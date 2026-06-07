@@ -1,0 +1,36 @@
+{
+  "rules": {
+    "global": {
+      "shops": { ".read": true, ".write": true },
+      "templates": { ".read": true, ".write": true }
+    },
+    "shops": {
+      "$shopId": {
+        ".read": true,
+        ".write": true,
+        "subs": {
+          "$subId": {
+            ".validate": "newData.hasChildren(['id','staffName','periodId','shifts','submittedAt'])"
+          }
+        }
+      }
+    },
+    "accounts": {
+      "$shopId": {
+        "plan":             { ".read": true,  ".write": false },
+        "planExpiry":       { ".read": true,  ".write": false },
+        "stripeCustomerId": { ".read": false, ".write": false },
+        "shops": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        }
+      }
+    },
+    "pendingLinks": {
+      "$userId": {
+        ".read": "auth != null && auth.uid === $userId",
+        ".write": "auth != null && auth.uid === $userId"
+      }
+    }
+  }
+}

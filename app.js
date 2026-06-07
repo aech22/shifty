@@ -110,10 +110,15 @@ const DEFAULT_PW="admin1234";
 
 // ===== サブスクリプション プラン定義 =====
 // テスト用: "free"|"standard"|"pro" に設定すると Firebase を無視して上書き
-const DEV_PLAN_OVERRIDE = null; // null = Firebaseから読む（本番）
+const DEV_PLAN_OVERRIDE = null; // 本番用
+// シークレットアンロックコード
+const UNLOCK_CODE = "Nito@1234";
+const UNLOCK_CODE_TEMP = "Itumen"; // 2026/7/31まで有効
+const UNLOCK_CODE_TEMP_EXPIRY = "2026-07-31"; // この日付まで（含む）
+const UNLOCK_LS_KEY = "ots_unlocked";
 
 const PLAN_LIMITS = {
-  free:     { shops: 1,        staff: 10, periods: 3        },
+  free:     { shops: 1,        staff: 20, periods: 1        },
   standard: { shops: 3,        staff: 30, periods: Infinity },
   pro:      { shops: Infinity, staff: Infinity, periods: Infinity },
 };
@@ -320,6 +325,7 @@ function App(){
   const[inviteCode,setInviteCode]=useState(""); // 引き継ぎコード入力値
   const[inviteError,setInviteError]=useState(""); // エラーメッセージ
   const[plan,setPlan]=useState("free"); // サブスクプラン
+  const[planExpiry,setPlanExpiry]=useState(null); // プラン有効期限
   const[emailMode,setEmailMode]=useState(null); // null | "login" | "register"
   const[emailVal,setEmailVal]=useState("");
   const[passwordVal,setPasswordVal]=useState("");
@@ -629,7 +635,16 @@ function App(){
     });
     // accounts/<shopId>/plan（プラン読み込み）
     on(`accounts/${targetSid}/plan`,val=>{
-      setPlan(DEV_PLAN_OVERRIDE||(val&&["free","standard","pro"].includes(val)?val:"free"));
+      const unlockVal=lg(UNLOCK_LS_KEY,false);
+      const today=new Date().toISOString().split("T")[0];
+      // "temp"で保存されている場合は期限チェック
+      const unlocked=unlockVal==="temp"?(today<=UNLOCK_CODE_TEMP_EXPIRY):!!unlockVal;
+      if(unlockVal==="temp"&&today>UNLOCK_CODE_TEMP_EXPIRY)ls(UNLOCK_LS_KEY,false); // 期限切れ時に自動解除
+      setPlan(DEV_PLAN_OVERRIDE||(unlocked?"pro":(val&&["free","standard","pro"].includes(val)?val:"free")));
+    });
+    // accounts/<shopId>/planExpiry（有効期限）
+    on(`accounts/${targetSid}/planExpiry`,val=>{
+      setPlanExpiry(val||null);
     });
 
     // settingsデフォルト書き込み
@@ -758,6 +773,19 @@ function App(){
       else if(e.code==="auth/too-many-requests")
         setAuthError("ログイン試行が多すぎます。しばらく待ってから再試行してください");
       else setAuthError("ログインに失敗しました: "+e.message);
+    }finally{setAuthLoading(false);}
+  };
+  // パスワードリセットメール送信
+  const sendPasswordReset=async(email)=>{
+    if(!firebaseAuth){setAuthError("Firebase Auth未初期化");return;}
+    if(!email){setAuthError("メールアドレスを入力してください");return;}
+    setAuthLoading(true);setAuthError("");
+    try{
+      await firebaseAuth.sendPasswordResetEmail(email);
+      setAuthError("✅ パスワードリセットメールを送信しました");
+    }catch(e){
+      if(e.code==="auth/user-not-found") setAuthError("このメールアドレスは登録されていません");
+      else setAuthError("送信に失敗しました: "+e.message);
     }finally{setAuthLoading(false);}
   };
   const signUpWithEmail=async(email,password)=>{
@@ -993,7 +1021,9 @@ function App(){
                 {emailMode==="login"?"ログイン":"アカウント作成"}
               </button>
               {emailMode==="login"
-                ?<div style={{textAlign:"center",fontSize:12,color:"#64748B"}}>アカウントがない場合は
+                ?<div style={{textAlign:"center",fontSize:12,color:"#64748B"}}>
+                  <button onClick={()=>sendPasswordReset(emailVal)} style={{background:"none",border:"none",color:"#94A3B8",fontSize:12,cursor:"pointer",textDecoration:"underline",marginBottom:6,display:"block",width:"100%"}}>パスワードを忘れた方</button>
+                  アカウントがない場合は
                   <button onClick={()=>{setEmailMode("register");setAuthError("");}} style={{background:"none",border:"none",color:"#f87036",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>新規登録</button>
                 </div>
                 :<div style={{textAlign:"center",fontSize:12,color:"#64748B"}}>既にアカウントがある場合は
@@ -1090,13 +1120,21 @@ function App(){
                   .then(()=>console.log(sub.isUpdated?"変更保存完了":"提出完了","path=",path))
                   .catch(e=>console.warn("sub書き込み失敗:",path,e));
               }
-            }} shopName={shop?.name}/>
+            }}
+            onDeleteSub={subId=>{
+              const currentSid=currentShopIdRef.current||sid;
+              const a=subs.filter(s=>s.id!==subId);
+              setSubs(a);
+              ls(storeKey(currentSid,"subs_v6"),a);
+              if(firebaseDB) firebaseDB.ref(`shops/${currentSid}/subs/${subId}`).remove().catch(e=>console.warn("sub削除失敗:",e));
+            }}
+            shopName={shop?.name}/>
         :(auth
           ?<AdminView settings={effectiveSettings} periods={periods} subs={subs} staffList={staffList} shops={shops}
               currentShopId={sid} saveSettings={saveSettings} savePeriods={savePeriods} saveSubs={saveSubs}
               saveStaff={saveStaff} saveShops={saveShops}
               globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates}
-              plan={plan}
+              plan={plan} planExpiry={planExpiry}
               setCurrentShopId={id=>{
                 currentShopIdRef.current=id;
                 setCurrentShopId(id);
@@ -1114,7 +1152,7 @@ function App(){
 // ============================================================
 // スタッフ画面
 // ============================================================
-function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub,shopName,urlLocked=false,plan="free"}){
+function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub,onDeleteSub,shopName,urlLocked=false,plan="free"}){
   // Cookieからスタッフ名を復元
   const savedName=shopId&&apid?getCookie(ckStaffKey(shopId,apid))||"":"";
   const[name,setName]=useState(savedName);
@@ -1208,11 +1246,12 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   const pe=dates[dates.length-1]?`${pd(dates[dates.length-1]).getMonth()+1}/${pd(dates[dates.length-1]).getDate()}`:"";
   const wk=dates.filter(d=>sd[d]?.status==="work").length;
 
-  // スタッフ名候補
-  // Pro: 従業員一覧の並び順（管理者が自由に並べ替え可能）
-  // Free/Standard: 登録順（五十音ソートなし）
-  const nameSuggests=useMemo(()=>[...staffList],[staffList]);
-  const filteredSuggests=ni?nameSuggests.filter(n=>n.includes(ni)):nameSuggests;
+  // スタッフ名候補（登録名 + 別名）
+  const staffAliases=settings?.staffAliases||{};
+  const allSuggests=useMemo(()=>buildSuggestList(staffList,staffAliases),[staffList,staffAliases]);
+  const filteredSuggests=ni
+    ?allSuggests.filter(s=>s.display.includes(ni)||s.registered.includes(ni))
+    :allSuggests;
 
   // クリック外で候補を閉じる
   useEffect(()=>{
@@ -1223,7 +1262,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   if(done)return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true});}} onEditByName={sub=>{setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true});}} onEditByName={sub=>{setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"50px 20px",textAlign:"center"}}>
         <div style={{fontSize:68,animation:"bI .5s"}}>✅</div>
         <div style={{fontSize:22,fontWeight:700,color:"#f87036",marginTop:14,marginBottom:8}}>提出完了！</div>
@@ -1244,7 +1283,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true});}} onEditByName={sub=>{setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true});}} onEditByName={sub=>{setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"14px 12px 120px"}}>
         {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`⚠️ 締切済み（${ap.deadlineDate.replace(/-/g,"/")}）`:`📅 締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
 
@@ -1256,17 +1295,28 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
               <div style={{position:"relative"}}>
                 <div style={{display:"flex",gap:8,alignItems:"center"}}>
                   <input ref={nr} value={ni} onChange={e=>{setNi(e.target.value);setShowSuggest(true);}}
-                    onKeyDown={e=>{if(e.key==="Enter"){if(ni.trim())setName(ni.trim());setEditN(false);setShowSuggest(false);}if(e.key==="Escape"){setEditN(false);setShowSuggest(false);}}}
+                    onKeyDown={e=>{
+                      if(e.key==="Enter"){
+                        if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);setName(resolved);}
+                        setEditN(false);setShowSuggest(false);
+                      }
+                      if(e.key==="Escape"){setEditN(false);setShowSuggest(false);}
+                    }}
                     onFocus={()=>setShowSuggest(true)}
                     placeholder="お名前を入力"
                     style={{flex:1,padding:"10px 12px",fontSize:18,fontWeight:700,background:"var(--c-bg)",border:"2px solid #f87036",borderRadius:10,outline:"none",color:"var(--c-text)",minWidth:0}}/>
-                  <button onClick={()=>{if(ni.trim())setName(ni.trim());setEditN(false);setShowSuggest(false);}} style={{padding:"10px 16px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",flexShrink:0}}>確定</button>
+                  <button onClick={()=>{
+                    if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);setName(resolved);}
+                    setEditN(false);setShowSuggest(false);
+                  }} style={{padding:"10px 16px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",flexShrink:0}}>確定</button>
                 </div>
                 {showSuggest&&filteredSuggests.length>0&&(
                   <div className="name-suggest">
-                    {filteredSuggests.map((n,i)=>(
-                      <div key={i} className="name-suggest-item" onMouseDown={e=>{e.preventDefault();setName(n);setNi(n);setEditN(false);setShowSuggest(false);}}>
-                        {n}
+                    {filteredSuggests.map((s,i)=>(
+                      <div key={i} className="name-suggest-item" onMouseDown={e=>{e.preventDefault();setName(s.registered);setNi(s.registered);setEditN(false);setShowSuggest(false);}}
+                        style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                        <span>{s.display}</span>
+                        {s.isAlias&&<span style={{fontSize:11,color:"#f87036",background:"rgba(248,112,54,.1)",padding:"1px 6px",borderRadius:4,flexShrink:0}}>→ {s.registered}</span>}
                       </div>
                     ))}
                   </div>
@@ -1471,7 +1521,7 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
 // ============================================================
 // 提出状況モーダル（全画面・名前固定・横スクロール）
 // ============================================================
-function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName}){
+function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onDeleteSub,plan="free"}){
   const period=periods.find(p=>p.id===apid);
   const submitted=subs.filter(s=>s.periodId===apid);
   const dates=period?gd(period.startDate,period.endDate):[];
@@ -1518,14 +1568,20 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName}){
             <div style={{height:52,flexShrink:0,borderBottom:"2px solid var(--c-border)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"var(--c-text3)",background:"var(--c-card)"}}>名前</div>
             <div ref={nameColRef} onScroll={e=>{if(dataColRef.current)dataColRef.current.scrollTop=e.currentTarget.scrollTop;}} style={{flex:1,overflowY:"scroll",overflowX:"hidden",scrollbarWidth:"none"}}>
               {submitted.map((sub,ri)=>(
-                <div key={sub.id} onClick={()=>handleNameClick(sub)}
-                  style={{height:72,borderBottom:"2px solid var(--c-border)",display:"flex",alignItems:"center",justifyContent:"center",padding:"6px",background:ri%2===0?"var(--c-card)":"var(--c-input2)",cursor:"pointer",flexShrink:0}}
-                  onMouseEnter={e=>e.currentTarget.style.background="#FEF0E8"}
-                  onMouseLeave={e=>e.currentTarget.style.background=ri%2===0?"var(--c-card)":"var(--c-input2)"}>
-                  <div style={{textAlign:"center"}}>
+                <div key={sub.id}
+                  style={{height:72,borderBottom:"2px solid var(--c-border)",display:"flex",alignItems:"center",justifyContent:"center",padding:"4px 6px",background:ri%2===0?"var(--c-card)":"var(--c-input2)",flexShrink:0,flexDirection:"column",gap:4}}>
+                  <div onClick={()=>handleNameClick(sub)} style={{textAlign:"center",cursor:"pointer",flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}
+                    onMouseEnter={e=>e.currentTarget.style.opacity=".7"}
+                    onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
                     <div style={{fontSize:12,fontWeight:700,color:"var(--c-text)",wordBreak:"break-all",lineHeight:1.3}}>{sub.staffName}</div>
                     <div style={{fontSize:10,color:"#f87036",marginTop:2}}>✎ 修正</div>
                   </div>
+                  {plan==="pro"&&onDeleteSub&&(
+                    <button onClick={e=>{e.stopPropagation();if(confirm(`「${sub.staffName}」の提出を削除しますか？`)){onDeleteSub(sub.id);}}}
+                      style={{width:"100%",padding:"2px 4px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:4,color:"#FF4757",fontSize:10,cursor:"pointer",fontWeight:600}}>
+                      🗑 削除
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -1621,7 +1677,7 @@ function AdminLogin({settings,onAuth}){
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free"}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>ssSave(SS_TAB,tab),[tab]);
   const[toast,setToast]=useState(null);
@@ -1766,7 +1822,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
             </div>
           </div>
           <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-            {[["periods","📅 期間"],["staff","👥 スタッフ"],["candidates","📋 候補"],["submissions","📥 提出一覧"],["settings","⚙️ 設定"]].map(([id,l])=>(
+            {[["periods","📅 期間"],["staff","👥 スタッフ"],["candidates","📋 候補"],["submissions","📥 提出一覧"],["mypage","💳 マイページ"],["settings","⚙️ 設定"]].map(([id,l])=>(
               <button key={id} onClick={()=>setTab(id)} style={{padding:"7px 13px",background:tab===id?"#f87036":"var(--c-input)",border:`1px solid ${tab===id?"#f87036":"var(--c-border)"}`,borderRadius:7,color:tab===id?"white":"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{l}</button>
             ))}
             <button onClick={logout} style={{padding:"7px 12px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:7,color:"#FF4757",fontSize:12,cursor:"pointer"}}>ログアウト</button>
@@ -1775,7 +1831,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
       </div>
       <div style={{maxWidth:900,margin:"0 auto",padding:"20px 14px 60px"}}>
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings}/>}
-        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} onRenameStaff={(oldName,newName)=>{
+        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
@@ -1787,11 +1843,12 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           tt(`✅ ${oldName} → ${newName} に変更しました`);
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
-        {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt}/>}
+        {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
+        {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
         {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"rgba(255,255,255,.12)",backdropFilter:"blur(10px)",color:"white",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid rgba(255,255,255,.15)"}}>{toast}</div>}
-      {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} onClose={()=>setUpgradeReason(null)}/>}
+      {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
     </div>
   );
 }
@@ -1846,7 +1903,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
     return(
       <div>
         <button onClick={()=>setViewPeriodId(null)} style={{marginBottom:16,padding:"8px 16px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:8,color:"var(--c-text)",fontSize:13,cursor:"pointer"}}>← 期間一覧に戻る</button>
-        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} onEditSub={sub=>{const updated={...sub,updatedAt:new Date().toISOString(),isUpdated:true};const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=updated;onSave(a);}tt("✅ 更新しました");}}/>
+        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} plan={plan} onDeleteSub={subId=>{const a=subs.filter(s=>s.id!==subId);onSave(a);tt("🗑️ 提出を削除しました");}} onEditSub={sub=>{const updated={...sub,updatedAt:new Date().toISOString(),isUpdated:true};const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=updated;onSave(a);}tt("✅ 更新しました");}}/>
       </div>
     );
   }
@@ -2142,11 +2199,36 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
 }
 
 // ===== スタッフ登録タブ =====
-function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings}){
+function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[]}){
   const[newName,setNewName]=useState("");
   const[editIdx,setEditIdx]=useState(null);
   const[editName,setEditName]=useState("");
+  const[aliasIdx,setAliasIdx]=useState(null); // 別名編集中のスタッフindex
   const isPro=plan==="pro";
+  const staffAliases=settings.staffAliases||{};
+  const saveAlias=(staffName,aliases)=>{
+    onSaveSettings&&onSaveSettings({...settings,staffAliases:{...staffAliases,[staffName]:aliases}});
+  };
+  const addAlias=(staffName,alias)=>{
+    if(staffList.includes(alias)){tt("⚠️ 登録名と同じ名前は別名にできません");return;}
+    const cur=staffAliases[staffName]||[];
+    if(cur.includes(alias)){tt("⚠️ 既に登録されている別名です");return;}
+    saveAlias(staffName,[...cur,alias]);
+    tt(`✅「${alias}」を別名として追加しました`);
+  };
+  const delAlias=(staffName,alias)=>{
+    const cur=(staffAliases[staffName]||[]).filter(a=>a!==alias);
+    saveAlias(staffName,cur);
+    tt("🗑️ 別名を削除しました");
+  };
+  // 最新期間の提出名のうち、未登録かつ未エイリアスのもの
+  const allAliases=Object.values(staffAliases).flat();
+  const latestPeriod=[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate))[0];
+  const unregisteredNames=useMemo(()=>{
+    if(!latestPeriod)return[];
+    const names=subs.filter(s=>s.periodId===latestPeriod.id).map(s=>s.staffName);
+    return[...new Set(names)].filter(n=>!staffList.includes(n)&&!allAliases.includes(n));
+  },[subs,latestPeriod,staffList,staffAliases]);
   const lim=PLAN_LIMITS[plan]?.staff??10;
   const staffColors=settings.staffColors||{};
   const toggleColor=name=>{
@@ -2183,7 +2265,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
         </div>}
         {staffList.length===0&&<div style={{fontSize:13,color:"var(--c-text4)",marginBottom:12}}>スタッフが登録されていません</div>}
         {staffList.map((n,i)=>(
-          <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:10,marginBottom:6}}>
+          <div key={i} style={{marginBottom:6}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:10}}>
             <span style={{fontSize:13,color:"var(--c-text4)",minWidth:24,textAlign:"center"}}>{i+1}</span>
             {editIdx===i
               ?<>
@@ -2200,9 +2283,46 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
                   <button onClick={()=>moveDown(i)} disabled={i===staffList.length-1} style={{padding:"4px 8px",background:"var(--c-input)",border:"1px solid #D1D5DB",borderRadius:5,color:"var(--c-text3)",fontSize:12,cursor:i===staffList.length-1?"not-allowed":"pointer",opacity:i===staffList.length-1?.3:1}}>↓</button>
                 </>}
                 <button onClick={()=>startEdit(i)} style={{padding:"6px 10px",background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.25)",borderRadius:6,color:"#3B82F6",fontSize:12,cursor:"pointer"}}>編集</button>
+                {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);setNewAlias("");}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer"}}>
+                  別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
+                </button>}
                 <button onClick={()=>del(i)} style={AD}>削除</button>
               </>
             }
+          </div>
+          {/* 別名パネル（Pro・展開時） */}
+          {isPro&&aliasIdx===i&&(
+            <div style={{marginTop:4,padding:"12px 14px",background:"rgba(248,112,54,.04)",border:"1px solid rgba(248,112,54,.2)",borderRadius:10}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#f87036",marginBottom:8}}>📝 別名（スタッフが入力できる名前）</div>
+              {/* 登録済み別名 */}
+              {(staffAliases[n]||[]).length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+                {(staffAliases[n]||[]).map((alias,ai)=>(
+                  <div key={ai} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(248,112,54,.1)",border:"1px solid rgba(248,112,54,.25)",borderRadius:16,padding:"3px 10px 3px 12px",fontSize:13,color:"#c45b1a",fontWeight:600}}>
+                    {alias}
+                    <button onClick={()=>delAlias(n,alias)} style={{background:"none",border:"none",color:"#f87036",cursor:"pointer",padding:"0 0 0 4px",fontSize:14,lineHeight:1}}>×</button>
+                  </div>
+                ))}
+              </div>}
+              {/* 最新期間の未登録名から選ぶ */}
+              <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:6}}>
+                最新期間「{latestPeriod?.label||""}」の未登録の名前：
+              </div>
+              {unregisteredNames.length===0
+                ?<div style={{fontSize:12,color:"var(--c-text4)",padding:"6px 0"}}>
+                    {latestPeriod?"未登録の提出名はありません":"期間データがありません"}
+                  </div>
+                :<div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                  {unregisteredNames.map((alias,ai)=>(
+                    <button key={ai} onClick={()=>addAlias(n,alias)}
+                      style={{padding:"5px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:16,fontSize:13,color:"var(--c-text2)",cursor:"pointer",fontWeight:600}}>
+                      ＋ {alias}
+                    </button>
+                  ))}
+                </div>
+              }
+              <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>タップした名前が「{n}」の別名として登録されます</div>
+            </div>
+          )}
           </div>
         ))}
         <div style={{display:"flex",gap:8,marginTop:12}}>
@@ -2463,10 +2583,24 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
 }
 
 // ===== 提出一覧タブ =====
-function SubsTab({subs,periods,staffList,onSave,tt}){
+function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,plan="free"}){
   const[fn,setFn]=useState(""),[fp,setFp]=useState("all");
   const[sf,setSf]=useState("submittedAt"),[sdr,setSdr]=useState("desc");
   const[det,setDet]=useState(null);
+  const[linkTarget,setLinkTarget]=useState(null); // {subName, selectedStaff}
+  const isPro=plan==="pro";
+  const staffAliases=settings.staffAliases||{};
+  const allAliases=Object.values(staffAliases).flat();
+  const isUnregistered=name=>!staffList.includes(name)&&!allAliases.includes(name);
+  const registerAlias=(subName,registeredName)=>{
+    const cur=staffAliases[registeredName]||[];
+    if(!cur.includes(subName)){
+      const newAliases={...staffAliases,[registeredName]:[...cur,subName]};
+      onSaveSettings&&onSaveSettings({...settings,staffAliases:newAliases});
+    }
+    setLinkTarget(null);
+    tt(`✅「${subName}」を「${registeredName}」の別名として登録しました`);
+  };
   const tg=f=>{if(sf===f)setSdr(d=>d==="asc"?"desc":"asc");else{setSf(f);setSdr("asc");}};
   const fil=subs.filter(s=>(!fn||s.staffName.includes(fn))&&(fp==="all"||s.periodId===fp)).sort((a,b)=>{let va=sf==="submittedAt"?new Date(a[sf]).getTime():(a[sf]||""),vb=sf==="submittedAt"?new Date(b[sf]).getTime():(b[sf]||"");return(va<vb?-1:va>vb?1:0)*(sdr==="asc"?1:-1);});
   const gpl=id=>periods.find(p=>p.id===id)?.label||"不明";
@@ -2489,21 +2623,38 @@ function SubsTab({subs,periods,staffList,onSave,tt}){
           </tr></thead>
           <tbody>{fil.length===0
             ?<tr><td colSpan={6} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
-            :fil.map(sub=>{const ds=Object.keys(sub.shifts||{}).sort(),wk=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").length,at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});return(<tr key={sub.id}>
+            :fil.map(sub=>{const ds=Object.keys(sub.shifts||{}).sort(),wk=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").length,at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&sub.updatedAt!==sub.submittedAt;return(<tr key={sub.id}>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text)",fontWeight:600}}>
-                {sub.staffName}
-                {sub.isUpdated&&<span style={{marginLeft:6,fontSize:10,background:"rgba(245,158,11,.2)",color:"#F59E0B",border:"1px solid rgba(245,158,11,.3)",padding:"1px 6px",borderRadius:4,fontWeight:700}}>変更あり</span>}
+                <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                  <span>{sub.staffName}</span>
+                  {hasRealUpdate&&<span style={{fontSize:10,background:"rgba(245,158,11,.2)",color:"#F59E0B",border:"1px solid rgba(245,158,11,.3)",padding:"1px 6px",borderRadius:4,fontWeight:700}}>変更あり</span>}
+                  {isPro&&isUnregistered(sub.staffName)&&(
+                    linkTarget?.subName===sub.staffName
+                      ?<div style={{display:"flex",alignItems:"center",gap:4,marginTop:4,width:"100%"}}>
+                        <select defaultValue="" onChange={e=>e.target.value&&registerAlias(sub.staffName,e.target.value)}
+                          style={{fontSize:12,padding:"3px 6px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text)",cursor:"pointer"}}>
+                          <option value="">スタッフを選択</option>
+                          {staffList.map(s=><option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <button onClick={()=>setLinkTarget(null)} style={{background:"none",border:"none",color:"var(--c-text4)",cursor:"pointer",fontSize:12}}>✕</button>
+                      </div>
+                      :<button onClick={()=>setLinkTarget({subName:sub.staffName})}
+                        style={{fontSize:10,background:"rgba(255,71,87,.08)",color:"#FF4757",border:"1px solid rgba(255,71,87,.25)",padding:"1px 7px",borderRadius:4,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                        未登録 → 別名登録
+                      </button>
+                  )}
+                </div>
               </td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text3)",whiteSpace:"nowrap"}}>
                   {at}
-                  {sub.isUpdated&&<><br/><span style={{fontSize:10,color:"#F59E0B",fontWeight:700}}>✏️ 更新: {new Date(sub.updatedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</span></>}
+                  {hasRealUpdate&&<><br/><span style={{fontSize:10,color:"#F59E0B",fontWeight:700}}>✏️ 更新: {new Date(sub.updatedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</span></>}
                 </td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text3)",fontSize:12}}>{gpl(sub.periodId)}</td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 8px",borderRadius:4,fontSize:12,fontWeight:600}}>{wk}日</span></td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><span style={{background:"var(--c-input)",color:"var(--c-text3)",padding:"2px 8px",borderRadius:4,fontSize:12}}>{ds.length-wk}日</span></td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",whiteSpace:"nowrap"}}>
                 <button onClick={()=>setDet(sub)} style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text2)",fontSize:12,cursor:"pointer",marginRight:4}}>詳細</button>
-                <button onClick={()=>{if(!confirm("削除しますか？"))return;onSave(subs.filter(s=>s.id!==sub.id));tt("🗑️ 削除しました");}} style={AD}>削除</button>
+                {isPro&&<button onClick={()=>{if(!confirm("削除しますか？"))return;onSave(subs.filter(s=>s.id!==sub.id));tt("🗑️ 削除しました");}} style={AD}>削除</button>}
               </td>
             </tr>);})}
           </tbody>
@@ -2536,6 +2687,30 @@ function SubsTab({subs,periods,staffList,onSave,tt}){
 }
 
 // ===== 設定タブ =====
+function UnlockCodeInput({tt,plan,onUnlock,onLock}){
+  const[code,setCode]=useState("");
+  const isUnlocked=lg(UNLOCK_LS_KEY,false);
+  if(isUnlocked){
+    return(<div style={{display:"flex",alignItems:"center",gap:10}}>
+      <div style={{fontSize:13,color:"#22c55e",fontWeight:700}}>✅ すべての機能が開放されています</div>
+      <button onClick={onLock} style={{...AGray,fontSize:12,padding:"6px 12px"}}>解除</button>
+    </div>);
+  }
+  return(<div style={{display:"flex",gap:8}}>
+    <input value={code} onChange={e=>setCode(e.target.value)} placeholder="コードを入力" type="password"
+      style={{...AI,flex:1}} onKeyDown={e=>{if(e.key==="Enter"){
+        const today=new Date().toISOString().split("T")[0];
+        const tempOk=code===UNLOCK_CODE_TEMP&&today<=UNLOCK_CODE_TEMP_EXPIRY;
+        if(code===UNLOCK_CODE){onUnlock(false);}else if(tempOk){onUnlock(true);}else{tt("❌ コードが違います");setCode("");}
+      }}}/>
+    <button onClick={()=>{
+      const today=new Date().toISOString().split("T")[0];
+      const tempOk=code===UNLOCK_CODE_TEMP&&today<=UNLOCK_CODE_TEMP_EXPIRY;
+      if(code===UNLOCK_CODE){onUnlock(false);}else if(tempOk){onUnlock(true);}else{tt("❌ コードが違います");setCode("");}
+    }} style={AB}>適用</button>
+  </div>);
+}
+
 function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
   const[inviteInput,setInviteInput]=useState("");
   const[pw,setPw]=useState("");
@@ -2585,7 +2760,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
         <div>
           <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{PLAN_LABELS[plan]}プラン</div>
           <div style={{fontSize:12,color:"var(--c-text3)",marginTop:3}}>
-            {plan==="free"&&"1店舗 / スタッフ10名 / 期間3件まで"}
+            {plan==="free"&&"1店舗 / スタッフ20名 / 期間1件まで"}
             {plan==="standard"&&"3店舗 / スタッフ30名 / 期間無制限"}
             {plan==="pro"&&"店舗・スタッフ・期間 無制限 + 全機能"}
           </div>
@@ -2656,6 +2831,12 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
         });
       }} style={{...AGray,width:"100%",fontSize:13}}>＋ 新規店舗を作成してこの端末に紐付け</button>
     </AC>
+    <AC title="🔑 アクセスコード">
+      <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>
+        コードを入力するとすべての機能が利用できます。
+      </div>
+      <UnlockCodeInput tt={tt} plan={plan} onUnlock={(isTemp)=>{ls(UNLOCK_LS_KEY,isTemp?"temp":true);window.location.reload();}} onLock={()=>{ls(UNLOCK_LS_KEY,false);window.location.reload();}}/>
+    </AC>
     {plan==="pro"&&<AC title="📊 Excel書き出し設定">
       <AL>書き出し時の店舗名（空欄 = 登録名をそのまま使用）</AL>
       <div style={{display:"flex",gap:8,marginBottom:4}}>
@@ -2669,36 +2850,208 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
 }
 
 // ============================================================
+// マイページ タブ (Phase 4)
+// ============================================================
+function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onUpgrade}){
+  const[portalLoading,setPortalLoading]=useState(false);
+  const lim=PLAN_LIMITS[plan]||PLAN_LIMITS.free;
+  const isPaid=plan==="standard"||plan==="pro";
+
+  const openPortal=async()=>{
+    setPortalLoading(true);
+    try{
+      const res=await fetch(`${CF_BASE}/createPortalSession`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({shopId,returnUrl:window.location.href}),
+      });
+      const data=await res.json();
+      if(data.url) window.location.href=data.url;
+      else tt("❌ "+(data.error||"請求管理ページを開けませんでした"));
+    }catch(e){
+      tt("❌ 通信エラーが発生しました");
+    }finally{setPortalLoading(false);}
+  };
+
+  // 有効期限の表示
+  const expiryLabel=planExpiry?`${planExpiry} まで有効`:"";
+
+  // 使用量バー
+  const Bar=({used,max,label})=>{
+    const pct=max===Infinity?0:Math.min(100,Math.round(used/max*100));
+    const isOver=used>=max;
+    return(
+      <div style={{marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
+          <span style={{fontSize:13,color:"var(--c-text2)",fontWeight:600}}>{label}</span>
+          <span style={{fontSize:13,fontWeight:700,color:isOver?"#FF4757":max===Infinity?"#10B981":"var(--c-text)"}}>
+            {max===Infinity?`${used}名 / 無制限`:`${used} / ${max}`}
+          </span>
+        </div>
+        {max!==Infinity&&<div style={{height:6,background:"var(--c-border)",borderRadius:3,overflow:"hidden"}}>
+          <div style={{height:"100%",width:`${pct}%`,background:isOver?"#FF4757":pct>80?"#F59E0B":"#10B981",borderRadius:3,transition:"width .4s"}}/>
+        </div>}
+      </div>
+    );
+  };
+
+  return(
+    <div>
+      <AT>💳 マイページ</AT>
+
+      {/* プランカード */}
+      <AC title="現在のプラン">
+        <div style={{display:"flex",alignItems:"center",gap:16,padding:"8px 0 16px"}}>
+          <div style={{fontSize:48}}>{plan==="pro"?"⭐":plan==="standard"?"📦":"🆓"}</div>
+          <div style={{flex:1}}>
+            <div style={{fontSize:22,fontWeight:800,color:"var(--c-text)"}}>{PLAN_LABELS[plan]}プラン</div>
+            {expiryLabel&&<div style={{fontSize:12,color:"var(--c-text3)",marginTop:3}}>🗓 {expiryLabel}</div>}
+            {!isPaid&&<div style={{fontSize:12,color:"var(--c-text4)",marginTop:3}}>無料プランをご利用中です</div>}
+          </div>
+        </div>
+
+        {/* 使用量 */}
+        <div style={{borderTop:"1px solid var(--c-border)",paddingTop:16}}>
+          <div style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:12}}>使用状況</div>
+          <Bar used={staffList.length} max={lim.staff} label="👥 スタッフ数"/>
+          <Bar used={periods.length} max={lim.periods} label="📅 期間数"/>
+        </div>
+
+        {/* アップグレード */}
+        {plan!=="pro"&&<div style={{marginTop:4}}>
+          <button onClick={()=>onUpgrade&&onUpgrade({type:"staff",limit:lim.staff,plan})}
+            style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#f87036,#e05a1a)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
+            {plan==="free"?"⭐ StandardまたはProにアップグレード":"⭐ Proにアップグレード"}
+          </button>
+        </div>}
+      </AC>
+
+      {/* プラン比較表 */}
+      <AC title="プラン比較">
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+            <thead>
+              <tr>
+                {[["","機能"],["🆓 Free","無料"],["📦 Standard","300円/月"],["⭐ Pro","500円/月"]].map(([icon,price],i)=>(
+                  <th key={i} style={{padding:"8px 6px",textAlign:"center",borderBottom:"2px solid var(--c-border)",color:"var(--c-text2)",fontWeight:700,background:
+                    (i===1&&plan==="free")||(i===2&&plan==="standard")||(i===3&&plan==="pro")
+                      ?"rgba(248,112,54,.1)":"transparent",
+                    borderRadius:i>0?"8px 8px 0 0":0,fontSize:i===0?12:13}}>
+                    {icon&&<div style={{fontSize:20,marginBottom:2}}>{icon}</div>}
+                    <div>{price}</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                ["店舗数","1店舗","3店舗","無制限"],
+                ["スタッフ数","20名","30名","無制限"],
+                ["期間数","1件","無制限","無制限"],
+                ["スタッフ並べ替え","❌","❌","✅"],
+                ["複数店舗管理","❌","✅","✅"],
+                ["Excel書き出し","✅","✅","✅"],
+                ["Excel店舗名変更","❌","❌","✅"],
+                ["スタッフ名色設定","❌","❌","✅"],
+                ["名前リンク（別名）","❌","❌","✅"],
+              ].map(([feat,...vals])=>(
+                <tr key={feat}>
+                  <td style={{padding:"9px 6px",color:"var(--c-text3)",fontSize:12,fontWeight:600,borderBottom:"1px solid var(--c-border)"}}>{feat}</td>
+                  {vals.map((v,i)=>(
+                    <td key={i} style={{padding:"9px 6px",textAlign:"center",borderBottom:"1px solid var(--c-border)",
+                      background:(i===0&&plan==="free")||(i===1&&plan==="standard")||(i===2&&plan==="pro")
+                        ?"rgba(248,112,54,.06)":"transparent",
+                      color:v==="✅"?"#10B981":v==="❌"?"#9CA3AF":"var(--c-text)",fontWeight:600}}>
+                      {v}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </AC>
+
+      {/* 請求管理 */}
+      {isPaid&&<AC title="請求・サブスクリプション管理">
+        <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:14}}>
+          請求履歴の確認、クレジットカードの変更、プランの変更・解約はStripeの管理ページで行えます。
+        </div>
+        <button onClick={openPortal} disabled={portalLoading}
+          style={{width:"100%",padding:"13px",background:portalLoading?"#999":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:11,color:"var(--c-text2)",fontSize:14,fontWeight:600,cursor:portalLoading?"not-allowed":"pointer"}}>
+          {portalLoading?"⏳ 読み込み中...":"🧾 請求・解約の管理（Stripeポータル）"}
+        </button>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8,textAlign:"center"}}>外部のStripeサイトに移動します</div>
+      </AC>}
+
+      {!isPaid&&<AC title="請求・サブスクリプション管理">
+        <div style={{fontSize:13,color:"var(--c-text4)",textAlign:"center",padding:"8px 0"}}>
+          有料プランをご購入後に請求管理ページが利用できます
+        </div>
+      </AC>}
+    </div>
+  );
+}
+
+// ============================================================
 // アップグレード促進モーダル
 // ============================================================
-function UpgradeModal({reason,currentPlan,onClose}){
+// Cloud Functions エンドポイント
+const CF_BASE = "https://asia-northeast1-ontheshift.cloudfunctions.net";
+
+function UpgradeModal({reason,currentPlan,shopId,onClose}){
+  const[loading,setLoading]=useState(null); // "standard" | "pro" | null
+  const[error,setError]=useState("");
   const msgs={
     shops:  {title:"店舗数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]}プランでは最大${reason.limit}店舗まで管理できます。`,next:"Standardプランで3店舗、Proプランで無制限に管理できます。"},
     staff:  {title:"スタッフ数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]}プランでは最大${reason.limit}名まで登録できます。`,next:"Standardプランで30名、Proプランで無制限に登録できます。"},
     periods:{title:"期間数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]}プランでは最大${reason.limit}件まで期間を作成できます。`,next:"StandardまたはProプランにアップグレードすると無制限に作成できます。"},
   };
   const m=msgs[reason.type]||{title:"上限に達しました",desc:"",next:""};
+
+  const checkout=async(plan)=>{
+    setLoading(plan);setError("");
+    try{
+      const res=await fetch(`${CF_BASE}/createCheckoutSession`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({shopId,plan,successUrl:window.location.href+"?payment=success",cancelUrl:window.location.href+"?payment=cancel"}),
+      });
+      const data=await res.json();
+      if(data.url) window.location.href=data.url;
+      else setError("決済ページの取得に失敗しました");
+    }catch(e){
+      setError("通信エラーが発生しました");
+    }finally{setLoading(null);}
+  };
+
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20,animation:"fI .2s"}} onClick={onClose}>
-      <div style={{background:"#16213E",border:"1px solid rgba(255,255,255,.12)",borderRadius:20,width:"100%",maxWidth:380,padding:"28px 24px",animation:"sI .2s"}} onClick={e=>e.stopPropagation()}>
+      <div style={{background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:20,width:"100%",maxWidth:380,padding:"28px 24px",animation:"sI .2s",boxShadow:"0 8px 40px rgba(0,0,0,.3)"}} onClick={e=>e.stopPropagation()}>
         <div style={{textAlign:"center",marginBottom:20}}>
           <div style={{fontSize:44,marginBottom:10}}>🔒</div>
           <div style={{fontSize:17,fontWeight:700,color:"var(--c-text)",marginBottom:8}}>{m.title}</div>
-          <div style={{fontSize:13,color:"rgba(255,255,255,.55)",lineHeight:1.6,marginBottom:8}}>{m.desc}</div>
-          <div style={{fontSize:13,color:"rgba(255,255,255,.75)",lineHeight:1.6}}>{m.next}</div>
+          <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8}}>{m.desc}</div>
+          <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6}}>{m.next}</div>
         </div>
         <div style={{background:"rgba(248,112,54,.08)",border:"1px solid rgba(248,112,54,.25)",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
-          <div style={{fontSize:12,fontWeight:700,color:"#FFA070",marginBottom:8}}>プラン比較</div>
-          {[["🆓 Free","無料","1店舗 / 10名 / 3期間"],["📦 Standard","300円/月","3店舗 / 30名 / 無制限"],["⭐ Pro","500円/月","無制限 + 全機能"]].map(([label,price,desc])=>(
-            <div key={label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid #E5E7EB"}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#f87036",marginBottom:8}}>プラン比較</div>
+          {[["🆓 Free","無料","1店舗 / 20名 / 1期間"],["📦 Standard","300円/月","3店舗 / 30名 / 無制限"],["⭐ Pro","500円/月","無制限 + 全機能"]].map(([label,price,desc])=>(
+            <div key={label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid var(--c-border)"}}>
               <span style={{fontSize:13,color:"var(--c-text2)",fontWeight:600}}>{label}</span>
-              <span style={{fontSize:12,color:"var(--c-text3)"}}>{desc}</span>
+              <span style={{fontSize:11,color:"var(--c-text3)"}}>{desc}</span>
               <span style={{fontSize:12,color:"#F59E0B",fontWeight:700}}>{price}</span>
             </div>
           ))}
         </div>
-        <div style={{fontSize:12,color:"rgba(255,255,255,.35)",textAlign:"center",marginBottom:14}}>アップグレード機能は近日公開予定です</div>
-        <button onClick={onClose} style={{width:"100%",padding:"13px",background:"#f87036",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer"}}>閉じる</button>
+        {error&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:10,background:"rgba(255,71,87,.1)",padding:"8px",borderRadius:8}}>{error}</div>}
+        <button onClick={()=>checkout("standard")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="standard"?"var(--c-text3)":"#f87036",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:8}}>
+          {loading==="standard"?"⏳ 処理中...":"📦 Standardにアップグレード（300円/月）"}
+        </button>
+        <button onClick={()=>checkout("pro")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="pro"?"var(--c-text3)":"linear-gradient(135deg,#f87036,#e05a1a)",border:"2px solid rgba(248,112,54,.3)",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
+          {loading==="pro"?"⏳ 処理中...":"⭐ Proにアップグレード（500円/月）"}
+        </button>
+        <button onClick={onClose} style={{width:"100%",padding:"11px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:11,color:"var(--c-text3)",fontSize:13,cursor:"pointer"}}>今はしない</button>
       </div>
     </div>
   );
@@ -2717,6 +3070,25 @@ function CL({items,onDel}){return items.map((c,i)=>(<div key={i} style={{display
   }
   <button onClick={()=>onDel(i)} style={AD}>削除</button>
 </div>));}
+// 別名 → 登録名に解決する（staffAliases: {"登録名": ["alias1","alias2"]}）
+function resolveAlias(inputName, staffAliases){
+  if(!inputName||!staffAliases)return inputName;
+  for(const [registered, aliases] of Object.entries(staffAliases)){
+    if(Array.isArray(aliases)&&aliases.map(a=>a.trim()).includes(inputName.trim()))return registered;
+  }
+  return inputName;
+}
+// 登録名+別名を含む全サジェスト候補を生成（{display, registered, isAlias}[]）
+function buildSuggestList(staffList, staffAliases){
+  const result=[];
+  staffList.forEach(name=>{
+    result.push({display:name,registered:name,isAlias:false});
+    const aliases=(staffAliases||{})[name]||[];
+    aliases.forEach(a=>{if(a&&a.trim())result.push({display:a.trim(),registered:name,isAlias:true});});
+  });
+  return result;
+}
+
 const AI={width:"100%",padding:"11px 14px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:10,color:"var(--c-text)",fontSize:14,outline:"none"};
 const AB={padding:"10px 18px",background:"#f87036",border:"none",borderRadius:9,color:"white",fontSize:14,fontWeight:700,cursor:"pointer"};
 const AD={padding:"6px 11px",background:"rgba(255,71,87,.1)",border:"1px solid rgba(255,71,87,.25)",borderRadius:6,color:"#EF4444",fontSize:12,fontWeight:600,cursor:"pointer"};

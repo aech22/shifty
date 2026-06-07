@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- 背景 -->
+  <rect width="64" height="64" rx="12" fill="#f87036"/>
+  <!-- セル全体の外枠 -->
+  <rect x="16" y="14" width="32" height="36" fill="#f0f0ee" stroke="#8a8a84" stroke-width="1.5"/>
+  <!-- セル区切りの点線 -->
+  <line x1="16" y1="32" x2="48" y2="32" stroke="#8a8a84" stroke-width="1.5" stroke-dasharray="1.5,1.5"/>
+</svg>
