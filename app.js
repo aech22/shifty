@@ -2050,7 +2050,7 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
       cell.fill=Object.assign({},f);
     }
     cell.border=border?Object.assign({},border):{};
-    cell.font=Object.assign({name:"HG正楷書体-PRO",size:11,bold:true},font||{}); // デフォルトHGフォント
+    cell.font=Object.assign({name:"Yu Gothic",size:11,bold:true},font||{}); // デフォルトHGフォント
   };
 
   // ===== Row1: ヘッダー (高さ120, 全縦書き) =====
@@ -2084,12 +2084,12 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
     ws.getRow(rB).height=18;
 
     // A列: 日付 (medium四辺, 上下結合, 横書き)
-    SC(rT,C_PER,day,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"HG正楷書体-PRO",bold:true,size:11,color:{argb:"FF000000"}});
+    SC(rT,C_PER,day,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:true,size:11,color:{argb:"FF000000"}});
     SC(rB,C_PER,null,aH,fill,{top:M,bottom:M,left:M,right:M});
     ws.mergeCells(rT,C_PER,rB,C_PER);
 
     // B列: 曜日 (medium四辺, 上下結合, 横書き)
-    SC(rT,C_WD_H,wd,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"HG正楷書体-PRO",bold:true,size:11,color:{argb:R("000000")}});
+    SC(rT,C_WD_H,wd,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:true,size:11,color:{argb:R("000000")}});
     SC(rB,C_WD_H,null,aH,fill,{top:M,bottom:M,left:M,right:M});
     ws.mergeCells(rT,C_WD_H,rB,C_WD_H);
 
@@ -2114,12 +2114,12 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
     });
 
     // 右端曜日: medium四辺, 上下結合
-    SC(rT,C_WD_R,wd,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"HG正楷書体-PRO",bold:true,size:11,color:{argb:R("000000")}});
+    SC(rT,C_WD_R,wd,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:true,size:11,color:{argb:R("000000")}});
     SC(rB,C_WD_R,null,aH,fill,{top:M,bottom:M,left:M,right:M});
     ws.mergeCells(rT,C_WD_R,rB,C_WD_R);
 
     // 右端日付: medium四辺, 上下結合
-    SC(rT,C_SHOP_R,day,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"HG正楷書体-PRO",bold:true,size:11});
+    SC(rT,C_SHOP_R,day,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:true,size:11});
     SC(rB,C_SHOP_R,null,aH,fill,{top:M,bottom:M,left:M,right:M});
     ws.mergeCells(rT,C_SHOP_R,rB,C_SHOP_R);
   });
