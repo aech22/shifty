@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <!-- 各OS・ブラウザ互換性のためのmeta設定 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- iOSのノッチ・ホームバー対応 -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Shifty">
+  <!-- Android Chrome対応 -->
+  <meta name="theme-color" content="#06C755">
+  <meta name="mobile-web-app-capable" content="yes">
+  <!-- Windows タイル対応 -->
+  <meta name="msapplication-TileColor" content="#06C755">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Shifty</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- ExcelJS（スタイル付きExcel生成） -->
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <!-- Firebase SDK (Realtime Database + Auth) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <style>
+    /* ===== テーマカラー変数（ライトモード） ===== */
+    :root {
+      --c-bg:      #F0F2F5;
+      --c-card:    #FFFFFF;
+      --c-input:   #F3F4F6;
+      --c-input2:  #F0F2F5;
+      --c-border:  #E5E7EB;
+      --c-border2: #D1D5DB;
+      --c-text:    #1A1A2E;
+      --c-text2:   #374151;
+      --c-text3:   #6B7280;
+      --c-text4:   #9CA3AF;
+      --c-shadow:  rgba(0,0,0,.06);
+    }
+    /* ダークモード変数 */
+    :root[data-theme="dark"] {
+      --c-bg:      #0F172A;
+      --c-card:    #1E293B;
+      --c-input:   #2D3748;
+      --c-input2:  #263044;
+      --c-border:  #334155;
+      --c-border2: #475569;
+      --c-text:    #F1F5F9;
+      --c-text2:   #CBD5E1;
+      --c-text3:   #94A3B8;
+      --c-text4:   #64748B;
+      --c-shadow:  rgba(0,0,0,.3);
+    }
+    /* OS設定がダークのときのデフォルト（手動設定がない場合） */
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]):not([data-theme="dark"]) {
+        --c-bg:      #0F172A;
+        --c-card:    #1E293B;
+        --c-input:   #2D3748;
+        --c-input2:  #263044;
+        --c-border:  #334155;
+        --c-border2: #475569;
+        --c-text:    #F1F5F9;
+        --c-text2:   #CBD5E1;
+        --c-text3:   #94A3B8;
+        --c-text4:   #64748B;
+        --c-shadow:  rgba(0,0,0,.3);
+      }
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:'Hiragino Sans','Yu Gothic',sans-serif;background:var(--c-bg);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;text-size-adjust:100%;}
+    /* iOS Safariのsafe-area対応（ノッチ・ホームバー） */
+    body{padding-bottom:env(safe-area-inset-bottom,0);}
+    /* iOS Safariのposition:sticky対応 */
+    .sticky-header{position:-webkit-sticky;position:sticky;}
+    /* Androidのタップハイライトを無効化 */
+    button,a,div[onClick]{-webkit-tap-highlight-color:transparent;}
+    /* iOS Safariでinputがズームしないようにフォントサイズを16px以上に */
+    input,select,textarea{font-size:16px;}
+    @keyframes sU{from{transform:translateY(60px);opacity:0}to{transform:translateY(0);opacity:1}}
+    @keyframes fI{from{opacity:0}to{opacity:1}}
+    @keyframes sI{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}
+    @keyframes bI{0%{transform:scale(0)}70%{transform:scale(1.15)}100%{transform:scale(1)}}
+    select,input,button,textarea{font-family:inherit;}
+    .dc{transition:box-shadow .2s;}
+    .dc:hover{box-shadow:0 4px 20px rgba(0,0,0,.12)!important;}
+    .cb:active{transform:scale(.96);}
+    input[type=date]{color-scheme:light;-webkit-appearance:none;appearance:none;}
+    :root[data-theme="dark"] input[type=date]{color-scheme:dark;}
+    /* Androidのdate inputスタイル統一 */
+    input[type=date]::-webkit-calendar-picker-indicator{opacity:0.5;}
+    ::-webkit-scrollbar{width:4px;height:4px;}
+    ::-webkit-scrollbar-thumb{background:var(--c-border2);border-radius:2px;}
+    .name-suggest{position:absolute;top:100%;left:0;right:0;background:var(--c-card);border:1px solid var(--c-border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:200;max-height:200px;overflow-y:auto;margin-top:4px;}
+    .name-suggest-item{padding:12px 16px;cursor:pointer;font-size:15px;font-weight:600;color:var(--c-text);}
+    .name-suggest-item:hover{background:var(--c-input);}
+    .name-suggest-item:active{background:var(--c-input2);}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" src="app.js?v=9" data-presets="react"></script>
+</body>
+</html>

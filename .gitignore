@@ -1,0 +1,7 @@
+.DS_Store
+.claude/
+app.js.bak
+node_modules/
+functions/node_modules/
+.env
+.env.local
