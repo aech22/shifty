@@ -1872,14 +1872,20 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
   const genPresets=()=>{
     const result=[],today=new Date();
     const cutoff=new Date(today.getFullYear(),today.getMonth()-1,today.getDate());
+    const use1month=plan==="pro"&&(settings.periodUnit||"2week")==="1month";
     for(let offset=0;offset<=2;offset++){
       const base=new Date(today.getFullYear(),today.getMonth()+offset,1);
       const yr=base.getFullYear(),mo=base.getMonth()+1,ms=String(mo).padStart(2,"0");
       const lastDay=fd(new Date(yr,mo,0));
-      const fh={label:`${yr}年${mo}月前半`,startDate:`${yr}-${ms}-01`,endDate:`${yr}-${ms}-15`};
-      const sh={label:`${yr}年${mo}月後半`,startDate:`${yr}-${ms}-16`,endDate:lastDay};
-      if(pd(fh.endDate)>=cutoff)result.push(fh);
-      if(pd(sh.endDate)>=cutoff)result.push(sh);
+      if(use1month){
+        const full={label:`${yr}年${mo}月`,startDate:`${yr}-${ms}-01`,endDate:lastDay};
+        if(pd(full.endDate)>=cutoff)result.push(full);
+      }else{
+        const fh={label:`${yr}年${mo}月前半`,startDate:`${yr}-${ms}-01`,endDate:`${yr}-${ms}-15`};
+        const sh={label:`${yr}年${mo}月後半`,startDate:`${yr}-${ms}-16`,endDate:lastDay};
+        if(pd(fh.endDate)>=cutoff)result.push(fh);
+        if(pd(sh.endDate)>=cutoff)result.push(sh);
+      }
     }
     return result;
   };
@@ -2815,6 +2821,21 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
         {(settings.xlShopName||"")&&<button onClick={()=>onSave({...settings,xlShopName:""})} style={{...AGray,padding:"10px 12px",fontSize:12}}>クリア</button>}
       </div>
       <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>設定した名前はExcel出力時のファイル名・シート内店舗名に反映されます</div>
+    </AC>}
+
+    {plan==="pro"&&<AC title="📅 期間の単位（プリセット）">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>期間を新規作成するときのプリセット選択肢を切り替えます。</div>
+      <div style={{display:"flex",gap:8}}>
+        {[["2week","📆 2週間（前半／後半）"],["1month","🗓️ 1ヶ月"]].map(([val,label])=>{
+          const sel=(settings.periodUnit||"2week")===val;
+          return(<button key={val} onClick={()=>onSave({...settings,periodUnit:val})}
+            style={{flex:1,padding:"10px 8px",borderRadius:10,border:`2px solid ${sel?"#f87036":"var(--c-border)"}`,
+              background:sel?"rgba(248,112,54,.1)":"var(--c-input)",color:sel?"#f87036":"var(--c-text2)",
+              fontSize:13,fontWeight:sel?700:500,cursor:"pointer"}}>
+            {label}
+          </button>);
+        })}
+      </div>
     </AC>}
 
     <AC title="📩 お問い合わせ">
