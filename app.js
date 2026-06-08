@@ -2817,6 +2817,23 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
       <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>設定した名前はExcel出力時のファイル名・シート内店舗名に反映されます</div>
     </AC>}
 
+    <AC title="📩 お問い合わせ">
+      <div style={{fontSize:13,color:"var(--c-text2)",marginBottom:14,lineHeight:1.7}}>
+        ご意見・ご要望・不具合の報告は、XのDMまたはリプライにてお気軽にどうぞ。
+      </div>
+      <a href="https://x.com/shifty_shift_" target="_blank" rel="noopener noreferrer"
+        style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:12,textDecoration:"none",cursor:"pointer"}}>
+        <div style={{width:36,height:36,borderRadius:"50%",background:"#000",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.737-8.835L1.254 2.25H8.08l4.259 5.631 5.905-5.631zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+        </div>
+        <div>
+          <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>@shifty_shift_</div>
+          <div style={{fontSize:12,color:"var(--c-text3)",marginTop:2}}>x.com/shifty_shift_</div>
+        </div>
+        <div style={{marginLeft:"auto",fontSize:12,color:"var(--c-text4)"}}>→</div>
+      </a>
+    </AC>
+
   </div>);
 }
 
