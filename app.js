@@ -2305,14 +2305,14 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
               :<>
                 {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid #D1D5DB",cursor:"pointer",flexShrink:0,padding:0}}/>}
                 <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{n}</span>
+                {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);setNewAlias("");}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
+                  別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
+                </button>}
                 {isPro&&<>
                   <button onClick={()=>moveUp(i)} disabled={i===0} style={{padding:"4px 8px",background:"var(--c-input)",border:"1px solid #D1D5DB",borderRadius:5,color:"var(--c-text3)",fontSize:12,cursor:i===0?"not-allowed":"pointer",opacity:i===0?.3:1}}>↑</button>
                   <button onClick={()=>moveDown(i)} disabled={i===staffList.length-1} style={{padding:"4px 8px",background:"var(--c-input)",border:"1px solid #D1D5DB",borderRadius:5,color:"var(--c-text3)",fontSize:12,cursor:i===staffList.length-1?"not-allowed":"pointer",opacity:i===staffList.length-1?.3:1}}>↓</button>
                 </>}
                 <button onClick={()=>startEdit(i)} style={{padding:"6px 10px",background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.25)",borderRadius:6,color:"#3B82F6",fontSize:12,cursor:"pointer"}}>編集</button>
-                {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);setNewAlias("");}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer"}}>
-                  別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
-                </button>}
                 <button onClick={()=>del(i)} style={AD}>削除</button>
               </>
             }
