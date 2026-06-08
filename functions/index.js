@@ -9,8 +9,7 @@ function getStripe() { return Stripe(process.env.STRIPE_SECRET_KEY); }
 
 // Stripe Price ID
 const STRIPE_PRICES = {
-  standard_monthly: "price_1TfjFgDxozrnBAkvGnCFkS0W", // Shifty Standard 300円/月
-  pro_monthly:      "price_1TfjGIDxozrnBAkvEsyiXhrV", // Shifty Pro 500円/月
+  pro_monthly: "price_1TfjGIDxozrnBAkvEsyiXhrV", // Shifty Pro 500円/月
 };
 
 // ============================================================
@@ -29,7 +28,7 @@ exports.createCheckoutSession = functions
     const { shopId, plan, successUrl, cancelUrl } = req.body;
     if (!shopId || !plan) { res.status(400).json({ error: "shopId, plan は必須です" }); return; }
 
-    const priceId = plan === "pro" ? STRIPE_PRICES.pro_monthly : STRIPE_PRICES.standard_monthly;
+    const priceId = STRIPE_PRICES.pro_monthly;
     const stripe = getStripe();
 
     try {

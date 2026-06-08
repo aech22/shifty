@@ -109,7 +109,7 @@ function isHoliday(dateStr){
 const DEFAULT_PW="admin1234";
 
 // ===== サブスクリプション プラン定義 =====
-// テスト用: "free"|"standard"|"pro" に設定すると Firebase を無視して上書き
+// テスト用: "free"|"pro" に設定すると Firebase を無視して上書き
 const DEV_PLAN_OVERRIDE = null; // 本番用
 // シークレットアンロックコード
 const UNLOCK_CODE = "Nito@1234";
@@ -118,11 +118,10 @@ const UNLOCK_CODE_TEMP_EXPIRY = "2026-07-31"; // この日付まで（含む）
 const UNLOCK_LS_KEY = "ots_unlocked";
 
 const PLAN_LIMITS = {
-  free:     { shops: 1,        staff: 20, periods: 1        },
-  standard: { shops: 3,        staff: 30, periods: Infinity },
-  pro:      { shops: Infinity, staff: Infinity, periods: Infinity },
+  free: { shops: Infinity, staff: 20, periods: 1        },
+  pro:  { shops: Infinity, staff: Infinity, periods: Infinity },
 };
-const PLAN_LABELS = { free: "Free", standard: "Standard", pro: "Pro" };
+const PLAN_LABELS = { free: "Free", pro: "Pro" };
 
 // ===== デフォルト候補時間 =====
 const CAND_WEEKDAY=[
@@ -640,7 +639,7 @@ function App(){
       // "temp"で保存されている場合は期限チェック
       const unlocked=unlockVal==="temp"?(today<=UNLOCK_CODE_TEMP_EXPIRY):!!unlockVal;
       if(unlockVal==="temp"&&today>UNLOCK_CODE_TEMP_EXPIRY)ls(UNLOCK_LS_KEY,false); // 期限切れ時に自動解除
-      setPlan(DEV_PLAN_OVERRIDE||(unlocked?"pro":(val&&["free","standard","pro"].includes(val)?val:"free")));
+      setPlan(DEV_PLAN_OVERRIDE||(unlocked?"pro":(val&&["free","pro"].includes(val)?val:"free")));
     });
     // accounts/<shopId>/planExpiry（有効期限）
     on(`accounts/${targetSid}/planExpiry`,val=>{
@@ -1738,7 +1737,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                         <button onClick={()=>{setShopEditMode(v=>!v);setShopCodeMode(false);}} style={{flex:1,padding:"7px",background:"var(--c-bg)",border:"none",borderRadius:8,fontSize:12,fontWeight:600,color:"var(--c-text)",cursor:"pointer"}}>⚙️ 編集</button>
                         <button onClick={()=>{setShopCodeMode(v=>!v);setShopEditMode(false);setShopCodeInput("");setShopCodeError("");}} style={{flex:1,padding:"7px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,fontSize:12,fontWeight:600,color:"var(--c-text2)",cursor:"pointer"}}>🔑 コードで追加</button>
                         <button onClick={()=>{
-                          const lim=PLAN_LIMITS[plan]?.shops??1;
+                          const lim=PLAN_LIMITS[plan]?.shops??Infinity;
                           if(shops.length>=lim){setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
                           const name=prompt("新しい店舗名を入力");if(!name)return;const ns=makeShop(name.trim());const newShops=[...shops,ns];saveShops(newShops);setCurrentShopId(ns.id);currentShopIdRef.current=ns.id;ssSave(SS_SHOP,ns.id);startSubscriptions(ns.id,newShops);setShopMenuOpen(false);tt("✅ 店舗を追加しました");
                         }} style={{flex:1,padding:"7px",background:"#f87036",border:"none",borderRadius:8,fontSize:12,fontWeight:700,color:"white",cursor:"pointer"}}>＋ 新規</button>
@@ -1751,7 +1750,10 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                             onKeyDown={e=>e.key==="Enter"&&(()=>{
                               const code=shopCodeInput.trim();
                               if(!code){setShopCodeError("コードを入力してください");return;}
-                              const lim=PLAN_LIMITS[plan]?.shops??1;
+              const today2=new Date().toISOString().split("T")[0];
+              const tempOk2=code===UNLOCK_CODE_TEMP&&today2<=UNLOCK_CODE_TEMP_EXPIRY;
+              if(code===UNLOCK_CODE||tempOk2){ls(UNLOCK_LS_KEY,tempOk2?"temp":true);setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");window.location.reload();return;}
+                              const lim=PLAN_LIMITS[plan]?.shops??Infinity;
                               if(shops.length>=lim){setShopCodeMode(false);setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
                               if(!firebaseDB){setShopCodeError("Firebase未接続");return;}
                               setShopCodeError("確認中...");
@@ -1778,7 +1780,10 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                           <button onClick={()=>{
                             const code=shopCodeInput.trim();
                             if(!code){setShopCodeError("コードを入力してください");return;}
-                            const lim=PLAN_LIMITS[plan]?.shops??1;
+              const today2=new Date().toISOString().split("T")[0];
+              const tempOk2=code===UNLOCK_CODE_TEMP&&today2<=UNLOCK_CODE_TEMP_EXPIRY;
+              if(code===UNLOCK_CODE||tempOk2){ls(UNLOCK_LS_KEY,tempOk2?"temp":true);setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");window.location.reload();return;}
+                            const lim=PLAN_LIMITS[plan]?.shops??Infinity;
                             if(shops.length>=lim){setShopCodeMode(false);setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
                             if(!firebaseDB){setShopCodeError("Firebase未接続");return;}
                             setShopCodeError("確認中...");
@@ -2026,10 +2031,9 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
   if(typeof ExcelJS==="undefined"){tt("⚠️ ExcelJS未読込み");return;}
   const dates=gd(p.startDate,p.endDate);
   const submittedNames=ss.map(s=>s.staffName);
-  const registeredOrder=staffList.filter(n=>submittedNames.includes(n));
-  const unregistered=submittedNames.filter(n=>!registeredOrder.includes(n)).sort((a,b)=>a.localeCompare(b,"ja"));
-  const sl=[...registeredOrder,...unregistered];
-  if(sl.length===0){tt("⚠️ 提出データがありません");return;}
+  const unregistered=submittedNames.filter(n=>!staffList.includes(n)).sort((a,b)=>a.localeCompare(b,"ja"));
+  const sl=[...staffList,...unregistered];
+  if(sl.length===0){tt("⚠️ スタッフが登録されていません");return;}
 
   const firstDate=pd(dates[0]);
   const mo=firstDate.getMonth()+1;
@@ -2074,7 +2078,7 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
   const H={style:"hair",  color:{argb:R("CCCCCC")}};
 
   // 配置
-  const aV={horizontal:"center",vertical:"middle",textRotation:255,wrapText:true};
+  const aV={horizontal:"center",vertical:"distributed",textRotation:255,wrapText:false};
   const aH={horizontal:"center",vertical:"middle"};
 
   // 塗り
@@ -2107,28 +2111,28 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
       cell.fill=Object.assign({},f);
     }
     cell.border=border?Object.assign({},border):{};
-    cell.font=Object.assign({name:"Yu Gothic",size:11,bold:true},font||{}); // デフォルトHGフォント
+    cell.font=Object.assign({name:"Yu Gothic",size:12,bold:false},font||{}); // デフォルトフォント（boldはヘッダーのみ）
   };
 
   // ===== Row1: ヘッダー (高さ120, 全縦書き) =====
   ws.getRow(1).height=120;
 
   // A1: 期間ラベル (top/bot/left:medium, right:thin)
-  SC(1,C_PER,periodLabel,aV,fNone,{top:M,bottom:M,left:M,right:T},{bold:true,size:11});
+  SC(1,C_PER,periodLabel,aV,fNone,{top:M,bottom:M,left:M,right:T},{bold:true,size:14});
   // B1: 曜日ヘッダー (top/bot/right:medium, left:thin)
-  SC(1,C_WD_H,"曜日",aV,fNone,{top:M,bottom:M,left:T,right:M},{bold:true,size:11});
+  SC(1,C_WD_H,"曜日",aV,fNone,{top:M,bottom:M,left:T,right:M},{bold:true,size:14});
   // スタッフ列: top:medium, right:thin（左枠なし）
   sl.forEach((nm,i)=>{
     const isFirst=i===0;
     const staffColorArgb=(options.staffColors||{})[nm]==="red"?"FFFF0000":"FF000000";
     SC(1,C_STAFF+i,nm,aV,fNone,
       {top:M,bottom:M,left:isFirst?T:undefined,right:T},
-      {bold:true,size:10,color:{argb:staffColorArgb}});
+      {bold:true,size:14,color:{argb:staffColorArgb}});
   });
   // 右端曜日: top/bot/left:medium, right:thin
-  SC(1,C_WD_R,"曜日",aV,fNone,{top:M,bottom:M,left:M,right:T},{bold:true,size:11});
+  SC(1,C_WD_R,"曜日",aV,fNone,{top:M,bottom:M,left:M,right:T},{bold:true,size:14});
   // 右端店舗名: top/bot:medium, left/right:thin
-  SC(1,C_SHOP_R,shopName||"",aV,fNone,{top:M,bottom:M,left:T,right:T},{bold:true,size:11});
+  SC(1,C_SHOP_R,shopName||"",aV,fNone,{top:M,bottom:M,left:T,right:T},{bold:true,size:14});
 
   // ===== データ行 (1日=2行) =====
   dates.forEach((ds,di)=>{
@@ -2141,12 +2145,12 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
     ws.getRow(rB).height=18;
 
     // A列: 日付 (medium四辺, 上下結合, 横書き)
-    SC(rT,C_PER,day,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:true,size:11,color:{argb:"FF000000"}});
+    SC(rT,C_PER,day,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:false,size:12,color:{argb:"FF000000"}});
     SC(rB,C_PER,null,aH,fill,{top:M,bottom:M,left:M,right:M});
     ws.mergeCells(rT,C_PER,rB,C_PER);
 
     // B列: 曜日 (medium四辺, 上下結合, 横書き)
-    SC(rT,C_WD_H,wd,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:true,size:11,color:{argb:R("000000")}});
+    SC(rT,C_WD_H,wd,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:false,size:12,color:{argb:R("000000")}});
     SC(rB,C_WD_H,null,aH,fill,{top:M,bottom:M,left:M,right:M});
     ws.mergeCells(rT,C_WD_H,rB,C_WD_H);
 
@@ -2159,9 +2163,13 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
       // 上行: top:medium, bot:hair
       // 下行: top:hair, bot:thin (最終日はbot:medium)
       const botT=isLast?M:T;
-      if(isWork){
-        SC(rT,ci,sh.start?timeToNum(sh.start):null,aH,fill,{top:M,bottom:H,left:T,right:T},{name:"Yu Gothic",bold:false,size:10});
-        SC(rB,ci,sh.end?timeToNum(sh.end):null,aH,fill,{top:H,bottom:botT,left:T,right:T},{name:"Yu Gothic",bold:false,size:10});
+      if(!sub){
+        // 未提出: 空白
+        SC(rT,ci,null,aH,fill,{top:M,bottom:H,left:T,right:T});
+        SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
+      } else if(isWork){
+        SC(rT,ci,sh.start?timeToNum(sh.start):null,aH,fill,{top:M,bottom:H,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
+        SC(rB,ci,sh.end?timeToNum(sh.end):null,aH,fill,{top:H,bottom:botT,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
       } else {
         // 休み: 斜線（右上→左下）
         const diagU={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
@@ -2171,12 +2179,12 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
     });
 
     // 右端曜日: medium四辺, 上下結合
-    SC(rT,C_WD_R,wd,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:true,size:11,color:{argb:R("000000")}});
+    SC(rT,C_WD_R,wd,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:false,size:12,color:{argb:R("000000")}});
     SC(rB,C_WD_R,null,aH,fill,{top:M,bottom:M,left:M,right:M});
     ws.mergeCells(rT,C_WD_R,rB,C_WD_R);
 
     // 右端日付: medium四辺, 上下結合
-    SC(rT,C_SHOP_R,day,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:true,size:11});
+    SC(rT,C_SHOP_R,day,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:false,size:12});
     SC(rB,C_SHOP_R,null,aH,fill,{top:M,bottom:M,left:M,right:M});
     ws.mergeCells(rT,C_SHOP_R,rB,C_SHOP_R);
   });
@@ -2260,7 +2268,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
       <AT>👥 スタッフ登録</AT>
       <AC title="スタッフ一覧">
         {!isPro&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:8,padding:"7px 10px"}}>
-          {`${plan==="free"?"🆓 Free":"📦 Standard"}プラン：最大${lim}名まで登録可能（${staffList.length}/${lim}名）`}
+          {`🆓 Freeプラン：最大${lim}名まで登録可能（${staffList.length}/${lim}名）`}
           {!isPro&&<span style={{marginLeft:8,color:"#F59E0B",fontSize:11}}>並べ替え・名前色変更はProプランで利用できます</span>}
         </div>}
         {staffList.length===0&&<div style={{fontSize:13,color:"var(--c-text4)",marginBottom:12}}>スタッフが登録されていません</div>}
@@ -2562,7 +2570,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
       </AC>}
 
       {mode==="template"&&<AC title="📁 曜日別候補テンプレート">
-        {plan==="free"&&<div style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#F59E0B"}}>🔒 テンプレート機能はStandard / Proプランで利用できます</div>}
+        {plan==="free"&&<div style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#F59E0B"}}>🔒 テンプレート機能はProプランで利用できます</div>}
         <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:12,opacity:plan==="free"?.4:1}}>現在の曜日別候補をテンプレートとして保存し、後で再利用できます。</div>
         <div style={{display:"flex",gap:8,marginBottom:16,opacity:plan==="free"?.4:1,pointerEvents:plan==="free"?"none":"auto"}}>
           <input value={tmplName} onChange={e=>setTmplName(e.target.value)} placeholder="テンプレート名を入力" style={{...AI,flex:1}}/>
@@ -2712,7 +2720,6 @@ function UnlockCodeInput({tt,plan,onUnlock,onLock}){
 }
 
 function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
-  const[inviteInput,setInviteInput]=useState("");
   const[pw,setPw]=useState("");
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,null));
   const changeTheme=pref=>{
@@ -2756,13 +2763,12 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
     <AT>⚙️ システム設定</AT>
     <AC title="💳 現在のプラン">
       <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0"}}>
-        <div style={{fontSize:32}}>{plan==="pro"?"⭐":plan==="standard"?"📦":"🆓"}</div>
+        <div style={{fontSize:32}}>{plan==="pro"?"⭐":"🆓"}</div>
         <div>
-          <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{PLAN_LABELS[plan]}プラン</div>
+          <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{PLAN_LABELS[plan]||"Free"}プラン</div>
           <div style={{fontSize:12,color:"var(--c-text3)",marginTop:3}}>
-            {plan==="free"&&"1店舗 / スタッフ20名 / 期間1件まで"}
-            {plan==="standard"&&"3店舗 / スタッフ30名 / 期間無制限"}
-            {plan==="pro"&&"店舗・スタッフ・期間 無制限 + 全機能"}
+            {plan==="free"&&"スタッフ20名 / 期間1件まで"}
+            {plan==="pro"&&"スタッフ・期間 無制限 + 全機能"}
           </div>
         </div>
       </div>
@@ -2781,62 +2787,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
         })}
       </div>
     </AC>
-    <AC title="🏪 端末・店舗の紐付け（招待コード）">
-      <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>
-        この端末のCookieに紐付いている店舗IDです。別の端末でこの店舗を管理したい場合は「招待コード」を別端末で入力してください。
-      </div>
-      <AL>この端末のCookie（店舗ID）</AL>
-      <div style={{display:"flex",gap:8,marginBottom:12,alignItems:"center"}}>
-        <input readOnly value={getCookie(CK_SHOP)||"（未設定）"} style={{...AI,flex:1,fontSize:11,fontFamily:"monospace"}}/>
-        <button onClick={()=>{const v=getCookie(CK_SHOP);if(!v)return;
-          if(navigator.clipboard&&navigator.clipboard.writeText){
-            navigator.clipboard.writeText(v).then(()=>tt("✅ コピーしました")).catch(()=>{const el=document.createElement("textarea");el.value=v;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✅ コピーしました");});
-          } else {
-            const el=document.createElement("textarea");el.value=v;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✅ コピーしました");
-          }}} style={AB}>コピー</button>
-      </div>
-      <AL>招待コード（別の店舗に切り替え）</AL>
-      <div style={{display:"flex",gap:8,marginBottom:12}}>
-        <input value={inviteInput} onChange={e=>setInviteInput(e.target.value)} placeholder="別端末の店舗IDを貼り付け" style={{...AI,flex:1}}/>
-        <button onClick={()=>{
-          if(!inviteInput.trim()){tt("⚠️ 招待コードを入力");return;}
-          const code=inviteInput.trim();
-          if(!firebaseDB){tt("⚠️ Firebase未接続");return;}
-          firebaseDB.ref("global/shops").once("value").then(snap=>{
-            const val=snap.val();
-            const sh=val?(typeof val==="object"&&!Array.isArray(val)?Object.values(val).filter(s=>s&&s.id):[]):[];
-            const found=sh.find(s=>s&&s.id===code);
-            if(found){
-              setCookie(CK_SHOP,code,365);
-              tt(`✅「${found.name}」に切り替えました。ページをリロードしてください。`);
-              setInviteInput("");
-            } else {
-              tt("❌ 該当する店舗が見つかりません");
-            }
-          }).catch(()=>tt("❌ 確認に失敗しました"));
-        }} style={AB}>切り替え</button>
-      </div>
-      <button onClick={()=>{
-        if(!firebaseDB){tt("⚠️ Firebase未接続");return;}
-        if(!confirm("新規店舗を作成してこの端末に紐付けます。よろしいですか？"))return;
-        const newShop=makeShop("新しい店舗");
-        firebaseDB.ref("global/shops").once("value").then(snap=>{
-          const val=snap.val();
-          const sh=val?(typeof val==="object"&&!Array.isArray(val)?Object.values(val).filter(s=>s&&s.id):[]):[];
-          const newShops=[...sh,newShop];
-          const obj={};newShops.forEach(s=>{if(s&&s.id)obj[s.id]=s;});
-          firebaseDB.ref("global/shops").set(obj);
-          setCookie(CK_SHOP,newShop.id,365);
-          tt("✅ 新規店舗を作成しました。ページをリロードしてください。");
-        });
-      }} style={{...AGray,width:"100%",fontSize:13}}>＋ 新規店舗を作成してこの端末に紐付け</button>
-    </AC>
-    <AC title="🔑 アクセスコード">
-      <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>
-        コードを入力するとすべての機能が利用できます。
-      </div>
-      <UnlockCodeInput tt={tt} plan={plan} onUnlock={(isTemp)=>{ls(UNLOCK_LS_KEY,isTemp?"temp":true);window.location.reload();}} onLock={()=>{ls(UNLOCK_LS_KEY,false);window.location.reload();}}/>
-    </AC>
+
     {plan==="pro"&&<AC title="📊 Excel書き出し設定">
       <AL>書き出し時の店舗名（空欄 = 登録名をそのまま使用）</AL>
       <div style={{display:"flex",gap:8,marginBottom:4}}>
@@ -2855,7 +2806,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
 function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onUpgrade}){
   const[portalLoading,setPortalLoading]=useState(false);
   const lim=PLAN_LIMITS[plan]||PLAN_LIMITS.free;
-  const isPaid=plan==="standard"||plan==="pro";
+  const isPaid=plan==="pro";
 
   const openPortal=async()=>{
     setPortalLoading(true);
@@ -2902,9 +2853,9 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
       {/* プランカード */}
       <AC title="現在のプラン">
         <div style={{display:"flex",alignItems:"center",gap:16,padding:"8px 0 16px"}}>
-          <div style={{fontSize:48}}>{plan==="pro"?"⭐":plan==="standard"?"📦":"🆓"}</div>
+          <div style={{fontSize:48}}>{plan==="pro"?"⭐":"🆓"}</div>
           <div style={{flex:1}}>
-            <div style={{fontSize:22,fontWeight:800,color:"var(--c-text)"}}>{PLAN_LABELS[plan]}プラン</div>
+            <div style={{fontSize:22,fontWeight:800,color:"var(--c-text)"}}>{PLAN_LABELS[plan]||"Free"}プラン</div>
             {expiryLabel&&<div style={{fontSize:12,color:"var(--c-text3)",marginTop:3}}>🗓 {expiryLabel}</div>}
             {!isPaid&&<div style={{fontSize:12,color:"var(--c-text4)",marginTop:3}}>無料プランをご利用中です</div>}
           </div>
@@ -2921,7 +2872,7 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
         {plan!=="pro"&&<div style={{marginTop:4}}>
           <button onClick={()=>onUpgrade&&onUpgrade({type:"staff",limit:lim.staff,plan})}
             style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#f87036,#e05a1a)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
-            {plan==="free"?"⭐ StandardまたはProにアップグレード":"⭐ Proにアップグレード"}
+            {"⭐ Proにアップグレード"}
           </button>
         </div>}
       </AC>
@@ -2932,9 +2883,9 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead>
               <tr>
-                {[["","機能"],["🆓 Free","無料"],["📦 Standard","300円/月"],["⭐ Pro","500円/月"]].map(([icon,price],i)=>(
+                {[["","機能"],["🆓 Free","無料"],["⭐ Pro","500円/月"]].map(([icon,price],i)=>(
                   <th key={i} style={{padding:"8px 6px",textAlign:"center",borderBottom:"2px solid var(--c-border)",color:"var(--c-text2)",fontWeight:700,background:
-                    (i===1&&plan==="free")||(i===2&&plan==="standard")||(i===3&&plan==="pro")
+                    (i===1&&plan==="free")||(i===2&&plan==="pro")
                       ?"rgba(248,112,54,.1)":"transparent",
                     borderRadius:i>0?"8px 8px 0 0":0,fontSize:i===0?12:13}}>
                     {icon&&<div style={{fontSize:20,marginBottom:2}}>{icon}</div>}
@@ -2945,21 +2896,20 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
             </thead>
             <tbody>
               {[
-                ["店舗数","1店舗","3店舗","無制限"],
-                ["スタッフ数","20名","30名","無制限"],
-                ["期間数","1件","無制限","無制限"],
-                ["スタッフ並べ替え","❌","❌","✅"],
-                ["複数店舗管理","❌","✅","✅"],
-                ["Excel書き出し","✅","✅","✅"],
-                ["Excel店舗名変更","❌","❌","✅"],
-                ["スタッフ名色設定","❌","❌","✅"],
-                ["名前リンク（別名）","❌","❌","✅"],
+                ["スタッフ数","20名","無制限"],
+                ["期間数","1件","無制限"],
+                ["スタッフ並べ替え","❌","✅"],
+                ["テンプレート共有","❌","✅"],
+                ["Excel書き出し","✅","✅"],
+                ["Excel店舗名変更","❌","✅"],
+                ["スタッフ名色設定","❌","✅"],
+                ["名前リンク（別名）","❌","✅"],
               ].map(([feat,...vals])=>(
                 <tr key={feat}>
                   <td style={{padding:"9px 6px",color:"var(--c-text3)",fontSize:12,fontWeight:600,borderBottom:"1px solid var(--c-border)"}}>{feat}</td>
                   {vals.map((v,i)=>(
                     <td key={i} style={{padding:"9px 6px",textAlign:"center",borderBottom:"1px solid var(--c-border)",
-                      background:(i===0&&plan==="free")||(i===1&&plan==="standard")||(i===2&&plan==="pro")
+                      background:(i===0&&plan==="free")||(i===1&&plan==="pro")
                         ?"rgba(248,112,54,.06)":"transparent",
                       color:v==="✅"?"#10B981":v==="❌"?"#9CA3AF":"var(--c-text)",fontWeight:600}}>
                       {v}
@@ -3000,12 +2950,12 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
 const CF_BASE = "https://asia-northeast1-ontheshift.cloudfunctions.net";
 
 function UpgradeModal({reason,currentPlan,shopId,onClose}){
-  const[loading,setLoading]=useState(null); // "standard" | "pro" | null
+  const[loading,setLoading]=useState(null); // "pro" | null
   const[error,setError]=useState("");
   const msgs={
-    shops:  {title:"店舗数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]}プランでは最大${reason.limit}店舗まで管理できます。`,next:"Standardプランで3店舗、Proプランで無制限に管理できます。"},
-    staff:  {title:"スタッフ数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]}プランでは最大${reason.limit}名まで登録できます。`,next:"Standardプランで30名、Proプランで無制限に登録できます。"},
-    periods:{title:"期間数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]}プランでは最大${reason.limit}件まで期間を作成できます。`,next:"StandardまたはProプランにアップグレードすると無制限に作成できます。"},
+    shops:  {title:"店舗数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}店舗まで管理できます。`,next:"Proプランで無制限に管理できます。"},
+    staff:  {title:"スタッフ数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}名まで登録できます。`,next:"Proプランで無制限に登録できます。"},
+    periods:{title:"期間数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}件まで期間を作成できます。`,next:"Proプランにアップグレードすると無制限に作成できます。"},
   };
   const m=msgs[reason.type]||{title:"上限に達しました",desc:"",next:""};
 
@@ -3036,7 +2986,7 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
         </div>
         <div style={{background:"rgba(248,112,54,.08)",border:"1px solid rgba(248,112,54,.25)",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
           <div style={{fontSize:12,fontWeight:700,color:"#f87036",marginBottom:8}}>プラン比較</div>
-          {[["🆓 Free","無料","1店舗 / 20名 / 1期間"],["📦 Standard","300円/月","3店舗 / 30名 / 無制限"],["⭐ Pro","500円/月","無制限 + 全機能"]].map(([label,price,desc])=>(
+          {[["🆓 Free","無料","スタッフ20名 / 期間1件"],["⭐ Pro","500円/月","スタッフ・期間 無制限 + 全機能"]].map(([label,price,desc])=>(
             <div key={label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid var(--c-border)"}}>
               <span style={{fontSize:13,color:"var(--c-text2)",fontWeight:600}}>{label}</span>
               <span style={{fontSize:11,color:"var(--c-text3)"}}>{desc}</span>
@@ -3045,9 +2995,6 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
           ))}
         </div>
         {error&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:10,background:"rgba(255,71,87,.1)",padding:"8px",borderRadius:8}}>{error}</div>}
-        <button onClick={()=>checkout("standard")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="standard"?"var(--c-text3)":"#f87036",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:8}}>
-          {loading==="standard"?"⏳ 処理中...":"📦 Standardにアップグレード（300円/月）"}
-        </button>
         <button onClick={()=>checkout("pro")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="pro"?"var(--c-text3)":"linear-gradient(135deg,#f87036,#e05a1a)",border:"2px solid rgba(248,112,54,.3)",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
           {loading==="pro"?"⏳ 処理中...":"⭐ Proにアップグレード（500円/月）"}
         </button>

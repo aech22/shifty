@@ -1,4 +1,4 @@
-# CLAUDE.md — OnTheShift 一般公開版
+# CLAUDE.md — Shifty 一般公開版
 
 作成日: 2026年6月  
 ベース: aech22/aech22.ontheshift.io（自分用Pro版）
@@ -7,10 +7,10 @@
 
 ## プロジェクト概要
 
-**OnTheShift** — 飲食店向けシフト提出・管理Webアプリの**一般公開版（サブスク制限付き）**。
+**Shifty** — 飲食店向けシフト提出・管理Webアプリの**一般公開版（サブスク制限付き）**。
 
 自分用（Pro相当・制限なし）は別リポジトリで運用中。  
-このリポジトリはFree/Standard/Proのプラン制限を持つ一般ユーザー向け版。
+このリポジトリはFree/Proの2段階プラン制限を持つ一般ユーザー向け版。
 
 ---
 
@@ -220,24 +220,26 @@ firebaseDB.ref(path).update(obj);
 
 ## サブスクリプション プラン
 
-| | Free | Standard | Pro |
-|---|---|---|---|
-| 月額 | 無料 | 300円 | 500円 |
-| 年額 | 無料 | 3,600円 | 6,000円 |
-| 店舗数 | 1 | 3 | 無制限 |
-| スタッフ数 | 10名 | 30名 | 無制限 |
-| 期間数 | 3 | 無制限 | 無制限 |
-| スタッフ並べ替え | ❌ | ❌ | ✅ |
-| 複数店舗管理 | ❌ | ✅ | ✅ |
-| テンプレート共有 | ❌ | ✅ | ✅ |
-| Excel書き出し時店舗名変更 | ❌ | ❌ | ✅ |
-| Excelスタッフ名色選択 | ❌ | ❌ | ✅ |
+プランは **Free / Pro の2段階**。Pro は **1サブスク = 1店舗**。
+
+| | Free | Pro |
+|---|---|---|
+| 月額 | 無料 | 500円 / 店舗 |
+| 年額 | 無料 | 6,000円 / 店舗（2ヶ月分無料） |
+| スタッフ数 | 20名 | 無制限 |
+| 期間数 | 1 | 無制限 |
+| スタッフ並べ替え | ❌ | ✅ |
+| テンプレート共有 | ❌ | ✅ |
+| Excel書き出し時店舗名変更 | ❌ | ✅ |
+| Excelスタッフ名色選択 | ❌ | ✅ |
+
+**複数店舗** → 店舗ごとに個別契約（Pro × 店舗数）  
+**複数端末** → 店舗コードで紐付け。同じ店舗なら追加料金なし
 
 ### プラン情報のFirebase保存先（Phase1以降）
 ```
-accounts/<uid>/plan        = "free" | "standard" | "pro"
-accounts/<uid>/planExpiry  = "2026-12-31"
-accounts/<uid>/shopId      = "<shopId>"
+accounts/<shopId>/plan       = "free" | "pro"
+accounts/<shopId>/planExpiry = "2026-12-31"
 ```
 
 ---
@@ -246,9 +248,9 @@ accounts/<uid>/shopId      = "<shopId>"
 
 ### 🔴 Phase 1（今すぐ実装・サーバー不要）
 - [ ] プラン判定ロジック追加（`accounts/<shopId>/plan`をFirebaseから読む）
-- [ ] Free: 店舗数・スタッフ数・期間数の制限チェック
-- [ ] Free/Standard: スタッフ並べ替えUIを無効化
-- [ ] Standard以上: テンプレート共有を有効化
+- [ ] Free: スタッフ数・期間数の制限チェック
+- [ ] Free: スタッフ並べ替えUIを無効化
+- [ ] Pro: テンプレート共有を有効化
 - [ ] Pro: Excel書き出し時の店舗名変更UI
 - [ ] Pro: Excelスタッフ名色選択（黒/赤）UI
 - [ ] 制限到達時のアップグレード促進モーダル
@@ -260,12 +262,12 @@ accounts/<uid>/shopId      = "<shopId>"
 - [ ] Cookie認証からFirebase Authへの移行
 
 ### 🟠 Phase 3（Stripe決済）
-- [ ] Stripe Checkout でサブスク決済ページ
+- [ ] Stripe Checkout でサブスク決済ページ（店舗単位）
 - [ ] Firebase Cloud Functions で Webhook 受信
-- [ ] 決済完了 → `accounts/<uid>/plan` を更新
+- [ ] 決済完了 → `accounts/<shopId>/plan` を更新
 
 ### 🟢 Phase 4（マイページ）
-- [ ] 現在のプラン確認
+- [ ] 現在のプラン確認（店舗ごと）
 - [ ] アップグレード/ダウングレード
 - [ ] 請求履歴
 
