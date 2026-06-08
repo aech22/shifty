@@ -202,6 +202,8 @@ function genSecureId(len=24){
   return Array.from(arr,b=>chars[b%chars.length]).join("");
 }
 
+const isSpacer=n=>typeof n==="string"&&n.startsWith("__spacer__");
+
 function buildUrl(shops,shopId,period){
   if(!period)return "";
   const token=period.urlToken||period.id;
@@ -1247,7 +1249,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
 
   // スタッフ名候補（登録名 + 別名）
   const staffAliases=settings?.staffAliases||{};
-  const allSuggests=useMemo(()=>buildSuggestList(staffList,staffAliases),[staffList,staffAliases]);
+  const allSuggests=useMemo(()=>buildSuggestList(staffList.filter(n=>!isSpacer(n)),staffAliases),[staffList,staffAliases]);
   const filteredSuggests=ni
     ?allSuggests.filter(s=>s.display.includes(ni)||s.registered.includes(ni))
     :allSuggests;
@@ -1526,7 +1528,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
   const dates=period?gd(period.startDate,period.endDate):[];
   const[editTarget,setEditTarget]=useState(null);
   const submittedNames=submitted.map(s=>s.staffName);
-  const notSubmitted=staffList.filter(n=>!submittedNames.includes(n));
+  const notSubmitted=staffList.filter(n=>!submittedNames.includes(n)&&!isSpacer(n));
   const NW=88,CW=86,COMMENT_W=150;
   const handleCellClick=(sub,ds)=>{if(!sub)return;setEditTarget({subId:sub.id,ds});};
   const applyCellEdit=(subId,ds,newStatus,newStart,newEnd)=>{
@@ -2031,9 +2033,9 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
   if(typeof ExcelJS==="undefined"){tt("⚠️ ExcelJS未読込み");return;}
   const dates=gd(p.startDate,p.endDate);
   const submittedNames=ss.map(s=>s.staffName);
-  const unregistered=submittedNames.filter(n=>!staffList.includes(n)).sort((a,b)=>a.localeCompare(b,"ja"));
+  const unregistered=submittedNames.filter(n=>!staffList.includes(n)&&!isSpacer(n)).sort((a,b)=>a.localeCompare(b,"ja"));
   const sl=[...staffList,...unregistered];
-  if(sl.length===0){tt("⚠️ スタッフが登録されていません");return;}
+  if(sl.filter(n=>!isSpacer(n)).length===0){tt("⚠️ スタッフが登録されていません");return;}
 
   const firstDate=pd(dates[0]);
   const mo=firstDate.getMonth()+1;
@@ -2093,7 +2095,7 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
   // 列幅
   ws.getColumn(C_PER).width=5;
   ws.getColumn(C_WD_H).width=5;
-  sl.forEach((_,i)=>ws.getColumn(C_STAFF+i).width=6);
+  sl.forEach((n,i)=>ws.getColumn(C_STAFF+i).width=isSpacer(n)?2:6);
   ws.getColumn(C_WD_R).width=5;
   ws.getColumn(C_SHOP_R).width=6;
 
@@ -2124,6 +2126,10 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
   // スタッフ列: top:medium, right:thin（左枠なし）
   sl.forEach((nm,i)=>{
     const isFirst=i===0;
+    if(isSpacer(nm)){
+      SC(1,C_STAFF+i,null,aV,fNone,{top:M,bottom:M,left:isFirst?T:undefined,right:T},{bold:false,size:12});
+      return;
+    }
     const staffColorArgb=(options.staffColors||{})[nm]==="red"?"FFFF0000":"FF000000";
     SC(1,C_STAFF+i,nm,aV,fNone,
       {top:M,bottom:M,left:isFirst?T:undefined,right:T},
@@ -2163,7 +2169,11 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
       // 上行: top:medium, bot:hair
       // 下行: top:hair, bot:thin (最終日はbot:medium)
       const botT=isLast?M:T;
-      if(!sub){
+      if(isSpacer(nm)){
+        // スペーサー列: 空白
+        SC(rT,ci,null,aH,fill,{top:M,bottom:H,left:T,right:T});
+        SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
+      } else if(!sub){
         // 未提出: 空白
         SC(rT,ci,null,aH,fill,{top:M,bottom:H,left:T,right:T});
         SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
@@ -2257,7 +2267,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const add=()=>{
     if(!newName.trim()){tt("⚠️ 名前を入力");return;}
     if(staffList.includes(newName.trim())){tt("⚠️ 既に登録されています");return;}
-    if(staffList.length>=lim){onUpgrade&&onUpgrade({type:"staff",limit:lim,plan});return;}
+    if(staffList.filter(n=>!isSpacer(n)).length>=lim){onUpgrade&&onUpgrade({type:"staff",limit:lim,plan});return;}
     onSave([...staffList,newName.trim()]);setNewName("");tt(`✅ ${newName.trim()} を追加しました`);
   };
   const del=i=>{const a=[...staffList];a.splice(i,1);onSave(a);tt("🗑️ 削除しました");};
@@ -2268,14 +2278,23 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
       <AT>👥 スタッフ登録</AT>
       <AC title="スタッフ一覧">
         {!isPro&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:8,padding:"7px 10px"}}>
-          {`🆓 Freeプラン：最大${lim}名まで登録可能（${staffList.length}/${lim}名）`}
+          {`🆓 Freeプラン：最大${lim}名まで登録可能（${staffList.filter(n=>!isSpacer(n)).length}/${lim}名）`}
           {!isPro&&<span style={{marginLeft:8,color:"#F59E0B",fontSize:11}}>並べ替え・名前色変更はProプランで利用できます</span>}
         </div>}
         {staffList.length===0&&<div style={{fontSize:13,color:"var(--c-text4)",marginBottom:12}}>スタッフが登録されていません</div>}
         {staffList.map((n,i)=>(
           <div key={i} style={{marginBottom:6}}>
-          <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:10}}>
-            <span style={{fontSize:13,color:"var(--c-text4)",minWidth:24,textAlign:"center"}}>{i+1}</span>
+          {isSpacer(n)
+            ?<div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",border:"1px dashed var(--c-border2)",borderRadius:10,background:"transparent"}}>
+              <span style={{flex:1,fontSize:12,textAlign:"center",color:"var(--c-text4)",letterSpacing:2}}>─ 空白列 ─</span>
+              {isPro&&<>
+                <button onClick={()=>moveUp(i)} disabled={i===0} style={{padding:"4px 8px",background:"var(--c-input)",border:"1px solid #D1D5DB",borderRadius:5,color:"var(--c-text3)",fontSize:12,cursor:i===0?"not-allowed":"pointer",opacity:i===0?.3:1}}>↑</button>
+                <button onClick={()=>moveDown(i)} disabled={i===staffList.length-1} style={{padding:"4px 8px",background:"var(--c-input)",border:"1px solid #D1D5DB",borderRadius:5,color:"var(--c-text3)",fontSize:12,cursor:i===staffList.length-1?"not-allowed":"pointer",opacity:i===staffList.length-1?.3:1}}>↓</button>
+              </>}
+              <button onClick={()=>del(i)} style={AD}>削除</button>
+            </div>
+            :<div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:10}}>
+            <span style={{fontSize:13,color:"var(--c-text4)",minWidth:24,textAlign:"center"}}>{staffList.slice(0,i).filter(x=>!isSpacer(x)).length+1}</span>
             {editIdx===i
               ?<>
                 {isPro&&<div style={{width:18,height:18,borderRadius:"50%",background:(staffColors[staffList[i]]||"black")==="red"?"#FF4757":"#374151",border:"2px solid #D1D5DB",flexShrink:0}}/>}
@@ -2297,7 +2316,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
                 <button onClick={()=>del(i)} style={AD}>削除</button>
               </>
             }
-          </div>
+          </div>}
           {/* 別名パネル（Pro・展開時） */}
           {isPro&&aliasIdx===i&&(
             <div style={{marginTop:4,padding:"12px 14px",background:"rgba(248,112,54,.04)",border:"1px solid rgba(248,112,54,.2)",borderRadius:10}}>
@@ -2337,7 +2356,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
           <input value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="スタッフ名を入力" style={AI}/>
           <button onClick={add} style={AB}>＋ 追加</button>
         </div>
-        {staffList.length>=lim&&<div style={{marginTop:10,fontSize:12,color:"#F59E0B",textAlign:"center"}}>⚠️ 上限に達しています。アップグレードするとさらに追加できます。</div>}
+        {isPro&&<button onClick={()=>{onSave([...staffList,"__spacer__"+genToken()]);tt("✅ 空白列を追加しました");}} style={{...AGray,width:"100%",fontSize:13,marginTop:8}}>＋ 空白列を追加（末尾）</button>}
+        {staffList.filter(n=>!isSpacer(n)).length>=lim&&<div style={{marginTop:10,fontSize:12,color:"#F59E0B",textAlign:"center"}}>⚠️ 上限に達しています。アップグレードするとさらに追加できます。</div>}
       </AC>
     </div>
   );
