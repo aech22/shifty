@@ -1162,6 +1162,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   const[conf,setConf]=useState(false);
   const[toast,setToast]=useState(null);
   const[sm,setSm]=useState(false);
+  const editingRef=useRef(false); // 「修正する」でユーザーが手動編集中フラグ
   const[comment,setComment]=useState("");
   const[editN,setEditN]=useState(false);
   const[ni,setNi]=useState("");
@@ -1174,6 +1175,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   // Cookieに保存された名前がある場合は提出済みデータを復元
   useEffect(()=>{
     if(!apid||!ap)return;
+    // ユーザーが手動で修正中の場合はFirebase更新でdoneを上書きしない
+    if(editingRef.current)return;
     const ckName=shopId&&apid?getCookie(ckStaffKey(shopId,apid))||"":"";
     if(ckName){
       // 提出済みデータを検索
@@ -1195,11 +1198,12 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     }
     const i={};dates.forEach(d=>{i[d]={status:"holiday"};});
     setSd(i);setDone(false);setComment("");
-  },[apid,ap?.startDate,ap?.endDate,shopId]);
+  },[apid,ap?.startDate,ap?.endDate,shopId,subs]);
 
   const tt_=m=>{setToast(m);clearTimeout(tr.current);tr.current=setTimeout(()=>setToast(null),2500);};
   const upd=(ds,u)=>setSd(p=>({...p,[ds]:{...p[ds],...u}}));
   const reset=()=>{
+    editingRef.current=false;
     // CookieとStateをリセット
     if(shopId&&apid) delCookie(ckStaffKey(shopId,apid));
     setName("");
@@ -1240,6 +1244,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     };
     // スタッフ名をCookieに保存（1年間）
     if(shopId&&apid) setCookie(ckStaffKey(shopId,apid),staffName,365);
+    editingRef.current=false;
     onSub(sub);setDone(true);setConf(false);
   };
 
@@ -1263,7 +1268,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   if(done)return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true});}} onEditByName={sub=>{setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true});}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"50px 20px",textAlign:"center"}}>
         <div style={{fontSize:68,animation:"bI .5s"}}>✅</div>
         <div style={{fontSize:22,fontWeight:700,color:"#f87036",marginTop:14,marginBottom:8}}>提出完了！</div>
@@ -1274,7 +1279,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
           {comment&&<><br/>コメント：{comment}</>}
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
-          {!dl&&<button onClick={()=>setDone(false)} style={{padding:"11px 22px",background:"var(--c-card)",border:"2px solid #f87036",borderRadius:10,color:"#f87036",fontSize:14,fontWeight:700,cursor:"pointer"}}>✏️ 修正する</button>}
+          {!dl&&<button onClick={()=>{editingRef.current=true;setDone(false);setConf(false);setSm(false);}} style={{padding:"11px 22px",background:"var(--c-card)",border:"2px solid #f87036",borderRadius:10,color:"#f87036",fontSize:14,fontWeight:700,cursor:"pointer"}}>✏️ 修正する</button>}
           <button onClick={reset} style={{padding:"11px 22px",background:"var(--c-bg)",border:"2px solid #E5E7EB",borderRadius:10,color:"var(--c-text3)",fontSize:14,fontWeight:700,cursor:"pointer"}}>🔄 最初から</button>
         </div>
       </div>
@@ -1284,7 +1289,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true});}} onEditByName={sub=>{setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true});}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"14px 12px 120px"}}>
         {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`⚠️ 締切済み（${ap.deadlineDate.replace(/-/g,"/")}）`:`📅 締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
 
@@ -1417,7 +1422,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       </div>
 
       {/* 送信ボタン */}
-      {!dl&&<div style={{position:"fixed",bottom:0,left:0,right:0,background:"rgba(240,242,245,.97)",backdropFilter:"blur(10px)",padding:"10px 14px 16px",boxShadow:"0 -4px 20px rgba(0,0,0,.08)",zIndex:40}}>
+      {!dl&&<div style={{position:"fixed",bottom:0,left:0,right:0,background:"var(--c-bg)",backdropFilter:"blur(10px)",padding:"10px 14px 16px",boxShadow:"0 -4px 20px rgba(0,0,0,.08)",zIndex:40}}>
         <div style={{maxWidth:560,margin:"0 auto",display:"flex",gap:8}}>
           <button onClick={reset} style={{padding:"13px 14px",background:"var(--c-card)",border:"2px solid #E5E7EB",borderRadius:10,color:"var(--c-text3)",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>🔄 リセット</button>
           <button onClick={()=>{if(!name.trim()){tt_("⚠️ 名前を入力してください");return;}setConf(true);}}
