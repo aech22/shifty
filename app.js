@@ -142,11 +142,15 @@ function _lockMsg(ns){
 // ===== サブスクリプション プラン定義 =====
 // テスト用: "free"|"pro" に設定すると Firebase を無視して上書き
 const DEV_PLAN_OVERRIDE = null; // 本番用
-// シークレットアンロックコード
-const UNLOCK_CODE = "Nito@1234";
-const UNLOCK_CODE_TEMP = "Itumen"; // 2026/7/31まで有効
-const UNLOCK_CODE_TEMP_EXPIRY = "2026-07-31"; // この日付まで（含む）
+// シークレットアンロックコード（SHA-256ハッシュで保持）
+const UNLOCK_HASH      = "c7f68383637178c47cafddafdd79574d148dff2ea6c34ddf5a497e4115bcae8c";
+const UNLOCK_HASH_TEMP = "0d84e1fbd7fd8b59ee827ac602431a89302edef17903c5d9d4da31af1d308c71";
+const UNLOCK_CODE_TEMP_EXPIRY = "2026-07-31";
 const UNLOCK_LS_KEY = "ots_unlocked";
+async function hashCode(str){
+  const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
 
 const PLAN_LIMITS = {
   free: { shops: Infinity, staff: 20, periods: 1        },
@@ -1825,12 +1829,13 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                         <div style={{fontSize:11,color:"var(--c-text3)",marginBottom:6}}>店舗コードを入力して既存店舗を追加</div>
                         <div style={{display:"flex",gap:6}}>
                           <input value={shopCodeInput} onChange={e=>{setShopCodeInput(e.target.value);setShopCodeError("");}}
-                            onKeyDown={e=>e.key==="Enter"&&(()=>{
+                            onKeyDown={e=>e.key==="Enter"&&(async()=>{
                               const code=shopCodeInput.trim();
                               if(!code){setShopCodeError("コードを入力してください");return;}
               const today2=new Date().toISOString().split("T")[0];
-              const tempOk2=code===UNLOCK_CODE_TEMP&&today2<=UNLOCK_CODE_TEMP_EXPIRY;
-              if(code===UNLOCK_CODE||tempOk2){ls(UNLOCK_LS_KEY,tempOk2?"temp":true);setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");window.location.reload();return;}
+              const h=await hashCode(code);
+              const tempOk2=h===UNLOCK_HASH_TEMP&&today2<=UNLOCK_CODE_TEMP_EXPIRY;
+              if(h===UNLOCK_HASH||tempOk2){ls(UNLOCK_LS_KEY,tempOk2?"temp":true);setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");window.location.reload();return;}
                               const lim=PLAN_LIMITS[plan]?.shops??Infinity;
                               if(shops.length>=lim){setShopCodeMode(false);setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
                               if(!firebaseDB){setShopCodeError("Firebase未接続");return;}
@@ -1855,12 +1860,13 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                             })()}
                             placeholder="店舗コードを貼り付け"
                             style={{flex:1,padding:"7px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:12,outline:"none"}}/>
-                          <button onClick={()=>{
+                          <button onClick={async()=>{
                             const code=shopCodeInput.trim();
                             if(!code){setShopCodeError("コードを入力してください");return;}
               const today2=new Date().toISOString().split("T")[0];
-              const tempOk2=code===UNLOCK_CODE_TEMP&&today2<=UNLOCK_CODE_TEMP_EXPIRY;
-              if(code===UNLOCK_CODE||tempOk2){ls(UNLOCK_LS_KEY,tempOk2?"temp":true);setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");window.location.reload();return;}
+              const h=await hashCode(code);
+              const tempOk2=h===UNLOCK_HASH_TEMP&&today2<=UNLOCK_CODE_TEMP_EXPIRY;
+              if(h===UNLOCK_HASH||tempOk2){ls(UNLOCK_LS_KEY,tempOk2?"temp":true);setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");window.location.reload();return;}
                             const lim=PLAN_LIMITS[plan]?.shops??Infinity;
                             if(shops.length>=lim){setShopCodeMode(false);setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
                             if(!firebaseDB){setShopCodeError("Firebase未接続");return;}
@@ -2817,13 +2823,17 @@ function UnlockCodeInput({tt,plan,onUnlock,onLock}){
     <input value={code} onChange={e=>setCode(e.target.value)} placeholder="コードを入力" type="password"
       style={{...AI,flex:1}} onKeyDown={e=>{if(e.key==="Enter"){
         const today=new Date().toISOString().split("T")[0];
-        const tempOk=code===UNLOCK_CODE_TEMP&&today<=UNLOCK_CODE_TEMP_EXPIRY;
-        if(code===UNLOCK_CODE){onUnlock(false);}else if(tempOk){onUnlock(true);}else{tt("✕ コードが違います");setCode("");}
+        hashCode(code).then(h=>{
+          const tempOk=h===UNLOCK_HASH_TEMP&&today<=UNLOCK_CODE_TEMP_EXPIRY;
+          if(h===UNLOCK_HASH){onUnlock(false);}else if(tempOk){onUnlock(true);}else{tt("✕ コードが違います");setCode("");}
+        });
       }}}/>
     <button onClick={()=>{
       const today=new Date().toISOString().split("T")[0];
-      const tempOk=code===UNLOCK_CODE_TEMP&&today<=UNLOCK_CODE_TEMP_EXPIRY;
-      if(code===UNLOCK_CODE){onUnlock(false);}else if(tempOk){onUnlock(true);}else{tt("✕ コードが違います");setCode("");}
+      hashCode(code).then(h=>{
+        const tempOk=h===UNLOCK_HASH_TEMP&&today<=UNLOCK_CODE_TEMP_EXPIRY;
+        if(h===UNLOCK_HASH){onUnlock(false);}else if(tempOk){onUnlock(true);}else{tt("✕ コードが違います");setCode("");}
+      });
     }} style={AB}>適用</button>
   </div>);
 }
