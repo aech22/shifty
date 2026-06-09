@@ -2937,6 +2937,10 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
         <div style={{marginLeft:"auto",fontSize:12,color:"var(--c-text4)"}}>→</div>
       </a>
     </AC>
+    <div style={{textAlign:"center",padding:"8px 0 4px",display:"flex",justifyContent:"center",gap:20}}>
+      <a href="/terms.html" target="_blank" style={{fontSize:12,color:"var(--c-text4)",textDecoration:"none"}}>利用規約</a>
+      <a href="/privacy.html" target="_blank" style={{fontSize:12,color:"var(--c-text4)",textDecoration:"none"}}>プライバシーポリシー</a>
+    </div>
 
   </div>);
 }
