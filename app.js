@@ -1905,8 +1905,8 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                         {shops.map(sh=>(
                           <div key={sh.id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
                             <span style={{flex:1,fontSize:13,color:"var(--c-text)"}}>{sh.name}</span>
-                            <button onClick={()=>{const name=prompt("店舗名を変更",sh.name);if(!name)return;saveShops(shops.map(s=>s.id===sh.id?{...s,name:name.trim()}:s));tt("✓ 変更しました");}} style={{padding:"4px 8px",background:"var(--c-bg)",border:"none",borderRadius:6,fontSize:11,cursor:"pointer"}}>️</button>
-                            {shops.length>1&&<button onClick={()=>{if(!confirm(`「${sh.name}」を削除しますか？`))return;const ns=shops.filter(s=>s.id!==sh.id);saveShops(ns);if(sh.id===currentShopId){setCurrentShopId(ns[0].id);currentShopIdRef.current=ns[0].id;ssSave(SS_SHOP,ns[0].id);startSubscriptions(ns[0].id,ns);}tt("削除しました");}} style={{padding:"4px 8px",background:"rgba(255,71,87,.1)",border:"none",borderRadius:6,fontSize:11,color:"#FF4757",cursor:"pointer"}}>️</button>}
+                            <button onClick={()=>{const name=prompt("店舗名を変更",sh.name);if(!name)return;saveShops(shops.map(s=>s.id===sh.id?{...s,name:name.trim()}:s));tt("✓ 変更しました");}} style={{padding:"4px 8px",background:"var(--c-bg)",border:"none",borderRadius:6,fontSize:11,cursor:"pointer"}}>✏️</button>
+                            {shops.length>1&&<button onClick={()=>{if(!confirm(`「${sh.name}」を削除しますか？`))return;const ns=shops.filter(s=>s.id!==sh.id);saveShops(ns);if(sh.id===currentShopId){setCurrentShopId(ns[0].id);currentShopIdRef.current=ns[0].id;ssSave(SS_SHOP,ns[0].id);startSubscriptions(ns[0].id,ns);}tt("削除しました");}} style={{padding:"4px 8px",background:"rgba(255,71,87,.1)",border:"none",borderRadius:6,fontSize:11,color:"#FF4757",cursor:"pointer"}}>🗑️</button>}
                           </div>
                         ))}
                       </div>}
@@ -1943,7 +1943,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -2717,6 +2717,8 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
 // ===== 提出一覧タブ =====
 function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,plan="free"}){
   const[fn,setFn]=useState(""),[fp,setFp]=useState("all");
+  const fpInit=useRef(false);
+  useEffect(()=>{if(!fpInit.current&&periods.length>0){fpInit.current=true;const lat=[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate))[0];if(lat)setFp(lat.id);}},[periods.length]);
   const[sf,setSf]=useState("submittedAt"),[sdr,setSdr]=useState("desc");
   const[det,setDet]=useState(null);
   const[linkTarget,setLinkTarget]=useState(null); // {subName, selectedStaff}
@@ -2847,7 +2849,7 @@ function UnlockCodeInput({tt,plan,onUnlock,onLock}){
   </div>);
 }
 
-function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
+function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId}){
   const[pw,setPw]=useState("");
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
   const changeTheme=pref=>{
@@ -2938,6 +2940,18 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
           </button>);
         })}
       </div>
+    </AC>}
+
+    {shopId&&<AC title="この端末の店舗コード">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>このコードを別の端末で入力すると、同じ店舗に紐付けられます。</div>
+      <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,padding:"10px 14px"}}>
+        <span style={{flex:1,fontFamily:"monospace",fontSize:13,color:"var(--c-text)",letterSpacing:"0.05em",wordBreak:"break-all"}}>{shopId}</span>
+        <button onClick={()=>{
+          const copy=()=>{const el=document.createElement("textarea");el.value=shopId;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 店舗コードをコピーしました");};
+          if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(shopId).then(()=>tt("✓ 店舗コードをコピーしました")).catch(copy);}else{copy();}
+        }} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>コピー</button>
+      </div>
+      <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>別端末への共有は「店舗名ボタン → コードで追加」から行えます</div>
     </AC>}
 
     <AC title="お問い合わせ">
