@@ -88,6 +88,20 @@ function ph(event, props) {
   try { window.posthog && window.posthog.capture(event, props); } catch {}
 }
 
+// ===== アイコン =====
+// color: アイコンの色（デフォルト白）、size: px単位の一辺サイズ
+function ShiftyIcon({size=32,color="white"}){
+  const s=size,r=Math.round(s*0.19),f="#f0f0ee",st="#8a8a84",sw=s*0.024;
+  const x1=Math.round(s*0.25),y1=Math.round(s*0.22),w=Math.round(s*0.5),h=Math.round(s*0.56),mid=Math.round(y1+h/2);
+  return(
+    <svg xmlns="http://www.w3.org/2000/svg" width={s} height={s} viewBox="0 0 64 64" style={{display:"block",flexShrink:0}}>
+      <rect width="64" height="64" rx={Math.round(64*r/s)} fill="#f87036"/>
+      <rect x="16" y="14" width="32" height="36" fill={f} stroke={st} strokeWidth="1.5"/>
+      <line x1="16" y1="32" x2="48" y2="32" stroke={st} strokeWidth="1.5" strokeDasharray="1.5,1.5"/>
+    </svg>
+  );
+}
+
 // ===== 定数 =====
 const WD=["日","月","火","水","木","金","土"];
 // 日本の祝日（固定祝日 + ハッピーマンデー + 年ごと変動）
@@ -969,7 +983,7 @@ function App(){
   // ローディング画面
   if(!ready||(urlLocked&&!apid)) return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#1A1A2E",flexDirection:"column",gap:16}}>
-      <div style={{fontSize:40}}></div>
+      <ShiftyIcon size={64}/>
       <div style={{color:"white",fontSize:16,fontWeight:700}}>Shifty</div>
       <div style={{color:"rgba(255,255,255,.5)",fontSize:13}}>データを読み込み中...</div>
     </div>
@@ -1044,7 +1058,7 @@ function App(){
       <div style={{background:"#1E293B",borderRadius:24,padding:"36px 28px",width:"100%",maxWidth:420,boxShadow:"0 12px 40px rgba(0,0,0,.5)"}}>
         {/* ロゴ */}
         <div style={{textAlign:"center",marginBottom:32}}>
-          <div style={{fontSize:52,marginBottom:12}}></div>
+          <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><ShiftyIcon size={72}/></div>
           <div style={{color:"#F1F5F9",fontSize:24,fontWeight:800,letterSpacing:"-0.5px"}}>Shifty</div>
           <div style={{color:"#94A3B8",fontSize:13,marginTop:6}}>飲食店向けシフト管理アプリ</div>
         </div>
@@ -1525,7 +1539,7 @@ function StaffHdr({ap,p0,pe,nd,subs,apid,onSm,shopName}){
     <div style={{background:"#f87036",boxShadow:"0 2px 12px rgba(248,112,54,.25)",padding:"12px 14px"}}>
       <div style={{maxWidth:560,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
         <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
-          <span style={{fontSize:20,flexShrink:0}}></span>
+          <ShiftyIcon size={28}/>
           <div style={{minWidth:0}}>
             <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
               {shopName&&<span style={{fontSize:11,background:"rgba(255,255,255,.25)",color:"white",padding:"1px 7px",borderRadius:10,fontWeight:700,whiteSpace:"nowrap"}}>{shopName}</span>}
@@ -1797,7 +1811,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
       <div style={{background:"var(--c-card)",borderBottom:"1px solid #E5E7EB",padding:"12px 16px"}}>
         <div style={{maxWidth:900,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:34,height:34,background:"#f87036",borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17}}>️</div>
+            <div style={{width:34,height:34,flexShrink:0}}><ShiftyIcon size={34}/></div>
             <div>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <div style={{fontSize:15,fontWeight:700,color:"var(--c-text)"}}>Shifty</div>
