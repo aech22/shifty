@@ -83,6 +83,11 @@ function fbOn(path, cb) {
   return () => {};
 }
 
+// PostHog イベント送信ヘルパー
+function ph(event, props) {
+  try { window.posthog && window.posthog.capture(event, props); } catch {}
+}
+
 // ===== 定数 =====
 const WD=["日","月","火","水","木","金","土"];
 // 日本の祝日（固定祝日 + ハッピーマンデー + 年ごと変動）
@@ -582,6 +587,8 @@ function App(){
       refs.push(r);
     };
     console.log("購読開始 targetSid=",targetSid);
+    try { window.posthog && window.posthog.identify(targetSid); } catch {}
+    ph("app_loaded",{shop_id:targetSid});
 
     // global/templates（全店舗共通）
     on("global/templates",val=>{
@@ -1245,6 +1252,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     // スタッフ名をCookieに保存（1年間）
     if(shopId&&apid) setCookie(ckStaffKey(shopId,apid),staffName,365);
     editingRef.current=false;
+    ph("shift_submitted",{period_id:apid,is_update:!!existSub,work_days:Object.values(sd).filter(s=>s?.status==="work").length});
     onSub(sub);setDone(true);setConf(false);
   };
 
@@ -1685,7 +1693,7 @@ function AdminLogin({settings,onAuth}){
 // ============================================================
 function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
-  useEffect(()=>ssSave(SS_TAB,tab),[tab]);
+  useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
   const[shopMenuOpen,setShopMenuOpen]=useState(false);
   const[shopEditMode,setShopEditMode]=useState(false);
@@ -1908,6 +1916,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
       label:form.label||`${form.startDate.replace(/-/g,"/")}〜${form.endDate.replace(/-/g,"/")}`,
       startDate:form.startDate,endDate:form.endDate,deadlineDate:form.deadlineDate,
       createdAt:new Date().toISOString()};
+    ph("period_created",{period_id:p.id,shop_id:shopId});
     onSave([...periods,p]);
     setForm({label:"",startDate:"",endDate:"",deadlineDate:""});
     setShow(false);setUsePreset(true);
@@ -2044,6 +2053,7 @@ function PEF({period,onSave,onCancel}){
 
 // ===== Excel出力 =====
 function expXl(p,subs,staffList,tt,shopName,options={}){
+  ph("excel_exported",{period_id:p.id,submission_count:subs.filter(s=>s.periodId===p.id).length});
   const ss=subs.filter(s=>s.periodId===p.id);
   if(typeof ExcelJS==="undefined"){tt("▲ ExcelJS未読込み");return;}
   const dates=gd(p.startDate,p.endDate);
@@ -2283,6 +2293,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     if(!newName.trim()){tt("▲ 名前を入力");return;}
     if(staffList.includes(newName.trim())){tt("▲ 既に登録されています");return;}
     if(staffList.filter(n=>!isSpacer(n)).length>=lim){onUpgrade&&onUpgrade({type:"staff",limit:lim,plan});return;}
+    ph("staff_added",{staff_count:staffList.filter(n=>!isSpacer(n)).length+1});
     onSave([...staffList,newName.trim()]);setNewName("");tt(`✓ ${newName.trim()} を追加しました`);
   };
   const del=i=>{const a=[...staffList];a.splice(i,1);onSave(a);tt("削除しました");};
@@ -2876,6 +2887,7 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
   const isPaid=plan==="pro";
 
   const openPortal=async()=>{
+    ph("portal_opened");
     setPortalLoading(true);
     try{
       const res=await fetch(`${CF_BASE}/createPortalSession`,{
@@ -3027,6 +3039,7 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
   const m=msgs[reason.type]||{title:"上限に達しました",desc:"",next:""};
 
   const checkout=async(plan)=>{
+    ph("upgrade_started",{plan});
     setLoading(plan);setError("");
     try{
       const res=await fetch(`${CF_BASE}/createCheckoutSession`,{

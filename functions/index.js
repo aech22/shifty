@@ -37,8 +37,8 @@ exports.createCheckoutSession = functions
         payment_method_types: ["card"],
         line_items: [{ price: priceId, quantity: 1 }],
         metadata: { shopId, plan },
-        success_url: successUrl || "https://thiftythifty.app/?payment=success",
-        cancel_url:  cancelUrl  || "https://thiftythifty.app/?payment=cancel",
+        success_url: successUrl || "https://shiftyshifty.app/?payment=success",
+        cancel_url:  cancelUrl  || "https://shiftyshifty.app/?payment=cancel",
         locale: "ja",
       });
       res.status(200).json({ url: session.url });
@@ -137,7 +137,7 @@ exports.createPortalSession = functions
     try {
       const session = await stripe.billingPortal.sessions.create({
         customer: customerId,
-        return_url: returnUrl || "https://thiftythifty.app/",
+        return_url: returnUrl || "https://shiftyshifty.app/",
       });
       res.status(200).json({ url: session.url });
     } catch (e) {
