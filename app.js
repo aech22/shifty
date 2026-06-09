@@ -89,15 +89,12 @@ function ph(event, props) {
 }
 
 // ===== アイコン =====
-// color: アイコンの色（デフォルト白）、size: px単位の一辺サイズ
-function ShiftyIcon({size=32,color="white"}){
-  const s=size,r=Math.round(s*0.19),f="#f0f0ee",st="#8a8a84",sw=s*0.024;
-  const x1=Math.round(s*0.25),y1=Math.round(s*0.22),w=Math.round(s*0.5),h=Math.round(s*0.56),mid=Math.round(y1+h/2);
+function ShiftyIcon({size=32}){
   return(
-    <svg xmlns="http://www.w3.org/2000/svg" width={s} height={s} viewBox="0 0 64 64" style={{display:"block",flexShrink:0}}>
-      <rect width="64" height="64" rx={Math.round(64*r/s)} fill="#f87036"/>
-      <rect x="16" y="14" width="32" height="36" fill={f} stroke={st} strokeWidth="1.5"/>
-      <line x1="16" y1="32" x2="48" y2="32" stroke={st} strokeWidth="1.5" strokeDasharray="1.5,1.5"/>
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 64 64" style={{display:"block",flexShrink:0}}>
+      <rect width="64" height="64" rx="12" fill="#f87036"/>
+      <rect x="16" y="14" width="32" height="36" fill="#f0f0ee" stroke="#8a8a84" strokeWidth="1.5"/>
+      <line x1="16" y1="32" x2="48" y2="32" stroke="#8a8a84" strokeWidth="1.5" strokeDasharray="1.5,1.5"/>
     </svg>
   );
 }
@@ -1835,7 +1832,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                         <button onClick={()=>{
                           const lim=PLAN_LIMITS[plan]?.shops??Infinity;
                           if(shops.length>=lim){setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
-                          const name=prompt("新しい店舗名を入力");if(!name)return;const ns=makeShop(name.trim());const newShops=[...shops,ns];saveShops(newShops);setCurrentShopId(ns.id);currentShopIdRef.current=ns.id;ssSave(SS_SHOP,ns.id);startSubscriptions(ns.id,newShops);setShopMenuOpen(false);tt("✓ 店舗を追加しました");
+                          const name=prompt("新しい店舗名を入力");if(!name)return;const ns=makeShop(name.trim());const newShops=[...shops,ns];saveShops(newShops);setCurrentShopId(ns.id);setShopMenuOpen(false);tt("✓ 店舗を追加しました");
                         }} style={{flex:1,padding:"7px",background:"#f87036",border:"none",borderRadius:8,fontSize:12,fontWeight:700,color:"white",cursor:"pointer"}}>＋ 新規</button>
                       </div>
                       {/* 店舗コードで追加パネル */}
@@ -1866,8 +1863,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                                 // Cookie にも追加
                                 const ckIds=getCookieShops();
                                 if(!ckIds.includes(code)) saveCookieShops([...ckIds,code]);
-                                setCurrentShopId(code);currentShopIdRef.current=code;ssSave(SS_SHOP,code);
-                                startSubscriptions(code,newShops);
+                                setCurrentShopId(code);
                                 setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");
                                 tt(`✓ 「${found.name}」を追加しました`);
                               }).catch(()=>setShopCodeError("確認に失敗しました"));
@@ -1897,8 +1893,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                               // Cookie にも追加
                               const ckIds2=getCookieShops();
                               if(!ckIds2.includes(code)) saveCookieShops([...ckIds2,code]);
-                              setCurrentShopId(code);currentShopIdRef.current=code;ssSave(SS_SHOP,code);
-                              startSubscriptions(code,newShops);
+                              setCurrentShopId(code);
                               setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");
                               tt(`✓ 「${found.name}」を追加しました`);
                             }).catch(()=>setShopCodeError("確認に失敗しました"));
@@ -1933,7 +1928,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         </div>
       </div>
       <div style={{maxWidth:900,margin:"0 auto",padding:"20px 14px 60px"}}>
-        {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings}/>}
+        {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings}/>}
         {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
@@ -1957,7 +1952,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
 }
 
 // ===== 期間管理タブ =====
-function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan="free",onUpgrade,settings={}}){
+function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shopName,plan="free",onUpgrade,settings={}}){
   const[eid,setEid]=useState(null);
   const[form,setForm]=useState({label:"",startDate:"",endDate:"",deadlineDate:""});
   const[show,setShow]=useState(false);
@@ -2013,7 +2008,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
     return(
       <div>
         <button onClick={()=>setViewPeriodId(null)} style={{marginBottom:16,padding:"8px 16px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:8,color:"var(--c-text)",fontSize:13,cursor:"pointer"}}>← 期間一覧に戻る</button>
-        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} plan={plan} onDeleteSub={subId=>{const a=subs.filter(s=>s.id!==subId);onSave(a);tt("提出を削除しました");}} onEditSub={sub=>{const updated={...sub,updatedAt:new Date().toISOString(),isUpdated:true};const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=updated;onSave(a);}tt("✓ 更新しました");}}/>
+        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} plan={plan} onDeleteSub={subId=>{const a=subs.filter(s=>s.id!==subId);saveSubs&&saveSubs(a);tt("提出を削除しました");}} onEditSub={sub=>{const updated={...sub,updatedAt:new Date().toISOString(),isUpdated:true};const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=updated;saveSubs&&saveSubs(a);}tt("✓ 更新しました");}}/>
       </div>
     );
   }
