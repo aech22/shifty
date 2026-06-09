@@ -246,30 +246,32 @@ accounts/<shopId>/planExpiry = "2026-12-31"
 
 ## 実装ロードマップ
 
-### 🔴 Phase 1（今すぐ実装・サーバー不要）
-- [ ] プラン判定ロジック追加（`accounts/<shopId>/plan`をFirebaseから読む）
-- [ ] Free: スタッフ数・期間数の制限チェック
-- [ ] Free: スタッフ並べ替えUIを無効化
-- [ ] Pro: テンプレート共有を有効化
-- [ ] Pro: Excel書き出し時の店舗名変更UI
-- [ ] Pro: Excelスタッフ名色選択（黒/赤）UI
-- [ ] 制限到達時のアップグレード促進モーダル
-- [ ] テスト用: `plan = "free"` をハードコードして動作確認
+### ✅ Phase 1（実装完了）
+- [x] プラン判定ロジック追加（`accounts/<shopId>/plan`をFirebaseから読む）
+- [x] Free: スタッフ数・期間数の制限チェック
+- [x] Free: スタッフ並べ替えUIを無効化
+- [x] Pro: テンプレート共有を有効化
+- [x] Pro: Excel書き出し時の店舗名変更UI
+- [x] Pro: Excelスタッフ名色選択（黒/赤）UI
+- [x] 制限到達時のアップグレード促進モーダル
+- [x] テスト用: `DEV_PLAN_OVERRIDE = "free"` をセットして動作確認（app.js 144行目）
 
-### 🟡 Phase 2（Firebase Authentication）
-- [ ] メール+パスワード認証
-- [ ] uidとshopIdの紐付け
-- [ ] Cookie認証からFirebase Authへの移行
+### ✅ Phase 2（Firebase Authentication — 実装完了）
+- [x] メール+パスワード認証
+- [x] uidとshopIdの紐付け
+- [x] Cookie認証との併用（Firebase Auth + Cookieどちらでも動作）
 
-### 🟠 Phase 3（Stripe決済）
-- [ ] Stripe Checkout でサブスク決済ページ（店舗単位）
-- [ ] Firebase Cloud Functions で Webhook 受信
-- [ ] 決済完了 → `accounts/<shopId>/plan` を更新
+### ✅ Phase 3（Stripe決済 — 実装完了）
+- [x] Stripe Checkout でサブスク決済ページ（店舗単位）
+- [x] Firebase Cloud Functions で Webhook 受信
+- [x] 決済完了 → `accounts/<shopId>/plan` を更新
+- [x] キャンセル → `accounts/<shopId>/plan` を "free" に戻す
+- [x] Customer Portal セッション（請求管理・解約）
 
-### 🟢 Phase 4（マイページ）
-- [ ] 現在のプラン確認（店舗ごと）
-- [ ] アップグレード/ダウングレード
-- [ ] 請求履歴
+### ✅ Phase 4（マイページ — 実装完了）
+- [x] 現在のプラン確認（店舗ごと）
+- [x] アップグレード/ダウングレード（UpgradeModal + Stripeチェックアウト）
+- [x] 請求履歴（Stripeポータルへ誘導）
 
 ---
 
