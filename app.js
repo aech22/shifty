@@ -298,7 +298,7 @@ function applyTheme(pref){
   else{root.removeAttribute("data-theme");} // CSS media query に任せる
 }
 // 初回適用
-applyTheme(lg(THEME_KEY,null));
+applyTheme(lg(THEME_KEY,"light"));
 
 function App(){
   const[syncStatus,setSyncStatus]=useState("init");
@@ -783,7 +783,7 @@ function App(){
     setAuthLoading(true);setAuthError("");
     try{
       await firebaseAuth.sendPasswordResetEmail(email);
-      setAuthError("✅ パスワードリセットメールを送信しました");
+      setAuthError("✓ パスワードリセットメールを送信しました");
     }catch(e){
       if(e.code==="auth/user-not-found") setAuthError("このメールアドレスは登録されていません");
       else setAuthError("送信に失敗しました: "+e.message);
@@ -913,7 +913,7 @@ function App(){
   // ローディング画面
   if(!ready||(urlLocked&&!apid)) return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#1A1A2E",flexDirection:"column",gap:16}}>
-      <div style={{fontSize:40}}>📅</div>
+      <div style={{fontSize:40}}></div>
       <div style={{color:"white",fontSize:16,fontWeight:700}}>Shifty</div>
       <div style={{color:"rgba(255,255,255,.5)",fontSize:13}}>データを読み込み中...</div>
     </div>
@@ -988,7 +988,7 @@ function App(){
       <div style={{background:"#1E293B",borderRadius:24,padding:"36px 28px",width:"100%",maxWidth:420,boxShadow:"0 12px 40px rgba(0,0,0,.5)"}}>
         {/* ロゴ */}
         <div style={{textAlign:"center",marginBottom:32}}>
-          <div style={{fontSize:52,marginBottom:12}}>📅</div>
+          <div style={{fontSize:52,marginBottom:12}}></div>
           <div style={{color:"#F1F5F9",fontSize:24,fontWeight:800,letterSpacing:"-0.5px"}}>Shifty</div>
           <div style={{color:"#94A3B8",fontSize:13,marginTop:6}}>飲食店向けシフト管理アプリ</div>
         </div>
@@ -1045,7 +1045,7 @@ function App(){
               </button>
               <button onClick={()=>{setEmailMode("login");setAuthError("");}}
                 style={{width:"100%",padding:"14px",background:"rgba(255,255,255,.05)",border:"1px solid #334155",borderRadius:14,color:"#CBD5E1",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
-                ✉️ メールアドレスで続ける
+                メールアドレスで続ける
               </button>
               {authError&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:12,background:"rgba(255,71,87,.1)",padding:"8px 12px",borderRadius:8}}>{authError}</div>}
             </>
@@ -1062,7 +1062,7 @@ function App(){
 
         {/* 店舗コードで参加・新規作成（メール認証フォーム非表示時のみ） */}
         {!emailMode&&<>
-        <div style={{fontSize:12,color:"#64748B",marginBottom:6,fontWeight:600}}>📋 店舗コードで参加（この端末でのみ有効）</div>
+        <div style={{fontSize:12,color:"#64748B",marginBottom:6,fontWeight:600}}>店舗コードで参加（この端末でのみ有効）</div>
         <div style={{display:"flex",gap:8,marginBottom:6}}>
           <input
             value={inviteCode}
@@ -1098,12 +1098,12 @@ function App(){
     <div style={{fontFamily:"'Hiragino Sans','Yu Gothic',sans-serif",minHeight:"100vh",background:"var(--c-bg)"}}>
       {/* 同期ステータスバー（接続中以外のみ表示） */}
       {syncStatus!=="online"&&<div style={{background:syncStatus==="offline"?"#F59E0B":"#6B7280",color:"white",fontSize:11,fontWeight:700,textAlign:"center",padding:"4px 8px"}}>
-        {syncStatus==="offline"?"🟡 オフライン（再接続中...）":syncStatus==="no_config"?"⚙️ Firebase未設定":"⏳ 接続中..."}
+        {syncStatus==="offline"?"オフライン（再接続中...）":syncStatus==="no_config"?"Firebase未設定":"⏳ 接続中..."}
       </div>}
       {/* タブ: URLロック時はスタッフ画面のみ表示 */}
       {!urlLocked&&<div style={{display:"flex",position:"sticky",top:0,zIndex:100,boxShadow:"0 2px 8px rgba(0,0,0,.15)"}}>
-        <button onClick={()=>setView("staff")} style={{flex:1,padding:"13px 0",border:"none",cursor:"pointer",fontSize:14,fontWeight:700,background:view==="staff"?"#f87036":"#1A1A2E",color:"white"}}>📅 スタッフ画面</button>
-        <button onClick={()=>setView("admin")} style={{flex:1,padding:"13px 0",border:"none",cursor:"pointer",fontSize:14,fontWeight:700,background:view==="admin"?"#16213E":"#111827",color:"white"}}>⚙️ 管理者画面</button>
+        <button onClick={()=>setView("staff")} style={{flex:1,padding:"13px 0",border:"none",cursor:"pointer",fontSize:14,fontWeight:700,background:view==="staff"?"#f87036":"#1A1A2E",color:"white"}}>スタッフ画面</button>
+        <button onClick={()=>setView("admin")} style={{flex:1,padding:"13px 0",border:"none",cursor:"pointer",fontSize:14,fontWeight:700,background:view==="admin"?"#16213E":"#111827",color:"white"}}>管理者画面</button>
       </div>}
       {/* メインコンテンツ */}
       {(urlLocked||view==="staff")
@@ -1209,7 +1209,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     setName("");
     const i={};dates.forEach(d=>{i[d]={status:"holiday"};});
     setSd(i);setDone(false);setComment("");
-    tt_("🔄 リセットしました");
+    tt_("↺ リセットしました");
   };
 
   // 候補取得（日付別 > 祝日[key=7] > 曜日別 > 全体）
@@ -1270,7 +1270,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
       {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true});}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"50px 20px",textAlign:"center"}}>
-        <div style={{fontSize:68,animation:"bI .5s"}}>✅</div>
+        <div style={{fontSize:68,animation:"bI .5s"}}>✓</div>
         <div style={{fontSize:22,fontWeight:700,color:"#f87036",marginTop:14,marginBottom:8}}>提出完了！</div>
         <div style={{background:"#FEF0E8",border:"1px solid #FDDCC7",borderRadius:12,padding:"14px 20px",marginBottom:24,fontSize:14,lineHeight:1.9,display:"inline-block",textAlign:"left"}}>
           <strong style={{color:"#f87036"}}>{ap?.label}</strong><br/>
@@ -1279,8 +1279,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
           {comment&&<><br/>コメント：{comment}</>}
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
-          {!dl&&<button onClick={()=>{editingRef.current=true;setDone(false);setConf(false);setSm(false);}} style={{padding:"11px 22px",background:"var(--c-card)",border:"2px solid #f87036",borderRadius:10,color:"#f87036",fontSize:14,fontWeight:700,cursor:"pointer"}}>✏️ 修正する</button>}
-          <button onClick={reset} style={{padding:"11px 22px",background:"var(--c-bg)",border:"2px solid #E5E7EB",borderRadius:10,color:"var(--c-text3)",fontSize:14,fontWeight:700,cursor:"pointer"}}>🔄 最初から</button>
+          {!dl&&<button onClick={()=>{editingRef.current=true;setDone(false);setConf(false);setSm(false);}} style={{padding:"11px 22px",background:"var(--c-card)",border:"2px solid #f87036",borderRadius:10,color:"#f87036",fontSize:14,fontWeight:700,cursor:"pointer"}}>修正する</button>}
+          <button onClick={reset} style={{padding:"11px 22px",background:"var(--c-bg)",border:"2px solid #E5E7EB",borderRadius:10,color:"var(--c-text3)",fontSize:14,fontWeight:700,cursor:"pointer"}}>↺ 最初から</button>
         </div>
       </div>
     </div>
@@ -1291,11 +1291,11 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
       {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true});}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"14px 12px 120px"}}>
-        {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`⚠️ 締切済み（${ap.deadlineDate.replace(/-/g,"/")}）`:`📅 締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
+        {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`▲ 締切済み（${ap.deadlineDate.replace(/-/g,"/")}）`:`締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
 
         {/* 名前カード */}
         <div style={{background:"var(--c-card)",borderRadius:14,boxShadow:"0 1px 4px var(--c-shadow)",marginBottom:14,padding:"16px 18px",display:"flex",alignItems:"center",gap:14}}>
-          <div style={{width:48,height:48,borderRadius:"50%",background:"#FEF0E8",border:"2px solid #FDDCC7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>👤</div>
+          <div style={{width:48,height:48,borderRadius:"50%",background:"#FEF0E8",border:"2px solid #FDDCC7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}></div>
           <div style={{flex:1,minWidth:0}} ref={nameWrapRef}>
             {editN?(
               <div style={{position:"relative"}}>
@@ -1360,7 +1360,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:17,fontWeight:700,color:"var(--c-text)"}}>{m}/{day}</span>
                   <span style={{fontSize:13,fontWeight:700,padding:"2px 8px",borderRadius:6,background:iS?"#EFF6FF":iSu?"#FFF0F1":"var(--c-input)",color:iS?"#3B82F6":iSu?"#FF4757":"var(--c-text3)"}}>{wd}{isHoliday(ds)?"祝":""}</span>
-                  {dayIsClosed&&<span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:6,background:"rgba(255,71,87,.1)",color:"#FF4757"}}>🚫 休業日</span>}
+                  {dayIsClosed&&<span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:6,background:"rgba(255,71,87,.1)",color:"#FF4757"}}>× 休業日</span>}
                 </div>
                 <span style={{fontSize:12,fontWeight:700,padding:"3px 10px",borderRadius:12,background:dayIsClosed?"rgba(255,71,87,.1)":iw?"#FEF0E8":"var(--c-input)",color:dayIsClosed?"#FF4757":iw?"#d4601a":"var(--c-text3)"}}>{dayIsClosed?"休業":iw?"出勤":"休み"}</span>
               </div>
@@ -1378,7 +1378,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
               {!dayIsClosed&&iw&&(
                 <div style={{padding:"0 15px 13px"}}>
                   {cds.length>0&&<div style={{marginBottom:10}}>
-                    <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:5}}>⚡ 候補から選択</div>
+                    <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:5}}>候補から選択</div>
                     <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
                       {cds.map((c,i)=>{const sel=st.start===c.start&&st.end===c.end;return(
                         <button key={i} className="cb" onClick={()=>!dl&&upd(ds,{start:c.start,end:c.end})} disabled={dl}
@@ -1401,7 +1401,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                   </div>
                 </div>
               )}
-              {!iw&&<div style={{padding:"0 15px 13px",fontSize:13,color:"var(--c-text3)",fontWeight:500}}>🌙 お休み</div>}
+              {!iw&&<div style={{padding:"0 15px 13px",fontSize:13,color:"var(--c-text3)",fontWeight:500}}>お休み</div>}
             </div>
           );
         })}
@@ -1409,7 +1409,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
         {/* コメント欄 */}
         <div style={{background:"var(--c-card)",borderRadius:14,boxShadow:"0 1px 4px var(--c-shadow)",marginBottom:10,overflow:"hidden"}}>
           <div style={{padding:"12px 16px 10px",borderBottom:"1px solid #E5E7EB",display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:16}}>💬</span>
+            <span style={{fontSize:16}}></span>
             <span style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>コメント・備考（任意）</span>
           </div>
           <div style={{padding:"14px 16px"}}>
@@ -1424,10 +1424,10 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       {/* 送信ボタン */}
       {!dl&&<div style={{position:"fixed",bottom:0,left:0,right:0,background:"var(--c-bg)",backdropFilter:"blur(10px)",padding:"10px 14px 16px",boxShadow:"0 -4px 20px rgba(0,0,0,.08)",zIndex:40}}>
         <div style={{maxWidth:560,margin:"0 auto",display:"flex",gap:8}}>
-          <button onClick={reset} style={{padding:"13px 14px",background:"var(--c-card)",border:"2px solid #E5E7EB",borderRadius:10,color:"var(--c-text3)",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>🔄 リセット</button>
-          <button onClick={()=>{if(!name.trim()){tt_("⚠️ 名前を入力してください");return;}setConf(true);}}
+          <button onClick={reset} style={{padding:"13px 14px",background:"var(--c-card)",border:"2px solid #E5E7EB",borderRadius:10,color:"var(--c-text3)",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>↺ リセット</button>
+          <button onClick={()=>{if(!name.trim()){tt_("▲ 名前を入力してください");return;}setConf(true);}}
             style={{flex:1,padding:13,background:"#f87036",color:"white",border:"none",borderRadius:10,fontSize:16,fontWeight:700,boxShadow:"0 4px 16px rgba(248,112,54,.35)",cursor:"pointer"}}>
-            📤 シフトを提出する
+            シフトを提出する
           </button>
         </div>
       </div>}
@@ -1435,7 +1435,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       {/* 確認モーダル */}
       {conf&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20,animation:"fI .2s"}}>
         <div style={{background:"var(--c-card)",borderRadius:20,width:"100%",maxWidth:340,padding:"26px 22px 20px",boxShadow:"0 8px 32px rgba(0,0,0,.14)",animation:"sI .2s"}}>
-          <div style={{fontSize:36,textAlign:"center",marginBottom:10}}>📤</div>
+          <div style={{fontSize:36,textAlign:"center",marginBottom:10}}></div>
           <div style={{fontSize:17,fontWeight:700,textAlign:"center",marginBottom:8}}>シフトを提出しますか？</div>
           <div style={{background:"var(--c-bg)",borderRadius:10,padding:"11px 13px",marginBottom:18,fontSize:13,lineHeight:1.9,color:"var(--c-text3)"}}>
             <strong style={{color:"var(--c-text)"}}>氏名</strong>：{name}<br/>
@@ -1461,7 +1461,7 @@ function StaffHdr({ap,p0,pe,nd,subs,apid,onSm,shopName}){
     <div style={{background:"#f87036",boxShadow:"0 2px 12px rgba(248,112,54,.25)",padding:"12px 14px"}}>
       <div style={{maxWidth:560,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
         <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
-          <span style={{fontSize:20,flexShrink:0}}>📅</span>
+          <span style={{fontSize:20,flexShrink:0}}></span>
           <div style={{minWidth:0}}>
             <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
               {shopName&&<span style={{fontSize:11,background:"rgba(255,255,255,.25)",color:"white",padding:"1px 7px",borderRadius:10,fontWeight:700,whiteSpace:"nowrap"}}>{shopName}</span>}
@@ -1473,7 +1473,7 @@ function StaffHdr({ap,p0,pe,nd,subs,apid,onSm,shopName}){
           </div>
         </div>
         <button onClick={onSm} style={{flexShrink:0,background:"rgba(255,255,255,.18)",border:"1px solid rgba(255,255,255,.4)",borderRadius:20,padding:"7px 14px",color:"white",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
-          👥 提出状況
+          提出状況
           <span style={{background:submitted.length>0?"white":"rgba(255,255,255,.3)",color:submitted.length>0?"#f87036":"white",borderRadius:20,padding:"1px 8px",fontSize:12,fontWeight:800}}>{submitted.length}</span>
         </button>
       </div>
@@ -1516,7 +1516,7 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
               </div>
             ))}
           </div>
-          <button onClick={()=>onApply(status,start,end)} style={{width:"100%",padding:"12px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>✅ 確定</button>
+          <button onClick={()=>onApply(status,start,end)} style={{width:"100%",padding:"12px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>✓ 確定</button>
         </>}
         <button onClick={onClose} style={{width:"100%",padding:"10px",background:"var(--c-bg)",border:"none",borderRadius:10,color:"var(--c-text3)",fontSize:14,fontWeight:600,cursor:"pointer"}}>キャンセル</button>
       </div>
@@ -1557,7 +1557,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
       <div style={{background:"#f87036",padding:"12px 16px",flexShrink:0,boxShadow:"0 2px 8px rgba(248,112,54,.3)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
-            <div style={{fontSize:16,fontWeight:700,color:"white"}}>👥 提出状況一覧</div>
+            <div style={{fontSize:16,fontWeight:700,color:"white"}}>提出状況一覧</div>
             <div style={{fontSize:11,color:"rgba(255,255,255,.85)",marginTop:1}}>{period?.label}　提出済み {submitted.length}名</div>
           </div>
           <button onClick={onClose} style={{background:"rgba(255,255,255,.2)",border:"1px solid rgba(255,255,255,.4)",borderRadius:"50%",width:36,height:36,color:"white",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
@@ -1585,7 +1585,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                   {plan==="pro"&&onDeleteSub&&(
                     <button onClick={e=>{e.stopPropagation();if(confirm(`「${sub.staffName}」の提出を削除しますか？`)){onDeleteSub(sub.id);}}}
                       style={{width:"100%",padding:"2px 4px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:4,color:"#FF4757",fontSize:10,cursor:"pointer",fontWeight:600}}>
-                      🗑 削除
+                      削除
                     </button>
                   )}
                 </div>
@@ -1625,7 +1625,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                         <div style={{fontSize:11,fontWeight:700,color:"var(--c-text)",whiteSpace:"nowrap"}}>{s.start||"--:--"}</div>
                         <div style={{fontSize:9,color:"var(--c-text4)"}}>〜</div>
                         <div style={{fontSize:11,fontWeight:700,color:"var(--c-text)",whiteSpace:"nowrap"}}>{s.end||"--:--"}</div>
-                      </>):(<div style={{fontSize:13,color:"var(--c-border2)"}}>🌙</div>)}
+                      </>):(<div style={{fontSize:13,color:"var(--c-border2)"}}></div>)}
                     </div>
                   );
                 })}
@@ -1650,7 +1650,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
         />;
       })()}
       {notSubmitted.length>0&&<div style={{background:"var(--c-card)",borderTop:"1px solid var(--c-border)",padding:"10px 16px",flexShrink:0}}>
-        <div style={{fontSize:12,fontWeight:700,color:"var(--c-text4)",marginBottom:6}}>📋 未提出（{notSubmitted.length}名）</div>
+        <div style={{fontSize:12,fontWeight:700,color:"var(--c-text4)",marginBottom:6}}>未提出（{notSubmitted.length}名）</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
           {notSubmitted.map((n,i)=><span key={i} style={{fontSize:12,background:"#FFF0F1",color:"#FF4757",border:"1px solid rgba(255,71,87,.2)",padding:"3px 10px",borderRadius:20,fontWeight:600}}>{n}</span>)}
         </div>
@@ -1668,7 +1668,7 @@ function AdminLogin({settings,onAuth}){
   return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 44px)",background:"var(--c-bg)",padding:20}}>
       <div style={{background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:20,padding:"36px 28px",width:"100%",maxWidth:360,textAlign:"center",animation:"sI .3s",boxShadow:"0 4px 16px rgba(0,0,0,.08)"}}>
-        <div style={{fontSize:48,marginBottom:12}}>🔐</div>
+        <div style={{fontSize:48,marginBottom:12}}></div>
         <div style={{fontSize:20,fontWeight:700,color:"#1F2937",marginBottom:4}}>管理者ログイン</div>
         <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:24}}>パスワードを入力してください</div>
         <input type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="••••••••" style={{width:"100%",padding:"13px 16px",background:"var(--c-card)",border:"1px solid #D1D5DB",borderRadius:10,color:"#1F2937",fontSize:16,outline:"none",textAlign:"center",letterSpacing:".2em",marginBottom:12}}/>
@@ -1722,7 +1722,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
       <div style={{background:"var(--c-card)",borderBottom:"1px solid #E5E7EB",padding:"12px 16px"}}>
         <div style={{maxWidth:900,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:34,height:34,background:"#f87036",borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17}}>⚙️</div>
+            <div style={{width:34,height:34,background:"#f87036",borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17}}>️</div>
             <div>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <div style={{fontSize:15,fontWeight:700,color:"var(--c-text)"}}>Shifty</div>
@@ -1730,7 +1730,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                 {true
                   ?<div ref={shopMenuRef} style={{position:"relative"}}>
                   <button onClick={()=>setShopMenuOpen(v=>!v)} style={{display:"flex",alignItems:"center",gap:5,background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,padding:"4px 10px",color:"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>
-                    🏪 {currentShop?.name||"店舗"} ▼
+                    {currentShop?.name||"店舗"} ▼
                   </button>
                   {shopMenuOpen&&(
                     <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,background:"var(--c-card)",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,.2)",zIndex:200,minWidth:180,overflow:"hidden"}}>
@@ -1741,12 +1741,12 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                       ))}
                       <div style={{borderTop:"1px solid var(--c-border)",padding:"8px 10px",display:"flex",gap:6}}>
 
-                        <button onClick={()=>{setShopEditMode(v=>!v);setShopCodeMode(false);}} style={{flex:1,padding:"7px",background:"var(--c-bg)",border:"none",borderRadius:8,fontSize:12,fontWeight:600,color:"var(--c-text)",cursor:"pointer"}}>⚙️ 編集</button>
-                        <button onClick={()=>{setShopCodeMode(v=>!v);setShopEditMode(false);setShopCodeInput("");setShopCodeError("");}} style={{flex:1,padding:"7px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,fontSize:12,fontWeight:600,color:"var(--c-text2)",cursor:"pointer"}}>🔑 コードで追加</button>
+                        <button onClick={()=>{setShopEditMode(v=>!v);setShopCodeMode(false);}} style={{flex:1,padding:"7px",background:"var(--c-bg)",border:"none",borderRadius:8,fontSize:12,fontWeight:600,color:"var(--c-text)",cursor:"pointer"}}>編集</button>
+                        <button onClick={()=>{setShopCodeMode(v=>!v);setShopEditMode(false);setShopCodeInput("");setShopCodeError("");}} style={{flex:1,padding:"7px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,fontSize:12,fontWeight:600,color:"var(--c-text2)",cursor:"pointer"}}>コードで追加</button>
                         <button onClick={()=>{
                           const lim=PLAN_LIMITS[plan]?.shops??Infinity;
                           if(shops.length>=lim){setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
-                          const name=prompt("新しい店舗名を入力");if(!name)return;const ns=makeShop(name.trim());const newShops=[...shops,ns];saveShops(newShops);setCurrentShopId(ns.id);currentShopIdRef.current=ns.id;ssSave(SS_SHOP,ns.id);startSubscriptions(ns.id,newShops);setShopMenuOpen(false);tt("✅ 店舗を追加しました");
+                          const name=prompt("新しい店舗名を入力");if(!name)return;const ns=makeShop(name.trim());const newShops=[...shops,ns];saveShops(newShops);setCurrentShopId(ns.id);currentShopIdRef.current=ns.id;ssSave(SS_SHOP,ns.id);startSubscriptions(ns.id,newShops);setShopMenuOpen(false);tt("✓ 店舗を追加しました");
                         }} style={{flex:1,padding:"7px",background:"#f87036",border:"none",borderRadius:8,fontSize:12,fontWeight:700,color:"white",cursor:"pointer"}}>＋ 新規</button>
                       </div>
                       {/* 店舗コードで追加パネル */}
@@ -1779,7 +1779,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                                 setCurrentShopId(code);currentShopIdRef.current=code;ssSave(SS_SHOP,code);
                                 startSubscriptions(code,newShops);
                                 setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");
-                                tt(`✅ 「${found.name}」を追加しました`);
+                                tt(`✓ 「${found.name}」を追加しました`);
                               }).catch(()=>setShopCodeError("確認に失敗しました"));
                             })()}
                             placeholder="店舗コードを貼り付け"
@@ -1809,7 +1809,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                               setCurrentShopId(code);currentShopIdRef.current=code;ssSave(SS_SHOP,code);
                               startSubscriptions(code,newShops);
                               setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");
-                              tt(`✅ 「${found.name}」を追加しました`);
+                              tt(`✓ 「${found.name}」を追加しました`);
                             }).catch(()=>setShopCodeError("確認に失敗しました"));
                           }} style={{padding:"7px 10px",background:"#f87036",border:"none",borderRadius:8,fontSize:12,fontWeight:700,color:"white",cursor:"pointer"}}>追加</button>
                         </div>
@@ -1819,22 +1819,22 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                         {shops.map(sh=>(
                           <div key={sh.id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
                             <span style={{flex:1,fontSize:13,color:"var(--c-text)"}}>{sh.name}</span>
-                            <button onClick={()=>{const name=prompt("店舗名を変更",sh.name);if(!name)return;saveShops(shops.map(s=>s.id===sh.id?{...s,name:name.trim()}:s));tt("✅ 変更しました");}} style={{padding:"4px 8px",background:"var(--c-bg)",border:"none",borderRadius:6,fontSize:11,cursor:"pointer"}}>✏️</button>
-                            {shops.length>1&&<button onClick={()=>{if(!confirm(`「${sh.name}」を削除しますか？`))return;const ns=shops.filter(s=>s.id!==sh.id);saveShops(ns);if(sh.id===currentShopId){setCurrentShopId(ns[0].id);currentShopIdRef.current=ns[0].id;ssSave(SS_SHOP,ns[0].id);startSubscriptions(ns[0].id,ns);}tt("🗑️ 削除しました");}} style={{padding:"4px 8px",background:"rgba(255,71,87,.1)",border:"none",borderRadius:6,fontSize:11,color:"#FF4757",cursor:"pointer"}}>🗑️</button>}
+                            <button onClick={()=>{const name=prompt("店舗名を変更",sh.name);if(!name)return;saveShops(shops.map(s=>s.id===sh.id?{...s,name:name.trim()}:s));tt("✓ 変更しました");}} style={{padding:"4px 8px",background:"var(--c-bg)",border:"none",borderRadius:6,fontSize:11,cursor:"pointer"}}>️</button>
+                            {shops.length>1&&<button onClick={()=>{if(!confirm(`「${sh.name}」を削除しますか？`))return;const ns=shops.filter(s=>s.id!==sh.id);saveShops(ns);if(sh.id===currentShopId){setCurrentShopId(ns[0].id);currentShopIdRef.current=ns[0].id;ssSave(SS_SHOP,ns[0].id);startSubscriptions(ns[0].id,ns);}tt("削除しました");}} style={{padding:"4px 8px",background:"rgba(255,71,87,.1)",border:"none",borderRadius:6,fontSize:11,color:"#FF4757",cursor:"pointer"}}>️</button>}
                           </div>
                         ))}
                       </div>}
                     </div>
                   )}
                 </div>
-                  :<span style={{fontSize:12,fontWeight:600,color:"var(--c-text3)",background:"var(--c-input)",padding:"4px 10px",borderRadius:8}}>🏪 {currentShop?.name||"店舗"}</span>
+                  :<span style={{fontSize:12,fontWeight:600,color:"var(--c-text3)",background:"var(--c-input)",padding:"4px 10px",borderRadius:8}}>{currentShop?.name||"店舗"}</span>
                 }
               </div>
               <div style={{fontSize:11,color:"var(--c-text4)"}}>{authUser?`${authUser.displayName||authUser.email||"ログイン中"} · `:""}管理者画面</div>
             </div>
           </div>
           <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-            {[["periods","📅 期間"],["staff","👥 スタッフ"],["candidates","📋 候補"],["submissions","📥 提出一覧"],["mypage","💳 マイページ"],["settings","⚙️ 設定"]].map(([id,l])=>(
+            {[["periods","期間"],["staff","スタッフ"],["candidates","候補"],["submissions","提出一覧"],["mypage","マイページ"],["settings","設定"]].map(([id,l])=>(
               <button key={id} onClick={()=>setTab(id)} style={{padding:"7px 13px",background:tab===id?"#f87036":"var(--c-input)",border:`1px solid ${tab===id?"#f87036":"var(--c-border)"}`,borderRadius:7,color:tab===id?"white":"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{l}</button>
             ))}
             <button onClick={logout} style={{padding:"7px 12px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:7,color:"#FF4757",fontSize:12,cursor:"pointer"}}>ログアウト</button>
@@ -1852,7 +1852,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           const sc={...(settings.staffColors||{})};
           if(sc[oldName]!==undefined){sc[newName]=sc[oldName];delete sc[oldName];}
           saveSettings({...settings,staffColors:sc});
-          tt(`✅ ${oldName} → ${newName} に変更しました`);
+          tt(`✓ ${oldName} → ${newName} に変更しました`);
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
@@ -1902,7 +1902,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
     return true;
   };
   const create=()=>{
-    if(!form.startDate||!form.endDate){tt("⚠️ 開始日・終了日を入力");return;}
+    if(!form.startDate||!form.endDate){tt("▲ 開始日・終了日を入力");return;}
     if(!checkPeriodLimit())return;
     const p={id:`p_${Date.now()}`,urlToken:genToken(),shopId,
       label:form.label||`${form.startDate.replace(/-/g,"/")}〜${form.endDate.replace(/-/g,"/")}`,
@@ -1911,7 +1911,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
     onSave([...periods,p]);
     setForm({label:"",startDate:"",endDate:"",deadlineDate:""});
     setShow(false);setUsePreset(true);
-    tt("✅ 期間を作成しました");
+    tt("✓ 期間を作成しました");
   };
 
   // 提出状況ビュー
@@ -1921,7 +1921,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
     return(
       <div>
         <button onClick={()=>setViewPeriodId(null)} style={{marginBottom:16,padding:"8px 16px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:8,color:"var(--c-text)",fontSize:13,cursor:"pointer"}}>← 期間一覧に戻る</button>
-        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} plan={plan} onDeleteSub={subId=>{const a=subs.filter(s=>s.id!==subId);onSave(a);tt("🗑️ 提出を削除しました");}} onEditSub={sub=>{const updated={...sub,updatedAt:new Date().toISOString(),isUpdated:true};const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=updated;onSave(a);}tt("✅ 更新しました");}}/>
+        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} plan={plan} onDeleteSub={subId=>{const a=subs.filter(s=>s.id!==subId);onSave(a);tt("提出を削除しました");}} onEditSub={sub=>{const updated={...sub,updatedAt:new Date().toISOString(),isUpdated:true};const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=updated;onSave(a);}tt("✓ 更新しました");}}/>
       </div>
     );
   }
@@ -1932,14 +1932,18 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
   return(
     <div>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
-        <AT>📅 期間管理</AT>
+        <AT>期間管理</AT>
         <button onClick={()=>{setShow(v=>!v);setUsePreset(true);setForm({label:"",startDate:"",endDate:"",deadlineDate:""}); }} style={{padding:"9px 16px",background:"#f87036",border:"none",borderRadius:9,color:"white",fontSize:13,fontWeight:700,cursor:"pointer"}}>＋ 新しい期間を作成</button>
       </div>
-      {show&&<AC title="📝 新しい期間を作成">
+      {plan!=="pro"&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:8,padding:"7px 10px"}}>
+        {`Freeプラン：最大${PLAN_LIMITS.free.periods}件まで作成可能（${periods.length}/${PLAN_LIMITS.free.periods}件）`}
+        {periods.length>=PLAN_LIMITS.free.periods&&<span style={{marginLeft:8,color:"#F59E0B",fontSize:11}}>期間追加はProプランで利用できます</span>}
+      </div>}
+      {show&&<AC title="新しい期間を作成">
         {/* プリセット使用 / 手動入力 の切り替え */}
         <div style={{display:"flex",gap:8,marginBottom:16}}>
-          <button onClick={()=>setUsePreset(true)} style={{flex:1,padding:"9px 0",border:`2px solid ${usePreset?"#f87036":"var(--c-border2)"}`,borderRadius:9,background:usePreset?"rgba(248,112,54,.15)":"rgba(0,0,0,.03)",color:usePreset?"#f87036":"#6B7280",fontSize:13,fontWeight:700,cursor:"pointer"}}>📋 プリセットから選ぶ</button>
-          <button onClick={()=>{setUsePreset(false);setForm({label:"",startDate:"",endDate:"",deadlineDate:""}); }} style={{flex:1,padding:"9px 0",border:`2px solid ${!usePreset?"#f87036":"var(--c-border2)"}`,borderRadius:9,background:!usePreset?"rgba(248,112,54,.15)":"rgba(0,0,0,.03)",color:!usePreset?"#f87036":"#6B7280",fontSize:13,fontWeight:700,cursor:"pointer"}}>✏️ 手動で入力する</button>
+          <button onClick={()=>setUsePreset(true)} style={{flex:1,padding:"9px 0",border:`2px solid ${usePreset?"#f87036":"var(--c-border2)"}`,borderRadius:9,background:usePreset?"rgba(248,112,54,.15)":"rgba(0,0,0,.03)",color:usePreset?"#f87036":"#6B7280",fontSize:13,fontWeight:700,cursor:"pointer"}}>プリセットから選ぶ</button>
+          <button onClick={()=>{setUsePreset(false);setForm({label:"",startDate:"",endDate:"",deadlineDate:""}); }} style={{flex:1,padding:"9px 0",border:`2px solid ${!usePreset?"#f87036":"var(--c-border2)"}`,borderRadius:9,background:!usePreset?"rgba(248,112,54,.15)":"rgba(0,0,0,.03)",color:!usePreset?"#f87036":"#6B7280",fontSize:13,fontWeight:700,cursor:"pointer"}}>手動で入力する</button>
         </div>
 
         {usePreset?(
@@ -1951,10 +1955,10 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
                 const alreadyExists=periods.some(pp=>pp.startDate===p.startDate&&pp.endDate===p.endDate);
                 return(
                   <button key={i} onClick={()=>{
-                    if(alreadyExists){tt("⚠️ この期間はすでに作成済みです");return;}
+                    if(alreadyExists){tt("▲ この期間はすでに作成済みです");return;}
                     if(!checkPeriodLimit())return;
                     const np={id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:p.label,startDate:p.startDate,endDate:p.endDate,deadlineDate:"",createdAt:new Date().toISOString()};
-                    onSave([...periods,np]);setShow(false);setUsePreset(true);tt(`✅ ${p.label} を作成しました`);
+                    onSave([...periods,np]);setShow(false);setUsePreset(true);tt(`✓ ${p.label} を作成しました`);
                   }} style={{padding:"10px 16px",background:alreadyExists?"rgba(0,0,0,.02)":"var(--c-border)",border:`1px solid ${alreadyExists?"var(--c-border)":"var(--c-border2)"}`,borderRadius:9,color:alreadyExists?"var(--c-border2)":"#1A1A2E",fontSize:13,fontWeight:600,cursor:alreadyExists?"not-allowed":"pointer",textDecoration:alreadyExists?"line-through":"none"}}>
                     {p.label}{alreadyExists&&<span style={{fontSize:10,marginLeft:4}}>作成済み</span>}
                   </button>
@@ -1974,7 +1978,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
             </div>
             {form.startDate&&form.endDate&&form.startDate<=form.endDate&&<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:10}}>期間：{gd(form.startDate,form.endDate).length}日間</div>}
             <div style={{display:"flex",gap:8}}>
-              <button onClick={create} style={AB}>✅ 作成する</button>
+              <button onClick={create} style={AB}>✓ 作成する</button>
               <button onClick={()=>setShow(false)} style={AGray}>キャンセル</button>
             </div>
           </div>
@@ -1987,7 +1991,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
         return(
           <div key={p.id} style={{background:"rgba(0,0,0,.03)",border:"1px solid #E5E7EB",borderRadius:14,padding:18,marginBottom:12,cursor:"pointer"}} onClick={e=>{if(e.target.tagName==="BUTTON"||e.target.closest("button"))return;setViewPeriodId(p.id);}}>
             {eid===p.id
-              ?<PEF period={p} onSave={u=>{onSave(periods.map(pp=>pp.id===p.id?{...pp,...u}:pp));tt("✅ 保存しました");setEid(null);}} onCancel={()=>setEid(null)}/>
+              ?<PEF period={p} onSave={u=>{onSave(periods.map(pp=>pp.id===p.id?{...pp,...u}:pp));tt("✓ 保存しました");setEid(null);}} onCancel={()=>setEid(null)}/>
               :<>
                 <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
                   <div>
@@ -1997,23 +2001,23 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
                     <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>提出：{subs.filter(s=>s.periodId===p.id).length}件</div>
                   </div>
                   <div style={{display:"flex",gap:5,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
-                    <button onClick={e=>{e.stopPropagation();setEid(p.id);}} style={{padding:"5px 9px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text2)",fontSize:11,cursor:"pointer"}}>✏️ 編集</button>
-                    <button onClick={e=>{e.stopPropagation();expXl(p,subs,staffList,tt,settings.xlShopName||shopName,{staffColors:settings.staffColors||{}});}} style={{padding:"5px 9px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:6,color:"white",fontSize:11,fontWeight:700,cursor:"pointer"}}>📊 Excel</button>
-                    <button onClick={e=>{e.stopPropagation();if(!confirm("削除しますか？"))return;onSave(periods.filter(pp=>pp.id!==p.id));tt("🗑️ 削除しました");}} style={AD}>削除</button>
+                    <button onClick={e=>{e.stopPropagation();setEid(p.id);}} style={{padding:"5px 9px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text2)",fontSize:11,cursor:"pointer"}}>編集</button>
+                    <button onClick={e=>{e.stopPropagation();expXl(p,subs,staffList,tt,settings.xlShopName||shopName,{staffColors:settings.staffColors||{}});}} style={{padding:"5px 9px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:6,color:"white",fontSize:11,fontWeight:700,cursor:"pointer"}}>Excel</button>
+                    <button onClick={e=>{e.stopPropagation();if(!confirm("削除しますか？"))return;onSave(periods.filter(pp=>pp.id!==p.id));tt("削除しました");}} style={AD}>削除</button>
                   </div>
                 </div>
                 {/* URLシェア */}
                 <div style={{marginTop:10,padding:"8px 12px",background:"rgba(0,0,0,.03)",borderRadius:8,display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:11,color:"var(--c-text4)",flexShrink:0}}>🔗 URL</span>
+                  <span style={{fontSize:11,color:"var(--c-text4)",flexShrink:0}}>URL</span>
                   <span style={{fontSize:11,color:"var(--c-text3)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pUrl}</span>
                   <button onClick={e=>{e.stopPropagation();
               if(navigator.clipboard&&navigator.clipboard.writeText){
-                navigator.clipboard.writeText(pUrl).then(()=>tt("✅ URLをコピーしました")).catch(()=>{
+                navigator.clipboard.writeText(pUrl).then(()=>tt("✓ URLをコピーしました")).catch(()=>{
                   // フォールバック（iOS Safari 12以下等）
-                  const el=document.createElement("textarea");el.value=pUrl;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✅ URLをコピーしました");
+                  const el=document.createElement("textarea");el.value=pUrl;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ URLをコピーしました");
                 });
               } else {
-                const el=document.createElement("textarea");el.value=pUrl;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✅ URLをコピーしました");
+                const el=document.createElement("textarea");el.value=pUrl;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ URLをコピーしました");
               }}} style={{padding:"4px 10px",background:"var(--c-border)",border:"none",borderRadius:6,color:"var(--c-text)",fontSize:11,cursor:"pointer",flexShrink:0}}>コピー</button>
                 </div>
               </>
@@ -2027,26 +2031,26 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
 function PEF({period,onSave,onCancel}){
   const[f,setF]=useState({label:period.label,startDate:period.startDate,endDate:period.endDate,deadlineDate:period.deadlineDate||""});
   return(<div onClick={e=>e.stopPropagation()}>
-    <div style={{fontSize:13,fontWeight:700,color:"var(--c-text2)",marginBottom:10}}>✏️ 編集中</div>
+    <div style={{fontSize:13,fontWeight:700,color:"var(--c-text2)",marginBottom:10}}>編集中</div>
     <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:9,marginBottom:12}}>
       <div><AL>ラベル</AL><input value={f.label} onChange={e=>setF(p=>({...p,label:e.target.value}))} style={AI}/></div>
       <div><AL>開始日</AL><input type="date" value={f.startDate} onChange={e=>setF(p=>({...p,startDate:e.target.value}))} style={AI}/></div>
       <div><AL>終了日</AL><input type="date" value={f.endDate} onChange={e=>setF(p=>({...p,endDate:e.target.value}))} style={AI}/></div>
       <div><AL>締切日</AL><input type="date" value={f.deadlineDate} onChange={e=>setF(p=>({...p,deadlineDate:e.target.value}))} style={AI}/></div>
     </div>
-    <div style={{display:"flex",gap:8}}><button onClick={()=>onSave(f)} style={AB}>💾 保存</button><button onClick={onCancel} style={AGray}>キャンセル</button></div>
+    <div style={{display:"flex",gap:8}}><button onClick={()=>onSave(f)} style={AB}>保存</button><button onClick={onCancel} style={AGray}>キャンセル</button></div>
   </div>);
 }
 
 // ===== Excel出力 =====
 function expXl(p,subs,staffList,tt,shopName,options={}){
   const ss=subs.filter(s=>s.periodId===p.id);
-  if(typeof ExcelJS==="undefined"){tt("⚠️ ExcelJS未読込み");return;}
+  if(typeof ExcelJS==="undefined"){tt("▲ ExcelJS未読込み");return;}
   const dates=gd(p.startDate,p.endDate);
   const submittedNames=ss.map(s=>s.staffName);
   const unregistered=submittedNames.filter(n=>!staffList.includes(n)&&!isSpacer(n)).sort((a,b)=>a.localeCompare(b,"ja"));
   const sl=[...staffList,...unregistered];
-  if(sl.filter(n=>!isSpacer(n)).length===0){tt("⚠️ スタッフが登録されていません");return;}
+  if(sl.filter(n=>!isSpacer(n)).length===0){tt("▲ スタッフが登録されていません");return;}
 
   const firstDate=pd(dates[0]);
   const mo=firstDate.getMonth()+1;
@@ -2220,10 +2224,10 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
     const a=document.createElement("a");
     a.href=url; a.download=fname; a.click();
     setTimeout(()=>URL.revokeObjectURL(url),1000);
-    tt(`✅ ${fname} をダウンロードしました`);
+    tt(`✓ ${fname} をダウンロードしました`);
   }).catch(e=>{
     console.error("Excel生成失敗:",e);
-    tt("❌ Excel生成に失敗しました: "+e.message);
+    tt("✕ Excel生成に失敗しました: "+e.message);
   });
 }
 
@@ -2239,16 +2243,16 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     onSaveSettings&&onSaveSettings({...settings,staffAliases:{...staffAliases,[staffName]:aliases}});
   };
   const addAlias=(staffName,alias)=>{
-    if(staffList.includes(alias)){tt("⚠️ 登録名と同じ名前は別名にできません");return;}
+    if(staffList.includes(alias)){tt("▲ 登録名と同じ名前は別名にできません");return;}
     const cur=staffAliases[staffName]||[];
-    if(cur.includes(alias)){tt("⚠️ 既に登録されている別名です");return;}
+    if(cur.includes(alias)){tt("▲ 既に登録されている別名です");return;}
     saveAlias(staffName,[...cur,alias]);
-    tt(`✅「${alias}」を別名として追加しました`);
+    tt(`✓「${alias}」を別名として追加しました`);
   };
   const delAlias=(staffName,alias)=>{
     const cur=(staffAliases[staffName]||[]).filter(a=>a!==alias);
     saveAlias(staffName,cur);
-    tt("🗑️ 別名を削除しました");
+    tt("別名を削除しました");
   };
   // 最新期間の提出名のうち、未登録かつ未エイリアスのもの
   const allAliases=Object.values(staffAliases).flat();
@@ -2269,27 +2273,27 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const cancelEdit=()=>{setEditIdx(null);setEditName("");};
   const confirmEdit=i=>{
     const trimmed=editName.trim();
-    if(!trimmed){tt("⚠️ 名前を入力してください");return;}
-    if(staffList.includes(trimmed)&&trimmed!==staffList[i]){tt("⚠️ 既に登録されている名前です");return;}
+    if(!trimmed){tt("▲ 名前を入力してください");return;}
+    if(staffList.includes(trimmed)&&trimmed!==staffList[i]){tt("▲ 既に登録されている名前です");return;}
     if(trimmed===staffList[i]){cancelEdit();return;}
     onRenameStaff&&onRenameStaff(staffList[i],trimmed);
     setEditIdx(null);setEditName("");
   };
   const add=()=>{
-    if(!newName.trim()){tt("⚠️ 名前を入力");return;}
-    if(staffList.includes(newName.trim())){tt("⚠️ 既に登録されています");return;}
+    if(!newName.trim()){tt("▲ 名前を入力");return;}
+    if(staffList.includes(newName.trim())){tt("▲ 既に登録されています");return;}
     if(staffList.filter(n=>!isSpacer(n)).length>=lim){onUpgrade&&onUpgrade({type:"staff",limit:lim,plan});return;}
-    onSave([...staffList,newName.trim()]);setNewName("");tt(`✅ ${newName.trim()} を追加しました`);
+    onSave([...staffList,newName.trim()]);setNewName("");tt(`✓ ${newName.trim()} を追加しました`);
   };
-  const del=i=>{const a=[...staffList];a.splice(i,1);onSave(a);tt("🗑️ 削除しました");};
+  const del=i=>{const a=[...staffList];a.splice(i,1);onSave(a);tt("削除しました");};
   const moveUp=i=>{if(i===0)return;const a=[...staffList];[a[i-1],a[i]]=[a[i],a[i-1]];onSave(a);};
   const moveDown=i=>{if(i===staffList.length-1)return;const a=[...staffList];[a[i],a[i+1]]=[a[i+1],a[i]];onSave(a);};
   return(
     <div>
-      <AT>👥 スタッフ登録</AT>
+      <AT>スタッフ登録</AT>
       <AC title="スタッフ一覧">
         {!isPro&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:8,padding:"7px 10px"}}>
-          {`🆓 Freeプラン：最大${lim}名まで登録可能（${staffList.filter(n=>!isSpacer(n)).length}/${lim}名）`}
+          {`Freeプラン：最大${lim}名まで登録可能（${staffList.filter(n=>!isSpacer(n)).length}/${lim}名）`}
           {!isPro&&<span style={{marginLeft:8,color:"#F59E0B",fontSize:11}}>並べ替え・名前色変更はProプランで利用できます</span>}
         </div>}
         {staffList.length===0&&<div style={{fontSize:13,color:"var(--c-text4)",marginBottom:12}}>スタッフが登録されていません</div>}
@@ -2331,7 +2335,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
           {/* 別名パネル（Pro・展開時） */}
           {isPro&&aliasIdx===i&&(
             <div style={{marginTop:4,padding:"12px 14px",background:"rgba(248,112,54,.04)",border:"1px solid rgba(248,112,54,.2)",borderRadius:10}}>
-              <div style={{fontSize:12,fontWeight:700,color:"#f87036",marginBottom:8}}>📝 別名（スタッフが入力できる名前）</div>
+              <div style={{fontSize:12,fontWeight:700,color:"#f87036",marginBottom:8}}>別名（スタッフが入力できる名前）</div>
               {/* 登録済み別名 */}
               {(staffAliases[n]||[]).length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
                 {(staffAliases[n]||[]).map((alias,ai)=>(
@@ -2367,8 +2371,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
           <input value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="スタッフ名を入力" style={AI}/>
           <button onClick={add} style={AB}>＋ 追加</button>
         </div>
-        {isPro&&<button onClick={()=>{onSave([...staffList,"__spacer__"+genToken()]);tt("✅ 空白列を追加しました");}} style={{...AGray,width:"100%",fontSize:13,marginTop:8}}>＋ 空白列を追加（末尾）</button>}
-        {staffList.filter(n=>!isSpacer(n)).length>=lim&&<div style={{marginTop:10,fontSize:12,color:"#F59E0B",textAlign:"center"}}>⚠️ 上限に達しています。アップグレードするとさらに追加できます。</div>}
+        {isPro&&<button onClick={()=>{onSave([...staffList,"__spacer__"+genToken()]);tt("✓ 空白列を追加しました");}} style={{...AGray,width:"100%",fontSize:13,marginTop:8}}>＋ 空白列を追加（末尾）</button>}
+        {staffList.filter(n=>!isSpacer(n)).length>=lim&&<div style={{marginTop:10,fontSize:12,color:"#F59E0B",textAlign:"center"}}>▲ 上限に達しています。アップグレードするとさらに追加できます。</div>}
       </AC>
     </div>
   );
@@ -2392,18 +2396,18 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
   const toggleArr=(arr,setArr,val)=>setArr(prev=>prev.includes(val)?prev.filter(v=>v!==val):[...prev,val]);
 
   const addG=()=>{
-    if(!selStart||!selEnd){tt("⚠️ 開始・終了を選択してください");return;}
-    if(selStart>=selEnd){tt("⚠️ 退勤は出勤より後にしてください");return;}
+    if(!selStart||!selEnd){tt("▲ 開始・終了を選択してください");return;}
+    if(selStart>=selEnd){tt("▲ 退勤は出勤より後にしてください");return;}
     const nc={start:selStart,end:selEnd};
-    if((settings.candidates||[]).some(c=>c.start===nc.start&&c.end===nc.end)){tt("⚠️ 同じ時間帯が既に登録されています");return;}
+    if((settings.candidates||[]).some(c=>c.start===nc.start&&c.end===nc.end)){tt("▲ 同じ時間帯が既に登録されています");return;}
     const merged=sc([...(settings.candidates||[]),nc]);
-    onSave({...settings,candidates:merged});setSelStart("");setSelEnd("");tt(`✅ ${selStart}〜${selEnd} を追加`);
+    onSave({...settings,candidates:merged});setSelStart("");setSelEnd("");tt(`✓ ${selStart}〜${selEnd} を追加`);
   };
   const delG=i=>{const c=[...(settings.candidates||[])];c.splice(i,1);onSave({...settings,candidates:c});};
 
   const addW=()=>{
-    if(!wSelStart||!wSelEnd){tt("⚠️ 開始・終了を選択してください");return;}
-    if(wSelStart>=wSelEnd){tt("⚠️ 退勤は出勤より後にしてください");return;}
+    if(!wSelStart||!wSelEnd){tt("▲ 開始・終了を選択してください");return;}
+    if(wSelStart>=wSelEnd){tt("▲ 退勤は出勤より後にしてください");return;}
     const w={...(settings.weekdayCandidates||{})};
     const nc={start:wSelStart,end:wSelEnd};
     let total=0;
@@ -2412,13 +2416,13 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
       if(!b.some(c=>c.start===nc.start&&c.end===nc.end)){w[dow]=sc([...b,nc]);total++;}
     });
     onSave({...settings,weekdayCandidates:w});setWSelStart("");setWSelEnd("");
-    tt(total>0?`✅ ${selDows.map(d=>WD[d]).join("・")}に追加`:"⚠️ 既に登録済みです");
+    tt(total>0?`✓ ${selDows.map(d=>WD[d]).join("・")}に追加`:"▲ 既に登録済みです");
   };
-  const delW=(d,i)=>{const w={...(settings.weekdayCandidates||{})};w[d]=[...(w[d]||[])];w[d].splice(i,1);onSave({...settings,weekdayCandidates:w});tt("🗑️ 削除しました");};
+  const delW=(d,i)=>{const w={...(settings.weekdayCandidates||{})};w[d]=[...(w[d]||[])];w[d].splice(i,1);onSave({...settings,weekdayCandidates:w});tt("削除しました");};
 
   const addD=()=>{
-    if(!dSelStart||!dSelEnd){tt("⚠️ 開始・終了を選択してください");return;}
-    if(dSelStart>=dSelEnd){tt("⚠️ 退勤は出勤より後にしてください");return;}
+    if(!dSelStart||!dSelEnd){tt("▲ 開始・終了を選択してください");return;}
+    if(dSelStart>=dSelEnd){tt("▲ 退勤は出勤より後にしてください");return;}
     const dc={...(settings.dateCandidates||{})};
     const nc={start:dSelStart,end:dSelEnd};
     let total=0;
@@ -2426,23 +2430,23 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
       if(!(dc[dt]||[]).some(c=>c.start===nc.start&&c.end===nc.end)){dc[dt]=sc([...(dc[dt]||[]),nc]);total++;}
     });
     onSave({...settings,dateCandidates:dc});setDSelStart("");setDSelEnd("");
-    tt(total>0?`✅ ${selDates.length}日付に追加`:"⚠️ 既に登録済みです");
+    tt(total>0?`✓ ${selDates.length}日付に追加`:"▲ 既に登録済みです");
   };
   const delD=(dt,i)=>{const dc={...(settings.dateCandidates||{})};dc[dt]=[...(dc[dt]||[])];dc[dt].splice(i,1);if(dc[dt].length===0)delete dc[dt];onSave({...settings,dateCandidates:dc});};
 
   // テンプレート保存
   const saveTemplate=()=>{
-    if(!tmplName.trim()){tt("⚠️ テンプレート名を入力");return;}
+    if(!tmplName.trim()){tt("▲ テンプレート名を入力");return;}
     const wdCopy={...(settings.weekdayCandidates||{})};
     const tmpl={name:tmplName.trim(),weekdayCandidates:wdCopy,savedAt:new Date().toISOString()};
     const ts=[...globalTemplates,tmpl];
-    saveGlobalTemplates(ts);setTmplName("");tt(`✅ テンプレート「${tmplName.trim()}」を保存しました（全店舗共有）`);
+    saveGlobalTemplates(ts);setTmplName("");tt(`✓ テンプレート「${tmplName.trim()}」を保存しました（全店舗共有）`);
   };
   const applyTemplate=t=>{
     if(!confirm(`テンプレート「${t.name}」を適用しますか？現在の曜日別候補が上書きされます。`))return;
-    onSave({...settings,weekdayCandidates:t.weekdayCandidates});tt(`✅ テンプレート「${t.name}」を適用しました`);
+    onSave({...settings,weekdayCandidates:t.weekdayCandidates});tt(`✓ テンプレート「${t.name}」を適用しました`);
   };
-  const delTemplate=i=>{const ts=[...globalTemplates];ts.splice(i,1);saveGlobalTemplates(ts);tt("🗑️ 削除しました");};
+  const delTemplate=i=>{const ts=[...globalTemplates];ts.splice(i,1);saveGlobalTemplates(ts);tt("削除しました");};
 
   // 選択中の曜日の候補（複数選択時は全曜日の和集合）
   const wC=selDows.length===1?((settings.weekdayCandidates||{})[selDows[0]]||[]):[];// key=7は祝日候補
@@ -2462,14 +2466,14 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
 
   return(
     <div>
-      <AT>📋 候補管理</AT>
+      <AT>候補管理</AT>
       <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
-        {[["global","🌐 全体"],["weekday","📆 曜日別"],["date","📌 日付別"],["template","📁 テンプレ"]].map(([id,l])=>(
+        {[["global","全体"],["weekday","曜日別"],["date","日付別"],["template","テンプレ"]].map(([id,l])=>(
           <button key={id} onClick={()=>setMode(id)} style={{padding:"8px 14px",background:mode===id?"#f87036":"var(--c-border)",border:`1px solid ${mode===id?"#f87036":"var(--c-border)"}`,borderRadius:8,color:"var(--c-text)",fontSize:13,fontWeight:600,cursor:"pointer"}}>{l}</button>
         ))}
       </div>
 
-      {mode==="global"&&<AC title="🌐 全体候補（優先度低）">
+      {mode==="global"&&<AC title="全体候補（優先度低）">
         <CL items={settings.candidates||[]} onDel={delG}/>
         <div style={{marginTop:12,display:"flex",gap:10,alignItems:"flex-end"}}>
           <SingleTimeSelect value={selStart} onChange={setSelStart} label="出勤時刻"/>
@@ -2479,7 +2483,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
         </div>
       </AC>}
 
-      {mode==="weekday"&&<AC title="📆 曜日別候補（全体より優先）">
+      {mode==="weekday"&&<AC title="曜日別候補（全体より優先）">
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>複数選択で一括追加 ／ 祝日は平日・土日より優先適用されます</div>
 
         {/* 曜日選択ボタン（日曜を先頭に・祝日も含む） */}
@@ -2515,8 +2519,8 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
                 if(!b.some(c=>c.closed)){w[dow]=sc([...b,{closed:true}]);total++;}
               });
               onSave({...settings,weekdayCandidates:w});
-              tt(total>0?`✅ ${selDows.map(d=>d===7?"祝":WD[d]).join("・")}に休業日を設定`:"⚠️ 既に設定済みです");
-            }} style={{padding:"6px 12px",background:"rgba(255,71,87,.15)",border:"1px solid rgba(255,71,87,.3)",borderRadius:8,color:"#FF4757",fontSize:12,fontWeight:700,cursor:"pointer"}}>🚫 休業日に設定</button>
+              tt(total>0?`✓ ${selDows.map(d=>d===7?"祝":WD[d]).join("・")}に休業日を設定`:"▲ 既に設定済みです");
+            }} style={{padding:"6px 12px",background:"rgba(255,71,87,.15)",border:"1px solid rgba(255,71,87,.3)",borderRadius:8,color:"#FF4757",fontSize:12,fontWeight:700,cursor:"pointer"}}>× 休業日に設定</button>
           </div>
         </div>
 
@@ -2552,7 +2556,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
         </div>
       </AC>}
 
-      {mode==="date"&&<AC title="📌 日付別候補（最優先）">
+      {mode==="date"&&<AC title="日付別候補（最優先）">
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:6}}>複数選択可（選択した全日付にまとめて追加）</div>
         <div style={{display:"flex",gap:8,marginBottom:10,alignItems:"center"}}>
           <input type="date" value={newDate} onChange={e=>setNewDate(e.target.value)} style={{...AI,maxWidth:180}}/>
@@ -2590,8 +2594,8 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
                 if(!(dc[dt]||[]).some(c=>c.closed)){dc[dt]=sc([...(dc[dt]||[]),{closed:true}]);total++;}
               });
               onSave({...settings,dateCandidates:dc});
-              tt(total>0?`✅ ${selDates.length}日付に休業日を設定`:"⚠️ 既に設定済みです");
-            }} style={{padding:"6px 12px",background:"rgba(255,71,87,.15)",border:"1px solid rgba(255,71,87,.3)",borderRadius:8,color:"#FF4757",fontSize:12,fontWeight:700,cursor:"pointer"}}>🚫 休業日に設定</button>
+              tt(total>0?`✓ ${selDates.length}日付に休業日を設定`:"▲ 既に設定済みです");
+            }} style={{padding:"6px 12px",background:"rgba(255,71,87,.15)",border:"1px solid rgba(255,71,87,.3)",borderRadius:8,color:"#FF4757",fontSize:12,fontWeight:700,cursor:"pointer"}}>× 休業日に設定</button>
           </div>
         </div>
         {Object.keys(settings.dateCandidates||{}).length>0&&<div style={{marginTop:14}}>
@@ -2600,14 +2604,14 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
         </div>}
       </AC>}
 
-      {mode==="template"&&<AC title="📁 曜日別候補テンプレート">
-        {plan==="free"&&<div style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#F59E0B"}}>🔒 テンプレート機能はProプランで利用できます</div>}
+      {mode==="template"&&<AC title="曜日別候補テンプレート">
+        {plan==="free"&&<div style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#F59E0B"}}>テンプレート機能はProプランで利用できます</div>}
         <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:12,opacity:plan==="free"?.4:1}}>現在の曜日別候補をテンプレートとして保存し、後で再利用できます。</div>
         <div style={{display:"flex",gap:8,marginBottom:16,opacity:plan==="free"?.4:1,pointerEvents:plan==="free"?"none":"auto"}}>
           <input value={tmplName} onChange={e=>setTmplName(e.target.value)} placeholder="テンプレート名を入力" style={{...AI,flex:1}}/>
           <button onClick={saveTemplate} style={AB}>保存</button>
         </div>
-        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>🌐 全店舗で共有されます</div>
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>全店舗で共有されます</div>
         {globalTemplates.length===0&&<div style={{fontSize:13,color:"var(--c-text4)"}}>保存済みテンプレートはありません</div>}
         {globalTemplates.map((t,i)=>(
           <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:10,marginBottom:6,opacity:plan==="free"?.4:1,pointerEvents:plan==="free"?"none":"auto"}}>
@@ -2638,15 +2642,15 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
       onSaveSettings&&onSaveSettings({...settings,staffAliases:newAliases});
     }
     setLinkTarget(null);
-    tt(`✅「${subName}」を「${registeredName}」の別名として登録しました`);
+    tt(`✓「${subName}」を「${registeredName}」の別名として登録しました`);
   };
   const tg=f=>{if(sf===f)setSdr(d=>d==="asc"?"desc":"asc");else{setSf(f);setSdr("asc");}};
   const fil=subs.filter(s=>(!fn||s.staffName.includes(fn))&&(fp==="all"||s.periodId===fp)).sort((a,b)=>{let va=sf==="submittedAt"?new Date(a[sf]).getTime():(a[sf]||""),vb=sf==="submittedAt"?new Date(b[sf]).getTime():(b[sf]||"");return(va<vb?-1:va>vb?1:0)*(sdr==="asc"?1:-1);});
   const gpl=id=>periods.find(p=>p.id===id)?.label||"不明";
   return(<div>
-    <AT>📥 提出一覧</AT>
+    <AT>提出一覧</AT>
     <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
-      <input value={fn} onChange={e=>setFn(e.target.value)} placeholder="🔍 氏名で絞り込み" style={{flex:1,minWidth:130,padding:"10px 14px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:10,color:"var(--c-text)",fontSize:14,outline:"none"}}/>
+      <input value={fn} onChange={e=>setFn(e.target.value)} placeholder="氏名で絞り込み" style={{flex:1,minWidth:130,padding:"10px 14px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:10,color:"var(--c-text)",fontSize:14,outline:"none"}}/>
       <select value={fp} onChange={e=>setFp(e.target.value)} style={{padding:"10px 12px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:10,color:"var(--c-text)",fontSize:13,outline:"none",cursor:"pointer"}}>
         <option value="all" style={{background:"#1A1A2E"}}>全期間</option>
         {periods.map(p=><option key={p.id} value={p.id} style={{background:"#1A1A2E"}}>{p.label}</option>)}
@@ -2686,14 +2690,14 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
               </td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text3)",whiteSpace:"nowrap"}}>
                   {at}
-                  {hasRealUpdate&&<><br/><span style={{fontSize:10,color:"#F59E0B",fontWeight:700}}>✏️ 更新: {new Date(sub.updatedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</span></>}
+                  {hasRealUpdate&&<><br/><span style={{fontSize:10,color:"#F59E0B",fontWeight:700}}>更新: {new Date(sub.updatedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</span></>}
                 </td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text3)",fontSize:12}}>{gpl(sub.periodId)}</td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 8px",borderRadius:4,fontSize:12,fontWeight:600}}>{wk}日</span></td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><span style={{background:"var(--c-input)",color:"var(--c-text3)",padding:"2px 8px",borderRadius:4,fontSize:12}}>{ds.length-wk}日</span></td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",whiteSpace:"nowrap"}}>
                 <button onClick={()=>setDet(sub)} style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text2)",fontSize:12,cursor:"pointer",marginRight:4}}>詳細</button>
-                {isPro&&<button onClick={()=>{if(!confirm("削除しますか？"))return;onSave(subs.filter(s=>s.id!==sub.id));tt("🗑️ 削除しました");}} style={AD}>削除</button>}
+                {isPro&&<button onClick={()=>{if(!confirm("削除しますか？"))return;onSave(subs.filter(s=>s.id!==sub.id));tt("削除しました");}} style={AD}>削除</button>}
               </td>
             </tr>);})}
           </tbody>
@@ -2708,7 +2712,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           <button onClick={()=>setDet(null)} style={{background:"var(--c-input)",border:"none",borderRadius:"50%",width:32,height:32,color:"var(--c-text2)",fontSize:18,cursor:"pointer"}}>✕</button>
         </div>
         <div style={{overflowY:"auto",padding:"8px 16px 24px"}}>
-          {det.comment&&<div style={{background:"var(--c-input)",borderRadius:8,padding:"10px 12px",margin:"8px 0",fontSize:13,color:"var(--c-text2)"}}>💬 {det.comment}</div>}
+          {det.comment&&<div style={{background:"var(--c-input)",borderRadius:8,padding:"10px 12px",margin:"8px 0",fontSize:13,color:"var(--c-text2)"}}>{det.comment}</div>}
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead><tr>{["日付","区分","出勤","退勤"].map(h=><th key={h} style={{background:"var(--c-input)",color:"var(--c-text2)",padding:"8px 12px",textAlign:"left",fontWeight:600}}>{h}</th>)}</tr></thead>
             <tbody>{Object.keys(det.shifts||{}).sort().map(ds=>{const d=pd(ds),s=det.shifts[ds],iw=s&&s.status==="work";return(<tr key={ds}>
@@ -2731,7 +2735,7 @@ function UnlockCodeInput({tt,plan,onUnlock,onLock}){
   const isUnlocked=lg(UNLOCK_LS_KEY,false);
   if(isUnlocked){
     return(<div style={{display:"flex",alignItems:"center",gap:10}}>
-      <div style={{fontSize:13,color:"#22c55e",fontWeight:700}}>✅ すべての機能が開放されています</div>
+      <div style={{fontSize:13,color:"#22c55e",fontWeight:700}}>✓ すべての機能が開放されています</div>
       <button onClick={onLock} style={{...AGray,fontSize:12,padding:"6px 12px"}}>解除</button>
     </div>);
   }
@@ -2740,24 +2744,24 @@ function UnlockCodeInput({tt,plan,onUnlock,onLock}){
       style={{...AI,flex:1}} onKeyDown={e=>{if(e.key==="Enter"){
         const today=new Date().toISOString().split("T")[0];
         const tempOk=code===UNLOCK_CODE_TEMP&&today<=UNLOCK_CODE_TEMP_EXPIRY;
-        if(code===UNLOCK_CODE){onUnlock(false);}else if(tempOk){onUnlock(true);}else{tt("❌ コードが違います");setCode("");}
+        if(code===UNLOCK_CODE){onUnlock(false);}else if(tempOk){onUnlock(true);}else{tt("✕ コードが違います");setCode("");}
       }}}/>
     <button onClick={()=>{
       const today=new Date().toISOString().split("T")[0];
       const tempOk=code===UNLOCK_CODE_TEMP&&today<=UNLOCK_CODE_TEMP_EXPIRY;
-      if(code===UNLOCK_CODE){onUnlock(false);}else if(tempOk){onUnlock(true);}else{tt("❌ コードが違います");setCode("");}
+      if(code===UNLOCK_CODE){onUnlock(false);}else if(tempOk){onUnlock(true);}else{tt("✕ コードが違います");setCode("");}
     }} style={AB}>適用</button>
   </div>);
 }
 
 function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
   const[pw,setPw]=useState("");
-  const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,null));
+  const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
   const changeTheme=pref=>{
     ls(THEME_KEY,pref);
     setThemePref(pref);
     applyTheme(pref);
-    tt(pref==="light"?"☀️ ライトモード":(pref==="dark"?"🌙 ダークモード":"🔄 システム設定に合わせる"));
+    tt(pref==="light"?"☀️ ライトモード":(pref==="dark"?"ダークモード":"↺ システム設定に合わせる"));
   };
   // データエクスポート（JSON）
   const exportData=()=>{
@@ -2765,7 +2769,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
     const blob=new Blob([data],{type:"application/json"});
     const url=URL.createObjectURL(blob);
     const a=document.createElement("a");a.href=url;a.download=`shift_subs_${fd(new Date())}.json`;a.click();URL.revokeObjectURL(url);
-    tt("✅ 提出データをエクスポートしました");
+    tt("✓ 提出データをエクスポートしました");
   };
   // データインポート（JSON）→ 既存データとマージ
   const importData=()=>{
@@ -2776,25 +2780,25 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
       reader.onload=ev=>{
         try{
           const imported=JSON.parse(ev.target.result);
-          if(!Array.isArray(imported)){tt("⚠️ 無効なファイルです");return;}
+          if(!Array.isArray(imported)){tt("▲ 無効なファイルです");return;}
           // マージ（同一id は上書き、新規は追加）
           const merged=[...subs];
           imported.forEach(sub=>{
             const idx=merged.findIndex(s=>s.id===sub.id);
             if(idx>=0)merged[idx]=sub;else merged.push(sub);
           });
-          saveSubs(merged);tt(`✅ ${imported.length}件をインポートしました（合計${merged.length}件）`);
-        }catch{tt("⚠️ ファイルの読み込みに失敗しました");}
+          saveSubs(merged);tt(`✓ ${imported.length}件をインポートしました（合計${merged.length}件）`);
+        }catch{tt("▲ ファイルの読み込みに失敗しました");}
       };
       reader.readAsText(file);
     };
     input.click();
   };
   return(<div>
-    <AT>⚙️ システム設定</AT>
-    <AC title="💳 現在のプラン">
+    <AT>システム設定</AT>
+    <AC title="現在のプラン">
       <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0"}}>
-        <div style={{fontSize:32}}>{plan==="pro"?"⭐":"🆓"}</div>
+        <div style={{fontSize:32}}>{plan==="pro"?"★":""}</div>
         <div>
           <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{PLAN_LABELS[plan]||"Free"}プラン</div>
           <div style={{fontSize:12,color:"var(--c-text3)",marginTop:3}}>
@@ -2805,9 +2809,9 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
       </div>
       {plan!=="pro"&&<div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>アップグレード機能は近日公開予定です</div>}
     </AC>
-    <AC title="🌓 テーマ設定">
+    <AC title="テーマ設定">
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        {[["auto","🔄 自動（システム設定）",null],["light","☀️ ライト","light"],["dark","🌙 ダーク","dark"]].map(([key,label,val])=>{
+        {[["auto","↺ 自動（システム設定）",null],["light","☀️ ライト","light"],["dark","ダーク","dark"]].map(([key,label,val])=>{
           const sel=themePref===val;
           return(<button key={key} onClick={()=>changeTheme(val)}
             style={{flex:1,padding:"10px 8px",borderRadius:10,border:`2px solid ${sel?"#f87036":"var(--c-border)"}`,
@@ -2819,7 +2823,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
       </div>
     </AC>
 
-    {plan==="pro"&&<AC title="📊 Excel書き出し設定">
+    {plan==="pro"&&<AC title="Excel書き出し設定">
       <AL>書き出し時の店舗名（空欄 = 登録名をそのまま使用）</AL>
       <div style={{display:"flex",gap:8,marginBottom:4}}>
         <input value={settings.xlShopName||""} onChange={e=>onSave({...settings,xlShopName:e.target.value})} placeholder="例：〇〇カフェ 渋谷店" style={{...AI,flex:1}}/>
@@ -2828,10 +2832,10 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
       <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>設定した名前はExcel出力時のファイル名・シート内店舗名に反映されます</div>
     </AC>}
 
-    {plan==="pro"&&<AC title="📅 期間の単位（プリセット）">
+    {plan==="pro"&&<AC title="期間の単位（プリセット）">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>期間を新規作成するときのプリセット選択肢を切り替えます。</div>
       <div style={{display:"flex",gap:8}}>
-        {[["2week","📆 2週間（前半／後半）"],["1month","🗓️ 1ヶ月"]].map(([val,label])=>{
+        {[["2week","2週間（前半／後半）"],["1month","️ 1ヶ月"]].map(([val,label])=>{
           const sel=(settings.periodUnit||"2week")===val;
           return(<button key={val} onClick={()=>onSave({...settings,periodUnit:val})}
             style={{flex:1,padding:"10px 8px",borderRadius:10,border:`2px solid ${sel?"#f87036":"var(--c-border)"}`,
@@ -2843,7 +2847,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
       </div>
     </AC>}
 
-    <AC title="📩 お問い合わせ">
+    <AC title="お問い合わせ">
       <div style={{fontSize:13,color:"var(--c-text2)",marginBottom:14,lineHeight:1.7}}>
         ご意見・ご要望・不具合の報告は、XのDMまたはリプライにてお気軽にどうぞ。
       </div>
@@ -2881,9 +2885,9 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
       });
       const data=await res.json();
       if(data.url) window.location.href=data.url;
-      else tt("❌ "+(data.error||"請求管理ページを開けませんでした"));
+      else tt("✕ "+(data.error||"請求管理ページを開けませんでした"));
     }catch(e){
-      tt("❌ 通信エラーが発生しました");
+      tt("✕ 通信エラーが発生しました");
     }finally{setPortalLoading(false);}
   };
 
@@ -2911,15 +2915,15 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
 
   return(
     <div>
-      <AT>💳 マイページ</AT>
+      <AT>マイページ</AT>
 
       {/* プランカード */}
       <AC title="現在のプラン">
         <div style={{display:"flex",alignItems:"center",gap:16,padding:"8px 0 16px"}}>
-          <div style={{fontSize:48}}>{plan==="pro"?"⭐":"🆓"}</div>
+          <div style={{fontSize:48}}>{plan==="pro"?"★":""}</div>
           <div style={{flex:1}}>
             <div style={{fontSize:22,fontWeight:800,color:"var(--c-text)"}}>{PLAN_LABELS[plan]||"Free"}プラン</div>
-            {expiryLabel&&<div style={{fontSize:12,color:"var(--c-text3)",marginTop:3}}>🗓 {expiryLabel}</div>}
+            {expiryLabel&&<div style={{fontSize:12,color:"var(--c-text3)",marginTop:3}}>{expiryLabel}</div>}
             {!isPaid&&<div style={{fontSize:12,color:"var(--c-text4)",marginTop:3}}>無料プランをご利用中です</div>}
           </div>
         </div>
@@ -2927,15 +2931,15 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
         {/* 使用量 */}
         <div style={{borderTop:"1px solid var(--c-border)",paddingTop:16}}>
           <div style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:12}}>使用状況</div>
-          <Bar used={staffList.length} max={lim.staff} label="👥 スタッフ数"/>
-          <Bar used={periods.length} max={lim.periods} label="📅 期間数"/>
+          <Bar used={staffList.length} max={lim.staff} label="スタッフ数"/>
+          <Bar used={periods.length} max={lim.periods} label="期間数"/>
         </div>
 
         {/* アップグレード */}
         {plan!=="pro"&&<div style={{marginTop:4}}>
           <button onClick={()=>onUpgrade&&onUpgrade({type:"staff",limit:lim.staff,plan})}
             style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#f87036,#e05a1a)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
-            {"⭐ Proにアップグレード"}
+            {"★ Proにアップグレード"}
           </button>
         </div>}
       </AC>
@@ -2946,7 +2950,7 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead>
               <tr>
-                {[["","機能"],["🆓 Free","無料"],["⭐ Pro","500円/月"]].map(([icon,price],i)=>(
+                {[["","機能"],["Free","無料"],["★ Pro","500円/月"]].map(([icon,price],i)=>(
                   <th key={i} style={{padding:"8px 6px",textAlign:"center",borderBottom:"2px solid var(--c-border)",color:"var(--c-text2)",fontWeight:700,background:
                     (i===1&&plan==="free")||(i===2&&plan==="pro")
                       ?"rgba(248,112,54,.1)":"transparent",
@@ -2961,12 +2965,12 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
               {[
                 ["スタッフ数","20名","無制限"],
                 ["期間数","1件","無制限"],
-                ["スタッフ並べ替え","❌","✅"],
-                ["テンプレート共有","❌","✅"],
-                ["Excel書き出し","✅","✅"],
-                ["Excel店舗名変更","❌","✅"],
-                ["スタッフ名色設定","❌","✅"],
-                ["名前リンク（別名）","❌","✅"],
+                ["スタッフ並べ替え","✕","✓"],
+                ["テンプレート共有","✕","✓"],
+                ["Excel書き出し","✓","✓"],
+                ["Excel店舗名変更","✕","✓"],
+                ["スタッフ名色設定","✕","✓"],
+                ["名前リンク（別名）","✕","✓"],
               ].map(([feat,...vals])=>(
                 <tr key={feat}>
                   <td style={{padding:"9px 6px",color:"var(--c-text3)",fontSize:12,fontWeight:600,borderBottom:"1px solid var(--c-border)"}}>{feat}</td>
@@ -2974,7 +2978,7 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
                     <td key={i} style={{padding:"9px 6px",textAlign:"center",borderBottom:"1px solid var(--c-border)",
                       background:(i===0&&plan==="free")||(i===1&&plan==="pro")
                         ?"rgba(248,112,54,.06)":"transparent",
-                      color:v==="✅"?"#10B981":v==="❌"?"#9CA3AF":"var(--c-text)",fontWeight:600}}>
+                      color:v==="✓"?"#10B981":v==="✕"?"#9CA3AF":"var(--c-text)",fontWeight:600}}>
                       {v}
                     </td>
                   ))}
@@ -2992,7 +2996,7 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
         </div>
         <button onClick={openPortal} disabled={portalLoading}
           style={{width:"100%",padding:"13px",background:portalLoading?"#999":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:11,color:"var(--c-text2)",fontSize:14,fontWeight:600,cursor:portalLoading?"not-allowed":"pointer"}}>
-          {portalLoading?"⏳ 読み込み中...":"🧾 請求・解約の管理（Stripeポータル）"}
+          {portalLoading?"⏳ 読み込み中...":"請求・解約の管理（Stripeポータル）"}
         </button>
         <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8,textAlign:"center"}}>外部のStripeサイトに移動します</div>
       </AC>}
@@ -3042,14 +3046,14 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20,animation:"fI .2s"}} onClick={onClose}>
       <div style={{background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:20,width:"100%",maxWidth:380,padding:"28px 24px",animation:"sI .2s",boxShadow:"0 8px 40px rgba(0,0,0,.3)"}} onClick={e=>e.stopPropagation()}>
         <div style={{textAlign:"center",marginBottom:20}}>
-          <div style={{fontSize:44,marginBottom:10}}>🔒</div>
+          <div style={{fontSize:44,marginBottom:10}}></div>
           <div style={{fontSize:17,fontWeight:700,color:"var(--c-text)",marginBottom:8}}>{m.title}</div>
           <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8}}>{m.desc}</div>
           <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6}}>{m.next}</div>
         </div>
         <div style={{background:"rgba(248,112,54,.08)",border:"1px solid rgba(248,112,54,.25)",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
           <div style={{fontSize:12,fontWeight:700,color:"#f87036",marginBottom:8}}>プラン比較</div>
-          {[["🆓 Free","無料","スタッフ20名 / 期間1件"],["⭐ Pro","500円/月","スタッフ・期間 無制限 + 全機能"]].map(([label,price,desc])=>(
+          {[["Free","無料","スタッフ20名 / 期間1件"],["★ Pro","500円/月","スタッフ・期間 無制限 + 全機能"]].map(([label,price,desc])=>(
             <div key={label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid var(--c-border)"}}>
               <span style={{fontSize:13,color:"var(--c-text2)",fontWeight:600}}>{label}</span>
               <span style={{fontSize:11,color:"var(--c-text3)"}}>{desc}</span>
@@ -3059,7 +3063,7 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
         </div>
         {error&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:10,background:"rgba(255,71,87,.1)",padding:"8px",borderRadius:8}}>{error}</div>}
         <button onClick={()=>checkout("pro")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="pro"?"var(--c-text3)":"linear-gradient(135deg,#f87036,#e05a1a)",border:"2px solid rgba(248,112,54,.3)",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
-          {loading==="pro"?"⏳ 処理中...":"⭐ Proにアップグレード（500円/月）"}
+          {loading==="pro"?"⏳ 処理中...":"★ Proにアップグレード（500円/月）"}
         </button>
         <button onClick={onClose} style={{width:"100%",padding:"11px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:11,color:"var(--c-text3)",fontSize:13,cursor:"pointer"}}>今はしない</button>
       </div>
@@ -3075,7 +3079,7 @@ function AL({children}){return(<label style={{fontSize:13,fontWeight:600,color:"
 function AT({children}){return(<div style={{fontSize:18,fontWeight:700,color:"var(--c-text)",marginBottom:16}}>{children}</div>);}
 function CL({items,onDel}){return items.map((c,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:c.closed?"rgba(255,71,87,.08)":"rgba(255,255,255,.05)",border:`1px solid ${c.closed?"rgba(255,71,87,.2)":"var(--c-border)"}`,borderRadius:10,marginBottom:6}}>
   {c.closed
-    ?<span style={{flex:1,fontSize:14,color:"#FF4757",fontWeight:600}}>🚫 休業日</span>
+    ?<span style={{flex:1,fontSize:14,color:"#FF4757",fontWeight:600}}>× 休業日</span>
     :<span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:500}}>{c.start} 〜 {c.end}</span>
   }
   <button onClick={()=>onDel(i)} style={AD}>削除</button>
