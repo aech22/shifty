@@ -334,6 +334,18 @@ applyTheme(lg(THEME_KEY,"light"));
 function App(){
   const[syncStatus,setSyncStatus]=useState("init");
   const[ready,setReady]=useState(false); // Phase1完了フラグ
+  const[paymentToast,setPaymentToast]=useState(()=>{
+    const p=new URLSearchParams(window.location.search);
+    if(p.get("payment")==="success") return "success";
+    if(p.get("payment")==="cancel") return "cancel";
+    return null;
+  });
+  useEffect(()=>{
+    if(!paymentToast) return;
+    window.history.replaceState({},"",window.location.pathname+window.location.hash);
+    const t=setTimeout(()=>setPaymentToast(null),5000);
+    return()=>clearTimeout(t);
+  },[paymentToast]);
 
   const[shops,setShops]=useState([]);
   // URLにtokenがある場合はsessionStorageを無視してPhase1で確定
@@ -1140,6 +1152,9 @@ function App(){
 
   return(
     <div style={{fontFamily:"'Hiragino Sans','Yu Gothic',sans-serif",minHeight:"100vh",background:"var(--c-bg)"}}>
+      {paymentToast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:2000,background:paymentToast==="success"?"#22C55E":"#6B7280",color:"white",padding:"13px 24px",borderRadius:12,fontWeight:700,fontSize:14,boxShadow:"0 4px 20px rgba(0,0,0,.3)",animation:"sI .3s"}}>
+        {paymentToast==="success"?"★ Proプランへのアップグレードが完了しました！":"決済がキャンセルされました"}
+      </div>}
       {/* 同期ステータスバー（接続中以外のみ表示） */}
       {syncStatus!=="online"&&<div style={{background:syncStatus==="offline"?"#F59E0B":"#6B7280",color:"white",fontSize:11,fontWeight:700,textAlign:"center",padding:"4px 8px"}}>
         {syncStatus==="offline"?"オフライン（再接続中...）":syncStatus==="no_config"?"Firebase未設定":"⏳ 接続中..."}
