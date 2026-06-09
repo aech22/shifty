@@ -113,6 +113,32 @@ function isHoliday(dateStr){
 }
 const DEFAULT_PW="admin1234";
 
+// ===== ログイン試行制限（10回でロック・30分間）=====
+const _LA_KEY="ots_login_attempts";
+const _LL_KEY="ots_login_locked_until";
+const _MAX_ATTEMPTS=10;
+const _LOCK_MS=30*60*1000;
+function _getAttempts(ns){try{return parseInt(localStorage.getItem(_LA_KEY+"_"+ns)||"0",10);}catch{return 0;}}
+function _getLockUntil(ns){try{return parseInt(localStorage.getItem(_LL_KEY+"_"+ns)||"0",10);}catch{return 0;}}
+function _isLocked(ns){return Date.now()<_getLockUntil(ns);}
+function _lockRemaining(ns){return Math.max(0,_getLockUntil(ns)-Date.now());}
+function _incAttempts(ns){
+  try{
+    const n=_getAttempts(ns)+1;
+    localStorage.setItem(_LA_KEY+"_"+ns,String(n));
+    if(n>=_MAX_ATTEMPTS) localStorage.setItem(_LL_KEY+"_"+ns,String(Date.now()+_LOCK_MS));
+    return n;
+  }catch{return 0;}
+}
+function _resetAttempts(ns){
+  try{localStorage.removeItem(_LA_KEY+"_"+ns);localStorage.removeItem(_LL_KEY+"_"+ns);}catch{}
+}
+function _lockMsg(ns){
+  const s=Math.ceil(_lockRemaining(ns)/1000);
+  const m=Math.floor(s/60),r=s%60;
+  return`ログイン試行回数が上限（${_MAX_ATTEMPTS}回）を超えました。${m}分${r}秒後に再試行できます`;
+}
+
 // ===== サブスクリプション プラン定義 =====
 // テスト用: "free"|"pro" に設定すると Firebase を無視して上書き
 const DEV_PLAN_OVERRIDE = null; // 本番用
@@ -768,19 +794,26 @@ function App(){
   };
   const signInWithEmail=async(email,password)=>{
     if(!firebaseAuth){setAuthError("Firebase Auth未初期化");return;}
+    const ns="email";
+    if(_isLocked(ns)){setAuthError(_lockMsg(ns));return;}
     setAuthLoading(true);setAuthError("");
     try{
       const result=await firebaseAuth.signInWithEmailAndPassword(email,password);
+      _resetAttempts(ns);
       await _afterEmailAuth(result.user);
     }catch(e){
       console.warn("Email sign-in failed:",e);
-      if(e.code==="auth/user-not-found"||e.code==="auth/wrong-password"||e.code==="auth/invalid-credential")
-        setAuthError("メールアドレスまたはパスワードが正しくありません");
-      else if(e.code==="auth/invalid-email")
+      if(e.code==="auth/user-not-found"||e.code==="auth/wrong-password"||e.code==="auth/invalid-credential"){
+        const n=_incAttempts(ns);
+        const rem=_MAX_ATTEMPTS-n;
+        if(_isLocked(ns)) setAuthError(_lockMsg(ns));
+        else setAuthError(`メールアドレスまたはパスワードが正しくありません（残り${rem}回）`);
+      }else if(e.code==="auth/invalid-email")
         setAuthError("メールアドレスの形式が正しくありません");
-      else if(e.code==="auth/too-many-requests")
+      else if(e.code==="auth/too-many-requests"){
+        _incAttempts(ns);
         setAuthError("ログイン試行が多すぎます。しばらく待ってから再試行してください");
-      else setAuthError("ログインに失敗しました: "+e.message);
+      }else setAuthError("ログインに失敗しました");
     }finally{setAuthLoading(false);}
   };
   // パスワードリセットメール送信
@@ -1006,28 +1039,32 @@ function App(){
           :emailMode
             ?<div>
               {/* メール認証フォーム */}
+              {(()=>{const locked=emailMode==="login"&&_isLocked("email");return(
+              <React.Fragment>
               <div style={{display:"flex",alignItems:"center",marginBottom:16}}>
                 <button onClick={()=>{setEmailMode(null);setAuthError("");setEmailVal("");setPasswordVal("");setPassword2Val("");}}
                   style={{background:"none",border:"none",color:"#94A3B8",fontSize:13,cursor:"pointer",padding:"0 8px 0 0"}}>← 戻る</button>
                 <div style={{color:"#F1F5F9",fontSize:16,fontWeight:700}}>{emailMode==="login"?"メールでログイン":"新規アカウント登録"}</div>
               </div>
               <input type="email" value={emailVal} onChange={e=>setEmailVal(e.target.value)}
-                placeholder="メールアドレス"
-                style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:10,color:"#F1F5F9",fontSize:16,outline:"none",marginBottom:10}}/>
+                placeholder="メールアドレス" maxLength={254} disabled={locked}
+                style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:10,color:"#F1F5F9",fontSize:16,outline:"none",marginBottom:10,opacity:locked?.5:1}}/>
               <input type="password" value={passwordVal} onChange={e=>setPasswordVal(e.target.value)}
-                onKeyDown={e=>{if(e.key==="Enter"&&emailMode==="login")signInWithEmail(emailVal,passwordVal);}}
-                placeholder="パスワード（6文字以上）"
-                style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:10,color:"#F1F5F9",fontSize:16,outline:"none",marginBottom:emailMode==="register"?10:16}}/>
+                onKeyDown={e=>{if(e.key==="Enter"&&emailMode==="login"&&!locked)signInWithEmail(emailVal,passwordVal);}}
+                placeholder="パスワード（6文字以上）" maxLength={128} disabled={locked}
+                style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:10,color:"#F1F5F9",fontSize:16,outline:"none",marginBottom:emailMode==="register"?10:16,opacity:locked?.5:1}}/>
               {emailMode==="register"&&<input type="password" value={password2Val} onChange={e=>setPassword2Val(e.target.value)}
                 onKeyDown={e=>{if(e.key==="Enter"&&password2Val===passwordVal)signUpWithEmail(emailVal,passwordVal);}}
-                placeholder="パスワード（確認）"
+                placeholder="パスワード（確認）" maxLength={128}
                 style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:10,color:"#F1F5F9",fontSize:16,outline:"none",marginBottom:16}}/>}
               {authError&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:12,background:"rgba(255,71,87,.1)",padding:"8px 12px",borderRadius:8}}>{authError}</div>}
-              <button
+              <button disabled={locked||authLoading}
                 onClick={()=>emailMode==="login"?signInWithEmail(emailVal,passwordVal):(password2Val!==passwordVal?setAuthError("パスワードが一致しません"):signUpWithEmail(emailVal,passwordVal))}
-                style={{width:"100%",padding:"13px",background:"#f87036",border:"none",borderRadius:12,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:12}}>
+                style={{width:"100%",padding:"13px",background:locked?"#64748B":"#f87036",border:"none",borderRadius:12,color:"white",fontSize:15,fontWeight:700,cursor:locked?"not-allowed":"pointer",marginBottom:12}}>
                 {emailMode==="login"?"ログイン":"アカウント作成"}
               </button>
+              </React.Fragment>
+              );})()}
               {emailMode==="login"
                 ?<div style={{textAlign:"center",fontSize:12,color:"#64748B"}}>
                   <button onClick={()=>sendPasswordReset(emailVal)} style={{background:"none",border:"none",color:"#94A3B8",fontSize:12,cursor:"pointer",textDecoration:"underline",marginBottom:6,display:"block",width:"100%"}}>パスワードを忘れた方</button>
@@ -1075,7 +1112,7 @@ function App(){
             value={inviteCode}
             onChange={e=>{setInviteCode(e.target.value);setInviteError("");}}
             onKeyDown={e=>e.key==="Enter"&&applyInviteCode()}
-            placeholder="店舗コードを貼り付け"
+            placeholder="店舗コードを貼り付け" maxLength={100}
             style={{flex:1,padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:10,color:"#F1F5F9",fontSize:14,outline:"none"}}
           />
           <button onClick={applyInviteCode}
@@ -1317,7 +1354,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                       if(e.key==="Escape"){setEditN(false);setShowSuggest(false);}
                     }}
                     onFocus={()=>setShowSuggest(true)}
-                    placeholder="お名前を入力"
+                    placeholder="お名前を入力" maxLength={50}
                     style={{flex:1,padding:"10px 12px",fontSize:18,fontWeight:700,background:"var(--c-bg)",border:"2px solid #f87036",borderRadius:10,outline:"none",color:"var(--c-text)",minWidth:0}}/>
                   <button onClick={()=>{
                     if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);setName(resolved);}
@@ -1421,7 +1458,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
             <span style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>コメント・備考（任意）</span>
           </div>
           <div style={{padding:"14px 16px"}}>
-            <textarea value={comment} onChange={e=>setComment(e.target.value)} disabled={dl}
+            <textarea value={comment} onChange={e=>setComment(e.target.value)} disabled={dl} maxLength={500}
               placeholder="休み希望の理由、変動できる日、その他連絡事項など"
               style={{width:"100%",minHeight:80,padding:"10px 12px",fontSize:14,color:"var(--c-text)",background:"var(--c-bg)",border:"2px solid #E5E7EB",borderRadius:10,outline:"none",resize:"vertical",lineHeight:1.6,fontFamily:"inherit"}}
               onFocus={e=>e.target.style.borderColor="#f87036"} onBlur={e=>e.target.style.borderColor="var(--c-border)"}></textarea>
@@ -1672,17 +1709,28 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
 // ============================================================
 function AdminLogin({settings,onAuth}){
   const[pw,setPw]=useState(""),[err,setErr]=useState("");
-  const go=()=>{if(pw===(settings.password||DEFAULT_PW))onAuth();else{setErr("パスワードが違います");setPw("");}};
+  const NS="admin";
+  const go=()=>{
+    if(_isLocked(NS)){setErr(_lockMsg(NS));return;}
+    if(pw===(settings.password||DEFAULT_PW)){_resetAttempts(NS);onAuth();}
+    else{
+      const n=_incAttempts(NS);
+      const rem=_MAX_ATTEMPTS-n;
+      setPw("");
+      if(_isLocked(NS)) setErr(_lockMsg(NS));
+      else setErr(`パスワードが違います（残り${rem}回）`);
+    }
+  };
+  const locked=_isLocked(NS);
   return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 44px)",background:"var(--c-bg)",padding:20}}>
       <div style={{background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:20,padding:"36px 28px",width:"100%",maxWidth:360,textAlign:"center",animation:"sI .3s",boxShadow:"0 4px 16px rgba(0,0,0,.08)"}}>
         <div style={{fontSize:48,marginBottom:12}}></div>
         <div style={{fontSize:20,fontWeight:700,color:"#1F2937",marginBottom:4}}>管理者ログイン</div>
         <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:24}}>パスワードを入力してください</div>
-        <input type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="••••••••" style={{width:"100%",padding:"13px 16px",background:"var(--c-card)",border:"1px solid #D1D5DB",borderRadius:10,color:"#1F2937",fontSize:16,outline:"none",textAlign:"center",letterSpacing:".2em",marginBottom:12}}/>
-        <button onClick={go} style={{width:"100%",padding:14,background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:16,fontWeight:700,cursor:"pointer"}}>ログイン</button>
+        <input type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!locked&&go()} placeholder="••••••••" maxLength={128} disabled={locked} style={{width:"100%",padding:"13px 16px",background:"var(--c-card)",border:"1px solid #D1D5DB",borderRadius:10,color:"#1F2937",fontSize:16,outline:"none",textAlign:"center",letterSpacing:".2em",marginBottom:12,opacity:locked?.5:1}}/>
+        <button onClick={go} disabled={locked} style={{width:"100%",padding:14,background:locked?"#9CA3AF":"#f87036",border:"none",borderRadius:10,color:"white",fontSize:16,fontWeight:700,cursor:locked?"not-allowed":"pointer"}}>ログイン</button>
         <div style={{fontSize:13,color:"#EF4444",marginTop:10,minHeight:20}}>{err}</div>
-        <div style={{fontSize:12,color:"var(--c-text4)",marginTop:6}}>初期PW: admin1234</div>
       </div>
     </div>
   );
@@ -1980,7 +2028,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
           /* 手動入力 */
           <div>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:12}}>
-              <div><AL>ラベル</AL><input value={form.label} onChange={e=>setForm(f=>({...f,label:e.target.value}))} placeholder="例）7月前半" style={AI}/></div>
+              <div><AL>ラベル</AL><input value={form.label} onChange={e=>setForm(f=>({...f,label:e.target.value}))} placeholder="例）7月前半" maxLength={50} style={AI}/></div>
               <div><AL>開始日 *</AL><input type="date" value={form.startDate} onChange={e=>setForm(f=>({...f,startDate:e.target.value}))} style={AI}/></div>
               <div><AL>終了日 *</AL><input type="date" value={form.endDate} onChange={e=>setForm(f=>({...f,endDate:e.target.value}))} style={AI}/></div>
               <div><AL>締切日</AL><input type="date" value={form.deadlineDate} onChange={e=>setForm(f=>({...f,deadlineDate:e.target.value}))} style={AI}/></div>
@@ -2324,7 +2372,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
             {editIdx===i
               ?<>
                 {isPro&&<div style={{width:18,height:18,borderRadius:"50%",background:(staffColors[staffList[i]]||"black")==="red"?"#FF4757":"#374151",border:"2px solid #D1D5DB",flexShrink:0}}/>}
-                <input value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmEdit(i);if(e.key==="Escape")cancelEdit();}} autoFocus style={{...AI,flex:1,padding:"6px 10px",fontSize:14}}/>
+                <input value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmEdit(i);if(e.key==="Escape")cancelEdit();}} autoFocus maxLength={50} style={{...AI,flex:1,padding:"6px 10px",fontSize:14}}/>
                 <button onClick={()=>confirmEdit(i)} style={{...AB,padding:"6px 12px",fontSize:12}}>保存</button>
                 <button onClick={cancelEdit} style={{...AGray,padding:"6px 12px",fontSize:12}}>ｷｬﾝｾﾙ</button>
               </>
@@ -2379,7 +2427,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
           </div>
         ))}
         <div style={{display:"flex",gap:8,marginTop:12}}>
-          <input value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="スタッフ名を入力" style={AI}/>
+          <input value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="スタッフ名を入力" maxLength={50} style={AI}/>
           <button onClick={add} style={AB}>＋ 追加</button>
         </div>
         {isPro&&<button onClick={()=>{onSave([...staffList,"__spacer__"+genToken()]);tt("✓ 空白列を追加しました");}} style={{...AGray,width:"100%",fontSize:13,marginTop:8}}>＋ 空白列を追加（末尾）</button>}
@@ -2837,7 +2885,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
     {plan==="pro"&&<AC title="Excel書き出し設定">
       <AL>書き出し時の店舗名（空欄 = 登録名をそのまま使用）</AL>
       <div style={{display:"flex",gap:8,marginBottom:4}}>
-        <input value={settings.xlShopName||""} onChange={e=>onSave({...settings,xlShopName:e.target.value})} placeholder="例：〇〇カフェ 渋谷店" style={{...AI,flex:1}}/>
+        <input value={settings.xlShopName||""} onChange={e=>onSave({...settings,xlShopName:e.target.value})} placeholder="例：〇〇カフェ 渋谷店" maxLength={100} style={{...AI,flex:1}}/>
         {(settings.xlShopName||"")&&<button onClick={()=>onSave({...settings,xlShopName:""})} style={{...AGray,padding:"10px 12px",fontSize:12}}>クリア</button>}
       </div>
       <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>設定した名前はExcel出力時のファイル名・シート内店舗名に反映されます</div>
