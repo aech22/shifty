@@ -9,7 +9,7 @@ function getStripe() { return Stripe(process.env.STRIPE_SECRET_KEY); }
 
 // Stripe Price ID
 const STRIPE_PRICES = {
-  pro_monthly: "price_1TfjGIDxozrnBAkvEsyiXhrV", // Shifty Pro 500円/月
+  pro_monthly: "price_1TgTwHDjKKQsHl7LRZKClgFc", // Shifty Pro 500円/月（本番）
 };
 
 // ============================================================
