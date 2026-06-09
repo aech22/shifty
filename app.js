@@ -1968,7 +1968,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,tt,shopId,shopName,plan
   const pre=genPresets();
 
   const checkPeriodLimit=()=>{
-    const lim=PLAN_LIMITS[plan]?.periods??3;
+    const lim=PLAN_LIMITS[plan]?.periods??1;
     if(periods.length>=lim){onUpgrade&&onUpgrade({type:"periods",limit:lim,plan});return false;}
     return true;
   };
@@ -2881,7 +2881,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free"}){
           </div>
         </div>
       </div>
-      {plan!=="pro"&&<div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>アップグレード機能は近日公開予定です</div>}
+      <div style={{fontSize:12,color:"var(--c-text4)",marginTop:6}}>プランの変更・アップグレードは「マイページ」タブで行えます</div>
     </AC>
     <AC title="テーマ設定">
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
