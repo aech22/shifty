@@ -24,6 +24,7 @@ const FIREBASE_CONFIG = {
 // Firebase SDK の初期化
 let firebaseDB = null;
 let firebaseAuth = null;
+let firebaseFunctions = null;
 let firebaseEnabled = false;
 let onConnectChange = null; // 接続状態変化コールバック
 
@@ -412,6 +413,7 @@ function App(){
       if(!firebase.apps||firebase.apps.length===0) firebase.initializeApp(FIREBASE_CONFIG);
       firebaseDB = firebase.database();
       firebaseAuth = firebase.auth();
+      firebaseFunctions = firebase.app().functions("asia-northeast1");
       firebaseDB.ref(".info/connected").on("value",snap=>{
         firebaseEnabled=snap.val()===true;
         setSyncStatus(firebaseEnabled?"online":"offline");
@@ -874,6 +876,75 @@ function App(){
     }finally{setAuthLoading(false);}
   };
 
+  // authUser.providerData を最新状態に更新する
+  const refreshAuthUser=async()=>{
+    if(!firebaseAuth?.currentUser)return;
+    try{
+      await firebaseAuth.currentUser.reload();
+      const u=firebaseAuth.currentUser;
+      setAuthUser({...u,providerData:u.providerData?[...u.providerData]:[]});
+    }catch(e){console.warn("reload失敗:",e);}
+  };
+
+  // Google / Apple 連携
+  const linkProvider=async(type)=>{
+    if(!firebaseAuth?.currentUser)return{error:"ログインが必要です"};
+    try{
+      let provider;
+      if(type==="google"){
+        provider=new firebase.auth.GoogleAuthProvider();
+      }else{
+        provider=new firebase.auth.OAuthProvider("apple.com");
+        provider.addScope("name");provider.addScope("email");
+      }
+      await firebaseAuth.currentUser.linkWithPopup(provider);
+      await refreshAuthUser();
+      return{};
+    }catch(e){
+      if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request")return{error:""};
+      if(e.code==="auth/credential-already-in-use")return{error:"このアカウントは別のユーザーで使用済みです"};
+      if(e.code==="auth/provider-already-linked")return{error:"既に連携済みです"};
+      return{error:e.message};
+    }
+  };
+
+  // メール OTP 送信（Cloud Function）
+  const sendEmailOtp=async(email)=>{
+    if(!firebaseFunctions)return{error:"Firebase未初期化"};
+    try{
+      await firebaseFunctions.httpsCallable("sendEmailOtp")({email});
+      return{};
+    }catch(e){return{error:e.message};}
+  };
+
+  // OTP 検証→ emailLink 取得→ linkWithEmailLink で連携
+  const verifyAndLinkEmail=async(code,email)=>{
+    if(!firebaseAuth?.currentUser||!firebaseFunctions)return{error:"Firebase未初期化"};
+    try{
+      const result=await firebaseFunctions.httpsCallable("verifyEmailOtp")({code});
+      const{emailLink,email:confirmedEmail}=result.data;
+      await firebaseAuth.currentUser.linkWithEmailLink(confirmedEmail,emailLink);
+      await refreshAuthUser();
+      return{};
+    }catch(e){
+      if(e.code==="auth/provider-already-linked")return{error:"既にメールアドレスと連携済みです"};
+      if(e.code==="auth/email-already-in-use")return{error:"このメールアドレスは既に使用されています"};
+      return{error:e.message};
+    }
+  };
+
+  // プロバイダー連携解除
+  const unlinkProvider=async(providerId)=>{
+    if(!firebaseAuth?.currentUser)return{error:"ログインが必要です"};
+    const providers=firebaseAuth.currentUser.providerData||[];
+    if(providers.length<=1)return{error:"最後の連携方法は解除できません"};
+    try{
+      await firebaseAuth.currentUser.unlink(providerId);
+      await refreshAuthUser();
+      return{};
+    }catch(e){return{error:e.message};}
+  };
+
   // ログアウト
   const doLogout=async()=>{
     if(firebaseAuth&&authUser){
@@ -1217,7 +1288,9 @@ function App(){
                 startSubscriptions(id,shops);
               }}
               startSubscriptions={startSubscriptions}
-              logout={doLogout} authUser={authUser} syncStatus={syncStatus}/>
+              logout={doLogout} authUser={authUser} syncStatus={syncStatus}
+              onLinkProvider={linkProvider} onSendEmailOtp={sendEmailOtp}
+              onVerifyAndLinkEmail={verifyAndLinkEmail} onUnlinkProvider={unlinkProvider}/>
           :null)
       }
     </div>
@@ -1769,7 +1842,7 @@ function AdminLogin({settings,onAuth}){
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
@@ -1943,7 +2016,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -2861,9 +2934,15 @@ function UnlockCodeInput({tt,plan,onUnlock,onLock}){
   </div>);
 }
 
-function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId}){
+function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
+                 authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider}){
   const[pw,setPw]=useState("");
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
+  const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
+  const[emailInput,setEmailInput]=useState("");
+  const[codeInput,setCodeInput]=useState("");
+  const[linkLoading,setLinkLoading]=useState(false);
+  const[linkError,setLinkError]=useState("");
   const changeTheme=pref=>{
     ls(THEME_KEY,pref);
     setThemePref(pref);
@@ -2901,8 +2980,117 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId}
     };
     input.click();
   };
+  const linkedIds=(authUser?.providerData||[]).map(p=>p.providerId);
+  const handleLinkProvider=async(type)=>{
+    setLinkLoading(true);setLinkError("");
+    const r=await onLinkProvider(type);
+    setLinkLoading(false);
+    if(r?.error)setLinkError(r.error);
+    else if(!r?.error&&r?.error!==undefined){}
+    else tt("✓ 連携しました");
+  };
+  const handleSendOtp=async()=>{
+    if(!emailInput.trim()){setLinkError("メールアドレスを入力してください");return;}
+    setLinkLoading(true);setLinkError("");
+    const r=await onSendEmailOtp(emailInput.trim());
+    setLinkLoading(false);
+    if(r?.error){setLinkError(r.error);}
+    else{setEmailLinkStep(2);}
+  };
+  const handleVerifyOtp=async()=>{
+    if(!codeInput.trim()){setLinkError("確認コードを入力してください");return;}
+    setLinkLoading(true);setLinkError("");
+    const r=await onVerifyAndLinkEmail(codeInput.trim(),emailInput.trim());
+    setLinkLoading(false);
+    if(r?.error){setLinkError(r.error);}
+    else{setEmailLinkStep(0);setEmailInput("");setCodeInput("");tt("✓ メールアドレスを連携しました");}
+  };
+  const handleUnlink=async(pid)=>{
+    setLinkLoading(true);setLinkError("");
+    const r=await onUnlinkProvider(pid);
+    setLinkLoading(false);
+    if(r?.error)setLinkError(r.error);
+    else tt("✓ 連携を解除しました");
+  };
+
+  const providerRow=(pid,icon,label)=>{
+    const linked=linkedIds.includes(pid);
+    const info=linked?(authUser.providerData.find(p=>p.providerId===pid)?.email||""):null;
+    const isEmail=pid==="password";
+    const canUnlink=linkedIds.length>1;
+    return(
+      <div key={pid} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 0",borderBottom:"1px solid var(--c-border2)"}}>
+        <div style={{width:32,height:32,borderRadius:8,background:"var(--c-input)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{icon}</div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:14,fontWeight:600,color:"var(--c-text)"}}>{label}</div>
+          {linked&&info&&<div style={{fontSize:11,color:"var(--c-text3)",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{info}</div>}
+        </div>
+        {linked
+          ?<span style={{fontSize:11,fontWeight:600,color:"#22C55E",background:"rgba(34,197,94,.12)",padding:"3px 10px",borderRadius:20,whiteSpace:"nowrap",flexShrink:0}}>連携済み</span>
+          :<span style={{fontSize:11,color:"var(--c-text4)",flexShrink:0}}>未連携</span>
+        }
+        {linked&&canUnlink&&(
+          <button disabled={linkLoading} onClick={()=>handleUnlink(pid)}
+            style={{...AD,fontSize:11,padding:"5px 10px",flexShrink:0,opacity:linkLoading?.5:1}}>解除</button>
+        )}
+        {!linked&&!isEmail&&(
+          <button disabled={linkLoading} onClick={()=>handleLinkProvider(pid==="google.com"?"google":"apple")}
+            style={{...AB,fontSize:12,padding:"7px 14px",flexShrink:0,opacity:linkLoading?.5:1}}>連携する</button>
+        )}
+        {!linked&&isEmail&&emailLinkStep===0&&(
+          <button disabled={linkLoading} onClick={()=>{setEmailLinkStep(1);setLinkError("");}}
+            style={{...AB,fontSize:12,padding:"7px 14px",flexShrink:0}}>連携する</button>
+        )}
+      </div>
+    );
+  };
+
   return(<div>
     <AT>システム設定</AT>
+    {authUser&&<AC title="アカウント連携">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+        複数のログイン方法を連携しておくと、端末やブラウザが変わっても同じアカウントにアクセスできます。
+      </div>
+      {providerRow("apple.com","🍎","Apple ID")}
+      {providerRow("google.com","G","Googleアカウント")}
+      {providerRow("password","✉","メールアドレス")}
+      {emailLinkStep===1&&(
+        <div style={{marginTop:14,padding:14,background:"var(--c-input)",borderRadius:10,border:"1px solid var(--c-border2)"}}>
+          <AL>メールアドレス</AL>
+          <div style={{display:"flex",gap:8}}>
+            <input type="email" value={emailInput} onChange={e=>setEmailInput(e.target.value)}
+              placeholder="example@example.com" style={{...AI,flex:1,fontSize:16}}
+              onKeyDown={e=>{if(e.key==="Enter")handleSendOtp();}}/>
+            <button onClick={handleSendOtp} disabled={linkLoading}
+              style={{...AB,padding:"10px 14px",fontSize:13,whiteSpace:"nowrap",opacity:linkLoading?.5:1}}>
+              {linkLoading?"送信中...":"確認コードを送信"}
+            </button>
+          </div>
+          <button onClick={()=>{setEmailLinkStep(0);setLinkError("");}}
+            style={{...AGray,marginTop:8,padding:"6px 12px",fontSize:12}}>キャンセル</button>
+        </div>
+      )}
+      {emailLinkStep===2&&(
+        <div style={{marginTop:14,padding:14,background:"var(--c-input)",borderRadius:10,border:"1px solid var(--c-border2)"}}>
+          <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>
+            <strong>{emailInput}</strong> に確認コードを送信しました。<br/>メールに記載された6桁のコードを入力してください。
+          </div>
+          <AL>確認コード（6桁）</AL>
+          <div style={{display:"flex",gap:8}}>
+            <input type="text" inputMode="numeric" value={codeInput} onChange={e=>setCodeInput(e.target.value.replace(/\D/g,"").slice(0,6))}
+              placeholder="123456" maxLength={6} style={{...AI,flex:1,letterSpacing:"0.2em",fontSize:18,fontWeight:700}}
+              onKeyDown={e=>{if(e.key==="Enter")handleVerifyOtp();}}/>
+            <button onClick={handleVerifyOtp} disabled={linkLoading||codeInput.length<6}
+              style={{...AB,padding:"10px 14px",fontSize:13,whiteSpace:"nowrap",opacity:(linkLoading||codeInput.length<6)?.5:1}}>
+              {linkLoading?"確認中...":"確認して連携"}
+            </button>
+          </div>
+          <button onClick={()=>{setEmailLinkStep(1);setCodeInput("");setLinkError("");}}
+            style={{...AGray,marginTop:8,padding:"6px 12px",fontSize:12}}>← 戻る</button>
+        </div>
+      )}
+      {linkError&&<div style={{marginTop:10,fontSize:12,color:"#EF4444"}}>{linkError}</div>}
+    </AC>}
     <AC title="現在のプラン">
       <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0"}}>
         <div style={{fontSize:32}}>{plan==="pro"?"★":""}</div>
