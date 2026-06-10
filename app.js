@@ -657,9 +657,7 @@ function App(){
       const arr=typeof val==="object"&&!Array.isArray(val)
         ?Object.values(val).filter(s=>s&&s.id)
         :(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id);
-      const myIds=new Set(shopList.map(s=>s.id));
-      const myShops=arr.filter(s=>myIds.has(s.id));
-      if(myShops.length>0){ setShops(myShops); ls("shift_shops_v6",myShops); }
+      if(arr.length>0){ setShops(arr); ls("shift_shops_v6",arr); }
     });
     // settings
     on(fbPath(targetSid,"settings"),val=>{
