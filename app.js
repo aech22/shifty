@@ -2199,12 +2199,12 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
   wb.creator="ShiftApp";
   const ws=wb.addWorksheet("シフト一覧",{pageSetup:{orientation:"landscape"}});
 
-  // 列幅
-  ws.getColumn(C_PER).width=78;
-  ws.getColumn(C_WD_H).width=78;
-  sl.forEach((n,i)=>ws.getColumn(C_STAFF+i).width=78);
-  ws.getColumn(C_WD_R).width=78;
-  ws.getColumn(C_SHOP_R).width=78;
+  // 列幅 (78px ÷ 7px/char ≈ 11.14)
+  ws.getColumn(C_PER).width=11.14;
+  ws.getColumn(C_WD_H).width=11.14;
+  sl.forEach((n,i)=>ws.getColumn(C_STAFF+i).width=11.14);
+  ws.getColumn(C_WD_R).width=11.14;
+  ws.getColumn(C_SHOP_R).width=11.14;
 
   const SC=(r,c,val,al,fill,border,font)=>{
     const cell=ws.getRow(r).getCell(c);
@@ -2223,8 +2223,8 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
     cell.font=Object.assign({name:"Yu Gothic",size:12,bold:false},font||{}); // デフォルトフォント（boldはヘッダーのみ）
   };
 
-  // ===== Row1: ヘッダー (高さ208, 全縦書き) =====
-  ws.getRow(1).height=208;
+  // ===== Row1: ヘッダー (208px × 0.75 = 156pt) =====
+  ws.getRow(1).height=156;
 
   // A1: 期間ラベル (top/bot/left:medium, right:thin)
   SC(1,C_PER,periodLabel,aV,fNone,{top:M,bottom:M,left:M,right:T},{bold:true,size:14});
@@ -2254,8 +2254,8 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
     const fill=isSat?fSat:isSunHol?fHol:fNone; // 平日=塗りなし
     const isLast=di===dates.length-1;
     const rT=2+di*2, rB=rT+1;
-    ws.getRow(rT).height=44;
-    ws.getRow(rB).height=44;
+    ws.getRow(rT).height=33;
+    ws.getRow(rB).height=33;
 
     // A列: 日付 (medium四辺, 上下結合, 横書き)
     SC(rT,C_PER,day,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:false,size:12,color:{argb:"FF000000"}});
