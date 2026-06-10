@@ -7,7 +7,7 @@
   <!-- iOSのノッチ・ホームバー対応 -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="シフト作成サイトーshifty">
+  <meta name="apple-mobile-web-app-title" content="shifty">
   <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="icon" type="image/png" sizes="180x180" href="favicon-180.png">
@@ -22,22 +22,22 @@
   <!-- SEO -->
   <link rel="canonical" href="https://shiftyshifty.app/">
   <meta name="robots" content="index,follow">
-  <meta name="description" content="飲食店・小売店向けの無料シフト作成サイト。スタッフがスマホから希望シフトを提出、店長はExcelで一括管理。登録不要ですぐ使える。">
-  <meta name="keywords" content="シフト作成,シフト管理,シフト提出,飲食店,アルバイト,シフト表,無料">
+  <meta name="description" content="shifty（シフティ）は飲食店・小売店向けの無料シフト作成サイト。スタッフがスマホから希望シフトを提出、店長はExcelで一括管理。登録不要ですぐ使える。">
+  <meta name="keywords" content="shifty,シフティ,シフト作成,シフト管理,シフト提出,飲食店,アルバイト,シフト表,無料,シフト作成サイト">
   <!-- OGP（SNSシェア用） -->
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://shiftyshifty.app/">
-  <meta property="og:site_name" content="shifty">
-  <meta property="og:title" content="シフト作成サイトーshifty｜飲食店向け無料シフト管理">
-  <meta property="og:description" content="飲食店・小売店向けの無料シフト作成サイト。スタッフがスマホから希望シフトを提出、店長はExcelで一括管理。登録不要ですぐ使える。">
+  <meta property="og:site_name" content="shifty（シフティ）">
+  <meta property="og:title" content="shifty（シフティ）｜飲食店向け無料シフト作成・管理サイト">
+  <meta property="og:description" content="shifty（シフティ）は飲食店・小売店向けの無料シフト作成サイト。スタッフがスマホから希望シフトを提出、店長はExcelで一括管理。登録不要ですぐ使える。">
   <meta property="og:locale" content="ja_JP">
   <meta property="og:image" content="https://shiftyshifty.app/ogp.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="シフト作成サイトーshifty｜飲食店向け無料シフト管理">
-  <meta name="twitter:description" content="飲食店・小売店向けの無料シフト作成サイト。スタッフがスマホから希望シフトを提出、店長はExcelで一括管理。登録不要ですぐ使える。">
+  <meta name="twitter:title" content="shifty（シフティ）｜飲食店向け無料シフト作成・管理サイト">
+  <meta name="twitter:description" content="shifty（シフティ）は飲食店・小売店向けの無料シフト作成サイト。スタッフがスマホから希望シフトを提出、店長はExcelで一括管理。登録不要ですぐ使える。">
   <meta name="twitter:image" content="https://shiftyshifty.app/ogp.png">
   <!-- 構造化データ（JSON-LD） -->
   <script type="application/ld+json">
@@ -61,12 +61,21 @@
     {
       "@context": "https://schema.org",
       "@type": "WebSite",
+      "name": "shifty（シフティ）",
+      "alternateName": "shifty",
+      "url": "https://shiftyshifty.app",
+      "description": "飲食店・小売店向けの無料シフト作成・管理サイト"
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
       "name": "shifty",
-      "url": "https://shiftyshifty.app"
+      "url": "https://shiftyshifty.app",
+      "logo": "https://shiftyshifty.app/favicon-180.png"
     }
   ]
   </script>
-  <title>シフト作成サイトーshifty｜飲食店向け無料シフト管理</title>
+  <title>shifty（シフティ）｜飲食店向け無料シフト作成・管理サイト</title>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -162,6 +171,26 @@
   </style>
 </head>
 <body>
+  <!-- SEO: クローラー向け静的コンテンツ（Reactマウント後は非表示） -->
+  <div id="seo-static" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;">
+    <h1>shifty（シフティ）｜飲食店向け無料シフト作成・管理サイト</h1>
+    <p>shifty（シフティ）は飲食店・小売店のシフト管理を簡単にする無料Webアプリです。スタッフはスマートフォンから希望シフトを提出、店長・オーナーはブラウザ上で一覧確認・Excel出力ができます。アカウント登録不要ですぐに使えます。</p>
+    <h2>shiftyの主な機能</h2>
+    <ul>
+      <li>スタッフがスマホからシフト希望を提出</li>
+      <li>店長・管理者がシフト提出状況を一覧管理</li>
+      <li>Excelファイルでシフト表を一括出力</li>
+      <li>URLを共有するだけでスタッフが参加可能</li>
+      <li>登録不要・無料で利用開始</li>
+    </ul>
+    <h2>こんなお店に最適</h2>
+    <p>飲食店、カフェ、居酒屋、小売店、コンビニ、アパレルなどアルバイトスタッフがいるすべての業種で使えるシフト管理ツールです。</p>
+  </div>
+  <noscript>
+    <h1>shifty（シフティ）｜飲食店向け無料シフト作成・管理サイト</h1>
+    <p>shiftyはJavaScriptが必要なWebアプリです。ブラウザのJavaScriptを有効にしてご利用ください。</p>
+    <p>飲食店・小売店向けの無料シフト作成サイト。スタッフがスマホから希望シフトを提出、店長はExcelで一括管理。登録不要ですぐ使える。</p>
+  </noscript>
   <div id="root"></div>
   <script type="text/babel" src="app.js" data-presets="react"></script>
 </body>
