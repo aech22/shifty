@@ -408,32 +408,38 @@ function App(){
       return;
     }
 
-    // Firebase SDK 初期化
+    // Firebase SDK 初期化（DB接続のみクリティカルパス、Auth/Functionsは別で）
     try{
       if(!firebase.apps||firebase.apps.length===0) firebase.initializeApp(FIREBASE_CONFIG);
       firebaseDB = firebase.database();
-      firebaseAuth = firebase.auth();
       firebaseDB.ref(".info/connected").on("value",snap=>{
         firebaseEnabled=snap.val()===true;
         setSyncStatus(firebaseEnabled?"online":"offline");
       });
     }catch(e){
-      console.warn("Firebase init failed:",e);
+      console.warn("Firebase DB init failed:",e);
       const local=lg("shift_shops_v6",null)||[makeShop("メイン店舗")];
       setShops(local); setCurrentShopId(local[0].id);
       setSyncStatus("offline"); setAuthChecked(true); setReady(true); return;
     }
-    // Functions SDKは接続の必須ではないため別で初期化（失敗しても接続に影響しない）
+    // Auth/Functionsは接続のクリティカルパスから分離（失敗しても接続に影響しない）
+    try{ firebaseAuth = firebase.auth(); }catch(e){ console.warn("Auth init failed:",e); }
     try{ firebaseFunctions = firebase.app().functions("asia-northeast1"); }catch(e){ console.warn("Functions init failed:",e); }
 
     // Auth状態を確認してからshops読み込みを開始
-    const unsubAuth = firebaseAuth.onAuthStateChanged(user=>{
-      unsubAuth(); // 初回のみ
-      setAuthUser(user);
+    if(firebaseAuth){
+      const unsubAuth = firebaseAuth.onAuthStateChanged(user=>{
+        unsubAuth(); // 初回のみ
+        setAuthUser(user);
+        setAuthChecked(true);
+        // auth確定後にshops読み込み開始
+        loadShops(user);
+      });
+    }else{
+      // Auth未初期化: Cookie/localStorageで続行
       setAuthChecked(true);
-      // auth確定後にshops読み込み開始
-      loadShops(user);
-    });
+      loadShops(null);
+    }
 
     const loadShops=(authUser)=>{
     // global/shops を1回だけ読む（onceで）→ 全端末でIDを統一
