@@ -2365,8 +2365,8 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
       } else if(isWork){
         SC(rT,ci,sh.start?timeToNum(sh.start):null,aH,fill,{top:M,bottom:H,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
         SC(rB,ci,sh.end?timeToNum(sh.end):null,aH,fill,{top:H,bottom:botT,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
-        ws.getRow(rT).getCell(ci).numFmt='0.0#';
-        ws.getRow(rB).getCell(ci).numFmt='0.0#';
+        ws.getRow(rT).getCell(ci).numFmt='0.##';
+        ws.getRow(rB).getCell(ci).numFmt='0.##';
       } else {
         // 休み: 斜線（右上→左下）
         const diagU={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
