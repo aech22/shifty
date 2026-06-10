@@ -657,7 +657,9 @@ function App(){
       const arr=typeof val==="object"&&!Array.isArray(val)
         ?Object.values(val).filter(s=>s&&s.id)
         :(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id);
-      if(arr.length>0){ setShops(arr); ls("shift_shops_v6",arr); }
+      const myIds=new Set(shopList.map(s=>s.id));
+      const myShops=arr.filter(s=>myIds.has(s.id));
+      if(myShops.length>0){ setShops(myShops); ls("shift_shops_v6",myShops); }
     });
     // settings
     on(fbPath(targetSid,"settings"),val=>{
@@ -1013,7 +1015,7 @@ function App(){
         ls("shift_shops_v6",newShops);
         currentShopIdRef.current=code;
         setCurrentShopId(code);
-        startSubscriptions(code,authUser?sh:newShops);
+        startSubscriptions(code,newShops);
         setUnbound(false);
         setInviteError("");
         setInviteCode("");
@@ -2250,8 +2252,8 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
     const fill=isSat?fSat:isSunHol?fHol:fNone; // 平日=塗りなし
     const isLast=di===dates.length-1;
     const rT=2+di*2, rB=rT+1;
-    ws.getRow(rT).height=18;
-    ws.getRow(rB).height=18;
+    ws.getRow(rT).height=44;
+    ws.getRow(rB).height=44;
 
     // A列: 日付 (medium四辺, 上下結合, 横書き)
     SC(rT,C_PER,day,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:false,size:12,color:{argb:"FF000000"}});
