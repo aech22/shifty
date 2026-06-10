@@ -2198,11 +2198,11 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
   const ws=wb.addWorksheet("シフト一覧",{pageSetup:{orientation:"landscape"}});
 
   // 列幅
-  ws.getColumn(C_PER).width=5;
-  ws.getColumn(C_WD_H).width=5;
-  sl.forEach((n,i)=>ws.getColumn(C_STAFF+i).width=isSpacer(n)?2:6);
-  ws.getColumn(C_WD_R).width=5;
-  ws.getColumn(C_SHOP_R).width=6;
+  ws.getColumn(C_PER).width=78;
+  ws.getColumn(C_WD_H).width=78;
+  sl.forEach((n,i)=>ws.getColumn(C_STAFF+i).width=78);
+  ws.getColumn(C_WD_R).width=78;
+  ws.getColumn(C_SHOP_R).width=78;
 
   const SC=(r,c,val,al,fill,border,font)=>{
     const cell=ws.getRow(r).getCell(c);
@@ -2221,8 +2221,8 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
     cell.font=Object.assign({name:"Yu Gothic",size:12,bold:false},font||{}); // デフォルトフォント（boldはヘッダーのみ）
   };
 
-  // ===== Row1: ヘッダー (高さ120, 全縦書き) =====
-  ws.getRow(1).height=120;
+  // ===== Row1: ヘッダー (高さ208, 全縦書き) =====
+  ws.getRow(1).height=208;
 
   // A1: 期間ラベル (top/bot/left:medium, right:thin)
   SC(1,C_PER,periodLabel,aV,fNone,{top:M,bottom:M,left:M,right:T},{bold:true,size:14});
