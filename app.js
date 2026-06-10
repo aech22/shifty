@@ -2417,10 +2417,11 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
         SC(rT,ci,null,aH,fill,{top:M,bottom:H,left:T,right:T});
         SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
       } else if(isWork){
-        SC(rT,ci,sh.start?timeToNum(sh.start):null,aH,fill,{top:M,bottom:H,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
-        SC(rB,ci,sh.end?timeToNum(sh.end):null,aH,fill,{top:H,bottom:botT,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
-        ws.getRow(rT).getCell(ci).numFmt='General';
-        ws.getRow(rB).getCell(ci).numFmt='General';
+        const fmtT=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return m===0?h:h+m/60;};
+        SC(rT,ci,sh.start?fmtT(sh.start):null,aH,fill,{top:M,bottom:H,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
+        SC(rB,ci,sh.end?fmtT(sh.end):null,aH,fill,{top:H,bottom:botT,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
+        if(sh.start&&sh.start.endsWith(":00"))ws.getRow(rT).getCell(ci).numFmt='0';
+        if(sh.end&&sh.end.endsWith(":00"))ws.getRow(rB).getCell(ci).numFmt='0';
       } else {
         // 休み: 斜線（右上→左下）
         const diagU={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
