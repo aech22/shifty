@@ -1351,7 +1351,8 @@ function App(){
               startSubscriptions={startSubscriptions}
               logout={doLogout} authUser={authUser} syncStatus={syncStatus}
               onLinkProvider={linkProvider} onSendEmailOtp={sendEmailOtp}
-              onVerifyAndLinkEmail={verifyAndLinkEmail} onUnlinkProvider={unlinkProvider}/>
+              onVerifyAndLinkEmail={verifyAndLinkEmail} onUnlinkProvider={unlinkProvider}
+              onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkApple={signInAndLinkApple} onSignInAndLinkEmail={signInAndLinkEmail}/>
           :null)
       }
     </div>
@@ -1903,7 +1904,7 @@ function AdminLogin({settings,onAuth}){
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
