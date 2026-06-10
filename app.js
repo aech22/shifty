@@ -883,6 +883,60 @@ function App(){
     }finally{setAuthLoading(false);}
   };
 
+  // Cookie認証ユーザーがサインイン/登録して現在の店舗を紐付ける共通処理
+  const _afterSignInAndLink=async(user)=>{
+    setAuthUser(user);
+    if(!firebaseDB)return;
+    const shopId=currentShopIdRef.current;
+    if(shopId&&shopId!=="default"){
+      await firebaseDB.ref(`accounts/${user.uid}/shops/${shopId}`).set(true);
+    }
+  };
+  const signInAndLinkGoogle=async()=>{
+    if(!firebaseAuth)return{error:"Firebase Auth未初期化"};
+    try{
+      const provider=new firebase.auth.GoogleAuthProvider();
+      const result=await firebaseAuth.signInWithPopup(provider);
+      await _afterSignInAndLink(result.user);
+      return{};
+    }catch(e){
+      if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request")return{error:""};
+      return{error:"Googleログインに失敗しました: "+e.message};
+    }
+  };
+  const signInAndLinkApple=async()=>{
+    if(!firebaseAuth)return{error:"Firebase Auth未初期化"};
+    try{
+      const provider=new firebase.auth.OAuthProvider("apple.com");
+      provider.addScope("name");provider.addScope("email");
+      const result=await firebaseAuth.signInWithPopup(provider);
+      await _afterSignInAndLink(result.user);
+      return{};
+    }catch(e){
+      if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request")return{error:""};
+      return{error:"Appleログインに失敗しました: "+e.message};
+    }
+  };
+  const signInAndLinkEmail=async(email,password,isSignUp)=>{
+    if(!firebaseAuth)return{error:"Firebase Auth未初期化"};
+    try{
+      let result;
+      if(isSignUp){
+        result=await firebaseAuth.createUserWithEmailAndPassword(email,password);
+      }else{
+        result=await firebaseAuth.signInWithEmailAndPassword(email,password);
+      }
+      await _afterSignInAndLink(result.user);
+      return{};
+    }catch(e){
+      if(e.code==="auth/email-already-in-use")return{error:"このメールアドレスは既に使用されています"};
+      if(e.code==="auth/user-not-found"||e.code==="auth/wrong-password"||e.code==="auth/invalid-credential")return{error:"メールアドレスまたはパスワードが正しくありません"};
+      if(e.code==="auth/invalid-email")return{error:"メールアドレスの形式が正しくありません"};
+      if(e.code==="auth/weak-password")return{error:"パスワードは6文字以上にしてください"};
+      return{error:(isSignUp?"登録":"ログイン")+"に失敗しました: "+e.message};
+    }
+  };
+
   // authUser.providerData を最新状態に更新する
   const refreshAuthUser=async()=>{
     if(!firebaseAuth?.currentUser)return;
@@ -2023,7 +2077,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkApple={signInAndLinkApple} onSignInAndLinkEmail={signInAndLinkEmail}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -2942,7 +2996,8 @@ function UnlockCodeInput({tt,plan,onUnlock,onLock}){
 }
 
 function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
-                 authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider}){
+                 authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
+                 onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail}){
   const[pw,setPw]=useState("");
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
   const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
@@ -2950,6 +3005,13 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
   const[codeInput,setCodeInput]=useState("");
   const[linkLoading,setLinkLoading]=useState(false);
   const[linkError,setLinkError]=useState("");
+  // Cookie認証ユーザー向けアカウント登録/連携
+  const[acctEmailMode,setAcctEmailMode]=useState(null); // null | "login" | "register"
+  const[acctEmail,setAcctEmail]=useState("");
+  const[acctPw,setAcctPw]=useState("");
+  const[acctPw2,setAcctPw2]=useState("");
+  const[acctLoading,setAcctLoading]=useState(false);
+  const[acctError,setAcctError]=useState("");
   const changeTheme=pref=>{
     ls(THEME_KEY,pref);
     setThemePref(pref);
