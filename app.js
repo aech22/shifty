@@ -413,7 +413,6 @@ function App(){
       if(!firebase.apps||firebase.apps.length===0) firebase.initializeApp(FIREBASE_CONFIG);
       firebaseDB = firebase.database();
       firebaseAuth = firebase.auth();
-      firebaseFunctions = firebase.app().functions("asia-northeast1");
       firebaseDB.ref(".info/connected").on("value",snap=>{
         firebaseEnabled=snap.val()===true;
         setSyncStatus(firebaseEnabled?"online":"offline");
@@ -424,6 +423,8 @@ function App(){
       setShops(local); setCurrentShopId(local[0].id);
       setSyncStatus("offline"); setAuthChecked(true); setReady(true); return;
     }
+    // Functions SDKは接続の必須ではないため別で初期化（失敗しても接続に影響しない）
+    try{ firebaseFunctions = firebase.app().functions("asia-northeast1"); }catch(e){ console.warn("Functions init failed:",e); }
 
     // Auth状態を確認してからshops読み込みを開始
     const unsubAuth = firebaseAuth.onAuthStateChanged(user=>{
