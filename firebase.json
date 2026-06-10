@@ -8,6 +8,6 @@
   },
   "hosting": {
     "public": ".",
-    "ignore": ["firebase.json", "**/.*", "**/node_modules/**", "functions/**", "CLAUDE.md", "*.md"]
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**", "functions/**", "CLAUDE.md", "*.md", "generate-ogp.js", "ogp.html", "sample-image.html", "build-canvas.sh", "canvas.html", "app.js.bak", "*.sh"]
   }
 }
