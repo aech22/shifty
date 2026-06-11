@@ -442,7 +442,7 @@ function App(){
         sh=local&&local.length>0?local:[makeShop("メイン店舗")];
         const shObj={};
         sh.forEach(s=>{ if(s&&s.id) shObj[s.id]=s; });
-        firebaseDB.ref("global/shops").set(shObj);
+        firebaseDB.ref("global/shops").update(shObj);
       }
       setShops(sh);
       ls("shift_shops_v6",sh);
@@ -1158,7 +1158,7 @@ function App(){
     if(firebaseDB){
       const obj={};
       v.forEach(s=>{ if(s&&s.id) obj[s.id]=s; });
-      firebaseDB.ref("global/shops").set(obj).catch(e=>console.warn("shops書き込み失敗:",e));
+      firebaseDB.ref("global/shops").update(obj).catch(e=>console.warn("shops書き込み失敗:",e));
     }
   },[]);
 
@@ -1226,8 +1226,8 @@ function App(){
         :(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id)):[];
       const newShop=makeShop("新しい店舗");
       console.log("createNewShop: 新規店舗作成",newShop.id,newShop.name);
-      const obj={};[...sh,newShop].forEach(s=>{if(s&&s.id)obj[s.id]=s;});
-      firebaseDB.ref("global/shops").set(obj);
+      const obj={};obj[newShop.id]=newShop;
+      firebaseDB.ref("global/shops").update(obj);
       // Auth ユーザーはアカウントにも紐付け
       if(authUser) linkShopToAccount(authUser.uid,newShop.id);
       // Cookie: 単一店舗のみ保存（上書き）
