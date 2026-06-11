@@ -367,6 +367,8 @@ function App(){
   const[unbound,setUnbound]=useState(false); // 引き継ぎコード未入力（未所属）状態
   const[inviteCode,setInviteCode]=useState(""); // 引き継ぎコード入力値
   const[inviteError,setInviteError]=useState(""); // エラーメッセージ
+  const[inviteCodeDisplay,setInviteCodeDisplay]=useState(null); // 企業アカウント招待コード表示用
+  const[inviteCodeGenLoading,setInviteCodeGenLoading]=useState(false); // 招待コード生成中フラグ
   const[plan,setPlan]=useState("free"); // サブスクプラン
   const[planExpiry,setPlanExpiry]=useState(null); // プラン有効期限
   const[emailMode,setEmailMode]=useState(null); // null | "login" | "register"
@@ -993,6 +995,81 @@ function App(){
     setUnbound(true);
   };
 
+  // 企業アカウント招待コード関数
+  const generateInviteCode=async()=>{
+    if(!authUser || !firebaseDB) return;
+    setInviteCodeGenLoading(true);
+    try{
+      const code=genToken();
+      const now=new Date();
+      const expiresAt=new Date(now.getTime() + 24*60*60*1000);  // 24時間後
+      await firebaseDB.ref(`accounts/${authUser.uid}/inviteCode`).set({
+        code,
+        createdAt:now.toISOString(),
+        expiresAt:expiresAt.toISOString(),
+        createdBy:authUser.email
+      });
+      setInviteCodeDisplay(code);
+      console.log("招待コード生成:", code);
+    }catch(e){
+      console.warn("招待コード生成失敗:", e);
+    }finally{
+      setInviteCodeGenLoading(false);
+    }
+  };
+
+  const joinByInviteCode=async(code)=>{
+    if(!firebaseDB || !authUser) return;
+    try{
+      const snapshot=await firebaseDB.ref('accounts').once('value');
+      let foundUid=null;
+      snapshot.forEach(snap=>{
+        const data=snap.val();
+        if(data?.inviteCode?.code===code){
+          const expiresAt=new Date(data.inviteCode.expiresAt);
+          if(new Date()<expiresAt){
+            foundUid=snap.key;
+          }
+        }
+      });
+      if(!foundUid){
+        setInviteError('無効または期限切れのコードです');
+        return;
+      }
+      // members に追加
+      await firebaseDB.ref(`accounts/${foundUid}/members/${authUser.uid}`).set({
+        email:authUser.email,
+        joinedAt:new Date().toISOString(),
+        role:'member'
+      });
+      // shops をコピー
+      const linkedShops=await firebaseDB.ref(`accounts/${foundUid}/shops`).once('value');
+      if(linkedShops.val()){
+        await firebaseDB.ref(`accounts/${authUser.uid}/shops`).set(linkedShops.val());
+      }
+      setUnbound(false);
+      setInviteCode("");
+      console.log("招待コードで参加完了");
+    }catch(e){
+      console.warn("招待コード参加失敗:", e);
+      setInviteError('処理に失敗しました');
+    }
+  };
+
+  const linkExistingShopToAuth=async(shopId)=>{
+    if(!authUser || !firebaseDB) return;
+    try{
+      await firebaseDB.ref(`accounts/${authUser.uid}/shops/${shopId}`).set(true);
+      const snap=await firebaseDB.ref(`accounts/${authUser.uid}/shops`).once('value');
+      const linkedIds=Object.keys(snap.val()||{});
+      const linkedShops=shops.filter(s=>linkedIds.includes(s.id));
+      setShops(linkedShops);
+      console.log("既存店舗を企業アカウントに連携:", shopId);
+    }catch(e){
+      console.warn("連携失敗:", e);
+    }
+  };
+
   // URLにtokenが含まれるか（スタッフ専用モード・期間固定）
   const [urlLocked]=useState(()=>{ const p=parseUrl(); return !!(p&&p.token); });
 
@@ -1202,7 +1279,29 @@ function App(){
                 </div>
               }
             </div>
-            :<>
+            :authUser?(
+              // 認証済みユーザー向け：企業アカウント招待コード
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:"#F1F5F9",marginBottom:12}}>企業アカウントで参加</div>
+                <div style={{display:"flex",gap:8,marginBottom:12}}>
+                  <input
+                    value={inviteCode}
+                    onChange={e=>{setInviteCode(e.target.value);setInviteError("");}}
+                    onKeyDown={e=>e.key==="Enter"&&inviteCode.trim()&&joinByInviteCode(inviteCode.trim())}
+                    placeholder="招待コードを貼り付け" maxLength={50}
+                    style={{flex:1,padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:10,color:"#F1F5F9",fontSize:14,outline:"none"}}
+                  />
+                  <button onClick={()=>joinByInviteCode(inviteCode.trim())} disabled={authLoading||!inviteCode.trim()}
+                    style={{padding:"12px 16px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",opacity:inviteCode.trim()?1:0.5}}>
+                    参加
+                  </button>
+                </div>
+                {inviteError&&<div style={{color:"#FF4757",fontSize:12,marginBottom:12,textAlign:"center",background:"rgba(255,71,87,.1)",padding:"8px 12px",borderRadius:8}}>{inviteError}</div>}
+                <div style={{fontSize:11,color:"#64748B",textAlign:"center",marginBottom:16}}>
+                  既に企業アカウントを作成済みの場合、招待コードで参加できます。
+                </div>
+              </div>
+            ):<>
               <button onClick={signInWithGoogle} disabled={authLoading}
                 style={{width:"100%",padding:"14px",background:"white",border:"none",borderRadius:14,color:"#1A1A2E",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:"0 2px 8px rgba(0,0,0,.15)"}}>
                 <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
@@ -2039,7 +2138,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkApple={signInAndLinkApple} onSignInAndLinkEmail={signInAndLinkEmail}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkApple={signInAndLinkApple} onSignInAndLinkEmail={signInAndLinkEmail} shops={shops} onGenerateInviteCode={generateInviteCode} onJoinByInviteCode={joinByInviteCode} onLinkExistingShop={linkExistingShopToAuth} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -2958,7 +3057,9 @@ function UnlockCodeInput({tt,plan,onUnlock,onLock}){
 
 function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                  authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
-                 onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail}){
+                 onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,
+                 shops=[],onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,
+                 inviteCodeDisplay=null,inviteCodeGenLoading=false}){
   const[pw,setPw]=useState("");
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
   const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
@@ -3240,6 +3341,47 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
         }} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>コピー</button>
       </div>
       <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>別端末への共有は「店舗名ボタン → コードで追加」から行えます</div>
+    </AC>}
+
+    {authUser&&shops.length>1&&<AC title="企業アカウント管理">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+        このコードを他のユーザーに共有して、同じ企業アカウントで複数店舗を管理できます。
+      </div>
+      {inviteCodeDisplay?(
+        <div>
+          <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
+            <span style={{flex:1,fontFamily:"monospace",fontSize:14,color:"#f87036",letterSpacing:"0.05em",fontWeight:700}}>{inviteCodeDisplay}</span>
+            <button onClick={()=>{
+              const copy=()=>{const el=document.createElement("textarea");el.value=inviteCodeDisplay;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 招待コードをコピーしました");};
+              if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(inviteCodeDisplay).then(()=>tt("✓ 招待コードをコピーしました")).catch(copy);}else{copy();}
+            }} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>📋 コピー</button>
+          </div>
+          <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:12}}>有効期限：24時間</div>
+          <button onClick={onGenerateInviteCode} disabled={inviteCodeGenLoading} style={{width:"100%",padding:"10px",background:"rgba(248,112,54,.12)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"#f87036",fontSize:13,fontWeight:700,cursor:"pointer",opacity:inviteCodeGenLoading?.5:1}}>
+            🔄 新規生成
+          </button>
+        </div>
+      ):(
+        <button onClick={onGenerateInviteCode} disabled={inviteCodeGenLoading} style={{width:"100%",padding:"12px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",opacity:inviteCodeGenLoading?.5:1}}>
+          {inviteCodeGenLoading?"生成中...":"招待コードを生成する"}
+        </button>
+      )}
+    </AC>}
+
+    {authUser&&shops.filter(s=>!s.isAuth).length>0&&<AC title="企業アカウント連携">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+        Cookie 認証で使用している店舗を企業アカウントに連携できます。
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {shops.map(shop=>(
+          <div key={shop.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",background:"var(--c-input)",borderRadius:8,border:"1px solid var(--c-border2)"}}>
+            <span style={{fontSize:13,color:"var(--c-text)"}}>{shop.name}</span>
+            <button onClick={()=>onLinkExistingShop(shop.id)} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+              連携
+            </button>
+          </div>
+        ))}
+      </div>
     </AC>}
 
     <AC title="お問い合わせ">
