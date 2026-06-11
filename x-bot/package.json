@@ -1,0 +1,17 @@
+{
+  "name": "shifty-x-bot",
+  "version": "1.0.0",
+  "description": "Shifty X(Twitter) customer support automation bot",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "test-post": "node bot.js --test-post",
+    "test-fetch": "node bot.js --test-fetch"
+  },
+  "dependencies": {
+    "twitter-api-v2": "^1.17.0",
+    "@anthropic-ai/sdk": "^0.52.0",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.4.5"
+  }
+}

@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shifty Demo</title>
+<style>
+  /* ライトモード変数 */
+  :root {
+    --c-bg:      #F0F2F5;
+    --c-card:    #FFFFFF;
+    --c-input:   #F3F4F6;
+    --c-border:  #E5E7EB;
+    --c-border2: #D1D5DB;
+    --c-text:    #1A1A2E;
+    --c-text2:   #374151;
+    --c-text3:   #6B7280;
+    --c-text4:   #9CA3AF;
+    --c-shadow:  rgba(0,0,0,.06);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #E2E5EA;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    font-family: 'Hiragino Sans', 'Yu Gothic', sans-serif;
+    overflow: hidden;
+  }
+
+  /* ===== 全体フレーム ===== */
+  .frame {
+    width: 390px;
+    height: 844px;
+    position: relative;
+    overflow: hidden;
+    border-radius: 44px;
+    box-shadow: 0 30px 80px rgba(0,0,0,.25);
+    border: 1px solid rgba(0,0,0,.1);
+    background: var(--c-bg);
+  }
+
+  /* ===== 画面切り替え ===== */
+  .screen {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .5s;
+    overflow-y: auto;
+  }
+  .screen.active { opacity: 1; }
+
+  /* ===== 共通タブバー ===== */
+  .tab-bar {
+    display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    box-shadow: 0 2px 8px rgba(0,0,0,.08);
+  }
+  .tab-btn {
+    flex: 1;
+    padding: 13px 0;
+    border: none;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    color: white;
+  }
+  .tab-btn.staff-active { background: #f87036; }
+  .tab-btn.staff-inactive { background: #CBD5E1; color: #374151; }
+  .tab-btn.admin-active { background: #374151; }
+  .tab-btn.admin-inactive { background: #E5E7EB; color: #374151; }
+
+  /* ===== オーバーレイテキスト ===== */
+  .overlay-text {
+    position: absolute;
+    bottom: 60px;
+    left: 0; right: 0;
+    text-align: center;
+    opacity: 0;
+    transition: opacity .4s;
+    pointer-events: none;
+    z-index: 999;
+  }
+  .overlay-text.show { opacity: 1; }
+  .overlay-badge {
+    display: inline-block;
+    background: rgba(248,112,54,.95);
+    color: white;
+    font-size: 22px;
+    font-weight: 800;
+    padding: 12px 32px;
+    border-radius: 50px;
+    box-shadow: 0 4px 24px rgba(248,112,54,.4);
+    letter-spacing: .05em;
+  }
+
+  /* ===== ステップインジケーター ===== */
+  .step-indicator {
+    position: absolute;
+    top: 20px;
+    left: 0; right: 0;
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    z-index: 998;
+    opacity: 0;
+    transition: opacity .4s;
+  }
+  .step-indicator.show { opacity: 1; }
+  .step-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: rgba(0,0,0,.15);
+    transition: background .3s, transform .3s;
+  }
+  .step-dot.active { background: #f87036; transform: scale(1.4); }
+  .step-dot.done { background: rgba(248,112,54,.4); }
+
+  /* ===== カーソル ===== */
+  .cursor {
+    position: absolute;
+    width: 24px; height: 24px;
+    border-radius: 50%;
+    background: rgba(248,112,54,.85);
+    box-shadow: 0 0 0 4px rgba(248,112,54,.25);
+    pointer-events: none;
+    z-index: 9999;
+    transform: translate(-50%, -50%);
+    transition: left .6s cubic-bezier(.4,0,.2,1), top .6s cubic-bezier(.4,0,.2,1), transform .15s, opacity .3s;
+    opacity: 0;
+  }
+  .cursor.click { transform: translate(-50%,-50%) scale(.6); }
+
+  /* ===== コピートースト ===== */
+  .copy-toast {
+    position: absolute;
+    top: 80px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    background: var(--c-card);
+    border: 1.5px solid #f87036;
+    border-radius: 50px;
+    padding: 8px 20px;
+    color: #f87036;
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
+    opacity: 0;
+    box-shadow: 0 4px 16px rgba(248,112,54,.2);
+    transition: opacity .3s, transform .3s;
+    z-index: 999;
+  }
+  .copy-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ===== ロゴ画面 ===== */
+  .app-logo {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--c-bg);
+    z-index: 800;
+    opacity: 0;
+    transition: opacity .5s;
+    pointer-events: none;
+    gap: 8px;
+  }
+  .app-logo.show { opacity: 1; }
+  .logo-text { color: #f87036; font-size: 48px; font-weight: 900; letter-spacing: -.02em; }
+  .logo-sub { color: var(--c-text3); font-size: 14px; }
+
+  /* ===== 管理者画面ヘッダー ===== */
+  .admin-header {
+    background: linear-gradient(135deg, #f87036, #e85d20);
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(248,112,54,.25);
+  }
+  .admin-header-title { color: white; font-size: 18px; font-weight: 800; }
+  .admin-header-sub { color: rgba(255,255,255,.8); font-size: 12px; margin-top: 2px; }
+
+  /* ===== 内部タブ ===== */
+  .inner-tab-bar {
+    display: flex;
+    border-bottom: 2px solid var(--c-border);
+    background: var(--c-card);
+    overflow-x: auto;
+  }
+  .inner-tab {
+    padding: 11px 15px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--c-text3);
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+  }
+  .inner-tab.active { color: #f87036; border-bottom-color: #f87036; }
+
+  /* ===== 期間カード ===== */
+  .period-card {
+    background: var(--c-card);
+    border-radius: 14px;
+    margin: 14px 14px 0;
+    padding: 16px;
+    border: 1px solid var(--c-border);
+    box-shadow: 0 1px 4px var(--c-shadow);
+  }
+  .period-label { color: var(--c-text); font-size: 16px; font-weight: 700; }
+  .period-date { color: var(--c-text3); font-size: 12px; margin-top: 4px; }
+
+  .share-url-box {
+    background: var(--c-input);
+    border: 1px solid var(--c-border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-top: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .share-url-text {
+    flex: 1;
+    color: var(--c-text3);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .copy-btn {
+    background: #f87036;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: transform .1s;
+  }
+  .copy-btn.pressed { transform: scale(.9); }
+
+  /* ===== LINEパネル ===== */
+  .line-panel {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    background: var(--c-card);
+    border-top: 2px solid #00B900;
+    border-radius: 20px 20px 0 0;
+    padding: 20px 16px;
+    transform: translateY(100%);
+    transition: transform .5s cubic-bezier(.4,0,.2,1);
+    z-index: 500;
+    box-shadow: 0 -8px 32px rgba(0,0,0,.12);
+  }
+  .line-panel.show { transform: translateY(0); }
+  .line-header { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .line-icon {
+    width: 32px; height: 32px;
+    background: #00B900;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 16px; font-weight: 700;
+  }
+  .line-title { color: var(--c-text); font-size: 14px; font-weight: 700; }
+
+  .chat-bubble-wrap { display: flex; flex-direction: column; gap: 10px; }
+  .chat-bubble {
+    background: var(--c-input);
+    border-radius: 12px;
+    padding: 10px 14px;
+    color: var(--c-text2);
+    font-size: 12px;
+    max-width: 80%;
+    border: 1px solid var(--c-border);
+  }
+  .chat-bubble.mine {
+    background: #00B900;
+    color: white;
+    align-self: flex-end;
+    border: none;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity .4s, transform .4s;
+  }
+  .chat-bubble.mine.appear { opacity: 1; transform: translateY(0); }
+  .chat-bubble.mine .url-text { font-size: 11px; opacity: .9; word-break: break-all; }
+
+  /* ===== スタッフ画面 ===== */
+  .staff-header {
+    background: linear-gradient(135deg, #f87036, #e85d20);
+    padding: 16px;
+    box-shadow: 0 2px 8px rgba(248,112,54,.2);
+  }
+  .staff-header-title { color: white; font-size: 18px; font-weight: 800; }
+  .staff-header-sub { color: rgba(255,255,255,.8); font-size: 12px; margin-top: 2px; }
+
+  .name-section {
+    margin: 14px 14px 0;
+    background: var(--c-card);
+    border-radius: 14px;
+    padding: 14px;
+    border: 1px solid var(--c-border);
+    box-shadow: 0 1px 4px var(--c-shadow);
+  }
+  .name-label { color: var(--c-text3); font-size: 11px; font-weight: 700; margin-bottom: 6px; }
+  .name-display {
+    color: var(--c-text);
+    font-size: 22px;
+    font-weight: 900;
+    padding: 4px 0;
+  }
+
+  .shift-grid { margin: 10px 14px 0; display: flex; flex-direction: column; gap: 8px; }
+  .shift-day {
+    background: var(--c-card);
+    border-radius: 14px;
+    padding: 12px 14px;
+    border: 2px solid var(--c-border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-shadow: 0 1px 4px var(--c-shadow);
+  }
+  .shift-day.work-day { border-color: #FDDCC7; background: #FFFAF7; }
+  .shift-day.holiday-day { border-color: rgba(255,71,87,.25); background: rgba(255,71,87,.03); }
+
+  .day-label { width: 44px; text-align: center; flex-shrink: 0; }
+  .day-date { color: var(--c-text); font-size: 15px; font-weight: 700; }
+  .day-wd { font-size: 11px; color: var(--c-text3); }
+  .day-wd.sat { color: #3B82F6; }
+  .day-wd.sun { color: #FF4757; }
+
+  .shift-info { flex: 1; }
+  .shift-time { color: #c45b1a; font-size: 14px; font-weight: 700; }
+  .shift-holiday-label { color: #FF4757; font-size: 13px; font-weight: 700; }
+
+  .shift-status-chip {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 20px;
+    flex-shrink: 0;
+  }
+  .chip-work { background: #FEF0E8; color: #c45b1a; }
+  .chip-holiday { background: rgba(255,71,87,.1); color: #FF4757; }
+
+  .submit-btn {
+    margin: 14px;
+    width: calc(100% - 28px);
+    padding: 16px;
+    background: linear-gradient(135deg, #f87036, #e85d20);
+    border: none;
+    border-radius: 14px;
+    color: white;
+    font-size: 16px;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(248,112,54,.3);
+    letter-spacing: .05em;
+    transition: transform .1s;
+  }
+  .submit-btn.pressed { transform: scale(.97); }
+
+  /* ===== 提出完了オーバーレイ ===== */
+  .submitted-overlay {
+    position: absolute;
+    inset: 0;
+    background: var(--c-bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    opacity: 0;
+    transition: opacity .5s;
+    z-index: 200;
+  }
+  .submitted-overlay.show { opacity: 1; }
+  .submitted-icon { font-size: 64px; animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.1)} }
+  .submitted-title { color: var(--c-text); font-size: 22px; font-weight: 800; }
+  .submitted-sub { color: var(--c-text3); font-size: 14px; }
+
+  /* ===== 提出一覧 ===== */
+  .subs-list { padding: 14px; }
+  .subs-meta { color: var(--c-text3); font-size: 12px; font-weight: 600; margin-bottom: 10px; }
+
+  .sub-row {
+    background: var(--c-card);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    border: 1px solid var(--c-border);
+    box-shadow: 0 1px 4px var(--c-shadow);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity .4s, transform .4s;
+  }
+  .sub-row.appear { opacity: 1; transform: translateY(0); }
+  .sub-name { color: var(--c-text); font-size: 14px; font-weight: 700; }
+  .sub-time { color: var(--c-text3); font-size: 11px; margin-top: 2px; }
+  .sub-badge {
+    background: #FEF0E8;
+    color: #f87036;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 6px;
+  }
+
+  .excel-btn {
+    margin: 4px 14px 14px;
+    width: calc(100% - 28px);
+    padding: 14px;
+    background: linear-gradient(135deg, #16A34A, #15803D);
+    border: none;
+    border-radius: 14px;
+    color: white;
+    font-size: 15px;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(22,163,74,.25);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: transform .1s;
+  }
+  .excel-btn.pressed { transform: scale(.97); }
+
+  /* ===== Excel生成中 ===== */
+  .excel-generating {
+    position: absolute;
+    inset: 0;
+    background: rgba(240,242,245,.85);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px;
+    opacity: 0; pointer-events: none;
+    transition: opacity .3s;
+    z-index: 600;
+  }
+  .excel-generating.show { opacity: 1; }
+  .excel-spinner {
+    width: 48px; height: 48px;
+    border: 4px solid rgba(22,163,74,.15);
+    border-top-color: #16A34A;
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .excel-gen-text { color: var(--c-text); font-size: 14px; font-weight: 700; }
+
+  /* ===== Excel完成通知 ===== */
+  .excel-done {
+    position: absolute;
+    bottom: 80px;
+    left: 14px; right: 14px;
+    background: var(--c-card);
+    border: 1.5px solid #16A34A;
+    border-radius: 14px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity .4s, transform .4s;
+    z-index: 700;
+    box-shadow: 0 4px 16px rgba(22,163,74,.15);
+  }
+  .excel-done.show { opacity: 1; transform: translateY(0); }
+  .excel-done-icon { font-size: 32px; }
+  .excel-done-title { color: var(--c-text); font-size: 14px; font-weight: 700; }
+  .excel-done-sub { color: var(--c-text3); font-size: 11px; margin-top: 2px; }
+</style>
+</head>
+<body>
+
+<div class="frame">
+
+  <!-- ステップインジケーター -->
+  <div class="step-indicator" id="stepInd">
+    <div class="step-dot" id="dot0"></div>
+    <div class="step-dot" id="dot1"></div>
+    <div class="step-dot" id="dot2"></div>
+  </div>
+
+  <!-- カーソル -->
+  <div class="cursor" id="cursor"></div>
+
+  <!-- オーバーレイテキスト -->
+  <div class="overlay-text" id="overlayText">
+    <div class="overlay-badge" id="overlayBadge"></div>
+  </div>
+
+  <!-- コピートースト -->
+  <div class="copy-toast" id="copyToast">✅ URLをコピーしました</div>
+
+  <!-- ===== ロゴ画面 ===== -->
+  <div class="app-logo show" id="logoScreen">
+    <div class="logo-text">Shifty</div>
+    <div class="logo-sub">飲食店のシフト管理をシンプルに</div>
+  </div>
+
+  <!-- ===== STEP 1: 管理者画面（期間管理）===== -->
+  <div class="screen" id="screen1">
+    <div class="tab-bar">
+      <button class="tab-btn staff-inactive">📅 スタッフ画面</button>
+      <button class="tab-btn admin-active">⚙️ 管理者画面</button>
+    </div>
+    <div class="admin-header">
+      <div class="admin-header-title">⚙️ 管理者画面</div>
+      <div class="admin-header-sub">カフェ・さくら</div>
+    </div>
+    <div class="inner-tab-bar">
+      <div class="inner-tab active">📅 期間管理</div>
+      <div class="inner-tab">👥 スタッフ</div>
+      <div class="inner-tab">📋 提出一覧</div>
+      <div class="inner-tab">⏰ 候補時間</div>
+    </div>
+
+    <div class="period-card">
+      <div class="period-label">7月シフト</div>
+      <div class="period-date">2026/07/01（火）〜 2026/07/31（金）</div>
+      <div class="share-url-box">
+        <div class="share-url-text">https://shifty.jp/s/a3f8x2k9</div>
+        <button class="copy-btn" id="copyBtn">📋 URLをコピー</button>
+      </div>
+    </div>
+
+    <div class="period-card" style="opacity:.45;">
+      <div class="period-label">6月シフト</div>
+      <div class="period-date">2026/06/01（月）〜 2026/06/30（火）</div>
+    </div>
+
+    <!-- LINEパネル -->
+    <div class="line-panel" id="linePanel">
+      <div class="line-header">
+        <div class="line-icon">L</div>
+        <div class="line-title">LINE「カフェさくらスタッフ」</div>
+      </div>
+      <div class="chat-bubble-wrap">
+        <div class="chat-bubble">田中さん: 今月もよろしくです！</div>
+        <div class="chat-bubble">鈴木さん: はーい🙋</div>
+        <div class="chat-bubble mine" id="lineBubble">
+          <div style="font-size:11px;opacity:.85;margin-bottom:4px;">📅 7月シフト提出お願いします</div>
+          <div class="url-text">https://shifty.jp/s/a3f8x2k9</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== STEP 2: スタッフ画面 ===== -->
+  <div class="screen" id="screen2">
+    <div class="tab-bar">
+      <button class="tab-btn staff-active">📅 スタッフ画面</button>
+      <button class="tab-btn admin-inactive">⚙️ 管理者画面</button>
+    </div>
+    <div class="staff-header">
+      <div class="staff-header-title">📅 シフト提出</div>
+      <div class="staff-header-sub">カフェ・さくら　7月シフト</div>
+    </div>
+
+    <div class="name-section">
+      <div class="name-label">あなたの名前</div>
+      <div class="name-display">田中　あかり</div>
+    </div>
+
+    <div class="shift-grid" id="shiftGrid"></div>
+
+    <button class="submit-btn" id="submitBtn">✅ シフトを提出する</button>
+
+    <div class="submitted-overlay" id="submittedOverlay">
+      <div class="submitted-icon">✅</div>
+      <div class="submitted-title">提出完了！</div>
+      <div class="submitted-sub">シフトが送信されました</div>
+    </div>
+  </div>
+
+  <!-- ===== STEP 3: 管理者画面（提出一覧）===== -->
+  <div class="screen" id="screen3">
+    <div class="tab-bar">
+      <button class="tab-btn staff-inactive">📅 スタッフ画面</button>
+      <button class="tab-btn admin-active">⚙️ 管理者画面</button>
+    </div>
+    <div class="admin-header">
+      <div class="admin-header-title">⚙️ 管理者画面</div>
+      <div class="admin-header-sub">カフェ・さくら</div>
+    </div>
+    <div class="inner-tab-bar">
+      <div class="inner-tab">📅 期間管理</div>
+      <div class="inner-tab">👥 スタッフ</div>
+      <div class="inner-tab active">📋 提出一覧</div>
+      <div class="inner-tab">⏰ 候補時間</div>
+    </div>
+
+    <div class="subs-list">
+      <div class="subs-meta">7月シフト　提出済み 5名</div>
+      <div class="sub-row" id="sub1"><div><div class="sub-name">田中　あかり</div><div class="sub-time">提出済み</div></div><div class="sub-badge">提出済</div></div>
+      <div class="sub-row" id="sub2"><div><div class="sub-name">鈴木　はると</div><div class="sub-time">提出済み</div></div><div class="sub-badge">提出済</div></div>
+      <div class="sub-row" id="sub3"><div><div class="sub-name">山田　ゆい</div><div class="sub-time">提出済み</div></div><div class="sub-badge">提出済</div></div>
+      <div class="sub-row" id="sub4"><div><div class="sub-name">佐藤　けんた</div><div class="sub-time">提出済み</div></div><div class="sub-badge">提出済</div></div>
+      <div class="sub-row" id="sub5"><div><div class="sub-name">中村　みのり</div><div class="sub-time">提出済み</div></div><div class="sub-badge">提出済</div></div>
+    </div>
+
+    <button class="excel-btn" id="excelBtn"><span>📊</span> Excelに書き出す</button>
+
+    <div class="excel-generating" id="excelGen">
+      <div class="excel-spinner"></div>
+      <div class="excel-gen-text">Excel生成中...</div>
+    </div>
+    <div class="excel-done" id="excelDone">
+      <div class="excel-done-icon">📊</div>
+      <div>
+        <div class="excel-done-title">7月シフト.xlsx</div>
+        <div class="excel-done-sub">ダウンロード完了</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ===== シフトグリッド生成 =====
+const days = [
+  {date:"7/1", wd:"火", type:"work", time:"11:00〜17:00"},
+  {date:"7/2", wd:"水", type:"work", time:"17:00〜23:00"},
+  {date:"7/3", wd:"木", type:"holiday"},
+  {date:"7/4", wd:"金", type:"work", time:"11:00〜17:00"},
+  {date:"7/5", wd:"土", type:"work", time:"17:00〜23:00"},
+  {date:"7/6", wd:"日", type:"holiday"},
+  {date:"7/7", wd:"月", type:"work", time:"11:00〜17:00"},
+];
+const grid = document.getElementById("shiftGrid");
+days.forEach(d => {
+  const row = document.createElement("div");
+  const wdClass = d.wd==="土"?"sat":d.wd==="日"?"sun":"";
+  const isWork = d.type === "work";
+  row.className = `shift-day ${isWork ? "work-day" : "holiday-day"}`;
+  row.innerHTML = `
+    <div class="day-label">
+      <div class="day-date">${d.date}</div>
+      <div class="day-wd ${wdClass}">${d.wd}</div>
+    </div>
+    <div class="shift-info">
+      ${isWork
+        ? `<div class="shift-time">${d.time}</div>`
+        : `<div class="shift-holiday-label">🌙 お休み</div>`}
+    </div>
+    <div class="shift-status-chip ${isWork ? "chip-work" : "chip-holiday"}">
+      ${isWork ? "出勤" : "休み"}
+    </div>
+  `;
+  grid.appendChild(row);
+});
+
+// ===== ユーティリティ =====
+const cursor = document.getElementById("cursor");
+const stepInd = document.getElementById("stepInd");
+const dots = [document.getElementById("dot0"), document.getElementById("dot1"), document.getElementById("dot2")];
+const overlayText = document.getElementById("overlayText");
+const overlayBadge = document.getElementById("overlayBadge");
+
+function moveCursor(x, y) { cursor.style.left=x+"px"; cursor.style.top=y+"px"; }
+function clickCursor() { cursor.classList.add("click"); setTimeout(()=>cursor.classList.remove("click"),200); }
+function showOverlay(t) { overlayBadge.textContent=t; overlayText.classList.add("show"); }
+function hideOverlay() { overlayText.classList.remove("show"); }
+function setStep(n) {
+  dots.forEach((d,i) => { d.classList.remove("active","done"); if(i<n)d.classList.add("done"); if(i===n)d.classList.add("active"); });
+  stepInd.classList.add("show");
+}
+function sleep(ms) { return new Promise(r=>setTimeout(r,ms)); }
+
+// ===== メインアニメーション =====
+async function runDemo() {
+  const logo = document.getElementById("logoScreen");
+  const s1 = document.getElementById("screen1");
+  const s2 = document.getElementById("screen2");
+  const s3 = document.getElementById("screen3");
+
+  // ロゴ
+  await sleep(800);
+  logo.classList.remove("show");
+  await sleep(600);
+
+  // ── STEP 1: URLをコピー ──
+  setStep(0);
+  s1.classList.add("active");
+  await sleep(700);
+  showOverlay("① URLを送る");
+  await sleep(400);
+
+  cursor.style.opacity = "1";
+  moveCursor(310, 315);
+  await sleep(900);
+  clickCursor();
+  document.getElementById("copyBtn").classList.add("pressed");
+  await sleep(150);
+  document.getElementById("copyBtn").classList.remove("pressed");
+
+  const toast = document.getElementById("copyToast");
+  toast.classList.add("show");
+  await sleep(900);
+  toast.classList.remove("show");
+  await sleep(300);
+
+  document.getElementById("linePanel").classList.add("show");
+  await sleep(600);
+  moveCursor(195, 610);
+  await sleep(500);
+  document.getElementById("lineBubble").classList.add("appear");
+  await sleep(1400);
+
+  // ── STEP 2: スタッフ提出 ──
+  setStep(1);
+  hideOverlay();
+  document.getElementById("linePanel").classList.remove("show");
+  cursor.style.opacity = "0";
+  await sleep(400);
+  s1.classList.remove("active");
+  await sleep(200);
+  s2.classList.add("active");
+  await sleep(600);
+  showOverlay("② スタッフが提出");
+  await sleep(1400);
+
+  cursor.style.opacity = "1";
+  moveCursor(195, 720);
+  await sleep(700);
+  clickCursor();
+  document.getElementById("submitBtn").classList.add("pressed");
+  await sleep(150);
+  document.getElementById("submitBtn").classList.remove("pressed");
+  await sleep(300);
+  document.getElementById("submittedOverlay").classList.add("show");
+  await sleep(1600);
+
+  // ── STEP 3: Excel出力 ──
+  setStep(2);
+  hideOverlay();
+  cursor.style.opacity = "0";
+  s2.classList.remove("active");
+  await sleep(200);
+  s3.classList.add("active");
+  await sleep(400);
+
+  const subIds = ["sub1","sub2","sub3","sub4","sub5"];
+  for (const id of subIds) {
+    document.getElementById(id).classList.add("appear");
+    await sleep(140);
+  }
+  await sleep(500);
+  showOverlay("③ Excel出力");
+  await sleep(700);
+
+  cursor.style.opacity = "1";
+  moveCursor(195, 700);
+  await sleep(700);
+  clickCursor();
+  document.getElementById("excelBtn").classList.add("pressed");
+  await sleep(150);
+  document.getElementById("excelBtn").classList.remove("pressed");
+  await sleep(200);
+  document.getElementById("excelGen").classList.add("show");
+  await sleep(1200);
+  document.getElementById("excelGen").classList.remove("show");
+  await sleep(200);
+  document.getElementById("excelDone").classList.add("show");
+  cursor.style.opacity = "0";
+  await sleep(2200);
+  hideOverlay();
+
+  // ── リセット＆ループ ──
+  await sleep(1200);
+  document.getElementById("excelDone").classList.remove("show");
+  s3.classList.remove("active");
+  stepInd.classList.remove("show");
+  dots.forEach(d=>d.classList.remove("active","done"));
+  subIds.forEach(id=>document.getElementById(id).classList.remove("appear"));
+  document.getElementById("submittedOverlay").classList.remove("show");
+  document.getElementById("lineBubble").classList.remove("appear");
+  await sleep(300);
+  logo.classList.add("show");
+  await sleep(1500);
+  logo.classList.remove("show");
+  await sleep(600);
+  runDemo();
+}
+
+runDemo();
+</script>
+</body>
+</html>

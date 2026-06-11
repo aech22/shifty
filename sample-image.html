@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shifty サンプル画像</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #f0f2f5; font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif; display: inline-block; min-width: 390px; }
+
+  .wrapper {
+    width: 390px;
+    margin: 0 auto;
+    padding: 14px;
+  }
+
+  /* ===== STEP FLOW ===== */
+  .flow {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 12px;
+    margin-bottom: 0;
+  }
+
+  .step {
+    position: relative;
+  }
+
+  .step-arrow {
+    display: none;
+  }
+
+  .step-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    background: #f87036;
+    color: white;
+    border-radius: 50%;
+    font-size: 11px;
+    font-weight: 800;
+    margin-bottom: 5px;
+  }
+
+  .step-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: #f87036;
+    margin-bottom: 5px;
+    display: block;
+  }
+
+  /* ===== CARD BASE ===== */
+  .card {
+    background: white;
+    border-radius: 14px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    overflow: hidden;
+  }
+
+  /* ===== STEP 1: 期間作成 ===== */
+  .create-form {
+    padding: 10px 10px;
+  }
+
+  .form-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #f0f2f5;
+  }
+
+  .form-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #1a1a2e;
+  }
+
+  .badge-pro {
+    font-size: 10px;
+    font-weight: 700;
+    background: #f87036;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  .form-row {
+    margin-bottom: 6px;
+  }
+
+  .form-label {
+    font-size: 9px;
+    font-weight: 700;
+    color: #6b7280;
+    margin-bottom: 3px;
+  }
+
+  .form-input {
+    width: 100%;
+    padding: 6px 8px;
+    border: 2px solid #e5e7eb;
+    border-radius: 7px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #1a1a2e;
+    background: #f9fafb;
+  }
+
+  .form-input.active {
+    border-color: #f87036;
+    background: white;
+  }
+
+  .date-row {
+    display: flex;
+    gap: 8px;
+  }
+
+  .date-row .form-row {
+    flex: 1;
+    margin-bottom: 0;
+  }
+
+  .create-btn {
+    width: 100%;
+    padding: 8px;
+    background: #f87036;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+
+  /* ===== STEP 2: URL共有 ===== */
+  .url-box {
+    padding: 10px 10px;
+  }
+
+  .url-period-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #1a1a2e;
+    margin-bottom: 3px;
+  }
+
+  .url-period-date {
+    font-size: 9px;
+    color: #6b7280;
+    margin-bottom: 8px;
+  }
+
+  .url-display {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 7px;
+    padding: 6px 8px;
+    font-size: 9px;
+    color: #6b7280;
+    margin-bottom: 8px;
+    font-family: monospace;
+    word-break: break-all;
+  }
+
+  .share-btns {
+    display: flex;
+    gap: 6px;
+  }
+
+  .share-btn {
+    flex: 1;
+    padding: 7px 4px;
+    border-radius: 7px;
+    font-size: 10px;
+    font-weight: 700;
+    cursor: pointer;
+    text-align: center;
+    border: none;
+    white-space: nowrap;
+  }
+
+  .share-btn.copy {
+    background: #FEF0E8;
+    color: #f87036;
+    border: 1px solid #FDDCC7;
+  }
+
+  .share-btn.line {
+    background: #00B900;
+    color: white;
+  }
+
+  /* ===== STEP 3: 提出状況 ===== */
+  .status-header {
+    background: #f87036;
+    padding: 7px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .status-header-title {
+    font-size: 10px;
+    font-weight: 700;
+    color: white;
+    white-space: nowrap;
+  }
+
+  .status-header-sub {
+    font-size: 9px;
+    color: rgba(255,255,255,.8);
+    margin-top: 1px;
+    white-space: nowrap;
+  }
+
+  .status-badge {
+    background: white;
+    color: #f87036;
+    border-radius: 20px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 800;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .status-list {
+    padding: 6px 10px;
+  }
+
+  .status-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 0;
+    border-bottom: 1px solid #f0f2f5;
+    font-size: 10px;
+  }
+
+  .status-item:last-child {
+    border-bottom: none;
+  }
+
+  .status-name {
+    font-weight: 700;
+    color: #1a1a2e;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .dot-done { background: #10b981; }
+  .dot-wait { background: #d1d5db; }
+
+  .status-days {
+    font-size: 9px;
+    color: #6b7280;
+  }
+
+  .status-days strong {
+    color: #f87036;
+    font-weight: 700;
+  }
+
+  /* ===== STEP 4: Excel出力 ===== */
+  .excel-box {
+    padding: 10px 10px;
+  }
+
+  .excel-title {
+    font-size: 10px;
+    font-weight: 700;
+    color: #1a1a2e;
+    margin-bottom: 8px;
+  }
+
+  .excel-preview {
+    background: #f0fff4;
+    border: 1px solid #a7f3d0;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 8px;
+    font-size: 9px;
+  }
+
+  .excel-row {
+    display: flex;
+    border-bottom: 1px solid #d1fae5;
+  }
+
+  .excel-row:last-child {
+    border-bottom: none;
+  }
+
+  .excel-row.header {
+    background: #ecfdf5;
+    font-weight: 700;
+  }
+
+  .excel-cell {
+    flex: 1;
+    padding: 4px 3px;
+    border-right: 1px solid #d1fae5;
+    color: #065f46;
+    text-align: center;
+    min-width: 0;
+  }
+
+  .excel-cell:last-child {
+    border-right: none;
+  }
+
+  .excel-cell.name {
+    flex: 1.4;
+    text-align: left;
+    color: #1a1a2e;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .excel-cell.work {
+    background: #fff7ed;
+    color: #c45b1a;
+    font-weight: 700;
+    font-size: 8px;
+  }
+
+  .excel-btn {
+    width: 100%;
+    padding: 8px;
+    background: #217346;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+  }
+
+  .excel-icon {
+    font-size: 13px;
+  }
+
+  /* ===== HEADER ===== */
+  .app-header {
+    background: white;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  }
+
+  .app-logo {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #1a1a2e;
+  }
+
+  .logo-icon {
+    width: 22px;
+    height: 22px;
+    background: #f87036;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+  }
+
+  .shop-badge {
+    background: #FEF0E8;
+    color: #f87036;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 7px;
+    border: 1px solid #FDDCC7;
+  }
+
+  .flow-label {
+    text-align: center;
+    font-size: 9px;
+    font-weight: 700;
+    color: #9ca3af;
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <!-- アプリヘッダー -->
+  <div class="app-header">
+    <div class="app-logo">
+      <div class="logo-icon">📋</div>
+      Shifty
+    </div>
+    <div class="shop-badge">居酒屋まるや</div>
+    <div style="display:flex;gap:6px">
+      <span style="font-size:9px;color:#6b7280;font-weight:600;">期間 ｜ スタッフ ｜ 候補時間 ｜ 提出一覧</span>
+    </div>
+  </div>
+
+  <!-- フロー -->
+  <div class="flow">
+
+    <!-- STEP 1 -->
+    <div class="step">
+      <div class="step-num">1</div>
+      <span class="step-label">期間を作成</span>
+      <div class="card">
+        <div class="create-form">
+          <div class="form-header">
+            <span class="form-title">新しい期間を作成</span>
+          </div>
+          <div class="form-row">
+            <div class="form-label">期間名</div>
+            <div class="form-input active">7月シフト</div>
+          </div>
+          <div class="date-row">
+            <div class="form-row">
+              <div class="form-label">開始日</div>
+              <div class="form-input">2025/07/01</div>
+            </div>
+            <div class="form-row">
+              <div class="form-label">終了日</div>
+              <div class="form-input">2025/07/31</div>
+            </div>
+          </div>
+          <button class="create-btn">＋ 期間を作成する</button>
+        </div>
+      </div>
+      <div class="flow-label">3項目入力するだけ</div>
+    </div>
+
+    <div class="step-arrow">›</div>
+
+    <!-- STEP 2 -->
+    <div class="step">
+      <div class="step-num">2</div>
+      <span class="step-label">URLをシェア</span>
+      <div class="card">
+        <div class="url-box">
+          <div class="url-period-title">📅 7月シフト</div>
+          <div class="url-period-date">2025/07/01 〜 2025/07/31（31日間）</div>
+          <div class="url-display">https://shifty.app/#/s/k7m2xp4n</div>
+          <div class="share-btns">
+            <button class="share-btn copy">📋 URLをコピー</button>
+
+            <button class="share-btn line">LINE で送る</button>
+          </div>
+        </div>
+      </div>
+      <div class="flow-label">自動生成されたURL</div>
+    </div>
+
+    <div class="step-arrow">›</div>
+
+    <!-- STEP 3 -->
+    <div class="step">
+      <div class="step-num">3</div>
+      <span class="step-label">提出状況をリアルタイム確認</span>
+      <div class="card">
+        <div class="status-header">
+          <div>
+            <div class="status-header-title">7月シフト 提出状況</div>
+            <div class="status-header-sub">7/1 〜 7/31（31日間）</div>
+          </div>
+          <div class="status-badge">6 / 8人</div>
+        </div>
+        <div class="status-list">
+          <div class="status-item">
+            <span class="status-name"><span class="status-dot dot-done"></span>田中 ゆい</span>
+            <span class="status-days">出勤 <strong>18日</strong></span>
+          </div>
+          <div class="status-item">
+            <span class="status-name"><span class="status-dot dot-done"></span>鈴木 けんた</span>
+            <span class="status-days">出勤 <strong>12日</strong></span>
+          </div>
+          <div class="status-item">
+            <span class="status-name"><span class="status-dot dot-done"></span>佐藤 はる</span>
+            <span class="status-days">出勤 <strong>22日</strong></span>
+          </div>
+          <div class="status-item">
+            <span class="status-name"><span class="status-dot dot-wait"></span>山本 りく</span>
+            <span class="status-days" style="color:#d1d5db;">未提出</span>
+          </div>
+        </div>
+      </div>
+      <div class="flow-label">誰が未提出かひと目でわかる</div>
+    </div>
+
+    <div class="step-arrow">›</div>
+
+    <!-- STEP 4 -->
+    <div class="step">
+      <div class="step-num">4</div>
+      <span class="step-label">Excelに書き出し</span>
+      <div class="card">
+        <div class="excel-box">
+          <div class="excel-title">📊 7月シフト（8名）</div>
+          <div class="excel-preview">
+            <div class="excel-row header">
+              <div class="excel-cell name">名前</div>
+              <div class="excel-cell">7/1火</div>
+              <div class="excel-cell">7/2水</div>
+              <div class="excel-cell">7/3木</div>
+              <div class="excel-cell">7/4金</div>
+            </div>
+            <div class="excel-row">
+              <div class="excel-cell name">田中 ゆい</div>
+              <div class="excel-cell work">18:00〜23:00</div>
+              <div class="excel-cell">—</div>
+              <div class="excel-cell work">18:00〜23:00</div>
+              <div class="excel-cell work">17:00〜22:00</div>
+            </div>
+            <div class="excel-row">
+              <div class="excel-cell name">鈴木 けんた</div>
+              <div class="excel-cell">—</div>
+              <div class="excel-cell work">18:00〜23:00</div>
+              <div class="excel-cell">—</div>
+              <div class="excel-cell work">18:00〜24:00</div>
+            </div>
+            <div class="excel-row">
+              <div class="excel-cell name">佐藤 はる</div>
+              <div class="excel-cell work">17:00〜22:00</div>
+              <div class="excel-cell work">18:00〜23:00</div>
+              <div class="excel-cell work">18:00〜23:00</div>
+              <div class="excel-cell">—</div>
+            </div>
+          </div>
+          <button class="excel-btn">
+            <span class="excel-icon">📥</span> Excelで書き出す
+          </button>
+        </div>
+      </div>
+      <div class="flow-label">転記作業ゼロ</div>
+    </div>
+
+  </div>
+
+  <!-- ダウンロードボタン -->
+  <div style="text-align:center;margin-top:16px;padding-bottom:16px;">
+    <button id="dlBtn" onclick="downloadImage()" style="padding:10px 28px;background:#f87036;color:white;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 4px 12px rgba(248,112,54,.35);">
+      📥 画像をダウンロード
+    </button>
+  </div>
+
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script>
+function downloadImage() {
+  const btn = document.getElementById('dlBtn');
+  btn.style.display = 'none';
+  const wrapper = document.querySelector('.wrapper');
+  html2canvas(wrapper, { scale: 2, backgroundColor: '#f0f2f5', useCORS: true }).then(canvas => {
+    btn.style.display = '';
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    a.download = 'shifty-sample.png';
+    a.click();
+  });
+}
+</script>
+</body>
+</html>

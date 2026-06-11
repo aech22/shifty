@@ -1,11 +1,16 @@
 const functions = require("firebase-functions");
 const Stripe = require("stripe");
 const admin = require("firebase-admin");
+const nodemailer = require("nodemailer");
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.database();
 
 // Stripeは関数実行時に初期化（デプロイ解析時にAPIキーが不要）
-function getStripe() { return Stripe(process.env.STRIPE_SECRET_KEY); }
+function getStripe() {
+  const key = process.env.STRIPE_SECRET_KEY;
+  console.log("STRIPE_SECRET_KEY prefix:", key ? key.substring(0, 12) : "EMPTY");
+  return Stripe(key);
+}
 
 // Stripe Price ID
 const STRIPE_PRICES = {
@@ -24,6 +29,8 @@ exports.createCheckoutSession = functions
     res.set("Access-Control-Allow-Headers", "Content-Type");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
     if (req.method !== "POST") { res.status(405).send("Method Not Allowed"); return; }
+
+    console.log("createCheckoutSession called, KEY:", process.env.STRIPE_SECRET_KEY ? process.env.STRIPE_SECRET_KEY.substring(0,12) : "EMPTY");
 
     const { shopId, plan, successUrl, cancelUrl } = req.body;
     if (!shopId || !plan) { res.status(400).json({ error: "shopId, plan は必須です" }); return; }
@@ -144,4 +151,72 @@ exports.createPortalSession = functions
       console.error("Portal session作成失敗:", e);
       res.status(500).json({ error: e.message });
     }
+  });
+
+// ============================================================
+// メールアドレス連携用 OTP 送信
+// ============================================================
+exports.sendEmailOtp = functions
+  .region("asia-northeast1")
+  .runWith({ secrets: ["SMTP_PASS"] })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
+    }
+    const email = (data.email || "").trim();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new functions.https.HttpsError("invalid-argument", "メールアドレスが無効です");
+    }
+
+    const uid = context.auth.uid;
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const expiry = Date.now() + 10 * 60 * 1000; // 10分
+
+    const appUrl = process.env.APP_URL || "https://ontheshift.firebaseapp.com";
+    const emailLink = await admin.auth().generateSignInWithEmailLink(email, {
+      url: appUrl,
+      handleCodeInApp: true,
+    });
+
+    await admin.database().ref(`email_otps/${uid}`).set({ code, email, emailLink, expiry });
+
+    const smtpUser = process.env.SMTP_USER;
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || "smtp.gmail.com",
+      port: Number(process.env.SMTP_PORT) || 587,
+      secure: false,
+      auth: { user: smtpUser, pass: process.env.SMTP_PASS },
+    });
+
+    await transporter.sendMail({
+      from: `"Shifty" <${smtpUser}>`,
+      to: email,
+      subject: "Shifty メール連携の確認コード",
+      text: `確認コード: ${code}\n\nこのコードは10分間有効です。\nShiftyのアカウント連携画面に入力してください。`,
+    });
+
+    return { success: true };
+  });
+
+// ============================================================
+// メールアドレス連携用 OTP 検証
+// ============================================================
+exports.verifyEmailOtp = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
+    }
+    const uid = context.auth.uid;
+    const code = String(data.code || "").trim();
+
+    const snap = await admin.database().ref(`email_otps/${uid}`).once("value");
+    const otp = snap.val();
+
+    if (!otp || otp.code !== code || Date.now() > otp.expiry) {
+      throw new functions.https.HttpsError("invalid-argument", "確認コードが無効か期限切れです");
+    }
+
+    await admin.database().ref(`email_otps/${uid}`).delete();
+    return { emailLink: otp.emailLink, email: otp.email };
   });
