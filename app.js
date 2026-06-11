@@ -22,15 +22,15 @@ const FIREBASE_CONFIG_PROD = {
   measurementId:     "G-P8RP0TG9JG"
 };
 
-// ★ 開発用Firebaseプロジェクトの設定をここに貼り付ける
+// 開発用Firebaseプロジェクト（thirty-dev-b6958）
 const FIREBASE_CONFIG_DEV = {
-  apiKey:            "PASTE_DEV_API_KEY_HERE",
-  authDomain:        "PASTE_DEV_PROJECT_ID.firebaseapp.com",
-  databaseURL:       "https://PASTE_DEV_PROJECT_ID-default-rtdb.firebaseio.com",
-  projectId:         "PASTE_DEV_PROJECT_ID",
-  storageBucket:     "PASTE_DEV_PROJECT_ID.firebasestorage.app",
-  messagingSenderId: "PASTE_DEV_SENDER_ID",
-  appId:             "PASTE_DEV_APP_ID",
+  apiKey:            "AIzaSyAR4TJRJytLge7jgei4xbKXHwUfU-nWEd0",
+  authDomain:        "thirty-dev-b6958.firebaseapp.com",
+  databaseURL:       "https://thirty-dev-b6958-default-rtdb.firebaseio.com",
+  projectId:         "thirty-dev-b6958",
+  storageBucket:     "thirty-dev-b6958.firebasestorage.app",
+  messagingSenderId: "744273295072",
+  appId:             "1:744273295072:web:eccfe72f92bbc948dc4285",
 };
 
 const FIREBASE_CONFIG = DEV_MODE ? FIREBASE_CONFIG_DEV : FIREBASE_CONFIG_PROD;
