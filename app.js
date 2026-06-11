@@ -1034,6 +1034,10 @@ function App(){
         expiresAt:expiresAt.toISOString(),
         createdBy:authUser.email
       });
+      await firebaseDB.ref(`inviteCodes/${code}`).set({
+        uid:authUser.uid,
+        expiresAt:expiresAt.toISOString()
+      });
       setInviteCodeDisplay(code);
       console.log("招待コード生成:", code);
     }catch(e){
@@ -1046,21 +1050,13 @@ function App(){
   const joinByInviteCode=async(code)=>{
     if(!firebaseDB || !authUser) return;
     try{
-      const snapshot=await firebaseDB.ref('accounts').once('value');
-      let foundUid=null;
-      snapshot.forEach(snap=>{
-        const data=snap.val();
-        if(data?.inviteCode?.code===code){
-          const expiresAt=new Date(data.inviteCode.expiresAt);
-          if(new Date()<expiresAt){
-            foundUid=snap.key;
-          }
-        }
-      });
-      if(!foundUid){
+      const codeSnap=await firebaseDB.ref(`inviteCodes/${code}`).once('value');
+      const codeData=codeSnap.val();
+      if(!codeData || new Date()>=new Date(codeData.expiresAt)){
         setInviteError('無効または期限切れのコードです');
         return;
       }
+      const foundUid=codeData.uid;
       // members に追加
       await firebaseDB.ref(`accounts/${foundUid}/members/${authUser.uid}`).set({
         email:authUser.email,
