@@ -637,16 +637,20 @@ function App(){
     });
 
     // global/shops（複数店舗管理者向けのみ購読）
+    console.log("startSubscriptions: shopList=",shopList?.length,shopList?.map(s=>s?.id));
     if(!shopList||shopList.length>1){
+      console.log("startSubscriptions: 複数店舗購読を開始");
       on("global/shops",val=>{
         if(!val)return;
         const arr=typeof val==="object"&&!Array.isArray(val)
           ?Object.values(val).filter(s=>s&&s.id)
           :(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id);
+        console.log("startSubscriptions: global/shops受信",arr.map(s=>s.id));
         if(arr.length>0){ setShops(arr); ls("shift_shops_v6",arr); }
       });
     } else if(shopList&&shopList.length===1){
       // 単一店舗ログイン時は shopList をそのまま使用
+      console.log("startSubscriptions: 単一店舗のみ設定",shopList[0]?.id);
       setShops(shopList);
       ls("shift_shops_v6",shopList);
     }
@@ -1212,6 +1216,7 @@ function App(){
 
   // 新規店舗作成
   const createNewShop=()=>{
+    console.log("createNewShop: 実行開始");
     if(!firebaseDB){setInviteError("Firebase未接続");return;}
     setInviteError("作成中...");
     firebaseDB.ref("global/shops").once("value").then(snap=>{
@@ -1220,6 +1225,7 @@ function App(){
         ?Object.values(val).filter(s=>s&&s.id)
         :(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id)):[];
       const newShop=makeShop("新しい店舗");
+      console.log("createNewShop: 新規店舗作成",newShop.id,newShop.name);
       const obj={};[...sh,newShop].forEach(s=>{if(s&&s.id)obj[s.id]=s;});
       firebaseDB.ref("global/shops").set(obj);
       // Auth ユーザーはアカウントにも紐付け
@@ -1228,12 +1234,15 @@ function App(){
       setCookie(CK_SHOP,newShop.id,365);
       // shops 配列にも新規店舗だけ
       const newShops=[newShop];
+      console.log("createNewShop: setShops呼び出し前",{newShops:newShops.map(s=>s.id)});
       setShops(newShops);
       currentShopIdRef.current=newShop.id;
       setCurrentShopId(newShop.id);
+      console.log("createNewShop: startSubscriptions呼び出し前",{targetSid:newShop.id,shopListLength:newShops.length});
       startSubscriptions(newShop.id,newShops);
       setUnbound(false);
       setInviteError("");
+      console.log("createNewShop: 完了");
     }).catch(()=>setInviteError("エラーが発生しました。再試行してください。"));
   };
 
