@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>飲食店のシフト管理を無料でデジタル化する方法【導入5分】| Shifty</title>
+  <meta name="description" content="LINEやExcelでシフトを集めている飲食店の店長へ。URLを送るだけでスタッフがシフトを入力できる無料ツール「Shifty」を使えば、手打ち作業がゼロになります。導入5分・登録不要で今日から使えます。">
+  <meta property="og:title" content="飲食店のシフト管理を無料でデジタル化する方法【導入5分】">
+  <meta property="og:description" content="URLを送るだけでシフトが集まる。LINEやExcelの手打ち作業をなくしたい飲食店向け無料ツール「Shifty」の使い方。">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://shiftyshifty.app/blog/shift-kanri-muryou.html">
+  <meta property="og:site_name" content="Shifty">
+  <link rel="canonical" href="https://shiftyshifty.app/blog/shift-kanri-muryou.html">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+      background: #fafafa;
+      color: #1a1a1a;
+      line-height: 1.8;
+      font-size: 16px;
+    }
+
+    a { color: #2563eb; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Header */
+    .site-header {
+      background: #fff;
+      border-bottom: 1px solid #e5e7eb;
+      padding: 12px 20px;
+    }
+    .back-link {
+      font-size: 14px;
+      color: #6b7280;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .back-link:hover { color: #2563eb; text-decoration: none; }
+
+    /* Article layout */
+    .article-wrap {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 40px 20px 80px;
+    }
+
+    /* Meta */
+    .article-meta {
+      font-size: 13px;
+      color: #9ca3af;
+      margin-bottom: 16px;
+    }
+
+    /* Title */
+    h1 {
+      font-size: clamp(22px, 5vw, 32px);
+      font-weight: 700;
+      line-height: 1.4;
+      color: #111827;
+      margin-bottom: 32px;
+    }
+
+    /* Headings */
+    h2 {
+      font-size: 20px;
+      font-weight: 700;
+      color: #111827;
+      margin: 48px 0 16px;
+      padding-left: 12px;
+      border-left: 4px solid #2563eb;
+    }
+
+    h3 {
+      font-size: 17px;
+      font-weight: 700;
+      color: #374151;
+      margin: 32px 0 12px;
+    }
+
+    p { margin-bottom: 16px; }
+
+    ul, ol {
+      padding-left: 24px;
+      margin-bottom: 16px;
+    }
+    li { margin-bottom: 6px; }
+
+    /* Callout box */
+    .callout {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin: 24px 0;
+    }
+    .callout p { margin-bottom: 0; }
+    .callout strong { color: #1d4ed8; }
+
+    /* Pain box */
+    .pain-box {
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin: 24px 0;
+    }
+
+    /* Step */
+    .steps { margin: 24px 0; }
+    .step {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 20px;
+      align-items: flex-start;
+    }
+    .step-num {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      background: #2563eb;
+      color: #fff;
+      font-weight: 700;
+      font-size: 15px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 2px;
+    }
+    .step-body h3 { margin: 0 0 6px; font-size: 16px; }
+    .step-body p { margin: 0; font-size: 15px; color: #374151; }
+
+    /* Feature table */
+    .feature-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 24px 0;
+      font-size: 15px;
+    }
+    .feature-table th {
+      background: #f3f4f6;
+      padding: 10px 14px;
+      text-align: left;
+      font-weight: 700;
+      border-bottom: 2px solid #e5e7eb;
+    }
+    .feature-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid #e5e7eb;
+      vertical-align: top;
+    }
+    .feature-table tr:last-child td { border-bottom: none; }
+
+    /* CTA */
+    .cta-block {
+      background: linear-gradient(135deg, #1d4ed8, #2563eb);
+      border-radius: 12px;
+      padding: 36px 28px;
+      text-align: center;
+      margin: 48px 0 32px;
+      color: #fff;
+    }
+    .cta-block h2 {
+      border: none;
+      padding: 0;
+      color: #fff;
+      margin: 0 0 12px;
+      font-size: 22px;
+    }
+    .cta-block p {
+      color: rgba(255,255,255,0.85);
+      margin-bottom: 24px;
+      font-size: 15px;
+    }
+    .cta-btn {
+      display: inline-block;
+      background: #fff;
+      color: #2563eb;
+      font-weight: 700;
+      font-size: 17px;
+      padding: 14px 36px;
+      border-radius: 9999px;
+      transition: opacity 0.15s;
+    }
+    .cta-btn:hover { opacity: 0.9; text-decoration: none; }
+    .cta-note {
+      margin-top: 12px;
+      font-size: 13px;
+      color: rgba(255,255,255,0.7);
+      margin-bottom: 0;
+    }
+
+    /* Footer */
+    .article-footer {
+      font-size: 13px;
+      color: #9ca3af;
+      text-align: center;
+      padding-top: 32px;
+      border-top: 1px solid #e5e7eb;
+    }
+  </style>
+</head>
+<body>
+
+<header class="site-header">
+  <a class="back-link" href="https://shiftyshifty.app">← Shiftyに戻る</a>
+</header>
+
+<main class="article-wrap">
+
+  <p class="article-meta">2026年6月 &nbsp;|&nbsp; シフト管理の基本</p>
+
+  <h1>飲食店のシフト管理を無料でデジタル化する方法<br>【導入5分・登録不要】</h1>
+
+  <p>「今月のシフト、LINEで送ってー」と呼びかけて、返信が来るたびにExcelに手打ちしている——そんな作業に毎月何時間使っていますか？</p>
+
+  <p>飲食店の店長やオーナーが最も時間を取られる事務作業のひとつが、シフトの収集と集計です。返信を催促する手間、書き間違い、集計ミス。人数が増えるほど負担は重くなります。</p>
+
+  <p>この記事では、そのストレスをゼロにする方法を具体的に紹介します。</p>
+
+  <h2>「LINEでシフト管理」の限界</h2>
+
+  <div class="pain-box">
+    <p>以下のどれか当てはまりますか？</p>
+    <ul>
+      <li>スタッフからの返信がバラバラで、集計に30分以上かかる</li>
+      <li>「〇〇日は出られます」「やっぱり無理です」のやりとりが混在して把握しづらい</li>
+      <li>Excelに手打ちするとき入力ミスが起きる</li>
+      <li>誰がまだ出していないか毎回確認しなければならない</li>
+      <li>シフト表のフォームを毎月一から作り直している</li>
+    </ul>
+  </div>
+
+  <p>LINEはコミュニケーションツールとしては優れています。しかしシフト収集には向いていません。メッセージが流れやすく、構造化されたデータを集めるのに適していないからです。</p>
+
+  <p>Googleフォームを使う店舗も増えましたが、集計は別途スプレッドシートで行う必要があり、フォーマット変更のたびに手間がかかります。</p>
+
+  <h2>解決策：スタッフにURLを送るだけのシフト管理</h2>
+
+  <p>いちばんシンプルな解決策は、<strong>スタッフ自身がシフトを入力できるフォームを持つこと</strong>です。店長は結果を受け取るだけ。手打ち作業が一切なくなります。</p>
+
+  <p>その仕組みを無料で提供しているのが <strong>Shifty（シフティ）</strong> です。</p>
+
+  <div class="callout">
+    <p><strong>Shiftyのコンセプト：</strong>スタッフにURLを送るだけでシフトが集まる。手打ち入力ゼロ。スタッフのアプリインストール・アカウント登録も不要。</p>
+  </div>
+
+  <h2>Shiftyの使い方（3ステップ）</h2>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h3>店舗を作成して期間を設定する</h3>
+        <p>shiftyshifty.appにアクセスし、店舗名と対象月を設定します。アカウント登録不要。Googleログインまたはメールで30秒で完了。</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h3>スタッフ専用URLをLINEで送る</h3>
+        <p>期間を作成すると専用URLが発行されます。このURLをスタッフのLINEグループに貼り付けるだけ。スタッフは何もインストールしなくてもそのままシフトを入力できます。</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h3>提出状況を確認してExcelで出力</h3>
+        <p>スタッフが入力するとリアルタイムで管理画面に反映されます。誰が未提出か一目でわかります。集計が終わったらExcelファイルとして書き出せます。</p>
+      </div>
+    </div>
+  </div>
+
+  <h2>Shiftyでできること（無料プランで使える機能）</h2>
+
+  <table class="feature-table">
+    <tr>
+      <th>機能</th>
+      <th>説明</th>
+    </tr>
+    <tr>
+      <td>シフト収集フォーム</td>
+      <td>スタッフがURLにアクセスして出勤可能な時間帯を入力</td>
+    </tr>
+    <tr>
+      <td>リアルタイム反映</td>
+      <td>スタッフの入力が即座に管理画面に表示される</td>
+    </tr>
+    <tr>
+      <td>提出状況確認</td>
+      <td>誰が提出済みで誰がまだかひと目でわかる一覧表示</td>
+    </tr>
+    <tr>
+      <td>Excel書き出し</td>
+      <td>集まったシフトをそのままExcel形式でダウンロード</td>
+    </tr>
+    <tr>
+      <td>スタッフ最大20名</td>
+      <td>無料プランで20名まで登録可能</td>
+    </tr>
+    <tr>
+      <td>複数端末対応</td>
+      <td>スマートフォン・PCどちらからでも管理・入力できる</td>
+    </tr>
+  </table>
+
+  <h3>無料プランで十分な店舗</h3>
+  <p>スタッフ20名以内、月次でシフト期間を1件管理する店舗であれば、無料プランで全機能をそのまま使えます。追加費用はかかりません。</p>
+
+  <h3>Proプランが向いている店舗</h3>
+  <p>スタッフ数が多い、複数店舗を管理している、シフト期間を複数並行管理したいという場合はProプラン（月額500円/店舗）が対応しています。</p>
+
+  <h2>導入してよく変わること</h2>
+
+  <ul>
+    <li>シフト集計にかかる時間が週1〜2時間 → 数分に短縮される</li>
+    <li>「まだ出していない人」への催促がなくなる（提出状況が可視化されるため）</li>
+    <li>スタッフがいつでも自分のペースで提出できるようになる</li>
+    <li>Excelへの転記ミスがゼロになる</li>
+    <li>シフト表のフォーマットを毎月作り直す必要がなくなる</li>
+  </ul>
+
+  <h2>よくある質問</h2>
+
+  <h3>スタッフはアプリをインストールする必要がありますか？</h3>
+  <p>必要ありません。LINEで送ったURLをブラウザで開くだけです。スマートフォンのSafariやChromeからそのまま入力できます。</p>
+
+  <h3>スタッフの個人情報は登録が必要ですか？</h3>
+  <p>名前の入力だけで使えます。メールアドレスや電話番号の登録は不要です。</p>
+
+  <h3>今使っているExcelと組み合わせられますか？</h3>
+  <p>はい。収集したシフトはExcelファイルとして書き出せるため、既存のシフト表フォーマットに貼り付けることもできます。</p>
+
+  <h3>途中でスタッフが変更・修正することはできますか？</h3>
+  <p>できます。同じURLから何度でも上書き提出が可能です。修正するたびに最新の内容が管理画面に反映されます。</p>
+
+  <div class="cta-block">
+    <h2>今日から無料で試してみる</h2>
+    <p>登録5分・スタッフへの展開も当日中に完了します。<br>クレジットカード不要。無料プランはずっと無料です。</p>
+    <a class="cta-btn" href="https://shiftyshifty.app">shiftyshifty.appを試す（無料）</a>
+    <p class="cta-note">スタッフのアプリインストール・アカウント登録一切不要</p>
+  </div>
+
+  <footer class="article-footer">
+    <p>&copy; 2026 Shifty &nbsp;|&nbsp; <a href="https://shiftyshifty.app">shiftyshifty.app</a></p>
+  </footer>
+
+</main>
+
+</body>
+</html>
