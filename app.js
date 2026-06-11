@@ -6,10 +6,12 @@ const {useState,useEffect,useCallback,useRef,useMemo}=React;
 
 // ============================================================
 // ★ Firebase 設定 ★
-// Firebase Console で取得した設定を以下に貼り付けてください
-// https://console.firebase.google.com
+// DEV_MODE = true  → 開発用Firebase（developブランチ専用）
+// DEV_MODE = false → 本番Firebase（mainブランチ・リリース用）
 // ============================================================
-const FIREBASE_CONFIG = {
+const DEV_MODE = true;
+
+const FIREBASE_CONFIG_PROD = {
   apiKey:            "AIzaSyDdl1Li3QduufAFhBWcF4nmOlFcCsx8zlQ",
   authDomain:        "ontheshift.firebaseapp.com",
   databaseURL:       "https://ontheshift-default-rtdb.firebaseio.com",
@@ -19,6 +21,19 @@ const FIREBASE_CONFIG = {
   appId:             "1:29720860733:web:94aec772f4cddcb1287254",
   measurementId:     "G-P8RP0TG9JG"
 };
+
+// ★ 開発用Firebaseプロジェクトの設定をここに貼り付ける
+const FIREBASE_CONFIG_DEV = {
+  apiKey:            "PASTE_DEV_API_KEY_HERE",
+  authDomain:        "PASTE_DEV_PROJECT_ID.firebaseapp.com",
+  databaseURL:       "https://PASTE_DEV_PROJECT_ID-default-rtdb.firebaseio.com",
+  projectId:         "PASTE_DEV_PROJECT_ID",
+  storageBucket:     "PASTE_DEV_PROJECT_ID.firebasestorage.app",
+  messagingSenderId: "PASTE_DEV_SENDER_ID",
+  appId:             "PASTE_DEV_APP_ID",
+};
+
+const FIREBASE_CONFIG = DEV_MODE ? FIREBASE_CONFIG_DEV : FIREBASE_CONFIG_PROD;
 // ============================================================
 
 // Firebase SDK の初期化
