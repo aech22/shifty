@@ -16,13 +16,23 @@
       }
     },
     "accounts": {
-      "$shopId": {
+      "$uid": {
         "plan":             { ".read": true,  ".write": false },
         "planExpiry":       { ".read": true,  ".write": false },
         "stripeCustomerId": { ".read": false, ".write": false },
         "shops": {
           ".read": "auth != null",
           ".write": "auth != null"
+        },
+        "inviteCode": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid"
+        },
+        "members": {
+          ".read": "auth != null && auth.uid === $uid",
+          "$memberId": {
+            ".write": "auth != null"
+          }
         }
       }
     },
