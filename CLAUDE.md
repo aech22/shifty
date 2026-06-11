@@ -19,7 +19,9 @@
 ```
 /
 ├── index.html              ← CDN読み込み + Reactマウント + 全OS互換性設定
-├── app.js                  ← アプリ全体（約2100行のReact JSX）
+├── app.js                  ← アプリ全体（約3650行のReact JSX）
+├── functions/
+│   └── index.js            ← Firebase Cloud Functions（Stripe Webhook・決済セッション）
 ├── CLAUDE.md               ← このファイル
 └── サブスク_プラン設計書.md ← プラン仕様
 ```
@@ -34,8 +36,9 @@
 | データベース | Firebase Realtime Database（compat版 v9.23.0） |
 | Excel出力 | ExcelJS 4.4.0（CDN） |
 | ホスティング | GitHub Pages |
-| 認証 | Cookie（現在）→ Firebase Authentication（Phase2予定） |
-| 決済 | Stripe（Phase3予定） |
+| 認証 | Firebase Authentication（Google/Apple/メール+パスワード）+ Cookie併用 |
+| 決済 | Stripe Checkout（月払いサブスク）+ Firebase Cloud Functions |
+| Cloud Functions | Firebase Functions v1（asia-northeast1）+ Stripe Webhook |
 
 ### index.html CDN構成
 ```html
@@ -108,18 +111,25 @@ SS_TAB  = "ss_tab"       // 管理者タブ
 
 | 行 | コンポーネント | 役割 |
 |---|---|---|
-| 248 | `App()` | メインアプリ・3フェーズ初期化・Cookie管理 |
-| 744 | `StaffView` | スタッフのシフト提出画面 |
-| 1056 | `CellEditPanel` | セル編集パネル（既存データを初期値として保持） |
-| 1099 | `SmModal` | 提出状況一覧（名前列固定・日付横スクロール） |
-| 1249 | `AdminView` | 管理者画面（タブ切り替え） |
-| 1322 | `PeriodsTab` | 期間管理・URLシェア |
-| 1482 | `expXl()` | ExcelJSによるExcel生成 |
-| 1659 | `StaffTab` | スタッフ登録・並べ替え |
-| 1689 | `CandTab` | 候補時間・休業日管理 |
-| 1935 | `SubsTab` | 提出一覧・編集・変更履歴 |
-| 2008 | `SetTab` | 設定・Cookie引き継ぎコード |
-| 2104 | `CL` | 候補リスト表示コンポーネント |
+| 93 | `ShiftyIcon` | アプリアイコン |
+| 333 | `App()` | メインアプリ・3フェーズ初期化・Auth/Cookie管理 |
+| 1430 | `StaffView` | スタッフのシフト提出画面 |
+| 1733 | `StaffHdr` | スタッフ画面ヘッダー |
+| 1762 | `CellEditPanel` | セル編集パネル（既存データを初期値として保持） |
+| 1805 | `SmModal` | 提出状況一覧（名前列固定・日付横スクロール） |
+| 1940 | `AdminLogin` | 管理者ログイン画面 |
+| 1972 | `AdminView` | 管理者画面（タブ切り替え） |
+| 2149 | `PeriodsTab` | 期間管理・URLシェア |
+| 2312 | `PEF` | 期間編集フォーム |
+| 2327 | `expXl()` | ExcelJSによるExcel生成 |
+| 2520 | `StaffTab` | スタッフ登録・並べ替え |
+| 2676 | `CandTab` | 候補時間・休業日管理 |
+| 2923 | `SubsTab` | 提出一覧・編集・変更履歴 |
+| 3029 | `UnlockCodeInput` | 解放コード入力（Pro機能テスト用） |
+| 3057 | `SetTab` | 設定・Cookie引き継ぎコード・企業アカウント連携 |
+| 3413 | `MyPageTab` | マイページ（プラン確認・アップグレード） |
+| 3560 | `UpgradeModal` | アップグレード促進モーダル |
+| 3619 | `AC/AL/AT/CL` | 汎用UIパーツ（カード・ラベル・タイトル・候補リスト） |
 
 ---
 
@@ -130,12 +140,19 @@ Firebase Realtime Database
 ├── global/
 │   ├── shops          ← 全端末共有の店舗一覧 {shopId: shopObj}
 │   └── templates      ← 曜日別候補テンプレート（全店舗共有）
-└── shops/
-    └── {shopId}/
-        ├── settings   ← 店舗設定（候補時間含む）
-        ├── periods    ← 期間一覧 {periodId: periodObj}
-        ├── staff      ← スタッフ一覧（文字列配列）
-        └── subs/      ← 提出データ {subId: subObj}
+├── shops/
+│   └── {shopId}/
+│       ├── settings   ← 店舗設定（候補時間含む）
+│       ├── periods    ← 期間一覧 {periodId: periodObj}
+│       ├── staff      ← スタッフ一覧（文字列配列）
+│       └── subs/      ← 提出データ {subId: subObj}
+└── accounts/
+    └── {shopId}/            ← プラン管理（shopId単位）
+        ├── plan             = "free" | "pro"
+        ├── planExpiry       = "2026-12-31"
+        └── stripeCustomerId ← Stripe顧客ID（Customer Portal用）
+    └── {uid}/               ← Firebase Auth UIDで複数店舗管理
+        └── shops            ← {shopId: true} の紐付けマップ
 ```
 
 ### 重要: FirebaseはJavaScript配列をオブジェクトに変換する
@@ -174,12 +191,22 @@ const FIREBASE_CONFIG = {
 URLに #/s/<token> あり？
   ├─ Yes → Firebaseで全店舗横断検索 → period特定
   │         → スタッフ画面固定（管理者タブ非表示）
-  └─ No  → Cookie ots_shopId を確認
-             ├─ あり → その店舗を使用（引き継ぎ画面なし）
-             └─ なし → 引き継ぎコード入力画面（unbound=true）
-                         ├─ コード入力 → 既存店舗に紐付け
-                         └─ 新規作成 → 新しい店舗を作成
+  └─ No  → Firebase Auth 状態確認（onAuthStateChanged）
+             ├─ Auth済み → accounts/{uid}/shops から店舗一覧を取得
+             │              → 複数店舗なら一覧表示、1店舗なら即移動
+             └─ Auth未認証 → Cookie ots_shopId を確認
+                              ├─ あり → その店舗を使用（単一店舗Cookie認証）
+                              └─ なし → ログイン/新規作成画面
+                                          ├─ Google/Apple/メールでサインイン
+                                          └─ 新規作成 → 新しい店舗を作成
 ```
+
+### 企業アカウント（複数店舗管理）
+
+Firebase Authユーザーが複数店舗を持つ場合：
+- `accounts/{uid}/shops` に店舗ID一覧を保存
+- 既存Cookie店舗をAuth UIDに紐付け（signInAndLink系関数）
+- 招待コードで他端末の店舗を同一Authに追加（`onGenerateInviteCode` / `onJoinByInviteCode`）
 
 ---
 
@@ -254,12 +281,17 @@ accounts/<shopId>/planExpiry = "2026-12-31"
 - [x] Pro: Excel書き出し時の店舗名変更UI
 - [x] Pro: Excelスタッフ名色選択（黒/赤）UI
 - [x] 制限到達時のアップグレード促進モーダル
-- [x] テスト用: `DEV_PLAN_OVERRIDE = "free"` をセットして動作確認（app.js 144行目）
+- [x] テスト用: `DEV_PLAN_OVERRIDE = null` → `"free"` にセットして動作確認（app.js 156行目）
 
 ### ✅ Phase 2（Firebase Authentication — 実装完了）
-- [x] メール+パスワード認証
-- [x] uidとshopIdの紐付け
+- [x] メール+パスワード認証（新規登録・ログイン・パスワードリセット）
+- [x] Googleログイン
+- [x] Appleログイン
+- [x] uidとshopIdの紐付け（`accounts/{uid}/shops`）
 - [x] Cookie認証との併用（Firebase Auth + Cookieどちらでも動作）
+- [x] 既存Cookie店舗をAuth UIDに連携（signInAndLinkGoogle/Apple/Email）
+- [x] 複数店舗管理（Authユーザーが複数店舗を持てる）
+- [x] 企業アカウント招待コード（同一UIDに別端末の店舗を追加）
 
 ### ✅ Phase 3（Stripe決済 — 実装完了）
 - [x] Stripe Checkout でサブスク決済ページ（店舗単位）
@@ -286,27 +318,58 @@ accounts/<shopId>/planExpiry = "2026-12-31"
 
 ---
 
-## 最初にやること（Claude Codeへの指示例）
+## 開発Tips
 
+### プランのテスト方法
+```js
+// app.js 156行目
+const DEV_PLAN_OVERRIDE = "free"; // "free" | "pro" | null（本番はnull）
 ```
-このCLAUDE.mdとapp.jsを読んで。
-一般公開版としてPhase 1を実装して：
 
-1. Firebase の accounts/<shopId>/plan を読んでプランを判定
-   （存在しない場合は "free" として扱う）
-
-2. Freeプランの制限:
-   - 店舗追加: 1店舗を超えたら追加できないようにする
-   - スタッフ登録: 11人目以降は登録できないようにする
-   - 期間作成: 4つ目以降は作成できないようにする
-   - 制限到達時はアップグレード促進モーダルを表示
-
-3. Pro限定機能:
-   - スタッフ並べ替えUIはProのみ表示
-   - Excel書き出し時の店舗名変更入力欄はProのみ表示
-   - Excelスタッフ名色選択（黒/赤）はProのみ表示
-
-4. テスト用: plan = "free" をハードコードして動作確認できるようにする
-
-FirebaseのCONFIGは後で渡すので、まずロジックだけ実装して。
+### Stripe Price ID（本番）
 ```
+pro_monthly: price_1TgTwHDjKKQsHl7LRZKClgFc  // 500円/月
+```
+年払いは未実装（STRIPE_PRICESに`pro_annual`を追加すれば対応可能）。
+
+### Cloud Functions デプロイ
+```bash
+cd functions && firebase deploy --only functions
+```
+Secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`（firebase functions:secrets:set で設定）
+
+-
+-
+---
+
+## Obsidianノート（自動同期）
+### バグチェックログ
+# Shifty バグチェックログ
+
+自動スケジュールによるバグチェック結果の記録。
+
+---
+
+## Shifty バグチェックレポート（2026-06-11 自動実行）
+
+### 修正済み
+（今回の実行では修正なし）
+
+### 要確認（未修正）
+
+- **🟡 joinByInviteCode が全accountsを一括読み取り**（app.js:1049）
+  `firebaseDB.ref('accounts').once('value')` で全ユーザーのアカウント情報を取得している。Firebaseセキュリティルールが緩い場合、全ユーザーのplan情報・招待コード・shopIDが漏洩するリスク。パフォーマンス問題にもなり得る。
+
+- **🟡 CF_BASEが本番Cloud FunctionsのURLにハードコード**（app.js:3562）
+  `DEV_MODE = true` 時でも `https://asia-northeast1-ontheshift.cloudfunctions.net` が使われる。テスト中に本番Stripeセッションを誤作成するリスク（devプロジェクトのshopIdでは実際の決済は成立しない見込み）。
+
+- **🟢 AppleログインのデッドコードUIから削除済み**（app.js:776-808, 908-920）
+  最新コミットでAppleログインUIが削除されたが、`signInWithApple`・`signInAndLinkApple` 関数が残存。
+
+- **🟢 DEV_MODE=true → main マージ時の手動対応が必要**
+  GitHub Actionsに develop→main のDEV_MODE自動変更ワークフローなし。マージ前に手動で `false` に戻す必要がある。
+
+### 異常なし
+クリティカル（🔴）な問題はなし。直近コミットのAppleログイン削除は意図的な変更と確認。
+
+---
