@@ -22,22 +22,22 @@
   <!-- SEO -->
   <link rel="canonical" href="https://shiftyshifty.app/">
   <meta name="robots" content="index,follow">
-  <meta name="description" content="shifty（シフティ）は飲食店・小売店向けの無料シフト作成サイト。スタッフがスマホから希望シフトを提出、店長はExcelで一括管理。登録不要ですぐ使える。">
+  <meta name="description" content="店長がシフトをExcelに手打ちする作業をゼロに。スタッフにURLを送るだけでシフトが集まる、飲食店向け無料シフト管理アプリ。登録不要ですぐ使える。">
   <meta name="keywords" content="shifty,シフティ,シフト作成,シフト管理,シフト提出,飲食店,アルバイト,シフト表,無料,シフト作成サイト">
   <!-- OGP（SNSシェア用） -->
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://shiftyshifty.app/">
   <meta property="og:site_name" content="shifty（シフティ）">
-  <meta property="og:title" content="shifty（シフティ）｜飲食店向け無料シフト作成・管理サイト">
-  <meta property="og:description" content="shifty（シフティ）は飲食店・小売店向けの無料シフト作成サイト。スタッフがスマホから希望シフトを提出、店長はExcelで一括管理。登録不要ですぐ使える。">
+  <meta property="og:title" content="shifty（シフティ）｜URLを送るだけでシフトが集まる">
+  <meta property="og:description" content="店長がシフトをExcelに手打ちする作業をゼロに。スタッフにURLを送るだけでシフトが集まる、飲食店向け無料シフト管理アプリ。登録不要ですぐ使える。">
   <meta property="og:locale" content="ja_JP">
   <meta property="og:image" content="https://shiftyshifty.app/ogp.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="shifty（シフティ）｜飲食店向け無料シフト作成・管理サイト">
-  <meta name="twitter:description" content="shifty（シフティ）は飲食店・小売店向けの無料シフト作成サイト。スタッフがスマホから希望シフトを提出、店長はExcelで一括管理。登録不要ですぐ使える。">
+  <meta name="twitter:title" content="shifty（シフティ）｜URLを送るだけでシフトが集まる">
+  <meta name="twitter:description" content="店長がシフトをExcelに手打ちする作業をゼロに。スタッフにURLを送るだけでシフトが集まる、飲食店向け無料シフト管理アプリ。登録不要ですぐ使える。">
   <meta name="twitter:image" content="https://shiftyshifty.app/ogp.png">
   <!-- 構造化データ（JSON-LD） -->
   <script type="application/ld+json">
@@ -75,7 +75,7 @@
     }
   ]
   </script>
-  <title>shifty（シフティ）｜飲食店向け無料シフト作成・管理サイト</title>
+  <title>shifty（シフティ）｜URLを送るだけでシフトが集まる</title>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -86,6 +86,14 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
+  <!-- Google Analytics GA4 -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-P8RP0TG9JG"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-P8RP0TG9JG');
+  </script>
   <!-- PostHog Analytics -->
   <script>
     !function(t,e){var o,n,p,r;e.__SV||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="init capture register register_once register_for_session unregister unregister_for_session getFeatureFlag getFeatureFlagPayload isFeatureEnabled reloadFeatureFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSessionId getSurveys getActiveMatchingSurveys renderSurvey canRenderSurvey getNextSurveyStep identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException loadToolbar get_property getSessionProperty createPersonProfile opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing clear_opt_in_out_capturing debug".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
@@ -173,8 +181,8 @@
 <body>
   <!-- SEO: クローラー向け静的コンテンツ（Reactマウント後は非表示） -->
   <div id="seo-static" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;">
-    <h1>shifty（シフティ）｜飲食店向け無料シフト作成・管理サイト</h1>
-    <p>shifty（シフティ）は飲食店・小売店のシフト管理を簡単にする無料Webアプリです。スタッフはスマートフォンから希望シフトを提出、店長・オーナーはブラウザ上で一覧確認・Excel出力ができます。アカウント登録不要ですぐに使えます。</p>
+    <h1>shifty（シフティ）｜URLを送るだけでシフトが集まる</h1>
+    <p>店長がシフトをExcelに手打ちする作業をゼロに。shifty（シフティ）はスタッフにURLを送るだけでシフトが集まる、飲食店向け無料シフト管理アプリです。スタッフはアプリインストール不要。アカウント登録なしですぐに使えます。</p>
     <h2>shiftyの主な機能</h2>
     <ul>
       <li>スタッフがスマホからシフト希望を提出</li>

@@ -1,0 +1,64 @@
+name: develop → main 自動デプロイ
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  check-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 構文チェック（app.js）
+        run: node --check app.js
+
+      - name: 設定チェック
+        run: |
+          # DEV_MODE が false であること
+          if grep -E "^\s*const DEV_MODE\s*=\s*true" app.js; then
+            echo "❌ DEV_MODE が true のままです。false に変更してください。"
+            exit 1
+          fi
+          echo "✅ DEV_MODE: OK"
+
+          # DEV_PLAN_OVERRIDE が null であること
+          if grep -E "^\s*const DEV_PLAN_OVERRIDE\s*=\s*\"(free|pro)\"" app.js; then
+            echo "❌ DEV_PLAN_OVERRIDE が null 以外です。null に変更してください。"
+            exit 1
+          fi
+          echo "✅ DEV_PLAN_OVERRIDE: OK"
+
+          # FIREBASE_CONFIG が placeholder でないこと
+          if grep -q "YOUR_API_KEY" app.js; then
+            echo "❌ FIREBASE_CONFIG が未設定です。"
+            exit 1
+          fi
+          echo "✅ FIREBASE_CONFIG: OK"
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: develop → main マージ & push
+        run: |
+          git checkout main
+          git merge origin/develop --no-edit
+          git push origin main
+
+      - name: デプロイ成功通知
+        if: success()
+        run: echo "✅ main へのデプロイ完了"
+
+      - name: チェック失敗通知
+        if: failure()
+        run: echo "❌ チェック失敗のため main へのデプロイを中止しました"

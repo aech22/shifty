@@ -1034,6 +1034,10 @@ function App(){
         expiresAt:expiresAt.toISOString(),
         createdBy:authUser.email
       });
+      await firebaseDB.ref(`inviteCodes/${code}`).set({
+        uid:authUser.uid,
+        expiresAt:expiresAt.toISOString()
+      });
       setInviteCodeDisplay(code);
       console.log("招待コード生成:", code);
     }catch(e){
@@ -1046,21 +1050,13 @@ function App(){
   const joinByInviteCode=async(code)=>{
     if(!firebaseDB || !authUser) return;
     try{
-      const snapshot=await firebaseDB.ref('accounts').once('value');
-      let foundUid=null;
-      snapshot.forEach(snap=>{
-        const data=snap.val();
-        if(data?.inviteCode?.code===code){
-          const expiresAt=new Date(data.inviteCode.expiresAt);
-          if(new Date()<expiresAt){
-            foundUid=snap.key;
-          }
-        }
-      });
-      if(!foundUid){
+      const codeSnap=await firebaseDB.ref(`inviteCodes/${code}`).once('value');
+      const codeData=codeSnap.val();
+      if(!codeData || new Date()>=new Date(codeData.expiresAt)){
         setInviteError('無効または期限切れのコードです');
         return;
       }
+      const foundUid=codeData.uid;
       // members に追加
       await firebaseDB.ref(`accounts/${foundUid}/members/${authUser.uid}`).set({
         email:authUser.email,
@@ -1288,7 +1284,7 @@ function App(){
         <div style={{textAlign:"center",marginBottom:32}}>
           <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><ShiftyIcon size={72}/></div>
           <div style={{color:"#F1F5F9",fontSize:24,fontWeight:800,letterSpacing:"-0.5px"}}>Shifty</div>
-          <div style={{color:"#94A3B8",fontSize:13,marginTop:6}}>飲食店向けシフト管理アプリ</div>
+          <div style={{color:"#94A3B8",fontSize:13,marginTop:6}}>URLを送るだけでシフトが集まる</div>
         </div>
 
         {/* Auth ログインボタン */}
@@ -2167,7 +2163,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkApple={onSignInAndLinkApple} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkApple={onSignInAndLinkApple} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={unlinkShopFromAuth} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -3583,7 +3579,9 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
 // アップグレード促進モーダル
 // ============================================================
 // Cloud Functions エンドポイント
-const CF_BASE = "https://asia-northeast1-ontheshift.cloudfunctions.net";
+const CF_BASE = DEV_MODE
+  ? "https://asia-northeast1-thirty-dev-b6958.cloudfunctions.net"
+  : "https://asia-northeast1-ontheshift.cloudfunctions.net";
 
 function UpgradeModal({reason,currentPlan,shopId,onClose}){
   const[loading,setLoading]=useState(null); // "pro" | null
