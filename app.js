@@ -1410,7 +1410,7 @@ function App(){
                 currentShopIdRef.current=id;
                 setCurrentShopId(id);
                 ssSave(SS_SHOP,id);
-                startSubscriptions(id,shops);
+                startSubscriptions(id);
               }}
               startSubscriptions={startSubscriptions}
               logout={doLogout} authUser={authUser} syncStatus={syncStatus}
