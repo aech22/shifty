@@ -1,0 +1,18 @@
+{
+  "demo": true,
+  "initial_capital": 1000000,
+  "usd_jpy": 150,
+  "note": "デモポートフォリオ。shares/avg_priceを実際に購入した際に更新する。",
+  "holdings": [
+    {"symbol": "8031.T",  "name": "三井物産",         "market": "JP", "shares": 20, "avg_price": 4848.00},
+    {"symbol": "8306.T",  "name": "三菱UFJ",          "market": "JP", "shares": 31, "avg_price": 3146.00},
+    {"symbol": "9433.T",  "name": "KDDI",             "market": "JP", "shares": 36, "avg_price": 2770.50},
+    {"symbol": "5108.T",  "name": "ブリヂストン",       "market": "JP", "shares": 29, "avg_price": 3349.00},
+    {"symbol": "4063.T",  "name": "信越化学",          "market": "JP", "shares": 14, "avg_price": 6817.00},
+    {"symbol": "AAPL",    "name": "Apple",            "market": "US", "shares": 2,  "avg_price": 293.77},
+    {"symbol": "MSFT",    "name": "Microsoft",        "market": "US", "shares": 1,  "avg_price": 386.25},
+    {"symbol": "JNJ",     "name": "Johnson & Johnson","market": "US", "shares": 2,  "avg_price": 239.90},
+    {"symbol": "BRK-B",   "name": "Berkshire B",      "market": "US", "shares": 1,  "avg_price": 482.11},
+    {"symbol": "GOOGL",   "name": "Alphabet",         "market": "US", "shares": 1,  "avg_price": 347.80}
+  ]
+}
