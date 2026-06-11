@@ -1284,7 +1284,7 @@ function App(){
         <div style={{textAlign:"center",marginBottom:32}}>
           <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><ShiftyIcon size={72}/></div>
           <div style={{color:"#F1F5F9",fontSize:24,fontWeight:800,letterSpacing:"-0.5px"}}>Shifty</div>
-          <div style={{color:"#94A3B8",fontSize:13,marginTop:6}}>飲食店向けシフト管理アプリ</div>
+          <div style={{color:"#94A3B8",fontSize:13,marginTop:6}}>URLを送るだけでシフトが集まる</div>
         </div>
 
         {/* Auth ログインボタン */}
