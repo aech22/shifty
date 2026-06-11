@@ -636,14 +636,20 @@ function App(){
       ls("shift_global_templates",arr);
     });
 
-    // global/shops
-    on("global/shops",val=>{
-      if(!val)return;
-      const arr=typeof val==="object"&&!Array.isArray(val)
-        ?Object.values(val).filter(s=>s&&s.id)
-        :(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id);
-      if(arr.length>0){ setShops(arr); ls("shift_shops_v6",arr); }
-    });
+    // global/shops（複数店舗管理者向けのみ購読）
+    if(!shopList||shopList.length>1){
+      on("global/shops",val=>{
+        if(!val)return;
+        const arr=typeof val==="object"&&!Array.isArray(val)
+          ?Object.values(val).filter(s=>s&&s.id)
+          :(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id);
+        if(arr.length>0){ setShops(arr); ls("shift_shops_v6",arr); }
+      });
+    } else if(shopList&&shopList.length===1){
+      // 単一店舗ログイン時は shopList をそのまま使用
+      setShops(shopList);
+      ls("shift_shops_v6",shopList);
+    }
     // settings
     on(fbPath(targetSid,"settings"),val=>{
       if(val&&typeof val==="object"){ setSettings(val); ls(storeKey(targetSid,"settings_v6"),val); }
