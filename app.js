@@ -3368,9 +3368,9 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       )}
     </AC>}
 
-    {authUser&&shops.filter(s=>!s.isAuth).length>0&&<AC title="企業アカウント連携">
+    {authUser&&shops.length>0&&<AC title="企業アカウント連携">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
-        Cookie 認証で使用している店舗を企業アカウントに連携できます。
+        Cookie 認証で使用している店舗を企業アカウントに連携して、複数店舗管理に統一できます。
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {shops.map(shop=>(
