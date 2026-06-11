@@ -36,6 +36,12 @@
         }
       }
     },
+    "inviteCodes": {
+      "$code": {
+        ".read": "auth != null",
+        ".write": "auth != null"
+      }
+    },
     "pendingLinks": {
       "$userId": {
         ".read": "auth != null && auth.uid === $userId",

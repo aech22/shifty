@@ -1,0 +1,86 @@
+# Shifty — Cursor Rules
+
+## プロジェクト概要
+飲食店向けシフト提出・管理WebアプリのFree/Pro 2段階プラン版。
+GitHub Pagesでホスティング。ビルド不要（Babel Standalone使用）。
+
+## 技術スタック
+- React 18（CDN UMD版）+ Babel Standalone — JSXをブラウザでトランスパイル
+- Firebase Realtime Database（compat版 v9.23.0）
+- Firebase Authentication（Google/Apple/メール+パスワード）
+- Stripe Checkout + Firebase Cloud Functions（決済）
+- ExcelJS 4.4.0（Excel出力）
+- スタイルはすべてinline style（外部CSSファイルなし）
+
+## ファイル構成
+- `index.html` — CDN読み込み + Reactマウント
+- `app.js` — アプリ全体（約3650行のReact JSX）※単一ファイル
+- `functions/index.js` — Firebase Cloud Functions（Stripe Webhook）
+
+## コーディングルール
+
+### 必須
+- `input`の`font-size`は必ず16px以上（iOS Safariズーム防止）
+- スタイルはinline styleのみ（CSSファイル・CSSクラスを新規作成しない）
+- Firebaseへの配列保存は `{id: data}` 形式のオブジェクトで行う
+- subs（提出データ）は `shops/${shopId}/subs/${sub.id}` に1件ずつ書き込む
+- `set()` で配列全体を上書きしない（他端末データが消えるため）
+
+### Firebaseデータ読み取り
+```js
+// Firebaseはオブジェクトで返すので必ず変換
+const arr = typeof val === "object" && !Array.isArray(val)
+  ? Object.values(val).filter(s => s && s.id)
+  : val.filter(Boolean);
+```
+
+### プラン判定
+- `accounts/<shopId>/plan` = "free" | "pro"
+- Free制限: スタッフ20名、期間1つ、並べ替え不可
+- `DEV_PLAN_OVERRIDE`（app.js 156行目）でテスト可能
+
+## コンポーネント主要行番号（app.js）
+- 333: `App()` — メインアプリ・認証・初期化
+- 1430: `StaffView` — スタッフ提出画面
+- 1972: `AdminView` — 管理者画面
+- 2149: `PeriodsTab` — 期間管理
+- 2520: `StaffTab` — スタッフ登録
+- 2923: `SubsTab` — 提出一覧
+- 3413: `MyPageTab` — マイページ・プラン確認
+
+## 禁止事項
+- ビルドツール（webpack/vite等）の導入提案をしない
+- 外部npmパッケージの追加（CDNで解決済み）
+- コメントの多用（必要な場合のみ最小限で）
+
+## Obsidianノート（自動同期）
+### バグチェックログ
+# Shifty バグチェックログ
+
+自動スケジュールによるバグチェック結果の記録。
+
+---
+
+## Shifty バグチェックレポート（2026-06-11 自動実行）
+
+### 修正済み
+（今回の実行では修正なし）
+
+### 要確認（未修正）
+
+- **🟡 joinByInviteCode が全accountsを一括読み取り**（app.js:1049）
+  `firebaseDB.ref('accounts').once('value')` で全ユーザーのアカウント情報を取得している。Firebaseセキュリティルールが緩い場合、全ユーザーのplan情報・招待コード・shopIDが漏洩するリスク。パフォーマンス問題にもなり得る。
+
+- **🟡 CF_BASEが本番Cloud FunctionsのURLにハードコード**（app.js:3562）
+  `DEV_MODE = true` 時でも `https://asia-northeast1-ontheshift.cloudfunctions.net` が使われる。テスト中に本番Stripeセッションを誤作成するリスク（devプロジェクトのshopIdでは実際の決済は成立しない見込み）。
+
+- **🟢 AppleログインのデッドコードUIから削除済み**（app.js:776-808, 908-920）
+  最新コミットでAppleログインUIが削除されたが、`signInWithApple`・`signInAndLinkApple` 関数が残存。
+
+- **🟢 DEV_MODE=true → main マージ時の手動対応が必要**
+  GitHub Actionsに develop→main のDEV_MODE自動変更ワークフローなし。マージ前に手動で `false` に戻す必要がある。
+
+### 異常なし
+クリティカル（🔴）な問題はなし。直近コミットのAppleログイン削除は意図的な変更と確認。
+
+---
