@@ -1182,11 +1182,16 @@ function App(){
       if(found){
         // Auth ユーザーがいればアカウントにも紐付け
         if(authUser) linkShopToAccount(authUser.uid,code);
+        // 古いCookie を完全削除（複数店舗対応の遺跡削除）
+        delCookie(CK_SHOP);
+        try{ delCookie("ots_shopIds"); }catch{}
         // Cookie: 単一店舗のみ保存（上書き）
         setCookie(CK_SHOP,code,365);
-        // shops 配列にも単一店舗だけ
+        // localStorage も単一店舗のみに統一
         const newShops=[found];
         ls("shift_shops_v6",newShops);
+        // sessionStorage もクリア（古い状態を削除）
+        sessionStorage.clear();
         currentShopIdRef.current=code;
         setCurrentShopId(code);
         startSubscriptions(code,newShops);
@@ -3321,7 +3326,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>別端末への共有は「店舗名ボタン → コードで追加」から行えます</div>
     </AC>}
 
-    {authUser&&shops.length>1&&<AC title="企業アカウント管理">
+    {authUser&&shops.length>1&&onGenerateInviteCode&&<AC title="企業アカウント管理">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
         このコードを他のユーザーに共有して、同じ企業アカウントで複数店舗を管理できます。
       </div>
@@ -3335,18 +3340,18 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             }} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>📋 コピー</button>
           </div>
           <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:12}}>有効期限：24時間</div>
-          <button onClick={onGenerateInviteCode} disabled={inviteCodeGenLoading} style={{width:"100%",padding:"10px",background:"rgba(248,112,54,.12)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"#f87036",fontSize:13,fontWeight:700,cursor:"pointer",opacity:inviteCodeGenLoading?.5:1}}>
+          <button onClick={()=>onGenerateInviteCode&&onGenerateInviteCode()} disabled={inviteCodeGenLoading} style={{width:"100%",padding:"10px",background:"rgba(248,112,54,.12)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"#f87036",fontSize:13,fontWeight:700,cursor:"pointer",opacity:inviteCodeGenLoading?.5:1}}>
             🔄 新規生成
           </button>
         </div>
       ):(
-        <button onClick={onGenerateInviteCode} disabled={inviteCodeGenLoading} style={{width:"100%",padding:"12px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",opacity:inviteCodeGenLoading?.5:1}}>
+        <button onClick={()=>onGenerateInviteCode&&onGenerateInviteCode()} disabled={inviteCodeGenLoading} style={{width:"100%",padding:"12px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",opacity:inviteCodeGenLoading?.5:1}}>
           {inviteCodeGenLoading?"生成中...":"招待コードを生成する"}
         </button>
       )}
     </AC>}
 
-    {authUser&&shops.length>0&&<AC title="企業アカウント連携">
+    {authUser&&shops.length>0&&onLinkExistingShop&&<AC title="企業アカウント連携">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
         Cookie 認証で使用している店舗を企業アカウントに連携して、複数店舗管理に統一できます。
       </div>
@@ -3354,7 +3359,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
         {shops.map(shop=>(
           <div key={shop.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",background:"var(--c-input)",borderRadius:8,border:"1px solid var(--c-border2)"}}>
             <span style={{fontSize:13,color:"var(--c-text)"}}>{shop.name}</span>
-            <button onClick={()=>onLinkExistingShop(shop.id)} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+            <button onClick={()=>onLinkExistingShop&&onLinkExistingShop(shop.id)} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer"}}>
               連携
             </button>
           </div>
