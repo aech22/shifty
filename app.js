@@ -3579,7 +3579,9 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
 // アップグレード促進モーダル
 // ============================================================
 // Cloud Functions エンドポイント
-const CF_BASE = "https://asia-northeast1-ontheshift.cloudfunctions.net";
+const CF_BASE = DEV_MODE
+  ? "https://asia-northeast1-thirty-dev-b6958.cloudfunctions.net"
+  : "https://asia-northeast1-ontheshift.cloudfunctions.net";
 
 function UpgradeModal({reason,currentPlan,shopId,onClose}){
   const[loading,setLoading]=useState(null); // "pro" | null
