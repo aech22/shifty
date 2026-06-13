@@ -341,6 +341,9 @@ Secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`（firebase functions:secre
 -
 -
 -
+-
+-
+-
 ---
 
 ## Obsidianノート（自動同期）
@@ -372,5 +375,65 @@ Secrets: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`（firebase functions:secre
 
 ### 異常なし
 クリティカル（🔴）な問題はなし。直近コミットのAppleログイン削除は意図的な変更と確認。
+
+---
+
+## Shifty バグチェックレポート（2026-06-12 自動実行）
+
+### 修正済み
+（今回の実行では修正なし）
+
+### 要確認（未修正）
+
+- **🟢 signInWithApple / signInAndLinkApple デッドコード**（app.js:776-808, 908-920）
+  AppleログインUIは削除済みだが、`signInWithApple`・`signInAndLinkApple` 関数が残存。動作に影響はないが将来的に削除推奨。
+
+- **🟢 DEV_MODE = true（develop ブランチのため意図的）**（app.js:12）
+  main マージ前に手動で `false` に変更が必要。
+
+- **🟢 iOS Safari ズーム防止: fontSize:12 の input**（app.js:2095）
+  管理者ヘッダーの「コードで追加」入力欄が `fontSize:12`。iOS Safariでズームが発生する可能性。管理者画面のみの影響。
+
+- **🟢 iOS Safari ズーム防止: AI定数の fontSize:14**（app.js:3674）
+  `AI` スタイル定数（管理者フォーム全般）が `fontSize:14`。PEF期間編集・xlShopName入力等に使用。管理者画面のみの影響。
+
+### 前回から改善された点
+- `joinByInviteCode` が `accounts` 全件読み取り → `inviteCodes/${code}` 個別読み取りに修正済み ✓
+- `CF_BASE` が `DEV_MODE` に応じて dev/prod 正しく切り替わっている ✓
+
+### 異常なし
+クリティカル（🔴）・中程度（🟡）の問題はなし。
+
+---
+
+## Shifty バグチェックレポート（2026-06-13 自動実行）
+
+### 修正済み
+
+- **🟡 sc()関数が{closed:true}アイテムと時間候補混在時にTypeErrorでクラッシュ**（app.js:224）
+  休業日を設定済みの曜日/日付に時間候補を追加しようとするとソート処理がクラッシュ。closedアイテムを末尾に固定するガード処理を追加。
+
+- **🟡 StaffTab: setNewAlias未定義によりProユーザーが別名パネルを開けない**（app.js:2643）
+  別名ボタンのonClickでsetNewAlias（コンポーネント内で未定義）を呼び出していた。TypeError発生により別名パネルが一切開かなかった。不要なsetNewAlias("")呼び出しを削除。
+
+- **🟢 AdminView: 店舗削除ハンドラでcurrentShopIdRef（スコープ外）を参照しTypeError**（app.js:2129）
+  削除後の処理でcurrentShopIdRefを直接参照していたが、AdminViewスコープでは未定義。setCurrentShopId propsが既にref更新を内包しているため冗長な行を削除。削除完了トーストが表示されなかった問題を解消。
+
+### 要確認（未修正）
+
+- **🟢 signInWithApple / signInAndLinkApple デッドコード**（app.js:776-808, 908-920）
+  AppleログインUIは削除済みだが関数が残存。動作に影響なし、将来的に削除推奨。
+
+- **🟢 DEV_MODE = true（develop ブランチのため意図的）**（app.js:12）
+  main マージ前に手動で false に変更が必要。
+
+- **🟢 iOS Safari ズーム防止: fontSize:12 の input**（app.js:2095）
+  管理者ヘッダーの「コードで追加」入力欄。管理者画面のみの影響。
+
+- **🟢 iOS Safari ズーム防止: AI定数の fontSize:14**（app.js:3674）
+  管理者フォーム全般に使用されるAIスタイル定数。管理者画面のみの影響。
+
+### 異常なし
+クリティカル（🔴）の問題はなし。中程度（🟡）2件を修正済み。
 
 ---
