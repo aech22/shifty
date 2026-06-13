@@ -318,7 +318,8 @@ function setCookie(name,value,days){
   document.cookie=`${name}=${encodeURIComponent(value)};expires=${exp.toUTCString()};path=/;SameSite=Lax`;
 }
 function getCookie(name){
-  const m=document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+  const m=document.cookie.match(new RegExp(`(?:^|; )${escaped}=([^;]*)`));
   return m?decodeURIComponent(m[1]):null;
 }
 function delCookie(name){
