@@ -9,7 +9,7 @@ const {useState,useEffect,useCallback,useRef,useMemo}=React;
 // DEV_MODE = true  → 開発用Firebase（developブランチ専用）
 // DEV_MODE = false → 本番Firebase（mainブランチ・リリース用）
 // ============================================================
-const DEV_MODE = true;
+const DEV_MODE = false;
 
 const FIREBASE_CONFIG_PROD = {
   apiKey:            "AIzaSyDdl1Li3QduufAFhBWcF4nmOlFcCsx8zlQ",
@@ -1043,6 +1043,7 @@ function App(){
       console.log("招待コード生成:", code);
     }catch(e){
       console.warn("招待コード生成失敗:", e);
+      tt("招待コードの生成に失敗しました: " + (e?.message||e?.code||"不明なエラー"));
     }finally{
       setInviteCodeGenLoading(false);
     }
