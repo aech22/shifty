@@ -234,7 +234,7 @@ const td=new Date(),tds=fd(td);
 function storeKey(shopId,key){return`shift_${shopId}_${key}`;}
 
 // ===== 初期データ =====
-function makeShop(name="店舗1"){return{id:genSecureId(24),name,createdAt:new Date().toISOString()};}
+function makeShop(name="店舗1"){const now=new Date().toISOString();return{id:genSecureId(24),name,createdAt:now,lastActivity:now};}
 function makePeriod(shopId){
   const yr=td.getFullYear(),mo=td.getMonth()+1,ms=String(mo).padStart(2,"0");
   return{id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:`${yr}年${mo}月前半`,startDate:`${yr}-${ms}-01`,endDate:`${yr}-${ms}-15`,deadlineDate:"",createdAt:new Date().toISOString()};
@@ -1150,7 +1150,10 @@ function App(){
   // 保存関数（Firebase + localStorage 二重書き）
   // ===================================================================
   const fbW=(path,val)=>{ if(firebaseDB) firebaseDB.ref(path).set(val).catch(e=>console.warn("書き込み失敗:",path,e)); };
-  const saveSettings=useCallback(v=>{ setSettings(v); ls(storeKey(sid,"settings_v6"),v); fbW(fbPath(sid,"settings"),v); },[sid]);
+  const touchLastActivity=useCallback(()=>{
+    if(firebaseDB&&sid) firebaseDB.ref(`shops/${sid}/lastActivity`).set(new Date().toISOString()).catch(()=>{});
+  },[sid]);
+  const saveSettings=useCallback(v=>{ setSettings(v); ls(storeKey(sid,"settings_v6"),v); fbW(fbPath(sid,"settings"),v); touchLastActivity(); },[sid,touchLastActivity]);
   const savePeriods =useCallback(v=>{
     // 削除された期間のsubsをFirebaseから削除
     const deletedIds=periods.filter(p=>!v.find(np=>np.id===p.id)).map(p=>p.id);
@@ -1171,8 +1174,9 @@ function App(){
       v.forEach(p=>{ if(p&&p.id) obj[p.id]=p; });
       firebaseDB.ref(fbPath(sid,"periods")).set(obj).catch(e=>console.warn("periods書き込み失敗:",e));
     }
-  },[sid,periods,subs]);
-  const saveStaff   =useCallback(v=>{ setStaffList(v);ls(storeKey(sid,"staff_v6"),v);    fbW(fbPath(sid,"staff"),v);    },[sid]);
+    touchLastActivity();
+  },[sid,periods,subs,touchLastActivity]);
+  const saveStaff   =useCallback(v=>{ setStaffList(v);ls(storeKey(sid,"staff_v6"),v);    fbW(fbPath(sid,"staff"),v); touchLastActivity();   },[sid,touchLastActivity]);
   const saveSubs    =useCallback(v=>{
     setSubs(v);
     ls(storeKey(sid,"subs_v6"),v);
@@ -1182,7 +1186,8 @@ function App(){
       v.forEach(s=>{ if(s&&s.id) obj[s.id]=s; });
       firebaseDB.ref(fbPath(sid,"subs")).update(obj).catch(e=>console.warn("subs書き込み失敗:",e));
     }
-  },[sid]);
+    touchLastActivity();
+  },[sid,touchLastActivity]);
   const saveShops   =useCallback(v=>{
     setShops(v);
     ls("shift_shops_v6",v);
@@ -1443,7 +1448,7 @@ function App(){
               onLinkProvider={linkProvider} onSendEmailOtp={sendEmailOtp}
               onVerifyAndLinkEmail={verifyAndLinkEmail} onUnlinkProvider={unlinkProvider}
               onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkApple={signInAndLinkApple} onSignInAndLinkEmail={signInAndLinkEmail}
-              onGenerateInviteCode={generateInviteCode} onJoinByInviteCode={joinByInviteCode} onLinkExistingShop={linkExistingShopToAuth} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>
+              onGenerateInviteCode={generateInviteCode} onJoinByInviteCode={joinByInviteCode} onLinkExistingShop={linkExistingShopToAuth} onUnlinkShop={unlinkShopFromAuth} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>
           :null)
       }
     </div>
@@ -1546,7 +1551,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     if(shopId&&apid) setCookie(ckStaffKey(shopId,apid),staffName,365);
     editingRef.current=false;
     ph("shift_submitted",{period_id:apid,is_update:!!existSub,work_days:Object.values(sd).filter(s=>s?.status==="work").length});
-    onSub(sub);setDone(true);setConf(false);
+    setConf(false);setDone(true);onSub(sub);
   };
 
   const p0=dates[0]?`${pd(dates[0]).getMonth()+1}/${pd(dates[0]).getDate()}`:"";
@@ -1995,7 +2000,7 @@ function AdminLogin({settings,onAuth}){
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,inviteCodeDisplay,inviteCodeGenLoading}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
@@ -2047,8 +2052,11 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                   {shopMenuOpen&&(
                     <div style={{position:"absolute",top:"calc(100% + 6px)",left:0,background:"var(--c-card)",borderRadius:12,boxShadow:"0 8px 24px rgba(0,0,0,.2)",zIndex:200,minWidth:180,overflow:"hidden"}}>
                       {shops.map(sh=>(
-                        <div key={sh.id} onClick={()=>{setCurrentShopId(sh.id);setShopMenuOpen(false);}} style={{padding:"11px 16px",cursor:"pointer",fontSize:14,fontWeight:sh.id===currentShopId?700:400,color:sh.id===currentShopId?"#f87036":"#1A1A2E",background:sh.id===currentShopId?"#FEF0E8":"white",display:"flex",alignItems:"center",gap:8}}>
-                          {sh.id===currentShopId&&<span style={{fontSize:10}}>✓</span>}{sh.name}
+                        <div key={sh.id} style={{display:"flex",alignItems:"center",background:sh.id===currentShopId?"#FEF0E8":"white",borderBottom:"1px solid #F3F4F6"}}>
+                          <div onClick={()=>{setCurrentShopId(sh.id);setShopMenuOpen(false);}} style={{flex:1,padding:"11px 16px",cursor:"pointer",fontSize:14,fontWeight:sh.id===currentShopId?700:400,color:sh.id===currentShopId?"#f87036":"#1A1A2E",display:"flex",alignItems:"center",gap:8}}>
+                            {sh.id===currentShopId&&<span style={{fontSize:10}}>✓</span>}{sh.name}
+                          </div>
+                          <button onClick={e=>{e.stopPropagation();if(!window.confirm(`「${sh.name}」からログアウトしますか？`))return;setShopMenuOpen(false);if(shops.length===1){logout();}else{onUnlinkShop(sh.id);}}} style={{padding:"6px 10px",margin:"0 8px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:6,color:"#FF4757",fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>ログアウト</button>
                         </div>
                       ))}
                       <div style={{borderTop:"1px solid var(--c-border)",padding:"8px 10px",display:"flex",gap:6}}>
@@ -2606,6 +2614,26 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const handleDragOver=(e,i)=>{e.preventDefault();e.dataTransfer.dropEffect="move";setDragOverIdx(i);};
   const handleDrop=(e,i)=>{e.preventDefault();if(dragIdx===null||dragIdx===i){setDragIdx(null);setDragOverIdx(null);return;}const a=[...staffList];const[moved]=a.splice(dragIdx,1);a.splice(i,0,moved);onSave(a);setDragIdx(null);setDragOverIdx(null);};
   const handleDragEnd=()=>{setDragIdx(null);setDragOverIdx(null);};
+  const dragIdxRef=useRef(null);
+  const handleTouchStart=(e,i)=>{e.preventDefault();dragIdxRef.current=i;setDragIdx(i);};
+  const handleTouchMove=(e)=>{
+    e.preventDefault();
+    const touch=e.touches[0];
+    const el=document.elementFromPoint(touch.clientX,touch.clientY);
+    const item=el&&el.closest("[data-staff-idx]");
+    if(item){const idx=parseInt(item.getAttribute("data-staff-idx"),10);if(!isNaN(idx))setDragOverIdx(idx);}
+  };
+  const handleTouchEnd=()=>{
+    const from=dragIdxRef.current;
+    setDragIdx(null);
+    setDragOverIdx(prev=>{
+      if(from!==null&&prev!==null&&from!==prev){
+        const a=[...staffList];const[moved]=a.splice(from,1);a.splice(prev,0,moved);onSave(a);
+      }
+      return null;
+    });
+    dragIdxRef.current=null;
+  };
   return(
     <div>
       <AT>スタッフ登録</AT>
@@ -2618,7 +2646,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
         {staffList.map((n,i)=>(
           <div key={i} style={{marginBottom:6}}>
           {isSpacer(n)
-            ?<div draggable={isPro} onDragStart={isPro?e=>handleDragStart(e,i):undefined} onDragOver={isPro?e=>handleDragOver(e,i):undefined} onDrop={isPro?e=>handleDrop(e,i):undefined} onDragEnd={isPro?handleDragEnd:undefined} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",border:dragOverIdx===i&&dragIdx!==null?"2px solid #f87036":"1px dashed var(--c-border2)",borderRadius:10,background:"transparent",opacity:dragIdx===i?.4:1,transition:"opacity .15s"}}>
+            ?<div data-staff-idx={i} draggable={isPro} onDragStart={isPro?e=>handleDragStart(e,i):undefined} onDragOver={isPro?e=>handleDragOver(e,i):undefined} onDrop={isPro?e=>handleDrop(e,i):undefined} onDragEnd={isPro?handleDragEnd:undefined} onTouchStart={isPro?e=>handleTouchStart(e,i):undefined} onTouchMove={isPro?handleTouchMove:undefined} onTouchEnd={isPro?handleTouchEnd:undefined} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",border:dragOverIdx===i&&dragIdx!==null?"2px solid #f87036":"1px dashed var(--c-border2)",borderRadius:10,background:"transparent",opacity:dragIdx===i?.4:1,transition:"opacity .15s",touchAction:isPro?"none":"auto"}}>
               {isPro&&<span style={{cursor:"grab",color:"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",lineHeight:1}}>⠿</span>}
               <span style={{flex:1,fontSize:12,textAlign:"center",color:"var(--c-text4)",letterSpacing:2}}>─ 空白列 ─</span>
               {isPro&&<>
@@ -2627,7 +2655,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
               </>}
               <button onClick={()=>del(i)} style={AD}>削除</button>
             </div>
-            :<div draggable={isPro} onDragStart={isPro?e=>handleDragStart(e,i):undefined} onDragOver={isPro?e=>handleDragOver(e,i):undefined} onDrop={isPro?e=>handleDrop(e,i):undefined} onDragEnd={isPro?handleDragEnd:undefined} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:dragOverIdx===i&&dragIdx!==null?"2px solid #f87036":"1px solid #E5E7EB",borderRadius:10,opacity:dragIdx===i?.4:1,transition:"opacity .15s"}}>
+            :<div data-staff-idx={i} draggable={isPro} onDragStart={isPro?e=>handleDragStart(e,i):undefined} onDragOver={isPro?e=>handleDragOver(e,i):undefined} onDrop={isPro?e=>handleDrop(e,i):undefined} onDragEnd={isPro?handleDragEnd:undefined} onTouchStart={isPro?e=>handleTouchStart(e,i):undefined} onTouchMove={isPro?handleTouchMove:undefined} onTouchEnd={isPro?handleTouchEnd:undefined} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:dragOverIdx===i&&dragIdx!==null?"2px solid #f87036":"1px solid #E5E7EB",borderRadius:10,opacity:dragIdx===i?.4:1,transition:"opacity .15s",touchAction:isPro?"none":"auto"}}>
             {isPro&&<span style={{cursor:"grab",color:"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",lineHeight:1,flexShrink:0}}>⠿</span>}
             <span style={{fontSize:13,color:"var(--c-text4)",minWidth:24,textAlign:"center"}}>{staffList.slice(0,i).filter(x=>!isSpacer(x)).length+1}</span>
             {editIdx===i
