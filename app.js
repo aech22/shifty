@@ -1198,6 +1198,27 @@ function App(){
     }
   },[]);
 
+  // 1年間未更新の店舗をFirebaseから自動削除（初回ロード後1度だけ実行）
+  const purgedRef=useRef(false);
+  useEffect(()=>{
+    if(!ready||!sid||purgedRef.current)return;
+    purgedRef.current=true;
+    if(!firebaseDB)return;
+    const oneYearAgo=new Date();oneYearAgo.setFullYear(oneYearAgo.getFullYear()-1);
+    const snapshot=[...shops];
+    snapshot.forEach(sh=>{
+      if(!sh.id)return;
+      firebaseDB.ref(`shops/${sh.id}/lastActivity`).once("value").then(snap=>{
+        const la=snap.val();
+        const lastDate=la?new Date(la):(sh.createdAt?new Date(sh.createdAt):null);
+        if(!lastDate||lastDate>oneYearAgo)return;
+        console.log(`[Shifty] 1年間未更新の店舗を削除: ${sh.id} (${sh.name})`);
+        firebaseDB.ref(`shops/${sh.id}`).remove().catch(()=>{});
+        firebaseDB.ref(`global/shops/${sh.id}`).remove().catch(()=>{});
+      }).catch(()=>{});
+    });
+  },[ready,sid]);
+
   // ap: apidに対応するperiodを取得
   // 最新の期間 = startDateが最も新しいperiod
   const latestPeriod=periods.length>0?[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate))[0]:null;
@@ -2171,7 +2192,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkApple={onSignInAndLinkApple} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={unlinkShopFromAuth} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkApple={onSignInAndLinkApple} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
