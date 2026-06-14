@@ -740,6 +740,7 @@ function App(){
       const result=await firebaseAuth.signInWithPopup(provider);
       const user=result.user;
       setAuthUser(user);
+      ph("login",{method:"google"});
       // accounts/{uid}/shops を確認
       if(!firebaseDB){setAuthLoading(false);return;}
       const snap=await firebaseDB.ref(`accounts/${user.uid}/shops`).once("value");
@@ -812,6 +813,7 @@ function App(){
   // メール+パスワードでサインイン（共通処理）
   const _afterEmailAuth=async(user)=>{
     setAuthUser(user);
+    ph("login",{method:"email"});
     if(!firebaseDB){setAuthLoading(false);return;}
     const snap=await firebaseDB.ref(`accounts/${user.uid}/shops`).once("value");
     const linked=snap.val();
@@ -2093,7 +2095,8 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
   const[shopCodeMode,setShopCodeMode]=useState(false); // コードで店舗追加モード
   const[shopCodeInput,setShopCodeInput]=useState("");
   const[shopCodeError,setShopCodeError]=useState("");
-  const[upgradeReason,setUpgradeReason]=useState(null); // {type,limit,plan}
+  const[upgradeReason,setUpgradeReasonRaw]=useState(null); // {type,limit,plan}
+  const setUpgradeReason=r=>{if(r)ph("upgrade_modal_shown",{type:r.type,plan:r.plan});setUpgradeReasonRaw(r);};
   const tr=useRef();
   const shopMenuRef=useRef();
   const tt=m=>{setToast(m);clearTimeout(tr.current);tr.current=setTimeout(()=>setToast(null),2500);};
