@@ -388,6 +388,7 @@ function App(){
   const[inviteCodeGenLoading,setInviteCodeGenLoading]=useState(false); // 招待コード生成中フラグ
   const[plan,setPlan]=useState("free"); // サブスクプラン
   const[planExpiry,setPlanExpiry]=useState(null); // プラン有効期限
+  const[paymentFailed,setPaymentFailed]=useState(false); // 決済失敗フラグ
   const[emailMode,setEmailMode]=useState(null); // null | "login" | "register"
   const[emailVal,setEmailVal]=useState("");
   const[passwordVal,setPasswordVal]=useState("");
@@ -714,6 +715,10 @@ function App(){
     // accounts/<shopId>/planExpiry（有効期限）
     on(`accounts/${targetSid}/planExpiry`,val=>{
       setPlanExpiry(val||null);
+    });
+    // accounts/<shopId>/paymentFailed（決済失敗フラグ）
+    on(`accounts/${targetSid}/paymentFailed`,val=>{
+      setPaymentFailed(!!val);
     });
 
     // settingsデフォルト書き込み
@@ -1513,7 +1518,7 @@ function App(){
               currentShopId={sid} saveSettings={saveSettings} savePeriods={savePeriods} saveSubs={saveSubs}
               saveStaff={saveStaff} saveShops={saveShops}
               globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates}
-              plan={plan} planExpiry={planExpiry}
+              plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed}
               setCurrentShopId={id=>{
                 currentShopIdRef.current=id;
                 setCurrentShopId(id);
@@ -2086,7 +2091,7 @@ function AdminLogin({settings,onAuth}){
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
@@ -2243,6 +2248,14 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         </div>
       </div>
       <div style={{maxWidth:900,margin:"0 auto",padding:"20px 14px 60px"}}>
+        {paymentFailed&&<div style={{background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.3)",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:18}}>⚠️</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#DC2626",marginBottom:2}}>決済に失敗しました</div>
+            <div style={{fontSize:12,color:"#B91C1C"}}>登録中のカードに問題が発生しています。マイページ → 請求管理から支払い方法を更新してください。</div>
+          </div>
+          <button onClick={()=>setTab("mypage")} style={{padding:"6px 12px",background:"#DC2626",border:"none",borderRadius:7,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>マイページへ</button>
+        </div>}
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings}/>}
         {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
