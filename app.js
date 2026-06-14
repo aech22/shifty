@@ -538,14 +538,15 @@ function App(){
               if(linkedShops.length>0){
                 console.log("Auth店舗:",linkedShops.map(s=>s.name));
                 setAllLinkedShops(linkedShops);
-                setShops(linkedShops);
-                ls("shift_shops_v6",linkedShops);
-                // セッション復元 or 最初の店舗
+                // セッション復元 or 最初の店舗（shops はセッション対象の1店舗のみ）
                 const ssId=ssGet(SS_SHOP,null);
                 const targetId=linkedShops.find(s=>s.id===ssId)?ssId:linkedShops[0].id;
+                const targetShop=linkedShops.find(s=>s.id===targetId)||linkedShops[0];
+                setShops([targetShop]);
+                ls("shift_shops_v6",[targetShop]);
                 currentShopIdRef.current=targetId;
                 setCurrentShopId(targetId);
-                startSubscriptions(targetId,linkedShops);
+                startSubscriptions(targetId,[targetShop]);
                 setReady(true);
               } else {
                 // アカウントに紐付いた店舗が global/shops にない
@@ -746,16 +747,17 @@ function App(){
       const allSnap=await firebaseDB.ref("global/shops").once("value");
       const val=allSnap.val();
       const sh=val?(typeof val==="object"&&!Array.isArray(val)?Object.values(val).filter(s=>s&&s.id):(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id)):[];
-      setShops(sh);
       if(linked){
         const linkedIds=Object.keys(linked);
         const linkedShops=sh.filter(s=>linkedIds.includes(s.id));
         setAllLinkedShops(linkedShops);
         if(linkedShops.length>0){
-          const targetId=linkedShops[0].id;
-          currentShopIdRef.current=targetId;
-          setCurrentShopId(targetId);
-          startSubscriptions(targetId,linkedShops);
+          const targetShop=linkedShops[0];
+          setShops([targetShop]);
+          ls("shift_shops_v6",[targetShop]);
+          currentShopIdRef.current=targetShop.id;
+          setCurrentShopId(targetShop.id);
+          startSubscriptions(targetShop.id,[targetShop]);
           setUnbound(false);
         } else {
           setUnbound(true);
@@ -786,16 +788,17 @@ function App(){
       const allSnap=await firebaseDB.ref("global/shops").once("value");
       const val=allSnap.val();
       const sh=val?(typeof val==="object"&&!Array.isArray(val)?Object.values(val).filter(s=>s&&s.id):(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id)):[];
-      setShops(sh);
       if(linked){
         const linkedIds=Object.keys(linked);
         const linkedShops=sh.filter(s=>linkedIds.includes(s.id));
         setAllLinkedShops(linkedShops);
         if(linkedShops.length>0){
-          const targetId=linkedShops[0].id;
-          currentShopIdRef.current=targetId;
-          setCurrentShopId(targetId);
-          startSubscriptions(targetId,linkedShops);
+          const targetShop=linkedShops[0];
+          setShops([targetShop]);
+          ls("shift_shops_v6",[targetShop]);
+          currentShopIdRef.current=targetShop.id;
+          setCurrentShopId(targetShop.id);
+          startSubscriptions(targetShop.id,[targetShop]);
           setUnbound(false);
         } else {setUnbound(true);}
       } else {setUnbound(true);}
@@ -815,16 +818,17 @@ function App(){
     const allSnap=await firebaseDB.ref("global/shops").once("value");
     const val=allSnap.val();
     const sh=val?(typeof val==="object"&&!Array.isArray(val)?Object.values(val).filter(s=>s&&s.id):(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id)):[];
-    setShops(sh);
     if(linked){
       const linkedIds=Object.keys(linked);
       const linkedShops=sh.filter(s=>linkedIds.includes(s.id));
       setAllLinkedShops(linkedShops);
       if(linkedShops.length>0){
-        const targetId=linkedShops[0].id;
-        currentShopIdRef.current=targetId;
-        setCurrentShopId(targetId);
-        startSubscriptions(targetId,linkedShops);
+        const targetShop=linkedShops[0];
+        setShops([targetShop]);
+        ls("shift_shops_v6",[targetShop]);
+        currentShopIdRef.current=targetShop.id;
+        setCurrentShopId(targetShop.id);
+        startSubscriptions(targetShop.id,[targetShop]);
         setUnbound(false);
       } else {setUnbound(true);}
     } else {setUnbound(true);}
@@ -1094,9 +1098,13 @@ function App(){
       await firebaseDB.ref(`accounts/${authUser.uid}/shops/${shopId}`).set(true);
       const snap=await firebaseDB.ref(`accounts/${authUser.uid}/shops`).once('value');
       const linkedIds=Object.keys(snap.val()||{});
-      const linkedShops=shops.filter(s=>linkedIds.includes(s.id));
-      setShops(linkedShops);
-      setAllLinkedShops(linkedShops);
+      // allLinkedShops を全連携店舗で更新（global/shops から取得）
+      const allSnap=await firebaseDB.ref("global/shops").once('value');
+      const allVal=allSnap.val();
+      const allSh=allVal?(typeof allVal==="object"&&!Array.isArray(allVal)?Object.values(allVal).filter(s=>s&&s.id):Object.values(allVal).filter(s=>s&&s.id)):[];
+      const newLinked=allSh.filter(s=>linkedIds.includes(s.id));
+      setAllLinkedShops(newLinked);
+      // shops（セッション）は変更しない
       console.log("既存店舗を企業アカウントに連携:", shopId);
     }catch(e){
       console.warn("連携失敗:", e);
