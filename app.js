@@ -363,6 +363,7 @@ function App(){
   },[paymentToast]);
 
   const[shops,setShops]=useState([]);
+  const[allLinkedShops,setAllLinkedShops]=useState([]); // accounts/{uid}/shops に紐付いた全店舗
   // URLにtokenがある場合はsessionStorageを無視してPhase1で確定
   const _hasUrlToken=!!(parseUrl()?.type==="staff");
   const[currentShopId,setCurrentShopId]=useState(()=>_hasUrlToken?null:ssGet(SS_SHOP,null));
@@ -536,6 +537,7 @@ function App(){
               const linkedShops=sh.filter(s=>linkedIds.includes(s.id));
               if(linkedShops.length>0){
                 console.log("Auth店舗:",linkedShops.map(s=>s.name));
+                setAllLinkedShops(linkedShops);
                 setShops(linkedShops);
                 ls("shift_shops_v6",linkedShops);
                 // セッション復元 or 最初の店舗
@@ -758,6 +760,7 @@ function App(){
       if(linked){
         const linkedIds=Object.keys(linked);
         const linkedShops=sh.filter(s=>linkedIds.includes(s.id));
+        setAllLinkedShops(linkedShops);
         if(linkedShops.length>0){
           const targetId=linkedShops[0].id;
           currentShopIdRef.current=targetId;
@@ -797,6 +800,7 @@ function App(){
       if(linked){
         const linkedIds=Object.keys(linked);
         const linkedShops=sh.filter(s=>linkedIds.includes(s.id));
+        setAllLinkedShops(linkedShops);
         if(linkedShops.length>0){
           const targetId=linkedShops[0].id;
           currentShopIdRef.current=targetId;
@@ -825,6 +829,7 @@ function App(){
     if(linked){
       const linkedIds=Object.keys(linked);
       const linkedShops=sh.filter(s=>linkedIds.includes(s.id));
+      setAllLinkedShops(linkedShops);
       if(linkedShops.length>0){
         const targetId=linkedShops[0].id;
         currentShopIdRef.current=targetId;
@@ -1012,8 +1017,17 @@ function App(){
     }catch(e){return{error:e.message};}
   };
 
-  // ログアウト
+  // 店舗セッションのみログアウト（企業連携・Firebase Auth は維持）
   const doLogout=async()=>{
+    delCookie(CK_SHOP);
+    sessionStorage.clear();
+    setCurrentShopId(null);
+    setUnbound(true);
+    // authUser・shops・allLinkedShops は維持
+  };
+
+  // Firebase Auth を含む完全サインアウト
+  const doFullSignOut=async()=>{
     if(firebaseAuth&&authUser){
       try{await firebaseAuth.signOut();}catch(e){console.warn("signOut失敗:",e);}
     }
@@ -1022,6 +1036,7 @@ function App(){
     setAuthUser(null);
     setCurrentShopId(null);
     setShops([]);
+    setAllLinkedShops([]);
     setUnbound(true);
   };
 
@@ -1091,6 +1106,7 @@ function App(){
       const linkedIds=Object.keys(snap.val()||{});
       const linkedShops=shops.filter(s=>linkedIds.includes(s.id));
       setShops(linkedShops);
+      setAllLinkedShops(linkedShops);
       console.log("既存店舗を企業アカウントに連携:", shopId);
     }catch(e){
       console.warn("連携失敗:", e);
@@ -1099,9 +1115,11 @@ function App(){
 
   const unlinkShopFromAuth=async(targetShopId)=>{
     if(!authUser || !firebaseDB) return;
-    if(shops.length<=1){tt("✕ 最後の店舗は解除できません");return;}
+    if(allLinkedShops.length>0&&allLinkedShops.length<=1){tt("✕ 最後の店舗は解除できません");return;}
+    if(allLinkedShops.length===0&&shops.length<=1){tt("✕ 最後の店舗は解除できません");return;}
     try{
       await firebaseDB.ref(`accounts/${authUser.uid}/shops/${targetShopId}`).remove();
+      setAllLinkedShops(prev=>prev.filter(s=>s.id!==targetShopId));
       const newShops=shops.filter(s=>s.id!==targetShopId);
       setShops(newShops);
       ls("shift_shops_v6",newShops);
@@ -1309,6 +1327,37 @@ function App(){
     }).catch(()=>setInviteError("エラーが発生しました。再試行してください。"));
   };
 
+  if(unbound&&authUser&&allLinkedShops.length>0) return(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#0F172A",padding:"20px"}}>
+      <div style={{background:"#1E293B",borderRadius:24,padding:"36px 28px",width:"100%",maxWidth:420,boxShadow:"0 12px 40px rgba(0,0,0,.5)"}}>
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><ShiftyIcon size={64}/></div>
+          <div style={{color:"#F1F5F9",fontSize:22,fontWeight:800,letterSpacing:"-0.5px"}}>Shifty</div>
+          <div style={{color:"#94A3B8",fontSize:12,marginTop:4}}>{authUser.displayName||authUser.email||"ログイン中"}</div>
+        </div>
+        <div style={{color:"#CBD5E1",fontSize:13,fontWeight:700,marginBottom:12}}>店舗を選択してください</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:24}}>
+          {allLinkedShops.map(sh=>(
+            <button key={sh.id} onClick={()=>{
+              currentShopIdRef.current=sh.id;
+              setCurrentShopId(sh.id);
+              startSubscriptions(sh.id,allLinkedShops);
+              setUnbound(false);
+            }} style={{width:"100%",padding:"14px 16px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:12,color:"#F1F5F9",fontSize:14,fontWeight:600,cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span>{sh.name}</span>
+              <span style={{fontSize:12,color:"#64748B"}}>→</span>
+            </button>
+          ))}
+        </div>
+        <div style={{textAlign:"center",borderTop:"1px solid #1E3A5F",paddingTop:16}}>
+          <button onClick={doFullSignOut} style={{background:"none",border:"none",color:"#64748B",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>
+            別のアカウントでログインする
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   if(unbound) return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#0F172A",padding:"20px"}}>
       <div style={{background:"#1E293B",borderRadius:24,padding:"36px 28px",width:"100%",maxWidth:420,boxShadow:"0 12px 40px rgba(0,0,0,.5)"}}>
@@ -1473,6 +1522,8 @@ function App(){
               }}
               startSubscriptions={startSubscriptions}
               logout={doLogout} authUser={authUser} syncStatus={syncStatus}
+              allLinkedShops={allLinkedShops}
+              onSwitchToShop={id=>{currentShopIdRef.current=id;setCurrentShopId(id);ssSave(SS_SHOP,id);startSubscriptions(id,allLinkedShops);}}
               onLinkProvider={linkProvider} onSendEmailOtp={sendEmailOtp}
               onVerifyAndLinkEmail={verifyAndLinkEmail} onUnlinkProvider={unlinkProvider}
               onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkApple={signInAndLinkApple} onSignInAndLinkEmail={signInAndLinkEmail}
@@ -2028,7 +2079,7 @@ function AdminLogin({settings,onAuth}){
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
@@ -2084,7 +2135,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                           <div onClick={()=>{setCurrentShopId(sh.id);setShopMenuOpen(false);}} style={{flex:1,padding:"11px 16px",cursor:"pointer",fontSize:14,fontWeight:sh.id===currentShopId?700:400,color:sh.id===currentShopId?"#f87036":"#1A1A2E",display:"flex",alignItems:"center",gap:8}}>
                             {sh.id===currentShopId&&<span style={{fontSize:10}}>✓</span>}{sh.name}
                           </div>
-                          <button onClick={e=>{e.stopPropagation();if(!window.confirm(`「${sh.name}」からログアウトしますか？`))return;setShopMenuOpen(false);if(shops.length===1){logout();}else{onUnlinkShop(sh.id);}}} style={{padding:"6px 10px",margin:"0 8px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:6,color:"#FF4757",fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>ログアウト</button>
+                          <button onClick={e=>{e.stopPropagation();if(!window.confirm(`「${sh.name}」からログアウトしますか？`))return;setShopMenuOpen(false);logout();}} style={{padding:"6px 10px",margin:"0 8px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:6,color:"#FF4757",fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>ログアウト</button>
                         </div>
                       ))}
                       <div style={{borderTop:"1px solid var(--c-border)",padding:"8px 10px",display:"flex",gap:6}}>
@@ -2199,7 +2250,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkApple={onSignInAndLinkApple} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkApple={onSignInAndLinkApple} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -3158,7 +3209,7 @@ function UnlockCodeInput({tt,plan,onUnlock,onLock}){
 function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                  authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
                  onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,
-                 shops=[],onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,
+                 shops=[],allLinkedShops=[],onSwitchToShop,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,
                  inviteCodeDisplay=null,inviteCodeGenLoading=false}){
   const[pw,setPw]=useState("");
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
@@ -3462,23 +3513,35 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       )}
     </AC>}
 
-    {authUser&&shops&&shops.length>0&&<AC title="企業アカウント連携店舗">
+    {authUser&&(allLinkedShops.length>0||shops.length>0)&&<AC title="企業アカウント連携店舗">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
-        このアカウントに紐付いている店舗の一覧です。不要な店舗は連携を解除できます。
+        このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {shops.map(shop=>(
-          <div key={shop.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",background:"var(--c-input)",borderRadius:8,border:`1px solid ${shop.id===shopId?"rgba(248,112,54,.4)":"var(--c-border2)"}`}}>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              {shop.id===shopId&&<span style={{fontSize:10,background:"#f87036",color:"white",padding:"2px 6px",borderRadius:4,fontWeight:700,flexShrink:0}}>表示中</span>}
-              <span style={{fontSize:13,color:"var(--c-text)",fontWeight:shop.id===shopId?700:400}}>{shop.name}</span>
+        {(allLinkedShops.length>0?allLinkedShops:shops).map(shop=>{
+          const isCurrent=shop.id===shopId;
+          const canUnlink=(allLinkedShops.length>0?allLinkedShops:shops).length>1;
+          return(
+          <div key={shop.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",background:"var(--c-input)",borderRadius:8,border:`1px solid ${isCurrent?"rgba(248,112,54,.4)":"var(--c-border2)"}`}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+              {isCurrent&&<span style={{fontSize:10,background:"#f87036",color:"white",padding:"2px 6px",borderRadius:4,fontWeight:700,flexShrink:0}}>表示中</span>}
+              <span style={{fontSize:13,color:"var(--c-text)",fontWeight:isCurrent?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{shop.name}</span>
             </div>
-            <button onClick={()=>{if(window.confirm(`「${shop.name}」の連携を解除しますか？\nこの端末から店舗が削除されます。`))onUnlinkShop(shop.id);}}
-              style={{padding:"6px 12px",background:"var(--c-bg)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text3)",fontSize:12,fontWeight:600,cursor:"pointer",flexShrink:0}}>
-              解除
-            </button>
+            <div style={{display:"flex",gap:6,flexShrink:0}}>
+              {!isCurrent&&onSwitchToShop&&(
+                <button onClick={()=>{onSwitchToShop(shop.id);tt(`✓ 「${shop.name}」に切り替えました`);}}
+                  style={{padding:"5px 10px",background:"rgba(248,112,54,.1)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"#f87036",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                  ログイン
+                </button>
+              )}
+              {canUnlink&&<button onClick={()=>{if(window.confirm(`「${shop.name}」の連携を解除しますか？`))onUnlinkShop(shop.id);}}
+                style={{padding:"5px 10px",background:"var(--c-bg)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text3)",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                解除
+              </button>}
+            </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </AC>}
 
