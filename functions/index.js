@@ -102,6 +102,39 @@ exports.stripeWebhook = functions
       }
     }
 
+    // 決済失敗 → 警告フラグを立てる（即時ダウングレードはしない。Smart Retriesで回復したら解除）
+    if (event.type === "invoice.payment_failed") {
+      const obj = event.data.object;
+      let shopId = obj.metadata?.shopId;
+      if (!shopId && obj.subscription) {
+        try {
+          const sub = await getStripe().subscriptions.retrieve(obj.subscription);
+          shopId = sub.metadata?.shopId;
+        } catch (e) {
+          console.error("subscription取得失敗(payment_failed):", e);
+        }
+      }
+      if (shopId) {
+        await db.ref(`accounts/${shopId}/paymentFailed`).set(true);
+        console.log(`決済失敗フラグ: shopId=${shopId}`);
+      }
+    }
+
+    // 決済成功（更新）→ 失敗フラグを解除
+    if (event.type === "invoice.payment_succeeded") {
+      const obj = event.data.object;
+      let shopId = obj.metadata?.shopId;
+      if (!shopId && obj.subscription) {
+        try {
+          const sub = await getStripe().subscriptions.retrieve(obj.subscription);
+          shopId = sub.metadata?.shopId;
+        } catch (e) {}
+      }
+      if (shopId) {
+        await db.ref(`accounts/${shopId}/paymentFailed`).remove();
+      }
+    }
+
     // サブスクキャンセル → Freeに戻す
     if (event.type === "customer.subscription.deleted") {
       const sub = event.data.object;
