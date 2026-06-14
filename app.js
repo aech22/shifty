@@ -2638,29 +2638,48 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const del=i=>{const a=[...staffList];a.splice(i,1);onSave(a);tt("削除しました");};
   const moveUp=i=>{if(i===0)return;const a=[...staffList];[a[i-1],a[i]]=[a[i],a[i-1]];onSave(a);};
   const moveDown=i=>{if(i===staffList.length-1)return;const a=[...staffList];[a[i],a[i+1]]=[a[i+1],a[i]];onSave(a);};
-  const handleDragStart=(e,i)=>{setDragIdx(i);e.dataTransfer.effectAllowed="move";};
-  const handleDragOver=(e,i)=>{e.preventDefault();e.dataTransfer.dropEffect="move";setDragOverIdx(i);};
-  const handleDrop=(e,i)=>{e.preventDefault();if(dragIdx===null||dragIdx===i){setDragIdx(null);setDragOverIdx(null);return;}const a=[...staffList];const[moved]=a.splice(dragIdx,1);a.splice(i,0,moved);onSave(a);setDragIdx(null);setDragOverIdx(null);};
-  const handleDragEnd=()=>{setDragIdx(null);setDragOverIdx(null);};
   const dragIdxRef=useRef(null);
-  const handleTouchStart=(e,i)=>{e.preventDefault();dragIdxRef.current=i;setDragIdx(i);};
-  const handleTouchMove=(e)=>{
+  const longPressTimer=useRef(null);
+  const dragActiveRef=useRef(false);
+  const handleGripPointerDown=(e,i)=>{
+    if(!isPro)return;
     e.preventDefault();
-    const touch=e.touches[0];
-    const el=document.elementFromPoint(touch.clientX,touch.clientY);
+    try{e.currentTarget.setPointerCapture(e.pointerId);}catch(_){}
+    longPressTimer.current=setTimeout(()=>{
+      dragActiveRef.current=true;
+      dragIdxRef.current=i;
+      setDragIdx(i);
+      if(navigator.vibrate)navigator.vibrate(50);
+    },500);
+  };
+  const handleGripPointerMove=(e)=>{
+    if(!dragActiveRef.current)return;
+    e.preventDefault();
+    const el=document.elementFromPoint(e.clientX,e.clientY);
     const item=el&&el.closest("[data-staff-idx]");
     if(item){const idx=parseInt(item.getAttribute("data-staff-idx"),10);if(!isNaN(idx))setDragOverIdx(idx);}
   };
-  const handleTouchEnd=()=>{
-    const from=dragIdxRef.current;
-    setDragIdx(null);
-    setDragOverIdx(prev=>{
-      if(from!==null&&prev!==null&&from!==prev){
-        const a=[...staffList];const[moved]=a.splice(from,1);a.splice(prev,0,moved);onSave(a);
-      }
-      return null;
-    });
+  const handleGripPointerUp=()=>{
+    clearTimeout(longPressTimer.current);
+    if(dragActiveRef.current){
+      const from=dragIdxRef.current;
+      setDragIdx(null);
+      setDragOverIdx(prev=>{
+        if(from!==null&&prev!==null&&from!==prev){
+          const a=[...staffList];const[moved]=a.splice(from,1);a.splice(prev,0,moved);onSave(a);
+        }
+        return null;
+      });
+      dragIdxRef.current=null;
+      dragActiveRef.current=false;
+    }
+  };
+  const handleGripPointerCancel=()=>{
+    clearTimeout(longPressTimer.current);
     dragIdxRef.current=null;
+    dragActiveRef.current=false;
+    setDragIdx(null);
+    setDragOverIdx(null);
   };
   return(
     <div>
@@ -2674,8 +2693,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
         {staffList.map((n,i)=>(
           <div key={i} style={{marginBottom:6}}>
           {isSpacer(n)
-            ?<div data-staff-idx={i} draggable={isPro} onDragStart={isPro?e=>handleDragStart(e,i):undefined} onDragOver={isPro?e=>handleDragOver(e,i):undefined} onDrop={isPro?e=>handleDrop(e,i):undefined} onDragEnd={isPro?handleDragEnd:undefined} onTouchStart={isPro?e=>handleTouchStart(e,i):undefined} onTouchMove={isPro?handleTouchMove:undefined} onTouchEnd={isPro?handleTouchEnd:undefined} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",border:dragOverIdx===i&&dragIdx!==null?"2px solid #f87036":"1px dashed var(--c-border2)",borderRadius:10,background:"transparent",opacity:dragIdx===i?.4:1,transition:"opacity .15s",touchAction:isPro?"none":"auto"}}>
-              {isPro&&<span style={{cursor:"grab",color:"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",lineHeight:1}}>⠿</span>}
+            ?<div data-staff-idx={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",border:dragOverIdx===i&&dragIdx!==null?"2px solid #f87036":"1px dashed var(--c-border2)",borderRadius:10,background:"transparent",opacity:dragIdx===i?.4:1,transition:"opacity .15s"}}>
+              {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} style={{cursor:"grab",color:dragIdx===i?"#f87036":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",lineHeight:1,touchAction:"none"}}>⠿</span>}
               <span style={{flex:1,fontSize:12,textAlign:"center",color:"var(--c-text4)",letterSpacing:2}}>─ 空白列 ─</span>
               {isPro&&<>
                 <button onClick={()=>moveUp(i)} disabled={i===0} style={{padding:"4px 8px",background:"var(--c-input)",border:"1px solid #D1D5DB",borderRadius:5,color:"var(--c-text3)",fontSize:12,cursor:i===0?"not-allowed":"pointer",opacity:i===0?.3:1}}>↑</button>
@@ -2683,8 +2702,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
               </>}
               <button onClick={()=>del(i)} style={AD}>削除</button>
             </div>
-            :<div data-staff-idx={i} draggable={isPro} onDragStart={isPro?e=>handleDragStart(e,i):undefined} onDragOver={isPro?e=>handleDragOver(e,i):undefined} onDrop={isPro?e=>handleDrop(e,i):undefined} onDragEnd={isPro?handleDragEnd:undefined} onTouchStart={isPro?e=>handleTouchStart(e,i):undefined} onTouchMove={isPro?handleTouchMove:undefined} onTouchEnd={isPro?handleTouchEnd:undefined} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:dragOverIdx===i&&dragIdx!==null?"2px solid #f87036":"1px solid #E5E7EB",borderRadius:10,opacity:dragIdx===i?.4:1,transition:"opacity .15s",touchAction:isPro?"none":"auto"}}>
-            {isPro&&<span style={{cursor:"grab",color:"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",lineHeight:1,flexShrink:0}}>⠿</span>}
+            :<div data-staff-idx={i} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:dragOverIdx===i&&dragIdx!==null?"2px solid #f87036":"1px solid #E5E7EB",borderRadius:10,opacity:dragIdx===i?.4:1,transition:"opacity .15s"}}>
+            {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} style={{cursor:"grab",color:dragIdx===i?"#f87036":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",lineHeight:1,flexShrink:0,touchAction:"none"}}>⠿</span>}
             <span style={{fontSize:13,color:"var(--c-text4)",minWidth:24,textAlign:"center"}}>{staffList.slice(0,i).filter(x=>!isSpacer(x)).length+1}</span>
             {editIdx===i
               ?<>
