@@ -253,3 +253,107 @@ exports.verifyEmailOtp = functions
     await admin.database().ref(`email_otps/${uid}`).delete();
     return { emailLink: otp.emailLink, email: otp.email };
   });
+
+// ============================================================
+// ユーザーアンケート一斉送信（ワンショット・要秘密トークン）
+// curl -X POST https://asia-northeast1-ontheshift.cloudfunctions.net/sendSurveyEmails \
+//   -H "Content-Type: application/json" \
+//   -d '{"token":"SURVEY_SEND_TOKEN"}'
+// ============================================================
+exports.sendSurveyEmails = functions
+  .region("asia-northeast1")
+  .runWith({ secrets: ["SMTP_PASS", "SURVEY_SEND_TOKEN"], timeoutSeconds: 300 })
+  .https.onRequest(async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).send("Method Not Allowed"); return; }
+
+    // トークン認証（誰でも叩けないように）
+    const { token } = req.body;
+    if (!token || token !== process.env.SURVEY_SEND_TOKEN) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const MANAGER_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSczQWvAMCkS_otEVWW14NkFDHbz7DuzU_Fv_qRm-P9o0GGpWA/viewform";
+
+    const smtpUser = process.env.SMTP_USER || "thifty.app@gmail.com";
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || "smtp.gmail.com",
+      port: Number(process.env.SMTP_PORT) || 587,
+      secure: false,
+      auth: { user: smtpUser, pass: process.env.SMTP_PASS },
+    });
+
+    // Firebase Auth の全ユーザーをページネーションで取得
+    const results = { sent: [], skipped: [], failed: [] };
+    let nextPageToken;
+
+    do {
+      const listResult = await admin.auth().listUsers(1000, nextPageToken);
+      nextPageToken = listResult.pageToken;
+
+      for (const user of listResult.users) {
+        if (!user.email) { results.skipped.push(user.uid); continue; }
+
+        try {
+          await transporter.sendMail({
+            from: `"Shifty" <${smtpUser}>`,
+            to: user.email,
+            subject: "【Shifty】サービス改善のためアンケートにご協力ください（3〜5分）",
+            text: [
+              `${user.displayName || "Shiftyユーザー"} 様`,
+              "",
+              "いつもShiftyをご利用いただきありがとうございます。",
+              "より良いサービスにするため、3〜5分ほどのアンケートにご協力いただけますか？",
+              "匿名・謝礼なしで、お気軽にご回答いただけます。",
+              "",
+              "▼ アンケートはこちら（店長・管理者向け）",
+              MANAGER_FORM_URL,
+              "",
+              "---",
+              "Shifty（シフティ）",
+              "https://shiftyshifty.app",
+              "配信停止をご希望の場合はこのメールに返信してください。",
+            ].join("\n"),
+            html: `
+              <div style="font-family:sans-serif;max-width:560px;margin:0 auto;color:#1a1a2e">
+                <p>${user.displayName || "Shiftyユーザー"} 様</p>
+                <p>いつもShiftyをご利用いただきありがとうございます。<br>
+                より良いサービスにするため、<strong>3〜5分ほどのアンケート</strong>にご協力いただけますか？<br>
+                匿名・謝礼なしで、お気軽にご回答いただけます。</p>
+                <p style="margin:24px 0">
+                  <a href="${MANAGER_FORM_URL}"
+                     style="display:inline-block;padding:12px 24px;background:#f87036;color:white;border-radius:8px;text-decoration:none;font-weight:bold">
+                    アンケートに回答する
+                  </a>
+                </p>
+                <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0">
+                <p style="font-size:12px;color:#6b7280">
+                  Shifty（シフティ）｜ <a href="https://shiftyshifty.app">shiftyshifty.app</a><br>
+                  配信停止をご希望の場合はこのメールに返信してください。
+                </p>
+              </div>
+            `,
+          });
+          results.sent.push(user.email);
+          console.log(`送信完了: ${user.email}`);
+        } catch (e) {
+          console.error(`送信失敗: ${user.email}`, e.message);
+          results.failed.push(user.email);
+        }
+
+        // Gmail レート制限対策（100通/秒上限）
+        await new Promise(r => setTimeout(r, 200));
+      }
+    } while (nextPageToken);
+
+    console.log(`完了: 送信${results.sent.length}件 スキップ${results.skipped.length}件 失敗${results.failed.length}件`);
+    res.status(200).json({
+      message: "完了",
+      sent: results.sent.length,
+      skipped: results.skipped.length,
+      failed: results.failed.length,
+      failedEmails: results.failed,
+    });
+  });
