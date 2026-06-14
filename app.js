@@ -658,24 +658,14 @@ function App(){
       ls("shift_global_templates",arr);
     });
 
-    // global/shops（複数店舗管理者向けのみ購読）
+    // 店舗リスト設定（shopListが明示的に渡された時のみ更新）
     console.log("startSubscriptions: shopList=",shopList?.length,shopList?.map(s=>s?.id));
-    if(!shopList||shopList.length>1){
-      console.log("startSubscriptions: 複数店舗購読を開始");
-      on("global/shops",val=>{
-        if(!val)return;
-        const arr=typeof val==="object"&&!Array.isArray(val)
-          ?Object.values(val).filter(s=>s&&s.id)
-          :(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id);
-        console.log("startSubscriptions: global/shops受信",arr.map(s=>s.id));
-        if(arr.length>0){ setShops(arr); ls("shift_shops_v6",arr); }
-      });
-    } else if(shopList&&shopList.length===1){
-      // 単一店舗ログイン時は shopList をそのまま使用
-      console.log("startSubscriptions: 単一店舗のみ設定",shopList[0]?.id);
+    if(shopList&&shopList.length>0){
+      console.log("startSubscriptions: 店舗リスト設定",shopList.map(s=>s?.id));
       setShops(shopList);
       ls("shift_shops_v6",shopList);
     }
+    // shopListなし（店舗切り替え時）は既存のshopsを維持
     // settings
     on(fbPath(targetSid,"settings"),val=>{
       if(val&&typeof val==="object"){ setSettings(val); ls(storeKey(targetSid,"settings_v6"),val); }
@@ -1022,8 +1012,8 @@ function App(){
     delCookie(CK_SHOP);
     sessionStorage.clear();
     setCurrentShopId(null);
+    setShops([]); // セッションの店舗リストをクリア（authUser・allLinkedShops は維持）
     setUnbound(true);
-    // authUser・shops・allLinkedShops は維持
   };
 
   // Firebase Auth を含む完全サインアウト
@@ -1341,7 +1331,7 @@ function App(){
             <button key={sh.id} onClick={()=>{
               currentShopIdRef.current=sh.id;
               setCurrentShopId(sh.id);
-              startSubscriptions(sh.id,allLinkedShops);
+              startSubscriptions(sh.id,[sh]);
               setUnbound(false);
             }} style={{width:"100%",padding:"14px 16px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:12,color:"#F1F5F9",fontSize:14,fontWeight:600,cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <span>{sh.name}</span>
@@ -1523,7 +1513,14 @@ function App(){
               startSubscriptions={startSubscriptions}
               logout={doLogout} authUser={authUser} syncStatus={syncStatus}
               allLinkedShops={allLinkedShops}
-              onSwitchToShop={id=>{currentShopIdRef.current=id;setCurrentShopId(id);ssSave(SS_SHOP,id);startSubscriptions(id,allLinkedShops);}}
+              onSwitchToShop={id=>{
+                const sh=allLinkedShops.find(s=>s.id===id);
+                if(!sh)return;
+                const alreadyIn=shops.some(s=>s.id===id);
+                if(!alreadyIn){const ns=[...shops,sh];setShops(ns);ls("shift_shops_v6",ns);}
+                currentShopIdRef.current=id;setCurrentShopId(id);ssSave(SS_SHOP,id);
+                startSubscriptions(id); // shopListなし→既存のshopsリストを維持しつつ購読先だけ切り替え
+              }}
               onLinkProvider={linkProvider} onSendEmailOtp={sendEmailOtp}
               onVerifyAndLinkEmail={verifyAndLinkEmail} onUnlinkProvider={unlinkProvider}
               onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkApple={signInAndLinkApple} onSignInAndLinkEmail={signInAndLinkEmail}
