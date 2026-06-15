@@ -262,7 +262,7 @@ exports.verifyEmailOtp = functions
 // ============================================================
 exports.sendSurveyEmails = functions
   .region("asia-northeast1")
-  .runWith({ secrets: ["SMTP_PASS", "SURVEY_SEND_TOKEN"], timeoutSeconds: 300 })
+  .runWith({ secrets: ["SMTP_USER", "SMTP_PASS", "SURVEY_SEND_TOKEN"], timeoutSeconds: 300 })
   .https.onRequest(async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
@@ -277,7 +277,7 @@ exports.sendSurveyEmails = functions
 
     const MANAGER_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSczQWvAMCkS_otEVWW14NkFDHbz7DuzU_Fv_qRm-P9o0GGpWA/viewform";
 
-    const smtpUser = process.env.SMTP_USER || "thifty.app@gmail.com";
+    const smtpUser = process.env.SMTP_USER || "shifty.app@gmail.com";
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST || "smtp.gmail.com",
       port: Number(process.env.SMTP_PORT) || 587,

@@ -3011,8 +3011,11 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
                 {cands.length>0&&<div style={{padding:"6px 8px"}}>
                   {cands.map((c,i)=>(
                     <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-                      padding:"5px 8px",background:"var(--c-card)",borderRadius:7,marginBottom:3}}>
-                      <span style={{fontSize:13,color:"var(--c-text)",fontWeight:600}}>{c.start} 〜 {c.end}</span>
+                      padding:"5px 8px",background:c.closed?"rgba(255,71,87,.08)":"var(--c-card)",border:c.closed?"1px solid rgba(255,71,87,.2)":"none",borderRadius:7,marginBottom:3}}>
+                      {c.closed
+                        ?<span style={{fontSize:13,color:"#FF4757",fontWeight:600}}>× 休業日</span>
+                        :<span style={{fontSize:13,color:"var(--c-text)",fontWeight:600}}>{c.start} 〜 {c.end}</span>
+                      }
                       <button onClick={()=>delW(d,i)} style={AD}>削除</button>
                     </div>
                   ))}
