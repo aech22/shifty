@@ -168,7 +168,9 @@ function _lockMsg(ns){
 
 // ===== サブスクリプション プラン定義 =====
 // テスト用: "free"|"pro" に設定すると Firebase を無視して上書き
-const DEV_PLAN_OVERRIDE = null; // 本番用
+const DEV_PLAN_OVERRIDE = DEV_MODE
+  ? (new URLSearchParams(location.search).get('plan') || null)
+  : null;
 // シークレットアンロックコード（SHA-256ハッシュで保持）
 const UNLOCK_HASH      = "c7f68383637178c47cafddafdd79574d148dff2ea6c34ddf5a497e4115bcae8c";
 const UNLOCK_HASH_TEMP = "0d84e1fbd7fd8b59ee827ac602431a89302edef17903c5d9d4da31af1d308c71";
@@ -180,10 +182,11 @@ async function hashCode(str){
 }
 
 const PLAN_LIMITS = {
-  free: { shops: Infinity, staff: 20, periods: 1        },
-  pro:  { shops: Infinity, staff: Infinity, periods: Infinity },
+  free:    { shops: Infinity, staff: 20, periods: 1 },
+  pro:     { shops: Infinity, staff: Infinity, periods: Infinity },
+  premium: { shops: Infinity, staff: Infinity, periods: Infinity },
 };
-const PLAN_LABELS = { free: "Free", pro: "Pro" };
+const PLAN_LABELS = { free: "Free", pro: "Pro", premium: "Premium" };
 
 // ===== デフォルト候補時間 =====
 const CAND_WEEKDAY=[
@@ -725,7 +728,7 @@ function App(){
       // "temp"で保存されている場合は期限チェック
       const unlocked=unlockVal==="temp"?(today<=UNLOCK_CODE_TEMP_EXPIRY):!!unlockVal;
       if(unlockVal==="temp"&&today>UNLOCK_CODE_TEMP_EXPIRY)ls(UNLOCK_LS_KEY,false); // 期限切れ時に自動解除
-      setPlan(DEV_PLAN_OVERRIDE||(unlocked?"pro":(val&&["free","pro"].includes(val)?val:"free")));
+      setPlan(DEV_PLAN_OVERRIDE||(unlocked?"pro":(val&&["free","pro","premium"].includes(val)?val:"free")));
     });
     // accounts/<shopId>/planExpiry（有効期限）
     on(`accounts/${targetSid}/planExpiry`,val=>{
@@ -1994,7 +1997,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                     <div style={{fontSize:12,fontWeight:700,color:"var(--c-text)",wordBreak:"break-all",lineHeight:1.3}}>{sub.staffName}</div>
                     <div style={{fontSize:10,color:"#f87036",marginTop:2}}>✎ 修正</div>
                   </div>
-                  {plan==="pro"&&onDeleteSub&&(
+                  {(plan==="pro"||plan==="premium")&&onDeleteSub&&(
                     <button onClick={e=>{e.stopPropagation();if(confirm(`「${sub.staffName}」の提出を削除しますか？`)){onDeleteSub(sub.id);}}}
                       style={{width:"100%",padding:"2px 4px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:4,color:"#FF4757",fontSize:10,cursor:"pointer",fontWeight:600}}>
                       削除
@@ -2306,7 +2309,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
   const genPresets=()=>{
     const result=[],today=new Date();
     const cutoff=new Date(today.getFullYear(),today.getMonth()-1,today.getDate());
-    const use1month=plan==="pro"&&(settings.periodUnit||"2week")==="1month";
+    const use1month=(plan==="pro"||plan==="premium")&&(settings.periodUnit||"2week")==="1month";
     for(let offset=0;offset<=2;offset++){
       const base=new Date(today.getFullYear(),today.getMonth()+offset,1);
       const yr=base.getFullYear(),mo=base.getMonth()+1,ms=String(mo).padStart(2,"0");
@@ -2671,7 +2674,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const[editIdx,setEditIdx]=useState(null);
   const[editName,setEditName]=useState("");
   const[aliasIdx,setAliasIdx]=useState(null); // 別名編集中のスタッフindex
-  const isPro=plan==="pro";
+  const isPro=plan==="pro"||plan==="premium";
   const[dragIdx,setDragIdx]=useState(null);
   const[dragOverIdx,setDragOverIdx]=useState(null);
   const staffAliases=settings.staffAliases||{};
@@ -3157,7 +3160,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   const[sf,setSf]=useState("submittedAt"),[sdr,setSdr]=useState("desc");
   const[det,setDet]=useState(null);
   const[linkTarget,setLinkTarget]=useState(null); // {subName, selectedStaff}
-  const isPro=plan==="pro";
+  const isPro=plan==="pro"||plan==="premium";
   const staffAliases=settings.staffAliases||{};
   const allAliases=Object.values(staffAliases).flat();
   const isUnregistered=name=>!staffList.includes(name)&&!allAliases.includes(name);
@@ -3507,12 +3510,13 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
     </AC>}
     <AC title="現在のプラン">
       <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0"}}>
-        <div style={{fontSize:32}}>{plan==="pro"?"★":""}</div>
+        <div style={{fontSize:32}}>{plan==="free"?"":plan==="premium"?"★★":"★"}</div>
         <div>
           <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{PLAN_LABELS[plan]||"Free"}プラン</div>
           <div style={{fontSize:12,color:"var(--c-text3)",marginTop:3}}>
             {plan==="free"&&"スタッフ20名 / 期間1件まで"}
             {plan==="pro"&&"スタッフ・期間 無制限 + 全機能"}
+            {plan==="premium"&&"スタッフ・期間 無制限 + 全機能 + Premium機能"}
           </div>
         </div>
       </div>
@@ -3532,7 +3536,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       </div>
     </AC>
 
-    {plan==="pro"&&<AC title="Excel書き出し設定">
+    {(plan==="pro"||plan==="premium")&&<AC title="Excel書き出し設定">
       <AL>書き出し時の店舗名（空欄 = 登録名をそのまま使用）</AL>
       <div style={{display:"flex",gap:8,marginBottom:4}}>
         <input value={settings.xlShopName||""} onChange={e=>onSave({...settings,xlShopName:e.target.value})} placeholder="例：〇〇カフェ 渋谷店" maxLength={100} style={{...AI,flex:1}}/>
@@ -3541,7 +3545,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>設定した名前はExcel出力時のファイル名・シート内店舗名に反映されます</div>
     </AC>}
 
-    {plan==="pro"&&<AC title="期間の単位（プリセット）">
+    {(plan==="pro"||plan==="premium")&&<AC title="期間の単位（プリセット）">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>期間を新規作成するときのプリセット選択肢を切り替えます。</div>
       <div style={{display:"flex",gap:8}}>
         {[["2week","2週間（前半／後半）"],["1month","️ 1ヶ月"]].map(([val,label])=>{
@@ -3655,7 +3659,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
 function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onUpgrade}){
   const[portalLoading,setPortalLoading]=useState(false);
   const lim=PLAN_LIMITS[plan]||PLAN_LIMITS.free;
-  const isPaid=plan==="pro";
+  const isPaid=plan==="pro"||plan==="premium";
 
   const openPortal=async()=>{
     ph("portal_opened");
