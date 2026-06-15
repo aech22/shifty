@@ -187,6 +187,7 @@ const PLAN_LIMITS = {
   premium: { shops: Infinity, staff: Infinity, periods: Infinity },
 };
 const PLAN_LABELS = { free: "Free", pro: "Pro", premium: "Premium" };
+const STAFF_TYPE_LABELS = {employee:"社員",parttime:"バイト",dispatch:"派遣",other:"その他"};
 
 // ===== デフォルト候補時間 =====
 const CAND_WEEKDAY=[
@@ -258,7 +259,7 @@ function makePeriod(shopId){
   return{id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:`${yr}年${mo}月前半`,startDate:`${yr}-${ms}-01`,endDate:`${yr}-${ms}-15`,deadlineDate:"",createdAt:new Date().toISOString()};
 }
 function makeSettings(shopId){
-  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]}};
+  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{daily:0,weekly:0},parttime:{daily:0,weekly:0},dispatch:{daily:0,weekly:0},other:{daily:0,weekly:0}}};
 }
 
 // ===== URL生成・解析 =====
@@ -2805,6 +2806,10 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
               :<>
                 {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid #D1D5DB",cursor:"pointer",flexShrink:0,padding:0}}/>}
                 <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{n}</span>
+                {isPro&&<select value={(settings.staffAttributes||{})[n]||""} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:12,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
+                  <option value="">属性なし</option>
+                  {Object.entries(STAFF_TYPE_LABELS).map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                </select>}
                 {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
                   別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
                 </button>}
@@ -3195,11 +3200,14 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           </tr></thead>
           <tbody>{fil.length===0
             ?<tr><td colSpan={6} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
-            :fil.map(sub=>{const ds=Object.keys(sub.shifts||{}).sort(),wk=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").length,at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const rm=t=>Math.floor(new Date(t).getTime()/60000);const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&rm(sub.updatedAt)>rm(sub.submittedAt);const totalMin=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").reduce((acc,d)=>acc+calcNetWorkMinutes(sub.shifts[d],getBreakList(settings,d)),0);return(<tr key={sub.id}>
+            :fil.map(sub=>{const ds=Object.keys(sub.shifts||{}).sort(),wk=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").length,at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const rm=t=>Math.floor(new Date(t).getTime()/60000);const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&rm(sub.updatedAt)>rm(sub.submittedAt);const totalMin=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").reduce((acc,d)=>acc+calcNetWorkMinutes(sub.shifts[d],getBreakList(settings,d)),0);
+              const staffType=((settings.staffAttributes)||{})[sub.staffName];const typeLim=staffType?((settings.staffTypeLimits)||{})[staffType]||{daily:0,weekly:0}:{daily:0,weekly:0};let dailyVio=false,weeklyVio=false;if(staffType&&(typeLim.daily||typeLim.weekly)){const weekMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreakList(settings,d));if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));const wk2=fd(mon);weekMap[wk2]=(weekMap[wk2]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});}const hasVio=dailyVio||weeklyVio;
+              return(<tr key={sub.id} style={hasVio?{background:"rgba(255,71,87,.04)"}:{}}>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text)",fontWeight:600}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                   <span>{sub.staffName}</span>
                   {hasRealUpdate&&<span style={{fontSize:10,background:"rgba(245,158,11,.2)",color:"#F59E0B",border:"1px solid rgba(245,158,11,.3)",padding:"1px 6px",borderRadius:4,fontWeight:700}}>変更あり</span>}
+                  {hasVio&&<span style={{fontSize:10,background:"rgba(255,71,87,.15)",color:"#FF4757",border:"1px solid rgba(255,71,87,.3)",padding:"1px 6px",borderRadius:4,fontWeight:700,whiteSpace:"nowrap"}}>{dailyVio?"1日超過":""}{dailyVio&&weeklyVio?" / ":""}{weeklyVio?"週超過":""}</span>}
                   {isPro&&isUnregistered(sub.staffName)&&(
                     linkTarget?.subName===sub.staffName
                       ?<div style={{display:"flex",alignItems:"center",gap:4,marginTop:4,width:"100%"}}>
@@ -3558,6 +3566,32 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
           </button>);
         })}
       </div>
+    </AC>}
+
+    {(plan==="pro"||plan==="premium")&&<AC title="スタッフ属性別 勤務時間制限">
+      <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は無制限。制限を超えたスタッフは提出一覧で赤くハイライトされます。スタッフ登録タブで各スタッフに属性を設定してください。</div>
+      {[["employee","社員"],["parttime","バイト"],["dispatch","派遣"],["other","その他"]].map(([type,label])=>{
+        const lim=((settings.staffTypeLimits)||{})[type]||{daily:0,weekly:0};
+        return(<div key={type} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:10}}>
+          <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:8}}>{label}</div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1日の上限</span>
+              <input type="number" min={0} max={24} value={lim.daily||""} placeholder="0"
+                onChange={e=>{const v=Math.max(0,Math.min(24,parseInt(e.target.value)||0));onSave({...settings,staffTypeLimits:{...(settings.staffTypeLimits||{}),[type]:{...lim,daily:v}}});}}
+                style={{...AI,width:60,textAlign:"center",padding:"6px 8px"}}/>
+              <span style={{fontSize:12,color:"var(--c-text4)"}}>時間</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>週の上限</span>
+              <input type="number" min={0} max={168} value={lim.weekly||""} placeholder="0"
+                onChange={e=>{const v=Math.max(0,Math.min(168,parseInt(e.target.value)||0));onSave({...settings,staffTypeLimits:{...(settings.staffTypeLimits||{}),[type]:{...lim,weekly:v}}});}}
+                style={{...AI,width:60,textAlign:"center",padding:"6px 8px"}}/>
+              <span style={{fontSize:12,color:"var(--c-text4)"}}>時間</span>
+            </div>
+          </div>
+        </div>);
+      })}
     </AC>}
 
     {shopId&&<AC title="この端末の店舗コード">
