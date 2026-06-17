@@ -191,7 +191,7 @@ exports.createPortalSession = functions
 // ============================================================
 exports.sendEmailOtp = functions
   .region("asia-northeast1")
-  .runWith({ secrets: ["SMTP_PASS"] })
+  .runWith({ secrets: ["SMTP_USER", "SMTP_PASS"] })
   .https.onCall(async (data, context) => {
     if (!context.auth) {
       throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
@@ -250,7 +250,7 @@ exports.verifyEmailOtp = functions
       throw new functions.https.HttpsError("invalid-argument", "確認コードが無効か期限切れです");
     }
 
-    await admin.database().ref(`email_otps/${uid}`).delete();
+    await admin.database().ref(`email_otps/${uid}`).remove();
     return { emailLink: otp.emailLink, email: otp.email };
   });
 
