@@ -3263,18 +3263,18 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
       const allCounts=hours.flatMap(h=>dates.flatMap(d=>[countFor(setA,d,h),spIdx>-1?countFor(setB,d,h):0]));
       const maxCnt=Math.max(1,...allCounts);
       const cellBg=n=>{if(n===0)return"var(--c-input)";const a=Math.min(0.15+n/maxCnt*0.65,0.8);return`rgba(248,112,54,${a.toFixed(2)})`;};
-      const CW2=46,LW=46;
+      const HW=38,DW=52;
       const renderTbl=(nameSet,title)=>(<div style={{flex:1,minWidth:0}}>
         {title&&<div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:5}}>{title}</div>}
         <div style={{overflowX:"auto"}}>
           <table style={{borderCollapse:"collapse",fontSize:11}}>
             <thead><tr>
-              <th style={{width:LW,minWidth:LW,background:"var(--c-input)",padding:"4px 4px",borderRight:"1px solid var(--c-border2)",color:"var(--c-text4)",fontWeight:600,textAlign:"center",position:"sticky",left:0,zIndex:1}}>時間</th>
-              {dates.map(d=>{const dt=pd(d);const isW=isWeekend(d);return(<th key={d} style={{width:CW2,minWidth:CW2,background:"var(--c-input)",padding:"3px 2px",borderBottom:"1px solid var(--c-border2)",color:isW?"#EF4444":"var(--c-text4)",fontWeight:600,textAlign:"center",fontSize:10}}>{`${dt.getMonth()+1}/${dt.getDate()}`}<br/><span style={{fontSize:9}}>{WD[dt.getDay()]}</span></th>);})}
+              <th style={{width:DW,minWidth:DW,background:"var(--c-input)",padding:"4px 6px",borderRight:"1px solid var(--c-border2)",color:"var(--c-text4)",fontWeight:600,textAlign:"center",position:"sticky",left:0,zIndex:1}}>日付</th>
+              {hours.map(h=>{const hL=h>=24?`${h-24}+1`:`${h}時`;return(<th key={h} style={{width:HW,minWidth:HW,background:"var(--c-input)",padding:"3px 2px",borderBottom:"1px solid var(--c-border2)",color:"var(--c-text4)",fontWeight:600,textAlign:"center",fontSize:10}}>{hL}</th>);})}
             </tr></thead>
-            <tbody>{hours.map(h=>{const hL=h>=24?`${h-24}:00+1`:`${h}:00`;return(<tr key={h}>
-              <td style={{padding:"1px 4px",background:"var(--c-input)",borderRight:"1px solid var(--c-border2)",color:"var(--c-text4)",textAlign:"center",whiteSpace:"nowrap",position:"sticky",left:0,fontSize:10}}>{hL}</td>
-              {dates.map(d=>{const n=countFor(nameSet,d,h);return(<td key={d} style={{width:CW2,height:18,background:cellBg(n),textAlign:"center",color:n>0?"rgba(255,255,255,.9)":"var(--c-text4)",fontWeight:n>0?700:400,fontSize:11,border:"1px solid var(--c-border)",padding:0}}>{n>0?n:""}</td>);})}
+            <tbody>{dates.map(d=>{const dt=pd(d);const isW=isWeekend(d);return(<tr key={d}>
+              <td style={{padding:"1px 6px",background:"var(--c-input)",borderRight:"1px solid var(--c-border2)",color:isW?"#EF4444":"var(--c-text4)",textAlign:"center",whiteSpace:"nowrap",position:"sticky",left:0,fontSize:10,fontWeight:isW?700:400}}>{`${dt.getMonth()+1}/${dt.getDate()}`} {WD[dt.getDay()]}</td>
+              {hours.map(h=>{const n=countFor(nameSet,d,h);return(<td key={h} style={{width:HW,height:20,background:cellBg(n),textAlign:"center",color:n>0?"rgba(255,255,255,.9)":"var(--c-text4)",fontWeight:n>0?700:400,fontSize:11,border:"1px solid var(--c-border)",padding:0}}>{n>0?n:""}</td>);})}
             </tr>);})}
             </tbody>
           </table>
