@@ -231,10 +231,12 @@ function timeToNum(t){if(!t)return"";const[h,m]=t.split(":").map(Number);return 
 // 祝日判定（簡易）
 // isHoliday は上で定義済み
 function isWeekend(dateStr){const dow=pd(dateStr).getDay();return dow===0||dow===6||isHoliday(dateStr);}
-function calcNetWorkMinutes(shift,breaks){
+function calcNetWorkMinutes(shift,breaks,overtimeMins=0){
   if(!shift||shift.status!=="work")return 0;
-  const st=shift.adjustedStart??shift.start,en=shift.adjustedEnd??shift.end;
+  const st=shift.adjustedStart??shift.start;
+  let en=shift.adjustedEnd??shift.end;
   if(!st||!en)return 0;
+  if(overtimeMins>0){const[h,m]=en.split(":").map(Number);const tot=h*60+m+overtimeMins;en=`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;}
   const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
   const ws=toMin(st),we=toMin(en);
   if(we<=ws)return 0;
@@ -246,6 +248,7 @@ function getBreakList(settings,dateStr){
   const dow=pd(dateStr).getDay();const hol=isHoliday(dateStr);const bt=(settings&&settings.breakTimes)||{};
   if(hol)return bt.hol||[];if(dow===0)return bt.sun||[];if(dow===6)return bt.sat||[];return bt.weekday||[];
 }
+function getOT(staffName,settings){return(settings?.overtimeSettings?.byStaff||{})[staffName]||0;}
 function fmtMin(min){if(!min&&min!==0)return"";const h=Math.floor(min/60),m=min%60;return`${h}:${String(m).padStart(2,"0")}`;}
 
 
