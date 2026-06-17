@@ -2732,15 +2732,18 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const moveUp=i=>{if(i===0)return;const a=[...staffList];[a[i-1],a[i]]=[a[i],a[i-1]];onSave(a);};
   const moveDown=i=>{if(i===staffList.length-1)return;const a=[...staffList];[a[i],a[i+1]]=[a[i+1],a[i]];onSave(a);};
   const dragIdxRef=useRef(null);
+  const longPressTimer=useRef(null);
   const dragActiveRef=useRef(false);
   const handleGripPointerDown=(e,i)=>{
     if(!isPro)return;
     e.preventDefault();
     try{e.currentTarget.setPointerCapture(e.pointerId);}catch(_){}
-    dragActiveRef.current=true;
-    dragIdxRef.current=i;
-    setDragIdx(i);
-    if(navigator.vibrate)navigator.vibrate(30);
+    longPressTimer.current=setTimeout(()=>{
+      dragActiveRef.current=true;
+      dragIdxRef.current=i;
+      setDragIdx(i);
+      if(navigator.vibrate)navigator.vibrate(50);
+    },500);
   };
   const handleGripPointerMove=(e)=>{
     if(!dragActiveRef.current)return;
@@ -2750,6 +2753,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     if(item){const idx=parseInt(item.getAttribute("data-staff-idx"),10);if(!isNaN(idx))setDragOverIdx(idx);}
   };
   const handleGripPointerUp=()=>{
+    clearTimeout(longPressTimer.current);
     if(dragActiveRef.current){
       const from=dragIdxRef.current;
       setDragIdx(null);
@@ -2764,6 +2768,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     }
   };
   const handleGripPointerCancel=()=>{
+    clearTimeout(longPressTimer.current);
     dragIdxRef.current=null;
     dragActiveRef.current=false;
     setDragIdx(null);
