@@ -3821,7 +3821,7 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
       {/* プランカード */}
       <AC title="現在のプラン">
         <div style={{display:"flex",alignItems:"center",gap:16,padding:"8px 0 16px"}}>
-          <div style={{fontSize:48}}>{plan==="pro"?"★":""}</div>
+          <div style={{fontSize:48}}>{plan==="premium"?"★★":plan==="pro"?"★":""}</div>
           <div style={{flex:1}}>
             <div style={{fontSize:22,fontWeight:800,color:"var(--c-text)"}}>{PLAN_LABELS[plan]||"Free"}プラン</div>
             {expiryLabel&&<div style={{fontSize:12,color:"var(--c-text3)",marginTop:3}}>{expiryLabel}</div>}
@@ -3837,7 +3837,7 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
         </div>
 
         {/* アップグレード */}
-        {plan!=="pro"&&<div style={{marginTop:4}}>
+        {!isPaid&&<div style={{marginTop:4}}>
           <button onClick={()=>onUpgrade&&onUpgrade({type:"staff",limit:lim.staff,plan})}
             style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#f87036,#e05a1a)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
             {"★ Proにアップグレード"}
@@ -3851,9 +3851,9 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead>
               <tr>
-                {[["","機能"],["Free","無料"],["★ Pro","500円/月"]].map(([icon,price],i)=>(
+                {[["","機能"],["Free","無料"],["★ Pro","500円/月"],["★★ Premium","---"]].map(([icon,price],i)=>(
                   <th key={i} style={{padding:"8px 6px",textAlign:"center",borderBottom:"2px solid var(--c-border)",color:"var(--c-text2)",fontWeight:700,background:
-                    (i===1&&plan==="free")||(i===2&&plan==="pro")
+                    (i===1&&plan==="free")||(i===2&&plan==="pro")||(i===3&&plan==="premium")
                       ?"rgba(248,112,54,.1)":"transparent",
                     borderRadius:i>0?"8px 8px 0 0":0,fontSize:i===0?12:13}}>
                     {icon&&<div style={{fontSize:20,marginBottom:2}}>{icon}</div>}
@@ -3864,20 +3864,21 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
             </thead>
             <tbody>
               {[
-                ["スタッフ数","20名","無制限"],
-                ["期間数","1件","無制限"],
-                ["スタッフ並べ替え","✕","✓"],
-                ["テンプレート共有","✕","✓"],
-                ["Excel書き出し","✓","✓"],
-                ["Excel店舗名変更","✕","✓"],
-                ["スタッフ名色設定","✕","✓"],
-                ["名前リンク（別名）","✕","✓"],
+                ["スタッフ数","20名","無制限","無制限"],
+                ["期間数","1件","無制限","無制限"],
+                ["スタッフ並べ替え","✕","✓","✓"],
+                ["テンプレート共有","✕","✓","✓"],
+                ["Excel書き出し","✓","✓","✓"],
+                ["Excel店舗名変更","✕","✓","✓"],
+                ["スタッフ名色設定","✕","✓","✓"],
+                ["名前リンク（別名）","✕","✓","✓"],
+                ["Premium機能","✕","✕","✓"],
               ].map(([feat,...vals])=>(
                 <tr key={feat}>
                   <td style={{padding:"9px 6px",color:"var(--c-text3)",fontSize:12,fontWeight:600,borderBottom:"1px solid var(--c-border)"}}>{feat}</td>
                   {vals.map((v,i)=>(
                     <td key={i} style={{padding:"9px 6px",textAlign:"center",borderBottom:"1px solid var(--c-border)",
-                      background:(i===0&&plan==="free")||(i===1&&plan==="pro")
+                      background:(i===0&&plan==="free")||(i===1&&plan==="pro")||(i===2&&plan==="premium")
                         ?"rgba(248,112,54,.06)":"transparent",
                       color:v==="✓"?"#10B981":v==="✕"?"#9CA3AF":"var(--c-text)",fontWeight:600}}>
                       {v}
