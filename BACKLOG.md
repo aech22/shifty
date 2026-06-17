@@ -85,6 +85,7 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - アプリ固有の機能（プッシュ通知）は Web 版には追加しない（分離して管理）
 - コンポーネントは Web 版の inline style ではなく StyleSheet で書き直す
 - このタスクは **シフト調整機能群（高・中優先タスク）が落ち着いてから着手**する
+- **Expo 着手と同タイミングで Web 版も Vite + TypeScript に移行する**。現在の app.js（約 3900 行）は Babel Standalone によるビルドレスで `import`/`export` が使えないため分割不可。Vite 導入によりモジュール分割・型安全化・コンポーネントファイル分割が可能になり、Expo との共通ビジネスロジックをパッケージとして切り出せる。GitHub Pages のデプロイ設定（`vite build` → `dist/` 出力）変更が必要。
 
 ---
 
