@@ -2787,7 +2787,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
           <div key={i} style={{marginBottom:6}}>
           {isSpacer(n)
             ?<div data-staff-idx={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",border:dragOverIdx===i&&dragIdx!==null?"2px solid #f87036":"1px dashed var(--c-border2)",borderRadius:10,background:"transparent",opacity:dragIdx===i?.4:1,transition:"opacity .15s"}}>
-              {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} style={{cursor:"grab",color:dragIdx===i?"#f87036":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",lineHeight:1,touchAction:"none"}}>⠿</span>}
+              {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} onContextMenu={e=>e.preventDefault()} style={{cursor:"grab",color:dragIdx===i?"#f87036":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",WebkitUserSelect:"none",lineHeight:1,touchAction:"none"}}>⠿</span>}
               <span style={{flex:1,fontSize:12,textAlign:"center",color:"var(--c-text4)",letterSpacing:2}}>─ 空白列 ─</span>
               {isPro&&<>
                 <button onClick={()=>moveUp(i)} disabled={i===0} style={{padding:"4px 8px",background:"var(--c-input)",border:"1px solid #D1D5DB",borderRadius:5,color:"var(--c-text3)",fontSize:12,cursor:i===0?"not-allowed":"pointer",opacity:i===0?.3:1}}>↑</button>
@@ -2796,7 +2796,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
               <button onClick={()=>del(i)} style={AD}>削除</button>
             </div>
             :<div data-staff-idx={i} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:dragOverIdx===i&&dragIdx!==null?"2px solid #f87036":"1px solid #E5E7EB",borderRadius:10,opacity:dragIdx===i?.4:1,transition:"opacity .15s"}}>
-            {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} style={{cursor:"grab",color:dragIdx===i?"#f87036":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",lineHeight:1,flexShrink:0,touchAction:"none"}}>⠿</span>}
+            {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} onContextMenu={e=>e.preventDefault()} style={{cursor:"grab",color:dragIdx===i?"#f87036":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",WebkitUserSelect:"none",lineHeight:1,flexShrink:0,touchAction:"none"}}>⠿</span>}
             <span style={{fontSize:13,color:"var(--c-text4)",minWidth:24,textAlign:"center"}}>{staffList.slice(0,i).filter(x=>!isSpacer(x)).length+1}</span>
             {editIdx===i
               ?<>
