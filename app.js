@@ -3286,8 +3286,8 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
         <div style={{fontSize:13,fontWeight:700,color:"var(--c-text2)",marginBottom:10}}>時間帯別出勤人数</div>
         {spIdx>-1
           ?<div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
-            {rawA.length>0&&renderTbl(setA,"ランチ帯")}
-            {rawB.length>0&&renderTbl(setB,"ディナー帯")}
+            {rawA.length>0&&renderTbl(setA,"キッチン")}
+            {rawB.length>0&&renderTbl(setB,"ホール")}
           </div>
           :renderTbl(setA,"")
         }
