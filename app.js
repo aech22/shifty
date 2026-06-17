@@ -232,9 +232,11 @@ function timeToNum(t){if(!t)return"";const[h,m]=t.split(":").map(Number);return 
 // isHoliday は上で定義済み
 function isWeekend(dateStr){const dow=pd(dateStr).getDay();return dow===0||dow===6||isHoliday(dateStr);}
 function calcNetWorkMinutes(shift,breaks){
-  if(!shift||shift.status!=="work"||!shift.start||!shift.end)return 0;
+  if(!shift||shift.status!=="work")return 0;
+  const st=shift.adjustedStart??shift.start,en=shift.adjustedEnd??shift.end;
+  if(!st||!en)return 0;
   const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
-  const ws=toMin(shift.start),we=toMin(shift.end);
+  const ws=toMin(st),we=toMin(en);
   if(we<=ws)return 0;
   let net=we-ws;
   (breaks||[]).forEach(br=>{const bs=toMin(br.start),be=toMin(br.end);const ol=Math.min(we,be)-Math.max(ws,bs);if(ol>0)net-=ol;});
@@ -2730,18 +2732,15 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const moveUp=i=>{if(i===0)return;const a=[...staffList];[a[i-1],a[i]]=[a[i],a[i-1]];onSave(a);};
   const moveDown=i=>{if(i===staffList.length-1)return;const a=[...staffList];[a[i],a[i+1]]=[a[i+1],a[i]];onSave(a);};
   const dragIdxRef=useRef(null);
-  const longPressTimer=useRef(null);
   const dragActiveRef=useRef(false);
   const handleGripPointerDown=(e,i)=>{
     if(!isPro)return;
     e.preventDefault();
     try{e.currentTarget.setPointerCapture(e.pointerId);}catch(_){}
-    longPressTimer.current=setTimeout(()=>{
-      dragActiveRef.current=true;
-      dragIdxRef.current=i;
-      setDragIdx(i);
-      if(navigator.vibrate)navigator.vibrate(50);
-    },500);
+    dragActiveRef.current=true;
+    dragIdxRef.current=i;
+    setDragIdx(i);
+    if(navigator.vibrate)navigator.vibrate(30);
   };
   const handleGripPointerMove=(e)=>{
     if(!dragActiveRef.current)return;
@@ -2751,7 +2750,6 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     if(item){const idx=parseInt(item.getAttribute("data-staff-idx"),10);if(!isNaN(idx))setDragOverIdx(idx);}
   };
   const handleGripPointerUp=()=>{
-    clearTimeout(longPressTimer.current);
     if(dragActiveRef.current){
       const from=dragIdxRef.current;
       setDragIdx(null);
@@ -2766,7 +2764,6 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     }
   };
   const handleGripPointerCancel=()=>{
-    clearTimeout(longPressTimer.current);
     dragIdxRef.current=null;
     dragActiveRef.current=false;
     setDragIdx(null);
@@ -3181,6 +3178,11 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   const tg=f=>{if(sf===f)setSdr(d=>d==="asc"?"desc":"asc");else{setSf(f);setSdr("asc");}};
   const fil=subs.filter(s=>(!fn||s.staffName.includes(fn))&&(fp==="all"||s.periodId===fp)).sort((a,b)=>{let va=sf==="submittedAt"?new Date(a[sf]).getTime():(a[sf]||""),vb=sf==="submittedAt"?new Date(b[sf]).getTime():(b[sf]||"");return(va<vb?-1:va>vb?1:0)*(sdr==="asc"?1:-1);});
   const gpl=id=>periods.find(p=>p.id===id)?.label||"不明";
+  const saveAdj=(subId,date,field,value)=>{
+    const newSubs=subs.map(s=>{if(s.id!==subId)return s;const sh={...(s.shifts||{})};sh[date]={...sh[date]};if(value)sh[date][field]=value;else delete sh[date][field];return{...s,shifts:sh};});
+    onSave(newSubs);
+    setDet(prev=>{if(!prev||prev.id!==subId)return prev;const sh={...(prev.shifts||{})};sh[date]={...sh[date]};if(value)sh[date][field]=value;else delete sh[date][field];return{...prev,shifts:sh};});
+  };
   return(<div>
     <AT>提出一覧</AT>
     <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
@@ -3258,9 +3260,13 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
             <tbody>{Object.keys(det.shifts||{}).sort().map(ds=>{const d=pd(ds),s=det.shifts[ds],iw=s&&s.status==="work";const nm=iw?calcNetWorkMinutes(s,getBreakList(settings,ds)):0;return(<tr key={ds}>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:"var(--c-text2)"}}>{d.getMonth()+1}/{d.getDate()}（{WD[d.getDay()]}）</td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>{iw?<span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 7px",borderRadius:4,fontSize:12,fontWeight:600}}>出勤</span>:<span style={{background:"var(--c-input)",color:"var(--c-text3)",padding:"2px 7px",borderRadius:4,fontSize:12}}>休み</span>}</td>
-              <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:"var(--c-text2)"}}>{iw?s.start:"-"}</td>
-              <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:"var(--c-text2)"}}>{iw?s.end:"-"}</td>
-              <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:"var(--c-text3)"}}>{iw?fmtMin(nm):"-"}</td>
+              <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
+                {iw?<div><div style={{color:"var(--c-text4)",fontSize:11}}>{s.start}</div><select value={s.adjustedStart||""} onChange={e=>saveAdj(det.id,ds,"adjustedStart",e.target.value||"")} style={{fontSize:12,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedStart?"#60A5FA":"var(--c-border)"}`,borderRadius:6,color:s.adjustedStart?"#60A5FA":"var(--c-text3)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select></div>:"-"}
+              </td>
+              <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
+                {iw?<div><div style={{color:"var(--c-text4)",fontSize:11}}>{s.end}</div><select value={s.adjustedEnd||""} onChange={e=>saveAdj(det.id,ds,"adjustedEnd",e.target.value||"")} style={{fontSize:12,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedEnd?"#60A5FA":"var(--c-border)"}`,borderRadius:6,color:s.adjustedEnd?"#60A5FA":"var(--c-text3)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select></div>:"-"}
+              </td>
+              <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:nm>0?"var(--c-text2)":"var(--c-text3)"}}>{iw?fmtMin(nm):"-"}</td>
             </tr>);})}
             </tbody>
           </table>
