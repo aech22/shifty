@@ -3249,6 +3249,55 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
         </table>
       </div>
     </div>
+    {fp!=="all"&&(()=>{
+      const per=periods.find(p=>p.id===fp);
+      if(!per)return null;
+      const dates=gd(per.startDate,per.endDate);
+      const perSubs=subs.filter(s=>s.periodId===fp);
+      if(perSubs.length===0)return null;
+      const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
+      let minH=24,maxH=9,hasAny=false;
+      perSubs.forEach(sub=>dates.forEach(d=>{const sh=sub.shifts?.[d];if(!sh||sh.status!=="work")return;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(st&&en){hasAny=true;minH=Math.min(minH,Math.floor(toMin(st)/60));maxH=Math.max(maxH,Math.ceil(toMin(en)/60));}}));
+      if(!hasAny)return null;
+      minH=Math.max(6,minH);maxH=Math.min(28,Math.max(maxH,minH+1));
+      const hours=Array.from({length:maxH-minH},(_,i)=>minH+i);
+      const spIdx=staffList.findIndex(n=>isSpacer(n));
+      const rawA=spIdx>-1?staffList.slice(0,spIdx).filter(n=>!isSpacer(n)):staffList.filter(n=>!isSpacer(n));
+      const rawB=spIdx>-1?staffList.slice(spIdx+1).filter(n=>!isSpacer(n)):[];
+      const buildSet=grp=>{const s=new Set(grp);Object.entries(staffAliases).forEach(([reg,als])=>{if(s.has(reg))als.forEach(a=>s.add(a));});return s;};
+      const setA=buildSet(rawA),setB=buildSet(rawB);
+      const countFor=(nameSet,date,hour)=>perSubs.filter(sub=>{if(!nameSet.has(sub.staffName))return false;const sh=sub.shifts?.[date];if(!sh||sh.status!=="work")return false;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(!st||!en)return false;const hS=hour*60,hE=(hour+1)*60;return toMin(st)<hE&&toMin(en)>hS;}).length;
+      const allCounts=hours.flatMap(h=>dates.flatMap(d=>[countFor(setA,d,h),spIdx>-1?countFor(setB,d,h):0]));
+      const maxCnt=Math.max(1,...allCounts);
+      const cellBg=n=>{if(n===0)return"var(--c-input)";const a=Math.min(0.15+n/maxCnt*0.65,0.8);return`rgba(248,112,54,${a.toFixed(2)})`;};
+      const CW2=46,LW=46;
+      const renderTbl=(nameSet,title)=>(<div style={{flex:1,minWidth:0}}>
+        {title&&<div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:5}}>{title}</div>}
+        <div style={{overflowX:"auto"}}>
+          <table style={{borderCollapse:"collapse",fontSize:11}}>
+            <thead><tr>
+              <th style={{width:LW,minWidth:LW,background:"var(--c-input)",padding:"4px 4px",borderRight:"1px solid var(--c-border2)",color:"var(--c-text4)",fontWeight:600,textAlign:"center",position:"sticky",left:0,zIndex:1}}>時間</th>
+              {dates.map(d=>{const dt=pd(d);const isW=isWeekend(d);return(<th key={d} style={{width:CW2,minWidth:CW2,background:"var(--c-input)",padding:"3px 2px",borderBottom:"1px solid var(--c-border2)",color:isW?"#EF4444":"var(--c-text4)",fontWeight:600,textAlign:"center",fontSize:10}}>{`${dt.getMonth()+1}/${dt.getDate()}`}<br/><span style={{fontSize:9}}>{WD[dt.getDay()]}</span></th>);})}
+            </tr></thead>
+            <tbody>{hours.map(h=>{const hL=h>=24?`${h-24}:00+1`:`${h}:00`;return(<tr key={h}>
+              <td style={{padding:"1px 4px",background:"var(--c-input)",borderRight:"1px solid var(--c-border2)",color:"var(--c-text4)",textAlign:"center",whiteSpace:"nowrap",position:"sticky",left:0,fontSize:10}}>{hL}</td>
+              {dates.map(d=>{const n=countFor(nameSet,d,h);return(<td key={d} style={{width:CW2,height:18,background:cellBg(n),textAlign:"center",color:n>0?"rgba(255,255,255,.9)":"var(--c-text4)",fontWeight:n>0?700:400,fontSize:11,border:"1px solid var(--c-border)",padding:0}}>{n>0?n:""}</td>);})}
+            </tr>);})}
+            </tbody>
+          </table>
+        </div>
+      </div>);
+      return(<div style={{marginTop:14,background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:14,padding:"12px 14px"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"var(--c-text2)",marginBottom:10}}>時間帯別出勤人数</div>
+        {spIdx>-1
+          ?<div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+            {rawA.length>0&&renderTbl(setA,"ランチ帯")}
+            {rawB.length>0&&renderTbl(setB,"ディナー帯")}
+          </div>
+          :renderTbl(setA,"")
+        }
+      </div>);
+    })()}
     {det&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center",animation:"fI .2s"}} onClick={()=>setDet(null)}>
       <div style={{background:"var(--c-card)",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:560,maxHeight:"88vh",overflow:"hidden",display:"flex",flexDirection:"column",animation:"sU .25s"}} onClick={e=>e.stopPropagation()}>
         <div style={{width:36,height:4,background:"var(--c-border2)",borderRadius:2,margin:"10px auto 0"}}/>
