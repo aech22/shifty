@@ -1106,10 +1106,10 @@ function App(){
         joinedAt:new Date().toISOString(),
         role:'member'
       });
-      // shops をコピー
+      // shops をマージ（上書きではなく update でマージ）
       const linkedShops=await firebaseDB.ref(`accounts/${foundUid}/shops`).once('value');
       if(linkedShops.val()){
-        await firebaseDB.ref(`accounts/${authUser.uid}/shops`).set(linkedShops.val());
+        await firebaseDB.ref(`accounts/${authUser.uid}/shops`).update(linkedShops.val());
       }
       setUnbound(false);
       setInviteCode("");
