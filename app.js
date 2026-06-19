@@ -9,7 +9,7 @@ const {useState,useEffect,useCallback,useRef,useMemo}=React;
 // DEV_MODE = true  → 開発用Firebase（developブランチ専用）
 // DEV_MODE = false → 本番Firebase（mainブランチ・リリース用）
 // ============================================================
-const DEV_MODE = false;
+const DEV_MODE = true;
 
 const FIREBASE_CONFIG_PROD = {
   apiKey:            "AIzaSyDdl1Li3QduufAFhBWcF4nmOlFcCsx8zlQ",
@@ -168,7 +168,9 @@ function _lockMsg(ns){
 
 // ===== サブスクリプション プラン定義 =====
 // テスト用: "free"|"pro" に設定すると Firebase を無視して上書き
-const DEV_PLAN_OVERRIDE = null; // 本番用
+const DEV_PLAN_OVERRIDE = DEV_MODE
+  ? (new URLSearchParams(location.search).get('plan') || null)
+  : null;
 // シークレットアンロックコード（SHA-256ハッシュで保持）
 const UNLOCK_HASH      = "c7f68383637178c47cafddafdd79574d148dff2ea6c34ddf5a497e4115bcae8c";
 const UNLOCK_HASH_TEMP = "0d84e1fbd7fd8b59ee827ac602431a89302edef17903c5d9d4da31af1d308c71";
@@ -180,10 +182,12 @@ async function hashCode(str){
 }
 
 const PLAN_LIMITS = {
-  free: { shops: Infinity, staff: 20, periods: 1        },
-  pro:  { shops: Infinity, staff: Infinity, periods: Infinity },
+  free:    { shops: Infinity, staff: 20, periods: 1 },
+  pro:     { shops: Infinity, staff: Infinity, periods: Infinity },
+  premium: { shops: Infinity, staff: Infinity, periods: Infinity },
 };
-const PLAN_LABELS = { free: "Free", pro: "Pro" };
+const PLAN_LABELS = { free: "Free", pro: "Pro", premium: "Premium" };
+const STAFF_TYPE_LABELS = {employee:"社員",parttime:"バイト",dispatch:"派遣",other:"その他"};
 
 // ===== デフォルト候補時間 =====
 const CAND_WEEKDAY=[
@@ -227,6 +231,26 @@ function timeToNum(t){if(!t)return"";const[h,m]=t.split(":").map(Number);return 
 // 祝日判定（簡易）
 // isHoliday は上で定義済み
 function isWeekend(dateStr){const dow=pd(dateStr).getDay();return dow===0||dow===6||isHoliday(dateStr);}
+function calcNetWorkMinutes(shift,breaks,overtimeMins=0){
+  if(!shift||shift.status!=="work")return 0;
+  const st=shift.adjustedStart??shift.start;
+  let en=shift.adjustedEnd??shift.end;
+  if(!st||!en)return 0;
+  if(overtimeMins>0){const[h,m]=en.split(":").map(Number);const tot=h*60+m+overtimeMins;en=`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;}
+  const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
+  const ws=toMin(st),we=toMin(en);
+  if(we<=ws)return 0;
+  let net=we-ws;
+  (breaks||[]).forEach(br=>{const bs=toMin(br.start),be=toMin(br.end);const ol=Math.min(we,be)-Math.max(ws,bs);if(ol>0)net-=ol;});
+  return Math.max(0,net);
+}
+function getBreakList(settings,dateStr){
+  const dow=pd(dateStr).getDay();const hol=isHoliday(dateStr);const bt=(settings&&settings.breakTimes)||{};
+  if(hol)return bt.hol||[];if(dow===0)return bt.sun||[];if(dow===6)return bt.sat||[];return bt.weekday||[];
+}
+function getOT(staffName,settings){return(settings?.overtimeSettings?.byStaff||{})[staffName]||0;}
+function fmtMin(min){if(!min&&min!==0)return"";const h=Math.floor(min/60),m=min%60;return`${h}:${String(m).padStart(2,"0")}`;}
+
 
 const td=new Date(),tds=fd(td);
 
@@ -240,7 +264,7 @@ function makePeriod(shopId){
   return{id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:`${yr}年${mo}月前半`,startDate:`${yr}-${ms}-01`,endDate:`${yr}-${ms}-15`,deadlineDate:"",createdAt:new Date().toISOString()};
 }
 function makeSettings(shopId){
-  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[]};
+  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{daily:0,weekly:0},parttime:{daily:0,weekly:0},dispatch:{daily:0,weekly:0},other:{daily:0,weekly:0}},overtimeSettings:{byStaff:{}}};
 }
 
 // ===== URL生成・解析 =====
@@ -388,6 +412,7 @@ function App(){
   const[inviteCodeGenLoading,setInviteCodeGenLoading]=useState(false); // 招待コード生成中フラグ
   const[plan,setPlan]=useState("free"); // サブスクプラン
   const[planExpiry,setPlanExpiry]=useState(null); // プラン有効期限
+  const[paymentFailed,setPaymentFailed]=useState(false); // 決済失敗フラグ
   const[emailMode,setEmailMode]=useState(null); // null | "login" | "register"
   const[emailVal,setEmailVal]=useState("");
   const[passwordVal,setPasswordVal]=useState("");
@@ -709,11 +734,15 @@ function App(){
       // "temp"で保存されている場合は期限チェック
       const unlocked=unlockVal==="temp"?(today<=UNLOCK_CODE_TEMP_EXPIRY):!!unlockVal;
       if(unlockVal==="temp"&&today>UNLOCK_CODE_TEMP_EXPIRY)ls(UNLOCK_LS_KEY,false); // 期限切れ時に自動解除
-      setPlan(DEV_PLAN_OVERRIDE||(unlocked?"pro":(val&&["free","pro"].includes(val)?val:"free")));
+      setPlan(DEV_PLAN_OVERRIDE||(unlocked?"pro":(val&&["free","pro","premium"].includes(val)?val:"free")));
     });
     // accounts/<shopId>/planExpiry（有効期限）
     on(`accounts/${targetSid}/planExpiry`,val=>{
       setPlanExpiry(val||null);
+    });
+    // accounts/<shopId>/paymentFailed（決済失敗フラグ）
+    on(`accounts/${targetSid}/paymentFailed`,val=>{
+      setPaymentFailed(!!val);
     });
 
     // settingsデフォルト書き込み
@@ -740,6 +769,7 @@ function App(){
       const result=await firebaseAuth.signInWithPopup(provider);
       const user=result.user;
       setAuthUser(user);
+      ph("login",{method:"google"});
       // accounts/{uid}/shops を確認
       if(!firebaseDB){setAuthLoading(false);return;}
       const snap=await firebaseDB.ref(`accounts/${user.uid}/shops`).once("value");
@@ -812,6 +842,7 @@ function App(){
   // メール+パスワードでサインイン（共通処理）
   const _afterEmailAuth=async(user)=>{
     setAuthUser(user);
+    ph("login",{method:"email"});
     if(!firebaseDB){setAuthLoading(false);return;}
     const snap=await firebaseDB.ref(`accounts/${user.uid}/shops`).once("value");
     const linked=snap.val();
@@ -1078,10 +1109,10 @@ function App(){
         joinedAt:new Date().toISOString(),
         role:'member'
       });
-      // shops をコピー
+      // shops をマージ（上書きではなく update でマージ）
       const linkedShops=await firebaseDB.ref(`accounts/${foundUid}/shops`).once('value');
       if(linkedShops.val()){
-        await firebaseDB.ref(`accounts/${authUser.uid}/shops`).set(linkedShops.val());
+        await firebaseDB.ref(`accounts/${authUser.uid}/shops`).update(linkedShops.val());
       }
       setUnbound(false);
       setInviteCode("");
@@ -1199,13 +1230,15 @@ function App(){
     touchLastActivity();
   },[sid,periods,subs,touchLastActivity]);
   const saveStaff   =useCallback(v=>{ setStaffList(v);ls(storeKey(sid,"staff_v6"),v);    fbW(fbPath(sid,"staff"),v); touchLastActivity();   },[sid,touchLastActivity]);
-  const saveSubs    =useCallback(v=>{
+  const saveSubs    =useCallback((v,deletedId=null)=>{
     setSubs(v);
     ls(storeKey(sid,"subs_v6"),v);
     // Firebase には update() でマージ書き込み（set()は他端末データを上書きするためNG）
+    // deletedId を渡すと null セットで Firebase からも削除する
     if(firebaseDB){
       const obj={};
       v.forEach(s=>{ if(s&&s.id) obj[s.id]=s; });
+      if(deletedId) obj[deletedId]=null;
       firebaseDB.ref(fbPath(sid,"subs")).update(obj).catch(e=>console.warn("subs書き込み失敗:",e));
     }
     touchLastActivity();
@@ -1511,7 +1544,7 @@ function App(){
               currentShopId={sid} saveSettings={saveSettings} savePeriods={savePeriods} saveSubs={saveSubs}
               saveStaff={saveStaff} saveShops={saveShops}
               globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates}
-              plan={plan} planExpiry={planExpiry}
+              plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed}
               setCurrentShopId={id=>{
                 currentShopIdRef.current=id;
                 setCurrentShopId(id);
@@ -1972,7 +2005,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                     <div style={{fontSize:12,fontWeight:700,color:"var(--c-text)",wordBreak:"break-all",lineHeight:1.3}}>{sub.staffName}</div>
                     <div style={{fontSize:10,color:"#f87036",marginTop:2}}>✎ 修正</div>
                   </div>
-                  {plan==="pro"&&onDeleteSub&&(
+                  {(plan==="pro"||plan==="premium")&&onDeleteSub&&(
                     <button onClick={e=>{e.stopPropagation();if(confirm(`「${sub.staffName}」の提出を削除しますか？`)){onDeleteSub(sub.id);}}}
                       style={{width:"100%",padding:"2px 4px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:4,color:"#FF4757",fontSize:10,cursor:"pointer",fontWeight:600}}>
                       削除
@@ -2084,7 +2117,7 @@ function AdminLogin({settings,onAuth}){
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
@@ -2093,7 +2126,8 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
   const[shopCodeMode,setShopCodeMode]=useState(false); // コードで店舗追加モード
   const[shopCodeInput,setShopCodeInput]=useState("");
   const[shopCodeError,setShopCodeError]=useState("");
-  const[upgradeReason,setUpgradeReason]=useState(null); // {type,limit,plan}
+  const[upgradeReason,setUpgradeReasonRaw]=useState(null); // {type,limit,plan}
+  const setUpgradeReason=r=>{if(r)ph("upgrade_modal_shown",{type:r.type,plan:r.plan});setUpgradeReasonRaw(r);};
   const tr=useRef();
   const shopMenuRef=useRef();
   const tt=m=>{setToast(m);clearTimeout(tr.current);tr.current=setTimeout(()=>setToast(null),2500);};
@@ -2240,6 +2274,14 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         </div>
       </div>
       <div style={{maxWidth:900,margin:"0 auto",padding:"20px 14px 60px"}}>
+        {paymentFailed&&<div style={{background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.3)",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:18}}>⚠️</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#DC2626",marginBottom:2}}>決済に失敗しました</div>
+            <div style={{fontSize:12,color:"#B91C1C"}}>登録中のカードに問題が発生しています。マイページ → 請求管理から支払い方法を更新してください。</div>
+          </div>
+          <button onClick={()=>setTab("mypage")} style={{padding:"6px 12px",background:"#DC2626",border:"none",borderRadius:7,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>マイページへ</button>
+        </div>}
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings}/>}
         {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
@@ -2255,7 +2297,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkApple={onSignInAndLinkApple} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkApple={onSignInAndLinkApple} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading} staffList={staffList}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -2275,7 +2317,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
   const genPresets=()=>{
     const result=[],today=new Date();
     const cutoff=new Date(today.getFullYear(),today.getMonth()-1,today.getDate());
-    const use1month=plan==="pro"&&(settings.periodUnit||"2week")==="1month";
+    const use1month=(plan==="pro"||plan==="premium")&&(settings.periodUnit||"2week")==="1month";
     for(let offset=0;offset<=2;offset++){
       const base=new Date(today.getFullYear(),today.getMonth()+offset,1);
       const yr=base.getFullYear(),mo=base.getMonth()+1,ms=String(mo).padStart(2,"0");
@@ -2320,7 +2362,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
     return(
       <div>
         <button onClick={()=>setViewPeriodId(null)} style={{marginBottom:16,padding:"8px 16px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:8,color:"var(--c-text)",fontSize:13,cursor:"pointer"}}>← 期間一覧に戻る</button>
-        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} plan={plan} onDeleteSub={subId=>{const a=subs.filter(s=>s.id!==subId);saveSubs&&saveSubs(a);tt("提出を削除しました");}} onEditSub={sub=>{const updated={...sub,updatedAt:new Date().toISOString(),isUpdated:true};const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=updated;saveSubs&&saveSubs(a);}tt("✓ 更新しました");}}/>
+        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} plan={plan} onDeleteSub={subId=>{const a=subs.filter(s=>s.id!==subId);saveSubs&&saveSubs(a,subId);tt("提出を削除しました");}} onEditSub={sub=>{const updated={...sub,updatedAt:new Date().toISOString(),isUpdated:true};const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=updated;saveSubs&&saveSubs(a);}tt("✓ 更新しました");}}/>
       </div>
     );
   }
@@ -2640,7 +2682,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const[editIdx,setEditIdx]=useState(null);
   const[editName,setEditName]=useState("");
   const[aliasIdx,setAliasIdx]=useState(null); // 別名編集中のスタッフindex
-  const isPro=plan==="pro";
+  const isPro=plan==="pro"||plan==="premium";
+  const isPremium=plan==="premium";
   const[dragIdx,setDragIdx]=useState(null);
   const[dragOverIdx,setDragOverIdx]=useState(null);
   const staffAliases=settings.staffAliases||{};
@@ -2692,9 +2735,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     onSave([...staffList,newName.trim()]);setNewName("");tt(`✓ ${newName.trim()} を追加しました`);
   };
   const del=i=>{const a=[...staffList];a.splice(i,1);onSave(a);tt("削除しました");};
-  const moveUp=i=>{if(i===0)return;const a=[...staffList];[a[i-1],a[i]]=[a[i],a[i-1]];onSave(a);};
-  const moveDown=i=>{if(i===staffList.length-1)return;const a=[...staffList];[a[i],a[i+1]]=[a[i+1],a[i]];onSave(a);};
-  const dragIdxRef=useRef(null);
+const dragIdxRef=useRef(null);
   const longPressTimer=useRef(null);
   const dragActiveRef=useRef(false);
   const handleGripPointerDown=(e,i)=>{
@@ -2750,16 +2791,12 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
           <div key={i} style={{marginBottom:6}}>
           {isSpacer(n)
             ?<div data-staff-idx={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",border:dragOverIdx===i&&dragIdx!==null?"2px solid #f87036":"1px dashed var(--c-border2)",borderRadius:10,background:"transparent",opacity:dragIdx===i?.4:1,transition:"opacity .15s"}}>
-              {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} style={{cursor:"grab",color:dragIdx===i?"#f87036":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",lineHeight:1,touchAction:"none"}}>⠿</span>}
+              {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} onContextMenu={e=>e.preventDefault()} style={{cursor:"grab",color:dragIdx===i?"#f87036":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",WebkitUserSelect:"none",lineHeight:1,touchAction:"none"}}>⠿</span>}
               <span style={{flex:1,fontSize:12,textAlign:"center",color:"var(--c-text4)",letterSpacing:2}}>─ 空白列 ─</span>
-              {isPro&&<>
-                <button onClick={()=>moveUp(i)} disabled={i===0} style={{padding:"4px 8px",background:"var(--c-input)",border:"1px solid #D1D5DB",borderRadius:5,color:"var(--c-text3)",fontSize:12,cursor:i===0?"not-allowed":"pointer",opacity:i===0?.3:1}}>↑</button>
-                <button onClick={()=>moveDown(i)} disabled={i===staffList.length-1} style={{padding:"4px 8px",background:"var(--c-input)",border:"1px solid #D1D5DB",borderRadius:5,color:"var(--c-text3)",fontSize:12,cursor:i===staffList.length-1?"not-allowed":"pointer",opacity:i===staffList.length-1?.3:1}}>↓</button>
-              </>}
               <button onClick={()=>del(i)} style={AD}>削除</button>
             </div>
             :<div data-staff-idx={i} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:dragOverIdx===i&&dragIdx!==null?"2px solid #f87036":"1px solid #E5E7EB",borderRadius:10,opacity:dragIdx===i?.4:1,transition:"opacity .15s"}}>
-            {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} style={{cursor:"grab",color:dragIdx===i?"#f87036":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",lineHeight:1,flexShrink:0,touchAction:"none"}}>⠿</span>}
+            {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} onContextMenu={e=>e.preventDefault()} style={{cursor:"grab",color:dragIdx===i?"#f87036":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",WebkitUserSelect:"none",lineHeight:1,flexShrink:0,touchAction:"none"}}>⠿</span>}
             <span style={{fontSize:13,color:"var(--c-text4)",minWidth:24,textAlign:"center"}}>{staffList.slice(0,i).filter(x=>!isSpacer(x)).length+1}</span>
             {editIdx===i
               ?<>
@@ -2771,14 +2808,14 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
               :<>
                 {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid #D1D5DB",cursor:"pointer",flexShrink:0,padding:0}}/>}
                 <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{n}</span>
+                {isPremium&&<select value={(settings.staffAttributes||{})[n]||""} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:12,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
+                  <option value="">属性なし</option>
+                  {Object.entries(STAFF_TYPE_LABELS).map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                </select>}
                 {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
                   別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
                 </button>}
                 <button onClick={()=>startEdit(i)} style={{padding:"6px 10px",background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.25)",borderRadius:6,color:"#3B82F6",fontSize:12,cursor:"pointer"}}>編集</button>
-                {isPro&&<>
-                  <button onClick={()=>moveUp(i)} disabled={i===0} style={{padding:"4px 8px",background:"var(--c-input)",border:"1px solid #D1D5DB",borderRadius:5,color:"var(--c-text3)",fontSize:12,cursor:i===0?"not-allowed":"pointer",opacity:i===0?.3:1}}>↑</button>
-                  <button onClick={()=>moveDown(i)} disabled={i===staffList.length-1} style={{padding:"4px 8px",background:"var(--c-input)",border:"1px solid #D1D5DB",borderRadius:5,color:"var(--c-text3)",fontSize:12,cursor:i===staffList.length-1?"not-allowed":"pointer",opacity:i===staffList.length-1?.3:1}}>↓</button>
-                </>}
                 <button onClick={()=>del(i)} style={AD}>削除</button>
               </>
             }
@@ -2843,6 +2880,9 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
   const[dSelStart,setDSelStart]=useState("");
   const[dSelEnd,setDSelEnd]=useState("");
   const[tmplName,setTmplName]=useState("");
+  const[selDayType,setSelDayType]=useState("weekday");
+  const[brkStart,setBrkStart]=useState("");
+  const[brkEnd,setBrkEnd]=useState("");
 
   const toggleArr=(arr,setArr,val)=>setArr(prev=>prev.includes(val)?prev.filter(v=>v!==val):[...prev,val]);
 
@@ -2919,7 +2959,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
     <div>
       <AT>候補管理</AT>
       <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
-        {[["global","全体"],["weekday","曜日別"],["date","日付別"],["template","テンプレ"]].map(([id,l])=>(
+        {[["global","全体"],["weekday","曜日別"],["date","日付別"],["template","テンプレ"],...(plan==="premium"?[["break","休憩"]]:[])] .map(([id,l])=>(
           <button key={id} onClick={()=>setMode(id)} style={{padding:"8px 14px",background:mode===id?"#f87036":"var(--c-border)",border:`1px solid ${mode===id?"#f87036":"var(--c-border)"}`,borderRadius:8,color:"var(--c-text)",fontSize:13,fontWeight:600,cursor:"pointer"}}>{l}</button>
         ))}
       </div>
@@ -2995,8 +3035,11 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
                 {cands.length>0&&<div style={{padding:"6px 8px"}}>
                   {cands.map((c,i)=>(
                     <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-                      padding:"5px 8px",background:"var(--c-card)",borderRadius:7,marginBottom:3}}>
-                      <span style={{fontSize:13,color:"var(--c-text)",fontWeight:600}}>{c.start} 〜 {c.end}</span>
+                      padding:"5px 8px",background:c.closed?"rgba(255,71,87,.08)":"var(--c-card)",border:c.closed?"1px solid rgba(255,71,87,.2)":"none",borderRadius:7,marginBottom:3}}>
+                      {c.closed
+                        ?<span style={{fontSize:13,color:"#FF4757",fontWeight:600}}>× 休業日</span>
+                        :<span style={{fontSize:13,color:"var(--c-text)",fontWeight:600}}>{c.start} 〜 {c.end}</span>
+                      }
                       <button onClick={()=>delW(d,i)} style={AD}>削除</button>
                     </div>
                   ))}
@@ -3072,6 +3115,42 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
           </div>
         ))}
       </AC>}
+
+      {mode==="break"&&<AC title="休憩時間設定">
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>設定した休憩時間は出勤〜退勤から自動的に差し引かれ、純勤務時間として表示されます。</div>
+        <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
+          {[["weekday","平日"],["sat","土曜"],["sun","日曜"],["hol","祝日"]].map(([dt,l])=>{
+            const sel=selDayType===dt;
+            const c=dt==="sat"?"#3B82F6":dt==="sun"||dt==="hol"?"#FF4757":"#f87036";
+            return(<button key={dt} onClick={()=>setSelDayType(dt)} style={{padding:"7px 14px",borderRadius:20,fontSize:13,fontWeight:700,border:"1px solid",cursor:"pointer",
+              background:sel?c:"var(--c-input)",borderColor:sel?"transparent":"var(--c-border2)",color:sel?"white":c}}>{l}</button>);
+          })}
+        </div>
+        {((settings.breakTimes||{})[selDayType]||[]).length===0
+          ?<div style={{fontSize:12,color:"var(--c-text4)",padding:"6px 0",marginBottom:8}}>休憩時間が設定されていません</div>
+          :<div style={{marginBottom:8}}>{((settings.breakTimes||{})[selDayType]||[]).map((b,i)=>(
+            <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,marginBottom:4}}>
+              <span style={{fontSize:13,color:"var(--c-text)",fontWeight:600}}>{b.start} 〜 {b.end}</span>
+              <button onClick={()=>{const bt={...(settings.breakTimes||{})};bt[selDayType]=[...(bt[selDayType]||[])];bt[selDayType].splice(i,1);onSave({...settings,breakTimes:bt});tt("削除しました");}} style={AD}>削除</button>
+            </div>
+          ))}</div>
+        }
+        <div style={{display:"flex",gap:10,alignItems:"flex-end",marginTop:8}}>
+          <SingleTimeSelect value={brkStart} onChange={setBrkStart} label="開始時刻"/>
+          <div style={{color:"var(--c-text4)",paddingBottom:12,fontSize:16}}>〜</div>
+          <SingleTimeSelect value={brkEnd} onChange={setBrkEnd} label="終了時刻"/>
+          <button onClick={()=>{
+            if(!brkStart||!brkEnd){tt("▲ 開始・終了を選択してください");return;}
+            if(brkStart>=brkEnd){tt("▲ 終了は開始より後にしてください");return;}
+            const bt={...(settings.breakTimes||{weekday:[],sat:[],sun:[],hol:[]})};
+            const cur=bt[selDayType]||[];
+            if(cur.some(b=>b.start===brkStart&&b.end===brkEnd)){tt("▲ 既に登録されています");return;}
+            bt[selDayType]=[...cur,{start:brkStart,end:brkEnd}].sort((a,b)=>a.start.localeCompare(b.start));
+            onSave({...settings,breakTimes:bt});setBrkStart("");setBrkEnd("");
+            tt(`✓ ${brkStart}〜${brkEnd} を追加しました`);
+          }} style={{...AB,whiteSpace:"nowrap"}}>＋ 追加</button>
+        </div>
+      </AC>}
     </div>
   );
 }
@@ -3080,11 +3159,12 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
 function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,plan="free"}){
   const[fn,setFn]=useState(""),[fp,setFp]=useState("all");
   const fpInit=useRef(false);
-  useEffect(()=>{if(!fpInit.current&&periods.length>0){fpInit.current=true;const lat=[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate))[0];if(lat)setFp(lat.id);}},[periods.length]);
+  useEffect(()=>{if(!fpInit.current&&periods.length>0){fpInit.current=true;const today=new Date().toISOString().split("T")[0];const sorted=[...periods].sort((a,b)=>new Date(b.startDate||0)-new Date(a.startDate||0));const current=sorted.find(p=>p.startDate<=today&&p.endDate>=today);const target=current||sorted.find(p=>p.endDate<today)||sorted[0];if(target)setFp(target.id);}},[periods.length]);
   const[sf,setSf]=useState("submittedAt"),[sdr,setSdr]=useState("desc");
   const[det,setDet]=useState(null);
   const[linkTarget,setLinkTarget]=useState(null); // {subName, selectedStaff}
-  const isPro=plan==="pro";
+  const isPro=plan==="pro"||plan==="premium";
+  const isPremium=plan==="premium";
   const staffAliases=settings.staffAliases||{};
   const allAliases=Object.values(staffAliases).flat();
   const isUnregistered=name=>!staffList.includes(name)&&!allAliases.includes(name);
@@ -3100,6 +3180,11 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   const tg=f=>{if(sf===f)setSdr(d=>d==="asc"?"desc":"asc");else{setSf(f);setSdr("asc");}};
   const fil=subs.filter(s=>(!fn||s.staffName.includes(fn))&&(fp==="all"||s.periodId===fp)).sort((a,b)=>{let va=sf==="submittedAt"?new Date(a[sf]).getTime():(a[sf]||""),vb=sf==="submittedAt"?new Date(b[sf]).getTime():(b[sf]||"");return(va<vb?-1:va>vb?1:0)*(sdr==="asc"?1:-1);});
   const gpl=id=>periods.find(p=>p.id===id)?.label||"不明";
+  const saveAdj=(subId,date,field,value)=>{
+    const newSubs=subs.map(s=>{if(s.id!==subId)return s;const sh={...(s.shifts||{})};sh[date]={...sh[date]};if(value)sh[date][field]=value;else delete sh[date][field];return{...s,shifts:sh};});
+    onSave(newSubs);
+    setDet(prev=>{if(!prev||prev.id!==subId)return prev;const sh={...(prev.shifts||{})};sh[date]={...sh[date]};if(value)sh[date][field]=value;else delete sh[date][field];return{...prev,shifts:sh};});
+  };
   return(<div>
     <AT>提出一覧</AT>
     <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
@@ -3119,11 +3204,15 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           </tr></thead>
           <tbody>{fil.length===0
             ?<tr><td colSpan={6} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
-            :fil.map(sub=>{const ds=Object.keys(sub.shifts||{}).sort(),wk=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").length,at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const rm=t=>Math.floor(new Date(t).getTime()/60000);const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&rm(sub.updatedAt)>rm(sub.submittedAt);return(<tr key={sub.id}>
+            :fil.map(sub=>{const ds=Object.keys(sub.shifts||{}).sort(),wk=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").length,at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const rm=t=>Math.floor(new Date(t).getTime()/60000);const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&rm(sub.updatedAt)>rm(sub.submittedAt);const subOT=isPremium?getOT(sub.staffName,settings):0;const totalMin=isPremium?ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").reduce((acc,d)=>acc+calcNetWorkMinutes(sub.shifts[d],getBreakList(settings,d),subOT),0):0;
+              const staffType=isPremium?((settings.staffAttributes)||{})[sub.staffName]:null;const typeLim=staffType?((settings.staffTypeLimits)||{})[staffType]||{daily:0,weekly:0}:{daily:0,weekly:0};let dailyVio=false,weeklyVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly)){const weekMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreakList(settings,d),subOT);if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));const wk2=fd(mon);weekMap[wk2]=(weekMap[wk2]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});}const hasVio=dailyVio||weeklyVio;
+              const holidayDays=ds.length-wk;let maxConsec=0,halfDays=0;if(isPremium){const curPer=periods.find(p=>p.id===sub.periodId);const prevPer=curPer?[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate)).find(p=>new Date(p.endDate)<new Date(curPer.startDate)):null;const prevSb=prevPer?subs.find(s=>s.periodId===prevPer.id&&(s.staffName===sub.staffName||(staffAliases[sub.staffName]||[]).includes(s.staffName))):null;const prevDs2=prevSb?Object.keys(prevSb.shifts||{}).sort():[];const allC=[...new Set([...prevDs2,...ds])].sort();let consec=0;allC.forEach(d=>{const sh2=ds.includes(d)?sub.shifts[d]:prevSb?.shifts?.[d];if(sh2&&sh2.status==="work"){consec++;maxConsec=Math.max(maxConsec,consec);}else consec=0;});halfDays=ds.filter(d=>{const s=sub.shifts[d];return s&&s.status==="work"&&calcNetWorkMinutes(s,getBreakList(settings,d),subOT)<240;}).length;}
+              return(<tr key={sub.id} style={hasVio?{background:"rgba(255,71,87,.04)"}:{}}>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text)",fontWeight:600}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                   <span>{sub.staffName}</span>
                   {hasRealUpdate&&<span style={{fontSize:10,background:"rgba(245,158,11,.2)",color:"#F59E0B",border:"1px solid rgba(245,158,11,.3)",padding:"1px 6px",borderRadius:4,fontWeight:700}}>変更あり</span>}
+                  {hasVio&&<span style={{fontSize:10,background:"rgba(255,71,87,.15)",color:"#FF4757",border:"1px solid rgba(255,71,87,.3)",padding:"1px 6px",borderRadius:4,fontWeight:700,whiteSpace:"nowrap"}}>{dailyVio?"1日超過":""}{dailyVio&&weeklyVio?" / ":""}{weeklyVio?"週超過":""}</span>}
                   {isPro&&isUnregistered(sub.staffName)&&(
                     linkTarget?.subName===sub.staffName
                       ?<div style={{display:"flex",alignItems:"center",gap:4,marginTop:4,width:"100%"}}>
@@ -3146,17 +3235,66 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
                   {hasRealUpdate&&<><br/><span style={{fontSize:10,color:"#F59E0B",fontWeight:700}}>更新: {new Date(sub.updatedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</span></>}
                 </td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text3)",fontSize:12}}>{gpl(sub.periodId)}</td>
-              <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 8px",borderRadius:4,fontSize:12,fontWeight:600}}>{wk}日</span></td>
-              <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><span style={{background:"var(--c-input)",color:"var(--c-text3)",padding:"2px 8px",borderRadius:4,fontSize:12}}>{ds.length-wk}日</span></td>
+              <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><div style={{display:"flex",flexDirection:"column",gap:2}}><div><span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 8px",borderRadius:4,fontSize:12,fontWeight:600}}>{wk}日</span>{totalMin>0&&<span style={{marginLeft:4,fontSize:11,color:"var(--c-text3)"}}>{fmtMin(totalMin)}</span>}</div>{maxConsec>0&&<div style={{fontSize:10,color:"#A78BFA"}}>連勤 最大{maxConsec}日</div>}</div></td>
+              <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><div style={{display:"flex",flexDirection:"column",gap:2}}><span style={{background:"var(--c-input)",color:"var(--c-text3)",padding:"2px 8px",borderRadius:4,fontSize:12}}>{holidayDays}日</span>{halfDays>0&&<span style={{fontSize:10,color:"#60A5FA"}}>短日 {halfDays}日</span>}</div></td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",whiteSpace:"nowrap"}}>
                 <button onClick={()=>setDet(sub)} style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text2)",fontSize:12,cursor:"pointer",marginRight:4}}>詳細</button>
-                {isPro&&<button onClick={()=>{if(!confirm("削除しますか？"))return;onSave(subs.filter(s=>s.id!==sub.id));tt("削除しました");}} style={AD}>削除</button>}
+                {isPro&&<button onClick={()=>{if(!confirm("削除しますか？"))return;onSave(subs.filter(s=>s.id!==sub.id),sub.id);tt("削除しました");}} style={AD}>削除</button>}
               </td>
             </tr>);})}
           </tbody>
         </table>
       </div>
     </div>
+    {isPremium&&fp!=="all"&&(()=>{
+      const per=periods.find(p=>p.id===fp);
+      if(!per)return null;
+      const dates=gd(per.startDate,per.endDate);
+      const perSubs=subs.filter(s=>s.periodId===fp);
+      if(perSubs.length===0)return null;
+      const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
+      let minH=24,maxH=9,hasAny=false;
+      perSubs.forEach(sub=>dates.forEach(d=>{const sh=sub.shifts?.[d];if(!sh||sh.status!=="work")return;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(st&&en){hasAny=true;minH=Math.min(minH,Math.floor(toMin(st)/60));maxH=Math.max(maxH,Math.ceil(toMin(en)/60));}}));
+      if(!hasAny)return null;
+      minH=Math.max(6,minH);maxH=Math.min(28,Math.max(maxH,minH+1));
+      const hours=Array.from({length:maxH-minH},(_,i)=>minH+i);
+      const spIdx=staffList.findIndex(n=>isSpacer(n));
+      const rawA=spIdx>-1?staffList.slice(0,spIdx).filter(n=>!isSpacer(n)):staffList.filter(n=>!isSpacer(n));
+      const rawB=spIdx>-1?staffList.slice(spIdx+1).filter(n=>!isSpacer(n)):[];
+      const buildSet=grp=>{const s=new Set(grp);Object.entries(staffAliases).forEach(([reg,als])=>{if(s.has(reg))als.forEach(a=>s.add(a));});return s;};
+      const setA=buildSet(rawA),setB=buildSet(rawB);
+      const countFor=(nameSet,date,hour)=>perSubs.filter(sub=>{if(!nameSet.has(sub.staffName))return false;const sh=sub.shifts?.[date];if(!sh||sh.status!=="work")return false;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(!st||!en)return false;const hS=hour*60,hE=(hour+1)*60;return toMin(st)<hE&&toMin(en)>hS;}).length;
+      const allCounts=hours.flatMap(h=>dates.flatMap(d=>[countFor(setA,d,h),spIdx>-1?countFor(setB,d,h):0]));
+      const maxCnt=Math.max(1,...allCounts);
+      const cellBg=n=>{if(n===0)return"var(--c-input)";const a=Math.min(0.15+n/maxCnt*0.65,0.8);return`rgba(248,112,54,${a.toFixed(2)})`;};
+      const HW=38,DW=52;
+      const renderTbl=(nameSet,title)=>(<div style={{flex:1,minWidth:0}}>
+        {title&&<div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:5}}>{title}</div>}
+        <div style={{overflowX:"auto"}}>
+          <table style={{borderCollapse:"collapse",fontSize:11}}>
+            <thead><tr>
+              <th style={{width:DW,minWidth:DW,background:"var(--c-input)",padding:"4px 6px",borderRight:"1px solid var(--c-border2)",color:"var(--c-text4)",fontWeight:600,textAlign:"center",position:"sticky",left:0,zIndex:1}}>日付</th>
+              {hours.map(h=>{const hL=h>=24?`${h-24}+1`:`${h}時`;return(<th key={h} style={{width:HW,minWidth:HW,background:"var(--c-input)",padding:"3px 2px",borderBottom:"1px solid var(--c-border2)",color:"var(--c-text4)",fontWeight:600,textAlign:"center",fontSize:10}}>{hL}</th>);})}
+            </tr></thead>
+            <tbody>{dates.map(d=>{const dt=pd(d);const isW=isWeekend(d);return(<tr key={d}>
+              <td style={{padding:"1px 6px",background:"var(--c-input)",borderRight:"1px solid var(--c-border2)",color:isW?"#EF4444":"var(--c-text4)",textAlign:"center",whiteSpace:"nowrap",position:"sticky",left:0,fontSize:10,fontWeight:isW?700:400}}>{`${dt.getMonth()+1}/${dt.getDate()}`} {WD[dt.getDay()]}</td>
+              {hours.map(h=>{const n=countFor(nameSet,d,h);return(<td key={h} style={{width:HW,height:20,background:cellBg(n),textAlign:"center",color:n>0?"rgba(255,255,255,.9)":"var(--c-text4)",fontWeight:n>0?700:400,fontSize:11,border:"1px solid var(--c-border)",padding:0}}>{n>0?n:""}</td>);})}
+            </tr>);})}
+            </tbody>
+          </table>
+        </div>
+      </div>);
+      return(<div style={{marginTop:14,background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:14,padding:"12px 14px"}}>
+        <div style={{fontSize:13,fontWeight:700,color:"var(--c-text2)",marginBottom:10}}>時間帯別出勤人数</div>
+        {spIdx>-1
+          ?<div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+            {rawA.length>0&&renderTbl(setA,"キッチン")}
+            {rawB.length>0&&renderTbl(setB,"ホール")}
+          </div>
+          :renderTbl(setA,"")
+        }
+      </div>);
+    })()}
     {det&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center",animation:"fI .2s"}} onClick={()=>setDet(null)}>
       <div style={{background:"var(--c-card)",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:560,maxHeight:"88vh",overflow:"hidden",display:"flex",flexDirection:"column",animation:"sU .25s"}} onClick={e=>e.stopPropagation()}>
         <div style={{width:36,height:4,background:"var(--c-border2)",borderRadius:2,margin:"10px auto 0"}}/>
@@ -3165,17 +3303,25 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           <button onClick={()=>setDet(null)} style={{background:"var(--c-input)",border:"none",borderRadius:"50%",width:32,height:32,color:"var(--c-text2)",fontSize:18,cursor:"pointer"}}>✕</button>
         </div>
         <div style={{overflowY:"auto",padding:"8px 16px 24px"}}>
+          {isPremium&&(()=>{const detOT=getOT(det.staffName,settings);const dDs=Object.keys(det.shifts||{}).sort();const dWk=dDs.filter(d=>det.shifts[d]?.status==="work").length;const dTot=dDs.reduce((a,d)=>a+calcNetWorkMinutes(det.shifts[d],getBreakList(settings,d),detOT),0);const dHol=dDs.length-dWk;const dHalf=dDs.filter(d=>{const s=det.shifts[d];return s&&s.status==="work"&&calcNetWorkMinutes(s,getBreakList(settings,d),detOT)<240;}).length;const dCurP=periods.find(p=>p.id===det.periodId);const dPrevP=dCurP?[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate)).find(p=>new Date(p.endDate)<new Date(dCurP.startDate)):null;const dPrevS=dPrevP?subs.find(s=>s.periodId===dPrevP.id&&(s.staffName===det.staffName||(staffAliases[det.staffName]||[]).includes(s.staffName))):null;const dPDs=dPrevS?Object.keys(dPrevS.shifts||{}).sort():[];const dAll=[...new Set([...dPDs,...dDs])].sort();let dMax=0,dC=0;dAll.forEach(d=>{const sh=dDs.includes(d)?det.shifts[d]:dPrevS?.shifts?.[d];if(sh&&sh.status==="work"){dC++;dMax=Math.max(dMax,dC);}else dC=0;});const SB=(l,v,c,bg)=>(<div style={{background:bg,borderRadius:8,padding:"6px 10px",textAlign:"center",border:`1px solid ${c}33`,minWidth:56}}><div style={{fontSize:10,color:"var(--c-text4)",marginBottom:1}}>{l}</div><div style={{fontSize:13,fontWeight:700,color:c}}>{v}</div></div>);return(<div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"8px 0 4px"}}>{SB("出勤",`${dWk}日`,"#FFA070","rgba(248,112,54,.1)")}{SB("休み",`${dHol}日`,"var(--c-text3)","var(--c-input)")}{dHalf>0&&SB("短日",`${dHalf}日`,"#60A5FA","rgba(96,165,250,.1)")}{dTot>0&&SB("勤務計",fmtMin(dTot),"var(--c-text2)","var(--c-input)")}{dMax>0&&SB("最長連勤",`${dMax}日`,"#A78BFA","rgba(167,139,250,.1)")}{detOT>0&&SB("延長",`+${detOT}分`,"#34D399","rgba(52,211,153,.1)")}</div>);})()}
+          {isPremium&&(()=>{const detOT=getOT(det.staffName,settings);const wP=periods.find(p=>p.id===det.periodId);if(!wP)return null;const wSS=subs.filter(s=>s.staffName===det.staffName||(staffAliases[det.staffName]||[]).includes(s.staffName));const perDs=gd(wP.startDate,wP.endDate);const wkSet=new Set();perDs.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet.add(fd(mon));});const weeks=[...wkSet].sort();const mo=wP.startDate.slice(0,7);let moTot=0;wSS.forEach(s=>{const sOT=getOT(s.staffName,settings);Object.keys(s.shifts||{}).forEach(d=>{if(d.startsWith(mo))moTot+=calcNetWorkMinutes(s.shifts[d],getBreakList(settings,d),sOT);});});const wkData=weeks.map(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds2=fd(dd);if(det.shifts[ds2]){tot+=calcNetWorkMinutes(det.shifts[ds2],getBreakList(settings,ds2),detOT);}else{const os=wSS.find(s=>s.id!==det.id&&s.shifts&&s.shifts[ds2]);if(os)tot+=calcNetWorkMinutes(os.shifts[ds2],getBreakList(settings,ds2),getOT(os.staffName,settings));}}return{monStr,tot};});return(<div style={{marginBottom:4}}><div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",margin:"6px 0 5px"}}>週間勤務時間</div><div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{wkData.map(({monStr,tot})=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);const lbl=`${m.getMonth()+1}/${m.getDate()}〜${sun.getMonth()+1}/${sun.getDate()}`;return(<div key={monStr} style={{background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"var(--c-text4)"}}>{lbl}</div><div style={{fontSize:12,fontWeight:700,color:tot>0?"var(--c-text2)":"var(--c-text4)"}}>{tot>0?fmtMin(tot):"−"}</div></div>);})}{moTot>0&&<div style={{background:"rgba(248,112,54,.08)",border:"1px solid rgba(248,112,54,.2)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"#FFA070"}}>{mo.replace("-","年")}月計</div><div style={{fontSize:12,fontWeight:700,color:"#FFA070"}}>{fmtMin(moTot)}</div></div>}</div></div>);})()}
           {det.comment&&<div style={{background:"var(--c-input)",borderRadius:8,padding:"10px 12px",margin:"8px 0",fontSize:13,color:"var(--c-text2)"}}>{det.comment}</div>}
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-            <thead><tr>{["日付","区分","出勤","退勤"].map(h=><th key={h} style={{background:"var(--c-input)",color:"var(--c-text2)",padding:"8px 12px",textAlign:"left",fontWeight:600}}>{h}</th>)}</tr></thead>
-            <tbody>{Object.keys(det.shifts||{}).sort().map(ds=>{const d=pd(ds),s=det.shifts[ds],iw=s&&s.status==="work";return(<tr key={ds}>
+            <thead><tr>{["日付","区分","出勤","退勤","時間"].map(h=><th key={h} style={{background:"var(--c-input)",color:"var(--c-text2)",padding:"8px 12px",textAlign:"left",fontWeight:600}}>{h}</th>)}</tr></thead>
+            <tbody>{Object.keys(det.shifts||{}).sort().map(ds=>{const d=pd(ds),s=det.shifts[ds],iw=s&&s.status==="work";const detOT2=isPremium?getOT(det.staffName,settings):0;const nm=iw?calcNetWorkMinutes(s,getBreakList(settings,ds),detOT2):0;const effEnd=isPremium&&iw&&detOT2>0&&(s.adjustedEnd??s.end)?`→${(()=>{const en=s.adjustedEnd??s.end;const[h,m]=en.split(":").map(Number);const tot=h*60+m+detOT2;return`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;})()}`:null;return(<tr key={ds}>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:"var(--c-text2)"}}>{d.getMonth()+1}/{d.getDate()}（{WD[d.getDay()]}）</td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>{iw?<span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 7px",borderRadius:4,fontSize:12,fontWeight:600}}>出勤</span>:<span style={{background:"var(--c-input)",color:"var(--c-text3)",padding:"2px 7px",borderRadius:4,fontSize:12}}>休み</span>}</td>
-              <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:"var(--c-text2)"}}>{iw?s.start:"-"}</td>
-              <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:"var(--c-text2)"}}>{iw?s.end:"-"}</td>
+              <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
+                {iw?<div>{isPremium&&<div style={{color:"var(--c-text4)",fontSize:11}}>{s.start}</div>}{isPremium?<select value={s.adjustedStart||""} onChange={e=>saveAdj(det.id,ds,"adjustedStart",e.target.value||"")} style={{fontSize:12,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedStart?"#60A5FA":"var(--c-border)"}`,borderRadius:6,color:s.adjustedStart?"#60A5FA":"var(--c-text3)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>:<span style={{fontSize:13,color:"var(--c-text2)"}}>{s.start||"-"}</span>}</div>:"-"}
+              </td>
+              <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
+                {iw?<div>{isPremium&&<div style={{color:"var(--c-text4)",fontSize:11}}>{s.end}</div>}{isPremium?<><select value={s.adjustedEnd||""} onChange={e=>saveAdj(det.id,ds,"adjustedEnd",e.target.value||"")} style={{fontSize:12,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedEnd?"#60A5FA":"var(--c-border)"}`,borderRadius:6,color:s.adjustedEnd?"#60A5FA":"var(--c-text3)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>{effEnd&&<div style={{fontSize:10,color:"#34D399",marginTop:2,fontWeight:600}}>{effEnd}（+{detOT2}分）</div>}</>:<span style={{fontSize:13,color:"var(--c-text2)"}}>{s.end||"-"}</span>}</div>:"-"}
+              </td>
+              <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:nm>0?"var(--c-text2)":"var(--c-text3)"}}>{iw&&isPremium?fmtMin(nm):"-"}</td>
             </tr>);})}
             </tbody>
           </table>
+          {isPremium&&(()=>{const detOT3=getOT(det.staffName,settings);const tot=Object.keys(det.shifts||{}).reduce((acc,ds)=>{const s=det.shifts[ds];return acc+calcNetWorkMinutes(s,getBreakList(settings,ds),detOT3);},0);return tot>0?<div style={{textAlign:"right",padding:"6px 12px",fontSize:13,color:"var(--c-text2)",fontWeight:700}}>合計：{fmtMin(tot)}</div>:null;})()}
         </div>
       </div>
     </div>}
@@ -3211,7 +3357,7 @@ function UnlockCodeInput({tt,plan,onUnlock,onLock}){
   </div>);
 }
 
-function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
+function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,staffList=[],
                  authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
                  onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,
                  shops=[],allLinkedShops=[],onSwitchToShop,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,
@@ -3432,12 +3578,13 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
     </AC>}
     <AC title="現在のプラン">
       <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0"}}>
-        <div style={{fontSize:32}}>{plan==="pro"?"★":""}</div>
+        <div style={{fontSize:32}}>{plan==="free"?"":plan==="premium"?"★★":"★"}</div>
         <div>
           <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{PLAN_LABELS[plan]||"Free"}プラン</div>
           <div style={{fontSize:12,color:"var(--c-text3)",marginTop:3}}>
             {plan==="free"&&"スタッフ20名 / 期間1件まで"}
             {plan==="pro"&&"スタッフ・期間 無制限 + 全機能"}
+            {plan==="premium"&&"スタッフ・期間 無制限 + 全機能 + Premium機能"}
           </div>
         </div>
       </div>
@@ -3457,7 +3604,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       </div>
     </AC>
 
-    {plan==="pro"&&<AC title="Excel書き出し設定">
+    {(plan==="pro"||plan==="premium")&&<AC title="Excel書き出し設定">
       <AL>書き出し時の店舗名（空欄 = 登録名をそのまま使用）</AL>
       <div style={{display:"flex",gap:8,marginBottom:4}}>
         <input value={settings.xlShopName||""} onChange={e=>onSave({...settings,xlShopName:e.target.value})} placeholder="例：〇〇カフェ 渋谷店" maxLength={100} style={{...AI,flex:1}}/>
@@ -3466,7 +3613,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>設定した名前はExcel出力時のファイル名・シート内店舗名に反映されます</div>
     </AC>}
 
-    {plan==="pro"&&<AC title="期間の単位（プリセット）">
+    {(plan==="pro"||plan==="premium")&&<AC title="期間の単位（プリセット）">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>期間を新規作成するときのプリセット選択肢を切り替えます。</div>
       <div style={{display:"flex",gap:8}}>
         {[["2week","2週間（前半／後半）"],["1month","️ 1ヶ月"]].map(([val,label])=>{
@@ -3479,6 +3626,46 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
           </button>);
         })}
       </div>
+    </AC>}
+
+    {plan==="premium"&&<AC title="スタッフ属性別 勤務時間制限">
+      <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は無制限。制限を超えたスタッフは提出一覧で赤くハイライトされます。スタッフ登録タブで各スタッフに属性を設定してください。</div>
+      {[["employee","社員"],["parttime","バイト"],["dispatch","派遣"],["other","その他"]].map(([type,label])=>{
+        const lim=((settings.staffTypeLimits)||{})[type]||{daily:0,weekly:0};
+        return(<div key={type} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:10}}>
+          <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:8}}>{label}</div>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1日の上限</span>
+              <input type="number" min={0} max={24} value={lim.daily||""} placeholder="0"
+                onChange={e=>{const v=Math.max(0,Math.min(24,parseInt(e.target.value)||0));onSave({...settings,staffTypeLimits:{...(settings.staffTypeLimits||{}),[type]:{...lim,daily:v}}});}}
+                style={{...AI,width:60,textAlign:"center",padding:"6px 8px"}}/>
+              <span style={{fontSize:12,color:"var(--c-text4)"}}>時間</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>週の上限</span>
+              <input type="number" min={0} max={168} value={lim.weekly||""} placeholder="0"
+                onChange={e=>{const v=Math.max(0,Math.min(168,parseInt(e.target.value)||0));onSave({...settings,staffTypeLimits:{...(settings.staffTypeLimits||{}),[type]:{...lim,weekly:v}}});}}
+                style={{...AI,width:60,textAlign:"center",padding:"6px 8px"}}/>
+              <span style={{fontSize:12,color:"var(--c-text4)"}}>時間</span>
+            </div>
+          </div>
+        </div>);
+      })}
+    </AC>}
+
+    {plan==="premium"&&staffList.filter(n=>!isSpacer(n)).length>0&&<AC title="退勤延長設定">
+      <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>スタッフごとにシフト終了後の延長時間を設定します。勤務時間合計に加算され、提出一覧の退勤欄に表示されます。</div>
+      {staffList.filter(n=>!isSpacer(n)).map(n=>{
+        const ot=(settings.overtimeSettings?.byStaff||{})[n]||0;
+        return(<div key={n} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,marginBottom:6}}>
+          <span style={{flex:1,fontSize:13,color:"var(--c-text)",fontWeight:600}}>{n}</span>
+          <select value={ot} onChange={e=>{const v=parseInt(e.target.value)||0;const bs={...(settings.overtimeSettings?.byStaff||{})};if(v>0)bs[n]=v;else delete bs[n];onSave({...settings,overtimeSettings:{...(settings.overtimeSettings||{}),byStaff:bs}});}} style={{fontSize:13,padding:"5px 8px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",cursor:"pointer"}}>
+            <option value={0}>延長なし</option>
+            {[15,30,45,60,90,120].map(m=><option key={m} value={m}>+{m}分</option>)}
+          </select>
+        </div>);
+      })}
     </AC>}
 
     {shopId&&<AC title="この端末の店舗コード">
@@ -3580,7 +3767,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
 function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onUpgrade}){
   const[portalLoading,setPortalLoading]=useState(false);
   const lim=PLAN_LIMITS[plan]||PLAN_LIMITS.free;
-  const isPaid=plan==="pro";
+  const isPaid=plan==="pro"||plan==="premium";
 
   const openPortal=async()=>{
     ph("portal_opened");
@@ -3628,7 +3815,7 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
       {/* プランカード */}
       <AC title="現在のプラン">
         <div style={{display:"flex",alignItems:"center",gap:16,padding:"8px 0 16px"}}>
-          <div style={{fontSize:48}}>{plan==="pro"?"★":""}</div>
+          <div style={{fontSize:48}}>{plan==="premium"?"★★":plan==="pro"?"★":""}</div>
           <div style={{flex:1}}>
             <div style={{fontSize:22,fontWeight:800,color:"var(--c-text)"}}>{PLAN_LABELS[plan]||"Free"}プラン</div>
             {expiryLabel&&<div style={{fontSize:12,color:"var(--c-text3)",marginTop:3}}>{expiryLabel}</div>}
@@ -3644,7 +3831,7 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
         </div>
 
         {/* アップグレード */}
-        {plan!=="pro"&&<div style={{marginTop:4}}>
+        {!isPaid&&<div style={{marginTop:4}}>
           <button onClick={()=>onUpgrade&&onUpgrade({type:"staff",limit:lim.staff,plan})}
             style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#f87036,#e05a1a)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
             {"★ Proにアップグレード"}
@@ -3658,9 +3845,9 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead>
               <tr>
-                {[["","機能"],["Free","無料"],["★ Pro","500円/月"]].map(([icon,price],i)=>(
+                {[["","機能"],["Free","無料"],["★ Pro","500円/月"],["★★ Premium","---"]].map(([icon,price],i)=>(
                   <th key={i} style={{padding:"8px 6px",textAlign:"center",borderBottom:"2px solid var(--c-border)",color:"var(--c-text2)",fontWeight:700,background:
-                    (i===1&&plan==="free")||(i===2&&plan==="pro")
+                    (i===1&&plan==="free")||(i===2&&plan==="pro")||(i===3&&plan==="premium")
                       ?"rgba(248,112,54,.1)":"transparent",
                     borderRadius:i>0?"8px 8px 0 0":0,fontSize:i===0?12:13}}>
                     {icon&&<div style={{fontSize:20,marginBottom:2}}>{icon}</div>}
@@ -3671,20 +3858,21 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
             </thead>
             <tbody>
               {[
-                ["スタッフ数","20名","無制限"],
-                ["期間数","1件","無制限"],
-                ["スタッフ並べ替え","✕","✓"],
-                ["テンプレート共有","✕","✓"],
-                ["Excel書き出し","✓","✓"],
-                ["Excel店舗名変更","✕","✓"],
-                ["スタッフ名色設定","✕","✓"],
-                ["名前リンク（別名）","✕","✓"],
+                ["スタッフ数","20名","無制限","無制限"],
+                ["期間数","1件","無制限","無制限"],
+                ["スタッフ並べ替え","✕","✓","✓"],
+                ["テンプレート共有","✕","✓","✓"],
+                ["Excel書き出し","✓","✓","✓"],
+                ["Excel店舗名変更","✕","✓","✓"],
+                ["スタッフ名色設定","✕","✓","✓"],
+                ["名前リンク（別名）","✕","✓","✓"],
+                ["Premium機能","✕","✕","✓"],
               ].map(([feat,...vals])=>(
                 <tr key={feat}>
                   <td style={{padding:"9px 6px",color:"var(--c-text3)",fontSize:12,fontWeight:600,borderBottom:"1px solid var(--c-border)"}}>{feat}</td>
                   {vals.map((v,i)=>(
                     <td key={i} style={{padding:"9px 6px",textAlign:"center",borderBottom:"1px solid var(--c-border)",
-                      background:(i===0&&plan==="free")||(i===1&&plan==="pro")
+                      background:(i===0&&plan==="free")||(i===1&&plan==="pro")||(i===2&&plan==="premium")
                         ?"rgba(248,112,54,.06)":"transparent",
                       color:v==="✓"?"#10B981":v==="✕"?"#9CA3AF":"var(--c-text)",fontWeight:600}}>
                       {v}
