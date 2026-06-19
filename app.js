@@ -1655,12 +1655,11 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     // 既存subを検索（同じperiod+名前 → 上書き）
     const existSub=subs.find(s=>s.staffName===staffName&&s.periodId===apid);
     const sub={
-      id:existSub?existSub.id:Date.now().toString(), // 既存なら同じID（上書き）
+      id:existSub?existSub.id:Date.now().toString(),
       periodId:apid,
       staffName,
-      submittedAt:existSub?existSub.submittedAt:new Date().toISOString(), // 初回提出日は維持
-      updatedAt:existSub?new Date().toISOString():undefined, // 再提出なら更新日時
-      isUpdated:existSub?true:undefined,
+      submittedAt:existSub?existSub.submittedAt:new Date().toISOString(),
+      ...(existSub?{updatedAt:new Date().toISOString(),isUpdated:true}:{}),
       shifts:Object.fromEntries(dates.map(d=>[d,sd[d]||{status:"holiday"}])),
       comment:comment.trim()
     };
