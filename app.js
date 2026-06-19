@@ -3159,7 +3159,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
 function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,plan="free"}){
   const[fn,setFn]=useState(""),[fp,setFp]=useState("all");
   const fpInit=useRef(false);
-  useEffect(()=>{if(!fpInit.current&&periods.length>0){fpInit.current=true;const today=new Date().toISOString().split("T")[0];const sorted=[...periods].sort((a,b)=>new Date(b.startDate||0)-new Date(a.startDate||0));const current=sorted.find(p=>p.startDate<=today&&p.endDate>=today);const target=current||sorted.find(p=>p.endDate<today)||sorted[0];if(target)setFp(target.id);}},[periods.length]);
+  useEffect(()=>{if(!fpInit.current&&periods.length>0){fpInit.current=true;const lat=[...periods].sort((a,b)=>new Date(b.startDate||0)-new Date(a.startDate||0))[0];if(lat)setFp(lat.id);}},[periods.length]);
   const[sf,setSf]=useState("submittedAt"),[sdr,setSdr]=useState("desc");
   const[det,setDet]=useState(null);
   const[linkTarget,setLinkTarget]=useState(null); // {subName, selectedStaff}
