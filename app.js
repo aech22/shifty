@@ -716,8 +716,8 @@ function App(){
         :typeof val==="object"?Object.values(val).filter(s=>s&&typeof s==="string"):[];
       setStaffList(arr); ls(storeKey(targetSid,"staff_v6"),arr);
     });
-    // subs
-    setSubs([]);
+    // subs（リロード時にキャッシュを先に表示してからFirebaseで上書き）
+    setSubs(lg(storeKey(targetSid,"subs_v6"),[]));
     on(fbPath(targetSid,"subs"),val=>{
       if(!val){ setSubs([]); ls(storeKey(targetSid,"subs_v6"),[]); return; }
       const arr=typeof val==="object"&&!Array.isArray(val)
