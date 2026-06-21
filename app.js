@@ -563,10 +563,10 @@ function App(){
               if(linkedShops.length>0){
                 console.log("Auth店舗:",linkedShops.map(s=>s.name));
                 setAllLinkedShops(linkedShops);
-                // セッション復元 → Cookie（最後に使った店舗）→ 最初の店舗
-                const ssId=ssGet(SS_SHOP,null);
+                // Cookie（最後に使った店舗）→ セッション復元 → 最初の店舗
                 const ckId=getCookie(CK_SHOP);
-                const targetId=linkedShops.find(s=>s.id===ssId)?ssId:linkedShops.find(s=>s.id===ckId)?ckId:linkedShops[0].id;
+                const ssId=ssGet(SS_SHOP,null);
+                const targetId=linkedShops.find(s=>s.id===ckId)?ckId:linkedShops.find(s=>s.id===ssId)?ssId:linkedShops[0].id;
                 const targetShop=linkedShops.find(s=>s.id===targetId)||linkedShops[0];
                 setShops([targetShop]);
                 ls("shift_shops_v6",[targetShop]);
