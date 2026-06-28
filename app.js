@@ -2453,8 +2453,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             const bg=row._bg||"transparent";const stickyBg=row._bg||CRD;
             return(<tr key={row.id} style={{background:bg}}>
               <td style={{position:"sticky",left:0,background:stickyBg,zIndex:1,padding:"4px 8px",fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,whiteSpace:"nowrap"}}>{row.label}</td>
-              {realStaff.map(name=>{const min=row.getMin(name);return(
-                <td key={name} style={{padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:bg,fontWeight:row._bold&&min>0?700:400,color:min>0?(row._color||"var(--c-text2)"):"var(--c-text4)"}}>{min>0?fmtH(min):""}</td>
+              {realStaff.map(name=>{const min=row.getMin(name);const vio=row._violateFn?row._violateFn(name,min):false;const cellBg=vio?"rgba(255,71,87,.15)":bg;return(
+                <td key={name} style={{padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:cellBg,fontWeight:(row._bold||vio)&&min>0?700:400,color:min>0?(vio?"#FF4757":(row._color||"var(--c-text2)")):"var(--c-text4)"}}>{min>0?fmtH(min):""}</td>
               );})}
             </tr>);
           })}</tbody>
@@ -2472,7 +2472,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       _bold:firstHalf?.id===selPid,_color:firstHalf?.id===selPid?"#f87036":undefined,_bg:firstHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
     {id:secondHalf?.id||"nosecond",label:secondHalf?.label||`${mo2}月後半`,getMin:name=>secondHalf?getPeriodMin(secondHalf.id,name):0,
       _bold:secondHalf?.id===selPid,_color:secondHalf?.id===selPid?"#f87036":undefined,_bg:secondHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
-    {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"#f87036",_bg:"rgba(248,112,54,0.10)"},
+    {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"#f87036",_bg:"rgba(248,112,54,0.10)",
+      _violateFn:(name,min)=>{const t=(settings.staffAttributes||{})[name];const l=t?(settings.staffTypeLimits||{})[t]:null;const lim=l&&typeof l==="object"&&l.monthly?l.monthly*60:0;return lim>0&&min>=lim;}},
     {id:"monthly_limit",label:"月上限",getMin:name=>{const t=(settings.staffAttributes||{})[name];const l=t?(settings.staffTypeLimits||{})[t]:null;return(l&&typeof l==="object"&&l.monthly)?l.monthly*60:0;},_color:"#60A5FA",_bg:"rgba(96,165,250,0.07)"}
   ];
 
@@ -2557,7 +2558,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             scrollRef={weekScrollRef}
             rows={[...weeks.map(monStr=>{
               const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);
-              return{id:monStr,label:`${m.getDate()}〜${sun.getDate()}日`,getMin:name=>getWeekMin(monStr,name)};
+              return{id:monStr,label:`${m.getDate()}〜${sun.getDate()}日`,getMin:name=>getWeekMin(monStr,name),
+                _violateFn:(name,min)=>{const t=(settings.staffAttributes||{})[name];const l=t?(settings.staffTypeLimits||{})[t]:null;const lim=l&&typeof l==="object"&&l.weekly?l.weekly*60:0;return lim>0&&min>=lim;}};
             }),{id:"weekly_limit",label:"週上限",getMin:name=>{const t=(settings.staffAttributes||{})[name];const l=t?(settings.staffTypeLimits||{})[t]:null;return(l&&typeof l==="object"&&l.weekly)?l.weekly*60:0;},_color:"#60A5FA",_bg:"rgba(96,165,250,0.07)"}]}
           />}
         </>
