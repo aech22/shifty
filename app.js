@@ -2463,14 +2463,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   // 日付を"日(曜)"のみ表示（月不要）
   const fmtDL=date=>{const d=pd(date);return`${d.getDate()}(${WD[d.getDay()]})`;};
   const BD="1px solid var(--c-border)";const BD2="1px solid var(--c-border2)";const CRD="var(--c-card)";
-  // サイドパネル（キッチン/ホール分割がある場合は常に表示）
+  // サイドパネル: 通常表示+split時のみ（全員表示では熱マップを下部に表示）
   const hasSplit=hallStaff.length>0;
-  // hasSplit時は通常/fitAll共にブレイクアウト（余白にサイドパネルを表示）
-  const useBreakout=hasSplit||fitAll;
-  const panelW=hasSplit?(fitAll?Math.max(0,containerLeft-4):Math.max(0,containerLeft-4)):0;
+  const hasPanel=hasSplit&&!fitAll;
+  const useBreakout=hasPanel||fitAll;
+  const panelW=hasPanel?Math.max(0,containerLeft-4):0;
   // 熱マップ行高: 計測値があれば使う、なければフォールバック
   const heatRowH=measuredRowH||48;
-  // 中央グリッド幅 = ビューポート幅 - サイドパネル×2（ブレイクアウト時）
+  // 中央グリッド幅 = ブレイクアウト時はビューポート幅 - パネル×2
   const centerW=useBreakout?(window.innerWidth-panelW*2-24):containerW;
   const colW=fitAll?Math.max(24,Math.floor((centerW-90)/Math.max(1,realStaff.length))):39;
   const AI2={width:colW-3,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
@@ -2588,15 +2588,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       </div>
 
       {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
-        <div style={useBreakout?{marginLeft:-containerLeft,width:"100vw",paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:hasSplit?"flex":"block",alignItems:"flex-start",gap:4}:{}}>
+        <div style={useBreakout?{marginLeft:-containerLeft,width:"100vw",paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:hasPanel?"flex":"block",alignItems:"flex-start",gap:4}:{}}>
 
-          {/* === 左パネル: キッチン熱マップ（split時は常に表示） === */}
-          {hasSplit&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
+          {/* === 左パネル: キッチン熱マップ（通常表示+split時のみ） === */}
+          {hasPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
             <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="キッチン"/>
           </div>}
 
           {/* === 中央: グリッド + 集計 === */}
-          <div style={(fitAll||hasSplit)?{flex:1,minWidth:0}:{}}>
+          <div style={hasPanel?{flex:1,minWidth:0}:{}}>
 
           {/* ===メイングリッド（SL列廃止・日付のみstickyで15名対応）=== */}
           <div ref={mainScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
@@ -2649,10 +2649,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             </table>
           </div>
 
-          {/* ===時間帯別出勤人数 (split無し時のみグリッド下に表示) === */}
-          {!hasSplit&&<div style={{marginBottom:16}}>
+          {/* ===時間帯別出勤人数 (全員表示 or split無し → グリッド下に表示) === */}
+          {!hasPanel&&<div style={{marginBottom:16}}>
             <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>時間帯別出勤人数</div>
-            <HeatTable label="" section="kit" maxC={kitMax}/>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              <HeatTable label={hasSplit?"キッチン":""} section="kit" maxC={kitMax}/>
+              {hasSplit&&<HeatTable label="ホール" section="hall" maxC={hallMax}/>}
+            </div>
           </div>}
 
           {/* ===期間別勤務時間（前半/後半/月計を常に3行）=== */}
@@ -2674,8 +2677,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
 
           </div>{/* end center */}
 
-          {/* === 右パネル: ホール熱マップ（split時は常に表示） === */}
-          {hasSplit&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
+          {/* === 右パネル: ホール熱マップ（通常表示+split時のみ） === */}
+          {hasPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
             <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="ホール"/>
           </div>}
 
