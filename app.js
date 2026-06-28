@@ -2581,7 +2581,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       _bold:firstHalf?.id===selPid,_color:firstHalf?.id===selPid?"#f87036":undefined,_bg:firstHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
     {id:secondHalf?.id||"nosecond",label:secondHalf?.label||`${mo2}月後半`,getMin:name=>secondHalf?getPeriodMin(secondHalf.id,name):0,
       _bold:secondHalf?.id===selPid,_color:secondHalf?.id===selPid?"#f87036":undefined,_bg:secondHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
-    {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"#f87036",_bg:"rgba(248,112,54,0.10)"},
+    {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"#f87036"},
     {id:"monthly_limit",label:"月上限",getMin:name=>{const t=(settings.staffAttributes||{})[name]||"parttime";const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};const l=tls[t];return(l&&typeof l==="object"&&l.monthly)?l.monthly*60:0;},_color:"#60A5FA",_bg:"rgba(96,165,250,0.07)"}
   ];
 
