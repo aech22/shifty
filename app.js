@@ -2417,7 +2417,20 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     });
     return cnt;
   };
-  const heatHours=Array.from({length:16},(_,i)=>i+9);
+  // heatHours: 候補管理の時間帯 + 実際に入力された時間帯を包含した範囲
+  const heatHours=(()=>{
+    const hrs=new Set();
+    // 候補管理から時間帯を収集
+    const allCands=[...(settings.candidates||[]),...Object.values(settings.weekdayCandidates||{}).flat(),...Object.values(settings.dateCandidates||{}).flat()].filter(c=>!c.closed&&c.start&&c.end);
+    allCands.forEach(c=>{const sh=parseInt(c.start);const eh=parseInt(c.end);for(let h=sh;h<=eh;h++)hrs.add(h);});
+    // 実際の提出・入力値から時間帯を収集
+    subs.filter(s=>s.periodId===selPid).forEach(sub=>{Object.values(sub.shifts||{}).forEach(sh=>{if(sh.status!=="work")return;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(st)hrs.add(parseInt(st));if(en)hrs.add(parseInt(en));});});
+    // localEditsからも収集
+    Object.entries(localEdits).forEach(([,v])=>{const{numeric}=extractNote(v);const p=parseTime(numeric);if(p)hrs.add(parseInt(p));});
+    if(hrs.size===0){for(let h=9;h<=24;h++)hrs.add(h);}
+    const mn=Math.min(...hrs),mx=Math.max(...hrs);
+    return Array.from({length:mx-mn+1},(_,i)=>mn+i);
+  })();
 
   // 期間別勤務時間: 同月の全期間を両方表示
   const perD=period?pd(period.startDate):null;
