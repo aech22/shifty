@@ -2539,9 +2539,11 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
+                            data-sc={`${date}|start`} data-scn={name}
                             onChange={e=>isPro&&handleChange(name,date,"start",e.target.value)}
                             onFocus={e=>{const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);}}
+                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"start",e.target.value);document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}
                             style={{...AI2,opacity:isPro?1:0.55,cursor:isPro?"text":"default"}}/>
                         </td>
                       ))}
@@ -2551,9 +2553,11 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
+                            data-sc={`${date}|end`} data-scn={name}
                             onChange={e=>isPro&&handleChange(name,date,"end",e.target.value)}
                             onFocus={e=>{const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);}}
+                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();const ndi=dates.indexOf(date)+1;handleBlur(name,date,"end",e.target.value);if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}
                             style={{...AI2,opacity:isPro?1:0.55,cursor:isPro?"text":"default"}}/>
                         </td>
                       ))}
