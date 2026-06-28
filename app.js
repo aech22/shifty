@@ -3627,6 +3627,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
   const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
   const[emailInput,setEmailInput]=useState("");
   const[codeInput,setCodeInput]=useState("");
+  const[pendingNewType,setPendingNewType]=useState(null); // null | {name:""}
   const[linkLoading,setLinkLoading]=useState(false);
   const[linkError,setLinkError]=useState("");
   // Cookie認証ユーザー向けアカウント登録/連携
@@ -3892,7 +3893,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       const tls=settings.staffTypeLimits||{};
       const saveAllLimits=(newTls)=>onSave({...settings,staffTypeLimits:newTls});
       const saveLim=(type,key,val)=>saveAllLimits({...tls,[type]:{...tls[type],[key]:val}});
-      const addType=()=>{const id="custom_"+genSecureId(8);saveAllLimits({...tls,[id]:{name:"新しい属性",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}});};
+      const confirmAddType=()=>{if(!pendingNewType)return;const nm=pendingNewType.name.trim();if(!nm){setPendingNewType(null);return;}const id="custom_"+genSecureId(8);saveAllLimits({...tls,[id]:{name:nm,daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}});setPendingNewType(null);};
       const deleteType=(id)=>{const n={...tls};delete n[id];const attrs={...(settings.staffAttributes||{})};Object.keys(attrs).forEach(k=>{if(attrs[k]===id)delete attrs[k];});onSave({...settings,staffTypeLimits:n,staffAttributes:attrs});};
       const renameType=(id,name)=>saveAllLimits({...tls,[id]:{...tls[id],name}});
       // builtinで未登録のものはデフォルト値で補完（社員・バイトのみ）
@@ -3938,7 +3939,18 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             </div>
           </div>);
         })}
-        <button onClick={addType} style={{width:"100%",padding:"8px",background:"transparent",border:"1px dashed var(--c-border2)",borderRadius:8,color:"var(--c-text3)",fontSize:12,cursor:"pointer",marginTop:4}}>＋ 属性を追加</button>
+        {pendingNewType&&<div style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid #f87036",borderRadius:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+            <input autoFocus value={pendingNewType.name} placeholder="属性名を入力"
+              onChange={e=>setPendingNewType({name:e.target.value})}
+              onKeyDown={e=>{if(e.key==="Enter")confirmAddType();if(e.key==="Escape")setPendingNewType(null);}}
+              style={{...AI,flex:1,fontSize:13,fontWeight:700,padding:"4px 8px"}}/>
+            <button onClick={confirmAddType} style={{padding:"4px 10px",background:"rgba(248,112,54,.15)",border:"1px solid #f87036",borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer"}}>追加</button>
+            <button onClick={()=>setPendingNewType(null)} style={{padding:"4px 10px",background:"transparent",border:"1px solid var(--c-border)",borderRadius:6,color:"var(--c-text3)",fontSize:12,cursor:"pointer"}}>ｷｬﾝｾﾙ</button>
+          </div>
+          <div style={{fontSize:11,color:"var(--c-text4)"}}>保存後に制限値を設定できます</div>
+        </div>}
+        {!pendingNewType&&<button onClick={()=>setPendingNewType({name:""})} style={{width:"100%",padding:"8px",background:"transparent",border:"1px dashed var(--c-border2)",borderRadius:8,color:"var(--c-text3)",fontSize:12,cursor:"pointer",marginTop:4}}>＋ 属性を追加</button>}
       </AC>);
     })()}
 
