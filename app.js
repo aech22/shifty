@@ -2312,6 +2312,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const firstPid=(periods[0]||{}).id||"";
   const[selPid,setSelPid]=useState(firstPid);
   const[localEdits,setLocalEdits]=useState({});
+  const[cellTip,setCellTip]=useState(null); // {x,y,value}
   const mainScrollRef=useRef(null);
   const periodScrollRef=useRef(null);
   const weekScrollRef=useRef(null);
@@ -2496,6 +2497,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
 
   return(
     <div style={{padding:"12px 8px"}}>
+      {cellTip&&<div style={{position:"fixed",left:cellTip.x,top:cellTip.y-26,transform:"translateX(-50%)",background:"rgba(30,30,30,0.82)",color:"#fff",fontSize:11,fontWeight:600,padding:"2px 7px",borderRadius:10,pointerEvents:"none",zIndex:9999,whiteSpace:"nowrap",backdropFilter:"blur(4px)"}}>{cellTip.value}</div>}
       <div style={{marginBottom:10,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         <span style={{fontWeight:700,fontSize:15}}>シフト作成</span>
         <select value={selPid} onChange={e=>{setSelPid(e.target.value);setLocalEdits({});}}
@@ -2534,7 +2536,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
                             onChange={e=>isPro&&handleChange(name,date,"start",e.target.value)}
-                            onBlur={e=>handleBlur(name,date,"start",e.target.value)}
+                            onFocus={e=>{const v=toDecimal(getStoredTime(name,date,"start"));const n=getStoredNote(name,date,"start");const s=v?(v+n):"";const r=e.target.getBoundingClientRect();setCellTip(s?{x:r.left+r.width/2,y:r.top,value:s}:null);}}
+                            onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);}}
                             style={{...AI2,opacity:isPro?1:0.55,cursor:isPro?"text":"default"}}/>
                         </td>
                       ))}
@@ -2545,7 +2548,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
                             onChange={e=>isPro&&handleChange(name,date,"end",e.target.value)}
-                            onBlur={e=>handleBlur(name,date,"end",e.target.value)}
+                            onFocus={e=>{const v=toDecimal(getStoredTime(name,date,"end"));const n=getStoredNote(name,date,"end");const s=v?(v+n):"";const r=e.target.getBoundingClientRect();setCellTip(s?{x:r.left+r.width/2,y:r.top,value:s}:null);}}
+                            onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);}}
                             style={{...AI2,opacity:isPro?1:0.55,cursor:isPro?"text":"default"}}/>
                         </td>
                       ))}
