@@ -2320,6 +2320,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const mainScrollRef=useRef(null);
   const periodScrollRef=useRef(null);
   const weekScrollRef=useRef(null);
+  const restScrollRef=useRef(null);
   const gridBodyRef=useRef(null);
   const gridTheadRef=useRef(null);
   const[measuredRowH,setMeasuredRowH]=useState(null);
@@ -2360,7 +2361,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const syncScrollH=useCallback((src)=>{
     if(syncingRef.current)return;
     syncingRef.current=true;
-    [mainScrollRef,periodScrollRef,weekScrollRef].forEach(r=>{if(r.current&&r.current!==src)r.current.scrollLeft=src.scrollLeft;});
+    [mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef].forEach(r=>{if(r.current&&r.current!==src)r.current.scrollLeft=src.scrollLeft;});
     requestAnimationFrame(()=>{syncingRef.current=false;});
   },[]);
 
@@ -2480,6 +2481,23 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:72,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:600,color:"var(--c-text)",whiteSpace:"nowrap"}}>{name}</div>
     </th>
   );
+  // 休みカウント: 17時基準で前半/後半それぞれ出勤なし=0.5、終日なし=1
+  const restCounts=React.useMemo(()=>{
+    const result={};
+    realStaff.forEach(name=>{
+      let count=0;
+      dates.forEach(date=>{
+        const shift=_getSub(name)?.shifts?.[date];
+        if(!shift||shift.status==="holiday"){count+=1;return;}
+        const s=parseFloat(getVal(name,date,"start"));
+        const e=parseFloat(getVal(name,date,"end"));
+        if(!isNaN(s)&&s<17){}else{count+=0.5;}
+        if(!isNaN(e)&&e>17){}else{count+=0.5;}
+      });
+      result[name]=count;
+    });
+    return result;
+  },[realStaff,dates,subs,localEdits,selPid]);
   const kitMax=Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("kit",date,hr))));
   const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
@@ -2646,6 +2664,22 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                   ];
                 })}
               </tbody>
+            </table>
+          </div>
+
+          {/* === 休みの日カウント === */}
+          <div ref={restScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
+            <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
+              <thead>
+                <tr>
+                  <th style={{...SD,top:0,zIndex:4,fontWeight:600,borderBottom:BD2,background:CRD,fontSize:11}}>休みカウント</th>
+                  {realStaff.map(name=>(
+                    <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
+                      {(restCounts[name]||0)%1===0?(restCounts[name]||0):(restCounts[name]||0).toFixed(1)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
             </table>
           </div>
 
