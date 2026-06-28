@@ -2313,6 +2313,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const[selPid,setSelPid]=useState(firstPid);
   const[localEdits,setLocalEdits]=useState({});
   const[cellTip,setCellTip]=useState(null); // {x,y,value}
+  const[fitAll,setFitAll]=useState(false);
+  const[containerW,setContainerW]=useState(800);
   const mainScrollRef=useRef(null);
   const periodScrollRef=useRef(null);
   const weekScrollRef=useRef(null);
@@ -2325,6 +2327,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       setSelPid(periods[0].id);
     }
   },[periods]);
+
+  // コンテナ幅の計測（fitAll用）
+  useEffect(()=>{
+    const update=()=>{if(mainScrollRef.current)setContainerW(mainScrollRef.current.offsetWidth);};
+    update();
+    window.addEventListener("resize",update);
+    return()=>window.removeEventListener("resize",update);
+  },[]);
 
   const period=periods.find(p=>p.id===selPid)||null;
   const dates=period?gd(period.startDate,period.endDate):[];
@@ -2428,11 +2438,12 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   // 日付を"日(曜)"のみ表示（月不要）
   const fmtDL=date=>{const d=pd(date);return`${d.getDate()}(${WD[d.getDay()]})`;};
   const BD="1px solid var(--c-border)";const BD2="1px solid var(--c-border2)";const CRD="var(--c-card)";
-  // 出勤/退勤ラベル列を廃止し日付列だけsticky、列幅を36pxに縮小して15名対応
-  const AI2={width:36,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
+  // fitAll: コンテナ幅から列幅を均等計算（最小24px）
+  const colW=fitAll?Math.max(24,Math.floor((containerW-90)/Math.max(1,realStaff.length))):39;
+  const AI2={width:colW-3,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
   const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:11,borderRight:BD2};
   const VTH=(name)=>(
-    <th key={name} style={{width:39,minWidth:39,maxWidth:39,padding:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"bottom"}}>
+    <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"bottom"}}>
       <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:72,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:600,color:"var(--c-text)",whiteSpace:"nowrap"}}>{name}</div>
     </th>
   );
@@ -2466,8 +2477,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const SummaryTable=({title,rowLabel,rows,scrollRef,onScroll})=>(
     <div style={{marginBottom:16}}>
       <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>{title}</div>
-      <div ref={scrollRef} onScroll={onScroll} style={{overflowX:"auto",border:BD,borderRadius:8}}>
-        <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
+      <div ref={scrollRef} onScroll={onScroll} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8}}>
+        <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
           <thead><tr>
             <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:0,fontSize:11,fontWeight:600,borderBottom:BD2,width:90,minWidth:90,maxWidth:90}}><div style={{width:90,padding:"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{rowLabel}</div></th>
             {realStaff.map(name=>VTH(name))}
@@ -2509,6 +2520,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
         </select>
         <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPro?"例: 9, 9.5, 930, 9:30":"閲覧のみ（編集はプレミアムプランで）"}</span>
+        <button onClick={()=>setFitAll(v=>!v)}
+          style={{padding:"5px 10px",background:fitAll?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+          {fitAll?"通常表示":"全員表示"}
+        </button>
         {period&&<button onClick={()=>expXl(period,subs,staffList,tt,shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{}})}
           style={{padding:"6px 14px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           Excel出力
@@ -2518,8 +2533,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
         <>
           {/* ===メイングリッド（SL列廃止・日付のみstickyで15名対応）=== */}
-          <div ref={mainScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:"auto",border:BD,borderRadius:8,marginBottom:16}}>
-            <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
+          <div ref={mainScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
+            <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
               <thead>
                 <tr>
                   <th style={{...SD,top:0,zIndex:4,padding:"4px",fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>
@@ -2536,7 +2551,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                     <tr key={date+"-s"} style={{background:rb}}>
                       <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
                       {realStaff.map(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
                             data-sc={`${date}|start`} data-scn={name}
@@ -2550,7 +2565,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                     </tr>,
                     <tr key={date+"-e"} style={{background:rb}}>
                       {realStaff.map(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
                             data-sc={`${date}|end`} data-scn={name}
