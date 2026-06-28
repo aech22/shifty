@@ -188,6 +188,7 @@ const PLAN_LIMITS = {
 };
 const PLAN_LABELS = { free: "Free", pro: "Pro", premium: "Premium" };
 const STAFF_TYPE_LABELS = {employee:"社員",parttime:"バイト",dispatch:"派遣",other:"その他"};
+const BUILTIN_TYPES = ["employee","parttime","dispatch","other"];
 
 // ===== デフォルト候補時間 =====
 const CAND_WEEKDAY=[
@@ -264,7 +265,7 @@ function makePeriod(shopId){
   return{id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:`${yr}年${mo}月前半`,startDate:`${yr}-${ms}-01`,endDate:`${yr}-${ms}-15`,deadlineDate:"",createdAt:new Date().toISOString()};
 }
 function makeSettings(shopId){
-  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{daily:0,weekly:0,biweekly:0,monthly:0},parttime:{daily:0,weekly:0,biweekly:0,monthly:0},dispatch:{daily:0,weekly:0,biweekly:0,monthly:0},other:{daily:0,weekly:0,biweekly:0,monthly:0}},overtimeSettings:{byStaff:{}}};
+  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{name:"社員",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},parttime:{name:"バイト",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},dispatch:{name:"派遣",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},other:{name:"その他",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}},overtimeSettings:{byStaff:{}}};
 }
 
 // ===== URL生成・解析 =====
@@ -3069,7 +3070,7 @@ const dragIdxRef=useRef(null);
                 <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{n}</span>
                 {isPremium&&<select value={(settings.staffAttributes||{})[n]||""} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:12,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
                   <option value="">属性なし</option>
-                  {Object.entries(STAFF_TYPE_LABELS).map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                  {Object.entries(settings.staffTypeLimits||STAFF_TYPE_LABELS).map(([v,t])=><option key={v} value={v}>{t.name||STAFF_TYPE_LABELS[v]||v}</option>)}
                 </select>}
                 {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
                   別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
@@ -3464,7 +3465,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           <tbody>{fil.length===0
             ?<tr><td colSpan={6} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
             :fil.map(sub=>{const ds=Object.keys(sub.shifts||{}).sort(),wk=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").length,at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const rm=t=>Math.floor(new Date(t).getTime()/60000);const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&rm(sub.updatedAt)>rm(sub.submittedAt);const subOT=isPremium?getOT(sub.staffName,settings):0;const totalMin=isPremium?ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").reduce((acc,d)=>acc+calcNetWorkMinutes(sub.shifts[d],getBreakList(settings,d),subOT),0):0;
-              const staffType=isPremium?((settings.staffAttributes)||{})[sub.staffName]:null;const typeLim=staffType?((settings.staffTypeLimits)||{})[staffType]||{daily:0,weekly:0,biweekly:0,monthly:0}:{daily:0,weekly:0,biweekly:0,monthly:0};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly)){const weekMap={};const biweekMap={};const monthMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreakList(settings,d),subOT);if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));const wk2=fd(mon);weekMap[wk2]=(weekMap[wk2]||0)+nm;const mo=d.slice(0,7);monthMap[mo]=(monthMap[mo]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly){const wkKeys=Object.keys(weekMap).sort();for(let i=0;i<wkKeys.length;i+=2){const tot=(weekMap[wkKeys[i]]||0)+(weekMap[wkKeys[i+1]]||0);if(tot>typeLim.biweekly*60)biweeklyVio=true;}}if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio;
+              const staffType=isPremium?((settings.staffAttributes)||{})[sub.staffName]:null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly||typeLim.customDays)){const weekMap={};const monthMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreakList(settings,d),subOT);if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));weekMap[fd(mon)]=(weekMap[fd(mon)]||0)+nm;monthMap[d.slice(0,7)]=(monthMap[d.slice(0,7)]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly){const wkKeys=Object.keys(weekMap).sort();for(let i=0;i<wkKeys.length;i+=2){const tot=(weekMap[wkKeys[i]]||0)+(weekMap[wkKeys[i+1]]||0);if(tot>typeLim.biweekly*60)biweeklyVio=true;}}if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});if(typeLim.customDays&&typeLim.customHours){const sortedDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();for(let i=0;i<sortedDs.length;i++){const start=pd(sortedDs[i]);let tot=0;for(let j=i;j<sortedDs.length;j++){const diffD=(pd(sortedDs[j])-start)/86400000;if(diffD>=typeLim.customDays)break;const sh=sub.shifts[sortedDs[j]];tot+=calcNetWorkMinutes(sh,getBreakList(settings,sortedDs[j]),subOT);}if(tot>typeLim.customHours*60){customVio=true;break;}}}}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;
               const holidayDays=ds.length-wk;let maxConsec=0,halfDays=0;if(isPremium){const curPer=periods.find(p=>p.id===sub.periodId);const prevPer=curPer?[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate)).find(p=>new Date(p.endDate)<new Date(curPer.startDate)):null;const prevSb=prevPer?subs.find(s=>s.periodId===prevPer.id&&(s.staffName===sub.staffName||(staffAliases[sub.staffName]||[]).includes(s.staffName))):null;const prevDs2=prevSb?Object.keys(prevSb.shifts||{}).sort():[];const allC=[...new Set([...prevDs2,...ds])].sort();let consec=0;allC.forEach(d=>{const sh2=ds.includes(d)?sub.shifts[d]:prevSb?.shifts?.[d];if(sh2&&sh2.status==="work"){consec++;maxConsec=Math.max(maxConsec,consec);}else consec=0;});halfDays=ds.filter(d=>{const s=sub.shifts[d];return s&&s.status==="work"&&calcNetWorkMinutes(s,getBreakList(settings,d),subOT)<240;}).length;}
               return(<tr key={sub.id} style={hasVio?{background:"rgba(255,71,87,.04)"}:{}}>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text)",fontWeight:600}}>
@@ -3887,27 +3888,56 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       </div>
     </AC>}
 
-    {plan==="premium"&&<AC title="スタッフ属性別 勤務時間制限">
-      <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は無制限。制限を超えたスタッフは提出一覧で赤くハイライトされます。スタッフ登録タブで各スタッフに属性を設定してください。</div>
-      {[["employee","社員"],["parttime","バイト"],["dispatch","派遣"],["other","その他"]].map(([type,label])=>{
-        const lim=((settings.staffTypeLimits)||{})[type]||{daily:0,weekly:0,biweekly:0,monthly:0};
-        const saveLim=(key,val)=>onSave({...settings,staffTypeLimits:{...(settings.staffTypeLimits||{}),[type]:{...lim,[key]:val}}});
-        return(<div key={type} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:10}}>
-          <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:8}}>{label}</div>
-          <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
-            {[["daily","1日",24],["weekly","週",168],["biweekly","2週間",336],["monthly","1ヶ月",744]].map(([key,lbl,mx])=>(
-              <div key={key} style={{display:"flex",alignItems:"center",gap:6}}>
-                <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{lbl}の上限</span>
-                <input type="number" min={0} max={mx} value={lim[key]||""} placeholder="0"
-                  onChange={e=>{const v=Math.max(0,Math.min(mx,parseInt(e.target.value)||0));saveLim(key,v);}}
-                  style={{...AI,width:60,textAlign:"center",padding:"6px 8px"}}/>
-                <span style={{fontSize:12,color:"var(--c-text4)"}}>時間</span>
+    {plan==="premium"&&(()=>{
+      const tls=settings.staffTypeLimits||{};
+      const saveAllLimits=(newTls)=>onSave({...settings,staffTypeLimits:newTls});
+      const saveLim=(type,key,val)=>saveAllLimits({...tls,[type]:{...tls[type],[key]:val}});
+      const addType=()=>{const id="custom_"+genSecureId(8);saveAllLimits({...tls,[id]:{name:"新しい属性",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}});};
+      const deleteType=(id)=>{const n={...tls};delete n[id];const attrs={...(settings.staffAttributes||{})};Object.keys(attrs).forEach(k=>{if(attrs[k]===id)delete attrs[k];});onSave({...settings,staffTypeLimits:n,staffAttributes:attrs});};
+      const renameType=(id,name)=>saveAllLimits({...tls,[id]:{...tls[id],name}});
+      const typeEntries=Object.entries(tls).length>0?Object.entries(tls):Object.entries(STAFF_TYPE_LABELS).map(([k,v])=>[k,{name:v}]);
+      return(<AC title="スタッフ属性別 勤務時間制限">
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は無制限。制限を超えたスタッフは提出一覧で赤くハイライトされます。</div>
+        {typeEntries.map(([type,limRaw])=>{
+          const lim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeof limRaw==="object"?limRaw:{name:limRaw})};
+          const isBuiltin=BUILTIN_TYPES.includes(type);
+          const displayName=lim.name||STAFF_TYPE_LABELS[type]||type;
+          return(<div key={type} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+              {isBuiltin
+                ?<div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",flex:1}}>{displayName}</div>
+                :<input value={displayName} onChange={e=>renameType(type,e.target.value)}
+                    style={{...AI,flex:1,fontSize:13,fontWeight:700,padding:"4px 8px"}}/>
+              }
+              {!isBuiltin&&<button onClick={()=>deleteType(type)} style={{padding:"4px 10px",background:"rgba(229,57,53,.1)",border:"1px solid rgba(229,57,53,.3)",borderRadius:6,color:"#e53935",fontSize:12,cursor:"pointer"}}>削除</button>}
+            </div>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              {[["daily","1日",24],["weekly","週",168],["biweekly","2週間",336],["monthly","1ヶ月",744]].map(([key,lbl,mx])=>(
+                <div key={key} style={{display:"flex",alignItems:"center",gap:4}}>
+                  <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{lbl}</span>
+                  <input type="number" min={0} max={mx} value={lim[key]||""} placeholder="0"
+                    onChange={e=>{const v=Math.max(0,Math.min(mx,parseInt(e.target.value)||0));saveLim(type,key,v);}}
+                    style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
+                  <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+                </div>
+              ))}
+              <div style={{display:"flex",alignItems:"center",gap:4,paddingLeft:4,borderLeft:"1px solid var(--c-border)"}}>
+                <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>任意</span>
+                <input type="number" min={0} max={365} value={lim.customDays||""} placeholder="日数"
+                  onChange={e=>{const v=Math.max(0,Math.min(365,parseInt(e.target.value)||0));saveLim(type,"customDays",v);}}
+                  style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
+                <span style={{fontSize:11,color:"var(--c-text4)"}}>日で</span>
+                <input type="number" min={0} max={744} value={lim.customHours||""} placeholder="時間"
+                  onChange={e=>{const v=Math.max(0,Math.min(744,parseInt(e.target.value)||0));saveLim(type,"customHours",v);}}
+                  style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
+                <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
               </div>
-            ))}
-          </div>
-        </div>);
-      })}
-    </AC>}
+            </div>
+          </div>);
+        })}
+        <button onClick={addType} style={{width:"100%",padding:"8px",background:"transparent",border:"1px dashed var(--c-border2)",borderRadius:8,color:"var(--c-text3)",fontSize:12,cursor:"pointer",marginTop:4}}>＋ 属性を追加</button>
+      </AC>);
+    })()}
 
     {plan==="premium"&&staffList.filter(n=>!isSpacer(n)).length>0&&<AC title="退勤延長設定">
       <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>スタッフごとにシフト終了後の延長時間を設定します。勤務時間合計に加算され、提出一覧の退勤欄に表示されます。</div>
