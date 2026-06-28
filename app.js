@@ -2494,9 +2494,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         if(h1>0&&h2>0)setMeasuredRowH(h1+h2);
       }
     }
-    if(gridTheadRef.current){
-      const h=gridTheadRef.current.getBoundingClientRect().height;
-      if(h>0)setMeasuredTheadH(h);
+    // table top → 最初のtbody行 top の距離を直接計測（border-collapse誤差を回避）
+    if(mainScrollRef.current&&gridBodyRef.current?.firstElementChild){
+      const tableEl=mainScrollRef.current.querySelector('table');
+      const firstRow=gridBodyRef.current.firstElementChild;
+      if(tableEl){
+        const offset=Math.round(firstRow.getBoundingClientRect().top-tableEl.getBoundingClientRect().top);
+        if(offset>0)setMeasuredTheadH(offset);
+      }
     }
   },[selPid,dates.length,colW]);
 
