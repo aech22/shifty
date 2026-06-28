@@ -2359,8 +2359,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return{numeric:m[1],note:l==="h"?"h":l==="k"?"k":l?"x":""};
   };
 
-  const getStoredTime=(name,date,field)=>{const sub=subs.find(s=>s.periodId===selPid&&s.staffName===name);return sub?.shifts?.[date]?.[field]||"";};
-  const getStoredNote=(name,date,field)=>{const sub=subs.find(s=>s.periodId===selPid&&s.staffName===name);const nk=field==="start"?"startNote":"endNote";return sub?.shifts?.[date]?.[nk]||"";};
+  const _getSub=(name)=>subs.find(s=>s.periodId===selPid&&s.staffName===name);
+  // 管理者編集値(adjustedXxx)優先、なければスタッフ提出値(xxx)にフォールバック
+  const getStoredTime=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";return(field==="start"?(sh.adjustedStart??sh.start):(sh.adjustedEnd??sh.end))||"";};
+  const getStoredNote=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";return(field==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"";};
   const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);return t?(t+n):""};
   const handleChange=(name,date,field,value)=>{setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
   const handleBlur=(name,date,field,rawValue)=>{
@@ -2368,17 +2370,19 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     const{numeric,note}=extractNote(rawValue);
     const parsed=parseTime(numeric);const display=parsed?(toDecimal(parsed)+note):"";
     setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:display}));
-    const nk=field==="start"?"startNote":"endNote";
+    // 管理者編集はadjustedXxxに保存（スタッフ提出のstart/endを保護）
+    const adjField=field==="start"?"adjustedStart":"adjustedEnd";
+    const nk=field==="start"?"adjustedStartNote":"adjustedEndNote";
     let newSubs=[...subs];const idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
-    if(idx===-1){if(!parsed)return;const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString()};ns.shifts[date]={status:"work",[field]:parsed,[nk]:note};newSubs.push(ns);}
-    else{const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};if(parsed){sd[field]=parsed;sd[nk]=note;sd.status="work";}else{delete sd[field];delete sd[nk];}shifts[date]=sd;sub.shifts=shifts;sub.updatedAt=new Date().toISOString();sub.isUpdated=true;newSubs[idx]=sub;}
+    if(idx===-1){if(!parsed)return;const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString()};ns.shifts[date]={status:"work",[adjField]:parsed,[nk]:note};newSubs.push(ns);}
+    else{const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};if(parsed){sd[adjField]=parsed;sd[nk]=note;sd.status="work";}else{delete sd[adjField];delete sd[nk];}shifts[date]=sd;sub.shifts=shifts;sub.updatedAt=new Date().toISOString();sub.isUpdated=true;newSubs[idx]=sub;}
     onSave(newSubs);
   };
 
   const getEffHHMM=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits){const{numeric}=extractNote(localEdits[key]);return parseTime(numeric)||"";}return getStoredTime(name,date,field);};
-  // シフトのノート取得（localEdits優先）
+  // シフトのノート取得: 管理者調整値優先、なければスタッフ提出値（localEdits最優先）
   const getShiftNote=(name,date)=>{
-    for(const field of["start","end"]){const key=`${name}|${date}|${field}`;if(key in localEdits){const{note}=extractNote(localEdits[key]);if(note)return note;}const nk=field==="start"?"startNote":"endNote";const sub=subs.find(s=>s.periodId===selPid&&s.staffName===name);const n=sub?.shifts?.[date]?.[nk];if(n)return n;}return"";
+    for(const field of["start","end"]){const key=`${name}|${date}|${field}`;if(key in localEdits){const{note}=extractNote(localEdits[key]);if(note)return note;}const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";const n=(sh?.[adjNk]??sh?.[origNk]);if(n)return n;}return"";
   };
   const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
   // section: "kit" or "hall" — サフィックスh/kで所属を上書き、xはどちらにも入らない
@@ -2536,7 +2540,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
                             onChange={e=>isPro&&handleChange(name,date,"start",e.target.value)}
-                            onFocus={e=>{const v=toDecimal(getStoredTime(name,date,"start"));const n=getStoredNote(name,date,"start");const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
+                            onFocus={e=>{const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);}}
                             style={{...AI2,opacity:isPro?1:0.55,cursor:isPro?"text":"default"}}/>
                         </td>
@@ -2548,7 +2552,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
                             onChange={e=>isPro&&handleChange(name,date,"end",e.target.value)}
-                            onFocus={e=>{const v=toDecimal(getStoredTime(name,date,"end"));const n=getStoredNote(name,date,"end");const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
+                            onFocus={e=>{const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);}}
                             style={{...AI2,opacity:isPro?1:0.55,cursor:isPro?"text":"default"}}/>
                         </td>
