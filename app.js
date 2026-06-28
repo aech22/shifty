@@ -2306,6 +2306,205 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
   );
 }
 
+// ===== シフト作成タブ =====
+function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId}){
+  const firstPid=(periods[0]||{}).id||"";
+  const[selPid,setSelPid]=useState(firstPid);
+  const[localEdits,setLocalEdits]=useState({});
+
+  const period=periods.find(p=>p.id===selPid)||null;
+  const dates=period?gd(period.startDate,period.endDate):[];
+  const realStaff=staffList.filter(n=>!isSpacer(n));
+
+  const parseTime=v=>{
+    if(!v||!v.trim())return"";
+    const s=v.trim();
+    if(/^\d{1,2}:\d{2}$/.test(s)){
+      const[h,m]=s.split(":").map(Number);
+      if(h>=0&&h<=30&&m>=0&&m<60)return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
+      return"";
+    }
+    if(/^\d+\.\d+$/.test(s)){
+      const n=parseFloat(s);const h=Math.floor(n);const m=Math.round((n-h)*60);
+      if(h>=0&&h<=30&&m>=0&&m<60)return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
+      return"";
+    }
+    if(/^\d+$/.test(s)){
+      const n=parseInt(s,10);
+      if(s.length<=2){if(n>=0&&n<=30)return`${String(n).padStart(2,"0")}:00`;}
+      else{const h=Math.floor(n/100);const m=n%100;if(h>=0&&h<=30&&m>=0&&m<60)return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;}
+      return"";
+    }
+    return"";
+  };
+
+  const getVal=(name,date,field)=>{
+    const key=`${name}|${date}|${field}`;
+    if(key in localEdits)return localEdits[key];
+    const sub=subs.find(s=>s.periodId===selPid&&s.staffName===name);
+    return sub?.shifts?.[date]?.[field]||"";
+  };
+
+  const handleChange=(name,date,field,value)=>{
+    setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));
+  };
+
+  const handleBlur=(name,date,field,rawValue)=>{
+    const parsed=parseTime(rawValue);
+    setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:parsed}));
+    let newSubs=[...subs];
+    const idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
+    if(idx===-1){
+      if(!parsed)return;
+      const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString()};
+      ns.shifts[date]={status:"work",[field]:parsed};
+      newSubs.push(ns);
+    }else{
+      const sub={...newSubs[idx]};
+      const shifts={...(sub.shifts||{})};
+      const sd={...(shifts[date]||{status:"work"})};
+      if(parsed){sd[field]=parsed;sd.status="work";}else{delete sd[field];}
+      shifts[date]=sd;
+      sub.shifts=shifts;sub.updatedAt=new Date().toISOString();sub.isUpdated=true;
+      newSubs[idx]=sub;
+    }
+    onSave(newSubs);
+  };
+
+  const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
+  const getEff=(name,date,field)=>{
+    const key=`${name}|${date}|${field}`;
+    if(key in localEdits)return localEdits[key];
+    const sub=subs.find(s=>s.periodId===selPid&&s.staffName===name);
+    return sub?.shifts?.[date]?.[field]||"";
+  };
+
+  const heatHours=Array.from({length:16},(_,i)=>i+9);
+  const heatmap=dates.map(date=>heatHours.map(hr=>{
+    let cnt=0;
+    realStaff.forEach(name=>{
+      const st=getEff(name,date,"start");const en=getEff(name,date,"end");
+      if(!st||!en)return;
+      const stM=timeToMin(st);const enM=timeToMin(en);
+      if(stM===null||enM===null)return;
+      if(stM<(hr+1)*60&&enM>hr*60)cnt++;
+    });
+    return cnt;
+  }));
+  const maxCnt=Math.max(1,...heatmap.flat());
+
+  const AI2={width:52,fontSize:16,border:"1px solid var(--c-border)",borderRadius:4,padding:"2px 4px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
+  const SD={position:"sticky",left:0,background:"var(--c-card)",zIndex:2,whiteSpace:"nowrap",minWidth:86,padding:"2px 6px",fontSize:13,borderRight:"1px solid var(--c-border)"};
+  const SL={position:"sticky",left:86,background:"var(--c-card)",zIndex:2,whiteSpace:"nowrap",minWidth:34,padding:"2px 3px",fontSize:12,color:"var(--c-text2)",borderRight:"1px solid var(--c-border)",textAlign:"center"};
+
+  return(
+    <div style={{padding:"12px 8px"}}>
+      <div style={{marginBottom:10,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <span style={{fontWeight:700,fontSize:15}}>シフト作成</span>
+        <select value={selPid} onChange={e=>{setSelPid(e.target.value);setLocalEdits({});}}
+          style={{fontSize:16,padding:"4px 8px",border:"1px solid var(--c-border)",borderRadius:6,background:"var(--c-input)",color:"var(--c-text)"}}>
+          {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
+        </select>
+        <span style={{fontSize:12,color:"var(--c-text3)"}}>出退勤を入力（例: 9, 930, 9:30, 17:30）</span>
+      </div>
+
+      {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
+        <>
+          <div style={{overflowX:"auto",border:"1px solid var(--c-border)",borderRadius:8,marginBottom:16}}>
+            <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
+              <thead>
+                <tr>
+                  <th style={{...SD,top:0,zIndex:3,padding:"6px 6px",fontSize:12,fontWeight:600,borderBottom:"1px solid var(--c-border2)"}}>日付</th>
+                  <th style={{...SL,top:0,zIndex:3,padding:"6px 3px",fontSize:11,borderBottom:"1px solid var(--c-border2)"}}>時間</th>
+                  {realStaff.map(name=>(
+                    <th key={name} style={{minWidth:64,padding:"4px 4px",fontSize:12,fontWeight:600,textAlign:"center",borderLeft:"1px solid var(--c-border)",borderBottom:"1px solid var(--c-border2)",whiteSpace:"nowrap",background:"var(--c-card)"}}>
+                      {name}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {dates.map(date=>{
+                  const d=pd(date);const dow=WD[d.getDay()];const day=d.getDay();
+                  const isHol=isWeekend(date)&&day!==0&&day!==6;
+                  const isSun=day===0;const isSat=day===6;
+                  const dc=(isSun||isHol)?"#e53935":isSat?"#1976d2":"var(--c-text)";
+                  const rb=(isSun||isHol)?"rgba(229,57,53,0.04)":isSat?"rgba(25,118,210,0.04)":"transparent";
+                  const dl=date.slice(5).replace("-","/")+`(${dow})`;
+                  return[
+                    <tr key={date+"-s"} style={{background:rb}}>
+                      <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",background:rb||"var(--c-card)",borderBottom:"1px solid var(--c-border)"}}>{dl}</td>
+                      <td style={{...SL,color:"#388e3c",background:rb||"var(--c-card)",borderBottom:"none",fontSize:11}}>出勤</td>
+                      {realStaff.map(name=>(
+                        <td key={name} style={{padding:"2px 3px",borderLeft:"1px solid var(--c-border)",borderBottom:"none",textAlign:"center",background:rb}}>
+                          <input type="text" inputMode="decimal" value={getVal(name,date,"start")} placeholder="--"
+                            onChange={e=>handleChange(name,date,"start",e.target.value)}
+                            onBlur={e=>handleBlur(name,date,"start",e.target.value)}
+                            style={AI2}/>
+                        </td>
+                      ))}
+                    </tr>,
+                    <tr key={date+"-e"} style={{background:rb}}>
+                      <td style={{...SL,color:"#e53935",background:rb||"var(--c-card)",borderTop:"none",fontSize:11,borderBottom:"1px solid var(--c-border)"}}>退勤</td>
+                      {realStaff.map(name=>(
+                        <td key={name} style={{padding:"2px 3px",borderLeft:"1px solid var(--c-border)",borderBottom:"1px solid var(--c-border)",textAlign:"center",background:rb}}>
+                          <input type="text" inputMode="decimal" value={getVal(name,date,"end")} placeholder="--"
+                            onChange={e=>handleChange(name,date,"end",e.target.value)}
+                            onBlur={e=>handleBlur(name,date,"end",e.target.value)}
+                            style={AI2}/>
+                        </td>
+                      ))}
+                    </tr>
+                  ];
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{marginTop:8}}>
+            <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>時間帯別出勤人数</div>
+            <div style={{overflowX:"auto",border:"1px solid var(--c-border)",borderRadius:8}}>
+              <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
+                <thead>
+                  <tr>
+                    <th style={{...SD,top:0,zIndex:3,padding:"4px 6px",fontSize:11,fontWeight:600,borderBottom:"1px solid var(--c-border2)"}}>日付</th>
+                    {heatHours.map(hr=>(
+                      <th key={hr} style={{minWidth:26,padding:"4px 2px",fontSize:10,textAlign:"center",borderLeft:"1px solid var(--c-border)",borderBottom:"1px solid var(--c-border2)",background:"var(--c-card)",fontWeight:500}}>{hr}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {dates.map((date,di)=>{
+                    const d=pd(date);const dow=WD[d.getDay()];const day=d.getDay();
+                    const isHol=isWeekend(date)&&day!==0&&day!==6;
+                    const dc=(day===0||isHol)?"#e53935":day===6?"#1976d2":"var(--c-text)";
+                    return(
+                      <tr key={date}>
+                        <td style={{...SD,fontSize:11,color:dc,background:"var(--c-card)",borderBottom:"1px solid var(--c-border)"}}>
+                          {date.slice(5).replace("-","/")}({dow})
+                        </td>
+                        {heatmap[di].map((cnt,hi)=>{
+                          const ratio=cnt/maxCnt;
+                          const bg=cnt===0?"transparent":`rgba(248,112,54,${0.15+ratio*0.75})`;
+                          return(
+                            <td key={hi} style={{minWidth:26,padding:"3px 2px",textAlign:"center",fontSize:11,borderLeft:"1px solid var(--c-border)",borderBottom:"1px solid var(--c-border)",background:bg,color:cnt===0?"var(--c-text4)":"var(--c-text)",fontWeight:cnt>0?600:400}}>
+                              {cnt||""}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ===== 期間管理タブ =====
 function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shopName,plan="free",onUpgrade,settings={}}){
   const[eid,setEid]=useState(null);
