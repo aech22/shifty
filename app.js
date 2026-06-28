@@ -264,7 +264,7 @@ function makePeriod(shopId){
   return{id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:`${yr}年${mo}月前半`,startDate:`${yr}-${ms}-01`,endDate:`${yr}-${ms}-15`,deadlineDate:"",createdAt:new Date().toISOString()};
 }
 function makeSettings(shopId){
-  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{daily:0,weekly:0},parttime:{daily:0,weekly:0},dispatch:{daily:0,weekly:0},other:{daily:0,weekly:0}},overtimeSettings:{byStaff:{}}};
+  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{daily:0,weekly:0,biweekly:0,monthly:0},parttime:{daily:0,weekly:0,biweekly:0,monthly:0},dispatch:{daily:0,weekly:0,biweekly:0,monthly:0},other:{daily:0,weekly:0,biweekly:0,monthly:0}},overtimeSettings:{byStaff:{}}};
 }
 
 // ===== URL生成・解析 =====
@@ -3464,7 +3464,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           <tbody>{fil.length===0
             ?<tr><td colSpan={6} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
             :fil.map(sub=>{const ds=Object.keys(sub.shifts||{}).sort(),wk=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").length,at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const rm=t=>Math.floor(new Date(t).getTime()/60000);const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&rm(sub.updatedAt)>rm(sub.submittedAt);const subOT=isPremium?getOT(sub.staffName,settings):0;const totalMin=isPremium?ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").reduce((acc,d)=>acc+calcNetWorkMinutes(sub.shifts[d],getBreakList(settings,d),subOT),0):0;
-              const staffType=isPremium?((settings.staffAttributes)||{})[sub.staffName]:null;const typeLim=staffType?((settings.staffTypeLimits)||{})[staffType]||{daily:0,weekly:0}:{daily:0,weekly:0};let dailyVio=false,weeklyVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly)){const weekMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreakList(settings,d),subOT);if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));const wk2=fd(mon);weekMap[wk2]=(weekMap[wk2]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});}const hasVio=dailyVio||weeklyVio;
+              const staffType=isPremium?((settings.staffAttributes)||{})[sub.staffName]:null;const typeLim=staffType?((settings.staffTypeLimits)||{})[staffType]||{daily:0,weekly:0,biweekly:0,monthly:0}:{daily:0,weekly:0,biweekly:0,monthly:0};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly)){const weekMap={};const biweekMap={};const monthMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreakList(settings,d),subOT);if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));const wk2=fd(mon);weekMap[wk2]=(weekMap[wk2]||0)+nm;const mo=d.slice(0,7);monthMap[mo]=(monthMap[mo]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly){const wkKeys=Object.keys(weekMap).sort();for(let i=0;i<wkKeys.length;i+=2){const tot=(weekMap[wkKeys[i]]||0)+(weekMap[wkKeys[i+1]]||0);if(tot>typeLim.biweekly*60)biweeklyVio=true;}}if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio;
               const holidayDays=ds.length-wk;let maxConsec=0,halfDays=0;if(isPremium){const curPer=periods.find(p=>p.id===sub.periodId);const prevPer=curPer?[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate)).find(p=>new Date(p.endDate)<new Date(curPer.startDate)):null;const prevSb=prevPer?subs.find(s=>s.periodId===prevPer.id&&(s.staffName===sub.staffName||(staffAliases[sub.staffName]||[]).includes(s.staffName))):null;const prevDs2=prevSb?Object.keys(prevSb.shifts||{}).sort():[];const allC=[...new Set([...prevDs2,...ds])].sort();let consec=0;allC.forEach(d=>{const sh2=ds.includes(d)?sub.shifts[d]:prevSb?.shifts?.[d];if(sh2&&sh2.status==="work"){consec++;maxConsec=Math.max(maxConsec,consec);}else consec=0;});halfDays=ds.filter(d=>{const s=sub.shifts[d];return s&&s.status==="work"&&calcNetWorkMinutes(s,getBreakList(settings,d),subOT)<240;}).length;}
               return(<tr key={sub.id} style={hasVio?{background:"rgba(255,71,87,.04)"}:{}}>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text)",fontWeight:600}}>
@@ -3890,24 +3890,20 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
     {plan==="premium"&&<AC title="スタッフ属性別 勤務時間制限">
       <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は無制限。制限を超えたスタッフは提出一覧で赤くハイライトされます。スタッフ登録タブで各スタッフに属性を設定してください。</div>
       {[["employee","社員"],["parttime","バイト"],["dispatch","派遣"],["other","その他"]].map(([type,label])=>{
-        const lim=((settings.staffTypeLimits)||{})[type]||{daily:0,weekly:0};
+        const lim=((settings.staffTypeLimits)||{})[type]||{daily:0,weekly:0,biweekly:0,monthly:0};
+        const saveLim=(key,val)=>onSave({...settings,staffTypeLimits:{...(settings.staffTypeLimits||{}),[type]:{...lim,[key]:val}}});
         return(<div key={type} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:10}}>
           <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:8}}>{label}</div>
-          <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1日の上限</span>
-              <input type="number" min={0} max={24} value={lim.daily||""} placeholder="0"
-                onChange={e=>{const v=Math.max(0,Math.min(24,parseInt(e.target.value)||0));onSave({...settings,staffTypeLimits:{...(settings.staffTypeLimits||{}),[type]:{...lim,daily:v}}});}}
-                style={{...AI,width:60,textAlign:"center",padding:"6px 8px"}}/>
-              <span style={{fontSize:12,color:"var(--c-text4)"}}>時間</span>
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>週の上限</span>
-              <input type="number" min={0} max={168} value={lim.weekly||""} placeholder="0"
-                onChange={e=>{const v=Math.max(0,Math.min(168,parseInt(e.target.value)||0));onSave({...settings,staffTypeLimits:{...(settings.staffTypeLimits||{}),[type]:{...lim,weekly:v}}});}}
-                style={{...AI,width:60,textAlign:"center",padding:"6px 8px"}}/>
-              <span style={{fontSize:12,color:"var(--c-text4)"}}>時間</span>
-            </div>
+          <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+            {[["daily","1日",24],["weekly","週",168],["biweekly","2週間",336],["monthly","1ヶ月",744]].map(([key,lbl,mx])=>(
+              <div key={key} style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{lbl}の上限</span>
+                <input type="number" min={0} max={mx} value={lim[key]||""} placeholder="0"
+                  onChange={e=>{const v=Math.max(0,Math.min(mx,parseInt(e.target.value)||0));saveLim(key,v);}}
+                  style={{...AI,width:60,textAlign:"center",padding:"6px 8px"}}/>
+                <span style={{fontSize:12,color:"var(--c-text4)"}}>時間</span>
+              </div>
+            ))}
           </div>
         </div>);
       })}
