@@ -2599,7 +2599,19 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           style={{padding:"5px 10px",background:fitAll?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           {fitAll?"通常表示":"全員表示"}
         </button>
-        {period&&<button onClick={()=>expXl(period,subs,staffList,tt,shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{}})}
+        {period&&<button onClick={()=>{
+          const adjResolver=(name,date,field)=>{
+            const key=`${name}|${date}|${field}`;
+            let time="";
+            if(key in localEdits){const{numeric}=extractNote(localEdits[key]);time=parseTime(numeric)||"";}
+            else{time=getStoredTime(name,date,field);}
+            let note="";
+            if(key in localEdits){note=extractNote(localEdits[key]).note||"";}
+            else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=sh?.[adjNk]??sh?.[origNk]??"";}
+            return{time,note};
+          };
+          expXl(period,subs,staffList,tt,shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{}},adjResolver);
+        }}
           style={{padding:"6px 14px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           Excel出力
         </button>}
@@ -2901,7 +2913,7 @@ function PEF({period,onSave,onCancel}){
 }
 
 // ===== Excel出力 =====
-function expXl(p,subs,staffList,tt,shopName,options={}){
+function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   ph("excel_exported",{period_id:p.id,submission_count:subs.filter(s=>s.periodId===p.id).length});
   const ss=subs.filter(s=>s.periodId===p.id);
   if(typeof ExcelJS==="undefined"){tt("▲ ExcelJS未読込み");return;}
@@ -3056,11 +3068,15 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
         SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
       } else if(isWork){
         const fmtT=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return m===0?String(h):String(h+m/60);};
+        // resolver がある場合は調整済み値を使用
+        const rv=resolver?{st:resolver(nm,ds,"start"),en:resolver(nm,ds,"end")}:null;
+        const startT=rv?rv.st.time:sh.start, endT=rv?rv.en.time:sh.end;
+        const sNote=rv?rv.st.note:(sh.startNote||""), eNote=rv?rv.en.note:(sh.endNote||"");
         // サフィックスh/k/xがある場合は黄色塗り
-        const startFill=sh.startNote?fYel:fill;
-        const endFill=sh.endNote?fYel:fill;
-        const startDisp=sh.start?((fmtT(sh.start)||"")+(sh.startNote||"")):null;
-        const endDisp=sh.end?((fmtT(sh.end)||"")+(sh.endNote||"")):null;
+        const startFill=sNote?fYel:fill;
+        const endFill=eNote?fYel:fill;
+        const startDisp=startT?((fmtT(startT)||"")+sNote):null;
+        const endDisp=endT?((fmtT(endT)||"")+eNote):null;
         SC(rT,ci,startDisp,aH,startFill,{top:M,bottom:H,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
         SC(rB,ci,endDisp,aH,endFill,{top:H,bottom:botT,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
       } else {
@@ -3085,7 +3101,7 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
   // ファイル名・ダウンロード
   const sn=(shopName||"店舗").replace(/[\\/:*?"<>|]/g,"");
   const pl=periodLabel.replace(/[\\/:*?"<>|]/g,"");
-  const fname=`${sn}${pl}.xlsx`;
+  const fname=`${sn}${pl}${resolver?"_調整済":""}.xlsx`;
   wb.xlsx.writeBuffer().then(buf=>{
     const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
     const url=URL.createObjectURL(blob);
