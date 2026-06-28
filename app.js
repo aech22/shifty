@@ -2462,6 +2462,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   // サイドパネル（キッチン/ホール分割がある場合は常に表示）
   const hasSplit=hallStaff.length>0;
   const panelW=hasSplit?(fitAll?Math.max(0,containerLeft-4):160):0;
+  // メイングリッド行高（サイドパネルの熱マップ行高と揃える）
+  const ROW_H=24;
   // 中央グリッド幅 = ビューポート/コンテナ幅 - サイドパネル×2
   const centerW=fitAll?(window.innerWidth-panelW*2-24):(hasSplit?containerW-panelW*2-8:containerW);
   const colW=fitAll?Math.max(24,Math.floor((centerW-90)/Math.max(1,realStaff.length))):39;
@@ -2476,21 +2478,21 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
 
-  const HeatTable=({label,section,maxC})=>(
-    <div style={{overflowX:"auto",border:BD,borderRadius:8,flex:1,minWidth:200}}>
+  const HeatTable=({label,section,maxC,rowH})=>(
+    <div style={{overflowX:"auto",border:BD,borderRadius:8,flex:rowH?undefined:1,minWidth:rowH?undefined:200}}>
       {label&&<div style={{fontSize:12,fontWeight:700,padding:"4px 8px",borderBottom:BD,color:"var(--c-text2)"}}>{label}</div>}
       <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
-        <thead><tr>
+        <thead><tr style={rowH?{height:ROW_H}:{}}>
           <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,whiteSpace:"nowrap"}}>日付</th>
           {heatHours.map(hr=><th key={hr} style={{minWidth:22,padding:"2px 1px",fontSize:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500}}>{hr}</th>)}
         </tr></thead>
         <tbody>{dates.map(date=>{
           const d=pd(date);const day=d.getDay();const isHol=isHoliday(date);
           const dc=(day===0||isHol)?"#e53935":day===6?"#1976d2":"var(--c-text)";
-          return(<tr key={date}>
-            <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:11,color:dc,borderBottom:BD,whiteSpace:"nowrap"}}>{fmtDL(date)}</td>
+          return(<tr key={date} style={rowH?{height:rowH}:{}}>
+            <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:11,color:dc,borderBottom:BD,whiteSpace:"nowrap",verticalAlign:"middle"}}>{fmtDL(date)}</td>
             {heatHours.map((hr,hi)=>{const n=countHeat(section,date,hr);return(
-              <td key={hi} style={{minWidth:22,padding:"2px 1px",textAlign:"center",fontSize:11,borderLeft:BD,borderBottom:BD,background:hBg(n,maxC),color:n===0?"var(--c-text4)":"var(--c-text)",fontWeight:n>0?600:400}}>{n||""}</td>
+              <td key={hi} style={{minWidth:22,padding:"2px 1px",textAlign:"center",fontSize:11,borderLeft:BD,borderBottom:BD,background:hBg(n,maxC),color:n===0?"var(--c-text4)":"var(--c-text)",fontWeight:n>0?600:400,verticalAlign:"middle"}}>{n||""}</td>
             );})}
           </tr>);
         })}</tbody>
@@ -2561,11 +2563,11 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           {/* === 左パネル: キッチン熱マップ（split時は常に表示） === */}
           {hasSplit&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
             <div style={{fontSize:11,fontWeight:700,padding:"2px 4px",color:"var(--c-text2)"}}>キッチン</div>
-            <HeatTable label="" section="kit" maxC={kitMax}/>
+            <HeatTable label="" section="kit" maxC={kitMax} rowH={ROW_H*2}/>
           </div>}
 
           {/* === 中央: グリッド + 集計 === */}
-          <div style={fitAll?{flex:1,minWidth:0}:{}}>
+          <div style={(fitAll||hasSplit)?{flex:1,minWidth:0}:{}}>
 
           {/* ===メイングリッド（SL列廃止・日付のみstickyで15名対応）=== */}
           <div ref={mainScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
@@ -2583,7 +2585,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                   const dc=(isSun||isHol)?"#e53935":isSat?"#1976d2":"var(--c-text)";
                   const rb=(isSun||isHol)?"rgba(229,57,53,0.07)":isSat?"rgba(25,118,210,0.07)":"transparent";
                   return[
-                    <tr key={date+"-s"} style={{background:rb}}>
+                    <tr key={date+"-s"} style={{background:rb,height:ROW_H}}>
                       <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
                       {realStaff.map(name=>(
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
@@ -2598,7 +2600,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                         </td>
                       ))}
                     </tr>,
-                    <tr key={date+"-e"} style={{background:rb}}>
+                    <tr key={date+"-e"} style={{background:rb,height:ROW_H}}>
                       {realStaff.map(name=>(
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
@@ -2646,7 +2648,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           {/* === 右パネル: ホール熱マップ（split時は常に表示） === */}
           {hasSplit&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
             <div style={{fontSize:11,fontWeight:700,padding:"2px 4px",color:"var(--c-text2)"}}>ホール</div>
-            <HeatTable label="" section="hall" maxC={hallMax}/>
+            <HeatTable label="" section="hall" maxC={hallMax} rowH={ROW_H*2}/>
           </div>}
 
         </div>
