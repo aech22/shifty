@@ -2315,6 +2315,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const[cellTip,setCellTip]=useState(null); // {x,y,value}
   const[fitAll,setFitAll]=useState(false);
   const[containerW,setContainerW]=useState(800);
+  const[containerLeft,setContainerLeft]=useState(0);
+  const outerRef=useRef(null);
   const mainScrollRef=useRef(null);
   const periodScrollRef=useRef(null);
   const weekScrollRef=useRef(null);
@@ -2328,9 +2330,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     }
   },[periods]);
 
-  // コンテナ幅の計測（fitAll用）
+  // コンテナ幅・左オフセットの計測（fitAll用）
   useEffect(()=>{
-    const update=()=>{if(mainScrollRef.current)setContainerW(mainScrollRef.current.offsetWidth);};
+    const update=()=>{
+      if(outerRef.current){
+        const rect=outerRef.current.getBoundingClientRect();
+        setContainerLeft(rect.left);
+        setContainerW(window.innerWidth-16); // 全幅 - 左右padding8px×2
+      }
+    };
     update();
     window.addEventListener("resize",update);
     return()=>window.removeEventListener("resize",update);
@@ -2511,7 +2519,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   ];
 
   return(
-    <div style={{padding:"12px 8px"}}>
+    <div ref={outerRef} style={{padding:"12px 8px"}}>
       {cellTip&&<div style={{position:"fixed",left:cellTip.x,top:cellTip.y-26,transform:"translateX(-50%)",background:"rgba(30,30,30,0.82)",color:"#fff",fontSize:11,fontWeight:600,padding:"2px 7px",borderRadius:10,pointerEvents:"none",zIndex:9999,whiteSpace:"nowrap",backdropFilter:"blur(4px)"}}>{cellTip.value}</div>}
       <div style={{marginBottom:10,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         <span style={{fontWeight:700,fontSize:15}}>シフト作成</span>
@@ -2531,7 +2539,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       </div>
 
       {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
-        <>
+        <div style={fitAll?{marginLeft:-containerLeft,width:"100vw",paddingLeft:8,paddingRight:8,boxSizing:"border-box"}:{}}>
           {/* ===メイングリッド（SL列廃止・日付のみstickyで15名対応）=== */}
           <div ref={mainScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
             <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
@@ -2608,7 +2616,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                 _violateFn:(name,min)=>{const t=(settings.staffAttributes||{})[name]||"parttime";const l=tls[t];const lim=l&&typeof l==="object"&&l.weekly?l.weekly*60:0;return lim>0&&min>=lim;}};
             }),{id:"weekly_limit",label:"週上限",getMin:name=>{const t=(settings.staffAttributes||{})[name]||"parttime";const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};const l=tls[t];return(l&&typeof l==="object"&&l.weekly)?l.weekly*60:0;},_color:"#60A5FA",_bg:"rgba(96,165,250,0.07)"}]}
           />}
-        </>
+        </div>
       )}
     </div>
   );
