@@ -2536,7 +2536,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
                             onChange={e=>isPro&&handleChange(name,date,"start",e.target.value)}
-                            onFocus={e=>{const v=toDecimal(getStoredTime(name,date,"start"));const n=getStoredNote(name,date,"start");const s=v?(v+n):"";const r=e.target.getBoundingClientRect();setCellTip(s?{x:r.left+r.width/2,y:r.top,value:s}:null);}}
+                            onFocus={e=>{const v=toDecimal(getStoredTime(name,date,"start"));const n=getStoredNote(name,date,"start");const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);}}
                             style={{...AI2,opacity:isPro?1:0.55,cursor:isPro?"text":"default"}}/>
                         </td>
@@ -2548,7 +2548,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
                             onChange={e=>isPro&&handleChange(name,date,"end",e.target.value)}
-                            onFocus={e=>{const v=toDecimal(getStoredTime(name,date,"end"));const n=getStoredNote(name,date,"end");const s=v?(v+n):"";const r=e.target.getBoundingClientRect();setCellTip(s?{x:r.left+r.width/2,y:r.top,value:s}:null);}}
+                            onFocus={e=>{const v=toDecimal(getStoredTime(name,date,"end"));const n=getStoredNote(name,date,"end");const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);}}
                             style={{...AI2,opacity:isPro?1:0.55,cursor:isPro?"text":"default"}}/>
                         </td>
