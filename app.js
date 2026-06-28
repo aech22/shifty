@@ -2320,6 +2320,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const mainScrollRef=useRef(null);
   const periodScrollRef=useRef(null);
   const weekScrollRef=useRef(null);
+  const gridBodyRef=useRef(null);
+  const[measuredRowH,setMeasuredRowH]=useState(null);
 
   const isPro=plan==="pro"||plan==="premium";
 
@@ -2336,13 +2338,24 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       if(outerRef.current){
         const rect=outerRef.current.getBoundingClientRect();
         setContainerLeft(rect.left);
-        setContainerW(window.innerWidth-16); // 全幅 - 左右padding8px×2
+        setContainerW(window.innerWidth-16);
       }
     };
     update();
     window.addEventListener("resize",update);
     return()=>window.removeEventListener("resize",update);
   },[]);
+
+  // グリッドの実際の行高を測定してサイドパネルと同期
+  useEffect(()=>{
+    if(!gridBodyRef.current)return;
+    const rows=gridBodyRef.current.querySelectorAll("tr");
+    if(rows.length>=2){
+      const h1=rows[0].getBoundingClientRect().height;
+      const h2=rows[1].getBoundingClientRect().height;
+      if(h1>0&&h2>0)setMeasuredRowH(h1+h2);
+    }
+  },[selPid,dates.length,colW]);
 
   const period=periods.find(p=>p.id===selPid)||null;
   const dates=period?gd(period.startDate,period.endDate):[];
@@ -2461,11 +2474,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const BD="1px solid var(--c-border)";const BD2="1px solid var(--c-border2)";const CRD="var(--c-card)";
   // サイドパネル（キッチン/ホール分割がある場合は常に表示）
   const hasSplit=hallStaff.length>0;
-  const panelW=hasSplit?(fitAll?Math.max(0,containerLeft-4):160):0;
-  // メイングリッド行高（サイドパネルの熱マップ行高と揃える）
-  const ROW_H=24;
-  // 中央グリッド幅 = ビューポート/コンテナ幅 - サイドパネル×2
-  const centerW=fitAll?(window.innerWidth-panelW*2-24):(hasSplit?containerW-panelW*2-8:containerW);
+  // hasSplit時は通常/fitAll共にブレイクアウト（余白にサイドパネルを表示）
+  const useBreakout=hasSplit||fitAll;
+  const panelW=hasSplit?(fitAll?Math.max(0,containerLeft-4):Math.max(0,containerLeft-4)):0;
+  // 熱マップ行高: 計測値があれば使う、なければフォールバック
+  const heatRowH=measuredRowH||48;
+  // 中央グリッド幅 = ビューポート幅 - サイドパネル×2（ブレイクアウト時）
+  const centerW=useBreakout?(window.innerWidth-panelW*2-24):containerW;
   const colW=fitAll?Math.max(24,Math.floor((centerW-90)/Math.max(1,realStaff.length))):39;
   const AI2={width:colW-3,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
   const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:11,borderRight:BD2};
@@ -2558,12 +2573,12 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       </div>
 
       {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
-        <div style={fitAll?{marginLeft:-containerLeft,width:"100vw",paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:"flex",alignItems:"flex-start",gap:4}:hasSplit?{display:"flex",alignItems:"flex-start",gap:4}:{}}>
+        <div style={useBreakout?{marginLeft:-containerLeft,width:"100vw",paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:hasSplit?"flex":"block",alignItems:"flex-start",gap:4}:{}}>
 
           {/* === 左パネル: キッチン熱マップ（split時は常に表示） === */}
           {hasSplit&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
             <div style={{fontSize:11,fontWeight:700,padding:"2px 4px",color:"var(--c-text2)"}}>キッチン</div>
-            <HeatTable label="" section="kit" maxC={kitMax} rowH={ROW_H*2}/>
+            <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH}/>
           </div>}
 
           {/* === 中央: グリッド + 集計 === */}
@@ -2578,14 +2593,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                   {realStaff.map(name=>VTH(name))}
                 </tr>
               </thead>
-              <tbody>
+              <tbody ref={gridBodyRef}>
                 {dates.map(date=>{
                   const d=pd(date);const day=d.getDay();
                   const isHol=isHoliday(date);const isSun=day===0;const isSat=day===6;
                   const dc=(isSun||isHol)?"#e53935":isSat?"#1976d2":"var(--c-text)";
                   const rb=(isSun||isHol)?"rgba(229,57,53,0.07)":isSat?"rgba(25,118,210,0.07)":"transparent";
                   return[
-                    <tr key={date+"-s"} style={{background:rb,height:ROW_H}}>
+                    <tr key={date+"-s"} style={{background:rb}}>
                       <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
                       {realStaff.map(name=>(
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
@@ -2600,7 +2615,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                         </td>
                       ))}
                     </tr>,
-                    <tr key={date+"-e"} style={{background:rb,height:ROW_H}}>
+                    <tr key={date+"-e"} style={{background:rb}}>
                       {realStaff.map(name=>(
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
@@ -2648,7 +2663,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           {/* === 右パネル: ホール熱マップ（split時は常に表示） === */}
           {hasSplit&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
             <div style={{fontSize:11,fontWeight:700,padding:"2px 4px",color:"var(--c-text2)"}}>ホール</div>
-            <HeatTable label="" section="hall" maxC={hallMax} rowH={ROW_H*2}/>
+            <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH}/>
           </div>}
 
         </div>
