@@ -97,6 +97,44 @@ async function main() {
     console.log(`   ✅ 消費税レートを作成: ${created.id}`);
   }
 
+  // ── 4. Premium プラン 2,980円/月 の Price 作成 ──────────────
+  console.log("\n4️⃣  Premium Price（2,980円/月）を確認中...");
+  const prices = await stripe.prices.list({ active: true, limit: 100 });
+  const existingPremium = prices.data.find(p =>
+    p.unit_amount === 2980 &&
+    p.currency === "jpy" &&
+    p.recurring?.interval === "month" &&
+    p.metadata?.plan === "premium"
+  );
+
+  if (existingPremium) {
+    console.log(`   ✅ 既存 Premium Price を確認: ${existingPremium.id}`);
+    console.log(`   📝 functions/index.js の premium_monthly に設定してください: "${existingPremium.id}"`);
+  } else {
+    // 先に Product を作成（または既存を再利用）
+    const products = await stripe.products.list({ active: true, limit: 100 });
+    let premiumProduct = products.data.find(p => p.metadata?.plan === "premium");
+    if (!premiumProduct) {
+      premiumProduct = await stripe.products.create({
+        name: "Shifty Premium",
+        description: "シフト時間編集・全機能利用可能なPremiumプラン",
+        metadata: { plan: "premium" },
+      });
+      console.log(`   ✅ Premium Product を作成: ${premiumProduct.id}`);
+    } else {
+      console.log(`   ✅ 既存 Premium Product を確認: ${premiumProduct.id}`);
+    }
+    const price = await stripe.prices.create({
+      product: premiumProduct.id,
+      unit_amount: 2980,
+      currency: "jpy",
+      recurring: { interval: "month" },
+      metadata: { plan: "premium" },
+    });
+    console.log(`   ✅ Premium Price を作成: ${price.id}`);
+    console.log(`   📝 functions/index.js の premium_monthly に設定してください: "${price.id}"`);
+  }
+
   console.log("\n✨ 完了しました！\n");
   console.log("📋 残りの手動設定（APIでは変更不可）:");
   console.log("   • Smart Retries: Settings > Subscriptions and emails > Manage failed payments > Smart Retries をオン");

@@ -2297,7 +2297,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
-        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name}/>}
+        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
         {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkApple={onSignInAndLinkApple} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading} staffList={staffList}/>}
       </div>
@@ -2308,7 +2308,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
 }
 
 // ===== シフト作成タブ =====
-function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,shopName}){
+function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,shopName,onUpgrade}){
   const firstPid=(periods[0]||{}).id||"";
   const[selPid,setSelPid]=useState(firstPid);
   const[localEdits,setLocalEdits]=useState({});
@@ -2327,6 +2327,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const[measuredTheadH,setMeasuredTheadH]=useState(null);
 
   const isPro=plan==="pro"||plan==="premium";
+  const isPremium=plan==="premium";
 
   // periodsが非同期ロード後に届いた場合、selPidが""のままなら先頭に補正
   useEffect(()=>{
@@ -2389,7 +2390,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);return t?(t+n):""};
   const handleChange=(name,date,field,value)=>{setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
   const handleBlur=(name,date,field,rawValue)=>{
-    if(!isPro)return;
+    if(!isPremium)return;
     const{numeric,note}=extractNote(rawValue);
     const parsed=parseTime(numeric);const display=parsed?(toDecimal(parsed)+note):"";
     setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:display}));
@@ -2594,7 +2595,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           style={{fontSize:16,padding:"4px 8px",border:BD,borderRadius:6,background:"var(--c-input)",color:"var(--c-text)"}}>
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
         </select>
-        <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPro?"例: 9, 9.5, 930, 9:30":"閲覧のみ（編集はプレミアムプランで）"}</span>
+        <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPremium?"例: 9, 9.5, 930, 9:30":"閲覧のみ（編集はPremiumプランで）"}</span>
         <button onClick={()=>setFitAll(v=>!v)}
           style={{padding:"5px 10px",background:fitAll?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           {fitAll?"通常表示":"全員表示"}
@@ -2649,13 +2650,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                       {realStaff.map(name=>(
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
-                            readOnly={!isPro} disabled={!isPro}
+                            readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
-                            onChange={e=>isPro&&handleChange(name,date,"start",e.target.value)}
-                            onFocus={e=>{const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
+                            onChange={e=>isPremium&&handleChange(name,date,"start",e.target.value)}
+                            onClick={!isPremium?()=>onUpgrade&&onUpgrade({type:"edit",plan}):undefined}
+                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"start",e.target.value);document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}
-                            style={{...AI2,opacity:isPro?1:0.55,cursor:isPro?"text":"default"}}/>
+                            style={{...AI2,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
                       ))}
                     </tr>,
@@ -2663,13 +2665,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                       {realStaff.map(name=>(
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
-                            readOnly={!isPro} disabled={!isPro}
+                            readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
-                            onChange={e=>isPro&&handleChange(name,date,"end",e.target.value)}
-                            onFocus={e=>{const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
+                            onChange={e=>isPremium&&handleChange(name,date,"end",e.target.value)}
+                            onClick={!isPremium?()=>onUpgrade&&onUpgrade({type:"edit",plan}):undefined}
+                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();const ndi=dates.indexOf(date)+1;handleBlur(name,date,"end",e.target.value);if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}
-                            style={{...AI2,opacity:isPro?1:0.55,cursor:isPro?"text":"default"}}/>
+                            style={{...AI2,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
                       ))}
                     </tr>
@@ -4398,12 +4401,14 @@ const CF_BASE = DEV_MODE
   : "https://asia-northeast1-ontheshift.cloudfunctions.net";
 
 function UpgradeModal({reason,currentPlan,shopId,onClose}){
-  const[loading,setLoading]=useState(null); // "pro" | null
+  const[loading,setLoading]=useState(null);
   const[error,setError]=useState("");
+  const isEditType=reason.type==="edit";
   const msgs={
     shops:  {title:"店舗数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}店舗まで管理できます。`,next:"Proプランで無制限に管理できます。"},
     staff:  {title:"スタッフ数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}名まで登録できます。`,next:"Proプランで無制限に登録できます。"},
     periods:{title:"期間数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}件まで期間を作成できます。`,next:"Proプランにアップグレードすると無制限に作成できます。"},
+    edit:   {title:"シフト作成タブの編集機能",desc:"シフト時間の調整・編集はPremiumプランの機能です。",next:"Premiumプランにアップグレードすると、提出されたシフト時間を管理者側で編集・調整できます。"},
   };
   const m=msgs[reason.type]||{title:"上限に達しました",desc:"",next:""};
 
@@ -4424,29 +4429,39 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
     }finally{setLoading(null);}
   };
 
+  const planRows=isEditType
+    ?[["Free","無料","スタッフ20名 / 期間1件"],["Pro","500円/月","スタッフ・期間 無制限"],["★ Premium","2,980円/月","全機能 + シフト時間編集"]]
+    :[["Free","無料","スタッフ20名 / 期間1件"],["★ Pro","500円/月","スタッフ・期間 無制限 + 全機能"],["Premium","2,980円/月","全機能 + シフト時間編集"]];
+
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20,animation:"fI .2s"}} onClick={onClose}>
-      <div style={{background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:20,width:"100%",maxWidth:380,padding:"28px 24px",animation:"sI .2s",boxShadow:"0 8px 40px rgba(0,0,0,.3)"}} onClick={e=>e.stopPropagation()}>
+      <div style={{background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:20,width:"100%",maxWidth:400,padding:"28px 24px",animation:"sI .2s",boxShadow:"0 8px 40px rgba(0,0,0,.3)"}} onClick={e=>e.stopPropagation()}>
         <div style={{textAlign:"center",marginBottom:20}}>
-          <div style={{fontSize:44,marginBottom:10}}></div>
+          <div style={{fontSize:44,marginBottom:10}}>{isEditType?"✏️":"🚀"}</div>
           <div style={{fontSize:17,fontWeight:700,color:"var(--c-text)",marginBottom:8}}>{m.title}</div>
           <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8}}>{m.desc}</div>
           <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6}}>{m.next}</div>
         </div>
         <div style={{background:"rgba(248,112,54,.08)",border:"1px solid rgba(248,112,54,.25)",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
           <div style={{fontSize:12,fontWeight:700,color:"#f87036",marginBottom:8}}>プラン比較</div>
-          {[["Free","無料","スタッフ20名 / 期間1件"],["★ Pro","500円/月","スタッフ・期間 無制限 + 全機能"]].map(([label,price,desc])=>(
-            <div key={label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid var(--c-border)"}}>
-              <span style={{fontSize:13,color:"var(--c-text2)",fontWeight:600}}>{label}</span>
-              <span style={{fontSize:11,color:"var(--c-text3)"}}>{desc}</span>
-              <span style={{fontSize:12,color:"#F59E0B",fontWeight:700}}>{price}</span>
+          {planRows.map(([label,price,desc])=>(
+            <div key={label} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid var(--c-border)"}}>
+              <span style={{fontSize:13,color:"var(--c-text2)",fontWeight:600,minWidth:72}}>{label}</span>
+              <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{desc}</span>
+              <span style={{fontSize:12,color:"#F59E0B",fontWeight:700,whiteSpace:"nowrap"}}>{price}</span>
             </div>
           ))}
         </div>
         {error&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:10,background:"rgba(255,71,87,.1)",padding:"8px",borderRadius:8}}>{error}</div>}
-        <button onClick={()=>checkout("pro")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="pro"?"var(--c-text3)":"linear-gradient(135deg,#f87036,#e05a1a)",border:"2px solid rgba(248,112,54,.3)",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
-          {loading==="pro"?"⏳ 処理中...":"★ Proにアップグレード（500円/月）"}
-        </button>
+        {isEditType?(
+          <button onClick={()=>checkout("premium")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="premium"?"var(--c-text3)":"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"2px solid rgba(124,58,237,.3)",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
+            {loading==="premium"?"⏳ 処理中...":"★ Premiumにアップグレード（2,980円/月）"}
+          </button>
+        ):(
+          <button onClick={()=>checkout("pro")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="pro"?"var(--c-text3)":"linear-gradient(135deg,#f87036,#e05a1a)",border:"2px solid rgba(248,112,54,.3)",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
+            {loading==="pro"?"⏳ 処理中...":"★ Proにアップグレード（500円/月）"}
+          </button>
+        )}
         <button onClick={onClose} style={{width:"100%",padding:"11px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:11,color:"var(--c-text3)",fontSize:13,cursor:"pointer"}}>今はしない</button>
       </div>
     </div>
