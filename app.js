@@ -2406,7 +2406,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const BD="1px solid var(--c-border)";const BD2="1px solid var(--c-border2)";const CRD="var(--c-card)";
   // 出勤/退勤ラベル列を廃止し日付列だけsticky、列幅を36pxに縮小して15名対応
   const AI2={width:36,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
-  const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",minWidth:52,padding:"2px 4px",fontSize:11,borderRight:BD2};
+  const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:11,borderRight:BD2};
   const VTH=(name)=>(
     <th key={name} style={{minWidth:36,maxWidth:36,padding:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"bottom"}}>
       <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:72,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:600,color:"var(--c-text)",whiteSpace:"nowrap"}}>{name}</div>
@@ -2445,7 +2445,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       <div ref={scrollRef} style={{overflowX:"auto",border:BD,borderRadius:8}}>
         <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
           <thead><tr>
-            <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"4px 8px",fontSize:11,fontWeight:600,borderBottom:BD2,minWidth:90,whiteSpace:"nowrap"}}>{rowLabel}</th>
+            <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"4px 8px",fontSize:11,fontWeight:600,borderBottom:BD2,width:90,minWidth:90,whiteSpace:"nowrap"}}>{rowLabel}</th>
             {realStaff.map(name=>VTH(name))}
           </tr></thead>
           <tbody>{rows.map(row=>{
