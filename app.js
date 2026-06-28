@@ -2349,23 +2349,51 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     if(/^\d+$/.test(s)){const n=parseInt(s,10);if(s.length<=2){if(n>=0&&n<=30)return`${String(n).padStart(2,"0")}:00`;}else{const h=Math.floor(n/100);const m=n%100;if(h>=0&&h<=30&&m>=0&&m<60)return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;}return"";}
     return"";
   };
+  // サフィックス抽出: h=ホール出張, k=キッチン入り, x=ヘルプ(カウント外), ""=通常
+  const extractNote=raw=>{
+    if(!raw||!raw.trim())return{numeric:"",note:""};
+    const m=raw.trim().match(/^([\d.:]+)([a-zA-Z]*)$/i);
+    if(!m)return{numeric:"",note:"x"}; // 文字のみ → ヘルプ
+    const l=m[2].toLowerCase();
+    return{numeric:m[1],note:l==="h"?"h":l==="k"?"k":l?"x":""};
+  };
 
   const getStoredTime=(name,date,field)=>{const sub=subs.find(s=>s.periodId===selPid&&s.staffName===name);return sub?.shifts?.[date]?.[field]||"";};
-  const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];return toDecimal(getStoredTime(name,date,field));};
+  const getStoredNote=(name,date,field)=>{const sub=subs.find(s=>s.periodId===selPid&&s.staffName===name);const nk=field==="start"?"startNote":"endNote";return sub?.shifts?.[date]?.[nk]||"";};
+  const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);return t?(t+n):""};
   const handleChange=(name,date,field,value)=>{setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
   const handleBlur=(name,date,field,rawValue)=>{
     if(!isPro)return;
-    const parsed=parseTime(rawValue);const display=toDecimal(parsed);
+    const{numeric,note}=extractNote(rawValue);
+    const parsed=parseTime(numeric);const display=parsed?(toDecimal(parsed)+note):"";
     setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:display}));
+    const nk=field==="start"?"startNote":"endNote";
     let newSubs=[...subs];const idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
-    if(idx===-1){if(!parsed)return;const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString()};ns.shifts[date]={status:"work",[field]:parsed};newSubs.push(ns);}
-    else{const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};if(parsed){sd[field]=parsed;sd.status="work";}else{delete sd[field];}shifts[date]=sd;sub.shifts=shifts;sub.updatedAt=new Date().toISOString();sub.isUpdated=true;newSubs[idx]=sub;}
+    if(idx===-1){if(!parsed)return;const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString()};ns.shifts[date]={status:"work",[field]:parsed,[nk]:note};newSubs.push(ns);}
+    else{const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};if(parsed){sd[field]=parsed;sd[nk]=note;sd.status="work";}else{delete sd[field];delete sd[nk];}shifts[date]=sd;sub.shifts=shifts;sub.updatedAt=new Date().toISOString();sub.isUpdated=true;newSubs[idx]=sub;}
     onSave(newSubs);
   };
 
-  const getEffHHMM=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return parseTime(localEdits[key])||"";return getStoredTime(name,date,field);};
+  const getEffHHMM=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits){const{numeric}=extractNote(localEdits[key]);return parseTime(numeric)||"";}return getStoredTime(name,date,field);};
+  // シフトのノート取得（localEdits優先）
+  const getShiftNote=(name,date)=>{
+    for(const field of["start","end"]){const key=`${name}|${date}|${field}`;if(key in localEdits){const{note}=extractNote(localEdits[key]);if(note)return note;}const nk=field==="start"?"startNote":"endNote";const sub=subs.find(s=>s.periodId===selPid&&s.staffName===name);const n=sub?.shifts?.[date]?.[nk];if(n)return n;}return"";
+  };
   const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
-  const countHeat=(nameArr,date,hr)=>{let cnt=0;nameArr.forEach(name=>{const stM=timeToMin(getEffHHMM(name,date,"start"));const enM=timeToMin(getEffHHMM(name,date,"end"));if(stM!==null&&enM!==null&&stM<(hr+1)*60&&enM>hr*60)cnt++;});return cnt;};
+  // section: "kit" or "hall" — サフィックスh/kで所属を上書き、xはどちらにも入らない
+  const countHeat=(section,date,hr)=>{
+    let cnt=0;
+    realStaff.forEach(name=>{
+      const stM=timeToMin(getEffHHMM(name,date,"start"));const enM=timeToMin(getEffHHMM(name,date,"end"));
+      if(stM===null||enM===null||stM>=(hr+1)*60||enM<=hr*60)return;
+      const note=getShiftNote(name,date);
+      if(note==="x")return;
+      const orig=hallStaff.includes(name)?"hall":"kit";
+      const eff=note==="h"?"hall":note==="k"?"kit":orig;
+      if(eff===section)cnt++;
+    });
+    return cnt;
+  };
   const heatHours=Array.from({length:16},(_,i)=>i+9);
 
   // 期間別勤務時間: 同月の全期間を両方表示
@@ -2403,11 +2431,11 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:72,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:600,color:"var(--c-text)",whiteSpace:"nowrap"}}>{name}</div>
     </th>
   );
-  const kitMax=Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat(kitStaff,date,hr))));
-  const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat(hallStaff,date,hr)))):1;
+  const kitMax=Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("kit",date,hr))));
+  const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
 
-  const HeatTable=({label,staff,maxC})=>(
+  const HeatTable=({label,section,maxC})=>(
     <div style={{overflowX:"auto",border:BD,borderRadius:8,flex:1,minWidth:200}}>
       {label&&<div style={{fontSize:12,fontWeight:700,padding:"4px 8px",borderBottom:BD,color:"var(--c-text2)"}}>{label}</div>}
       <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
@@ -2420,7 +2448,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           const dc=(day===0||isHol)?"#e53935":day===6?"#1976d2":"var(--c-text)";
           return(<tr key={date}>
             <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:11,color:dc,borderBottom:BD,whiteSpace:"nowrap"}}>{fmtDL(date)}</td>
-            {heatHours.map((hr,hi)=>{const n=countHeat(staff,date,hr);return(
+            {heatHours.map((hr,hi)=>{const n=countHeat(section,date,hr);return(
               <td key={hi} style={{minWidth:22,padding:"2px 1px",textAlign:"center",fontSize:11,borderLeft:BD,borderBottom:BD,background:hBg(n,maxC),color:n===0?"var(--c-text4)":"var(--c-text)",fontWeight:n>0?600:400}}>{n||""}</td>
             );})}
           </tr>);
@@ -2503,7 +2531,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                       <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
                       {realStaff.map(name=>(
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb}}>
-                          <input type="text" inputMode="decimal" value={getVal(name,date,"start")} placeholder="--"
+                          <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
                             onChange={e=>isPro&&handleChange(name,date,"start",e.target.value)}
                             onBlur={e=>handleBlur(name,date,"start",e.target.value)}
@@ -2514,7 +2542,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                     <tr key={date+"-e"} style={{background:rb}}>
                       {realStaff.map(name=>(
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb}}>
-                          <input type="text" inputMode="decimal" value={getVal(name,date,"end")} placeholder="--"
+                          <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
                             onChange={e=>isPro&&handleChange(name,date,"end",e.target.value)}
                             onBlur={e=>handleBlur(name,date,"end",e.target.value)}
@@ -2532,8 +2560,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           <div style={{marginBottom:16}}>
             <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>時間帯別出勤人数</div>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              <HeatTable label={hallStaff.length>0?"キッチン":""} staff={kitStaff} maxC={kitMax}/>
-              {hallStaff.length>0&&<HeatTable label="ホール" staff={hallStaff} maxC={hallMax}/>}
+              <HeatTable label={hallStaff.length>0?"キッチン":""} section="kit" maxC={kitMax}/>
+              {hallStaff.length>0&&<HeatTable label="ホール" section="hall" maxC={hallMax}/>}
             </div>
           </div>
 
@@ -2797,9 +2825,10 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
   const aH={horizontal:"center",vertical:"middle"};
 
   // 塗り
-  const fSat ={type:"pattern",pattern:"solid",fgColor:{argb:R("DDEEFF")},bgColor:{argb:"FFFFFFFF"}};
-  const fHol ={type:"pattern",pattern:"solid",fgColor:{argb:R("FFEEEE")},bgColor:{argb:"FFFFFFFF"}};
-  const fNone={type:"pattern",pattern:"none"};
+  const fSat  ={type:"pattern",pattern:"solid",fgColor:{argb:R("DDEEFF")},bgColor:{argb:"FFFFFFFF"}};
+  const fHol  ={type:"pattern",pattern:"solid",fgColor:{argb:R("FFEEEE")},bgColor:{argb:"FFFFFFFF"}};
+  const fYel  ={type:"pattern",pattern:"solid",fgColor:{argb:R("FFFF00")},bgColor:{argb:"FFFFFFFF"}};
+  const fNone ={type:"pattern",pattern:"none"};
 
   const wb=new ExcelJS.Workbook();
   wb.creator="ShiftApp";
@@ -2892,8 +2921,13 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
         SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
       } else if(isWork){
         const fmtT=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return m===0?String(h):String(h+m/60);};
-        SC(rT,ci,sh.start?fmtT(sh.start):null,aH,fill,{top:M,bottom:H,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
-        SC(rB,ci,sh.end?fmtT(sh.end):null,aH,fill,{top:H,bottom:botT,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
+        // サフィックスh/k/xがある場合は黄色塗り
+        const startFill=sh.startNote?fYel:fill;
+        const endFill=sh.endNote?fYel:fill;
+        const startDisp=sh.start?((fmtT(sh.start)||"")+(sh.startNote||"")):null;
+        const endDisp=sh.end?((fmtT(sh.end)||"")+(sh.endNote||"")):null;
+        SC(rT,ci,startDisp,aH,startFill,{top:M,bottom:H,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
+        SC(rB,ci,endDisp,aH,endFill,{top:H,bottom:botT,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
       } else {
         // 休み: 斜線（右上→左下）
         const diagU={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
