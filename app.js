@@ -2500,12 +2500,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     }
   },[selPid,dates.length,colW]);
 
-  const HeatTable=({label,section,maxC,rowH,theadH})=>(
+  const HeatTable=({label,section,maxC,rowH,theadH,sectionLabel})=>(
     <div style={{overflowX:"auto",border:BD,borderRadius:8,flex:rowH?undefined:1,minWidth:rowH?undefined:200}}>
       {label&&<div style={{fontSize:12,fontWeight:700,padding:"4px 8px",borderBottom:BD,color:"var(--c-text2)"}}>{label}</div>}
       <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
         <thead><tr style={theadH?{height:theadH}:{}}>
-          <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,whiteSpace:"nowrap",verticalAlign:"bottom"}}>日付</th>
+          <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,whiteSpace:"nowrap",verticalAlign:"bottom"}}>
+            {sectionLabel&&<div style={{fontSize:10,fontWeight:700,color:"var(--c-text2)",marginBottom:4}}>{sectionLabel}</div>}
+            日付
+          </th>
           {heatHours.map(hr=><th key={hr} style={{minWidth:22,padding:"2px 1px",fontSize:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500,verticalAlign:"bottom"}}>{hr}</th>)}
         </tr></thead>
         <tbody>{dates.map(date=>{
@@ -2584,8 +2587,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
 
           {/* === 左パネル: キッチン熱マップ（split時は常に表示） === */}
           {hasSplit&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
-            <div style={{fontSize:11,fontWeight:700,padding:"2px 4px",color:"var(--c-text2)"}}>キッチン</div>
-            <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH}/>
+            <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="キッチン"/>
           </div>}
 
           {/* === 中央: グリッド + 集計 === */}
@@ -2669,8 +2671,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
 
           {/* === 右パネル: ホール熱マップ（split時は常に表示） === */}
           {hasSplit&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
-            <div style={{fontSize:11,fontWeight:700,padding:"2px 4px",color:"var(--c-text2)"}}>ホール</div>
-            <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH}/>
+            <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="ホール"/>
           </div>}
 
         </div>
