@@ -2311,87 +2311,78 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const firstPid=(periods[0]||{}).id||"";
   const[selPid,setSelPid]=useState(firstPid);
   const[localEdits,setLocalEdits]=useState({});
+  const mainScrollRef=useRef(null);
+  const periodScrollRef=useRef(null);
+  const weekScrollRef=useRef(null);
+
+  const isPro=plan==="pro"||plan==="premium";
+
+  // periodsが非同期ロード後に届いた場合、selPidが""のままなら先頭に補正
+  useEffect(()=>{
+    if(periods.length>0&&!periods.find(p=>p.id===selPid)){
+      setSelPid(periods[0].id);
+    }
+  },[periods]);
 
   const period=periods.find(p=>p.id===selPid)||null;
   const dates=period?gd(period.startDate,period.endDate):[];
   const realStaff=staffList.filter(n=>!isSpacer(n));
-  // キッチン/ホール分割（スペーサーで区切る）
   const spIdx=staffList.findIndex(n=>isSpacer(n));
   const kitStaff=spIdx>-1?staffList.slice(0,spIdx).filter(n=>!isSpacer(n)):realStaff;
   const hallStaff=spIdx>-1?staffList.slice(spIdx+1).filter(n=>!isSpacer(n)):[];
 
-  const toDecimal=t=>{
-    if(!t)return"";
-    const[h,m]=t.split(":").map(Number);
-    return m===0?String(h):String(h+m/60);
-  };
+  // 横スクロール同期
+  useEffect(()=>{
+    const refs=[mainScrollRef,periodScrollRef,weekScrollRef];
+    const cleanup=[];
+    let syncing=false;
+    refs.forEach((ref,i)=>{
+      if(!ref.current)return;
+      const el=ref.current;
+      const fn=()=>{
+        if(syncing)return;syncing=true;
+        refs.forEach((other,j)=>{if(i!==j&&other.current)other.current.scrollLeft=el.scrollLeft;});
+        syncing=false;
+      };
+      el.addEventListener("scroll",fn,{passive:true});
+      cleanup.push(()=>el.removeEventListener("scroll",fn));
+    });
+    return()=>cleanup.forEach(f=>f());
+  },[selPid,period]);
+
+  const toDecimal=t=>{if(!t)return"";const[h,m]=t.split(":").map(Number);return m===0?String(h):String(h+m/60);};
   const parseTime=v=>{
-    if(!v||!v.trim())return"";
-    const s=v.trim();
+    if(!v||!v.trim())return"";const s=v.trim();
     if(/^\d{1,2}:\d{2}$/.test(s)){const[h,m]=s.split(":").map(Number);if(h>=0&&h<=30&&m>=0&&m<60)return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;return"";}
     if(/^\d+\.\d+$/.test(s)){const n=parseFloat(s);const h=Math.floor(n);const m=Math.round((n-h)*60);if(h>=0&&h<=30&&m>=0&&m<60)return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;return"";}
     if(/^\d+$/.test(s)){const n=parseInt(s,10);if(s.length<=2){if(n>=0&&n<=30)return`${String(n).padStart(2,"0")}:00`;}else{const h=Math.floor(n/100);const m=n%100;if(h>=0&&h<=30&&m>=0&&m<60)return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;}return"";}
     return"";
   };
 
-  const getStoredTime=(name,date,field)=>{
-    const sub=subs.find(s=>s.periodId===selPid&&s.staffName===name);
-    return sub?.shifts?.[date]?.[field]||"";
-  };
-  const getVal=(name,date,field)=>{
-    const key=`${name}|${date}|${field}`;
-    if(key in localEdits)return localEdits[key];
-    return toDecimal(getStoredTime(name,date,field));
-  };
-  const handleChange=(name,date,field,value)=>{
-    setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));
-  };
+  const getStoredTime=(name,date,field)=>{const sub=subs.find(s=>s.periodId===selPid&&s.staffName===name);return sub?.shifts?.[date]?.[field]||"";};
+  const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];return toDecimal(getStoredTime(name,date,field));};
+  const handleChange=(name,date,field,value)=>{setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
   const handleBlur=(name,date,field,rawValue)=>{
-    const parsed=parseTime(rawValue);
-    const display=toDecimal(parsed);
+    if(!isPro)return;
+    const parsed=parseTime(rawValue);const display=toDecimal(parsed);
     setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:display}));
-    let newSubs=[...subs];
-    const idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
-    if(idx===-1){
-      if(!parsed)return;
-      const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString()};
-      ns.shifts[date]={status:"work",[field]:parsed};newSubs.push(ns);
-    }else{
-      const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};
-      if(parsed){sd[field]=parsed;sd.status="work";}else{delete sd[field];}
-      shifts[date]=sd;sub.shifts=shifts;sub.updatedAt=new Date().toISOString();sub.isUpdated=true;newSubs[idx]=sub;
-    }
+    let newSubs=[...subs];const idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
+    if(idx===-1){if(!parsed)return;const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString()};ns.shifts[date]={status:"work",[field]:parsed};newSubs.push(ns);}
+    else{const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};if(parsed){sd[field]=parsed;sd.status="work";}else{delete sd[field];}shifts[date]=sd;sub.shifts=shifts;sub.updatedAt=new Date().toISOString();sub.isUpdated=true;newSubs[idx]=sub;}
     onSave(newSubs);
   };
 
-  // ヒートマップ用: localEditsはdecimal表示なのでparseTimeで変換してから使う
-  const getEffHHMM=(name,date,field)=>{
-    const key=`${name}|${date}|${field}`;
-    if(key in localEdits)return parseTime(localEdits[key])||"";
-    return getStoredTime(name,date,field);
-  };
+  const getEffHHMM=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return parseTime(localEdits[key])||"";return getStoredTime(name,date,field);};
   const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
-  const countHeat=(nameArr,date,hr)=>{
-    let cnt=0;
-    nameArr.forEach(name=>{
-      const stM=timeToMin(getEffHHMM(name,date,"start"));const enM=timeToMin(getEffHHMM(name,date,"end"));
-      if(stM===null||enM===null)return;
-      if(stM<(hr+1)*60&&enM>hr*60)cnt++;
-    });
-    return cnt;
-  };
+  const countHeat=(nameArr,date,hr)=>{let cnt=0;nameArr.forEach(name=>{const stM=timeToMin(getEffHHMM(name,date,"start"));const enM=timeToMin(getEffHHMM(name,date,"end"));if(stM!==null&&enM!==null&&stM<(hr+1)*60&&enM>hr*60)cnt++;});return cnt;};
   const heatHours=Array.from({length:16},(_,i)=>i+9);
 
-  // 期間別勤務時間
-  const mo=period?.startDate?.slice(0,7)||"";
-  const sameMoPeriods=period?[...periods].filter(p=>p.startDate.startsWith(mo)||p.endDate.startsWith(mo)).sort((a,b)=>a.startDate.localeCompare(b.startDate)):[];
+  // 期間別勤務時間: 同月の全期間を両方表示
+  const perD=period?pd(period.startDate):null;
+  const sameMoPeriods=period?[...periods].filter(p=>{const d=pd(p.startDate);return d.getFullYear()===perD.getFullYear()&&d.getMonth()===perD.getMonth();}).sort((a,b)=>a.startDate.localeCompare(b.startDate)):[];
   const getPeriodMin=(pid,name)=>{
     const p=periods.find(pp=>pp.id===pid);if(!p)return 0;
-    return gd(p.startDate,p.endDate).reduce((acc,d)=>{
-      const sub=subs.find(ss=>ss.periodId===pid&&ss.staffName===name);
-      const sh=sub?.shifts?.[d];
-      return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreakList(settings,d),getOT(name,settings)):0);
-    },0);
+    return gd(p.startDate,p.endDate).reduce((acc,d)=>{const sub=subs.find(ss=>ss.periodId===pid&&ss.staffName===name);const sh=sub?.shifts?.[d];return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreakList(settings,d),getOT(name,settings)):0);},0);
   };
 
   // 週間勤務時間（前の期間を跨ぐ）
@@ -2399,30 +2390,24 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const weeks=(()=>{
     if(!period)return[];
     const allD=[...(prevPeriod?gd(prevPeriod.startDate,prevPeriod.endDate):[]),...gd(period.startDate,period.endDate)];
-    const wkSet=new Set();
-    allD.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet.add(fd(mon));});
+    const wkSet=new Set();allD.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet.add(fd(mon));});
     return[...wkSet].sort();
   })();
   const getWeekMin=(monStr,name)=>{
-    let tot=0;
-    for(let i=0;i<7;i++){
-      const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);
-      const sub=subs.find(s=>s.staffName===name&&s.shifts?.[ds]?.status==="work");
-      if(sub)tot+=calcNetWorkMinutes(sub.shifts[ds],getBreakList(settings,ds),getOT(name,settings));
-    }
+    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sub=subs.find(s=>s.staffName===name&&s.shifts?.[ds]?.status==="work");if(sub)tot+=calcNetWorkMinutes(sub.shifts[ds],getBreakList(settings,ds),getOT(name,settings));}
     return tot;
   };
 
-  const fmtH=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;return m===0?`${h}h`:`${h}:${String(m).padStart(2,"0")}`;};
-  const BD="1px solid var(--c-border)";
-  const BD2="1px solid var(--c-border2)";
-  const CRD="var(--c-card)";
+  // "h"なし勤務時間フォーマット
+  const fmtH=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;return m===0?String(h):`${h}:${String(m).padStart(2,"0")}`;};
+  const BD="1px solid var(--c-border)";const BD2="1px solid var(--c-border2)";const CRD="var(--c-card)";
   const AI2={width:42,fontSize:16,border:BD,borderRadius:4,padding:"1px 2px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
   const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",minWidth:72,padding:"2px 4px",fontSize:12,borderRight:BD2};
   const SL={position:"sticky",left:72,background:CRD,zIndex:2,minWidth:26,padding:"2px 2px",fontSize:11,borderRight:BD,textAlign:"center"};
+  // 縦書きヘッダー（rotate除去で文字を正位置に）
   const VTH=(name)=>(
     <th key={name} style={{minWidth:42,maxWidth:42,padding:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"bottom"}}>
-      <div style={{writingMode:"vertical-rl",textOrientation:"mixed",transform:"rotate(180deg)",height:72,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:600,color:"var(--c-text)",whiteSpace:"nowrap"}}>{name}</div>
+      <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:72,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:600,color:"var(--c-text)",whiteSpace:"nowrap"}}>{name}</div>
     </th>
   );
   const kitMax=Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat(kitStaff,date,hr))));
@@ -2438,8 +2423,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           {heatHours.map(hr=><th key={hr} style={{minWidth:22,padding:"2px 1px",fontSize:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500}}>{hr}</th>)}
         </tr></thead>
         <tbody>{dates.map(date=>{
-          const d=pd(date);const dow=WD[d.getDay()];const day=d.getDay();
-          const isHol=isHoliday(date);const dc=(day===0||isHol)?"#e53935":day===6?"#1976d2":"var(--c-text)";
+          const d=pd(date);const dow=WD[d.getDay()];const day=d.getDay();const isHol=isHoliday(date);
+          const dc=(day===0||isHol)?"#e53935":day===6?"#1976d2":"var(--c-text)";
           return(<tr key={date}>
             <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:11,color:dc,borderBottom:BD,whiteSpace:"nowrap"}}>{date.slice(5).replace("-","/")}({dow})</td>
             {heatHours.map((hr,hi)=>{const n=countHeat(staff,date,hr);return(
@@ -2451,19 +2436,19 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     </div>
   );
 
-  const SummaryTable=({title,rowKey,rowLabel,rows,rowBg})=>(
+  // 集計表：scrollRefを外から渡してスクロール同期させる
+  const SummaryTable=({title,rowLabel,rows,scrollRef})=>(
     <div style={{marginBottom:16}}>
       <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>{title}</div>
-      <div style={{overflowX:"auto",border:BD,borderRadius:8}}>
+      <div ref={scrollRef} style={{overflowX:"auto",border:BD,borderRadius:8}}>
         <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
           <thead><tr>
             <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"4px 8px",fontSize:11,fontWeight:600,borderBottom:BD2,minWidth:100,whiteSpace:"nowrap"}}>{rowLabel}</th>
             {realStaff.map(name=>VTH(name))}
           </tr></thead>
-          <tbody>{rows.map((row,ri)=>{
-            const bg=rowBg?rowBg(row,ri):"transparent";
-            return(<tr key={row[rowKey]} style={{background:bg}}>
-              <td style={{position:"sticky",left:0,background:bg||CRD,zIndex:1,padding:"4px 8px",fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,whiteSpace:"nowrap"}}>{row.label}</td>
+          <tbody>{rows.map(row=>{
+            return(<tr key={row.id} style={{background:row._bg||"transparent"}}>
+              <td style={{position:"sticky",left:0,background:row._bg||CRD,zIndex:1,padding:"4px 8px",fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,whiteSpace:"nowrap"}}>{row.label}</td>
               {realStaff.map(name=>{const min=row.getMin(name);return(
                 <td key={name} style={{padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,fontWeight:row._bold&&min>0?700:400,color:min>0?(row._color||"var(--c-text2)"):"var(--c-text4)"}}>{min>0?fmtH(min):""}</td>
               );})}
@@ -2482,7 +2467,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           style={{fontSize:16,padding:"4px 8px",border:BD,borderRadius:6,background:"var(--c-input)",color:"var(--c-text)"}}>
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
         </select>
-        <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>例: 9, 9.5, 930, 9:30</span>
+        <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPro?"例: 9, 9.5, 930, 9:30":"閲覧のみ（編集はプレミアムプランで）"}</span>
         {period&&<button onClick={()=>expXl(period,subs,staffList,tt,shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{}})}
           style={{padding:"6px 14px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           Excel出力
@@ -2492,7 +2477,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
         <>
           {/* ===メイングリッド=== */}
-          <div style={{overflowX:"auto",border:BD,borderRadius:8,marginBottom:16}}>
+          <div ref={mainScrollRef} style={{overflowX:"auto",border:BD,borderRadius:8,marginBottom:16}}>
             <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
               <thead>
                 <tr>
@@ -2515,8 +2500,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                       {realStaff.map(name=>(
                         <td key={name} style={{padding:"1px 2px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb}}>
                           <input type="text" inputMode="decimal" value={getVal(name,date,"start")} placeholder="--"
-                            onChange={e=>handleChange(name,date,"start",e.target.value)}
-                            onBlur={e=>handleBlur(name,date,"start",e.target.value)} style={AI2}/>
+                            readOnly={!isPro} disabled={!isPro}
+                            onChange={e=>isPro&&handleChange(name,date,"start",e.target.value)}
+                            onBlur={e=>handleBlur(name,date,"start",e.target.value)}
+                            style={{...AI2,opacity:isPro?1:0.55,cursor:isPro?"text":"default"}}/>
                         </td>
                       ))}
                     </tr>,
@@ -2525,8 +2512,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                       {realStaff.map(name=>(
                         <td key={name} style={{padding:"1px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb}}>
                           <input type="text" inputMode="decimal" value={getVal(name,date,"end")} placeholder="--"
-                            onChange={e=>handleChange(name,date,"end",e.target.value)}
-                            onBlur={e=>handleBlur(name,date,"end",e.target.value)} style={AI2}/>
+                            readOnly={!isPro} disabled={!isPro}
+                            onChange={e=>isPro&&handleChange(name,date,"end",e.target.value)}
+                            onBlur={e=>handleBlur(name,date,"end",e.target.value)}
+                            style={{...AI2,opacity:isPro?1:0.55,cursor:isPro?"text":"default"}}/>
                         </td>
                       ))}
                     </tr>
@@ -2548,23 +2537,23 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           {/* ===期間別勤務時間=== */}
           <SummaryTable
             title="期間別勤務時間"
-            rowKey="id"
             rowLabel="期間"
+            scrollRef={periodScrollRef}
             rows={[
               ...sameMoPeriods.map(p=>{
-                const isF=pd(p.startDate).getDate()<=15;
-                const mo2=pd(p.startDate).getMonth()+1;
-                return{id:p.id,label:p.label||(isF?`${mo2}月前半`:`${mo2}月後半`),getMin:name=>getPeriodMin(p.id,name),_bold:p.id===selPid,_color:p.id===selPid?"#f87036":undefined};
+                const isF=pd(p.startDate).getDate()<=15;const mo2=pd(p.startDate).getMonth()+1;
+                const isCur=p.id===selPid;
+                return{id:p.id,label:p.label||(isF?`${mo2}月前半`:`${mo2}月後半`),getMin:name=>getPeriodMin(p.id,name),_bold:isCur,_color:isCur?"#f87036":undefined,_bg:isCur?"rgba(248,112,54,0.06)":undefined};
               }),
-              {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"#f87036"}
+              {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"#f87036",_bg:"rgba(248,112,54,0.04)"}
             ]}
           />
 
           {/* ===週間勤務時間=== */}
           {weeks.length>0&&<SummaryTable
             title="週間勤務時間（前期間含む）"
-            rowKey="id"
             rowLabel="週"
+            scrollRef={weekScrollRef}
             rows={weeks.map(monStr=>{
               const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);
               return{id:monStr,label:`${m.getMonth()+1}/${m.getDate()}〜${sun.getMonth()+1}/${sun.getDate()}`,getMin:name=>getWeekMin(monStr,name)};
