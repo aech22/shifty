@@ -2332,24 +2332,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const kitStaff=spIdx>-1?staffList.slice(0,spIdx).filter(n=>!isSpacer(n)):realStaff;
   const hallStaff=spIdx>-1?staffList.slice(spIdx+1).filter(n=>!isSpacer(n)):[];
 
-  // 横スクロール同期
-  useEffect(()=>{
-    const refs=[mainScrollRef,periodScrollRef,weekScrollRef];
-    const cleanup=[];
-    let syncing=false;
-    refs.forEach((ref,i)=>{
-      if(!ref.current)return;
-      const el=ref.current;
-      const fn=()=>{
-        if(syncing)return;syncing=true;
-        refs.forEach((other,j)=>{if(i!==j&&other.current)other.current.scrollLeft=el.scrollLeft;});
-        syncing=false;
-      };
-      el.addEventListener("scroll",fn,{passive:true});
-      cleanup.push(()=>el.removeEventListener("scroll",fn));
-    });
-    return()=>cleanup.forEach(f=>f());
-  },[selPid,period]);
+  // 横スクロール同期（onScroll経由で確実に同期）
+  const syncingRef=useRef(false);
+  const syncScrollH=useCallback((src)=>{
+    if(syncingRef.current)return;
+    syncingRef.current=true;
+    [mainScrollRef,periodScrollRef,weekScrollRef].forEach(r=>{if(r.current&&r.current!==src)r.current.scrollLeft=src.scrollLeft;});
+    requestAnimationFrame(()=>{syncingRef.current=false;});
+  },[]);
 
   const toDecimal=t=>{if(!t)return"";const[h,m]=t.split(":").map(Number);return m===0?String(h):String(h+m/60);};
   const parseTime=v=>{
@@ -2440,10 +2430,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   );
 
   // 集計表：scrollRefを外から渡してスクロール同期、sticky背景を確実に塗る
-  const SummaryTable=({title,rowLabel,rows,scrollRef})=>(
+  const SummaryTable=({title,rowLabel,rows,scrollRef,onScroll})=>(
     <div style={{marginBottom:16}}>
       <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>{title}</div>
-      <div ref={scrollRef} style={{overflowX:"auto",border:BD,borderRadius:8}}>
+      <div ref={scrollRef} onScroll={onScroll} style={{overflowX:"auto",border:BD,borderRadius:8}}>
         <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
           <thead><tr>
             <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"4px 8px",fontSize:11,fontWeight:600,borderBottom:BD2,width:90,minWidth:90,whiteSpace:"nowrap"}}>{rowLabel}</th>
@@ -2494,7 +2484,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
         <>
           {/* ===メイングリッド（SL列廃止・日付のみstickyで15名対応）=== */}
-          <div ref={mainScrollRef} style={{overflowX:"auto",border:BD,borderRadius:8,marginBottom:16}}>
+          <div ref={mainScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:"auto",border:BD,borderRadius:8,marginBottom:16}}>
             <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
               <thead>
                 <tr>
@@ -2548,13 +2538,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           </div>
 
           {/* ===期間別勤務時間（前半/後半/月計を常に3行）=== */}
-          <SummaryTable title="期間別勤務時間" rowLabel="期間" scrollRef={periodScrollRef} rows={periodRows}/>
+          <SummaryTable title="期間別勤務時間" rowLabel="期間" scrollRef={periodScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} rows={periodRows}/>
 
           {/* ===週間勤務時間=== */}
           {weeks.length>0&&<SummaryTable
             title="週間勤務時間（前期間含む）"
             rowLabel="週"
             scrollRef={weekScrollRef}
+            onScroll={e=>syncScrollH(e.currentTarget)}
             rows={[...weeks.map(monStr=>{
               const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);
               const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};
