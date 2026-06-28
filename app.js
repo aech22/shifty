@@ -3068,9 +3068,9 @@ const dragIdxRef=useRef(null);
               :<>
                 {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid #D1D5DB",cursor:"pointer",flexShrink:0,padding:0}}/>}
                 <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{n}</span>
-                {isPremium&&<select value={(settings.staffAttributes||{})[n]||""} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:12,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
+                {isPremium&&<select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:12,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
                   <option value="">属性なし</option>
-                  {Object.entries(settings.staffTypeLimits||STAFF_TYPE_LABELS).map(([v,t])=><option key={v} value={v}>{t.name||STAFF_TYPE_LABELS[v]||v}</option>)}
+                  {Object.entries(settings.staffTypeLimits||STAFF_TYPE_LABELS).map(([v,t])=><option key={v} value={v}>{(typeof t==="object"?t.name:"")||STAFF_TYPE_LABELS[v]||""}</option>).filter(el=>el.props.children[1])}
                 </select>}
                 {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
                   別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
