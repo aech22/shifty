@@ -2346,17 +2346,6 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return()=>window.removeEventListener("resize",update);
   },[]);
 
-  // グリッドの実際の行高を測定してサイドパネルと同期
-  useEffect(()=>{
-    if(!gridBodyRef.current)return;
-    const rows=gridBodyRef.current.querySelectorAll("tr");
-    if(rows.length>=2){
-      const h1=rows[0].getBoundingClientRect().height;
-      const h2=rows[1].getBoundingClientRect().height;
-      if(h1>0&&h2>0)setMeasuredRowH(h1+h2);
-    }
-  },[selPid,dates.length,colW]);
-
   const period=periods.find(p=>p.id===selPid)||null;
   const dates=period?gd(period.startDate,period.endDate):[];
   const realStaff=staffList.filter(n=>!isSpacer(n));
@@ -2492,6 +2481,17 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const kitMax=Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("kit",date,hr))));
   const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
+
+  // グリッドの実際の行高を測定してサイドパネルと同期（dates・colW宣言後に配置）
+  useEffect(()=>{
+    if(!gridBodyRef.current)return;
+    const rows=gridBodyRef.current.querySelectorAll("tr");
+    if(rows.length>=2){
+      const h1=rows[0].getBoundingClientRect().height;
+      const h2=rows[1].getBoundingClientRect().height;
+      if(h1>0&&h2>0)setMeasuredRowH(h1+h2);
+    }
+  },[selPid,dates.length,colW]);
 
   const HeatTable=({label,section,maxC,rowH})=>(
     <div style={{overflowX:"auto",border:BD,borderRadius:8,flex:rowH?undefined:1,minWidth:rowH?undefined:200}}>
