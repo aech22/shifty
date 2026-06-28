@@ -188,6 +188,7 @@ const PLAN_LIMITS = {
 };
 const PLAN_LABELS = { free: "Free", pro: "Pro", premium: "Premium" };
 const STAFF_TYPE_LABELS = {employee:"社員",parttime:"バイト",dispatch:"派遣",other:"その他"};
+const BUILTIN_TYPES = ["employee","parttime","dispatch","other"];
 
 // ===== デフォルト候補時間 =====
 const CAND_WEEKDAY=[
@@ -264,7 +265,7 @@ function makePeriod(shopId){
   return{id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:`${yr}年${mo}月前半`,startDate:`${yr}-${ms}-01`,endDate:`${yr}-${ms}-15`,deadlineDate:"",createdAt:new Date().toISOString()};
 }
 function makeSettings(shopId){
-  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{daily:0,weekly:0},parttime:{daily:0,weekly:0},dispatch:{daily:0,weekly:0},other:{daily:0,weekly:0}},overtimeSettings:{byStaff:{}}};
+  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{name:"社員",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},parttime:{name:"バイト",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}},overtimeSettings:{byStaff:{}}};
 }
 
 // ===== URL生成・解析 =====
@@ -563,9 +564,10 @@ function App(){
               if(linkedShops.length>0){
                 console.log("Auth店舗:",linkedShops.map(s=>s.name));
                 setAllLinkedShops(linkedShops);
-                // セッション復元 or 最初の店舗（shops はセッション対象の1店舗のみ）
+                // Cookie（最後に使った店舗）→ セッション復元 → 最初の店舗
+                const ckId=getCookie(CK_SHOP);
                 const ssId=ssGet(SS_SHOP,null);
-                const targetId=linkedShops.find(s=>s.id===ssId)?ssId:linkedShops[0].id;
+                const targetId=linkedShops.find(s=>s.id===ckId)?ckId:linkedShops.find(s=>s.id===ssId)?ssId:linkedShops[0].id;
                 const targetShop=linkedShops.find(s=>s.id===targetId)||linkedShops[0];
                 setShops([targetShop]);
                 ls("shift_shops_v6",[targetShop]);
@@ -2251,7 +2253,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                           <div key={sh.id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
                             <span style={{flex:1,fontSize:13,color:"var(--c-text)"}}>{sh.name}</span>
                             <button onClick={()=>{const name=prompt("店舗名を変更",sh.name);if(!name)return;saveShops(shops.map(s=>s.id===sh.id?{...s,name:name.trim()}:s));tt("✓ 変更しました");}} style={{padding:"4px 8px",background:"var(--c-bg)",border:"none",borderRadius:6,fontSize:11,cursor:"pointer"}}>✏️</button>
-                            {shops.length>1&&<button onClick={()=>{if(!confirm(`「${sh.name}」を削除しますか？`))return;const ns=shops.filter(s=>s.id!==sh.id);saveShops(ns);if(sh.id===currentShopId){setCurrentShopId(ns[0].id);startSubscriptions(ns[0].id,ns);}tt("削除しました");}} style={{padding:"4px 8px",background:"rgba(255,71,87,.1)",border:"none",borderRadius:6,fontSize:11,color:"#FF4757",cursor:"pointer"}}>🗑️</button>}
+                            {shops.length>1&&<button onClick={async()=>{if(!confirm(`「${sh.name}」を削除しますか？`))return;if(authUser&&onUnlinkShop){await onUnlinkShop(sh.id);}else{const ns=shops.filter(s=>s.id!==sh.id);saveShops(ns);if(sh.id===currentShopId){setCurrentShopId(ns[0].id);startSubscriptions(ns[0].id,ns);}tt("削除しました");}}} style={{padding:"4px 8px",background:"rgba(255,71,87,.1)",border:"none",borderRadius:6,fontSize:11,color:"#FF4757",cursor:"pointer"}}>🗑️</button>}
                           </div>
                         ))}
                       </div>}
@@ -2265,7 +2267,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
             </div>
           </div>
           <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-            {[["periods","期間"],["staff","スタッフ"],["candidates","候補"],["submissions","提出一覧"],["mypage","マイページ"],["settings","設定"]].map(([id,l])=>(
+            {[["periods","期間"],["staff","スタッフ"],["candidates","候補"],["submissions","提出一覧"],["edit","シフト作成"],["mypage","マイページ"],["settings","設定"]].map(([id,l])=>(
               <button key={id} onClick={()=>setTab(id)} style={{padding:"7px 13px",background:tab===id?"#f87036":"var(--c-input)",border:`1px solid ${tab===id?"#f87036":"var(--c-border)"}`,borderRadius:7,color:tab===id?"white":"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{l}</button>
             ))}
             <button onClick={logout} style={{padding:"7px 12px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:7,color:"#FF4757",fontSize:12,cursor:"pointer"}}>ログアウト</button>
@@ -2295,11 +2297,442 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
+        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
         {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkApple={onSignInAndLinkApple} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading} staffList={staffList}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
+    </div>
+  );
+}
+
+// ===== シフト作成タブ =====
+function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,shopName,onUpgrade}){
+  const firstPid=(periods[0]||{}).id||"";
+  const[selPid,setSelPid]=useState(firstPid);
+  const[localEdits,setLocalEdits]=useState({});
+  const[cellTip,setCellTip]=useState(null); // {x,y,value}
+  const[fitAll,setFitAll]=useState(false);
+  const[containerW,setContainerW]=useState(800);
+  const[containerLeft,setContainerLeft]=useState(0);
+  const outerRef=useRef(null);
+  const mainScrollRef=useRef(null);
+  const periodScrollRef=useRef(null);
+  const weekScrollRef=useRef(null);
+  const restScrollRef=useRef(null);
+  const gridBodyRef=useRef(null);
+  const gridTheadRef=useRef(null);
+  const[measuredRowH,setMeasuredRowH]=useState(null);
+  const[measuredTheadH,setMeasuredTheadH]=useState(null);
+
+  const isPro=plan==="pro"||plan==="premium";
+  const isPremium=plan==="premium";
+
+  // periodsが非同期ロード後に届いた場合、selPidが""のままなら先頭に補正
+  useEffect(()=>{
+    if(periods.length>0&&!periods.find(p=>p.id===selPid)){
+      setSelPid(periods[0].id);
+    }
+  },[periods]);
+
+  // コンテナ幅・左オフセットの計測（fitAll用）
+  useEffect(()=>{
+    const update=()=>{
+      if(outerRef.current){
+        const rect=outerRef.current.getBoundingClientRect();
+        setContainerLeft(rect.left);
+        setContainerW(window.innerWidth-16);
+      }
+    };
+    update();
+    window.addEventListener("resize",update);
+    return()=>window.removeEventListener("resize",update);
+  },[]);
+
+  const period=periods.find(p=>p.id===selPid)||null;
+  const dates=period?gd(period.startDate,period.endDate):[];
+  const realStaff=staffList.filter(n=>!isSpacer(n));
+  const spIdx=staffList.findIndex(n=>isSpacer(n));
+  const kitStaff=spIdx>-1?staffList.slice(0,spIdx).filter(n=>!isSpacer(n)):realStaff;
+  const hallStaff=spIdx>-1?staffList.slice(spIdx+1).filter(n=>!isSpacer(n)):[];
+
+  // 横スクロール同期（onScroll経由で確実に同期）
+  const syncingRef=useRef(false);
+  const syncScrollH=useCallback((src)=>{
+    if(syncingRef.current)return;
+    syncingRef.current=true;
+    [mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef].forEach(r=>{if(r.current&&r.current!==src)r.current.scrollLeft=src.scrollLeft;});
+    requestAnimationFrame(()=>{syncingRef.current=false;});
+  },[]);
+
+  const toDecimal=t=>{if(!t)return"";const[h,m]=t.split(":").map(Number);return m===0?String(h):String(h+m/60);};
+  const parseTime=v=>{
+    if(!v||!v.trim())return"";const s=v.trim();
+    if(/^\d{1,2}:\d{2}$/.test(s)){const[h,m]=s.split(":").map(Number);if(h>=0&&h<=30&&m>=0&&m<60)return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;return"";}
+    if(/^\d+\.\d+$/.test(s)){const n=parseFloat(s);const h=Math.floor(n);const m=Math.round((n-h)*60);if(h>=0&&h<=30&&m>=0&&m<60)return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;return"";}
+    if(/^\d+$/.test(s)){const n=parseInt(s,10);if(s.length<=2){if(n>=0&&n<=30)return`${String(n).padStart(2,"0")}:00`;}else{const h=Math.floor(n/100);const m=n%100;if(h>=0&&h<=30&&m>=0&&m<60)return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;}return"";}
+    return"";
+  };
+  // サフィックス抽出: h=ホール出張, k=キッチン入り, x=ヘルプ(カウント外), ""=通常
+  const extractNote=raw=>{
+    if(!raw||!raw.trim())return{numeric:"",note:""};
+    const m=raw.trim().match(/^([\d.:]+)([a-zA-Z]*)$/i);
+    if(!m)return{numeric:"",note:"x"}; // 文字のみ → ヘルプ
+    const l=m[2].toLowerCase();
+    return{numeric:m[1],note:l==="h"?"h":l==="k"?"k":l?"x":""};
+  };
+
+  const _getSub=(name)=>subs.find(s=>s.periodId===selPid&&s.staffName===name);
+  // 管理者編集値(adjustedXxx)優先、なければスタッフ提出値(xxx)にフォールバック
+  const getStoredTime=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";return(field==="start"?(sh.adjustedStart??sh.start):(sh.adjustedEnd??sh.end))||"";};
+  const getStoredNote=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";return(field==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"";};
+  const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);return t?(t+n):""};
+  const handleChange=(name,date,field,value)=>{setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
+  const handleBlur=(name,date,field,rawValue)=>{
+    if(!isPremium)return;
+    const{numeric,note}=extractNote(rawValue);
+    const parsed=parseTime(numeric);const display=parsed?(toDecimal(parsed)+note):"";
+    setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:display}));
+    // 管理者編集はadjustedXxxに保存（スタッフ提出のstart/endを保護）
+    const adjField=field==="start"?"adjustedStart":"adjustedEnd";
+    const nk=field==="start"?"adjustedStartNote":"adjustedEndNote";
+    let newSubs=[...subs];const idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
+    if(idx===-1){if(!parsed)return;const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString()};ns.shifts[date]={status:"work",[adjField]:parsed,[nk]:note};newSubs.push(ns);}
+    else{const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};if(parsed){sd[adjField]=parsed;sd[nk]=note;sd.status="work";}else{delete sd[adjField];delete sd[nk];}shifts[date]=sd;sub.shifts=shifts;sub.updatedAt=new Date().toISOString();sub.isUpdated=true;newSubs[idx]=sub;}
+    onSave(newSubs);
+  };
+
+  const getEffHHMM=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits){const{numeric}=extractNote(localEdits[key]);return parseTime(numeric)||"";}return getStoredTime(name,date,field);};
+  // シフトのノート取得: 管理者調整値優先、なければスタッフ提出値（localEdits最優先）
+  const getShiftNote=(name,date)=>{
+    for(const field of["start","end"]){const key=`${name}|${date}|${field}`;if(key in localEdits){const{note}=extractNote(localEdits[key]);if(note)return note;}const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";const n=(sh?.[adjNk]??sh?.[origNk]);if(n)return n;}return"";
+  };
+  const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
+  // section: "kit" or "hall" — サフィックスh/kで所属を上書き、xはどちらにも入らない
+  const countHeat=(section,date,hr)=>{
+    let cnt=0;
+    realStaff.forEach(name=>{
+      const stM=timeToMin(getEffHHMM(name,date,"start"));const enM=timeToMin(getEffHHMM(name,date,"end"));
+      if(stM===null||enM===null||stM>=(hr+1)*60||enM<=hr*60)return;
+      const note=getShiftNote(name,date);
+      if(note==="x")return;
+      const orig=hallStaff.includes(name)?"hall":"kit";
+      const eff=note==="h"?"hall":note==="k"?"kit":orig;
+      if(eff===section)cnt++;
+    });
+    return cnt;
+  };
+  // heatHours: 候補管理の時間帯 + 実際に入力された時間帯を包含した範囲
+  const heatHours=(()=>{
+    const hrs=new Set();
+    // 候補管理から時間帯を収集
+    const allCands=[...(settings.candidates||[]),...Object.values(settings.weekdayCandidates||{}).flat(),...Object.values(settings.dateCandidates||{}).flat()].filter(c=>!c.closed&&c.start&&c.end);
+    allCands.forEach(c=>{const sh=parseInt(c.start);const eh=parseInt(c.end);for(let h=sh;h<=eh;h++)hrs.add(h);});
+    // 実際の提出・入力値から時間帯を収集
+    subs.filter(s=>s.periodId===selPid).forEach(sub=>{Object.values(sub.shifts||{}).forEach(sh=>{if(sh.status!=="work")return;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(st)hrs.add(parseInt(st));if(en)hrs.add(parseInt(en));});});
+    // localEditsからも収集
+    Object.entries(localEdits).forEach(([,v])=>{const{numeric}=extractNote(v);const p=parseTime(numeric);if(p)hrs.add(parseInt(p));});
+    if(hrs.size===0){for(let h=9;h<=24;h++)hrs.add(h);}
+    const mn=Math.min(...hrs),mx=Math.max(...hrs);
+    return Array.from({length:mx-mn+1},(_,i)=>mn+i);
+  })();
+
+  // 期間別勤務時間: 同月の全期間を両方表示
+  const perD=period?pd(period.startDate):null;
+  const sameMoPeriods=period?[...periods].filter(p=>{const d=pd(p.startDate);return d.getFullYear()===perD.getFullYear()&&d.getMonth()===perD.getMonth();}).sort((a,b)=>a.startDate.localeCompare(b.startDate)):[];
+  const getPeriodMin=(pid,name)=>{
+    const p=periods.find(pp=>pp.id===pid);if(!p)return 0;
+    return gd(p.startDate,p.endDate).reduce((acc,d)=>{const sub=subs.find(ss=>ss.periodId===pid&&ss.staffName===name);const sh=sub?.shifts?.[d];return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreakList(settings,d),getOT(name,settings)):0);},0);
+  };
+
+  // 週間勤務時間（前の期間を跨ぐ）
+  const prevPeriod=period?([...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate)).find(p=>new Date(p.endDate)<new Date(period.startDate))||null):null;
+  const weeks=(()=>{
+    if(!period)return[];
+    const allD=[...(prevPeriod?gd(prevPeriod.startDate,prevPeriod.endDate):[]),...gd(period.startDate,period.endDate)];
+    const wkSet=new Set();allD.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet.add(fd(mon));});
+    return[...wkSet].sort();
+  })();
+  const getWeekMin=(monStr,name)=>{
+    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sub=subs.find(s=>s.staffName===name&&s.shifts?.[ds]?.status==="work");if(sub)tot+=calcNetWorkMinutes(sub.shifts[ds],getBreakList(settings,ds),getOT(name,settings));}
+    return tot;
+  };
+
+  // "h"なし勤務時間フォーマット
+  // "h"なし勤務時間フォーマット
+  const fmtH=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;return m===0?String(h):`${h}:${String(m).padStart(2,"0")}`;};
+  // 日付を"日(曜)"のみ表示（月不要）
+  const fmtDL=date=>{const d=pd(date);return`${d.getDate()}(${WD[d.getDay()]})`;};
+  const BD="1px solid var(--c-border)";const BD2="1px solid var(--c-border2)";const CRD="var(--c-card)";
+  // サイドパネル: 通常表示+split時のみ（全員表示では熱マップを下部に表示）
+  const hasSplit=hallStaff.length>0;
+  const hasPanel=hasSplit&&!fitAll;
+  const useBreakout=hasPanel||fitAll;
+  const panelW=hasPanel?Math.max(0,containerLeft-4):0;
+  // 熱マップ行高: 計測値があれば使う、なければフォールバック
+  const heatRowH=measuredRowH||48;
+  // 中央グリッド幅 = ブレイクアウト時はビューポート幅 - パネル×2
+  const centerW=useBreakout?(window.innerWidth-panelW*2-24):containerW;
+  const colW=fitAll?Math.max(24,Math.floor((centerW-90)/Math.max(1,realStaff.length))):39;
+  const AI2={width:colW-3,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
+  const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:11,borderRight:BD2};
+  const VTH=(name)=>(
+    <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"middle"}}>
+      <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:72,display:"inline-block",fontSize:11,fontWeight:600,color:"var(--c-text)",whiteSpace:"nowrap",textAlign:"center",lineHeight:String(colW-4)+"px"}}>{name}</div>
+    </th>
+  );
+  // 休みカウント: 17時基準で前半/後半それぞれ出勤なし=0.5、終日なし=1
+  const restCounts=React.useMemo(()=>{
+    const result={};
+    realStaff.forEach(name=>{
+      let count=0;
+      dates.forEach(date=>{
+        const shift=_getSub(name)?.shifts?.[date];
+        if(!shift||shift.status==="holiday"){count+=1;return;}
+        const s=parseFloat(getVal(name,date,"start"));
+        const e=parseFloat(getVal(name,date,"end"));
+        if(!isNaN(s)&&s<17){}else{count+=0.5;}
+        if(!isNaN(e)&&e>17){}else{count+=0.5;}
+      });
+      result[name]=count;
+    });
+    return result;
+  },[realStaff,dates,subs,localEdits,selPid]);
+  const kitMax=Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("kit",date,hr))));
+  const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
+  const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
+
+  // グリッドの実際の行高・thead高を測定してサイドパネルと同期
+  useEffect(()=>{
+    if(gridBodyRef.current){
+      const rows=gridBodyRef.current.querySelectorAll("tr");
+      if(rows.length>=2){
+        const h1=rows[0].getBoundingClientRect().height;
+        const h2=rows[1].getBoundingClientRect().height;
+        if(h1>0&&h2>0)setMeasuredRowH(h1+h2);
+      }
+    }
+    // table top → 最初のtbody行 top の距離を直接計測（border-collapse誤差を回避）
+    if(mainScrollRef.current&&gridBodyRef.current?.firstElementChild){
+      const tableEl=mainScrollRef.current.querySelector('table');
+      const firstRow=gridBodyRef.current.firstElementChild;
+      if(tableEl){
+        const offset=Math.round(firstRow.getBoundingClientRect().top-tableEl.getBoundingClientRect().top);
+        if(offset>0)setMeasuredTheadH(offset);
+      }
+    }
+  },[selPid,dates.length,colW]);
+
+  const HeatTable=({label,section,maxC,rowH,theadH,sectionLabel})=>(
+    <div style={{overflowX:"auto",border:BD,borderRadius:8,flex:rowH?undefined:1,minWidth:rowH?undefined:200}}>
+      {label&&<div style={{fontSize:12,fontWeight:700,padding:"4px 8px",borderBottom:BD,color:"var(--c-text2)"}}>{label}</div>}
+      <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
+        <thead><tr style={theadH?{height:theadH}:{}}>
+          <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,whiteSpace:"nowrap",verticalAlign:"bottom"}}>
+            {sectionLabel&&<div style={{fontSize:10,fontWeight:700,color:"var(--c-text2)",marginBottom:4}}>{sectionLabel}</div>}
+            日付
+          </th>
+          {heatHours.map(hr=><th key={hr} style={{minWidth:22,padding:"2px 1px",fontSize:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500,verticalAlign:"bottom"}}>{hr}</th>)}
+        </tr></thead>
+        <tbody>{dates.map(date=>{
+          const d=pd(date);const day=d.getDay();const isHol=isHoliday(date);
+          const dc=(day===0||isHol)?"#e53935":day===6?"#1976d2":"var(--c-text)";
+          return(<tr key={date} style={rowH?{height:rowH}:{}}>
+            <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:11,color:dc,borderBottom:BD,whiteSpace:"nowrap",verticalAlign:"middle"}}>{fmtDL(date)}</td>
+            {heatHours.map((hr,hi)=>{const n=countHeat(section,date,hr);return(
+              <td key={hi} style={{minWidth:22,padding:"2px 1px",textAlign:"center",fontSize:11,borderLeft:BD,borderBottom:BD,background:hBg(n,maxC),color:n===0?"var(--c-text4)":"var(--c-text)",fontWeight:n>0?600:400,verticalAlign:"middle"}}>{n||""}</td>
+            );})}
+          </tr>);
+        })}</tbody>
+      </table>
+    </div>
+  );
+
+  // 集計表：scrollRefを外から渡してスクロール同期、sticky背景を確実に塗る
+  const SummaryTable=({title,rowLabel,rows,scrollRef,onScroll})=>(
+    <div style={{marginBottom:16}}>
+      <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>{title}</div>
+      <div ref={scrollRef} onScroll={onScroll} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8}}>
+        <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
+          <thead><tr>
+            <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:0,fontSize:11,fontWeight:600,borderBottom:BD2,width:90,minWidth:90,maxWidth:90}}><div style={{width:90,padding:"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{rowLabel}</div></th>
+            {realStaff.map(name=>VTH(name))}
+          </tr></thead>
+          <tbody>{rows.map(row=>{
+            const bg=row._bg||"transparent";const stickyBg=row._bg?`linear-gradient(${row._bg},${row._bg}),${CRD}`:CRD;
+            return(<tr key={row.id} style={{background:bg}}>
+              <td style={{position:"sticky",left:0,background:stickyBg,zIndex:1,padding:0,fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,width:90,minWidth:90,maxWidth:90}}><div style={{width:90,padding:"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{row.label}</div></td>
+              {realStaff.map(name=>{const min=row.getMin(name);const vio=row._violateFn?row._violateFn(name,min):false;const cellBg=vio?"rgba(255,71,87,.15)":bg;return(
+                <td key={name} style={{padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:cellBg,fontWeight:(row._bold||vio)&&min>0?700:400,color:min>0?(vio?"#FF4757":(row._color||"var(--c-text2)")):"var(--c-text4)"}}>{min>0?fmtH(min):""}</td>
+              );})}
+            </tr>);
+          })}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  // 期間行：前半/後半/月計を常に3行表示
+  const mo2=period?pd(period.startDate).getMonth()+1:0;
+  const firstHalf=sameMoPeriods.find(p=>pd(p.startDate).getDate()<=15)||null;
+  const secondHalf=sameMoPeriods.find(p=>pd(p.startDate).getDate()>15)||null;
+  const periodRows=[
+    {id:firstHalf?.id||"nofirst",label:firstHalf?.label||`${mo2}月前半`,getMin:name=>firstHalf?getPeriodMin(firstHalf.id,name):0,
+      _bold:firstHalf?.id===selPid,_color:firstHalf?.id===selPid?"#f87036":undefined,_bg:firstHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
+    {id:secondHalf?.id||"nosecond",label:secondHalf?.label||`${mo2}月後半`,getMin:name=>secondHalf?getPeriodMin(secondHalf.id,name):0,
+      _bold:secondHalf?.id===selPid,_color:secondHalf?.id===selPid?"#f87036":undefined,_bg:secondHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
+    {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"#f87036"},
+    {id:"monthly_limit",label:"月上限",getMin:name=>{const t=(settings.staffAttributes||{})[name]||"parttime";const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};const l=tls[t];return(l&&typeof l==="object"&&l.monthly)?l.monthly*60:0;},_color:"#60A5FA",_bg:"rgba(96,165,250,0.07)"}
+  ];
+
+  return(
+    <div ref={outerRef} style={{padding:"12px 8px"}}>
+      {cellTip&&<div style={{position:"fixed",left:cellTip.x,top:cellTip.y-26,transform:"translateX(-50%)",background:"rgba(30,30,30,0.82)",color:"#fff",fontSize:11,fontWeight:600,padding:"2px 7px",borderRadius:10,pointerEvents:"none",zIndex:9999,whiteSpace:"nowrap",backdropFilter:"blur(4px)"}}>{cellTip.value}</div>}
+      <div style={{marginBottom:10,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        <span style={{fontWeight:700,fontSize:15}}>シフト作成</span>
+        <select value={selPid} onChange={e=>{setSelPid(e.target.value);setLocalEdits({});}}
+          style={{fontSize:16,padding:"4px 8px",border:BD,borderRadius:6,background:"var(--c-input)",color:"var(--c-text)"}}>
+          {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
+        </select>
+        <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPremium?"例: 9, 9.5, 930, 9:30":"閲覧のみ（編集はPremiumプランで）"}</span>
+        <button onClick={()=>setFitAll(v=>!v)}
+          style={{padding:"5px 10px",background:fitAll?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+          {fitAll?"通常表示":"全員表示"}
+        </button>
+        {period&&<button onClick={()=>{
+          const adjResolver=(name,date,field)=>{
+            const key=`${name}|${date}|${field}`;
+            let time="";
+            if(key in localEdits){const{numeric}=extractNote(localEdits[key]);time=parseTime(numeric)||"";}
+            else{time=getStoredTime(name,date,field);}
+            let note="";
+            if(key in localEdits){note=extractNote(localEdits[key]).note||"";}
+            else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=sh?.[adjNk]??sh?.[origNk]??"";}
+            return{time,note};
+          };
+          expXl(period,subs,staffList,tt,shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{}},adjResolver);
+        }}
+          style={{padding:"6px 14px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+          Excel出力
+        </button>}
+      </div>
+
+      {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
+        <div style={useBreakout?{marginLeft:-containerLeft,width:"100vw",paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:hasPanel?"flex":"block",alignItems:"flex-start",gap:4}:{}}>
+
+          {/* === 左パネル: キッチン熱マップ（通常表示+split時のみ） === */}
+          {hasPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
+            <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="キッチン"/>
+          </div>}
+
+          {/* === 中央: グリッド + 集計 === */}
+          <div style={hasPanel?{flex:1,minWidth:0}:{}}>
+
+          {/* ===メイングリッド（SL列廃止・日付のみstickyで15名対応）=== */}
+          <div ref={mainScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
+            <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
+              <thead ref={gridTheadRef}>
+                <tr>
+                  <th style={{...SD,top:0,zIndex:4,padding:"4px",fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>
+                  {realStaff.map(name=>VTH(name))}
+                </tr>
+              </thead>
+              <tbody ref={gridBodyRef}>
+                {dates.map(date=>{
+                  const d=pd(date);const day=d.getDay();
+                  const isHol=isHoliday(date);const isSun=day===0;const isSat=day===6;
+                  const dc=(isSun||isHol)?"#e53935":isSat?"#1976d2":"var(--c-text)";
+                  const rb=(isSun||isHol)?"rgba(229,57,53,0.07)":isSat?"rgba(25,118,210,0.07)":"transparent";
+                  return[
+                    <tr key={date+"-s"} style={{background:rb}}>
+                      <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
+                      {realStaff.map(name=>(
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
+                          <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
+                            readOnly={!isPremium} disabled={!isPremium}
+                            data-sc={`${date}|start`} data-scn={name}
+                            onChange={e=>isPremium&&handleChange(name,date,"start",e.target.value)}
+                            onClick={!isPremium?()=>onUpgrade&&onUpgrade({type:"edit",plan}):undefined}
+                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
+                            onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);}}
+                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"start",e.target.value);document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}
+                            style={{...AI2,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                        </td>
+                      ))}
+                    </tr>,
+                    <tr key={date+"-e"} style={{background:rb}}>
+                      {realStaff.map(name=>(
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
+                          <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
+                            readOnly={!isPremium} disabled={!isPremium}
+                            data-sc={`${date}|end`} data-scn={name}
+                            onChange={e=>isPremium&&handleChange(name,date,"end",e.target.value)}
+                            onClick={!isPremium?()=>onUpgrade&&onUpgrade({type:"edit",plan}):undefined}
+                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
+                            onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);}}
+                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();const ndi=dates.indexOf(date)+1;handleBlur(name,date,"end",e.target.value);if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}
+                            style={{...AI2,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                        </td>
+                      ))}
+                    </tr>
+                  ];
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* === 休みの日カウント === */}
+          <div ref={restScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
+            <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
+              <thead>
+                <tr>
+                  <th style={{...SD,top:0,zIndex:4,fontWeight:600,borderBottom:BD2,background:CRD,fontSize:11}}>休みカウント</th>
+                  {realStaff.map(name=>(
+                    <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
+                      {(restCounts[name]||0)%1===0?(restCounts[name]||0):(restCounts[name]||0).toFixed(1)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+            </table>
+          </div>
+
+          {/* ===時間帯別出勤人数 (全員表示 or split無し → グリッド下に表示) === */}
+          {!hasPanel&&<div style={{marginBottom:16}}>
+            <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>時間帯別出勤人数</div>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              <HeatTable label={hasSplit?"キッチン":""} section="kit" maxC={kitMax}/>
+              {hasSplit&&<HeatTable label="ホール" section="hall" maxC={hallMax}/>}
+            </div>
+          </div>}
+
+          {/* ===期間別勤務時間（前半/後半/月計を常に3行）=== */}
+          <SummaryTable title="期間別勤務時間" rowLabel="期間" scrollRef={periodScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} rows={periodRows}/>
+
+          {/* ===週間勤務時間=== */}
+          {weeks.length>0&&<SummaryTable
+            title="週間勤務時間（前期間含む）"
+            rowLabel="週"
+            scrollRef={weekScrollRef}
+            onScroll={e=>syncScrollH(e.currentTarget)}
+            rows={[...weeks.map(monStr=>{
+              const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);
+              const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};
+              return{id:monStr,label:`${m.getDate()}〜${sun.getDate()}日`,getMin:name=>getWeekMin(monStr,name),
+                _violateFn:(name,min)=>{const t=(settings.staffAttributes||{})[name]||"parttime";const l=tls[t];const lim=l&&typeof l==="object"&&l.weekly?l.weekly*60:0;return lim>0&&min>=lim;}};
+            }),{id:"weekly_limit",label:"週上限",getMin:name=>{const t=(settings.staffAttributes||{})[name]||"parttime";const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};const l=tls[t];return(l&&typeof l==="object"&&l.weekly)?l.weekly*60:0;},_color:"#60A5FA",_bg:"rgba(96,165,250,0.07)"}]}
+          />}
+
+          </div>{/* end center */}
+
+          {/* === 右パネル: ホール熱マップ（通常表示+split時のみ） === */}
+          {hasPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
+            <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="ホール"/>
+          </div>}
+
+        </div>
+      )}
     </div>
   );
 }
@@ -2483,7 +2916,7 @@ function PEF({period,onSave,onCancel}){
 }
 
 // ===== Excel出力 =====
-function expXl(p,subs,staffList,tt,shopName,options={}){
+function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   ph("excel_exported",{period_id:p.id,submission_count:subs.filter(s=>s.periodId===p.id).length});
   const ss=subs.filter(s=>s.periodId===p.id);
   if(typeof ExcelJS==="undefined"){tt("▲ ExcelJS未読込み");return;}
@@ -2542,9 +2975,10 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
   const aH={horizontal:"center",vertical:"middle"};
 
   // 塗り
-  const fSat ={type:"pattern",pattern:"solid",fgColor:{argb:R("DDEEFF")},bgColor:{argb:"FFFFFFFF"}};
-  const fHol ={type:"pattern",pattern:"solid",fgColor:{argb:R("FFEEEE")},bgColor:{argb:"FFFFFFFF"}};
-  const fNone={type:"pattern",pattern:"none"};
+  const fSat  ={type:"pattern",pattern:"solid",fgColor:{argb:R("DDEEFF")},bgColor:{argb:"FFFFFFFF"}};
+  const fHol  ={type:"pattern",pattern:"solid",fgColor:{argb:R("FFEEEE")},bgColor:{argb:"FFFFFFFF"}};
+  const fYel  ={type:"pattern",pattern:"solid",fgColor:{argb:R("FFFF00")},bgColor:{argb:"FFFFFFFF"}};
+  const fNone ={type:"pattern",pattern:"none"};
 
   const wb=new ExcelJS.Workbook();
   wb.creator="ShiftApp";
@@ -2637,8 +3071,17 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
         SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
       } else if(isWork){
         const fmtT=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return m===0?String(h):String(h+m/60);};
-        SC(rT,ci,sh.start?fmtT(sh.start):null,aH,fill,{top:M,bottom:H,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
-        SC(rB,ci,sh.end?fmtT(sh.end):null,aH,fill,{top:H,bottom:botT,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
+        // resolver がある場合は調整済み値を使用
+        const rv=resolver?{st:resolver(nm,ds,"start"),en:resolver(nm,ds,"end")}:null;
+        const startT=rv?rv.st.time:sh.start, endT=rv?rv.en.time:sh.end;
+        const sNote=rv?rv.st.note:(sh.startNote||""), eNote=rv?rv.en.note:(sh.endNote||"");
+        // サフィックスh/k/xがある場合は黄色塗り
+        const startFill=sNote?fYel:fill;
+        const endFill=eNote?fYel:fill;
+        const startDisp=startT?((fmtT(startT)||"")+sNote):null;
+        const endDisp=endT?((fmtT(endT)||"")+eNote):null;
+        SC(rT,ci,startDisp,aH,startFill,{top:M,bottom:H,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
+        SC(rB,ci,endDisp,aH,endFill,{top:H,bottom:botT,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
       } else {
         // 休み: 斜線（右上→左下）
         const diagU={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
@@ -2661,7 +3104,7 @@ function expXl(p,subs,staffList,tt,shopName,options={}){
   // ファイル名・ダウンロード
   const sn=(shopName||"店舗").replace(/[\\/:*?"<>|]/g,"");
   const pl=periodLabel.replace(/[\\/:*?"<>|]/g,"");
-  const fname=`${sn}${pl}.xlsx`;
+  const fname=`${sn}${pl}${resolver?"":"_修正前"}.xlsx`;
   wb.xlsx.writeBuffer().then(buf=>{
     const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
     const url=URL.createObjectURL(blob);
@@ -2807,9 +3250,9 @@ const dragIdxRef=useRef(null);
               :<>
                 {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid #D1D5DB",cursor:"pointer",flexShrink:0,padding:0}}/>}
                 <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{n}</span>
-                {isPremium&&<select value={(settings.staffAttributes||{})[n]||""} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:12,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
+                {isPremium&&<select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:12,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
                   <option value="">属性なし</option>
-                  {Object.entries(STAFF_TYPE_LABELS).map(([v,l])=><option key={v} value={v}>{l}</option>)}
+                  {Object.entries({employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})}).map(([v,t])=>{const label=(typeof t==="object"?t.name:"")||STAFF_TYPE_LABELS[v]||"";return label?<option key={v} value={v}>{label}</option>:null;})}
                 </select>}
                 {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
                   別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
@@ -3204,9 +3647,9 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           <tbody>{fil.length===0
             ?<tr><td colSpan={6} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
             :fil.map(sub=>{const ds=Object.keys(sub.shifts||{}).sort(),wk=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").length,at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const rm=t=>Math.floor(new Date(t).getTime()/60000);const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&rm(sub.updatedAt)>rm(sub.submittedAt);const subOT=isPremium?getOT(sub.staffName,settings):0;const totalMin=isPremium?ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").reduce((acc,d)=>acc+calcNetWorkMinutes(sub.shifts[d],getBreakList(settings,d),subOT),0):0;
-              const staffType=isPremium?((settings.staffAttributes)||{})[sub.staffName]:null;const typeLim=staffType?((settings.staffTypeLimits)||{})[staffType]||{daily:0,weekly:0}:{daily:0,weekly:0};let dailyVio=false,weeklyVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly)){const weekMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreakList(settings,d),subOT);if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));const wk2=fd(mon);weekMap[wk2]=(weekMap[wk2]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});}const hasVio=dailyVio||weeklyVio;
+              const staffType=isPremium?((settings.staffAttributes)||{})[sub.staffName]:null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly||typeLim.customDays)){const weekMap={};const monthMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreakList(settings,d),subOT);if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));weekMap[fd(mon)]=(weekMap[fd(mon)]||0)+nm;monthMap[d.slice(0,7)]=(monthMap[d.slice(0,7)]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly){const wkKeys=Object.keys(weekMap).sort();for(let i=0;i<wkKeys.length;i+=2){const tot=(weekMap[wkKeys[i]]||0)+(weekMap[wkKeys[i+1]]||0);if(tot>typeLim.biweekly*60)biweeklyVio=true;}}if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});if(typeLim.customDays&&typeLim.customHours){const sortedDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();for(let i=0;i<sortedDs.length;i++){const start=pd(sortedDs[i]);let tot=0;for(let j=i;j<sortedDs.length;j++){const diffD=(pd(sortedDs[j])-start)/86400000;if(diffD>=typeLim.customDays)break;const sh=sub.shifts[sortedDs[j]];tot+=calcNetWorkMinutes(sh,getBreakList(settings,sortedDs[j]),subOT);}if(tot>typeLim.customHours*60){customVio=true;break;}}}}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;
               const holidayDays=ds.length-wk;let maxConsec=0,halfDays=0;if(isPremium){const curPer=periods.find(p=>p.id===sub.periodId);const prevPer=curPer?[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate)).find(p=>new Date(p.endDate)<new Date(curPer.startDate)):null;const prevSb=prevPer?subs.find(s=>s.periodId===prevPer.id&&(s.staffName===sub.staffName||(staffAliases[sub.staffName]||[]).includes(s.staffName))):null;const prevDs2=prevSb?Object.keys(prevSb.shifts||{}).sort():[];const allC=[...new Set([...prevDs2,...ds])].sort();let consec=0;allC.forEach(d=>{const sh2=ds.includes(d)?sub.shifts[d]:prevSb?.shifts?.[d];if(sh2&&sh2.status==="work"){consec++;maxConsec=Math.max(maxConsec,consec);}else consec=0;});halfDays=ds.filter(d=>{const s=sub.shifts[d];return s&&s.status==="work"&&calcNetWorkMinutes(s,getBreakList(settings,d),subOT)<240;}).length;}
-              return(<tr key={sub.id} style={hasVio?{background:"rgba(255,71,87,.04)"}:{}}>
+              return(<tr key={sub.id} style={hasVio?{background:"rgba(255,71,87,.12)"}:{}}>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text)",fontWeight:600}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                   <span>{sub.staffName}</span>
@@ -3366,6 +3809,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
   const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
   const[emailInput,setEmailInput]=useState("");
   const[codeInput,setCodeInput]=useState("");
+  const[pendingNewType,setPendingNewType]=useState(null); // null | {name:""}
   const[linkLoading,setLinkLoading]=useState(false);
   const[linkError,setLinkError]=useState("");
   // Cookie認証ユーザー向けアカウント登録/連携
@@ -3627,31 +4071,70 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       </div>
     </AC>}
 
-    {plan==="premium"&&<AC title="スタッフ属性別 勤務時間制限">
-      <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は無制限。制限を超えたスタッフは提出一覧で赤くハイライトされます。スタッフ登録タブで各スタッフに属性を設定してください。</div>
-      {[["employee","社員"],["parttime","バイト"],["dispatch","派遣"],["other","その他"]].map(([type,label])=>{
-        const lim=((settings.staffTypeLimits)||{})[type]||{daily:0,weekly:0};
-        return(<div key={type} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:10}}>
-          <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:8}}>{label}</div>
-          <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1日の上限</span>
-              <input type="number" min={0} max={24} value={lim.daily||""} placeholder="0"
-                onChange={e=>{const v=Math.max(0,Math.min(24,parseInt(e.target.value)||0));onSave({...settings,staffTypeLimits:{...(settings.staffTypeLimits||{}),[type]:{...lim,daily:v}}});}}
-                style={{...AI,width:60,textAlign:"center",padding:"6px 8px"}}/>
-              <span style={{fontSize:12,color:"var(--c-text4)"}}>時間</span>
+    {plan==="premium"&&(()=>{
+      const tls=settings.staffTypeLimits||{};
+      const saveAllLimits=(newTls)=>onSave({...settings,staffTypeLimits:newTls});
+      const saveLim=(type,key,val)=>saveAllLimits({...tls,[type]:{...tls[type],[key]:val}});
+      const confirmAddType=()=>{if(!pendingNewType)return;const nm=pendingNewType.name.trim();if(!nm){setPendingNewType(null);return;}const id="custom_"+genSecureId(8);saveAllLimits({...tls,[id]:{name:nm,daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}});setPendingNewType(null);};
+      const deleteType=(id)=>{const n={...tls};delete n[id];const attrs={...(settings.staffAttributes||{})};Object.keys(attrs).forEach(k=>{if(attrs[k]===id)delete attrs[k];});onSave({...settings,staffTypeLimits:n,staffAttributes:attrs});};
+      const renameType=(id,name)=>saveAllLimits({...tls,[id]:{...tls[id],name}});
+      // builtinで未登録のものはデフォルト値で補完（社員・バイトのみ）
+      const DEFAULT_TYPES=["employee","parttime"];
+      const tlsMerged={...tls};DEFAULT_TYPES.forEach(k=>{if(!tlsMerged[k])tlsMerged[k]={name:STAFF_TYPE_LABELS[k],daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0};});
+      const typeEntries=Object.entries(tlsMerged);
+      return(<AC title="スタッフ属性別 勤務時間制限">
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は無制限。制限を超えたスタッフは提出一覧で赤くハイライトされます。</div>
+        {typeEntries.map(([type,limRaw])=>{
+          const lim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeof limRaw==="object"?limRaw:{name:limRaw})};
+          const isBuiltin=BUILTIN_TYPES.includes(type);
+          const displayName=lim.name||STAFF_TYPE_LABELS[type]||type;
+          return(<div key={type} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+              {isBuiltin
+                ?<div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",flex:1}}>{displayName}</div>
+                :<input value={lim.name||""} placeholder="属性名を入力" onChange={e=>renameType(type,e.target.value)}
+                    style={{...AI,flex:1,fontSize:13,fontWeight:700,padding:"4px 8px"}}/>
+              }
+              {!isBuiltin&&<button onClick={()=>deleteType(type)} style={{padding:"4px 10px",background:"rgba(229,57,53,.1)",border:"1px solid rgba(229,57,53,.3)",borderRadius:6,color:"#e53935",fontSize:12,cursor:"pointer"}}>削除</button>}
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>週の上限</span>
-              <input type="number" min={0} max={168} value={lim.weekly||""} placeholder="0"
-                onChange={e=>{const v=Math.max(0,Math.min(168,parseInt(e.target.value)||0));onSave({...settings,staffTypeLimits:{...(settings.staffTypeLimits||{}),[type]:{...lim,weekly:v}}});}}
-                style={{...AI,width:60,textAlign:"center",padding:"6px 8px"}}/>
-              <span style={{fontSize:12,color:"var(--c-text4)"}}>時間</span>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              {[["daily","1日",24],["weekly","週",168],["biweekly","2週間",336],["monthly","1ヶ月",744]].map(([key,lbl,mx])=>(
+                <div key={key} style={{display:"flex",alignItems:"center",gap:4}}>
+                  <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{lbl}</span>
+                  <input type="number" min={0} max={mx} value={lim[key]||""} placeholder="0"
+                    onChange={e=>{const v=Math.max(0,Math.min(mx,parseInt(e.target.value)||0));saveLim(type,key,v);}}
+                    style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
+                  <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+                </div>
+              ))}
+              <div style={{display:"flex",alignItems:"center",gap:4,paddingLeft:4,borderLeft:"1px solid var(--c-border)"}}>
+                <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>任意</span>
+                <input type="number" min={0} max={365} value={lim.customDays||""} placeholder="日数"
+                  onChange={e=>{const v=Math.max(0,Math.min(365,parseInt(e.target.value)||0));saveLim(type,"customDays",v);}}
+                  style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
+                <span style={{fontSize:11,color:"var(--c-text4)"}}>日で</span>
+                <input type="number" min={0} max={744} value={lim.customHours||""} placeholder="時間"
+                  onChange={e=>{const v=Math.max(0,Math.min(744,parseInt(e.target.value)||0));saveLim(type,"customHours",v);}}
+                  style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
+                <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+              </div>
             </div>
+          </div>);
+        })}
+        {pendingNewType&&<div style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid #f87036",borderRadius:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+            <input autoFocus value={pendingNewType.name} placeholder="属性名を入力"
+              onChange={e=>setPendingNewType({name:e.target.value})}
+              onKeyDown={e=>{if(e.key==="Enter")confirmAddType();if(e.key==="Escape")setPendingNewType(null);}}
+              style={{...AI,flex:1,fontSize:13,fontWeight:700,padding:"4px 8px"}}/>
+            <button onClick={confirmAddType} style={{padding:"4px 10px",background:"rgba(248,112,54,.15)",border:"1px solid #f87036",borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer"}}>追加</button>
+            <button onClick={()=>setPendingNewType(null)} style={{padding:"4px 10px",background:"transparent",border:"1px solid var(--c-border)",borderRadius:6,color:"var(--c-text3)",fontSize:12,cursor:"pointer"}}>ｷｬﾝｾﾙ</button>
           </div>
-        </div>);
-      })}
-    </AC>}
+          <div style={{fontSize:11,color:"var(--c-text4)"}}>保存後に制限値を設定できます</div>
+        </div>}
+        {!pendingNewType&&<button onClick={()=>setPendingNewType({name:""})} style={{width:"100%",padding:"8px",background:"transparent",border:"1px dashed var(--c-border2)",borderRadius:8,color:"var(--c-text3)",fontSize:12,cursor:"pointer",marginTop:4}}>＋ 属性を追加</button>}
+      </AC>);
+    })()}
 
     {plan==="premium"&&staffList.filter(n=>!isSpacer(n)).length>0&&<AC title="退勤延長設定">
       <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>スタッフごとにシフト終了後の延長時間を設定します。勤務時間合計に加算され、提出一覧の退勤欄に表示されます。</div>
@@ -3865,7 +4348,11 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
                 ["Excel店舗名変更","✕","✓","✓"],
                 ["スタッフ名色設定","✕","✓","✓"],
                 ["名前リンク（別名）","✕","✓","✓"],
-                ["Premium機能","✕","✕","✓"],
+                ["シフトの作成・書き出し","✕","✕","✓"],
+                ["勤務時間の制限の表示","✕","✕","✓"],
+                ["時間帯別出勤人数の表示","✕","✕","✓"],
+                ["期間別勤務時間の表示","✕","✕","✓"],
+                ["総勤務時間の表示","✕","✕","✓"],
               ].map(([feat,...vals])=>(
                 <tr key={feat}>
                   <td style={{padding:"9px 6px",color:"var(--c-text3)",fontSize:12,fontWeight:600,borderBottom:"1px solid var(--c-border)"}}>{feat}</td>
@@ -3914,12 +4401,14 @@ const CF_BASE = DEV_MODE
   : "https://asia-northeast1-ontheshift.cloudfunctions.net";
 
 function UpgradeModal({reason,currentPlan,shopId,onClose}){
-  const[loading,setLoading]=useState(null); // "pro" | null
+  const[loading,setLoading]=useState(null);
   const[error,setError]=useState("");
+  const isEditType=reason.type==="edit";
   const msgs={
     shops:  {title:"店舗数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}店舗まで管理できます。`,next:"Proプランで無制限に管理できます。"},
     staff:  {title:"スタッフ数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}名まで登録できます。`,next:"Proプランで無制限に登録できます。"},
     periods:{title:"期間数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}件まで期間を作成できます。`,next:"Proプランにアップグレードすると無制限に作成できます。"},
+    edit:   {title:"シフト作成タブの編集機能",desc:"シフト時間の調整・編集はPremiumプランの機能です。",next:"Premiumプランにアップグレードすると、提出されたシフト時間を管理者側で編集・調整できます。"},
   };
   const m=msgs[reason.type]||{title:"上限に達しました",desc:"",next:""};
 
@@ -3940,29 +4429,39 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
     }finally{setLoading(null);}
   };
 
+  const planRows=isEditType
+    ?[["Free","無料","スタッフ20名 / 期間1件"],["Pro","500円/月","スタッフ・期間 無制限"],["★ Premium","2,980円/月","全機能 + シフト時間編集"]]
+    :[["Free","無料","スタッフ20名 / 期間1件"],["★ Pro","500円/月","スタッフ・期間 無制限 + 全機能"],["Premium","2,980円/月","全機能 + シフト時間編集"]];
+
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20,animation:"fI .2s"}} onClick={onClose}>
-      <div style={{background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:20,width:"100%",maxWidth:380,padding:"28px 24px",animation:"sI .2s",boxShadow:"0 8px 40px rgba(0,0,0,.3)"}} onClick={e=>e.stopPropagation()}>
+      <div style={{background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:20,width:"100%",maxWidth:400,padding:"28px 24px",animation:"sI .2s",boxShadow:"0 8px 40px rgba(0,0,0,.3)"}} onClick={e=>e.stopPropagation()}>
         <div style={{textAlign:"center",marginBottom:20}}>
-          <div style={{fontSize:44,marginBottom:10}}></div>
+          <div style={{fontSize:44,marginBottom:10}}>{isEditType?"✏️":"🚀"}</div>
           <div style={{fontSize:17,fontWeight:700,color:"var(--c-text)",marginBottom:8}}>{m.title}</div>
           <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8}}>{m.desc}</div>
           <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6}}>{m.next}</div>
         </div>
         <div style={{background:"rgba(248,112,54,.08)",border:"1px solid rgba(248,112,54,.25)",borderRadius:12,padding:"14px 16px",marginBottom:16}}>
           <div style={{fontSize:12,fontWeight:700,color:"#f87036",marginBottom:8}}>プラン比較</div>
-          {[["Free","無料","スタッフ20名 / 期間1件"],["★ Pro","500円/月","スタッフ・期間 無制限 + 全機能"]].map(([label,price,desc])=>(
-            <div key={label} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0",borderBottom:"1px solid var(--c-border)"}}>
-              <span style={{fontSize:13,color:"var(--c-text2)",fontWeight:600}}>{label}</span>
-              <span style={{fontSize:11,color:"var(--c-text3)"}}>{desc}</span>
-              <span style={{fontSize:12,color:"#F59E0B",fontWeight:700}}>{price}</span>
+          {planRows.map(([label,price,desc])=>(
+            <div key={label} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid var(--c-border)"}}>
+              <span style={{fontSize:13,color:"var(--c-text2)",fontWeight:600,minWidth:72}}>{label}</span>
+              <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{desc}</span>
+              <span style={{fontSize:12,color:"#F59E0B",fontWeight:700,whiteSpace:"nowrap"}}>{price}</span>
             </div>
           ))}
         </div>
         {error&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:10,background:"rgba(255,71,87,.1)",padding:"8px",borderRadius:8}}>{error}</div>}
-        <button onClick={()=>checkout("pro")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="pro"?"var(--c-text3)":"linear-gradient(135deg,#f87036,#e05a1a)",border:"2px solid rgba(248,112,54,.3)",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
-          {loading==="pro"?"⏳ 処理中...":"★ Proにアップグレード（500円/月）"}
-        </button>
+        {isEditType?(
+          <button onClick={()=>checkout("premium")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="premium"?"var(--c-text3)":"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"2px solid rgba(124,58,237,.3)",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
+            {loading==="premium"?"⏳ 処理中...":"★ Premiumにアップグレード（2,980円/月）"}
+          </button>
+        ):(
+          <button onClick={()=>checkout("pro")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="pro"?"var(--c-text3)":"linear-gradient(135deg,#f87036,#e05a1a)",border:"2px solid rgba(248,112,54,.3)",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
+            {loading==="pro"?"⏳ 処理中...":"★ Proにアップグレード（500円/月）"}
+          </button>
+        )}
         <button onClick={onClose} style={{width:"100%",padding:"11px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:11,color:"var(--c-text3)",fontSize:13,cursor:"pointer"}}>今はしない</button>
       </div>
     </div>

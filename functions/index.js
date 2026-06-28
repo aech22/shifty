@@ -14,7 +14,8 @@ function getStripe() {
 
 // Stripe Price ID
 const STRIPE_PRICES = {
-  pro_monthly: "price_1TgTwHDjKKQsHl7LRZKClgFc", // Shifty Pro 500円/月（本番）
+  pro_monthly:     "price_1TgTwHDjKKQsHl7LRZKClgFc", // Shifty Pro 500円/月（本番）
+  premium_monthly: "price_1TnOJYDjKKQsHl7LhJxMUbQE", // Shifty Premium 2,980円/月
 };
 
 // ============================================================
@@ -35,7 +36,7 @@ exports.createCheckoutSession = functions
     const { shopId, plan, successUrl, cancelUrl } = req.body;
     if (!shopId || !plan) { res.status(400).json({ error: "shopId, plan は必須です" }); return; }
 
-    const priceId = STRIPE_PRICES.pro_monthly;
+    const priceId = plan === "premium" ? STRIPE_PRICES.premium_monthly : STRIPE_PRICES.pro_monthly;
     const stripe = getStripe();
 
     try {
