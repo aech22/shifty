@@ -15,7 +15,7 @@ function getStripe() {
 // Stripe Price ID
 const STRIPE_PRICES = {
   pro_monthly:     "price_1TgTwHDjKKQsHl7LRZKClgFc", // Shifty Pro 500円/月（本番）
-  premium_monthly: "price_REPLACE_WITH_PREMIUM_PRICE_ID", // Shifty Premium 2,980円/月（要Stripe作成）
+  premium_monthly: "price_1TnOJYDjKKQsHl7LhJxMUbQE", // Shifty Premium 2,980円/月
 };
 
 // ============================================================
