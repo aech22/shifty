@@ -2484,24 +2484,29 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
 
-  // グリッドの実際の行高を測定してサイドパネルと同期（dates・colW宣言後に配置）
+  // グリッドの実際の行高・thead高を測定してサイドパネルと同期
   useEffect(()=>{
-    if(!gridBodyRef.current)return;
-    const rows=gridBodyRef.current.querySelectorAll("tr");
-    if(rows.length>=2){
-      const h1=rows[0].getBoundingClientRect().height;
-      const h2=rows[1].getBoundingClientRect().height;
-      if(h1>0&&h2>0)setMeasuredRowH(h1+h2);
+    if(gridBodyRef.current){
+      const rows=gridBodyRef.current.querySelectorAll("tr");
+      if(rows.length>=2){
+        const h1=rows[0].getBoundingClientRect().height;
+        const h2=rows[1].getBoundingClientRect().height;
+        if(h1>0&&h2>0)setMeasuredRowH(h1+h2);
+      }
+    }
+    if(gridTheadRef.current){
+      const h=gridTheadRef.current.getBoundingClientRect().height;
+      if(h>0)setMeasuredTheadH(h);
     }
   },[selPid,dates.length,colW]);
 
-  const HeatTable=({label,section,maxC,rowH})=>(
+  const HeatTable=({label,section,maxC,rowH,theadH})=>(
     <div style={{overflowX:"auto",border:BD,borderRadius:8,flex:rowH?undefined:1,minWidth:rowH?undefined:200}}>
       {label&&<div style={{fontSize:12,fontWeight:700,padding:"4px 8px",borderBottom:BD,color:"var(--c-text2)"}}>{label}</div>}
       <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
-        <thead><tr>
-          <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,whiteSpace:"nowrap"}}>日付</th>
-          {heatHours.map(hr=><th key={hr} style={{minWidth:22,padding:"2px 1px",fontSize:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500}}>{hr}</th>)}
+        <thead><tr style={theadH?{height:theadH}:{}}>
+          <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,whiteSpace:"nowrap",verticalAlign:"bottom"}}>日付</th>
+          {heatHours.map(hr=><th key={hr} style={{minWidth:22,padding:"2px 1px",fontSize:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500,verticalAlign:"bottom"}}>{hr}</th>)}
         </tr></thead>
         <tbody>{dates.map(date=>{
           const d=pd(date);const day=d.getDay();const isHol=isHoliday(date);
@@ -2580,7 +2585,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           {/* === 左パネル: キッチン熱マップ（split時は常に表示） === */}
           {hasSplit&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
             <div style={{fontSize:11,fontWeight:700,padding:"2px 4px",color:"var(--c-text2)"}}>キッチン</div>
-            <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH}/>
+            <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH}/>
           </div>}
 
           {/* === 中央: グリッド + 集計 === */}
@@ -2589,7 +2594,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           {/* ===メイングリッド（SL列廃止・日付のみstickyで15名対応）=== */}
           <div ref={mainScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
             <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
-              <thead>
+              <thead ref={gridTheadRef}>
                 <tr>
                   <th style={{...SD,top:0,zIndex:4,padding:"4px",fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>
                   {realStaff.map(name=>VTH(name))}
@@ -2665,7 +2670,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           {/* === 右パネル: ホール熱マップ（split時は常に表示） === */}
           {hasSplit&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
             <div style={{fontSize:11,fontWeight:700,padding:"2px 4px",color:"var(--c-text2)"}}>ホール</div>
-            <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH}/>
+            <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH}/>
           </div>}
 
         </div>
