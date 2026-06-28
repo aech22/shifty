@@ -265,7 +265,7 @@ function makePeriod(shopId){
   return{id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:`${yr}年${mo}月前半`,startDate:`${yr}-${ms}-01`,endDate:`${yr}-${ms}-15`,deadlineDate:"",createdAt:new Date().toISOString()};
 }
 function makeSettings(shopId){
-  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{name:"社員",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},parttime:{name:"バイト",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},dispatch:{name:"派遣",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},other:{name:"その他",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}},overtimeSettings:{byStaff:{}}};
+  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{name:"社員",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},parttime:{name:"バイト",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}},overtimeSettings:{byStaff:{}}};
 }
 
 // ===== URL生成・解析 =====
@@ -3895,7 +3895,10 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       const addType=()=>{const id="custom_"+genSecureId(8);saveAllLimits({...tls,[id]:{name:"新しい属性",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}});};
       const deleteType=(id)=>{const n={...tls};delete n[id];const attrs={...(settings.staffAttributes||{})};Object.keys(attrs).forEach(k=>{if(attrs[k]===id)delete attrs[k];});onSave({...settings,staffTypeLimits:n,staffAttributes:attrs});};
       const renameType=(id,name)=>saveAllLimits({...tls,[id]:{...tls[id],name}});
-      const typeEntries=Object.entries(tls).length>0?Object.entries(tls):Object.entries(STAFF_TYPE_LABELS).map(([k,v])=>[k,{name:v}]);
+      // builtinで未登録のものはデフォルト値で補完（社員・バイトのみ）
+      const DEFAULT_TYPES=["employee","parttime"];
+      const tlsMerged={...tls};DEFAULT_TYPES.forEach(k=>{if(!tlsMerged[k])tlsMerged[k]={name:STAFF_TYPE_LABELS[k],daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0};});
+      const typeEntries=Object.entries(tlsMerged);
       return(<AC title="スタッフ属性別 勤務時間制限">
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は無制限。制限を超えたスタッフは提出一覧で赤くハイライトされます。</div>
         {typeEntries.map(([type,limRaw])=>{
@@ -3906,7 +3909,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
               {isBuiltin
                 ?<div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",flex:1}}>{displayName}</div>
-                :<input value={displayName} onChange={e=>renameType(type,e.target.value)}
+                :<input value={lim.name||""} placeholder="属性名を入力" onChange={e=>renameType(type,e.target.value)}
                     style={{...AI,flex:1,fontSize:13,fontWeight:700,padding:"4px 8px"}}/>
               }
               {!isBuiltin&&<button onClick={()=>deleteType(type)} style={{padding:"4px 10px",background:"rgba(229,57,53,.1)",border:"1px solid rgba(229,57,53,.3)",borderRadius:6,color:"#e53935",fontSize:12,cursor:"pointer"}}>削除</button>}
