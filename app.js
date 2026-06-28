@@ -4287,7 +4287,11 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
                 ["Excel店舗名変更","✕","✓","✓"],
                 ["スタッフ名色設定","✕","✓","✓"],
                 ["名前リンク（別名）","✕","✓","✓"],
-                ["Premium機能","✕","✕","✓"],
+                ["シフトの作成・書き出し","✕","✕","✓"],
+                ["勤務時間の制限の表示","✕","✕","✓"],
+                ["時間帯別出勤人数の表示","✕","✕","✓"],
+                ["期間別勤務時間の表示","✕","✕","✓"],
+                ["総勤務時間の表示","✕","✕","✓"],
               ].map(([feat,...vals])=>(
                 <tr key={feat}>
                   <td style={{padding:"9px 6px",color:"var(--c-text3)",fontSize:12,fontWeight:600,borderBottom:"1px solid var(--c-border)"}}>{feat}</td>
