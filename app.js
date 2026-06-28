@@ -3101,7 +3101,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   // ファイル名・ダウンロード
   const sn=(shopName||"店舗").replace(/[\\/:*?"<>|]/g,"");
   const pl=periodLabel.replace(/[\\/:*?"<>|]/g,"");
-  const fname=`${sn}${pl}${resolver?"_調整済":""}.xlsx`;
+  const fname=`${sn}${pl}${resolver?"":"_修正前"}.xlsx`;
   wb.xlsx.writeBuffer().then(buf=>{
     const blob=new Blob([buf],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
     const url=URL.createObjectURL(blob);
