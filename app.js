@@ -2321,7 +2321,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const periodScrollRef=useRef(null);
   const weekScrollRef=useRef(null);
   const gridBodyRef=useRef(null);
+  const gridTheadRef=useRef(null);
   const[measuredRowH,setMeasuredRowH]=useState(null);
+  const[measuredTheadH,setMeasuredTheadH]=useState(null);
 
   const isPro=plan==="pro"||plan==="premium";
 
