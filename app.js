@@ -9,7 +9,7 @@ const {useState,useEffect,useCallback,useRef,useMemo}=React;
 // DEV_MODE = true  → 開発用Firebase（developブランチ専用）
 // DEV_MODE = false → 本番Firebase（mainブランチ・リリース用）
 // ============================================================
-const DEV_MODE = true;
+const DEV_MODE = false;
 
 const FIREBASE_CONFIG_PROD = {
   apiKey:            "AIzaSyDdl1Li3QduufAFhBWcF4nmOlFcCsx8zlQ",
