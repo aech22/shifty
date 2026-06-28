@@ -2399,14 +2399,16 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   };
 
   // "h"なし勤務時間フォーマット
+  // "h"なし勤務時間フォーマット
   const fmtH=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;return m===0?String(h):`${h}:${String(m).padStart(2,"0")}`;};
+  // 日付を"日(曜)"のみ表示（月不要）
+  const fmtDL=date=>{const d=pd(date);return`${d.getDate()}(${WD[d.getDay()]})`;};
   const BD="1px solid var(--c-border)";const BD2="1px solid var(--c-border2)";const CRD="var(--c-card)";
-  const AI2={width:42,fontSize:16,border:BD,borderRadius:4,padding:"1px 2px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
-  const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",minWidth:72,padding:"2px 4px",fontSize:12,borderRight:BD2};
-  const SL={position:"sticky",left:72,background:CRD,zIndex:2,minWidth:26,padding:"2px 2px",fontSize:11,borderRight:BD,textAlign:"center"};
-  // 縦書きヘッダー（rotate除去で文字を正位置に）
+  // 出勤/退勤ラベル列を廃止し日付列だけsticky、列幅を36pxに縮小して15名対応
+  const AI2={width:36,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
+  const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",minWidth:52,padding:"2px 4px",fontSize:11,borderRight:BD2};
   const VTH=(name)=>(
-    <th key={name} style={{minWidth:42,maxWidth:42,padding:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"bottom"}}>
+    <th key={name} style={{minWidth:36,maxWidth:36,padding:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"bottom"}}>
       <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:72,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:600,color:"var(--c-text)",whiteSpace:"nowrap"}}>{name}</div>
     </th>
   );
@@ -2419,14 +2421,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       {label&&<div style={{fontSize:12,fontWeight:700,padding:"4px 8px",borderBottom:BD,color:"var(--c-text2)"}}>{label}</div>}
       <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
         <thead><tr>
-          <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:72,whiteSpace:"nowrap"}}>日付</th>
+          <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,whiteSpace:"nowrap"}}>日付</th>
           {heatHours.map(hr=><th key={hr} style={{minWidth:22,padding:"2px 1px",fontSize:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500}}>{hr}</th>)}
         </tr></thead>
         <tbody>{dates.map(date=>{
-          const d=pd(date);const dow=WD[d.getDay()];const day=d.getDay();const isHol=isHoliday(date);
+          const d=pd(date);const day=d.getDay();const isHol=isHoliday(date);
           const dc=(day===0||isHol)?"#e53935":day===6?"#1976d2":"var(--c-text)";
           return(<tr key={date}>
-            <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:11,color:dc,borderBottom:BD,whiteSpace:"nowrap"}}>{date.slice(5).replace("-","/")}({dow})</td>
+            <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:11,color:dc,borderBottom:BD,whiteSpace:"nowrap"}}>{fmtDL(date)}</td>
             {heatHours.map((hr,hi)=>{const n=countHeat(staff,date,hr);return(
               <td key={hi} style={{minWidth:22,padding:"2px 1px",textAlign:"center",fontSize:11,borderLeft:BD,borderBottom:BD,background:hBg(n,maxC),color:n===0?"var(--c-text4)":"var(--c-text)",fontWeight:n>0?600:400}}>{n||""}</td>
             );})}
@@ -2436,21 +2438,22 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     </div>
   );
 
-  // 集計表：scrollRefを外から渡してスクロール同期させる
+  // 集計表：scrollRefを外から渡してスクロール同期、sticky背景を確実に塗る
   const SummaryTable=({title,rowLabel,rows,scrollRef})=>(
     <div style={{marginBottom:16}}>
       <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>{title}</div>
       <div ref={scrollRef} style={{overflowX:"auto",border:BD,borderRadius:8}}>
         <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
           <thead><tr>
-            <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"4px 8px",fontSize:11,fontWeight:600,borderBottom:BD2,minWidth:100,whiteSpace:"nowrap"}}>{rowLabel}</th>
+            <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"4px 8px",fontSize:11,fontWeight:600,borderBottom:BD2,minWidth:90,whiteSpace:"nowrap"}}>{rowLabel}</th>
             {realStaff.map(name=>VTH(name))}
           </tr></thead>
           <tbody>{rows.map(row=>{
-            return(<tr key={row.id} style={{background:row._bg||"transparent"}}>
-              <td style={{position:"sticky",left:0,background:row._bg||CRD,zIndex:1,padding:"4px 8px",fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,whiteSpace:"nowrap"}}>{row.label}</td>
+            const bg=row._bg||"transparent";const stickyBg=row._bg||CRD;
+            return(<tr key={row.id} style={{background:bg}}>
+              <td style={{position:"sticky",left:0,background:stickyBg,zIndex:1,padding:"4px 8px",fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,whiteSpace:"nowrap"}}>{row.label}</td>
               {realStaff.map(name=>{const min=row.getMin(name);return(
-                <td key={name} style={{padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,fontWeight:row._bold&&min>0?700:400,color:min>0?(row._color||"var(--c-text2)"):"var(--c-text4)"}}>{min>0?fmtH(min):""}</td>
+                <td key={name} style={{padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:bg,fontWeight:row._bold&&min>0?700:400,color:min>0?(row._color||"var(--c-text2)"):"var(--c-text4)"}}>{min>0?fmtH(min):""}</td>
               );})}
             </tr>);
           })}</tbody>
@@ -2458,6 +2461,18 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       </div>
     </div>
   );
+
+  // 期間行：前半/後半/月計を常に3行表示
+  const mo2=period?pd(period.startDate).getMonth()+1:0;
+  const firstHalf=sameMoPeriods.find(p=>pd(p.startDate).getDate()<=15)||null;
+  const secondHalf=sameMoPeriods.find(p=>pd(p.startDate).getDate()>15)||null;
+  const periodRows=[
+    {id:firstHalf?.id||"nofirst",label:firstHalf?.label||`${mo2}月前半`,getMin:name=>firstHalf?getPeriodMin(firstHalf.id,name):0,
+      _bold:firstHalf?.id===selPid,_color:firstHalf?.id===selPid?"#f87036":undefined,_bg:firstHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
+    {id:secondHalf?.id||"nosecond",label:secondHalf?.label||`${mo2}月後半`,getMin:name=>secondHalf?getPeriodMin(secondHalf.id,name):0,
+      _bold:secondHalf?.id===selPid,_color:secondHalf?.id===selPid?"#f87036":undefined,_bg:secondHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
+    {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"#f87036",_bg:"rgba(248,112,54,0.10)"}
+  ];
 
   return(
     <div style={{padding:"12px 8px"}}>
@@ -2476,29 +2491,26 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
 
       {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
         <>
-          {/* ===メイングリッド=== */}
+          {/* ===メイングリッド（SL列廃止・日付のみstickyで15名対応）=== */}
           <div ref={mainScrollRef} style={{overflowX:"auto",border:BD,borderRadius:8,marginBottom:16}}>
             <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
               <thead>
                 <tr>
                   <th style={{...SD,top:0,zIndex:4,padding:"4px",fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>
-                  <th style={{...SL,top:0,zIndex:4,padding:"4px",fontSize:10,borderBottom:BD2,background:CRD}}>時間</th>
                   {realStaff.map(name=>VTH(name))}
                 </tr>
               </thead>
               <tbody>
                 {dates.map(date=>{
-                  const d=pd(date);const dow=WD[d.getDay()];const day=d.getDay();
+                  const d=pd(date);const day=d.getDay();
                   const isHol=isHoliday(date);const isSun=day===0;const isSat=day===6;
                   const dc=(isSun||isHol)?"#e53935":isSat?"#1976d2":"var(--c-text)";
                   const rb=(isSun||isHol)?"rgba(229,57,53,0.07)":isSat?"rgba(25,118,210,0.07)":"transparent";
-                  const dl=`${date.slice(5).replace("-","/")}(${dow})`;
                   return[
                     <tr key={date+"-s"} style={{background:rb}}>
-                      <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{dl}</td>
-                      <td style={{...SL,color:"#388e3c",background:CRD,borderBottom:"none",fontSize:11}}>出勤</td>
+                      <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
                       {realStaff.map(name=>(
-                        <td key={name} style={{padding:"1px 2px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb}}>
                           <input type="text" inputMode="decimal" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
                             onChange={e=>isPro&&handleChange(name,date,"start",e.target.value)}
@@ -2508,9 +2520,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                       ))}
                     </tr>,
                     <tr key={date+"-e"} style={{background:rb}}>
-                      <td style={{...SL,color:"#e53935",background:CRD,borderTop:"none",fontSize:11,borderBottom:BD}}>退勤</td>
                       {realStaff.map(name=>(
-                        <td key={name} style={{padding:"1px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb}}>
                           <input type="text" inputMode="decimal" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPro} disabled={!isPro}
                             onChange={e=>isPro&&handleChange(name,date,"end",e.target.value)}
@@ -2534,20 +2545,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             </div>
           </div>
 
-          {/* ===期間別勤務時間=== */}
-          <SummaryTable
-            title="期間別勤務時間"
-            rowLabel="期間"
-            scrollRef={periodScrollRef}
-            rows={[
-              ...sameMoPeriods.map(p=>{
-                const isF=pd(p.startDate).getDate()<=15;const mo2=pd(p.startDate).getMonth()+1;
-                const isCur=p.id===selPid;
-                return{id:p.id,label:p.label||(isF?`${mo2}月前半`:`${mo2}月後半`),getMin:name=>getPeriodMin(p.id,name),_bold:isCur,_color:isCur?"#f87036":undefined,_bg:isCur?"rgba(248,112,54,0.06)":undefined};
-              }),
-              {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"#f87036",_bg:"rgba(248,112,54,0.04)"}
-            ]}
-          />
+          {/* ===期間別勤務時間（前半/後半/月計を常に3行）=== */}
+          <SummaryTable title="期間別勤務時間" rowLabel="期間" scrollRef={periodScrollRef} rows={periodRows}/>
 
           {/* ===週間勤務時間=== */}
           {weeks.length>0&&<SummaryTable
@@ -2556,7 +2555,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             scrollRef={weekScrollRef}
             rows={weeks.map(monStr=>{
               const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);
-              return{id:monStr,label:`${m.getMonth()+1}/${m.getDate()}〜${sun.getMonth()+1}/${sun.getDate()}`,getMin:name=>getWeekMin(monStr,name)};
+              return{id:monStr,label:`${m.getDate()}〜${sun.getDate()}日`,getMin:name=>getWeekMin(monStr,name)};
             })}
           />}
         </>
