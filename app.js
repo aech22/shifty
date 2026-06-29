@@ -171,12 +171,6 @@ function _lockMsg(ns){
 const DEV_PLAN_OVERRIDE = DEV_MODE
   ? (new URLSearchParams(location.search).get('plan') || null)
   : null;
-// シークレットアンロックコード（SHA-256ハッシュで保持）
-async function hashCode(str){
-  const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(str));
-  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
-}
-
 const PLAN_LIMITS = {
   free:    { shops: Infinity, staff: 20, periods: 1 },
   pro:     { shops: Infinity, staff: Infinity, periods: Infinity },
@@ -423,6 +417,8 @@ function App(){
   // Phase1: Firebase初期化 → global/shopsをonceで読む → shops/sid確定
   // ===================================================================
   useEffect(()=>{
+    // 旧・解放コード（廃止済み）のlocalStorageキーを即時削除
+    localStorage.removeItem("ots_unlocked");
     const configured = FIREBASE_CONFIG.apiKey !== "YOUR_API_KEY";
 
     if(!configured){
