@@ -9,7 +9,7 @@ const {useState,useEffect,useCallback,useRef,useMemo}=React;
 // DEV_MODE = true  → 開発用Firebase（developブランチ専用）
 // DEV_MODE = false → 本番Firebase（mainブランチ・リリース用）
 // ============================================================
-const DEV_MODE = false;
+const DEV_MODE = true;
 
 const FIREBASE_CONFIG_PROD = {
   apiKey:            "AIzaSyDdl1Li3QduufAFhBWcF4nmOlFcCsx8zlQ",
@@ -172,10 +172,6 @@ const DEV_PLAN_OVERRIDE = DEV_MODE
   ? (new URLSearchParams(location.search).get('plan') || null)
   : null;
 // シークレットアンロックコード（SHA-256ハッシュで保持）
-const UNLOCK_HASH      = "c7f68383637178c47cafddafdd79574d148dff2ea6c34ddf5a497e4115bcae8c";
-const UNLOCK_HASH_TEMP = "0d84e1fbd7fd8b59ee827ac602431a89302edef17903c5d9d4da31af1d308c71";
-const UNLOCK_CODE_TEMP_EXPIRY = "2026-07-31";
-const UNLOCK_LS_KEY = "ots_unlocked";
 async function hashCode(str){
   const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(str));
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
@@ -731,12 +727,7 @@ function App(){
     });
     // accounts/<shopId>/plan（プラン読み込み）
     on(`accounts/${targetSid}/plan`,val=>{
-      const unlockVal=lg(UNLOCK_LS_KEY,false);
-      const today=new Date().toISOString().split("T")[0];
-      // "temp"で保存されている場合は期限チェック
-      const unlocked=unlockVal==="temp"?(today<=UNLOCK_CODE_TEMP_EXPIRY):!!unlockVal;
-      if(unlockVal==="temp"&&today>UNLOCK_CODE_TEMP_EXPIRY)ls(UNLOCK_LS_KEY,false); // 期限切れ時に自動解除
-      setPlan(DEV_PLAN_OVERRIDE||(unlocked?"pro":(val&&["free","pro","premium"].includes(val)?val:"free")));
+      setPlan(DEV_PLAN_OVERRIDE||(val&&["free","pro","premium"].includes(val)?val:"free"));
     });
     // accounts/<shopId>/planExpiry（有効期限）
     on(`accounts/${targetSid}/planExpiry`,val=>{
@@ -2196,10 +2187,6 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                             onKeyDown={e=>e.key==="Enter"&&(async()=>{
                               const code=shopCodeInput.trim();
                               if(!code){setShopCodeError("コードを入力してください");return;}
-              const today2=new Date().toISOString().split("T")[0];
-              const h=await hashCode(code);
-              const tempOk2=h===UNLOCK_HASH_TEMP&&today2<=UNLOCK_CODE_TEMP_EXPIRY;
-              if(h===UNLOCK_HASH||tempOk2){ls(UNLOCK_LS_KEY,tempOk2?"temp":true);setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");window.location.reload();return;}
                               const lim=PLAN_LIMITS[plan]?.shops??Infinity;
                               if(shops.length>=lim){setShopCodeMode(false);setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
                               if(!firebaseDB){setShopCodeError("Firebase未接続");return;}
@@ -2223,10 +2210,6 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                           <button onClick={async()=>{
                             const code=shopCodeInput.trim();
                             if(!code){setShopCodeError("コードを入力してください");return;}
-              const today2=new Date().toISOString().split("T")[0];
-              const h=await hashCode(code);
-              const tempOk2=h===UNLOCK_HASH_TEMP&&today2<=UNLOCK_CODE_TEMP_EXPIRY;
-              if(h===UNLOCK_HASH||tempOk2){ls(UNLOCK_LS_KEY,tempOk2?"temp":true);setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");window.location.reload();return;}
                             const lim=PLAN_LIMITS[plan]?.shops??Infinity;
                             if(shops.length>=lim){setShopCodeMode(false);setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
                             if(!firebaseDB){setShopCodeError("Firebase未接続");return;}
@@ -3767,35 +3750,6 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
         </div>
       </div>
     </div>}
-  </div>);
-}
-
-// ===== 設定タブ =====
-function UnlockCodeInput({tt,plan,onUnlock,onLock}){
-  const[code,setCode]=useState("");
-  const isUnlocked=lg(UNLOCK_LS_KEY,false);
-  if(isUnlocked){
-    return(<div style={{display:"flex",alignItems:"center",gap:10}}>
-      <div style={{fontSize:13,color:"#22c55e",fontWeight:700}}>✓ すべての機能が開放されています</div>
-      <button onClick={onLock} style={{...AGray,fontSize:12,padding:"6px 12px"}}>解除</button>
-    </div>);
-  }
-  return(<div style={{display:"flex",gap:8}}>
-    <input value={code} onChange={e=>setCode(e.target.value)} placeholder="コードを入力" type="password"
-      style={{...AI,flex:1}} onKeyDown={e=>{if(e.key==="Enter"){
-        const today=new Date().toISOString().split("T")[0];
-        hashCode(code).then(h=>{
-          const tempOk=h===UNLOCK_HASH_TEMP&&today<=UNLOCK_CODE_TEMP_EXPIRY;
-          if(h===UNLOCK_HASH){onUnlock(false);}else if(tempOk){onUnlock(true);}else{tt("✕ コードが違います");setCode("");}
-        });
-      }}}/>
-    <button onClick={()=>{
-      const today=new Date().toISOString().split("T")[0];
-      hashCode(code).then(h=>{
-        const tempOk=h===UNLOCK_HASH_TEMP&&today<=UNLOCK_CODE_TEMP_EXPIRY;
-        if(h===UNLOCK_HASH){onUnlock(false);}else if(tempOk){onUnlock(true);}else{tt("✕ コードが違います");setCode("");}
-      });
-    }} style={AB}>適用</button>
   </div>);
 }
 
