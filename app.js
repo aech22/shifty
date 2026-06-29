@@ -4263,10 +4263,14 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
         </div>
 
         {/* アップグレード */}
-        {!isPaid&&<div style={{marginTop:4}}>
-          <button onClick={()=>onUpgrade&&onUpgrade({type:"staff",limit:lim.staff,plan})}
+        {plan!=="premium"&&<div style={{marginTop:4}}>
+          {plan==="free"&&<button onClick={()=>onUpgrade&&onUpgrade({type:"staff",limit:lim.staff,plan})}
             style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#f87036,#e05a1a)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
-            {"★ Proにアップグレード"}
+            {"★ Proにアップグレード（500円/月）"}
+          </button>}
+          <button onClick={()=>onUpgrade&&onUpgrade({type:"edit",plan})}
+            style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
+            {"★★ Premiumにアップグレード（2,980円/月）"}
           </button>
         </div>}
       </AC>
@@ -4277,7 +4281,7 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead>
               <tr>
-                {[["","機能"],["Free","無料"],["★ Pro","500円/月"],["★★ Premium","---"]].map(([icon,price],i)=>(
+                {[["","機能"],["Free","無料"],["★ Pro","500円/月"],["★★ Premium","2,980円/月"]].map(([icon,price],i)=>(
                   <th key={i} style={{padding:"8px 6px",textAlign:"center",borderBottom:"2px solid var(--c-border)",color:"var(--c-text2)",fontWeight:700,background:
                     (i===1&&plan==="free")||(i===2&&plan==="pro")||(i===3&&plan==="premium")
                       ?"rgba(248,112,54,.1)":"transparent",
