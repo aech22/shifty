@@ -2361,7 +2361,6 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const periodScrollRef=useRef(null);
   const weekScrollRef=useRef(null);
   const restScrollRef=useRef(null);
-  const consecScrollRef=useRef(null);
   const gridBodyRef=useRef(null);
   const gridTheadRef=useRef(null);
   const[measuredRowH,setMeasuredRowH]=useState(null);
@@ -2403,7 +2402,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const syncScrollH=useCallback((src)=>{
     if(syncingRef.current)return;
     syncingRef.current=true;
-    [mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef,consecScrollRef].forEach(r=>{if(r.current&&r.current!==src)r.current.scrollLeft=src.scrollLeft;});
+    [mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef].forEach(r=>{if(r.current&&r.current!==src)r.current.scrollLeft=src.scrollLeft;});
     requestAnimationFrame(()=>{syncingRef.current=false;});
   },[]);
 
@@ -2621,15 +2620,18 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
     return note?"#333":undefined;
   };
-  // セルフォーカス時: そのシフトのchangedフラグを消す（Firebase永続化）
-  const clearChanged=(name,date)=>{
+  // ダブルクリック/ダブルタップ: そのシフトのchangedフラグをトグル（Firebase永続化）
+  const toggleChanged=(name,date)=>{
     if(!isPremium)return;
     const sub=_getSub(name);const sd0=sub?.shifts?.[date];
-    if(!sub||!sd0||sd0.changed!==true)return;
+    if(!sub||!sd0)return;
     const newSubs=[...subs];const idx=newSubs.findIndex(s=>s.id===sub.id);if(idx===-1)return;
-    const ns={...newSubs[idx]};const shifts={...(ns.shifts||{})};const sd={...shifts[date]};delete sd.changed;shifts[date]=sd;ns.shifts=shifts;newSubs[idx]=ns;
+    const ns={...newSubs[idx]};const shifts={...(ns.shifts||{})};const sd={...shifts[date]};
+    if(sd.changed===true)delete sd.changed;else sd.changed=true;
+    shifts[date]=sd;ns.shifts=shifts;newSubs[idx]=ns;
     onSave(newSubs);
   };
+  const lastTapRef=useRef({key:null,t:0});
 
   // グリッドの実際の行高・thead高を測定してサイドパネルと同期
   useEffect(()=>{
@@ -3004,7 +3006,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             data-sc={`${date}|start`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"start",e.target.value)}
                             onClick={!isPremium?()=>onUpgrade&&onUpgrade({type:"edit",plan}):undefined}
-                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|start`);clearChanged(name,date);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
+                            onDoubleClick={()=>toggleChanged(name,date)}
+                            onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();if(lastTapRef.current.key===k&&now-lastTapRef.current.t<350){toggleChanged(name,date);lastTapRef.current={key:null,t:0};}else{lastTapRef.current={key:k,t:now};}}}
+                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|start`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);setFocusKey(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"start",e.target.value);if(e.ctrlKey||e.metaKey){const pdi=dates.indexOf(date)-1;if(pdi>=0)document.querySelector(`[data-sc="${dates[pdi]}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
                             style={{...AI2,background:cellBgFor(name,date,"start",AI2.background),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
@@ -3019,7 +3023,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             data-sc={`${date}|end`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"end",e.target.value)}
                             onClick={!isPremium?()=>onUpgrade&&onUpgrade({type:"edit",plan}):undefined}
-                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);clearChanged(name,date);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
+                            onDoubleClick={()=>toggleChanged(name,date)}
+                            onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();if(lastTapRef.current.key===k&&now-lastTapRef.current.t<350){toggleChanged(name,date);lastTapRef.current={key:null,t:0};}else{lastTapRef.current={key:k,t:now};}}}
+                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
                             style={{...AI2,background:cellBgFor(name,date,"end",AI2.background),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
@@ -3032,35 +3038,27 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             </table>
           </div>
 
-          {/* === 休みの日カウント === */}
+          {/* === 休みカウント / 連勤カウント === */}
           <div ref={restScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
             <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
-              <thead>
+              <tbody>
                 <tr>
-                  <th style={{...SD,top:0,zIndex:4,fontWeight:600,borderBottom:BD2,background:CRD,fontSize:11}}>休みカウント</th>
+                  <td style={{...SD,fontWeight:600,borderBottom:BD,background:CRD,fontSize:11}}>休みカウント</td>
                   {mapGridCols(name=>(
-                    <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
+                    <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
                       {(restCounts[name]||0)%1===0?(restCounts[name]||0):(restCounts[name]||0).toFixed(1)}
-                    </th>
+                    </td>
                   ),spacerTh)}
                 </tr>
-              </thead>
-            </table>
-          </div>
-
-          {/* === 連勤カウント === */}
-          <div ref={consecScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
-            <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
-              <thead>
                 <tr>
-                  <th style={{...SD,top:0,zIndex:4,fontWeight:600,borderBottom:BD2,background:CRD,fontSize:11}}>連勤カウント</th>
+                  <td style={{...SD,fontWeight:600,borderBottom:BD2,background:CRD,fontSize:11}}>連勤カウント</td>
                   {mapGridCols(name=>(
-                    <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
+                    <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
                       {consecCounts[name]||0}
-                    </th>
+                    </td>
                   ),spacerTh)}
                 </tr>
-              </thead>
+              </tbody>
             </table>
           </div>
 
@@ -3174,7 +3172,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
         <AT>期間管理</AT>
         <button onClick={()=>{setShow(v=>!v);setUsePreset(true);setForm({label:"",startDate:"",endDate:"",deadlineDate:""}); }} style={{padding:"9px 16px",background:"#f87036",border:"none",borderRadius:9,color:"white",fontSize:13,fontWeight:700,cursor:"pointer"}}>＋ 新しい期間を作成</button>
       </div>
-      {plan!=="pro"&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:8,padding:"7px 10px"}}>
+      {plan==="free"&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:8,padding:"7px 10px"}}>
         {`Freeプラン：最大${PLAN_LIMITS.free.periods}件まで作成可能（${periods.length}/${PLAN_LIMITS.free.periods}件）`}
         {periods.length>=PLAN_LIMITS.free.periods&&<span style={{marginLeft:8,color:"#F59E0B",fontSize:11}}>期間追加はProプランで利用できます</span>}
       </div>}
@@ -4076,7 +4074,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           </tr></thead>
           <tbody>{fil.length===0
             ?<tr><td colSpan={4} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
-            :fil.map(sub=>{const ds=Object.keys(sub.shifts||{}).sort(),wkDays=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work");const att=wkDays.reduce((acc,d)=>{const sh=sub.shifts[d];const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;return acc+((st&&en)?shiftBandInfo(sh).attendance:1);},0);const attLabel=`${att}日`;const at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const rm=t=>Math.floor(new Date(t).getTime()/60000);const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&rm(sub.updatedAt)>rm(sub.submittedAt);const totalMin=isPremium?ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").reduce((acc,d)=>acc+calcNetWorkMinutes(sub.shifts[d],getBreaksFor(settings,d,sub.staffName,sub.shifts[d]),getOT(sub.staffName,settings,sub.shifts[d])),0):0;
+            :fil.map(sub=>{const ds=Object.keys(sub.shifts||{}).sort(),wkDays=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work");const att=wkDays.reduce((acc,d)=>{const sh=sub.shifts[d];const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;return acc+((st&&en)?shiftBandInfo(sh).attendance:1);},0);const attLabel=`${att}日`;const at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const rm=t=>Math.floor(new Date(t).getTime()/60000);const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&rm(sub.updatedAt)>rm(sub.submittedAt);
               const staffType=isPremium?((settings.staffAttributes)||{})[sub.staffName]:null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly||typeLim.customDays)){const weekMap={};const monthMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreaksFor(settings,d,sub.staffName,sh),getOT(sub.staffName,settings,sh));if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));weekMap[fd(mon)]=(weekMap[fd(mon)]||0)+nm;monthMap[d.slice(0,7)]=(monthMap[d.slice(0,7)]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly){const wkKeys=Object.keys(weekMap).sort();for(let i=0;i<wkKeys.length;i+=2){const tot=(weekMap[wkKeys[i]]||0)+(weekMap[wkKeys[i+1]]||0);if(tot>typeLim.biweekly*60)biweeklyVio=true;}}if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});if(typeLim.customDays&&typeLim.customHours){const sortedDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();for(let i=0;i<sortedDs.length;i++){const start=pd(sortedDs[i]);let tot=0;for(let j=i;j<sortedDs.length;j++){const diffD=(pd(sortedDs[j])-start)/86400000;if(diffD>=typeLim.customDays)break;const sh=sub.shifts[sortedDs[j]];tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,sortedDs[j],sub.staffName,sh),getOT(sub.staffName,settings,sh));}if(tot>typeLim.customHours*60){customVio=true;break;}}}}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;
               return(<tr key={sub.id} style={hasVio?{background:"rgba(255,71,87,.12)"}:{}}>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text)",fontWeight:600}}>
@@ -4105,7 +4103,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
                   {at}
                   {hasRealUpdate&&<><br/><span style={{fontSize:10,color:"#F59E0B",fontWeight:700}}>更新: {new Date(sub.updatedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</span></>}
                 </td>
-              <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><div><span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 8px",borderRadius:4,fontSize:12,fontWeight:600}}>{attLabel}</span>{totalMin>0&&<span style={{marginLeft:4,fontSize:11,color:"var(--c-text3)"}}>{fmtMin(totalMin)}</span>}</div></td>
+              <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><div><span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 8px",borderRadius:4,fontSize:12,fontWeight:600}}>{attLabel}</span></div></td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",whiteSpace:"nowrap"}}>
                 <button onClick={()=>setDet(sub)} style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text2)",fontSize:12,cursor:"pointer",marginRight:4}}>詳細</button>
                 {isPro&&<button onClick={()=>{if(!confirm("削除しますか？"))return;onSave(subs.filter(s=>s.id!==sub.id),sub.id);tt("削除しました");}} style={AD}>削除</button>}
@@ -4485,51 +4483,6 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       </AC>);
     })()}
 
-    {plan==="premium"&&(()=>{
-      const attrOpts=getAttrOptions(settings);
-      const abBreaks=[];
-      DAY_TYPES.forEach(([dt,l])=>{((settings.breakTimes||{})[dt]||[]).forEach((b,i)=>{if((b.tags||[]).includes(abAttr))abBreaks.push({dt,l,i,b});});});
-      const removeAb=(dt,i)=>{const bt={...(settings.breakTimes||{})};bt[dt]=[...(bt[dt]||[])];bt[dt].splice(i,1);onSave({...settings,breakTimes:bt});tt("削除しました");};
-      const dtColor=dt=>dt==="sat"?"#3B82F6":dt==="sun"||dt==="hol"?"#FF4757":"#f87036";
-      const selStyle={fontSize:16,padding:"5px 8px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",cursor:"pointer"};
-      return(<AC title="属性別休憩時間">
-        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>ここで追加した休憩は選択した属性のスタッフにのみ適用されます。休憩は候補管理の「休憩」タブと共通のデータです。</div>
-        <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
-          {attrOpts.map(([aid,anm])=>{const on=abAttr===aid;return(<button key={aid} onClick={()=>setAbAttr(aid)} style={{padding:"7px 14px",borderRadius:20,fontSize:13,fontWeight:700,border:"1px solid",cursor:"pointer",background:on?"#f87036":"var(--c-input)",borderColor:on?"transparent":"var(--c-border2)",color:on?"white":"var(--c-text2)"}}>{anm}</button>);})}
-        </div>
-        {abBreaks.length===0
-          ?<div style={{fontSize:12,color:"var(--c-text4)",padding:"6px 0",marginBottom:8}}>この属性専用の休憩は設定されていません</div>
-          :<div style={{marginBottom:8}}>{abBreaks.map(({dt,l,i,b})=>(
-            <div key={`${dt}_${i}`} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,marginBottom:4}}>
-              <span style={{fontSize:13,color:"var(--c-text)",fontWeight:600}}><span style={{color:dtColor(dt),marginRight:8,fontWeight:700}}>{l}</span>{b.start} 〜 {b.end}</span>
-              <button onClick={()=>removeAb(dt,i)} style={AD}>削除</button>
-            </div>
-          ))}</div>
-        }
-        <div style={{borderTop:"1px solid var(--c-border)",paddingTop:12,marginTop:8}}>
-          <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8,fontWeight:600}}>休憩を追加</div>
-          <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
-            {DAY_TYPES.map(([dt,l])=>{const on=abDayType===dt;const c=dtColor(dt);return(<button key={dt} onClick={()=>setAbDayType(dt)} style={{padding:"7px 14px",borderRadius:20,fontSize:13,fontWeight:700,border:"1px solid",cursor:"pointer",background:on?c:"var(--c-input)",borderColor:on?"transparent":"var(--c-border2)",color:on?"white":c}}>{l}</button>);})}
-          </div>
-          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-            <select value={abStart} onChange={e=>setAbStart(e.target.value)} style={selStyle}><option value="">開始</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>
-            <span style={{color:"var(--c-text4)",fontSize:16}}>〜</span>
-            <select value={abEnd} onChange={e=>setAbEnd(e.target.value)} style={selStyle}><option value="">終了</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>
-            <button onClick={()=>{
-              if(!abStart||!abEnd){tt("▲ 開始・終了を選択してください");return;}
-              if(abStart>=abEnd){tt("▲ 終了は開始より後にしてください");return;}
-              const bt={...(settings.breakTimes||{weekday:[],sat:[],sun:[],hol:[]})};
-              const cur=bt[abDayType]||[];
-              if(cur.some(b=>b.start===abStart&&b.end===abEnd&&(b.tags||[]).includes(abAttr))){tt("▲ 既に登録されています");return;}
-              bt[abDayType]=[...cur,{start:abStart,end:abEnd,tags:[abAttr]}].sort((a,b)=>a.start.localeCompare(b.start));
-              onSave({...settings,breakTimes:bt});setAbStart("");setAbEnd("");
-              tt(`✓ ${abStart}〜${abEnd} を追加しました`);
-            }} style={{...AB,whiteSpace:"nowrap"}}>＋ 追加</button>
-          </div>
-        </div>
-      </AC>);
-    })()}
-
     {plan==="premium"&&staffList.filter(n=>!isSpacer(n)).length>0&&<AC title="退勤延長設定">
       <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>スタッフごとにシフト終了後の延長時間を設定します。ランチ帯（退勤17:00以前）とディナー帯（退勤17:00超）で個別に設定できます。勤務時間合計に加算され、提出一覧の退勤欄に表示されます。</div>
       {staffList.filter(n=>!isSpacer(n)).map(n=>{
@@ -4537,8 +4490,8 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
         const ot=typeof raw==="number"?{lunch:raw,dinner:raw}:(raw||{lunch:0,dinner:0});
         const setOT=(band,v)=>{const bs={...(settings.overtimeSettings?.byStaff||{})};const prevRaw=bs[n];const prev=typeof prevRaw==="number"?{lunch:prevRaw,dinner:prevRaw}:(prevRaw||{lunch:0,dinner:0});const next={...prev,[band]:v};if((next.lunch||0)>0||(next.dinner||0)>0)bs[n]={lunch:next.lunch||0,dinner:next.dinner||0};else delete bs[n];onSave({...settings,overtimeSettings:{...(settings.overtimeSettings||{}),byStaff:bs}});};
         const selStyle={fontSize:16,padding:"5px 8px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",cursor:"pointer"};
-        return(<div key={n} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,marginBottom:6,flexWrap:"wrap"}}>
-          <span style={{flex:"1 1 100%",fontSize:13,color:"var(--c-text)",fontWeight:600,minWidth:0}}>{n}</span>
+        return(<div key={n} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,marginBottom:6}}>
+          <span style={{flex:1,fontSize:13,color:"var(--c-text)",fontWeight:600,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n}</span>
           <div style={{display:"flex",alignItems:"center",gap:4}}>
             <span style={{fontSize:11,color:"var(--c-text3)"}}>ランチ</span>
             <select value={ot.lunch||0} onChange={e=>setOT("lunch",parseInt(e.target.value)||0)} style={selStyle}>
