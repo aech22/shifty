@@ -1685,13 +1685,28 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     const staffName=name.trim();
     // 既存subを検索（同じperiod+名前 → 上書き）
     const existSub=subs.find(s=>s.staffName===staffName&&s.periodId===apid);
+    // 再提出時: 日付ごとに旧シフトと比較し、変更があれば changed:true を付与。
+    // 管理者調整値(adjustedXxx)は旧シフトから引き継ぐ。
+    const buildShift=d=>{
+      const nw={...(sd[d]||{status:"holiday"})};
+      delete nw.changed; // 過去のchangedは作り直す
+      if(existSub){
+        const old=existSub.shifts?.[d];
+        if(old){
+          ["adjustedStart","adjustedEnd","adjustedStartNote","adjustedEndNote"].forEach(k=>{if(old[k]!=null&&nw[k]==null)nw[k]=old[k];});
+          const changed=(old.status!==nw.status)||((old.start||"")!==(nw.start||""))||((old.end||"")!==(nw.end||""));
+          if(changed)nw.changed=true;
+        }
+      }
+      return nw;
+    };
     const sub={
       id:existSub?existSub.id:Date.now().toString(),
       periodId:apid,
       staffName,
       submittedAt:existSub?existSub.submittedAt:new Date().toISOString(),
       ...(existSub?{updatedAt:new Date().toISOString(),isUpdated:true}:{}),
-      shifts:Object.fromEntries(dates.map(d=>[d,sd[d]||{status:"holiday"}])),
+      shifts:Object.fromEntries(dates.map(d=>[d,buildShift(d)])),
       comment:comment.trim()
     };
     // スタッフ名をCookieに保存（1年間）
@@ -2333,6 +2348,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const firstPid=(periods[0]||{}).id||"";
   const[selPid,setSelPid]=useState(firstPid);
   const[localEdits,setLocalEdits]=useState({});
+  const[heatEdits,setHeatEdits]=useState({}); // blur確定値のみ（集計・ヒートマップ用）
+  const[focusKey,setFocusKey]=useState(null); // フォーカス中セルkey（黄色ハイライト抑制用）
   const[cellTip,setCellTip]=useState(null); // {x,y,value}
   const[fitAll,setFitAll]=useState(false);
   const[containerW,setContainerW]=useState(800);
@@ -2342,6 +2359,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const periodScrollRef=useRef(null);
   const weekScrollRef=useRef(null);
   const restScrollRef=useRef(null);
+  const consecScrollRef=useRef(null);
   const gridBodyRef=useRef(null);
   const gridTheadRef=useRef(null);
   const[measuredRowH,setMeasuredRowH]=useState(null);
@@ -2383,7 +2401,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const syncScrollH=useCallback((src)=>{
     if(syncingRef.current)return;
     syncingRef.current=true;
-    [mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef].forEach(r=>{if(r.current&&r.current!==src)r.current.scrollLeft=src.scrollLeft;});
+    [mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef,consecScrollRef].forEach(r=>{if(r.current&&r.current!==src)r.current.scrollLeft=src.scrollLeft;});
     requestAnimationFrame(()=>{syncingRef.current=false;});
   },[]);
 
@@ -2395,13 +2413,19 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     if(/^\d+$/.test(s)){const n=parseInt(s,10);if(s.length<=2){if(n>=0&&n<=30)return`${String(n).padStart(2,"0")}:00`;}else{const h=Math.floor(n/100);const m=n%100;if(h>=0&&h<=30&&m>=0&&m<60)return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;}return"";}
     return"";
   };
-  // サフィックス抽出: h=ホール出張, k=キッチン入り, x=ヘルプ(カウント外), ""=通常
+  // サフィックス抽出: h=ホール出張, k=キッチン入り, x=ヘルプ(カウント外), 任意文字列=そのまま保持, ""=通常
   const extractNote=raw=>{
     if(!raw||!raw.trim())return{numeric:"",note:""};
-    const m=raw.trim().match(/^([\d.:]+)([a-zA-Z]*)$/i);
-    if(!m)return{numeric:"",note:"x"}; // 文字のみ → ヘルプ
-    const l=m[2].toLowerCase();
-    return{numeric:m[1],note:l==="h"?"h":l==="k"?"k":l?"x":""};
+    const s=raw.trim();
+    const m=s.match(/^([\d.:]+)(.*)$/s);
+    if(!m||!m[1])return{numeric:"",note:"x"}; // 数値部なし(文字のみ) → ヘルプ
+    const suf=m[2].trim();
+    if(!suf)return{numeric:m[1],note:""};
+    const l=suf.toLowerCase();
+    if(l==="h")return{numeric:m[1],note:"h"};
+    if(l==="k")return{numeric:m[1],note:"k"};
+    if(l==="x")return{numeric:m[1],note:"x"};
+    return{numeric:m[1],note:suf}; // 日本語含む任意サフィックスはそのまま保持
   };
 
   const _getSub=(name)=>subs.find(s=>s.periodId===selPid&&s.staffName===name);
@@ -2414,7 +2438,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     if(!isPremium)return;
     const{numeric,note}=extractNote(rawValue);
     const parsed=parseTime(numeric);const display=parsed?(toDecimal(parsed)+note):"";
-    setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:display}));
+    const ekey=`${name}|${date}|${field}`;
+    setLocalEdits(prev=>({...prev,[ekey]:display}));
+    setHeatEdits(prev=>({...prev,[ekey]:display})); // blur確定値を集計/ヒートマップ用に反映
     // 管理者編集はadjustedXxxに保存（スタッフ提出のstart/endを保護）
     const adjField=field==="start"?"adjustedStart":"adjustedEnd";
     const nk=field==="start"?"adjustedStartNote":"adjustedEndNote";
@@ -2424,20 +2450,37 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     onSave(newSubs);
   };
 
-  const getEffHHMM=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits){const{numeric}=extractNote(localEdits[key]);return parseTime(numeric)||"";}return getStoredTime(name,date,field);};
-  // シフトのノート取得: 管理者調整値優先、なければスタッフ提出値（localEdits最優先）
-  const getShiftNote=(name,date)=>{
-    for(const field of["start","end"]){const key=`${name}|${date}|${field}`;if(key in localEdits){const{note}=extractNote(localEdits[key]);if(note)return note;}const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";const n=(sh?.[adjNk]??sh?.[origNk]);if(n)return n;}return"";
+  // 集計/ヒートマップ用は heatEdits（blur確定値）を参照
+  const getEffHHMM=(name,date,field,src=heatEdits)=>{const key=`${name}|${date}|${field}`;if(key in src){const{numeric}=extractNote(src[key]);return parseTime(numeric)||"";}return getStoredTime(name,date,field);};
+  // シフトのノート取得: 管理者調整値優先、なければスタッフ提出値（edits最優先）
+  const getShiftNote=(name,date,src=heatEdits)=>{
+    for(const field of["start","end"]){const key=`${name}|${date}|${field}`;if(key in src){const{note}=extractNote(src[key]);if(note)return note;}const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";const n=(sh?.[adjNk]??sh?.[origNk]);if(n)return n;}return"";
+  };
+  // ヒートマップ休憩判定用: 実効start/endを反映した一時シフトオブジェクト
+  const getHeatShift=(name,date)=>{
+    const base=_getSub(name)?.shifts?.[date];
+    const st=getEffHHMM(name,date,"start"),en=getEffHHMM(name,date,"end");
+    if(!st||!en)return null;
+    return{...(base||{}),status:"work",adjustedStart:st,adjustedEnd:en};
   };
   const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
   // section: "kit" or "hall" — サフィックスh/kで所属を上書き、xはどちらにも入らない
+  // 列hr[hr*60,(hr+1)*60)にカウント: stM<(hr+1)*60 && enM>=hr*60（終端時刻列も含む）
   const countHeat=(section,date,hr)=>{
     let cnt=0;
+    const h0=hr*60,h1=(hr+1)*60;
     realStaff.forEach(name=>{
       const stM=timeToMin(getEffHHMM(name,date,"start"));const enM=timeToMin(getEffHHMM(name,date,"end"));
-      if(stM===null||enM===null||stM>=(hr+1)*60||enM<=hr*60)return;
+      if(stM===null||enM===null||stM>=h1||enM<h0)return;
       const note=getShiftNote(name,date);
       if(note==="x")return;
+      // 休憩適用者: 休憩がこの1時間帯を完全に覆う場合はカウントしない
+      const hsh=getHeatShift(name,date);
+      if(hsh&&isBreakEligible(hsh)){
+        const brs=getBreaksFor(settings,date,name,hsh);
+        const covered=brs.some(br=>{const bs=timeToMin(br.start),be=timeToMin(br.end);return bs!==null&&be!==null&&bs<=h0&&be>=h1;});
+        if(covered)return;
+      }
       const orig=hallStaff.includes(name)?"hall":"kit";
       const eff=note==="h"?"hall":note==="k"?"kit":orig;
       if(eff===section)cnt++;
@@ -2452,8 +2495,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     allCands.forEach(c=>{const sh=parseInt(c.start);const eh=parseInt(c.end);for(let h=sh;h<=eh;h++)hrs.add(h);});
     // 実際の提出・入力値から時間帯を収集
     subs.filter(s=>s.periodId===selPid).forEach(sub=>{Object.values(sub.shifts||{}).forEach(sh=>{if(sh.status!=="work")return;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(st)hrs.add(parseInt(st));if(en)hrs.add(parseInt(en));});});
-    // localEditsからも収集
-    Object.entries(localEdits).forEach(([,v])=>{const{numeric}=extractNote(v);const p=parseTime(numeric);if(p)hrs.add(parseInt(p));});
+    // heatEdits（blur確定値）からも収集
+    Object.entries(heatEdits).forEach(([,v])=>{const{numeric}=extractNote(v);const p=parseTime(numeric);if(p)hrs.add(parseInt(p));});
     if(hrs.size===0){for(let h=9;h<=24;h++)hrs.add(h);}
     const mn=Math.min(...hrs),mx=Math.max(...hrs);
     return Array.from({length:mx-mn+1},(_,i)=>mn+i);
@@ -2495,14 +2538,33 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const heatRowH=measuredRowH||48;
   // 中央グリッド幅 = ブレイクアウト時はビューポート幅 - パネル×2
   const centerW=useBreakout?(window.innerWidth-panelW*2-24):containerW;
-  const colW=fitAll?Math.max(24,Math.floor((centerW-90)/Math.max(1,realStaff.length))):39;
+  // gridStaff: spacer列を含む列描画リスト（集計はrealStaffのまま）
+  const gridStaff=staffList;
+  const colW=fitAll?Math.max(24,Math.floor((centerW-90)/Math.max(1,gridStaff.length))):39;
+  const spacerCell=(key)=>(<td key={key} style={{width:colW,minWidth:colW,maxWidth:colW,borderLeft:BD2,background:"var(--c-input2, var(--c-input))",padding:0}}></td>);
+  const spacerTh=(key)=>(<th key={key} style={{width:colW,minWidth:colW,maxWidth:colW,borderLeft:BD2,background:"var(--c-input2, var(--c-input))",padding:0}}></th>);
+  // gridStaffを列描画: spacer位置はspacerFnで空セル、実スタッフはrenderFnで描画
+  const mapGridCols=(renderFn,spacerFn)=>gridStaff.map((name,i)=>isSpacer(name)?spacerFn(`sp${i}`):renderFn(name,i));
   const AI2={width:colW-3,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
-  const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:11,borderRight:BD2};
+  const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:16,fontWeight:600,borderRight:BD2};
+  // スタッフ名色（Excel書き出しと同ルール: staffColors[name]==="red"→赤）
+  const nameColor=name=>((settings.staffColors||{})[name]==="red"?"#e53935":"var(--c-text)");
   const VTH=(name)=>(
     <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"middle"}}>
-      <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:72,display:"inline-block",fontSize:11,fontWeight:600,color:"var(--c-text)",whiteSpace:"nowrap",textAlign:"center",lineHeight:String(colW-4)+"px"}}>{name}</div>
+      <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:72,display:"inline-block",fontSize:11,fontWeight:600,color:nameColor(name),whiteSpace:"nowrap",textAlign:"center",lineHeight:String(colW-4)+"px"}}>{name}</div>
     </th>
   );
+  // 集計用の実効値（heatEdits＝blur確定値ベース）
+  const getHeatVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in heatEdits)return heatEdits[key];const t=toDecimal(getStoredTime(name,date,field));return t||"";};
+  // その日出勤しているか（0.5出勤含む）: start か end のどちらかに有効値がある
+  const isWorkDay=(name,date)=>{
+    const shift=_getSub(name)?.shifts?.[date];
+    const s=parseFloat(getHeatVal(name,date,"start"));
+    const e=parseFloat(getHeatVal(name,date,"end"));
+    const hasVal=!isNaN(s)||!isNaN(e);
+    if(shift&&shift.status==="holiday"&&!hasVal)return false;
+    return hasVal;
+  };
   // 休みカウント: 17時基準で前半/後半それぞれ出勤なし=0.5、終日なし=1
   const restCounts=React.useMemo(()=>{
     const result={};
@@ -2510,19 +2572,62 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       let count=0;
       dates.forEach(date=>{
         const shift=_getSub(name)?.shifts?.[date];
-        if(!shift||shift.status==="holiday"){count+=1;return;}
-        const s=parseFloat(getVal(name,date,"start"));
-        const e=parseFloat(getVal(name,date,"end"));
+        const s=parseFloat(getHeatVal(name,date,"start"));
+        const e=parseFloat(getHeatVal(name,date,"end"));
+        if((!shift||shift.status==="holiday")&&isNaN(s)&&isNaN(e)){count+=1;return;}
         if(!isNaN(s)&&s<17){}else{count+=0.5;}
         if(!isNaN(e)&&e>17){}else{count+=0.5;}
       });
       result[name]=count;
     });
     return result;
-  },[realStaff,dates,subs,localEdits,selPid]);
+  },[realStaff,dates,subs,heatEdits,selPid]);
+  // 連勤カウント: 期間内の最大連続出勤日数（0.5出勤も出勤扱い）
+  const consecCounts=React.useMemo(()=>{
+    const result={};
+    realStaff.forEach(name=>{
+      let maxC=0,cur=0;
+      dates.forEach(date=>{
+        if(isWorkDay(name,date)){cur++;maxC=Math.max(maxC,cur);}else cur=0;
+      });
+      result[name]=maxC;
+    });
+    return result;
+  },[realStaff,dates,subs,heatEdits,selPid]);
   const kitMax=Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("kit",date,hr))));
   const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
+
+  // セルの色: 緑(スタッフ変更) > 黄(サフィックスnote) > 行背景。フォーカス中セルは通常背景。
+  const cellBgFor=(name,date,field,rb)=>{
+    const key=`${name}|${date}|${field}`;
+    if(_getSub(name)?.shifts?.[date]?.changed===true)return"rgba(52,199,89,.30)";
+    if(focusKey===key)return rb; // 編集中は通常背景
+    // note有無を localEdits/保存値から判定
+    let note="";
+    if(key in localEdits){note=extractNote(localEdits[key]).note;}
+    else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
+    if(note)return"#FFF3B0";
+    return rb;
+  };
+  const cellTextColor=(name,date,field)=>{
+    const key=`${name}|${date}|${field}`;
+    if(_getSub(name)?.shifts?.[date]?.changed===true)return undefined;
+    if(focusKey===key)return undefined;
+    let note="";
+    if(key in localEdits){note=extractNote(localEdits[key]).note;}
+    else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
+    return note?"#333":undefined;
+  };
+  // セルフォーカス時: そのシフトのchangedフラグを消す（Firebase永続化）
+  const clearChanged=(name,date)=>{
+    if(!isPremium)return;
+    const sub=_getSub(name);const sd0=sub?.shifts?.[date];
+    if(!sub||!sd0||sd0.changed!==true)return;
+    const newSubs=[...subs];const idx=newSubs.findIndex(s=>s.id===sub.id);if(idx===-1)return;
+    const ns={...newSubs[idx]};const shifts={...(ns.shifts||{})};const sd={...shifts[date]};delete sd.changed;shifts[date]=sd;ns.shifts=shifts;newSubs[idx]=ns;
+    onSave(newSubs);
+  };
 
   // グリッドの実際の行高・thead高を測定してサイドパネルと同期
   useEffect(()=>{
@@ -2560,7 +2665,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           const d=pd(date);const day=d.getDay();const isHol=isHoliday(date);
           const dc=(day===0||isHol)?"#e53935":day===6?"#1976d2":"var(--c-text)";
           return(<tr key={date} style={rowH?{height:rowH}:{}}>
-            <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:11,color:dc,borderBottom:BD,whiteSpace:"nowrap",verticalAlign:"middle"}}>{fmtDL(date)}</td>
+            <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:15,fontWeight:600,color:dc,borderBottom:BD,whiteSpace:"nowrap",verticalAlign:"middle"}}>{fmtDL(date)}</td>
             {heatHours.map((hr,hi)=>{const n=countHeat(section,date,hr);return(
               <td key={hi} style={{minWidth:22,padding:"2px 1px",textAlign:"center",fontSize:11,borderLeft:BD,borderBottom:BD,background:hBg(n,maxC),color:n===0?"var(--c-text4)":"var(--c-text)",fontWeight:n>0?600:400,verticalAlign:"middle"}}>{n||""}</td>
             );})}
@@ -2578,15 +2683,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
           <thead><tr>
             <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:0,fontSize:11,fontWeight:600,borderBottom:BD2,width:90,minWidth:90,maxWidth:90}}><div style={{width:90,padding:"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{rowLabel}</div></th>
-            {realStaff.map(name=>VTH(name))}
+            {mapGridCols(name=>VTH(name),spacerTh)}
           </tr></thead>
           <tbody>{rows.map(row=>{
             const bg=row._bg||"transparent";const stickyBg=row._bg?`linear-gradient(${row._bg},${row._bg}),${CRD}`:CRD;
             return(<tr key={row.id} style={{background:bg}}>
               <td style={{position:"sticky",left:0,background:stickyBg,zIndex:1,padding:0,fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,width:90,minWidth:90,maxWidth:90}}><div style={{width:90,padding:"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{row.label}</div></td>
-              {realStaff.map(name=>{const min=row.getMin(name);const vio=row._violateFn?row._violateFn(name,min):false;const cellBg=vio?"rgba(255,71,87,.15)":bg;return(
+              {mapGridCols(name=>{const min=row.getMin(name);const vio=row._violateFn?row._violateFn(name,min):false;const cellBg=vio?"rgba(255,71,87,.15)":bg;return(
                 <td key={name} style={{padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:cellBg,fontWeight:(row._bold||vio)&&min>0?700:400,color:min>0?(vio?"#FF4757":(row._color||"var(--c-text2)")):"var(--c-text4)"}}>{min>0?fmtH(min):""}</td>
-              );})}
+              );},spacerCell)}
             </tr>);
           })}</tbody>
         </table>
@@ -2612,7 +2717,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       {cellTip&&<div style={{position:"fixed",left:cellTip.x,top:cellTip.y-26,transform:"translateX(-50%)",background:"rgba(30,30,30,0.82)",color:"#fff",fontSize:11,fontWeight:600,padding:"2px 7px",borderRadius:10,pointerEvents:"none",zIndex:9999,whiteSpace:"nowrap",backdropFilter:"blur(4px)"}}>{cellTip.value}</div>}
       <div style={{marginBottom:10,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         <span style={{fontWeight:700,fontSize:15}}>シフト作成</span>
-        <select value={selPid} onChange={e=>{setSelPid(e.target.value);setLocalEdits({});}}
+        <select value={selPid} onChange={e=>{setSelPid(e.target.value);setLocalEdits({});setHeatEdits({});setFocusKey(null);}}
           style={{fontSize:16,padding:"4px 8px",border:BD,borderRadius:6,background:"var(--c-input)",color:"var(--c-text)"}}>
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
         </select>
@@ -2656,7 +2761,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
               <thead ref={gridTheadRef}>
                 <tr>
                   <th style={{...SD,top:0,zIndex:4,padding:"4px",fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>
-                  {realStaff.map(name=>VTH(name))}
+                  {mapGridCols(name=>VTH(name),spacerTh)}
                 </tr>
               </thead>
               <tbody ref={gridBodyRef}>
@@ -2668,34 +2773,34 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                   return[
                     <tr key={date+"-s"} style={{background:rb}}>
                       <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
-                      {realStaff.map(name=>(
+                      {mapGridCols(name=>(
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"start",e.target.value)}
                             onClick={!isPremium?()=>onUpgrade&&onUpgrade({type:"edit",plan}):undefined}
-                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
-                            onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);}}
-                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"start",e.target.value);document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}
-                            style={{...AI2,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|start`);clearChanged(name,date);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
+                            onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);setFocusKey(null);}}
+                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"start",e.target.value);if(e.ctrlKey||e.metaKey){const pdi=dates.indexOf(date)-1;if(pdi>=0)document.querySelector(`[data-sc="${dates[pdi]}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
+                            style={{...AI2,background:cellBgFor(name,date,"start",AI2.background),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
-                      ))}
+                      ),spacerCell)}
                     </tr>,
                     <tr key={date+"-e"} style={{background:rb}}>
-                      {realStaff.map(name=>(
+                      {mapGridCols(name=>(
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"end",e.target.value)}
                             onClick={!isPremium?()=>onUpgrade&&onUpgrade({type:"edit",plan}):undefined}
-                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
-                            onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);}}
-                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();const ndi=dates.indexOf(date)+1;handleBlur(name,date,"end",e.target.value);if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}
-                            style={{...AI2,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);clearChanged(name,date);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
+                            onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
+                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
+                            style={{...AI2,background:cellBgFor(name,date,"end",AI2.background),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
-                      ))}
+                      ),spacerCell)}
                     </tr>
                   ];
                 })}
@@ -2709,11 +2814,27 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
               <thead>
                 <tr>
                   <th style={{...SD,top:0,zIndex:4,fontWeight:600,borderBottom:BD2,background:CRD,fontSize:11}}>休みカウント</th>
-                  {realStaff.map(name=>(
+                  {mapGridCols(name=>(
                     <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
                       {(restCounts[name]||0)%1===0?(restCounts[name]||0):(restCounts[name]||0).toFixed(1)}
                     </th>
-                  ))}
+                  ),spacerTh)}
+                </tr>
+              </thead>
+            </table>
+          </div>
+
+          {/* === 連勤カウント === */}
+          <div ref={consecScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
+            <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
+              <thead>
+                <tr>
+                  <th style={{...SD,top:0,zIndex:4,fontWeight:600,borderBottom:BD2,background:CRD,fontSize:11}}>連勤カウント</th>
+                  {mapGridCols(name=>(
+                    <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
+                      {consecCounts[name]||0}
+                    </th>
+                  ),spacerTh)}
                 </tr>
               </thead>
             </table>
