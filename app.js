@@ -4159,10 +4159,6 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
   const[emailInput,setEmailInput]=useState("");
   const[codeInput,setCodeInput]=useState("");
   const[pendingNewType,setPendingNewType]=useState(null); // null | {name:""}
-  const[abAttr,setAbAttr]=useState("employee"); // 属性別休憩: 選択中の属性
-  const[abDayType,setAbDayType]=useState("weekday"); // 属性別休憩: 追加先の日種別
-  const[abStart,setAbStart]=useState(""); // 属性別休憩: 開始時刻
-  const[abEnd,setAbEnd]=useState(""); // 属性別休憩: 終了時刻
   const[linkLoading,setLinkLoading]=useState(false);
   const[linkError,setLinkError]=useState("");
   // Cookie認証ユーザー向けアカウント登録/連携
