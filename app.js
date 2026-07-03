@@ -2466,13 +2466,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   };
   const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
   // section: "kit" or "hall" — サフィックスh/kで所属を上書き、xはどちらにも入らない
-  // 列hr[hr*60,(hr+1)*60)にカウント: stM<(hr+1)*60 && enM>=hr*60（終端時刻列も含む）
+  // 列hr[hr*60,(hr+1)*60)にカウント: stM<(hr+1)*60 && enM>hr*60
   const countHeat=(section,date,hr)=>{
     let cnt=0;
     const h0=hr*60,h1=(hr+1)*60;
     realStaff.forEach(name=>{
       const stM=timeToMin(getEffHHMM(name,date,"start"));const enM=timeToMin(getEffHHMM(name,date,"end"));
-      if(stM===null||enM===null||stM>=h1||enM<h0)return;
+      if(stM===null||enM===null||stM>=h1||enM<=h0)return;
       const note=getShiftNote(name,date);
       if(note==="x")return;
       // 休憩適用者: 休憩がこの1時間帯を完全に覆う場合はカウントしない
