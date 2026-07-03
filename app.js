@@ -263,12 +263,19 @@ function getAttrOptions(settings){
   return out;
 }
 const DAY_TYPES=[["weekday","平日"],["sat","土曜"],["sun","日曜"],["hol","祝日"]];
-// 休憩適用の統一入口: 適用可否判定 + 属性タグフィルタ
+// 休憩適用の統一入口: 適用可否判定 + 属性タグフィルタ + 出勤開始時刻フィルタ
 function getBreaksFor(settings,dateStr,staffName,shift){
   if(!isBreakEligible(shift))return[];
   const list=getBreakList(settings,dateStr);
   const attr=((settings&&settings.staffAttributes)||{})[staffName]||"parttime";
-  return list.filter(br=>{const tags=br&&br.tags;if(!tags||!tags.length)return true;return tags.includes(attr);});
+  const stStr=shift&&(shift.adjustedStart??shift.start);
+  const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
+  const ws=stStr?toMin(stStr):null;
+  return list.filter(br=>{
+    const tags=br&&br.tags;if(tags&&tags.length&&!tags.includes(attr))return false;
+    if(ws!==null&&br&&br.start&&ws>=toMin(br.start))return false;
+    return true;
+  });
 }
 // 退勤延長: shiftの実効終了時刻で ランチ(≤17:00)/ディナー(>17:00) を判定して延長分を返す
 function getOT(staffName,settings,shift){
