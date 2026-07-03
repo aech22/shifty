@@ -2749,24 +2749,26 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     let h='<table style="border-collapse:collapse;font-size:12px;">';
     // ヘッダー2行
     h+='<thead>';
-    // Row1: 従業員番号（A/B/右端は2行縦結合）
+    // Row1: 従業員コード専用行（左右の端セルは結合・空欄。期間等は表示しない）
     h+='<tr>';
-    h+=`<th rowspan="2" style="border:${BDp2};padding:2px 4px;width:36px;writing-mode:vertical-rl;text-align:center;font-weight:700;">${esc(period.label||"")}</th>`;
-    h+=`<th rowspan="2" style="border:${BDp2};padding:2px 4px;width:28px;text-align:center;font-weight:700;">曜日</th>`;
+    h+=`<th colspan="2" style="border:${BDp2};padding:1px;height:16px;"></th>`;
     cols.forEach(nm=>{
       if(isSpacer(nm)){h+=`<th style="border:${BDp};padding:1px;width:30px;height:16px;background:#f0f0f0;"></th>`;return;}
       h+=`<th style="border:${BDp};padding:1px;width:30px;height:16px;text-align:center;font-size:9px;font-weight:600;">${esc(staffNums[nm]||"")}</th>`;
     });
-    h+=`<th rowspan="2" style="border:${BDp2};padding:2px 4px;width:28px;text-align:center;font-weight:700;">曜日</th>`;
-    h+=`<th rowspan="2" style="border:${BDp2};padding:2px 4px;width:40px;writing-mode:vertical-rl;text-align:center;font-weight:700;">${esc(shopName||"店舗")}</th>`;
+    h+=`<th colspan="2" style="border:${BDp2};padding:1px;height:16px;"></th>`;
     h+='</tr>';
-    // Row2: スタッフ名（縦書き）
+    // Row2: 期間（縦書き）・曜日・スタッフ名（縦書き）・曜日・店名（縦書き）
     h+='<tr>';
+    h+=`<th style="border:${BDp2};padding:2px 4px;width:36px;writing-mode:vertical-rl;text-align:center;font-weight:700;">${esc(period.label||"")}</th>`;
+    h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;text-align:center;font-weight:700;">曜日</th>`;
     cols.forEach(nm=>{
       if(isSpacer(nm)){h+=`<th style="border:${BDp};background:#f0f0f0;"></th>`;return;}
       const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";
       h+=`<th style="border:${BDp};padding:1px;height:80px;writing-mode:vertical-rl;text-orientation:mixed;text-align:center;font-weight:700;color:${col};white-space:nowrap;">${esc(nm)}</th>`;
     });
+    h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;text-align:center;font-weight:700;">曜日</th>`;
+    h+=`<th style="border:${BDp2};padding:2px 4px;width:40px;writing-mode:vertical-rl;text-align:center;font-weight:700;">${esc(shopName||"店舗")}</th>`;
     h+='</tr></thead><tbody>';
     dates.forEach((ds,di)=>{
       const d=pd(ds),dow=d.getDay(),day=d.getDate(),wd=WD[dow];
@@ -2782,13 +2784,16 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         cols.forEach(nm=>{
           if(isSpacer(nm)){h+=`<td style="border:${BDp};background:#f0f0f0;"></td>`;return;}
           if(!pdfHasSub(nm,ds)){h+=`<td style="border:${BDp};"></td>`;return;}
+          const sh=_getSub(nm)?.shifts?.[ds];
           const r=pdfResolve(nm,ds,field);
           const otherHas=pdfResolve(nm,ds,field==="start"?"end":"start").disp;
           if(!r.disp&&!otherHas){
-            // 休みセル（両方空）: 斜線ハッチ
-            h+=`<td style="border:${BDp};background:${hatch};height:15px;"></td>`;return;
+            // 休み提出のみ斜線ハッチ（出勤で上書きされていればdispがあるためここに来ない）
+            if(sh&&sh.status==="holiday"){h+=`<td style="border:${BDp};background:${hatch};height:15px;"></td>`;return;}
+            h+=`<td style="border:${BDp};height:15px;"></td>`;return;
           }
-          const cbg=r.note?"#FFFF00":"transparent";
+          // 背景: 緑(スタッフ変更) > 黄(サフィックスnote) — 画面と同じ優先順位
+          const cbg=sh&&sh.changed===true?"#B7EBC6":r.note?"#FFFF00":"transparent";
           h+=`<td style="border:${BDp};padding:1px;text-align:center;background:${cbg};height:15px;">${esc(r.disp)}</td>`;
         });
         if(ri===0){
@@ -2801,17 +2806,21 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     h+='</tbody></table>';
     return h;
   };
-  // 集計系table（1行ヘッダー＋値行）
-  const buildCountTableHtml=(title,valFn,fmt)=>{
+  // 休み・連勤カウント統合table（名前ヘッダー1行＋値2行）
+  const buildCountsTableHtml=()=>{
     const cols=buildPdfCols();const BDp="1px solid #888";
-    let h=`<div style="font-size:13px;font-weight:700;margin:10px 0 4px;">${esc(title)}</div>`;
+    let h=`<div style="font-size:13px;font-weight:700;margin:10px 0 4px;">休み・連勤カウント</div>`;
     h+='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
-    h+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;white-space:nowrap;">${esc(title)}</th>`;
+    h+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;"></th>`;
     cols.forEach(nm=>{if(isSpacer(nm)){h+=`<th style="border:${BDp};background:#f0f0f0;width:26px;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";h+=`<th style="border:${BDp};padding:2px;height:70px;writing-mode:vertical-rl;text-orientation:mixed;text-align:center;color:${col};white-space:nowrap;">${esc(nm)}</th>`;});
-    h+='</tr></thead><tbody><tr>';
-    h+=`<td style="border:${BDp};padding:3px 6px;background:#f7f7f7;"></td>`;
-    cols.forEach(nm=>{if(isSpacer(nm)){h+=`<td style="border:${BDp};background:#f0f0f0;"></td>`;return;}const v=valFn(nm);h+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${esc(fmt?fmt(v):v)}</td>`;});
-    h+='</tr></tbody></table>';
+    h+='</tr></thead><tbody>';
+    const rows=[["休みカウント",nm=>{const v=restCounts[nm]||0;return v%1===0?v:v.toFixed(1);}],["連勤カウント",nm=>consecCounts[nm]||0]];
+    rows.forEach(([lbl,valFn])=>{
+      h+=`<tr><td style="border:${BDp};padding:3px 6px;background:#f7f7f7;font-weight:600;white-space:nowrap;">${esc(lbl)}</td>`;
+      cols.forEach(nm=>{if(isSpacer(nm)){h+=`<td style="border:${BDp};background:#f0f0f0;"></td>`;return;}h+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${esc(valFn(nm))}</td>`;});
+      h+='</tr>';
+    });
+    h+='</tbody></table>';
     return h;
   };
   // ヒートマップtable（日付×時刻・背景濃淡）
@@ -2832,73 +2841,72 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     h+='</tbody></table>';
     return h;
   };
-  // canvas→jsPDF（縦分割で複数ページ対応）
-  const canvasToPdf=(canvas,fname)=>{
-    const{jsPDF}=window.jspdf;
-    const pdf=new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
-    const pageW=297,pageH=210,margin=5,imgW=pageW-margin*2,imgH=pageH-margin*2;
-    const pxPerMm=canvas.width/imgW;             // 横基準スケール
-    const pageHpx=Math.floor(imgH*pxPerMm);      // 1ページ分のピクセル高
-    let sy=0,first=true;
-    while(sy<canvas.height){
-      const sliceH=Math.min(pageHpx,canvas.height-sy);
-      const tmp=document.createElement("canvas");
-      tmp.width=canvas.width;tmp.height=sliceH;
-      const ctx=tmp.getContext("2d");
-      ctx.fillStyle="#fff";ctx.fillRect(0,0,tmp.width,tmp.height);
-      ctx.drawImage(canvas,0,sy,canvas.width,sliceH,0,0,canvas.width,sliceH);
-      const sliceMm=sliceH/pxPerMm;
-      if(!first)pdf.addPage();
-      pdf.addImage(tmp.toDataURL("image/jpeg",0.92),"JPEG",margin,margin,imgW,sliceMm);
-      first=false;sy+=sliceH;
-    }
-    pdf.save(fname);
+  // ブロック単体をオフスクリーン描画してcanvas化（幅はコンテンツに追従）
+  const renderBlock=async(html)=>{
+    const c=document.createElement("div");
+    c.style.cssText="position:fixed;left:-30000px;top:0;width:max-content;background:#fff;color:#000;font-family:'Yu Gothic','Hiragino Sans',sans-serif;padding:12px;box-sizing:border-box;";
+    c.innerHTML=html;
+    document.body.appendChild(c);
+    try{return await window.html2canvas(c,{scale:2,backgroundColor:"#fff"});}
+    finally{if(c.parentNode)c.parentNode.removeChild(c);}
   };
   const exportPdf=async(mode)=>{
     if(!period)return;
     if(typeof window.html2canvas==="undefined"||typeof window.jspdf==="undefined"){tt("▲ PDFライブラリ未読込み");return;}
     setPdfBusy(true);
-    const container=document.createElement("div");
-    container.style.cssText="position:fixed;left:-10000px;top:0;width:1400px;background:#fff;color:#000;font-family:'Yu Gothic','Hiragino Sans',sans-serif;padding:16px;box-sizing:border-box;";
     try{
-      let inner="";
       const heading=`${esc(shopName||"店舗")} ${esc(period.label||"")}`;
+      // ブロック=ページ内で分割しない単位。収まらないブロックは次ページへ、単独で超える場合は縮小して1ページに収める
+      const blocks=[];
       if(mode==="shift"){
-        inner=`<div style="font-size:16px;font-weight:700;margin-bottom:8px;">${heading} シフト表</div>`+buildShiftTableHtml();
+        blocks.push(`<div style="font-size:16px;font-weight:700;margin-bottom:8px;">${heading} シフト表</div>`+buildShiftTableHtml());
       }else{
-        inner=`<div style="font-size:18px;font-weight:700;margin-bottom:10px;">${heading} シフト作成データ</div>`;
-        inner+=`<div style="font-size:13px;font-weight:700;margin:6px 0 4px;">シフト表</div>`+buildShiftTableHtml();
-        inner+=buildCountTableHtml("休みカウント",nm=>{const v=restCounts[nm]||0;return v%1===0?v:v.toFixed(1);});
-        inner+=buildCountTableHtml("連勤カウント",nm=>consecCounts[nm]||0);
-        inner+=`<div style="font-size:13px;font-weight:700;margin:10px 0 4px;">時間帯別出勤人数</div>`;
-        inner+=buildHeatTableHtml(hasSplit?"キッチン":"",("kit"),kitMax);
-        if(hasSplit)inner+=buildHeatTableHtml("ホール","hall",hallMax);
+        // 上段: 左=キッチン時間別出勤人数 / 中央=シフト表 / 右=ホール時間別出勤人数
+        let top=`<div style="font-size:18px;font-weight:700;margin-bottom:10px;">${heading} シフト作成データ</div>`;
+        top+='<div style="display:flex;gap:14px;align-items:flex-start;">';
+        top+=`<div>${buildHeatTableHtml(hasSplit?"キッチン":"時間帯別出勤人数","kit",kitMax)}</div>`;
+        top+=`<div><div style="font-size:13px;font-weight:700;margin:8px 0 4px;">シフト表</div>${buildShiftTableHtml()}</div>`;
+        if(hasSplit)top+=`<div>${buildHeatTableHtml("ホール","hall",hallMax)}</div>`;
+        top+='</div>';
+        blocks.push(top);
+        blocks.push(buildCountsTableHtml());
         // 期間別勤務時間
-        inner+=`<div style="font-size:13px;font-weight:700;margin:10px 0 4px;">期間別勤務時間</div>`;
         {const cols=buildPdfCols();const BDp="1px solid #888";
-         let t='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
+         let t=`<div style="font-size:13px;font-weight:700;margin:0 0 4px;">期間別勤務時間</div>`;
+         t+='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
          t+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;">期間</th>`;
          cols.forEach(nm=>{if(isSpacer(nm)){t+=`<th style="border:${BDp};background:#f0f0f0;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";t+=`<th style="border:${BDp};padding:2px;height:70px;writing-mode:vertical-rl;text-orientation:mixed;text-align:center;color:${col};white-space:nowrap;">${esc(nm)}</th>`;});
          t+='</tr></thead><tbody>';
          periodRows.forEach(row=>{t+=`<tr><td style="border:${BDp};padding:3px 6px;font-weight:${row._bold?700:400};white-space:nowrap;">${esc(row.label)}</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};background:#f0f0f0;"></td>`;return;}const min=row.getMin(nm);t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
-         t+='</tbody></table>';inner+=t;}
+         t+='</tbody></table>';blocks.push(t);}
         // 週間勤務時間
         if(weeks.length>0){
-          inner+=`<div style="font-size:13px;font-weight:700;margin:10px 0 4px;">週間勤務時間（前期間含む）</div>`;
           const cols=buildPdfCols();const BDp="1px solid #888";
-          let t='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
+          let t=`<div style="font-size:13px;font-weight:700;margin:0 0 4px;">週間勤務時間（前期間含む）</div>`;
+          t+='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
           t+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;">週</th>`;
           cols.forEach(nm=>{if(isSpacer(nm)){t+=`<th style="border:${BDp};background:#f0f0f0;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";t+=`<th style="border:${BDp};padding:2px;height:70px;writing-mode:vertical-rl;text-orientation:mixed;text-align:center;color:${col};white-space:nowrap;">${esc(nm)}</th>`;});
           t+='</tr></thead><tbody>';
           weeks.forEach(monStr=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);t+=`<tr><td style="border:${BDp};padding:3px 6px;white-space:nowrap;">${m.getDate()}〜${sun.getDate()}日</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};background:#f0f0f0;"></td>`;return;}const min=getWeekMin(monStr,nm);t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
-          t+='</tbody></table>';inner+=t;
+          t+='</tbody></table>';blocks.push(t);
         }
       }
-      container.innerHTML=inner;
-      document.body.appendChild(container);
-      const canvas=await window.html2canvas(container,{scale:2,backgroundColor:"#fff"});
+      const{jsPDF}=window.jspdf;
+      const pdf=new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+      const pageW=297,pageH=210,margin=5,imgW=pageW-margin*2,imgH=pageH-margin*2;
+      let y=margin;
+      for(const bh of blocks){
+        const canvas=await renderBlock(bh);
+        // 幅基準でスケール（自然サイズ以上には拡大しない）。1ページ高を超えるブロックは等比縮小
+        let mmPerPx=Math.min(imgW/canvas.width,0.14);
+        if(canvas.height*mmPerPx>imgH)mmPerPx=imgH/canvas.height;
+        const wMm=canvas.width*mmPerPx,hMm=canvas.height*mmPerPx;
+        if(y>margin+0.1&&y+hMm>pageH-margin){pdf.addPage();y=margin;}
+        pdf.addImage(canvas.toDataURL("image/jpeg",0.92),"JPEG",margin,y,wMm,hMm);
+        y+=hMm+4;
+      }
       const fname=`${pdfSanitize(shopName||"店舗")}${pdfSanitize(period.label||"")}${mode==="shift"?"シフト":"全データ"}.pdf`;
-      canvasToPdf(canvas,fname);
+      pdf.save(fname);
       ph("pdf_exported",{period_id:period.id,mode});
       tt(`✓ ${fname} をダウンロードしました`);
       setPdfModal(false);
@@ -2906,7 +2914,6 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       console.error("PDF生成失敗:",e);
       tt("✕ PDF生成に失敗しました: "+e.message);
     }finally{
-      if(container.parentNode)container.parentNode.removeChild(container);
       setPdfBusy(false);
     }
   };
@@ -3300,12 +3307,9 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   // ============================================================
   // サンプルファイル完全準拠レイアウト
   //
-  // ヘッダー行(Row1 = サンプルのRow2):
-  //   A1 = 期間ラベル (縦書き, medium四辺)
-  //   B1 = 曜日ヘッダー (縦書き, medium四辺)
-  //   C1〜C+sl-1 = スタッフ名 (縦書き, top:medium, right:thin)
-  //   C+sl = 曜日 (縦書き, medium四辺 ← 右端ミラー)
-  //   C+sl+1 = 店舗名 (縦書き, top/bot:medium, left/right:thin)
+  // ヘッダー行:
+  //   Row1 = 従業員コード専用行（A1:B1結合・右端2セル結合は空欄、スタッフ列=従業員番号）
+  //   Row2 = A:期間ラベル(縦書き) / B:曜日 / スタッフ名(縦書き) / 曜日 / 店舗名
   //
   // データ行(1日=2行):
   //   上行: A=日付(横書き), B=曜日(横書き) → 両方 medium四辺・上下結合
@@ -3379,14 +3383,13 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   ws.getRow(1).height=18;   // 従業員番号行（横書き・低め）
   ws.getRow(2).height=78;   // スタッフ名行（縦書き・従来通り）
 
-  // A列(期間ラベル): Row1〜2を縦結合し従来の見た目を維持
-  SC(1,C_PER,periodLabel,aV,fNone,{top:M,bottom:M,left:M,right:T},{bold:true,size:14});
-  SC(2,C_PER,null,aV,fNone,{top:M,bottom:M,left:M,right:T});
-  ws.mergeCells(1,C_PER,2,C_PER);
-  // B列(曜日ヘッダー): Row1〜2を縦結合
-  SC(1,C_WD_H,"曜日",aV,fNone,{top:M,bottom:M,left:T,right:M},{bold:true,size:14});
-  SC(2,C_WD_H,null,aV,fNone,{top:M,bottom:M,left:T,right:M});
-  ws.mergeCells(1,C_WD_H,2,C_WD_H);
+  // Row1左端(A1:B1): 従業員コード行のため横結合・空欄（期間等は表示しない）
+  SC(1,C_PER,null,aH,fNone,{top:M,bottom:T,left:M,right:T},{bold:false,size:8});
+  SC(1,C_WD_H,null,aH,fNone,{top:M,bottom:T,left:T,right:M},{bold:false,size:8});
+  ws.mergeCells(1,C_PER,1,C_WD_H);
+  // Row2: A=期間ラベル(縦書き), B=曜日ヘッダー(縦書き)
+  SC(2,C_PER,periodLabel,aV,fNone,{top:T,bottom:M,left:M,right:T},{bold:true,size:14});
+  SC(2,C_WD_H,"曜日",aV,fNone,{top:T,bottom:M,left:T,right:M},{bold:true,size:14});
   // スタッフ列: Row1=従業員番号(横書き), Row2=スタッフ名(縦書き)
   sl.forEach((nm,i)=>{
     const isFirst=i===0;
@@ -3406,14 +3409,13 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
       {top:T,bottom:M,left:isFirst?T:undefined,right:T},
       {bold:true,size:14,color:{argb:staffColorArgb}});
   });
-  // 右端曜日: Row1〜2を縦結合
-  SC(1,C_WD_R,"曜日",aV,fNone,{top:M,bottom:M,left:M,right:T},{bold:true,size:14});
-  SC(2,C_WD_R,null,aV,fNone,{top:M,bottom:M,left:M,right:T});
-  ws.mergeCells(1,C_WD_R,2,C_WD_R);
-  // 右端店舗名: Row1〜2を縦結合
-  SC(1,C_SHOP_R,shopName||"",aV,fNone,{top:M,bottom:M,left:T,right:T},{bold:true,size:14});
-  SC(2,C_SHOP_R,null,aV,fNone,{top:M,bottom:M,left:T,right:T});
-  ws.mergeCells(1,C_SHOP_R,2,C_SHOP_R);
+  // Row1右端(曜日:店舗名): 従業員コード行のため横結合・空欄
+  SC(1,C_WD_R,null,aH,fNone,{top:M,bottom:T,left:M,right:T},{bold:false,size:8});
+  SC(1,C_SHOP_R,null,aH,fNone,{top:M,bottom:T,left:T,right:T},{bold:false,size:8});
+  ws.mergeCells(1,C_WD_R,1,C_SHOP_R);
+  // Row2: 右端曜日・店舗名（縦書き）
+  SC(2,C_WD_R,"曜日",aV,fNone,{top:T,bottom:M,left:M,right:T},{bold:true,size:14});
+  SC(2,C_SHOP_R,shopName||"",aV,fNone,{top:T,bottom:M,left:T,right:T},{bold:true,size:14});
 
   // ===== データ行 (1日=2行) =====
   dates.forEach((ds,di)=>{
