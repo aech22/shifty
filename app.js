@@ -232,7 +232,7 @@ function calcNetWorkMinutes(shift,breaks,overtimeMins=0){
   const ws=toMin(st),we=toMin(en);
   if(we<=ws)return 0;
   let net=we-ws;
-  (breaks||[]).forEach(br=>{const bs=toMin(br.start),be=toMin(br.end);const ol=Math.min(we,be)-Math.max(ws,bs);if(ol>0)net-=ol;});
+  (breaks||[]).forEach(br=>{const bs=toMin(br.start),be=toMin(br.end);if(ws>=bs)return;const ol=Math.min(we,be)-Math.max(ws,bs);if(ol>0)net-=ol;});
   return Math.max(0,net);
 }
 function getBreakList(settings,dateStr){
