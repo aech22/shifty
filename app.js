@@ -239,7 +239,49 @@ function getBreakList(settings,dateStr){
   const dow=pd(dateStr).getDay();const hol=isHoliday(dateStr);const bt=(settings&&settings.breakTimes)||{};
   if(hol)return bt.hol||[];if(dow===0)return bt.sun||[];if(dow===6)return bt.sat||[];return bt.weekday||[];
 }
-function getOT(staffName,settings){return(settings?.overtimeSettings?.byStaff||{})[staffName]||0;}
+// 17:00(1020分)を境界にランチ帯/ディナー帯を判定し出勤数を返す
+function shiftBandInfo(shift){
+  if(!shift||shift.status!=="work")return{startMin:0,endMin:0,hasLunch:false,hasDinner:false,attendance:0};
+  const st=shift.adjustedStart??shift.start;const en=shift.adjustedEnd??shift.end;
+  if(!st||!en)return{startMin:0,endMin:0,hasLunch:false,hasDinner:false,attendance:0};
+  const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
+  const startMin=toMin(st),endMin=toMin(en);
+  if(endMin<=startMin)return{startMin,endMin,hasLunch:false,hasDinner:false,attendance:0};
+  const hasLunch=startMin<1020,hasDinner=endMin>1020;
+  const attendance=((hasLunch&&hasDinner)||(endMin-startMin)>=540)?1:0.5;
+  return{startMin,endMin,hasLunch,hasDinner,attendance};
+}
+// 休憩は1出勤（ランチ・ディナー両帯 or 9時間以上）のスタッフにのみ適用
+function isBreakEligible(shift){return shiftBandInfo(shift).attendance===1;}
+// 属性ID→名称のリスト（staffTypeLimits優先・社員/バイト補完）
+function getAttrOptions(settings){
+  const stl=(settings&&settings.staffTypeLimits)||{};
+  const out=[];
+  if(stl.employee&&stl.employee.name)out.push(["employee",stl.employee.name]);else out.push(["employee","社員"]);
+  if(stl.parttime&&stl.parttime.name)out.push(["parttime",stl.parttime.name]);else out.push(["parttime","バイト"]);
+  Object.keys(stl).forEach(id=>{if(id!=="employee"&&id!=="parttime"&&stl[id]&&stl[id].name)out.push([id,stl[id].name]);});
+  return out;
+}
+const DAY_TYPES=[["weekday","平日"],["sat","土曜"],["sun","日曜"],["hol","祝日"]];
+// 休憩適用の統一入口: 適用可否判定 + 属性タグフィルタ
+function getBreaksFor(settings,dateStr,staffName,shift){
+  if(!isBreakEligible(shift))return[];
+  const list=getBreakList(settings,dateStr);
+  const attr=((settings&&settings.staffAttributes)||{})[staffName]||"parttime";
+  return list.filter(br=>{const tags=br&&br.tags;if(!tags||!tags.length)return true;return tags.includes(attr);});
+}
+// 退勤延長: shiftの実効終了時刻で ランチ(≤17:00)/ディナー(>17:00) を判定して延長分を返す
+function getOT(staffName,settings,shift){
+  const raw=(settings?.overtimeSettings?.byStaff||{})[staffName];
+  if(raw==null)return 0;
+  if(typeof raw==="number")return raw; // レガシー数値
+  const lunch=raw.lunch||0,dinner=raw.dinner||0;
+  if(!shift)return dinner;
+  const en=shift.adjustedEnd??shift.end;
+  if(!en)return dinner;
+  const[h,m]=en.split(":").map(Number);
+  return(h*60+m)<=1020?lunch:dinner;
+}
 function fmtMin(min){if(!min&&min!==0)return"";const h=Math.floor(min/60),m=min%60;return`${h}:${String(m).padStart(2,"0")}`;}
 
 
@@ -255,7 +297,7 @@ function makePeriod(shopId){
   return{id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:`${yr}年${mo}月前半`,startDate:`${yr}-${ms}-01`,endDate:`${yr}-${ms}-15`,deadlineDate:"",createdAt:new Date().toISOString()};
 }
 function makeSettings(shopId){
-  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{name:"社員",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},parttime:{name:"バイト",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}},overtimeSettings:{byStaff:{}}};
+  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{name:"社員",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},parttime:{name:"バイト",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}},overtimeSettings:{byStaff:{}},staffNumbers:{}};
 }
 
 // ===== URL生成・解析 =====
@@ -1643,13 +1685,28 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     const staffName=name.trim();
     // 既存subを検索（同じperiod+名前 → 上書き）
     const existSub=subs.find(s=>s.staffName===staffName&&s.periodId===apid);
+    // 再提出時: 日付ごとに旧シフトと比較し、変更があれば changed:true を付与。
+    // 管理者調整値(adjustedXxx)は旧シフトから引き継ぐ。
+    const buildShift=d=>{
+      const nw={...(sd[d]||{status:"holiday"})};
+      delete nw.changed; // 過去のchangedは作り直す
+      if(existSub){
+        const old=existSub.shifts?.[d];
+        if(old){
+          ["adjustedStart","adjustedEnd","adjustedStartNote","adjustedEndNote"].forEach(k=>{if(old[k]!=null&&nw[k]==null)nw[k]=old[k];});
+          const changed=(old.status!==nw.status)||((old.start||"")!==(nw.start||""))||((old.end||"")!==(nw.end||""));
+          if(changed)nw.changed=true;
+        }
+      }
+      return nw;
+    };
     const sub={
       id:existSub?existSub.id:Date.now().toString(),
       periodId:apid,
       staffName,
       submittedAt:existSub?existSub.submittedAt:new Date().toISOString(),
       ...(existSub?{updatedAt:new Date().toISOString(),isUpdated:true}:{}),
-      shifts:Object.fromEntries(dates.map(d=>[d,sd[d]||{status:"holiday"}])),
+      shifts:Object.fromEntries(dates.map(d=>[d,buildShift(d)])),
       comment:comment.trim()
     };
     // スタッフ名をCookieに保存（1年間）
@@ -2291,8 +2348,12 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const firstPid=(periods[0]||{}).id||"";
   const[selPid,setSelPid]=useState(firstPid);
   const[localEdits,setLocalEdits]=useState({});
+  const[heatEdits,setHeatEdits]=useState({}); // blur確定値のみ（集計・ヒートマップ用）
+  const[focusKey,setFocusKey]=useState(null); // フォーカス中セルkey（黄色ハイライト抑制用）
   const[cellTip,setCellTip]=useState(null); // {x,y,value}
   const[fitAll,setFitAll]=useState(false);
+  const[pdfModal,setPdfModal]=useState(false);
+  const[pdfBusy,setPdfBusy]=useState(false);
   const[containerW,setContainerW]=useState(800);
   const[containerLeft,setContainerLeft]=useState(0);
   const outerRef=useRef(null);
@@ -2353,13 +2414,19 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     if(/^\d+$/.test(s)){const n=parseInt(s,10);if(s.length<=2){if(n>=0&&n<=30)return`${String(n).padStart(2,"0")}:00`;}else{const h=Math.floor(n/100);const m=n%100;if(h>=0&&h<=30&&m>=0&&m<60)return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;}return"";}
     return"";
   };
-  // サフィックス抽出: h=ホール出張, k=キッチン入り, x=ヘルプ(カウント外), ""=通常
+  // サフィックス抽出: h=ホール出張, k=キッチン入り, x=ヘルプ(カウント外), 任意文字列=そのまま保持, ""=通常
   const extractNote=raw=>{
     if(!raw||!raw.trim())return{numeric:"",note:""};
-    const m=raw.trim().match(/^([\d.:]+)([a-zA-Z]*)$/i);
-    if(!m)return{numeric:"",note:"x"}; // 文字のみ → ヘルプ
-    const l=m[2].toLowerCase();
-    return{numeric:m[1],note:l==="h"?"h":l==="k"?"k":l?"x":""};
+    const s=raw.trim();
+    const m=s.match(/^([\d.:]+)(.*)$/s);
+    if(!m||!m[1])return{numeric:"",note:"x"}; // 数値部なし(文字のみ) → ヘルプ
+    const suf=m[2].trim();
+    if(!suf)return{numeric:m[1],note:""};
+    const l=suf.toLowerCase();
+    if(l==="h")return{numeric:m[1],note:"h"};
+    if(l==="k")return{numeric:m[1],note:"k"};
+    if(l==="x")return{numeric:m[1],note:"x"};
+    return{numeric:m[1],note:suf}; // 日本語含む任意サフィックスはそのまま保持
   };
 
   const _getSub=(name)=>subs.find(s=>s.periodId===selPid&&s.staffName===name);
@@ -2372,7 +2439,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     if(!isPremium)return;
     const{numeric,note}=extractNote(rawValue);
     const parsed=parseTime(numeric);const display=parsed?(toDecimal(parsed)+note):"";
-    setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:display}));
+    const ekey=`${name}|${date}|${field}`;
+    setLocalEdits(prev=>({...prev,[ekey]:display}));
+    setHeatEdits(prev=>({...prev,[ekey]:display})); // blur確定値を集計/ヒートマップ用に反映
     // 管理者編集はadjustedXxxに保存（スタッフ提出のstart/endを保護）
     const adjField=field==="start"?"adjustedStart":"adjustedEnd";
     const nk=field==="start"?"adjustedStartNote":"adjustedEndNote";
@@ -2382,20 +2451,37 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     onSave(newSubs);
   };
 
-  const getEffHHMM=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits){const{numeric}=extractNote(localEdits[key]);return parseTime(numeric)||"";}return getStoredTime(name,date,field);};
-  // シフトのノート取得: 管理者調整値優先、なければスタッフ提出値（localEdits最優先）
-  const getShiftNote=(name,date)=>{
-    for(const field of["start","end"]){const key=`${name}|${date}|${field}`;if(key in localEdits){const{note}=extractNote(localEdits[key]);if(note)return note;}const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";const n=(sh?.[adjNk]??sh?.[origNk]);if(n)return n;}return"";
+  // 集計/ヒートマップ用は heatEdits（blur確定値）を参照
+  const getEffHHMM=(name,date,field,src=heatEdits)=>{const key=`${name}|${date}|${field}`;if(key in src){const{numeric}=extractNote(src[key]);return parseTime(numeric)||"";}return getStoredTime(name,date,field);};
+  // シフトのノート取得: 管理者調整値優先、なければスタッフ提出値（edits最優先）
+  const getShiftNote=(name,date,src=heatEdits)=>{
+    for(const field of["start","end"]){const key=`${name}|${date}|${field}`;if(key in src){const{note}=extractNote(src[key]);if(note)return note;}const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";const n=(sh?.[adjNk]??sh?.[origNk]);if(n)return n;}return"";
+  };
+  // ヒートマップ休憩判定用: 実効start/endを反映した一時シフトオブジェクト
+  const getHeatShift=(name,date)=>{
+    const base=_getSub(name)?.shifts?.[date];
+    const st=getEffHHMM(name,date,"start"),en=getEffHHMM(name,date,"end");
+    if(!st||!en)return null;
+    return{...(base||{}),status:"work",adjustedStart:st,adjustedEnd:en};
   };
   const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
   // section: "kit" or "hall" — サフィックスh/kで所属を上書き、xはどちらにも入らない
+  // 列hr[hr*60,(hr+1)*60)にカウント: stM<(hr+1)*60 && enM>=hr*60（終端時刻列も含む）
   const countHeat=(section,date,hr)=>{
     let cnt=0;
+    const h0=hr*60,h1=(hr+1)*60;
     realStaff.forEach(name=>{
       const stM=timeToMin(getEffHHMM(name,date,"start"));const enM=timeToMin(getEffHHMM(name,date,"end"));
-      if(stM===null||enM===null||stM>=(hr+1)*60||enM<=hr*60)return;
+      if(stM===null||enM===null||stM>=h1||enM<h0)return;
       const note=getShiftNote(name,date);
       if(note==="x")return;
+      // 休憩適用者: 休憩がこの1時間帯を完全に覆う場合はカウントしない
+      const hsh=getHeatShift(name,date);
+      if(hsh&&isBreakEligible(hsh)){
+        const brs=getBreaksFor(settings,date,name,hsh);
+        const covered=brs.some(br=>{const bs=timeToMin(br.start),be=timeToMin(br.end);return bs!==null&&be!==null&&bs<=h0&&be>=h1;});
+        if(covered)return;
+      }
       const orig=hallStaff.includes(name)?"hall":"kit";
       const eff=note==="h"?"hall":note==="k"?"kit":orig;
       if(eff===section)cnt++;
@@ -2410,8 +2496,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     allCands.forEach(c=>{const sh=parseInt(c.start);const eh=parseInt(c.end);for(let h=sh;h<=eh;h++)hrs.add(h);});
     // 実際の提出・入力値から時間帯を収集
     subs.filter(s=>s.periodId===selPid).forEach(sub=>{Object.values(sub.shifts||{}).forEach(sh=>{if(sh.status!=="work")return;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(st)hrs.add(parseInt(st));if(en)hrs.add(parseInt(en));});});
-    // localEditsからも収集
-    Object.entries(localEdits).forEach(([,v])=>{const{numeric}=extractNote(v);const p=parseTime(numeric);if(p)hrs.add(parseInt(p));});
+    // heatEdits（blur確定値）からも収集
+    Object.entries(heatEdits).forEach(([,v])=>{const{numeric}=extractNote(v);const p=parseTime(numeric);if(p)hrs.add(parseInt(p));});
     if(hrs.size===0){for(let h=9;h<=24;h++)hrs.add(h);}
     const mn=Math.min(...hrs),mx=Math.max(...hrs);
     return Array.from({length:mx-mn+1},(_,i)=>mn+i);
@@ -2422,7 +2508,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const sameMoPeriods=period?[...periods].filter(p=>{const d=pd(p.startDate);return d.getFullYear()===perD.getFullYear()&&d.getMonth()===perD.getMonth();}).sort((a,b)=>a.startDate.localeCompare(b.startDate)):[];
   const getPeriodMin=(pid,name)=>{
     const p=periods.find(pp=>pp.id===pid);if(!p)return 0;
-    return gd(p.startDate,p.endDate).reduce((acc,d)=>{const sub=subs.find(ss=>ss.periodId===pid&&ss.staffName===name);const sh=sub?.shifts?.[d];return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreakList(settings,d),getOT(name,settings)):0);},0);
+    return gd(p.startDate,p.endDate).reduce((acc,d)=>{const sub=subs.find(ss=>ss.periodId===pid&&ss.staffName===name);const sh=sub?.shifts?.[d];return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh)):0);},0);
   };
 
   // 週間勤務時間（前の期間を跨ぐ）
@@ -2434,7 +2520,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return[...wkSet].sort();
   })();
   const getWeekMin=(monStr,name)=>{
-    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sub=subs.find(s=>s.staffName===name&&s.shifts?.[ds]?.status==="work");if(sub)tot+=calcNetWorkMinutes(sub.shifts[ds],getBreakList(settings,ds),getOT(name,settings));}
+    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sub=subs.find(s=>s.staffName===name&&s.shifts?.[ds]?.status==="work");if(sub)tot+=calcNetWorkMinutes(sub.shifts[ds],getBreaksFor(settings,ds,name,sub.shifts[ds]),getOT(name,settings,sub.shifts[ds]));}
     return tot;
   };
 
@@ -2453,14 +2539,33 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const heatRowH=measuredRowH||48;
   // 中央グリッド幅 = ブレイクアウト時はビューポート幅 - パネル×2
   const centerW=useBreakout?(window.innerWidth-panelW*2-24):containerW;
-  const colW=fitAll?Math.max(24,Math.floor((centerW-90)/Math.max(1,realStaff.length))):39;
+  // gridStaff: spacer列を含む列描画リスト（集計はrealStaffのまま）
+  const gridStaff=staffList;
+  const colW=fitAll?Math.max(24,Math.floor((centerW-90)/Math.max(1,gridStaff.length))):39;
+  const spacerCell=(key)=>(<td key={key} style={{width:colW,minWidth:colW,maxWidth:colW,borderLeft:BD2,background:"var(--c-input2, var(--c-input))",padding:0}}></td>);
+  const spacerTh=(key)=>(<th key={key} style={{width:colW,minWidth:colW,maxWidth:colW,borderLeft:BD2,background:"var(--c-input2, var(--c-input))",padding:0}}></th>);
+  // gridStaffを列描画: spacer位置はspacerFnで空セル、実スタッフはrenderFnで描画
+  const mapGridCols=(renderFn,spacerFn)=>gridStaff.map((name,i)=>isSpacer(name)?spacerFn(`sp${i}`):renderFn(name,i));
   const AI2={width:colW-3,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
-  const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:11,borderRight:BD2};
+  const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:16,fontWeight:600,borderRight:BD2};
+  // スタッフ名色（Excel書き出しと同ルール: staffColors[name]==="red"→赤）
+  const nameColor=name=>((settings.staffColors||{})[name]==="red"?"#e53935":"var(--c-text)");
   const VTH=(name)=>(
     <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"middle"}}>
-      <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:72,display:"inline-block",fontSize:11,fontWeight:600,color:"var(--c-text)",whiteSpace:"nowrap",textAlign:"center",lineHeight:String(colW-4)+"px"}}>{name}</div>
+      <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:72,display:"inline-block",fontSize:11,fontWeight:600,color:nameColor(name),whiteSpace:"nowrap",textAlign:"center",lineHeight:String(colW-4)+"px"}}>{name}</div>
     </th>
   );
+  // 集計用の実効値（heatEdits＝blur確定値ベース）
+  const getHeatVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in heatEdits)return heatEdits[key];const t=toDecimal(getStoredTime(name,date,field));return t||"";};
+  // その日出勤しているか（0.5出勤含む）: start か end のどちらかに有効値がある
+  const isWorkDay=(name,date)=>{
+    const shift=_getSub(name)?.shifts?.[date];
+    const s=parseFloat(getHeatVal(name,date,"start"));
+    const e=parseFloat(getHeatVal(name,date,"end"));
+    const hasVal=!isNaN(s)||!isNaN(e);
+    if(shift&&shift.status==="holiday"&&!hasVal)return false;
+    return hasVal;
+  };
   // 休みカウント: 17時基準で前半/後半それぞれ出勤なし=0.5、終日なし=1
   const restCounts=React.useMemo(()=>{
     const result={};
@@ -2468,19 +2573,65 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       let count=0;
       dates.forEach(date=>{
         const shift=_getSub(name)?.shifts?.[date];
-        if(!shift||shift.status==="holiday"){count+=1;return;}
-        const s=parseFloat(getVal(name,date,"start"));
-        const e=parseFloat(getVal(name,date,"end"));
+        const s=parseFloat(getHeatVal(name,date,"start"));
+        const e=parseFloat(getHeatVal(name,date,"end"));
+        if((!shift||shift.status==="holiday")&&isNaN(s)&&isNaN(e)){count+=1;return;}
         if(!isNaN(s)&&s<17){}else{count+=0.5;}
         if(!isNaN(e)&&e>17){}else{count+=0.5;}
       });
       result[name]=count;
     });
     return result;
-  },[realStaff,dates,subs,localEdits,selPid]);
+  },[realStaff,dates,subs,heatEdits,selPid]);
+  // 連勤カウント: 期間内の最大連続出勤日数（0.5出勤も出勤扱い）
+  const consecCounts=React.useMemo(()=>{
+    const result={};
+    realStaff.forEach(name=>{
+      let maxC=0,cur=0;
+      dates.forEach(date=>{
+        if(isWorkDay(name,date)){cur++;maxC=Math.max(maxC,cur);}else cur=0;
+      });
+      result[name]=maxC;
+    });
+    return result;
+  },[realStaff,dates,subs,heatEdits,selPid]);
   const kitMax=Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("kit",date,hr))));
   const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
+
+  // セルの色: 緑(スタッフ変更) > 黄(サフィックスnote) > 行背景。フォーカス中セルは通常背景。
+  const cellBgFor=(name,date,field,rb)=>{
+    const key=`${name}|${date}|${field}`;
+    if(_getSub(name)?.shifts?.[date]?.changed===true)return"rgba(52,199,89,.30)";
+    if(focusKey===key)return rb; // 編集中は通常背景
+    // note有無を localEdits/保存値から判定
+    let note="";
+    if(key in localEdits){note=extractNote(localEdits[key]).note;}
+    else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
+    if(note)return"#FFF3B0";
+    return rb;
+  };
+  const cellTextColor=(name,date,field)=>{
+    const key=`${name}|${date}|${field}`;
+    if(_getSub(name)?.shifts?.[date]?.changed===true)return undefined;
+    if(focusKey===key)return undefined;
+    let note="";
+    if(key in localEdits){note=extractNote(localEdits[key]).note;}
+    else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
+    return note?"#333":undefined;
+  };
+  // ダブルクリック/ダブルタップ: そのシフトのchangedフラグをトグル（Firebase永続化）
+  const toggleChanged=(name,date)=>{
+    if(!isPremium)return;
+    const sub=_getSub(name);const sd0=sub?.shifts?.[date];
+    if(!sub||!sd0)return;
+    const newSubs=[...subs];const idx=newSubs.findIndex(s=>s.id===sub.id);if(idx===-1)return;
+    const ns={...newSubs[idx]};const shifts={...(ns.shifts||{})};const sd={...shifts[date]};
+    if(sd.changed===true)delete sd.changed;else sd.changed=true;
+    shifts[date]=sd;ns.shifts=shifts;newSubs[idx]=ns;
+    onSave(newSubs);
+  };
+  const lastTapRef=useRef({key:null,t:0});
 
   // グリッドの実際の行高・thead高を測定してサイドパネルと同期
   useEffect(()=>{
@@ -2518,7 +2669,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           const d=pd(date);const day=d.getDay();const isHol=isHoliday(date);
           const dc=(day===0||isHol)?"#e53935":day===6?"#1976d2":"var(--c-text)";
           return(<tr key={date} style={rowH?{height:rowH}:{}}>
-            <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:11,color:dc,borderBottom:BD,whiteSpace:"nowrap",verticalAlign:"middle"}}>{fmtDL(date)}</td>
+            <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:15,fontWeight:600,color:dc,borderBottom:BD,whiteSpace:"nowrap",verticalAlign:"middle"}}>{fmtDL(date)}</td>
             {heatHours.map((hr,hi)=>{const n=countHeat(section,date,hr);return(
               <td key={hi} style={{minWidth:22,padding:"2px 1px",textAlign:"center",fontSize:11,borderLeft:BD,borderBottom:BD,background:hBg(n,maxC),color:n===0?"var(--c-text4)":"var(--c-text)",fontWeight:n>0?600:400,verticalAlign:"middle"}}>{n||""}</td>
             );})}
@@ -2536,15 +2687,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
           <thead><tr>
             <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:0,fontSize:11,fontWeight:600,borderBottom:BD2,width:90,minWidth:90,maxWidth:90}}><div style={{width:90,padding:"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{rowLabel}</div></th>
-            {realStaff.map(name=>VTH(name))}
+            {mapGridCols(name=>VTH(name),spacerTh)}
           </tr></thead>
           <tbody>{rows.map(row=>{
             const bg=row._bg||"transparent";const stickyBg=row._bg?`linear-gradient(${row._bg},${row._bg}),${CRD}`:CRD;
             return(<tr key={row.id} style={{background:bg}}>
               <td style={{position:"sticky",left:0,background:stickyBg,zIndex:1,padding:0,fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,width:90,minWidth:90,maxWidth:90}}><div style={{width:90,padding:"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{row.label}</div></td>
-              {realStaff.map(name=>{const min=row.getMin(name);const vio=row._violateFn?row._violateFn(name,min):false;const cellBg=vio?"rgba(255,71,87,.15)":bg;return(
+              {mapGridCols(name=>{const min=row.getMin(name);const vio=row._violateFn?row._violateFn(name,min):false;const cellBg=vio?"rgba(255,71,87,.15)":bg;return(
                 <td key={name} style={{padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:cellBg,fontWeight:(row._bold||vio)&&min>0?700:400,color:min>0?(vio?"#FF4757":(row._color||"var(--c-text2)")):"var(--c-text4)"}}>{min>0?fmtH(min):""}</td>
-              );})}
+              );},spacerCell)}
             </tr>);
           })}</tbody>
         </table>
@@ -2565,12 +2716,216 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     {id:"monthly_limit",label:"月上限",getMin:name=>{const t=(settings.staffAttributes||{})[name]||"parttime";const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};const l=tls[t];return(l&&typeof l==="object"&&l.monthly)?l.monthly*60:0;},_color:"#60A5FA",_bg:"rgba(96,165,250,0.07)"}
   ];
 
+  // ============ PDF書き出し ============
+  // シフト表HTMLを構築（Excelと同ルール：管理者調整値優先＋サフィックス＋従業員番号行）
+  const pdfSanitize=s=>(s||"").replace(/[\\/:*?"<>|]/g,"");
+  const staffNums=settings.staffNumbers||{};
+  const staffAliasesPdf=settings.staffAliases||{};
+  const staffColorsPdf=settings.staffColors||{};
+  // PDF用: シフト値の解決（localEdits優先→保存値、サフィックス連結）
+  const pdfResolve=(name,date,field)=>{
+    const key=`${name}|${date}|${field}`;
+    let time="",note="";
+    if(key in localEdits){const{numeric,note:nt}=extractNote(localEdits[key]);time=parseTime(numeric)||"";note=nt||"";}
+    else{time=getStoredTime(name,date,field);const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
+    const dec=time?toDecimal(time):"";
+    return{disp:dec?(dec+note):"",note};
+  };
+  // 提出があるか（休みか未提出かの判定用）
+  const pdfHasSub=(name,date)=>{const sh=_getSub(name)?.shifts?.[date];const key1=`${name}|${date}|start`,key2=`${name}|${date}|end`;const edited=(key1 in localEdits)||(key2 in localEdits);return!!sh||edited;};
+  // Excel出力と同じ列構成（staffList＋未提出の未登録名）
+  const buildPdfCols=()=>{
+    const allAliases=Object.values(staffAliasesPdf).flat();
+    const submittedNames=subs.filter(s=>s.periodId===selPid).map(s=>s.staffName);
+    const unreg=submittedNames.filter(n=>!staffList.includes(n)&&!isSpacer(n)&&!allAliases.includes(n)).sort((a,b)=>a.localeCompare(b,"ja"));
+    return[...staffList,...unreg];
+  };
+  const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  // 縦書き: html2canvasはwriting-modeを描画できないため1文字ずつ<br>で縦積みする
+  const vtext=s=>String(s==null?"":s).replace(/\s+/g,"").split("").map(esc).join("<br>");
+  // シフト表table（HTML文字列）
+  const buildShiftTableHtml=()=>{
+    const cols=buildPdfCols();
+    const BDp="1px solid #888",BDp2="2px solid #555";
+    // 斜線: html2canvasはrepeating-linear-gradientを描画できないためSVGタイル画像を使う
+    // style属性(二重引用符)内に埋め込むため、url()は単一引用符・SVG内の引用符は%27にエスケープする
+    const hatch=`url('data:image/svg+xml;charset=utf-8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='6' height='6'><path d='M0 0 L6 6' stroke='#999' stroke-width='1'/></svg>").replace(/'/g,"%27")}') repeat`;
+    let h='<table style="border-collapse:collapse;font-size:12px;">';
+    // ヘッダー2行
+    h+='<thead>';
+    // Row1: 従業員コード専用行（左右の端セルは結合・空欄。期間等は表示しない）
+    h+='<tr>';
+    h+=`<th colspan="2" style="border:${BDp2};padding:1px;height:16px;"></th>`;
+    cols.forEach(nm=>{
+      if(isSpacer(nm)){h+=`<th style="border:${BDp};padding:1px;width:30px;height:16px;background:#f0f0f0;"></th>`;return;}
+      h+=`<th style="border:${BDp};padding:1px;width:30px;height:16px;text-align:center;font-size:9px;font-weight:600;">${esc(staffNums[nm]||"")}</th>`;
+    });
+    h+=`<th colspan="2" style="border:${BDp2};padding:1px;height:16px;"></th>`;
+    h+='</tr>';
+    // Row2: 期間（縦積み）・曜日・スタッフ名（縦積み）・曜日・店名（縦積み）
+    h+='<tr>';
+    h+=`<th style="border:${BDp2};padding:3px 2px;width:36px;text-align:center;font-weight:700;font-size:10px;line-height:1.2;vertical-align:middle;">${vtext(period.label||"")}</th>`;
+    h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;text-align:center;font-weight:700;">曜日</th>`;
+    cols.forEach(nm=>{
+      if(isSpacer(nm)){h+=`<th style="border:${BDp};background:#f0f0f0;"></th>`;return;}
+      const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";
+      h+=`<th style="border:${BDp};padding:3px 1px;width:30px;text-align:center;font-weight:700;font-size:10px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;
+    });
+    h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;text-align:center;font-weight:700;">曜日</th>`;
+    h+=`<th style="border:${BDp2};padding:3px 2px;width:40px;text-align:center;font-weight:700;font-size:10px;line-height:1.2;vertical-align:middle;">${vtext(shopName||"店舗")}</th>`;
+    h+='</tr></thead><tbody>';
+    dates.forEach((ds,di)=>{
+      const d=pd(ds),dow=d.getDay(),day=d.getDate(),wd=WD[dow];
+      const isSat=dow===6,isSunHol=dow===0||isHoliday(ds);
+      const rowBg=isSat?"#DDEEFF":isSunHol?"#FFEEEE":"#fff";
+      // 上行=出勤 / 下行=退勤
+      // 日付・曜日はセル2個分: html2canvasがrowspanを描画できないため上下2セルで境界線を消して結合風にする
+      const mergeTd=(val,top)=>`<td style="border-left:${BDp2};border-right:${BDp2};border-top:${top?BDp2:"0"};border-bottom:${top?"0":BDp2};padding:1px 2px;text-align:center;font-weight:600;vertical-align:${top?"bottom":"top"};height:15px;">${top?val:""}</td>`;
+      ["start","end"].forEach((field,ri)=>{
+        h+=`<tr style="background:${rowBg};">`;
+        h+=mergeTd(day,ri===0);
+        h+=mergeTd(esc(wd),ri===0);
+        cols.forEach(nm=>{
+          if(isSpacer(nm)){h+=`<td style="border:${BDp};background:#f0f0f0;"></td>`;return;}
+          if(!pdfHasSub(nm,ds)){h+=`<td style="border:${BDp};"></td>`;return;}
+          const sh=_getSub(nm)?.shifts?.[ds];
+          const r=pdfResolve(nm,ds,field);
+          const otherHas=pdfResolve(nm,ds,field==="start"?"end":"start").disp;
+          if(!r.disp&&!otherHas){
+            // 休み提出のみ斜線ハッチ（出勤で上書きされていればdispがあるためここに来ない）
+            if(sh&&sh.status==="holiday"){h+=`<td style="border:${BDp};background:${hatch};height:15px;"></td>`;return;}
+            h+=`<td style="border:${BDp};height:15px;"></td>`;return;
+          }
+          // 背景: 緑(スタッフ変更) > 黄(サフィックスnote) — 画面と同じ優先順位
+          const cbg=sh&&sh.changed===true?"#B7EBC6":r.note?"#FFFF00":"transparent";
+          h+=`<td style="border:${BDp};padding:1px;text-align:center;background:${cbg};height:15px;">${esc(r.disp)}</td>`;
+        });
+        h+=mergeTd(esc(wd),ri===0);
+        h+=mergeTd(day,ri===0);
+        h+='</tr>';
+      });
+    });
+    h+='</tbody></table>';
+    return h;
+  };
+  // 休み・連勤カウント統合table（名前ヘッダー1行＋値2行）
+  const buildCountsTableHtml=()=>{
+    const cols=buildPdfCols();const BDp="1px solid #888";
+    let h=`<div style="font-size:13px;font-weight:700;margin:10px 0 4px;">休み・連勤カウント</div>`;
+    h+='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
+    h+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;"></th>`;
+    cols.forEach(nm=>{if(isSpacer(nm)){h+=`<th style="border:${BDp};background:#f0f0f0;width:26px;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";h+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:10px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
+    h+='</tr></thead><tbody>';
+    const rows=[["休みカウント",nm=>{const v=restCounts[nm]||0;return v%1===0?v:v.toFixed(1);}],["連勤カウント",nm=>consecCounts[nm]||0]];
+    rows.forEach(([lbl,valFn])=>{
+      h+=`<tr><td style="border:${BDp};padding:3px 6px;background:#f7f7f7;font-weight:600;white-space:nowrap;">${esc(lbl)}</td>`;
+      cols.forEach(nm=>{if(isSpacer(nm)){h+=`<td style="border:${BDp};background:#f0f0f0;"></td>`;return;}h+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${esc(valFn(nm))}</td>`;});
+      h+='</tr>';
+    });
+    h+='</tbody></table>';
+    return h;
+  };
+  // ヒートマップtable（日付×時刻・背景濃淡）
+  const buildHeatTableHtml=(label,section,maxC)=>{
+    const BDp="1px solid #888";
+    let h=`<div style="font-size:12px;font-weight:700;margin:8px 0 4px;">${esc(label)}</div>`;
+    h+='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
+    h+=`<th style="border:${BDp};padding:2px 6px;background:#f7f7f7;">日付</th>`;
+    heatHours.forEach(hr=>{h+=`<th style="border:${BDp};padding:2px 3px;text-align:center;background:#f7f7f7;">${hr}</th>`;});
+    h+='</tr></thead><tbody>';
+    dates.forEach(date=>{
+      const d=pd(date),dow=d.getDay(),isHol=isHoliday(date);
+      const dc=(dow===0||isHol)?"#e53935":dow===6?"#1976d2":"#000";
+      h+=`<tr><td style="border:${BDp};padding:2px 6px;font-weight:600;color:${dc};white-space:nowrap;">${esc(fmtDL(date))}</td>`;
+      heatHours.forEach(hr=>{const n=countHeat(section,date,hr);const bg=n===0?"transparent":`rgba(248,112,54,${0.15+(n/maxC)*0.75})`;h+=`<td style="border:${BDp};padding:2px 3px;text-align:center;background:${bg};">${n||""}</td>`;});
+      h+='</tr>';
+    });
+    h+='</tbody></table>';
+    return h;
+  };
+  // ブロック単体をオフスクリーン描画してcanvas化（幅はコンテンツに追従）
+  const renderBlock=async(html)=>{
+    const c=document.createElement("div");
+    c.style.cssText="position:fixed;left:-30000px;top:0;width:max-content;background:#fff;color:#000;font-family:'Yu Gothic','Hiragino Sans',sans-serif;padding:12px;box-sizing:border-box;";
+    c.innerHTML=html;
+    document.body.appendChild(c);
+    try{return await window.html2canvas(c,{scale:2,backgroundColor:"#fff"});}
+    finally{if(c.parentNode)c.parentNode.removeChild(c);}
+  };
+  const exportPdf=async(mode)=>{
+    if(!period)return;
+    if(typeof window.html2canvas==="undefined"||typeof window.jspdf==="undefined"){tt("▲ PDFライブラリ未読込み");return;}
+    setPdfBusy(true);
+    try{
+      const heading=`${esc(shopName||"店舗")} ${esc(period.label||"")}`;
+      // ブロック=ページ内で分割しない単位。収まらないブロックは次ページへ、単独で超える場合は縮小して1ページに収める
+      const blocks=[];
+      if(mode==="shift"){
+        blocks.push(`<div style="font-size:16px;font-weight:700;margin-bottom:8px;">${heading} シフト表</div>`+buildShiftTableHtml());
+      }else{
+        // 上段: 左=キッチン時間別出勤人数 / 中央=シフト表 / 右=ホール時間別出勤人数
+        let top=`<div style="font-size:18px;font-weight:700;margin-bottom:10px;">${heading} シフト作成データ</div>`;
+        top+='<div style="display:flex;gap:14px;align-items:flex-start;">';
+        top+=`<div>${buildHeatTableHtml(hasSplit?"キッチン":"時間帯別出勤人数","kit",kitMax)}</div>`;
+        top+=`<div><div style="font-size:13px;font-weight:700;margin:8px 0 4px;">シフト表</div>${buildShiftTableHtml()}</div>`;
+        if(hasSplit)top+=`<div>${buildHeatTableHtml("ホール","hall",hallMax)}</div>`;
+        top+='</div>';
+        blocks.push(top);
+        blocks.push(buildCountsTableHtml());
+        // 期間別勤務時間
+        {const cols=buildPdfCols();const BDp="1px solid #888";
+         let t=`<div style="font-size:13px;font-weight:700;margin:0 0 4px;">期間別勤務時間</div>`;
+         t+='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
+         t+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;">期間</th>`;
+         cols.forEach(nm=>{if(isSpacer(nm)){t+=`<th style="border:${BDp};background:#f0f0f0;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";t+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:10px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
+         t+='</tr></thead><tbody>';
+         periodRows.forEach(row=>{t+=`<tr><td style="border:${BDp};padding:3px 6px;font-weight:${row._bold?700:400};white-space:nowrap;">${esc(row.label)}</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};background:#f0f0f0;"></td>`;return;}const min=row.getMin(nm);t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
+         t+='</tbody></table>';blocks.push(t);}
+        // 週間勤務時間
+        if(weeks.length>0){
+          const cols=buildPdfCols();const BDp="1px solid #888";
+          let t=`<div style="font-size:13px;font-weight:700;margin:0 0 4px;">週間勤務時間（前期間含む）</div>`;
+          t+='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
+          t+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;">週</th>`;
+          cols.forEach(nm=>{if(isSpacer(nm)){t+=`<th style="border:${BDp};background:#f0f0f0;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";t+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:10px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
+          t+='</tr></thead><tbody>';
+          weeks.forEach(monStr=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);t+=`<tr><td style="border:${BDp};padding:3px 6px;white-space:nowrap;">${m.getDate()}〜${sun.getDate()}日</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};background:#f0f0f0;"></td>`;return;}const min=getWeekMin(monStr,nm);t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
+          t+='</tbody></table>';blocks.push(t);
+        }
+      }
+      const{jsPDF}=window.jspdf;
+      const pdf=new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+      const pageW=297,pageH=210,margin=5,imgW=pageW-margin*2,imgH=pageH-margin*2;
+      let y=margin;
+      for(const bh of blocks){
+        const canvas=await renderBlock(bh);
+        // 幅基準でスケール（自然サイズ以上には拡大しない）。1ページ高を超えるブロックは等比縮小
+        let mmPerPx=Math.min(imgW/canvas.width,0.14);
+        if(canvas.height*mmPerPx>imgH)mmPerPx=imgH/canvas.height;
+        const wMm=canvas.width*mmPerPx,hMm=canvas.height*mmPerPx;
+        if(y>margin+0.1&&y+hMm>pageH-margin){pdf.addPage();y=margin;}
+        pdf.addImage(canvas.toDataURL("image/jpeg",0.92),"JPEG",margin,y,wMm,hMm);
+        y+=hMm+4;
+      }
+      const fname=`${pdfSanitize(shopName||"店舗")}${pdfSanitize(period.label||"")}${mode==="shift"?"シフト":"全データ"}.pdf`;
+      pdf.save(fname);
+      ph("pdf_exported",{period_id:period.id,mode});
+      tt(`✓ ${fname} をダウンロードしました`);
+      setPdfModal(false);
+    }catch(e){
+      console.error("PDF生成失敗:",e);
+      tt("✕ PDF生成に失敗しました: "+e.message);
+    }finally{
+      setPdfBusy(false);
+    }
+  };
+
   return(
     <div ref={outerRef} style={{padding:"12px 8px"}}>
       {cellTip&&<div style={{position:"fixed",left:cellTip.x,top:cellTip.y-26,transform:"translateX(-50%)",background:"rgba(30,30,30,0.82)",color:"#fff",fontSize:11,fontWeight:600,padding:"2px 7px",borderRadius:10,pointerEvents:"none",zIndex:9999,whiteSpace:"nowrap",backdropFilter:"blur(4px)"}}>{cellTip.value}</div>}
       <div style={{marginBottom:10,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         <span style={{fontWeight:700,fontSize:15}}>シフト作成</span>
-        <select value={selPid} onChange={e=>{setSelPid(e.target.value);setLocalEdits({});}}
+        <select value={selPid} onChange={e=>{setSelPid(e.target.value);setLocalEdits({});setHeatEdits({});setFocusKey(null);}}
           style={{fontSize:16,padding:"4px 8px",border:BD,borderRadius:6,background:"var(--c-input)",color:"var(--c-text)"}}>
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
         </select>
@@ -2590,12 +2945,39 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=sh?.[adjNk]??sh?.[origNk]??"";}
             return{time,note};
           };
-          expXl(period,subs,staffList,tt,shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{}},adjResolver);
+          expXl(period,subs,staffList,tt,shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{}},adjResolver);
         }}
           style={{padding:"6px 14px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           Excel出力
         </button>}
+        {period&&isPremium&&<button onClick={()=>setPdfModal(true)}
+          style={{padding:"6px 14px",background:"linear-gradient(135deg,#b91c1c,#7f1d1d)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+          PDF出力
+        </button>}
       </div>
+
+      {pdfModal&&(
+        <div onClick={()=>{if(!pdfBusy)setPdfModal(false);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9998,padding:16}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:14,padding:"22px 20px",width:"100%",maxWidth:340,boxShadow:"0 8px 32px var(--c-shadow)"}}>
+            <div style={{fontSize:16,fontWeight:700,marginBottom:6,color:"var(--c-text)"}}>PDF出力</div>
+            <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:16}}>出力する内容を選択してください</div>
+            <button disabled={pdfBusy} onClick={()=>exportPdf("shift")}
+              style={{width:"100%",padding:"12px",marginBottom:10,background:"linear-gradient(135deg,#b91c1c,#7f1d1d)",border:"none",borderRadius:9,color:"white",fontSize:14,fontWeight:700,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
+              {pdfBusy?"生成中...":"シフト"}
+              <div style={{fontSize:11,fontWeight:400,marginTop:2,opacity:0.85}}>シフト表のみ（Excelと同じ形式）</div>
+            </button>
+            <button disabled={pdfBusy} onClick={()=>exportPdf("all")}
+              style={{width:"100%",padding:"12px",marginBottom:14,background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",borderRadius:9,color:"white",fontSize:14,fontWeight:700,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
+              {pdfBusy?"生成中...":"全データ"}
+              <div style={{fontSize:11,fontWeight:400,marginTop:2,opacity:0.85}}>シフト表・カウント・ヒートマップ・勤務時間集計</div>
+            </button>
+            <button disabled={pdfBusy} onClick={()=>setPdfModal(false)}
+              style={{width:"100%",padding:"9px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:9,color:"var(--c-text2)",fontSize:13,fontWeight:600,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
+              キャンセル
+            </button>
+          </div>
+        </div>
+      )}
 
       {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
         <div style={useBreakout?{marginLeft:-containerLeft,width:"100vw",paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:hasPanel?"flex":"block",alignItems:"flex-start",gap:4}:{}}>
@@ -2614,7 +2996,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
               <thead ref={gridTheadRef}>
                 <tr>
                   <th style={{...SD,top:0,zIndex:4,padding:"4px",fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>
-                  {realStaff.map(name=>VTH(name))}
+                  {mapGridCols(name=>VTH(name),spacerTh)}
                 </tr>
               </thead>
               <tbody ref={gridBodyRef}>
@@ -2626,34 +3008,38 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                   return[
                     <tr key={date+"-s"} style={{background:rb}}>
                       <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
-                      {realStaff.map(name=>(
+                      {mapGridCols(name=>(
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"start",e.target.value)}
                             onClick={!isPremium?()=>onUpgrade&&onUpgrade({type:"edit",plan}):undefined}
-                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
-                            onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);}}
-                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"start",e.target.value);document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}
-                            style={{...AI2,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                            onDoubleClick={()=>toggleChanged(name,date)}
+                            onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();if(lastTapRef.current.key===k&&now-lastTapRef.current.t<350){toggleChanged(name,date);lastTapRef.current={key:null,t:0};}else{lastTapRef.current={key:k,t:now};}}}
+                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|start`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
+                            onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);setFocusKey(null);}}
+                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"start",e.target.value);if(e.ctrlKey||e.metaKey){const pdi=dates.indexOf(date)-1;if(pdi>=0)document.querySelector(`[data-sc="${dates[pdi]}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
+                            style={{...AI2,background:cellBgFor(name,date,"start",AI2.background),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
-                      ))}
+                      ),spacerCell)}
                     </tr>,
                     <tr key={date+"-e"} style={{background:rb}}>
-                      {realStaff.map(name=>(
+                      {mapGridCols(name=>(
                         <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"end",e.target.value)}
                             onClick={!isPremium?()=>onUpgrade&&onUpgrade({type:"edit",plan}):undefined}
-                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
-                            onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);}}
-                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();const ndi=dates.indexOf(date)+1;handleBlur(name,date,"end",e.target.value);if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}
-                            style={{...AI2,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                            onDoubleClick={()=>toggleChanged(name,date)}
+                            onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();if(lastTapRef.current.key===k&&now-lastTapRef.current.t<350){toggleChanged(name,date);lastTapRef.current={key:null,t:0};}else{lastTapRef.current={key:k,t:now};}}}
+                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
+                            onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
+                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
+                            style={{...AI2,background:cellBgFor(name,date,"end",AI2.background),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
-                      ))}
+                      ),spacerCell)}
                     </tr>
                   ];
                 })}
@@ -2661,19 +3047,27 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             </table>
           </div>
 
-          {/* === 休みの日カウント === */}
+          {/* === 休みカウント / 連勤カウント === */}
           <div ref={restScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
             <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
-              <thead>
+              <tbody>
                 <tr>
-                  <th style={{...SD,top:0,zIndex:4,fontWeight:600,borderBottom:BD2,background:CRD,fontSize:11}}>休みカウント</th>
-                  {realStaff.map(name=>(
-                    <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
+                  <td style={{...SD,fontWeight:600,borderBottom:BD,background:CRD,fontSize:11}}>休みカウント</td>
+                  {mapGridCols(name=>(
+                    <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
                       {(restCounts[name]||0)%1===0?(restCounts[name]||0):(restCounts[name]||0).toFixed(1)}
-                    </th>
-                  ))}
+                    </td>
+                  ),spacerTh)}
                 </tr>
-              </thead>
+                <tr>
+                  <td style={{...SD,fontWeight:600,borderBottom:BD2,background:CRD,fontSize:11}}>連勤カウント</td>
+                  {mapGridCols(name=>(
+                    <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
+                      {consecCounts[name]||0}
+                    </td>
+                  ),spacerTh)}
+                </tr>
+              </tbody>
             </table>
           </div>
 
@@ -2787,7 +3181,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
         <AT>期間管理</AT>
         <button onClick={()=>{setShow(v=>!v);setUsePreset(true);setForm({label:"",startDate:"",endDate:"",deadlineDate:""}); }} style={{padding:"9px 16px",background:"#f87036",border:"none",borderRadius:9,color:"white",fontSize:13,fontWeight:700,cursor:"pointer"}}>＋ 新しい期間を作成</button>
       </div>
-      {plan!=="pro"&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:8,padding:"7px 10px"}}>
+      {plan==="free"&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:8,padding:"7px 10px"}}>
         {`Freeプラン：最大${PLAN_LIMITS.free.periods}件まで作成可能（${periods.length}/${PLAN_LIMITS.free.periods}件）`}
         {periods.length>=PLAN_LIMITS.free.periods&&<span style={{marginLeft:8,color:"#F59E0B",fontSize:11}}>期間追加はProプランで利用できます</span>}
       </div>}
@@ -2854,7 +3248,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
                   </div>
                   <div style={{display:"flex",gap:5,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
                     <button onClick={e=>{e.stopPropagation();setEid(p.id);}} style={{padding:"5px 9px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text2)",fontSize:11,cursor:"pointer"}}>編集</button>
-                    <button onClick={e=>{e.stopPropagation();expXl(p,subs,staffList,tt,settings.xlShopName||shopName,{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{}});}} style={{padding:"5px 9px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:6,color:"white",fontSize:11,fontWeight:700,cursor:"pointer"}}>Excel</button>
+                    <button onClick={e=>{e.stopPropagation();expXl(p,subs,staffList,tt,settings.xlShopName||shopName,{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{}});}} style={{padding:"5px 9px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:6,color:"white",fontSize:11,fontWeight:700,cursor:"pointer"}}>Excel</button>
                     <button onClick={e=>{e.stopPropagation();if(!confirm("削除しますか？"))return;onSave(periods.filter(pp=>pp.id!==p.id));tt("削除しました");}} style={AD}>削除</button>
                   </div>
                 </div>
@@ -2915,12 +3309,9 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   // ============================================================
   // サンプルファイル完全準拠レイアウト
   //
-  // ヘッダー行(Row1 = サンプルのRow2):
-  //   A1 = 期間ラベル (縦書き, medium四辺)
-  //   B1 = 曜日ヘッダー (縦書き, medium四辺)
-  //   C1〜C+sl-1 = スタッフ名 (縦書き, top:medium, right:thin)
-  //   C+sl = 曜日 (縦書き, medium四辺 ← 右端ミラー)
-  //   C+sl+1 = 店舗名 (縦書き, top/bot:medium, left/right:thin)
+  // ヘッダー行:
+  //   Row1 = 従業員コード専用行（A1:B1結合・右端2セル結合は空欄、スタッフ列=従業員番号）
+  //   Row2 = A:期間ラベル(縦書き) / B:曜日 / スタッフ名(縦書き) / 曜日 / 店舗名
   //
   // データ行(1日=2行):
   //   上行: A=日付(横書き), B=曜日(横書き) → 両方 medium四辺・上下結合
@@ -2942,7 +3333,10 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   const C_WD_R=3+sl.length;  // 右端曜日
   const C_SHOP_R=4+sl.length;// 右端店舗名
   const TOTAL_COLS=C_SHOP_R;
-  const TOTAL_ROWS=1+dates.length*2;
+  const staffNumbers=options.staffNumbers||{};
+  // ヘッダー2行構成（Row1=従業員番号, Row2=スタッフ名）→ データはRow3から
+  const DATA_START=3;
+  const TOTAL_ROWS=2+dates.length*2;
 
   // 枠線
   const M={style:"medium",color:{argb:R("555555")}};
@@ -2987,29 +3381,43 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
     cell.font=Object.assign({name:"Yu Gothic",size:12,bold:false},font||{}); // デフォルトフォント（boldはヘッダーのみ）
   };
 
-  // ===== Row1: ヘッダー =====
-  ws.getRow(1).height=78;
+  // ===== Row1=従業員番号 / Row2=スタッフ名 の2行ヘッダー =====
+  ws.getRow(1).height=18;   // 従業員番号行（横書き・低め）
+  ws.getRow(2).height=78;   // スタッフ名行（縦書き・従来通り）
 
-  // A1: 期間ラベル (top/bot/left:medium, right:thin)
-  SC(1,C_PER,periodLabel,aV,fNone,{top:M,bottom:M,left:M,right:T},{bold:true,size:14});
-  // B1: 曜日ヘッダー (top/bot/right:medium, left:thin)
-  SC(1,C_WD_H,"曜日",aV,fNone,{top:M,bottom:M,left:T,right:M},{bold:true,size:14});
-  // スタッフ列: top:medium, right:thin（左枠なし）
+  // Row1左端(A1:B1): 従業員コード行のため横結合・空欄（期間等は表示しない）
+  SC(1,C_PER,null,aH,fNone,{top:M,bottom:T,left:M,right:T},{bold:false,size:8});
+  SC(1,C_WD_H,null,aH,fNone,{top:M,bottom:T,left:T,right:M},{bold:false,size:8});
+  ws.mergeCells(1,C_PER,1,C_WD_H);
+  // Row2: A=期間ラベル(縦書き), B=曜日ヘッダー(縦書き)
+  SC(2,C_PER,periodLabel,aV,fNone,{top:T,bottom:M,left:M,right:T},{bold:true,size:14});
+  SC(2,C_WD_H,"曜日",aV,fNone,{top:T,bottom:M,left:T,right:M},{bold:true,size:14});
+  // スタッフ列: Row1=従業員番号(横書き), Row2=スタッフ名(縦書き)
   sl.forEach((nm,i)=>{
     const isFirst=i===0;
     if(isSpacer(nm)){
-      SC(1,C_STAFF+i,null,aV,fNone,{top:M,bottom:M,left:isFirst?T:undefined,right:T},{bold:false,size:12});
+      SC(1,C_STAFF+i,null,aH,fNone,{top:M,left:isFirst?T:undefined,right:T,bottom:T},{bold:false,size:8});
+      SC(2,C_STAFF+i,null,aV,fNone,{top:T,bottom:M,left:isFirst?T:undefined,right:T},{bold:false,size:12});
       return;
     }
     const staffColorArgb=(options.staffColors||{})[nm]==="red"?"FFFF0000":"FF000000";
-    SC(1,C_STAFF+i,nm,aV,fNone,
-      {top:M,bottom:M,left:isFirst?T:undefined,right:T},
+    const num=staffNumbers[nm]||"";
+    // 従業員番号行: 横書き・中央・小さめ（列幅5.2に4文字収まるsize:8）
+    SC(1,C_STAFF+i,num,aH,fNone,
+      {top:M,left:isFirst?T:undefined,right:T,bottom:T},
+      {bold:false,size:8,color:{argb:"FF000000"}});
+    // スタッフ名行: 縦書き
+    SC(2,C_STAFF+i,nm,aV,fNone,
+      {top:T,bottom:M,left:isFirst?T:undefined,right:T},
       {bold:true,size:14,color:{argb:staffColorArgb}});
   });
-  // 右端曜日: top/bot/left:medium, right:thin
-  SC(1,C_WD_R,"曜日",aV,fNone,{top:M,bottom:M,left:M,right:T},{bold:true,size:14});
-  // 右端店舗名: top/bot:medium, left/right:thin
-  SC(1,C_SHOP_R,shopName||"",aV,fNone,{top:M,bottom:M,left:T,right:T},{bold:true,size:14});
+  // Row1右端(曜日:店舗名): 従業員コード行のため横結合・空欄
+  SC(1,C_WD_R,null,aH,fNone,{top:M,bottom:T,left:M,right:T},{bold:false,size:8});
+  SC(1,C_SHOP_R,null,aH,fNone,{top:M,bottom:T,left:T,right:T},{bold:false,size:8});
+  ws.mergeCells(1,C_WD_R,1,C_SHOP_R);
+  // Row2: 右端曜日・店舗名（縦書き）
+  SC(2,C_WD_R,"曜日",aV,fNone,{top:T,bottom:M,left:M,right:T},{bold:true,size:14});
+  SC(2,C_SHOP_R,shopName||"",aV,fNone,{top:T,bottom:M,left:T,right:T},{bold:true,size:14});
 
   // ===== データ行 (1日=2行) =====
   dates.forEach((ds,di)=>{
@@ -3017,7 +3425,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
     const isSat=dow===6,isSunHol=dow===0||isHoliday(ds);
     const fill=isSat?fSat:isSunHol?fHol:fNone; // 平日=塗りなし
     const isLast=di===dates.length-1;
-    const rT=2+di*2, rB=rT+1;
+    const rT=DATA_START+di*2, rB=rT+1;
     ws.getRow(rT).height=16.5;
     ws.getRow(rB).height=16.5;
 
@@ -3205,7 +3613,7 @@ const dragIdxRef=useRef(null);
       <AC title="スタッフ一覧">
         {!isPro&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:8,padding:"7px 10px"}}>
           {`Freeプラン：最大${lim}名まで登録可能（${staffList.filter(n=>!isSpacer(n)).length}/${lim}名）`}
-          {!isPro&&<span style={{marginLeft:8,color:"#F59E0B",fontSize:11}}>並べ替え・名前色変更はProプランで利用できます</span>}
+          {!isPro&&<span style={{marginLeft:8,color:"#F59E0B",fontSize:11}}>並べ替え・名前色変更はProプラン（500円/月）で利用できます</span>}
         </div>}
         {staffList.length===0&&<div style={{fontSize:13,color:"var(--c-text4)",marginBottom:12}}>スタッフが登録されていません</div>}
         {staffList.map((n,i)=>(
@@ -3229,8 +3637,8 @@ const dragIdxRef=useRef(null);
               :<>
                 {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid #D1D5DB",cursor:"pointer",flexShrink:0,padding:0}}/>}
                 <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{n}</span>
+                {isPremium&&<input value={(settings.staffNumbers||{})[n]||""} onChange={e=>{const v=e.target.value;const nums={...(settings.staffNumbers||{})};if(v)nums[n]=v;else delete nums[n];onSaveSettings&&onSaveSettings({...settings,staffNumbers:nums});}} maxLength={8} placeholder="番号" style={{width:64,fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text2)",flexShrink:0,textAlign:"center"}}/>}
                 {isPremium&&<select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:12,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
-                  <option value="">属性なし</option>
                   {Object.entries({employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})}).map(([v,t])=>{const label=(typeof t==="object"?t.name:"")||STAFF_TYPE_LABELS[v]||"";return label?<option key={v} value={v}>{label}</option>:null;})}
                 </select>}
                 {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
@@ -3304,6 +3712,8 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
   const[selDayType,setSelDayType]=useState("weekday");
   const[brkStart,setBrkStart]=useState("");
   const[brkEnd,setBrkEnd]=useState("");
+  const[brkTags,setBrkTags]=useState([]); // 新規休憩に付与する属性タグ
+  const[editTagKey,setEditTagKey]=useState(null); // タグ編集中の "dayType_index"
 
   const toggleArr=(arr,setArr,val)=>setArr(prev=>prev.includes(val)?prev.filter(v=>v!==val):[...prev,val]);
 
@@ -3520,7 +3930,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
       </AC>}
 
       {mode==="template"&&<AC title="曜日別候補テンプレート">
-        {plan==="free"&&<div style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#F59E0B"}}>テンプレート機能はProプランで利用できます</div>}
+        {plan==="free"&&<div style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#F59E0B"}}>テンプレート機能はProプラン（500円/月）で利用できます</div>}
         <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:12,opacity:plan==="free"?.4:1}}>現在の曜日別候補をテンプレートとして保存し、後で再利用できます。</div>
         <div style={{display:"flex",gap:8,marginBottom:16,opacity:plan==="free"?.4:1,pointerEvents:plan==="free"?"none":"auto"}}>
           <input value={tmplName} onChange={e=>setTmplName(e.target.value)} placeholder="テンプレート名を入力" style={{...AI,flex:1}}/>
@@ -3537,41 +3947,84 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
         ))}
       </AC>}
 
-      {mode==="break"&&<AC title="休憩時間設定">
-        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>設定した休憩時間は出勤〜退勤から自動的に差し引かれ、純勤務時間として表示されます。</div>
-        <div style={{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}}>
-          {[["weekday","平日"],["sat","土曜"],["sun","日曜"],["hol","祝日"]].map(([dt,l])=>{
-            const sel=selDayType===dt;
-            const c=dt==="sat"?"#3B82F6":dt==="sun"||dt==="hol"?"#FF4757":"#f87036";
-            return(<button key={dt} onClick={()=>setSelDayType(dt)} style={{padding:"7px 14px",borderRadius:20,fontSize:13,fontWeight:700,border:"1px solid",cursor:"pointer",
-              background:sel?c:"var(--c-input)",borderColor:sel?"transparent":"var(--c-border2)",color:sel?"white":c}}>{l}</button>);
+      {mode==="break"&&(()=>{
+        const attrOpts=getAttrOptions(settings);
+        const attrName=id=>{const f=attrOpts.find(a=>a[0]===id);return f?f[1]:id;};
+        const dtColor=dt=>dt==="sat"?"#3B82F6":dt==="sun"||dt==="hol"?"#FF4757":"#f87036";
+        const removeBreak=(dt,i)=>{const bt={...(settings.breakTimes||{})};bt[dt]=[...(bt[dt]||[])];bt[dt].splice(i,1);onSave({...settings,breakTimes:bt});setEditTagKey(null);tt("削除しました");};
+        const toggleTag=(dt,i,tagId)=>{const bt={...(settings.breakTimes||{})};bt[dt]=[...(bt[dt]||[])];const cur=bt[dt][i]||{};const tags=[...(cur.tags||[])];const p=tags.indexOf(tagId);if(p>=0)tags.splice(p,1);else tags.push(tagId);bt[dt][i]={...cur,tags:tags.length?tags:undefined};onSave({...settings,breakTimes:bt});};
+        return(<AC title="休憩時間設定">
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>設定した休憩時間は出勤〜退勤から自動的に差し引かれ、純勤務時間として表示されます。</div>
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>休憩はランチ・ディナー両方の出勤、または9時間以上勤務するスタッフにのみ適用されます。</div>
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>タグを設定した休憩はその属性のスタッフにのみ適用されます。タグなしは全属性に適用。</div>
+        {/* 全区分の登録済み休憩一覧（常に表示） */}
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,fontWeight:600}}>登録済みの休憩</div>
+          {DAY_TYPES.map(([dt,l])=>{
+            const brks=(settings.breakTimes||{})[dt]||[];
+            const lc=dtColor(dt);
+            return(
+              <div key={dt} style={{marginBottom:8,background:"var(--c-input2)",borderRadius:10,overflow:"hidden"}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",borderBottom:brks.length>0?"1px solid var(--c-border)":"none"}}>
+                  <span style={{fontSize:13,fontWeight:700,color:lc}}>{l}</span>
+                  <span style={{fontSize:11,color:brks.length>0?"#9CA3AF":"var(--c-border2)"}}>{brks.length>0?`${brks.length}件`:"未設定"}</span>
+                </div>
+                {brks.map((b,i)=>{
+                  const ek=`${dt}_${i}`;const tags=b.tags||[];
+                  return(<div key={i} style={{padding:"8px 12px",borderBottom:i<brks.length-1?"1px solid var(--c-border)":"none"}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+                      <span style={{fontSize:13,color:"var(--c-text)",fontWeight:600}}>{b.start} 〜 {b.end}</span>
+                      <div style={{display:"flex",gap:6}}>
+                        <button onClick={()=>setEditTagKey(editTagKey===ek?null:ek)} style={{padding:"4px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>タグ</button>
+                        <button onClick={()=>removeBreak(dt,i)} style={AD}>削除</button>
+                      </div>
+                    </div>
+                    <div style={{display:"flex",gap:5,flexWrap:"wrap",marginTop:5}}>
+                      {tags.length>0?tags.map(tg=>(<span key={tg} style={{fontSize:11,padding:"2px 8px",borderRadius:12,background:"rgba(248,112,54,.12)",color:"#f87036",fontWeight:600}}>{attrName(tg)}</span>))
+                        :<span style={{fontSize:11,color:"var(--c-text4)"}}>全属性</span>}
+                    </div>
+                    {editTagKey===ek&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:8,paddingTop:8,borderTop:"1px dashed var(--c-border)"}}>
+                      {attrOpts.map(([aid,anm])=>{const on=tags.includes(aid);return(<button key={aid} onClick={()=>toggleTag(dt,i,aid)} style={{padding:"5px 12px",borderRadius:16,fontSize:12,fontWeight:600,border:"1px solid",cursor:"pointer",background:on?"#f87036":"var(--c-input)",borderColor:on?"transparent":"var(--c-border2)",color:on?"white":"var(--c-text2)"}}>{anm}</button>);})}
+                    </div>}
+                  </div>);
+                })}
+              </div>
+            );
           })}
         </div>
-        {((settings.breakTimes||{})[selDayType]||[]).length===0
-          ?<div style={{fontSize:12,color:"var(--c-text4)",padding:"6px 0",marginBottom:8}}>休憩時間が設定されていません</div>
-          :<div style={{marginBottom:8}}>{((settings.breakTimes||{})[selDayType]||[]).map((b,i)=>(
-            <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,marginBottom:4}}>
-              <span style={{fontSize:13,color:"var(--c-text)",fontWeight:600}}>{b.start} 〜 {b.end}</span>
-              <button onClick={()=>{const bt={...(settings.breakTimes||{})};bt[selDayType]=[...(bt[selDayType]||[])];bt[selDayType].splice(i,1);onSave({...settings,breakTimes:bt});tt("削除しました");}} style={AD}>削除</button>
+        {/* 追加フォーム */}
+        <div style={{borderTop:"1px solid var(--c-border)",paddingTop:12}}>
+          <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8,fontWeight:600}}>休憩を追加</div>
+          <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
+            {DAY_TYPES.map(([dt,l])=>{const sel=selDayType===dt;const c=dtColor(dt);
+              return(<button key={dt} onClick={()=>setSelDayType(dt)} style={{padding:"7px 14px",borderRadius:20,fontSize:13,fontWeight:700,border:"1px solid",cursor:"pointer",background:sel?c:"var(--c-input)",borderColor:sel?"transparent":"var(--c-border2)",color:sel?"white":c}}>{l}</button>);
+            })}
+          </div>
+          <div style={{marginBottom:10}}>
+            <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:5}}>適用する属性（未選択＝全属性）</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {attrOpts.map(([aid,anm])=>{const on=brkTags.includes(aid);return(<button key={aid} onClick={()=>toggleArr(brkTags,setBrkTags,aid)} style={{padding:"5px 12px",borderRadius:16,fontSize:12,fontWeight:600,border:"1px solid",cursor:"pointer",background:on?"#f87036":"var(--c-input)",borderColor:on?"transparent":"var(--c-border2)",color:on?"white":"var(--c-text2)"}}>{anm}</button>);})}
             </div>
-          ))}</div>
-        }
-        <div style={{display:"flex",gap:10,alignItems:"flex-end",marginTop:8}}>
-          <SingleTimeSelect value={brkStart} onChange={setBrkStart} label="開始時刻"/>
-          <div style={{color:"var(--c-text4)",paddingBottom:12,fontSize:16}}>〜</div>
-          <SingleTimeSelect value={brkEnd} onChange={setBrkEnd} label="終了時刻"/>
-          <button onClick={()=>{
-            if(!brkStart||!brkEnd){tt("▲ 開始・終了を選択してください");return;}
-            if(brkStart>=brkEnd){tt("▲ 終了は開始より後にしてください");return;}
-            const bt={...(settings.breakTimes||{weekday:[],sat:[],sun:[],hol:[]})};
-            const cur=bt[selDayType]||[];
-            if(cur.some(b=>b.start===brkStart&&b.end===brkEnd)){tt("▲ 既に登録されています");return;}
-            bt[selDayType]=[...cur,{start:brkStart,end:brkEnd}].sort((a,b)=>a.start.localeCompare(b.start));
-            onSave({...settings,breakTimes:bt});setBrkStart("");setBrkEnd("");
-            tt(`✓ ${brkStart}〜${brkEnd} を追加しました`);
-          }} style={{...AB,whiteSpace:"nowrap"}}>＋ 追加</button>
+          </div>
+          <div style={{display:"flex",gap:10,alignItems:"flex-end"}}>
+            <SingleTimeSelect value={brkStart} onChange={setBrkStart} label="開始時刻"/>
+            <div style={{color:"var(--c-text4)",paddingBottom:12,fontSize:16}}>〜</div>
+            <SingleTimeSelect value={brkEnd} onChange={setBrkEnd} label="終了時刻"/>
+            <button onClick={()=>{
+              if(!brkStart||!brkEnd){tt("▲ 開始・終了を選択してください");return;}
+              if(brkStart>=brkEnd){tt("▲ 終了は開始より後にしてください");return;}
+              const bt={...(settings.breakTimes||{weekday:[],sat:[],sun:[],hol:[]})};
+              const cur=bt[selDayType]||[];
+              if(cur.some(b=>b.start===brkStart&&b.end===brkEnd)){tt("▲ 既に登録されています");return;}
+              const nb={start:brkStart,end:brkEnd};if(brkTags.length)nb.tags=[...brkTags];
+              bt[selDayType]=[...cur,nb].sort((a,b)=>a.start.localeCompare(b.start));
+              onSave({...settings,breakTimes:bt});setBrkStart("");setBrkEnd("");setBrkTags([]);
+              tt(`✓ ${brkStart}〜${brkEnd} を追加しました`);
+            }} style={{...AB,whiteSpace:"nowrap"}}>＋ 追加</button>
+          </div>
         </div>
-      </AC>}
+      </AC>);
+      })()}
     </div>
   );
 }
@@ -3610,9 +4063,9 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
     <AT>提出一覧</AT>
     <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
       <input value={fn} onChange={e=>setFn(e.target.value)} placeholder="氏名で絞り込み" style={{flex:1,minWidth:130,padding:"10px 14px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:10,color:"var(--c-text)",fontSize:14,outline:"none"}}/>
-      <select value={fp} onChange={e=>setFp(e.target.value)} style={{padding:"10px 12px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:10,color:"var(--c-text)",fontSize:13,outline:"none",cursor:"pointer"}}>
-        <option value="all" style={{background:"#1A1A2E"}}>全期間</option>
-        {periods.map(p=><option key={p.id} value={p.id} style={{background:"#1A1A2E"}}>{p.label}</option>)}
+      <select value={fp} onChange={e=>setFp(e.target.value)} style={{padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:10,color:"var(--c-text)",fontSize:16,outline:"none",cursor:"pointer"}}>
+        <option value="all">全期間</option>
+        {periods.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
       </select>
     </div>
     <div style={{marginBottom:12,fontSize:13,color:"var(--c-text3)"}}>件数：<strong style={{color:"#FFA070",fontSize:16}}>{fil.length}</strong></div>
@@ -3621,13 +4074,12 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
           <thead><tr>
             {[["staffName","氏名"],["submittedAt","提出日時"]].map(([f,l])=><th key={f} onClick={()=>tg(f)} style={{background:"var(--c-input)",color:"var(--c-text2)",padding:"10px 14px",textAlign:"left",fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",borderBottom:"1px solid #E5E7EB"}}>{l}{sf===f?(sdr==="asc"?" ▲":" ▼"):" ↕"}</th>)}
-            {["期間","出勤","休み","操作"].map(h=><th key={h} style={{background:"var(--c-input)",color:"var(--c-text2)",padding:"10px 14px",textAlign:"left",fontWeight:600,whiteSpace:"nowrap",borderBottom:"1px solid #E5E7EB"}}>{h}</th>)}
+            {["出勤","操作"].map(h=><th key={h} style={{background:"var(--c-input)",color:"var(--c-text2)",padding:"10px 14px",textAlign:"left",fontWeight:600,whiteSpace:"nowrap",borderBottom:"1px solid #E5E7EB"}}>{h}</th>)}
           </tr></thead>
           <tbody>{fil.length===0
-            ?<tr><td colSpan={6} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
-            :fil.map(sub=>{const ds=Object.keys(sub.shifts||{}).sort(),wk=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").length,at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const rm=t=>Math.floor(new Date(t).getTime()/60000);const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&rm(sub.updatedAt)>rm(sub.submittedAt);const subOT=isPremium?getOT(sub.staffName,settings):0;const totalMin=isPremium?ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work").reduce((acc,d)=>acc+calcNetWorkMinutes(sub.shifts[d],getBreakList(settings,d),subOT),0):0;
-              const staffType=isPremium?((settings.staffAttributes)||{})[sub.staffName]:null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly||typeLim.customDays)){const weekMap={};const monthMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreakList(settings,d),subOT);if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));weekMap[fd(mon)]=(weekMap[fd(mon)]||0)+nm;monthMap[d.slice(0,7)]=(monthMap[d.slice(0,7)]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly){const wkKeys=Object.keys(weekMap).sort();for(let i=0;i<wkKeys.length;i+=2){const tot=(weekMap[wkKeys[i]]||0)+(weekMap[wkKeys[i+1]]||0);if(tot>typeLim.biweekly*60)biweeklyVio=true;}}if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});if(typeLim.customDays&&typeLim.customHours){const sortedDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();for(let i=0;i<sortedDs.length;i++){const start=pd(sortedDs[i]);let tot=0;for(let j=i;j<sortedDs.length;j++){const diffD=(pd(sortedDs[j])-start)/86400000;if(diffD>=typeLim.customDays)break;const sh=sub.shifts[sortedDs[j]];tot+=calcNetWorkMinutes(sh,getBreakList(settings,sortedDs[j]),subOT);}if(tot>typeLim.customHours*60){customVio=true;break;}}}}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;
-              const holidayDays=ds.length-wk;let maxConsec=0,halfDays=0;if(isPremium){const curPer=periods.find(p=>p.id===sub.periodId);const prevPer=curPer?[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate)).find(p=>new Date(p.endDate)<new Date(curPer.startDate)):null;const prevSb=prevPer?subs.find(s=>s.periodId===prevPer.id&&(s.staffName===sub.staffName||(staffAliases[sub.staffName]||[]).includes(s.staffName))):null;const prevDs2=prevSb?Object.keys(prevSb.shifts||{}).sort():[];const allC=[...new Set([...prevDs2,...ds])].sort();let consec=0;allC.forEach(d=>{const sh2=ds.includes(d)?sub.shifts[d]:prevSb?.shifts?.[d];if(sh2&&sh2.status==="work"){consec++;maxConsec=Math.max(maxConsec,consec);}else consec=0;});halfDays=ds.filter(d=>{const s=sub.shifts[d];return s&&s.status==="work"&&calcNetWorkMinutes(s,getBreakList(settings,d),subOT)<240;}).length;}
+            ?<tr><td colSpan={4} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
+            :fil.map(sub=>{const ds=Object.keys(sub.shifts||{}).sort(),wkDays=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work");const att=wkDays.reduce((acc,d)=>{const sh=sub.shifts[d];const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;return acc+((st&&en)?shiftBandInfo(sh).attendance:1);},0);const attLabel=`${att}日`;const at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const rm=t=>Math.floor(new Date(t).getTime()/60000);const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&rm(sub.updatedAt)>rm(sub.submittedAt);
+              const staffType=isPremium?((settings.staffAttributes)||{})[sub.staffName]:null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly||typeLim.customDays)){const weekMap={};const monthMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreaksFor(settings,d,sub.staffName,sh),getOT(sub.staffName,settings,sh));if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));weekMap[fd(mon)]=(weekMap[fd(mon)]||0)+nm;monthMap[d.slice(0,7)]=(monthMap[d.slice(0,7)]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly){const wkKeys=Object.keys(weekMap).sort();for(let i=0;i<wkKeys.length;i+=2){const tot=(weekMap[wkKeys[i]]||0)+(weekMap[wkKeys[i+1]]||0);if(tot>typeLim.biweekly*60)biweeklyVio=true;}}if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});if(typeLim.customDays&&typeLim.customHours){const sortedDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();for(let i=0;i<sortedDs.length;i++){const start=pd(sortedDs[i]);let tot=0;for(let j=i;j<sortedDs.length;j++){const diffD=(pd(sortedDs[j])-start)/86400000;if(diffD>=typeLim.customDays)break;const sh=sub.shifts[sortedDs[j]];tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,sortedDs[j],sub.staffName,sh),getOT(sub.staffName,settings,sh));}if(tot>typeLim.customHours*60){customVio=true;break;}}}}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;
               return(<tr key={sub.id} style={hasVio?{background:"rgba(255,71,87,.12)"}:{}}>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text)",fontWeight:600}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
@@ -3655,9 +4107,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
                   {at}
                   {hasRealUpdate&&<><br/><span style={{fontSize:10,color:"#F59E0B",fontWeight:700}}>更新: {new Date(sub.updatedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</span></>}
                 </td>
-              <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text3)",fontSize:12}}>{gpl(sub.periodId)}</td>
-              <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><div style={{display:"flex",flexDirection:"column",gap:2}}><div><span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 8px",borderRadius:4,fontSize:12,fontWeight:600}}>{wk}日</span>{totalMin>0&&<span style={{marginLeft:4,fontSize:11,color:"var(--c-text3)"}}>{fmtMin(totalMin)}</span>}</div>{maxConsec>0&&<div style={{fontSize:10,color:"#A78BFA"}}>連勤 最大{maxConsec}日</div>}</div></td>
-              <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><div style={{display:"flex",flexDirection:"column",gap:2}}><span style={{background:"var(--c-input)",color:"var(--c-text3)",padding:"2px 8px",borderRadius:4,fontSize:12}}>{holidayDays}日</span>{halfDays>0&&<span style={{fontSize:10,color:"#60A5FA"}}>短日 {halfDays}日</span>}</div></td>
+              <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><div><span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 8px",borderRadius:4,fontSize:12,fontWeight:600}}>{attLabel}</span></div></td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",whiteSpace:"nowrap"}}>
                 <button onClick={()=>setDet(sub)} style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text2)",fontSize:12,cursor:"pointer",marginRight:4}}>詳細</button>
                 {isPro&&<button onClick={()=>{if(!confirm("削除しますか？"))return;onSave(subs.filter(s=>s.id!==sub.id),sub.id);tt("削除しました");}} style={AD}>削除</button>}
@@ -3667,55 +4117,6 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
         </table>
       </div>
     </div>
-    {isPremium&&fp!=="all"&&(()=>{
-      const per=periods.find(p=>p.id===fp);
-      if(!per)return null;
-      const dates=gd(per.startDate,per.endDate);
-      const perSubs=subs.filter(s=>s.periodId===fp);
-      if(perSubs.length===0)return null;
-      const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
-      let minH=24,maxH=9,hasAny=false;
-      perSubs.forEach(sub=>dates.forEach(d=>{const sh=sub.shifts?.[d];if(!sh||sh.status!=="work")return;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(st&&en){hasAny=true;minH=Math.min(minH,Math.floor(toMin(st)/60));maxH=Math.max(maxH,Math.ceil(toMin(en)/60));}}));
-      if(!hasAny)return null;
-      minH=Math.max(6,minH);maxH=Math.min(28,Math.max(maxH,minH+1));
-      const hours=Array.from({length:maxH-minH},(_,i)=>minH+i);
-      const spIdx=staffList.findIndex(n=>isSpacer(n));
-      const rawA=spIdx>-1?staffList.slice(0,spIdx).filter(n=>!isSpacer(n)):staffList.filter(n=>!isSpacer(n));
-      const rawB=spIdx>-1?staffList.slice(spIdx+1).filter(n=>!isSpacer(n)):[];
-      const buildSet=grp=>{const s=new Set(grp);Object.entries(staffAliases).forEach(([reg,als])=>{if(s.has(reg))als.forEach(a=>s.add(a));});return s;};
-      const setA=buildSet(rawA),setB=buildSet(rawB);
-      const countFor=(nameSet,date,hour)=>perSubs.filter(sub=>{if(!nameSet.has(sub.staffName))return false;const sh=sub.shifts?.[date];if(!sh||sh.status!=="work")return false;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(!st||!en)return false;const hS=hour*60,hE=(hour+1)*60;return toMin(st)<hE&&toMin(en)>hS;}).length;
-      const allCounts=hours.flatMap(h=>dates.flatMap(d=>[countFor(setA,d,h),spIdx>-1?countFor(setB,d,h):0]));
-      const maxCnt=Math.max(1,...allCounts);
-      const cellBg=n=>{if(n===0)return"var(--c-input)";const a=Math.min(0.15+n/maxCnt*0.65,0.8);return`rgba(248,112,54,${a.toFixed(2)})`;};
-      const HW=38,DW=52;
-      const renderTbl=(nameSet,title)=>(<div style={{flex:1,minWidth:0}}>
-        {title&&<div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:5}}>{title}</div>}
-        <div style={{overflowX:"auto"}}>
-          <table style={{borderCollapse:"collapse",fontSize:11}}>
-            <thead><tr>
-              <th style={{width:DW,minWidth:DW,background:"var(--c-input)",padding:"4px 6px",borderRight:"1px solid var(--c-border2)",color:"var(--c-text4)",fontWeight:600,textAlign:"center",position:"sticky",left:0,zIndex:1}}>日付</th>
-              {hours.map(h=>{const hL=h>=24?`${h-24}+1`:`${h}時`;return(<th key={h} style={{width:HW,minWidth:HW,background:"var(--c-input)",padding:"3px 2px",borderBottom:"1px solid var(--c-border2)",color:"var(--c-text4)",fontWeight:600,textAlign:"center",fontSize:10}}>{hL}</th>);})}
-            </tr></thead>
-            <tbody>{dates.map(d=>{const dt=pd(d);const isW=isWeekend(d);return(<tr key={d}>
-              <td style={{padding:"1px 6px",background:"var(--c-input)",borderRight:"1px solid var(--c-border2)",color:isW?"#EF4444":"var(--c-text4)",textAlign:"center",whiteSpace:"nowrap",position:"sticky",left:0,fontSize:10,fontWeight:isW?700:400}}>{`${dt.getMonth()+1}/${dt.getDate()}`} {WD[dt.getDay()]}</td>
-              {hours.map(h=>{const n=countFor(nameSet,d,h);return(<td key={h} style={{width:HW,height:20,background:cellBg(n),textAlign:"center",color:n>0?"rgba(255,255,255,.9)":"var(--c-text4)",fontWeight:n>0?700:400,fontSize:11,border:"1px solid var(--c-border)",padding:0}}>{n>0?n:""}</td>);})}
-            </tr>);})}
-            </tbody>
-          </table>
-        </div>
-      </div>);
-      return(<div style={{marginTop:14,background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:14,padding:"12px 14px"}}>
-        <div style={{fontSize:13,fontWeight:700,color:"var(--c-text2)",marginBottom:10}}>時間帯別出勤人数</div>
-        {spIdx>-1
-          ?<div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
-            {rawA.length>0&&renderTbl(setA,"キッチン")}
-            {rawB.length>0&&renderTbl(setB,"ホール")}
-          </div>
-          :renderTbl(setA,"")
-        }
-      </div>);
-    })()}
     {det&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:500,display:"flex",alignItems:"flex-end",justifyContent:"center",animation:"fI .2s"}} onClick={()=>setDet(null)}>
       <div style={{background:"var(--c-card)",borderRadius:"20px 20px 0 0",width:"100%",maxWidth:560,maxHeight:"88vh",overflow:"hidden",display:"flex",flexDirection:"column",animation:"sU .25s"}} onClick={e=>e.stopPropagation()}>
         <div style={{width:36,height:4,background:"var(--c-border2)",borderRadius:2,margin:"10px auto 0"}}/>
@@ -3724,12 +4125,12 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           <button onClick={()=>setDet(null)} style={{background:"var(--c-input)",border:"none",borderRadius:"50%",width:32,height:32,color:"var(--c-text2)",fontSize:18,cursor:"pointer"}}>✕</button>
         </div>
         <div style={{overflowY:"auto",padding:"8px 16px 24px"}}>
-          {isPremium&&(()=>{const detOT=getOT(det.staffName,settings);const dDs=Object.keys(det.shifts||{}).sort();const dWk=dDs.filter(d=>det.shifts[d]?.status==="work").length;const dTot=dDs.reduce((a,d)=>a+calcNetWorkMinutes(det.shifts[d],getBreakList(settings,d),detOT),0);const dHol=dDs.length-dWk;const dHalf=dDs.filter(d=>{const s=det.shifts[d];return s&&s.status==="work"&&calcNetWorkMinutes(s,getBreakList(settings,d),detOT)<240;}).length;const dCurP=periods.find(p=>p.id===det.periodId);const dPrevP=dCurP?[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate)).find(p=>new Date(p.endDate)<new Date(dCurP.startDate)):null;const dPrevS=dPrevP?subs.find(s=>s.periodId===dPrevP.id&&(s.staffName===det.staffName||(staffAliases[det.staffName]||[]).includes(s.staffName))):null;const dPDs=dPrevS?Object.keys(dPrevS.shifts||{}).sort():[];const dAll=[...new Set([...dPDs,...dDs])].sort();let dMax=0,dC=0;dAll.forEach(d=>{const sh=dDs.includes(d)?det.shifts[d]:dPrevS?.shifts?.[d];if(sh&&sh.status==="work"){dC++;dMax=Math.max(dMax,dC);}else dC=0;});const SB=(l,v,c,bg)=>(<div style={{background:bg,borderRadius:8,padding:"6px 10px",textAlign:"center",border:`1px solid ${c}33`,minWidth:56}}><div style={{fontSize:10,color:"var(--c-text4)",marginBottom:1}}>{l}</div><div style={{fontSize:13,fontWeight:700,color:c}}>{v}</div></div>);return(<div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"8px 0 4px"}}>{SB("出勤",`${dWk}日`,"#FFA070","rgba(248,112,54,.1)")}{SB("休み",`${dHol}日`,"var(--c-text3)","var(--c-input)")}{dHalf>0&&SB("短日",`${dHalf}日`,"#60A5FA","rgba(96,165,250,.1)")}{dTot>0&&SB("勤務計",fmtMin(dTot),"var(--c-text2)","var(--c-input)")}{dMax>0&&SB("最長連勤",`${dMax}日`,"#A78BFA","rgba(167,139,250,.1)")}{detOT>0&&SB("延長",`+${detOT}分`,"#34D399","rgba(52,211,153,.1)")}</div>);})()}
-          {isPremium&&(()=>{const detOT=getOT(det.staffName,settings);const wP=periods.find(p=>p.id===det.periodId);if(!wP)return null;const wSS=subs.filter(s=>s.staffName===det.staffName||(staffAliases[det.staffName]||[]).includes(s.staffName));const perDs=gd(wP.startDate,wP.endDate);const wkSet=new Set();perDs.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet.add(fd(mon));});const weeks=[...wkSet].sort();const mo=wP.startDate.slice(0,7);let moTot=0;wSS.forEach(s=>{const sOT=getOT(s.staffName,settings);Object.keys(s.shifts||{}).forEach(d=>{if(d.startsWith(mo))moTot+=calcNetWorkMinutes(s.shifts[d],getBreakList(settings,d),sOT);});});const wkData=weeks.map(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds2=fd(dd);if(det.shifts[ds2]){tot+=calcNetWorkMinutes(det.shifts[ds2],getBreakList(settings,ds2),detOT);}else{const os=wSS.find(s=>s.id!==det.id&&s.shifts&&s.shifts[ds2]);if(os)tot+=calcNetWorkMinutes(os.shifts[ds2],getBreakList(settings,ds2),getOT(os.staffName,settings));}}return{monStr,tot};});return(<div style={{marginBottom:4}}><div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",margin:"6px 0 5px"}}>週間勤務時間</div><div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{wkData.map(({monStr,tot})=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);const lbl=`${m.getMonth()+1}/${m.getDate()}〜${sun.getMonth()+1}/${sun.getDate()}`;return(<div key={monStr} style={{background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"var(--c-text4)"}}>{lbl}</div><div style={{fontSize:12,fontWeight:700,color:tot>0?"var(--c-text2)":"var(--c-text4)"}}>{tot>0?fmtMin(tot):"−"}</div></div>);})}{moTot>0&&<div style={{background:"rgba(248,112,54,.08)",border:"1px solid rgba(248,112,54,.2)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"#FFA070"}}>{mo.replace("-","年")}月計</div><div style={{fontSize:12,fontWeight:700,color:"#FFA070"}}>{fmtMin(moTot)}</div></div>}</div></div>);})()}
+          {isPremium&&(()=>{const dDs=Object.keys(det.shifts||{}).sort();const dWorkDs=dDs.filter(d=>det.shifts[d]?.status==="work");const dAtt=dWorkDs.reduce((acc,d)=>{const sh=det.shifts[d];const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;return acc+((st&&en)?shiftBandInfo(sh).attendance:1);},0);const dTot=dDs.reduce((a,d)=>a+calcNetWorkMinutes(det.shifts[d],getBreaksFor(settings,d,det.staffName,det.shifts[d]),getOT(det.staffName,settings,det.shifts[d])),0);const detOTMax=dDs.reduce((mx,d)=>{const s=det.shifts[d];return s&&s.status==="work"?Math.max(mx,getOT(det.staffName,settings,s)):mx;},0);const SB=(l,v,c,bg)=>(<div style={{background:bg,borderRadius:8,padding:"6px 10px",textAlign:"center",border:`1px solid ${c}33`,minWidth:56}}><div style={{fontSize:10,color:"var(--c-text4)",marginBottom:1}}>{l}</div><div style={{fontSize:13,fontWeight:700,color:c}}>{v}</div></div>);return(<div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"8px 0 4px"}}>{SB("出勤",`${dAtt}日`,"#FFA070","rgba(248,112,54,.1)")}{dTot>0&&SB("勤務計",fmtMin(dTot),"var(--c-text2)","var(--c-input)")}{detOTMax>0&&SB("延長",`+${detOTMax}分`,"#34D399","rgba(52,211,153,.1)")}</div>);})()}
+          {isPremium&&(()=>{const wP=periods.find(p=>p.id===det.periodId);if(!wP)return null;const wSS=subs.filter(s=>s.staffName===det.staffName||(staffAliases[det.staffName]||[]).includes(s.staffName));const perDs=gd(wP.startDate,wP.endDate);const wkSet=new Set();perDs.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet.add(fd(mon));});const weeks=[...wkSet].sort();const mo=wP.startDate.slice(0,7);let moTot=0;wSS.forEach(s=>{Object.keys(s.shifts||{}).forEach(d=>{if(d.startsWith(mo))moTot+=calcNetWorkMinutes(s.shifts[d],getBreaksFor(settings,d,s.staffName,s.shifts[d]),getOT(s.staffName,settings,s.shifts[d]));});});const wkData=weeks.map(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds2=fd(dd);if(det.shifts[ds2]){tot+=calcNetWorkMinutes(det.shifts[ds2],getBreaksFor(settings,ds2,det.staffName,det.shifts[ds2]),getOT(det.staffName,settings,det.shifts[ds2]));}else{const os=wSS.find(s=>s.id!==det.id&&s.shifts&&s.shifts[ds2]);if(os)tot+=calcNetWorkMinutes(os.shifts[ds2],getBreaksFor(settings,ds2,os.staffName,os.shifts[ds2]),getOT(os.staffName,settings,os.shifts[ds2]));}}return{monStr,tot};});return(<div style={{marginBottom:4}}><div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",margin:"6px 0 5px"}}>週間勤務時間</div><div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{wkData.map(({monStr,tot})=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);const lbl=`${m.getMonth()+1}/${m.getDate()}〜${sun.getMonth()+1}/${sun.getDate()}`;return(<div key={monStr} style={{background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"var(--c-text4)"}}>{lbl}</div><div style={{fontSize:12,fontWeight:700,color:tot>0?"var(--c-text2)":"var(--c-text4)"}}>{tot>0?fmtMin(tot):"−"}</div></div>);})}{moTot>0&&<div style={{background:"rgba(248,112,54,.08)",border:"1px solid rgba(248,112,54,.2)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"#FFA070"}}>{mo.replace("-","年")}月計</div><div style={{fontSize:12,fontWeight:700,color:"#FFA070"}}>{fmtMin(moTot)}</div></div>}</div></div>);})()}
           {det.comment&&<div style={{background:"var(--c-input)",borderRadius:8,padding:"10px 12px",margin:"8px 0",fontSize:13,color:"var(--c-text2)"}}>{det.comment}</div>}
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead><tr>{["日付","区分","出勤","退勤","時間"].map(h=><th key={h} style={{background:"var(--c-input)",color:"var(--c-text2)",padding:"8px 12px",textAlign:"left",fontWeight:600}}>{h}</th>)}</tr></thead>
-            <tbody>{Object.keys(det.shifts||{}).sort().map(ds=>{const d=pd(ds),s=det.shifts[ds],iw=s&&s.status==="work";const detOT2=isPremium?getOT(det.staffName,settings):0;const nm=iw?calcNetWorkMinutes(s,getBreakList(settings,ds),detOT2):0;const effEnd=isPremium&&iw&&detOT2>0&&(s.adjustedEnd??s.end)?`→${(()=>{const en=s.adjustedEnd??s.end;const[h,m]=en.split(":").map(Number);const tot=h*60+m+detOT2;return`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;})()}`:null;return(<tr key={ds}>
+            <tbody>{Object.keys(det.shifts||{}).sort().map(ds=>{const d=pd(ds),s=det.shifts[ds],iw=s&&s.status==="work";const detOT2=isPremium&&iw?getOT(det.staffName,settings,s):0;const nm=iw?calcNetWorkMinutes(s,getBreaksFor(settings,ds,det.staffName,s),detOT2):0;const effEnd=isPremium&&iw&&detOT2>0&&(s.adjustedEnd??s.end)?`→${(()=>{const en=s.adjustedEnd??s.end;const[h,m]=en.split(":").map(Number);const tot=h*60+m+detOT2;return`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;})()}`:null;return(<tr key={ds}>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:"var(--c-text2)"}}>{d.getMonth()+1}/{d.getDate()}（{WD[d.getDay()]}）</td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>{iw?<span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 7px",borderRadius:4,fontSize:12,fontWeight:600}}>出勤</span>:<span style={{background:"var(--c-input)",color:"var(--c-text3)",padding:"2px 7px",borderRadius:4,fontSize:12}}>休み</span>}</td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
@@ -3742,7 +4143,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
             </tr>);})}
             </tbody>
           </table>
-          {isPremium&&(()=>{const detOT3=getOT(det.staffName,settings);const tot=Object.keys(det.shifts||{}).reduce((acc,ds)=>{const s=det.shifts[ds];return acc+calcNetWorkMinutes(s,getBreakList(settings,ds),detOT3);},0);return tot>0?<div style={{textAlign:"right",padding:"6px 12px",fontSize:13,color:"var(--c-text2)",fontWeight:700}}>合計：{fmtMin(tot)}</div>:null;})()}
+          {isPremium&&(()=>{const tot=Object.keys(det.shifts||{}).reduce((acc,ds)=>{const s=det.shifts[ds];return acc+calcNetWorkMinutes(s,getBreaksFor(settings,ds,det.staffName,s),getOT(det.staffName,settings,s));},0);return tot>0?<div style={{textAlign:"right",padding:"6px 12px",fontSize:13,color:"var(--c-text2)",fontWeight:700}}>合計：{fmtMin(tot)}</div>:null;})()}
         </div>
       </div>
     </div>}
@@ -4087,15 +4488,26 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
     })()}
 
     {plan==="premium"&&staffList.filter(n=>!isSpacer(n)).length>0&&<AC title="退勤延長設定">
-      <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>スタッフごとにシフト終了後の延長時間を設定します。勤務時間合計に加算され、提出一覧の退勤欄に表示されます。</div>
+      <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>スタッフごとにシフト終了後の延長時間を設定します。ランチ帯（退勤17:00以前）とディナー帯（退勤17:00超）で個別に設定できます。勤務時間合計に加算され、提出一覧の退勤欄に表示されます。</div>
       {staffList.filter(n=>!isSpacer(n)).map(n=>{
-        const ot=(settings.overtimeSettings?.byStaff||{})[n]||0;
-        return(<div key={n} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,marginBottom:6}}>
-          <span style={{flex:1,fontSize:13,color:"var(--c-text)",fontWeight:600}}>{n}</span>
-          <select value={ot} onChange={e=>{const v=parseInt(e.target.value)||0;const bs={...(settings.overtimeSettings?.byStaff||{})};if(v>0)bs[n]=v;else delete bs[n];onSave({...settings,overtimeSettings:{...(settings.overtimeSettings||{}),byStaff:bs}});}} style={{fontSize:13,padding:"5px 8px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",cursor:"pointer"}}>
-            <option value={0}>延長なし</option>
-            {[15,30,45,60,90,120].map(m=><option key={m} value={m}>+{m}分</option>)}
-          </select>
+        const raw=(settings.overtimeSettings?.byStaff||{})[n];
+        const ot=typeof raw==="number"?{lunch:raw,dinner:raw}:(raw||{lunch:0,dinner:0});
+        const setOT=(band,v)=>{const bs={...(settings.overtimeSettings?.byStaff||{})};const prevRaw=bs[n];const prev=typeof prevRaw==="number"?{lunch:prevRaw,dinner:prevRaw}:(prevRaw||{lunch:0,dinner:0});const next={...prev,[band]:v};if((next.lunch||0)>0||(next.dinner||0)>0)bs[n]={lunch:next.lunch||0,dinner:next.dinner||0};else delete bs[n];onSave({...settings,overtimeSettings:{...(settings.overtimeSettings||{}),byStaff:bs}});};
+        const selStyle={fontSize:16,padding:"5px 8px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",cursor:"pointer"};
+        return(<div key={n} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,marginBottom:6}}>
+          <span style={{flex:1,fontSize:13,color:"var(--c-text)",fontWeight:600,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n}</span>
+          <div style={{display:"flex",alignItems:"center",gap:4}}>
+            <span style={{fontSize:11,color:"var(--c-text3)"}}>ランチ</span>
+            <select value={ot.lunch||0} onChange={e=>setOT("lunch",parseInt(e.target.value)||0)} style={selStyle}>
+              <option value={0}>延長なし</option>{[15,30,45,60,90,120].map(m=><option key={m} value={m}>+{m}分</option>)}
+            </select>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:4}}>
+            <span style={{fontSize:11,color:"var(--c-text3)"}}>ディナー</span>
+            <select value={ot.dinner||0} onChange={e=>setOT("dinner",parseInt(e.target.value)||0)} style={selStyle}>
+              <option value={0}>延長なし</option>{[15,30,45,60,90,120].map(m=><option key={m} value={m}>+{m}分</option>)}
+            </select>
+          </div>
         </div>);
       })}
     </AC>}
@@ -4268,6 +4680,7 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
             style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#f87036,#e05a1a)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
             {"★ Proにアップグレード（500円/月）"}
           </button>}
+          {plan==="pro"&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8,textAlign:"center"}}>シフト作成・時間調整・PDF書き出しなど全機能が使えます</div>}
           <button onClick={()=>onUpgrade&&onUpgrade({type:"edit",plan})}
             style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
             {"★★ Premiumにアップグレード（2,980円/月）"}
@@ -4296,17 +4709,18 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
               {[
                 ["スタッフ数","20名","無制限","無制限"],
                 ["期間数","1件","無制限","無制限"],
-                ["スタッフ並べ替え","✕","✓","✓"],
-                ["テンプレート共有","✕","✓","✓"],
                 ["Excel書き出し","✓","✓","✓"],
+                ["スタッフ並べ替え・名前色","✕","✓","✓"],
+                ["テンプレート共有","✕","✓","✓"],
                 ["Excel店舗名変更","✕","✓","✓"],
-                ["スタッフ名色設定","✕","✓","✓"],
                 ["名前リンク（別名）","✕","✓","✓"],
-                ["シフトの作成・書き出し","✕","✕","✓"],
-                ["勤務時間の制限の表示","✕","✕","✓"],
-                ["時間帯別出勤人数の表示","✕","✕","✓"],
-                ["期間別勤務時間の表示","✕","✕","✓"],
-                ["総勤務時間の表示","✕","✕","✓"],
+                ["シフト作成・時間調整","✕","✕","✓"],
+                ["PDF書き出し","✕","✕","✓"],
+                ["休憩時間・属性別設定","✕","✕","✓"],
+                ["勤務時間制限チェック","✕","✕","✓"],
+                ["時間帯別出勤人数","✕","✕","✓"],
+                ["連勤・休みカウント","✕","✕","✓"],
+                ["従業員番号のExcel/PDF出力","✕","✕","✓"],
               ].map(([feat,...vals])=>(
                 <tr key={feat}>
                   <td style={{padding:"9px 6px",color:"var(--c-text3)",fontSize:12,fontWeight:600,borderBottom:"1px solid var(--c-border)"}}>{feat}</td>
@@ -4359,10 +4773,10 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
   const[error,setError]=useState("");
   const isEditType=reason.type==="edit";
   const msgs={
-    shops:  {title:"店舗数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}店舗まで管理できます。`,next:"Proプランで無制限に管理できます。"},
-    staff:  {title:"スタッフ数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}名まで登録できます。`,next:"Proプランで無制限に登録できます。"},
-    periods:{title:"期間数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}件まで期間を作成できます。`,next:"Proプランにアップグレードすると無制限に作成できます。"},
-    edit:   {title:"シフト作成タブの編集機能",desc:"シフト時間の調整・編集はPremiumプランの機能です。",next:"Premiumプランにアップグレードすると、提出されたシフト時間を管理者側で編集・調整できます。"},
+    shops:  {title:"店舗数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}店舗まで管理できます。`,next:"Proプラン（500円/月）なら店舗を無制限に管理できます。"},
+    staff:  {title:"スタッフ数の上限に達しました",desc:"Freeプランでは最大20名まで登録できます。",next:"Proプラン（500円/月）ならスタッフ数・期間数が無制限になります。"},
+    periods:{title:"期間数の上限に達しました",desc:"Freeプランでは期間を1件まで作成できます。",next:"Proプラン（500円/月）なら期間を無制限に作成できます。"},
+    edit:   {title:"シフト作成はPremiumプランの機能です",desc:"提出されたシフトの編集・調整、休憩・属性管理、PDF/Excel書き出しはPremiumプランでご利用いただけます。",next:"Premiumプラン（2,980円/月）で、シフト表の仕上げから書き出しまでこのアプリだけで完結します。"},
   };
   const m=msgs[reason.type]||{title:"上限に達しました",desc:"",next:""};
 
@@ -4383,9 +4797,10 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
     }finally{setLoading(null);}
   };
 
+  const proLabel=currentPlan==="pro"?"Pro（現在）":"Pro";
   const planRows=isEditType
-    ?[["Free","無料","スタッフ20名 / 期間1件"],["Pro","500円/月","スタッフ・期間 無制限"],["★ Premium","2,980円/月","全機能 + シフト時間編集"]]
-    :[["Free","無料","スタッフ20名 / 期間1件"],["★ Pro","500円/月","スタッフ・期間 無制限 + 全機能"],["Premium","2,980円/月","全機能 + シフト時間編集"]];
+    ?[["Free","無料","スタッフ20名 / 期間1件"],[proLabel,"500円/月","スタッフ・期間 無制限＋並べ替え・テンプレート・名前色"],["★ Premium","2,980円/月","Proの全機能＋シフト作成・調整・休憩/属性管理・PDF出力"]]
+    :[["Free","無料","スタッフ20名 / 期間1件"],["★ Pro","500円/月","スタッフ・期間 無制限＋並べ替え・テンプレート・名前色"],["Premium","2,980円/月","Proの全機能＋シフト作成・調整・休憩/属性管理・PDF出力"]];
 
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20,animation:"fI .2s"}} onClick={onClose}>
