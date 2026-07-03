@@ -2741,11 +2741,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return[...staffList,...unreg];
   };
   const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  // 縦書き: html2canvasはwriting-modeを描画できないため1文字ずつ<br>で縦積みする
+  const vtext=s=>String(s==null?"":s).replace(/\s+/g,"").split("").map(esc).join("<br>");
   // シフト表table（HTML文字列）
   const buildShiftTableHtml=()=>{
     const cols=buildPdfCols();
     const BDp="1px solid #888",BDp2="2px solid #555";
-    const hatch="repeating-linear-gradient(135deg,transparent,transparent 3px,#bbb 3px,#bbb 4px)";
+    // 斜線: html2canvasはrepeating-linear-gradientを描画できないためSVGタイル画像を使う
+    // style属性(二重引用符)内に埋め込むため、url()は単一引用符・SVG内の引用符は%27にエスケープする
+    const hatch=`url('data:image/svg+xml;charset=utf-8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='6' height='6'><path d='M0 0 L6 6' stroke='#999' stroke-width='1'/></svg>").replace(/'/g,"%27")}') repeat`;
     let h='<table style="border-collapse:collapse;font-size:12px;">';
     // ヘッダー2行
     h+='<thead>';
@@ -2758,29 +2762,29 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     });
     h+=`<th colspan="2" style="border:${BDp2};padding:1px;height:16px;"></th>`;
     h+='</tr>';
-    // Row2: 期間（縦書き）・曜日・スタッフ名（縦書き）・曜日・店名（縦書き）
+    // Row2: 期間（縦積み）・曜日・スタッフ名（縦積み）・曜日・店名（縦積み）
     h+='<tr>';
-    h+=`<th style="border:${BDp2};padding:2px 4px;width:36px;writing-mode:vertical-rl;text-align:center;font-weight:700;">${esc(period.label||"")}</th>`;
+    h+=`<th style="border:${BDp2};padding:3px 2px;width:36px;text-align:center;font-weight:700;font-size:10px;line-height:1.2;vertical-align:middle;">${vtext(period.label||"")}</th>`;
     h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;text-align:center;font-weight:700;">曜日</th>`;
     cols.forEach(nm=>{
       if(isSpacer(nm)){h+=`<th style="border:${BDp};background:#f0f0f0;"></th>`;return;}
       const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";
-      h+=`<th style="border:${BDp};padding:1px;height:80px;writing-mode:vertical-rl;text-orientation:mixed;text-align:center;font-weight:700;color:${col};white-space:nowrap;">${esc(nm)}</th>`;
+      h+=`<th style="border:${BDp};padding:3px 1px;width:30px;text-align:center;font-weight:700;font-size:10px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;
     });
     h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;text-align:center;font-weight:700;">曜日</th>`;
-    h+=`<th style="border:${BDp2};padding:2px 4px;width:40px;writing-mode:vertical-rl;text-align:center;font-weight:700;">${esc(shopName||"店舗")}</th>`;
+    h+=`<th style="border:${BDp2};padding:3px 2px;width:40px;text-align:center;font-weight:700;font-size:10px;line-height:1.2;vertical-align:middle;">${vtext(shopName||"店舗")}</th>`;
     h+='</tr></thead><tbody>';
     dates.forEach((ds,di)=>{
       const d=pd(ds),dow=d.getDay(),day=d.getDate(),wd=WD[dow];
       const isSat=dow===6,isSunHol=dow===0||isHoliday(ds);
       const rowBg=isSat?"#DDEEFF":isSunHol?"#FFEEEE":"#fff";
       // 上行=出勤 / 下行=退勤
+      // 日付・曜日はセル2個分: html2canvasがrowspanを描画できないため上下2セルで境界線を消して結合風にする
+      const mergeTd=(val,top)=>`<td style="border-left:${BDp2};border-right:${BDp2};border-top:${top?BDp2:"0"};border-bottom:${top?"0":BDp2};padding:1px 2px;text-align:center;font-weight:600;vertical-align:${top?"bottom":"top"};height:15px;">${top?val:""}</td>`;
       ["start","end"].forEach((field,ri)=>{
         h+=`<tr style="background:${rowBg};">`;
-        if(ri===0){
-          h+=`<td rowspan="2" style="border:${BDp2};padding:2px;text-align:center;font-weight:600;">${day}</td>`;
-          h+=`<td rowspan="2" style="border:${BDp2};padding:2px;text-align:center;font-weight:600;">${esc(wd)}</td>`;
-        }
+        h+=mergeTd(day,ri===0);
+        h+=mergeTd(esc(wd),ri===0);
         cols.forEach(nm=>{
           if(isSpacer(nm)){h+=`<td style="border:${BDp};background:#f0f0f0;"></td>`;return;}
           if(!pdfHasSub(nm,ds)){h+=`<td style="border:${BDp};"></td>`;return;}
@@ -2796,10 +2800,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           const cbg=sh&&sh.changed===true?"#B7EBC6":r.note?"#FFFF00":"transparent";
           h+=`<td style="border:${BDp};padding:1px;text-align:center;background:${cbg};height:15px;">${esc(r.disp)}</td>`;
         });
-        if(ri===0){
-          h+=`<td rowspan="2" style="border:${BDp2};padding:2px;text-align:center;font-weight:600;">${esc(wd)}</td>`;
-          h+=`<td rowspan="2" style="border:${BDp2};padding:2px;text-align:center;font-weight:600;">${day}</td>`;
-        }
+        h+=mergeTd(esc(wd),ri===0);
+        h+=mergeTd(day,ri===0);
         h+='</tr>';
       });
     });
@@ -2812,7 +2814,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     let h=`<div style="font-size:13px;font-weight:700;margin:10px 0 4px;">休み・連勤カウント</div>`;
     h+='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
     h+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;"></th>`;
-    cols.forEach(nm=>{if(isSpacer(nm)){h+=`<th style="border:${BDp};background:#f0f0f0;width:26px;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";h+=`<th style="border:${BDp};padding:2px;height:70px;writing-mode:vertical-rl;text-orientation:mixed;text-align:center;color:${col};white-space:nowrap;">${esc(nm)}</th>`;});
+    cols.forEach(nm=>{if(isSpacer(nm)){h+=`<th style="border:${BDp};background:#f0f0f0;width:26px;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";h+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:10px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
     h+='</tr></thead><tbody>';
     const rows=[["休みカウント",nm=>{const v=restCounts[nm]||0;return v%1===0?v:v.toFixed(1);}],["連勤カウント",nm=>consecCounts[nm]||0]];
     rows.forEach(([lbl,valFn])=>{
@@ -2875,7 +2877,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
          let t=`<div style="font-size:13px;font-weight:700;margin:0 0 4px;">期間別勤務時間</div>`;
          t+='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
          t+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;">期間</th>`;
-         cols.forEach(nm=>{if(isSpacer(nm)){t+=`<th style="border:${BDp};background:#f0f0f0;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";t+=`<th style="border:${BDp};padding:2px;height:70px;writing-mode:vertical-rl;text-orientation:mixed;text-align:center;color:${col};white-space:nowrap;">${esc(nm)}</th>`;});
+         cols.forEach(nm=>{if(isSpacer(nm)){t+=`<th style="border:${BDp};background:#f0f0f0;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";t+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:10px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
          t+='</tr></thead><tbody>';
          periodRows.forEach(row=>{t+=`<tr><td style="border:${BDp};padding:3px 6px;font-weight:${row._bold?700:400};white-space:nowrap;">${esc(row.label)}</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};background:#f0f0f0;"></td>`;return;}const min=row.getMin(nm);t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
          t+='</tbody></table>';blocks.push(t);}
@@ -2885,7 +2887,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           let t=`<div style="font-size:13px;font-weight:700;margin:0 0 4px;">週間勤務時間（前期間含む）</div>`;
           t+='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
           t+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;">週</th>`;
-          cols.forEach(nm=>{if(isSpacer(nm)){t+=`<th style="border:${BDp};background:#f0f0f0;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";t+=`<th style="border:${BDp};padding:2px;height:70px;writing-mode:vertical-rl;text-orientation:mixed;text-align:center;color:${col};white-space:nowrap;">${esc(nm)}</th>`;});
+          cols.forEach(nm=>{if(isSpacer(nm)){t+=`<th style="border:${BDp};background:#f0f0f0;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";t+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:10px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
           t+='</tr></thead><tbody>';
           weeks.forEach(monStr=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);t+=`<tr><td style="border:${BDp};padding:3px 6px;white-space:nowrap;">${m.getDate()}〜${sun.getDate()}日</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};background:#f0f0f0;"></td>`;return;}const min=getWeekMin(monStr,nm);t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
           t+='</tbody></table>';blocks.push(t);
