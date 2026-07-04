@@ -27,12 +27,18 @@ Free / Pro の 2 段階プラン制。Pro は Stripe サブスク（500円/月�
 
 ### 2つの Firebase プロジェクト
 
-```
-DEV_MODE = true  → thirty-dev-b6958（開発用）  ← develop ブランチ
-DEV_MODE = false → ontheshift（本番）            ← main ブランチ
+`DEV_MODE` はブランチではなく**実行時のホスト名で自動判定**する（[app.js:12](app.js)）:
+
+```js
+const DEV_MODE = location.hostname !== "shiftyshifty.app";
 ```
 
-`CF_BASE`（Cloud Functions エンドポイント）も `DEV_MODE` に連動して切り替わる（[app.js:3744](app.js)）。
+```
+本番カスタムドメイン(shiftyshifty.app) → DEV_MODE=false → ontheshift（本番）
+それ以外（localhost・プレビューURL等）  → DEV_MODE=true  → thirty-dev-b6958（開発用）
+```
+
+developブランチ・mainブランチのどちらにチェックアウトしていても同じ判定になるため、マージ前後で手動切り替えする必要はない。`CF_BASE`（Cloud Functions エンドポイント）も `DEV_MODE` に連動して切り替わる（[app.js:3744](app.js)）。
 
 ---
 
@@ -59,7 +65,7 @@ DEV_MODE = false → ontheshift（本番）            ← main ブランチ
 ### 1〜35行: Firebase 設定
 
 ```js
-const DEV_MODE = true;            // develop=true / main=false
+const DEV_MODE = location.hostname !== "shiftyshifty.app"; // ホスト名で自動判定
 const FIREBASE_CONFIG_PROD = {...} // ontheshift プロジェクト
 const FIREBASE_CONFIG_DEV  = {...} // thirty-dev-b6958 プロジェクト
 const FIREBASE_CONFIG = DEV_MODE ? FIREBASE_CONFIG_DEV : FIREBASE_CONFIG_PROD;
@@ -346,12 +352,11 @@ SURVEY_SEND_TOKEN
 ```bash
 # develop での開発 → main へマージ（PRフロー）
 git push origin develop
-# PR 作成 → DEV_MODE を false に変更してから main にマージ
+# PR 作成 → main にマージ（DEV_MODEはホスト名で自動判定されるため手動切り替え不要）
 ```
 
 **マージ前チェックリスト**:
-- [ ] `DEV_MODE = false` になっているか（app.js 12行目）
-- [ ] `DEV_PLAN_OVERRIDE = null` になっているか（app.js ~171行目）
+- [ ] `DEV_MODE` が `location.hostname !== "shiftyshifty.app"` の式のままか（app.js 12行目。固定の `true`/`false` に書き換わっていないか）
 
 ### Cloud Functions
 
@@ -366,8 +371,9 @@ firebase deploy --only functions
 
 ### ブランチと DEV_MODE
 
-- `develop`: 常に `DEV_MODE = true`（DEV Firebase に接続）
-- `main`: 常に `DEV_MODE = false`（本番 Firebase に接続）
+- `DEV_MODE` はブランチではなく実行時のホスト名で自動判定（`location.hostname !== "shiftyshifty.app"`）
+- 本番カスタムドメイン以外（localhost・プレビューURL等）はすべて DEV Firebase に接続する
+- develop・main どちらのブランチにチェックアウトしていても判定は同じなので、マージ前後の手動切り替えは不要
 - `CF_BASE` も `DEV_MODE` に連動して自動切り替わる（app.js 3744行目）
 
 ### プランのテスト
@@ -483,46 +489,65 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-08 自動実行）
+## Shifty バグチェックレポート（2026-07-04 自動実行 #2）
 
 ### 修正済み
 
-- **🔴 DEV_MODE = false のまま develop ブランチにコミットされていた**（app.js:12）
-  RULES.md 違反。直近コミット `5dfa299 chore: DEV_MODE=false（本番リリース用）` で `false` のまま develop に残存していた。`true` に修正してコミット・プッシュ済み（c609862）。
+（今回の実行では修正なし）
 
 ### 要確認（未修正）
 
-- **🟢 signInWithApple / signInAndLinkApple デッドコード**（app.js:807,944）
+- **🟢 signInWithApple / signInAndLinkApple デッドコード**（app.js:844,981）
   Apple ログインUI削除済みだが関数残存。動作に影響なし、将来的に削除推奨。
 
-- **🟢 iOS Safari ズーム防止: AI定数の fontSize:14**（app.js:4005）
+- **🟢 iOS Safari ズーム防止: AI定数の fontSize:14**（app.js:4903）
   管理者フォーム全般のスタイル定数。管理者画面のみの影響。
 
-- **🟢 iOS Safari ズーム防止: コードで追加入力欄 fontSize:12**（app.js:2221）
-  管理者ヘッダーの「コードで追加」入力欄。管理者画面のみの影響。
+- **🟢 iOS Safari ズーム防止: 店舗コード「コードで追加」入力欄の fontSize:12**（app.js:2269付近）
+  引き続き未修正。管理者画面のみの影響。
 
-- **🟢 iOS Safari ズーム防止: SubsTab詳細モーダル調整selectの fontSize:12**（app.js:3315,3318）
+- **🟢 iOS Safari ズーム防止: SubsTab詳細モーダル調整selectの fontSize:12**（app.js:4154,4157付近）
   出退勤調整セレクト。Premiumユーザーのみの影響。
 
-- **🟢 iOS Safari ズーム防止: staffAttribute selectの fontSize:12**（app.js:2811）
+- **🟢 iOS Safari ズーム防止: staffAttribute selectの fontSize:12**（app.js:3658付近）
   スタッフ属性セレクト（StaffTab）。Premiumユーザーのみの影響。
 
 - **🟢 onJoinByInviteCode がSetTabに渡されているがUIから未使用**（app.js内）
   企業アカウント招待コード参加UIが未実装のためデッドプロップ。
 
-- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app.js:3309付近）
-  non-Premiumユーザーは全行「-」表示。機能上の問題はないが視覚的に不要な列が表示される軽微なUX問題。
+### 前回から改善された点
+- **CLAUDE.md肥大化・再帰同期バグが解消**（commit `1b0a4c5`）: 12,499行/603KB → 2,626行/130KB に縮小。`readAllNotes` から CLAUDE.md/.cursorrules を除外し自己再帰を停止する修正を確認。
 
 ### 確認した直近コミット
-- 5dfa299: DEV_MODE=false（本番リリース用）→ develop ブランチにあったため RULES.md 違反として修正（c609862）
-- 575ea84: Free/ProプランからPremiumへのアップグレードボタン追加 → 正常
-- 2cec6cd: 解放コード廃止・旧ots_unlockedキー自動削除 → 正常
+- a17f478: シフト提出の二重送信で重複レコードが作られるバグを修正 → `submittingRef` 同期ガードが成功・失敗どちらのパスでも解除される正しい実装
+- ac1c83b: シフト提出のFirebase書き込み失敗を検知せず「提出完了」と表示するバグを修正 → `onSub` が Promise を返し、await で書き込み成功を確認してから完了表示するよう修正。正常
+- b13f6e2: 壊れたdevelop→main自動デプロイワークフローを削除 → 他ファイルからの参照なし、問題なし
+
+### 異常なし
+クリティカル（🔴）・中程度（🟡）の問題はなし。Firebase書き込みパターン・DEV_MODE=true・isPro/isPremium分離・Cloud Functions secrets・ESLint（0 errors）すべて正常。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 -
 -
 -
@@ -770,8 +795,7 @@ Vite + TS へのフル移行は不要。
 
 ## コード全般
 
-- `DEV_MODE` を `false` のまま develop ブランチにコミットしない（develop は常に `true`）
-- `DEV_MODE` を `true` のまま main ブランチにマージしない
+- `DEV_MODE` はホスト名で自動判定する式（`location.hostname !== "shiftyshifty.app"`）。固定値の `true`/`false` に書き換えない
 - Firebase の `set()` でコレクション全体を上書きしない（他端末データが消える）
 - `firebaseDB.ref('accounts').once('value')` など全件読み取りを新規追加しない
 
@@ -803,7 +827,6 @@ firebaseDB.ref(`shops/${shopId}/subs`).set(allSubs);
 ## ブランチ・デプロイ
 
 - `main` ブランチへの直接プッシュをしない（develop → main の PR フローを守る）
-- `DEV_MODE` の切り替えを忘れずに main マージ前に行う
 - Cloud Functions のデプロイは `cd functions && firebase deploy --only functions`
 
 ## ループ動作中の禁止事項
@@ -933,12 +956,14 @@ grep -n "\.delete()" functions/index.js
 ### 2-D. RULES.md 違反チェック（🔴）
 
 ```bash
-# DEV_MODE が誤って false になっていないか（develop ブランチは常に true）
+# DEV_MODE がホスト名自動判定の式のままか（固定値の true/false に書き換わっていないか）
 grep -n "^const DEV_MODE" app.js
 
-# DEV_PLAN_OVERRIDE が null 以外になっていないか
+# DEV_PLAN_OVERRIDE が DEV_MODE 連動の式のままか（固定値に書き換わっていないか）
 grep -n "^const DEV_PLAN_OVERRIDE" app.js
 ```
+
+正しい状態: `const DEV_MODE = location.hostname !== "shiftyshifty.app";`。固定値の `true`/`false` にハードコードされていたら🔴。
 
 ### 2-E. 既知の軽微問題（🟢）
 
@@ -1075,6 +1100,60 @@ firebaseDB.ref(`shops/${sid}/subs/${subId}`).remove();
 .runWith({ secrets: ["SMTP_USER", "SMTP_PASS"] })
 ```
 
+### check-dev
+---
+description: app.js の DEV_MODE と DEV_PLAN_OVERRIDE の現在値を確認して表示します
+---
+
+以下のコマンドを実行して app.js の開発フラグ状態を確認してください：
+
+```bash
+grep -n "^const DEV_MODE\|^const DEV_PLAN_OVERRIDE" app.js
+```
+
+`DEV_MODE` はホスト名で自動判定する式（`location.hostname !== "shiftyshifty.app"`）が正しい状態。ブランチによって固定の `true`/`false` に切り替える必要はない。
+
+結果を以下の形式で報告してください：
+
+| 変数 | 行番号 | 現在値 | 正しい状態か |
+|------|--------|--------|------------|
+| DEV_MODE | XX行 | [値] | `location.hostname !== "shiftyshifty.app"` の式のままか |
+| DEV_PLAN_OVERRIDE | XX行 | [値] | `DEV_MODE` に連動する式（`DEV_MODE ? ... : null`）のままか |
+
+固定値の `true`/`false`/`"free"`/`"pro"` 等に書き換わっていた場合は ⚠️ 警告を表示してください。
+
+### deploy
+---
+description: デプロイ前チェック（DEV_MODE / DEV_PLAN_OVERRIDE）後、引数をコミットメッセージとして main にプッシュします。使い方: /deploy <コミットメッセージ>
+---
+
+以下の手順でデプロイ前チェックを実施し、問題がなければデプロイしてください。
+
+## ステップ1: 開発フラグを確認
+
+```bash
+grep -n "^const DEV_MODE\|^const DEV_PLAN_OVERRIDE" app.js
+```
+
+## ステップ2: チェック判定
+
+`DEV_MODE` はホスト名で自動判定する式（`const DEV_MODE = location.hostname !== "shiftyshifty.app";`）が正しい状態。本番ドメインでは自動的に false になるため、ブランチごとの手動切り替えは不要。
+
+- `DEV_MODE` が固定値の `true`/`false` に書き換わっていたら **デプロイ中止** — app.js 12行目を `location.hostname !== "shiftyshifty.app"` の式に戻すようユーザーに伝える
+- `DEV_PLAN_OVERRIDE` が `DEV_MODE` に連動しない固定値（`"free"`/`"pro"` 等）になっていたら **デプロイ中止** — app.js 171行目付近を `DEV_MODE ? (...) : null` の式に戻すようユーザーに伝える
+
+問題がある場合は修正箇所を具体的に示してデプロイを停止してください。
+
+## ステップ3: デプロイ実行
+
+両フラグが自動判定の式のままであることを確認できたら実行:
+
+```bash
+git add -A && git commit -m "$ARGUMENTS" && git push origin main
+```
+
+コミットメッセージ: `$ARGUMENTS`
+
 ### release-to-main
 ---
 description: developブランチの内容をmainにマージして本番デプロイします。DEV_MODE/DEV_PLAN_OVERRIDEチェック・未コミット変更の退避・マージコンフリクト解決を含む一連の流れを自動化します。
@@ -1107,7 +1186,7 @@ git diff main..develop --stat -- functions/
 grep -n "^const DEV_MODE" app.js
 ```
 
-developでは `true` が正しい状態。`false` になっていた場合はRULES.md違反なのでユーザーに報告する（このコマンドの対象外の問題なので、報告のみで先に進めてよい）。
+`DEV_MODE` はホスト名で自動判定する式（`location.hostname !== "shiftyshifty.app"`）が正しい状態。develop・main どちらのブランチでも同じ式で問題ない。固定値の `true`/`false` に書き換わっていた場合はRULES.md違反なのでユーザーに報告する（このコマンドの対象外の問題なので、報告のみで先に進めてよい）。
 
 ## ステップ3: main を最新化してマージ
 
@@ -1125,14 +1204,14 @@ grep -n "^<<<<<<<\|^=======\|^>>>>>>>" app.js
 
 **基本方針**: developはmainより新しい変更を持ち込む側なので、単純な追加（addのみ）のコンフリクトは develop 側を採用する。ロジックが競合している場合はコードの意味を読んで判断し、どちらを採用すべきか自明でない場合はユーザーに確認してから進める。コンフリクトマーカー（`<<<<<<<` `=======` `>>>>>>>`）を残したままコミットしない。
 
-## ステップ5: 本番用フラグに変更
+## ステップ5: フラグが自動判定の式のままか確認
 
 ```bash
 grep -n "^const DEV_MODE\|^const DEV_PLAN_OVERRIDE" app.js
 ```
 
-- `DEV_MODE` を `false` に変更する（Editツールで `const DEV_MODE = true;` → `const DEV_MODE = false;`）
-- `DEV_PLAN_OVERRIDE` は `const DEV_PLAN_OVERRIDE = DEV_MODE ? (...) : null;` のように DEV_MODE に連動する式で定義されているのが現在の実装。式のままなら DEV_MODE=false で自動的に null になるので触らなくてよい。もし直値（`"free"` 等）で定義されているのを見つけた場合はそれ自体がバグなので `null` に修正してユーザーに報告する。
+- `DEV_MODE` は `const DEV_MODE = location.hostname !== "shiftyshifty.app";` のようにホスト名で自動判定する式が現在の実装。本番ドメインでは自動的に false になるため、手動で `false` に書き換える必要はない。もし固定値の `true`/`false` に書き換わっているのを見つけた場合はそれ自体がバグなので式に戻し、ユーザーに報告する。
+- `DEV_PLAN_OVERRIDE` は `const DEV_PLAN_OVERRIDE = DEV_MODE ? (...) : null;` のように DEV_MODE に連動する式で定義されているのが現在の実装。式のままなら本番ドメインで自動的に null になるので触らなくてよい。もし直値（`"free"` 等）で定義されているのを見つけた場合はそれ自体がバグなので式に戻し、ユーザーに報告する。
 
 ## ステップ6: コミット
 
@@ -1198,27 +1277,26 @@ description: Shifty を localhost で起動してブラウザプレビューを�
 
 preview_screenshot でアプリが正常に表示されることを確認します。
 
-## 3. プラン切り替え（DEV_MODE=true 時のみ有効）
+## 3. プラン切り替え（DEV_MODE=true 時のみ有効・localhostは常にtrue）
 
 URL パラメータでプランをオーバーライドできます：
 
-| URL                                   | 効果                             |
-| ------------------------------------- | ------------------------------ |
-| `http://localhost:PORT/`              | Firebase の実際のプランを使用            |
-| `http://localhost:PORT/?plan=free`    | Free プランで表示                    |
-| `http://localhost:PORT/?plan=pro`     | Pro プランで表示                     |
+| URL | 効果 |
+|-----|------|
+| `http://localhost:PORT/` | Firebase の実際のプランを使用 |
+| `http://localhost:PORT/?plan=free` | Free プランで表示 |
+| `http://localhost:PORT/?plan=pro` | Pro プランで表示 |
 | `http://localhost:PORT/?plan=premium` | Premium プランで表示（BACKLOG 機能テスト用） |
 
 ## 4. Firebase 接続について
 
-`DEV_MODE = true` のとき、開発用 Firebase プロジェクト (`thirty-dev-b6958`) に接続します。
+`DEV_MODE` は `location.hostname !== "shiftyshifty.app"` で自動判定されるため、localhost では常に `true` になり、開発用 Firebase プロジェクト (`thirty-dev-b6958`) に接続します。
 スタッフ情報・シフトデータはこのプロジェクトに保存・取得されます。
 本番データには影響しません。
 
 ## 注意
 
-- `DEV_MODE` が `true` のままであることを確認してから作業してください
-- `main` ブランチへのマージ時は `DEV_MODE = false` に戻すこと（`/check-dev` で確認可）
+- `DEV_MODE` はホスト名で自動判定されるため、ブランチマージ時の手動切り替えは不要（`/check-dev` で式が壊れていないか確認可）
 
 ### shifty-feature
 ---
@@ -1288,7 +1366,7 @@ RULES.md の禁止事項を守りながら実装する。
 - inline style のみ（外部 CSS なし）
 - input の fontSize は 16px 以上
 - Firebase 書き込みは個別パス (`ref(...).set()`) か `update()`
-- DEV_MODE は変更しない（develop では true のまま）
+- DEV_MODE の自動判定式（`location.hostname !== "shiftyshifty.app"`）を固定値に書き換えない
 - 不要なコメント・リファクタリングはしない
 - 1タスクに絞って実装する（関係ない改善はしない）
 
@@ -1306,7 +1384,7 @@ RULES.md の禁止事項を守りながら実装する。
 - RULES.md の禁止パターンに違反していないか
 - Firebase の書き込みパターンが正しいか
 - iOS Safari / Android Chrome で問題が起きそうな箇所がないか
-- DEV_MODE が true のままか
+- DEV_MODE がホスト名自動判定の式のままか（固定値に書き換わっていないか）
 
 **バグ混入チェック:**
 - 実装した箇所以外に副作用がないか
@@ -2544,6 +2622,50 @@ Firebase: accounts/{shopId}/planExpiry = "YYYY-MM-DD"
 
 ### 異常なし
 クリティカル（🔴）の問題はなし。中程度（🟡）はCLAUDE.md肥大化のみ（コードバグではなく別タスク推奨）。
+
+---
+
+## Shifty バグチェックレポート（2026-07-04 自動実行 #2）
+
+### 修正済み
+
+（今回の実行では修正なし）
+
+### 要確認（未修正）
+
+- **🟢 signInWithApple / signInAndLinkApple デッドコード**（app.js:844,981）
+  Apple ログインUI削除済みだが関数残存。動作に影響なし、将来的に削除推奨。
+
+- **🟢 iOS Safari ズーム防止: AI定数の fontSize:14**（app.js:4903）
+  管理者フォーム全般のスタイル定数。管理者画面のみの影響。
+
+- **🟢 iOS Safari ズーム防止: 店舗コード「コードで追加」入力欄の fontSize:12**（app.js:2269付近）
+  引き続き未修正。管理者画面のみの影響。
+
+- **🟢 iOS Safari ズーム防止: SubsTab詳細モーダル調整selectの fontSize:12**（app.js:4154,4157付近）
+  出退勤調整セレクト。Premiumユーザーのみの影響。
+
+- **🟢 iOS Safari ズーム防止: staffAttribute selectの fontSize:12**（app.js:3658付近）
+  スタッフ属性セレクト（StaffTab）。Premiumユーザーのみの影響。
+
+- **🟢 onJoinByInviteCode がSetTabに渡されているがUIから未使用**（app.js内）
+  企業アカウント招待コード参加UIが未実装のためデッドプロップ。
+
+### 前回から改善された点
+- **CLAUDE.md肥大化・再帰同期バグが解消**（commit `1b0a4c5`）: 前回（12,499行/603KB）から `2,626行/130KB` まで縮小。`readAllNotes` から CLAUDE.md/.cursorrules を除外し自己再帰を停止する修正が確認できた。マーカー `BUG_CHECK_LATEST_START/END` も1組のみで正常。
+
+### 確認した直近コミット
+- a17f478: シフト提出の二重送信で重複レコードが作られるバグを修正 → `submittingRef` による同期ガードを `submit()` 先頭に追加。成功・失敗いずれのパスでも `submittingRef.current=false` に戻しており、ガードが永続的にロックされる経路は無い。正しい実装。
+- ac1c83b: シフト提出のFirebase書き込み失敗を検知せず「提出完了」と表示するバグを修正 → `onSub` がPromiseを返すよう変更し、`await`で書き込み成功を確認してから `setDone(true)` するよう修正。失敗時はエラートースト表示・再提出可能。正しい実装。
+- 1b0a4c5: obsidian-sync がCLAUDE.md自身を同期し再帰肥大化するのを修正 → 上記の通り確認済み、正常に解消。
+- b13f6e2: 壊れたdevelop→main自動デプロイワークフローを削除 → `.github/workflows/deploy-to-main.yml` 削除のみ。他ファイルからの参照なし、問題なし。
+
+### 追加確認
+- ESLint CI（`npx eslint app.js`）実行 → 0 errors / 60 warnings（すべて `no-unused-vars` で機能に影響なし）。
+- dev server起動確認 → スタッフ画面が正常表示、コンソールエラーなし。
+
+### 異常なし
+クリティカル（🔴）・中程度（🟡）の問題はなし。Firebase書き込みパターン・DEV_MODE=true・DEV_PLAN_OVERRIDE・isPro/isPremium分離・Cloud Functions secretsすべて正常。
 
 ---
 

@@ -6,10 +6,10 @@ const {useState,useEffect,useCallback,useRef,useMemo}=React;
 
 // ============================================================
 // ★ Firebase 設定 ★
-// DEV_MODE = true  → 開発用Firebase（developブランチ専用）
-// DEV_MODE = false → 本番Firebase（mainブランチ・リリース用）
+// DEV_MODE はホスト名で自動判定する（手動切替による事故防止のため固定値にしない）。
+// 本番カスタムドメイン(shiftyshifty.app)以外はすべて開発用Firebaseに接続する。
 // ============================================================
-const DEV_MODE = false;
+const DEV_MODE = location.hostname !== "shiftyshifty.app";
 
 const FIREBASE_CONFIG_PROD = {
   apiKey:            "AIzaSyDdl1Li3QduufAFhBWcF4nmOlFcCsx8zlQ",
@@ -2468,7 +2468,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     const nk=field==="start"?"adjustedStartNote":"adjustedEndNote";
     let newSubs=[...subs];const idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
     if(idx===-1){if(!parsed)return;const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString()};ns.shifts[date]={status:"work",[adjField]:parsed,[nk]:note};newSubs.push(ns);}
-    else{const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};if(parsed){sd[adjField]=parsed;sd[nk]=note;sd.status="work";}else{delete sd[adjField];delete sd[nk];}shifts[date]=sd;sub.shifts=shifts;sub.updatedAt=new Date().toISOString();sub.isUpdated=true;newSubs[idx]=sub;}
+    else{const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};if(parsed){sd[adjField]=parsed;sd[nk]=note;sd.status="work";}else{delete sd[adjField];delete sd[nk];}shifts[date]=sd;sub.shifts=shifts;newSubs[idx]=sub;}
     onSave(newSubs);
   };
 
@@ -3810,7 +3810,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
     <div style={{flex:1}}>
       <div style={{fontSize:11,color:"var(--c-text3)",marginBottom:4}}>{label}</div>
       <select value={value} onChange={e=>onChange(e.target.value)}
-        style={{width:"100%",padding:"9px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:value?"var(--c-text)":"var(--c-text4)",fontSize:14,outline:"none",cursor:"pointer"}}>
+        style={{width:"100%",padding:"9px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:14,outline:"none",cursor:"pointer"}}>
         <option value="">-- 選択 --</option>
         {TO.map(t=><option key={t} value={t}>{t}</option>)}
       </select>
@@ -3988,8 +3988,39 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>設定した休憩時間は出勤〜退勤から自動的に差し引かれ、純勤務時間として表示されます。</div>
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>休憩はランチ・ディナー両方の出勤、または9時間以上勤務するスタッフにのみ適用されます。</div>
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>タグを設定した休憩はその属性のスタッフにのみ適用されます。タグなしは全属性に適用。</div>
+        {/* 追加フォーム */}
+        <div>
+          <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8,fontWeight:600}}>休憩を追加</div>
+          <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
+            {DAY_TYPES.map(([dt,l])=>{const sel=selDayType===dt;const c=dtColor(dt);
+              return(<button key={dt} onClick={()=>setSelDayType(dt)} style={{padding:"7px 14px",borderRadius:20,fontSize:13,fontWeight:700,border:"1px solid",cursor:"pointer",background:sel?c:"var(--c-input)",borderColor:sel?"transparent":"var(--c-border2)",color:sel?"white":c}}>{l}</button>);
+            })}
+          </div>
+          <div style={{marginBottom:10}}>
+            <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:5}}>適用する属性（未選択＝全属性）</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {attrOpts.map(([aid,anm])=>{const on=brkTags.includes(aid);return(<button key={aid} onClick={()=>toggleArr(brkTags,setBrkTags,aid)} style={{padding:"5px 12px",borderRadius:16,fontSize:12,fontWeight:600,border:"1px solid",cursor:"pointer",background:on?"#f87036":"var(--c-input)",borderColor:on?"transparent":"var(--c-border2)",color:on?"white":"var(--c-text2)"}}>{anm}</button>);})}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:10,alignItems:"flex-end"}}>
+            <SingleTimeSelect value={brkStart} onChange={setBrkStart} label="開始時刻"/>
+            <div style={{color:"var(--c-text4)",paddingBottom:12,fontSize:16}}>〜</div>
+            <SingleTimeSelect value={brkEnd} onChange={setBrkEnd} label="終了時刻"/>
+            <button onClick={()=>{
+              if(!brkStart||!brkEnd){tt("▲ 開始・終了を選択してください");return;}
+              if(brkStart>=brkEnd){tt("▲ 終了は開始より後にしてください");return;}
+              const bt={...(settings.breakTimes||{weekday:[],sat:[],sun:[],hol:[]})};
+              const cur=bt[selDayType]||[];
+              if(cur.some(b=>b.start===brkStart&&b.end===brkEnd)){tt("▲ 既に登録されています");return;}
+              const nb={start:brkStart,end:brkEnd};if(brkTags.length)nb.tags=[...brkTags];
+              bt[selDayType]=[...cur,nb].sort((a,b)=>a.start.localeCompare(b.start));
+              onSave({...settings,breakTimes:bt});setBrkStart("");setBrkEnd("");setBrkTags([]);
+              tt(`✓ ${brkStart}〜${brkEnd} を追加しました`);
+            }} style={{...AB,whiteSpace:"nowrap"}}>＋ 追加</button>
+          </div>
+        </div>
         {/* 全区分の登録済み休憩一覧（常に表示） */}
-        <div style={{marginBottom:14}}>
+        <div style={{marginTop:14,borderTop:"1px solid var(--c-border)",paddingTop:12}}>
           <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,fontWeight:600}}>登録済みの休憩</div>
           {DAY_TYPES.map(([dt,l])=>{
             const brks=(settings.breakTimes||{})[dt]||[];
@@ -4022,37 +4053,6 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
               </div>
             );
           })}
-        </div>
-        {/* 追加フォーム */}
-        <div style={{borderTop:"1px solid var(--c-border)",paddingTop:12}}>
-          <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8,fontWeight:600}}>休憩を追加</div>
-          <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
-            {DAY_TYPES.map(([dt,l])=>{const sel=selDayType===dt;const c=dtColor(dt);
-              return(<button key={dt} onClick={()=>setSelDayType(dt)} style={{padding:"7px 14px",borderRadius:20,fontSize:13,fontWeight:700,border:"1px solid",cursor:"pointer",background:sel?c:"var(--c-input)",borderColor:sel?"transparent":"var(--c-border2)",color:sel?"white":c}}>{l}</button>);
-            })}
-          </div>
-          <div style={{marginBottom:10}}>
-            <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:5}}>適用する属性（未選択＝全属性）</div>
-            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-              {attrOpts.map(([aid,anm])=>{const on=brkTags.includes(aid);return(<button key={aid} onClick={()=>toggleArr(brkTags,setBrkTags,aid)} style={{padding:"5px 12px",borderRadius:16,fontSize:12,fontWeight:600,border:"1px solid",cursor:"pointer",background:on?"#f87036":"var(--c-input)",borderColor:on?"transparent":"var(--c-border2)",color:on?"white":"var(--c-text2)"}}>{anm}</button>);})}
-            </div>
-          </div>
-          <div style={{display:"flex",gap:10,alignItems:"flex-end"}}>
-            <SingleTimeSelect value={brkStart} onChange={setBrkStart} label="開始時刻"/>
-            <div style={{color:"var(--c-text4)",paddingBottom:12,fontSize:16}}>〜</div>
-            <SingleTimeSelect value={brkEnd} onChange={setBrkEnd} label="終了時刻"/>
-            <button onClick={()=>{
-              if(!brkStart||!brkEnd){tt("▲ 開始・終了を選択してください");return;}
-              if(brkStart>=brkEnd){tt("▲ 終了は開始より後にしてください");return;}
-              const bt={...(settings.breakTimes||{weekday:[],sat:[],sun:[],hol:[]})};
-              const cur=bt[selDayType]||[];
-              if(cur.some(b=>b.start===brkStart&&b.end===brkEnd)){tt("▲ 既に登録されています");return;}
-              const nb={start:brkStart,end:brkEnd};if(brkTags.length)nb.tags=[...brkTags];
-              bt[selDayType]=[...cur,nb].sort((a,b)=>a.start.localeCompare(b.start));
-              onSave({...settings,breakTimes:bt});setBrkStart("");setBrkEnd("");setBrkTags([]);
-              tt(`✓ ${brkStart}〜${brkEnd} を追加しました`);
-            }} style={{...AB,whiteSpace:"nowrap"}}>＋ 追加</button>
-          </div>
         </div>
       </AC>);
       })()}
@@ -4165,10 +4165,10 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:"var(--c-text2)"}}>{d.getMonth()+1}/{d.getDate()}（{WD[d.getDay()]}）</td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>{iw?<span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 7px",borderRadius:4,fontSize:12,fontWeight:600}}>出勤</span>:<span style={{background:"var(--c-input)",color:"var(--c-text3)",padding:"2px 7px",borderRadius:4,fontSize:12}}>休み</span>}</td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
-                {iw?<div>{isPremium&&<div style={{color:"var(--c-text4)",fontSize:11}}>{s.start}</div>}{isPremium?<select value={s.adjustedStart||""} onChange={e=>saveAdj(det.id,ds,"adjustedStart",e.target.value||"")} style={{fontSize:12,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedStart?"#60A5FA":"var(--c-border)"}`,borderRadius:6,color:s.adjustedStart?"#60A5FA":"var(--c-text3)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>:<span style={{fontSize:13,color:"var(--c-text2)"}}>{s.start||"-"}</span>}</div>:"-"}
+                {iw?<div>{isPremium&&<div style={{color:"var(--c-text4)",fontSize:11}}>{s.start}</div>}{isPremium?<select value={s.adjustedStart||""} onChange={e=>saveAdj(det.id,ds,"adjustedStart",e.target.value||"")} style={{fontSize:12,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedStart?"#60A5FA":"var(--c-border)"}`,borderRadius:6,color:s.adjustedStart?"#60A5FA":"var(--c-text)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>:<span style={{fontSize:13,color:"var(--c-text2)"}}>{s.start||"-"}</span>}</div>:"-"}
               </td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
-                {iw?<div>{isPremium&&<div style={{color:"var(--c-text4)",fontSize:11}}>{s.end}</div>}{isPremium?<><select value={s.adjustedEnd||""} onChange={e=>saveAdj(det.id,ds,"adjustedEnd",e.target.value||"")} style={{fontSize:12,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedEnd?"#60A5FA":"var(--c-border)"}`,borderRadius:6,color:s.adjustedEnd?"#60A5FA":"var(--c-text3)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>{effEnd&&<div style={{fontSize:10,color:"#34D399",marginTop:2,fontWeight:600}}>{effEnd}（+{detOT2}分）</div>}</>:<span style={{fontSize:13,color:"var(--c-text2)"}}>{s.end||"-"}</span>}</div>:"-"}
+                {iw?<div>{isPremium&&<div style={{color:"var(--c-text4)",fontSize:11}}>{s.end}</div>}{isPremium?<><select value={s.adjustedEnd||""} onChange={e=>saveAdj(det.id,ds,"adjustedEnd",e.target.value||"")} style={{fontSize:12,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedEnd?"#60A5FA":"var(--c-border)"}`,borderRadius:6,color:s.adjustedEnd?"#60A5FA":"var(--c-text)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>{effEnd&&<div style={{fontSize:10,color:"#34D399",marginTop:2,fontWeight:600}}>{effEnd}（+{detOT2}分）</div>}</>:<span style={{fontSize:13,color:"var(--c-text2)"}}>{s.end||"-"}</span>}</div>:"-"}
               </td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:nm>0?"var(--c-text2)":"var(--c-text3)"}}>{iw&&isPremium?fmtMin(nm):"-"}</td>
             </tr>);})}
