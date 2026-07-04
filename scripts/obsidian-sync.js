@@ -10,8 +10,13 @@ const CURSORRULES = path.join(__dirname, "../.cursorrules");
 const SECTION_HEADER = "\n---\n\n## Obsidianノート（自動同期）\n";
 const SECTION_MARKER = "## Obsidianノート（自動同期）";
 
+// 同期対象から除外するファイル。
+// CLAUDE.md / .cursorrules は md_to_obsidian フックでこの同期元フォルダにもコピーされるため、
+// ここで読み込むと「自分自身を自分の中に埋め込む」再帰が起きて無限に肥大化する。必ず除外する。
+const EXCLUDE_NOTES = new Set(["CLAUDE.md", ".cursorrules.md"]);
+
 function readAllNotes() {
-  const files = fs.readdirSync(VAULT_DIR).filter(f => f.endsWith(".md"));
+  const files = fs.readdirSync(VAULT_DIR).filter(f => f.endsWith(".md") && !EXCLUDE_NOTES.has(f));
   return files.map(f => {
     const content = fs.readFileSync(path.join(VAULT_DIR, f), "utf8").trim();
     return `### ${f.replace(".md", "")}\n${content}`;
@@ -52,6 +57,11 @@ function sync() {
 
 // 起動時に1回同期
 sync();
+
+// --once: 監視せず1回だけ同期して終了（クリーンアップ/手動再生成用）
+if (process.argv.includes("--once")) {
+  process.exit(0);
+}
 
 // 監視開始
 let debounceTimer = null;
