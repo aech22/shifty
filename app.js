@@ -41,63 +41,9 @@ let firebaseDB = null;
 let firebaseAuth = null;
 let firebaseFunctions = null;
 let firebaseEnabled = false;
-let onConnectChange = null; // 接続状態変化コールバック
-
-function initFirebase(onStatusChange) {
-  try {
-    if (typeof firebase === "undefined") {
-      console.warn("Firebase SDK未読込み");
-      onStatusChange && onStatusChange("offline");
-      return;
-    }
-    // 既に初期化済みなら再利用
-    if (!firebase.apps || firebase.apps.length === 0) {
-      firebase.initializeApp(FIREBASE_CONFIG);
-    }
-    firebaseDB = firebase.database();
-    onConnectChange = onStatusChange;
-
-    // 接続状態をリアルタイム監視
-    firebaseDB.ref(".info/connected").on("value", snap => {
-      const connected = snap.val() === true;
-      firebaseEnabled = connected;
-      console.log("Firebase接続状態:", connected ? "オンライン" : "オフライン");
-      onStatusChange && onStatusChange(connected ? "online" : "offline");
-    });
-  } catch(e) {
-    console.warn("Firebase初期化失敗:", e.message);
-    firebaseEnabled = false;
-    onStatusChange && onStatusChange("offline");
-  }
-}
 
 // Firebase パス生成（店舗ID + キー）
 function fbPath(shopId, key) { return `shops/${shopId}/${key}`; }
-
-// Firebase への書き込み
-function fbSet(path, val) {
-  if (firebaseDB) {
-    return firebaseDB.ref(path).set(val)
-      .then(() => console.log("fbSet OK:", path))
-      .catch(e => console.warn("fbSet失敗:", path, e.message));
-  }
-  return Promise.resolve();
-}
-
-// Firebase リアルタイム購読
-function fbOn(path, cb) {
-  if (firebaseDB) {
-    const ref = firebaseDB.ref(path);
-    ref.on("value", snap => {
-      const val = snap.val();
-      console.log("fbOn受信:", path, val !== null ? "データあり" : "null");
-      cb(val);
-    }, err => console.warn("fbOn失敗:", path, err.message));
-    return () => ref.off("value");
-  }
-  // Firebase未初期化 → 何もしない
-  return () => {};
-}
 
 // PostHog イベント送信ヘルパー
 function ph(event, props) {
@@ -217,8 +163,6 @@ function idp(d){return d?new Date()>new Date(d+"T23:59:59"):false;}
 function lg(k,fb){try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;}}
 function ls(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch{}}
 function sc(cs){return[...cs].sort((a,b)=>{if(a.closed)return 1;if(b.closed)return -1;const ta=Number(a.start.replace(":","").replace(":","")),tb=Number(b.start.replace(":","").replace(":","")),ea=Number(a.end.replace(":","").replace(":","")),eb=Number(b.end.replace(":","").replace(":",""));return ta!==tb?ta-tb:ea-eb;});}
-// 時刻→数値（Excelフォーマット用）HH:MM → H.5 / H形式
-function timeToNum(t){if(!t)return"";const[h,m]=t.split(":").map(Number);return m===0?h:h+m/60;}
 // 祝日判定（簡易）
 // isHoliday は上で定義済み
 function isWeekend(dateStr){const dow=pd(dateStr).getDay();return dow===0||dow===6||isHoliday(dateStr);}
@@ -299,10 +243,6 @@ function storeKey(shopId,key){return`shift_${shopId}_${key}`;}
 
 // ===== 初期データ =====
 function makeShop(name="店舗1"){const now=new Date().toISOString();return{id:genSecureId(24),name,createdAt:now,lastActivity:now};}
-function makePeriod(shopId){
-  const yr=td.getFullYear(),mo=td.getMonth()+1,ms=String(mo).padStart(2,"0");
-  return{id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:`${yr}年${mo}月前半`,startDate:`${yr}-${ms}-01`,endDate:`${yr}-${ms}-15`,deadlineDate:"",createdAt:new Date().toISOString()};
-}
 function makeSettings(shopId){
   return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{name:"社員",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},parttime:{name:"バイト",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}},overtimeSettings:{byStaff:{}},staffNumbers:{}};
 }
@@ -350,20 +290,6 @@ function parseUrl(){
     if(token) return{type:"staff",token};
   }
   if(h.startsWith("#p="))return{type:"staff",token:h.slice(3)};
-  return null;
-}
-
-// URLからshopId+periodを解決
-function resolvePeriodFromUrl(shops,allPeriods){
-  const parsed=parseUrl();
-  if(!parsed||!parsed.token)return null;
-  const token=parsed.token;
-  // urlToken または id で検索（旧形式互換）
-  const found=allPeriods.find(p=>p.urlToken===token||p.id===token);
-  if(found){
-    const shopId=found.shopId||shops[0]?.id;
-    return{period:found,shopId};
-  }
   return null;
 }
 
