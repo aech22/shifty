@@ -1562,12 +1562,11 @@ function App(){
               if(i>=0)a[i]=sub;else a.push(sub);
               setSubs(a);
               ls(storeKey(currentSid,"subs_v6"),a);
-              if(firebaseDB){
-                const path=`shops/${currentSid}/subs/${sub.id}`;
-                firebaseDB.ref(path).set(sub)
-                  .then(()=>console.log(sub.isUpdated?"変更保存完了":"提出完了","path=",path))
-                  .catch(e=>console.warn("sub書き込み失敗:",path,e));
-              }
+              if(!firebaseDB)return Promise.reject(new Error("firebase未接続"));
+              const path=`shops/${currentSid}/subs/${sub.id}`;
+              return firebaseDB.ref(path).set(sub)
+                .then(()=>console.log(sub.isUpdated?"変更保存完了":"提出完了","path=",path))
+                .catch(e=>{console.warn("sub書き込み失敗:",path,e);throw e;});
             }}
             onDeleteSub={subId=>{
               const currentSid=currentShopIdRef.current||sid;
@@ -1620,6 +1619,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   const[sd,setSd]=useState({});
   const[done,setDone]=useState(false);
   const[conf,setConf]=useState(false);
+  const[sending,setSending]=useState(false);
   const[toast,setToast]=useState(null);
   const[sm,setSm]=useState(false);
   const editingRef=useRef(false); // 「修正する」でユーザーが手動編集中フラグ
@@ -1688,7 +1688,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   // 休業日チェック（候補に closed:true が含まれるか）
   const isClosed=ds=>gc(ds).some(c=>c.closed);
 
-  const submit=()=>{
+  const submit=async()=>{
     const staffName=name.trim();
     // 既存subを検索（同じperiod+名前 → 上書き）
     const existSub=subs.find(s=>s.staffName===staffName&&s.periodId===apid);
@@ -1716,11 +1716,20 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       shifts:Object.fromEntries(dates.map(d=>[d,buildShift(d)])),
       comment:comment.trim()
     };
+    setSending(true);
+    try{
+      await onSub(sub);
+    }catch(e){
+      setSending(false);
+      tt_("△ 通信エラー：提出できませんでした。もう一度お試しください");
+      return;
+    }
+    setSending(false);
     // スタッフ名をCookieに保存（1年間）
     if(shopId&&apid) setCookie(ckStaffKey(shopId,apid),staffName,365);
     editingRef.current=false;
     ph("shift_submitted",{period_id:apid,is_update:!!existSub,work_days:Object.values(sd).filter(s=>s?.status==="work").length});
-    setConf(false);setDone(true);onSub(sub);
+    setConf(false);setDone(true);
   };
 
   const p0=dates[0]?`${pd(dates[0]).getMonth()+1}/${pd(dates[0]).getDate()}`:"";
@@ -1743,7 +1752,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   if(done)return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true});}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"50px 20px",textAlign:"center"}}>
         <div style={{fontSize:68,animation:"bI .5s"}}>✓</div>
         <div style={{fontSize:22,fontWeight:700,color:"#f87036",marginTop:14,marginBottom:8}}>提出完了！</div>
@@ -1764,7 +1773,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true});}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"14px 12px 120px"}}>
         {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`▲ 締切済み（${ap.deadlineDate.replace(/-/g,"/")}）`:`締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
 
@@ -1919,8 +1928,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
             {comment&&<><br/><strong style={{color:"var(--c-text)"}}>コメント</strong>：{comment}</>}
           </div>
           <div style={{display:"flex",gap:8}}>
-            <button onClick={()=>setConf(false)} style={{flex:1,padding:12,background:"var(--c-bg)",border:"none",borderRadius:10,fontSize:14,fontWeight:600,color:"var(--c-text3)",cursor:"pointer"}}>キャンセル</button>
-            <button onClick={submit} style={{flex:2,padding:12,background:"#f87036",border:"none",borderRadius:10,fontSize:14,fontWeight:700,color:"white",cursor:"pointer"}}>提出する</button>
+            <button disabled={sending} onClick={()=>setConf(false)} style={{flex:1,padding:12,background:"var(--c-bg)",border:"none",borderRadius:10,fontSize:14,fontWeight:600,color:"var(--c-text3)",cursor:sending?"default":"pointer",opacity:sending?.5:1}}>キャンセル</button>
+            <button disabled={sending} onClick={submit} style={{flex:2,padding:12,background:"#f87036",border:"none",borderRadius:10,fontSize:14,fontWeight:700,color:"white",cursor:sending?"default":"pointer",opacity:sending?.7:1}}>{sending?"送信中...":"提出する"}</button>
           </div>
         </div>
       </div>}

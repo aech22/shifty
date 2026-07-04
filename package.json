@@ -1,0 +1,16 @@
+{
+  "name": "shifty",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shifty — 飲食店向けシフト提出・管理 Web アプリ。lint による未定義参照バグ検出のみ（ビルドレス構成）。",
+  "scripts": {
+    "lint": "eslint app.js"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0",
+    "@babel/eslint-parser": "^7.25.9",
+    "@babel/preset-react": "^7.26.3",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react": "^7.37.3"
+  }
+}

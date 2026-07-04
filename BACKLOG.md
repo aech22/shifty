@@ -53,42 +53,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🟢 React Native（Expo）アプリ — Web と同等機能を年内リリース
-
-**目的**: shiftyshifty.app を維持しながら、iOS / Android アプリを App Store / Google Play にリリースする。年内（2026年末）に Web 版と同等機能を搭載することを目標とする。
-**方針**: React Native（Expo）で新規プロジェクトを作成。Firebase・ビジネスロジックは Web 版と共有。
-
-**フェーズ構成**:
-
-### Phase 1: 基盤構築（〜2026年8月目安）
-- [ ] Expo プロジェクト新規作成（`shifty-app` リポジトリ）
-- [ ] Firebase SDK（React Native 対応版）の接続・動作確認
-- [ ] 認証（Google / Apple / メール）の実装
-- [ ] スタッフ画面（シフト提出）の実装
-- [ ] TestFlight（iOS）/ Google Play 内部テストへの初回配信
-
-### Phase 2: 管理者機能（〜2026年10月目安）
-- [ ] 管理者画面（提出一覧・期間管理・スタッフ管理）の実装
-- [ ] Excel 出力（Web 版に準じた形式）
-- [ ] Free / Pro プラン制御・Stripe 決済
-- [ ] プッシュ通知（シフト提出期限リマインダー）
-
-### Phase 3: Web 版同等・リリース（〜2026年12月目安）
-- [ ] Web 版の全機能をアプリ版でカバー
-- [ ] App Store 審査・Google Play 審査・公開
-- [ ] Web 版と同一 Firebase バックエンドでデータ統一されている
-
-**影響範囲**: 新規リポジトリ（shifty-app）、Firebase プロジェクトへの iOS/Android アプリ登録
-**備考**:
-- Apple Developer Program（年 $99）・Google Play デベロッパー登録（$25 一回）が必要
-- Web 版（shiftyshifty.app）は変更なく継続稼働させる
-- アプリ固有の機能（プッシュ通知）は Web 版には追加しない（分離して管理）
-- コンポーネントは Web 版の inline style ではなく StyleSheet で書き直す
-- このタスクは **シフト調整機能群（高・中優先タスク）が落ち着いてから着手**する
-- **Expo 着手と同タイミングで Web 版も Vite + TypeScript に移行する**。現在の app.js（約 3900 行）は Babel Standalone によるビルドレスで `import`/`export` が使えないため分割不可。Vite 導入によりモジュール分割・型安全化・コンポーネントファイル分割が可能になり、Expo との共通ビジネスロジックをパッケージとして切り出せる。GitHub Pages のデプロイ設定（`vite build` → `dist/` 出力）変更が必要。
-
----
-
 ## 🟢 企業連携内の店舗間シフト重複エラー
 
 **目的**: 同じスタッフが同時刻に複数店舗に入っているミスを自動検知する。
@@ -98,6 +62,35 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] エラー表示は SubsTab のセルまたは行に視覚的に表示（赤枠・アイコンなど）
 **影響範囲**: SubsTab、allLinkedShops を使った他店舗データ取得
 **備考**: 🟢「企業連携内の他店舗ヘルプ表示」の完了後に実装する
+
+---
+
+## 見送り
+
+### ⏸️ React Native（Expo）アプリ — 見送り（2026-07-04 判断）
+
+**判断**: Web版（shiftyshifty.app）のみで継続する方針に決定。Expo アプリ化はやらない。
+これに伴い、下記備考にあった「Expo 着手と同タイミングの Vite + TypeScript フル移行」も前提条件ではなくなった。
+Vite + TS へのフル移行は不要。
+
+**中間案（バグ削減）は実装済み（2026-07-04・commit `efb7c83`）**: 当初は「JSDoc 型注釈 + `tsc --checkJs`」を検討したが、app.js が `.js` ファイル内に大量の JSX を含むため tsc では解析できないと判明。代わりに **ESLint による静的検査 CI** を採用した（`@babel/eslint-parser` + `eslint-plugin-react`、`no-undef` / `react/jsx-no-undef` を error）。ビルドステップなし・配信物（app.js / index.html）のランタイムは無変更・GitHub Pages のデプロイ変更なし。Shifty で頻発してきた未定義参照バグ（`setNewAlias`・`tt`・`currentShopIdRef` 等）を push 前・CI で検出できる。設定は `eslint.config.js` / `package.json` / `.github/workflows/lint.yml`。
+
+<details>
+<summary>元のタスク内容（参考・凍結）</summary>
+
+**目的**: shiftyshifty.app を維持しながら、iOS / Android アプリを App Store / Google Play にリリースする。年内（2026年末）に Web 版と同等機能を搭載することを目標とする。
+**方針**: React Native（Expo）で新規プロジェクトを作成。Firebase・ビジネスロジックは Web 版と共有。
+
+- Phase 1: 基盤構築（Expo 新規作成・Firebase 接続・認証・スタッフ画面・TestFlight/内部テスト配信）
+- Phase 2: 管理者機能（提出一覧・期間管理・スタッフ管理・Excel出力・プラン制御・プッシュ通知）
+- Phase 3: Web 版同等・ストア審査・公開
+
+**備考**:
+- Apple Developer Program（年 $99）・Google Play デベロッパー登録（$25 一回）が必要
+- コンポーネントは Web 版の inline style ではなく StyleSheet で書き直す
+- **Expo 着手と同タイミングで Web 版も Vite + TypeScript に移行する**構想だった（app.js が Babel Standalone のビルドレスで `import`/`export` 不可・分割不可のため）。→ Expo 見送りにより本構想も凍結。
+
+</details>
 
 ---
 
