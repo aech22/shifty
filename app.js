@@ -840,43 +840,6 @@ function App(){
     }finally{setAuthLoading(false);}
   };
 
-  // Appleでサインイン
-  const signInWithApple=async()=>{
-    if(!firebaseAuth){setAuthError("Firebase Auth未初期化");return;}
-    setAuthLoading(true);setAuthError("");
-    try{
-      const provider=new firebase.auth.OAuthProvider("apple.com");
-      provider.addScope("name");provider.addScope("email");
-      const result=await firebaseAuth.signInWithPopup(provider);
-      const user=result.user;
-      setAuthUser(user);
-      if(!firebaseDB){setAuthLoading(false);return;}
-      const snap=await firebaseDB.ref(`accounts/${user.uid}/shops`).once("value");
-      const linked=snap.val();
-      const allSnap=await firebaseDB.ref("global/shops").once("value");
-      const val=allSnap.val();
-      const sh=val?(typeof val==="object"&&!Array.isArray(val)?Object.values(val).filter(s=>s&&s.id):(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id)):[];
-      if(linked){
-        const linkedIds=Object.keys(linked);
-        const linkedShops=sh.filter(s=>linkedIds.includes(s.id));
-        setAllLinkedShops(linkedShops);
-        if(linkedShops.length>0){
-          const targetShop=linkedShops[0];
-          setShops([targetShop]);
-          ls("shift_shops_v6",[targetShop]);
-          currentShopIdRef.current=targetShop.id;
-          setCurrentShopId(targetShop.id);
-          startSubscriptions(targetShop.id,[targetShop]);
-          setUnbound(false);
-        } else {setUnbound(true);}
-      } else {setUnbound(true);}
-    }catch(e){
-      console.warn("Apple sign-in failed:",e);
-      if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request"){}
-      else setAuthError("Appleログインに失敗しました: "+e.message);
-    }finally{setAuthLoading(false);}
-  };
-
   // メール+パスワードでサインイン（共通処理）
   const _afterEmailAuth=async(user)=>{
     setAuthUser(user);
@@ -976,19 +939,6 @@ function App(){
     }catch(e){
       if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request")return{error:""};
       return{error:"Googleログインに失敗しました: "+e.message};
-    }
-  };
-  const signInAndLinkApple=async()=>{
-    if(!firebaseAuth)return{error:"Firebase Auth未初期化"};
-    try{
-      const provider=new firebase.auth.OAuthProvider("apple.com");
-      provider.addScope("name");provider.addScope("email");
-      const result=await firebaseAuth.signInWithPopup(provider);
-      await _afterSignInAndLink(result.user);
-      return{};
-    }catch(e){
-      if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request")return{error:""};
-      return{error:"Appleログインに失敗しました: "+e.message};
     }
   };
   const signInAndLinkEmail=async(email,password,isSignUp)=>{
@@ -1601,7 +1551,7 @@ function App(){
               }}
               onLinkProvider={linkProvider} onSendEmailOtp={sendEmailOtp}
               onVerifyAndLinkEmail={verifyAndLinkEmail} onUnlinkProvider={unlinkProvider}
-              onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkApple={signInAndLinkApple} onSignInAndLinkEmail={signInAndLinkEmail}
+              onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkEmail={signInAndLinkEmail}
               onGenerateInviteCode={generateInviteCode} onJoinByInviteCode={joinByInviteCode} onLinkExistingShop={linkExistingShopToAuth} onUnlinkShop={unlinkShopFromAuth} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>
           :null)
       }
@@ -2183,7 +2133,7 @@ function AdminLogin({settings,onAuth}){
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
@@ -2356,7 +2306,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
         {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkApple={onSignInAndLinkApple} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading} staffList={staffList}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading} staffList={staffList}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -4183,7 +4133,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
 
 function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,staffList=[],
                  authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
-                 onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,
+                 onSignInAndLinkGoogle,onSignInAndLinkEmail,
                  shops=[],allLinkedShops=[],onSwitchToShop,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,
                  inviteCodeDisplay=null,inviteCodeGenLoading=false}){
   const[pw,setPw]=useState("");
