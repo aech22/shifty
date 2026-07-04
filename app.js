@@ -6,10 +6,10 @@ const {useState,useEffect,useCallback,useRef,useMemo}=React;
 
 // ============================================================
 // ★ Firebase 設定 ★
-// DEV_MODE = true  → 開発用Firebase（developブランチ専用）
-// DEV_MODE = false → 本番Firebase（mainブランチ・リリース用）
+// DEV_MODE はホスト名で自動判定する（手動切替による事故防止のため固定値にしない）。
+// 本番カスタムドメイン(shiftyshifty.app)以外はすべて開発用Firebaseに接続する。
 // ============================================================
-const DEV_MODE = true;
+const DEV_MODE = location.hostname !== "shiftyshifty.app";
 
 const FIREBASE_CONFIG_PROD = {
   apiKey:            "AIzaSyDdl1Li3QduufAFhBWcF4nmOlFcCsx8zlQ",
