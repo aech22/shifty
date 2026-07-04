@@ -79,8 +79,6 @@ firebaseAuth     // firebase.auth() インスタンス（グローバル）
 firebaseFunctions // firebase.app().functions("asia-northeast1")
 firebaseEnabled  // 接続状態フラグ
 fbPath(shopId, key) // "shops/{shopId}/{key}" パス生成
-fbSet(path, val)    // 書き込み（ほぼ未使用、fbW を使う）
-fbOn(path, cb)      // リアルタイム購読
 ph(event, props)    // PostHog イベント送信
 ```
 
@@ -92,7 +90,6 @@ JH_FIXED / JH_DATES   // 日本の祝日（2025〜2027）
 DEFAULT_PW = "admin1234"
 _LA_KEY / _LL_KEY      // ログイン試行ロック（10回・30分）
 DEV_PLAN_OVERRIDE = null // "free"|"pro"|null。テスト時のみ変更
-UNLOCK_HASH / UNLOCK_HASH_TEMP / UNLOCK_CODE_TEMP_EXPIRY // Pro解放コード
 PLAN_LIMITS = { free: {staff:20, periods:1}, pro: {staff:Infinity, periods:Infinity} }
 ```
 
@@ -107,7 +104,6 @@ idp(d)           // 期限切れ判定
 lg(k, fb)        // localStorage 読み取り（JSON.parse + fallback）
 ls(k, v)         // localStorage 書き込み（JSON.stringify）
 sc(cs)           // 候補時間ソート（closed は末尾に固定）
-timeToNum(t)     // "HH:MM" → Excel用小数（例: "10:30" → 10.5）
 isWeekend(dateStr) // 土日祝判定
 storeKey(shopId, key) // localStorage キー生成
 genToken()       // 8文字ランダムトークン（URLトークン・招待コード用）
@@ -115,7 +111,6 @@ genSecureId(len) // 24文字強力ランダムID（shopId用）
 isSpacer(n)      // "__spacer__" 区切り判定
 buildUrl(shops, shopId, period) // スタッフ用URL生成（#/s/<token>）
 parseUrl()       // URL解析（{type:"staff", token}）
-resolvePeriodFromUrl(shops, allPeriods) // URLトークン→period解決
 ```
 
 ### 316〜338行: Cookie / SessionStorage キー
@@ -215,7 +210,6 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `StaffTab` | ~2520 | スタッフ登録・並べ替え・別名設定 |
 | `CandTab` | ~2676 | 候補時間・休業日管理 |
 | `SubsTab` | ~2923 | 提出一覧・セル編集・変更履歴 |
-| `UnlockCodeInput` | ~3029 | Pro 機能解放コード入力 |
 | `SetTab` | ~3057 | 設定・Cookie引き継ぎ・企業アカウント連携 |
 | `MyPageTab` | ~3599 | マイページ（プラン確認・アップグレード） |
 | `UpgradeModal` | ~3748 | アップグレード促進モーダル（Stripe Checkout 呼び出し） |
@@ -463,7 +457,6 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 
 ## 既知の技術負債
 
-- `signInWithApple` / `signInAndLinkApple` がデッドコードとして残存（UI削除済み、関数は残る）
 - 管理者画面の `fontSize:14` / `fontSize:12` の `input` は iOS Safari ズームが発生する可能性あり（管理者のみ影響）
 
 ---
@@ -531,6 +524,12 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 ---
 
 
+-
+-
+-
+-
+-
+-
 -
 -
 -
@@ -2673,6 +2672,9 @@ Firebase: accounts/{shopId}/planExpiry = "YYYY-MM-DD"
 # Shifty ユーザーアンケート
 
 作成日: 2026-06-15
+**ステータス: 🛑 案件停止（2026-07-04）**
+
+> 🛑 本案件は2026-07-04のGround Truth監査により停止。配信対象だった本番Firebase Authのメール登録ユーザーは実測3件しかおらず、目標回答数（各セグメント10件以上）は母数的に達成不可能。再送信コマンドは実行しないこと。定期スケジュールは元々なし（送信はワンショットのCloud Function `sendSurveyEmails`）。Cloud Function自体は本番にデプロイ済みのまま残っているため、完全撤去する場合は `functions/index.js` から削除して再デプロイが必要（本番変更のため人間の判断待ち）。
 
 ---
 
