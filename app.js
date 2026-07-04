@@ -4136,7 +4136,6 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                  onSignInAndLinkGoogle,onSignInAndLinkEmail,
                  shops=[],allLinkedShops=[],onSwitchToShop,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,
                  inviteCodeDisplay=null,inviteCodeGenLoading=false}){
-  const[pw,setPw]=useState("");
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
   const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
   const[emailInput,setEmailInput]=useState("");
@@ -4156,37 +4155,6 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
     setThemePref(pref);
     applyTheme(pref);
     tt(pref==="light"?"☀️ ライトモード":(pref==="dark"?"ダークモード":"↺ システム設定に合わせる"));
-  };
-  // データエクスポート（JSON）
-  const exportData=()=>{
-    const data=JSON.stringify(subs,null,2);
-    const blob=new Blob([data],{type:"application/json"});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement("a");a.href=url;a.download=`shift_subs_${fd(new Date())}.json`;a.click();URL.revokeObjectURL(url);
-    tt("✓ 提出データをエクスポートしました");
-  };
-  // データインポート（JSON）→ 既存データとマージ
-  const importData=()=>{
-    const input=document.createElement("input");input.type="file";input.accept=".json";
-    input.onchange=e=>{
-      const file=e.target.files[0];if(!file)return;
-      const reader=new FileReader();
-      reader.onload=ev=>{
-        try{
-          const imported=JSON.parse(ev.target.result);
-          if(!Array.isArray(imported)){tt("▲ 無効なファイルです");return;}
-          // マージ（同一id は上書き、新規は追加）
-          const merged=[...subs];
-          imported.forEach(sub=>{
-            const idx=merged.findIndex(s=>s.id===sub.id);
-            if(idx>=0)merged[idx]=sub;else merged.push(sub);
-          });
-          saveSubs(merged);tt(`✓ ${imported.length}件をインポートしました（合計${merged.length}件）`);
-        }catch{tt("▲ ファイルの読み込みに失敗しました");}
-      };
-      reader.readAsText(file);
-    };
-    input.click();
   };
   const linkedIds=(authUser?.providerData||[]).map(p=>p.providerId);
   const handleLinkProvider=async(type)=>{
