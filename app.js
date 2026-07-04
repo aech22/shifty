@@ -1628,6 +1628,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   const[ni,setNi]=useState("");
   const[showSuggest,setShowSuggest]=useState(false);
   const tr=useRef(),nr=useRef(),nameWrapRef=useRef();
+  const submittingRef=useRef(false); // 二重送信防止（state更新を待たない同期ガード）
   const dl=idp(ap?.deadlineDate);
   const dates=ap?gd(ap.startDate,ap.endDate):[];
 
@@ -1689,6 +1690,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   const isClosed=ds=>gc(ds).some(c=>c.closed);
 
   const submit=async()=>{
+    if(submittingRef.current)return; // 連打・二重発火防止（stateの反映を待たず同期チェック）
+    submittingRef.current=true;
     const staffName=name.trim();
     // 既存subを検索（同じperiod+名前 → 上書き）
     const existSub=subs.find(s=>s.staffName===staffName&&s.periodId===apid);
@@ -1720,10 +1723,12 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     try{
       await onSub(sub);
     }catch(e){
+      submittingRef.current=false;
       setSending(false);
       tt_("△ 通信エラー：提出できませんでした。もう一度お試しください");
       return;
     }
+    submittingRef.current=false;
     setSending(false);
     // スタッフ名をCookieに保存（1年間）
     if(shopId&&apid) setCookie(ckStaffKey(shopId,apid),staffName,365);
