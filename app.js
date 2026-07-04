@@ -496,7 +496,6 @@ function App(){
             console.warn("token一致なし(Phase1):", token, "→ Cookieチェックへ");
             const ckShopId2=getCookie(CK_SHOP);
             if(ckShopId2){
-              const ckShop2=sh.find(s=>s.id===ckShopId2);
               const targetId=ckShopId2;
               currentShopIdRef.current=targetId;
               setCurrentShopId(targetId);
@@ -1562,8 +1561,6 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     if(isWeekend(ds))return settings.candidates||CAND_WEEKEND;
     return settings.candidates||CAND_WEEKDAY;
   };
-  // 休業日チェック（候補に closed:true が含まれるか）
-  const isClosed=ds=>gc(ds).some(c=>c.closed);
 
   const submit=async()=>{
     if(submittingRef.current)return; // 連打・二重発火防止（stateの反映を待たず同期チェック）
@@ -1915,7 +1912,6 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
   // 名前列と日付列の縦スクロール同期用ref
   const nameColRef=useRef();
   const dataColRef=useRef();
-  const syncScroll=(src,dst)=>()=>{if(dst.current)dst.current.scrollTop=src.current.scrollTop;};
 
   return(
     <div style={{position:"fixed",inset:0,background:"var(--c-card)",zIndex:300,display:"flex",flexDirection:"column",animation:"fI .2s"}}>
@@ -2263,7 +2259,6 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const[measuredRowH,setMeasuredRowH]=useState(null);
   const[measuredTheadH,setMeasuredTheadH]=useState(null);
 
-  const isPro=plan==="pro"||plan==="premium";
   const isPremium=plan==="premium";
 
   // periodsが非同期ロード後に届いた場合、selPidが""のままなら先頭に補正
@@ -2291,7 +2286,6 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const dates=period?gd(period.startDate,period.endDate):[];
   const realStaff=staffList.filter(n=>!isSpacer(n));
   const spIdx=staffList.findIndex(n=>isSpacer(n));
-  const kitStaff=spIdx>-1?staffList.slice(0,spIdx).filter(n=>!isSpacer(n)):realStaff;
   const hallStaff=spIdx>-1?staffList.slice(spIdx+1).filter(n=>!isSpacer(n)):[];
 
   // 横スクロール同期（onScroll経由で確実に同期）
@@ -3239,11 +3233,9 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   const C_STAFF=3;           // C〜: スタッフ
   const C_WD_R=3+sl.length;  // 右端曜日
   const C_SHOP_R=4+sl.length;// 右端店舗名
-  const TOTAL_COLS=C_SHOP_R;
   const staffNumbers=options.staffNumbers||{};
   // ヘッダー2行構成（Row1=従業員番号, Row2=スタッフ名）→ データはRow3から
   const DATA_START=3;
-  const TOTAL_ROWS=2+dates.length*2;
 
   // 枠線
   const M={style:"medium",color:{argb:R("555555")}};
@@ -3351,7 +3343,6 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
       const sub=ss.find(s=>s.staffName===nm||(staffAliases[nm]||[]).includes(s.staffName)),sh=sub?.shifts?.[ds];
       const isWork=sh&&sh.status==="work";
       const ci=C_STAFF+si;
-      const isLastStaff=si===sl.length-1;
       // 上行: top:medium, bot:hair
       // 下行: top:hair, bot:thin (最終日はbot:medium)
       const botT=isLast?M:T;
@@ -3677,8 +3668,6 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
   };
   const delTemplate=i=>{const ts=[...globalTemplates];ts.splice(i,1);saveGlobalTemplates(ts);tt("削除しました");};
 
-  // 選択中の曜日の候補（複数選択時は全曜日の和集合）
-  const wC=selDows.length===1?((settings.weekdayCandidates||{})[selDows[0]]||[]):[];// key=7は祝日候補
   // 選択中の日付の候補（複数選択時は全日付の和集合）
   const dC=selDates.length===1?((settings.dateCandidates||{})[selDates[0]]||[]):[];
 
