@@ -1565,6 +1565,24 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     return settings.candidates||CAND_WEEKDAY;
   };
 
+  // 全日程一括入力（通し／ランチ／ディナー）
+  const bulkFill=type=>{
+    const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
+    const src=(settings.candidates||CAND_WEEKDAY).filter(c=>!c.closed&&c.start&&c.end);
+    const pool=type==="lunch"?src.filter(c=>toMin(c.end)<=toMin("17:00"))
+      :type==="dinner"?src.filter(c=>toMin(c.start)>=toMin("17:00"))
+      :src;
+    const cand=pool.reduce((best,c)=>!best||(toMin(c.end)-toMin(c.start))>(toMin(best.end)-toMin(best.start))?c:best,null);
+    if(!cand){tt_("▲ 該当する候補時間が見つかりません");return;}
+    editingRef.current=true;
+    setSd(p=>{
+      const n={...p};
+      dates.forEach(ds=>{if(!gc(ds).some(c=>c.closed))n[ds]={...n[ds],status:"work",start:cand.start,end:cand.end};});
+      return n;
+    });
+    tt_(`✓ ${{through:"通し",lunch:"ランチ",dinner:"ディナー"}[type]}を全日程に反映しました`);
+  };
+
   const submit=async()=>{
     if(submittingRef.current)return; // 連打・二重発火防止（stateの反映を待たず同期チェック）
     submittingRef.current=true;
@@ -1712,6 +1730,16 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
             )}
           </div>
         </div>
+
+        {/* 全日程一括入力 */}
+        {!dl&&<div style={{display:"flex",gap:8,marginBottom:14}}>
+          {[["through","通し"],["lunch","ランチ"],["dinner","ディナー"]].map(([k,l])=>(
+            <button key={k} onClick={()=>bulkFill(k)}
+              style={{flex:1,padding:"10px 0",background:"rgba(248,112,54,.1)",border:"1.5px solid #FDDCC7",borderRadius:10,color:"#f87036",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+              全日程「{l}」
+            </button>
+          ))}
+        </div>}
 
         {/* 日付カード */}
         {dates.map(ds=>{
