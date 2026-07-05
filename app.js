@@ -467,41 +467,6 @@ function App(){
         if(cached) enterShop(cached); else toUnbound();
       });
     };
-    // 旧方式フォールバック: 全店舗のperiodsを横断検索（tokens未登録の既存期間用・移行期間が終わったら撤去する）
-    const legacyTokenScan=(token)=>{
-      firebaseDB.ref("global/shops").once("value").then(snap=>{
-        const val=snap.val();
-        const sh=val?Object.values(val).filter(s=>s&&s.id):[];
-        return Promise.all(
-          sh.map(shop=>
-            firebaseDB.ref(fbPath(shop.id,"periods")).once("value")
-              .then(s=>{
-                const v=s.val();
-                const arr=v?Object.values(v).filter(Boolean):[];
-                return{shop,periods:arr};
-              }).catch(()=>({shop,periods:[]}))
-          )
-        ).then(results=>{
-          let matched=null;
-          for(const {shop,periods:ps} of results){
-            const found=ps.find(p=>p.urlToken===token||p.id===token);
-            if(found){matched={shop,period:found};break;}
-          }
-          if(matched){
-            console.log("URL解決(旧方式): shop=",matched.shop.name,"period=",matched.period.label);
-            // 次回以降O(1)で解決できるよう逆引きを登録
-            firebaseDB.ref(`tokens/${token}`).set({shopId:matched.shop.id,periodId:matched.period.id}).catch(()=>{});
-            setApid(matched.period.id);
-            setUrlResolved(true);
-            enterShop(matched.shop);
-          } else {
-            console.warn("token一致なし(Phase1):", token, "→ Cookieチェックへ");
-            cookieFallback();
-          }
-        });
-      }).catch(()=>cookieFallback());
-    };
-
     const parsed=parseUrl();
     // URLにtokenがある場合: tokens逆引きインデックスでshop/periodを特定
     if(parsed&&parsed.token&&parsed.type==="staff"){
@@ -517,8 +482,8 @@ function App(){
           enterShop(shop);
           return true;
         });
-      }).then(ok=>{ if(!ok) legacyTokenScan(token); })
-        .catch(()=>legacyTokenScan(token));
+      }).then(ok=>{ if(!ok){ console.warn("token一致なし:",token,"→ Cookieチェックへ"); cookieFallback(); } })
+        .catch(()=>cookieFallback());
       return;
     }
     // 1) Firebase Auth ユーザーがいる場合 → accounts/{uid}/shops を確認
