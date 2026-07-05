@@ -2689,7 +2689,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return len<=5?base:+(base*5/len).toFixed(2);
   };
   // シフト表table（HTML文字列）。withHeat=trueで左右にヒートマップ列を統合し日付行に合わせて表示する
-  const buildShiftTableHtml=(withHeat=false)=>{
+  const buildShiftTableHtml=(withHeat=false,staffCols=true)=>{
     const cols=buildPdfCols();
     const BDp="1px solid #888",BDp2="2px solid #555";
     // 斜線: Excelのdiagonal(右上→左下の1本線)に合わせ、セル毎に1本だけ描画する非リピートSVGを使う
@@ -2708,7 +2708,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     h+='<tr>';
     if(showKit)h+=`<th colspan="${heatHours.length}" style="border:${BDp2};padding:1px;height:16px;text-align:center;font-size:8px;font-weight:600;white-space:nowrap;">${esc(kitLabel)}</th>`;
     h+=`<th colspan="2" style="border:${BDp2};padding:1px;height:16px;"></th>`;
-    cols.forEach(nm=>{
+    if(staffCols)cols.forEach(nm=>{
       if(isSpacer(nm)){h+=`<th style="border:${BDp};padding:1px;width:30px;height:16px;"></th>`;return;}
       h+=`<th style="border:${BDp};padding:1px;width:30px;height:16px;text-align:center;font-size:9px;font-weight:600;">${esc(staffNums[nm]||"")}</th>`;
     });
@@ -2720,7 +2720,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     if(showKit)heatHours.forEach(hr=>{h+=`<th style="border:${BDp};padding:1px;width:20px;text-align:center;font-size:9px;font-weight:600;background:#f7f7f7;vertical-align:bottom;">${hr}</th>`;});
     h+=`<th style="border:${BDp2};padding:3px 2px;width:36px;text-align:center;font-weight:700;font-size:10px;line-height:1.2;vertical-align:middle;">${vtext(pdfPeriodLabel(period.label||""))}</th>`;
     h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;text-align:center;font-weight:700;">曜日</th>`;
-    cols.forEach(nm=>{
+    if(staffCols)cols.forEach(nm=>{
       if(isSpacer(nm)){h+=`<th style="border:${BDp};"></th>`;return;}
       const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";
       h+=`<th style="border:${BDp};padding:3px 1px;width:30px;text-align:center;font-weight:700;font-size:${vfontSize(nm,10)}px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;
@@ -2744,7 +2744,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         });
         h+=mergeTd(day,top);
         h+=mergeTd(esc(wd),top);
-        cols.forEach(nm=>{
+        if(staffCols)cols.forEach(nm=>{
           if(isSpacer(nm)){h+=`<td style="border:${BDp};"></td>`;return;}
           if(!pdfHasSub(nm,ds)){h+=`<td style="border:${BDp};"></td>`;return;}
           const sh=_getSub(nm)?.shifts?.[ds];
@@ -2799,6 +2799,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     finally{if(c.parentNode)c.parentNode.removeChild(c);}
   };
   const PDF_PAGEBREAK="__PAGEBREAK__";
+  const PDF_SYNCSCALE="__SYNCSCALE__"; // 直前のブロックと同じmm/pxスケールを使う（ページ間で日付行の高さ・幅を揃えるため）
   const exportPdf=async(mode)=>{
     if(!period)return;
     if(typeof window.html2canvas==="undefined"||typeof window.jspdf==="undefined"){tt("▲ PDFライブラリ未読込み");return;}
@@ -2810,11 +2811,16 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       if(mode==="shift"){
         blocks.push(`<div style="font-size:16px;font-weight:700;margin-bottom:8px;">${heading} シフト表</div>`+buildShiftTableHtml(false));
       }else{
-        // シフト表にキッチン/ホールの時間帯別出勤人数を列として統合し、日付行に合わせて表示する
-        let top=`<div style="font-size:18px;font-weight:700;margin-bottom:10px;">${heading} シフト作成データ</div>`;
-        top+=buildShiftTableHtml(true);
-        blocks.push(top);
-        // 休み・連勤カウントは2ページ目から開始する
+        // 1ページ目: シフト表のみ（シフトモードと同じ内容）
+        blocks.push(`<div style="font-size:18px;font-weight:700;margin-bottom:10px;">${heading} シフト作成データ</div>`+buildShiftTableHtml(false));
+        // 2ページ目: 時間帯別出勤人数（ヒートマップ）のみ。1ページ目と同じ日付行構造(mergeTd)を使うことで高さ・幅を揃え、
+        // PDF_SYNCSCALEで1ページ目と同じmm/pxスケールを引き継ぐことで見た目の整合性を取る
+        if(heatHours.length>0){
+          blocks.push(PDF_PAGEBREAK);
+          blocks.push(PDF_SYNCSCALE);
+          blocks.push(`<div style="font-size:18px;font-weight:700;margin-bottom:10px;">${heading} 時間帯別出勤人数</div>`+buildShiftTableHtml(true,false));
+        }
+        // 3ページ目以降: 休み・連勤カウント等の期間別集計
         blocks.push(PDF_PAGEBREAK);
         blocks.push(buildCountsTableHtml());
         // 期間別勤務時間
@@ -2841,13 +2847,21 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       const{jsPDF}=window.jspdf;
       const pdf=new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
       const pageW=297,pageH=210,margin=5,imgW=pageW-margin*2,imgH=pageH-margin*2;
-      let y=margin;
+      let y=margin,lastMmPerPx=null,syncNext=false;
       for(const bh of blocks){
         if(bh===PDF_PAGEBREAK){pdf.addPage();y=margin;continue;}
+        if(bh===PDF_SYNCSCALE){syncNext=true;continue;}
         const canvas=await renderBlock(bh);
         // 幅基準でスケール（自然サイズ以上には拡大しない）。1ページ高を超えるブロックは等比縮小
-        let mmPerPx=Math.min(imgW/canvas.width,0.14);
-        if(canvas.height*mmPerPx>imgH)mmPerPx=imgH/canvas.height;
+        let mmPerPx;
+        if(syncNext&&lastMmPerPx&&canvas.width*lastMmPerPx<=imgW&&canvas.height*lastMmPerPx<=imgH){
+          mmPerPx=lastMmPerPx; // 直前ブロックと同スケールを維持し、日付行の高さ・幅を揃える
+        }else{
+          mmPerPx=Math.min(imgW/canvas.width,0.14);
+          if(canvas.height*mmPerPx>imgH)mmPerPx=imgH/canvas.height;
+        }
+        syncNext=false;
+        lastMmPerPx=mmPerPx;
         const wMm=canvas.width*mmPerPx,hMm=canvas.height*mmPerPx;
         if(y>margin+0.1&&y+hMm>pageH-margin){pdf.addPage();y=margin;}
         pdf.addImage(canvas.toDataURL("image/jpeg",0.92),"JPEG",margin,y,wMm,hMm);
