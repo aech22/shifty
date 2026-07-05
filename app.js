@@ -1565,7 +1565,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     return settings.candidates||CAND_WEEKDAY;
   };
 
-  // 全日程一括入力（通し／ランチ／ディナー）
+  // 全日程一括入力（通し／ランチ／ディナー）※トグル: 既に全日程が同一内容なら休みに戻す
   const bulkFill=type=>{
     const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
     const src=(settings.candidates||CAND_WEEKDAY).filter(c=>!c.closed&&c.start&&c.end);
@@ -1574,13 +1574,17 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       :src;
     const cand=pool.reduce((best,c)=>!best||(toMin(c.end)-toMin(c.start))>(toMin(best.end)-toMin(best.start))?c:best,null);
     if(!cand){tt_("▲ 該当する候補時間が見つかりません");return;}
+    const applicable=dates.filter(ds=>!gc(ds).some(c=>c.closed));
+    const alreadyApplied=applicable.length>0&&applicable.every(ds=>{const s=sd[ds];return s?.status==="work"&&s.start===cand.start&&s.end===cand.end;});
     editingRef.current=true;
     setSd(p=>{
       const n={...p};
-      dates.forEach(ds=>{if(!gc(ds).some(c=>c.closed))n[ds]={...n[ds],status:"work",start:cand.start,end:cand.end};});
+      applicable.forEach(ds=>{
+        n[ds]=alreadyApplied?{...n[ds],status:"holiday",start:undefined,end:undefined}:{...n[ds],status:"work",start:cand.start,end:cand.end};
+      });
       return n;
     });
-    tt_(`✓ ${{through:"通し",lunch:"ランチ",dinner:"ディナー"}[type]}を全日程に反映しました`);
+    tt_(alreadyApplied?`↺ ${{through:"通し",lunch:"ランチ",dinner:"ディナー"}[type]}を全日程「休み」に戻しました`:`✓ ${{through:"通し",lunch:"ランチ",dinner:"ディナー"}[type]}を全日程に反映しました`);
   };
 
   const submit=async()=>{
