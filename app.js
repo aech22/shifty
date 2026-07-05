@@ -1418,6 +1418,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   const[toast,setToast]=useState(null);
   const[sm,setSm]=useState(false);
   const editingRef=useRef(false); // 「修正する」でユーザーが手動編集中フラグ
+  const dirtyRef=useRef(false); // 提出前フォームに未保存の入力があるフラグ（他人の提出によるsubs更新での消去防止）
+  const initedApidRef=useRef(null); // 初期化済みのapid（期間が実際に変わったときだけリセットする）
   const[comment,setComment]=useState("");
   const[editN,setEditN]=useState(false);
   const[ni,setNi]=useState("");
@@ -1427,39 +1429,44 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   const dl=idp(ap?.deadlineDate);
   const dates=ap?gd(ap.startDate,ap.endDate):[];
 
-  // 期間変更時にシフトデータをリセット
-  // Cookieに保存された名前がある場合は提出済みデータを復元
+  // 期間が実際に変わったとき（および初回）だけシフトデータを初期化する。
+  // subs更新（他スタッフの提出）でこのeffectが再実行されても、同一期間ならリセットしない。
   useEffect(()=>{
     if(!apid||!ap)return;
-    // ユーザーが手動で修正中の場合はFirebase更新でdoneを上書きしない
-    if(editingRef.current)return;
+    if(initedApidRef.current===apid)return;
+    initedApidRef.current=apid;
+    dirtyRef.current=false;
+    editingRef.current=false;
     const ckName=shopId&&apid?getCookie(ckStaffKey(shopId,apid))||"":"";
-    if(ckName){
-      // 提出済みデータを検索
-      const prevSub=subs.find(s=>s.staffName===ckName&&s.periodId===apid);
-      if(prevSub){
-        // 提出済み → データを復元して完了画面を表示
-        setName(ckName);
-        const init={};
-        gd(ap.startDate,ap.endDate).forEach(d=>{
-          init[d]=(prevSub.shifts||{})[d]||{status:"holiday"};
-        });
-        setSd(init);
-        setComment(prevSub.comment||"");
-        setDone(true);
-        return;
-      }
-      // 名前はあるが未提出 → 名前だけ復元
-      setName(ckName);
-    }
+    if(ckName)setName(ckName);
     const i={};dates.forEach(d=>{i[d]={status:"holiday"};});
     setSd(i);setDone(false);setComment("");
-  },[apid,ap?.startDate,ap?.endDate,shopId,subs]);
+  },[apid,ap?.startDate,ap?.endDate,shopId]);
+
+  // Cookieに保存された名前の提出済みデータを復元して完了画面を表示。
+  // ユーザーが入力中（dirty/editing）のときは復元しない＝他人の提出で入力中フォームが消えるバグの防止。
+  useEffect(()=>{
+    if(!apid||!ap)return;
+    if(editingRef.current||dirtyRef.current||done)return;
+    const ckName=shopId&&apid?getCookie(ckStaffKey(shopId,apid))||"":"";
+    if(!ckName)return;
+    const prevSub=subs.find(s=>s.staffName===ckName&&s.periodId===apid);
+    if(!prevSub)return;
+    setName(ckName);
+    const init={};
+    gd(ap.startDate,ap.endDate).forEach(d=>{
+      init[d]=(prevSub.shifts||{})[d]||{status:"holiday"};
+    });
+    setSd(init);
+    setComment(prevSub.comment||"");
+    setDone(true);
+  },[apid,ap?.startDate,ap?.endDate,shopId,subs,done]);
 
   const tt_=m=>{setToast(m);clearTimeout(tr.current);tr.current=setTimeout(()=>setToast(null),2500);};
-  const upd=(ds,u)=>setSd(p=>({...p,[ds]:{...p[ds],...u}}));
+  const upd=(ds,u)=>{dirtyRef.current=true;setSd(p=>({...p,[ds]:{...p[ds],...u}}));};
   const reset=()=>{
     editingRef.current=false;
+    dirtyRef.current=false;
     // CookieとStateをリセット
     if(shopId&&apid) delCookie(ckStaffKey(shopId,apid));
     setName("");
@@ -1494,6 +1501,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     const applicable=dates.filter(ds=>!gc(ds).some(c=>c.closed));
     const alreadyApplied=applicable.length>0&&applicable.every(ds=>{const s=sd[ds];return s?.status==="work"&&s.start===cand.start&&s.end===cand.end;});
     editingRef.current=true;
+    dirtyRef.current=true;
     setSd(p=>{
       const n={...p};
       applicable.forEach(ds=>{
@@ -1548,6 +1556,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     // スタッフ名をCookieに保存（1年間）
     if(shopId&&apid) setCookie(ckStaffKey(shopId,apid),staffName,365);
     editingRef.current=false;
+    dirtyRef.current=false;
     ph("shift_submitted",{period_id:apid,is_update:!!existSub,work_days:Object.values(sd).filter(s=>s?.status==="work").length});
     setConf(false);setDone(true);
   };
@@ -1607,7 +1616,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                   <input ref={nr} value={ni} onChange={e=>{setNi(e.target.value);setShowSuggest(true);}}
                     onKeyDown={e=>{
                       if(e.key==="Enter"){
-                        if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);setName(resolved);}
+                        if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);dirtyRef.current=true;setName(resolved);}
                         setEditN(false);setShowSuggest(false);
                       }
                       if(e.key==="Escape"){setEditN(false);setShowSuggest(false);}
@@ -1616,14 +1625,14 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                     placeholder="お名前を入力" maxLength={50}
                     style={{flex:1,padding:"10px 12px",fontSize:18,fontWeight:700,background:"var(--c-bg)",border:"2px solid #f87036",borderRadius:10,outline:"none",color:"var(--c-text)",minWidth:0}}/>
                   <button onClick={()=>{
-                    if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);setName(resolved);}
+                    if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);dirtyRef.current=true;setName(resolved);}
                     setEditN(false);setShowSuggest(false);
                   }} style={{padding:"10px 16px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",flexShrink:0}}>確定</button>
                 </div>
                 {showSuggest&&filteredSuggests.length>0&&(
                   <div className="name-suggest">
                     {filteredSuggests.map((s,i)=>(
-                      <div key={i} className="name-suggest-item" onMouseDown={e=>{e.preventDefault();setName(s.registered);setNi(s.registered);setEditN(false);setShowSuggest(false);}}
+                      <div key={i} className="name-suggest-item" onMouseDown={e=>{e.preventDefault();dirtyRef.current=true;setName(s.registered);setNi(s.registered);setEditN(false);setShowSuggest(false);}}
                         style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                         <span>{s.display}</span>
                         {s.isAlias&&<span style={{fontSize:11,color:"#f87036",background:"rgba(248,112,54,.1)",padding:"1px 6px",borderRadius:4,flexShrink:0}}>→ {s.registered}</span>}
@@ -1731,7 +1740,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
             <span style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>コメント・備考（任意）</span>
           </div>
           <div style={{padding:"14px 16px"}}>
-            <textarea value={comment} onChange={e=>setComment(e.target.value)} disabled={dl} maxLength={500}
+            <textarea value={comment} onChange={e=>{dirtyRef.current=true;setComment(e.target.value);}} disabled={dl} maxLength={500}
               placeholder="休み希望の理由、変動できる日、その他連絡事項など"
               style={{width:"100%",minHeight:80,padding:"10px 12px",fontSize:14,color:"var(--c-text)",background:"var(--c-bg)",border:"2px solid #E5E7EB",borderRadius:10,outline:"none",resize:"vertical",lineHeight:1.6,fontFamily:"inherit"}}
               onFocus={e=>e.target.style.borderColor="#f87036"} onBlur={e=>e.target.style.borderColor="var(--c-border)"}></textarea>
