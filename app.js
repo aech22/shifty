@@ -49,6 +49,7 @@ function fbPath(shopId, key) { return `shops/${shopId}/${key}`; }
 function ph(event, props) {
   try { window.posthog && window.posthog.capture(event, props); } catch {}
 }
+const dlog=(...a)=>{if(DEV_MODE)console.log(...a);};
 
 // ===== アイコン =====
 function ShiftyIcon({size=32}){
@@ -77,6 +78,9 @@ const JH_DATES=new Set([
   // 2027
   "20270101","20270111","20270211","20270223","20270321","20270322","20270429","20270503","20270504","20270505",
   "20270719","20270811","20270920","20270923","20271011","20271103","20271123",
+  // 2028
+  "20280101","20280110","20280211","20280223","20280320","20280429","20280503","20280504","20280505",
+  "20280717","20280811","20280918","20280922","20281009","20281103","20281123",
 ]);
 function isHoliday(dateStr){
   const d=pd(dateStr);
@@ -164,7 +168,7 @@ function ls(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch{}}
 function sc(cs){return[...cs].sort((a,b)=>{if(a.closed)return 1;if(b.closed)return -1;const ta=Number(a.start.replace(":","").replace(":","")),tb=Number(b.start.replace(":","").replace(":","")),ea=Number(a.end.replace(":","").replace(":","")),eb=Number(b.end.replace(":","").replace(":",""));return ta!==tb?ta-tb:ea-eb;});}
 // 祝日判定（簡易）
 // isHoliday は上で定義済み
-function isWeekend(dateStr){const dow=pd(dateStr).getDay();return dow===0||dow===6||isHoliday(dateStr);}
+function isWeekendOrHoliday(dateStr){const dow=pd(dateStr).getDay();return dow===0||dow===6||isHoliday(dateStr);}
 function calcNetWorkMinutes(shift,breaks,overtimeMins=0){
   if(!shift||shift.status!=="work")return 0;
   const st=shift.adjustedStart??shift.start;
@@ -456,9 +460,9 @@ function App(){
     // Cookie店舗で入る（DB読み失敗時はlocalStorageキャッシュでオフライン継続）
     const cookieFallback=()=>{
       const ckId=getCookie(CK_SHOP);
-      if(!ckId||ckId==="default"){ console.log("未ログイン: ログイン画面へ"); toUnbound(); return; }
+      if(!ckId||ckId==="default"){ dlog("未ログイン: ログイン画面へ"); toUnbound(); return; }
       readShop(ckId).then(shop=>{
-        if(shop){ console.log("Cookie店舗:",shop.name); enterShop(shop); }
+        if(shop){ dlog("Cookie店舗:",shop.name); enterShop(shop); }
         else toUnbound(); // CookieのIDがDBに存在しない
       }).catch(e=>{
         console.warn("shops読み込み失敗:",e);
@@ -476,7 +480,7 @@ function App(){
         if(!tv||!tv.shopId) return false;
         return readShop(tv.shopId).then(shop=>{
           if(!shop) return false;
-          console.log("URL解決(tokens): shop=",shop.name);
+          dlog("URL解決(tokens): shop=",shop.name);
           setApid(tv.periodId||null);
           setUrlResolved(true);
           enterShop(shop);
@@ -495,7 +499,7 @@ function App(){
         Promise.all(linkedIds.map(id=>readShop(id).catch(()=>null))).then(shopObjs=>{
           const linkedShops=shopObjs.filter(s=>s&&s.id);
           if(linkedShops.length===0){ toUnbound(); return; } // 紐付いた店舗がglobal/shopsにない
-          console.log("Auth店舗:",linkedShops.map(s=>s.name));
+          dlog("Auth店舗:",linkedShops.map(s=>s.name));
           setAllLinkedShops(linkedShops);
           // Cookie（最後に使った店舗）→ セッション復元 → 最初の店舗
           const ckId=getCookie(CK_SHOP);
@@ -553,7 +557,7 @@ function App(){
       r.on("value",snap=>cb(snap.val()),err=>console.warn("購読失敗:",path,err));
       refs.push(r);
     };
-    console.log("購読開始 targetSid=",targetSid);
+    dlog("購読開始 targetSid=",targetSid);
     try { window.posthog && window.posthog.identify(targetSid); } catch {}
     ph("app_loaded",{shop_id:targetSid});
 
@@ -566,9 +570,9 @@ function App(){
     });
 
     // 店舗リスト設定（shopListが明示的に渡された時のみ更新）
-    console.log("startSubscriptions: shopList=",shopList?.length,shopList?.map(s=>s?.id));
+    dlog("startSubscriptions: shopList=",shopList?.length,shopList?.map(s=>s?.id));
     if(shopList&&shopList.length>0){
-      console.log("startSubscriptions: 店舗リスト設定",shopList.map(s=>s?.id));
+      dlog("startSubscriptions: 店舗リスト設定",shopList.map(s=>s?.id));
       setShops(shopList);
       ls("shift_shops_v6",shopList);
     }
@@ -606,7 +610,7 @@ function App(){
         :(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id);
       arr.sort((a,b)=>new Date(b.submittedAt)-new Date(a.submittedAt));
       setSubs(arr); ls(storeKey(targetSid,"subs_v6"),arr);
-      console.log("subs受信:",arr.length,"件 sid=",targetSid);
+      dlog("subs受信:",arr.length,"件 sid=",targetSid);
     });
     // accounts/<shopId>/plan（プラン読み込み）
     on(`accounts/${targetSid}/plan`,val=>{
@@ -898,7 +902,7 @@ function App(){
         shops:shopsSnap.val()||null
       });
       setInviteCodeDisplay(code);
-      console.log("招待コード生成:", code);
+      dlog("招待コード生成:", code);
     }catch(e){
       console.warn("招待コード生成失敗:", e);
       tt("招待コードの生成に失敗しました: " + (e?.message||e?.code||"不明なエラー"));
@@ -936,7 +940,7 @@ function App(){
       }
       setUnbound(false);
       setInviteCode("");
-      console.log("招待コードで参加完了");
+      dlog("招待コードで参加完了");
     }catch(e){
       console.warn("招待コード参加失敗:", e);
       setInviteError('処理に失敗しました');
@@ -951,7 +955,7 @@ function App(){
       const newLinked=await fetchLinkedShops(authUser.uid);
       setAllLinkedShops(newLinked);
       // shops（セッション）は変更しない
-      console.log("既存店舗を企業アカウントに連携:", shopId);
+      dlog("既存店舗を企業アカウントに連携:", shopId);
     }catch(e){
       console.warn("連携失敗:", e);
     }
@@ -1147,11 +1151,11 @@ function App(){
 
   // 新規店舗作成
   const createNewShop=()=>{
-    console.log("createNewShop: 実行開始");
+    dlog("createNewShop: 実行開始");
     if(!firebaseDB){setInviteError("Firebase未接続");return;}
     setInviteError("作成中...");
     const newShop=makeShop("新しい店舗");
-    console.log("createNewShop: 新規店舗作成",newShop.id,newShop.name);
+    dlog("createNewShop: 新規店舗作成",newShop.id,newShop.name);
     firebaseDB.ref(`global/shops/${newShop.id}`).set(newShop).then(()=>{
       // Auth ユーザーはアカウントにも紐付け
       if(authUser) linkShopToAccount(authUser.uid,newShop.id);
@@ -1337,7 +1341,7 @@ function App(){
               if(!firebaseDB)return Promise.reject(new Error("firebase未接続"));
               const path=`shops/${currentSid}/subs/${sub.id}`;
               return firebaseDB.ref(path).set(sub)
-                .then(()=>console.log(sub.isUpdated?"変更保存完了":"提出完了","path=",path))
+                .then(()=>dlog(sub.isUpdated?"変更保存完了":"提出完了","path=",path))
                 .catch(e=>{console.warn("sub書き込み失敗:",path,e);throw e;});
             }}
             onDeleteSub={subId=>{
@@ -1460,7 +1464,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     const dow=pd(ds).getDay();
     const wdc=(settings.weekdayCandidates||{})[dow]||[];if(wdc.length>0)return wdc;
     // 4. 全体デフォルト
-    if(isWeekend(ds))return settings.candidates||CAND_WEEKEND;
+    if(isWeekendOrHoliday(ds))return settings.candidates||CAND_WEEKEND;
     return settings.candidates||CAND_WEEKDAY;
   };
 
@@ -1490,6 +1494,14 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   const submit=async()=>{
     if(submittingRef.current)return; // 連打・二重発火防止（stateの反映を待たず同期チェック）
     submittingRef.current=true;
+    // 出勤>退勤バリデーション（HH:MMゼロ埋め文字列なので文字列比較でよい。25:00〜27:00形式も正しく比較される）
+    const badDate=dates.find(d=>sd[d]?.status==="work"&&sd[d].start&&sd[d].end&&sd[d].start>=sd[d].end);
+    if(badDate){
+      const bd=pd(badDate);
+      tt_(`▲ 退勤が出勤より前の日があります（${bd.getMonth()+1}/${bd.getDate()}）`);
+      submittingRef.current=false;setSending(false);setConf(false);
+      return;
+    }
     const staffName=name.trim();
     // 既存subを検索（同じperiod+名前 → 上書き）
     const existSub=subs.find(s=>s.staffName===staffName&&s.periodId===apid);
@@ -2042,7 +2054,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                           <div onClick={()=>{setCurrentShopId(sh.id);setShopMenuOpen(false);}} style={{flex:1,padding:"11px 16px",cursor:"pointer",fontSize:14,fontWeight:sh.id===currentShopId?700:400,color:sh.id===currentShopId?"#f87036":"#1A1A2E",display:"flex",alignItems:"center",gap:8}}>
                             {sh.id===currentShopId&&<span style={{fontSize:10}}>✓</span>}{sh.name}
                           </div>
-                          <button onClick={e=>{e.stopPropagation();if(!window.confirm(`「${sh.name}」からログアウトしますか？`))return;setShopMenuOpen(false);logout();}} style={{padding:"6px 10px",margin:"0 8px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:6,color:"#FF4757",fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>ログアウト</button>
+                          <button onClick={e=>{e.stopPropagation();if(!window.confirm(`ログアウトしますか？（この端末の全店舗セッションを終了します）`))return;setShopMenuOpen(false);logout();}} style={{padding:"6px 10px",margin:"0 8px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:6,color:"#FF4757",fontSize:11,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>ログアウト</button>
                         </div>
                       ))}
                       <div style={{borderTop:"1px solid var(--c-border)",padding:"8px 10px",display:"flex",gap:6}}>
@@ -2062,7 +2074,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                           <input value={shopCodeInput} onChange={e=>{setShopCodeInput(e.target.value);setShopCodeError("");}}
                             onKeyDown={e=>e.key==="Enter"&&addShopByCode()}
                             placeholder="店舗コードを貼り付け"
-                            style={{flex:1,padding:"7px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:12,outline:"none"}}/>
+                            style={{flex:1,padding:"7px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none"}}/>
                           <button onClick={addShopByCode} style={{padding:"7px 10px",background:"#f87036",border:"none",borderRadius:8,fontSize:12,fontWeight:700,color:"white",cursor:"pointer"}}>追加</button>
                         </div>
                         {shopCodeError&&<div style={{fontSize:11,color:shopCodeError==="確認中..."?"#F59E0B":"#FF4757",marginTop:4}}>{shopCodeError}</div>}
@@ -3473,7 +3485,7 @@ const dragIdxRef=useRef(null);
             {editIdx===i
               ?<>
                 {isPro&&<div style={{width:18,height:18,borderRadius:"50%",background:(staffColors[staffList[i]]||"black")==="red"?"#FF4757":"#374151",border:"2px solid #D1D5DB",flexShrink:0}}/>}
-                <input value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmEdit(i);if(e.key==="Escape")cancelEdit();}} autoFocus maxLength={50} style={{...AI,flex:1,padding:"6px 10px",fontSize:14}}/>
+                <input value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmEdit(i);if(e.key==="Escape")cancelEdit();}} autoFocus maxLength={50} style={{...AI,flex:1,padding:"6px 10px",fontSize:16}}/>
                 <button onClick={()=>confirmEdit(i)} style={{...AB,padding:"6px 12px",fontSize:12}}>保存</button>
                 <button onClick={cancelEdit} style={{...AGray,padding:"6px 12px",fontSize:12}}>ｷｬﾝｾﾙ</button>
               </>
@@ -3481,7 +3493,7 @@ const dragIdxRef=useRef(null);
                 {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid #D1D5DB",cursor:"pointer",flexShrink:0,padding:0}}/>}
                 <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{n}</span>
                 {isPremium&&<input value={(settings.staffNumbers||{})[n]||""} onChange={e=>{const v=e.target.value;const nums={...(settings.staffNumbers||{})};if(v)nums[n]=v;else delete nums[n];onSaveSettings&&onSaveSettings({...settings,staffNumbers:nums});}} maxLength={8} placeholder="番号" style={{width:64,fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text2)",flexShrink:0,textAlign:"center"}}/>}
-                {isPremium&&<select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:12,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
+                {isPremium&&<select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
                   {Object.entries({employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})}).map(([v,t])=>{const label=(typeof t==="object"?t.name:"")||STAFF_TYPE_LABELS[v]||"";return label?<option key={v} value={v}>{label}</option>:null;})}
                 </select>}
                 {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
@@ -3620,7 +3632,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
     <div style={{flex:1}}>
       <div style={{fontSize:11,color:"var(--c-text3)",marginBottom:4}}>{label}</div>
       <select value={value} onChange={e=>onChange(e.target.value)}
-        style={{width:"100%",padding:"9px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:14,outline:"none",cursor:"pointer"}}>
+        style={{width:"100%",padding:"9px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",cursor:"pointer"}}>
         <option value="">-- 選択 --</option>
         {TO.map(t=><option key={t} value={t}>{t}</option>)}
       </select>
@@ -3903,7 +3915,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   return(<div>
     <AT>提出一覧</AT>
     <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
-      <input value={fn} onChange={e=>setFn(e.target.value)} placeholder="氏名で絞り込み" style={{flex:1,minWidth:130,padding:"10px 14px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:10,color:"var(--c-text)",fontSize:14,outline:"none"}}/>
+      <input value={fn} onChange={e=>setFn(e.target.value)} placeholder="氏名で絞り込み" style={{flex:1,minWidth:130,padding:"10px 14px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:10,color:"var(--c-text)",fontSize:16,outline:"none"}}/>
       <select value={fp} onChange={e=>setFp(e.target.value)} style={{padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:10,color:"var(--c-text)",fontSize:16,outline:"none",cursor:"pointer"}}>
         <option value="all">全期間</option>
         {periods.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}
@@ -3931,7 +3943,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
                     linkTarget?.subName===sub.staffName
                       ?<div style={{display:"flex",alignItems:"center",gap:4,marginTop:4,width:"100%"}}>
                         <select defaultValue="" onChange={e=>e.target.value&&registerAlias(sub.staffName,e.target.value)}
-                          style={{fontSize:12,padding:"3px 6px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text)",cursor:"pointer"}}>
+                          style={{fontSize:16,padding:"3px 6px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text)",cursor:"pointer"}}>
                           <option value="">スタッフを選択</option>
                           {staffList.map(s=><option key={s} value={s}>{s}</option>)}
                         </select>
@@ -3975,10 +3987,10 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:"var(--c-text2)"}}>{d.getMonth()+1}/{d.getDate()}（{WD[d.getDay()]}）</td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>{iw?<span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 7px",borderRadius:4,fontSize:12,fontWeight:600}}>出勤</span>:<span style={{background:"var(--c-input)",color:"var(--c-text3)",padding:"2px 7px",borderRadius:4,fontSize:12}}>休み</span>}</td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
-                {iw?<div>{isPremium&&<div style={{color:"var(--c-text4)",fontSize:11}}>{s.start}</div>}{isPremium?<select value={s.adjustedStart||""} onChange={e=>saveAdj(det.id,ds,"adjustedStart",e.target.value||"")} style={{fontSize:12,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedStart?"#60A5FA":"var(--c-border)"}`,borderRadius:6,color:s.adjustedStart?"#60A5FA":"var(--c-text)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>:<span style={{fontSize:13,color:"var(--c-text2)"}}>{s.start||"-"}</span>}</div>:"-"}
+                {iw?<div>{isPremium&&<div style={{color:"var(--c-text4)",fontSize:11}}>{s.start}</div>}{isPremium?<select value={s.adjustedStart||""} onChange={e=>saveAdj(det.id,ds,"adjustedStart",e.target.value||"")} style={{fontSize:16,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedStart?"#60A5FA":"var(--c-border)"}`,borderRadius:6,color:s.adjustedStart?"#60A5FA":"var(--c-text)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>:<span style={{fontSize:13,color:"var(--c-text2)"}}>{s.start||"-"}</span>}</div>:"-"}
               </td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
-                {iw?<div>{isPremium&&<div style={{color:"var(--c-text4)",fontSize:11}}>{s.end}</div>}{isPremium?<><select value={s.adjustedEnd||""} onChange={e=>saveAdj(det.id,ds,"adjustedEnd",e.target.value||"")} style={{fontSize:12,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedEnd?"#60A5FA":"var(--c-border)"}`,borderRadius:6,color:s.adjustedEnd?"#60A5FA":"var(--c-text)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>{effEnd&&<div style={{fontSize:10,color:"#34D399",marginTop:2,fontWeight:600}}>{effEnd}（+{detOT2}分）</div>}</>:<span style={{fontSize:13,color:"var(--c-text2)"}}>{s.end||"-"}</span>}</div>:"-"}
+                {iw?<div>{isPremium&&<div style={{color:"var(--c-text4)",fontSize:11}}>{s.end}</div>}{isPremium?<><select value={s.adjustedEnd||""} onChange={e=>saveAdj(det.id,ds,"adjustedEnd",e.target.value||"")} style={{fontSize:16,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedEnd?"#60A5FA":"var(--c-border)"}`,borderRadius:6,color:s.adjustedEnd?"#60A5FA":"var(--c-text)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>{effEnd&&<div style={{fontSize:10,color:"#34D399",marginTop:2,fontWeight:600}}>{effEnd}（+{detOT2}分）</div>}</>:<span style={{fontSize:13,color:"var(--c-text2)"}}>{s.end||"-"}</span>}</div>:"-"}
               </td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:nm>0?"var(--c-text2)":"var(--c-text3)"}}>{iw&&isPremium?fmtMin(nm):"-"}</td>
             </tr>);})}
@@ -4678,7 +4690,7 @@ function buildSuggestList(staffList, staffAliases){
   return result;
 }
 
-const AI={width:"100%",padding:"11px 14px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:10,color:"var(--c-text)",fontSize:14,outline:"none"};
+const AI={width:"100%",padding:"11px 14px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:10,color:"var(--c-text)",fontSize:16,outline:"none"};
 const AB={padding:"10px 18px",background:"#f87036",border:"none",borderRadius:9,color:"white",fontSize:14,fontWeight:700,cursor:"pointer"};
 const AD={padding:"6px 11px",background:"rgba(255,71,87,.1)",border:"1px solid rgba(255,71,87,.25)",borderRadius:6,color:"#EF4444",fontSize:12,fontWeight:600,cursor:"pointer"};
 const AGray={padding:"10px 16px",background:"var(--c-input)",border:"1px solid #D1D5DB",borderRadius:9,color:"var(--c-text2)",fontSize:14,cursor:"pointer"};
