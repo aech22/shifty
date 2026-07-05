@@ -38,7 +38,19 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟡 Anonymous Auth導入による権限分離（セキュリティ強化フェーズB）
 
+**目的**: 2026-07-06のセキュリティ改修（capabilityモデル化）の残存リスクを解消する。現在は「shopIdを知る者＝店舗を管理できる」ため、スタッフURL経由でshopIdを得たスタッフも管理操作が可能。
+**受け入れ条件**:
+- [ ] Firebase Anonymous Auth を導入し、全クライアントが `auth != null` になる
+- [ ] `shops/{shopId}/owners/{uid}` で管理者を管理し、settings/periods/staff の書き込みをオーナーに限定する
+- [ ] スタッフ（URL経由）は subs への提出書き込みと閲覧のみ可能にする
+- [ ] `createPortalSession` に Firebase Auth IDトークン検証を追加（現在は shopId のみで他人のStripeポータルを開ける。shopId非公開化により緩和済みだが完全ではない）
+- [ ] 移行: 既存のCookie運用店舗のオーナー登録経路（店舗コード入力時にオーナー追加）を用意する
+**影響範囲**: database.rules.json、app.js（Phase1初期化・認証まわり）、functions/index.js（createPortalSession）
+**備考**: 2026-07-06 コードレビューのS-6・フェーズ1残存リスクの恒久対応。あわせて移行完了後に app.js の legacyTokenScan（旧URL解決フォールバック）を撤去する。レビュー詳細は Obsidian `Projects/Shifty/コードレビュー_2026-07-06.md`
+
+---
 
 ## 🟢 企業連携内の他店舗ヘルプ表示
 

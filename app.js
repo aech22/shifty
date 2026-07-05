@@ -84,8 +84,6 @@ function isHoliday(dateStr){
   const mmdd=yyyymmdd.slice(4);
   return JH_DATES.has(yyyymmdd)||JH_FIXED.has(mmdd);
 }
-const DEFAULT_PW="admin1234";
-
 // ===== ログイン試行制限（10回でロック・30分間）=====
 const _LA_KEY="ots_login_attempts";
 const _LL_KEY="ots_login_locked_until";
@@ -245,7 +243,7 @@ function storeKey(shopId,key){return`shift_${shopId}_${key}`;}
 // ===== 初期データ =====
 function makeShop(name="店舗1"){const now=new Date().toISOString();return{id:genSecureId(24),name,createdAt:now,lastActivity:now};}
 function makeSettings(shopId){
-  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{name:"社員",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},parttime:{name:"バイト",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}},overtimeSettings:{byStaff:{}},staffNumbers:{}};
+  return{shopId,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{name:"社員",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},parttime:{name:"バイト",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}},overtimeSettings:{byStaff:{}},staffNumbers:{}};
 }
 
 // ===== URL生成・解析 =====
@@ -271,7 +269,7 @@ function genSecureId(len=24){
 
 const isSpacer=n=>typeof n==="string"&&n.startsWith("__spacer__");
 
-function buildUrl(shops,shopId,period){
+function buildUrl(period){
   if(!period)return "";
   const token=period.urlToken||period.id;
   // スタッフURL: #/s/<token>
@@ -360,7 +358,6 @@ function App(){
   const[currentShopId,setCurrentShopId]=useState(()=>_hasUrlToken?null:ssGet(SS_SHOP,null));
   const currentShopIdRef=useRef(_hasUrlToken?null:ssGet(SS_SHOP,null));
   const[view,setView]=useState(()=>_hasUrlToken?"staff":ssGet(SS_VIEW,"staff"));
-  const[auth,setAuth]=useState(true); // パスワード廃止
   const[authUser,setAuthUser]=useState(null); // Firebase Auth ユーザー（null=未ログイン）
   const[authChecked,setAuthChecked]=useState(false); // Auth状態確認完了フラグ
   const[authLoading,setAuthLoading]=useState(false); // OAuth処理中
@@ -445,39 +442,42 @@ function App(){
     }
 
     const loadShops=(authUser)=>{
-    // global/shops を1回だけ読む（onceで）→ 全端末でIDを統一
-    firebaseDB.ref("global/shops").once("value").then(snap=>{
-      const val=snap.val();
-      let sh;
-      if(val){
-        if(typeof val==="object"&&!Array.isArray(val)){
-          sh=Object.values(val).filter(s=>s&&s.id);
-        } else {
-          sh=(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id);
-        }
-      } else {
-        const local=lg("shift_shops_v6",null);
-        sh=local&&local.length>0?local:[makeShop("メイン店舗")];
-        const shObj={};
-        sh.forEach(s=>{ if(s&&s.id) shObj[s.id]=s; });
-        firebaseDB.ref("global/shops").update(shObj);
-      }
-      setShops(sh);
-      ls("shift_shops_v6",sh);
-
-      // URLにtokenがある場合: 全店舗のperiodsを横断検索してshopを特定
-      const parsed=parseUrl();
-      if(parsed&&parsed.token&&parsed.type==="staff"){
-        const token=parsed.token;
-        Promise.all(
+    // 店舗はglobal/shopsの全件読みをやめ、必要なIDの直キー読みで取得する（一覧の公開を前提にしない）
+    const readShop=id=>firebaseDB.ref(`global/shops/${id}`).once("value").then(s=>{const v=s.val();return v&&v.id?v:null;});
+    const enterShop=(shopObj)=>{
+      setShops([shopObj]);
+      ls("shift_shops_v6",[shopObj]);
+      currentShopIdRef.current=shopObj.id;
+      setCurrentShopId(shopObj.id);
+      startSubscriptions(shopObj.id,[shopObj]);
+      setReady(true);
+    };
+    const toUnbound=()=>{ setUnbound(true); setReady(true); };
+    // Cookie店舗で入る（DB読み失敗時はlocalStorageキャッシュでオフライン継続）
+    const cookieFallback=()=>{
+      const ckId=getCookie(CK_SHOP);
+      if(!ckId||ckId==="default"){ console.log("未ログイン: ログイン画面へ"); toUnbound(); return; }
+      readShop(ckId).then(shop=>{
+        if(shop){ console.log("Cookie店舗:",shop.name); enterShop(shop); }
+        else toUnbound(); // CookieのIDがDBに存在しない
+      }).catch(e=>{
+        console.warn("shops読み込み失敗:",e);
+        const local=lg("shift_shops_v6",null)||[];
+        const cached=local.find(s=>s&&s.id===ckId);
+        if(cached) enterShop(cached); else toUnbound();
+      });
+    };
+    // 旧方式フォールバック: 全店舗のperiodsを横断検索（tokens未登録の既存期間用・移行期間が終わったら撤去する）
+    const legacyTokenScan=(token)=>{
+      firebaseDB.ref("global/shops").once("value").then(snap=>{
+        const val=snap.val();
+        const sh=val?Object.values(val).filter(s=>s&&s.id):[];
+        return Promise.all(
           sh.map(shop=>
             firebaseDB.ref(fbPath(shop.id,"periods")).once("value")
               .then(s=>{
                 const v=s.val();
-                if(!v)return{shop,periods:[]};
-                const arr=typeof v==="object"&&!Array.isArray(v)
-                  ?Object.values(v).filter(Boolean)
-                  :Array.isArray(v)?v.filter(Boolean):[];
+                const arr=v?Object.values(v).filter(Boolean):[];
                 return{shop,periods:arr};
               }).catch(()=>({shop,periods:[]}))
           )
@@ -488,120 +488,62 @@ function App(){
             if(found){matched={shop,period:found};break;}
           }
           if(matched){
-            console.log("URL解決(Phase1): shop=",matched.shop.name,"period=",matched.period.label);
-            currentShopIdRef.current=matched.shop.id;
-            setCurrentShopId(matched.shop.id);
+            console.log("URL解決(旧方式): shop=",matched.shop.name,"period=",matched.period.label);
+            // 次回以降O(1)で解決できるよう逆引きを登録
+            firebaseDB.ref(`tokens/${token}`).set({shopId:matched.shop.id,periodId:matched.period.id}).catch(()=>{});
             setApid(matched.period.id);
             setUrlResolved(true);
-            startSubscriptions(matched.shop.id,sh);
+            enterShop(matched.shop);
           } else {
-            // tokenがあるがperiodが見つからない → 管理者URLの可能性
-            // Cookieチェックに戻す
             console.warn("token一致なし(Phase1):", token, "→ Cookieチェックへ");
-            const ckShopId2=getCookie(CK_SHOP);
-            if(ckShopId2){
-              const targetId=ckShopId2;
-              currentShopIdRef.current=targetId;
-              setCurrentShopId(targetId);
-              startSubscriptions(targetId,sh);
-            } else {
-              // Cookieもない → 引き継ぎ画面
-              setShops(sh);
-              setUnbound(true);
-            }
+            cookieFallback();
           }
-          setReady(true);
-        }).catch(()=>{
-          const ckShopId2=getCookie(CK_SHOP);
-          if(ckShopId2){
-            setCurrentShopId(ckShopId2);
-            startSubscriptions(ckShopId2,sh);
-          } else {
-            setShops(sh);
-            setUnbound(true);
-          }
-          setReady(true);
         });
-      } else {
-        // URLなし
-        // 1) Firebase Auth ユーザーがいる場合 → accounts/{uid}/shops を確認
-        if(authUser){
-          firebaseDB.ref(`accounts/${authUser.uid}/shops`).once("value").then(accSnap=>{
-            const linked=accSnap.val(); // {shopId: true, ...} or null
-            if(linked){
-              const linkedIds=Object.keys(linked);
-              const linkedShops=sh.filter(s=>linkedIds.includes(s.id));
-              if(linkedShops.length>0){
-                console.log("Auth店舗:",linkedShops.map(s=>s.name));
-                setAllLinkedShops(linkedShops);
-                // Cookie（最後に使った店舗）→ セッション復元 → 最初の店舗
-                const ckId=getCookie(CK_SHOP);
-                const ssId=ssGet(SS_SHOP,null);
-                const targetId=linkedShops.find(s=>s.id===ckId)?ckId:linkedShops.find(s=>s.id===ssId)?ssId:linkedShops[0].id;
-                const targetShop=linkedShops.find(s=>s.id===targetId)||linkedShops[0];
-                setShops([targetShop]);
-                ls("shift_shops_v6",[targetShop]);
-                currentShopIdRef.current=targetId;
-                setCurrentShopId(targetId);
-                startSubscriptions(targetId,[targetShop]);
-                setReady(true);
-              } else {
-                // アカウントに紐付いた店舗が global/shops にない
-                setShops(sh);
-                setUnbound(true);
-                setReady(true);
-              }
-            } else {
-              // Auth済みだが店舗未登録 → 登録画面へ
-              setShops(sh);
-              setUnbound(true);
-              setReady(true);
-            }
-          }).catch(()=>{
-            setShops(sh);
-            setUnbound(true);
-            setReady(true);
-          });
-        } else {
-          // 2) Auth なし → Cookie チェック（単一店舗のみ）
+      }).catch(()=>cookieFallback());
+    };
+
+    const parsed=parseUrl();
+    // URLにtokenがある場合: tokens逆引きインデックスでshop/periodを特定
+    if(parsed&&parsed.token&&parsed.type==="staff"){
+      const token=parsed.token;
+      firebaseDB.ref(`tokens/${token}`).once("value").then(tsnap=>{
+        const tv=tsnap.val();
+        if(!tv||!tv.shopId) return false;
+        return readShop(tv.shopId).then(shop=>{
+          if(!shop) return false;
+          console.log("URL解決(tokens): shop=",shop.name);
+          setApid(tv.periodId||null);
+          setUrlResolved(true);
+          enterShop(shop);
+          return true;
+        });
+      }).then(ok=>{ if(!ok) legacyTokenScan(token); })
+        .catch(()=>legacyTokenScan(token));
+      return;
+    }
+    // 1) Firebase Auth ユーザーがいる場合 → accounts/{uid}/shops を確認
+    if(authUser){
+      firebaseDB.ref(`accounts/${authUser.uid}/shops`).once("value").then(accSnap=>{
+        const linked=accSnap.val(); // {shopId: true, ...} or null
+        const linkedIds=linked?Object.keys(linked):[];
+        if(linkedIds.length===0){ toUnbound(); return; } // Auth済みだが店舗未登録 → 登録画面へ
+        Promise.all(linkedIds.map(id=>readShop(id).catch(()=>null))).then(shopObjs=>{
+          const linkedShops=shopObjs.filter(s=>s&&s.id);
+          if(linkedShops.length===0){ toUnbound(); return; } // 紐付いた店舗がglobal/shopsにない
+          console.log("Auth店舗:",linkedShops.map(s=>s.name));
+          setAllLinkedShops(linkedShops);
+          // Cookie（最後に使った店舗）→ セッション復元 → 最初の店舗
           const ckId=getCookie(CK_SHOP);
-          if(ckId && ckId!=="default"){
-            const ckShop=sh.find(s=>s.id===ckId);
-            if(ckShop){
-              console.log("Cookie店舗:", ckShop.name);
-              setShops([ckShop]);
-              ls("shift_shops_v6",[ckShop]);
-              currentShopIdRef.current=ckId;
-              setCurrentShopId(ckId);
-              startSubscriptions(ckId,[ckShop]);
-              setReady(true);
-            } else {
-              // CookieのIDがglobal/shopsに存在しない
-              setShops(sh);
-              setUnbound(true);
-              setReady(true);
-            }
-          } else {
-            // Cookieなし・未ログイン → ログイン画面
-            console.log("未ログイン: ログイン画面へ");
-            setShops(sh);
-            setUnbound(true);
-            setReady(true);
-          }
-        }
-      }
-    }).catch(e=>{
-      console.warn("shops読み込み失敗:",e);
-      const ckShopId=getCookie(CK_SHOP);
-      const local=lg("shift_shops_v6",null)||[];
-      const ckShop=ckShopId?local.find(s=>s.id===ckShopId):null;
-      const target=ckShop||(local.length>0?local[0]:makeShop("メイン店舗"));
-      if(!ckShopId)setCookie(CK_SHOP,target.id,365);
-      setShops(local.length>0?local:[target]);
-      setCurrentShopId(target.id);
-      startSubscriptions(target.id,local.length>0?local:[target]);
-      setReady(true);
-    });
+          const ssId=ssGet(SS_SHOP,null);
+          const targetId=linkedShops.find(s=>s.id===ckId)?ckId:linkedShops.find(s=>s.id===ssId)?ssId:linkedShops[0].id;
+          const targetShop=linkedShops.find(s=>s.id===targetId)||linkedShops[0];
+          enterShop(targetShop);
+        });
+      }).catch(()=>toUnbound());
+      return;
+    }
+    // 2) Auth なし → Cookie チェック（単一店舗のみ）
+    cookieFallback();
     }; // loadShops end
 
     return()=>{ if(firebaseDB) firebaseDB.ref(".info/connected").off(); };
@@ -727,6 +669,31 @@ function App(){
     firebaseDB.ref(`accounts/${uid}/shops/${shopId}`).set(true).catch(e=>console.warn("shop link失敗:",e));
   };
 
+  // Auth UIDに紐付いた店舗一覧を直キー読みで取得（global/shopsの全件読みはしない）
+  const fetchLinkedShops=async(uid)=>{
+    const snap=await firebaseDB.ref(`accounts/${uid}/shops`).once("value");
+    const linkedIds=Object.keys(snap.val()||{});
+    const shopSnaps=await Promise.all(linkedIds.map(id=>firebaseDB.ref(`global/shops/${id}`).once("value").catch(()=>null)));
+    return shopSnaps.map(s=>s&&s.val()).filter(s=>s&&s.id);
+  };
+
+  // ログイン直後の共通処理: 紐付き店舗を読み、先頭店舗でセッション開始
+  const _enterLinkedShops=async(user)=>{
+    const linkedShops=await fetchLinkedShops(user.uid);
+    setAllLinkedShops(linkedShops);
+    if(linkedShops.length>0){
+      const targetShop=linkedShops[0];
+      setShops([targetShop]);
+      ls("shift_shops_v6",[targetShop]);
+      currentShopIdRef.current=targetShop.id;
+      setCurrentShopId(targetShop.id);
+      startSubscriptions(targetShop.id,[targetShop]);
+      setUnbound(false);
+    } else {
+      setUnbound(true);
+    }
+  };
+
   // Googleでサインイン
   const signInWithGoogle=async()=>{
     if(!firebaseAuth){setAuthError("Firebase Auth未初期化");return;}
@@ -739,29 +706,7 @@ function App(){
       ph("login",{method:"google"});
       // accounts/{uid}/shops を確認
       if(!firebaseDB){setAuthLoading(false);return;}
-      const snap=await firebaseDB.ref(`accounts/${user.uid}/shops`).once("value");
-      const linked=snap.val();
-      const allSnap=await firebaseDB.ref("global/shops").once("value");
-      const val=allSnap.val();
-      const sh=val?(typeof val==="object"&&!Array.isArray(val)?Object.values(val).filter(s=>s&&s.id):(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id)):[];
-      if(linked){
-        const linkedIds=Object.keys(linked);
-        const linkedShops=sh.filter(s=>linkedIds.includes(s.id));
-        setAllLinkedShops(linkedShops);
-        if(linkedShops.length>0){
-          const targetShop=linkedShops[0];
-          setShops([targetShop]);
-          ls("shift_shops_v6",[targetShop]);
-          currentShopIdRef.current=targetShop.id;
-          setCurrentShopId(targetShop.id);
-          startSubscriptions(targetShop.id,[targetShop]);
-          setUnbound(false);
-        } else {
-          setUnbound(true);
-        }
-      } else {
-        setUnbound(true);
-      }
+      await _enterLinkedShops(user);
     }catch(e){
       console.warn("Google sign-in failed:",e);
       if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request"){}
@@ -774,25 +719,7 @@ function App(){
     setAuthUser(user);
     ph("login",{method:"email"});
     if(!firebaseDB){setAuthLoading(false);return;}
-    const snap=await firebaseDB.ref(`accounts/${user.uid}/shops`).once("value");
-    const linked=snap.val();
-    const allSnap=await firebaseDB.ref("global/shops").once("value");
-    const val=allSnap.val();
-    const sh=val?(typeof val==="object"&&!Array.isArray(val)?Object.values(val).filter(s=>s&&s.id):(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id)):[];
-    if(linked){
-      const linkedIds=Object.keys(linked);
-      const linkedShops=sh.filter(s=>linkedIds.includes(s.id));
-      setAllLinkedShops(linkedShops);
-      if(linkedShops.length>0){
-        const targetShop=linkedShops[0];
-        setShops([targetShop]);
-        ls("shift_shops_v6",[targetShop]);
-        currentShopIdRef.current=targetShop.id;
-        setCurrentShopId(targetShop.id);
-        startSubscriptions(targetShop.id,[targetShop]);
-        setUnbound(false);
-      } else {setUnbound(true);}
-    } else {setUnbound(true);}
+    await _enterLinkedShops(user);
   };
   const signInWithEmail=async(email,password)=>{
     if(!firebaseAuth){setAuthError("Firebase Auth未初期化");return;}
@@ -996,9 +923,12 @@ function App(){
         expiresAt:expiresAt.toISOString(),
         createdBy:authUser.email
       });
+      // 参加者が招待主のaccountsを読まなくて済むよう、店舗紐付けのスナップショットを埋め込む
+      const shopsSnap=await firebaseDB.ref(`accounts/${authUser.uid}/shops`).once("value");
       await firebaseDB.ref(`inviteCodes/${code}`).set({
         uid:authUser.uid,
-        expiresAt:expiresAt.toISOString()
+        expiresAt:expiresAt.toISOString(),
+        shops:shopsSnap.val()||null
       });
       setInviteCodeDisplay(code);
       console.log("招待コード生成:", code);
@@ -1027,9 +957,15 @@ function App(){
         role:'member'
       });
       // shops をマージ（上書きではなく update でマージ）
-      const linkedShops=await firebaseDB.ref(`accounts/${foundUid}/shops`).once('value');
-      if(linkedShops.val()){
-        await firebaseDB.ref(`accounts/${authUser.uid}/shops`).update(linkedShops.val());
+      // 新形式: コードに埋め込まれたスナップショットを使う（他人のaccountsを読まない）
+      if(codeData.shops){
+        await firebaseDB.ref(`accounts/${authUser.uid}/shops`).update(codeData.shops);
+      }else{
+        // 旧形式コードの互換（新ルール適用後は他人のaccounts読み取りが拒否されるため失敗し得る）
+        const linkedShops=await firebaseDB.ref(`accounts/${foundUid}/shops`).once('value');
+        if(linkedShops.val()){
+          await firebaseDB.ref(`accounts/${authUser.uid}/shops`).update(linkedShops.val());
+        }
       }
       setUnbound(false);
       setInviteCode("");
@@ -1044,13 +980,8 @@ function App(){
     if(!authUser || !firebaseDB) return;
     try{
       await firebaseDB.ref(`accounts/${authUser.uid}/shops/${shopId}`).set(true);
-      const snap=await firebaseDB.ref(`accounts/${authUser.uid}/shops`).once('value');
-      const linkedIds=Object.keys(snap.val()||{});
-      // allLinkedShops を全連携店舗で更新（global/shops から取得）
-      const allSnap=await firebaseDB.ref("global/shops").once('value');
-      const allVal=allSnap.val();
-      const allSh=allVal?(typeof allVal==="object"&&!Array.isArray(allVal)?Object.values(allVal).filter(s=>s&&s.id):Object.values(allVal).filter(s=>s&&s.id)):[];
-      const newLinked=allSh.filter(s=>linkedIds.includes(s.id));
+      // allLinkedShops を全連携店舗で更新（直キー読み）
+      const newLinked=await fetchLinkedShops(authUser.uid);
       setAllLinkedShops(newLinked);
       // shops（セッション）は変更しない
       console.log("既存店舗を企業アカウントに連携:", shopId);
@@ -1065,15 +996,23 @@ function App(){
     if(allLinkedShops.length===0&&shops.length<=1){tt("✕ 最後の店舗は解除できません");return;}
     try{
       await firebaseDB.ref(`accounts/${authUser.uid}/shops/${targetShopId}`).remove();
-      setAllLinkedShops(prev=>prev.filter(s=>s.id!==targetShopId));
-      const newShops=shops.filter(s=>s.id!==targetShopId);
+      const remainingLinked=allLinkedShops.filter(s=>s.id!==targetShopId);
+      setAllLinkedShops(remainingLinked);
+      let newShops=shops.filter(s=>s.id!==targetShopId);
+      if(currentShopId===targetShopId){
+        // セッションのshopsが空になる場合は残りの連携店舗から次を選ぶ（TypeError防止）
+        const next=newShops[0]||remainingLinked[0];
+        if(next){
+          if(newShops.length===0)newShops=[next];
+          setCurrentShopId(next.id);
+          startSubscriptions(next.id,newShops);
+        }else{
+          setCurrentShopId(null);
+          setUnbound(true);
+        }
+      }
       setShops(newShops);
       ls("shift_shops_v6",newShops);
-      if(currentShopId===targetShopId){
-        const next=newShops[0];
-        setCurrentShopId(next.id);
-        startSubscriptions(next.id,newShops);
-      }
       tt("✓ 店舗の連携を解除しました");
     }catch(e){
       console.warn("連携解除失敗:", e);
@@ -1083,6 +1022,17 @@ function App(){
 
   // URLにtokenが含まれるか（スタッフ専用モード・期間固定）
   const [urlLocked]=useState(()=>{ const p=parseUrl(); return !!(p&&p.token); });
+
+  // tokens逆引きインデックスの補完（既存期間の自動移行・冪等）。管理者セッションのみ実行
+  useEffect(()=>{
+    if(!firebaseDB||urlLocked||!ready)return;
+    if(!sid||sid==="default")return;
+    periods.forEach(p=>{
+      if(!p||!p.urlToken||!p.id)return;
+      if(p.shopId&&p.shopId!==sid)return; // 店舗切替直後の古いstate混入を防ぐ
+      firebaseDB.ref(`tokens/${p.urlToken}`).set({shopId:p.shopId||sid,periodId:p.id}).catch(()=>{});
+    });
+  },[periods,sid,ready,urlLocked]);
 
   // ===================================================================
   // Phase3: URLなし時のapid初期化（セッション復元優先）
@@ -1125,9 +1075,11 @@ function App(){
   },[sid]);
   const saveSettings=useCallback(v=>{ setSettings(v); ls(storeKey(sid,"settings_v6"),v); fbW(fbPath(sid,"settings"),v); touchLastActivity(); },[sid,touchLastActivity]);
   const savePeriods =useCallback(v=>{
-    // 削除された期間のsubsをFirebaseから削除
-    const deletedIds=periods.filter(p=>!v.find(np=>np.id===p.id)).map(p=>p.id);
+    // 削除された期間のsubsとURLトークン逆引きをFirebaseから削除
+    const deletedPeriods=periods.filter(p=>!v.find(np=>np.id===p.id));
+    const deletedIds=deletedPeriods.map(p=>p.id);
     if(deletedIds.length>0&&firebaseDB){
+      deletedPeriods.forEach(p=>{ if(p.urlToken) firebaseDB.ref(`tokens/${p.urlToken}`).remove().catch(()=>{}); });
       const newSubs=subs.filter(s=>!deletedIds.includes(s.periodId));
       setSubs(newSubs); ls(storeKey(sid,"subs_v6"),newSubs);
       firebaseDB.ref(fbPath(sid,"subs")).once("value").then(snap=>{
@@ -1143,6 +1095,10 @@ function App(){
       const obj={};
       v.forEach(p=>{ if(p&&p.id) obj[p.id]=p; });
       firebaseDB.ref(fbPath(sid,"periods")).set(obj).catch(e=>console.warn("periods書き込み失敗:",e));
+      // 追加された期間のURLトークン逆引きを登録（スタッフURLのO(1)解決用）
+      v.filter(p=>p&&p.urlToken&&!periods.find(op=>op.id===p.id)).forEach(p=>{
+        firebaseDB.ref(`tokens/${p.urlToken}`).set({shopId:sid,periodId:p.id}).catch(()=>{});
+      });
     }
     touchLastActivity();
   },[sid,periods,subs,touchLastActivity]);
@@ -1170,26 +1126,8 @@ function App(){
     }
   },[]);
 
-  // 1年間未更新の店舗をFirebaseから自動削除（初回ロード後1度だけ実行）
-  const purgedRef=useRef(false);
-  useEffect(()=>{
-    if(!ready||!sid||purgedRef.current)return;
-    purgedRef.current=true;
-    if(!firebaseDB)return;
-    const oneYearAgo=new Date();oneYearAgo.setFullYear(oneYearAgo.getFullYear()-1);
-    const snapshot=[...shops];
-    snapshot.forEach(sh=>{
-      if(!sh.id)return;
-      firebaseDB.ref(`shops/${sh.id}/lastActivity`).once("value").then(snap=>{
-        const la=snap.val();
-        const lastDate=la?new Date(la):(sh.createdAt?new Date(sh.createdAt):null);
-        if(!lastDate||lastDate>oneYearAgo)return;
-        console.log(`[Shifty] 1年間未更新の店舗を削除: ${sh.id} (${sh.name})`);
-        firebaseDB.ref(`shops/${sh.id}`).remove().catch(()=>{});
-        firebaseDB.ref(`global/shops/${sh.id}`).remove().catch(()=>{});
-      }).catch(()=>{});
-    });
-  },[ready,sid]);
+  // 1年間未更新の店舗の自動削除は Cloud Functions（purgeInactiveShops）のスケジュール実行に移行済み。
+  // クライアント側での削除は端末時計ズレ・壊れたlastActivityによる誤削除リスクがあるため行わない。
 
   // ap: apidに対応するperiodを取得
   // 最新の期間 = startDateが最も新しいperiod
@@ -1213,12 +1151,9 @@ function App(){
     if(!code){setInviteError("店舗コードを入力してください");return;}
     if(!firebaseDB){setInviteError("Firebase未接続です");return;}
     setInviteError("確認中...");
-    firebaseDB.ref("global/shops").once("value").then(snap=>{
-      const val=snap.val();
-      if(!val){setInviteError("店舗情報が見つかりません");return;}
-      const sh=typeof val==="object"&&!Array.isArray(val)?Object.values(val).filter(s=>s&&s.id):val.filter(Boolean);
-      const found=sh.find(s=>s&&s.id===code);
-      if(found){
+    firebaseDB.ref(`global/shops/${code}`).once("value").then(snap=>{
+      const found=snap.val();
+      if(found&&found.id===code){
         // Auth ユーザーがいればアカウントにも紐付け
         if(authUser) linkShopToAccount(authUser.uid,code);
         // 古いCookie を完全削除（複数店舗対応の遺跡削除）
@@ -1248,30 +1183,21 @@ function App(){
     console.log("createNewShop: 実行開始");
     if(!firebaseDB){setInviteError("Firebase未接続");return;}
     setInviteError("作成中...");
-    firebaseDB.ref("global/shops").once("value").then(snap=>{
-      const val=snap.val();
-      const sh=val?(typeof val==="object"&&!Array.isArray(val)
-        ?Object.values(val).filter(s=>s&&s.id)
-        :(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id)):[];
-      const newShop=makeShop("新しい店舗");
-      console.log("createNewShop: 新規店舗作成",newShop.id,newShop.name);
-      const obj={};obj[newShop.id]=newShop;
-      firebaseDB.ref("global/shops").update(obj);
+    const newShop=makeShop("新しい店舗");
+    console.log("createNewShop: 新規店舗作成",newShop.id,newShop.name);
+    firebaseDB.ref(`global/shops/${newShop.id}`).set(newShop).then(()=>{
       // Auth ユーザーはアカウントにも紐付け
       if(authUser) linkShopToAccount(authUser.uid,newShop.id);
       // Cookie: 単一店舗のみ保存（上書き）
       setCookie(CK_SHOP,newShop.id,365);
       // shops 配列にも新規店舗だけ
       const newShops=[newShop];
-      console.log("createNewShop: setShops呼び出し前",{newShops:newShops.map(s=>s.id)});
       setShops(newShops);
       currentShopIdRef.current=newShop.id;
       setCurrentShopId(newShop.id);
-      console.log("createNewShop: startSubscriptions呼び出し前",{targetSid:newShop.id,shopListLength:newShops.length});
       startSubscriptions(newShop.id,newShops);
       setUnbound(false);
       setInviteError("");
-      console.log("createNewShop: 完了");
     }).catch(()=>setInviteError("エラーが発生しました。再試行してください。"));
   };
 
@@ -1455,8 +1381,7 @@ function App(){
               if(firebaseDB) firebaseDB.ref(`shops/${currentSid}/subs/${subId}`).remove().catch(e=>console.warn("sub削除失敗:",e));
             }}
             shopName={shop?.name}/>
-        :(auth
-          ?<AdminView settings={effectiveSettings} periods={periods} subs={subs} staffList={staffList} shops={shops}
+        :<AdminView settings={effectiveSettings} periods={periods} subs={subs} staffList={staffList} shops={shops}
               currentShopId={sid} saveSettings={saveSettings} savePeriods={savePeriods} saveSubs={saveSubs}
               saveStaff={saveStaff} saveShops={saveShops}
               globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates}
@@ -1482,7 +1407,6 @@ function App(){
               onVerifyAndLinkEmail={verifyAndLinkEmail} onUnlinkProvider={unlinkProvider}
               onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkEmail={signInAndLinkEmail}
               onGenerateInviteCode={generateInviteCode} onJoinByInviteCode={joinByInviteCode} onLinkExistingShop={linkExistingShopToAuth} onUnlinkShop={unlinkShopFromAuth} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>
-          :null)
       }
     </div>
   );
@@ -1502,6 +1426,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   const[toast,setToast]=useState(null);
   const[sm,setSm]=useState(false);
   const editingRef=useRef(false); // 「修正する」でユーザーが手動編集中フラグ
+  const dirtyRef=useRef(false); // 提出前フォームに未保存の入力があるフラグ（他人の提出によるsubs更新での消去防止）
+  const initedApidRef=useRef(null); // 初期化済みのapid（期間が実際に変わったときだけリセットする）
   const[comment,setComment]=useState("");
   const[editN,setEditN]=useState(false);
   const[ni,setNi]=useState("");
@@ -1511,39 +1437,44 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   const dl=idp(ap?.deadlineDate);
   const dates=ap?gd(ap.startDate,ap.endDate):[];
 
-  // 期間変更時にシフトデータをリセット
-  // Cookieに保存された名前がある場合は提出済みデータを復元
+  // 期間が実際に変わったとき（および初回）だけシフトデータを初期化する。
+  // subs更新（他スタッフの提出）でこのeffectが再実行されても、同一期間ならリセットしない。
   useEffect(()=>{
     if(!apid||!ap)return;
-    // ユーザーが手動で修正中の場合はFirebase更新でdoneを上書きしない
-    if(editingRef.current)return;
+    if(initedApidRef.current===apid)return;
+    initedApidRef.current=apid;
+    dirtyRef.current=false;
+    editingRef.current=false;
     const ckName=shopId&&apid?getCookie(ckStaffKey(shopId,apid))||"":"";
-    if(ckName){
-      // 提出済みデータを検索
-      const prevSub=subs.find(s=>s.staffName===ckName&&s.periodId===apid);
-      if(prevSub){
-        // 提出済み → データを復元して完了画面を表示
-        setName(ckName);
-        const init={};
-        gd(ap.startDate,ap.endDate).forEach(d=>{
-          init[d]=(prevSub.shifts||{})[d]||{status:"holiday"};
-        });
-        setSd(init);
-        setComment(prevSub.comment||"");
-        setDone(true);
-        return;
-      }
-      // 名前はあるが未提出 → 名前だけ復元
-      setName(ckName);
-    }
+    if(ckName)setName(ckName);
     const i={};dates.forEach(d=>{i[d]={status:"holiday"};});
     setSd(i);setDone(false);setComment("");
-  },[apid,ap?.startDate,ap?.endDate,shopId,subs]);
+  },[apid,ap?.startDate,ap?.endDate,shopId]);
+
+  // Cookieに保存された名前の提出済みデータを復元して完了画面を表示。
+  // ユーザーが入力中（dirty/editing）のときは復元しない＝他人の提出で入力中フォームが消えるバグの防止。
+  useEffect(()=>{
+    if(!apid||!ap)return;
+    if(editingRef.current||dirtyRef.current||done)return;
+    const ckName=shopId&&apid?getCookie(ckStaffKey(shopId,apid))||"":"";
+    if(!ckName)return;
+    const prevSub=subs.find(s=>s.staffName===ckName&&s.periodId===apid);
+    if(!prevSub)return;
+    setName(ckName);
+    const init={};
+    gd(ap.startDate,ap.endDate).forEach(d=>{
+      init[d]=(prevSub.shifts||{})[d]||{status:"holiday"};
+    });
+    setSd(init);
+    setComment(prevSub.comment||"");
+    setDone(true);
+  },[apid,ap?.startDate,ap?.endDate,shopId,subs,done]);
 
   const tt_=m=>{setToast(m);clearTimeout(tr.current);tr.current=setTimeout(()=>setToast(null),2500);};
-  const upd=(ds,u)=>setSd(p=>({...p,[ds]:{...p[ds],...u}}));
+  const upd=(ds,u)=>{dirtyRef.current=true;setSd(p=>({...p,[ds]:{...p[ds],...u}}));};
   const reset=()=>{
     editingRef.current=false;
+    dirtyRef.current=false;
     // CookieとStateをリセット
     if(shopId&&apid) delCookie(ckStaffKey(shopId,apid));
     setName("");
@@ -1578,6 +1509,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     const applicable=dates.filter(ds=>!gc(ds).some(c=>c.closed));
     const alreadyApplied=applicable.length>0&&applicable.every(ds=>{const s=sd[ds];return s?.status==="work"&&s.start===cand.start&&s.end===cand.end;});
     editingRef.current=true;
+    dirtyRef.current=true;
     setSd(p=>{
       const n={...p};
       applicable.forEach(ds=>{
@@ -1610,7 +1542,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       return nw;
     };
     const sub={
-      id:existSub?existSub.id:Date.now().toString(),
+      id:existSub?existSub.id:genSecureId(24), // Date.now()は同時提出でID衝突するためランダムIDを使用
       periodId:apid,
       staffName,
       submittedAt:existSub?existSub.submittedAt:new Date().toISOString(),
@@ -1632,6 +1564,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     // スタッフ名をCookieに保存（1年間）
     if(shopId&&apid) setCookie(ckStaffKey(shopId,apid),staffName,365);
     editingRef.current=false;
+    dirtyRef.current=false;
     ph("shift_submitted",{period_id:apid,is_update:!!existSub,work_days:Object.values(sd).filter(s=>s?.status==="work").length});
     setConf(false);setDone(true);
   };
@@ -1691,7 +1624,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                   <input ref={nr} value={ni} onChange={e=>{setNi(e.target.value);setShowSuggest(true);}}
                     onKeyDown={e=>{
                       if(e.key==="Enter"){
-                        if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);setName(resolved);}
+                        if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);dirtyRef.current=true;setName(resolved);}
                         setEditN(false);setShowSuggest(false);
                       }
                       if(e.key==="Escape"){setEditN(false);setShowSuggest(false);}
@@ -1700,14 +1633,14 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                     placeholder="お名前を入力" maxLength={50}
                     style={{flex:1,padding:"10px 12px",fontSize:18,fontWeight:700,background:"var(--c-bg)",border:"2px solid #f87036",borderRadius:10,outline:"none",color:"var(--c-text)",minWidth:0}}/>
                   <button onClick={()=>{
-                    if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);setName(resolved);}
+                    if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);dirtyRef.current=true;setName(resolved);}
                     setEditN(false);setShowSuggest(false);
                   }} style={{padding:"10px 16px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",flexShrink:0}}>確定</button>
                 </div>
                 {showSuggest&&filteredSuggests.length>0&&(
                   <div className="name-suggest">
                     {filteredSuggests.map((s,i)=>(
-                      <div key={i} className="name-suggest-item" onMouseDown={e=>{e.preventDefault();setName(s.registered);setNi(s.registered);setEditN(false);setShowSuggest(false);}}
+                      <div key={i} className="name-suggest-item" onMouseDown={e=>{e.preventDefault();dirtyRef.current=true;setName(s.registered);setNi(s.registered);setEditN(false);setShowSuggest(false);}}
                         style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                         <span>{s.display}</span>
                         {s.isAlias&&<span style={{fontSize:11,color:"#f87036",background:"rgba(248,112,54,.1)",padding:"1px 6px",borderRadius:4,flexShrink:0}}>→ {s.registered}</span>}
@@ -1815,7 +1748,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
             <span style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>コメント・備考（任意）</span>
           </div>
           <div style={{padding:"14px 16px"}}>
-            <textarea value={comment} onChange={e=>setComment(e.target.value)} disabled={dl} maxLength={500}
+            <textarea value={comment} onChange={e=>{dirtyRef.current=true;setComment(e.target.value);}} disabled={dl} maxLength={500}
               placeholder="休み希望の理由、変動できる日、その他連絡事項など"
               style={{width:"100%",minHeight:80,padding:"10px 12px",fontSize:14,color:"var(--c-text)",background:"var(--c-bg)",border:"2px solid #E5E7EB",borderRadius:10,outline:"none",resize:"vertical",lineHeight:1.6,fontFamily:"inherit"}}
               onFocus={e=>e.target.style.borderColor="#f87036"} onBlur={e=>e.target.style.borderColor="var(--c-border)"}></textarea>
@@ -1940,7 +1873,8 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
   const handleCellClick=(sub,ds)=>{if(!sub)return;setEditTarget({subId:sub.id,ds});};
   const applyCellEdit=(subId,ds,newStatus,newStart,newEnd)=>{
     const sub=submitted.find(s=>s.id===subId);if(!sub)return;
-    const shifts={...(sub.shifts||{}),[ds]:{status:newStatus,start:newStart,end:newEnd}};
+    // 既存フィールドを保持してマージ（adjustedStart/End等の管理者調整値・changedフラグを消さない）
+    const shifts={...(sub.shifts||{}),[ds]:{...((sub.shifts||{})[ds]||{}),status:newStatus,start:newStart,end:newEnd}};
     onEditSub({...sub,shifts});
     setEditTarget(null);
   };
@@ -2061,38 +1995,6 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
 }
 
 // ============================================================
-// 管理者ログイン
-// ============================================================
-function AdminLogin({settings,onAuth}){
-  const[pw,setPw]=useState(""),[err,setErr]=useState("");
-  const NS="admin";
-  const go=()=>{
-    if(_isLocked(NS)){setErr(_lockMsg(NS));return;}
-    if(pw===(settings.password||DEFAULT_PW)){_resetAttempts(NS);onAuth();}
-    else{
-      const n=_incAttempts(NS);
-      const rem=_MAX_ATTEMPTS-n;
-      setPw("");
-      if(_isLocked(NS)) setErr(_lockMsg(NS));
-      else setErr(`パスワードが違います（残り${rem}回）`);
-    }
-  };
-  const locked=_isLocked(NS);
-  return(
-    <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 44px)",background:"var(--c-bg)",padding:20}}>
-      <div style={{background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:20,padding:"36px 28px",width:"100%",maxWidth:360,textAlign:"center",animation:"sI .3s",boxShadow:"0 4px 16px rgba(0,0,0,.08)"}}>
-        <div style={{fontSize:48,marginBottom:12}}></div>
-        <div style={{fontSize:20,fontWeight:700,color:"#1F2937",marginBottom:4}}>管理者ログイン</div>
-        <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:24}}>パスワードを入力してください</div>
-        <input type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!locked&&go()} placeholder="••••••••" maxLength={128} disabled={locked} style={{width:"100%",padding:"13px 16px",background:"var(--c-card)",border:"1px solid #D1D5DB",borderRadius:10,color:"#1F2937",fontSize:16,outline:"none",textAlign:"center",letterSpacing:".2em",marginBottom:12,opacity:locked?.5:1}}/>
-        <button onClick={go} disabled={locked} style={{width:"100%",padding:14,background:locked?"#9CA3AF":"#f87036",border:"none",borderRadius:10,color:"white",fontSize:16,fontWeight:700,cursor:locked?"not-allowed":"pointer"}}>ログイン</button>
-        <div style={{fontSize:13,color:"#EF4444",marginTop:10,minHeight:20}}>{err}</div>
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
 // 管理者画面
 // ============================================================
 function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading}){
@@ -2110,6 +2012,27 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
   const shopMenuRef=useRef();
   const tt=m=>{setToast(m);clearTimeout(tr.current);tr.current=setTimeout(()=>setToast(null),2500);};
   const currentShop=shops.find(s=>s.id===currentShopId)||shops[0];
+
+  // 店舗コードで既存店舗を追加（global/shopsの直キー読み。Enter/クリック共通）
+  const addShopByCode=()=>{
+    const code=shopCodeInput.trim();
+    if(!code){setShopCodeError("コードを入力してください");return;}
+    const lim=PLAN_LIMITS[plan]?.shops??Infinity;
+    if(shops.length>=lim){setShopCodeMode(false);setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
+    if(!firebaseDB){setShopCodeError("Firebase未接続");return;}
+    setShopCodeError("確認中...");
+    firebaseDB.ref(`global/shops/${code}`).once("value").then(snap=>{
+      const found=snap.val();
+      if(!found||found.id!==code){setShopCodeError("コードが正しくありません");return;}
+      if(shops.find(s=>s.id===code)){setShopCodeError("既に追加済みです");return;}
+      const newShops=[...shops,found];
+      saveShops(newShops);
+      if(authUser) firebaseDB.ref(`accounts/${authUser.uid}/shops/${code}`).set(true);
+      setCurrentShopId(code);
+      setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");
+      tt(`✓ 「${found.name}」を追加しました`);
+    }).catch(()=>setShopCodeError("確認に失敗しました"));
+  };
 
   // 外タップでドロップダウンを閉じる
   useEffect(()=>{
@@ -2170,50 +2093,10 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                         <div style={{fontSize:11,color:"var(--c-text3)",marginBottom:6}}>店舗コードを入力して既存店舗を追加</div>
                         <div style={{display:"flex",gap:6}}>
                           <input value={shopCodeInput} onChange={e=>{setShopCodeInput(e.target.value);setShopCodeError("");}}
-                            onKeyDown={e=>e.key==="Enter"&&(async()=>{
-                              const code=shopCodeInput.trim();
-                              if(!code){setShopCodeError("コードを入力してください");return;}
-                              const lim=PLAN_LIMITS[plan]?.shops??Infinity;
-                              if(shops.length>=lim){setShopCodeMode(false);setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
-                              if(!firebaseDB){setShopCodeError("Firebase未接続");return;}
-                              setShopCodeError("確認中...");
-                              firebaseDB.ref("global/shops").once("value").then(snap=>{
-                                const val=snap.val();
-                                const sh=val?(typeof val==="object"&&!Array.isArray(val)?Object.values(val).filter(s=>s&&s.id):(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id)):[];
-                                const found=sh.find(s=>s.id===code);
-                                if(!found){setShopCodeError("コードが正しくありません");return;}
-                                if(shops.find(s=>s.id===code)){setShopCodeError("既に追加済みです");return;}
-                                const newShops=[...shops,found];
-                                saveShops(newShops);
-                                if(authUser) firebaseDB.ref(`accounts/${authUser.uid}/shops/${code}`).set(true);
-                                setCurrentShopId(code);
-                                setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");
-                                tt(`✓ 「${found.name}」を追加しました`);
-                              }).catch(()=>setShopCodeError("確認に失敗しました"));
-                            })()}
+                            onKeyDown={e=>e.key==="Enter"&&addShopByCode()}
                             placeholder="店舗コードを貼り付け"
                             style={{flex:1,padding:"7px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:12,outline:"none"}}/>
-                          <button onClick={async()=>{
-                            const code=shopCodeInput.trim();
-                            if(!code){setShopCodeError("コードを入力してください");return;}
-                            const lim=PLAN_LIMITS[plan]?.shops??Infinity;
-                            if(shops.length>=lim){setShopCodeMode(false);setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
-                            if(!firebaseDB){setShopCodeError("Firebase未接続");return;}
-                            setShopCodeError("確認中...");
-                            firebaseDB.ref("global/shops").once("value").then(snap=>{
-                              const val=snap.val();
-                              const sh=val?(typeof val==="object"&&!Array.isArray(val)?Object.values(val).filter(s=>s&&s.id):(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id)):[];
-                              const found=sh.find(s=>s.id===code);
-                              if(!found){setShopCodeError("コードが正しくありません");return;}
-                              if(shops.find(s=>s.id===code)){setShopCodeError("既に追加済みです");return;}
-                              const newShops=[...shops,found];
-                              saveShops(newShops);
-                              if(authUser) firebaseDB.ref(`accounts/${authUser.uid}/shops/${code}`).set(true);
-                              setCurrentShopId(code);
-                              setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");
-                              tt(`✓ 「${found.name}」を追加しました`);
-                            }).catch(()=>setShopCodeError("確認に失敗しました"));
-                          }} style={{padding:"7px 10px",background:"#f87036",border:"none",borderRadius:8,fontSize:12,fontWeight:700,color:"white",cursor:"pointer"}}>追加</button>
+                          <button onClick={addShopByCode} style={{padding:"7px 10px",background:"#f87036",border:"none",borderRadius:8,fontSize:12,fontWeight:700,color:"white",cursor:"pointer"}}>追加</button>
                         </div>
                         {shopCodeError&&<div style={{fontSize:11,color:shopCodeError==="確認中..."?"#F59E0B":"#FF4757",marginTop:4}}>{shopCodeError}</div>}
                       </div>}
@@ -2360,7 +2243,29 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return{numeric:m[1],note:suf}; // 日本語含む任意サフィックスはそのまま保持
   };
 
-  const _getSub=(name)=>subs.find(s=>s.periodId===selPid&&s.staffName===name);
+  // 提出データの逆引きインデックス（subs.findのO(n)探索をO(1)に。ヒートマップ・集計の再計算コスト削減）
+  const subsByKey=useMemo(()=>{
+    const m=new Map();
+    subs.forEach(s=>{
+      if(!s||!s.periodId||!s.staffName)return;
+      const k=s.periodId+"|"+s.staffName;
+      if(!m.has(k))m.set(k,s); // 重複時はfindと同じ「最初の1件」を採用
+    });
+    return m;
+  },[subs]);
+  // 週間集計用: スタッフ名+日付 → 出勤シフト（期間をまたいだ検索の高速化）
+  const workShiftByStaffDate=useMemo(()=>{
+    const m=new Map();
+    subs.forEach(s=>{
+      if(!s||!s.staffName||!s.shifts)return;
+      Object.entries(s.shifts).forEach(([d,sh])=>{
+        const k=s.staffName+"|"+d;
+        if(sh&&sh.status==="work"&&!m.has(k))m.set(k,sh);
+      });
+    });
+    return m;
+  },[subs]);
+  const _getSub=(name)=>subsByKey.get(selPid+"|"+name);
   // 管理者編集値(adjustedXxx)優先、なければスタッフ提出値(xxx)にフォールバック
   const getStoredTime=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";return(field==="start"?(sh.adjustedStart??sh.start):(sh.adjustedEnd??sh.end))||"";};
   const getStoredNote=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";return(field==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"";};
@@ -2398,27 +2303,39 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
   // section: "kit" or "hall" — サフィックスh/kで所属を上書き、xはどちらにも入らない
   // 列hr[hr*60,(hr+1)*60)にカウント: stM<(hr+1)*60 && enM>hr*60
+  // 日付×スタッフの実効出勤情報（開始・延長込み終了・休憩・所属）を事前計算しておき、
+  // ヒートマップの各セルは区間判定だけで数える（従来は日付×時間×スタッフ×subs.findの全走査で入力が重かった）
+  const heatData=useMemo(()=>{
+    const perDate={};
+    dates.forEach(date=>{
+      const arr=[];
+      realStaff.forEach(name=>{
+        const stM=timeToMin(getEffHHMM(name,date,"start"));let enM=timeToMin(getEffHHMM(name,date,"end"));
+        if(stM===null||enM===null)return;
+        const hsh=getHeatShift(name,date);
+        // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）
+        if(hsh){const ot=getOT(name,settings,hsh);if(ot>0)enM+=ot;}
+        const note=getShiftNote(name,date);
+        if(note==="x")return;
+        // 休憩適用者の休憩区間（時間帯セルを完全に覆う場合にカウント除外するため保持）
+        const breaks=(hsh&&isBreakEligible(hsh))
+          ?getBreaksFor(settings,date,name,hsh).map(br=>({bs:timeToMin(br.start),be:timeToMin(br.end)})).filter(b=>b.bs!==null&&b.be!==null)
+          :[];
+        const section=note==="h"?"hall":note==="k"?"kit":(hallStaff.includes(name)?"hall":"kit");
+        arr.push({stM,enM,breaks,section});
+      });
+      perDate[date]=arr;
+    });
+    return perDate;
+  },[subs,heatEdits,settings,selPid,staffList,periods]);
   const countHeat=(section,date,hr)=>{
-    let cnt=0;
     const h0=hr*60,h1=(hr+1)*60;
-    realStaff.forEach(name=>{
-      const stM=timeToMin(getEffHHMM(name,date,"start"));let enM=timeToMin(getEffHHMM(name,date,"end"));
-      if(stM===null||enM===null)return;
-      const hsh=getHeatShift(name,date);
-      // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）
-      if(hsh){const ot=getOT(name,settings,hsh);if(ot>0)enM+=ot;}
-      if(stM>=h1||enM<=h0)return;
-      const note=getShiftNote(name,date);
-      if(note==="x")return;
-      // 休憩適用者: 休憩がこの1時間帯を完全に覆う場合はカウントしない
-      if(hsh&&isBreakEligible(hsh)){
-        const brs=getBreaksFor(settings,date,name,hsh);
-        const covered=brs.some(br=>{const bs=timeToMin(br.start),be=timeToMin(br.end);return bs!==null&&be!==null&&bs<=h0&&be>=h1;});
-        if(covered)return;
-      }
-      const orig=hallStaff.includes(name)?"hall":"kit";
-      const eff=note==="h"?"hall":note==="k"?"kit":orig;
-      if(eff===section)cnt++;
+    let cnt=0;
+    (heatData[date]||[]).forEach(e=>{
+      if(e.section!==section)return;
+      if(e.stM>=h1||e.enM<=h0)return;
+      if(e.breaks.some(b=>b.bs<=h0&&b.be>=h1))return;
+      cnt++;
     });
     return cnt;
   };
@@ -2442,7 +2359,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const sameMoPeriods=period?[...periods].filter(p=>{const d=pd(p.startDate);return d.getFullYear()===perD.getFullYear()&&d.getMonth()===perD.getMonth();}).sort((a,b)=>a.startDate.localeCompare(b.startDate)):[];
   const getPeriodMin=(pid,name)=>{
     const p=periods.find(pp=>pp.id===pid);if(!p)return 0;
-    return gd(p.startDate,p.endDate).reduce((acc,d)=>{const sub=subs.find(ss=>ss.periodId===pid&&ss.staffName===name);const sh=sub?.shifts?.[d];return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh)):0);},0);
+    const sub=subsByKey.get(pid+"|"+name); // 日ループの外で1回だけ引く
+    if(!sub)return 0;
+    return gd(p.startDate,p.endDate).reduce((acc,d)=>{const sh=sub.shifts?.[d];return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh)):0);},0);
   };
 
   // 週間勤務時間（前の期間を跨ぐ）
@@ -2454,7 +2373,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return[...wkSet].sort();
   })();
   const getWeekMin=(monStr,name)=>{
-    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sub=subs.find(s=>s.staffName===name&&s.shifts?.[ds]?.status==="work");if(sub)tot+=calcNetWorkMinutes(sub.shifts[ds],getBreaksFor(settings,ds,name,sub.shifts[ds]),getOT(name,settings,sub.shifts[ds]));}
+    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sh=workShiftByStaffDate.get(name+"|"+ds);if(sh)tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh));}
     return tot;
   };
 
@@ -3193,7 +3112,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
 
       {sortedPeriods.map(p=>{
         const dates=gd(p.startDate,p.endDate),ip=idp(p.deadlineDate);
-        const pUrl=buildUrl(shops,shopId,p);
+        const pUrl=buildUrl(p);
         return(
           <div key={p.id} style={{background:"rgba(0,0,0,.03)",border:"1px solid #E5E7EB",borderRadius:14,padding:18,marginBottom:12,cursor:"pointer"}} onClick={e=>{if(e.target.tagName==="BUTTON"||e.target.closest("button"))return;setViewPeriodId(p.id);}}>
             {eid===p.id

@@ -206,13 +206,13 @@ exports.sendEmailOtp = functions
     const code = String(Math.floor(100000 + Math.random() * 900000));
     const expiry = Date.now() + 10 * 60 * 1000; // 10分
 
-    const appUrl = process.env.APP_URL || "https://ontheshift.firebaseapp.com";
+    const appUrl = process.env.APP_URL || "https://shiftyshifty.app";
     const emailLink = await admin.auth().generateSignInWithEmailLink(email, {
       url: appUrl,
       handleCodeInApp: true,
     });
 
-    await admin.database().ref(`email_otps/${uid}`).set({ code, email, emailLink, expiry });
+    await admin.database().ref(`email_otps/${uid}`).set({ code, email, emailLink, expiry, attempts: 0 });
 
     const smtpUser = process.env.SMTP_USER;
     const transporter = nodemailer.createTransport({
@@ -247,12 +247,74 @@ exports.verifyEmailOtp = functions
     const snap = await admin.database().ref(`email_otps/${uid}`).once("value");
     const otp = snap.val();
 
-    if (!otp || otp.code !== code || Date.now() > otp.expiry) {
+    if (!otp || Date.now() > otp.expiry) {
+      throw new functions.https.HttpsError("invalid-argument", "確認コードが無効か期限切れです");
+    }
+    // 総当たり対策: 5回失敗でOTPを無効化（再送信が必要）
+    const attempts = (otp.attempts || 0) + 1;
+    if (attempts > 5) {
+      await admin.database().ref(`email_otps/${uid}`).remove();
+      throw new functions.https.HttpsError("resource-exhausted", "試行回数の上限を超えました。確認コードを再送信してください");
+    }
+    if (otp.code !== code) {
+      await admin.database().ref(`email_otps/${uid}/attempts`).set(attempts);
       throw new functions.https.HttpsError("invalid-argument", "確認コードが無効か期限切れです");
     }
 
     await admin.database().ref(`email_otps/${uid}`).remove();
     return { emailLink: otp.emailLink, email: otp.email };
+  });
+
+// ============================================================
+// 1年間未更新の店舗を自動アーカイブ（毎日実行・30日猶予後に本削除）
+// 旧実装はクライアント側で即時削除していたが、端末時計ズレや壊れた
+// lastActivity（Invalid Date）による誤削除リスクがあるため、
+// スケジュール実行 + 二段階削除（archived/ 経由）に移行。
+// ============================================================
+exports.purgeInactiveShops = functions
+  .region("asia-northeast1")
+  .pubsub.schedule("every 24 hours")
+  .timeZone("Asia/Tokyo")
+  .onRun(async () => {
+    const now = Date.now();
+    const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+    const GRACE_MS = 30 * 24 * 60 * 60 * 1000;
+
+    // 1) 1年未更新の店舗を archived/shops へ移動（即削除しない）
+    const shopsSnap = await db.ref("global/shops").once("value");
+    const shops = shopsSnap.val() || {};
+    for (const [id, shop] of Object.entries(shops)) {
+      if (!shop || !shop.id) continue;
+      const laSnap = await db.ref(`shops/${id}/lastActivity`).once("value");
+      const raw = laSnap.val() || shop.lastActivity || shop.createdAt;
+      const t = raw ? new Date(raw).getTime() : NaN;
+      if (Number.isNaN(t)) {
+        console.warn(`lastActivityが不正のためスキップ: ${id} (${shop.name}) raw=${raw}`);
+        continue;
+      }
+      if (now - t < ONE_YEAR_MS) continue;
+      const dataSnap = await db.ref(`shops/${id}`).once("value");
+      await db.ref(`archived/shops/${id}`).set({
+        shop,
+        data: dataSnap.val(),
+        archivedAt: new Date(now).toISOString(),
+      });
+      await db.ref(`shops/${id}`).remove();
+      await db.ref(`global/shops/${id}`).remove();
+      console.log(`アーカイブ: ${id} (${shop.name}) lastActivity=${raw}`);
+    }
+
+    // 2) アーカイブから30日経過したものを本削除
+    const archSnap = await db.ref("archived/shops").once("value");
+    const archived = archSnap.val() || {};
+    for (const [id, entry] of Object.entries(archived)) {
+      const at = entry && entry.archivedAt ? new Date(entry.archivedAt).getTime() : NaN;
+      if (Number.isNaN(at)) continue;
+      if (now - at < GRACE_MS) continue;
+      await db.ref(`archived/shops/${id}`).remove();
+      console.log(`アーカイブ期限切れを本削除: ${id}`);
+    }
+    return null;
   });
 
 // ============================================================
