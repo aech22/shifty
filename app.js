@@ -159,6 +159,7 @@ function gto(){
   return o;
 }
 const TO=gto();
+const TO_START=TO.filter(t=>{const m=t.split(":")[1];return m==="00"||m==="30";}); // 出勤時間は30分刻み
 function idp(d){return d?new Date()>new Date(d+"T23:59:59"):false;}
 function lg(k,fb){try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;}}
 function ls(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch{}}
@@ -1786,15 +1787,19 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                     </div>
                   </div>}
                   <div style={{display:"flex",gap:8}}>
-                    {[["start","出勤"],["end","退勤"]].map(([f,l])=>(
+                    {[["start","出勤"],["end","退勤"]].map(([f,l])=>{
+                      const base=f==="start"?TO_START:TO;
+                      const opts=st[f]&&!base.includes(st[f])?[...base,st[f]].sort():base;
+                      return(
                       <div key={f} style={{flex:1}}>
                         <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>{l}</div>
                         <select value={st[f]||"18:00"} onChange={e=>!dl&&upd(ds,{[f]:e.target.value})} disabled={dl}
                           style={{width:"100%",padding:"9px 28px 9px 10px",fontSize:15,fontWeight:600,background:`var(--c-input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 8px center`,border:"2px solid var(--c-border)",borderRadius:9,color:"var(--c-text)",outline:"none",cursor:"pointer",appearance:"none",WebkitAppearance:"none"}}>
-                          {TO.map(t=><option key={t} value={t}>{t}</option>)}
+                          {opts.map(t=><option key={t} value={t}>{t}</option>)}
                         </select>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
