@@ -84,8 +84,6 @@ function isHoliday(dateStr){
   const mmdd=yyyymmdd.slice(4);
   return JH_DATES.has(yyyymmdd)||JH_FIXED.has(mmdd);
 }
-const DEFAULT_PW="admin1234";
-
 // ===== ログイン試行制限（10回でロック・30分間）=====
 const _LA_KEY="ots_login_attempts";
 const _LL_KEY="ots_login_locked_until";
@@ -245,7 +243,7 @@ function storeKey(shopId,key){return`shift_${shopId}_${key}`;}
 // ===== 初期データ =====
 function makeShop(name="店舗1"){const now=new Date().toISOString();return{id:genSecureId(24),name,createdAt:now,lastActivity:now};}
 function makeSettings(shopId){
-  return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{name:"社員",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},parttime:{name:"バイト",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}},overtimeSettings:{byStaff:{}},staffNumbers:{}};
+  return{shopId,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{name:"社員",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},parttime:{name:"バイト",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}},overtimeSettings:{byStaff:{}},staffNumbers:{}};
 }
 
 // ===== URL生成・解析 =====
@@ -271,7 +269,7 @@ function genSecureId(len=24){
 
 const isSpacer=n=>typeof n==="string"&&n.startsWith("__spacer__");
 
-function buildUrl(shops,shopId,period){
+function buildUrl(period){
   if(!period)return "";
   const token=period.urlToken||period.id;
   // スタッフURL: #/s/<token>
@@ -360,7 +358,6 @@ function App(){
   const[currentShopId,setCurrentShopId]=useState(()=>_hasUrlToken?null:ssGet(SS_SHOP,null));
   const currentShopIdRef=useRef(_hasUrlToken?null:ssGet(SS_SHOP,null));
   const[view,setView]=useState(()=>_hasUrlToken?"staff":ssGet(SS_VIEW,"staff"));
-  const[auth,setAuth]=useState(true); // パスワード廃止
   const[authUser,setAuthUser]=useState(null); // Firebase Auth ユーザー（null=未ログイン）
   const[authChecked,setAuthChecked]=useState(false); // Auth状態確認完了フラグ
   const[authLoading,setAuthLoading]=useState(false); // OAuth処理中
@@ -1394,8 +1391,7 @@ function App(){
               if(firebaseDB) firebaseDB.ref(`shops/${currentSid}/subs/${subId}`).remove().catch(e=>console.warn("sub削除失敗:",e));
             }}
             shopName={shop?.name}/>
-        :(auth
-          ?<AdminView settings={effectiveSettings} periods={periods} subs={subs} staffList={staffList} shops={shops}
+        :<AdminView settings={effectiveSettings} periods={periods} subs={subs} staffList={staffList} shops={shops}
               currentShopId={sid} saveSettings={saveSettings} savePeriods={savePeriods} saveSubs={saveSubs}
               saveStaff={saveStaff} saveShops={saveShops}
               globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates}
@@ -1421,7 +1417,6 @@ function App(){
               onVerifyAndLinkEmail={verifyAndLinkEmail} onUnlinkProvider={unlinkProvider}
               onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkEmail={signInAndLinkEmail}
               onGenerateInviteCode={generateInviteCode} onJoinByInviteCode={joinByInviteCode} onLinkExistingShop={linkExistingShopToAuth} onUnlinkShop={unlinkShopFromAuth} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>
-          :null)
       }
     </div>
   );
@@ -1995,38 +1990,6 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
           {notSubmitted.map((n,i)=><span key={i} style={{fontSize:12,background:"#FFF0F1",color:"#FF4757",border:"1px solid rgba(255,71,87,.2)",padding:"3px 10px",borderRadius:20,fontWeight:600}}>{n}</span>)}
         </div>
       </div>}
-    </div>
-  );
-}
-
-// ============================================================
-// 管理者ログイン
-// ============================================================
-function AdminLogin({settings,onAuth}){
-  const[pw,setPw]=useState(""),[err,setErr]=useState("");
-  const NS="admin";
-  const go=()=>{
-    if(_isLocked(NS)){setErr(_lockMsg(NS));return;}
-    if(pw===(settings.password||DEFAULT_PW)){_resetAttempts(NS);onAuth();}
-    else{
-      const n=_incAttempts(NS);
-      const rem=_MAX_ATTEMPTS-n;
-      setPw("");
-      if(_isLocked(NS)) setErr(_lockMsg(NS));
-      else setErr(`パスワードが違います（残り${rem}回）`);
-    }
-  };
-  const locked=_isLocked(NS);
-  return(
-    <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 44px)",background:"var(--c-bg)",padding:20}}>
-      <div style={{background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:20,padding:"36px 28px",width:"100%",maxWidth:360,textAlign:"center",animation:"sI .3s",boxShadow:"0 4px 16px rgba(0,0,0,.08)"}}>
-        <div style={{fontSize:48,marginBottom:12}}></div>
-        <div style={{fontSize:20,fontWeight:700,color:"#1F2937",marginBottom:4}}>管理者ログイン</div>
-        <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:24}}>パスワードを入力してください</div>
-        <input type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!locked&&go()} placeholder="••••••••" maxLength={128} disabled={locked} style={{width:"100%",padding:"13px 16px",background:"var(--c-card)",border:"1px solid #D1D5DB",borderRadius:10,color:"#1F2937",fontSize:16,outline:"none",textAlign:"center",letterSpacing:".2em",marginBottom:12,opacity:locked?.5:1}}/>
-        <button onClick={go} disabled={locked} style={{width:"100%",padding:14,background:locked?"#9CA3AF":"#f87036",border:"none",borderRadius:10,color:"white",fontSize:16,fontWeight:700,cursor:locked?"not-allowed":"pointer"}}>ログイン</button>
-        <div style={{fontSize:13,color:"#EF4444",marginTop:10,minHeight:20}}>{err}</div>
-      </div>
     </div>
   );
 }
@@ -3113,7 +3076,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
 
       {sortedPeriods.map(p=>{
         const dates=gd(p.startDate,p.endDate),ip=idp(p.deadlineDate);
-        const pUrl=buildUrl(shops,shopId,p);
+        const pUrl=buildUrl(p);
         return(
           <div key={p.id} style={{background:"rgba(0,0,0,.03)",border:"1px solid #E5E7EB",borderRadius:14,padding:18,marginBottom:12,cursor:"pointer"}} onClick={e=>{if(e.target.tagName==="BUTTON"||e.target.closest("button"))return;setViewPeriodId(p.id);}}>
             {eid===p.id
