@@ -204,6 +204,12 @@
     <p>飲食店・小売店向けの無料シフト作成サイト。スタッフがスマホから希望シフトを提出、店長はExcelで一括管理。登録不要ですぐ使える。</p>
   </noscript>
   <div id="root"></div>
-  <script type="text/babel" src="app.js" data-presets="react"></script>
+  <!-- app.js を5ファイルに分割（M-1）。読み込み順厳守: utils→core→staff→admin→main。
+       utils/core は純JS/ブラウザ依存のプレーンscript。staff/admin/main は JSX を含むため Babel でトランスパイル。 -->
+  <script src="app-utils.js"></script>
+  <script src="app-core.js"></script>
+  <script type="text/babel" src="app-staff.js" data-presets="react"></script>
+  <script type="text/babel" src="app-admin.js" data-presets="react"></script>
+  <script type="text/babel" src="app-main.js" data-presets="react"></script>
 </body>
 </html>

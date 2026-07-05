@@ -2,9 +2,10 @@
   "name": "shifty",
   "version": "1.0.0",
   "private": true,
-  "description": "Shifty — 飲食店向けシフト提出・管理 Web アプリ。lint による未定義参照バグ検出のみ（ビルドレス構成）。",
+  "description": "Shifty — 飲食店向けシフト提出・管理 Web アプリ。lint による未定義参照バグ検出 + コアユーティリティの Node ユニットテスト（ビルドレス構成）。",
   "scripts": {
-    "lint": "eslint app.js"
+    "lint": "eslint app-utils.js app-core.js app-staff.js app-admin.js app-main.js",
+    "test": "node --test \"tests/**/*.test.js\""
   },
   "devDependencies": {
     "@babel/core": "^7.26.0",

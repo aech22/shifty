@@ -1,4 +1,4 @@
-name: Lint
+name: Lint & Test
 
 on:
   push:
@@ -24,3 +24,6 @@ jobs:
 
       - name: Run ESLint (未定義参照チェック)
         run: npm run lint
+
+      - name: Run unit tests (コアユーティリティ)
+        run: npm test

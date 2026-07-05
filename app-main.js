@@ -1,0 +1,1064 @@
+// ============================================================
+// Shifty - メインアプリ App()（app.js から分割 M-1）
+// ============================================================
+
+// ============================================================
+// メインアプリ
+// ============================================================
+// ============================================================
+// メインアプリ - 3フェーズ初期化
+// ============================================================
+
+function App(){
+  const[syncStatus,setSyncStatus]=useState("init");
+  const[ready,setReady]=useState(false); // Phase1完了フラグ
+  const[paymentToast,setPaymentToast]=useState(()=>{
+    const p=new URLSearchParams(window.location.search);
+    if(p.get("payment")==="success") return "success";
+    if(p.get("payment")==="cancel") return "cancel";
+    return null;
+  });
+  useEffect(()=>{
+    if(!paymentToast) return;
+    window.history.replaceState({},"",window.location.pathname+window.location.hash);
+    const t=setTimeout(()=>setPaymentToast(null),5000);
+    return()=>clearTimeout(t);
+  },[paymentToast]);
+
+  const[shops,setShops]=useState([]);
+  const[allLinkedShops,setAllLinkedShops]=useState([]); // accounts/{uid}/shops に紐付いた全店舗
+  // URLにtokenがある場合はsessionStorageを無視してPhase1で確定
+  const _hasUrlToken=!!(parseUrl()?.type==="staff");
+  const[currentShopId,setCurrentShopId]=useState(()=>_hasUrlToken?null:ssGet(SS_SHOP,null));
+  const currentShopIdRef=useRef(_hasUrlToken?null:ssGet(SS_SHOP,null));
+  const[view,setView]=useState(()=>_hasUrlToken?"staff":ssGet(SS_VIEW,"staff"));
+  const[authUser,setAuthUser]=useState(null); // Firebase Auth ユーザー（null=未ログイン）
+  const[authChecked,setAuthChecked]=useState(false); // Auth状態確認完了フラグ
+  const[authLoading,setAuthLoading]=useState(false); // OAuth処理中
+  const[authError,setAuthError]=useState(""); // ログインエラー
+  const[settings,setSettings]=useState(null);
+  const[periods,setPeriods]=useState([]);
+  const[staffList,setStaffList]=useState([]);
+  const[subs,setSubs]=useState([]);
+  // URLトークンがある場合はapidもPhase1で確定させる
+  const[apid,setApid]=useState(()=>_hasUrlToken?null:ssGet(SS_APID,null));
+  const[urlResolved,setUrlResolved]=useState(false);
+  const[unbound,setUnbound]=useState(false); // 引き継ぎコード未入力（未所属）状態
+  const[inviteCode,setInviteCode]=useState(""); // 引き継ぎコード入力値
+  const[inviteError,setInviteError]=useState(""); // エラーメッセージ
+  const[inviteCodeDisplay,setInviteCodeDisplay]=useState(null); // 企業アカウント招待コード表示用
+  const[inviteCodeGenLoading,setInviteCodeGenLoading]=useState(false); // 招待コード生成中フラグ
+  const[plan,setPlan]=useState("free"); // サブスクプラン
+  const[planExpiry,setPlanExpiry]=useState(null); // プラン有効期限
+  const[paymentFailed,setPaymentFailed]=useState(false); // 決済失敗フラグ
+  const[emailMode,setEmailMode]=useState(null); // null | "login" | "register"
+  const[emailVal,setEmailVal]=useState("");
+  const[passwordVal,setPasswordVal]=useState("");
+  const[password2Val,setPassword2Val]=useState("");
+  // App スコープのトースト（generateInviteCode など App 内関数から使用）
+  const[appToast,setAppToast]=useState(null);
+  const appToastRef=useRef();
+  const tt=m=>{setAppToast(m);clearTimeout(appToastRef.current);appToastRef.current=setTimeout(()=>setAppToast(null),2500);};
+
+  // ===================================================================
+  // Phase1: Firebase初期化 → global/shopsをonceで読む → shops/sid確定
+  // ===================================================================
+  useEffect(()=>{
+    // 旧・解放コード（廃止済み）のlocalStorageキーを即時削除
+    localStorage.removeItem("ots_unlocked");
+    const configured = FIREBASE_CONFIG.apiKey !== "YOUR_API_KEY";
+
+    if(!configured){
+      // Firebase未設定: localStorageのみ
+      const local=lg("shift_shops_v6",null);
+      const sh=local&&local.length>0?local:[makeShop("メイン店舗")];
+      setShops(sh); ls("shift_shops_v6",sh);
+      setCurrentShopId(sh[0].id);
+      setSyncStatus("no_config");
+      setReady(true);
+      return;
+    }
+
+    // Firebase SDK 初期化（DB接続のみクリティカルパス、Auth/Functionsは別で）
+    try{
+      if(!firebase.apps||firebase.apps.length===0) firebase.initializeApp(FIREBASE_CONFIG);
+      firebaseDB = firebase.database();
+      firebaseDB.ref(".info/connected").on("value",snap=>{
+        firebaseEnabled=snap.val()===true;
+        setSyncStatus(firebaseEnabled?"online":"offline");
+      });
+    }catch(e){
+      console.warn("Firebase DB init failed:",e);
+      const local=lg("shift_shops_v6",null)||[makeShop("メイン店舗")];
+      setShops(local); setCurrentShopId(local[0].id);
+      setSyncStatus("offline"); setAuthChecked(true); setReady(true); return;
+    }
+    // Auth/Functionsは接続のクリティカルパスから分離（失敗しても接続に影響しない）
+    try{ firebaseAuth = firebase.auth(); }catch(e){ console.warn("Auth init failed:",e); }
+    try{ firebaseFunctions = firebase.app().functions("asia-northeast1"); }catch(e){ console.warn("Functions init failed:",e); }
+
+    // Auth状態を確認してからshops読み込みを開始
+    if(firebaseAuth){
+      // ログイン状態をブラウザに永続化しない（別端末・タブ再訪問時に自動ログインさせない。明示的な再ログインを毎回要求する）
+      firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.NONE).catch(e=>console.warn("setPersistence失敗:",e)).then(()=>{
+        const unsubAuth = firebaseAuth.onAuthStateChanged(user=>{
+          unsubAuth(); // 初回のみ
+          setAuthUser(user);
+          setAuthChecked(true);
+          // auth確定後にshops読み込み開始
+          loadShops(user);
+        });
+      });
+    }else{
+      // Auth未初期化: Cookie/localStorageで続行
+      setAuthChecked(true);
+      loadShops(null);
+    }
+
+    const loadShops=(authUser)=>{
+    // 店舗はglobal/shopsの全件読みをやめ、必要なIDの直キー読みで取得する（一覧の公開を前提にしない）
+    const readShop=id=>firebaseDB.ref(`global/shops/${id}`).once("value").then(s=>{const v=s.val();return v&&v.id?v:null;});
+    const enterShop=(shopObj)=>{
+      setShops([shopObj]);
+      ls("shift_shops_v6",[shopObj]);
+      currentShopIdRef.current=shopObj.id;
+      setCurrentShopId(shopObj.id);
+      startSubscriptions(shopObj.id,[shopObj]);
+      setReady(true);
+    };
+    const toUnbound=()=>{ setUnbound(true); setReady(true); };
+    // Cookie店舗で入る（DB読み失敗時はlocalStorageキャッシュでオフライン継続）
+    const cookieFallback=()=>{
+      const ckId=getCookie(CK_SHOP);
+      if(!ckId||ckId==="default"){ dlog("未ログイン: ログイン画面へ"); toUnbound(); return; }
+      readShop(ckId).then(shop=>{
+        if(shop){ dlog("Cookie店舗:",shop.name); enterShop(shop); }
+        else toUnbound(); // CookieのIDがDBに存在しない
+      }).catch(e=>{
+        console.warn("shops読み込み失敗:",e);
+        const local=lg("shift_shops_v6",null)||[];
+        const cached=local.find(s=>s&&s.id===ckId);
+        if(cached) enterShop(cached); else toUnbound();
+      });
+    };
+    const parsed=parseUrl();
+    // URLにtokenがある場合: tokens逆引きインデックスでshop/periodを特定
+    if(parsed&&parsed.token&&parsed.type==="staff"){
+      const token=parsed.token;
+      firebaseDB.ref(`tokens/${token}`).once("value").then(tsnap=>{
+        const tv=tsnap.val();
+        if(!tv||!tv.shopId) return false;
+        return readShop(tv.shopId).then(shop=>{
+          if(!shop) return false;
+          dlog("URL解決(tokens): shop=",shop.name);
+          setApid(tv.periodId||null);
+          setUrlResolved(true);
+          enterShop(shop);
+          return true;
+        });
+      }).then(ok=>{ if(!ok){ console.warn("token一致なし:",token,"→ Cookieチェックへ"); cookieFallback(); } })
+        .catch(()=>cookieFallback());
+      return;
+    }
+    // 1) Firebase Auth ユーザーがいる場合 → accounts/{uid}/shops を確認
+    if(authUser){
+      firebaseDB.ref(`accounts/${authUser.uid}/shops`).once("value").then(accSnap=>{
+        const linked=accSnap.val(); // {shopId: true, ...} or null
+        const linkedIds=linked?Object.keys(linked):[];
+        if(linkedIds.length===0){ toUnbound(); return; } // Auth済みだが店舗未登録 → 登録画面へ
+        Promise.all(linkedIds.map(id=>readShop(id).catch(()=>null))).then(shopObjs=>{
+          const linkedShops=shopObjs.filter(s=>s&&s.id);
+          if(linkedShops.length===0){ toUnbound(); return; } // 紐付いた店舗がglobal/shopsにない
+          dlog("Auth店舗:",linkedShops.map(s=>s.name));
+          setAllLinkedShops(linkedShops);
+          // Cookie（最後に使った店舗）→ セッション復元 → 最初の店舗
+          const ckId=getCookie(CK_SHOP);
+          const ssId=ssGet(SS_SHOP,null);
+          const targetId=linkedShops.find(s=>s.id===ckId)?ckId:linkedShops.find(s=>s.id===ssId)?ssId:linkedShops[0].id;
+          const targetShop=linkedShops.find(s=>s.id===targetId)||linkedShops[0];
+          enterShop(targetShop);
+        });
+      }).catch(()=>toUnbound());
+      return;
+    }
+    // 2) Auth なし → Cookie チェック（単一店舗のみ）
+    cookieFallback();
+    }; // loadShops end
+
+    return()=>{ if(firebaseDB) firebaseDB.ref(".info/connected").off(); };
+  },[]);
+
+  const shop=shops.find(s=>s.id===currentShopId)||shops[0];
+  const sid=shop?.id||"default";
+  // refとsessionStorage・Cookieを最新のsidに同期
+  useEffect(()=>{
+    currentShopIdRef.current=sid;
+    if(!_hasUrlToken){
+      ssSave(SS_SHOP,sid);
+      // "default"はCookieに保存しない（リロード時の誤ログイン画面表示を防ぐ）
+      if(sid&&sid!=="default"){
+        setCookie(CK_SHOP,sid,365);  // 単一店舗のみ保存
+      }
+    }
+  },[sid]);
+
+  // 曜日別候補テンプレート（店舗単位: shops/{shopId}/templates）
+  const[globalTemplates,setGlobalTemplates]=useState([]);
+  const saveGlobalTemplates=useCallback(v=>{
+    setGlobalTemplates(v);
+    const targetSid=currentShopIdRef.current;
+    if(!targetSid||targetSid==="default")return;
+    ls(storeKey(targetSid,"templates_v6"),v);
+    if(firebaseDB) firebaseDB.ref(fbPath(targetSid,"templates")).set(v).catch(e=>console.warn("templates保存失敗:",e));
+  },[]);
+  useEffect(()=>{ if(!_hasUrlToken) ssSave(SS_APID,apid); },[apid]);
+  useEffect(()=>{ if(!_hasUrlToken) ssSave(SS_VIEW,view); },[view]);
+
+  // startSubscriptions: Phase1内でsid確定直後に呼ぶ（useEffectに依存しない）
+  const activeSubsRef=useRef([]); // 購読中のrefリスト（クリーンアップ用）
+  const startSubscriptions=useCallback((targetSid,shopList)=>{
+    if(!firebaseDB)return;
+    // 既存の購読を解除
+    activeSubsRef.current.forEach(r=>r.off());
+    activeSubsRef.current=[];
+    const refs=activeSubsRef.current;
+    const on=(path,cb)=>{
+      const r=firebaseDB.ref(path);
+      r.on("value",snap=>cb(snap.val()),err=>console.warn("購読失敗:",path,err));
+      refs.push(r);
+    };
+    dlog("購読開始 targetSid=",targetSid);
+    try { window.posthog && window.posthog.identify(targetSid); } catch {}
+    ph("app_loaded",{shop_id:targetSid});
+
+    // 曜日別候補テンプレート（店舗単位: shops/{shopId}/templates）
+    on(fbPath(targetSid,"templates"),val=>{
+      if(!val){setGlobalTemplates([]);return;}
+      const arr=Array.isArray(val)?val.filter(Boolean):Object.values(val);
+      setGlobalTemplates(arr);
+      ls(storeKey(targetSid,"templates_v6"),arr);
+    });
+
+    // 店舗リスト設定（shopListが明示的に渡された時のみ更新）
+    dlog("startSubscriptions: shopList=",shopList?.length,shopList?.map(s=>s?.id));
+    if(shopList&&shopList.length>0){
+      dlog("startSubscriptions: 店舗リスト設定",shopList.map(s=>s?.id));
+      setShops(shopList);
+      ls("shift_shops_v6",shopList);
+    }
+    // shopListなし（店舗切り替え時）は既存のshopsを維持
+    // settings
+    on(fbPath(targetSid,"settings"),val=>{
+      if(val&&typeof val==="object"){ setSettings(val); ls(storeKey(targetSid,"settings_v6"),val); }
+      else{ setSettings(makeSettings(targetSid)); }
+    });
+    // periods
+    on(fbPath(targetSid,"periods"),val=>{
+      if(!val)return;
+      const arr=typeof val==="object"&&!Array.isArray(val)
+        ?Object.values(val).filter(p=>p&&p.id)
+        :(Array.isArray(val)?val:Object.values(val)).filter(p=>p&&p.id);
+      if(arr.length>0){
+        arr.sort((a,b)=>new Date(b.startDate||0)-new Date(a.startDate||0));
+        setPeriods(arr); ls(storeKey(targetSid,"periods_v6"),arr);
+      }
+    });
+    // staff
+    on(fbPath(targetSid,"staff"),val=>{
+      if(!val){ setStaffList([]); return; }
+      const arr=Array.isArray(val)
+        ?val.filter(s=>s&&typeof s==="string")
+        :typeof val==="object"?Object.values(val).filter(s=>s&&typeof s==="string"):[];
+      setStaffList(arr); ls(storeKey(targetSid,"staff_v6"),arr);
+    });
+    // subs（リロード時にキャッシュを先に表示してからFirebaseで上書き）
+    setSubs(lg(storeKey(targetSid,"subs_v6"),[]));
+    on(fbPath(targetSid,"subs"),val=>{
+      if(!val){ setSubs([]); ls(storeKey(targetSid,"subs_v6"),[]); return; }
+      const arr=typeof val==="object"&&!Array.isArray(val)
+        ?Object.values(val).filter(s=>s&&s.id)
+        :(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id);
+      arr.sort((a,b)=>new Date(b.submittedAt)-new Date(a.submittedAt));
+      setSubs(arr); ls(storeKey(targetSid,"subs_v6"),arr);
+      dlog("subs受信:",arr.length,"件 sid=",targetSid);
+    });
+    // accounts/<shopId>/plan（プラン読み込み）
+    on(`accounts/${targetSid}/plan`,val=>{
+      setPlan(DEV_PLAN_OVERRIDE||(val&&["free","pro","premium"].includes(val)?val:"free"));
+    });
+    // accounts/<shopId>/planExpiry（有効期限）
+    on(`accounts/${targetSid}/planExpiry`,val=>{
+      setPlanExpiry(val||null);
+    });
+    // accounts/<shopId>/paymentFailed（決済失敗フラグ）
+    on(`accounts/${targetSid}/paymentFailed`,val=>{
+      setPaymentFailed(!!val);
+    });
+
+    // settingsデフォルト書き込み
+    firebaseDB.ref(fbPath(targetSid,"settings")).once("value").then(snap=>{
+      if(!snap.val()) firebaseDB.ref(fbPath(targetSid,"settings")).set(makeSettings(targetSid));
+    });
+  },[]);
+
+  // ===================================================================
+  // Auth ヘルパー関数
+  // ===================================================================
+  // 店舗をアカウントに紐付け（Google/Apple ユーザーのみ）
+  const linkShopToAccount=(uid,shopId)=>{
+    if(!firebaseDB||!uid)return;
+    firebaseDB.ref(`accounts/${uid}/shops/${shopId}`).set(true).catch(e=>console.warn("shop link失敗:",e));
+  };
+
+  // Auth UIDに紐付いた店舗一覧を直キー読みで取得（global/shopsの全件読みはしない）
+  const fetchLinkedShops=async(uid)=>{
+    const snap=await firebaseDB.ref(`accounts/${uid}/shops`).once("value");
+    const linkedIds=Object.keys(snap.val()||{});
+    const shopSnaps=await Promise.all(linkedIds.map(id=>firebaseDB.ref(`global/shops/${id}`).once("value").catch(()=>null)));
+    return shopSnaps.map(s=>s&&s.val()).filter(s=>s&&s.id);
+  };
+
+  // ログイン直後の共通処理: 紐付き店舗を読み、先頭店舗でセッション開始
+  const _enterLinkedShops=async(user)=>{
+    const linkedShops=await fetchLinkedShops(user.uid);
+    setAllLinkedShops(linkedShops);
+    if(linkedShops.length>0){
+      const targetShop=linkedShops[0];
+      setShops([targetShop]);
+      ls("shift_shops_v6",[targetShop]);
+      currentShopIdRef.current=targetShop.id;
+      setCurrentShopId(targetShop.id);
+      startSubscriptions(targetShop.id,[targetShop]);
+      setUnbound(false);
+    } else {
+      setUnbound(true);
+    }
+  };
+
+  // Googleでサインイン
+  const signInWithGoogle=async()=>{
+    if(!firebaseAuth){setAuthError("Firebase Auth未初期化");return;}
+    setAuthLoading(true);setAuthError("");
+    try{
+      const provider=new firebase.auth.GoogleAuthProvider();
+      const result=await firebaseAuth.signInWithPopup(provider);
+      const user=result.user;
+      setAuthUser(user);
+      ph("login",{method:"google"});
+      // accounts/{uid}/shops を確認
+      if(!firebaseDB){setAuthLoading(false);return;}
+      await _enterLinkedShops(user);
+    }catch(e){
+      console.warn("Google sign-in failed:",e);
+      if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request"){}
+      else setAuthError("Googleログインに失敗しました: "+e.message);
+    }finally{setAuthLoading(false);}
+  };
+
+  // メール+パスワードでサインイン（共通処理）
+  const _afterEmailAuth=async(user)=>{
+    setAuthUser(user);
+    ph("login",{method:"email"});
+    if(!firebaseDB){setAuthLoading(false);return;}
+    await _enterLinkedShops(user);
+  };
+  const signInWithEmail=async(email,password)=>{
+    if(!firebaseAuth){setAuthError("Firebase Auth未初期化");return;}
+    const ns="email";
+    if(_isLocked(ns)){setAuthError(_lockMsg(ns));return;}
+    setAuthLoading(true);setAuthError("");
+    try{
+      const result=await firebaseAuth.signInWithEmailAndPassword(email,password);
+      _resetAttempts(ns);
+      await _afterEmailAuth(result.user);
+    }catch(e){
+      console.warn("Email sign-in failed:",e);
+      if(e.code==="auth/user-not-found"||e.code==="auth/wrong-password"||e.code==="auth/invalid-credential"){
+        const n=_incAttempts(ns);
+        const rem=_MAX_ATTEMPTS-n;
+        if(_isLocked(ns)) setAuthError(_lockMsg(ns));
+        else setAuthError(`メールアドレスまたはパスワードが正しくありません（残り${rem}回）`);
+      }else if(e.code==="auth/invalid-email")
+        setAuthError("メールアドレスの形式が正しくありません");
+      else if(e.code==="auth/too-many-requests"){
+        _incAttempts(ns);
+        setAuthError("ログイン試行が多すぎます。しばらく待ってから再試行してください");
+      }else setAuthError("ログインに失敗しました");
+    }finally{setAuthLoading(false);}
+  };
+  // パスワードリセットメール送信
+  const sendPasswordReset=async(email)=>{
+    if(!firebaseAuth){setAuthError("Firebase Auth未初期化");return;}
+    if(!email){setAuthError("メールアドレスを入力してください");return;}
+    setAuthLoading(true);setAuthError("");
+    try{
+      await firebaseAuth.sendPasswordResetEmail(email);
+      setAuthError("✓ パスワードリセットメールを送信しました");
+    }catch(e){
+      if(e.code==="auth/user-not-found") setAuthError("このメールアドレスは登録されていません");
+      else setAuthError("送信に失敗しました: "+e.message);
+    }finally{setAuthLoading(false);}
+  };
+  const signUpWithEmail=async(email,password)=>{
+    if(!firebaseAuth){setAuthError("Firebase Auth未初期化");return;}
+    setAuthLoading(true);setAuthError("");
+    try{
+      const result=await firebaseAuth.createUserWithEmailAndPassword(email,password);
+      await _afterEmailAuth(result.user);
+    }catch(e){
+      console.warn("Email sign-up failed:",e);
+      if(e.code==="auth/email-already-in-use")
+        setAuthError("このメールアドレスは既に使用されています");
+      else if(e.code==="auth/invalid-email")
+        setAuthError("メールアドレスの形式が正しくありません");
+      else if(e.code==="auth/weak-password")
+        setAuthError("パスワードは6文字以上にしてください");
+      else setAuthError("登録に失敗しました: "+e.message);
+    }finally{setAuthLoading(false);}
+  };
+
+  // Cookie認証ユーザーがサインイン/登録して現在の店舗を紐付ける共通処理
+  const _afterSignInAndLink=async(user)=>{
+    setAuthUser(user);
+    if(!firebaseDB)return;
+    const shopId=currentShopIdRef.current;
+    if(shopId&&shopId!=="default"){
+      await firebaseDB.ref(`accounts/${user.uid}/shops/${shopId}`).set(true);
+    }
+  };
+  const signInAndLinkGoogle=async()=>{
+    if(!firebaseAuth)return{error:"Firebase Auth未初期化"};
+    try{
+      const provider=new firebase.auth.GoogleAuthProvider();
+      const result=await firebaseAuth.signInWithPopup(provider);
+      await _afterSignInAndLink(result.user);
+      return{};
+    }catch(e){
+      if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request")return{error:""};
+      return{error:"Googleログインに失敗しました: "+e.message};
+    }
+  };
+  const signInAndLinkEmail=async(email,password,isSignUp)=>{
+    if(!firebaseAuth)return{error:"Firebase Auth未初期化"};
+    try{
+      let result;
+      if(isSignUp){
+        result=await firebaseAuth.createUserWithEmailAndPassword(email,password);
+      }else{
+        result=await firebaseAuth.signInWithEmailAndPassword(email,password);
+      }
+      await _afterSignInAndLink(result.user);
+      return{};
+    }catch(e){
+      if(e.code==="auth/email-already-in-use")return{error:"このメールアドレスは既に使用されています"};
+      if(e.code==="auth/user-not-found"||e.code==="auth/wrong-password"||e.code==="auth/invalid-credential")return{error:"メールアドレスまたはパスワードが正しくありません"};
+      if(e.code==="auth/invalid-email")return{error:"メールアドレスの形式が正しくありません"};
+      if(e.code==="auth/weak-password")return{error:"パスワードは6文字以上にしてください"};
+      return{error:(isSignUp?"登録":"ログイン")+"に失敗しました: "+e.message};
+    }
+  };
+
+  // authUser.providerData を最新状態に更新する
+  const refreshAuthUser=async()=>{
+    if(!firebaseAuth?.currentUser)return;
+    try{
+      await firebaseAuth.currentUser.reload();
+      const u=firebaseAuth.currentUser;
+      setAuthUser({...u,providerData:u.providerData?[...u.providerData]:[]});
+    }catch(e){console.warn("reload失敗:",e);}
+  };
+
+  // Google / Apple 連携
+  const linkProvider=async(type)=>{
+    if(!firebaseAuth?.currentUser)return{error:"ログインが必要です"};
+    try{
+      let provider;
+      if(type==="google"){
+        provider=new firebase.auth.GoogleAuthProvider();
+      }else{
+        provider=new firebase.auth.OAuthProvider("apple.com");
+        provider.addScope("name");provider.addScope("email");
+      }
+      await firebaseAuth.currentUser.linkWithPopup(provider);
+      await refreshAuthUser();
+      return{};
+    }catch(e){
+      if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request")return{error:""};
+      if(e.code==="auth/credential-already-in-use")return{error:"このアカウントは別のユーザーで使用済みです"};
+      if(e.code==="auth/provider-already-linked")return{error:"既に連携済みです"};
+      return{error:e.message};
+    }
+  };
+
+  // メール OTP 送信（Cloud Function）
+  const sendEmailOtp=async(email)=>{
+    if(!firebaseFunctions)return{error:"Firebase未初期化"};
+    try{
+      await firebaseFunctions.httpsCallable("sendEmailOtp")({email});
+      return{};
+    }catch(e){return{error:e.message};}
+  };
+
+  // OTP 検証→ emailLink 取得→ linkWithEmailLink で連携
+  const verifyAndLinkEmail=async(code,email)=>{
+    if(!firebaseAuth?.currentUser||!firebaseFunctions)return{error:"Firebase未初期化"};
+    try{
+      const result=await firebaseFunctions.httpsCallable("verifyEmailOtp")({code});
+      const{emailLink,email:confirmedEmail}=result.data;
+      await firebaseAuth.currentUser.linkWithEmailLink(confirmedEmail,emailLink);
+      await refreshAuthUser();
+      return{};
+    }catch(e){
+      if(e.code==="auth/provider-already-linked")return{error:"既にメールアドレスと連携済みです"};
+      if(e.code==="auth/email-already-in-use")return{error:"このメールアドレスは既に使用されています"};
+      return{error:e.message};
+    }
+  };
+
+  // プロバイダー連携解除
+  const unlinkProvider=async(providerId)=>{
+    if(!firebaseAuth?.currentUser)return{error:"ログインが必要です"};
+    const providers=firebaseAuth.currentUser.providerData||[];
+    if(providers.length<=1)return{error:"最後の連携方法は解除できません"};
+    try{
+      await firebaseAuth.currentUser.unlink(providerId);
+      await refreshAuthUser();
+      return{};
+    }catch(e){return{error:e.message};}
+  };
+
+  // 店舗セッションのみログアウト（企業連携・Firebase Auth は維持）
+  const doLogout=async()=>{
+    delCookie(CK_SHOP);
+    sessionStorage.clear();
+    setCurrentShopId(null);
+    setShops([]); // セッションの店舗リストをクリア（authUser・allLinkedShops は維持）
+    setUnbound(true);
+  };
+
+  // Firebase Auth を含む完全サインアウト
+  const doFullSignOut=async()=>{
+    if(firebaseAuth&&authUser){
+      try{await firebaseAuth.signOut();}catch(e){console.warn("signOut失敗:",e);}
+    }
+    delCookie(CK_SHOP);
+    sessionStorage.clear();
+    setAuthUser(null);
+    setCurrentShopId(null);
+    setShops([]);
+    setAllLinkedShops([]);
+    setUnbound(true);
+  };
+
+  // 企業アカウント招待コード関数
+  const generateInviteCode=async()=>{
+    if(!authUser || !firebaseDB) return;
+    setInviteCodeGenLoading(true);
+    try{
+      const code=genToken();
+      const now=new Date();
+      const expiresAt=new Date(now.getTime() + 24*60*60*1000);  // 24時間後
+      await firebaseDB.ref(`accounts/${authUser.uid}/inviteCode`).set({
+        code,
+        createdAt:now.toISOString(),
+        expiresAt:expiresAt.toISOString(),
+        createdBy:authUser.email
+      });
+      // 参加者が招待主のaccountsを読まなくて済むよう、店舗紐付けのスナップショットを埋め込む
+      const shopsSnap=await firebaseDB.ref(`accounts/${authUser.uid}/shops`).once("value");
+      await firebaseDB.ref(`inviteCodes/${code}`).set({
+        uid:authUser.uid,
+        expiresAt:expiresAt.toISOString(),
+        shops:shopsSnap.val()||null
+      });
+      setInviteCodeDisplay(code);
+      dlog("招待コード生成:", code);
+    }catch(e){
+      console.warn("招待コード生成失敗:", e);
+      tt("招待コードの生成に失敗しました: " + (e?.message||e?.code||"不明なエラー"));
+    }finally{
+      setInviteCodeGenLoading(false);
+    }
+  };
+
+  const joinByInviteCode=async(code)=>{
+    if(!firebaseDB || !authUser) return;
+    try{
+      const codeSnap=await firebaseDB.ref(`inviteCodes/${code}`).once('value');
+      const codeData=codeSnap.val();
+      if(!codeData || new Date()>=new Date(codeData.expiresAt)){
+        setInviteError('無効または期限切れのコードです');
+        return;
+      }
+      const foundUid=codeData.uid;
+      // members に追加
+      await firebaseDB.ref(`accounts/${foundUid}/members/${authUser.uid}`).set({
+        email:authUser.email,
+        joinedAt:new Date().toISOString(),
+        role:'member'
+      });
+      // shops をマージ（上書きではなく update でマージ）
+      // 新形式: コードに埋め込まれたスナップショットを使う（他人のaccountsを読まない）
+      if(codeData.shops){
+        await firebaseDB.ref(`accounts/${authUser.uid}/shops`).update(codeData.shops);
+      }else{
+        // 旧形式コードの互換（新ルール適用後は他人のaccounts読み取りが拒否されるため失敗し得る）
+        const linkedShops=await firebaseDB.ref(`accounts/${foundUid}/shops`).once('value');
+        if(linkedShops.val()){
+          await firebaseDB.ref(`accounts/${authUser.uid}/shops`).update(linkedShops.val());
+        }
+      }
+      setUnbound(false);
+      setInviteCode("");
+      dlog("招待コードで参加完了");
+    }catch(e){
+      console.warn("招待コード参加失敗:", e);
+      setInviteError('処理に失敗しました');
+    }
+  };
+
+  const linkExistingShopToAuth=async(shopId)=>{
+    if(!authUser || !firebaseDB) return;
+    try{
+      await firebaseDB.ref(`accounts/${authUser.uid}/shops/${shopId}`).set(true);
+      // allLinkedShops を全連携店舗で更新（直キー読み）
+      const newLinked=await fetchLinkedShops(authUser.uid);
+      setAllLinkedShops(newLinked);
+      // shops（セッション）は変更しない
+      dlog("既存店舗を企業アカウントに連携:", shopId);
+    }catch(e){
+      console.warn("連携失敗:", e);
+    }
+  };
+
+  const unlinkShopFromAuth=async(targetShopId)=>{
+    if(!authUser || !firebaseDB) return;
+    if(allLinkedShops.length>0&&allLinkedShops.length<=1){tt("✕ 最後の店舗は解除できません");return;}
+    if(allLinkedShops.length===0&&shops.length<=1){tt("✕ 最後の店舗は解除できません");return;}
+    try{
+      await firebaseDB.ref(`accounts/${authUser.uid}/shops/${targetShopId}`).remove();
+      const remainingLinked=allLinkedShops.filter(s=>s.id!==targetShopId);
+      setAllLinkedShops(remainingLinked);
+      let newShops=shops.filter(s=>s.id!==targetShopId);
+      if(currentShopId===targetShopId){
+        // セッションのshopsが空になる場合は残りの連携店舗から次を選ぶ（TypeError防止）
+        const next=newShops[0]||remainingLinked[0];
+        if(next){
+          if(newShops.length===0)newShops=[next];
+          setCurrentShopId(next.id);
+          startSubscriptions(next.id,newShops);
+        }else{
+          setCurrentShopId(null);
+          setUnbound(true);
+        }
+      }
+      setShops(newShops);
+      ls("shift_shops_v6",newShops);
+      tt("✓ 店舗の連携を解除しました");
+    }catch(e){
+      console.warn("連携解除失敗:", e);
+      tt("✕ 解除に失敗しました");
+    }
+  };
+
+  // URLにtokenが含まれるか（スタッフ専用モード・期間固定）
+  const [urlLocked]=useState(()=>{ const p=parseUrl(); return !!(p&&p.token); });
+
+  // tokens逆引きインデックスの補完（既存期間の自動移行・冪等）。管理者セッションのみ実行
+  useEffect(()=>{
+    if(!firebaseDB||urlLocked||!ready)return;
+    if(!sid||sid==="default")return;
+    periods.forEach(p=>{
+      if(!p||!p.urlToken||!p.id)return;
+      if(p.shopId&&p.shopId!==sid)return; // 店舗切替直後の古いstate混入を防ぐ
+      firebaseDB.ref(`tokens/${p.urlToken}`).set({shopId:p.shopId||sid,periodId:p.id}).catch(()=>{});
+    });
+  },[periods,sid,ready,urlLocked]);
+
+  // ===================================================================
+  // Phase3: URLなし時のapid初期化（セッション復元優先）
+  // ===================================================================
+  useEffect(()=>{
+    if(!ready||urlResolved)return;
+    if(periods.length===0)return; // periodsが届くまで待機
+    // URLトークンがある場合はPhase1で解決済みなのでPhase3では何もしない
+    if(_hasUrlToken){
+      // apidはPhase1でセット済み。未セットの場合だけperiods[0]を使う
+      if(!apid&&periods.length>0) setApid(periods[0].id);
+      setUrlResolved(true);
+      return;
+    }
+    // URLなし: セッションに保存されたapidがperiodsに存在するか確認
+    const savedApid=ssGet(SS_APID,null);
+    const restored=savedApid?periods.find(p=>p.id===savedApid):null;
+    if(restored){
+      setApid(restored.id);
+    } else if(!apid){
+      setApid(periods[0].id);
+    }
+    setUrlResolved(true);
+  },[ready,periods,urlResolved]);
+
+  // periodsが来たらapidを設定（URLで指定済みの場合は上書きしない）
+  useEffect(()=>{
+    if(!apid&&periods.length>0&&urlResolved){
+      const latest=[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate))[0];
+      setApid(latest.id);
+    }
+  },[periods,urlResolved]);
+
+  // ===================================================================
+  // 保存関数（Firebase + localStorage 二重書き）
+  // ===================================================================
+  const fbW=(path,val)=>{ if(firebaseDB) firebaseDB.ref(path).set(val).catch(e=>console.warn("書き込み失敗:",path,e)); };
+  const touchLastActivity=useCallback(()=>{
+    if(firebaseDB&&sid) firebaseDB.ref(`shops/${sid}/lastActivity`).set(new Date().toISOString()).catch(()=>{});
+  },[sid]);
+  const saveSettings=useCallback(v=>{ setSettings(v); ls(storeKey(sid,"settings_v6"),v); fbW(fbPath(sid,"settings"),v); touchLastActivity(); },[sid,touchLastActivity]);
+  const savePeriods =useCallback(v=>{
+    // 削除された期間のsubsとURLトークン逆引きをFirebaseから削除
+    const deletedPeriods=periods.filter(p=>!v.find(np=>np.id===p.id));
+    const deletedIds=deletedPeriods.map(p=>p.id);
+    if(deletedIds.length>0&&firebaseDB){
+      deletedPeriods.forEach(p=>{ if(p.urlToken) firebaseDB.ref(`tokens/${p.urlToken}`).remove().catch(()=>{}); });
+      const newSubs=subs.filter(s=>!deletedIds.includes(s.periodId));
+      setSubs(newSubs); ls(storeKey(sid,"subs_v6"),newSubs);
+      firebaseDB.ref(fbPath(sid,"subs")).once("value").then(snap=>{
+        const val=snap.val(); if(!val)return;
+        const updates={};
+        Object.keys(val).forEach(k=>{ if(deletedIds.includes(val[k]?.periodId)) updates[k]=null; });
+        if(Object.keys(updates).length>0) firebaseDB.ref(fbPath(sid,"subs")).update(updates);
+      });
+    }
+    setPeriods(v);
+    ls(storeKey(sid,"periods_v6"),v);
+    if(firebaseDB){
+      const obj={};
+      v.forEach(p=>{ if(p&&p.id) obj[p.id]=p; });
+      firebaseDB.ref(fbPath(sid,"periods")).set(obj).catch(e=>console.warn("periods書き込み失敗:",e));
+      // 追加された期間のURLトークン逆引きを登録（スタッフURLのO(1)解決用）
+      v.filter(p=>p&&p.urlToken&&!periods.find(op=>op.id===p.id)).forEach(p=>{
+        firebaseDB.ref(`tokens/${p.urlToken}`).set({shopId:sid,periodId:p.id}).catch(()=>{});
+      });
+    }
+    touchLastActivity();
+  },[sid,periods,subs,touchLastActivity]);
+  const saveStaff   =useCallback(v=>{ setStaffList(v);ls(storeKey(sid,"staff_v6"),v);    fbW(fbPath(sid,"staff"),v); touchLastActivity();   },[sid,touchLastActivity]);
+  const saveSubs    =useCallback((v,deletedId=null)=>{
+    setSubs(v);
+    ls(storeKey(sid,"subs_v6"),v);
+    // Firebase には update() でマージ書き込み（set()は他端末データを上書きするためNG）
+    // 差分書き込み: 直前のstate subs とオブジェクト参照比較し、新規・変更されたsubのみ書く
+    // （呼び出し元はいずれも変更subを新しいオブジェクト参照で作っているため参照比較で検知できる）
+    // deletedId を渡すと null セットで Firebase からも削除する
+    if(firebaseDB){
+      const prevSet=new Set(subs);
+      const changed=v.filter(s=>s&&s.id&&!prevSet.has(s));
+      const obj={};
+      changed.forEach(s=>{ obj[s.id]=s; });
+      if(deletedId) obj[deletedId]=null;
+      if(Object.keys(obj).length>0){
+        firebaseDB.ref(fbPath(sid,"subs")).update(obj).catch(e=>console.warn("subs書き込み失敗:",e));
+      }
+    }
+    touchLastActivity();
+  },[sid,subs,touchLastActivity]);
+  const saveShops   =useCallback(v=>{
+    setShops(v);
+    ls("shift_shops_v6",v);
+    if(firebaseDB){
+      const obj={};
+      v.forEach(s=>{ if(s&&s.id) obj[s.id]=s; });
+      firebaseDB.ref("global/shops").update(obj).catch(e=>console.warn("shops書き込み失敗:",e));
+    }
+  },[]);
+
+  // 1年間未更新の店舗の自動削除は Cloud Functions（purgeInactiveShops）のスケジュール実行に移行済み。
+  // クライアント側での削除は端末時計ズレ・壊れたlastActivityによる誤削除リスクがあるため行わない。
+
+  // ap: apidに対応するperiodを取得
+  // 最新の期間 = startDateが最も新しいperiod
+  const latestPeriod=periods.length>0?[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate))[0]:null;
+  // urlLocked時はapidが確定するまで表示しない、それ以外は最新期間をデフォルトに
+  const ap=periods.find(p=>p.id===apid)||(urlLocked?null:latestPeriod);
+  const effectiveSettings=settings||makeSettings(sid);
+
+  // ローディング画面
+  if(!ready||(urlLocked&&!apid)) return(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#1A1A2E",flexDirection:"column",gap:16}}>
+      <ShiftyIcon size={64}/>
+      <div style={{color:"white",fontSize:16,fontWeight:700}}>Shifty</div>
+      <div style={{color:"rgba(255,255,255,.5)",fontSize:13}}>データを読み込み中...</div>
+    </div>
+  );
+
+  // 引き継ぎコード（店舗コード）でログイン
+  const applyInviteCode=()=>{
+    const code=inviteCode.trim();
+    if(!code){setInviteError("店舗コードを入力してください");return;}
+    if(!firebaseDB){setInviteError("Firebase未接続です");return;}
+    setInviteError("確認中...");
+    firebaseDB.ref(`global/shops/${code}`).once("value").then(snap=>{
+      const found=snap.val();
+      if(found&&found.id===code){
+        // Auth ユーザーがいればアカウントにも紐付け
+        if(authUser) linkShopToAccount(authUser.uid,code);
+        // 古いCookie を完全削除（複数店舗対応の遺跡削除）
+        delCookie(CK_SHOP);
+        try{ delCookie("ots_shopIds"); }catch{}
+        // Cookie: 単一店舗のみ保存（上書き）
+        setCookie(CK_SHOP,code,365);
+        // localStorage も単一店舗のみに統一
+        const newShops=[found];
+        ls("shift_shops_v6",newShops);
+        // sessionStorage もクリア（古い状態を削除）
+        sessionStorage.clear();
+        currentShopIdRef.current=code;
+        setCurrentShopId(code);
+        startSubscriptions(code,newShops);
+        setUnbound(false);
+        setInviteError("");
+        setInviteCode("");
+      } else {
+        setInviteError("コードが正しくありません。もう一度確認してください。");
+      }
+    }).catch(()=>setInviteError("確認に失敗しました。もう一度お試しください。"));
+  };
+
+  // 新規店舗作成
+  const createNewShop=()=>{
+    dlog("createNewShop: 実行開始");
+    if(!firebaseDB){setInviteError("Firebase未接続");return;}
+    setInviteError("作成中...");
+    const newShop=makeShop("新しい店舗");
+    dlog("createNewShop: 新規店舗作成",newShop.id,newShop.name);
+    firebaseDB.ref(`global/shops/${newShop.id}`).set(newShop).then(()=>{
+      // Auth ユーザーはアカウントにも紐付け
+      if(authUser) linkShopToAccount(authUser.uid,newShop.id);
+      // Cookie: 単一店舗のみ保存（上書き）
+      setCookie(CK_SHOP,newShop.id,365);
+      // shops 配列にも新規店舗だけ
+      const newShops=[newShop];
+      setShops(newShops);
+      currentShopIdRef.current=newShop.id;
+      setCurrentShopId(newShop.id);
+      startSubscriptions(newShop.id,newShops);
+      setUnbound(false);
+      setInviteError("");
+    }).catch(()=>setInviteError("エラーが発生しました。再試行してください。"));
+  };
+
+  if(unbound&&authUser&&allLinkedShops.length>0) return(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#0F172A",padding:"20px"}}>
+      <div style={{background:"#1E293B",borderRadius:24,padding:"36px 28px",width:"100%",maxWidth:420,boxShadow:"0 12px 40px rgba(0,0,0,.5)"}}>
+        <div style={{textAlign:"center",marginBottom:28}}>
+          <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><ShiftyIcon size={64}/></div>
+          <div style={{color:"#F1F5F9",fontSize:22,fontWeight:800,letterSpacing:"-0.5px"}}>Shifty</div>
+          <div style={{color:"#94A3B8",fontSize:12,marginTop:4}}>{authUser.displayName||authUser.email||"ログイン中"}</div>
+        </div>
+        <div style={{color:"#CBD5E1",fontSize:13,fontWeight:700,marginBottom:12}}>店舗を選択してください</div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:24}}>
+          {allLinkedShops.map(sh=>(
+            <button key={sh.id} onClick={()=>{
+              currentShopIdRef.current=sh.id;
+              setCurrentShopId(sh.id);
+              startSubscriptions(sh.id,[sh]);
+              setUnbound(false);
+            }} style={{width:"100%",padding:"14px 16px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:12,color:"#F1F5F9",fontSize:14,fontWeight:600,cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <span>{sh.name}</span>
+              <span style={{fontSize:12,color:"#64748B"}}>→</span>
+            </button>
+          ))}
+        </div>
+        <div style={{textAlign:"center",borderTop:"1px solid #1E3A5F",paddingTop:16}}>
+          <button onClick={doFullSignOut} style={{background:"none",border:"none",color:"#64748B",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>
+            別のアカウントでログインする
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  if(unbound) return(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#0F172A",padding:"20px"}}>
+      <div style={{background:"#1E293B",borderRadius:24,padding:"36px 28px",width:"100%",maxWidth:420,boxShadow:"0 12px 40px rgba(0,0,0,.5)"}}>
+        {/* ロゴ */}
+        <div style={{textAlign:"center",marginBottom:32}}>
+          <div style={{marginBottom:12,display:"flex",justifyContent:"center"}}><ShiftyIcon size={72}/></div>
+          <div style={{color:"#F1F5F9",fontSize:24,fontWeight:800,letterSpacing:"-0.5px"}}>Shifty</div>
+          <div style={{color:"#94A3B8",fontSize:13,marginTop:6}}>URLを送るだけでシフトが集まる</div>
+        </div>
+
+        {/* Auth ログインボタン */}
+        {authLoading
+          ?<div style={{textAlign:"center",color:"#94A3B8",padding:"20px 0",fontSize:14}}>⏳ 認証中...</div>
+          :emailMode
+            ?<div>
+              {/* メール認証フォーム */}
+              {(()=>{const locked=emailMode==="login"&&_isLocked("email");return(
+              <React.Fragment>
+              <div style={{display:"flex",alignItems:"center",marginBottom:16}}>
+                <button onClick={()=>{setEmailMode(null);setAuthError("");setEmailVal("");setPasswordVal("");setPassword2Val("");}}
+                  style={{background:"none",border:"none",color:"#94A3B8",fontSize:13,cursor:"pointer",padding:"0 8px 0 0"}}>← 戻る</button>
+                <div style={{color:"#F1F5F9",fontSize:16,fontWeight:700}}>{emailMode==="login"?"メールでログイン":"新規アカウント登録"}</div>
+              </div>
+              <input type="email" value={emailVal} onChange={e=>setEmailVal(e.target.value)}
+                placeholder="メールアドレス" maxLength={254} disabled={locked}
+                style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:10,color:"#F1F5F9",fontSize:16,outline:"none",marginBottom:10,opacity:locked?.5:1}}/>
+              <input type="password" value={passwordVal} onChange={e=>setPasswordVal(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter"&&emailMode==="login"&&!locked)signInWithEmail(emailVal,passwordVal);}}
+                placeholder="パスワード（6文字以上）" maxLength={128} disabled={locked}
+                style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:10,color:"#F1F5F9",fontSize:16,outline:"none",marginBottom:emailMode==="register"?10:16,opacity:locked?.5:1}}/>
+              {emailMode==="register"&&<input type="password" value={password2Val} onChange={e=>setPassword2Val(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter"&&password2Val===passwordVal)signUpWithEmail(emailVal,passwordVal);}}
+                placeholder="パスワード（確認）" maxLength={128}
+                style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:10,color:"#F1F5F9",fontSize:16,outline:"none",marginBottom:16}}/>}
+              {authError&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:12,background:"rgba(255,71,87,.1)",padding:"8px 12px",borderRadius:8}}>{authError}</div>}
+              <button disabled={locked||authLoading}
+                onClick={()=>emailMode==="login"?signInWithEmail(emailVal,passwordVal):(password2Val!==passwordVal?setAuthError("パスワードが一致しません"):signUpWithEmail(emailVal,passwordVal))}
+                style={{width:"100%",padding:"13px",background:locked?"#64748B":"#f87036",border:"none",borderRadius:12,color:"white",fontSize:15,fontWeight:700,cursor:locked?"not-allowed":"pointer",marginBottom:12}}>
+                {emailMode==="login"?"ログイン":"アカウント作成"}
+              </button>
+              </React.Fragment>
+              );})()}
+              {emailMode==="login"
+                ?<div style={{textAlign:"center",fontSize:12,color:"#64748B"}}>
+                  <button onClick={()=>sendPasswordReset(emailVal)} style={{background:"none",border:"none",color:"#94A3B8",fontSize:12,cursor:"pointer",textDecoration:"underline",marginBottom:6,display:"block",width:"100%"}}>パスワードを忘れた方</button>
+                  アカウントがない場合は
+                  <button onClick={()=>{setEmailMode("register");setAuthError("");}} style={{background:"none",border:"none",color:"#f87036",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>新規登録</button>
+                </div>
+                :<div style={{textAlign:"center",fontSize:12,color:"#64748B"}}>既にアカウントがある場合は
+                  <button onClick={()=>{setEmailMode("login");setAuthError("");}} style={{background:"none",border:"none",color:"#f87036",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>ログイン</button>
+                </div>
+              }
+            </div>
+            :<>
+              <button onClick={signInWithGoogle} disabled={authLoading}
+                style={{width:"100%",padding:"14px",background:"white",border:"none",borderRadius:14,color:"#1A1A2E",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:"0 2px 8px rgba(0,0,0,.15)"}}>
+                <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                Googleでログイン
+              </button>
+              <button onClick={()=>{setEmailMode("login");setAuthError("");}}
+                style={{width:"100%",padding:"14px",background:"rgba(255,255,255,.05)",border:"1px solid #334155",borderRadius:14,color:"#CBD5E1",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+                メールアドレスで続ける
+              </button>
+              {authError&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:12,background:"rgba(255,71,87,.1)",padding:"8px 12px",borderRadius:8}}>{authError}</div>}
+            </>
+        }
+
+        {!emailMode&&<>
+        {/* 区切り線 */}
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+          <div style={{flex:1,height:1,background:"#334155"}}/>
+          <div style={{color:"#64748B",fontSize:12}}>または</div>
+          <div style={{flex:1,height:1,background:"#334155"}}/>
+        </div>
+        </>}
+
+        {/* 店舗コードで参加・新規作成（メール認証フォーム非表示時のみ） */}
+        {!emailMode&&<>
+        <div style={{fontSize:12,color:"#64748B",marginBottom:6,fontWeight:600}}>店舗コードで参加（この端末でのみ有効）</div>
+        <div style={{display:"flex",gap:8,marginBottom:6}}>
+          <input
+            value={inviteCode}
+            onChange={e=>{setInviteCode(e.target.value);setInviteError("");}}
+            onKeyDown={e=>e.key==="Enter"&&applyInviteCode()}
+            placeholder="店舗コードを貼り付け" maxLength={100}
+            style={{flex:1,padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:10,color:"#F1F5F9",fontSize:14,outline:"none"}}
+          />
+          <button onClick={applyInviteCode}
+            style={{padding:"12px 16px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+            参加
+          </button>
+        </div>
+        {inviteError&&<div style={{color:inviteError==="確認中..."||inviteError==="作成中..."?"#F59E0B":"#FF4757",fontSize:12,marginBottom:8,textAlign:"center"}}>{inviteError}</div>}
+
+        {/* 新規作成 */}
+        <button onClick={createNewShop}
+          style={{width:"100%",padding:"12px",background:"rgba(248,112,54,.12)",border:"1px solid rgba(248,112,54,.3)",borderRadius:10,color:"#f87036",fontSize:14,fontWeight:700,cursor:"pointer",marginTop:8}}>
+          ＋ 新規店舗を作成する
+        </button>
+
+        {/* 注意書き */}
+        <div style={{marginTop:20,fontSize:11,color:"#475569",textAlign:"center",lineHeight:1.7}}>
+          複数端末でデータを同期するにはGoogle/メール認証をご利用ください。<br/>
+          店舗コード・新規作成はこの端末のみ有効です。
+        </div>
+        </>}
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{fontFamily:"'Hiragino Sans','Yu Gothic',sans-serif",minHeight:"100vh",background:"var(--c-bg)"}}>
+      {paymentToast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:2000,background:paymentToast==="success"?"#22C55E":"#6B7280",color:"white",padding:"13px 24px",borderRadius:12,fontWeight:700,fontSize:14,boxShadow:"0 4px 20px rgba(0,0,0,.3)",animation:"sI .3s"}}>
+        {paymentToast==="success"?"★ Proプランへのアップグレードが完了しました！":"決済がキャンセルされました"}
+      </div>}
+      {appToast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1000,background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)",whiteSpace:"nowrap"}}>{appToast}</div>}
+      {/* 同期ステータスバー（接続中以外のみ表示） */}
+      {syncStatus!=="online"&&<div style={{background:syncStatus==="offline"?"#F59E0B":"#6B7280",color:"white",fontSize:11,fontWeight:700,textAlign:"center",padding:"4px 8px"}}>
+        {syncStatus==="offline"?"オフライン（再接続中...）":syncStatus==="no_config"?"Firebase未設定":"⏳ 接続中..."}
+      </div>}
+      {/* タブ: URLロック時はスタッフ画面のみ表示 */}
+      {!urlLocked&&<div style={{display:"flex",position:"sticky",top:0,zIndex:100,boxShadow:"0 2px 8px rgba(0,0,0,.15)"}}>
+        <button onClick={()=>setView("staff")} style={{flex:1,padding:"13px 0",border:"none",cursor:"pointer",fontSize:14,fontWeight:700,background:view==="staff"?"#f87036":"#1A1A2E",color:"white"}}>スタッフ画面</button>
+        <button onClick={()=>setView("admin")} style={{flex:1,padding:"13px 0",border:"none",cursor:"pointer",fontSize:14,fontWeight:700,background:view==="admin"?"#16213E":"#111827",color:"white"}}>管理者画面</button>
+      </div>}
+      {/* メインコンテンツ */}
+      {(urlLocked||view==="staff")
+        ?<StaffView periods={periods} ap={ap} apid={apid} setApid={setApid} shopId={sid} settings={effectiveSettings} subs={subs} staffList={staffList} plan={plan}
+            urlLocked={urlLocked}
+            onSub={sub=>{
+              const currentSid=currentShopIdRef.current||sid;
+              const a=[...subs];const i=a.findIndex(s=>s.staffName===sub.staffName&&s.periodId===sub.periodId);
+              if(i>=0)a[i]=sub;else a.push(sub);
+              setSubs(a);
+              ls(storeKey(currentSid,"subs_v6"),a);
+              if(!firebaseDB)return Promise.reject(new Error("firebase未接続"));
+              const path=`shops/${currentSid}/subs/${sub.id}`;
+              return firebaseDB.ref(path).set(sub)
+                .then(()=>dlog(sub.isUpdated?"変更保存完了":"提出完了","path=",path))
+                .catch(e=>{console.warn("sub書き込み失敗:",path,e);throw e;});
+            }}
+            onDeleteSub={subId=>{
+              const currentSid=currentShopIdRef.current||sid;
+              const a=subs.filter(s=>s.id!==subId);
+              setSubs(a);
+              ls(storeKey(currentSid,"subs_v6"),a);
+              if(firebaseDB) firebaseDB.ref(`shops/${currentSid}/subs/${subId}`).remove().catch(e=>console.warn("sub削除失敗:",e));
+            }}
+            shopName={shop?.name}/>
+        :<AdminView settings={effectiveSettings} periods={periods} subs={subs} staffList={staffList} shops={shops}
+              currentShopId={sid} saveSettings={saveSettings} savePeriods={savePeriods} saveSubs={saveSubs}
+              saveStaff={saveStaff} saveShops={saveShops}
+              globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates}
+              plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed}
+              setCurrentShopId={id=>{
+                currentShopIdRef.current=id;
+                setCurrentShopId(id);
+                ssSave(SS_SHOP,id);
+                startSubscriptions(id);
+              }}
+              startSubscriptions={startSubscriptions}
+              logout={doLogout} authUser={authUser} syncStatus={syncStatus}
+              allLinkedShops={allLinkedShops}
+              onSwitchToShop={id=>{
+                const sh=allLinkedShops.find(s=>s.id===id);
+                if(!sh)return;
+                const alreadyIn=shops.some(s=>s.id===id);
+                if(!alreadyIn){const ns=[...shops,sh];setShops(ns);ls("shift_shops_v6",ns);}
+                currentShopIdRef.current=id;setCurrentShopId(id);ssSave(SS_SHOP,id);
+                startSubscriptions(id); // shopListなし→既存のshopsリストを維持しつつ購読先だけ切り替え
+              }}
+              onLinkProvider={linkProvider} onSendEmailOtp={sendEmailOtp}
+              onVerifyAndLinkEmail={verifyAndLinkEmail} onUnlinkProvider={unlinkProvider}
+              onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkEmail={signInAndLinkEmail}
+              onGenerateInviteCode={generateInviteCode} onJoinByInviteCode={joinByInviteCode} onLinkExistingShop={linkExistingShopToAuth} onUnlinkShop={unlinkShopFromAuth} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>
+      }
+    </div>
+  );
+}
+
+
+// ===== React マウント =====
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
