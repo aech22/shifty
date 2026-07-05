@@ -2303,27 +2303,39 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
   // section: "kit" or "hall" — サフィックスh/kで所属を上書き、xはどちらにも入らない
   // 列hr[hr*60,(hr+1)*60)にカウント: stM<(hr+1)*60 && enM>hr*60
+  // 日付×スタッフの実効出勤情報（開始・延長込み終了・休憩・所属）を事前計算しておき、
+  // ヒートマップの各セルは区間判定だけで数える（従来は日付×時間×スタッフ×subs.findの全走査で入力が重かった）
+  const heatData=useMemo(()=>{
+    const perDate={};
+    dates.forEach(date=>{
+      const arr=[];
+      realStaff.forEach(name=>{
+        const stM=timeToMin(getEffHHMM(name,date,"start"));let enM=timeToMin(getEffHHMM(name,date,"end"));
+        if(stM===null||enM===null)return;
+        const hsh=getHeatShift(name,date);
+        // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）
+        if(hsh){const ot=getOT(name,settings,hsh);if(ot>0)enM+=ot;}
+        const note=getShiftNote(name,date);
+        if(note==="x")return;
+        // 休憩適用者の休憩区間（時間帯セルを完全に覆う場合にカウント除外するため保持）
+        const breaks=(hsh&&isBreakEligible(hsh))
+          ?getBreaksFor(settings,date,name,hsh).map(br=>({bs:timeToMin(br.start),be:timeToMin(br.end)})).filter(b=>b.bs!==null&&b.be!==null)
+          :[];
+        const section=note==="h"?"hall":note==="k"?"kit":(hallStaff.includes(name)?"hall":"kit");
+        arr.push({stM,enM,breaks,section});
+      });
+      perDate[date]=arr;
+    });
+    return perDate;
+  },[subs,heatEdits,settings,selPid,staffList,periods]);
   const countHeat=(section,date,hr)=>{
-    let cnt=0;
     const h0=hr*60,h1=(hr+1)*60;
-    realStaff.forEach(name=>{
-      const stM=timeToMin(getEffHHMM(name,date,"start"));let enM=timeToMin(getEffHHMM(name,date,"end"));
-      if(stM===null||enM===null)return;
-      const hsh=getHeatShift(name,date);
-      // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）
-      if(hsh){const ot=getOT(name,settings,hsh);if(ot>0)enM+=ot;}
-      if(stM>=h1||enM<=h0)return;
-      const note=getShiftNote(name,date);
-      if(note==="x")return;
-      // 休憩適用者: 休憩がこの1時間帯を完全に覆う場合はカウントしない
-      if(hsh&&isBreakEligible(hsh)){
-        const brs=getBreaksFor(settings,date,name,hsh);
-        const covered=brs.some(br=>{const bs=timeToMin(br.start),be=timeToMin(br.end);return bs!==null&&be!==null&&bs<=h0&&be>=h1;});
-        if(covered)return;
-      }
-      const orig=hallStaff.includes(name)?"hall":"kit";
-      const eff=note==="h"?"hall":note==="k"?"kit":orig;
-      if(eff===section)cnt++;
+    let cnt=0;
+    (heatData[date]||[]).forEach(e=>{
+      if(e.section!==section)return;
+      if(e.stM>=h1||e.enM<=h0)return;
+      if(e.breaks.some(b=>b.bs<=h0&&b.be>=h1))return;
+      cnt++;
     });
     return cnt;
   };
