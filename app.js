@@ -1078,15 +1078,21 @@ function App(){
     setSubs(v);
     ls(storeKey(sid,"subs_v6"),v);
     // Firebase には update() でマージ書き込み（set()は他端末データを上書きするためNG）
+    // 差分書き込み: 直前のstate subs とオブジェクト参照比較し、新規・変更されたsubのみ書く
+    // （呼び出し元はいずれも変更subを新しいオブジェクト参照で作っているため参照比較で検知できる）
     // deletedId を渡すと null セットで Firebase からも削除する
     if(firebaseDB){
+      const prevSet=new Set(subs);
+      const changed=v.filter(s=>s&&s.id&&!prevSet.has(s));
       const obj={};
-      v.forEach(s=>{ if(s&&s.id) obj[s.id]=s; });
+      changed.forEach(s=>{ obj[s.id]=s; });
       if(deletedId) obj[deletedId]=null;
-      firebaseDB.ref(fbPath(sid,"subs")).update(obj).catch(e=>console.warn("subs書き込み失敗:",e));
+      if(Object.keys(obj).length>0){
+        firebaseDB.ref(fbPath(sid,"subs")).update(obj).catch(e=>console.warn("subs書き込み失敗:",e));
+      }
     }
     touchLastActivity();
-  },[sid,touchLastActivity]);
+  },[sid,subs,touchLastActivity]);
   const saveShops   =useCallback(v=>{
     setShops(v);
     ls("shift_shops_v6",v);
