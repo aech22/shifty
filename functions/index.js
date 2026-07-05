@@ -206,13 +206,13 @@ exports.sendEmailOtp = functions
     const code = String(Math.floor(100000 + Math.random() * 900000));
     const expiry = Date.now() + 10 * 60 * 1000; // 10分
 
-    const appUrl = process.env.APP_URL || "https://ontheshift.firebaseapp.com";
+    const appUrl = process.env.APP_URL || "https://shiftyshifty.app";
     const emailLink = await admin.auth().generateSignInWithEmailLink(email, {
       url: appUrl,
       handleCodeInApp: true,
     });
 
-    await admin.database().ref(`email_otps/${uid}`).set({ code, email, emailLink, expiry });
+    await admin.database().ref(`email_otps/${uid}`).set({ code, email, emailLink, expiry, attempts: 0 });
 
     const smtpUser = process.env.SMTP_USER;
     const transporter = nodemailer.createTransport({
@@ -247,7 +247,17 @@ exports.verifyEmailOtp = functions
     const snap = await admin.database().ref(`email_otps/${uid}`).once("value");
     const otp = snap.val();
 
-    if (!otp || otp.code !== code || Date.now() > otp.expiry) {
+    if (!otp || Date.now() > otp.expiry) {
+      throw new functions.https.HttpsError("invalid-argument", "確認コードが無効か期限切れです");
+    }
+    // 総当たり対策: 5回失敗でOTPを無効化（再送信が必要）
+    const attempts = (otp.attempts || 0) + 1;
+    if (attempts > 5) {
+      await admin.database().ref(`email_otps/${uid}`).remove();
+      throw new functions.https.HttpsError("resource-exhausted", "試行回数の上限を超えました。確認コードを再送信してください");
+    }
+    if (otp.code !== code) {
+      await admin.database().ref(`email_otps/${uid}/attempts`).set(attempts);
       throw new functions.https.HttpsError("invalid-argument", "確認コードが無効か期限切れです");
     }
 
