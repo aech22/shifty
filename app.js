@@ -563,12 +563,14 @@ function App(){
     }
   },[sid]);
 
-  // 共有テンプレート（全店舗共通: global/templates）
-  const[globalTemplates,setGlobalTemplates]=useState(()=>lg("shift_global_templates",[]));
+  // 曜日別候補テンプレート（店舗単位: shops/{shopId}/templates）
+  const[globalTemplates,setGlobalTemplates]=useState([]);
   const saveGlobalTemplates=useCallback(v=>{
     setGlobalTemplates(v);
-    ls("shift_global_templates",v);
-    if(firebaseDB) firebaseDB.ref("global/templates").set(v).catch(e=>console.warn("templates保存失敗:",e));
+    const targetSid=currentShopIdRef.current;
+    if(!targetSid||targetSid==="default")return;
+    ls(storeKey(targetSid,"templates_v6"),v);
+    if(firebaseDB) firebaseDB.ref(fbPath(targetSid,"templates")).set(v).catch(e=>console.warn("templates保存失敗:",e));
   },[]);
   useEffect(()=>{ if(!_hasUrlToken) ssSave(SS_APID,apid); },[apid]);
   useEffect(()=>{ if(!_hasUrlToken) ssSave(SS_VIEW,view); },[view]);
@@ -590,12 +592,12 @@ function App(){
     try { window.posthog && window.posthog.identify(targetSid); } catch {}
     ph("app_loaded",{shop_id:targetSid});
 
-    // global/templates（全店舗共通）
-    on("global/templates",val=>{
-      if(!val)return;
+    // 曜日別候補テンプレート（店舗単位: shops/{shopId}/templates）
+    on(fbPath(targetSid,"templates"),val=>{
+      if(!val){setGlobalTemplates([]);return;}
       const arr=Array.isArray(val)?val.filter(Boolean):Object.values(val);
       setGlobalTemplates(arr);
-      ls("shift_global_templates",arr);
+      ls(storeKey(targetSid,"templates_v6"),arr);
     });
 
     // 店舗リスト設定（shopListが明示的に渡された時のみ更新）
@@ -3638,7 +3640,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
     const wdCopy={...(settings.weekdayCandidates||{})};
     const tmpl={name:tmplName.trim(),weekdayCandidates:wdCopy,savedAt:new Date().toISOString()};
     const ts=[...globalTemplates,tmpl];
-    saveGlobalTemplates(ts);setTmplName("");tt(`✓ テンプレート「${tmplName.trim()}」を保存しました（全店舗共有）`);
+    saveGlobalTemplates(ts);setTmplName("");tt(`✓ テンプレート「${tmplName.trim()}」を保存しました（この店舗）`);
   };
   const applyTemplate=t=>{
     if(!confirm(`テンプレート「${t.name}」を適用しますか？現在の曜日別候補が上書きされます。`))return;
