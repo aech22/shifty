@@ -427,12 +427,15 @@ function App(){
 
     // Auth状態を確認してからshops読み込みを開始
     if(firebaseAuth){
-      const unsubAuth = firebaseAuth.onAuthStateChanged(user=>{
-        unsubAuth(); // 初回のみ
-        setAuthUser(user);
-        setAuthChecked(true);
-        // auth確定後にshops読み込み開始
-        loadShops(user);
+      // ログイン状態をブラウザに永続化しない（別端末・タブ再訪問時に自動ログインさせない。明示的な再ログインを毎回要求する）
+      firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.NONE).catch(e=>console.warn("setPersistence失敗:",e)).then(()=>{
+        const unsubAuth = firebaseAuth.onAuthStateChanged(user=>{
+          unsubAuth(); // 初回のみ
+          setAuthUser(user);
+          setAuthChecked(true);
+          // auth確定後にshops読み込み開始
+          loadShops(user);
+        });
       });
     }else{
       // Auth未初期化: Cookie/localStorageで続行
