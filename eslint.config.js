@@ -1,16 +1,136 @@
 // ESLint flat config (ESLint v9)
-// 目的: app.js の「未定義参照バグ」（no-undef / react/jsx-no-undef）を静的検出する。
-// app.js は CDN UMD + Babel Standalone のビルドレス構成（import/export なし・グローバルスクリプト）。
-// このファイルは CI の静的検査専用であり、配信物（app.js / index.html）のランタイムには一切影響しない。
+// 目的: app-*.js の「未定義参照バグ」（no-undef / react/jsx-no-undef）を静的検出する。
+// app-*.js は CDN UMD + Babel Standalone のビルドレス構成（import/export なし・グローバルスクリプト）。
+// このファイルは CI の静的検査専用であり、配信物（app-*.js / index.html）のランタイムには一切影響しない。
+//
+// M-1 でファイルを5分割（app-utils / app-core / app-staff / app-admin / app-main）した。
+// 各ファイルは独立して lint されるため、ファイルをまたいで参照される共有識別子
+// （utils/core の関数・定数、staff/admin のコンポーネント）を sharedGlobals に列挙し
+// no-undef の誤検知を防ぐ。読み込み順（utils→core→staff→admin→main）で全ファイルは同一グローバルスコープを共有する。
 
 const babelParser = require("@babel/eslint-parser");
 const reactPlugin = require("eslint-plugin-react");
 
+// app-*.js のトップレベル宣言（関数・定数・let）。分割ファイル間で相互参照されるため writable globals として登録する。
+const sharedGlobals = {
+  // app-core.js の `const {useState,...}=React` で分割スコープ全体に展開される React フック
+  useState: "readonly",
+  useEffect: "readonly",
+  useCallback: "readonly",
+  useRef: "readonly",
+  useMemo: "readonly",
+  AB: "writable",
+  AC: "writable",
+  AD: "writable",
+  AGray: "writable",
+  AI: "writable",
+  AL: "writable",
+  AT: "writable",
+  AdminView: "writable",
+  App: "writable",
+  BUILTIN_TYPES: "writable",
+  CAND_WEEKDAY: "writable",
+  CAND_WEEKEND: "writable",
+  CF_BASE: "writable",
+  CK_SHOP: "writable",
+  CL: "writable",
+  CandTab: "writable",
+  CellEditPanel: "writable",
+  DAY_TYPES: "writable",
+  DEV_MODE: "writable",
+  DEV_PLAN_OVERRIDE: "writable",
+  FIREBASE_CONFIG: "writable",
+  FIREBASE_CONFIG_DEV: "writable",
+  FIREBASE_CONFIG_PROD: "writable",
+  JH_DATES: "writable",
+  JH_FIXED: "writable",
+  MyPageTab: "writable",
+  PEF: "writable",
+  PLAN_LABELS: "writable",
+  PLAN_LIMITS: "writable",
+  PeriodsTab: "writable",
+  SS_APID: "writable",
+  SS_SHOP: "writable",
+  SS_TAB: "writable",
+  SS_VIEW: "writable",
+  STAFF_TYPE_LABELS: "writable",
+  SetTab: "writable",
+  ShiftEditTab: "writable",
+  ShiftyIcon: "writable",
+  SmModal: "writable",
+  StaffHdr: "writable",
+  StaffTab: "writable",
+  StaffView: "writable",
+  SubsTab: "writable",
+  THEME_KEY: "writable",
+  TO: "writable",
+  TO_START: "writable",
+  UpgradeModal: "writable",
+  WD: "writable",
+  _LA_KEY: "writable",
+  _LL_KEY: "writable",
+  _LOCK_MS: "writable",
+  _MAX_ATTEMPTS: "writable",
+  _getAttempts: "writable",
+  _getLockUntil: "writable",
+  _incAttempts: "writable",
+  _isLocked: "writable",
+  _lockMsg: "writable",
+  _lockRemaining: "writable",
+  _resetAttempts: "writable",
+  applyTheme: "writable",
+  buildSuggestList: "writable",
+  buildUrl: "writable",
+  calcNetWorkMinutes: "writable",
+  ckStaffKey: "writable",
+  delCookie: "writable",
+  dlog: "writable",
+  dragIdxRef: "writable",
+  expXl: "writable",
+  fbPath: "writable",
+  fd: "writable",
+  firebaseAuth: "writable",
+  firebaseDB: "writable",
+  firebaseEnabled: "writable",
+  firebaseFunctions: "writable",
+  fmtMin: "writable",
+  gd: "writable",
+  genSecureId: "writable",
+  genToken: "writable",
+  getAttrOptions: "writable",
+  getBreakList: "writable",
+  getBreaksFor: "writable",
+  getCookie: "writable",
+  getOT: "writable",
+  gto: "writable",
+  idp: "writable",
+  isBreakEligible: "writable",
+  isHoliday: "writable",
+  isSpacer: "writable",
+  isWeekendOrHoliday: "writable",
+  lg: "writable",
+  ls: "writable",
+  makeSettings: "writable",
+  makeShop: "writable",
+  parseUrl: "writable",
+  pd: "writable",
+  ph: "writable",
+  resolveAlias: "writable",
+  sc: "writable",
+  setCookie: "writable",
+  shiftBandInfo: "writable",
+  ssGet: "writable",
+  ssSave: "writable",
+  storeKey: "writable",
+  td: "writable",
+  tds: "writable",
+};
+
 module.exports = [
   {
-    files: ["app.js"],
+    files: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-main.js"],
     languageOptions: {
-      // app.js は import/export を使わないグローバルスクリプト
+      // app-*.js は import/export を使わないグローバルスクリプト
       sourceType: "script",
       parser: babelParser,
       parserOptions: {
@@ -20,6 +140,10 @@ module.exports = [
         },
       },
       globals: {
+        // --- 分割ファイル間で共有されるトップレベル識別子 ---
+        ...sharedGlobals,
+        // --- Nodeテスト用エクスポートガード（app-utils.js 末尾）---
+        module: "readonly",
         // --- CDN で読み込まれるグローバル ---
         React: "readonly",
         ReactDOM: "readonly",

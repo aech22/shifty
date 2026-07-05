@@ -6,8 +6,7 @@
           ".read": true,
           ".write": "newData.exists() && newData.child('id').val() === $shopId"
         }
-      },
-      "templates": { ".read": true, ".write": true }
+      }
     },
     "tokens": {
       "$token": {
