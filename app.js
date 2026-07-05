@@ -996,15 +996,23 @@ function App(){
     if(allLinkedShops.length===0&&shops.length<=1){tt("✕ 最後の店舗は解除できません");return;}
     try{
       await firebaseDB.ref(`accounts/${authUser.uid}/shops/${targetShopId}`).remove();
-      setAllLinkedShops(prev=>prev.filter(s=>s.id!==targetShopId));
-      const newShops=shops.filter(s=>s.id!==targetShopId);
+      const remainingLinked=allLinkedShops.filter(s=>s.id!==targetShopId);
+      setAllLinkedShops(remainingLinked);
+      let newShops=shops.filter(s=>s.id!==targetShopId);
+      if(currentShopId===targetShopId){
+        // セッションのshopsが空になる場合は残りの連携店舗から次を選ぶ（TypeError防止）
+        const next=newShops[0]||remainingLinked[0];
+        if(next){
+          if(newShops.length===0)newShops=[next];
+          setCurrentShopId(next.id);
+          startSubscriptions(next.id,newShops);
+        }else{
+          setCurrentShopId(null);
+          setUnbound(true);
+        }
+      }
       setShops(newShops);
       ls("shift_shops_v6",newShops);
-      if(currentShopId===targetShopId){
-        const next=newShops[0];
-        setCurrentShopId(next.id);
-        startSubscriptions(next.id,newShops);
-      }
       tt("✓ 店舗の連携を解除しました");
     }catch(e){
       console.warn("連携解除失敗:", e);
@@ -1534,7 +1542,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       return nw;
     };
     const sub={
-      id:existSub?existSub.id:Date.now().toString(),
+      id:existSub?existSub.id:genSecureId(24), // Date.now()は同時提出でID衝突するためランダムIDを使用
       periodId:apid,
       staffName,
       submittedAt:existSub?existSub.submittedAt:new Date().toISOString(),
@@ -1865,7 +1873,8 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
   const handleCellClick=(sub,ds)=>{if(!sub)return;setEditTarget({subId:sub.id,ds});};
   const applyCellEdit=(subId,ds,newStatus,newStart,newEnd)=>{
     const sub=submitted.find(s=>s.id===subId);if(!sub)return;
-    const shifts={...(sub.shifts||{}),[ds]:{status:newStatus,start:newStart,end:newEnd}};
+    // 既存フィールドを保持してマージ（adjustedStart/End等の管理者調整値・changedフラグを消さない）
+    const shifts={...(sub.shifts||{}),[ds]:{...((sub.shifts||{})[ds]||{}),status:newStatus,start:newStart,end:newEnd}};
     onEditSub({...sub,shifts});
     setEditTarget(null);
   };
