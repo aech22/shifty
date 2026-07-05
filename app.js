@@ -41,63 +41,9 @@ let firebaseDB = null;
 let firebaseAuth = null;
 let firebaseFunctions = null;
 let firebaseEnabled = false;
-let onConnectChange = null; // 接続状態変化コールバック
-
-function initFirebase(onStatusChange) {
-  try {
-    if (typeof firebase === "undefined") {
-      console.warn("Firebase SDK未読込み");
-      onStatusChange && onStatusChange("offline");
-      return;
-    }
-    // 既に初期化済みなら再利用
-    if (!firebase.apps || firebase.apps.length === 0) {
-      firebase.initializeApp(FIREBASE_CONFIG);
-    }
-    firebaseDB = firebase.database();
-    onConnectChange = onStatusChange;
-
-    // 接続状態をリアルタイム監視
-    firebaseDB.ref(".info/connected").on("value", snap => {
-      const connected = snap.val() === true;
-      firebaseEnabled = connected;
-      console.log("Firebase接続状態:", connected ? "オンライン" : "オフライン");
-      onStatusChange && onStatusChange(connected ? "online" : "offline");
-    });
-  } catch(e) {
-    console.warn("Firebase初期化失敗:", e.message);
-    firebaseEnabled = false;
-    onStatusChange && onStatusChange("offline");
-  }
-}
 
 // Firebase パス生成（店舗ID + キー）
 function fbPath(shopId, key) { return `shops/${shopId}/${key}`; }
-
-// Firebase への書き込み
-function fbSet(path, val) {
-  if (firebaseDB) {
-    return firebaseDB.ref(path).set(val)
-      .then(() => console.log("fbSet OK:", path))
-      .catch(e => console.warn("fbSet失敗:", path, e.message));
-  }
-  return Promise.resolve();
-}
-
-// Firebase リアルタイム購読
-function fbOn(path, cb) {
-  if (firebaseDB) {
-    const ref = firebaseDB.ref(path);
-    ref.on("value", snap => {
-      const val = snap.val();
-      console.log("fbOn受信:", path, val !== null ? "データあり" : "null");
-      cb(val);
-    }, err => console.warn("fbOn失敗:", path, err.message));
-    return () => ref.off("value");
-  }
-  // Firebase未初期化 → 何もしない
-  return () => {};
-}
 
 // PostHog イベント送信ヘルパー
 function ph(event, props) {
@@ -217,8 +163,6 @@ function idp(d){return d?new Date()>new Date(d+"T23:59:59"):false;}
 function lg(k,fb){try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;}}
 function ls(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch{}}
 function sc(cs){return[...cs].sort((a,b)=>{if(a.closed)return 1;if(b.closed)return -1;const ta=Number(a.start.replace(":","").replace(":","")),tb=Number(b.start.replace(":","").replace(":","")),ea=Number(a.end.replace(":","").replace(":","")),eb=Number(b.end.replace(":","").replace(":",""));return ta!==tb?ta-tb:ea-eb;});}
-// 時刻→数値（Excelフォーマット用）HH:MM → H.5 / H形式
-function timeToNum(t){if(!t)return"";const[h,m]=t.split(":").map(Number);return m===0?h:h+m/60;}
 // 祝日判定（簡易）
 // isHoliday は上で定義済み
 function isWeekend(dateStr){const dow=pd(dateStr).getDay();return dow===0||dow===6||isHoliday(dateStr);}
@@ -299,10 +243,6 @@ function storeKey(shopId,key){return`shift_${shopId}_${key}`;}
 
 // ===== 初期データ =====
 function makeShop(name="店舗1"){const now=new Date().toISOString();return{id:genSecureId(24),name,createdAt:now,lastActivity:now};}
-function makePeriod(shopId){
-  const yr=td.getFullYear(),mo=td.getMonth()+1,ms=String(mo).padStart(2,"0");
-  return{id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:`${yr}年${mo}月前半`,startDate:`${yr}-${ms}-01`,endDate:`${yr}-${ms}-15`,deadlineDate:"",createdAt:new Date().toISOString()};
-}
 function makeSettings(shopId){
   return{shopId,password:DEFAULT_PW,candidates:CAND_WEEKDAY,weekdayCandidates:{0:CAND_WEEKEND,6:CAND_WEEKEND},dateCandidates:{},templates:[],breakTimes:{weekday:[],sat:[],sun:[],hol:[]},staffAttributes:{},staffTypeLimits:{employee:{name:"社員",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0},parttime:{name:"バイト",daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}},overtimeSettings:{byStaff:{}},staffNumbers:{}};
 }
@@ -350,20 +290,6 @@ function parseUrl(){
     if(token) return{type:"staff",token};
   }
   if(h.startsWith("#p="))return{type:"staff",token:h.slice(3)};
-  return null;
-}
-
-// URLからshopId+periodを解決
-function resolvePeriodFromUrl(shops,allPeriods){
-  const parsed=parseUrl();
-  if(!parsed||!parsed.token)return null;
-  const token=parsed.token;
-  // urlToken または id で検索（旧形式互換）
-  const found=allPeriods.find(p=>p.urlToken===token||p.id===token);
-  if(found){
-    const shopId=found.shopId||shops[0]?.id;
-    return{period:found,shopId};
-  }
   return null;
 }
 
@@ -501,12 +427,15 @@ function App(){
 
     // Auth状態を確認してからshops読み込みを開始
     if(firebaseAuth){
-      const unsubAuth = firebaseAuth.onAuthStateChanged(user=>{
-        unsubAuth(); // 初回のみ
-        setAuthUser(user);
-        setAuthChecked(true);
-        // auth確定後にshops読み込み開始
-        loadShops(user);
+      // ログイン状態をブラウザに永続化しない（別端末・タブ再訪問時に自動ログインさせない。明示的な再ログインを毎回要求する）
+      firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.NONE).catch(e=>console.warn("setPersistence失敗:",e)).then(()=>{
+        const unsubAuth = firebaseAuth.onAuthStateChanged(user=>{
+          unsubAuth(); // 初回のみ
+          setAuthUser(user);
+          setAuthChecked(true);
+          // auth確定後にshops読み込み開始
+          loadShops(user);
+        });
       });
     }else{
       // Auth未初期化: Cookie/localStorageで続行
@@ -570,7 +499,6 @@ function App(){
             console.warn("token一致なし(Phase1):", token, "→ Cookieチェックへ");
             const ckShopId2=getCookie(CK_SHOP);
             if(ckShopId2){
-              const ckShop2=sh.find(s=>s.id===ckShopId2);
               const targetId=ckShopId2;
               currentShopIdRef.current=targetId;
               setCurrentShopId(targetId);
@@ -840,43 +768,6 @@ function App(){
     }finally{setAuthLoading(false);}
   };
 
-  // Appleでサインイン
-  const signInWithApple=async()=>{
-    if(!firebaseAuth){setAuthError("Firebase Auth未初期化");return;}
-    setAuthLoading(true);setAuthError("");
-    try{
-      const provider=new firebase.auth.OAuthProvider("apple.com");
-      provider.addScope("name");provider.addScope("email");
-      const result=await firebaseAuth.signInWithPopup(provider);
-      const user=result.user;
-      setAuthUser(user);
-      if(!firebaseDB){setAuthLoading(false);return;}
-      const snap=await firebaseDB.ref(`accounts/${user.uid}/shops`).once("value");
-      const linked=snap.val();
-      const allSnap=await firebaseDB.ref("global/shops").once("value");
-      const val=allSnap.val();
-      const sh=val?(typeof val==="object"&&!Array.isArray(val)?Object.values(val).filter(s=>s&&s.id):(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id)):[];
-      if(linked){
-        const linkedIds=Object.keys(linked);
-        const linkedShops=sh.filter(s=>linkedIds.includes(s.id));
-        setAllLinkedShops(linkedShops);
-        if(linkedShops.length>0){
-          const targetShop=linkedShops[0];
-          setShops([targetShop]);
-          ls("shift_shops_v6",[targetShop]);
-          currentShopIdRef.current=targetShop.id;
-          setCurrentShopId(targetShop.id);
-          startSubscriptions(targetShop.id,[targetShop]);
-          setUnbound(false);
-        } else {setUnbound(true);}
-      } else {setUnbound(true);}
-    }catch(e){
-      console.warn("Apple sign-in failed:",e);
-      if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request"){}
-      else setAuthError("Appleログインに失敗しました: "+e.message);
-    }finally{setAuthLoading(false);}
-  };
-
   // メール+パスワードでサインイン（共通処理）
   const _afterEmailAuth=async(user)=>{
     setAuthUser(user);
@@ -976,19 +867,6 @@ function App(){
     }catch(e){
       if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request")return{error:""};
       return{error:"Googleログインに失敗しました: "+e.message};
-    }
-  };
-  const signInAndLinkApple=async()=>{
-    if(!firebaseAuth)return{error:"Firebase Auth未初期化"};
-    try{
-      const provider=new firebase.auth.OAuthProvider("apple.com");
-      provider.addScope("name");provider.addScope("email");
-      const result=await firebaseAuth.signInWithPopup(provider);
-      await _afterSignInAndLink(result.user);
-      return{};
-    }catch(e){
-      if(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request")return{error:""};
-      return{error:"Appleログインに失敗しました: "+e.message};
     }
   };
   const signInAndLinkEmail=async(email,password,isSignUp)=>{
@@ -1601,7 +1479,7 @@ function App(){
               }}
               onLinkProvider={linkProvider} onSendEmailOtp={sendEmailOtp}
               onVerifyAndLinkEmail={verifyAndLinkEmail} onUnlinkProvider={unlinkProvider}
-              onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkApple={signInAndLinkApple} onSignInAndLinkEmail={signInAndLinkEmail}
+              onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkEmail={signInAndLinkEmail}
               onGenerateInviteCode={generateInviteCode} onJoinByInviteCode={joinByInviteCode} onLinkExistingShop={linkExistingShopToAuth} onUnlinkShop={unlinkShopFromAuth} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>
           :null)
       }
@@ -1686,8 +1564,6 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     if(isWeekend(ds))return settings.candidates||CAND_WEEKEND;
     return settings.candidates||CAND_WEEKDAY;
   };
-  // 休業日チェック（候補に closed:true が含まれるか）
-  const isClosed=ds=>gc(ds).some(c=>c.closed);
 
   const submit=async()=>{
     if(submittingRef.current)return; // 連打・二重発火防止（stateの反映を待たず同期チェック）
@@ -2039,7 +1915,6 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
   // 名前列と日付列の縦スクロール同期用ref
   const nameColRef=useRef();
   const dataColRef=useRef();
-  const syncScroll=(src,dst)=>()=>{if(dst.current)dst.current.scrollTop=src.current.scrollTop;};
 
   return(
     <div style={{position:"fixed",inset:0,background:"var(--c-card)",zIndex:300,display:"flex",flexDirection:"column",animation:"fI .2s"}}>
@@ -2183,7 +2058,7 @@ function AdminLogin({settings,onAuth}){
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
@@ -2356,7 +2231,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
         {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkApple={onSignInAndLinkApple} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading} staffList={staffList}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading} staffList={staffList}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -2387,7 +2262,6 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const[measuredRowH,setMeasuredRowH]=useState(null);
   const[measuredTheadH,setMeasuredTheadH]=useState(null);
 
-  const isPro=plan==="pro"||plan==="premium";
   const isPremium=plan==="premium";
 
   // periodsが非同期ロード後に届いた場合、selPidが""のままなら先頭に補正
@@ -2415,7 +2289,6 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const dates=period?gd(period.startDate,period.endDate):[];
   const realStaff=staffList.filter(n=>!isSpacer(n));
   const spIdx=staffList.findIndex(n=>isSpacer(n));
-  const kitStaff=spIdx>-1?staffList.slice(0,spIdx).filter(n=>!isSpacer(n)):realStaff;
   const hallStaff=spIdx>-1?staffList.slice(spIdx+1).filter(n=>!isSpacer(n)):[];
 
   // 横スクロール同期（onScroll経由で確実に同期）
@@ -3363,11 +3236,9 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   const C_STAFF=3;           // C〜: スタッフ
   const C_WD_R=3+sl.length;  // 右端曜日
   const C_SHOP_R=4+sl.length;// 右端店舗名
-  const TOTAL_COLS=C_SHOP_R;
   const staffNumbers=options.staffNumbers||{};
   // ヘッダー2行構成（Row1=従業員番号, Row2=スタッフ名）→ データはRow3から
   const DATA_START=3;
-  const TOTAL_ROWS=2+dates.length*2;
 
   // 枠線
   const M={style:"medium",color:{argb:R("555555")}};
@@ -3475,7 +3346,6 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
       const sub=ss.find(s=>s.staffName===nm||(staffAliases[nm]||[]).includes(s.staffName)),sh=sub?.shifts?.[ds];
       const isWork=sh&&sh.status==="work";
       const ci=C_STAFF+si;
-      const isLastStaff=si===sl.length-1;
       // 上行: top:medium, bot:hair
       // 下行: top:hair, bot:thin (最終日はbot:medium)
       const botT=isLast?M:T;
@@ -3801,8 +3671,6 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
   };
   const delTemplate=i=>{const ts=[...globalTemplates];ts.splice(i,1);saveGlobalTemplates(ts);tt("削除しました");};
 
-  // 選択中の曜日の候補（複数選択時は全曜日の和集合）
-  const wC=selDows.length===1?((settings.weekdayCandidates||{})[selDows[0]]||[]):[];// key=7は祝日候補
   // 選択中の日付の候補（複数選択時は全日付の和集合）
   const dC=selDates.length===1?((settings.dateCandidates||{})[selDates[0]]||[]):[];
 
@@ -4183,10 +4051,9 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
 
 function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,staffList=[],
                  authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
-                 onSignInAndLinkGoogle,onSignInAndLinkApple,onSignInAndLinkEmail,
+                 onSignInAndLinkGoogle,onSignInAndLinkEmail,
                  shops=[],allLinkedShops=[],onSwitchToShop,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,
                  inviteCodeDisplay=null,inviteCodeGenLoading=false}){
-  const[pw,setPw]=useState("");
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
   const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
   const[emailInput,setEmailInput]=useState("");
@@ -4206,37 +4073,6 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
     setThemePref(pref);
     applyTheme(pref);
     tt(pref==="light"?"☀️ ライトモード":(pref==="dark"?"ダークモード":"↺ システム設定に合わせる"));
-  };
-  // データエクスポート（JSON）
-  const exportData=()=>{
-    const data=JSON.stringify(subs,null,2);
-    const blob=new Blob([data],{type:"application/json"});
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement("a");a.href=url;a.download=`shift_subs_${fd(new Date())}.json`;a.click();URL.revokeObjectURL(url);
-    tt("✓ 提出データをエクスポートしました");
-  };
-  // データインポート（JSON）→ 既存データとマージ
-  const importData=()=>{
-    const input=document.createElement("input");input.type="file";input.accept=".json";
-    input.onchange=e=>{
-      const file=e.target.files[0];if(!file)return;
-      const reader=new FileReader();
-      reader.onload=ev=>{
-        try{
-          const imported=JSON.parse(ev.target.result);
-          if(!Array.isArray(imported)){tt("▲ 無効なファイルです");return;}
-          // マージ（同一id は上書き、新規は追加）
-          const merged=[...subs];
-          imported.forEach(sub=>{
-            const idx=merged.findIndex(s=>s.id===sub.id);
-            if(idx>=0)merged[idx]=sub;else merged.push(sub);
-          });
-          saveSubs(merged);tt(`✓ ${imported.length}件をインポートしました（合計${merged.length}件）`);
-        }catch{tt("▲ ファイルの読み込みに失敗しました");}
-      };
-      reader.readAsText(file);
-    };
-    input.click();
   };
   const linkedIds=(authUser?.providerData||[]).map(p=>p.providerId);
   const handleLinkProvider=async(type)=>{
