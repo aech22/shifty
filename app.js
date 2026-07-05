@@ -1118,26 +1118,8 @@ function App(){
     }
   },[]);
 
-  // 1年間未更新の店舗をFirebaseから自動削除（初回ロード後1度だけ実行）
-  const purgedRef=useRef(false);
-  useEffect(()=>{
-    if(!ready||!sid||purgedRef.current)return;
-    purgedRef.current=true;
-    if(!firebaseDB)return;
-    const oneYearAgo=new Date();oneYearAgo.setFullYear(oneYearAgo.getFullYear()-1);
-    const snapshot=[...shops];
-    snapshot.forEach(sh=>{
-      if(!sh.id)return;
-      firebaseDB.ref(`shops/${sh.id}/lastActivity`).once("value").then(snap=>{
-        const la=snap.val();
-        const lastDate=la?new Date(la):(sh.createdAt?new Date(sh.createdAt):null);
-        if(!lastDate||lastDate>oneYearAgo)return;
-        console.log(`[Shifty] 1年間未更新の店舗を削除: ${sh.id} (${sh.name})`);
-        firebaseDB.ref(`shops/${sh.id}`).remove().catch(()=>{});
-        firebaseDB.ref(`global/shops/${sh.id}`).remove().catch(()=>{});
-      }).catch(()=>{});
-    });
-  },[ready,sid]);
+  // 1年間未更新の店舗の自動削除は Cloud Functions（purgeInactiveShops）のスケジュール実行に移行済み。
+  // クライアント側での削除は端末時計ズレ・壊れたlastActivityによる誤削除リスクがあるため行わない。
 
   // ap: apidに対応するperiodを取得
   // 最新の期間 = startDateが最も新しいperiod

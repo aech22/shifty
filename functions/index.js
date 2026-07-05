@@ -256,6 +256,58 @@ exports.verifyEmailOtp = functions
   });
 
 // ============================================================
+// 1年間未更新の店舗を自動アーカイブ（毎日実行・30日猶予後に本削除）
+// 旧実装はクライアント側で即時削除していたが、端末時計ズレや壊れた
+// lastActivity（Invalid Date）による誤削除リスクがあるため、
+// スケジュール実行 + 二段階削除（archived/ 経由）に移行。
+// ============================================================
+exports.purgeInactiveShops = functions
+  .region("asia-northeast1")
+  .pubsub.schedule("every 24 hours")
+  .timeZone("Asia/Tokyo")
+  .onRun(async () => {
+    const now = Date.now();
+    const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+    const GRACE_MS = 30 * 24 * 60 * 60 * 1000;
+
+    // 1) 1年未更新の店舗を archived/shops へ移動（即削除しない）
+    const shopsSnap = await db.ref("global/shops").once("value");
+    const shops = shopsSnap.val() || {};
+    for (const [id, shop] of Object.entries(shops)) {
+      if (!shop || !shop.id) continue;
+      const laSnap = await db.ref(`shops/${id}/lastActivity`).once("value");
+      const raw = laSnap.val() || shop.lastActivity || shop.createdAt;
+      const t = raw ? new Date(raw).getTime() : NaN;
+      if (Number.isNaN(t)) {
+        console.warn(`lastActivityが不正のためスキップ: ${id} (${shop.name}) raw=${raw}`);
+        continue;
+      }
+      if (now - t < ONE_YEAR_MS) continue;
+      const dataSnap = await db.ref(`shops/${id}`).once("value");
+      await db.ref(`archived/shops/${id}`).set({
+        shop,
+        data: dataSnap.val(),
+        archivedAt: new Date(now).toISOString(),
+      });
+      await db.ref(`shops/${id}`).remove();
+      await db.ref(`global/shops/${id}`).remove();
+      console.log(`アーカイブ: ${id} (${shop.name}) lastActivity=${raw}`);
+    }
+
+    // 2) アーカイブから30日経過したものを本削除
+    const archSnap = await db.ref("archived/shops").once("value");
+    const archived = archSnap.val() || {};
+    for (const [id, entry] of Object.entries(archived)) {
+      const at = entry && entry.archivedAt ? new Date(entry.archivedAt).getTime() : NaN;
+      if (Number.isNaN(at)) continue;
+      if (now - at < GRACE_MS) continue;
+      await db.ref(`archived/shops/${id}`).remove();
+      console.log(`アーカイブ期限切れを本削除: ${id}`);
+    }
+    return null;
+  });
+
+// ============================================================
 // ユーザーアンケート一斉送信（ワンショット・要秘密トークン）
 // curl -X POST https://asia-northeast1-ontheshift.cloudfunctions.net/sendSurveyEmails \
 //   -H "Content-Type: application/json" \
