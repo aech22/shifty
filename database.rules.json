@@ -1,8 +1,20 @@
 {
   "rules": {
     "global": {
-      "shops": { ".read": true, ".write": true },
+      "shops": {
+        "$shopId": {
+          ".read": true,
+          ".write": "newData.exists() && newData.child('id').val() === $shopId"
+        }
+      },
       "templates": { ".read": true, ".write": true }
+    },
+    "tokens": {
+      "$token": {
+        ".read": true,
+        ".write": "!data.exists() || (newData.exists() && newData.child('shopId').val() === data.child('shopId').val())",
+        ".validate": "newData.hasChildren(['shopId','periodId'])"
+      }
     },
     "shops": {
       "$shopId": {
@@ -10,7 +22,7 @@
         ".write": true,
         "subs": {
           "$subId": {
-            ".validate": "newData.hasChildren(['id','staffName','periodId','shifts','submittedAt'])"
+            ".validate": "newData.hasChildren(['id','staffName','periodId','shifts','submittedAt']) && newData.child('staffName').isString() && newData.child('staffName').val().length <= 50"
           }
         }
       }
@@ -19,10 +31,11 @@
       "$uid": {
         "plan":             { ".read": true,  ".write": false },
         "planExpiry":       { ".read": true,  ".write": false },
+        "paymentFailed":    { ".read": true,  ".write": false },
         "stripeCustomerId": { ".read": false, ".write": false },
         "shops": {
-          ".read": "auth != null",
-          ".write": "auth != null"
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid"
         },
         "inviteCode": {
           ".read": "auth != null && auth.uid === $uid",
@@ -31,7 +44,7 @@
         "members": {
           ".read": "auth != null && auth.uid === $uid",
           "$memberId": {
-            ".write": "auth != null"
+            ".write": "auth != null && auth.uid === $memberId"
           }
         }
       }
@@ -39,13 +52,7 @@
     "inviteCodes": {
       "$code": {
         ".read": "auth != null",
-        ".write": "auth != null"
-      }
-    },
-    "pendingLinks": {
-      "$userId": {
-        ".read": "auth != null && auth.uid === $userId",
-        ".write": "auth != null && auth.uid === $userId"
+        ".write": "auth != null && (!data.exists() || data.child('uid').val() === auth.uid)"
       }
     }
   }
