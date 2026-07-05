@@ -2243,7 +2243,29 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return{numeric:m[1],note:suf}; // 日本語含む任意サフィックスはそのまま保持
   };
 
-  const _getSub=(name)=>subs.find(s=>s.periodId===selPid&&s.staffName===name);
+  // 提出データの逆引きインデックス（subs.findのO(n)探索をO(1)に。ヒートマップ・集計の再計算コスト削減）
+  const subsByKey=useMemo(()=>{
+    const m=new Map();
+    subs.forEach(s=>{
+      if(!s||!s.periodId||!s.staffName)return;
+      const k=s.periodId+"|"+s.staffName;
+      if(!m.has(k))m.set(k,s); // 重複時はfindと同じ「最初の1件」を採用
+    });
+    return m;
+  },[subs]);
+  // 週間集計用: スタッフ名+日付 → 出勤シフト（期間をまたいだ検索の高速化）
+  const workShiftByStaffDate=useMemo(()=>{
+    const m=new Map();
+    subs.forEach(s=>{
+      if(!s||!s.staffName||!s.shifts)return;
+      Object.entries(s.shifts).forEach(([d,sh])=>{
+        const k=s.staffName+"|"+d;
+        if(sh&&sh.status==="work"&&!m.has(k))m.set(k,sh);
+      });
+    });
+    return m;
+  },[subs]);
+  const _getSub=(name)=>subsByKey.get(selPid+"|"+name);
   // 管理者編集値(adjustedXxx)優先、なければスタッフ提出値(xxx)にフォールバック
   const getStoredTime=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";return(field==="start"?(sh.adjustedStart??sh.start):(sh.adjustedEnd??sh.end))||"";};
   const getStoredNote=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";return(field==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"";};
@@ -2325,7 +2347,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const sameMoPeriods=period?[...periods].filter(p=>{const d=pd(p.startDate);return d.getFullYear()===perD.getFullYear()&&d.getMonth()===perD.getMonth();}).sort((a,b)=>a.startDate.localeCompare(b.startDate)):[];
   const getPeriodMin=(pid,name)=>{
     const p=periods.find(pp=>pp.id===pid);if(!p)return 0;
-    return gd(p.startDate,p.endDate).reduce((acc,d)=>{const sub=subs.find(ss=>ss.periodId===pid&&ss.staffName===name);const sh=sub?.shifts?.[d];return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh)):0);},0);
+    const sub=subsByKey.get(pid+"|"+name); // 日ループの外で1回だけ引く
+    if(!sub)return 0;
+    return gd(p.startDate,p.endDate).reduce((acc,d)=>{const sh=sub.shifts?.[d];return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh)):0);},0);
   };
 
   // 週間勤務時間（前の期間を跨ぐ）
@@ -2337,7 +2361,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return[...wkSet].sort();
   })();
   const getWeekMin=(monStr,name)=>{
-    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sub=subs.find(s=>s.staffName===name&&s.shifts?.[ds]?.status==="work");if(sub)tot+=calcNetWorkMinutes(sub.shifts[ds],getBreaksFor(settings,ds,name,sub.shifts[ds]),getOT(name,settings,sub.shifts[ds]));}
+    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sh=workShiftByStaffDate.get(name+"|"+ds);if(sh)tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh));}
     return tot;
   };
 
