@@ -42,7 +42,7 @@
         },
         "lastActivity": {
           ".read": "auth != null",
-          ".write": "auth != null",
+          ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
           ".validate": "newData.isString() && newData.val().length <= 40"
         },
         "subs": {
@@ -55,7 +55,7 @@
         "owners": {
           ".read": "auth != null && data.child(auth.uid).exists()",
           "$uid": {
-            ".write": "auth != null && auth.uid === $uid && newData.isString() && newData.val() === root.child('shops').child($shopId).child('private').child('adminKey').val()"
+            ".write": "auth != null && ((auth.uid === $uid && newData.isString() && newData.val() === root.child('shops').child($shopId).child('private').child('adminKey').val()) || (!newData.exists() && data.parent().child(auth.uid).exists()))"
           }
         },
         "private": {
@@ -91,9 +91,9 @@
     },
     "inviteCodes": {
       "$code": {
-        ".read": "auth != null",
+        ".read": "auth != null && data.child('expiresAtMs').val() > now",
         ".write": "auth != null && (!data.exists() || data.child('uid').val() === auth.uid)",
-        ".validate": "newData.hasChildren(['uid','expiresAt'])"
+        ".validate": "newData.hasChildren(['uid','expiresAt','expiresAtMs']) && newData.child('expiresAtMs').isNumber() && newData.child('uid').val() === auth.uid"
       }
     }
   }
