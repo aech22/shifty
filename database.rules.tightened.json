@@ -4,7 +4,7 @@
       "shops": {
         "$shopId": {
           ".read": "auth != null",
-          ".write": "auth != null && newData.exists() && newData.child('id').val() === $shopId && (!root.child('shops').child($shopId).child('owners').exists() || root.child('shops').child($shopId).child('owners').child(auth.uid).exists())",
+          ".write": "auth != null && newData.exists() && newData.child('id').val() === $shopId && (!data.exists() || root.child('shops').child($shopId).child('owners').child(auth.uid).exists())",
           ".validate": "newData.child('name').isString() && newData.child('name').val().length <= 100"
         }
       }
@@ -12,7 +12,7 @@
     "tokens": {
       "$token": {
         ".read": "auth != null",
-        ".write": "auth != null && ((newData.exists() && (!data.exists() || newData.child('shopId').val() === data.child('shopId').val()) && (!root.child('shops').child(newData.child('shopId').val()).child('owners').exists() || root.child('shops').child(newData.child('shopId').val()).child('owners').child(auth.uid).exists())) || (!newData.exists() && data.exists() && (!root.child('shops').child(data.child('shopId').val()).child('owners').exists() || root.child('shops').child(data.child('shopId').val()).child('owners').child(auth.uid).exists())))",
+        ".write": "auth != null && ((newData.exists() && (!data.exists() || newData.child('shopId').val() === data.child('shopId').val()) && root.child('shops').child(newData.child('shopId').val()).child('owners').child(auth.uid).exists()) || (!newData.exists() && data.exists() && root.child('shops').child(data.child('shopId').val()).child('owners').child(auth.uid).exists()))",
         ".validate": "newData.hasChildren(['shopId','periodId'])"
       }
     },
@@ -20,25 +20,25 @@
       "$shopId": {
         "settings": {
           ".read": "auth != null",
-          ".write": "auth != null && (!root.child('shops').child($shopId).child('owners').exists() || root.child('shops').child($shopId).child('owners').child(auth.uid).exists())"
+          ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()"
         },
         "periods": {
           ".read": "auth != null",
-          ".write": "auth != null && (!root.child('shops').child($shopId).child('owners').exists() || root.child('shops').child($shopId).child('owners').child(auth.uid).exists())",
+          ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
           "$periodId": {
             ".validate": "newData.hasChildren(['id'])"
           }
         },
         "staff": {
           ".read": "auth != null",
-          ".write": "auth != null && (!root.child('shops').child($shopId).child('owners').exists() || root.child('shops').child($shopId).child('owners').child(auth.uid).exists())",
+          ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
           "$i": {
             ".validate": "newData.isString() && newData.val().length <= 50"
           }
         },
         "templates": {
           ".read": "auth != null",
-          ".write": "auth != null && (!root.child('shops').child($shopId).child('owners').exists() || root.child('shops').child($shopId).child('owners').child(auth.uid).exists())"
+          ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()"
         },
         "lastActivity": {
           ".read": "auth != null",
@@ -59,7 +59,7 @@
           }
         },
         "private": {
-          ".read": "auth != null && (!root.child('shops').child($shopId).child('owners').exists() || root.child('shops').child($shopId).child('owners').child(auth.uid).exists())",
+          ".read": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
           "adminKey": {
             ".write": "auth != null && (!data.exists() || root.child('shops').child($shopId).child('owners').child(auth.uid).exists())",
             ".validate": "newData.isString() && newData.val().length >= 16 && newData.val().length <= 64"
