@@ -2057,7 +2057,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                  authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
                  onSignInAndLinkGoogle,onSignInAndLinkEmail,
                  shops=[],allLinkedShops=[],onSwitchToShop,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,
-                 inviteCodeDisplay=null,inviteCodeGenLoading=false}){
+                 inviteCodeDisplay=null,inviteCodeGenLoading=false,adminCode=null}){
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
   const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
   const[emailInput,setEmailInput]=useState("");
@@ -2383,13 +2383,14 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       })}
     </AC>}
 
-    {shopId&&<AC title="この端末の店舗コード">
-      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>このコードを別の端末で入力すると、同じ店舗に紐付けられます。</div>
+    {shopId&&<AC title="この端末の管理コード">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>このコードを別の端末で入力すると、同じ店舗を管理者として操作できるようになります。<b>スタッフには共有しないでください。</b></div>
       <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,padding:"10px 14px"}}>
-        <span style={{flex:1,fontFamily:"monospace",fontSize:13,color:"var(--c-text)",letterSpacing:"0.05em",wordBreak:"break-all"}}>{shopId}</span>
+        <span style={{flex:1,fontFamily:"monospace",fontSize:13,color:"var(--c-text)",letterSpacing:"0.05em",wordBreak:"break-all"}}>{adminCode||shopId}</span>
         <button onClick={()=>{
-          const copy=()=>{const el=document.createElement("textarea");el.value=shopId;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 店舗コードをコピーしました");};
-          if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(shopId).then(()=>tt("✓ 店舗コードをコピーしました")).catch(copy);}else{copy();}
+          const codeVal=adminCode||shopId;
+          const copy=()=>{const el=document.createElement("textarea");el.value=codeVal;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 管理コードをコピーしました");};
+          if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(codeVal).then(()=>tt("✓ 管理コードをコピーしました")).catch(copy);}else{copy();}
         }} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>コピー</button>
       </div>
       <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>別端末への共有は「店舗名ボタン → コードで追加」から行えます</div>
@@ -2488,9 +2489,10 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
     ph("portal_opened");
     setPortalLoading(true);
     try{
+      const idToken=await firebaseAuth?.currentUser?.getIdToken().catch(()=>null);
       const res=await fetch(`${CF_BASE}/createPortalSession`,{
         method:"POST",
-        headers:{"Content-Type":"application/json"},
+        headers:{"Content-Type":"application/json",...(idToken?{"Authorization":`Bearer ${idToken}`}:{})},
         body:JSON.stringify({shopId,returnUrl:window.location.href}),
       });
       const data=await res.json();
@@ -2651,9 +2653,10 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
     ph("upgrade_started",{plan});
     setLoading(plan);setError("");
     try{
+      const idToken=await firebaseAuth?.currentUser?.getIdToken().catch(()=>null);
       const res=await fetch(`${CF_BASE}/createCheckoutSession`,{
         method:"POST",
-        headers:{"Content-Type":"application/json"},
+        headers:{"Content-Type":"application/json",...(idToken?{"Authorization":`Bearer ${idToken}`}:{})},
         body:JSON.stringify({shopId,plan,successUrl:window.location.href+"?payment=success",cancelUrl:window.location.href+"?payment=cancel"}),
       });
       const data=await res.json();
