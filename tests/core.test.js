@@ -129,3 +129,19 @@ test("sc: closed が末尾に来る", () => {
   assert.strictEqual(sorted[1].start, "18:00");
   assert.strictEqual(sorted[2].closed, true);
 });
+
+test("gd: 正常な範囲は日付配列を返す", () => {
+  assert.deepStrictEqual(u.gd("2026-06-01", "2026-06-03"), ["2026-06-01", "2026-06-02", "2026-06-03"]);
+});
+
+test("gd: startDate/endDate が undefined でも例外を投げず [] を返す（PeriodsTabクラッシュ防止）", () => {
+  assert.deepStrictEqual(u.gd(undefined, "2026-06-03"), []);
+  assert.deepStrictEqual(u.gd("2026-06-01", undefined), []);
+  assert.deepStrictEqual(u.gd(undefined, undefined), []);
+  assert.deepStrictEqual(u.gd("", ""), []);
+});
+
+test("pd: 非文字列は例外を投げず Invalid Date を返す", () => {
+  assert.ok(Number.isNaN(u.pd(undefined).getTime()));
+  assert.ok(Number.isNaN(u.pd("").getTime()));
+});

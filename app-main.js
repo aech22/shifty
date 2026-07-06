@@ -280,6 +280,9 @@ function App(){
         ?Object.values(val).filter(p=>p&&p.id)
         :(Array.isArray(val)?val:Object.values(val)).filter(p=>p&&p.id);
       if(arr.length>0){
+        // 旧データにはshopIdがない期間があり、店舗切替直後のtokens補完で他店舗のsidが
+        // 混入し得るため、購読元のsidでここで補完しておく
+        arr.forEach(p=>{ if(!p.shopId) p.shopId=targetSid; });
         arr.sort((a,b)=>new Date(b.startDate||0)-new Date(a.startDate||0));
         setPeriods(arr); ls(storeKey(targetSid,"periods_v6"),arr);
       }
@@ -354,17 +357,22 @@ function App(){
     const uid=firebaseAuth.currentUser.uid;
     let key=getAdminKeyLS(shopId);
     if(!key){
-      // キー未保持: 未claim店舗ならadminKeyを読める（null）→生成して初回claim
+      // キー未保持: 未claim店舗ならadminKeyを生成して初回claim。
+      // 締めルールではprivateの読みがオーナー限定のため未claim店舗でも読みは拒否される。
+      // 読めない場合も「未claimなら書ける」書き込みルールを頼りに生成キーのsetを試す
+      // （claim済み店舗の非オーナーはsetも拒否されるため乗っ取りは成立しない）
       try{
         const snap=await firebaseDB.ref(`shops/${shopId}/private/adminKey`).once("value");
         key=snap.val();
-        if(!key){
-          key=genSecureId(32);
+      }catch(e){ key=null; }
+      if(!key){
+        key=genSecureId(32);
+        try{
           await firebaseDB.ref(`shops/${shopId}/private/adminKey`).set(key);
+        }catch(e){
+          dlog("adminKey取得不可（オーナー未登録端末）:",shopId);
+          return false;
         }
-      }catch(e){
-        dlog("adminKey取得不可（オーナー未登録端末）:",shopId);
-        return false;
       }
     }
     try{
@@ -608,6 +616,9 @@ function App(){
 
   // 店舗セッションのみログアウト（企業連携・Firebase Auth は維持）
   const doLogout=async()=>{
+    // 前店舗の購読を解除（ログイン画面表示中に店舗データの受信を続けない）
+    activeSubsRef.current.forEach(r=>r.off());
+    activeSubsRef.current=[];
     delCookie(CK_SHOP);
     sessionStorage.clear();
     setCurrentShopId(null);
@@ -617,6 +628,8 @@ function App(){
 
   // Firebase Auth を含む完全サインアウト
   const doFullSignOut=async()=>{
+    activeSubsRef.current.forEach(r=>r.off());
+    activeSubsRef.current=[];
     if(firebaseAuth&&authUser){
       try{await firebaseAuth.signOut();}catch(e){console.warn("signOut失敗:",e);}
     }
@@ -639,6 +652,11 @@ function App(){
       const code=genToken();
       const now=new Date();
       const expiresAt=new Date(now.getTime() + 24*60*60*1000);  // 24時間後
+      // 旧コードを削除（管理キー入りの失効コードをDBに残さない）
+      try{
+        const prev=(await firebaseDB.ref(`accounts/${authUser.uid}/inviteCode`).once("value")).val();
+        if(prev&&prev.code&&prev.code!==code) await firebaseDB.ref(`inviteCodes/${prev.code}`).remove();
+      }catch{}
       await firebaseDB.ref(`accounts/${authUser.uid}/inviteCode`).set({
         code,
         createdAt:now.toISOString(),
@@ -658,6 +676,7 @@ function App(){
       await firebaseDB.ref(`inviteCodes/${code}`).set({
         uid:authUser.uid,
         expiresAt:expiresAt.toISOString(),
+        expiresAtMs:expiresAt.getTime(), // 締めルールが期限切れコードの読み取りを拒否する判定用
         shops:shopsSnap.val()||null,
         adminKeys:Object.keys(adminKeyMap).length>0?adminKeyMap:null
       });
@@ -673,9 +692,21 @@ function App(){
 
   const joinByInviteCode=async(code)=>{
     if(!firebaseDB || !authUser) return;
+    let codeData;
     try{
       const codeSnap=await firebaseDB.ref(`inviteCodes/${code}`).once('value');
-      const codeData=codeSnap.val();
+      codeData=codeSnap.val();
+    }catch(e){
+      // 締めルールでは期限切れ・存在しないコードの読み取り自体が拒否される（adminKey漏洩防止）
+      if(e&&(e.code==='PERMISSION_DENIED'||/permission_denied/i.test(e.message||''))){
+        setInviteError('無効または期限切れのコードです');
+      }else{
+        console.warn("招待コード参加失敗:", e);
+        setInviteError('処理に失敗しました');
+      }
+      return;
+    }
+    try{
       if(!codeData || new Date()>=new Date(codeData.expiresAt)){
         setInviteError('無効または期限切れのコードです');
         return;

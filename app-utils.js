@@ -58,8 +58,8 @@ const CAND_WEEKEND=[
 // ===== ユーティリティ =====
 // ===== ユーティリティ =====
 function fd(d){return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
-function pd(s){const[y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d);}
-function gd(s,e){const r=[],st=pd(s),en=pd(e);let c=new Date(st);while(c<=en){r.push(fd(c));c.setDate(c.getDate()+1);}return r;}
+function pd(s){if(typeof s!=="string"||!s)return new Date(NaN);const[y,m,d]=s.split("-").map(Number);return new Date(y,m-1,d);}
+function gd(s,e){if(typeof s!=="string"||typeof e!=="string"||!s||!e)return[];const r=[],st=pd(s),en=pd(e);if(isNaN(st)||isNaN(en))return[];let c=new Date(st);while(c<=en){r.push(fd(c));c.setDate(c.getDate()+1);}return r;}
 function gto(){
   const o=[];
   // 9:00〜24:00（15分刻み）
