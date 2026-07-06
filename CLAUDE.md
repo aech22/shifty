@@ -211,7 +211,7 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `UpgradeModal` | app-admin.js | アップグレード促進モーダル（Stripe Checkout 呼び出し） |
 | `AC / AL / AT / CL` | app-admin.js | 汎用UIパーツ（カード・ラベル・タイトル・候補リスト） |
 
-※ 管理者パスワード認証（AdminLogin）は廃止・削除済み。管理者画面の実質的な認証は「shopIdを知っているか」のcapabilityモデル（恒久対応はBACKLOGのAnonymous Auth権限分離）。
+※ 管理者パスワード認証（AdminLogin）は廃止・削除済み。管理者権限は2026-07-07から**管理キー（adminKey）方式**: `shops/{shopId}/owners/{uid}` に登録された端末のみ管理系パスに書き込める。端末追加は管理コード（`shopId.adminKey`）を「コードで追加」に入力する。
 
 ---
 
@@ -230,7 +230,10 @@ Firebase Realtime Database
 │       ├── staff      ← スタッフ名一覧（文字列配列）
 │       ├── templates  ← 曜日別候補テンプレート（店舗単位・Pro以上）
 │       ├── lastActivity ← ISO文字列（CFの1年未更新アーカイブ判定に使用）
-│       └── subs/      ← 提出データ {subId: subObj}（書き込みは.validateで形状検証）
+│       ├── subs/      ← 提出データ {subId: subObj}（書き込みは.validateで形状検証・auth必須）
+│       ├── owners/    ← {uid: adminKey} 管理者登録（自uid追加はadminKey照合が必要・読みはオーナーのみ）
+│       └── private/
+│           └── adminKey ← 管理キー（32桁）。読みはオーナー（未claim時はauth済み全員）のみ
 ├── archived/
 │   └── shops/{shopId} ← purgeInactiveShops が退避した店舗（30日猶予後に本削除）
 ├── accounts/
@@ -249,7 +252,12 @@ Firebase Realtime Database
     └── {uid}            ← {code, email, emailLink, expiry, attempts}（OTP・5回失敗で無効化）
 ```
 
-**セキュリティモデル（2026-07-06改修）**: 「公開リストの廃止 + 推測不能ID（capability）」。shopId（24桁）・urlToken（8桁）は一覧不可のため実質的な秘密として機能する。`accounts/{uid}` 系は `auth.uid === $uid` で本人限定。残存リスク（shopIdを知る者=管理可）の恒久対応はBACKLOGのAnonymous Auth権限分離。
+**セキュリティモデル（2026-07-07改修・フェーズB）**: 「Anonymous Auth必須 + オーナー権限分離（管理キー方式）」。
+- 全クライアントは起動時に `signInAnonymously()`（LOCAL永続化・端末ごとにuid安定）。**全ルールが `auth != null` 必須**のため未認証RESTは全拒否。実ログイン（Google/メール）は従来通り永続化しない（サインイン直前にNONEへ切替）。
+- 管理系パス（settings/periods/staff/templates/tokens/global/shops）の書き込みは `shops/{shopId}/owners/{auth.uid}` 登録者のみ。owners への自己登録は `private/adminKey` との値照合が必要で、adminKeyは管理者端末のlocalStorage（`ots_adminKeys_v1`）にのみ保存される。**スタッフURLから得られるshopIdだけでは管理操作できない**。
+- スタッフは subs の読み書きと settings/periods/staff の読みのみ（従来機能を維持）。
+- **移行猶予（現行ルール）**: owners未登録（未claim）店舗は従来通り書き込み可。既存店舗は管理者画面表示時のlazy claimで自動移行する。猶予終了後は `database.rules.tightened.json` に差し替える（BACKLOG参照）。
+- Cloud Functions（createCheckoutSession/createPortalSession）はIDトークン検証+オーナー照合。App CheckはSDK読込済み・サイトキー未設定でスキップ中（BACKLOG参照）。
 
 ### Firebase 書き込みルール（最重要）
 
@@ -620,6 +628,11 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 -
 -
 -
+-
+-
+-
+-
+-
 ---
 
 ## Obsidianノート（自動同期）
@@ -664,17 +677,28 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🟡 Anonymous Auth導入による権限分離（セキュリティ強化フェーズB）
+## 🟡 セキュリティ強化: 締めルールへの切り替え（猶予期間終了後）
 
-**目的**: 2026-07-06のセキュリティ改修（capabilityモデル化）の残存リスクを解消する。現在は「shopIdを知る者＝店舗を管理できる」ため、スタッフURL経由でshopIdを得たスタッフも管理操作が可能。
+**目的**: 2026-07-07に実装したオーナー権限分離（Anonymous Auth + adminKey）の移行猶予を終了し、未claim店舗への書き込み許可ブランチを削除する。
 **受け入れ条件**:
-- [ ] Firebase Anonymous Auth を導入し、全クライアントが `auth != null` になる
-- [ ] `shops/{shopId}/owners/{uid}` で管理者を管理し、settings/periods/staff の書き込みをオーナーに限定する
-- [ ] スタッフ（URL経由）は subs への提出書き込みと閲覧のみ可能にする
-- [ ] `createPortalSession` に Firebase Auth IDトークン検証を追加（現在は shopId のみで他人のStripeポータルを開ける。shopId非公開化により緩和済みだが完全ではない）
-- [ ] 移行: 既存のCookie運用店舗のオーナー登録経路（店舗コード入力時にオーナー追加）を用意する
-**影響範囲**: database.rules.json、app.js（Phase1初期化・認証まわり）、functions/index.js（createPortalSession）
-**備考**: 2026-07-06 コードレビューのS-6・フェーズ1残存リスクの恒久対応。あわせて移行完了後に app.js の legacyTokenScan（旧URL解決フォールバック）を撤去する。レビュー詳細は Obsidian `Projects/Shifty/コードレビュー_2026-07-06.md`
+- [ ] 本番のアクティブ店舗のオーナーclaim状況を確認する（`shops/*/owners` が存在する店舗の割合。直近1〜2ヶ月にlastActivityがある店舗がすべてclaim済みであること）
+- [ ] `database.rules.tightened.json` の内容を `database.rules.json` に反映してdev→本番の順にデプロイする
+- [ ] デプロイ後にスタッフ提出・管理者書き込み・新規店舗作成の実機確認を行う
+**影響範囲**: database.rules.json のみ（クライアント変更なし。クライアントは既にclaim済み前提で動作する）
+**備考**: 開始日 2026-07-07（本番ルールデプロイ日）。**2〜4週間後（2026-07-21〜08-04）に着手する。** 猶予中の残存リスクは「未claim店舗に限り、shopIdを知る者が最初にclaimした者勝ち」（従来と同等）。claim済み店舗は管理コード（shopId.adminKey）保持者のみ管理可能。
+
+---
+
+## 🟢 App Check の有効化（reCAPTCHA v3）
+
+**目的**: 正規のWebアプリ以外（curl・スクレイパー・改造クライアント）からのFirebaseアクセスを層として遮断する。SDK読込と初期化コードは実装済み（サイトキー未設定のためスキップ動作中）。
+**受け入れ条件**:
+- [ ] Firebaseコンソール（両プロジェクト）→ App Check → アプリを登録し、reCAPTCHA v3 サイトキーを発行する
+- [ ] `app-core.js` の `APP_CHECK_SITE_KEY` にサイトキーを設定する（DEV_MODE分岐でdev/本番それぞれ）
+- [ ] **未enforceの監視モードで2週間観察**し、コンソールのApp Checkメトリクスで正規トラフィックの検証成功率がほぼ100%であることを確認する
+- [ ] Realtime Database と Cloud Functions のenforcementをコンソールから有効化する
+**影響範囲**: app-core.js（定数1箇所）、Firebaseコンソール操作
+**備考**: enforce後はRESTでの直接デバッグアクセスが遮断される点に注意（管理用途はAdmin SDK/コンソールを使う）。
 
 ---
 
@@ -733,6 +757,20 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ Anonymous Auth導入による権限分離（セキュリティ強化フェーズB）（2026-07-07）
+
+**受け入れ条件**:
+- [x] Firebase Anonymous Auth を導入し、全クライアントが `auth != null` になる（Phase1で signInAnonymously・LOCAL永続化。実ログインは従来通りNONE）
+- [x] `shops/{shopId}/owners/{uid}` で管理者を管理し、settings/periods/staff/templates/tokens/global/shops の書き込みをオーナーに限定する（管理キー方式: `shops/{shopId}/private/adminKey` との照合でowners自己登録。キーはlocalStorageのみに保持しスタッフURLに露出しない）
+- [x] スタッフ（URL経由）は subs への提出書き込みと閲覧のみ可能にする
+- [x] `createPortalSession`・`createCheckoutSession` に Firebase Auth IDトークン検証+オーナー照合を追加
+- [x] 移行: 既存店舗は管理者画面表示時のlazy claim（未claim店舗でadminKey生成→owners登録）。端末追加は管理コード（`shopId.adminKey`）入力。非オーナー端末には閲覧専用バナー表示
+- [x] REST検証47項目パス（未認証全拒否・オーナー分離・乗っ取り防止・validate）+ 実機検証（claim・再claim・新規店舗作成・スタッフURL提出・3プラン）
+
+**備考**: 猶予ルール（未claim店舗は従来通り書き込み可）でリリース。締めルールは `database.rules.tightened.json` に準備済み → 上記🟡タスクで切り替える。
+
+---
 
 ### ✅ 退勤時間延長（残業）on/off 設定（2026-06-18）
 
