@@ -97,16 +97,37 @@ function App(){
     try{ firebaseAuth = firebase.auth(); }catch(e){ console.warn("Auth init failed:",e); }
     try{ firebaseFunctions = firebase.app().functions("asia-northeast1"); }catch(e){ console.warn("Functions init failed:",e); }
 
+    // App Check（サイトキー設定済みの場合のみ有効化。未設定時はスキップ）
+    try{
+      if(APP_CHECK_SITE_KEY && firebase.appCheck){
+        firebase.appCheck().activate(APP_CHECK_SITE_KEY, true);
+      }
+    }catch(e){ console.warn("App Check init failed:",e); }
+
     // Auth状態を確認してからshops読み込みを開始
+    // 全クライアントを匿名認証でauth != null にする（Firebaseルールが未認証アクセスを拒否するため）。
+    // 匿名セッションはLOCALで永続化（端末ごとにuidを安定させ、ownersの肥大化を防ぐ）。
+    // Google/メールの実ログインは従来通り永続化しない（各サインイン関数内でNONEに切り替える）。
     if(firebaseAuth){
-      // ログイン状態をブラウザに永続化しない（別端末・タブ再訪問時に自動ログインさせない。明示的な再ログインを毎回要求する）
-      firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.NONE).catch(e=>console.warn("setPersistence失敗:",e)).then(()=>{
+      firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e=>console.warn("setPersistence失敗:",e)).then(()=>{
         const unsubAuth = firebaseAuth.onAuthStateChanged(user=>{
           unsubAuth(); // 初回のみ
-          setAuthUser(user);
-          setAuthChecked(true);
-          // auth確定後にshops読み込み開始
-          loadShops(user);
+          // 永続化されるのは匿名ユーザーのみの設計だが、旧バージョンの実ユーザーが残っていた場合は
+          // 自動ログインさせない従来方針に合わせてサインアウトして匿名に入り直す
+          const proceed=(realUser)=>{
+            setAuthUser(realUser);
+            setAuthChecked(true);
+            loadShops(realUser);
+          };
+          if(user&&!user.isAnonymous){
+            firebaseAuth.signOut().catch(()=>{}).then(()=>
+              firebaseAuth.signInAnonymously().catch(e=>console.warn("匿名サインイン失敗:",e))
+            ).then(()=>proceed(null));
+          }else if(!user){
+            firebaseAuth.signInAnonymously().catch(e=>console.warn("匿名サインイン失敗:",e)).then(()=>proceed(null));
+          }else{
+            proceed(null); // 匿名ユーザー復元済み
+          }
         });
       });
     }else{
@@ -295,15 +316,68 @@ function App(){
       setPaymentFailed(!!val);
     });
 
-    // settingsデフォルト書き込み
+    // settingsデフォルト書き込み（スタッフセッションはルールで拒否されるためcatchで握る）
     firebaseDB.ref(fbPath(targetSid,"settings")).once("value").then(snap=>{
-      if(!snap.val()) firebaseDB.ref(fbPath(targetSid,"settings")).set(makeSettings(targetSid));
-    });
+      if(!snap.val()) firebaseDB.ref(fbPath(targetSid,"settings")).set(makeSettings(targetSid)).catch(()=>{});
+    }).catch(()=>{});
   },[]);
 
   // ===================================================================
   // Auth ヘルパー関数
   // ===================================================================
+  // 実ログイン（Google/メール）の直前に呼ぶ: セッションを永続化しない従来方針を維持
+  const _preRealSignIn=async()=>{
+    try{ await firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.NONE); }catch(e){ console.warn("setPersistence(NONE)失敗:",e); }
+  };
+  // 実ログイン終了後（完全サインアウト時）に匿名セッションへ戻す
+  const _restoreAnonSession=async()=>{
+    if(!firebaseAuth)return;
+    try{ await firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch{}
+    try{ await firebaseAuth.signInAnonymously(); }catch(e){ console.warn("匿名サインイン失敗:",e); }
+  };
+
+  // ===================================================================
+  // オーナー権限（管理キー）管理
+  // shops/{shopId}/private/adminKey と owners/{uid} で管理者を店舗に登録する。
+  // - 未claim店舗: adminKeyを生成して初回claim（既存店舗の移行経路）
+  // - claim済み店舗: localStorageの管理キーで owners に自uidを追加（端末追加・uid変化時の再claim）
+  // - キーを持たない端末: 読み書きともルールで拒否される → ownerReadOnly=true
+  // ===================================================================
+  const[adminKeys,setAdminKeys]=useState(()=>lg(ADMIN_KEYS_LS,{})||{});
+  const[ownerReadOnly,setOwnerReadOnly]=useState(false);
+  const rememberAdminKey=useCallback((shopId,key)=>{
+    setAdminKeyLS(shopId,key);
+    setAdminKeys(m=>({...m,[shopId]:key}));
+  },[]);
+  const claimOwnership=useCallback(async(shopId)=>{
+    if(!firebaseDB||!firebaseAuth?.currentUser||!shopId||shopId==="default")return false;
+    const uid=firebaseAuth.currentUser.uid;
+    let key=getAdminKeyLS(shopId);
+    if(!key){
+      // キー未保持: 未claim店舗ならadminKeyを読める（null）→生成して初回claim
+      try{
+        const snap=await firebaseDB.ref(`shops/${shopId}/private/adminKey`).once("value");
+        key=snap.val();
+        if(!key){
+          key=genSecureId(32);
+          await firebaseDB.ref(`shops/${shopId}/private/adminKey`).set(key);
+        }
+      }catch(e){
+        dlog("adminKey取得不可（オーナー未登録端末）:",shopId);
+        return false;
+      }
+    }
+    try{
+      await firebaseDB.ref(`shops/${shopId}/owners/${uid}`).set(key);
+      rememberAdminKey(shopId,key);
+      return true;
+    }catch(e){
+      // 保存済みキーが古い（ローテーション済み）場合はルールで拒否される
+      console.warn("オーナー登録失敗:",shopId,e);
+      return false;
+    }
+  },[rememberAdminKey]);
+
   // 店舗をアカウントに紐付け（Google/Apple ユーザーのみ）
   const linkShopToAccount=(uid,shopId)=>{
     if(!firebaseDB||!uid)return;
@@ -340,6 +414,7 @@ function App(){
     if(!firebaseAuth){setAuthError("Firebase Auth未初期化");return;}
     setAuthLoading(true);setAuthError("");
     try{
+      await _preRealSignIn();
       const provider=new firebase.auth.GoogleAuthProvider();
       const result=await firebaseAuth.signInWithPopup(provider);
       const user=result.user;
@@ -368,6 +443,7 @@ function App(){
     if(_isLocked(ns)){setAuthError(_lockMsg(ns));return;}
     setAuthLoading(true);setAuthError("");
     try{
+      await _preRealSignIn();
       const result=await firebaseAuth.signInWithEmailAndPassword(email,password);
       _resetAttempts(ns);
       await _afterEmailAuth(result.user);
@@ -403,6 +479,7 @@ function App(){
     if(!firebaseAuth){setAuthError("Firebase Auth未初期化");return;}
     setAuthLoading(true);setAuthError("");
     try{
+      await _preRealSignIn();
       const result=await firebaseAuth.createUserWithEmailAndPassword(email,password);
       await _afterEmailAuth(result.user);
     }catch(e){
@@ -429,6 +506,7 @@ function App(){
   const signInAndLinkGoogle=async()=>{
     if(!firebaseAuth)return{error:"Firebase Auth未初期化"};
     try{
+      await _preRealSignIn();
       const provider=new firebase.auth.GoogleAuthProvider();
       const result=await firebaseAuth.signInWithPopup(provider);
       await _afterSignInAndLink(result.user);
@@ -441,6 +519,7 @@ function App(){
   const signInAndLinkEmail=async(email,password,isSignUp)=>{
     if(!firebaseAuth)return{error:"Firebase Auth未初期化"};
     try{
+      await _preRealSignIn();
       let result;
       if(isSignUp){
         result=await firebaseAuth.createUserWithEmailAndPassword(email,password);
@@ -548,6 +627,8 @@ function App(){
     setShops([]);
     setAllLinkedShops([]);
     setUnbound(true);
+    // ルールがauth必須のため匿名セッションに戻す（戻せないとログイン画面の店舗コード参加等が失敗する）
+    await _restoreAnonSession();
   };
 
   // 企業アカウント招待コード関数
@@ -566,10 +647,19 @@ function App(){
       });
       // 参加者が招待主のaccountsを読まなくて済むよう、店舗紐付けのスナップショットを埋め込む
       const shopsSnap=await firebaseDB.ref(`accounts/${authUser.uid}/shops`).once("value");
+      const shopIds=Object.keys(shopsSnap.val()||{});
+      // 参加者が各店舗のオーナーになれるよう管理キーも埋め込む（自分が読める店舗のみ。24時間で失効するコード内に限定）
+      const adminKeyMap={};
+      await Promise.all(shopIds.map(async id=>{
+        let k=getAdminKeyLS(id);
+        if(!k){ try{ k=(await firebaseDB.ref(`shops/${id}/private/adminKey`).once("value")).val(); }catch{} }
+        if(k) adminKeyMap[id]=k;
+      }));
       await firebaseDB.ref(`inviteCodes/${code}`).set({
         uid:authUser.uid,
         expiresAt:expiresAt.toISOString(),
-        shops:shopsSnap.val()||null
+        shops:shopsSnap.val()||null,
+        adminKeys:Object.keys(adminKeyMap).length>0?adminKeyMap:null
       });
       setInviteCodeDisplay(code);
       dlog("招待コード生成:", code);
@@ -597,6 +687,10 @@ function App(){
         joinedAt:new Date().toISOString(),
         role:'member'
       });
+      // 管理キーが埋め込まれていれば保存（各店舗のオーナーclaimは管理者画面表示時に行われる）
+      if(codeData.adminKeys){
+        Object.entries(codeData.adminKeys).forEach(([id,k])=>{ if(id&&k) rememberAdminKey(id,k); });
+      }
       // shops をマージ（上書きではなく update でマージ）
       // 新形式: コードに埋め込まれたスナップショットを使う（他人のaccountsを読まない）
       if(codeData.shops){
@@ -663,6 +757,17 @@ function App(){
 
   // URLにtokenが含まれるか（スタッフ専用モード・期間固定）
   const [urlLocked]=useState(()=>{ const p=parseUrl(); return !!(p&&p.token); });
+
+  // 管理者セッションのオーナーlazy claim（既存店舗の移行・端末追加時の再claim・冪等）
+  // スタッフURL（urlLocked）では実行しない
+  useEffect(()=>{
+    if(!firebaseDB||urlLocked||!ready)return;
+    if(view!=="admin")return;
+    if(!sid||sid==="default")return;
+    let cancelled=false;
+    claimOwnership(sid).then(ok=>{ if(!cancelled) setOwnerReadOnly(!ok); });
+    return()=>{ cancelled=true; };
+  },[ready,sid,view,urlLocked,claimOwnership]);
 
   // tokens逆引きインデックスの補完（既存期間の自動移行・冪等）。管理者セッションのみ実行
   useEffect(()=>{
@@ -764,14 +869,19 @@ function App(){
     touchLastActivity();
   },[sid,subs,touchLastActivity]);
   const saveShops   =useCallback(v=>{
+    const prev=shops;
     setShops(v);
     ls("shift_shops_v6",v);
     if(firebaseDB){
-      const obj={};
-      v.forEach(s=>{ if(s&&s.id) obj[s.id]=s; });
-      firebaseDB.ref("global/shops").update(obj).catch(e=>console.warn("shops書き込み失敗:",e));
+      // 変更された店舗のみ個別に書く（update一括だと非オーナー店舗が混ざった時に全体が拒否されるため）
+      v.forEach(s=>{
+        if(!s||!s.id)return;
+        const old=prev.find(p=>p&&p.id===s.id);
+        if(old&&JSON.stringify(old)===JSON.stringify(s))return;
+        firebaseDB.ref(`global/shops/${s.id}`).set(s).catch(e=>console.warn("shops書き込み失敗:",s.id,e));
+      });
     }
-  },[]);
+  },[shops]);
 
   // 1年間未更新の店舗の自動削除は Cloud Functions（purgeInactiveShops）のスケジュール実行に移行済み。
   // クライアント側での削除は端末時計ズレ・壊れたlastActivityによる誤削除リスクがあるため行わない。
@@ -792,15 +902,18 @@ function App(){
     </div>
   );
 
-  // 引き継ぎコード（店舗コード）でログイン
+  // 引き継ぎコード（店舗コード / 管理コード shopId.adminKey）でログイン
   const applyInviteCode=()=>{
-    const code=inviteCode.trim();
-    if(!code){setInviteError("店舗コードを入力してください");return;}
+    const raw=inviteCode.trim();
+    if(!raw){setInviteError("店舗コードを入力してください");return;}
     if(!firebaseDB){setInviteError("Firebase未接続です");return;}
+    const{shopId:code,adminKey}=parseShopCode(raw);
     setInviteError("確認中...");
     firebaseDB.ref(`global/shops/${code}`).once("value").then(snap=>{
       const found=snap.val();
       if(found&&found.id===code){
+        // 管理コードにadminKeyが含まれていれば保存（claimは管理者画面表示時のlazy claimで行う）
+        if(adminKey) rememberAdminKey(code,adminKey);
         // Auth ユーザーがいればアカウントにも紐付け
         if(authUser) linkShopToAccount(authUser.uid,code);
         // 古いCookie を完全削除（複数店舗対応の遺跡削除）
@@ -832,7 +945,9 @@ function App(){
     setInviteError("作成中...");
     const newShop=makeShop("新しい店舗");
     dlog("createNewShop: 新規店舗作成",newShop.id,newShop.name);
-    firebaseDB.ref(`global/shops/${newShop.id}`).set(newShop).then(()=>{
+    firebaseDB.ref(`global/shops/${newShop.id}`).set(newShop).then(async()=>{
+      // 作成者をオーナー登録（管理キー生成 → owners に自uidを追加）
+      await claimOwnership(newShop.id);
       // Auth ユーザーはアカウントにも紐付け
       if(authUser) linkShopToAccount(authUser.uid,newShop.id);
       // Cookie: 単一店舗のみ保存（上書き）
@@ -1031,6 +1146,8 @@ function App(){
         :<AdminView settings={effectiveSettings} periods={periods} subs={subs} staffList={staffList} shops={shops}
               currentShopId={sid} saveSettings={saveSettings} savePeriods={savePeriods} saveSubs={saveSubs}
               saveStaff={saveStaff} saveShops={saveShops}
+              adminCode={adminKeys[sid]?`${sid}.${adminKeys[sid]}`:sid} ownerReadOnly={ownerReadOnly}
+              onRememberAdminKey={rememberAdminKey} onClaimShop={claimOwnership}
               globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates}
               plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed}
               setCurrentShopId={id=>{
