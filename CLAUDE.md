@@ -1,6 +1,6 @@
 # CLAUDE.md — Shifty
 
-作成日: 2026年6月（コードベースから自動生成）
+作成日: 2026年6月（コードベースから自動生成）／最終更新: 2026-07-06（app.js 5分割・セキュリティルール改修を反映）
 
 ---
 
@@ -8,7 +8,7 @@
 
 **Shifty** (`shiftyshifty.app`) — 飲食店向けシフト提出・管理 Web アプリの一般公開版。  
 スタッフは URL を開くだけで希望シフトを提出できる。管理者は提出状況を確認し Excel で出力できる。  
-Free / Pro の 2 段階プラン制。Pro は Stripe サブスク（500円/月・店舗単位）。
+Free / Pro / Premium の 3 段階プラン制。Stripe サブスク（Pro 500円/月・Premium 2,980円/月・店舗単位）。
 
 ---
 
@@ -27,7 +27,7 @@ Free / Pro の 2 段階プラン制。Pro は Stripe サブスク（500円/月�
 
 ### 2つの Firebase プロジェクト
 
-`DEV_MODE` はブランチではなく**実行時のホスト名で自動判定**する（[app.js:12](app.js)）:
+`DEV_MODE` はブランチではなく**実行時のホスト名で自動判定**する（[app-core.js:12](app-core.js)）:
 
 ```js
 const DEV_MODE = location.hostname !== "shiftyshifty.app";
@@ -38,18 +38,24 @@ const DEV_MODE = location.hostname !== "shiftyshifty.app";
 それ以外（localhost・プレビューURL等）  → DEV_MODE=true  → thirty-dev-b6958（開発用）
 ```
 
-developブランチ・mainブランチのどちらにチェックアウトしていても同じ判定になるため、マージ前後で手動切り替えする必要はない。`CF_BASE`（Cloud Functions エンドポイント）も `DEV_MODE` に連動して切り替わる（[app.js:3744](app.js)）。
+developブランチ・mainブランチのどちらにチェックアウトしていても同じ判定になるため、マージ前後で手動切り替えする必要はない。`CF_BASE`（Cloud Functions エンドポイント）も `DEV_MODE` に連動して切り替わる（app-core.js）。
 
 ---
 
-## ファイル構成
+## ファイル構成（2026-07-06 に app.js を5ファイルに分割）
 
 ```
 /
-├── index.html          ← CDN 読み込み・PWA meta・OGP・Babel mount
-├── app.js              ← アプリ全体（約3850行の React JSX）
+├── index.html          ← CDN 読み込み（SRI付き）・PWA meta・OGP・スクリプト読み込み
+├── app-utils.js        ← 純粋関数・定数（ブラウザAPI非依存 = Nodeでテスト可能・プレーンscript）
+├── app-core.js         ← DEV_MODE・Firebase設定・Cookie/テーマ/localStorage・スタイル定数（プレーンscript）
+├── app-staff.js        ← ShiftyIcon, StaffView, StaffHdr, CellEditPanel, SmModal（babel）
+├── app-admin.js        ← AdminView と全タブ, expXl, UpgradeModal, AC/AL/AT/CL（babel）
+├── app-main.js         ← App() 本体 + ReactDOM マウント（babel）
+├── tests/
+│   └── core.test.js    ← app-utils.js の Node ユニットテスト（node --test）
 ├── functions/
-│   └── index.js        ← Firebase Cloud Functions（Stripe・メール送信）
+│   └── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗自動アーカイブ）
 ├── RULES.md            ← やってはいけないこと（必読）
 ├── firebase.json       ← Firebase Hosting / Functions 設定
 ├── database.rules.json ← Firebase セキュリティルール
@@ -58,71 +64,43 @@ developブランチ・mainブランチのどちらにチェックアウトして
     └── stripe-setup.js ← Stripe Price ID 確認スクリプト
 ```
 
----
+**分割の仕組み**: Babel Standalone は複数の `<script type="text/babel">` を同一グローバルスコープで順に実行するため、`import`/`export` なしでファイル間参照が成立する（実証済み）。**index.html の読み込み順（utils→core→staff→admin→main）を変えてはいけない**。新しいコンポーネント・関数は所属に応じたファイルへ追加する。
 
-## app.js 構造（行番号は現在のコード基準）
+## ソースファイルの内容
 
-### 1〜35行: Firebase 設定
-
-```js
-const DEV_MODE = location.hostname !== "shiftyshifty.app"; // ホスト名で自動判定
-const FIREBASE_CONFIG_PROD = {...} // ontheshift プロジェクト
-const FIREBASE_CONFIG_DEV  = {...} // thirty-dev-b6958 プロジェクト
-const FIREBASE_CONFIG = DEV_MODE ? FIREBASE_CONFIG_DEV : FIREBASE_CONFIG_PROD;
-```
-
-### 40〜105行: Firebase 初期化ヘルパー
+### app-utils.js（純粋関数・Nodeテスト対象）
 
 ```js
-firebaseDB       // firebase.database() インスタンス（グローバル）
-firebaseAuth     // firebase.auth() インスタンス（グローバル）
-firebaseFunctions // firebase.app().functions("asia-northeast1")
-firebaseEnabled  // 接続状態フラグ
-fbPath(shopId, key) // "shops/{shopId}/{key}" パス生成
-ph(event, props)    // PostHog イベント送信
+WD / JH_FIXED / JH_DATES   // 曜日・日本の祝日（2025〜2028）
+PLAN_LIMITS / PLAN_LABELS  // プラン定義
+fd(d) / pd(s) / gd(s,e)    // 日付ユーティリティ
+gto() → TO / TO_START      // 時間オプション 9:00〜27:00
+sc(cs)                     // 候補時間ソート（closed は末尾）
+isHoliday / isWeekendOrHoliday(dateStr) // 土日祝判定
+calcNetWorkMinutes / getBreakList / getBreaksFor / getOT // 純勤務時間計算
+shiftBandInfo / isBreakEligible // ランチ/ディナー帯判定
+genToken() / genSecureId(len)   // ランダムID生成
+isSpacer(n) / resolveAlias / buildSuggestList
+// 末尾に module.exports ガード（Nodeテスト用）
 ```
 
-### 118〜180行: 定数
+### app-core.js（ブラウザ依存のグローバル）
 
 ```js
-WD = ["日","月","火","水","木","金","土"]
-JH_FIXED / JH_DATES   // 日本の祝日（2025〜2027）
-DEFAULT_PW = "admin1234"
-_LA_KEY / _LL_KEY      // ログイン試行ロック（10回・30分）
-DEV_PLAN_OVERRIDE = null // "free"|"pro"|null。テスト時のみ変更
-PLAN_LIMITS = { free: {staff:20, periods:1}, pro: {staff:Infinity, periods:Infinity} }
+const DEV_MODE = location.hostname !== "shiftyshifty.app"; // 12行目・ホスト名で自動判定
+FIREBASE_CONFIG_PROD / DEV / FIREBASE_CONFIG
+firebaseDB / firebaseAuth / firebaseFunctions / firebaseEnabled
+fbPath(shopId, key) / ph(event, props) / dlog(...)  // dlogはDEV_MODE時のみconsole.log
+DEV_PLAN_OVERRIDE   // DEV_MODE時のみ ?plan= URLパラメータで上書き
+_LA_KEY / _LL_KEY   // ログイン試行ロック（10回・30分・メールログインで使用）
+lg / ls / storeKey  // localStorage
+CK_SHOP / ckStaffKey / SS_* / THEME_KEY / applyTheme // Cookie・セッション・テーマ
+makeShop / makeSettings / buildUrl(period) / parseUrl
+CF_BASE             // Cloud FunctionsエンドポイントをDEV_MODE連動で切り替え
+AI / AB / AD / AGray // スタイル定数
 ```
 
-### 202〜265行: ユーティリティ
-
-```js
-fd(d)            // Date → "YYYY-MM-DD"
-pd(s)            // "YYYY-MM-DD" → Date
-gd(s, e)         // 開始〜終了の日付文字列配列
-gto()            // 時間オプション 9:00〜27:00（15分刻み）→ TO 定数
-idp(d)           // 期限切れ判定
-lg(k, fb)        // localStorage 読み取り（JSON.parse + fallback）
-ls(k, v)         // localStorage 書き込み（JSON.stringify）
-sc(cs)           // 候補時間ソート（closed は末尾に固定）
-isWeekend(dateStr) // 土日祝判定
-storeKey(shopId, key) // localStorage キー生成
-genToken()       // 8文字ランダムトークン（URLトークン・招待コード用）
-genSecureId(len) // 24文字強力ランダムID（shopId用）
-isSpacer(n)      // "__spacer__" 区切り判定
-buildUrl(shops, shopId, period) // スタッフ用URL生成（#/s/<token>）
-parseUrl()       // URL解析（{type:"staff", token}）
-```
-
-### 316〜338行: Cookie / SessionStorage キー
-
-```js
-CK_SHOP = "ots_shopId"              // 現在の店舗ID（1年Cookie）
-ckStaffKey(shopId, periodId)        // スタッフ名Cookie
-SS_SHOP / SS_APID / SS_VIEW / SS_TAB // sessionStorage キー
-THEME_KEY = "ots_theme"             // テーマ設定（localStorage）
-```
-
-### 349〜1547行: App() コンポーネント（メインアプリ）
+### App() コンポーネント（app-main.js）
 
 主要 state 変数：
 
@@ -176,18 +154,21 @@ THEME_KEY = "ots_theme"             // テーマ設定（localStorage）
 
 ```
 Phase1 (useEffect[]) — Firebase初期化 → onAuthStateChanged → loadShops()
-  → URLトークンあり: 全店舗periodを横断検索 → shop/period確定 → startSubscriptions()
-  → Auth済み:        accounts/{uid}/shops → setAllLinkedShops → startSubscriptions()
-  → Cookie:          CK_SHOP → startSubscriptions()
+  → URLトークンあり: tokens/{token} をO(1)読み → global/shops/{shopId} 直キー読み → startSubscriptions()
+  → Auth済み:        accounts/{uid}/shops → 各shopIdを直キー読み → setAllLinkedShops → startSubscriptions()
+  → Cookie:          CK_SHOP → global/shops/{ckId} 直キー読み → startSubscriptions()
   → なし:            setUnbound(true) → ログイン画面
+  ※ global/shops の全件読みはセキュリティルールで拒否される（一覧の公開廃止・直キー読みのみ）
 
 Phase2 (startSubscriptions関数) — sid確定後にuseEffectを経由せず直接呼ぶ
-  → global/templates, shops/{sid}/settings, periods, staff, subs
+  → shops/{sid}/templates, settings, periods, staff, subs
   → accounts/{sid}/plan, planExpiry, paymentFailed をリアルタイム購読
 
 Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
   → sessionStorage復元 or periods[0]（最新期間）
 ```
+
+**tokens逆引きインデックス**: `tokens/{urlToken} = {shopId, periodId}`。期間の作成/削除時（savePeriods）に書き込み・削除され、既存期間は管理者セッションのlazy backfill（App内useEffect）が冪等に補完する。スタッフURLはこのインデックスで解決される。
 
 **重要**: `startSubscriptions` は `useCallback` で定義してあるが、`useEffect([ready, sid])` に依存させてはいけない。React のバッチ処理で sid/ready の更新タイミングがズレて競合が発生する。Phase1内から直接呼ぶこと。
 
@@ -195,25 +176,28 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 
 ## コンポーネント一覧
 
-| コンポーネント | 行 | 役割 |
+| コンポーネント | ファイル | 役割 |
 |---|---|---|
-| `App()` | ~349 | メインアプリ・3フェーズ初期化・全 state 管理 |
-| `StaffView` | ~1552 | スタッフのシフト提出画面 |
-| `StaffHdr` | ~1733 | スタッフ画面ヘッダー（期間選択） |
-| `CellEditPanel` | ~1762 | 提出状況ビュー内のセル編集（既存データを初期値） |
-| `SmModal` | ~1805 | 提出状況一覧（名前列固定・日付横スクロール） |
-| `AdminLogin` | ~2062 | 管理者ログイン（パスワード認証・ロック機能） |
-| `AdminView` | ~2100 | 管理者画面（タブ切り替え） |
-| `PeriodsTab` | ~2215 | 期間管理・URL シェア |
-| `PEF` | ~2446 | 期間編集フォーム |
-| `expXl()` | ~2461 | ExcelJS による Excel 生成 |
-| `StaffTab` | ~2520 | スタッフ登録・並べ替え・別名設定 |
-| `CandTab` | ~2676 | 候補時間・休業日管理 |
-| `SubsTab` | ~2923 | 提出一覧・セル編集・変更履歴 |
-| `SetTab` | ~3057 | 設定・Cookie引き継ぎ・企業アカウント連携 |
-| `MyPageTab` | ~3599 | マイページ（プラン確認・アップグレード） |
-| `UpgradeModal` | ~3748 | アップグレード促進モーダル（Stripe Checkout 呼び出し） |
-| `AC / AL / AT / CL` | ~3807 | 汎用UIパーツ（カード・ラベル・タイトル・候補リスト） |
+| `App()` | app-main.js | メインアプリ・3フェーズ初期化・全 state 管理・ReactDOMマウント |
+| `ShiftyIcon` | app-staff.js | アプリアイコンSVG（全画面共通） |
+| `StaffView` | app-staff.js | スタッフのシフト提出画面 |
+| `StaffHdr` | app-staff.js | スタッフ画面ヘッダー（期間選択） |
+| `CellEditPanel` | app-staff.js | 提出状況ビュー内のセル編集（既存データを初期値） |
+| `SmModal` | app-staff.js | 提出状況一覧（名前列固定・日付横スクロール） |
+| `AdminView` | app-admin.js | 管理者画面（タブ切り替え） |
+| `ShiftEditTab` | app-admin.js | シフト作成グリッド・ヒートマップ・集計・PDF出力（Premium） |
+| `PeriodsTab` | app-admin.js | 期間管理・URL シェア |
+| `PEF` | app-admin.js | 期間編集フォーム |
+| `expXl()` | app-admin.js | ExcelJS による Excel 生成 |
+| `StaffTab` | app-admin.js | スタッフ登録・並べ替え・別名設定 |
+| `CandTab` | app-admin.js | 候補時間・休業日・休憩管理 |
+| `SubsTab` | app-admin.js | 提出一覧・セル編集・変更履歴 |
+| `SetTab` | app-admin.js | 設定・Cookie引き継ぎ・企業アカウント連携 |
+| `MyPageTab` | app-admin.js | マイページ（プラン確認・アップグレード） |
+| `UpgradeModal` | app-admin.js | アップグレード促進モーダル（Stripe Checkout 呼び出し） |
+| `AC / AL / AT / CL` | app-admin.js | 汎用UIパーツ（カード・ラベル・タイトル・候補リスト） |
+
+※ 管理者パスワード認証（AdminLogin）は廃止・削除済み。管理者画面の実質的な認証は「shopIdを知っているか」のcapabilityモデル（恒久対応はBACKLOGのAnonymous Auth権限分離）。
 
 ---
 
@@ -222,30 +206,36 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 ```
 Firebase Realtime Database
 ├── global/
-│   ├── shops          ← 全端末共有の店舗一覧 {shopId: shopObj}
-│   └── templates      ← 曜日別候補テンプレート（Proプランのみ利用可能）
+│   └── shops/{shopId} ← 店舗情報。直キー読みのみ許可（一覧読みはルールで拒否）
+├── tokens/
+│   └── {urlToken}     ← {shopId, periodId} スタッフURLのO(1)逆引きインデックス
 ├── shops/
 │   └── {shopId}/
-│       ├── settings   ← 候補時間・スタッフ色・別名・Excel設定など
+│       ├── settings   ← 候補時間・スタッフ色・別名・休憩・属性・Excel設定など
 │       ├── periods    ← 期間一覧 {periodId: periodObj}
 │       ├── staff      ← スタッフ名一覧（文字列配列）
-│       ├── lastActivity ← ISO文字列（1年未更新で自動削除対象）
-│       └── subs/      ← 提出データ {subId: subObj}
+│       ├── templates  ← 曜日別候補テンプレート（店舗単位・Pro以上）
+│       ├── lastActivity ← ISO文字列（CFの1年未更新アーカイブ判定に使用）
+│       └── subs/      ← 提出データ {subId: subObj}（書き込みは.validateで形状検証）
+├── archived/
+│   └── shops/{shopId} ← purgeInactiveShops が退避した店舗（30日猶予後に本削除）
 ├── accounts/
 │   └── {shopId}/            ← プラン管理（shopId単位）
-│       ├── plan             = "free" | "pro"
+│       ├── plan             = "free" | "pro" | "premium"
 │       ├── planExpiry       = "YYYY-MM-DD"
 │       ├── stripeCustomerId ← Stripe Customer Portal 用
 │       └── paymentFailed    = true（決済失敗時）
-│   └── {uid}/               ← Firebase Auth UIDで複数店舗管理
+│   └── {uid}/               ← Firebase Auth UIDで複数店舗管理（本人のみ読み書き可）
 │       ├── shops            ← {shopId: true} 紐付けマップ
 │       ├── inviteCode       ← {code, createdAt, expiresAt, createdBy}
-│       └── members/         ← {uid: {email, joinedAt, role:"member"}}
+│       └── members/         ← {uid: {email, joinedAt, role:"member"}}（自分の追加のみ可）
 ├── inviteCodes/
-│   └── {code}           ← {uid, expiresAt}（企業招待コード）
+│   └── {code}           ← {uid, expiresAt, shops}（企業招待コード・shopsスナップショット埋め込み）
 └── email_otps/
-    └── {uid}            ← {code, email, emailLink, expiry}（OTP）
+    └── {uid}            ← {code, email, emailLink, expiry, attempts}（OTP・5回失敗で無効化）
 ```
+
+**セキュリティモデル（2026-07-06改修）**: 「公開リストの廃止 + 推測不能ID（capability）」。shopId（24桁）・urlToken（8桁）は一覧不可のため実質的な秘密として機能する。`accounts/{uid}` 系は `auth.uid === $uid` で本人限定。残存リスク（shopIdを知る者=管理可）の恒久対応はBACKLOGのAnonymous Auth権限分離。
 
 ### Firebase 書き込みルール（最重要）
 
@@ -284,9 +274,12 @@ Sub = { id: string, periodId: string, staffName: string, shopId: string,
 // 候補時間
 Cand = { start: string, end: string } | { closed: true }
 
-// 設定
-Settings = { shopId, password, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
+// 設定（passwordは廃止済み・新規店舗には書かれない）
+Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              dateCandidates: {[date]: Cand[]}, templates: Template[],
+             breakTimes?: {weekday|sat|sun|hol: {start,end,tags?}[]},
+             staffAttributes?: {[name]: 属性ID}, staffTypeLimits?: {[属性ID]: 制限},
+             overtimeSettings?: {byStaff: {[name]: {lunch,dinner}}}, staffNumbers?: {[name]: string},
              xlShopName?: string, staffColors?: {[name]: "red"|"black"},
              staffAliases?: {[registered]: string[]}, periodUnit?: "2week"|"1month" }
 ```
@@ -298,10 +291,10 @@ Settings = { shopId, password, candidates: Cand[], weekdayCandidates: {[dow]: Ca
 1. **Firebase Auth ユーザー**が店舗を作成すると `accounts/{uid}/shops/{shopId} = true` に紐付け
 2. 複数端末から同じ Google/Apple/メールでログインすると、`allLinkedShops` に全店舗が入る
 3. 企業招待コード（`generateInviteCode`）:
-   - `inviteCodes/{8文字トークン} = {uid, expiresAt}` を書き込む（24時間有効）
+   - `inviteCodes/{8文字トークン} = {uid, expiresAt, shops}` を書き込む（24時間有効・shopsスナップショット埋め込み）
    - 別ユーザーが `joinByInviteCode(code)` で参加:
-     - `accounts/{招待主uid}/members/{自分のuid}` に追記
-     - `accounts/{招待主uid}/shops` の内容を自分の shops にコピー
+     - `accounts/{招待主uid}/members/{自分のuid}` に追記（ルール上「自分の追加」のみ可）
+     - コードに埋め込まれた `shops` を自分の shops に update でマージ（他人のaccountsは読まない。ルールで本人限定のため）
 4. **店舗切り替え**: `onSwitchToShop(id)` → `startSubscriptions(id)` を shopList なしで呼ぶ（既存の shops リストを維持しつつ購読先だけ切り替え）
 5. `doLogout()` はセッションのみクリア（authUser・allLinkedShops は維持）
 6. `doFullSignOut()` は Firebase Auth も含む完全サインアウト
@@ -316,7 +309,8 @@ Settings = { shopId, password, candidates: Cand[], weekdayCandidates: {[dow]: Ca
 | `stripeWebhook` | POST `/stripeWebhook` | Webhook受信（plan更新・失敗フラグ・キャンセル） |
 | `createPortalSession` | POST `/createPortalSession` | Stripe Customer Portal セッション |
 | `sendEmailOtp` | Callable `sendEmailOtp` | メール連携用OTP送信 |
-| `verifyEmailOtp` | Callable `verifyEmailOtp` | OTP検証 |
+| `verifyEmailOtp` | Callable `verifyEmailOtp` | OTP検証（5回失敗で無効化） |
+| `purgeInactiveShops` | schedule 毎日（JST） | 1年未更新店舗を archived/ へ退避→30日後に本削除。Invalid Dateはスキップしてログ |
 | `sendSurveyEmails` | POST `/sendSurveyEmails` | ユーザーアンケート一斉送信（要秘密トークン） |
 
 ### Stripe Webhook イベント処理
@@ -350,13 +344,23 @@ git push origin develop
 ```
 
 **マージ前チェックリスト**:
-- [ ] `DEV_MODE` が `location.hostname !== "shiftyshifty.app"` の式のままか（app.js 12行目。固定の `true`/`false` に書き換わっていないか）
+- [ ] `DEV_MODE` が `location.hostname !== "shiftyshifty.app"` の式のままか（**app-core.js 12行目**。固定の `true`/`false` に書き換わっていないか）
+- [ ] `npm test` が全パスするか（app-utils.js のユニットテスト）
+
+**Firebaseルールの変更を含むリリースの順序（厳守）**: クライアント変更を先に main へ反映し本番配信を確認 → その後に `firebase deploy --only database --project ontheshift`。ルールを先に出すと旧クライアントが壊れる。
 
 ### Cloud Functions
 
 ```bash
 cd functions
-firebase deploy --only functions
+firebase deploy --only functions --project ontheshift   # devプロジェクトはSparkプランのためデプロイ不可
+```
+
+### Firebaseセキュリティルール
+
+```bash
+firebase deploy --only database --project thirty-dev-b6958  # dev
+firebase deploy --only database --project ontheshift        # 本番（クライアント配信後）
 ```
 
 ---
@@ -368,21 +372,28 @@ firebase deploy --only functions
 - `DEV_MODE` はブランチではなく実行時のホスト名で自動判定（`location.hostname !== "shiftyshifty.app"`）
 - 本番カスタムドメイン以外（localhost・プレビューURL等）はすべて DEV Firebase に接続する
 - develop・main どちらのブランチにチェックアウトしていても判定は同じなので、マージ前後の手動切り替えは不要
-- `CF_BASE` も `DEV_MODE` に連動して自動切り替わる（app.js 3744行目）
+- `CF_BASE` も `DEV_MODE` に連動して自動切り替わる（app-core.js）
 
 ### プランのテスト
 
-```js
-// app.js ~171行目
-const DEV_PLAN_OVERRIDE = "free"; // "free" | "pro" | null（本番は null）
+`DEV_PLAN_OVERRIDE`（app-core.js）は DEV_MODE 時のみ URL パラメータで上書きされる式。localhost で `?plan=free` / `?plan=pro` / `?plan=premium` を付けてテストする（コードの書き換えは不要）。
+
+### テスト
+
+```bash
+npm test          # app-utils.js の純粋関数（calcNetWorkMinutes・祝日判定等）のユニットテスト
+npx eslint app-*.js  # 0 errors を維持（CIでも実行）
 ```
 
 ### React・スタイル制約
 
 - **ビルド不要**: Babel Standalone がブラウザでトランスパイル。`import`/`export` は使えない
+- **ファイル分割の制約**: index.html の読み込み順（utils→core→staff→admin→main）を変えない。全ファイルがグローバルスコープを共有する
 - **スタイルは inline style のみ**: 外部 CSS ファイル・CSS モジュール追加禁止
-- **`input` の `fontSize` は 16px 以上**: iOS Safari ズーム防止（`fontSize:14` の箇所は既知の技術負債）
-- **スタイル定数**: `AI`（input）/ `AB`（primary button）/ `AD`（delete）/ `AGray`（secondary）が定義済み
+- **`input`/`select`/`textarea` の `fontSize` は 16px 以上**: iOS Safari ズーム防止（2026-07-06に全箇所解消済み。新規追加時に守ること）
+- **CDNスクリプトはSRI付き**: バージョン変更時は integrity ハッシュの再計算が必要（`curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`）
+- **スタイル定数**: `AI`（input）/ `AB`（primary button）/ `AD`（delete）/ `AGray`（secondary）が app-core.js に定義済み
+- **console.log は `dlog()` を使う**（DEV_MODE時のみ出力。warn/errorはそのまま）
 
 ### CSS カスタムプロパティ（テーマ）
 
@@ -457,7 +468,9 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 
 ## 既知の技術負債
 
-- 管理者画面の `fontSize:14` / `fontSize:12` の `input` は iOS Safari ズームが発生する可能性あり（管理者のみ影響）
+- iOS Safari ズーム問題（input の fontSize<16）は 2026-07-06 に全箇所解消済み
+- 残存する既知の設計課題は「shopIdを知る者=管理可」のcapabilityモデル（恒久対応は BACKLOG の Anonymous Auth 権限分離を参照）
+- `globalTemplates` という state/prop 名は店舗単位化後も歴史的経緯で残っている（実体は shops/{shopId}/templates）
 
 ---
 
@@ -482,7 +495,7 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-04 自動実行 #2）
+## Shifty バグチェックレポート（2026-07-05 自動実行 #2）
 
 ### 修正済み
 
@@ -490,40 +503,57 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 
 ### 要確認（未修正）
 
-- **🟢 signInWithApple / signInAndLinkApple デッドコード**（app.js:844,981）
-  Apple ログインUI削除済みだが関数残存。動作に影響なし、将来的に削除推奨。
-
-- **🟢 iOS Safari ズーム防止: AI定数の fontSize:14**（app.js:4903）
+- **🟢 iOS Safari ズーム防止: AI定数の fontSize:14**（app.js:4781）
   管理者フォーム全般のスタイル定数。管理者画面のみの影響。
 
-- **🟢 iOS Safari ズーム防止: 店舗コード「コードで追加」入力欄の fontSize:12**（app.js:2269付近）
+- **🟢 iOS Safari ズーム防止: 店舗コード「コードで追加」入力欄の fontSize:12**（app.js:2195）
   引き続き未修正。管理者画面のみの影響。
 
-- **🟢 iOS Safari ズーム防止: SubsTab詳細モーダル調整selectの fontSize:12**（app.js:4154,4157付近）
+- **🟢 iOS Safari ズーム防止: SubsTab詳細モーダル調整selectの fontSize:12**（app.js:4078,4081）
   出退勤調整セレクト。Premiumユーザーのみの影響。
 
-- **🟢 iOS Safari ズーム防止: staffAttribute selectの fontSize:12**（app.js:3658付近）
+- **🟢 iOS Safari ズーム防止: staffAttribute selectの fontSize:12**（app.js:3584）
   スタッフ属性セレクト（StaffTab）。Premiumユーザーのみの影響。
 
-- **🟢 onJoinByInviteCode がSetTabに渡されているがUIから未使用**（app.js内）
+- **🟢 onJoinByInviteCode がSetTabに渡されているがUIから未使用**（app.js:1484,2271,4097）
   企業アカウント招待コード参加UIが未実装のためデッドプロップ。
 
-### 前回から改善された点
-- **CLAUDE.md肥大化・再帰同期バグが解消**（commit `1b0a4c5`）: 12,499行/603KB → 2,626行/130KB に縮小。`readAllNotes` から CLAUDE.md/.cursorrules を除外し自己再帰を停止する修正を確認。
-
 ### 確認した直近コミット
-- a17f478: シフト提出の二重送信で重複レコードが作られるバグを修正 → `submittingRef` 同期ガードが成功・失敗どちらのパスでも解除される正しい実装
-- ac1c83b: シフト提出のFirebase書き込み失敗を検知せず「提出完了」と表示するバグを修正 → `onSub` が Promise を返し、await で書き込み成功を確認してから完了表示するよう修正。正常
-- b13f6e2: 壊れたdevelop→main自動デプロイワークフローを削除 → 他ファイルからの参照なし、問題なし
+- 6353756: Firebase Authのログイン状態が端末に永続化され新規リロードで自動ログインしてしまうバグを修正 → `setPersistence(NONE)` を明示指定。`.catch().then()` の連結で setPersistence 失敗時もリスナー登録が継続実行される点を確認、正しい実装。
+- ab4fe11 / 9727801: スタッフ提出画面に全日程一括入力ボタン（通し/ランチ/ディナー）を追加・トグル動作化 → 変数スコープ確認済み、ブラウザ実機で適用・巻き戻しトグルの動作を確認。
+- 6af46d4: シフト作成タブPDF出力の縦書き名前フォントサイズを文字数に応じて自動縮小（`vfontSize`）→ Premium限定機能内の表示調整のみ。
+- c801997: 出勤時間の選択肢を30分刻みに変更（退勤は15分刻みのまま）→ `TO_START`定数追加・既存15分刻みデータの保持ロジックを確認、ブラウザ実機でoptionsが30分刻みになっていることを確認。
 
 ### 異常なし
-クリティカル（🔴）・中程度（🟡）の問題はなし。Firebase書き込みパターン・DEV_MODE=true・isPro/isPremium分離・Cloud Functions secrets・ESLint（0 errors）すべて正常。
+クリティカル（🔴）・中程度（🟡）の問題はなし。今回の5コミットはすべて正しく実装されており、ブラウザ実機確認（全日程一括入力・トグル・出退勤セレクト刻み幅）でも新規バグは検出されなかった。Firebase書き込みパターン・DEV_MODE=true・DEV_PLAN_OVERRIDE・isPro/isPremium分離・Cloud Functions secrets・ESLint（0 errors）すべて正常。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 -
 -
 -
@@ -656,7 +686,19 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟡 Anonymous Auth導入による権限分離（セキュリティ強化フェーズB）
 
+**目的**: 2026-07-06のセキュリティ改修（capabilityモデル化）の残存リスクを解消する。現在は「shopIdを知る者＝店舗を管理できる」ため、スタッフURL経由でshopIdを得たスタッフも管理操作が可能。
+**受け入れ条件**:
+- [ ] Firebase Anonymous Auth を導入し、全クライアントが `auth != null` になる
+- [ ] `shops/{shopId}/owners/{uid}` で管理者を管理し、settings/periods/staff の書き込みをオーナーに限定する
+- [ ] スタッフ（URL経由）は subs への提出書き込みと閲覧のみ可能にする
+- [ ] `createPortalSession` に Firebase Auth IDトークン検証を追加（現在は shopId のみで他人のStripeポータルを開ける。shopId非公開化により緩和済みだが完全ではない）
+- [ ] 移行: 既存のCookie運用店舗のオーナー登録経路（店舗コード入力時にオーナー追加）を用意する
+**影響範囲**: database.rules.json、app.js（Phase1初期化・認証まわり）、functions/index.js（createPortalSession）
+**備考**: 2026-07-06 コードレビューのS-6・フェーズ1残存リスクの恒久対応。あわせて移行完了後に app.js の legacyTokenScan（旧URL解決フォールバック）を撤去する。レビュー詳細は Obsidian `Projects/Shifty/コードレビュー_2026-07-06.md`
+
+---
 
 ## 🟢 企業連携内の他店舗ヘルプ表示
 
@@ -1446,6 +1488,174 @@ Obsidian CLI を使い、以下のノートに追記する:
 - Firebase 本番データの変更は行わない
 - 1回のループで複数タスクを実装しない（1ループ＝1タスク）
 - BACKLOG.md が空の場合は何も実装せずに終了する
+
+### コードレビュー_2026-07-06
+# Shifty コードベース全体レビュー（2026-07-06）
+
+対象: app.js（4,800行）・functions/index.js（360行）・index.html・database.rules.json・firebase.json
+対象外: Stripe連携（createCheckoutSession / stripeWebhook のロジック）
+実施: Claude Code によるフルレビュー。ESLint実行済み（0 errors / 40 warnings、すべて no-unused-vars）
+
+---
+
+## サマリー
+
+| 優先度 | 件数 | 内訳 |
+|---|---|---|
+| 🔴 高 | 5 | セキュリティ4件・バグ1件 |
+| 🟡 中 | 10 | バグ5件・セキュリティ2件・パフォーマンス2件・保守性1件 |
+| 🟢 低 | 12 | UX・保守性・軽微な不整合 |
+
+**最重要**: Firebaseセキュリティルールが実質「全公開」になっており、アプリ側のプラン制限・管理者画面・店舗コードの秘匿性がすべて無効化されている。コード品質やUXより先に、ルールの締め付けを最優先で対応すべき。
+
+---
+
+## 🔴 優先度: 高
+
+### S-1. Firebaseルール: 全店舗データが誰でも読み書き可能（database.rules.json:3-16）
+
+```json
+"global":  { "shops": { ".read": true, ".write": true } },
+"shops":   { "$shopId": { ".read": true, ".write": true } }
+```
+
+- `global/shops` が**未認証でも全件読み取り可能** → 全店舗の shopId・店舗名のリストが誰でも取得できる。shopId は「店舗コード」としてログイン資格情報を兼ねているため、**誰でも任意の店舗に管理者として参加できる**（ログイン画面の「店舗コードで参加」に貼るだけ）。
+- `shops/$shopId` が読み書き自由 → 提出データ・スタッフ名（個人名）・設定の閲覧/改ざん/削除が誰でも可能。
+- `global/shops` の `.write: true` → 店舗一覧そのものを第三者が削除・上書きできる。
+- 副作用として、プラン制限（Free 20名/期間1件）もクライアント側チェックのみなので直接書き込みで無制限に回避可能。
+
+**推奨対応**（段階的に）:
+1. `global/shops` の `.read` を廃止し、店舗コード参加は「shopIdを直接キー指定で読む」方式に変更（一覧を舐めない）。`.write` は認証必須+自分の作成分のみに。
+2. `shops/$shopId` の書き込みは `auth != null` + `accounts/{uid}/shops/{shopId}` 保有者に限定。スタッフの提出だけは `subs` サブパスへの限定 write を許可（urlToken 検証は難しいので、最低限 validate で書き込み形状を縛る）。
+3. 読み取りも同様に絞り、スタッフ画面用には「periods と subs のみ読み取り可」の落とし所を設計する。
+4. Cookie/URLだけの匿名運用を残すなら Firebase Anonymous Auth を導入すると「auth != null」ベースのルールに移行しやすい。
+
+### S-2. accounts/{uid}/shops が「認証済みなら誰でも」読み書き可能（database.rules.json:23-26）
+
+```json
+"shops": { ".read": "auth != null", ".write": "auth != null" }
+```
+
+任意のGoogleアカウントでログインすれば、**他人の企業アカウントの店舗紐付けを読み取り・追加・全削除できる**。`joinByInviteCode` が他人の `accounts/{招待主uid}/shops` を読む必要があるための緩和と思われるが、正当化される範囲を超えている。
+
+**推奨対応**: `.write` は `auth.uid === $uid` に。招待参加のフローは「招待主の shops を Cloud Function 経由でコピーする」か、`inviteCodes/{code}` に shopId リストを埋め込んで招待主が事前に書き出す形にする。`.read` も同様に絞る。
+
+### S-3. 管理者画面が実質無認証 + パスワード機構が死んでいる（app.js:363, 2066）
+
+- `const[auth,setAuth]=useState(true); // パスワード廃止` — 管理者画面は誰でも開ける設計になっており、`AdminLogin` コンポーネント（app.js:2066）は**どこからも呼ばれていないデッドコード**。
+- `settings.password`（デフォルト "admin1234"）はDBに平文保存されたまま残存し、S-1により誰でも読める。
+- 現在の実質的な認証は「shopIdを知っているか」だけ。S-1で shopId が公開されているため防御ゼロ。
+
+**推奨対応**: S-1の対応が本丸。加えて `AdminLogin`・`settings.password`・`DEFAULT_PW`・ロック機構のうち使わないものを削除するか、管理者パスワードを復活させるなら平文保存をやめる（少なくともハッシュ化、理想はFirebase Authベース）。
+
+### S-4. 1年未更新店舗の自動削除がクライアント側で実行され、Invalid Date で誤削除する（app.js:1175-1192）
+
+- 店舗の物理削除（`shops/{id}` と `global/shops/{id}` の `.remove()`）を**任意のクライアントが自分の端末時計を基準に実行**する。時計が狂った端末1台で店舗が消える。
+- さらに `lastActivity` が壊れた文字列の場合、`new Date(la)` は Invalid Date（truthy）になり `!lastDate` を通過、`Invalid Date > oneYearAgo` は false なので**削除ブランチに落ちる**。データ破損1件で即削除。
+- バックアップ・猶予・通知なしの不可逆削除。
+
+**推奨対応**: この処理は Cloud Functions のスケジュール実行（`pubsub.schedule`）へ移す。クライアントからは削除ロジックを撤去。移行までの暫定なら最低限 `isNaN(lastDate.getTime())` ガードと「削除ではなく archived フラグ」に変更。
+
+### B-1. スタッフが入力中のシフトが、他人の提出で全消去される（app.js:1516-1541）
+
+`StaffView` の復元 useEffect が `subs` に依存しており、末尾で無条件に `setSd(初期値)` する:
+
+```js
+useEffect(()=>{ ... 
+  if(editingRef.current)return;   // ←「修正する」経由でしか true にならない
+  const ckName=getCookie(...);    // ←Cookieは提出完了時にしか書かれない
+  if(ckName){ ...復元して return }
+  const i={};dates.forEach(d=>{i[d]={status:"holiday"};});
+  setSd(i);setDone(false);setComment("");  // ←ここで全リセット
+},[apid,ap?.startDate,ap?.endDate,shopId,subs]);
+```
+
+**新規提出を作成中のスタッフ**（Cookie未保存・editingRef=false）は、他のスタッフが1人提出するたびに Firebase の `subs` リスナーが発火し、**入力中の全日程・コメントが「休み」に巻き戻る**。提出が集中する締切前ほど発生しやすい。
+
+**推奨対応**: ユーザーが1回でも `upd()`（日付セルの操作）や名前入力をしたら `editingRef.current=true`（もしくは `dirty` フラグ）を立て、リセットは「期間が実際に変わったとき」だけに限定する（`subs` を依存から外し、復元用の subs 参照は ref 経由にする）。
+
+---
+
+## 🟡 優先度: 中
+
+### B-2. 提出状況モーダルのセル編集が管理者調整値・変更フラグを消す（app.js:1941-1946）
+
+`SmModal` の `applyCellEdit` はシフトを `{status,start,end}` で**丸ごと置換**するため、Premiumの `adjustedStart/adjustedEnd/adjustedStartNote/adjustedEndNote` や `changed` フラグが消える。`{...sub.shifts[ds], status, start, end}` のマージにすべき。
+
+### B-3. 企業連携の店舗解除でクラッシュする経路（app.js:1062-1082）
+
+`unlinkShopFromAuth` のガードは `allLinkedShops.length<=1` のみ。**連携店舗が2件以上あるがセッションの `shops` に1件しか入っていない状態**（通常のAuthログイン直後がまさにこれ）で表示中店舗を解除すると、`newShops=[]` → `newShops[0].id` で TypeError。解除自体は成功しているため、画面が中途半端な状態で止まる。`next` が undefined の場合は残りの `allLinkedShops` から選ぶ or unbound に戻すフォールバックが必要。
+
+### B-4. 提出IDが `Date.now().toString()` で衝突しうる（app.js:1613）
+
+別端末の2人が同ミリ秒に新規提出すると同一IDになり、片方の提出が上書き消失する。`genSecureId()` が既にあり ShiftEditTab では使っているので、`submit()` 側も揃えるべき（既存データはそのままで新規のみ変更で問題ない）。
+
+### B-5. verifyEmailOtp に試行回数制限がない（functions/index.js:238-256）
+
+6桁コード・有効期限10分・試行無制限。総当たりは現実的には難しいが、attempts カウンタを OTP レコードに持たせて5回失敗で無効化するのが定石。ついでに `sendEmailOtp` の `APP_URL` フォールバックが `ontheshift.firebaseapp.com` 固定で、devプロジェクトでも本番URLを埋め込む点も直しておきたい。
+
+### S-5. CDN スクリプトに SRI（integrity属性）がない（index.html:79-91）
+
+React・Babel・ExcelJS・html2canvas・jsPDF・Firebase をすべて外部CDNから integrity なしで読み込んでいる。CDN側が侵害されると全ユーザーに任意コード実行（提出データ・認証情報への完全アクセス）。バージョン固定はできているので、`integrity` + `crossorigin` を付けるだけで対策できる（ビルド不要の方針と両立する）。
+
+### S-6. createPortalSession が無認証で shopId だけで叩ける（functions/index.js:156-188）
+
+Stripe連携自体は対象外だが、エンドポイントの認可の問題として1点だけ: shopId は S-1 により公開情報なので、**第三者が任意店舗の Stripe カスタマーポータル URL を取得できる**（解約・カード情報の閲覧操作が可能になる）。Firebase Auth トークン検証か、最低でも shopId を推測不能に保つ（S-1対応）が前提条件。
+
+### P-1. URLトークン解決が全店舗の periods を総なめする（app.js:472-484）
+
+スタッフURLを開くたびに `global/shops` 全件 + **全店舗の periods を並列 once 読み**している。店舗数Nに比例して読み取り課金・初期表示時間が悪化し、他店舗の期間データが全スタッフのクライアントに流れる（プライバシー）。`tokens/{urlToken} = {shopId, periodId}` のような逆引きインデックスを period 作成時に書けば O(1) になる。
+
+### P-2. ShiftEditTab のヒートマップ/集計が O(日数×時間×スタッフ×提出数) を毎レンダー再計算（app.js:2401-2438, 2591-2614）
+
+`countHeat` が内部で `subs.find`（O(subs)）を呼び、それを 日付×時間帯×スタッフ×2セクション で回す。15日×18時間×20名×30提出 ≒ 数十万回の find がセル入力のたびに走る。スマホでの入力遅延の主要因になりうる。`useMemo` で `name→sub` の Map と日付ごとの実効時刻テーブルを先に作れば1〜2桁軽くなる。
+
+### M-1. app.js 単一ファイル4,800行の限界（保守性）
+
+ShiftEditTab だけで約800行、App() が1,200行。ビルドステップ禁止の制約下でも、**`<script type="text/babel">` はグローバルスコープを共有するので複数ファイルに分割できる**（例: `app-core.js`（ユーティリティ・定数）→ `app-staff.js` → `app-admin.js` → `app-main.js` の順に index.html で読み込む）。import/export 不要・GitHub Pages のまま・ESLint も引き続き効く。ついでに `calcNetWorkMinutes`・`getBreaksFor`・`parseTime` など純粋関数群を切り出せば Node でユニットテスト可能になる（現状テストゼロ）。
+
+---
+
+## 🟢 優先度: 低
+
+1. **AdminLogin・settings.password・DEFAULT_PW・ログインロック機構がデッドコード**（app.js:87-113, 2066-2093）— S-3 の方針決定後に削除。
+2. **`pendingLinks` ルールが定義されているがアプリから未使用**（database.rules.json:45-50）— 削除候補。
+3. **`buildUrl(shops,shopId,period)` の第1・第2引数が未使用**（app.js:274）。
+4. **MyPageTab の使用量バーがスペーサー（`__spacer__`）をスタッフ数に含める**（app.js:4596）— `staffList.filter(n=>!isSpacer(n)).length` にすべき。制限チェック側は正しいので表示のみの問題。
+5. **祝日テーブルが2027年まで**（app.js:70-80）— 2027年後半に2028年分の追記が必要。カレンダーに補充タスクを入れておくと安全。
+6. **`isWeekend()` が祝日も true を返す**（app.js:169）— 名前と実態の乖離。`isWeekendOrHoliday` へのリネーム推奨。
+7. **`viewport: user-scalable=no, maximum-scale=1.0`**（index.html:6）— アクセシビリティ（弱視ユーザーのピンチズーム）阻害。iOS 10以降は無視されるが Android では効くため、外しても input 16px 対策で実害は出にくい。
+8. **店舗ドロップダウンの「ログアウト」ボタンが店舗単位に見えて全セッションを消す**（app.js:2155）— `doLogout()` は Cookie/セッション全クリア。複数店舗運用時に文言と挙動が不一致。
+9. **submit() に出勤>退勤のバリデーションがない**（app.js:1591-）— 純勤務0分の提出が黙って通る。確認モーダルで警告を出すと親切。
+10. **iOS Safari ズーム: fontSize<16 の input/select**（AI定数 fontSize:14 は修正済みだが、店舗コード入力 app.js:2195、調整select 4092/4095、属性select 3598 など fontSize:12 が残存）— 既知の技術負債、管理者/Premiumのみ影響。
+11. **subs 保存が毎回全件 update()**（app.js:1150-1162）— 動作は正しいが、1件の編集で全提出を送信するため提出数が多い店舗では帯域と競合ウィンドウが無駄に大きい。変更した sub だけ `subs/{id}` に書く形に寄せられる（スタッフ提出側は既に個別パス書き込みで正しい）。
+12. **console.log が本番でも大量に出る**（購読ログ・createNewShop の逐次ログ等）— DEV_MODE ガードで抑制推奨。
+
+---
+
+## 良かった点
+
+- **DEV_MODE のホスト名自動判定**（app.js:12）: 過去に繰り返し起きた手動切替事故への恒久対策として正しい設計。
+- **Firebase 書き込み規律**: subs の set() 全体上書きなし、削除は deletedId / `.remove()` で統一されており、RULES.md が守られている。
+- **二重送信ガード**（submittingRef）・**書き込み失敗の検知**（onSub の Promise 化）: 直近の修正が正しく入っている。
+- **XSS対策**: PDF生成の `esc()`/`vtext()`、React のデフォルトエスケープで、ユーザー入力のHTML注入経路は見当たらなかった。
+- **ESLint CI**: ビルドレス構成での未定義参照バグ対策として費用対効果が高い。0 errors を維持。
+- **プラン分離**: isPro / isPremium のゲートは全機能で正しく分離されている（バグチェックログの継続確認と一致）。
+
+---
+
+## 推奨対応順序
+
+1. **S-1 + S-2（Firebaseルール）** — 他のすべての前提。ルール変更はアプリの読み書きパスに影響するため、dev プロジェクトで `firebase_validate_security_rules` → 動作確認 → 本番適用の順で。
+2. **S-4（クライアント側店舗削除の撤去）** — データ消失リスクの即時止血。クライアントからの削除コードを消すだけなら小さい変更。
+3. **B-1（入力中フォームの消失）** — ユーザー体験に直撃する実バグ。締切前に発生しやすい。
+4. **B-2〜B-4** — 個別コミットで順次。
+5. **S-5（SRI付与）・P-1（トークン逆引き）** — 独立して着手可能。
+6. **M-1（ファイル分割 + 純粋関数のテスト化）** — 上記が落ち着いてから。
+
+---
+
+*このレビューは読み取りのみで実施。コードへの変更は一切行っていない。*
 
 ### サブスク_プラン設計書
 # サブスクリプション プラン設計書
@@ -2668,6 +2878,91 @@ Firebase: accounts/{shopId}/planExpiry = "YYYY-MM-DD"
 
 ---
 
+## Shifty バグチェックレポート（2026-07-05 自動実行）
+
+### 修正済み
+
+（今回の実行では修正なし。前回チェック（2026-07-04 #2、commit 7949970）以降、app.js / functions/index.js への新規コミットなし。今回の唯一の新規コミットはCLAUDE.mdのドキュメント整理のみ）
+
+### 要確認（未修正）
+
+- **🟢 signInWithApple / signInAndLinkApple デッドコード**（該当コード自体は既に削除済み）
+  過去のレポートで参照していた関数は commit `916f070` で完全削除済みと確認。以後のレポートから外してよい状態だが、念のため grep で再確認 → app.js内に該当関数は存在しない。
+
+- **🟢 iOS Safari ズーム防止: AI定数の fontSize:14**（app.js:4736）
+  管理者フォーム全般のスタイル定数。管理者画面のみの影響。
+
+- **🟢 iOS Safari ズーム防止: 店舗コード「コードで追加」入力欄の fontSize:12**（app.js:2155）
+  引き続き未修正。管理者画面のみの影響。
+
+- **🟢 iOS Safari ズーム防止: SubsTab詳細モーダル調整selectの fontSize:12**（app.js:4033,4036付近）
+  出退勤調整セレクト。Premiumユーザーのみの影響。
+
+- **🟢 iOS Safari ズーム防止: staffAttribute selectの fontSize:12**（app.js:3539）
+  スタッフ属性セレクト（StaffTab）。Premiumユーザーのみの影響。
+
+- **🟢 onJoinByInviteCode がSetTabに渡されているがUIから未使用**（app.js:2231,4052付近）
+  企業アカウント招待コード参加UIが未実装のためデッドプロップ。
+
+### 確認した直近コミット
+- 7949970: 削除したデッドコードの参照をCLAUDE.mdから除去（fbSet/fbOn/timeToNum/resolvePeriodFromUrl/UNLOCK_HASH群/UnlockCodeInput/Apple技術負債）→ ドキュメントのみの変更、app.js/functions/index.jsへの影響なし
+- 828c1a6: 未使用ローカル変数を削除（ckShop2/isClosed/syncScroll/isPro/kitStaff/TOTAL_COLS/TOTAL_ROWS/isLastStaff/wC）→ 削除済み変数がコード内で再参照されていないことをESLint（0 errors）で確認
+- 67045fc: 未使用トップレベル関数を削除（initFirebase/onConnectChange/fbSet/fbOn/timeToNum/makePeriod/resolvePeriodFromUrl）→ 同上、再参照なし
+- 0866b15: SetTab内デッドコードを削除（exportData/importData・未使用state pw）→ 同上
+- 916f070: Apple連携デッドコード一式を削除（signInWithApple/signInAndLinkApple・prop受け渡し4箇所）→ grep で該当関数の残存なしを確認、上記🟢項目は解消済みと判断
+
+### 確認した内容
+- Firebase 書き込みパターン: `subs` の `set()` 全体上書きなし。削除操作（SmModal・SubsTab詳細モーダル・SubsTab一覧）はすべて `saveSubs(a, id)` の deletedId 渡しで実装されており、Firebaseからの削除漏れなし。
+- Cloud Functions secrets: 全 `runWith` 呼び出し（createCheckoutSession, stripeWebhook, createPortalSession, sendEmailOtp, sendSurveyEmails）で必要な secrets が揃っている。`.delete()` 誤用なし。
+- `isPro`/`isPremium` の分離: Premium限定機能（staffAttribute・staffTypeLimits・adjustedStart/End・週次/月次超過判定）はすべて `isPremium` 判定で正しくゲートされている。`isPro` の使用箇所（未登録スタッフの別名リンクUI）はPro相当の機能で誤用なし。
+- DEV_MODE（app.js:12）・DEV_PLAN_OVERRIDE（app.js:117）は式のまま正しく定義（develop ブランチ正常、固定値へのハードコードなし）。
+- ESLint CI（`npx eslint app.js`）実行 → 0 errors / 40 warnings（すべて `no-unused-vars`。単一ファイル構成のため関数コンポーネントが「未使用」と誤検知されるのみで機能に影響なし）。
+- dev server起動確認 → スタッフ/未ログイン画面が正常表示、コンソールエラーなし。
+
+### 異常なし
+クリティカル（🔴）・中程度（🟡）の問題はなし。前回チェック以降の直近5コミットはすべてデッドコード削除・ドキュメント整理のみで、ランタイムロジックへの変更は含まれていないことを確認。
+
+---
+
+## Shifty バグチェックレポート（2026-07-05 自動実行 #2）
+
+### 修正済み
+
+（今回の実行では修正なし）
+
+### 要確認（未修正）
+
+- **🟢 iOS Safari ズーム防止: AI定数の fontSize:14**（app.js:4781）
+  管理者フォーム全般のスタイル定数。管理者画面のみの影響。
+
+- **🟢 iOS Safari ズーム防止: 店舗コード「コードで追加」入力欄の fontSize:12**（app.js:2195）
+  引き続き未修正。管理者画面のみの影響。
+
+- **🟢 iOS Safari ズーム防止: SubsTab詳細モーダル調整selectの fontSize:12**（app.js:4078,4081）
+  出退勤調整セレクト。Premiumユーザーのみの影響。
+
+- **🟢 iOS Safari ズーム防止: staffAttribute selectの fontSize:12**（app.js:3584）
+  スタッフ属性セレクト（StaffTab）。Premiumユーザーのみの影響。
+
+- **🟢 onJoinByInviteCode がSetTabに渡されているがUIから未使用**（app.js:1484,2271,4097）
+  企業アカウント招待コード参加UIが未実装のためデッドプロップ。
+
+### 確認した直近コミット
+- 6353756: Firebase Authのログイン状態が端末に永続化され新規リロードで自動ログインしてしまうバグを修正 → `setPersistence(NONE)` を明示指定。`.catch().then()` の連結で setPersistence 失敗時もリスナー登録が継続実行される点を確認、正しい実装。Cookie経由の単一店舗ログインには影響しない設計。
+- ab4fe11 / 9727801: スタッフ提出画面に全日程一括入力ボタン（通し/ランチ/ディナー）を追加・トグル動作化 → `bulkFill` 内の変数（`tt_`/`gc`/`editingRef`/`sd`/`dates`）はすべて StaffView スコープ内で正しく定義済み。ブラウザ実機確認で「通し」「ランチ」ボタンの適用・再クリックでの「休み」への巻き戻しトグル動作を確認、想定通り動作。
+- 6af46d4: シフト作成タブPDF出力の縦書き名前フォントサイズを文字数に応じて自動縮小（`vfontSize`）→ Premium限定機能内の表示調整のみ、Firebase書き込みなし。
+- c801997: 出勤時間の選択肢を30分刻みに変更（退勤は15分刻みのまま）→ `TO_START`定数を追加し、既存データが15分刻み値を持つ場合は選択肢に一時追加して値を保持するロジックを確認。ブラウザ実機で出勤select のoptionsが30分刻み（09:00,09:30,...）になっていることを確認。
+
+### 追加確認
+- dev server起動・ブラウザ実機テスト: スタッフ画面で全日程一括入力ボタン3種の動作・トグル巻き戻し・出退勤セレクトの刻み幅を確認。コンソールエラー・ネットワークエラーなし。
+- ESLint CI（`npx eslint app.js`）実行 → 0 errors / 40 warnings（すべて `no-unused-vars`、単一ファイル構成による誤検知）。
+- Firebase書き込みパターン（`subs`の`set()`全体上書きなし・削除は`deletedId`渡しまたは`.remove()`直接呼び出し）・Cloud Functions secrets（全関数で必要なsecrets設定済み）・DEV_MODE/DEV_PLAN_OVERRIDE（式のまま正常）・isPro/isPremium分離すべて確認済み、異常なし。
+
+### 異常なし
+クリティカル（🔴）・中程度（🟡）の問題はなし。今回の5コミット（Firebase Auth永続化修正・全日程一括入力ボタン追加とトグル化・PDF縦書きフォント調整・出勤時間30分刻み化）はすべて正しく実装されており、ブラウザ実機確認でも新規バグは検出されなかった。
+
+---
+
 ### ユーザーアンケート
 # Shifty ユーザーアンケート
 
@@ -2746,5 +3041,80 @@ curl -X POST https://asia-northeast1-ontheshift.cloudfunctions.net/sendSurveyEma
 - [x] 設定画面（CandTab）から休憩設定を追加・削除できる
 - [x] 既存の勤務時間表示箇所で純勤務時間が反映される
 **動作確認**: develop ブランチで実装完了（e7b7262）。main へのマージはユーザー確認後。
+
+---
+
+## 2026-07-06: セキュリティ改修・バグ修正（コードレビュー対応 ①〜⑥）
+
+**実装内容**: 2026-07-06コードレビューの🔴5件+🟡7件を計画承認のうえ一括対応。
+**変更ファイル**: app.js / database.rules.json / functions/index.js / index.html / BACKLOG.md
+
+**コミット（develop）**:
+- dc815c0: tokens逆引きインデックス+global/shops直キー読み化（S-1/S-2/P-1）
+- 24b0e5e: Firebaseルール強化（一覧公開廃止・accounts本人限定・paymentFailedルール新設）
+- f8340ca: デッドコード削除（AdminLogin・DEFAULT_PW等）（S-3）
+- e314a87: 店舗自動削除をCFスケジュール実行に移行（Invalid Dateガード+30日猶予アーカイブ）（S-4）
+- b2e3fa3: OTP試行5回制限+APP_URL修正（B-5）
+- ca3dcf2: 入力中シフトが他人の提出で消えるバグ修正（B-1）
+- 57a7b9b: セル編集の調整値保持/unlinkクラッシュ/提出ID衝突（B-2/B-3/B-4）
+- ea9f6f1: CDN全10本にSRI付与（S-5）
+- 7771ce9+58b4034: シフト作成タブの再計算最適化（P-2）
+- 0f6cbf9: Anonymous Auth権限分離をBACKLOGに記録（S-6恒久対応の方針）
+
+**dev検証済み**:
+- 新ルールをdevにデプロイ済み。REST検証: 一覧読み拒否/直キー許可/店舗削除拒否/トークン乗っ取り拒否/不正形状subs拒否
+- devトークンバックフィル完了（16件）
+- 実機: スタッフURL（tokens経路O(1)解決）→提出→完了画面復元、Cookie管理者、全タブ表示
+- B-1: 入力中に他人の提出を発生させてもフォーム保持を確認
+- P-2: 既知データでヒートマップ・集計値の完全一致を確認
+- ESLint 0 errors維持、DEV_MODE/DEV_PLAN_OVERRIDE式のまま
+
+**未実施（ユーザー確認待ちの本番作業4点）**:
+1. 本番DBへのtokensバックフィル
+2. develop→mainマージ（/release-to-main）
+3. 本番ルールデプロイ（firebase deploy --only database --project ontheshift）
+4. 本番Functionsデプロイ（purgeInactiveShops+OTP修正。devはSparkプランでデプロイ不可のため本番デプロイ後にログ検証）
+
+**残課題**: Anonymous Auth権限分離（BACKLOG 🟡）、移行完了後のlegacyTokenScan撤去
+
+---
+
+## 2026-07-06: セキュリティ改修の本番反映（全4ステップ完了）
+
+1. **本番tokensバックフィル**: 52店舗・29期間 → 29トークンを /tokens に登録・検証済み
+2. **develop→mainマージ**: 11コミット（マージコミット f3d0d46）。コンフリクトなし・DEV_MODE/DEV_PLAN_OVERRIDE式のまま・push済み。GitHub Pagesの新クライアント配信を確認してから次工程へ
+3. **本番ルールデプロイ**（ontheshift）: REST検証済み — global/shops全件読み拒否・accounts全件拒否・tokens直キー許可
+4. **本番Functionsデプロイ**: purgeInactiveShops（新規・Cloud Scheduler有効化）/ verifyEmailOtp / sendEmailOtp 更新成功
+
+**本番E2E検証**: スタッフURLの読み取りシーケンス（tokens→global/shops直キー→periods→settings→plan）をRESTで完全再現し全て成功。本番アプリのapp.jsに新コード（legacyTokenScan）配信済みを確認。
+
+**要フォロー**: purgeInactiveShopsの初回実行（24時間以内）後に `firebase functions:log --project ontheshift` でアーカイブ対象・Invalid Dateスキップのログを確認する。
+
+---
+
+## 2026-07-06: 残案件の意思決定（レビューフォローアップ）
+
+**保留: C. Anonymous Auth権限分離（セキュリティ強化フェーズB）**
+- 判断: 保留（BACKLOG 🟡に登録済みのまま）
+- 理由: 残存リスクは「自店舗スタッフによる内部操作」に限定され（外部からのshopId列挙は2026-07-06のルール強化で遮断済み）、費用対効果が低い。Anonymous Authのuid喪失問題への救済経路を残すと結局capabilityモデルに戻る設計上のジレンマがあり、完全に閉じるには管理操作のGoogle/メール認証必須化＝「登録不要ですぐ使える」というプロダクトの強みと衝突する。
+- 再着手条件: (1) 有料ユーザー増加でプラン回避の実害が出る、または (2) 管理操作の認証必須化をプロダクト方針として受け入れる、のいずれか。
+
+**実行決定: A(templates店舗単位化)→B(legacyTokenScan撤去)→D(低優先度負債一括)→E(ファイル分割+テスト基盤) を順次実施**（計画=Fable 5、実装=Opus 4.8）
+
+---
+
+## 2026-07-06: 残案件A/B/D/Eの実装と本番反映（計画=Fable 5、実装=Opus 4.8サブエージェント）
+
+**A. templates店舗単位化**（5e474fe）: global/templates（全ユーザー共有の設計ミス）→ shops/{shopId}/templates へ。利用者ゼロ（本番/devともnull）のため移行なし。ルールからglobal/templates削除。UI文言も「この店舗に保存されます」に修正。
+**B. legacyTokenScan撤去**（4048edc）: tokens整合チェック（本番・devとも全periods欠落ゼロ）を実施後、機能しない旧フォールバック37行を削除。有効/無効トークン両方の実機確認済み。
+**D. 技術負債8項目**（f2fd897, fc91e91）: input/select 9箇所のfontSize→16、**2028年祝日16日を追加**（振替なし・春分3/20・秋分9/22、計算値と突き合わせ済み）、viewportのuser-scalable=no削除、isWeekend→isWeekendOrHoliday、提出時の出勤>退勤バリデーション、ログアウト文言修正、saveSubs差分書き込み化（呼び出し元6箇所の新参照生成を全確認）、console.log 14箇所をDEV_MODEガード（dlog）。
+**E. ファイル分割+テスト基盤**（f02cc80）: app.js（4,704行）→ app-utils.js(199)/app-core.js(167)/app-staff.js(607)/app-admin.js(2,700)/app-main.js(1,065)。実証実験でBabel Standaloneは複数スクリプト間でグローバルスコープを共有すると判明（windowエクスポート不要・読み込み順序のみで成立）。104宣言の1:1移動を機械検証。**Nodeユニットテスト19件導入**（calcNetWorkMinutes/shiftBandInfo/getBreaksFor/isHoliday等）、npm test・CI組み込み済み。
+
+**本番反映**: devルールデプロイ→検証 → main マージ（5f4eeec）→ GitHub Pagesの分割ファイル配信確認 → 本番ルールデプロイ → REST検証（global/templates拒否・tokens正常・全5ファイル200・SRI 10本維持）。
+
+**運用への影響**:
+- .claude/commands の app.js 参照を app-*.js に更新済み（bug-check/check-dev/deploy/release-to-main/shifty-feature）
+- **要対応**: app.js監視の自動コミットフックは対象ファイルが消えたため、app-*.js を対象に更新が必要
+- CLAUDE.md のアーキテクチャ記述（app.js前提）は次回のObsidian同期/手動更新で追従を推奨
 
 ---
