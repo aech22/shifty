@@ -12,6 +12,20 @@ Free / Pro / Premium の 3 段階プラン制。Stripe サブスク（Pro 500円
 
 ---
 
+## 実装依頼の受け方（全モデル共通・必読）
+
+実行モデル（Sonnet / Opus / Fable 等）に関わらず同じ品質を担保するための手順。モデルの判断力に頼らず、この手順自体が品質を保証する。
+
+1. **着手前にタスクを定型化する**: フリーフォームの依頼（「〜を直して」「〜を追加して」）は、実装前に「**目的**（なぜ必要か）/ **受け入れ条件**（チェックリスト）/ **影響範囲**（ファイル・コンポーネント）」の3点に変換して提示してから着手する。typo修正などの自明な1行修正は省略してよい。
+2. **該当スキルを必ず経由する**: バグ調査・修正 → `/bug-check`、BACKLOG実装 → `/shifty-feature`、本番リリース → `/release-to-main`。スキル内のPHASE・チェックリストを省略しない。
+3. **修正前に全呼び出し元を洗い出す**: 5ファイル分割のため定義と呼び出しが別ファイルにあるのが普通。`grep -n "関数名" app-*.js` で全ファイル横断で確認してから編集する。
+4. **コミット前の検証は固定**: `npm test` と `npx eslint app-*.js` を必ず実行し、結果を省略せず報告する。失敗したら失敗のまま報告する（成功したことにしない）。
+5. **受け入れ条件を1つずつ照合してから完了報告する**: 未検証の項目は「未検証」と明記する。
+
+※ main へのpush・本番Firebase（ontheshift）へのデプロイ・DEV_MODE固定値の書き込みは PreToolUse フックが機械的にブロックする。ブロックされたら回避せず、フックのメッセージに従うこと。
+
+---
+
 ## アーキテクチャ
 
 | 項目 | 内容 |
@@ -495,7 +509,7 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-05 自動実行 #2）
+## Shifty バグチェックレポート（2026-07-07 自動実行 #2）
 
 ### 修正済み
 
@@ -503,35 +517,44 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 
 ### 要確認（未修正）
 
-- **🟢 iOS Safari ズーム防止: AI定数の fontSize:14**（app.js:4781）
-  管理者フォーム全般のスタイル定数。管理者画面のみの影響。
-
-- **🟢 iOS Safari ズーム防止: 店舗コード「コードで追加」入力欄の fontSize:12**（app.js:2195）
-  引き続き未修正。管理者画面のみの影響。
-
-- **🟢 iOS Safari ズーム防止: SubsTab詳細モーダル調整selectの fontSize:12**（app.js:4078,4081）
-  出退勤調整セレクト。Premiumユーザーのみの影響。
-
-- **🟢 iOS Safari ズーム防止: staffAttribute selectの fontSize:12**（app.js:3584）
-  スタッフ属性セレクト（StaffTab）。Premiumユーザーのみの影響。
-
-- **🟢 onJoinByInviteCode がSetTabに渡されているがUIから未使用**（app.js:1484,2271,4097）
+- **🟢 onJoinByInviteCode がSetTabに渡されているがUIから未使用**（app-admin.js:9,163,2050）
   企業アカウント招待コード参加UIが未実装のためデッドプロップ。
 
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2026）
+  non-Premiumユーザーは全行「-」表示。機能上の問題はないが視覚的に不要な列が表示される軽微なUX問題。
+
 ### 確認した直近コミット
-- 6353756: Firebase Authのログイン状態が端末に永続化され新規リロードで自動ログインしてしまうバグを修正 → `setPersistence(NONE)` を明示指定。`.catch().then()` の連結で setPersistence 失敗時もリスナー登録が継続実行される点を確認、正しい実装。
-- ab4fe11 / 9727801: スタッフ提出画面に全日程一括入力ボタン（通し/ランチ/ディナー）を追加・トグル動作化 → 変数スコープ確認済み、ブラウザ実機で適用・巻き戻しトグルの動作を確認。
-- 6af46d4: シフト作成タブPDF出力の縦書き名前フォントサイズを文字数に応じて自動縮小（`vfontSize`）→ Premium限定機能内の表示調整のみ。
-- c801997: 出勤時間の選択肢を30分刻みに変更（退勤は15分刻みのまま）→ `TO_START`定数追加・既存15分刻みデータの保持ロジックを確認、ブラウザ実機でoptionsが30分刻みになっていることを確認。
+- 243d8ee: ShiftEditTabの`_getSub`に別名解決を追加（登録名で見つからなければ`staffAliases`のエイリアスでフォールバック）→ SubsTab/expXlで既に使われている `s.staffName===nm||(staffAliases[nm]||[]).includes(s.staffName)` と同じパターンで実装されており、別名で提出したスタッフのシフトがシフト作成タブ（Premium限定）に正しく反映されるようになる正当な修正。副作用なし。
+
+### 追加確認
+- Firebase書き込みパターン: `subs`の`set()`全体上書きなし。削除3箇所（SmModal・SubsTab詳細モーダル・スタッフ画面）すべて`deletedId`渡しまたは`.remove()`直接呼び出しで正しく実装。
+- database.rules.json: `global/shops`直キー読みのみ・`tokens`直キー読みのみ・`accounts/{uid}/shops`等は`auth.uid===$uid`限定、後退なし。
+- index.html: スクリプト読み込み順（utils→core→staff→admin→main）維持、SRI 10本維持。
+- Cloud Functions: 全`runWith`でsecrets設定済み、`.delete()`誤用なし、`purgeInactiveShops`の`Number.isNaN`ガード・archived二段削除も維持。
+- DEV_MODE（app-core.js:12）・DEV_PLAN_OVERRIDE（app-core.js:81付近）は式のまま、develop正常。
+- `npx eslint app-*.js` 0 errors / 87 warnings（すべてno-unused-vars誤検知）。`npm test` 19件全パス。
+- dev server実機確認: スタッフ画面（free）・管理者画面（premium、期間管理タブ・シフト作成タブ）をブラウザで表示、コンソールエラーなし。
 
 ### 異常なし
-クリティカル（🔴）・中程度（🟡）の問題はなし。今回の5コミットはすべて正しく実装されており、ブラウザ実機確認（全日程一括入力・トグル・出退勤セレクト刻み幅）でも新規バグは検出されなかった。Firebase書き込みパターン・DEV_MODE=true・DEV_PLAN_OVERRIDE・isPro/isPremium分離・Cloud Functions secrets・ESLint（0 errors）すべて正常。
+クリティカル（🔴）・中程度（🟡）の問題はなし。前回チェック（2026-07-06 #3）以降の唯一の新規コミット（243d8ee: ShiftEditTabの別名解決追加）は既存パターンに沿った正当な修正で、新規バグは検出されなかった。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 -
 -
 -
@@ -928,12 +951,14 @@ firebaseDB.ref(`shops/${shopId}/subs`).set(allSubs);
 
 ### bug-check
 ---
-description: Shifty の app.js と functions/index.js をスキャンして🔴🟡🟢のバグを分類・修正し、Obsidian のバグチェックログに結果を追記します。新機能実装後や定期メンテ時に使います。
+description: Shifty の app-*.js（5分割構成）・functions/index.js・database.rules.json・index.html をスキャンして🔴🟡🟢のバグを分類・修正し、Obsidian のバグチェックログに結果を追記します。新機能実装後や定期メンテ時に使います。
 ---
 
 # Shifty バグチェック・修正スキル
 
 作業ディレクトリ: `/Users/hiroshi/Documents/Claude Code/シフト作成アプリーshifty`
+
+**ソース構成（2026-07-06にapp.jsを5分割）**: `app-utils.js`（純粋関数）→ `app-core.js`（DEV_MODE・Firebase・スタイル定数）→ `app-staff.js`（スタッフ画面）→ `app-admin.js`（管理者画面）→ `app-main.js`（App+マウント）。index.html がこの順で読み込み、全ファイルがグローバルスコープを共有する。
 
 ---
 
@@ -964,55 +989,98 @@ git status
 ### 2-A. Firebase 書き込みパターンの確認（🔴🟡）
 
 ```bash
-# subs の set() 全体上書き（RULES.md 禁止）
-grep -n "subs\)\.set\|\"subs\"\)\.set\|subs\`\)\.set" app.js
+# subs の set() 全体上書き（RULES.md 禁止）。ヒット0が正常
+# ※ この環境のgrep(ugrep)はBREの \| や片側だけの \) を受け付けないため -E 形式を使う
+grep -nE '(subs\)|"subs"\)|subs`\))\.set' app-*.js
 
-# 削除操作で update() を使っているパターン（今後も要チェック）
-# → onSave(array.filter(...)) や saveSubs(filtered) の後に Firebase remove() が呼ばれているか確認
-grep -n "\.filter(s=>s\.id!==" app.js | grep -v "//\|const fil\|staffList\|periods\|newSubs\|allC\|prevDs\|ds\b\|dates\|fil\."
+# 削除操作: filter で縮小した配列を deletedId なしで保存していないか
+grep -nE '\.filter\(s=>s\.id!==' app-*.js
+
+# saveSubs は差分書き込み（参照比較）方式。呼び出し元が変更subを
+# 「新しいオブジェクト参照」で作っているか確認（in-place変更は書き込み漏れになる）
+grep -nE 'onSave\(|saveSubs\(' app-*.js | head -20
 ```
 
-**削除バグの確認方法**: `filter(s=>s.id!==...)` で配列を縮小したあと、Firebase の `.remove()` を呼ばずに `saveSubs()` や `onSave()` だけ呼んでいる箇所は削除がFirebaseに反映されない可能性がある。
+**削除バグの確認方法**: `filter(s=>s.id!==...)` で配列を縮小したあと、`saveSubs(filtered, deletedId)` の第2引数を渡していない箇所は削除がFirebaseに反映されない。
+**差分書き込みの確認方法**: saveSubs は `new Set(subs)` との参照比較で変更subだけを書く。呼び出し元がsubを直接ミューテートしていたら🟡（spreadで新オブジェクト化する）。
 
 ### 2-B. プラン制限ロジックの確認（🟡）
 
 ```bash
 # isPro を使っているが isPremium が正しい箇所がないか
-grep -n "isPro&&\|isPro ?" app.js | grep -v "//\|color\|toggleColor\|staffColors\|drag\|alias\|spacer\|button\|span\|div\|td\|th\|style\|delete\|rename"
+grep -nE 'isPro&&|isPro \?' app-*.js | grep -vE '//|color|toggleColor|staffColors|drag|alias|spacer|button|span|div|td|th|style|delete|rename'
 
 # Premium 機能が isPro に残っていないか確認
-grep -n "plan.*pro.*premium\|pro.*plan" app.js | grep "attribute\|break\|limit\|overtime\|consec\|heatmap\|weekl\|calcNet" | head -10
+grep -nE 'plan.*pro.*premium|pro.*plan' app-*.js | grep -E 'attribute|break|limit|overtime|consec|heatmap|weekl|calcNet' | head -10
 ```
 
 ### 2-C. Cloud Functions の確認（🟡）
 
 ```bash
 # secrets の抜け漏れ
-grep -n "secrets:\|SMTP_USER\|SMTP_PASS" functions/index.js
+grep -nE 'secrets:|SMTP_USER|SMTP_PASS' functions/index.js
 
 # .delete() の誤用（正解は .remove()）
-grep -n "\.delete()" functions/index.js
+grep -nE '\.delete\(\)' functions/index.js
+
+# purgeInactiveShops の安全装置が残っているか（Invalid Dateスキップ・archived経由の二段削除）
+grep -nE 'Number.isNaN|archived/shops' functions/index.js
 ```
 
 ### 2-D. RULES.md 違反チェック（🔴）
 
 ```bash
-# DEV_MODE がホスト名自動判定の式のままか（固定値の true/false に書き換わっていないか）
-grep -n "^const DEV_MODE" app.js
-
-# DEV_PLAN_OVERRIDE が DEV_MODE 連動の式のままか（固定値に書き換わっていないか）
-grep -n "^const DEV_PLAN_OVERRIDE" app.js
+# DEV_MODE / DEV_PLAN_OVERRIDE は app-core.js にある。式のままか（固定値に書き換わっていないか）
+grep -nE '^const DEV_MODE|^const DEV_PLAN_OVERRIDE' app-core.js
 ```
 
-正しい状態: `const DEV_MODE = location.hostname !== "shiftyshifty.app";`。固定値の `true`/`false` にハードコードされていたら🔴。
+正しい状態: `const DEV_MODE = location.hostname !== "shiftyshifty.app";`（12行目）。固定値の `true`/`false` にハードコードされていたら🔴。
 
-### 2-E. 既知の軽微問題（🟢）
+### 2-E. セキュリティモデルの後退チェック（🔴・2026-07-06改修の維持）
+
+```bash
+# global/shops の全件読みが復活していないか（直キー読みのみが正。ルールで一覧readは拒否される）
+grep -n 'ref("global/shops")' app-*.js
+# → ヒットは saveShops の update() 1箇所のみが正常。once("value") の全件読みがあれば🔴
+
+# global/templates への読み書きが復活していないか（店舗単位 shops/{sid}/templates が正）
+grep -n "global/templates" app-*.js
+
+# ルールの後退: global/shops一覧公開・accounts本人限定・tokens乗っ取り防止が維持されているか
+grep -n '".read": true' database.rules.json
+# → "shops"の$shopId直下・tokensの$token直下・accountsのplan系のみが正。
+#    global/shops 直下や accounts/$uid/shops に ".read": true があれば🔴
+
+# tokens逆引きの書き込みが期間作成に残っているか（savePeriods内）
+grep -n "tokens/" app-main.js | head -5
+```
+
+### 2-F. 分割構成・配信の整合チェック（🟡）
+
+```bash
+# index.html のスクリプト読み込み順（utils→core→staff→admin→main）
+grep -o 'src="app-[a-z]*\.js"' index.html
+# → app-utils, app-core, app-staff, app-admin, app-main の順でなければ🔴（起動しない）
+
+# CDNスクリプトのSRIが維持されているか（10本）
+grep -c 'integrity="sha384' index.html
+```
+
+### 2-G. 静的検査 + ユニットテスト（毎回必須）
+
+```bash
+npx eslint app-utils.js app-core.js app-staff.js app-admin.js app-main.js   # 0 errors が正常（warningsは no-unused-vars の誤検知のみ）
+npm test   # tests/core.test.js 全パスが正常
+```
+
+### 2-H. 既知の軽微問題（🟢）
 
 以下は毎回リストに記載するが修正は任意:
-- `signInWithApple` / `signInAndLinkApple` デッドコード（app.js:806, 943）
-- `AI` 定数の `fontSize:14`（app.js 末尾付近）
-- 管理者 input の `fontSize:12`
-- `onJoinByInviteCode` デッドプロップ
+- `onJoinByInviteCode` が SetTab に渡されているがUIから未使用（デッドプロップ）
+- `globalTemplates` という state/prop 名（実体は店舗単位。歴史的経緯）
+- capabilityモデルの残存リスク「shopIdを知る者=管理可」（恒久対応はBACKLOGのAnonymous Auth権限分離。修正対象ではなく認識事項）
+
+※ 旧リストの signInWithApple デッドコード・AI定数fontSize:14・管理者input fontSize:12 は**すべて解消済み**（2026-07-05〜06）。復活していないかだけ確認する。
 
 ---
 
@@ -1028,50 +1096,50 @@ grep -n "^const DEV_PLAN_OVERRIDE" app.js
 
 ### 修正前の必須チェックリスト（誘発バグ防止）
 
-修正を始める前に、必ず以下を実行する:
-
-**1. 修正対象の関数・変数の全呼び出し元を洗い出す**
+**1. 修正対象の関数・変数の全呼び出し元を洗い出す（ファイル横断）**
 ```bash
-# 修正する関数名で grep（例: saveSubs を修正する場合）
-grep -n "saveSubs" app.js
+# 分割構成のため必ず全ファイルを対象に grep する（例: saveSubs を修正する場合）
+grep -n "saveSubs" app-*.js
 ```
-→ 洗い出した呼び出し元をすべてリストアップしてから修正に進む。
+→ 定義と呼び出しが**別ファイル**にあることが普通にある。全ファイルの呼び出し元をリストアップしてから修正に進む。
 
 **2. 修正箇所の前後30行を読む**
 - Edit ツールの old_string は最低20行以上のコンテキストを含める
-- 変数のスコープ（props / state / ローカル変数）を確認する
-- クロージャ内の変数が修正後も参照可能か確認する
+- 変数のスコープ（props / state / ローカル変数 / 他ファイルのグローバル）を確認する
 
 **3. 関数シグネチャを変更する場合は全呼び出し元を同時に更新する**
-- 引数を追加・削除する場合、grep で洗い出した全呼び出し元を同じコミットで更新する
-- 1箇所だけ変えて他を放置しない
+- grep で洗い出した全呼び出し元（全ファイル）を同じコミットで更新する
+
+**4. 関数・コンポーネントの移動/追加時はファイルの役割と読み込み順を守る**
+- 純粋関数→app-utils.js（Nodeテスト対象。localStorage/window/document/location参照禁止）
+- ブラウザ依存グローバル→app-core.js、スタッフ画面→app-staff.js、管理者→app-admin.js、App→app-main.js
+- 後に読み込まれるファイルの識別子を、前のファイルの**トップレベル即時実行コード**から参照しない（コンポーネント内の参照は実行時解決なのでOK）
 
 ### 修正後の誘発バグ確認チェックリスト
 
 Edit 後、コミット前に必ず確認:
 
 ```bash
-# 1. DEV_MODE が変わっていないか
-grep -n "^const DEV_MODE\|^const DEV_PLAN_OVERRIDE" app.js
+# 1. DEV_MODE / DEV_PLAN_OVERRIDE が変わっていないか
+grep -nE '^const DEV_MODE|^const DEV_PLAN_OVERRIDE' app-core.js
 
-# 2. 修正した関数の全呼び出し元が新しいシグネチャと一致しているか
-#    （例: saveSubs を修正した場合）
-grep -n "saveSubs(" app.js
+# 2. 修正した関数の全呼び出し元が新しいシグネチャと一致しているか（全ファイル横断）
+grep -n "saveSubs(" app-*.js
 
-# 3. 修正箇所で参照している変数が正しいスコープにあるか
-#    （例: sid, shopId, settings など）
-grep -n "const sid\|const shopId" app.js | head -5
+# 3. 静的検査とテスト
+npx eslint app-utils.js app-core.js app-staff.js app-admin.js app-main.js
+npm test
 ```
 
 追加で確認:
 - `subs` を `.set()` で全体上書きしていないか
-- `fontSize` が 16px 未満の input を新たに追加していないか
-- 修正した行の前後で undefined / null 参照が生まれていないか
+- `fontSize` が 16px 未満の input/select/textarea を新たに追加していないか
+- app-utils.js にブラウザ依存コードを混入させていないか（npm test が落ちる）
 
 ### コミットルール
 
 ```bash
-git add app.js  # または functions/index.js
+git add app-<対象>.js  # または functions/index.js 等、変更ファイルを明示
 git commit -m "fix: [問題の概要]（ファイル名:行番号）"
 git push origin develop
 ```
@@ -1112,13 +1180,24 @@ git push origin develop
 ### Firebase 削除が永続しないパターン（🟡）
 
 ```js
-// ❌ 間違い: update()にないキーはFirebaseから消えない
+// ❌ 間違い: 差分書き込みでは消えたsubを検知できない
 saveSubs(subs.filter(s => s.id !== subId)); // リロードで復活する
 
 // ✅ 正しい: deletedId を saveSubs に渡す
 saveSubs(subs.filter(s => s.id !== subId), subId);
 // または
 firebaseDB.ref(`shops/${sid}/subs/${subId}`).remove();
+```
+
+### sub を in-place 変更して保存するパターン（🟡・差分書き込み導入後の新パターン）
+
+```js
+// ❌ 間違い: 参照が変わらないため saveSubs の差分検知に漏れ、Firebaseに書かれない
+sub.shifts[date].adjustedStart = "11:00";
+onSave([...subs]);
+
+// ✅ 正しい: 変更するsubは新しいオブジェクトで作る
+onSave(subs.map(s => s.id === sub.id ? {...s, shifts: {...s.shifts, [date]: {...s.shifts[date], adjustedStart: "11:00"}}} : s));
 ```
 
 ### Premium 機能を isPro で表示してしまうパターン（🟡）
@@ -1139,6 +1218,14 @@ firebaseDB.ref(`shops/${sid}/subs/${subId}`).remove();
 
 // ✅ 正しい
 .runWith({ secrets: ["SMTP_USER", "SMTP_PASS"] })
+```
+
+### 分割ファイルの配置ミス（🔴）
+
+```js
+// ❌ 間違い: app-utils.js に localStorage 依存コードを置く → npm test がクラッシュ
+// ❌ 間違い: index.html の読み込み順を変える → 未定義参照で起動しない
+// ✅ 正しい: 純粋関数のみ app-utils.js、ブラウザ依存は app-core.js 以降へ
 ```
 
 ### check-dev
@@ -2960,6 +3047,74 @@ Firebase: accounts/{shopId}/planExpiry = "YYYY-MM-DD"
 
 ### 異常なし
 クリティカル（🔴）・中程度（🟡）の問題はなし。今回の5コミット（Firebase Auth永続化修正・全日程一括入力ボタン追加とトグル化・PDF縦書きフォント調整・出勤時間30分刻み化）はすべて正しく実装されており、ブラウザ実機確認でも新規バグは検出されなかった。
+
+---
+
+## Shifty バグチェックレポート（2026-07-06 自動実行 #3）
+
+### 修正済み
+
+（今回の実行では修正なし）
+
+### 前回から改善された点
+
+- **iOS Safari ズーム防止項目がすべて解消済み**: 前回チェック以降の「低優先度の技術負債を一括処理」コミット（f2fd897）で input/select 9箇所の fontSize が16に統一されたことを確認（app-core.js:163 の AI定数・app-admin.js:104 の店舗コード「コードで追加」入力欄・app-admin.js:1526 のstaffAttribute select、他）。過去レポートで継続していた🟢4項目（AI定数・店舗コード入力欄・SubsTab調整select・staffAttribute select）はすべてクローズ。
+- **app.js が5ファイルに分割された**（f02cc80）: app-utils.js（純粋関数）/ app-core.js（DEV_MODE等ブラウザ依存グローバル）/ app-staff.js / app-admin.js / app-main.js に分割。Babel Standaloneが複数`<script type="text/babel">`間でグローバルスコープを共有する仕組みを利用しており、import/export不要・ビルドステップ追加なしで実現。Nodeユニットテスト19件も同時導入（`npm test`）。
+
+### 要確認（未修正）
+
+- **🟢 onJoinByInviteCode がSetTabに渡されているがUIから未使用**（app-admin.js:9,163,2039）
+  企業アカウント招待コード参加UIが未実装のためデッドプロップ。ファイル分割後も同じ状態で残存。
+
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2015）
+  non-Premiumユーザーは全行「-」表示。機能上の問題はないが視覚的に不要な列が表示される軽微なUX問題。
+
+### 確認した直近コミット
+- 9889642: CLAUDE.mdのアーキテクチャ記述を現状に更新 → ドキュメントのみ、影響なし
+- f02cc80: app.js を5ファイルに分割しNodeユニットテスト19件を導入 → 全saveSubs呼び出し元（app-admin.js/app-main.js）で新オブジェクト参照による変更検知が正しく機能することをコード読解で確認。index.htmlの読み込み順（utils→core→staff→admin→main）も維持されている。
+- fc91e91: saveSubsを変更されたsubのみの差分書き込みに変更 → 全呼び出し元（renameStaff・SmModal削除/編集・adjustedStart/End編集・toggleChanged・saveAdj等）が変更subに新しいオブジェクト参照を割り当てていることを確認、参照比較による差分検知（`new Set(subs)`との比較）が正しく動作する実装。
+- f2fd897: 低優先度の技術負債を一括処理（iOS zoom/2028祝日/viewport/命名/バリデーション/文言/ログ）→ fontSize16統一・2028年祝日16日追加を確認
+- 4048edc: legacyTokenScan撤去 → 該当コードの残存なし
+
+### 追加確認
+- `npm test`（app-utils.js のNodeユニットテスト）19件全パス（calcNetWorkMinutes・shiftBandInfo・getBreaksFor・isHoliday・resolveAlias・sc）
+- `npx eslint app-*.js` 0 errors / 87 warnings（すべてno-unused-vars、ファイル分割によるクロスファイル参照の誤検知でありコード上の実害はなし）
+- dev server起動確認: スタッフ画面・管理者画面（期間管理タブ・Premium限定のシフト作成タブ含む）を free/premium 両プランで実機確認、コンソールエラー・ネットワークエラー（GA計測ビーコンの中断を除く）なし
+- Firebase書き込みパターン（subsのset()全体上書きなし・削除はdeletedId渡しまたは`.remove()`直接呼び出し）・DEV_MODE=true（式のまま）・DEV_PLAN_OVERRIDE（式のまま）・isPro/isPremium分離（Premium限定機能はすべてisPremium判定）・Cloud Functions secrets（全runWithで必要なsecrets設定済み・`.delete()`誤用なし）すべて正常。
+
+### 異常なし
+クリティカル（🔴）・中程度（🟡）の問題はなし。前回チェック（2026-07-05 #2）以降の5コミット（app.js分割・saveSubs差分書き込み・技術負債一括処理・legacyTokenScan撤去・ドキュメント更新）はすべて正しく実装されており、新規バグは検出されなかった。
+
+---
+
+## Shifty バグチェックレポート（2026-07-07 自動実行 #2）
+
+### 修正済み
+
+（今回の実行では修正なし）
+
+### 要確認（未修正）
+
+- **🟢 onJoinByInviteCode がSetTabに渡されているがUIから未使用**（app-admin.js:9,163,2050）
+  企業アカウント招待コード参加UIが未実装のためデッドプロップ。
+
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2026）
+  non-Premiumユーザーは全行「-」表示。機能上の問題はないが視覚的に不要な列が表示される軽微なUX問題。
+
+### 確認した直近コミット
+- 243d8ee: ShiftEditTabの`_getSub`に別名解決を追加（登録名で見つからなければ`staffAliases`のエイリアスでフォールバック）→ SubsTab/expXlで既に使われている `s.staffName===nm||(staffAliases[nm]||[]).includes(s.staffName)` と同じパターンで実装されており、別名で提出したスタッフのシフトがシフト作成タブ（Premium限定）に正しく反映されるようになる正当な修正。副作用なし。
+
+### 追加確認
+- Firebase書き込みパターン: `subs`の`set()`全体上書きなし。削除3箇所（SmModal・SubsTab詳細モーダル・スタッフ画面）すべて`deletedId`渡しまたは`.remove()`直接呼び出しで正しく実装。
+- database.rules.json: `global/shops`直キー読みのみ・`tokens`直キー読みのみ・`accounts/{uid}/shops`等は`auth.uid===$uid`限定、後退なし。
+- index.html: スクリプト読み込み順（utils→core→staff→admin→main）維持、SRI 10本維持。
+- Cloud Functions: 全`runWith`でsecrets設定済み、`.delete()`誤用なし、`purgeInactiveShops`の`Number.isNaN`ガード・archived二段削除も維持。
+- DEV_MODE（app-core.js:12）・DEV_PLAN_OVERRIDE（app-core.js:81付近）は式のまま、develop正常。
+- `npx eslint app-*.js` 0 errors / 87 warnings（すべてno-unused-vars誤検知）。`npm test` 19件全パス。
+- dev server実機確認: スタッフ画面（free）・管理者画面（premium、期間管理タブ・シフト作成タブ）をブラウザで表示、コンソールエラーなし。
+
+### 異常なし
+クリティカル（🔴）・中程度（🟡）の問題はなし。前回チェック（2026-07-06 #3）以降の唯一の新規コミット（243d8ee: ShiftEditTabの別名解決追加）は既存パターンに沿った正当な修正で、新規バグは検出されなかった。
 
 ---
 
