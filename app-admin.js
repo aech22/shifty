@@ -891,7 +891,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       )}
 
       {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
-        <div style={useBreakout?{marginLeft:-containerLeft,width:"100vw",paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:hasPanel?"flex":"block",alignItems:"flex-start",gap:4}:{}}>
+        <div style={useBreakout?{marginLeft:-(containerLeft+8),width:"100vw",paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:hasPanel?"flex":"block",alignItems:"flex-start",gap:4}:{}}>
 
           {/* === 左パネル: キッチン熱マップ（通常表示+split時のみ） === */}
           {hasPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
