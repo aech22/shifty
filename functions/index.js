@@ -19,6 +19,28 @@ const STRIPE_PRICES = {
 };
 
 // ============================================================
+// Firebase IDトークン検証 + 店舗オーナー照合
+// owners未登録（未claim）の店舗は移行猶予として許可する。
+// クライアントは匿名認証を含め常にauth済みのため、トークンなしは拒否してよい。
+// ============================================================
+async function verifyShopOwner(req, shopId) {
+  const m = (req.headers.authorization || "").match(/^Bearer (.+)$/);
+  if (!m) return { ok: false, status: 401, error: "認証トークンがありません。ページを再読み込みしてお試しください。" };
+  let decoded;
+  try {
+    decoded = await admin.auth().verifyIdToken(m[1]);
+  } catch (e) {
+    return { ok: false, status: 401, error: "認証トークンが無効です。ページを再読み込みしてお試しください。" };
+  }
+  const ownersSnap = await db.ref(`shops/${shopId}/owners`).once("value");
+  const owners = ownersSnap.val();
+  if (owners && !owners[decoded.uid]) {
+    return { ok: false, status: 403, error: "この店舗の管理者権限がありません。" };
+  }
+  return { ok: true, uid: decoded.uid };
+}
+
+// ============================================================
 // Stripe決済セッション作成
 // ============================================================
 exports.createCheckoutSession = functions
@@ -27,7 +49,7 @@ exports.createCheckoutSession = functions
   .https.onRequest(async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.set("Access-Control-Allow-Headers", "Content-Type");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
     if (req.method !== "POST") { res.status(405).send("Method Not Allowed"); return; }
 
@@ -35,6 +57,9 @@ exports.createCheckoutSession = functions
 
     const { shopId, plan, successUrl, cancelUrl } = req.body;
     if (!shopId || !plan) { res.status(400).json({ error: "shopId, plan は必須です" }); return; }
+
+    const auth = await verifyShopOwner(req, shopId);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
 
     const priceId = plan === "premium" ? STRIPE_PRICES.premium_monthly : STRIPE_PRICES.pro_monthly;
     const stripe = getStripe();
@@ -159,12 +184,15 @@ exports.createPortalSession = functions
   .https.onRequest(async (req, res) => {
     res.set("Access-Control-Allow-Origin", "*");
     res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
-    res.set("Access-Control-Allow-Headers", "Content-Type");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
     if (req.method !== "POST") { res.status(405).send("Method Not Allowed"); return; }
 
     const { shopId, returnUrl } = req.body;
     if (!shopId) { res.status(400).json({ error: "shopId は必須です" }); return; }
+
+    const auth = await verifyShopOwner(req, shopId);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
 
     // FirebaseからStripe顧客IDを取得
     const snap = await db.ref(`accounts/${shopId}/stripeCustomerId`).once("value");

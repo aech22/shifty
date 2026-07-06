@@ -10,13 +10,17 @@ const CURSORRULES = path.join(__dirname, "../.cursorrules");
 const SECTION_HEADER = "\n---\n\n## Obsidianノート（自動同期）\n";
 const SECTION_MARKER = "## Obsidianノート（自動同期）";
 
-// 同期対象から除外するファイル。
-// CLAUDE.md / .cursorrules は md_to_obsidian フックでこの同期元フォルダにもコピーされるため、
-// ここで読み込むと「自分自身を自分の中に埋め込む」再帰が起きて無限に肥大化する。必ず除外する。
-const EXCLUDE_NOTES = new Set(["CLAUDE.md", ".cursorrules.md"]);
+// 同期対象は許可リスト方式（2026-07-07に除外リスト方式から反転）。
+// 理由: 全ノート埋め込みでCLAUDE.mdが187KBまで肥大化し、コンテキストノイズで
+// モデル（特にSonnet系）の指示遵守率とキャッシュ効率を悪化させていたため。
+// - バグチェックログ（85KB・全履歴）: 最新1件はCLAUDE.md手動部にあるため不要
+// - bug-check等スキル6本: .claude/commands のコピーでありスキルとして読み込み済み（二重）
+// - RULES/VISION/コードレビュー/実装ログ等: スキルが必要時にReadする設計のため常駐不要
+// CLAUDE.md / .cursorrules 自身を含めると再帰肥大化するので、許可リストに追加してはいけない。
+const INCLUDE_NOTES = new Set(["BACKLOG.md"]);
 
 function readAllNotes() {
-  const files = fs.readdirSync(VAULT_DIR).filter(f => f.endsWith(".md") && !EXCLUDE_NOTES.has(f));
+  const files = fs.readdirSync(VAULT_DIR).filter(f => INCLUDE_NOTES.has(f));
   return files.map(f => {
     const content = fs.readFileSync(path.join(VAULT_DIR, f), "utf8").trim();
     return `### ${f.replace(".md", "")}\n${content}`;

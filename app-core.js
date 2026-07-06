@@ -159,6 +159,26 @@ const CF_BASE = DEV_MODE
   ? "https://asia-northeast1-thirty-dev-b6958.cloudfunctions.net"
   : "https://asia-northeast1-ontheshift.cloudfunctions.net";
 
+// ===== 管理キー（オーナー権限のcapability）=====
+// shopIdはスタッフURLからも辿れるため管理権限の根拠にできない。
+// 管理キーは管理者端末のlocalStorageのみに保存し、Firebaseルールの
+// owners登録（shops/{shopId}/owners/{uid} = adminKey）の照合に使う。
+const ADMIN_KEYS_LS="ots_adminKeys_v1";
+function getAdminKeyLS(shopId){const m=lg(ADMIN_KEYS_LS,{})||{};return m[shopId]||null;}
+function setAdminKeyLS(shopId,key){const m=lg(ADMIN_KEYS_LS,{})||{};m[shopId]=key;ls(ADMIN_KEYS_LS,m);}
+// 店舗コード入力のパース: "shopId"（旧形式）または "shopId.adminKey"（管理コード）
+function parseShopCode(raw){
+  const t=(raw||"").trim();
+  const i=t.indexOf(".");
+  if(i<0)return{shopId:t,adminKey:null};
+  return{shopId:t.slice(0,i),adminKey:t.slice(i+1)||null};
+}
+
+// ===== App Check（reCAPTCHA v3）=====
+// Firebaseコンソールでアプリ登録・サイトキー発行後にキーを設定すると有効化される。
+// 空文字の間は初期化をスキップする（enforce はコンソール側で別途操作）。
+const APP_CHECK_SITE_KEY = DEV_MODE ? "" : "";
+
 // ===== 共通スタイル定数 =====
 const AI={width:"100%",padding:"11px 14px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:10,color:"var(--c-text)",fontSize:16,outline:"none"};
 const AB={padding:"10px 18px",background:"#f87036",border:"none",borderRadius:9,color:"white",fontSize:14,fontWeight:700,cursor:"pointer"};

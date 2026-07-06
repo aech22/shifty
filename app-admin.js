@@ -6,7 +6,7 @@
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
@@ -22,10 +22,11 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
   const tt=m=>{setToast(m);clearTimeout(tr.current);tr.current=setTimeout(()=>setToast(null),2500);};
   const currentShop=shops.find(s=>s.id===currentShopId)||shops[0];
 
-  // 店舗コードで既存店舗を追加（global/shopsの直キー読み。Enter/クリック共通）
+  // 店舗コード / 管理コード（shopId.adminKey）で既存店舗を追加（global/shopsの直キー読み。Enter/クリック共通）
   const addShopByCode=()=>{
-    const code=shopCodeInput.trim();
-    if(!code){setShopCodeError("コードを入力してください");return;}
+    const raw=shopCodeInput.trim();
+    if(!raw){setShopCodeError("コードを入力してください");return;}
+    const{shopId:code,adminKey}=parseShopCode(raw);
     const lim=PLAN_LIMITS[plan]?.shops??Infinity;
     if(shops.length>=lim){setShopCodeMode(false);setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
     if(!firebaseDB){setShopCodeError("Firebase未接続");return;}
@@ -33,7 +34,8 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
     firebaseDB.ref(`global/shops/${code}`).once("value").then(snap=>{
       const found=snap.val();
       if(!found||found.id!==code){setShopCodeError("コードが正しくありません");return;}
-      if(shops.find(s=>s.id===code)){setShopCodeError("既に追加済みです");return;}
+      if(adminKey&&onRememberAdminKey) onRememberAdminKey(code,adminKey);
+      if(shops.find(s=>s.id===code)){setShopCodeError(adminKey?"":"既に追加済みです");if(adminKey){setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");tt("✓ 管理コードを登録しました");if(onClaimShop)onClaimShop(code);}return;}
       const newShops=[...shops,found];
       saveShops(newShops);
       if(authUser) firebaseDB.ref(`accounts/${authUser.uid}/shops/${code}`).set(true);
@@ -136,6 +138,13 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         </div>
       </div>
       <div style={{maxWidth:900,margin:"0 auto",padding:"20px 14px 60px"}}>
+        {ownerReadOnly&&<div style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:18}}>🔒</span>
+          <div style={{flex:1}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#B45309",marginBottom:2}}>この端末は管理者として登録されていません（閲覧のみ）</div>
+            <div style={{fontSize:12,color:"#92400E"}}>設定・シフトの変更を行うには、登録済みの端末の「設定タブ → 管理コード」を「店舗名ボタン → コードで追加」に入力してください。</div>
+          </div>
+        </div>}
         {paymentFailed&&<div style={{background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.3)",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
           <span style={{fontSize:18}}>⚠️</span>
           <div style={{flex:1}}>
@@ -160,7 +169,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
         {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading} staffList={staffList}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading} staffList={staffList} adminCode={adminCode}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -2048,7 +2057,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                  authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
                  onSignInAndLinkGoogle,onSignInAndLinkEmail,
                  shops=[],allLinkedShops=[],onSwitchToShop,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,
-                 inviteCodeDisplay=null,inviteCodeGenLoading=false}){
+                 inviteCodeDisplay=null,inviteCodeGenLoading=false,adminCode=null}){
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
   const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
   const[emailInput,setEmailInput]=useState("");
@@ -2374,13 +2383,14 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       })}
     </AC>}
 
-    {shopId&&<AC title="この端末の店舗コード">
-      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>このコードを別の端末で入力すると、同じ店舗に紐付けられます。</div>
+    {shopId&&<AC title="この端末の管理コード">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>このコードを別の端末で入力すると、同じ店舗を管理者として操作できるようになります。<b>スタッフには共有しないでください。</b></div>
       <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,padding:"10px 14px"}}>
-        <span style={{flex:1,fontFamily:"monospace",fontSize:13,color:"var(--c-text)",letterSpacing:"0.05em",wordBreak:"break-all"}}>{shopId}</span>
+        <span style={{flex:1,fontFamily:"monospace",fontSize:13,color:"var(--c-text)",letterSpacing:"0.05em",wordBreak:"break-all"}}>{adminCode||shopId}</span>
         <button onClick={()=>{
-          const copy=()=>{const el=document.createElement("textarea");el.value=shopId;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 店舗コードをコピーしました");};
-          if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(shopId).then(()=>tt("✓ 店舗コードをコピーしました")).catch(copy);}else{copy();}
+          const codeVal=adminCode||shopId;
+          const copy=()=>{const el=document.createElement("textarea");el.value=codeVal;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 管理コードをコピーしました");};
+          if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(codeVal).then(()=>tt("✓ 管理コードをコピーしました")).catch(copy);}else{copy();}
         }} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>コピー</button>
       </div>
       <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>別端末への共有は「店舗名ボタン → コードで追加」から行えます</div>
@@ -2479,9 +2489,10 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
     ph("portal_opened");
     setPortalLoading(true);
     try{
+      const idToken=await firebaseAuth?.currentUser?.getIdToken().catch(()=>null);
       const res=await fetch(`${CF_BASE}/createPortalSession`,{
         method:"POST",
-        headers:{"Content-Type":"application/json"},
+        headers:{"Content-Type":"application/json",...(idToken?{"Authorization":`Bearer ${idToken}`}:{})},
         body:JSON.stringify({shopId,returnUrl:window.location.href}),
       });
       const data=await res.json();
@@ -2642,9 +2653,10 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
     ph("upgrade_started",{plan});
     setLoading(plan);setError("");
     try{
+      const idToken=await firebaseAuth?.currentUser?.getIdToken().catch(()=>null);
       const res=await fetch(`${CF_BASE}/createCheckoutSession`,{
         method:"POST",
-        headers:{"Content-Type":"application/json"},
+        headers:{"Content-Type":"application/json",...(idToken?{"Authorization":`Bearer ${idToken}`}:{})},
         body:JSON.stringify({shopId,plan,successUrl:window.location.href+"?payment=success",cancelUrl:window.location.href+"?payment=cancel"}),
       });
       const data=await res.json();
