@@ -409,14 +409,17 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   // "h"なし勤務時間フォーマット
   // "h"なし勤務時間フォーマット
   const fmtH=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;return m===0?String(h):`${h}:${String(m).padStart(2,"0")}`;};
+  // 画面の集計表用: 4桁以内に抑える（100時間以上は時間のみ）。列幅がグリッドとずれるのを防ぐ
+  const fmtH4=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;if(h>=100)return String(h);return m===0?String(h):`${h}:${String(m).padStart(2,"0")}`;};
   // 日付を"日(曜)"のみ表示（月不要）
   const fmtDL=date=>{const d=pd(date);return`${d.getDate()}(${WD[d.getDay()]})`;};
   const BD="1px solid var(--c-border)";const BD2="1px solid var(--c-border2)";const CRD="var(--c-card)";
-  // サイドパネル: 通常表示+split時のみ（全員表示では熱マップを下部に表示）
+  // サイドパネル: 通常表示+split時かつ左右に十分な余白があるPC幅のみ（携帯・タブレットではグリッド下に表示）
   const hasSplit=hallStaff.length>0;
-  const hasPanel=hasSplit&&!fitAll;
+  const rawPanelW=Math.max(0,containerLeft-4);
+  const hasPanel=hasSplit&&!fitAll&&rawPanelW>=150;
   const useBreakout=hasPanel||fitAll;
-  const panelW=hasPanel?Math.max(0,containerLeft-4):0;
+  const panelW=hasPanel?rawPanelW:0;
   // 熱マップ行高: 計測値があれば使う、なければフォールバック
   const heatRowH=measuredRowH||48;
   // 中央グリッド幅 = ブレイクアウト時はビューポート幅 - パネル×2
@@ -576,7 +579,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             return(<tr key={row.id} style={{background:bg}}>
               <td style={{position:"sticky",left:0,background:stickyBg,zIndex:1,padding:0,fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,width:90,minWidth:90,maxWidth:90}}><div style={{width:90,padding:"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{row.label}</div></td>
               {mapGridCols(name=>{const min=row.getMin(name);const vio=row._violateFn?row._violateFn(name,min):false;const cellBg=vio?"rgba(255,71,87,.15)":bg;return(
-                <td key={name} style={{padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:cellBg,fontWeight:(row._bold||vio)&&min>0?700:400,color:min>0?(vio?"#FF4757":(row._color||"var(--c-text2)")):"var(--c-text4)"}}>{min>0?fmtH(min):""}</td>
+                <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:"border-box",padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:cellBg,fontWeight:(row._bold||vio)&&min>0?700:400,color:min>0?(vio?"#FF4757":(row._color||"var(--c-text2)")):"var(--c-text4)"}}>{min>0?fmtH4(min):""}</td>
               );},spacerCell)}
             </tr>);
           })}</tbody>
@@ -979,10 +982,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             </table>
           </div>
 
-          {/* ===時間帯別出勤人数 (全員表示 or split無し → グリッド下に表示) === */}
+          {/* ===時間帯別出勤人数 (サイドパネル非表示時 → グリッド下にキッチン→ホールの順で縦に表示) === */}
           {!hasPanel&&<div style={{marginBottom:16}}>
             <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>時間帯別出勤人数</div>
-            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+            <div style={{display:"flex",flexDirection:"column",gap:10}}>
               <HeatTable label={hasSplit?"キッチン":""} section="kit" maxC={kitMax}/>
               {hasSplit&&<HeatTable label="ホール" section="hall" maxC={hallMax}/>}
             </div>
@@ -1521,6 +1524,9 @@ const dragIdxRef=useRef(null);
           {!isPro&&<span style={{marginLeft:8,color:"#F59E0B",fontSize:11}}>並べ替え・名前色変更はProプラン（500円/月）で利用できます</span>}
         </div>}
         {staffList.length===0&&<div style={{fontSize:13,color:"var(--c-text4)",marginBottom:12}}>スタッフが登録されていません</div>}
+        {/* 行がカード幅を超える場合はカード内で横スクロール（行背景は末尾の削除ボタンまで届く） */}
+        <div style={{overflowX:"auto"}}>
+        <div style={{minWidth:"max-content"}}>
         {staffList.map((n,i)=>(
           <div key={i} style={{marginBottom:6}}>
           {isSpacer(n)
@@ -1556,7 +1562,7 @@ const dragIdxRef=useRef(null);
           </div>}
           {/* 別名パネル（Pro・展開時） */}
           {isPro&&aliasIdx===i&&(
-            <div style={{marginTop:4,padding:"12px 14px",background:"rgba(248,112,54,.04)",border:"1px solid rgba(248,112,54,.2)",borderRadius:10}}>
+            <div style={{marginTop:4,padding:"12px 14px",background:"rgba(248,112,54,.04)",border:"1px solid rgba(248,112,54,.2)",borderRadius:10,position:"sticky",left:0,maxWidth:"calc(100vw - 76px)",boxSizing:"border-box"}}>
               <div style={{fontSize:12,fontWeight:700,color:"#f87036",marginBottom:8}}>別名（スタッフが入力できる名前）</div>
               {/* 登録済み別名 */}
               {(staffAliases[n]||[]).length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
@@ -1589,6 +1595,8 @@ const dragIdxRef=useRef(null);
           )}
           </div>
         ))}
+        </div>
+        </div>
         <div style={{display:"flex",gap:8,marginTop:12}}>
           <input value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="スタッフ名を入力" maxLength={50} style={AI}/>
           <button onClick={add} style={AB}>＋ 追加</button>
@@ -2360,13 +2368,16 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
 
     {plan==="premium"&&staffList.filter(n=>!isSpacer(n)).length>0&&<AC title="退勤延長設定">
       <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>スタッフごとにシフト終了後の延長時間を設定します。ランチ帯（退勤17:00以前）とディナー帯（退勤17:00超）で個別に設定できます。勤務時間合計に加算され、提出一覧の退勤欄に表示されます。</div>
+      {/* 行がカード幅を超える場合（携帯・タブレット）はカード内で横スクロールしてスタッフ名を確認できる */}
+      <div style={{overflowX:"auto"}}>
+      <div style={{minWidth:"max-content"}}>
       {staffList.filter(n=>!isSpacer(n)).map(n=>{
         const raw=(settings.overtimeSettings?.byStaff||{})[n];
         const ot=typeof raw==="number"?{lunch:raw,dinner:raw}:(raw||{lunch:0,dinner:0});
         const setOT=(band,v)=>{const bs={...(settings.overtimeSettings?.byStaff||{})};const prevRaw=bs[n];const prev=typeof prevRaw==="number"?{lunch:prevRaw,dinner:prevRaw}:(prevRaw||{lunch:0,dinner:0});const next={...prev,[band]:v};if((next.lunch||0)>0||(next.dinner||0)>0)bs[n]={lunch:next.lunch||0,dinner:next.dinner||0};else delete bs[n];onSave({...settings,overtimeSettings:{...(settings.overtimeSettings||{}),byStaff:bs}});};
         const selStyle={fontSize:16,padding:"5px 8px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",cursor:"pointer"};
         return(<div key={n} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,marginBottom:6}}>
-          <span style={{flex:1,fontSize:13,color:"var(--c-text)",fontWeight:600,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{n}</span>
+          <span style={{flex:1,fontSize:13,color:"var(--c-text)",fontWeight:600,whiteSpace:"nowrap"}}>{n}</span>
           <div style={{display:"flex",alignItems:"center",gap:4}}>
             <span style={{fontSize:11,color:"var(--c-text3)"}}>ランチ</span>
             <select value={ot.lunch||0} onChange={e=>setOT("lunch",parseInt(e.target.value)||0)} style={selStyle}>
@@ -2381,6 +2392,8 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
           </div>
         </div>);
       })}
+      </div>
+      </div>
     </AC>}
 
     {shopId&&<AC title="この端末の管理コード">
