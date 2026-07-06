@@ -274,7 +274,18 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     });
     return m;
   },[subs]);
-  const _getSub=(name)=>subsByKey.get(selPid+"|"+name);
+  // Excel出力（expXl）と同じ別名解決: 登録名で見つからなければ別名で提出されたsubにフォールバック
+  const staffAliases=settings?.staffAliases||{};
+  const _getSub=(name)=>{
+    const exact=subsByKey.get(selPid+"|"+name);
+    if(exact)return exact;
+    const aliases=staffAliases[name]||[];
+    for(const alias of aliases){
+      const s=subsByKey.get(selPid+"|"+alias);
+      if(s)return s;
+    }
+    return undefined;
+  };
   // 管理者編集値(adjustedXxx)優先、なければスタッフ提出値(xxx)にフォールバック
   const getStoredTime=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";return(field==="start"?(sh.adjustedStart??sh.start):(sh.adjustedEnd??sh.end))||"";};
   const getStoredNote=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";return(field==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"";};
