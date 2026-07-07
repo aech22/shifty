@@ -153,13 +153,24 @@ function App(){
     const loadShops=(authUser)=>{
     // 店舗はglobal/shopsの全件読みをやめ、必要なIDの直キー読みで取得する（一覧の公開を前提にしない）
     const readShop=id=>firebaseDB.ref(`global/shops/${id}`).once("value").then(s=>{const v=s.val();return v&&v.id?v:null;});
-    const enterShop=(shopObj)=>{
-      setShops([shopObj]);
-      ls("shift_shops_v6",[shopObj]);
+    const enterShop=(shopObj,shopList)=>{
+      const list=shopList&&shopList.length>0?shopList:[shopObj];
+      setShops(list);
+      ls("shift_shops_v6",list);
       currentShopIdRef.current=shopObj.id;
       setCurrentShopId(shopObj.id);
-      startSubscriptions(shopObj.id,[shopObj]);
+      startSubscriptions(shopObj.id,list);
       setReady(true);
+    };
+    // 前回セッションで切り替えて訪問した複数店舗を復元する（Auth経由のみ）。
+    // shift_shops_v6キャッシュのうち、現在もこのアカウントに紐付いている店舗のみを対象にし、
+    // targetShopは必ず含める（リロード直後に「他の店舗がログアウトになる」のを防ぐ）
+    const restoreShopList=(linkedShops,targetShop)=>{
+      const cached=lg("shift_shops_v6",[])||[];
+      const cachedIds=cached.map(s=>s&&s.id).filter(Boolean);
+      const restored=cachedIds.map(id=>linkedShops.find(s=>s.id===id)).filter(Boolean);
+      if(!restored.some(s=>s.id===targetShop.id)) restored.unshift(targetShop);
+      return restored;
     };
     const toUnbound=()=>{ setUnbound(true); setReady(true); };
     // Cookie店舗で入る（DB読み失敗時はlocalStorageキャッシュでオフライン継続）
@@ -216,7 +227,7 @@ function App(){
             const ssId=ssGet(SS_SHOP,null);
             const targetId=linkedShops.find(s=>s.id===ckId)?ckId:linkedShops.find(s=>s.id===ssId)?ssId:linkedShops[0].id;
             const targetShop=linkedShops.find(s=>s.id===targetId)||linkedShops[0];
-            enterShop(targetShop);
+            enterShop(targetShop,restoreShopList(linkedShops,targetShop));
           });
         }).catch(()=>toUnbound());
         return;
@@ -235,7 +246,7 @@ function App(){
           const ssId=ssGet(SS_SHOP,null);
           const targetId=linkedShops.find(s=>s.id===ckId)?ckId:linkedShops.find(s=>s.id===ssId)?ssId:linkedShops[0].id;
           const targetShop=linkedShops.find(s=>s.id===targetId)||linkedShops[0];
-          enterShop(targetShop);
+          enterShop(targetShop,restoreShopList(linkedShops,targetShop));
         });
       }).catch(()=>toUnbound());
       return;
