@@ -192,7 +192,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
 }
 
 // ===== シフト作成タブ =====
-function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,shopName,onUpgrade}){
+function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,shopName,onUpgrade,allLinkedShops=[]}){
   const firstPid=(periods[0]||{}).id||"";
   const[selPid,setSelPid]=useState(firstPid);
   const[localEdits,setLocalEdits]=useState({});
@@ -215,6 +215,37 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const[measuredTheadH,setMeasuredTheadH]=useState(null);
 
   const isPremium=plan==="premium";
+
+  // 企業連携の他店舗データ（略称・提出シフト）。ヘルプ判定・重複チェックに使用
+  const[companyData,setCompanyData]=useState({}); // {shopId:{name,abbrs:[],workMap:Map(name|date→shift)}}
+  useEffect(()=>{
+    const otherShops=(allLinkedShops||[]).filter(s=>s&&s.id&&s.id!==shopId);
+    if(!firebaseDB||otherShops.length===0){setCompanyData({});return;}
+    let cancelled=false;
+    Promise.all(otherShops.map(os=>
+      Promise.all([
+        firebaseDB.ref(`shops/${os.id}/settings/shopAbbrs`).once("value").catch(()=>null),
+        firebaseDB.ref(`shops/${os.id}/subs`).once("value").catch(()=>null),
+      ]).then(([aS,sS])=>{
+        const abbrs=aS?Object.values(aS.val()||{}).filter(v=>typeof v==="string"):[];
+        const workMap=new Map();
+        Object.values((sS&&sS.val())||{}).forEach(sub=>{
+          if(!sub||!sub.staffName||!sub.shifts)return;
+          Object.entries(sub.shifts).forEach(([d,sh])=>{
+            if(sh&&sh.status==="work"){const k=sub.staffName+"|"+d;if(!workMap.has(k))workMap.set(k,sh);}
+          });
+        });
+        return[os.id,{name:os.name,abbrs,workMap}];
+      })
+    )).then(entries=>{if(!cancelled)setCompanyData(Object.fromEntries(entries));});
+    return()=>{cancelled=true;};
+  },[shopId,allLinkedShops,selPid]);
+  // 略称→他店舗の逆引き
+  const abbrToShop=useMemo(()=>{
+    const m={};
+    Object.entries(companyData).forEach(([id,d])=>(d.abbrs||[]).forEach(a=>{if(a&&!m[a])m[a]={id,name:d.name};}));
+    return m;
+  },[companyData]);
 
   // periodsが非同期ロード後に届いた場合、selPidが""のままなら先頭に補正
   useEffect(()=>{
