@@ -662,7 +662,6 @@ function App(){
     activeSubsRef.current=[];
     delCookie(CK_SHOP);
     sessionStorage.clear();
-    ls(AUTH_LOGGED_OUT_LS,true); // 明示ログアウト: 次回起動時に実ユーザーセッションを自動復元しない
     setCurrentShopId(null);
     setShops([]); // セッションの店舗リストをクリア（authUser・allLinkedShops は維持）
     setUnbound(true);
