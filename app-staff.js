@@ -103,10 +103,17 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   const bulkFill=type=>{
     const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
     const src=(settings.candidates||CAND_WEEKDAY).filter(c=>!c.closed&&c.start&&c.end);
-    const pool=type==="lunch"?src.filter(c=>toMin(c.end)<=toMin("17:00"))
-      :type==="dinner"?src.filter(c=>toMin(c.start)>=toMin("17:00"))
-      :src;
-    const cand=pool.reduce((best,c)=>!best||(toMin(c.end)-toMin(c.start))>(toMin(best.end)-toMin(best.start))?c:best,null);
+    let cand;
+    if(type==="through"){
+      // 通し: 単一候補ではなく、候補全体の最も早い出勤〜最も遅い退勤を動的に組み立てる
+      const earliestStart=src.reduce((best,c)=>!best||toMin(c.start)<toMin(best)?c.start:best,null);
+      const latestEnd=src.reduce((best,c)=>!best||toMin(c.end)>toMin(best)?c.end:best,null);
+      cand=earliestStart&&latestEnd?{start:earliestStart,end:latestEnd}:null;
+    }else{
+      const pool=type==="lunch"?src.filter(c=>toMin(c.end)<=toMin("17:00"))
+        :src.filter(c=>toMin(c.start)>=toMin("17:00"));
+      cand=pool.reduce((best,c)=>!best||(toMin(c.end)-toMin(c.start))>(toMin(best.end)-toMin(best.start))?c:best,null);
+    }
     if(!cand){tt_("▲ 該当する候補時間が見つかりません");return;}
     const applicable=dates.filter(ds=>!gc(ds).some(c=>c.closed));
     const alreadyApplied=applicable.length>0&&applicable.every(ds=>{const s=sd[ds];return s?.status==="work"&&s.start===cand.start&&s.end===cand.end;});
