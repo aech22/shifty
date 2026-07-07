@@ -655,13 +655,15 @@ function App(){
     }catch(e){return{error:e.message};}
   };
 
-  // 店舗セッションのみログアウト（企業連携・Firebase Auth は維持）
+  // ログアウト（今セッションはallLinkedShopsの選択画面に戻すが、次回起動時は
+  // 実ユーザーセッションを自動復元しない＝リロード後は全店舗ログアウト状態になる）
   const doLogout=async()=>{
     // 前店舗の購読を解除（ログイン画面表示中に店舗データの受信を続けない）
     activeSubsRef.current.forEach(r=>r.off());
     activeSubsRef.current=[];
     delCookie(CK_SHOP);
     sessionStorage.clear();
+    ls(AUTH_LOGGED_OUT_LS,true); // 明示ログアウト: 次回起動時に実ユーザーセッションを自動復元しない（全店舗ログアウト）
     setCurrentShopId(null);
     setShops([]); // セッションの店舗リストをクリア（authUser・allLinkedShops は維持）
     setUnbound(true);
