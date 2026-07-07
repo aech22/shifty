@@ -631,6 +631,22 @@ function App(){
     setUnbound(true);
   };
 
+  // 指定店舗のみセッションからログアウト（他店舗のセッション・企業連携は維持）
+  const doShopLogout=(targetShopId)=>{
+    const newShops=shops.filter(s=>s.id!==targetShopId);
+    if(newShops.length===0){ doLogout(); return; } // 最後の1店舗は従来通り全体ログアウト
+    if(currentShopId===targetShopId){
+      const next=newShops[0];
+      currentShopIdRef.current=next.id;
+      setCurrentShopId(next.id);
+      ssSave(SS_SHOP,next.id);
+      startSubscriptions(next.id,newShops); // shops更新＋購読先切り替え
+    }else{
+      setShops(newShops);
+      ls("shift_shops_v6",newShops);
+    }
+  };
+
   // Firebase Auth を含む完全サインアウト
   const doFullSignOut=async()=>{
     activeSubsRef.current.forEach(r=>r.off());
@@ -1332,7 +1348,7 @@ function App(){
                 startSubscriptions(id);
               }}
               startSubscriptions={startSubscriptions}
-              logout={doLogout} authUser={authUser} syncStatus={syncStatus}
+              logout={doLogout} logoutShop={doShopLogout} authUser={authUser} syncStatus={syncStatus}
               allLinkedShops={allLinkedShops}
               onSwitchToShop={id=>{
                 const sh=allLinkedShops.find(s=>s.id===id);
