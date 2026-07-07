@@ -71,7 +71,9 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   },[apid,ap?.startDate,ap?.endDate,shopId,subs,done]);
 
   const tt_=m=>{setToast(m);clearTimeout(tr.current);tr.current=setTimeout(()=>setToast(null),2500);};
-  const upd=(ds,u)=>{dirtyRef.current=true;setSd(p=>({...p,[ds]:{...p[ds],...u}}));};
+  // Firebaseはundefinedを含むオブジェクトのset()で例外を投げる（休みボタンでstart/endをundefinedにする既存の実装と相性が悪いため必須）
+  const stripUndef=o=>{const r={...o};Object.keys(r).forEach(k=>{if(r[k]===undefined)delete r[k];});return r;};
+  const upd=(ds,u)=>{dirtyRef.current=true;setSd(p=>({...p,[ds]:stripUndef({...p[ds],...u})}));};
   const reset=()=>{
     editingRef.current=false;
     dirtyRef.current=false;
@@ -113,7 +115,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     setSd(p=>{
       const n={...p};
       applicable.forEach(ds=>{
-        n[ds]=alreadyApplied?{...n[ds],status:"holiday",start:undefined,end:undefined}:{...n[ds],status:"work",start:cand.start,end:cand.end};
+        n[ds]=stripUndef(alreadyApplied?{...n[ds],status:"holiday",start:undefined,end:undefined}:{...n[ds],status:"work",start:cand.start,end:cand.end});
       });
       return n;
     });
@@ -147,7 +149,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
           if(changed)nw.changed=true;
         }
       }
-      return nw;
+      return stripUndef(nw); // Firebaseはundefinedを含むオブジェクトのset()で例外を投げるため最終防御として除去
     };
     const sub={
       id:existSub?existSub.id:genSecureId(24), // Date.now()は同時提出でID衝突するためランダムIDを使用
