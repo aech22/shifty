@@ -114,12 +114,17 @@ function App(){
     // 匿名セッションはLOCALで永続化（端末ごとにuidを安定させ、ownersの肥大化を防ぐ）。
     // Google/メールの実ログインは従来通り永続化しない（各サインイン関数内でNONEに切り替える）。
     if(firebaseAuth){
+      // アプリ内ブラウザ（iOS WKWebView等）でindexedDBがハングし、setPersistence/onAuthStateChangedが
+      // 永久に解決しない事象への保険。10秒で初期化が進まなければエラー画面へ。
+      // 遅れて初期化が完了し店舗に入れた場合はエラー画面は自動で消える（renderの抑制条件）
+      const authWatchdog=setTimeout(()=>setInitError(prev=>prev||"auth"),10000);
       firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e=>console.warn("setPersistence失敗:",e)).then(()=>{
         const unsubAuth = firebaseAuth.onAuthStateChanged(user=>{
           unsubAuth(); // 初回のみ
           // 永続化されるのは匿名ユーザーのみの設計だが、旧バージョンの実ユーザーが残っていた場合は
           // 自動ログインさせない従来方針に合わせてサインアウトして匿名に入り直す
           const proceed=(realUser)=>{
+            clearTimeout(authWatchdog);
             setAuthUser(realUser);
             setAuthChecked(true);
             loadShops(realUser);
@@ -1060,9 +1065,10 @@ function App(){
   const ap=periods.find(p=>p.id===apid)||(urlLocked?null:latestPeriod);
   const effectiveSettings=settings||makeSettings(sid);
 
-  // 初期化失敗画面（匿名認証失敗・スタッフURL解決失敗。アプリ内ブラウザの制限や無効URLで発生）
+  // 初期化失敗画面（匿名認証失敗/ハング・スタッフURL解決失敗。アプリ内ブラウザの制限や無効URLで発生）
   // ローディング判定より先に出す（urlLocked時はapidが確定しないため、これがないと無限ローディングになる）
-  if(initError&&!currentShopId) return(
+  // 店舗に入れた（ready && currentShopId確定）場合は表示しない＝遅延後の初期化成功で自動的に消える
+  if(initError&&(!ready||!currentShopId)) return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#1A1A2E",flexDirection:"column",gap:16,padding:24}}>
       <ShiftyIcon size={64}/>
       <div style={{color:"white",fontSize:18,fontWeight:700}}>ページを開けませんでした</div>

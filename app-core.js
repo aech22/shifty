@@ -99,7 +99,9 @@ function buildUrl(period){
   if(!period)return "";
   const token=period.urlToken||period.id;
   // スタッフURL: #/s/<token>
-  return`${window.location.origin}${window.location.pathname}#/s/${token}`;
+  // openExternalBrowser=1 はLINEのアプリ内ブラウザで開かれた際に外部ブラウザ（Safari/Chrome）を
+  // 自動起動させるLINE公式パラメータ。他のブラウザ・アプリでは無視される（parseUrlはhashのみ参照）
+  return`${window.location.origin}${window.location.pathname}?openExternalBrowser=1#/s/${token}`;
 }
 
 function parseUrl(){
