@@ -143,7 +143,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
             </div>
           </div>
           <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
-            {[["periods","期間"],["staff","スタッフ"],["candidates","候補"],["submissions","提出一覧"],["edit","シフト作成"],["mypage","マイページ"],["settings","設定"]].map(([id,l])=>(
+            {[["periods","期間"],["staff","スタッフ"],["candidates","候補"],["submissions","提出一覧"],["edit","シフト作成"],["company","企業連携"],["mypage","マイページ"],["settings","設定"]].map(([id,l])=>(
               <button key={id} onClick={()=>setTab(id)} style={{padding:"7px 13px",background:tab===id?"#f87036":"var(--c-input)",border:`1px solid ${tab===id?"#f87036":"var(--c-border)"}`,borderRadius:7,color:tab===id?"white":"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{l}</button>
             ))}
             <button onClick={logout} style={{padding:"7px 12px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:7,color:"#FF4757",fontSize:12,cursor:"pointer"}}>ログアウト</button>
@@ -180,9 +180,10 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
-        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason}/>}
+        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops}/>}
+        {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} staffList={staffList} adminCode={adminCode} ownerReadOnly={ownerReadOnly} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} staffList={staffList} adminCode={adminCode} ownerReadOnly={ownerReadOnly}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -2074,19 +2075,11 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   </div>);
 }
 
-function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,staffList=[],
-                 authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
-                 onSignInAndLinkGoogle,onSignInAndLinkEmail,
-                 shops=[],allLinkedShops=[],onSwitchToShop,onLinkExistingShop,onUnlinkShop,adminCode=null,ownerReadOnly=false,
-                 companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
-  const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
-  const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
-  const[emailInput,setEmailInput]=useState("");
-  const[codeInput,setCodeInput]=useState("");
-  const[pendingNewType,setPendingNewType]=useState(null); // null | {name:""}
-  const[linkLoading,setLinkLoading]=useState(false);
-  const[linkError,setLinkError]=useState("");
-  // 企業アカウント UI
+// ===== 企業連携タブ =====
+function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
+                     shops=[],allLinkedShops=[],onSwitchToShop,onUnlinkShop,
+                     companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
+  // 企業アカウントUI（SetTabから移動）
   const[coName,setCoName]=useState("");
   const[coPw,setCoPw]=useState("");
   const[coBusy,setCoBusy]=useState(false);
@@ -2096,6 +2089,280 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
   const[coNewPw,setCoNewPw]=useState("");
   const[coAddCode,setCoAddCode]=useState("");
   const[coAddOpen,setCoAddOpen]=useState(false);
+  // 店舗一覧トグル・略称・スタッフ勤務先
+  const[expanded,setExpanded]=useState({});   // {shopId:true}
+  const[shopMeta,setShopMeta]=useState({});   // {shopId:{abbrs:[],staff:[],workplaces:{},loaded:true}}
+  const[abbrInput,setAbbrInput]=useState({}); // {shopId:"入力中の略称"}
+  const listShops=allLinkedShops.length>0?allLinkedShops:shops;
+
+  const loadShopMeta=(sid)=>{
+    if(!firebaseDB)return;
+    Promise.all([
+      firebaseDB.ref(`shops/${sid}/settings/shopAbbrs`).once("value"),
+      firebaseDB.ref(`shops/${sid}/staff`).once("value"),
+      firebaseDB.ref(`shops/${sid}/settings/staffWorkplaces`).once("value"),
+    ]).then(([aS,stS,wS])=>{
+      const abbrs=Object.values(aS.val()||{}).filter(v=>typeof v==="string");
+      const staff=Object.values(stS.val()||{}).filter(n=>typeof n==="string"&&!isSpacer(n));
+      setShopMeta(m=>({...m,[sid]:{abbrs,staff,workplaces:wS.val()||{},loaded:true}}));
+    }).catch(()=>{
+      setShopMeta(m=>({...m,[sid]:{abbrs:[],staff:[],workplaces:{},loaded:true}}));
+      tt("✕ 店舗データの読み込みに失敗しました");
+    });
+  };
+  const toggleExpand=(sid)=>{
+    setExpanded(e=>({...e,[sid]:!e[sid]}));
+    if(!shopMeta[sid])loadShopMeta(sid);
+  };
+  // 表示中店舗はライブなsettingsを使い、他店舗は読み込んだメタを使う
+  const metaFor=(sid)=>sid===shopId
+    ?{abbrs:settings.shopAbbrs||[],staff:staffList.filter(n=>!isSpacer(n)),workplaces:settings.staffWorkplaces||{},loaded:true}
+    :(shopMeta[sid]||null);
+  // 略称・勤務先の保存: 表示中店舗はsaveSettings経由（localStorage二重書き維持）、他店舗はFirebaseへupdateマージ
+  const saveMetaField=(sid,field,value)=>{
+    const stateKey=field==="shopAbbrs"?"abbrs":"workplaces";
+    if(sid===shopId){onSave({...settings,[field]:value});setShopMeta(m=>m[sid]?{...m,[sid]:{...m[sid],[stateKey]:value}}:m);return;}
+    setShopMeta(m=>({...m,[sid]:{...(m[sid]||{abbrs:[],staff:[],workplaces:{},loaded:true}),[stateKey]:value}}));
+    if(!firebaseDB)return;
+    firebaseDB.ref(`shops/${sid}/settings`).update({[field]:value})
+      .catch(()=>{tt("✕ 保存できませんでした（この店舗の管理者権限がありません）");loadShopMeta(sid);});
+  };
+  const addAbbr=(sid)=>{
+    const v=(abbrInput[sid]||"").trim();
+    if(!v)return;
+    if(v.length>4){tt("✕ 略称は4文字以内にしてください");return;}
+    if(/^[hkxHKX]$/.test(v)||/^[\d.:]+$/.test(v)){tt("✕ h・k・x・数字のみの略称は使用できません");return;}
+    const cur=(metaFor(sid)||{}).abbrs||[];
+    if(cur.includes(v)){tt("✕ 既に登録済みの略称です");return;}
+    const conflict=listShops.find(s=>s.id!==sid&&((metaFor(s.id)||{}).abbrs||[]).includes(v));
+    if(conflict){tt(`✕ 「${v}」は「${conflict.name}」で使用中です`);return;}
+    saveMetaField(sid,"shopAbbrs",[...cur,v]);
+    setAbbrInput(i=>({...i,[sid]:""}));
+  };
+  const removeAbbr=(sid,abbr)=>{
+    const cur=(metaFor(sid)||{}).abbrs||[];
+    saveMetaField(sid,"shopAbbrs",cur.filter(a=>a!==abbr));
+  };
+  const toggleWorkplace=(sid,staffName,targetShopId)=>{
+    const meta=metaFor(sid);if(!meta)return;
+    const wp={...(meta.workplaces||{})};
+    const cur={...(wp[staffName]||{})};
+    if(cur[targetShopId])delete cur[targetShopId];else cur[targetShopId]=true;
+    if(Object.keys(cur).length)wp[staffName]=cur;else delete wp[staffName];
+    saveMetaField(sid,"staffWorkplaces",wp);
+  };
+
+  const shopCard=(shop)=>{
+    const isCurrent=shop.id===shopId;
+    const open=!!expanded[shop.id];
+    const meta=metaFor(shop.id);
+    const canUnlink=listShops.length>1;
+    const others=listShops.filter(s=>s.id!==shop.id);
+    return(
+      <div key={shop.id} style={{background:"var(--c-input)",borderRadius:10,border:`1px solid ${isCurrent?"rgba(248,112,54,.4)":"var(--c-border2)"}`,marginBottom:8,overflow:"hidden"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",cursor:"pointer"}} onClick={()=>toggleExpand(shop.id)}>
+          <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+            <span style={{fontSize:11,color:"var(--c-text3)",transform:open?"rotate(90deg)":"none",transition:"transform .15s",flexShrink:0}}>▶</span>
+            {isCurrent&&<span style={{fontSize:10,background:"#f87036",color:"white",padding:"2px 6px",borderRadius:4,fontWeight:700,flexShrink:0}}>表示中</span>}
+            <span style={{fontSize:13,color:"var(--c-text)",fontWeight:isCurrent?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{shop.name}</span>
+            {meta&&meta.abbrs.length>0&&<span style={{fontSize:11,color:"var(--c-text3)",flexShrink:0}}>（{meta.abbrs.join("・")}）</span>}
+          </div>
+          <div style={{display:"flex",gap:6,flexShrink:0}} onClick={e=>e.stopPropagation()}>
+            {!isCurrent&&onSwitchToShop&&(
+              <button onClick={()=>{onSwitchToShop(shop.id);tt(`✓ 「${shop.name}」に切り替えました`);}}
+                style={{padding:"5px 10px",background:"rgba(248,112,54,.1)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"#f87036",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                ログイン
+              </button>
+            )}
+            {canUnlink&&<button onClick={async()=>{
+              if(!window.confirm(`「${shop.name}」の連携を解除しますか？`))return;
+              if(companyInfo&&onUnlinkStoreFromCompany){const r=await onUnlinkStoreFromCompany(shop.id);tt(r&&r.error?("✕ "+r.error):`✓ 「${shop.name}」の連携を解除しました`);}
+              else if(onUnlinkShop)onUnlinkShop(shop.id);
+            }}
+              style={{padding:"5px 10px",background:"var(--c-bg)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text3)",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+              解除
+            </button>}
+          </div>
+        </div>
+        {open&&(
+          <div style={{borderTop:"1px solid var(--c-border2)",padding:"12px"}}>
+            {!meta?<div style={{fontSize:12,color:"var(--c-text3)"}}>⏳ 読み込み中...</div>:(<>
+              {/* 店舗略称 */}
+              <AL>店舗略称（シフト作成タブでヘルプ入力に使用・複数登録可）</AL>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+                {meta.abbrs.map(a=>(
+                  <span key={a} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 8px",background:"rgba(96,165,250,.12)",border:"1px solid rgba(96,165,250,.4)",borderRadius:8,fontSize:13,fontWeight:600,color:"var(--c-text)"}}>
+                    {a}
+                    <button onClick={()=>removeAbbr(shop.id,a)} style={{background:"none",border:"none",color:"var(--c-text3)",cursor:"pointer",fontSize:12,padding:0,lineHeight:1}}>✕</button>
+                  </span>
+                ))}
+                {meta.abbrs.length===0&&<span style={{fontSize:12,color:"var(--c-text4)"}}>未登録</span>}
+              </div>
+              <div style={{display:"flex",gap:6,marginBottom:14}}>
+                <input value={abbrInput[shop.id]||""} onChange={e=>setAbbrInput(i=>({...i,[shop.id]:e.target.value}))}
+                  onKeyDown={e=>{if(e.key==="Enter")addAbbr(shop.id);}}
+                  placeholder="例：三（4文字以内）" maxLength={4}
+                  style={{...AI,flex:1,maxWidth:200}}/>
+                <button onClick={()=>addAbbr(shop.id)} style={{...AB,padding:"8px 14px",fontSize:13,whiteSpace:"nowrap"}}>追加</button>
+              </div>
+              {/* スタッフ一覧と勤務先登録 */}
+              <AL>スタッフの勤務先店舗（複数店舗で働くスタッフに登録すると、シフト重複を自動チェックします）</AL>
+              {meta.staff.length===0&&<div style={{fontSize:12,color:"var(--c-text4)"}}>スタッフが登録されていません</div>}
+              {meta.staff.map(nm=>{
+                const wps=(meta.workplaces||{})[nm]||{};
+                return(
+                  <div key={nm} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid var(--c-border)",flexWrap:"wrap"}}>
+                    <span style={{fontSize:13,fontWeight:600,color:"var(--c-text)",minWidth:80}}>{nm}</span>
+                    <div style={{display:"flex",gap:5,flexWrap:"wrap",flex:1}}>
+                      {others.length===0&&<span style={{fontSize:11,color:"var(--c-text4)"}}>他に連携店舗がありません</span>}
+                      {others.map(os=>{
+                        const sel=!!wps[os.id];
+                        return(<button key={os.id} onClick={()=>toggleWorkplace(shop.id,nm,os.id)}
+                          style={{padding:"4px 10px",borderRadius:14,border:`1px solid ${sel?"#f87036":"var(--c-border2)"}`,
+                            background:sel?"rgba(248,112,54,.12)":"var(--c-bg)",color:sel?"#f87036":"var(--c-text3)",
+                            fontSize:12,fontWeight:sel?700:400,cursor:"pointer",whiteSpace:"nowrap"}}>
+                          {sel?"✓ ":""}{os.name}
+                        </button>);
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </>)}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return(<div>
+    <AT>企業連携</AT>
+    {!authUser?(
+      <AC title="企業連携を利用するには">
+        <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.7}}>
+          企業連携を利用するには、まず「設定」タブの<b>アカウント連携</b>からGoogleまたはメールアドレスでアカウントを登録してください。
+        </div>
+      </AC>
+    ):(<>
+    <AC title="企業アカウント">
+      {companyInfo?(
+        <div>
+          <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+            企業名・企業コード・パスワードを管理します。企業コードとパスワードを共有すると、他のスタッフが同じ企業アカウントにログインできます。
+          </div>
+          {/* 企業名（編集可） */}
+          <AL>企業名</AL>
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <input value={coName!==""?coName:companyInfo.name} onChange={e=>setCoName(e.target.value)} maxLength={100} style={{...AI,flex:1}}/>
+            <button disabled={coBusy} onClick={async()=>{
+              const nm=(coName!==""?coName:companyInfo.name).trim(); if(!nm||!onRenameCompany)return;
+              setCoBusy(true); const r=await onRenameCompany(nm); setCoBusy(false);
+              if(r&&r.error)tt("✕ "+r.error); else {tt("✓ 企業名を変更しました");setCoName("");}
+            }} style={{...AGray,whiteSpace:"nowrap"}}>保存</button>
+          </div>
+          {/* 企業コード（コピー） */}
+          <AL>企業コード（ログインID）</AL>
+          <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
+            <span style={{flex:1,fontFamily:"monospace",fontSize:15,color:"#f87036",letterSpacing:"0.1em",fontWeight:700}}>{companyInfo.code}</span>
+            <button onClick={()=>{
+              const v=companyInfo.code;const copy=()=>{const el=document.createElement("textarea");el.value=v;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 企業コードをコピーしました");};
+              if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(v).then(()=>tt("✓ 企業コードをコピーしました")).catch(copy);}else copy();
+            }} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>📋 コピー</button>
+          </div>
+          {/* パスワード変更 */}
+          {coPwEdit?(
+            <div style={{marginBottom:4}}>
+              <AL>新しいパスワード（6文字以上）</AL>
+              <div style={{display:"flex",gap:8}}>
+                <input type="password" value={coNewPw} onChange={e=>setCoNewPw(e.target.value)} maxLength={128} placeholder="新しいパスワード" style={{...AI,flex:1}}/>
+                <button disabled={coBusy} onClick={async()=>{
+                  if(coNewPw.length<6){tt("✕ パスワードは6文字以上にしてください");return;}
+                  setCoBusy(true); const r=await onChangeCompanyPassword(coNewPw); setCoBusy(false);
+                  if(r&&r.error)tt("✕ "+r.error); else {tt("✓ パスワードを変更しました");setCoNewPw("");setCoPwEdit(false);}
+                }} style={{...AB,whiteSpace:"nowrap"}}>変更</button>
+                <button onClick={()=>{setCoPwEdit(false);setCoNewPw("");}} style={{...AGray,whiteSpace:"nowrap"}}>取消</button>
+              </div>
+            </div>
+          ):(
+            <button onClick={()=>setCoPwEdit(true)} style={{...AGray,width:"100%"}}>パスワードを変更する</button>
+          )}
+        </div>
+      ):(
+        authUser.isAnonymous?(
+          <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6}}>企業アカウントの作成にはメールまたはGoogleでのログインが必要です。「設定」タブのアカウント連携から登録してください。</div>
+        ):(
+          <div>
+            <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+              企業アカウントを作成すると、現在の店舗をまとめて管理でき、企業コード＋パスワードで他のスタッフもログインできます。
+            </div>
+            <AL>企業名</AL>
+            <input value={coName} onChange={e=>setCoName(e.target.value)} maxLength={100} placeholder="例）〇〇フーズ" style={{...AI,marginBottom:10}}/>
+            <AL>ログイン用パスワード（6文字以上）</AL>
+            <input type="password" value={coPw} onChange={e=>setCoPw(e.target.value)} maxLength={128} placeholder="パスワード" style={{...AI,marginBottom:10}}/>
+            {coErr&&<div style={{color:"#FF4757",fontSize:12,marginBottom:8}}>{coErr}</div>}
+            {coCreated?(
+              <div style={{background:"rgba(34,197,94,.1)",border:"1px solid rgba(34,197,94,.3)",borderRadius:10,padding:"12px 14px"}}>
+                <div style={{fontSize:12,color:"var(--c-text2)",marginBottom:6}}>企業アカウントを作成しました。企業コード：</div>
+                <div style={{fontFamily:"monospace",fontSize:16,color:"#22C55E",fontWeight:700,letterSpacing:"0.1em"}}>{coCreated.code}</div>
+              </div>
+            ):(
+              <button disabled={coBusy} onClick={async()=>{
+                setCoErr("");
+                if(!coName.trim()){setCoErr("企業名を入力してください");return;}
+                if(coPw.length<6){setCoErr("パスワードは6文字以上にしてください");return;}
+                setCoBusy(true); const r=await onCreateCompany(coName.trim(),coPw); setCoBusy(false);
+                if(r&&r.error)setCoErr(r.error); else {setCoCreated({code:r.code});setCoName("");setCoPw("");tt("✓ 企業アカウントを作成しました");}
+              }} style={{...AB,width:"100%"}}>{coBusy?"作成中...":"企業アカウントを作成する"}</button>
+            )}
+          </div>
+        )
+      )}
+    </AC>
+    {listShops.length>0&&<AC title="連携店舗">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+        {companyInfo?"この企業アカウントに紐付いている店舗の一覧です。店舗コードで追加・不要な店舗は連携解除できます。":"このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。"}
+        店舗名をタップすると略称・スタッフの勤務先を設定できます。
+      </div>
+      {companyInfo&&(
+        coAddOpen?(
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <input value={coAddCode} onChange={e=>setCoAddCode(e.target.value)} maxLength={100} placeholder="店舗コードを貼り付け" style={{...AI,flex:1}}/>
+            <button disabled={coBusy} onClick={async()=>{
+              if(!coAddCode.trim()||!onLinkStoreToCompany)return;
+              setCoBusy(true); const r=await onLinkStoreToCompany(coAddCode.trim()); setCoBusy(false);
+              if(r&&r.error)tt("✕ "+r.error); else {tt(`✓ 「${r.name||"店舗"}」を追加しました`);setCoAddCode("");setCoAddOpen(false);}
+            }} style={{...AB,whiteSpace:"nowrap"}}>追加</button>
+            <button onClick={()=>{setCoAddOpen(false);setCoAddCode("");}} style={{...AGray,whiteSpace:"nowrap"}}>取消</button>
+          </div>
+        ):(
+          <button onClick={()=>setCoAddOpen(true)} style={{width:"100%",padding:"10px",background:"rgba(248,112,54,.12)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"#f87036",fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:12}}>＋ 店舗コードで追加</button>
+        )
+      )}
+      <div>{listShops.map(shopCard)}</div>
+    </AC>}
+    <AC title="シフト作成タブでのヘルプ入力">
+      <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.8}}>
+        店舗略称を登録すると、シフト作成タブのセルで「時間＋略称」（例: <b>9三</b>）と入力することで他店舗ヘルプとして扱われます。<br/>
+        ・<b>出勤セルのみ</b>に略称 → その店舗のランチ帯（〜17時）のみヘルプ<br/>
+        ・<b>退勤セルのみ</b>に略称 → その店舗のディナー帯（17時〜）のみヘルプ<br/>
+        ・<b>両方のセル</b>に略称 → 出勤から退勤まで終日ヘルプ<br/>
+        ヘルプ帯は自店舗の時間帯別出勤人数から除外されます。勤務先店舗を登録したスタッフは、他店舗と時間が重複するとシフト作成タブにエラーが表示されます。
+      </div>
+    </AC>
+    </>)}
+  </div>);
+}
+
+function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,staffList=[],
+                 authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
+                 onSignInAndLinkGoogle,onSignInAndLinkEmail,adminCode=null,ownerReadOnly=false}){
+  const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
+  const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
+  const[emailInput,setEmailInput]=useState("");
+  const[codeInput,setCodeInput]=useState("");
+  const[pendingNewType,setPendingNewType]=useState(null); // null | {name:""}
+  const[linkLoading,setLinkLoading]=useState(false);
+  const[linkError,setLinkError]=useState("");
   // Cookie認証ユーザー向けアカウント登録/連携
   const[acctEmailMode,setAcctEmailMode]=useState(null); // null | "login" | "register"
   const[acctEmail,setAcctEmail]=useState("");
@@ -2176,152 +2443,21 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
 
   return(<div>
     <AT>システム設定</AT>
-    {!authUser&&shopId&&<AC title="アカウント連携">
-      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:14,lineHeight:1.6}}>
-        アカウントを登録すると、端末やブラウザが変わっても同じ店舗にアクセスできます。
+    {shopId&&<AC title="この端末の管理コード">
+      {ownerReadOnly?(
+        <div style={{fontSize:12,color:"#B45309",lineHeight:1.6}}>この端末は管理者登録されていないため、正しい管理コードを表示できません。既に管理者登録済みの端末（設定変更ができる端末）でこのコードを確認してください。</div>
+      ):(<>
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>このコードを別の端末で入力すると、同じ店舗を管理者として操作できるようになります。<b>スタッフには共有しないでください。</b></div>
+      <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,padding:"10px 14px"}}>
+        <span style={{flex:1,fontFamily:"monospace",fontSize:13,color:"var(--c-text)",letterSpacing:"0.05em",wordBreak:"break-all"}}>{adminCode||shopId}</span>
+        <button onClick={()=>{
+          const codeVal=adminCode||shopId;
+          const copy=()=>{const el=document.createElement("textarea");el.value=codeVal;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 管理コードをコピーしました");};
+          if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(codeVal).then(()=>tt("✓ 管理コードをコピーしました")).catch(copy);}else{copy();}
+        }} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>コピー</button>
       </div>
-      {acctLoading
-        ?<div style={{textAlign:"center",color:"var(--c-text3)",padding:"12px 0",fontSize:14}}>⏳ 認証中...</div>
-        :acctEmailMode
-          ?<div>
-            <div style={{display:"flex",alignItems:"center",marginBottom:14}}>
-              <button onClick={()=>{setAcctEmailMode(null);setAcctError("");setAcctEmail("");setAcctPw("");setAcctPw2("");}}
-                style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:13,cursor:"pointer",padding:"0 8px 0 0"}}>← 戻る</button>
-              <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>{acctEmailMode==="login"?"メールでログイン":"新規アカウント登録"}</div>
-            </div>
-            <input type="email" value={acctEmail} onChange={e=>setAcctEmail(e.target.value)}
-              placeholder="メールアドレス" maxLength={254}
-              style={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:8,boxSizing:"border-box"}}/>
-            <input type="password" value={acctPw} onChange={e=>setAcctPw(e.target.value)}
-              onKeyDown={async e=>{if(e.key==="Enter"&&acctEmailMode==="login"){setAcctLoading(true);setAcctError("");const r=await onSignInAndLinkEmail(acctEmail,acctPw,false);setAcctLoading(false);if(r?.error)setAcctError(r.error);else{setAcctEmailMode(null);tt("✓ アカウントを連携しました");}}}}
-              placeholder="パスワード（6文字以上）" maxLength={128}
-              style={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:acctEmailMode==="register"?8:12,boxSizing:"border-box"}}/>
-            {acctEmailMode==="register"&&<input type="password" value={acctPw2} onChange={e=>setAcctPw2(e.target.value)}
-              placeholder="パスワード（確認）" maxLength={128}
-              style={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:12,boxSizing:"border-box"}}/>}
-            {acctError&&<div style={{fontSize:12,color:"#EF4444",marginBottom:10,background:"rgba(239,68,68,.08)",padding:"8px 10px",borderRadius:8}}>{acctError}</div>}
-            <button disabled={acctLoading} onClick={async()=>{
-              if(acctEmailMode==="register"&&acctPw!==acctPw2){setAcctError("パスワードが一致しません");return;}
-              setAcctLoading(true);setAcctError("");
-              const r=await onSignInAndLinkEmail(acctEmail,acctPw,acctEmailMode==="register");
-              setAcctLoading(false);
-              if(r?.error)setAcctError(r.error);
-              else{setAcctEmailMode(null);tt("✓ アカウントを連携しました");}
-            }} style={{width:"100%",padding:"11px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:8,opacity:acctLoading?.5:1}}>
-              {acctEmailMode==="login"?"ログイン":"アカウント作成"}
-            </button>
-            {acctEmailMode==="login"
-              ?<div style={{textAlign:"center",fontSize:12,color:"var(--c-text4)"}}>アカウントがない場合は<button onClick={()=>{setAcctEmailMode("register");setAcctError("");}} style={{background:"none",border:"none",color:"#f87036",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>新規登録</button></div>
-              :<div style={{textAlign:"center",fontSize:12,color:"var(--c-text4)"}}>既にアカウントがある場合は<button onClick={()=>{setAcctEmailMode("login");setAcctError("");}} style={{background:"none",border:"none",color:"#f87036",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>ログイン</button></div>
-            }
-          </div>
-          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
-            <button onClick={async()=>{setAcctLoading(true);setAcctError("");const r=await onSignInAndLinkGoogle();setAcctLoading(false);if(r?.error)setAcctError(r.error);else tt("✓ アカウントを連携しました");}}
-              style={{width:"100%",padding:"12px",background:"white",border:"1px solid var(--c-border)",borderRadius:10,color:"#1A1A2E",fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
-              <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-              Googleで登録/ログイン
-            </button>
-            <button onClick={()=>{setAcctEmailMode("login");setAcctError("");}}
-              style={{width:"100%",padding:"12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,color:"var(--c-text2)",fontSize:14,fontWeight:700,cursor:"pointer"}}>
-              メールアドレスで続ける
-            </button>
-            {acctError&&<div style={{fontSize:12,color:"#EF4444",background:"rgba(239,68,68,.08)",padding:"8px 10px",borderRadius:8}}>{acctError}</div>}
-          </div>
-      }
-    </AC>}
-    {authUser&&<AC title="アカウント連携">
-      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
-        複数のログイン方法を連携しておくと、端末やブラウザが変わっても同じアカウントにアクセスできます。
-      </div>
-      {providerRow("google.com","G","Googleアカウント")}
-      {providerRow("password","✉","メールアドレス")}
-      {emailLinkStep===1&&(
-        <div style={{marginTop:14,padding:14,background:"var(--c-input)",borderRadius:10,border:"1px solid var(--c-border2)"}}>
-          <AL>メールアドレス</AL>
-          <div style={{display:"flex",gap:8}}>
-            <input type="email" value={emailInput} onChange={e=>setEmailInput(e.target.value)}
-              placeholder="example@example.com" style={{...AI,flex:1,fontSize:16}}
-              onKeyDown={e=>{if(e.key==="Enter")handleSendOtp();}}/>
-            <button onClick={handleSendOtp} disabled={linkLoading}
-              style={{...AB,padding:"10px 14px",fontSize:13,whiteSpace:"nowrap",opacity:linkLoading?.5:1}}>
-              {linkLoading?"送信中...":"確認コードを送信"}
-            </button>
-          </div>
-          <button onClick={()=>{setEmailLinkStep(0);setLinkError("");}}
-            style={{...AGray,marginTop:8,padding:"6px 12px",fontSize:12}}>キャンセル</button>
-        </div>
-      )}
-      {emailLinkStep===2&&(
-        <div style={{marginTop:14,padding:14,background:"var(--c-input)",borderRadius:10,border:"1px solid var(--c-border2)"}}>
-          <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>
-            <strong>{emailInput}</strong> に確認コードを送信しました。<br/>メールに記載された6桁のコードを入力してください。
-          </div>
-          <AL>確認コード（6桁）</AL>
-          <div style={{display:"flex",gap:8}}>
-            <input type="text" inputMode="numeric" value={codeInput} onChange={e=>setCodeInput(e.target.value.replace(/\D/g,"").slice(0,6))}
-              placeholder="123456" maxLength={6} style={{...AI,flex:1,letterSpacing:"0.2em",fontSize:18,fontWeight:700}}
-              onKeyDown={e=>{if(e.key==="Enter")handleVerifyOtp();}}/>
-            <button onClick={handleVerifyOtp} disabled={linkLoading||codeInput.length<6}
-              style={{...AB,padding:"10px 14px",fontSize:13,whiteSpace:"nowrap",opacity:(linkLoading||codeInput.length<6)?.5:1}}>
-              {linkLoading?"確認中...":"確認して連携"}
-            </button>
-          </div>
-          <button onClick={()=>{setEmailLinkStep(1);setCodeInput("");setLinkError("");}}
-            style={{...AGray,marginTop:8,padding:"6px 12px",fontSize:12}}>← 戻る</button>
-        </div>
-      )}
-      {linkError&&<div style={{marginTop:10,fontSize:12,color:"#EF4444"}}>{linkError}</div>}
-    </AC>}
-    <AC title="現在のプラン">
-      <div style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0"}}>
-        <div style={{fontSize:32}}>{plan==="free"?"":plan==="premium"?"★★":"★"}</div>
-        <div>
-          <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{PLAN_LABELS[plan]||"Free"}プラン</div>
-          <div style={{fontSize:12,color:"var(--c-text3)",marginTop:3}}>
-            {plan==="free"&&"スタッフ20名 / 期間1件まで"}
-            {plan==="pro"&&"スタッフ・期間 無制限 + 全機能"}
-            {plan==="premium"&&"スタッフ・期間 無制限 + 全機能 + Premium機能"}
-          </div>
-        </div>
-      </div>
-      <div style={{fontSize:12,color:"var(--c-text4)",marginTop:6}}>プランの変更・アップグレードは「マイページ」タブで行えます</div>
-    </AC>
-    <AC title="テーマ設定">
-      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        {[["auto","↺ 自動（システム設定）",null],["light","☀️ ライト","light"],["dark","ダーク","dark"]].map(([key,label,val])=>{
-          const sel=themePref===val;
-          return(<button key={key} onClick={()=>changeTheme(val)}
-            style={{flex:1,padding:"10px 8px",borderRadius:10,border:`2px solid ${sel?"#f87036":"var(--c-border)"}`,
-              background:sel?"rgba(248,112,54,.1)":"var(--c-input)",color:sel?"#f87036":"var(--c-text2)",
-              fontSize:13,fontWeight:sel?700:500,cursor:"pointer",whiteSpace:"nowrap"}}>
-            {label}
-          </button>);
-        })}
-      </div>
-    </AC>
-
-    {(plan==="pro"||plan==="premium")&&<AC title="Excel書き出し設定">
-      <AL>書き出し時の店舗名（空欄 = 登録名をそのまま使用）</AL>
-      <div style={{display:"flex",gap:8,marginBottom:4}}>
-        <input value={settings.xlShopName||""} onChange={e=>onSave({...settings,xlShopName:e.target.value})} placeholder="例：〇〇カフェ 渋谷店" maxLength={100} style={{...AI,flex:1}}/>
-        {(settings.xlShopName||"")&&<button onClick={()=>onSave({...settings,xlShopName:""})} style={{...AGray,padding:"10px 12px",fontSize:12}}>クリア</button>}
-      </div>
-      <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>設定した名前はExcel出力時のファイル名・シート内店舗名に反映されます</div>
-    </AC>}
-
-    {(plan==="pro"||plan==="premium")&&<AC title="期間の単位（プリセット）">
-      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>期間を新規作成するときのプリセット選択肢を切り替えます。</div>
-      <div style={{display:"flex",gap:8}}>
-        {[["2week","2週間（前半／後半）"],["1month","️ 1ヶ月"]].map(([val,label])=>{
-          const sel=(settings.periodUnit||"2week")===val;
-          return(<button key={val} onClick={()=>onSave({...settings,periodUnit:val})}
-            style={{flex:1,padding:"10px 8px",borderRadius:10,border:`2px solid ${sel?"#f87036":"var(--c-border)"}`,
-              background:sel?"rgba(248,112,54,.1)":"var(--c-input)",color:sel?"#f87036":"var(--c-text2)",
-              fontSize:13,fontWeight:sel?700:500,cursor:"pointer"}}>
-            {label}
-          </button>);
-        })}
-      </div>
+      <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>別端末への共有は「店舗名ボタン → コードで追加」から行えます</div>
+      </>)}
     </AC>}
 
     {plan==="premium"&&(()=>{
@@ -2419,165 +2555,142 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       </div>
     </AC>}
 
-    {shopId&&<AC title="この端末の管理コード">
-      {ownerReadOnly?(
-        <div style={{fontSize:12,color:"#B45309",lineHeight:1.6}}>この端末は管理者登録されていないため、正しい管理コードを表示できません。既に管理者登録済みの端末（設定変更ができる端末）でこのコードを確認してください。</div>
-      ):(<>
-      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>このコードを別の端末で入力すると、同じ店舗を管理者として操作できるようになります。<b>スタッフには共有しないでください。</b></div>
-      <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,padding:"10px 14px"}}>
-        <span style={{flex:1,fontFamily:"monospace",fontSize:13,color:"var(--c-text)",letterSpacing:"0.05em",wordBreak:"break-all"}}>{adminCode||shopId}</span>
-        <button onClick={()=>{
-          const codeVal=adminCode||shopId;
-          const copy=()=>{const el=document.createElement("textarea");el.value=codeVal;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 管理コードをコピーしました");};
-          if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(codeVal).then(()=>tt("✓ 管理コードをコピーしました")).catch(copy);}else{copy();}
-        }} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>コピー</button>
+    {(plan==="pro"||plan==="premium")&&<AC title="Excel書き出し設定">
+      <AL>書き出し時の店舗名（空欄 = 登録名をそのまま使用）</AL>
+      <div style={{display:"flex",gap:8,marginBottom:4}}>
+        <input value={settings.xlShopName||""} onChange={e=>onSave({...settings,xlShopName:e.target.value})} placeholder="例：〇〇カフェ 渋谷店" maxLength={100} style={{...AI,flex:1}}/>
+        {(settings.xlShopName||"")&&<button onClick={()=>onSave({...settings,xlShopName:""})} style={{...AGray,padding:"10px 12px",fontSize:12}}>クリア</button>}
       </div>
-      <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>別端末への共有は「店舗名ボタン → コードで追加」から行えます</div>
-      </>)}
+      <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>設定した名前はExcel出力時のファイル名・シート内店舗名に反映されます</div>
     </AC>}
 
-    {authUser&&<AC title="企業アカウント">
-      {companyInfo?(
-        <div>
-          <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
-            企業名・企業コード・パスワードを管理します。企業コードとパスワードを共有すると、他のスタッフが同じ企業アカウントにログインできます。
-          </div>
-          {/* 企業名（編集可） */}
-          <AL>企業名</AL>
-          <div style={{display:"flex",gap:8,marginBottom:12}}>
-            <input value={coName!==""?coName:companyInfo.name} onChange={e=>setCoName(e.target.value)} maxLength={100} style={{...AI,flex:1}}/>
-            <button disabled={coBusy} onClick={async()=>{
-              const nm=(coName!==""?coName:companyInfo.name).trim(); if(!nm||!onRenameCompany)return;
-              setCoBusy(true); const r=await onRenameCompany(nm); setCoBusy(false);
-              if(r&&r.error)tt("✕ "+r.error); else {tt("✓ 企業名を変更しました");setCoName("");}
-            }} style={{...AGray,whiteSpace:"nowrap"}}>保存</button>
-          </div>
-          {/* 企業コード（コピー） */}
-          <AL>企業コード（ログインID）</AL>
-          <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
-            <span style={{flex:1,fontFamily:"monospace",fontSize:15,color:"#f87036",letterSpacing:"0.1em",fontWeight:700}}>{companyInfo.code}</span>
-            <button onClick={()=>{
-              const v=companyInfo.code;const copy=()=>{const el=document.createElement("textarea");el.value=v;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 企業コードをコピーしました");};
-              if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(v).then(()=>tt("✓ 企業コードをコピーしました")).catch(copy);}else copy();
-            }} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>📋 コピー</button>
-          </div>
-          {/* パスワード変更 */}
-          {coPwEdit?(
-            <div style={{marginBottom:4}}>
-              <AL>新しいパスワード（6文字以上）</AL>
-              <div style={{display:"flex",gap:8}}>
-                <input type="password" value={coNewPw} onChange={e=>setCoNewPw(e.target.value)} maxLength={128} placeholder="新しいパスワード" style={{...AI,flex:1}}/>
-                <button disabled={coBusy} onClick={async()=>{
-                  if(coNewPw.length<6){tt("✕ パスワードは6文字以上にしてください");return;}
-                  setCoBusy(true); const r=await onChangeCompanyPassword(coNewPw); setCoBusy(false);
-                  if(r&&r.error)tt("✕ "+r.error); else {tt("✓ パスワードを変更しました");setCoNewPw("");setCoPwEdit(false);}
-                }} style={{...AB,whiteSpace:"nowrap"}}>変更</button>
-                <button onClick={()=>{setCoPwEdit(false);setCoNewPw("");}} style={{...AGray,whiteSpace:"nowrap"}}>取消</button>
-              </div>
-            </div>
-          ):(
-            <button onClick={()=>setCoPwEdit(true)} style={{...AGray,width:"100%"}}>パスワードを変更する</button>
-          )}
-        </div>
-      ):(
-        authUser.isAnonymous?(
-          <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6}}>企業アカウントの作成にはメールまたはGoogleでのログインが必要です。</div>
-        ):(
-          <div>
-            <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
-              企業アカウントを作成すると、現在の店舗をまとめて管理でき、企業コード＋パスワードで他のスタッフもログインできます。
-            </div>
-            <AL>企業名</AL>
-            <input value={coName} onChange={e=>setCoName(e.target.value)} maxLength={100} placeholder="例）〇〇フーズ" style={{...AI,marginBottom:10}}/>
-            <AL>ログイン用パスワード（6文字以上）</AL>
-            <input type="password" value={coPw} onChange={e=>setCoPw(e.target.value)} maxLength={128} placeholder="パスワード" style={{...AI,marginBottom:10}}/>
-            {coErr&&<div style={{color:"#FF4757",fontSize:12,marginBottom:8}}>{coErr}</div>}
-            {coCreated?(
-              <div style={{background:"rgba(34,197,94,.1)",border:"1px solid rgba(34,197,94,.3)",borderRadius:10,padding:"12px 14px"}}>
-                <div style={{fontSize:12,color:"var(--c-text2)",marginBottom:6}}>企業アカウントを作成しました。企業コード：</div>
-                <div style={{fontFamily:"monospace",fontSize:16,color:"#22C55E",fontWeight:700,letterSpacing:"0.1em"}}>{coCreated.code}</div>
-              </div>
-            ):(
-              <button disabled={coBusy} onClick={async()=>{
-                setCoErr("");
-                if(!coName.trim()){setCoErr("企業名を入力してください");return;}
-                if(coPw.length<6){setCoErr("パスワードは6文字以上にしてください");return;}
-                setCoBusy(true); const r=await onCreateCompany(coName.trim(),coPw); setCoBusy(false);
-                if(r&&r.error)setCoErr(r.error); else {setCoCreated({code:r.code});setCoName("");setCoPw("");tt("✓ 企業アカウントを作成しました");}
-              }} style={{...AB,width:"100%"}}>{coBusy?"作成中...":"企業アカウントを作成する"}</button>
-            )}
-          </div>
-        )
-      )}
-    </AC>}
-
-    {authUser&&(allLinkedShops.length>0||shops.length>0)&&<AC title="連携店舗">
-      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
-        {companyInfo?"この企業アカウントに紐付いている店舗の一覧です。店舗コードで追加・不要な店舗は連携解除できます。":"このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。"}
-      </div>
-      {companyInfo&&(
-        coAddOpen?(
-          <div style={{display:"flex",gap:8,marginBottom:12}}>
-            <input value={coAddCode} onChange={e=>setCoAddCode(e.target.value)} maxLength={100} placeholder="店舗コードを貼り付け" style={{...AI,flex:1}}/>
-            <button disabled={coBusy} onClick={async()=>{
-              if(!coAddCode.trim()||!onLinkStoreToCompany)return;
-              setCoBusy(true); const r=await onLinkStoreToCompany(coAddCode.trim()); setCoBusy(false);
-              if(r&&r.error)tt("✕ "+r.error); else {tt(`✓ 「${r.name||"店舗"}」を追加しました`);setCoAddCode("");setCoAddOpen(false);}
-            }} style={{...AB,whiteSpace:"nowrap"}}>追加</button>
-            <button onClick={()=>{setCoAddOpen(false);setCoAddCode("");}} style={{...AGray,whiteSpace:"nowrap"}}>取消</button>
-          </div>
-        ):(
-          <button onClick={()=>setCoAddOpen(true)} style={{width:"100%",padding:"10px",background:"rgba(248,112,54,.12)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"#f87036",fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:12}}>＋ 店舗コードで追加</button>
-        )
-      )}
-      <div style={{display:"flex",flexDirection:"column",gap:8}}>
-        {(allLinkedShops.length>0?allLinkedShops:shops).map(shop=>{
-          const isCurrent=shop.id===shopId;
-          const canUnlink=(allLinkedShops.length>0?allLinkedShops:shops).length>1;
-          return(
-          <div key={shop.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",background:"var(--c-input)",borderRadius:8,border:`1px solid ${isCurrent?"rgba(248,112,54,.4)":"var(--c-border2)"}`}}>
-            <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
-              {isCurrent&&<span style={{fontSize:10,background:"#f87036",color:"white",padding:"2px 6px",borderRadius:4,fontWeight:700,flexShrink:0}}>表示中</span>}
-              <span style={{fontSize:13,color:"var(--c-text)",fontWeight:isCurrent?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{shop.name}</span>
-            </div>
-            <div style={{display:"flex",gap:6,flexShrink:0}}>
-              {!isCurrent&&onSwitchToShop&&(
-                <button onClick={()=>{onSwitchToShop(shop.id);tt(`✓ 「${shop.name}」に切り替えました`);}}
-                  style={{padding:"5px 10px",background:"rgba(248,112,54,.1)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"#f87036",fontSize:12,fontWeight:600,cursor:"pointer"}}>
-                  ログイン
-                </button>
-              )}
-              {canUnlink&&<button onClick={async()=>{
-                if(!window.confirm(`「${shop.name}」の連携を解除しますか？`))return;
-                if(companyInfo&&onUnlinkStoreFromCompany){const r=await onUnlinkStoreFromCompany(shop.id);tt(r&&r.error?("✕ "+r.error):`✓ 「${shop.name}」の連携を解除しました`);}
-                else onUnlinkShop(shop.id);
-              }}
-                style={{padding:"5px 10px",background:"var(--c-bg)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text3)",fontSize:12,fontWeight:600,cursor:"pointer"}}>
-                解除
-              </button>}
-            </div>
-          </div>
-          );
+    {(plan==="pro"||plan==="premium")&&<AC title="期間の単位（プリセット）">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>期間を新規作成するときのプリセット選択肢を切り替えます。</div>
+      <div style={{display:"flex",gap:8}}>
+        {[["2week","2週間（前半／後半）"],["1month","️ 1ヶ月"]].map(([val,label])=>{
+          const sel=(settings.periodUnit||"2week")===val;
+          return(<button key={val} onClick={()=>onSave({...settings,periodUnit:val})}
+            style={{flex:1,padding:"10px 8px",borderRadius:10,border:`2px solid ${sel?"#f87036":"var(--c-border)"}`,
+              background:sel?"rgba(248,112,54,.1)":"var(--c-input)",color:sel?"#f87036":"var(--c-text2)",
+              fontSize:13,fontWeight:sel?700:500,cursor:"pointer"}}>
+            {label}
+          </button>);
         })}
       </div>
     </AC>}
 
-    <AC title="お問い合わせ">
-      <div style={{fontSize:13,color:"var(--c-text2)",marginBottom:14,lineHeight:1.7}}>
-        ご意見・ご要望・不具合の報告は、XのDMまたはリプライにてお気軽にどうぞ。
+    <AC title="テーマ設定">
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        {[["auto","↺ 自動（システム設定）",null],["light","☀️ ライト","light"],["dark","ダーク","dark"]].map(([key,label,val])=>{
+          const sel=themePref===val;
+          return(<button key={key} onClick={()=>changeTheme(val)}
+            style={{flex:1,padding:"10px 8px",borderRadius:10,border:`2px solid ${sel?"#f87036":"var(--c-border)"}`,
+              background:sel?"rgba(248,112,54,.1)":"var(--c-input)",color:sel?"#f87036":"var(--c-text2)",
+              fontSize:13,fontWeight:sel?700:500,cursor:"pointer",whiteSpace:"nowrap"}}>
+            {label}
+          </button>);
+        })}
       </div>
-      <a href="https://x.com/shifty_shift_" target="_blank" rel="noopener noreferrer"
-        style={{display:"flex",alignItems:"center",gap:12,padding:"14px 16px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:12,textDecoration:"none",cursor:"pointer"}}>
-        <div style={{width:36,height:36,borderRadius:"50%",background:"#000",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-4.714-6.231-5.401 6.231H2.744l7.737-8.835L1.254 2.25H8.08l4.259 5.631 5.905-5.631zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-        </div>
-        <div>
-          <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>@shifty_shift_</div>
-          <div style={{fontSize:12,color:"var(--c-text3)",marginTop:2}}>x.com/shifty_shift_</div>
-        </div>
-        <div style={{marginLeft:"auto",fontSize:12,color:"var(--c-text4)"}}>→</div>
-      </a>
     </AC>
+
+    {!authUser&&shopId&&<AC title="アカウント連携">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:14,lineHeight:1.6}}>
+        アカウントを登録すると、端末やブラウザが変わっても同じ店舗にアクセスできます。
+      </div>
+      {acctLoading
+        ?<div style={{textAlign:"center",color:"var(--c-text3)",padding:"12px 0",fontSize:14}}>⏳ 認証中...</div>
+        :acctEmailMode
+          ?<div>
+            <div style={{display:"flex",alignItems:"center",marginBottom:14}}>
+              <button onClick={()=>{setAcctEmailMode(null);setAcctError("");setAcctEmail("");setAcctPw("");setAcctPw2("");}}
+                style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:13,cursor:"pointer",padding:"0 8px 0 0"}}>← 戻る</button>
+              <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>{acctEmailMode==="login"?"メールでログイン":"新規アカウント登録"}</div>
+            </div>
+            <input type="email" value={acctEmail} onChange={e=>setAcctEmail(e.target.value)}
+              placeholder="メールアドレス" maxLength={254}
+              style={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:8,boxSizing:"border-box"}}/>
+            <input type="password" value={acctPw} onChange={e=>setAcctPw(e.target.value)}
+              onKeyDown={async e=>{if(e.key==="Enter"&&acctEmailMode==="login"){setAcctLoading(true);setAcctError("");const r=await onSignInAndLinkEmail(acctEmail,acctPw,false);setAcctLoading(false);if(r?.error)setAcctError(r.error);else{setAcctEmailMode(null);tt("✓ アカウントを連携しました");}}}}
+              placeholder="パスワード（6文字以上）" maxLength={128}
+              style={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:acctEmailMode==="register"?8:12,boxSizing:"border-box"}}/>
+            {acctEmailMode==="register"&&<input type="password" value={acctPw2} onChange={e=>setAcctPw2(e.target.value)}
+              placeholder="パスワード（確認）" maxLength={128}
+              style={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:12,boxSizing:"border-box"}}/>}
+            {acctError&&<div style={{fontSize:12,color:"#EF4444",marginBottom:10,background:"rgba(239,68,68,.08)",padding:"8px 10px",borderRadius:8}}>{acctError}</div>}
+            <button disabled={acctLoading} onClick={async()=>{
+              if(acctEmailMode==="register"&&acctPw!==acctPw2){setAcctError("パスワードが一致しません");return;}
+              setAcctLoading(true);setAcctError("");
+              const r=await onSignInAndLinkEmail(acctEmail,acctPw,acctEmailMode==="register");
+              setAcctLoading(false);
+              if(r?.error)setAcctError(r.error);
+              else{setAcctEmailMode(null);tt("✓ アカウントを連携しました");}
+            }} style={{width:"100%",padding:"11px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:8,opacity:acctLoading?.5:1}}>
+              {acctEmailMode==="login"?"ログイン":"アカウント作成"}
+            </button>
+            {acctEmailMode==="login"
+              ?<div style={{textAlign:"center",fontSize:12,color:"var(--c-text4)"}}>アカウントがない場合は<button onClick={()=>{setAcctEmailMode("register");setAcctError("");}} style={{background:"none",border:"none",color:"#f87036",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>新規登録</button></div>
+              :<div style={{textAlign:"center",fontSize:12,color:"var(--c-text4)"}}>既にアカウントがある場合は<button onClick={()=>{setAcctEmailMode("login");setAcctError("");}} style={{background:"none",border:"none",color:"#f87036",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>ログイン</button></div>
+            }
+          </div>
+          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+            <button onClick={async()=>{setAcctLoading(true);setAcctError("");const r=await onSignInAndLinkGoogle();setAcctLoading(false);if(r?.error)setAcctError(r.error);else tt("✓ アカウントを連携しました");}}
+              style={{width:"100%",padding:"12px",background:"white",border:"1px solid var(--c-border)",borderRadius:10,color:"#1A1A2E",fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+              Googleで登録/ログイン
+            </button>
+            <button onClick={()=>{setAcctEmailMode("login");setAcctError("");}}
+              style={{width:"100%",padding:"12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,color:"var(--c-text2)",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+              メールアドレスで続ける
+            </button>
+            {acctError&&<div style={{fontSize:12,color:"#EF4444",background:"rgba(239,68,68,.08)",padding:"8px 10px",borderRadius:8}}>{acctError}</div>}
+          </div>
+      }
+    </AC>}
+
+    {authUser&&<AC title="アカウント連携">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+        複数のログイン方法を連携しておくと、端末やブラウザが変わっても同じアカウントにアクセスできます。
+      </div>
+      {providerRow("google.com","G","Googleアカウント")}
+      {providerRow("password","✉","メールアドレス")}
+      {emailLinkStep===1&&(
+        <div style={{marginTop:14,padding:14,background:"var(--c-input)",borderRadius:10,border:"1px solid var(--c-border2)"}}>
+          <AL>メールアドレス</AL>
+          <div style={{display:"flex",gap:8}}>
+            <input type="email" value={emailInput} onChange={e=>setEmailInput(e.target.value)}
+              placeholder="example@example.com" style={{...AI,flex:1,fontSize:16}}
+              onKeyDown={e=>{if(e.key==="Enter")handleSendOtp();}}/>
+            <button onClick={handleSendOtp} disabled={linkLoading}
+              style={{...AB,padding:"10px 14px",fontSize:13,whiteSpace:"nowrap",opacity:linkLoading?.5:1}}>
+              {linkLoading?"送信中...":"確認コードを送信"}
+            </button>
+          </div>
+          <button onClick={()=>{setEmailLinkStep(0);setLinkError("");}}
+            style={{...AGray,marginTop:8,padding:"6px 12px",fontSize:12}}>キャンセル</button>
+        </div>
+      )}
+      {emailLinkStep===2&&(
+        <div style={{marginTop:14,padding:14,background:"var(--c-input)",borderRadius:10,border:"1px solid var(--c-border2)"}}>
+          <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>
+            <strong>{emailInput}</strong> に確認コードを送信しました。<br/>メールに記載された6桁のコードを入力してください。
+          </div>
+          <AL>確認コード（6桁）</AL>
+          <div style={{display:"flex",gap:8}}>
+            <input type="text" inputMode="numeric" value={codeInput} onChange={e=>setCodeInput(e.target.value.replace(/\D/g,"").slice(0,6))}
+              placeholder="123456" maxLength={6} style={{...AI,flex:1,letterSpacing:"0.2em",fontSize:18,fontWeight:700}}
+              onKeyDown={e=>{if(e.key==="Enter")handleVerifyOtp();}}/>
+            <button onClick={handleVerifyOtp} disabled={linkLoading||codeInput.length<6}
+              style={{...AB,padding:"10px 14px",fontSize:13,whiteSpace:"nowrap",opacity:(linkLoading||codeInput.length<6)?.5:1}}>
+              {linkLoading?"確認中...":"確認して連携"}
+            </button>
+          </div>
+          <button onClick={()=>{setEmailLinkStep(1);setCodeInput("");setLinkError("");}}
+            style={{...AGray,marginTop:8,padding:"6px 12px",fontSize:12}}>← 戻る</button>
+        </div>
+      )}
+      {linkError&&<div style={{marginTop:10,fontSize:12,color:"#EF4444"}}>{linkError}</div>}
+    </AC>}
+
     <div style={{textAlign:"center",padding:"8px 0 4px",display:"flex",justifyContent:"center",gap:20}}>
       <a href="/terms.html" target="_blank" style={{fontSize:12,color:"var(--c-text4)",textDecoration:"none"}}>利用規約</a>
       <a href="/privacy.html" target="_blank" style={{fontSize:12,color:"var(--c-text4)",textDecoration:"none"}}>プライバシーポリシー</a>
