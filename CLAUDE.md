@@ -517,7 +517,7 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-07 自動実行 #2）
+## Shifty バグチェックレポート（2026-07-07 自動実行 #3）
 
 ### 修正済み
 
@@ -531,26 +531,35 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 - **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2026）
   non-Premiumユーザーは全行「-」表示。機能上の問題はないが視覚的に不要な列が表示される軽微なUX問題。
 
-### 確認した直近コミット
-- 243d8ee: ShiftEditTabの`_getSub`に別名解決を追加（登録名で見つからなければ`staffAliases`のエイリアスでフォールバック）→ SubsTab/expXlで既に使われている `s.staffName===nm||(staffAliases[nm]||[]).includes(s.staffName)` と同じパターンで実装されており、別名で提出したスタッフのシフトがシフト作成タブ（Premium限定）に正しく反映されるようになる正当な修正。副作用なし。
+### 確認した直近コミット（前回#2の243d8ee以降・5コミット）
+- 3025a5e / 4f0ed95: 管理画面レイアウト崩れ3件の修正（スタッフタブ・シフト作成タブ・退勤延長設定の横幅/スクロールずれ）→ ブラウザ実機で900px幅までリサイズしサイドパネルが正しく非表示になり縦積みレイアウトに切り替わることを確認、コンソールエラーなし。
+- 84e9b75: 購読ライフサイクルのレース修正・PeriodsTabクラッシュ防止・締めルール強化
+  - `doLogout`/`doFullSignOut`で店舗切替前に`activeSubsRef`を明示的に`off()`してから解除（前店舗データの受信継続を防止）
+  - periods購読ハンドラで`shopId`欠落データに購読元`targetSid`を補完（店舗切替直後のtokens補完で他店舗sidが混入するのを防止）
+  - `app-utils.js`の`pd`/`gd`が非文字列・undefinedでも例外を投げず`Invalid Date`/`[]`を返すよう防御。ユニットテスト4件追加、全パス
+  - `database.rules.tightened.json`（未適用の締めルール）強化。現行`database.rules.json`は変更なし
+  - 招待コードの`expiresAtMs`ベース期限切れ読み取り拒否・締めルール下のエラーハンドリングを追加
+- f8af476 / fb76c51: developへのマージコミットのみ、差分なし
 
 ### 追加確認
-- Firebase書き込みパターン: `subs`の`set()`全体上書きなし。削除3箇所（SmModal・SubsTab詳細モーダル・スタッフ画面）すべて`deletedId`渡しまたは`.remove()`直接呼び出しで正しく実装。
-- database.rules.json: `global/shops`直キー読みのみ・`tokens`直キー読みのみ・`accounts/{uid}/shops`等は`auth.uid===$uid`限定、後退なし。
-- index.html: スクリプト読み込み順（utils→core→staff→admin→main）維持、SRI 10本維持。
-- Cloud Functions: 全`runWith`でsecrets設定済み、`.delete()`誤用なし、`purgeInactiveShops`の`Number.isNaN`ガード・archived二段削除も維持。
-- DEV_MODE（app-core.js:12）・DEV_PLAN_OVERRIDE（app-core.js:81付近）は式のまま、develop正常。
-- `npx eslint app-*.js` 0 errors / 87 warnings（すべてno-unused-vars誤検知）。`npm test` 19件全パス。
-- dev server実機確認: スタッフ画面（free）・管理者画面（premium、期間管理タブ・シフト作成タブ）をブラウザで表示、コンソールエラーなし。
+- Firebase書き込みパターン: `subs`の`set()`全体上書きなし。削除操作すべて`deletedId`渡しで正しく実装
+- isPro/isPremium分離: 唯一の非色系`isPro`箇所（app-admin.js:2000、別名登録UI）はPro以上機能として意図通り
+- index.html: スクリプト読み込み順維持、SRI 11本
+- Cloud Functions: secrets抜け漏れなし、`.delete()`誤用なし、`purgeInactiveShops`安全装置維持
+- DEV_MODE（app-core.js:12、式のまま）正常
+- `npx eslint app-*.js` 0 errors / 92 warnings（すべてno-unused-vars誤検知）。`npm test` 22件全パス
+- dev server実機確認: スタッフ画面・管理者画面各タブ（900px幅リサイズ含む）表示、非オーナー端末の閲覧専用バナー・`permission_denied`の安全な握りつぶしを確認、コンソールエラーなし
 
 ### 異常なし
-クリティカル（🔴）・中程度（🟡）の問題はなし。前回チェック（2026-07-06 #3）以降の唯一の新規コミット（243d8ee: ShiftEditTabの別名解決追加）は既存パターンに沿った正当な修正で、新規バグは検出されなかった。
+クリティカル（🔴）・中程度（🟡）の問題はなし。前回チェック（2026-07-07 #2）以降の5コミットはすべて正しく実装されており、新規バグは検出されなかった。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
 -
 -
 -
