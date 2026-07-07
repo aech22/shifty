@@ -12,6 +12,7 @@
 function App(){
   const[syncStatus,setSyncStatus]=useState("init");
   const[ready,setReady]=useState(false); // Phase1完了フラグ
+  const[initError,setInitError]=useState(null); // "auth"=匿名認証不可 / "resolve"=スタッフURL解決不可（アプリ内ブラウザの制限等）
   const[paymentToast,setPaymentToast]=useState(()=>{
     const p=new URLSearchParams(window.location.search);
     if(p.get("payment")==="success") return "success";
@@ -69,7 +70,7 @@ function App(){
   // ===================================================================
   useEffect(()=>{
     // 旧・解放コード（廃止済み）のlocalStorageキーを即時削除
-    localStorage.removeItem("ots_unlocked");
+    try{localStorage.removeItem("ots_unlocked");}catch(e){console.warn("localStorage cleanup failed:",e);}
     const configured = FIREBASE_CONFIG.apiKey !== "YOUR_API_KEY";
 
     if(!configured){
@@ -125,10 +126,10 @@ function App(){
           };
           if(user&&!user.isAnonymous){
             firebaseAuth.signOut().catch(()=>{}).then(()=>
-              firebaseAuth.signInAnonymously().catch(e=>console.warn("匿名サインイン失敗:",e))
+              firebaseAuth.signInAnonymously().catch(e=>{console.warn("匿名サインイン失敗:",e);setInitError("auth");})
             ).then(()=>proceed(null));
           }else if(!user){
-            firebaseAuth.signInAnonymously().catch(e=>console.warn("匿名サインイン失敗:",e)).then(()=>proceed(null));
+            firebaseAuth.signInAnonymously().catch(e=>{console.warn("匿名サインイン失敗:",e);setInitError("auth");}).then(()=>proceed(null));
           }else{
             proceed(null); // 匿名ユーザー復元済み
           }
@@ -181,8 +182,8 @@ function App(){
           enterShop(shop);
           return true;
         });
-      }).then(ok=>{ if(!ok){ console.warn("token一致なし:",token,"→ Cookieチェックへ"); cookieFallback(); } })
-        .catch(()=>cookieFallback());
+      }).then(ok=>{ if(!ok){ console.warn("token一致なし:",token,"→ Cookieチェックへ"); setInitError("resolve"); cookieFallback(); } })
+        .catch(e=>{ console.warn("スタッフURL解決失敗:",e); setInitError("resolve"); cookieFallback(); });
       return;
     }
     // 1) Firebase Auth ユーザーがいる場合 → accounts/{uid}/shops を確認
@@ -1058,6 +1059,21 @@ function App(){
   // urlLocked時はapidが確定するまで表示しない、それ以外は最新期間をデフォルトに
   const ap=periods.find(p=>p.id===apid)||(urlLocked?null:latestPeriod);
   const effectiveSettings=settings||makeSettings(sid);
+
+  // 初期化失敗画面（匿名認証失敗・スタッフURL解決失敗。アプリ内ブラウザの制限や無効URLで発生）
+  // ローディング判定より先に出す（urlLocked時はapidが確定しないため、これがないと無限ローディングになる）
+  if(initError&&!currentShopId) return(
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#1A1A2E",flexDirection:"column",gap:16,padding:24}}>
+      <ShiftyIcon size={64}/>
+      <div style={{color:"white",fontSize:18,fontWeight:700}}>ページを開けませんでした</div>
+      <div style={{color:"rgba(255,255,255,.7)",fontSize:14,lineHeight:1.8,maxWidth:340,textAlign:"left"}}>
+        LINEやInstagramなどのアプリ内ブラウザでは、制限により読み込めないことがあります。<br/>
+        メニューから「ブラウザで開く」「Safariで開く」を選ぶか、URLをコピーしてSafariやChromeに貼り付けて開いてください。<br/>
+        それでも開けない場合は、管理者に最新のURLを確認してください。
+      </div>
+      <button onClick={()=>window.location.reload()} style={{marginTop:8,padding:"12px 36px",background:"#f87036",border:"none",borderRadius:10,fontSize:15,fontWeight:700,color:"white",cursor:"pointer"}}>再試行</button>
+    </div>
+  );
 
   // ローディング画面
   if(!ready||(urlLocked&&!apid)) return(
