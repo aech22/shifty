@@ -357,7 +357,8 @@ function App(){
     setAdminKeys(m=>({...m,[shopId]:key}));
   },[]);
   const claimOwnership=useCallback(async(shopId)=>{
-    if(!firebaseDB||!firebaseAuth?.currentUser||!shopId||shopId==="default")return false;
+    const applyResult=ok=>{ if(shopId===currentShopIdRef.current) setOwnerReadOnly(!ok); return ok; };
+    if(!firebaseDB||!firebaseAuth?.currentUser||!shopId||shopId==="default")return applyResult(false);
     const uid=firebaseAuth.currentUser.uid;
     let key=getAdminKeyLS(shopId);
     if(!key){
@@ -375,18 +376,18 @@ function App(){
           await firebaseDB.ref(`shops/${shopId}/private/adminKey`).set(key);
         }catch(e){
           dlog("adminKey取得不可（オーナー未登録端末）:",shopId);
-          return false;
+          return applyResult(false);
         }
       }
     }
     try{
       await firebaseDB.ref(`shops/${shopId}/owners/${uid}`).set(key);
       rememberAdminKey(shopId,key);
-      return true;
+      return applyResult(true);
     }catch(e){
       // 保存済みキーが古い（ローテーション済み）場合はルールで拒否される
       console.warn("オーナー登録失敗:",shopId,e);
-      return false;
+      return applyResult(false);
     }
   },[rememberAdminKey]);
 
