@@ -229,10 +229,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       ]).then(([aS,sS])=>{
         const abbrs=aS?Object.values(aS.val()||{}).filter(v=>typeof v==="string"):[];
         const workMap=new Map();
+        // 出勤・退勤が両方揃ったシフトを優先（同名の部分データsubに完全データが隠されるのを防ぐ）
+        const hasBoth=sh=>!!((sh.adjustedStart??sh.start)&&(sh.adjustedEnd??sh.end));
         Object.values((sS&&sS.val())||{}).forEach(sub=>{
           if(!sub||!sub.staffName||!sub.shifts)return;
           Object.entries(sub.shifts).forEach(([d,sh])=>{
-            if(sh&&sh.status==="work"){const k=sub.staffName+"|"+d;if(!workMap.has(k))workMap.set(k,sh);}
+            if(!sh||sh.status!=="work")return;
+            const k=sub.staffName+"|"+d;
+            const cur=workMap.get(k);
+            if(!cur||(!hasBoth(cur)&&hasBoth(sh)))workMap.set(k,sh);
           });
         });
         return[os.id,{name:os.name,abbrs,workMap}];
