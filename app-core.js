@@ -168,6 +168,12 @@ const CF_BASE = DEV_MODE
 const ADMIN_KEYS_LS="ots_adminKeys_v1";
 function getAdminKeyLS(shopId){const m=lg(ADMIN_KEYS_LS,{})||{};return m[shopId]||null;}
 function setAdminKeyLS(shopId,key){const m=lg(ADMIN_KEYS_LS,{})||{};m[shopId]=key;ls(ADMIN_KEYS_LS,m);}
+
+// 実ログイン（Google/メール）は端末にLOCAL永続化し、リロード後も複数店舗ログイン状態を維持する。
+// ただし明示的なログアウト操作後は、Firebase Authに実ユーザーセッションが残っていても
+// 次回起動時に自動復元しない（「新端末で自動ログインされる」旧バグの再発防止）。
+// このフラグはdoLogout/doFullSignOutでtrueにし、実ログイン成立時にfalseへ戻す。
+const AUTH_LOGGED_OUT_LS="ots_authLoggedOut_v1";
 // 店舗コード入力のパース: "shopId"（旧形式）または "shopId.adminKey"（管理コード）
 function parseShopCode(raw){
   const t=(raw||"").trim();

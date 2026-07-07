@@ -111,8 +111,11 @@ function App(){
 
     // Auth状態を確認してからshops読み込みを開始
     // 全クライアントを匿名認証でauth != null にする（Firebaseルールが未認証アクセスを拒否するため）。
-    // 匿名セッションはLOCALで永続化（端末ごとにuidを安定させ、ownersの肥大化を防ぐ）。
-    // Google/メールの実ログインは従来通り永続化しない（各サインイン関数内でNONEに切り替える）。
+    // 匿名セッションもGoogle/メールの実ログインもLOCALで永続化する（端末ごとにuidを安定させ、
+    // リロード後も複数店舗ログイン状態を維持するため）。
+    // 「新端末で自動ログインされる」旧バグの再発防止は、実ユーザーセッションの有無ではなく
+    // 明示的なログアウト操作の有無（AUTH_LOGGED_OUT_LS）で判定する。doLogout/doFullSignOutで
+    // フラグが立っていれば、実ユーザーが復元されてもサインアウトして匿名に入り直す。
     if(firebaseAuth){
       // アプリ内ブラウザ（iOS WKWebView等）でindexedDBがハングし、setPersistence/onAuthStateChangedが
       // 永久に解決しない事象への保険。10秒で初期化が進まなければエラー画面へ。
@@ -121,18 +124,19 @@ function App(){
       firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e=>console.warn("setPersistence失敗:",e)).then(()=>{
         const unsubAuth = firebaseAuth.onAuthStateChanged(user=>{
           unsubAuth(); // 初回のみ
-          // 永続化されるのは匿名ユーザーのみの設計だが、旧バージョンの実ユーザーが残っていた場合は
-          // 自動ログインさせない従来方針に合わせてサインアウトして匿名に入り直す
           const proceed=(realUser)=>{
             clearTimeout(authWatchdog);
             setAuthUser(realUser);
             setAuthChecked(true);
             loadShops(realUser);
           };
-          if(user&&!user.isAnonymous){
+          if(user&&!user.isAnonymous&&lg(AUTH_LOGGED_OUT_LS,false)){
+            // 明示的にログアウト済み: 実ユーザーセッションが残っていても自動復元しない
             firebaseAuth.signOut().catch(()=>{}).then(()=>
               firebaseAuth.signInAnonymously().catch(e=>{console.warn("匿名サインイン失敗:",e);setInitError("auth");})
             ).then(()=>proceed(null));
+          }else if(user&&!user.isAnonymous){
+            proceed(user); // 実ユーザーセッション復元（複数店舗ログイン状態を維持）
           }else if(!user){
             firebaseAuth.signInAnonymously().catch(e=>{console.warn("匿名サインイン失敗:",e);setInitError("auth");}).then(()=>proceed(null));
           }else{
@@ -193,6 +197,30 @@ function App(){
     }
     // 1) Firebase Auth ユーザーがいる場合 → accounts/{uid}/shops を確認
     if(authUser){
+      // 企業コード＋パスワードでログインしたセッション（uid="company_"+companyId）は
+      // accounts/{uid}/shops ではなく companies/{companyId}/pub/shops に連携店舗を持つ
+      if(String(authUser.uid).startsWith("company_")){
+        const companyId=authUser.uid.slice("company_".length);
+        firebaseDB.ref(`companies/${companyId}/pub`).once("value").then(pubSnap=>{
+          const pub=pubSnap.val();
+          if(!pub){ toUnbound(); return; }
+          setCompanyInfo({companyId,code:pub.code||"",name:pub.name||""});
+          const linkedIds=Object.keys(pub.shops||{});
+          if(linkedIds.length===0){ toUnbound(); return; }
+          Promise.all(linkedIds.map(id=>readShop(id).catch(()=>null))).then(shopObjs=>{
+            const linkedShops=shopObjs.filter(s=>s&&s.id);
+            if(linkedShops.length===0){ toUnbound(); return; }
+            dlog("企業ログイン店舗:",linkedShops.map(s=>s.name));
+            setAllLinkedShops(linkedShops);
+            const ckId=getCookie(CK_SHOP);
+            const ssId=ssGet(SS_SHOP,null);
+            const targetId=linkedShops.find(s=>s.id===ckId)?ckId:linkedShops.find(s=>s.id===ssId)?ssId:linkedShops[0].id;
+            const targetShop=linkedShops.find(s=>s.id===targetId)||linkedShops[0];
+            enterShop(targetShop);
+          });
+        }).catch(()=>toUnbound());
+        return;
+      }
       firebaseDB.ref(`accounts/${authUser.uid}/shops`).once("value").then(accSnap=>{
         const linked=accSnap.val(); // {shopId: true, ...} or null
         const linkedIds=linked?Object.keys(linked):[];
@@ -338,9 +366,9 @@ function App(){
   // ===================================================================
   // Auth ヘルパー関数
   // ===================================================================
-  // 実ログイン（Google/メール）の直前に呼ぶ: セッションを永続化しない従来方針を維持
+  // 実ログイン（Google/メール）の直前に呼ぶ: LOCAL永続化してリロード後も複数店舗ログイン状態を維持する
   const _preRealSignIn=async()=>{
-    try{ await firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.NONE); }catch(e){ console.warn("setPersistence(NONE)失敗:",e); }
+    try{ await firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); }catch(e){ console.warn("setPersistence(LOCAL)失敗:",e); }
   };
   // 実ログイン終了後（完全サインアウト時）に匿名セッションへ戻す
   const _restoreAnonSession=async()=>{
@@ -413,6 +441,7 @@ function App(){
 
   // ログイン直後の共通処理: 紐付き店舗を読み、先頭店舗でセッション開始
   const _enterLinkedShops=async(user)=>{
+    ls(AUTH_LOGGED_OUT_LS,false); // 実ログイン成立: リロード後もこのセッションを維持対象にする
     const linkedShops=await fetchLinkedShops(user.uid);
     setAllLinkedShops(linkedShops);
     if(linkedShops.length>0){
@@ -515,6 +544,7 @@ function App(){
 
   // Cookie認証ユーザーがサインイン/登録して現在の店舗を紐付ける共通処理
   const _afterSignInAndLink=async(user)=>{
+    ls(AUTH_LOGGED_OUT_LS,false); // 実ログイン成立: リロード後もこのセッションを維持対象にする
     setAuthUser(user);
     if(!firebaseDB)return;
     const shopId=currentShopIdRef.current;
@@ -632,6 +662,7 @@ function App(){
     activeSubsRef.current=[];
     delCookie(CK_SHOP);
     sessionStorage.clear();
+    ls(AUTH_LOGGED_OUT_LS,true); // 明示ログアウト: 次回起動時に実ユーザーセッションを自動復元しない
     setCurrentShopId(null);
     setShops([]); // セッションの店舗リストをクリア（authUser・allLinkedShops は維持）
     setUnbound(true);
@@ -662,6 +693,7 @@ function App(){
     }
     delCookie(CK_SHOP);
     sessionStorage.clear();
+    ls(AUTH_LOGGED_OUT_LS,true); // 明示ログアウト: 次回起動時に実ユーザーセッションを自動復元しない
     setAuthUser(null);
     setCurrentShopId(null);
     setShops([]);
@@ -845,6 +877,7 @@ function App(){
       await _preRealSignIn();
       const {token,companyId,name}=await _callCF("companyLogin",{code,password});
       const result=await firebaseAuth.signInWithCustomToken(token);
+      ls(AUTH_LOGGED_OUT_LS,false); // 実ログイン成立: リロード後もこのセッションを維持対象にする
       setAuthUser(result.user);
       setCompanyInfo({companyId,code:(code||"").trim().toUpperCase(),name});
       ph("login",{method:"company"});
@@ -1163,6 +1196,7 @@ function App(){
         <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:24}}>
           {allLinkedShops.map(sh=>(
             <button key={sh.id} onClick={()=>{
+              ls(AUTH_LOGGED_OUT_LS,false); // 店舗選択でセッション再開: リロード後の維持対象に戻す
               currentShopIdRef.current=sh.id;
               setCurrentShopId(sh.id);
               startSubscriptions(sh.id,[sh]);

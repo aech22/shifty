@@ -27,6 +27,7 @@ const sharedGlobals = {
   AL: "writable",
   AT: "writable",
   ADMIN_KEYS_LS: "writable",
+  AUTH_LOGGED_OUT_LS: "writable",
   APP_CHECK_SITE_KEY: "writable",
   AdminView: "writable",
   App: "writable",
