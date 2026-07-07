@@ -6,7 +6,7 @@
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,inviteCodeDisplay,inviteCodeGenLoading,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onLinkExistingShop,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
@@ -169,7 +169,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
         {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onGenerateInviteCode={onGenerateInviteCode} onJoinByInviteCode={onJoinByInviteCode} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading} staffList={staffList} adminCode={adminCode}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onLinkExistingShop={onLinkExistingShop} onUnlinkShop={onUnlinkShop} staffList={staffList} adminCode={adminCode} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -2064,8 +2064,8 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
 function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,staffList=[],
                  authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
                  onSignInAndLinkGoogle,onSignInAndLinkEmail,
-                 shops=[],allLinkedShops=[],onSwitchToShop,onGenerateInviteCode,onJoinByInviteCode,onLinkExistingShop,onUnlinkShop,
-                 inviteCodeDisplay=null,inviteCodeGenLoading=false,adminCode=null}){
+                 shops=[],allLinkedShops=[],onSwitchToShop,onLinkExistingShop,onUnlinkShop,adminCode=null,
+                 companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
   const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
   const[emailInput,setEmailInput]=useState("");
@@ -2073,6 +2073,16 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
   const[pendingNewType,setPendingNewType]=useState(null); // null | {name:""}
   const[linkLoading,setLinkLoading]=useState(false);
   const[linkError,setLinkError]=useState("");
+  // 企業アカウント UI
+  const[coName,setCoName]=useState("");
+  const[coPw,setCoPw]=useState("");
+  const[coBusy,setCoBusy]=useState(false);
+  const[coErr,setCoErr]=useState("");
+  const[coCreated,setCoCreated]=useState(null); // 作成直後に表示する {code}
+  const[coPwEdit,setCoPwEdit]=useState(false);
+  const[coNewPw,setCoNewPw]=useState("");
+  const[coAddCode,setCoAddCode]=useState("");
+  const[coAddOpen,setCoAddOpen]=useState(false);
   // Cookie認証ユーザー向けアカウント登録/連携
   const[acctEmailMode,setAcctEmailMode]=useState(null); // null | "login" | "register"
   const[acctEmail,setAcctEmail]=useState("");
@@ -2409,35 +2419,100 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>別端末への共有は「店舗名ボタン → コードで追加」から行えます</div>
     </AC>}
 
-    {authUser&&shops&&shops.length>0&&<AC title="企業アカウント管理">
-      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
-        このコードを他のユーザーに共有して、同じ企業アカウントで複数店舗を管理できます。
-      </div>
-      {inviteCodeDisplay?(
+    {authUser&&<AC title="企業アカウント">
+      {companyInfo?(
         <div>
+          <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+            企業名・企業コード・パスワードを管理します。企業コードとパスワードを共有すると、他のスタッフが同じ企業アカウントにログインできます。
+          </div>
+          {/* 企業名（編集可） */}
+          <AL>企業名</AL>
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <input value={coName!==""?coName:companyInfo.name} onChange={e=>setCoName(e.target.value)} maxLength={100} style={{...AI,flex:1}}/>
+            <button disabled={coBusy} onClick={async()=>{
+              const nm=(coName!==""?coName:companyInfo.name).trim(); if(!nm||!onRenameCompany)return;
+              setCoBusy(true); const r=await onRenameCompany(nm); setCoBusy(false);
+              if(r&&r.error)tt("✕ "+r.error); else {tt("✓ 企業名を変更しました");setCoName("");}
+            }} style={{...AGray,whiteSpace:"nowrap"}}>保存</button>
+          </div>
+          {/* 企業コード（コピー） */}
+          <AL>企業コード（ログインID）</AL>
           <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:10,padding:"10px 14px",marginBottom:12}}>
-            <span style={{flex:1,fontFamily:"monospace",fontSize:14,color:"#f87036",letterSpacing:"0.05em",fontWeight:700}}>{inviteCodeDisplay}</span>
+            <span style={{flex:1,fontFamily:"monospace",fontSize:15,color:"#f87036",letterSpacing:"0.1em",fontWeight:700}}>{companyInfo.code}</span>
             <button onClick={()=>{
-              const copy=()=>{const el=document.createElement("textarea");el.value=inviteCodeDisplay;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 招待コードをコピーしました");};
-              if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(inviteCodeDisplay).then(()=>tt("✓ 招待コードをコピーしました")).catch(copy);}else{copy();}
+              const v=companyInfo.code;const copy=()=>{const el=document.createElement("textarea");el.value=v;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 企業コードをコピーしました");};
+              if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(v).then(()=>tt("✓ 企業コードをコピーしました")).catch(copy);}else copy();
             }} style={{padding:"6px 12px",background:"#f87036",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>📋 コピー</button>
           </div>
-          <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:12}}>有効期限：24時間</div>
-          <button onClick={onGenerateInviteCode} disabled={inviteCodeGenLoading} style={{width:"100%",padding:"10px",background:"rgba(248,112,54,.12)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"#f87036",fontSize:13,fontWeight:700,cursor:"pointer",opacity:inviteCodeGenLoading?.5:1}}>
-            🔄 新規生成
-          </button>
+          {/* パスワード変更 */}
+          {coPwEdit?(
+            <div style={{marginBottom:4}}>
+              <AL>新しいパスワード（6文字以上）</AL>
+              <div style={{display:"flex",gap:8}}>
+                <input type="password" value={coNewPw} onChange={e=>setCoNewPw(e.target.value)} maxLength={128} placeholder="新しいパスワード" style={{...AI,flex:1}}/>
+                <button disabled={coBusy} onClick={async()=>{
+                  if(coNewPw.length<6){tt("✕ パスワードは6文字以上にしてください");return;}
+                  setCoBusy(true); const r=await onChangeCompanyPassword(coNewPw); setCoBusy(false);
+                  if(r&&r.error)tt("✕ "+r.error); else {tt("✓ パスワードを変更しました");setCoNewPw("");setCoPwEdit(false);}
+                }} style={{...AB,whiteSpace:"nowrap"}}>変更</button>
+                <button onClick={()=>{setCoPwEdit(false);setCoNewPw("");}} style={{...AGray,whiteSpace:"nowrap"}}>取消</button>
+              </div>
+            </div>
+          ):(
+            <button onClick={()=>setCoPwEdit(true)} style={{...AGray,width:"100%"}}>パスワードを変更する</button>
+          )}
         </div>
       ):(
-        <button onClick={onGenerateInviteCode} disabled={inviteCodeGenLoading} style={{width:"100%",padding:"12px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",opacity:inviteCodeGenLoading?.5:1}}>
-          {inviteCodeGenLoading?"生成中...":"招待コードを生成する"}
-        </button>
+        authUser.isAnonymous?(
+          <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6}}>企業アカウントの作成にはメールまたはGoogleでのログインが必要です。</div>
+        ):(
+          <div>
+            <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+              企業アカウントを作成すると、現在の店舗をまとめて管理でき、企業コード＋パスワードで他のスタッフもログインできます。
+            </div>
+            <AL>企業名</AL>
+            <input value={coName} onChange={e=>setCoName(e.target.value)} maxLength={100} placeholder="例）〇〇フーズ" style={{...AI,marginBottom:10}}/>
+            <AL>ログイン用パスワード（6文字以上）</AL>
+            <input type="password" value={coPw} onChange={e=>setCoPw(e.target.value)} maxLength={128} placeholder="パスワード" style={{...AI,marginBottom:10}}/>
+            {coErr&&<div style={{color:"#FF4757",fontSize:12,marginBottom:8}}>{coErr}</div>}
+            {coCreated?(
+              <div style={{background:"rgba(34,197,94,.1)",border:"1px solid rgba(34,197,94,.3)",borderRadius:10,padding:"12px 14px"}}>
+                <div style={{fontSize:12,color:"var(--c-text2)",marginBottom:6}}>企業アカウントを作成しました。企業コード：</div>
+                <div style={{fontFamily:"monospace",fontSize:16,color:"#22C55E",fontWeight:700,letterSpacing:"0.1em"}}>{coCreated.code}</div>
+              </div>
+            ):(
+              <button disabled={coBusy} onClick={async()=>{
+                setCoErr("");
+                if(!coName.trim()){setCoErr("企業名を入力してください");return;}
+                if(coPw.length<6){setCoErr("パスワードは6文字以上にしてください");return;}
+                setCoBusy(true); const r=await onCreateCompany(coName.trim(),coPw); setCoBusy(false);
+                if(r&&r.error)setCoErr(r.error); else {setCoCreated({code:r.code});setCoName("");setCoPw("");tt("✓ 企業アカウントを作成しました");}
+              }} style={{...AB,width:"100%"}}>{coBusy?"作成中...":"企業アカウントを作成する"}</button>
+            )}
+          </div>
+        )
       )}
     </AC>}
 
-    {authUser&&(allLinkedShops.length>0||shops.length>0)&&<AC title="企業アカウント連携店舗">
+    {authUser&&(allLinkedShops.length>0||shops.length>0)&&<AC title="連携店舗">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
-        このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。
+        {companyInfo?"この企業アカウントに紐付いている店舗の一覧です。店舗コードで追加・不要な店舗は連携解除できます。":"このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。"}
       </div>
+      {companyInfo&&(
+        coAddOpen?(
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <input value={coAddCode} onChange={e=>setCoAddCode(e.target.value)} maxLength={100} placeholder="店舗コードを貼り付け" style={{...AI,flex:1}}/>
+            <button disabled={coBusy} onClick={async()=>{
+              if(!coAddCode.trim()||!onLinkStoreToCompany)return;
+              setCoBusy(true); const r=await onLinkStoreToCompany(coAddCode.trim()); setCoBusy(false);
+              if(r&&r.error)tt("✕ "+r.error); else {tt(`✓ 「${r.name||"店舗"}」を追加しました`);setCoAddCode("");setCoAddOpen(false);}
+            }} style={{...AB,whiteSpace:"nowrap"}}>追加</button>
+            <button onClick={()=>{setCoAddOpen(false);setCoAddCode("");}} style={{...AGray,whiteSpace:"nowrap"}}>取消</button>
+          </div>
+        ):(
+          <button onClick={()=>setCoAddOpen(true)} style={{width:"100%",padding:"10px",background:"rgba(248,112,54,.12)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"#f87036",fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:12}}>＋ 店舗コードで追加</button>
+        )
+      )}
       <div style={{display:"flex",flexDirection:"column",gap:8}}>
         {(allLinkedShops.length>0?allLinkedShops:shops).map(shop=>{
           const isCurrent=shop.id===shopId;
@@ -2455,7 +2530,11 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                   ログイン
                 </button>
               )}
-              {canUnlink&&<button onClick={()=>{if(window.confirm(`「${shop.name}」の連携を解除しますか？`))onUnlinkShop(shop.id);}}
+              {canUnlink&&<button onClick={async()=>{
+                if(!window.confirm(`「${shop.name}」の連携を解除しますか？`))return;
+                if(companyInfo&&onUnlinkStoreFromCompany){const r=await onUnlinkStoreFromCompany(shop.id);tt(r&&r.error?("✕ "+r.error):`✓ 「${shop.name}」の連携を解除しました`);}
+                else onUnlinkShop(shop.id);
+              }}
                 style={{padding:"5px 10px",background:"var(--c-bg)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text3)",fontSize:12,fontWeight:600,cursor:"pointer"}}>
                 解除
               </button>}

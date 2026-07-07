@@ -48,6 +48,10 @@ function App(){
   const[inviteError,setInviteError]=useState(""); // エラーメッセージ
   const[inviteCodeDisplay,setInviteCodeDisplay]=useState(null); // 企業アカウント招待コード表示用
   const[inviteCodeGenLoading,setInviteCodeGenLoading]=useState(false); // 招待コード生成中フラグ
+  const[companyInfo,setCompanyInfo]=useState(null); // {companyId,code,name} 企業アカウント（作成者本人 or 企業ログイン中）
+  const[companyLoginMode,setCompanyLoginMode]=useState(false); // ログイン画面で企業コードログインフォーム表示中
+  const[companyCodeVal,setCompanyCodeVal]=useState("");
+  const[companyPwVal,setCompanyPwVal]=useState("");
   const[plan,setPlan]=useState("free"); // サブスクプラン
   const[planExpiry,setPlanExpiry]=useState(null); // プラン有効期限
   const[paymentFailed,setPaymentFailed]=useState(false); // 決済失敗フラグ
@@ -786,6 +790,120 @@ function App(){
     }
   };
 
+  // ===================================================================
+  // 企業アカウント（企業名＋企業コード＋パスワード）
+  // 作成: メール/グーグルでログイン済みの本人が createCompany CF を呼ぶ。
+  // ログイン: 企業コード＋パスワード → companyLogin CF → カスタムトークンでサインイン。
+  // 企業ログインuid（company_{companyId}）は各店舗のownerに登録され管理権限を持つ。
+  // ===================================================================
+  const _callCF=async(name,payload)=>{
+    if(!firebaseFunctions) throw new Error("Firebase未初期化");
+    const r=await firebaseFunctions.httpsCallable(name)(payload||{});
+    return r.data;
+  };
+  // 企業の連携店舗を読み込みセッション開始（企業ログイン後）
+  const _enterCompanyShops=async(companyId)=>{
+    const snap=await firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value");
+    const ids=Object.keys(snap.val()||{});
+    const objs=await Promise.all(ids.map(id=>firebaseDB.ref(`global/shops/${id}`).once("value").catch(()=>null)));
+    const linked=objs.map(s=>s&&s.val()).filter(s=>s&&s.id);
+    setAllLinkedShops(linked);
+    if(linked.length>0){
+      const t=linked[0];
+      setShops([t]); ls("shift_shops_v6",[t]);
+      currentShopIdRef.current=t.id; setCurrentShopId(t.id);
+      startSubscriptions(t.id,[t]); setUnbound(false);
+    }else{ setUnbound(true); }
+  };
+  // 企業コード＋パスワードでログイン（ログイン画面から）
+  const companyLoginAndEnter=async(code,password)=>{
+    if(!firebaseAuth||!firebaseFunctions) return {error:"Firebase未初期化"};
+    try{
+      await _preRealSignIn();
+      const {token,companyId,name}=await _callCF("companyLogin",{code,password});
+      const result=await firebaseAuth.signInWithCustomToken(token);
+      setAuthUser(result.user);
+      setCompanyInfo({companyId,code:(code||"").trim().toUpperCase(),name});
+      ph("login",{method:"company"});
+      await _enterCompanyShops(companyId);
+      return {};
+    }catch(e){
+      const msg=(e&&e.message)||"";
+      if(/permission|not-found|正しく/.test(msg)) return {error:"企業コードまたはパスワードが正しくありません"};
+      return {error:"ログインに失敗しました。しばらくしてから再度お試しください"};
+    }
+  };
+  const _doCompanyLogin=async()=>{
+    if(!companyCodeVal.trim()||!companyPwVal){setAuthError("企業コードとパスワードを入力してください");return;}
+    setAuthLoading(true);setAuthError("");
+    const {error}=await companyLoginAndEnter(companyCodeVal.trim(),companyPwVal);
+    if(error)setAuthError(error);
+    else{setCompanyLoginMode(false);setCompanyCodeVal("");setCompanyPwVal("");}
+    setAuthLoading(false);
+  };
+  // 企業アカウント作成（メール/グーグルでログイン済みの本人）
+  const createCompany=async(name,password)=>{
+    if(!authUser||authUser.isAnonymous) return {error:"メールまたはGoogleでログインしてください"};
+    try{
+      const shopIds=(allLinkedShops.length>0?allLinkedShops:shops).map(s=>s&&s.id).filter(Boolean);
+      const {companyId,code}=await _callCF("createCompany",{name,password,shopIds});
+      setCompanyInfo({companyId,code,name});
+      return {code};
+    }catch(e){ return {error:(e&&e.message)||"作成に失敗しました"}; }
+  };
+  const changeCompanyPassword=async(newPassword)=>{
+    if(!companyInfo) return {error:"企業アカウントがありません"};
+    try{ await _callCF("changeCompanyPassword",{companyId:companyInfo.companyId,newPassword}); return {}; }
+    catch(e){ return {error:(e&&e.message)||"変更に失敗しました"}; }
+  };
+  const renameCompany=async(name)=>{
+    if(!companyInfo) return {error:"企業アカウントがありません"};
+    try{ await _callCF("renameCompany",{companyId:companyInfo.companyId,name}); setCompanyInfo(c=>({...c,name})); return {}; }
+    catch(e){ return {error:(e&&e.message)||"変更に失敗しました"}; }
+  };
+  // 店舗コードで企業に連携（SetTabの連携店舗一覧の追加ボタン）
+  const linkStoreToCompany=async(rawCode)=>{
+    if(!companyInfo) return {error:"企業アカウントがありません"};
+    const {shopId}=parseShopCode(rawCode);
+    try{
+      const {name}=await _callCF("linkStoreToCompany",{companyId:companyInfo.companyId,shopId});
+      await _refreshCompanyLinkedShops();
+      return {name};
+    }catch(e){ return {error:/not-found|正しく/.test((e&&e.message)||"")?"店舗コードが正しくありません":((e&&e.message)||"追加に失敗しました")}; }
+  };
+  const unlinkStoreFromCompany=async(shopId)=>{
+    if(!companyInfo) return {error:"企業アカウントがありません"};
+    try{
+      await _callCF("unlinkStoreFromCompany",{companyId:companyInfo.companyId,shopId});
+      await _refreshCompanyLinkedShops(shopId);
+      return {};
+    }catch(e){ return {error:(e&&e.message)||"解除に失敗しました"}; }
+  };
+  const _refreshCompanyLinkedShops=async(removedId)=>{
+    if(!companyInfo) return;
+    const snap=await firebaseDB.ref(`companies/${companyInfo.companyId}/pub/shops`).once("value");
+    const ids=Object.keys(snap.val()||{});
+    const objs=await Promise.all(ids.map(id=>firebaseDB.ref(`global/shops/${id}`).once("value").catch(()=>null)));
+    const linked=objs.map(s=>s&&s.val()).filter(s=>s&&s.id);
+    setAllLinkedShops(linked);
+    if(removedId&&currentShopId===removedId){
+      const next=linked[0];
+      if(next){ const ns=[next]; setShops(ns); ls("shift_shops_v6",ns); currentShopIdRef.current=next.id; setCurrentShopId(next.id); startSubscriptions(next.id,ns); }
+      else { setCurrentShopId(null); setUnbound(true); }
+    }
+  };
+  // 作成者本人（メール/グーグル）ログイン時に自分の企業アカウント情報を復元
+  useEffect(()=>{
+    if(!firebaseDB||!authUser||authUser.isAnonymous||companyInfo)return;
+    if(String(authUser.uid).startsWith("company_"))return; // 企業ログインセッションはcompanyLoginで設定済み
+    let cancelled=false;
+    firebaseDB.ref(`accounts/${authUser.uid}/company`).once("value").then(snap=>{
+      const v=snap.val();
+      if(!cancelled&&v&&v.companyId) setCompanyInfo({companyId:v.companyId,code:v.code||"",name:v.name||""});
+    }).catch(()=>{});
+    return()=>{cancelled=true;};
+  },[authUser,companyInfo]);
+
   // URLにtokenが含まれるか（スタッフ専用モード・期間固定）
   const [urlLocked]=useState(()=>{ const p=parseUrl(); return !!(p&&p.token); });
 
@@ -1078,6 +1196,27 @@ function App(){
                 </div>
               }
             </div>
+            :companyLoginMode
+            ?<div>
+              <div style={{display:"flex",alignItems:"center",marginBottom:16}}>
+                <button onClick={()=>{setCompanyLoginMode(false);setAuthError("");setCompanyCodeVal("");setCompanyPwVal("");}}
+                  style={{background:"none",border:"none",color:"#94A3B8",fontSize:13,cursor:"pointer",padding:"0 8px 0 0"}}>← 戻る</button>
+                <div style={{color:"#F1F5F9",fontSize:16,fontWeight:700}}>企業コードでログイン</div>
+              </div>
+              <input value={companyCodeVal} onChange={e=>setCompanyCodeVal(e.target.value)}
+                placeholder="企業コード" maxLength={16}
+                style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:10,color:"#F1F5F9",fontSize:16,outline:"none",marginBottom:10,letterSpacing:"0.05em"}}/>
+              <input type="password" value={companyPwVal} onChange={e=>setCompanyPwVal(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter"&&!authLoading)_doCompanyLogin();}}
+                placeholder="パスワード" maxLength={128}
+                style={{width:"100%",padding:"12px 14px",background:"rgba(255,255,255,.06)",border:"1px solid #334155",borderRadius:10,color:"#F1F5F9",fontSize:16,outline:"none",marginBottom:16}}/>
+              {authError&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:12,background:"rgba(255,71,87,.1)",padding:"8px 12px",borderRadius:8}}>{authError}</div>}
+              <button disabled={authLoading} onClick={_doCompanyLogin}
+                style={{width:"100%",padding:"13px",background:"#f87036",border:"none",borderRadius:12,color:"white",fontSize:15,fontWeight:700,cursor:authLoading?"not-allowed":"pointer"}}>
+                {authLoading?"ログイン中...":"ログイン"}
+              </button>
+              <div style={{textAlign:"center",fontSize:11,color:"#64748B",marginTop:12,lineHeight:1.6}}>企業コードとパスワードは、企業アカウントの作成者から共有されます。</div>
+            </div>
             :<>
               <button onClick={signInWithGoogle} disabled={authLoading}
                 style={{width:"100%",padding:"14px",background:"white",border:"none",borderRadius:14,color:"#1A1A2E",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"center",gap:10,boxShadow:"0 2px 8px rgba(0,0,0,.15)"}}>
@@ -1085,14 +1224,18 @@ function App(){
                 Googleでログイン
               </button>
               <button onClick={()=>{setEmailMode("login");setAuthError("");}}
-                style={{width:"100%",padding:"14px",background:"rgba(255,255,255,.05)",border:"1px solid #334155",borderRadius:14,color:"#CBD5E1",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+                style={{width:"100%",padding:"14px",background:"rgba(255,255,255,.05)",border:"1px solid #334155",borderRadius:14,color:"#CBD5E1",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:10,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
                 メールアドレスで続ける
+              </button>
+              <button onClick={()=>{setCompanyLoginMode(true);setAuthError("");}}
+                style={{width:"100%",padding:"14px",background:"rgba(255,255,255,.05)",border:"1px solid #334155",borderRadius:14,color:"#CBD5E1",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+                🏢 企業コードでログイン
               </button>
               {authError&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:12,background:"rgba(255,71,87,.1)",padding:"8px 12px",borderRadius:8}}>{authError}</div>}
             </>
         }
 
-        {!emailMode&&<>
+        {!emailMode&&!companyLoginMode&&<>
         {/* 区切り線 */}
         <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
           <div style={{flex:1,height:1,background:"#334155"}}/>
@@ -1102,7 +1245,7 @@ function App(){
         </>}
 
         {/* 店舗コードで参加・新規作成（メール認証フォーム非表示時のみ） */}
-        {!emailMode&&<>
+        {!emailMode&&!companyLoginMode&&<>
         <div style={{fontSize:12,color:"#64748B",marginBottom:6,fontWeight:600}}>店舗コードで参加（この端末でのみ有効）</div>
         <div style={{display:"flex",gap:8,marginBottom:6}}>
           <input
@@ -1201,7 +1344,9 @@ function App(){
               onLinkProvider={linkProvider} onSendEmailOtp={sendEmailOtp}
               onVerifyAndLinkEmail={verifyAndLinkEmail} onUnlinkProvider={unlinkProvider}
               onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkEmail={signInAndLinkEmail}
-              onGenerateInviteCode={generateInviteCode} onJoinByInviteCode={joinByInviteCode} onLinkExistingShop={linkExistingShopToAuth} onUnlinkShop={unlinkShopFromAuth} inviteCodeDisplay={inviteCodeDisplay} inviteCodeGenLoading={inviteCodeGenLoading}/>
+              onLinkExistingShop={linkExistingShopToAuth} onUnlinkShop={unlinkShopFromAuth}
+              companyInfo={companyInfo} onCreateCompany={createCompany} onChangeCompanyPassword={changeCompanyPassword}
+              onRenameCompany={renameCompany} onLinkStoreToCompany={linkStoreToCompany} onUnlinkStoreFromCompany={unlinkStoreFromCompany}/>
       }
     </div>
   );

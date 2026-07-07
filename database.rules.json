@@ -81,6 +81,10 @@
           ".read": "auth != null && auth.uid === $uid",
           ".write": "auth != null && auth.uid === $uid"
         },
+        "company": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": false
+        },
         "members": {
           ".read": "auth != null && auth.uid === $uid",
           "$memberId": {
@@ -95,6 +99,16 @@
         ".write": "auth != null && (!data.exists() || data.child('uid').val() === auth.uid)",
         ".validate": "newData.hasChildren(['uid','expiresAt'])"
       }
-    }
+    },
+    "companies": {
+      "$companyId": {
+        ".write": false,
+        "pub": {
+          ".read": "auth != null && (auth.uid === 'company_' + $companyId || data.child('ownerUid').val() === auth.uid)"
+        },
+        "private": { ".read": false, ".write": false }
+      }
+    },
+    "companyCodes": { ".read": false, ".write": false }
   }
 }

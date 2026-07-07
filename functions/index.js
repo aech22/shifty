@@ -2,8 +2,57 @@ const functions = require("firebase-functions");
 const Stripe = require("stripe");
 const admin = require("firebase-admin");
 const nodemailer = require("nodemailer");
+const crypto = require("crypto");
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.database();
+
+// ============================================================
+// 企業アカウント: パスワードハッシュ（scrypt・追加依存なし）
+// 形式: "salt(hex):hash(hex)"。平文はDBに保存しない。
+// ============================================================
+function hashPassword(plain) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.scryptSync(String(plain), salt, 64).toString("hex");
+  return `${salt}:${hash}`;
+}
+function verifyPassword(plain, stored) {
+  if (typeof stored !== "string" || !stored.includes(":")) return false;
+  const [salt, hash] = stored.split(":");
+  const cand = crypto.scryptSync(String(plain), salt, 64).toString("hex");
+  const a = Buffer.from(hash, "hex");
+  const b = Buffer.from(cand, "hex");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+// 企業ログイン用の安定uid（カスタムトークン）
+function companyUid(companyId) { return `company_${companyId}`; }
+// 8桁の企業コード生成（衝突時リトライは呼び出し側）
+function genCompanyCode() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let t = "";
+  const arr = crypto.randomBytes(8);
+  for (let i = 0; i < 8; i++) t += chars[arr[i] % chars.length];
+  return t;
+}
+// 呼び出し元が企業の管理者（作成者本人 or 企業ログインuid）か検証
+async function assertCompanyMember(context, companyId) {
+  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
+  const uid = context.auth.uid;
+  if (uid === companyUid(companyId)) return uid;
+  const ownerSnap = await db.ref(`companies/${companyId}/pub/ownerUid`).once("value");
+  if (ownerSnap.val() === uid) return uid;
+  throw new functions.https.HttpsError("permission-denied", "この企業アカウントの権限がありません");
+}
+// 企業ログインuidを店舗ownerに登録（Admin SDKでadminKey照合をバイパス）
+async function registerCompanyAsOwner(companyId, shopId) {
+  const keySnap = await db.ref(`shops/${shopId}/private/adminKey`).once("value");
+  let key = keySnap.val();
+  if (!key) {
+    // 未claim店舗: adminKeyを生成して初回claim扱い
+    key = crypto.randomBytes(24).toString("base64").replace(/[^A-Za-z0-9]/g, "").slice(0, 32);
+    await db.ref(`shops/${shopId}/private/adminKey`).set(key);
+  }
+  await db.ref(`shops/${shopId}/owners/${companyUid(companyId)}`).set(key);
+}
 
 // Stripeは関数実行時に初期化（デプロイ解析時にAPIキーが不要）
 function getStripe() {
@@ -447,4 +496,132 @@ exports.sendSurveyEmails = functions
       failed: results.failed.length,
       failedEmails: results.failed,
     });
+  });
+
+// ============================================================
+// 企業アカウント Cloud Functions
+// ============================================================
+
+// 企業アカウント作成（メール/グーグルでログイン済みの本人が実行）
+// name: 企業名, password: 企業ログイン用パスワード, shopIds: 連携する既存店舗（作成者がオーナーの店舗）
+exports.createCompany = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    if (!context.auth || context.auth.token.firebase.sign_in_provider === "anonymous") {
+      throw new functions.https.HttpsError("unauthenticated", "メールまたはGoogleでログインしてください");
+    }
+    const uid = context.auth.uid;
+    const name = (data && typeof data.name === "string") ? data.name.trim() : "";
+    const password = (data && typeof data.password === "string") ? data.password : "";
+    const shopIds = (data && Array.isArray(data.shopIds)) ? data.shopIds.filter(s => typeof s === "string").slice(0, 50) : [];
+    if (!name || name.length > 100) throw new functions.https.HttpsError("invalid-argument", "企業名が無効です");
+    if (password.length < 6 || password.length > 128) throw new functions.https.HttpsError("invalid-argument", "パスワードは6〜128文字にしてください");
+
+    // 企業コードを衝突しないよう生成
+    let code = "";
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const c = genCompanyCode();
+      const exists = await db.ref(`companyCodes/${c}`).once("value");
+      if (!exists.exists()) { code = c; break; }
+    }
+    if (!code) throw new functions.https.HttpsError("internal", "企業コードの生成に失敗しました");
+
+    const companyId = db.ref("companies").push().key;
+    await db.ref(`companies/${companyId}/pub`).set({
+      name, code, ownerUid: uid, createdAt: new Date().toISOString(),
+    });
+    await db.ref(`companies/${companyId}/private/passwordHash`).set(hashPassword(password));
+    await db.ref(`companyCodes/${code}`).set(companyId);
+    // 作成者本人が次回ログイン時に企業情報を復元できるようポインタを保存
+    await db.ref(`accounts/${uid}/company`).set({ companyId, code, name });
+
+    // 連携店舗: 作成者がオーナーの店舗のみ登録し、企業ログインuidをownerに追加
+    const linked = [];
+    for (const shopId of shopIds) {
+      const ownersSnap = await db.ref(`shops/${shopId}/owners`).once("value");
+      const owners = ownersSnap.val();
+      // 未claim(owners無し) または 作成者がオーナー の店舗のみ
+      if (owners && !owners[uid]) continue;
+      await db.ref(`companies/${companyId}/pub/shops/${shopId}`).set(true);
+      await registerCompanyAsOwner(companyId, shopId);
+      linked.push(shopId);
+    }
+    return { companyId, code, name, linkedShops: linked };
+  });
+
+// 企業コード＋パスワードでログイン → カスタムトークンを発行
+exports.companyLogin = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const code = (data && typeof data.code === "string") ? data.code.trim().toUpperCase() : "";
+    const password = (data && typeof data.password === "string") ? data.password : "";
+    if (!code || !password) throw new functions.https.HttpsError("invalid-argument", "企業コードとパスワードを入力してください");
+
+    const idSnap = await db.ref(`companyCodes/${code}`).once("value");
+    const companyId = idSnap.val();
+    if (!companyId) throw new functions.https.HttpsError("not-found", "企業コードまたはパスワードが正しくありません");
+    const hashSnap = await db.ref(`companies/${companyId}/private/passwordHash`).once("value");
+    if (!verifyPassword(password, hashSnap.val())) {
+      throw new functions.https.HttpsError("permission-denied", "企業コードまたはパスワードが正しくありません");
+    }
+    const nameSnap = await db.ref(`companies/${companyId}/pub/name`).once("value");
+    const token = await admin.auth().createCustomToken(companyUid(companyId), { companyId, kind: "company" });
+    return { token, companyId, name: nameSnap.val() || "" };
+  });
+
+// 企業パスワード変更（企業ログインuid or 作成者本人）
+exports.changeCompanyPassword = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
+    const newPassword = (data && typeof data.newPassword === "string") ? data.newPassword : "";
+    if (!companyId) throw new functions.https.HttpsError("invalid-argument", "企業IDが無効です");
+    if (newPassword.length < 6 || newPassword.length > 128) throw new functions.https.HttpsError("invalid-argument", "パスワードは6〜128文字にしてください");
+    await assertCompanyMember(context, companyId);
+    await db.ref(`companies/${companyId}/private/passwordHash`).set(hashPassword(newPassword));
+    return { ok: true };
+  });
+
+// 企業名の変更
+exports.renameCompany = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
+    const name = (data && typeof data.name === "string") ? data.name.trim() : "";
+    if (!companyId || !name || name.length > 100) throw new functions.https.HttpsError("invalid-argument", "企業名が無効です");
+    await assertCompanyMember(context, companyId);
+    await db.ref(`companies/${companyId}/pub/name`).set(name);
+    // 作成者ポインタの表示名も更新
+    const ownerSnap = await db.ref(`companies/${companyId}/pub/ownerUid`).once("value");
+    if (ownerSnap.val()) await db.ref(`accounts/${ownerSnap.val()}/company/name`).set(name);
+    return { ok: true };
+  });
+
+// 店舗を企業に連携（企業ログインuidをownerに登録）。shopCodeは "shopId" または "shopId.adminKey"
+exports.linkStoreToCompany = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
+    const shopId = (data && typeof data.shopId === "string") ? data.shopId.trim() : "";
+    if (!companyId || !shopId) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗コードが無効です");
+    await assertCompanyMember(context, companyId);
+    const shopSnap = await db.ref(`global/shops/${shopId}`).once("value");
+    const shop = shopSnap.val();
+    if (!shop || shop.id !== shopId) throw new functions.https.HttpsError("not-found", "店舗コードが正しくありません");
+    await db.ref(`companies/${companyId}/pub/shops/${shopId}`).set(true);
+    await registerCompanyAsOwner(companyId, shopId);
+    return { ok: true, name: shop.name || "" };
+  });
+
+// 店舗の企業連携を解除（企業ログインuidをownerから外す）
+exports.unlinkStoreFromCompany = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
+    const shopId = (data && typeof data.shopId === "string") ? data.shopId.trim() : "";
+    if (!companyId || !shopId) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗IDが無効です");
+    await assertCompanyMember(context, companyId);
+    await db.ref(`companies/${companyId}/pub/shops/${shopId}`).remove();
+    await db.ref(`shops/${shopId}/owners/${companyUid(companyId)}`).remove();
+    return { ok: true };
   });
