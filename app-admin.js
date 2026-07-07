@@ -6,7 +6,7 @@
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onLinkExistingShop,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
@@ -367,6 +367,22 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const getShiftNote=(name,date,src=heatEdits)=>{
     for(const field of["start","end"]){const key=`${name}|${date}|${field}`;if(key in src){const{note}=extractNote(src[key]);if(note)return note;}const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";const n=(sh?.[adjNk]??sh?.[origNk]);if(n)return n;}return"";
   };
+  // フィールド別ノート取得（edits最優先→管理者調整値→スタッフ提出値）
+  const getFieldNote=(name,date,field,src=heatEdits)=>{
+    const key=`${name}|${date}|${field}`;
+    if(key in src)return extractNote(src[key]).note||"";
+    const sh=_getSub(name)?.shifts?.[date];
+    const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";
+    const origNk=field==="start"?"startNote":"endNote";
+    return(sh?.[adjNk]??sh?.[origNk])||"";
+  };
+  // 他店舗ヘルプ判定: 出勤セルの略称=ランチ帯ヘルプ、退勤セルの略称=ディナー帯ヘルプ、両方=終日ヘルプ
+  const getHelpInfo=(name,date,src=heatEdits)=>{
+    const startShop=abbrToShop[getFieldNote(name,date,"start",src)]||null;
+    const endShop=abbrToShop[getFieldNote(name,date,"end",src)]||null;
+    if(!startShop&&!endShop)return null;
+    return{startShop,endShop,full:!!(startShop&&endShop)};
+  };
   // ヒートマップ休憩判定用: 実効start/endを反映した一時シフトオブジェクト
   const getHeatShift=(name,date)=>{
     const base=_getSub(name)?.shifts?.[date];
@@ -384,13 +400,21 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     dates.forEach(date=>{
       const arr=[];
       realStaff.forEach(name=>{
-        const stM=timeToMin(getEffHHMM(name,date,"start"));let enM=timeToMin(getEffHHMM(name,date,"end"));
+        let stM=timeToMin(getEffHHMM(name,date,"start"));let enM=timeToMin(getEffHHMM(name,date,"end"));
         if(stM===null||enM===null)return;
         const hsh=getHeatShift(name,date);
         // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）
         if(hsh){const ot=getOT(name,settings,hsh);if(ot>0)enM+=ot;}
         const note=getShiftNote(name,date);
         if(note==="x")return;
+        // 他店舗ヘルプ帯は自店舗のカウントから除外（終日=全除外、出勤側=〜17時、退勤側=17時〜）
+        const help=getHelpInfo(name,date);
+        if(help){
+          if(help.full)return;
+          if(help.startShop)stM=Math.max(stM,1020);
+          if(help.endShop)enM=Math.min(enM,1020);
+          if(stM>=enM)return;
+        }
         // 休憩適用者の休憩区間（時間帯セルを完全に覆う場合にカウント除外するため保持）
         const breaks=(hsh&&isBreakEligible(hsh))
           ?getBreaksFor(settings,date,name,hsh).map(br=>({bs:timeToMin(br.start),be:timeToMin(br.end)})).filter(b=>b.bs!==null&&b.be!==null)
@@ -401,7 +425,37 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       perDate[date]=arr;
     });
     return perDate;
-  },[subs,heatEdits,settings,selPid,staffList,periods]);
+  },[subs,heatEdits,settings,selPid,staffList,periods,companyData]);
+  // 店舗間シフト重複エラー: 勤務先登録済みスタッフが他店舗と時間重複していないか（blur確定値ベース）
+  const dupErrors=useMemo(()=>{
+    const errs={}; // {name|date: 他店舗名}
+    const wpAll=settings.staffWorkplaces||{};
+    if(Object.keys(companyData).length===0)return errs;
+    realStaff.forEach(name=>{
+      const wps=Object.keys(wpAll[name]||{}).filter(id=>companyData[id]);
+      if(wps.length===0)return;
+      dates.forEach(date=>{
+        let s=timeToMin(getEffHHMM(name,date,"start")),e=timeToMin(getEffHHMM(name,date,"end"));
+        if(s===null||e===null)return;
+        // ヘルプ指定帯は他店舗勤務が前提なので判定から除外
+        const help=getHelpInfo(name,date);
+        if(help){
+          if(help.full)return;
+          if(help.startShop)s=Math.max(s,1020);
+          if(help.endShop)e=Math.min(e,1020);
+          if(s>=e)return;
+        }
+        for(const osid of wps){
+          const osh=companyData[osid].workMap.get(name+"|"+date);
+          if(!osh)continue;
+          const os=timeToMin(osh.adjustedStart??osh.start),oe=timeToMin(osh.adjustedEnd??osh.end);
+          if(os===null||oe===null)continue;
+          if(os<e&&oe>s){errs[`${name}|${date}`]=companyData[osid].name;break;}
+        }
+      });
+    });
+    return errs;
+  },[companyData,heatEdits,subs,settings,selPid,staffList,periods]);
   const countHeat=(section,date,hr)=>{
     const h0=hr*60,h1=(hr+1)*60;
     let cnt=0;
@@ -529,15 +583,17 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
 
-  // セルの色: 緑(スタッフ変更) > 黄(サフィックスnote) > 行背景。フォーカス中セルは通常背景。
+  // セルの色: 緑(スタッフ変更) > 赤(店舗間重複) > 青(他店舗ヘルプ) > 黄(サフィックスnote) > 行背景。フォーカス中セルは通常背景。
   const cellBgFor=(name,date,field,rb)=>{
     const key=`${name}|${date}|${field}`;
     if(_getSub(name)?.shifts?.[date]?.changed===true)return"rgba(52,199,89,.30)";
     if(focusKey===key)return rb; // 編集中は通常背景
+    if(dupErrors[`${name}|${date}`])return"rgba(255,71,87,.35)";
     // note有無を localEdits/保存値から判定
     let note="";
     if(key in localEdits){note=extractNote(localEdits[key]).note;}
     else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
+    if(note&&abbrToShop[note])return"#BFDBFE"; // 他店舗ヘルプ
     if(note)return"#FFF3B0";
     return rb;
   };
@@ -885,7 +941,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           style={{fontSize:16,padding:"4px 8px",border:BD,borderRadius:6,background:"var(--c-input)",color:"var(--c-text)"}}>
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
         </select>
-        <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPremium?"例: 9, 9.5, 930, 9:30":"閲覧のみ（編集はPremiumプランで）"}</span>
+        <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPremium?("例: 9, 9.5, 930, 9:30"+(Object.keys(abbrToShop).length>0?" / 略称でヘルプ（例: 9三）":"")):"閲覧のみ（編集はPremiumプランで）"}</span>
         <button onClick={()=>setFitAll(v=>!v)}
           style={{padding:"5px 10px",background:fitAll?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           {fitAll?"通常表示":"全員表示"}
@@ -911,6 +967,19 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           PDF出力
         </button>}
       </div>
+
+      {/* 店舗間シフト重複エラー一覧 */}
+      {Object.keys(dupErrors).length>0&&(
+        <div style={{background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#FF4757",marginBottom:4}}>⚠ 出勤がだぶついています（他店舗と時間重複）</div>
+          <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
+            {Object.entries(dupErrors).map(([k,shopNm])=>{
+              const i=k.indexOf("|");const nm=k.slice(0,i);const d=k.slice(i+1);
+              return`${nm} ${fmtDL(d)}（${shopNm}）`;
+            }).join("、")}
+          </div>
+        </div>
+      )}
 
       {pdfModal&&(
         <div onClick={()=>{if(!pdfBusy)setPdfModal(false);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9998,padding:16}}>
