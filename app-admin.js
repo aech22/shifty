@@ -1010,10 +1010,6 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
         </select>
         <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPremium?("例: 9, 9.5, 930, 9:30"+(Object.keys(abbrToShop).length>0?" / 略称でヘルプ（例: 9三）":"")):"閲覧のみ（編集はPremiumプランで）"}</span>
-        {isPremium&&<button onClick={handleSaveAll}
-          style={{padding:"6px 14px",background:"linear-gradient(135deg,#34a853,#1e7e34)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
-          💾 保存
-        </button>}
         <button onClick={()=>setFitAll(v=>!v)}
           style={{padding:"5px 10px",background:fitAll?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           {fitAll?"通常表示":"全員表示"}
@@ -1037,6 +1033,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         {period&&isPremium&&<button onClick={()=>setPdfModal(true)}
           style={{padding:"6px 14px",background:"linear-gradient(135deg,#b91c1c,#7f1d1d)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           PDF出力
+        </button>}
+        {isPremium&&<button onClick={handleSaveAll}
+          style={{padding:"6px 14px",background:"linear-gradient(135deg,#34a853,#1e7e34)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+          保存
         </button>}
       </div>
 
