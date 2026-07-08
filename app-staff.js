@@ -344,7 +344,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                       <div key={f} style={{flex:1}}>
                         <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>{l}</div>
                         <select value={st[f]||"18:00"} onChange={e=>!dl&&upd(ds,{[f]:e.target.value})} disabled={dl}
-                          style={{width:"100%",padding:"9px 28px 9px 10px",fontSize:15,fontWeight:600,background:`var(--c-input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 8px center`,border:"2px solid var(--c-border)",borderRadius:9,color:"var(--c-text)",outline:"none",cursor:"pointer",appearance:"none",WebkitAppearance:"none"}}>
+                          style={{width:"100%",padding:"9px 28px 9px 10px",fontSize:16,fontWeight:600,background:`var(--c-input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 8px center`,border:"2px solid var(--c-border)",borderRadius:9,color:"var(--c-text)",outline:"none",cursor:"pointer",appearance:"none",WebkitAppearance:"none"}}>
                           {opts.map(t=><option key={t} value={t}>{t}</option>)}
                         </select>
                       </div>
@@ -367,7 +367,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
           <div style={{padding:"14px 16px"}}>
             <textarea value={comment} onChange={e=>{dirtyRef.current=true;setComment(e.target.value);}} disabled={dl} maxLength={500}
               placeholder="休み希望の理由、変動できる日、その他連絡事項など"
-              style={{width:"100%",minHeight:80,padding:"10px 12px",fontSize:14,color:"var(--c-text)",background:"var(--c-bg)",border:"2px solid #E5E7EB",borderRadius:10,outline:"none",resize:"vertical",lineHeight:1.6,fontFamily:"inherit"}}
+              style={{width:"100%",minHeight:80,padding:"10px 12px",fontSize:16,color:"var(--c-text)",background:"var(--c-bg)",border:"2px solid #E5E7EB",borderRadius:10,outline:"none",resize:"vertical",lineHeight:1.6,fontFamily:"inherit"}}
               onFocus={e=>e.target.style.borderColor="#f87036"} onBlur={e=>e.target.style.borderColor="var(--c-border)"}></textarea>
           </div>
         </div>
@@ -462,7 +462,7 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
               <div key={f} style={{flex:1}}>
                 <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>{l}</div>
                 <select value={f==="start"?start:end} onChange={e=>f==="start"?setStart(e.target.value):setEnd(e.target.value)}
-                  style={{width:"100%",padding:"9px 10px",fontSize:15,fontWeight:700,background:"var(--c-input)",border:"2px solid var(--c-border)",borderRadius:9,color:"var(--c-text)",outline:"none",cursor:"pointer"}}>
+                  style={{width:"100%",padding:"9px 10px",fontSize:16,fontWeight:700,background:"var(--c-input)",border:"2px solid var(--c-border)",borderRadius:9,color:"var(--c-text)",outline:"none",cursor:"pointer"}}>
                   {TO.map(t=><option key={t} value={t}>{t}</option>)}
                 </select>
               </div>

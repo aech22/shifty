@@ -2617,7 +2617,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
               {isBuiltin
                 ?<div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",flex:1}}>{displayName}</div>
                 :<input value={lim.name||""} placeholder="属性名を入力" onChange={e=>renameType(type,e.target.value)}
-                    style={{...AI,flex:1,fontSize:13,fontWeight:700,padding:"4px 8px"}}/>
+                    style={{...AI,flex:1,fontSize:16,fontWeight:700,padding:"4px 8px"}}/>
               }
               {!isBuiltin&&<button onClick={()=>deleteType(type)} style={{padding:"4px 10px",background:"rgba(229,57,53,.1)",border:"1px solid rgba(229,57,53,.3)",borderRadius:6,color:"#e53935",fontSize:12,cursor:"pointer"}}>削除</button>}
             </div>
@@ -2650,7 +2650,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             <input autoFocus value={pendingNewType.name} placeholder="属性名を入力"
               onChange={e=>setPendingNewType({name:e.target.value})}
               onKeyDown={e=>{if(e.key==="Enter")confirmAddType();if(e.key==="Escape")setPendingNewType(null);}}
-              style={{...AI,flex:1,fontSize:13,fontWeight:700,padding:"4px 8px"}}/>
+              style={{...AI,flex:1,fontSize:16,fontWeight:700,padding:"4px 8px"}}/>
             <button onClick={confirmAddType} style={{padding:"4px 10px",background:"rgba(248,112,54,.15)",border:"1px solid #f87036",borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer"}}>追加</button>
             <button onClick={()=>setPendingNewType(null)} style={{padding:"4px 10px",background:"transparent",border:"1px solid var(--c-border)",borderRadius:6,color:"var(--c-text3)",fontSize:12,cursor:"pointer"}}>ｷｬﾝｾﾙ</button>
           </div>
