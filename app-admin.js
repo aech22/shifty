@@ -588,7 +588,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
 
-  // セルの色: 緑(スタッフ変更) > 赤(店舗間重複) > 青(他店舗ヘルプ) > 黄(サフィックスnote) > 行背景。フォーカス中セルは通常背景。
+  // セルの色: 緑(スタッフ変更) > 赤(店舗間重複) > 黄(サフィックスnote・他店舗ヘルプ含む) > 行背景。フォーカス中セルは通常背景。
   const cellBgFor=(name,date,field,rb)=>{
     const key=`${name}|${date}|${field}`;
     if(_getSub(name)?.shifts?.[date]?.changed===true)return"rgba(52,199,89,.30)";
@@ -598,7 +598,6 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     let note="";
     if(key in localEdits){note=extractNote(localEdits[key]).note;}
     else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
-    if(note&&abbrToShop[note])return"#BFDBFE"; // 他店舗ヘルプ
     if(note)return"#FFF3B0";
     return rb;
   };
