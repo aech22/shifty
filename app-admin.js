@@ -696,8 +696,18 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
 
-  // 休み希望提出済みか（シフト有無に関わらず黒破線枠で表示）
-  const isHolidayReq=(name,date)=>_getSub(name)?.shifts?.[date]?.status==="holiday";
+  // 休み希望の黒破線枠判定（field: "start"=出勤セル / "end"=退勤セル）
+  // 1日休み(status==="holiday")は両セル対象。status==="work"でも実提出シフトがランチ帯/ディナー帯の
+  // 片方しか含まない場合は、含まない側のみ「休み」とみなして該当セルに破線を出す（shiftBandInfoの17時境界判定を流用）
+  const holidayCellDash=(name,date,field)=>{
+    const sh=_getSub(name)?.shifts?.[date];
+    if(!sh)return false;
+    if(sh.status==="holiday")return true;
+    if(sh.status!=="work")return false;
+    const info=shiftBandInfo(sh);
+    if(info.attendance===0)return false; // 出退勤未確定・不正値は対象外
+    return field==="start"?!info.hasLunch:!info.hasDinner;
+  };
   // セルの色: 緑(スタッフ変更) > 赤(店舗間重複) > 黄(サフィックスnote・他店舗ヘルプ含む) > 行背景。フォーカス中セルは通常背景。
   const cellBgFor=(name,date,field,rb)=>{
     const key=`${name}|${date}|${field}`;
@@ -1109,7 +1119,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                     <tr key={date+"-s"} style={{background:rb}}>
                       <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:isHolidayReq(name,date)?"1px dashed #000":BD,borderRight:isHolidayReq(name,date)?"1px dashed #000":undefined,borderTop:isHolidayReq(name,date)?"1px dashed #000":undefined,borderBottom:"none",textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:holidayCellDash(name,date,"start")?"1px dashed #000":BD,borderRight:holidayCellDash(name,date,"start")?"1px dashed #000":undefined,borderTop:holidayCellDash(name,date,"start")?"1px dashed #000":undefined,borderBottom:"none",textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
@@ -1126,7 +1136,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                     </tr>,
                     <tr key={date+"-e"} style={{background:rb}}>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:isHolidayReq(name,date)?"1px dashed #000":BD,borderRight:isHolidayReq(name,date)?"1px dashed #000":undefined,borderBottom:isHolidayReq(name,date)?"1px dashed #000":BD,textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:holidayCellDash(name,date,"end")?"1px dashed #000":BD,borderRight:holidayCellDash(name,date,"end")?"1px dashed #000":undefined,borderBottom:holidayCellDash(name,date,"end")?"1px dashed #000":BD,textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
