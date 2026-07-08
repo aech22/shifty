@@ -411,6 +411,28 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const getStoredNote=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";return(field==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"";};
   const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);return t?(t+n):""};
   const handleChange=(name,date,field,value)=>{setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
+  // 1セル分の編集をnewSubs配列に適用する（handleBlur・保存ボタン一括保存の共通ロジック）。
+  // newSubsは呼び出し元がprevSubsから作った配列を直接破壊的に更新する（呼び出し元でreturnする）。
+  const applyEditToSubs=(newSubs,name,date,field,rawValue)=>{
+    const{numeric,note}=extractNote(rawValue);
+    const parsed=parseTime(numeric);
+    // 管理者編集はadjustedXxxに保存（スタッフ提出のstart/endを保護）
+    const adjField=field==="start"?"adjustedStart":"adjustedEnd";
+    const nk=field==="start"?"adjustedStartNote":"adjustedEndNote";
+    const idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
+    if(idx===-1){
+      if(!parsed)return;
+      // シフト作成タブから直接新規作成したsubはsource:"grid"を付与する。
+      // 提出一覧(SubsTab)はスタッフURL経由の提出のみを表示するため、この印で除外する。
+      const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString(),source:"grid"};
+      ns.shifts[date]={status:"work",[adjField]:parsed,[nk]:note};
+      newSubs.push(ns);
+    }else{
+      const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};
+      if(parsed){sd[adjField]=parsed;sd[nk]=note;sd.status="work";}else{delete sd[adjField];delete sd[nk];}
+      shifts[date]=sd;sub.shifts=shifts;newSubs[idx]=sub;
+    }
+  };
   const handleBlur=(name,date,field,rawValue)=>{
     if(!isPremium)return;
     const{numeric,note}=extractNote(rawValue);
@@ -418,13 +440,35 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     const ekey=`${name}|${date}|${field}`;
     setLocalEdits(prev=>({...prev,[ekey]:display}));
     setHeatEdits(prev=>({...prev,[ekey]:display})); // blur確定値を集計/ヒートマップ用に反映
-    // 管理者編集はadjustedXxxに保存（スタッフ提出のstart/endを保護）
-    const adjField=field==="start"?"adjustedStart":"adjustedEnd";
-    const nk=field==="start"?"adjustedStartNote":"adjustedEndNote";
-    let newSubs=[...subs];const idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
-    if(idx===-1){if(!parsed)return;const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString()};ns.shifts[date]={status:"work",[adjField]:parsed,[nk]:note};newSubs.push(ns);}
-    else{const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};if(parsed){sd[adjField]=parsed;sd[nk]=note;sd.status="work";}else{delete sd[adjField];delete sd[nk];}shifts[date]=sd;sub.shifts=shifts;newSubs[idx]=sub;}
-    onSave(newSubs);
+    // 直前state(prevSubs)基準の関数型更新。Enterキーでの高速な連続blur等、再レンダーを挟まず
+    // 複数セルが立て続けに確定するケースでも、propsのsubs（古いスナップショットの可能性がある）
+    // ではなく直前stateから計算するため、後続の呼び出しが前の編集を上書き消去しない。
+    onSave(prevSubs=>{
+      const newSubs=[...prevSubs];
+      applyEditToSubs(newSubs,name,date,field,rawValue);
+      return newSubs;
+    });
+  };
+  // 「保存」ボタン: localEditsに残っている全セルをまとめて確定書き込みする。
+  // 個々のセルはonBlur/Enterで既に確定済みのはずだが、それでも保存漏れの不安を訴える声があったため、
+  // 「明示的に押せば確実に保存される」導線として用意する（同じ値の再適用は冪等なので害はない）。
+  const handleSaveAll=()=>{
+    if(!isPremium)return;
+    // フォーカス中セルがあれば先にblurさせ、その場のonBlurで確定させてから一括処理する
+    if(document.activeElement&&document.activeElement.tagName==="INPUT")document.activeElement.blur();
+    const entries=Object.entries(localEdits);
+    if(entries.length===0){tt("変更はありません");return;}
+    onSave(prevSubs=>{
+      const newSubs=[...prevSubs];
+      entries.forEach(([key,rawValue])=>{
+        const m=key.match(/^(.*)\|(\d{4}-\d{2}-\d{2})\|(start|end)$/);
+        if(!m)return;
+        applyEditToSubs(newSubs,m[1],m[2],m[3],rawValue);
+      });
+      return newSubs;
+    });
+    setHeatEdits(prev=>({...prev,...localEdits}));
+    tt(`✓ ${entries.length}件のシフトを保存しました`);
   };
 
   // 集計/ヒートマップ用は heatEdits（blur確定値）を参照
@@ -678,11 +722,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     if(!isPremium)return;
     const sub=_getSub(name);const sd0=sub?.shifts?.[date];
     if(!sub||!sd0)return;
-    const newSubs=[...subs];const idx=newSubs.findIndex(s=>s.id===sub.id);if(idx===-1)return;
-    const ns={...newSubs[idx]};const shifts={...(ns.shifts||{})};const sd={...shifts[date]};
-    if(sd.changed===true)delete sd.changed;else sd.changed=true;
-    shifts[date]=sd;ns.shifts=shifts;newSubs[idx]=ns;
-    onSave(newSubs);
+    // handleBlur同様、直前state(prevSubs)基準で計算する関数型更新にしてある
+    onSave(prevSubs=>{
+      const newSubs=[...prevSubs];const idx=newSubs.findIndex(s=>s.id===sub.id);if(idx===-1)return prevSubs;
+      const ns={...newSubs[idx]};const shifts={...(ns.shifts||{})};const sd={...shifts[date]};
+      if(sd.changed===true)delete sd.changed;else sd.changed=true;
+      shifts[date]=sd;ns.shifts=shifts;newSubs[idx]=ns;
+      return newSubs;
+    });
   };
   const lastTapRef=useRef({key:null,t:0});
 
@@ -962,6 +1009,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
         </select>
         <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPremium?("例: 9, 9.5, 930, 9:30"+(Object.keys(abbrToShop).length>0?" / 略称でヘルプ（例: 9三）":"")):"閲覧のみ（編集はPremiumプランで）"}</span>
+        {isPremium&&<button onClick={handleSaveAll}
+          style={{padding:"6px 14px",background:"linear-gradient(135deg,#34a853,#1e7e34)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+          💾 保存
+        </button>}
         <button onClick={()=>setFitAll(v=>!v)}
           style={{padding:"5px 10px",background:fitAll?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           {fitAll?"通常表示":"全員表示"}
@@ -2112,7 +2163,8 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
     tt(`✓「${subName}」を「${registeredName}」の別名として登録しました`);
   };
   const tg=f=>{if(sf===f)setSdr(d=>d==="asc"?"desc":"asc");else{setSf(f);setSdr("asc");}};
-  const fil=subs.filter(s=>(!fn||s.staffName.includes(fn))&&(fp==="all"||s.periodId===fp)).sort((a,b)=>{let va=sf==="submittedAt"?new Date(a[sf]).getTime():(a[sf]||""),vb=sf==="submittedAt"?new Date(b[sf]).getTime():(b[sf]||"");return(va<vb?-1:va>vb?1:0)*(sdr==="asc"?1:-1);});
+  // source:"grid" はシフト作成タブが直接作成したsub（スタッフのURL提出ではない）なので提出一覧には出さない
+  const fil=subs.filter(s=>s.source!=="grid"&&(!fn||s.staffName.includes(fn))&&(fp==="all"||s.periodId===fp)).sort((a,b)=>{let va=sf==="submittedAt"?new Date(a[sf]).getTime():(a[sf]||""),vb=sf==="submittedAt"?new Date(b[sf]).getTime():(b[sf]||"");return(va<vb?-1:va>vb?1:0)*(sdr==="asc"?1:-1);});
   const gpl=id=>periods.find(p=>p.id===id)?.label||"不明";
   const saveAdj=(subId,date,field,value)=>{
     const newSubs=subs.map(s=>{if(s.id!==subId)return s;const sh={...(s.shifts||{})};sh[date]={...sh[date]};if(value)sh[date][field]=value;else delete sh[date][field];return{...s,shifts:sh};});

@@ -1066,24 +1066,35 @@ function App(){
   },[sid,periods,subs,touchLastActivity]);
   const saveStaff   =useCallback(v=>{ setStaffList(v);ls(storeKey(sid,"staff_v6"),v);    fbW(fbPath(sid,"staff"),v); touchLastActivity();   },[sid,touchLastActivity]);
   const saveSubs    =useCallback((v,deletedId=null)=>{
-    setSubs(v);
-    ls(storeKey(sid,"subs_v6"),v);
-    // Firebase には update() でマージ書き込み（set()は他端末データを上書きするためNG）
-    // 差分書き込み: 直前のstate subs とオブジェクト参照比較し、新規・変更されたsubのみ書く
-    // （呼び出し元はいずれも変更subを新しいオブジェクト参照で作っているため参照比較で検知できる）
-    // deletedId を渡すと null セットで Firebase からも削除する
-    if(firebaseDB){
-      const prevSet=new Set(subs);
-      const changed=v.filter(s=>s&&s.id&&!prevSet.has(s));
-      const obj={};
-      changed.forEach(s=>{ obj[s.id]=s; });
-      if(deletedId) obj[deletedId]=null;
-      if(Object.keys(obj).length>0){
-        firebaseDB.ref(fbPath(sid,"subs")).update(obj).catch(e=>console.warn("subs書き込み失敗:",e));
+    // vは配列そのもの、または (prevSubs=>newArray) の関数のどちらでも受け付ける。
+    // 関数型はReactのsetState関数型更新でprevSubsを取るため、直前のクロージャ値ではなく
+    // コミット時点の最新stateを基準に計算される＝Enterキー連打等でblurが間を置かず連続発火し
+    // 再レンダーが挟まらないケースでも、後の呼び出しが前の呼び出しの結果を上書き消去しない。
+    // （配列を直接渡す旧来の呼び出し元は従来通り動作する＝後方互換）
+    setSubs(prevSubs=>{
+      const newVal=typeof v==="function"?v(prevSubs):v;
+      ls(storeKey(sid,"subs_v6"),newVal);
+      // Firebase には update() でマージ書き込み（set()は他端末データを上書きするためNG）
+      // 差分書き込み: prevSubs とオブジェクト参照比較し、新規・変更されたsubのみ書く
+      // （呼び出し元はいずれも変更subを新しいオブジェクト参照で作っているため参照比較で検知できる）
+      // deletedId を渡すと null セットで Firebase からも削除する
+      // ※ setState updater内でのFirebase/localStorage書き込みは副作用だが、このアプリは
+      //   StrictModeでラップしていない（app-main.js末尾のReactDOM.createRoot参照）ため
+      //   updaterは実際のコミット毎に厳密に1回だけ呼ばれ、二重発火の心配はない。
+      if(firebaseDB){
+        const prevSet=new Set(prevSubs);
+        const changed=newVal.filter(s=>s&&s.id&&!prevSet.has(s));
+        const obj={};
+        changed.forEach(s=>{ obj[s.id]=s; });
+        if(deletedId) obj[deletedId]=null;
+        if(Object.keys(obj).length>0){
+          firebaseDB.ref(fbPath(sid,"subs")).update(obj).catch(e=>console.warn("subs書き込み失敗:",e));
+        }
       }
-    }
+      return newVal;
+    });
     touchLastActivity();
-  },[sid,subs,touchLastActivity]);
+  },[sid,touchLastActivity]);
   const saveShops   =useCallback(v=>{
     const prev=shops;
     setShops(v);
