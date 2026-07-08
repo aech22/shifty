@@ -1592,6 +1592,12 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     const next=cur==="black"?"red":"black";
     onSaveSettings&&onSaveSettings({...settings,staffColors:{...staffColors,[name]:next}});
   };
+  const staffHelp=settings.staffHelp||{};
+  const toggleHelp=name=>{
+    const h={...staffHelp};
+    if(h[name])delete h[name];else h[name]=true;
+    onSaveSettings&&onSaveSettings({...settings,staffHelp:h});
+  };
   const startEdit=i=>{setEditIdx(i);setEditName(staffList[i]);};
   const cancelEdit=()=>{setEditIdx(null);setEditName("");};
   const confirmEdit=i=>{
@@ -1693,6 +1699,9 @@ const dragIdxRef=useRef(null);
                 {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
                   別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
                 </button>}
+                <button onClick={()=>toggleHelp(n)} title="ヘルプ要員として一覧に表示" style={{padding:"6px 10px",background:staffHelp[n]?"rgba(16,185,129,.15)":"rgba(16,185,129,.06)",border:`1px solid ${staffHelp[n]?"#10B981":"rgba(16,185,129,.3)"}`,borderRadius:6,color:"#10B981",fontSize:12,cursor:"pointer",flexShrink:0}}>
+                  {staffHelp[n]?"✓ ヘルプ":"ヘルプ"}
+                </button>
                 <button onClick={()=>startEdit(i)} style={{padding:"6px 10px",background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.25)",borderRadius:6,color:"#3B82F6",fontSize:12,cursor:"pointer"}}>編集</button>
                 <button onClick={()=>del(i)} style={AD}>削除</button>
               </>
