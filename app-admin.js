@@ -485,7 +485,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         const breaks=(hsh&&isBreakEligible(hsh))
           ?getBreaksFor(settings,date,name,hsh).map(br=>({bs:timeToMin(br.start),be:timeToMin(br.end)})).filter(b=>b.bs!==null&&b.be!==null)
           :[];
-        const section=note==="h"?"hall":note==="k"?"kit":(hallStaff.includes(name)?"hall":"kit");
+        // ホール/キッチン分割未設定の店舗はhall列自体が非表示のため、h/kサフィックスで
+        // section="hall"に振り分けるとカウントが画面から消える。分割未設定時は常にkitに集約する。
+        const section=hallStaff.length===0?"kit":(note==="h"?"hall":note==="k"?"kit":(hallStaff.includes(name)?"hall":"kit"));
         arr.push({stM,enM,breaks,section});
       });
       perDate[date]=arr;
