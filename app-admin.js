@@ -429,7 +429,20 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       newSubs.push(ns);
     }else{
       const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};
-      if(parsed){sd[adjField]=parsed;sd[nk]=note;sd.status="work";}else{delete sd[adjField];delete sd[nk];}
+      if(parsed){
+        // 休み希望セルへの入力は出勤扱いに変えるが、元のstatusをorigStatusに退避して消去時に復元できるようにする
+        if(sd.status!=="work"&&sd.origStatus===undefined)sd.origStatus=sd.status;
+        sd[adjField]=parsed;sd[nk]=note;sd.status="work";
+      }else{
+        delete sd[adjField];delete sd[nk];
+        // 出勤・退勤とも管理者調整値が消えたら退避したstatusに戻す（休み希望なら斜線が復活する）。
+        // スタッフ提出のstart/endが残っている場合は本人が出勤に変えているため復元しない
+        const otherAdj=field==="start"?"adjustedEnd":"adjustedStart";
+        if(sd[otherAdj]==null&&sd.origStatus!==undefined){
+          if(!sd.start&&!sd.end)sd.status=sd.origStatus;
+          delete sd.origStatus;
+        }
+      }
       shifts[date]=sd;sub.shifts=shifts;newSubs[idx]=sub;
     }
   };
