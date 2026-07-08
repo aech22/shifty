@@ -191,6 +191,13 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
   );
 }
 
+// セル背景色はレジストリ（app-utils.js の CELL_COLOR_LEGEND）を単一ソースにする（グリッド描画とレジェンド表示で共用）
+const LEGEND_COLORS=Object.fromEntries(CELL_COLOR_LEGEND.filter(c=>c.color).map(c=>[c.key,c.color]));
+// 休み希望セルの斜線（右上→左下・PDF出力のhatchと同じSVG方式）。#999はライト/ダーク両テーマで視認可、
+// non-scaling-strokeでセルサイズに引き伸ばしても線幅一定。inputのbackgroundImageに敷き、色背景はbackgroundColorと2層で共存させる
+const HDASH_IMG=`url("data:image/svg+xml;charset=utf-8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' preserveAspectRatio='none'><line x1='10' y1='0' x2='0' y2='10' stroke='#999' stroke-width='1.5' vector-effect='non-scaling-stroke'/></svg>")}")`;
+const hdashStyle=on=>on?{backgroundImage:HDASH_IMG,backgroundRepeat:"no-repeat",backgroundSize:"100% 100%"}:null;
+
 // 時間帯別出勤人数（ヒートマップ）。ShiftEditTab の外（モジュールスコープ）で定義しコンポーネント型を固定する。
 // ShiftEditTab内で定義すると親の再レンダー（セル選択等）のたびに新しい関数=新しい型になり、
 // Reactが毎回このサブツリーをアンマウント→再マウントしてスクロール位置がリセットされてしまうため。
@@ -254,6 +261,64 @@ function SummaryTable({title,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols
 }
 
 // ===== シフト作成タブ =====
+// ===== シフト作成タブ: 操作方法レジェンド =====
+// 内容は app-utils.js の CELL_COMMANDS / CELL_COLOR_LEGEND から自動生成される。
+// セルコマンドや色を追加するときはレジストリに登録するだけでここに反映される（このコンポーネントの個別編集は不要）。
+// 企業連携の他店舗略称は abbrToShop（設定値）から動的生成。モジュールスコープで定義しコンポーネント型を固定する。
+function GridLegend({abbrToShop}){
+  const[open,setOpen]=useState(()=>lg("shifty_grid_legend_open",false)===true);
+  const toggle=()=>setOpen(o=>{ls("shifty_grid_legend_open",!o);return!o;});
+  const LBD="1px solid var(--c-border)";
+  const swatch=(color,hatch)=>(
+    <span style={{display:"inline-block",width:26,height:16,borderRadius:3,border:LBD,verticalAlign:"middle",background:color||"var(--c-input)",...(hatch?{backgroundImage:HDASH_IMG,backgroundRepeat:"no-repeat",backgroundSize:"100% 100%"}:{}),flexShrink:0}}/>
+  );
+  const chip=t=>(
+    <code style={{display:"inline-block",padding:"1px 7px",borderRadius:4,border:LBD,background:"var(--c-input)",color:"var(--c-text)",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>{t}</code>
+  );
+  const row=(key,left,desc)=>(
+    <div key={key} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"3px 0"}}>
+      <div style={{minWidth:120,display:"flex",alignItems:"center",gap:6,flexShrink:0}}>{left}</div>
+      <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.55}}>{desc}</div>
+    </div>
+  );
+  const SecH=({children})=>(<div style={{fontSize:12,fontWeight:700,color:"var(--c-text)",margin:"10px 0 3px"}}>{children}</div>);
+  const lbl=t=>(<span style={{fontSize:12,fontWeight:700,color:"var(--c-text)"}}>{t}</span>);
+  const abbrs=Object.entries(abbrToShop||{});
+  return(
+    <div style={{border:LBD,borderRadius:8,marginBottom:16,background:"var(--c-card)"}}>
+      <button onClick={toggle} style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 12px",background:"transparent",border:"none",cursor:"pointer",color:"var(--c-text)",fontSize:13,fontWeight:700,textAlign:"left"}}>
+        <span style={{display:"inline-block",transform:open?"rotate(90deg)":"none",transition:"transform .15s",fontSize:11}}>▶</span>
+        操作方法（セル入力コマンド・色の意味）
+      </button>
+      {open&&<div style={{padding:"0 14px 12px"}}>
+        <SecH>時間の入力（出勤・退勤セル）</SecH>
+        {row("t1",chip("9"),"9:00（1〜2桁は「時」）")}
+        {row("t2",chip("930"),"9:30（3〜4桁は「時分」）")}
+        {row("t3",chip("9.5"),"9:30（小数は時+分の割合）")}
+        {row("t4",chip("9:30"),"9:30（コロン区切りそのまま）")}
+        <SecH>セル内コマンド</SecH>
+        {CELL_COMMANDS.map(c=>row(c.key,<>{chip(c.usage)}{(c.color||c.hatch)?swatch(c.color,c.hatch):null}</>,`${c.label} — ${c.desc}`))}
+        {row("free",chip("9○○"),"時間+任意の文字 — メモとしてそのまま表示（特記の黄色背景）")}
+        {abbrs.length>0&&<React.Fragment>
+          <SecH>企業連携ヘルプ（登録済み略称）</SecH>
+          <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.55,padding:"2px 0 4px"}}>
+            時間+略称で他店舗ヘルプになる。出勤セルのみ=ランチ帯、退勤セルのみ=ディナー帯、両方=終日。ヘルプ帯は自店舗の時間帯別出勤人数から除外される。
+          </div>
+          {abbrs.map(([a,s])=>row("ab_"+a,chip("9"+a),`${s.name} へのヘルプ`))}
+        </React.Fragment>}
+        <SecH>セルの色・記号</SecH>
+        {CELL_COLOR_LEGEND.map(c=>row(c.key,swatch(c.color,c.hatch),`${c.label} — ${c.desc}`))}
+        <SecH>キー・マウス操作</SecH>
+        {row("k1",chip("Enter"),"次のセルへ移動して確定（出勤→退勤→翌日の出勤）")}
+        {row("k2",chip("Ctrl(⌘)+Enter"),"逆方向に移動して確定")}
+        {row("k3",lbl("ダブルクリック"),"変更マーク（緑）のオン/オフ。スマホはダブルタップ")}
+        {row("k4",lbl("空にして確定"),"管理者入力を消去。スタッフ提出の休み希望があれば斜線が復元される")}
+        {row("k5",lbl("セル選択"),"スタッフが提出した元の値をツールチップに表示")}
+      </div>}
+    </div>
+  );
+}
+
 function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,shopName,onUpgrade,allLinkedShops=[]}){
   const firstPid=(periods[0]||{}).id||"";
   const[selPid,setSelPid]=useState(firstPid);
@@ -364,20 +429,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     if(/^\d+$/.test(s)){const n=parseInt(s,10);if(s.length<=2){if(n>=0&&n<=30)return`${String(n).padStart(2,"0")}:00`;}else{const h=Math.floor(n/100);const m=n%100;if(h>=0&&h<=30&&m>=0&&m<60)return`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;}return"";}
     return"";
   };
-  // サフィックス抽出: h=ホール出張, k=キッチン入り, x=ヘルプ(カウント外), 任意文字列=そのまま保持, ""=通常
-  const extractNote=raw=>{
-    if(!raw||!raw.trim())return{numeric:"",note:""};
-    const s=raw.trim();
-    const m=s.match(/^([\d.:]+)(.*)$/s);
-    if(!m||!m[1])return{numeric:"",note:"x"}; // 数値部なし(文字のみ) → ヘルプ
-    const suf=m[2].trim();
-    if(!suf)return{numeric:m[1],note:""};
-    const l=suf.toLowerCase();
-    if(l==="h")return{numeric:m[1],note:"h"};
-    if(l==="k")return{numeric:m[1],note:"k"};
-    if(l==="x")return{numeric:m[1],note:"x"};
-    return{numeric:m[1],note:suf}; // 日本語含む任意サフィックスはそのまま保持
-  };
+  // サフィックス抽出は app-utils.js の extractNote（CELL_COMMANDSレジストリ駆動）を使用。
+  // h=ホール出張, k=キッチン入り, x=ヘルプ, y/休=休み希望(rest), 任意文字列=そのまま保持
 
   // 提出データの逆引きインデックス（subs.findのO(n)探索をO(1)に。ヒートマップ・集計の再計算コスト削減）
   const subsByKey=useMemo(()=>{
@@ -413,21 +466,30 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     }
     return undefined;
   };
-  // 管理者編集値(adjustedXxx)優先、なければスタッフ提出値(xxx)にフォールバック
-  const getStoredTime=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";return(field==="start"?(sh.adjustedStart??sh.start):(sh.adjustedEnd??sh.end))||"";};
-  const getStoredNote=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";return(field==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"";};
+  // 管理者編集値(adjustedXxx)優先、なければスタッフ提出値(xxx)にフォールバック。
+  // 管理者入力の休み希望(adminRest)が付いたフィールドは実効値なし=""（休みカウント・ヒートマップ・集計・表示すべて休み扱いになる）
+  const fieldRest=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];return!!(sh&&sh.adminRest&&sh.adminRest[field]);};
+  const getStoredTime=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";if(sh.adminRest&&sh.adminRest[field])return"";return(field==="start"?(sh.adjustedStart??sh.start):(sh.adjustedEnd??sh.end))||"";};
+  const getStoredNote=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";if(sh.adminRest&&sh.adminRest[field])return"";return(field==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"";};
   const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);return t?(t+n):""};
   const handleChange=(name,date,field,value)=>{setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
   // 1セル分の編集をnewSubs配列に適用する（handleBlur・保存ボタン一括保存の共通ロジック）。
   // newSubsは呼び出し元がprevSubsから作った配列を直接破壊的に更新する（呼び出し元でreturnする）。
   const applyEditToSubs=(newSubs,name,date,field,rawValue)=>{
-    const{numeric,note}=extractNote(rawValue);
+    const{numeric,note,rest}=extractNote(rawValue);
     const parsed=parseTime(numeric);
     // 管理者編集はadjustedXxxに保存（スタッフ提出のstart/endを保護）
     const adjField=field==="start"?"adjustedStart":"adjustedEnd";
     const nk=field==="start"?"adjustedStartNote":"adjustedEndNote";
     const idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
     if(idx===-1){
+      if(rest){
+        // 休み希望(y)を未提出スタッフのセルに入力: adminRestのみ持つsubを新規作成
+        const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString(),source:"grid"};
+        ns.shifts[date]={status:"work",adminRest:{[field]:true}};
+        newSubs.push(ns);
+        return;
+      }
       if(!parsed)return;
       // シフト作成タブから直接新規作成したsubはsource:"grid"を付与する。
       // 提出一覧(SubsTab)はスタッフURL経由の提出のみを表示するため、この印で除外する。
@@ -436,10 +498,19 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       newSubs.push(ns);
     }else{
       const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};
-      if(parsed){
+      if(rest){
+        // 休み希望トグル: 同じセルへの再入力で解除。セット時は同フィールドの管理者調整値を消す
+        // （スタッフ提出のstart/end/statusには触れない。実効値の抑制はgetStoredTimeのadminRest判定が担う）
+        const ar={...(sd.adminRest||{})};
+        if(ar[field]){delete ar[field];}
+        else{ar[field]=true;delete sd[adjField];delete sd[nk];}
+        if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;
+      }else if(parsed){
         // 休み希望セルへの入力は出勤扱いに変えるが、元のstatusをorigStatusに退避して消去時に復元できるようにする
         if(sd.status!=="work"&&sd.origStatus===undefined)sd.origStatus=sd.status;
         sd[adjField]=parsed;sd[nk]=note;sd.status="work";
+        // 時間入力は同フィールドの休み希望マーク(adminRest)を解除する
+        if(sd.adminRest&&sd.adminRest[field]){const ar={...sd.adminRest};delete ar[field];if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;}
       }else{
         delete sd[adjField];delete sd[nk];
         // 出勤・退勤とも管理者調整値が消えたら退避したstatusに戻す（休み希望なら斜線が復活する）。
@@ -453,11 +524,29 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       shifts[date]=sd;sub.shifts=shifts;newSubs[idx]=sub;
     }
   };
+  // 休み希望(y)の二重適用ガード: Enterキー確定はhandleBlurを直接呼んだ後にフォーカス移動で
+  // ネイティブblurイベントも発火し、同じ値で2回呼ばれる。時間入力は再適用が冪等なので無害だが、
+  // yはトグルのため2回目で打ち消されてしまう。同一セル・短時間の連続rest適用を1回に抑止する。
+  const restAppliedRef=useRef({key:null,t:0});
   const handleBlur=(name,date,field,rawValue)=>{
     if(!isPremium)return;
-    const{numeric,note}=extractNote(rawValue);
-    const parsed=parseTime(numeric);const display=parsed?(toDecimal(parsed)+note):"";
+    const{numeric,note,rest}=extractNote(rawValue);
     const ekey=`${name}|${date}|${field}`;
+    if(rest){
+      const now=Date.now();
+      if(restAppliedRef.current.key===ekey&&now-restAppliedRef.current.t<400)return;
+      restAppliedRef.current={key:ekey,t:now};
+      // 表示は保存値由来に任せる（トグルON=空欄+斜線 / OFF=提出値が復元されて再表示）ため編集値ごと消す
+      setLocalEdits(prev=>{const n={...prev};delete n[ekey];return n;});
+      setHeatEdits(prev=>{const n={...prev};delete n[ekey];return n;});
+      onSave(prevSubs=>{
+        const newSubs=[...prevSubs];
+        applyEditToSubs(newSubs,name,date,field,rawValue);
+        return newSubs;
+      });
+      return;
+    }
+    const parsed=parseTime(numeric);const display=parsed?(toDecimal(parsed)+note):"";
     setLocalEdits(prev=>({...prev,[ekey]:display}));
     setHeatEdits(prev=>({...prev,[ekey]:display})); // blur確定値を集計/ヒートマップ用に反映
     // 直前state(prevSubs)基準の関数型更新。Enterキーでの高速な連続blur等、再レンダーを挟まず
@@ -483,6 +572,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       entries.forEach(([key,rawValue])=>{
         const m=key.match(/^(.*)\|(\d{4}-\d{2}-\d{2})\|(start|end)$/);
         if(!m)return;
+        // 休み希望(y)はトグルのため一括再適用しない（直前のblurで既に適用済み。
+        // localEditsのstale closureに残った値を再適用すると打ち消されてしまう）
+        if(isRestCommand(rawValue))return;
         applyEditToSubs(newSubs,m[1],m[2],m[3],rawValue);
       });
       return newSubs;
@@ -495,12 +587,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const getEffHHMM=(name,date,field,src=heatEdits)=>{const key=`${name}|${date}|${field}`;if(key in src){const{numeric}=extractNote(src[key]);return parseTime(numeric)||"";}return getStoredTime(name,date,field);};
   // シフトのノート取得: 管理者調整値優先、なければスタッフ提出値（edits最優先）
   const getShiftNote=(name,date,src=heatEdits)=>{
-    for(const field of["start","end"]){const key=`${name}|${date}|${field}`;if(key in src){const{note}=extractNote(src[key]);if(note)return note;}const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";const n=(sh?.[adjNk]??sh?.[origNk]);if(n)return n;}return"";
+    for(const field of["start","end"]){const key=`${name}|${date}|${field}`;if(key in src){const{note}=extractNote(src[key]);if(note)return note;}if(fieldRest(name,date,field))continue;const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";const n=(sh?.[adjNk]??sh?.[origNk]);if(n)return n;}return"";
   };
-  // フィールド別ノート取得（edits最優先→管理者調整値→スタッフ提出値）
+  // フィールド別ノート取得（edits最優先→管理者調整値→スタッフ提出値。adminRestフィールドはノートなし）
   const getFieldNote=(name,date,field,src=heatEdits)=>{
     const key=`${name}|${date}|${field}`;
     if(key in src)return extractNote(src[key]).note||"";
+    if(fieldRest(name,date,field))return"";
     const sh=_getSub(name)?.shifts?.[date];
     const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";
     const origNk=field==="start"?"startNote":"endNote";
@@ -663,10 +756,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   // gridStaffを列描画: spacer位置はspacerFnで空セル、実スタッフはrenderFnで描画
   const mapGridCols=(renderFn,spacerFn)=>gridStaff.map((name,i)=>isSpacer(name)?spacerFn(`sp${i}`):renderFn(name,i));
   const AI2={width:colW-3,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
-  // 休み希望セルの斜線（右上→左下・PDF出力のhatchと同じSVG方式）。#999はライト/ダーク両テーマで視認可、
-  // non-scaling-strokeでセルサイズに引き伸ばしても線幅一定。inputのbackgroundImageに敷き、色背景はbackgroundColorと2層で共存させる
-  const HDASH_IMG=`url("data:image/svg+xml;charset=utf-8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' preserveAspectRatio='none'><line x1='10' y1='0' x2='0' y2='10' stroke='#999' stroke-width='1.5' vector-effect='non-scaling-stroke'/></svg>")}")`;
-  const hdashStyle=on=>on?{backgroundImage:HDASH_IMG,backgroundRepeat:"no-repeat",backgroundSize:"100% 100%"}:null;
+  // 斜線スタイル: HDASH_IMG / hdashStyle はモジュールスコープ（GridLegendと共用）
   const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:16,fontWeight:600,borderRight:BD2};
   // スタッフ名色（Excel書き出しと同ルール: staffColors[name]==="red"→赤）
   const nameColor=name=>((settings.staffColors||{})[name]==="red"?"#e53935":"var(--c-text)");
@@ -726,6 +816,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const holidayCellDash=(name,date,field)=>{
     const sh=_getSub(name)?.shifts?.[date];
     if(!sh)return false;
+    if(sh.adminRest&&sh.adminRest[field])return true; // 管理者入力の休み希望(y)
     if(sh.status==="holiday")return true;
     if(sh.status!=="work")return false;
     const info=shiftBandInfo(sh);
@@ -735,20 +826,22 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   // セルの色: 緑(スタッフ変更) > 赤(店舗間重複) > 黄(サフィックスnote・他店舗ヘルプ含む) > 行背景。フォーカス中セルは通常背景。
   const cellBgFor=(name,date,field,rb)=>{
     const key=`${name}|${date}|${field}`;
-    if(_getSub(name)?.shifts?.[date]?.changed===true)return"rgba(52,199,89,.30)";
+    if(_getSub(name)?.shifts?.[date]?.changed===true)return LEGEND_COLORS.changed;
     if(focusKey===key)return rb; // 編集中は通常背景
-    if(dupErrors[`${name}|${date}`])return"rgba(255,71,87,.35)";
+    if(dupErrors[`${name}|${date}`])return LEGEND_COLORS.dup;
+    if(fieldRest(name,date,field))return rb; // 休み希望(y)セルは通常背景+斜線（noteの黄色は付けない）
     // note有無を localEdits/保存値から判定
     let note="";
     if(key in localEdits){note=extractNote(localEdits[key]).note;}
     else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
-    if(note)return"#FFF3B0";
+    if(note)return LEGEND_COLORS.note;
     return rb;
   };
   const cellTextColor=(name,date,field)=>{
     const key=`${name}|${date}|${field}`;
     if(_getSub(name)?.shifts?.[date]?.changed===true)return undefined;
     if(focusKey===key)return undefined;
+    if(fieldRest(name,date,field))return undefined;
     let note="";
     if(key in localEdits){note=extractNote(localEdits[key]).note;}
     else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
@@ -818,6 +911,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const staffColorsPdf=settings.staffColors||{};
   // PDF用: シフト値の解決（localEdits優先→保存値、サフィックス連結）
   const pdfResolve=(name,date,field)=>{
+    if(fieldRest(name,date,field))return{disp:"",note:""}; // 休み希望(y)フィールドは空欄（斜線は呼び出し元で描画）
     const key=`${name}|${date}|${field}`;
     let time="",note="";
     if(key in localEdits){const{numeric,note:nt}=extractNote(localEdits[key]);time=parseTime(numeric)||"";note=nt||"";}
@@ -910,6 +1004,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           const sh=_getSub(nm)?.shifts?.[ds];
           const r=pdfResolve(nm,ds,field);
           const otherHas=pdfResolve(nm,ds,field==="start"?"end":"start").disp;
+          // 管理者入力の休み希望(y)はフィールド単位で斜線（画面のholidayCellDashと同じ扱い）
+          if(!r.disp&&sh&&sh.adminRest&&sh.adminRest[field]){h+=`<td style="border:${BDp};background:${hatch};height:15px;"></td>`;return;}
           if(!r.disp&&!otherHas){
             // 休み提出のみ斜線（出勤で上書きされていればdispがあるためここに来ない）
             if(sh&&sh.status==="holiday"){h+=`<td style="border:${BDp};background:${hatch};height:15px;"></td>`;return;}
@@ -1056,6 +1152,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         </button>
         {period&&<button onClick={()=>{
           const adjResolver=(name,date,field)=>{
+            if(fieldRest(name,date,field))return{time:"",note:"",rest:true}; // 休み希望(y)はExcelで斜線描画
             const key=`${name}|${date}|${field}`;
             let time="";
             if(key in localEdits){const{numeric}=extractNote(localEdits[key]);time=parseTime(numeric)||"";}
@@ -1240,6 +1337,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                 _violateFn:(name,min)=>{const t=(settings.staffAttributes||{})[name]||"parttime";const l=tls[t];const lim=l&&typeof l==="object"&&l.weekly?l.weekly*60:0;return lim>0&&min>=lim;}};
             }),{id:"weekly_limit",label:"週上限",getMin:name=>{const t=(settings.staffAttributes||{})[name]||"parttime";const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};const l=tls[t];return(l&&typeof l==="object"&&l.weekly)?l.weekly*60:0;},_color:"#60A5FA",_bg:"rgba(96,165,250,0.07)"}]}
           />}
+
+          {/* ===操作方法レジェンド（CELL_COMMANDS / CELL_COLOR_LEGEND から自動生成）=== */}
+          <GridLegend abbrToShop={abbrToShop}/>
 
           </div>{/* end center */}
 
@@ -1608,8 +1708,12 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
         const endFill=eNote?fYel:fill;
         const startDisp=startT?((fmtT(startT)||"")+sNote):null;
         const endDisp=endT?((fmtT(endT)||"")+eNote):null;
-        SC(rT,ci,startDisp,aH,startFill,{top:M,bottom:H,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
-        SC(rB,ci,endDisp,aH,endFill,{top:H,bottom:botT,left:T,right:T},{name:"Yu Gothic",bold:false,size:12});
+        // 管理者入力の休み希望(y)はフィールド単位で斜線（resolver経由=シフト作成タブからの出力時のみ）
+        const diagR={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
+        const stB={top:M,bottom:H,left:T,right:T,...(rv&&rv.st.rest?{diagonal:diagR}:{})};
+        const enB={top:H,bottom:botT,left:T,right:T,...(rv&&rv.en.rest?{diagonal:diagR}:{})};
+        SC(rT,ci,startDisp,aH,startFill,stB,{name:"Yu Gothic",bold:false,size:12});
+        SC(rB,ci,endDisp,aH,endFill,enB,{name:"Yu Gothic",bold:false,size:12});
       } else {
         // 休み: 斜線（右上→左下）
         const diagU={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
@@ -2360,7 +2464,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
     const v=(abbrInput[sid]||"").trim();
     if(!v)return;
     if(v.length>4){tt("✕ 略称は4文字以内にしてください");return;}
-    if(/^[hkxHKX]$/.test(v)||/^[\d.:]+$/.test(v)){tt("✕ h・k・x・数字のみの略称は使用できません");return;}
+    if(/^[hkxyHKXY]$/.test(v)||v==="休"||/^[\d.:]+$/.test(v)){tt("✕ h・k・x・y・休・数字のみの略称は使用できません");return;}
     const cur=(metaFor(sid)||{}).abbrs||[];
     if(cur.includes(v)){tt("✕ 既に登録済みの略称です");return;}
     const conflict=listShops.find(s=>s.id!==sid&&((metaFor(s.id)||{}).abbrs||[]).includes(v));

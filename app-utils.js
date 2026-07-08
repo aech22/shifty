@@ -192,7 +192,41 @@ function buildSuggestList(staffList, staffAliases){
   return result;
 }
 
+// ===== シフト作成タブ: セルコマンドレジストリ =====
+// パーサ（extractNote / isRestCommand）とタブ最下部の「操作方法」レジェンド（GridLegend）の共通ソース。
+// 新しいセルコマンド・セル色を追加するときは必ずここに登録する。レジェンドはこの配列から自動生成されるため
+// 登録すれば説明も自動で追記される（tests/core.test.js の完全性テストが登録漏れを検出する）。
+const CELL_COMMANDS=[
+  {key:"h",kind:"suffix",usage:"9h",label:"ホール出張",desc:"キッチン所属のスタッフをこの日だけホールの人数として集計する",color:"#FFF3B0"},
+  {key:"k",kind:"suffix",usage:"9k",label:"キッチン入り",desc:"ホール所属のスタッフをこの日だけキッチンの人数として集計する",color:"#FFF3B0"},
+  {key:"x",kind:"suffix",usage:"9x",label:"ヘルプ（カウント外）",desc:"時間帯別出勤人数に数えない。時間なしの文字だけの入力も同じ扱い",color:"#FFF3B0"},
+  {key:"y",kind:"rest",usage:"y",label:"休み希望",desc:"セルを休み扱いにして斜線を表示する（出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日）。もう一度 y で解除、時間を入力すると出勤に上書き。「休」でも入力できる",hatch:true},
+];
+// セル背景色・記号の意味（cellBgForとレジェンドの共通ソース）
+const CELL_COLOR_LEGEND=[
+  {key:"changed",color:"rgba(52,199,89,.30)",label:"変更マーク",desc:"セルをダブルクリック（スマホはダブルタップ）でオン/オフ。確定後に変更したシフトの目印"},
+  {key:"dup",color:"rgba(255,71,87,.35)",label:"店舗間シフト重複",desc:"企業連携している他店舗のシフトと勤務時間が重なっている"},
+  {key:"note",color:"#FFF3B0",label:"特記あり",desc:"h・k・x・他店舗略称などのサフィックスが付いたセル"},
+  {key:"rest",hatch:true,label:"休み希望（斜線）",desc:"スタッフが提出した休み希望、または管理者が y で入力した休み"},
+];
+// 休み希望コマンド判定（セル全体が y / 休 のとき。時間付きの「9y」は通常サフィックス扱い）
+const isRestCommand=raw=>/^(y|ｙ|休)$/i.test(String(raw==null?"":raw).trim());
+// サフィックス抽出: 登録済みコマンド(kind:"suffix")は小文字に正規化、任意文字列=そのまま保持、""=通常。
+// rest=true は休み希望コマンド（numeric/noteは空）。旧実装はShiftEditTab内ローカル関数（2026-07-09にレジストリ駆動化して移設）
+function extractNote(raw){
+  if(raw==null||!String(raw).trim())return{numeric:"",note:"",rest:false};
+  const s=String(raw).trim();
+  if(isRestCommand(s))return{numeric:"",note:"",rest:true};
+  const m=s.match(/^([\d.:]+)(.*)$/s);
+  if(!m||!m[1])return{numeric:"",note:"x",rest:false}; // 数値部なし(文字のみ) → ヘルプ
+  const suf=m[2].trim();
+  if(!suf)return{numeric:m[1],note:"",rest:false};
+  const l=suf.toLowerCase();
+  if(CELL_COMMANDS.some(c=>c.kind==="suffix"&&c.key===l))return{numeric:m[1],note:l,rest:false};
+  return{numeric:m[1],note:suf,rest:false}; // 日本語含む任意サフィックスはそのまま保持
+}
+
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,isBreakEligible,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,isBreakEligible,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote};
 }

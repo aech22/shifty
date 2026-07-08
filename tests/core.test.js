@@ -145,3 +145,62 @@ test("pd: 非文字列は例外を投げず Invalid Date を返す", () => {
   assert.ok(Number.isNaN(u.pd(undefined).getTime()));
   assert.ok(Number.isNaN(u.pd("").getTime()));
 });
+
+// ===== extractNote / セルコマンドレジストリ（シフト作成タブ） =====
+
+test("extractNote: 時間のみ", () => {
+  assert.deepStrictEqual(u.extractNote("9"), { numeric: "9", note: "", rest: false });
+  assert.deepStrictEqual(u.extractNote("9:30"), { numeric: "9:30", note: "", rest: false });
+});
+
+test("extractNote: 登録サフィックス(h/k/x)は小文字に正規化", () => {
+  assert.strictEqual(u.extractNote("9H").note, "h");
+  assert.strictEqual(u.extractNote("930k").note, "k");
+  assert.strictEqual(u.extractNote("9.5X").note, "x");
+});
+
+test("extractNote: 文字のみはヘルプ(x)扱い", () => {
+  assert.deepStrictEqual(u.extractNote("三"), { numeric: "", note: "x", rest: false });
+});
+
+test("extractNote: 任意サフィックスはそのまま保持", () => {
+  assert.deepStrictEqual(u.extractNote("9三"), { numeric: "9", note: "三", rest: false });
+});
+
+test("extractNote: y/休 は休み希望コマンド（時間付き9yは通常サフィックス）", () => {
+  for (const v of ["y", "Y", "ｙ", "休", " y "]) assert.strictEqual(u.extractNote(v).rest, true, `input: ${v}`);
+  assert.strictEqual(u.extractNote("9y").rest, false);
+  assert.strictEqual(u.extractNote("9y").note, "y");
+  assert.strictEqual(u.extractNote("").rest, false);
+});
+
+test("isRestCommand: y/ｙ/休のみtrue", () => {
+  assert.strictEqual(u.isRestCommand("y"), true);
+  assert.strictEqual(u.isRestCommand("休"), true);
+  assert.strictEqual(u.isRestCommand("9"), false);
+  assert.strictEqual(u.isRestCommand("x"), false);
+  assert.strictEqual(u.isRestCommand(""), false);
+  assert.strictEqual(u.isRestCommand(null), false);
+});
+
+test("CELL_COMMANDS: レジストリの完全性（レジェンド自動生成に必要なフィールドが揃っている）", () => {
+  assert.ok(Array.isArray(u.CELL_COMMANDS) && u.CELL_COMMANDS.length >= 4);
+  u.CELL_COMMANDS.forEach(c => {
+    assert.ok(c.key && c.kind && c.usage && c.label && c.desc, `registry entry incomplete: ${JSON.stringify(c)}`);
+  });
+  // パーサが認識する予約サフィックス・休みコマンドがすべて登録されている
+  ["h", "k", "x"].forEach(k => assert.ok(u.CELL_COMMANDS.some(c => c.kind === "suffix" && c.key === k), `suffix ${k} missing`));
+  assert.ok(u.CELL_COMMANDS.some(c => c.kind === "rest" && c.key === "y"), "rest command y missing");
+  // レジストリと実装の乖離防止: 登録済みサフィックスは extractNote が正規化して認識する
+  u.CELL_COMMANDS.filter(c => c.kind === "suffix").forEach(c => {
+    assert.strictEqual(u.extractNote("9" + c.key.toUpperCase()).note, c.key, `suffix ${c.key} not recognized`);
+  });
+  u.CELL_COMMANDS.filter(c => c.kind === "rest").forEach(c => {
+    assert.strictEqual(u.extractNote(c.key).rest, true, `rest ${c.key} not recognized`);
+  });
+});
+
+test("CELL_COLOR_LEGEND: 完全性（色または斜線+説明が揃っている）", () => {
+  ["changed", "dup", "note", "rest"].forEach(k => assert.ok(u.CELL_COLOR_LEGEND.some(c => c.key === k), `legend ${k} missing`));
+  u.CELL_COLOR_LEGEND.forEach(c => assert.ok(c.label && c.desc && (c.color || c.hatch), `legend entry incomplete: ${c.key}`));
+});

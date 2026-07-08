@@ -487,6 +487,13 @@ newPeriods.forEach(p => { if (p && p.id) obj[p.id] = p; });
 firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 ```
 
+### シフト作成タブにセル操作・セル色を追加（2026-07-09〜）
+
+1. `app-utils.js` の `CELL_COMMANDS`（セル内コマンド）/ `CELL_COLOR_LEGEND`（色・記号の意味）レジストリに**必ず登録**する
+2. タブ最下部の「操作方法」レジェンド（`GridLegend`・app-admin.js）はレジストリから自動生成されるため、個別編集は不要（登録するだけで説明が自動追記される）
+3. パーサ（`extractNote`・app-utils.js）もレジストリ駆動。`tests/core.test.js` の完全性テストが登録漏れ・実装との乖離を検出する
+4. 既存コマンド: `h`/`k`/`x`（サフィックス）、`y`/`休`（休み希望・`adminRest`フィールドに保存・トグル式）。店舗略称バリデーション（CompanyTab）の予約語も忘れずに更新する
+
 ---
 
 ## 既知の技術負債
@@ -546,6 +553,7 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 ---
 
 
+-
 -
 -
 -
