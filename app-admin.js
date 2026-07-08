@@ -643,6 +643,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   // gridStaffを列描画: spacer位置はspacerFnで空セル、実スタッフはrenderFnで描画
   const mapGridCols=(renderFn,spacerFn)=>gridStaff.map((name,i)=>isSpacer(name)?spacerFn(`sp${i}`):renderFn(name,i));
   const AI2={width:colW-3,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
+  // 休み希望セルの斜線（右上→左下・PDF出力のhatchと同じSVG方式）。#999はライト/ダーク両テーマで視認可、
+  // non-scaling-strokeでセルサイズに引き伸ばしても線幅一定。inputのbackgroundImageに敷き、色背景はbackgroundColorと2層で共存させる
+  const HDASH_IMG=`url("data:image/svg+xml;charset=utf-8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' preserveAspectRatio='none'><line x1='10' y1='0' x2='0' y2='10' stroke='#999' stroke-width='1.5' vector-effect='non-scaling-stroke'/></svg>")}")`;
+  const hdashStyle=on=>on?{backgroundImage:HDASH_IMG,backgroundRepeat:"no-repeat",backgroundSize:"100% 100%"}:null;
   const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:16,fontWeight:600,borderRight:BD2};
   // スタッフ名色（Excel書き出しと同ルール: staffColors[name]==="red"→赤）
   const nameColor=name=>((settings.staffColors||{})[name]==="red"?"#e53935":"var(--c-text)");
@@ -1119,7 +1123,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                     <tr key={date+"-s"} style={{background:rb}}>
                       <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:holidayCellDash(name,date,"start")?"1px dashed #000":BD,borderRight:holidayCellDash(name,date,"start")?"1px dashed #000":undefined,borderTop:holidayCellDash(name,date,"start")?"1px dashed #000":undefined,borderBottom:"none",textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
@@ -1130,13 +1134,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|start`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);setFocusKey(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"start",e.target.value);if(e.ctrlKey||e.metaKey){const pdi=dates.indexOf(date)-1;if(pdi>=0)document.querySelector(`[data-sc="${dates[pdi]}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:cellBgFor(name,date,"start",AI2.background),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                            style={{...AI2,background:undefined,backgroundColor:cellBgFor(name,date,"start",AI2.background),...hdashStyle(holidayCellDash(name,date,"start")),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
                       ),spacerCell)}
                     </tr>,
                     <tr key={date+"-e"} style={{background:rb}}>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:holidayCellDash(name,date,"end")?"1px dashed #000":BD,borderRight:holidayCellDash(name,date,"end")?"1px dashed #000":undefined,borderBottom:holidayCellDash(name,date,"end")?"1px dashed #000":BD,textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
@@ -1147,7 +1151,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:cellBgFor(name,date,"end",AI2.background),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                            style={{...AI2,background:undefined,backgroundColor:cellBgFor(name,date,"end",AI2.background),...hdashStyle(holidayCellDash(name,date,"end")),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
                       ),spacerCell)}
                     </tr>
