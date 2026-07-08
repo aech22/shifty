@@ -696,6 +696,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
 
+  // 休み希望提出済みか（シフト有無に関わらず黒破線枠で表示）
+  const isHolidayReq=(name,date)=>_getSub(name)?.shifts?.[date]?.status==="holiday";
   // セルの色: 緑(スタッフ変更) > 赤(店舗間重複) > 黄(サフィックスnote・他店舗ヘルプ含む) > 行背景。フォーカス中セルは通常背景。
   const cellBgFor=(name,date,field,rb)=>{
     const key=`${name}|${date}|${field}`;
