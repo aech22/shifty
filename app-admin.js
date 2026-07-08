@@ -194,19 +194,20 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
 // 時間帯別出勤人数（ヒートマップ）。ShiftEditTab の外（モジュールスコープ）で定義しコンポーネント型を固定する。
 // ShiftEditTab内で定義すると親の再レンダー（セル選択等）のたびに新しい関数=新しい型になり、
 // Reactが毎回このサブツリーをアンマウント→再マウントしてスクロール位置がリセットされてしまうため。
-function HeatTable({label,section,maxC,rowH,theadH,sectionLabel,dates,heatHours,countHeat,hBg}){
+function HeatTable({label,section,maxC,rowH,theadH,sectionLabel,dates,heatHours,countHeat,hBg,scrollRef,onScroll,maxH}){
   const BD="1px solid var(--c-border)",BD2="1px solid var(--c-border2)",CRD="var(--c-card)";
   const fmtDL=date=>{const d=pd(date);return`${d.getDate()}(${WD[d.getDay()]})`;};
+  // maxH指定時（サイドパネル）: グリッドと同じ高さの縦スクロール領域にし、ヘッダーをsticky固定して日付行の位置を揃える
   return(
-    <div style={{overflowX:"auto",border:BD,borderRadius:8,flex:rowH?undefined:1,minWidth:rowH?undefined:200}}>
+    <div ref={scrollRef} onScroll={onScroll} style={{overflowX:"auto",...(maxH?{overflowY:"auto",maxHeight:maxH}:{}),border:BD,borderRadius:8,flex:rowH?undefined:1,minWidth:rowH?undefined:200}}>
       {label&&<div style={{fontSize:12,fontWeight:700,padding:"4px 8px",borderBottom:BD,color:"var(--c-text2)"}}>{label}</div>}
       <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
         <thead><tr style={theadH?{height:theadH}:{}}>
-          <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,whiteSpace:"nowrap",verticalAlign:"bottom"}}>
+          <th style={{position:"sticky",left:0,...(maxH?{top:0,zIndex:3}:{zIndex:2}),background:CRD,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,whiteSpace:"nowrap",verticalAlign:"bottom"}}>
             {sectionLabel&&<div style={{fontSize:10,fontWeight:700,color:"var(--c-text2)",marginBottom:4}}>{sectionLabel}</div>}
             日付
           </th>
-          {heatHours.map(hr=><th key={hr} style={{minWidth:22,padding:"2px 1px",fontSize:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500,verticalAlign:"bottom"}}>{hr}</th>)}
+          {heatHours.map(hr=><th key={hr} style={{minWidth:22,padding:"2px 1px",fontSize:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500,verticalAlign:"bottom",...(maxH?{position:"sticky",top:0,zIndex:2}:{})}}>{hr}</th>)}
         </tr></thead>
         <tbody>{dates.map(date=>{
           const d=pd(date);const day=d.getDay();const isHol=isHoliday(date);
@@ -347,6 +348,12 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     syncingRef.current=true;
     [mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef].forEach(r=>{if(r.current&&r.current!==src)r.current.scrollLeft=src.scrollLeft;});
     requestAnimationFrame(()=>{syncingRef.current=false;});
+  },[]);
+  // 縦スクロール同期（メイングリッド⇔左右ヒートマップ。同値代入はscrollイベントを発火しないためループしない）
+  const kitHeatRef=useRef(null);
+  const hallHeatRef=useRef(null);
+  const syncScrollV=useCallback((src)=>{
+    [mainScrollRef,kitHeatRef,hallHeatRef].forEach(r=>{if(r.current&&r.current!==src&&r.current.scrollTop!==src.scrollTop)r.current.scrollTop=src.scrollTop;});
   },[]);
 
   const toDecimal=t=>{if(!t)return"";const[h,m]=t.split(":").map(Number);return m===0?String(h):String(h+m/60);};
@@ -767,7 +774,11 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   useEffect(()=>{
     if(gridBodyRef.current){
       const rows=gridBodyRef.current.querySelectorAll("tr");
-      if(rows.length>=2){
+      if(rows.length>=4){
+        // 日付1件=2行のペア間の実ストライドで測る（h1+h2の合算はborder-collapseの共有ボーダー分がズレて累積する）
+        const stride=rows[2].getBoundingClientRect().top-rows[0].getBoundingClientRect().top;
+        if(stride>0)setMeasuredRowH(stride);
+      }else if(rows.length>=2){
         const h1=rows[0].getBoundingClientRect().height;
         const h2=rows[1].getBoundingClientRect().height;
         if(h1>0&&h2>0)setMeasuredRowH(h1+h2);
@@ -1110,7 +1121,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
 
           {/* === 左パネル: キッチン熱マップ（通常表示+split時のみ） === */}
           {hasPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
-            <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="キッチン" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>
+            <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="キッチン" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} scrollRef={kitHeatRef} onScroll={e=>syncScrollV(e.currentTarget)} maxH="70vh"/>
           </div>}
 
           {/* === 中央: グリッド + 集計 === */}
@@ -1118,7 +1129,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
 
           {/* ===メイングリッド（SL列廃止・日付のみstickyで15名対応）=== */}
           {/* overflowXが"auto"だとoverflowYも暗黙にautoへ昇格し、maxHeightがないと内部スクロールが発生せずposition:stickyのtopが機能しない。名前行を画面上端に固定するためmaxHeightで実スクロール領域にする */}
-          <div ref={mainScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",overflowY:"auto",maxHeight:"70vh",border:BD,borderRadius:8,marginBottom:16}}>
+          <div ref={mainScrollRef} onScroll={e=>{syncScrollH(e.currentTarget);syncScrollV(e.currentTarget);}} style={{overflowX:fitAll?"hidden":"auto",overflowY:"auto",maxHeight:"70vh",border:BD,borderRadius:8,marginBottom:16}}>
             <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
               <thead ref={gridTheadRef}>
                 <tr>
@@ -1234,7 +1245,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
 
           {/* === 右パネル: ホール熱マップ（通常表示+split時のみ） === */}
           {hasPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
-            <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="ホール" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>
+            <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="ホール" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} scrollRef={hallHeatRef} onScroll={e=>syncScrollV(e.currentTarget)} maxH="70vh"/>
           </div>}
 
         </div>
