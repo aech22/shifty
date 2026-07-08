@@ -191,6 +191,67 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
   );
 }
 
+// 時間帯別出勤人数（ヒートマップ）。ShiftEditTab の外（モジュールスコープ）で定義しコンポーネント型を固定する。
+// ShiftEditTab内で定義すると親の再レンダー（セル選択等）のたびに新しい関数=新しい型になり、
+// Reactが毎回このサブツリーをアンマウント→再マウントしてスクロール位置がリセットされてしまうため。
+function HeatTable({label,section,maxC,rowH,theadH,sectionLabel,dates,heatHours,countHeat,hBg}){
+  const BD="1px solid var(--c-border)",BD2="1px solid var(--c-border2)",CRD="var(--c-card)";
+  const fmtDL=date=>{const d=pd(date);return`${d.getDate()}(${WD[d.getDay()]})`;};
+  return(
+    <div style={{overflowX:"auto",border:BD,borderRadius:8,flex:rowH?undefined:1,minWidth:rowH?undefined:200}}>
+      {label&&<div style={{fontSize:12,fontWeight:700,padding:"4px 8px",borderBottom:BD,color:"var(--c-text2)"}}>{label}</div>}
+      <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
+        <thead><tr style={theadH?{height:theadH}:{}}>
+          <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,whiteSpace:"nowrap",verticalAlign:"bottom"}}>
+            {sectionLabel&&<div style={{fontSize:10,fontWeight:700,color:"var(--c-text2)",marginBottom:4}}>{sectionLabel}</div>}
+            日付
+          </th>
+          {heatHours.map(hr=><th key={hr} style={{minWidth:22,padding:"2px 1px",fontSize:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500,verticalAlign:"bottom"}}>{hr}</th>)}
+        </tr></thead>
+        <tbody>{dates.map(date=>{
+          const d=pd(date);const day=d.getDay();const isHol=isHoliday(date);
+          const dc=(day===0||isHol)?"#e53935":day===6?"#1976d2":"var(--c-text)";
+          return(<tr key={date} style={rowH?{height:rowH}:{}}>
+            <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:15,fontWeight:600,color:dc,borderBottom:BD,whiteSpace:"nowrap",verticalAlign:"middle"}}>{fmtDL(date)}</td>
+            {heatHours.map((hr,hi)=>{const n=countHeat(section,date,hr);return(
+              <td key={hi} style={{minWidth:22,padding:"2px 1px",textAlign:"center",fontSize:11,borderLeft:BD,borderBottom:BD,background:hBg(n,maxC),color:n===0?"var(--c-text4)":"var(--c-text)",fontWeight:n>0?600:400,verticalAlign:"middle"}}>{n||""}</td>
+            );})}
+          </tr>);
+        })}</tbody>
+      </table>
+    </div>
+  );
+}
+
+// 集計表：scrollRefを外から渡してスクロール同期、sticky背景を確実に塗る。
+// HeatTable と同じ理由でモジュールスコープに固定（親の再レンダーで型が変わりスクロール位置がリセットされるのを防ぐ）。
+function SummaryTable({title,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols,spacerTh,spacerCell,colW,VTH}){
+  const BD="1px solid var(--c-border)",BD2="1px solid var(--c-border2)",CRD="var(--c-card)";
+  const fmtH4=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;if(h>=100)return String(h);return m===0?String(h):`${h}:${String(m).padStart(2,"0")}`;};
+  return(
+    <div style={{marginBottom:16}}>
+      <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>{title}</div>
+      <div ref={scrollRef} onScroll={onScroll} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8}}>
+        <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
+          <thead><tr>
+            <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:0,fontSize:11,fontWeight:600,borderBottom:BD2,width:90,minWidth:90,maxWidth:90}}><div style={{width:90,padding:"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{rowLabel}</div></th>
+            {mapGridCols(name=>VTH(name),spacerTh)}
+          </tr></thead>
+          <tbody>{rows.map(row=>{
+            const bg=row._bg||"transparent";const stickyBg=row._bg?`linear-gradient(${row._bg},${row._bg}),${CRD}`:CRD;
+            return(<tr key={row.id} style={{background:bg}}>
+              <td style={{position:"sticky",left:0,background:stickyBg,zIndex:1,padding:0,fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,width:90,minWidth:90,maxWidth:90}}><div style={{width:90,padding:"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{row.label}</div></td>
+              {mapGridCols(name=>{const min=row.getMin(name);const vio=row._violateFn?row._violateFn(name,min):false;const cellBg=vio?"rgba(255,71,87,.15)":bg;return(
+                <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:"border-box",padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:cellBg,fontWeight:(row._bold||vio)&&min>0?700:400,color:min>0?(vio?"#FF4757":(row._color||"var(--c-text2)")):"var(--c-text4)"}}>{min>0?fmtH4(min):""}</td>
+              );},spacerCell)}
+            </tr>);
+          })}</tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ===== シフト作成タブ =====
 function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,shopName,onUpgrade,allLinkedShops=[]}){
   const firstPid=(periods[0]||{}).id||"";
@@ -644,54 +705,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     }
   },[selPid,dates.length,colW]);
 
-  const HeatTable=({label,section,maxC,rowH,theadH,sectionLabel})=>(
-    <div style={{overflowX:"auto",border:BD,borderRadius:8,flex:rowH?undefined:1,minWidth:rowH?undefined:200}}>
-      {label&&<div style={{fontSize:12,fontWeight:700,padding:"4px 8px",borderBottom:BD,color:"var(--c-text2)"}}>{label}</div>}
-      <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
-        <thead><tr style={theadH?{height:theadH}:{}}>
-          <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,whiteSpace:"nowrap",verticalAlign:"bottom"}}>
-            {sectionLabel&&<div style={{fontSize:10,fontWeight:700,color:"var(--c-text2)",marginBottom:4}}>{sectionLabel}</div>}
-            日付
-          </th>
-          {heatHours.map(hr=><th key={hr} style={{minWidth:22,padding:"2px 1px",fontSize:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500,verticalAlign:"bottom"}}>{hr}</th>)}
-        </tr></thead>
-        <tbody>{dates.map(date=>{
-          const d=pd(date);const day=d.getDay();const isHol=isHoliday(date);
-          const dc=(day===0||isHol)?"#e53935":day===6?"#1976d2":"var(--c-text)";
-          return(<tr key={date} style={rowH?{height:rowH}:{}}>
-            <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:15,fontWeight:600,color:dc,borderBottom:BD,whiteSpace:"nowrap",verticalAlign:"middle"}}>{fmtDL(date)}</td>
-            {heatHours.map((hr,hi)=>{const n=countHeat(section,date,hr);return(
-              <td key={hi} style={{minWidth:22,padding:"2px 1px",textAlign:"center",fontSize:11,borderLeft:BD,borderBottom:BD,background:hBg(n,maxC),color:n===0?"var(--c-text4)":"var(--c-text)",fontWeight:n>0?600:400,verticalAlign:"middle"}}>{n||""}</td>
-            );})}
-          </tr>);
-        })}</tbody>
-      </table>
-    </div>
-  );
-
-  // 集計表：scrollRefを外から渡してスクロール同期、sticky背景を確実に塗る
-  const SummaryTable=({title,rowLabel,rows,scrollRef,onScroll})=>(
-    <div style={{marginBottom:16}}>
-      <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>{title}</div>
-      <div ref={scrollRef} onScroll={onScroll} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8}}>
-        <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
-          <thead><tr>
-            <th style={{position:"sticky",left:0,background:CRD,zIndex:2,padding:0,fontSize:11,fontWeight:600,borderBottom:BD2,width:90,minWidth:90,maxWidth:90}}><div style={{width:90,padding:"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{rowLabel}</div></th>
-            {mapGridCols(name=>VTH(name),spacerTh)}
-          </tr></thead>
-          <tbody>{rows.map(row=>{
-            const bg=row._bg||"transparent";const stickyBg=row._bg?`linear-gradient(${row._bg},${row._bg}),${CRD}`:CRD;
-            return(<tr key={row.id} style={{background:bg}}>
-              <td style={{position:"sticky",left:0,background:stickyBg,zIndex:1,padding:0,fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,width:90,minWidth:90,maxWidth:90}}><div style={{width:90,padding:"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{row.label}</div></td>
-              {mapGridCols(name=>{const min=row.getMin(name);const vio=row._violateFn?row._violateFn(name,min):false;const cellBg=vio?"rgba(255,71,87,.15)":bg;return(
-                <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:"border-box",padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:cellBg,fontWeight:(row._bold||vio)&&min>0?700:400,color:min>0?(vio?"#FF4757":(row._color||"var(--c-text2)")):"var(--c-text4)"}}>{min>0?fmtH4(min):""}</td>
-              );},spacerCell)}
-            </tr>);
-          })}</tbody>
-        </table>
-      </div>
-    </div>
-  );
+  // HeatTable / SummaryTable はモジュールスコープに移動済み（スクロール位置リセットバグ対策）
 
   // 期間行：前半/後半/月計を常に3行表示
   const mo2=period?pd(period.startDate).getMonth()+1:0;
@@ -1013,7 +1027,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
 
           {/* === 左パネル: キッチン熱マップ（通常表示+split時のみ） === */}
           {hasPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
-            <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="キッチン"/>
+            <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="キッチン" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>
           </div>}
 
           {/* === 中央: グリッド + 集計 === */}
@@ -1104,13 +1118,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           {!hasPanel&&<div style={{marginBottom:16}}>
             <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>時間帯別出勤人数</div>
             <div style={{display:"flex",flexDirection:"column",gap:10}}>
-              <HeatTable label={hasSplit?"キッチン":""} section="kit" maxC={kitMax}/>
-              {hasSplit&&<HeatTable label="ホール" section="hall" maxC={hallMax}/>}
+              <HeatTable label={hasSplit?"キッチン":""} section="kit" maxC={kitMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>
+              {hasSplit&&<HeatTable label="ホール" section="hall" maxC={hallMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>}
             </div>
           </div>}
 
           {/* ===期間別勤務時間（前半/後半/月計を常に3行）=== */}
-          <SummaryTable title="期間別勤務時間" rowLabel="期間" scrollRef={periodScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} rows={periodRows}/>
+          <SummaryTable title="期間別勤務時間" rowLabel="期間" scrollRef={periodScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} rows={periodRows} fitAll={fitAll} mapGridCols={mapGridCols} spacerTh={spacerTh} spacerCell={spacerCell} colW={colW} VTH={VTH}/>
 
           {/* ===週間勤務時間=== */}
           {weeks.length>0&&<SummaryTable
@@ -1118,6 +1132,12 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             rowLabel="週"
             scrollRef={weekScrollRef}
             onScroll={e=>syncScrollH(e.currentTarget)}
+            fitAll={fitAll}
+            mapGridCols={mapGridCols}
+            spacerTh={spacerTh}
+            spacerCell={spacerCell}
+            colW={colW}
+            VTH={VTH}
             rows={[...weeks.map(monStr=>{
               const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);
               const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};
@@ -1130,7 +1150,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
 
           {/* === 右パネル: ホール熱マップ（通常表示+split時のみ） === */}
           {hasPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
-            <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="ホール"/>
+            <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="ホール" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>
           </div>}
 
         </div>
