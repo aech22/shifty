@@ -41,6 +41,15 @@ function App(){
   const[periods,setPeriods]=useState([]);
   const[staffList,setStaffList]=useState([]);
   const[subs,setSubs]=useState([]);
+  // subs購読の期間ベース絞り込み用（直近3ヶ月＋アクティブ期間のみ常時購読。詳細はstartSubscriptions）
+  const subsMapRef=useRef({});          // subId→sub（複数期間購読のマージ先）
+  const subsListenersRef=useRef({});    // periodId→Firebaseクエリref（期間ごとのon購読）
+  const periodsForSubsRef=useRef([]);   // reconcileが参照する最新periods
+  const apidRef=useRef(null);           // reconcileが参照する最新apid
+  const pastSubsLoadedRef=useRef(false);// 過去参照ボタンで全期間購読に切替済みか
+  const subsSidRef=useRef(null);        // 現在subsを購読中のshopId（店舗切替後の遅延コールバック無視用）
+  const reconcileSubsRef=useRef(null);  // startSubscriptions内で定義するreconcile関数
+  const[pastSubsLoaded,setPastSubsLoaded]=useState(false); // 過去参照ボタン表示制御用
   // URLトークンがある場合はapidもPhase1で確定させる
   const[apid,setApid]=useState(()=>_hasUrlToken?null:ssGet(SS_APID,null));
   const[urlResolved,setUrlResolved]=useState(false);
@@ -292,6 +301,13 @@ function App(){
     activeSubsRef.current.forEach(r=>r.off());
     activeSubsRef.current=[];
     const refs=activeSubsRef.current;
+    // subs期間別購読もクリア（店舗切替時に前店舗のリスナー・マージ結果を持ち越さない）
+    Object.values(subsListenersRef.current).forEach(q=>{try{q.off();}catch{}});
+    subsListenersRef.current={};
+    subsMapRef.current={};
+    periodsForSubsRef.current=[]; // 前店舗のperiodsで購読を張らないようクリア
+    subsSidRef.current=targetSid;
+    pastSubsLoadedRef.current=false; setPastSubsLoaded(false);
     const on=(path,cb)=>{
       const r=firebaseDB.ref(path);
       r.on("value",snap=>cb(snap.val()),err=>console.warn("購読失敗:",path,err));
@@ -334,6 +350,9 @@ function App(){
         arr.forEach(p=>{ if(!p.shopId) p.shopId=targetSid; });
         arr.sort((a,b)=>new Date(b.startDate||0)-new Date(a.startDate||0));
         setPeriods(arr); ls(storeKey(targetSid,"periods_v6"),arr);
+        // 期間の増減に追随してsubsの期間別購読を張り替える
+        periodsForSubsRef.current=arr;
+        reconcileSubsRef.current&&reconcileSubsRef.current();
       }
     });
     // staff
@@ -345,16 +364,47 @@ function App(){
       setStaffList(arr); ls(storeKey(targetSid,"staff_v6"),arr);
     });
     // subs（リロード時にキャッシュを先に表示してからFirebaseで上書き）
+    // 全期間を一括購読するのではなく、期間ベースで直近3ヶ月＋アクティブ期間だけを購読しDL量を抑える。
+    // 過去参照ボタン押下時（pastSubsLoaded）は全期間を購読する。
     setSubs(lg(storeKey(targetSid,"subs_v6"),[]));
-    on(fbPath(targetSid,"subs"),val=>{
-      if(!val){ setSubs([]); ls(storeKey(targetSid,"subs_v6"),[]); return; }
-      const arr=typeof val==="object"&&!Array.isArray(val)
-        ?Object.values(val).filter(s=>s&&s.id)
-        :(Array.isArray(val)?val:Object.values(val)).filter(s=>s&&s.id);
+    const flushSubs=()=>{
+      const arr=Object.values(subsMapRef.current).filter(s=>s&&s.id);
       arr.sort((a,b)=>new Date(b.submittedAt)-new Date(a.submittedAt));
       setSubs(arr); ls(storeKey(targetSid,"subs_v6"),arr);
-      dlog("subs受信:",arr.length,"件 sid=",targetSid);
-    });
+    };
+    const setPeriodSubs=(pid,val)=>{
+      // 当該periodIdの既存分をマップから除去してから今回分を反映
+      for(const id in subsMapRef.current){ if(subsMapRef.current[id].periodId===pid) delete subsMapRef.current[id]; }
+      if(val&&typeof val==="object"){ Object.values(val).forEach(s=>{ if(s&&s.id) subsMapRef.current[s.id]=s; }); }
+      flushSubs();
+    };
+    const reconcileSubs=()=>{
+      if(subsSidRef.current!==targetSid)return; // 店舗切替後の遅延コールバックは無視
+      const all=periodsForSubsRef.current||[];
+      const wantAll=pastSubsLoadedRef.current;
+      const cutoff=subsWindowCutoff();
+      const active=apidRef.current;
+      const want=new Set();
+      all.forEach(p=>{ if(!p||!p.id)return; if(wantAll||p.id===active||(p.startDate&&p.startDate>=cutoff)) want.add(p.id); });
+      if(active) want.add(active); // アクティブ期間（過去期間のスタッフURL含む）は常に購読
+      // 追加: まだ購読していない対象期間
+      want.forEach(pid=>{
+        if(subsListenersRef.current[pid])return;
+        const q=firebaseDB.ref(fbPath(targetSid,"subs")).orderByChild("periodId").equalTo(pid);
+        q.on("value",snap=>setPeriodSubs(pid,snap.val()),err=>console.warn("subs購読失敗:",pid,err));
+        subsListenersRef.current[pid]=q;
+      });
+      // 除去: 対象外になった期間の購読とマージ結果
+      Object.keys(subsListenersRef.current).forEach(pid=>{
+        if(want.has(pid))return;
+        try{subsListenersRef.current[pid].off();}catch{}
+        delete subsListenersRef.current[pid];
+        for(const id in subsMapRef.current){ if(subsMapRef.current[id].periodId===pid) delete subsMapRef.current[id]; }
+      });
+      flushSubs();
+    };
+    reconcileSubsRef.current=reconcileSubs;
+    reconcileSubs(); // periods未着でも空実行（periods着信・apid確定で再実行される）
     // accounts/<shopId>/plan（プラン読み込み）
     on(`accounts/${targetSid}/plan`,val=>{
       setPlan(DEV_PLAN_OVERRIDE||(val&&["free","pro","premium"].includes(val)?val:"free"));
@@ -372,6 +422,17 @@ function App(){
     firebaseDB.ref(fbPath(targetSid,"settings")).once("value").then(snap=>{
       if(!snap.val()) firebaseDB.ref(fbPath(targetSid,"settings")).set(makeSettings(targetSid)).catch(()=>{});
     }).catch(()=>{});
+  },[]);
+
+  // apid（アクティブ期間）変更に追随してsubs期間別購読を張り替える。
+  // 過去期間のスタッフURLでもアクティブ期間が購読対象に入るようにする。
+  useEffect(()=>{ apidRef.current=apid; reconcileSubsRef.current&&reconcileSubsRef.current(); },[apid]);
+
+  // 過去参照ボタン: 3ヶ月より古い期間の提出データもオンデマンドで購読対象に加える（全期間購読へ切替）。
+  const loadPastSubs=useCallback(()=>{
+    pastSubsLoadedRef.current=true;
+    setPastSubsLoaded(true);
+    reconcileSubsRef.current&&reconcileSubsRef.current();
   },[]);
 
   // ===================================================================
@@ -1426,6 +1487,7 @@ function App(){
                 startSubscriptions(id);
               }}
               startSubscriptions={startSubscriptions}
+              onLoadPastSubs={loadPastSubs} pastSubsLoaded={pastSubsLoaded}
               logout={doLogout} logoutShop={doShopLogout} authUser={authUser} syncStatus={syncStatus}
               allLinkedShops={allLinkedShops}
               onSwitchToShop={id=>{

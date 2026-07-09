@@ -6,7 +6,7 @@
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,globalTemplates,saveGlobalTemplates,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,globalTemplates,saveGlobalTemplates,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
@@ -179,8 +179,8 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           tt(`✓ ${oldName} → ${newName} に変更しました`);
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
-        {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan}/>}
-        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops}/>}
+        {tab==="submissions"&&<SubsTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
+        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
         {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
         {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} staffList={staffList} adminCode={adminCode} ownerReadOnly={ownerReadOnly}/>}
@@ -319,7 +319,9 @@ function GridLegend({abbrToShop}){
   );
 }
 
-function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,shopName,onUpgrade,allLinkedShops=[]}){
+function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,shopName,onUpgrade,allLinkedShops=[],onLoadPastSubs,pastSubsLoaded=false}){
+  // 直近3ヶ月より古い期間があり、まだ過去分未読なら「過去参照」ボタンを出す（古い期間のシフトを見るため）
+  const hasOlderPeriods=periods.some(p=>p&&p.startDate&&p.startDate<subsWindowCutoff());
   const firstPid=(periods[0]||{}).id||"";
   const[selPid,setSelPid]=useState(firstPid);
   const[localEdits,setLocalEdits]=useState({});
@@ -823,21 +825,28 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return hasVal;
   };
   // 休みカウント: 17時基準で前半/後半それぞれ出勤なし=0.5、終日なし=1
-  const restCounts=React.useMemo(()=>{
-    const result={};
+  // 併せて 1日休み(その日の休み値=1)・半日休み(その日の休み値=0.5) の回数も集計する
+  // （半日休みは 0.5 を合算せず「回数」として数える: ランチ休み+ディナー休みで半休2回=2）
+  const {restCounts,fullDayCounts,halfDayCounts}=React.useMemo(()=>{
+    const rest={},full={},half={};
     realStaff.forEach(name=>{
-      let count=0;
+      let count=0,fd=0,hd=0;
       dates.forEach(date=>{
         const shift=_getSub(name)?.shifts?.[date];
         const s=parseFloat(getHeatVal(name,date,"start"));
         const e=parseFloat(getHeatVal(name,date,"end"));
-        if((!shift||shift.status==="holiday")&&isNaN(s)&&isNaN(e)){count+=1;return;}
-        if(!isNaN(s)&&s<17){}else{count+=0.5;}
-        if(!isNaN(e)&&e>17){}else{count+=0.5;}
+        let day=0;
+        if((!shift||shift.status==="holiday")&&isNaN(s)&&isNaN(e)){day=1;}
+        else{
+          if(!(!isNaN(s)&&s<17))day+=0.5;
+          if(!(!isNaN(e)&&e>17))day+=0.5;
+        }
+        count+=day;
+        if(day===1)fd++;else if(day===0.5)hd++;
       });
-      result[name]=count;
+      rest[name]=count;full[name]=fd;half[name]=hd;
     });
-    return result;
+    return {restCounts:rest,fullDayCounts:full,halfDayCounts:half};
   },[realStaff,dates,subs,heatEdits,selPid]);
   // 連勤カウント: 期間内の最大連続出勤日数（0.5出勤も出勤扱い）
   const consecCounts=React.useMemo(()=>{
@@ -1081,7 +1090,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     h+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;"></th>`;
     cols.forEach(nm=>{if(isSpacer(nm)){h+=`<th style="border:${BDp};width:26px;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";h+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:${vfontSize(nm,10)}px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
     h+='</tr></thead><tbody>';
-    const rows=[["休みカウント",nm=>{const v=restCounts[nm]||0;return v%1===0?v:v.toFixed(1);}],["連勤カウント",nm=>consecCounts[nm]||0]];
+    const rows=[["1日休み",nm=>fullDayCounts[nm]||0],["半日休み",nm=>halfDayCounts[nm]||0],["休みカウント",nm=>{const v=restCounts[nm]||0;return v%1===0?v:v.toFixed(1);}],["連勤カウント",nm=>consecCounts[nm]||0]];
     rows.forEach(([lbl,valFn])=>{
       h+=`<tr><td style="border:${BDp};padding:3px 6px;background:#f7f7f7;font-weight:600;white-space:nowrap;">${esc(lbl)}</td>`;
       cols.forEach(nm=>{if(isSpacer(nm)){h+=`<td style="border:${BDp};"></td>`;return;}h+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${esc(valFn(nm))}</td>`;});
@@ -1190,6 +1199,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           style={{fontSize:16,padding:"4px 8px",border:BD,borderRadius:6,background:"var(--c-input)",color:"var(--c-text)"}}>
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
         </select>
+        {onLoadPastSubs&&!pastSubsLoaded&&hasOlderPeriods&&<button onClick={onLoadPastSubs}
+          style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+          過去データ読込
+        </button>}
         <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPremium?("例: 9, 9.5, 930, 9:30"+(Object.keys(abbrToShop).length>0?" / 略称でヘルプ（例: 9三）":"")):"閲覧のみ（編集はPremiumプランで）"}</span>
         <button onClick={()=>setFitAll(v=>!v)}
           style={{padding:"5px 10px",background:fitAll?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
@@ -1340,6 +1353,22 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           <div ref={restScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
             <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
               <tbody>
+                <tr>
+                  <td style={{...SD,fontWeight:600,borderBottom:BD,background:CRD,fontSize:11}}>1日休み</td>
+                  {mapGridCols(name=>(
+                    <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
+                      {fullDayCounts[name]||0}
+                    </td>
+                  ),spacerTh)}
+                </tr>
+                <tr>
+                  <td style={{...SD,fontWeight:600,borderBottom:BD,background:CRD,fontSize:11}}>半日休み</td>
+                  {mapGridCols(name=>(
+                    <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
+                      {halfDayCounts[name]||0}
+                    </td>
+                  ),spacerTh)}
+                </tr>
                 <tr>
                   <td style={{...SD,fontWeight:600,borderBottom:BD,background:CRD,fontSize:11}}>休みカウント</td>
                   {mapGridCols(name=>(
@@ -2341,7 +2370,9 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
 }
 
 // ===== 提出一覧タブ =====
-function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,plan="free"}){
+function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,plan="free",onLoadPastSubs,pastSubsLoaded=false}){
+  // 直近3ヶ月より古い期間が存在し、まだ過去分を読み込んでいなければ「過去参照」ボタンを出す
+  const hasOlderPeriods=periods.some(p=>p&&p.startDate&&p.startDate<subsWindowCutoff());
   const[fn,setFn]=useState(""),[fp,setFp]=useState("all");
   const fpInit=useRef(false);
   useEffect(()=>{if(!fpInit.current&&periods.length>0){fpInit.current=true;const lat=[...periods].sort((a,b)=>new Date(b.startDate||0)-new Date(a.startDate||0))[0];if(lat)setFp(lat.id);}},[periods.length]);
@@ -2381,6 +2412,9 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
       </select>
     </div>
     <div style={{marginBottom:12,fontSize:13,color:"var(--c-text3)"}}>件数：<strong style={{color:"#FFA070",fontSize:16}}>{fil.length}</strong></div>
+    {onLoadPastSubs&&(pastSubsLoaded
+      ?<div style={{marginBottom:12,fontSize:12,color:"var(--c-text3)"}}>過去のすべての提出データを読み込みました</div>
+      :hasOlderPeriods&&<button onClick={onLoadPastSubs} style={{...AGray,marginBottom:12,fontSize:13,padding:"8px 14px"}}>3ヶ月より前の提出データも読み込む</button>)}
     <div style={{background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:14,overflow:"hidden"}}>
       <div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
