@@ -1306,10 +1306,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             </table>
           </div>
 
-          {/* ===時間帯別出勤人数 (サイドパネル非表示時 → グリッド下にキッチン→ホールの順で縦に表示) === */}
+          {/* ===時間帯別出勤人数 (サイドパネル非表示時 → グリッド下にキッチン・ホールを横に並べて表示) === */}
           {!hasPanel&&<div style={{marginBottom:16}}>
             <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>時間帯別出勤人数</div>
-            <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            <div style={{display:"flex",flexDirection:"row",gap:10}}>
               <HeatTable label={hasSplit?"キッチン":""} section="kit" maxC={kitMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>
               {hasSplit&&<HeatTable label="ホール" section="hall" maxC={hallMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>}
             </div>
