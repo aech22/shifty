@@ -525,34 +525,58 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-08 自動実行 #8）
+## Shifty バグチェックレポート（2026-07-09 自動実行 #10）
 
 ### 修正済み
-
-- **🟡 iOS Safariズーム対策のfontSize<16残存箇所**（app-staff.js:347,368,465、app-admin.js:2620,2653、commit b7c084d）
-  2026-07-06に「全箇所解消済み」とされていたが、5分割後の全ファイルをinput/select/textarea単位で機械的に再スキャンした結果、StaffView（スタッフのシフト提出画面本体）の出退勤時間select×2箇所（fontSize:15）とコメント欄textarea（fontSize:14）、およびapp-admin.jsのスタッフ属性名rename用input×2箇所（`AI`定数のfontSize:16を`fontSize:13`で上書き）が対象漏れだった。StaffView側3箇所はスタッフが毎回操作する最頻出UIで影響大。全5箇所をfontSize:16に統一。
-  検証: `npm test` 22件全パス、`npx eslint app-*.js` 0 errors 97 warnings。開発用Firebaseにテスト店舗を作成しStaffViewのコメント欄textareaの実測`font-size`が16pxであることをブラウザ実機確認（select側は期間データ未設定で画面に出現せずソース確認のみ）。検証用データは削除済み（owners登録・global/shopsスタブのみdev環境に残存・実害なし）。
+（今回の実行では修正なし）
 
 ### 要確認（未修正）
 
-- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js）
-  non-Premiumユーザーは全行「-」表示。機能上の問題はないが視覚的に不要な列が表示される軽微なUX問題。継続監視中。
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2444、継続監視中・変更なし）
+
+### 重点調査: 前回巡回（#9）以降の新規6コミット
+
+前回巡回（#9）は`8b22362`までを検証済みだったため、今回はそれ以降の6コミット（e288107〜6329b52。操作方法一覧の並び順変更・キッチン/ホール横並びヒートマップ・片側入力ヒートマップ補完・変更マークのダブル→トリプルクリック化・ランチ終わり/ディナー始まりの候補タブ連動算出・別名提出の上書きバグ修正）を静的レビュー。
+
+- 別名提出の上書きバグ修正（app-admin.js:485-495、commit 6329b52）: `applyEditToSubs`の編集対象sub検索が登録名の完全一致のみだったため、別名提出者の編集が新規subを作ってしまい元の提出が見えなくなる不整合があった。`_getSub`と同じ完全一致→別名フォールバックのロジックに統一。突合キー・フォールバック順序が`_getSub`と一致していることを確認済み。
+- StaffHdr/SmModalのsource:"grid"除外漏れ（app-staff.js:412,487、commit 6329b52）: シフト作成タブが直接作成する管理者入力用sub（`source:"grid"`）がスタッフ側の「提出済み」バッジ・一覧に誤カウントされないよう、SubsTabと同じ除外条件を追加。実提出時に自動的に「提出済み」へ遷移する設計も確認。
+- 片側入力ヒートマップ補完（app-admin.js:646-654,671、commit 908e0c5・c04103a）: 補完値（ランチ終わり/ディナー始まり）が休憩控除・残業延長の対象から正しく除外されるロジックであることを確認。
 
 ### 追加確認
-- Firebase書き込みパターン: `subs`の`set()`全体上書きなし。削除操作すべて`deletedId`渡し/`remove()`で正しく実装
-- isPro/isPremium分離: 正しく分離済み
-- Cloud Functions: secrets抜け漏れなし（STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET/SMTP_USER/SMTP_PASS/SURVEY_SEND_TOKEN）、`.delete()`誤用なし
-- DEV_MODE（app-core.js:12、式のまま）正常
-- accounts/global-shops全件読み取りなし
+- `npm test`: 30件全パス（前回#9と同数）
+- `npx eslint app-*.js`: 0 errors 99 warnings（既存no-unused-vars誤検知のみ）
+- Firebase書き込みパターン: `subs`は`update()`のみで`set()`全体上書きなし
+- isPro/isPremium誤用なし、DEV_MODE（app-core.js:12、式のまま）正常
+- Cloud Functions secrets抜け漏れなし、`.delete()`誤用なし
+- fontSize<16 の input/select/textarea: 新規箇所なし
 
 ### 異常なし
-クリティカル（🔴）の問題はなし。中程度（🟡）1件を修正済み。develop→push済み。main反映はユーザー確認待ち。
+クリティカル（🔴）・中程度（🟡）の新規問題はなし。develop→push不要（コード変更なし。ローカルはorigin/developから1コミット遅れていたためpullのみ実施）。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 -
 -
 -
@@ -690,6 +714,36 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+---
+
+## 🟡 データ保存上限②: subs購読を直近3ヶ月に絞り込み＋過去参照ボタン
+
+**目的**: クライアントが起動時に `shops/{sid}/subs` を全期間ぶん購読しており、利用が長期化するほど毎セッションのダウンロード量とクライアント負荷が線形に増える。購読を直近分に絞ることで、データを削除せずに負荷問題を解決する（2026-07-09 保存上限計画の項目2）。
+**受け入れ条件**:
+- [ ] startSubscriptions の subs 購読を「期間の startDate が過去3ヶ月以内の期間に属する提出」相当に絞り込む（`.indexOn` 追加を含む。periodId ベースのクエリか、直近期間リストからの個別購読かは実装時に選択）
+- [ ] 週間勤務時間・最長連勤の前期間跨ぎ計算が従来どおり動く（3ヶ月窓が隣接前期間を含むことを確認）
+- [ ] 提出一覧・シフト作成タブに「過去参照ボタン（仮称）」を追加し、押すと3ヶ月より古い期間の提出データをオンデマンドで読み込んで閲覧できる
+- [ ] スタッフURL（過去期間のURLを開いた場合）でも該当期間の提出が表示される
+- [ ] database.rules.json の `.indexOn` 追加はクライアント配信後にデプロイする（リリース順序ルール厳守）
+**影響範囲**: app-main.js（startSubscriptions）、app-admin.js（SubsTab / ShiftEditTab のUI）、database.rules.json（.indexOn）
+**備考**: 実測（2026-07-09時点で本番24店舗）ではストレージ費は問題にならない。主目的はDL量とクライアント負荷の抑制。
+
+---
+
+## 🟢 データ保存上限④: 36ヶ月超のシフト期間データの自動削除
+
+**目的**: シフト期間・提出データの保存期間を36ヶ月（労基法の帳簿保存義務3年に整合）と定め、超過分を順次削除してデータの無限増加を止める（2026-07-09 保存上限計画の項目2・5）。
+**受け入れ条件**:
+- [ ] 上記①〜③（購読絞り込み・利用規約掲載）が完了していること。規約掲載前に削除を有効化しない
+- [ ] 日次Functionが endDate から36ヶ月を超えた期間について period・その期間の subs・`tokens/{urlToken}` を削除する（endDate が不正な期間はスキップしてログ）
+- [ ] まず「削除対象を数えてログに出すだけ」のdry-runモードでリリースし、アプリ内告知のうえ1ヶ月観察してから削除を有効化する
+- [ ] periodId が期間に紐付かない孤児 subs の扱い（削除対象に含めるか）を実装時に定義する
+- [ ] 日次スキャンが subs 全件を読まない設計にする（periods の endDate だけで対象を判定し、対象期間の subs のみ読む）
+**影響範囲**: functions/index.js（新規または purgeInactiveShops への追加）、告知UI（app-admin.js / app-staff.js）
+**備考**: 保存期間を課金軸・プラン差別化には使わない（全プラン共通の運用上限）。スタッフ人数上限は保留（理由: Proの「スタッフ無制限」の約束との衝突。残存リスク: 100人超店舗のデータ増だが負荷の支配項は保持期間側。再着手条件: ①実測で100人超店舗が出現しDL/負荷が問題化したとき ②プラン・価格改定を行うとき）。
+
+---
+
 ## 🟡 セキュリティ強化: 締めルールへの切り替え（猶予期間終了後）
 
 **目的**: 2026-07-07に実装したオーナー権限分離（Anonymous Auth + adminKey）の移行猶予を終了し、未claim店舗への書き込み許可ブランチを削除する。
@@ -745,6 +799,33 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ データ保存上限③: 利用規約の掲載（マイページ最下部にボタン）（2026-07-09）
+
+**目的**: データの定期削除は規約上の根拠なしに実施できない。キャンセルポリシー・データの扱い・保存期間（36ヶ月）を利用規約として明示する（2026-07-09 保存上限計画の項目4）。
+**受け入れ条件**:
+- [x] 利用規約の文面をユーザーが確認・承認済みであること（確定済み 2026-07-09・v1.0。正本: Obsidian `Projects/Shifty/利用規約.md`。名義=TODGE・税込表記・制定日2026-07-09）
+- [x] MyPageTab の一番下に「利用規約」を開くボタンを追加し、モーダル（TermsModal）で全文を表示する（本文はTERMS_TEXT定数として正本から一字一句転記。node差分チェックで正本と完全一致を確認済み）
+- [x] 文面にプラン・料金（第4条）・解約（第5条・Stripeカスタマーポータル）・返金なし（第5条2項）・データ保存期間（第6条・36ヶ月／Free店舗1年未更新削除・課金中対象外）・免責（第10条）が含まれる
+- [x] input/select/textarea は追加していない（対象外）
+**影響範囲**: app-admin.js（MyPageTab・TERMS_TEXT定数・TermsModalコンポーネントを新規追加）
+**備考**: モーダルはUpgradeModalと同様のオーバーレイ形式・pre-wrapでの全文スクロール表示。dev環境でPlaywright（Claude Preview）実機検証済み（デスクトップ・モバイル375px幅）。
+
+---
+
+### ✅ データ保存上限①: purgeInactiveShops の課金中店舗除外と孤児データ掃除（2026-07-09）
+
+**目的**: 1年未更新による店舗自動削除（purgeInactiveShops・稼働中）が課金中の店舗も削除対象にしており、削除されると stripeCustomerId が消えて「記録のない課金だけが続く」事故になり得る問題への対応。
+**受け入れ条件**:
+- [x] `accounts/{shopId}/plan` が "pro"/"premium" の店舗はアーカイブ・削除の対象外になる（plan未設定・"free" のみ対象。`accounts/{id}/plan` を毎ループ判定して除外）
+- [x] 店舗をアーカイブ→本削除する際、その店舗の periods の urlToken に対応する `tokens/{urlToken}` と `accounts/{shopId}` を同時に削除する（アーカイブ時点で削除。archived/ 退避時に periods から urlToken を回収）
+- [x] `inviteCodes` の expiresAt 切れ・`email_otps` の expiry 切れエントリを日次で削除する（期限フィールド欠損エントリも削除対象に含めた）
+- [x] `/global/shops` に載っていない `/shops` 配下の孤児店舗を洗い出して掃除する（2026-07-09 ユーザーが手動整理済み: テスト残骸42店舗＋関連tokens・accounts参照を削除し、本番は自己使用のpremium 13店舗のみに。再発防止として、走査起点を `global/shops` から `/shops` 本体に変更し、今後生まれる孤児も自動的に判定対象へ入るようにした）
+- [x] dry-run検証（合成データによるロジック単体検証・PASS）を実行し、誤爆がないことを確認してから本番デプロイした
+**影響範囲**: functions/index.js（purgeInactiveShops）のみ。クライアント変更なし
+**備考**: エミュレータ（RTDB emulatorはJava必須・環境にJava未インストール）とdev環境（Functionsデプロイ不可・Sparkプラン）の両方が使えなかったため、実際の分岐ロジックを合成データ（課金中/Free×新旧、孤児あり/なし、日付破損、expiresAt欠損等7パターン）に対して手動再現し全パスすることを確認するかたちでdry-run相当の検証を行った。本番Firebaseへの読み取りアクセスは自動分類器にブロックされたため実施していない（意図通り）。
+
+---
 
 ### ✅ 企業連携タブ新設＋他店舗ヘルプ表示＋店舗間シフト重複エラー（2026-07-08）
 
