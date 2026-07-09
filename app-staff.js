@@ -408,7 +408,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
 
 // ===== スタッフヘッダー =====
 function StaffHdr({ap,p0,pe,nd,subs,apid,onSm,shopName}){
-  const submitted=subs.filter(s=>s.periodId===apid);
+  // source:"grid"はシフト作成タブの管理者入力用sub（実際の提出ではない）なのでバッジ件数から除外する
+  const submitted=subs.filter(s=>s.periodId===apid&&s.source!=="grid");
   return(
     <div style={{background:"#f87036",boxShadow:"0 2px 12px rgba(248,112,54,.25)",padding:"12px 14px"}}>
       <div style={{maxWidth:560,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
@@ -481,7 +482,9 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
 // ============================================================
 function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onDeleteSub,plan="free"}){
   const period=periods.find(p=>p.id===apid);
-  const submitted=subs.filter(s=>s.periodId===apid);
+  // source:"grid"はシフト作成タブが未提出スタッフのセルに直接作成した管理者入力用のsub（実際の提出ではない）。
+  // スタッフ向けの提出状況一覧には表示しない（app-admin.jsのSubsTabと同じ除外基準）。
+  const submitted=subs.filter(s=>s.periodId===apid&&s.source!=="grid");
   const dates=period?gd(period.startDate,period.endDate):[];
   const[editTarget,setEditTarget]=useState(null);
   const submittedNames=submitted.map(s=>s.staffName);

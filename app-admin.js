@@ -291,6 +291,17 @@ function GridLegend({abbrToShop}){
         操作方法（セル入力コマンド・色の意味）
       </button>
       {open&&<div style={{padding:"0 14px 12px"}}>
+        <SecH>セルの色・記号</SecH>
+        {CELL_COLOR_LEGEND.map(c=>row(c.key,swatch(c.color,c.hatch),`${c.label} — ${c.desc}`))}
+        <SecH>セル内コマンド</SecH>
+        {CELL_COMMANDS.map(c=>row(c.key,<>{chip(c.usage)}{(c.color||c.hatch)?swatch(c.color,c.hatch):null}</>,`${c.label} — ${c.desc}`))}
+        {row("free",chip("9○○"),"時間+任意の文字 — メモとしてそのまま表示（特記の黄色背景）")}
+        <SecH>キー・マウス操作</SecH>
+        {row("k1",chip("Enter"),"次のセルへ移動して確定（出勤→退勤→翌日の出勤）")}
+        {row("k2",chip("Ctrl(⌘)+Enter"),"逆方向に移動して確定")}
+        {row("k3",lbl("トリプルクリック"),"変更マーク（緑）のオン/オフ。スマホはトリプルタップ")}
+        {row("k4",lbl("空にして確定"),"管理者入力を消去。スタッフ提出の休み希望があれば斜線が復元される")}
+        {row("k5",lbl("セル選択"),"スタッフが提出した元の値をツールチップに表示")}
         <SecH>時間の入力（出勤・退勤セル）</SecH>
         {row("t1",chip("9"),"9:00（1〜2桁は「時」）")}
         {row("t2",chip("930"),"9:30（3〜4桁は「時分」）")}
@@ -303,17 +314,6 @@ function GridLegend({abbrToShop}){
           </div>
           {abbrs.map(([a,s])=>row("ab_"+a,chip("9"+a),`${s.name} へのヘルプ`))}
         </React.Fragment>}
-        <SecH>セルの色・記号</SecH>
-        {CELL_COLOR_LEGEND.map(c=>row(c.key,swatch(c.color,c.hatch),`${c.label} — ${c.desc}`))}
-        <SecH>キー・マウス操作</SecH>
-        {row("k1",chip("Enter"),"次のセルへ移動して確定（出勤→退勤→翌日の出勤）")}
-        {row("k2",chip("Ctrl(⌘)+Enter"),"逆方向に移動して確定")}
-        {row("k3",lbl("トリプルクリック"),"変更マーク（緑）のオン/オフ。スマホはトリプルタップ")}
-        {row("k4",lbl("空にして確定"),"管理者入力を消去。スタッフ提出の休み希望があれば斜線が復元される")}
-        {row("k5",lbl("セル選択"),"スタッフが提出した元の値をツールチップに表示")}
-        <SecH>セル内コマンド</SecH>
-        {CELL_COMMANDS.map(c=>row(c.key,<>{chip(c.usage)}{(c.color||c.hatch)?swatch(c.color,c.hatch):null}</>,`${c.label} — ${c.desc}`))}
-        {row("free",chip("9○○"),"時間+任意の文字 — メモとしてそのまま表示（特記の黄色背景）")}
       </div>}
     </div>
   );
@@ -482,7 +482,17 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     // 管理者編集はadjustedXxxに保存（スタッフ提出のstart/endを保護）
     const adjField=field==="start"?"adjustedStart":"adjustedEnd";
     const nk=field==="start"?"adjustedStartNote":"adjustedEndNote";
-    const idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
+    let idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
+    if(idx===-1){
+      // 別名で提出済みの場合は表示解決(_getSub)と同じロジックでその提出を編集対象にする。
+      // ここでaliasを見ずに登録名一致だけで判定すると、別名提出者の編集がidx===-1に落ちて
+      // 登録名の別subを新規作成してしまい、_getSubの完全一致優先により元の提出が読めなくなる。
+      const aliases=staffAliases[name]||[];
+      for(const alias of aliases){
+        idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===alias);
+        if(idx!==-1)break;
+      }
+    }
     if(idx===-1){
       if(rest){
         // 休み希望(y)を未提出スタッフのセルに入力: adminRestのみ持つsubを新規作成
@@ -784,6 +794,12 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const spacerTh=(key,sticky=false)=>(<th key={key} style={{width:colW,minWidth:colW,maxWidth:colW,borderLeft:BD2,background:"var(--c-input2, var(--c-input))",padding:0,...(sticky?{position:"sticky",top:0,zIndex:3}:{})}}></th>);
   // gridStaffを列描画: spacer位置はspacerFnで空セル、実スタッフはrenderFnで描画
   const mapGridCols=(renderFn,spacerFn)=>gridStaff.map((name,i)=>isSpacer(name)?spacerFn(`sp${i}`):renderFn(name,i));
+  // キッチン/ホール絞り込み表示（片側パネルのみ）時: ヒートマップ+グリッドの塊が画面に収まるなら画面中央に配置する。
+  // 収まらない場合は現状どおりパネルを端に固定しグリッドを残り幅いっぱいに広げる（flex:1、内部は横スクロール）。
+  // fitAll（全員表示）時はグリッド自体が既にcenterWいっぱいに広がる設計のため対象外。
+  const singlePanel=panelCount===1&&!fitAll;
+  const gridContentW=90+colW*gridStaff.length;
+  const fitsCentered=singlePanel&&(panelW+4+gridContentW+24)<=window.innerWidth;
   const AI2={width:colW-3,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
   // 斜線スタイル: HDASH_IMG / hdashStyle はモジュールスコープ（GridLegendと共用）
   const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:16,fontWeight:600,borderRight:BD2};
@@ -1251,7 +1267,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       )}
 
       {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
-        <div style={useBreakout?{marginLeft:-(containerLeft+8),width:"100vw",paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:hasPanel?"flex":"block",alignItems:"flex-start",gap:4}:{}}>
+        <div style={useBreakout?{marginLeft:-(containerLeft+8),width:"100vw",paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:hasPanel?"flex":"block",justifyContent:fitsCentered?"center":"flex-start",alignItems:"flex-start",gap:4}:{}}>
 
           {/* === 左パネル: キッチン熱マップ（通常表示+split時、またはキッチン絞り込み時） === */}
           {kitShownAsPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
@@ -1259,7 +1275,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           </div>}
 
           {/* === 中央: グリッド + 集計 === */}
-          <div style={hasPanel?{flex:1,minWidth:0}:{}}>
+          {/* fitsCentered時はwidthを明示指定する。GridLegend/集計表など幅auto(=block)の子要素の
+              max-content幅（折り返し前提の説明文など）に引きずられてflex:0 0 autoだけでは
+              グリッド表本来の幅に収まらないため、グリッドの実幅(gridContentW)で強制的に固定する */}
+          <div style={hasPanel?(fitsCentered?{flex:"0 0 auto",width:gridContentW,minWidth:0}:{flex:1,minWidth:0}):{}}>
 
           {/* ===メイングリッド（SL列廃止・日付のみstickyで15名対応）=== */}
           {/* overflowXが"auto"だとoverflowYも暗黙にautoへ昇格し、maxHeightがないと内部スクロールが発生せずposition:stickyのtopが機能しない。名前行を画面上端に固定するためmaxHeightで実スクロール領域にする */}
