@@ -99,6 +99,41 @@ test("getBreaksFor: 出勤開始が休憩開始以降 → 適用しない", () =
   );
 });
 
+test("getBreaksFor: 差し替え方式（属性一致のタグ付き休憩がある場合、タグなし休憩は適用しない）", () => {
+  const settings = {
+    breakTimes: { weekday: [
+      { start: "12:00", end: "13:00" },
+      { start: "12:30", end: "13:30", tags: ["employee"] },
+    ]},
+    staffAttributes: { "社員A": "employee", "バイトB": "parttime" },
+  };
+  const shift = { status: "work", start: "10:00", end: "22:00" };
+  // 社員A: タグ付き休憩のみ（タグなしは差し替えで除外）
+  assert.deepStrictEqual(
+    u.getBreaksFor(settings, "2026-07-06", "社員A", shift),
+    [{ start: "12:30", end: "13:30", tags: ["employee"] }]
+  );
+  // バイトB: 従来どおりタグなし休憩が適用
+  assert.deepStrictEqual(
+    u.getBreaksFor(settings, "2026-07-06", "バイトB", shift),
+    [{ start: "12:00", end: "13:00" }]
+  );
+});
+
+test("getBreaksFor: 差し替えは日区分単位（出勤開始フィルタでタグ付きが外れてもタグなしは復活しない）", () => {
+  const settings = {
+    breakTimes: { weekday: [
+      { start: "15:00", end: "16:00" },
+      { start: "12:00", end: "13:00", tags: ["employee"] },
+    ]},
+    staffAttributes: { A: "employee" },
+  };
+  assert.deepStrictEqual(
+    u.getBreaksFor(settings, "2026-07-06", "A", { status: "work", start: "13:00", end: "23:00" }),
+    []
+  );
+});
+
 test("isHoliday: 2026-01-01 = true（元日）", () => {
   assert.strictEqual(u.isHoliday("2026-01-01"), true);
 });
