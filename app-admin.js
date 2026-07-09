@@ -1090,7 +1090,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     h+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;"></th>`;
     cols.forEach(nm=>{if(isSpacer(nm)){h+=`<th style="border:${BDp};width:26px;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";h+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:${vfontSize(nm,10)}px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
     h+='</tr></thead><tbody>';
-    const rows=[["1日休み",nm=>fullDayCounts[nm]||0],["半日休み",nm=>halfDayCounts[nm]||0],["休みカウント",nm=>{const v=restCounts[nm]||0;return v%1===0?v:v.toFixed(1);}],["連勤カウント",nm=>consecCounts[nm]||0]];
+    const rows=[["1日休み（回）",nm=>fullDayCounts[nm]||0],["半日休み（回）",nm=>halfDayCounts[nm]||0],["休み合計",nm=>{const v=restCounts[nm]||0;return v%1===0?v:v.toFixed(1);}],["最大連勤数",nm=>consecCounts[nm]||0]];
     rows.forEach(([lbl,valFn])=>{
       h+=`<tr><td style="border:${BDp};padding:3px 6px;background:#f7f7f7;font-weight:600;white-space:nowrap;">${esc(lbl)}</td>`;
       cols.forEach(nm=>{if(isSpacer(nm)){h+=`<td style="border:${BDp};"></td>`;return;}h+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${esc(valFn(nm))}</td>`;});
@@ -1354,7 +1354,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
               <tbody>
                 <tr>
-                  <td style={{...SD,fontWeight:600,borderBottom:BD,background:CRD,fontSize:11}}>1日休み</td>
+                  <td style={{...SD,fontWeight:600,borderBottom:BD,background:CRD,fontSize:11}}>1日休み（回）</td>
                   {mapGridCols(name=>(
                     <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
                       {fullDayCounts[name]||0}
@@ -1362,7 +1362,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                   ),spacerTh)}
                 </tr>
                 <tr>
-                  <td style={{...SD,fontWeight:600,borderBottom:BD,background:CRD,fontSize:11}}>半日休み</td>
+                  <td style={{...SD,fontWeight:600,borderBottom:BD,background:CRD,fontSize:11}}>半日休み（回）</td>
                   {mapGridCols(name=>(
                     <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
                       {halfDayCounts[name]||0}
@@ -1370,7 +1370,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                   ),spacerTh)}
                 </tr>
                 <tr>
-                  <td style={{...SD,fontWeight:600,borderBottom:BD,background:CRD,fontSize:11}}>休みカウント</td>
+                  <td style={{...SD,fontWeight:600,borderBottom:BD,background:CRD,fontSize:11}}>休み合計</td>
                   {mapGridCols(name=>(
                     <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
                       {(restCounts[name]||0)%1===0?(restCounts[name]||0):(restCounts[name]||0).toFixed(1)}
@@ -1378,7 +1378,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                   ),spacerTh)}
                 </tr>
                 <tr>
-                  <td style={{...SD,fontWeight:600,borderBottom:BD2,background:CRD,fontSize:11}}>連勤カウント</td>
+                  <td style={{...SD,fontWeight:600,borderBottom:BD2,background:CRD,fontSize:11}}>最大連勤数</td>
                   {mapGridCols(name=>(
                     <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
                       {consecCounts[name]||0}
