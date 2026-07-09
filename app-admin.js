@@ -3329,6 +3329,15 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
           有料プランをご購入後に請求管理ページが利用できます
         </div>
       </AC>}
+
+      {/* 利用規約 */}
+      <div style={{textAlign:"center",marginTop:8,paddingBottom:8}}>
+        <button onClick={()=>setShowTerms(true)}
+          style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:12,textDecoration:"underline",cursor:"pointer",padding:8}}>
+          利用規約
+        </button>
+      </div>
+      {showTerms&&<TermsModal onClose={()=>setShowTerms(false)}/>}
     </div>
   );
 }
