@@ -615,8 +615,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return{...(base||{}),status:"work",adjustedStart:st,adjustedEnd:en};
   };
   const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
-  // ヒートマップ補完用の固定境界（片側セルのみ入力時）: ランチ終わり15:00・ディナー始まり17:00
-  const HEAT_LUNCH_END_MIN=900,HEAT_DINNER_START_MIN=1020;
+  // ヒートマップ補完用の境界（片側セルのみ入力時）: 候補タブ(candidates/weekdayCandidates/dateCandidates)の
+  // 実際の候補時間帯から算出し、該当候補がなければ標準値（ランチ終わり15:00・ディナー始まり17:00）にフォールバック。
+  // ランチ終わり = 17時以前(17時含む)に終わる候補のうち最も遅い退勤。ディナー始まり = 17時以降(17時含む)に始まる候補のうち最も早い出勤。
+  const{HEAT_LUNCH_END_MIN,HEAT_DINNER_START_MIN}=(()=>{
+    const allCands=[...(settings.candidates||[]),...Object.values(settings.weekdayCandidates||{}).flat(),...Object.values(settings.dateCandidates||{}).flat()].filter(c=>!c.closed&&c.start&&c.end);
+    const lunchEnds=allCands.map(c=>timeToMin(c.end)).filter(m=>m!==null&&m<=1020);
+    const dinnerStarts=allCands.map(c=>timeToMin(c.start)).filter(m=>m!==null&&m>=1020);
+    return{HEAT_LUNCH_END_MIN:lunchEnds.length?Math.max(...lunchEnds):900,HEAT_DINNER_START_MIN:dinnerStarts.length?Math.min(...dinnerStarts):1020};
+  })();
   // section: "kit" or "hall" — サフィックスh/kで所属を上書き、xはどちらにも入らない
   // 列hr[hr*60,(hr+1)*60)にカウント: stM<(hr+1)*60 && enM>hr*60
   // 日付×スタッフの実効出勤情報（開始・延長込み終了・休憩・所属）を事前計算しておき、
@@ -628,7 +635,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       realStaff.forEach(name=>{
         let stM=timeToMin(getEffHHMM(name,date,"start"));let enM=timeToMin(getEffHHMM(name,date,"end"));
         if(stM===null&&enM===null)return;
-        // 片側セルのみ入力: 出勤のみ→ランチ終わり(15:00)まで、退勤のみ→ディナー始まり(17:00)から出勤扱い
+        // 片側セルのみ入力: 出勤のみ→ランチ終わり(HEAT_LUNCH_END_MIN)まで、退勤のみ→ディナー始まり(HEAT_DINNER_START_MIN)から出勤扱い
         if(enM===null)enM=HEAT_LUNCH_END_MIN;
         if(stM===null)stM=HEAT_DINNER_START_MIN;
         if(stM>=enM)return;
