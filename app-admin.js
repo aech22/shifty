@@ -296,9 +296,6 @@ function GridLegend({abbrToShop}){
         {row("t2",chip("930"),"9:30（3〜4桁は「時分」）")}
         {row("t3",chip("9.5"),"9:30（小数は時+分の割合）")}
         {row("t4",chip("9:30"),"9:30（コロン区切りそのまま）")}
-        <SecH>セル内コマンド</SecH>
-        {CELL_COMMANDS.map(c=>row(c.key,<>{chip(c.usage)}{(c.color||c.hatch)?swatch(c.color,c.hatch):null}</>,`${c.label} — ${c.desc}`))}
-        {row("free",chip("9○○"),"時間+任意の文字 — メモとしてそのまま表示（特記の黄色背景）")}
         {abbrs.length>0&&<React.Fragment>
           <SecH>企業連携ヘルプ（登録済み略称）</SecH>
           <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.55,padding:"2px 0 4px"}}>
@@ -314,6 +311,9 @@ function GridLegend({abbrToShop}){
         {row("k3",lbl("ダブルクリック"),"変更マーク（緑）のオン/オフ。スマホはダブルタップ")}
         {row("k4",lbl("空にして確定"),"管理者入力を消去。スタッフ提出の休み希望があれば斜線が復元される")}
         {row("k5",lbl("セル選択"),"スタッフが提出した元の値をツールチップに表示")}
+        <SecH>セル内コマンド</SecH>
+        {CELL_COMMANDS.map(c=>row(c.key,<>{chip(c.usage)}{(c.color||c.hatch)?swatch(c.color,c.hatch):null}</>,`${c.label} — ${c.desc}`))}
+        {row("free",chip("9○○"),"時間+任意の文字 — メモとしてそのまま表示（特記の黄色背景）")}
       </div>}
     </div>
   );
