@@ -239,3 +239,40 @@ test("CELL_COLOR_LEGEND: 完全性（色または斜線+説明が揃っている
   ["changed", "dup", "note", "rest"].forEach(k => assert.ok(u.CELL_COLOR_LEGEND.some(c => c.key === k), `legend ${k} missing`));
   u.CELL_COLOR_LEGEND.forEach(c => assert.ok(c.label && c.desc && (c.color || c.hatch), `legend entry incomplete: ${c.key}`));
 });
+
+// ===== subs購読の直近ウィンドウ絞り込み（データ保存上限②） =====
+test("subsWindowCutoff: refDateから3ヶ月前の日付を返す", () => {
+  assert.strictEqual(u.subsWindowCutoff("2026-07-09"), "2026-04-09");
+});
+
+test("subsWindowCutoff: 月末境界（月数繰り下がり）", () => {
+  // 2026-01-15 の3ヶ月前 = 2025-10-15
+  assert.strictEqual(u.subsWindowCutoff("2026-01-15"), "2025-10-15");
+});
+
+test("subsWindowCutoff: months引数で窓幅を変更できる", () => {
+  assert.strictEqual(u.subsWindowCutoff("2026-07-09", 1), "2026-06-09");
+});
+
+test("recentPeriodIds: cutoff以降のstartDateの期間IDのみ返す", () => {
+  const periods = [
+    { id: "p1", startDate: "2026-07-01" }, // 直近
+    { id: "p2", startDate: "2026-05-01" }, // 直近（cutoff=2026-04-09以降）
+    { id: "p3", startDate: "2026-03-01" }, // 古い（除外）
+    { id: "p4", startDate: "2026-04-09" }, // 境界（cutoff当日=含む）
+  ];
+  assert.deepStrictEqual(u.recentPeriodIds(periods, "2026-07-09").sort(), ["p1", "p2", "p4"]);
+});
+
+test("recentPeriodIds: startDate欠損やnullは除外", () => {
+  const periods = [{ id: "p1", startDate: "2026-07-01" }, { id: "p2" }, null, { startDate: "2026-07-01" }];
+  assert.deepStrictEqual(u.recentPeriodIds(periods, "2026-07-09"), ["p1"]);
+});
+
+test("recentPeriodIds: 隣接前期間が3ヶ月窓に含まれる（2週間・1ヶ月単位とも）", () => {
+  // 最新期間の直前期間（2週間前・1ヶ月前）は必ず窓内に入る＝前期間跨ぎ計算が維持される
+  const biweekly = [{ id: "cur", startDate: "2026-07-01" }, { id: "prev", startDate: "2026-06-16" }];
+  assert.ok(u.recentPeriodIds(biweekly, "2026-07-09").includes("prev"));
+  const monthly = [{ id: "cur", startDate: "2026-07-01" }, { id: "prev", startDate: "2026-06-01" }];
+  assert.ok(u.recentPeriodIds(monthly, "2026-07-09").includes("prev"));
+});

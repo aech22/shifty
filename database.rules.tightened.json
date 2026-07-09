@@ -47,6 +47,7 @@
         },
         "subs": {
           ".read": "auth != null",
+          ".indexOn": ["periodId"],
           "$subId": {
             ".write": "auth != null",
             ".validate": "newData.hasChildren(['id','staffName','periodId','shifts','submittedAt']) && newData.child('staffName').isString() && newData.child('staffName').val().length <= 50"
