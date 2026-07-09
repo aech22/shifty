@@ -26,6 +26,15 @@ Free / Pro / Premium の 3 段階プラン制。Stripe サブスク（Pro 500円
 
 ---
 
+## 複数セッション並行時のルール（並行編集・デプロイ順序）
+
+別チャット（別セッション）が同じ Shifty のファイルを並行して編集していることがある。着手前に「他のセッションが並行編集中」と伝えられたとき、または `git status` に自分の作業でない変更があるときは、以下を守る。
+
+1. **混同・上書きを防ぐ**: どのファイルを自分が触るかを最初に確定し、他セッションが編集中と分かっているファイルには不用意に触らない。並行編集が確実なら `shifty-e2e-verify` スキル0.5節の git worktree 隔離手順で作業を分離する。編集前に必ず対象ファイルを Read し、想定と違う変更（見覚えのない差分）が入っていたら上書きせず報告する。
+2. **デプロイは全セッションの作業が終わってからまとめて1回**: main へのマージ／push・Firebase デプロイは、並行しているすべてのセッションの作業が完了してから実施する。自分のタスクが終わっても他セッションが未完了なら、単独でデプロイせず全作業の完了を待つ。中途半端な状態を main・本番に出さない。デプロイ可否が判断できないときは、勝手にデプロイせずユーザーに全セッションの完了を確認する。
+
+---
+
 ## アーキテクチャ
 
 | 項目 | 内容 |
@@ -670,6 +679,10 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 -
 -
 -
+-
+-
+-
+-
 ---
 
 ## Obsidianノート（自動同期）
@@ -713,20 +726,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 ## 実装待ちタスク
 
 ---
-
----
-
-## 🟡 データ保存上限②: subs購読を直近3ヶ月に絞り込み＋過去参照ボタン
-
-**目的**: クライアントが起動時に `shops/{sid}/subs` を全期間ぶん購読しており、利用が長期化するほど毎セッションのダウンロード量とクライアント負荷が線形に増える。購読を直近分に絞ることで、データを削除せずに負荷問題を解決する（2026-07-09 保存上限計画の項目2）。
-**受け入れ条件**:
-- [ ] startSubscriptions の subs 購読を「期間の startDate が過去3ヶ月以内の期間に属する提出」相当に絞り込む（`.indexOn` 追加を含む。periodId ベースのクエリか、直近期間リストからの個別購読かは実装時に選択）
-- [ ] 週間勤務時間・最長連勤の前期間跨ぎ計算が従来どおり動く（3ヶ月窓が隣接前期間を含むことを確認）
-- [ ] 提出一覧・シフト作成タブに「過去参照ボタン（仮称）」を追加し、押すと3ヶ月より古い期間の提出データをオンデマンドで読み込んで閲覧できる
-- [ ] スタッフURL（過去期間のURLを開いた場合）でも該当期間の提出が表示される
-- [ ] database.rules.json の `.indexOn` 追加はクライアント配信後にデプロイする（リリース順序ルール厳守）
-**影響範囲**: app-main.js（startSubscriptions）、app-admin.js（SubsTab / ShiftEditTab のUI）、database.rules.json（.indexOn）
-**備考**: 実測（2026-07-09時点で本番24店舗）ではストレージ費は問題にならない。主目的はDL量とクライアント負荷の抑制。
 
 ---
 
@@ -799,6 +798,20 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ データ保存上限②: subs購読を直近3ヶ月に絞り込み＋過去参照ボタン（2026-07-09）
+
+**目的**: クライアントが起動時に `shops/{sid}/subs` を全期間ぶん購読しており、利用長期化でDL量・クライアント負荷が線形に増える問題を、データ削除なしで解決する。
+**実装内容**（設計判断: 「直近期間リストからの個別購読」方式を採用）:
+- [x] startSubscriptions の subs 購読を全期間一括購読から**期間ベースの部分購読**へ変更。`periods` から startDate が直近3ヶ月以内の期間＋アクティブ期間(apid)を選び、`shops/{sid}/subs` を `orderByChild("periodId").equalTo(pid)` で期間ごとに購読して subId マップにマージする（app-main.js: subsMapRef/subsListenersRef/reconcileSubs）。古い期間の subs は購読対象外でDLされない。純粋関数 `subsWindowCutoff` / `recentPeriodIds` を app-utils.js に追加しユニットテスト（6件）で検証。
+- [x] 週間勤務時間・最長連勤の前期間跨ぎ計算が従来どおり動く: 最新期間の隣接前期間（2週間/1ヶ月前）は必ず3ヶ月窓に入ることをユニットテストで確認。
+- [x] 提出一覧(SubsTab)・シフト作成タブ(ShiftEditTab)に「過去参照ボタン」を追加。3ヶ月より古い期間が存在するときのみ表示され、押すと全期間購読へ切り替わる（App: loadPastSubs / pastSubsLoaded を AdminView経由で受け渡し）。
+- [x] スタッフURL（過去期間のURLを開いた場合）: reconcile がアクティブ期間(apid)を常に購読対象に含めるため、3ヶ月より古い期間のURLでもその期間の提出が表示される。
+- [x] `database.rules.json` / `database.rules.tightened.json` の subs に `.indexOn: ["periodId"]` を追加。**クライアント配信後にデプロイする**（リリース順序ルール厳守。未デプロイ時はFirebaseがクライアント側フィルタにフォールバックし警告を出すが動作は正常）。
+**影響範囲**: app-utils.js（純粋関数+export）、app-main.js（startSubscriptions/refs/loadPastSubs）、app-admin.js（AdminView/SubsTab/ShiftEditTab）、database.rules.json・database.rules.tightened.json（.indexOn）、eslint.config.js（globals）、tests/core.test.js
+**検証**: `npm test` 38件パス（新規6件）・`npx eslint app-*.js` 0 errors。dev実機（標準テスト店舗）で非回帰確認: 提出一覧「件数：1」・提出状況バッジ「1」が従来どおり表示（per-period マージ経路で source:"grid" ダミー除外も維持）、過去参照ボタンは古い期間がないため非表示（正しい）、コンソールエラーなし。**未検証（データ制約）**: 3ヶ月超の実期間データが本番にまだ存在しない（運用開始1ヶ月）ため、フィルタでの実DL削減量・過去参照ボタン押下時の古いsubs読込は実データでのE2E未実施（選択ロジックはユニットテスト済み・ボタン表示条件はdev確認済み）。**次アクション**: main配信・本番確認後に `firebase deploy --only database`（dev→本番）で `.indexOn` を反映する。
+
+---
 
 ### ✅ データ保存上限③: 利用規約の掲載（マイページ最下部にボタン）（2026-07-09）
 
