@@ -327,6 +327,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const[focusKey,setFocusKey]=useState(null); // フォーカス中セルkey（黄色ハイライト抑制用）
   const[cellTip,setCellTip]=useState(null); // {x,y,value}
   const[fitAll,setFitAll]=useState(false);
+  const[deptFilter,setDeptFilter]=useState("all"); // "all"|"kit"|"hall" — キッチン/ホール絞り込み表示
   const[pdfModal,setPdfModal]=useState(false);
   const[pdfBusy,setPdfBusy]=useState(false);
   const[containerW,setContainerW]=useState(800);
@@ -614,6 +615,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return{...(base||{}),status:"work",adjustedStart:st,adjustedEnd:en};
   };
   const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
+  // ヒートマップ補完用の固定境界（片側セルのみ入力時）: ランチ終わり15:00・ディナー始まり17:00
+  const HEAT_LUNCH_END_MIN=900,HEAT_DINNER_START_MIN=1020;
   // section: "kit" or "hall" — サフィックスh/kで所属を上書き、xはどちらにも入らない
   // 列hr[hr*60,(hr+1)*60)にカウント: stM<(hr+1)*60 && enM>hr*60
   // 日付×スタッフの実効出勤情報（開始・延長込み終了・休憩・所属）を事前計算しておき、
@@ -624,7 +627,11 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       const arr=[];
       realStaff.forEach(name=>{
         let stM=timeToMin(getEffHHMM(name,date,"start"));let enM=timeToMin(getEffHHMM(name,date,"end"));
-        if(stM===null||enM===null)return;
+        if(stM===null&&enM===null)return;
+        // 片側セルのみ入力: 出勤のみ→ランチ終わり(15:00)まで、退勤のみ→ディナー始まり(17:00)から出勤扱い
+        if(enM===null)enM=HEAT_LUNCH_END_MIN;
+        if(stM===null)stM=HEAT_DINNER_START_MIN;
+        if(stM>=enM)return;
         const hsh=getHeatShift(name,date);
         // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）
         if(hsh){const ot=getOT(name,settings,hsh);if(ot>0)enM+=ot;}
@@ -741,15 +748,30 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   // サイドパネル: 通常表示+split時かつ左右に十分な余白があるPC幅のみ（携帯・タブレットではグリッド下に表示）
   const hasSplit=hallStaff.length>0;
   const rawPanelW=Math.max(0,containerLeft-4);
-  const hasPanel=hasSplit&&!fitAll&&rawPanelW>=150;
+  // キッチン/ホール絞り込み中は絞り込んだ側のみ横パネル候補にする（もう一方は常にグリッド下）
+  const deptSidePanel=deptFilter==="kit"?"kit":deptFilter==="hall"?"hall":null;
+  const hasPanel=deptSidePanel?rawPanelW>=150:(hasSplit&&!fitAll&&rawPanelW>=150);
+  const kitShownAsPanel=hasPanel&&deptSidePanel!=="hall";
+  const hallShownAsPanel=hasPanel&&deptSidePanel!=="kit"&&hasSplit;
+  const kitBelow=!kitShownAsPanel;
+  const hallBelow=hasSplit&&!hallShownAsPanel;
   const useBreakout=hasPanel||fitAll;
   const panelW=hasPanel?rawPanelW:0;
+  const panelCount=(kitShownAsPanel?1:0)+(hallShownAsPanel?1:0);
   // 熱マップ行高: 計測値があれば使う、なければフォールバック
   const heatRowH=measuredRowH||48;
-  // 中央グリッド幅 = ブレイクアウト時はビューポート幅 - パネル×2
-  const centerW=useBreakout?(window.innerWidth-panelW*2-24):containerW;
-  // gridStaff: spacer列を含む列描画リスト（集計はrealStaffのまま）
-  const gridStaff=staffList;
+  // 中央グリッド幅 = ブレイクアウト時はビューポート幅 - パネル分
+  const centerW=useBreakout?(window.innerWidth-panelW*panelCount-24):containerW;
+  // キッチン/ホール絞り込み時の追加表示スタッフ: 相手グループでも該当サフィックス(k/h)が
+  // 期間内のどこかのシフトに付いていればヘルプ要員として表示に含める
+  const kitchenGroup=realStaff.filter(n=>!hallStaff.includes(n));
+  const kitExtra=hasSplit?hallStaff.filter(n=>dates.some(d=>getShiftNote(n,d)==="k")):[];
+  const hallExtra=hasSplit?kitchenGroup.filter(n=>dates.some(d=>getShiftNote(n,d)==="h")):[];
+  const kitExtraSet=new Set(kitExtra),hallExtraSet=new Set(hallExtra);
+  // gridStaff: spacer列を含む列描画リスト（絞り込み時はspacerなしの単一列リスト。集計はrealStaffのまま）
+  const gridStaff=deptFilter==="kit"?realStaff.filter(n=>!hallStaff.includes(n)||kitExtraSet.has(n))
+    :deptFilter==="hall"?realStaff.filter(n=>hallStaff.includes(n)||hallExtraSet.has(n))
+    :staffList;
   const colW=fitAll?Math.max(24,Math.floor((centerW-90)/Math.max(1,gridStaff.length))):39;
   const spacerCell=(key)=>(<td key={key} style={{width:colW,minWidth:colW,maxWidth:colW,borderLeft:BD2,background:"var(--c-input2, var(--c-input))",padding:0}}></td>);
   const spacerTh=(key,sticky=false)=>(<th key={key} style={{width:colW,minWidth:colW,maxWidth:colW,borderLeft:BD2,background:"var(--c-input2, var(--c-input))",padding:0,...(sticky?{position:"sticky",top:0,zIndex:3}:{})}}></th>);
@@ -1150,6 +1172,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           style={{padding:"5px 10px",background:fitAll?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           {fitAll?"通常表示":"全員表示"}
         </button>
+        {hasSplit&&<button onClick={()=>setDeptFilter(f=>f==="kit"?"all":"kit")}
+          style={{padding:"5px 10px",background:deptFilter==="kit"?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+          キッチン
+        </button>}
+        {hasSplit&&<button onClick={()=>setDeptFilter(f=>f==="hall"?"all":"hall")}
+          style={{padding:"5px 10px",background:deptFilter==="hall"?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+          ホール
+        </button>}
         {period&&<button onClick={()=>{
           const adjResolver=(name,date,field)=>{
             if(fieldRest(name,date,field))return{time:"",note:"",rest:true}; // 休み希望(y)はExcelで斜線描画
@@ -1216,8 +1246,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
         <div style={useBreakout?{marginLeft:-(containerLeft+8),width:"100vw",paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:hasPanel?"flex":"block",alignItems:"flex-start",gap:4}:{}}>
 
-          {/* === 左パネル: キッチン熱マップ（通常表示+split時のみ） === */}
-          {hasPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
+          {/* === 左パネル: キッチン熱マップ（通常表示+split時、またはキッチン絞り込み時） === */}
+          {kitShownAsPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
             <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="キッチン" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} scrollRef={kitHeatRef} onScroll={e=>syncScrollV(e.currentTarget)} maxH="70vh"/>
           </div>}
 
@@ -1306,12 +1336,12 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             </table>
           </div>
 
-          {/* ===時間帯別出勤人数 (サイドパネル非表示時 → グリッド下にキッチン・ホールを横に並べて表示) === */}
-          {!hasPanel&&<div style={{marginBottom:16}}>
+          {/* ===時間帯別出勤人数 (サイドパネル非表示分・絞り込み時の相手側は常にここに表示) === */}
+          {(kitBelow||hallBelow)&&<div style={{marginBottom:16}}>
             <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>時間帯別出勤人数</div>
             <div style={{display:"flex",flexDirection:"row",gap:10}}>
-              <HeatTable label={hasSplit?"キッチン":""} section="kit" maxC={kitMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>
-              {hasSplit&&<HeatTable label="ホール" section="hall" maxC={hallMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>}
+              {kitBelow&&<HeatTable label={hasSplit?"キッチン":""} section="kit" maxC={kitMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>}
+              {hallBelow&&<HeatTable label="ホール" section="hall" maxC={hallMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>}
             </div>
           </div>}
 
@@ -1343,8 +1373,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
 
           </div>{/* end center */}
 
-          {/* === 右パネル: ホール熱マップ（通常表示+split時のみ） === */}
-          {hasPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
+          {/* === 右パネル: ホール熱マップ（通常表示+split時、またはホール絞り込み時） === */}
+          {hallShownAsPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
             <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="ホール" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} scrollRef={hallHeatRef} onScroll={e=>syncScrollV(e.currentTarget)} maxH="70vh"/>
           </div>}
 
