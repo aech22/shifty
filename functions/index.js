@@ -347,7 +347,19 @@ exports.verifyEmailOtp = functions
 // 旧実装はクライアント側で即時削除していたが、端末時計ズレや壊れた
 // lastActivity（Invalid Date）による誤削除リスクがあるため、
 // スケジュール実行 + 二段階削除（archived/ 経由）に移行。
+//
+// 走査起点は /global/shops ではなく /shops 本体にする。/global/shops は
+// 店舗コード検索用のインデックスに過ぎず未登録の孤児店舗が存在しうるため、
+// インデックス起点だと孤児店舗が永久に削除対象へ入らない（2026-07-09判明）。
+// 課金中（pro/premium）の店舗は stripeCustomerId 等の記録を守るため対象外。
 // ============================================================
+function purgeShopStaleness(id, shopData, globalEntry, now, ONE_YEAR_MS) {
+  const raw = (shopData && shopData.lastActivity) || (globalEntry && globalEntry.lastActivity) || (globalEntry && globalEntry.createdAt);
+  const t = raw ? new Date(raw).getTime() : NaN;
+  if (Number.isNaN(t)) return { stale: false, invalid: true, raw };
+  return { stale: now - t >= ONE_YEAR_MS, invalid: false, raw };
+}
+
 exports.purgeInactiveShops = functions
   .region("asia-northeast1")
   .pubsub.schedule("every 24 hours")
@@ -357,28 +369,47 @@ exports.purgeInactiveShops = functions
     const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
     const GRACE_MS = 30 * 24 * 60 * 60 * 1000;
 
-    // 1) 1年未更新の店舗を archived/shops へ移動（即削除しない）
-    const shopsSnap = await db.ref("global/shops").once("value");
-    const shops = shopsSnap.val() || {};
-    for (const [id, shop] of Object.entries(shops)) {
-      if (!shop || !shop.id) continue;
-      const laSnap = await db.ref(`shops/${id}/lastActivity`).once("value");
-      const raw = laSnap.val() || shop.lastActivity || shop.createdAt;
-      const t = raw ? new Date(raw).getTime() : NaN;
-      if (Number.isNaN(t)) {
-        console.warn(`lastActivityが不正のためスキップ: ${id} (${shop.name}) raw=${raw}`);
+    // 1) 1年未更新かつFreeプランの店舗を archived/shops へ移動（即削除しない）
+    const [shopsSnap, globalShopsSnap] = await Promise.all([
+      db.ref("shops").once("value"),
+      db.ref("global/shops").once("value"),
+    ]);
+    const allShops = shopsSnap.val() || {};
+    const globalShops = globalShopsSnap.val() || {};
+
+    for (const [id, shopData] of Object.entries(allShops)) {
+      if (!shopData) continue;
+
+      const planSnap = await db.ref(`accounts/${id}/plan`).once("value");
+      const planVal = planSnap.val();
+      if (planVal === "pro" || planVal === "premium") continue;
+
+      const globalEntry = globalShops[id];
+      const label = (globalEntry && globalEntry.name) || id;
+      const { stale, invalid, raw } = purgeShopStaleness(id, shopData, globalEntry, now, ONE_YEAR_MS);
+      if (invalid) {
+        console.warn(`lastActivityが不正のためスキップ: ${id} (${label}) raw=${raw}`);
         continue;
       }
-      if (now - t < ONE_YEAR_MS) continue;
-      const dataSnap = await db.ref(`shops/${id}`).once("value");
+      if (!stale) continue;
+
       await db.ref(`archived/shops/${id}`).set({
-        shop,
-        data: dataSnap.val(),
+        shop: globalEntry || { id },
+        data: shopData,
         archivedAt: new Date(now).toISOString(),
       });
       await db.ref(`shops/${id}`).remove();
       await db.ref(`global/shops/${id}`).remove();
-      console.log(`アーカイブ: ${id} (${shop.name}) lastActivity=${raw}`);
+      await db.ref(`accounts/${id}`).remove();
+
+      const periods = shopData.periods || {};
+      for (const period of Object.values(periods)) {
+        if (period && period.urlToken) {
+          await db.ref(`tokens/${period.urlToken}`).remove();
+        }
+      }
+
+      console.log(`アーカイブ: ${id} (${label}) lastActivity=${raw}`);
     }
 
     // 2) アーカイブから30日経過したものを本削除
@@ -391,6 +422,28 @@ exports.purgeInactiveShops = functions
       await db.ref(`archived/shops/${id}`).remove();
       console.log(`アーカイブ期限切れを本削除: ${id}`);
     }
+
+    // 3) 期限切れの inviteCodes / email_otps を削除（期限フィールド欠損も対象）
+    const inviteSnap = await db.ref("inviteCodes").once("value");
+    const invites = inviteSnap.val() || {};
+    for (const [code, entry] of Object.entries(invites)) {
+      const exp = entry && entry.expiresAt ? new Date(entry.expiresAt).getTime() : NaN;
+      if (Number.isNaN(exp) || now > exp) {
+        await db.ref(`inviteCodes/${code}`).remove();
+        console.log(`inviteCode期限切れを削除: ${code}`);
+      }
+    }
+
+    const otpSnap = await db.ref("email_otps").once("value");
+    const otps = otpSnap.val() || {};
+    for (const [uid, entry] of Object.entries(otps)) {
+      const exp = entry && entry.expiry ? Number(entry.expiry) : NaN;
+      if (Number.isNaN(exp) || now > exp) {
+        await db.ref(`email_otps/${uid}`).remove();
+        console.log(`email_otp期限切れを削除: ${uid}`);
+      }
+    }
+
     return null;
   });
 
