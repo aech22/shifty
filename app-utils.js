@@ -204,7 +204,7 @@ const CELL_COMMANDS=[
 ];
 // セル背景色・記号の意味（cellBgForとレジェンドの共通ソース）
 const CELL_COLOR_LEGEND=[
-  {key:"changed",color:"rgba(52,199,89,.30)",label:"変更マーク",desc:"セルをダブルクリック（スマホはダブルタップ）でオン/オフ。確定後に変更したシフトの目印"},
+  {key:"changed",color:"rgba(52,199,89,.30)",label:"変更マーク",desc:"セルをトリプルクリック（スマホはトリプルタップ）でオン/オフ。確定後に変更したシフトの目印"},
   {key:"dup",color:"rgba(255,71,87,.35)",label:"店舗間シフト重複",desc:"企業連携している他店舗のシフトと勤務時間が重なっている"},
   {key:"note",color:"#FFF3B0",label:"特記あり",desc:"h・k・x・他店舗略称などのサフィックスが付いたセル"},
   {key:"rest",hatch:true,label:"休み希望（斜線）",desc:"スタッフが提出した休み希望、または管理者が y で入力した休み"},

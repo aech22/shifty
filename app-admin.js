@@ -308,7 +308,7 @@ function GridLegend({abbrToShop}){
         <SecH>キー・マウス操作</SecH>
         {row("k1",chip("Enter"),"次のセルへ移動して確定（出勤→退勤→翌日の出勤）")}
         {row("k2",chip("Ctrl(⌘)+Enter"),"逆方向に移動して確定")}
-        {row("k3",lbl("ダブルクリック"),"変更マーク（緑）のオン/オフ。スマホはダブルタップ")}
+        {row("k3",lbl("トリプルクリック"),"変更マーク（緑）のオン/オフ。スマホはトリプルタップ")}
         {row("k4",lbl("空にして確定"),"管理者入力を消去。スタッフ提出の休み希望があれば斜線が復元される")}
         {row("k5",lbl("セル選択"),"スタッフが提出した元の値をツールチップに表示")}
         <SecH>セル内コマンド</SecH>
@@ -869,7 +869,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
     return note?"#333":undefined;
   };
-  // ダブルクリック/ダブルタップ: そのシフトのchangedフラグをトグル（Firebase永続化）
+  // トリプルクリック/トリプルタップ: そのシフトのchangedフラグをトグル（Firebase永続化）
   const toggleChanged=(name,date)=>{
     if(!isPremium)return;
     const sub=_getSub(name);const sd0=sub?.shifts?.[date];
@@ -883,7 +883,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       return newSubs;
     });
   };
-  const lastTapRef=useRef({key:null,t:0});
+  const lastTapRef=useRef({key:null,times:[]});
 
   // グリッドの実際の行高・thead高を測定してサイドパネルと同期
   useEffect(()=>{
@@ -1279,9 +1279,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"start",e.target.value)}
-                            onClick={!isPremium?()=>onUpgrade&&onUpgrade({type:"edit",plan}):undefined}
-                            onDoubleClick={()=>toggleChanged(name,date)}
-                            onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();if(lastTapRef.current.key===k&&now-lastTapRef.current.t<350){toggleChanged(name,date);lastTapRef.current={key:null,t:0};}else{lastTapRef.current={key:k,t:now};}}}
+                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(e.detail===3)toggleChanged(name,date);}}
+                            onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();const prev=lastTapRef.current;const times=(prev.key===k&&prev.times.length>0&&now-prev.times[prev.times.length-1]<350)?[...prev.times,now]:[now];if(times.length>=3){toggleChanged(name,date);lastTapRef.current={key:null,times:[]};}else{lastTapRef.current={key:k,times};}}}
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|start`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);setFocusKey(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"start",e.target.value);if(e.ctrlKey||e.metaKey){const pdi=dates.indexOf(date)-1;if(pdi>=0)document.querySelector(`[data-sc="${dates[pdi]}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
@@ -1296,9 +1295,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"end",e.target.value)}
-                            onClick={!isPremium?()=>onUpgrade&&onUpgrade({type:"edit",plan}):undefined}
-                            onDoubleClick={()=>toggleChanged(name,date)}
-                            onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();if(lastTapRef.current.key===k&&now-lastTapRef.current.t<350){toggleChanged(name,date);lastTapRef.current={key:null,t:0};}else{lastTapRef.current={key:k,t:now};}}}
+                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(e.detail===3)toggleChanged(name,date);}}
+                            onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();const prev=lastTapRef.current;const times=(prev.key===k&&prev.times.length>0&&now-prev.times[prev.times.length-1]<350)?[...prev.times,now]:[now];if(times.length>=3){toggleChanged(name,date);lastTapRef.current={key:null,times:[]};}else{lastTapRef.current={key:k,times};}}}
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
