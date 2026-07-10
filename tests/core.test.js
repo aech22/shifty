@@ -74,12 +74,48 @@ test("getBreaksFor: シフト終了後に始まる休憩は重ならないため
   );
 });
 
-test("getBreaksFor: 9時間未満・ランチのみの短時間シフトでも休憩時間帯と重なれば適用する（出勤日数attendanceによる全か無かの判定は廃止）", () => {
+test("getBreaksFor: 9時間未満・ランチのみの短時間シフトでも休憩を完全にまたいでいれば適用する（出勤日数attendanceによる全か無かの判定は廃止）", () => {
   const settings = { breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] } };
-  // 10:00-14:00 = 4時間（attendance 0.5 相当・旧ロジックなら[]だった）が、休憩12:00-13:00と重なるため適用する
+  // 10:00-14:00 = 4時間（attendance 0.5 相当・旧ロジックなら[]だった）だが、休憩12:00-13:00を丸ごとまたぐため適用する
   assert.deepStrictEqual(
     u.getBreaksFor(settings, "2026-07-06", "A", { status: "work", start: "10:00", end: "14:00" }),
     [{ start: "12:00", end: "13:00" }]
+  );
+});
+
+test("getBreaksFor: ランチのみ（退勤=休憩終了と同時刻）は適用しない", () => {
+  const settings = { breakTimes: { weekday: [{ start: "15:00", end: "17:00" }] } };
+  // 10:00-17:00: 休憩の後半（17時以降）に及ばないため適用しない
+  assert.deepStrictEqual(
+    u.getBreaksFor(settings, "2026-07-06", "A", { status: "work", start: "10:00", end: "17:00" }),
+    []
+  );
+});
+
+test("getBreaksFor: ランチのみ（退勤が休憩の途中）も適用しない", () => {
+  const settings = { breakTimes: { weekday: [{ start: "15:00", end: "17:00" }] } };
+  // 10:00-16:00: 休憩終了(17:00)より前に退勤するため適用しない
+  assert.deepStrictEqual(
+    u.getBreaksFor(settings, "2026-07-06", "A", { status: "work", start: "10:00", end: "16:00" }),
+    []
+  );
+});
+
+test("getBreaksFor: ディナーのみ（出勤=休憩開始と同時刻）は適用しない", () => {
+  const settings = { breakTimes: { weekday: [{ start: "15:00", end: "17:00" }] } };
+  // 15:00-23:00: 休憩の前半（15時より前）に及ばないため適用しない
+  assert.deepStrictEqual(
+    u.getBreaksFor(settings, "2026-07-06", "A", { status: "work", start: "15:00", end: "23:00" }),
+    []
+  );
+});
+
+test("getBreaksFor: 通し勤務（休憩を完全にまたぐ）は適用する", () => {
+  const settings = { breakTimes: { weekday: [{ start: "15:00", end: "17:00" }] } };
+  // 10:00-23:00: 出勤が休憩開始(15:00)より前・退勤が休憩終了(17:00)より後 → 適用
+  assert.deepStrictEqual(
+    u.getBreaksFor(settings, "2026-07-06", "A", { status: "work", start: "10:00", end: "23:00" }),
+    [{ start: "15:00", end: "17:00" }]
   );
 });
 

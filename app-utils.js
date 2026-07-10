@@ -136,10 +136,10 @@ function getAttrOptions(settings){
 const DAY_TYPES=[["weekday","平日"],["sat","土曜"],["sun","日曜"],["hol","祝日"]];
 // 休憩適用の統一入口: 属性タグフィルタ + 実際のシフト時間帯との重なり判定
 // 属性一致のタグ付き休憩がその日区分にある場合はタグなし休憩を適用しない（差し替え方式）
-// 休憩の適用可否は出勤日数(attendance=1出勤等)のような全か無かの指標では判定しない。
-// シフトの実長ではなく出退勤時刻が休憩時間帯と重なるかどうかだけで決めないと、
-// 出退勤時間をわずかに減らしただけで閾値をまたいで休憩控除が消え、
-// 総労働時間がかえって増えるという矛盾が生じるため（2026-07-10修正）。
+// 休憩の適用可否は出勤日数(attendance=1出勤等)のような汎用閾値では判定しない（2026-07-10改修）。
+// その代わり、休憩を丸ごとまたいでいるか（出勤が休憩開始より前 かつ 退勤が休憩終了より後）だけを見る。
+// ランチのみ（休憩終了と同時刻に退勤）やディナーのみ（休憩開始と同時刻に出勤）のような
+// 休憩の片側にしか触れないシフトには適用しない（2026-07-10追加修正）。
 function getBreaksFor(settings,dateStr,staffName,shift){
   if(!shift||shift.status!=="work")return[];
   const list=getBreakList(settings,dateStr);
@@ -155,7 +155,7 @@ function getBreaksFor(settings,dateStr,staffName,shift){
     if(tags&&tags.length){if(!tags.includes(attr))return false;}
     else if(hasTagged)return false;
     if(ws!==null&&br&&br.start&&ws>=toMin(br.start))return false;
-    if(we!==null&&br&&br.start&&we<=toMin(br.start))return false;
+    if(we!==null&&br&&br.end&&we<=toMin(br.end))return false;
     return true;
   });
 }
