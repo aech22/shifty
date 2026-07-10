@@ -729,6 +729,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   // section判定はheatDataのsectionと同じ規則（h/kサフィックスで上書き、分割未設定店舗は常にkitchenに集約）
   const positionErrors=useMemo(()=>{
     const result={}; // {date:{lunch:{kitchen:{pos:不足数},hall:{...}},dinner:{...}}}
+    if(!isPremium)return result; // ポジションエラー判定はPremium限定機能（プラン変更後も過去のrequiredPositionsで誤表示しないよう明示的にガード）
     const reqAll=settings.requiredPositions||{};
     const staffPos=settings.staffPositions||{};
     const hasAnyRequired=Object.values(reqAll).some(dt=>dt&&["lunch","dinner"].some(m=>{const r=dt[m];return r&&(((r.kitchen||[]).length)||((r.hall||[]).length));}));
@@ -766,7 +767,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       if(hasErr)result[date]=dayResult;
     });
     return result;
-  },[subs,heatEdits,settings,selPid,staffList,periods,companyData]);
+  },[isPremium,subs,heatEdits,settings,selPid,staffList,periods,companyData]);
   const hasLunchErr=date=>{const pe=positionErrors[date];return!!pe&&(Object.keys(pe.lunch.kitchen).length>0||Object.keys(pe.lunch.hall).length>0);};
   const hasDinnerErr=date=>{const pe=positionErrors[date];return!!pe&&(Object.keys(pe.dinner.kitchen).length>0||Object.keys(pe.dinner.hall).length>0);};
   // エラーサマリー用に日付順のフラットな一覧へ展開（キッチン/ホール別）
