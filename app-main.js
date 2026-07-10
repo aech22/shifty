@@ -49,6 +49,12 @@ function App(){
   const pastSubsLoadedRef=useRef(false);// 過去参照ボタンで全期間購読に切替済みか
   const subsSidRef=useRef(null);        // 現在subsを購読中のshopId（店舗切替後の遅延コールバック無視用）
   const reconcileSubsRef=useRef(null);  // startSubscriptions内で定義するreconcile関数
+  // subId→未確定のローカル書き込み値（null=削除待ち）。saveSubsが書き込み開始時にセットし、
+  // Firebase側の確認(update()のPromise解決)後にクリアする。setPeriodSubsのスナップショット反映時に
+  // このマップの内容で上書きし、サーバー未反映の直前の編集がリスナーのechoで巻き戻されるのを防ぐ
+  // （同一クライアント内で短時間に複数セルを連続編集した際、後の編集が古いスナップショットで
+  // 消され、さらに後続の別編集がその欠落状態のsubを丸ごと書き込んで永久にデータが消える事故があった）
+  const pendingSubWritesRef=useRef({});
   const[pastSubsLoaded,setPastSubsLoaded]=useState(false); // 過去参照ボタン表示制御用
   // URLトークンがある場合はapidもPhase1で確定させる
   const[apid,setApid]=useState(()=>_hasUrlToken?null:ssGet(SS_APID,null));
@@ -305,6 +311,7 @@ function App(){
     Object.values(subsListenersRef.current).forEach(q=>{try{q.off();}catch{}});
     subsListenersRef.current={};
     subsMapRef.current={};
+    pendingSubWritesRef.current={}; // 前店舗の未確定書き込み保護を持ち越さない
     periodsForSubsRef.current=[]; // 前店舗のperiodsで購読を張らないようクリア
     subsSidRef.current=targetSid;
     pastSubsLoadedRef.current=false; setPastSubsLoaded(false);
@@ -368,7 +375,15 @@ function App(){
     // 過去参照ボタン押下時（pastSubsLoaded）は全期間を購読する。
     setSubs(lg(storeKey(targetSid,"subs_v6"),[]));
     const flushSubs=()=>{
-      const arr=Object.values(subsMapRef.current).filter(s=>s&&s.id);
+      // pendingSubWritesRefに残っている未確定のローカル編集をサーバースナップショットの上に重ねる。
+      // これがないと、直前に自分が書き込んだがまだサーバー確認が取れていない変更が、
+      // ほぼ同時に届く別の（自分自身の別編集の場合を含む）value echoで巻き戻され、
+      // さらに後続の編集がその欠落状態のsubを丸ごと書き直すことで永久にデータが消える
+      const merged={...subsMapRef.current};
+      Object.entries(pendingSubWritesRef.current).forEach(([id,s])=>{
+        if(s===null)delete merged[id];else merged[id]=s;
+      });
+      const arr=Object.values(merged).filter(s=>s&&s.id);
       arr.sort((a,b)=>new Date(b.submittedAt)-new Date(a.submittedAt));
       setSubs(arr); ls(storeKey(targetSid,"subs_v6"),arr);
     };
@@ -1149,7 +1164,16 @@ function App(){
         changed.forEach(s=>{ obj[s.id]=s; });
         if(deletedId) obj[deletedId]=null;
         if(Object.keys(obj).length>0){
-          firebaseDB.ref(fbPath(sid,"subs")).update(obj).catch(e=>console.warn("subs書き込み失敗:",e));
+          // 書き込み確定までpendingSubWritesRefに退避し、リアルタイムリスナーの未確定echoに
+          // よる巻き戻し（flushSubs参照）からこの変更を保護する
+          Object.entries(obj).forEach(([id,val])=>{ pendingSubWritesRef.current[id]=val; });
+          firebaseDB.ref(fbPath(sid,"subs")).update(obj)
+            .catch(e=>console.warn("subs書き込み失敗:",e))
+            .finally(()=>{
+              // このPromiseで送った値からまだ書き換わっていなければ保護を解除する
+              // （解除中に別の編集が同じidに上書きしていればそちらのPromiseに任せる）
+              Object.entries(obj).forEach(([id,val])=>{ if(pendingSubWritesRef.current[id]===val)delete pendingSubWritesRef.current[id]; });
+            });
         }
       }
       return newVal;
