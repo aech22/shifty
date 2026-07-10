@@ -311,7 +311,6 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              breakTimes?: {weekday|sat|sun|hol: {start,end,tags?}[]},
              staffAttributes?: {[name]: 属性ID}, staffTypeLimits?: {[属性ID]: 制限},
              overtimeSettings?: {byStaff: {[name]: {lunch,dinner}}}, staffNumbers?: {[name]: string},
-             staffHelp?: {[name]: true},  // スタッフ一覧の「ヘルプ」タグ（表示専用・他機能と非連動）
              xlShopName?: string, staffColors?: {[name]: "red"|"black"},
              staffAliases?: {[registered]: string[]}, periodUnit?: "2week"|"1month" }
 ```
@@ -569,6 +568,8 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 ---
 
 
+-
+-
 -
 -
 -
