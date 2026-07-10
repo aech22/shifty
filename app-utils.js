@@ -174,14 +174,32 @@ function getOT(staffName,settings,shift){
 function fmtMin(min){if(!min&&min!==0)return"";const h=Math.floor(min/60),m=min%60;return`${h}:${String(m).padStart(2,"0")}`;}
 
 // ===== ポジションエラー判定 =====
-// 曜日区分判定（祝日優先。getBreakListと同じ優先順位: 祝日 > 日 > 土 > 平日、DAY_TYPESと同じキー）
+// 休み日（土日祝のいずれか）判定。連休の塊を数えるための内部ヘルパー
+function isRestDay(dateStr){const dow=pd(dateStr).getDay();return dow===0||dow===6||isHoliday(dateStr);}
+function addDays(dateStr,n){const d=pd(dateStr);d.setDate(d.getDate()+n);return fd(d);}
+// 曜日区分判定（祝日は「連休の中でどう機能するか」でさらに2分割する）。
+// weekday/sat/sun は非祝日のみ。祝日は必ず holSat か holSun のどちらかになる（祝日自体が土日でも同様）。
+// holSun（日曜扱い）: 祝日自体が日曜日、または「休み日(土日祝)が2日以上連続する塊」の最終日（＝翌日に平日が戻る）
+// holSat（土曜扱い）: 祝日自体が土曜日、または連休初日〜最終日前日、または前後を平日に挟まれた単独の祝日
+//   （単独祝日は2日以上の塊を作らないため「連休最終日」に該当せずholSatに倒れる）
 function dayTypeOf(dateStr){
   const dow=pd(dateStr).getDay();
-  if(isHoliday(dateStr))return"hol";
+  if(isHoliday(dateStr)){
+    if(dow===0)return"holSun";
+    if(dow===6)return"holSat";
+    let runEnd=dateStr;
+    while(isRestDay(addDays(runEnd,1)))runEnd=addDays(runEnd,1);
+    let runStart=dateStr;
+    while(isRestDay(addDays(runStart,-1)))runStart=addDays(runStart,-1);
+    const runLength=Math.round((pd(runEnd)-pd(runStart))/86400000)+1;
+    return(runLength>=2&&runEnd===dateStr)?"holSun":"holSat";
+  }
   if(dow===0)return"sun";
   if(dow===6)return"sat";
   return"weekday";
 }
+// シフト作成タブ「必要ポジション設定」の曜日区分タブ（祝日をholSat/holSunに分割した5分類。DAY_TYPESとは別物＝breakTimes等には影響しない）
+const POSITION_DAY_TYPES=[["weekday","平日"],["sat","土曜"],["sun","日曜"],["holSat","祝日（土曜扱い）"],["holSun","祝日（日曜扱い）"]];
 // 必要ポジション(slots・重複可の配列)と出勤者(attendees:[{name,positions:[]}])の最大二部マッチング（Kuhn法）。
 // 1人が複数ポジションを持っていても同時に埋められるのは1枠のみ（「1出勤につき1人」の制約）。
 // 単純な貪欲割当だと本来埋まる組み合わせを見逃す（例: 枠[調理長,フライヤー]・A[調理長,フライヤー]・B[調理長]は
@@ -345,5 +363,5 @@ function applyFlatSubWrite(map,path,value){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES};
 }

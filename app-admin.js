@@ -3167,7 +3167,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
     {plan==="premium"&&<AC title="必要ポジション設定">
       <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>曜日区分・ランチ/ディナーごとに必要なポジションをタグで追加します。同じポジションを複数回追加すると、その人数分が必要になります（シフト作成タブで不足を判定）。</div>
       <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
-        {DAY_TYPES.map(([id,label])=>(
+        {POSITION_DAY_TYPES.map(([id,label])=>(
           <button key={id} onClick={()=>setReqDayType(id)} style={{padding:"6px 12px",background:reqDayType===id?"#f87036":"var(--c-input)",border:`1px solid ${reqDayType===id?"#f87036":"var(--c-border2)"}`,borderRadius:7,color:reqDayType===id?"white":"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{label}</button>
         ))}
       </div>

@@ -399,10 +399,37 @@ test("dayTypeOf: 平日/土/日を判定する", () => {
   assert.strictEqual(u.dayTypeOf("2026-07-12"), "sun"); // 日曜
 });
 
-test("dayTypeOf: 祝日は曜日に関わらずholを優先する", () => {
-  // 2026-07-20は祝日（海の日・月曜）
+test("dayTypeOf: 祝日はholSat/holSunのどちらかに分類され、weekday/sat/sunにはならない", () => {
+  // 2026-07-20は祝日（海の日・月曜、7/18土〜7/20月の3連休最終日）
   assert.strictEqual(u.isHoliday("2026-07-20"), true);
-  assert.strictEqual(u.dayTypeOf("2026-07-20"), "hol");
+  assert.strictEqual(u.dayTypeOf("2026-07-20"), "holSun");
+});
+
+test("dayTypeOf: 前後を平日に挟まれた単独の祝日はholSat（土曜扱い）", () => {
+  // 2026-01-01（元日・木曜）。前日12/31・翌日1/2はともに祝日でも土日でもない
+  assert.strictEqual(u.isHoliday("2025-12-31"), false);
+  assert.strictEqual(u.isHoliday("2026-01-02"), false);
+  assert.strictEqual(u.dayTypeOf("2026-01-01"), "holSat");
+});
+
+test("dayTypeOf: 連休（2日以上の休み日の塊）の初日〜最終日前日はholSat", () => {
+  // 2026年GW: 5/2(土,休日ではないが週末)〜5/3(日,祝)〜5/4(月,祝)〜5/5(火,祝)の4日連続休み。5/4は最終日(5/5)より前
+  assert.strictEqual(u.dayTypeOf("2026-05-04"), "holSat");
+});
+
+test("dayTypeOf: 連休（2日以上の休み日の塊）の最終日はholSun", () => {
+  // 同じGWの塊の最終日である5/5(火・こどもの日)
+  assert.strictEqual(u.dayTypeOf("2026-05-05"), "holSun");
+});
+
+test("dayTypeOf: 祝日自体が日曜日ならholSun（連休の位置によらず常に）", () => {
+  // 2026-05-03(日・憲法記念日)。連休の最終日ではない（5/4,5/5と続く）が、日曜日自体なので常にholSun
+  assert.strictEqual(u.dayTypeOf("2026-05-03"), "holSun");
+});
+
+test("dayTypeOf: 祝日自体が土曜日ならholSat（連休の位置によらず常に）", () => {
+  // 2025-05-03(土・憲法記念日)
+  assert.strictEqual(u.dayTypeOf("2025-05-03"), "holSat");
 });
 
 test("matchPositionSlots: 必要枠なし(空配列)は不足なし", () => {

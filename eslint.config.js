@@ -136,6 +136,7 @@ const sharedGlobals = {
   applyFlatSubWrite: "writable",
   dayTypeOf: "writable",
   matchPositionSlots: "writable",
+  POSITION_DAY_TYPES: "writable",
   ssGet: "writable",
   ssSave: "writable",
   storeKey: "writable",
