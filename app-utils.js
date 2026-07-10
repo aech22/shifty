@@ -249,7 +249,58 @@ function extractNote(raw){
   return{numeric:m[1],note:suf,rest:false}; // 日本語含む任意サフィックスはそのまま保持
 }
 
+// ===== subs保存: フィールド単位Firebase書き込み =====
+// saveSubsが1つのsubの変更をFirebaseへ書き込む際、sub全体をset/updateすると同じsubの
+// 別フィールドを編集した他端末・別編集の変更を巻き戻してしまう（last-write-winsが
+// オブジェクト全体に効いてしまうため）。変更されたフィールドだけをフラットパス
+// （"subId"=新規sub全体 / "subId/フィールド名" / "subId/shifts/日付"）に展開し、
+// 実際に変わった部分だけをupdate()することで他フィールドを巻き込まないようにする。
+// prevSubが存在しない（新規作成）場合はsub全体を1エントリとして返す。
+function diffSubForFlatWrite(id,prevSub,newSub){
+  const out={};
+  if(!prevSub){out[id]=newSub;return out;}
+  const prevShifts=prevSub.shifts||{};
+  const shifts=newSub.shifts||{};
+  Object.keys(shifts).forEach(date=>{
+    if(shifts[date]!==prevShifts[date])out[`${id}/shifts/${date}`]=shifts[date];
+  });
+  Object.keys(prevShifts).forEach(date=>{
+    if(!(date in shifts))out[`${id}/shifts/${date}`]=null;
+  });
+  Object.keys(newSub).forEach(key=>{
+    if(key==="shifts")return;
+    if(newSub[key]!==prevSub[key])out[`${id}/${key}`]=newSub[key];
+  });
+  Object.keys(prevSub).forEach(key=>{
+    if(key==="shifts")return;
+    if(!(key in newSub))out[`${id}/${key}`]=null;
+  });
+  return out;
+}
+// diffSubForFlatWriteが作ったフラットパス1件をsubId→subのマップに適用する（flushSubsのマージで使用）。
+// value===nullはそのパスの削除。mapは呼び出し元が浅いコピーを渡すこと（このマップ自体を書き換える）。
+function applyFlatSubWrite(map,path,value){
+  const parts=path.split("/");
+  const id=parts[0];
+  if(parts.length===1){
+    if(value===null)delete map[id];else map[id]=value;
+    return;
+  }
+  if(!map[id])return; // ベースsubがまだ届いていない（後続の別flushで再試行される）
+  const base={...map[id]};
+  if(parts.length===2){
+    const key=parts[1];
+    if(value===null)delete base[key];else base[key]=value;
+  }else if(parts.length===3&&parts[1]==="shifts"){
+    const date=parts[2];
+    const shifts={...(base.shifts||{})};
+    if(value===null)delete shifts[date];else shifts[date]=value;
+    base.shifts=shifts;
+  }
+  map[id]=base;
+}
+
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,diffSubForFlatWrite,applyFlatSubWrite};
 }

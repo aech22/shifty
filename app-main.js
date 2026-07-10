@@ -49,11 +49,14 @@ function App(){
   const pastSubsLoadedRef=useRef(false);// 過去参照ボタンで全期間購読に切替済みか
   const subsSidRef=useRef(null);        // 現在subsを購読中のshopId（店舗切替後の遅延コールバック無視用）
   const reconcileSubsRef=useRef(null);  // startSubscriptions内で定義するreconcile関数
-  // subId→未確定のローカル書き込み値（null=削除待ち）。saveSubsが書き込み開始時にセットし、
-  // Firebase側の確認(update()のPromise解決)後にクリアする。setPeriodSubsのスナップショット反映時に
-  // このマップの内容で上書きし、サーバー未反映の直前の編集がリスナーのechoで巻き戻されるのを防ぐ
-  // （同一クライアント内で短時間に複数セルを連続編集した際、後の編集が古いスナップショットで
-  // 消され、さらに後続の別編集がその欠落状態のsubを丸ごと書き込んで永久にデータが消える事故があった）
+  // フラットパス（"subId" または "subId/フィールド名" "subId/shifts/日付"）→未確定のローカル
+  // 書き込み値（null=削除待ち）。saveSubsが書き込み開始時にセットし、Firebase側の確認
+  // (update()のPromise解決)後にクリアする。setPeriodSubsのスナップショット反映時に
+  // このマップの内容をapplyFlatSubWriteで重ね、サーバー未反映の直前の編集がリスナーの
+  // echoで巻き戻されるのを防ぐ（同一クライアント内で短時間に複数セルを連続編集した際、
+  // 後の編集が古いスナップショットで消える事故があった）。saveSubs側もフィールド単位の
+  // フラットパスで書き込むため、他端末が同じsub内の別フィールドを編集していても
+  // 互いの変更を巻き戻さない（詳細はapp-utils.jsのdiffSubForFlatWrite）
   const pendingSubWritesRef=useRef({});
   const[pastSubsLoaded,setPastSubsLoaded]=useState(false); // 過去参照ボタン表示制御用
   // URLトークンがある場合はapidもPhase1で確定させる
@@ -378,10 +381,12 @@ function App(){
       // pendingSubWritesRefに残っている未確定のローカル編集をサーバースナップショットの上に重ねる。
       // これがないと、直前に自分が書き込んだがまだサーバー確認が取れていない変更が、
       // ほぼ同時に届く別の（自分自身の別編集の場合を含む）value echoで巻き戻され、
-      // さらに後続の編集がその欠落状態のsubを丸ごと書き直すことで永久にデータが消える
+      // さらに後続の編集がその欠落状態のsubを丸ごと書き直すことで永久にデータが消える。
+      // pendingの各エントリはフラットパス（新規subは"subId"丸ごと、既存subの編集は
+      // "subId/フィールド名"や"subId/shifts/日付"）のため、applyFlatSubWriteで1件ずつ適用する。
       const merged={...subsMapRef.current};
-      Object.entries(pendingSubWritesRef.current).forEach(([id,s])=>{
-        if(s===null)delete merged[id];else merged[id]=s;
+      Object.entries(pendingSubWritesRef.current).forEach(([path,val])=>{
+        applyFlatSubWrite(merged,path,val);
       });
       const arr=Object.values(merged).filter(s=>s&&s.id);
       arr.sort((a,b)=>new Date(b.submittedAt)-new Date(a.submittedAt));
@@ -1151,28 +1156,32 @@ function App(){
       const newVal=typeof v==="function"?v(prevSubs):v;
       ls(storeKey(sid,"subs_v6"),newVal);
       // Firebase には update() でマージ書き込み（set()は他端末データを上書きするためNG）
-      // 差分書き込み: prevSubs とオブジェクト参照比較し、新規・変更されたsubのみ書く
-      // （呼び出し元はいずれも変更subを新しいオブジェクト参照で作っているため参照比較で検知できる）
-      // deletedId を渡すと null セットで Firebase からも削除する
+      // 差分書き込み: prevSubs とオブジェクト参照比較し、新規・変更されたsubを検出する
+      // （呼び出し元はいずれも変更subを新しいオブジェクト参照で作っているため参照比較で検知できる）。
+      // 検出した各subはさらにdiffSubForFlatWriteでフィールド単位のフラットパスに展開してから
+      // update()する。sub全体をそのまま書くと、同じsub内の別フィールドを編集した他端末・
+      // 直前の別編集を丸ごと上書きしてしまうため（last-write-winsがオブジェクト全体に
+      // 効いてしまう）。deletedId を渡すと sub 全体を null セットして Firebase からも削除する
       // ※ setState updater内でのFirebase/localStorage書き込みは副作用だが、このアプリは
       //   StrictModeでラップしていない（app-main.js末尾のReactDOM.createRoot参照）ため
       //   updaterは実際のコミット毎に厳密に1回だけ呼ばれ、二重発火の心配はない。
       if(firebaseDB){
         const prevSet=new Set(prevSubs);
+        const prevById={}; prevSubs.forEach(s=>{ if(s&&s.id) prevById[s.id]=s; });
         const changed=newVal.filter(s=>s&&s.id&&!prevSet.has(s));
-        const obj={};
-        changed.forEach(s=>{ obj[s.id]=s; });
-        if(deletedId) obj[deletedId]=null;
-        if(Object.keys(obj).length>0){
+        const flat={};
+        changed.forEach(s=>{ Object.assign(flat,diffSubForFlatWrite(s.id,prevById[s.id],s)); });
+        if(deletedId) flat[deletedId]=null;
+        if(Object.keys(flat).length>0){
           // 書き込み確定までpendingSubWritesRefに退避し、リアルタイムリスナーの未確定echoに
           // よる巻き戻し（flushSubs参照）からこの変更を保護する
-          Object.entries(obj).forEach(([id,val])=>{ pendingSubWritesRef.current[id]=val; });
-          firebaseDB.ref(fbPath(sid,"subs")).update(obj)
+          Object.entries(flat).forEach(([path,val])=>{ pendingSubWritesRef.current[path]=val; });
+          firebaseDB.ref(fbPath(sid,"subs")).update(flat)
             .catch(e=>console.warn("subs書き込み失敗:",e))
             .finally(()=>{
               // このPromiseで送った値からまだ書き換わっていなければ保護を解除する
-              // （解除中に別の編集が同じidに上書きしていればそちらのPromiseに任せる）
-              Object.entries(obj).forEach(([id,val])=>{ if(pendingSubWritesRef.current[id]===val)delete pendingSubWritesRef.current[id]; });
+              // （解除中に別の編集が同じパスに上書きしていればそちらのPromiseに任せる）
+              Object.entries(flat).forEach(([path,val])=>{ if(pendingSubWritesRef.current[path]===val)delete pendingSubWritesRef.current[path]; });
             });
         }
       }

@@ -334,3 +334,60 @@ test("recentPeriodIds: 隣接前期間が3ヶ月窓に含まれる（2週間・1
   const monthly = [{ id: "cur", startDate: "2026-07-01" }, { id: "prev", startDate: "2026-06-01" }];
   assert.ok(u.recentPeriodIds(monthly, "2026-07-09").includes("prev"));
 });
+
+test("diffSubForFlatWrite: 新規subは丸ごと1エントリを返す", () => {
+  const ns = { id: "s1", staffName: "太郎", shifts: { "2026-07-10": { status: "work", start: "9:00" } } };
+  assert.deepStrictEqual(u.diffSubForFlatWrite("s1", undefined, ns), { s1: ns });
+});
+
+test("diffSubForFlatWrite: 変更したshifts日付のみをフラットパスで返す（他日付・他subは巻き込まない）", () => {
+  const prev = { id: "s1", comment: "", shifts: {
+    "2026-07-10": { status: "work", start: "9:00" },
+    "2026-07-11": { status: "work", start: "10:00" },
+  } };
+  const next = { ...prev, shifts: { ...prev.shifts, "2026-07-10": { status: "work", start: "9:30" } } };
+  const diff = u.diffSubForFlatWrite("s1", prev, next);
+  assert.deepStrictEqual(diff, { "s1/shifts/2026-07-10": { status: "work", start: "9:30" } });
+});
+
+test("diffSubForFlatWrite: トップレベルフィールドの変更はsubId/フィールド名で返す", () => {
+  const prev = { id: "s1", comment: "旧", updatedAt: "2026-07-01T00:00:00Z", shifts: {} };
+  const next = { ...prev, comment: "新", updatedAt: "2026-07-10T00:00:00Z", isUpdated: true };
+  const diff = u.diffSubForFlatWrite("s1", prev, next);
+  assert.deepStrictEqual(diff, {
+    "s1/comment": "新",
+    "s1/updatedAt": "2026-07-10T00:00:00Z",
+    "s1/isUpdated": true,
+  });
+});
+
+test("diffSubForFlatWrite: 削除されたフィールド・日付はnullで返す", () => {
+  const prev = { id: "s1", note: "x", shifts: { "2026-07-10": { status: "work" } } };
+  const next = { id: "s1", shifts: {} };
+  const diff = u.diffSubForFlatWrite("s1", prev, next);
+  assert.deepStrictEqual(diff, { "s1/shifts/2026-07-10": null, "s1/note": null });
+});
+
+test("applyFlatSubWrite: subId丸ごとの新規追加・削除", () => {
+  const map = {};
+  u.applyFlatSubWrite(map, "s1", { id: "s1", shifts: {} });
+  assert.deepStrictEqual(map, { s1: { id: "s1", shifts: {} } });
+  u.applyFlatSubWrite(map, "s1", null);
+  assert.deepStrictEqual(map, {});
+});
+
+test("applyFlatSubWrite: shifts/日付パッチは同subの他日付・他フィールドを保持する", () => {
+  const map = { s1: { id: "s1", comment: "c", shifts: { "2026-07-10": { status: "work", start: "9:00" } } } };
+  u.applyFlatSubWrite(map, "s1/shifts/2026-07-11", { status: "work", start: "10:00" });
+  assert.deepStrictEqual(map.s1.shifts, {
+    "2026-07-10": { status: "work", start: "9:00" },
+    "2026-07-11": { status: "work", start: "10:00" },
+  });
+  assert.strictEqual(map.s1.comment, "c");
+});
+
+test("applyFlatSubWrite: ベースsubが未到着のフィールドパッチは無視される（後続flushで再試行）", () => {
+  const map = {};
+  u.applyFlatSubWrite(map, "s1/comment", "新");
+  assert.deepStrictEqual(map, {});
+});

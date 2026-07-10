@@ -132,6 +132,8 @@ const sharedGlobals = {
   subsWindowCutoff: "writable",
   recentPeriodIds: "writable",
   SUBS_WINDOW_MONTHS: "writable",
+  diffSubForFlatWrite: "writable",
+  applyFlatSubWrite: "writable",
   ssGet: "writable",
   ssSave: "writable",
   storeKey: "writable",
