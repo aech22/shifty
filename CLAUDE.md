@@ -534,39 +534,41 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-09 自動実行 #10）
+## Shifty バグチェックレポート（2026-07-10 自動実行 #11）
 
 ### 修正済み
 （今回の実行では修正なし）
 
 ### 要確認（未修正）
 
-- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2444、継続監視中・変更なし）
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2478、継続監視中・変更なし）
+- **🟢（新規把握）subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、コミット7aee03aで導入）: `setPeriodSubs`自体には現在の店舗IDと一致するかのガードがなく、店舗切替直後に旧店舗のスナップショットイベントが遅延到着すると共有`subsMapRef`に一瞬混入し得る。次のイベントで自己修復するため実害は限定的。旧実装にも同種の狭いレースは存在しており修正は見送り。
 
-### 重点調査: 前回巡回（#9）以降の新規6コミット
+### 重点調査: 前回巡回（#10）以降の新規コミット
 
-前回巡回（#9）は`8b22362`までを検証済みだったため、今回はそれ以降の6コミット（e288107〜6329b52。操作方法一覧の並び順変更・キッチン/ホール横並びヒートマップ・片側入力ヒートマップ補完・変更マークのダブル→トリプルクリック化・ランチ終わり/ディナー始まりの候補タブ連動算出・別名提出の上書きバグ修正）を静的レビュー。
+前回巡回（#10）は`236898e`までを検証済み。以降developへ積まれたコミットのうちコード変更を伴うものは以下2件（他は利用規約v1.2改定・docsのみ）。
 
-- 別名提出の上書きバグ修正（app-admin.js:485-495、commit 6329b52）: `applyEditToSubs`の編集対象sub検索が登録名の完全一致のみだったため、別名提出者の編集が新規subを作ってしまい元の提出が見えなくなる不整合があった。`_getSub`と同じ完全一致→別名フォールバックのロジックに統一。突合キー・フォールバック順序が`_getSub`と一致していることを確認済み。
-- StaffHdr/SmModalのsource:"grid"除外漏れ（app-staff.js:412,487、commit 6329b52）: シフト作成タブが直接作成する管理者入力用sub（`source:"grid"`）がスタッフ側の「提出済み」バッジ・一覧に誤カウントされないよう、SubsTabと同じ除外条件を追加。実提出時に自動的に「提出済み」へ遷移する設計も確認。
-- 片側入力ヒートマップ補完（app-admin.js:646-654,671、commit 908e0c5・c04103a）: 補完値（ランチ終わり/ディナー始まり）が休憩控除・残業延長の対象から正しく除外されるロジックであることを確認。
+- `7aee03a` subs購読の期間ベース部分購読化＋過去参照ボタン（app-main.js/app-admin.js/app-utils.js）: BACKLOG完了タスクとして既にdev実機・ユニットテストで検証済み。店舗切替時の購読クリア処理・`reconcileSubs`のsidガード・`reconcileSubsRef`再代入タイミングを静的再レビューし、致命的な不整合はないと判断。上記🟢のレースのみ新規把握。
+- `9fd5148` シフト作成タブの休み・連勤カウント表題改称＋1日休み/半日休み集計追加（app-admin.js）: 既存の0/0.5/1判定ロジックは変更なし、`fullDayCounts`/`halfDayCounts`への分解追加のみ。休み合計との整合性を確認。
 
 ### 追加確認
-- `npm test`: 30件全パス（前回#9と同数）
-- `npx eslint app-*.js`: 0 errors 99 warnings（既存no-unused-vars誤検知のみ）
-- Firebase書き込みパターン: `subs`は`update()`のみで`set()`全体上書きなし
+- `npm test`: 38件全パス（前回#10と同数）
+- `npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ、前回99から+1だが実害なし）
+- Firebase書き込みパターン: `subs`は`update()`/個別パス書き込みのみで`set()`全体上書きなし
 - isPro/isPremium誤用なし、DEV_MODE（app-core.js:12、式のまま）正常
-- Cloud Functions secrets抜け漏れなし、`.delete()`誤用なし
+- Cloud Functions: 前回巡回以降変更なし
 - fontSize<16 の input/select/textarea: 新規箇所なし
 
 ### 異常なし
-クリティカル（🔴）・中程度（🟡）の新規問題はなし。develop→push不要（コード変更なし。ローカルはorigin/developから1コミット遅れていたためpullのみ実施）。
+クリティカル（🔴）・中程度（🟡）の新規問題はなし。develop→push不要（コード変更なし。今回はレビューのみ）。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
 -
 -
 -
