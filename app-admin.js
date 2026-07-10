@@ -538,11 +538,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         // 時間入力は同フィールドの休み希望マーク(adminRest)を解除する
         if(sd.adminRest&&sd.adminRest[field]){const ar={...sd.adminRest};delete ar[field];if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;}
       }else{
-        delete sd[adjField];delete sd[nk];
-        // 出勤・退勤とも管理者調整値が消えたら退避したstatusに戻す（休み希望なら斜線が復活する）。
+        // セルを空欄にする＝「時間なし」の明示的な上書きとして保存する（空文字はnullish coalescing
+        // では素通りしないため、getStoredTime/getStoredNoteがスタッフ提出値にフォールバックしなくなる）。
+        // スタッフ提出値そのものを消したいときはこの上書きで対応でき、提出値に戻したいときは
+        // 提出一覧タブの詳細モーダルにある「提出値」選択（saveAdj）を使う想定
+        sd[adjField]="";sd[nk]="";
+        // 出勤・退勤とも管理者調整値が空欄になったら退避したstatusに戻す（休み希望なら斜線が復活する）。
         // スタッフ提出のstart/endが残っている場合は本人が出勤に変えているため復元しない
         const otherAdj=field==="start"?"adjustedEnd":"adjustedStart";
-        if(sd[otherAdj]==null&&sd.origStatus!==undefined){
+        if(!sd[otherAdj]&&sd.origStatus!==undefined){
           if(!sd.start&&!sd.end)sd.status=sd.origStatus;
           delete sd.origStatus;
         }
