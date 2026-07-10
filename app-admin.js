@@ -724,6 +724,67 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     });
     return errs;
   },[companyData,heatEdits,subs,settings,selPid,staffList,periods]);
+  // ポジション不足エラー: 日付×ランチ/ディナー×キッチン/ホールで、必要ポジション(settings.requiredPositions)に対する
+  // 出勤スタッフの保有ポジション(settings.staffPositions)を最大二部マッチング(matchPositionSlots)し、埋まらない枠を不足として集計する。
+  // section判定はheatDataのsectionと同じ規則（h/kサフィックスで上書き、分割未設定店舗は常にkitchenに集約）
+  const positionErrors=useMemo(()=>{
+    const result={}; // {date:{lunch:{kitchen:{pos:不足数},hall:{...}},dinner:{...}}}
+    const reqAll=settings.requiredPositions||{};
+    const staffPos=settings.staffPositions||{};
+    const hasAnyRequired=Object.values(reqAll).some(dt=>dt&&["lunch","dinner"].some(m=>{const r=dt[m];return r&&(((r.kitchen||[]).length)||((r.hall||[]).length));}));
+    if(!hasAnyRequired)return result;
+    dates.forEach(date=>{
+      const req=reqAll[dayTypeOf(date)]||{};
+      const attendees={lunch:{kitchen:[],hall:[]},dinner:{kitchen:[],hall:[]}};
+      realStaff.forEach(name=>{
+        let s=timeToMin(getEffHHMM(name,date,"start"));let e=timeToMin(getEffHHMM(name,date,"end"));
+        if(s===null||e===null||s>=e)return;
+        const note=getShiftNote(name,date);
+        if(note==="x")return;
+        const help=getHelpInfo(name,date);
+        if(help){
+          if(help.full)return;
+          if(help.startShop)s=Math.max(s,1020);
+          if(help.endShop)e=Math.min(e,1020);
+          if(s>=e)return;
+        }
+        const section=hallStaff.length===0?"kitchen":(note==="h"?"hall":note==="k"?"kitchen":(hallStaff.includes(name)?"hall":"kitchen"));
+        const positions=staffPos[name]||{lunch:[],dinner:[]};
+        if(s<1020)attendees.lunch[section].push({name,positions:positions.lunch||[]});
+        if(e>1020)attendees.dinner[section].push({name,positions:positions.dinner||[]});
+      });
+      const dayResult={lunch:{kitchen:{},hall:{}},dinner:{kitchen:{},hall:{}}};
+      ["lunch","dinner"].forEach(meal=>{
+        ["kitchen","hall"].forEach(section=>{
+          const slots=(req[meal]&&req[meal][section])||[];
+          if(slots.length===0)return;
+          const{shortageByPosition}=matchPositionSlots(slots,attendees[meal][section]);
+          if(Object.keys(shortageByPosition).length>0)dayResult[meal][section]=shortageByPosition;
+        });
+      });
+      const hasErr=["lunch","dinner"].some(m=>Object.keys(dayResult[m].kitchen).length>0||Object.keys(dayResult[m].hall).length>0);
+      if(hasErr)result[date]=dayResult;
+    });
+    return result;
+  },[subs,heatEdits,settings,selPid,staffList,periods,companyData]);
+  const hasLunchErr=date=>{const pe=positionErrors[date];return!!pe&&(Object.keys(pe.lunch.kitchen).length>0||Object.keys(pe.lunch.hall).length>0);};
+  const hasDinnerErr=date=>{const pe=positionErrors[date];return!!pe&&(Object.keys(pe.dinner.kitchen).length>0||Object.keys(pe.dinner.hall).length>0);};
+  // エラーサマリー用に日付順のフラットな一覧へ展開（キッチン/ホール別）
+  const positionErrorEntries=useMemo(()=>{
+    const kitchen=[],hall=[];
+    dates.forEach(date=>{
+      const pe=positionErrors[date];
+      if(!pe)return;
+      ["lunch","dinner"].forEach(meal=>{
+        ["kitchen","hall"].forEach(section=>{
+          Object.entries(pe[meal][section]||{}).forEach(([posName,short])=>{
+            (section==="kitchen"?kitchen:hall).push({date,meal,posName,short});
+          });
+        });
+      });
+    });
+    return{kitchen,hall};
+  },[positionErrors,dates]);
   const countHeat=(section,date,hr)=>{
     const h0=hr*60,h1=(hr+1)*60;
     let cnt=0;
@@ -1325,12 +1386,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                   const d=pd(date);const day=d.getDay();
                   const isHol=isHoliday(date);const isSun=day===0;const isSat=day===6;
                   const dc=(isSun||isHol)?"#e53935":isSat?"#1976d2":"var(--c-text)";
-                  const rb=(isSun||isHol)?"rgba(229,57,53,0.07)":isSat?"rgba(25,118,210,0.07)":"transparent";
+                  const baseRb=(isSun||isHol)?"rgba(229,57,53,0.07)":isSat?"rgba(25,118,210,0.07)":"transparent";
+                  // ポジション不足がある帯（ランチ=出勤行/ディナー=退勤行）の背景を赤く塗る
+                  const rbS=hasLunchErr(date)?LEGEND_COLORS.posErr:baseRb;
+                  const rbE=hasDinnerErr(date)?LEGEND_COLORS.posErr:baseRb;
                   return[
-                    <tr key={date+"-s"} style={{background:rb}}>
+                    <tr key={date+"-s"} style={{background:rbS}}>
                       <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rbS,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
@@ -1344,9 +1408,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                         </td>
                       ),spacerCell)}
                     </tr>,
-                    <tr key={date+"-e"} style={{background:rb}}>
+                    <tr key={date+"-e"} style={{background:rbE}}>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rb,width:colW,minWidth:colW,maxWidth:colW}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rbE,width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
@@ -1365,6 +1429,18 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
               </tbody>
             </table>
           </div>
+
+          {/* ポジション不足エラー一覧: 通常/ホール絞り込み時はホール→キッチンの順、キッチン絞り込み時は逆順 */}
+          {(positionErrorEntries.kitchen.length>0||positionErrorEntries.hall.length>0)&&(
+            <div style={{background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#DC2626",marginBottom:4}}>⚠ ポジションが不足しています</div>
+              <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
+                {(deptFilter==="kit"?[...positionErrorEntries.kitchen,...positionErrorEntries.hall]:[...positionErrorEntries.hall,...positionErrorEntries.kitchen])
+                  .map(e=>`${pd(e.date).getDate()}日${e.meal==="lunch"?"ランチ":"ディナー"}${e.posName} -${e.short}`)
+                  .join("、")}
+              </div>
+            </div>
+          )}
 
           {/* === 休みカウント / 連勤カウント === */}
           <div ref={restScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
@@ -1856,6 +1932,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const[editIdx,setEditIdx]=useState(null);
   const[editName,setEditName]=useState("");
   const[aliasIdx,setAliasIdx]=useState(null); // 別名編集中のスタッフindex
+  const[posIdx,setPosIdx]=useState(null); // ポジション編集中のスタッフindex
   const isPro=plan==="pro"||plan==="premium";
   const isPremium=plan==="premium";
   const[dragIdx,setDragIdx]=useState(null);
@@ -1876,6 +1953,12 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     saveAlias(staffName,cur);
     tt("別名を削除しました");
   };
+  const staffPositions=settings.staffPositions||{};
+  const savePositions=(staffName,meal,arr)=>{
+    const cur=staffPositions[staffName]||{lunch:[],dinner:[]};
+    onSaveSettings&&onSaveSettings({...settings,staffPositions:{...staffPositions,[staffName]:{...cur,[meal]:arr}}});
+  };
+  const allPositions=[...((settings.positions&&settings.positions.kitchen)||[]),...((settings.positions&&settings.positions.hall)||[])];
   // 最新期間の提出名のうち、未登録かつ未エイリアスのもの
   const allAliases=Object.values(staffAliases).flat();
   const latestPeriod=[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate))[0];
@@ -1998,6 +2081,9 @@ const dragIdxRef=useRef(null);
                 {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
                   別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
                 </button>}
+                {isPremium&&<button onClick={()=>{setPosIdx(posIdx===i?null:i);}} style={{padding:"6px 10px",background:posIdx===i?"rgba(59,130,246,.15)":"rgba(59,130,246,.06)",border:`1px solid ${posIdx===i?"#3B82F6":"rgba(59,130,246,.3)"}`,borderRadius:6,color:"#3B82F6",fontSize:12,cursor:"pointer",minWidth:76,textAlign:"center"}}>
+                  ポジション{(((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length)>0?` (${((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length})`:""}
+                </button>}
                 <button onClick={()=>toggleHelp(n)} title="ヘルプ要員として一覧に表示" style={{padding:"6px 10px",background:staffHelp[n]?"rgba(16,185,129,.15)":"rgba(16,185,129,.06)",border:`1px solid ${staffHelp[n]?"#10B981":"rgba(16,185,129,.3)"}`,borderRadius:6,color:"#10B981",fontSize:12,cursor:"pointer",flexShrink:0}}>
                   {staffHelp[n]?"✓ ヘルプ":"ヘルプ"}
                 </button>
@@ -2037,6 +2123,35 @@ const dragIdxRef=useRef(null);
                 </div>
               }
               <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>タップした名前が「{n}」の別名として登録されます</div>
+            </div>
+          )}
+          {/* ポジションパネル（Premium・展開時） */}
+          {isPremium&&posIdx===i&&(
+            <div style={{marginTop:4,padding:"12px 14px",background:"rgba(59,130,246,.04)",border:"1px solid rgba(59,130,246,.2)",borderRadius:10,position:"sticky",left:0,maxWidth:"calc(100vw - 76px)",boxSizing:"border-box"}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#3B82F6",marginBottom:8}}>ポジション（設定タブで登録したポジションから選択）</div>
+              {allPositions.length===0
+                ?<div style={{fontSize:12,color:"var(--c-text4)"}}>設定タブの「ポジション設定」で先にポジションを登録してください</div>
+                :["lunch","dinner"].map(meal=>{
+                  const cur=(staffPositions[n]&&staffPositions[n][meal])||[];
+                  return(
+                    <div key={meal} style={{marginBottom:10}}>
+                      <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:6}}>{meal==="lunch"?"ランチ":"ディナー"}</div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:6}}>
+                        {cur.length===0&&<div style={{fontSize:12,color:"var(--c-text4)"}}>未設定</div>}
+                        {cur.map((p,pi)=>(
+                          <div key={pi} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(59,130,246,.1)",border:"1px solid rgba(59,130,246,.25)",borderRadius:16,padding:"3px 10px 3px 12px",fontSize:13,color:"#2563EB",fontWeight:600}}>
+                            {p}<button onClick={()=>savePositions(n,meal,cur.filter((_,ci)=>ci!==pi))} style={{background:"none",border:"none",color:"#3B82F6",cursor:"pointer",padding:"0 0 0 4px",fontSize:14,lineHeight:1}}>×</button>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                        {allPositions.filter(p=>!cur.includes(p)).map(p=>(
+                          <button key={p} onClick={()=>savePositions(n,meal,[...cur,p])} style={{padding:"5px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:16,fontSize:13,color:"var(--c-text2)",cursor:"pointer",fontWeight:600}}>＋ {p}</button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
             </div>
           )}
           </div>
@@ -2799,6 +2914,9 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
   const[emailInput,setEmailInput]=useState("");
   const[codeInput,setCodeInput]=useState("");
   const[pendingNewType,setPendingNewType]=useState(null); // null | {name:""}
+  const[newPosInput,setNewPosInput]=useState({kitchen:"",hall:""}); // ポジション名追加の入力欄
+  const[reqDayType,setReqDayType]=useState("weekday"); // 必要ポジション設定: 表示中の曜日区分
+  const[reqMeal,setReqMeal]=useState("lunch"); // 必要ポジション設定: 表示中のランチ/ディナー
   const[linkLoading,setLinkLoading]=useState(false);
   const[linkError,setLinkError]=useState("");
   // Cookie認証ユーザー向けアカウント登録/連携
@@ -2991,6 +3109,110 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       })}
       </div>
       </div>
+    </AC>}
+
+    {plan==="premium"&&<AC title="ポジション設定">
+      <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>キッチン・ホールそれぞれのポジション名を登録します。下の「必要ポジション設定」・スタッフ一覧タブのポジション選択で使用します。</div>
+      <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+        {[["kitchen","キッチン"],["hall","ホール"]].map(([sec,label])=>{
+          const list=(settings.positions&&settings.positions[sec])||[];
+          const addPos=()=>{
+            const v=(newPosInput[sec]||"").trim();
+            if(!v)return;
+            if(list.includes(v)){tt("▲ 既に登録されているポジションです");return;}
+            onSave({...settings,positions:{...(settings.positions||{}),[sec]:[...list,v]}});
+            setNewPosInput({...newPosInput,[sec]:""});
+          };
+          const delPos=p=>{
+            // 削除時は必要ポジション設定・スタッフのポジションからも同名を除去する（属性削除と同じカスケード方針）
+            const newPositions={...(settings.positions||{}),[sec]:list.filter(x=>x!==p)};
+            const rp=settings.requiredPositions||{};
+            const newRP={};
+            Object.keys(rp).forEach(dt=>{
+              const cur=rp[dt]||{};
+              newRP[dt]={
+                lunch:{kitchen:((cur.lunch&&cur.lunch.kitchen)||[]).filter(x=>x!==p),hall:((cur.lunch&&cur.lunch.hall)||[]).filter(x=>x!==p)},
+                dinner:{kitchen:((cur.dinner&&cur.dinner.kitchen)||[]).filter(x=>x!==p),hall:((cur.dinner&&cur.dinner.hall)||[]).filter(x=>x!==p)},
+              };
+            });
+            const sp=settings.staffPositions||{};
+            const newSP={};
+            Object.keys(sp).forEach(name=>{
+              newSP[name]={lunch:((sp[name]&&sp[name].lunch)||[]).filter(x=>x!==p),dinner:((sp[name]&&sp[name].dinner)||[]).filter(x=>x!==p)};
+            });
+            onSave({...settings,positions:newPositions,requiredPositions:newRP,staffPositions:newSP});
+          };
+          return(
+            <div key={sec} style={{flex:"1 1 220px",minWidth:220}}>
+              <div style={{fontSize:12,fontWeight:700,color:"var(--c-text2)",marginBottom:6}}>{label}</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+                {list.length===0&&<div style={{fontSize:12,color:"var(--c-text4)"}}>未登録</div>}
+                {list.map(p=>(
+                  <div key={p} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(248,112,54,.1)",border:"1px solid rgba(248,112,54,.25)",borderRadius:16,padding:"3px 10px 3px 12px",fontSize:13,color:"#c45b1a",fontWeight:600}}>
+                    {p}<button onClick={()=>delPos(p)} style={{background:"none",border:"none",color:"#f87036",cursor:"pointer",padding:"0 0 0 4px",fontSize:14,lineHeight:1}}>×</button>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <input value={newPosInput[sec]||""} onChange={e=>setNewPosInput({...newPosInput,[sec]:e.target.value})} onKeyDown={e=>e.key==="Enter"&&addPos()} placeholder="ポジション名" maxLength={20} style={{...AI,flex:1,padding:"6px 10px",fontSize:16}}/>
+                <button onClick={addPos} style={{...AB,padding:"6px 12px",fontSize:12}}>＋</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </AC>}
+
+    {plan==="premium"&&<AC title="必要ポジション設定">
+      <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>曜日区分・ランチ/ディナーごとに必要なポジションをタグで追加します。同じポジションを複数回追加すると、その人数分が必要になります（シフト作成タブで不足を判定）。</div>
+      <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+        {DAY_TYPES.map(([id,label])=>(
+          <button key={id} onClick={()=>setReqDayType(id)} style={{padding:"6px 12px",background:reqDayType===id?"#f87036":"var(--c-input)",border:`1px solid ${reqDayType===id?"#f87036":"var(--c-border2)"}`,borderRadius:7,color:reqDayType===id?"white":"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{label}</button>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:14}}>
+        {[["lunch","ランチ"],["dinner","ディナー"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setReqMeal(id)} style={{padding:"6px 12px",background:reqMeal===id?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:7,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{label}</button>
+        ))}
+      </div>
+      {(()=>{
+        const rp=settings.requiredPositions||{};
+        const cur=(rp[reqDayType]&&rp[reqDayType][reqMeal])||{kitchen:[],hall:[]};
+        const setCur=(sec,arr)=>{
+          const nextDT={...(rp[reqDayType]||{lunch:{kitchen:[],hall:[]},dinner:{kitchen:[],hall:[]}})};
+          nextDT[reqMeal]={...(nextDT[reqMeal]||{kitchen:[],hall:[]}),[sec]:arr};
+          onSave({...settings,requiredPositions:{...rp,[reqDayType]:nextDT}});
+        };
+        return(
+          <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+            {[["kitchen","キッチン"],["hall","ホール"]].map(([sec,label])=>{
+              const options=(settings.positions&&settings.positions[sec])||[];
+              const slots=cur[sec]||[];
+              return(
+                <div key={sec} style={{flex:"1 1 220px",minWidth:220}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"var(--c-text2)",marginBottom:6}}>{label}</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+                    {slots.length===0&&<div style={{fontSize:12,color:"var(--c-text4)"}}>未設定</div>}
+                    {slots.map((p,i)=>(
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.3)",borderRadius:16,padding:"3px 10px 3px 12px",fontSize:13,color:"#DC2626",fontWeight:600}}>
+                        {p}<button onClick={()=>setCur(sec,slots.filter((_,ci)=>ci!==i))} style={{background:"none",border:"none",color:"#DC2626",cursor:"pointer",padding:"0 0 0 4px",fontSize:14,lineHeight:1}}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                  {options.length===0
+                    ?<div style={{fontSize:11,color:"var(--c-text4)"}}>先に上の「ポジション設定」で{label}のポジションを登録してください</div>
+                    :<div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                      {options.map(p=>(
+                        <button key={p} onClick={()=>setCur(sec,[...slots,p])} style={{padding:"5px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:16,fontSize:13,color:"var(--c-text2)",cursor:"pointer",fontWeight:600}}>＋ {p}</button>
+                      ))}
+                    </div>
+                  }
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
     </AC>}
 
     {(plan==="pro"||plan==="premium")&&<AC title="Excel書き出し設定">

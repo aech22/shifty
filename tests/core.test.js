@@ -391,3 +391,56 @@ test("applyFlatSubWrite: ベースsubが未到着のフィールドパッチは�
   u.applyFlatSubWrite(map, "s1/comment", "新");
   assert.deepStrictEqual(map, {});
 });
+
+// ===== ポジションエラー判定 =====
+test("dayTypeOf: 平日/土/日を判定する", () => {
+  assert.strictEqual(u.dayTypeOf("2026-07-13"), "weekday"); // 月曜
+  assert.strictEqual(u.dayTypeOf("2026-07-11"), "sat"); // 土曜
+  assert.strictEqual(u.dayTypeOf("2026-07-12"), "sun"); // 日曜
+});
+
+test("dayTypeOf: 祝日は曜日に関わらずholを優先する", () => {
+  // 2026-07-20は祝日（海の日・月曜）
+  assert.strictEqual(u.isHoliday("2026-07-20"), true);
+  assert.strictEqual(u.dayTypeOf("2026-07-20"), "hol");
+});
+
+test("matchPositionSlots: 必要枠なし(空配列)は不足なし", () => {
+  const r = u.matchPositionSlots([], [{ name: "A", positions: ["調理長"] }]);
+  assert.deepStrictEqual(r, { matchedCount: 0, shortageByPosition: {} });
+});
+
+test("matchPositionSlots: 単純に満たされるケース", () => {
+  const r = u.matchPositionSlots(["調理長"], [{ name: "A", positions: ["調理長"] }]);
+  assert.strictEqual(r.matchedCount, 1);
+  assert.deepStrictEqual(r.shortageByPosition, {});
+});
+
+test("matchPositionSlots: 保有者不足は不足数を返す", () => {
+  const r = u.matchPositionSlots(["調理長", "調理長"], [{ name: "A", positions: ["調理長"] }]);
+  assert.strictEqual(r.matchedCount, 1);
+  assert.deepStrictEqual(r.shortageByPosition, { 調理長: 1 });
+});
+
+test("matchPositionSlots: 複数ポジション保有者を跨いだ増加道で最大マッチングを求める（貪欲割当だと過大不足になるケース）", () => {
+  // 枠: 調理長, フライヤー / A: 調理長+フライヤー両方保有, B: 調理長のみ保有
+  // 貪欲に先頭の枠(調理長)からAを割り当てると、フライヤーを埋められるのはAしかいないため不足になってしまう。
+  // 正しくはA→フライヤー, B→調理長で両方埋まる（不足0）。
+  const slots = ["調理長", "フライヤー"];
+  const attendees = [
+    { name: "A", positions: ["調理長", "フライヤー"] },
+    { name: "B", positions: ["調理長"] },
+  ];
+  const r = u.matchPositionSlots(slots, attendees);
+  assert.strictEqual(r.matchedCount, 2);
+  assert.deepStrictEqual(r.shortageByPosition, {});
+});
+
+test("matchPositionSlots: 1人は1出勤=1枠までしか埋められない（同じ人を2枠にカウントしない）", () => {
+  const slots = ["調理長", "フライヤー"];
+  const attendees = [{ name: "A", positions: ["調理長", "フライヤー"] }];
+  const r = u.matchPositionSlots(slots, attendees);
+  assert.strictEqual(r.matchedCount, 1);
+  // どちらか一方が不足として残る（どちらかは実装の割当順に依存するため、不足件数のみ検証）
+  assert.strictEqual(Object.values(r.shortageByPosition).reduce((a, b) => a + b, 0), 1);
+});

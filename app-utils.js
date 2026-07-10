@@ -173,6 +173,48 @@ function getOT(staffName,settings,shift){
 }
 function fmtMin(min){if(!min&&min!==0)return"";const h=Math.floor(min/60),m=min%60;return`${h}:${String(m).padStart(2,"0")}`;}
 
+// ===== ポジションエラー判定 =====
+// 曜日区分判定（祝日優先。getBreakListと同じ優先順位: 祝日 > 日 > 土 > 平日、DAY_TYPESと同じキー）
+function dayTypeOf(dateStr){
+  const dow=pd(dateStr).getDay();
+  if(isHoliday(dateStr))return"hol";
+  if(dow===0)return"sun";
+  if(dow===6)return"sat";
+  return"weekday";
+}
+// 必要ポジション(slots・重複可の配列)と出勤者(attendees:[{name,positions:[]}])の最大二部マッチング（Kuhn法）。
+// 1人が複数ポジションを持っていても同時に埋められるのは1枠のみ（「1出勤につき1人」の制約）。
+// 単純な貪欲割当だと本来埋まる組み合わせを見逃す（例: 枠[調理長,フライヤー]・A[調理長,フライヤー]・B[調理長]は
+// A→フライヤー,B→調理長で両方埋まるが、枠を先頭から貪欲に割り当てるとAが調理長を取ってフライヤーが埋まらなくなる）
+// ため、増加道(augmenting path)による再割当てで最大マッチングを求める。
+function matchPositionSlots(slots,attendees){
+  const shortageByPosition={};
+  if(!slots||slots.length===0)return{matchedCount:0,shortageByPosition};
+  const list=attendees||[];
+  const matchOfStaff=new Array(list.length).fill(-1); // staffIdx -> slotIdx
+  const slotMatched=new Array(slots.length).fill(false);
+  const tryAssign=(slotIdx,visited)=>{
+    for(let si=0;si<list.length;si++){
+      if(visited[si])continue;
+      if(!(list[si].positions||[]).includes(slots[slotIdx]))continue;
+      visited[si]=true;
+      if(matchOfStaff[si]===-1||tryAssign(matchOfStaff[si],visited)){
+        matchOfStaff[si]=slotIdx;
+        slotMatched[slotIdx]=true;
+        return true;
+      }
+    }
+    return false;
+  };
+  slots.forEach((_,slotIdx)=>{tryAssign(slotIdx,new Array(list.length).fill(false));});
+  let matchedCount=0;
+  slots.forEach((posName,slotIdx)=>{
+    if(slotMatched[slotIdx])matchedCount++;
+    else shortageByPosition[posName]=(shortageByPosition[posName]||0)+1;
+  });
+  return{matchedCount,shortageByPosition};
+}
+
 // ===== ストレージキー（店舗IDベース）=====
 // ===== ストレージキー（店舗IDベース）=====
 function storeKey(shopId,key){return`shift_${shopId}_${key}`;}
@@ -231,6 +273,7 @@ const CELL_COLOR_LEGEND=[
   {key:"dup",color:"rgba(255,71,87,.35)",label:"店舗間シフト重複",desc:"企業連携している他店舗のシフトと勤務時間が重なっている"},
   {key:"note",color:"#FFF3B0",label:"特記あり",desc:"h・k・x・他店舗略称などのサフィックスが付いたセル"},
   {key:"rest",hatch:true,label:"休み希望（斜線）",desc:"スタッフが提出した休み希望、または管理者が y で入力した休み"},
+  {key:"posErr",color:"rgba(239,68,68,0.18)",label:"ポジション不足",desc:"必要ポジション設定に対して出勤人数・ポジションが不足しているランチ/ディナーの行"},
 ];
 // 休み希望コマンド判定（セル全体が y / 休 のとき。時間付きの「9y」は通常サフィックス扱い）
 const isRestCommand=raw=>/^(y|ｙ|休)$/i.test(String(raw==null?"":raw).trim());
@@ -302,5 +345,5 @@ function applyFlatSubWrite(map,path,value){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,diffSubForFlatWrite,applyFlatSubWrite};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots};
 }

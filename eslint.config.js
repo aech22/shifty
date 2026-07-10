@@ -134,6 +134,8 @@ const sharedGlobals = {
   SUBS_WINDOW_MONTHS: "writable",
   diffSubForFlatWrite: "writable",
   applyFlatSubWrite: "writable",
+  dayTypeOf: "writable",
+  matchPositionSlots: "writable",
   ssGet: "writable",
   ssSave: "writable",
   storeKey: "writable",
