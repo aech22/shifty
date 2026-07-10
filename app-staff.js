@@ -85,15 +85,18 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     tt_("↺ リセットしました");
   };
 
-  // 候補取得（日付別 > 祝日[key=7] > 曜日別 > 全体）
+  // 候補取得（日付別 > 祝日[key=7:連休中・単日/key=8:最終日] > 曜日別 > 全体）
   const gc=ds=>{
     // 1. 日付別（最優先）
     const dc=(settings.dateCandidates||{})[ds];if(dc&&dc.length>0)return dc;
-    // 2. 祝日（key=7）
-    if(isHoliday(ds)){const hc=(settings.weekdayCandidates||{})[7]||[];if(hc.length>0)return hc;}
-    // 3. 曜日別
+    // 2. 祝日（dayTypeOfで連休中・単日(holSat)/最終日(holSun)を判定）
+    const dt=dayTypeOf(ds);
+    if(dt==="holSat"){const hc=(settings.weekdayCandidates||{})[7]||[];if(hc.length>0)return hc;}
+    if(dt==="holSun"){const hc=(settings.weekdayCandidates||{})[8]||[];if(hc.length>0)return hc;}
+    // 3. 曜日別（翌日が祝日で連休が続く非祝日の日曜日はdayTypeOfが"sat"を返すため土曜(6)の候補を使う）
     const dow=pd(ds).getDay();
-    const wdc=(settings.weekdayCandidates||{})[dow]||[];if(wdc.length>0)return wdc;
+    const wdKey=dt==="sat"?6:dow;
+    const wdc=(settings.weekdayCandidates||{})[wdKey]||[];if(wdc.length>0)return wdc;
     // 4. 全体デフォルト
     if(isWeekendOrHoliday(ds))return settings.candidates||CAND_WEEKEND;
     return settings.candidates||CAND_WEEKDAY;

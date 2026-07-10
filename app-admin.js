@@ -2248,6 +2248,13 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
   // 選択中の日付の候補（複数選択時は全日付の和集合）
   const dC=selDates.length===1?((settings.dateCandidates||{})[selDates[0]]||[]):[];
 
+  // 曜日別候補の区分: 0〜6=通常の曜日、7=祝日（連休中・単日、土曜扱い）、8=祝日（最終日、日曜扱い）
+  const WDAY_OPTS=[0,1,2,3,4,5,6,7,8];
+  const wdLabel=d=>d===7?"祝(単)":d===8?"祝(終)":WD[d];
+  const wdLabelFull=d=>d===7?"祝日（連休中・単日）":d===8?"祝日（最終日）":WD[d]+"曜日";
+  const wdIsSat=d=>d===6||d===7; // 土曜扱い（土曜そのもの・連休中/単日の祝日）
+  const wdIsSun=d=>d===0||d===8; // 日曜扱い（日曜そのもの・連休最終日の祝日）
+
   const SingleTimeSelect=({value,onChange,label})=>(
     <div style={{flex:1}}>
       <div style={{fontSize:11,color:"var(--c-text3)",marginBottom:4}}>{label}</div>
@@ -2281,17 +2288,17 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
       {mode==="weekday"&&<AC title="曜日別候補（全体より優先）">
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>複数選択で一括追加 ／ 祝日は平日・土日より優先適用されます</div>
 
-        {/* 曜日選択ボタン（日曜を先頭に・祝日も含む） */}
+        {/* 曜日選択ボタン（日曜を先頭に・祝日2種も含む） */}
         <div style={{display:"flex",gap:4,flexWrap:"wrap",marginBottom:12}}>
-          {[0,1,2,3,4,5,6,7].map(d=>{
+          {WDAY_OPTS.map(d=>{
             const sel=selDows.includes(d);
-            const isSat=d===6,isSun=d===0,isHol=d===7;
+            const isSat=wdIsSat(d),isSun=wdIsSun(d);
             return(<button key={d} onClick={()=>setSelDows(prev=>prev.includes(d)?prev.filter(x=>x!==d):[...prev,d])}
               style={{padding:"7px 14px",borderRadius:20,fontSize:13,fontWeight:700,border:"1px solid",cursor:"pointer",
-                background:sel?(isSat?"#3B82F6":isSun||isHol?"#FF4757":"#f87036"):"var(--c-input)",
-                borderColor:sel?"transparent":isSat?"rgba(147,197,253,.3)":isSun||isHol?"rgba(252,165,165,.3)":"var(--c-border2)",
-                color:sel?"white":isSat?"#3B82F6":isSun||isHol?"#FF4757":"var(--c-text2)"}}>
-              {d===7?"祝":WD[d]}
+                background:sel?(isSat?"#3B82F6":isSun?"#FF4757":"#f87036"):"var(--c-input)",
+                borderColor:sel?"transparent":isSat?"rgba(147,197,253,.3)":isSun?"rgba(252,165,165,.3)":"var(--c-border2)",
+                color:sel?"white":isSat?"#3B82F6":isSun?"#FF4757":"var(--c-text2)"}}>
+              {wdLabel(d)}
             </button>);
           })}
         </div>
@@ -2305,7 +2312,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
             <button onClick={addW} style={{...AB,whiteSpace:"nowrap"}}>＋ 追加</button>
           </div>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-            <div style={{fontSize:10,color:"var(--c-text4)"}}>{selDows.map(d=>d===7?"祝":WD[d]).join("・")} に追加</div>
+            <div style={{fontSize:10,color:"var(--c-text4)"}}>{selDows.map(wdLabel).join("・")} に追加</div>
             <button onClick={()=>{
               const w={...(settings.weekdayCandidates||{})};
               let total=0;
@@ -2314,7 +2321,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
                 if(!b.some(c=>c.closed)){w[dow]=sc([...b,{closed:true}]);total++;}
               });
               onSave({...settings,weekdayCandidates:w});
-              tt(total>0?`✓ ${selDows.map(d=>d===7?"祝":WD[d]).join("・")}に休業日を設定`:"▲ 既に設定済みです");
+              tt(total>0?`✓ ${selDows.map(wdLabel).join("・")}に休業日を設定`:"▲ 既に設定済みです");
             }} style={{padding:"6px 12px",background:"rgba(255,71,87,.15)",border:"1px solid rgba(255,71,87,.3)",borderRadius:8,color:"#FF4757",fontSize:12,fontWeight:700,cursor:"pointer"}}>× 休業日に設定</button>
           </div>
         </div>
@@ -2322,11 +2329,11 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
         {/* 全曜日の候補一覧（常に表示・日曜→祝→月〜土の順） */}
         <div style={{borderTop:"1px solid var(--c-border)",paddingTop:14}}>
           <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,fontWeight:600}}>全曜日の登録済み候補</div>
-          {[0,1,2,3,4,5,6,7].map(d=>{
+          {WDAY_OPTS.map(d=>{
             const cands=(settings.weekdayCandidates||{})[d]||[];
-            const isSat=d===6,isSun=d===0,isHol=d===7;
-            const label=d===7?"祝日":WD[d]+"曜日";
-            const lc=isSat?"#93C5FD":isSun||isHol?"#FCA5A5":"#4B5563";
+            const isSat=wdIsSat(d),isSun=wdIsSun(d);
+            const label=wdLabelFull(d);
+            const lc=isSat?"#93C5FD":isSun?"#FCA5A5":"#4B5563";
             return(
               <div key={d} style={{marginBottom:8,background:"var(--c-input2)",borderRadius:10,overflow:"hidden"}}>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",
