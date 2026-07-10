@@ -124,8 +124,6 @@ function shiftBandInfo(shift){
   const attendance=((hasLunch&&hasDinner)||(endMin-startMin)>=540)?1:0.5;
   return{startMin,endMin,hasLunch,hasDinner,attendance};
 }
-// 休憩は1出勤（ランチ・ディナー両帯 or 9時間以上）のスタッフにのみ適用
-function isBreakEligible(shift){return shiftBandInfo(shift).attendance===1;}
 // 属性ID→名称のリスト（staffTypeLimits優先・社員/バイト補完）
 function getAttrOptions(settings){
   const stl=(settings&&settings.staffTypeLimits)||{};
@@ -136,21 +134,28 @@ function getAttrOptions(settings){
   return out;
 }
 const DAY_TYPES=[["weekday","平日"],["sat","土曜"],["sun","日曜"],["hol","祝日"]];
-// 休憩適用の統一入口: 適用可否判定 + 属性タグフィルタ + 出勤開始時刻フィルタ
+// 休憩適用の統一入口: 属性タグフィルタ + 実際のシフト時間帯との重なり判定
 // 属性一致のタグ付き休憩がその日区分にある場合はタグなし休憩を適用しない（差し替え方式）
+// 休憩の適用可否は出勤日数(attendance=1出勤等)のような全か無かの指標では判定しない。
+// シフトの実長ではなく出退勤時刻が休憩時間帯と重なるかどうかだけで決めないと、
+// 出退勤時間をわずかに減らしただけで閾値をまたいで休憩控除が消え、
+// 総労働時間がかえって増えるという矛盾が生じるため（2026-07-10修正）。
 function getBreaksFor(settings,dateStr,staffName,shift){
-  if(!isBreakEligible(shift))return[];
+  if(!shift||shift.status!=="work")return[];
   const list=getBreakList(settings,dateStr);
   const attr=((settings&&settings.staffAttributes)||{})[staffName]||"parttime";
   const hasTagged=list.some(br=>br&&br.tags&&br.tags.length&&br.tags.includes(attr));
   const stStr=shift&&(shift.adjustedStart??shift.start);
+  const enStr=shift&&(shift.adjustedEnd??shift.end);
   const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
   const ws=stStr?toMin(stStr):null;
+  const we=enStr?toMin(enStr):null;
   return list.filter(br=>{
     const tags=br&&br.tags;
     if(tags&&tags.length){if(!tags.includes(attr))return false;}
     else if(hasTagged)return false;
     if(ws!==null&&br&&br.start&&ws>=toMin(br.start))return false;
+    if(we!==null&&br&&br.start&&we<=toMin(br.start))return false;
     return true;
   });
 }
@@ -246,5 +251,5 @@ function extractNote(raw){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,isBreakEligible,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds};
 }

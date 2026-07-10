@@ -66,12 +66,34 @@ test("shiftBandInfo: 9時間以上 08:00-17:00（ディナー帯なし・540分�
   assert.strictEqual(r.hasDinner, false); // 1020分ちょうどで > 1020 ではない
 });
 
-test("getBreaksFor: 非適格（ランチのみ）→ []", () => {
+test("getBreaksFor: シフト終了後に始まる休憩は重ならないため適用しない", () => {
   const settings = { breakTimes: { weekday: [{ start: "15:00", end: "16:00" }] } };
   assert.deepStrictEqual(
     u.getBreaksFor(settings, "2026-07-06", "A", { status: "work", start: "10:00", end: "14:00" }),
     []
   );
+});
+
+test("getBreaksFor: 9時間未満・ランチのみの短時間シフトでも休憩時間帯と重なれば適用する（出勤日数attendanceによる全か無かの判定は廃止）", () => {
+  const settings = { breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] } };
+  // 10:00-14:00 = 4時間（attendance 0.5 相当・旧ロジックなら[]だった）が、休憩12:00-13:00と重なるため適用する
+  assert.deepStrictEqual(
+    u.getBreaksFor(settings, "2026-07-06", "A", { status: "work", start: "10:00", end: "14:00" }),
+    [{ start: "12:00", end: "13:00" }]
+  );
+});
+
+test("回帰: 退勤時間を減らすと期間別勤務時間が増える不具合（境界9時間の崖）が解消されている", () => {
+  const settings = { breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] } };
+  const breaksFull = u.getBreaksFor(settings, "2026-07-10", "A", { status: "work", start: "08:00", end: "17:00" });
+  const netFull = u.calcNetWorkMinutes({ status: "work", start: "08:00", end: "17:00" }, breaksFull);
+  const breaksReduced = u.getBreaksFor(settings, "2026-07-10", "A", { status: "work", start: "08:00", end: "16:55" });
+  const netReduced = u.calcNetWorkMinutes({ status: "work", start: "08:00", end: "16:55" }, breaksReduced);
+  // 退勤を17:00→16:55（5分減）にしたら、純勤務時間も5分減るのが正しい（480→475）。
+  // 旧ロジックでは9時間(540分)の閾値を下回って休憩控除ごと消え、480→535に増えていた。
+  assert.strictEqual(netFull, 480);
+  assert.strictEqual(netReduced, 475);
+  assert.ok(netReduced < netFull, "退勤時間を減らしたのに純勤務時間が増えてはいけない");
 });
 
 test("getBreaksFor: 属性タグフィルタ（employee向け休憩をparttimeは受け取らない）", () => {
