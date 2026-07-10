@@ -199,7 +199,7 @@ function dayTypeOf(dateStr){
   return"weekday";
 }
 // シフト作成タブ「必要ポジション設定」の曜日区分タブ（祝日をholSat/holSunに分割した5分類。DAY_TYPESとは別物＝breakTimes等には影響しない）
-const POSITION_DAY_TYPES=[["weekday","平日"],["sat","土曜"],["sun","日曜"],["holSat","祝日（土曜扱い）"],["holSun","祝日（日曜扱い）"]];
+const POSITION_DAY_TYPES=[["weekday","平日"],["sat","土曜"],["sun","日曜"],["holSat","祝日（連休中・単日）"],["holSun","祝日（最終日）"]];
 // 必要ポジション(slots・重複可の配列)と出勤者(attendees:[{name,positions:[]}])の最大二部マッチング（Kuhn法）。
 // 1人が複数ポジションを持っていても同時に埋められるのは1枠のみ（「1出勤につき1人」の制約）。
 // 単純な貪欲割当だと本来埋まる組み合わせを見逃す（例: 枠[調理長,フライヤー]・A[調理長,フライヤー]・B[調理長]は
