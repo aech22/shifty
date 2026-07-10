@@ -534,27 +534,29 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-10 自動実行 #11）
+## Shifty バグチェックレポート（2026-07-10 自動実行 #12）
 
 ### 修正済み
-（今回の実行では修正なし）
+（今回の実行では修正なし。以下は本ループ開始前にユーザー/別セッションが同日中に実装・コミット済みだった5件のレビュー）
+
+### 重点調査: 前回巡回（#11・`444d6ae`時点）以降の新規コミット
+
+`fd9bb98`（別名スタッフの期間別/週間勤務時間、別途「ユーザー報告調査」で既報告・main リリース済み）を除く4件を精査。
+
+- `b5e23c1`/`491053e` 休憩控除の適用可否判定を「出勤日数attendance（9時間以上等）の全か無か閾値」から「出勤が休憩開始より前 かつ 退勤が休憩終了より後（休憩を完全にまたぐ）」に変更。境界の崖（退勤をわずかに減らすと純勤務時間が増える矛盾）とランチのみ/ディナーのみ勤務への誤適用を解消。回帰テスト追加済み、ロジック整合性を確認。
+- `154d685` シフト作成タブの連続セル編集時、Firebaseリスナーの未確定echoが直前のローカル編集を巻き戻すレースを`pendingSubWritesRef`で解消。店舗切替時のクリア処理も確認済み。
+- `daecdb6` subs保存をsub全体update()からフィールド単位のフラットパス書き込み（`diffSubForFlatWrite`/`applyFlatSubWrite`）に変更し、同一sub内の別フィールドを編集した他端末・直前の別編集を巻き戻さないようにした。全呼び出し元が不変更新パターン（変更部分のみ新しいオブジェクト参照）を守っており参照比較の差分検出と整合。`database.rules.json`の`subs/$subId`検証（`hasChildren(['id','staffName','periodId','shifts','submittedAt'])`）は、現行コードがshiftsを完全に空にする更新パスを持たないため影響なしと判断。
+- `649fa15` 未調整セル（提出値がそのまま残るセル）を空欄にしても保存されない不具合を、`adjustedStart/End=""`の明示的な上書きとして修正。`??`によるフォールバックが空文字を素通りしないことを確認。
 
 ### 要確認（未修正）
 
-- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2478、継続監視中・変更なし）
-- **🟢（新規把握）subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、コミット7aee03aで導入）: `setPeriodSubs`自体には現在の店舗IDと一致するかのガードがなく、店舗切替直後に旧店舗のスナップショットイベントが遅延到着すると共有`subsMapRef`に一瞬混入し得る。次のイベントで自己修復するため実害は限定的。旧実装にも同種の狭いレースは存在しており修正は見送り。
-
-### 重点調査: 前回巡回（#10）以降の新規コミット
-
-前回巡回（#10）は`236898e`までを検証済み。以降developへ積まれたコミットのうちコード変更を伴うものは以下2件（他は利用規約v1.2改定・docsのみ）。
-
-- `7aee03a` subs購読の期間ベース部分購読化＋過去参照ボタン（app-main.js/app-admin.js/app-utils.js）: BACKLOG完了タスクとして既にdev実機・ユニットテストで検証済み。店舗切替時の購読クリア処理・`reconcileSubs`のsidガード・`reconcileSubsRef`再代入タイミングを静的再レビューし、致命的な不整合はないと判断。上記🟢のレースのみ新規把握。
-- `9fd5148` シフト作成タブの休み・連勤カウント表題改称＋1日休み/半日休み集計追加（app-admin.js）: 既存の0/0.5/1判定ロジックは変更なし、`fullDayCounts`/`halfDayCounts`への分解追加のみ。休み合計との整合性を確認。
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2495、継続監視中・変更なし）
+- **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、#11から継続監視中・変更なし）
 
 ### 追加確認
-- `npm test`: 38件全パス（前回#10と同数）
-- `npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ、前回99から+1だが実害なし）
-- Firebase書き込みパターン: `subs`は`update()`/個別パス書き込みのみで`set()`全体上書きなし
+- `npm test`: 51件全パス（前回#11の38件から+13）
+- `npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ、前回#11と同数）
+- Firebase書き込みパターン: `subs`は`update()`/フィールド単位フラットパス書き込みのみで`set()`全体上書きなし
 - isPro/isPremium誤用なし、DEV_MODE（app-core.js:12、式のまま）正常
 - Cloud Functions: 前回巡回以降変更なし
 - fontSize<16 の input/select/textarea: 新規箇所なし
@@ -567,6 +569,10 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 ---
 
 
+-
+-
+-
+-
 -
 -
 -
