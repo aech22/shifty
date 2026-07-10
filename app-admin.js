@@ -459,13 +459,26 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   },[subs]);
   // Excel出力（expXl）と同じ別名解決: 登録名で見つからなければ別名で提出されたsubにフォールバック
   const staffAliases=settings?.staffAliases||{};
-  const _getSub=(name)=>{
-    const exact=subsByKey.get(selPid+"|"+name);
+  // pidを外から指定できる版（期間別勤務時間は前半/後半/月計で selPid 以外の期間も参照するため）
+  const _getSubForPeriod=(pid,name)=>{
+    const exact=subsByKey.get(pid+"|"+name);
     if(exact)return exact;
     const aliases=staffAliases[name]||[];
     for(const alias of aliases){
-      const s=subsByKey.get(selPid+"|"+alias);
+      const s=subsByKey.get(pid+"|"+alias);
       if(s)return s;
+    }
+    return undefined;
+  };
+  const _getSub=(name)=>_getSubForPeriod(selPid,name);
+  // workShiftByStaffDate も同様に別名フォールバックする（週間勤務時間の集計用）
+  const _getWorkShift=(name,date)=>{
+    const exact=workShiftByStaffDate.get(name+"|"+date);
+    if(exact)return exact;
+    const aliases=staffAliases[name]||[];
+    for(const alias of aliases){
+      const sh=workShiftByStaffDate.get(alias+"|"+date);
+      if(sh)return sh;
     }
     return undefined;
   };
@@ -738,7 +751,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const sameMoPeriods=period?[...periods].filter(p=>{const d=pd(p.startDate);return d.getFullYear()===perD.getFullYear()&&d.getMonth()===perD.getMonth();}).sort((a,b)=>a.startDate.localeCompare(b.startDate)):[];
   const getPeriodMin=(pid,name)=>{
     const p=periods.find(pp=>pp.id===pid);if(!p)return 0;
-    const sub=subsByKey.get(pid+"|"+name); // 日ループの外で1回だけ引く
+    const sub=_getSubForPeriod(pid,name); // 日ループの外で1回だけ引く。別名提出者も解決する
     if(!sub)return 0;
     return gd(p.startDate,p.endDate).reduce((acc,d)=>{const sh=sub.shifts?.[d];return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh)):0);},0);
   };
@@ -752,7 +765,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return[...wkSet].sort();
   })();
   const getWeekMin=(monStr,name)=>{
-    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sh=workShiftByStaffDate.get(name+"|"+ds);if(sh)tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh));}
+    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sh=_getWorkShift(name,ds);if(sh)tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh));}
     return tot;
   };
 
