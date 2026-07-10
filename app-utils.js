@@ -182,6 +182,8 @@ function addDays(dateStr,n){const d=pd(dateStr);d.setDate(d.getDate()+n);return 
 // holSun（日曜扱い）: 祝日自体が日曜日、または「休み日(土日祝)が2日以上連続する塊」の最終日（＝翌日に平日が戻る）
 // holSat（土曜扱い）: 祝日自体が土曜日、または連休初日〜最終日前日、または前後を平日に挟まれた単独の祝日
 //   （単独祝日は2日以上の塊を作らないため「連休最終日」に該当せずholSatに倒れる）
+// sun（非祝日の日曜）: 翌日(月曜)が祝日で連休が続く場合はsunではなくsat扱いにする
+//   （その日曜はまだ連休の途中であり、実際の最終日は翌日の祝日=holSunになるため）
 function dayTypeOf(dateStr){
   const dow=pd(dateStr).getDay();
   if(isHoliday(dateStr)){
@@ -194,7 +196,7 @@ function dayTypeOf(dateStr){
     const runLength=Math.round((pd(runEnd)-pd(runStart))/86400000)+1;
     return(runLength>=2&&runEnd===dateStr)?"holSun":"holSat";
   }
-  if(dow===0)return"sun";
+  if(dow===0)return isHoliday(addDays(dateStr,1))?"sat":"sun";
   if(dow===6)return"sat";
   return"weekday";
 }

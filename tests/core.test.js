@@ -432,6 +432,20 @@ test("dayTypeOf: 祝日自体が土曜日ならholSat（連休の位置によら
   assert.strictEqual(u.dayTypeOf("2025-05-03"), "holSat");
 });
 
+test("dayTypeOf: 翌日(月曜)が祝日で連休が続く非祝日の日曜日はsatになる", () => {
+  // 2026-01-11(日・非祝日)の翌日2026-01-12(月・成人の日)は祝日 → まだ連休の途中なのでsat扱い
+  assert.strictEqual(u.isHoliday("2026-01-11"), false);
+  assert.strictEqual(u.isHoliday("2026-01-12"), true);
+  assert.strictEqual(u.dayTypeOf("2026-01-11"), "sat");
+  assert.strictEqual(u.dayTypeOf("2026-01-12"), "holSun"); // 連休(土10日+日11日+月12日)の最終日
+});
+
+test("dayTypeOf: 翌日が平日の非祝日の日曜日は従来通りsun", () => {
+  // 2026-07-12(日)の翌日2026-07-13(月)は祝日ではない普通の平日
+  assert.strictEqual(u.isHoliday("2026-07-13"), false);
+  assert.strictEqual(u.dayTypeOf("2026-07-12"), "sun");
+});
+
 test("matchPositionSlots: 必要枠なし(空配列)は不足なし", () => {
   const r = u.matchPositionSlots([], [{ name: "A", positions: ["調理長"] }]);
   assert.deepStrictEqual(r, { matchedCount: 0, shortageByPosition: {} });
