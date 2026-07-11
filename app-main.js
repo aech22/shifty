@@ -318,6 +318,14 @@ function App(){
     periodsForSubsRef.current=[]; // 前店舗のperiodsで購読を張らないようクリア
     subsSidRef.current=targetSid;
     pastSubsLoadedRef.current=false; setPastSubsLoaded(false);
+    // staffList/settings/periods/globalTemplatesをキャッシュ値へ同期リセットする（subsと同じパターン）。
+    // Firebaseのon("value")が新店舗のデータを非同期で返すまでの間、これらのstateが前店舗のデータの
+    // ままだと、その間に「スタッフ登録」の追加等でstaffListをそのまま書き込む操作をした場合、
+    // 前店舗の配列（＋変更分）が新店舗（sidは既に新店舗を指す）のFirebaseパスへ上書きされてしまう。
+    setStaffList(lg(storeKey(targetSid,"staff_v6"),[]));
+    setSettings(lg(storeKey(targetSid,"settings_v6"),null)||makeSettings(targetSid));
+    setPeriods(lg(storeKey(targetSid,"periods_v6"),[]));
+    setGlobalTemplates(lg(storeKey(targetSid,"templates_v6"),[]));
     const on=(path,cb)=>{
       const r=firebaseDB.ref(path);
       r.on("value",snap=>cb(snap.val()),err=>console.warn("購読失敗:",path,err));
