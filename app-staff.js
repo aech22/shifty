@@ -92,7 +92,10 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     // 2. 祝日（dayTypeOfで連休中・単日(holSat)/最終日(holSun)を判定）
     const dt=dayTypeOf(ds);
     if(dt==="holSat"){const hc=(settings.weekdayCandidates||{})[7]||[];if(hc.length>0)return hc;}
-    if(dt==="holSun"){const hc=(settings.weekdayCandidates||{})[8]||[];if(hc.length>0)return hc;}
+    // key8未設定（既存店舗の大半）は分割前の祝日候補(key7)にフォールバックする。
+    // 分割前は全祝日がkey7に集約されており、ハッピーマンデー祝日（連休最終日=holSun）を
+    // 素通りさせると既設定の祝日候補が最終日だけ効かなくなる回帰になるため。
+    if(dt==="holSun"){const hc8=(settings.weekdayCandidates||{})[8]||[];if(hc8.length>0)return hc8;const hc7=(settings.weekdayCandidates||{})[7]||[];if(hc7.length>0)return hc7;}
     // 3. 曜日別（翌日が祝日で連休が続く非祝日の日曜日はdayTypeOfが"sat"を返すため土曜(6)の候補を使う）
     const dow=pd(ds).getDay();
     const wdKey=dt==="sat"?6:dow;

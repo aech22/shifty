@@ -236,7 +236,6 @@ function matchPositionSlots(slots,attendees){
 }
 
 // ===== ストレージキー（店舗IDベース）=====
-// ===== ストレージキー（店舗IDベース）=====
 function storeKey(shopId,key){return`shift_${shopId}_${key}`;}
 
 // ===== ランダムID生成 =====
