@@ -298,6 +298,36 @@ test("CELL_COLOR_LEGEND: 完全性（色または斜線+説明が揃っている
   u.CELL_COLOR_LEGEND.forEach(c => assert.ok(c.label && c.desc && (c.color || c.hatch), `legend entry incomplete: ${c.key}`));
 });
 
+// ===== fixedShiftCommandFor / isFixedShiftEligibleShop（東通り店専用「締」コマンド）=====
+
+test("fixedShiftCommandFor: 「締」は23:00〜25:00固定コマンドとして認識される", () => {
+  const cmd = u.fixedShiftCommandFor("締");
+  assert.ok(cmd, "締 should resolve to a fixed-shift command");
+  assert.strictEqual(cmd.start, "23:00");
+  assert.strictEqual(cmd.end, "25:00");
+  assert.strictEqual(u.fixedShiftCommandFor(" 締 ").start, "23:00"); // 前後空白は無視
+});
+
+test("fixedShiftCommandFor: 未登録の文字列・空文字はnull", () => {
+  assert.strictEqual(u.fixedShiftCommandFor("9締"), null); // 数値付きは全体一致しないため対象外
+  assert.strictEqual(u.fixedShiftCommandFor("三"), null);
+  assert.strictEqual(u.fixedShiftCommandFor(""), null);
+  assert.strictEqual(u.fixedShiftCommandFor(null), null);
+});
+
+test("isFixedShiftEligibleShop: 店舗名に「鷄えん東通り」または「東通り」を含む場合のみtrue", () => {
+  assert.strictEqual(u.isFixedShiftEligibleShop("鷄えん東通り店"), true);
+  assert.strictEqual(u.isFixedShiftEligibleShop("東通り店"), true);
+  assert.strictEqual(u.isFixedShiftEligibleShop("鷄えん本店"), false);
+  assert.strictEqual(u.isFixedShiftEligibleShop(""), false);
+  assert.strictEqual(u.isFixedShiftEligibleShop(null), false);
+  assert.strictEqual(u.isFixedShiftEligibleShop(undefined), false);
+});
+
+test("CELL_COMMANDS: 「締」固定シフトコマンドが登録されている", () => {
+  assert.ok(u.CELL_COMMANDS.some(c => c.kind === "fixed" && c.key === "締" && c.start === "23:00" && c.end === "25:00"));
+});
+
 // ===== subs購読の直近ウィンドウ絞り込み（データ保存上限②） =====
 test("subsWindowCutoff: refDateから3ヶ月前の日付を返す", () => {
   assert.strictEqual(u.subsWindowCutoff("2026-07-09"), "2026-04-09");
