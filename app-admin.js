@@ -346,6 +346,12 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
 
   const isPremium=plan==="premium";
 
+  // 店舗切替（ヘッダーの店舗ドロップダウン）はタブを離脱しないためこのコンポーネントはアンマウントされない。
+  // localEdits/heatEditsはスタッフ名をキーに持つバッファのため、リセットしないと前の店舗で入力中/確定済みの
+  // 値が新しい店舗のグリッドに残存表示され、保存操作(handleBlur/handleSaveAll)で同名スタッフ（複数店舗在籍者）
+  // の別店舗データへ誤って書き込まれる。shopId変更時に必ずクリアする。
+  useEffect(()=>{setLocalEdits({});setHeatEdits({});setFocusKey(null);},[shopId]);
+
   // 企業連携の他店舗データ（略称・提出シフト）。ヘルプ判定・重複チェックに使用
   const[companyData,setCompanyData]=useState({}); // {shopId:{name,abbrs:[],workMap:Map(name|date→shift)}}
   useEffect(()=>{
