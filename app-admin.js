@@ -1285,15 +1285,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           過去データ読込
         </button>}
         <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPremium?("例: 9, 9.5, 930, 9:30"+(Object.keys(abbrToShop).length>0?" / 略称でヘルプ（例: 9三）":"")):"閲覧のみ（編集はPremiumプランで）"}</span>
-        <button onClick={()=>setFitAll(v=>!v)}
+        <button onClick={()=>{setFitAll(v=>!v);setDeptFilter("all");}}
           style={{padding:"5px 10px",background:fitAll?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           {fitAll?"通常表示":"全員表示"}
         </button>
-        {hasSplit&&<button onClick={()=>setDeptFilter(f=>f==="kit"?"all":"kit")}
+        {hasSplit&&<button onClick={()=>{setDeptFilter(f=>f==="kit"?"all":"kit");setFitAll(false);}}
           style={{padding:"5px 10px",background:deptFilter==="kit"?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           キッチン
         </button>}
-        {hasSplit&&<button onClick={()=>setDeptFilter(f=>f==="hall"?"all":"hall")}
+        {hasSplit&&<button onClick={()=>{setDeptFilter(f=>f==="hall"?"all":"hall");setFitAll(false);}}
           style={{padding:"5px 10px",background:deptFilter==="hall"?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:6,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           ホール
         </button>}
