@@ -265,7 +265,7 @@ function SummaryTable({title,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols
 // 内容は app-utils.js の CELL_COMMANDS / CELL_COLOR_LEGEND から自動生成される。
 // セルコマンドや色を追加するときはレジストリに登録するだけでここに反映される（このコンポーネントの個別編集は不要）。
 // 企業連携の他店舗略称は abbrToShop（設定値）から動的生成。モジュールスコープで定義しコンポーネント型を固定する。
-function GridLegend({abbrToShop}){
+function GridLegend({abbrToShop,shopName}){
   const[open,setOpen]=useState(()=>lg("shifty_grid_legend_open",false)===true);
   const toggle=()=>setOpen(o=>{ls("shifty_grid_legend_open",!o);return!o;});
   const LBD="1px solid var(--c-border)";
@@ -294,7 +294,7 @@ function GridLegend({abbrToShop}){
         <SecH>セルの色・記号</SecH>
         {CELL_COLOR_LEGEND.map(c=>row(c.key,swatch(c.color,c.hatch),`${c.label} — ${c.desc}`))}
         <SecH>セル内コマンド</SecH>
-        {CELL_COMMANDS.map(c=>row(c.key,<>{chip(c.usage)}{(c.color||c.hatch)?swatch(c.color,c.hatch):null}</>,`${c.label} — ${c.desc}`))}
+        {CELL_COMMANDS.filter(c=>c.kind!=="fixed"||isFixedShiftEligibleShop(shopName)).map(c=>row(c.key,<>{chip(c.usage)}{(c.color||c.hatch)?swatch(c.color,c.hatch):null}</>,`${c.label} — ${c.desc}`))}
         {row("free",chip("9○○"),"時間+任意の文字 — メモとしてそのまま表示（特記の黄色背景）")}
         <SecH>キー・マウス操作</SecH>
         {row("k1",chip("Enter"),"次のセルへ移動して確定（出勤→退勤→翌日の出勤）")}
@@ -495,6 +495,34 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const getStoredNote=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";if(sh.adminRest&&sh.adminRest[field])return"";return(field==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"";};
   const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);return t?(t+n):""};
   const handleChange=(name,date,field,value)=>{setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
+  // 店舗限定固定シフトコマンド（「締」等）が有効な店舗かどうか
+  const fixedShiftEnabled=useMemo(()=>isFixedShiftEligibleShop(shopName),[shopName]);
+  // 固定シフトコマンド（例:「締」）を出勤・退勤どちらのセルに入力しても両方のフィールドを固定時刻にする。
+  // 通常のapplyEditToSubsは1フィールドずつしか更新できないため別関数にした（handleBlurのみから呼ぶ。
+  // handleSaveAllの一括再適用はhandleBlurが確定値(数値文字列)をlocalEditsへ書き戻す設計のため通常経路で足りる）。
+  const applyFixedShiftToSubs=(newSubs,name,date,cmd)=>{
+    let idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
+    if(idx===-1){
+      const aliases=staffAliases[name]||[];
+      for(const alias of aliases){
+        idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===alias);
+        if(idx!==-1)break;
+      }
+    }
+    if(idx===-1){
+      const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString(),source:"grid"};
+      ns.shifts[date]={status:"work",adjustedStart:cmd.start,adjustedStartNote:"",adjustedEnd:cmd.end,adjustedEndNote:""};
+      newSubs.push(ns);
+      return;
+    }
+    const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};
+    if(sd.status!=="work"&&sd.origStatus===undefined)sd.origStatus=sd.status;
+    sd.status="work";
+    sd.adjustedStart=cmd.start;sd.adjustedStartNote="";
+    sd.adjustedEnd=cmd.end;sd.adjustedEndNote="";
+    if(sd.adminRest)delete sd.adminRest;
+    shifts[date]=sd;sub.shifts=shifts;newSubs[idx]=sub;
+  };
   // 1セル分の編集をnewSubs配列に適用する（handleBlur・保存ボタン一括保存の共通ロジック）。
   // newSubsは呼び出し元がprevSubsから作った配列を直接破壊的に更新する（呼び出し元でreturnする）。
   const applyEditToSubs=(newSubs,name,date,field,rawValue)=>{
@@ -566,8 +594,22 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const restAppliedRef=useRef({key:null,t:0});
   const handleBlur=(name,date,field,rawValue)=>{
     if(!isPremium)return;
-    const{numeric,note,rest}=extractNote(rawValue);
     const ekey=`${name}|${date}|${field}`;
+    // 固定シフトコマンド（「締」等）: 有効店舗のみ、入力したフィールドに関わらず出勤・退勤の両方を固定時刻にする
+    const fixedCmd=fixedShiftEnabled?fixedShiftCommandFor(rawValue):null;
+    if(fixedCmd){
+      const ekeyS=`${name}|${date}|start`,ekeyE=`${name}|${date}|end`;
+      const dispS=toDecimal(fixedCmd.start),dispE=toDecimal(fixedCmd.end);
+      setLocalEdits(prev=>({...prev,[ekeyS]:dispS,[ekeyE]:dispE}));
+      setHeatEdits(prev=>({...prev,[ekeyS]:dispS,[ekeyE]:dispE}));
+      onSave(prevSubs=>{
+        const newSubs=[...prevSubs];
+        applyFixedShiftToSubs(newSubs,name,date,fixedCmd);
+        return newSubs;
+      });
+      return;
+    }
+    const{numeric,note,rest}=extractNote(rawValue);
     if(rest){
       const now=Date.now();
       if(restAppliedRef.current.key===ekey&&now-restAppliedRef.current.t<400)return;
@@ -1518,7 +1560,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           />}
 
           {/* ===操作方法レジェンド（CELL_COMMANDS / CELL_COLOR_LEGEND から自動生成）=== */}
-          <GridLegend abbrToShop={abbrToShop}/>
+          <GridLegend abbrToShop={abbrToShop} shopName={shopName}/>
 
           </div>{/* end center */}
 

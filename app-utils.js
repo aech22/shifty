@@ -285,6 +285,7 @@ const CELL_COMMANDS=[
   {key:"k",kind:"suffix",usage:"9k",label:"キッチン入り",desc:"ホール所属のスタッフをこの日だけキッチンの人数として集計する",color:"#FFF3B0"},
   {key:"x",kind:"suffix",usage:"9x",label:"ヘルプ（カウント外）",desc:"時間帯別出勤人数に数えない。時間なしの文字だけの入力も同じ扱い",color:"#FFF3B0"},
   {key:"y",kind:"rest",usage:"y",label:"休み希望",desc:"セルを休み扱いにして斜線を表示する（出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日）。もう一度 y で解除、時間を入力すると出勤に上書き。「休」でも入力できる",hatch:true},
+  {key:"締",kind:"fixed",usage:"締",label:"締め固定（東通り店専用）",desc:"出勤・退勤どちらのセルに入力しても出勤23:00・退勤25:00(翌1:00)に固定する。鷄えん東通り店でのみ有効",start:"23:00",end:"25:00"},
 ];
 // セル背景色・記号の意味（cellBgForとレジェンドの共通ソース）
 const CELL_COLOR_LEGEND=[
@@ -309,6 +310,18 @@ function extractNote(raw){
   const l=suf.toLowerCase();
   if(CELL_COMMANDS.some(c=>c.kind==="suffix"&&c.key===l))return{numeric:m[1],note:l,rest:false};
   return{numeric:m[1],note:suf,rest:false}; // 日本語含む任意サフィックスはそのまま保持
+}
+// 店舗限定の固定シフトコマンド（kind:"fixed"）判定。セル全体がコマンドキーと完全一致するときそのレジストリ
+// エントリ（{start,end,...}）を返す。店舗が対象かどうかは呼び出し側がisFixedShiftEligibleShopで判定する
+// （このパーサ自体は店舗を知らない純粋関数のまま保つ）。
+function fixedShiftCommandFor(raw){
+  const s=String(raw==null?"":raw).trim();
+  if(!s)return null;
+  return CELL_COMMANDS.find(c=>c.kind==="fixed"&&c.key===s)||null;
+}
+// 「締」等の店舗限定固定シフトコマンドを有効化する店舗かどうか（店舗名に対象文言を含むかで判定）
+function isFixedShiftEligibleShop(shopName){
+  return typeof shopName==="string"&&(shopName.includes("鷄えん東通り")||shopName.includes("東通り"));
 }
 
 // ===== subs保存: フィールド単位Firebase書き込み =====
@@ -364,5 +377,5 @@ function applyFlatSubWrite(map,path,value){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES};
 }
