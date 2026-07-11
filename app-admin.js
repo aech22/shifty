@@ -944,17 +944,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
 
   // 休み希望の黒破線枠判定（field: "start"=出勤セル / "end"=退勤セル）
-  // 1日休み(status==="holiday")は両セル対象。status==="work"でも実提出シフトがランチ帯/ディナー帯の
-  // 片方しか含まない場合は、含まない側のみ「休み」とみなして該当セルに破線を出す（shiftBandInfoの17時境界判定を流用）
+  // 表示条件は2つのみ: スタッフが1日休みとして提出(status==="holiday") または 管理者がそのフィールドに休み希望(y)を明示入力(adminRest)。
+  // ランチ/ディナーの片方だけ入力された work 提出を「反対側は休み」とみなす自動推測は行わない。
   const holidayCellDash=(name,date,field)=>{
     const sh=_getSub(name)?.shifts?.[date];
     if(!sh)return false;
     if(sh.adminRest&&sh.adminRest[field])return true; // 管理者入力の休み希望(y)
-    if(sh.status==="holiday")return true;
-    if(sh.status!=="work")return false;
-    const info=shiftBandInfo(sh);
-    if(info.attendance===0)return false; // 出退勤未確定・不正値は対象外
-    return field==="start"?!info.hasLunch:!info.hasDinner;
+    return sh.status==="holiday"; // スタッフ提出の1日休み希望
   };
   // セルの色: 緑(スタッフ変更) > 赤(店舗間重複) > 黄(サフィックスnote・他店舗ヘルプ含む) > 行背景。フォーカス中セルは通常背景。
   const cellBgFor=(name,date,field,rb)=>{
