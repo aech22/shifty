@@ -534,34 +534,42 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-12 個別調査 #16・訂正）
+## Shifty バグチェックレポート（2026-07-12 自動実行 #17）
 
-### 調査対象
-前回セッション（「締」コマンドの数字組み合わせ対応・#15）の完了報告内で「新規店舗作成時に期間(periods)がFirebaseへ永続化されない」とユーザーへ報告した件。ユーザーから改めて調査依頼を受けて再現調査した。
+### 修正済み
+（今回の実行では修正なし）
 
-### 結論: Shiftyアプリのバグではなく、E2E検証時のクリック手法の誤りによる誤検知だった
+### 前回巡回（#16）以降の新規コミット
+なし。HEADは`2a68ea6`のまま変化なし（#15・#16と同一コミット）。今回はコード全域の定期スキャン（差分レビューではなくフルスキャン）として実施。
 
-dev環境で新規店舗を作成しオーナー登録（lazy claim）完了を確認した状態で、期間プリセットボタンをスクリーンショット座標基準の`computer left_click`で押下したところ画面が無反応（Firebaseにも書き込まれず）。同じボタンを`document.querySelector`+`.click()`で押下すると即座に期間が作成され、Firebaseにも正しく永続化されることを確認した。ビューポート(1280×720)と検証ツールのスクリーンショット画像(800×451)の解像度差により座標クリックがボタンを外していたことが原因と判断。`savePeriods`の書き込みロジック・オーナー権限・セキュリティルールいずれにも問題は見つからなかった。
+### スキャン結果
+- Firebase書き込みパターン: `subs`の`set()`全体上書きなし。削除処理は全箇所`deletedId`渡しでFirebase削除漏れなし
+- isPro/isPremium誤用なし
+- Cloud Functions: secrets抜け漏れなし・`.delete()`誤用なし・purgeInactiveShopsの安全装置維持
+- DEV_MODE（app-core.js:12、ホスト名判定の式のまま）正常
+- セキュリティルール: `database.rules.json`と`database.rules.tightened.json`の両方で`companies`/`companyCodes`パスのルールが揃っていることを確認（Admin SDK経由のCloud Functionsのみ書き込み可・読みも権限限定）
+- index.html: スクリプト読み込み順・CDN SRIハッシュ維持
+- `npm test`: 82件全パス、`npx eslint app-*.js`: 0 errors 100 warnings
 
-前回報告した「期間永続化バグ」は撤回する。コード修正は行っていない（行う必要がない）。
-
-### 修正済み（前回#15の🟢項目・別件）
-- **🟢→解決 店舗略称バリデーションの予約語リストに「締」が未反映**（app-admin.js `addAbbr`）: `CELL_COMMANDS`レジストリ+`isRestCommand`駆動の判定に置き換え、今後のコマンド追加時も自動追従するようにした（コミット`ca1d37e`）。
+### 新規把握（修正不要・認識事項）
+- **企業アカウント機能（`companies`/`companyCodes`、企業コード＋パスワードでログイン）がCLAUDE.mdのCloud Functions表・Firebaseデータ構造表に未記載**（コミット`7a99d7c`・2026-07-07導入）。実装自体（scrypt+salt+timingSafeEqualハッシュ・権限チェック・セキュリティルール整合）に欠陥はなし。ドキュメント記載漏れのみ。
 
 ### 要確認（未修正・継続）
 
-- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2653、#11から継続監視中）
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2712、#11から継続監視中）
 - **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、#11から継続監視中）
-- **🟢 `joinByInviteCode`（app-main.js:852）が呼び出し元ゼロのデッドコードに変化**（企業アカウント招待コード参加UIは依然未実装）
+- **🟢 `joinByInviteCode`（app-main.js:852）が呼び出し元ゼロのデッドコード**（企業アカウント招待コード参加UIは依然未実装）
 
 ### 異常なし
-コード上の欠陥は発見されず。develop→push不要（コード変更なし。今回は個別調査・訂正のみ）。
+クリティカル（🔴）・中程度（🟡）の問題はなし。develop→push不要（コード変更なし。今回はフルスキャンによる定期レビューのみ）。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
 -
 -
 -
