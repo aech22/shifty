@@ -493,41 +493,21 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const fieldRest=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];return!!(sh&&sh.adminRest&&sh.adminRest[field]);};
   const getStoredTime=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";if(sh.adminRest&&sh.adminRest[field])return"";return(field==="start"?(sh.adjustedStart??sh.start):(sh.adjustedEnd??sh.end))||"";};
   const getStoredNote=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";if(sh.adminRest&&sh.adminRest[field])return"";return(field==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"";};
-  const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);return t?(t+n):""};
+  const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);if(t)return t+n;return(fixedShiftEnabled&&fixedShiftCommandFor(n))?n:"";};
   const handleChange=(name,date,field,value)=>{setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
   // 店舗限定固定シフトコマンド（「締」等）が有効な店舗かどうか
   const fixedShiftEnabled=useMemo(()=>isFixedShiftEligibleShop(shopName),[shopName]);
-  // 固定シフトコマンド（例:「締」）を出勤・退勤どちらのセルに入力しても両方のフィールドを固定時刻にする。
-  // 通常のapplyEditToSubsは1フィールドずつしか更新できないため別関数にした（handleBlurのみから呼ぶ。
-  // handleSaveAllの一括再適用はhandleBlurが確定値(数値文字列)をlocalEditsへ書き戻す設計のため通常経路で足りる）。
-  const applyFixedShiftToSubs=(newSubs,name,date,cmd)=>{
-    let idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
-    if(idx===-1){
-      const aliases=staffAliases[name]||[];
-      for(const alias of aliases){
-        idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===alias);
-        if(idx!==-1)break;
-      }
-    }
-    if(idx===-1){
-      const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString(),source:"grid"};
-      ns.shifts[date]={status:"work",adjustedStart:cmd.start,adjustedStartNote:"",adjustedEnd:cmd.end,adjustedEndNote:""};
-      newSubs.push(ns);
-      return;
-    }
-    const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};
-    if(sd.status!=="work"&&sd.origStatus===undefined)sd.origStatus=sd.status;
-    sd.status="work";
-    sd.adjustedStart=cmd.start;sd.adjustedStartNote="";
-    sd.adjustedEnd=cmd.end;sd.adjustedEndNote="";
-    if(sd.adminRest)delete sd.adminRest;
-    shifts[date]=sd;sub.shifts=shifts;newSubs[idx]=sub;
-  };
   // 1セル分の編集をnewSubs配列に適用する（handleBlur・保存ボタン一括保存の共通ロジック）。
   // newSubsは呼び出し元がprevSubsから作った配列を直接破壊的に更新する（呼び出し元でreturnする）。
+  // 「締」等の店舗限定固定シフトコマンド(kind:"fixed")は、出勤・退勤どちらのフィールドの note に
+  // 付いていても主シフト(adjField/adjustedStart等)とは別の追加出勤(extraStart/extraEnd)として扱う。
+  // 数字と組み合わせた「17締」（主シフト17:00+追加締め）と、単独の「締」（主シフトなし+追加締めのみ）の
+  // 両方をこの1関数で処理する。extraStart/extraEndは日全体で1組のみのため、2フィールドのうち
+  // どちらかが締めならON、どちらも締めでなくなればOFFという形で毎回のblurごとに再判定する。
   const applyEditToSubs=(newSubs,name,date,field,rawValue)=>{
     const{numeric,note,rest}=extractNote(rawValue);
     const parsed=parseTime(numeric);
+    const fixedCmd=fixedShiftEnabled?fixedShiftCommandFor(note):null;
     // 管理者編集はadjustedXxxに保存（スタッフ提出のstart/endを保護）
     const adjField=field==="start"?"adjustedStart":"adjustedEnd";
     const nk=field==="start"?"adjustedStartNote":"adjustedEndNote";
@@ -550,11 +530,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         newSubs.push(ns);
         return;
       }
-      if(!parsed)return;
+      if(!parsed&&!fixedCmd)return;
       // シフト作成タブから直接新規作成したsubはsource:"grid"を付与する。
       // 提出一覧(SubsTab)はスタッフURL経由の提出のみを表示するため、この印で除外する。
       const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString(),source:"grid"};
-      ns.shifts[date]={status:"work",[adjField]:parsed,[nk]:note};
+      const sd0={status:"work"};
+      if(parsed){sd0[adjField]=parsed;sd0[nk]=note;}
+      if(fixedCmd){sd0.extraStart=fixedCmd.start;sd0.extraEnd=fixedCmd.end;}
+      ns.shifts[date]=sd0;
       newSubs.push(ns);
     }else{
       const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};
@@ -576,13 +559,28 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         // では素通りしないため、getStoredTime/getStoredNoteがスタッフ提出値にフォールバックしなくなる）。
         // スタッフ提出値そのものを消したいときはこの上書きで対応でき、提出値に戻したいときは
         // 提出一覧タブの詳細モーダルにある「提出値」選択（saveAdj）を使う想定
-        sd[adjField]="";sd[nk]="";
+        sd[adjField]="";sd[nk]=fixedCmd?note:"";
         // 出勤・退勤とも管理者調整値が空欄になったら退避したstatusに戻す（休み希望なら斜線が復活する）。
         // スタッフ提出のstart/endが残っている場合は本人が出勤に変えているため復元しない
+        // （締めコマンドが付いている場合は下の追加出勤トグルがstatus="work"に再設定するため復元させない）
         const otherAdj=field==="start"?"adjustedEnd":"adjustedStart";
-        if(!sd[otherAdj]&&sd.origStatus!==undefined){
+        if(!sd[otherAdj]&&sd.origStatus!==undefined&&!fixedCmd){
           if(!sd.start&&!sd.end)sd.status=sd.origStatus;
           delete sd.origStatus;
+        }
+      }
+      // 締め(kind:"fixed")の追加出勤トグル: start/endどちらかのnoteが締めならON、どちらも締めでなければOFF。
+      // rest分岐でnkが削除された場合(delete sd[nk])は「締めでなくなった」扱いで正しく反映される。
+      // この判定はrawValue単位ではなくsdに書き込み済みの両フィールドのnoteを見るため、
+      // どちらのセルから入力されても、また入力順序に関わらず正しくON/OFFが決まる。
+      if(fixedShiftEnabled){
+        const activeCmd=fixedShiftCommandFor(sd.adjustedStartNote)||fixedShiftCommandFor(sd.adjustedEndNote);
+        if(activeCmd){
+          if(sd.status!=="work"&&sd.origStatus===undefined)sd.origStatus=sd.status;
+          sd.status="work";
+          sd.extraStart=activeCmd.start;sd.extraEnd=activeCmd.end;
+        }else{
+          delete sd.extraStart;delete sd.extraEnd;
         }
       }
       shifts[date]=sd;sub.shifts=shifts;newSubs[idx]=sub;
@@ -595,20 +593,6 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const handleBlur=(name,date,field,rawValue)=>{
     if(!isPremium)return;
     const ekey=`${name}|${date}|${field}`;
-    // 固定シフトコマンド（「締」等）: 有効店舗のみ、入力したフィールドに関わらず出勤・退勤の両方を固定時刻にする
-    const fixedCmd=fixedShiftEnabled?fixedShiftCommandFor(rawValue):null;
-    if(fixedCmd){
-      const ekeyS=`${name}|${date}|start`,ekeyE=`${name}|${date}|end`;
-      const dispS=toDecimal(fixedCmd.start),dispE=toDecimal(fixedCmd.end);
-      setLocalEdits(prev=>({...prev,[ekeyS]:dispS,[ekeyE]:dispE}));
-      setHeatEdits(prev=>({...prev,[ekeyS]:dispS,[ekeyE]:dispE}));
-      onSave(prevSubs=>{
-        const newSubs=[...prevSubs];
-        applyFixedShiftToSubs(newSubs,name,date,fixedCmd);
-        return newSubs;
-      });
-      return;
-    }
     const{numeric,note,rest}=extractNote(rawValue);
     if(rest){
       const now=Date.now();
@@ -624,7 +608,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       });
       return;
     }
-    const parsed=parseTime(numeric);const display=parsed?(toDecimal(parsed)+note):"";
+    const parsed=parseTime(numeric);
+    const fixedCmd=fixedShiftEnabled?fixedShiftCommandFor(note):null;
+    // 数値なし(締めコマンド単独)の場合、通常なら空欄表示になってしまう箇所を締め自体の表示として残す
+    const display=parsed?(toDecimal(parsed)+note):(fixedCmd?note:"");
     setLocalEdits(prev=>({...prev,[ekey]:display}));
     setHeatEdits(prev=>({...prev,[ekey]:display})); // blur確定値を集計/ヒートマップ用に反映
     // 直前state(prevSubs)基準の関数型更新。Enterキーでの高速な連続blur等、再レンダーを挟まず
@@ -711,37 +698,57 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       const arr=[];
       realStaff.forEach(name=>{
         let stM=timeToMin(getEffHHMM(name,date,"start"));let enM=timeToMin(getEffHHMM(name,date,"end"));
-        if(stM===null&&enM===null)return;
-        // 片側セルのみ入力: 出勤のみ→ランチ終わり(HEAT_LUNCH_END_MIN)まで、退勤のみ→ディナー始まり(HEAT_DINNER_START_MIN)から出勤扱い
-        if(enM===null)enM=HEAT_LUNCH_END_MIN;
-        if(stM===null)stM=HEAT_DINNER_START_MIN;
-        if(stM>=enM)return;
-        const hsh=getHeatShift(name,date);
-        // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）
-        if(hsh){const ot=getOT(name,settings,hsh);if(ot>0)enM+=ot;}
-        const note=getShiftNote(name,date);
-        if(note==="x")return;
-        // 他店舗ヘルプ帯は自店舗のカウントから除外（終日=全除外、出勤側=〜17時、退勤側=17時〜）
-        const help=getHelpInfo(name,date);
-        if(help){
-          if(help.full)return;
-          if(help.startShop)stM=Math.max(stM,1020);
-          if(help.endShop)enM=Math.min(enM,1020);
-          if(stM>=enM)return;
+        // 「締」等の店舗限定固定シフトコマンド: start/endどちらかのnoteに付いていれば
+        // 主シフトとは別の追加出勤(固定時間帯)としてカウントする
+        const fixedCmd=fixedShiftEnabled?(fixedShiftCommandFor(getFieldNote(name,date,"start"))||fixedShiftCommandFor(getFieldNote(name,date,"end"))):null;
+        if(stM===null&&enM===null&&!fixedCmd)return;
+        if(stM!==null||enM!==null){
+          // 片側セルのみ入力: 出勤のみ→ランチ終わり(HEAT_LUNCH_END_MIN)まで、退勤のみ→ディナー始まり(HEAT_DINNER_START_MIN)から出勤扱い
+          let pStM=stM,pEnM=enM;
+          if(pEnM===null)pEnM=HEAT_LUNCH_END_MIN;
+          if(pStM===null)pStM=HEAT_DINNER_START_MIN;
+          if(pStM<pEnM){
+            const hsh=getHeatShift(name,date);
+            // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）
+            if(hsh){const ot=getOT(name,settings,hsh);if(ot>0)pEnM+=ot;}
+            const note=getShiftNote(name,date);
+            if(note!=="x"){
+              // 他店舗ヘルプ帯は自店舗のカウントから除外（終日=全除外、出勤側=〜17時、退勤側=17時〜）
+              const help=getHelpInfo(name,date);
+              let ok=true;
+              if(help){
+                if(help.full)ok=false;
+                else{
+                  if(help.startShop)pStM=Math.max(pStM,1020);
+                  if(help.endShop)pEnM=Math.min(pEnM,1020);
+                  if(pStM>=pEnM)ok=false;
+                }
+              }
+              if(ok){
+                // 休憩区間（時間帯セルを完全に覆う場合にカウント除外するため保持）
+                const breaks=hsh
+                  ?getBreaksFor(settings,date,name,hsh).map(br=>({bs:timeToMin(br.start),be:timeToMin(br.end)})).filter(b=>b.bs!==null&&b.be!==null)
+                  :[];
+                // ホール/キッチン分割未設定の店舗はhall列自体が非表示のため、h/kサフィックスで
+                // section="hall"に振り分けるとカウントが画面から消える。分割未設定時は常にkitに集約する。
+                const section=hallStaff.length===0?"kit":(note==="h"?"hall":note==="k"?"kit":(hallStaff.includes(name)?"hall":"kit"));
+                arr.push({stM:pStM,enM:pEnM,breaks,section});
+              }
+            }
+          }
         }
-        // 休憩区間（時間帯セルを完全に覆う場合にカウント除外するため保持）
-        const breaks=hsh
-          ?getBreaksFor(settings,date,name,hsh).map(br=>({bs:timeToMin(br.start),be:timeToMin(br.end)})).filter(b=>b.bs!==null&&b.be!==null)
-          :[];
-        // ホール/キッチン分割未設定の店舗はhall列自体が非表示のため、h/kサフィックスで
-        // section="hall"に振り分けるとカウントが画面から消える。分割未設定時は常にkitに集約する。
-        const section=hallStaff.length===0?"kit":(note==="h"?"hall":note==="k"?"kit":(hallStaff.includes(name)?"hall":"kit"));
-        arr.push({stM,enM,breaks,section});
+        if(fixedCmd){
+          const exStM=timeToMin(fixedCmd.start),exEnM=timeToMin(fixedCmd.end);
+          if(exStM!==null&&exEnM!==null&&exStM<exEnM){
+            const section=hallStaff.length===0?"kit":(hallStaff.includes(name)?"hall":"kit");
+            arr.push({stM:exStM,enM:exEnM,breaks:[],section});
+          }
+        }
       });
       perDate[date]=arr;
     });
     return perDate;
-  },[subs,heatEdits,settings,selPid,staffList,periods,companyData]);
+  },[subs,heatEdits,settings,selPid,staffList,periods,companyData,fixedShiftEnabled]);
   // 店舗間シフト重複エラー: 勤務先登録済みスタッフが他店舗と時間重複していないか（blur確定値ベース）
   const dupErrors=useMemo(()=>{
     const errs={}; // {name|date: 他店舗名}
@@ -851,10 +858,18 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     // 候補管理から時間帯を収集
     const allCands=[...(settings.candidates||[]),...Object.values(settings.weekdayCandidates||{}).flat(),...Object.values(settings.dateCandidates||{}).flat()].filter(c=>!c.closed&&c.start&&c.end);
     allCands.forEach(c=>{const sh=parseInt(c.start);const eh=parseInt(c.end);for(let h=sh;h<=eh;h++)hrs.add(h);});
-    // 実際の提出・入力値から時間帯を収集（退勤延長分も含める）
-    subs.filter(s=>s.periodId===selPid).forEach(sub=>{Object.values(sub.shifts||{}).forEach(sh=>{if(sh.status!=="work")return;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(st)hrs.add(parseInt(st));if(en){hrs.add(parseInt(en));const ot=getOT(sub.staffName,settings,sh);if(ot>0){const[h,m]=en.split(":").map(Number);hrs.add(Math.floor((h*60+m+ot)/60));}}});});
+    // 実際の提出・入力値から時間帯を収集（退勤延長分・「締」等の追加出勤(extraStart/extraEnd)も含める）
+    subs.filter(s=>s.periodId===selPid).forEach(sub=>{Object.values(sub.shifts||{}).forEach(sh=>{if(sh.status!=="work")return;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(st)hrs.add(parseInt(st));if(en){hrs.add(parseInt(en));const ot=getOT(sub.staffName,settings,sh);if(ot>0){const[h,m]=en.split(":").map(Number);hrs.add(Math.floor((h*60+m+ot)/60));}}if(sh.extraStart)hrs.add(parseInt(sh.extraStart));if(sh.extraEnd)hrs.add(parseInt(sh.extraEnd));});});
     // heatEdits（blur確定値）からも収集
     Object.entries(heatEdits).forEach(([,v])=>{const{numeric}=extractNote(v);const p=parseTime(numeric);if(p)hrs.add(parseInt(p));});
+    // 「締」等の固定シフトコマンドが有効な店舗では、その追加出勤時間帯も列として必ず含める
+    // （候補時間・提出データに深夜帯がまだ登録されていない新規店舗でも列が欠けないようにする）
+    if(fixedShiftEnabled){
+      CELL_COMMANDS.filter(c=>c.kind==="fixed").forEach(c=>{
+        const sh=parseInt(c.start);const eh=parseInt(c.end);
+        for(let h=sh;h<=eh;h++)hrs.add(h);
+      });
+    }
     if(hrs.size===0){for(let h=9;h<=24;h++)hrs.add(h);}
     const mn=Math.min(...hrs),mx=Math.max(...hrs);
     return Array.from({length:mx-mn+1},(_,i)=>mn+i);
@@ -943,17 +958,20 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   // 集計用の実効値（heatEdits＝blur確定値ベース）
   const getHeatVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in heatEdits)return heatEdits[key];const t=toDecimal(getStoredTime(name,date,field));return t||"";};
   // その日出勤しているか（0.5出勤含む）: start か end のどちらかに有効値がある
+  // その日「締」等の固定シフトコマンドが有効か（start/endどちらかのnoteがそれに該当）
+  const hasFixedCmd=(name,date)=>fixedShiftEnabled&&!!(fixedShiftCommandFor(getFieldNote(name,date,"start"))||fixedShiftCommandFor(getFieldNote(name,date,"end")));
   const isWorkDay=(name,date)=>{
     const shift=_getSub(name)?.shifts?.[date];
     const s=parseFloat(getHeatVal(name,date,"start"));
     const e=parseFloat(getHeatVal(name,date,"end"));
-    const hasVal=!isNaN(s)||!isNaN(e);
+    const hasVal=!isNaN(s)||!isNaN(e)||hasFixedCmd(name,date);
     if(shift&&shift.status==="holiday"&&!hasVal)return false;
     return hasVal;
   };
   // 休みカウント: 17時基準で前半/後半それぞれ出勤なし=0.5、終日なし=1
   // 併せて 1日休み(その日の休み値=1)・半日休み(その日の休み値=0.5) の回数も集計する
   // （半日休みは 0.5 を合算せず「回数」として数える: ランチ休み+ディナー休みで半休2回=2）
+  // 「締」等の固定シフトコマンドはディナー帯(17時以降)の追加出勤として扱い、後半の休み判定を打ち消す
   const {restCounts,fullDayCounts,halfDayCounts}=React.useMemo(()=>{
     const rest={},full={},half={};
     realStaff.forEach(name=>{
@@ -962,11 +980,12 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         const shift=_getSub(name)?.shifts?.[date];
         const s=parseFloat(getHeatVal(name,date,"start"));
         const e=parseFloat(getHeatVal(name,date,"end"));
+        const fixedCmd=hasFixedCmd(name,date);
         let day=0;
-        if((!shift||shift.status==="holiday")&&isNaN(s)&&isNaN(e)){day=1;}
+        if((!shift||shift.status==="holiday")&&isNaN(s)&&isNaN(e)&&!fixedCmd){day=1;}
         else{
           if(!(!isNaN(s)&&s<17))day+=0.5;
-          if(!(!isNaN(e)&&e>17))day+=0.5;
+          if(!((!isNaN(e)&&e>17)||fixedCmd))day+=0.5;
         }
         count+=day;
         if(day===1)fd++;else if(day===0.5)hd++;
@@ -974,7 +993,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       rest[name]=count;full[name]=fd;half[name]=hd;
     });
     return {restCounts:rest,fullDayCounts:full,halfDayCounts:half};
-  },[realStaff,dates,subs,heatEdits,selPid]);
+  },[realStaff,dates,subs,heatEdits,selPid,fixedShiftEnabled]);
   // 連勤カウント: 期間内の最大連続出勤日数（0.5出勤も出勤扱い）
   const consecCounts=React.useMemo(()=>{
     const result={};
@@ -986,7 +1005,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       result[name]=maxC;
     });
     return result;
-  },[realStaff,dates,subs,heatEdits,selPid]);
+  },[realStaff,dates,subs,heatEdits,selPid,fixedShiftEnabled]);
   const kitMax=Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("kit",date,hr))));
   const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
@@ -2599,7 +2618,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           </tr></thead>
           <tbody>{fil.length===0
             ?<tr><td colSpan={4} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
-            :fil.map(sub=>{const resolvedName=resolveAlias(sub.staffName,staffAliases);const ds=Object.keys(sub.shifts||{}).sort(),wkDays=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work");const att=wkDays.reduce((acc,d)=>{const sh=sub.shifts[d];const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;return acc+((st&&en)?shiftBandInfo(sh).attendance:1);},0);const attLabel=`${att}日`;const at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const rm=t=>Math.floor(new Date(t).getTime()/60000);const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&rm(sub.updatedAt)>rm(sub.submittedAt);
+            :fil.map(sub=>{const resolvedName=resolveAlias(sub.staffName,staffAliases);const ds=Object.keys(sub.shifts||{}).sort(),wkDays=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work");const att=wkDays.reduce((acc,d)=>{const sh=sub.shifts[d];const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;return acc+(((st&&en)||(sh.extraStart&&sh.extraEnd))?shiftBandInfo(sh).attendance:1);},0);const attLabel=`${att}日`;const at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const rm=t=>Math.floor(new Date(t).getTime()/60000);const hasRealUpdate=sub.isUpdated&&sub.updatedAt&&rm(sub.updatedAt)>rm(sub.submittedAt);
               const staffType=isPremium?((settings.staffAttributes)||{})[resolvedName]:null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly||typeLim.customDays)){const weekMap={};const monthMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreaksFor(settings,d,resolvedName,sh),getOT(resolvedName,settings,sh));if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));weekMap[fd(mon)]=(weekMap[fd(mon)]||0)+nm;monthMap[d.slice(0,7)]=(monthMap[d.slice(0,7)]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly){const wkKeys=Object.keys(weekMap).sort();for(let i=0;i<wkKeys.length;i+=2){const tot=(weekMap[wkKeys[i]]||0)+(weekMap[wkKeys[i+1]]||0);if(tot>typeLim.biweekly*60)biweeklyVio=true;}}if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});if(typeLim.customDays&&typeLim.customHours){const sortedDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();for(let i=0;i<sortedDs.length;i++){const start=pd(sortedDs[i]);let tot=0;for(let j=i;j<sortedDs.length;j++){const diffD=(pd(sortedDs[j])-start)/86400000;if(diffD>=typeLim.customDays)break;const sh=sub.shifts[sortedDs[j]];tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,sortedDs[j],resolvedName,sh),getOT(resolvedName,settings,sh));}if(tot>typeLim.customHours*60){customVio=true;break;}}}}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;
               return(<tr key={sub.id} style={hasVio?{background:"rgba(255,71,87,.12)"}:{}}>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text)",fontWeight:600}}>
@@ -2646,7 +2665,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           <button onClick={()=>setDet(null)} style={{background:"var(--c-input)",border:"none",borderRadius:"50%",width:32,height:32,color:"var(--c-text2)",fontSize:18,cursor:"pointer"}}>✕</button>
         </div>
         <div style={{overflowY:"auto",padding:"8px 16px 24px"}}>
-          {isPremium&&(()=>{const dDs=Object.keys(det.shifts||{}).sort();const dWorkDs=dDs.filter(d=>det.shifts[d]?.status==="work");const dAtt=dWorkDs.reduce((acc,d)=>{const sh=det.shifts[d];const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;return acc+((st&&en)?shiftBandInfo(sh).attendance:1);},0);const dTot=dDs.reduce((a,d)=>a+calcNetWorkMinutes(det.shifts[d],getBreaksFor(settings,d,det.staffName,det.shifts[d]),getOT(det.staffName,settings,det.shifts[d])),0);const detOTMax=dDs.reduce((mx,d)=>{const s=det.shifts[d];return s&&s.status==="work"?Math.max(mx,getOT(det.staffName,settings,s)):mx;},0);const SB=(l,v,c,bg)=>(<div style={{background:bg,borderRadius:8,padding:"6px 10px",textAlign:"center",border:`1px solid ${c}33`,minWidth:56}}><div style={{fontSize:10,color:"var(--c-text4)",marginBottom:1}}>{l}</div><div style={{fontSize:13,fontWeight:700,color:c}}>{v}</div></div>);return(<div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"8px 0 4px"}}>{SB("出勤",`${dAtt}日`,"#FFA070","rgba(248,112,54,.1)")}{dTot>0&&SB("勤務計",fmtMin(dTot),"var(--c-text2)","var(--c-input)")}{detOTMax>0&&SB("延長",`+${detOTMax}分`,"#34D399","rgba(52,211,153,.1)")}</div>);})()}
+          {isPremium&&(()=>{const dDs=Object.keys(det.shifts||{}).sort();const dWorkDs=dDs.filter(d=>det.shifts[d]?.status==="work");const dAtt=dWorkDs.reduce((acc,d)=>{const sh=det.shifts[d];const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;return acc+(((st&&en)||(sh.extraStart&&sh.extraEnd))?shiftBandInfo(sh).attendance:1);},0);const dTot=dDs.reduce((a,d)=>a+calcNetWorkMinutes(det.shifts[d],getBreaksFor(settings,d,det.staffName,det.shifts[d]),getOT(det.staffName,settings,det.shifts[d])),0);const detOTMax=dDs.reduce((mx,d)=>{const s=det.shifts[d];return s&&s.status==="work"?Math.max(mx,getOT(det.staffName,settings,s)):mx;},0);const SB=(l,v,c,bg)=>(<div style={{background:bg,borderRadius:8,padding:"6px 10px",textAlign:"center",border:`1px solid ${c}33`,minWidth:56}}><div style={{fontSize:10,color:"var(--c-text4)",marginBottom:1}}>{l}</div><div style={{fontSize:13,fontWeight:700,color:c}}>{v}</div></div>);return(<div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"8px 0 4px"}}>{SB("出勤",`${dAtt}日`,"#FFA070","rgba(248,112,54,.1)")}{dTot>0&&SB("勤務計",fmtMin(dTot),"var(--c-text2)","var(--c-input)")}{detOTMax>0&&SB("延長",`+${detOTMax}分`,"#34D399","rgba(52,211,153,.1)")}</div>);})()}
           {isPremium&&(()=>{const wP=periods.find(p=>p.id===det.periodId);if(!wP)return null;const wSS=subs.filter(s=>s.staffName===det.staffName||(staffAliases[det.staffName]||[]).includes(s.staffName));const perDs=gd(wP.startDate,wP.endDate);const wkSet=new Set();perDs.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet.add(fd(mon));});const weeks=[...wkSet].sort();const mo=wP.startDate.slice(0,7);let moTot=0;wSS.forEach(s=>{Object.keys(s.shifts||{}).forEach(d=>{if(d.startsWith(mo))moTot+=calcNetWorkMinutes(s.shifts[d],getBreaksFor(settings,d,s.staffName,s.shifts[d]),getOT(s.staffName,settings,s.shifts[d]));});});const wkData=weeks.map(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds2=fd(dd);if(det.shifts[ds2]){tot+=calcNetWorkMinutes(det.shifts[ds2],getBreaksFor(settings,ds2,det.staffName,det.shifts[ds2]),getOT(det.staffName,settings,det.shifts[ds2]));}else{const os=wSS.find(s=>s.id!==det.id&&s.shifts&&s.shifts[ds2]);if(os)tot+=calcNetWorkMinutes(os.shifts[ds2],getBreaksFor(settings,ds2,os.staffName,os.shifts[ds2]),getOT(os.staffName,settings,os.shifts[ds2]));}}return{monStr,tot};});return(<div style={{marginBottom:4}}><div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",margin:"6px 0 5px"}}>週間勤務時間</div><div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{wkData.map(({monStr,tot})=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);const lbl=`${m.getMonth()+1}/${m.getDate()}〜${sun.getMonth()+1}/${sun.getDate()}`;return(<div key={monStr} style={{background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"var(--c-text4)"}}>{lbl}</div><div style={{fontSize:12,fontWeight:700,color:tot>0?"var(--c-text2)":"var(--c-text4)"}}>{tot>0?fmtMin(tot):"−"}</div></div>);})}{moTot>0&&<div style={{background:"rgba(248,112,54,.08)",border:"1px solid rgba(248,112,54,.2)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"#FFA070"}}>{mo.replace("-","年")}月計</div><div style={{fontSize:12,fontWeight:700,color:"#FFA070"}}>{fmtMin(moTot)}</div></div>}</div></div>);})()}
           {det.comment&&<div style={{background:"var(--c-input)",borderRadius:8,padding:"10px 12px",margin:"8px 0",fontSize:13,color:"var(--c-text2)"}}>{det.comment}</div>}
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>

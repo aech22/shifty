@@ -328,6 +328,66 @@ test("CELL_COMMANDS: 「締」固定シフトコマンドが登録されてい�
   assert.ok(u.CELL_COMMANDS.some(c => c.kind === "fixed" && c.key === "締" && c.start === "23:00" && c.end === "25:00"));
 });
 
+test("extractNote: 数字と組み合わせた「17締」は numeric=17・note=締", () => {
+  const r = u.extractNote("17締");
+  assert.strictEqual(r.numeric, "17");
+  assert.strictEqual(r.note, "締");
+  assert.strictEqual(r.rest, false);
+});
+
+test("extractNote: 単独の「締」は numeric=''・note=締（従来のヘルプ(x)には収束しない）", () => {
+  const r = u.extractNote("締");
+  assert.strictEqual(r.numeric, "");
+  assert.strictEqual(r.note, "締");
+  assert.strictEqual(r.rest, false);
+});
+
+test("extractNote: 未登録の文字だけの入力(三)は従来通りヘルプ(x)扱いのまま", () => {
+  assert.strictEqual(u.extractNote("三").note, "x");
+});
+
+// ===== calcNetWorkMinutes / shiftBandInfo: extraStart/extraEnd（「締」による追加出勤）=====
+
+test("calcNetWorkMinutes: 主シフト(13:00-17:00)+追加出勤(23:00-25:00)を合算=360分", () => {
+  const min = u.calcNetWorkMinutes({ status: "work", adjustedStart: "13:00", adjustedEnd: "17:00", extraStart: "23:00", extraEnd: "25:00" }, []);
+  assert.strictEqual(min, 360);
+});
+
+test("calcNetWorkMinutes: 主シフトなし・追加出勤のみ(23:00-25:00)=120分", () => {
+  const min = u.calcNetWorkMinutes({ status: "work", extraStart: "23:00", extraEnd: "25:00" }, []);
+  assert.strictEqual(min, 120);
+});
+
+test("calcNetWorkMinutes: extraStart/extraEndが逆転(不正)なら加算しない", () => {
+  const min = u.calcNetWorkMinutes({ status: "work", adjustedStart: "13:00", adjustedEnd: "17:00", extraStart: "25:00", extraEnd: "23:00" }, []);
+  assert.strictEqual(min, 240);
+});
+
+test("calcNetWorkMinutes: extraStart/extraEndなしは従来通り（回帰なし）", () => {
+  assert.strictEqual(u.calcNetWorkMinutes({ status: "work", start: "10:00", end: "15:00" }, []), 300);
+});
+
+test("shiftBandInfo: 主シフト(ランチのみ13-17)+追加出勤(23-25・ディナー帯)→ hasLunch/hasDinner両方trueでattendance=1", () => {
+  const r = u.shiftBandInfo({ status: "work", adjustedStart: "13:00", adjustedEnd: "17:00", extraStart: "23:00", extraEnd: "25:00" });
+  assert.strictEqual(r.hasLunch, true);
+  assert.strictEqual(r.hasDinner, true);
+  assert.strictEqual(r.attendance, 1);
+});
+
+test("shiftBandInfo: 追加出勤(23-25)のみ→ hasDinner=true・attendance=0.5", () => {
+  const r = u.shiftBandInfo({ status: "work", extraStart: "23:00", extraEnd: "25:00" });
+  assert.strictEqual(r.hasLunch, false);
+  assert.strictEqual(r.hasDinner, true);
+  assert.strictEqual(r.attendance, 0.5);
+});
+
+test("shiftBandInfo: extraStart/extraEndなしは従来通り（回帰なし）", () => {
+  const r = u.shiftBandInfo({ status: "work", start: "10:00", end: "14:00" });
+  assert.strictEqual(r.attendance, 0.5);
+  assert.strictEqual(r.hasLunch, true);
+  assert.strictEqual(r.hasDinner, false);
+});
+
 // ===== subs購読の直近ウィンドウ絞り込み（データ保存上限②） =====
 test("subsWindowCutoff: refDateから3ヶ月前の日付を返す", () => {
   assert.strictEqual(u.subsWindowCutoff("2026-07-09"), "2026-04-09");

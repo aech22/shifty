@@ -95,33 +95,54 @@ function sc(cs){return[...cs].sort((a,b)=>{if(a.closed)return 1;if(b.closed)retu
 // 祝日判定（簡易）
 // isHoliday は上で定義済み
 function isWeekendOrHoliday(dateStr){const dow=pd(dateStr).getDay();return dow===0||dow===6||isHoliday(dateStr);}
+// extraStart/extraEnd（「締」等の店舗限定固定シフトコマンドによる追加出勤期間）がある場合は主シフトとは別に加算する。
+// 追加期間は休憩控除・残業延長の対象外（主シフトの休憩帯と重ならない深夜帯を想定した単純加算）。
 function calcNetWorkMinutes(shift,breaks,overtimeMins=0){
   if(!shift||shift.status!=="work")return 0;
+  const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
+  let net=0;
   const st=shift.adjustedStart??shift.start;
   let en=shift.adjustedEnd??shift.end;
-  if(!st||!en)return 0;
-  if(overtimeMins>0){const[h,m]=en.split(":").map(Number);const tot=h*60+m+overtimeMins;en=`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;}
-  const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
-  const ws=toMin(st),we=toMin(en);
-  if(we<=ws)return 0;
-  let net=we-ws;
-  (breaks||[]).forEach(br=>{const bs=toMin(br.start),be=toMin(br.end);if(ws>=bs)return;const ol=Math.min(we,be)-Math.max(ws,bs);if(ol>0)net-=ol;});
-  return Math.max(0,net);
+  if(st&&en){
+    if(overtimeMins>0){const[h,m]=en.split(":").map(Number);const tot=h*60+m+overtimeMins;en=`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;}
+    const ws=toMin(st),we=toMin(en);
+    if(we>ws){
+      let seg=we-ws;
+      (breaks||[]).forEach(br=>{const bs=toMin(br.start),be=toMin(br.end);if(ws>=bs)return;const ol=Math.min(we,be)-Math.max(ws,bs);if(ol>0)seg-=ol;});
+      net+=Math.max(0,seg);
+    }
+  }
+  if(shift.extraStart&&shift.extraEnd){
+    const es=toMin(shift.extraStart),ee=toMin(shift.extraEnd);
+    if(ee>es)net+=(ee-es);
+  }
+  return net;
 }
 function getBreakList(settings,dateStr){
   const dow=pd(dateStr).getDay();const hol=isHoliday(dateStr);const bt=(settings&&settings.breakTimes)||{};
   if(hol)return bt.hol||[];if(dow===0)return bt.sun||[];if(dow===6)return bt.sat||[];return bt.weekday||[];
 }
-// 17:00(1020分)を境界にランチ帯/ディナー帯を判定し出勤数を返す
+// 17:00(1020分)を境界にランチ帯/ディナー帯を判定し出勤数を返す。
+// extraStart/extraEnd（「締」等の追加出勤期間）があれば主シフトと合算してhasLunch/hasDinner/attendanceを判定する
+// （主シフトがランチのみ・追加期間がディナー帯なら合わせて終日出勤=attendance1になる）。
 function shiftBandInfo(shift){
   if(!shift||shift.status!=="work")return{startMin:0,endMin:0,hasLunch:false,hasDinner:false,attendance:0};
-  const st=shift.adjustedStart??shift.start;const en=shift.adjustedEnd??shift.end;
-  if(!st||!en)return{startMin:0,endMin:0,hasLunch:false,hasDinner:false,attendance:0};
   const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
-  const startMin=toMin(st),endMin=toMin(en);
-  if(endMin<=startMin)return{startMin,endMin,hasLunch:false,hasDinner:false,attendance:0};
-  const hasLunch=startMin<1020,hasDinner=endMin>1020;
-  const attendance=((hasLunch&&hasDinner)||(endMin-startMin)>=540)?1:0.5;
+  const st=shift.adjustedStart??shift.start;const en=shift.adjustedEnd??shift.end;
+  let startMin=0,endMin=0,hasLunch=false,hasDinner=false,totalMin=0,any=false;
+  if(st&&en){
+    const s0=toMin(st),e0=toMin(en);
+    if(e0>s0){startMin=s0;endMin=e0;hasLunch=s0<1020;hasDinner=e0>1020;totalMin+=e0-s0;any=true;}
+  }
+  if(shift.extraStart&&shift.extraEnd){
+    const s1=toMin(shift.extraStart),e1=toMin(shift.extraEnd);
+    if(e1>s1){
+      if(!any){startMin=s1;endMin=e1;}
+      hasLunch=hasLunch||s1<1020;hasDinner=hasDinner||e1>1020;totalMin+=e1-s1;any=true;
+    }
+  }
+  if(!any)return{startMin:0,endMin:0,hasLunch:false,hasDinner:false,attendance:0};
+  const attendance=((hasLunch&&hasDinner)||totalMin>=540)?1:0.5;
   return{startMin,endMin,hasLunch,hasDinner,attendance};
 }
 // 属性ID→名称のリスト（staffTypeLimits優先・社員/バイト補完）
@@ -285,7 +306,7 @@ const CELL_COMMANDS=[
   {key:"k",kind:"suffix",usage:"9k",label:"キッチン入り",desc:"ホール所属のスタッフをこの日だけキッチンの人数として集計する",color:"#FFF3B0"},
   {key:"x",kind:"suffix",usage:"9x",label:"ヘルプ（カウント外）",desc:"時間帯別出勤人数に数えない。時間なしの文字だけの入力も同じ扱い",color:"#FFF3B0"},
   {key:"y",kind:"rest",usage:"y",label:"休み希望",desc:"セルを休み扱いにして斜線を表示する（出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日）。もう一度 y で解除、時間を入力すると出勤に上書き。「休」でも入力できる",hatch:true},
-  {key:"締",kind:"fixed",usage:"締",label:"締め固定（東通り店専用）",desc:"出勤・退勤どちらのセルに入力しても出勤23:00・退勤25:00(翌1:00)に固定する。鷄えん東通り店でのみ有効",start:"23:00",end:"25:00"},
+  {key:"締",kind:"fixed",usage:"17締",label:"締め（東通り店専用・追加出勤）",desc:"出勤・退勤どちらのセルに単独入力、または数字に続けて入力しても、23:00〜25:00(翌1:00)を主シフトとは別の追加出勤として計上する（例: 出勤13・退勤17締 → 13〜17時と23〜25時の2出勤）。鷄えん東通り店でのみ有効",start:"23:00",end:"25:00"},
 ];
 // セル背景色・記号の意味（cellBgForとレジェンドの共通ソース）
 const CELL_COLOR_LEGEND=[
@@ -304,7 +325,12 @@ function extractNote(raw){
   const s=String(raw).trim();
   if(isRestCommand(s))return{numeric:"",note:"",rest:true};
   const m=s.match(/^([\d.:]+)(.*)$/s);
-  if(!m||!m[1])return{numeric:"",note:"x",rest:false}; // 数値部なし(文字のみ) → ヘルプ
+  if(!m||!m[1]){
+    // 数値部なし(文字のみ): 登録済みの店舗限定固定シフトコマンド(kind:"fixed")ならそのkeyを保持、
+    // それ以外は従来通りヘルプ(x)扱い（h/k等のsuffixコマンドは数値なし単体では従来通りxに収束させる）
+    const fixed=CELL_COMMANDS.find(c=>c.kind==="fixed"&&c.key===s);
+    return{numeric:"",note:fixed?fixed.key:"x",rest:false};
+  }
   const suf=m[2].trim();
   if(!suf)return{numeric:m[1],note:"",rest:false};
   const l=suf.toLowerCase();
