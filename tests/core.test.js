@@ -242,8 +242,8 @@ test("pd: 非文字列は例外を投げず Invalid Date を返す", () => {
 // ===== extractNote / セルコマンドレジストリ（シフト作成タブ） =====
 
 test("extractNote: 時間のみ", () => {
-  assert.deepStrictEqual(u.extractNote("9"), { numeric: "9", note: "", rest: false });
-  assert.deepStrictEqual(u.extractNote("9:30"), { numeric: "9:30", note: "", rest: false });
+  assert.deepStrictEqual(u.extractNote("9"), { numeric: "9", note: "", rest: false, hasFixed: false });
+  assert.deepStrictEqual(u.extractNote("9:30"), { numeric: "9:30", note: "", rest: false, hasFixed: false });
 });
 
 test("extractNote: 登録サフィックス(h/k/x)は小文字に正規化", () => {
@@ -253,11 +253,11 @@ test("extractNote: 登録サフィックス(h/k/x)は小文字に正規化", () 
 });
 
 test("extractNote: 文字のみはヘルプ(x)扱い", () => {
-  assert.deepStrictEqual(u.extractNote("三"), { numeric: "", note: "x", rest: false });
+  assert.deepStrictEqual(u.extractNote("三"), { numeric: "", note: "x", rest: false, hasFixed: false });
 });
 
 test("extractNote: 任意サフィックスはそのまま保持", () => {
-  assert.deepStrictEqual(u.extractNote("9三"), { numeric: "9", note: "三", rest: false });
+  assert.deepStrictEqual(u.extractNote("9三"), { numeric: "9", note: "三", rest: false, hasFixed: false });
 });
 
 test("extractNote: y/休 は休み希望コマンド（時間付き9yは通常サフィックス）", () => {
@@ -328,22 +328,50 @@ test("CELL_COMMANDS: 「締」固定シフトコマンドが登録されてい�
   assert.ok(u.CELL_COMMANDS.some(c => c.kind === "fixed" && c.key === "締" && c.start === "23:00" && c.end === "25:00"));
 });
 
-test("extractNote: 数字と組み合わせた「17締」は numeric=17・note=締", () => {
+test("extractNote: 数字と組み合わせた「17締」は numeric=17・note=''・hasFixed=true", () => {
   const r = u.extractNote("17締");
   assert.strictEqual(r.numeric, "17");
-  assert.strictEqual(r.note, "締");
+  assert.strictEqual(r.note, "");
+  assert.strictEqual(r.hasFixed, true);
   assert.strictEqual(r.rest, false);
 });
 
-test("extractNote: 単独の「締」は numeric=''・note=締（従来のヘルプ(x)には収束しない）", () => {
+test("extractNote: 単独の「締」は numeric=''・note=''・hasFixed=true（従来のヘルプ(x)には収束しない）", () => {
   const r = u.extractNote("締");
   assert.strictEqual(r.numeric, "");
-  assert.strictEqual(r.note, "締");
+  assert.strictEqual(r.note, "");
+  assert.strictEqual(r.hasFixed, true);
   assert.strictEqual(r.rest, false);
 });
 
-test("extractNote: 未登録の文字だけの入力(三)は従来通りヘルプ(x)扱いのまま", () => {
-  assert.strictEqual(u.extractNote("三").note, "x");
+test("extractNote: 未登録の文字だけの入力(三)は従来通りヘルプ(x)扱いのまま・hasFixed=false", () => {
+  const r = u.extractNote("三");
+  assert.strictEqual(r.note, "x");
+  assert.strictEqual(r.hasFixed, false);
+});
+
+test("extractNote: 「16k締」のように他コマンドと併用すると note='k'・hasFixed=true（順序不問）", () => {
+  const r1 = u.extractNote("16k締");
+  assert.strictEqual(r1.numeric, "16");
+  assert.strictEqual(r1.note, "k");
+  assert.strictEqual(r1.hasFixed, true);
+  const r2 = u.extractNote("16締k"); // 逆順でも同じ結果
+  assert.strictEqual(r2.numeric, "16");
+  assert.strictEqual(r2.note, "k");
+  assert.strictEqual(r2.hasFixed, true);
+});
+
+test("extractNote: 「9三締」のように略称と締めを併用すると note='三'・hasFixed=true", () => {
+  const r = u.extractNote("9三締");
+  assert.strictEqual(r.numeric, "9");
+  assert.strictEqual(r.note, "三");
+  assert.strictEqual(r.hasFixed, true);
+});
+
+test("extractNote: 締めを含まない通常入力はhasFixed=false", () => {
+  assert.strictEqual(u.extractNote("9h").hasFixed, false);
+  assert.strictEqual(u.extractNote("9").hasFixed, false);
+  assert.strictEqual(u.extractNote("").hasFixed, false);
 });
 
 // ===== calcNetWorkMinutes / shiftBandInfo: extraStart/extraEnd（「締」による追加出勤）=====

@@ -725,17 +725,19 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         // 組み合わせ入力でも）、主シフトとは別の追加出勤(固定時間帯)としてカウントする
         const fixedCmd=(getFieldFixed(name,date,"start")||getFieldFixed(name,date,"end"))?FIXED_ENTRY:null;
         if(stM===null&&enM===null&&!fixedCmd)return;
-        if(stM!==null||enM!==null){
-          // 片側セルのみ入力: 出勤のみ→ランチ終わり(HEAT_LUNCH_END_MIN)まで、退勤のみ→ディナー始まり(HEAT_DINNER_START_MIN)から出勤扱い
-          let pStM=stM,pEnM=enM;
-          if(pEnM===null)pEnM=HEAT_LUNCH_END_MIN;
-          if(pStM===null)pStM=HEAT_DINNER_START_MIN;
-          if(pStM<pEnM){
-            const hsh=getHeatShift(name,date);
-            // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）
-            if(hsh){const ot=getOT(name,settings,hsh);if(ot>0)pEnM+=ot;}
-            const note=getShiftNote(name,date);
-            if(note!=="x"){
+        // note（h/k/x等）はstart/endどちらのセルから入力されても日単位で共通のため、主シフト・追加出勤の
+        // 両方に同じ判定を適用する（x=ヘルプ扱いで両方カウント除外、h/k=両方まとめて部門を上書き）
+        const note=getShiftNote(name,date);
+        if(note!=="x"){
+          if(stM!==null||enM!==null){
+            // 片側セルのみ入力: 出勤のみ→ランチ終わり(HEAT_LUNCH_END_MIN)まで、退勤のみ→ディナー始まり(HEAT_DINNER_START_MIN)から出勤扱い
+            let pStM=stM,pEnM=enM;
+            if(pEnM===null)pEnM=HEAT_LUNCH_END_MIN;
+            if(pStM===null)pStM=HEAT_DINNER_START_MIN;
+            if(pStM<pEnM){
+              const hsh=getHeatShift(name,date);
+              // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）
+              if(hsh){const ot=getOT(name,settings,hsh);if(ot>0)pEnM+=ot;}
               // 他店舗ヘルプ帯は自店舗のカウントから除外（終日=全除外、出勤側=〜17時、退勤側=17時〜）
               const help=getHelpInfo(name,date);
               let ok=true;
@@ -759,12 +761,12 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
               }
             }
           }
-        }
-        if(fixedCmd){
-          const exStM=timeToMin(fixedCmd.start),exEnM=timeToMin(fixedCmd.end);
-          if(exStM!==null&&exEnM!==null&&exStM<exEnM){
-            const section=hallStaff.length===0?"kit":(hallStaff.includes(name)?"hall":"kit");
-            arr.push({stM:exStM,enM:exEnM,breaks:[],section});
+          if(fixedCmd){
+            const exStM=timeToMin(fixedCmd.start),exEnM=timeToMin(fixedCmd.end);
+            if(exStM!==null&&exEnM!==null&&exStM<exEnM){
+              const section=hallStaff.length===0?"kit":(note==="h"?"hall":note==="k"?"kit":(hallStaff.includes(name)?"hall":"kit"));
+              arr.push({stM:exStM,enM:exEnM,breaks:[],section});
+            }
           }
         }
       });
@@ -982,7 +984,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const getHeatVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in heatEdits)return heatEdits[key];const t=toDecimal(getStoredTime(name,date,field));return t||"";};
   // その日出勤しているか（0.5出勤含む）: start か end のどちらかに有効値がある
   // その日「締」等の固定シフトコマンドが有効か（start/endどちらかのnoteがそれに該当）
-  const hasFixedCmd=(name,date)=>fixedShiftEnabled&&!!(fixedShiftCommandFor(getFieldNote(name,date,"start"))||fixedShiftCommandFor(getFieldNote(name,date,"end")));
+  const hasFixedCmd=(name,date)=>getFieldFixed(name,date,"start")||getFieldFixed(name,date,"end");
   const isWorkDay=(name,date)=>{
     const shift=_getSub(name)?.shifts?.[date];
     const s=parseFloat(getHeatVal(name,date,"start"));
