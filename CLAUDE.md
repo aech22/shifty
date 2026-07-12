@@ -534,27 +534,37 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-11 ユーザー報告・本番）
+## Shifty バグチェックレポート（2026-07-12 自動実行 #15）
 
 ### 修正済み
+（今回の実行では修正なし）
 
-- **🔴 複数店舗在籍スタッフの出勤・退勤時間が店舗切替時に他店舗へ誤保存されるバグ**（app-admin.js `ShiftEditTab`・コミット`b659935`）
-  管理者画面ヘッダーの店舗切替ドロップダウン（店舗名ボタン▼→店舗選択）は`AdminView`のタブ状態（`tab`）を変更しないため、「シフト作成」タブを開いたまま店舗を切り替えると`ShiftEditTab`コンポーネントはアンマウントされない。同コンポーネントのローカルstate `localEdits`/`heatEdits`（セルの入力値バッファ。**スタッフ名**をキーに保持し、blur確定後も表示用に値を保持し続ける設計）は`shopId` propの変更に連動してリセットされていなかった。
-  結果として、店舗Aでスタッフのセルに入力した値（未確定の入力途中の値も、blurで確定済みの値も両方）が、店舗Bへ切り替えた後も`getVal`のlocalEdits優先読み出しにより店舗Bのグリッドにそのまま残存表示され、さらにその状態で「保存」ボタン（`handleSaveAll`。localEditsの全エントリを無条件に現在の店舗へ書き込む設計）を押す、またはそのセルを個別にblurすると、`applyEditToSubs`が**スタッフ名一致のみ**（`shopId`を見ない）で対象subを検索・作成するため、店舗Bに同姓同名のスタッフ（企業連携で複数店舗に在籍登録されているケースの典型）が存在する場合、その人物の店舗Bのシフトデータとして誤って書き込まれる状態だった。他店舗シフトの参照・表示機能（`companyData`/`getHelpInfo`によるヘルプ判定・重複チェック）はもともと`once("value")`による読み取り専用実装で書き込み経路を持たず無関係。
-  修正: `ShiftEditTab`に`useEffect(()=>{setLocalEdits({});setHeatEdits({});setFocusKey(null);},[shopId])`を追加し、`shopId`変更時にこれらのコンポーネントstateを明示的にクリアするようにした。
-  検証: dev環境（thirty-dev-b6958）で2店舗（標準テスト店舗＋新規作成の検証用店舗）に同名スタッフ「田中」を登録し、店舗Aで「田中」のセルにblur確定込みで時間を入力→ヘッダードロップダウンで店舗Bへ切替（タブ遷移なし）→店舗Bのグリッドで該当セルが空欄のまま（残存表示なし）であることを確認。さらに店舗Bで「保存」ボタンを押し、Firebase上の店舗Bの`subs`に何も書き込まれないこと（`null`のまま）を直接確認。修正後に店舗Bで独自に入力した値は正しく店舗B自身に保存されることも確認（回帰なし）。`npm test`65件全パス・`npx eslint app-*.js`0 errors 100 warnings（既存警告と同数）。テスト用店舗・データはdev環境から削除済み。
+### 重点調査: 前回巡回（#14・`8f3f92f`時点）以降の新規コミット
 
-### 対象外の確認事項
-- ユーザー報告を受けて企業連携機能のFirebase書き込み経路（app-admin.js/app-main.js）を全数grepで洗い出したが、上記1箇所を除き他店舗の`subs`への書き込みは存在しないことを確認（`shops/${sid}/settings`への書き込みは`CompanyTab`の略称・勤務先登録機能のみで意図通り）。
+4件（`96ea1ea`〜`d637758`）を精査。修正が必要な問題は見つからず。
+
+- `96ea1ea` シフト作成タブの「全員表示」トグルと「キッチン」「ホール」部門フィルタを相互排他にするUI変更。問題なし。
+- `2ef8df1`/`3d30ca2` 鷄えん東通り店専用のセル内コマンド「締」（出勤23:00〜退勤25:00固定）を追加。`CELL_COMMANDS`レジストリに`kind:"fixed"`で登録し、`fixedShiftCommandFor`（完全一致のみ・純粋関数）と`isFixedShiftEligibleShop`（店舗名部分一致）で店舗限定化。`applyFixedShiftToSubs`は既存の`applyEditToSubs`と同じ別名解決・新規sub作成パターンを踏襲し、`saveSubs`の関数型更新（`prevSubs=>newArray`）とも整合。新規テスト4件を確認、想定通り。
+  - 🟢 新規把握: 店舗略称バリデーション（`CompanyTab`の`addAbbr`）の予約語リストに「締」が未反映（下記参照）。
+- `d637758` 店舗切替時に`staffList`/`settings`/`periods`/`globalTemplates`が前店舗のデータのまま残り新店舗のFirebaseパスへ誤保存される競合を修正（`subs`で既に採用済みのキャッシュ値への同期リセットパターンを`startSubscriptions`に追加）。書き込み時と読み出し時の`storeKey`引数が完全一致していることを確認、キー不一致によるフォールバック漏れなし。
+
+### 要確認（未修正）
+
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2653、#11から継続監視中）
+- **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、#11から継続監視中）
+- **🟢 「締」固定シフトコマンドが店舗略称バリデーションの予約語リストに未反映**（app-admin.js `addAbbr`。実害は東通り店自身が略称「締」を自店登録した場合のみで低リスク）
+- **🟢 `joinByInviteCode`（app-main.js:852）が呼び出し元ゼロのデッドコードに変化**（企業アカウント招待コード参加UIは依然未実装）
 
 ### 異常なし
-上記1件（🔴・修正済み）を除き、新規の問題は発見せず。develop→main→本番（shiftyshifty.app）へデプロイ済み（コミット`b659935`、GitHub Pages反映まで数分）。
+クリティカル（🔴）・中程度（🟡）の新規問題はなし。`npm test`69件全パス・`npx eslint app-*.js`0 errors 100 warnings。develop→push不要（コード変更なし。今回はレビューのみ）。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
 -
 -
 -
