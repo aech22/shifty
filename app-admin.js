@@ -193,6 +193,10 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
 
 // セル背景色はレジストリ（app-utils.js の CELL_COLOR_LEGEND）を単一ソースにする（グリッド描画とレジェンド表示で共用）
 const LEGEND_COLORS=Object.fromEntries(CELL_COLOR_LEGEND.filter(c=>c.color).map(c=>[c.key,c.color]));
+// 店舗限定固定シフトコマンド（現状「締」）のレジストリエントリ・キー文字。複数店舗限定コマンドが増えても
+// 単一のkind:"fixed"想定のまま（現状1件のみ登録）
+const FIXED_ENTRY=CELL_COMMANDS.find(c=>c.kind==="fixed")||null;
+const FIXED_KEY=FIXED_ENTRY?FIXED_ENTRY.key:"";
 // 休み希望セルの斜線（右上→左下・PDF出力のhatchと同じSVG方式）。#999はライト/ダーク両テーマで視認可、
 // non-scaling-strokeでセルサイズに引き伸ばしても線幅一定。inputのbackgroundImageに敷き、色背景はbackgroundColorと2層で共存させる
 const HDASH_IMG=`url("data:image/svg+xml;charset=utf-8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' preserveAspectRatio='none'><line x1='10' y1='0' x2='0' y2='10' stroke='#999' stroke-width='1.5' vector-effect='non-scaling-stroke'/></svg>")}")`;
@@ -493,7 +497,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const fieldRest=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];return!!(sh&&sh.adminRest&&sh.adminRest[field]);};
   const getStoredTime=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";if(sh.adminRest&&sh.adminRest[field])return"";return(field==="start"?(sh.adjustedStart??sh.start):(sh.adjustedEnd??sh.end))||"";};
   const getStoredNote=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];if(!sh)return"";if(sh.adminRest&&sh.adminRest[field])return"";return(field==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"";};
-  const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);if(t)return t+n;return(fixedShiftEnabled&&fixedShiftCommandFor(n))?n:"";};
+  // 締めフラグ（adjustedStartFixed/adjustedEndFixed）: noteとは独立に永続化する。noteは締め文字を含まない
+  // 「素の」値（h/k/x・略称等）のまま保つことで、h/k判定・abbrToShop完全一致lookupに影響を与えない
+  const getStoredFixed=(name,date,field)=>{if(!fixedShiftEnabled)return false;const sh=_getSub(name)?.shifts?.[date];const fk=field==="start"?"adjustedStartFixed":"adjustedEndFixed";return!!(sh&&sh[fk]);};
+  const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);const fx=getStoredFixed(name,date,field)?FIXED_KEY:"";if(t)return t+n+fx;return(n+fx)||"";};
   const handleChange=(name,date,field,value)=>{setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
   // 店舗限定固定シフトコマンド（「締」等）が有効な店舗かどうか
   const fixedShiftEnabled=useMemo(()=>isFixedShiftEligibleShop(shopName),[shopName]);
@@ -505,12 +512,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   // 両方をこの1関数で処理する。extraStart/extraEndは日全体で1組のみのため、2フィールドのうち
   // どちらかが締めならON、どちらも締めでなくなればOFFという形で毎回のblurごとに再判定する。
   const applyEditToSubs=(newSubs,name,date,field,rawValue)=>{
-    const{numeric,note,rest}=extractNote(rawValue);
+    const{numeric,note,rest,hasFixed}=extractNote(rawValue);
     const parsed=parseTime(numeric);
-    const fixedCmd=fixedShiftEnabled?fixedShiftCommandFor(note):null;
+    const fixedCmd=(fixedShiftEnabled&&hasFixed)?FIXED_ENTRY:null;
     // 管理者編集はadjustedXxxに保存（スタッフ提出のstart/endを保護）
     const adjField=field==="start"?"adjustedStart":"adjustedEnd";
     const nk=field==="start"?"adjustedStartNote":"adjustedEndNote";
+    // 締めフラグは note とは別に永続化する（noteはh/k/x・略称等の「素の」値のまま保つ）
+    const fixedFieldKey=field==="start"?"adjustedStartFixed":"adjustedEndFixed";
+    const otherFixedFieldKey=field==="start"?"adjustedEndFixed":"adjustedStartFixed";
     let idx=newSubs.findIndex(s=>s.periodId===selPid&&s.staffName===name);
     if(idx===-1){
       // 別名で提出済みの場合は表示解決(_getSub)と同じロジックでその提出を編集対象にする。
@@ -536,7 +546,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString(),source:"grid"};
       const sd0={status:"work"};
       if(parsed){sd0[adjField]=parsed;sd0[nk]=note;}
-      if(fixedCmd){sd0.extraStart=fixedCmd.start;sd0.extraEnd=fixedCmd.end;}
+      if(fixedCmd){sd0[fixedFieldKey]=true;sd0.extraStart=fixedCmd.start;sd0.extraEnd=fixedCmd.end;}
       ns.shifts[date]=sd0;
       newSubs.push(ns);
     }else{
@@ -546,12 +556,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         // （スタッフ提出のstart/end/statusには触れない。実効値の抑制はgetStoredTimeのadminRest判定が担う）
         const ar={...(sd.adminRest||{})};
         if(ar[field]){delete ar[field];}
-        else{ar[field]=true;delete sd[adjField];delete sd[nk];}
+        else{ar[field]=true;delete sd[adjField];delete sd[nk];delete sd[fixedFieldKey];}
         if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;
       }else if(parsed){
         // 休み希望セルへの入力は出勤扱いに変えるが、元のstatusをorigStatusに退避して消去時に復元できるようにする
         if(sd.status!=="work"&&sd.origStatus===undefined)sd.origStatus=sd.status;
         sd[adjField]=parsed;sd[nk]=note;sd.status="work";
+        if(fixedCmd)sd[fixedFieldKey]=true;else delete sd[fixedFieldKey];
         // 時間入力は同フィールドの休み希望マーク(adminRest)を解除する
         if(sd.adminRest&&sd.adminRest[field]){const ar={...sd.adminRest};delete ar[field];if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;}
       }else{
@@ -559,7 +570,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         // では素通りしないため、getStoredTime/getStoredNoteがスタッフ提出値にフォールバックしなくなる）。
         // スタッフ提出値そのものを消したいときはこの上書きで対応でき、提出値に戻したいときは
         // 提出一覧タブの詳細モーダルにある「提出値」選択（saveAdj）を使う想定
-        sd[adjField]="";sd[nk]=fixedCmd?note:"";
+        sd[adjField]="";sd[nk]=note;
+        if(fixedCmd)sd[fixedFieldKey]=true;else delete sd[fixedFieldKey];
         // 出勤・退勤とも管理者調整値が空欄になったら退避したstatusに戻す（休み希望なら斜線が復活する）。
         // スタッフ提出のstart/endが残っている場合は本人が出勤に変えているため復元しない
         // （締めコマンドが付いている場合は下の追加出勤トグルがstatus="work"に再設定するため復元させない）
@@ -569,16 +581,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           delete sd.origStatus;
         }
       }
-      // 締め(kind:"fixed")の追加出勤トグル: start/endどちらかのnoteが締めならON、どちらも締めでなければOFF。
-      // rest分岐でnkが削除された場合(delete sd[nk])は「締めでなくなった」扱いで正しく反映される。
-      // この判定はrawValue単位ではなくsdに書き込み済みの両フィールドのnoteを見るため、
-      // どちらのセルから入力されても、また入力順序に関わらず正しくON/OFFが決まる。
+      // 締め(kind:"fixed")の追加出勤トグル: start/endどちらかのadjustedXFixedがtrueならON、どちらもfalseならOFF。
+      // noteの文字列一致ではなくこの専用フラグで判定するため、h/k/x・略称等と組み合わせた
+      // 「16k締」のような入力でも（どちらのセルから入力されても・入力順序に関わらず）正しくON/OFFが決まる。
       if(fixedShiftEnabled){
-        const activeCmd=fixedShiftCommandFor(sd.adjustedStartNote)||fixedShiftCommandFor(sd.adjustedEndNote);
-        if(activeCmd){
+        const anyFixed=!!sd[fixedFieldKey]||!!sd[otherFixedFieldKey];
+        if(anyFixed){
           if(sd.status!=="work"&&sd.origStatus===undefined)sd.origStatus=sd.status;
           sd.status="work";
-          sd.extraStart=activeCmd.start;sd.extraEnd=activeCmd.end;
+          sd.extraStart=FIXED_ENTRY.start;sd.extraEnd=FIXED_ENTRY.end;
         }else{
           delete sd.extraStart;delete sd.extraEnd;
         }
@@ -593,7 +604,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const handleBlur=(name,date,field,rawValue)=>{
     if(!isPremium)return;
     const ekey=`${name}|${date}|${field}`;
-    const{numeric,note,rest}=extractNote(rawValue);
+    const{numeric,note,rest,hasFixed}=extractNote(rawValue);
     if(rest){
       const now=Date.now();
       if(restAppliedRef.current.key===ekey&&now-restAppliedRef.current.t<400)return;
@@ -609,9 +620,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       return;
     }
     const parsed=parseTime(numeric);
-    const fixedCmd=fixedShiftEnabled?fixedShiftCommandFor(note):null;
-    // 数値なし(締めコマンド単独)の場合、通常なら空欄表示になってしまう箇所を締め自体の表示として残す
-    const display=parsed?(toDecimal(parsed)+note):(fixedCmd?note:"");
+    const fx=(fixedShiftEnabled&&hasFixed)?FIXED_KEY:"";
+    // 数値なし(締めコマンド単独・締め+他コマンドの組み合わせ含む)の場合、通常なら空欄表示になってしまう
+    // 箇所を締め自体の表示として残す
+    const display=parsed?(toDecimal(parsed)+note+fx):((note+fx)||"");
     setLocalEdits(prev=>({...prev,[ekey]:display}));
     setHeatEdits(prev=>({...prev,[ekey]:display})); // blur確定値を集計/ヒートマップ用に反映
     // 直前state(prevSubs)基準の関数型更新。Enterキーでの高速な連続blur等、再レンダーを挟まず
@@ -664,6 +676,17 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     const origNk=field==="start"?"startNote":"endNote";
     return(sh?.[adjNk]??sh?.[origNk])||"";
   };
+  // フィールド別「締め」フラグ取得（edits最優先→永続化済みadjustedXFixed）。getFieldNoteと対で使う。
+  // noteとは独立管理のため、h/k/x・略称等と組み合わせた入力でもnote側の完全一致判定に影響しない
+  const getFieldFixed=(name,date,field,src=heatEdits)=>{
+    if(!fixedShiftEnabled)return false;
+    const key=`${name}|${date}|${field}`;
+    if(key in src)return extractNote(src[key]).hasFixed;
+    if(fieldRest(name,date,field))return false;
+    const sh=_getSub(name)?.shifts?.[date];
+    const fk=field==="start"?"adjustedStartFixed":"adjustedEndFixed";
+    return!!(sh&&sh[fk]);
+  };
   // 他店舗ヘルプ判定: 出勤セルの略称=ランチ帯ヘルプ、退勤セルの略称=ディナー帯ヘルプ、両方=終日ヘルプ
   const getHelpInfo=(name,date,src=heatEdits)=>{
     const startShop=abbrToShop[getFieldNote(name,date,"start",src)]||null;
@@ -698,9 +721,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       const arr=[];
       realStaff.forEach(name=>{
         let stM=timeToMin(getEffHHMM(name,date,"start"));let enM=timeToMin(getEffHHMM(name,date,"end"));
-        // 「締」等の店舗限定固定シフトコマンド: start/endどちらかのnoteに付いていれば
-        // 主シフトとは別の追加出勤(固定時間帯)としてカウントする
-        const fixedCmd=fixedShiftEnabled?(fixedShiftCommandFor(getFieldNote(name,date,"start"))||fixedShiftCommandFor(getFieldNote(name,date,"end"))):null;
+        // 「締」等の店舗限定固定シフトコマンド: start/endどちらかに付いていれば（h/k/x・略称等との
+        // 組み合わせ入力でも）、主シフトとは別の追加出勤(固定時間帯)としてカウントする
+        const fixedCmd=(getFieldFixed(name,date,"start")||getFieldFixed(name,date,"end"))?FIXED_ENTRY:null;
         if(stM===null&&enM===null&&!fixedCmd)return;
         if(stM!==null||enM!==null){
           // 片側セルのみ入力: 出勤のみ→ランチ終わり(HEAT_LUNCH_END_MIN)まで、退勤のみ→ディナー始まり(HEAT_DINNER_START_MIN)から出勤扱い
@@ -1169,17 +1192,17 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     h+='</tr>';
     // Row2: ヒートマップ時刻・期間（縦積み）・曜日・スタッフ名（縦積み）・曜日・店名（縦積み）・ヒートマップ時刻
     h+='<tr>';
-    if(showKit)heatHours.forEach(hr=>{h+=`<th style="border:${BDp};padding:1px;width:20px;text-align:center;font-size:9px;font-weight:600;background:#f7f7f7;vertical-align:bottom;">${hr}</th>`;});
     h+=`<th style="border:${BDp2};padding:3px 2px;width:36px;text-align:center;font-weight:700;font-size:10px;line-height:1.2;vertical-align:middle;">${vtext(pdfPeriodLabel(period.label||""))}</th>`;
     h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;text-align:center;font-weight:700;">曜日</th>`;
+    if(showKit)heatHours.forEach(hr=>{h+=`<th style="border:${BDp};padding:1px;width:20px;text-align:center;font-size:9px;font-weight:600;background:#f7f7f7;vertical-align:bottom;">${hr}</th>`;});
     if(staffCols)cols.forEach(nm=>{
       if(isSpacer(nm)){h+=`<th style="border:${BDp};"></th>`;return;}
       const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";
       h+=`<th style="border:${BDp};padding:3px 1px;width:30px;text-align:center;font-weight:700;font-size:${vfontSize(nm,10)}px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;
     });
+    if(showHall)heatHours.forEach(hr=>{h+=`<th style="border:${BDp};padding:1px;width:20px;text-align:center;font-size:9px;font-weight:600;background:#f7f7f7;vertical-align:bottom;">${hr}</th>`;});
     h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;text-align:center;font-weight:700;">曜日</th>`;
     h+=`<th style="border:${BDp2};padding:3px 2px;width:40px;text-align:center;font-weight:700;font-size:10px;line-height:1.2;vertical-align:middle;">${vtext(shopName||"店舗")}</th>`;
-    if(showHall)heatHours.forEach(hr=>{h+=`<th style="border:${BDp};padding:1px;width:20px;text-align:center;font-size:9px;font-weight:600;background:#f7f7f7;vertical-align:bottom;">${hr}</th>`;});
     h+='</tr></thead><tbody>';
     dates.forEach((ds,di)=>{
       const d=pd(ds),dow=d.getDay(),day=d.getDate(),wd=WD[dow];
@@ -1189,13 +1212,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       ["start","end"].forEach((field,ri)=>{
         const top=ri===0;
         h+=`<tr style="background:${rowBg};">`;
+        h+=mergeTd(day,top);
+        h+=mergeTd(esc(wd),top);
         if(showKit)heatHours.forEach(hr=>{
           const n=countHeat("kit",ds,hr);
           const bg=n===0?"transparent":`rgba(248,112,54,${0.15+(n/kitMax)*0.75})`;
           h+=mergeHeat(n||"",top,bg);
         });
-        h+=mergeTd(day,top);
-        h+=mergeTd(esc(wd),top);
         if(staffCols)cols.forEach(nm=>{
           if(isSpacer(nm)){
             // スペーサー列: 35名以上は作成表両端(日付列)と同じ結合風の太枠で日にち(月なし)を表示
@@ -1217,13 +1240,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           const cbg=sh&&sh.changed===true?"#B7EBC6":r.note?"#FFFF00":"transparent";
           h+=`<td style="border:${BDp};padding:1px;text-align:center;background:${cbg};height:15px;">${esc(r.disp)}</td>`;
         });
-        h+=mergeTd(esc(wd),top);
-        h+=mergeTd(day,top);
         if(showHall)heatHours.forEach(hr=>{
           const n=countHeat("hall",ds,hr);
           const bg=n===0?"transparent":`rgba(248,112,54,${0.15+(n/hallMax)*0.75})`;
           h+=mergeHeat(n||"",top,bg);
         });
+        h+=mergeTd(esc(wd),top);
+        h+=mergeTd(day,top);
         h+='</tr>';
       });
     });

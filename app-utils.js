@@ -306,7 +306,7 @@ const CELL_COMMANDS=[
   {key:"k",kind:"suffix",usage:"9k",label:"キッチン入り",desc:"ホール所属のスタッフをこの日だけキッチンの人数として集計する",color:"#FFF3B0"},
   {key:"x",kind:"suffix",usage:"9x",label:"ヘルプ（カウント外）",desc:"時間帯別出勤人数に数えない。時間なしの文字だけの入力も同じ扱い",color:"#FFF3B0"},
   {key:"y",kind:"rest",usage:"y",label:"休み希望",desc:"セルを休み扱いにして斜線を表示する（出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日）。もう一度 y で解除、時間を入力すると出勤に上書き。「休」でも入力できる",hatch:true},
-  {key:"締",kind:"fixed",usage:"17締",label:"締め（東通り店専用・追加出勤）",desc:"出勤・退勤どちらのセルに単独入力、または数字に続けて入力しても、23:00〜25:00(翌1:00)を主シフトとは別の追加出勤として計上する（例: 出勤13・退勤17締 → 13〜17時と23〜25時の2出勤）。鷄えん東通り店でのみ有効",start:"23:00",end:"25:00"},
+  {key:"締",kind:"fixed",usage:"16k締",label:"締め（東通り店専用・追加出勤）",desc:"出勤・退勤どちらのセルに単独入力、または数字・h/k/x・他店舗略称など他のコマンドと組み合わせて（前後どちらでも可）入力しても、23:00〜25:00(翌1:00)を主シフトとは別の追加出勤として計上する（例: 出勤13・退勤17締 → 13〜17時と23〜25時の2出勤。出勤16k締 → キッチン入りかつ追加出勤）。鷄えん東通り店でのみ有効",start:"23:00",end:"25:00"},
 ];
 // セル背景色・記号の意味（cellBgForとレジェンドの共通ソース）
 const CELL_COLOR_LEGEND=[
@@ -320,22 +320,35 @@ const CELL_COLOR_LEGEND=[
 const isRestCommand=raw=>/^(y|ｙ|休)$/i.test(String(raw==null?"":raw).trim());
 // サフィックス抽出: 登録済みコマンド(kind:"suffix")は小文字に正規化、任意文字列=そのまま保持、""=通常。
 // rest=true は休み希望コマンド（numeric/noteは空）。旧実装はShiftEditTab内ローカル関数（2026-07-09にレジストリ駆動化して移設）
+// hasFixed: 店舗限定固定シフトコマンド(kind:"fixed"。現状「締」)が、他のサフィックス(h/k/x/略称)と
+// 併用された場合も含めて含まれているかどうか。noteからは固定コマンドの文字自体を取り除いた「素の」値を返す
+// ことで、h/k/x判定・略称lookup(abbrToShop等)がnoteの完全一致に依存する既存ロジックへ影響を与えない。
+// 前後どちらの順序で入力しても（例:「16k締」「16締k」）同じ結果になるよう単純な文字列除去で判定する。
 function extractNote(raw){
-  if(raw==null||!String(raw).trim())return{numeric:"",note:"",rest:false};
+  if(raw==null||!String(raw).trim())return{numeric:"",note:"",rest:false,hasFixed:false};
   const s=String(raw).trim();
-  if(isRestCommand(s))return{numeric:"",note:"",rest:true};
+  if(isRestCommand(s))return{numeric:"",note:"",rest:true,hasFixed:false};
+  const fixedKey=(CELL_COMMANDS.find(c=>c.kind==="fixed")||{}).key||"";
   const m=s.match(/^([\d.:]+)(.*)$/s);
   if(!m||!m[1]){
-    // 数値部なし(文字のみ): 登録済みの店舗限定固定シフトコマンド(kind:"fixed")ならそのkeyを保持、
-    // それ以外は従来通りヘルプ(x)扱い（h/k等のsuffixコマンドは数値なし単体では従来通りxに収束させる）
-    const fixed=CELL_COMMANDS.find(c=>c.kind==="fixed"&&c.key===s);
-    return{numeric:"",note:fixed?fixed.key:"x",rest:false};
+    // 数値部なし(文字のみ): 登録済みの固定シフトコマンドを含んでいれば取り除いて判定する。
+    // 締めのみ単独→note="" hasFixed=true。締め+他の文字混在・締めなしの文字のみは
+    // 従来通りヘルプ(x)扱いに収束させる（h/k等のsuffixコマンドも数値なし単体ではxに収束する仕様を維持）
+    const hasFixed=!!fixedKey&&s.includes(fixedKey);
+    if(hasFixed){
+      const stripped=s.split(fixedKey).join("");
+      return{numeric:"",note:stripped?"x":"",rest:false,hasFixed:true};
+    }
+    return{numeric:"",note:"x",rest:false,hasFixed:false};
   }
-  const suf=m[2].trim();
-  if(!suf)return{numeric:m[1],note:"",rest:false};
+  const rawSuf=m[2].trim();
+  if(!rawSuf)return{numeric:m[1],note:"",rest:false,hasFixed:false};
+  const hasFixed=!!fixedKey&&rawSuf.includes(fixedKey);
+  const suf=hasFixed?rawSuf.split(fixedKey).join(""):rawSuf;
+  if(!suf)return{numeric:m[1],note:"",rest:false,hasFixed};
   const l=suf.toLowerCase();
-  if(CELL_COMMANDS.some(c=>c.kind==="suffix"&&c.key===l))return{numeric:m[1],note:l,rest:false};
-  return{numeric:m[1],note:suf,rest:false}; // 日本語含む任意サフィックスはそのまま保持
+  if(CELL_COMMANDS.some(c=>c.kind==="suffix"&&c.key===l))return{numeric:m[1],note:l,rest:false,hasFixed};
+  return{numeric:m[1],note:suf,rest:false,hasFixed}; // 日本語含む任意サフィックスはそのまま保持
 }
 // 店舗限定の固定シフトコマンド（kind:"fixed"）判定。セル全体がコマンドキーと完全一致するときそのレジストリ
 // エントリ（{start,end,...}）を返す。店舗が対象かどうかは呼び出し側がisFixedShiftEligibleShopで判定する
