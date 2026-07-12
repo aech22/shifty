@@ -448,6 +448,81 @@ exports.purgeInactiveShops = functions
   });
 
 // ============================================================
+// 36ヶ月超のシフト期間データ削除（保存上限④・毎日実行）
+// 労基法の帳簿保存義務（3年）に整合させ、期間データの無限増加を止める。
+// dry-runで先行リリースし、アプリ内告知のうえ1ヶ月観察してから
+// PURGE_OLD_PERIODS_DRY_RUN を false に切り替えて本削除を有効化する
+// （BACKLOG.md「セキュリティ強化」タスクと同様の段階リリース）。
+//
+// 日次スキャンは shops/{id}/periods のみ読み（subsを含まない軽量な部分木）、
+// 36ヶ月超の期間が見つかった場合のみ shops/{id}/subs を
+// orderByChild("periodId").equalTo(periodId) で絞り込んで読む。
+// subs全件読み取りは行わない。
+//
+// periodIdが現存するどの期間にも紐付かない孤児subsはこのスキャンの対象外
+// （endDateという判定基準を持たないため削除しない。孤児"店舗"の掃除は
+// purgeInactiveShops側の別の関心事）。
+//
+// 列挙元は /global/shops（軽量なインデックス）。/global/shops に載っていない
+// 孤児店舗はこの期間クリーンアップの対象外（孤児店舗自体はpurgeInactiveShops
+// が /shops 起点で別途処理する）。
+// ============================================================
+const PURGE_OLD_PERIODS_DRY_RUN = true; // 1ヶ月観察後にfalseへ切り替える
+
+function purgeOldPeriodsCutoff(now) {
+  const d = new Date(now);
+  d.setMonth(d.getMonth() - 36);
+  return d.toISOString().slice(0, 10); // "YYYY-MM-DD"
+}
+
+exports.purgeOldPeriods = functions
+  .region("asia-northeast1")
+  .pubsub.schedule("every 24 hours")
+  .timeZone("Asia/Tokyo")
+  .onRun(async () => {
+    const now = Date.now();
+    const cutoff = purgeOldPeriodsCutoff(now);
+
+    const globalShopsSnap = await db.ref("global/shops").once("value");
+    const globalShops = globalShopsSnap.val() || {};
+
+    for (const shopId of Object.keys(globalShops)) {
+      const periodsSnap = await db.ref(`shops/${shopId}/periods`).once("value");
+      const periods = periodsSnap.val() || {};
+
+      for (const [periodId, period] of Object.entries(periods)) {
+        if (!period || !period.endDate || Number.isNaN(Date.parse(period.endDate))) {
+          console.warn(`endDateが不正のためスキップ: shop=${shopId} period=${periodId}`);
+          continue;
+        }
+        if (period.endDate >= cutoff) continue; // 36ヶ月以内は対象外
+
+        const subsSnap = await db.ref(`shops/${shopId}/subs`)
+          .orderByChild("periodId").equalTo(periodId).once("value");
+        const subCount = subsSnap.numChildren();
+
+        if (PURGE_OLD_PERIODS_DRY_RUN) {
+          console.log(`[dry-run] 削除対象: shop=${shopId} period=${periodId} (endDate=${period.endDate}) subs=${subCount}件`);
+          continue;
+        }
+
+        const subUpdates = {};
+        subsSnap.forEach((child) => { subUpdates[child.key] = null; });
+        if (Object.keys(subUpdates).length > 0) {
+          await db.ref(`shops/${shopId}/subs`).update(subUpdates);
+        }
+        if (period.urlToken) {
+          await db.ref(`tokens/${period.urlToken}`).remove();
+        }
+        await db.ref(`shops/${shopId}/periods/${periodId}`).remove();
+        console.log(`削除: shop=${shopId} period=${periodId} (endDate=${period.endDate}) subs=${subCount}件`);
+      }
+    }
+
+    return null;
+  });
+
+// ============================================================
 // ユーザーアンケート一斉送信（ワンショット・要秘密トークン）
 // curl -X POST https://asia-northeast1-ontheshift.cloudfunctions.net/sendSurveyEmails \
 //   -H "Content-Type: application/json" \
