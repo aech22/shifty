@@ -3733,6 +3733,11 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
         </div>
       </AC>}
 
+      {/* データ保存期間の告知（保存上限④・36ヶ月超の期間データは順次削除） */}
+      <div style={{fontSize:11,color:"var(--c-text4)",textAlign:"center",padding:"0 16px"}}>
+        シフト期間データは終了日から36ヶ月を超えると順次削除されます（詳細は利用規約 第6条）
+      </div>
+
       {/* 利用規約 */}
       <div style={{textAlign:"center",marginTop:8,paddingBottom:8}}>
         <button onClick={()=>setShowTerms(true)}
