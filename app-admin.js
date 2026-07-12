@@ -1158,14 +1158,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     h+='<thead>';
     // Row1: 従業員コード専用行（左右の端セルは結合・空欄。期間等は表示しない）。ヒートマップ列はセクション名を結合表示
     h+='<tr>';
-    if(showKit)h+=`<th colspan="${heatHours.length}" style="border:${BDp2};padding:1px;height:16px;text-align:center;font-size:8px;font-weight:600;white-space:nowrap;">${esc(kitLabel)}</th>`;
     h+=`<th colspan="2" style="border:${BDp2};padding:1px;height:16px;"></th>`;
+    if(showKit)h+=`<th colspan="${heatHours.length}" style="border:${BDp2};padding:1px;height:16px;text-align:center;font-size:8px;font-weight:600;white-space:nowrap;">${esc(kitLabel)}</th>`;
     if(staffCols)cols.forEach(nm=>{
       if(isSpacer(nm)){h+=`<th style="border:${BDp};padding:1px;width:30px;height:16px;"></th>`;return;}
       h+=`<th style="border:${BDp};padding:1px;width:30px;height:16px;text-align:center;font-size:9px;font-weight:600;">${esc(staffNums[nm]||"")}</th>`;
     });
-    h+=`<th colspan="2" style="border:${BDp2};padding:1px;height:16px;"></th>`;
     if(showHall)h+=`<th colspan="${heatHours.length}" style="border:${BDp2};padding:1px;height:16px;text-align:center;font-size:8px;font-weight:600;white-space:nowrap;">ホール</th>`;
+    h+=`<th colspan="2" style="border:${BDp2};padding:1px;height:16px;"></th>`;
     h+='</tr>';
     // Row2: ヒートマップ時刻・期間（縦積み）・曜日・スタッフ名（縦積み）・曜日・店名（縦積み）・ヒートマップ時刻
     h+='<tr>';
