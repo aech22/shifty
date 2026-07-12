@@ -1141,8 +1141,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   // シフト表table（HTML文字列）。withHeat=trueで左右にヒートマップ列を統合し日付行に合わせて表示する
   const buildShiftTableHtml=(withHeat=false,staffCols=true)=>{
     const cols=buildPdfCols();
-    // スタッフ36名以上: 部門仕切り用スペーサー列が常に空白のままだと、印刷時に日付を見失いやすいため日付を表示する
-    const showSpacerDate=cols.filter(n=>!isSpacer(n)).length>35;
+    // スタッフ35名以上: 部門仕切り用スペーサー列が常に空白のままだと、印刷時に日付を見失いやすいため日付を表示する
+    const showSpacerDate=cols.filter(n=>!isSpacer(n)).length>34;
     const BDp="1px solid #888",BDp2="2px solid #555";
     // 斜線: Excelのdiagonal(右上→左下の1本線)に合わせ、セル毎に1本だけ描画する非リピートSVGを使う
     // style属性(二重引用符)内に埋め込むため、url()は単一引用符・SVG内の引用符は%27にエスケープする
@@ -1790,8 +1790,8 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   const sl=[...staffList,...unregistered];
   const realStaffCount=sl.filter(n=>!isSpacer(n)).length;
   if(realStaffCount===0){tt("▲ スタッフが登録されていません");return;}
-  // スタッフ36名以上: 部門仕切り用スペーサー列が常に空白のままだと、印刷時に日付を見失いやすいため日付を表示する
-  const showSpacerDate=realStaffCount>35;
+  // スタッフ35名以上: 部門仕切り用スペーサー列が常に空白のままだと、印刷時に日付を見失いやすいため日付を表示する
+  const showSpacerDate=realStaffCount>34;
 
   const firstDate=pd(dates[0]);
   const mo=firstDate.getMonth()+1;
@@ -1938,7 +1938,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
       // 下行: top:hair, bot:thin (最終日はbot:medium)
       const botT=isLast?M:T;
       if(isSpacer(nm)){
-        // スペーサー列: 36名以上は日付(M/D)を表示、35名以下は従来通り空白
+        // スペーサー列: 35名以上は日付(M/D)を表示、34名以下は従来通り空白
         const spacerDate=showSpacerDate?`${d.getMonth()+1}/${day}`:null;
         SC(rT,ci,spacerDate,aH,fill,{top:M,bottom:H,left:T,right:T},{name:"Yu Gothic",bold:false,size:8,color:{argb:"FF666666"}});
         SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
