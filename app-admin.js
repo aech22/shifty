@@ -1198,8 +1198,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         h+=mergeTd(esc(wd),top);
         if(staffCols)cols.forEach(nm=>{
           if(isSpacer(nm)){
-            const spacerDate=showSpacerDate&&top?`${d.getMonth()+1}/${day}`:"";
-            h+=`<td style="border:${BDp};text-align:center;font-size:9px;color:#666;">${spacerDate}</td>`;return;
+            // スペーサー列: 35名以上は作成表両端(日付列)と同じ結合風の太枠で日にち(月なし)を表示
+            h+=showSpacerDate?mergeTd(day,top):`<td style="border:${BDp};"></td>`;
+            return;
           }
           if(!pdfHasSub(nm,ds)){h+=`<td style="border:${BDp};"></td>`;return;}
           const sh=_getSub(nm)?.shifts?.[ds];
@@ -1938,10 +1939,15 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
       // 下行: top:hair, bot:thin (最終日はbot:medium)
       const botT=isLast?M:T;
       if(isSpacer(nm)){
-        // スペーサー列: 35名以上は日付(M/D)を表示、34名以下は従来通り空白
-        const spacerDate=showSpacerDate?`${d.getMonth()+1}/${day}`:null;
-        SC(rT,ci,spacerDate,aH,fill,{top:M,bottom:H,left:T,right:T},{name:"Yu Gothic",bold:false,size:8,color:{argb:"FF666666"}});
-        SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
+        // スペーサー列: 35名以上は作成表両端(A/B列)と同じ結合・太枠で日にち(月なし)を表示、34名以下は従来通り空白
+        if(showSpacerDate){
+          SC(rT,ci,day,aH,fill,{top:M,bottom:M,left:M,right:M},{name:"Yu Gothic",bold:false,size:12,color:{argb:"FF000000"}});
+          SC(rB,ci,null,aH,fill,{top:M,bottom:M,left:M,right:M});
+          ws.mergeCells(rT,ci,rB,ci);
+        } else {
+          SC(rT,ci,null,aH,fill,{top:M,bottom:H,left:T,right:T});
+          SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
+        }
       } else if(!sub){
         // 未提出: 空白
         SC(rT,ci,null,aH,fill,{top:M,bottom:H,left:T,right:T});
