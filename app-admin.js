@@ -2746,7 +2746,8 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
     const v=(abbrInput[sid]||"").trim();
     if(!v)return;
     if(v.length>4){tt("✕ 略称は4文字以内にしてください");return;}
-    if(/^[hkxyHKXY]$/.test(v)||v==="休"||/^[\d.:]+$/.test(v)){tt("✕ h・k・x・y・休・数字のみの略称は使用できません");return;}
+    // 予約語はCELL_COMMANDSレジストリ駆動（h/k/x/y/締等）。新規コマンド追加時にここを個別更新する必要がない
+    if(CELL_COMMANDS.some(c=>c.key.toLowerCase()===v.toLowerCase())||isRestCommand(v)||/^[\d.:]+$/.test(v)){tt("✕ h・k・x・y・休・締・数字のみの略称は使用できません");return;}
     const cur=(metaFor(sid)||{}).abbrs||[];
     if(cur.includes(v)){tt("✕ 既に登録済みの略称です");return;}
     const conflict=listShops.find(s=>s.id!==sid&&((metaFor(s.id)||{}).abbrs||[]).includes(v));
