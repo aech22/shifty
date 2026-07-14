@@ -78,13 +78,16 @@ developブランチ・mainブランチのどちらにチェックアウトして
 ├── tests/
 │   └── core.test.js    ← app-utils.js の Node ユニットテスト（node --test）
 ├── functions/
-│   └── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗自動アーカイブ）
+│   └── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗/期間の自動削除・企業アカウント）
 ├── RULES.md            ← やってはいけないこと（必読）
 ├── firebase.json       ← Firebase Hosting / Functions 設定
-├── database.rules.json ← Firebase セキュリティルール
+├── database.rules.json ← Firebase セキュリティルール（現行・移行猶予あり）
+├── database.rules.tightened.json ← 締めルール（猶予終了後に差し替え。BACKLOG参照）
 ├── CNAME               ← shiftyshifty.app
-└── scripts/
-    └── stripe-setup.js ← Stripe Price ID 確認スクリプト
+├── privacy.html / terms.html / ogp.html ← 静的ページ（プライバシー・規約・OGP）
+├── blog/               ← SEO記事HTML（shift-kanri-muryou.html 等）
+├── x-bot/              ← X（Twitter）自動投稿bot（独立Node環境・別途node_modules）
+└── scripts/            ← 運用スクリプト（stripe-setup / seed_shops / list_shops / copy-prod-to-dev / obsidian-sync 等。service-account-*.jsonはgitignore済み）
 ```
 
 **分割の仕組み**: Babel Standalone は複数の `<script type="text/babel">` を同一グローバルスコープで順に実行するため、`import`/`export` なしでファイル間参照が成立する（実証済み）。**index.html の読み込み順（utils→core→staff→admin→main）を変えてはいけない**。新しいコンポーネント・関数は所属に応じたファイルへ追加する。
@@ -102,6 +105,8 @@ sc(cs)                     // 候補時間ソート（closed は末尾）
 isHoliday / isWeekendOrHoliday(dateStr) // 土日祝判定
 calcNetWorkMinutes / getBreakList / getBreaksFor / getOT // 純勤務時間計算
 shiftBandInfo / isBreakEligible // ランチ/ディナー帯判定
+dayTypeOf(dateStr) / POSITION_DAY_TYPES // 祝日をholSat/holSunに分割した5分類（必要ポジション設定タブ用・breakTimes等には非影響）
+matchPositionSlots(slots, attendees)    // 必要ポジションと出勤者の最大二部マッチング（Kuhn法・ポジション不足エラー判定＝Premium限定）
 genToken() / genSecureId(len)   // ランダムID生成
 isSpacer(n) / resolveAlias / buildSuggestList
 // 末尾に module.exports ガード（Nodeテスト用）
@@ -215,9 +220,12 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `StaffTab` | app-admin.js | スタッフ登録・並べ替え・別名設定 |
 | `CandTab` | app-admin.js | 候補時間・休業日・休憩管理 |
 | `SubsTab` | app-admin.js | 提出一覧・セル編集・変更履歴 |
-| `SetTab` | app-admin.js | 設定・Cookie引き継ぎ・企業アカウント連携 |
-| `MyPageTab` | app-admin.js | マイページ（プラン確認・アップグレード） |
+| `CompanyTab` | app-admin.js | 企業連携（企業アカウント作成/ログイン・連携店舗一覧・店舗略称・スタッフ勤務先） |
+| `SetTab` | app-admin.js | 設定（管理コード・属性別制限・退勤延長・Excel・期間単位・テーマ・アカウント連携） |
+| `MyPageTab` | app-admin.js | マイページ（プラン確認・アップグレード・利用規約） |
+| `TermsModal` | app-admin.js | 利用規約全文モーダル（`TERMS_TEXT` 定数を表示） |
 | `UpgradeModal` | app-admin.js | アップグレード促進モーダル（Stripe Checkout 呼び出し） |
+| `GridLegend / HeatTable / SummaryTable` | app-admin.js | シフト作成タブの操作説明レジェンド・ヒートマップ表・集計表 |
 | `AC / AL / AT / CL` | app-admin.js | 汎用UIパーツ（カード・ラベル・タイトル・候補リスト） |
 
 ※ 管理者パスワード認証（AdminLogin）は廃止・削除済み。管理者権限は2026-07-07から**管理キー（adminKey）方式**: `shops/{shopId}/owners/{uid}` に登録された端末のみ管理系パスに書き込める。端末追加は管理コード（`shopId.adminKey`）を「コードで追加」に入力する。
@@ -257,8 +265,14 @@ Firebase Realtime Database
 │       └── members/         ← {uid: {email, joinedAt, role:"member"}}（自分の追加のみ可）
 ├── inviteCodes/
 │   └── {code}           ← {uid, expiresAt, shops}（企業招待コード・shopsスナップショット埋め込み）
-└── email_otps/
-    └── {uid}            ← {code, email, emailLink, expiry, attempts}（OTP・5回失敗で無効化）
+├── email_otps/
+│   └── {uid}            ← {code, email, emailLink, expiry, attempts}（OTP・5回失敗で無効化）
+├── companies/
+│   └── {companyId}/     ← 企業アカウント（CompanyTab・企業コード＋パスワード方式。accounts/{uid}のcompanyLinkとは別系統）
+│       ├── pub          ← {name, ownerUid, shops:{shopId:true}}（連携店舗マップ）
+│       └── private/passwordHash ← パスワードハッシュ（Cloud Functions経由のみ）
+└── companyCodes/
+    └── {code}           ← companyId（企業コードの逆引き。companyLoginでカスタムトークン発行に使用）
 ```
 
 **セキュリティモデル（2026-07-07改修・フェーズB）**: 「Anonymous Auth必須 + オーナー権限分離（管理キー方式）」。
@@ -342,7 +356,14 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
 | `sendEmailOtp` | Callable `sendEmailOtp` | メール連携用OTP送信 |
 | `verifyEmailOtp` | Callable `verifyEmailOtp` | OTP検証（5回失敗で無効化） |
 | `purgeInactiveShops` | schedule 毎日（JST） | 1年未更新店舗を archived/ へ退避→30日後に本削除。Invalid Dateはスキップしてログ |
+| `purgeOldPeriods` | schedule 毎日（JST） | endDateが36ヶ月超の期間の period・subs・tokens を削除。`PURGE_OLD_PERIODS_DRY_RUN=true` でdry-run中（本有効化はBACKLOG参照） |
 | `sendSurveyEmails` | POST `/sendSurveyEmails` | ユーザーアンケート一斉送信（要秘密トークン） |
+| `createCompany` | Callable `createCompany` | 企業アカウント作成（企業コード発行・パスワードハッシュ保存・作成者オーナー店舗を連携） |
+| `companyLogin` | Callable `companyLogin` | 企業コード＋パスワードで認証しカスタムトークンを発行 |
+| `changeCompanyPassword` | Callable `changeCompanyPassword` | 企業パスワード変更 |
+| `renameCompany` | Callable `renameCompany` | 企業名変更（作成者ポインタの表示名も更新） |
+| `linkStoreToCompany` | Callable `linkStoreToCompany` | 店舗コード（shopId / shopId.adminKey）で店舗を企業に連携 |
+| `unlinkStoreFromCompany` | Callable `unlinkStoreFromCompany` | 店舗の企業連携を解除 |
 
 ### Stripe Webhook イベント処理
 
@@ -534,40 +555,65 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-12 自動実行 #17）
+## Shifty バグチェックレポート（2026-07-14 自動実行 #20）
 
 ### 修正済み
 （今回の実行では修正なし）
 
-### 前回巡回（#16）以降の新規コミット
-なし。HEADは`2a68ea6`のまま変化なし（#15・#16と同一コミット）。今回はコード全域の定期スキャン（差分レビューではなくフルスキャン）として実施。
+### 前回巡回（#19）以降の新規コミット
+なし。HEADは`fd14b31`のまま変化なし（#19と同一コミット）。作業ツリーには`.cursorrules`・`CLAUDE.md`のドキュメント同期による未コミット差分があるが、コードファイルの変更ではないためバグチェック対象外。
 
 ### スキャン結果
-- Firebase書き込みパターン: `subs`の`set()`全体上書きなし。削除処理は全箇所`deletedId`渡しでFirebase削除漏れなし
-- isPro/isPremium誤用なし
-- Cloud Functions: secrets抜け漏れなし・`.delete()`誤用なし・purgeInactiveShopsの安全装置維持
-- DEV_MODE（app-core.js:12、ホスト名判定の式のまま）正常
-- セキュリティルール: `database.rules.json`と`database.rules.tightened.json`の両方で`companies`/`companyCodes`パスのルールが揃っていることを確認（Admin SDK経由のCloud Functionsのみ書き込み可・読みも権限限定）
-- index.html: スクリプト読み込み順・CDN SRIハッシュ維持
-- `npm test`: 82件全パス、`npx eslint app-*.js`: 0 errors 100 warnings
-
-### 新規把握（修正不要・認識事項）
-- **企業アカウント機能（`companies`/`companyCodes`、企業コード＋パスワードでログイン）がCLAUDE.mdのCloud Functions表・Firebaseデータ構造表に未記載**（コミット`7a99d7c`・2026-07-07導入）。実装自体（scrypt+salt+timingSafeEqualハッシュ・権限チェック・セキュリティルール整合）に欠陥はなし。ドキュメント記載漏れのみ。
+- `subs`の`set()`全体上書き: ヒット0（正常。`fbPath(sid,"subs")`はすべて`orderByChild`購読・`update()`のみ）
+- `filter(s=>s.id!==...)`削除パターン: 全6箇所（app-main.js 4件・app-admin.js 2件）を確認。いずれも`saveSubs(a,subId)`/`onSave(...,sub.id)`によるdeletedId渡し、または`firebaseDB.ref(...).remove()`直呼び出しでFirebase削除漏れなし
+- DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE正常
+- セキュリティ: `global/shops`全件読みなし（直キー読みのみ）、`global/templates`参照の復活なし
+- index.html: スクリプト読み込み順（utils→core→staff→admin→main）維持、CDN SRIハッシュ全11件確認
+- Cloud Functions: secrets抜け漏れなし（STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET/SMTP_USER/SMTP_PASS/SURVEY_SEND_TOKEN全関数で適切）、`.delete()`誤用なし
+- `signInWithApple`/`signInAndLinkApple`デッドコード: 残存ゼロを確認（過去レポートに記載されていた項目が既に解消済み）
+- `npm test`: 82件全パス、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
 
 ### 要確認（未修正・継続）
 
-- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2712、#11から継続監視中）
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2717、#11から継続監視中）
 - **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、#11から継続監視中）
 - **🟢 `joinByInviteCode`（app-main.js:852）が呼び出し元ゼロのデッドコード**（企業アカウント招待コード参加UIは依然未実装）
 
 ### 異常なし
-クリティカル（🔴）・中程度（🟡）の問題はなし。develop→push不要（コード変更なし。今回はフルスキャンによる定期レビューのみ）。
+クリティカル（🔴）・中程度（🟡）の問題はなし。develop→push不要（新規コミットなし・同日再スキャンのみ）。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 -
 -
 -
@@ -752,17 +798,15 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🟢 データ保存上限④: 36ヶ月超のシフト期間データの自動削除
+## 🟢 データ保存上限④-b: dry-run観察後の36ヶ月超期間データ削除の本有効化
 
-**目的**: シフト期間・提出データの保存期間を36ヶ月（労基法の帳簿保存義務3年に整合）と定め、超過分を順次削除してデータの無限増加を止める（2026-07-09 保存上限計画の項目2・5）。
+**目的**: dry-runリリース（コミット`4aa100e`）から1ヶ月観察し、問題なければ実削除を有効化する。
 **受け入れ条件**:
-- [ ] 上記①〜③（購読絞り込み・利用規約掲載）が完了していること。規約掲載前に削除を有効化しない
-- [ ] 日次Functionが endDate から36ヶ月を超えた期間について period・その期間の subs・`tokens/{urlToken}` を削除する（endDate が不正な期間はスキップしてログ）
-- [ ] まず「削除対象を数えてログに出すだけ」のdry-runモードでリリースし、アプリ内告知のうえ1ヶ月観察してから削除を有効化する
-- [ ] periodId が期間に紐付かない孤児 subs の扱い（削除対象に含めるか）を実装時に定義する
-- [ ] 日次スキャンが subs 全件を読まない設計にする（periods の endDate だけで対象を判定し、対象期間の subs のみ読む）
-**影響範囲**: functions/index.js（新規または purgeInactiveShops への追加）、告知UI（app-admin.js / app-staff.js）
-**備考**: 保存期間を課金軸・プラン差別化には使わない（全プラン共通の運用上限）。スタッフ人数上限は保留（理由: Proの「スタッフ無制限」の約束との衝突。残存リスク: 100人超店舗のデータ増だが負荷の支配項は保持期間側。再着手条件: ①実測で100人超店舗が出現しDL/負荷が問題化したとき ②プラン・価格改定を行うとき）。
+- [ ] Cloud Functionsのログで`purgeOldPeriods`の`[dry-run]`出力を確認し、削除対象の件数・内容が想定通りであることを確認する
+- [ ] `functions/index.js`の`PURGE_OLD_PERIODS_DRY_RUN`を`false`に変更してデプロイする
+- [ ] 有効化後、実際に削除が行われ`period`・`subs`・`tokens/{urlToken}`が正しく消えることを本番ログで確認する
+**影響範囲**: functions/index.js（`PURGE_OLD_PERIODS_DRY_RUN`定数1箇所）
+**備考**: 開始日 2026-07-12（dry-runリリース日）。**1ヶ月後（2026-08-12以降）に着手する。** 孤児subs（periodIdが現存する期間に紐付かないもの）はこの削除の対象外（endDateという判定基準を持たないため）。列挙元は`/global/shops`のため、そこに載っていない孤児店舗の期間データは対象外（孤児店舗自体は`purgeInactiveShops`が別途処理）。
 
 ---
 
@@ -821,6 +865,22 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ データ保存上限④: 36ヶ月超のシフト期間データの自動削除（dry-runリリース）（2026-07-12）
+
+**目的**: シフト期間・提出データの保存期間を36ヶ月（労基法の帳簿保存義務3年に整合）と定め、超過分を順次削除してデータの無限増加を止める（2026-07-09 保存上限計画の項目2・5）。
+**実装内容**:
+- [x] `functions/index.js`に`purgeOldPeriods`（毎日実行）を新規追加。`period.endDate`が36ヶ月を超えた期間について`period`・該当`subs`・`tokens/{urlToken}`を削除する
+- [x] `endDate`が欠損・不正な期間はスキップしてログ出力（削除しない）
+- [x] `PURGE_OLD_PERIODS_DRY_RUN = true`のdry-runモードでリリース。削除対象を`[dry-run]`ログに出力するのみで実削除は行わない
+- [x] 孤児subs（periodIdが現存するどの期間にも紐付かない）はこのスキャンの対象外と定義（endDateという判定基準を持たないため削除しない）
+- [x] 日次スキャンは`shops/{id}/periods`のみ読み（subsを含まない軽量な部分木）、36ヶ月超の期間が見つかった場合のみ`orderByChild("periodId").equalTo(periodId)`で該当subsのみ絞り込んで読む。subs全件読み取りは行わない
+- [x] マイページ（MyPageTab）に告知文を追加: 「シフト期間データは終了日から36ヶ月を超えると順次削除されます（詳細は利用規約 第6条）」
+**影響範囲**: functions/index.js（`purgeOldPeriods`新規）、app-admin.js（MyPageTab告知文）
+**検証**: `node -c functions/index.js`で構文確認。カットオフ日計算・判定ロジック（36ヶ月超/境界/endDate不正/null）を合成データでNode手動シミュレーションし全ケースPASS（エミュレータ・dev環境Functionsデプロイ不可のため実データ確認は不可・データ保存上限①と同様の検証方法）。`npm test`82件パス・`npx eslint app-*.js`0 errors 100 warnings。dev実機で告知文の表示を確認、コンソールエラーなし。
+**備考**: 実削除の有効化は別タスク（🟢 データ保存上限④-b）として1ヶ月後に着手する。
+
+---
 
 ### ✅ データ保存上限②: subs購読を直近3ヶ月に絞り込み＋過去参照ボタン（2026-07-09）
 
