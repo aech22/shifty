@@ -540,12 +540,16 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         newSubs.push(ns);
         return;
       }
-      if(!parsed&&!fixedCmd)return;
+      // 時間も締めもメモ(コマンド外の任意文字)も無いなら新規作成不要
+      if(!parsed&&!fixedCmd&&!note)return;
       // シフト作成タブから直接新規作成したsubはsource:"grid"を付与する。
       // 提出一覧(SubsTab)はスタッフURL経由の提出のみを表示するため、この印で除外する。
       const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString(),source:"grid"};
       const sd0={status:"work"};
+      // 時間ありは時刻＋note、時間なしのメモのみ(例「研修」)はadjField=""でnoteだけ保存する
+      // （提出のないスタッフのセルにコマンド外の文字を入れてもリロードで消えないようにする）
       if(parsed){sd0[adjField]=parsed;sd0[nk]=note;}
+      else if(note){sd0[adjField]="";sd0[nk]=note;}
       if(fixedCmd){sd0[fixedFieldKey]=true;sd0.extraStart=fixedCmd.start;sd0.extraEnd=fixedCmd.end;}
       ns.shifts[date]=sd0;
       newSubs.push(ns);

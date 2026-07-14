@@ -252,8 +252,15 @@ test("extractNote: 登録サフィックス(h/k/x)は小文字に正規化", () 
   assert.strictEqual(u.extractNote("9.5X").note, "x");
 });
 
-test("extractNote: 文字のみはヘルプ(x)扱い", () => {
-  assert.deepStrictEqual(u.extractNote("三"), { numeric: "", note: "x", rest: false, hasFixed: false });
+test("extractNote: コマンド以外の文字のみはメモとしてそのまま保持", () => {
+  assert.deepStrictEqual(u.extractNote("三"), { numeric: "", note: "三", rest: false, hasFixed: false });
+  assert.deepStrictEqual(u.extractNote("研修"), { numeric: "", note: "研修", rest: false, hasFixed: false });
+  assert.deepStrictEqual(u.extractNote("AB"), { numeric: "", note: "AB", rest: false, hasFixed: false });
+});
+
+test("extractNote: x単体・登録サフィックス単体はカウント外(x)に収束", () => {
+  // 時間なしのx/h/k単体はメモではなくカウント外マーカーとして扱う（数字なしでは所属上書きの意味を持たないため）
+  for (const v of ["x", "X", "h", "k"]) assert.strictEqual(u.extractNote(v).note, "x", `input: ${v}`);
 });
 
 test("extractNote: 任意サフィックスはそのまま保持", () => {
@@ -344,9 +351,9 @@ test("extractNote: 単独の「締」は numeric=''・note=''・hasFixed=true（
   assert.strictEqual(r.rest, false);
 });
 
-test("extractNote: 未登録の文字だけの入力(三)は従来通りヘルプ(x)扱いのまま・hasFixed=false", () => {
+test("extractNote: 締めを含まない未登録の文字だけの入力(三)はメモとして保持・hasFixed=false", () => {
   const r = u.extractNote("三");
-  assert.strictEqual(r.note, "x");
+  assert.strictEqual(r.note, "三");
   assert.strictEqual(r.hasFixed, false);
 });
 

@@ -304,7 +304,7 @@ function buildSuggestList(staffList, staffAliases){
 const CELL_COMMANDS=[
   {key:"h",kind:"suffix",usage:"9h",label:"ホール出張",desc:"キッチン所属のスタッフをこの日だけホールの人数として集計する",color:"#FFF3B0"},
   {key:"k",kind:"suffix",usage:"9k",label:"キッチン入り",desc:"ホール所属のスタッフをこの日だけキッチンの人数として集計する",color:"#FFF3B0"},
-  {key:"x",kind:"suffix",usage:"9x",label:"ヘルプ（カウント外）",desc:"時間帯別出勤人数に数えない。時間なしの文字だけの入力も同じ扱い",color:"#FFF3B0"},
+  {key:"x",kind:"suffix",usage:"9x",label:"ヘルプ（カウント外）",desc:"時間帯別出勤人数に数えない。x単体入力も同じ扱い（コマンド以外の文字だけの入力はメモとしてそのまま表示される）",color:"#FFF3B0"},
   {key:"y",kind:"rest",usage:"y",label:"休み希望",desc:"セルを休み扱いにして斜線を表示する（出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日）。もう一度 y で解除、時間を入力すると出勤に上書き。「休」でも入力できる",hatch:true},
   {key:"締",kind:"fixed",usage:"16k締",label:"締め（東通り店専用・追加出勤）",desc:"出勤・退勤どちらのセルに単独入力、または数字・h/k/x・他店舗略称など他のコマンドと組み合わせて（前後どちらでも可）入力しても、23:00〜25:00(翌1:00)を主シフトとは別の追加出勤として計上する（例: 出勤13・退勤17締 → 13〜17時と23〜25時の2出勤。出勤16k締 → キッチン入りかつ追加出勤）。鷄えん東通り店でのみ有効",start:"23:00",end:"25:00"},
 ];
@@ -318,7 +318,8 @@ const CELL_COLOR_LEGEND=[
 ];
 // 休み希望コマンド判定（セル全体が y / 休 のとき。時間付きの「9y」は通常サフィックス扱い）
 const isRestCommand=raw=>/^(y|ｙ|休)$/i.test(String(raw==null?"":raw).trim());
-// サフィックス抽出: 登録済みコマンド(kind:"suffix")は小文字に正規化、任意文字列=そのまま保持、""=通常。
+// サフィックス抽出: 登録済みコマンド(kind:"suffix")は小文字に正規化、任意文字列=そのまま保持(数値なしの
+// 文字だけの入力もコマンド以外はメモとしてそのまま保持し、x単体のみカウント外扱い)、""=通常。
 // rest=true は休み希望コマンド（numeric/noteは空）。旧実装はShiftEditTab内ローカル関数（2026-07-09にレジストリ駆動化して移設）
 // hasFixed: 店舗限定固定シフトコマンド(kind:"fixed"。現状「締」)が、他のサフィックス(h/k/x/略称)と
 // 併用された場合も含めて含まれているかどうか。noteからは固定コマンドの文字自体を取り除いた「素の」値を返す
@@ -331,15 +332,17 @@ function extractNote(raw){
   const fixedKey=(CELL_COMMANDS.find(c=>c.kind==="fixed")||{}).key||"";
   const m=s.match(/^([\d.:]+)(.*)$/s);
   if(!m||!m[1]){
-    // 数値部なし(文字のみ): 登録済みの固定シフトコマンドを含んでいれば取り除いて判定する。
-    // 締めのみ単独→note="" hasFixed=true。締め+他の文字混在・締めなしの文字のみは
-    // 従来通りヘルプ(x)扱いに収束させる（h/k等のsuffixコマンドも数値なし単体ではxに収束する仕様を維持）
+    // 数値部なし(文字のみ): 登録済みの固定シフトコマンド(締)を含んでいれば取り除いてから判定する。
+    // 素の値が空=固定コマンド単独→note=""、登録済みsuffix(h/k/x)単体→x(カウント外)、
+    // それ以外の「コマンド未設定の任意文字列」はメモとしてそのまま表示できるよう保持する
+    // （数字付き「9研修」が研修を保持するのと同じ扱い。時間なしのため出勤人数・ヘルプ集計には非影響）。
     const hasFixed=!!fixedKey&&s.includes(fixedKey);
-    if(hasFixed){
-      const stripped=s.split(fixedKey).join("");
-      return{numeric:"",note:stripped?"x":"",rest:false,hasFixed:true};
-    }
-    return{numeric:"",note:"x",rest:false,hasFixed:false};
+    const body=hasFixed?s.split(fixedKey).join(""):s;
+    let note;
+    if(!body)note="";
+    else if(CELL_COMMANDS.some(c=>c.kind==="suffix"&&c.key===body.toLowerCase()))note="x";
+    else note=body;
+    return{numeric:"",note,rest:false,hasFixed};
   }
   const rawSuf=m[2].trim();
   if(!rawSuf)return{numeric:m[1],note:"",rest:false,hasFixed:false};
