@@ -1326,7 +1326,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           t+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;">週</th>`;
           cols.forEach(nm=>{if(isSpacer(nm)){t+=`<th style="border:${BDp};"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";t+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:${vfontSize(nm,10)}px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
           t+='</tr></thead><tbody>';
-          weeks.forEach(monStr=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);t+=`<tr><td style="border:${BDp};padding:3px 6px;white-space:nowrap;">${m.getDate()}〜${sun.getDate()}日</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};"></td>`;return;}const min=getWeekMin(monStr,nm);t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
+          weeks.forEach(monStr=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);t+=`<tr><td style="border:${BDp};padding:3px 6px;white-space:nowrap;">${m.getDate()}〜${sun.getDate()}日</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};"></td>`;return;}const min=getWeekMin(monStr,nm);const wl=(settings.staffTypeLimits||{})[(settings.staffAttributes||{})[nm]||"parttime"];const wlim=wl&&typeof wl==="object"&&wl.weekly?wl.weekly*60:0;const vio=wlim>0&&min>=wlim;const vs=vio?"background:#FFE0E3;color:#e53935;font-weight:700;":"";t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;${vs}">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
           t+='</tbody></table>';blocks.push(t);
         }
       }
