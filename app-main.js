@@ -1471,6 +1471,10 @@ function App(){
           店舗コード・新規作成はこの端末のみ有効です。
         </div>
         </>}
+        <div style={{marginTop:16,paddingTop:14,borderTop:"1px solid rgba(148,163,184,.15)",display:"flex",justifyContent:"center",gap:16,flexWrap:"wrap"}}>
+          <a href="/terms.html" target="_blank" rel="noopener" style={{color:"#94A3B8",fontSize:11,textDecoration:"none"}}>利用規約</a>
+          <a href="/privacy.html" target="_blank" rel="noopener" style={{color:"#94A3B8",fontSize:11,textDecoration:"none"}}>プライバシーポリシー</a>
+        </div>
       </div>
     </div>
   );

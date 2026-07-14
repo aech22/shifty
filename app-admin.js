@@ -1120,7 +1120,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       _bold:firstHalf?.id===selPid,_color:firstHalf?.id===selPid?"#f87036":undefined,_bg:firstHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
     {id:secondHalf?.id||"nosecond",label:secondHalf?.label||`${mo2}月後半`,getMin:name=>secondHalf?getPeriodMin(secondHalf.id,name):0,
       _bold:secondHalf?.id===selPid,_color:secondHalf?.id===selPid?"#f87036":undefined,_bg:secondHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
-    {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"#f87036"},
+    {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"#f87036",
+      _violateFn:(name,min)=>{const t=(settings.staffAttributes||{})[name]||"parttime";const l=(settings.staffTypeLimits||{})[t];const lim=l&&typeof l==="object"&&l.monthly?l.monthly*60:0;return lim>0&&min>lim;}},
     {id:"monthly_limit",label:"月上限",getMin:name=>{const t=(settings.staffAttributes||{})[name]||"parttime";const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};const l=tls[t];return(l&&typeof l==="object"&&l.monthly)?l.monthly*60:0;},_color:"#60A5FA",_bg:"rgba(96,165,250,0.07)"}
   ];
 
@@ -1134,11 +1135,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const pdfResolve=(name,date,field)=>{
     if(fieldRest(name,date,field))return{disp:"",note:""}; // 休み希望(y)フィールドは空欄（斜線は呼び出し元で描画）
     const key=`${name}|${date}|${field}`;
-    let time="",note="";
-    if(key in localEdits){const{numeric,note:nt}=extractNote(localEdits[key]);time=parseTime(numeric)||"";note=nt||"";}
-    else{time=getStoredTime(name,date,field);const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
+    let time="",note="",fixed=false;
+    if(key in localEdits){const{numeric,note:nt,hasFixed}=extractNote(localEdits[key]);time=parseTime(numeric)||"";note=nt||"";fixed=fixedShiftEnabled&&hasFixed;}
+    else{time=getStoredTime(name,date,field);const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";fixed=getStoredFixed(name,date,field);}
     const dec=time?toDecimal(time):"";
-    return{disp:dec?(dec+note):"",note};
+    const fx=fixed?FIXED_KEY:"";
+    // 「締」（東通り店専用・追加出勤）は画面のgetVal同様、note末尾にコマンド文字を付加して表示する。
+    // main時刻が無い単独「締」でもfxだけで表示できるようdec||fxを判定条件にする（従来はdecのみでfx脱落=空欄化していた）
+    return{disp:(dec||fx)?(dec+note+fx):"",note};
   };
   // 提出があるか（休みか未提出かの判定用）
   const pdfHasSub=(name,date)=>{const sh=_getSub(name)?.shifts?.[date];const key1=`${name}|${date}|start`,key2=`${name}|${date}|end`;const edited=(key1 in localEdits)||(key2 in localEdits);return!!sh||edited;};
@@ -1171,12 +1175,17 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     // スタッフ35名以上: 部門仕切り用スペーサー列が常に空白のままだと、印刷時に日付を見失いやすいため日付を表示する
     const showSpacerDate=cols.filter(n=>!isSpacer(n)).length>34;
     const BDp="1px solid #888",BDp2="2px solid #555";
+    // ヘッダーRow2の固定高さ: 縦書きスタッフ名(最大5文字)と単行のヒートマップ時刻見出しとで自然な高さが大きく異なるため、
+    // シフト表ページと時間帯別出勤人数ページを別紙で並べたときに日付行がずれないよう両ページで揃える
+    const R2H=64;
     // 斜線: Excelのdiagonal(右上→左下の1本線)に合わせ、セル毎に1本だけ描画する非リピートSVGを使う
     // style属性(二重引用符)内に埋め込むため、url()は単一引用符・SVG内の引用符は%27にエスケープする
     const hatch=`url('data:image/svg+xml;charset=utf-8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' preserveAspectRatio='none'><line x1='10' y1='0' x2='0' y2='10' stroke='#999' stroke-width='1'/></svg>").replace(/'/g,"%27")}') no-repeat center/100% 100%`;
     const showKit=withHeat&&heatHours.length>0;
     const showHall=showKit&&hasSplit;
     const kitLabel=hasSplit?"キッチン":"時間帯別出勤人数";
+    // キッチンとホールのヒートマップの間に1セル分の空白を挟み、2つの表を視覚的に分離する（区切り線は外枠と同じ太さ）
+    const heatGap=showHall?`<td style="border-left:${BDp2};border-right:${BDp2};background:#fff;width:20px;min-width:20px;"></td>`:"";
     // 日付・曜日・ヒートマップはセル2個分: html2canvasがrowspanを描画できないため上下2セルで境界線を消して結合風にする
     const mergeTd=(val,top)=>`<td style="border-left:${BDp2};border-right:${BDp2};border-top:${top?BDp2:"0"};border-bottom:${top?"0":BDp2};padding:1px 2px;text-align:center;font-weight:600;vertical-align:${top?"bottom":"top"};height:15px;">${top?val:""}</td>`;
     const mergeHeat=(val,top,bg)=>`<td style="border-left:${BDp};border-right:${BDp};border-top:${top?BDp:"0"};border-bottom:${top?"0":BDp};padding:1px 2px;text-align:center;font-weight:${val?600:400};vertical-align:${top?"bottom":"top"};height:15px;background:${bg};">${top?(val||""):""}</td>`;
@@ -1191,22 +1200,22 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       if(isSpacer(nm)){h+=`<th style="border:${BDp};padding:1px;width:30px;height:16px;"></th>`;return;}
       h+=`<th style="border:${BDp};padding:1px;width:30px;height:16px;text-align:center;font-size:9px;font-weight:600;">${esc(staffNums[nm]||"")}</th>`;
     });
-    if(showHall)h+=`<th colspan="${heatHours.length}" style="border:${BDp2};padding:1px;height:16px;text-align:center;font-size:8px;font-weight:600;white-space:nowrap;">ホール</th>`;
+    if(showHall)h+=heatGap+`<th colspan="${heatHours.length}" style="border:${BDp2};padding:1px;height:16px;text-align:center;font-size:8px;font-weight:600;white-space:nowrap;">ホール</th>`;
     h+=`<th colspan="2" style="border:${BDp2};padding:1px;height:16px;"></th>`;
     h+='</tr>';
     // Row2: ヒートマップ時刻・期間（縦積み）・曜日・スタッフ名（縦積み）・曜日・店名（縦積み）・ヒートマップ時刻
     h+='<tr>';
-    h+=`<th style="border:${BDp2};padding:3px 2px;width:36px;text-align:center;font-weight:700;font-size:10px;line-height:1.2;vertical-align:middle;">${vtext(pdfPeriodLabel(period.label||""))}</th>`;
-    h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;text-align:center;font-weight:700;">曜日</th>`;
-    if(showKit)heatHours.forEach(hr=>{h+=`<th style="border:${BDp};padding:1px;width:20px;text-align:center;font-size:9px;font-weight:600;background:#f7f7f7;vertical-align:bottom;">${hr}</th>`;});
+    h+=`<th style="border:${BDp2};padding:3px 2px;width:36px;height:${R2H}px;text-align:center;font-weight:700;font-size:10px;line-height:1.2;vertical-align:middle;">${vtext(pdfPeriodLabel(period.label||""))}</th>`;
+    h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;height:${R2H}px;text-align:center;font-weight:700;">曜日</th>`;
+    if(showKit)heatHours.forEach(hr=>{h+=`<th style="border:${BDp};padding:1px;width:20px;height:${R2H}px;text-align:center;font-size:9px;font-weight:600;background:#f7f7f7;vertical-align:bottom;">${hr}</th>`;});
     if(staffCols)cols.forEach(nm=>{
-      if(isSpacer(nm)){h+=`<th style="border:${BDp};"></th>`;return;}
+      if(isSpacer(nm)){h+=`<th style="border:${BDp};height:${R2H}px;"></th>`;return;}
       const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";
-      h+=`<th style="border:${BDp};padding:3px 1px;width:30px;text-align:center;font-weight:700;font-size:${vfontSize(nm,10)}px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;
+      h+=`<th style="border:${BDp};padding:3px 1px;width:30px;height:${R2H}px;text-align:center;font-weight:700;font-size:${vfontSize(nm,10)}px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;
     });
-    if(showHall)heatHours.forEach(hr=>{h+=`<th style="border:${BDp};padding:1px;width:20px;text-align:center;font-size:9px;font-weight:600;background:#f7f7f7;vertical-align:bottom;">${hr}</th>`;});
-    h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;text-align:center;font-weight:700;">曜日</th>`;
-    h+=`<th style="border:${BDp2};padding:3px 2px;width:40px;text-align:center;font-weight:700;font-size:10px;line-height:1.2;vertical-align:middle;">${vtext(shopName||"店舗")}</th>`;
+    if(showHall){h+=heatGap;heatHours.forEach(hr=>{h+=`<th style="border:${BDp};padding:1px;width:20px;height:${R2H}px;text-align:center;font-size:9px;font-weight:600;background:#f7f7f7;vertical-align:bottom;">${hr}</th>`;});}
+    h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;height:${R2H}px;text-align:center;font-weight:700;">曜日</th>`;
+    h+=`<th style="border:${BDp2};padding:3px 2px;width:40px;height:${R2H}px;text-align:center;font-weight:700;font-size:10px;line-height:1.2;vertical-align:middle;">${vtext(shopName||"店舗")}</th>`;
     h+='</tr></thead><tbody>';
     dates.forEach((ds,di)=>{
       const d=pd(ds),dow=d.getDay(),day=d.getDate(),wd=WD[dow];
@@ -1242,13 +1251,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           }
           // 背景: 緑(スタッフ変更) > 黄(サフィックスnote) — 画面と同じ優先順位
           const cbg=sh&&sh.changed===true?"#B7EBC6":r.note?"#FFFF00":"transparent";
-          h+=`<td style="border:${BDp};padding:1px;text-align:center;background:${cbg};height:15px;">${esc(r.disp)}</td>`;
+          h+=`<td style="border:${BDp};padding:1px;text-align:center;background:${cbg};height:15px;white-space:nowrap;">${esc(r.disp)}</td>`;
         });
-        if(showHall)heatHours.forEach(hr=>{
+        if(showHall){h+=heatGap;heatHours.forEach(hr=>{
           const n=countHeat("hall",ds,hr);
           const bg=n===0?"transparent":`rgba(248,112,54,${0.15+(n/hallMax)*0.75})`;
           h+=mergeHeat(n||"",top,bg);
-        });
+        });}
         h+=mergeTd(esc(wd),top);
         h+=mergeTd(day,top);
         h+='</tr>';
@@ -1315,7 +1324,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
          t+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;">期間</th>`;
          cols.forEach(nm=>{if(isSpacer(nm)){t+=`<th style="border:${BDp};"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";t+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:${vfontSize(nm,10)}px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
          t+='</tr></thead><tbody>';
-         periodRows.forEach(row=>{t+=`<tr><td style="border:${BDp};padding:3px 6px;font-weight:${row._bold?700:400};white-space:nowrap;">${esc(pdfPeriodLabel(row.label))}</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};"></td>`;return;}const min=row.getMin(nm);t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
+         periodRows.forEach(row=>{t+=`<tr><td style="border:${BDp};padding:3px 6px;font-weight:${row._bold?700:400};white-space:nowrap;">${esc(pdfPeriodLabel(row.label))}</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};"></td>`;return;}const min=row.getMin(nm);const vio=row._violateFn?row._violateFn(nm,min):false;const vs=vio?"background:#FFE0E3;color:#e53935;font-weight:700;":"";t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;${vs}">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
          t+='</tbody></table>';blocks.push(t);}
         // 週間勤務時間
         if(weeks.length>0){
@@ -1325,7 +1334,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           t+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;">週</th>`;
           cols.forEach(nm=>{if(isSpacer(nm)){t+=`<th style="border:${BDp};"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";t+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:${vfontSize(nm,10)}px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
           t+='</tr></thead><tbody>';
-          weeks.forEach(monStr=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);t+=`<tr><td style="border:${BDp};padding:3px 6px;white-space:nowrap;">${m.getDate()}〜${sun.getDate()}日</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};"></td>`;return;}const min=getWeekMin(monStr,nm);t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
+          weeks.forEach(monStr=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);t+=`<tr><td style="border:${BDp};padding:3px 6px;white-space:nowrap;">${m.getDate()}〜${sun.getDate()}日</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};"></td>`;return;}const min=getWeekMin(monStr,nm);const wl=(settings.staffTypeLimits||{})[(settings.staffAttributes||{})[nm]||"parttime"];const wlim=wl&&typeof wl==="object"&&wl.weekly?wl.weekly*60:0;const vio=wlim>0&&min>wlim;const vs=vio?"background:#FFE0E3;color:#e53935;font-weight:700;":"";t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;${vs}">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
           t+='</tbody></table>';blocks.push(t);
         }
       }
@@ -1513,7 +1522,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();const prev=lastTapRef.current;const times=(prev.key===k&&prev.times.length>0&&now-prev.times[prev.times.length-1]<350)?[...prev.times,now]:[now];if(times.length>=3){toggleChanged(name,date);lastTapRef.current={key:null,times:[]};}else{lastTapRef.current={key:k,times};}}}
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|start`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);setFocusKey(null);}}
-                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"start",e.target.value);if(e.ctrlKey||e.metaKey){const pdi=dates.indexOf(date)-1;if(pdi>=0)document.querySelector(`[data-sc="${dates[pdi]}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
+                            // 日本語IME変換確定のEnter(isComposing/keyCode229)はセル確定・フォーカス移動として扱わない。
+                            // 除外しないと変換確定のEnterで即座に次セルへ移動し、IMEの確定処理がそのまま次セルに入って
+                            // 手打ちしていないセルにも同じ文字（例:「締」）が入ってしまう
+                            onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"start",e.target.value);if(e.ctrlKey||e.metaKey){const pdi=dates.indexOf(date)-1;if(pdi>=0)document.querySelector(`[data-sc="${dates[pdi]}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
                             style={{...AI2,background:undefined,backgroundColor:cellBgFor(name,date,"start",AI2.background),...hdashStyle(holidayCellDash(name,date,"start")),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
                       ),spacerCell)}
@@ -1529,7 +1541,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();const prev=lastTapRef.current;const times=(prev.key===k&&prev.times.length>0&&now-prev.times[prev.times.length-1]<350)?[...prev.times,now]:[now];if(times.length>=3){toggleChanged(name,date);lastTapRef.current={key:null,times:[]};}else{lastTapRef.current={key:k,times};}}}
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
-                            onKeyDown={e=>{if(e.key!=="Enter")return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
+                            onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
                             style={{...AI2,background:undefined,backgroundColor:cellBgFor(name,date,"end",AI2.background),...hdashStyle(holidayCellDash(name,date,"end")),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
                       ),spacerCell)}
@@ -3144,7 +3156,9 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       // builtinで未登録のものはデフォルト値で補完（社員・バイトのみ）
       const DEFAULT_TYPES=["employee","parttime"];
       const tlsMerged={...tls};DEFAULT_TYPES.forEach(k=>{if(!tlsMerged[k])tlsMerged[k]={name:STAFF_TYPE_LABELS[k],daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0};});
-      const typeEntries=Object.entries(tlsMerged);
+      // 表示名(displayNameと同ルール)で50音順ソート。漢字は読み仮名を持たないため文字コード順になる点は許容
+      const typeName=(id,raw)=>(raw&&typeof raw==="object"?raw.name:raw)||STAFF_TYPE_LABELS[id]||id;
+      const typeEntries=Object.entries(tlsMerged).sort(([ta,la],[tb,lb])=>String(typeName(ta,la)).localeCompare(String(typeName(tb,lb)),"ja"));
       return(<AC title="スタッフ属性別 勤務時間制限">
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は無制限。制限を超えたスタッフは提出一覧で赤くハイライトされます。</div>
         {typeEntries.map(([type,limRaw])=>{
@@ -3743,6 +3757,11 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
         </div>
       </AC>}
 
+      {/* データ保存期間の告知（保存上限④・36ヶ月超の期間データは順次削除） */}
+      <div style={{fontSize:11,color:"var(--c-text4)",textAlign:"center",padding:"0 16px"}}>
+        シフト期間データは終了日から36ヶ月を超えると順次削除されます（詳細は利用規約 第6条）
+      </div>
+
       {/* 利用規約 */}
       <div style={{textAlign:"center",marginTop:8,paddingBottom:8}}>
         <button onClick={()=>setShowTerms(true)}
@@ -3812,6 +3831,14 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
               <span style={{fontSize:12,color:"#F59E0B",fontWeight:700,whiteSpace:"nowrap"}}>{price}</span>
             </div>
           ))}
+        </div>
+        <div style={{fontSize:11,color:"var(--c-text3)",lineHeight:1.7,marginBottom:14}}>
+          月額料金の<strong style={{color:"var(--c-text2)"}}>自動更新（定期課金）</strong>です。表示価格は税込・1店舗あたりの月額で、Stripe を通じて毎月自動的に課金されます。解約はいつでもマイページ（Stripe カスタマーポータル）から行え、解約後も支払い済み期間の末日まで利用できます（期間途中の日割り返金はありません）。
+          <span style={{display:"block",marginTop:6}}>
+            <a href="/terms.html" target="_blank" rel="noopener" style={{color:"#f87036",textDecoration:"none"}}>利用規約</a>
+            <span style={{margin:"0 6px",color:"var(--c-text4)"}}>·</span>
+            <a href="/privacy.html" target="_blank" rel="noopener" style={{color:"#f87036",textDecoration:"none"}}>プライバシーポリシー</a>
+          </span>
         </div>
         {error&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:10,background:"rgba(255,71,87,.1)",padding:"8px",borderRadius:8}}>{error}</div>}
         {isEditType?(
