@@ -336,7 +336,6 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const[deptFilter,setDeptFilter]=useState("all"); // "all"|"kit"|"hall" — キッチン/ホール絞り込み表示
   const[pdfModal,setPdfModal]=useState(false);
   const[pdfBusy,setPdfBusy]=useState(false);
-  const[pdfDept,setPdfDept]=useState("all"); // "all"|"kit"|"hall" — PDF書き出し時のキッチン/ホール絞り込み
   const[containerW,setContainerW]=useState(800);
   const[containerLeft,setContainerLeft]=useState(0);
   const outerRef=useRef(null);
@@ -1143,10 +1142,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   };
   // 提出があるか（休みか未提出かの判定用）
   const pdfHasSub=(name,date)=>{const sh=_getSub(name)?.shifts?.[date];const key1=`${name}|${date}|start`,key2=`${name}|${date}|end`;const edited=(key1 in localEdits)||(key2 in localEdits);return!!sh||edited;};
-  // Excel出力と同じ列構成（staffList＋未提出の未登録名）。pdfDeptが"kit"/"hall"の場合はgridStaffと同じ規則（h/kサフィックスのヘルプ要員を含む）で絞り込む
-  const buildPdfCols=()=>{
-    if(pdfDept==="kit")return realStaff.filter(n=>!hallStaff.includes(n)||kitExtraSet.has(n));
-    if(pdfDept==="hall")return realStaff.filter(n=>hallStaff.includes(n)||hallExtraSet.has(n));
+  // Excel出力と同じ列構成（staffList＋未提出の未登録名）。dept="kit"/"hall"の場合はgridStaffと同じ規則（h/kサフィックスのヘルプ要員を含む）で絞り込む
+  const buildPdfCols=(dept="all")=>{
+    if(dept==="kit")return realStaff.filter(n=>!hallStaff.includes(n)||kitExtraSet.has(n));
+    if(dept==="hall")return realStaff.filter(n=>hallStaff.includes(n)||hallExtraSet.has(n));
     const allAliases=Object.values(staffAliasesPdf).flat();
     const submittedNames=subs.filter(s=>s.periodId===selPid).map(s=>s.staffName);
     const unreg=submittedNames.filter(n=>!staffList.includes(n)&&!isSpacer(n)&&!allAliases.includes(n)).sort((a,b)=>a.localeCompare(b,"ja"));
@@ -1167,8 +1166,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return len<=5?base:+(base*5/len).toFixed(2);
   };
   // シフト表table（HTML文字列）。withHeat=trueで左右にヒートマップ列を統合し日付行に合わせて表示する
-  const buildShiftTableHtml=(withHeat=false,staffCols=true)=>{
-    const cols=buildPdfCols();
+  const buildShiftTableHtml=(withHeat=false,staffCols=true,dept="all")=>{
+    const cols=buildPdfCols(dept);
     // スタッフ35名以上: 部門仕切り用スペーサー列が常に空白のままだと、印刷時に日付を見失いやすいため日付を表示する
     const showSpacerDate=cols.filter(n=>!isSpacer(n)).length>34;
     const BDp="1px solid #888",BDp2="2px solid #555";
@@ -1259,8 +1258,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     return h;
   };
   // 休み・連勤カウント統合table（名前ヘッダー1行＋値2行）
-  const buildCountsTableHtml=()=>{
-    const cols=buildPdfCols();const BDp="1px solid #888";
+  const buildCountsTableHtml=(dept="all")=>{
+    const cols=buildPdfCols(dept);const BDp="1px solid #888";
     let h=`<div style="font-size:13px;font-weight:700;margin:10px 0 4px;">休み・連勤カウント</div>`;
     h+='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
     h+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;"></th>`;
@@ -1286,7 +1285,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   };
   const PDF_PAGEBREAK="__PAGEBREAK__";
   const PDF_SYNCSCALE="__SYNCSCALE__"; // 直前のブロックと同じmm/pxスケールを使う（ページ間で日付行の高さ・幅を揃えるため）
-  const exportPdf=async(mode)=>{
+  const exportPdf=async(mode,dept="all")=>{
     if(!period)return;
     if(typeof window.html2canvas==="undefined"||typeof window.jspdf==="undefined"){tt("▲ PDFライブラリ未読込み");return;}
     setPdfBusy(true);
@@ -1295,22 +1294,22 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       // ブロック=ページ内で分割しない単位。収まらないブロックは次ページへ、単独で超える場合は縮小して1ページに収める
       const blocks=[];
       if(mode==="shift"){
-        blocks.push(`<div style="font-size:16px;font-weight:700;margin-bottom:8px;">${heading} シフト表</div>`+buildShiftTableHtml(false));
+        blocks.push(`<div style="font-size:16px;font-weight:700;margin-bottom:8px;">${heading} シフト表</div>`+buildShiftTableHtml(false,true,dept));
       }else{
         // 1ページ目: シフト表のみ（シフトモードと同じ内容）
-        blocks.push(`<div style="font-size:18px;font-weight:700;margin-bottom:10px;">${heading} シフト作成データ</div>`+buildShiftTableHtml(false));
+        blocks.push(`<div style="font-size:18px;font-weight:700;margin-bottom:10px;">${heading} シフト作成データ</div>`+buildShiftTableHtml(false,true,dept));
         // 2ページ目: 時間帯別出勤人数（ヒートマップ）のみ。1ページ目と同じ日付行構造(mergeTd)を使うことで高さ・幅を揃え、
         // PDF_SYNCSCALEで1ページ目と同じmm/pxスケールを引き継ぐことで見た目の整合性を取る
         if(heatHours.length>0){
           blocks.push(PDF_PAGEBREAK);
           blocks.push(PDF_SYNCSCALE);
-          blocks.push(`<div style="font-size:18px;font-weight:700;margin-bottom:10px;">${heading} 時間帯別出勤人数</div>`+buildShiftTableHtml(true,false));
+          blocks.push(`<div style="font-size:18px;font-weight:700;margin-bottom:10px;">${heading} 時間帯別出勤人数</div>`+buildShiftTableHtml(true,false,dept));
         }
         // 3ページ目以降: 休み・連勤カウント等の期間別集計
         blocks.push(PDF_PAGEBREAK);
-        blocks.push(buildCountsTableHtml());
+        blocks.push(buildCountsTableHtml(dept));
         // 期間別勤務時間
-        {const cols=buildPdfCols();const BDp="1px solid #888";
+        {const cols=buildPdfCols(dept);const BDp="1px solid #888";
          let t=`<div style="font-size:13px;font-weight:700;margin:0 0 4px;">期間別勤務時間</div>`;
          t+='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
          t+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;">期間</th>`;
@@ -1320,7 +1319,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
          t+='</tbody></table>';blocks.push(t);}
         // 週間勤務時間
         if(weeks.length>0){
-          const cols=buildPdfCols();const BDp="1px solid #888";
+          const cols=buildPdfCols(dept);const BDp="1px solid #888";
           let t=`<div style="font-size:13px;font-weight:700;margin:0 0 4px;">週間勤務時間（前期間含む）</div>`;
           t+='<table style="border-collapse:collapse;font-size:11px;"><thead><tr>';
           t+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;">週</th>`;
@@ -1353,10 +1352,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         pdf.addImage(canvas.toDataURL("image/jpeg",0.92),"JPEG",margin,y,wMm,hMm);
         y+=hMm+4;
       }
-      const deptSuffix=pdfDept==="kit"?"_キッチン":pdfDept==="hall"?"_ホール":"";
+      const deptSuffix=dept==="kit"?"_キッチン":dept==="hall"?"_ホール":"";
       const fname=`${pdfSanitize(shopName||"店舗")}${pdfSanitize(period.label||"")}${mode==="shift"?"シフト":"全データ"}${deptSuffix}.pdf`;
       pdf.save(fname);
-      ph("pdf_exported",{period_id:period.id,mode,dept:pdfDept});
+      ph("pdf_exported",{period_id:period.id,mode,dept});
       tt(`✓ ${fname} をダウンロードしました`);
       setPdfModal(false);
     }catch(e){
@@ -1438,24 +1437,29 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:14,padding:"22px 20px",width:"100%",maxWidth:340,boxShadow:"0 8px 32px var(--c-shadow)"}}>
             <div style={{fontSize:16,fontWeight:700,marginBottom:6,color:"var(--c-text)"}}>PDF出力</div>
             <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:16}}>出力する内容を選択してください</div>
-            {hasSplit&&<div style={{display:"flex",gap:6,marginBottom:14}}>
-              {[["all","全スタッフ"],["hall","ホールのみ"],["kit","キッチンのみ"]].map(([id,label])=>(
-                <button key={id} disabled={pdfBusy} onClick={()=>setPdfDept(id)}
-                  style={{flex:1,padding:"7px 4px",background:pdfDept===id?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:7,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
-                  {label}
-                </button>
-              ))}
-            </div>}
             <button disabled={pdfBusy} onClick={()=>exportPdf("shift")}
               style={{width:"100%",padding:"12px",marginBottom:10,background:"linear-gradient(135deg,#b91c1c,#7f1d1d)",border:"none",borderRadius:9,color:"white",fontSize:14,fontWeight:700,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
               {pdfBusy?"生成中...":"シフト"}
               <div style={{fontSize:11,fontWeight:400,marginTop:2,opacity:0.85}}>シフト表のみ（Excelと同じ形式）</div>
             </button>
             <button disabled={pdfBusy} onClick={()=>exportPdf("all")}
-              style={{width:"100%",padding:"12px",marginBottom:14,background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",borderRadius:9,color:"white",fontSize:14,fontWeight:700,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
+              style={{width:"100%",padding:"12px",marginBottom:hasSplit?10:14,background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",borderRadius:9,color:"white",fontSize:14,fontWeight:700,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
               {pdfBusy?"生成中...":"全データ"}
               <div style={{fontSize:11,fontWeight:400,marginTop:2,opacity:0.85}}>シフト表・カウント・ヒートマップ・勤務時間集計</div>
             </button>
+            {hasSplit&&<div style={{marginBottom:14}}>
+              <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6}}>部門別（シフト表のみ・任意）</div>
+              <div style={{display:"flex",gap:6}}>
+                <button disabled={pdfBusy} onClick={()=>exportPdf("shift","hall")}
+                  style={{flex:1,padding:"9px 4px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text2)",fontSize:12,fontWeight:600,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
+                  ホールのみ
+                </button>
+                <button disabled={pdfBusy} onClick={()=>exportPdf("shift","kit")}
+                  style={{flex:1,padding:"9px 4px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text2)",fontSize:12,fontWeight:600,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
+                  キッチンのみ
+                </button>
+              </div>
+            </div>}
             <button disabled={pdfBusy} onClick={()=>setPdfModal(false)}
               style={{width:"100%",padding:"9px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:9,color:"var(--c-text2)",fontSize:13,fontWeight:600,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
               キャンセル
