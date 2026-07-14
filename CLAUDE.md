@@ -555,38 +555,37 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-14 自動実行 #20）
+## Shifty バグチェックレポート（2026-07-14 自動実行 #21）
 
 ### 修正済み
-（今回の実行では修正なし）
 
-### 前回巡回（#19）以降の新規コミット
-なし。HEADは`fd14b31`のまま変化なし（#19と同一コミット）。作業ツリーには`.cursorrules`・`CLAUDE.md`のドキュメント同期による未コミット差分があるが、コードファイルの変更ではないためバグチェック対象外。
+- **🟡 月次/週次の上限超過ハイライトが境界値ちょうどで誤発火**（app-admin.js:1125,1332,1626）
+  PDF出力の「月計」行・週別サマリーと、シフト作成タブ画面上の週別サマリーテーブルが、上限にちょうど達した（超過ではなく一致）スタッフも赤くハイライトしていた（`min>=lim`）。提出一覧（SubsTab、正本の違反判定ロジック）は一貫して「超過のみ」を違反とする厳密な`>`判定を使っており、画面間で判定基準が不一致だった。3箇所とも`>=`を`>`に統一。うち2箇所は本日のPDF「ホールのみ/キッチンのみ」出力機能追加コミット（`31f321f`）で新規混入、1箇所（画面上の週別サマリー）は2026-06-29から存在した既存の同種不整合。`npx eslint`0 errors・`npm test`82件パス。dev実機（標準テスト店舗・Premiumプラン）でシフト作成タブ・PDF出力を実行しコンソールエラーなし・PDF生成成功を確認。修正・コミット・push済み（`c7894fa`）。
+
+### 前回巡回（#20）以降の新規コミット
+9件（HEADは`fd14b31`→`31f321f`、コード変更を含むのは5件）。`31f321f`（PDF部門別出力追加）で上記🟡を発見。`ca2caa8`（利用規約/プライバシーの表示是正）はUpgradeModal・ログイン画面フッターへのリンク追加で新規input/select/textareaなし、dev実機で表示確認済み。残りはdocsのみ。
 
 ### スキャン結果
-- `subs`の`set()`全体上書き: ヒット0（正常。`fbPath(sid,"subs")`はすべて`orderByChild`購読・`update()`のみ）
-- `filter(s=>s.id!==...)`削除パターン: 全6箇所（app-main.js 4件・app-admin.js 2件）を確認。いずれも`saveSubs(a,subId)`/`onSave(...,sub.id)`によるdeletedId渡し、または`firebaseDB.ref(...).remove()`直呼び出しでFirebase削除漏れなし
-- DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE正常
-- セキュリティ: `global/shops`全件読みなし（直キー読みのみ）、`global/templates`参照の復活なし
-- index.html: スクリプト読み込み順（utils→core→staff→admin→main）維持、CDN SRIハッシュ全11件確認
-- Cloud Functions: secrets抜け漏れなし（STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET/SMTP_USER/SMTP_PASS/SURVEY_SEND_TOKEN全関数で適切）、`.delete()`誤用なし
-- `signInWithApple`/`signInAndLinkApple`デッドコード: 残存ゼロを確認（過去レポートに記載されていた項目が既に解消済み）
+- `subs`の`set()`全体上書き: ヒット0、削除パターン全6箇所とも安全、DEV_MODE正常、セキュリティ（global/shops全件読み・global/templates復活なし）、index.htmlスクリプト順・SRI維持、Cloud Functions secrets/`.delete()`誤用なし、isPro/isPremium誤用なし
 - `npm test`: 82件全パス、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
 
 ### 要確認（未修正・継続）
 
-- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2717、#11から継続監視中）
+- **🟢 index.htmlのキャッシュバスティング版数（`?v=20260708-a8bfc44`）が2026-07-08から更新されていない**（index.html:211-215、app-core.js:1-4）「デプロイ毎に手動更新」規約だが07-08以降にapp-admin.js/app-main.jsの内容変更コミットが5件積まれ未更新。develop上のみのため今回は見送り、次回main リリース時に手動更新が必要（release-to-main/deployスキルにも手順化されていない）
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js、#11から継続監視中）
 - **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、#11から継続監視中）
 - **🟢 `joinByInviteCode`（app-main.js:852）が呼び出し元ゼロのデッドコード**（企業アカウント招待コード参加UIは依然未実装）
 
 ### 異常なし
-クリティカル（🔴）・中程度（🟡）の問題はなし。develop→push不要（新規コミットなし・同日再スキャンのみ）。
+クリティカル（🔴）の問題はなし。中程度（🟡）1件（境界値ハイライト誤発火・3箇所）を修正済み。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
 -
 -
 -
@@ -795,6 +794,22 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 ## 実装待ちタスク
 
 ---
+
+## 🔴 利用規約・特定商取引法に基づく表記の整備（表記内容＋サイト表示の是正）
+
+**目的**: 有料サブスク（Pro/Premium）を提供している以上、特定商取引法・定型約款（民法548条の2〜4）・改正特商法（2022年6月・定期購入の最終確認画面）の表示義務を満たす必要がある。2026-07-14の調査で「内容（本文）は概ね適法だが、必須の特商法表記が無く、サイトでの表示（公開場所・バージョン整合・購入前提示）に不備がある」ことが判明したため是正する。
+**前提（2026-07-14確認済み・残1点）**:
+- 事業者形態は**未登記（法人登記も開業届も未提出・名称「TODGE」のみ）**。ただし**Stripeで有料課金を実施している以上、特商法上は「事業者」に該当し表記義務は消えない**。未登記のため販売業者名は屋号「TODGE」単独では不可で、**運営者本人の本名**の記載が必須。
+- 住所・電話番号は**「請求があれば遅滞なく開示」で代替**する方針で確定（サイト常時表示はしない）。
+- [ ] **残る必要情報＝①運営者の本名（販売業者名として表示）②連絡先メールアドレス（常時表示・必須）**。この2点が揃えば `tokusho.html` を作成・導線配線できる。→ ①③④の表示是正は 2026-07-14 に実装済み（コミット`ca2caa8`）。本タスクは②の特商法表記ページのみ残。
+- （参考・スコープ外）未登記での有料サービス運営は税務上の開業届未提出リスクも伴う。特商法表記とは別問題として要検討。
+**受け入れ条件**:
+- [ ] **特定商取引法に基づく表記**を独立ページ（例: `tokusho.html`）として新設する。記載事項: 販売業者名（上記確定値）・所在地・連絡先・販売価格（Pro 500円/Premium 2,980円 税込）・支払方法（Stripeクレカ）・支払時期（月額自動更新）・提供時期・解約/返金条件（日割り返金なし）。
+- [ ] **静的ページの最新版同期**: `terms.html`（現状 制定日2026年6月10日の旧版）と `privacy.html` を、アプリ内モーダル `TERMS_TEXT`（v1.2・2026-07-09）と**同一内容**に更新する。現状は SetTab フッター（[app-admin.js:3466](app-admin.js)）が旧版 `/terms.html` を開き、MyPageの `TermsModal`（[app-admin.js:3572](app-admin.js)）が新版を表示しており、**2バージョンが混在している**。正本はObsidian `Projects/Shifty/利用規約.md`（[[project_shifty_terms_of_service]] 相当）。
+- [ ] **導線の整備**: ランディング（`index.html`）および購入前導線（`UpgradeModal`・Stripe Checkoutへ進む前）から、利用規約・特商法表記・プライバシーポリシーへアクセスできるようにする。現状 index.html にはこれらのフッターリンクが無く、規約への導線が管理画面の奥（MyPage/設定タブ）に限定されている。
+- [ ] **購入前の明示**: 改正特商法の最終確認画面要件に沿い、`UpgradeModal` で「定期課金であること・月額/支払総額・解約方法（マイページのStripeカスタマーポータル）」を明示する（Stripe Checkout側の表示と重複してよい）。
+**影響範囲**: 新規 `tokusho.html`、既存 `terms.html`・`privacy.html`（内容更新）、`index.html`（フッターリンク）、app-admin.js（`UpgradeModal`・規約導線）。正本はObsidian利用規約.md。
+**備考**: 調査日 2026-07-14。本文の免責条項（第10条・故意重過失を除外し12ヶ月料金を上限）は消費者契約法8条の全部免責には当たらず概ね適法と判断。最大の欠落は「特商法表記ページの不在」と「静的terms.htmlの旧版残存」。
 
 ---
 
