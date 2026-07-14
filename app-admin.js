@@ -1120,7 +1120,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       _bold:firstHalf?.id===selPid,_color:firstHalf?.id===selPid?"#f87036":undefined,_bg:firstHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
     {id:secondHalf?.id||"nosecond",label:secondHalf?.label||`${mo2}月後半`,getMin:name=>secondHalf?getPeriodMin(secondHalf.id,name):0,
       _bold:secondHalf?.id===selPid,_color:secondHalf?.id===selPid?"#f87036":undefined,_bg:secondHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
-    {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"#f87036"},
+    {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"#f87036",
+      _violateFn:(name,min)=>{const t=(settings.staffAttributes||{})[name]||"parttime";const l=(settings.staffTypeLimits||{})[t];const lim=l&&typeof l==="object"&&l.monthly?l.monthly*60:0;return lim>0&&min>=lim;}},
     {id:"monthly_limit",label:"月上限",getMin:name=>{const t=(settings.staffAttributes||{})[name]||"parttime";const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};const l=tls[t];return(l&&typeof l==="object"&&l.monthly)?l.monthly*60:0;},_color:"#60A5FA",_bg:"rgba(96,165,250,0.07)"}
   ];
 
@@ -1315,7 +1316,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
          t+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;">期間</th>`;
          cols.forEach(nm=>{if(isSpacer(nm)){t+=`<th style="border:${BDp};"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";t+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:${vfontSize(nm,10)}px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
          t+='</tr></thead><tbody>';
-         periodRows.forEach(row=>{t+=`<tr><td style="border:${BDp};padding:3px 6px;font-weight:${row._bold?700:400};white-space:nowrap;">${esc(pdfPeriodLabel(row.label))}</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};"></td>`;return;}const min=row.getMin(nm);t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
+         periodRows.forEach(row=>{t+=`<tr><td style="border:${BDp};padding:3px 6px;font-weight:${row._bold?700:400};white-space:nowrap;">${esc(pdfPeriodLabel(row.label))}</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};"></td>`;return;}const min=row.getMin(nm);const vio=row._violateFn?row._violateFn(nm,min):false;const vs=vio?"background:#FFE0E3;color:#e53935;font-weight:700;":"";t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;${vs}">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
          t+='</tbody></table>';blocks.push(t);}
         // 週間勤務時間
         if(weeks.length>0){
@@ -3134,7 +3135,9 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       // builtinで未登録のものはデフォルト値で補完（社員・バイトのみ）
       const DEFAULT_TYPES=["employee","parttime"];
       const tlsMerged={...tls};DEFAULT_TYPES.forEach(k=>{if(!tlsMerged[k])tlsMerged[k]={name:STAFF_TYPE_LABELS[k],daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0};});
-      const typeEntries=Object.entries(tlsMerged);
+      // 表示名(displayNameと同ルール)で50音順ソート。漢字は読み仮名を持たないため文字コード順になる点は許容
+      const typeName=(id,raw)=>(raw&&typeof raw==="object"?raw.name:raw)||STAFF_TYPE_LABELS[id]||id;
+      const typeEntries=Object.entries(tlsMerged).sort(([ta,la],[tb,lb])=>String(typeName(ta,la)).localeCompare(String(typeName(tb,lb)),"ja"));
       return(<AC title="スタッフ属性別 勤務時間制限">
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は無制限。制限を超えたスタッフは提出一覧で赤くハイライトされます。</div>
         {typeEntries.map(([type,limRaw])=>{
