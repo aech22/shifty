@@ -336,6 +336,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const[deptFilter,setDeptFilter]=useState("all"); // "all"|"kit"|"hall" — キッチン/ホール絞り込み表示
   const[pdfModal,setPdfModal]=useState(false);
   const[pdfBusy,setPdfBusy]=useState(false);
+  const[pdfDept,setPdfDept]=useState("all"); // "all"|"kit"|"hall" — PDF書き出し時のキッチン/ホール絞り込み
   const[containerW,setContainerW]=useState(800);
   const[containerLeft,setContainerLeft]=useState(0);
   const outerRef=useRef(null);
@@ -1143,8 +1144,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   };
   // 提出があるか（休みか未提出かの判定用）
   const pdfHasSub=(name,date)=>{const sh=_getSub(name)?.shifts?.[date];const key1=`${name}|${date}|start`,key2=`${name}|${date}|end`;const edited=(key1 in localEdits)||(key2 in localEdits);return!!sh||edited;};
-  // Excel出力と同じ列構成（staffList＋未提出の未登録名）
+  // Excel出力と同じ列構成（staffList＋未提出の未登録名）。pdfDeptが"kit"/"hall"の場合はgridStaffと同じ規則（h/kサフィックスのヘルプ要員を含む）で絞り込む
   const buildPdfCols=()=>{
+    if(pdfDept==="kit")return realStaff.filter(n=>!hallStaff.includes(n)||kitExtraSet.has(n));
+    if(pdfDept==="hall")return realStaff.filter(n=>hallStaff.includes(n)||hallExtraSet.has(n));
     const allAliases=Object.values(staffAliasesPdf).flat();
     const submittedNames=subs.filter(s=>s.periodId===selPid).map(s=>s.staffName);
     const unreg=submittedNames.filter(n=>!staffList.includes(n)&&!isSpacer(n)&&!allAliases.includes(n)).sort((a,b)=>a.localeCompare(b,"ja"));
@@ -1353,9 +1356,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         pdf.addImage(canvas.toDataURL("image/jpeg",0.92),"JPEG",margin,y,wMm,hMm);
         y+=hMm+4;
       }
-      const fname=`${pdfSanitize(shopName||"店舗")}${pdfSanitize(period.label||"")}${mode==="shift"?"シフト":"全データ"}.pdf`;
+      const deptSuffix=pdfDept==="kit"?"_キッチン":pdfDept==="hall"?"_ホール":"";
+      const fname=`${pdfSanitize(shopName||"店舗")}${pdfSanitize(period.label||"")}${mode==="shift"?"シフト":"全データ"}${deptSuffix}.pdf`;
       pdf.save(fname);
-      ph("pdf_exported",{period_id:period.id,mode});
+      ph("pdf_exported",{period_id:period.id,mode,dept:pdfDept});
       tt(`✓ ${fname} をダウンロードしました`);
       setPdfModal(false);
     }catch(e){
@@ -1437,6 +1441,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:14,padding:"22px 20px",width:"100%",maxWidth:340,boxShadow:"0 8px 32px var(--c-shadow)"}}>
             <div style={{fontSize:16,fontWeight:700,marginBottom:6,color:"var(--c-text)"}}>PDF出力</div>
             <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:16}}>出力する内容を選択してください</div>
+            {hasSplit&&<div style={{display:"flex",gap:6,marginBottom:14}}>
+              {[["all","全スタッフ"],["hall","ホールのみ"],["kit","キッチンのみ"]].map(([id,label])=>(
+                <button key={id} disabled={pdfBusy} onClick={()=>setPdfDept(id)}
+                  style={{flex:1,padding:"7px 4px",background:pdfDept===id?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:7,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
+                  {label}
+                </button>
+              ))}
+            </div>}
             <button disabled={pdfBusy} onClick={()=>exportPdf("shift")}
               style={{width:"100%",padding:"12px",marginBottom:10,background:"linear-gradient(135deg,#b91c1c,#7f1d1d)",border:"none",borderRadius:9,color:"white",fontSize:14,fontWeight:700,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
               {pdfBusy?"生成中...":"シフト"}
