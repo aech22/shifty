@@ -1451,7 +1451,6 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
               <div style={{fontSize:11,fontWeight:400,marginTop:2,opacity:0.85}}>シフト表・カウント・ヒートマップ・勤務時間集計</div>
             </button>
             {hasSplit&&<div style={{marginBottom:14}}>
-              <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6}}>部門別（シフト表のみ・任意）</div>
               <div style={{display:"flex",gap:6}}>
                 <button disabled={pdfBusy} onClick={()=>exportPdf("shift","hall")}
                   style={{flex:1,padding:"9px 4px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text2)",fontSize:12,fontWeight:600,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
