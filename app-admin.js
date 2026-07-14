@@ -3811,6 +3811,14 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
             </div>
           ))}
         </div>
+        <div style={{fontSize:11,color:"var(--c-text3)",lineHeight:1.7,marginBottom:14}}>
+          月額料金の<strong style={{color:"var(--c-text2)"}}>自動更新（定期課金）</strong>です。表示価格は税込・1店舗あたりの月額で、Stripe を通じて毎月自動的に課金されます。解約はいつでもマイページ（Stripe カスタマーポータル）から行え、解約後も支払い済み期間の末日まで利用できます（期間途中の日割り返金はありません）。
+          <span style={{display:"block",marginTop:6}}>
+            <a href="/terms.html" target="_blank" rel="noopener" style={{color:"#f87036",textDecoration:"none"}}>利用規約</a>
+            <span style={{margin:"0 6px",color:"var(--c-text4)"}}>·</span>
+            <a href="/privacy.html" target="_blank" rel="noopener" style={{color:"#f87036",textDecoration:"none"}}>プライバシーポリシー</a>
+          </span>
+        </div>
         {error&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:10,background:"rgba(255,71,87,.1)",padding:"8px",borderRadius:8}}>{error}</div>}
         {isEditType?(
           <button onClick={()=>checkout("premium")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="premium"?"var(--c-text3)":"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"2px solid rgba(124,58,237,.3)",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
