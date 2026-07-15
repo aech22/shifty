@@ -1145,8 +1145,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     const dec=time?toDecimal(time):"";
     const fx=fixed?FIXED_KEY:"";
     // 「締」（東通り店専用・追加出勤）は画面のgetVal同様、note末尾にコマンド文字を付加して表示する。
-    // main時刻が無い単独「締」でもfxだけで表示できるようdec||fxを判定条件にする（従来はdecのみでfx脱落=空欄化していた）
-    return{disp:(dec||fx)?(dec+note+fx):"",note};
+    // main時刻が無い単独「締」でもfxだけで表示できるようdec||fxを判定条件にする（従来はdecのみでfx脱落=空欄化していた）。
+    // コマンド外の文字だけのメモ（時刻もfxも無い「研修」等）も同様にnote単体で表示できるよう判定に含める
+    // （getVal: if(t)return t+n+fx; return(n+fx)||""; と同じ真偽判定に揃える）
+    return{disp:(dec||fx||note)?(dec+note+fx):"",note};
   };
   // 提出があるか（休みか未提出かの判定用）
   const pdfHasSub=(name,date)=>{const sh=_getSub(name)?.shifts?.[date];const key1=`${name}|${date}|start`,key2=`${name}|${date}|end`;const edited=(key1 in localEdits)||(key2 in localEdits);return!!sh||edited;};
