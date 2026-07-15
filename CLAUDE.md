@@ -555,35 +555,50 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-14 自動実行 #21）
+## Shifty バグチェックレポート（2026-07-15 自動実行 #22）
 
 ### 修正済み
 
-- **🟡 月次/週次の上限超過ハイライトが境界値ちょうどで誤発火**（app-admin.js:1125,1332,1626）
-  PDF出力の「月計」行・週別サマリーと、シフト作成タブ画面上の週別サマリーテーブルが、上限にちょうど達した（超過ではなく一致）スタッフも赤くハイライトしていた（`min>=lim`）。提出一覧（SubsTab、正本の違反判定ロジック）は一貫して「超過のみ」を違反とする厳密な`>`判定を使っており、画面間で判定基準が不一致だった。3箇所とも`>=`を`>`に統一。うち2箇所は本日のPDF「ホールのみ/キッチンのみ」出力機能追加コミット（`31f321f`）で新規混入、1箇所（画面上の週別サマリー）は2026-06-29から存在した既存の同種不整合。`npx eslint`0 errors・`npm test`82件パス。dev実機（標準テスト店舗・Premiumプラン）でシフト作成タブ・PDF出力を実行しコンソールエラーなし・PDF生成成功を確認。修正・コミット・push済み（`c7894fa`）。
+- **🟡 PDF出力でコマンド外の文字だけのメモが空欄になる**（app-admin.js:1148）
+  #21以降に入った2つの変更が組み合わさって発生した不具合。①`63e07f7`/`d05b289`/`447a932`（本日）で「出勤/退勤セルに時間なしで自由記述メモ（例:「研修」）を入力すると、従来の一律x収束ではなく入力どおり保存・画面表示される」機能が追加された。②同日先行の`22c1506`（「締」コマンドのPDF反映修正）で`pdfResolve`の表示判定が`(dec||fx)`（時刻または締めコマンドのどちらか）に書き換えられていたが、①のメモ単体（dec・fxどちらも無しでnoteのみ）のケースは考慮されておらず、画面(`getVal`：`if(t)return t+n+fx; return(n+fx)||"";`)では表示されるのにPDF出力だけ空欄になっていた。判定条件に`note`を追加して`getVal`と揃えた（`(dec||fx||note)`）。`node`での実行トレースで再現確認（修正前:disp=""、修正後:disp="研修"）→修正→`npm test`83件パス・`npx eslint`0 errors→dev実機（標準テスト店舗にテスト用期間を作成）でセルに「研修」を入力→PDF出力（全データ）を実行し、`html2canvas`に渡される直前のHTML文字列に`<td ...background:#FFFF00...>研修</td>`が実際に含まれることをフック経由で確認（PDFファイル自体はバイナリのため展開前のHTML内容で検証）→検証用の期間は削除して後片付け済み。コミット・push済み（`49c56e3`）。
 
-### 前回巡回（#20）以降の新規コミット
-9件（HEADは`fd14b31`→`31f321f`、コード変更を含むのは5件）。`31f321f`（PDF部門別出力追加）で上記🟡を発見。`ca2caa8`（利用規約/プライバシーの表示是正）はUpgradeModal・ログイン画面フッターへのリンク追加で新規input/select/textareaなし、dev実機で表示確認済み。残りはdocsのみ。
+### 前回巡回（#21）以降の新規コミット
+8件（HEADは`31f321f`→`447a932`、コード変更を含むのは6件）。レビュー対象:
+- `06a478f`/`62fe3d6`/`6b5b64a` PDF部門別出力の1クリック化・ラベル削除・シフト表とヒートマップページの高さ揃え/折り返し修正 — 表示調整のみ、ロジック上の懸念なし
+- `22c1506` 「締」コマンドのPDF反映修正 — 修正自体は正しいが、後続コミットとの組み合わせで上記🟡を誘発（新規混入）
+- `63e07f7`/`d05b289`/`447a932` コマンド外の文字だけの入力をメモとして保持する仕様変更（`extractNote`・`ShiftEditTab`新規sub作成・テスト追加） — 変更は意図通りで、対応するテストも追加済み。ヒートマップ・ポジションエラー判定への影響はコード読解で確認済み（時間なしのメモ単体は`stM===null&&enM===null&&!fixedCmd`で早期returnするため無関係）。ただしPDF出力側の対応漏れが上記🟡として発覚
+- `cb397a2` docsのみ（#21のCLAUDE.md同期）
 
 ### スキャン結果
-- `subs`の`set()`全体上書き: ヒット0、削除パターン全6箇所とも安全、DEV_MODE正常、セキュリティ（global/shops全件読み・global/templates復活なし）、index.htmlスクリプト順・SRI維持、Cloud Functions secrets/`.delete()`誤用なし、isPro/isPremium誤用なし
-- `npm test`: 82件全パス、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
+- `subs`の`set()`全体上書き: ヒット0（正常）
+- `filter(s=>s.id!==...)`削除パターン: 全6箇所、いずれも`saveSubs(a,subId)`/`onSave(...,sub.id)`によるdeletedId渡し、または`.remove()`直呼び出しでFirebase削除漏れなし
+- DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE正常
+- セキュリティ: `global/shops`全件読み・`global/templates`参照の復活なし、`database.rules.json`に無条件`".read": true"`なし
+- index.html: スクリプト読み込み順（utils→core→staff→admin→main）維持、CDN SRIハッシュ11件確認
+- Cloud Functions: secrets抜け漏れなし、`.delete()`誤用なし、`purgeOldPeriods`/`purgeInactiveShops`の安全装置（Number.isNaNガード・archived経由の二段削除）維持
+- isPro/isPremium誤用: 新規ヒットなし（唯一の該当箇所はPremium機能と無関係の未登録スタッフ判定で妥当）
+- `npm test`: 修正前83件パス→修正後も83件パス、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
 
 ### 要確認（未修正・継続）
 
-- **🟢 index.htmlのキャッシュバスティング版数（`?v=20260708-a8bfc44`）が2026-07-08から更新されていない**（index.html:211-215、app-core.js:1-4）「デプロイ毎に手動更新」規約だが07-08以降にapp-admin.js/app-main.jsの内容変更コミットが5件積まれ未更新。develop上のみのため今回は見送り、次回main リリース時に手動更新が必要（release-to-main/deployスキルにも手順化されていない）
+- **🟢 index.htmlのキャッシュバスティング版数（`?v=20260708-a8bfc44`）が2026-07-08から更新されていない**（index.html:211-215、app-core.js:1-4、#21から継続。07-08以降の実質コミットがさらに積み上がっている）
 - **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js、#11から継続監視中）
 - **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、#11から継続監視中）
-- **🟢 `joinByInviteCode`（app-main.js:852）が呼び出し元ゼロのデッドコード**（企業アカウント招待コード参加UIは依然未実装）
+- **🟢 `joinByInviteCode`（app-main.js:852）が呼び出し元ゼロのデッドコード**（企業アカウント招待コード参加UIは依然未実装。#15から継続）
 
 ### 異常なし
-クリティカル（🔴）の問題はなし。中程度（🟡）1件（境界値ハイライト誤発火・3箇所）を修正済み。
+クリティカル（🔴）の問題はなし。中程度（🟡）1件（PDF出力メモ欠落）を修正・コミット・push済み（`49c56e3`）。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
+-
+-
+-
 -
 -
 -
