@@ -555,21 +555,21 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-16 自動実行 #24）
+## Shifty バグチェックレポート（2026-07-16 自動実行 #25）
 
 ### 修正済み
 （今回の実行では修正なし）
 
-### 前回巡回（#23・同日）以降の新規コミット
-1件（HEADは`01e9c52`→`bb6451d`）。`bb6451d`はCLAUDE.md同期のみ（docsコミット）でコード変更なし。#23時点から実質的な差分なし。
+### 前回巡回（#24・同日）以降の新規コミット
+1件（HEADは`bb6451d`→`c459629`）。`c459629`はCLAUDE.md同期のみ（docsコミット）でコード変更なし。#24時点から実質的な差分なし。
 
 ### スキャン結果
-- `subs`の`set()`全体上書き: ヒット0（正常）
-- `filter(s=>s.id!==...)`削除パターン: 全ヒット確認。shops系フィルタ（削除対象外）を除く subs 系はすべて`saveSubs(a,subId)`/`onSave(...,sub.id)`によるdeletedId渡し、または`firebaseDB.ref(...).remove()`直呼び出し（app-main.js:1515 onDeleteSub）でFirebase削除漏れなし
+- `subs`の`set()`全体上書き: ヒット0（正常）。`saveSubs`（app-main.js:1157）は引き続きupdate()ベースの差分書き込み実装を維持
+- `filter(s=>s.id!==...)`削除パターン: 全ヒット確認（app-main.js:773,924,926,1515／app-admin.js:132,1718,2726,2849）。shops系フィルタ（削除対象外）を除く subs 系はすべて`saveSubs(a,subId)`/`onSave(...,sub.id)`によるdeletedId渡し、または`firebaseDB.ref(...).remove()`直呼び出し（app-main.js:1515 onDeleteSub）でFirebase削除漏れなし
 - DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE正常
-- セキュリティ: `global/shops`全件読み・`global/templates`参照の復活なし、`database.rules.json`に無条件`".read": true`なし
-- index.html: スクリプト読み込み順（utils→core→staff→admin→main）維持、CDN SRIハッシュ11件確認
-- Cloud Functions: secrets抜け漏れなし、`.delete()`誤用なし、`purgeOldPeriods`/`purgeInactiveShops`の安全装置（Number.isNaNガード・archived経由の二段削除）維持
+- セキュリティ: `global/shops`全件読み・`global/templates`参照の復活なし（直キー読みのみ維持）、`database.rules.json`に無条件`".read": true`なし
+- index.html: スクリプト読み込み順（utils→core→staff→admin→main）維持、CDN SRIハッシュ・キャッシュバスティング版数`?v=20260708-a8bfc44`（変化なし）
+- Cloud Functions: secrets抜け漏れなし（5関数とも既定通り）、`.delete()`誤用なし
 - isPro/isPremium誤用: 新規ヒットなし（唯一の該当箇所app-admin.js:2702はPremium機能と無関係の未登録スタッフ判定で妥当）
 - `npm test`: 83件パス、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
 
@@ -581,13 +581,15 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 - **🟢 `joinByInviteCode`（app-main.js:852）が呼び出し元ゼロのデッドコード**（企業アカウント招待コード参加UIは依然未実装。#15から継続。`onJoinByInviteCode`prop自体も他ファイルに存在せず孤立したまま）
 
 ### 異常なし
-クリティカル（🔴）・中程度（🟡）の問題はなし。前回チェック（#23）からコード変更がなく、新規バグの混入なし。4回連続（#21修正以降）で新規バグなし。
+クリティカル（🔴）・中程度（🟡）の問題はなし。前回チェック（#24）からコード変更がなく、新規バグの混入なし。5回連続（#21修正以降）で新規バグなし。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
 -
 -
 -
