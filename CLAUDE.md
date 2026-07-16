@@ -555,40 +555,41 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-16 自動実行 #23）
+## Shifty バグチェックレポート（2026-07-16 自動実行 #24）
 
 ### 修正済み
 （今回の実行では修正なし）
 
-### 前回巡回（#22・同日）以降の新規コミット
-1件（HEADは`49c56e3`→`01e9c52`）。`01e9c52`はCLAUDE.md同期のみ（docsコミット）でコード変更なし。#22時点から実質的な差分なし。
+### 前回巡回（#23・同日）以降の新規コミット
+1件（HEADは`01e9c52`→`bb6451d`）。`bb6451d`はCLAUDE.md同期のみ（docsコミット）でコード変更なし。#23時点から実質的な差分なし。
 
 ### スキャン結果
 - `subs`の`set()`全体上書き: ヒット0（正常）
-- `filter(s=>s.id!==...)`削除パターン: 全6箇所、いずれも`saveSubs(a,subId)`/`onSave(...,sub.id)`によるdeletedId渡し、または`.remove()`直呼び出しでFirebase削除漏れなし
-- サブ編集の差分書き込み（`diffSubForFlatWrite`/`applyFlatSubWrite`）: `ShiftEditTab`の`applyEditToSubs`は`const sub={...newSubs[idx]}`で新規参照化してからミューテートしており、in-place変更による書き込み漏れなし
+- `filter(s=>s.id!==...)`削除パターン: 全ヒット確認。shops系フィルタ（削除対象外）を除く subs 系はすべて`saveSubs(a,subId)`/`onSave(...,sub.id)`によるdeletedId渡し、または`firebaseDB.ref(...).remove()`直呼び出し（app-main.js:1515 onDeleteSub）でFirebase削除漏れなし
 - DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE正常
-- セキュリティ: `global/shops`全件読み・`global/templates`参照の復活なし、`database.rules.json`に無条件`".read": true"`なし
+- セキュリティ: `global/shops`全件読み・`global/templates`参照の復活なし、`database.rules.json`に無条件`".read": true`なし
 - index.html: スクリプト読み込み順（utils→core→staff→admin→main）維持、CDN SRIハッシュ11件確認
 - Cloud Functions: secrets抜け漏れなし、`.delete()`誤用なし、`purgeOldPeriods`/`purgeInactiveShops`の安全装置（Number.isNaNガード・archived経由の二段削除）維持
-- isPro/isPremium誤用: 新規ヒットなし（唯一の該当箇所はPremium機能と無関係の未登録スタッフ判定で妥当）
+- isPro/isPremium誤用: 新規ヒットなし（唯一の該当箇所app-admin.js:2702はPremium機能と無関係の未登録スタッフ判定で妥当）
 - `npm test`: 83件パス、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
 
 ### 要確認（未修正・継続）
 
-- **🟢 index.htmlのキャッシュバスティング版数（`?v=20260708-a8bfc44`）が2026-07-08から更新されていない**（index.html:211-215、app-core.js:1-4、#21から継続）
-- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2745、#11から継続監視中）
+- **🟢 index.htmlのキャッシュバスティング版数（`?v=20260708-a8bfc44`）が2026-07-08から更新されていない**（index.html:211-215、#21から継続）
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2745付近、#11から継続監視中）
 - **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、#11から継続監視中）
-- **🟢 `joinByInviteCode`（app-main.js:852）が呼び出し元ゼロのデッドコード**（企業アカウント招待コード参加UIは依然未実装。#15から継続。今回確認したところ`onJoinByInviteCode`というprop渡し自体も他ファイルから見当たらなくなっており、関数定義のみが完全に孤立している）
+- **🟢 `joinByInviteCode`（app-main.js:852）が呼び出し元ゼロのデッドコード**（企業アカウント招待コード参加UIは依然未実装。#15から継続。`onJoinByInviteCode`prop自体も他ファイルに存在せず孤立したまま）
 
 ### 異常なし
-クリティカル（🔴）・中程度（🟡）の問題はなし。前回チェック（#22）からコード変更がなく、新規バグの混入なし。
+クリティカル（🔴）・中程度（🟡）の問題はなし。前回チェック（#23）からコード変更がなく、新規バグの混入なし。4回連続（#21修正以降）で新規バグなし。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
 -
 -
 -
