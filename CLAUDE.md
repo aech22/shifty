@@ -555,22 +555,22 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-18 自動実行 #28）
+## Shifty バグチェックレポート（2026-07-19 自動実行 #29）
 
 ### 修正済み
 （今回の実行では修正なし）
 
-### 前回巡回（#27・2026-07-18）以降の新規コミット
-1件（`ee029a6` docs: バグチェック#27をCLAUDE.mdに同期）。ドキュメント同期のみで、`app-*.js`・`functions/index.js`・`database.rules.json`・`index.html` への変更は0件。
+### 前回巡回（#28・2026-07-18）以降の新規コミット
+0件（`0d4efa2..HEAD` が空）。`app-*.js`・`functions/index.js`・`database.rules.json`・`index.html` への変更は0件。
 
 ### スキャン結果
 - `subs`の`set()`全体上書き: ヒット0（正常）
 - `filter(s=>s.id!==...)`削除パターン: 全8ヒット確認（app-main.js:773,924,926,1515／app-admin.js:132,1718,2726,2849）。shops系フィルタ（削除対象外）を除く subs 系はすべてdeletedId渡し（app-admin.js:1718,2726）か`remove()`直呼び出し（app-main.js:1515 `onDeleteSub`）
 - DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE（app-core.js:81）正常
-- セキュリティ: `ref("global/shops")`全件読み・`global/templates`参照の復活なし（直キー読みのみ維持）、`database.rules.json`に無条件`".read": true`なし
+- セキュリティ: `ref("global/shops")`全件読み・`global/templates`参照の復活なし（直キー読みのみ維持）。`database.rules.json`の`".read"`はすべて`auth != null`（+条件付き）で無条件`".read": true`は0件（stripeCustomerId・companies/private・companyCodesは`false`維持）
 - index.html: スクリプト読み込み順（utils→core→staff→admin→main、211-215行）維持、CDN SRI 11本・キャッシュバスティング版数`?v=20260708-a8bfc44`（変化なし）
 - Cloud Functions: secrets抜け漏れなし（Stripe系3関数・sendEmailOtp・sendSurveyEmailsとも既定通り）、`.delete()`誤用なし、安全装置（`Number.isNaN`・`archived/shops`）9箇所維持
-- isPro/isPremium誤用: 新規ヒットなし（唯一の該当箇所app-admin.js:2702はPremium機能と無関係の未登録スタッフ判定で妥当）
+- isPro/isPremium誤用: 新規ヒットなし（唯一の該当箇所app-admin.js:2702はPremium機能と無関係の未登録スタッフ別名登録UIの表示条件で妥当）
 - `npm test`: 83件パス、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
 
 ### 要確認（未修正・継続）
@@ -582,13 +582,15 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 - **🟢 スキルがPHASE 0で読むよう指示している`VISION.md`がリポジトリに存在しない**（#27から継続。完了判定はCLAUDE.md・RULES.mdとスキル本文の基準のみで実施。VISION.md再作成またはスキル側の参照削除が必要）
 
 ### 異常なし
-クリティカル（🔴）・中程度（🟡）の問題はなし。前回チェック（#27）以降のコード変更が0件で、新規バグの混入なし。8回連続（#21修正以降）で新規バグなし。作業ツリーの`.cursorrules`未コミット変更は#27に続き残っているが、本ループの対象外（別セッションの作業の可能性があるため触れていない）。
+クリティカル（🔴）・中程度（🟡）の問題はなし。前回チェック（#28）以降のコミットが0件で、新規バグの混入なし。9回連続（#21修正以降）で新規バグなし。作業ツリーの`.cursorrules`未コミット変更は#28に続き残っているが、本ループの対象外（別セッションの作業の可能性があるため触れていない）。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
 -
 -
 -
