@@ -178,7 +178,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           saveSettings({...settings,staffColors:sc});
           tt(`✓ ${oldName} → ${newName} に変更しました`);
         }}/>}
-        {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
+        {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan} periods={periods}/>}
         {tab==="submissions"&&<SubsTab key={currentShopId} subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
         {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
         {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany}/>}
@@ -2326,7 +2326,7 @@ const dragIdxRef=useRef(null);
 }
 
 // ===== 候補管理タブ（複数選択対応）=====
-function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan="free"}){
+function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan="free",periods=[]}){
   const[mode,setMode]=useState("global");
   const[selDows,setSelDows]=useState([1]);
   const[selDates,setSelDates]=useState([tds]);
@@ -2593,10 +2593,16 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
             }} style={{padding:"6px 12px",background:"rgba(255,71,87,.15)",border:"1px solid rgba(255,71,87,.3)",borderRadius:8,color:"#FF4757",fontSize:12,fontWeight:700,cursor:"pointer"}}>× 休業日に設定</button>
           </div>
         </div>
-        {Object.keys(settings.dateCandidates||{}).length>0&&<div style={{marginTop:14}}>
-          <div style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:8}}>設定済みの日付</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{Object.keys(settings.dateCandidates||{}).sort().map(dt=>{const sel=selDates.includes(dt);return(<button key={dt} onClick={()=>setSelDates(prev=>prev.includes(dt)?prev.filter(d=>d!==dt):[...prev,dt])} style={{padding:"4px 9px",borderRadius:6,background:sel?"#f87036":"var(--c-border)",border:`1px solid ${sel?"#f87036":"var(--c-border2)"}`,color:"var(--c-text)",fontSize:11,fontWeight:600,cursor:"pointer"}}>{dt.replace(/-/g,"/")}（{((settings.dateCandidates||{})[dt]||[]).length}件）</button>);})}</div>
-        </div>}
+        {(()=>{
+          // 最新から3個前の期間より古い設定済み日付は非表示（データは削除せず表示フィルタのみ）。設定済み日付の選択は単一選択。
+          const dcCutoff=dateCandidateDisplayCutoff(periods);
+          const dispDates=Object.keys(settings.dateCandidates||{}).sort().filter(dt=>dcCutoff===null||dt>=dcCutoff);
+          if(dispDates.length===0)return null;
+          return(<div style={{marginTop:14}}>
+            <div style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:8}}>設定済みの日付</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{dispDates.map(dt=>{const sel=selDates.includes(dt);return(<button key={dt} onClick={()=>setSelDates(prev=>(prev.length===1&&prev[0]===dt)?[]:[dt])} style={{padding:"4px 9px",borderRadius:6,background:sel?"#f87036":"var(--c-border)",border:`1px solid ${sel?"#f87036":"var(--c-border2)"}`,color:"var(--c-text)",fontSize:11,fontWeight:600,cursor:"pointer"}}>{dt.replace(/-/g,"/")}（{((settings.dateCandidates||{})[dt]||[]).length}件）</button>);})}</div>
+          </div>);
+        })()}
       </AC>}
 
       {mode==="template"&&<AC title="曜日別候補テンプレート">
