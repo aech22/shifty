@@ -260,6 +260,11 @@ function matchingPositionDayTypes(dateCands,weekdayCandidates){
   });
   return set;
 }
+// requiredPositions に1件でもポジション枠が設定されているか（区分×ランチ/ディナー×キッチン/ホールのいずれか）。
+function hasAnyRequiredPosition(requiredPositions){
+  const reqAll=requiredPositions||{};
+  return Object.values(reqAll).some(dt=>dt&&["lunch","dinner"].some(m=>{const r=dt[m];return !!(r&&(((r.kitchen||[]).length)||((r.hall||[]).length)));}));
+}
 // 必要ポジション判定で日付に適用する曜日区分を決める。
 // 1) settings.dateCandidatePosTypes[dateStr] に有効な手動指定があればそれを使う
 // 2) なければ dateCandidates[dateStr] と完全一致する曜日別候補の区分が一意に定まればそれを使う
@@ -471,5 +476,5 @@ function applyFlatSubWrite(map,path,value){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition};
 }

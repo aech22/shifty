@@ -143,6 +143,7 @@ const sharedGlobals = {
   candListsEqual: "writable",
   matchingPositionDayTypes: "writable",
   positionDayTypeFor: "writable",
+  hasAnyRequiredPosition: "writable",
   ssGet: "writable",
   ssSave: "writable",
   storeKey: "writable",
