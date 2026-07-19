@@ -1187,6 +1187,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     // スタッフ35名以上: 部門仕切り用スペーサー列が常に空白のままだと、印刷時に日付を見失いやすいため日付を表示する
     const showSpacerDate=cols.filter(n=>!isSpacer(n)).length>34;
     const BDp="1px solid #888",BDp2="2px solid #555";
+    // ヒートマップ列は行背景(土日祝の #DDEEFF/#FFEEEE)が透けて混色するのを防ぐため、半透明オレンジを
+    // 白地に合成した不透明RGBにする。n===0は白。印刷でも確実に効くよう透明・rgbaは使わない。
+    const heatBg=(n,max)=>{
+      if(!n)return"#fff";
+      const a=0.15+(n/max)*0.75;
+      const mix=c=>Math.round(c*a+255*(1-a));
+      return`rgb(${mix(248)},${mix(112)},${mix(54)})`;
+    };
     // ヘッダーRow2の固定高さ: 縦書きスタッフ名(最大5文字)と単行のヒートマップ時刻見出しとで自然な高さが大きく異なるため、
     // シフト表ページと時間帯別出勤人数ページを別紙で並べたときに日付行がずれないよう両ページで揃える
     const R2H=64;
@@ -1241,7 +1249,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         h+=mergeTd(esc(wd),top);
         if(showKit)heatHours.forEach(hr=>{
           const n=countHeat("kit",ds,hr);
-          const bg=n===0?"transparent":`rgba(248,112,54,${0.15+(n/kitMax)*0.75})`;
+          const bg=heatBg(n,kitMax);
           h+=mergeHeat(n||"",top,bg);
         });
         if(staffCols)cols.forEach(nm=>{
@@ -1267,7 +1275,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         });
         if(showHall){h+=heatGap;heatHours.forEach(hr=>{
           const n=countHeat("hall",ds,hr);
-          const bg=n===0?"transparent":`rgba(248,112,54,${0.15+(n/hallMax)*0.75})`;
+          const bg=heatBg(n,hallMax);
           h+=mergeHeat(n||"",top,bg);
         });}
         h+=mergeTd(esc(wd),top);
@@ -1517,16 +1525,16 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                   const d=pd(date);const day=d.getDay();
                   const isHol=isHoliday(date);const isSun=day===0;const isSat=day===6;
                   const dc=(isSun||isHol)?"#e53935":isSat?"#1976d2":"var(--c-text)";
-                  const baseRb=(isSun||isHol)?"rgba(229,57,53,0.07)":isSat?"rgba(25,118,210,0.07)":"transparent";
-                  // ポジション不足がある帯（ランチ=出勤行/ディナー=退勤行）のセル背景を赤く塗る。
-                  // 不足しているカテゴリ(キッチン/ホール)の担当スタッフのセルのみ対象（cellPosErrがスタッフ所属で判定）。
-                  const rbS=name=>cellPosErr(name,date,"lunch")?LEGEND_COLORS.posErr:baseRb;
-                  const rbE=name=>cellPosErr(name,date,"dinner")?LEGEND_COLORS.posErr:baseRb;
+                  // 土日祝はセル背景を塗らず、日付行ペアの上辺(出勤行)・下辺(退勤行)の色枠で表す（緑の変更マーク等と混色しないため）。
+                  // border-collapse で隣接1px線に勝つよう2px。sat=青・sun/祝=赤。ポジション不足は各inputに赤枠(boxShadow)で表示する。
+                  const wkColor=(isSun||isHol)?"rgba(229,57,53,.6)":isSat?"rgba(25,118,210,.6)":null;
+                  const wkTop=wkColor?{borderTop:`2px solid ${wkColor}`}:null;
+                  const wkBot=wkColor?{borderBottom:`2px solid ${wkColor}`}:null;
                   return[
-                    <tr key={date+"-s"} style={{background:baseRb}}>
-                      <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
+                    <tr key={date+"-s"}>
+                      <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD,...wkTop,...wkBot}}>{fmtDL(date)}</td>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rbS(name),width:colW,minWidth:colW,maxWidth:colW}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",width:colW,minWidth:colW,maxWidth:colW,...wkTop}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
@@ -1539,13 +1547,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             // 除外しないと変換確定のEnterで即座に次セルへ移動し、IMEの確定処理がそのまま次セルに入って
                             // 手打ちしていないセルにも同じ文字（例:「締」）が入ってしまう
                             onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"start",e.target.value);if(e.ctrlKey||e.metaKey){const pdi=dates.indexOf(date)-1;if(pdi>=0)document.querySelector(`[data-sc="${dates[pdi]}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:undefined,backgroundColor:cellBgFor(name,date,"start",AI2.background),...hdashStyle(holidayCellDash(name,date,"start")),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                            style={{...AI2,background:undefined,backgroundColor:cellBgFor(name,date,"start",AI2.background),...hdashStyle(holidayCellDash(name,date,"start")),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer",boxShadow:cellPosErr(name,date,"lunch")?"inset 0 0 0 1.5px rgba(239,68,68,.8)":undefined}}/>
                         </td>
                       ),spacerCell)}
                     </tr>,
-                    <tr key={date+"-e"} style={{background:baseRb}}>
+                    <tr key={date+"-e"}>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rbE(name),width:colW,minWidth:colW,maxWidth:colW}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",width:colW,minWidth:colW,maxWidth:colW,...wkBot}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
@@ -1555,7 +1563,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:undefined,backgroundColor:cellBgFor(name,date,"end",AI2.background),...hdashStyle(holidayCellDash(name,date,"end")),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                            style={{...AI2,background:undefined,backgroundColor:cellBgFor(name,date,"end",AI2.background),...hdashStyle(holidayCellDash(name,date,"end")),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer",boxShadow:cellPosErr(name,date,"dinner")?"inset 0 0 0 1.5px rgba(239,68,68,.8)":undefined}}/>
                         </td>
                       ),spacerCell)}
                     </tr>
