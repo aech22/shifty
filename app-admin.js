@@ -178,7 +178,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           saveSettings({...settings,staffColors:sc});
           tt(`✓ ${oldName} → ${newName} に変更しました`);
         }}/>}
-        {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan}/>}
+        {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan} periods={periods}/>}
         {tab==="submissions"&&<SubsTab key={currentShopId} subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
         {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
         {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany}/>}
@@ -200,7 +200,6 @@ const FIXED_KEY=FIXED_ENTRY?FIXED_ENTRY.key:"";
 // 休み希望セルの斜線（右上→左下・PDF出力のhatchと同じSVG方式）。#999はライト/ダーク両テーマで視認可、
 // non-scaling-strokeでセルサイズに引き伸ばしても線幅一定。inputのbackgroundImageに敷き、色背景はbackgroundColorと2層で共存させる
 const HDASH_IMG=`url("data:image/svg+xml;charset=utf-8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' preserveAspectRatio='none'><line x1='10' y1='0' x2='0' y2='10' stroke='#999' stroke-width='1.5' vector-effect='non-scaling-stroke'/></svg>")}")`;
-const hdashStyle=on=>on?{backgroundImage:HDASH_IMG,backgroundRepeat:"no-repeat",backgroundSize:"100% 100%"}:null;
 
 // 時間帯別出勤人数（ヒートマップ）。ShiftEditTab の外（モジュールスコープ）で定義しコンポーネント型を固定する。
 // ShiftEditTab内で定義すると親の再レンダー（セル選択等）のたびに新しい関数=新しい型になり、
@@ -980,7 +979,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const gridContentW=90+colW*gridStaff.length;
   const fitsCentered=singlePanel&&(panelW+4+gridContentW+24)<=window.innerWidth;
   const AI2={width:colW-3,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
-  // 斜線スタイル: HDASH_IMG / hdashStyle はモジュールスコープ（GridLegendと共用）
+  // 斜線画像 HDASH_IMG はモジュールスコープ（GridLegend・cellBgStyleと共用）
   const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:16,fontWeight:600,borderRight:BD2};
   // スタッフ名色（Excel書き出しと同ルール: staffColors[name]==="red"→赤）
   const nameColor=name=>((settings.staffColors||{})[name]==="red"?"#e53935":"var(--c-text)");
@@ -1077,6 +1076,20 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     if(key in localEdits){note=extractNote(localEdits[key]).note;}
     else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
     return note?"#333":undefined;
+  };
+  // セル背景を2層で作る: backgroundColorは常に不透明ベース(var(--c-input))、その上に cellBgFor が返す
+  // 半透明レジェンド色(緑=変更/赤=重複)や不透明色(黄=特記)を linear-gradient 層で重ねる。こうすると
+  // td側の行背景(土日tint・ポジション不足の赤)が input を透過して混色するのを防ぎ、非土日セルと同じ見た目になる
+  // （--c-input はライト/ダーク両テーマとも不透明色なので合成結果もテーマ非依存で通常セルと揃う）。
+  // 休み希望の斜線(HDASH_IMG)も backgroundImage を使うため、両方付くケースでは斜線を前面にカンマ合成して消えないようにする。
+  const cellBgStyle=(name,date,field)=>{
+    const col=cellBgFor(name,date,field,AI2.background);
+    const layers=[];
+    if(holidayCellDash(name,date,field))layers.push(HDASH_IMG); // 斜線を最前面（色の上に描く）
+    if(col!==AI2.background)layers.push(`linear-gradient(${col},${col})`); // レジェンド色を不透明ベースに重ねる
+    const st={backgroundColor:AI2.background};
+    if(layers.length){st.backgroundImage=layers.join(",");st.backgroundRepeat="no-repeat";st.backgroundSize="100% 100%";}
+    return st;
   };
   // トリプルクリック/トリプルタップ: そのシフトのchangedフラグをトグル（Firebase永続化）
   const toggleChanged=(name,date)=>{
@@ -1187,6 +1200,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     // スタッフ35名以上: 部門仕切り用スペーサー列が常に空白のままだと、印刷時に日付を見失いやすいため日付を表示する
     const showSpacerDate=cols.filter(n=>!isSpacer(n)).length>34;
     const BDp="1px solid #888",BDp2="2px solid #555";
+    // ヒートマップ列は行背景(土日祝の #DDEEFF/#FFEEEE)が透けて混色するのを防ぐため、半透明オレンジを
+    // 白地に合成した不透明RGBにする。n===0は白。印刷でも確実に効くよう透明・rgbaは使わない。
+    const heatBg=(n,max)=>{
+      if(!n)return"#fff";
+      const a=0.15+(n/max)*0.75;
+      const mix=c=>Math.round(c*a+255*(1-a));
+      return`rgb(${mix(248)},${mix(112)},${mix(54)})`;
+    };
     // ヘッダーRow2の固定高さ: 縦書きスタッフ名(最大5文字)と単行のヒートマップ時刻見出しとで自然な高さが大きく異なるため、
     // シフト表ページと時間帯別出勤人数ページを別紙で並べたときに日付行がずれないよう両ページで揃える
     const R2H=64;
@@ -1241,7 +1262,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         h+=mergeTd(esc(wd),top);
         if(showKit)heatHours.forEach(hr=>{
           const n=countHeat("kit",ds,hr);
-          const bg=n===0?"transparent":`rgba(248,112,54,${0.15+(n/kitMax)*0.75})`;
+          const bg=heatBg(n,kitMax);
           h+=mergeHeat(n||"",top,bg);
         });
         if(staffCols)cols.forEach(nm=>{
@@ -1267,7 +1288,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         });
         if(showHall){h+=heatGap;heatHours.forEach(hr=>{
           const n=countHeat("hall",ds,hr);
-          const bg=n===0?"transparent":`rgba(248,112,54,${0.15+(n/hallMax)*0.75})`;
+          const bg=heatBg(n,hallMax);
           h+=mergeHeat(n||"",top,bg);
         });}
         h+=mergeTd(esc(wd),top);
@@ -1539,7 +1560,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             // 除外しないと変換確定のEnterで即座に次セルへ移動し、IMEの確定処理がそのまま次セルに入って
                             // 手打ちしていないセルにも同じ文字（例:「締」）が入ってしまう
                             onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"start",e.target.value);if(e.ctrlKey||e.metaKey){const pdi=dates.indexOf(date)-1;if(pdi>=0)document.querySelector(`[data-sc="${dates[pdi]}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:undefined,backgroundColor:cellBgFor(name,date,"start",AI2.background),...hdashStyle(holidayCellDash(name,date,"start")),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"start"),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
                       ),spacerCell)}
                     </tr>,
@@ -1555,7 +1576,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:undefined,backgroundColor:cellBgFor(name,date,"end",AI2.background),...hdashStyle(holidayCellDash(name,date,"end")),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"end"),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
                       ),spacerCell)}
                     </tr>
@@ -2219,7 +2240,7 @@ const dragIdxRef=useRef(null);
                 {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
                   別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
                 </button>}
-                {isPremium&&<button onClick={()=>{setPosIdx(posIdx===i?null:i);}} style={{padding:"6px 10px",background:posIdx===i?"rgba(59,130,246,.15)":"rgba(59,130,246,.06)",border:`1px solid ${posIdx===i?"#3B82F6":"rgba(59,130,246,.3)"}`,borderRadius:6,color:"#3B82F6",fontSize:12,cursor:"pointer",minWidth:76,textAlign:"center"}}>
+                {isPremium&&<button onClick={()=>{setPosIdx(posIdx===i?null:i);}} style={{padding:"6px 8px",background:posIdx===i?"rgba(59,130,246,.15)":"rgba(59,130,246,.06)",border:`1px solid ${posIdx===i?"#3B82F6":"rgba(59,130,246,.3)"}`,borderRadius:6,color:"#3B82F6",fontSize:12,cursor:"pointer",width:118,boxSizing:"border-box",flexShrink:0,whiteSpace:"nowrap",textAlign:"center"}}>
                   ポジション{(((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length)>0?` (${((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length})`:""}
                 </button>}
                 <button onClick={()=>startEdit(i)} style={{padding:"6px 10px",background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.25)",borderRadius:6,color:"#3B82F6",fontSize:12,cursor:"pointer"}}>編集</button>
@@ -2305,7 +2326,7 @@ const dragIdxRef=useRef(null);
 }
 
 // ===== 候補管理タブ（複数選択対応）=====
-function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan="free"}){
+function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan="free",periods=[]}){
   const[mode,setMode]=useState("global");
   const[selDows,setSelDows]=useState([1]);
   const[selDates,setSelDates]=useState([tds]);
@@ -2324,6 +2345,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
   const[brkTags,setBrkTags]=useState([]); // 新規休憩に付与する属性タグ
   const[editTagKey,setEditTagKey]=useState(null); // タグ編集中の "dayType_index"
   const[posTypeModal,setPosTypeModal]=useState(null); // {date, types:[posType,...]} 必要ポジションの曜日区分選択ポップアップ
+  const[tmplApply,setTmplApply]=useState(null); // {index, weekdays:[0..8]} テンプレ適用時の曜日選択パネル
 
   const toggleArr=(arr,setArr,val)=>setArr(prev=>prev.includes(val)?prev.filter(v=>v!==val):[...prev,val]);
 
@@ -2395,9 +2417,15 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
     const ts=[...globalTemplates,tmpl];
     saveGlobalTemplates(ts);setTmplName("");tt(`✓ テンプレート「${tmplName.trim()}」を保存しました（この店舗）`);
   };
-  const applyTemplate=t=>{
-    if(!confirm(`テンプレート「${t.name}」を適用しますか？現在の曜日別候補が上書きされます。`))return;
-    onSave({...settings,weekdayCandidates:t.weekdayCandidates});tt(`✓ テンプレート「${t.name}」を適用しました`);
+  // テンプレを選択した曜日にだけ適用する。選択曜日のみ w[d]=テンプレの候補(空なら[])で上書きし、未選択曜日は現状維持。
+  // 全曜日(WDAY_OPTS)を選択すれば従来の一括適用と同じ結果になる。
+  const doApplyTemplate=(t,weekdays)=>{
+    if(!weekdays.length){tt("▲ 適用する曜日を選択してください");return;}
+    const names=weekdays.slice().sort((a,b)=>a-b).map(wdLabel).join("・");
+    if(!confirm(`テンプレート「${t.name}」の候補を ${names} に適用しますか？選択した曜日の候補が上書きされます。`))return;
+    const w={...(settings.weekdayCandidates||{})};
+    weekdays.forEach(d=>{w[d]=(t.weekdayCandidates||{})[d]||[];});
+    onSave({...settings,weekdayCandidates:w});setTmplApply(null);tt(`✓ テンプレート「${t.name}」を ${names} に適用しました`);
   };
   const delTemplate=i=>{const ts=[...globalTemplates];ts.splice(i,1);saveGlobalTemplates(ts);tt("削除しました");};
 
@@ -2539,11 +2567,11 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
           {dC.length===0&&<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>未設定</div>}
           <CL items={dC} onDel={i=>delD(selDates[0],i)}/>
           {(()=>{
-            if(!hasAnyRequiredPosition(settings.requiredPositions))return null;
+            // 必要ポジション設定済み店舗で候補が登録された日付なら、曖昧一致の有無に関わらず現在値＋変更ボタンを常に表示する
+            if(!hasAnyRequiredPosition(settings.requiredPositions)||dC.length===0)return null;
             const date=selDates[0];
             const ov=(settings.dateCandidatePosTypes||{})[date];
             const ambTypes=[...matchingPositionDayTypes(dC,settings.weekdayCandidates||{})];
-            if(!ov&&ambTypes.length<2)return null;
             const lbl=ov?((POSITION_DAY_TYPES.find(t=>t[0]===ov)||[])[1]||ov):"自動判定";
             return(<div style={{marginTop:8,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:12,color:"var(--c-text3)"}}>
               <span>必要ポジションの曜日区分：<b style={{color:"var(--c-text)"}}>{lbl}</b></span>
@@ -2572,10 +2600,16 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
             }} style={{padding:"6px 12px",background:"rgba(255,71,87,.15)",border:"1px solid rgba(255,71,87,.3)",borderRadius:8,color:"#FF4757",fontSize:12,fontWeight:700,cursor:"pointer"}}>× 休業日に設定</button>
           </div>
         </div>
-        {Object.keys(settings.dateCandidates||{}).length>0&&<div style={{marginTop:14}}>
-          <div style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:8}}>設定済みの日付</div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{Object.keys(settings.dateCandidates||{}).sort().map(dt=>{const sel=selDates.includes(dt);return(<button key={dt} onClick={()=>setSelDates(prev=>prev.includes(dt)?prev.filter(d=>d!==dt):[...prev,dt])} style={{padding:"4px 9px",borderRadius:6,background:sel?"#f87036":"var(--c-border)",border:`1px solid ${sel?"#f87036":"var(--c-border2)"}`,color:"var(--c-text)",fontSize:11,fontWeight:600,cursor:"pointer"}}>{dt.replace(/-/g,"/")}（{((settings.dateCandidates||{})[dt]||[]).length}件）</button>);})}</div>
-        </div>}
+        {(()=>{
+          // 最新から3個前の期間より古い設定済み日付は非表示（データは削除せず表示フィルタのみ）。設定済み日付の選択は単一選択。
+          const dcCutoff=dateCandidateDisplayCutoff(periods);
+          const dispDates=Object.keys(settings.dateCandidates||{}).sort().filter(dt=>dcCutoff===null||dt>=dcCutoff);
+          if(dispDates.length===0)return null;
+          return(<div style={{marginTop:14}}>
+            <div style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:8}}>設定済みの日付</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{dispDates.map(dt=>{const sel=selDates.includes(dt);return(<button key={dt} onClick={()=>setSelDates(prev=>(prev.length===1&&prev[0]===dt)?[]:[dt])} style={{padding:"4px 9px",borderRadius:6,background:sel?"#f87036":"var(--c-border)",border:`1px solid ${sel?"#f87036":"var(--c-border2)"}`,color:"var(--c-text)",fontSize:11,fontWeight:600,cursor:"pointer"}}>{dt.replace(/-/g,"/")}（{((settings.dateCandidates||{})[dt]||[]).length}件）</button>);})}</div>
+          </div>);
+        })()}
       </AC>}
 
       {mode==="template"&&<AC title="曜日別候補テンプレート">
@@ -2587,13 +2621,25 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
         </div>
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>この店舗に保存されます</div>
         {globalTemplates.length===0&&<div style={{fontSize:13,color:"var(--c-text4)"}}>保存済みテンプレートはありません</div>}
-        {globalTemplates.map((t,i)=>(
-          <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:10,marginBottom:6,opacity:plan==="free"?.4:1,pointerEvents:plan==="free"?"none":"auto"}}>
-            <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{t.name}</span>
-            <button onClick={()=>applyTemplate(t)} style={{...AB,padding:"6px 12px",fontSize:12}}>適用</button>
-            <button onClick={()=>delTemplate(i)} style={AD}>削除</button>
-          </div>
-        ))}
+        {globalTemplates.map((t,i)=>{
+          const open=tmplApply&&tmplApply.index===i;
+          return(<div key={i} style={{marginBottom:6,opacity:plan==="free"?.4:1,pointerEvents:plan==="free"?"none":"auto"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:open?"10px 10px 0 0":10}}>
+              <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{t.name}</span>
+              <button onClick={()=>setTmplApply(open?null:{index:i,weekdays:WDAY_OPTS.filter(d=>(((t.weekdayCandidates||{})[d])||[]).length>0)})} style={{...AB,padding:"6px 12px",fontSize:12}}>適用</button>
+              <button onClick={()=>delTemplate(i)} style={AD}>削除</button>
+            </div>
+            {open&&<div style={{padding:"12px 14px",background:"var(--c-input2)",border:"1px solid var(--c-border)",borderTop:"none",borderRadius:"0 0 10px 10px"}}>
+              <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8}}>適用する曜日を選択（テンプレに候補がある曜日を初期選択）</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{WDAY_OPTS.map(d=>{const sel=tmplApply.weekdays.includes(d);const cnt=(((t.weekdayCandidates||{})[d])||[]).length;return(
+                <button key={d} onClick={()=>setTmplApply(cur=>({...cur,weekdays:cur.weekdays.includes(d)?cur.weekdays.filter(x=>x!==d):[...cur.weekdays,d]}))} style={{padding:"6px 12px",borderRadius:16,fontSize:12,fontWeight:700,border:"1px solid",cursor:"pointer",background:sel?"#f87036":"var(--c-input)",borderColor:sel?"transparent":"var(--c-border2)",color:sel?"white":"var(--c-text2)"}}>{wdLabel(d)}（{cnt}）</button>);})}</div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>doApplyTemplate(t,tmplApply.weekdays)} style={{...AB,padding:"8px 14px",fontSize:13}}>選択した曜日に適用</button>
+                <button onClick={()=>setTmplApply(null)} style={{...AGray,padding:"8px 14px",fontSize:13}}>キャンセル</button>
+              </div>
+            </div>}
+          </div>);
+        })}
       </AC>}
 
       {mode==="break"&&(()=>{

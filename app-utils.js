@@ -74,6 +74,13 @@ function recentPeriodIds(periods,refDate,months){
   const cutoff=subsWindowCutoff(refDate,months);
   return (periods||[]).filter(p=>p&&p.id&&p.startDate&&p.startDate>=cutoff).map(p=>p.id);
 }
+// 「設定済みの日付」一覧の表示下限日付("YYYY-MM-DD")。最新から3個前の期間(降順で4番目)のstartDateを返し、
+// この日付以降の設定済み日付だけを表示する（cutoff当日は dt>=cutoff で残る）。期間が4件未満なら null=全件表示。
+// periodsは降順ソート済み前提だが、空・未ソートでも安全に動くよう startDate で降順ソートし直してから取る。
+function dateCandidateDisplayCutoff(periods){
+  const dates=(periods||[]).filter(p=>p&&p.startDate).map(p=>p.startDate).sort().reverse();
+  return dates.length>=4?dates[3]:null;
+}
 function gto(){
   const o=[];
   // 9:00〜24:00（15分刻み）
@@ -476,5 +483,5 @@ function applyFlatSubWrite(map,path,value){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition};
 }
