@@ -108,26 +108,31 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   // 全日程一括入力（通し／ランチ／ディナー）※トグル: 既に全日程が同一内容なら休みに戻す
   const bulkFill=type=>{
     const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
-    const src=(settings.candidates||CAND_WEEKDAY).filter(c=>!c.closed&&c.start&&c.end);
-    let cand;
-    if(type==="through"){
-      // 通し: 単一候補ではなく、候補全体の最も早い出勤〜最も遅い退勤を動的に組み立てる
-      const earliestStart=src.reduce((best,c)=>!best||toMin(c.start)<toMin(best)?c.start:best,null);
-      const latestEnd=src.reduce((best,c)=>!best||toMin(c.end)>toMin(best)?c.end:best,null);
-      cand=earliestStart&&latestEnd?{start:earliestStart,end:latestEnd}:null;
-    }else{
+    // 日付ごとに gc(ds)（日付別>祝日>曜日別>全体）で解決した候補から適用値を求める。
+    // settings.candidates 直読みだと曜日別・日付別候補が無視され、通し=最長に対応しない不具合になる。
+    const candFor=ds=>{
+      const src=gc(ds).filter(c=>!c.closed&&c.start&&c.end);
+      if(src.length===0)return null;
+      if(type==="through"){
+        // 通し: 単一候補ではなく、その日の候補の最も早い出勤〜最も遅い退勤を動的に組み立てる
+        const earliestStart=src.reduce((best,c)=>!best||toMin(c.start)<toMin(best)?c.start:best,null);
+        const latestEnd=src.reduce((best,c)=>!best||toMin(c.end)>toMin(best)?c.end:best,null);
+        return earliestStart&&latestEnd?{start:earliestStart,end:latestEnd}:null;
+      }
       const pool=type==="lunch"?src.filter(c=>toMin(c.end)<=toMin("17:00"))
         :src.filter(c=>toMin(c.start)>=toMin("17:00"));
-      cand=pool.reduce((best,c)=>!best||(toMin(c.end)-toMin(c.start))>(toMin(best.end)-toMin(best.start))?c:best,null);
-    }
-    if(!cand){tt_("▲ 該当する候補時間が見つかりません");return;}
-    const applicable=dates.filter(ds=>!gc(ds).some(c=>c.closed));
-    const alreadyApplied=applicable.length>0&&applicable.every(ds=>{const s=sd[ds];return s?.status==="work"&&s.start===cand.start&&s.end===cand.end;});
+      return pool.reduce((best,c)=>!best||(toMin(c.end)-toMin(c.start))>(toMin(best.end)-toMin(best.start))?c:best,null);
+    };
+    // 休業日を除き、その日に適用可能な候補がある日付のみ対象
+    const applicable=dates.filter(ds=>!gc(ds).some(c=>c.closed)&&candFor(ds));
+    if(applicable.length===0){tt_("▲ 該当する候補時間が見つかりません");return;}
+    const alreadyApplied=applicable.every(ds=>{const s=sd[ds];const cand=candFor(ds);return s?.status==="work"&&s.start===cand.start&&s.end===cand.end;});
     editingRef.current=true;
     dirtyRef.current=true;
     setSd(p=>{
       const n={...p};
       applicable.forEach(ds=>{
+        const cand=candFor(ds);
         n[ds]=stripUndef(alreadyApplied?{...n[ds],status:"holiday",start:undefined,end:undefined}:{...n[ds],status:"work",start:cand.start,end:cand.end});
       });
       return n;
