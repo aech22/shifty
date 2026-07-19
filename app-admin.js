@@ -200,7 +200,6 @@ const FIXED_KEY=FIXED_ENTRY?FIXED_ENTRY.key:"";
 // 休み希望セルの斜線（右上→左下・PDF出力のhatchと同じSVG方式）。#999はライト/ダーク両テーマで視認可、
 // non-scaling-strokeでセルサイズに引き伸ばしても線幅一定。inputのbackgroundImageに敷き、色背景はbackgroundColorと2層で共存させる
 const HDASH_IMG=`url("data:image/svg+xml;charset=utf-8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' preserveAspectRatio='none'><line x1='10' y1='0' x2='0' y2='10' stroke='#999' stroke-width='1.5' vector-effect='non-scaling-stroke'/></svg>")}")`;
-const hdashStyle=on=>on?{backgroundImage:HDASH_IMG,backgroundRepeat:"no-repeat",backgroundSize:"100% 100%"}:null;
 
 // 時間帯別出勤人数（ヒートマップ）。ShiftEditTab の外（モジュールスコープ）で定義しコンポーネント型を固定する。
 // ShiftEditTab内で定義すると親の再レンダー（セル選択等）のたびに新しい関数=新しい型になり、
@@ -980,7 +979,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const gridContentW=90+colW*gridStaff.length;
   const fitsCentered=singlePanel&&(panelW+4+gridContentW+24)<=window.innerWidth;
   const AI2={width:colW-3,fontSize:16,border:BD,borderRadius:3,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
-  // 斜線スタイル: HDASH_IMG / hdashStyle はモジュールスコープ（GridLegendと共用）
+  // 斜線画像 HDASH_IMG はモジュールスコープ（GridLegend・cellBgStyleと共用）
   const SD={position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:16,fontWeight:600,borderRight:BD2};
   // スタッフ名色（Excel書き出しと同ルール: staffColors[name]==="red"→赤）
   const nameColor=name=>((settings.staffColors||{})[name]==="red"?"#e53935":"var(--c-text)");
@@ -1077,6 +1076,20 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     if(key in localEdits){note=extractNote(localEdits[key]).note;}
     else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
     return note?"#333":undefined;
+  };
+  // セル背景を2層で作る: backgroundColorは常に不透明ベース(var(--c-input))、その上に cellBgFor が返す
+  // 半透明レジェンド色(緑=変更/赤=重複)や不透明色(黄=特記)を linear-gradient 層で重ねる。こうすると
+  // td側の行背景(土日tint・ポジション不足の赤)が input を透過して混色するのを防ぎ、非土日セルと同じ見た目になる
+  // （--c-input はライト/ダーク両テーマとも不透明色なので合成結果もテーマ非依存で通常セルと揃う）。
+  // 休み希望の斜線(HDASH_IMG)も backgroundImage を使うため、両方付くケースでは斜線を前面にカンマ合成して消えないようにする。
+  const cellBgStyle=(name,date,field)=>{
+    const col=cellBgFor(name,date,field,AI2.background);
+    const layers=[];
+    if(holidayCellDash(name,date,field))layers.push(HDASH_IMG); // 斜線を最前面（色の上に描く）
+    if(col!==AI2.background)layers.push(`linear-gradient(${col},${col})`); // レジェンド色を不透明ベースに重ねる
+    const st={backgroundColor:AI2.background};
+    if(layers.length){st.backgroundImage=layers.join(",");st.backgroundRepeat="no-repeat";st.backgroundSize="100% 100%";}
+    return st;
   };
   // トリプルクリック/トリプルタップ: そのシフトのchangedフラグをトグル（Firebase永続化）
   const toggleChanged=(name,date)=>{
@@ -1525,16 +1538,16 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                   const d=pd(date);const day=d.getDay();
                   const isHol=isHoliday(date);const isSun=day===0;const isSat=day===6;
                   const dc=(isSun||isHol)?"#e53935":isSat?"#1976d2":"var(--c-text)";
-                  // 土日祝はセル背景を塗らず、日付行ペアの上辺(出勤行)・下辺(退勤行)の色枠で表す（緑の変更マーク等と混色しないため）。
-                  // border-collapse で隣接1px線に勝つよう2px。sat=青・sun/祝=赤。ポジション不足は各inputに赤枠(boxShadow)で表示する。
-                  const wkColor=(isSun||isHol)?"rgba(229,57,53,.6)":isSat?"rgba(25,118,210,.6)":null;
-                  const wkTop=wkColor?{borderTop:`2px solid ${wkColor}`}:null;
-                  const wkBot=wkColor?{borderBottom:`2px solid ${wkColor}`}:null;
+                  const baseRb=(isSun||isHol)?"rgba(229,57,53,0.07)":isSat?"rgba(25,118,210,0.07)":"transparent";
+                  // ポジション不足がある帯（ランチ=出勤行/ディナー=退勤行）のセル背景を赤く塗る。
+                  // 不足しているカテゴリ(キッチン/ホール)の担当スタッフのセルのみ対象（cellPosErrがスタッフ所属で判定）。
+                  const rbS=name=>cellPosErr(name,date,"lunch")?LEGEND_COLORS.posErr:baseRb;
+                  const rbE=name=>cellPosErr(name,date,"dinner")?LEGEND_COLORS.posErr:baseRb;
                   return[
-                    <tr key={date+"-s"}>
-                      <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD,...wkTop,...wkBot}}>{fmtDL(date)}</td>
+                    <tr key={date+"-s"} style={{background:baseRb}}>
+                      <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",width:colW,minWidth:colW,maxWidth:colW,...wkTop}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rbS(name),width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
@@ -1547,13 +1560,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             // 除外しないと変換確定のEnterで即座に次セルへ移動し、IMEの確定処理がそのまま次セルに入って
                             // 手打ちしていないセルにも同じ文字（例:「締」）が入ってしまう
                             onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"start",e.target.value);if(e.ctrlKey||e.metaKey){const pdi=dates.indexOf(date)-1;if(pdi>=0)document.querySelector(`[data-sc="${dates[pdi]}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:undefined,backgroundColor:cellBgFor(name,date,"start",AI2.background),...hdashStyle(holidayCellDash(name,date,"start")),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer",boxShadow:cellPosErr(name,date,"lunch")?"inset 0 0 0 1.5px rgba(239,68,68,.8)":undefined}}/>
+                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"start"),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
                       ),spacerCell)}
                     </tr>,
-                    <tr key={date+"-e"}>
+                    <tr key={date+"-e"} style={{background:baseRb}}>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",width:colW,minWidth:colW,maxWidth:colW,...wkBot}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rbE(name),width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
@@ -1563,7 +1576,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:undefined,backgroundColor:cellBgFor(name,date,"end",AI2.background),...hdashStyle(holidayCellDash(name,date,"end")),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer",boxShadow:cellPosErr(name,date,"dinner")?"inset 0 0 0 1.5px rgba(239,68,68,.8)":undefined}}/>
+                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"end"),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
                         </td>
                       ),spacerCell)}
                     </tr>
@@ -2547,11 +2560,11 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
           {dC.length===0&&<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>未設定</div>}
           <CL items={dC} onDel={i=>delD(selDates[0],i)}/>
           {(()=>{
-            if(!hasAnyRequiredPosition(settings.requiredPositions))return null;
+            // 必要ポジション設定済み店舗で候補が登録された日付なら、曖昧一致の有無に関わらず現在値＋変更ボタンを常に表示する
+            if(!hasAnyRequiredPosition(settings.requiredPositions)||dC.length===0)return null;
             const date=selDates[0];
             const ov=(settings.dateCandidatePosTypes||{})[date];
             const ambTypes=[...matchingPositionDayTypes(dC,settings.weekdayCandidates||{})];
-            if(!ov&&ambTypes.length<2)return null;
             const lbl=ov?((POSITION_DAY_TYPES.find(t=>t[0]===ov)||[])[1]||ov):"自動判定";
             return(<div style={{marginTop:8,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:12,color:"var(--c-text3)"}}>
               <span>必要ポジションの曜日区分：<b style={{color:"var(--c-text)"}}>{lbl}</b></span>

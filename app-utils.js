@@ -371,7 +371,7 @@ const CELL_COLOR_LEGEND=[
   {key:"dup",color:"rgba(255,71,87,.35)",label:"店舗間シフト重複",desc:"企業連携している他店舗のシフトと勤務時間が重なっている"},
   {key:"note",color:"#FFF3B0",label:"特記あり",desc:"h・k・x・他店舗略称などのサフィックスが付いたセル"},
   {key:"rest",hatch:true,label:"休み希望（斜線）",desc:"スタッフが提出した休み希望、または管理者が y で入力した休み"},
-  {key:"posErr",color:"rgba(239,68,68,.8)",border:true,label:"ポジション不足",desc:"必要ポジション設定に対して出勤人数・ポジションが不足しているスタッフのセル（赤い枠線で表示）"},
+  {key:"posErr",color:"rgba(239,68,68,0.18)",label:"ポジション不足",desc:"必要ポジション設定に対して出勤人数・ポジションが不足しているランチ/ディナーの行"},
 ];
 // 休み希望コマンド判定（セル全体が y / 休 のとき。時間付きの「9y」は通常サフィックス扱い）
 const isRestCommand=raw=>/^(y|ｙ|休)$/i.test(String(raw==null?"":raw).trim());
