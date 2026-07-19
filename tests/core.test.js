@@ -460,6 +460,54 @@ test("recentPeriodIds: 隣接前期間が3ヶ月窓に含まれる（2週間・1
   assert.ok(u.recentPeriodIds(monthly, "2026-07-09").includes("prev"));
 });
 
+test("dateCandidateDisplayCutoff: 期間0/1件はnull（全件表示）", () => {
+  assert.strictEqual(u.dateCandidateDisplayCutoff([]), null);
+  assert.strictEqual(u.dateCandidateDisplayCutoff(null), null);
+  assert.strictEqual(u.dateCandidateDisplayCutoff([{ id: "p1", startDate: "2026-07-01" }]), null);
+});
+
+test("dateCandidateDisplayCutoff: 期間3件以下はnull（全件表示）", () => {
+  const periods = [
+    { id: "p1", startDate: "2026-07-01" },
+    { id: "p2", startDate: "2026-06-01" },
+    { id: "p3", startDate: "2026-05-01" },
+  ];
+  assert.strictEqual(u.dateCandidateDisplayCutoff(periods), null);
+});
+
+test("dateCandidateDisplayCutoff: 期間4件は最新から3個前(降順4番目)のstartDate", () => {
+  const periods = [
+    { id: "p1", startDate: "2026-07-01" },
+    { id: "p2", startDate: "2026-06-01" },
+    { id: "p3", startDate: "2026-05-01" },
+    { id: "p4", startDate: "2026-04-01" },
+  ];
+  assert.strictEqual(u.dateCandidateDisplayCutoff(periods), "2026-04-01");
+});
+
+test("dateCandidateDisplayCutoff: 期間5件でも降順4番目を返す（未ソート入力も降順ソートして判定）", () => {
+  const periods = [
+    { id: "p3", startDate: "2026-05-01" },
+    { id: "p5", startDate: "2026-03-01" },
+    { id: "p1", startDate: "2026-07-01" },
+    { id: "p4", startDate: "2026-04-01" },
+    { id: "p2", startDate: "2026-06-01" },
+  ];
+  assert.strictEqual(u.dateCandidateDisplayCutoff(periods), "2026-04-01");
+});
+
+test("dateCandidateDisplayCutoff: cutoff当日は表示対象（dt>=cutoffで残る境界確認）", () => {
+  const periods = [
+    { id: "p1", startDate: "2026-07-01" },
+    { id: "p2", startDate: "2026-06-01" },
+    { id: "p3", startDate: "2026-05-01" },
+    { id: "p4", startDate: "2026-04-01" },
+  ];
+  const cutoff = u.dateCandidateDisplayCutoff(periods);
+  assert.ok("2026-04-01" >= cutoff); // cutoff当日は残る
+  assert.ok(!("2026-03-31" >= cutoff)); // cutoffより前は隠れる
+});
+
 test("diffSubForFlatWrite: 新規subは丸ごと1エントリを返す", () => {
   const ns = { id: "s1", staffName: "太郎", shifts: { "2026-07-10": { status: "work", start: "9:00" } } };
   assert.deepStrictEqual(u.diffSubForFlatWrite("s1", undefined, ns), { s1: ns });

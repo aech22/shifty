@@ -133,6 +133,7 @@ const sharedGlobals = {
   shiftBandInfo: "writable",
   subsWindowCutoff: "writable",
   recentPeriodIds: "writable",
+  dateCandidateDisplayCutoff: "writable",
   SUBS_WINDOW_MONTHS: "writable",
   diffSubForFlatWrite: "writable",
   applyFlatSubWrite: "writable",
