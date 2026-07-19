@@ -555,35 +555,65 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-14 自動実行 #21）
+## Shifty バグチェックレポート（2026-07-19 自動実行 #29）
 
 ### 修正済み
+（今回の実行では修正なし）
 
-- **🟡 月次/週次の上限超過ハイライトが境界値ちょうどで誤発火**（app-admin.js:1125,1332,1626）
-  PDF出力の「月計」行・週別サマリーと、シフト作成タブ画面上の週別サマリーテーブルが、上限にちょうど達した（超過ではなく一致）スタッフも赤くハイライトしていた（`min>=lim`）。提出一覧（SubsTab、正本の違反判定ロジック）は一貫して「超過のみ」を違反とする厳密な`>`判定を使っており、画面間で判定基準が不一致だった。3箇所とも`>=`を`>`に統一。うち2箇所は本日のPDF「ホールのみ/キッチンのみ」出力機能追加コミット（`31f321f`）で新規混入、1箇所（画面上の週別サマリー）は2026-06-29から存在した既存の同種不整合。`npx eslint`0 errors・`npm test`82件パス。dev実機（標準テスト店舗・Premiumプラン）でシフト作成タブ・PDF出力を実行しコンソールエラーなし・PDF生成成功を確認。修正・コミット・push済み（`c7894fa`）。
-
-### 前回巡回（#20）以降の新規コミット
-9件（HEADは`fd14b31`→`31f321f`、コード変更を含むのは5件）。`31f321f`（PDF部門別出力追加）で上記🟡を発見。`ca2caa8`（利用規約/プライバシーの表示是正）はUpgradeModal・ログイン画面フッターへのリンク追加で新規input/select/textareaなし、dev実機で表示確認済み。残りはdocsのみ。
+### 前回巡回（#28・2026-07-18）以降の新規コミット
+0件（`0d4efa2..HEAD` が空）。`app-*.js`・`functions/index.js`・`database.rules.json`・`index.html` への変更は0件。
 
 ### スキャン結果
-- `subs`の`set()`全体上書き: ヒット0、削除パターン全6箇所とも安全、DEV_MODE正常、セキュリティ（global/shops全件読み・global/templates復活なし）、index.htmlスクリプト順・SRI維持、Cloud Functions secrets/`.delete()`誤用なし、isPro/isPremium誤用なし
-- `npm test`: 82件全パス、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
+- `subs`の`set()`全体上書き: ヒット0（正常）
+- `filter(s=>s.id!==...)`削除パターン: 全8ヒット確認（app-main.js:773,924,926,1515／app-admin.js:132,1718,2726,2849）。shops系フィルタ（削除対象外）を除く subs 系はすべてdeletedId渡し（app-admin.js:1718,2726）か`remove()`直呼び出し（app-main.js:1515 `onDeleteSub`）
+- DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE（app-core.js:81）正常
+- セキュリティ: `ref("global/shops")`全件読み・`global/templates`参照の復活なし（直キー読みのみ維持）。`database.rules.json`の`".read"`はすべて`auth != null`（+条件付き）で無条件`".read": true`は0件（stripeCustomerId・companies/private・companyCodesは`false`維持）
+- index.html: スクリプト読み込み順（utils→core→staff→admin→main、211-215行）維持、CDN SRI 11本・キャッシュバスティング版数`?v=20260708-a8bfc44`（変化なし）
+- Cloud Functions: secrets抜け漏れなし（Stripe系3関数・sendEmailOtp・sendSurveyEmailsとも既定通り）、`.delete()`誤用なし、安全装置（`Number.isNaN`・`archived/shops`）9箇所維持
+- isPro/isPremium誤用: 新規ヒットなし（唯一の該当箇所app-admin.js:2702はPremium機能と無関係の未登録スタッフ別名登録UIの表示条件で妥当）
+- `npm test`: 83件パス、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
 
 ### 要確認（未修正・継続）
 
-- **🟢 index.htmlのキャッシュバスティング版数（`?v=20260708-a8bfc44`）が2026-07-08から更新されていない**（index.html:211-215、app-core.js:1-4）「デプロイ毎に手動更新」規約だが07-08以降にapp-admin.js/app-main.jsの内容変更コミットが5件積まれ未更新。develop上のみのため今回は見送り、次回main リリース時に手動更新が必要（release-to-main/deployスキルにも手順化されていない）
-- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js、#11から継続監視中）
+- **🟢 index.htmlのキャッシュバスティング版数（`?v=20260708-a8bfc44`）が2026-07-08から更新されていない**（index.html:211-215、#21から継続）
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2745付近、#11から継続監視中）
 - **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、#11から継続監視中）
-- **🟢 `joinByInviteCode`（app-main.js:852）が呼び出し元ゼロのデッドコード**（企業アカウント招待コード参加UIは依然未実装）
+- **🟢 `joinByInviteCode`（app-main.js:852）が呼び出し元ゼロのデッドコード**（企業アカウント招待コード参加UIは依然未実装。#15から継続）
+- **🟢 スキルがPHASE 0で読むよう指示している`VISION.md`がリポジトリに存在しない**（#27から継続。完了判定はCLAUDE.md・RULES.mdとスキル本文の基準のみで実施。VISION.md再作成またはスキル側の参照削除が必要）
 
 ### 異常なし
-クリティカル（🔴）の問題はなし。中程度（🟡）1件（境界値ハイライト誤発火・3箇所）を修正済み。
+クリティカル（🔴）・中程度（🟡）の問題はなし。前回チェック（#28）以降のコミットが0件で、新規バグの混入なし。9回連続（#21修正以降）で新規バグなし。作業ツリーの`.cursorrules`未コミット変更は#28に続き残っているが、本ループの対象外（別セッションの作業の可能性があるため触れていない）。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 -
 -
 -
