@@ -819,7 +819,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     const hasAnyRequired=Object.values(reqAll).some(dt=>dt&&["lunch","dinner"].some(m=>{const r=dt[m];return r&&(((r.kitchen||[]).length)||((r.hall||[]).length));}));
     if(!hasAnyRequired)return result;
     dates.forEach(date=>{
-      const req=reqAll[dayTypeOf(date)]||{};
+      const req=reqAll[positionDayTypeFor(date,settings)]||{};
       const attendees={lunch:{kitchen:[],hall:[]},dinner:{kitchen:[],hall:[]}};
       realStaff.forEach(name=>{
         let s=timeToMin(getEffHHMM(name,date,"start"));let e=timeToMin(getEffHHMM(name,date,"end"));
@@ -2324,8 +2324,28 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
   const[brkEnd,setBrkEnd]=useState("");
   const[brkTags,setBrkTags]=useState([]); // 新規休憩に付与する属性タグ
   const[editTagKey,setEditTagKey]=useState(null); // タグ編集中の "dayType_index"
+  const[posTypeModal,setPosTypeModal]=useState(null); // {date, types:[posType,...]} 必要ポジションの曜日区分選択ポップアップ
 
   const toggleArr=(arr,setArr,val)=>setArr(prev=>prev.includes(val)?prev.filter(v=>v!==val):[...prev,val]);
+
+  // 日付別候補を保存したあと、その候補がポジション区分の異なる複数の曜日別候補と一致する場合のみ
+  // 「必要ポジションでどの曜日設定を使うか」を選ぶポップアップを開く（単一日付編集時のみ）。
+  const maybePromptPosType=dc=>{
+    if(selDates.length!==1)return;
+    const date=selDates[0];
+    const cands=dc[date]||[];
+    if(!cands.length)return;
+    const types=[...matchingPositionDayTypes(cands,settings.weekdayCandidates||{})];
+    if(types.length>=2)setPosTypeModal({date,types});
+  };
+  // ポップアップの選択結果を settings.dateCandidatePosTypes に保存（自動判定=nullは該当キーを削除）。
+  const applyPosType=(date,posType)=>{
+    const m={...(settings.dateCandidatePosTypes||{})};
+    if(posType)m[date]=posType;else delete m[date];
+    onSave({...settings,dateCandidatePosTypes:m});
+    setPosTypeModal(null);
+    tt(posType?`✓ ${(POSITION_DAY_TYPES.find(t=>t[0]===posType)||[])[1]||posType}の必要ポジションを適用`:"✓ 自動判定に設定");
+  };
 
   const addG=()=>{
     if(!selStart||!selEnd){tt("▲ 開始・終了を選択してください");return;}
@@ -2363,8 +2383,9 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
     });
     onSave({...settings,dateCandidates:dc});setDSelStart("");setDSelEnd("");
     tt(total>0?`✓ ${selDates.length}日付に追加`:"▲ 既に登録済みです");
+    if(total>0)maybePromptPosType(dc);
   };
-  const delD=(dt,i)=>{const dc={...(settings.dateCandidates||{})};dc[dt]=[...(dc[dt]||[])];dc[dt].splice(i,1);if(dc[dt].length===0)delete dc[dt];onSave({...settings,dateCandidates:dc});};
+  const delD=(dt,i)=>{const dc={...(settings.dateCandidates||{})};dc[dt]=[...(dc[dt]||[])];dc[dt].splice(i,1);const next={...settings,dateCandidates:dc};if(dc[dt].length===0){delete dc[dt];if((settings.dateCandidatePosTypes||{})[dt]){const m={...settings.dateCandidatePosTypes};delete m[dt];next.dateCandidatePosTypes=m;}}onSave(next);};
 
   // テンプレート保存
   const saveTemplate=()=>{
@@ -2517,6 +2538,17 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
           <div style={{fontSize:13,fontWeight:700,color:"var(--c-text2)",marginBottom:8}}>{selDates[0].replace(/-/g,"/")} の登録済み候補</div>
           {dC.length===0&&<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>未設定</div>}
           <CL items={dC} onDel={i=>delD(selDates[0],i)}/>
+          {(()=>{
+            const date=selDates[0];
+            const ov=(settings.dateCandidatePosTypes||{})[date];
+            const ambTypes=[...matchingPositionDayTypes(dC,settings.weekdayCandidates||{})];
+            if(!ov&&ambTypes.length<2)return null;
+            const lbl=ov?((POSITION_DAY_TYPES.find(t=>t[0]===ov)||[])[1]||ov):"自動判定";
+            return(<div style={{marginTop:8,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",fontSize:12,color:"var(--c-text3)"}}>
+              <span>必要ポジションの曜日区分：<b style={{color:"var(--c-text)"}}>{lbl}</b></span>
+              <button onClick={()=>setPosTypeModal({date,types:ambTypes.length>=2?ambTypes:POSITION_DAY_TYPES.map(t=>t[0])})} style={{padding:"3px 10px",borderRadius:6,background:"var(--c-border)",border:"1px solid var(--c-border2)",color:"var(--c-text)",fontSize:11,fontWeight:600,cursor:"pointer"}}>変更</button>
+            </div>);
+          })()}
         </>}
         <div style={{marginTop:12,padding:"12px",background:"var(--c-input2)",borderRadius:10}}>
           <div style={{display:"flex",gap:10,alignItems:"flex-end",marginBottom:8}}>
@@ -2535,6 +2567,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
               });
               onSave({...settings,dateCandidates:dc});
               tt(total>0?`✓ ${selDates.length}日付に休業日を設定`:"▲ 既に設定済みです");
+              if(total>0)maybePromptPosType(dc);
             }} style={{padding:"6px 12px",background:"rgba(255,71,87,.15)",border:"1px solid rgba(255,71,87,.3)",borderRadius:8,color:"#FF4757",fontSize:12,fontWeight:700,cursor:"pointer"}}>× 休業日に設定</button>
           </div>
         </div>
@@ -2639,6 +2672,22 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
           })}
         </div>
       </AC>);
+      })()}
+
+      {posTypeModal&&(()=>{
+        const opts=(posTypeModal.types||[]).map(pt=>[pt,(POSITION_DAY_TYPES.find(t=>t[0]===pt)||[])[1]||pt]);
+        return(<div onClick={()=>setPosTypeModal(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:16}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:14,padding:"20px",maxWidth:360,width:"100%",boxShadow:"0 10px 40px var(--c-shadow)"}}>
+            <div style={{fontSize:15,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>この日のポジション設定を選んでください</div>
+            <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:14}}>{posTypeModal.date.replace(/-/g,"/")} の候補が複数の曜日設定と一致します。必要ポジション判定でどの曜日区分を使うか選べます。</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {opts.map(([pt,l])=>(
+                <button key={pt} onClick={()=>applyPosType(posTypeModal.date,pt)} style={{padding:"11px 14px",borderRadius:10,background:"var(--c-input)",border:"1px solid var(--c-border2)",color:"var(--c-text)",fontSize:14,fontWeight:600,cursor:"pointer",textAlign:"left"}}>{l}</button>
+              ))}
+              <button onClick={()=>applyPosType(posTypeModal.date,null)} style={{padding:"11px 14px",borderRadius:10,background:"transparent",border:"1px solid var(--c-border)",color:"var(--c-text3)",fontSize:13,fontWeight:600,cursor:"pointer",textAlign:"left"}}>選択しない（自動判定）</button>
+            </div>
+          </div>
+        </div>);
       })()}
     </div>
   );

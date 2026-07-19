@@ -571,6 +571,64 @@ test("dayTypeOf: 翌日が平日の非祝日の日曜日は従来通りsun", () 
   assert.strictEqual(u.dayTypeOf("2026-07-12"), "sun");
 });
 
+test("weekdayKeyToPositionDayType: 曜日キー0〜8を区分に変換する", () => {
+  assert.strictEqual(u.weekdayKeyToPositionDayType(0), "sun");
+  assert.strictEqual(u.weekdayKeyToPositionDayType(1), "weekday");
+  assert.strictEqual(u.weekdayKeyToPositionDayType(5), "weekday");
+  assert.strictEqual(u.weekdayKeyToPositionDayType(6), "sat");
+  assert.strictEqual(u.weekdayKeyToPositionDayType(7), "holSat");
+  assert.strictEqual(u.weekdayKeyToPositionDayType(8), "holSun");
+  assert.strictEqual(u.weekdayKeyToPositionDayType("6"), "sat"); // 文字列キーでも動く
+  assert.strictEqual(u.weekdayKeyToPositionDayType(9), null);
+});
+
+test("candListsEqual: 順不同・closedを含めて内容一致を判定する", () => {
+  const a = [{ start: "9:00", end: "17:00" }, { start: "17:00", end: "23:00" }];
+  const b = [{ start: "17:00", end: "23:00" }, { start: "9:00", end: "17:00" }]; // 順序違い
+  assert.strictEqual(u.candListsEqual(a, b), true);
+  assert.strictEqual(u.candListsEqual(a, [{ start: "9:00", end: "17:00" }]), false); // 件数違い
+  assert.strictEqual(u.candListsEqual(a, [{ start: "9:00", end: "18:00" }, { start: "17:00", end: "23:00" }]), false);
+  assert.strictEqual(u.candListsEqual([{ closed: true }], [{ closed: true }]), true);
+  assert.strictEqual(u.candListsEqual([{ closed: true }], [{ start: "9:00", end: "17:00" }]), false);
+});
+
+test("matchingPositionDayTypes: 一致する曜日別候補の区分集合を返す", () => {
+  const cands = [{ start: "10:00", end: "22:00" }];
+  // 土(6)と単独祝(7)が同じ候補、月(1)は別候補
+  const wc = { 6: [{ start: "10:00", end: "22:00" }], 7: [{ start: "10:00", end: "22:00" }], 1: [{ start: "9:00", end: "17:00" }] };
+  const set = u.matchingPositionDayTypes(cands, wc);
+  assert.strictEqual(set.size, 2);
+  assert.strictEqual(set.has("sat"), true);
+  assert.strictEqual(set.has("holSat"), true);
+  assert.strictEqual(set.has("weekday"), false);
+});
+
+test("positionDayTypeFor: 手動指定(dateCandidatePosTypes)を最優先する", () => {
+  const s = { dateCandidatePosTypes: { "2026-07-11": "holSun" }, dateCandidates: { "2026-07-11": [{ start: "9:00", end: "17:00" }] }, weekdayCandidates: {} };
+  assert.strictEqual(u.positionDayTypeFor("2026-07-11", s), "holSun");
+});
+
+test("positionDayTypeFor: 不正な手動指定は無視してフォールバックする", () => {
+  const s = { dateCandidatePosTypes: { "2026-07-13": "bogus" }, dateCandidates: {}, weekdayCandidates: {} };
+  assert.strictEqual(u.positionDayTypeFor("2026-07-13", s), "weekday"); // 7/13は月曜
+});
+
+test("positionDayTypeFor: 一致する曜日別候補の区分が一意ならそれを使う", () => {
+  const s = { dateCandidates: { "2026-07-13": [{ start: "10:00", end: "22:00" }] }, weekdayCandidates: { 6: [{ start: "10:00", end: "22:00" }] } };
+  // 7/13は本来weekdayだが、候補が土曜設定と一致 → satを返す
+  assert.strictEqual(u.positionDayTypeFor("2026-07-13", s), "sat");
+});
+
+test("positionDayTypeFor: 区分が複数にまたがる場合はカレンダー規則へフォールバック", () => {
+  const s = { dateCandidates: { "2026-07-13": [{ start: "10:00", end: "22:00" }] }, weekdayCandidates: { 6: [{ start: "10:00", end: "22:00" }], 7: [{ start: "10:00", end: "22:00" }] } };
+  assert.strictEqual(u.positionDayTypeFor("2026-07-13", s), "weekday"); // 一意でない→dayTypeOf(月曜)=weekday
+});
+
+test("positionDayTypeFor: 日付別候補がなければdayTypeOfを返す", () => {
+  assert.strictEqual(u.positionDayTypeFor("2026-07-11", { dateCandidates: {}, weekdayCandidates: {} }), "sat"); // 土曜
+  assert.strictEqual(u.positionDayTypeFor("2026-07-11", {}), "sat"); // settings空でも安全
+});
+
 test("matchPositionSlots: 必要枠なし(空配列)は不足なし", () => {
   const r = u.matchPositionSlots([], [{ name: "A", positions: ["調理長"] }]);
   assert.deepStrictEqual(r, { matchedCount: 0, shortageByPosition: {} });

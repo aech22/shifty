@@ -223,6 +223,58 @@ function dayTypeOf(dateStr){
 }
 // シフト作成タブ「必要ポジション設定」の曜日区分タブ（祝日をholSat/holSunに分割した5分類。DAY_TYPESとは別物＝breakTimes等には影響しない）
 const POSITION_DAY_TYPES=[["weekday","平日"],["sat","土曜"],["sun","日曜"],["holSat","祝日（連休中・単日）"],["holSun","祝日（最終日）"]];
+// weekdayCandidates のキー(0〜8) → 必要ポジションの曜日区分(weekday/sat/sun/holSat/holSun) へ変換する。
+// 0=日→sun, 1〜5=月〜金→weekday, 6=土→sat, 7=祝(単)→holSat, 8=祝(終)→holSun。対応外はnull。
+function weekdayKeyToPositionDayType(key){
+  const k=Number(key);
+  if(k===7)return"holSat";
+  if(k===8)return"holSun";
+  if(k===0)return"sun";
+  if(k===6)return"sat";
+  if(k>=1&&k<=5)return"weekday";
+  return null;
+}
+// 2つの候補配列(Cand[])が「同じ内容か」を判定する。sc()で正規化後に要素ごとに比較（closedも含めて完全一致）。
+function candListsEqual(a,b){
+  const na=sc([...(a||[])]),nb=sc([...(b||[])]);
+  if(na.length!==nb.length)return false;
+  for(let i=0;i<na.length;i++){
+    const x=na[i],y=nb[i];
+    if(x.closed||y.closed){if(!!x.closed!==!!y.closed)return false;continue;}
+    if(x.start!==y.start||x.end!==y.end)return false;
+  }
+  return true;
+}
+// 指定した候補配列と完全一致する曜日別候補(weekdayCandidates)を探し、対応するポジション区分の集合を返す。
+// 例: dateCandsが土曜と単独祝日の両方の候補と一致するなら Set{"sat","holSat"} を返す。
+function matchingPositionDayTypes(dateCands,weekdayCandidates){
+  const set=new Set();
+  const wc=weekdayCandidates||{};
+  Object.keys(wc).forEach(key=>{
+    const cands=wc[key];
+    if(!cands||!cands.length)return;
+    if(candListsEqual(dateCands,cands)){
+      const pt=weekdayKeyToPositionDayType(key);
+      if(pt)set.add(pt);
+    }
+  });
+  return set;
+}
+// 必要ポジション判定で日付に適用する曜日区分を決める。
+// 1) settings.dateCandidatePosTypes[dateStr] に有効な手動指定があればそれを使う
+// 2) なければ dateCandidates[dateStr] と完全一致する曜日別候補の区分が一意に定まればそれを使う
+// 3) それ以外はカレンダー規則(dayTypeOf)へフォールバック
+function positionDayTypeFor(dateStr,settings){
+  const s=settings||{};
+  const override=s.dateCandidatePosTypes&&s.dateCandidatePosTypes[dateStr];
+  if(override&&POSITION_DAY_TYPES.some(t=>t[0]===override))return override;
+  const dc=s.dateCandidates&&s.dateCandidates[dateStr];
+  if(dc&&dc.length){
+    const types=matchingPositionDayTypes(dc,s.weekdayCandidates||{});
+    if(types.size===1)return[...types][0];
+  }
+  return dayTypeOf(dateStr);
+}
 // 必要ポジション(slots・重複可の配列)と出勤者(attendees:[{name,positions:[]}])の最大二部マッチング（Kuhn法）。
 // 1人が複数ポジションを持っていても同時に埋められるのは1枠のみ（「1出勤につき1人」の制約）。
 // 単純な貪欲割当だと本来埋まる組み合わせを見逃す（例: 枠[調理長,フライヤー]・A[調理長,フライヤー]・B[調理長]は
@@ -419,5 +471,5 @@ function applyFlatSubWrite(map,path,value){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor};
 }
