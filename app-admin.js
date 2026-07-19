@@ -2240,7 +2240,7 @@ const dragIdxRef=useRef(null);
                 {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"#f87036":"rgba(248,112,54,.3)"}`,borderRadius:6,color:"#f87036",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
                   別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
                 </button>}
-                {isPremium&&<button onClick={()=>{setPosIdx(posIdx===i?null:i);}} style={{padding:"6px 10px",background:posIdx===i?"rgba(59,130,246,.15)":"rgba(59,130,246,.06)",border:`1px solid ${posIdx===i?"#3B82F6":"rgba(59,130,246,.3)"}`,borderRadius:6,color:"#3B82F6",fontSize:12,cursor:"pointer",minWidth:76,textAlign:"center"}}>
+                {isPremium&&<button onClick={()=>{setPosIdx(posIdx===i?null:i);}} style={{padding:"6px 8px",background:posIdx===i?"rgba(59,130,246,.15)":"rgba(59,130,246,.06)",border:`1px solid ${posIdx===i?"#3B82F6":"rgba(59,130,246,.3)"}`,borderRadius:6,color:"#3B82F6",fontSize:12,cursor:"pointer",width:118,boxSizing:"border-box",flexShrink:0,whiteSpace:"nowrap",textAlign:"center"}}>
                   ポジション{(((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length)>0?` (${((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length})`:""}
                 </button>}
                 <button onClick={()=>startEdit(i)} style={{padding:"6px 10px",background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.25)",borderRadius:6,color:"#3B82F6",fontSize:12,cursor:"pointer"}}>編集</button>
@@ -2345,6 +2345,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
   const[brkTags,setBrkTags]=useState([]); // 新規休憩に付与する属性タグ
   const[editTagKey,setEditTagKey]=useState(null); // タグ編集中の "dayType_index"
   const[posTypeModal,setPosTypeModal]=useState(null); // {date, types:[posType,...]} 必要ポジションの曜日区分選択ポップアップ
+  const[tmplApply,setTmplApply]=useState(null); // {index, weekdays:[0..8]} テンプレ適用時の曜日選択パネル
 
   const toggleArr=(arr,setArr,val)=>setArr(prev=>prev.includes(val)?prev.filter(v=>v!==val):[...prev,val]);
 
@@ -2416,9 +2417,15 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
     const ts=[...globalTemplates,tmpl];
     saveGlobalTemplates(ts);setTmplName("");tt(`✓ テンプレート「${tmplName.trim()}」を保存しました（この店舗）`);
   };
-  const applyTemplate=t=>{
-    if(!confirm(`テンプレート「${t.name}」を適用しますか？現在の曜日別候補が上書きされます。`))return;
-    onSave({...settings,weekdayCandidates:t.weekdayCandidates});tt(`✓ テンプレート「${t.name}」を適用しました`);
+  // テンプレを選択した曜日にだけ適用する。選択曜日のみ w[d]=テンプレの候補(空なら[])で上書きし、未選択曜日は現状維持。
+  // 全曜日(WDAY_OPTS)を選択すれば従来の一括適用と同じ結果になる。
+  const doApplyTemplate=(t,weekdays)=>{
+    if(!weekdays.length){tt("▲ 適用する曜日を選択してください");return;}
+    const names=weekdays.slice().sort((a,b)=>a-b).map(wdLabel).join("・");
+    if(!confirm(`テンプレート「${t.name}」の候補を ${names} に適用しますか？選択した曜日の候補が上書きされます。`))return;
+    const w={...(settings.weekdayCandidates||{})};
+    weekdays.forEach(d=>{w[d]=(t.weekdayCandidates||{})[d]||[];});
+    onSave({...settings,weekdayCandidates:w});setTmplApply(null);tt(`✓ テンプレート「${t.name}」を ${names} に適用しました`);
   };
   const delTemplate=i=>{const ts=[...globalTemplates];ts.splice(i,1);saveGlobalTemplates(ts);tt("削除しました");};
 
@@ -2614,13 +2621,25 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
         </div>
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>この店舗に保存されます</div>
         {globalTemplates.length===0&&<div style={{fontSize:13,color:"var(--c-text4)"}}>保存済みテンプレートはありません</div>}
-        {globalTemplates.map((t,i)=>(
-          <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:10,marginBottom:6,opacity:plan==="free"?.4:1,pointerEvents:plan==="free"?"none":"auto"}}>
-            <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{t.name}</span>
-            <button onClick={()=>applyTemplate(t)} style={{...AB,padding:"6px 12px",fontSize:12}}>適用</button>
-            <button onClick={()=>delTemplate(i)} style={AD}>削除</button>
-          </div>
-        ))}
+        {globalTemplates.map((t,i)=>{
+          const open=tmplApply&&tmplApply.index===i;
+          return(<div key={i} style={{marginBottom:6,opacity:plan==="free"?.4:1,pointerEvents:plan==="free"?"none":"auto"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:open?"10px 10px 0 0":10}}>
+              <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{t.name}</span>
+              <button onClick={()=>setTmplApply(open?null:{index:i,weekdays:WDAY_OPTS.filter(d=>(((t.weekdayCandidates||{})[d])||[]).length>0)})} style={{...AB,padding:"6px 12px",fontSize:12}}>適用</button>
+              <button onClick={()=>delTemplate(i)} style={AD}>削除</button>
+            </div>
+            {open&&<div style={{padding:"12px 14px",background:"var(--c-input2)",border:"1px solid var(--c-border)",borderTop:"none",borderRadius:"0 0 10px 10px"}}>
+              <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8}}>適用する曜日を選択（テンプレに候補がある曜日を初期選択）</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{WDAY_OPTS.map(d=>{const sel=tmplApply.weekdays.includes(d);const cnt=(((t.weekdayCandidates||{})[d])||[]).length;return(
+                <button key={d} onClick={()=>setTmplApply(cur=>({...cur,weekdays:cur.weekdays.includes(d)?cur.weekdays.filter(x=>x!==d):[...cur.weekdays,d]}))} style={{padding:"6px 12px",borderRadius:16,fontSize:12,fontWeight:700,border:"1px solid",cursor:"pointer",background:sel?"#f87036":"var(--c-input)",borderColor:sel?"transparent":"var(--c-border2)",color:sel?"white":"var(--c-text2)"}}>{wdLabel(d)}（{cnt}）</button>);})}</div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={()=>doApplyTemplate(t,tmplApply.weekdays)} style={{...AB,padding:"8px 14px",fontSize:13}}>選択した曜日に適用</button>
+                <button onClick={()=>setTmplApply(null)} style={{...AGray,padding:"8px 14px",fontSize:13}}>キャンセル</button>
+              </div>
+            </div>}
+          </div>);
+        })}
       </AC>}
 
       {mode==="break"&&(()=>{
