@@ -852,8 +852,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     });
     return result;
   },[isPremium,subs,heatEdits,settings,selPid,staffList,periods,companyData]);
-  const hasLunchErr=date=>{const pe=positionErrors[date];return!!pe&&(Object.keys(pe.lunch.kitchen).length>0||Object.keys(pe.lunch.hall).length>0);};
-  const hasDinnerErr=date=>{const pe=positionErrors[date];return!!pe&&(Object.keys(pe.dinner.kitchen).length>0||Object.keys(pe.dinner.hall).length>0);};
+  // スタッフの所属(キッチン/ホール)判定。positionErrors算出時のsection規則(上記realStaff.forEach内)と同一に保つこと。
+  // 分割なし店舗(hallStaff.length===0)は全員kitchenに集約されるため、キッチン不足＝全スタッフのセルが対象＝従来の「全セル赤」動作になる。
+  const staffSectionOn=(name,date)=>{
+    if(hallStaff.length===0)return"kitchen";
+    const note=getShiftNote(name,date);
+    return note==="h"?"hall":note==="k"?"kitchen":(hallStaff.includes(name)?"hall":"kitchen");
+  };
+  // ポジション不足でセルを赤くするか: そのスタッフの所属セクションに不足がある帯(lunch=出勤行/dinner=退勤行)のみ対象
+  const cellPosErr=(name,date,meal)=>{const pe=positionErrors[date];if(!pe)return false;return Object.keys(pe[meal][staffSectionOn(name,date)]||{}).length>0;};
   // エラーサマリー用に日付順のフラットな一覧へ展開（キッチン/ホール別）
   const positionErrorEntries=useMemo(()=>{
     const kitchen=[],hall=[];
@@ -1512,14 +1519,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                   const isHol=isHoliday(date);const isSun=day===0;const isSat=day===6;
                   const dc=(isSun||isHol)?"#e53935":isSat?"#1976d2":"var(--c-text)";
                   const baseRb=(isSun||isHol)?"rgba(229,57,53,0.07)":isSat?"rgba(25,118,210,0.07)":"transparent";
-                  // ポジション不足がある帯（ランチ=出勤行/ディナー=退勤行）の背景を赤く塗る
-                  const rbS=hasLunchErr(date)?LEGEND_COLORS.posErr:baseRb;
-                  const rbE=hasDinnerErr(date)?LEGEND_COLORS.posErr:baseRb;
+                  // ポジション不足がある帯（ランチ=出勤行/ディナー=退勤行）のセル背景を赤く塗る。
+                  // 不足しているカテゴリ(キッチン/ホール)の担当スタッフのセルのみ対象（cellPosErrがスタッフ所属で判定）。
+                  const rbS=name=>cellPosErr(name,date,"lunch")?LEGEND_COLORS.posErr:baseRb;
+                  const rbE=name=>cellPosErr(name,date,"dinner")?LEGEND_COLORS.posErr:baseRb;
                   return[
-                    <tr key={date+"-s"} style={{background:rbS}}>
+                    <tr key={date+"-s"} style={{background:baseRb}}>
                       <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rbS,width:colW,minWidth:colW,maxWidth:colW}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:"none",textAlign:"center",background:rbS(name),width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
@@ -1536,9 +1544,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                         </td>
                       ),spacerCell)}
                     </tr>,
-                    <tr key={date+"-e"} style={{background:rbE}}>
+                    <tr key={date+"-e"} style={{background:baseRb}}>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rbE,width:colW,minWidth:colW,maxWidth:colW}}>
+                        <td key={name} style={{padding:"1px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",background:rbE(name),width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
