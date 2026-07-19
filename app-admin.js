@@ -816,8 +816,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     if(!isPremium)return result; // ポジションエラー判定はPremium限定機能（プラン変更後も過去のrequiredPositionsで誤表示しないよう明示的にガード）
     const reqAll=settings.requiredPositions||{};
     const staffPos=settings.staffPositions||{};
-    const hasAnyRequired=Object.values(reqAll).some(dt=>dt&&["lunch","dinner"].some(m=>{const r=dt[m];return r&&(((r.kitchen||[]).length)||((r.hall||[]).length));}));
-    if(!hasAnyRequired)return result;
+    if(!hasAnyRequiredPosition(reqAll))return result;
     dates.forEach(date=>{
       const req=reqAll[positionDayTypeFor(date,settings)]||{};
       const attendees={lunch:{kitchen:[],hall:[]},dinner:{kitchen:[],hall:[]}};
@@ -2332,6 +2331,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
   // 「必要ポジションでどの曜日設定を使うか」を選ぶポップアップを開く（単一日付編集時のみ）。
   const maybePromptPosType=dc=>{
     if(selDates.length!==1)return;
+    if(!hasAnyRequiredPosition(settings.requiredPositions))return; // 必要ポジション未設定ならポップアップ不要
     const date=selDates[0];
     const cands=dc[date]||[];
     if(!cands.length)return;
@@ -2539,6 +2539,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
           {dC.length===0&&<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>未設定</div>}
           <CL items={dC} onDel={i=>delD(selDates[0],i)}/>
           {(()=>{
+            if(!hasAnyRequiredPosition(settings.requiredPositions))return null;
             const date=selDates[0];
             const ov=(settings.dateCandidatePosTypes||{})[date];
             const ambTypes=[...matchingPositionDayTypes(dC,settings.weekdayCandidates||{})];

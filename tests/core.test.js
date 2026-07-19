@@ -629,6 +629,15 @@ test("positionDayTypeFor: 日付別候補がなければdayTypeOfを返す", () 
   assert.strictEqual(u.positionDayTypeFor("2026-07-11", {}), "sat"); // settings空でも安全
 });
 
+test("hasAnyRequiredPosition: 必要ポジションが1件でもあればtrue、なければfalse", () => {
+  assert.strictEqual(u.hasAnyRequiredPosition(undefined), false);
+  assert.strictEqual(u.hasAnyRequiredPosition({}), false);
+  assert.strictEqual(u.hasAnyRequiredPosition({ weekday: {} }), false);
+  assert.strictEqual(u.hasAnyRequiredPosition({ weekday: { lunch: { kitchen: [], hall: [] } } }), false);
+  assert.strictEqual(u.hasAnyRequiredPosition({ weekday: { lunch: { kitchen: ["調理長"], hall: [] } } }), true);
+  assert.strictEqual(u.hasAnyRequiredPosition({ sat: { dinner: { hall: ["ホール"] } } }), true);
+});
+
 test("matchPositionSlots: 必要枠なし(空配列)は不足なし", () => {
   const r = u.matchPositionSlots([], [{ name: "A", positions: ["調理長"] }]);
   assert.deepStrictEqual(r, { matchedCount: 0, shortageByPosition: {} });
