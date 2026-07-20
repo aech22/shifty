@@ -725,3 +725,49 @@ test("matchPositionSlots: 1人は1出勤=1枠までしか埋められない（�
   // どちらか一方が不足として残る（どちらかは実装の割当順に依存するため、不足件数のみ検証）
   assert.strictEqual(Object.values(r.shortageByPosition).reduce((a, b) => a + b, 0), 1);
 });
+
+// ===== subLastActionTime（提出一覧の並べ替えキー）=====
+
+test("subLastActionTime: 新規提出（未更新）は submittedAt を返す", () => {
+  const st = "2026-07-20T09:00:00.000Z";
+  assert.strictEqual(u.subLastActionTime({ submittedAt: st }), new Date(st).getTime());
+});
+
+test("subLastActionTime: 再提出（変更あり）は updatedAt を返す", () => {
+  const st = "2026-07-20T09:00:00.000Z", ut = "2026-07-20T15:30:00.000Z";
+  assert.strictEqual(
+    u.subLastActionTime({ submittedAt: st, updatedAt: ut, isUpdated: true }),
+    new Date(ut).getTime()
+  );
+});
+
+test("subLastActionTime: 再提出の方が新規提出より新しければ上位に並ぶ", () => {
+  const older = { submittedAt: "2026-07-18T09:00:00.000Z", updatedAt: "2026-07-20T20:00:00.000Z", isUpdated: true };
+  const newer = { submittedAt: "2026-07-20T10:00:00.000Z" };
+  const sorted = [newer, older].sort((a, b) => u.subLastActionTime(b) - u.subLastActionTime(a));
+  assert.strictEqual(sorted[0], older);
+});
+
+test("subLastActionTime: 同一分内の updatedAt は再提出とみなさず submittedAt を返す", () => {
+  const st = "2026-07-20T09:00:10.000Z", ut = "2026-07-20T09:00:45.000Z";
+  assert.strictEqual(
+    u.subLastActionTime({ submittedAt: st, updatedAt: ut, isUpdated: true }),
+    new Date(st).getTime()
+  );
+});
+
+test("subLastActionTime: isUpdated が無い・updatedAt が無い場合は submittedAt を返す", () => {
+  const st = "2026-07-20T09:00:00.000Z", ut = "2026-07-21T09:00:00.000Z";
+  assert.strictEqual(u.subLastActionTime({ submittedAt: st, updatedAt: ut }), new Date(st).getTime());
+  assert.strictEqual(u.subLastActionTime({ submittedAt: st, isUpdated: true }), new Date(st).getTime());
+});
+
+test("subLastActionTime: 日付が不正・sub が無い場合も例外にせず数値を返す", () => {
+  assert.strictEqual(u.subLastActionTime(null), 0);
+  assert.strictEqual(u.subLastActionTime({}), 0);
+  const st = "2026-07-20T09:00:00.000Z";
+  assert.strictEqual(
+    u.subLastActionTime({ submittedAt: st, updatedAt: "こわれた日付", isUpdated: true }),
+    new Date(st).getTime()
+  );
+});
