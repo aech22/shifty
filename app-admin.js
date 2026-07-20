@@ -1720,6 +1720,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
   const[form,setForm]=useState({label:"",startDate:"",endDate:"",deadlineDate:""});
   const[show,setShow]=useState(false);
   const[usePreset,setUsePreset]=useState(true); // プリセット使用フラグ
+  const[presetDeadline,setPresetDeadline]=useState(""); // プリセット作成時の締切日（任意）
   const[viewPeriodId,setViewPeriodId]=useState(null);
 
   // プリセット生成（1ヶ月前除外、今月〜再来月）
@@ -1783,7 +1784,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
     <div>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16}}>
         <AT>期間管理</AT>
-        <button onClick={()=>{setShow(v=>!v);setUsePreset(true);setForm({label:"",startDate:"",endDate:"",deadlineDate:""}); }} style={{padding:"9px 16px",background:"#f87036",border:"none",borderRadius:9,color:"white",fontSize:13,fontWeight:700,cursor:"pointer"}}>＋ 新しい期間を作成</button>
+        <button onClick={()=>{setShow(v=>!v);setUsePreset(true);setPresetDeadline("");setForm({label:"",startDate:"",endDate:"",deadlineDate:""}); }} style={{padding:"9px 16px",background:"#f87036",border:"none",borderRadius:9,color:"white",fontSize:13,fontWeight:700,cursor:"pointer"}}>＋ 新しい期間を作成</button>
       </div>
       {plan==="free"&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid #E5E7EB",borderRadius:8,padding:"7px 10px"}}>
         {`Freeプラン：最大${PLAN_LIMITS.free.periods}件まで作成可能（${periods.length}/${PLAN_LIMITS.free.periods}件）`}
@@ -1792,31 +1793,39 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
       {show&&<AC title="新しい期間を作成">
         {/* プリセット使用 / 手動入力 の切り替え */}
         <div style={{display:"flex",gap:8,marginBottom:16}}>
-          <button onClick={()=>setUsePreset(true)} style={{flex:1,padding:"9px 0",border:`2px solid ${usePreset?"#f87036":"var(--c-border2)"}`,borderRadius:9,background:usePreset?"rgba(248,112,54,.15)":"rgba(0,0,0,.03)",color:usePreset?"#f87036":"#6B7280",fontSize:13,fontWeight:700,cursor:"pointer"}}>プリセットから選ぶ</button>
-          <button onClick={()=>{setUsePreset(false);setForm({label:"",startDate:"",endDate:"",deadlineDate:""}); }} style={{flex:1,padding:"9px 0",border:`2px solid ${!usePreset?"#f87036":"var(--c-border2)"}`,borderRadius:9,background:!usePreset?"rgba(248,112,54,.15)":"rgba(0,0,0,.03)",color:!usePreset?"#f87036":"#6B7280",fontSize:13,fontWeight:700,cursor:"pointer"}}>手動で入力する</button>
+          <button onClick={()=>{setUsePreset(true);setPresetDeadline("");}} style={{flex:1,padding:"9px 0",border:`2px solid ${usePreset?"#f87036":"var(--c-border2)"}`,borderRadius:9,background:usePreset?"rgba(248,112,54,.15)":"rgba(0,0,0,.03)",color:usePreset?"#f87036":"#6B7280",fontSize:13,fontWeight:700,cursor:"pointer"}}>プリセットから選ぶ</button>
+          <button onClick={()=>{setUsePreset(false);setPresetDeadline("");setForm({label:"",startDate:"",endDate:"",deadlineDate:""}); }} style={{flex:1,padding:"9px 0",border:`2px solid ${!usePreset?"#f87036":"var(--c-border2)"}`,borderRadius:9,background:!usePreset?"rgba(248,112,54,.15)":"rgba(0,0,0,.03)",color:!usePreset?"#f87036":"#6B7280",fontSize:13,fontWeight:700,cursor:"pointer"}}>手動で入力する</button>
         </div>
 
         {usePreset?(
           /* プリセット選択 */
-          <div>
-            <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:10}}>選択するとすぐに作成されます</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
-              {pre.map((p,i)=>{
-                const alreadyExists=periods.some(pp=>pp.startDate===p.startDate&&pp.endDate===p.endDate);
-                return(
+          (()=>{
+            const availPresets=pre.filter(p=>!periods.some(pp=>pp.startDate===p.startDate&&pp.endDate===p.endDate));
+            return(
+            <div>
+              <div style={{marginBottom:12}}>
+                <AL>締切日（任意）</AL>
+                <input type="date" value={presetDeadline} onChange={e=>setPresetDeadline(e.target.value)} style={AI}/>
+              </div>
+              <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:10}}>選択するとすぐに作成されます</div>
+              {availPresets.length===0
+                ?<div style={{fontSize:13,color:"var(--c-text3)",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:9,padding:"12px 14px",marginBottom:14}}>表示できるプリセットがありません（すべて作成済みです）</div>
+                :<div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
+                {availPresets.map((p,i)=>(
                   <button key={i} onClick={()=>{
-                    if(alreadyExists){tt("▲ この期間はすでに作成済みです");return;}
+                    if(periods.some(pp=>pp.startDate===p.startDate&&pp.endDate===p.endDate)){tt("▲ この期間はすでに作成済みです");return;}
                     if(!checkPeriodLimit())return;
-                    const np={id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:p.label,startDate:p.startDate,endDate:p.endDate,deadlineDate:"",createdAt:new Date().toISOString()};
-                    onSave([...periods,np]);setShow(false);setUsePreset(true);tt(`✓ ${p.label} を作成しました`);
-                  }} style={{padding:"10px 16px",background:alreadyExists?"rgba(0,0,0,.02)":"var(--c-border)",border:`1px solid ${alreadyExists?"var(--c-border)":"var(--c-border2)"}`,borderRadius:9,color:alreadyExists?"var(--c-border2)":"#1A1A2E",fontSize:13,fontWeight:600,cursor:alreadyExists?"not-allowed":"pointer",textDecoration:alreadyExists?"line-through":"none"}}>
-                    {p.label}{alreadyExists&&<span style={{fontSize:10,marginLeft:4}}>作成済み</span>}
+                    const np={id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:p.label,startDate:p.startDate,endDate:p.endDate,deadlineDate:presetDeadline,createdAt:new Date().toISOString()};
+                    onSave([...periods,np]);setShow(false);setUsePreset(true);setPresetDeadline("");tt(`✓ ${p.label} を作成しました`);
+                  }} style={{padding:"10px 16px",background:"var(--c-border)",border:"1px solid var(--c-border2)",borderRadius:9,color:"#1A1A2E",fontSize:13,fontWeight:600,cursor:"pointer"}}>
+                    {p.label}
                   </button>
-                );
-              })}
+                ))}
+              </div>}
+              <button onClick={()=>setShow(false)} style={{...AGray,width:"100%"}}>キャンセル</button>
             </div>
-            <button onClick={()=>setShow(false)} style={{...AGray,width:"100%"}}>キャンセル</button>
-          </div>
+            );
+          })()
         ):(
           /* 手動入力 */
           <div>
@@ -2824,7 +2833,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           </tr></thead>
           <tbody>{fil.length===0
             ?<tr><td colSpan={4} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
-            :fil.map(sub=>{const resolvedName=resolveAlias(sub.staffName,staffAliases);const ds=Object.keys(sub.shifts||{}).sort(),wkDays=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work");const att=wkDays.reduce((acc,d)=>{const sh=sub.shifts[d];const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;return acc+(((st&&en)||(sh.extraStart&&sh.extraEnd))?shiftBandInfo(sh).attendance:1);},0);const attLabel=`${att}日`;const at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const hasRealUpdate=subLastActionTime(sub)>new Date(sub.submittedAt).getTime();
+            :fil.map(sub=>{const resolvedName=resolveAlias(sub.staffName,staffAliases);const ds=Object.keys(sub.shifts||{}).sort(),wkDays=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work");const att=wkDays.reduce((acc,d)=>{const sh=sub.shifts[d];const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;return acc+(((st&&en)||(sh.extraStart&&sh.extraEnd))?shiftBandInfo(sh).attendance:1);},0);const attLabel=`${att}日`;const at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const subPeriod=periods.find(p=>p.id===sub.periodId);const hasRealUpdate=subHasRealUpdate(sub,subPeriod?.deadlineDate);
               const staffType=isPremium?((settings.staffAttributes)||{})[resolvedName]:null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly||typeLim.customDays)){const weekMap={};const monthMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreaksFor(settings,d,resolvedName,sh),getOT(resolvedName,settings,sh));if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));weekMap[fd(mon)]=(weekMap[fd(mon)]||0)+nm;monthMap[d.slice(0,7)]=(monthMap[d.slice(0,7)]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly){const wkKeys=Object.keys(weekMap).sort();for(let i=0;i<wkKeys.length;i+=2){const tot=(weekMap[wkKeys[i]]||0)+(weekMap[wkKeys[i+1]]||0);if(tot>typeLim.biweekly*60)biweeklyVio=true;}}if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});if(typeLim.customDays&&typeLim.customHours){const sortedDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();for(let i=0;i<sortedDs.length;i++){const start=pd(sortedDs[i]);let tot=0;for(let j=i;j<sortedDs.length;j++){const diffD=(pd(sortedDs[j])-start)/86400000;if(diffD>=typeLim.customDays)break;const sh=sub.shifts[sortedDs[j]];tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,sortedDs[j],resolvedName,sh),getOT(resolvedName,settings,sh));}if(tot>typeLim.customHours*60){customVio=true;break;}}}}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;
               return(<tr key={sub.id} style={hasVio?{background:"rgba(255,71,87,.12)"}:{}}>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text)",fontWeight:600}}>
