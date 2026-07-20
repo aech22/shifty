@@ -555,44 +555,47 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-19 自動実行 #30）
+## Shifty バグチェックレポート（2026-07-20 自動実行 #31）
 
 ### 修正済み
-（今回の実行では修正なし）
+- **[🟡] キャッシュバスティング版数が未更新のまま app-admin.js / app-utils.js が変更されていた**（index.html:211-215、app-core.js:2,4）。直前の大型コミット`9fc15d3`でapp-admin.js(+96行)・app-utils.js(+9行)が変更されたのに`?v=20260719-b41b041`のままで、このままmainへマージすると既存ユーザーが旧JSをキャッシュから読み続ける状態だった。`20260720-9fc15d3`へ更新（コミット`a56b00b`）。
 
-### 前回巡回（#29・2026-07-19）以降の新規コミット
-6件（`9d7bf47..HEAD`）。コード変更はシフト作成タブの必要ポジション機能まわり: `b1f8e2a`（通し一括入力が曜日別/日付別候補を無視＋提出一覧の店舗切替非反映を修正）・`b41b041`（ポジション不足の赤表示を不足カテゴリの担当スタッフのみに限定）・`67fad7d`（日付別候補の曜日区分選択ポップアップ追加）・`0f828b2`（ポップアップを必要ポジション設定時のみ表示）＋版数更新2件。変更ファイル: app-admin.js(+86)・app-utils.js(+59)・app-staff.js(±31)・app-core.js/index.html(版数)・tests/core.test.js(+67)。
+### 前回巡回（#30・2026-07-19）以降の新規コミット
+6件（`c6e2901..9fc15d3`）。実質的なコード変更は`9fc15d3`（シフト作成タブ/候補管理の7項目改善）と`ec7d054`（テスト追加）。変更ファイル: app-admin.js(+96/-26)・app-utils.js(+9)・tests/core.test.js(+48)・eslint.config.js(+1)。Auto-commit 4件は同一変更の分割コミット。
 
 ### 新規コミットのレビュー（新規バグなし）
-- **app-utils.js**: 純粋関数5件を新規追加（`weekdayKeyToPositionDayType`・`candListsEqual`・`matchingPositionDayTypes`・`positionDayTypeFor`・`hasAnyRequiredPosition`）。全件 `module.exports` 登録済み・ブラウザ依存なし・ユニットテスト追加（83→92件）。
-- **app-staff.js `bulkFill`**: 候補解決を `settings.candidates` 直読みから日付ごとの `gc(ds)` へ変更。通し=その日の最長帯に正しく対応、休業日除外・トグル判定も per-date 化で整合。
-- **app-admin.js**: `SubsTab` に `key={currentShopId}` を付与し店舗切替時に再マウント。ポジション不足の赤表示を `cellPosErr`/`staffSectionOn` でスタッフ所属セクション単位に限定。`staffSectionOn` の所属判定は `positionErrors` 内（app-admin.js:835）の section 割当規則と**完全一致**を確認。`CandTab` に曜日区分選択ポップアップ（`posTypeModal`）追加、`delD` は候補全削除時に `dateCandidatePosTypes` も掃除。
+- **`cellBgStyle`（app-admin.js:1084-1092・新規）**: 背景を「不透明ベース＋linear-gradient層＋斜線画像」のカンマ合成へ置換。斜線(HDASH_IMG)を配列先頭にpushしておりCSSの重ね順（先頭=最前面）で色の上に描かれる。旧`hdashStyle`は完全削除・残存参照ゼロ。
+- **`heatBg`（app-admin.js:1204-1210・新規）**: PDFヒートマップ色をrgbaから白地合成済みの不透明rgb()へ。土日祝の行背景との混色防止という意図と実装が一致。
+- **`CandTab`**: 新規prop`periods`はAdminView(178行)で配線済み＋デフォルト値あり。`dispDates`フィルタ導入後も`selDates`参照は`length===1`/`length>0`でガードされ、単一選択トグルで空配列になっても`selDates[0]`のundefined参照は起きない。`var(--c-input2)`はindex.html:117/131/146で両テーマ定義済み。
+- **`doApplyTemplate`**: 選択曜日のみ上書き。未選択曜日はスプレッドで保持され、全曜日選択時は旧挙動と等価。空選択ガードあり。
+- **`dateCandidateDisplayCutoff`（app-utils.js・新規）**: module.exports登録済み・ブラウザ依存なし・テスト追加（92→97件）。表示フィルタのみでデータ削除は行わない。
 
 ### スキャン結果
 - `subs`の`set()`全体上書き: ヒット0（正常）
-- `filter(s=>s.id!==...)`削除パターン: 全7ヒット確認。subs系はすべてdeletedId渡し（app-admin.js:1725,2784）か`remove()`直呼び出し（app-main.js:1515 `onDeleteSub`）、他はshops系フィルタ（対象外）
+- `filter(s=>s.id!==...)`削除パターン: 全8ヒット確認。subs系はdeletedId渡し（app-admin.js:1746,2830）か`remove()`直呼び出し（app-main.js:1515）
 - DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE（app-core.js:81）正常
-- セキュリティ: `ref("global/shops")`全件読み・`global/templates`参照の復活なし。無条件`".read": true`は0件
-- index.html: スクリプト読み込み順（utils→core→staff→admin→main、211-215行）維持、CDN SRI 11本・**キャッシュバスティング版数`?v=20260719-b41b041`に更新（#21から継続していた🟢「版数が07-08から未更新」は解消）**
-- Cloud Functions: secrets抜け漏れなし・`.delete()`誤用なし・安全装置（`Number.isNaN`・`archived/shops`）維持
-- isPro/isPremium誤用: 新規ヒットなし（唯一の該当箇所app-admin.js:2760はPremium機能と無関係の未登録スタッフ別名登録UIの表示条件で妥当）
-- `npm test`: 92件パス（0 fail）、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
+- セキュリティ: `ref("global/shops")`全件読みの復活なし。無条件`".read": true`は0件
+- index.html: スクリプト読み込み順（utils→core→staff→admin→main、211-215行）維持、CDN SRI 11本、版数を`?v=20260720-9fc15d3`に更新
+- Cloud Functions: secrets抜け漏れなし（5箇所）・`.delete()`誤用なし
+- 新規inputのfontSize: 16px未満の追加なし（新規UIはボタンのみ）
+- `npm test`: 97件パス（0 fail）、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
 
 ### 要確認（未修正・継続）
-
-- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2745付近、#11から継続監視中）
-- **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、#11から継続。今回 `SubsTab key={currentShopId}` で提出一覧側の切替非反映は緩和されたが、購読レース自体の恒久対応は別途）
-- **🟢 `joinByInviteCode`（app-main.js:852付近）が呼び出し元ゼロのデッドコード**（企業アカウント招待コード参加UIは依然未実装。#15から継続）
-- **🟢 スキルがPHASE 0で読むよう指示している`VISION.md`がリポジトリに存在しない**（#27から継続。完了判定はCLAUDE.md・RULES.mdとスキル本文の基準のみで実施）
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2745付近、#11から継続）
+- **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、#11から継続）
+- **🟢 `joinByInviteCode`（app-main.js:852付近）が呼び出し元ゼロのデッドコード**（#15から継続）
+- **🟢 スキルがPHASE 0で読むよう指示している`VISION.md`がリポジトリに存在しない**（#27から継続）
+- **🟢 版数更新の手動運用が繰り返し漏れる**（#21・#31で2度発生）。コード変更コミット時の自動更新フック化を検討する余地あり
 
 ### 異常なし
-クリティカル（🔴）・中程度（🟡）の問題はなし。#29以降の新規コミット（必要ポジション機能の3修正＋1機能追加）をレビューし、新規バグの混入なし。新規純粋関数はユニットテスト付き・所属判定ロジックの二重定義も一致を確認。作業ツリーの`.cursorrules`未コミット変更は#28から継続して残っているが、本ループの対象外。
+クリティカル（🔴）はなし。🟡1件（版数未更新）を検出・修正済み。`9fc15d3`の7項目改善（背景合成・PDFヒートマップ色・候補管理UI）をレビューし、機能上の新規バグの混入なし。作業ツリーの`.cursorrules`未コミット変更は#28から継続して残っているが、本ループの対象外。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
 -
 -
 -
