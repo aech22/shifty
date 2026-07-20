@@ -697,6 +697,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     if(!startShop&&!endShop)return null;
     return{startShop,endShop,full:!!(startShop&&endShop)};
   };
+  // ランチ帯/ディナー帯それぞれのセクションを返す（"kit"/"hall"）。ヒートマップ(heatSectionEntries)と
+  // ポジション不足判定・セル赤ハイライトで同じ規則を共有するための入口。
+  const bandSectionsOf=(name,date,stM,enM)=>{
+    const def=hallStaff.includes(name)?"hall":"kit";
+    if(hallStaff.length===0)return{lunch:"kit",dinner:"kit"};
+    const bv=resolveBandValues(stM,enM,noteToHeatSection(getFieldNote(name,date,"start")),noteToHeatSection(getFieldNote(name,date,"end")),HEAT_BAND_SPLIT_MIN);
+    return{lunch:bv.lunch||def,dinner:bv.dinner||def};
+  };
   // ヒートマップ休憩判定用: 実効start/endを反映した一時シフトオブジェクト
   const getHeatShift=(name,date)=>{
     const base=_getSub(name)?.shifts?.[date];
@@ -728,8 +736,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         // 組み合わせ入力でも）、主シフトとは別の追加出勤(固定時間帯)としてカウントする
         const fixedCmd=(getFieldFixed(name,date,"start")||getFieldFixed(name,date,"end"))?FIXED_ENTRY:null;
         if(stM===null&&enM===null&&!fixedCmd)return;
-        // note（h/k/x等）はstart/endどちらのセルから入力されても日単位で共通のため、主シフト・追加出勤の
-        // 両方に同じ判定を適用する（x=ヘルプ扱いで両方カウント除外、h/k=両方まとめて部門を上書き）
+        // xサフィックスは日単位(getShiftNote)で判定（どちらのセルに付いてもシフト全体を除外）。
+        // h/kサフィックスと他店舗ヘルプ略称はフィールド別(getFieldNote)に判定し、
+        // startセル→ランチ帯・endセル→ディナー帯に適用する（heatSectionEntries / resolveBandValues）。
         const note=getShiftNote(name,date);
         if(note!=="x"){
           if(stM!==null||enM!==null){
@@ -741,14 +750,16 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
               const hsh=getHeatShift(name,date);
               // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）
               if(hsh){const ot=getOT(name,settings,hsh);if(ot>0)pEnM+=ot;}
-              // 他店舗ヘルプ帯は自店舗のカウントから除外（終日=全除外、出勤側=〜17時、退勤側=17時〜）
+              // 他店舗ヘルプ帯は自店舗のカウントから除外。h/kと同じ帯規則（resolveBandValues）で解決する。跨ぎシフトは
+              // 出勤側略称=ランチ帯・退勤側略称=ディナー帯、片帯のみのシフトは反対側セルの略称も有効。
               const help=getHelpInfo(name,date);
               let ok=true;
               if(help){
-                if(help.full)ok=false;
+                const hv=resolveBandValues(pStM,pEnM,help.startShop,help.endShop,HEAT_BAND_SPLIT_MIN);
+                if(hv.lunch&&hv.dinner)ok=false;
                 else{
-                  if(help.startShop)pStM=Math.max(pStM,1020);
-                  if(help.endShop)pEnM=Math.min(pEnM,1020);
+                  if(hv.lunch)pStM=Math.max(pStM,HEAT_BAND_SPLIT_MIN);
+                  if(hv.dinner)pEnM=Math.min(pEnM,HEAT_BAND_SPLIT_MIN);
                   if(pStM>=pEnM)ok=false;
                 }
               }
@@ -757,18 +768,29 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                 const breaks=hsh
                   ?getBreaksFor(settings,date,name,hsh).map(br=>({bs:timeToMin(br.start),be:timeToMin(br.end)})).filter(b=>b.bs!==null&&b.be!==null)
                   :[];
-                // ホール/キッチン分割未設定の店舗はhall列自体が非表示のため、h/kサフィックスで
-                // section="hall"に振り分けるとカウントが画面から消える。分割未設定時は常にkitに集約する。
-                const section=hallStaff.length===0?"kit":(note==="h"?"hall":note==="k"?"kit":(hallStaff.includes(name)?"hall":"kit"));
-                arr.push({stM:pStM,enM:pEnM,breaks,section});
+                // startセルのnote→ランチ帯section、endセルのnote→ディナー帯section（heatSectionEntries）。
+                // 帯を跨ぎ かつ 両帯のsectionが異なるときだけ17:00固定で2件に分割される。
+                heatSectionEntries({
+                  stM:pStM,enM:pEnM,
+                  startNote:getFieldNote(name,date,"start"),
+                  endNote:getFieldNote(name,date,"end"),
+                  defaultSec:hallStaff.includes(name)?"hall":"kit",
+                  splitEnabled:hallStaff.length>0,
+                }).forEach(e=>arr.push({...e,breaks}));
               }
             }
           }
           if(fixedCmd){
+            // 「締」の追加出勤(23:00〜25:00)はディナー帯のみのため退勤セルのnote優先（片帯シフトと同じ規則）
             const exStM=timeToMin(fixedCmd.start),exEnM=timeToMin(fixedCmd.end);
             if(exStM!==null&&exEnM!==null&&exStM<exEnM){
-              const section=hallStaff.length===0?"kit":(note==="h"?"hall":note==="k"?"kit":(hallStaff.includes(name)?"hall":"kit"));
-              arr.push({stM:exStM,enM:exEnM,breaks:[],section});
+              heatSectionEntries({
+                stM:exStM,enM:exEnM,
+                startNote:getFieldNote(name,date,"start"),
+                endNote:getFieldNote(name,date,"end"),
+                defaultSec:hallStaff.includes(name)?"hall":"kit",
+                splitEnabled:hallStaff.length>0,
+              }).forEach(e=>arr.push({...e,breaks:[]}));
             }
           }
         }
@@ -788,12 +810,13 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       dates.forEach(date=>{
         let s=timeToMin(getEffHHMM(name,date,"start")),e=timeToMin(getEffHHMM(name,date,"end"));
         if(s===null||e===null)return;
-        // ヘルプ指定帯は他店舗勤務が前提なので判定から除外
+        // ヘルプ指定帯は他店舗勤務が前提なので判定から除外（帯の解決規則はヒートマップと共通）
         const help=getHelpInfo(name,date);
         if(help){
-          if(help.full)return;
-          if(help.startShop)s=Math.max(s,1020);
-          if(help.endShop)e=Math.min(e,1020);
+          const hv=resolveBandValues(s,e,help.startShop,help.endShop,HEAT_BAND_SPLIT_MIN);
+          if(hv.lunch&&hv.dinner)return;
+          if(hv.lunch)s=Math.max(s,HEAT_BAND_SPLIT_MIN);
+          if(hv.dinner)e=Math.min(e,HEAT_BAND_SPLIT_MIN);
           if(s>=e)return;
         }
         for(const osid of wps){
@@ -809,7 +832,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   },[companyData,heatEdits,subs,settings,selPid,staffList,periods]);
   // ポジション不足エラー: 日付×ランチ/ディナー×キッチン/ホールで、必要ポジション(settings.requiredPositions)に対する
   // 出勤スタッフの保有ポジション(settings.staffPositions)を最大二部マッチング(matchPositionSlots)し、埋まらない枠を不足として集計する。
-  // section判定はheatDataのsectionと同じ規則（h/kサフィックスで上書き、分割未設定店舗は常にkitchenに集約）
+  // section判定はheatDataと同じ入口(bandSectionsOf)を使い、ランチ帯/ディナー帯で別々に振り分ける
+  // （出勤セルのh/k→ランチ帯、退勤セルのh/k→ディナー帯。分割未設定店舗は常にkitchenに集約）
   const positionErrors=useMemo(()=>{
     const result={}; // {date:{lunch:{kitchen:{pos:不足数},hall:{...}},dinner:{...}}}
     if(!isPremium)return result; // ポジションエラー判定はPremium限定機能（プラン変更後も過去のrequiredPositionsで誤表示しないよう明示的にガード）
@@ -826,15 +850,18 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         if(note==="x")return;
         const help=getHelpInfo(name,date);
         if(help){
-          if(help.full)return;
-          if(help.startShop)s=Math.max(s,1020);
-          if(help.endShop)e=Math.min(e,1020);
+          const hv=resolveBandValues(s,e,help.startShop,help.endShop,HEAT_BAND_SPLIT_MIN);
+          if(hv.lunch&&hv.dinner)return;
+          if(hv.lunch)s=Math.max(s,HEAT_BAND_SPLIT_MIN);
+          if(hv.dinner)e=Math.min(e,HEAT_BAND_SPLIT_MIN);
           if(s>=e)return;
         }
-        const section=hallStaff.length===0?"kitchen":(note==="h"?"hall":note==="k"?"kitchen":(hallStaff.includes(name)?"hall":"kitchen"));
+        // ランチ帯とディナー帯でセクションが変わりうるため帯ごとに振り分ける（"kit"→"kitchen"に読み替え）
+        const bs=bandSectionsOf(name,date,s,e);
+        const secOf=v=>v==="hall"?"hall":"kitchen";
         const positions=staffPos[name]||{lunch:[],dinner:[]};
-        if(s<1020)attendees.lunch[section].push({name,positions:positions.lunch||[]});
-        if(e>1020)attendees.dinner[section].push({name,positions:positions.dinner||[]});
+        if(s<HEAT_BAND_SPLIT_MIN)attendees.lunch[secOf(bs.lunch)].push({name,positions:positions.lunch||[]});
+        if(e>HEAT_BAND_SPLIT_MIN)attendees.dinner[secOf(bs.dinner)].push({name,positions:positions.dinner||[]});
       });
       const dayResult={lunch:{kitchen:{},hall:{}},dinner:{kitchen:{},hall:{}}};
       ["lunch","dinner"].forEach(meal=>{
@@ -850,15 +877,16 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     });
     return result;
   },[isPremium,subs,heatEdits,settings,selPid,staffList,periods,companyData]);
-  // スタッフの所属(キッチン/ホール)判定。positionErrors算出時のsection規則(上記realStaff.forEach内)と同一に保つこと。
+  // スタッフの帯別所属(キッチン/ホール)判定。positionErrors算出時のsection規則(bandSectionsOf)と同一の入口を使う。
   // 分割なし店舗(hallStaff.length===0)は全員kitchenに集約されるため、キッチン不足＝全スタッフのセルが対象＝従来の「全セル赤」動作になる。
-  const staffSectionOn=(name,date)=>{
+  const staffSectionOn=(name,date,meal)=>{
     if(hallStaff.length===0)return"kitchen";
-    const note=getShiftNote(name,date);
-    return note==="h"?"hall":note==="k"?"kitchen":(hallStaff.includes(name)?"hall":"kitchen");
+    const s=timeToMin(getEffHHMM(name,date,"start")),e=timeToMin(getEffHHMM(name,date,"end"));
+    const bs=bandSectionsOf(name,date,s==null?0:s,e==null?0:e);
+    return(meal==="dinner"?bs.dinner:bs.lunch)==="hall"?"hall":"kitchen";
   };
-  // ポジション不足でセルを赤くするか: そのスタッフの所属セクションに不足がある帯(lunch=出勤行/dinner=退勤行)のみ対象
-  const cellPosErr=(name,date,meal)=>{const pe=positionErrors[date];if(!pe)return false;return Object.keys(pe[meal][staffSectionOn(name,date)]||{}).length>0;};
+  // ポジション不足でセルを赤くするか: そのスタッフのその帯の所属セクションに不足がある帯(lunch=出勤行/dinner=退勤行)のみ対象
+  const cellPosErr=(name,date,meal)=>{const pe=positionErrors[date];if(!pe)return false;return Object.keys(pe[meal][staffSectionOn(name,date,meal)]||{}).length>0;};
   // エラーサマリー用に日付順のフラットな一覧へ展開（キッチン/ホール別）
   const positionErrorEntries=useMemo(()=>{
     const kitchen=[],hall=[];
