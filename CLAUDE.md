@@ -555,46 +555,46 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-20 自動実行 #31）
+## Shifty バグチェックレポート（2026-07-20 自動実行 #32）
 
 ### 修正済み
-- **[🟡] キャッシュバスティング版数が未更新のまま app-admin.js / app-utils.js が変更されていた**（index.html:211-215、app-core.js:2,4）。直前の大型コミット`9fc15d3`でapp-admin.js(+96行)・app-utils.js(+9行)が変更されたのに`?v=20260719-b41b041`のままで、このままmainへマージすると既存ユーザーが旧JSをキャッシュから読み続ける状態だった。`20260720-9fc15d3`へ更新（コミット`a56b00b`）。
+なし（🔴🟡の検出ゼロ）。
 
-### 前回巡回（#30・2026-07-19）以降の新規コミット
-6件（`c6e2901..9fc15d3`）。実質的なコード変更は`9fc15d3`（シフト作成タブ/候補管理の7項目改善）と`ec7d054`（テスト追加）。変更ファイル: app-admin.js(+96/-26)・app-utils.js(+9)・tests/core.test.js(+48)・eslint.config.js(+1)。Auto-commit 4件は同一変更の分割コミット。
+### 前回巡回（#31・同日）以降の新規コミット
+2件（`618c49b..21827b0`）。実質的なコード変更は`0997620`（提出一覧ソートの修正）のみで、`21827b0`はその版数更新。変更ファイル: app-admin.js(+3/-2)・app-utils.js(+16/-1)・tests/core.test.js(+46)・eslint.config.js(+1)・app-core.js/index.html(版数)。
 
 ### 新規コミットのレビュー（新規バグなし）
-- **`cellBgStyle`（app-admin.js:1084-1092・新規）**: 背景を「不透明ベース＋linear-gradient層＋斜線画像」のカンマ合成へ置換。斜線(HDASH_IMG)を配列先頭にpushしておりCSSの重ね順（先頭=最前面）で色の上に描かれる。旧`hdashStyle`は完全削除・残存参照ゼロ。
-- **`heatBg`（app-admin.js:1204-1210・新規）**: PDFヒートマップ色をrgbaから白地合成済みの不透明rgb()へ。土日祝の行背景との混色防止という意図と実装が一致。
-- **`CandTab`**: 新規prop`periods`はAdminView(178行)で配線済み＋デフォルト値あり。`dispDates`フィルタ導入後も`selDates`参照は`length===1`/`length>0`でガードされ、単一選択トグルで空配列になっても`selDates[0]`のundefined参照は起きない。`var(--c-input2)`はindex.html:117/131/146で両テーマ定義済み。
-- **`doApplyTemplate`**: 選択曜日のみ上書き。未選択曜日はスプレッドで保持され、全曜日選択時は旧挙動と等価。空選択ガードあり。
-- **`dateCandidateDisplayCutoff`（app-utils.js・新規）**: module.exports登録済み・ブラウザ依存なし・テスト追加（92→97件）。表示フィルタのみでデータ削除は行わない。
+- **`subLastActionTime`（app-utils.js:487-496・新規）**: 純粋関数でブラウザAPI非依存、module.exports登録済み。`submittedAt`欠損時は`new Date(0)`でbase=0、`updatedAt`が不正日付なら`Number.isNaN`でbaseへフォールバックし例外を出さない。分単位比較（`Math.floor(t/60000)`）で同一分内のupdatedAtを「再提出」と誤判定しない挙動をユニットテスト6件が固定している。
+- **ソートキーの差し替え（app-admin.js:2770）**: `sf==="submittedAt"`のときのみ`subLastActionTime`を使い、他のソート列（`staffName`等の文字列比較）は従来の`(a[sf]||"")`経路のまま。数値と文字列が混ざる比較にはならない。
+- **「変更あり」バッジ判定の一本化（app-admin.js:2799）**: 旧`sub.isUpdated&&sub.updatedAt&&rm(updatedAt)>rm(submittedAt)`と新`subLastActionTime(sub)>new Date(sub.submittedAt).getTime()`は等価（関数内で`isUpdated`/`updatedAt`欠損時はbaseを返すため）。`submittedAt`が不正な場合は右辺がNaNとなり比較がfalseになるだけでクラッシュしない。ローカル関数`rm`は使用箇所と同時に削除済みで残骸なし。
 
 ### スキャン結果
 - `subs`の`set()`全体上書き: ヒット0（正常）
-- `filter(s=>s.id!==...)`削除パターン: 全8ヒット確認。subs系はdeletedId渡し（app-admin.js:1746,2830）か`remove()`直呼び出し（app-main.js:1515）
+- `filter(s=>s.id!==...)`削除パターン: 全8ヒット確認。subs系はdeletedId渡し（app-admin.js:1746,2831）か`remove()`直呼び出し（app-main.js:1515）で削除のFirebase反映は維持
+- subのin-place変更: なし。`onEditSub`（app-admin.js:1746）はスプレッドで新オブジェクトを作っており`saveSubs`の参照比較差分書き込みに乗る
 - DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE（app-core.js:81）正常
-- セキュリティ: `ref("global/shops")`全件読みの復活なし。無条件`".read": true`は0件
-- index.html: スクリプト読み込み順（utils→core→staff→admin→main、211-215行）維持、CDN SRI 11本、版数を`?v=20260720-9fc15d3`に更新
-- Cloud Functions: secrets抜け漏れなし（5箇所）・`.delete()`誤用なし
-- 新規inputのfontSize: 16px未満の追加なし（新規UIはボタンのみ）
-- `npm test`: 97件パス（0 fail）、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
+- セキュリティ: `ref("global/shops")`全件読みの復活なし、`global/templates`参照なし、無条件`".read": true`は0件
+- index.html: スクリプト読み込み順（utils→core→staff→admin→main）維持、CDN SRI 11本、版数`?v=20260720-0997620`がapp-core.js冒頭のbuild表記およびHEADのコード変更コミットと整合
+- Cloud Functions: secrets抜け漏れなし（5箇所）・`.delete()`誤用なし・`purgeInactiveShops`のInvalid Dateスキップとarchived二段削除は維持・`PURGE_OLD_PERIODS_DRY_RUN=true`のまま（BACKLOG通り2026-08-12以降に切り替え）
+- 新規inputのfontSize: 16px未満の追加なし（#31以降の新規UIはbutton/div/spanのみ）
+- `npm test`: 103件パス（0 fail、`subLastActionTime`の新規6件を含む）、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
 
 ### 要確認（未修正・継続）
 - **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2745付近、#11から継続）
 - **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、#11から継続）
 - **🟢 `joinByInviteCode`（app-main.js:852付近）が呼び出し元ゼロのデッドコード**（#15から継続）
 - **🟢 スキルがPHASE 0で読むよう指示している`VISION.md`がリポジトリに存在しない**（#27から継続）
-- **🟢 版数更新の手動運用が繰り返し漏れる**（#21・#31で2度発生）。コード変更コミット時の自動更新フック化を検討する余地あり
+- **🟢 版数更新の手動運用**（#21・#31で漏れ発生）。今回は`0997620`に対して同日中に`21827b0`で正しく更新されており漏れなし。自動化の検討余地は継続
 
 ### 異常なし
-クリティカル（🔴）はなし。🟡1件（版数未更新）を検出・修正済み。`9fc15d3`の7項目改善（背景合成・PDFヒートマップ色・候補管理UI）をレビューし、機能上の新規バグの混入なし。作業ツリーの`.cursorrules`未コミット変更は#28から継続して残っているが、本ループの対象外。
+クリティカル（🔴）・中程度（🟡）ともにゼロ。今回の巡回では修正コミットなし。`0997620`の提出一覧ソート修正をレビューし、新規バグの混入なし。作業ツリーの`.cursorrules`未コミット変更は#28から継続して残っているが、本ループの対象外。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
 -
 -
 -
