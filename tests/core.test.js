@@ -772,6 +772,52 @@ test("subLastActionTime: 日付が不正・sub が無い場合も例外にせず
   );
 });
 
+// ===== subHasRealUpdate（提出一覧の「変更あり」バッジ・締切日ゲート付き・2026-07-21） =====
+test("subHasRealUpdate: 変更なし（updatedAtなし）は締切あり/なしどちらも false", () => {
+  const sub = { submittedAt: "2026-07-20T09:00:00.000Z" };
+  assert.strictEqual(u.subHasRealUpdate(sub, ""), false);
+  assert.strictEqual(u.subHasRealUpdate(sub, "2026-07-25"), false);
+});
+
+test("subHasRealUpdate: 締切なし・提出1分以上後に更新なら true（従来動作）", () => {
+  const sub = { submittedAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:02:00.000Z", isUpdated: true };
+  assert.strictEqual(u.subHasRealUpdate(sub, ""), true);
+  assert.strictEqual(u.subHasRealUpdate(sub, undefined), true);
+});
+
+test("subHasRealUpdate: 締切ありで締切前の更新は false", () => {
+  const sub = { submittedAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-22T09:00:00.000Z", isUpdated: true };
+  assert.strictEqual(u.subHasRealUpdate(sub, "2026-07-25"), false);
+});
+
+test("subHasRealUpdate: 締切ありで締切後の更新は true", () => {
+  const sub = { submittedAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-28T09:00:00.000Z", isUpdated: true };
+  assert.strictEqual(u.subHasRealUpdate(sub, "2026-07-25"), true);
+});
+
+test("subHasRealUpdate: 締切当日中の更新は false・翌日以降の更新は true（境界）", () => {
+  const before = { submittedAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-25T01:00:00.000Z", isUpdated: true };
+  const after = { submittedAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-26T15:00:00.000Z", isUpdated: true };
+  assert.strictEqual(u.subHasRealUpdate(before, "2026-07-25"), false);
+  assert.strictEqual(u.subHasRealUpdate(after, "2026-07-25"), true);
+});
+
+test("subHasRealUpdate: 締切日が不正文字列なら従来判定にフォールバック", () => {
+  const updated = { submittedAt: "2026-07-20T09:00:00.000Z", updatedAt: "2026-07-20T09:02:00.000Z", isUpdated: true };
+  const notUpdated = { submittedAt: "2026-07-20T09:00:00.000Z" };
+  assert.strictEqual(u.subHasRealUpdate(updated, "こわれた締切"), true);
+  assert.strictEqual(u.subHasRealUpdate(notUpdated, "こわれた締切"), false);
+});
+
+test("subHasRealUpdate: submittedAt/updatedAt が不正・sub が無い場合も例外にせず false", () => {
+  assert.strictEqual(u.subHasRealUpdate(null, "2026-07-25"), false);
+  assert.strictEqual(u.subHasRealUpdate({}, "2026-07-25"), false);
+  assert.strictEqual(
+    u.subHasRealUpdate({ submittedAt: "こわれた", updatedAt: "こわれた", isUpdated: true }, "2026-07-25"),
+    false
+  );
+});
+
 // ===== ヒートマップの帯別セクション（h/kサフィックスのランチ/ディナー分割・2026-07-21） =====
 const HS = (o) => u.heatSectionEntries({ defaultSec: "kit", splitEnabled: true, ...o });
 

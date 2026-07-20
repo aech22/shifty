@@ -139,6 +139,7 @@ const sharedGlobals = {
   recentPeriodIds: "writable",
   dateCandidateDisplayCutoff: "writable",
   subLastActionTime: "writable",
+  subHasRealUpdate: "writable",
   SUBS_WINDOW_MONTHS: "writable",
   diffSubForFlatWrite: "writable",
   applyFlatSubWrite: "writable",
