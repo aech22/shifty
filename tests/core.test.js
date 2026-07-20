@@ -771,3 +771,96 @@ test("subLastActionTime: 日付が不正・sub が無い場合も例外にせず
     new Date(st).getTime()
   );
 });
+
+// ===== ヒートマップの帯別セクション（h/kサフィックスのランチ/ディナー分割・2026-07-21） =====
+const HS = (o) => u.heatSectionEntries({ defaultSec: "kit", splitEnabled: true, ...o });
+
+test("heatSectionEntries: 跨ぎシフト(9-22)でstartNote=h・endNote無しはランチ=hall/ディナー=kitに分割される", () => {
+  const r = HS({ stM: 540, enM: 1320, startNote: "h", endNote: "" });
+  assert.deepStrictEqual(r, [
+    { stM: 540, enM: 1020, section: "hall" },
+    { stM: 1020, enM: 1320, section: "kit" },
+  ]);
+});
+
+test("heatSectionEntries: 跨ぎシフトでendNote=hのみならランチ=kit/ディナー=hallになる", () => {
+  const r = HS({ stM: 540, enM: 1320, startNote: "", endNote: "h" });
+  assert.deepStrictEqual(r, [
+    { stM: 540, enM: 1020, section: "kit" },
+    { stM: 1020, enM: 1320, section: "hall" },
+  ]);
+});
+
+test("heatSectionEntries: ディナーのみシフト(18-23)はendNote優先・空ならstartNoteにフォールバックする", () => {
+  assert.deepStrictEqual(HS({ stM: 1080, enM: 1380, startNote: "h", endNote: "" }), [
+    { stM: 1080, enM: 1380, section: "hall" },
+  ]);
+  assert.deepStrictEqual(HS({ stM: 1080, enM: 1380, startNote: "h", endNote: "k" }), [
+    { stM: 1080, enM: 1380, section: "kit" },
+  ]);
+});
+
+test("heatSectionEntries: ランチのみシフト(9-15)はstartNote優先・空ならendNoteにフォールバックする", () => {
+  assert.deepStrictEqual(HS({ stM: 540, enM: 900, startNote: "", endNote: "h" }), [
+    { stM: 540, enM: 900, section: "hall" },
+  ]);
+  assert.deepStrictEqual(HS({ stM: 540, enM: 900, startNote: "k", endNote: "h" }), [
+    { stM: 540, enM: 900, section: "kit" },
+  ]);
+});
+
+test("heatSectionEntries: 分割点は17:00固定で、17:00ちょうど終業(9-17)は分割されず1エントリになる", () => {
+  assert.strictEqual(u.HEAT_BAND_SPLIT_MIN, 1020);
+  assert.deepStrictEqual(HS({ stM: 540, enM: 1020, startNote: "h", endNote: "" }), [
+    { stM: 540, enM: 1020, section: "hall" },
+  ]);
+});
+
+test("heatSectionEntries: 両セルのnoteが同一(9h/22h)なら跨ぎでも分割せず1エントリになる", () => {
+  assert.deepStrictEqual(HS({ stM: 540, enM: 1320, startNote: "h", endNote: "h" }), [
+    { stM: 540, enM: 1320, section: "hall" },
+  ]);
+});
+
+test("heatSectionEntries: ホール/キッチン分割未使用の店舗はnoteに関わらず常にdefaultSecの1エントリ", () => {
+  const r = u.heatSectionEntries({ stM: 540, enM: 1320, startNote: "h", endNote: "k", defaultSec: "kit", splitEnabled: false });
+  assert.deepStrictEqual(r, [{ stM: 540, enM: 1320, section: "kit" }]);
+});
+
+test("heatSectionEntries: ホール所属スタッフ(defaultSec=hall)はnote無しの帯がhallのままになる", () => {
+  const r = u.heatSectionEntries({ stM: 540, enM: 1320, startNote: "k", endNote: "", defaultSec: "hall", splitEnabled: true });
+  assert.deepStrictEqual(r, [
+    { stM: 540, enM: 1020, section: "kit" },
+    { stM: 1020, enM: 1320, section: "hall" },
+  ]);
+});
+
+test("heatSectionEntries: 開始>=終了の不正な区間は空配列を返す", () => {
+  assert.deepStrictEqual(HS({ stM: 1020, enM: 1020, startNote: "h", endNote: "" }), []);
+});
+
+test("resolveBandValues: 跨ぎは各セルの値を厳密に使い、片帯のみは反対側セルにフォールバックする", () => {
+  // 跨ぎ（9三 / 22）→ ランチだけ他店舗ヘルプ
+  assert.deepStrictEqual(u.resolveBandValues(540, 1320, "shopA", null), { lunch: "shopA", dinner: null });
+  // ディナーのみ（18三 / 23）→ 出勤セルの略称がディナー帯にも効く
+  assert.deepStrictEqual(u.resolveBandValues(1080, 1380, "shopA", null), { lunch: "shopA", dinner: "shopA" });
+  // ランチのみ（9 / 15三）→ 退勤セルの略称がランチ帯にも効く
+  assert.deepStrictEqual(u.resolveBandValues(540, 900, null, "shopB"), { lunch: "shopB", dinner: "shopB" });
+  // 両方指定は終日
+  assert.deepStrictEqual(u.resolveBandValues(540, 1320, "shopA", "shopB"), { lunch: "shopA", dinner: "shopB" });
+});
+
+test("noteToHeatSection: h→hall / k→kit / それ以外はnull", () => {
+  assert.strictEqual(u.noteToHeatSection("h"), "hall");
+  assert.strictEqual(u.noteToHeatSection("k"), "kit");
+  assert.strictEqual(u.noteToHeatSection("x"), null);
+  assert.strictEqual(u.noteToHeatSection("研修"), null);
+  assert.strictEqual(u.noteToHeatSection(""), null);
+});
+
+test("CELL_COMMANDS: h/kのdescに帯別適用（ランチ帯/ディナー帯）の説明が含まれる", () => {
+  ["h", "k"].forEach(k => {
+    const c = u.CELL_COMMANDS.find(x => x.kind === "suffix" && x.key === k);
+    assert.ok(c.desc.includes("ランチ帯") && c.desc.includes("ディナー帯"), `${k} の説明が帯別適用を説明していない`);
+  });
+});

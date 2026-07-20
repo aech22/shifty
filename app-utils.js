@@ -152,6 +152,42 @@ function shiftBandInfo(shift){
   const attendance=((hasLunch&&hasDinner)||totalMin>=540)?1:0.5;
   return{startMin,endMin,hasLunch,hasDinner,attendance};
 }
+// ===== シフト作成タブ: セルコマンドの帯別（ランチ/ディナー）反映 =====
+// 帯境界は17:00固定（shiftBandInfo・ヘルプ判定・ポジション判定と同じ1020分）。候補時間から算出される
+// HEAT_LUNCH_END_MIN / HEAT_DINNER_START_MIN（app-admin.js）は「片側セルのみ入力時の時間補完」専用であり、
+// 帯の区切りには使わない（可変境界を区切りに使うと時間セルが2帯にまたがって二重カウントされる）。
+const HEAT_BAND_SPLIT_MIN=1020;
+// 出勤セルの値=ランチ帯・退勤セルの値=ディナー帯に対応付ける共通規則。h/kサフィックスと
+// 他店舗ヘルプ略称の両方がこの規則を共有する。
+// 帯を跨ぐシフトは各セルの値をその帯に厳密に適用する（「9三」「22」＝ランチだけ他店舗ヘルプ）。
+// 片方の帯にしか掛からないシフトのみ、値のないセル側を反対側セルの値でフォールバックする
+// （「18h」「23」のようなディナーのみシフトでhが黙殺されないようにするため。2026-07-21確定仕様）。
+function resolveBandValues(stM,enM,startVal,endVal,splitM){
+  const sp=splitM==null?HEAT_BAND_SPLIT_MIN:splitM;
+  const sv=startVal||null,ev=endVal||null;
+  if(stM<sp&&enM>sp)return{lunch:sv,dinner:ev};
+  return{lunch:sv||ev,dinner:ev||sv};
+}
+// h/kサフィックス→ヒートマップのセクション（"hall"/"kit"）。未登録・空はnull（＝所属のデフォルトに従う）
+function noteToHeatSection(note){
+  return note==="h"?"hall":note==="k"?"kit":null;
+}
+// ヒートマップの出勤エントリをセクション別に分割する。帯を跨ぎ かつ ランチ帯とディナー帯で
+// セクションが異なるときだけ HEAT_BAND_SPLIT_MIN で2件に分ける。
+// splitEnabled=false（ホール/キッチン分割を使っていない店舗＝hall列が非表示）は、h/kが付いていても
+// 常にdefaultSecの1件に集約する（hallに振り分けるとカウントが画面から消えるため）。
+function heatSectionEntries(o){
+  const stM=o.stM,enM=o.enM,def=o.defaultSec||"kit";
+  if(!(stM<enM))return[];
+  if(!o.splitEnabled)return[{stM,enM,section:def}];
+  const sp=o.splitM==null?HEAT_BAND_SPLIT_MIN:o.splitM;
+  const bv=resolveBandValues(stM,enM,noteToHeatSection(o.startNote),noteToHeatSection(o.endNote),sp);
+  const ls=bv.lunch||def,ds=bv.dinner||def;
+  if(enM<=sp)return[{stM,enM,section:ls}];
+  if(stM>=sp)return[{stM,enM,section:ds}];
+  if(ls===ds)return[{stM,enM,section:ls}];
+  return[{stM,enM:sp,section:ls},{stM:sp,enM,section:ds}];
+}
 // 属性ID→名称のリスト（staffTypeLimits優先・社員/バイト補完）
 function getAttrOptions(settings){
   const stl=(settings&&settings.staffTypeLimits)||{};
@@ -366,8 +402,8 @@ function buildSuggestList(staffList, staffAliases){
 // 新しいセルコマンド・セル色を追加するときは必ずここに登録する。レジェンドはこの配列から自動生成されるため
 // 登録すれば説明も自動で追記される（tests/core.test.js の完全性テストが登録漏れを検出する）。
 const CELL_COMMANDS=[
-  {key:"h",kind:"suffix",usage:"9h",label:"ホール出張",desc:"キッチン所属のスタッフをこの日だけホールの人数として集計する",color:"#FFF3B0"},
-  {key:"k",kind:"suffix",usage:"9k",label:"キッチン入り",desc:"ホール所属のスタッフをこの日だけキッチンの人数として集計する",color:"#FFF3B0"},
+  {key:"h",kind:"suffix",usage:"9h",label:"ホール出張",desc:"キッチン所属のスタッフをホールの人数として集計する。出勤セルに付けるとランチ帯（〜17時）、退勤セルに付けるとディナー帯（17時〜）だけに反映する（例: 出勤9h・退勤22 → ランチはホール・ディナーはキッチン）。片方の帯しかないシフトでは、もう一方のセルのコマンドも有効になる",color:"#FFF3B0"},
+  {key:"k",kind:"suffix",usage:"9k",label:"キッチン入り",desc:"ホール所属のスタッフをキッチンの人数として集計する。出勤セルに付けるとランチ帯（〜17時）、退勤セルに付けるとディナー帯（17時〜）だけに反映する。片方の帯しかないシフトでは、もう一方のセルのコマンドも有効になる",color:"#FFF3B0"},
   {key:"x",kind:"suffix",usage:"9x",label:"ヘルプ（カウント外）",desc:"時間帯別出勤人数に数えない。x単体入力も同じ扱い（コマンド以外の文字だけの入力はメモとしてそのまま表示される）",color:"#FFF3B0"},
   {key:"y",kind:"rest",usage:"y",label:"休み希望",desc:"セルを休み扱いにして斜線を表示する（出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日）。もう一度 y で解除、時間を入力すると出勤に上書き。「休」でも入力できる",hatch:true},
   {key:"締",kind:"fixed",usage:"16k締",label:"締め（東通り店専用・追加出勤）",desc:"出勤・退勤どちらのセルに単独入力、または数字・h/k/x・他店舗略称など他のコマンドと組み合わせて（前後どちらでも可）入力しても、23:00〜25:00(翌1:00)を主シフトとは別の追加出勤として計上する（例: 出勤13・退勤17締 → 13〜17時と23〜25時の2出勤。出勤16k締 → キッチン入りかつ追加出勤）。鷄えん東通り店でのみ有効",start:"23:00",end:"25:00"},
@@ -497,5 +533,5 @@ function subLastActionTime(sub){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition};
 }
