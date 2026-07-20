@@ -518,8 +518,8 @@ function applyFlatSubWrite(map,path,value){
 }
 
 // 提出一覧のソート用「最終アクション時刻」（ミリ秒）。再提出（変更あり）はupdatedAt、それ以外は初回提出時刻を返す。
-// 変更ありの判定は分単位で比較する。提出直後にupdatedAtが数秒だけ進むケースを再提出とみなさないための基準で、
-// 一覧の「変更あり」バッジと同じ条件をここに一本化している。
+// 変更ありの判定は分単位で比較する。提出直後にupdatedAtが数秒だけ進むケースを再提出とみなさないための基準。
+// 「変更あり」バッジの判定は subHasRealUpdate（締切日ゲート付き）に移した。ここは並べ替え専用。
 function subLastActionTime(sub){
   if(!sub)return 0;
   const st=new Date(sub.submittedAt||0).getTime();
@@ -531,7 +531,21 @@ function subLastActionTime(sub){
   return mn(ut)>mn(base)?ut:base;
 }
 
+// 提出一覧の「変更あり」バッジ判定。締切日がある期間は「締切日（23:59）を過ぎてからの変更」のみ変更ありとする。
+// 締切日なし・締切日が不正な日付の場合は従来判定（初回提出より1分以上後の更新があれば変更あり）。
+function subHasRealUpdate(sub,deadlineDate){
+  if(!sub)return false;
+  const last=subLastActionTime(sub);
+  const st=new Date(sub.submittedAt||0).getTime();
+  const base=Number.isNaN(st)?0:st;
+  if(last<=base)return false;            // 変更なし（subLastActionTimeの分単位判定に一本化）
+  if(!deadlineDate)return true;          // 締切なし→従来判定
+  const dl=new Date(deadlineDate+"T23:59:59").getTime();
+  if(Number.isNaN(dl))return true;       // 不正な締切→従来判定
+  return last>dl;                        // 締切後の変更のみ変更あり
+}
+
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition};
 }

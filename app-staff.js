@@ -228,7 +228,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
           {comment&&<><br/>コメント：{comment}</>}
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
-          {!dl&&<button onClick={()=>{editingRef.current=true;setDone(false);setConf(false);setSm(false);}} style={{padding:"11px 22px",background:"var(--c-card)",border:"2px solid #f87036",borderRadius:10,color:"#f87036",fontSize:14,fontWeight:700,cursor:"pointer"}}>修正する</button>}
+          <button onClick={()=>{editingRef.current=true;setDone(false);setConf(false);setSm(false);}} style={{padding:"11px 22px",background:"var(--c-card)",border:"2px solid #f87036",borderRadius:10,color:"#f87036",fontSize:14,fontWeight:700,cursor:"pointer"}}>修正する</button>
           <button onClick={reset} style={{padding:"11px 22px",background:"var(--c-bg)",border:"2px solid #E5E7EB",borderRadius:10,color:"var(--c-text3)",fontSize:14,fontWeight:700,cursor:"pointer"}}>↺ 最初から</button>
         </div>
       </div>
@@ -240,7 +240,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
       {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"14px 12px 120px"}}>
-        {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`▲ 締切済み（${ap.deadlineDate.replace(/-/g,"/")}）`:`締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
+        {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`▲ 締切日（${ap.deadlineDate.replace(/-/g,"/")}）を過ぎています（提出・修正は可能です）`:`締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
 
         {/* 名前カード */}
         <div style={{background:"var(--c-card)",borderRadius:14,boxShadow:"0 1px 4px var(--c-shadow)",marginBottom:14,padding:"16px 18px",display:"flex",alignItems:"center",gap:14}}>
@@ -298,14 +298,14 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
         </div>
 
         {/* 全日程一括入力 */}
-        {!dl&&<div style={{display:"flex",gap:8,marginBottom:14}}>
+        <div style={{display:"flex",gap:8,marginBottom:14}}>
           {[["through","通し"],["lunch","ランチ"],["dinner","ディナー"]].map(([k,l])=>(
             <button key={k} onClick={()=>bulkFill(k)}
               style={{flex:1,padding:"10px 0",background:"rgba(248,112,54,.1)",border:"1.5px solid #FDDCC7",borderRadius:10,color:"#f87036",fontSize:13,fontWeight:700,cursor:"pointer"}}>
               全日程「{l}」
             </button>
           ))}
-        </div>}
+        </div>
 
         {/* 日付カード */}
         {dates.map(ds=>{
@@ -328,8 +328,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                 :<div style={{display:"flex",gap:8,padding:"0 15px 10px"}}>
                 {[["work","出勤"],["holiday","休み"]].map(([v,l])=>{
                   const a=st.status===v,iW=v==="work";
-                  return(<div key={v} onClick={()=>!dl&&upd(ds,{status:v,start:iW?(st.start||cds[0]?.start||"18:00"):undefined,end:iW?(st.end||cds[0]?.end||"23:00"):undefined})}
-                    style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:10,cursor:dl?"not-allowed":"pointer",border:`2px solid ${a?(iW?"#f87036":"#FF4757"):"var(--c-border)"}`,background:a?(iW?"#FEF0E8":"#FFF0F1"):"var(--c-input)",color:a?(iW?"#c45b1a":"#FF4757"):"var(--c-text3)",fontSize:14,fontWeight:600,opacity:dl?.5:1,transition:"all .15s"}}>
+                  return(<div key={v} onClick={()=>upd(ds,{status:v,start:iW?(st.start||cds[0]?.start||"18:00"):undefined,end:iW?(st.end||cds[0]?.end||"23:00"):undefined})}
+                    style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:10,cursor:"pointer",border:`2px solid ${a?(iW?"#f87036":"#FF4757"):"var(--c-border)"}`,background:a?(iW?"#FEF0E8":"#FFF0F1"):"var(--c-input)",color:a?(iW?"#c45b1a":"#FF4757"):"var(--c-text3)",fontSize:14,fontWeight:600,transition:"all .15s"}}>
                     <div style={{width:15,height:15,borderRadius:"50%",border:"2px solid currentColor",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{a&&<div style={{width:7,height:7,borderRadius:"50%",background:"currentColor"}}/>}</div>{l}
                   </div>);
                 })}
