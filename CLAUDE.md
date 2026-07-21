@@ -555,57 +555,98 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-21 自動実行 #33）
+## Shifty バグチェックレポート（2026-07-21 自動実行 #34）
 
 ### 修正済み
-なし（🔴ゼロ。🟡2件はいずれも仕様判断が必要なため報告のみ・後述）。
+- **🔴 ログアウト時に期間別 subs 購読が解除されず、ログイン画面に戻った後も提出データを受信し続ける**（app-main.js:310 新設 `stopSubsListeners` / 呼び出し 771・799、コミット `3128e5c`）
+  `doLogout`・`doFullSignOut` は `activeSubsRef`（settings/periods/staff/templates/plan系の7本）のみ `off()` しており、`subsListenersRef` が保持する **periodId ごとの subs クエリ購読を解除していなかった**。解除処理は `startSubscriptions` 内にしか存在せず、ログアウト経路はそこを通らない。`doLogout` のコメントが「ログイン画面表示中に店舗データの受信を続けない」と明記しているため、意図に反した実装であることが確定でき、仕様判断を要さないと判断して修正した。
+  実害: ログアウト後も他スタッフの提出を受信し、`flushSubs` 経由で **localStorage への書き込みが継続する**（プライバシー＋DL量）。`doFullSignOut` では読み取り権限喪失により `subs購読失敗` の warn が期間数ぶん出続ける。次回ログインの `startSubscriptions` まで自己修復しない。
+  修正: 解除処理を `stopSubsListeners()` に切り出し、`startSubscriptions`（店舗切替）と `doLogout` / `doFullSignOut` の3箇所から呼ぶ。`subsSidRef` を `null` に落とすことで、apid 変更の `useEffect`（app-main.js:456）経由で `reconcileSubs` が再入しても購読が張り直されない。`startSubscriptions` 側の挙動は従来と同一（クリア処理をそのまま関数化し、直後に `subsSidRef.current=targetSid` を再設定）。
+  **実機検証済み**: dev（標準テスト店舗）で `firebase.database.Query.prototype.off` をフックしてログアウトを実行し、`/shops/{sid}/subs` のクエリ購読に対して実際に `off()` が呼ばれること（計8本＝activeSubsRef 7本＋subs 1本）とログイン画面へ戻ることを確認。修正前はこの subs 分の `off()` が発生しない（subs クエリを `off()` する経路は `stopSubsListeners` と `reconcileSubs` の対象外期間のみで、ログアウトはどちらも通らないため）。
+- **🟢 キャッシュバスティング版数を `20260721-3128e5c` に更新**（index.html・app-core.js、コミット `cc401e2`）
 
-### 前回巡回（#32）以降の新規コミット
-4件（`61c4281..7d7b4de`）。実質的なコード変更は2機能: `bdbadd7`＋`efa3978`（セルコマンドのヒートマップ帯別反映）、`94f8d22`（締切日をプリセット作成でも設定可能にし、締切を提出ブロックから変更あり判定の基準へ変更）。`7d7b4de`は版数更新のみ。変更ファイル: app-admin.js(+133/-59)・app-utils.js(+60)・app-staff.js(+22)・tests/core.test.js(+139)・eslint.config.js(+5)・app-core.js/index.html(版数)。
+### 前回巡回（#33）以降の新規コミット
+コード変更なし（`22f68f2` は #33 のレポート同期のみ）。したがって今回は差分レビューではなく、これまで手薄だった **Firebase リアルタイム購読ライフサイクル**（app-main.js の3フェーズ初期化・startSubscriptions・reconcileSubs・購読解除経路）を対象に深掘り監査を実施した。
 
 ### 今回の新規検出（未修正）
-- **🟡 `x`（カウント外）が他方のセルのコマンドに隠れて無効化される**（app-admin.js:669 `getShiftNote`／コメントは app-admin.js:739）
-  `getShiftNote` は `["start","end"]` を走査して**最初の非空note**を返すため、出勤セルに別コマンドがあると退勤セルの `x` に到達しない。node実測: `9h`+`22x`→`"h"`、`9三`+`22x`→`"三"`。「ランチはホール・ディナーはカウント外」のつもりの入力でシフト全体が計上され続ける。`positionErrors`（app-admin.js:850）も同経路。**挙動自体は既存**だが、`bdbadd7` が追加したコメント「どちらのセルに付いてもシフト全体を除外」が実挙動と逆である点が新規問題。対処は (a)コメント訂正 / (b)`getShiftNote` を `x` で短絡 の2択で、正解が仕様判断のため未着手。
-- **🟡 プリセット作成経路で `ph("period_created")` が発火しない**（app-admin.js:1818 vs 手動 app-admin.js:1761）
-  プリセットが既定経路（app-admin.js:1787 で `setUsePreset(true)`）のため、`period_created` が実態を大きく下回って計測されている可能性。計測のみで機能破壊なし。意図的除外の可能性を排除できず未修正。なお `checkPeriodLimit()` は**両経路とも呼ばれ**（app-admin.js:1756/1817）、Freeプランの期間上限バイパスは無い。
-- **🟢 グリッドの緑「変更マーク」は締切ゲート対象外**（app-staff.js:166／消費 app-admin.js:1087,1314）。提出一覧バッジのみ締切後限定になり両画面が食い違う。ただし管理者が手動トグルできる注釈でもある（app-admin.js:1131）ため仕様判断。
-- **🟢 退勤延長がランチのみシフトを帯跨ぎに変える**（app-admin.js:752）。`pEnM+=ot` を分割前に適用するため、9-16＋延長90分が17:00を跨ぎ延長分だけキッチン列に出る。影響は境界1時間のみ。
-- **🟢 `staffSectionOn` がヘルプ帯クリップ未実施**（app-admin.js:881 vs 852）。セル背景の見た目のみで不足数の算出は正しい。
+- **🟡 店舗切替で `apid` がリセットされず、新店舗の subs を旧店舗の periodId で購読する**（app-main.js:413 `reconcileSubs` / 1091 Phase3 / 1538 `onSwitchToShop`）
+  `startSubscriptions` は subs 関連の ref を全てクリアするが **`apid` state も `apidRef.current` もクリアしない**。Phase3 は `if(!ready||urlResolved)return;` で早期 return し `urlResolved` は最初の店舗で既に true のため再実行されず、app-main.js:1113 のフォールバックも `!apid` 条件のため発火しない。結果、店舗Bへ切替後も `active=P_A`（店舗Aの期間）のまま reconcile が走り、店舗Bに存在しない periodId で空クエリを1本張る。
+  **実害が出る条件**: 店舗Bの最新期間の `startDate` が3ヶ月より古い場合（しばらく使っていない店舗）、その期間は `startDate>=cutoff` も `p.id===active` も満たさず購読対象に入らない一方、画面には app-main.js:1222 の `periods.find(...)||latestPeriod` により**その期間が表示される** → 提出一覧が実データありなのに0件表示になる。さらに `ssSave(SS_APID,apid)` は apid 不変時に再実行されないため、**リロード後も旧店舗の apid が固定される**。
+  未修正の理由: 修正には `startSubscriptions` での `setApid(null)`＋`setUrlResolved(false)` が必要だが、スタッフURL（`urlLocked`）経路の期間選択UXに影響するため仕様判断を要する。#11から「subs期間別購読の店舗切替時レース」として継続報告されてきた項目の**実体はこれ**（遅延コールバックのガード不足ではない。下記「個別検証」参照）。
+- **🟡 periods ノードが空になったとき periods state と subs 購読が更新されない**（app-main.js:360-375）
+  `on(periods)` のコールバックが `if(!val)return;` と `if(arr.length>0)` で早期 return し、**null/空のときに `setPeriods([])` も `periodsForSubsRef` クリアも reconcile も行わない**。templates（341）・settings（357）・staff（378）は3系統ともリセット処理を持っており、periods だけが例外。
+  再現: 端末Aで全期間を削除すると `savePeriods` が `obj={}` を `set()` してノードごと消え、端末Bには `null` が届くが早期 return → **端末Bは削除済みの期間を表示し操作でき、リロードまで復帰しない**。削除された期間の subs リスナーも残る。
+  未修正の理由: 一過性の空値で期間表示を消さないための意図的なガードである可能性を排除できない（他3系統との非対称が意図的かの判断が必要）。
+- **🟢 `templates` の読み取りだけ要素の妥当性ガードがない**（app-main.js:341）。配列分岐は `filter(Boolean)` があるがオブジェクト分岐は素の `Object.values(val)`。periods/staff/subs は全てガード済みで、ここだけ抜けている。`val` がプリミティブに壊れた場合のみ顕在化。
+- **🟢 アンマウント時に購読が解除されない**（app-main.js:276）。Phase1 の cleanup は `.info/connected` のみ off し `activeSubsRef`/`subsListenersRef` に触れない。`App` はルートでアンマウントされないため実害なし。
+- **🟢 `savePeriods` が3ヶ月ウィンドウを迂回して subs 全件を1回読む**（app-main.js:1136）。期間削除時のみ・低頻度だが「データ保存上限②」の意図を部分的に打ち消す。app-admin.js:367 の他店舗 subs 全件読みも同種。
+- **🟢 `StaffView.onSub` が `pendingSubWritesRef` に登録しない**（app-main.js:1501-1512）。`saveSubs` は書き込み中の値を退避してリスナー echo による巻き戻しを防ぐが、スタッフ提出経路は退避しない。echo 到着で復帰する一過性の表示揺れのみ。
+- **🟢 `tokens/{token}` に `periodId` が無いと意図と違う期間が黙って表示される**（app-main.js:218→1113）。無限ローディングにはならない。なお app-main.js:1097 の `if(!apid&&periods.length>0)` は `urlResolved` が先に true になるため到達しない実質デッドコード。
 
-### スキャン結果
-- `subs`の`set()`全体上書き: ヒット0（正常）
-- `filter(s=>s.id!==...)`: 全7ヒット確認。subs系は deletedId 渡し（app-admin.js:1775,2868）か `remove()` 直呼び（app-main.js:1515）で削除のFirebase反映を維持
-- DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE（app-core.js:81）正常
-- セキュリティ: `ref("global/shops")` 全件読みの復活なし、`ref('accounts')` 全件読みなし、無条件 `".read": true` は0件
-- index.html: 読み込み順（utils→core→staff→admin→main）維持、CDN SRI 11本、版数 `?v=20260721-94f8d22` が app-core.js 冒頭の build 表記と一致
-- Cloud Functions: secrets 5箇所とも抜け漏れなし・`.delete()` 誤用なし・`node -c` 構文OK・`PURGE_OLD_PERIODS_DRY_RUN=true` 継続（BACKLOG通り2026-08-12以降に切替）
-- 新規 input の fontSize: 16px未満なし（新規は `<input type="date" style={AI}/>`、`AI` は fontSize:16）
-- `npm test`: **122件パス**（0 fail、#32の103件から+19件）、`npx eslint app-*.js`: 0 errors 100 warnings（既存 no-unused-vars 誤検知のみ）
+### 運用上の要対応（新規）
+- **🟡 `.indexOn: ["periodId"]` が dev Firebase に未デプロイ**（`database.rules.json:50` にはコミット済み）
+  dev 実機のコンソールに `FIREBASE WARNING: Using an unspecified index ... Consider adding ".indexOn": "periodId" at /shops/{sid}/subs` が出続けることを今回確認した。ルールが未デプロイだと Firebase は**該当パスの subs を全件ダウンロードしてクライアント側でフィルタする**ため、「データ保存上限②（購読を直近3ヶ月に絞る）」の DL 削減効果が実質的に無効化される。BACKLOG の「次アクション: main配信・本番確認後に `firebase deploy --only database`（dev→本番）」が未実施のまま。**本番（ontheshift）の適用状況は本ループでは未確認**（本番への読み取り・デプロイは行わないため）。
 
-### 個別検証（重点確認・異常なし）
-- **帯分割の境界**: `countHeat`（app-admin.js:906）は半開区間判定で、17:00分割の2エントリが分単位1020で二重計上されない。両エントリとも累積され取りこぼしもなし
-- **`締`（23:00〜25:00）**: `exStM=1380>=1020` で分割ブランチに入らず1エントリ。1440超のラップアラウンド破損なし
-- **`heatSectionEntries` 呼び出し2箇所**（app-admin.js:773/787）: 必要フィールドを全供給。`splitM` 省略は設計どおりの既定値フォールバック
-- **`subHasRealUpdate`**: 呼び出し1箇所（app-admin.js:2836）で `periods.find(p=>p.id===sub.periodId)` により**その sub 自身の期間**の締切を引く。期間削除済みは従来判定にフォールバックし安全側
-- **締切の提出ブロック解除が完全**: app-staff.js に残る `disabled` は確認モーダルの `sending` ガードのみ。ルール・Functions側にも締切制限はなく締切後も実際に書き込める
-- **プリセット/手動の Period 形状一致**、**締切パースのローカル時刻解釈が `idp()` と一致・不正値は例外を出さずフォールバック**、**新規テストが判別可能な対比で挙動を固定**（いずれも確認済み）
-
-### 要確認（未修正・継続）
-- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2745付近、#11から継続）
-- **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`、#11から継続）
+### 要確認（未修正・#33から継続）
+- **🟡 `x`（カウント外）が他方のセルのコマンドに隠れて無効化される**（app-admin.js:669 `getShiftNote`／コメント 739）。コメントと実挙動が逆。対処は (a)コメント訂正 / (b)`x` で短絡 の2択で仕様判断待ち。
+- **🟡 プリセット作成経路で `ph("period_created")` が発火しない**（app-admin.js:1818 vs 手動 1761）。計測のみ・機能破壊なし。`checkPeriodLimit()` は両経路とも呼ばれ Free 上限バイパスは無い。
+- **🟢 グリッドの緑「変更マーク」は締切ゲート対象外**（app-staff.js:166／消費 app-admin.js:1087,1314）
+- **🟢 退勤延長がランチのみシフトを帯跨ぎに変える**（app-admin.js:752）
+- **🟢 `staffSectionOn` がヘルプ帯クリップ未実施**（app-admin.js:881 vs 852）
+- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示**（app-admin.js:2745付近、#11から継続）
 - **🟢 `joinByInviteCode`（app-main.js:852付近）が呼び出し元ゼロのデッドコード**（#15から継続）
 - **🟢 スキルがPHASE 0で読む `VISION.md` がリポジトリに存在しない**（#27から継続。今回も不在を確認）
-- **🟢 版数更新の手動運用**（#21・#31で漏れ発生）。今回は `94f8d22`→`7d7b4de` で更新済み・漏れなし
 - **🟢 期間作成時に `deadlineDate` と `startDate`/`endDate` の整合を検証しない**（両経路）
 
+### スキャン結果
+- `subs` の `set()` 全体上書き: ヒット0（正常）
+- `filter(s=>s.id!==...)`: 全7ヒット確認。subs系は deletedId 渡し（app-admin.js:1775,2868）か `remove()` 直呼び（app-main.js:1515）で削除のFirebase反映を維持
+- DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE（app-core.js:81）正常
+- セキュリティ: `ref("global/shops")` 全件読みの復活なし、`ref('accounts')` 全件読みなし
+- index.html: 読み込み順（utils→core→staff→admin→main）維持、CDN SRI 11本、版数 `?v=20260721-3128e5c` が app-core.js 冒頭の build 表記と一致
+- Cloud Functions: secrets 5箇所とも抜け漏れなし・`.delete()` 誤用なし・`node -c` 構文OK・`PURGE_OLD_PERIODS_DRY_RUN=true` 継続（BACKLOG通り2026-08-12以降に切替）
+- `database.rules.json` / `.tightened.json`: JSON構文OK・`.indexOn` 記載あり（デプロイ状況は上記「運用上の要対応」参照）
+- 新規 input の fontSize: 16px未満なし
+- `npm test`: **122件パス**（0 fail、修正前後で変化なし）、`npx eslint app-*.js`: 0 errors 100 warnings（既存 no-unused-vars 誤検知のみ）
+- dev実機（標準テスト店舗）: 起動時コンソール **error 0件**、白画面なし、Babel precompile 警告のみ正常
+
+### 個別検証（重点確認・異常なし）
+- **`off()` の引数一致**: `on` ヘルパー（app-main.js:329）は引数なし `r.off()` で当該ロケーションの全コールバックを外す構造のため、コールバック参照の取り違えは起こり得ない。subs 側も同一 `Query` オブジェクトを保持して `q.off()` しており、`orderByChild("periodId").equalTo(pid)` は pid ごとにクエリ識別子が異なるため他期間を巻き添えにしない。`app-admin.js`/`app-staff.js`/`app-core.js` に `on()` 登録は1件も無く（あるのは `once()` のみ）、引数なし off の巻き添えも成立しない
+- **二重購読**: `startSubscriptions` は冒頭で必ず全解除してから張り直し、`reconcileSubs` も `if(subsListenersRef.current[pid])return;`（420）で既存を弾く。Phase1 で `enterShop` と `cookieFallback` が両方走る理論上の経路でも蓄積しない
+- **遅延コールバックによる新店舗 state 汚染**: 起こらない。Firebase SDK の `off()` はコールバック登録を同期的に除去する。`setPeriodSubs`/`flushSubs` に `subsSidRef` ガードが無く `reconcileSubs` にだけある非対称は欠陥ではなく、後者だけが `reconcileSubsRef` 経由で apid useEffect・periods コールバックから**間接的に**呼ばれ得るための正しい設計。前2者は closure の `targetSid` しか参照せず localStorage も正しいキーに書く
+- **`loadPastSubs` 後の reconcile で過去分が消えないか**: 消えない。`wantAll=pastSubsLoadedRef.current` を毎回読み直すため、以後の periods 更新・apid 変更でも全期間が `want` に残る。フラグのリセットは `startSubscriptions`（320）のみ＝店舗切替時の正しい挙動
+- **`subsMapRef` に古い期間の sub が残らないか**: 購読解除時（430）と `setPeriodSubs` 反映前（405）の両方で当該 periodId 分を除去しており残留しない
+- **`Object.values(...).filter(s=>s&&s.id)` ガード**: periods（362）・staff（377）・subs（406）・`fetchLinkedShops`（539）・店舗読み（240,258）・app-admin.js:369,373,2935 いずれもガード済み。抜けは templates 1箇所のみ（上記🟢）
+- **apid が undefined のまま描画される経路**: 無い。初期値 `null` で `undefined` 代入経路が無く、`urlLocked` 時は 1242 でローディング退避、非 urlLocked 時は 1222 で `latestPeriod` にフォールバック
+
 ### 総括
-クリティカル（🔴）ゼロ。🟡2件はクラッシュ・データ欠損を伴わず、正しい挙動が仕様判断に依存するため、RULES.md「明示的な依頼がない機能追加・リファクタリングは行わない」に従い推測で変更せず報告に留めた。指示があれば実装する。作業ツリーの `.cursorrules` 未コミット変更は #28 から継続（本ループ対象外）。
+🔴 を1件検出し修正・push した（`3128e5c`＋版数 `cc401e2`）。コード変更が無い巡回だったため購読ライフサイクルの深掘りに切り替えたところ、#11から3巡にわたり「レース」として曖昧に継続報告されてきた項目の実体が **`apid` の店舗切替時持ち越し**であることを特定できた（🟡・仕様判断のため未修正）。あわせて `.indexOn` の dev 未デプロイを実機警告から検出し、「データ保存上限②」の DL 削減が現状効いていないことを確認した。その他の🟡2件・🟢群は RULES.md「明示的な依頼がない機能追加・リファクタリングは行わない」に従い報告に留めた。作業ツリーの `.cursorrules` 未コミット変更は #28 から継続（本ループ対象外）。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 -
 -
 -
