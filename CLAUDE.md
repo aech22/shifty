@@ -555,45 +555,179 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-20 自動実行 #32）
+## Shifty バグチェックレポート（2026-07-21 自動実行 #33）
 
 ### 修正済み
-なし（🔴🟡の検出ゼロ）。
+なし（🔴ゼロ。🟡2件はいずれも仕様判断が必要なため報告のみ・後述）。
 
-### 前回巡回（#31・同日）以降の新規コミット
-2件（`618c49b..21827b0`）。実質的なコード変更は`0997620`（提出一覧ソートの修正）のみで、`21827b0`はその版数更新。変更ファイル: app-admin.js(+3/-2)・app-utils.js(+16/-1)・tests/core.test.js(+46)・eslint.config.js(+1)・app-core.js/index.html(版数)。
+### 前回巡回（#32）以降の新規コミット
+4件（`61c4281..7d7b4de`）。実質的なコード変更は2機能: `bdbadd7`＋`efa3978`（セルコマンドのヒートマップ帯別反映）、`94f8d22`（締切日をプリセット作成でも設定可能にし、締切を提出ブロックから変更あり判定の基準へ変更）。`7d7b4de`は版数更新のみ。変更ファイル: app-admin.js(+133/-59)・app-utils.js(+60)・app-staff.js(+22)・tests/core.test.js(+139)・eslint.config.js(+5)・app-core.js/index.html(版数)。
 
-### 新規コミットのレビュー（新規バグなし）
-- **`subLastActionTime`（app-utils.js:487-496・新規）**: 純粋関数でブラウザAPI非依存、module.exports登録済み。`submittedAt`欠損時は`new Date(0)`でbase=0、`updatedAt`が不正日付なら`Number.isNaN`でbaseへフォールバックし例外を出さない。分単位比較（`Math.floor(t/60000)`）で同一分内のupdatedAtを「再提出」と誤判定しない挙動をユニットテスト6件が固定している。
-- **ソートキーの差し替え（app-admin.js:2770）**: `sf==="submittedAt"`のときのみ`subLastActionTime`を使い、他のソート列（`staffName`等の文字列比較）は従来の`(a[sf]||"")`経路のまま。数値と文字列が混ざる比較にはならない。
-- **「変更あり」バッジ判定の一本化（app-admin.js:2799）**: 旧`sub.isUpdated&&sub.updatedAt&&rm(updatedAt)>rm(submittedAt)`と新`subLastActionTime(sub)>new Date(sub.submittedAt).getTime()`は等価（関数内で`isUpdated`/`updatedAt`欠損時はbaseを返すため）。`submittedAt`が不正な場合は右辺がNaNとなり比較がfalseになるだけでクラッシュしない。ローカル関数`rm`は使用箇所と同時に削除済みで残骸なし。
+### 今回の新規検出（未修正）
+- **🟡 `x`（カウント外）が他方のセルのコマンドに隠れて無効化される**（app-admin.js:669 `getShiftNote`／コメントは app-admin.js:739）
+  `getShiftNote` は `["start","end"]` を走査して**最初の非空note**を返すため、出勤セルに別コマンドがあると退勤セルの `x` に到達しない。node実測: `9h`+`22x`→`"h"`、`9三`+`22x`→`"三"`。「ランチはホール・ディナーはカウント外」のつもりの入力でシフト全体が計上され続ける。`positionErrors`（app-admin.js:850）も同経路。**挙動自体は既存**だが、`bdbadd7` が追加したコメント「どちらのセルに付いてもシフト全体を除外」が実挙動と逆である点が新規問題。対処は (a)コメント訂正 / (b)`getShiftNote` を `x` で短絡 の2択で、正解が仕様判断のため未着手。
+- **🟡 プリセット作成経路で `ph("period_created")` が発火しない**（app-admin.js:1818 vs 手動 app-admin.js:1761）
+  プリセットが既定経路（app-admin.js:1787 で `setUsePreset(true)`）のため、`period_created` が実態を大きく下回って計測されている可能性。計測のみで機能破壊なし。意図的除外の可能性を排除できず未修正。なお `checkPeriodLimit()` は**両経路とも呼ばれ**（app-admin.js:1756/1817）、Freeプランの期間上限バイパスは無い。
+- **🟢 グリッドの緑「変更マーク」は締切ゲート対象外**（app-staff.js:166／消費 app-admin.js:1087,1314）。提出一覧バッジのみ締切後限定になり両画面が食い違う。ただし管理者が手動トグルできる注釈でもある（app-admin.js:1131）ため仕様判断。
+- **🟢 退勤延長がランチのみシフトを帯跨ぎに変える**（app-admin.js:752）。`pEnM+=ot` を分割前に適用するため、9-16＋延長90分が17:00を跨ぎ延長分だけキッチン列に出る。影響は境界1時間のみ。
+- **🟢 `staffSectionOn` がヘルプ帯クリップ未実施**（app-admin.js:881 vs 852）。セル背景の見た目のみで不足数の算出は正しい。
 
 ### スキャン結果
 - `subs`の`set()`全体上書き: ヒット0（正常）
-- `filter(s=>s.id!==...)`削除パターン: 全8ヒット確認。subs系はdeletedId渡し（app-admin.js:1746,2831）か`remove()`直呼び出し（app-main.js:1515）で削除のFirebase反映は維持
-- subのin-place変更: なし。`onEditSub`（app-admin.js:1746）はスプレッドで新オブジェクトを作っており`saveSubs`の参照比較差分書き込みに乗る
+- `filter(s=>s.id!==...)`: 全7ヒット確認。subs系は deletedId 渡し（app-admin.js:1775,2868）か `remove()` 直呼び（app-main.js:1515）で削除のFirebase反映を維持
 - DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE（app-core.js:81）正常
-- セキュリティ: `ref("global/shops")`全件読みの復活なし、`global/templates`参照なし、無条件`".read": true`は0件
-- index.html: スクリプト読み込み順（utils→core→staff→admin→main）維持、CDN SRI 11本、版数`?v=20260720-0997620`がapp-core.js冒頭のbuild表記およびHEADのコード変更コミットと整合
-- Cloud Functions: secrets抜け漏れなし（5箇所）・`.delete()`誤用なし・`purgeInactiveShops`のInvalid Dateスキップとarchived二段削除は維持・`PURGE_OLD_PERIODS_DRY_RUN=true`のまま（BACKLOG通り2026-08-12以降に切り替え）
-- 新規inputのfontSize: 16px未満の追加なし（#31以降の新規UIはbutton/div/spanのみ）
-- `npm test`: 103件パス（0 fail、`subLastActionTime`の新規6件を含む）、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
+- セキュリティ: `ref("global/shops")` 全件読みの復活なし、`ref('accounts')` 全件読みなし、無条件 `".read": true` は0件
+- index.html: 読み込み順（utils→core→staff→admin→main）維持、CDN SRI 11本、版数 `?v=20260721-94f8d22` が app-core.js 冒頭の build 表記と一致
+- Cloud Functions: secrets 5箇所とも抜け漏れなし・`.delete()` 誤用なし・`node -c` 構文OK・`PURGE_OLD_PERIODS_DRY_RUN=true` 継続（BACKLOG通り2026-08-12以降に切替）
+- 新規 input の fontSize: 16px未満なし（新規は `<input type="date" style={AI}/>`、`AI` は fontSize:16）
+- `npm test`: **122件パス**（0 fail、#32の103件から+19件）、`npx eslint app-*.js`: 0 errors 100 warnings（既存 no-unused-vars 誤検知のみ）
+
+### 個別検証（重点確認・異常なし）
+- **帯分割の境界**: `countHeat`（app-admin.js:906）は半開区間判定で、17:00分割の2エントリが分単位1020で二重計上されない。両エントリとも累積され取りこぼしもなし
+- **`締`（23:00〜25:00）**: `exStM=1380>=1020` で分割ブランチに入らず1エントリ。1440超のラップアラウンド破損なし
+- **`heatSectionEntries` 呼び出し2箇所**（app-admin.js:773/787）: 必要フィールドを全供給。`splitM` 省略は設計どおりの既定値フォールバック
+- **`subHasRealUpdate`**: 呼び出し1箇所（app-admin.js:2836）で `periods.find(p=>p.id===sub.periodId)` により**その sub 自身の期間**の締切を引く。期間削除済みは従来判定にフォールバックし安全側
+- **締切の提出ブロック解除が完全**: app-staff.js に残る `disabled` は確認モーダルの `sending` ガードのみ。ルール・Functions側にも締切制限はなく締切後も実際に書き込める
+- **プリセット/手動の Period 形状一致**、**締切パースのローカル時刻解釈が `idp()` と一致・不正値は例外を出さずフォールバック**、**新規テストが判別可能な対比で挙動を固定**（いずれも確認済み）
 
 ### 要確認（未修正・継続）
 - **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2745付近、#11から継続）
-- **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、#11から継続）
+- **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`、#11から継続）
 - **🟢 `joinByInviteCode`（app-main.js:852付近）が呼び出し元ゼロのデッドコード**（#15から継続）
-- **🟢 スキルがPHASE 0で読むよう指示している`VISION.md`がリポジトリに存在しない**（#27から継続）
-- **🟢 版数更新の手動運用**（#21・#31で漏れ発生）。今回は`0997620`に対して同日中に`21827b0`で正しく更新されており漏れなし。自動化の検討余地は継続
+- **🟢 スキルがPHASE 0で読む `VISION.md` がリポジトリに存在しない**（#27から継続。今回も不在を確認）
+- **🟢 版数更新の手動運用**（#21・#31で漏れ発生）。今回は `94f8d22`→`7d7b4de` で更新済み・漏れなし
+- **🟢 期間作成時に `deadlineDate` と `startDate`/`endDate` の整合を検証しない**（両経路）
 
-### 異常なし
-クリティカル（🔴）・中程度（🟡）ともにゼロ。今回の巡回では修正コミットなし。`0997620`の提出一覧ソート修正をレビューし、新規バグの混入なし。作業ツリーの`.cursorrules`未コミット変更は#28から継続して残っているが、本ループの対象外。
+### 総括
+クリティカル（🔴）ゼロ。🟡2件はクラッシュ・データ欠損を伴わず、正しい挙動が仕様判断に依存するため、RULES.md「明示的な依頼がない機能追加・リファクタリングは行わない」に従い推測で変更せず報告に留めた。指示があれば実装する。作業ツリーの `.cursorrules` 未コミット変更は #28 から継続（本ループ対象外）。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 -
 -
 -
