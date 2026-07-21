@@ -208,10 +208,10 @@
   <!-- app.js を5ファイルに分割（M-1）。読み込み順厳守: utils→core→staff→admin→main。
        utils/core は純JS/ブラウザ依存のプレーンscript。staff/admin/main は JSX を含むため Babel でトランスパイル。
        ?v= はキャッシュバスティング用バージョン（ビルドレス構成のためデプロイ毎に手動更新。app-core.js冒頭のconsole.logと揃える）。 -->
-  <script src="app-utils.js?v=20260721-94f8d22"></script>
-  <script src="app-core.js?v=20260721-94f8d22"></script>
-  <script type="text/babel" src="app-staff.js?v=20260721-94f8d22" data-presets="react"></script>
-  <script type="text/babel" src="app-admin.js?v=20260721-94f8d22" data-presets="react"></script>
-  <script type="text/babel" src="app-main.js?v=20260721-94f8d22" data-presets="react"></script>
+  <script src="app-utils.js?v=20260721-3128e5c"></script>
+  <script src="app-core.js?v=20260721-3128e5c"></script>
+  <script type="text/babel" src="app-staff.js?v=20260721-3128e5c" data-presets="react"></script>
+  <script type="text/babel" src="app-admin.js?v=20260721-3128e5c" data-presets="react"></script>
+  <script type="text/babel" src="app-main.js?v=20260721-3128e5c" data-presets="react"></script>
 </body>
 </html>
