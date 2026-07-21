@@ -304,6 +304,18 @@ function App(){
 
   // startSubscriptions: Phase1内でsid確定直後に呼ぶ（useEffectに依存しない）
   const activeSubsRef=useRef([]); // 購読中のrefリスト（クリーンアップ用）
+  // subs期間別購読の解除とマージ状態のクリア。startSubscriptions（店舗切替）と
+  // doLogout/doFullSignOut（ログイン画面へ戻る）の両方から呼ぶ。subsSidRefをnullに
+  // 落とすことで、apid変更のuseEffect経由でreconcileSubsが再入しても購読が張り直されない。
+  const stopSubsListeners=useCallback(()=>{
+    Object.values(subsListenersRef.current).forEach(q=>{try{q.off();}catch{}});
+    subsListenersRef.current={};
+    subsMapRef.current={};
+    pendingSubWritesRef.current={}; // 前店舗の未確定書き込み保護を持ち越さない
+    periodsForSubsRef.current=[]; // 前店舗のperiodsで購読を張らないようクリア
+    subsSidRef.current=null;
+    pastSubsLoadedRef.current=false; setPastSubsLoaded(false);
+  },[]);
   const startSubscriptions=useCallback((targetSid,shopList)=>{
     if(!firebaseDB)return;
     // 既存の購読を解除
@@ -311,13 +323,8 @@ function App(){
     activeSubsRef.current=[];
     const refs=activeSubsRef.current;
     // subs期間別購読もクリア（店舗切替時に前店舗のリスナー・マージ結果を持ち越さない）
-    Object.values(subsListenersRef.current).forEach(q=>{try{q.off();}catch{}});
-    subsListenersRef.current={};
-    subsMapRef.current={};
-    pendingSubWritesRef.current={}; // 前店舗の未確定書き込み保護を持ち越さない
-    periodsForSubsRef.current=[]; // 前店舗のperiodsで購読を張らないようクリア
+    stopSubsListeners();
     subsSidRef.current=targetSid;
-    pastSubsLoadedRef.current=false; setPastSubsLoaded(false);
     // staffList/settings/periods/globalTemplatesをキャッシュ値へ同期リセットする（subsと同じパターン）。
     // Firebaseのon("value")が新店舗のデータを非同期で返すまでの間、これらのstateが前店舗のデータの
     // ままだと、その間に「スタッフ登録」の追加等でstaffListをそのまま書き込む操作をした場合、
@@ -761,6 +768,7 @@ function App(){
     // 前店舗の購読を解除（ログイン画面表示中に店舗データの受信を続けない）
     activeSubsRef.current.forEach(r=>r.off());
     activeSubsRef.current=[];
+    stopSubsListeners(); // 期間別subs購読も解除（activeSubsRefには含まれない）
     delCookie(CK_SHOP);
     sessionStorage.clear();
     setCurrentShopId(null);
@@ -788,6 +796,7 @@ function App(){
   const doFullSignOut=async()=>{
     activeSubsRef.current.forEach(r=>r.off());
     activeSubsRef.current=[];
+    stopSubsListeners(); // 期間別subs購読も解除（サインアウト後は読み取り権限を失い警告が出続ける）
     if(firebaseAuth&&authUser){
       try{await firebaseAuth.signOut();}catch(e){console.warn("signOut失敗:",e);}
     }
