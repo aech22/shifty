@@ -83,13 +83,9 @@ function dateCandidateDisplayCutoff(periods){
 }
 function gto(){
   const o=[];
-  // 9:00〜24:00（15分刻み）
-  for(let h=9;h<=24;h++){
-    const ms=h===24?[0]:[0,15,30,45];
-    for(const m of ms) o.push(`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`);
-  }
-  // 翌0:15〜翌3:00（25:00〜27:00形式、15分刻み）
-  for(let h=25;h<=27;h++){
+  // 0:00〜27:00（15分刻み・連続）。24:00=翌0:00、25:00〜27:00=翌1:00〜翌3:00 で深夜跨ぎを表現。
+  // 全24時間＋深夜帯を欠けなくカバー（朝営業・深夜営業の候補時刻に対応）。
+  for(let h=0;h<=27;h++){
     const ms=h===27?[0]:[0,15,30,45];
     for(const m of ms) o.push(`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`);
   }

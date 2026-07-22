@@ -100,7 +100,7 @@ developブランチ・mainブランチのどちらにチェックアウトして
 WD / JH_FIXED / JH_DATES   // 曜日・日本の祝日（2025〜2028）
 PLAN_LIMITS / PLAN_LABELS  // プラン定義
 fd(d) / pd(s) / gd(s,e)    // 日付ユーティリティ
-gto() → TO / TO_START      // 時間オプション 9:00〜27:00
+gto() → TO / TO_START      // 時間オプション 0:00〜27:00（15分刻み・連続。翌3:00まで）
 sc(cs)                     // 候補時間ソート（closed は末尾）
 isHoliday / isWeekendOrHoliday(dateStr) // 土日祝判定
 calcNetWorkMinutes / getBreakList / getBreaksFor / getOT // 純勤務時間計算
@@ -590,6 +590,24 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 ---
 
 
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 -
 -
 -
