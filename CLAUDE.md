@@ -555,40 +555,50 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-22 自動実行 #35）
+## Shifty バグチェックレポート（2026-07-22 自動実行 #36）
 
 ### 修正済み
-なし（今回はコード変更が発生しなかった）。
+なし（今回もコード変更は発生しなかった）。
 
 ### 今回の対象
-前回巡回（#34）以降の新規コミットは **ドキュメント同期のみ**（`cc401e2` 版数更新・`fc9f976` CLAUDE.md同期）で、実コードの変更はゼロ。HEAD は #34 の修正 `3128e5c` を含むが、その修正自体は前回巡回で検証・記録済み。したがって差分レビュー対象がなく、RULES.md 準拠の全体スキャン（Firebase書き込み・プラン制限・Cloud Functions・セキュリティルール・分割構成・静的検査）を一巡した。
+#35 以降の新規コミットは **ドキュメント同期のみ**（`927e3c3` #35 の CLAUDE.md 同期）で、実コードの変更はゼロ。同日中の再巡回のため差分レビュー対象がなく、RULES.md 準拠の全体スキャン（Firebase書き込み・プラン制限・Cloud Functions・セキュリティルール・分割構成・静的検査）を再度一巡した。
 
-### スキャン結果（すべて正常）
+### スキャン結果（すべて正常・#35から非回帰）
 - `subs` の `set()` 全体上書き: ヒット0（正常）
-- `filter(s=>s.id!==...)`: 全7ヒット確認。subs 系は削除の Firebase 反映を維持——app-admin.js:1775・2868 は deletedId を渡し、app-main.js:1524 は `.remove()` 直呼び。残り（app-main.js:781,933,935／app-admin.js:132,2991）は店舗リストの絞り込みで subs 削除ではない
+- `filter(s=>s.id!==...)`: 全7ヒット確認。subs 系は削除の Firebase 反映を維持——app-admin.js:1775・2868 は deletedId を渡し、app-main.js:1524 は `.remove()` を直呼び（1527行）。残り（app-main.js:781,933,935／app-admin.js:132,2991）は店舗リストの絞り込みで subs 削除ではない
 - DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE（app-core.js:81）正常
-- セキュリティ: `ref("global/shops")` 全件読みの復活なし（全12箇所とも直キー読み `global/shops/${id}` か個別 set）。`database.rules.json` の全 `.read` は `auth != null` 以上のゲート（`".read": true` は0件）。accounts/$uid は `auth.uid === $uid`、owners は adminKey 照合方式を維持。`global/templates` 復活なし
-- index.html: 読み込み順（utils→core→staff→admin→main）維持、CDN SRI 11本、版数 `?v=20260721-3128e5c`
+- プラン制限: `isPro&&` の残ヒットは app-admin.js:2844 の未登録スタッフ表示のみ（プランゲートではない・正常）。Premium 機能の isPro 誤用なし
+- セキュリティ: `ref("global/shops")` 全件読みの復活なし。`database.rules.json` に `".read": true` は0件。accounts/$uid は `auth.uid === $uid`、owners は adminKey 照合方式を維持。`global/templates` 復活なし
+- index.html: 読み込み順（utils→core→staff→admin→main）維持、CDN SRI 11本、版数 `?v=20260721-3128e5c`（HEAD コード commit と一致）
 - Cloud Functions: secrets 5箇所とも抜け漏れなし（STRIPE×3・SMTP×2・SURVEY）・`.delete()` 誤用なし・`node -c` 構文OK・purgeInactiveShops の安全装置（`Number.isNaN` スキップ・`archived/shops` 二段削除）維持・`PURGE_OLD_PERIODS_DRY_RUN=true` 継続（BACKLOG通り2026-08-12以降に切替）
-- `database.rules.json` / `.tightened.json`: JSON構文OK
 - `npm test`: **122件パス**（0 fail）、`npx eslint app-*.js`: **0 errors** 100 warnings（既存 no-unused-vars 誤検知のみ）
 
-### 要確認（未修正・#34から継続。いずれも仕様判断またはルール反映を要し、本ループでは着手しない）
-- **🟡 店舗切替で `apid` がリセットされず、新店舗の subs を旧店舗の periodId で購読する**（app-main.js:413/1091/1538）。#11から継続報告の「レース」の実体。修正には `startSubscriptions` での `setApid(null)`＋`setUrlResolved(false)` が必要で、スタッフURL（urlLocked）経路のUXに影響するため仕様判断待ち
-- **🟡 periods ノードが空になったとき periods state と subs 購読が更新されない**（app-main.js:360-375）。一過性の空値で期間表示を消さないための意図的ガードの可能性を排除できず、他3系統との非対称が意図的かの判断待ち
-- **🟡 `.indexOn: ["periodId"]` が dev Firebase に未反映**（database.rules.json にはコミット済み）。ルール反映は書き込み操作のため本ループでは実施しない。BACKLOG「main配信・本番確認後にルール反映」が未実施のまま
-- **🟡 `x`（カウント外）が他方セルのコマンドに隠れて無効化される**（app-admin.js:669／コメント739）。コメントと実挙動が逆。対処は (a)コメント訂正 / (b)`x` で短絡 の2択で仕様判断待ち
-- **🟡 プリセット作成経路で `ph("period_created")` が発火しない**（app-admin.js:1818 vs 手動 1761）。計測のみ・機能破壊なし。Free 上限バイパスは無い
-- **🟢群（#34から継続）**: 変更マークの締切ゲート対象外（app-staff.js:166）／退勤延長がランチのみシフトを帯跨ぎに変える（app-admin.js:752）／`staffSectionOn` のヘルプ帯クリップ未実施（app-admin.js:881）／詳細モーダル「時間」列ヘッダーが non-Premium でも表示（app-admin.js:2745付近）／`joinByInviteCode` デッドコード（app-main.js:852付近）／`VISION.md` 不在（#27から継続・今回も確認）／期間作成時の `deadlineDate` 整合未検証／`templates` 読み取りの要素妥当性ガード欠落（app-main.js:341）
+### 要確認（未修正・#34/#35から継続。いずれも仕様判断またはルール反映を要し、本ループでは着手しない）
+- **🟡 店舗切替で `apid` がリセットされず、新店舗の subs を旧店舗の periodId で購読する**（app-main.js:413/1091/1538）。仕様判断待ち
+- **🟡 periods ノードが空になったとき periods state と subs 購読が更新されない**（app-main.js:360-375）。意図的ガードかの判断待ち
+- **🟡 `.indexOn: ["periodId"]` が dev Firebase に未反映**（database.rules.json にはコミット済み）。ルール反映は書き込み操作のため本ループでは実施しない
+- **🟡 `x`（カウント外）が他方セルのコマンドに隠れて無効化される**（app-admin.js:669／コメント739）。コメント訂正 or 短絡の2択で仕様判断待ち
+- **🟡 プリセット作成経路で `ph("period_created")` が発火しない**（app-admin.js:1818 vs 手動 1761）。計測のみ・機能破壊なし
+- **🟡（ルール反映系）BACKLOG「締めルールへの切り替え」の着手ウィンドウ（2026-07-21〜08-04）に入った**。`database.rules.tightened.json` への差し替えは Firebase 本番/dev への書き込み操作のため本自動ループの対象外。オーナー claim 状況確認とデプロイはユーザー判断で実施
+- **🟢群（継続）**: 変更マークの締切ゲート対象外（app-staff.js:166）／退勤延長がランチのみシフトを帯跨ぎに変える（app-admin.js:752）／`staffSectionOn` のヘルプ帯クリップ未実施（app-admin.js:881）／詳細モーダル「時間」列ヘッダーが non-Premium でも表示（app-admin.js:2745付近）／`joinByInviteCode` デッドコード（app-main.js:852付近）／`VISION.md` 不在（#27から継続・今回も確認）／`templates` 読み取りの要素妥当性ガード欠落（app-main.js:341）
 
 ### 総括
-コード変更が無い巡回のため、RULES.md 準拠の全体スキャンを一巡した。🔴・新規🟡ともに検出ゼロ。#34 で修正済みの subs 購読リークの非回帰（`.remove()` 直呼び・`stopSubsListeners` の存在）を確認。継続中の🟡5件はすべて仕様判断またはルール反映待ちで、自律実行の対象外として報告に留めた。作業ツリーの `.cursorrules`・CLAUDE.md 未コミット変更は継続（本ループ対象外）。
+同日中のコード変更なし巡回のため、RULES.md 準拠の全体スキャンを一巡した。🔴・新規🟡ともに検出ゼロ。#34 の subs 購読リーク修正の非回帰を再確認。継続中の🟡はすべて仕様判断またはルール反映待ちで自律実行対象外。作業ツリーの `.cursorrules`・CLAUDE.md 未コミット変更（後者は dash バンプのみ）は継続（本ループ対象外）。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
+-
+-
+-
+-
+-
+-
+-
 -
 -
 -
