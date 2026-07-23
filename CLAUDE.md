@@ -100,7 +100,7 @@ developブランチ・mainブランチのどちらにチェックアウトして
 WD / JH_FIXED / JH_DATES   // 曜日・日本の祝日（2025〜2028）
 PLAN_LIMITS / PLAN_LABELS  // プラン定義
 fd(d) / pd(s) / gd(s,e)    // 日付ユーティリティ
-gto() → TO / TO_START      // 時間オプション 9:00〜27:00
+gto() → TO / TO_START      // 時間オプション 0:00〜27:00（15分刻み・連続。翌3:00まで）
 sc(cs)                     // 候補時間ソート（closed は末尾）
 isHoliday / isWeekendOrHoliday(dateStr) // 土日祝判定
 calcNetWorkMinutes / getBreakList / getBreaksFor / getOT // 純勤務時間計算
@@ -555,45 +555,251 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-20 自動実行 #32）
+## Shifty バグチェックレポート（2026-07-23 自動実行 #37）
 
 ### 修正済み
-なし（🔴🟡の検出ゼロ）。
+なし（今回もコード変更は発生しなかった）。
 
-### 前回巡回（#31・同日）以降の新規コミット
-2件（`618c49b..21827b0`）。実質的なコード変更は`0997620`（提出一覧ソートの修正）のみで、`21827b0`はその版数更新。変更ファイル: app-admin.js(+3/-2)・app-utils.js(+16/-1)・tests/core.test.js(+46)・eslint.config.js(+1)・app-core.js/index.html(版数)。
+### 今回の対象
+#36 以降の新規コミット `2fcd943`（feat: 候補時刻の選択範囲を24時間対応＝0:00〜27:00連続に拡張）が唯一の実コード変更。この差分レビューに加え、RULES.md 準拠の全体スキャン（Firebase書き込み・プラン制限・Cloud Functions・セキュリティルール・分割構成・静的検査）を一巡した。
 
-### 新規コミットのレビュー（新規バグなし）
-- **`subLastActionTime`（app-utils.js:487-496・新規）**: 純粋関数でブラウザAPI非依存、module.exports登録済み。`submittedAt`欠損時は`new Date(0)`でbase=0、`updatedAt`が不正日付なら`Number.isNaN`でbaseへフォールバックし例外を出さない。分単位比較（`Math.floor(t/60000)`）で同一分内のupdatedAtを「再提出」と誤判定しない挙動をユニットテスト6件が固定している。
-- **ソートキーの差し替え（app-admin.js:2770）**: `sf==="submittedAt"`のときのみ`subLastActionTime`を使い、他のソート列（`staffName`等の文字列比較）は従来の`(a[sf]||"")`経路のまま。数値と文字列が混ざる比較にはならない。
-- **「変更あり」バッジ判定の一本化（app-admin.js:2799）**: 旧`sub.isUpdated&&sub.updatedAt&&rm(updatedAt)>rm(submittedAt)`と新`subLastActionTime(sub)>new Date(sub.submittedAt).getTime()`は等価（関数内で`isUpdated`/`updatedAt`欠損時はbaseを返すため）。`submittedAt`が不正な場合は右辺がNaNとなり比較がfalseになるだけでクラッシュしない。ローカル関数`rm`は使用箇所と同時に削除済みで残骸なし。
+### `2fcd943` 差分レビュー（app-utils.js `gto()`・問題なし）
+- `gto()` を `for(let h=0;h<=27;h++)` の連続生成へ変更。`h===27` のみ `[0]` 分・他は `[0,15,30,45]` 分で、`00:00`〜`26:45`＋`27:00` を欠けなく生成。旧実装（9:00〜24:00 と 25:00〜27:00 の2ループ）の朝帯・24時台欠落を解消
+- `TO=gto()`（app-utils.js:94）・`TO_START=TO.filter(30分刻み)`（app-utils.js:95）に自動反映。`TO_START` に `00:00/00:30…` が追加され、消費側 app-staff.js:352（start=TO_START / end=TO）に破壊的影響なし。`9:00` 等のハードコード出勤下限に依存する箇所なし
+- 計算系（toMin/parseInt・帯判定・休憩・ヒートマップ）は >24 時刻を既存対応済みのため非影響。`npm test` **122件パス**で非回帰確認
 
-### スキャン結果
-- `subs`の`set()`全体上書き: ヒット0（正常）
-- `filter(s=>s.id!==...)`削除パターン: 全8ヒット確認。subs系はdeletedId渡し（app-admin.js:1746,2831）か`remove()`直呼び出し（app-main.js:1515）で削除のFirebase反映は維持
-- subのin-place変更: なし。`onEditSub`（app-admin.js:1746）はスプレッドで新オブジェクトを作っており`saveSubs`の参照比較差分書き込みに乗る
+### スキャン結果（すべて正常・#36から非回帰）
+- `subs` の `set()` 全体上書き: ヒット0（正常）
+- `filter(s=>s.id!==...)`: subs 系は削除の Firebase 反映を維持——app-admin.js:1775・2868 は deletedId を渡し、app-main.js:1524 は `.remove()` を直呼び（1527行）。残り（app-main.js:781,933,935／app-admin.js:132,2991）は店舗リストの絞り込みで subs 削除ではない
 - DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE（app-core.js:81）正常
-- セキュリティ: `ref("global/shops")`全件読みの復活なし、`global/templates`参照なし、無条件`".read": true`は0件
-- index.html: スクリプト読み込み順（utils→core→staff→admin→main）維持、CDN SRI 11本、版数`?v=20260720-0997620`がapp-core.js冒頭のbuild表記およびHEADのコード変更コミットと整合
-- Cloud Functions: secrets抜け漏れなし（5箇所）・`.delete()`誤用なし・`purgeInactiveShops`のInvalid Dateスキップとarchived二段削除は維持・`PURGE_OLD_PERIODS_DRY_RUN=true`のまま（BACKLOG通り2026-08-12以降に切り替え）
-- 新規inputのfontSize: 16px未満の追加なし（#31以降の新規UIはbutton/div/spanのみ）
-- `npm test`: 103件パス（0 fail、`subLastActionTime`の新規6件を含む）、`npx eslint app-*.js`: 0 errors 100 warnings（既存no-unused-vars誤検知のみ）
+- プラン制限: Premium 機能（属性/残業/休憩/ヒートマップ/連勤）への `isPro` 誤用なし
+- セキュリティ: `ref("global/shops")` 全件読みの復活なし。`database.rules.json` に `".read": true` は0件
+- Cloud Functions: secrets 5箇所とも抜け漏れなし（STRIPE×3・SMTP×2・SURVEY）・`.delete()` 誤用なし・`node -c` 構文OK・`PURGE_OLD_PERIODS_DRY_RUN=true` 継続（BACKLOG通り2026-08-12以降に切替）
+- `npm test`: **122件パス**（0 fail）、`npx eslint app-*.js`: **0 errors** 100 warnings（既存 no-unused-vars 誤検知のみ）
 
-### 要確認（未修正・継続）
-- **🟢 詳細モーダルの「時間」列ヘッダーがnon-Premiumでも常に表示される**（app-admin.js:2745付近、#11から継続）
-- **🟢 subs期間別購読の店舗切替時レース**（app-main.js `reconcileSubs`/`setPeriodSubs`、#11から継続）
-- **🟢 `joinByInviteCode`（app-main.js:852付近）が呼び出し元ゼロのデッドコード**（#15から継続）
-- **🟢 スキルがPHASE 0で読むよう指示している`VISION.md`がリポジトリに存在しない**（#27から継続）
-- **🟢 版数更新の手動運用**（#21・#31で漏れ発生）。今回は`0997620`に対して同日中に`21827b0`で正しく更新されており漏れなし。自動化の検討余地は継続
+### 要確認（未修正）
+- **🟡（新規・リリース前バンプ必須）index.html のキャッシュバスティング版数が HEAD と不一致**。版数は `?v=20260721-3128e5c` のまま（app-utils.js/core.js:211-215）だが、`2fcd943` で app-utils.js が変更された。**main リリース時に版数を `2fcd943`（相当）へバンプしないと、既存ユーザーのブラウザ/CDN が旧 app-utils.js をキャッシュ配信し、候補時刻の24時間対応が反映されない**。版数バンプは release-to-main フローが担う工程のため本自動ループでは実施せず、次リリースへの申し送りとして記載
+- **🟡 店舗切替で `apid` がリセットされず、新店舗の subs を旧店舗の periodId で購読する**（app-main.js:413/1091/1538）。仕様判断待ち
+- **🟡 periods ノードが空になったとき periods state と subs 購読が更新されない**（app-main.js:360-375）。意図的ガードかの判断待ち
+- **🟡 `.indexOn: ["periodId"]` が dev Firebase に未反映**（database.rules.json にはコミット済み）。ルール反映は書き込み操作のため本ループでは実施しない
+- **🟡 `x`（カウント外）が他方セルのコマンドに隠れて無効化される**（app-admin.js:669／コメント739）。コメント訂正 or 短絡の2択で仕様判断待ち
+- **🟡 プリセット作成経路で `ph("period_created")` が発火しない**（app-admin.js:1818 vs 手動 1761）。計測のみ・機能破壊なし
+- **🟡（ルール反映系）BACKLOG「締めルールへの切り替え」の着手ウィンドウ（2026-07-21〜08-04）に入った**。`database.rules.tightened.json` への差し替えは Firebase 本番/dev への書き込み操作のため本自動ループの対象外。オーナー claim 状況確認とデプロイはユーザー判断で実施
+- **🟢群（継続）**: 変更マークの締切ゲート対象外（app-staff.js:166）／退勤延長がランチのみシフトを帯跨ぎに変える（app-admin.js:752）／`staffSectionOn` のヘルプ帯クリップ未実施（app-admin.js:881）／詳細モーダル「時間」列ヘッダーが non-Premium でも表示（app-admin.js:2745付近）／`joinByInviteCode` デッドコード（app-main.js:852付近）／`VISION.md` 不在（#27から継続・今回も確認）／`templates` 読み取りの要素妥当性ガード欠落（app-main.js:341）
 
-### 異常なし
-クリティカル（🔴）・中程度（🟡）ともにゼロ。今回の巡回では修正コミットなし。`0997620`の提出一覧ソート修正をレビューし、新規バグの混入なし。作業ツリーの`.cursorrules`未コミット変更は#28から継続して残っているが、本ループの対象外。
+### 総括
+新規コミット `2fcd943`（候補時刻24時間対応）の差分レビュー＋全体スキャンを実施。コード🔴・機能破壊🟡ともに検出ゼロ。`gto()` 変更は 122件テストで非回帰確認済み。唯一の新規🟡は「index.html 版数が HEAD と不一致＝main リリース前に版数バンプが必要」で、これはリリース工程の申し送り事項（自動ループ対象外）。継続中の🟡はすべて仕様判断またはルール反映待ちで自律実行対象外。作業ツリーの `.cursorrules` 未コミット変更は継続（本ループ対象外）。
 <!-- BUG_CHECK_LATEST_END -->
 
 -
 ---
 
 
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
 -
 -
 -
