@@ -3888,6 +3888,18 @@ function MyPageTab({plan="free",planExpiry,staffList=[],periods=[],shopId,tt,onU
         </div>
       </AC>
 
+      {/* 使い方マニュアル */}
+      <AC title="使い方マニュアル">
+        <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:14}}>
+          Shiftyの使い方や機能の解説記事（note）をまとめています。はじめての方や設定に迷ったときにご覧ください。
+        </div>
+        <a href="https://note.com/todge00/m/m894b1b9ff090" target="_blank" rel="noopener" onClick={()=>ph("manual_opened")}
+          style={{display:"block",width:"100%",padding:"13px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:11,color:"var(--c-text2)",fontSize:14,fontWeight:600,cursor:"pointer",textDecoration:"none",textAlign:"center",boxSizing:"border-box"}}>
+          📖 マニュアルを見る（note）
+        </a>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8,textAlign:"center"}}>外部のnoteサイトに移動します</div>
+      </AC>
+
       {/* 請求管理 */}
       {isPaid&&<AC title="請求・サブスクリプション管理">
         <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:14}}>
