@@ -7,8 +7,9 @@ const path = require("path");
 const VAULT_DIR = "/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty";
 const CLAUDE_MD = path.join(__dirname, "../CLAUDE.md");
 const CURSORRULES = path.join(__dirname, "../.cursorrules");
-const SECTION_HEADER = "\n---\n\n## Obsidianノート（自動同期）\n";
 const SECTION_MARKER = "## Obsidianノート（自動同期）";
+const SECTION_PREFIX = "\n---\n\n";                       // マーカーの前に置く区切り
+const SECTION_HEADER = SECTION_PREFIX + SECTION_MARKER + "\n";
 
 // 同期対象は許可リスト方式（2026-07-07に除外リスト方式から反転）。
 // 理由: 全ノート埋め込みでCLAUDE.mdが187KBまで肥大化し、コンテキストノイズで
@@ -31,7 +32,10 @@ function updateClaudeMd(notes) {
   let content = fs.readFileSync(CLAUDE_MD, "utf8");
   const idx = content.indexOf(SECTION_MARKER);
   if (idx !== -1) {
-    content = content.slice(0, idx - 4); // "\n---\n" の手前まで
+    // 区切り（SECTION_PREFIX）ごと切り落とす。長さを固定値で持つと
+    // 削り残しが同期のたびに "-" 行として蓄積するため、必ず実長で計算する
+    const start = idx - SECTION_PREFIX.length;
+    content = content.slice(0, content.startsWith(SECTION_PREFIX, start) ? start : idx);
   }
   content += SECTION_HEADER + notes + "\n";
   fs.writeFileSync(CLAUDE_MD, content, "utf8");
