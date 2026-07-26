@@ -217,7 +217,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   if(done)return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"50px 20px",textAlign:"center"}}>
         <div style={{fontSize:68,animation:"bI .5s"}}>✓</div>
         <div style={{fontSize:22,fontWeight:700,color:"#f87036",marginTop:14,marginBottom:8}}>提出完了！</div>
@@ -238,7 +238,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"14px 12px 120px"}}>
         {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:10,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`▲ 締切日（${ap.deadlineDate.replace(/-/g,"/")}）を過ぎています（提出・修正は可能です）`:`締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
 
@@ -491,15 +491,15 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
 // ============================================================
 // 提出状況モーダル（全画面・名前固定・横スクロール）
 // ============================================================
-function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onDeleteSub,plan="free"}){
+function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onDeleteSub,plan="free",staffAliases={}}){
   const period=periods.find(p=>p.id===apid);
   // source:"grid"はシフト作成タブが未提出スタッフのセルに直接作成した管理者入力用のsub（実際の提出ではない）。
   // スタッフ向けの提出状況一覧には表示しない（app-admin.jsのSubsTabと同じ除外基準）。
   const submitted=subs.filter(s=>s.periodId===apid&&s.source!=="grid");
   const dates=period?gd(period.startDate,period.endDate):[];
   const[editTarget,setEditTarget]=useState(null);
-  const submittedNames=submitted.map(s=>s.staffName);
-  const notSubmitted=staffList.filter(n=>!submittedNames.includes(n)&&!isSpacer(n));
+  // 別名照合: 提出名が登録名そのもの、または登録名の別名配列に含まれれば「提出済み」とみなす（提出一覧タブ/Excel出力と同じ照合）。
+  const notSubmitted=staffList.filter(n=>!isSpacer(n)&&!submitted.some(s=>s.staffName===n||(staffAliases[n]||[]).includes(s.staffName)));
   const NW=88,CW=86,COMMENT_W=150;
   const handleCellClick=(sub,ds)=>{if(!sub)return;setEditTarget({subId:sub.id,ds});};
   const applyCellEdit=(subId,ds,newStatus,newStart,newEnd)=>{
@@ -545,11 +545,11 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                   <div onClick={()=>handleNameClick(sub)} style={{textAlign:"center",cursor:"pointer",flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}
                     onMouseEnter={e=>e.currentTarget.style.opacity=".7"}
                     onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
-                    <div style={{fontSize:12,fontWeight:700,color:"var(--c-text)",wordBreak:"break-all",lineHeight:1.3}}>{sub.staffName}</div>
+                    <div style={{fontSize:12,fontWeight:700,color:"var(--c-text)",wordBreak:"break-all",lineHeight:1.3}}>{resolveAlias(sub.staffName,staffAliases)}</div>
                     <div style={{fontSize:10,color:"#f87036",marginTop:2}}>✎ 修正</div>
                   </div>
                   {(plan==="pro"||plan==="premium")&&onDeleteSub&&(
-                    <button onClick={e=>{e.stopPropagation();if(confirm(`「${sub.staffName}」の提出を削除しますか？`)){onDeleteSub(sub.id);}}}
+                    <button onClick={e=>{e.stopPropagation();if(confirm(`「${resolveAlias(sub.staffName,staffAliases)}」の提出を削除しますか？`)){onDeleteSub(sub.id);}}}
                       style={{width:"100%",padding:"2px 4px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:4,color:"#FF4757",fontSize:10,cursor:"pointer",fontWeight:600}}>
                       削除
                     </button>

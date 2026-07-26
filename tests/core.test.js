@@ -677,6 +677,40 @@ test("positionDayTypeFor: 日付別候補がなければdayTypeOfを返す", () 
   assert.strictEqual(u.positionDayTypeFor("2026-07-11", {}), "sat"); // settings空でも安全
 });
 
+// getBreakList: 休憩の日区分を必要ポジションと同じ5区分(positionDayTypeFor)で解決する + 旧"hol"の後方互換
+test("getBreakList: 平日はweekday区分の休憩を返す", () => {
+  const s = { breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] } };
+  assert.deepStrictEqual(u.getBreakList(s, "2026-07-13"), [{ start: "12:00", end: "13:00" }]); // 7/13は月曜
+});
+
+test("getBreakList: 祝日はholSat/holSunに解決される（旧holではなく5区分）", () => {
+  const s = { breakTimes: { holSat: [{ start: "14:00", end: "15:00" }], holSun: [{ start: "16:00", end: "17:00" }] } };
+  assert.deepStrictEqual(u.getBreakList(s, "2026-02-11"), [{ start: "14:00", end: "15:00" }]); // 2/11(建国記念の日・単日)=holSat
+  assert.deepStrictEqual(u.getBreakList(s, "2026-07-20"), [{ start: "16:00", end: "17:00" }]); // 7/20(海の日・連休最終日)=holSun
+});
+
+test("getBreakList: 候補タブの日付別区分(dateCandidatePosTypes)に自動追従する", () => {
+  const s = { breakTimes: { holSun: [{ start: "20:00", end: "21:00" }] }, dateCandidatePosTypes: { "2026-07-13": "holSun" } };
+  // 7/13は本来weekdayだが、候補タブでholSunに指定 → 休憩もholSunに追従
+  assert.deepStrictEqual(u.getBreakList(s, "2026-07-13"), [{ start: "20:00", end: "21:00" }]);
+});
+
+test("getBreakList: 旧hol設定は祝日区分が空のときだけ後方互換で流用される", () => {
+  const s = { breakTimes: { hol: [{ start: "14:00", end: "15:00" }] } };
+  assert.deepStrictEqual(u.getBreakList(s, "2026-02-11"), [{ start: "14:00", end: "15:00" }]); // holSat未設定→旧holを流用
+  assert.deepStrictEqual(u.getBreakList(s, "2026-07-20"), [{ start: "14:00", end: "15:00" }]); // holSun未設定→旧holを流用
+});
+
+test("getBreakList: 祝日区分が設定済みなら旧holより優先する", () => {
+  const s = { breakTimes: { holSat: [{ start: "10:00", end: "11:00" }], hol: [{ start: "14:00", end: "15:00" }] } };
+  assert.deepStrictEqual(u.getBreakList(s, "2026-02-11"), [{ start: "10:00", end: "11:00" }]); // holSat優先
+});
+
+test("getBreakList: 旧hol流用は祝日区分限定（平日/日曜等には波及しない）", () => {
+  const s = { breakTimes: { hol: [{ start: "14:00", end: "15:00" }] } };
+  assert.deepStrictEqual(u.getBreakList(s, "2026-07-13"), []); // 月曜=weekday未設定→旧holは流用しない
+});
+
 test("hasAnyRequiredPosition: 必要ポジションが1件でもあればtrue、なければfalse", () => {
   assert.strictEqual(u.hasAnyRequiredPosition(undefined), false);
   assert.strictEqual(u.hasAnyRequiredPosition({}), false);

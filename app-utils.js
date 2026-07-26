@@ -122,8 +122,15 @@ function calcNetWorkMinutes(shift,breaks,overtimeMins=0){
   return net;
 }
 function getBreakList(settings,dateStr){
-  const dow=pd(dateStr).getDay();const hol=isHoliday(dateStr);const bt=(settings&&settings.breakTimes)||{};
-  if(hol)return bt.hol||[];if(dow===0)return bt.sun||[];if(dow===6)return bt.sat||[];return bt.weekday||[];
+  const bt=(settings&&settings.breakTimes)||{};
+  // 必要ポジション設定と同じ5区分(平日/土曜/日曜/祝日連休中/祝日最終日)で解決し、
+  // 候補タブの日付別で選んだ区分(dateCandidatePosTypes / 候補一致推論)に自動追従する。
+  const dt=positionDayTypeFor(dateStr,settings);
+  let list=bt[dt];
+  // 旧4区分の後方互換: 祝日を holSat/holSun に分割する前の "hol" データは、
+  // 該当する祝日区分に未設定のときだけ流用する（既存店舗の休憩設定を失わせない）。
+  if((!list||!list.length)&&(dt==="holSat"||dt==="holSun"))list=bt.hol;
+  return list||[];
 }
 // 17:00(1020分)を境界にランチ帯/ディナー帯を判定し出勤数を返す。
 // extraStart/extraEnd（「締」等の追加出勤期間）があれば主シフトと合算してhasLunch/hasDinner/attendanceを判定する
@@ -193,7 +200,6 @@ function getAttrOptions(settings){
   Object.keys(stl).forEach(id=>{if(id!=="employee"&&id!=="parttime"&&stl[id]&&stl[id].name)out.push([id,stl[id].name]);});
   return out;
 }
-const DAY_TYPES=[["weekday","平日"],["sat","土曜"],["sun","日曜"],["hol","祝日"]];
 // 休憩適用の統一入口: 属性タグフィルタ + 実際のシフト時間帯との重なり判定
 // 属性一致のタグ付き休憩がその日区分にある場合はタグなし休憩を適用しない（差し替え方式）
 // 休憩の適用可否は出勤日数(attendance=1出勤等)のような汎用閾値では判定しない（2026-07-10改修）。
@@ -260,7 +266,7 @@ function dayTypeOf(dateStr){
   if(dow===6)return"sat";
   return"weekday";
 }
-// シフト作成タブ「必要ポジション設定」の曜日区分タブ（祝日をholSat/holSunに分割した5分類。DAY_TYPESとは別物＝breakTimes等には影響しない）
+// シフト作成タブ「必要ポジション設定」の曜日区分（祝日をholSat/holSunに分割した5分類）。休憩時間(breakTimes)もこの5区分を共有し、getBreakListがpositionDayTypeForで日付→区分を解決する（旧"hol"データは後方互換で流用）。
 const POSITION_DAY_TYPES=[["weekday","平日"],["sat","土曜"],["sun","日曜"],["holSat","祝日（連休中・単日）"],["holSun","祝日（最終日）"]];
 // weekdayCandidates のキー(0〜8) → 必要ポジションの曜日区分(weekday/sat/sun/holSat/holSun) へ変換する。
 // 0=日→sun, 1〜5=月〜金→weekday, 6=土→sat, 7=祝(単)→holSat, 8=祝(終)→holSun。対応外はnull。
