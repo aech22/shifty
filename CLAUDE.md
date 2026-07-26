@@ -555,46 +555,48 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-26 自動実行 #41）
+## Shifty バグチェックレポート（2026-07-26 自動実行 #42）
 
 ### 修正済み
 
-- **[🟡] obsidian-sync の区切り削り残しで CLAUDE.md に `-` 行が同期のたび蓄積する**（scripts/obsidian-sync.js:34）
-  `SECTION_HEADER` の接頭辞は `"\n---\n\n"`（6文字）なのに `slice(0, idx - 4)` と固定値で切っていたため、同期のたびに `"\n-"` が削り残されて情報を持たない `-` 行が積み上がっていた。接頭辞の実長で切るよう変更し、蓄積済みの441行（内訳: `-` 438行 / `---` 1行 / 空行2行）を CLAUDE.md から除去した（1321行 → 880行）。コミット `e7fac75`。
+- **[🟡] #41 の `-` 行修正が実効化しておらず、修正後も残骸が蓄積し続けていた**（scripts/obsidian-sync.js:40）
+  `e7fac75` でソースは直したが、同期を担う **launchd 常駐プロセス（PID 881・2026-07-11 03:05 起動）が起動時のソースを実行し続けていた**ため、旧 `idx - 4` ロジックが動き続け、修正後の1日で新たに 39 行の `-` が積み上がっていた。`launchctl kickstart -k` でプロセスを再起動して修正版を反映し、あわせて**残骸を自己修復する除去処理**（`content.replace(/(?:\n-)+$/, "")`）を追加した。これで再発時に手動掃除が不要になる。蓄積済み39行を除去（927行 → 888行）。コミット `b8d2a9a`。
+
+### #41 から解消された項目
+
+- **キャッシュバスティング版数の不一致（#41 で🟡申し送り）は解消済み**。`c2280bf` が `?v=20260723-2fcd943` へバンプ済みで、これは app-*.js の最新変更コミット `2fcd943`（候補時刻24時間対応）と一致する。app-core.js:4 のビルド表示も同値で揃っている。リリース前の追加バンプは不要。
 
 ### 今回の対象
-HEAD は `d560bcd`（docs: バグチェック#40の同期）で、#40 以降の新規コミットもドキュメント同期のみ。コード（app-*.js／functions／ルール／index.html）の差分レビュー対象がないため、RULES.md 準拠の全体スキャンを一巡し #40 からの非回帰を確認したうえで、#40 で「毎回積み上がる同期フックの残骸」として観測されていた `-` 行の**原因を特定して恒久修正**した。
+HEAD は `79450fc`（Merge branch 'develop'）。#41 以降の新規コミットは CLAUDE.md 同期・ブログ表記訂正・obsidian-sync 修正のみで、**アプリコードの差分は #37 の `2fcd943` 以降ゼロ**。そのため全体スキャンで非回帰を確認したうえで、#41 の修正が本当に効いているかの**事後検証**に重点を置き、効いていないことを発見して根治した。
 
-### `-` 行蓄積の原因特定（#40の観測 → #41で根治）
-- #40 では「未コミットの残骸」と記録されていたが、実際は **HEAD にコミット済み**で、コミットを跨いで単調増加していた（`fc9f976`:339行 → `927e3c3`:372 → `e56abf2`:381 → `2fcd943`:399 → `cdb1793`:402 → `c404a6d`:437 → `866bd47`/`d560bcd`:438）。
-- 原因は `updateClaudeMd()` の切り出し位置。`SECTION_PREFIX = "\n---\n\n"` の 6 文字を `idx - 4` で切っていたため、毎回先頭 2 文字（`\n` と `-`）が残り、その直後に新しい `"\n---\n\n"` が付き足されていた。Obsidian の vault を監視するウォッチャは1日に何度も発火するため、日単位で行が増える。
-- 証拠: 新旧ロジックを同一入力で回した比較シミュレーションで、旧 = 5回同期あたり `-` 4行増加 / 新 = 0行。修正後の `node scripts/obsidian-sync.js --once` を3回連続実行して出力がバイト一致（冪等）し、残骸は0行。
-- `updateCursorRules()` は marker に先頭 `\n` を含めて `indexOf` の位置でそのまま切っており、削り残しは発生しない（`.cursorrules` 側は健全）。
+### 根治の証拠
+- 旧プロセスの実行継続を `ps -eo pid,lstart` で確認（PID 881・起動 2026-07-11、修正コミット `e7fac75` は 2026-07-26）。Node は起動時にソースを読むため、ファイル修正だけでは常駐プロセスに反映されない。
+- 残骸の実測: HEAD の CLAUDE.md に `-` 行 1 行、作業ツリーに 39 行（うち38行が `e7fac75` 以降の未コミット蓄積）。位置はバグチェック最新ブロックの終了マーカーと `---` の間。
+- 再起動後、launchd の RunAtLoad 同期で残骸 0 行になることを確認。さらに `node scripts/obsidian-sync.js --once` を3回連続実行し、**md5 が3回とも `2d8568f9…` で一致**（888行・`-` 行0）＝冪等を確認。
+- 除去正規表現の安全性: `(?:\n-)+$` は末尾が `-` 単独行の連続のときだけ一致する。`---`（水平線）は最後の2文字が `--` のため一致せず、`- item` のような通常の箇条書きも一致しない。
 
-### スキャン結果（すべて正常・#40から非回帰）
-- `subs` の `set()` 全体上書き: ヒット0。`fbPath(sid,"subs")` への書き込みは app-main.js:1149・1196 の `update()` のみ、読みは 1145 の `once` と 428 の `orderByChild("periodId").equalTo()` クエリ。削除は app-main.js:1527 の `shops/{sid}/subs/{subId}` 直 `.remove()`
-- 削除の Firebase 反映: app-admin.js:1775・2868 は deletedId を第2引数で渡す形を維持。残り（app-admin.js:132,2991／app-main.js:781,933,935）は店舗リストの絞り込みで subs 削除ではない
-- 期間別 subs 購読の解除: `subsListenersRef` の `off()` がログアウト時（app-main.js:311-313）と reconcile 時の期間離脱（同 433-437）の両方で呼ばれ、`subsMapRef` からも該当 periodId のエントリを削除（#34 修正の非回帰を確認）
+### スキャン結果（すべて正常・#41から非回帰）
+- `subs` の `set()` 全体上書き: ヒット0。`filter(s=>s.id!==…)` の7箇所はいずれも削除反映済み（app-admin.js:1775・2868 は deletedId を第2引数で渡す形を維持、他は店舗リストの絞り込み）
+- sub の in-place 変更（差分書き込み漏れ）: ヒット0（app-admin.js:2836 の1件は `.status==` の比較で代入ではない）
 - DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE（app-core.js:81）正常
-- プラン制限: Premium 機能への `isPro` 誤用なし。`isPro` 単独ゲートは app-admin.js:2265（スタッフ色ドット）・2844（未登録スタッフ表示）・2868（提出削除ボタン）で、いずれも Pro 相当が正しい
-- セキュリティ: `global/shops` は全12箇所すべて直キー読み書きで一覧読みの復活なし・`ref("accounts")` の全件読みゼロ・`global/templates` の参照ゼロ・`database.rules.json` / `.tightened.json` ともに `".read": true` は0件・`.indexOn: ["periodId"]` は両ルールの50行目にコミット済み
-- Cloud Functions: secrets 5種（STRIPE_SECRET_KEY×3・STRIPE_WEBHOOK_SECRET・SMTP_USER/PASS×2・SURVEY_SEND_TOKEN）抜け漏れなし・`.delete()` 誤用0件・`PURGE_OLD_PERIODS_DRY_RUN=true`（functions/index.js:470）継続（BACKLOG通り2026-08-12以降に切替）
-- 分割構成: index.html のスクリプト読み込み順 utils→core→staff→admin→main 維持（211-215行）・SRI 11本
-- iOS ズーム対策: 16px 未満の `input`/`select`/`textarea` の新規混入なし（ヒットはすべて `div`/`span`/`button` のラベル・バッジ）
+- プラン制限: `isPro` 単独ゲートは app-admin.js:2844（未登録スタッフ表示）のみで Pro 相当が正しい。Premium 機能への誤用なし
+- セキュリティ: `global/shops` は全12箇所すべて直キー読み書き（一覧読みの復活なし）・`ref("accounts")` の全件読み0件・`global/templates` 参照0件・`database.rules.json` / `.tightened.json` ともに `".read": true` は0件・tokens 逆引きの set/remove は savePeriods 内（app-main.js:1093・1142・1160）に健在
+- Cloud Functions: secrets 5種すべて宣言あり・`.delete()` 誤用0件・`Number.isNaN` ガードと `archived/shops` 二段削除が健在・`PURGE_OLD_PERIODS_DRY_RUN=true`（functions/index.js:470）継続（BACKLOG通り2026-08-12以降に切替）
+- 分割構成: index.html の読み込み順 utils→core→staff→admin→main 維持（211-215行）・SRI 11本
+- iOS ズーム対策: 16px 未満の `input`/`select`/`textarea` の新規混入なし
 - `npm test`: **122件パス**（0 fail）、`npx eslint app-*.js`: **0 errors** 100 warnings（既存 no-unused-vars 誤検知のみ）
 
-### 要確認（未修正・#40から継続）
-- **🟡（リリース前バンプ必須）index.html のキャッシュバスティング版数が HEAD と不一致**（211-215行が `?v=20260721-3128e5c` のまま。HEAD は `e7fac75`）。`2fcd943` で app-utils.js が変更済み。**main リリース時に版数をバンプしないと既存ユーザーのブラウザ/CDN が旧 app-utils.js をキャッシュ配信し候補時刻24時間対応が反映されない**。版数バンプは release-to-main フローの工程のため本自動ループでは実施せず申し送り
-- **🟡 店舗切替で `apid` がリセットされず、新店舗の subs を旧店舗の periodId で購読する**（app-main.js:413/1091/1538）。仕様判断待ち
-- **🟡 periods ノードが空になったとき periods state と subs 購読が更新されない**（app-main.js:360-375）。意図的ガードかの判断待ち
+### 要確認（未修正・#41から継続）
+- **🟡 店舗切替で `apid` がリセットされず、新店舗の subs を旧店舗の periodId で購読する**（app-main.js:1106 の `if(!apid&&periods.length>0)` は apid が既に入っていると更新しない）。今回コードを読んで**現存を再確認**した。仕様判断待ち
+- **🟡 periods ノードが空になったとき periods state と subs 購読が更新されない**（app-main.js:368 の `if(!val)return;` と 372 の `if(arr.length>0)`）。今回コードを読んで**現存を再確認**した。意図的ガードかの判断待ち
 - **🟡 `.indexOn: ["periodId"]` が dev Firebase に未反映**（database.rules.json:50 にはコミット済み）。ルール反映は書き込み操作のため本ループでは実施しない
 - **🟡 `x`（カウント外）が他方セルのコマンドに隠れて無効化される**（app-admin.js:669／コメント739）。仕様判断待ち
 - **🟡 プリセット作成経路で `ph("period_created")` が発火しない**（app-admin.js:1818 vs 手動 1761）。計測のみ・機能破壊なし
-- **🟡（ルール反映系）BACKLOG「締めルールへの切り替え」の着手ウィンドウ（2026-07-21〜08-04）内で残り約9日**。`database.rules.tightened.json` への差し替えは Firebase 本番/dev への書き込み操作のため本自動ループの対象外。オーナー claim 状況確認とデプロイはユーザー判断で実施
+- **🟡（ルール反映系）BACKLOG「締めルールへの切り替え」の着手ウィンドウ（2026-07-21〜08-04）内で残り約9日**。`database.rules.tightened.json` への差し替えは Firebase への書き込み操作のため本自動ループの対象外。オーナー claim 状況確認とデプロイはユーザー判断で実施
 - **🟢群（継続）**: 変更マークの締切ゲート対象外（app-staff.js:166）／退勤延長がランチのみシフトを帯跨ぎに変える（app-admin.js:752）／`staffSectionOn` のヘルプ帯クリップ未実施（app-admin.js:881）／詳細モーダル「時間」列ヘッダーが non-Premium でも表示（app-admin.js:2745付近）／`joinByInviteCode` デッドコード（app-main.js:852付近）／`VISION.md` 不在（#27から継続・今回も確認）／`templates` 読み取りの要素妥当性ガード欠落（app-main.js:341）
 
 ### 総括
-アプリコードの新規コミットは #37 の `2fcd943` 以降ゼロで、全体スキャンは 🔴・新規🟡ともに検出ゼロ（122件テスト・0 eslint errors）。今回は #40 で申し送りだった「CLAUDE.md に毎回積み上がる `-` 行」の原因を obsidian-sync.js の固定オフセット（`idx - 4`）と特定し、接頭辞の実長で切るよう修正して蓄積済み441行を除去した（コミット `e7fac75`）。これで毎セッションのコンテキストに載る CLAUDE.md が 1321行 → 880行に縮む。作業ツリーに残る `.cursorrules` の未コミット差分は vault の BACKLOG 同期出力で、本ループの対象外。締めルール切り替えの着手ウィンドウ（〜2026-08-04）が残り約9日である点をユーザー判断事項として再掲する。
+アプリコードの新規コミットは #37 の `2fcd943` 以降ゼロで、全体スキャンは 🔴・新規🟡ともに検出ゼロ（122件テスト・0 eslint errors）。今回の主眼は**「前回の修正が本当に効いているかの検証」**で、#41 が「根治した」と報告した `-` 行蓄積が**実際には止まっていなかった**ことを発見した。原因はコードではなく運用面で、launchd 常駐プロセスが2026-07-11起動のまま旧ロジックを実行し続けていた。プロセス再起動に加え、残骸を自己修復する除去処理を入れて再発時の手動掃除を不要にし、`--once` 3回のmd5一致で冪等を確認した（コミット `b8d2a9a`）。**教訓: 常駐プロセスが実行しているコードを修正したときは、プロセス再起動まで含めて初めて修正が完了する。** #41 で🟡申し送りだったキャッシュバスティング版数の不一致は `c2280bf` で解消済みであることも確認した。締めルール切り替えの着手ウィンドウ（〜2026-08-04）が残り約9日である点をユーザー判断事項として再掲する。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
