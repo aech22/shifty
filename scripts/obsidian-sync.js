@@ -37,6 +37,10 @@ function updateClaudeMd(notes) {
     const start = idx - SECTION_PREFIX.length;
     content = content.slice(0, content.startsWith(SECTION_PREFIX, start) ? start : idx);
   }
+  // 過去の削り残し（"-" だけの行）を除去してから書き直す。launchd 常駐プロセスは
+  // 起動時のソースを実行し続けるため、修正後も再起動までは旧ロジックが残骸を
+  // 積み続ける。自己修復しないと残骸が恒久的に残り手動掃除が必要になる
+  content = content.replace(/(?:\n-)+$/, "");
   content += SECTION_HEADER + notes + "\n";
   fs.writeFileSync(CLAUDE_MD, content, "utf8");
 }
