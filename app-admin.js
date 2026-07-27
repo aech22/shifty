@@ -1296,7 +1296,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     dates.forEach((ds,di)=>{
       const d=pd(ds),dow=d.getDay(),day=d.getDate(),wd=WD[dow];
       const isSat=dow===6,isSunHol=dow===0||isHoliday(ds);
-      const rowBg=isSat?"#DDEEFF":isSunHol?"#FFEEEE":"#fff";
+      const isSpecRed=isSpecialRedDate(ds,settings);
+      const rowBg=isSat?"#DDEEFF":(isSunHol||isSpecRed)?"#FFEEEE":"#fff";
       // 上行=出勤 / 下行=退勤
       ["start","end"].forEach((field,ri)=>{
         const top=ri===0;
@@ -1489,7 +1490,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=sh?.[adjNk]??sh?.[origNk]??"";}
             return{time,note};
           };
-          expXl(period,subs,staffList,tt,shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{}},adjResolver);
+          expXl(period,subs,staffList,tt,shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings},adjResolver);
         }}
           style={{padding:"6px 14px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           Excel出力
@@ -1580,8 +1581,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                 {dates.map(date=>{
                   const d=pd(date);const day=d.getDay();
                   const isHol=isHoliday(date);const isSun=day===0;const isSat=day===6;
-                  const dc=(isSun||isHol)?"#e53935":isSat?"#1976d2":"var(--c-text)";
-                  const baseRb=(isSun||isHol)?"rgba(229,57,53,0.07)":isSat?"rgba(25,118,210,0.07)":"transparent";
+                  const isSpecRed=isSpecialRedDate(date,settings);
+                  const dc=(isSun||isHol||isSpecRed)?"#e53935":isSat?"#1976d2":"var(--c-text)";
+                  const baseRb=(isSun||isHol||isSpecRed)?"rgba(229,57,53,0.07)":isSat?"rgba(25,118,210,0.07)":"transparent";
                   // ポジション不足がある帯（ランチ=出勤行/ディナー=退勤行）のセル背景を赤く塗る。
                   // 不足しているカテゴリ(キッチン/ホール)の担当スタッフのセルのみ対象（cellPosErrがスタッフ所属で判定）。
                   const rbS=name=>cellPosErr(name,date,"lunch")?LEGEND_COLORS.posErr:baseRb;
@@ -1877,7 +1879,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
                   </div>
                   <div style={{display:"flex",gap:5,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
                     <button onClick={e=>{e.stopPropagation();setEid(p.id);}} style={{padding:"5px 9px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text2)",fontSize:11,cursor:"pointer"}}>編集</button>
-                    <button onClick={e=>{e.stopPropagation();expXl(p,subs,staffList,tt,settings.xlShopName||shopName,{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{}});}} style={{padding:"5px 9px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:6,color:"white",fontSize:11,fontWeight:700,cursor:"pointer"}}>Excel</button>
+                    <button onClick={e=>{e.stopPropagation();expXl(p,subs,staffList,tt,settings.xlShopName||shopName,{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings});}} style={{padding:"5px 9px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:6,color:"white",fontSize:11,fontWeight:700,cursor:"pointer"}}>Excel</button>
                     <button onClick={e=>{e.stopPropagation();if(!confirm("削除しますか？"))return;onSave(periods.filter(pp=>pp.id!==p.id));tt("削除しました");}} style={AD}>削除</button>
                   </div>
                 </div>
@@ -1920,6 +1922,7 @@ function PEF({period,onSave,onCancel}){
 // ===== Excel出力 =====
 function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   ph("excel_exported",{period_id:p.id,submission_count:subs.filter(s=>s.periodId===p.id).length});
+  const settings=options.settings||{};
   const ss=subs.filter(s=>s.periodId===p.id);
   if(typeof ExcelJS==="undefined"){tt("▲ ExcelJS未読込み");return;}
   const dates=gd(p.startDate,p.endDate);
@@ -2053,7 +2056,8 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   dates.forEach((ds,di)=>{
     const d=pd(ds),dow=d.getDay(),day=d.getDate(),wd=WD[dow];
     const isSat=dow===6,isSunHol=dow===0||isHoliday(ds);
-    const fill=isSat?fSat:isSunHol?fHol:fNone; // 平日=塗りなし
+    const isSpecRed=isSpecialRedDate(ds,settings);
+    const fill=isSat?fSat:(isSunHol||isSpecRed)?fHol:fNone; // 平日=塗りなし
     const isLast=di===dates.length-1;
     const rT=DATA_START+di*2, rB=rT+1;
     ws.getRow(rT).height=16.5;
@@ -2461,6 +2465,21 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
     if(total>0)maybePromptPosType(dc);
   };
   const delD=(dt,i)=>{const dc={...(settings.dateCandidates||{})};dc[dt]=[...(dc[dt]||[])];dc[dt].splice(i,1);const next={...settings,dateCandidates:dc};if(dc[dt].length===0){delete dc[dt];if((settings.dateCandidatePosTypes||{})[dt]){const m={...settings.dateCandidatePosTypes};delete m[dt];next.dateCandidatePosTypes=m;}}onSave(next);};
+  // 曜日別候補から1件を選択して日付別候補に追加（機能1）＋ ポジション区分を自動設定（機能2）
+  const addFromWeekday=(wkey,wcand)=>{
+    const dc={...(settings.dateCandidates||{})};
+    let added=0;
+    selDates.forEach(dt=>{
+      const prev=dc[dt]||[];
+      if(!prev.some(p=>p.start===wcand.start&&p.end===wcand.end)){dc[dt]=sc([...prev,wcand]);added++;}
+    });
+    if(added===0){tt("▲ 既に登録済みです");return;}
+    const posType=weekdayKeyToPositionDayType(wkey);
+    const newSettings={...settings,dateCandidates:dc};
+    if(posType){const m={...(settings.dateCandidatePosTypes||{})};selDates.forEach(dt=>{m[dt]=posType;});newSettings.dateCandidatePosTypes=m;}
+    onSave(newSettings);
+    tt(`✓ ${wdLabel(wkey)}の候補（${wcand.start}〜${wcand.end}）を${selDates.length}日付に追加`);
+  };
 
   // テンプレート保存
   const saveTemplate=()=>{
@@ -2561,6 +2580,30 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
               tt(total>0?`✓ ${selDows.map(wdLabel).join("・")}に休業日を設定`:"▲ 既に設定済みです");
             }} style={{padding:"6px 12px",background:"rgba(255,71,87,.15)",border:"1px solid rgba(255,71,87,.3)",borderRadius:8,color:"#FF4757",fontSize:12,fontWeight:700,cursor:"pointer"}}>× 休業日に設定</button>
           </div>
+          {(()=>{
+            const wc=settings.weekdayCandidates||{};
+            const keysWithCands=WDAY_OPTS.filter(d=>(wc[d]||[]).some(c=>!c.closed));
+            if(!keysWithCands.length)return null;
+            return(<div style={{marginTop:12,borderTop:"1px solid var(--c-border)",paddingTop:10}}>
+              <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8,fontWeight:600}}>曜日別から選ぶ</div>
+              {keysWithCands.map(d=>{
+                const cands=(wc[d]||[]).filter(c=>!c.closed);
+                const isSat=wdIsSat(d),isSun=wdIsSun(d);
+                const lc=isSat?"#3B82F6":isSun?"#FF4757":"#4B5563";
+                return(<div key={d} style={{marginBottom:8}}>
+                  <div style={{fontSize:11,color:lc,fontWeight:700,marginBottom:4}}>{wdLabelFull(d)}</div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                    {cands.map((c,i)=>(
+                      <button key={i} onClick={()=>addFromWeekday(d,c)}
+                        style={{padding:"4px 10px",borderRadius:6,fontSize:12,fontWeight:600,border:"1px solid var(--c-border2)",cursor:"pointer",background:"var(--c-input)",color:"var(--c-text2)"}}>
+                        {c.start}〜{c.end}
+                      </button>
+                    ))}
+                  </div>
+                </div>);
+              })}
+            </div>);
+          })()}
         </div>
 
         {/* 全曜日の候補一覧（常に表示・日曜→祝→月〜土の順） */}
