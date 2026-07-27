@@ -547,20 +547,7 @@ function subHasRealUpdate(sub,deadlineDate){
   return last>dl;                        // 締切後の変更のみ変更あり
 }
 
-// 平日（月〜金・非祝日）に日祝系ポジション区分が設定されている日付判定（シフト表・Excel・PDF の赤背景表示用）。
-// posTypeが sun/holSat/holSun のいずれかで、かつ実際の日付が土日でも祝日でもない場合にtrueを返す。
-function isSpecialRedDate(dateStr,settings){
-  const posType=(settings&&settings.dateCandidatePosTypes)?settings.dateCandidatePosTypes[dateStr]:null;
-  if(!posType)return false;
-  const sunTypes=["sun","holSat","holSun"];
-  if(!sunTypes.includes(posType))return false;
-  const dow=pd(dateStr).getDay();
-  if(dow===0||dow===6)return false; // 土日は元々色がある
-  if(isHoliday(dateStr))return false; // 実祝日も元々色がある
-  return true;
-}
-
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition};
 }
