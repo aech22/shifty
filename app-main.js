@@ -345,7 +345,9 @@ function App(){
     // 曜日別候補テンプレート（店舗単位: shops/{shopId}/templates）
     on(fbPath(targetSid,"templates"),val=>{
       if(!val){setGlobalTemplates([]);return;}
-      const arr=Array.isArray(val)?val.filter(Boolean):Object.values(val);
+      // periods/staffと同様に要素単位で妥当性を検証する（テンプレートはオブジェクト構造）。
+      // 配列ケースのfilter(Boolean)だけでなく、オブジェクトケース(Object.values)のnull要素・不正型も除去。
+      const arr=(Array.isArray(val)?val:Object.values(val)).filter(t=>t&&typeof t==="object");
       setGlobalTemplates(arr);
       ls(storeKey(targetSid,"templates_v6"),arr);
     });
@@ -365,20 +367,21 @@ function App(){
     });
     // periods
     on(fbPath(targetSid,"periods"),val=>{
-      if(!val)return;
-      const arr=typeof val==="object"&&!Array.isArray(val)
+      const arr=!val?[]:(typeof val==="object"&&!Array.isArray(val)
         ?Object.values(val).filter(p=>p&&p.id)
-        :(Array.isArray(val)?val:Object.values(val)).filter(p=>p&&p.id);
+        :(Array.isArray(val)?val:Object.values(val)).filter(p=>p&&p.id));
+      // 全期間削除で空になったケースも反映する（settings/staffと同様に空リセットする）。
+      // 空を握りつぶすと削除済み期間がUIに残り、subs購読も古いperiodsForSubsRefで張られ続ける。
       if(arr.length>0){
         // 旧データにはshopIdがない期間があり、店舗切替直後のtokens補完で他店舗のsidが
         // 混入し得るため、購読元のsidでここで補完しておく
         arr.forEach(p=>{ if(!p.shopId) p.shopId=targetSid; });
         arr.sort((a,b)=>new Date(b.startDate||0)-new Date(a.startDate||0));
-        setPeriods(arr); ls(storeKey(targetSid,"periods_v6"),arr);
-        // 期間の増減に追随してsubsの期間別購読を張り替える
-        periodsForSubsRef.current=arr;
-        reconcileSubsRef.current&&reconcileSubsRef.current();
       }
+      setPeriods(arr); ls(storeKey(targetSid,"periods_v6"),arr);
+      // 期間の増減に追随してsubsの期間別購読を張り替える
+      periodsForSubsRef.current=arr;
+      reconcileSubsRef.current&&reconcileSubsRef.current();
     });
     // staff
     on(fbPath(targetSid,"staff"),val=>{
@@ -855,58 +858,6 @@ function App(){
       tt("招待コードの生成に失敗しました: " + (e?.message||e?.code||"不明なエラー"));
     }finally{
       setInviteCodeGenLoading(false);
-    }
-  };
-
-  const joinByInviteCode=async(code)=>{
-    if(!firebaseDB || !authUser) return;
-    let codeData;
-    try{
-      const codeSnap=await firebaseDB.ref(`inviteCodes/${code}`).once('value');
-      codeData=codeSnap.val();
-    }catch(e){
-      // 締めルールでは期限切れ・存在しないコードの読み取り自体が拒否される（adminKey漏洩防止）
-      if(e&&(e.code==='PERMISSION_DENIED'||/permission_denied/i.test(e.message||''))){
-        setInviteError('無効または期限切れのコードです');
-      }else{
-        console.warn("招待コード参加失敗:", e);
-        setInviteError('処理に失敗しました');
-      }
-      return;
-    }
-    try{
-      if(!codeData || new Date()>=new Date(codeData.expiresAt)){
-        setInviteError('無効または期限切れのコードです');
-        return;
-      }
-      const foundUid=codeData.uid;
-      // members に追加
-      await firebaseDB.ref(`accounts/${foundUid}/members/${authUser.uid}`).set({
-        email:authUser.email,
-        joinedAt:new Date().toISOString(),
-        role:'member'
-      });
-      // 管理キーが埋め込まれていれば保存（各店舗のオーナーclaimは管理者画面表示時に行われる）
-      if(codeData.adminKeys){
-        Object.entries(codeData.adminKeys).forEach(([id,k])=>{ if(id&&k) rememberAdminKey(id,k); });
-      }
-      // shops をマージ（上書きではなく update でマージ）
-      // 新形式: コードに埋め込まれたスナップショットを使う（他人のaccountsを読まない）
-      if(codeData.shops){
-        await firebaseDB.ref(`accounts/${authUser.uid}/shops`).update(codeData.shops);
-      }else{
-        // 旧形式コードの互換（新ルール適用後は他人のaccounts読み取りが拒否されるため失敗し得る）
-        const linkedShops=await firebaseDB.ref(`accounts/${foundUid}/shops`).once('value');
-        if(linkedShops.val()){
-          await firebaseDB.ref(`accounts/${authUser.uid}/shops`).update(linkedShops.val());
-        }
-      }
-      setUnbound(false);
-      setInviteCode("");
-      dlog("招待コードで参加完了");
-    }catch(e){
-      console.warn("招待コード参加失敗:", e);
-      setInviteError('処理に失敗しました');
     }
   };
 
@@ -1538,6 +1489,7 @@ function App(){
                 currentShopIdRef.current=id;
                 setCurrentShopId(id);
                 ssSave(SS_SHOP,id);
+                setApid(null); // 旧店舗のapidを持ち越さない（新店舗の最新期間をline1122のeffectが選び直す）
                 startSubscriptions(id);
               }}
               startSubscriptions={startSubscriptions}
@@ -1550,6 +1502,7 @@ function App(){
                 const alreadyIn=shops.some(s=>s.id===id);
                 if(!alreadyIn){const ns=[...shops,sh];setShops(ns);ls("shift_shops_v6",ns);}
                 currentShopIdRef.current=id;setCurrentShopId(id);ssSave(SS_SHOP,id);
+                setApid(null); // 旧店舗のapidを持ち越さない（新店舗の最新期間をline1122のeffectが選び直す）
                 startSubscriptions(id); // shopListなし→既存のshopsリストを維持しつつ購読先だけ切り替え
               }}
               onLinkProvider={linkProvider} onSendEmailOtp={sendEmailOtp}

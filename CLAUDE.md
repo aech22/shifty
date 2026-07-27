@@ -555,48 +555,50 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-26 自動実行 #42）
+## Shifty バグチェックレポート（2026-07-27 自動実行 #44）
 
 ### 修正済み
 
-- **[🟡] #41 の `-` 行修正が実効化しておらず、修正後も残骸が蓄積し続けていた**（scripts/obsidian-sync.js:40）
-  `e7fac75` でソースは直したが、同期を担う **launchd 常駐プロセス（PID 881・2026-07-11 03:05 起動）が起動時のソースを実行し続けていた**ため、旧 `idx - 4` ロジックが動き続け、修正後の1日で新たに 39 行の `-` が積み上がっていた。`launchctl kickstart -k` でプロセスを再起動して修正版を反映し、あわせて**残骸を自己修復する除去処理**（`content.replace(/(?:\n-)+$/, "")`）を追加した。これで再発時に手動掃除が不要になる。蓄積済み39行を除去（927行 → 888行）。コミット `b8d2a9a`。
-
-### #41 から解消された項目
-
-- **キャッシュバスティング版数の不一致（#41 で🟡申し送り）は解消済み**。`c2280bf` が `?v=20260723-2fcd943` へバンプ済みで、これは app-*.js の最新変更コミット `2fcd943`（候補時刻24時間対応）と一致する。app-core.js:4 のビルド表示も同値で揃っている。リリース前の追加バンプは不要。
+- **[🔴・本チェック自身が作り込んだ回帰] `isSpecialRedDate` の定義が develop から消え、シフト作成グリッド・PDF・Excel が ReferenceError になる状態だった**（app-utils.js:552）
+  作業開始時点で `.git` の index が stale だったが、**`git commit` は「index 全体」をコミットする**ため、`git add eslint.config.js` だけして作った `ecc6c09` が app-utils.js を `b447e7c` 以前へ巻き戻し、`isSpecialRedDate` の定義ごと削除していた。app-admin.js の3箇所（1299・1584・2059）が同関数を呼ぶため、**シフト作成グリッド・PDF・Excel が落ちる状態を develop に push してしまっていた**。最終検証で `git status` の `M app-utils.js` を追って発覚し、作業ツリー（`b447e7c` と byte 一致を diff で確認）を復元＝`9d63b73`。復元後、作業ツリーと HEAD が全コードファイルで一致することを確認し lint 0 errors・テスト128件パスを再取得。**教訓: このリポジトリは app-*.js 自動コミットフックの異常終了で index が stale になる。コミット前に `git diff --cached --name-only` でステージ内容を確認し、コミット後は作業ツリーでなく HEAD 側を検証すること。**
+- **[🔴] 「曜日別から選ぶ」UIが曜日別タブに置かれ、画面に出ていない日付へ最優先候補を書き込んでいた**（app-admin.js:2679）
+  `b447e7c` で追加された `addFromWeekday` は `selDates`（**日付別タブ**の選択日付・既定値は当日）に対して `dateCandidates` と `dateCandidatePosTypes` を書き込むのに、UIブロックの挿入先が `mode==="weekday"` のセクションだった。そのため曜日別タブでボタンを押すと、**画面上どこにも表示されていない日付（既定では当日）に「日付別候補（最優先）」が無自覚に追加され、ポジション区分も上書き**されていた。日付別候補は最優先系列のためスタッフの提出画面の選択肢が意図せず変わる。コミットメッセージが示す設計意図どおり日付別タブの追加フォーム内（`mode==="date"`）へ移動し、日付未選択時は非表示にした。コミット `c4b2e70`。
+- **[🟡] eslint が `isSpecialRedDate` を no-undef として3件のエラーを出し develop の CI が落ちる状態だった**（eslint.config.js:153）
+  `b447e7c` で app-utils.js に追加された関数が globals 宣言に未登録で、app-admin.js の3参照（1299・1584・2059行）が `no-undef` に。実行時は app-utils.js が先に読まれるため**ブラウザ動作に影響はない**が、CI（push毎の `npm run lint`）が赤くなる。globals に1行追加して 3 errors → 0 errors。コミット `ecc6c09`。
 
 ### 今回の対象
-HEAD は `79450fc`（Merge branch 'develop'）。#41 以降の新規コミットは CLAUDE.md 同期・ブログ表記訂正・obsidian-sync 修正のみで、**アプリコードの差分は #37 の `2fcd943` 以降ゼロ**。そのため全体スキャンで非回帰を確認したうえで、#41 の修正が本当に効いているかの**事後検証**に重点を置き、効いていないことを発見して根治した。
 
-### 根治の証拠
-- 旧プロセスの実行継続を `ps -eo pid,lstart` で確認（PID 881・起動 2026-07-11、修正コミット `e7fac75` は 2026-07-26）。Node は起動時にソースを読むため、ファイル修正だけでは常駐プロセスに反映されない。
-- 残骸の実測: HEAD の CLAUDE.md に `-` 行 1 行、作業ツリーに 39 行（うち38行が `e7fac75` 以降の未コミット蓄積）。位置はバグチェック最新ブロックの終了マーカーと `---` の間。
-- 再起動後、launchd の RunAtLoad 同期で残骸 0 行になることを確認。さらに `node scripts/obsidian-sync.js --once` を3回連続実行し、**md5 が3回とも `2d8568f9…` で一致**（888行・`-` 行0）＝冪等を確認。
-- 除去正規表現の安全性: `(?:\n-)+$` は末尾が `-` 単独行の連続のときだけ一致する。`---`（水平線）は最後の2文字が `--` のため一致せず、`- item` のような通常の箇条書きも一致しない。
+HEAD は `b447e7c`。#43 のレポート後に `52bf52f`（#43申し送りのまとめ修正）と `b447e7c`（日付別候補の曜日別選択UI・ポジション区分自動設定・日祝系平日の赤背景）が入った。**#43 の申し送り10件が `52bf52f` でほぼ全消化**されているため、新規差分 `b447e7c` のレビューを主眼に置いた。
 
-### スキャン結果（すべて正常・#41から非回帰）
-- `subs` の `set()` 全体上書き: ヒット0。`filter(s=>s.id!==…)` の7箇所はいずれも削除反映済み（app-admin.js:1775・2868 は deletedId を第2引数で渡す形を維持、他は店舗リストの絞り込み）
-- sub の in-place 変更（差分書き込み漏れ）: ヒット0（app-admin.js:2836 の1件は `.status==` の比較で代入ではない）
-- DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE（app-core.js:81）正常
-- プラン制限: `isPro` 単独ゲートは app-admin.js:2844（未登録スタッフ表示）のみで Pro 相当が正しい。Premium 機能への誤用なし
-- セキュリティ: `global/shops` は全12箇所すべて直キー読み書き（一覧読みの復活なし）・`ref("accounts")` の全件読み0件・`global/templates` 参照0件・`database.rules.json` / `.tightened.json` ともに `".read": true` は0件・tokens 逆引きの set/remove は savePeriods 内（app-main.js:1093・1142・1160）に健在
-- Cloud Functions: secrets 5種すべて宣言あり・`.delete()` 誤用0件・`Number.isNaN` ガードと `archived/shops` 二段削除が健在・`PURGE_OLD_PERIODS_DRY_RUN=true`（functions/index.js:470）継続（BACKLOG通り2026-08-12以降に切替）
-- 分割構成: index.html の読み込み順 utils→core→staff→admin→main 維持（211-215行）・SRI 11本
-- iOS ズーム対策: 16px 未満の `input`/`select`/`textarea` の新規混入なし
-- `npm test`: **122件パス**（0 fail）、`npx eslint app-*.js`: **0 errors** 100 warnings（既存 no-unused-vars 誤検知のみ）
+### 新規差分のレビュー結果
 
-### 要確認（未修正・#41から継続）
-- **🟡 店舗切替で `apid` がリセットされず、新店舗の subs を旧店舗の periodId で購読する**（app-main.js:1106 の `if(!apid&&periods.length>0)` は apid が既に入っていると更新しない）。今回コードを読んで**現存を再確認**した。仕様判断待ち
-- **🟡 periods ノードが空になったとき periods state と subs 購読が更新されない**（app-main.js:368 の `if(!val)return;` と 372 の `if(arr.length>0)`）。今回コードを読んで**現存を再確認**した。意図的ガードかの判断待ち
-- **🟡 `.indexOn: ["periodId"]` が dev Firebase に未反映**（database.rules.json:50 にはコミット済み）。ルール反映は書き込み操作のため本ループでは実施しない
-- **🟡 `x`（カウント外）が他方セルのコマンドに隠れて無効化される**（app-admin.js:669／コメント739）。仕様判断待ち
-- **🟡 プリセット作成経路で `ph("period_created")` が発火しない**（app-admin.js:1818 vs 手動 1761）。計測のみ・機能破壊なし
-- **🟡（ルール反映系）BACKLOG「締めルールへの切り替え」の着手ウィンドウ（2026-07-21〜08-04）内で残り約9日**。`database.rules.tightened.json` への差し替えは Firebase への書き込み操作のため本自動ループの対象外。オーナー claim 状況確認とデプロイはユーザー判断で実施
-- **🟢群（継続）**: 変更マークの締切ゲート対象外（app-staff.js:166）／退勤延長がランチのみシフトを帯跨ぎに変える（app-admin.js:752）／`staffSectionOn` のヘルプ帯クリップ未実施（app-admin.js:881）／詳細モーダル「時間」列ヘッダーが non-Premium でも表示（app-admin.js:2745付近）／`joinByInviteCode` デッドコード（app-main.js:852付近）／`VISION.md` 不在（#27から継続・今回も確認）／`templates` 読み取りの要素妥当性ガード欠落（app-main.js:341）
+1. **`isSpecialRedDate` の適用漏れなし**（app-utils.js:552）: 日祝系区分（`sun`/`holSat`/`holSun`）の平日を赤背景にする新関数が**3出力経路すべてに適用済み** — 画面グリッド（app-admin.js:1584）・PDF/印刷HTML（同1299・`buildShiftTableHtml` 内）・Excel（同2059・`expXl` 内）。土日・実祝日は早期 return するため二重適用もなし。
+2. **`expXl` の引数追加は安全**: `options.settings` 新設。**呼び出し元2箇所（1493・1882行）とも同一コミットで更新済み**。関数本体（1923〜2151行）が `settings` を参照するのは新規2行のみで**シャドウイングなし**を全体 grep で確認。
+3. **`addFromWeekday` のロジック自体は健全**: 重複判定＋`sc()` 正規化は既存 `addD` と同作法。`weekdayKeyToPositionDayType` は対応外で null を返し posType を書かない。**問題は配置のみ**。
+4. **posType の無条件上書きは意図的仕様と判断**: 機能名が「ポジション区分自動設定」で、日付別タブに現在値表示＋「変更」ボタンが併設されているため変更せず。
+
+### スキャン結果（RULES.md 準拠・非回帰）
+
+- `subs` の `set()` 全体上書き: **ヒット0**／`filter(s=>s.id!==…)` 8箇所はすべて削除ID第2引数か店舗リスト絞り込みで健全
+- `DEV_MODE`（app-core.js:12・式のまま）・`DEV_PLAN_OVERRIDE`（同81）正常
+- セキュリティ: `ref("global/shops")` 全件読み**0件**・`global/templates` **0件**・`ref("accounts")` 全件読み**0件**・両ルールで `".read": true` **0件**・`.indexOn: ["periodId"]` は50行目にコミット済み
+- Cloud Functions: secrets 5箇所に抜け漏れなし・`.delete()` 誤用**0件**・`PURGE_OLD_PERIODS_DRY_RUN=true` 継続（2026-08-12以降に切替）
+- 分割構成: 読み込み順 utils→core→staff→admin→main 維持・SRI 11本／プラン制限: Premium機能の `isPro` 誤用なし／iOS ズーム対策の新規混入なし
+- `npm test`: **128件パス**（0 fail）、`npx eslint app-*.js`: **0 errors** 98 warnings（修正前は3 errors）
+
+### 要確認（未修正）
+
+- **🟡（継続・リリース前バンプ必須）index.html のキャッシュバスティング版数が HEAD とズレている**。`?v=20260727-e494534` に対し HEAD は `c4b2e70`（4コミット差）。バンプしないと旧 app-admin.js・app-utils.js がキャッシュ配信される。release-to-main フローの工程のため本ループでは実施せず申し送り
+- **🟡 `.indexOn: ["periodId"]` が Firebase に未反映**（ルールファイルにはコミット済み）。Firebase 書き込み操作のため本ループ対象外
+- **🟡 BACKLOG「締めルールへの切り替え」の着手ウィンドウ（2026-07-21〜08-04）が残り約8日**。Firebase 書き込み操作のため本ループ対象外・ユーザー判断で実施
+- **🟢（新規）今回の修正はブラウザ実機（E2E）未検証**。JSX の兄弟セクション間の移設のみでパーサ0 errors・`addFromWeekday` 本体無変更を根拠に健全と判断したが、日付別タブでの実表示・クリックは未確認
+- **🟢（新規）`isSpecialRedDate` にユニットテストがない**（app-utils.js:552）
+- **🟢（新規）`.git` に古いロックファイルが残留**。本チェック中の commit が `.git/index.lock`・`.git/HEAD.lock`（ともに0バイト）に阻まれ、git プロセス不在を `ps` で確認のうえ削除して復旧。`.git/index.stash.13.lock`・`.git/index_tmp.lock` は未削除で残存（commit を阻害しないため）。自動コミットフックの異常終了が疑われ、再発するなら要調査
+- **🟢群（継続）**: 変更マークの締切ゲート対象外（app-staff.js:166）／`globalTemplates` の命名／capabilityモデルの残存リスク／`VISION.md` 不在（#27から継続）
 
 ### 総括
-アプリコードの新規コミットは #37 の `2fcd943` 以降ゼロで、全体スキャンは 🔴・新規🟡ともに検出ゼロ（122件テスト・0 eslint errors）。今回の主眼は**「前回の修正が本当に効いているかの検証」**で、#41 が「根治した」と報告した `-` 行蓄積が**実際には止まっていなかった**ことを発見した。原因はコードではなく運用面で、launchd 常駐プロセスが2026-07-11起動のまま旧ロジックを実行し続けていた。プロセス再起動に加え、残骸を自己修復する除去処理を入れて再発時の手動掃除を不要にし、`--once` 3回のmd5一致で冪等を確認した（コミット `b8d2a9a`）。**教訓: 常駐プロセスが実行しているコードを修正したときは、プロセス再起動まで含めて初めて修正が完了する。** #41 で🟡申し送りだったキャッシュバスティング版数の不一致は `c2280bf` で解消済みであることも確認した。締めルール切り替えの着手ウィンドウ（〜2026-08-04）が残り約9日である点をユーザー判断事項として再掲する。
+
+`b447e7c` を差分レビューし **🔴1件・🟡1件を検出して両方修正した。さらに修正作業中に本チェック自身が 🔴 の回帰を1件作り込み、最終検証で検出して復元した（計 🔴2件・🟡1件）**。作り込んだ回帰（`isSpecialRedDate` の定義消失）は、テストも eslint も「作業ツリー」に対して実行していたため両方パスし続け、`git status` の見慣れない `M app-utils.js` を追ってのみ発覚した。**コミット後は作業ツリーではなく HEAD 側を検証する**こと。以下は当初検出した2件について。🔴 はロジックは正しく**配置だけが誤っていた**形で、ユニットテストでも eslint でも検出できず、`selDates`（日付別タブの state）と `mode==="weekday"`（描画先タブ）の食い違いを読んで初めて分かる種類。**タブ付きUIに機能を足すときは「その state がどのタブのものか」を配置前に確認する**のが再発防止になる。🟡 は **app-utils.js に関数を追加したら eslint.config.js の globals にも足す**という手順漏れ（#43 でも `DAY_TYPES` の逆パターンが出ている）。#43 申し送り10件の消化を実測確認し、未修正は Firebase 反映系とリリース時の版数バンプに絞り込まれた。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
