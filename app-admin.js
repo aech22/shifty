@@ -2465,20 +2465,23 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
     if(total>0)maybePromptPosType(dc);
   };
   const delD=(dt,i)=>{const dc={...(settings.dateCandidates||{})};dc[dt]=[...(dc[dt]||[])];dc[dt].splice(i,1);const next={...settings,dateCandidates:dc};if(dc[dt].length===0){delete dc[dt];if((settings.dateCandidatePosTypes||{})[dt]){const m={...settings.dateCandidatePosTypes};delete m[dt];next.dateCandidatePosTypes=m;}}onSave(next);};
-  // 曜日別候補から1件を選択して日付別候補に追加（機能1）＋ ポジション区分を自動設定（機能2）
-  const addFromWeekday=(wkey,wcand)=>{
+  // 曜日を1つ選ぶと、その曜日に設定した全候補を日付別候補に追加（機能1）＋ ポジション区分を自動設定（機能2）
+  const addAllFromWeekday=(wkey)=>{
+    const wcands=((settings.weekdayCandidates||{})[wkey]||[]).filter(c=>!c.closed);
+    if(!wcands.length){tt("▲ この曜日に候補がありません");return;}
     const dc={...(settings.dateCandidates||{})};
     let added=0;
     selDates.forEach(dt=>{
       const prev=dc[dt]||[];
-      if(!prev.some(p=>p.start===wcand.start&&p.end===wcand.end)){dc[dt]=sc([...prev,wcand]);added++;}
+      const toAdd=wcands.filter(wc=>!prev.some(p=>p.start===wc.start&&p.end===wc.end));
+      if(toAdd.length){dc[dt]=sc([...prev,...toAdd]);added+=toAdd.length;}
     });
     if(added===0){tt("▲ 既に登録済みです");return;}
     const posType=weekdayKeyToPositionDayType(wkey);
     const newSettings={...settings,dateCandidates:dc};
     if(posType){const m={...(settings.dateCandidatePosTypes||{})};selDates.forEach(dt=>{m[dt]=posType;});newSettings.dateCandidatePosTypes=m;}
     onSave(newSettings);
-    tt(`✓ ${wdLabel(wkey)}の候補（${wcand.start}〜${wcand.end}）を${selDates.length}日付に追加`);
+    tt(`✓ ${wdLabelFull(wkey)}の候補（${wcands.length}件）を${selDates.length}日付に追加`);
   };
 
   // テンプレート保存
@@ -2677,22 +2680,16 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
             if(!keysWithCands.length||selDates.length===0)return null;
             return(<div style={{marginTop:12,borderTop:"1px solid var(--c-border)",paddingTop:10}}>
               <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8,fontWeight:600}}>曜日別から選ぶ</div>
-              {keysWithCands.map(d=>{
-                const cands=(wc[d]||[]).filter(c=>!c.closed);
-                const isSat=wdIsSat(d),isSun=wdIsSun(d);
-                const lc=isSat?"#3B82F6":isSun?"#FF4757":"#4B5563";
-                return(<div key={d} style={{marginBottom:8}}>
-                  <div style={{fontSize:11,color:lc,fontWeight:700,marginBottom:4}}>{wdLabelFull(d)}</div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
-                    {cands.map((c,i)=>(
-                      <button key={i} onClick={()=>addFromWeekday(d,c)}
-                        style={{padding:"4px 10px",borderRadius:6,fontSize:12,fontWeight:600,border:"1px solid var(--c-border2)",cursor:"pointer",background:"var(--c-input)",color:"var(--c-text2)"}}>
-                        {c.start}〜{c.end}
-                      </button>
-                    ))}
-                  </div>
-                </div>);
-              })}
+              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {keysWithCands.map(d=>{
+                  const isSat=wdIsSat(d),isSun=wdIsSun(d);
+                  const lc=isSat?"#3B82F6":isSun?"#FF4757":"#4B5563";
+                  return(<button key={d} onClick={()=>addAllFromWeekday(d)}
+                    style={{padding:"6px 14px",borderRadius:8,fontSize:13,fontWeight:700,border:`1px solid ${lc}`,cursor:"pointer",background:"var(--c-input)",color:lc}}>
+                    {wdLabelFull(d)}
+                  </button>);
+                })}
+              </div>
             </div>);
           })()}
         </div>
