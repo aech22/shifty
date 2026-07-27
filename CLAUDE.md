@@ -555,48 +555,52 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-26 自動実行 #42）
+## Shifty バグチェックレポート（2026-07-27 自動実行 #43）
 
 ### 修正済み
 
-- **[🟡] #41 の `-` 行修正が実効化しておらず、修正後も残骸が蓄積し続けていた**（scripts/obsidian-sync.js:40）
-  `e7fac75` でソースは直したが、同期を担う **launchd 常駐プロセス（PID 881・2026-07-11 03:05 起動）が起動時のソースを実行し続けていた**ため、旧 `idx - 4` ロジックが動き続け、修正後の1日で新たに 39 行の `-` が積み上がっていた。`launchctl kickstart -k` でプロセスを再起動して修正版を反映し、あわせて**残骸を自己修復する除去処理**（`content.replace(/(?:\n-)+$/, "")`）を追加した。これで再発時に手動掃除が不要になる。蓄積済み39行を除去（927行 → 888行）。コミット `b8d2a9a`。
-
-### #41 から解消された項目
-
-- **キャッシュバスティング版数の不一致（#41 で🟡申し送り）は解消済み**。`c2280bf` が `?v=20260723-2fcd943` へバンプ済みで、これは app-*.js の最新変更コミット `2fcd943`（候補時刻24時間対応）と一致する。app-core.js:4 のビルド表示も同値で揃っている。リリース前の追加バンプは不要。
+- **[🟡] プリセットボタンからの期間作成で `ph("period_created")` が発火しない**（app-admin.js:1819）
+  手動作成パス（1761行）は計測イベントを送っているのに、プリセット（「今月後半」等のボタン）経由の作成パスだけ抜けており、PostHog の期間作成数が実態より少なく集計されていた。手動側と同一形式の `ph("period_created",{period_id:np.id,shop_id:shopId})` を追加。#38 以降5回のレポートで「計測のみ・機能破壊なし」として繰り越されていた項目を、変数スコープ（`np`・`shopId` ともに同クロージャ内）を確認したうえで解消した。コミット `4650898`（app-*.js 自動コミットフックが commit & push を実行したため、メッセージは "Auto-commit: app-*.js changes" になっている）。
 
 ### 今回の対象
-HEAD は `79450fc`（Merge branch 'develop'）。#41 以降の新規コミットは CLAUDE.md 同期・ブログ表記訂正・obsidian-sync 修正のみで、**アプリコードの差分は #37 の `2fcd943` 以降ゼロ**。そのため全体スキャンで非回帰を確認したうえで、#41 の修正が本当に効いているかの**事後検証**に重点を置き、効いていないことを発見して根治した。
 
-### 根治の証拠
-- 旧プロセスの実行継続を `ps -eo pid,lstart` で確認（PID 881・起動 2026-07-11、修正コミット `e7fac75` は 2026-07-26）。Node は起動時にソースを読むため、ファイル修正だけでは常駐プロセスに反映されない。
-- 残骸の実測: HEAD の CLAUDE.md に `-` 行 1 行、作業ツリーに 39 行（うち38行が `e7fac75` 以降の未コミット蓄積）。位置はバグチェック最新ブロックの終了マーカーと `---` の間。
-- 再起動後、launchd の RunAtLoad 同期で残骸 0 行になることを確認。さらに `node scripts/obsidian-sync.js --once` を3回連続実行し、**md5 が3回とも `2d8568f9…` で一致**（888行・`-` 行0）＝冪等を確認。
-- 除去正規表現の安全性: `(?:\n-)+$` は末尾が `-` 単独行の連続のときだけ一致する。`---`（水平線）は最後の2文字が `--` のため一致せず、`- item` のような通常の箇条書きも一致しない。
+HEAD は `eca046b`。**#37 の `2fcd943` 以来はじめてアプリコードの実差分がある回**で、#42 以降に `e494534`（休憩日区分の5分類化＋提出状況一覧の別名対応＋未設定スタッフのバイト扱い）・`762112f`（版数バンプ）・`a9af693`／`eca046b`（マイページのnoteマニュアル導線）が入った。そのため全体スキャンによる非回帰確認に加え、**新規差分のレビューを主眼**に置いた。
 
-### スキャン結果（すべて正常・#41から非回帰）
-- `subs` の `set()` 全体上書き: ヒット0。`filter(s=>s.id!==…)` の7箇所はいずれも削除反映済み（app-admin.js:1775・2868 は deletedId を第2引数で渡す形を維持、他は店舗リストの絞り込み）
-- sub の in-place 変更（差分書き込み漏れ）: ヒット0（app-admin.js:2836 の1件は `.status==` の比較で代入ではない）
-- DEV_MODE（app-core.js:12、ホスト名判定の式のまま）・DEV_PLAN_OVERRIDE（app-core.js:81）正常
-- プラン制限: `isPro` 単独ゲートは app-admin.js:2844（未登録スタッフ表示）のみで Pro 相当が正しい。Premium 機能への誤用なし
-- セキュリティ: `global/shops` は全12箇所すべて直キー読み書き（一覧読みの復活なし）・`ref("accounts")` の全件読み0件・`global/templates` 参照0件・`database.rules.json` / `.tightened.json` ともに `".read": true` は0件・tokens 逆引きの set/remove は savePeriods 内（app-main.js:1093・1142・1160）に健在
-- Cloud Functions: secrets 5種すべて宣言あり・`.delete()` 誤用0件・`Number.isNaN` ガードと `archived/shops` 二段削除が健在・`PURGE_OLD_PERIODS_DRY_RUN=true`（functions/index.js:470）継続（BACKLOG通り2026-08-12以降に切替）
-- 分割構成: index.html の読み込み順 utils→core→staff→admin→main 維持（211-215行）・SRI 11本
+### 新規差分のレビュー結果（6点・いずれも健全）
+
+1. **`getBreakList` の5区分化**（app-utils.js:124-133）: 休憩の日区分をカレンダー固定（weekday/sat/sun/hol）から `positionDayTypeFor` 経由の5区分（holSat/holSun 分割）へ変更。**呼び出し元は `getBreaksFor`（app-utils.js:211）の1箇所のみ**で、`settings` 全体を渡しているため引数不足は発生しない。`getBreakList`（124行）が `positionDayTypeFor`（317行）より前に定義されているが、関数宣言の巻き上げにより実行時に解決する。旧 `hol` データの後方互換フォールバックは `dt==="holSat"||dt==="holSun"` の祝日区分限定で、平日・日曜には波及しないことを新規ユニットテスト6件が担保している。
+2. **`DAY_TYPES` 定数の削除**（app-utils.js）: app-*.js 側の参照は**0件**で、CandTab の2箇所（app-admin.js:2697・2727）はいずれも `POSITION_DAY_TYPES` に置換済み。未定義参照の残りなし。`eslint.config.js:44` に globals 宣言だけが残存（🟢・無害）。
+3. **`SmModal` の別名対応**（app-staff.js:494-552）: 新規 prop `staffAliases` は StaffView 側（app-staff.js:205 の `settings?.staffAliases||{}`）と PeriodsTab 側（app-admin.js:1775、`settings={}` 既定値あり・呼び出し元 169行で `settings` を渡し済み）の両方から供給されており、undefined 参照は起きない。未提出判定 `(staffAliases[n]||[]).includes(s.staffName)` は Excel 出力の `expXl`（app-admin.js:2058）と**同一の照合方式**で一貫している。
+4. **未設定スタッフのバイト扱い**（app-admin.js:2838）: `staffAttributes` の読み取り箇所を全数確認したところ、**8箇所すべてが `||"parttime"` で統一**された（app-admin.js:1175・1176・1398・1697・1698・2274・2838／app-utils.js:212）。改修前は SubsTab の行バッジ（2838）だけが既定値なしで、シフト作成タブの週/月上限バッジ・Excel の週集計・`getBreaksFor` の休憩タグ判定と属性解決がズレていた。今回の変更でその不整合が解消された形で、新たなズレは生じていない。
+5. **マイページのnoteマニュアル導線**（app-admin.js:3891-3901）: 外部リンクは `target="_blank"` + `rel="noopener"` を明示。`ph("manual_opened")` は app-core.js の `ph()` を使用（定義済み）。`input`/`select`/`textarea` の追加はないため iOS ズーム対策への影響なし。
+6. **キャッシュバスティング**: index.html の5本すべてが `?v=20260727-e494534`、app-core.js:4 のビルド表示も同値で、コード最終変更コミット `e494534` と一致していた（`762112f` でバンプ済み）。**ただし今回の修正コミット `4650898` で app-admin.js が変わったため、再びズレた状態になっている**（下記の要確認に記載）。
+
+### スキャン結果（RULES.md 準拠・#42 から非回帰）
+
+- `subs` の `set()` 全体上書き: **ヒット0**
+- `filter(s=>s.id!==…)` の7箇所: app-admin.js:1775・2869 は削除ID を第2引数で渡す形を維持、app-main.js:1524 は削除経路、残り4件（app-main.js:781・933・935／app-admin.js:132・2992）は店舗リストの絞り込みで subs 削除ではない
+- `DEV_MODE`（app-core.js:12、`location.hostname !== "shiftyshifty.app"` の式のまま）・`DEV_PLAN_OVERRIDE`（app-core.js:81）正常
+- セキュリティ: `global/shops` は全12箇所すべて直キー読み書き（一覧読みの復活なし）・`global/templates` 参照0件・`ref("accounts")` の全件読み0件・`database.rules.json` / `.tightened.json` ともに `".read": true` は0件・`.indexOn: ["periodId"]` は両ルールの50行目にコミット済み
+- Cloud Functions: secrets 宣言5箇所（97・138・232・272・533行）に抜け漏れなし・`.delete()` 誤用0件・`Number.isNaN` ガードと `archived/shops` 二段削除が健在・`PURGE_OLD_PERIODS_DRY_RUN=true`（functions/index.js:470）継続（BACKLOG通り2026-08-12以降に切替）
+- 分割構成: index.html の読み込み順 utils→core→staff→admin→main 維持・SRI 11本
 - iOS ズーム対策: 16px 未満の `input`/`select`/`textarea` の新規混入なし
-- `npm test`: **122件パス**（0 fail）、`npx eslint app-*.js`: **0 errors** 100 warnings（既存 no-unused-vars 誤検知のみ）
+- `npm test`: **128件パス**（0 fail。#42 の122件から `getBreakList` の新規テスト6件が増加）、`npx eslint app-*.js`: **0 errors** 99 warnings（既存 no-unused-vars 誤検知のみ）
 
-### 要確認（未修正・#41から継続）
-- **🟡 店舗切替で `apid` がリセットされず、新店舗の subs を旧店舗の periodId で購読する**（app-main.js:1106 の `if(!apid&&periods.length>0)` は apid が既に入っていると更新しない）。今回コードを読んで**現存を再確認**した。仕様判断待ち
-- **🟡 periods ノードが空になったとき periods state と subs 購読が更新されない**（app-main.js:368 の `if(!val)return;` と 372 の `if(arr.length>0)`）。今回コードを読んで**現存を再確認**した。意図的ガードかの判断待ち
-- **🟡 `.indexOn: ["periodId"]` が dev Firebase に未反映**（database.rules.json:50 にはコミット済み）。ルール反映は書き込み操作のため本ループでは実施しない
+### 要確認（未修正）
+
+- **🟡（新規・リリース前バンプ必須）index.html のキャッシュバスティング版数が HEAD とズレた**。今回の修正コミット `4650898` で app-admin.js を変更したため、`?v=20260727-e494534` は最新コードを指していない。**main リリース時に版数をバンプしないと、既存ユーザーのブラウザ/CDN が旧 app-admin.js をキャッシュ配信する**。版数バンプは release-to-main フローの工程のため本自動ループでは実施せず申し送り
+- **🟡 店舗切替で `apid` がリセットされず、新店舗の subs を旧店舗の periodId で購読する**（app-main.js:1106 の `if(!apid&&periods.length>0)` は apid が既に入っていると更新しない）。今回もコードを読んで**現存を再確認**した。仕様判断待ち
+- **🟡 periods ノードが空になったとき periods state と subs 購読が更新されない**（app-main.js:368 の `if(!val)return;` と 372 の `if(arr.length>0)`）。今回もコードを読んで**現存を再確認**した。意図的ガードかの判断待ち
+- **🟡 `.indexOn: ["periodId"]` が dev Firebase に未反映**（database.rules.json:50 にはコミット済み）。ルール反映は Firebase への書き込み操作のため本ループでは実施しない
 - **🟡 `x`（カウント外）が他方セルのコマンドに隠れて無効化される**（app-admin.js:669／コメント739）。仕様判断待ち
-- **🟡 プリセット作成経路で `ph("period_created")` が発火しない**（app-admin.js:1818 vs 手動 1761）。計測のみ・機能破壊なし
-- **🟡（ルール反映系）BACKLOG「締めルールへの切り替え」の着手ウィンドウ（2026-07-21〜08-04）内で残り約9日**。`database.rules.tightened.json` への差し替えは Firebase への書き込み操作のため本自動ループの対象外。オーナー claim 状況確認とデプロイはユーザー判断で実施
+- **🟡（ルール反映系）BACKLOG「締めルールへの切り替え」の着手ウィンドウ（2026-07-21〜08-04）が残り約8日**。`database.rules.tightened.json` への差し替えは Firebase への書き込み操作のため本自動ループの対象外。オーナー claim 状況の確認とデプロイはユーザー判断で実施
+- **🟢（新規）`makeSettings()` の `breakTimes` 既定値が旧4区分のまま**（app-core.js:94 が `{weekday:[],sat:[],sun:[],hol:[]}`）。`e494534` で日区分モデルが5分類（holSat/holSun）へ移ったのに、新規店舗のシード値だけ旧 `hol` キーを持ち holSat/holSun を持たない状態が残っている。値が空配列のため `getBreakList` の戻り値も CandTab の旧設定行の表示条件（`.hol.length`）も変わらず、**動作上の差は生じない**ため今回は変更しなかった
+- **🟢（新規）`eslint.config.js:44` に削除済み定数 `DAY_TYPES` の globals 宣言が残存**。未定義扱いを緩めるだけで検査に悪影響はない
 - **🟢群（継続）**: 変更マークの締切ゲート対象外（app-staff.js:166）／退勤延長がランチのみシフトを帯跨ぎに変える（app-admin.js:752）／`staffSectionOn` のヘルプ帯クリップ未実施（app-admin.js:881）／詳細モーダル「時間」列ヘッダーが non-Premium でも表示（app-admin.js:2745付近）／`joinByInviteCode` デッドコード（app-main.js:852付近）／`VISION.md` 不在（#27から継続・今回も確認）／`templates` 読み取りの要素妥当性ガード欠落（app-main.js:341）
 
 ### 総括
-アプリコードの新規コミットは #37 の `2fcd943` 以降ゼロで、全体スキャンは 🔴・新規🟡ともに検出ゼロ（122件テスト・0 eslint errors）。今回の主眼は**「前回の修正が本当に効いているかの検証」**で、#41 が「根治した」と報告した `-` 行蓄積が**実際には止まっていなかった**ことを発見した。原因はコードではなく運用面で、launchd 常駐プロセスが2026-07-11起動のまま旧ロジックを実行し続けていた。プロセス再起動に加え、残骸を自己修復する除去処理を入れて再発時の手動掃除を不要にし、`--once` 3回のmd5一致で冪等を確認した（コミット `b8d2a9a`）。**教訓: 常駐プロセスが実行しているコードを修正したときは、プロセス再起動まで含めて初めて修正が完了する。** #41 で🟡申し送りだったキャッシュバスティング版数の不一致は `c2280bf` で解消済みであることも確認した。締めルール切り替えの着手ウィンドウ（〜2026-08-04）が残り約9日である点をユーザー判断事項として再掲する。
+
+#37 の `2fcd943` 以来はじめてアプリコードの実差分がある回で、`e494534`（休憩5分類・提出状況一覧の別名対応・未設定スタッフのバイト扱い）と note マニュアル導線を差分レビューした。**新規差分に 🔴・🟡 の欠陥は検出されなかった**。特に注意して見たのは (a) `getBreakList` の引数要件が `breakTimes` だけから `settings` 全体（`dateCandidatePosTypes`・`weekdayCandidates`）へ広がった点、(b) 削除された `DAY_TYPES` の参照残り、(c) 新規 prop `staffAliases` の供給漏れ、の3点で、いずれも呼び出し元を全ファイル横断で洗い出して健全性を確認した。`staffAttributes` の既定値については、改修前は SubsTab の行バッジだけが `||"parttime"` を欠いており他7箇所とズレていたことを確認し、今回の変更でその不整合が**解消された**ことを実測で裏付けた。あわせて #38 以降5回にわたり「計測のみ」として繰り越されていたプリセット経路の `period_created` 欠落を修正した（`4650898`）。この修正で app-admin.js が変わったため、**main リリース前に index.html の `?v=` バンプが必要**な点を申し送る。締めルール切り替えの着手ウィンドウ（〜2026-08-04）は残り約8日。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
