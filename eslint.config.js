@@ -41,7 +41,6 @@ const sharedGlobals = {
   CL: "writable",
   CandTab: "writable",
   CellEditPanel: "writable",
-  DAY_TYPES: "writable",
   DEV_MODE: "writable",
   DEV_PLAN_OVERRIDE: "writable",
   FIREBASE_CONFIG: "writable",

@@ -679,6 +679,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     const origNk=field==="start"?"startNote":"endNote";
     return(sh?.[adjNk]??sh?.[origNk])||"";
   };
+  // x（カウント外）は出勤・退勤どちらのセルに付いてもシフト全体を集計・ヒートマップから除外する。
+  // getShiftNoteは最初に見つかった非空noteを返すため、退勤セルのxが出勤セルのh/k・ヘルプ略称に
+  // 隠れて無効化される非対称があった。両フィールドを個別に評価し、いずれかがxなら除外する。
+  const isCountExcluded=(name,date,src=heatEdits)=>getFieldNote(name,date,"start",src)==="x"||getFieldNote(name,date,"end",src)==="x";
   // フィールド別「締め」フラグ取得（edits最優先→永続化済みadjustedXFixed）。getFieldNoteと対で使う。
   // noteとは独立管理のため、h/k/x・略称等と組み合わせた入力でもnote側の完全一致判定に影響しない
   const getFieldFixed=(name,date,field,src=heatEdits)=>{
@@ -736,11 +740,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         // 組み合わせ入力でも）、主シフトとは別の追加出勤(固定時間帯)としてカウントする
         const fixedCmd=(getFieldFixed(name,date,"start")||getFieldFixed(name,date,"end"))?FIXED_ENTRY:null;
         if(stM===null&&enM===null&&!fixedCmd)return;
-        // xサフィックスは日単位(getShiftNote)で判定（どちらのセルに付いてもシフト全体を除外）。
+        // xサフィックスは日単位で判定（どちらのセルに付いてもシフト全体を除外＝isCountExcluded）。
         // h/kサフィックスと他店舗ヘルプ略称はフィールド別(getFieldNote)に判定し、
         // startセル→ランチ帯・endセル→ディナー帯に適用する（heatSectionEntries / resolveBandValues）。
-        const note=getShiftNote(name,date);
-        if(note!=="x"){
+        if(!isCountExcluded(name,date)){
           if(stM!==null||enM!==null){
             // 片側セルのみ入力: 出勤のみ→ランチ終わり(HEAT_LUNCH_END_MIN)まで、退勤のみ→ディナー始まり(HEAT_DINNER_START_MIN)から出勤扱い
             let pStM=stM,pEnM=enM;
@@ -748,8 +751,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             if(pStM===null)pStM=HEAT_DINNER_START_MIN;
             if(pStM<pEnM){
               const hsh=getHeatShift(name,date);
-              // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）
-              if(hsh){const ot=getOT(name,settings,hsh);if(ot>0)pEnM+=ot;}
+              // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）。
+              // ただしランチ帯（延長前の退勤が17:00以内）に収まるシフトは、延長でディナー帯に
+              // 跨いでディナー帯の出勤人数に混入しないよう17:00で頭打ちにする（ヒートマップ計上のみ・純勤務時間は別）。
+              if(hsh){const ot=getOT(name,settings,hsh);if(ot>0){const wasLunch=pEnM<=HEAT_BAND_SPLIT_MIN;pEnM+=ot;if(wasLunch)pEnM=Math.min(pEnM,HEAT_BAND_SPLIT_MIN);}}
               // 他店舗ヘルプ帯は自店舗のカウントから除外。h/kと同じ帯規則（resolveBandValues）で解決する。跨ぎシフトは
               // 出勤側略称=ランチ帯・退勤側略称=ディナー帯、片帯のみのシフトは反対側セルの略称も有効。
               const help=getHelpInfo(name,date);
@@ -846,8 +851,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       realStaff.forEach(name=>{
         let s=timeToMin(getEffHHMM(name,date,"start"));let e=timeToMin(getEffHHMM(name,date,"end"));
         if(s===null||e===null||s>=e)return;
-        const note=getShiftNote(name,date);
-        if(note==="x")return;
+        if(isCountExcluded(name,date))return;
         const help=getHelpInfo(name,date);
         if(help){
           const hv=resolveBandValues(s,e,help.startShop,help.endShop,HEAT_BAND_SPLIT_MIN);
@@ -881,12 +885,23 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   // 分割なし店舗(hallStaff.length===0)は全員kitchenに集約されるため、キッチン不足＝全スタッフのセルが対象＝従来の「全セル赤」動作になる。
   const staffSectionOn=(name,date,meal)=>{
     if(hallStaff.length===0)return"kitchen";
-    const s=timeToMin(getEffHHMM(name,date,"start")),e=timeToMin(getEffHHMM(name,date,"end"));
+    let s=timeToMin(getEffHHMM(name,date,"start")),e=timeToMin(getEffHHMM(name,date,"end"));
+    // positionErrorsと同じヘルプ帯クリップ。他店舗ヘルプ帯は自店舗カウント外なので所属判定からも外す。
+    // これを行わないと、ヘルプで自店舗カウント外の帯をこの赤ハイライト判定だけ自店舗所属扱いしてズレる。
+    const help=getHelpInfo(name,date);
+    if(help&&s!=null&&e!=null&&s<e){
+      const hv=resolveBandValues(s,e,help.startShop,help.endShop,HEAT_BAND_SPLIT_MIN);
+      if(hv.lunch&&hv.dinner)return null;
+      if(hv.lunch)s=Math.max(s,HEAT_BAND_SPLIT_MIN);
+      if(hv.dinner)e=Math.min(e,HEAT_BAND_SPLIT_MIN);
+      if(s>=e)return null;
+    }
     const bs=bandSectionsOf(name,date,s==null?0:s,e==null?0:e);
     return(meal==="dinner"?bs.dinner:bs.lunch)==="hall"?"hall":"kitchen";
   };
-  // ポジション不足でセルを赤くするか: そのスタッフのその帯の所属セクションに不足がある帯(lunch=出勤行/dinner=退勤行)のみ対象
-  const cellPosErr=(name,date,meal)=>{const pe=positionErrors[date];if(!pe)return false;return Object.keys(pe[meal][staffSectionOn(name,date,meal)]||{}).length>0;};
+  // ポジション不足でセルを赤くするか: そのスタッフのその帯の所属セクションに不足がある帯(lunch=出勤行/dinner=退勤行)のみ対象。
+  // 所属なし(null=その帯は他店舗ヘルプで自店舗カウント外)はハイライトしない。
+  const cellPosErr=(name,date,meal)=>{const pe=positionErrors[date];if(!pe)return false;const sec=staffSectionOn(name,date,meal);if(!sec)return false;return Object.keys(pe[meal][sec]||{}).length>0;};
   // エラーサマリー用に日付順のフラットな一覧へ展開（キッチン/ホール別）
   const positionErrorEntries=useMemo(()=>{
     const kitchen=[],hall=[];
@@ -2886,7 +2901,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           {isPremium&&(()=>{const wP=periods.find(p=>p.id===det.periodId);if(!wP)return null;const wSS=subs.filter(s=>s.staffName===det.staffName||(staffAliases[det.staffName]||[]).includes(s.staffName));const perDs=gd(wP.startDate,wP.endDate);const wkSet=new Set();perDs.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet.add(fd(mon));});const weeks=[...wkSet].sort();const mo=wP.startDate.slice(0,7);let moTot=0;wSS.forEach(s=>{Object.keys(s.shifts||{}).forEach(d=>{if(d.startsWith(mo))moTot+=calcNetWorkMinutes(s.shifts[d],getBreaksFor(settings,d,s.staffName,s.shifts[d]),getOT(s.staffName,settings,s.shifts[d]));});});const wkData=weeks.map(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds2=fd(dd);if(det.shifts[ds2]){tot+=calcNetWorkMinutes(det.shifts[ds2],getBreaksFor(settings,ds2,det.staffName,det.shifts[ds2]),getOT(det.staffName,settings,det.shifts[ds2]));}else{const os=wSS.find(s=>s.id!==det.id&&s.shifts&&s.shifts[ds2]);if(os)tot+=calcNetWorkMinutes(os.shifts[ds2],getBreaksFor(settings,ds2,os.staffName,os.shifts[ds2]),getOT(os.staffName,settings,os.shifts[ds2]));}}return{monStr,tot};});return(<div style={{marginBottom:4}}><div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",margin:"6px 0 5px"}}>週間勤務時間</div><div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{wkData.map(({monStr,tot})=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);const lbl=`${m.getMonth()+1}/${m.getDate()}〜${sun.getMonth()+1}/${sun.getDate()}`;return(<div key={monStr} style={{background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"var(--c-text4)"}}>{lbl}</div><div style={{fontSize:12,fontWeight:700,color:tot>0?"var(--c-text2)":"var(--c-text4)"}}>{tot>0?fmtMin(tot):"−"}</div></div>);})}{moTot>0&&<div style={{background:"rgba(248,112,54,.08)",border:"1px solid rgba(248,112,54,.2)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"#FFA070"}}>{mo.replace("-","年")}月計</div><div style={{fontSize:12,fontWeight:700,color:"#FFA070"}}>{fmtMin(moTot)}</div></div>}</div></div>);})()}
           {det.comment&&<div style={{background:"var(--c-input)",borderRadius:8,padding:"10px 12px",margin:"8px 0",fontSize:13,color:"var(--c-text2)"}}>{det.comment}</div>}
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-            <thead><tr>{["日付","区分","出勤","退勤","時間"].map(h=><th key={h} style={{background:"var(--c-input)",color:"var(--c-text2)",padding:"8px 12px",textAlign:"left",fontWeight:600}}>{h}</th>)}</tr></thead>
+            <thead><tr>{["日付","区分","出勤","退勤",...(isPremium?["時間"]:[])].map(h=><th key={h} style={{background:"var(--c-input)",color:"var(--c-text2)",padding:"8px 12px",textAlign:"left",fontWeight:600}}>{h}</th>)}</tr></thead>
             <tbody>{Object.keys(det.shifts||{}).sort().map(ds=>{const d=pd(ds),s=det.shifts[ds],iw=s&&s.status==="work";const detOT2=isPremium&&iw?getOT(det.staffName,settings,s):0;const nm=iw?calcNetWorkMinutes(s,getBreaksFor(settings,ds,det.staffName,s),detOT2):0;const effEnd=isPremium&&iw&&detOT2>0&&(s.adjustedEnd??s.end)?`→${(()=>{const en=s.adjustedEnd??s.end;const[h,m]=en.split(":").map(Number);const tot=h*60+m+detOT2;return`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;})()}`:null;return(<tr key={ds}>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:"var(--c-text2)"}}>{d.getMonth()+1}/{d.getDate()}（{WD[d.getDay()]}）</td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>{iw?<span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 7px",borderRadius:4,fontSize:12,fontWeight:600}}>出勤</span>:<span style={{background:"var(--c-input)",color:"var(--c-text3)",padding:"2px 7px",borderRadius:4,fontSize:12}}>休み</span>}</td>
@@ -2896,7 +2911,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
                 {iw?<div>{isPremium&&<div style={{color:"var(--c-text4)",fontSize:11}}>{s.end}</div>}{isPremium?<><select value={s.adjustedEnd||""} onChange={e=>saveAdj(det.id,ds,"adjustedEnd",e.target.value||"")} style={{fontSize:16,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedEnd?"#60A5FA":"var(--c-border)"}`,borderRadius:6,color:s.adjustedEnd?"#60A5FA":"var(--c-text)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>{effEnd&&<div style={{fontSize:10,color:"#34D399",marginTop:2,fontWeight:600}}>{effEnd}（+{detOT2}分）</div>}</>:<span style={{fontSize:13,color:"var(--c-text2)"}}>{s.end||"-"}</span>}</div>:"-"}
               </td>
-              <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:nm>0?"var(--c-text2)":"var(--c-text3)"}}>{iw&&isPremium?fmtMin(nm):"-"}</td>
+              {isPremium&&<td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:nm>0?"var(--c-text2)":"var(--c-text3)"}}>{iw?fmtMin(nm):"-"}</td>}
             </tr>);})}
             </tbody>
           </table>
