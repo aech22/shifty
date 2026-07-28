@@ -684,18 +684,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🟡 セキュリティ強化: 締めルールへの切り替え（猶予期間終了後）
-
-**目的**: 2026-07-07に実装したオーナー権限分離（Anonymous Auth + adminKey）の移行猶予を終了し、未claim店舗への書き込み許可ブランチを削除する。
-**受け入れ条件**:
-- [ ] 本番のアクティブ店舗のオーナーclaim状況を確認する（`shops/*/owners` が存在する店舗の割合。直近1〜2ヶ月にlastActivityがある店舗がすべてclaim済みであること）
-- [ ] `database.rules.tightened.json` の内容を `database.rules.json` に反映してdev→本番の順にデプロイする
-- [ ] デプロイ後にスタッフ提出・管理者書き込み・新規店舗作成の実機確認を行う
-**影響範囲**: database.rules.json のみ（クライアント変更なし。クライアントは既にclaim済み前提で動作する）
-**備考**: 開始日 2026-07-07（本番ルールデプロイ日）。**2〜4週間後（2026-07-21〜08-04）に着手する。** 猶予中の残存リスクは「未claim店舗に限り、shopIdを知る者が最初にclaimした者勝ち」（従来と同等）。claim済み店舗は管理コード（shopId.adminKey）保持者のみ管理可能。
-
----
-
 ## 🟢 App Check の有効化（reCAPTCHA v3）
 
 **目的**: 正規のWebアプリ以外（curl・スクレイパー・改造クライアント）からのFirebaseアクセスを層として遮断する。SDK読込と初期化コードは実装済み（サイトキー未設定のためスキップ動作中）。
@@ -706,18 +694,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] Realtime Database と Cloud Functions のenforcementをコンソールから有効化する
 **影響範囲**: app-core.js（定数1箇所）、Firebaseコンソール操作
 **備考**: enforce後はRESTでの直接デバッグアクセスが遮断される点に注意（管理用途はAdmin SDK/コンソールを使う）。
-
----
-
-## 🟡 `.indexOn: ["periodId"]` を本番/dev Firebase に反映する
-
-**目的**: 「データ保存上限②（subs購読を直近3ヶ月に絞り込み）」でsubsを`orderByChild("periodId").equalTo(pid)`で期間ごとに購読するようになったが、`.indexOn`がルールファイル（`database.rules.json`:50・`.tightened.json`）にコミットされているだけで**Firebaseに未デプロイ**。未反映のままだとFirebaseがクライアント側フィルタにフォールバックし、警告を出す（動作はするが非効率）。バグチェック#44の継続申し送り。
-**受け入れ条件**:
-- [ ] クライアント変更がmainに反映され本番配信済みであることを確認する（リリース順序ルール: クライアント→ルールの順）
-- [ ] `firebase deploy --only database --project thirty-dev-b6958`（dev）→ `firebase deploy --only database --project ontheshift`（本番）の順で反映する
-- [ ] 反映後、コンソールにindex警告が出ないこと・subsの期間別購読が正常に動くことを確認する
-**影響範囲**: database.rules.json / database.rules.tightened.json（既にコミット済み・デプロイのみ）
-**備考**: Firebase書き込み操作のため自動バグチェックループの対象外。「締めルールへの切り替え」タスクと同じdatabase deployなので、まとめて1回で反映してよい。
 
 ---
 
@@ -765,6 +741,20 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ セキュリティ強化: 締めルールへの切り替え＋`.indexOn: ["periodId"]` 反映（2026-07-28）
+
+**目的**: 2026-07-07実装のオーナー権限分離（Anonymous Auth + adminKey）の移行猶予を終了し、未claim店舗への「誰でも書き込み可」ブランチを撤去。あわせて同一 database deploy で `.indexOn` を反映。
+**実装内容**:
+- [x] **本番claim監査（デプロイ前ゲート）**: prodサービスアカウントで `/shops` 全13店舗を監査し、全店舗claim済み（未claim0・アクティブ未claim0・課金中未claim0）を確認。締めルールで書き込み不能になる店舗が存在しないことを確認してからデプロイ。
+- [x] **クライアント先行の確認**: 本番配信中の `origin/main` が既に `inviteCodes` の `expiresAtMs`/`uid` 書き込み（app-main.js:847-853）と lazy claim（app-main.js:492-528）を実装済み＝デプロイ順序ルール（クライアント→ルール）を充足。
+- [x] `database.rules.tightened.json` の内容を `database.rules.json` に反映（差分は owner uid 一致必須化の11行のみ）。settings/periods/staff/templates/tokens/lastActivity/private/global-shops の書き込みを owner 限定化。inviteCodes に `expiresAtMs`(数値)・`uid===auth.uid` の validate と期限切れ読み取り拒否を追加。owners に owner による削除ブランチを追加（企業連携の店舗解除用）。
+- [x] dev（thirty-dev-b6958）→ 本番（ontheshift）の順で `firebase deploy --only database`。
+- [x] **REST実機検証**: 匿名認証トークンで dev 16項目・本番 11項目パス（0 fail）。未claim書き込み拒否・claim後owner書き込み許可・スタッフ提出/読み取りの非破壊・inviteCodes正常形許可/欠損uid偽装拒否・owner削除ブランチを確認。テストデータは両環境で掃除・残存なし。
+- [x] `.indexOn: ["periodId"]` の有効化を `orderByChild("periodId")` クエリで本番・dev 両方確認（index未定義なら400のところ200）。
+**影響範囲**: database.rules.json（コミット `dbdd9d9`）。クライアント変更なし。
+**残副作用（許容）**: `saveSubs` の `touchLastActivity` が締めルール下でowner限定化により無害にno-op（`.catch(()=>{})`で握り潰し・提出自体は成功）。lastActivityはowner操作でのみ更新されるが、全13店舗がpurge対象外premiumのため実害なし。
+**備考**: 実施日 2026-07-28（着手ウィンドウ2026-07-21〜08-04内）。
 
 ### ✅ データ保存上限④: 36ヶ月超のシフト期間データの自動削除（dry-runリリース）（2026-07-12）
 

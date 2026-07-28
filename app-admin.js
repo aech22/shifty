@@ -867,7 +867,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         if(s<HEAT_BAND_SPLIT_MIN)attendees.lunch[secOf(bs.lunch)].push({name,positions:positions.lunch||[]});
         if(e>HEAT_BAND_SPLIT_MIN)attendees.dinner[secOf(bs.dinner)].push({name,positions:positions.dinner||[]});
       });
-      const dayResult={lunch:{kitchen:{},hall:{}},dinner:{kitchen:{},hall:{}}};
+      const dayResult={lunch:{kitchen:{},hall:{},all:{}},dinner:{kitchen:{},hall:{},all:{}}};
       ["lunch","dinner"].forEach(meal=>{
         ["kitchen","hall"].forEach(section=>{
           const slots=(req[meal]&&req[meal][section])||[];
@@ -876,7 +876,16 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           if(Object.keys(shortageByPosition).length>0)dayResult[meal][section]=shortageByPosition;
         });
       });
-      const hasErr=["lunch","dinner"].some(m=>Object.keys(dayResult[m].kitchen).length>0||Object.keys(dayResult[m].hall).length>0);
+      // "全て"セクション: キッチン+ホール全員を合算してマッチング
+      ["lunch","dinner"].forEach(meal=>{
+        const allSlots=(req[meal]&&req[meal].all)||[];
+        if(allSlots.length>0){
+          const allAttendees=[...attendees[meal].kitchen,...attendees[meal].hall];
+          const{shortageByPosition}=matchPositionSlots(allSlots,allAttendees);
+          if(Object.keys(shortageByPosition).length>0)dayResult[meal].all=shortageByPosition;
+        }
+      });
+      const hasErr=["lunch","dinner"].some(m=>Object.keys(dayResult[m].kitchen).length>0||Object.keys(dayResult[m].hall).length>0||Object.keys(dayResult[m].all).length>0);
       if(hasErr)result[date]=dayResult;
     });
     return result;
@@ -901,10 +910,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   };
   // ポジション不足でセルを赤くするか: そのスタッフのその帯の所属セクションに不足がある帯(lunch=出勤行/dinner=退勤行)のみ対象。
   // 所属なし(null=その帯は他店舗ヘルプで自店舗カウント外)はハイライトしない。
-  const cellPosErr=(name,date,meal)=>{const pe=positionErrors[date];if(!pe)return false;const sec=staffSectionOn(name,date,meal);if(!sec)return false;return Object.keys(pe[meal][sec]||{}).length>0;};
+  const cellPosErr=(name,date,meal)=>{const pe=positionErrors[date];if(!pe)return false;const sec=staffSectionOn(name,date,meal);if(sec&&Object.keys(pe[meal].all||{}).length>0)return true;if(!sec)return false;return Object.keys(pe[meal][sec]||{}).length>0;};
   // エラーサマリー用に日付順のフラットな一覧へ展開（キッチン/ホール別）
   const positionErrorEntries=useMemo(()=>{
-    const kitchen=[],hall=[];
+    const kitchen=[],hall=[],all=[];
     dates.forEach(date=>{
       const pe=positionErrors[date];
       if(!pe)return;
@@ -914,9 +923,12 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             (section==="kitchen"?kitchen:hall).push({date,meal,posName,short});
           });
         });
+        Object.entries(pe[meal].all||{}).forEach(([posName,short])=>{
+          all.push({date,meal,posName,short});
+        });
       });
     });
-    return{kitchen,hall};
+    return{kitchen,hall,all};
   },[positionErrors,dates]);
   const countHeat=(section,date,hr)=>{
     const h0=hr*60,h1=(hr+1)*60;
@@ -1584,7 +1596,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                   const isSpecRed=isSpecialRedDate(date,settings);
                   const dc=(isSun||isHol||isSpecRed)?"#e53935":isSat?"#1976d2":"var(--c-text)";
                   const baseRb=(isSun||isHol||isSpecRed)?"rgba(229,57,53,0.07)":isSat?"rgba(25,118,210,0.07)":"transparent";
-                  // ポジション不足がある帯（ランチ=出勤行/ディナー=退勤行）のセル背景を赤く塗る。
+                  // ポジション不足がある帯（ランチ=出勤行/ディナー=退勤行）のセル背景を黄色く塗る。
                   // 不足しているカテゴリ(キッチン/ホール)の担当スタッフのセルのみ対象（cellPosErrがスタッフ所属で判定）。
                   const rbS=name=>cellPosErr(name,date,"lunch")?LEGEND_COLORS.posErr:baseRb;
                   const rbE=name=>cellPosErr(name,date,"dinner")?LEGEND_COLORS.posErr:baseRb;
@@ -1632,11 +1644,11 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           </div>
 
           {/* ポジション不足エラー一覧: 通常/ホール絞り込み時はホール→キッチンの順、キッチン絞り込み時は逆順 */}
-          {(positionErrorEntries.kitchen.length>0||positionErrorEntries.hall.length>0)&&(
+          {(positionErrorEntries.kitchen.length>0||positionErrorEntries.hall.length>0||positionErrorEntries.all.length>0)&&(
             <div style={{background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10}}>
               <div style={{fontSize:12,fontWeight:700,color:"#DC2626",marginBottom:4}}>⚠ ポジションが不足しています</div>
               <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
-                {(deptFilter==="kit"?[...positionErrorEntries.kitchen,...positionErrorEntries.hall]:[...positionErrorEntries.hall,...positionErrorEntries.kitchen])
+                {(deptFilter==="kit"?[...positionErrorEntries.kitchen,...positionErrorEntries.hall,...positionErrorEntries.all]:[...positionErrorEntries.hall,...positionErrorEntries.kitchen,...positionErrorEntries.all])
                   .map(e=>`${pd(e.date).getDate()}日${e.meal==="lunch"?"ランチ":"ディナー"}${e.posName} -${e.short}`)
                   .join("、")}
               </div>
@@ -2511,8 +2523,8 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
   const WDAY_OPTS=[0,1,2,3,4,5,6,7,8];
   const wdLabel=d=>d===7?"祝(単)":d===8?"祝(終)":WD[d];
   const wdLabelFull=d=>d===7?"祝日（連休中・単日）":d===8?"祝日（最終日）":WD[d]+"曜日";
-  const wdIsSat=d=>d===6||d===7; // 土曜扱い（土曜そのもの・連休中/単日の祝日）
-  const wdIsSun=d=>d===0||d===8; // 日曜扱い（日曜そのもの・連休最終日の祝日）
+  const wdIsSat=d=>d===6; // 土曜扱い（土曜のみ）
+  const wdIsSun=d=>d===0||d===7||d===8; // 日曜扱い（日曜そのもの・祝日は連休中/単日・最終日ともに日曜色）
 
   const SingleTimeSelect=({value,onChange,label})=>(
     <div style={{flex:1}}>
@@ -3468,8 +3480,8 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             Object.keys(rp).forEach(dt=>{
               const cur=rp[dt]||{};
               newRP[dt]={
-                lunch:{kitchen:((cur.lunch&&cur.lunch.kitchen)||[]).filter(x=>x!==p),hall:((cur.lunch&&cur.lunch.hall)||[]).filter(x=>x!==p)},
-                dinner:{kitchen:((cur.dinner&&cur.dinner.kitchen)||[]).filter(x=>x!==p),hall:((cur.dinner&&cur.dinner.hall)||[]).filter(x=>x!==p)},
+                lunch:{kitchen:((cur.lunch&&cur.lunch.kitchen)||[]).filter(x=>x!==p),hall:((cur.lunch&&cur.lunch.hall)||[]).filter(x=>x!==p),all:((cur.lunch&&cur.lunch.all)||[]).filter(x=>x!==p)},
+                dinner:{kitchen:((cur.dinner&&cur.dinner.kitchen)||[]).filter(x=>x!==p),hall:((cur.dinner&&cur.dinner.hall)||[]).filter(x=>x!==p),all:((cur.dinner&&cur.dinner.all)||[]).filter(x=>x!==p)},
               };
             });
             const sp=settings.staffPositions||{};
@@ -3514,22 +3526,28 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       </div>
       {(()=>{
         const rp=settings.requiredPositions||{};
-        const cur=(rp[reqDayType]&&rp[reqDayType][reqMeal])||{kitchen:[],hall:[]};
+        const cur=(rp[reqDayType]&&rp[reqDayType][reqMeal])||{kitchen:[],hall:[],all:[]};
         const setCur=(sec,arr)=>{
-          const nextDT={...(rp[reqDayType]||{lunch:{kitchen:[],hall:[]},dinner:{kitchen:[],hall:[]}})};
-          nextDT[reqMeal]={...(nextDT[reqMeal]||{kitchen:[],hall:[]}),[sec]:arr};
+          const nextDT={...(rp[reqDayType]||{lunch:{kitchen:[],hall:[],all:[]},dinner:{kitchen:[],hall:[],all:[]}})};
+          nextDT[reqMeal]={...(nextDT[reqMeal]||{kitchen:[],hall:[],all:[]}),[sec]:arr};
           onSave({...settings,requiredPositions:{...rp,[reqDayType]:nextDT}});
         };
         return(
           <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
-            {[["kitchen","キッチン"],["hall","ホール"]].map(([sec,label])=>{
-              const options=(settings.positions&&settings.positions[sec])||[];
+            {[["kitchen","キッチン"],["hall","ホール"],["all","全て"]].map(([sec,label])=>{
+              // "全て"は kitchen+hall 両方のポジションを選択可。他はそれぞれのセクションのみ
+              const options=sec==="all"
+                ?[...((settings.positions&&settings.positions.kitchen)||[]),...((settings.positions&&settings.positions.hall)||[])]
+                :(settings.positions&&settings.positions[sec])||[];
               const slots=cur[sec]||[];
               return(
                 <div key={sec} style={{flex:"1 1 220px",minWidth:220}}>
-                  <div style={{fontSize:12,fontWeight:700,color:"var(--c-text2)",marginBottom:6}}>{label}</div>
-                  <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
-                    {slots.length===0&&<div style={{fontSize:12,color:"var(--c-text4)"}}>未設定</div>}
+                  <div style={{fontSize:12,fontWeight:700,color:"var(--c-text2)",marginBottom:6}}>
+                    {label}
+                    {sec==="all"&&<span style={{fontSize:10,fontWeight:400,color:"var(--c-text4)",marginLeft:4}}>（キッチン+ホール合算）</span>}
+                  </div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8,minHeight:32,alignContent:"flex-start"}}>
+                    {slots.length===0&&<div style={{fontSize:12,color:"var(--c-text4)",alignSelf:"center"}}>未設定</div>}
                     {slots.map((p,i)=>(
                       <div key={i} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.3)",borderRadius:16,padding:"3px 10px 3px 12px",fontSize:13,color:"#DC2626",fontWeight:600}}>
                         {p}<button onClick={()=>setCur(sec,slots.filter((_,ci)=>ci!==i))} style={{background:"none",border:"none",color:"#DC2626",cursor:"pointer",padding:"0 0 0 4px",fontSize:14,lineHeight:1}}>×</button>
@@ -3537,7 +3555,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                     ))}
                   </div>
                   {options.length===0
-                    ?<div style={{fontSize:11,color:"var(--c-text4)"}}>先に上の「ポジション設定」で{label}のポジションを登録してください</div>
+                    ?<div style={{fontSize:11,color:"var(--c-text4)"}}>{sec==="all"?"先に上の「ポジション設定」でポジションを登録してください":`先に上の「ポジション設定」で${label}のポジションを登録してください`}</div>
                     :<div style={{display:"flex",flexWrap:"wrap",gap:6}}>
                       {options.map(p=>(
                         <button key={p} onClick={()=>setCur(sec,[...slots,p])} style={{padding:"5px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:16,fontSize:13,color:"var(--c-text2)",cursor:"pointer",fontWeight:600}}>＋ {p}</button>
