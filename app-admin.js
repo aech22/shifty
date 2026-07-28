@@ -2918,7 +2918,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
                         <select defaultValue="" onChange={e=>e.target.value&&registerAlias(sub.staffName,e.target.value)}
                           style={{fontSize:16,padding:"3px 6px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text)",cursor:"pointer"}}>
                           <option value="">スタッフを選択</option>
-                          {staffList.map(s=><option key={s} value={s}>{s}</option>)}
+                          {staffList.filter(s=>!isSpacer(s)).map(s=><option key={s} value={s}>{s}</option>)}
                         </select>
                         <button onClick={()=>setLinkTarget(null)} style={{background:"none",border:"none",color:"var(--c-text4)",cursor:"pointer",fontSize:12}}>✕</button>
                       </div>
