@@ -2192,7 +2192,9 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     const cur=staffPositions[staffName]||{lunch:[],dinner:[]};
     onSaveSettings&&onSaveSettings({...settings,staffPositions:{...staffPositions,[staffName]:{...cur,[meal]:arr}}});
   };
-  const allPositions=[...((settings.positions&&settings.positions.kitchen)||[]),...((settings.positions&&settings.positions.hall)||[])];
+  // キッチン/ホールで同名ポジションを登録できる（追加時の重複チェックはセクション内のみ）ため、
+  // 合算リストは必ず重複排除する。しないと同じ「＋ ○○」ボタンが2つ並び、key重複でReactが警告する。
+  const allPositions=[...new Set([...((settings.positions&&settings.positions.kitchen)||[]),...((settings.positions&&settings.positions.hall)||[])])];
   // 最新期間の提出名のうち、未登録かつ未エイリアスのもの
   const allAliases=Object.values(staffAliases).flat();
   const latestPeriod=[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate))[0];
@@ -3535,9 +3537,10 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
         return(
           <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
             {[["kitchen","キッチン"],["hall","ホール"],["all","全て"]].map(([sec,label])=>{
-              // "全て"は kitchen+hall 両方のポジションを選択可。他はそれぞれのセクションのみ
+              // "全て"は kitchen+hall 両方のポジションを選択可。他はそれぞれのセクションのみ。
+              // 同名ポジションが両セクションに登録されていると合算リストで重複するため new Set で排除する。
               const options=sec==="all"
-                ?[...((settings.positions&&settings.positions.kitchen)||[]),...((settings.positions&&settings.positions.hall)||[])]
+                ?[...new Set([...((settings.positions&&settings.positions.kitchen)||[]),...((settings.positions&&settings.positions.hall)||[])])]
                 :(settings.positions&&settings.positions[sec])||[];
               const slots=cur[sec]||[];
               return(
