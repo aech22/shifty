@@ -111,7 +111,6 @@ const sharedGlobals = {
   getOT: "writable",
   gto: "writable",
   idp: "writable",
-  isBreakEligible: "writable",
   isFixedShiftEligibleShop: "writable",
   isHoliday: "writable",
   isRestCommand: "writable",
