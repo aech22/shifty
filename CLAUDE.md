@@ -555,59 +555,51 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-28 自動実行 #45）
+## Shifty バグチェックレポート（2026-07-28 自動実行 #46）
 
 ### 修正済み
 
-- **[🟡] eslint の globals に実体のない `isBreakEligible` が残り、`no-undef` の検出網に穴が空いていた**（eslint.config.js:114）
-  `isBreakEligible` は `b5e23c1`（2026-07-10・休憩控除の閾値ゲート撤廃）で app-utils.js から**意図的に削除**されたが、eslint.config.js の globals 宣言だけが残っていた。現在この名前を参照しているコードは1箇所もないため**実行時バグは発生していない**。問題は検出網のほうで、globals に載っている限り `isBreakEligible(...)` と書いても `no-undef` が発火せず、**ブラウザで初めて ReferenceError になる**（#44 で develop に push してしまった `isSpecialRedDate` 消失と同じ失敗経路）。宣言を1行削除し、**削除後に app-utils.js へ一時的に参照を追加すると `no-undef` error が出ることを実測で確認**（確認後に復元し `git diff` 空を確認）。コミット `9a13309`。
-- **[🟢] CLAUDE.md の app-utils.js 関数一覧が廃止済みの `isBreakEligible` を現存として記載していた**（CLAUDE.md:107）
-  上記に合わせて記述を修正し、休憩適用の判定が `getBreaksFor` の時間帯重なりのみに移った旨を追記した。
+- **[🟡] ポジション削除が反対セクションの必要ポジション設定とスタッフのポジションまで巻き添えで消していた**（app-admin.js:3477 `delPos`／コミット `7961063`）
+  ポジション追加時の重複チェックはセクション内のみ（`list.includes(v)`・app-admin.js:3471）のため、**同名ポジションをキッチンとホールの両方に登録できる**。この状態で片方から削除すると、`delPos` が `requiredPositions` の `kitchen`/`hall`/`all` 全部とスタッフのポジション（`staffPositions` はセクション非依存）から同名を**無条件に**除去していた。結果、まだ有効な反対セクションの必要ポジション枠とスタッフの担当設定が黙って失われ、**ポジション不足エラーの判定が実態とズレる**。反対セクションに同名が残るかを判定し、残る場合は削除したセクションの枠だけを消して他は保持するよう修正。**旧実装との出力一致をNodeで実測確認**し、同名重複を使っていない店舗（＝通常運用）では旧実装と完全に同一の結果になることを検証済み（全PASS）。
+- **[🟡] キッチン+ホールを合算したポジションリストが重複し、React の key 重複と同一ボタンの二重表示を起こしていた**（app-admin.js:2197・3541／コミット `d3c5166`）
+  同じ「同名を両セクションに登録できる」前提により、合算リストを作る2箇所——スタッフ一覧タブのポジション選択（`allPositions`）と、`11bc41f` で新設された設定タブ「必要ポジション設定」の**"全て"** の候補——が同名を2件持つ。`key={p}` で描画しているため duplicate key 警告が出るうえ、同じ「＋ ○○」ボタンが2つ並んで見える。`new Set` で重複排除した。
 
 ### 今回の対象
 
-作業開始時の HEAD は `430c5b7`（Auto-commit: app-admin.js）。#44 のレポート以降に入った新規コードコミットはこの1件のみ。**#44 の教訓に従い、まず作業ツリーと HEAD がコードファイル全件で一致することを確認**（`git diff HEAD -- 'app-*.js' functions/ index.html eslint.config.js tests/` が空）してから着手した。
+前回（#45）の HEAD は `9a13309`。以降のコード変更コミットは実質 **`11bc41f`（祝日色統一・ポジションエラー黄色・"全て"ポジション追加・設定欄高さ揃え）の1件のみ**。着手時に作業ツリーとHEADがコードファイル全件で一致することを確認（`.cursorrules` のみ自分の作業でない未コミット変更があり、規約どおり不介入）。develop と main は着手時点で同一。
 
-### 新規差分（`430c5b7`）のレビュー結果 — 問題なし
+### 新規差分（`11bc41f`）のレビュー結果
 
-`addFromWeekday`（候補1件を追加）を `addAllFromWeekday`（曜日を押すとその曜日の全候補を追加）へ作り替えた変更。
+**「祝日色統一」は問題なし。** `wdIsSat`/`wdIsSun` の定義変更（祝(単)=`d===7` を土曜色→日曜色へ）は、全3箇所の使用（app-admin.js:2566・2605・2697）が**すべて表示色の決定のみ**であることを実測確認した。候補の保存先区分（`weekdayKeyToPositionDayType`: 7→`holSat`, 8→`holSun`）には影響せず、グリッド側が既に全祝日を赤（app-admin.js:1596）にしていたのと一致する意図どおりの統一。
 
-1. **旧名の取り残しなし**: `addFromWeekday` の残存参照 **0件**（grep 全ファイル横断）。
-2. **参照する識別子はすべて実在**: `wdLabelFull`（app-admin.js:2513 に定義）・`wdIsSat`/`wdIsSun`・`sc`・`tt`（CandTab の引数）・`selDates`・`weekdayKeyToPositionDayType`。旧 `wdLabel` も 2560・2728 行で現役のため未使用化していない。
-3. **#44 で修正したタブ配置が維持されている**: このブロックは `mode==="date"`（日付別タブ）側の追加フォーム内（app-admin.js:2677〜2694）にあり、`selDates.length===0` で非表示。#44 の 🔴 が再発していないことを確認した。
-4. **重複追加ガードが件数単位に正しく移行**: `toAdd=wcands.filter(...)` で既存分を除いてから `sc()` で正規化し、`added` を件数で積む。全件重複時は `▲ 既に登録済みです` で早期 return するため posType の空振り上書きも起きない。`closed` 候補は `wcands` の時点で除外済み。
+**"全て"セクションのロジック自体は健全。** `requiredPositions` に `all` キーを増やす変更で、読み出しは全箇所 `||[]` を通すため既存データと後方互換。`hasAnyRequiredPosition`（app-utils.js:311）・集計（app-admin.js:880-888）・`positionErrorEntries`（916-931）・サマリー表示（1651）・`delPos`（3483-3484）・`setCur`（3529-3532）と、`all` を追加すべき箇所は**すべて更新されており取りこぼしなし**。`cellPosErr`（913）が "全て" 不足時にその帯の全スタッフを黄色くするのは定義上正しい。
 
-### 未コミットの `database.rules.json`（別セッションの作業・本ループでは不介入）
-
-作業ツリーに**自分の作業ではない** `database.rules.json` の変更があり、内容は `database.rules.tightened.json` と **byte 一致**（`diff` 空）＝ BACKLOG「締めルールへの切り替え」が作業ツリー上で適用済み・未コミット・未デプロイの状態。CLAUDE.md の並行セッション規約に従い**このファイルには一切触れていない**。ただしクライアント側との整合だけは実測で確認した（いずれも問題なし）:
-
-1. **未claim店舗の初回claimは成立する**: `private` の読みがオーナー限定になったが、`claimOwnership`（app-main.js:503-536）は締めルールを前提としたコメント付きで、読み拒否時も**生成キーの `set` を試すフォールバック**を持つ（claim済み店舗の非オーナーは `set` も拒否されるため乗っ取りは成立しない）。
-2. **スタッフ提出は `lastActivity` のオーナー限定化の影響を受けない**: スタッフ提出は `onSub`（app-main.js:1461-1472）が `shops/{sid}/subs/{id}` へ直接書くのみで `touchLastActivity` を経由しない。`touchLastActivity` の呼び出し元は `saveSettings`/`savePeriods`/`saveStaff`/`saveSubs` の**管理者経路4つだけ**（app-main.js:1087・1114・1116・1158）。
-3. **`inviteCodes` の新 `.read`/`.validate` が要求する `expiresAtMs` をクライアントが書いている**（app-main.js:850）。
+問題は、**"全て"が「キッチンとホールの合算リスト」を初めて正面から扱ったことで、「同名を両セクションに登録できる」という既存の緩い前提が表面化した点**にあった（🟡2件とも根本原因は同一）。
 
 ### スキャン結果（RULES.md 準拠・非回帰）
 
-- `subs` の `set()` 全体上書き: **ヒット0**／`filter(s=>s.id!==…)` 6箇所は店舗リスト絞り込み4件＋削除ID第2引数2件で健全。スタッフ提出の削除（app-main.js:1473-1479）は `.remove()` を直接呼んでおり Firebase から確実に消える
+- `subs` の `set()` 全体上書き: **ヒット0**／`filter(s=>s.id!==…)` 7箇所は店舗リスト絞り込み5件＋削除ID第2引数2件で健全
 - `DEV_MODE`（app-core.js:12・式のまま）・`DEV_PLAN_OVERRIDE`（同81）正常
-- セキュリティ: `ref("accounts")`/`ref("global/shops")` の全件読み**0件**・両ルールで `".read": true` **0件**
-- Cloud Functions: secrets 5箇所に抜け漏れなし・`.delete()` 誤用**0件**・`PURGE_OLD_PERIODS_DRY_RUN=true` 継続（2026-08-12以降に切替）
-- 分割構成: 読み込み順 utils→core→staff→admin→main 維持・SRI 11本／input・select・textarea の `fontSize<16` の新規混入**0件**
-- **eslint globals 194件の実体照合を新規実施**（#44 の再発防止）: ブラウザ/CDN 由来を除いた宣言のうち、実体がないのは `isBreakEligible` **1件のみ**で、これを今回修正した。CLAUDE.md が app-utils.js の関数として挙げる25名も全件実在を確認
-- `calcNetWorkMinutes` の休憩控除は `Math.min(we,be)-Math.max(ws,bs)` の**実重なり分**を引いており、部分的にしか重ならない休憩を丸ごと控除する誤りはない（`b5e23c1` の修正が正しく効いている）
-- `npm test`: **128件パス**（0 fail）、`npx eslint app-*.js`: **0 errors** 98 warnings
+- セキュリティ: `global/shops` は**全件読み0件・直キー読みのみ**／`global/templates` 参照**0件**／`database.rules.json` に `".read": true` **0件**
+- **締めルールが本番反映済みの状態を維持**: `database.rules.json` と `database.rules.tightened.json` が `diff` で**完全一致**。`.indexOn: ["periodId"]`（同50行目）も在中 — #45 の🟡2件は `dbdd9d9` で**解消済み**
+- Cloud Functions: secrets 5箇所に抜け漏れなし・`.delete()` 誤用**0件**・`Number.isNaN` ガードと `archived/shops` 二段削除は健在・`PURGE_OLD_PERIODS_DRY_RUN=true` 継続（2026-08-12以降に切替）
+- 分割構成: 読み込み順 utils→core→staff→admin→main 維持・SRI 11本・input/select/textarea の `fontSize<16` の新規混入**0件**
+- `npm test`: **128件パス**（0 fail）、`npx eslint app-*.js`: **0 errors** 98 warnings（修正前後で同数）
+- 実機起動確認: localhost（`?plan=premium`）でマウントと `SetTab` の評価、**コンソールエラー0件**を確認
 
 ### 要確認（未修正）
 
-- **🟡（継続・リリース前バンプ必須）index.html のキャッシュバスティング版数が HEAD とズレている**。`?v=20260727-e494534` に対し HEAD は `9a13309`。バンプしないと旧 app-admin.js がキャッシュ配信される。release-to-main フローの工程のため本ループでは実施せず申し送り
-- **🟡（継続）`.indexOn: ["periodId"]` が Firebase に未反映**（ルールファイルにはコミット済み）。Firebase 操作のため本ループ対象外
-- **🟡（新規・要ユーザー判断）締めルールが作業ツリーに適用済みだが未コミット・未デプロイ**。上記のとおりクライアント互換は確認したが、**コミット・デプロイは別セッションの担当範囲**。デプロイ順序（クライアントを main へ配信 → その後 database deploy）を守ること。`.indexOn` と同じ database deploy なのでまとめて1回で反映してよい
-- **🟢（継続）#44 で日付別タブへ移した「曜日別から選ぶ」UIが実機（E2E）未検証**。`430c5b7` でこのブロック自体がさらに作り替わったため、実機確認の対象は最新形（曜日ボタン1つで全候補追加）になった
-- **🟢（継続）`isSpecialRedDate` にユニットテストがない**（app-utils.js:552）
-- **🟢群（継続）**: 変更マークの締切ゲート対象外（app-staff.js:166）／`globalTemplates` の命名／capabilityモデルの残存リスク（App Check で恒久対応予定）／`VISION.md` 不在（#27から継続。本ループも完了基準を RULES.md + CLAUDE.md で代替した）
+- **🟡（新規・リリース前バンプ必須）index.html のキャッシュバスティング版数が HEAD とズレている**。`?v=20260728-11bc41f` に対し develop の HEAD は `7961063`。**今回の修正2件を本番に届けるには版数バンプが必須**。release-to-main フローの工程のため本ループでは未実施
+- **🟡（新規・要ユーザー判断）今回の修正2件は develop のみに存在し本番未反映**。main へのマージは規約どおりユーザー確認が必要。並行セッションの有無も確認のうえリリースすること
+- **🟢（新規）根本原因である「キッチン/ホールに同名ポジションを登録できる」仕様自体は未着手**。追加時の重複チェックをセクション横断にするほうが筋がよいが、既に同名を登録済みの店舗があると衝突するため仕様判断をユーザーに委ねる。今回は「同名が存在しても壊れない」側を担保した
+- **🟢（新規）ポジション不足エラーのサマリー文がセクションを区別しない**（app-admin.js:1651）。同じ日・帯・ポジション名がキッチンと"全て"の両方で不足すると同一文字列が2回並ぶ
+- **🟢（継続）`isSpecialRedDate` にユニットテストがない**（app-utils.js:552）。`tests/core.test.js` 内の参照**0件**を実測確認
+- **🟢（継続）「曜日別から選ぶ」UI（`addAllFromWeekday`）が実機E2E未検証**／**今回修正した2件も同名重複という前提条件下での実機E2Eは未実施**（Nodeでの入出力実測と起動確認まで）
+- **🟢群（継続）**: 変更マークの締切ゲート対象外（app-staff.js:166）／`globalTemplates` の命名／capabilityモデルの残存リスク／`VISION.md` 不在
 
 ### 総括
 
-新規コードは `430c5b7` の1件のみで、**そこにバグはなかった**（#44 で修正したタブ配置の非回帰も確認）。代わりに、#44 の失敗経路そのものを狙って **eslint globals 194件と実体の照合を新規に実施し、実体のない宣言 `isBreakEligible` を1件検出して修正した（🟡1件）**。これは「app-utils.js から関数を消したら eslint.config.js の globals からも消す」という、#44 の 🟡（追加時に globals へ足し忘れる）とちょうど逆向きの手順漏れで、**放置すると lint が「定義済み」と偽って no-undef を握り潰す**ため、#44 のような回帰を CI が素通しする土壌になっていた。修正が実際に効くことは、参照を一時追加して `no-undef` error が出ることを確認して裏を取った。この照合はコストが低いので次回以降も定例化する価値がある。並行セッションによる締めルール適用（未コミット）を検出したため、規約どおりファイルには触れず、クライアント側3点の互換性確認だけを行って申し送りに回した。
+新規コードは実質 `11bc41f` の1件で、その中心である**"全て"ポジション機能のロジック自体には問題がなかった**。一方、**"全て"が「キッチン+ホールの合算リスト」を初めて正面から扱ったことで、「同名ポジションを両セクションに登録できる」という既存の緩い前提が2つのバグとして表面化した**。うち1件（削除カスケードの巻き添え）は**設定とスタッフ担当が黙って消えるデータ欠損**で、ポジション不足エラーの判定を実態からズラす。両方とも新機能が作ったバグではなく新機能が**踏んだ**既存の地雷であり、機能追加時は「新しく組み合わせたデータの前提が既存の入力バリデーションで守られているか」を確認する価値を示している。修正は重複名を使っていない店舗では旧実装と完全に同一の出力になることをNodeで実測して非回帰を担保した。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
