@@ -93,6 +93,32 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟡 `.indexOn: ["periodId"]` を本番/dev Firebase に反映する
+
+**目的**: 「データ保存上限②（subs購読を直近3ヶ月に絞り込み）」でsubsを`orderByChild("periodId").equalTo(pid)`で期間ごとに購読するようになったが、`.indexOn`がルールファイル（`database.rules.json`:50・`.tightened.json`）にコミットされているだけで**Firebaseに未デプロイ**。未反映のままだとFirebaseがクライアント側フィルタにフォールバックし、警告を出す（動作はするが非効率）。バグチェック#44の継続申し送り。
+**受け入れ条件**:
+- [ ] クライアント変更がmainに反映され本番配信済みであることを確認する（リリース順序ルール: クライアント→ルールの順）
+- [ ] `firebase deploy --only database --project thirty-dev-b6958`（dev）→ `firebase deploy --only database --project ontheshift`（本番）の順で反映する
+- [ ] 反映後、コンソールにindex警告が出ないこと・subsの期間別購読が正常に動くことを確認する
+**影響範囲**: database.rules.json / database.rules.tightened.json（既にコミット済み・デプロイのみ）
+**備考**: Firebase書き込み操作のため自動バグチェックループの対象外。「締めルールへの切り替え」タスクと同じdatabase deployなので、まとめて1回で反映してよい。
+
+---
+
+## 🟢 バグチェック#44 申し送りの軽微項目（まとめ）
+
+**目的**: 2026-07-27 バグチェック#44の「要確認（未修正）」に残った軽微項目を消化する。いずれも実行時バグではないため個別タスク化せずまとめて扱う。
+**受け入れ条件**:
+- [ ] **「曜日別から選ぶ」ブロック移動のE2E実機確認**: `c4b2e70`で日付別タブへ移設した「曜日別から選ぶ」UIを、日付別タブでの実表示・クリック動作まで実機（localhost）で確認する（パーサ0 errors・`addFromWeekday`本体無変更を根拠に健全と判断済みだが実機未検証）
+- [ ] **`isSpecialRedDate` のユニットテスト追加**（app-utils.js:552）: posType3種（`sun`/`holSat`/`holSun`）の分岐・土日/実祝日の早期returnを`tests/core.test.js`でカバーする
+- [x] **`.git` ロックファイル残留の調査（2026-07-28 完了）**: 残骸4件（`index.stash.13.lock`・`index.stash.44869`・`index_tmp`・`index_tmp.lock`）を削除しgit正常を確認。**根本原因が判明: これらは Shifty の自動コミットフックではなく、グローバルの `security-guidance` プラグイン由来**。`diffstate.py` の `git stash create`（timeout=15秒）がタイムアウトでSIGKILLされると `.git/index.stash.<pid>[.lock]` を残す。`index_tmp*` は旧バージョンのプラグインが `.git/index_tmp` を一時indexに使っていた化石（現行版はTMPDIRの`security_hook_idx_*`に変更済み）。**重要: これらは一時index側のロックのため、通常の`git add`/`commit`が使う`.git/index.lock`とは別物で、gitをブロックしない（＝#44の「commitがindex.lock/HEAD.lockに阻まれた」障害の原因ではない）**。#44を実際にブロックした`index.lock`/`HEAD.lock`はShiftyのStopフックの`git commit`がターン終了で強制終了された痕跡で、これは別系統。恒久対策は不要（無害・低頻度）だが、再発時はこの区別を踏まえること
+- [ ] **`VISION.md` の作成**（#27から継続で不在）: CLAUDE.md関連ドキュメント欄が参照しているが実体がない
+- [ ] **`globalTemplates` の命名整理**（任意）: state/prop名は歴史的経緯で残存（実体は`shops/{shopId}/templates`）。CLAUDE.mdの技術負債にも記載済み
+**影響範囲**: tests/core.test.js（テスト追加）、新規VISION.md、.git運用（フック）、app-main.js/app-admin.js（命名整理は任意・広範）
+**備考**: 「変更マークの締切ゲート対象外」（app-staff.js:166）・capabilityモデルの残存リスクも#44申し送りに含まれるが、前者は仕様判断待ち、後者は上記「App Checkの有効化」で恒久対応するため本まとめには含めない。リリース時のindex.htmlキャッシュバスティング版数バンプはrelease-to-mainフローの標準工程のため別管理。
+
+---
+
 ## 見送り
 
 ### ⏸️ React Native（Expo）アプリ — 見送り（2026-07-04 判断）
