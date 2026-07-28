@@ -3475,21 +3475,29 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             setNewPosInput({...newPosInput,[sec]:""});
           };
           const delPos=p=>{
-            // 削除時は必要ポジション設定・スタッフのポジションからも同名を除去する（属性削除と同じカスケード方針）
+            // 削除時は必要ポジション設定・スタッフのポジションからも同名を除去する（属性削除と同じカスケード方針）。
+            // ただしキッチン/ホールには同名ポジションを登録できる（追加時の重複チェックはセクション内のみ）ため、
+            // 反対側に同名が残る場合は、そちらの必要ポジション枠・"全て"枠・スタッフのポジション
+            // （セクション非依存）まで巻き添えで消さない。消すと有効な設定が黙って失われる。
             const newPositions={...(settings.positions||{}),[sec]:list.filter(x=>x!==p)};
+            const other=sec==="kitchen"?"hall":"kitchen";
+            const stillExists=((newPositions[other])||[]).includes(p);
+            const cut=(arr,drop)=>drop?((arr||[]).filter(x=>x!==p)):((arr||[]).slice());
             const rp=settings.requiredPositions||{};
             const newRP={};
             Object.keys(rp).forEach(dt=>{
               const cur=rp[dt]||{};
-              newRP[dt]={
-                lunch:{kitchen:((cur.lunch&&cur.lunch.kitchen)||[]).filter(x=>x!==p),hall:((cur.lunch&&cur.lunch.hall)||[]).filter(x=>x!==p),all:((cur.lunch&&cur.lunch.all)||[]).filter(x=>x!==p)},
-                dinner:{kitchen:((cur.dinner&&cur.dinner.kitchen)||[]).filter(x=>x!==p),hall:((cur.dinner&&cur.dinner.hall)||[]).filter(x=>x!==p),all:((cur.dinner&&cur.dinner.all)||[]).filter(x=>x!==p)},
-              };
+              const cutMeal=m=>({
+                kitchen:cut(cur[m]&&cur[m].kitchen,sec==="kitchen"||!stillExists),
+                hall:cut(cur[m]&&cur[m].hall,sec==="hall"||!stillExists),
+                all:cut(cur[m]&&cur[m].all,!stillExists),
+              });
+              newRP[dt]={lunch:cutMeal("lunch"),dinner:cutMeal("dinner")};
             });
             const sp=settings.staffPositions||{};
             const newSP={};
             Object.keys(sp).forEach(name=>{
-              newSP[name]={lunch:((sp[name]&&sp[name].lunch)||[]).filter(x=>x!==p),dinner:((sp[name]&&sp[name].dinner)||[]).filter(x=>x!==p)};
+              newSP[name]={lunch:cut(sp[name]&&sp[name].lunch,!stillExists),dinner:cut(sp[name]&&sp[name].dinner,!stillExists)};
             });
             onSave({...settings,positions:newPositions,requiredPositions:newRP,staffPositions:newSP});
           };
