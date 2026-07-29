@@ -172,10 +172,23 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
           saveSubs(newSubs);
-          // staffColorsのキーも更新
-          const sc={...(settings.staffColors||{})};
-          if(sc[oldName]!==undefined){sc[newName]=sc[oldName];delete sc[oldName];}
-          saveSettings({...settings,staffColors:sc});
+          // スタッフ名をキーに持つ設定マップは全てキーを移し替える（漏れると属性・ポジション等が黙って初期値に戻る）
+          const renameKey=map=>{
+            const m={...(map||{})};
+            if(m[oldName]===undefined)return m;
+            m[newName]=m[oldName];delete m[oldName];
+            return m;
+          };
+          const ns={...settings,
+            staffColors:renameKey(settings.staffColors),
+            staffAttributes:renameKey(settings.staffAttributes),
+            staffNumbers:renameKey(settings.staffNumbers),
+            staffPositions:renameKey(settings.staffPositions),
+            staffAliases:renameKey(settings.staffAliases),
+            staffWorkplaces:renameKey(settings.staffWorkplaces)};
+          if(settings.overtimeSettings&&settings.overtimeSettings.byStaff)
+            ns.overtimeSettings={...settings.overtimeSettings,byStaff:renameKey(settings.overtimeSettings.byStaff)};
+          saveSettings(ns);
           tt(`✓ ${oldName} → ${newName} に変更しました`);
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan} periods={periods}/>}
