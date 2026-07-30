@@ -253,8 +253,7 @@ module.exports = [
       // 直接 firebaseDB.ref(...).set()/update() を呼ぶと、undefined を含む値で
       // 「同期例外」が飛び、保存が失われたうえ state が汚染されて以降の保存も全て失敗する
       // （バグチェック#48）。呼び出し元を1つずつ守るのではなく、経由を機械的に強制する。
-      // フェーズ1では warn（残り箇所を可視化しつつ 0 errors を維持）。全経路の置換後に error へ昇格する。
-      "no-restricted-syntax": ["warn", {
+      "no-restricted-syntax": ["error", {
         selector: "CallExpression[callee.object.callee.property.name='ref'][callee.property.name=/^(set|update)$/]",
         message: "Firebaseへの書き込みは app-core.js の fbSet / fbUpd を経由すること（undefined混入で同期例外になるため）",
       }],
