@@ -396,7 +396,11 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       })
     )).then(entries=>{if(!cancelled)setCompanyData(Object.fromEntries(entries));});
     return()=>{cancelled=true;};
-  },[shopId,allLinkedShops,selPid]);
+    // selPidは依存に入れない: この取得は期間に依存しない（workMapは名前|日付キーで全期間を保持し、
+    // 参照側のdupErrors/heatDataが自分のselPid依存で再計算する）。依存に入れると期間ドロップダウンを
+    // 切り替えるたびに連携店舗ぶんの shops/{id}/subs を毎回まるごと再取得してしまう（期間の絞り込みが
+    // 効かない全件読みのため、店舗数×蓄積データに比例して増える）。
+  },[shopId,allLinkedShops]);
   // 略称→他店舗の逆引き
   const abbrToShop=useMemo(()=>{
     const m={};
