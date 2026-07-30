@@ -458,7 +458,7 @@ function App(){
 
     // settingsデフォルト書き込み（スタッフセッションはルールで拒否されるためcatchで握る）
     firebaseDB.ref(fbPath(targetSid,"settings")).once("value").then(snap=>{
-      if(!snap.val()) firebaseDB.ref(fbPath(targetSid,"settings")).set(makeSettings(targetSid)).catch(()=>{});
+      if(!snap.val()) fbSet(fbPath(targetSid,"settings"), makeSettings(targetSid)).catch(()=>{});
     }).catch(()=>{});
   },[]);
 
@@ -517,7 +517,7 @@ function App(){
       if(!key){
         key=genSecureId(32);
         try{
-          await firebaseDB.ref(`shops/${shopId}/private/adminKey`).set(key);
+          await fbSet(`shops/${shopId}/private/adminKey`, key);
         }catch(e){
           dlog("adminKey取得不可（オーナー未登録端末）:",shopId);
           return applyResult(false);
@@ -525,7 +525,7 @@ function App(){
       }
     }
     try{
-      await firebaseDB.ref(`shops/${shopId}/owners/${uid}`).set(key);
+      await fbSet(`shops/${shopId}/owners/${uid}`, key);
       rememberAdminKey(shopId,key);
       return applyResult(true);
     }catch(e){
@@ -538,7 +538,7 @@ function App(){
   // 店舗をアカウントに紐付け（Google/Apple ユーザーのみ）
   const linkShopToAccount=(uid,shopId)=>{
     if(!firebaseDB||!uid)return;
-    firebaseDB.ref(`accounts/${uid}/shops/${shopId}`).set(true).catch(e=>console.warn("shop link失敗:",e));
+    fbSet(`accounts/${uid}/shops/${shopId}`, true).catch(e=>console.warn("shop link失敗:",e));
   };
 
   // Auth UIDに紐付いた店舗一覧を直キー読みで取得（global/shopsの全件読みはしない）
@@ -659,7 +659,7 @@ function App(){
     if(!firebaseDB)return;
     const shopId=currentShopIdRef.current;
     if(shopId&&shopId!=="default"){
-      await firebaseDB.ref(`accounts/${user.uid}/shops/${shopId}`).set(true);
+      await fbSet(`accounts/${user.uid}/shops/${shopId}`, true);
     }
   };
   const signInAndLinkGoogle=async()=>{
@@ -828,7 +828,7 @@ function App(){
         const prev=(await firebaseDB.ref(`accounts/${authUser.uid}/inviteCode`).once("value")).val();
         if(prev&&prev.code&&prev.code!==code) await firebaseDB.ref(`inviteCodes/${prev.code}`).remove();
       }catch{}
-      await firebaseDB.ref(`accounts/${authUser.uid}/inviteCode`).set({
+      await fbSet(`accounts/${authUser.uid}/inviteCode`, {
         code,
         createdAt:now.toISOString(),
         expiresAt:expiresAt.toISOString(),
@@ -844,7 +844,7 @@ function App(){
         if(!k){ try{ k=(await firebaseDB.ref(`shops/${id}/private/adminKey`).once("value")).val(); }catch{} }
         if(k) adminKeyMap[id]=k;
       }));
-      await firebaseDB.ref(`inviteCodes/${code}`).set({
+      await fbSet(`inviteCodes/${code}`, {
         uid:authUser.uid,
         expiresAt:expiresAt.toISOString(),
         expiresAtMs:expiresAt.getTime(), // 締めルールが期限切れコードの読み取りを拒否する判定用
@@ -864,7 +864,7 @@ function App(){
   const linkExistingShopToAuth=async(shopId)=>{
     if(!authUser || !firebaseDB) return;
     try{
-      await firebaseDB.ref(`accounts/${authUser.uid}/shops/${shopId}`).set(true);
+      await fbSet(`accounts/${authUser.uid}/shops/${shopId}`, true);
       // allLinkedShops を全連携店舗で更新（直キー読み）
       const newLinked=await fetchLinkedShops(authUser.uid);
       setAllLinkedShops(newLinked);
@@ -1041,7 +1041,7 @@ function App(){
     periods.forEach(p=>{
       if(!p||!p.urlToken||!p.id)return;
       if(p.shopId&&p.shopId!==sid)return; // 店舗切替直後の古いstate混入を防ぐ
-      firebaseDB.ref(`tokens/${p.urlToken}`).set({shopId:p.shopId||sid,periodId:p.id}).catch(()=>{});
+      fbSet(`tokens/${p.urlToken}`, {shopId:p.shopId||sid,periodId:p.id}).catch(()=>{});
     });
   },[periods,sid,ready,urlLocked]);
 
@@ -1082,7 +1082,7 @@ function App(){
   // ===================================================================
   const fbW=(path,val)=>{ if(firebaseDB) fbSet(path,val).catch(e=>console.warn("書き込み失敗:",path,e)); };
   const touchLastActivity=useCallback(()=>{
-    if(firebaseDB&&sid) firebaseDB.ref(`shops/${sid}/lastActivity`).set(new Date().toISOString()).catch(()=>{});
+    if(firebaseDB&&sid) fbSet(`shops/${sid}/lastActivity`, new Date().toISOString()).catch(()=>{});
   },[sid]);
   const saveSettings=useCallback(v=>{ setSettings(v); ls(storeKey(sid,"settings_v6"),v); fbW(fbPath(sid,"settings"),v); touchLastActivity(); },[sid,touchLastActivity]);
   const savePeriods =useCallback(v=>{
@@ -1097,7 +1097,7 @@ function App(){
         const val=snap.val(); if(!val)return;
         const updates={};
         Object.keys(val).forEach(k=>{ if(deletedIds.includes(val[k]?.periodId)) updates[k]=null; });
-        if(Object.keys(updates).length>0) firebaseDB.ref(fbPath(sid,"subs")).update(updates);
+        if(Object.keys(updates).length>0) fbUpd(fbPath(sid,"subs"), updates);
       });
     }
     setPeriods(v);
@@ -1108,7 +1108,7 @@ function App(){
       fbSet(fbPath(sid,"periods"),obj).catch(e=>console.warn("periods書き込み失敗:",e));
       // 追加された期間のURLトークン逆引きを登録（スタッフURLのO(1)解決用）
       v.filter(p=>p&&p.urlToken&&!periods.find(op=>op.id===p.id)).forEach(p=>{
-        firebaseDB.ref(`tokens/${p.urlToken}`).set({shopId:sid,periodId:p.id}).catch(()=>{});
+        fbSet(`tokens/${p.urlToken}`, {shopId:sid,periodId:p.id}).catch(()=>{});
       });
     }
     touchLastActivity();
@@ -1167,7 +1167,7 @@ function App(){
         if(!s||!s.id)return;
         const old=prev.find(p=>p&&p.id===s.id);
         if(old&&JSON.stringify(old)===JSON.stringify(s))return;
-        firebaseDB.ref(`global/shops/${s.id}`).set(s).catch(e=>console.warn("shops書き込み失敗:",s.id,e));
+        fbSet(`global/shops/${s.id}`, s).catch(e=>console.warn("shops書き込み失敗:",s.id,e));
       });
     }
   },[shops]);
@@ -1250,7 +1250,7 @@ function App(){
     setInviteError("作成中...");
     const newShop=makeShop("新しい店舗");
     dlog("createNewShop: 新規店舗作成",newShop.id,newShop.name);
-    firebaseDB.ref(`global/shops/${newShop.id}`).set(newShop).then(async()=>{
+    fbSet(`global/shops/${newShop.id}`, newShop).then(async()=>{
       // 作成者をオーナー登録（管理キー生成 → owners に自uidを追加）
       await claimOwnership(newShop.id);
       // Auth ユーザーはアカウントにも紐付け
@@ -1466,7 +1466,7 @@ function App(){
               ls(storeKey(currentSid,"subs_v6"),a);
               if(!firebaseDB)return Promise.reject(new Error("firebase未接続"));
               const path=`shops/${currentSid}/subs/${sub.id}`;
-              return firebaseDB.ref(path).set(sub)
+              return fbSet(path, sub)
                 .then(()=>dlog(sub.isUpdated?"変更保存完了":"提出完了","path=",path))
                 .catch(e=>{console.warn("sub書き込み失敗:",path,e);throw e;});
             }}
