@@ -49,6 +49,33 @@ function fbPath(shopId, key) { return `shops/${shopId}/${key}`; }
 function ph(event, props) {
   try { window.posthog && window.posthog.capture(event, props); } catch {}
 }
+
+// ===== Firebase書き込みの唯一の入口 =====
+// firebaseDB.ref(path).set()/update() を直接呼ばず、必ずこの2つを経由する（eslintのno-restricted-syntaxで強制）。
+// 目的は undefined 混入による同期例外の防止で、詳細は app-utils.js の sanitizeForSet を参照。
+// 開発時（DEV_MODE）は現状どおり例外を投げて呼び出し元のバグを即座に露呈させ、本番では
+// 除去して書き込みを通し、警告と計測イベントで発生を観測できるようにする（利用者のデータを失わせない）。
+// strict を引数で受けるのは DEV_MODE を書き換えずに両分岐をテストできるようにするため。
+// 戻り値は必ず Firebase の Promise をそのまま返す（呼び出し元が await/.then/.catch を自由に使えるように）。
+function _fbGuard(path, found, strict) {
+  if (!found.length) return;
+  const msg = `undefined を含む書き込み: ${path} -> ${found.join(", ")}`;
+  if (strict) throw new Error(msg);
+  console.warn(msg);
+  ph("write_undefined_stripped", { path, keys: found.slice(0, 5) });
+}
+function fbSet(path, val, strict = DEV_MODE) {
+  const { value, found } = sanitizeForSet(val);
+  _fbGuard(path, found, strict);
+  // eslint-disable-next-line no-restricted-syntax -- 書き込みの唯一の入口（ここだけは直接呼ぶ）
+  return firebaseDB.ref(path).set(value);
+}
+function fbUpd(path, payload, strict = DEV_MODE) {
+  const { value, found } = sanitizeForUpdate(payload);
+  _fbGuard(path, found, strict);
+  // eslint-disable-next-line no-restricted-syntax -- 書き込みの唯一の入口（ここだけは直接呼ぶ）
+  return firebaseDB.ref(path).update(value);
+}
 const dlog=(...a)=>{if(DEV_MODE)console.log(...a);};
 
 // ===== ログイン試行制限（10回でロック・30分間）=====

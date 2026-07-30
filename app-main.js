@@ -297,7 +297,7 @@ function App(){
     const targetSid=currentShopIdRef.current;
     if(!targetSid||targetSid==="default")return;
     ls(storeKey(targetSid,"templates_v6"),v);
-    if(firebaseDB) firebaseDB.ref(fbPath(targetSid,"templates")).set(v).catch(e=>console.warn("templates保存失敗:",e));
+    if(firebaseDB) fbSet(fbPath(targetSid,"templates"),v).catch(e=>console.warn("templates保存失敗:",e));
   },[]);
   useEffect(()=>{ if(!_hasUrlToken) ssSave(SS_APID,apid); },[apid]);
   useEffect(()=>{ if(!_hasUrlToken) ssSave(SS_VIEW,view); },[view]);
@@ -1080,7 +1080,7 @@ function App(){
   // ===================================================================
   // 保存関数（Firebase + localStorage 二重書き）
   // ===================================================================
-  const fbW=(path,val)=>{ if(firebaseDB) firebaseDB.ref(path).set(val).catch(e=>console.warn("書き込み失敗:",path,e)); };
+  const fbW=(path,val)=>{ if(firebaseDB) fbSet(path,val).catch(e=>console.warn("書き込み失敗:",path,e)); };
   const touchLastActivity=useCallback(()=>{
     if(firebaseDB&&sid) firebaseDB.ref(`shops/${sid}/lastActivity`).set(new Date().toISOString()).catch(()=>{});
   },[sid]);
@@ -1105,7 +1105,7 @@ function App(){
     if(firebaseDB){
       const obj={};
       v.forEach(p=>{ if(p&&p.id) obj[p.id]=p; });
-      firebaseDB.ref(fbPath(sid,"periods")).set(obj).catch(e=>console.warn("periods書き込み失敗:",e));
+      fbSet(fbPath(sid,"periods"),obj).catch(e=>console.warn("periods書き込み失敗:",e));
       // 追加された期間のURLトークン逆引きを登録（スタッフURLのO(1)解決用）
       v.filter(p=>p&&p.urlToken&&!periods.find(op=>op.id===p.id)).forEach(p=>{
         firebaseDB.ref(`tokens/${p.urlToken}`).set({shopId:sid,periodId:p.id}).catch(()=>{});
@@ -1144,7 +1144,7 @@ function App(){
           // 書き込み確定までpendingSubWritesRefに退避し、リアルタイムリスナーの未確定echoに
           // よる巻き戻し（flushSubs参照）からこの変更を保護する
           Object.entries(flat).forEach(([path,val])=>{ pendingSubWritesRef.current[path]=val; });
-          firebaseDB.ref(fbPath(sid,"subs")).update(flat)
+          fbUpd(fbPath(sid,"subs"),flat)
             .catch(e=>console.warn("subs書き込み失敗:",e))
             .finally(()=>{
               // このPromiseで送った値からまだ書き換わっていなければ保護を解除する

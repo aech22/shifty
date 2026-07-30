@@ -3044,7 +3044,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
     if(sid===shopId){onSave({...settings,[field]:value});setShopMeta(m=>m[sid]?{...m,[sid]:{...m[sid],[stateKey]:value}}:m);return;}
     setShopMeta(m=>({...m,[sid]:{...(m[sid]||{abbrs:[],staff:[],workplaces:{},loaded:true}),[stateKey]:value}}));
     if(!firebaseDB)return;
-    firebaseDB.ref(`shops/${sid}/settings`).update({[field]:value})
+    fbUpd(`shops/${sid}/settings`,{[field]:value})
       .catch(()=>{tt("✕ 保存できませんでした（この店舗の管理者権限がありません）");loadShopMeta(sid);});
   };
   const addAbbr=(sid)=>{
