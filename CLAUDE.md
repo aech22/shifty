@@ -555,50 +555,66 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-07-29 自動実行 #48）
+## Shifty バグチェックレポート（2026-08-02 自動実行 #49）
 
 ### 修正済み
 
-- **[🟡] 休憩の適用属性タグを全解除するとFirebase書き込みが同期例外で落ち、その保存だけでなく以降の全設定保存が黙って失敗していた**（app-admin.js:2770 `toggleTag`／コミット `6893a3f`）
-  候補時間タブの休憩設定で、休憩エントリのタグを1つずつ外して**最後の1つを外した瞬間**、`{...cur,tags:tags.length?tags:undefined}` が `tags` キーを**値undefinedのまま残す**。Realtime Database の `set()` は undefined を含むオブジェクトに対して**同期例外を投げる**ため、`fbW` の `.catch()`（Promise用）では捕捉できず、`saveSettings` の `fbW` 行で例外が飛ぶ。実害が2段階ある点が厄介で、①その保存がFirebaseに届かない ②`saveSettings` は `setSettings(v)` を**fbWより先に**実行しているため、undefinedを含む設定オブジェクトが state に残り、以降 `onSave({...settings,…})` する**全ての設定変更（候補時間・属性・退勤延長・Excel・テーマ等）がリロードするまで同じ例外で失敗し続ける**。さらに `ls()` は `JSON.stringify` 経由で undefined を落とすため **localStorage と画面だけは正常に見え、Firebaseにだけ書かれない**という食い違いが起きる。`tags` が空ならキー自体を削除する形に修正した。
-  **実ブラウザ（localhost・dev Firebase）で実測検証済み**: 実際の firebase-database-compat 9.23.0 に対し、旧実装の出力は `set failed: value argument contains undefined in property '…breakTimes.weekday.0.tags'` を**同期throw**、新実装の出力は**書き込み可**、クリーンな同形オブジェクトは throw しないことを確認（`update()` も同様に throw することを併せて確認）。**非回帰も実測**: タグを**追加**する側（`tags` が空にならない経路）の出力は旧実装と `JSON.stringify` 比較で**完全一致**、消費側の `getBreaksFor`（app-utils.js:213/220-222）は `tags&&tags.length` の真偽判定のため**キー無しと undefined を同一に扱う**＝休憩の適用対象は不変。`npm test` 128件パス・`npx eslint app-*.js` 0 errors（修正前後で同数）・リロード後のコンソールエラー0件。
+- **[🟡] Firebase書き込みの経由を強制する eslint ルールが `child()` / `push()` チェーンを素通ししていた**（eslint.config.js:262／コミット `05ee808`）
+  前回の #48 恒久対策フェーズ2（`1da0efe`）は、17箇所を `fbSet`/`fbUpd` へ置換したうえで no-restricted-syntax を error へ昇格し、コミットメッセージで「**18箇所目を追加できないようにした**」と宣言していた。しかしセレクタが `CallExpression[callee.object.callee.property.name='ref'][callee.property.name=/^(set|update)$/]` ＝ **`X.ref(...).set()` という1つの形だけ**を見ており、`firebaseDB.ref(a).child(b).set(v)` ・ `firebaseDB.ref(a).push().set(v)` ・ `ref(p).setWithPriority(v,pri)` はいずれも error にならず素通りしていた（`--stdin` で実測）。つまり「機械的に強制した」という前提そのものが成立しておらず、**将来の新規書き込みが `.child()` を1つ挟むだけで undefined 防御を丸ごと迂回できる**状態だった。参照を作る呼び出し（`ref`/`child`/`push`）に書き込みを直接チェーンした形をすべて対象にするようセレクタを拡張した。
+  **実測検証**: `--stdin` で6形（`ref.set` / `ref.update` / `child.set` / `child.update` / `push.set` / `setWithPriority`）が **error 6件**になることを確認。誤検知の非回帰として `new Map().set(k,v)` ・ `Array.push(x)` ・ `fbSet()` / `fbUpd()` が**0件**であることを同時に確認（`callee.object.callee` を要求するセレクタのため、レシーバが単なる識別子の `Map.set` には一致しない）。実ファイルは `npx eslint app-*.js` が **0 errors 98 warnings** で変更前と同数（＝既存コードに新規検出は出ていない）、`npm test` **142件パス**。
 
 ### 今回の対象と見つけ方
 
-前回（#47）の HEAD は `e6885ea` で、**今回は新規コード差分が1行も無い**回だった（`.cursorrules` の未コミット変更のみで、これは本チェックの対象外・自分の作業でないため触っていない）。
+前回（#48）の HEAD は `017df31`。今回の新規差分は実質3本で、**うち2本が「Firebase書き込みの入口を1本化する」という #48 の恒久対策そのもの**だった。
 
-差分ゼロのため、**既存コードの「書き込み経路そのもの」を横断で洗う**方針を取った。着眼点は #47 で扱った「設定マップのキー整合」の一段下、**「保存しようとした値がそもそもFirebaseに受け付けられる形か」**。app-staff.js:75 に `stripUndef` というヘルパーがあり、その行のコメントが「Firebaseはundefinedを含むオブジェクトのset()で例外を投げるため最終防御として除去」と明記していることから、**この危険はコードベースが既に認識済みで、スタッフ画面だけが防御している**と分かった。そこで「同じ危険に対して防御が無いFirebase書き込み経路」を探し、`:undefined` を含むオブジェクトリテラルを全ファイルで列挙して、そのうち**Firebaseに書かれるオブジェクトに入るもの**を選別した結果 `toggleTag` 1件に到達した（他のヒットはスタイル定義・ExcelJSの罫線指定で、いずれも保存対象外）。
+- `7545e12` — `companyData` useEffect の不要な `selPid` 依存を削除（期間切替のたびに連携店舗の subs を全件再取得していた）
+- `27500ce` + `44fb8d4` — `sanitizeForSet` / `sanitizeForUpdate`（app-utils.js・純粋関数）と `fbSet` / `fbUpd`（app-core.js）を新設。app-staff.js の浅い `stripUndef` も `sanitizeForSet` へ一本化
+- `adfdf28` + `1da0efe` — 残る17箇所を `fbSet`/`fbUpd` へ置換し、eslint ルールを warn → error へ昇格
+
+**新設された防御そのものを疑う**方針を取った。#46〜#48 は「1箇所で学んだ不変条件が他の経路へ展開されない」という再発パターンで、今回はその恒久対策が入った回にあたる。ならば次に壊れるのは**恒久対策の網の目**であり、検証すべきは「防御の中身」ではなく「防御が本当に全経路を覆っているか」だと判断した。そこで eslint セレクタを AST の形として読み、Firebase 参照から書き込みに至る**チェーンの別の綴り方**を列挙して `--stdin` に流したところ、`child()` / `push()` / `setWithPriority` が素通りすることが分かった。決定打は **app-main.js:337 に `const r=firebaseDB.ref(path);` という参照を変数へ置く書き方が実在する**ことで（購読ヘルパー `on` のため書き込みではない）、この綴り方がコードベースにとって不自然でないと確認できた時点で、ルールの網は形を1つしか見ていないと判断した。
+
+### 検証したこと（refactor の非回帰）
+
+- **17箇所の置換は意味的に等価**: 全差分を目視照合し、①引数境界（オブジェクトリテラルが第2引数へ正しく移動している）②`.then` / `.catch` / `await` のチェーンが全箇所で維持されている③元々あった `if(firebaseDB)` ガードが増減していない、の3点を確認。`fbSet`/`fbUpd` は Firebase の Promise をそのまま返すため呼び出し元の扱いは不変
+- **`sanitizeForSet` / `sanitizeForUpdate` の挙動を Node で実測**: 入れ子の undefined はキーごと削除（`{a:1,b:{c:undefined,d:2}}` → `{a:1,b:{d:2}}`・found=`["b/c"]`）、配列要素の undefined は添字を保つため null 置換（`[1,undefined,3]` → `[1,null,3]`）、`null` は削除の意思表示として保持、`{".sv":"timestamp"}` 形のセンチネルは素通り、クリーンな値は found が空。update 経路は `{"a/b":undefined}` → `{"a/b":null}` となり set 経路の「キーを落とす」と同じ最終状態へ収束することを確認
+- **`companyData` の依存削除は安全**: effect 本体（app-admin.js:373-402）を読み、`selPid` が本体で**一切参照されていない**ことを確認（使うのは `shopId` / `allLinkedShops` / `firebaseDB` のみ）。stale closure にはならない
+- **`pendingSubWritesRef` の echo 保護は無傷**: 退避（app-main.js:1146）と解除（同1152）は同じ **sanitize 前の値の参照**を格納・比較しているため、`fbUpd` が内部でディープコピーしても比較は自己完結する
+- **eslint ルールの経由漏れ**: 実ファイルに残る直接呼び出しは app-core.js:71 / 77 の入口2箇所のみ（意図的な disable コメント付き）。`.child(` は app-*.js に**0件**
 
 ### スキャン結果（RULES.md 準拠・非回帰）
 
-- `subs` の `set()` 全体上書き **ヒット0**／`filter(s=>s.id!==…)` 7箇所は健全（前回と同数・同内容）
-- `DEV_MODE`（app-core.js:12・式のまま）・`DEV_PLAN_OVERRIDE`（同81）正常。localhost実機で `DEV_MODE=true` を実測確認
-- `saveSubs` の差分書き込みは健全: 編集経路 `applyEditToSubs`（app-admin.js:569/613）・`saveAdj`（同2896）・`toggleChanged`（同1170）はいずれも**新しいオブジェクト参照**を作っており参照比較の取りこぼしなし。`diffSubForFlatWrite`（app-utils.js:478）は削除されたフィールド・日付を `null` で返す実装が維持されている
-- セキュリティ: `global/shops` 全件読み**0件**／`global/templates` 参照**0件**／`database.rules.json` の `".read": true` **0件**
-- **締めルールが本番反映済みの状態を維持**: `database.rules.json` と `database.rules.tightened.json` が `diff` で**完全一致**。`.indexOn: ["periodId"]`（同50行目）も在中
-- Cloud Functions: secrets 5箇所に抜け漏れなし・`.delete()` 誤用**0件**・`Number.isNaN` ガードと `archived/shops` 二段削除は健在・`PURGE_OLD_PERIODS_DRY_RUN=true` 継続（2026-08-12以降に切替）
-- 分割構成: 読み込み順 utils→core→staff→admin→main 維持・SRI 11本・今回の差分に input/select/textarea の追加**0件**（`fontSize<16` の新規混入なし）
-- `npm test`: **128件パス**（0 fail）、`npx eslint app-*.js`: **0 errors** 98 warnings（修正前後で同数）
+- `subs` の `set()` 全体上書き **ヒット0**（subs への書き込みは `fbUpd` 2箇所＝app-main.js:1100 / 1147 のみ）
+- `DEV_MODE`（app-core.js:12・式のまま）・`DEV_PLAN_OVERRIDE`（同108）正常。`APP_CHECK_SITE_KEY`（同215）は両環境とも空のままでスキップ動作継続（BACKLOG の App Check タスク）
+- セキュリティ: `global/shops` 全件読み**0件**／`database.rules.json` の `".read": true` **0件**
+- **締めルールが本番反映済みの状態を維持**: `database.rules.json` と `database.rules.tightened.json` が `diff` で**完全一致**
+- Cloud Functions: secrets 5箇所（97/138/232/272/533行）に抜け漏れなし・`.delete()` 誤用**0件**・`PURGE_OLD_PERIODS_DRY_RUN=true` 継続（functions/index.js:470）
+- 分割構成: 読み込み順 utils→core→staff→admin→main 維持・SRI 11本・今回の差分に `fontSize<16` の新規混入**0件**
+- `npm test`: **142件パス**（0 fail・#48時点の128件から新規14件）、`npx eslint app-*.js`: **0 errors** 98 warnings（修正前後で同数）
 
 ### 要確認（未修正）
 
-- **🟡（新規・リリース時に要注意）直前リリースのコミット `4aa24d4` が develop に戻されていない**。main の index.html はキャッシュ版数 `20260728-4e02c81` を配信しているのに、develop の index.html は**それより古い** `20260728-11bc41f` のまま。`git log origin/develop..origin/main` が `4aa24d4` 1件を返す（従来のリリースコミット `9f02c6f` は develop に入っているため、今回だけ戻し漏れ）。**このまま develop→main をマージすると index.html が確実に衝突する**うえ、develop 側を採用して解決すると**本番のキャッシュ版数が古い文字列に巻き戻り、ブラウザが古い app-*.js をキャッシュから配信し続ける**。次のリリース時は必ず版数を新しい値へバンプして解決すること（`release-to-main` フローの標準工程）。
-- **🟡（継続・要ユーザー判断）未反映の修正が2件**（`399d220` スタッフ改名の設定移し替え、`6893a3f` 今回の休憩タグ）。いずれも develop のみで本番未反映。main へのマージは規約どおりユーザー確認が必要で、並行セッションの有無も確認のうえリリースすること。
-- **🟢（新規）`origStatus` に undefined が入りうる書き方が2箇所ある**（app-admin.js:579・606）。`if(sd.status!=="work"&&sd.origStatus===undefined)sd.origStatus=sd.status;` は `sd.status` 自体が undefined だと `origStatus:undefined` を作り、今回と同じ同期例外を起こす。**ただし到達経路は確認できなかった**ため未修正とした（シフト日オブジェクトの生成箇所は app-admin.js:551/566/613/1172 と app-utils.js:516 の5箇所のみで、いずれも `status` を必ず持つ。`saveAdj` も `iw`＝`status==="work"` の行でしか呼ばれない）。防御を入れるなら `saveSettings`/`fbW` 側に `stripUndef` 相当を通すのが根本的。
-- **🟢（新規）Firebase書き込みの入口に undefined 防御が無い**（app-main.js:1083 `fbW`）。`fbW` の `.catch()` は Promise 用で同期例外を捕捉しないため、今回のような値の不正は**握り潰されず画面に例外として飛ぶ**が、`setSettings` が先に走っている分だけ state が汚染される。`fbW` 内で再帰的に undefined を除去するか、`set` を try/catch で包んで `console.warn` に落とすと、この型のバグが将来再発しても1操作分の損失で済む。
-- **🟢（継続）スタッフ削除時に設定マップのキーが残る**（app-admin.js:2243 `del`）。通常は無害だが、**同名スタッフを後から再登録すると前任者の属性・ポジション・退勤延長を黙って引き継ぐ**。修正するなら `del` にも #47 の `renameKey` と同じ掃除を入れる。
+- **🟡（継続・リリース時に必ず対処）`4aa24d4` が develop に還流していない＋ index.html のキャッシュ版数が develop で古い**。main は `20260728-4e02c81` を配信中、develop は `20260728-11bc41f`（index.html:211-215）。`git log origin/develop..origin/main` は依然 `4aa24d4` 1件を返す。**このまま develop→main をマージすると index.html が確実に衝突し、develop 側を採用して解決すると本番のキャッシュ版数が巻き戻って古い app-*.js が配信され続ける**。次のリリースで版数を新しい値へバンプして解決すること。
+- **🟡（継続・要ユーザー判断）本番未反映の修正が develop に6コミット分たまっている**（`399d220` スタッフ改名、`6893a3f` 休憩タグ、`7545e12` 連携店舗の全件再取得、`44fb8d4`＋`1da0efe` 書き込み入口の一本化、`05ee808` 今回のルール修正）。**うち `44fb8d4`/`1da0efe` は全 Firebase 書き込み経路に触れる横断変更**のため、リリース時は通常より広めの実機確認を推奨する。main へのマージは規約どおりユーザー確認が必要で、並行セッションの有無も確認のうえ実施すること。
+- **🟢（新規）eslint ルールに残る抜け穴: 参照を変数へ置いてから書く形**（`const r=firebaseDB.ref(p); r.set(v)`）。AST セレクタはスコープを追えないため原理的に検出できない。**app-main.js:337 に同じ綴り方が実在する**（`on` ヘルパー・購読のみで書き込みではない）ため、将来この形で書き込みが追加されると素通りする。今回の修正でルール本体のコメントに明記した。根本的に潰すなら `firebaseDB` を直接触れないようラップするしかない。
+- **🟢（新規）本番では「値が undefined」が「そのパスを削除」に変わる**（app-utils.js `sanitizeForSet` の root 分岐）。ルート値が undefined のとき `{value:null}` を返すため、`strict=false`（＝本番）では `.set(null)` ＝ **そのパスの削除**が実行される。従来は Firebase が例外を投げて**何も書かれなかった**ので、フェイルセーフの向きが逆転している。**到達経路は今日は存在しない**（引数なしの `saveSettings()` / `saveStaff()` / `onSave()` 呼び出しは grep で0件・実測）ため未修正としたが、最終防御の最悪ケースが「書かない」ではなく「消す」なのは設計として弱い。直すなら root が undefined のときだけ**書き込み自体を中止**する（解決済み Promise を返す）のが安全。
+- **🟢（新規）`_fbGuard` の本番分岐が PostHog へパスをそのまま送る**（app-core.js:65）。`ph("write_undefined_stripped",{path,...})` の `path` には `accounts/{uid}/…` や `shops/{shopId}/…` が入るため、undefined 混入が起きた場合に uid / shopId が外部（PostHog）へ送られる。発生時のみ・件数も少ない想定だが、送るならパスの先頭セグメントだけに丸めるのが無難。
+- **🟢（#48から実質クローズ）`origStatus` に undefined が入りうる書き方**（app-admin.js:579・606）。#48 で「防御を入れるなら `fbW` 側に `stripUndef` 相当を通すのが根本的」と書いた対策が `fbSet` の導入で実現したため、**本番では自動的に除去され、DEV_MODE では例外で露呈する**状態になった。到達経路は依然確認できておらず、個別修正は不要と判断する。
+- **🟢（継続）スタッフ削除時に設定マップのキーが残る**（app-admin.js:2247 `del`）。同名スタッフを後から再登録すると前任者の属性・ポジション・退勤延長を黙って引き継ぐ。修正するなら `del` にも #47 の `renameKey` と同じ掃除を入れる。
 - **🟢（継続）改名時に他店舗の `staffWorkplaces` は更新されない**（#47から継続）。店舗をまたぐ整合は権限モデル上も別扱いが要るため対象外。
 - **🟢（継続）「キッチン/ホールに同名ポジションを登録できる」仕様自体は未着手**（#46 から継続・仕様判断待ち）
-- **🟢（継続）ポジション不足エラーのサマリー文がセクションを区別しない**（app-admin.js:1664）
-- **🟢（継続）`isSpecialRedDate` にユニットテストがない**（app-utils.js:552）。BACKLOG「#44 申し送りの軽微項目」に登録済み
-- **🟢（継続）実機E2E未実施**: 「曜日別から選ぶ」UI／#46 のポジション同名重複下での削除操作／#47 の改名修正。**今回の休憩タグ修正はUI操作までのE2Eは未実施**（実ブラウザ上で実Firebaseバリデータに対する旧新出力の突き合わせと非回帰確認までは実施済み。UI経路の再現には dev テスト店舗の休憩設定の書き換えが必要なため見送り）
-- **🟢群（継続）**: 変更マークの締切ゲート対象外（app-staff.js:166）／`globalTemplates` の命名／capabilityモデルの残存リスク／`VISION.md` 不在
+- **🟢（継続）ポジション不足エラーのサマリー文がセクションを区別しない**（app-admin.js:855 付近）
+- **🟢（継続）`isSpecialRedDate` にユニットテストがない**（app-utils.js）。BACKLOG「#44 申し送りの軽微項目」に登録済み
+- **🟢（継続・期限接近）`PURGE_OLD_PERIODS_DRY_RUN` の本有効化期限が近い**（functions/index.js:470）。BACKLOG の着手予定は **2026-08-12 以降**＝あと10日。
+- **🟢（継続）実機E2E未実施**: 「曜日別から選ぶ」UI／#46 のポジション同名重複下での削除操作／#47 の改名修正。**今回の修正は eslint 設定のみで配信物のランタイムに一切影響しない**ため、E2E の対象外。
+- **🟢群（継続）**: 変更マークの締切ゲート対象外（app-staff.js:166）／`globalTemplates` の命名／`VISION.md` 不在
 
 ### 総括
 
-**新規差分がゼロの回で🟡を1件掘り当てた**。#47 が「スタッフ名というキーの整合」だったのに対し、今回は一段下の層＝**「保存しようとしている値がFirebaseに受け付けられる形か」**を横断で見た結果、休憩タグを全解除したときだけ `tags:undefined` が残り、RTDB の `set()` が同期例外を投げていた。厄介なのは失敗の見え方で、**画面と localStorage は `JSON.stringify` が undefined を落とすおかげで正常に見えるのに Firebase にだけ書かれず**、しかも汚染された設定オブジェクトが state に残るため**以降の設定保存が全部リロードまで失敗し続ける**。単発の保存漏れではなく「以後の全設定保存の巻き添え」まで起きる点で実害が大きかった。
+**恒久対策が入った直後の回で、その恒久対策自体の穴を1件見つけた**。#48 の結論は「呼び出し元を1つずつ潰し続けるより、書き込みの入口1箇所で undefined を除去する方が構造的に強い」で、それは `sanitizeForSet` / `fbSet` / `fbUpd` として正しく実装されていた。問題は**その入口を通ることを強制する側**にあり、eslint セレクタが `X.ref(...).set()` という1つの綴り方しか見ていなかった。`.child()` を1つ挟むだけで、あるいは `push()` を経由するだけで、error にならずに直接書き込みを追加できた。
 
-注目すべきは、**この危険をコードベース自身が既に知っていた**ことで、app-staff.js:75 の `stripUndef` は「Firebaseはundefinedを含むオブジェクトのset()で例外を投げる」とコメントまで書いて防御している。にもかかわらず管理者側の書き込み経路には同じ防御が無く、スタッフ画面で学んだ教訓が管理者画面へ横展開されていなかった。#46（ポジション削除カスケード）・#47（改名のキー移し替え）と合わせて、**「1箇所で学んだ不変条件が、同じ性質を持つ他の経路へ展開されないまま残る」**というのがこのコードベースの再発パターンになっている。恒久対策としては個々の呼び出し元を潰し続けるより、`fbW`（書き込みの入口・1箇所）で undefined を除去する方が構造的に強い（上記🟢に記載）。
+構造的な防御を入れたときに壊れるのは、防御の中身ではなく**防御の入口の数え漏れ**だという点で、これは #46〜#48 の再発パターン（1箇所で学んだ不変条件が他の経路へ展開されない）が**一段メタなレイヤーで同じ形をして現れたもの**と言える。「全経路を1箇所に集約した」という主張は、集約を強制する仕組みが**経路の数え上げに成功しているとき**にだけ真になる。
+
+なお残る抜け穴（参照を変数へ置く形）は AST セレクタでは原理的に検出できない。今回はコメントで明示するにとどめたが、これを本当に閉じるには `firebaseDB` グローバルを直接参照させない（ラップして公開する）方向しかない。あわせて、今回新たに見つけた **`sanitizeForSet` の root 分岐が「書かない」ではなく「消す」に倒れている**点も、最終防御としてはフェイルセーフの向きが逆で、次の一手として優先度が高い。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
