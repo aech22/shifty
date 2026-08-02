@@ -555,66 +555,62 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-08-02 自動実行 #49）
+## Shifty バグチェックレポート（2026-08-02 自動実行 #50）
 
 ### 修正済み
 
-- **[🟡] Firebase書き込みの経由を強制する eslint ルールが `child()` / `push()` チェーンを素通ししていた**（eslint.config.js:262／コミット `05ee808`）
-  前回の #48 恒久対策フェーズ2（`1da0efe`）は、17箇所を `fbSet`/`fbUpd` へ置換したうえで no-restricted-syntax を error へ昇格し、コミットメッセージで「**18箇所目を追加できないようにした**」と宣言していた。しかしセレクタが `CallExpression[callee.object.callee.property.name='ref'][callee.property.name=/^(set|update)$/]` ＝ **`X.ref(...).set()` という1つの形だけ**を見ており、`firebaseDB.ref(a).child(b).set(v)` ・ `firebaseDB.ref(a).push().set(v)` ・ `ref(p).setWithPriority(v,pri)` はいずれも error にならず素通りしていた（`--stdin` で実測）。つまり「機械的に強制した」という前提そのものが成立しておらず、**将来の新規書き込みが `.child()` を1つ挟むだけで undefined 防御を丸ごと迂回できる**状態だった。参照を作る呼び出し（`ref`/`child`/`push`）に書き込みを直接チェーンした形をすべて対象にするようセレクタを拡張した。
-  **実測検証**: `--stdin` で6形（`ref.set` / `ref.update` / `child.set` / `child.update` / `push.set` / `setWithPriority`）が **error 6件**になることを確認。誤検知の非回帰として `new Map().set(k,v)` ・ `Array.push(x)` ・ `fbSet()` / `fbUpd()` が**0件**であることを同時に確認（`callee.object.callee` を要求するセレクタのため、レシーバが単なる識別子の `Map.set` には一致しない）。実ファイルは `npx eslint app-*.js` が **0 errors 98 warnings** で変更前と同数（＝既存コードに新規検出は出ていない）、`npm test` **142件パス**。
+- **[🟡] 管理者の休み希望（y／休）が勤務時間・出勤日数の集計に反映されていなかった**（app-utils.js:103 `calcNetWorkMinutes` / :141 `shiftBandInfo`／コミット `a43cbaa`）
+  管理者がシフト作成タブのセルに `y`／`休` を入力すると、`applyEditToSubs`（app-admin.js:579）は **`adminRest[field]` を立てるだけ**で、スタッフ提出の `start`/`end`/`status` には触れない（提出値を壊さないための意図的な設計）。したがって「休みである」という事実は読み出し側が `adminRest` を見て初めて成立する。**画面表示**（`getStoredTime`）・**休みカウント**（`restCounts`）・**ヒートマップ**（`heatData`）・**Excel出力**（`adjResolver`）はすべて `adminRest` を見て休み扱いにしていたが、`calcNetWorkMinutes` と `shiftBandInfo` は `adjustedStart??start` を直接読んでおり見ていなかった。この2つは ShiftEditTab の**期間別／月計／週間の勤務時間**（`getPeriodMin`:991・`getWeekMin`:1003）と SubsTab の**勤務計／出勤日数／属性別上限違反判定**（2927・2973・2991）がすべて経由するため、**同じ画面上でセルは休み表示・休みカウントは「1日休み」なのに勤務時間集計と出勤日数だけが提出値のまま計上される**矛盾が出ていた。さらに `getWeekMin` は **PDF出力**（1443）にも出力され週上限違反の**赤字ハイライト判定**にも使われるため、実在しない勤務時間で超過警告が出る経路もあった。
+  **修正**: 実効出退勤時刻の解決を `effShiftStart` / `effShiftEnd` へ一本化し、上記2関数をここ経由にした。`adminRest[field]` が立つフィールドは `""` を返し、既存の `st&&en` 判定でそのまま「時間なし」になるため差分は最小。
+  **実測検証**: 実データ形状の Node 再現で修正前 **480分 → 修正後 0分**、`attendance` **1 → 0**（`adminRest` 両方付けた終日休みでも修正前は480分のまま）。非回帰として通常シフト・空の `adminRest:{}`・`adjustedStart` との優先順を確認。`npm test` **149件パス**（新規7件）、`npx eslint app-*.js` **0 errors 98 warnings**（修正前と同数）。
 
 ### 今回の対象と見つけ方
 
-前回（#48）の HEAD は `017df31`。今回の新規差分は実質3本で、**うち2本が「Firebase書き込みの入口を1本化する」という #48 の恒久対策そのもの**だった。
+**前回（#49）の HEAD `48728fe` から新規コミットはゼロ**。差分を追う通常のやり方が使えないため、「同じ事実を複数の場所が独立に判定している箇所」を構造から探した。決定打は `grep -n "adminRest" app-*.js` で、**`adminRest` が app-admin.js にしか出現せず app-utils.js には1件も無い**こと。app-admin.js:512 のコメントが「休みカウント・ヒートマップ・集計・表示すべて休み扱いになる」と**4つ**主張していたので1つずつ呼び出し経路を辿ったところ、3つは真で**「集計」だけが偽**だった。
 
-- `7545e12` — `companyData` useEffect の不要な `selPid` 依存を削除（期間切替のたびに連携店舗の subs を全件再取得していた）
-- `27500ce` + `44fb8d4` — `sanitizeForSet` / `sanitizeForUpdate`（app-utils.js・純粋関数）と `fbSet` / `fbUpd`（app-core.js）を新設。app-staff.js の浅い `stripUndef` も `sanitizeForSet` へ一本化
-- `adfdf28` + `1da0efe` — 残る17箇所を `fbSet`/`fbUpd` へ置換し、eslint ルールを warn → error へ昇格
+### 検証したこと
 
-**新設された防御そのものを疑う**方針を取った。#46〜#48 は「1箇所で学んだ不変条件が他の経路へ展開されない」という再発パターンで、今回はその恒久対策が入った回にあたる。ならば次に壊れるのは**恒久対策の網の目**であり、検証すべきは「防御の中身」ではなく「防御が本当に全経路を覆っているか」だと判断した。そこで eslint セレクタを AST の形として読み、Firebase 参照から書き込みに至る**チェーンの別の綴り方**を列挙して `--stdin` に流したところ、`child()` / `push()` / `setWithPriority` が素通りすることが分かった。決定打は **app-main.js:337 に `const r=firebaseDB.ref(path);` という参照を変数へ置く書き方が実在する**ことで（購読ヘルパー `on` のため書き込みではない）、この綴り方がコードベースにとって不自然でないと確認できた時点で、ルールの網は形を1つしか見ていないと判断した。
-
-### 検証したこと（refactor の非回帰）
-
-- **17箇所の置換は意味的に等価**: 全差分を目視照合し、①引数境界（オブジェクトリテラルが第2引数へ正しく移動している）②`.then` / `.catch` / `await` のチェーンが全箇所で維持されている③元々あった `if(firebaseDB)` ガードが増減していない、の3点を確認。`fbSet`/`fbUpd` は Firebase の Promise をそのまま返すため呼び出し元の扱いは不変
-- **`sanitizeForSet` / `sanitizeForUpdate` の挙動を Node で実測**: 入れ子の undefined はキーごと削除（`{a:1,b:{c:undefined,d:2}}` → `{a:1,b:{d:2}}`・found=`["b/c"]`）、配列要素の undefined は添字を保つため null 置換（`[1,undefined,3]` → `[1,null,3]`）、`null` は削除の意思表示として保持、`{".sv":"timestamp"}` 形のセンチネルは素通り、クリーンな値は found が空。update 経路は `{"a/b":undefined}` → `{"a/b":null}` となり set 経路の「キーを落とす」と同じ最終状態へ収束することを確認
-- **`companyData` の依存削除は安全**: effect 本体（app-admin.js:373-402）を読み、`selPid` が本体で**一切参照されていない**ことを確認（使うのは `shopId` / `allLinkedShops` / `firebaseDB` のみ）。stale closure にはならない
-- **`pendingSubWritesRef` の echo 保護は無傷**: 退避（app-main.js:1146）と解除（同1152）は同じ **sanitize 前の値の参照**を格納・比較しているため、`fbUpd` が内部でディープコピーしても比較は自己完結する
-- **eslint ルールの経由漏れ**: 実ファイルに残る直接呼び出しは app-core.js:71 / 77 の入口2箇所のみ（意図的な disable コメント付き）。`.child(` は app-*.js に**0件**
+- **実効値を解決している箇所を app-utils.js 内で全数え上げ**（#49の「入口の数え漏れ」を踏まえ）: 4関数（`calcNetWorkMinutes`:107 / `shiftBandInfo`:141 / `getBreaksFor`:214 / `getOT`:235）。後2つは主シフトが抑制されると `st&&en` が false になり休憩控除も延長加算も適用されないため**結果に影響しない**ことを確認し意図的に対象外（理由をコメントに明記）
+- **`getOT` を変更しなかった根拠**: 実効値経由にすると `!en` 分岐で `dinner` が返り、SubsTab の「延長 +N分」バッジ（2973 `detOTMax`）に**休み日の延長バッジが新たに出る**という別のバグを作り込む。inert でないため変更しなかった
+- **「締」等の追加出勤との独立性**: `extraStart`/`extraEnd` は `adjustedStartFixed`/`adjustedEndFixed` で独立制御されるため `adminRest` で消さない。修正後も `adminRest` 両方＋締で **120分・attendance 0.5** が残ることをテストで固定
+- **Excel 2経路の区別**: ShiftEditTab（1522）は `adjResolver` を渡し `fieldRest` で斜線描画するため**元から正しい**。PeriodsTab（1911）は resolver なしの別経路（下記要確認）
+- **シグネチャ非変更**のため呼び出し元の更新は不要。`adminRest` 付きシフトは `status:"work"` のままなので従来どおり関数に到達して 0 を返す
 
 ### スキャン結果（RULES.md 準拠・非回帰）
 
-- `subs` の `set()` 全体上書き **ヒット0**（subs への書き込みは `fbUpd` 2箇所＝app-main.js:1100 / 1147 のみ）
-- `DEV_MODE`（app-core.js:12・式のまま）・`DEV_PLAN_OVERRIDE`（同108）正常。`APP_CHECK_SITE_KEY`（同215）は両環境とも空のままでスキップ動作継続（BACKLOG の App Check タスク）
-- セキュリティ: `global/shops` 全件読み**0件**／`database.rules.json` の `".read": true` **0件**
-- **締めルールが本番反映済みの状態を維持**: `database.rules.json` と `database.rules.tightened.json` が `diff` で**完全一致**
-- Cloud Functions: secrets 5箇所（97/138/232/272/533行）に抜け漏れなし・`.delete()` 誤用**0件**・`PURGE_OLD_PERIODS_DRY_RUN=true` 継続（functions/index.js:470）
-- 分割構成: 読み込み順 utils→core→staff→admin→main 維持・SRI 11本・今回の差分に `fontSize<16` の新規混入**0件**
-- `npm test`: **142件パス**（0 fail・#48時点の128件から新規14件）、`npx eslint app-*.js`: **0 errors** 98 warnings（修正前後で同数）
+- `DEV_MODE`（app-core.js:12・式のまま）・`DEV_PLAN_OVERRIDE`（108）正常。`APP_CHECK_SITE_KEY`（215）は空でスキップ継続
+- `subs` の `set()` 全体上書き **0件**／`accounts` 全件読み **0件**／`global/shops` 全件読み **0件**
+- `database.rules.json` の `".read": true` **0件**、`tightened` と `diff` **完全一致**（締めルール本番反映済みを維持）
+- Cloud Functions: secrets 5箇所抜け漏れなし・`.delete()` 誤用 **0件**・`PURGE_OLD_PERIODS_DRY_RUN=true` 継続（470行）
+- 削除がFirebaseに永続しないパターン **0件**／プラン判定 `isPro`・`isPremium` の定義は3コンポーネントで一貫
+- 読み込み順 utils→core→staff→admin→main 維持・SRI 11本・`fontSize<16` の新規混入 **0件**
+- `npm test` **149件パス**、`npx eslint app-*.js` **0 errors** 98 warnings
 
 ### 要確認（未修正）
 
-- **🟡（継続・リリース時に必ず対処）`4aa24d4` が develop に還流していない＋ index.html のキャッシュ版数が develop で古い**。main は `20260728-4e02c81` を配信中、develop は `20260728-11bc41f`（index.html:211-215）。`git log origin/develop..origin/main` は依然 `4aa24d4` 1件を返す。**このまま develop→main をマージすると index.html が確実に衝突し、develop 側を採用して解決すると本番のキャッシュ版数が巻き戻って古い app-*.js が配信され続ける**。次のリリースで版数を新しい値へバンプして解決すること。
-- **🟡（継続・要ユーザー判断）本番未反映の修正が develop に6コミット分たまっている**（`399d220` スタッフ改名、`6893a3f` 休憩タグ、`7545e12` 連携店舗の全件再取得、`44fb8d4`＋`1da0efe` 書き込み入口の一本化、`05ee808` 今回のルール修正）。**うち `44fb8d4`/`1da0efe` は全 Firebase 書き込み経路に触れる横断変更**のため、リリース時は通常より広めの実機確認を推奨する。main へのマージは規約どおりユーザー確認が必要で、並行セッションの有無も確認のうえ実施すること。
-- **🟢（新規）eslint ルールに残る抜け穴: 参照を変数へ置いてから書く形**（`const r=firebaseDB.ref(p); r.set(v)`）。AST セレクタはスコープを追えないため原理的に検出できない。**app-main.js:337 に同じ綴り方が実在する**（`on` ヘルパー・購読のみで書き込みではない）ため、将来この形で書き込みが追加されると素通りする。今回の修正でルール本体のコメントに明記した。根本的に潰すなら `firebaseDB` を直接触れないようラップするしかない。
-- **🟢（新規）本番では「値が undefined」が「そのパスを削除」に変わる**（app-utils.js `sanitizeForSet` の root 分岐）。ルート値が undefined のとき `{value:null}` を返すため、`strict=false`（＝本番）では `.set(null)` ＝ **そのパスの削除**が実行される。従来は Firebase が例外を投げて**何も書かれなかった**ので、フェイルセーフの向きが逆転している。**到達経路は今日は存在しない**（引数なしの `saveSettings()` / `saveStaff()` / `onSave()` 呼び出しは grep で0件・実測）ため未修正としたが、最終防御の最悪ケースが「書かない」ではなく「消す」なのは設計として弱い。直すなら root が undefined のときだけ**書き込み自体を中止**する（解決済み Promise を返す）のが安全。
-- **🟢（新規）`_fbGuard` の本番分岐が PostHog へパスをそのまま送る**（app-core.js:65）。`ph("write_undefined_stripped",{path,...})` の `path` には `accounts/{uid}/…` や `shops/{shopId}/…` が入るため、undefined 混入が起きた場合に uid / shopId が外部（PostHog）へ送られる。発生時のみ・件数も少ない想定だが、送るならパスの先頭セグメントだけに丸めるのが無難。
-- **🟢（#48から実質クローズ）`origStatus` に undefined が入りうる書き方**（app-admin.js:579・606）。#48 で「防御を入れるなら `fbW` 側に `stripUndef` 相当を通すのが根本的」と書いた対策が `fbSet` の導入で実現したため、**本番では自動的に除去され、DEV_MODE では例外で露呈する**状態になった。到達経路は依然確認できておらず、個別修正は不要と判断する。
-- **🟢（継続）スタッフ削除時に設定マップのキーが残る**（app-admin.js:2247 `del`）。同名スタッフを後から再登録すると前任者の属性・ポジション・退勤延長を黙って引き継ぐ。修正するなら `del` にも #47 の `renameKey` と同じ掃除を入れる。
-- **🟢（継続）改名時に他店舗の `staffWorkplaces` は更新されない**（#47から継続）。店舗をまたぐ整合は権限モデル上も別扱いが要るため対象外。
-- **🟢（継続）「キッチン/ホールに同名ポジションを登録できる」仕様自体は未着手**（#46 から継続・仕様判断待ち）
-- **🟢（継続）ポジション不足エラーのサマリー文がセクションを区別しない**（app-admin.js:855 付近）
-- **🟢（継続）`isSpecialRedDate` にユニットテストがない**（app-utils.js）。BACKLOG「#44 申し送りの軽微項目」に登録済み
-- **🟢（継続・期限接近）`PURGE_OLD_PERIODS_DRY_RUN` の本有効化期限が近い**（functions/index.js:470）。BACKLOG の着手予定は **2026-08-12 以降**＝あと10日。
-- **🟢（継続）実機E2E未実施**: 「曜日別から選ぶ」UI／#46 のポジション同名重複下での削除操作／#47 の改名修正。**今回の修正は eslint 設定のみで配信物のランタイムに一切影響しない**ため、E2E の対象外。
+- **🟡（継続・今回さらに重要度上昇）`4aa24d4` が develop に還流しておらず index.html のキャッシュ版数が develop で古い**。main は `20260728-4e02c81`、develop は `20260728-11bc41f`（index.html:211-215）。**今回の修正は app-utils.js の実挙動を変えるため、版数を上げずにリリースするとブラウザキャッシュで旧 app-utils.js が配信され修正が反映されない**。次のリリースで必ず新しい版数へバンプすること。
+- **🟡（継続・要ユーザー判断）本番未反映の修正が develop に7コミット分**（`399d220`／`6893a3f`／`7545e12`／`44fb8d4`＋`1da0efe`／`05ee808`／`a43cbaa`）。**`44fb8d4`/`1da0efe` は全 Firebase 書き込み経路に触れる横断変更**、**`a43cbaa` は勤務時間の数字が変わる変更**のため、リリース時は広めの実機確認を推奨。main へのマージは規約どおりユーザー確認が必要。
+- **🟢（新規）期間管理タブの Excel 出力だけが管理者調整値を反映しない**（app-admin.js:1911）。resolver を渡さないため `sh.start`/`sh.end`＝提出の生値が出力され、`adjustedStart`/`adjustedEnd` も `adminRest` も無視される。「提出そのまま」と「完成シフト」で意図的に使い分けている可能性があり**仕様判断が必要**なため未修正。
+- **🟢（新規）店舗間シフト重複エラーが他店舗の `adminRest` を見ない**（app-admin.js:847）。相手店舗の管理者が休みにした日にも重複エラーを出しうる。店舗跨ぎは #47 以降 対象外方針のため踏襲。
+- **🟢（新規）ヒートマップの時間列収集が `adminRest` を無視**（app-admin.js:968）。列見出しの範囲決めのみで人数カウントは正しく除外。実害は余分な列が1本出る程度。
+- **🟢（継続）`sanitizeForSet` の root 分岐が「書かない」ではなく「消す」に倒れている**。到達経路は今日も0件だが最終防御の向きとしては逆。
+- **🟢（継続）`_fbGuard` の本番分岐が PostHog へパスをそのまま送る**（app-core.js:65）。先頭セグメントに丸めるのが無難。
+- **🟢（継続）eslint ルールの抜け穴: 参照を変数へ置く形**（`const r=ref(p); r.set(v)`）。今回あわせて **`ref(p).push(値)` と `.transaction()` も未検出**であることを確認（現状の使用箇所は0件）。
+- **🟢（継続）スタッフ削除時に設定マップのキーが残る**（app-admin.js:2247）／**改名時に他店舗の `staffWorkplaces` 未更新**（#47・店舗跨ぎのため対象外）
+- **🟢（継続）同名ポジション登録の仕様**（#46・判断待ち）／**ポジション不足サマリーがセクション非区別**（app-admin.js:855付近）／**`isSpecialRedDate` のテスト不在**（BACKLOG登録済み）
+- **🟢（継続・期限接近）`PURGE_OLD_PERIODS_DRY_RUN` の本有効化**（functions/index.js:470）。着手予定 **2026-08-12 以降**＝あと10日。
+- **🟢（継続）実機E2E未実施**: 「曜日別から選ぶ」UI／#46 削除操作／#47 改名修正。**今回の修正も実機E2Eは未実施**（純粋関数のNode検証で挙動を固定したが、シフト作成タブで実際に `y` を入力して集計表が0になる画面確認は未実施）。
 - **🟢群（継続）**: 変更マークの締切ゲート対象外（app-staff.js:166）／`globalTemplates` の命名／`VISION.md` 不在
 
 ### 総括
 
-**恒久対策が入った直後の回で、その恒久対策自体の穴を1件見つけた**。#48 の結論は「呼び出し元を1つずつ潰し続けるより、書き込みの入口1箇所で undefined を除去する方が構造的に強い」で、それは `sanitizeForSet` / `fbSet` / `fbUpd` として正しく実装されていた。問題は**その入口を通ることを強制する側**にあり、eslint セレクタが `X.ref(...).set()` という1つの綴り方しか見ていなかった。`.child()` を1つ挟むだけで、あるいは `push()` を経由するだけで、error にならずに直接書き込みを追加できた。
+**新規コミットがゼロの回で、差分ではなく構造から 🟡 を1件見つけた**。`adminRest` は「そのフィールドは休み」というデータの意味を決めるフラグでありながら、その解釈が app-admin.js の読み出しヘルパーにしか実装されておらず、勤務時間を計算する app-utils.js の純粋関数はフラグの存在自体を知らなかった。結果、**同じ画面が同じ日について「休み」と「8時間勤務」を同時に主張する**状態だった。
 
-構造的な防御を入れたときに壊れるのは、防御の中身ではなく**防御の入口の数え漏れ**だという点で、これは #46〜#48 の再発パターン（1箇所で学んだ不変条件が他の経路へ展開されない）が**一段メタなレイヤーで同じ形をして現れたもの**と言える。「全経路を1箇所に集約した」という主張は、集約を強制する仕組みが**経路の数え上げに成功しているとき**にだけ真になる。
+これは #46〜#49 の再発パターンと同型だが、今回は**レイヤーをまたいだ形**で現れている。「提出値を壊さないためにフラグだけ立てて生データは残す」という設計を選んだ時点で、**そのフラグを解釈する責任がすべての読み出し経路に発生する**のに、責任が表示側にしか配られていなかった。
 
-なお残る抜け穴（参照を変数へ置く形）は AST セレクタでは原理的に検出できない。今回はコメントで明示するにとどめたが、これを本当に閉じるには `firebaseDB` グローバルを直接参照させない（ラップして公開する）方向しかない。あわせて、今回新たに見つけた **`sanitizeForSet` の root 分岐が「書かない」ではなく「消す」に倒れている**点も、最終防御としてはフェイルセーフの向きが逆で、次の一手として優先度が高い。
+発見の手がかりは**コード内コメントが主張していた範囲**だった。「休みカウント・ヒートマップ・集計・表示すべて」と4つ列挙されていたので4つとも経路を辿った結果、3つは真で1つが偽だった。**検証可能な主張が書かれたコメントはそのままテスト項目のリストとして使える**というのは今後も再利用できる見つけ方。
+
+なお今回は #49 の教訓を踏まえて実効値解決の4箇所を全数え上げしたうえで、**2箇所だけを直し残り2箇所は直さない判断を根拠つきで残した**。とくに `getOT` は一見同じ修正が当てはまるが、適用すると休み日に延長バッジが出る別のバグを作り込む。「入口を全部数える」ことと「数えた入口を全部同じように直す」ことは別で、前者は必須だが後者は個別に検証がいる。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
