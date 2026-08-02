@@ -1068,3 +1068,53 @@ test("CELL_COMMANDS: h/kのdescに帯別適用（ランチ帯/ディナー帯）
     assert.ok(c.desc.includes("ランチ帯") && c.desc.includes("ディナー帯"), `${k} の説明が帯別適用を説明していない`);
   });
 });
+
+// ===== 管理者の休み希望(adminRest)は実効値を抑制する（バグチェック#50）=====
+// 管理者がシフト作成タブのセルに y／休 を入力すると adminRest[field] が立つだけで
+// スタッフ提出の start/end/status は残る。読み出し側で抑制しないと、画面表示・休みカウント・
+// ヒートマップは休み扱いなのに勤務時間と出勤日数の集計だけが提出値のまま計上される。
+test("effShiftStart/effShiftEnd: adminRestが付いたフィールドは空文字（値なし）を返す", () => {
+  const sh = { status: "work", start: "10:00", end: "18:00", adminRest: { start: true } };
+  assert.strictEqual(u.effShiftStart(sh), "");
+  assert.strictEqual(u.effShiftEnd(sh), "18:00");
+  assert.strictEqual(u.effShiftStart(undefined), undefined);
+});
+
+test("effShiftStart: adminRestが無ければ adjustedStart→start の優先順を保つ", () => {
+  assert.strictEqual(u.effShiftStart({ start: "10:00", adjustedStart: "12:00" }), "12:00");
+  assert.strictEqual(u.effShiftStart({ start: "10:00" }), "10:00");
+  assert.strictEqual(u.effShiftEnd({ end: "18:00", adjustedEnd: "20:00" }), "20:00");
+});
+
+test("calcNetWorkMinutes: adminRestが片側でも付けば主シフトは0分になる", () => {
+  const base = { status: "work", start: "10:00", end: "18:00" };
+  assert.strictEqual(u.calcNetWorkMinutes(base, []), 480); // 非回帰: 通常は従来どおり
+  assert.strictEqual(u.calcNetWorkMinutes({ ...base, adminRest: { start: true } }, []), 0);
+  assert.strictEqual(u.calcNetWorkMinutes({ ...base, adminRest: { end: true } }, []), 0);
+  assert.strictEqual(u.calcNetWorkMinutes({ ...base, adminRest: { start: true, end: true } }, []), 0);
+});
+
+test("calcNetWorkMinutes: adminRestは管理者調整値(adjustedStart)より優先される", () => {
+  const sh = { status: "work", start: "10:00", end: "18:00", adjustedStart: "12:00", adminRest: { start: true } };
+  assert.strictEqual(u.calcNetWorkMinutes(sh, []), 0);
+});
+
+test("calcNetWorkMinutes: adminRestで主シフトが消えても「締」の追加出勤は残る", () => {
+  // 追加出勤は adjustedStartFixed/adjustedEndFixed で独立に制御されるため adminRest では消えない
+  const sh = { status: "work", start: "10:00", end: "18:00", adminRest: { start: true, end: true }, extraStart: "23:00", extraEnd: "25:00" };
+  assert.strictEqual(u.calcNetWorkMinutes(sh, []), 120);
+});
+
+test("calcNetWorkMinutes: 空のadminRestオブジェクトは抑制しない", () => {
+  assert.strictEqual(u.calcNetWorkMinutes({ status: "work", start: "10:00", end: "18:00", adminRest: {} }, []), 480);
+});
+
+test("shiftBandInfo: adminRestで主シフトが消えると出勤日数0、締があれば0.5", () => {
+  const base = { status: "work", start: "10:00", end: "22:00" };
+  assert.strictEqual(u.shiftBandInfo(base).attendance, 1); // 非回帰
+  assert.strictEqual(u.shiftBandInfo({ ...base, adminRest: { start: true, end: true } }).attendance, 0);
+  assert.strictEqual(
+    u.shiftBandInfo({ ...base, adminRest: { start: true, end: true }, extraStart: "23:00", extraEnd: "25:00" }).attendance,
+    0.5
+  );
+});

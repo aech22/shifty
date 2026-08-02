@@ -98,14 +98,33 @@ function sc(cs){return[...cs].sort((a,b)=>{if(a.closed)return 1;if(b.closed)retu
 // 祝日判定（簡易）
 // isHoliday は上で定義済み
 function isWeekendOrHoliday(dateStr){const dow=pd(dateStr).getDay();return dow===0||dow===6||isHoliday(dateStr);}
+// シフトの実効出退勤時刻。管理者がシフト作成タブのセルに休み希望（y／休）を入力すると
+// applyEditToSubs は adminRest[field] を立てるだけでスタッフ提出の start/end/status には触れない
+// （提出値を壊さないため）。そのため実効値の抑制は読み出し側の責務で、画面表示は app-admin.js の
+// getStoredTime が同じ規則で空文字を返している。ここを通さずに adjustedStart??start を直接読むと
+// 「セルは休みで表示され、休みカウント・ヒートマップも休み扱いなのに、勤務時間と出勤日数の集計だけが
+// 提出値のまま計上される」というズレになる（バグチェック#50）。
+// 戻り値の "" は呼び出し側の st&&en 判定で「値なし」として扱われる。
+// なお getBreaksFor / getOT は同じ生の値を読んでいるが、主シフトが抑制されると
+// calcNetWorkMinutes 側の st&&en が false になり休憩控除も延長加算も適用されないため影響しない。
+function effShiftStart(shift){
+  if(!shift)return undefined;
+  if(shift.adminRest&&shift.adminRest.start)return"";
+  return shift.adjustedStart??shift.start;
+}
+function effShiftEnd(shift){
+  if(!shift)return undefined;
+  if(shift.adminRest&&shift.adminRest.end)return"";
+  return shift.adjustedEnd??shift.end;
+}
 // extraStart/extraEnd（「締」等の店舗限定固定シフトコマンドによる追加出勤期間）がある場合は主シフトとは別に加算する。
 // 追加期間は休憩控除・残業延長の対象外（主シフトの休憩帯と重ならない深夜帯を想定した単純加算）。
 function calcNetWorkMinutes(shift,breaks,overtimeMins=0){
   if(!shift||shift.status!=="work")return 0;
   const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
   let net=0;
-  const st=shift.adjustedStart??shift.start;
-  let en=shift.adjustedEnd??shift.end;
+  const st=effShiftStart(shift);
+  let en=effShiftEnd(shift);
   if(st&&en){
     if(overtimeMins>0){const[h,m]=en.split(":").map(Number);const tot=h*60+m+overtimeMins;en=`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;}
     const ws=toMin(st),we=toMin(en);
@@ -138,7 +157,7 @@ function getBreakList(settings,dateStr){
 function shiftBandInfo(shift){
   if(!shift||shift.status!=="work")return{startMin:0,endMin:0,hasLunch:false,hasDinner:false,attendance:0};
   const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
-  const st=shift.adjustedStart??shift.start;const en=shift.adjustedEnd??shift.end;
+  const st=effShiftStart(shift);const en=effShiftEnd(shift);
   let startMin=0,endMin=0,hasLunch=false,hasDinner=false,totalMin=0,any=false;
   if(st&&en){
     const s0=toMin(st),e0=toMin(en);
@@ -614,5 +633,5 @@ function isSpecialRedDate(dateStr,settings){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,getBreakList,shiftBandInfo,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
 }
