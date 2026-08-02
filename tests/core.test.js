@@ -508,6 +508,130 @@ test("dateCandidateDisplayCutoff: cutoff当日は表示対象（dt>=cutoffで残
   assert.ok(!("2026-03-31" >= cutoff)); // cutoffより前は隠れる
 });
 
+// ===== sanitizeForSet / sanitizeForUpdate（Firebase書き込みの最終防御）=====
+// RTDBはundefinedを含むオブジェクトで同期例外を投げるため、書き込み直前に除去する。
+// null（＝削除の意思表示）は保持すること、入力を破壊しないこと、set経路とupdate経路が
+// 同じ最終状態に収束することが要件。
+
+test("sanitizeForSet: undefinedキーは落とし、nullは保持する", () => {
+  const r = u.sanitizeForSet({ a: 1, b: undefined, c: null });
+  assert.deepStrictEqual(r.value, { a: 1, c: null });
+  assert.deepStrictEqual(r.found, ["b"]);
+});
+
+test("sanitizeForSet: 入れ子のundefinedも落とす（休憩タグ全解除の実バグ形状）", () => {
+  const s = { breakTimes: { weekday: [{ start: "12:00", end: "13:00", tags: undefined }] } };
+  const r = u.sanitizeForSet(s);
+  assert.deepStrictEqual(r.value, { breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] } });
+  assert.deepStrictEqual(r.found, ["breakTimes/weekday[0]/tags"]);
+});
+
+test("sanitizeForSet: 配列のundefined要素はnullに置換し添字を保つ", () => {
+  const r = u.sanitizeForSet({ xs: ["a", undefined, "c"] });
+  assert.deepStrictEqual(r.value, { xs: ["a", null, "c"] });
+  assert.strictEqual(r.value.xs.length, 3);
+});
+
+test("sanitizeForSet: 入力オブジェクトを破壊しない（React stateをそのまま渡すため）", () => {
+  const s = { breakTimes: { weekday: [{ start: "12:00", tags: undefined }] } };
+  const snapshot = JSON.stringify(s);
+  u.sanitizeForSet(s);
+  assert.strictEqual(JSON.stringify(s), snapshot);
+  assert.ok("tags" in s.breakTimes.weekday[0], "元オブジェクトのキーが消えている");
+});
+
+test("sanitizeForSet: トップレベルundefinedはnull（＝削除）になる", () => {
+  assert.deepStrictEqual(u.sanitizeForSet(undefined).value, null);
+});
+
+test("sanitizeForSet: プリミティブ・null・falsy値はそのまま通す", () => {
+  assert.strictEqual(u.sanitizeForSet("x").value, "x");
+  assert.strictEqual(u.sanitizeForSet(0).value, 0);
+  assert.strictEqual(u.sanitizeForSet(false).value, false);
+  assert.strictEqual(u.sanitizeForSet("").value, "");
+  assert.strictEqual(u.sanitizeForSet(null).value, null);
+});
+
+test("sanitizeForSet: undefinedが無ければfoundは空（＝警告を出さない）", () => {
+  assert.deepStrictEqual(u.sanitizeForSet({ a: 1, b: { c: [1, 2] } }).found, []);
+});
+
+test("sanitizeForUpdate: トップレベルundefinedはnullに変換する（落とすと古い値が残る）", () => {
+  const r = u.sanitizeForUpdate({ "s1/shifts/2026-01-01/tags": undefined, "s1/comment": "x" });
+  assert.deepStrictEqual(r.value, { "s1/shifts/2026-01-01/tags": null, "s1/comment": "x" });
+  assert.deepStrictEqual(r.found, ["s1/shifts/2026-01-01/tags"]);
+});
+
+test("sanitizeForUpdate: 値がオブジェクトなら中身はset相当（キーごと落とす）", () => {
+  const r = u.sanitizeForUpdate({ "s1/shifts/2026-01-01": { status: "work", tags: undefined } });
+  assert.deepStrictEqual(r.value, { "s1/shifts/2026-01-01": { status: "work" } });
+});
+
+test("sanitizeForUpdate: 既存の明示null（diffSubForFlatWriteの削除指示）は素通しする", () => {
+  const r = u.sanitizeForUpdate({ s1: null });
+  assert.deepStrictEqual(r.value, { s1: null });
+  assert.deepStrictEqual(r.found, []);
+});
+
+// set経路（部分木置換）とupdate経路（パス単位代入・null=削除）が同じ最終状態に収束することを、
+// RTDBの最小モデルで確認する。ここが崩れると「片方だけ古い値が残る」型のバグになる。
+{
+  const isObj = v => v !== null && typeof v === "object" && !Array.isArray(v);
+  const dbSet = (store, path, val) => {
+    const parts = path.split("/").filter(Boolean);
+    let cur = store;
+    for (let i = 0; i < parts.length - 1; i++) { if (!isObj(cur[parts[i]])) cur[parts[i]] = {}; cur = cur[parts[i]]; }
+    const last = parts[parts.length - 1];
+    if (val === null) delete cur[last]; else cur[last] = JSON.parse(JSON.stringify(val));
+  };
+  // RTDBはnull値のキーを保存しない（＝存在しないと同じ）ため、比較前に正規化する
+  const norm = v => {
+    if (Array.isArray(v)) return v.map(norm);
+    if (isObj(v)) {
+      const o = {};
+      Object.keys(v).sort().forEach(k => { if (v[k] !== null) o[k] = norm(v[k]); });
+      return o;
+    }
+    return v;
+  };
+  const cases = [
+    ["tags:undefinedを含む日オブジェクト", { status: "work", tags: undefined }],
+    ["undefined・null・実値が混在", { status: "work", tags: undefined, note: null, start: "09:00" }],
+    ["undefinedが無い通常ケース", { status: "work", start: "09:00", end: "17:00" }],
+  ];
+  cases.forEach(([label, dayObj]) => {
+    test(`sanitize: set経路とupdate経路が同じ最終状態に収束する（${label}）`, () => {
+      const base = { shops: { s1: { subs: { sub1: { shifts: { "2026-01-01": { status: "work", tags: ["old"] } } } } } } };
+      const A = JSON.parse(JSON.stringify(base));
+      const B = JSON.parse(JSON.stringify(base));
+      dbSet(A, "shops/s1/subs/sub1/shifts/2026-01-01", u.sanitizeForSet(dayObj).value);
+      const flat = {};
+      Object.keys(dayObj).forEach(k => { flat[`sub1/shifts/2026-01-01/${k}`] = dayObj[k]; });
+      // setは部分木置換なので、update経路では消えたキーをnullで明示する（diffSubForFlatWriteと同じ規約）
+      Object.keys(B.shops.s1.subs.sub1.shifts["2026-01-01"]).forEach(k => {
+        if (!(k in dayObj)) flat[`sub1/shifts/2026-01-01/${k}`] = null;
+      });
+      const payload = u.sanitizeForUpdate(flat).value;
+      Object.keys(payload).forEach(k => dbSet(B, `shops/s1/subs/${k}`, payload[k]));
+      assert.deepStrictEqual(norm(A), norm(B));
+    });
+  });
+}
+
+// app-staff.js の stripUndef を sanitizeForSet に一本化したことの非回帰
+// （日オブジェクトは平坦なので旧・浅い実装と結果が一致しなければならない）
+test("sanitizeForSet: 平坦な日オブジェクトでは旧・浅いstripUndefと結果が一致する", () => {
+  const shallow = o => { const r = { ...o }; Object.keys(r).forEach(k => { if (r[k] === undefined) delete r[k]; }); return r; };
+  [
+    { status: "work", start: "09:00", end: "17:00" },
+    { status: "holiday", start: undefined, end: undefined },
+    { status: "work", adjustedStart: "10:00", adjustedStartNote: "", changed: true },
+    { status: "work", start: "09:00", end: undefined, changed: undefined },
+  ].forEach(day => {
+    assert.deepStrictEqual(u.sanitizeForSet(day).value, shallow(day));
+  });
+});
+
 test("diffSubForFlatWrite: 新規subは丸ごと1エントリを返す", () => {
   const ns = { id: "s1", staffName: "太郎", shifts: { "2026-07-10": { status: "work", start: "9:00" } } };
   assert.deepStrictEqual(u.diffSubForFlatWrite("s1", undefined, ns), { s1: ns });
@@ -943,4 +1067,54 @@ test("CELL_COMMANDS: h/kのdescに帯別適用（ランチ帯/ディナー帯）
     const c = u.CELL_COMMANDS.find(x => x.kind === "suffix" && x.key === k);
     assert.ok(c.desc.includes("ランチ帯") && c.desc.includes("ディナー帯"), `${k} の説明が帯別適用を説明していない`);
   });
+});
+
+// ===== 管理者の休み希望(adminRest)は実効値を抑制する（バグチェック#50）=====
+// 管理者がシフト作成タブのセルに y／休 を入力すると adminRest[field] が立つだけで
+// スタッフ提出の start/end/status は残る。読み出し側で抑制しないと、画面表示・休みカウント・
+// ヒートマップは休み扱いなのに勤務時間と出勤日数の集計だけが提出値のまま計上される。
+test("effShiftStart/effShiftEnd: adminRestが付いたフィールドは空文字（値なし）を返す", () => {
+  const sh = { status: "work", start: "10:00", end: "18:00", adminRest: { start: true } };
+  assert.strictEqual(u.effShiftStart(sh), "");
+  assert.strictEqual(u.effShiftEnd(sh), "18:00");
+  assert.strictEqual(u.effShiftStart(undefined), undefined);
+});
+
+test("effShiftStart: adminRestが無ければ adjustedStart→start の優先順を保つ", () => {
+  assert.strictEqual(u.effShiftStart({ start: "10:00", adjustedStart: "12:00" }), "12:00");
+  assert.strictEqual(u.effShiftStart({ start: "10:00" }), "10:00");
+  assert.strictEqual(u.effShiftEnd({ end: "18:00", adjustedEnd: "20:00" }), "20:00");
+});
+
+test("calcNetWorkMinutes: adminRestが片側でも付けば主シフトは0分になる", () => {
+  const base = { status: "work", start: "10:00", end: "18:00" };
+  assert.strictEqual(u.calcNetWorkMinutes(base, []), 480); // 非回帰: 通常は従来どおり
+  assert.strictEqual(u.calcNetWorkMinutes({ ...base, adminRest: { start: true } }, []), 0);
+  assert.strictEqual(u.calcNetWorkMinutes({ ...base, adminRest: { end: true } }, []), 0);
+  assert.strictEqual(u.calcNetWorkMinutes({ ...base, adminRest: { start: true, end: true } }, []), 0);
+});
+
+test("calcNetWorkMinutes: adminRestは管理者調整値(adjustedStart)より優先される", () => {
+  const sh = { status: "work", start: "10:00", end: "18:00", adjustedStart: "12:00", adminRest: { start: true } };
+  assert.strictEqual(u.calcNetWorkMinutes(sh, []), 0);
+});
+
+test("calcNetWorkMinutes: adminRestで主シフトが消えても「締」の追加出勤は残る", () => {
+  // 追加出勤は adjustedStartFixed/adjustedEndFixed で独立に制御されるため adminRest では消えない
+  const sh = { status: "work", start: "10:00", end: "18:00", adminRest: { start: true, end: true }, extraStart: "23:00", extraEnd: "25:00" };
+  assert.strictEqual(u.calcNetWorkMinutes(sh, []), 120);
+});
+
+test("calcNetWorkMinutes: 空のadminRestオブジェクトは抑制しない", () => {
+  assert.strictEqual(u.calcNetWorkMinutes({ status: "work", start: "10:00", end: "18:00", adminRest: {} }, []), 480);
+});
+
+test("shiftBandInfo: adminRestで主シフトが消えると出勤日数0、締があれば0.5", () => {
+  const base = { status: "work", start: "10:00", end: "22:00" };
+  assert.strictEqual(u.shiftBandInfo(base).attendance, 1); // 非回帰
+  assert.strictEqual(u.shiftBandInfo({ ...base, adminRest: { start: true, end: true } }).attendance, 0);
+  assert.strictEqual(
+    u.shiftBandInfo({ ...base, adminRest: { start: true, end: true }, extraStart: "23:00", extraEnd: "25:00" }).attendance,
+    0.5
+  );
 });

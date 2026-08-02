@@ -72,7 +72,9 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
 
   const tt_=m=>{setToast(m);clearTimeout(tr.current);tr.current=setTimeout(()=>setToast(null),2500);};
   // Firebaseはundefinedを含むオブジェクトのset()で例外を投げる（休みボタンでstart/endをundefinedにする既存の実装と相性が悪いため必須）
-  const stripUndef=o=>{const r={...o};Object.keys(r).forEach(k=>{if(r[k]===undefined)delete r[k];});return r;};
+  // 実装は app-utils.js の sanitizeForSet に一本化した（旧実装は1階層のみで入れ子を取りこぼすため）。
+  // o||{} は旧実装の {...null}==={} という挙動をそのまま保つためのもの。
+  const stripUndef=o=>sanitizeForSet(o||{}).value;
   const upd=(ds,u)=>{dirtyRef.current=true;setSd(p=>({...p,[ds]:stripUndef({...p[ds],...u})}));};
   const reset=()=>{
     editingRef.current=false;

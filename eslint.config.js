@@ -93,6 +93,11 @@ const sharedGlobals = {
   expXl: "writable",
   extractNote: "writable",
   fbPath: "writable",
+  fbSet: "writable",
+  fbUpd: "writable",
+  _fbGuard: "writable",
+  sanitizeForSet: "writable",
+  sanitizeForUpdate: "writable",
   fd: "writable",
   firebaseAuth: "writable",
   firebaseDB: "writable",
@@ -244,6 +249,19 @@ module.exports = [
       "react/jsx-no-undef": "error",
       // --- デッドコードが既知で存在するため error にはしない ---
       "no-unused-vars": "warn",
+      // --- Firebase書き込みは app-core.js の fbSet / fbUpd を必ず経由させる ---
+      // 直接 firebaseDB.ref(...).set()/update() を呼ぶと、undefined を含む値で
+      // 「同期例外」が飛び、保存が失われたうえ state が汚染されて以降の保存も全て失敗する
+      // （バグチェック#48）。呼び出し元を1つずつ守るのではなく、経由を機械的に強制する。
+      // 検出は「参照を作る呼び出しに書き込みを直接チェーンした形」を対象にする。ref() だけでなく
+      // child() / push() を挟んだ形も同じ書き込みなので同列に禁止する（バグチェック#49）。
+      // 既知の残る抜け穴: 参照を一度変数に置いてから書く形（const r=firebaseDB.ref(p); r.set(v)）は
+      // AST セレクタではスコープを追えないため検出できない。app-main.js:337 の購読ヘルパーのように
+      // 変数へ置く書き方自体はコードベースに実在するので、新規の書き込みでこの形を使わないこと。
+      "no-restricted-syntax": ["error", {
+        selector: "CallExpression[callee.object.callee.property.name=/^(ref|child|push)$/][callee.property.name=/^(set|update|setWithPriority)$/]",
+        message: "Firebaseへの書き込みは app-core.js の fbSet / fbUpd を経由すること（undefined混入で同期例外になるため）",
+      }],
     },
   },
 ];

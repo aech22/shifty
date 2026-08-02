@@ -51,7 +51,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
       }
       const newShops=[...shops,found];
       saveShops(newShops);
-      if(authUser) firebaseDB.ref(`accounts/${authUser.uid}/shops/${code}`).set(true);
+      if(authUser) fbSet(`accounts/${authUser.uid}/shops/${code}`, true);
       setCurrentShopId(code);
       setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");
       tt(`✓ 「${found.name}」を追加しました`);
@@ -109,7 +109,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                         <button onClick={()=>{
                           const lim=PLAN_LIMITS[plan]?.shops??Infinity;
                           if(shops.length>=lim){setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
-                          const name=prompt("新しい店舗名を入力");if(!name)return;const ns=makeShop(name.trim());const newShops=[...shops,ns];saveShops(newShops);if(authUser&&firebaseDB)firebaseDB.ref(`accounts/${authUser.uid}/shops/${ns.id}`).set(true).catch(e=>console.warn("店舗紐付け失敗:",e));setCurrentShopId(ns.id);setShopMenuOpen(false);tt("✓ 店舗を追加しました");
+                          const name=prompt("新しい店舗名を入力");if(!name)return;const ns=makeShop(name.trim());const newShops=[...shops,ns];saveShops(newShops);if(authUser&&firebaseDB)fbSet(`accounts/${authUser.uid}/shops/${ns.id}`, true).catch(e=>console.warn("店舗紐付け失敗:",e));setCurrentShopId(ns.id);setShopMenuOpen(false);tt("✓ 店舗を追加しました");
                         }} style={{flex:1,padding:"7px",background:"#f87036",border:"none",borderRadius:8,fontSize:12,fontWeight:700,color:"white",cursor:"pointer"}}>＋ 新規</button>
                       </div>
                       {/* 店舗コードで追加パネル */}
@@ -172,10 +172,23 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
           saveSubs(newSubs);
-          // staffColorsのキーも更新
-          const sc={...(settings.staffColors||{})};
-          if(sc[oldName]!==undefined){sc[newName]=sc[oldName];delete sc[oldName];}
-          saveSettings({...settings,staffColors:sc});
+          // スタッフ名をキーに持つ設定マップは全てキーを移し替える（漏れると属性・ポジション等が黙って初期値に戻る）
+          const renameKey=map=>{
+            const m={...(map||{})};
+            if(m[oldName]===undefined)return m;
+            m[newName]=m[oldName];delete m[oldName];
+            return m;
+          };
+          const ns={...settings,
+            staffColors:renameKey(settings.staffColors),
+            staffAttributes:renameKey(settings.staffAttributes),
+            staffNumbers:renameKey(settings.staffNumbers),
+            staffPositions:renameKey(settings.staffPositions),
+            staffAliases:renameKey(settings.staffAliases),
+            staffWorkplaces:renameKey(settings.staffWorkplaces)};
+          if(settings.overtimeSettings&&settings.overtimeSettings.byStaff)
+            ns.overtimeSettings={...settings.overtimeSettings,byStaff:renameKey(settings.overtimeSettings.byStaff)};
+          saveSettings(ns);
           tt(`✓ ${oldName} → ${newName} に変更しました`);
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan} periods={periods}/>}
@@ -383,7 +396,11 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       })
     )).then(entries=>{if(!cancelled)setCompanyData(Object.fromEntries(entries));});
     return()=>{cancelled=true;};
-  },[shopId,allLinkedShops,selPid]);
+    // selPidは依存に入れない: この取得は期間に依存しない（workMapは名前|日付キーで全期間を保持し、
+    // 参照側のdupErrors/heatDataが自分のselPid依存で再計算する）。依存に入れると期間ドロップダウンを
+    // 切り替えるたびに連携店舗ぶんの shops/{id}/subs を毎回まるごと再取得してしまう（期間の絞り込みが
+    // 効かない全件読みのため、店舗数×蓄積データに比例して増える）。
+  },[shopId,allLinkedShops]);
   // 略称→他店舗の逆引き
   const abbrToShop=useMemo(()=>{
     const m={};
@@ -2754,7 +2771,9 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
         const attrName=id=>{const f=attrOpts.find(a=>a[0]===id);return f?f[1]:id;};
         const dtColor=dt=>dt==="sat"?"#3B82F6":(dt==="sun"||dt==="hol"||dt==="holSat"||dt==="holSun")?"#FF4757":"#f87036";
         const removeBreak=(dt,i)=>{const bt={...(settings.breakTimes||{})};bt[dt]=[...(bt[dt]||[])];bt[dt].splice(i,1);onSave({...settings,breakTimes:bt});setEditTagKey(null);tt("削除しました");};
-        const toggleTag=(dt,i,tagId)=>{const bt={...(settings.breakTimes||{})};bt[dt]=[...(bt[dt]||[])];const cur=bt[dt][i]||{};const tags=[...(cur.tags||[])];const p=tags.indexOf(tagId);if(p>=0)tags.splice(p,1);else tags.push(tagId);bt[dt][i]={...cur,tags:tags.length?tags:undefined};onSave({...settings,breakTimes:bt});};
+        // tagsが空になったらキー自体を削除する。undefinedのまま残すとFirebaseのset()が同期例外を投げ、
+        // この保存が失われるだけでなく、settings stateに残ったundefinedのせいで以降の設定保存も全て失敗する
+        const toggleTag=(dt,i,tagId)=>{const bt={...(settings.breakTimes||{})};bt[dt]=[...(bt[dt]||[])];const cur=bt[dt][i]||{};const tags=[...(cur.tags||[])];const p=tags.indexOf(tagId);if(p>=0)tags.splice(p,1);else tags.push(tagId);const nb={...cur};if(tags.length)nb.tags=tags;else delete nb.tags;bt[dt][i]=nb;onSave({...settings,breakTimes:bt});};
         return(<AC title="休憩時間設定">
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>設定した休憩時間は出勤〜退勤から自動的に差し引かれ、純勤務時間として表示されます。</div>
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>休憩は出退勤時間が実際に休憩時間帯と重なるスタッフにのみ適用されます。</div>
@@ -3025,7 +3044,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
     if(sid===shopId){onSave({...settings,[field]:value});setShopMeta(m=>m[sid]?{...m,[sid]:{...m[sid],[stateKey]:value}}:m);return;}
     setShopMeta(m=>({...m,[sid]:{...(m[sid]||{abbrs:[],staff:[],workplaces:{},loaded:true}),[stateKey]:value}}));
     if(!firebaseDB)return;
-    firebaseDB.ref(`shops/${sid}/settings`).update({[field]:value})
+    fbUpd(`shops/${sid}/settings`,{[field]:value})
       .catch(()=>{tt("✕ 保存できませんでした（この店舗の管理者権限がありません）");loadShopMeta(sid);});
   };
   const addAbbr=(sid)=>{
