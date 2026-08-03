@@ -1509,15 +1509,17 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         </button>}
         {period&&<button onClick={()=>{
           const adjResolver=(name,date,field)=>{
-            if(fieldRest(name,date,field))return{time:"",note:"",rest:true}; // 休み希望(y)はExcelで斜線描画
+            if(fieldRest(name,date,field))return{time:"",note:"",fixed:false,rest:true}; // 休み希望(y)はExcelで斜線描画
             const key=`${name}|${date}|${field}`;
-            let time="";
-            if(key in localEdits){const{numeric}=extractNote(localEdits[key]);time=parseTime(numeric)||"";}
-            else{time=getStoredTime(name,date,field);}
+            let time="",fixed=false;
+            if(key in localEdits){const{numeric,hasFixed}=extractNote(localEdits[key]);time=parseTime(numeric)||"";fixed=fixedShiftEnabled&&hasFixed;}
+            else{time=getStoredTime(name,date,field);fixed=getStoredFixed(name,date,field);}
             let note="";
             if(key in localEdits){note=extractNote(localEdits[key]).note||"";}
             else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=sh?.[adjNk]??sh?.[origNk]??"";}
-            return{time,note};
+            // 「締」（追加出勤）はnoteとは独立に永続化されるためfixedで別枠に返す（pdfResolveと同じ組み立て）。
+            // ここで返さないとExcelでだけ締めが脱落する（バグチェック#52）
+            return{time,note,fixed};
           };
           expXl(period,subs,staffList,tt,shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings},adjResolver);
         }}
@@ -2130,11 +2132,16 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
         const rv=resolver?{st:resolver(nm,ds,"start"),en:resolver(nm,ds,"end")}:null;
         const startT=rv?rv.st.time:sh.start, endT=rv?rv.en.time:sh.end;
         const sNote=rv?rv.st.note:(sh.startNote||""), eNote=rv?rv.en.note:(sh.endNote||"");
-        // サフィックスh/k/xがある場合は黄色塗り
+        // 「締」等の店舗限定固定シフトコマンドはnoteとは別枠で永続化されるため、ここで表示へ合成する
+        const sFx=rv&&rv.st.fixed?FIXED_KEY:"", eFx=rv&&rv.en.fixed?FIXED_KEY:"";
+        // サフィックスh/k/xがある場合は黄色塗り（締めは対象外＝PDFのセル背景判定と同じくnoteだけで決める）
         const startFill=sNote?fYel:fill;
         const endFill=eNote?fYel:fill;
-        const startDisp=startT?((fmtT(startT)||"")+sNote):null;
-        const endDisp=endT?((fmtT(endT)||"")+eNote):null;
+        // 時刻が無くてもnote・締めがあれば表示する。従来は時刻の有無だけで判定していたため、
+        // 単独「締」やメモのみのセルがグリッド・PDFには出るのにExcelでだけ空欄に落ちていた
+        // （バグチェック#52）。グリッドのgetVal・PDFのpdfResolveと同じ真偽判定に揃える
+        const startDisp=(startT||sNote||sFx)?((fmtT(startT)||"")+sNote+sFx):null;
+        const endDisp=(endT||eNote||eFx)?((fmtT(endT)||"")+eNote+eFx):null;
         // 管理者入力の休み希望(y)はフィールド単位で斜線（resolver経由=シフト作成タブからの出力時のみ）
         const diagR={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
         const stB={top:M,bottom:H,left:T,right:T,...(rv&&rv.st.rest?{diagonal:diagR}:{})};
