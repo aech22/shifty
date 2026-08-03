@@ -1118,3 +1118,57 @@ test("shiftBandInfo: adminRestで主シフトが消えると出勤日数0、締�
     0.5
   );
 });
+
+// ===== carryAdminShiftFields: スタッフ再提出時の管理者フィールド引き継ぎ（バグチェック#51）=====
+
+test("ADMIN_SHIFT_FIELDS: 管理者が日ごとに書き込む全フィールドが登録されている", () => {
+  // app-admin.js の applyEditToSubs / SubsTab が shift オブジェクトへ書く管理者フィールドの全量。
+  // ここに載っていないフィールドはスタッフ再提出で消えるため、追加時は必ず両方を更新する。
+  const expected = [
+    "adjustedStart", "adjustedEnd", "adjustedStartNote", "adjustedEndNote",
+    "adminRest", "extraStart", "extraEnd", "adjustedStartFixed", "adjustedEndFixed", "origStatus",
+  ];
+  assert.deepStrictEqual([...u.ADMIN_SHIFT_FIELDS].sort(), expected.sort());
+});
+
+test("carryAdminShiftFields: 管理者の休み希望(adminRest)が再提出で消えない", () => {
+  const old = { status: "work", start: "9:00", end: "18:00", adjustedStart: "10:00", adminRest: { start: true, end: true } };
+  const resubmitted = { status: "work", start: "9:00", end: "18:00" }; // Cookieなし端末＝管理者フィールドを持たない
+  const nw = u.carryAdminShiftFields(resubmitted, old);
+  assert.deepStrictEqual(nw.adminRest, { start: true, end: true });
+  assert.strictEqual(nw.adjustedStart, "10:00");
+  assert.strictEqual(u.calcNetWorkMinutes(nw, []), 0);   // 修正前は480分に戻っていた
+  assert.strictEqual(u.shiftBandInfo(nw).attendance, 0); // 修正前は1日に戻っていた
+});
+
+test("carryAdminShiftFields: 「締」の追加出勤が引き継がれ status も work に戻る", () => {
+  const old = { status: "work", origStatus: "holiday", adjustedStartFixed: true, extraStart: "23:00", extraEnd: "25:00" };
+  const nw = u.carryAdminShiftFields({ status: "holiday" }, old);
+  assert.strictEqual(nw.extraStart, "23:00");
+  assert.strictEqual(nw.extraEnd, "25:00");
+  assert.strictEqual(nw.adjustedStartFixed, true);
+  assert.strictEqual(nw.status, "work");        // 戻さないと status!=="work" の早期returnで0分になる
+  assert.strictEqual(nw.origStatus, "holiday"); // 締を消したときの復元先を保つ
+  assert.strictEqual(u.calcNetWorkMinutes(nw, []), 120); // 修正前は0分に落ちていた
+});
+
+test("carryAdminShiftFields: 追加出勤フラグが無ければ status は書き換えない", () => {
+  const nw = u.carryAdminShiftFields({ status: "holiday" }, { status: "work", start: "9:00", end: "18:00" });
+  assert.strictEqual(nw.status, "holiday");
+  assert.strictEqual(nw.origStatus, undefined);
+});
+
+test("carryAdminShiftFields: スタッフの新しい入力を管理者フィールドで上書きしない", () => {
+  const old = { status: "work", adjustedStart: "10:00", adminRest: { start: true } };
+  const nw = u.carryAdminShiftFields({ status: "work", adjustedStart: "13:00" }, old);
+  assert.strictEqual(nw.adjustedStart, "13:00"); // 既に値がある側を優先
+  assert.deepStrictEqual(nw.adminRest, { start: true });
+});
+
+test("carryAdminShiftFields: 旧シフトが無ければ素通し・入力オブジェクトを破壊しない", () => {
+  const src = { status: "work", start: "9:00" };
+  assert.deepStrictEqual(u.carryAdminShiftFields(src, null), src);
+  const old = { status: "work", adminRest: { start: true } };
+  u.carryAdminShiftFields(src, old);
+  assert.strictEqual(src.adminRest, undefined); // srcは変更されない
+});

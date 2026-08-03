@@ -174,6 +174,29 @@ function shiftBandInfo(shift){
   const attendance=((hasLunch&&hasDinner)||totalMin>=540)?1:0.5;
   return{startMin,endMin,hasLunch,hasDinner,attendance};
 }
+// ===== スタッフ再提出時に引き継ぐ管理者フィールド =====
+// 管理者がシフト作成タブ・提出一覧で日ごとに書き込む、スタッフ提出値(status/start/end)とは
+// 独立したフィールドの一覧。スタッフが再提出すると app-staff.js の buildShift が日オブジェクトを
+// 作り直すため、ここに載っていないフィールドは黙って消える（バグチェック#51）。
+// 新しい管理者フィールドを追加したら必ずここに登録すること。
+const ADMIN_SHIFT_FIELDS=["adjustedStart","adjustedEnd","adjustedStartNote","adjustedEndNote",
+  "adminRest","extraStart","extraEnd","adjustedStartFixed","adjustedEndFixed","origStatus"];
+// 新しい日オブジェクト(newShift)に、既存提出(oldShift)の管理者フィールドを引き継ぐ。
+// newShift側に既に値があるフィールドは上書きしない（スタッフの新しい入力を優先する）。
+// 追加出勤フラグ(adjustedStartFixed/adjustedEndFixed)を引き継いだ日は status="work" に戻す。
+// applyEditToSubs（app-admin.js）が「締」適用時に置いているのと同じ不変条件で、戻さないと
+// extraStart/extraEndだけが残り calcNetWorkMinutes/shiftBandInfo の status!=="work" 早期returnで
+// 追加出勤が0分に落ちる。newShift は破壊せず新しいオブジェクトを返す。
+function carryAdminShiftFields(newShift,oldShift){
+  const nw={...(newShift||{})};
+  if(!oldShift)return nw;
+  ADMIN_SHIFT_FIELDS.forEach(k=>{if(oldShift[k]!=null&&nw[k]==null)nw[k]=oldShift[k];});
+  if(nw.adjustedStartFixed||nw.adjustedEndFixed){
+    if(nw.status!=="work"&&nw.origStatus===undefined)nw.origStatus=nw.status;
+    nw.status="work";
+  }
+  return nw;
+}
 // ===== シフト作成タブ: セルコマンドの帯別（ランチ/ディナー）反映 =====
 // 帯境界は17:00固定（shiftBandInfo・ヘルプ判定・ポジション判定と同じ1020分）。候補時間から算出される
 // HEAT_LUNCH_END_MIN / HEAT_DINNER_START_MIN（app-admin.js）は「片側セルのみ入力時の時間補完」専用であり、
@@ -633,5 +656,5 @@ function isSpecialRedDate(dateStr,settings){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
+  module.exports={fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
 }

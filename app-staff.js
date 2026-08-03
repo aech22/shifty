@@ -159,12 +159,17 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     // 再提出時: 日付ごとに旧シフトと比較し、変更があれば changed:true を付与。
     // 管理者調整値(adjustedXxx)は旧シフトから引き継ぐ。
     const buildShift=d=>{
-      const nw={...(sd[d]||{status:"holiday"})};
+      let nw={...(sd[d]||{status:"holiday"})};
       delete nw.changed; // 過去のchangedは作り直す
       if(existSub){
         const old=existSub.shifts?.[d];
         if(old){
-          ["adjustedStart","adjustedEnd","adjustedStartNote","adjustedEndNote"].forEach(k=>{if(old[k]!=null&&nw[k]==null)nw[k]=old[k];});
+          // 管理者フィールド（休み希望・「締」の追加出勤・管理者調整値）はここで引き継ぐ。
+          // sd は端末にCookieが無いと初期値のままなので（別端末からの再提出・リセット後の再提出）、
+          // 引き継がないと管理者が作り込んだ休み希望・追加出勤が黙って消える（バグチェック#51）。
+          nw=carryAdminShiftFields(nw,old);
+          // changed は status 復元後の最終形で判定する（引き継ぎで元と同じ状態に戻った日を
+          // 「変更あり」と誤表示しないため）
           const changed=(old.status!==nw.status)||((old.start||"")!==(nw.start||""))||((old.end||"")!==(nw.end||""));
           if(changed)nw.changed=true;
         }
