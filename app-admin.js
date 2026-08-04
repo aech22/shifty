@@ -867,7 +867,14 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       const attendees={lunch:{kitchen:[],hall:[]},dinner:{kitchen:[],hall:[]}};
       realStaff.forEach(name=>{
         let s=timeToMin(getEffHHMM(name,date,"start"));let e=timeToMin(getEffHHMM(name,date,"end"));
-        if(s===null||e===null||s>=e)return;
+        // 片側セルのみ入力はヒートマップ(heatData:766-768)と同じ規則で補完する
+        // （出勤のみ→ランチ終わりまで、退勤のみ→ディナー始まりから出勤扱い）。
+        // 補完せず早期returnすると、ヒートマップでは出勤として数えているスタッフが
+        // ポジション判定でだけ不在扱いになり、実際には埋まっている枠を「不足」と誤報する（バグチェック#53）
+        if(s===null&&e===null)return;
+        if(e===null)e=HEAT_LUNCH_END_MIN;
+        if(s===null)s=HEAT_DINNER_START_MIN;
+        if(s>=e)return;
         if(isCountExcluded(name,date))return;
         const help=getHelpInfo(name,date);
         if(help){
@@ -912,6 +919,11 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   const staffSectionOn=(name,date,meal)=>{
     if(hallStaff.length===0)return"kitchen";
     let s=timeToMin(getEffHHMM(name,date,"start")),e=timeToMin(getEffHHMM(name,date,"end"));
+    // positionErrorsと同じ片側補完。補完せず下の bandSectionsOf に 0 を渡すと、
+    // 退勤セルのみのシフトが stM=0（＝ランチ帯から在席）と誤判定され、
+    // positionErrors 側の帯振り分けとセル赤ハイライトの帯がズレる（バグチェック#53）
+    if(e===null&&s!==null)e=HEAT_LUNCH_END_MIN;
+    if(s===null&&e!==null)s=HEAT_DINNER_START_MIN;
     // positionErrorsと同じヘルプ帯クリップ。他店舗ヘルプ帯は自店舗カウント外なので所属判定からも外す。
     // これを行わないと、ヘルプで自店舗カウント外の帯をこの赤ハイライト判定だけ自店舗所属扱いしてズレる。
     const help=getHelpInfo(name,date);
