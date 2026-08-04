@@ -2095,6 +2095,14 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   SC(2,C_WD_R,"曜日",aV,fNone,{top:T,bottom:M,left:M,right:T},{bold:true,size:14});
   SC(2,C_SHOP_R,shopName||"",aV,fNone,{top:T,bottom:M,left:T,right:T},{bold:true,size:14});
 
+  // 管理者調整（resolver経由）で表示すべき値があるか。スタッフが1日休みで提出した日でも、管理者が
+  // メモ・「締」・時刻を入れていればグリッド(getVal)・PDF(pdfResolve)は表示する。スタッフ提出の
+  // status だけで分岐すると Excel でだけ斜線に潰れて内容が落ちる（バグチェック#54）
+  const hasAdminDisp=(nm,ds)=>{
+    if(!resolver)return false;
+    return["start","end"].some(f=>{const v=resolver(nm,ds,f);return!!(v&&(v.time||v.note||v.fixed));});
+  };
+
   // ===== データ行 (1日=2行) =====
   dates.forEach((ds,di)=>{
     const d=pd(ds),dow=d.getDay(),day=d.getDate(),wd=WD[dow];
@@ -2138,7 +2146,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
         // 未提出: 空白
         SC(rT,ci,null,aH,fill,{top:M,bottom:H,left:T,right:T});
         SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
-      } else if(isWork){
+      } else if(isWork||hasAdminDisp(nm,ds)){
         const fmtT=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return m===0?String(h):String(h+m/60);};
         // resolver がある場合は調整済み値を使用
         const rv=resolver?{st:resolver(nm,ds,"start"),en:resolver(nm,ds,"end")}:null;
