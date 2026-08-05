@@ -512,7 +512,15 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
   const applyCellEdit=(subId,ds,newStatus,newStart,newEnd)=>{
     const sub=submitted.find(s=>s.id===subId);if(!sub)return;
     // 既存フィールドを保持してマージ（adjustedStart/End等の管理者調整値・changedフラグを消さない）
-    const shifts={...(sub.shifts||{}),[ds]:{...((sub.shifts||{})[ds]||{}),status:newStatus,start:newStart,end:newEnd}};
+    const next={...((sub.shifts||{})[ds]||{}),status:newStatus};
+    // 休みにした日はスタッフ提出の start/end を残さない（StaffViewの日付カード:336・一括反映:138と同じ扱い）。
+    // 残すと status は holiday なのに getStoredTime が時刻を返し、シフト作成グリッド・PDF・Excel・
+    // ヒートマップだけがその日を出勤として表示・カウントする一方、勤務時間・出勤日数は0のままになる
+    // （＝画面内で矛盾する。バグチェック#55）。CellEditPanelは休み側でも選択中の時刻をそのまま渡してくる。
+    // 管理者フィールド（adjustedXxx・adminRest・extraStart等）はここでは触らない（#51の引き継ぎ対象）。
+    if(newStatus==="work"){next.start=newStart;next.end=newEnd;}
+    else{delete next.start;delete next.end;}
+    const shifts={...(sub.shifts||{}),[ds]:next};
     onEditSub({...sub,shifts});
     setEditTarget(null);
   };
