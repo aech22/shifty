@@ -1918,7 +1918,11 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
                     <div style={{fontSize:15,fontWeight:700,color:"var(--c-text)",marginBottom:3}}>{p.label}</div>
                     <div style={{fontSize:13,color:"var(--c-text3)"}}>{p.startDate?.replace(/-/g,"/")} 〜 {p.endDate?.replace(/-/g,"/")}（{dates.length}日間）</div>
                     {p.deadlineDate&&<div style={{fontSize:12,marginTop:3,color:ip?"#FF8C94":"#9CA3AF"}}>締切：{p.deadlineDate.replace(/-/g,"/")} {ip?"（済み）":""}</div>}
-                    <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>提出：{subs.filter(s=>s.periodId===p.id).length}件</div>
+                    {/* source:"grid" は管理者がシフト作成タブのセルに直接入力して生まれたsubで、スタッフの提出ではない
+                        （app-admin.js:554/:563 applyEditToSubs）。除外しないと、このカードをタップして開くSmModalの
+                        「提出済み N名」（app-staff.js:505）や提出一覧タブ（:2924）と件数が食い違う（バグチェック#56）。
+                        Excel出力（expXl:1969）は管理者入力も出力対象なので、そちらは除外しないままでよい。 */}
+                    <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>提出：{subs.filter(s=>s.periodId===p.id&&s.source!=="grid").length}件</div>
                   </div>
                   <div style={{display:"flex",gap:5,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
                     <button onClick={e=>{e.stopPropagation();setEid(p.id);}} style={{padding:"5px 9px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text2)",fontSize:11,cursor:"pointer"}}>編集</button>
