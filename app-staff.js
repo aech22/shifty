@@ -519,7 +519,19 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
     // （＝画面内で矛盾する。バグチェック#55）。CellEditPanelは休み側でも選択中の時刻をそのまま渡してくる。
     // 管理者フィールド（adjustedXxx・adminRest・extraStart等）はここでは触らない（#51の引き継ぎ対象）。
     if(newStatus==="work"){next.start=newStart;next.end=newEnd;}
-    else{delete next.start;delete next.end;}
+    else{
+      delete next.start;delete next.end;
+      // 管理者が入れた実効出退勤（グリッドの調整値・「締」の追加出勤）も同じ理由で残さない。
+      // 残すと status は holiday なのに getStoredTime（app-admin.js:514）が調整値を返し、
+      // グリッド・PDF・Excel・ヒートマップ・休みカウントだけがその日を出勤として扱う一方、
+      // 勤務時間・出勤日数は0のままになる（#55と同じ矛盾。バグチェック#57）。
+      // 追加出勤フラグを残したまま status を holiday にするのは、carryAdminShiftFields
+      // （app-utils.js:186）が宣言している「フラグがある日は status="work"」の不変条件にも反する。
+      // メモ（adjustedXxxNote）と休み希望（adminRest）は休みの日でも表示・意味が成立するため残す。
+      delete next.adjustedStart;delete next.adjustedEnd;
+      delete next.adjustedStartFixed;delete next.adjustedEndFixed;
+      delete next.extraStart;delete next.extraEnd;
+    }
     const shifts={...(sub.shifts||{}),[ds]:next};
     onEditSub({...sub,shifts});
     setEditTarget(null);
