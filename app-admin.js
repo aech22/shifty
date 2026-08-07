@@ -1832,7 +1832,13 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
     return(
       <div>
         <button onClick={()=>setViewPeriodId(null)} style={{marginBottom:16,padding:"8px 16px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:8,color:"var(--c-text)",fontSize:13,cursor:"pointer"}}>← 期間一覧に戻る</button>
-        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} plan={plan} staffAliases={settings.staffAliases||{}} onDeleteSub={subId=>{const a=subs.filter(s=>s.id!==subId);saveSubs&&saveSubs(a,subId);tt("提出を削除しました");}} onEditSub={sub=>{const updated={...sub,updatedAt:new Date().toISOString(),isUpdated:true};const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=updated;saveSubs&&saveSubs(a);}tt("✓ 更新しました");}}/>
+        {/* 管理者がこのビューでセルを編集しても isUpdated/updatedAt は立てない。これらは「スタッフ本人が
+            再提出した」ことを表す提出メタで、subHasRealUpdate（提出一覧の「更新: …」バッジ・締切日ゲート付き）と
+            subLastActionTime（提出一覧の並べ替え）が読む。管理者の編集時刻でこれを立てると、締切を守った
+            スタッフが「締切後に変更あり」と表示される（バグチェック#59）。管理者の他のセル編集経路
+            （シフト作成タブのapplyEditToSubs・提出一覧詳細モーダルのsaveAdj:2930）も同じ理由で立てていない。
+            既にスタッフの再提出で立っている値はそのまま引き継ぐ（消すと本物の再提出記録が消えるため）。 */}
+        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} plan={plan} staffAliases={settings.staffAliases||{}} onDeleteSub={subId=>{const a=subs.filter(s=>s.id!==subId);saveSubs&&saveSubs(a,subId);tt("提出を削除しました");}} onEditSub={sub=>{const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=sub;saveSubs&&saveSubs(a);}tt("✓ 更新しました");}}/>
       </div>
     );
   }
