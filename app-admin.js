@@ -1190,6 +1190,22 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     });
   };
   const lastTapRef=useRef({key:null,times:[]});
+  // トリプルタップの二重適用ガード: タッチ端末では3回目のtouchendでトグルした直後に、ブラウザが合成した
+  // clickが detail===3 で同じセルに届き、もう一度トグルして打ち消してしまう（Chromium実測でtouchendの
+  // 1ms後に到達）。touchend由来の適用を記録し、その直後に来た合成clickだけを無視する。
+  // タッチ側は抑止しないので、連続でトグルし直す操作は従来どおり効く。
+  const tapToggledRef=useRef({key:null,t:0});
+  const onCellTripleClick=(name,date)=>{
+    const k=`${name}|${date}`;const r=tapToggledRef.current;
+    if(r.key===k&&Date.now()-r.t<700)return; // touchend で適用済みの合成click
+    toggleChanged(name,date);
+  };
+  const onCellTripleTap=(name,date)=>{
+    const k=`${name}|${date}`;const now=Date.now();const prev=lastTapRef.current;
+    const times=(prev.key===k&&prev.times.length>0&&now-prev.times[prev.times.length-1]<350)?[...prev.times,now]:[now];
+    if(times.length>=3){toggleChanged(name,date);tapToggledRef.current={key:k,t:now};lastTapRef.current={key:null,times:[]};}
+    else{lastTapRef.current={key:k,times};}
+  };
 
   // グリッドの実際の行高・thead高を測定してサイドパネルと同期
   useEffect(()=>{
@@ -1640,8 +1656,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"start",e.target.value)}
-                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(e.detail===3)toggleChanged(name,date);}}
-                            onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();const prev=lastTapRef.current;const times=(prev.key===k&&prev.times.length>0&&now-prev.times[prev.times.length-1]<350)?[...prev.times,now]:[now];if(times.length>=3){toggleChanged(name,date);lastTapRef.current={key:null,times:[]};}else{lastTapRef.current={key:k,times};}}}
+                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(e.detail===3)onCellTripleClick(name,date);}}
+                            onTouchEnd={()=>{if(!isPremium)return;onCellTripleTap(name,date);}}
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|start`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);setFocusKey(null);}}
                             // 日本語IME変換確定のEnter(isComposing/keyCode229)はセル確定・フォーカス移動として扱わない。
@@ -1659,8 +1675,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"end",e.target.value)}
-                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(e.detail===3)toggleChanged(name,date);}}
-                            onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();const prev=lastTapRef.current;const times=(prev.key===k&&prev.times.length>0&&now-prev.times[prev.times.length-1]<350)?[...prev.times,now]:[now];if(times.length>=3){toggleChanged(name,date);lastTapRef.current={key:null,times:[]};}else{lastTapRef.current={key:k,times};}}}
+                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(e.detail===3)onCellTripleClick(name,date);}}
+                            onTouchEnd={()=>{if(!isPremium)return;onCellTripleTap(name,date);}}
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
