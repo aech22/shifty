@@ -3066,6 +3066,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
   const[expanded,setExpanded]=useState({});   // {shopId:true}
   const[shopMeta,setShopMeta]=useState({});   // {shopId:{abbrs:[],staff:[],workplaces:{},loaded:true}}
   const[abbrInput,setAbbrInput]=useState({}); // {shopId:"入力中の略称"}
+  const[allAbbrs,setAllAbbrs]=useState({});   // {shopId:[略称]} 重複チェック専用（未展開店舗ぶんも先読み）
   const listShops=allLinkedShops.length>0?allLinkedShops:shops;
 
   const loadShopMeta=(sid)=>{
@@ -3096,10 +3097,26 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
     const stateKey=field==="shopAbbrs"?"abbrs":"workplaces";
     if(sid===shopId){onSave({...settings,[field]:value});setShopMeta(m=>m[sid]?{...m,[sid]:{...m[sid],[stateKey]:value}}:m);return;}
     setShopMeta(m=>({...m,[sid]:{...(m[sid]||{abbrs:[],staff:[],workplaces:{},loaded:true}),[stateKey]:value}}));
+    if(field==="shopAbbrs")setAllAbbrs(a=>({...a,[sid]:value}));
     if(!firebaseDB)return;
     fbUpd(`shops/${sid}/settings`,{[field]:value})
       .catch(()=>{tt("✕ 保存できませんでした（この店舗の管理者権限がありません）");loadShopMeta(sid);});
   };
+  // 略称の重複チェックは全連携店舗を見る必要があるが、shopMeta はカードを展開した店舗しか読まない。
+  // 未展開店舗ぶんを先読みしておかないと衝突を検出できず、同じ略称が2店舗に登録される。そうなると
+  // シフト作成タブの abbrToShop（先勝ちマップ）がヘルプ先を別店舗に解決し、レジェンドの店舗名が入れ替わる。
+  useEffect(()=>{
+    if(!firebaseDB)return;
+    let cancelled=false;
+    Promise.all(listShops.filter(s=>s&&s.id).map(s=>
+      firebaseDB.ref(`shops/${s.id}/settings/shopAbbrs`).once("value")
+        .then(sn=>[s.id,Object.values(sn.val()||{}).filter(v=>typeof v==="string")])
+        .catch(()=>[s.id,[]])
+    )).then(entries=>{if(!cancelled)setAllAbbrs(Object.fromEntries(entries));});
+    return()=>{cancelled=true;};
+  },[listShops]);
+  // 略称の参照元: 表示中・展開済み店舗はライブなmeta、未展開店舗は先読みした allAbbrs
+  const abbrsOf=(sid)=>{const m=metaFor(sid);return m?(m.abbrs||[]):(allAbbrs[sid]||[]);};
   const addAbbr=(sid)=>{
     const v=(abbrInput[sid]||"").trim();
     if(!v)return;
@@ -3108,7 +3125,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
     if(CELL_COMMANDS.some(c=>c.key.toLowerCase()===v.toLowerCase())||isRestCommand(v)||/^[\d.:]+$/.test(v)){tt("✕ h・k・x・y・休・締・数字のみの略称は使用できません");return;}
     const cur=(metaFor(sid)||{}).abbrs||[];
     if(cur.includes(v)){tt("✕ 既に登録済みの略称です");return;}
-    const conflict=listShops.find(s=>s.id!==sid&&((metaFor(s.id)||{}).abbrs||[]).includes(v));
+    const conflict=listShops.find(s=>s&&s.id!==sid&&abbrsOf(s.id).includes(v));
     if(conflict){tt(`✕ 「${v}」は「${conflict.name}」で使用中です`);return;}
     saveMetaField(sid,"shopAbbrs",[...cur,v]);
     setAbbrInput(i=>({...i,[sid]:""}));
