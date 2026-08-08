@@ -980,9 +980,12 @@ function App(){
   // 店舗コードで企業に連携（SetTabの連携店舗一覧の追加ボタン）
   const linkStoreToCompany=async(rawCode)=>{
     if(!companyInfo) return {error:"企業アカウントがありません"};
-    const {shopId}=parseShopCode(rawCode);
+    // 管理コード（shopId.adminKey）の鍵部分は捨てずにCFへ渡す。CF側は shopId だけでは
+    // ownersに登録しない（linkStoreToCompany）。貼り付けが旧形式の店舗コードでも、この端末が
+    // 既にその店舗の管理キーを持っていれば流用する。
+    const {shopId,adminKey}=parseShopCode(rawCode);
     try{
-      const {name}=await _callCF("linkStoreToCompany",{companyId:companyInfo.companyId,shopId});
+      const {name}=await _callCF("linkStoreToCompany",{companyId:companyInfo.companyId,shopId,adminKey:adminKey||adminKeys[shopId]||""});
       await _refreshCompanyLinkedShops();
       return {name};
     }catch(e){ return {error:/not-found|正しく/.test((e&&e.message)||"")?"店舗コードが正しくありません":((e&&e.message)||"追加に失敗しました")}; }

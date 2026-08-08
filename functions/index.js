@@ -25,6 +25,12 @@ function verifyPassword(plain, stored) {
 }
 // 企業ログイン用の安定uid（カスタムトークン）
 function companyUid(companyId) { return `company_${companyId}`; }
+// 定数時間の文字列比較（adminKey照合用）。長さが違う・空文字は無条件で不一致にする
+function safeEqualStr(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  if (!a.length || a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 // 8桁の企業コード生成（衝突時リトライは呼び出し側）
 function genCompanyCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -731,11 +737,29 @@ exports.linkStoreToCompany = functions
   .https.onCall(async (data, context) => {
     const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
     const shopId = (data && typeof data.shopId === "string") ? data.shopId.trim() : "";
+    const adminKey = (data && typeof data.adminKey === "string") ? data.adminKey.trim() : "";
     if (!companyId || !shopId) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗コードが無効です");
-    await assertCompanyMember(context, companyId);
+    const callerUid = await assertCompanyMember(context, companyId);
     const shopSnap = await db.ref(`global/shops/${shopId}`).once("value");
     const shop = shopSnap.val();
     if (!shop || shop.id !== shopId) throw new functions.https.HttpsError("not-found", "店舗コードが正しくありません");
+    // 店舗コード(shopId)はスタッフURLのtokens逆引きから誰でも辿れるため、shopIdだけを根拠に
+    // registerCompanyAsOwner を呼んではいけない（Admin SDKがadminKey照合をバイパスして
+    // owners に登録するため、オーナー権限分離＝管理キー方式がそのまま無効化される）。
+    // createCompany 側は同じ理由で owners[uid] を確認している。ここでも同等の証明を要求する。
+    const ownersSnap = await db.ref(`shops/${shopId}/owners`).once("value");
+    const owners = ownersSnap.val();
+    let allowed = !owners;                                  // 未claim店舗（createCompanyと同じ扱い）
+    if (!allowed && owners[callerUid]) allowed = true;       // 呼び出し元が既にこの店舗のオーナー
+    if (!allowed) {                                          // 企業の作成者本人がオーナー（企業uidで呼んだ場合）
+      const ownerUid = (await db.ref(`companies/${companyId}/pub/ownerUid`).once("value")).val();
+      if (ownerUid && owners[ownerUid]) allowed = true;
+    }
+    if (!allowed && adminKey) {                              // 管理コード（shopId.adminKey）を提示した場合
+      const stored = (await db.ref(`shops/${shopId}/private/adminKey`).once("value")).val();
+      if (safeEqualStr(adminKey, stored)) allowed = true;
+    }
+    if (!allowed) throw new functions.https.HttpsError("permission-denied", "この店舗の管理コード（店舗コード.管理キー）を入力してください");
     await db.ref(`companies/${companyId}/pub/shops/${shopId}`).set(true);
     await registerCompanyAsOwner(companyId, shopId);
     return { ok: true, name: shop.name || "" };
