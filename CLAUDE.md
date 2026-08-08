@@ -555,77 +555,85 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-08-07 自動実行 #60）
+## Shifty バグチェックレポート（2026-08-08 自動実行 #61）
 
 ### 修正済み
 
-- **[🟡] スマホ・タブレットでシフト作成グリッドのセルをトリプルタップしても「変更マーク」が付かなかった（タッチ端末では機能そのものが無効だった）**（app-admin.js:1179 `toggleChanged`／:1643-1644・:1662-1663／コミット `997683a`）
-  **同じ操作が2つのハンドラを起動し、トグルが自分を打ち消していた**。セルの `<input>` には `onClick`（`e.detail===3` でトリプルクリック検出）と `onTouchEnd`（3タップを自前でカウント）の両方が付いており、どちらも同じ `toggleChanged` を呼ぶ。`toggleChanged` は `if(sd.changed===true)delete sd.changed;else sd.changed=true;` の純粋なトグル（:1187）なので、2回呼ばれると**元に戻る**。
-  **実測（playwright-core + Chromium 1228 をタッチ有効・モバイルビューポートで起動し、`page.touchscreen.tap()` を3回）**: イベント列は `click detail=1` → `click detail=2` → `TOUCHEND_FIRE` → `click detail=3` → `CLICK_FIRE` で、**`toggleChanged` 呼び出し回数＝2**。合成clickが到達するのは touchend の **1ms後**（タイムスタンプ実測）だった。修正後は同じ操作で **①トリプルタップ1回目 → `changed=true`・呼び出し1回 ②続けてトリプルタップ → `changed=false`・呼び出し1回（打ち消しではなく本来のトグル解除）③PCのトリプルクリック → `changed=true`・呼び出し1回** を確認した。
-  **壊れ方**: `changed` は「この日のシフトを直した」という管理者向けの緑マークで、Firebaseに永続化される（Premium機能）。タッチ端末ではマークを**付けることも外すこともできない**が、画面上は何も起きないだけなので「反応が悪い」「タップの仕方が悪い」と受け取られ、機能が壊れているとは気付きにくい。Shiftyの管理者はスマホでグリッドを触ることが多く、**この機能はタッチ端末では最初から一度も動いていなかった**可能性が高い。
-  **修正方針**: `onTouchEnd` 側でトグルした時刻とセルキーを `tapToggledRef` に記録し、**その直後（700ms以内・同一セル）に来た合成clickだけを無視する**。時間窓による一律のガード（`restAppliedRef` 方式）にしなかったのは、タッチ側を抑止すると「続けてトグルし直す」操作まで殺してしまうため。あわせて2箇所に重複していたタップ計数ロジックを `onCellTripleTap` / `onCellTripleClick` に括り出した（片方だけ直る事故を防ぐため）。
+- **[🔴] 店舗コード（shopId）を知っているだけで、他人の店舗を自分の企業アカウントに連携してオーナー権限を奪えた**（functions/index.js:729 `linkStoreToCompany`／コミット `7d21104`）
+  **2026-07-07 のオーナー権限分離（管理キー方式）が、Cloud Functions の1エンドポイントだけで完全にバイパスできる状態だった**。`linkStoreToCompany` は呼び出し元が「その企業アカウントのメンバーであること」（`assertCompanyMember`）と「店舗が実在すること」（`global/shops/{shopId}` の存在）しか確認せず、**その店舗に対する権限を一切検証しないまま `registerCompanyAsOwner` を呼んでいた**。`registerCompanyAsOwner`（:46）は関数自身のコメントが「Admin SDKでadminKey照合をバイパス」と明記しているとおり、店舗の実 adminKey を読み出して `shops/{shopId}/owners/company_{companyId}` に書き込む。つまり adminKey を知らないまま owners 登録が完了する。
+  **成立条件（すべて実装・ルールから確認済み）**: ①`database.rules.json` の `tokens/$token` は `".read": "auth != null"`、`global/shops/$shopId` も `".read": "auth != null"` で、**スタッフURLを1本持っていれば shopId は誰でも辿れる**（そもそもスタッフ端末の Cookie `CK_SHOP` と localStorage に平文で入っている）②`createCompany` は「匿名でない Auth」＝自分の Google/メールアカウントがあれば誰でも実行でき、作った企業の `ownerUid` は自分になる ③よってその企業IDで `linkStoreToCompany({companyId, shopId})` を呼べば `assertCompanyMember` は通る ④`companyLogin` で `company_{companyId}` のカスタムトークンを取得してサインインすると、**被害店舗の `settings`/`periods`/`staff`/`templates`/`tokens`/`global/shops` すべてに書き込めるオーナーになる**。さらに Cloud Functions の `verifyShopOwner`（Stripe決済系）も owners を見ているため、**`createPortalSession` 経由で被害店舗の Stripe カスタマーポータル（サブスク解約・請求情報）にも到達できた**。
+  **見つけ方**: `createCompany` は同じ `registerCompanyAsOwner` を呼ぶ直前に `if (owners && !owners[uid]) continue;`（:672）で呼び出し元のオーナー権限を確認している。**同じ危険な関数を呼ぶ2つの入口のうち片方だけにガードがある**という非対称がそのまま欠陥だった。加えて :728 のコメントが「shopCodeは "shopId" または "shopId.adminKey"」と書いているのに、関数は `data.adminKey` を受け取るコードを一行も持っていない。**クライアント（app-main.js:983）は `parseShopCode` で adminKey をきちんと分離しておきながら、CFへ渡さず捨てていた**——設計意図は最初から「管理コードで証明させる」だったが、実装が両側で落ちていた。
+  **修正方針**: `linkStoreToCompany` に店舗権限の証明を要求する。①未claim店舗（`createCompany` と同じ扱い）②呼び出し元uidが既にその店舗のオーナー ③企業の作成者本人（`companies/{id}/pub/ownerUid`）がオーナー＝企業uidで呼んでも自分の店舗なら鍵不要 ④提示された adminKey が `shops/{shopId}/private/adminKey` と一致（`crypto.timingSafeEqual`・長さ不一致と空文字は無条件で不一致）——このいずれかでのみ連携を許可し、それ以外は `permission-denied`。クライアントは分離済みの adminKey を渡し、旧形式の店舗コードを貼られた場合はこの端末が保持する管理キー（`ots_adminKeys_v1`）にフォールバックする。③を残したのは、正規ユーザーが自分の店舗を追加する最頻ケースで鍵の再入力を強いないため（＝非回帰）。
 
 ### 今回の対象と見つけ方
 
-前回（#59）以降のコード差分は #59 の修正（`1589071` app-admin.js:1835）と CLAUDE.md 同期のみ。**#59 の総括が名指しした次回の起点をそのまま採って当たった**。
+前回（#60）以降のコード差分は #60 の修正（`997683a`）と CLAUDE.md 同期のみで、**実質コード変更ゼロの回**。#60 の総括が指定した起点2つを順に潰してから、未探索の領域へ移った。
 
-#59 は「未使用の起点コメント」の3本目として `restAppliedRef` の二重適用ガード（app-admin.js:620-622「Enterキー確定はhandleBlurを直接呼んだ後にネイティブblurも発火する」）を挙げ、**「同じイベントが2回発火する」はトグル系全般に効く形なので `toggleChanged`（:1179・トリプルクリック）が同じ二重発火に晒されていないかを次回の起点にできる**と書いていた。この指示どおり `toggleChanged` の呼び出し元を数えたところ、**1つの `<input>` に `onClick` と `onTouchEnd` の2本が並んで付いている**ことがすぐ見えた。`restAppliedRef` が守っているのは `handleBlur` だけで、`toggleChanged` は無防備だった。
-
-**推測で終わらせず実測に落とした**のが今回の要点。「タッチ端末では合成clickの `detail` が3になるのか」はブラウザ依存で机上では確定できない（#59 の🟡がまさにこれで未修正になっている）。そこで `~/Library/Caches/ms-playwright` にある Chromium 1228 を `playwright-core` から `executablePath` 指定で直接起動し、`hasTouch:true` の実コンテキストで `touchscreen.tap()` を3回撃つ再現スクリプトを書いて、**イベント列とトグル回数を実際に観測した**。修正後は同じスクリプトの検証版（実装をそのまま移植したもの）で3ケースを通した。
+- **起点1（「PCでは動くがタッチ端末では動かない」軸）は検証の結果シロだった**。#60 が「未確認」と書いた `onPointerDown` のドラッグ並べ替えは、app-admin.js:2360・2365 の両方に既に `touchAction:"none"` が入っており、`setPointerCapture`（:2307）・`onPointerCancel`（:2337）も揃っている。`onMouseDown` の候補リスト（app-staff.js:287）も `e.preventDefault()` 済みで、外側クリック検出（:229-230 の document `mousedown`）は `nameWrapRef.contains(e.target)` で判定しているため合成mousedownでも誤発火しない。**この軸は今回で閉じてよい**。
+- **起点2（実ブラウザ再現で `pendingSubWritesRef` の🟡を取りに行く）には着手していない**。起点1がシロと分かった時点で、より重い欠陥が別領域に見つかったため、そちらを優先した。この🟡は継続扱いのまま残す。
+- **実際に当たったのは「Cloud Functions の認可（authorization）」という、このループが一度も正面から見ていなかった領域**。これまで60回、探索はほぼ app-*.js のクライアントロジックに集中していた。今回は RULES.md 準拠スキャンで functions/index.js を通ったついでに全12エンドポイントの認可チェックを1つずつ読み下し、**「危険な副作用を持つ内部関数の呼び出し元を全部数え、ガードの有無を比較する」**という #60 と同じ手（`toggleChanged` の呼び出し元を数えた手）をサーバ側に適用した。
 
 ### 検証したこと
 
-- **二重発火の実測（修正前）**: Chromium 1228・`hasTouch:true`・390×844 で3連タップ → `toggleChanged` **2回**（`TOUCHEND_FIRE` の1ms後に `CLICK_FIRE`）
-- **修正後の実測（3ケース）**: ①タッチのトリプルタップで1回だけ適用（`changed=true`）②続けてもう一度トリプルタップすると本来どおり解除される（`changed=false`・呼び出し1回。ガードがタッチ側を殺していない）③マウスの `click({clickCount:3})` で従来どおり1回適用（PCの挙動は非回帰）
-- **未検証（環境制約・正直に記載）**: **WebKit（iOS Safari）では実測できていない**。キャッシュ済みの webkit-2311 と `playwright-core` が要求する webkit-2342 が不一致で起動しなかった。iOS Safari も合成clickを出す点は同じだが、`detail` が3まで数えられるかは**未確認**。ただし修正は「touchendで適用済みなら直後の合成clickを捨てる」形なので、**iOS側で `detail` が3にならない（＝合成clickが元から発火しない）場合でも挙動は変わらない**（ガードが空振りするだけ）
-- **呼び出し元の全数確認**: `toggleChanged` の呼び出しは定義(:1179)＋新ハンドラ2本(:1201・:1206)のみ。JSX側の4箇所（start行・end行 × click・touchEnd）がすべて新ハンドラ経由に揃っていることを grep で確認
-- **他に同型の二重発火がないかの棚卸し**: `if(x===true)delete` 形のトグルは `toggleChanged` の1件のみ（他0件）。`onMouseDown`+`onClick` の併用は app-staff.js:287（`e.preventDefault()` 済み・候補リストのため正しい）、`onPointerDown/Move/Up` は app-admin.js:2360・2365 のドラッグ並べ替えでトグルではない。`onKeyDown`(Enter)→`handleBlur`＋ネイティブblur の2箇所は `restAppliedRef` で既にガード済み
-- **`npm test` 155件パス**（増減なし）、**`npx eslint app-*.js` 0 errors 98 warnings**（いずれも修正前と同数）
+- **認可分岐の全ケース実測（9ケース・全PASS）**: 修正後の判定ロジックをそのまま Node に移植し、攻撃4ケース（claim済み店舗にshopIdだけ／誤ったadminKey／長さ違いのadminKey／空鍵と空storedKeyの一致偽装）がすべて `allowed=false`、正規5ケース（正しい管理コード／企業作成者がオーナーで鍵なし／呼び出し元uidがオーナー／未claim店舗／企業ログインuidの再連携）がすべて `allowed=true` になることを確認
+- **`owners` が null のときの TypeError 不在**: `let allowed=!owners;` を先に評価し、`if(!allowed&&owners[callerUid])` は短絡するため未claim店舗でも例外にならない（移植版でも同順序で確認）
+- **同型の欠陥がほかにないかの全数確認**: `registerCompanyAsOwner` の呼び出し元は :680（`createCompany`・`owners[uid]` 確認済み）と :764（今回修正）の2箇所のみ。CF から `shops/*/owners/` へ書くのは :60（登録）と :777（`unlinkStoreFromCompany` の削除）だけで、後者は `assertCompanyMember` 済みかつ**自分の企業uidしか外せない**ため悪用にならない。`changeCompanyPassword`・`renameCompany`・`unlinkStoreFromCompany` はいずれも `assertCompanyMember`、`createCheckoutSession`・`createPortalSession` は `verifyShopOwner`（IDトークン検証＋owners照合）、`sendEmailOtp`・`verifyEmailOtp` は `context.auth` 必須で、**認可の抜けは他になし**
+- **`node -c functions/index.js` 構文OK**、`npm test` **155件パス（増減なし）**、`npx eslint app-*.js` **0 errors 98 warnings（修正前と同数）**
+- **未検証（環境制約・正直に記載）**: **本番・devいずれの Firebase にもデプロイしておらず、実エンドポイントでの攻撃再現・遮断確認はしていない**。dev（thirty-dev-b6958）は Spark プランで Functions をデプロイできず、本番デプロイはループの禁止事項（ユーザー確認なしの本番変更）に当たるため実施していない。検証はロジック移植による全ケース実測にとどまる（データ保存上限①・④と同じ検証水準）
 
 ### スキャン結果（RULES.md 準拠・非回帰）
 
 - `DEV_MODE`（app-core.js:12・式のまま）正常。`DEV_PLAN_OVERRIDE`（:108）正常
-- `subs` の `set()` 全体上書き **0件**／`accounts` 全件読み **0件**／`global/shops` 全件読み **0件**／`global/templates` 参照 **0件**
+- `subs` の `set()` 全体上書き **0件**／`accounts` 全件読み **0件**／`global/shops` 全件読み **0件**
 - `database.rules.json` の `".read": true` **0件**
 - Cloud Functions: secrets 5箇所抜け漏れなし（STRIPE×3・SMTP×2）・`.delete()` 誤用 **0件**
-- index.html の読み込み順 utils→core→staff→admin→main 維持・SRI 11本維持・今回の差分に `fontSize<16` の新規混入 **0件**（変更はハンドラのJSX propsのみ）
+- index.html の読み込み順 utils→core→staff→admin→main 維持・SRI 11本維持・今回の差分に `fontSize<16` の新規混入 **0件**
+- `PLAN_LIMITS` は free/pro/premium の3つとも定義済みで、`PLAN_LIMITS[plan]?.periods??1` 等のフォールバックが premium を誤って Free 相当に落とす経路は**なし**（今回新規に確認）
 
 ### 要確認（未修正）
 
-- **🟡（次リリースで必須）index.html のキャッシュ版数を必ずバンプすること**。本番（origin/main）は `20260805-78e8888`、develop は `20260802-94ffc47`。**現時点の本番未反映は `origin/main..develop` の12コミット（うち fix 6件＝#55・#56・#57・#58・#59・#60）**。版数を上げ忘れると app-staff.js・app-admin.js の実挙動が変わっているためブラウザキャッシュで旧ファイルが使われ、6件とも直っていない状態のまま配信される
-- **🟡（#59からの継続・再現手段がなく未修正）スタッフの提出書き込み（`onSub`）だけが、リスナーの巻き戻し保護と差分書き込みの両方を通っていない**（app-main.js:1461-1472）。`pendingSubWritesRef` は app-main.js:52-60 と :399-402 のコメントが「これがないと…後続の編集がその欠落状態のsubを丸ごと書き直すことで永久にデータが消える」と明記している保護機構だが、登録しているのは `saveSubs`（:1146）1箇所のみ。`onSub` は ①`pendingSubWritesRef` に登録しない ②`subsMapRef.current` を更新しない ③`fbSet` で sub全体を set する（`diffSubForFlatWrite` を通さない）④`setSubs(a)` が関数型更新でなく古いクロージャの配列を基準にする、の4点で `saveSubs` と非対称。Firebase の楽観的ローカル反映があるため成立条件を机上で確定できず、Node では再現できない。**着手するなら実機（2端末・提出状況一覧での連続セル編集）での再現が先**
+- **🔴（デプロイ待ち・本番はまだ脆弱）今回の修正は Cloud Functions のデプロイまで効かない**。`functions` のデプロイ（本番プロジェクト ontheshift）を実行するまで、本番の `linkStoreToCompany` は**無防備なまま動き続ける**。ループは本番Firebaseをユーザー確認なしに変更できないため未実施（デプロイコマンドはフックでもブロックされる）。**クライアント側（app-main.js の adminKey 送信）を先に出しても意味がなく、遮断はCF側でのみ成立する**ので、この1件はCFデプロイを最優先で行うこと。なお新CFは旧クライアント（adminKeyを送らない）からの呼び出しでも「企業作成者がオーナーの店舗」は従来どおり連携できるため、**CFを先にデプロイしても正規利用は壊れない**（デプロイ順序の制約はない）
+- **🟡（次リリースで必須）index.html のキャッシュ版数を必ずバンプすること**。本番（origin/main）は `20260805-78e8888`、develop は `20260802-94ffc47`。**現時点の本番未反映は `origin/main..develop` の14コミット（うち fix 7件＝#55・#56・#57・#58・#59・#60・#61）**。版数を上げ忘れると app-staff.js・app-admin.js・app-main.js の実挙動が変わっているためブラウザキャッシュで旧ファイルが使われる
+- **🟡（#59からの継続・再現手段がなく未修正）スタッフの提出書き込み（`onSub`）だけが、リスナーの巻き戻し保護と差分書き込みの両方を通っていない**（app-main.js:1461-1472）。`pendingSubWritesRef` は app-main.js:52-60 と :399-402 のコメントが「これがないと…後続の編集がその欠落状態のsubを丸ごと書き直すことで永久にデータが消える」と明記している保護機構だが、登録しているのは `saveSubs`（:1146）1箇所のみ。`onSub` は ①`pendingSubWritesRef` に登録しない ②`subsMapRef.current` を更新しない ③`fbSet` で sub全体を set する（`diffSubForFlatWrite` を通さない）④`setSubs(a)` が関数型更新でなく古いクロージャの配列を基準にする、の4点で `saveSubs` と非対称。**#60 が提案した「実ブラウザを playwright-core から直接叩いて2コンテキストで再現する」手は今回未着手**
 - **🟡（#57からの継続・仕様判断が要る）スタッフが再提出でその日を「休み」にすると、管理者の調整値が残ったまま status だけ holiday になる**（app-staff.js:161 `buildShift` → app-utils.js:190 `carryAdminShiftFields`）。`adjustedStart`/`adjustedEnd` にも「締」と同じ status 復元を広げれば「管理者の調整が勝つ」、逆に落とせば「スタッフの新しい休み申告が勝つ」。**どちらが正しいかは仕様判断**
-- **🟢（新規）トリプルタップの計数キーが出勤セルと退勤セルを区別しない**（app-admin.js:1204 `onCellTripleTap`）。キーが `name|date` のため、同じスタッフ・同じ日の出勤セルを2回・退勤セルを1回と350ms以内に続けてタップすると、意図せず変更マークがトグルされる。`changed` フラグ自体が日単位（フィールド別ではない）なので設計としては筋が通っており、今回の二重発火とは別問題。実害が出るのは「別のセルへ素早く移動しながらタップした」ときのみで、トグルは見えるし取り消せる
-- **🟢（#59からの継続）管理者が提出状況ビューでセルを編集すると、スタッフ提出値（`start`/`end`）そのものが書き換わる**（app-staff.js:530 `applyCellEdit`）。管理者の他の2経路は `adjustedStart`/`adjustedEnd` に書いて提出値を保護しているのに対し、SmModal はスタッフ本人の編集画面と共用のため生の提出値を直接更新する。「提出値に戻す」（`saveAdj` の「提出値」選択）では復元できない。SmModal の二重用途に踏み込む設計判断が要る
-- **🟢（#58からの継続）Excel出力の analytics が管理者のグリッド入力を提出として数える**（app-admin.js:1971）。同じ「提出件数」を答える他の4箇所はすべて `source!=="grid"` で除外している。PostHog の集計値のみで画面表示には出ないため実害はない
-- **🟢（#57からの継続）`ADMIN_SHIFT_FIELDS` の完全性テストが登録漏れを検出できない形になっている**（tests/core.test.js:1124）。期待値をテストファイル内にハードコードして `deepStrictEqual` するだけで、実装から導出されていない
-- **🟢（#59からの継続）期間削除時に `subs` を全件 `once("value")` で読んでいる**（app-main.js:1096）。削除対象期間の subs を購読窓（直近3ヶ月）の外まで含めて消すための意図的な一括読みで、期間削除時のみ・1回限り。RULES.md が禁じているのは `accounts` 全件読みで違反ではないが、`orderByChild("periodId").equalTo()` を削除期間ごとに回せば読み量を絞れる
+- **🟢（新規）未claim店舗は今も「先に触った人が owner になれる」**（functions/index.js:672 `createCompany`・`linkStoreToCompany` の未claim分岐・`verifyShopOwner`）。2026-07-28 の締めルール切り替えでクライアント側の未claim書き込みブランチは撤去されたが、CF側の3箇所には移行猶予の名残が残っている。本番13店舗はすべてclaim済みで実害はなく、新規店舗作成直後の一瞬だけ窓が開く（作成した端末がそのままclaimするため実際には塞がる）
+- **🟢（新規）企業アカウント作成に回数制限も監査ログもない**（functions/index.js:635 `createCompany`）。匿名でないAuthさえあれば何個でも作れる。今回の修正で「企業を作っただけでは他人の店舗を触れない」ようになったため悪用価値は下がったが、`companies/` と `companyCodes/` は増える一方
+- **🟢（新規）期間の手動作成に「終了日 ≥ 開始日」の検証がない**（app-admin.js:1831 `create`）。逆順で作ると `gd()` が空配列を返し0日の期間ができる。画面上すぐ分かり管理者が直せる
+- **🟢（#60からの継続）トリプルタップの計数キーが出勤セルと退勤セルを区別しない**（app-admin.js:1204 `onCellTripleTap`）。キーが `name|date` のため、同じスタッフ・同じ日の出勤セルを2回・退勤セルを1回と350ms以内に続けてタップすると、意図せず変更マークがトグルされる
+- **🟢（#59からの継続）管理者が提出状況ビューでセルを編集すると、スタッフ提出値（`start`/`end`）そのものが書き換わる**（app-staff.js:530 `applyCellEdit`）。SmModal の二重用途に踏み込む設計判断が要る
+- **🟢（#58からの継続）Excel出力の analytics が管理者のグリッド入力を提出として数える**（app-admin.js:1971）。PostHog の集計値のみで画面表示には出ない
+- **🟢（#57からの継続）`ADMIN_SHIFT_FIELDS` の完全性テストが登録漏れを検出できない形になっている**（tests/core.test.js:1124）
+- **🟢（#59からの継続）期間削除時に `subs` を全件 `once("value")` で読んでいる**（app-main.js:1096）。意図的な一括読みで RULES.md 違反ではない
 - **🟢（#56からの継続）マイページの「スタッフ数」使用量バーが空白列（スペーサー）を人数に数える**（app-admin.js:3957）。上限判定側3箇所は正しい
 - **🟢（#52からの継続）SubsTab の「出勤」日数が、管理者が両セルを空欄化した日を1日として数える**（app-admin.js:2957・:3004）
 - **🟢（継続）属性を削除しても休憩のタグ（`breakTimes[].tags`）に残る**（app-admin.js:3423 `deleteType`）
 - **🟢（継続）Excel出力とシフト作成タブで別名提出の解決順が違う**（app-admin.js:2133 `expXl` は配列順の先頭、`_getSubForPeriod`:489・`applyEditToSubs`:545 は完全一致優先）
-- **🟢（継続）期間管理タブの Excel 出力だけが管理者調整値を反映しない**（app-admin.js:1929）。ファイル名が `_修正前` になる意図的な使い分け
-- **🟢（継続）ヒートマップの時間列収集が `adminRest` を無視**（app-admin.js:980）。列見出しの範囲決めのみ
-- **🟢（継続）店舗間シフト重複エラーが片側入力と他店舗の `adminRest` を見ない**（app-admin.js:825 `dupErrors`／:385 `hasBoth`）。店舗跨ぎは #47 以降 対象外方針
+- **🟢（継続）期間管理タブの Excel 出力だけが管理者調整値を反映しない**（app-admin.js:1929）。意図的な使い分け
+- **🟢（継続）ヒートマップの時間列収集が `adminRest` を無視**（app-admin.js:980）
+- **🟢（継続）店舗間シフト重複エラーが片側入力と他店舗の `adminRest` を見ない**（app-admin.js:825 `dupErrors`／:385 `hasBoth`）
 - **🟢（継続）`sanitizeForSet` の root 分岐が「書かない」ではなく「消す」に倒れている**（app-utils.js:528）。到達経路は今日も0件
 - **🟢（継続）`_fbGuard` の本番分岐が PostHog へパスをそのまま送る**（app-core.js:65）
 - **🟢（継続）eslint ルールの抜け穴: 参照を変数へ置く形**（`const r=ref(p); r.set(v)`）。現状の使用箇所は0件
-- **🟢（継続）スタッフ削除時に設定マップのキーが残る**（app-admin.js `deleteStaff` 付近。改名側 :176 `renameKey` は7マップ全て移し替える実装で非対称）
+- **🟢（継続）スタッフ削除時に設定マップのキーが残る**（app-admin.js `deleteStaff` 付近。改名側 :176 `renameKey` は7マップ全て移し替える）
 - **🟢（継続）同名ポジション登録の仕様**（#46・判断待ち）／**ポジション不足サマリーがセクション非区別**／**`isSpecialRedDate` のテスト不在**（BACKLOG登録済み）／**`VISION.md` が不在**（CLAUDE.md とこのループの PHASE 0 が参照しているが実体なし・BACKLOG登録済み）
-- **🟢（継続・期限到来）`PURGE_OLD_PERIODS_DRY_RUN` の本有効化**（functions/index.js:470 付近）。着手予定 **2026-08-12 以降**＝あと **5日**
-- **🟢（継続）実機E2E未実施**: #46 削除操作／#47 改名修正／#51 のスタッフ再提出／#52 の Excel 締めセル／#53 の片側入力／#54 の休み提出日メモ／#55・#57 の提出状況一覧セル／#58 のグリッド下書き→初回提出／#59 の提出状況ビュー編集→更新バッジ／**#60 のトリプルタップも実機（実際のiPhone/iPad）では未検証**（Chromiumのタッチエミュレーションでの実測にとどまり、iOS Safari は起動できず未確認）。`toggleChanged`・`onCellTripleTap` は export されていないため**ユニットテストが無い**。#55・#57・#58・#59 に続き、**export されていない関数で5回続けてバグが出ている**
+- **🟢（継続・期限到来）`PURGE_OLD_PERIODS_DRY_RUN` の本有効化**（functions/index.js:470 付近）。着手予定 **2026-08-12 以降**＝あと **4日**
+- **🟢（継続）実機E2E未実施**: #46〜#60 の各修正に加え、**#61 も未検証**（CFをデプロイできないため）。`linkStoreToCompany` の認可分岐は export されていない CF 内ロジックのため**ユニットテストが無い**
 
 ### 総括
 
-**11回連続で、実質コード変更ゼロの回に構造から 🟡 を1件見つけた**。今回が過去10回と決定的に違うのは、**前回の総括が指定した起点がそのまま当たった**ことである。#59 は「`restAppliedRef` の二重適用ガードは『同じイベントが2回発火する』というトグル系全般に効く形なので、`toggleChanged` が同じ二重発火に晒されていないかを次回の起点にできる」と書いていた。実際に見に行くと、`toggleChanged` は1つの `<input>` に付いた `onClick` と `onTouchEnd` の**両方から呼ばれていて無防備**だった。**この探索ループは、前回の自分に次の一手を指定させる形で機能し始めている**。
+**12回連続で、実質コード変更ゼロの回にバグを見つけた。そして今回、この探索ループで初めて 🔴 が出た。**
 
-害の質は #59（濡れ衣）とも #55〜#58（意思が消える・ノイズが信号を埋める）とも違い、今回は**沈黙**である。トグルが2回走って元に戻るので、画面には**何の変化も起きない**。エラーも出ない。管理者は「タップの仕方が悪かった」と思ってもう一度やり、また何も起きない。#59 の害は「気付くのが遅れる」だったが、今回は**そもそも気付く手がかりが一つも出ない**。しかも壊れているのはタッチ端末だけで、開発時に使うPCでは正常に動く——**開発者が最も検知しにくい形**の壊れ方だった。
+これまでの60回で見つかってきたのは、ほぼすべて「表示が間違う」「意思が消える」「操作が沈黙する」という**データと体験の欠陥**だった。今回のものは種類が違う。**スタッフURLを1本受け取っただけの人物が、自分のGoogleアカウントと3回のAPI呼び出しで、店舗のシフト・スタッフ名簿・設定を書き換えられ、Stripeの解約画面にまで到達できた**。しかもそれは、まさにこの事態を防ぐために2026-07-07に設計・実装された「管理キー方式」を、Cloud Functions の1関数が Admin SDK 権限で素通りさせることで成立していた。**防御機構そのものではなく、防御機構を迂回する裏口が別のところに開いていた**。
 
-ここから次回の手法が2つ出る。
+なぜ60回も見つからなかったのか。答えははっきりしている。**このループの探索は app-*.js に張り付いていた**。PHASE 2 のスキャン項目に functions/index.js は入っているが、その中身は「secrets の抜け漏れ」と「`.delete()` の誤用」——つまり**設定ミスの検出**だけで、**認可ロジックを読む項目が一つもなかった**。クライアントのバグは画面を見れば疑える。サーバの認可漏れは、誰も文句を言わないまま静かに開いている。#60 の害を「沈黙」と書いたが、認可漏れの沈黙はその比ではない。**被害者は攻撃されたことすら知らない**。
 
-**1つ目。「PCでは動くがタッチ端末では動かない」を独立した探索軸にする**。今回のバグは「タッチ操作にだけ存在する追加のイベント（合成click）」が原因だった。同種の落とし穴は `onTouchEnd`／`onPointerDown`／`onMouseDown` を使っている全箇所にある。棚卸しの結果 `onPointerDown` のドラッグ並べ替え（app-admin.js:2360・2365・スタッフ並べ替え）と `onMouseDown` の候補リスト（app-staff.js:287）が残っており、**前者はタッチでのドラッグ中にスクロールが競合しないか（`touch-action`）が未確認**。次回の起点にできる。
+見つけられた手そのものは新しくない。#60 で `toggleChanged` の呼び出し元を数えたのと同じ——**危険な副作用を持つ関数の呼び出し元を全部数え、ガードの有無を横並びで比べる**。今回は `registerCompanyAsOwner` の呼び出し元が2つあり、片方（`createCompany`）にだけ `owners[uid]` チェックがあった。**同じ関数を呼ぶ2つの入口でガードが非対称なら、ガードが無い方が正しい可能性はほぼない**。#59→#60 が「トグルの二重発火」で当たったのと同じ構造の当て方が、レイヤーを跨いでそのまま効いた。
 
-**2つ目。ブラウザ依存の疑いは「実測できる形」に落としてから判断する**。#59 は `pendingSubWritesRef` の疑いを「Firebaseの楽観的ローカル反映があるため机上で確定できない」として🟡未修正のまま置いた。今回も同じ壁（合成clickの `detail` はブラウザ依存）に当たったが、**`~/Library/Caches/ms-playwright` の実ブラウザを `playwright-core` から直接叩けば、タッチ操作の実イベント列をNodeから観測できる**と分かった。この手が使えるなら、`pendingSubWritesRef` の🟡も「2つのブラウザコンテキストを同時に開いて同じsubを連続編集する」形で実測に持ち込める可能性がある。**実機が要ると思って諦めていた項目を、再現スクリプトの側から取りに行く**のが次回の候補になる。ただし WebKit は今回起動できなかった（キャッシュ webkit-2311 と playwright-core 要求の 2342 が不一致）ため、iOS Safari 固有の挙動を確かめたい場合は `npx playwright install webkit` が先に要る。
+ここから次回の手が2つ出る。
+
+**1つ目。PHASE 2 のスキャン項目に「認可の非対称」を常設する**。具体的には、`db.ref(...).set/remove/update` を含む CF 内部ヘルパーを列挙し、その全呼び出し元で「呼び出し元が対象リソースへの権限を持つことをどう証明しているか」を1行で書き出す表を作る。今回それをやったので `registerCompanyAsOwner` は塞がったが、**同じ表を `accounts/`・`tokens/`・`inviteCodes/` への書き込みについても作れていない**。特に `accounts/{uid}/company`（createCompany:664 が他人のuid配下に書けるか）と `companyCodes/`（`.read:false .write:false` でCF専用だが、コード衝突時の上書き）は未確認のまま残っている。
+
+**2つ目。「コメントが実装より進んでいる箇所」を独立した探索軸にする**。今回の決定打は :728 のコメント「shopCodeは "shopId" または "shopId.adminKey"」だった。**コメントは adminKey を受け取る前提で書かれているのに、関数本体に `data.adminKey` が一度も出てこない**。これは設計意図が実装に落ちきらなかった痕跡そのもので、しかも grep 一発で検出できる形をしている。同様に、クライアント側では `parseShopCode` が返す `adminKey` を**受け取っておきながら使っていない**（app-main.js:983 の分割代入が `{shopId}` だけ）という形で同じ欠落が現れていた。**「関数が返す値・コメントが約束する引数のうち、どこからも使われていないもの」を洗い出す**のは、次回そのまま実行できる機械的な手順になる。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
