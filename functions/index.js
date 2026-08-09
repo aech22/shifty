@@ -125,6 +125,10 @@ exports.createCheckoutSession = functions
         payment_method_types: ["card"],
         line_items: [{ price: priceId, quantity: 1 }],
         metadata: { shopId, plan },
+        // Stripeは Checkout Session の metadata を、そこで作られる Subscription へコピーしない。
+        // 更新・失敗・解約のWebhookイベントが参照するのは Subscription 側のmetadataなので、
+        // ここで明示的に付けないと初回チェックアウト以降そのイベントから店舗を特定できなくなる。
+        subscription_data: { metadata: { shopId, plan } },
         success_url: successUrl || "https://shiftyshifty.app/?payment=success",
         cancel_url:  cancelUrl  || "https://shiftyshifty.app/?payment=cancel",
         locale: "ja",
@@ -135,6 +139,63 @@ exports.createCheckoutSession = functions
       res.status(500).json({ error: e.message });
     }
   });
+
+// ============================================================
+// Webhookイベント → 対象店舗(shopId)とプランの解決
+//
+// metadata は checkout.session.completed のときだけイベント本体に載っている。
+// 更新(invoice.payment_succeeded)・失敗(invoice.payment_failed)・解約
+// (customer.subscription.deleted)のイベント本体には shopId が無いため、
+// 次の順で辿る:
+//   ① イベント本体の metadata（checkout.session.completed）
+//   ② Subscription の metadata（subscription_data.metadata を付けて作った契約）
+//   ③ その Subscription を作った Checkout Session の metadata
+//      （②の付与より前に作られた既存契約の救済。Stripeは①のmetadataを②へコピーしない）
+// ============================================================
+function subscriptionIdOf(obj) {
+  if (!obj) return null;
+  if (obj.object === "subscription" && obj.id) return obj.id;
+  if (typeof obj.subscription === "string") return obj.subscription;
+  if (obj.subscription && obj.subscription.id) return obj.subscription.id;
+  // 新しいAPIバージョンの Invoice は subscription 参照が parent 配下に移っている
+  const pd = obj.parent && obj.parent.subscription_details;
+  if (pd) {
+    if (typeof pd.subscription === "string") return pd.subscription;
+    if (pd.subscription && pd.subscription.id) return pd.subscription.id;
+  }
+  return null;
+}
+
+async function resolveShopMeta(obj) {
+  const md = obj && obj.metadata;
+  if (md && md.shopId) return { shopId: md.shopId, plan: md.plan || null };
+
+  const subId = subscriptionIdOf(obj);
+  if (!subId) return { shopId: null, plan: null };
+  const stripe = getStripe();
+
+  try {
+    const sub = await stripe.subscriptions.retrieve(subId);
+    if (sub && sub.metadata && sub.metadata.shopId) {
+      return { shopId: sub.metadata.shopId, plan: sub.metadata.plan || null };
+    }
+  } catch (e) {
+    console.error("subscription取得失敗:", e.message);
+  }
+
+  try {
+    const sessions = await stripe.checkout.sessions.list({ subscription: subId, limit: 1 });
+    const s = sessions && sessions.data && sessions.data[0];
+    if (s && s.metadata && s.metadata.shopId) {
+      return { shopId: s.metadata.shopId, plan: s.metadata.plan || null };
+    }
+  } catch (e) {
+    console.error("checkout session逆引き失敗:", e.message);
+  }
+
+  console.error(`shopIdを解決できませんでした: subscription=${subId}`);
+  return { shopId: null, plan: null };
+}
 
 // ============================================================
 // Stripe Webhook受信（決済完了 → planをFirebaseに書き込む）
@@ -157,19 +218,7 @@ exports.stripeWebhook = functions
     // 決済完了 or サブスク更新
     if (event.type === "checkout.session.completed" || event.type === "invoice.payment_succeeded") {
       const obj = event.data.object;
-      let shopId = obj.metadata?.shopId;
-      let plan   = obj.metadata?.plan;
-
-      // invoice.payment_succeededの場合はsubscriptionからmetadataを取得
-      if (!shopId && obj.subscription) {
-        try {
-          const sub = await getStripe().subscriptions.retrieve(obj.subscription);
-          shopId = sub.metadata?.shopId;
-          plan   = sub.metadata?.plan;
-        } catch (e) {
-          console.error("subscription取得失敗:", e);
-        }
-      }
+      const { shopId, plan } = await resolveShopMeta(obj);
 
       if (shopId && plan) {
         const expiry = new Date();
@@ -177,7 +226,8 @@ exports.stripeWebhook = functions
         await db.ref(`accounts/${shopId}/plan`).set(plan);
         await db.ref(`accounts/${shopId}/planExpiry`).set(expiry.toISOString().split("T")[0]);
         // Stripe顧客IDを保存（Customer Portal用）
-        const customerId = obj.customer || (obj.subscription ? (await getStripe().subscriptions.retrieve(obj.subscription).catch(()=>null))?.customer : null);
+        const subId = subscriptionIdOf(obj);
+        const customerId = obj.customer || (subId ? (await getStripe().subscriptions.retrieve(subId).catch(()=>null))?.customer : null);
         if (customerId) await db.ref(`accounts/${shopId}/stripeCustomerId`).set(customerId);
         console.log(`プラン更新完了: shopId=${shopId} plan=${plan} customerId=${customerId}`);
       }
@@ -186,15 +236,7 @@ exports.stripeWebhook = functions
     // 決済失敗 → 警告フラグを立てる（即時ダウングレードはしない。Smart Retriesで回復したら解除）
     if (event.type === "invoice.payment_failed") {
       const obj = event.data.object;
-      let shopId = obj.metadata?.shopId;
-      if (!shopId && obj.subscription) {
-        try {
-          const sub = await getStripe().subscriptions.retrieve(obj.subscription);
-          shopId = sub.metadata?.shopId;
-        } catch (e) {
-          console.error("subscription取得失敗(payment_failed):", e);
-        }
-      }
+      const { shopId } = await resolveShopMeta(obj);
       if (shopId) {
         await db.ref(`accounts/${shopId}/paymentFailed`).set(true);
         console.log(`決済失敗フラグ: shopId=${shopId}`);
@@ -204,13 +246,7 @@ exports.stripeWebhook = functions
     // 決済成功（更新）→ 失敗フラグを解除
     if (event.type === "invoice.payment_succeeded") {
       const obj = event.data.object;
-      let shopId = obj.metadata?.shopId;
-      if (!shopId && obj.subscription) {
-        try {
-          const sub = await getStripe().subscriptions.retrieve(obj.subscription);
-          shopId = sub.metadata?.shopId;
-        } catch (e) {}
-      }
+      const { shopId } = await resolveShopMeta(obj);
       if (shopId) {
         await db.ref(`accounts/${shopId}/paymentFailed`).remove();
       }
@@ -219,7 +255,7 @@ exports.stripeWebhook = functions
     // サブスクキャンセル → Freeに戻す
     if (event.type === "customer.subscription.deleted") {
       const sub = event.data.object;
-      const shopId = sub.metadata?.shopId;
+      const { shopId } = await resolveShopMeta(sub);
       if (shopId) {
         await db.ref(`accounts/${shopId}/plan`).set("free");
         await db.ref(`accounts/${shopId}/planExpiry`).remove();
