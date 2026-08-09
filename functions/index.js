@@ -255,11 +255,21 @@ exports.stripeWebhook = functions
     // サブスクキャンセル → Freeに戻す
     if (event.type === "customer.subscription.deleted") {
       const sub = event.data.object;
-      const { shopId } = await resolveShopMeta(sub);
+      const { shopId, plan } = await resolveShopMeta(sub);
       if (shopId) {
-        await db.ref(`accounts/${shopId}/plan`).set("free");
-        await db.ref(`accounts/${shopId}/planExpiry`).remove();
-        console.log(`プランFreeに戻す: shopId=${shopId}`);
+        // Pro→Premiumのアップグレードは「別のサブスクを新規作成する」方式のため、
+        // 1店舗が同時に2つの契約を持つ状態が起こりうる。あとから旧Proを解約したときに
+        // 無条件でFreeに落とすと、支払い済みのPremiumごと剥奪してしまう。
+        // 解約された契約のプランが現行プランと食い違う場合は、別契約の解約とみなして何もしない。
+        // （プランが特定できない古い契約は従来どおりダウングレードする＝安全側の既定動作）
+        const currentPlan = (await db.ref(`accounts/${shopId}/plan`).once("value")).val();
+        if (plan && currentPlan && plan !== currentPlan) {
+          console.log(`現行プラン(${currentPlan})と異なる契約(${plan})の解約のためダウングレードしない: shopId=${shopId}`);
+        } else {
+          await db.ref(`accounts/${shopId}/plan`).set("free");
+          await db.ref(`accounts/${shopId}/planExpiry`).remove();
+          console.log(`プランFreeに戻す: shopId=${shopId}`);
+        }
       }
     }
 
