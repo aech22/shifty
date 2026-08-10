@@ -38,6 +38,45 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🔴 Cloud Functions の本番デプロイ（課金・認可の修正4件が本番未反映）
+
+**目的**: バグチェック #61・#64・#65 で `functions/index.js` に入れた4件の修正が、**本番（ontheshift）に一度もデプロイされていない**。本番は今も修正前の挙動で動いており、コードを直しただけでは実害が消えていない。
+**現在の本番の状態（＝未デプロイのまま起きていること）**:
+- **解約してもプランが下がらない**（`customer.subscription.deleted` が店舗を特定できない）。アプリ内の正規手順で解約したユーザーが有料機能を無期限に使える
+- **決済失敗バナーが一度も出ない**（`invoice.payment_failed` も同じ理由で素通り）
+- **`planExpiry`（マイページの「〜まで有効」）が初回購入時のまま更新されない**
+- **`linkStoreToCompany` の認可が無防備**（shopId を知るだけで他人の店舗を自分の企業に連携しオーナー権限を奪える／#61）
+**受け入れ条件**:
+- [ ] `cd functions && firebase deploy --only functions --project ontheshift` を実行する
+- [ ] デプロイ後、Cloud Functions のログで `stripeWebhook` がエラーなく起動することを確認する
+- [ ] Stripe ダッシュボードの Webhook 送信ログで、直近のイベントが 200 を返していることを確認する
+- [ ] 可能なら Stripe テストモードで解約イベントを1件発火させ、`accounts/{shopId}/plan` が実際に更新されることを確認する
+**影響範囲**: functions/index.js のみ（`4acd089`・`eee5096`・`3fccd20`・`7d21104`）。クライアント（app-*.js）の変更を伴わないため**デプロイ順序の制約はない**（新CFは旧クライアントからの呼び出しでも正規利用を壊さない）
+**備考**: バグチェック #61（2026-08-06）・#64（2026-08-09）・#65（2026-08-10）で検出・**条件A（ユーザーにしか実行できない操作）に該当**。本番デプロイはループの権限外で、PreToolUseフックでも機械的にブロックされる。**下の「二重課金の根治」より先にこれを出すこと**（根治は設計変更を伴い時間がかかるが、こちらは既に検証済みの修正を反映するだけ）。
+
+---
+
+## 🔴 Pro→Premium アップグレードの二重課金を根治する
+
+**目的**: `createCheckoutSession`（functions/index.js:123）は常に `mode:"subscription"` で**新しい契約を作る**ため、Pro ユーザーがマイページで「Premiumにアップグレード」を押すと **500円/月と2,980円/月が同時に走る**。さらに Checkout に既存の `customer` を渡していないので契約ごとに別の Stripe Customer が作られ、`accounts/{shopId}/stripeCustomerId` は新しい方で上書きされる。その結果 **Customer Portal は新Premiumの顧客しか開けず、旧Proを解約する導線がアプリ内に存在しない**。
+**これが原因で生じている派生問題（根治すればすべて消える）**:
+- **旧Proの月次更新が支払い済みPremiumをProへ引き下げる** → `3fccd20` でガード済み（対症療法）
+- **旧Proを解約するとPremiumごとFreeに落ちる** → `eee5096` でガード済み（対症療法）
+- **Premiumを解約すると、契約が残っているProまで一緒にFreeへ落ちる**（functions/index.js:295）→ **未対応**。次のPro更新請求まで最大1ヶ月、支払い中なのに有料機能を失う
+- **決済失敗フラグが別契約の請求成功で解除される**（functions/index.js:281）→ 未対応（実害小）
+**受け入れ条件**:
+- [ ] 方式を決める（**どちらを採るかはユーザー判断**）
+  - 案A: Checkout に既存 `customer`（`accounts/{shopId}/stripeCustomerId`）を渡し、**旧契約を解約してから新契約を作る**
+  - 案B: アップグレード/ダウングレードを **Stripe Customer Portal のプラン変更**に寄せ、`createCheckoutSession` は新規契約専用にする（Portal側の設定変更が必要）
+- [ ] 1店舗が同時に2つの有効な契約を持たない状態になる
+- [ ] 既に2契約になっている店舗があるか Stripe ダッシュボードで確認し、あれば手動で解消する
+- [ ] 根治後、対症療法で入れたガード（`shouldApplyRenewalPlan` / 解約時のプラン照合）を残すか外すか判断する（残す場合は「多重防御として意図的に残す」とコメントに書く）
+- [ ] `customer.subscription.updated`（Portalでのプラン変更）のWebhook処理が必要か検討する
+**影響範囲**: functions/index.js（`createCheckoutSession`・`stripeWebhook`・`createPortalSession`）、app-admin.js（`UpgradeModal` の導線・MyPageTab）、Stripe本番設定（Customer Portal の設定変更を伴う可能性）
+**備考**: バグチェック #64（2026-08-09）で検出・#65（2026-08-10）で派生2件を確認・**条件A（Stripe本番設定）と条件B（方式の選択）の両方に該当**。RULES.md「ユーザーに確認なく Stripe の本番設定を変更しない」によりループでは着手できない。**現在は Webhook のイベント種別ごとにガードを足して回る形になっており、イベントが増えるたびに同じ穴が開く**。
+
+---
+
 ## 🔴 利用規約・特定商取引法に基づく表記の整備（表記内容＋サイト表示の是正）
 
 **目的**: 有料サブスク（Pro/Premium）を提供している以上、特定商取引法・定型約款（民法548条の2〜4）・改正特商法（2022年6月・定期購入の最終確認画面）の表示義務を満たす必要がある。2026-07-14の調査で「内容（本文）は概ね適法だが、必須の特商法表記が無く、サイトでの表示（公開場所・バージョン整合・購入前提示）に不備がある」ことが判明したため是正する。
@@ -53,6 +92,47 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] **購入前の明示**: 改正特商法の最終確認画面要件に沿い、`UpgradeModal` で「定期課金であること・月額/支払総額・解約方法（マイページのStripeカスタマーポータル）」を明示する（Stripe Checkout側の表示と重複してよい）。
 **影響範囲**: 新規 `tokusho.html`、既存 `terms.html`・`privacy.html`（内容更新）、`index.html`（フッターリンク）、app-admin.js（`UpgradeModal`・規約導線）。正本はObsidian利用規約.md。
 **備考**: 調査日 2026-07-14。本文の免責条項（第10条・故意重過失を除外し12ヶ月料金を上限）は消費者契約法8条の全部免責には当たらず概ね適法と判断。最大の欠落は「特商法表記ページの不在」と「静的terms.htmlの旧版残存」。
+
+---
+
+## 🟡 企業連携の解除が、稼働中の店舗を「オーナー0人」に戻してしまう
+
+**目的**: `unlinkStoreFromCompany`（functions/index.js:815）は `shops/{shopId}/owners/company_{companyId}` を無条件に削除する。企業ログインのセッションで作った店舗はオーナーが企業uidだけなので、**解除すると owners が空になる**。`linkStoreToCompany` は未claim店舗（`allowed = !owners`・:798）を**管理キーなしで連携できる**ため、その隙に shopId を知る第三者が自分の企業へ連携してオーナーになれる。shopId はスタッフURLの `tokens` 逆引きから辿れるため、店舗コードは秘密情報として扱えない。
+**受け入れ条件**:
+- [ ] 「最後のオーナーを外したときにどうするか」を決める（**ユーザー判断**）
+  - 案A: 最後のオーナーは解除できない（エラーを返す）
+  - 案B: 解除は許すが、`private/adminKey` を残したまま「要再claim」状態にし、`linkStoreToCompany` の未claim分岐を**adminKey必須**に変更する
+  - 案C: 解除時に企業の作成者uid（`companies/{id}/pub/ownerUid`）へオーナーを移し替える
+- [ ] `linkStoreToCompany` / `createCompany` の未claim分岐（「先に触った人がオーナーになれる」）の扱いを合わせて決める
+- [ ] 本番13店舗が全てclaim済みであることを再確認してから適用する（締めルール切替時と同じゲート）
+**影響範囲**: functions/index.js（`unlinkStoreFromCompany`・`linkStoreToCompany`・`createCompany`）、app-admin.js（CompanyTab の解除UI・エラー表示）
+**備考**: バグチェック #65（2026-08-10）で検出・**条件B（仕様判断）に該当**。既存の🟢「未claim店舗は先に触った人がownerになれる」は「新規店舗作成直後の一瞬」と整理していたが、**解除操作が既存店舗を後からその状態に戻せる**点が新しい。本番13店舗は全てclaim済みのため現時点の実害はなく、解除操作を行った瞬間にだけ窓が開く。
+
+---
+
+## 🟡 スタッフの提出書き込み（onSub）だけが巻き戻し保護と差分書き込みを通っていない
+
+**目的**: `saveSubs`（app-main.js:1120）は「未確定書き込みの保護（`pendingSubWritesRef`）＋フィールド単位の差分書き込み（`diffSubForFlatWrite`）＋関数型state更新」の3点で他端末との競合から守られているが、**スタッフ提出の `onSub`（app-main.js:1478付近）だけがそのどれも通っていない**。`fbSet` で sub 全体を `set` するため last-write-wins がオブジェクト全体に効き、**管理者が同じsubの別の日を編集した直後にスタッフが再提出すると、スタッフ端末が持っている古いデータで管理者の編集を上書きしうる**。
+**受け入れ条件**:
+- [ ] `onSub` を `saveSubs` と同じ経路に寄せる（`pendingSubWritesRef` への登録・`subsMapRef` の更新・`diffSubForFlatWrite` によるフラット書き込み・`setSubs` の関数型更新の4点）
+- [ ] スタッフ画面からの新規提出・再提出が従来どおり動く（提出→一覧に反映→リロードで残る）
+- [ ] **実機2コンテキストでの再現と修正確認**: 管理者セッションでセルを編集 → 同時にスタッフセッションから再提出 → 管理者の編集が消えないことを確認する
+- [ ] 締切後の変更マーク（`subHasRealUpdate`）が従来どおり付く
+**影響範囲**: app-main.js（`onSub`）、app-staff.js（提出フロー）、tests/core.test.js（差分書き込みの単体テスト追加）
+**備考**: バグチェック #59 で検出・#60〜#65 で継続確認・**条件D（実機2コンテキストのE2Eが前提）に該当**。ループでは「再現手段がない」ことを理由に6回連続で見送られている。`shifty-e2e-verify` スキルの手順で2つのブラウザコンテキストを立てれば再現できるはずだが未着手。
+
+---
+
+## 🟡 仕様判断が必要な挙動のまとめ（どちらが正しいかユーザーが決める）
+
+**目的**: バグチェックで繰り返し検出されているが、「実装の誤り」ではなく「どちらの挙動を正とするか」の判断が必要なため、ループが手を出せずに毎回申し送られている項目をまとめて決着させる。**それぞれ独立して判断でき、決まればループが実装できる。**
+**受け入れ条件**:
+- [ ] **再提出で「休み」にしたとき、管理者の調整値をどうするか**（app-staff.js:167 `buildShift` → app-utils.js:190 `carryAdminShiftFields`）: 現状は `adjustedStart`/`adjustedEnd` は引き継がれるのに status は holiday のまま残り、「休みなのに調整時刻が入っている」状態になる。`adjustedStartFixed`（「締」）があるときだけ status を work に戻す実装。**案A: 休みにしたら調整値も消す／案B: 調整値があれば出勤扱いに戻す（「締」と同じ扱い）／案C: 現状維持**
+- [ ] **出勤・退勤の片方だけ入力された日を何時間として数えるか**（app-utils.js:128 `calcNetWorkMinutes` の `if(st&&en)`）: 現状は勤務時間・期間集計・週/月上限判定だけが**0分**。一方でヒートマップは「出勤のみ→ランチ終わりまで／退勤のみ→ディナー始まりから」と補完して出勤者に数え（app-admin.js:767-768）、休みカウントも0.5休みとして扱う（:1105-1106）。**上限超過の見落としにつながる**。**案A: ヒートマップと同じ補完ルールで時間を数える／案B: 0分のまま（現状維持）＋UIで「時間未確定」を明示**
+- [ ] **同名ポジションの登録を許すか**（#46から判断待ち）: 必要ポジション設定で同じ名前を複数登録できてしまう
+- [ ] 決まった項目はループが実装できるよう、このタスクに「決定: 案X」と追記する
+**影響範囲**: app-utils.js（`carryAdminShiftFields`・`calcNetWorkMinutes`）、app-staff.js（`buildShift`）、app-admin.js（集計・上限判定・ポジション設定UI）、tests/core.test.js
+**備考**: バグチェック #46・#52・#57・#64・#65 で継続検出・**条件B（仕様判断）に該当**。3項目とも「実装は難しくないが、正解が仕様側にしかない」。
 
 ---
 
@@ -86,10 +166,10 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 **目的**: 2026-07-27 バグチェック#44の「要確認（未修正）」に残った軽微項目を消化する。いずれも実行時バグではないため個別タスク化せずまとめて扱う。
 **受け入れ条件**:
 - [ ] **「曜日別から選ぶ」ブロック移動のE2E実機確認**: `c4b2e70`で日付別タブへ移設した「曜日別から選ぶ」UIを、日付別タブでの実表示・クリック動作まで実機（localhost）で確認する（パーサ0 errors・`addFromWeekday`本体無変更を根拠に健全と判断済みだが実機未検証）
-- [ ] **`isSpecialRedDate` のユニットテスト追加**（app-utils.js:552）: posType3種（`sun`/`holSat`/`holSun`）の分岐・土日/実祝日の早期returnを`tests/core.test.js`でカバーする
+- [x] **`isSpecialRedDate` のユニットテスト追加（2026-08-10 完了・コミット`8167927`）**（app-utils.js:646）: posType3種（`sun`/`holSat`/`holSun`）で true、`weekday`/`sat` で false、posType未設定・settings欠損、土曜(2026-08-15)・日曜(2026-08-16)の早期return、平日の実祝日（2026-08-11 山の日）の早期return——計5テストを追加。`npm test` 160件パス
 - [x] **`.git` ロックファイル残留の調査（2026-07-28 完了）**: 残骸4件（`index.stash.13.lock`・`index.stash.44869`・`index_tmp`・`index_tmp.lock`）を削除しgit正常を確認。**根本原因が判明: これらは Shifty の自動コミットフックではなく、グローバルの `security-guidance` プラグイン由来**。`diffstate.py` の `git stash create`（timeout=15秒）がタイムアウトでSIGKILLされると `.git/index.stash.<pid>[.lock]` を残す。`index_tmp*` は旧バージョンのプラグインが `.git/index_tmp` を一時indexに使っていた化石（現行版はTMPDIRの`security_hook_idx_*`に変更済み）。**重要: これらは一時index側のロックのため、通常の`git add`/`commit`が使う`.git/index.lock`とは別物で、gitをブロックしない（＝#44の「commitがindex.lock/HEAD.lockに阻まれた」障害の原因ではない）**。#44を実際にブロックした`index.lock`/`HEAD.lock`はShiftyのStopフックの`git commit`がターン終了で強制終了された痕跡で、これは別系統。恒久対策は不要（無害・低頻度）だが、再発時はこの区別を踏まえること
-- [ ] **`VISION.md` の作成**（#27から継続で不在）: CLAUDE.md関連ドキュメント欄が参照しているが実体がない
-- [ ] **`globalTemplates` の命名整理**（任意）: state/prop名は歴史的経緯で残存（実体は`shops/{shopId}/templates`）。CLAUDE.mdの技術負債にも記載済み
+- [x] **`VISION.md` の作成（2026-08-10 完了・コミット`df925ca`）**（#27から継続で不在だった）: `/bug-check` と `/shifty-feature` の両ループが PHASE 0 で参照する完了基準の正本として作成。プロダクトの目的・ターゲット・プラン・設計原則6項目・バグチェックループ完了基準・機能実装ループ完了基準・やらないと決めたこと（Expo/Vite+TS/AdminLogin の理由と再着手条件）・現在の重点を記載
+- [x] **`globalTemplates` の命名整理（2026-08-10 完了・コミット`5e725b0`）**: `shopTemplates` / `setShopTemplates` / `saveShopTemplates` へ改名（app-main.js 8箇所・app-admin.js 8箇所）。**Firebaseパス `shops/{shopId}/templates` と localStorage キー `templates_v6` は変更していない＝データ移行不要**。CLAUDE.md の state一覧・技術負債欄も更新済み
 **影響範囲**: tests/core.test.js（テスト追加）、新規VISION.md、.git運用（フック）、app-main.js/app-admin.js（命名整理は任意・広範）
 **備考**: 「変更マークの締切ゲート対象外」（app-staff.js:166）・capabilityモデルの残存リスクも#44申し送りに含まれるが、前者は仕様判断待ち、後者は上記「App Checkの有効化」で恒久対応するため本まとめには含めない。リリース時のindex.htmlキャッシュバスティング版数バンプはrelease-to-mainフローの標準工程のため別管理。
 
