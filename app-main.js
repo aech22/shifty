@@ -1463,15 +1463,31 @@ function App(){
             urlLocked={urlLocked}
             onSub={sub=>{
               const currentSid=currentShopIdRef.current||sid;
-              const a=[...subs];const i=a.findIndex(s=>s.staffName===sub.staffName&&s.periodId===sub.periodId);
-              if(i>=0)a[i]=sub;else a.push(sub);
-              setSubs(a);
-              ls(storeKey(currentSid,"subs_v6"),a);
               if(!firebaseDB)return Promise.reject(new Error("firebase未接続"));
-              const path=`shops/${currentSid}/subs/${sub.id}`;
-              return fbSet(path, sub)
-                .then(()=>dlog(sub.isUpdated?"変更保存完了":"提出完了","path=",path))
-                .catch(e=>{console.warn("sub書き込み失敗:",path,e);throw e;});
+              // saveSubs（管理者側）と同じ3点の保護を通す。以前はここだけが sub 全体を set() しており、
+              // last-write-wins がオブジェクト全体に効いていた（管理者が同じsubの別の日を編集した直後に
+              // スタッフが再提出すると、スタッフ端末が持っている古い分で管理者の編集を上書きしうる）。
+              // 1) 差分書き込み: サーバー由来の最新sub（subsMapRef）を基準に、実際に変わったパスだけ update する。
+              //    リスナー未着で基準が取れないときはローカルstateの同一subへフォールバックする（従来と同じ全体書き）。
+              const prevSub=subsMapRef.current[sub.id]||subs.find(s=>s&&s.id===sub.id)||null;
+              const flat=diffSubForFlatWrite(sub.id,prevSub,sub);
+              // 2) 関数型更新: blurや連打で再レンダーが挟まらないとき、後の呼び出しが前の結果を消さない
+              setSubs(prev=>{
+                const i=prev.findIndex(s=>s.staffName===sub.staffName&&s.periodId===sub.periodId);
+                const a=i>=0?prev.map((s,j)=>j===i?sub:s):[...prev,sub];
+                ls(storeKey(currentSid,"subs_v6"),a);
+                return a;
+              });
+              if(Object.keys(flat).length===0) return Promise.resolve(); // 変更なし＝書かない
+              // 3) 未確定書き込みの保護: 自分の書き込みがサーバー確認される前に届く value echo で巻き戻らないようにする
+              Object.entries(flat).forEach(([p,v])=>{ pendingSubWritesRef.current[p]=v; });
+              const path=fbPath(currentSid,"subs");
+              return fbUpd(path, flat)
+                .then(()=>dlog(sub.isUpdated?"変更保存完了":"提出完了","path=",path,"paths=",Object.keys(flat)))
+                .catch(e=>{console.warn("sub書き込み失敗:",path,e);throw e;})
+                .finally(()=>{
+                  Object.entries(flat).forEach(([p,v])=>{ if(pendingSubWritesRef.current[p]===v)delete pendingSubWritesRef.current[p]; });
+                });
             }}
             onDeleteSub={subId=>{
               const currentSid=currentShopIdRef.current||sid;
