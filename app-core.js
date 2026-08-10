@@ -21,7 +21,7 @@ const DEV_MODE = location.hostname !== "shiftyshifty.app";
 // ============================================================
 const DEMO_SHOP_ID = DEV_MODE
   ? "ML2JUEd~eC8a2L=zbcKA=2h7"   // dev: 居酒屋 とり松（販促用デモ店舗）
-  : "";                           // 本番: デモ店舗を用意したらそのshopIdを設定する
+  : "demo-toriMatsu-v1";          // 本番: devのとり松を複製したデモ店舗（owners空・adminKey設定済でclaim不可）
 const DEMO_MODE = !!DEMO_SHOP_ID && /^#\/demo\/?$/.test(location.hash);
 
 const FIREBASE_CONFIG_PROD = {
