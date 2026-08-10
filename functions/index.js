@@ -240,15 +240,27 @@ exports.changePlan = functions
       }
       const cur = schedule.phases[schedule.phases.length - 1];
       const curPrice = cur.items[0].price;
-      await stripe.subscriptionSchedules.update(schedule.id, {
-        end_behavior: "release",
-        phases: [
-          { items: [{ price: typeof curPrice === "string" ? curPrice : curPrice.id, quantity: 1 }],
-            start_date: cur.start_date, end_date: cur.end_date },
-          { items: [{ price: newPrice, quantity: 1 }] },
-        ],
-        metadata: { shopId, plan },
-      });
+      try {
+        await stripe.subscriptionSchedules.update(schedule.id, {
+          end_behavior: "release",
+          phases: [
+            { items: [{ price: typeof curPrice === "string" ? curPrice : curPrice.id, quantity: 1 }],
+              start_date: cur.start_date, end_date: cur.end_date },
+            { items: [{ price: newPrice, quantity: 1 }] },
+          ],
+          metadata: { shopId, plan },
+        });
+      } catch (e) {
+        // フェーズ更新に失敗すると、契約には「現状をなぞるだけのスケジュール」が
+        // 貼り付いたまま残る。解約や次のプラン変更の妨げになるため、自分が新規作成した
+        // ときに限って release して元の状態へ戻す（既存のスケジュールには触らない）。
+        if (!sub.schedule) {
+          await stripe.subscriptionSchedules.release(schedule.id)
+            .then(() => console.log(`スケジュールを解放して原状復帰: shopId=${shopId} schedule=${schedule.id}`))
+            .catch(re => console.error("スケジュールの解放に失敗:", re.message));
+        }
+        throw e;
+      }
       const effectiveAt = tsToDate(cur.end_date) || tsToDate(periodEndOf(sub));
       // 予約内容は subscription_schedule.* のWebhookでも拾えるが、そのイベント種別は
       // エンドポイントの購読対象に入っていない（2026-08-11時点の購読は5種類）。
