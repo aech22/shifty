@@ -38,21 +38,26 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🔴 Cloud Functions の本番デプロイ（課金・認可の修正4件が本番未反映）
+## 🔴 Stripe Webhook の署名検証が本番で失敗し続けている（全イベントが握り潰されている）
 
-**目的**: バグチェック #61・#64・#65 で `functions/index.js` に入れた4件の修正が、**本番（ontheshift）に一度もデプロイされていない**。本番は今も修正前の挙動で動いており、コードを直しただけでは実害が消えていない。
-**現在の本番の状態（＝未デプロイのまま起きていること）**:
-- **解約してもプランが下がらない**（`customer.subscription.deleted` が店舗を特定できない）。アプリ内の正規手順で解約したユーザーが有料機能を無期限に使える
-- **決済失敗バナーが一度も出ない**（`invoice.payment_failed` も同じ理由で素通り）
-- **`planExpiry`（マイページの「〜まで有効」）が初回購入時のまま更新されない**
-- **`linkStoreToCompany` の認可が無防備**（shopId を知るだけで他人の店舗を自分の企業に連携しオーナー権限を奪える／#61）
+**目的**: 2026-08-11 のCF本番デプロイ直後にログを確認したところ、`stripeWebhook` に届いたリクエストが**18件すべて署名検証に失敗して 400 を返しており、業務ロジックが一度も実行されていない**ことが判明した。プラン更新・解約・決済失敗のいずれもFirebaseに反映されない。**同日デプロイした4件の修正も、署名検証より手前で落ちるため一切効かない。**
+**判明している事実（2026-08-11 実測）**:
+- ログ保持期間内の `stripeWebhook` 実行は **18件すべて 400**、成功系ログ（`プラン更新完了`／`決済失敗フラグ`／`プランFreeに戻す`／`shopIdを解決できませんでした`）は **0件**
+- エラーは `No signatures found matching the expected signature for payload`（＝`stripe-signature` ヘッダは付いているが、保存されている署名シークレットと一致しない）
+- **シークレットの破損ではない**: `STRIPE_WEBHOOK_SECRET` は 39バイト（`whsec_`+32文字+改行＝正常）、`STRIPE_SECRET_KEY` は 108バイト（正常）。二重ペースト・ラベル混入・余分な改行はいずれも該当しない
+- **過去には成功していた**: `accounts` に `stripeCustomerId` と `planExpiry` が書かれている店舗が2件あり、Webhookが機能していた時期が確実にある
+- **失敗の時刻が更新期日と一致する**: 実課金店舗 `mKdff4?v88uP` の `planExpiry` が **2026-08-09**（＝前回成功は2026-07-09）で、18件の失敗はすべて 2026-08-09（UTC 18:27〜21:34）に集中している。**更新請求のWebhookとその再送がまるごと失われた**とみるのが自然
+- 実害の程度: `planExpiry` は表示専用（app-admin.js:3957 の「〜まで有効」ラベル）で機能ゲートは `plan` のみを見るため、**支払い中の顧客がPremium機能を失ってはいない**。失われているのは「解約の反映」「決済失敗の検知」「有効期限表示の更新」
+**原因の仮説**: 値が壊れていない以上、**Stripe側のエンドポイント署名シークレットと保存値の不一致**。エンドポイントを作り直した／複数エンドポイントがあり別のものの `whsec_` を保存している／Stripe側でローテーションした、のいずれか。
 **受け入れ条件**:
-- [ ] `cd functions && firebase deploy --only functions --project ontheshift` を実行する
-- [ ] デプロイ後、Cloud Functions のログで `stripeWebhook` がエラーなく起動することを確認する
-- [ ] Stripe ダッシュボードの Webhook 送信ログで、直近のイベントが 200 を返していることを確認する
-- [ ] 可能なら Stripe テストモードで解約イベントを1件発火させ、`accounts/{shopId}/plan` が実際に更新されることを確認する
-**影響範囲**: functions/index.js のみ（`4acd089`・`eee5096`・`3fccd20`・`7d21104`）。クライアント（app-*.js）の変更を伴わないため**デプロイ順序の制約はない**（新CFは旧クライアントからの呼び出しでも正規利用を壊さない）
-**備考**: バグチェック #61（2026-08-06）・#64（2026-08-09）・#65（2026-08-10）で検出・**条件A（ユーザーにしか実行できない操作）に該当**。本番デプロイはループの権限外で、PreToolUseフックでも機械的にブロックされる。**下の「二重課金の根治」より先にこれを出すこと**（根治は設計変更を伴い時間がかかるが、こちらは既に検証済みの修正を反映するだけ）。
+- [ ] Stripe ダッシュボード → 開発者 → Webhook で、`https://asia-northeast1-ontheshift.cloudfunctions.net/stripeWebhook` を宛先とするエンドポイントが**いくつ存在するか**を確認する（複数あれば不要なものを削除する）
+- [ ] そのエンドポイントの「署名シークレット」を表示し、Firebase 側へ**改行を付けずに1回だけ**設定する（**値はClaudeに渡さない**。ユーザー自身が実行する）
+      `printf '%s' '<署名シークレット>' | firebase functions:secrets:set STRIPE_WEBHOOK_SECRET --data-file=- --project ontheshift`
+- [ ] 再デプロイする（シークレット更新はデプロイしないと関数に反映されない）
+- [ ] **「デプロイした」ではなく「ログで消えた」で判定する**: Stripe ダッシュボードの該当エンドポイントで「テストイベントを送信」→ 直後の `stripeWebhook` ログに 200 が出ることを確認する
+- [ ] 失われた 2026-08-09 の更新イベントを Stripe ダッシュボードから**手動で再送**し、`accounts/mKdff4.../planExpiry` が更新されることを確認する
+**影響範囲**: Firebase Secret Manager（`STRIPE_WEBHOOK_SECRET`）、Stripe ダッシュボードのWebhook設定。コード変更なし
+**備考**: 2026-08-11 のCF本番デプロイ後の確認で検出・**条件A（ユーザーにしか実行できない操作）に該当**。診断は `diagnose-secret-corruption` スキルの手順（中身を見ずバイト長のみで判定）に従い、破損を除外した上で不一致と結論した。**この1件が直るまで、Webhook起因の修正はすべて本番で効かない**ため、下の「二重課金の根治」より先に対応すること。
 
 ---
 
@@ -142,13 +147,19 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ## 🟢 データ保存上限④-b: dry-run観察後の36ヶ月超期間データ削除の本有効化
 
-**目的**: dry-runリリース（コミット`4aa100e`）から1ヶ月観察し、問題なければ実削除を有効化する。
+**目的**: dry-run で1ヶ月観察し、問題なければ実削除を有効化する。
+
+> **⚠️ 前提が崩れていたので観察期間を引き直した（2026-08-11 判明）**
+> このタスクは「dry-runリリース（`4aa100e`・2026-07-12）から1ヶ月観察」を前提に着手日を 2026-08-12 と定めていた。しかし **2026-08-11 のCF本番デプロイで `purgeOldPeriods` が `update` ではなく `create` として作られた**——つまり **`4aa100e` は develop に入っただけで本番には一度もデプロイされておらず、dry-run は1日も走っていない**。観察できるログは存在しない。
+> **新しい着手日: 2026-09-11 以降**（本番稼働開始 2026-08-11 ＋ 1ヶ月）。それまでは `PURGE_OLD_PERIODS_DRY_RUN = true` のまま触らないこと。
+
 **受け入れ条件**:
-- [ ] Cloud Functionsのログで`purgeOldPeriods`の`[dry-run]`出力を確認し、削除対象の件数・内容が想定通りであることを確認する
+- [ ] **2026-09-11 以降に着手する**（それ以前に実削除を有効化しない）
+- [ ] Cloud Functionsのログで`purgeOldPeriods`の`[dry-run]`出力を確認し、削除対象の件数・内容が想定通りであることを確認する（**日次実行なので、この時点で約30回分のログが溜まっているはず**）
 - [ ] `functions/index.js`の`PURGE_OLD_PERIODS_DRY_RUN`を`false`に変更してデプロイする
 - [ ] 有効化後、実際に削除が行われ`period`・`subs`・`tokens/{urlToken}`が正しく消えることを本番ログで確認する
 **影響範囲**: functions/index.js（`PURGE_OLD_PERIODS_DRY_RUN`定数1箇所）
-**備考**: 開始日 2026-07-12（dry-runリリース日）。**1ヶ月後（2026-08-12以降）に着手する。** 孤児subs（periodIdが現存する期間に紐付かないもの）はこの削除の対象外（endDateという判定基準を持たないため）。列挙元は`/global/shops`のため、そこに載っていない孤児店舗の期間データは対象外（孤児店舗自体は`purgeInactiveShops`が別途処理）。
+**備考**: 本番稼働開始 2026-08-11（デプロイ日）。孤児subs（periodIdが現存する期間に紐付かないもの）はこの削除の対象外（endDateという判定基準を持たないため）。列挙元は`/global/shops`のため、そこに載っていない孤児店舗の期間データは対象外（孤児店舗自体は`purgeInactiveShops`が別途処理）。**教訓: 「コミットした日」ではなく「本番にデプロイされた日」を観察期間の起点にすること**（バグチェック#65 の「いつ書かれたかではなく、いつから実際に走るかで判定する」と同じ形の見落とし）。
 
 ---
 
@@ -162,20 +173,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] Realtime Database と Cloud Functions のenforcementをコンソールから有効化する
 **影響範囲**: app-core.js（定数1箇所）、Firebaseコンソール操作
 **備考**: enforce後はRESTでの直接デバッグアクセスが遮断される点に注意（管理用途はAdmin SDK/コンソールを使う）。
-
----
-
-## 🟢 バグチェック#44 申し送りの軽微項目（まとめ）
-
-**目的**: 2026-07-27 バグチェック#44の「要確認（未修正）」に残った軽微項目を消化する。いずれも実行時バグではないため個別タスク化せずまとめて扱う。
-**受け入れ条件**:
-- [x] **「曜日別から選ぶ」ブロック移動のE2E実機確認（2026-08-10 完了）**: localhost:3000 の標準テスト店舗（`eb6AfsQv4JAht+cX*xP7fuDa`・`?plan=premium`）で 管理者画面 → 候補 → 日付別 を開き、「曜日別から選ぶ」が日付別タブ内に表示されることを実機で確認。コンソールエラー0件。あわせて 候補→テンプレ タブも表示確認（`shopTemplates` 改名の非回帰確認を兼ねる）
-- [x] **`isSpecialRedDate` のユニットテスト追加（2026-08-10 完了・コミット`8167927`）**（app-utils.js:646）: posType3種（`sun`/`holSat`/`holSun`）で true、`weekday`/`sat` で false、posType未設定・settings欠損、土曜(2026-08-15)・日曜(2026-08-16)の早期return、平日の実祝日（2026-08-11 山の日）の早期return——計5テストを追加。`npm test` 160件パス
-- [x] **`.git` ロックファイル残留の調査（2026-07-28 完了）**: 残骸4件（`index.stash.13.lock`・`index.stash.44869`・`index_tmp`・`index_tmp.lock`）を削除しgit正常を確認。**根本原因が判明: これらは Shifty の自動コミットフックではなく、グローバルの `security-guidance` プラグイン由来**。`diffstate.py` の `git stash create`（timeout=15秒）がタイムアウトでSIGKILLされると `.git/index.stash.<pid>[.lock]` を残す。`index_tmp*` は旧バージョンのプラグインが `.git/index_tmp` を一時indexに使っていた化石（現行版はTMPDIRの`security_hook_idx_*`に変更済み）。**重要: これらは一時index側のロックのため、通常の`git add`/`commit`が使う`.git/index.lock`とは別物で、gitをブロックしない（＝#44の「commitがindex.lock/HEAD.lockに阻まれた」障害の原因ではない）**。#44を実際にブロックした`index.lock`/`HEAD.lock`はShiftyのStopフックの`git commit`がターン終了で強制終了された痕跡で、これは別系統。恒久対策は不要（無害・低頻度）だが、再発時はこの区別を踏まえること
-- [x] **`VISION.md` の作成（2026-08-10 完了・コミット`df925ca`）**（#27から継続で不在だった）: `/bug-check` と `/shifty-feature` の両ループが PHASE 0 で参照する完了基準の正本として作成。プロダクトの目的・ターゲット・プラン・設計原則6項目・バグチェックループ完了基準・機能実装ループ完了基準・やらないと決めたこと（Expo/Vite+TS/AdminLogin の理由と再着手条件）・現在の重点を記載
-- [x] **`globalTemplates` の命名整理（2026-08-10 完了・コミット`5e725b0`）**: `shopTemplates` / `setShopTemplates` / `saveShopTemplates` へ改名（app-main.js 8箇所・app-admin.js 8箇所）。**Firebaseパス `shops/{shopId}/templates` と localStorage キー `templates_v6` は変更していない＝データ移行不要**。CLAUDE.md の state一覧・技術負債欄も更新済み
-**影響範囲**: tests/core.test.js（テスト追加）、新規VISION.md、.git運用（フック）、app-main.js/app-admin.js（命名整理は任意・広範）
-**備考**: 「変更マークの締切ゲート対象外」（app-staff.js:166）・capabilityモデルの残存リスクも#44申し送りに含まれるが、前者は仕様判断待ち、後者は上記「App Checkの有効化」で恒久対応するため本まとめには含めない。リリース時のindex.htmlキャッシュバスティング版数バンプはrelease-to-mainフローの標準工程のため別管理。
 
 ---
 
@@ -209,6 +206,31 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ Cloud Functions の本番デプロイ（2026-08-11 完了・課金/認可の修正4件を反映）
+
+**実施内容**:
+- [x] **本番（ontheshift）へデプロイ実行**: 14関数すべて成功（`4acd089`・`eee5096`・`3fccd20`・`7d21104` を反映）。うち **`purgeOldPeriods` は `update` ではなく `create` だった＝この関数は本番に一度も存在していなかった**（下の④-bタスクの前提が崩れているため同タスクを更新済み）
+- [x] **CFログで `stripeWebhook` の起動を確認**: `firebase functions:list` で14関数の稼働を確認、監査ログの UpdateFunction が granted:true で完了
+- [ ] **未達＝ここで新しい🔴を検出した**: Webhook 送信ログの直近イベントは 200 ではなく、**18件すべて 400（署名検証失敗）**だった。→ 実装待ちの「Stripe Webhook の署名検証が本番で失敗し続けている」へ分離
+- [ ] **未達（上の🔴が直るまで実施しても意味がない）**: 署名検証で落ちるため、解約イベントを発火させても業務ロジックに到達しない
+**残る実害**: デプロイ自体は完了したが、**Webhookの署名検証が通らないため4件の修正はまだ本番で効いていない**。署名シークレットを直した時点で初めて有効になる。
+**備考**: バグチェック #61・#64・#65 で検出。2026-08-11 にユーザーの明示指示で実行。
+
+---
+
+### ✅ バグチェック#44 申し送りの軽微項目（2026-08-10 完了・受け入れ条件5件すべて達成）
+
+**目的**: 2026-07-27 バグチェック#44の「要確認（未修正）」に残った軽微項目を消化する。いずれも実行時バグではないため個別タスク化せずまとめて扱う。
+**受け入れ条件**:
+- [x] **「曜日別から選ぶ」ブロック移動のE2E実機確認（2026-08-10 完了）**: localhost:3000 の標準テスト店舗（`eb6AfsQv4JAht+cX*xP7fuDa`・`?plan=premium`）で 管理者画面 → 候補 → 日付別 を開き、「曜日別から選ぶ」が日付別タブ内に表示されることを実機で確認。コンソールエラー0件。あわせて 候補→テンプレ タブも表示確認（`shopTemplates` 改名の非回帰確認を兼ねる）
+- [x] **`isSpecialRedDate` のユニットテスト追加（2026-08-10 完了・コミット`8167927`）**（app-utils.js:646）: posType3種（`sun`/`holSat`/`holSun`）で true、`weekday`/`sat` で false、posType未設定・settings欠損、土曜(2026-08-15)・日曜(2026-08-16)の早期return、平日の実祝日（2026-08-11 山の日）の早期return——計5テストを追加。`npm test` 160件パス
+- [x] **`.git` ロックファイル残留の調査（2026-07-28 完了）**: 残骸4件（`index.stash.13.lock`・`index.stash.44869`・`index_tmp`・`index_tmp.lock`）を削除しgit正常を確認。**根本原因が判明: これらは Shifty の自動コミットフックではなく、グローバルの `security-guidance` プラグイン由来**。`diffstate.py` の `git stash create`（timeout=15秒）がタイムアウトでSIGKILLされると `.git/index.stash.<pid>[.lock]` を残す。`index_tmp*` は旧バージョンのプラグインが `.git/index_tmp` を一時indexに使っていた化石（現行版はTMPDIRの`security_hook_idx_*`に変更済み）。**重要: これらは一時index側のロックのため、通常の`git add`/`commit`が使う`.git/index.lock`とは別物で、gitをブロックしない（＝#44の「commitがindex.lock/HEAD.lockに阻まれた」障害の原因ではない）**。#44を実際にブロックした`index.lock`/`HEAD.lock`はShiftyのStopフックの`git commit`がターン終了で強制終了された痕跡で、これは別系統。恒久対策は不要（無害・低頻度）だが、再発時はこの区別を踏まえること
+- [x] **`VISION.md` の作成（2026-08-10 完了・コミット`df925ca`）**（#27から継続で不在だった）: `/bug-check` と `/shifty-feature` の両ループが PHASE 0 で参照する完了基準の正本として作成。プロダクトの目的・ターゲット・プラン・設計原則6項目・バグチェックループ完了基準・機能実装ループ完了基準・やらないと決めたこと（Expo/Vite+TS/AdminLogin の理由と再着手条件）・現在の重点を記載
+- [x] **`globalTemplates` の命名整理（2026-08-10 完了・コミット`5e725b0`）**: `shopTemplates` / `setShopTemplates` / `saveShopTemplates` へ改名（app-main.js 8箇所・app-admin.js 8箇所）。**Firebaseパス `shops/{shopId}/templates` と localStorage キー `templates_v6` は変更していない＝データ移行不要**。CLAUDE.md の state一覧・技術負債欄も更新済み
+**影響範囲**: tests/core.test.js（テスト追加）、新規VISION.md、.git運用（フック）、app-main.js/app-admin.js（命名整理は任意・広範）
+**備考**: 「変更マークの締切ゲート対象外」（app-staff.js:166）・capabilityモデルの残存リスクも#44申し送りに含まれるが、前者は仕様判断待ち、後者は上記「App Checkの有効化」で恒久対応するため本まとめには含めない。リリース時のindex.htmlキャッシュバスティング版数バンプはrelease-to-mainフローの標準工程のため別管理。
+
 
 ### ✅ スタッフの提出書き込み（onSub）の差分書き込み化（2026-08-10）
 **実装内容**:
