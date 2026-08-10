@@ -1172,3 +1172,43 @@ test("carryAdminShiftFields: 旧シフトが無ければ素通し・入力オブ
   u.carryAdminShiftFields(src, old);
   assert.strictEqual(src.adminRest, undefined); // srcは変更されない
 });
+
+// ===== isSpecialRedDate（平日に日祝系ポジション区分が設定された日の赤背景判定）=====
+// 基準日: 2026-08-12(水・非祝日) / 2026-08-15(土) / 2026-08-16(日) / 2026-08-11(火・山の日)
+const RED_WEEKDAY = "2026-08-12";
+const posSettings = (dateStr, posType) => ({ dateCandidatePosTypes: { [dateStr]: posType } });
+
+test("isSpecialRedDate: 平日に sun/holSat/holSun が設定されていれば true", () => {
+  for (const t of ["sun", "holSat", "holSun"]) {
+    assert.strictEqual(u.isSpecialRedDate(RED_WEEKDAY, posSettings(RED_WEEKDAY, t)), true, `posType=${t}`);
+  }
+});
+
+test("isSpecialRedDate: 平日でも weekday/sat は対象外", () => {
+  for (const t of ["weekday", "sat"]) {
+    assert.strictEqual(u.isSpecialRedDate(RED_WEEKDAY, posSettings(RED_WEEKDAY, t)), false, `posType=${t}`);
+  }
+});
+
+test("isSpecialRedDate: posTypeが未設定・settings欠損なら false", () => {
+  assert.strictEqual(u.isSpecialRedDate(RED_WEEKDAY, posSettings("2026-08-13", "sun")), false); // 別の日付にだけ設定
+  assert.strictEqual(u.isSpecialRedDate(RED_WEEKDAY, { dateCandidatePosTypes: {} }), false);
+  assert.strictEqual(u.isSpecialRedDate(RED_WEEKDAY, {}), false);
+  assert.strictEqual(u.isSpecialRedDate(RED_WEEKDAY, null), false);
+});
+
+test("isSpecialRedDate: 土曜・日曜は元々色があるため早期returnで false", () => {
+  for (const d of ["2026-08-15", "2026-08-16"]) {
+    assert.strictEqual(u.isHoliday(d), false, `${d} は祝日ではない前提`);
+    assert.strictEqual(u.isSpecialRedDate(d, posSettings(d, "sun")), false, d);
+  }
+});
+
+test("isSpecialRedDate: 実祝日（平日の山の日）は元々色があるため false", () => {
+  const hol = "2026-08-11"; // 火曜・山の日
+  assert.strictEqual(u.isHoliday(hol), true, "山の日が祝日として登録されている前提");
+  assert.strictEqual(u.pd(hol).getDay(), 2, "平日（火曜）である前提");
+  for (const t of ["sun", "holSat", "holSun"]) {
+    assert.strictEqual(u.isSpecialRedDate(hol, posSettings(hol, t)), false, `posType=${t}`);
+  }
+});
