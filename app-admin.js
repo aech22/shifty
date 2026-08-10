@@ -151,6 +151,16 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         </div>
       </div>
       <div style={{maxWidth:900,margin:"0 auto",padding:"20px 14px 60px"}}>
+        {DEMO_MODE&&<div style={{background:"rgba(248,112,54,.1)",border:"1px solid rgba(248,112,54,.35)",borderRadius:10,padding:"14px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+          <span style={{fontSize:20}}>👀</span>
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#C2410C",marginBottom:2}}>これはデモです（サンプル店舗・全機能が使えるPremium表示）</div>
+            <div style={{fontSize:12,color:"#9A3412"}}>自由に触って試せます。入力内容は保存されず、ページを再読み込みすると元に戻ります。</div>
+          </div>
+          {/* ?start=1 を付けるのはハッシュだけを外すと同一ドキュメント遷移になり再読み込みされないため。
+              GA4でデモからの「無料で始める」到達を計測できる副次効果もある */}
+          <a href={window.location.pathname+"?start=1"} style={{padding:"10px 18px",background:"#f87036",color:"#fff",borderRadius:8,fontSize:14,fontWeight:700,textDecoration:"none",whiteSpace:"nowrap"}}>無料で始める</a>
+        </div>}
         {ownerReadOnly&&<div style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
           <span style={{fontSize:18}}>🔒</span>
           <div style={{flex:1}}>

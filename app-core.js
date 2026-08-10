@@ -11,6 +11,19 @@ const {useState,useEffect,useCallback,useRef,useMemo}=React;
 // ============================================================
 const DEV_MODE = location.hostname !== "shiftyshifty.app";
 
+// ============================================================
+// ★ デモモード ★
+// 広告等から来た未ログイン訪問者に、ログインさせずに完成形の管理画面を見せるための体験版。
+// URLハッシュ #/demo で起動し、DEMO_SHOP_ID の店舗を直接読み込む。
+// 訪問者の操作は fbSet/fbUpd の入口で握り潰すためFirebaseには一切保存されない
+// （リロードで元に戻る＝荒らしが成立せず、本番データも汚れない）。
+// shopId を URL から受け取らないのは、任意の店舗を第三者に閲覧させないため（固定値のみ許可）。
+// ============================================================
+const DEMO_SHOP_ID = DEV_MODE
+  ? "ML2JUEd~eC8a2L=zbcKA=2h7"   // dev: 居酒屋 とり松（販促用デモ店舗）
+  : "";                           // 本番: デモ店舗を用意したらそのshopIdを設定する
+const DEMO_MODE = !!DEMO_SHOP_ID && /^#\/demo\/?$/.test(location.hash);
+
 const FIREBASE_CONFIG_PROD = {
   apiKey:            "AIzaSyDdl1Li3QduufAFhBWcF4nmOlFcCsx8zlQ",
   authDomain:        "ontheshift.firebaseapp.com",
@@ -65,12 +78,16 @@ function _fbGuard(path, found, strict) {
   ph("write_undefined_stripped", { path, keys: found.slice(0, 5) });
 }
 function fbSet(path, val, strict = DEV_MODE) {
+  // デモモードでは書き込みを行わない（UIは操作できるがローカルstateにしか反映されない）
+  if (DEMO_MODE) return Promise.resolve();
   const { value, found } = sanitizeForSet(val);
   _fbGuard(path, found, strict);
   // eslint-disable-next-line no-restricted-syntax -- 書き込みの唯一の入口（ここだけは直接呼ぶ）
   return firebaseDB.ref(path).set(value);
 }
 function fbUpd(path, payload, strict = DEV_MODE) {
+  // デモモードでは書き込みを行わない（fbSet と同じ理由）
+  if (DEMO_MODE) return Promise.resolve();
   const { value, found } = sanitizeForUpdate(payload);
   _fbGuard(path, found, strict);
   // eslint-disable-next-line no-restricted-syntax -- 書き込みの唯一の入口（ここだけは直接呼ぶ）
@@ -133,6 +150,8 @@ function buildUrl(period){
 
 function parseUrl(){
   const h=window.location.hash;
+  // デモURL: #/demo（下の「旧形式互換」より先に判定する。#/demo は #/ で始まるため）
+  if(/^#\/demo\/?$/.test(h)) return{type:"demo"};
   // スタッフURL: #/s/<token>
   if(h.startsWith("#/s/")){
     const token=h.slice(4);

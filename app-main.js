@@ -208,6 +208,17 @@ function App(){
       });
     };
     const parsed=parseUrl();
+    // デモ（#/demo）: 固定のデモ店舗を直読みして管理者画面を開く。
+    // Cookie・sessionStorageには保存しないため、通常利用のセッションを乗っ取らない。
+    if(parsed&&parsed.type==="demo"&&DEMO_SHOP_ID){
+      readShop(DEMO_SHOP_ID).then(shop=>{
+        if(!shop){ console.warn("デモ店舗が見つかりません:",DEMO_SHOP_ID); toUnbound(); return; }
+        dlog("デモモード:",shop.name);
+        setView("admin");
+        enterShop(shop);
+      }).catch(e=>{ console.warn("デモ店舗の読み込み失敗:",e); toUnbound(); });
+      return;
+    }
     // URLにtokenがある場合: tokens逆引きインデックスでshop/periodを特定
     if(parsed&&parsed.token&&parsed.type==="staff"){
       const token=parsed.token;
@@ -283,7 +294,7 @@ function App(){
   // refとsessionStorage・Cookieを最新のsidに同期
   useEffect(()=>{
     currentShopIdRef.current=sid;
-    if(!_hasUrlToken){
+    if(!_hasUrlToken&&!DEMO_MODE){
       ssSave(SS_SHOP,sid);
       // "default"はCookieに保存しない（リロード時の誤ログイン画面表示を防ぐ）
       if(sid&&sid!=="default"){
@@ -301,8 +312,8 @@ function App(){
     ls(storeKey(targetSid,"templates_v6"),v);
     if(firebaseDB) fbSet(fbPath(targetSid,"templates"),v).catch(e=>console.warn("templates保存失敗:",e));
   },[]);
-  useEffect(()=>{ if(!_hasUrlToken) ssSave(SS_APID,apid); },[apid]);
-  useEffect(()=>{ if(!_hasUrlToken) ssSave(SS_VIEW,view); },[view]);
+  useEffect(()=>{ if(!_hasUrlToken&&!DEMO_MODE) ssSave(SS_APID,apid); },[apid]);
+  useEffect(()=>{ if(!_hasUrlToken&&!DEMO_MODE) ssSave(SS_VIEW,view); },[view]);
 
   // startSubscriptions: Phase1内でsid確定直後に呼ぶ（useEffectに依存しない）
   const activeSubsRef=useRef([]); // 購読中のrefリスト（クリーンアップ用）
@@ -450,7 +461,8 @@ function App(){
     reconcileSubs(); // periods未着でも空実行（periods着信・apid確定で再実行される）
     // accounts/<shopId>/plan（プラン読み込み）
     on(`accounts/${targetSid}/plan`,val=>{
-      setPlan(DEV_PLAN_OVERRIDE||(val&&["free","pro","premium"].includes(val)?val:"free"));
+      // デモは全機能を見せる目的なので常にPremium表示にする（accountsのシードに依存させない）
+      setPlan(DEMO_MODE?"premium":(DEV_PLAN_OVERRIDE||(val&&["free","pro","premium"].includes(val)?val:"free")));
     });
     // accounts/<shopId>/planExpiry（有効期限）
     on(`accounts/${targetSid}/planExpiry`,val=>{
@@ -523,6 +535,9 @@ function App(){
   },[]);
   const claimOwnership=useCallback(async(shopId)=>{
     const applyResult=ok=>{ if(shopId===currentShopIdRef.current) setOwnerReadOnly(!ok); return ok; };
+    // デモ: 書き込みは全て無効化済みなのでclaimしない。localStorageに偽のadminKeyを残さないため。
+    // 閲覧専用バナーではなくデモバナーを出したいので ownerReadOnly は立てない（UIは触れる）
+    if(DEMO_MODE) return applyResult(true);
     if(!firebaseDB||!firebaseAuth?.currentUser||!shopId||shopId==="default")return applyResult(false);
     const uid=firebaseAuth.currentUser.uid;
     let key=getAdminKeyLS(shopId);
@@ -1113,7 +1128,7 @@ function App(){
     // 削除された期間のsubsとURLトークン逆引きをFirebaseから削除
     const deletedPeriods=periods.filter(p=>!v.find(np=>np.id===p.id));
     const deletedIds=deletedPeriods.map(p=>p.id);
-    if(deletedIds.length>0&&firebaseDB){
+    if(deletedIds.length>0&&firebaseDB&&!DEMO_MODE){
       deletedPeriods.forEach(p=>{ if(p.urlToken) firebaseDB.ref(`tokens/${p.urlToken}`).remove().catch(()=>{}); });
       const newSubs=subs.filter(s=>!deletedIds.includes(s.periodId));
       setSubs(newSubs); ls(storeKey(sid,"subs_v6"),newSubs);
@@ -1515,7 +1530,7 @@ function App(){
               const a=subs.filter(s=>s.id!==subId);
               setSubs(a);
               ls(storeKey(currentSid,"subs_v6"),a);
-              if(firebaseDB) firebaseDB.ref(`shops/${currentSid}/subs/${subId}`).remove().catch(e=>console.warn("sub削除失敗:",e));
+              if(firebaseDB&&!DEMO_MODE) firebaseDB.ref(`shops/${currentSid}/subs/${subId}`).remove().catch(e=>console.warn("sub削除失敗:",e));
             }}
             shopName={shop?.name}/>
         :<AdminView settings={effectiveSettings} periods={periods} subs={subs} staffList={staffList} shops={shops}
