@@ -555,37 +555,33 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-08-09 自動実行 #64）
+## Shifty バグチェックレポート（2026-08-10 自動実行 #65）
 
 ### 修正済み
 
-- **[🔴] サブスクの解約・月次更新・決済失敗のWebhookが、対象店舗を特定できず一切反映されていなかった**（functions/index.js:123 `createCheckoutSession` / :169 `resolveShopMeta`・コミット`4acd089`）
-  Stripeは Checkout Session の `metadata` を、そこで作られる Subscription へコピーしない。`createCheckoutSession` は `metadata:{shopId,plan}` をセッションにしか付けていなかったため、`shopId` が載っているイベントは **`checkout.session.completed`（初回購入）だけ**だった。それ以降の `invoice.payment_succeeded` / `invoice.payment_failed` / `customer.subscription.deleted` は `obj.metadata` も `subscription.metadata` も空になり、`if(shopId)` を素通りして**何も書かれていなかった**。`subscription_data.metadata` を追加（以降の新規契約）し、①イベント本体 →②Subscription →③その契約を作った Checkout Session の順に辿る `resolveShopMeta` を追加した（③により**既存契約もバックフィルなしで救済**される）。あわせて Invoice の subscription 参照位置のAPIバージョン差を `subscriptionIdOf` で吸収した。
-- **[🟡] 旧Proの解約が、支払い済みのPremiumごとFreeに落としていた**（functions/index.js:257 `customer.subscription.deleted`・コミット`eee5096`）
-  Pro→Premium のアップグレードは `mode:"subscription"` で**別の契約を新規作成する**方式のため、旧Proを解約するまで1店舗が2契約を同時に持つ。解約Webhookは無条件に `plan="free"` を書いていたので、あとから旧Proを解約すると有効なPremiumごと剥奪される。**上の修正でこの経路が初めて実際に到達するようになった**ため同時に塞いだ。解約された契約のプランが現行プランと異なる場合はダウングレードしない（プランを特定できない古い契約は従来どおりFreeへ落とす＝安全側の既定動作を維持）。
+- **[🔴] 旧Proの月次更新請求が、支払い済みのPremiumを毎月Proへ引き下げていた**（functions/index.js:219 `invoice.payment_succeeded`・コミット`3fccd20`）
+  Pro→Premium のアップグレードは `mode:"subscription"` で**別の契約を新規作成する**方式で、旧Proを解約する導線がアプリ内に無い（#64の🟡）。そのため1店舗が Pro と Premium の2契約を同時に持ち、**両方が毎月別々に更新される**。更新イベントは `accounts/{shopId}/plan` を**無条件に上書き**していたため、旧Proの請求が成功するたびに Premium ユーザーが Pro へ落とされ、Premiumの請求日が来ると Premium に戻る——**毎月シフト作成タブが使えたり使えなかったりする**状態になる。プランの序列（free<pro<premium）を導入し、**明示的な購入（`checkout.session.completed`）は従来どおり常に反映・更新イベント（`invoice.payment_succeeded`）だけは現行プランより下位のときに反映しない**ようにした。`planExpiry`・`stripeCustomerId` の上書きも同じガードの内側へ移した（Customer Portal が下位プランの顧客を指してしまうのを防ぐ）。
 
 ### 今回の対象と見つけ方
 
-#63 が指定した2軸を先に実行し、**2軸とも #63 と同じ結論（到達不能な潜在形のみ）**で閉じた。そのあと「**壊れたときの損害が大きい経路**」に切り替え、#63 が Excel出力・差分書き込みで使った同じ観点を**課金系**に向けたところ、63回のループで一度も踏まれていなかった領域から🔴が出た。
+#64 が置いた2軸のうち**2つ目（「初回だけ動いて2回目以降は動かない」経路）を、#64 自身の修正に向けた**。#64 の総括が「壊れていたものを直すと、その先で止まっていた別の経路が動き出す」と書いた、まさにその形が実際に残っていた。
 
-- **指定軸1（デフォルト引数が実際に効いたときに壊れるか）**: `=[]`/`={}` のデフォルトを持つ関数シグネチャを全数抽出（`AdminView`・`ShiftEditTab`・`PeriodsTab`・`StaffTab`・`CandTab`・`SubsTab`・`CompanyTab`・`SetTab`・`MyPageTab`・`expXl`）。依存配列に載るのは `ShiftEditTab({allLinkedShops=[]})`→`useEffect([shopId,allLinkedShops])`（app-admin.js:403）と、#63既知の `CompanyTab`→`useEffect([listShops])`（:3117）の**2件のみ**。前者はデフォルトが効くと「毎レンダー新しい`[]`→`setCompanyData({})`→再レンダー」の無限ループになるが、**唯一の呼び出し元（app-admin.js:196）が必ず `allLinkedShops={allLinkedShops}` を渡す**ため到達しない。全9コンポーネントの呼び出し元（app-admin.js:169-199）を実測し、**デフォルトが効く呼び出しは0件**だった。
-- **指定軸2（全呼び出し元が既定値のままの可変性）**: #63 が挙げた `src=heatEdits` 6関数に加えコンポーネント側も見たが、**新規の実害は0件**。#63 の🟢のまま据え置く。
-- **切り替え後（損害の大きい経路）**: 削除・課金という「間違うと取り返しがつかない」2箇所を選んだ。①`purgeOldPeriods` は**3日後（2026-08-12）に実削除が有効化される**予定なので先回りして監査 → **問題なし**（下記）。②Stripe Webhook → **🔴が出た**。
+- **前提の確認**: `4acd089` で更新イベントが初めて `shopId` を解決できるようになった。つまり `invoice.payment_succeeded` の plan書き込みは、**デプロイした瞬間に初めて実行される未走行コード**である。#64 は解約（`customer.subscription.deleted`）についてはこの視点で `eee5096` を入れたが、**更新（renewal）には同じ見直しが入っていなかった**。
+- **到達条件の実測**: `UpgradeModal` の Premium ボタン（app-admin.js:4180）→ `checkout("premium")`（:4128）→ `createCheckoutSession`（functions/index.js:123）は、既存 `customer` も既存契約の解約も渡さず常に `mode:"subscription"` で新規契約を作る。旧Proは生き続け、`createPortalSession` は新Premiumの顧客しか開けない（#64で確認済み）。**つまり「Pro→Premiumにアップグレードした店舗」は全数がこの2契約状態になる**。
+- **定型スキャンは今回も全て正常**（下記）。当たりは定型の外から出た。
 
 ### 検証したこと
 
-- **`resolveShopMeta` / `subscriptionIdOf` の挙動テスト17件（新規・全パス）**: 本物のStripeへは一切アクセスせず、`functions/index.js` から当該2関数の**実ソースを切り出して**スタブStripeで検証した（スクリプトはスクラッチパッド、リポジトリには入れていない）。カバーしたのは、イベント種別ごとのsubscription参照形5種（Subscription本体／Session文字列／Invoice展開済み／新APIの`parent.subscription_details`／同展開済み）、①②③の解決順と**不要なStripe呼び出しをしないこと**、既存契約が③のCheckout Session逆引きで解決すること（**今回の本丸**）、解約イベントの解決、`retrieve`例外時の③へのフォールバック、**両方失敗時に`null`を返して誤った店舗へ書かないこと**、`plan`欠落時に`plan=null`となり plan書き込み分岐が発火しないこと。
-- **バグが実際にユーザー導線から到達することの確認**: 解約は `createPortalSession`（Stripe Customer Portal・functions/index.js:271）が唯一の導線で、ここでの解約が `customer.subscription.deleted` を発火させる。すなわち**アプリ内の正規手順で解約したユーザーが、有料機能を無期限に使い続けられる状態だった**。決済失敗バナー（`paymentFailed`）が一度も出ないこと、`planExpiry`（MyPageTabの「〜まで有効」表示・app-admin.js:3957）が初回購入時のまま更新されないことも同じ根本原因。
-- **クライアント側のプラン判定への影響範囲**: `app-main.js:447` が `accounts/{shopId}/plan` のみでゲートしており、`planExpiry` は表示専用（app-admin.js:3957）。したがって**「解約してもplanが"free"に戻らない＝機能が剥奪されない」が実害の本体**で、期限切れによる自動失効の仕組みは存在しない。
-- **`purgeOldPeriods` の事前監査（実削除が3日後に有効化されるため）**: `endDate`欠損・`Date.parse`不正はスキップ（:500）、36ヶ月判定は `"YYYY-MM-DD"` 同士の文字列比較（:504）、対象subsは `.indexOn:["periodId"]`（デプロイ済み）を使った絞り込み読み（:506）、削除は subs を`update()`でnull → `tokens/{urlToken}`削除 → period削除の順（:515-523）。**論理・順序ともに問題なし**。カットオフが `toISOString()` のUTC日付なのでJST深夜帯に最大1日ぶん早く出るが、**「消さない側」にずれるため無害**（🟢に記載）。
-- **非回帰**: `node --check functions/index.js` OK。`npx eslint app-*.js` **0 errors 98 warnings**（#63と同数）、`npm test` **155件パス**（増減なし）。`app-*.js` は今回**未変更**。
-- **RULES.md準拠**: `accounts` 全件読み取りは追加していない（`resolveShopMeta` はStripe API側で解決し、追加したDB読みは `accounts/{shopId}/plan` の直キー読み1件のみ）。本番Firebase・Stripe本番設定への変更は一切行っていない。
-- **未検証（正直に記載）**: **Stripeの実イベントによるE2E検証は行っていない**（テストモードのWebhook発火・`stripe trigger` 相当の操作は本番/課金系の変更にあたるため、ループの権限外）。検証したのは解決ロジックの単体挙動までで、**「①のsession metadataがSubscriptionへコピーされない」というStripeの仕様前提そのものは、コードとStripeのAPI仕様に基づく判断であり実イベントでは未確認**。また **Cloud Functions は未デプロイのため、本番は今も修正前の挙動**（下記🔴）。実ブラウザでの確認も今回は行っていない（`app-*.js` に差分がないため）。
+- **`planRank` / `shouldApplyRenewalPlan` の挙動テスト11件（新規・全パス）**: 本物のStripe・Firebaseには一切アクセスせず、`functions/index.js` から当該関数の**実ソースを切り出して**評価した（スクリプトはスクラッチパッド、リポジトリには入れていない）。カバーしたのは、本丸（Premium保持中にProの更新→反映しない）、通常の月次更新（同一プラン→反映する）、上位への更新（free/pro→premium→反映する）、現行プラン未設定・破損時の扱い（反映する＝初回請求を取りこぼさない）、未知のプラン名（書かない）、Freeへの巻き戻しが更新経路では起きないこと、**明示的な購入はダウングレードも含め常に反映されること**、購入と初回請求の**到着順が逆でも最終状態が矛盾しないこと**。あわせて実ソースを正規表現で照合し、**ガードが `invoice.payment_succeeded` にのみ掛かっていること**と、**plan・planExpiry・stripeCustomerId の3つの書き込みが全て `apply` の内側にあること**を機械的に確認した。
+- **他に無防備な plan書き込みが残っていないことの確認**: `accounts/${shopId}/...` への書き込みを全数列挙（functions/index.js:248/255/256/260/271/281/295/299/300/329）。plan を書くのは更新経路（:255・今回ガード）と解約経路（:299・`eee5096` でガード済み）の2つだけで、**未ガードの plan書き込みは0件**。
+- **非回帰**: `node --check functions/index.js` OK。`npm test` **155件パス**（増減なし）、`npx eslint app-*.js` **0 errors 98 warnings**（#64と同数）。`app-*.js` は今回**未変更**。
+- **RULES.md準拠**: 追加したDB読みは `accounts/{shopId}/plan` の直キー読み1件のみ（全件読みなし）。本番Firebase・Stripe本番設定への変更は一切行っていない。
+- **未検証（正直に記載）**: **Stripeの実イベントによるE2E検証は行っていない**（テストモードのWebhook発火は課金系の操作にあたりループの権限外）。検証したのはガード判定の単体挙動と、それが webhook 本体の正しい位置に入っていることまで。また **Cloud Functions は未デプロイのため、本番は今も修正前の挙動**（下記🔴）。`app-*.js` に差分がないため実ブラウザ確認も行っていない。
 
 ### スキャン結果（RULES.md 準拠・非回帰）
 
 - `DEV_MODE`（app-core.js:12・式のまま）正常。`DEV_PLAN_OVERRIDE`（:108・DEV_MODE連動）正常
-- `subs` の `set()` 全体上書き **0件**／`accounts` 全件読み **0件**／`global/shops` 全件読み **0件**（直キー読みのみ・app-main.js:173/548/923/1005/1220/1256、app-admin.js:34）／`global/templates` 参照 **0件**
+- `subs` の `set()` 全体上書き **0件**／`accounts` 全件読み **0件**／`global/shops` 全件読み **0件**（直キー読みのみ・app-main.js:173/548/923/1005/1173/1220/1256、app-admin.js:34）／`global/templates` 参照 **0件**
 - `database.rules.json` の `".read": true` **0件**（締めルール適用後の形を維持）
 - Cloud Functions: secrets **5箇所**抜け漏れなし（STRIPE×3・SMTP×2＋SURVEY_SEND_TOKEN）・`.delete()` 誤用 **0件**・`Number.isNaN`/`archived/shops` の安全装置 **9箇所維持**
 - index.html の読み込み順 utils→core→staff→admin→main 維持・SRI **11本**維持・`fontSize<16` の input/select/textarea **0件**
@@ -593,64 +589,63 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 
 ### 要確認（未修正）
 
-- **🔴（デプロイ待ち・本番はまだ壊れている）今回の2件と #61 の認可修正は、Cloud Functions をデプロイするまで効かない**。本番（ontheshift）では**解約してもプランが下がらず・決済失敗バナーも出ず・`linkStoreToCompany` の認可も無防備**なまま。ループは本番Firebaseをユーザー確認なしに変更できず、デプロイコマンドはフックでもブロックされるため未実施。デプロイは `cd functions && firebase deploy --only functions --project ontheshift`。**3件ともCF側だけで完結し、クライアント側の変更を伴わないためデプロイ順序の制約はない**（新CFは旧クライアントからの呼び出しでも正規利用を壊さない）
-- **🟡（新規・仕様判断が要るため未修正）Pro→Premium のアップグレードが二重課金になり、旧Proを解約する手段がアプリ内に無い**。`createCheckoutSession`（functions/index.js:123）は常に `mode:"subscription"` で**新しい契約を作る**ため、Proユーザーが MyPageTab の「★★ Premiumにアップグレード（2,980円/月）」（app-admin.js:4000付近）を押すと **500円/月と2,980円/月が同時に走る**。さらに Checkout に `customer` を渡していないので契約ごとに別のStripe Customerが作られ、`accounts/{shopId}/stripeCustomerId`（functions/index.js:230）は**新しい方で上書きされる**。その結果 Customer Portal（`createPortalSession`）は新Premiumの顧客しか開けず、**旧Proを解約する導線がアプリ内に存在しない**。恒久対応は「Checkoutに既存 `customer` を渡す」か「アップグレードをPortalのプラン変更に寄せる」のどちらかで、**Stripe本番設定の変更を伴う可能性があるためループでは着手しない**（RULES.md「ユーザーに確認なくStripeの本番設定を変更しない」）。なお `eee5096` により、**旧Proを手動で解約してもPremiumが剥奪されることはなくなっている**
-- **🟡（#59からの継続・再現手段がなく未修正）スタッフの提出書き込み（`onSub`）だけが、リスナーの巻き戻し保護と差分書き込みの両方を通っていない**（app-main.js:1464-1475）。`saveSubs` と非対称な4点（`pendingSubWritesRef` 未登録・`subsMapRef` 未更新・`fbSet` で sub全体 set・`setSubs(a)` が関数型更新でない）は今回も変わらず。**残る実害は「sub全体 set」による last-write-wins**で、管理者が同じsubの別の日を編集した直後にスタッフが再提出すると、スタッフ端末の `subs` が古いぶんだけ管理者の編集を上書きしうる。**実ブラウザ2コンテキストでの再現は依然未着手**
-- **🟡（次リリースで必須）index.html のキャッシュ版数のバンプ**。本番（origin/main）は `20260805-78e8888`、develop は `20260802-94ffc47`。この差は「develop側が巻き戻す危険」ではない（版数を上げた `92dc08a` は main 限定コミットで、develop→main のマージでは main 側が保持される）。ただし配信物が変わっている以上バンプ自体は必須。**現時点の本番未反映は `origin/main..develop` の19コミット（うち fix 10件＝#55〜#64）**
-- **🟡（#57からの継続・仕様判断が要る）スタッフが再提出でその日を「休み」にすると、管理者の調整値が残ったまま status だけ holiday になる**（app-staff.js:167 `buildShift` → app-utils.js:190 `carryAdminShiftFields`）。`carryAdminShiftFields` が `status="work"` に戻すのは `adjustedStartFixed`/`adjustedEndFixed`（＝「締」）があるときだけで、`adjustedStart`/`adjustedEnd` は引き継がれるのに status は holiday のまま。**どちらが正しいかは仕様判断**
-- **🟢（新規）片側セルだけ入力された日の勤務時間が0分として集計される**（app-utils.js:128 `calcNetWorkMinutes` の `if(st&&en)`）。ヒートマップは片側入力を「出勤のみ→ランチ終わりまで／退勤のみ→ディナー始まりから」と補完して出勤者に数え（app-admin.js:767-768）、休みカウントも0.5休みとして扱う（:1105-1106）のに、**勤務時間・期間別集計・週上限/月上限の判定だけが0分**になる。管理者が片側だけ入力する運用は正規の使い方なので、**上限超過の見落としにつながりうる**。ただし「開始も終了も分からない日を何時間として数えるか」は仕様判断（#52からの「両セル空欄の日を出勤1日と数える」と同系統）
-- **🟢（新規）`purgeOldPeriods` のカットオフがUTC日付**（functions/index.js:478 `purgeOldPeriodsCutoff` の `toISOString()`）。スケジュールはJSTだが `new Date().toISOString()` はUTCのため、JST 00:00〜09:00の実行では日付が1日前になる。**36ヶ月境界が最大1日「消さない側」にずれるだけ**で無害
-- **🟢（新規）`getBreaksFor` が退勤延長（残業）前の時刻で休憩の適用可否を判定する**（app-utils.js:266）。`calcNetWorkMinutes` は延長を加算してから休憩を引く（:129）のに、`getBreaksFor` は延長前の `we` で「勤務が休憩帯を完全に含むか」を見るため、**延長によって初めて休憩帯を跨いだシフトでは休憩が引かれない**。現行の休憩設定（ランチ・ディナーの間）と延長幅では実データで再現しにくい
-- **🟢（#63からの継続）`src` 引数を持つ6関数の可変性が一度も使われていない**（app-admin.js:684 `getEffHHMM`・686 `getShiftNote`・690 `getFieldNote`・702 `isCountExcluded`・705 `getFieldFixed`・715 `getHelpInfo`）。全呼び出し元が既定値のままで `localEdits` を渡す箇所は0件
-- **🟢（#63からの継続）`staffSectionOn` だけが `isCountExcluded`（x＝カウント外）を見ていない**（app-admin.js:919）。`heatData`(:763)・`positionErrors`(:878) は両方xを除外する。ただしコメント:941の除外条件は「所属なし＝他店舗ヘルプ」であって「カウント外」ではないため、誤りとは言い切れない
-- **🟢（#63からの継続）SubsTab 詳細モーダルの「月計」だけが別名subを重複加算しうる**（app-admin.js:3027 `moTot`）。現行UIの名前確定3経路すべてが `resolveAlias` で正規化するため、レガシーデータがある場合にのみ再現する
-- **🟢（#63からの継続）`CompanyTab` のデフォルト引数が効くと `allAbbrs` 先読みが無限ループになる**（app-admin.js:3053・3070・3110）。今回 `ShiftEditTab` の `allLinkedShops=[]`→`useEffect([shopId,allLinkedShops])`（:403）も**同型**であることを確認した。どちらも唯一の呼び出し元が必ずプロップを渡すため到達しないが、**呼び出し元が2つ目になった瞬間に踏む**
-- **🟢（#63からの継続）`allAbbrs` の先読みが解決すると `saveMetaField` の直後の保存値を一時的に巻き戻す**（app-admin.js:3100 vs :3110）。該当店舗は展開済み＝`abbrsOf` が `metaFor` を優先するため実害なし
-- **🟢（#63からの継続）`sub.shopId` はどこからも読まれていない死にフィールド**。`sub.shopId` を読むコードは app-*.js・functions/index.js に0件。CLAUDE.md の `Sub` 型定義にだけ残っている
+- **🔴（デプロイ待ち・本番はまだ壊れている）今回の1件と #64 の2件・#61 の認可修正は、Cloud Functions をデプロイするまで効かない**。本番（ontheshift）では**解約してもプランが下がらず・決済失敗バナーも出ず・`linkStoreToCompany` の認可も無防備**なまま。デプロイは `cd functions && firebase deploy --only functions --project ontheshift`。**4件ともCF側だけで完結し、クライアント側の変更を伴わないためデプロイ順序の制約はない**。なお**今回の修正はデプロイ前に入れる必要があった**もので、#64 だけを先にデプロイしていたら「毎月プランが入れ替わる」不具合が本番で発生していた
+- **🟡（新規・修正には仕様判断かStripe設定変更が要る）Premiumを解約すると、契約が残っているProまで一緒にFreeへ落ちる**（functions/index.js:295 `customer.subscription.deleted`）。上と同じ2契約状態の裏返しで、`eee5096` のガードは「解約された契約のプランが現行プランと**異なる**ときは何もしない」形のため、**現行プランと同じPremiumを解約すると無条件に `plan="free"` が書かれる**。実際にはProの契約が生きていて支払いも続いているのに、**次のProの更新請求が来るまで最大1ヶ月、有料機能を失う**（更新が来れば `plan="pro"` に自己回復する）。正しく直すには「その店舗にまだ有効な契約が他にあるか」をStripeに問い合わせる必要があるが、**2つの契約は別々のStripe Customerに属している**（Checkoutに既存 `customer` を渡していないため）ので顧客単位の列挙ができず、古い契約には `metadata` も無いためメタデータ検索も当てにならない。**根治は #64 の🟡（Checkoutに既存 `customer` を渡す／アップグレードをPortalのプラン変更に寄せる）と同一で、Stripe本番設定の変更を伴う可能性があるためループでは着手しない**
+- **🟡（#64からの継続・根治が本課題）Pro→Premium のアップグレードが二重課金になり、旧Proを解約する手段がアプリ内に無い**（functions/index.js:123 `createCheckoutSession` / app-admin.js:4180 の Premiumボタン）。今回の🔴も上の🟡も**すべてこの1点から派生している**。ここを直せば派生2件のガードは不要になる
+- **🟡（新規）企業連携の解除が、稼働中の店舗を「オーナー0人」の状態に戻しうる**（functions/index.js:815 `unlinkStoreFromCompany`）。企業ログインのセッションで作った店舗はオーナーが企業uidだけなので、解除すると `shops/{shopId}/owners` が空になる。`linkStoreToCompany` は未claim店舗（`allowed = !owners`・:798）を**管理キーなしで連携できる**ため、その隙にshopIdを知る第三者が自分の企業へ連携してオーナーになれる。shopIdはスタッフURLの `tokens` 逆引きから辿れる。既存の🟢「未claim店舗は先に触った人がownerになれる」は「新規店舗作成直後の一瞬」と整理していたが、**解除操作が既存店舗を後からその状態に戻せる**点は未記載だった。修正は「最後のオーナーは外せない」等の仕様判断を伴うためループでは着手しない
+- **🟡（#59からの継続・再現手段がなく未修正）スタッフの提出書き込み（`onSub`）だけが、リスナーの巻き戻し保護と差分書き込みの両方を通っていない**（app-main.js:1478付近）。`saveSubs` と非対称な4点（`pendingSubWritesRef` 未登録・`subsMapRef` 未更新・`fbSet` で sub全体 set・`setSubs(a)` が関数型更新でない）は今回も変わらず。**残る実害は「sub全体 set」による last-write-wins**。実ブラウザ2コンテキストでの再現は依然未着手
+- **🟡（次リリースで必須）index.html のキャッシュ版数のバンプ**。本番（origin/main）は `20260805-78e8888`、develop は `20260802-94ffc47`。**現時点の本番未反映は `origin/main..develop` の22コミット（うち fix 11件＝#55〜#65）**
+- **🟡（#57からの継続・仕様判断が要る）スタッフが再提出でその日を「休み」にすると、管理者の調整値が残ったまま status だけ holiday になる**（app-staff.js:167 `buildShift` → app-utils.js:190 `carryAdminShiftFields`）
+- **🟢（新規）決済失敗フラグの解除も、別契約の請求成功で起こりうる**（functions/index.js:281）。Premiumの支払いが失敗している最中に旧Proの請求が成功すると `paymentFailed` が消える。警告バナーの表示条件でしかなく、失敗が続けば次のイベントで再び立つため実害は小さい（今回の🔴と同じ2契約状態が前提）
+- **🟢（#64からの継続）片側セルだけ入力された日の勤務時間が0分として集計される**（app-utils.js:128 `calcNetWorkMinutes` の `if(st&&en)`）。ヒートマップ（app-admin.js:767-768）・休みカウント（:1105-1106）は片側入力を補完するのに、勤務時間・週/月上限判定だけが0分になる
+- **🟢（#64からの継続）`purgeOldPeriods` のカットオフがUTC日付**（functions/index.js:524 `purgeOldPeriodsCutoff`）。36ヶ月境界が最大1日「消さない側」にずれるだけで無害
+- **🟢（#64からの継続）`getBreaksFor` が退勤延長（残業）前の時刻で休憩の適用可否を判定する**（app-utils.js:266）
+- **🟢（#63からの継続）`src` 引数を持つ6関数の可変性が一度も使われていない**（app-admin.js:684/686/690/702/705/715）
+- **🟢（#63からの継続）`staffSectionOn` だけが `isCountExcluded`（x＝カウント外）を見ていない**（app-admin.js:919）
+- **🟢（#63からの継続）SubsTab 詳細モーダルの「月計」だけが別名subを重複加算しうる**（app-admin.js:3027 `moTot`）
+- **🟢（#63からの継続）`CompanyTab` と `ShiftEditTab` のデフォルト引数が効くと無限ループになる**（app-admin.js:3053/3070/3110、:403）。どちらも唯一の呼び出し元が必ずプロップを渡すため到達しない
+- **🟢（#63からの継続）`allAbbrs` の先読みが解決すると `saveMetaField` の直後の保存値を一時的に巻き戻す**（app-admin.js:3100 vs :3110）
+- **🟢（#63からの継続）`sub.shopId` はどこからも読まれていない死にフィールド**
+- **🟢（継続）店舗メニューの店舗削除（非Authセッション）が `global/shops/{id}` を消さない**（app-admin.js:132 → `saveShops` は残った店舗を書くだけ・app-main.js:1163）。孤児は `purgeInactiveShops` が1年後に回収する
 - **🟢（継続）`isFixedShiftEligibleShop` の第1条件が第2条件に完全に包含されている**（app-utils.js:509）
-- **🟢（継続）CLAUDE.md の記述が実装より古い箇所が2つ**。①`dayTypeOf`/`POSITION_DAY_TYPES` を「`breakTimes`等には非影響」としているが、現在は `getBreakList`（app-utils.js:147）が `positionDayTypeFor` 経由でこの5区分を使う。②Settings型の `breakTimes?: {weekday|sat|sun|hol}` が旧4区分のまま
-- **🟢（継続）`companyCodes/{code}` の生成が `exists()`→`set` の TOCTOU**（functions/index.js・`createCompany`）。32^8＋同時実行が条件のため実質起きない
-- **🟢（継続）略称が重複登録済みの場合、`abbrToShop` の「先勝ち」自体は残る**（app-admin.js:407）。#62 の修正は新規登録を止めるだけ
-- **🟢（継続）未claim店舗は今も「先に触った人が owner になれる」**（`database.rules.json` の `private/adminKey` が `!data.exists()` で書き込み可＋`createCompany`・`linkStoreToCompany` の未claim分岐）。本番13店舗はすべてclaim済みで実害はなく、新規店舗作成直後の一瞬だけ窓が開く
+- **🟢（継続）CLAUDE.md の記述が実装より古い箇所が2つ**（`dayTypeOf` の非影響記述・Settings型の `breakTimes` が旧4区分）
+- **🟢（継続）`companyCodes/{code}` の生成が `exists()`→`set` の TOCTOU**（functions/index.js `createCompany`）
+- **🟢（継続）略称が重複登録済みの場合、`abbrToShop` の「先勝ち」自体は残る**（app-admin.js:407）
 - **🟢（継続）企業アカウント作成に回数制限も監査ログもない**（functions/index.js `createCompany`）
 - **🟢（継続）期間の手動作成に「終了日 ≥ 開始日」の検証がない**（app-admin.js `create`）
-- **🟢（継続）トリプルタップの計数キーが出勤セルと退勤セルを区別しない**（app-admin.js `onCellTripleTap`。キーが `name|date`）
+- **🟢（継続）トリプルタップの計数キーが出勤セルと退勤セルを区別しない**（app-admin.js `onCellTripleTap`）
 - **🟢（継続）管理者が提出状況ビューでセルを編集すると、スタッフ提出値（`start`/`end`）そのものが書き換わる**（app-staff.js `applyCellEdit`）
-- **🟢（継続）Excel出力の analytics が管理者のグリッド入力を提出として数える**（app-admin.js:1993 `ph("excel_exported")`）
+- **🟢（継続）Excel出力の analytics が管理者のグリッド入力を提出として数える**（app-admin.js:1993）
 - **🟢（継続）`ADMIN_SHIFT_FIELDS` の完全性テストが登録漏れを検出できない形になっている**（tests/core.test.js）
-- **🟢（継続）期間削除時に `subs` を全件 `once("value")` で読んでいる**（app-main.js:1096）。意図的な一括読みで RULES.md 違反ではない
-- **🟢（継続）マイページの「スタッフ数」使用量バーが空白列（スペーサー）を人数に数える**。上限判定側3箇所は正しい
-- **🟢（継続）SubsTab の「出勤」日数が、管理者が両セルを空欄化した日を1日として数える**（app-admin.js:2979・3026 の `:1` フォールバック）
+- **🟢（継続）期間削除時に `subs` を全件 `once("value")` で読んでいる**（app-main.js:1099）。意図的な一括読みで RULES.md 違反ではない
+- **🟢（継続）マイページの「スタッフ数」使用量バーが空白列（スペーサー）を人数に数える**
+- **🟢（継続）SubsTab の「出勤」日数が、管理者が両セルを空欄化した日を1日として数える**（app-admin.js:2979・3026）
 - **🟢（継続）属性を削除しても休憩のタグ（`breakTimes[].tags`）に残る**（app-admin.js `deleteType`）
-- **🟢（継続）Excel出力とシフト作成タブで別名提出の解決順が違う**（`expXl` は配列順の先頭、`_getSubForPeriod`・`applyEditToSubs` は完全一致優先）
-- **🟢（継続）期間管理タブの Excel 出力だけが管理者調整値を反映しない**。ファイル名の `_修正前` サフィックスで意図的な使い分けと確認済み（#63）
-- **🟢（継続）ヒートマップの時間列収集（`heatHours`・app-admin.js:980）が `adminRest` を無視**し、`adjustedStart??start` を直接読む
-- **🟢（継続）店舗間シフト重複エラーが片側入力と他店舗の `adminRest` を見ない**（app-admin.js:834 の `if(s===null||e===null)return;` と :847 の `osh.adjustedStart??osh.start`）
-- **🟢（継続）`sanitizeForSet` の root 分岐が「書かない」ではなく「消す」に倒れている**（app-utils.js）。到達経路は今日も0件
+- **🟢（継続）Excel出力とシフト作成タブで別名提出の解決順が違う**
+- **🟢（継続）期間管理タブの Excel 出力だけが管理者調整値を反映しない**（意図的な使い分けと確認済み）
+- **🟢（継続）ヒートマップの時間列収集（`heatHours`・app-admin.js:980）が `adminRest` を無視**
+- **🟢（継続）店舗間シフト重複エラーが片側入力と他店舗の `adminRest` を見ない**（app-admin.js:834・847）
+- **🟢（継続）`sanitizeForSet` の root 分岐が「書かない」ではなく「消す」に倒れている**（app-utils.js）。到達経路は0件
 - **🟢（継続）`_fbGuard` の本番分岐が PostHog へパスをそのまま送る**（app-core.js:65）
-- **🟢（継続）eslint ルールの抜け穴: 参照を変数へ置く形**（`const r=ref(p); r.set(v)`）。現状の使用箇所は0件
-- **🟢（継続）スタッフ削除時に設定マップのキーが残る**（app-admin.js `deleteStaff` 付近。改名側 `renameKey` は7マップ全て移し替える）
-- **🟢（継続）同名ポジション登録の仕様**（#46・判断待ち）／**ポジション不足サマリーがセクション非区別**／**`isSpecialRedDate` のテスト不在**（BACKLOG登録済み）／**`VISION.md` が不在**（CLAUDE.md とこのループの PHASE 0 が参照しているが実体なし・BACKLOG登録済み）
-- **🟢（継続・期限到来）`PURGE_OLD_PERIODS_DRY_RUN` の本有効化**（functions/index.js:476）。着手予定 **2026-08-12 以降**＝あと **3日**。今回コードを事前監査し**論理・削除順序ともに問題なし**を確認済み
-- **🟢（継続）実機E2E未実施**: #46〜#64 の各修正に加え、**#64 は `app-*.js` に差分がないため実ブラウザ確認そのものを行っていない**
+- **🟢（継続）eslint ルールの抜け穴: 参照を変数へ置く形**（`const r=ref(p); r.set(v)`）。使用箇所は0件
+- **🟢（継続）スタッフ削除時に設定マップのキーが残る**（app-admin.js `deleteStaff` 付近）
+- **🟢（継続）同名ポジション登録の仕様**（#46・判断待ち）／**ポジション不足サマリーがセクション非区別**／**`isSpecialRedDate` のテスト不在**／**`VISION.md` が不在**（このループの PHASE 0 が参照しているが実体なし・BACKLOG登録済み）
+- **🟢（継続・期限到来）`PURGE_OLD_PERIODS_DRY_RUN` の本有効化**（functions/index.js:522）。着手予定 **2026-08-12 以降**＝あと **2日**。#64 でコードを事前監査し論理・削除順序ともに問題なしを確認済み
+- **🟢（継続）実機E2E未実施**: #46〜#65 の各修正に加え、**#65 も `app-*.js` に差分がないため実ブラウザ確認そのものを行っていない**
 
 ### 総括
 
-**14回連続で実質コード変更ゼロだった流れが止まり、63回のループが一度も触れていなかった領域から🔴が出た。** 見つかったのは「Stripeの解約・更新・決済失敗のWebhookが、初回購入以降**一度も対象店舗を特定できていなかった**」という欠陥で、**アプリ内の正規手順で解約したユーザーが有料機能を無期限に使い続けられる**状態だった。
+**#64 が「次はここを見ろ」と書いた2軸のうち、2つ目を #64 自身の修正に向けたら当たった。** #64 の総括はこう締めていた——「壊れていたものを直すと、その先で止まっていた別の経路が動き出す。修正の影響範囲は直した関数の呼び出し元だけでなく、**これまで到達していなかった下流まで見る必要がある**」。今回見つけた🔴は、まさにその文の続きにあった。#64 は解約経路について下流を見て `eee5096` を入れたが、**更新（renewal）経路には同じ点検をしていなかった**。同じ2契約状態が引き起こす同じ形の事故が、解約側だけ塞がれて更新側は開いたままだった。
 
-**なぜ63回も見つからなかったのかは、はっきりしている。** これまでの全ラウンドは `app-*.js`（5.6万行）に検索と読解を集中させ、`functions/index.js` に対しては毎回「secretsの抜け漏れ」「`.delete()`誤用」「安全装置の維持」という**定型3点スキャンしか当てていなかった**。この3点は「以前壊れた形」を再発検知するためのもので、**まだ壊れたことのない形は原理的に拾えない**。今回の欠陥は文法的にも構造的にも正常で、`obj.metadata?.shopId` は「取れなければ何もしない」という一見安全なコードに見える。**grepで見つかる形をしていなかった**。
+**「未走行コードのレビュー」という視点が要る。** `4acd089` を入れた瞬間、`invoice.payment_succeeded` の plan書き込みは**過去に一度も実行されたことのないコード**になった。書かれてから何年も経っていても、走ったことがなければ新規コードと同じ扱いをすべきで、レビューの密度もそう決めるべきだった。**「いつ書かれたか」ではなく「いつから実際に走るか」で新旧を判定する**——これは今後のバグチェックの基準にできる。
 
-**#63 の総括が置いた2軸は、今回も空振りだった。** ただし空振りの内訳は前回と違う。指定軸1は在庫がありそうだと書かれていたが、全数当たった結果、依存配列に載るデフォルト引数は `ShiftEditTab` と `CompanyTab` の2件だけで、**どちらも唯一の呼び出し元がプロップを必ず渡すため到達しない**。つまり `app-*.js` 側は「デフォルトが効く呼び出しが1つも存在しない」ところまで数え切れた。これは軸を閉じてよい空振りである。
+**もう1つ確かなことがある。今回の🔴も、上に🟡として挙げた解約側の裏返しも、決済失敗フラグの🟢も、原因は全部同じ1点だ。** 「Pro→Premium のアップグレードが、旧契約を解約せずに別契約を作る」（#64の🟡）。ここが直っていないので、**Webhookの各イベントハンドラに「2契約かもしれない」というガードを1つずつ足して回る**という筋の悪い形になっている。今回もそのガードを1つ足した。塞いだのは事実だが、**これは対症療法であり、イベント種別が増えるたびに同じ穴が開く**。根治（Checkoutに既存 `customer` を渡す、またはアップグレードをStripe Customer Portal のプラン変更へ寄せる）はStripe本番設定に触る可能性があるためループの権限外だが、**優先度としては残っている🟡の中で最上位**である。ユーザーの判断が要る。
 
-**今回効いたのは軸ではなく、対象の選び方だった。** #63 が最後に取った「害が大きいと踏んで見に行く」（Excel出力・戻す操作）という手を、**まだ一度も向けていない領域**に向けただけである。削除（`purgeOldPeriods`・3日後に実削除が有効化される）と課金（Stripe Webhook）の2つを選び、前者は問題なし、後者で当たった。**パターンを探すのではなく、間違ったときに取り返しがつかない場所を選んで読む**——63回ぶんの探索でパターン在庫が尽きたあとに残るのは、これだと思う。
+ここから次回の手が2つ出る。
 
-**副産物として、修正が別のバグを起こしうることも見えた。** 解約イベントが届くようになった瞬間、`plan="free"` を無条件に書く既存コードが牙を剥く。Pro→Premium のアップグレードは新しい契約を作る方式なので、旧Proを解約したときに**支払い済みのPremiumごと剥奪される**。これは修正前は「イベントが届かない」という別の欠陥に隠れていた。`eee5096` で塞いだが、**壊れていたものを直すと、その先で止まっていた別の経路が動き出す**という形は今後も出る。修正の影響範囲は「直した関数の呼び出し元」だけでなく、**「これまで到達していなかった下流」まで見る必要がある**。
+**1つ目。「まだ一度も走っていないコード」を洗い出す軸。** 手順は、①直近のfixコミットが「これまで到達しなかった経路を到達可能にした」ものかを判定する（`if(x)` で素通りしていた分岐を埋めた修正は全部これに当たる）②その経路の**下流**——到達可能になった先で実行されるコード——を新規コードとしてレビューする③特に「無条件に書き込む」「無条件に削除する」形を疑う。今回の `plan` 書き込みも `eee5096` の `plan="free"` も、どちらも**無条件の上書き**だった。到達しない前提で書かれたコードは、たいてい条件分岐が甘い。
 
-ここから次回の手が2つ出る。**どちらも今回の当たり方をそのまま延長したものである。**
-
-**1つ目。`functions/index.js` を `app-*.js` と同じ密度で読み切る軸。** 今回で分かったのは、CFが**定型3点スキャンしか受けていない未踏領域**だということで、当たりが1つ出た以上まだあると考えるのが自然だ。手順は、①14個の `exports.*` を全数列挙する（既に列挙済み: `createCheckoutSession`・`stripeWebhook`・`createPortalSession`・`sendEmailOtp`・`verifyEmailOtp`・`purgeInactiveShops`・`purgeOldPeriods`・`sendSurveyEmails`・`createCompany`・`companyLogin`・`changeCompanyPassword`・`renameCompany`・`linkStoreToCompany`・`unlinkStoreFromCompany`）②各関数について「**外部サービスから受け取った値のうち、実は入っていないもの**」を1つずつ確かめる——今回の `subscription.metadata` がまさにそれで、**「送っていないものを読もうとしている」箇所は文法的に正常なので静的検査では出ない**③`if(x)` で素通りする分岐に `console.error` すら無い箇所は、**失敗が観測されないまま何年でも続く**ので優先度を上げる。今回 `resolveShopMeta` の末尾に解決失敗ログを足したのはこの理由による。
-
-**2つ目。「初回だけ動いて2回目以降は動かない」経路を探す軸。** 今回の欠陥の本質はここで、**初回購入では動くので、テストしても正常に見える**。同じ形は他にもありうる: `sendEmailOtp`/`verifyEmailOtp` の再送・再試行、`purgeInactiveShops` の archived→本削除の**2段目**（1段目のアーカイブは日常的に走るが、30日後の本削除は滅多に走らない）、`inviteCodes` の期限切れ後の再発行、`lastActivity` の更新（#63 で「締めルール下でowner限定化により無害にno-op」と記録済み——**これも「初回は書けたが今は書けていない」形**）。手順は、**「1回目と2回目で通るコードが違う処理」を列挙し、2回目のパスだけを追う**。1回目が成功することは、2回目が成功する証拠にならない。
+**2つ目。「同時に2つ存在しうるもの」を列挙する軸。** 今回の一連の欠陥は、すべて「1店舗＝1契約」という暗黙の前提が崩れたところで起きている。同じ形の前提はコード中に他にもある: **1店舗に owners が複数**（企業uid＋個人uid。上の🟡はここに触れている）、**1uidに company が複数**（`createCompany` を2回呼ぶと `accounts/{uid}/company` は後勝ちで上書きされ、前の企業は残る）、**1スタッフ名に別名sub が複数**（#63の `moTot` の🟢）、**1店舗に略称が複数**（#62で塞いだが `abbrToShop` の先勝ちは残る）、**1期間に urlToken が複数**（期間を編集して再発行した場合）。手順は、**「1つしか無いはず」と読めるコードを見つけ、2つある状態を作れるUI操作を探す**。作れたなら、そのコードは必ずどこかで間違える。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
