@@ -45,6 +45,8 @@ const sharedGlobals = {
   CellEditPanel: "writable",
   DEV_MODE: "writable",
   DEV_PLAN_OVERRIDE: "writable",
+  DEMO_MODE: "writable",
+  DEMO_SHOP_ID: "writable",
   FIREBASE_CONFIG: "writable",
   FIREBASE_CONFIG_DEV: "writable",
   FIREBASE_CONFIG_PROD: "writable",
