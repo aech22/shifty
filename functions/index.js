@@ -245,8 +245,12 @@ exports.changePlan = functions
           end_behavior: "release",
           phases: [
             { items: [{ price: typeof curPrice === "string" ? curPrice : curPrice.id, quantity: 1 }],
-              start_date: cur.start_date, end_date: cur.end_date },
-            { items: [{ price: newPrice, quantity: 1 }] },
+              start_date: cur.start_date, end_date: cur.end_date,
+              metadata: { shopId, plan: currentPlan } },
+            // フェーズのmetadataは、そのフェーズが始まったときに契約のmetadataへ反映される。
+            // 切替後の契約が「plan=変更前」を持ち続けないようにするための多重防御
+            // （本命の対策は resolveShopMeta が price からプランを解決すること）。
+            { items: [{ price: newPrice, quantity: 1 }], metadata: { shopId, plan } },
           ],
           metadata: { shopId, plan },
         });
@@ -313,7 +317,14 @@ async function resolveShopMeta(obj) {
   try {
     const sub = await stripe.subscriptions.retrieve(subId);
     if (sub && sub.metadata && sub.metadata.shopId) {
-      return { shopId: sub.metadata.shopId, plan: sub.metadata.plan || null };
+      // プランは metadata ではなく **契約の実際のprice** から解決する。
+      // 期間終了時ダウングレード（Subscription Schedule）は price だけを差し替えるため、
+      // metadata.plan は変更前のプランのまま残る。metadata を信じると、切替後の最初の
+      // 更新請求で「上位プランへの更新」と誤判定して降格を巻き戻してしまう
+      // （2026-08-11 の実購入テストで、Premium→Pro 予約後の契約に plan:premium が
+      //   残っていることを実データで確認した）。
+      const livePlan = planOfSubscription(sub);
+      return { shopId: sub.metadata.shopId, plan: livePlan || sub.metadata.plan || null };
     }
   } catch (e) {
     console.error("subscription取得失敗:", e.message);
