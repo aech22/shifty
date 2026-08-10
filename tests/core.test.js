@@ -1172,3 +1172,117 @@ test("carryAdminShiftFields: 旧シフトが無ければ素通し・入力オブ
   u.carryAdminShiftFields(src, old);
   assert.strictEqual(src.adminRest, undefined); // srcは変更されない
 });
+
+// ===== スタッフ再提出（onSub）の差分書き込み =====
+// 以前 onSub は sub 全体を set() しており、管理者が同じsubの別の日を編集した直後に
+// スタッフが再提出すると、その編集ごと巻き戻していた。差分書き込みでそれが起きないことを固定する。
+test("diffSubForFlatWrite: スタッフが触っていない日は書き込みパスに現れない（管理者の編集が残る）", () => {
+  const serverSub = {
+    id: "s1", staffName: "田中", periodId: "p1", submittedAt: "2026-08-01T00:00:00.000Z",
+    shifts: {
+      "2026-08-01": { status: "work", start: "10:00", end: "15:00" },
+      // 管理者が 8/2 に調整値を入れた（スタッフ端末はこれを知らない可能性がある）
+      "2026-08-02": { status: "work", start: "10:00", end: "15:00", adjustedStart: "11:00" },
+    },
+    comment: "",
+  };
+  // スタッフは 8/1 だけ変更して再提出する
+  const resubmitted = {
+    ...serverSub,
+    shifts: {
+      "2026-08-01": { status: "work", start: "12:00", end: "18:00" },
+      "2026-08-02": serverSub.shifts["2026-08-02"],
+    },
+    updatedAt: "2026-08-03T00:00:00.000Z", isUpdated: true,
+  };
+  const flat = u.diffSubForFlatWrite("s1", serverSub, resubmitted);
+  assert.ok("s1/shifts/2026-08-01" in flat, "変更した日は書き込む");
+  assert.strictEqual("s1/shifts/2026-08-02" in flat, false, "触っていない日（管理者の調整値）は書き込まない");
+  assert.strictEqual("s1" in flat, false, "sub全体の上書きにならない");
+  assert.strictEqual(flat["s1/isUpdated"], true);
+});
+
+test("diffSubForFlatWrite: 内容が同じなら別オブジェクトでも変更扱いしない（再提出は全日付を作り直す）", () => {
+  // StaffView は再提出のたびに shifts の全日付を buildShift で作り直すため、
+  // 参照比較のままだと1日直しただけで全日付が書き込み対象になり差分書き込みが無効化される。
+  const prev = {
+    id: "s4", staffName: "高橋", periodId: "p1", submittedAt: "t",
+    shifts: {
+      "2026-08-01": { status: "work", start: "10:00", end: "15:00" },
+      "2026-08-02": { status: "holiday" },
+      "2026-08-03": { status: "work", start: "10:00", end: "15:00", adminRest: { start: true } },
+    },
+  };
+  // 全日付を「同じ内容の新しいオブジェクト」で作り直し、8/1 だけ実際に変更する
+  const rebuilt = {
+    ...prev,
+    shifts: {
+      "2026-08-01": { status: "work", start: "12:00", end: "18:00" },
+      "2026-08-02": { status: "holiday" },
+      "2026-08-03": { status: "work", start: "10:00", end: "15:00", adminRest: { start: true } },
+    },
+  };
+  const flat = u.diffSubForFlatWrite("s4", prev, rebuilt);
+  assert.deepStrictEqual(Object.keys(flat), ["s4/shifts/2026-08-01"], "実際に変わった1日だけを書く");
+});
+
+test("diffSubForFlatWrite: ネストしたadminRestの中身が変われば検出する", () => {
+  const prev = { id: "s5", staffName: "田中", periodId: "p1", submittedAt: "t",
+    shifts: { "2026-08-01": { status: "work", adminRest: { start: true } } } };
+  const next = { id: "s5", staffName: "田中", periodId: "p1", submittedAt: "t",
+    shifts: { "2026-08-01": { status: "work", adminRest: { start: true, end: true } } } };
+  assert.deepStrictEqual(Object.keys(u.diffSubForFlatWrite("s5", prev, next)), ["s5/shifts/2026-08-01"]);
+});
+
+test("diffSubForFlatWrite: 新規提出は sub 全体を書く（IDキー1件）", () => {
+  const fresh = { id: "s2", staffName: "佐藤", periodId: "p1", shifts: {}, submittedAt: "2026-08-01T00:00:00.000Z" };
+  const flat = u.diffSubForFlatWrite("s2", null, fresh);
+  assert.deepStrictEqual(Object.keys(flat), ["s2"]);
+  assert.strictEqual(flat.s2, fresh);
+});
+
+test("diffSubForFlatWrite: 何も変わっていなければ書き込みパスは0件（無駄な書き込みをしない）", () => {
+  const sub = { id: "s3", staffName: "鈴木", periodId: "p1", shifts: { "2026-08-01": { status: "holiday" } }, submittedAt: "x" };
+  const same = { ...sub, shifts: sub.shifts };
+  assert.strictEqual(Object.keys(u.diffSubForFlatWrite("s3", sub, same)).length, 0);
+});
+
+// ===== isSpecialRedDate（平日に日祝系ポジション区分が設定された日の赤背景判定）=====
+// 基準日: 2026-08-12(水・非祝日) / 2026-08-15(土) / 2026-08-16(日) / 2026-08-11(火・山の日)
+const RED_WEEKDAY = "2026-08-12";
+const posSettings = (dateStr, posType) => ({ dateCandidatePosTypes: { [dateStr]: posType } });
+
+test("isSpecialRedDate: 平日に sun/holSat/holSun が設定されていれば true", () => {
+  for (const t of ["sun", "holSat", "holSun"]) {
+    assert.strictEqual(u.isSpecialRedDate(RED_WEEKDAY, posSettings(RED_WEEKDAY, t)), true, `posType=${t}`);
+  }
+});
+
+test("isSpecialRedDate: 平日でも weekday/sat は対象外", () => {
+  for (const t of ["weekday", "sat"]) {
+    assert.strictEqual(u.isSpecialRedDate(RED_WEEKDAY, posSettings(RED_WEEKDAY, t)), false, `posType=${t}`);
+  }
+});
+
+test("isSpecialRedDate: posTypeが未設定・settings欠損なら false", () => {
+  assert.strictEqual(u.isSpecialRedDate(RED_WEEKDAY, posSettings("2026-08-13", "sun")), false); // 別の日付にだけ設定
+  assert.strictEqual(u.isSpecialRedDate(RED_WEEKDAY, { dateCandidatePosTypes: {} }), false);
+  assert.strictEqual(u.isSpecialRedDate(RED_WEEKDAY, {}), false);
+  assert.strictEqual(u.isSpecialRedDate(RED_WEEKDAY, null), false);
+});
+
+test("isSpecialRedDate: 土曜・日曜は元々色があるため早期returnで false", () => {
+  for (const d of ["2026-08-15", "2026-08-16"]) {
+    assert.strictEqual(u.isHoliday(d), false, `${d} は祝日ではない前提`);
+    assert.strictEqual(u.isSpecialRedDate(d, posSettings(d, "sun")), false, d);
+  }
+});
+
+test("isSpecialRedDate: 実祝日（平日の山の日）は元々色があるため false", () => {
+  const hol = "2026-08-11"; // 火曜・山の日
+  assert.strictEqual(u.isHoliday(hol), true, "山の日が祝日として登録されている前提");
+  assert.strictEqual(u.pd(hol).getDay(), 2, "平日（火曜）である前提");
+  for (const t of ["sun", "holSat", "holSun"]) {
+    assert.strictEqual(u.isSpecialRedDate(hol, posSettings(hol, t)), false, `posType=${t}`);
+  }
+});

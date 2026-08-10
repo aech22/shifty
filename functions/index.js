@@ -25,6 +25,12 @@ function verifyPassword(plain, stored) {
 }
 // 企業ログイン用の安定uid（カスタムトークン）
 function companyUid(companyId) { return `company_${companyId}`; }
+// 定数時間の文字列比較（adminKey照合用）。長さが違う・空文字は無条件で不一致にする
+function safeEqualStr(a, b) {
+  if (typeof a !== "string" || typeof b !== "string") return false;
+  if (!a.length || a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 // 8桁の企業コード生成（衝突時リトライは呼び出し側）
 function genCompanyCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -119,6 +125,10 @@ exports.createCheckoutSession = functions
         payment_method_types: ["card"],
         line_items: [{ price: priceId, quantity: 1 }],
         metadata: { shopId, plan },
+        // Stripeは Checkout Session の metadata を、そこで作られる Subscription へコピーしない。
+        // 更新・失敗・解約のWebhookイベントが参照するのは Subscription 側のmetadataなので、
+        // ここで明示的に付けないと初回チェックアウト以降そのイベントから店舗を特定できなくなる。
+        subscription_data: { metadata: { shopId, plan } },
         success_url: successUrl || "https://shiftyshifty.app/?payment=success",
         cancel_url:  cancelUrl  || "https://shiftyshifty.app/?payment=cancel",
         locale: "ja",
@@ -129,6 +139,82 @@ exports.createCheckoutSession = functions
       res.status(500).json({ error: e.message });
     }
   });
+
+// ============================================================
+// Webhookイベント → 対象店舗(shopId)とプランの解決
+//
+// metadata は checkout.session.completed のときだけイベント本体に載っている。
+// 更新(invoice.payment_succeeded)・失敗(invoice.payment_failed)・解約
+// (customer.subscription.deleted)のイベント本体には shopId が無いため、
+// 次の順で辿る:
+//   ① イベント本体の metadata（checkout.session.completed）
+//   ② Subscription の metadata（subscription_data.metadata を付けて作った契約）
+//   ③ その Subscription を作った Checkout Session の metadata
+//      （②の付与より前に作られた既存契約の救済。Stripeは①のmetadataを②へコピーしない）
+// ============================================================
+function subscriptionIdOf(obj) {
+  if (!obj) return null;
+  if (obj.object === "subscription" && obj.id) return obj.id;
+  if (typeof obj.subscription === "string") return obj.subscription;
+  if (obj.subscription && obj.subscription.id) return obj.subscription.id;
+  // 新しいAPIバージョンの Invoice は subscription 参照が parent 配下に移っている
+  const pd = obj.parent && obj.parent.subscription_details;
+  if (pd) {
+    if (typeof pd.subscription === "string") return pd.subscription;
+    if (pd.subscription && pd.subscription.id) return pd.subscription.id;
+  }
+  return null;
+}
+
+async function resolveShopMeta(obj) {
+  const md = obj && obj.metadata;
+  if (md && md.shopId) return { shopId: md.shopId, plan: md.plan || null };
+
+  const subId = subscriptionIdOf(obj);
+  if (!subId) return { shopId: null, plan: null };
+  const stripe = getStripe();
+
+  try {
+    const sub = await stripe.subscriptions.retrieve(subId);
+    if (sub && sub.metadata && sub.metadata.shopId) {
+      return { shopId: sub.metadata.shopId, plan: sub.metadata.plan || null };
+    }
+  } catch (e) {
+    console.error("subscription取得失敗:", e.message);
+  }
+
+  try {
+    const sessions = await stripe.checkout.sessions.list({ subscription: subId, limit: 1 });
+    const s = sessions && sessions.data && sessions.data[0];
+    if (s && s.metadata && s.metadata.shopId) {
+      return { shopId: s.metadata.shopId, plan: s.metadata.plan || null };
+    }
+  } catch (e) {
+    console.error("checkout session逆引き失敗:", e.message);
+  }
+
+  console.error(`shopIdを解決できませんでした: subscription=${subId}`);
+  return { shopId: null, plan: null };
+}
+
+// プランの序列。更新イベントが現行プランを引き下げていないかの判定に使う。
+const PLAN_RANK = { free: 0, pro: 1, premium: 2 };
+function planRank(p) {
+  return Object.prototype.hasOwnProperty.call(PLAN_RANK, p) ? PLAN_RANK[p] : -1;
+}
+// Pro→Premium のアップグレードは「別の契約を新規作成する」方式のため、旧Proを解約する
+// までは1店舗が2つの契約を同時に持つ（アプリ内に旧Proの解約導線が無い）。この状態では
+// 旧Proの毎月の更新請求が成功するたびに invoice.payment_succeeded が届くため、
+// 無条件に反映すると支払い済みのPremiumが毎月Proへ引き下げられる。
+// 明示的な購入(checkout.session.completed)は常に反映し、更新イベントだけは
+// 現行プランより下位のときに限って無視する（＝ダウングレードは購入経由でのみ起こる）。
+function shouldApplyRenewalPlan(currentPlan, incomingPlan) {
+  const inc = planRank(incomingPlan);
+  if (inc < 0) return false;              // 未知のプラン名は書かない
+  const cur = planRank(currentPlan);
+  if (cur < 0) return true;               // 現行プランが未設定・不正なら反映する
+  return inc >= cur;
+}
 
 // ============================================================
 // Stripe Webhook受信（決済完了 → planをFirebaseに書き込む）
@@ -151,44 +237,36 @@ exports.stripeWebhook = functions
     // 決済完了 or サブスク更新
     if (event.type === "checkout.session.completed" || event.type === "invoice.payment_succeeded") {
       const obj = event.data.object;
-      let shopId = obj.metadata?.shopId;
-      let plan   = obj.metadata?.plan;
-
-      // invoice.payment_succeededの場合はsubscriptionからmetadataを取得
-      if (!shopId && obj.subscription) {
-        try {
-          const sub = await getStripe().subscriptions.retrieve(obj.subscription);
-          shopId = sub.metadata?.shopId;
-          plan   = sub.metadata?.plan;
-        } catch (e) {
-          console.error("subscription取得失敗:", e);
-        }
-      }
+      const { shopId, plan } = await resolveShopMeta(obj);
 
       if (shopId && plan) {
-        const expiry = new Date();
-        expiry.setMonth(expiry.getMonth() + 1);
-        await db.ref(`accounts/${shopId}/plan`).set(plan);
-        await db.ref(`accounts/${shopId}/planExpiry`).set(expiry.toISOString().split("T")[0]);
-        // Stripe顧客IDを保存（Customer Portal用）
-        const customerId = obj.customer || (obj.subscription ? (await getStripe().subscriptions.retrieve(obj.subscription).catch(()=>null))?.customer : null);
-        if (customerId) await db.ref(`accounts/${shopId}/stripeCustomerId`).set(customerId);
-        console.log(`プラン更新完了: shopId=${shopId} plan=${plan} customerId=${customerId}`);
+        // 更新（invoice.payment_succeeded）は、同じ店舗が持つ別契約の請求である可能性がある。
+        // 現行プランより下位なら反映しない（stripeCustomerIdも上書きしない＝Customer Portalが
+        // 上位プランの顧客を指したままになる）。
+        let apply = true;
+        if (event.type === "invoice.payment_succeeded") {
+          const currentPlan = (await db.ref(`accounts/${shopId}/plan`).once("value")).val();
+          apply = shouldApplyRenewalPlan(currentPlan, plan);
+          if (!apply) console.log(`現行プラン(${currentPlan})より下位の契約(${plan})の更新のため反映しない: shopId=${shopId}`);
+        }
+        if (apply) {
+          const expiry = new Date();
+          expiry.setMonth(expiry.getMonth() + 1);
+          await db.ref(`accounts/${shopId}/plan`).set(plan);
+          await db.ref(`accounts/${shopId}/planExpiry`).set(expiry.toISOString().split("T")[0]);
+          // Stripe顧客IDを保存（Customer Portal用）
+          const subId = subscriptionIdOf(obj);
+          const customerId = obj.customer || (subId ? (await getStripe().subscriptions.retrieve(subId).catch(()=>null))?.customer : null);
+          if (customerId) await db.ref(`accounts/${shopId}/stripeCustomerId`).set(customerId);
+          console.log(`プラン更新完了: shopId=${shopId} plan=${plan} customerId=${customerId}`);
+        }
       }
     }
 
     // 決済失敗 → 警告フラグを立てる（即時ダウングレードはしない。Smart Retriesで回復したら解除）
     if (event.type === "invoice.payment_failed") {
       const obj = event.data.object;
-      let shopId = obj.metadata?.shopId;
-      if (!shopId && obj.subscription) {
-        try {
-          const sub = await getStripe().subscriptions.retrieve(obj.subscription);
-          shopId = sub.metadata?.shopId;
-        } catch (e) {
-          console.error("subscription取得失敗(payment_failed):", e);
-        }
-      }
+      const { shopId } = await resolveShopMeta(obj);
       if (shopId) {
         await db.ref(`accounts/${shopId}/paymentFailed`).set(true);
         console.log(`決済失敗フラグ: shopId=${shopId}`);
@@ -198,13 +276,7 @@ exports.stripeWebhook = functions
     // 決済成功（更新）→ 失敗フラグを解除
     if (event.type === "invoice.payment_succeeded") {
       const obj = event.data.object;
-      let shopId = obj.metadata?.shopId;
-      if (!shopId && obj.subscription) {
-        try {
-          const sub = await getStripe().subscriptions.retrieve(obj.subscription);
-          shopId = sub.metadata?.shopId;
-        } catch (e) {}
-      }
+      const { shopId } = await resolveShopMeta(obj);
       if (shopId) {
         await db.ref(`accounts/${shopId}/paymentFailed`).remove();
       }
@@ -213,11 +285,21 @@ exports.stripeWebhook = functions
     // サブスクキャンセル → Freeに戻す
     if (event.type === "customer.subscription.deleted") {
       const sub = event.data.object;
-      const shopId = sub.metadata?.shopId;
+      const { shopId, plan } = await resolveShopMeta(sub);
       if (shopId) {
-        await db.ref(`accounts/${shopId}/plan`).set("free");
-        await db.ref(`accounts/${shopId}/planExpiry`).remove();
-        console.log(`プランFreeに戻す: shopId=${shopId}`);
+        // Pro→Premiumのアップグレードは「別のサブスクを新規作成する」方式のため、
+        // 1店舗が同時に2つの契約を持つ状態が起こりうる。あとから旧Proを解約したときに
+        // 無条件でFreeに落とすと、支払い済みのPremiumごと剥奪してしまう。
+        // 解約された契約のプランが現行プランと食い違う場合は、別契約の解約とみなして何もしない。
+        // （プランが特定できない古い契約は従来どおりダウングレードする＝安全側の既定動作）
+        const currentPlan = (await db.ref(`accounts/${shopId}/plan`).once("value")).val();
+        if (plan && currentPlan && plan !== currentPlan) {
+          console.log(`現行プラン(${currentPlan})と異なる契約(${plan})の解約のためダウングレードしない: shopId=${shopId}`);
+        } else {
+          await db.ref(`accounts/${shopId}/plan`).set("free");
+          await db.ref(`accounts/${shopId}/planExpiry`).remove();
+          console.log(`プランFreeに戻す: shopId=${shopId}`);
+        }
       }
     }
 
@@ -731,11 +813,29 @@ exports.linkStoreToCompany = functions
   .https.onCall(async (data, context) => {
     const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
     const shopId = (data && typeof data.shopId === "string") ? data.shopId.trim() : "";
+    const adminKey = (data && typeof data.adminKey === "string") ? data.adminKey.trim() : "";
     if (!companyId || !shopId) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗コードが無効です");
-    await assertCompanyMember(context, companyId);
+    const callerUid = await assertCompanyMember(context, companyId);
     const shopSnap = await db.ref(`global/shops/${shopId}`).once("value");
     const shop = shopSnap.val();
     if (!shop || shop.id !== shopId) throw new functions.https.HttpsError("not-found", "店舗コードが正しくありません");
+    // 店舗コード(shopId)はスタッフURLのtokens逆引きから誰でも辿れるため、shopIdだけを根拠に
+    // registerCompanyAsOwner を呼んではいけない（Admin SDKがadminKey照合をバイパスして
+    // owners に登録するため、オーナー権限分離＝管理キー方式がそのまま無効化される）。
+    // createCompany 側は同じ理由で owners[uid] を確認している。ここでも同等の証明を要求する。
+    const ownersSnap = await db.ref(`shops/${shopId}/owners`).once("value");
+    const owners = ownersSnap.val();
+    let allowed = !owners;                                  // 未claim店舗（createCompanyと同じ扱い）
+    if (!allowed && owners[callerUid]) allowed = true;       // 呼び出し元が既にこの店舗のオーナー
+    if (!allowed) {                                          // 企業の作成者本人がオーナー（企業uidで呼んだ場合）
+      const ownerUid = (await db.ref(`companies/${companyId}/pub/ownerUid`).once("value")).val();
+      if (ownerUid && owners[ownerUid]) allowed = true;
+    }
+    if (!allowed && adminKey) {                              // 管理コード（shopId.adminKey）を提示した場合
+      const stored = (await db.ref(`shops/${shopId}/private/adminKey`).once("value")).val();
+      if (safeEqualStr(adminKey, stored)) allowed = true;
+    }
+    if (!allowed) throw new functions.https.HttpsError("permission-denied", "この店舗の管理コード（店舗コード.管理キー）を入力してください");
     await db.ref(`companies/${companyId}/pub/shops/${shopId}`).set(true);
     await registerCompanyAsOwner(companyId, shopId);
     return { ok: true, name: shop.name || "" };

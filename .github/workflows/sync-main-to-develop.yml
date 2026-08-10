@@ -4,10 +4,15 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    # リポジトリ既定は default_workflow_permissions: read のため、
+    # ここで明示しないと develop への push が 403 になる（リポジトリ設定は変えない）
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:

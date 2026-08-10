@@ -156,6 +156,12 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     const staffName=name.trim();
     // 既存subを検索（同じperiod+名前 → 上書き）
     const existSub=subs.find(s=>s.staffName===staffName&&s.periodId===apid);
+    // source:"grid" は管理者がシフト作成タブのセルに直接下書きして生まれたsubで、スタッフの提出ではない
+    // （バグチェック#56で導入した印）。これを「前回の提出」として扱うと、スタッフの初回提出なのに
+    // submittedAt が管理者の入力時刻のまま残り、isUpdated と日ごとの changed マークまで立つ（#58）。
+    // レコード自体（id・管理者フィールド）は引き継ぎ先として使うが、「前回提出」としては数えない。
+    // ここで source を新subに引き継がないのは意図的で、提出後は実際の提出として数えられるようにする。
+    const isFirstSubmission=!existSub||existSub.source==="grid";
     // 再提出時: 日付ごとに旧シフトと比較し、変更があれば changed:true を付与。
     // 管理者調整値(adjustedXxx)は旧シフトから引き継ぐ。
     const buildShift=d=>{
@@ -167,11 +173,14 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
           // 管理者フィールド（休み希望・「締」の追加出勤・管理者調整値）はここで引き継ぐ。
           // sd は端末にCookieが無いと初期値のままなので（別端末からの再提出・リセット後の再提出）、
           // 引き継がないと管理者が作り込んだ休み希望・追加出勤が黙って消える（バグチェック#51）。
+          // 引き継ぎは初回提出（管理者の下書きのみ）でも行う。消してよい値ではないため。
           nw=carryAdminShiftFields(nw,old);
           // changed は status 復元後の最終形で判定する（引き継ぎで元と同じ状態に戻った日を
           // 「変更あり」と誤表示しないため）
-          const changed=(old.status!==nw.status)||((old.start||"")!==(nw.start||""))||((old.end||"")!==(nw.end||""));
-          if(changed)nw.changed=true;
+          if(!isFirstSubmission){
+            const changed=(old.status!==nw.status)||((old.start||"")!==(nw.start||""))||((old.end||"")!==(nw.end||""));
+            if(changed)nw.changed=true;
+          }
         }
       }
       return stripUndef(nw); // Firebaseはundefinedを含むオブジェクトのset()で例外を投げるため最終防御として除去
@@ -180,8 +189,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       id:existSub?existSub.id:genSecureId(24), // Date.now()は同時提出でID衝突するためランダムIDを使用
       periodId:apid,
       staffName,
-      submittedAt:existSub?existSub.submittedAt:new Date().toISOString(),
-      ...(existSub?{updatedAt:new Date().toISOString(),isUpdated:true}:{}),
+      submittedAt:isFirstSubmission?new Date().toISOString():existSub.submittedAt,
+      ...(isFirstSubmission?{}:{updatedAt:new Date().toISOString(),isUpdated:true}),
       shifts:Object.fromEntries(dates.map(d=>[d,buildShift(d)])),
       comment:comment.trim()
     };
@@ -200,7 +209,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     if(shopId&&apid) setCookie(ckStaffKey(shopId,apid),staffName,365);
     editingRef.current=false;
     dirtyRef.current=false;
-    ph("shift_submitted",{period_id:apid,is_update:!!existSub,work_days:Object.values(sd).filter(s=>s?.status==="work").length});
+    ph("shift_submitted",{period_id:apid,is_update:!isFirstSubmission,work_days:Object.values(sd).filter(s=>s?.status==="work").length});
     setConf(false);setDone(true);
   };
 
@@ -512,7 +521,27 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
   const applyCellEdit=(subId,ds,newStatus,newStart,newEnd)=>{
     const sub=submitted.find(s=>s.id===subId);if(!sub)return;
     // 既存フィールドを保持してマージ（adjustedStart/End等の管理者調整値・changedフラグを消さない）
-    const shifts={...(sub.shifts||{}),[ds]:{...((sub.shifts||{})[ds]||{}),status:newStatus,start:newStart,end:newEnd}};
+    const next={...((sub.shifts||{})[ds]||{}),status:newStatus};
+    // 休みにした日はスタッフ提出の start/end を残さない（StaffViewの日付カード:336・一括反映:138と同じ扱い）。
+    // 残すと status は holiday なのに getStoredTime が時刻を返し、シフト作成グリッド・PDF・Excel・
+    // ヒートマップだけがその日を出勤として表示・カウントする一方、勤務時間・出勤日数は0のままになる
+    // （＝画面内で矛盾する。バグチェック#55）。CellEditPanelは休み側でも選択中の時刻をそのまま渡してくる。
+    // 管理者フィールド（adjustedXxx・adminRest・extraStart等）はここでは触らない（#51の引き継ぎ対象）。
+    if(newStatus==="work"){next.start=newStart;next.end=newEnd;}
+    else{
+      delete next.start;delete next.end;
+      // 管理者が入れた実効出退勤（グリッドの調整値・「締」の追加出勤）も同じ理由で残さない。
+      // 残すと status は holiday なのに getStoredTime（app-admin.js:514）が調整値を返し、
+      // グリッド・PDF・Excel・ヒートマップ・休みカウントだけがその日を出勤として扱う一方、
+      // 勤務時間・出勤日数は0のままになる（#55と同じ矛盾。バグチェック#57）。
+      // 追加出勤フラグを残したまま status を holiday にするのは、carryAdminShiftFields
+      // （app-utils.js:186）が宣言している「フラグがある日は status="work"」の不変条件にも反する。
+      // メモ（adjustedXxxNote）と休み希望（adminRest）は休みの日でも表示・意味が成立するため残す。
+      delete next.adjustedStart;delete next.adjustedEnd;
+      delete next.adjustedStartFixed;delete next.adjustedEndFixed;
+      delete next.extraStart;delete next.extraEnd;
+    }
+    const shifts={...(sub.shifts||{}),[ds]:next};
     onEditSub({...sub,shifts});
     setEditTarget(null);
   };

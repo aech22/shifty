@@ -6,7 +6,7 @@
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,globalTemplates,saveGlobalTemplates,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,shopTemplates,saveShopTemplates,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   const[toast,setToast]=useState(null);
@@ -191,7 +191,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           saveSettings(ns);
           tt(`✓ ${oldName} → ${newName} に変更しました`);
         }}/>}
-        {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates} tt={tt} plan={plan} periods={periods}/>}
+        {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} shopTemplates={shopTemplates} saveShopTemplates={saveShopTemplates} tt={tt} plan={plan} periods={periods}/>}
         {tab==="submissions"&&<SubsTab key={currentShopId} subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
         {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
         {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany}/>}
@@ -1190,6 +1190,22 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     });
   };
   const lastTapRef=useRef({key:null,times:[]});
+  // トリプルタップの二重適用ガード: タッチ端末では3回目のtouchendでトグルした直後に、ブラウザが合成した
+  // clickが detail===3 で同じセルに届き、もう一度トグルして打ち消してしまう（Chromium実測でtouchendの
+  // 1ms後に到達）。touchend由来の適用を記録し、その直後に来た合成clickだけを無視する。
+  // タッチ側は抑止しないので、連続でトグルし直す操作は従来どおり効く。
+  const tapToggledRef=useRef({key:null,t:0});
+  const onCellTripleClick=(name,date)=>{
+    const k=`${name}|${date}`;const r=tapToggledRef.current;
+    if(r.key===k&&Date.now()-r.t<700)return; // touchend で適用済みの合成click
+    toggleChanged(name,date);
+  };
+  const onCellTripleTap=(name,date)=>{
+    const k=`${name}|${date}`;const now=Date.now();const prev=lastTapRef.current;
+    const times=(prev.key===k&&prev.times.length>0&&now-prev.times[prev.times.length-1]<350)?[...prev.times,now]:[now];
+    if(times.length>=3){toggleChanged(name,date);tapToggledRef.current={key:k,t:now};lastTapRef.current={key:null,times:[]};}
+    else{lastTapRef.current={key:k,times};}
+  };
 
   // グリッドの実際の行高・thead高を測定してサイドパネルと同期
   useEffect(()=>{
@@ -1640,8 +1656,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"start",e.target.value)}
-                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(e.detail===3)toggleChanged(name,date);}}
-                            onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();const prev=lastTapRef.current;const times=(prev.key===k&&prev.times.length>0&&now-prev.times[prev.times.length-1]<350)?[...prev.times,now]:[now];if(times.length>=3){toggleChanged(name,date);lastTapRef.current={key:null,times:[]};}else{lastTapRef.current={key:k,times};}}}
+                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(e.detail===3)onCellTripleClick(name,date);}}
+                            onTouchEnd={()=>{if(!isPremium)return;onCellTripleTap(name,date);}}
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|start`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);setFocusKey(null);}}
                             // 日本語IME変換確定のEnter(isComposing/keyCode229)はセル確定・フォーカス移動として扱わない。
@@ -1659,8 +1675,8 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
                             readOnly={!isPremium} disabled={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"end",e.target.value)}
-                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(e.detail===3)toggleChanged(name,date);}}
-                            onTouchEnd={()=>{if(!isPremium)return;const k=`${name}|${date}`;const now=Date.now();const prev=lastTapRef.current;const times=(prev.key===k&&prev.times.length>0&&now-prev.times[prev.times.length-1]<350)?[...prev.times,now]:[now];if(times.length>=3){toggleChanged(name,date);lastTapRef.current={key:null,times:[]};}else{lastTapRef.current={key:k,times};}}}
+                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(e.detail===3)onCellTripleClick(name,date);}}
+                            onTouchEnd={()=>{if(!isPremium)return;onCellTripleTap(name,date);}}
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
@@ -1832,7 +1848,13 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
     return(
       <div>
         <button onClick={()=>setViewPeriodId(null)} style={{marginBottom:16,padding:"8px 16px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:8,color:"var(--c-text)",fontSize:13,cursor:"pointer"}}>← 期間一覧に戻る</button>
-        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} plan={plan} staffAliases={settings.staffAliases||{}} onDeleteSub={subId=>{const a=subs.filter(s=>s.id!==subId);saveSubs&&saveSubs(a,subId);tt("提出を削除しました");}} onEditSub={sub=>{const updated={...sub,updatedAt:new Date().toISOString(),isUpdated:true};const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=updated;saveSubs&&saveSubs(a);}tt("✓ 更新しました");}}/>
+        {/* 管理者がこのビューでセルを編集しても isUpdated/updatedAt は立てない。これらは「スタッフ本人が
+            再提出した」ことを表す提出メタで、subHasRealUpdate（提出一覧の「更新: …」バッジ・締切日ゲート付き）と
+            subLastActionTime（提出一覧の並べ替え）が読む。管理者の編集時刻でこれを立てると、締切を守った
+            スタッフが「締切後に変更あり」と表示される（バグチェック#59）。管理者の他のセル編集経路
+            （シフト作成タブのapplyEditToSubs・提出一覧詳細モーダルのsaveAdj:2930）も同じ理由で立てていない。
+            既にスタッフの再提出で立っている値はそのまま引き継ぐ（消すと本物の再提出記録が消えるため）。 */}
+        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} plan={plan} staffAliases={settings.staffAliases||{}} onDeleteSub={subId=>{const a=subs.filter(s=>s.id!==subId);saveSubs&&saveSubs(a,subId);tt("提出を削除しました");}} onEditSub={sub=>{const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=sub;saveSubs&&saveSubs(a);}tt("✓ 更新しました");}}/>
       </div>
     );
   }
@@ -1918,7 +1940,11 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
                     <div style={{fontSize:15,fontWeight:700,color:"var(--c-text)",marginBottom:3}}>{p.label}</div>
                     <div style={{fontSize:13,color:"var(--c-text3)"}}>{p.startDate?.replace(/-/g,"/")} 〜 {p.endDate?.replace(/-/g,"/")}（{dates.length}日間）</div>
                     {p.deadlineDate&&<div style={{fontSize:12,marginTop:3,color:ip?"#FF8C94":"#9CA3AF"}}>締切：{p.deadlineDate.replace(/-/g,"/")} {ip?"（済み）":""}</div>}
-                    <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>提出：{subs.filter(s=>s.periodId===p.id).length}件</div>
+                    {/* source:"grid" は管理者がシフト作成タブのセルに直接入力して生まれたsubで、スタッフの提出ではない
+                        （app-admin.js:554/:563 applyEditToSubs）。除外しないと、このカードをタップして開くSmModalの
+                        「提出済み N名」（app-staff.js:505）や提出一覧タブ（:2928 SubsTab）と件数が食い違う（バグチェック#56）。
+                        Excel出力（expXl:1973）は管理者入力も出力対象なので、そちらは除外しないままでよい。 */}
+                    <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>提出：{subs.filter(s=>s.periodId===p.id&&s.source!=="grid").length}件</div>
                   </div>
                   <div style={{display:"flex",gap:5,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
                     <button onClick={e=>{e.stopPropagation();setEid(p.id);}} style={{padding:"5px 9px",background:"var(--c-input)",border:"1px solid #E5E7EB",borderRadius:6,color:"var(--c-text2)",fontSize:11,cursor:"pointer"}}>編集</button>
@@ -2441,7 +2467,7 @@ const dragIdxRef=useRef(null);
 }
 
 // ===== 候補管理タブ（複数選択対応）=====
-function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan="free",periods=[]}){
+function CandTab({settings,onSave,shopTemplates=[],saveShopTemplates,tt,plan="free",periods=[]}){
   const[mode,setMode]=useState("global");
   const[selDows,setSelDows]=useState([1]);
   const[selDates,setSelDates]=useState([tds]);
@@ -2547,8 +2573,8 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
     if(!tmplName.trim()){tt("▲ テンプレート名を入力");return;}
     const wdCopy={...(settings.weekdayCandidates||{})};
     const tmpl={name:tmplName.trim(),weekdayCandidates:wdCopy,savedAt:new Date().toISOString()};
-    const ts=[...globalTemplates,tmpl];
-    saveGlobalTemplates(ts);setTmplName("");tt(`✓ テンプレート「${tmplName.trim()}」を保存しました（この店舗）`);
+    const ts=[...shopTemplates,tmpl];
+    saveShopTemplates(ts);setTmplName("");tt(`✓ テンプレート「${tmplName.trim()}」を保存しました（この店舗）`);
   };
   // テンプレを選択した曜日にだけ適用する。選択曜日のみ w[d]=テンプレの候補(空なら[])で上書きし、未選択曜日は現状維持。
   // 全曜日(WDAY_OPTS)を選択すれば従来の一括適用と同じ結果になる。
@@ -2560,7 +2586,7 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
     weekdays.forEach(d=>{w[d]=(t.weekdayCandidates||{})[d]||[];});
     onSave({...settings,weekdayCandidates:w});setTmplApply(null);tt(`✓ テンプレート「${t.name}」を ${names} に適用しました`);
   };
-  const delTemplate=i=>{const ts=[...globalTemplates];ts.splice(i,1);saveGlobalTemplates(ts);tt("削除しました");};
+  const delTemplate=i=>{const ts=[...shopTemplates];ts.splice(i,1);saveShopTemplates(ts);tt("削除しました");};
 
   // 選択中の日付の候補（複数選択時は全日付の和集合）
   const dC=selDates.length===1?((settings.dateCandidates||{})[selDates[0]]||[]):[];
@@ -2771,8 +2797,8 @@ function CandTab({settings,onSave,globalTemplates=[],saveGlobalTemplates,tt,plan
           <button onClick={saveTemplate} style={AB}>保存</button>
         </div>
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>この店舗に保存されます</div>
-        {globalTemplates.length===0&&<div style={{fontSize:13,color:"var(--c-text4)"}}>保存済みテンプレートはありません</div>}
-        {globalTemplates.map((t,i)=>{
+        {shopTemplates.length===0&&<div style={{fontSize:13,color:"var(--c-text4)"}}>保存済みテンプレートはありません</div>}
+        {shopTemplates.map((t,i)=>{
           const open=tmplApply&&tmplApply.index===i;
           return(<div key={i} style={{marginBottom:6,opacity:plan==="free"?.4:1,pointerEvents:plan==="free"?"none":"auto"}}>
             <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:open?"10px 10px 0 0":10}}>
@@ -3040,6 +3066,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
   const[expanded,setExpanded]=useState({});   // {shopId:true}
   const[shopMeta,setShopMeta]=useState({});   // {shopId:{abbrs:[],staff:[],workplaces:{},loaded:true}}
   const[abbrInput,setAbbrInput]=useState({}); // {shopId:"入力中の略称"}
+  const[allAbbrs,setAllAbbrs]=useState({});   // {shopId:[略称]} 重複チェック専用（未展開店舗ぶんも先読み）
   const listShops=allLinkedShops.length>0?allLinkedShops:shops;
 
   const loadShopMeta=(sid)=>{
@@ -3070,10 +3097,26 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
     const stateKey=field==="shopAbbrs"?"abbrs":"workplaces";
     if(sid===shopId){onSave({...settings,[field]:value});setShopMeta(m=>m[sid]?{...m,[sid]:{...m[sid],[stateKey]:value}}:m);return;}
     setShopMeta(m=>({...m,[sid]:{...(m[sid]||{abbrs:[],staff:[],workplaces:{},loaded:true}),[stateKey]:value}}));
+    if(field==="shopAbbrs")setAllAbbrs(a=>({...a,[sid]:value}));
     if(!firebaseDB)return;
     fbUpd(`shops/${sid}/settings`,{[field]:value})
       .catch(()=>{tt("✕ 保存できませんでした（この店舗の管理者権限がありません）");loadShopMeta(sid);});
   };
+  // 略称の重複チェックは全連携店舗を見る必要があるが、shopMeta はカードを展開した店舗しか読まない。
+  // 未展開店舗ぶんを先読みしておかないと衝突を検出できず、同じ略称が2店舗に登録される。そうなると
+  // シフト作成タブの abbrToShop（先勝ちマップ）がヘルプ先を別店舗に解決し、レジェンドの店舗名が入れ替わる。
+  useEffect(()=>{
+    if(!firebaseDB)return;
+    let cancelled=false;
+    Promise.all(listShops.filter(s=>s&&s.id).map(s=>
+      firebaseDB.ref(`shops/${s.id}/settings/shopAbbrs`).once("value")
+        .then(sn=>[s.id,Object.values(sn.val()||{}).filter(v=>typeof v==="string")])
+        .catch(()=>[s.id,[]])
+    )).then(entries=>{if(!cancelled)setAllAbbrs(Object.fromEntries(entries));});
+    return()=>{cancelled=true;};
+  },[listShops]);
+  // 略称の参照元: 表示中・展開済み店舗はライブなmeta、未展開店舗は先読みした allAbbrs
+  const abbrsOf=(sid)=>{const m=metaFor(sid);return m?(m.abbrs||[]):(allAbbrs[sid]||[]);};
   const addAbbr=(sid)=>{
     const v=(abbrInput[sid]||"").trim();
     if(!v)return;
@@ -3082,7 +3125,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
     if(CELL_COMMANDS.some(c=>c.key.toLowerCase()===v.toLowerCase())||isRestCommand(v)||/^[\d.:]+$/.test(v)){tt("✕ h・k・x・y・休・締・数字のみの略称は使用できません");return;}
     const cur=(metaFor(sid)||{}).abbrs||[];
     if(cur.includes(v)){tt("✕ 既に登録済みの略称です");return;}
-    const conflict=listShops.find(s=>s.id!==sid&&((metaFor(s.id)||{}).abbrs||[]).includes(v));
+    const conflict=listShops.find(s=>s&&s.id!==sid&&abbrsOf(s.id).includes(v));
     if(conflict){tt(`✕ 「${v}」は「${conflict.name}」で使用中です`);return;}
     saveMetaField(sid,"shopAbbrs",[...cur,v]);
     setAbbrInput(i=>({...i,[sid]:""}));
@@ -3268,13 +3311,13 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
     </AC>
     {listShops.length>0&&<AC title="連携店舗">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
-        {companyInfo?"この企業アカウントに紐付いている店舗の一覧です。店舗コードで追加・不要な店舗は連携解除できます。":"このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。"}
+        {companyInfo?"この企業アカウントに紐付いている店舗の一覧です。管理コードで追加・不要な店舗は連携解除できます（追加する店舗の設定タブに表示されている「管理コード」が必要です）。":"このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。"}
         店舗名をタップすると略称・スタッフの勤務先を設定できます。
       </div>
       {companyInfo&&(
         coAddOpen?(
           <div style={{display:"flex",gap:8,marginBottom:12}}>
-            <input value={coAddCode} onChange={e=>setCoAddCode(e.target.value)} maxLength={100} placeholder="店舗コードを貼り付け" style={{...AI,flex:1}}/>
+            <input value={coAddCode} onChange={e=>setCoAddCode(e.target.value)} maxLength={100} placeholder="管理コードを貼り付け" style={{...AI,flex:1}}/>
             <button disabled={coBusy} onClick={async()=>{
               if(!coAddCode.trim()||!onLinkStoreToCompany)return;
               setCoBusy(true); const r=await onLinkStoreToCompany(coAddCode.trim()); setCoBusy(false);
@@ -3283,7 +3326,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
             <button onClick={()=>{setCoAddOpen(false);setCoAddCode("");}} style={{...AGray,whiteSpace:"nowrap"}}>取消</button>
           </div>
         ):(
-          <button onClick={()=>setCoAddOpen(true)} style={{width:"100%",padding:"10px",background:"rgba(248,112,54,.12)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"#f87036",fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:12}}>＋ 店舗コードで追加</button>
+          <button onClick={()=>setCoAddOpen(true)} style={{width:"100%",padding:"10px",background:"rgba(248,112,54,.12)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"#f87036",fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:12}}>＋ 管理コードで追加</button>
         )
       )}
       <div>{listShops.map(shopCard)}</div>

@@ -569,20 +569,33 @@ function sanitizeForUpdate(payload,found=[]){
 // （"subId"=新規sub全体 / "subId/フィールド名" / "subId/shifts/日付"）に展開し、
 // 実際に変わった部分だけをupdate()することで他フィールドを巻き込まないようにする。
 // prevSubが存在しない（新規作成）場合はsub全体を1エントリとして返す。
+// 値の同一性判定。参照比較（!==）だと、内容が同じでも作り直されたオブジェクトを
+// 「変更あり」と誤判定する。スタッフの再提出は shifts の全日付を毎回 buildShift で
+// 作り直すため、参照比較のままだと1日だけ直しても全日付が書き込み対象になり、
+// 差分書き込みが実質的に無効化される（＝管理者の編集を巻き込む）。
+function deepEqValue(a,b){
+  if(a===b)return true;
+  if(a===null||b===null||a===undefined||b===undefined)return false;
+  if(typeof a!=="object"||typeof b!=="object")return false;
+  if(Array.isArray(a)!==Array.isArray(b))return false;
+  const ka=Object.keys(a),kb=Object.keys(b);
+  if(ka.length!==kb.length)return false;
+  return ka.every(k=>Object.prototype.hasOwnProperty.call(b,k)&&deepEqValue(a[k],b[k]));
+}
 function diffSubForFlatWrite(id,prevSub,newSub){
   const out={};
   if(!prevSub){out[id]=newSub;return out;}
   const prevShifts=prevSub.shifts||{};
   const shifts=newSub.shifts||{};
   Object.keys(shifts).forEach(date=>{
-    if(shifts[date]!==prevShifts[date])out[`${id}/shifts/${date}`]=shifts[date];
+    if(!deepEqValue(shifts[date],prevShifts[date]))out[`${id}/shifts/${date}`]=shifts[date];
   });
   Object.keys(prevShifts).forEach(date=>{
     if(!(date in shifts))out[`${id}/shifts/${date}`]=null;
   });
   Object.keys(newSub).forEach(key=>{
     if(key==="shifts")return;
-    if(newSub[key]!==prevSub[key])out[`${id}/${key}`]=newSub[key];
+    if(!deepEqValue(newSub[key],prevSub[key]))out[`${id}/${key}`]=newSub[key];
   });
   Object.keys(prevSub).forEach(key=>{
     if(key==="shifts")return;
