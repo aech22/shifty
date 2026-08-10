@@ -116,6 +116,19 @@ exports.createCheckoutSession = functions
     const auth = await verifyShopOwner(req, shopId);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
 
+    // 既に有効な契約がある店舗に新しい契約を作らせない。これを許すと1店舗が2契約を持ち、
+    // 更新・解約イベントがどちらの契約のものか判別できなくなる（旧実装の二重課金の原因）。
+    // プランの変更は契約を作り直さずに changePlan（subscriptions.update）で行う。
+    const existingSub = await findActiveSubscription(shopId);
+    if (existingSub) {
+      res.status(409).json({
+        error: "すでに有効な契約があります。プランの変更はマイページの「プランを変更」からお手続きください。",
+        code: "already_subscribed",
+        currentPlan: planOfSubscription(existingSub),
+      });
+      return;
+    }
+
     const priceId = plan === "premium" ? STRIPE_PRICES.premium_monthly : STRIPE_PRICES.pro_monthly;
     const stripe = getStripe();
 
@@ -136,6 +149,117 @@ exports.createCheckoutSession = functions
       res.status(200).json({ url: session.url });
     } catch (e) {
       console.error("Checkout session作成失敗:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+// ============================================================
+// プラン変更（Pro ⇄ Premium）
+//
+// 契約を作り直さず、既存 subscription の price を差し替える。これにより
+// 「1店舗＝1契約」が構造的に保証され、二重課金が起こりようがなくなる。
+//
+// アップグレード（Pro→Premium）: 即時反映 + 差額を即請求（always_invoice）。
+//   押した瞬間に上位機能が使えないとアップグレードの意味がないため。差額のみの
+//   請求で、二重取りにはならない。
+// ダウングレード（Premium→Pro）: 期間終了時に切替（Subscription Schedule）。
+//   利用規約が日割り返金なしのため、支払い済みの期間は上位プランのまま使える
+//   のが筋。即時に落とすと「金は返さないが機能は取り上げる」形になる。
+// ============================================================
+exports.changePlan = functions
+  .region("asia-northeast1")
+  .runWith({ secrets: ["STRIPE_SECRET_KEY"] })
+  .https.onRequest(async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).send("Method Not Allowed"); return; }
+
+    const { shopId, plan } = req.body || {};
+    if (!shopId || !plan) { res.status(400).json({ error: "shopId, plan は必須です" }); return; }
+    if (plan !== "pro" && plan !== "premium") { res.status(400).json({ error: "plan は pro または premium を指定してください" }); return; }
+
+    const auth = await verifyShopOwner(req, shopId);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+
+    const stripe = getStripe();
+    try {
+      const sub = await findActiveSubscription(shopId);
+      if (!sub) {
+        res.status(409).json({ error: "有効な契約が見つかりません。新規のお申し込みからお手続きください。", code: "no_subscription" });
+        return;
+      }
+      const currentPlan = planOfSubscription(sub);
+      if (currentPlan === plan) {
+        res.status(400).json({ error: "すでにそのプランをご利用中です。", code: "same_plan" });
+        return;
+      }
+      const newPrice = plan === "premium" ? STRIPE_PRICES.premium_monthly : STRIPE_PRICES.pro_monthly;
+      const itemId = sub.items && sub.items.data && sub.items.data[0] && sub.items.data[0].id;
+      if (!itemId) {
+        res.status(500).json({ error: "契約明細を取得できませんでした。時間をおいてお試しください。" });
+        return;
+      }
+
+      // 現行プランが未知（Priceを差し替え済み等）の場合は序列比較ができないので、
+      // 安全側に倒して即時アップグレード扱いにはせず、エラーにする
+      if (planRank(currentPlan) < 0) {
+        console.error(`現行プランを判定できません: shopId=${shopId} sub=${sub.id}`);
+        res.status(409).json({ error: "現在のプランを判定できませんでした。お問い合わせください。", code: "unknown_current_plan" });
+        return;
+      }
+
+      if (planRank(plan) > planRank(currentPlan)) {
+        // --- アップグレード: 即時反映 + 差額請求 ---
+        await stripe.subscriptions.update(sub.id, {
+          items: [{ id: itemId, price: newPrice }],
+          proration_behavior: "always_invoice",
+          metadata: { ...(sub.metadata || {}), shopId, plan },
+        });
+        // Webhook(customer.subscription.updated)でも同じ値が入るが、押した直後に画面へ
+        // 反映されるようここでも書く（Stripe側の設定変更に依存させないため）
+        await db.ref(`accounts/${shopId}`).update({
+          plan, stripeSubscriptionId: sub.id, scheduledPlan: null, scheduledPlanDate: null,
+        });
+        console.log(`プラン変更(即時アップグレード): shopId=${shopId} ${currentPlan}→${plan} sub=${sub.id}`);
+        res.status(200).json({ ok: true, applied: "immediate", plan });
+        return;
+      }
+
+      // --- ダウングレード: 期間終了時に切替 ---
+      // Subscription Schedule で「現在の期間は現行price」「以降は新price」の2フェーズにする。
+      // end_behavior:"release" により、切替後はスケジュールを離れて通常の契約として継続する。
+      let schedule;
+      if (sub.schedule) {
+        schedule = await stripe.subscriptionSchedules.retrieve(
+          typeof sub.schedule === "string" ? sub.schedule : sub.schedule.id
+        );
+      } else {
+        schedule = await stripe.subscriptionSchedules.create({ from_subscription: sub.id });
+      }
+      const cur = schedule.phases[schedule.phases.length - 1];
+      const curPrice = cur.items[0].price;
+      await stripe.subscriptionSchedules.update(schedule.id, {
+        end_behavior: "release",
+        phases: [
+          { items: [{ price: typeof curPrice === "string" ? curPrice : curPrice.id, quantity: 1 }],
+            start_date: cur.start_date, end_date: cur.end_date },
+          { items: [{ price: newPrice, quantity: 1 }] },
+        ],
+        metadata: { shopId, plan },
+      });
+      const effectiveAt = tsToDate(cur.end_date) || tsToDate(periodEndOf(sub));
+      // 予約内容は subscription_schedule.* のWebhookでも拾えるが、そのイベント種別は
+      // エンドポイントの購読対象に入っていない（2026-08-11時点の購読は5種類）。
+      // Stripe側の設定変更に依存させないため、予約はここで直接書く。
+      await db.ref(`accounts/${shopId}`).update({
+        scheduledPlan: plan, scheduledPlanDate: effectiveAt, stripeSubscriptionId: sub.id,
+      });
+      console.log(`プラン変更(期間終了時ダウングレード): shopId=${shopId} ${currentPlan}→${plan} 切替日=${effectiveAt} sub=${sub.id}`);
+      res.status(200).json({ ok: true, applied: "period_end", plan, effectiveAt });
+    } catch (e) {
+      console.error("プラン変更失敗:", e);
       res.status(500).json({ error: e.message });
     }
   });
@@ -216,6 +340,55 @@ function shouldApplyRenewalPlan(currentPlan, incomingPlan) {
   return inc >= cur;
 }
 
+// Price ID → プラン名。契約が「いまどのプランか」の唯一の真実はStripe側のpriceなので、
+// プラン変更後の状態はメタデータではなくここから解決する。
+function planOfPriceId(priceId) {
+  if (priceId === STRIPE_PRICES.premium_monthly) return "premium";
+  if (priceId === STRIPE_PRICES.pro_monthly) return "pro";
+  return null;
+}
+function planOfSubscription(sub) {
+  const item = sub && sub.items && sub.items.data && sub.items.data[0];
+  return item && item.price ? planOfPriceId(item.price.id) : null;
+}
+// 新しいAPIバージョンでは current_period_end が subscription item 配下へ移っているため両方見る
+function periodEndOf(sub) {
+  if (!sub) return null;
+  if (sub.current_period_end) return sub.current_period_end;
+  const item = sub.items && sub.items.data && sub.items.data[0];
+  return (item && item.current_period_end) || null;
+}
+function tsToDate(ts) {
+  return ts ? new Date(ts * 1000).toISOString().split("T")[0] : null;
+}
+
+// 店舗の「いま有効な契約」を1本だけ返す。プラン変更(changePlan)と、
+// 新規契約の二重作成防止(createCheckoutSession)の両方がこれを基準にする。
+const LIVE_SUB_STATUSES = ["active", "trialing", "past_due", "unpaid"];
+async function findActiveSubscription(shopId) {
+  const acct = (await db.ref(`accounts/${shopId}`).once("value")).val() || {};
+  const stripe = getStripe();
+  // 追跡中のsubscription IDを優先（プラン変更で契約が入れ替わらない前提を守るため）
+  if (acct.stripeSubscriptionId) {
+    try {
+      const s = await stripe.subscriptions.retrieve(acct.stripeSubscriptionId);
+      if (s && LIVE_SUB_STATUSES.includes(s.status)) return s;
+    } catch (e) {
+      console.warn("追跡中subscriptionの取得失敗:", e.message);
+    }
+  }
+  if (!acct.stripeCustomerId) return null;
+  try {
+    const list = await stripe.subscriptions.list({ customer: acct.stripeCustomerId, status: "all", limit: 20 });
+    const live = (list.data || []).filter(s => s && LIVE_SUB_STATUSES.includes(s.status));
+    // 同じ店舗のmetadataを持つものを優先し、無ければ最初の有効契約
+    return live.find(s => s.metadata && s.metadata.shopId === shopId) || live[0] || null;
+  } catch (e) {
+    console.error("subscription一覧の取得失敗:", e.message);
+    return null;
+  }
+}
+
 // ============================================================
 // Stripe Webhook受信（決済完了 → planをFirebaseに書き込む）
 // ============================================================
@@ -258,6 +431,11 @@ exports.stripeWebhook = functions
           const subId = subscriptionIdOf(obj);
           const customerId = obj.customer || (subId ? (await getStripe().subscriptions.retrieve(subId).catch(()=>null))?.customer : null);
           if (customerId) await db.ref(`accounts/${shopId}/stripeCustomerId`).set(customerId);
+          // subscription ID も保存する。findActiveSubscription がこれを起点に「その店舗の契約」を
+          // 一意に特定できるようにし、プラン変更が別契約を掴むことを防ぐ。
+          if (subId) await db.ref(`accounts/${shopId}/stripeSubscriptionId`).set(subId);
+          // 新規契約・アップグレード直後は解約予約・変更予約が無い状態なので、古い表示を残さない
+          await db.ref(`accounts/${shopId}`).update({ cancelAtPeriodEnd: null, scheduledPlan: null, scheduledPlanDate: null });
           console.log(`プラン更新完了: shopId=${shopId} plan=${plan} customerId=${customerId}`);
         }
       }
@@ -282,6 +460,64 @@ exports.stripeWebhook = functions
       }
     }
 
+    // 契約の変更 → 解約予約・プラン変更予約の状態をアプリへ反映する
+    //
+    // これを処理しないと、ユーザーがカスタマーポータルで解約しても（Stripeは「期間終了時に
+    // 解約」として customer.subscription.updated を送るだけなので）アプリの表示が一切変わらず、
+    // 解約が効いていないように見える（2026-08-11 の実購入テストで確認）。
+    // プランの降格そのものは従来どおり customer.subscription.deleted で行い、
+    // ここでは「いつ終わるか」「いつ何に変わるか」だけを保存する。
+    if (event.type === "customer.subscription.updated") {
+      const sub = event.data.object;
+      const { shopId } = await resolveShopMeta(sub);
+      if (shopId) {
+        // 追跡中の契約と異なるものは無視する（万一2契約が並存しても表示を壊さない多重防御）
+        const tracked = (await db.ref(`accounts/${shopId}/stripeSubscriptionId`).once("value")).val();
+        if (tracked && sub.id && tracked !== sub.id) {
+          console.log(`追跡中(${tracked})と異なる契約(${sub.id})の更新のため無視: shopId=${shopId}`);
+        } else {
+          const updates = {
+            cancelAtPeriodEnd: sub.cancel_at_period_end ? true : null,
+            currentPeriodEnd: tsToDate(periodEndOf(sub)),
+          };
+          if (!tracked && sub.id) updates.stripeSubscriptionId = sub.id;
+          // 現在有効なプランはStripeのpriceが唯一の真実。アップグレードの即時反映も、
+          // スケジュールされたダウングレードが期間終了時に発火したときも、ここで追随する。
+          const livePlan = planOfSubscription(sub);
+          if (livePlan && LIVE_SUB_STATUSES.includes(sub.status)) updates.plan = livePlan;
+          await db.ref(`accounts/${shopId}`).update(updates);
+          console.log(`契約更新: shopId=${shopId} plan=${livePlan} 解約予約=${!!sub.cancel_at_period_end} 期間終了=${updates.currentPeriodEnd}`);
+        }
+      }
+    }
+
+    // プラン変更の予約（ダウングレードのSubscription Schedule）→ 予約内容をアプリへ反映する
+    if (event.type === "subscription_schedule.updated" || event.type === "subscription_schedule.created") {
+      const sch = event.data.object;
+      const shopId = sch && sch.metadata && sch.metadata.shopId;
+      const plan = sch && sch.metadata && sch.metadata.plan;
+      if (shopId && plan) {
+        const phases = sch.phases || [];
+        const next = phases.length > 1 ? phases[phases.length - 1] : null;
+        await db.ref(`accounts/${shopId}`).update({
+          scheduledPlan: plan,
+          scheduledPlanDate: tsToDate(next && next.start_date),
+        });
+        console.log(`プラン変更予約: shopId=${shopId} → ${plan} 切替日=${tsToDate(next && next.start_date)}`);
+      }
+    }
+
+    // 予約が完了・解除された → 予約表示を消す
+    if (event.type === "subscription_schedule.released" || event.type === "subscription_schedule.canceled"
+        || event.type === "subscription_schedule.completed") {
+      const sch = event.data.object;
+      const shopId = sch && sch.metadata && sch.metadata.shopId;
+      if (shopId) {
+        await db.ref(`accounts/${shopId}`).update({ scheduledPlan: null, scheduledPlanDate: null });
+        console.log(`プラン変更予約を解除: shopId=${shopId} (${event.type})`);
+      }
+    }
+
     // サブスクキャンセル → Freeに戻す
     if (event.type === "customer.subscription.deleted") {
       const sub = event.data.object;
@@ -298,6 +534,12 @@ exports.stripeWebhook = functions
         } else {
           await db.ref(`accounts/${shopId}/plan`).set("free");
           await db.ref(`accounts/${shopId}/planExpiry`).remove();
+          // 契約が消えた以上、解約予約・プラン変更予約・追跡中subscriptionの表示は残さない
+          // （stripeCustomerId は Customer Portal と再契約のために残す）
+          await db.ref(`accounts/${shopId}`).update({
+            cancelAtPeriodEnd: null, currentPeriodEnd: null,
+            scheduledPlan: null, scheduledPlanDate: null, stripeSubscriptionId: null,
+          });
           console.log(`プランFreeに戻す: shopId=${shopId}`);
         }
       }
