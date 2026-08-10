@@ -1,0 +1,15 @@
+name: Perm probe (temporary)
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Show granted token permissions
+        run: echo "see the 'GITHUB_TOKEN Permissions' group in the job log"
