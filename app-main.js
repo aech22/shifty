@@ -457,16 +457,21 @@ function App(){
     on(`accounts/${targetSid}/paymentFailed`,val=>{
       setPaymentFailed(!!val);
     });
-    // 契約の予定状態（解約予約・プラン変更予約）。個別に購読すると4本になるので親をまとめて読む。
-    // ここはプラン系の小さなオブジェクトで、RULES.mdが禁じている accounts 全件読みではない。
-    on(`accounts/${targetSid}`,val=>{
-      const v=val&&typeof val==="object"?val:{};
-      setBillingSchedule({
-        cancelAtPeriodEnd:!!v.cancelAtPeriodEnd,
-        currentPeriodEnd:v.currentPeriodEnd||null,
-        scheduledPlan:["pro","premium"].includes(v.scheduledPlan)?v.scheduledPlan:null,
-        scheduledPlanDate:v.scheduledPlanDate||null,
-      });
+    // 契約の予定状態（解約予約・プラン変更予約）。
+    // 親ノード（accounts/{shopId}）をまとめて読んではいけない: セキュリティルールは表示用の
+    // 子フィールドにだけ読みを許可しており、stripeCustomerId / stripeSubscriptionId は
+    // 明示的に .read:false になっている。親を購読すると permission denied で丸ごと落ちる。
+    on(`accounts/${targetSid}/cancelAtPeriodEnd`,val=>{
+      setBillingSchedule(p=>({...p,cancelAtPeriodEnd:!!val}));
+    });
+    on(`accounts/${targetSid}/currentPeriodEnd`,val=>{
+      setBillingSchedule(p=>({...p,currentPeriodEnd:val||null}));
+    });
+    on(`accounts/${targetSid}/scheduledPlan`,val=>{
+      setBillingSchedule(p=>({...p,scheduledPlan:["pro","premium"].includes(val)?val:null}));
+    });
+    on(`accounts/${targetSid}/scheduledPlanDate`,val=>{
+      setBillingSchedule(p=>({...p,scheduledPlanDate:val||null}));
     });
 
     // settingsデフォルト書き込み（スタッフセッションはルールで拒否されるためcatchで握る）

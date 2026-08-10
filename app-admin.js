@@ -3935,6 +3935,35 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
   const lim=PLAN_LIMITS[plan]||PLAN_LIMITS.free;
   const isPaid=plan==="pro"||plan==="premium";
 
+  const[changing,setChanging]=useState("");
+  const bs=billingSchedule||{};
+  // プラン変更（Pro⇄Premium）。契約は作り直さずCF側で price を差し替える。
+  // アップグレードは即時反映、ダウングレードは期間終了時切替（CFのchangePlan参照）。
+  const changePlan=async(next)=>{
+    const isUp=(PLAN_RANK_UI[next]||0)>(PLAN_RANK_UI[plan]||0);
+    const msg=isUp
+      ? `${PLAN_LABELS[next]}プランに変更します。\n\n・すぐに${PLAN_LABELS[next]}の機能が使えるようになります\n・差額のみを即時に請求します（二重請求にはなりません）\n\nよろしいですか？`
+      : `${PLAN_LABELS[next]}プランに変更します。\n\n・${PLAN_LABELS[plan]}の機能は${bs.currentPeriodEnd?bs.currentPeriodEnd:"今の期間の終わり"}までご利用いただけます\n・その翌日から${PLAN_LABELS[next]}に切り替わります\n・日割りの返金はありません\n\nよろしいですか？`;
+    if(!confirm(msg))return;
+    ph("plan_change_requested",{from:plan,to:next});
+    setChanging(next);
+    try{
+      const idToken=await firebaseAuth?.currentUser?.getIdToken().catch(()=>null);
+      const res=await fetch(`${CF_BASE}/changePlan`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json",...(idToken?{"Authorization":`Bearer ${idToken}`}:{})},
+        body:JSON.stringify({shopId,plan:next}),
+      });
+      const data=await res.json().catch(()=>({}));
+      if(!res.ok){ tt("✕ "+(data.error||"プランを変更できませんでした")); return; }
+      tt(data.applied==="immediate"
+        ? `✓ ${PLAN_LABELS[next]}プランに変更しました`
+        : `✓ ${data.effectiveAt||"期間終了時"}から${PLAN_LABELS[next]}プランに変更されます`);
+    }catch(e){
+      tt("✕ 通信エラーが発生しました");
+    }finally{setChanging("");}
+  };
+
   const openPortal=async()=>{
     ph("portal_opened");
     setPortalLoading(true);
@@ -3989,6 +4018,53 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
             {!isPaid&&<div style={{fontSize:12,color:"var(--c-text4)",marginTop:3}}>無料プランをご利用中です</div>}
           </div>
         </div>
+
+        {/* 契約の予定状態。Stripe側は「期間終了時に解約」で処理されるため、これを出さないと
+            解約したのに画面が何も変わらず、解約が効いていないように見える */}
+        {isPaid&&bs.cancelAtPeriodEnd&&(
+          <div style={{background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.3)",borderRadius:10,padding:"10px 13px",marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#FF4757",marginBottom:2}}>解約済み</div>
+            <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.6}}>
+              {bs.currentPeriodEnd?`${bs.currentPeriodEnd} をもって終了します。`:"現在の期間の終了をもって終了します。"}
+              それまでは{PLAN_LABELS[plan]}の機能をそのままご利用いただけます。
+              <br/>解約を取り消す場合は下の「請求管理」からお手続きください。
+            </div>
+          </div>
+        )}
+        {isPaid&&!bs.cancelAtPeriodEnd&&bs.scheduledPlan&&bs.scheduledPlan!==plan&&(
+          <div style={{background:"rgba(96,165,250,.08)",border:"1px solid rgba(96,165,250,.35)",borderRadius:10,padding:"10px 13px",marginBottom:12}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#60A5FA",marginBottom:2}}>プラン変更の予約中</div>
+            <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.6}}>
+              {bs.scheduledPlanDate?`${bs.scheduledPlanDate} から`:"次の更新日から"}
+              {PLAN_LABELS[bs.scheduledPlan]}プランに切り替わります。
+              それまでは{PLAN_LABELS[plan]}の機能をご利用いただけます。
+            </div>
+          </div>
+        )}
+
+        {/* プラン変更（Pro⇄Premium）。契約は作り直さないので二重請求は起こらない */}
+        {isPaid&&!bs.cancelAtPeriodEnd&&(
+          <div style={{marginBottom:4}}>
+            <div style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:6}}>プランを変更</div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {["pro","premium"].filter(p=>p!==plan).map(p=>{
+                const isUp=(PLAN_RANK_UI[p]||0)>(PLAN_RANK_UI[plan]||0);
+                const busy=changing===p;
+                return(
+                  <button key={p} onClick={()=>changePlan(p)} disabled={!!changing}
+                    style={{flex:"1 1 160px",padding:"11px 14px",borderRadius:10,cursor:changing?"default":"pointer",fontSize:14,fontWeight:700,
+                      border:isUp?"none":"1px solid var(--c-border2)",
+                      background:isUp?"#f87036":"var(--c-input)",color:isUp?"white":"var(--c-text2)",opacity:changing?.6:1}}>
+                    {busy?"変更中...":`${PLAN_LABELS[p]}プランに${isUp?"アップグレード":"変更"}`}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6,lineHeight:1.6}}>
+              アップグレードはすぐに反映され、差額のみを請求します。ダウングレードは現在の期間の終了後に切り替わります（日割りの返金はありません）。
+            </div>
+          </div>
+        )}
 
         {/* 使用量 */}
         <div style={{borderTop:"1px solid var(--c-border)",paddingTop:16}}>
