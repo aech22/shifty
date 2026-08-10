@@ -291,9 +291,9 @@ function App(){
   },[sid]);
 
   // 曜日別候補テンプレート（店舗単位: shops/{shopId}/templates）
-  const[globalTemplates,setGlobalTemplates]=useState([]);
-  const saveGlobalTemplates=useCallback(v=>{
-    setGlobalTemplates(v);
+  const[shopTemplates,setShopTemplates]=useState([]);
+  const saveShopTemplates=useCallback(v=>{
+    setShopTemplates(v);
     const targetSid=currentShopIdRef.current;
     if(!targetSid||targetSid==="default")return;
     ls(storeKey(targetSid,"templates_v6"),v);
@@ -325,14 +325,14 @@ function App(){
     // subs期間別購読もクリア（店舗切替時に前店舗のリスナー・マージ結果を持ち越さない）
     stopSubsListeners();
     subsSidRef.current=targetSid;
-    // staffList/settings/periods/globalTemplatesをキャッシュ値へ同期リセットする（subsと同じパターン）。
+    // staffList/settings/periods/shopTemplatesをキャッシュ値へ同期リセットする（subsと同じパターン）。
     // Firebaseのon("value")が新店舗のデータを非同期で返すまでの間、これらのstateが前店舗のデータの
     // ままだと、その間に「スタッフ登録」の追加等でstaffListをそのまま書き込む操作をした場合、
     // 前店舗の配列（＋変更分）が新店舗（sidは既に新店舗を指す）のFirebaseパスへ上書きされてしまう。
     setStaffList(lg(storeKey(targetSid,"staff_v6"),[]));
     setSettings(lg(storeKey(targetSid,"settings_v6"),null)||makeSettings(targetSid));
     setPeriods(lg(storeKey(targetSid,"periods_v6"),[]));
-    setGlobalTemplates(lg(storeKey(targetSid,"templates_v6"),[]));
+    setShopTemplates(lg(storeKey(targetSid,"templates_v6"),[]));
     const on=(path,cb)=>{
       const r=firebaseDB.ref(path);
       r.on("value",snap=>cb(snap.val()),err=>console.warn("購読失敗:",path,err));
@@ -344,11 +344,11 @@ function App(){
 
     // 曜日別候補テンプレート（店舗単位: shops/{shopId}/templates）
     on(fbPath(targetSid,"templates"),val=>{
-      if(!val){setGlobalTemplates([]);return;}
+      if(!val){setShopTemplates([]);return;}
       // periods/staffと同様に要素単位で妥当性を検証する（テンプレートはオブジェクト構造）。
       // 配列ケースのfilter(Boolean)だけでなく、オブジェクトケース(Object.values)のnull要素・不正型も除去。
       const arr=(Array.isArray(val)?val:Object.values(val)).filter(t=>t&&typeof t==="object");
-      setGlobalTemplates(arr);
+      setShopTemplates(arr);
       ls(storeKey(targetSid,"templates_v6"),arr);
     });
 
@@ -1486,7 +1486,7 @@ function App(){
               saveStaff={saveStaff} saveShops={saveShops}
               adminCode={adminKeys[sid]?`${sid}.${adminKeys[sid]}`:sid} ownerReadOnly={ownerReadOnly}
               onRememberAdminKey={rememberAdminKey} onClaimShop={claimOwnership}
-              globalTemplates={globalTemplates} saveGlobalTemplates={saveGlobalTemplates}
+              shopTemplates={shopTemplates} saveShopTemplates={saveShopTemplates}
               plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed}
               setCurrentShopId={id=>{
                 currentShopIdRef.current=id;

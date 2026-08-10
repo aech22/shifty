@@ -152,7 +152,7 @@ AI / AB / AD / AGray // スタイル定数
 | `periods` | Period[] | 期間一覧（startDate降順ソート済み） |
 | `staffList` | string[] | スタッフ名一覧 |
 | `subs` | Sub[] | 提出データ一覧 |
-| `globalTemplates` | Template[] | 全店舗共有テンプレート（global/templates） |
+| `shopTemplates` | Template[] | 曜日別候補テンプレート（shops/{shopId}/templates・店舗単位） |
 | `inviteCodeDisplay` | string\|null | 企業招待コード表示用 |
 | `syncStatus` | "init"\|"online"\|"offline"\|"no_config" | Firebase接続状態 |
 
@@ -530,7 +530,7 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 
 - iOS Safari ズーム問題（input の fontSize<16）は 2026-07-06 に全箇所解消済み
 - 残存する既知の設計課題は「shopIdを知る者=管理可」のcapabilityモデル（恒久対応は BACKLOG の Anonymous Auth 権限分離を参照）
-- `globalTemplates` という state/prop 名は店舗単位化後も歴史的経緯で残っている（実体は shops/{shopId}/templates）
+- ~~`globalTemplates` という state/prop 名の不一致~~ → 2026-08-10 に `shopTemplates` / `setShopTemplates` / `saveShopTemplates` へ改名して解消（Firebaseパス `shops/{shopId}/templates` と localStorage キー `templates_v6` は変更なし＝データ移行不要）
 
 ---
 
