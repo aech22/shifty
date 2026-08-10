@@ -4225,9 +4225,12 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
         headers:{"Content-Type":"application/json",...(idToken?{"Authorization":`Bearer ${idToken}`}:{})},
         body:JSON.stringify({shopId,plan,successUrl:window.location.href+"?payment=success",cancelUrl:window.location.href+"?payment=cancel"}),
       });
-      const data=await res.json();
+      const data=await res.json().catch(()=>({}));
       if(data.url) window.location.href=data.url;
-      else setError("決済ページの取得に失敗しました");
+      // サーバーが理由を返しているときはそれを見せる。特に「すでに有効な契約がある」(409)は
+      // 次に何をすればよいか（マイページのプラン変更）まで含んだ案内文なので、
+      // 汎用の「取得に失敗しました」で潰してはいけない
+      else setError(data.error||"決済ページの取得に失敗しました");
     }catch(e){
       setError("通信エラーが発生しました");
     }finally{setLoading(null);}
