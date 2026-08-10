@@ -1516,7 +1516,7 @@ function App(){
               adminCode={adminKeys[sid]?`${sid}.${adminKeys[sid]}`:sid} ownerReadOnly={ownerReadOnly}
               onRememberAdminKey={rememberAdminKey} onClaimShop={claimOwnership}
               shopTemplates={shopTemplates} saveShopTemplates={saveShopTemplates}
-              plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed}
+              plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed} billingSchedule={billingSchedule}
               setCurrentShopId={id=>{
                 currentShopIdRef.current=id;
                 setCurrentShopId(id);
