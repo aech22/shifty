@@ -1286,3 +1286,31 @@ test("isSpecialRedDate: 実祝日（平日の山の日）は元々色がある�
     assert.strictEqual(u.isSpecialRedDate(hol, posSettings(hol, t)), false, `posType=${t}`);
   }
 });
+
+// ===== プラン序列（PLAN_RANK_UI）=====
+// クライアントの PLAN_RANK_UI は「アップグレードかダウングレードか」の判定に使われ、
+// Cloud Functions 側の PLAN_RANK は更新イベントの降格防止ガードに使われる。
+// 両者がずれると、画面では「アップグレード」と表示しながらサーバーは降格として扱う、
+// といった食い違いが起きるため、値の一致をテストで固定する。
+test("PLAN_RANK_UI: free < pro < premium の順序である", () => {
+  assert.ok(u.PLAN_RANK_UI.free < u.PLAN_RANK_UI.pro, "free < pro");
+  assert.ok(u.PLAN_RANK_UI.pro < u.PLAN_RANK_UI.premium, "pro < premium");
+});
+
+test("PLAN_RANK_UI: Cloud Functions 側の PLAN_RANK と同じ値である", () => {
+  const fs = require("node:fs");
+  const src = fs.readFileSync(require("node:path").join(__dirname, "..", "functions", "index.js"), "utf8");
+  const m = src.match(/const PLAN_RANK\s*=\s*\{([^}]*)\}/);
+  assert.ok(m, "functions/index.js に PLAN_RANK の定義が見つからない");
+  const server = {};
+  for (const part of m[1].split(",")) {
+    const kv = part.split(":").map(x => x.trim());
+    if (kv.length === 2 && kv[0]) server[kv[0]] = Number(kv[1]);
+  }
+  assert.deepStrictEqual(server, u.PLAN_RANK_UI,
+    "PLAN_RANK（サーバー）と PLAN_RANK_UI（クライアント）の値が一致していない");
+});
+
+test("PLAN_RANK_UI: PLAN_LABELS と同じプラン名を漏れなく持つ", () => {
+  assert.deepStrictEqual(Object.keys(u.PLAN_RANK_UI).sort(), Object.keys(u.PLAN_LABELS).sort());
+});

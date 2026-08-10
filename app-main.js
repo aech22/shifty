@@ -335,6 +335,9 @@ function App(){
     setSettings(lg(storeKey(targetSid,"settings_v6"),null)||makeSettings(targetSid));
     setPeriods(lg(storeKey(targetSid,"periods_v6"),[]));
     setShopTemplates(lg(storeKey(targetSid,"templates_v6"),[]));
+    // 契約の予定状態は店舗ごとに違うので、購読が返るまでの間に前店舗の「解約済み」表示を
+    // 引きずらないよう同期的にクリアする（各フィールドのon()が新店舗の値で埋め直す）
+    setBillingSchedule({cancelAtPeriodEnd:false,currentPeriodEnd:null,scheduledPlan:null,scheduledPlanDate:null});
     const on=(path,cb)=>{
       const r=firebaseDB.ref(path);
       r.on("value",snap=>cb(snap.val()),err=>console.warn("購読失敗:",path,err));

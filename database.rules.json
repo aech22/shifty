@@ -73,7 +73,12 @@
         "plan":             { ".read": "auth != null",  ".write": false },
         "planExpiry":       { ".read": "auth != null",  ".write": false },
         "paymentFailed":    { ".read": "auth != null",  ".write": false },
+        "cancelAtPeriodEnd":  { ".read": "auth != null",  ".write": false },
+        "currentPeriodEnd":   { ".read": "auth != null",  ".write": false },
+        "scheduledPlan":      { ".read": "auth != null",  ".write": false },
+        "scheduledPlanDate":  { ".read": "auth != null",  ".write": false },
         "stripeCustomerId": { ".read": false, ".write": false },
+        "stripeSubscriptionId": { ".read": false, ".write": false },
         "shops": {
           ".read": "auth != null && auth.uid === $uid",
           ".write": "auth != null && auth.uid === $uid"

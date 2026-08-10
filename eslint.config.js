@@ -54,6 +54,7 @@ const sharedGlobals = {
   PEF: "writable",
   PLAN_LABELS: "writable",
   PLAN_LIMITS: "writable",
+  PLAN_RANK_UI: "writable",
   PeriodsTab: "writable",
   SS_APID: "writable",
   SS_SHOP: "writable",
