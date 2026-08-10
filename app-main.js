@@ -74,6 +74,8 @@ function App(){
   const[plan,setPlan]=useState("free"); // サブスクプラン
   const[planExpiry,setPlanExpiry]=useState(null); // プラン有効期限
   const[paymentFailed,setPaymentFailed]=useState(false); // 決済失敗フラグ
+  // 契約の予定状態（Stripeのsubscriptionから同期。解約予約とプラン変更予約を画面に出すために持つ）
+  const[billingSchedule,setBillingSchedule]=useState({cancelAtPeriodEnd:false,currentPeriodEnd:null,scheduledPlan:null,scheduledPlanDate:null});
   const[emailMode,setEmailMode]=useState(null); // null | "login" | "register"
   const[emailVal,setEmailVal]=useState("");
   const[passwordVal,setPasswordVal]=useState("");
@@ -454,6 +456,17 @@ function App(){
     // accounts/<shopId>/paymentFailed（決済失敗フラグ）
     on(`accounts/${targetSid}/paymentFailed`,val=>{
       setPaymentFailed(!!val);
+    });
+    // 契約の予定状態（解約予約・プラン変更予約）。個別に購読すると4本になるので親をまとめて読む。
+    // ここはプラン系の小さなオブジェクトで、RULES.mdが禁じている accounts 全件読みではない。
+    on(`accounts/${targetSid}`,val=>{
+      const v=val&&typeof val==="object"?val:{};
+      setBillingSchedule({
+        cancelAtPeriodEnd:!!v.cancelAtPeriodEnd,
+        currentPeriodEnd:v.currentPeriodEnd||null,
+        scheduledPlan:["pro","premium"].includes(v.scheduledPlan)?v.scheduledPlan:null,
+        scheduledPlanDate:v.scheduledPlanDate||null,
+      });
     });
 
     // settingsデフォルト書き込み（スタッフセッションはルールで拒否されるためcatchで握る）
