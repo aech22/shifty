@@ -151,6 +151,16 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         </div>
       </div>
       <div style={{maxWidth:900,margin:"0 auto",padding:"20px 14px 60px"}}>
+        {DEMO_MODE&&<div style={{background:"rgba(248,112,54,.1)",border:"1px solid rgba(248,112,54,.35)",borderRadius:10,padding:"14px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+          <span style={{fontSize:20}}>👀</span>
+          <div style={{flex:1,minWidth:200}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#C2410C",marginBottom:2}}>これはデモです（サンプル店舗・全機能が使えるPremium表示）</div>
+            <div style={{fontSize:12,color:"#9A3412"}}>自由に触って試せます。入力内容は保存されず、ページを再読み込みすると元に戻ります。</div>
+          </div>
+          {/* ?start=1 を付けるのはハッシュだけを外すと同一ドキュメント遷移になり再読み込みされないため。
+              GA4でデモからの「無料で始める」到達を計測できる副次効果もある */}
+          <a href={window.location.pathname+"?start=1"} style={{padding:"10px 18px",background:"#f87036",color:"#fff",borderRadius:8,fontSize:14,fontWeight:700,textDecoration:"none",whiteSpace:"nowrap"}}>無料で始める</a>
+        </div>}
         {ownerReadOnly&&<div style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
           <span style={{fontSize:18}}>🔒</span>
           <div style={{flex:1}}>
@@ -3937,6 +3947,8 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
 
   const[changing,setChanging]=useState("");
   const bs=billingSchedule||{};
+  // 選べるプラン変更先。現在のプランと、既に切替予約済みのプランは除く（同じ操作を二度押させない）
+  const changeOptions=["pro","premium"].filter(p=>p!==plan&&p!==bs.scheduledPlan);
   // プラン変更（Pro⇄Premium）。契約は作り直さずCF側で price を差し替える。
   // アップグレードは即時反映、ダウングレードは期間終了時切替（CFのchangePlan参照）。
   const changePlan=async(next)=>{
@@ -4042,12 +4054,14 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
           </div>
         )}
 
-        {/* プラン変更（Pro⇄Premium）。契約は作り直さないので二重請求は起こらない */}
-        {isPaid&&!bs.cancelAtPeriodEnd&&(
+        {/* プラン変更（Pro⇄Premium）。契約は作り直さないので二重請求は起こらない。
+            現在のプランと切替予約済みのプランは選択肢に出さないため、残りが0件なら
+            見出しだけが残らないようセクションごと隠す */}
+        {isPaid&&!bs.cancelAtPeriodEnd&&changeOptions.length>0&&(
           <div style={{marginBottom:4}}>
             <div style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:6}}>プランを変更</div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-              {["pro","premium"].filter(p=>p!==plan).map(p=>{
+              {changeOptions.map(p=>{
                 const isUp=(PLAN_RANK_UI[p]||0)>(PLAN_RANK_UI[plan]||0);
                 const busy=changing===p;
                 return(
