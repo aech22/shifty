@@ -197,6 +197,25 @@ async function resolveShopMeta(obj) {
   return { shopId: null, plan: null };
 }
 
+// プランの序列。更新イベントが現行プランを引き下げていないかの判定に使う。
+const PLAN_RANK = { free: 0, pro: 1, premium: 2 };
+function planRank(p) {
+  return Object.prototype.hasOwnProperty.call(PLAN_RANK, p) ? PLAN_RANK[p] : -1;
+}
+// Pro→Premium のアップグレードは「別の契約を新規作成する」方式のため、旧Proを解約する
+// までは1店舗が2つの契約を同時に持つ（アプリ内に旧Proの解約導線が無い）。この状態では
+// 旧Proの毎月の更新請求が成功するたびに invoice.payment_succeeded が届くため、
+// 無条件に反映すると支払い済みのPremiumが毎月Proへ引き下げられる。
+// 明示的な購入(checkout.session.completed)は常に反映し、更新イベントだけは
+// 現行プランより下位のときに限って無視する（＝ダウングレードは購入経由でのみ起こる）。
+function shouldApplyRenewalPlan(currentPlan, incomingPlan) {
+  const inc = planRank(incomingPlan);
+  if (inc < 0) return false;              // 未知のプラン名は書かない
+  const cur = planRank(currentPlan);
+  if (cur < 0) return true;               // 現行プランが未設定・不正なら反映する
+  return inc >= cur;
+}
+
 // ============================================================
 // Stripe Webhook受信（決済完了 → planをFirebaseに書き込む）
 // ============================================================
@@ -221,15 +240,26 @@ exports.stripeWebhook = functions
       const { shopId, plan } = await resolveShopMeta(obj);
 
       if (shopId && plan) {
-        const expiry = new Date();
-        expiry.setMonth(expiry.getMonth() + 1);
-        await db.ref(`accounts/${shopId}/plan`).set(plan);
-        await db.ref(`accounts/${shopId}/planExpiry`).set(expiry.toISOString().split("T")[0]);
-        // Stripe顧客IDを保存（Customer Portal用）
-        const subId = subscriptionIdOf(obj);
-        const customerId = obj.customer || (subId ? (await getStripe().subscriptions.retrieve(subId).catch(()=>null))?.customer : null);
-        if (customerId) await db.ref(`accounts/${shopId}/stripeCustomerId`).set(customerId);
-        console.log(`プラン更新完了: shopId=${shopId} plan=${plan} customerId=${customerId}`);
+        // 更新（invoice.payment_succeeded）は、同じ店舗が持つ別契約の請求である可能性がある。
+        // 現行プランより下位なら反映しない（stripeCustomerIdも上書きしない＝Customer Portalが
+        // 上位プランの顧客を指したままになる）。
+        let apply = true;
+        if (event.type === "invoice.payment_succeeded") {
+          const currentPlan = (await db.ref(`accounts/${shopId}/plan`).once("value")).val();
+          apply = shouldApplyRenewalPlan(currentPlan, plan);
+          if (!apply) console.log(`現行プラン(${currentPlan})より下位の契約(${plan})の更新のため反映しない: shopId=${shopId}`);
+        }
+        if (apply) {
+          const expiry = new Date();
+          expiry.setMonth(expiry.getMonth() + 1);
+          await db.ref(`accounts/${shopId}/plan`).set(plan);
+          await db.ref(`accounts/${shopId}/planExpiry`).set(expiry.toISOString().split("T")[0]);
+          // Stripe顧客IDを保存（Customer Portal用）
+          const subId = subscriptionIdOf(obj);
+          const customerId = obj.customer || (subId ? (await getStripe().subscriptions.retrieve(subId).catch(()=>null))?.customer : null);
+          if (customerId) await db.ref(`accounts/${shopId}/stripeCustomerId`).set(customerId);
+          console.log(`プラン更新完了: shopId=${shopId} plan=${plan} customerId=${customerId}`);
+        }
       }
     }
 
