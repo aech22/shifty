@@ -123,6 +123,23 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟢 招待コード方式の残骸を消すか復活させるかを決める
+
+**目的**: 2026-07-08 の CompanyTab 新設で、複数ユーザーの店舗共有は「企業コード＋パスワード」方式（`createCompany` / `companyLogin` / `linkStoreToCompany`）に置き換わった。しかし旧・招待コード方式の残骸が**コードとセキュリティルールの両方に残っており、片方だけが生きている状態**になっている。実害はないが、次に触る人（人間・モデルとも）を確実に誤解させる。
+**現状（2026-08-10 実測）**:
+- `generateInviteCode`（app-main.js:819・約35行）は**定義のみで呼び出し元ゼロ**。`inviteCodeDisplay`/`inviteCodeGenLoading`（:68/:69）の2 state も未参照
+- `joinByInviteCode` は**コード上に実体が存在しない**（CLAUDE.md には現行関数として載っていたため #66 で記述を是正済み）
+- `database.rules.json` は 2026-07-28 の締めルール切替で `inviteCodes` に `expiresAtMs`(数値)・`uid===auth.uid` の validate を**追加している**が、その時点で既に書き込む側は死んでいた
+- `accounts/{uid}/members`（招待コード方式の受け皿）も同様に書き込み元がない可能性が高い（未確認）
+**受け入れ条件**:
+- [ ] 招待コード方式を**廃止するか復活させるか**を決める（**ユーザー判断**。企業コード＋パスワード方式で要件を満たせているなら廃止でよい）
+- [ ] 廃止する場合: `generateInviteCode` と2 state を削除し、`database.rules.json` / `database.rules.tightened.json` の `inviteCodes`（および使われていなければ `accounts/{uid}/members`）ルールを削除する。**ルールの削除はクライアント配信後**（デプロイ順序ルール厳守）
+- [ ] `accounts/{uid}/members` に実際の書き込み元があるかを grep で確認してから判断する
+**影響範囲**: app-main.js（`generateInviteCode`・state 2件）、database.rules.json / database.rules.tightened.json、CLAUDE.md（#66 で是正済み）
+**備考**: バグチェック#66（2026-08-10）で検出・**条件B（仕様判断）に該当**。実害ゼロのため優先度は🟢だが、「ルールだけが残っている機能」は監査のたびに再検出されるため一度決着させる価値がある。
+
+---
+
 ## 🟢 データ保存上限④-b: dry-run観察後の36ヶ月超期間データ削除の本有効化
 
 **目的**: dry-runリリース（コミット`4aa100e`）から1ヶ月観察し、問題なければ実削除を有効化する。
