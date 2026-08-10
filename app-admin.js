@@ -3939,6 +3939,36 @@ function TermsModal({onClose}){
   );
 }
 
+// ===== プランの購入・変更の唯一の入口 =====
+// 契約の作り方が2通りあるため（新規契約=Checkout / 既存契約の価格差し替え=changePlan）、
+// 呼び出し側ごとに使い分けると「有料プラン中に新規契約を作ろうとして409」のような
+// 食い違いが起きる（2026-08-11 の本番実測）。振り分けはここ1箇所に閉じる。
+//   有料プラン中 → changePlan（契約を作り直さないので二重課金が起こらない）
+//   Free        → createCheckoutSession（新規契約）
+// 手動でプランを付与した店舗のように「有料表示だが契約が無い」ケースがあるため、
+// changePlan が no_subscription を返したときだけ Checkout へフォールバックする。
+async function requestPlanAction(shopId,plan,currentPlan){
+  const idToken=await firebaseAuth?.currentUser?.getIdToken().catch(()=>null);
+  const headers={"Content-Type":"application/json",...(idToken?{"Authorization":`Bearer ${idToken}`}:{})};
+  if(currentPlan==="pro"||currentPlan==="premium"){
+    try{
+      const r=await fetch(`${CF_BASE}/changePlan`,{method:"POST",headers,body:JSON.stringify({shopId,plan})});
+      const d=await r.json().catch(()=>({}));
+      if(r.ok)return{kind:"changed",applied:d.applied,plan:d.plan,effectiveAt:d.effectiveAt};
+      if(d.code!=="no_subscription")return{kind:"error",error:d.error||"プランを変更できませんでした"};
+    }catch(e){ return{kind:"error",error:"通信エラーが発生しました"}; }
+  }
+  try{
+    const r=await fetch(`${CF_BASE}/createCheckoutSession`,{
+      method:"POST",headers,
+      body:JSON.stringify({shopId,plan,successUrl:window.location.href+"?payment=success",cancelUrl:window.location.href+"?payment=cancel"}),
+    });
+    const d=await r.json().catch(()=>({}));
+    if(d.url)return{kind:"checkout",url:d.url};
+    return{kind:"error",error:d.error||"決済ページの取得に失敗しました"};
+  }catch(e){ return{kind:"error",error:"通信エラーが発生しました"}; }
+}
+
 function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],periods=[],shopId,tt,onUpgrade}){
   const[portalLoading,setPortalLoading]=useState(false);
   const[showTerms,setShowTerms]=useState(false);
@@ -3959,21 +3989,14 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
     if(!confirm(msg))return;
     ph("plan_change_requested",{from:plan,to:next});
     setChanging(next);
-    try{
-      const idToken=await firebaseAuth?.currentUser?.getIdToken().catch(()=>null);
-      const res=await fetch(`${CF_BASE}/changePlan`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json",...(idToken?{"Authorization":`Bearer ${idToken}`}:{})},
-        body:JSON.stringify({shopId,plan:next}),
-      });
-      const data=await res.json().catch(()=>({}));
-      if(!res.ok){ tt("✕ "+(data.error||"プランを変更できませんでした")); return; }
-      tt(data.applied==="immediate"
-        ? `✓ ${PLAN_LABELS[next]}プランに変更しました`
-        : `✓ ${data.effectiveAt||"期間終了時"}から${PLAN_LABELS[next]}プランに変更されます`);
-    }catch(e){
-      tt("✕ 通信エラーが発生しました");
-    }finally{setChanging("");}
+    const r=await requestPlanAction(shopId,next,plan);
+    setChanging("");
+    if(r.kind==="error"){ tt("✕ "+r.error); return; }
+    // 契約が無い店舗（手動付与など）はCheckoutへ回るため、その場合は決済ページへ遷移する
+    if(r.kind==="checkout"){ window.location.href=r.url; return; }
+    tt(r.applied==="immediate"
+      ? `✓ ${PLAN_LABELS[next]}プランに変更しました`
+      : `✓ ${r.effectiveAt||"期間終了時"}から${PLAN_LABELS[next]}プランに変更されます`);
   };
 
   const openPortal=async()=>{
@@ -4087,18 +4110,21 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
           <Bar used={periods.length} max={lim.periods} label="期間数"/>
         </div>
 
-        {/* アップグレード */}
-        {plan!=="premium"&&<div style={{marginTop:4}}>
-          {plan==="free"&&<button onClick={()=>onUpgrade&&onUpgrade({type:"staff",limit:lim.staff,plan})}
+        {/* 新規申し込み（Freeのみ）。
+            有料プラン中のプラン変更は上の「プランを変更」に一本化してあるので、
+            ここに重ねて出さない（同じ操作の入口が2つあると、押した側によって
+            新規契約とプラン変更に分岐して二重課金の温床になる） */}
+        {plan==="free"&&<div style={{marginTop:4}}>
+          <button onClick={()=>onUpgrade&&onUpgrade({type:"staff",limit:lim.staff,plan})}
             style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#f87036,#e05a1a)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
             {"★ Proにアップグレード（500円/月）"}
-          </button>}
-          {plan==="pro"&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8,textAlign:"center"}}>シフト作成・時間調整・PDF書き出しなど全機能が使えます</div>}
+          </button>
           <button onClick={()=>onUpgrade&&onUpgrade({type:"edit",plan})}
             style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
             {"★★ Premiumにアップグレード（2,980円/月）"}
           </button>
         </div>}
+        {plan==="pro"&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6,marginTop:4,textAlign:"center"}}>プランの変更は上の「プランを変更」からお手続きください</div>}
       </AC>
 
       {/* プラン比較表 */}
@@ -4206,6 +4232,7 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
 function UpgradeModal({reason,currentPlan,shopId,onClose}){
   const[loading,setLoading]=useState(null);
   const[error,setError]=useState("");
+  const[done,setDone]=useState(""); // 既存契約の価格差し替えで完了したときの案内（決済ページへ遷移しないため画面内で伝える）
   const isEditType=reason.type==="edit";
   const msgs={
     shops:  {title:"店舗数の上限に達しました",desc:`${PLAN_LABELS[currentPlan]||"Free"}プランでは最大${reason.limit}店舗まで管理できます。`,next:"Proプラン（500円/月）なら店舗を無制限に管理できます。"},
@@ -4215,25 +4242,20 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
   };
   const m=msgs[reason.type]||{title:"上限に達しました",desc:"",next:""};
 
+  // 購入と変更の振り分けは requestPlanAction に一本化してある。
+  // このモーダルは機能ゲート（Proユーザーがシフト作成タブを触った等）からも開くため、
+  // 契約済みの相手にCheckoutを叩くと409で止まる。ここでも同じ入口を使う。
   const checkout=async(plan)=>{
-    ph("upgrade_started",{plan});
+    ph("upgrade_started",{plan,from:currentPlan});
     setLoading(plan);setError("");
-    try{
-      const idToken=await firebaseAuth?.currentUser?.getIdToken().catch(()=>null);
-      const res=await fetch(`${CF_BASE}/createCheckoutSession`,{
-        method:"POST",
-        headers:{"Content-Type":"application/json",...(idToken?{"Authorization":`Bearer ${idToken}`}:{})},
-        body:JSON.stringify({shopId,plan,successUrl:window.location.href+"?payment=success",cancelUrl:window.location.href+"?payment=cancel"}),
-      });
-      const data=await res.json().catch(()=>({}));
-      if(data.url) window.location.href=data.url;
-      // サーバーが理由を返しているときはそれを見せる。特に「すでに有効な契約がある」(409)は
-      // 次に何をすればよいか（マイページのプラン変更）まで含んだ案内文なので、
-      // 汎用の「取得に失敗しました」で潰してはいけない
-      else setError(data.error||"決済ページの取得に失敗しました");
-    }catch(e){
-      setError("通信エラーが発生しました");
-    }finally{setLoading(null);}
+    const r=await requestPlanAction(shopId,plan,currentPlan);
+    setLoading(null);
+    if(r.kind==="checkout"){ window.location.href=r.url; return; }
+    if(r.kind==="error"){ setError(r.error); return; }
+    // 既存契約の価格差し替えで完了した（新しい契約は作られていない）
+    setDone(r.applied==="immediate"
+      ? `${PLAN_LABELS[plan]}プランに変更しました。そのままご利用いただけます。`
+      : `${r.effectiveAt||"期間終了時"}から${PLAN_LABELS[plan]}プランに変更されます。`);
   };
 
   const proLabel=currentPlan==="pro"?"Pro（現在）":"Pro";
@@ -4269,7 +4291,9 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
           </span>
         </div>
         {error&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:10,background:"rgba(255,71,87,.1)",padding:"8px",borderRadius:8}}>{error}</div>}
-        {isEditType?(
+        {done&&<div style={{color:"#15803D",fontSize:13,fontWeight:700,textAlign:"center",marginBottom:10,background:"rgba(34,197,94,.12)",padding:"10px",borderRadius:8}}>✓ {done}</div>}
+        {/* 変更が完了したら購入ボタンは出さない（同じ操作を二度実行させない） */}
+        {done?null:isEditType?(
           <button onClick={()=>checkout("premium")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="premium"?"var(--c-text3)":"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"2px solid rgba(124,58,237,.3)",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
             {loading==="premium"?"⏳ 処理中...":"★ Premiumにアップグレード（2,980円/月）"}
           </button>
@@ -4278,7 +4302,7 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
             {loading==="pro"?"⏳ 処理中...":"★ Proにアップグレード（500円/月）"}
           </button>
         )}
-        <button onClick={onClose} style={{width:"100%",padding:"11px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:11,color:"var(--c-text3)",fontSize:13,cursor:"pointer"}}>今はしない</button>
+        <button onClick={onClose} style={{width:"100%",padding:"11px",background:done?"linear-gradient(135deg,#f87036,#e05a1a)":"var(--c-input)",border:done?"none":"1px solid var(--c-border)",borderRadius:11,color:done?"white":"var(--c-text3)",fontSize:done?15:13,fontWeight:done?700:400,cursor:"pointer"}}>{done?"閉じる":"今はしない"}</button>
       </div>
     </div>
   );
