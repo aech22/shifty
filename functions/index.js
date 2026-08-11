@@ -73,6 +73,14 @@ const STRIPE_PRICES = {
   premium_monthly: "price_1TnOJYDjKKQsHl7LhJxMUbQE", // Shifty Premium 2,980円/月
 };
 
+// デモ店舗（クライアントの #/demo が読み込む固定店舗）。
+// この店舗は owners を持たない状態で運用するため、下の verifyShopOwner の
+// 「未claim店舗は許可」という移行猶予をそのまま通過してしまう。デモURLは広告から
+// 誰でも開けるので、課金系のエンドポイントだけは shopId で明示的に拒否する
+// （クライアント側の DEMO_MODE 判定は、直接POSTされれば無いのと同じ）。
+const DEMO_SHOP_IDS = ["demo-toriMatsu-v1"];
+function isDemoShop(shopId) { return DEMO_SHOP_IDS.includes(shopId); }
+
 // ============================================================
 // Firebase IDトークン検証 + 店舗オーナー照合
 // owners未登録（未claim）の店舗は移行猶予として許可する。
@@ -112,6 +120,7 @@ exports.createCheckoutSession = functions
 
     const { shopId, plan, successUrl, cancelUrl } = req.body;
     if (!shopId || !plan) { res.status(400).json({ error: "shopId, plan は必須です" }); return; }
+    if (isDemoShop(shopId)) { res.status(403).json({ error: "デモ店舗では購入のお手続きはできません。" }); return; }
 
     const auth = await verifyShopOwner(req, shopId);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
@@ -179,6 +188,7 @@ exports.changePlan = functions
     const { shopId, plan } = req.body || {};
     if (!shopId || !plan) { res.status(400).json({ error: "shopId, plan は必須です" }); return; }
     if (plan !== "pro" && plan !== "premium") { res.status(400).json({ error: "plan は pro または premium を指定してください" }); return; }
+    if (isDemoShop(shopId)) { res.status(403).json({ error: "デモ店舗ではプラン変更のお手続きはできません。" }); return; }
 
     const auth = await verifyShopOwner(req, shopId);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
@@ -586,6 +596,7 @@ exports.createPortalSession = functions
 
     const { shopId, returnUrl } = req.body;
     if (!shopId) { res.status(400).json({ error: "shopId は必須です" }); return; }
+    if (isDemoShop(shopId)) { res.status(403).json({ error: "デモ店舗では請求管理をご利用いただけません。" }); return; }
 
     const auth = await verifyShopOwner(req, shopId);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }

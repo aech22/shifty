@@ -3947,7 +3947,11 @@ function TermsModal({onClose}){
 //   Free        → createCheckoutSession（新規契約）
 // 手動でプランを付与した店舗のように「有料表示だが契約が無い」ケースがあるため、
 // changePlan が no_subscription を返したときだけ Checkout へフォールバックする。
+// デモ（#/demo）は誰のものでもない共有店舗を全員が同じ匿名セッションで開く。しかも owners が
+// 空なので Cloud Functions のオーナー照合（未claim店舗は許可）も素通りする。ここを通すと
+// 訪問者が「自分の店舗ではない店」の決済ページへ飛ばされ、実際に課金されうる。
 async function requestPlanAction(shopId,plan,currentPlan){
+  if(DEMO_MODE) return{kind:"error",error:"デモではプランの購入・変更はできません"};
   const idToken=await firebaseAuth?.currentUser?.getIdToken().catch(()=>null);
   const headers={"Content-Type":"application/json",...(idToken?{"Authorization":`Bearer ${idToken}`}:{})};
   if(currentPlan==="pro"||currentPlan==="premium"){
@@ -4000,6 +4004,9 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
   };
 
   const openPortal=async()=>{
+    // デモ店舗のポータルを開かせない（requestPlanAction と同じ理由）。誰かが一度でも
+    // デモ店舗で決済してしまうと、以降のデモ訪問者にその人の請求情報が開いてしまう
+    if(DEMO_MODE){ tt("✕ デモでは請求管理を利用できません"); return; }
     ph("portal_opened");
     setPortalLoading(true);
     try{
@@ -4080,7 +4087,7 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
         {/* プラン変更（Pro⇄Premium）。契約は作り直さないので二重請求は起こらない。
             現在のプランと切替予約済みのプランは選択肢に出さないため、残りが0件なら
             見出しだけが残らないようセクションごと隠す */}
-        {isPaid&&!bs.cancelAtPeriodEnd&&changeOptions.length>0&&(
+        {isPaid&&!DEMO_MODE&&!bs.cancelAtPeriodEnd&&changeOptions.length>0&&(
           <div style={{marginBottom:4}}>
             <div style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:6}}>プランを変更</div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -4190,8 +4197,8 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
         <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8,textAlign:"center"}}>外部のnoteサイトに移動します</div>
       </AC>
 
-      {/* 請求管理 */}
-      {isPaid&&<AC title="請求・サブスクリプション管理">
+      {/* 請求管理。デモはPremium表示だが契約は存在しないので出さない（下のデモ用の案内に差し替わる） */}
+      {isPaid&&!DEMO_MODE&&<AC title="請求・サブスクリプション管理">
         <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:14}}>
           請求履歴の確認、クレジットカードの変更、プランの変更・解約はStripeの管理ページで行えます。
         </div>
@@ -4202,9 +4209,11 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
         <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8,textAlign:"center"}}>外部のStripeサイトに移動します</div>
       </AC>}
 
-      {!isPaid&&<AC title="請求・サブスクリプション管理">
+      {(!isPaid||DEMO_MODE)&&<AC title="請求・サブスクリプション管理">
         <div style={{fontSize:13,color:"var(--c-text4)",textAlign:"center",padding:"8px 0"}}>
-          有料プランをご購入後に請求管理ページが利用できます
+          {DEMO_MODE
+            ?"デモでは購入・請求のお手続きはできません。ご利用を始めるには「無料で始める」からお進みください。"
+            :"有料プランをご購入後に請求管理ページが利用できます"}
         </div>
       </AC>}
 
