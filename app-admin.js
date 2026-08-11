@@ -3954,12 +3954,16 @@ async function requestPlanAction(shopId,plan,currentPlan){
   if(DEMO_MODE) return{kind:"error",error:"デモではプランの購入・変更はできません"};
   const idToken=await firebaseAuth?.currentUser?.getIdToken().catch(()=>null);
   const headers={"Content-Type":"application/json",...(idToken?{"Authorization":`Bearer ${idToken}`}:{})};
+  // 有料プラン中に Checkout へ回った＝「変更」のつもりが「新規契約」になる。呼び出し側が
+  // 追加の同意を取れるよう、フォールバックしたことを結果に含める（newContract）。
+  let fellBack=false;
   if(currentPlan==="pro"||currentPlan==="premium"){
     try{
       const r=await fetch(`${CF_BASE}/changePlan`,{method:"POST",headers,body:JSON.stringify({shopId,plan})});
       const d=await r.json().catch(()=>({}));
       if(r.ok)return{kind:"changed",applied:d.applied,plan:d.plan,effectiveAt:d.effectiveAt};
       if(d.code!=="no_subscription")return{kind:"error",error:d.error||"プランを変更できませんでした"};
+      fellBack=true;
     }catch(e){ return{kind:"error",error:"通信エラーが発生しました"}; }
   }
   try{
@@ -3968,7 +3972,7 @@ async function requestPlanAction(shopId,plan,currentPlan){
       body:JSON.stringify({shopId,plan,successUrl:window.location.href+"?payment=success",cancelUrl:window.location.href+"?payment=cancel"}),
     });
     const d=await r.json().catch(()=>({}));
-    if(d.url)return{kind:"checkout",url:d.url};
+    if(d.url)return{kind:"checkout",url:d.url,newContract:fellBack};
     return{kind:"error",error:d.error||"決済ページの取得に失敗しました"};
   }catch(e){ return{kind:"error",error:"通信エラーが発生しました"}; }
 }
@@ -3996,8 +4000,21 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
     const r=await requestPlanAction(shopId,next,plan);
     setChanging("");
     if(r.kind==="error"){ tt("✕ "+r.error); return; }
-    // 契約が無い店舗（手動付与など）はCheckoutへ回るため、その場合は決済ページへ遷移する
-    if(r.kind==="checkout"){ window.location.href=r.url; return; }
+    // 契約が無い店舗（手動付与・契約が失効した等）はCheckoutへ回る。ここで無言に遷移すると、
+    // 上の確認文（「期間の終わりまで使えます」「日割り返金はありません」＝プランの変更の説明）
+    // で同意した利用者が、実際には新規の月額契約の決済ページに立たされる。金額と自動更新を
+    // 示して同意を取り直す（定期購入の最終確認。Freeからの購入は UpgradeModal が同じ説明を出す）。
+    if(r.kind==="checkout"){
+      if(r.newContract&&!confirm(
+        `この店舗には有効な契約が見つかりませんでした。\n\n`+
+        `続けると${PLAN_LABELS[next]}プランの「新規のお申し込み」になります。\n`+
+        `・${PLAN_LABELS[next]}プラン ${next==="premium"?"2,980":"500"}円/月（税込・1店舗あたり）\n`+
+        `・毎月自動で更新される定期課金です\n`+
+        `・お支払いが完了した時点で${PLAN_LABELS[next]}プランに切り替わります\n\n`+
+        `決済ページへ移動しますか？`
+      )) return;
+      window.location.href=r.url; return;
+    }
     tt(r.applied==="immediate"
       ? `✓ ${PLAN_LABELS[next]}プランに変更しました`
       : `✓ ${r.effectiveAt||"期間終了時"}から${PLAN_LABELS[next]}プランに変更されます`);
