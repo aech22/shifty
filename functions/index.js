@@ -1024,6 +1024,9 @@ exports.createCompany = functions
     // 連携店舗: 作成者がオーナーの店舗のみ登録し、企業ログインuidをownerに追加
     const linked = [];
     for (const shopId of shopIds) {
+      // デモ店舗は owners を持たないため下の未claim分岐を通ってしまう。誰でも開ける
+      // デモURLから自分の企業のオーナーにされないよう、連携対象から外す
+      if (isDemoShop(shopId)) continue;
       const ownersSnap = await db.ref(`shops/${shopId}/owners`).once("value");
       const owners = ownersSnap.val();
       // 未claim(owners無し) または 作成者がオーナー の店舗のみ
@@ -1091,6 +1094,8 @@ exports.linkStoreToCompany = functions
     const shopId = (data && typeof data.shopId === "string") ? data.shopId.trim() : "";
     const adminKey = (data && typeof data.adminKey === "string") ? data.adminKey.trim() : "";
     if (!companyId || !shopId) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗コードが無効です");
+    // デモ店舗は未claimのまま運用するため、下の allowed = !owners を素通りしてしまう
+    if (isDemoShop(shopId)) throw new functions.https.HttpsError("permission-denied", "デモ店舗は企業アカウントに連携できません");
     const callerUid = await assertCompanyMember(context, companyId);
     const shopSnap = await db.ref(`global/shops/${shopId}`).once("value");
     const shop = shopSnap.val();

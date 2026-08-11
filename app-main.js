@@ -947,7 +947,12 @@ function App(){
   // ログイン: 企業コード＋パスワード → companyLogin CF → カスタムトークンでサインイン。
   // 企業ログインuid（company_{companyId}）は各店舗のownerに登録され管理権限を持つ。
   // ===================================================================
+  // 企業アカウント系のCloud Functionsはすべてここを通る。デモでは呼ばせない:
+  // デモ店舗は owners が空のため、createCompany / linkStoreToCompany の「未claim店舗は許可」
+  // 分岐を通って、訪問者の企業が本番のデモ店舗のオーナーとして登録できてしまう
+  // （Admin SDK経由の書き込みなので fbSet のデモガードもセキュリティルールも効かない）。
   const _callCF=async(name,payload)=>{
+    if(DEMO_MODE) throw new Error("デモではこの操作はできません");
     if(!firebaseFunctions) throw new Error("Firebase未初期化");
     const r=await firebaseFunctions.httpsCallable(name)(payload||{});
     return r.data;
