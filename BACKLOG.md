@@ -122,7 +122,8 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 > デプロイ順序は rules → Cloud Functions → mainリリース（ルール変更が読み取りの「追加」のため、通常の「クライアント先」とは逆）。本番配信6ファイルが origin/main とバイト一致することを確認済み。
 > 案A・案Bのいずれでもなく、**契約を作り直さず price を差し替える「案C」**で実装した（`changePlan` を新設し `subscriptions.update` を使う）。契約が増えないため二重課金が「起きない」のではなく**起こしようがない**構造になる。`createCheckoutSession` は有効な契約がある店舗を409で拒否する。Stripe側の設定変更は不要。
 > **残: 実購入での全遷移検証のみ**（Pro購入 → Premiumへアップグレード＝差額請求 → Proへダウングレード＝予約表示 → 解約 → 返金）。**特にダウングレードの Subscription Schedule は Stripe API の挙動依存で、コードだけでは正しさを保証できていない。**
-> **注意（本番の12店舗について）**: 自家用の12店舗は `plan:"premium"` が手動シードされているだけで Stripe の契約を持たない。マイページにプラン変更ボタンは出るが、押すと `changePlan` が「有効な契約が見つかりません」（409）を返す。データは壊れないが、押しても何も起きないUXになる。ボタンの出し分けが要るか要判断。
+> **注意（本番の12店舗について）**: 自家用の12店舗は `plan:"premium"` が手動シードされているだけで Stripe の契約を持たない。マイページにプラン変更ボタンは出るが、押すと `changePlan` が「有効な契約が見つかりません」（409）を返す。
+> **⚠️ 2026-08-12 訂正（バグチェック#68）**: ここに書いてあった「データは壊れないが、押しても何も起きないUXになる」は**誤り**だった。クライアントは 409 の `code:"no_subscription"` を受けると `createCheckoutSession` へフォールバックするため、実際には**新規契約のStripe決済ページへ遷移する**（localhost で fetch を模擬して実測）。完了すると Premium 表示の店舗が **Pro（500円/月）の実課金に切り替わる**。`e1c0377` で「新規のお申し込みになります／金額／毎月自動更新」を示す確認を挟むようにしたので無言の遷移はしなくなったが、**ボタンの出し分けが要るかの判断は未決のまま残る**。
 
 **目的**: `createCheckoutSession`（functions/index.js:123）は常に `mode:"subscription"` で**新しい契約を作る**ため、Pro ユーザーがマイページで「Premiumにアップグレード」を押すと **500円/月と2,980円/月が同時に走る**。さらに Checkout に既存の `customer` を渡していないので契約ごとに別の Stripe Customer が作られ、`accounts/{shopId}/stripeCustomerId` は新しい方で上書きされる。その結果 **Customer Portal は新Premiumの顧客しか開けず、旧Proを解約する導線がアプリ内に存在しない**。
 **これが原因で生じている派生問題（根治すればすべて消える）**:
@@ -164,6 +165,22 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟡 解約イベントだけが「契約の実際のprice」ではなく metadata でプランを判定している
+
+**目的**: `resolveShopMeta`（functions/index.js:319）は冒頭で `if (md && md.shopId) return { shopId: md.shopId, plan: md.plan || null }` と早期returnする。**イベント本体が Subscription オブジェクトそのものである `customer.subscription.deleted` / `customer.subscription.updated` は必ずこの行で返るため、同関数が下（:336）で行っている「プランは metadata ではなく契約の実際のprice から解決する」という処置がこの2イベントには一切適用されない。** その :336 のコメント自体が「metadata を信じると降格を巻き戻す」と書いており、`99d8cd5` はまさにそれを直した修正だったが、**修正が届いたのは invoice 経路（subscription を retrieve する分岐）だけ**だった。
+
+**これが問題になる経路**: `customer.subscription.deleted` のハンドラ（:557）は、受け取った `plan` と DB の現行プランが食い違うと「別契約の解約」とみなして**ダウングレードを丸ごとスキップする**（:563）。したがって subscription の `metadata.plan` と `accounts/{shopId}/plan` が一度でも食い違うと、**解約しても店舗が有料プランのまま残り続ける**（契約は消えているので以後イベントは二度と来ない＝自動回復しない＝無償で有料機能が使えたままになる）。
+- 食い違いが生まれうる形: 期間終了時ダウングレード（Subscription Schedule）は price を差し替える。`customer.subscription.updated` は price からプランを解決して DB を更新する（:517）一方、subscription の `metadata.plan` は**フェーズのmetadataがStripe側で適用されて初めて**追随する。コード中のコメント自身がこれを「多重防御」と呼んでおり確実性は前提にされていない。Stripeダッシュボードから手作業でpriceを変えた場合も同じ食い違いになる。
+
+**受け入れ条件**:
+- [ ] `resolveShopMeta` が、対象が Subscription オブジェクトのときは `planOfSubscription()`（price 由来）を優先し、解決できないときだけ `metadata.plan` にフォールバックするようにする
+- [ ] `customer.subscription.deleted` の「プラン不一致ならスキップ」ガードを残すか外すかを決める。`createCheckoutSession` が有効契約のある店舗を409で拒否するようになった今、**1店舗2契約はもう構造的に作れない**ため、このガードの前提（2契約併存）は既に消えている（**ユーザー判断**）
+- [ ] Stripe のテスト環境またはテスト店舗の実購入で「ダウングレード予約 → 期間終了で切替 → 解約」を通し、解約後に `plan` が `free` に落ちることを実データで確認する
+**影響範囲**: functions/index.js（`resolveShopMeta`・`customer.subscription.deleted` ハンドラ）
+**備考**: バグチェック#68（2026-08-12）で検出・**条件A（Cloud Functionsの本番デプロイとStripe実データでの確認）に該当**。ループ内では Stripe の状態を再現できないため未修正。**コード上の非対称は確実だが、「実際に食い違いが発生するか」は Stripe がフェーズのmetadataを適用するかに依存し未検証**。上の「実購入での全遷移検証」（二重課金タスクの残作業）と同じ操作で確認できるので、まとめて実施するのが効率的。
+
+---
+
 ## 🟡 企業連携の解除が、稼働中の店舗を「オーナー0人」に戻してしまう
 
 **目的**: `unlinkStoreFromCompany`（functions/index.js:815）は `shops/{shopId}/owners/company_{companyId}` を無条件に削除する。企業ログインのセッションで作った店舗はオーナーが企業uidだけなので、**解除すると owners が空になる**。`linkStoreToCompany` は未claim店舗（`allowed = !owners`・:798）を**管理キーなしで連携できる**ため、その隙に shopId を知る第三者が自分の企業へ連携してオーナーになれる。shopId はスタッフURLの `tokens` 逆引きから辿れるため、店舗コードは秘密情報として扱えない。
@@ -188,6 +205,7 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] **再提出で「休み」にしたとき、管理者の調整値をどうするか**（app-staff.js:167 `buildShift` → app-utils.js:190 `carryAdminShiftFields`）: 現状は `adjustedStart`/`adjustedEnd` は引き継がれるのに status は holiday のまま残り、「休みなのに調整時刻が入っている」状態になる。`adjustedStartFixed`（「締」）があるときだけ status を work に戻す実装。**案A: 休みにしたら調整値も消す／案B: 調整値があれば出勤扱いに戻す（「締」と同じ扱い）／案C: 現状維持**
 - [ ] **出勤・退勤の片方だけ入力された日を何時間として数えるか**（app-utils.js:128 `calcNetWorkMinutes` の `if(st&&en)`）: 現状は勤務時間・期間集計・週/月上限判定だけが**0分**。一方でヒートマップは「出勤のみ→ランチ終わりまで／退勤のみ→ディナー始まりから」と補完して出勤者に数え（app-admin.js:767-768）、休みカウントも0.5休みとして扱う（:1105-1106）。**上限超過の見落としにつながる**。**案A: ヒートマップと同じ補完ルールで時間を数える／案B: 0分のまま（現状維持）＋UIで「時間未確定」を明示**
 - [ ] **同名ポジションの登録を許すか**（#46から判断待ち）: 必要ポジション設定で同じ名前を複数登録できてしまう
+- [ ] **「閲覧専用」端末に提出データの書き換え・削除を許すか**（#68で検出。app-admin.js:164 のバナー / database.rules.json:52）: 管理キーを持たない端末は `ownerReadOnly=true` になり「この端末は管理者として登録されていません（閲覧のみ）」と表示されるが、**`subs` の書き込みルールは `auth != null` だけで owner を要求していない**（スタッフがURLから提出できる必要があるため、ルール側では分離できない）。そのため閲覧専用端末でも提出一覧・シフト作成タブのセル編集と提出削除（app-main.js:1538 の `subs/{subId}` 直 remove）が**実際にFirebaseへ通る**。バナーの文言と実際の権限が食い違っている。**案A: クライアント側で `ownerReadOnly` のとき提出の編集・削除UIを止める（ただし `ownerReadOnly` は Firebase 初期化前や匿名認証の遅延でも true になるため、正当なオーナーが一時的に編集不能になる副作用がある）／案B: バナーの文言を実態に合わせる（「設定・期間・スタッフの変更のみ制限されています」）／案C: 現状維持**
 - [ ] 決まった項目はループが実装できるよう、このタスクに「決定: 案X」と追記する
 **影響範囲**: app-utils.js（`carryAdminShiftFields`・`calcNetWorkMinutes`）、app-staff.js（`buildShift`）、app-admin.js（集計・上限判定・ポジション設定UI）、tests/core.test.js
 **備考**: バグチェック #46・#52・#57・#64・#65 で継続検出・**条件B（仕様判断）に該当**。3項目とも「実装は難しくないが、正解が仕様側にしかない」。
