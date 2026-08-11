@@ -38,6 +38,27 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🔴 デモURLの課金・オーナー権限の穴を本番へ反映する（修正済み・リリース待ち）
+
+**目的**: バグチェック#67（2026-08-11）で、**本番で公開中のデモURL（`https://shiftyshifty.app/#/demo`）から2つの穴が開いていることを検出した**。修正は develop に入っている（`8e50036`・`12776cd`）が、**本番は今も穴が開いたまま**である。デモは広告からの流入先なので、放置している間ずっと不特定多数に露出している。
+
+**本番で今起きていること**:
+- **🔴 訪問者が、自分のものではないデモ店舗のStripe決済ページへ飛ばされる**。デモは `plan` を premium 固定で描画するためマイページに「Proプランに変更」「請求・解約の管理」が出る。押すと `changePlan`（契約が無いので409）→ `createCheckoutSession` へフォールバックし、実在するデモ店舗の決済ページへ遷移する。**誰かが決済を完了すると、その人は自分のものでない店舗に月額課金され**、さらに `accounts/demo-toriMatsu-v1/stripeCustomerId` が入るため、**以後のデモ訪問者が「請求管理」からその人のStripeポータル（請求履歴・カード情報・解約）を開ける**
+- **🟡 訪問者が、本番のデモ店舗のオーナー権限を自分の企業アカウントに取れる**。デモ画面からGoogle/メールでログイン →企業連携タブ→企業アカウント作成、で `createCompany` にデモ店舗のshopIdが渡り、`registerCompanyAsOwner` が Admin SDK で `shops/demo-toriMatsu-v1/owners/company_X` を書く。以後その企業ログインでデモ店舗を書き換えられる（デモ画面の改ざん）
+- **成立の理由**: 本番のデモ店舗は `owners` が**空**（2026-08-11 実測）。Cloud Functions の `verifyShopOwner` は「未claim店舗は移行猶予として許可」するため、**匿名の訪問者でもオーナー照合を通過する**。dev のデモ店舗は owners が3件あるため**この穴は本番でしか再現しない**
+
+**受け入れ条件**:
+- [ ] develop を main へマージして本番配信する（`8e50036`・`12776cd`・および未リリースの `99d8cd5`）
+- [ ] **`index.html` の `?v=` を必ずバンプする**。develop・main とも現在 `20260811-83a7bf5` で同値のため、バンプしないと既存訪問者のブラウザキャッシュに旧 app-admin.js / app-main.js が残り、**穴が閉じない**
+- [ ] `cd functions && firebase deploy --only functions --project ontheshift` を実行する（デモ店舗を課金3エンドポイントと企業連携で拒否する変更が入っている）
+- [ ] 反映後、本番の `#/demo` でマイページを開き、プラン変更セクションと請求管理ボタンが出ないことを目視で確認する
+- [ ] `accounts/demo-toriMatsu-v1` が存在しない（＝誰も決済していない）ことを確認する。存在した場合は、その契約の解約・返金対応が要る
+
+**影響範囲**: app-admin.js（MyPageTab・`requestPlanAction`・`openPortal`）、app-main.js（`_callCF`）、functions/index.js（`createCheckoutSession`・`changePlan`・`createPortalSession`・`createCompany`・`linkStoreToCompany`）、index.html（キャッシュ版数）
+**備考**: バグチェック#67（2026-08-11）で検出・**条件A（ユーザーにしか実行できない操作）に該当**。main へのpushと本番デプロイはループの権限外で、PreToolUseフックが機械的にブロックする。**クライアントとCFはどちらを先に出しても壊れない**（CFの追加は拒否条件のみで、旧クライアントの正規利用を妨げない）。なお今回の修正はデモ店舗をdenylistに入れる**対症療法**であり、根（未claim店舗は誰でも自分の企業に取り込める）は下の「企業連携の解除が…」タスクで決着させる必要がある。
+
+---
+
 ## 🟡 Webhook の疎通確認と、解約済みテスト契約の残骸データの整理
 
 **目的**: 2026-08-11 のCF本番デプロイ後、`stripeWebhook` のログに18件の署名検証失敗（400）が並んでいたため一時「本番のWebhookが全滅している」と判断したが、**Stripeダッシュボードの実測でこれは誤りと判明した**。実際に残っている課題は2つ（疎通の未確認・解約済み契約の残骸データ）だけである。
@@ -155,6 +176,8 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] 本番13店舗が全てclaim済みであることを再確認してから適用する（締めルール切替時と同じゲート）
 **影響範囲**: functions/index.js（`unlinkStoreFromCompany`・`linkStoreToCompany`・`createCompany`）、app-admin.js（CompanyTab の解除UI・エラー表示）
 **備考**: バグチェック #65（2026-08-10）で検出・**条件B（仕様判断）に該当**。既存の🟢「未claim店舗は先に触った人がownerになれる」は「新規店舗作成直後の一瞬」と整理していたが、**解除操作が既存店舗を後からその状態に戻せる**点が新しい。本番13店舗は全てclaim済みのため現時点の実害はなく、解除操作を行った瞬間にだけ窓が開く。
+
+**2026-08-11 追記（バグチェック#67）**: 同じ根に**別の入口から2回目の到達**をした。#65 は `unlinkStoreFromCompany` 経由、#67 は `createCompany` 経由（`if (owners && !owners[uid]) continue` の未claim分岐）で、**本番のデモ店舗が owners を空のまま公開されていたため、デモURLの訪問者が自分の企業のオーナーとして登録できる状態だった**。#67 ではデモ店舗をdenylistに入れる対症療法で塞いだ（上の🔴タスク）ので、**このタスクの対象は「未claim店舗を誰でも取り込める」という設計そのものの可否**に絞られる。3回目の入口が現れる前に決着させたい。
 
 ---
 

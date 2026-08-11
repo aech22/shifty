@@ -555,73 +555,64 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-08-10 自動実行 #66）
+## Shifty バグチェックレポート（2026-08-11 自動実行 #67）
 
 ### 修正済み
 
-なし（コード修正を要する🔴🟡は今回検出されなかった）。ドキュメント修正のみ行った（下記「ドキュメント是正」）。
+- **🔴 デモ（`#/demo`）の訪問者が、自分のものではないデモ店舗の決済ページへ飛ばされる**（app-admin.js:3954 `requestPlanAction` / :4090 / :4201、functions/index.js:123・191・599）
+  デモはマイページに「Proプランに変更」「請求・解約の管理」を出していた。押すと `changePlan` →契約が無いので409 `no_subscription` → `createCheckoutSession` へフォールバックし、**実在するデモ店舗のStripe決済ページへ遷移する**。本番のデモ店舗は `owners` が空なので Cloud Functions のオーナー照合（未claim店舗は許可）も素通りする。クライアントはプラン変更・請求管理のUIを出さず共通入口（`requestPlanAction`/`openPortal`）でも弾くように、Cloud Functions は3つの課金エンドポイントがデモ店舗のshopIdを403で拒否するようにした（コミット `8e50036`）。
+- **🟡 デモの訪問者が、本番のデモ店舗のオーナー権限を自分の企業アカウントに取れる**（app-main.js:990 `_callCF`、functions/index.js:1029・1098）
+  デモ画面からGoogle/メールでログインすると企業連携タブの「企業アカウントを作成する」が押せる。このとき `createCompany` へ渡る `shopIds` はデモ店舗1件で、デモ店舗は `owners` が空のためCF側の未claim分岐（`if (owners && !owners[uid]) continue`）を素通りし、`registerCompanyAsOwner` が **Admin SDK で `shops/{demo}/owners/company_X` を書く**（Admin SDK経由なのでセキュリティルールも `fbSet` のデモガードも効かない）。以後その企業ログインで本番のデモ店舗を書き換えられる。企業系CFの唯一の入口 `_callCF` をデモで塞ぎ、CF側も `createCompany` は連携対象からデモ店舗を除外・`linkStoreToCompany` は拒否するようにした（コミット `12776cd`）。
 
 ### 今回の対象と見つけ方
 
-#65 が置いた次の手2軸のうち **1つ目（「まだ一度も走っていないコード」）を、#65 の翌日にマージされた `57c75c0` に向けた**。#65 の総括は「『いつ書かれたか』ではなく『いつから実際に走るか』で新旧を判定する」と書いており、その基準に照らすと **`57c75c0` は全ユーザーのスタッフ端末で初めて走るコードを2つ生んでいた**。
+#65 の「**いつ書かれたかではなく、いつから実際に走るかで新旧を判定する**」を、#66 の翌日に入った大量の新規コードへ適用した。#66 以降 develop には22コミットが積まれ、機能が3本（プラン変更 Pro⇄Premium・期間終了時ダウングレード・デモURL `#/demo`）入っている。**うちデモURLとプラン変更UIは既に本番へリリース済み**（`2868406`）で、つまり「昨日から本番で初めて走り始めたコード」がそのまま最大の未検査面だった。
 
-- **新しく到達可能になった経路の特定**: `57c75c0` は `onSub`（スタッフ提出）を `fbSet`（sub全体set）から `diffSubForFlatWrite` + `fbUpd` + `pendingSubWritesRef` へ寄せた。これにより、①スタッフ端末で `pendingSubWritesRef` / `applyFlatSubWrite`（flushSubs のマージ経路）が**初めて実行される**（従来は `saveSubs` からしか書かれず、スタッフ画面は `saveSubs` を呼ばないため常に空だった）、②`diffSubForFlatWrite` の値比較化（`deepEqValue`）は **`saveSubs`（管理者側）の書き込み量も同時に変えている**——という2点が「未走行コード」に当たる。
-- **①②とも実機で確認した**（下記「検証したこと」）。②は「参照比較 → 値比較」で書き込みパスが**減る方向**の変更であり、減ったせいで必要な書き込みが落ちる経路がないかを重点的に見たが、`saveSubs` の呼び出し元はいずれも変更日だけ新しいオブジェクトを作るため、従来から同じパスしか書いていない（＝挙動は同値、誤検知が減っただけ）ことを確認した。
-- **定型スキャンは全て正常**（下記）。今回は当たりが出ず、代わりに**ドキュメントが実装より古い箇所を3件**検出した（うち1件は「存在しない関数を現行仕様として記述」という、今後のループを空振りさせる質のもの）。
+見つけ方は単純で、「デモは書き込みを塞いだ」と設計コメントに書いてあるので、**塞いだものを実際に数えた**。`DEMO_MODE` のガードは `fbSet`/`fbUpd`（Firebase書き込み）とセッション保存にしか入っておらず、**Cloud Functions の呼び出しには1つも入っていなかった**。一方でデモは `plan` を premium 固定で描画する（app-main.js:465）ため、マイページの購入・変更・請求管理の導線はそのまま表示される。「Firebaseを塞ぐ」と「副作用を塞ぐ」が同じことだと暗黙に仮定されていたのが原因で、実際にはCF経由の副作用（Stripe決済・Admin SDKでのowners書き込み）がすべて素通りしていた。
 
 ### 検証したこと
 
-- **実機E2E（localhost:3000・標準テスト店舗 `eb6AfsQv4JAht+cX*xP7fuDa`・`?plan=premium`）**: `firebaseDB` の `ref.prototype.update/set` をフックして、スタッフ提出が実際に書き込むパスを直接観測した。
-  - **無変更の再提出 → 書き込みは `{subId}/updatedAt` の1パスのみ**（`shifts` は1日も書かれない）。#65 時点の申し送り（sub全体set）が解消されていることを実データで再確認。
-  - **管理者のグリッド下書き（`source:"grid"`）の上にスタッフが初回提出**: 鈴木の下書きsub（8/7に `adjustedStart:"11:00"`）に対して初回提出したところ、`source:"grid"` が正しく削除され（`diffSubForFlatWrite` の「prevSubにあってnewSubに無いトップレベルキーは null」経路）、**管理者が入れた `adjustedStart:"11:00"` は保持された**。`submittedAt` も提出時刻へ更新された。この経路は `carryAdminShiftFields` と差分書き込みの合わせ技で、両方が同時に効くことを実データで確認したのは今回が初。
-  - **コンソールエラー0件**（起動時・提出時・提出後とも）。
-  - 使ったフィクスチャ（鈴木の `source:"grid"` sub）は**検証後に元の状態へ復元済み**。標準テスト店舗に残骸はない。
-- **`57c75c0` の非対称性の妥当性確認**: BACKLOG の受け入れ条件は4点（pending登録・`subsMapRef` 更新・差分書き込み・関数型更新）だが、実装は `subsMapRef` を**読むだけで書いていない**。これが欠陥かを追ったが、書き込み中の穴は `pendingSubWritesRef` の overlay（`flushSubs`）が埋めており、`.finally` での保護解除はサーバーack後＝リスナーのローカルイベント発火後になるため、`saveSubs` と同じ安全性が成立している。**欠陥ではない**と判断した。
-- **セキュリティルールとの整合**: `shops/$shopId/subs/$subId` の `.validate`（`hasChildren(['id','staffName','periodId','shifts','submittedAt'])`）に対し、フラット書き込みが必須childを消す組み合わせがないことを確認（スタッフの `sub` は常に5フィールドを含む）。実機の書き込みも全て成功している。
-- **非回帰**: `npm test` **165件パス**（#65 の155件から `57c75c0` の5件・`8167927` の5件で増加）、`npx eslint app-*.js` **0 errors 98 warnings**（98件すべて `no-unused-vars`。他ルールの指摘は0）、`node --check functions/index.js` OK。`app-*.js`・`functions/index.js` は**今回未変更**。
-- **未検証（正直に記載）**: **管理者セッションとスタッフセッションを同時に開いた2コンテキストでの競合再現は今回も行っていない**（#59以来の申し送り。単一コンテキストでの差分書き込み挙動までは実データで確認済み）。Cloud Functions は**依然として未デプロイ**のため、課金・認可の4件は本番で修正前の挙動のまま（🔴・下記）。Stripe実イベントでのE2Eも権限外のため未実施。
+- **本番Firebaseの実データで前提を確認（読み取りのみ）**: `shops/demo-toriMatsu-v1/owners` が **NULL（空）**、`accounts/demo-toriMatsu-v1` が **存在しない**、`private/adminKey` は設定済み。owners が空であることが `verifyShopOwner` の「未claim店舗は許可」を誰でも通過できる根拠で、accounts が無いことが `findActiveSubscription`→409→Checkoutフォールバックへ落ちる根拠。**dev のデモ店舗は逆に owners が3件あるため、この露出は本番固有**である（devだけ見ていたら再現しない）。
+- **修正前の経路をlocalhostで実測**: `#/demo` のマイページで「Proプランに変更」を押すと、`fetch` が **`/changePlan` →（409 no_subscription を模擬）→ `/createCheckoutSession`** の順に飛び、bodyに **デモ店舗のshopId**、ヘッダに匿名ユーザーの **Authorization トークン**が載っていることを確認した（Stripeを実際に呼ばないようCF応答のみ模擬し、決済URLは返さずに遷移させていない）。
+- **修正後を実測**: 同じ画面でプラン変更セクション・請求管理ボタンがどちらも消え、デモ用の案内文に差し替わること、`requestPlanAction` を直接呼んでも **fetch 0件** で拒否されることを確認。
+- **企業アカウント乗っ取りをE2Eで再現・阻止まで確認**: デモ画面からメール新規登録して実ユーザー状態（`isAnonymous:false`）を作り、企業連携タブで「企業アカウントを作成する」を実行 → 「デモではこの操作はできません」で停止し、**`httpsCallable` の呼び出し0件**・デモ店舗の `owners` は権限なしのまま（＝オーナーになれていない）ことを実測。
+- **非回帰**: 非デモの Premium セッション（標準テスト店舗・`?plan=premium`）ではプラン変更セクションと請求管理ボタンが従来どおり表示され、デモ用の案内が出ないことを確認。**コンソールエラー0件**。`npm test` **168件パス**、`npx eslint app-*.js` **0 errors 98 warnings**、`node --check functions/index.js` OK。
+- **検証で作ったものは掃除済み**: dev Auth に作ったテストアカウント `demo-takeover-test@example.com` は削除。`accounts/{uid}` 配下には何も書かれていなかった（＝デモのFirebase書き込みガードは正しく効いていた）ことも確認した。
+- **否定できた仮説（記録として）**: 「デモは `ss_apid` の読み出しをガードしていないので、通常利用したタブでデモを開くと期間が壊れる」と考えて実測したが、**壊れなかった**（別店舗の期間IDを仕込んで `#/demo` を開いても提出一覧は「件数：7」で正常表示）。下流のフォールバックが吸収している。
+- **未検証（正直に記載）**: **Cloud Functions 側の修正（デモ店舗の403・企業連携除外）は未デプロイのため、本番では未検証**。クライアント修正も develop 止まりで、**本番のデモは今この瞬間も穴が開いたまま**（下記「要確認」の🔴を参照）。実際にStripe決済を完走させる検証は行っていない（実課金になるため意図的に回避）。
 
 ### スキャン結果（RULES.md 準拠・非回帰）
 
-- `DEV_MODE`（app-core.js:12・式のまま）正常。`DEV_PLAN_OVERRIDE`（:108・DEV_MODE連動）正常
+- `DEV_MODE`（app-core.js:12・式のまま）正常。`DEV_PLAN_OVERRIDE`（:125・DEV_MODE連動）正常
 - `subs` の `set()` 全体上書き **0件**／`accounts` 全件読み **0件**／`global/shops` 全件読み **0件**
 - `database.rules.json` の `".read": true` **0件**。`subs` の `.indexOn:["periodId"]` 維持
-- Cloud Functions: secrets **5箇所**抜け漏れなし・`.delete()` 誤用 **0件**・`accounts/{shopId}` への無防備な plan書き込み **0件**（更新経路・解約経路とも `3fccd20`/`eee5096` のガード内）
+- Cloud Functions: `runWith` の secrets **6箇所**（新設の `changePlan` にも `STRIPE_SECRET_KEY` あり）・`.delete()` 誤用 **0件**
 - index.html の読み込み順 utils→core→staff→admin→main 維持・SRI **11本**維持
-- `input`/`select`/`textarea` の `fontSize<16` **0件**（button/span の12〜14pxはiOSズーム対象外）
-- `globalTemplates` の残存 **0件**（`5e725b0` の改名は16箇所すべて完了・Firebaseパスとlocalstorageキーは未変更）
-- ブランチ整合: develop は origin/main より **35コミット先行**、main には develop に無いコミットが**1件**（`92dc08a`＝キャッシュ版数バンプ。sync workflow は main への push でしか発火せず、`559964d` の修正が最後のmain pushより後だったため未同期）。**develop はマージベース以降 index.html を触っていない**ため、次の develop→main マージで main 側の新しい版数が保たれる（コンフリクト・巻き戻しは起きない）ことを確認済み
-
-### ドキュメント是正（今回のコミット）
-
-- **CLAUDE.md が、実体の無い関数を現行仕様として記述していた**（CLAUDE.md:174 と「企業アカウント（companyLink）の仕組み」§3）。`joinByInviteCode(code)` は **コード上に実体が1文字も存在しない**（全5ファイルで grep 0件）。`generateInviteCode()` は app-main.js:819 に定義があるが**呼び出し元ゼロ**で、`inviteCodeDisplay`/`inviteCodeGenLoading` の2 state も同様に未参照。実際の複数ユーザー共有は 2026-07-08 の CompanyTab 新設で `createCompany` / `companyLogin` / `linkStoreToCompany`（企業コード＋パスワード）方式に置き換わっている。→ 現行方式の記述に差し替え、旧方式は「未使用」と明示した
-- **`authChecked`（CLAUDE.md:142）も未使用**。app-main.js:37 に宣言があるが `setAuthChecked` を含め参照ゼロで、Auth待ちのゲートには一切使われていない → state一覧に「未使用」と明記した
+- `input`/`select`/`textarea` の `fontSize<16` **0件**（12〜14pxの該当は button/span/code のみでiOSズーム対象外）
+- **#66 が提案した「ドキュメント記載の識別子が実在するか」スキャンを初実施**: CLAUDE.md の関数表・state表の16識別子を `grep -c` で照合し、実体が無いのは `joinByInviteCode`（0件・#66で記述是正済み）のみ、`generateInviteCode` は定義のみで呼び出し元ゼロ（BACKLOG化済み）を再確認した
 
 ### 要確認（未修正）
 
-- **🔴（デプロイ待ち・本番はまだ壊れている・#61/#64/#65 から継続）Cloud Functions の課金・認可の修正4件が本番未反映** → **BACKLOG化済み**。本番（ontheshift）では**解約してもプランが下がらず・決済失敗バナーも出ず・`planExpiry` が初回購入時のまま・`linkStoreToCompany` の認可も無防備**なまま。手順はBACKLOGの当該タスクに記載（functions ディレクトリからの本番デプロイ）。**今回も新たなCF修正は加えていないため、デプロイ順序の制約はない**（4件ともクライアント変更を伴わない）
-- **🟡（#64/#65 から継続・根治にユーザー判断が要る）Pro→Premium のアップグレードが二重課金になり、旧Proを解約する手段がアプリ内に無い** → **BACKLOG化済み**。Webhook のイベント種別ごとにガードを足して回る対症療法が続いている構造は今回も変わらず
-- **🟡（#65 から継続）企業連携の解除が、稼働中の店舗を「オーナー0人」に戻しうる** → **BACKLOG化済み**（functions/index.js:845 `unlinkStoreFromCompany`）。今回 `createCompany`（:754）にも同じ未claim分岐（`if (owners && !owners[uid]) continue;`＝ownersが無ければ通す）があることを確認した。**根は `linkStoreToCompany` の `allowed = !owners` と同一**なので、BACKLOG の同タスク内で一緒に決めればよい（別タスクに割らない）
-- **🟡（#65 から継続・次リリースで必須）index.html のキャッシュ版数のバンプ**。本番（origin/main）は `20260805-78e8888`、develop は `20260802-94ffc47`。**現時点の本番未反映は `origin/main..origin/develop` の35コミット**
-- **🟡（#57/#64/#65 から継続・仕様判断が要る）再提出で「休み」にしたときの管理者調整値の扱い／片側セルのみ入力の勤務時間／同名ポジションの可否** → **BACKLOG化済み**（3件まとめ）。今回のE2Eで1件目の実データを再確認した: 鈴木 8/7 が `{adjustedStart:"11:00", adjustedStartNote:"", status:"holiday"}` になり、**シフト作成グリッドには 11:00 が表示されるのに出勤者としては数えられない**状態が実際に作れる
-- **🟢（新規）`generateInviteCode`（app-main.js:819・約35行）と `inviteCodeDisplay`/`inviteCodeGenLoading`（:68/:69）が完全なデッドコード**。`database.rules.json` は 2026-07-28 の締めルール切替で `inviteCodes` に `expiresAtMs`(数値)・`uid===auth.uid` の validate を**わざわざ追加**しているが、書き込む側が既に存在しない。削除の可否は「招待コード方式を将来復活させるか」の判断を含むため、今回はコードに手を付けず記載のみとした
-- **🟢（新規）`authChecked`（app-main.js:37）が宣言のみで未使用**。`setAuthChecked` も呼ばれない。Auth確認完了を待つゲートは実際には `ready`/`authUser` 側で成立しているため実害はない
-- **🟢（新規）`urlLocked` が StaffView に渡されているが、StaffView 内で一度も使われていない**（app-staff.js:18）。`git log -S` で初回コミット（`1534336`）から一貫して未使用だったことを確認。`StaffHdr` に期間切替UIが無いため、スタッフURLモードで隠すべきものが露出しているわけではない（無害な死にプロップ）
-- **🟢（新規）`sync-main-to-develop` ワークフローは main への push でしか発火しない**ため、`559964d` の403修正後もまだ一度も走っていない（develop に `92dc08a` が無いのはこのため）。次に main へ push した時点で自動的に解消するので対応不要だが、「修正したのに同期されていない」を不具合と誤認しないよう記録しておく
-- 以下は #46〜#65 からの継続。今回も状態変化なし: 決済失敗フラグが別契約の請求成功で解除される（functions/index.js:281）／片側セルだけ入力された日の勤務時間が0分（app-utils.js:128）／`purgeOldPeriods` のカットオフがUTC日付（functions/index.js:554）／`getBreaksFor` が残業前の時刻で休憩適用を判定（app-utils.js:266）／`src` 引数を持つ6関数の可変性が未使用／`staffSectionOn` だけが `isCountExcluded` を見ていない／SubsTab 詳細モーダルの「月計」が別名subを重複加算しうる／`CompanyTab`・`ShiftEditTab` のデフォルト引数が効くと無限ループ（到達不能）／`allAbbrs` の先読みが `saveMetaField` 直後の値を一時的に巻き戻す／`sub.shopId` が死にフィールド／店舗メニューの店舗削除が `global/shops/{id}` を消さない／`isFixedShiftEligibleShop` の第1条件が第2条件に包含／`companyCodes/{code}` 生成の TOCTOU／略称の「先勝ち」／企業アカウント作成に回数制限・監査ログなし／期間の手動作成に「終了日 ≥ 開始日」検証なし／トリプルタップの計数キーが出勤・退勤セルを区別しない／提出状況ビューのセル編集がスタッフ提出値を書き換える／Excel出力の analytics が管理者のグリッド入力を提出として数える／`ADMIN_SHIFT_FIELDS` の完全性テストが登録漏れを検出できない／期間削除時の `subs` 全件 `once("value")`（意図的）／マイページの「スタッフ数」バーがスペーサーを人数に数える／SubsTab の「出勤」日数が空欄化した日を1日として数える／属性削除後も `breakTimes[].tags` に残る／Excel出力とシフト作成タブで別名解決順が違う／期間管理タブのExcel出力だけ管理者調整値を反映しない（意図的）／`heatHours` が `adminRest` を無視／店舗間シフト重複エラーが片側入力と他店舗の `adminRest` を見ない／`sanitizeForSet` の root 分岐（到達0件）／`_fbGuard` の本番分岐が PostHog へパスを送る／eslint ルールの抜け穴（使用箇所0件）／スタッフ削除時に設定マップのキーが残る／`isSpecialRedDate` のテスト不在は `8167927` で解消済み
-- **🟢（継続・期限到来）`PURGE_OLD_PERIODS_DRY_RUN` の本有効化**（functions/index.js:552）。着手予定 **2026-08-12 以降＝あと2日**。#64 でコードを事前監査済み
+- **🔴（本番はまだ穴が開いている・要リリース＋デプロイ）今回の修正2件が develop 止まり** → **BACKLOG化済み**。本番のデモURL（`https://shiftyshifty.app/#/demo`）は公開済みで、**訪問者を決済ページへ飛ばせる状態のまま**。クライアント（app-admin.js / app-main.js）を main へ出し、**`index.html` の `?v=` を必ずバンプする**（develop・main とも現在 `20260811-83a7bf5` で同値のため、バンプしないと既存訪問者のキャッシュに旧JSが残り穴が閉じない）。あわせて `cd functions && firebase deploy --only functions --project ontheshift` を実行する。**クライアントとCFのどちらが先でも壊れない**（CFの追加は拒否条件のみで、旧クライアントの正規利用を妨げない）。
+- **🟡（#66 から継続・仕様判断）企業連携の解除／未claim分岐が、稼働中の店舗をオーナー0人に戻しうる** → **BACKLOG化済み**。今回のデモ乗っ取りは `createCompany`・`linkStoreToCompany` の `allowed = !owners`（未claim店舗は誰でも連携できる）という**同じ根**から出ている。今回はデモ店舗をピンポイントで denylist に入れただけで、**根は塞いでいない**。「未claim店舗を誰でも自分の企業に取り込める」設計そのものの可否はBACKLOGの当該タスクで決める。
+- **🟡（#64/#65 から継続・大幅に前進）二重課金の根治** → **BACKLOG化済み**。`2123952` で「契約を作り直さず price を差し替える」方式（案C）が実装され、`createCheckoutSession` は有効契約があると409を返すようになった＝**1店舗2契約が構造的に起こりにくくなった**。ただし本番未デプロイ。
+- **🟢（新規）`findActiveSubscription` の `|| live[0]` フォールバックが、他店舗の契約を掴みうる**（functions/index.js:408）。`metadata.shopId` で一致するものを優先するため、`subscription_data.metadata` を付けて作った契約（現行）では起こらない。同一Stripe顧客に複数店舗の契約がぶら下がり、かつ metadata の無い旧契約が残っている場合にだけ、別店舗の契約を掴んで `changePlan` が誤爆しうる。本番に該当する生存契約は無い（解約済み2件のみ）ため実害なし。
+- **🟢（新規）期間終了時ダウングレードの発火順によっては `planExpiry` が1ヶ月古いまま残る**（functions/index.js:445）。切替時の `invoice.payment_succeeded` は `shouldApplyRenewalPlan("premium","pro")` が false になるため `planExpiry` を更新しない。`customer.subscription.updated` が先に届いていれば更新される、という順序依存。表示専用のため実害は軽微で、翌月の更新で自然に直る。
+- **🟢（新規）`subscription_schedule.*` の4分岐が、現状のWebhook購読設定では一度も走らない**（functions/index.js:527・543）。コード内コメント自身が「購読対象に入っていない（2026-08-11時点の購読は5種類）」と明記している。予約内容は `changePlan` が直接DBへ書くため機能は成立しているが、**Stripe側の購読設定を変えるまでこの分岐はデッドコード**である点は認識しておく（#66 の「ルールだけが残っている機能」と同型の、逆向き＝コードだけが先にある状態）。
+- **🟢（新規・#66 の記述の訂正）`authChecked` は「`setAuthChecked` も含め参照ゼロ」ではない**。`setAuthChecked` は app-main.js:119・150・169 の**3箇所で呼ばれており**、参照ゼロなのは state の**値**の側だけ（`const[authChecked,...]` の宣言のみ）。#66 が大文字小文字を跨いだ grep で数え違えたものと思われる。デッドである結論自体は変わらない。
+- 以下は #46〜#66 からの継続（今回も状態変化なし）: 決済失敗フラグが別契約の請求成功で解除される／片側セルだけ入力された日の勤務時間が0分／`purgeOldPeriods` のカットオフがUTC日付／`getBreaksFor` が残業前の時刻で休憩適用を判定／`generateInviteCode` と2 stateのデッドコード／`urlLocked` が StaffView で未使用／`src` 引数を持つ6関数の可変性が未使用／`staffSectionOn` だけが `isCountExcluded` を見ていない／SubsTab 詳細モーダルの「月計」が別名subを重複加算しうる／`allAbbrs` の先読みが `saveMetaField` 直後の値を一時的に巻き戻す／`sub.shopId` が死にフィールド／店舗メニューの店舗削除が `global/shops/{id}` を消さない／`companyCodes/{code}` 生成の TOCTOU／略称の「先勝ち」／期間の手動作成に「終了日 ≥ 開始日」検証なし／提出状況ビューのセル編集がスタッフ提出値を書き換える／Excel出力の analytics が管理者のグリッド入力を提出として数える／マイページの「スタッフ数」バーがスペーサーを人数に数える／属性削除後も `breakTimes[].tags` に残る／Excel出力とシフト作成タブで別名解決順が違う／`heatHours` が `adminRest` を無視／`_fbGuard` の本番分岐が PostHog へパスを送る／スタッフ削除時に設定マップのキーが残る
 
 ### 総括
 
-**#65 の「未走行コードを新規コードとして見直せ」という基準を、#65 自身の翌日のコミットに適用した。結果は「欠陥なし」だったが、それは基準が空振りしたのではなく、基準どおりに見た結果として確認できたことに意味がある。** `57c75c0` は、①スタッフ端末で `pendingSubWritesRef`／`applyFlatSubWrite` を初めて走らせ、②`diffSubForFlatWrite` の比較方式変更を通じて**管理者側の `saveSubs` の書き込み量まで同時に変えていた**。②は「直したのはスタッフ側なのに、影響は管理者側にも及んでいる」という、まさに #65 が警告した「修正の影響範囲は呼び出し元だけでなく下流まで」の形をしている。値比較への変更は書き込みが**減る**方向なので、減って困る経路がないかを個別に当たり、`saveSubs` の全呼び出し元が「変更日だけ新オブジェクト」を作る実装であるため従来と同値であることを確認した。
+**「書き込みを塞いだ」の“書き込み”が Firebase だけを指していたために、デモが課金と権限の穴になっていた。** デモモードは `fbSet`/`fbUpd` を握り潰す設計で、その範囲では正しく動いている（実際、検証で作ったアカウントの `accounts/{uid}` には何も書かれていなかった）。しかし副作用の経路はもう1本あり、**Cloud Functions は Admin SDK で動くためセキュリティルールもクライアントのガードも一切効かない**。そこにデモ店舗が「owners を空のまま運用する」という設計と噛み合い、`verifyShopOwner` の移行猶予（未claim店舗は許可）を誰でも通過できる状態になっていた。結果、①匿名の訪問者が自分のものでない店舗の決済ページへ飛ばされる ②ログインした訪問者が本番デモ店舗のオーナー権限を取れる、という2つの穴が同時に開いていた。
 
-**今回の実質的な収穫は、コードのバグではなくドキュメントの虚構だった。** CLAUDE.md は `joinByInviteCode(code)` を「招待コードで他ユーザーの企業アカウントに参加」する現行関数として関数表に載せていたが、**この関数はコード上に存在しない**。`generateInviteCode` も定義だけが残り呼び出し元がない。2026-07-08 に企業アカウントが企業コード＋パスワード方式へ置き換わったとき、CLAUDE.md の該当節が更新されなかったことが原因である。これは単なる古い記述ではなく、**「実装依頼を受けたモデルが、存在しない関数を前提に設計してしまう」種類の負債**であり、#65 が 🟢 として2件挙げていた「CLAUDE.md の記述が実装より古い」と同根だが質が悪い。今回はここを是正した。
+**この2つは別々のバグに見えて、根は1つである**——「デモ店舗は owners を持たない」という判断が、`owners` の有無を権限の代理指標として使っている全コードに影響した。今回はデモ店舗を denylist に入れる形で塞いだが、これは対症療法である。本丸は BACKLOG に既にある「未claim店舗は先に触った人がオーナーになれる」で、#65 が `unlinkStoreFromCompany` を通じて、#67（今回）が `createCompany` を通じて、**同じ根に別の入口から2回到達した**。3回目を待たずに根を決着させる価値がある。
 
 ここから次回の手が2つ出る。
 
-**1つ目。「ドキュメントに書かれた関数・state が実在するか」を定型スキャンに入れる。** 手順は機械的で、①CLAUDE.md の関数表・state表から識別子を抜き出す ②`grep -c` を全 `app-*.js` に掛ける ③**0件（存在しない）と1件（定義のみで呼び出し元なし）を分けて報告する**。今回この手順で3件（`joinByInviteCode`＝0件、`generateInviteCode`＝定義のみ、`authChecked`＝宣言のみ）が一度に出た。`no-unused-vars` の98件は「クロスファイル参照でeslintが見えていないだけ」のものが大半だが、**app-main.js のように単一ファイル内で完結するスコープの指摘だけを拾えば、この検出は自動化できる**。
+**1つ目。「新機能が増やした副作用の経路」を、機能単位ではなく“出口”単位で数える。** 今回効いたのは「デモは何を塞いだか」を数えたことで、機能の仕様を読んだことではない。Shifty の副作用の出口は現状3つある——**①Firebase直書き（`fbSet`/`fbUpd` と、それを通らない直 `ref().remove()` が4箇所）②Cloud Functions（HTTP 4本＋Callable 8本）③外部遷移（`window.location.href` によるStripeへの遷移）**。新しいモードやゲート（デモ・閲覧専用 `ownerReadOnly`・スタッフURL `urlLocked`）を足したときは、**その3つの出口すべてに対してガードが入っているかを表にして確かめる**。今回 `ownerReadOnly`（閲覧専用バナー）についても同じ問いが立つ——**閲覧専用の端末はCloud Functionsを呼べるのか**。`verifyShopOwner` があるので課金系は弾かれるはずだが、確かめた記録はどこにもない。次回はここを見る。
 
-**2つ目。「ルールだけが残っている機能」を探す軸。** `database.rules.json` は 2026-07-28 の締めルール切替で `inviteCodes` の validate を強化しているが、**その時点で既に書き込む側のコードは死んでいた**（CompanyTab 新設は 2026-07-08）。つまり「セキュリティルールを固めた」という作業自体が、存在しない攻撃面に対して行われていた。同じ形は他にもありうる: `accounts/{uid}/members`（招待コード方式の受け皿。書き込み元は同じく消滅している可能性が高い）、`email_otps`（`sendEmailOtp`/`verifyEmailOtp` は生きているがUI導線が残っているか）、`archived/shops`（`purgeInactiveShops` 以外に読む者がいるか）。手順は、**`database.rules.json` のトップレベルキーを列挙し、それぞれについて「クライアントまたはCFに実際の書き込み元があるか」を grep で確かめる**。無ければ、ルールを消すか機能を復活させるかの判断がユーザーに要る——どちらにせよ、片方だけが残っている状態は次の誰かを確実に誤解させる。
+**2つ目。「本番でだけ再現する条件」を、devとの差分として明示的に持つ。** 今回の穴は **dev では再現しない**（dev のデモ店舗は owners が3件ある）。localhost 検証だけで完結していたら「デモは安全」と結論していた可能性が高い。本番固有の状態——`owners` の有無、`accounts` の有無、プランのシード値（自家用12店舗の `premium`/`2100-06-29`）、デモ店舗の存在——は**コードから読み取れない前提**であり、これらに依存する分岐を触ったときは本番の実データを読んで前提を確かめる必要がある。今回は読み取り専用のスクリプトで4項目を確認するだけで済んだ（1分）。**「dev で再現しないから問題ない」を結論にしない**というルールを、次回以降のチェック手順に加える。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
@@ -668,25 +659,91 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🔴 Cloud Functions の本番デプロイ（課金・認可の修正4件が本番未反映）
+## 🔴 デモURLの課金・オーナー権限の穴を本番へ反映する（修正済み・リリース待ち）
 
-**目的**: バグチェック #61・#64・#65 で `functions/index.js` に入れた4件の修正が、**本番（ontheshift）に一度もデプロイされていない**。本番は今も修正前の挙動で動いており、コードを直しただけでは実害が消えていない。
-**現在の本番の状態（＝未デプロイのまま起きていること）**:
-- **解約してもプランが下がらない**（`customer.subscription.deleted` が店舗を特定できない）。アプリ内の正規手順で解約したユーザーが有料機能を無期限に使える
-- **決済失敗バナーが一度も出ない**（`invoice.payment_failed` も同じ理由で素通り）
-- **`planExpiry`（マイページの「〜まで有効」）が初回購入時のまま更新されない**
-- **`linkStoreToCompany` の認可が無防備**（shopId を知るだけで他人の店舗を自分の企業に連携しオーナー権限を奪える／#61）
+**目的**: バグチェック#67（2026-08-11）で、**本番で公開中のデモURL（`https://shiftyshifty.app/#/demo`）から2つの穴が開いていることを検出した**。修正は develop に入っている（`8e50036`・`12776cd`）が、**本番は今も穴が開いたまま**である。デモは広告からの流入先なので、放置している間ずっと不特定多数に露出している。
+
+**本番で今起きていること**:
+- **🔴 訪問者が、自分のものではないデモ店舗のStripe決済ページへ飛ばされる**。デモは `plan` を premium 固定で描画するためマイページに「Proプランに変更」「請求・解約の管理」が出る。押すと `changePlan`（契約が無いので409）→ `createCheckoutSession` へフォールバックし、実在するデモ店舗の決済ページへ遷移する。**誰かが決済を完了すると、その人は自分のものでない店舗に月額課金され**、さらに `accounts/demo-toriMatsu-v1/stripeCustomerId` が入るため、**以後のデモ訪問者が「請求管理」からその人のStripeポータル（請求履歴・カード情報・解約）を開ける**
+- **🟡 訪問者が、本番のデモ店舗のオーナー権限を自分の企業アカウントに取れる**。デモ画面からGoogle/メールでログイン →企業連携タブ→企業アカウント作成、で `createCompany` にデモ店舗のshopIdが渡り、`registerCompanyAsOwner` が Admin SDK で `shops/demo-toriMatsu-v1/owners/company_X` を書く。以後その企業ログインでデモ店舗を書き換えられる（デモ画面の改ざん）
+- **成立の理由**: 本番のデモ店舗は `owners` が**空**（2026-08-11 実測）。Cloud Functions の `verifyShopOwner` は「未claim店舗は移行猶予として許可」するため、**匿名の訪問者でもオーナー照合を通過する**。dev のデモ店舗は owners が3件あるため**この穴は本番でしか再現しない**
+
 **受け入れ条件**:
-- [ ] `cd functions && firebase deploy --only functions --project ontheshift` を実行する
-- [ ] デプロイ後、Cloud Functions のログで `stripeWebhook` がエラーなく起動することを確認する
-- [ ] Stripe ダッシュボードの Webhook 送信ログで、直近のイベントが 200 を返していることを確認する
-- [ ] 可能なら Stripe テストモードで解約イベントを1件発火させ、`accounts/{shopId}/plan` が実際に更新されることを確認する
-**影響範囲**: functions/index.js のみ（`4acd089`・`eee5096`・`3fccd20`・`7d21104`）。クライアント（app-*.js）の変更を伴わないため**デプロイ順序の制約はない**（新CFは旧クライアントからの呼び出しでも正規利用を壊さない）
-**備考**: バグチェック #61（2026-08-06）・#64（2026-08-09）・#65（2026-08-10）で検出・**条件A（ユーザーにしか実行できない操作）に該当**。本番デプロイはループの権限外で、PreToolUseフックでも機械的にブロックされる。**下の「二重課金の根治」より先にこれを出すこと**（根治は設計変更を伴い時間がかかるが、こちらは既に検証済みの修正を反映するだけ）。
+- [ ] develop を main へマージして本番配信する（`8e50036`・`12776cd`・および未リリースの `99d8cd5`）
+- [ ] **`index.html` の `?v=` を必ずバンプする**。develop・main とも現在 `20260811-83a7bf5` で同値のため、バンプしないと既存訪問者のブラウザキャッシュに旧 app-admin.js / app-main.js が残り、**穴が閉じない**
+- [ ] `cd functions && firebase deploy --only functions --project ontheshift` を実行する（デモ店舗を課金3エンドポイントと企業連携で拒否する変更が入っている）
+- [ ] 反映後、本番の `#/demo` でマイページを開き、プラン変更セクションと請求管理ボタンが出ないことを目視で確認する
+- [ ] `accounts/demo-toriMatsu-v1` が存在しない（＝誰も決済していない）ことを確認する。存在した場合は、その契約の解約・返金対応が要る
+
+**影響範囲**: app-admin.js（MyPageTab・`requestPlanAction`・`openPortal`）、app-main.js（`_callCF`）、functions/index.js（`createCheckoutSession`・`changePlan`・`createPortalSession`・`createCompany`・`linkStoreToCompany`）、index.html（キャッシュ版数）
+**備考**: バグチェック#67（2026-08-11）で検出・**条件A（ユーザーにしか実行できない操作）に該当**。main へのpushと本番デプロイはループの権限外で、PreToolUseフックが機械的にブロックする。**クライアントとCFはどちらを先に出しても壊れない**（CFの追加は拒否条件のみで、旧クライアントの正規利用を妨げない）。なお今回の修正はデモ店舗をdenylistに入れる**対症療法**であり、根（未claim店舗は誰でも自分の企業に取り込める）は下の「企業連携の解除が…」タスクで決着させる必要がある。
+
+---
+
+## 🟡 Webhook の疎通確認と、解約済みテスト契約の残骸データの整理
+
+**目的**: 2026-08-11 のCF本番デプロイ後、`stripeWebhook` のログに18件の署名検証失敗（400）が並んでいたため一時「本番のWebhookが全滅している」と判断したが、**Stripeダッシュボードの実測でこれは誤りと判明した**。実際に残っている課題は2つ（疎通の未確認・解約済み契約の残骸データ）だけである。
+
+**誤警報だった経緯（2026-08-11・記録として残す）**:
+- 当初の判断: ログ上18件すべて400・成功系ログ0件・実課金店舗の `planExpiry`(2026-08-09) と失敗時刻が一致 → 「更新請求のWebhookが失われた」
+- **実測による否定**: ①エンドポイントは `charming-euphoria` の**1つだけ**で**エラー発生率0%**（重複登録もテストモードの二重登録もない）②対象2契約は **2026/07/09 に作成され同日 19:27/19:28 に解約・全額返金済み**、契約期間は 2026/07/09〜2026/08/09 ③**2026/07/12 以降のイベントは `balance.available` 1件のみ**
+- **結論**: 7/09以降そもそも配信すべきイベントが無く、**配信0は正常**。`planExpiry=2026-08-09` は「更新の取りこぼし」ではなく**購入日+1ヶ月がそのまま書かれた値**で、契約期間の表示と一致する。18件の400は **Stripe CLI**（`stripe listen`/`stripe trigger`）由来で、CLIは登録エンドポイントとは別の `whsec_` で署名するため一致しない（ダッシュボードの配信カウントにも乗らない＝実際0件）
+- **`STRIPE_WEBHOOK_SECRET` は正しい。差し替えてはいけない**（39バイト＝`whsec_`+32文字で形式も正常）
+- **教訓**: 「成功ログが無い」を「失敗している証拠」として読んだのが誤り。実際は「送られていないから何も無い」だった。ログ保持が約3時間しかなく、そこにたまたまCLIテストの塊が入っていたのを全体像として扱ってしまった。**ログの保持範囲を確認せず、その窓の中身を代表値として扱わないこと。**
+
+**受け入れ条件**:
+- [x] **残骸データの整理（2026-08-11 完了）**: 対象は **`mKdff4?v88uPN=B=eEsc&WHW` の1件のみ**と特定した。店舗名が **「あ」**、`lastActivity` が作成時刻（2026-07-09T10:15:09Z ＝ JST 19:15:09）のまま更新されていない**試験課金用の捨て店舗**で、`stripeCustomerId` が `cus_Uqwu81keEbgVBe`＝解約済みPremium契約の顧客IDと一致した。解約ハンドラと同じ動作（`plan="free"` ＋ `planExpiry` 削除・`stripeCustomerId` は Portal 用に保持）を本番へ適用済み。**他12店舗（すべて実店舗・`premium`/`2100-06-29` の自家用シード）は無変更**であることを適用後に確認済み
+      - もう1件の `stripeCustomerId` 保有ノード `shop_1780453329813` は実店舗「東通り」で、`planExpiry:2100-06-29` の手動シード＝Webhook由来ではないため**対象外**（触らない）
+- [x] **疎通確認（2026-08-11 完了・実購入テストで検証）**: 本番モードにはテストイベントを送る手段が無い（①「…」メニューにテスト送信が無い ②ワークベンチShellは本番で読み取り専用 ③7/09イベントの再送は30日制限）ことを確認したため、**テスト店舗で Pro(¥500) を実購入して検証した**（後日返金）。
+      - 検証店舗: `_kcHL+eJi8MRHWJacGDU8vWn`（テスト_20260811）。**開始時点で `accounts/{shopId}` が `null`＝Webhook以外にデータが生まれる経路が無い状態**から実施
+      - **購入**: 16:54 に2件の200（`checkout.session.completed` と初回 `invoice.payment_succeeded`）。両方で `プラン更新完了: plan=pro customerId=cus_V32XoHaPVHxVBL`。`accounts` が `null` → `{plan:"pro", planExpiry:"2026-09-10", stripeCustomerId:...}`
+      - **即時解約**: 17:09 に200 ＋ `プランFreeに戻す`。`accounts` → `{plan:"free", stripeCustomerId:...}`（`planExpiry` も正しく削除）
+      - **結論**: `STRIPE_WEBHOOK_SECRET` は正しく、署名検証は通る。`4acd089`（店舗特定）・`eee5096`（解約時のプラン照合）・`3fccd20`（更新時の降格防止）が実データで機能することを確認した
+      - **未検証のまま残るもの**: `7d21104`（`linkStoreToCompany` の認可）は企業連携の経路で課金とは別系統のため、この테スト では通っていない
+
+---
+
+## 🟡（新規）カスタマーポータルの解約がアプリに伝わらない（`customer.subscription.updated` を捨てている）
+
+> **✅ 実装・本番反映まで完了（2026-08-11・`2123952` / `7767551` / `b73bba4`・リリース `88a4ca5`）**
+> デプロイ順序は rules → Cloud Functions → mainリリース（ルール変更が読み取りの「追加」のため、通常の「クライアント先」とは逆）。本番配信6ファイルが origin/main とバイト一致することを確認済み。
+> `customer.subscription.updated` を処理して `cancelAtPeriodEnd` / `currentPeriodEnd` を保存し、マイページに「解約済み・YYYY-MM-DD をもって終了します」を表示する。降格自体は従来どおり `customer.subscription.deleted` で行う（払い済み期間は使えるまま）。
+> **残: 実購入テストでの最終確認のみ**（dev では解約予約・変更予約の両バナーを実機確認済み）。
+
+**目的**: 2026-08-11 の実購入テストで判明。ユーザーがアプリの正規導線（マイページ → 請求管理 → カスタマーポータル）から解約すると、Stripeは**「期間終了時に解約」**として扱い、`customer.subscription.updated`（`cancel_at_period_end=true`）を送る。エンドポイントはこのイベントを購読済みで**実際に届いている**（2件・いずれも200）が、`stripeWebhook` に分岐が無いため**何もせず捨てている**。
+**結果として起きていること**:
+- 解約してもマイページの表示は `pro`・「2026-09-10 まで有効」のままで、**「解約済み・9/10で終了」という状態がどこにも出ない**。ユーザーからは解約が効いていないように見える
+- 実際の降格は期間終了時に `customer.subscription.deleted` が飛んだ時点で正しく起きる（＝データとしては最終的に正しくなる）。**壊れているのは「解約したことが分かるか」というUXの部分**
+**受け入れ条件**:
+- [ ] `stripeWebhook` に `customer.subscription.updated` の分岐を追加し、`cancel_at_period_end` と `current_period_end` を `accounts/{shopId}` へ保存する
+- [ ] 解約予約を取り消した場合（ポータルの「サブスクリプションをキャンセルしない」）にフラグが戻ることも確認する
+- [ ] MyPageTab に「解約済み・YYYY-MM-DD で終了します」を表示する
+- [ ] プラン降格そのものは従来どおり `customer.subscription.deleted` で行う（期間終了まで使える仕様は維持する）
+**影響範囲**: functions/index.js（`stripeWebhook`）、app-main.js（購読の追加）、app-admin.js（MyPageTab の表示）
+**備考**: 2026-08-11 の実購入テストで検出。下の「二重課金の根治」の受け入れ条件にある「`customer.subscription.updated` の処理が必要か検討する」への**答えは Yes** で確定した。単独でも実装できるが、二重課金の根治と同じファイルを触るため一緒にやるのが効率的。
+
+---
+
+## 🟢（新規）planExpiry がUTC基準で計算され、JST午前9時以降の購入で1日短く表示される
+
+**目的**: 2026-08-11 の実購入テストで判明。[functions/index.js:253](functions/index.js) は `new Date()` から1ヶ月後を求めて `toISOString().split("T")[0]` で日付にしているが、Cloud Functions のサーバー時刻はUTCのため、**JST 9:00〜24:00 の購入は日付が1日巻き戻る**。実測では JST 2026-08-11 01:54（UTC 08-10 16:54）の購入で `planExpiry = "2026-09-10"` となり、JSTの感覚（9/11）と1日ずれた。
+**受け入れ条件**:
+- [ ] `planExpiry` をJST基準で算出する（UTC+9してから日付を取る）
+- [ ] 既存の `planExpiry` を持つアカウントの扱いを決める（放置でよいか、次回更新時に自然に直るか）
+**影響範囲**: functions/index.js（`stripeWebhook` の expiry 計算1箇所）
+**備考**: 2026-08-11 の実購入テストで検出。`planExpiry` は表示専用（app-admin.js:3957 の「〜まで有効」）で機能ゲートは `plan` のみを見るため実害は軽微。既知の🟢「`purgeOldPeriods` のカットオフがUTC日付」と同種の取りこぼし。
+**影響範囲**: 本番Firebase の `accounts/{shopId}`（データのみ・コード変更なし）、Stripeダッシュボード操作
+**備考**: 2026-08-11 のCF本番デプロイ後の確認で検出。残骸データの整理はユーザーの明示指示を得て同日実行済み。疎通確認は**条件A（ユーザーにしか実行できない操作）に該当**し、案Bを採る場合は実課金を伴うためユーザー判断が要る。
 
 ---
 
 ## 🔴 Pro→Premium アップグレードの二重課金を根治する
+
+> **✅ 実装・本番反映まで完了（2026-08-11・`2123952` / `7767551` / `b73bba4`・リリース `88a4ca5`）**
+> デプロイ順序は rules → Cloud Functions → mainリリース（ルール変更が読み取りの「追加」のため、通常の「クライアント先」とは逆）。本番配信6ファイルが origin/main とバイト一致することを確認済み。
+> 案A・案Bのいずれでもなく、**契約を作り直さず price を差し替える「案C」**で実装した（`changePlan` を新設し `subscriptions.update` を使う）。契約が増えないため二重課金が「起きない」のではなく**起こしようがない**構造になる。`createCheckoutSession` は有効な契約がある店舗を409で拒否する。Stripe側の設定変更は不要。
+> **残: 実購入での全遷移検証のみ**（Pro購入 → Premiumへアップグレード＝差額請求 → Proへダウングレード＝予約表示 → 解約 → 返金）。**特にダウングレードの Subscription Schedule は Stripe API の挙動依存で、コードだけでは正しさを保証できていない。**
+> **注意（本番の12店舗について）**: 自家用の12店舗は `plan:"premium"` が手動シードされているだけで Stripe の契約を持たない。マイページにプラン変更ボタンは出るが、押すと `changePlan` が「有効な契約が見つかりません」（409）を返す。データは壊れないが、押しても何も起きないUXになる。ボタンの出し分けが要るか要判断。
 
 **目的**: `createCheckoutSession`（functions/index.js:123）は常に `mode:"subscription"` で**新しい契約を作る**ため、Pro ユーザーがマイページで「Premiumにアップグレード」を押すと **500円/月と2,980円/月が同時に走る**。さらに Checkout に既存の `customer` を渡していないので契約ごとに別の Stripe Customer が作られ、`accounts/{shopId}/stripeCustomerId` は新しい方で上書きされる。その結果 **Customer Portal は新Premiumの顧客しか開けず、旧Proを解約する導線がアプリ内に存在しない**。
 **これが原因で生じている派生問題（根治すればすべて消える）**:
@@ -698,12 +755,15 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] 方式を決める（**どちらを採るかはユーザー判断**）
   - 案A: Checkout に既存 `customer`（`accounts/{shopId}/stripeCustomerId`）を渡し、**旧契約を解約してから新契約を作る**
   - 案B: アップグレード/ダウングレードを **Stripe Customer Portal のプラン変更**に寄せ、`createCheckoutSession` は新規契約専用にする（Portal側の設定変更が必要）
+  - **⚠️ 2026-08-11 実測: 現在のカスタマーポータルには「プラン変更」のUIが無い**（表示されるのは「サブスクリプションのキャンセル」「決済手段」「請求先情報」のみ）。案Bを採るには **Stripe側でPortal設定の「サブスクリプションの更新」を有効化し、切替可能な価格を登録する**必要があり、さらにアップグレード操作がアプリ外へ出るためUXも変わる。**この実測により案Aの方が有利になった**（コードだけで完結し、アプリ内に導線が残る）。一度「案B推奨」と報告したが撤回し、再検討する
 - [ ] 1店舗が同時に2つの有効な契約を持たない状態になる
 - [ ] 既に2契約になっている店舗があるか Stripe ダッシュボードで確認し、あれば手動で解消する
 - [ ] 根治後、対症療法で入れたガード（`shouldApplyRenewalPlan` / 解約時のプラン照合）を残すか外すか判断する（残す場合は「多重防御として意図的に残す」とコメントに書く）
 - [ ] `customer.subscription.updated`（Portalでのプラン変更）のWebhook処理が必要か検討する
 **影響範囲**: functions/index.js（`createCheckoutSession`・`stripeWebhook`・`createPortalSession`）、app-admin.js（`UpgradeModal` の導線・MyPageTab）、Stripe本番設定（Customer Portal の設定変更を伴う可能性）
 **備考**: バグチェック #64（2026-08-09）で検出・#65（2026-08-10）で派生2件を確認・**条件A（Stripe本番設定）と条件B（方式の選択）の両方に該当**。RULES.md「ユーザーに確認なく Stripe の本番設定を変更しない」によりループでは着手できない。**現在は Webhook のイベント種別ごとにガードを足して回る形になっており、イベントが増えるたびに同じ穴が開く**。
+
+**根拠について（2026-08-11 訂正）**: 2026/07/09 に Pro(¥500) と Premium(¥2,980) の2契約が存在した記録を「アプリが同時に2契約を作った実データの証拠」と一度報告したが、**これは誤り**。ユーザーの申告では「Proを解約してからPremiumに登録した」操作であり、アプリが2契約を並存させた証拠にはならない（ダッシュボード上のタイムスタンプは Pro解約 19:28 / Premium請求書 19:16 と読め、申告と食い違うが、断定できる材料ではない）。**本タスクの根拠はコード側のみで十分に成立する**: `createCheckoutSession` は常に `mode:"subscription"` で新規契約を作り、既存 `customer` を渡さず、旧契約の解約も行わない。むしろ「解約をStripeの画面から手で行った」という事実自体が、**アプリ内に解約導線が存在しない**という本タスクの指摘を裏付けている。
 
 ---
 
@@ -737,6 +797,8 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] 本番13店舗が全てclaim済みであることを再確認してから適用する（締めルール切替時と同じゲート）
 **影響範囲**: functions/index.js（`unlinkStoreFromCompany`・`linkStoreToCompany`・`createCompany`）、app-admin.js（CompanyTab の解除UI・エラー表示）
 **備考**: バグチェック #65（2026-08-10）で検出・**条件B（仕様判断）に該当**。既存の🟢「未claim店舗は先に触った人がownerになれる」は「新規店舗作成直後の一瞬」と整理していたが、**解除操作が既存店舗を後からその状態に戻せる**点が新しい。本番13店舗は全てclaim済みのため現時点の実害はなく、解除操作を行った瞬間にだけ窓が開く。
+
+**2026-08-11 追記（バグチェック#67）**: 同じ根に**別の入口から2回目の到達**をした。#65 は `unlinkStoreFromCompany` 経由、#67 は `createCompany` 経由（`if (owners && !owners[uid]) continue` の未claim分岐）で、**本番のデモ店舗が owners を空のまま公開されていたため、デモURLの訪問者が自分の企業のオーナーとして登録できる状態だった**。#67 ではデモ店舗をdenylistに入れる対症療法で塞いだ（上の🔴タスク）ので、**このタスクの対象は「未claim店舗を誰でも取り込める」という設計そのものの可否**に絞られる。3回目の入口が現れる前に決着させたい。
 
 ---
 
@@ -772,13 +834,19 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ## 🟢 データ保存上限④-b: dry-run観察後の36ヶ月超期間データ削除の本有効化
 
-**目的**: dry-runリリース（コミット`4aa100e`）から1ヶ月観察し、問題なければ実削除を有効化する。
+**目的**: dry-run で1ヶ月観察し、問題なければ実削除を有効化する。
+
+> **⚠️ 前提が崩れていたので観察期間を引き直した（2026-08-11 判明）**
+> このタスクは「dry-runリリース（`4aa100e`・2026-07-12）から1ヶ月観察」を前提に着手日を 2026-08-12 と定めていた。しかし **2026-08-11 のCF本番デプロイで `purgeOldPeriods` が `update` ではなく `create` として作られた**——つまり **`4aa100e` は develop に入っただけで本番には一度もデプロイされておらず、dry-run は1日も走っていない**。観察できるログは存在しない。
+> **新しい着手日: 2026-09-11 以降**（本番稼働開始 2026-08-11 ＋ 1ヶ月）。それまでは `PURGE_OLD_PERIODS_DRY_RUN = true` のまま触らないこと。
+
 **受け入れ条件**:
-- [ ] Cloud Functionsのログで`purgeOldPeriods`の`[dry-run]`出力を確認し、削除対象の件数・内容が想定通りであることを確認する
+- [ ] **2026-09-11 以降に着手する**（それ以前に実削除を有効化しない）
+- [ ] Cloud Functionsのログで`purgeOldPeriods`の`[dry-run]`出力を確認し、削除対象の件数・内容が想定通りであることを確認する（**日次実行なので、この時点で約30回分のログが溜まっているはず**）
 - [ ] `functions/index.js`の`PURGE_OLD_PERIODS_DRY_RUN`を`false`に変更してデプロイする
 - [ ] 有効化後、実際に削除が行われ`period`・`subs`・`tokens/{urlToken}`が正しく消えることを本番ログで確認する
 **影響範囲**: functions/index.js（`PURGE_OLD_PERIODS_DRY_RUN`定数1箇所）
-**備考**: 開始日 2026-07-12（dry-runリリース日）。**1ヶ月後（2026-08-12以降）に着手する。** 孤児subs（periodIdが現存する期間に紐付かないもの）はこの削除の対象外（endDateという判定基準を持たないため）。列挙元は`/global/shops`のため、そこに載っていない孤児店舗の期間データは対象外（孤児店舗自体は`purgeInactiveShops`が別途処理）。
+**備考**: 本番稼働開始 2026-08-11（デプロイ日）。孤児subs（periodIdが現存する期間に紐付かないもの）はこの削除の対象外（endDateという判定基準を持たないため）。列挙元は`/global/shops`のため、そこに載っていない孤児店舗の期間データは対象外（孤児店舗自体は`purgeInactiveShops`が別途処理）。**教訓: 「コミットした日」ではなく「本番にデプロイされた日」を観察期間の起点にすること**（バグチェック#65 の「いつ書かれたかではなく、いつから実際に走るかで判定する」と同じ形の見落とし）。
 
 ---
 
@@ -792,20 +860,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] Realtime Database と Cloud Functions のenforcementをコンソールから有効化する
 **影響範囲**: app-core.js（定数1箇所）、Firebaseコンソール操作
 **備考**: enforce後はRESTでの直接デバッグアクセスが遮断される点に注意（管理用途はAdmin SDK/コンソールを使う）。
-
----
-
-## 🟢 バグチェック#44 申し送りの軽微項目（まとめ）
-
-**目的**: 2026-07-27 バグチェック#44の「要確認（未修正）」に残った軽微項目を消化する。いずれも実行時バグではないため個別タスク化せずまとめて扱う。
-**受け入れ条件**:
-- [x] **「曜日別から選ぶ」ブロック移動のE2E実機確認（2026-08-10 完了）**: localhost:3000 の標準テスト店舗（`eb6AfsQv4JAht+cX*xP7fuDa`・`?plan=premium`）で 管理者画面 → 候補 → 日付別 を開き、「曜日別から選ぶ」が日付別タブ内に表示されることを実機で確認。コンソールエラー0件。あわせて 候補→テンプレ タブも表示確認（`shopTemplates` 改名の非回帰確認を兼ねる）
-- [x] **`isSpecialRedDate` のユニットテスト追加（2026-08-10 完了・コミット`8167927`）**（app-utils.js:646）: posType3種（`sun`/`holSat`/`holSun`）で true、`weekday`/`sat` で false、posType未設定・settings欠損、土曜(2026-08-15)・日曜(2026-08-16)の早期return、平日の実祝日（2026-08-11 山の日）の早期return——計5テストを追加。`npm test` 160件パス
-- [x] **`.git` ロックファイル残留の調査（2026-07-28 完了）**: 残骸4件（`index.stash.13.lock`・`index.stash.44869`・`index_tmp`・`index_tmp.lock`）を削除しgit正常を確認。**根本原因が判明: これらは Shifty の自動コミットフックではなく、グローバルの `security-guidance` プラグイン由来**。`diffstate.py` の `git stash create`（timeout=15秒）がタイムアウトでSIGKILLされると `.git/index.stash.<pid>[.lock]` を残す。`index_tmp*` は旧バージョンのプラグインが `.git/index_tmp` を一時indexに使っていた化石（現行版はTMPDIRの`security_hook_idx_*`に変更済み）。**重要: これらは一時index側のロックのため、通常の`git add`/`commit`が使う`.git/index.lock`とは別物で、gitをブロックしない（＝#44の「commitがindex.lock/HEAD.lockに阻まれた」障害の原因ではない）**。#44を実際にブロックした`index.lock`/`HEAD.lock`はShiftyのStopフックの`git commit`がターン終了で強制終了された痕跡で、これは別系統。恒久対策は不要（無害・低頻度）だが、再発時はこの区別を踏まえること
-- [x] **`VISION.md` の作成（2026-08-10 完了・コミット`df925ca`）**（#27から継続で不在だった）: `/bug-check` と `/shifty-feature` の両ループが PHASE 0 で参照する完了基準の正本として作成。プロダクトの目的・ターゲット・プラン・設計原則6項目・バグチェックループ完了基準・機能実装ループ完了基準・やらないと決めたこと（Expo/Vite+TS/AdminLogin の理由と再着手条件）・現在の重点を記載
-- [x] **`globalTemplates` の命名整理（2026-08-10 完了・コミット`5e725b0`）**: `shopTemplates` / `setShopTemplates` / `saveShopTemplates` へ改名（app-main.js 8箇所・app-admin.js 8箇所）。**Firebaseパス `shops/{shopId}/templates` と localStorage キー `templates_v6` は変更していない＝データ移行不要**。CLAUDE.md の state一覧・技術負債欄も更新済み
-**影響範囲**: tests/core.test.js（テスト追加）、新規VISION.md、.git運用（フック）、app-main.js/app-admin.js（命名整理は任意・広範）
-**備考**: 「変更マークの締切ゲート対象外」（app-staff.js:166）・capabilityモデルの残存リスクも#44申し送りに含まれるが、前者は仕様判断待ち、後者は上記「App Checkの有効化」で恒久対応するため本まとめには含めない。リリース時のindex.htmlキャッシュバスティング版数バンプはrelease-to-mainフローの標準工程のため別管理。
 
 ---
 
@@ -839,6 +893,31 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ Cloud Functions の本番デプロイ（2026-08-11 完了・課金/認可の修正4件を反映）
+
+**実施内容**:
+- [x] **本番（ontheshift）へデプロイ実行**: 14関数すべて成功（`4acd089`・`eee5096`・`3fccd20`・`7d21104` を反映）。うち **`purgeOldPeriods` は `update` ではなく `create` だった＝この関数は本番に一度も存在していなかった**（下の④-bタスクの前提が崩れているため同タスクを更新済み）
+- [x] **CFログで `stripeWebhook` の起動を確認**: `firebase functions:list` で14関数の稼働を確認、監査ログの UpdateFunction が granted:true で完了
+- [ ] **未達＝ここで新しい🔴を検出した**: Webhook 送信ログの直近イベントは 200 ではなく、**18件すべて 400（署名検証失敗）**だった。→ 実装待ちの「Stripe Webhook の署名検証が本番で失敗し続けている」へ分離
+- [ ] **未達（上の🔴が直るまで実施しても意味がない）**: 署名検証で落ちるため、解約イベントを発火させても業務ロジックに到達しない
+**残る実害**: デプロイ自体は完了したが、**Webhookの署名検証が通らないため4件の修正はまだ本番で効いていない**。署名シークレットを直した時点で初めて有効になる。
+**備考**: バグチェック #61・#64・#65 で検出。2026-08-11 にユーザーの明示指示で実行。
+
+---
+
+### ✅ バグチェック#44 申し送りの軽微項目（2026-08-10 完了・受け入れ条件5件すべて達成）
+
+**目的**: 2026-07-27 バグチェック#44の「要確認（未修正）」に残った軽微項目を消化する。いずれも実行時バグではないため個別タスク化せずまとめて扱う。
+**受け入れ条件**:
+- [x] **「曜日別から選ぶ」ブロック移動のE2E実機確認（2026-08-10 完了）**: localhost:3000 の標準テスト店舗（`eb6AfsQv4JAht+cX*xP7fuDa`・`?plan=premium`）で 管理者画面 → 候補 → 日付別 を開き、「曜日別から選ぶ」が日付別タブ内に表示されることを実機で確認。コンソールエラー0件。あわせて 候補→テンプレ タブも表示確認（`shopTemplates` 改名の非回帰確認を兼ねる）
+- [x] **`isSpecialRedDate` のユニットテスト追加（2026-08-10 完了・コミット`8167927`）**（app-utils.js:646）: posType3種（`sun`/`holSat`/`holSun`）で true、`weekday`/`sat` で false、posType未設定・settings欠損、土曜(2026-08-15)・日曜(2026-08-16)の早期return、平日の実祝日（2026-08-11 山の日）の早期return——計5テストを追加。`npm test` 160件パス
+- [x] **`.git` ロックファイル残留の調査（2026-07-28 完了）**: 残骸4件（`index.stash.13.lock`・`index.stash.44869`・`index_tmp`・`index_tmp.lock`）を削除しgit正常を確認。**根本原因が判明: これらは Shifty の自動コミットフックではなく、グローバルの `security-guidance` プラグイン由来**。`diffstate.py` の `git stash create`（timeout=15秒）がタイムアウトでSIGKILLされると `.git/index.stash.<pid>[.lock]` を残す。`index_tmp*` は旧バージョンのプラグインが `.git/index_tmp` を一時indexに使っていた化石（現行版はTMPDIRの`security_hook_idx_*`に変更済み）。**重要: これらは一時index側のロックのため、通常の`git add`/`commit`が使う`.git/index.lock`とは別物で、gitをブロックしない（＝#44の「commitがindex.lock/HEAD.lockに阻まれた」障害の原因ではない）**。#44を実際にブロックした`index.lock`/`HEAD.lock`はShiftyのStopフックの`git commit`がターン終了で強制終了された痕跡で、これは別系統。恒久対策は不要（無害・低頻度）だが、再発時はこの区別を踏まえること
+- [x] **`VISION.md` の作成（2026-08-10 完了・コミット`df925ca`）**（#27から継続で不在だった）: `/bug-check` と `/shifty-feature` の両ループが PHASE 0 で参照する完了基準の正本として作成。プロダクトの目的・ターゲット・プラン・設計原則6項目・バグチェックループ完了基準・機能実装ループ完了基準・やらないと決めたこと（Expo/Vite+TS/AdminLogin の理由と再着手条件）・現在の重点を記載
+- [x] **`globalTemplates` の命名整理（2026-08-10 完了・コミット`5e725b0`）**: `shopTemplates` / `setShopTemplates` / `saveShopTemplates` へ改名（app-main.js 8箇所・app-admin.js 8箇所）。**Firebaseパス `shops/{shopId}/templates` と localStorage キー `templates_v6` は変更していない＝データ移行不要**。CLAUDE.md の state一覧・技術負債欄も更新済み
+**影響範囲**: tests/core.test.js（テスト追加）、新規VISION.md、.git運用（フック）、app-main.js/app-admin.js（命名整理は任意・広範）
+**備考**: 「変更マークの締切ゲート対象外」（app-staff.js:166）・capabilityモデルの残存リスクも#44申し送りに含まれるが、前者は仕様判断待ち、後者は上記「App Checkの有効化」で恒久対応するため本まとめには含めない。リリース時のindex.htmlキャッシュバスティング版数バンプはrelease-to-mainフローの標準工程のため別管理。
+
 
 ### ✅ スタッフの提出書き込み（onSub）の差分書き込み化（2026-08-10）
 **実装内容**:
