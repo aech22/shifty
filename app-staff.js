@@ -6,7 +6,7 @@
 function ShiftyIcon({size=32}){
   return(
     <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 64 64" style={{display:"block",flexShrink:0}}>
-      <rect width="64" height="64" rx="12" fill="#f87036"/>
+      <rect width="64" height="64" rx="12" fill="var(--c-accent)"/>
       <rect x="16" y="14" width="32" height="36" fill="#f0f0ee" stroke="#8a8a84" strokeWidth="1.5"/>
       <line x1="16" y1="32" x2="48" y2="32" stroke="#8a8a84" strokeWidth="1.5" strokeDasharray="1.5,1.5"/>
     </svg>
@@ -236,16 +236,16 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} onDeleteSub={onDeleteSub} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"50px 20px",textAlign:"center"}}>
         <div style={{fontSize:68,animation:"bI .5s"}}>✓</div>
-        <div style={{fontSize:22,fontWeight:700,color:"#f87036",marginTop:14,marginBottom:8}}>提出完了！</div>
+        <div style={{fontSize:22,fontWeight:700,color:"var(--c-accent)",marginTop:14,marginBottom:8}}>提出完了！</div>
         <div style={{background:"#FEF0E8",border:"1px solid #FDDCC7",borderRadius:12,padding:"14px 20px",marginBottom:24,fontSize:14,lineHeight:1.9,display:"inline-block",textAlign:"left"}}>
-          <strong style={{color:"#f87036"}}>{ap?.label}</strong><br/>
+          <strong style={{color:"var(--c-accent)"}}>{ap?.label}</strong><br/>
           {ap?.startDate?.replace(/-/g,"/")} 〜 {ap?.endDate?.replace(/-/g,"/")}<br/>
-          出勤予定：<strong style={{color:"#f87036"}}>{wk}日</strong>　休み：{dates.length-wk}日
+          出勤予定：<strong style={{color:"var(--c-accent)"}}>{wk}日</strong>　休み：{dates.length-wk}日
           {comment&&<><br/>コメント：{comment}</>}
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
-          <button onClick={()=>{editingRef.current=true;setDone(false);setConf(false);setSm(false);}} style={{padding:"11px 22px",background:"var(--c-card)",border:"2px solid #f87036",borderRadius:10,color:"#f87036",fontSize:14,fontWeight:700,cursor:"pointer"}}>修正する</button>
-          <button onClick={reset} style={{padding:"11px 22px",background:"var(--c-bg)",border:"2px solid #E5E7EB",borderRadius:10,color:"var(--c-text3)",fontSize:14,fontWeight:700,cursor:"pointer"}}>↺ 最初から</button>
+          <button onClick={()=>{editingRef.current=true;setDone(false);setConf(false);setSm(false);}} style={{padding:"11px 22px",background:"var(--c-card)",border:"2px solid var(--c-accent)",borderRadius:10,color:"var(--c-accent)",fontSize:14,fontWeight:700,cursor:"pointer"}}>修正する</button>
+          <button onClick={reset} style={{padding:"11px 22px",background:"var(--c-bg)",border:"2px solid var(--c-border)",borderRadius:10,color:"var(--c-text3)",fontSize:14,fontWeight:700,cursor:"pointer"}}>↺ 最初から</button>
         </div>
       </div>
     </div>
@@ -275,11 +275,11 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                     }}
                     onFocus={()=>setShowSuggest(true)}
                     placeholder="お名前を入力" maxLength={50}
-                    style={{flex:1,padding:"10px 12px",fontSize:18,fontWeight:700,background:"var(--c-bg)",border:"2px solid #f87036",borderRadius:10,outline:"none",color:"var(--c-text)",minWidth:0}}/>
+                    style={{flex:1,padding:"10px 12px",fontSize:18,fontWeight:700,background:"var(--c-bg)",border:"2px solid var(--c-accent)",borderRadius:10,outline:"none",color:"var(--c-text)",minWidth:0}}/>
                   <button onClick={()=>{
                     if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);dirtyRef.current=true;setName(resolved);}
                     setEditN(false);setShowSuggest(false);
-                  }} style={{padding:"10px 16px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",flexShrink:0}}>確定</button>
+                  }} style={{padding:"10px 16px",background:"var(--c-accent)",border:"none",borderRadius:10,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",flexShrink:0}}>確定</button>
                 </div>
                 {showSuggest&&filteredSuggests.length>0&&(
                   <div className="name-suggest">
@@ -287,7 +287,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                       <div key={i} className="name-suggest-item" onMouseDown={e=>{e.preventDefault();dirtyRef.current=true;setName(s.registered);setNi(s.registered);setEditN(false);setShowSuggest(false);}}
                         style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                         <span>{s.display}</span>
-                        {s.isAlias&&<span style={{fontSize:11,color:"#f87036",background:"rgba(248,112,54,.1)",padding:"1px 6px",borderRadius:4,flexShrink:0}}>→ {s.registered}</span>}
+                        {s.isAlias&&<span style={{fontSize:11,color:"var(--c-accent)",background:"rgba(248,112,54,.1)",padding:"1px 6px",borderRadius:4,flexShrink:0}}>→ {s.registered}</span>}
                       </div>
                     ))}
                   </div>
@@ -304,9 +304,9 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
             ):(
               <div onClick={()=>{setNi("");setEditN(true);setTimeout(()=>{nr.current?.focus();setShowSuggest(true);},50);}} style={{cursor:"pointer",padding:"4px 0"}}>
                 <div style={{fontSize:13,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>お名前を入力してください（必須）</div>
-                <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"var(--c-bg)",borderRadius:10,border:"2px dashed #E5E7EB"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"var(--c-bg)",borderRadius:10,border:"2px dashed var(--c-border)"}}>
                   <span style={{fontSize:16,color:"var(--c-text4)"}}>例）山田 太郎</span>
-                  <span style={{marginLeft:"auto",fontSize:12,color:"#f87036",fontWeight:700}}>タップして入力 →</span>
+                  <span style={{marginLeft:"auto",fontSize:12,color:"var(--c-accent)",fontWeight:700}}>タップして入力 →</span>
                 </div>
               </div>
             )}
@@ -317,7 +317,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
         <div style={{display:"flex",gap:8,marginBottom:14}}>
           {[["through","通し"],["lunch","ランチ"],["dinner","ディナー"]].map(([k,l])=>(
             <button key={k} onClick={()=>bulkFill(k)}
-              style={{flex:1,padding:"10px 0",background:"rgba(248,112,54,.1)",border:"1.5px solid #FDDCC7",borderRadius:10,color:"#f87036",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+              style={{flex:1,padding:"10px 0",background:"rgba(248,112,54,.1)",border:"1.5px solid #FDDCC7",borderRadius:10,color:"var(--c-accent)",fontSize:13,fontWeight:700,cursor:"pointer"}}>
               全日程「{l}」
             </button>
           ))}
@@ -345,7 +345,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                 {[["work","出勤"],["holiday","休み"]].map(([v,l])=>{
                   const a=st.status===v,iW=v==="work";
                   return(<div key={v} onClick={()=>upd(ds,{status:v,start:iW?(st.start||cds[0]?.start||"18:00"):undefined,end:iW?(st.end||cds[0]?.end||"23:00"):undefined})}
-                    style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:10,cursor:"pointer",border:`2px solid ${a?(iW?"#f87036":"#FF4757"):"var(--c-border)"}`,background:a?(iW?"#FEF0E8":"#FFF0F1"):"var(--c-input)",color:a?(iW?"#c45b1a":"#FF4757"):"var(--c-text3)",fontSize:14,fontWeight:600,transition:"all .15s"}}>
+                    style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:10,cursor:"pointer",border:`2px solid ${a?(iW?"var(--c-accent)":"#FF4757"):"var(--c-border)"}`,background:a?(iW?"#FEF0E8":"#FFF0F1"):"var(--c-input)",color:a?(iW?"#c45b1a":"#FF4757"):"var(--c-text3)",fontSize:14,fontWeight:600,transition:"all .15s"}}>
                     <div style={{width:15,height:15,borderRadius:"50%",border:"2px solid currentColor",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{a&&<div style={{width:7,height:7,borderRadius:"50%",background:"currentColor"}}/>}</div>{l}
                   </div>);
                 })}
@@ -357,7 +357,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                     <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
                       {cds.map((c,i)=>{const sel=st.start===c.start&&st.end===c.end;return(
                         <button key={i} className="cb" onClick={()=>upd(ds,{start:c.start,end:c.end})}
-                          style={{padding:"6px 11px",fontSize:13,fontWeight:700,background:sel?"#f87036":"rgba(248,112,54,.1)",color:sel?"white":"#f87036",border:`1.5px solid ${sel?"#f87036":"#FDDCC7"}`,borderRadius:8,whiteSpace:"nowrap",cursor:"pointer"}}>
+                          style={{padding:"6px 11px",fontSize:13,fontWeight:700,background:sel?"var(--c-accent)":"rgba(248,112,54,.1)",color:sel?"white":"var(--c-accent)",border:`1.5px solid ${sel?"var(--c-accent)":"#FDDCC7"}`,borderRadius:8,whiteSpace:"nowrap",cursor:"pointer"}}>
                           {c.start}〜{c.end}
                         </button>
                       );})}
@@ -370,8 +370,10 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                       return(
                       <div key={f} style={{flex:1}}>
                         <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>{l}</div>
+                        {/* 矢印は data URI 内のSVGのため CSS変数が使えない。ライト/ダーク両方の背景で
+                            非テキストコントラスト3:1を満たす中間グレー(#7E8899)を固定値で使う */}
                         <select value={st[f]||"18:00"} onChange={e=>upd(ds,{[f]:e.target.value})}
-                          style={{width:"100%",padding:"9px 28px 9px 10px",fontSize:16,fontWeight:600,background:`var(--c-input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 8px center`,border:"2px solid var(--c-border)",borderRadius:9,color:"var(--c-text)",outline:"none",cursor:"pointer",appearance:"none",WebkitAppearance:"none"}}>
+                          style={{width:"100%",padding:"9px 28px 9px 10px",fontSize:16,fontWeight:600,background:`var(--c-input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%237E8899' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 8px center`,border:"2px solid var(--c-border)",borderRadius:9,color:"var(--c-text)",outline:"none",cursor:"pointer",appearance:"none",WebkitAppearance:"none"}}>
                           {opts.map(t=><option key={t} value={t}>{t}</option>)}
                         </select>
                       </div>
@@ -387,15 +389,15 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
 
         {/* コメント欄 */}
         <div style={{background:"var(--c-card)",borderRadius:14,boxShadow:"0 1px 4px var(--c-shadow)",marginBottom:10,overflow:"hidden"}}>
-          <div style={{padding:"12px 16px 10px",borderBottom:"1px solid #E5E7EB",display:"flex",alignItems:"center",gap:8}}>
+          <div style={{padding:"12px 16px 10px",borderBottom:"1px solid var(--c-border)",display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:16}}></span>
             <span style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>コメント・備考（任意）</span>
           </div>
           <div style={{padding:"14px 16px"}}>
             <textarea value={comment} onChange={e=>{dirtyRef.current=true;setComment(e.target.value);}} maxLength={500}
               placeholder="休み希望の理由、変動できる日、その他連絡事項など"
-              style={{width:"100%",minHeight:80,padding:"10px 12px",fontSize:16,color:"var(--c-text)",background:"var(--c-bg)",border:"2px solid #E5E7EB",borderRadius:10,outline:"none",resize:"vertical",lineHeight:1.6,fontFamily:"inherit"}}
-              onFocus={e=>e.target.style.borderColor="#f87036"} onBlur={e=>e.target.style.borderColor="var(--c-border)"}></textarea>
+              style={{width:"100%",minHeight:80,padding:"10px 12px",fontSize:16,color:"var(--c-text)",background:"var(--c-bg)",border:"2px solid var(--c-border)",borderRadius:10,outline:"none",resize:"vertical",lineHeight:1.6,fontFamily:"inherit"}}
+              onFocus={e=>e.target.style.borderColor="var(--c-accent)"} onBlur={e=>e.target.style.borderColor="var(--c-border)"}></textarea>
           </div>
         </div>
       </div>
@@ -403,9 +405,9 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       {/* 送信ボタン */}
       <div style={{position:"fixed",bottom:0,left:0,right:0,background:"var(--c-bg)",backdropFilter:"blur(10px)",padding:"10px 14px 16px",boxShadow:"0 -4px 20px rgba(0,0,0,.08)",zIndex:40}}>
         <div style={{maxWidth:560,margin:"0 auto",display:"flex",gap:8}}>
-          <button onClick={reset} style={{padding:"13px 14px",background:"var(--c-card)",border:"2px solid #E5E7EB",borderRadius:10,color:"var(--c-text3)",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>↺ リセット</button>
+          <button onClick={reset} style={{padding:"13px 14px",background:"var(--c-card)",border:"2px solid var(--c-border)",borderRadius:10,color:"var(--c-text3)",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>↺ リセット</button>
           <button onClick={()=>{if(!name.trim()){tt_("▲ 名前を入力してください");return;}setConf(true);}}
-            style={{flex:1,padding:13,background:"#f87036",color:"white",border:"none",borderRadius:10,fontSize:16,fontWeight:700,boxShadow:"0 4px 16px rgba(248,112,54,.35)",cursor:"pointer"}}>
+            style={{flex:1,padding:13,background:"var(--c-accent)",color:"white",border:"none",borderRadius:10,fontSize:16,fontWeight:700,boxShadow:"0 4px 16px rgba(248,112,54,.35)",cursor:"pointer"}}>
             シフトを提出する
           </button>
         </div>
@@ -424,7 +426,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
           </div>
           <div style={{display:"flex",gap:8}}>
             <button disabled={sending} onClick={()=>setConf(false)} style={{flex:1,padding:12,background:"var(--c-bg)",border:"none",borderRadius:10,fontSize:14,fontWeight:600,color:"var(--c-text3)",cursor:sending?"default":"pointer",opacity:sending?.5:1}}>キャンセル</button>
-            <button disabled={sending} onClick={submit} style={{flex:2,padding:12,background:"#f87036",border:"none",borderRadius:10,fontSize:14,fontWeight:700,color:"white",cursor:sending?"default":"pointer",opacity:sending?.7:1}}>{sending?"送信中...":"提出する"}</button>
+            <button disabled={sending} onClick={submit} style={{flex:2,padding:12,background:"var(--c-accent)",border:"none",borderRadius:10,fontSize:14,fontWeight:700,color:"white",cursor:sending?"default":"pointer",opacity:sending?.7:1}}>{sending?"送信中...":"提出する"}</button>
           </div>
         </div>
       </div>}
@@ -438,7 +440,7 @@ function StaffHdr({ap,p0,pe,nd,subs,apid,onSm,shopName}){
   // source:"grid"はシフト作成タブの管理者入力用sub（実際の提出ではない）なのでバッジ件数から除外する
   const submitted=subs.filter(s=>s.periodId===apid&&s.source!=="grid");
   return(
-    <div style={{background:"#f87036",boxShadow:"0 2px 12px rgba(248,112,54,.25)",padding:"12px 14px"}}>
+    <div style={{background:"var(--c-accent)",boxShadow:"0 2px 12px rgba(248,112,54,.25)",padding:"12px 14px"}}>
       <div style={{maxWidth:560,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
         <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
           <ShiftyIcon size={28}/>
@@ -454,7 +456,7 @@ function StaffHdr({ap,p0,pe,nd,subs,apid,onSm,shopName}){
         </div>
         <button onClick={onSm} style={{flexShrink:0,background:"rgba(255,255,255,.18)",border:"1px solid rgba(255,255,255,.4)",borderRadius:20,padding:"7px 14px",color:"white",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
           提出状況
-          <span style={{background:submitted.length>0?"white":"rgba(255,255,255,.3)",color:submitted.length>0?"#f87036":"white",borderRadius:20,padding:"1px 8px",fontSize:12,fontWeight:800}}>{submitted.length}</span>
+          <span style={{background:submitted.length>0?"white":"rgba(255,255,255,.3)",color:submitted.length>0?"var(--c-accent)":"white",borderRadius:20,padding:"1px 8px",fontSize:12,fontWeight:800}}>{submitted.length}</span>
         </button>
       </div>
     </div>
@@ -481,7 +483,7 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
         <div style={{display:"flex",gap:8,marginBottom:14}}>
           {[["work","出勤"],["holiday","休み"]].map(([v,l])=>(
             <button key={v} onClick={()=>handleStatus(v)}
-              style={{flex:1,padding:"10px 0",border:`2px solid ${status===v?(v==="work"?"#f87036":"#FF4757"):"var(--c-border)"}`,borderRadius:10,background:status===v?(v==="work"?"#FEF0E8":"#FFF0F1"):"var(--c-input)",color:status===v?(v==="work"?"#c45b1a":"#FF4757"):"var(--c-text3)",fontWeight:700,fontSize:14,cursor:"pointer"}}>{l}</button>
+              style={{flex:1,padding:"10px 0",border:`2px solid ${status===v?(v==="work"?"var(--c-accent)":"#FF4757"):"var(--c-border)"}`,borderRadius:10,background:status===v?(v==="work"?"#FEF0E8":"#FFF0F1"):"var(--c-input)",color:status===v?(v==="work"?"#c45b1a":"#FF4757"):"var(--c-text3)",fontWeight:700,fontSize:14,cursor:"pointer"}}>{l}</button>
           ))}
         </div>
         {status==="work"&&<>
@@ -496,7 +498,7 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
               </div>
             ))}
           </div>
-          <button onClick={()=>onApply(status,start,end)} style={{width:"100%",padding:"12px",background:"#f87036",border:"none",borderRadius:10,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>✓ 確定</button>
+          <button onClick={()=>onApply(status,start,end)} style={{width:"100%",padding:"12px",background:"var(--c-accent)",border:"none",borderRadius:10,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>✓ 確定</button>
         </>}
         <button onClick={onClose} style={{width:"100%",padding:"10px",background:"var(--c-bg)",border:"none",borderRadius:10,color:"var(--c-text3)",fontSize:14,fontWeight:600,cursor:"pointer"}}>キャンセル</button>
       </div>
@@ -556,7 +558,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
 
   return(
     <div style={{position:"fixed",inset:0,background:"var(--c-card)",zIndex:300,display:"flex",flexDirection:"column",animation:"fI .2s"}}>
-      <div style={{background:"#f87036",padding:"12px 16px",flexShrink:0,boxShadow:"0 2px 8px rgba(248,112,54,.3)"}}>
+      <div style={{background:"var(--c-accent)",padding:"12px 16px",flexShrink:0,boxShadow:"0 2px 8px rgba(248,112,54,.3)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
             <div style={{fontSize:16,fontWeight:700,color:"white"}}>提出状況一覧</div>
@@ -582,7 +584,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                     onMouseEnter={e=>e.currentTarget.style.opacity=".7"}
                     onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
                     <div style={{fontSize:12,fontWeight:700,color:"var(--c-text)",wordBreak:"break-all",lineHeight:1.3}}>{resolveAlias(sub.staffName,staffAliases)}</div>
-                    <div style={{fontSize:10,color:"#f87036",marginTop:2}}>✎ 修正</div>
+                    <div style={{fontSize:10,color:"var(--c-accent)",marginTop:2}}>✎ 修正</div>
                   </div>
                   {(plan==="pro"||plan==="premium")&&onDeleteSub&&(
                     <button onClick={e=>{e.stopPropagation();if(confirm(`「${resolveAlias(sub.staffName,staffAliases)}」の提出を削除しますか？`)){onDeleteSub(sub.id);}}}
@@ -604,7 +606,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                 return(
                   <div key={ds} style={{width:CW,flexShrink:0,textAlign:"center",height:52,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",borderRight:"1px solid var(--c-border)",borderLeft:"1px solid var(--c-border)"}}>
                     <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)"}}>{m}/{day}</div>
-                    <div style={{fontSize:11,fontWeight:700,padding:"1px 6px",borderRadius:4,background:iS?"#EFF6FF":iSu?"#FFF0F1":"#F0F2F5",color:iS?"#3B82F6":iSu?"#FF4757":"#6B7280",marginTop:2}}>{wd}{isHoliday(ds)?"祝":""}</div>
+                    <div style={{fontSize:11,fontWeight:700,padding:"1px 6px",borderRadius:4,background:iS?"#EFF6FF":iSu?"#FFF0F1":"var(--c-input)",color:iS?"#3B82F6":iSu?"#FF4757":"var(--c-text3)",marginTop:2}}>{wd}{isHoliday(ds)?"祝":""}</div>
                   </div>
                 );
               })}
