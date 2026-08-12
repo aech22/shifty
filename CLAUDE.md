@@ -555,65 +555,52 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-08-12 自動実行 #69）
+## Shifty バグチェックレポート（2026-08-12 自動実行 #70）
 
 ### 修正済み
 
-- **🟢（ドキュメント訂正）BACKLOG が案Aの「副作用」として挙げていた `ownerReadOnly` の記述が誤りだった**（BACKLOG.md「仕様判断が必要な挙動のまとめ」/ 実体は app-main.js:531・1072-1079）
-  「`ownerReadOnly` は Firebase 初期化前や匿名認証の遅延でも true になるため、正当なオーナーが一時的に編集不能になる」と書かれていたが**実際は逆**で、初期値は `false`、true にしうる useEffect は `ready` で門番され、`ready` が立つのは匿名サインイン解決後である。**案Aを避ける理由は現存しない**ことが確定し、BACKLOG を訂正した。
-
-### 今回の対象と見つけ方
-
-#68 以降 develop に新規コミットは無い（`0837f7e` は #68 の修正を main へ出したリリースで、変更は `index.html` の版数と `app-core.js` の2行のみ）。コードが動いていない回なので、**#68 が自分に課した宿題のうちループ内で実行できる1つ目——「ドキュメントの照合を『識別子が在るか』から『書いてある挙動が本当か』へ広げ、対象は実害を否定している記述に限定する」——を実行する回**とした。
-
-`実害はない|実害は軽微|何も起きない|問題はない|壊れない` を BACKLOG・CLAUDE.md から機械的に集めて1件ずつコードで照合した結果、**実害を否定する記述は4件すべて正しかった**。代わりに**「実害を主張する記述」の側に誤りが1件**見つかった。
-
-### 検証したこと
-
-**照合した「実害を否定する記述」（すべて正しかった＝否定的な結果として記録）**
-
-- **`planExpiry` は表示専用・機能ゲートは `plan` のみ**（BACKLOG:113）→ **正しい**。参照は app-admin.js:4045 の `expiryLabel` のみ。CF側も :462 で書き :569 で消すだけで、読んで分岐する箇所は無い
-- **`paymentFailed` の誤解除は実害小**（BACKLOG:133）→ **正しい**。用途は app-admin.js:171 の警告バナー1箇所のみで機能ゲートではない
-- **旧・招待コード方式の残骸に実害はない**（BACKLOG:217/228）→ **正しい**。`generateInviteCode`（app-main.js:855）は呼び出し元ゼロを再確認
-- **デモ(#/demo)の穴は塞がっている**→ **3つの出口すべてで確認**。①Firebase直書き: `fbSet`/`fbUpd` が DEMO_MODE で早期return（app-core.js:81-95）。helper を経由しない直接書き込み4箇所のうち `tokens` 削除（app-main.js:1137）と `subs` 削除（:1538）は `!DEMO_MODE` 済み、残り2箇所は無害 ②CF: `_callCF`（:955）が全 callable を拒否＋CF側 `isDemoShop` denylist（:123/:191/:599/:1029/:1098） ③外部遷移: `requestPlanAction`（app-admin.js:3954）と `openPortal`（:4026）。**`UpgradeModal` が独自 fetch を持たず `requestPlanAction` に一本化されている**ため、購入の入口が1つでデモ判定の書き漏れが構造的に起こらない
-
-**見つかった誤り（実害を主張する側）**
-
-BACKLOG の案A（閲覧専用端末の提出編集・削除UIを止める）に「`ownerReadOnly` は初期化前・認証遅延でも true になるため正当なオーナーが編集不能になる」とあったが、逆だった:
-- `ownerReadOnly` の**初期値は `false`**（app-main.js:531）
-- true にしうる唯一の useEffect は **`ready` で門番**（:1072-1079）
-- `setReady(true)` の4箇所のうち :103（Firebase未設定）・:119（DB初期化失敗）は `firebaseDB` 未代入で早期return。:183/:195 は `loadShops` 内で、到達経路は `proceed()` ＝ **`signInAnonymously()` 解決後**（:146-165）
-- よって**初期化前・認証遅延の間はバナーが出ずUIは編集可能**。バナーは claim が実際に失敗した後にだけ出る
-- 唯一 true になる残り経路「DBは生きているがAuth初期化失敗」（:167-170）では書き込みがルール（`auth != null`）で本当に拒否されるので**バナーは正しい**
-
-**スキャン結果（RULES.md 準拠・非回帰）**
-
-- `DEV_MODE`（app-core.js:12・式のまま）正常。`DEV_PLAN_OVERRIDE`（:125）正常
-- `subs` の `set()` 全体上書き **0件**／`accounts` 全件読み **0件**／`global/shops` 全件読み **0件**
-- `input`/`select`/`textarea` の `fontSize<16` **0件**
-- CF: `runWith` の secrets **6箇所**・`.delete()` 誤用 **0件**
-- index.html の読み込み順維持・SRI **11本**・`?v=20260812-474285f`（**develop と origin/main が完全一致＝#68 の修正は本番反映済み。#67 の🔴は解消**）
-- `npm test` **168件パス**／`npx eslint app-*.js` **0 errors 98 warnings**／`node --check functions/index.js` OK
-
-**今回のプロセス上のミス（隠さず記録）**: `authChecked` の調査中、`grep` が1件しか返さないのに `sed` の表示には `setAuthChecked` が見えたため、homoglyph混入・並行書き換え・出力改ざんを疑って4回のツール呼び出しを浪費した。**原因は大文字小文字で、`setAuthChecked` は `authChecked`（小文字a）を含まないというだけ**だった。異常を疑う前に自分のパターンを疑うべきだった。副産物として CLAUDE.md:142 の「`setAuthChecked` も含め参照ゼロ」が**不正確**と判明（setter は :119・:150・:169 で呼ばれる。ただし値を読む箇所はゼロなので「読まれないstate」という結論は不変）。
+- **🟢（ドキュメント訂正）BACKLOG が引用していた提出削除の行が、管理者経路ではなくスタッフURL経路だった**（BACKLOG.md「仕様判断が必要な挙動のまとめ」/ 実体は app-main.js:1533-1539 と :1161）
+  `app-main.js:1538` は `StaffView` の `onDeleteSub`＝**スタッフURL側**の削除経路で、管理者側の削除は `saveSubs`（:1161）の `flat[deletedId]=null`。この誤記のせいで、後述のより広い穴が「閲覧専用端末のバナー文言の食い違い」として過小に記述されていた。
+- **🟢（ドキュメント訂正）同項目の「ルール側では分離できない」が過大だった**
+  分離できないのは新規作成と更新だけで、**sub 全体の削除はルールで分離できる**（`.write` を `auth != null && (newData.exists() || <owner判定>)` にすれば、スタッフの正規フロー＝フィールド単位のパス書きを壊さずに全体削除だけをオーナー限定にできる）。**案Dとして BACKLOG に追加。**
+- **🟢（ドキュメント訂正）`accounts/{uid}/members` の書き込み元ゼロを確定**（未確認→確定）。`grep` 0件で、残っているのはルール定義（`database.rules.json:94` ほか）だけ。
+- **🟢（ドキュメント訂正）CLAUDE.md:142 の `authChecked`**（#69 申し送り）: setter は :119・:150・:169 で呼ばれる。「書かれるが読まれないstate」へ訂正（結論は不変）。
 
 ### 要確認（未修正）
 
-- **🟡 解約イベントだけが metadata でプランを判定している**（functions/index.js:319）→ **BACKLOG化済み（#68起票）**。Stripe実データが要るためループ内で決着不可・状態変化なし
-- **🟡 「閲覧専用」端末でも提出の書き換え・削除が通る**（database.rules.json:52 / app-main.js:1538）→ **BACKLOG化済み（#68起票・仕様判断）**。**今回、案Aの阻害要因とされた副作用が誤りと判明し、案A・案Bどちらも選べる状態になった**
-- **🟢 CLAUDE.md:142 の `setAuthChecked` 参照ゼロという記述が不正確**（実際は :119・:150・:169 で呼ばれる）
+- **🟡（新規）Pro/Premium 店舗では、スタッフURLを開いた誰でも他人の提出を削除できる**（app-staff.js:587-591 / app-main.js:1533-1539 / database.rules.json）→ **BACKLOG化済み**（既存「閲覧専用」項目と同根のため統合）
+  `SmModal`（app-staff.js:510）は **StaffView（:236・:257）と AdminView（app-admin.js:1867）の二重用途**で、削除ボタンは `plan==="pro"||plan==="premium"` かつ `onDeleteSub` が渡っていれば**提出者の全行に**出る。StaffView は `onDeleteSub` を渡し（app-main.js:1533-1539）`shops/{sid}/subs/{subId}` を直 `remove()`。ルールは `.write = auth != null && $shopId !== 'demo-toriMatsu-v1'` のみで匿名認証で通る。**スタッフ画面には本人性の概念が無い**（設計原則1）ため誰の行でも消せる。「✎ 修正」は通常の提出フローでも同じ結果になるので新規の能力ではないが、**削除はデータを消す唯一の経路**で VISION 原則5 に触れる。**未修正の理由＝仕様判断（条件B）**: スタッフ側の削除が意図した機能かで手当てが変わる（意図なら案D＋本人確認、非意図なら StaffView から `onDeleteSub` を外すだけで閉じる）。
+- **🟡 解約イベントだけが metadata でプランを判定している**（functions/index.js:319）→ BACKLOG化済み（#68起票）。Stripe実データが要るためループ内で決着不可・状態変化なし
 - **🟢 マイページに `ownerReadOnly` が渡っていない**（app-admin.js:208）。#68 から変化なし
-- 以下は #46〜#68 からの継続（状態変化なし）: 未claim店舗を誰でも自分の企業に取り込める根／`findActiveSubscription` の `|| live[0]`／`subscription_schedule.*` の4分岐が未購読／`planExpiry` のUTC基準計算／決済失敗フラグの誤解除／片側セルだけの日が0分／`purgeOldPeriods` のUTC日付／`getBreaksFor` の休憩判定／`generateInviteCode` のデッドコード／`urlLocked` が StaffView で未使用／`staffSectionOn` と `isCountExcluded`／SubsTab「月計」の別名重複／`sub.shopId` が死にフィールド／店舗削除が `global/shops/{id}` を消さない／`companyCodes` の TOCTOU／略称の先勝ち／期間作成の日付検証なし／提出状況ビューのセル編集／Excel analytics の数え方／スタッフ数バーのスペーサー／`breakTimes[].tags` の残留／別名解決順の不一致／`heatHours` が `adminRest` を無視／スタッフ削除時のキー残留
+- 以下は #46〜#69 からの継続（状態変化なし）: 未claim店舗を誰でも自分の企業に取り込める根／`findActiveSubscription` の `|| live[0]`／`subscription_schedule.*` の4分岐が未購読／`planExpiry` のUTC基準計算／決済失敗フラグの誤解除／片側セルだけの日が0分／`purgeOldPeriods` のUTC日付／`getBreaksFor` の休憩判定／`generateInviteCode` のデッドコード／`urlLocked` が StaffView で未使用／`staffSectionOn` と `isCountExcluded`／SubsTab「月計」の別名重複／`sub.shopId` が死にフィールド／店舗削除が `global/shops/{id}` を消さない／`companyCodes` の TOCTOU／略称の先勝ち／期間作成の日付検証なし／提出状況ビューのセル編集／Excel analytics の数え方／スタッフ数バーのスペーサー／`breakTimes[].tags` の残留／別名解決順の不一致／`heatHours` が `adminRest` を無視／スタッフ削除時のキー残留
+
+### 今回の対象と見つけ方
+
+#69 から develop に新規コミットは無く、develop は origin/main の1コミット先（記録コミットのみ）＝**配信コードは本番と一致**。コードが動いていない回なので、**#69 が次の手として絞った「BACKLOG の案A/B/C の但し書き＝その案を選ばない理由として機能している記述を1件ずつコードで裏取りする」を実行する回**とした。
+
+**照合した5件はすべて正しかった（否定的な結果として記録）**: `purgeOldPeriods` の列挙元が `/global/shops`（functions/index.js:844）／`carryAdminShiftFields` の status 復元条件（app-utils.js:194-201）／片側セルが0分・ヒートマップは補完・休みは0.5（app-utils.js:130・app-admin.js:775・:1103）／`linkStoreToCompany` の未claim分岐が管理キー不要（functions/index.js:1108）／`unlinkStoreFromCompany` が owners を無条件削除（:1131）。
+
+**当たった1件から本体の発見に届いた。** 「ルール側では分離できない」を確かめるため subs ルールを展開し、`.write` が `auth != null` だけだと確認 →「では削除だけ owner を要求できないか」を検討して**案Dが成立**（＝但し書きが過大）→ その裏取りに**subs を全体削除する経路を数え直した** → `remove()` の1本（:1538）が**想定と違い `StaffView` の prop だった** → `SmModal` の二重用途と、削除ボタンが提出者の全行に出ることに到達。
+
+**#59 の記述がこの経路を調査対象から外していた**: 「app-staff.js:236・257 スタッフ側 SmModal＝編集者がスタッフ本人なので正しい」。設計原則1よりスタッフ画面に本人性は存在しないので、この前提が誤りだった。
+
+### 検証したこと
+
+- `DEV_MODE`（app-core.js:12・式のまま）・`DEV_PLAN_OVERRIDE`（:125）正常
+- `subs` の `set()` 全体上書き **0件**／`accounts` 全件読み **0件**／`global/shops` 全件読み **0件**
+- `input`/`select`/`textarea` の `fontSize<16` **0件**（フォーム要素55箇所を精査。`AI` は `fontSize:16`・app-core.js:237。grep の `fontSize:14` 等は `var(--c-input)` を含む button/span/div の誤検出）
+- CF: `.delete()` 誤用 **0件**
+- 読み込み順（utils→core→staff→admin→main）維持・SRI **11本**・`?v=20260812-474285f`（develop と origin/main が一致）
+- `npm test` **168件パス**／`npx eslint app-*.js` **0 errors 98 warnings**／`node --check functions/index.js` OK
+- **未検証**: 上記🟡の実機E2E（スタッフURLで他人の行の削除ボタンを実際に押す）。コード経路とルールからの確定にとどまる。**ボタンが描画されるのは pro/premium のときだけ**（`DEV_PLAN_OVERRIDE` はクライアント表示を上書きするだけでルールには影響しない）。
 
 ### 総括
 
-**「実害はない」だけを疑うのでは足りない。「実害がある」も同じだけ疑う必要がある。**
+**「その案を選ばない理由」を疑う手は当たった。ただし当たり方は予想と違い、但し書きの誤りそれ自体ではなく、それを検証する過程で踏んだコードが本体だった。**
 
-#68 は「実害を否定する記述は『対応しない』判断の根拠だからコストが最大」と書き、否定形の照合を次の手に指定した。実行した結果、**否定形は4件すべて正しく**、見つかったのは**肯定形（「この案には副作用がある」）の誤り**だった。
+誤記は2つ重なっていた。①行番号の誤引用（管理者経路だと思っていた行がスタッフ経路）②「ルール側では分離できない」（＝手当ての選択肢を1つ消していた）。この2つが噛み合い、**影響範囲（誰が消せるか）と深刻度（バナーの文言か、データ喪失か）の両方が過小に見積もられ、3回連続で🟢相当として申し送られていた**。#69 の「記述が判断の入力である」のより強い形で、**誤った記述は判断を1つ誤らせるのではなく、周辺の見積もり全体を歪める**。
 
-構造は #68 と同一である。#68 の「押しても何も起きない」は『対応不要』を支えていた。今回の「初期化前にも true になる」は『案Aは採れない』を支えていた。どちらも**記述が判断の入力**であり、誤れば判断も誤る。違いは向きだけで、実害を否定しているか主張しているかは本質ではなかった。**照合すべきは『実害の有無を述べた記述』ではなく『何かをしない理由として使われている記述』である。**
-
-**次回の手を1つに絞る。** BACKLOG の各タスクにある**「案A／案B／案C」の但し書き**——「ただし〜という副作用がある」「〜のため難しい」——だけを集めて1件ずつコードで裏を取る。これらは全て「その案を選ばない理由」として機能しており、今回の1件と完全に同じ型である。仕様判断待ちの4項目それぞれに同種の但し書きが付いており、最も費用対効果が高い。
+**次回の手を1つに絞る。** 今回の穴は「管理者用に作った操作が、共用コンポーネント経由でスタッフ側にも渡っていた」という構造だった。`SmModal` が二重用途である以上**同じ構造の prop が他にもありうる**ので、**`app-main.js` が `StaffView` に渡している prop（:1503-1540）と、それが `SmModal`・`CellEditPanel` へ再転送されている先を1件ずつ突き合わせる**。今回の発見と同じ型で、コードだけで閉じられる。
 
 **CF側の宿題（#68 の2つ目）は今回も持ち越し。** `resolveShopMeta` の非対称は「コードの非対称は確実・発火は Stripe 次第」のままで、**実購入テストのダウングレード発火直後に subscription の `metadata.plan` を1回読む**だけで閉じられる。この紐付けは維持する。
 <!-- BUG_CHECK_LATEST_END -->
