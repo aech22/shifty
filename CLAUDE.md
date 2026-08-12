@@ -139,7 +139,7 @@ AI / AB / AD / AGray // スタイル定数
 | `currentShopId` | string | 現在アクティブな店舗ID |
 | `currentShopIdRef` | Ref | 非同期処理内で最新shopIdを参照するためのRef |
 | `authUser` | FirebaseUser\|null | Firebase Auth ユーザー（null=未ログイン） |
-| ~~`authChecked`~~ | bool | **未使用**（app-main.js:37 で宣言されているが `setAuthChecked` も含め参照ゼロ。Auth待ちのゲートには使われていない） |
+| ~~`authChecked`~~ | bool | **書かれるが読まれない**（app-main.js:37 で宣言。`setAuthChecked` は :119・:150・:169 で呼ばれるが、**値を読む箇所はゼロ**でAuth待ちのゲートには使われていない。#70でこの記述を訂正） |
 | `view` | "staff"\|"admin" | 現在の画面 |
 | `apid` | string | アクティブ期間ID |
 | `urlLocked` | bool | URLにtokenがある場合true（スタッフ専用モード） |
@@ -829,8 +829,14 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] **再提出で「休み」にしたとき、管理者の調整値をどうするか**（app-staff.js:167 `buildShift` → app-utils.js:190 `carryAdminShiftFields`）: 現状は `adjustedStart`/`adjustedEnd` は引き継がれるのに status は holiday のまま残り、「休みなのに調整時刻が入っている」状態になる。`adjustedStartFixed`（「締」）があるときだけ status を work に戻す実装。**案A: 休みにしたら調整値も消す／案B: 調整値があれば出勤扱いに戻す（「締」と同じ扱い）／案C: 現状維持**
 - [ ] **出勤・退勤の片方だけ入力された日を何時間として数えるか**（app-utils.js:128 `calcNetWorkMinutes` の `if(st&&en)`）: 現状は勤務時間・期間集計・週/月上限判定だけが**0分**。一方でヒートマップは「出勤のみ→ランチ終わりまで／退勤のみ→ディナー始まりから」と補完して出勤者に数え（app-admin.js:767-768）、休みカウントも0.5休みとして扱う（:1105-1106）。**上限超過の見落としにつながる**。**案A: ヒートマップと同じ補完ルールで時間を数える／案B: 0分のまま（現状維持）＋UIで「時間未確定」を明示**
 - [ ] **同名ポジションの登録を許すか**（#46から判断待ち）: 必要ポジション設定で同じ名前を複数登録できてしまう
-- [ ] **「閲覧専用」端末に提出データの書き換え・削除を許すか**（#68で検出。app-admin.js:164 のバナー / database.rules.json:52）: 管理キーを持たない端末は `ownerReadOnly=true` になり「この端末は管理者として登録されていません（閲覧のみ）」と表示されるが、**`subs` の書き込みルールは `auth != null` だけで owner を要求していない**（スタッフがURLから提出できる必要があるため、ルール側では分離できない）。そのため閲覧専用端末でも提出一覧・シフト作成タブのセル編集と提出削除（app-main.js:1538 の `subs/{subId}` 直 remove）が**実際にFirebaseへ通る**。バナーの文言と実際の権限が食い違っている。**案A: クライアント側で `ownerReadOnly` のとき提出の編集・削除UIを止める／案B: バナーの文言を実態に合わせる（「設定・期間・スタッフの変更のみ制限されています」）／案C: 現状維持**
+- [ ] **「閲覧専用」端末に提出データの書き換え・削除を許すか**（#68で検出。app-admin.js:164 のバナー / database.rules.json:52）: 管理キーを持たない端末は `ownerReadOnly=true` になり「この端末は管理者として登録されていません（閲覧のみ）」と表示されるが、**`subs` の書き込みルールは `auth != null` だけで owner を要求していない**（スタッフがURLから提出できる必要があるため、**新規作成と更新は**ルール側で分離できない）。そのため閲覧専用端末でも提出一覧・シフト作成タブのセル編集と提出削除（管理者側の削除経路は app-main.js:1161 `saveSubs` の `flat[deletedId]=null`）が**実際にFirebaseへ通る**。バナーの文言と実際の権限が食い違っている。**案A: クライアント側で `ownerReadOnly` のとき提出の編集・削除UIを止める／案B: バナーの文言を実態に合わせる（「設定・期間・スタッフの変更のみ制限されています」）／案C: 現状維持／案D: sub 全体の削除だけをルールでオーナー限定にする（下記の訂正2を参照）**
       - **⚠️ 2026-08-12 訂正（バグチェック#69）**: ここに案Aの副作用として書いてあった「`ownerReadOnly` は Firebase 初期化前や匿名認証の遅延でも true になるため、正当なオーナーが一時的に編集不能になる」は**誤り**だった。実際は逆で、初期値は `false`（app-main.js:531）であり、true にしうる唯一の useEffect は `ready` で門番されている（app-main.js:1072-1079）。`ready` を立てる4箇所のうち `firebaseDB` が生きているのは `loadShops` 内の2箇所（:183 / :195）だけで、そこへ到達する経路は `proceed()` ＝ **`signInAnonymously()` が解決した後**である（:146-165）。Firebase未設定（:103）・DB初期化失敗（:119）の経路では `firebaseDB` が未代入のため useEffect が早期returnする。つまり**「初期化前・認証遅延の間」はバナーが出ずUIは編集可能**で、バナーが出るのは実際に claim が失敗した後だけ。唯一 true になる残りの経路は「DBは生きているがAuth初期化に失敗した」場合（:167-170）だが、そのときは書き込みがルール（`auth != null`）で本当に拒否されるので、バナーは**正しい**。**したがって案Aにこの副作用は無く、案A採用を妨げる理由は現存しない。**
+      - **⚠️ 2026-08-12 訂正2（バグチェック#70）— この項目が「閲覧専用の管理者端末の話」として書かれていたのは実態の過小記述だった。**
+        引用していた `app-main.js:1538` は管理者の削除経路ではなく **`StaffView` の `onDeleteSub`＝スタッフURL側の削除経路**である（管理者側は `saveSubs`・:1161）。実際に起きているのは次のことで、影響範囲は閲覧専用端末より広い:
+        **`SmModal`（app-staff.js:510）は StaffView（:236・:257）と AdminView（app-admin.js:1867）の二重用途**で、削除ボタン（app-staff.js:587-591）は `plan==="pro"||plan==="premium"` かつ `onDeleteSub` が渡っていれば**提出者の全行に**描画される。StaffView は `onDeleteSub` を渡している（app-main.js:1533-1539・`shops/{sid}/subs/{subId}` を直 `remove()`）。スタッフ画面には**本人性の概念が無い**（設計原則1「スタッフに登録を求めない」）ため、**Pro/Premium 店舗では、スタッフURLを開いた誰でも他人の提出を削除できる**（確認ダイアログは相手の名前を出すだけで、権限は問わない）。ルール側も `auth != null` のみなので匿名認証で通る。
+        なお「✎ 修正」（他人の提出の編集）は、通常の提出フローでも名前を選んで出し直せば同じ結果になるため**新しい能力ではない**。一方 **削除はデータを消す唯一の経路**で、VISION 原則5「データを勝手に失わない」に触れる。
+        **案Dが成立する（「ルール側では分離できない」は過大だった）**: `subs/$subId` の `.write` を `auth != null && (newData.exists() || <owner判定>)` にすれば、**sub全体の削除だけ**をオーナー限定にできる。スタッフの正規フロー（新規提出・再提出）は `diffSubForFlatWrite` がフィールド単位のパスを書くだけで `newData.exists()` が真のまま通るため壊れない。分離できないのは create/update だけで、削除は分離できる。
+        **判断が必要な点: スタッフ側の削除ボタンは意図した機能か**（意図なら案D＋UIの本人確認、非意図なら StaffView から `onDeleteSub` を外すだけで閉じる）。バグチェックログ#59 は「app-staff.js:236・257 スタッフ側 SmModal＝編集者がスタッフ本人なので正しい」としてこの2経路を調査対象から外していたが、**その前提が誤りだった**。
 - [ ] 決まった項目はループが実装できるよう、このタスクに「決定: 案X」と追記する
 **影響範囲**: app-utils.js（`carryAdminShiftFields`・`calcNetWorkMinutes`）、app-staff.js（`buildShift`）、app-admin.js（集計・上限判定・ポジション設定UI）、tests/core.test.js
 **備考**: バグチェック #46・#52・#57・#64・#65 で継続検出・**条件B（仕様判断）に該当**。3項目とも「実装は難しくないが、正解が仕様側にしかない」。
@@ -844,11 +850,11 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - `generateInviteCode`（app-main.js:819・約35行）は**定義のみで呼び出し元ゼロ**。`inviteCodeDisplay`/`inviteCodeGenLoading`（:68/:69）の2 state も未参照
 - `joinByInviteCode` は**コード上に実体が存在しない**（CLAUDE.md には現行関数として載っていたため #66 で記述を是正済み）
 - `database.rules.json` は 2026-07-28 の締めルール切替で `inviteCodes` に `expiresAtMs`(数値)・`uid===auth.uid` の validate を**追加している**が、その時点で既に書き込む側は死んでいた
-- `accounts/{uid}/members`（招待コード方式の受け皿）も同様に書き込み元がない可能性が高い（未確認）
+- `accounts/{uid}/members`（招待コード方式の受け皿）は**書き込み元がゼロであることを確認済み**（2026-08-12・バグチェック#70。`grep -n "members" app-*.js functions/index.js` が0件で、ヒットするのは `database.rules.json:94` と `database.rules.tightened.json:94` のルール定義だけ）。`inviteCodes` と同じ「ルールだけが残っている」状態
 **受け入れ条件**:
 - [ ] 招待コード方式を**廃止するか復活させるか**を決める（**ユーザー判断**。企業コード＋パスワード方式で要件を満たせているなら廃止でよい）
 - [ ] 廃止する場合: `generateInviteCode` と2 state を削除し、`database.rules.json` / `database.rules.tightened.json` の `inviteCodes`（および使われていなければ `accounts/{uid}/members`）ルールを削除する。**ルールの削除はクライアント配信後**（デプロイ順序ルール厳守）
-- [ ] `accounts/{uid}/members` に実際の書き込み元があるかを grep で確認してから判断する
+- [x] `accounts/{uid}/members` に実際の書き込み元があるかを grep で確認してから判断する（2026-08-12 完了・書き込み元ゼロ＝ルールごと削除して差し支えない）
 **影響範囲**: app-main.js（`generateInviteCode`・state 2件）、database.rules.json / database.rules.tightened.json、CLAUDE.md（#66 で是正済み）
 **備考**: バグチェック#66（2026-08-10）で検出・**条件B（仕様判断）に該当**。実害ゼロのため優先度は🟢だが、「ルールだけが残っている機能」は監査のたびに再検出されるため一度決着させる価値がある。
 
