@@ -1356,7 +1356,7 @@ function App(){
 
         {/* Auth ログインボタン */}
         {authLoading
-          ?<div style={{textAlign:"center",color:"var(--c-text3)",padding:"20px 0",fontSize:14}}>⏳ 認証中...</div>
+          ?<div style={{textAlign:"center",color:"var(--c-text3)",padding:"20px 0",fontSize:14}}>認証中...</div>
           :emailMode
             ?<div>
               {/* メール認証フォーム */}
@@ -1430,7 +1430,7 @@ function App(){
               </button>
               <button onClick={()=>{setCompanyLoginMode(true);setAuthError("");}}
                 style={{width:"100%",padding:"14px",background:"rgba(255,255,255,.05)",border:"1px solid var(--c-border)",borderRadius:14,color:"var(--c-text2)",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:20,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
-                🏢 企業コードでログイン
+                企業コードでログイン
               </button>
               {authError&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:12,background:"rgba(255,71,87,.1)",padding:"8px 12px",borderRadius:8}}>{authError}</div>}
             </>
@@ -1486,12 +1486,12 @@ function App(){
   return(
     <div style={{fontFamily:"'Hiragino Sans','Yu Gothic',sans-serif",minHeight:"100vh",background:"var(--c-bg)"}}>
       {paymentToast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:2000,background:paymentToast==="success"?"#22C55E":"#6B7280",color:"white",padding:"13px 24px",borderRadius:12,fontWeight:700,fontSize:14,boxShadow:"0 4px 20px rgba(0,0,0,.3)",animation:"sI .3s"}}>
-        {paymentToast==="success"?"★ Proプランへのアップグレードが完了しました！":"決済がキャンセルされました"}
+        {paymentToast==="success"?"Proプランへのアップグレードが完了しました！":"決済がキャンセルされました"}
       </div>}
       {appToast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1000,background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:24,fontSize:14,fontWeight:500,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)",whiteSpace:"nowrap"}}>{appToast}</div>}
       {/* 同期ステータスバー（接続中以外のみ表示） */}
       {syncStatus!=="online"&&<div style={{background:syncStatus==="offline"?"#F59E0B":"#6B7280",color:"white",fontSize:11,fontWeight:700,textAlign:"center",padding:"4px 8px"}}>
-        {syncStatus==="offline"?"オフライン（再接続中...）":syncStatus==="no_config"?"Firebase未設定":"⏳ 接続中..."}
+        {syncStatus==="offline"?"オフライン（再接続中...）":syncStatus==="no_config"?"Firebase未設定":"接続中..."}
       </div>}
       {/* タブ: URLロック時はスタッフ画面のみ表示 */}
       {!urlLocked&&<div style={{display:"flex",position:"sticky",top:0,zIndex:100,boxShadow:"0 2px 8px rgba(0,0,0,.15)"}}>

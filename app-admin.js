@@ -1561,15 +1561,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           };
           expXl(period,subs,staffList,tt,shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings},adjResolver);
         }}
-          style={{padding:"6px 14px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+          style={{padding:"6px 14px",background:"#1D6F42",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           Excel出力
         </button>}
         {period&&isPremium&&<button onClick={()=>setPdfModal(true)}
-          style={{padding:"6px 14px",background:"linear-gradient(135deg,#b91c1c,#7f1d1d)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+          style={{padding:"6px 14px",background:"#C0392B",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           PDF出力
         </button>}
         {isPremium&&<button onClick={handleSaveAll}
-          style={{padding:"6px 14px",background:"linear-gradient(135deg,#34a853,#1e7e34)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+          style={{padding:"6px 14px",background:"var(--c-accent)",border:"none",borderRadius:7,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           保存
         </button>}
       </div>
@@ -1593,12 +1593,12 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
             <div style={{fontSize:16,fontWeight:700,marginBottom:6,color:"var(--c-text)"}}>PDF出力</div>
             <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:16}}>出力する内容を選択してください</div>
             <button disabled={pdfBusy} onClick={()=>exportPdf("shift")}
-              style={{width:"100%",padding:"12px",marginBottom:10,background:"linear-gradient(135deg,#b91c1c,#7f1d1d)",border:"none",borderRadius:9,color:"white",fontSize:14,fontWeight:700,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
+              style={{width:"100%",padding:"12px",marginBottom:10,background:"#C0392B",border:"none",borderRadius:9,color:"white",fontSize:14,fontWeight:700,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
               {pdfBusy?"生成中...":"シフト"}
               <div style={{fontSize:11,fontWeight:400,marginTop:2,opacity:0.85}}>シフト表のみ（Excelと同じ形式）</div>
             </button>
             <button disabled={pdfBusy} onClick={()=>exportPdf("all")}
-              style={{width:"100%",padding:"12px",marginBottom:hasSplit?10:14,background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",borderRadius:9,color:"white",fontSize:14,fontWeight:700,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
+              style={{width:"100%",padding:"12px",marginBottom:hasSplit?10:14,background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:9,color:"var(--c-text)",fontSize:14,fontWeight:700,cursor:pdfBusy?"default":"pointer",opacity:pdfBusy?0.6:1}}>
               {pdfBusy?"生成中...":"全データ"}
               <div style={{fontSize:11,fontWeight:400,marginTop:2,opacity:0.85}}>シフト表・カウント・ヒートマップ・勤務時間集計</div>
             </button>
@@ -1958,7 +1958,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
                   </div>
                   <div style={{display:"flex",gap:5,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
                     <button onClick={e=>{e.stopPropagation();setEid(p.id);}} style={{padding:"5px 9px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:6,color:"var(--c-text2)",fontSize:11,cursor:"pointer"}}>編集</button>
-                    <button onClick={e=>{e.stopPropagation();expXl(p,subs,staffList,tt,settings.xlShopName||shopName,{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings});}} style={{padding:"5px 9px",background:"linear-gradient(135deg,#c45e1f,#a34d19)",border:"none",borderRadius:6,color:"white",fontSize:11,fontWeight:700,cursor:"pointer"}}>Excel</button>
+                    <button onClick={e=>{e.stopPropagation();expXl(p,subs,staffList,tt,settings.xlShopName||shopName,{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings});}} style={{padding:"5px 9px",background:"#1D6F42",border:"none",borderRadius:6,color:"white",fontSize:11,fontWeight:700,cursor:"pointer"}}>Excel</button>
                     <button onClick={e=>{e.stopPropagation();if(!confirm("削除しますか？"))return;onSave(periods.filter(pp=>pp.id!==p.id));tt("削除しました");}} style={AD}>削除</button>
                   </div>
                 </div>
@@ -3187,7 +3187,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
         </div>
         {open&&(
           <div style={{borderTop:"1px solid var(--c-border2)",padding:"12px"}}>
-            {!meta?<div style={{fontSize:12,color:"var(--c-text3)"}}>⏳ 読み込み中...</div>:(<>
+            {!meta?<div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div>:(<>
               {/* 店舗略称 */}
               <AL>店舗略称（シフト作成タブでヘルプ入力に使用・複数登録可）</AL>
               <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
@@ -3268,7 +3268,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
             <button onClick={()=>{
               const v=companyInfo.code;const copy=()=>{const el=document.createElement("textarea");el.value=v;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 企業コードをコピーしました");};
               if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(v).then(()=>tt("✓ 企業コードをコピーしました")).catch(copy);}else copy();
-            }} style={{padding:"6px 12px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>📋 コピー</button>
+            }} style={{padding:"6px 12px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>コピー</button>
           </div>
           {/* パスワード変更 */}
           {coPwEdit?(
@@ -3378,7 +3378,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
     ls(THEME_KEY,pref);
     setThemePref(pref);
     applyTheme(pref);
-    tt(pref==="light"?"☀️ ライトモード":(pref==="dark"?"ダークモード":"↺ システム設定に合わせる"));
+    tt(pref==="light"?"ライトモード":(pref==="dark"?"ダークモード":"↺ システム設定に合わせる"));
   };
   const linkedIds=(authUser?.providerData||[]).map(p=>p.providerId);
   const handleLinkProvider=async(type)=>{
@@ -3692,7 +3692,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
     {(plan==="pro"||plan==="premium")&&<AC title="期間の単位（プリセット）">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>期間を新規作成するときのプリセット選択肢を切り替えます。</div>
       <div style={{display:"flex",gap:8}}>
-        {[["2week","2週間（前半／後半）"],["1month","️ 1ヶ月"]].map(([val,label])=>{
+        {[["2week","2週間（前半／後半）"],["1month","1ヶ月"]].map(([val,label])=>{
           const sel=(settings.periodUnit||"2week")===val;
           return(<button key={val} onClick={()=>onSave({...settings,periodUnit:val})}
             style={{flex:1,padding:"10px 8px",borderRadius:10,border:`2px solid ${sel?"var(--c-accent)":"var(--c-border)"}`,
@@ -3706,7 +3706,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
 
     <AC title="テーマ設定">
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        {[["auto","↺ 自動（システム設定）",null],["light","☀️ ライト","light"],["dark","ダーク","dark"]].map(([key,label,val])=>{
+        {[["auto","↺ 自動（システム設定）",null],["light","ライト","light"],["dark","ダーク","dark"]].map(([key,label,val])=>{
           const sel=themePref===val;
           return(<button key={key} onClick={()=>changeTheme(val)}
             style={{flex:1,padding:"10px 8px",borderRadius:10,border:`2px solid ${sel?"var(--c-accent)":"var(--c-border)"}`,
@@ -3723,7 +3723,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
         アカウントを登録すると、端末やブラウザが変わっても同じ店舗にアクセスできます。
       </div>
       {acctLoading
-        ?<div style={{textAlign:"center",color:"var(--c-text3)",padding:"12px 0",fontSize:14}}>⏳ 認証中...</div>
+        ?<div style={{textAlign:"center",color:"var(--c-text3)",padding:"12px 0",fontSize:14}}>認証中...</div>
         :acctEmailMode
           ?<div>
             <div style={{display:"flex",alignItems:"center",marginBottom:14}}>
@@ -4139,13 +4139,14 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
             ここに重ねて出さない（同じ操作の入口が2つあると、押した側によって
             新規契約とプラン変更に分岐して二重課金の温床になる） */}
         {plan==="free"&&<div style={{marginTop:4}}>
-          <button onClick={()=>onUpgrade&&onUpgrade({type:"staff",limit:lim.staff,plan})}
-            style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,var(--c-accent),#e05a1a)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
-            {"★ Proにアップグレード（500円/月）"}
-          </button>
+          {/* 主導線はPremium。同じ強さの塗りを2つ並べるとどちらを選ぶべきか読めないため、Proは枠線に落とす */}
           <button onClick={()=>onUpgrade&&onUpgrade({type:"edit",plan})}
-            style={{width:"100%",padding:"13px",background:"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
-            {"★★ Premiumにアップグレード（2,980円/月）"}
+            style={{width:"100%",padding:"13px",background:"var(--c-accent)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
+            Premium にする<span style={{fontWeight:400,fontSize:13,opacity:.92,marginLeft:6}}>月 2,980円</span>
+          </button>
+          <button onClick={()=>onUpgrade&&onUpgrade({type:"staff",limit:lim.staff,plan})}
+            style={{width:"100%",padding:"13px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:11,color:"var(--c-text2)",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>
+            Pro にする<span style={{fontWeight:400,fontSize:13,color:"var(--c-text3)",marginLeft:6}}>月 500円</span>
           </button>
         </div>}
         {plan==="pro"&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6,marginTop:4,textAlign:"center"}}>プランの変更は上の「プランを変更」からお手続きください</div>}
@@ -4157,7 +4158,7 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead>
               <tr>
-                {[["","機能"],["Free","無料"],["★ Pro","500円/月"],["★★ Premium","2,980円/月"]].map(([icon,price],i)=>(
+                {[["","機能"],["Free","無料"],["Pro","500円/月"],["Premium","2,980円/月"]].map(([icon,price],i)=>(
                   <th key={i} style={{padding:"8px 6px",textAlign:"center",borderBottom:"2px solid var(--c-border)",color:"var(--c-text2)",fontWeight:700,background:
                     (i===1&&plan==="free")||(i===2&&plan==="pro")||(i===3&&plan==="premium")
                       ?"rgba(248,112,54,.1)":"transparent",
@@ -4221,7 +4222,7 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
         </div>
         <button onClick={openPortal} disabled={portalLoading}
           style={{width:"100%",padding:"13px",background:portalLoading?"#999":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:11,color:"var(--c-text2)",fontSize:14,fontWeight:600,cursor:portalLoading?"not-allowed":"pointer"}}>
-          {portalLoading?"⏳ 読み込み中...":"請求・解約の管理（Stripeポータル）"}
+          {portalLoading?"読み込み中...":"請求・解約の管理（Stripeポータル）"}
         </button>
         <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8,textAlign:"center"}}>外部のStripeサイトに移動します</div>
       </AC>}
@@ -4286,8 +4287,8 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
 
   const proLabel=currentPlan==="pro"?"Pro（現在）":"Pro";
   const planRows=isEditType
-    ?[["Free","無料","スタッフ20名 / 期間1件"],[proLabel,"500円/月","スタッフ・期間 無制限＋並べ替え・テンプレート・名前色"],["★ Premium","2,980円/月","Proの全機能＋シフト作成・調整・休憩/属性管理・PDF出力"]]
-    :[["Free","無料","スタッフ20名 / 期間1件"],["★ Pro","500円/月","スタッフ・期間 無制限＋並べ替え・テンプレート・名前色"],["Premium","2,980円/月","Proの全機能＋シフト作成・調整・休憩/属性管理・PDF出力"]];
+    ?[["Free","無料","スタッフ20名 / 期間1件"],[proLabel,"500円/月","スタッフ・期間 無制限＋並べ替え・テンプレート・名前色"],["Premium","2,980円/月","Proの全機能＋シフト作成・調整・休憩/属性管理・PDF出力"]]
+    :[["Free","無料","スタッフ20名 / 期間1件"],["Pro","500円/月","スタッフ・期間 無制限＋並べ替え・テンプレート・名前色"],["Premium","2,980円/月","Proの全機能＋シフト作成・調整・休憩/属性管理・PDF出力"]];
 
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20,animation:"fI .2s"}} onClick={onClose}>
@@ -4320,15 +4321,15 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
         {done&&<div style={{color:"#15803D",fontSize:13,fontWeight:700,textAlign:"center",marginBottom:10,background:"rgba(34,197,94,.12)",padding:"10px",borderRadius:8}}>✓ {done}</div>}
         {/* 変更が完了したら購入ボタンは出さない（同じ操作を二度実行させない） */}
         {done?null:isEditType?(
-          <button onClick={()=>checkout("premium")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="premium"?"var(--c-text3)":"linear-gradient(135deg,#7c3aed,#5b21b6)",border:"2px solid rgba(124,58,237,.3)",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
-            {loading==="premium"?"⏳ 処理中...":"★ Premiumにアップグレード（2,980円/月）"}
+          <button onClick={()=>checkout("premium")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="premium"?"var(--c-text3)":"var(--c-accent)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
+            {loading==="premium"?"処理中...":<React.Fragment>Premium にする<span style={{fontWeight:400,fontSize:13,opacity:.92,marginLeft:6}}>月 2,980円</span></React.Fragment>}
           </button>
         ):(
-          <button onClick={()=>checkout("pro")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="pro"?"var(--c-text3)":"linear-gradient(135deg,var(--c-accent),#e05a1a)",border:"2px solid rgba(248,112,54,.3)",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
-            {loading==="pro"?"⏳ 処理中...":"★ Proにアップグレード（500円/月）"}
+          <button onClick={()=>checkout("pro")} disabled={!!loading} style={{width:"100%",padding:"13px",background:loading==="pro"?"var(--c-text3)":"var(--c-accent)",border:"none",borderRadius:11,color:"white",fontSize:15,fontWeight:700,cursor:loading?"not-allowed":"pointer",marginBottom:12}}>
+            {loading==="pro"?"処理中...":<React.Fragment>Pro にする<span style={{fontWeight:400,fontSize:13,opacity:.92,marginLeft:6}}>月 500円</span></React.Fragment>}
           </button>
         )}
-        <button onClick={onClose} style={{width:"100%",padding:"11px",background:done?"linear-gradient(135deg,var(--c-accent),#e05a1a)":"var(--c-input)",border:done?"none":"1px solid var(--c-border)",borderRadius:11,color:done?"white":"var(--c-text3)",fontSize:done?15:13,fontWeight:done?700:400,cursor:"pointer"}}>{done?"閉じる":"今はしない"}</button>
+        <button onClick={onClose} style={{width:"100%",padding:"11px",background:done?"var(--c-accent)":"var(--c-input)",border:done?"none":"1px solid var(--c-border)",borderRadius:11,color:done?"white":"var(--c-text3)",fontSize:done?15:13,fontWeight:done?700:400,cursor:"pointer"}}>{done?"閉じる":"今はしない"}</button>
       </div>
     </div>
   );
