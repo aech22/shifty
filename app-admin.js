@@ -146,8 +146,9 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
             {[["periods","期間"],["staff","スタッフ"],["candidates","候補"],["submissions","提出一覧"],["edit","シフト作成"],["company","企業連携"],["mypage","マイページ"],["settings","設定"]].map(([id,l])=>(
               <button key={id} onClick={()=>setTab(id)} style={{padding:"7px 13px",background:tab===id?"var(--c-accent)":"var(--c-input)",border:`1px solid ${tab===id?"var(--c-accent)":"var(--c-border)"}`,borderRadius:8,color:tab===id?"white":"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{l}</button>
             ))}
-            {/* タブは画面の移動、ログアウトは実行。同じ形で並べるとタブに見えるので右端の文字リンクにする */}
-            <button onClick={logout} style={{padding:"7px 4px",marginLeft:"auto",background:"none",border:"none",color:"var(--c-text3)",fontSize:12,textDecoration:"underline",cursor:"pointer"}}>ログアウト</button>
+            {/* ログアウトはここに置かない。タブは画面の移動、ログアウトは実行で種類が違ううえ、
+                確認ダイアログなしで即実行されるため誤操作を招く。
+                導線は店舗名ボタン→ドロップダウン内のログアウト（確認あり・店舗ごと）に一本化する */}
           </div>
         </div>
       </div>
