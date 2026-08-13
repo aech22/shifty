@@ -157,7 +157,11 @@
       }
     }
     *{box-sizing:border-box;margin:0;padding:0;}
-    body{font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Yu Gothic',sans-serif;background:var(--c-bg);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;text-size-adjust:100%;}
+    /* color を明示しない要素はブラウザ既定の黒になり、ダークでは背景に沈む（シフト作成タブの
+       ヒートマップ・集計表の見出しが 1.44:1 で読めなかった）。既定をテーマの文字色にする。
+       ライトの --c-text は #1A1A2E で既定の黒とほぼ同じなので、ライトの見た目は変わらない。
+       固定の明るい背景を持つ要素は color を自前で持つこと（app-staff.js の提出完了パネル） */
+    body{font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Yu Gothic',sans-serif;background:var(--c-bg);color:var(--c-text);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;text-size-adjust:100%;}
     /* iOS Safariのsafe-area対応（ノッチ・ホームバー） */
     body{padding-bottom:env(safe-area-inset-bottom,0);}
     /* iOS Safariのposition:sticky対応 */

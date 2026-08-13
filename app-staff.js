@@ -237,7 +237,9 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       <div style={{maxWidth:560,margin:"0 auto",padding:"50px 20px",textAlign:"center"}}>
         <div style={{fontSize:68,animation:"bI .5s"}}>✓</div>
         <div style={{fontSize:22,fontWeight:700,color:"var(--c-accent)",marginTop:14,marginBottom:8}}>提出完了！</div>
-        <div style={{background:"#FEF0E8",border:"1px solid #FDDCC7",borderRadius:12,padding:"14px 20px",marginBottom:24,fontSize:14,lineHeight:1.9,display:"inline-block",textAlign:"left"}}>
+        {/* 背景がテーマ非依存の固定色なので文字色も自前で持つ。body の color:var(--c-text) を
+            継承するとダークで薄い文字＋明るい背景になって読めなくなる */}
+        <div style={{background:"#FEF0E8",border:"1px solid #FDDCC7",borderRadius:12,padding:"14px 20px",marginBottom:24,fontSize:14,lineHeight:1.9,display:"inline-block",textAlign:"left",color:"#1A1A2E"}}>
           <strong style={{color:"var(--c-accent)"}}>{ap?.label}</strong><br/>
           {ap?.startDate?.replace(/-/g,"/")} 〜 {ap?.endDate?.replace(/-/g,"/")}<br/>
           出勤予定：<strong style={{color:"var(--c-accent)"}}>{wk}日</strong>　休み：{dates.length-wk}日
