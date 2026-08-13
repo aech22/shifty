@@ -146,7 +146,8 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
             {[["periods","期間"],["staff","スタッフ"],["candidates","候補"],["submissions","提出一覧"],["edit","シフト作成"],["company","企業連携"],["mypage","マイページ"],["settings","設定"]].map(([id,l])=>(
               <button key={id} onClick={()=>setTab(id)} style={{padding:"7px 13px",background:tab===id?"var(--c-accent)":"var(--c-input)",border:`1px solid ${tab===id?"var(--c-accent)":"var(--c-border)"}`,borderRadius:7,color:tab===id?"white":"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{l}</button>
             ))}
-            <button onClick={logout} style={{padding:"7px 12px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:7,color:"#FF4757",fontSize:12,cursor:"pointer"}}>ログアウト</button>
+            {/* タブは画面の移動、ログアウトは実行。同じ形で並べるとタブに見えるので右端の文字リンクにする */}
+            <button onClick={logout} style={{padding:"7px 4px",marginLeft:"auto",background:"none",border:"none",color:"var(--c-text3)",fontSize:12,textDecoration:"underline",cursor:"pointer"}}>ログアウト</button>
           </div>
         </div>
       </div>
@@ -2985,12 +2986,16 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
             ?<tr><td colSpan={4} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
             :fil.map(sub=>{const resolvedName=resolveAlias(sub.staffName,staffAliases);const ds=Object.keys(sub.shifts||{}).sort(),wkDays=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work");const att=wkDays.reduce((acc,d)=>{const sh=sub.shifts[d];const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;return acc+(((st&&en)||(sh.extraStart&&sh.extraEnd))?shiftBandInfo(sh).attendance:1);},0);const attLabel=`${att}日`;const at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const subPeriod=periods.find(p=>p.id===sub.periodId);const hasRealUpdate=subHasRealUpdate(sub,subPeriod?.deadlineDate);
               const staffType=isPremium?(((settings.staffAttributes)||{})[resolvedName]||"parttime"):null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly||typeLim.customDays)){const weekMap={};const monthMap={};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreaksFor(settings,d,resolvedName,sh),getOT(resolvedName,settings,sh));if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));weekMap[fd(mon)]=(weekMap[fd(mon)]||0)+nm;monthMap[d.slice(0,7)]=(monthMap[d.slice(0,7)]||0)+nm;});if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly){const wkKeys=Object.keys(weekMap).sort();for(let i=0;i<wkKeys.length;i+=2){const tot=(weekMap[wkKeys[i]]||0)+(weekMap[wkKeys[i+1]]||0);if(tot>typeLim.biweekly*60)biweeklyVio=true;}}if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});if(typeLim.customDays&&typeLim.customHours){const sortedDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();for(let i=0;i<sortedDs.length;i++){const start=pd(sortedDs[i]);let tot=0;for(let j=i;j<sortedDs.length;j++){const diffD=(pd(sortedDs[j])-start)/86400000;if(diffD>=typeLim.customDays)break;const sh=sub.shifts[sortedDs[j]];tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,sortedDs[j],resolvedName,sh),getOT(resolvedName,settings,sh));}if(tot>typeLim.customHours*60){customVio=true;break;}}}}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;
-              return(<tr key={sub.id} style={hasVio?{background:"rgba(255,71,87,.12)"}:{}}>
+              {/* 超過行は塗りつぶさず左に線を引く。塗ると行内の他の情報が読みにくくなる */}
+              return(<tr key={sub.id} style={hasVio?{boxShadow:"inset 2px 0 0 #FF4757"}:{}}>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text)",fontWeight:600}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                   <span>{resolvedName}</span>
-                  {hasRealUpdate&&<span style={{fontSize:10,background:"rgba(245,158,11,.2)",color:"#F59E0B",border:"1px solid rgba(245,158,11,.3)",padding:"1px 6px",borderRadius:4,fontWeight:700}}>変更あり</span>}
-                  {hasVio&&<span style={{fontSize:10,background:"rgba(255,71,87,.15)",color:"#FF4757",border:"1px solid rgba(255,71,87,.3)",padding:"1px 6px",borderRadius:4,fontWeight:700,whiteSpace:"nowrap"}}>{dailyVio?"1日超過":""}{dailyVio&&weeklyVio?" / ":""}{weeklyVio?"週超過":""}</span>}
+                  {/* 「変更あり」と「別名を登録」は管理者の対応が要る項目。同じアクセント塗りに揃えて
+                      「オレンジの箱がある行＝手を動かす必要がある行」という規則を1つだけ作る */}
+                  {hasRealUpdate&&<span style={{fontSize:10,background:"var(--c-accent)",color:"#fff",padding:"2px 7px",borderRadius:4,fontWeight:700}}>変更あり</span>}
+                  {/* 超過は異常だが「今すぐ操作する」項目ではないので、要対応バッジとは別の見え方にする */}
+                  {hasVio&&<span style={{fontSize:11,color:"#FF4757",fontWeight:700,whiteSpace:"nowrap"}}>{dailyVio?"1日超過":""}{dailyVio&&weeklyVio?" / ":""}{weeklyVio?"週超過":""}</span>}
                   {isPro&&isUnregistered(sub.staffName)&&(
                     linkTarget?.subName===sub.staffName
                       ?<div style={{display:"flex",alignItems:"center",gap:4,marginTop:4,width:"100%"}}>
@@ -3002,8 +3007,8 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
                         <button onClick={()=>setLinkTarget(null)} style={{background:"none",border:"none",color:"var(--c-text4)",cursor:"pointer",fontSize:12}}>✕</button>
                       </div>
                       :<button onClick={()=>setLinkTarget({subName:sub.staffName})}
-                        style={{fontSize:10,background:"rgba(255,71,87,.08)",color:"#FF4757",border:"1px solid rgba(255,71,87,.25)",padding:"1px 7px",borderRadius:4,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
-                        未登録 → 別名登録
+                        style={{fontSize:10,background:"var(--c-accent)",color:"#fff",border:"none",padding:"2px 8px",borderRadius:4,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                        別名を登録
                       </button>
                   )}
                 </div>
@@ -3627,7 +3632,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       </div>
       <div style={{display:"flex",gap:6,marginBottom:14}}>
         {[["lunch","ランチ"],["dinner","ディナー"]].map(([id,label])=>(
-          <button key={id} onClick={()=>setReqMeal(id)} style={{padding:"6px 12px",background:reqMeal===id?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:7,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{label}</button>
+          <button key={id} onClick={()=>setReqMeal(id)} style={{padding:"6px 12px",background:reqMeal===id?"var(--c-accent)":"var(--c-input)",border:`1px solid ${reqMeal===id?"var(--c-accent)":"var(--c-border2)"}`,borderRadius:7,color:reqMeal===id?"#fff":"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{label}</button>
         ))}
       </div>
       {(()=>{
@@ -3706,9 +3711,9 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
         {[["auto","↺ 自動（システム設定）",null],["light","ライト","light"],["dark","ダーク","dark"]].map(([key,label,val])=>{
           const sel=themePref===val;
           return(<button key={key} onClick={()=>changeTheme(val)}
-            style={{flex:1,padding:"10px 8px",borderRadius:10,border:`2px solid ${sel?"var(--c-accent)":"var(--c-border)"}`,
-              background:sel?"rgba(248,112,54,.1)":"var(--c-input)",color:sel?"var(--c-accent)":"var(--c-text2)",
-              fontSize:13,fontWeight:sel?700:500,cursor:"pointer",whiteSpace:"nowrap"}}>
+            style={{flex:1,padding:"10px 8px",borderRadius:7,border:`1px solid ${sel?"var(--c-accent)":"var(--c-border2)"}`,
+              background:sel?"var(--c-accent)":"var(--c-input)",color:sel?"#fff":"var(--c-text2)",
+              fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
             {label}
           </button>);
         })}

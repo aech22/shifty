@@ -344,7 +344,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                 {[["work","出勤"],["holiday","休み"]].map(([v,l])=>{
                   const a=st.status===v,iW=v==="work";
                   return(<div key={v} onClick={()=>upd(ds,{status:v,start:iW?(st.start||cds[0]?.start||"18:00"):undefined,end:iW?(st.end||cds[0]?.end||"23:00"):undefined})}
-                    style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:10,cursor:"pointer",border:`2px solid ${a?(iW?"var(--c-accent)":"#FF4757"):"var(--c-border)"}`,background:a?(iW?"#FEF0E8":"#FFF0F1"):"var(--c-input)",color:a?(iW?"#c45b1a":"#FF4757"):"var(--c-text3)",fontSize:14,fontWeight:600,transition:"all .15s"}}>
+                    style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:10,cursor:"pointer",border:`2px solid ${a?(iW?"var(--c-accent)":"var(--c-danger)"):"var(--c-border)"}`,background:a?(iW?"var(--c-accent)":"var(--c-danger)"):"var(--c-input)",color:a?"#fff":"var(--c-text3)",fontSize:14,fontWeight:a?700:600,transition:"all .15s"}}>
                     <div style={{width:15,height:15,borderRadius:"50%",border:"2px solid currentColor",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{a&&<div style={{width:7,height:7,borderRadius:"50%",background:"currentColor"}}/>}</div>{l}
                   </div>);
                 })}
@@ -480,7 +480,7 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
         <div style={{display:"flex",gap:8,marginBottom:14}}>
           {[["work","出勤"],["holiday","休み"]].map(([v,l])=>(
             <button key={v} onClick={()=>handleStatus(v)}
-              style={{flex:1,padding:"10px 0",border:`2px solid ${status===v?(v==="work"?"var(--c-accent)":"#FF4757"):"var(--c-border)"}`,borderRadius:10,background:status===v?(v==="work"?"#FEF0E8":"#FFF0F1"):"var(--c-input)",color:status===v?(v==="work"?"#c45b1a":"#FF4757"):"var(--c-text3)",fontWeight:700,fontSize:14,cursor:"pointer"}}>{l}</button>
+              style={{flex:1,padding:"10px 0",border:`2px solid ${status===v?(v==="work"?"var(--c-accent)":"var(--c-danger)"):"var(--c-border)"}`,borderRadius:10,background:status===v?(v==="work"?"var(--c-accent)":"var(--c-danger)"):"var(--c-input)",color:status===v?"#fff":"var(--c-text3)",fontWeight:700,fontSize:14,cursor:"pointer"}}>{l}</button>
           ))}
         </div>
         {status==="work"&&<>
