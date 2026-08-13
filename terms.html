@@ -6,20 +6,35 @@
   <title>利用規約 | Shifty</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <style>
+    /* アプリ(index.html)と同じ変数名・同じ値。アプリからリンクで飛んだとき
+       ダークのまま白く光らないようにする */
+    :root{
+      --c-bg:#F0F2F5; --c-card:#FFFFFF; --c-border:#E5E7EB;
+      --c-text:#1A1A2E; --c-text2:#374151; --c-text3:#6B7280; --c-text4:#9CA3AF;
+      --c-accent:#f87036;
+    }
+    @media (prefers-color-scheme: dark){
+      :root{
+        --c-bg:#0F172A; --c-card:#1E293B; --c-border:#334155;
+        --c-text:#F1F5F9; --c-text2:#CBD5E1; --c-text3:#94A3B8; --c-text4:#64748B;
+      }
+    }
     *{box-sizing:border-box;margin:0;padding:0;}
-    body{font-family:'Hiragino Sans','Yu Gothic',sans-serif;background:#f9fafb;color:#1f2937;line-height:1.8;}
-    header{background:#f87036;padding:16px 24px;display:flex;align-items:center;gap:12px;}
-    header a{color:white;text-decoration:none;font-size:20px;font-weight:800;letter-spacing:.5px;}
-    header span{color:rgba(255,255,255,.7);font-size:14px;}
+    body{font-family:'Hiragino Sans','Yu Gothic',sans-serif;background:var(--c-bg);color:var(--c-text2);line-height:1.8;}
+    /* 規約ページで最も強い視覚要素がブランド帯である必要はない。主役は条文 */
+    header{background:var(--c-card);border-bottom:1px solid var(--c-border);padding:16px 24px;display:flex;align-items:center;gap:12px;}
+    header a{color:var(--c-text);text-decoration:none;font-size:20px;font-weight:800;letter-spacing:.5px;}
+    header span{color:var(--c-text3);font-size:14px;}
     .container{max-width:720px;margin:40px auto;padding:0 20px 80px;}
-    h1{font-size:24px;font-weight:800;margin-bottom:8px;color:#111827;}
-    .date{font-size:13px;color:#6b7280;margin-bottom:40px;}
-    h2{font-size:16px;font-weight:700;color:#111827;margin:32px 0 12px;padding-left:12px;border-left:3px solid #f87036;}
-    p{font-size:14px;color:#374151;margin-bottom:10px;}
-    ul{font-size:14px;color:#374151;padding-left:20px;margin-bottom:10px;}
+    h1{font-size:24px;font-weight:800;margin-bottom:8px;color:var(--c-text);}
+    .date{font-size:13px;color:var(--c-text3);margin-bottom:40px;}
+    /* 条文は「第1条」と番号で既に構造化されているので、左バーは情報を足していない */
+    h2{font-size:16px;font-weight:700;color:var(--c-text);margin:32px 0 12px;}
+    p{font-size:14px;color:var(--c-text2);margin-bottom:10px;}
+    ul{font-size:14px;color:var(--c-text2);padding-left:20px;margin-bottom:10px;}
     ul li{margin-bottom:6px;}
-    a{color:#f87036;}
-    footer{text-align:center;padding:24px;font-size:12px;color:#9ca3af;}
+    a{color:var(--c-accent);}
+    footer{text-align:center;padding:24px;font-size:12px;color:var(--c-text4);}
   </style>
 </head>
 <body>

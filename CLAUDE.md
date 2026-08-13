@@ -84,7 +84,10 @@ developブランチ・mainブランチのどちらにチェックアウトして
 ├── database.rules.json ← Firebase セキュリティルール（現行・移行猶予あり）
 ├── database.rules.tightened.json ← 締めルール（猶予終了後に差し替え。BACKLOG参照）
 ├── CNAME               ← shiftyshifty.app
-├── privacy.html / terms.html / ogp.html ← 静的ページ（プライバシー・規約・OGP）
+├── privacy.html / terms.html ← 静的ページ（プライバシー・規約）
+├── ogp.png             ← OGP画像（実配信物。index.html の og:image が参照）
+├── generate-ogp.js     ← ogp.png の生成元。画像を変えるときはこれを編集して再生成する
+│                          （@napi-rs/canvas が必要。フォントは Hiragino Sans を明示すること）
 ├── blog/               ← SEO記事HTML（shift-kanri-muryou.html 等）
 ├── x-bot/              ← X（Twitter）自動投稿bot（独立Node環境・別途node_modules）
 └── scripts/            ← 運用スクリプト（stripe-setup / seed_shops / list_shops / copy-prod-to-dev / obsidian-sync 等。service-account-*.jsonはgitignore済み）

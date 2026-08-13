@@ -23,7 +23,7 @@
       font-size: 16px;
     }
 
-    a { color: #2563eb; text-decoration: none; }
+    a { color: #f87036; text-decoration: none; }
     a:hover { text-decoration: underline; }
 
     /* Header */
@@ -39,7 +39,7 @@
       align-items: center;
       gap: 4px;
     }
-    .back-link:hover { color: #2563eb; text-decoration: none; }
+    .back-link:hover { color: #f87036; text-decoration: none; }
 
     /* Article layout */
     .article-wrap {
@@ -70,8 +70,6 @@
       font-weight: 700;
       color: #111827;
       margin: 48px 0 16px;
-      padding-left: 12px;
-      border-left: 4px solid #2563eb;
     }
 
     h3 {
@@ -89,23 +87,21 @@
     }
     li { margin-bottom: 6px; }
 
-    /* Callout box */
+    /* Callout box — 要点。囲みを2種類使うとどちらが重要か読めなくなるため、
+       要点は左の線1本だけで示し、悩みの列挙（.pain-box）は本文の一部として控えめにする */
     .callout {
-      background: #eff6ff;
-      border: 1px solid #bfdbfe;
-      border-radius: 8px;
-      padding: 20px 24px;
+      border-left: 2px solid #f87036;
+      padding: 2px 0 2px 16px;
       margin: 24px 0;
     }
     .callout p { margin-bottom: 0; }
-    .callout strong { color: #1d4ed8; }
+    .callout strong { color: #111827; }
 
     /* Pain box */
     .pain-box {
-      background: #fff7ed;
-      border: 1px solid #fed7aa;
-      border-radius: 8px;
-      padding: 20px 24px;
+      border-left: 1px solid #e5e7eb;
+      color: #6b7280;
+      padding: 2px 0 2px 16px;
       margin: 24px 0;
     }
 
@@ -121,7 +117,7 @@
       flex-shrink: 0;
       width: 32px;
       height: 32px;
-      background: #2563eb;
+      background: #f87036;
       color: #fff;
       font-weight: 700;
       font-size: 15px;
@@ -155,42 +151,40 @@
     }
     .feature-table tr:last-child td { border-bottom: none; }
 
-    /* CTA */
+    /* CTA — グラデーションは同系色の濃淡で差がほぼ見えず、塗る理由がないため廃止 */
     .cta-block {
-      background: linear-gradient(135deg, #1d4ed8, #2563eb);
-      border-radius: 12px;
-      padding: 36px 28px;
+      border-top: 1px solid #e5e7eb;
+      padding: 32px 0 0;
       text-align: center;
       margin: 48px 0 32px;
-      color: #fff;
     }
     .cta-block h2 {
       border: none;
       padding: 0;
-      color: #fff;
+      color: #111827;
       margin: 0 0 12px;
       font-size: 22px;
     }
     .cta-block p {
-      color: rgba(255,255,255,0.85);
+      color: #6b7280;
       margin-bottom: 24px;
       font-size: 15px;
     }
     .cta-btn {
       display: inline-block;
-      background: #fff;
-      color: #2563eb;
+      background: #f87036;
+      color: #fff;
       font-weight: 700;
       font-size: 17px;
       padding: 14px 36px;
-      border-radius: 9999px;
+      border-radius: 8px;
       transition: opacity 0.15s;
     }
     .cta-btn:hover { opacity: 0.9; text-decoration: none; }
     .cta-note {
       margin-top: 12px;
       font-size: 13px;
-      color: rgba(255,255,255,0.7);
+      color: #9ca3af;
       margin-bottom: 0;
     }
 
@@ -216,7 +210,7 @@
 
   <h1>飲食店のシフト管理を無料でデジタル化する方法<br>【導入5分・登録不要】</h1>
 
-  <p>「今月のシフト、LINEで送ってー」と呼びかけて、返信が来るたびにExcelに手打ちしている——そんな作業に毎月何時間使っていますか？</p>
+  <p>「今月のシフト、LINEで送ってー」と呼びかけて、返信が来るたびにExcelに手打ちしている。この作業に毎月何時間使っていますか？</p>
 
   <p>飲食店の店長やオーナーが最も時間を取られる事務作業のひとつが、シフトの収集と集計です。返信を催促する手間、書き間違い、集計ミス。人数が増えるほど負担は重くなります。</p>
 
