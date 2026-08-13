@@ -234,7 +234,7 @@ function parseShopCode(raw){
 const APP_CHECK_SITE_KEY = DEV_MODE ? "" : "";
 
 // ===== 共通スタイル定数 =====
-const AI={width:"100%",padding:"11px 14px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:10,color:"var(--c-text)",fontSize:16,outline:"none"};
-const AB={padding:"10px 18px",background:"var(--c-accent)",border:"none",borderRadius:9,color:"white",fontSize:14,fontWeight:700,cursor:"pointer"};
-const AD={padding:"6px 11px",background:"rgba(255,71,87,.1)",border:"1px solid rgba(255,71,87,.25)",borderRadius:6,color:"#EF4444",fontSize:12,fontWeight:600,cursor:"pointer"};
-const AGray={padding:"10px 16px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:9,color:"var(--c-text2)",fontSize:14,cursor:"pointer"};
+const AI={width:"100%",padding:"11px 14px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none"};
+const AB={padding:"10px 18px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:14,fontWeight:700,cursor:"pointer"};
+const AD={padding:"6px 11px",background:"rgba(255,71,87,.1)",border:"1px solid rgba(255,71,87,.25)",borderRadius:4,color:"#EF4444",fontSize:12,fontWeight:600,cursor:"pointer"};
+const AGray={padding:"10px 16px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text2)",fontSize:14,cursor:"pointer"};
