@@ -128,8 +128,8 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                         {shops.map(sh=>(
                           <div key={sh.id} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
                             <span style={{flex:1,fontSize:13,color:"var(--c-text)"}}>{sh.name}</span>
-                            <button onClick={()=>{const name=prompt("店舗名を変更",sh.name);if(!name)return;saveShops(shops.map(s=>s.id===sh.id?{...s,name:name.trim()}:s));tt("✓ 変更しました");}} style={{padding:"4px 8px",background:"var(--c-bg)",border:"none",borderRadius:6,fontSize:11,cursor:"pointer"}}>✏️</button>
-                            {shops.length>1&&<button onClick={async()=>{if(!confirm(`「${sh.name}」を削除しますか？`))return;if(authUser&&onUnlinkShop){await onUnlinkShop(sh.id);}else{const ns=shops.filter(s=>s.id!==sh.id);saveShops(ns);if(sh.id===currentShopId){setCurrentShopId(ns[0].id);startSubscriptions(ns[0].id,ns);}tt("削除しました");}}} style={{padding:"4px 8px",background:"rgba(255,71,87,.1)",border:"none",borderRadius:6,fontSize:11,color:"#FF4757",cursor:"pointer"}}>🗑️</button>}
+                            <button onClick={()=>{const name=prompt("店舗名を変更",sh.name);if(!name)return;saveShops(shops.map(s=>s.id===sh.id?{...s,name:name.trim()}:s));tt("✓ 変更しました");}} style={{padding:"4px 8px",background:"var(--c-bg)",border:"none",borderRadius:6,fontSize:11,color:"var(--c-text3)",cursor:"pointer"}}>名前</button>
+                            {shops.length>1&&<button onClick={async()=>{if(!confirm(`「${sh.name}」を削除しますか？`))return;if(authUser&&onUnlinkShop){await onUnlinkShop(sh.id);}else{const ns=shops.filter(s=>s.id!==sh.id);saveShops(ns);if(sh.id===currentShopId){setCurrentShopId(ns[0].id);startSubscriptions(ns[0].id,ns);}tt("削除しました");}}} style={{padding:"4px 8px",background:"none",border:"none",borderRadius:6,fontSize:11,color:"#FF4757",cursor:"pointer"}}>削除</button>}
                           </div>
                         ))}
                       </div>}
@@ -152,7 +152,6 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
       </div>
       <div style={{maxWidth:900,margin:"0 auto",padding:"20px 14px 60px"}}>
         {DEMO_MODE&&<div style={{background:"rgba(248,112,54,.1)",border:"1px solid rgba(248,112,54,.35)",borderRadius:10,padding:"14px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
-          <span style={{fontSize:20}}>👀</span>
           <div style={{flex:1,minWidth:200}}>
             <div style={{fontSize:13,fontWeight:700,color:"#C2410C",marginBottom:2}}>これはデモです（サンプル店舗・全機能が使えるPremium表示）</div>
             <div style={{fontSize:12,color:"#9A3412"}}>自由に触って試せます。入力内容は保存されず、ページを再読み込みすると元に戻ります。</div>
@@ -162,14 +161,12 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           <a href={window.location.pathname+"?start=1"} style={{padding:"10px 18px",background:"var(--c-accent)",color:"#fff",borderRadius:8,fontSize:14,fontWeight:700,textDecoration:"none",whiteSpace:"nowrap"}}>無料で始める</a>
         </div>}
         {ownerReadOnly&&<div style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:18}}>🔒</span>
           <div style={{flex:1}}>
             <div style={{fontSize:13,fontWeight:700,color:"#B45309",marginBottom:2}}>この端末は管理者として登録されていません（閲覧のみ）</div>
             <div style={{fontSize:12,color:"#92400E"}}>設定・シフトの変更を行うには、登録済みの端末の「設定タブ → 管理コード」を「店舗名ボタン → コードで追加」に入力してください。</div>
           </div>
         </div>}
         {paymentFailed&&<div style={{background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.3)",borderRadius:10,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
-          <span style={{fontSize:18}}>⚠️</span>
           <div style={{flex:1}}>
             <div style={{fontSize:13,fontWeight:700,color:"#DC2626",marginBottom:2}}>決済に失敗しました</div>
             <div style={{fontSize:12,color:"#B91C1C"}}>登録中のカードに問題が発生しています。マイページ → 請求管理から支払い方法を更新してください。</div>
@@ -4070,7 +4067,6 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
       {/* プランカード */}
       <AC title="現在のプラン">
         <div style={{display:"flex",alignItems:"center",gap:16,padding:"8px 0 16px"}}>
-          <div style={{fontSize:48}}>{plan==="premium"?"★★":plan==="pro"?"★":""}</div>
           <div style={{flex:1}}>
             <div style={{fontSize:22,fontWeight:800,color:"var(--c-text)"}}>{PLAN_LABELS[plan]||"Free"}プラン</div>
             {expiryLabel&&<div style={{fontSize:12,color:"var(--c-text3)",marginTop:3}}>{expiryLabel}</div>}
@@ -4294,7 +4290,6 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20,animation:"fI .2s"}} onClick={onClose}>
       <div style={{background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:20,width:"100%",maxWidth:400,padding:"28px 24px",animation:"sI .2s",boxShadow:"0 8px 40px rgba(0,0,0,.3)"}} onClick={e=>e.stopPropagation()}>
         <div style={{textAlign:"center",marginBottom:20}}>
-          <div style={{fontSize:44,marginBottom:10}}>{isEditType?"✏️":"🚀"}</div>
           <div style={{fontSize:17,fontWeight:700,color:"var(--c-text)",marginBottom:8}}>{m.title}</div>
           <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8}}>{m.desc}</div>
           <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6}}>{m.next}</div>
@@ -4305,7 +4300,7 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
             <div key={label} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid var(--c-border)"}}>
               <span style={{fontSize:13,color:"var(--c-text2)",fontWeight:600,minWidth:72}}>{label}</span>
               <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{desc}</span>
-              <span style={{fontSize:12,color:"#F59E0B",fontWeight:700,whiteSpace:"nowrap"}}>{price}</span>
+              <span style={{fontSize:13,color:"var(--c-text)",fontWeight:600,whiteSpace:"nowrap",fontVariantNumeric:"tabular-nums"}}>{price}</span>
             </div>
           ))}
         </div>

@@ -260,7 +260,6 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
 
         {/* 名前カード */}
         <div style={{background:"var(--c-card)",borderRadius:14,boxShadow:"0 1px 4px var(--c-shadow)",marginBottom:14,padding:"16px 18px",display:"flex",alignItems:"center",gap:14}}>
-          <div style={{width:48,height:48,borderRadius:"50%",background:"#FEF0E8",border:"2px solid #FDDCC7",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}></div>
           <div style={{flex:1,minWidth:0}} ref={nameWrapRef}>
             {editN?(
               <div style={{position:"relative"}}>
@@ -390,7 +389,6 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
         {/* コメント欄 */}
         <div style={{background:"var(--c-card)",borderRadius:14,boxShadow:"0 1px 4px var(--c-shadow)",marginBottom:10,overflow:"hidden"}}>
           <div style={{padding:"12px 16px 10px",borderBottom:"1px solid var(--c-border)",display:"flex",alignItems:"center",gap:8}}>
-            <span style={{fontSize:16}}></span>
             <span style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>コメント・備考（任意）</span>
           </div>
           <div style={{padding:"14px 16px"}}>
@@ -416,7 +414,6 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       {/* 確認モーダル */}
       {conf&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20,animation:"fI .2s"}}>
         <div style={{background:"var(--c-card)",borderRadius:20,width:"100%",maxWidth:340,padding:"26px 22px 20px",boxShadow:"0 8px 32px rgba(0,0,0,.14)",animation:"sI .2s"}}>
-          <div style={{fontSize:36,textAlign:"center",marginBottom:10}}></div>
           <div style={{fontSize:17,fontWeight:700,textAlign:"center",marginBottom:8}}>シフトを提出しますか？</div>
           <div style={{background:"var(--c-bg)",borderRadius:10,padding:"11px 13px",marginBottom:18,fontSize:13,lineHeight:1.9,color:"var(--c-text3)"}}>
             <strong style={{color:"var(--c-text)"}}>氏名</strong>：{name}<br/>
@@ -629,7 +626,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                         <div style={{fontSize:11,fontWeight:700,color:"var(--c-text)",whiteSpace:"nowrap"}}>{s.start||"--:--"}</div>
                         <div style={{fontSize:9,color:"var(--c-text4)"}}>〜</div>
                         <div style={{fontSize:11,fontWeight:700,color:"var(--c-text)",whiteSpace:"nowrap"}}>{s.end||"--:--"}</div>
-                      </>):(<div style={{fontSize:13,color:"var(--c-border2)"}}></div>)}
+                      </>):null}
                     </div>
                   );
                 })}
