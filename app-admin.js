@@ -1754,7 +1754,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           {/* ===時間帯別出勤人数 (サイドパネル非表示分・絞り込み時の相手側は常にここに表示) === */}
           {(kitBelow||hallBelow)&&<div style={{marginBottom:16}}>
             <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>時間帯別出勤人数</div>
-            <div style={{display:"flex",flexDirection:"row",gap:10}}>
+            {/* flexWrap は必須: 子は minWidth:200 で縮まないため、幅が 410px(200*2+gap) を
+                下回るモバイルでは折り返さないと横並びのまま親をはみ出し、ページ全体が横スクロールする
+                （デスクトップ幅では2つとも収まるので折り返さず見た目は不変。実測: バグチェック#73） */}
+            <div style={{display:"flex",flexDirection:"row",flexWrap:"wrap",gap:10}}>
               {kitBelow&&<HeatTable label={hasSplit?"キッチン":""} section="kit" maxC={kitMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>}
               {hallBelow&&<HeatTable label="ホール" section="hall" maxC={hallMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>}
             </div>
