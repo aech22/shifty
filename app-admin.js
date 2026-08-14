@@ -3607,6 +3607,15 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             Object.keys(sp).forEach(name=>{
               newSP[name]={lunch:cut(sp[name]&&sp[name].lunch,!stillExists),dinner:cut(sp[name]&&sp[name].dinner,!stillExists)};
             });
+            // この × ボタンは 13.2x14px（Apple HIG の最小タップ領域 44x44 の約1割の面積）で誤タップしやすいのに、
+            // 上のカスケードで必要ポジション設定（全日付区分×ランチ/ディナー×3セクション）とスタッフの
+            // ポジション（全スタッフ）から同名を巻き添えで消す。期間削除・提出削除・店舗削除と同じく確認を挟み、
+            // かつ何件が道連れになるかを提示する（バグチェック#74）。
+            const cntRP=o=>Object.values(o||{}).reduce((n,dt)=>n+Object.values(dt||{}).reduce((m,meal)=>m+Object.values(meal||{}).reduce((k,arr)=>k+(Array.isArray(arr)?arr.length:0),0),0),0);
+            const cntSP=o=>Object.values(o||{}).reduce((n,st)=>n+Object.values(st||{}).reduce((m,arr)=>m+(Array.isArray(arr)?arr.length:0),0),0);
+            const lostRP=cntRP(rp)-cntRP(newRP), lostSP=cntSP(sp)-cntSP(newSP);
+            const also=[lostRP>0?`必要ポジション設定の枠 ${lostRP}件`:"",lostSP>0?`スタッフのポジション ${lostSP}件`:""].filter(Boolean).join("・");
+            if(!confirm(`ポジション「${p}」を削除しますか？${also?`\n${also}も一緒に削除されます。`:""}`))return;
             onSave({...settings,positions:newPositions,requiredPositions:newRP,staffPositions:newSP});
           };
           return(
