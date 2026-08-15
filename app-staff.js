@@ -625,9 +625,11 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                       onMouseLeave={e=>{if(!isEditing)e.currentTarget.style.background="transparent";}}>
                       {iw?(<>
                         <div style={{fontSize:10,fontWeight:700,background:"#FEF0E8",color:"#d4601a",padding:"1px 5px",borderRadius:4,border:"1px solid #FDDCC7"}}>出勤</div>
-                        <div style={{fontSize:11,fontWeight:700,color:"var(--c-text)",whiteSpace:"nowrap"}}>{s.start||"--:--"}</div>
+                        {/* 編集中は背景が固定の明色(#FEF0E8)になるため、文字色もテーマ非依存の暗色に固定する。
+                            ライトの var(--c-text) は #1A1A2E と同値なので見た目は変わらない。 */}
+                        <div style={{fontSize:11,fontWeight:700,color:isEditing?"#1A1A2E":"var(--c-text)",whiteSpace:"nowrap"}}>{s.start||"--:--"}</div>
                         <div style={{fontSize:9,color:"var(--c-text4)"}}>〜</div>
-                        <div style={{fontSize:11,fontWeight:700,color:"var(--c-text)",whiteSpace:"nowrap"}}>{s.end||"--:--"}</div>
+                        <div style={{fontSize:11,fontWeight:700,color:isEditing?"#1A1A2E":"var(--c-text)",whiteSpace:"nowrap"}}>{s.end||"--:--"}</div>
                       </>):null}
                     </div>
                   );
