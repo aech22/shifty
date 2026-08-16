@@ -1961,7 +1961,9 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
                   <div style={{display:"flex",gap:5,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
                     <button onClick={e=>{e.stopPropagation();setEid(p.id);}} style={{padding:"5px 9px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:4,color:"var(--c-text2)",fontSize:11,cursor:"pointer"}}>編集</button>
                     <button onClick={e=>{e.stopPropagation();expXl(p,subs,staffList,tt,settings.xlShopName||shopName,{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings});}} style={{padding:"5px 9px",background:"#1D6F42",border:"none",borderRadius:4,color:"white",fontSize:11,fontWeight:700,cursor:"pointer"}}>Excel</button>
-                    <button onClick={e=>{e.stopPropagation();if(!confirm("削除しますか？"))return;onSave(periods.filter(pp=>pp.id!==p.id));tt("削除しました");}} style={AD}>削除</button>
+                    {/* 期間の削除は savePeriods（app-main.js:1132）でこの期間のsubsと tokens/{urlToken} まで
+                        連鎖削除される。件数は上の「提出：N件」と同じ式で数える（食い違うとバグチェック#56 と同じ混乱になる）。 */}
+                    <button onClick={e=>{e.stopPropagation();const sc=subs.filter(s=>s.periodId===p.id&&s.source!=="grid").length;if(!confirm(`「${p.label}」を削除しますか？\n${sc>0?`提出済みのシフト${sc}件も一緒に削除されます。\n`:""}スタッフ用URLも無効になります。この操作は取り消せません。`))return;onSave(periods.filter(pp=>pp.id!==p.id));tt("削除しました");}} style={AD}>削除</button>
                   </div>
                 </div>
                 {/* URLシェア */}
