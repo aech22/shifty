@@ -3046,7 +3046,11 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)"}}><div><span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 8px",borderRadius:4,fontSize:12,fontWeight:600}}>{attLabel}</span></div></td>
               <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",whiteSpace:"nowrap"}}>
                 <button onClick={()=>setDet({...sub,staffName:resolvedName})} style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:4,color:"var(--c-text2)",fontSize:12,cursor:"pointer",marginRight:4}}>詳細</button>
-                {isPro&&<button onClick={()=>{if(!confirm("削除しますか？"))return;onSave(subs.filter(s=>s.id!==sub.id),sub.id);tt("削除しました");}} style={AD}>削除</button>}
+                {/* 一覧の行なので、対象名を出さないと隣の「詳細」と押し間違えても気づけない（gap 4px・#74実測）。
+                    saveSubs は deletedId を受けると flat[deletedId]=null で sub 全体を消す＝archived退避なし。
+                    ただし本人が再提出できるので「元に戻せない」ではなく再提出が要ると書く。
+                    スタッフ側の同じ操作（app-staff.js:589）は既に対象名を出している */}
+                {isPro&&<button onClick={()=>{if(!confirm(`「${resolvedName}」の提出を削除しますか？${ds.length>0?`\n${ds.length}日分の希望が消えます（戻すには本人の再提出が必要です）。`:""}`))return;onSave(subs.filter(s=>s.id!==sub.id),sub.id);tt("削除しました");}} style={AD}>削除</button>}
               </td>
             </tr>);})}
           </tbody>
