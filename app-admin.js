@@ -2311,7 +2311,21 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     ph("staff_added",{staff_count:staffList.filter(n=>!isSpacer(n)).length+1});
     onSave([...staffList,newName.trim()]);setNewName("");tt(`✓ ${newName.trim()} を追加しました`);
   };
-  const del=i=>{const a=[...staffList];a.splice(i,1);onSave(a);tt("削除しました");};
+  // 他の破壊的操作（:132 店舗 / :1966 期間 / :3032 提出 / :3618 ポジション）は全て confirm で対象を示すのに、
+  // スタッフ削除だけが素通りだった。ここは1行に 別名/ポジション/編集/削除 が並ぶ最も密なリスト（バグチェック#74:
+  // スタッフタブは43要素中39個が44px未満）で、押した瞬間に対象がシフト作成の列（gridStaff・:1060）と
+  // ヒートマップ（heatData・:762）から消える。件数は「提出済みのシフト」の語に合わせて source:"grid"
+  // （管理者がセルに直接入力した分）を除く＝提出一覧・SmModal と同じ式にする（食い違うとバグチェック#56 の再来）。
+  // 提出データ自体は del では消えない（onSave は staffList のみ）ため「残る」と明示する。取り消し不能とは書かない
+  // ——同名で追加し直せば設定マップもsubsも復帰し、失われるのは並び順だけである。
+  const del=i=>{
+    const n=staffList[i];
+    if(!isSpacer(n)){
+      const sc=subs.filter(s=>s.staffName===n&&s.source!=="grid").length;
+      if(!confirm(`「${n}」を削除しますか？${sc>0?`\n提出済みのシフト${sc}件は削除されません（提出一覧とExcelには残ります）。`:""}`))return;
+    }
+    const a=[...staffList];a.splice(i,1);onSave(a);tt("削除しました");
+  };
 const dragIdxRef=useRef(null);
   const longPressTimer=useRef(null);
   const dragActiveRef=useRef(false);
