@@ -394,7 +394,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         const abbrs=aS?Object.values(aS.val()||{}).filter(v=>typeof v==="string"):[];
         const workMap=new Map();
         // 出勤・退勤が両方揃ったシフトを優先（同名の部分データsubに完全データが隠されるのを防ぐ）
-        const hasBoth=sh=>!!((sh.adjustedStart??sh.start)&&(sh.adjustedEnd??sh.end));
+        // 管理者が休み希望(y/休)を入れたセルは effShiftStart/End が "" を返す＝勤務時間なしとして扱う。
+        // 生の adjustedStart??start を読むと、休みマーク済みのセルが「両方入っている」と判定され、
+        // 実際に勤務している別subより優先されてしまう（判定を app-utils の定義に一本化する）。
+        const hasBoth=sh=>!!(effShiftStart(sh)&&effShiftEnd(sh));
         Object.values((sS&&sS.val())||{}).forEach(sub=>{
           if(!sub||!sub.staffName||!sub.shifts)return;
           Object.entries(sub.shifts).forEach(([d,sh])=>{
@@ -856,7 +859,9 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         for(const osid of wps){
           const osh=companyData[osid].workMap.get(name+"|"+date);
           if(!osh)continue;
-          const os=timeToMin(osh.adjustedStart??osh.start),oe=timeToMin(osh.adjustedEnd??osh.end);
+          // 他店舗側で休み希望マークが付いたセルは勤務ではないので重複エラーにしない。
+          // effShiftStart/End が "" を返し timeToMin(null相当)→null になるため直後の continue で除外される。
+          const os=timeToMin(effShiftStart(osh)),oe=timeToMin(effShiftEnd(osh));
           if(os===null||oe===null)continue;
           if(os<e&&oe>s){errs[`${name}|${date}`]=companyData[osid].name;break;}
         }

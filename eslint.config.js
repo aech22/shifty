@@ -139,6 +139,8 @@ const sharedGlobals = {
   setAdminKeyLS: "writable",
   setCookie: "writable",
   shiftBandInfo: "writable",
+  effShiftStart: "writable",
+  effShiftEnd: "writable",
   HEAT_BAND_SPLIT_MIN: "writable",
   resolveBandValues: "writable",
   noteToHeatSection: "writable",
