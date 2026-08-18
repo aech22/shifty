@@ -2319,12 +2319,17 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   // スタッフタブは43要素中39個が44px未満）で、押した瞬間に対象がシフト作成の列（gridStaff・:1060）と
   // ヒートマップ（heatData・:762）から消える。件数は「提出済みのシフト」の語に合わせて source:"grid"
   // （管理者がセルに直接入力した分）を除く＝提出一覧・SmModal と同じ式にする（食い違うとバグチェック#56 の再来）。
+  // 別名ぶんも必ず数える: registerAlias（:2969）は sub.staffName を書き換えず staffAliases に登録するだけなので、
+  // 別名で出された提出は staffName に別名が入ったまま残る。一方 提出一覧（:3010）は resolveAlias 済みの名前で表示し、
+  // Excel（expXl・:2172）も別名を登録名の列に出す。名前一致だけで数えると、この文が名指しした2つの出力に
+  // 残るものを数え落とす（全提出が別名ぶんなら 0件 になり警告文ごと消える）。他4箇所（app-staff.js:519 /
+  // :2172 / :3069 / :552-559）は既に別名込みで数えており、ここだけが名前一致だった。
   // 提出データ自体は del では消えない（onSave は staffList のみ）ため「残る」と明示する。取り消し不能とは書かない
   // ——同名で追加し直せば設定マップもsubsも復帰し、失われるのは並び順だけである。
   const del=i=>{
     const n=staffList[i];
     if(!isSpacer(n)){
-      const sc=subs.filter(s=>s.staffName===n&&s.source!=="grid").length;
+      const sc=subs.filter(s=>(s.staffName===n||(staffAliases[n]||[]).includes(s.staffName))&&s.source!=="grid").length;
       if(!confirm(`「${n}」を削除しますか？${sc>0?`\n提出済みのシフト${sc}件は削除されません（提出一覧とExcelには残ります）。`:""}`))return;
     }
     const a=[...staffList];a.splice(i,1);onSave(a);tt("削除しました");
