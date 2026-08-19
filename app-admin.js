@@ -2990,7 +2990,13 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   // 既に「各出勤日を起点にN日間を前方に合算する」スライディング窓で正しく書かれており、biweekly はその
   // 5分前に書かれたまま更新されていなかった（8334f8e 23:24 → 8501732 23:29）。窓の実装を _windowVio に
   // 一本化して biweekly を days=14 で通す。以後どちらかだけが直る形にはならない。
-  const shiftByStaffDate=useMemo(()=>{const m=new Map();subs.forEach(s=>{if(!s||!s.shifts)return;Object.keys(s.shifts).forEach(d=>{const sh=s.shifts[d];if(sh&&sh.status==="work")m.set(s.staffName+"|"+d,sh);});});return m;},[subs]);
+  // 重複キー（同じ staffName|date が複数のsubにある）は「最初の1件」を採る。期間の重複は PEF に
+  // バリデーションが無いため作成でき、重なった日に両方の期間へ提出があるとキーが衝突する。
+  // 同じ形のマップが2つあり、ShiftEditTab の workShiftByStaffDate（:490-500）は !m.has(k) で最初を、
+  // subsByKey（:485）も「重複時はfindと同じ最初の1件を採用」とコメントで明示しているのに、
+  // ここだけ無条件 set ＝最後の1件だった（実測: 重なった週の勤務時間が シフト作成タブ 25:00 に対し
+  // 提出一覧 65:00 と食い違い、週上限40hの判定が画面ごとに反転した）。衝突が無い通常時の挙動は不変。
+  const shiftByStaffDate=useMemo(()=>{const m=new Map();subs.forEach(s=>{if(!s||!s.shifts)return;Object.keys(s.shifts).forEach(d=>{const sh=s.shifts[d];const k=s.staffName+"|"+d;if(sh&&sh.status==="work"&&!m.has(k))m.set(k,sh);});});return m;},[subs]);
   const _shiftAt=(name,date)=>{const ex=shiftByStaffDate.get(name+"|"+date);if(ex)return ex;for(const a of(staffAliases[name]||[])){const s=shiftByStaffDate.get(a+"|"+date);if(s)return s;}return undefined;};
   const _workDatesOf=name=>{const names=[name,...(staffAliases[name]||[])];const out=new Set();shiftByStaffDate.forEach((_v,k)=>{const i=k.lastIndexOf("|");if(names.includes(k.slice(0,i)))out.add(k.slice(i+1));});return[...out].sort();};
   const registerAlias=(subName,registeredName)=>{
