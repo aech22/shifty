@@ -994,7 +994,7 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
     const allCands=[...(settings.candidates||[]),...Object.values(settings.weekdayCandidates||{}).flat(),...Object.values(settings.dateCandidates||{}).flat()].filter(c=>!c.closed&&c.start&&c.end);
     allCands.forEach(c=>{const sh=parseInt(c.start);const eh=parseInt(c.end);for(let h=sh;h<=eh;h++)hrs.add(h);});
     // 実際の提出・入力値から時間帯を収集（退勤延長分・「締」等の追加出勤(extraStart/extraEnd)も含める）
-    subs.filter(s=>s.periodId===selPid).forEach(sub=>{Object.values(sub.shifts||{}).forEach(sh=>{if(sh.status!=="work")return;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(st)hrs.add(parseInt(st));if(en){hrs.add(parseInt(en));const ot=getOT(sub.staffName,settings,sh);if(ot>0){const[h,m]=en.split(":").map(Number);hrs.add(Math.floor((h*60+m+ot)/60));}}if(sh.extraStart)hrs.add(parseInt(sh.extraStart));if(sh.extraEnd)hrs.add(parseInt(sh.extraEnd));});});
+    subs.filter(s=>s.periodId===selPid).forEach(sub=>{Object.values(sub.shifts||{}).forEach(sh=>{if(sh.status!=="work")return;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(st)hrs.add(parseInt(st));if(en){hrs.add(parseInt(en));const ot=getOT(resolveAlias(sub.staffName,staffAliases),settings,sh);if(ot>0){const[h,m]=en.split(":").map(Number);hrs.add(Math.floor((h*60+m+ot)/60));}}if(sh.extraStart)hrs.add(parseInt(sh.extraStart));if(sh.extraEnd)hrs.add(parseInt(sh.extraEnd));});});
     // heatEdits（blur確定値）からも収集
     Object.entries(heatEdits).forEach(([,v])=>{const{numeric}=extractNote(v);const p=parseTime(numeric);if(p)hrs.add(parseInt(p));});
     // 「締」等の固定シフトコマンドが有効な店舗では、その追加出勤時間帯も列として必ず含める
