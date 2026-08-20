@@ -390,8 +390,15 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
       Promise.all([
         firebaseDB.ref(`shops/${os.id}/settings/shopAbbrs`).once("value").catch(()=>null),
         firebaseDB.ref(`shops/${os.id}/subs`).once("value").catch(()=>null),
-      ]).then(([aS,sS])=>{
+        firebaseDB.ref(`shops/${os.id}/settings/staffAliases`).once("value").catch(()=>null),
+      ]).then(([aS,sS,alS])=>{
         const abbrs=aS?Object.values(aS.val()||{}).filter(v=>typeof v==="string"):[];
+        // 別名で提出されたsubは staffName に別名がそのまま残る（registerAlias は staffAliases に
+        // 登録するだけで staffName を書き換えない）。キーを生の名前のまま持つと、参照側の
+        // dupErrors(:861) が自店舗の登録名で引いたときに必ず外れ、店舗間の勤務重複が検出されない。
+        // 他店舗自身の staffAliases で登録名へ解決してからキーにする（別名未使用の店舗では
+        // resolveAlias が入力をそのまま返すため挙動は変わらない）。
+        const otherAliases=(alS&&alS.val())||{};
         const workMap=new Map();
         // 出勤・退勤が両方揃ったシフトを優先（同名の部分データsubに完全データが隠されるのを防ぐ）
         // 管理者が休み希望(y/休)を入れたセルは effShiftStart/End が "" を返す＝勤務時間なしとして扱う。
@@ -400,9 +407,10 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
         const hasBoth=sh=>!!(effShiftStart(sh)&&effShiftEnd(sh));
         Object.values((sS&&sS.val())||{}).forEach(sub=>{
           if(!sub||!sub.staffName||!sub.shifts)return;
+          const resolved=resolveAlias(sub.staffName,otherAliases);
           Object.entries(sub.shifts).forEach(([d,sh])=>{
             if(!sh||sh.status!=="work")return;
-            const k=sub.staffName+"|"+d;
+            const k=resolved+"|"+d;
             const cur=workMap.get(k);
             if(!cur||(!hasBoth(cur)&&hasBoth(sh)))workMap.set(k,sh);
           });
