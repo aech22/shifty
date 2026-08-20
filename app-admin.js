@@ -3209,7 +3209,12 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
     if(!v)return;
     if(v.length>4){tt("✕ 略称は4文字以内にしてください");return;}
     // 予約語はCELL_COMMANDSレジストリ駆動（h/k/x/y/締等）。新規コマンド追加時にここを個別更新する必要がない
-    if(CELL_COMMANDS.some(c=>c.key.toLowerCase()===v.toLowerCase())||isRestCommand(v)||/^[\d.:]+$/.test(v)){tt("✕ h・k・x・y・休・締・数字のみの略称は使用できません");return;}
+    // 先頭文字は extractNote のパース境界（^([\d.:]+) が時刻部として貪欲に食う）と一致させる。
+    // 「2号」のような先頭が数字の略称を許すと、セルに「9 2号」の意で「92号」と入力したとき
+    // numeric="92"（parseTimeが弾いて時刻消失）・note="号" となり、abbrToShopの完全一致lookupが
+    // 必ず外れる＝ヘルプ判定も店舗間重複判定も無言で効かなくなる。「92号」を 9+「2号」と
+    // 92+「号」のどちらに解釈するかは原理的に決められないため、パーサ側では直せない。
+    if(CELL_COMMANDS.some(c=>c.key.toLowerCase()===v.toLowerCase())||isRestCommand(v)||/^[\d.:]/.test(v)){tt("✕ h・k・x・y・休・締・数字や記号（. :）で始まる略称は使用できません");return;}
     const cur=(metaFor(sid)||{}).abbrs||[];
     if(cur.includes(v)){tt("✕ 既に登録済みの略称です");return;}
     const conflict=listShops.find(s=>s&&s.id!==sid&&abbrsOf(s.id).includes(v));
