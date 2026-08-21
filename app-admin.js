@@ -1609,7 +1609,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             // ここで返さないとExcelでだけ締めが脱落する（バグチェック#52）
             return{time,note,fixed};
           };
-          expXl(period,subs,staffList,tt,shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings},adjResolver);
+          // 店舗名は settings.xlShopName（設定タブ「Excel書き出し設定」）を優先する。期間タブのExcel(:2016)は
+          // 既にそうしており、設定の説明文も「Excel出力時のファイル名・シート内店舗名に反映されます」と
+          // 約束している。ここだけ登録名を使うと、実際に配る側のシートにだけ設定が効かない。
+          // xlShopName は凍結対象キーではないため、確定済み期間でも現在値が入る（期間タブ側と同じ）。
+          expXl(period,subs,staffList,tt,settings.xlShopName||shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings},adjResolver);
         }}
           style={{padding:"6px 14px",background:"#1D6F42",border:"none",borderRadius:8,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           Excel出力
