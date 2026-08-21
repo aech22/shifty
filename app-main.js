@@ -1514,7 +1514,10 @@ function App(){
               const flat=diffSubForFlatWrite(sub.id,prevSub,sub);
               // 2) 関数型更新: blurや連打で再レンダーが挟まらないとき、後の呼び出しが前の結果を消さない
               setSubs(prev=>{
-                const i=prev.findIndex(s=>s.staffName===sub.staffName&&s.periodId===sub.periodId);
+                // id で引く（staffName+periodId ではない）。別名提出のsubを再利用すると
+                // staffName が別名→登録名へ正規化されるため、名前で探すと旧エントリに当たらず
+                // ローカルstateにだけ同じ人の行が2つ増える（サーバー同期まで画面が二重に見える）。
+                const i=prev.findIndex(s=>s&&s.id===sub.id);
                 const a=i>=0?prev.map((s,j)=>j===i?sub:s):[...prev,sub];
                 ls(storeKey(currentSid,"subs_v6"),a);
                 return a;
