@@ -205,7 +205,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} shopTemplates={shopTemplates} saveShopTemplates={saveShopTemplates} tt={tt} plan={plan} periods={periods}/>}
         {tab==="submissions"&&<SubsTab key={currentShopId} subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
-        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
+        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly}/>}
         {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany}/>}
         {tab==="mypage"&&<MyPageTab plan={plan} planExpiry={planExpiry} billingSchedule={billingSchedule} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
         {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} staffList={staffList} adminCode={adminCode} ownerReadOnly={ownerReadOnly}/>}
@@ -347,7 +347,10 @@ function GridLegend({abbrToShop,shopName}){
   );
 }
 
-function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,shopName,onUpgrade,allLinkedShops=[],onLoadPastSubs,pastSubsLoaded=false}){
+// staffList/settings を props 名のまま受けないのは、このタブだけが「選択中の期間が終了済みなら
+// その期間の写し(period.snapshot)を使う」＝他タブと違う値で動くため。以降の本文が参照する
+// staffList/settings は解決後の値で、写しの更新にだけ生の staffListProp/settingsProp を使う。
+function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:settingsProp,plan,shopId,shopName,onUpgrade,allLinkedShops=[],onLoadPastSubs,pastSubsLoaded=false,savePeriods,ownerReadOnly=false}){
   // 直近3ヶ月より古い期間があり、まだ過去分未読なら「過去参照」ボタンを出す（古い期間のシフトを見るため）
   const hasOlderPeriods=periods.some(p=>p&&p.startDate&&p.startDate<subsWindowCutoff());
   const firstPid=(periods[0]||{}).id||"";
@@ -453,6 +456,25 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
   },[]);
 
   const period=periods.find(p=>p.id===selPid)||null;
+  // 選択中の期間が終了済み（today > endDate）で写しを持つなら、staffList と凍結対象settingsを写しから読む。
+  // 以降このコンポーネントが参照する staffList / settings はすべてこの解決後の値になるため、
+  // Excel(:1580)・PDF(buildPdfCols) も同じ凍結名簿で出力される。他タブは props のまま＝現在値で動く。
+  const todayStr=fd(new Date());
+  const periodMaster=useMemo(()=>resolvePeriodMaster(period,staffListProp,settingsProp,todayStr),[period,staffListProp,settingsProp,todayStr]);
+  const staffList=periodMaster.staffList;
+  const settings=periodMaster.settings;
+  const periodLocked=periodMaster.locked;
+  // 期間が生きている間はシフト作成タブを開くたびに写しを最新化し、最終日を超えたら更新を止める＝そこで凍結。
+  // 「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、最終日を過ぎてから初めてアプリを
+  // 開くまでの間に行われたスタッフ削除を取りこぼす（写しはアプリが動いている瞬間しか撮れないため）。
+  // 内容に変化があるときだけ書く。ownerReadOnly端末は periods への書き込みがルールで拒否されるので何もしない。
+  useEffect(()=>{
+    if(ownerReadOnly||!savePeriods||!period)return;
+    if(isPeriodEnded(period,todayStr))return;
+    const next=buildPeriodSnapshot(staffListProp,settingsProp);
+    if(periodSnapshotEqual(period.snapshot,next))return;
+    savePeriods(periods.map(p=>(p&&p.id===period.id)?{...p,snapshot:next}:p));
+  },[period,staffListProp,settingsProp,periods,ownerReadOnly,todayStr]);
   const dates=period?gd(period.startDate,period.endDate):[];
   const realStaff=staffList.filter(n=>!isSpacer(n));
   const spIdx=staffList.findIndex(n=>isSpacer(n));
@@ -1543,6 +1565,19 @@ function ShiftEditTab({subs,periods,staffList,onSave,tt,settings,plan,shopId,sho
           style={{fontSize:16,padding:"4px 8px",border:BD,borderRadius:4,background:"var(--c-input)",color:"var(--c-text)"}}>
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
         </select>
+        {/* 確定バッジと解除/確定ボタン。確定中でもセルの編集は従来どおりできる（凍結するのはマスタ側だけ）。
+            解除すると写しを消す＝現在値に戻る。終了済みで写しが無い期間には「確定する」を出し、
+            一度解除した期間や、この機能より前に終わった期間を後から固定できるようにする（一方通行にしない）。 */}
+        {period&&isPeriodEnded(period,todayStr)&&!ownerReadOnly&&savePeriods&&(periodLocked
+          ?<React.Fragment>
+            <span title="この期間はスタッフ・属性・退勤延長などを終了時点の内容で固定しています（シフトの編集は可能）"
+              style={{padding:"3px 8px",background:"rgba(248,112,54,.15)",border:"1px solid rgba(248,112,54,.45)",borderRadius:4,color:"var(--c-accent)",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>確定済み</span>
+            <button onClick={()=>{if(!confirm("この期間の確定を解除しますか？\n解除すると、スタッフ一覧・属性・ポジション・退勤延長などが現在の設定に従うようになります。"))return;savePeriods(periods.map(p=>{if(!p||p.id!==period.id)return p;const n={...p};delete n.snapshot;delete n.lockedAt;return n;}));tt("✓ 確定を解除しました");}}
+              style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>確定を解除</button>
+          </React.Fragment>
+          :<button onClick={()=>{if(!confirm("この期間を現在の設定内容で確定しますか？\n以後、スタッフの追加・削除や属性・退勤延長の変更はこの期間に反映されなくなります（シフトの編集は可能）。"))return;savePeriods(periods.map(p=>(p&&p.id===period.id)?{...p,snapshot:buildPeriodSnapshot(staffListProp,settingsProp),lockedAt:new Date().toISOString()}:p));tt("✓ この期間を確定しました");}}
+              style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>この期間を確定</button>
+        )}
         {onLoadPastSubs&&!pastSubsLoaded&&hasOlderPeriods&&<button onClick={onLoadPastSubs}
           style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           過去データ読込
@@ -1976,7 +2011,9 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
                   </div>
                   <div style={{display:"flex",gap:5,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
                     <button onClick={e=>{e.stopPropagation();setEid(p.id);}} style={{padding:"5px 9px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:4,color:"var(--c-text2)",fontSize:11,cursor:"pointer"}}>編集</button>
-                    <button onClick={e=>{e.stopPropagation();expXl(p,subs,staffList,tt,settings.xlShopName||shopName,{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings});}} style={{padding:"5px 9px",background:"#1D6F42",border:"none",borderRadius:4,color:"white",fontSize:11,fontWeight:700,cursor:"pointer"}}>Excel</button>
+                    {/* 確定済み期間はシフト作成タブと同じ凍結名簿・凍結設定で出力する。
+                        ここだけ現在値のまま出すと、同じ期間のExcelが出す場所によって中身が変わる。 */}
+                    <button onClick={e=>{e.stopPropagation();const m=resolvePeriodMaster(p,staffList,settings,fd(new Date()));expXl(p,subs,m.staffList,tt,m.settings.xlShopName||shopName,{staffColors:m.settings.staffColors||{},staffAliases:m.settings.staffAliases||{},staffNumbers:m.settings.staffNumbers||{},settings:m.settings});}} style={{padding:"5px 9px",background:"#1D6F42",border:"none",borderRadius:4,color:"white",fontSize:11,fontWeight:700,cursor:"pointer"}}>Excel</button>
                     {/* 期間の削除は savePeriods（app-main.js:1132）でこの期間のsubsと tokens/{urlToken} まで
                         連鎖削除される。件数は上の「提出：N件」と同じ式で数える（食い違うとバグチェック#56 と同じ混乱になる）。 */}
                     <button onClick={e=>{e.stopPropagation();const sc=subs.filter(s=>s.periodId===p.id&&s.source!=="grid").length;if(!confirm(`「${p.label}」を削除しますか？\n${sc>0?`提出済みのシフト${sc}件も一緒に削除されます。\n`:""}スタッフ用URLも無効になります。この操作は取り消せません。`))return;onSave(periods.filter(pp=>pp.id!==p.id));tt("削除しました");}} style={AD}>削除</button>

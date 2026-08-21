@@ -670,7 +670,53 @@ function isSpecialRedDate(dateStr,settings){
   return true;
 }
 
+// ===== 期間の確定（終了した期間のマスタ凍結）=====
+// シフト作成タブは staffList・属性・ポジション等をすべて「現在値」で参照するため、スタッフを1人削除すると
+// 配り終えた過去のシフト表からその人の列が黙って消える（属性・退勤延長を変えれば過去の集計も動く）。
+// 終了した期間は、その時点のマスタの写し(period.snapshot)を参照して固定する。
+//
+// 重要な制約: 写しを撮れるのはアプリが動いている瞬間だけで、「最終日の23:59の状態」を後から復元する
+// 手段は無い。そのため期間が生きている間（today <= endDate）はシフト作成タブを開くたびに写しを
+// 更新し続け、最終日を超えたら更新を止める＝その時点の内容がそのまま凍結される、という形にする。
+// 写しを持たない過去期間（この機能より前に終わった期間）は従来どおり現在値で動かす。今日の値で
+// 過去を固定すると「既に削除済みのスタッフが欠けた状態」を正として焼き付けてしまうため。
+const PERIOD_SNAPSHOT_SETTING_KEYS=["staffAttributes","staffTypeLimits","staffPositions","positions",
+  "requiredPositions","staffNumbers","overtimeSettings","staffColors","staffAliases","staffWorkplaces",
+  "breakTimes","candidates","weekdayCandidates","dateCandidates","dateCandidatePosTypes"];
+function isPeriodEnded(period,todayStr){return!!(period&&period.endDate&&todayStr&&todayStr>period.endDate);}
+function buildPeriodSnapshot(staffList,settings){
+  const s={};
+  PERIOD_SNAPSHOT_SETTING_KEYS.forEach(k=>{const v=(settings||{})[k];if(v!==undefined&&v!==null)s[k]=v;});
+  return{staffList:[...(staffList||[])],settings:s};
+}
+// Firebaseは空配列・空オブジェクトをキーごと落とし、疎配列をオブジェクトに変換して返す。
+// 書いた値と読み戻した値を素朴に比較すると永久に「変化あり」と判定されて書き込みループになるため、
+// 空を欠損と同一視し、配列/オブジェクトの表現差を吸収した正規形で比べる。
+function _normSnap(v){
+  if(v===undefined||v===null)return null;
+  if(Array.isArray(v)){const a=v.map(_normSnap);return a.length?a:null;}
+  if(typeof v==="object"){
+    const o={};Object.keys(v).sort().forEach(k=>{const n=_normSnap(v[k]);if(n!==null)o[k]=n;});
+    return Object.keys(o).length?o:null;
+  }
+  return v;
+}
+function periodSnapshotEqual(a,b){return JSON.stringify(_normSnap(a))===JSON.stringify(_normSnap(b));}
+// シフト作成タブが実際に使う staffList / settings を解決する。locked=true のときだけ写しを採用する。
+// 凍結対象キーは「写しに無ければ現在値も消す」＝写しを撮ったあとに新設された設定が過去期間へ
+// 漏れ込まないようにする。凍結対象外のキー（xlShopName・periodUnit・templates 等）は現在値のまま。
+function resolvePeriodMaster(period,staffList,settings,todayStr){
+  const snap=period&&period.snapshot;
+  const rawSl=snap&&snap.staffList;
+  const sl=Array.isArray(rawSl)?rawSl:(rawSl&&typeof rawSl==="object"?Object.values(rawSl):null);
+  if(!isPeriodEnded(period,todayStr)||!sl)return{staffList,settings,locked:false};
+  const merged={...(settings||{})};
+  const ss=snap.settings||{};
+  PERIOD_SNAPSHOT_SETTING_KEYS.forEach(k=>{if(ss[k]===undefined)delete merged[k];else merged[k]=ss[k];});
+  return{staffList:sl.filter(n=>typeof n==="string"),settings:merged,locked:true};
+}
+
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
+  module.exports={PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
 }

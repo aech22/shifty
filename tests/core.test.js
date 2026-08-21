@@ -1314,3 +1314,66 @@ test("PLAN_RANK_UI: Cloud Functions 側の PLAN_RANK と同じ値である", () 
 test("PLAN_RANK_UI: PLAN_LABELS と同じプラン名を漏れなく持つ", () => {
   assert.deepStrictEqual(Object.keys(u.PLAN_RANK_UI).sort(), Object.keys(u.PLAN_LABELS).sort());
 });
+
+// ===== 期間の確定（終了した期間のマスタ凍結）=====
+const _basePeriod = { id: "p1", startDate: "2026-07-01", endDate: "2026-07-31" };
+const _liveStaff = ["田中", "佐藤", "山田"];
+const _liveSettings = {
+  staffAttributes: { 田中: "employee" }, staffNumbers: { 田中: "001" },
+  overtimeSettings: { byStaff: { 田中: { lunch: 30 } } }, breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] },
+  xlShopName: "現在の店舗名", periodUnit: "1month",
+};
+
+test("isPeriodEnded: 最終日当日はまだ終了ではない・翌日から終了", () => {
+  assert.strictEqual(u.isPeriodEnded(_basePeriod, "2026-07-31"), false);
+  assert.strictEqual(u.isPeriodEnded(_basePeriod, "2026-08-01"), true);
+  assert.strictEqual(u.isPeriodEnded(_basePeriod, "2026-07-01"), false);
+  assert.strictEqual(u.isPeriodEnded(null, "2026-08-01"), false);
+  assert.strictEqual(u.isPeriodEnded({ id: "p" }, "2026-08-01"), false, "endDateが無ければ終了扱いにしない");
+});
+
+test("buildPeriodSnapshot: 凍結対象キーだけを写し取り、対象外は含めない", () => {
+  const snap = u.buildPeriodSnapshot(_liveStaff, _liveSettings);
+  assert.deepStrictEqual(snap.staffList, _liveStaff);
+  assert.ok(snap.settings.staffAttributes && snap.settings.breakTimes);
+  assert.strictEqual(snap.settings.xlShopName, undefined, "xlShopNameは凍結対象外");
+  assert.strictEqual(snap.settings.periodUnit, undefined, "periodUnitは凍結対象外");
+  snap.staffList.push("侵入");
+  assert.strictEqual(_liveStaff.length, 3, "元のstaffListを破壊しない");
+});
+
+test("periodSnapshotEqual: Firebaseが空配列・空オブジェクトを落としても等価と判定する（書き込みループ防止）", () => {
+  const a = u.buildPeriodSnapshot(["田中"], { staffAttributes: {}, staffNumbers: { 田中: "1" }, breakTimes: { weekday: [] } });
+  const readBack = { staffList: ["田中"], settings: { staffNumbers: { 田中: "1" } } }; // 空が落ちた形
+  assert.strictEqual(u.periodSnapshotEqual(a, readBack), true);
+  assert.strictEqual(u.periodSnapshotEqual(a, { staffList: ["田中", "佐藤"], settings: { staffNumbers: { 田中: "1" } } }), false);
+  assert.strictEqual(u.periodSnapshotEqual(undefined, u.buildPeriodSnapshot([], {})), true, "空の写しと未作成は等価");
+});
+
+test("resolvePeriodMaster: 終了前は現在値・終了後は写しを使う", () => {
+  const snap = u.buildPeriodSnapshot(["田中", "退職者"], { staffAttributes: { 退職者: "parttime" } });
+  const p = { ..._basePeriod, snapshot: snap };
+  const before = u.resolvePeriodMaster(p, _liveStaff, _liveSettings, "2026-07-20");
+  assert.strictEqual(before.locked, false);
+  assert.deepStrictEqual(before.staffList, _liveStaff, "終了前は現在のstaffList");
+  const after = u.resolvePeriodMaster(p, _liveStaff, _liveSettings, "2026-08-05");
+  assert.strictEqual(after.locked, true);
+  assert.deepStrictEqual(after.staffList, ["田中", "退職者"], "終了後は写しのstaffList＝削除済みスタッフの列が残る");
+  assert.deepStrictEqual(after.settings.staffAttributes, { 退職者: "parttime" });
+  assert.strictEqual(after.settings.staffNumbers, undefined, "写しに無い凍結対象キーは現在値を漏らさない");
+  assert.strictEqual(after.settings.xlShopName, "現在の店舗名", "凍結対象外のキーは現在値のまま");
+});
+
+test("resolvePeriodMaster: 写しの無い過去期間は従来どおり現在値で動く", () => {
+  const r = u.resolvePeriodMaster(_basePeriod, _liveStaff, _liveSettings, "2026-08-05");
+  assert.strictEqual(r.locked, false);
+  assert.deepStrictEqual(r.staffList, _liveStaff);
+  assert.strictEqual(r.settings, _liveSettings);
+});
+
+test("resolvePeriodMaster: Firebaseがオブジェクト化して返したstaffListも配列として扱う", () => {
+  const p = { ..._basePeriod, snapshot: { staffList: { 0: "田中", 1: "佐藤" }, settings: {} } };
+  const r = u.resolvePeriodMaster(p, _liveStaff, _liveSettings, "2026-08-05");
+  assert.strictEqual(r.locked, true);
+  assert.deepStrictEqual(r.staffList, ["田中", "佐藤"]);
+});
