@@ -3019,7 +3019,12 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   const tg=f=>{if(sf===f)setSdr(d=>d==="asc"?"desc":"asc");else{setSf(f);setSdr("asc");}};
   // source:"grid" はシフト作成タブが直接作成したsub（スタッフのURL提出ではない）なので提出一覧には出さない
   // 提出日時での並べ替えは subLastActionTime（再提出＝変更ありはupdatedAt）を使い、再提出も新規提出と同じ土俵で上位に来るようにする
-  const fil=subs.filter(s=>s.source!=="grid"&&(!fn||s.staffName.includes(fn))&&(fp==="all"||s.periodId===fp)).sort((a,b)=>{let va=sf==="submittedAt"?subLastActionTime(a):(a[sf]||""),vb=sf==="submittedAt"?subLastActionTime(b):(b[sf]||"");return(va<vb?-1:va>vb?1:0)*(sdr==="asc"?1:-1);});
+  // 氏名の絞り込み・並べ替えは表示名（:3051 が resolveAlias で解決した登録名）でも突き合わせる。
+  // 生の s.staffName だけを見ると、別名で提出されたsubは行に「田中」と表示されているのに「田中」で
+  // 絞り込むと消える＝画面に出ている名前でその行を引けない。氏名列の並べ替えも同じ理由で表示名を使う
+  // （生の別名でも従来どおり引けるよう、絞り込みは生の名前との一致も残す＝ヒットが減ることはない）。
+  const dispName=s=>resolveAlias(s.staffName,staffAliases);
+  const fil=subs.filter(s=>s.source!=="grid"&&(!fn||s.staffName.includes(fn)||dispName(s).includes(fn))&&(fp==="all"||s.periodId===fp)).sort((a,b)=>{let va=sf==="submittedAt"?subLastActionTime(a):(sf==="staffName"?dispName(a):(a[sf]||"")),vb=sf==="submittedAt"?subLastActionTime(b):(sf==="staffName"?dispName(b):(b[sf]||""));return(va<vb?-1:va>vb?1:0)*(sdr==="asc"?1:-1);});
   const gpl=id=>periods.find(p=>p.id===id)?.label||"不明";
   const saveAdj=(subId,date,field,value)=>{
     const newSubs=subs.map(s=>{if(s.id!==subId)return s;const sh={...(s.shifts||{})};sh[date]={...sh[date]};if(value)sh[date][field]=value;else delete sh[date][field];return{...s,shifts:sh};});
