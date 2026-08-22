@@ -27,6 +27,10 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
     const raw=shopCodeInput.trim();
     if(!raw){setShopCodeError("コードを入力してください");return;}
     const{shopId:code,adminKey}=parseShopCode(raw);
+    // ref() は禁止文字（# $ [ ]）や空パスに対して「同期に」throwする。下の .catch は
+    // promiseに付くため同期throwを受け取れず、「確認中...」のまま固まる。入口で弾く。
+    // プラン上限より前に置く（不正なコードでアップグレード案内を出さないため）。
+    if(!code||firebaseKeyForbiddenChars(code).length){setShopCodeError("コードが正しくありません");return;}
     const lim=PLAN_LIMITS[plan]?.shops??Infinity;
     if(shops.length>=lim){setShopCodeMode(false);setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
     if(!firebaseDB){setShopCodeError("Firebase未接続");return;}

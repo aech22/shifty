@@ -1257,6 +1257,9 @@ function App(){
     if(!raw){setInviteError("店舗コードを入力してください");return;}
     if(!firebaseDB){setInviteError("Firebase未接続です");return;}
     const{shopId:code,adminKey}=parseShopCode(raw);
+    // ref() は禁止文字（# $ [ ]）や空パスに対して「同期に」throwする。下の .catch は
+    // promiseに付くため同期throwを受け取れず、「確認中...」のまま固まる。入口で弾く。
+    if(!code||firebaseKeyForbiddenChars(code).length){setInviteError("コードが正しくありません。もう一度確認してください。");return;}
     setInviteError("確認中...");
     firebaseDB.ref(`global/shops/${code}`).once("value").then(snap=>{
       const found=snap.val();
