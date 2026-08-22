@@ -1401,3 +1401,32 @@ test("firebaseKeyForbiddenChars: 通常の名前は通す（スペース・ハ�
 test("firebaseKeyForbiddenChars: 同じ文字が複数あっても1回だけ返す", () => {
   assert.deepStrictEqual(u.firebaseKeyForbiddenChars("a.b.c"), ["."]);
 });
+
+// ===== Cookie名に使う文字列の "=" 除去 =====
+// ブラウザはCookieを最初の "=" で名前と値に分ける。genSecureId は "=" を含むため、
+// "=" を持つ shopId から作った ckStaffKey は名前が切られ、同じ店舗の全期間が
+// 1つのCookieを共有してしまう（バグチェック#90・Chromium/WebKitで実測）。
+const CK = (shopId, periodId) => u.cookieSafeKey(`ots_staff_${shopId}_${periodId}`);
+
+test("cookieSafeKey: '=' を含む shopId でも期間ごとに別のCookie名になる", () => {
+  const withEq = "mKdff4?v88uPN=B=eEsc&WHW"; // "=" を2つ持つ実在形式のshopId
+  const k1 = CK(withEq, "p_1"), k2 = CK(withEq, "p_2");
+  assert.ok(!k1.includes("="), "Cookie名に '=' が残ってはいけない");
+  assert.notStrictEqual(k1, k2, "期間が違えばCookie名も違わなければならない");
+  // 名前が最初の "=" で切られないこと（＝ブラウザが保存する名前が完全形と一致する）
+  assert.strictEqual(k1.split("=")[0], k1);
+});
+
+test("cookieSafeKey: '=' を持たない shopId ではキーが1バイトも変わらない（既存Cookieの非破壊）", () => {
+  const noEq = "eb6AfsQv4JAht+cX*xP7fuDa";
+  assert.strictEqual(CK(noEq, "p_1"), `ots_staff_${noEq}_p_1`);
+  // "+" "*" "?" "&" 等はCookie名を壊さないので置換しない
+  assert.strictEqual(u.cookieSafeKey("a+b*c?d&e~f"), "a+b*c?d&e~f");
+});
+
+test("cookieSafeKey: 置換が別のshopIdと衝突しない（'.' は genSecureId の文字集合に無い）", () => {
+  assert.ok(!"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@%&*+-=?_~".includes("."));
+  assert.notStrictEqual(u.cookieSafeKey("A=B"), u.cookieSafeKey("A=C"));
+  assert.strictEqual(u.cookieSafeKey("A=B"), "A.B");
+  assert.strictEqual(u.cookieSafeKey(null), "");
+});

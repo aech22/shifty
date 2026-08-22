@@ -438,6 +438,17 @@ function firebaseKeyForbiddenChars(name){
   return[...new Set(found.map(c=>(c.charCodeAt(0)<32||c.charCodeAt(0)===127)?"制御文字":c))];
 }
 
+// Cookie名に使う文字列から "=" を落とす。
+// genSecureId の文字集合はFirebaseのキー禁止文字だけを避けており "=" を含むため、
+// shopId の約25%が "=" を持つ。ブラウザは Cookie を最初の "=" で名前と値に分割する
+// （RFC 6265 §5.2・Chromium/WebKit で実測）ので、"=" を含む shopId から作った
+// ckStaffKey は名前が途中で切られ、同じ店舗の全期間が1つのCookieを奪い合う
+// ＝期間が変わるたびにスタッフ名の記憶が消える。
+// 置換先が "." なのは、genSecureId の文字集合に "." が無く（Firebaseのキー禁止文字として
+// 除外されている）、periodId も `p_<数字>` のため、置換で別のキーと衝突しないから。
+// "=" を持たない shopId ではキーが1バイトも変わらない＝既存のCookieを壊さない。
+function cookieSafeKey(s){return String(s==null?"":s).replace(/=/g,".");}
+
 // ===== 別名解決・サジェスト =====
 // 別名 → 登録名に解決する（staffAliases: {"登録名": ["alias1","alias2"]}）
 function resolveAlias(inputName, staffAliases){
@@ -732,5 +743,5 @@ function resolvePeriodMaster(period,staffList,settings,todayStr){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
+  module.exports={PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
 }

@@ -182,7 +182,9 @@ function delCookie(name){
   document.cookie=`${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
 }
 const CK_SHOP="ots_shopId";   // 現在のアクティブ店舗ID（単一店舗のみ）
-const ckStaffKey=(shopId,periodId)=>`ots_staff_${shopId}_${periodId}`; // スタッフ名Cookie
+// スタッフ名Cookie。shopId は genSecureId 由来で "=" を含みうるため cookieSafeKey を通す
+// （通さないとCookie名が最初の "=" で切られ、同じ店舗の全期間が1つのCookieを共有してしまう）
+const ckStaffKey=(shopId,periodId)=>cookieSafeKey(`ots_staff_${shopId}_${periodId}`);
 
 // リロード時の状態復元用セッションキー
 const SS_SHOP="ss_shopId";

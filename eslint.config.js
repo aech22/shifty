@@ -128,6 +128,7 @@ const sharedGlobals = {
   idp: "writable",
   isFixedShiftEligibleShop: "writable",
   firebaseKeyForbiddenChars: "writable",
+  cookieSafeKey: "writable",
   isHoliday: "writable",
   isRestCommand: "writable",
   isSpacer: "writable",
