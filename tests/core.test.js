@@ -1377,3 +1377,27 @@ test("resolvePeriodMaster: Firebaseがオブジェクト化して返したstaffL
   assert.strictEqual(r.locked, true);
   assert.deepStrictEqual(r.staffList, ["田中", "佐藤"]);
 });
+
+// ===== スタッフ名のFirebase禁止文字 =====
+// 名前は staffColors 等7つの設定マップでキーになる。禁止文字を含むと set() が同期例外を投げ、
+// fbW の .catch では拾えないまま保存が失われる（バグチェック#89）。
+test("firebaseKeyForbiddenChars: Firebaseがキーに使えない文字を検出する", () => {
+  assert.deepStrictEqual(u.firebaseKeyForbiddenChars("田中.太郎"), ["."]);
+  assert.deepStrictEqual(u.firebaseKeyForbiddenChars("A/B"), ["/"]);
+  assert.deepStrictEqual(u.firebaseKeyForbiddenChars("山田#2"), ["#"]);
+  assert.deepStrictEqual(u.firebaseKeyForbiddenChars("S$1"), ["$"]);
+  assert.deepStrictEqual(u.firebaseKeyForbiddenChars("X[1]"), ["[", "]"]);
+  assert.deepStrictEqual(u.firebaseKeyForbiddenChars("タブ\t入り"), ["制御文字"]);
+});
+
+test("firebaseKeyForbiddenChars: 通常の名前は通す（スペース・ハイフン・全角記号を弾かない）", () => {
+  ["田中", "田中 太郎", "Anne-Marie", "佐藤(店長)", "Ｍ．ケン", "__spacer__abc"].forEach(n => {
+    assert.deepStrictEqual(u.firebaseKeyForbiddenChars(n), [], n);
+  });
+  assert.deepStrictEqual(u.firebaseKeyForbiddenChars(""), []);
+  assert.deepStrictEqual(u.firebaseKeyForbiddenChars(null), []);
+});
+
+test("firebaseKeyForbiddenChars: 同じ文字が複数あっても1回だけ返す", () => {
+  assert.deepStrictEqual(u.firebaseKeyForbiddenChars("a.b.c"), ["."]);
+});

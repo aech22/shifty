@@ -2353,17 +2353,30 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   };
   const startEdit=i=>{setEditIdx(i);setEditName(staffList[i]);};
   const cancelEdit=()=>{setEditIdx(null);setEditName("");};
+  // スタッフ名は7つの設定マップ（staffColors/staffAttributes/staffNumbers/staffPositions/
+  // staffAliases/staffWorkplaces/overtimeSettings.byStaff）でFirebaseのキーになる。禁止文字を
+  // 含む名前を通すと、色や属性を1つ設定した瞬間に settings の set() が同期例外を投げ、
+  // fbW の .catch では拾えないまま保存が黙って失われる（画面とlocalStorageだけが更新される）。
+  // ID生成側（genSecureId・app-utils.js:419）は既に同じ集合を除外している。入口をそちらに揃える。
+  const rejectBadName=n=>{
+    const bad=firebaseKeyForbiddenChars(n);
+    if(!bad.length)return false;
+    tt(`▲ 名前に使えない文字があります（${bad.join(" ")}）`);
+    return true;
+  };
   const confirmEdit=i=>{
     const trimmed=editName.trim();
     if(!trimmed){tt("▲ 名前を入力してください");return;}
     if(staffList.includes(trimmed)&&trimmed!==staffList[i]){tt("▲ 既に登録されている名前です");return;}
     if(trimmed===staffList[i]){cancelEdit();return;}
+    if(rejectBadName(trimmed))return;
     onRenameStaff&&onRenameStaff(staffList[i],trimmed);
     setEditIdx(null);setEditName("");
   };
   const add=()=>{
     if(!newName.trim()){tt("▲ 名前を入力");return;}
     if(staffList.includes(newName.trim())){tt("▲ 既に登録されています");return;}
+    if(rejectBadName(newName.trim()))return;
     if(staffList.filter(n=>!isSpacer(n)).length>=lim){onUpgrade&&onUpgrade({type:"staff",limit:lim,plan});return;}
     ph("staff_added",{staff_count:staffList.filter(n=>!isSpacer(n)).length+1});
     onSave([...staffList,newName.trim()]);setNewName("");tt(`✓ ${newName.trim()} を追加しました`);

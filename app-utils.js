@@ -423,6 +423,20 @@ function genSecureId(len=24){
   return Array.from(arr,b=>chars[b%chars.length]).join("");
 }
 const isSpacer=n=>typeof n==="string"&&n.startsWith("__spacer__");
+// Firebaseのキーに使えない文字（genSecureId が記号から除外しているのと同じ集合）。
+// スタッフ名は staffColors / staffAttributes / staffNumbers / staffPositions / staffAliases /
+// staffWorkplaces / overtimeSettings.byStaff の7つの設定マップで「キー」として使われるため、
+// この文字を含む名前を登録すると saveSettings の set() が同期例外を投げる。fbW の
+// `fbSet(...).catch(...)` は同期throwを受け取れない（.catchを付ける前に投げられる）ので
+// 書き込み失敗のログすら出ず、setSettings/localStorage だけが先に成功して画面上は保存されたように見える。
+// 名前が入る唯一の入口（追加・改名）で弾く。
+// 半角スペース・ハイフンはFirebaseのキーとして有効なので含めない（「田中 太郎」を弾いてはいけない）。
+const FIREBASE_KEY_FORBIDDEN_RE=/[.#$\/[\]\u0000-\u001F\u007F]/g;
+function firebaseKeyForbiddenChars(name){
+  const found=String(name==null?"":name).match(FIREBASE_KEY_FORBIDDEN_RE);
+  if(!found)return[];
+  return[...new Set(found.map(c=>(c.charCodeAt(0)<32||c.charCodeAt(0)===127)?"制御文字":c))];
+}
 
 // ===== 別名解決・サジェスト =====
 // 別名 → 登録名に解決する（staffAliases: {"登録名": ["alias1","alias2"]}）
@@ -718,5 +732,5 @@ function resolvePeriodMaster(period,staffList,settings,todayStr){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
+  module.exports={PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
 }
