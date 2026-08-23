@@ -2308,10 +2308,16 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
 // ===== スタッフ登録タブ =====
 function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[]}){
   const[newName,setNewName]=useState("");
-  const[editIdx,setEditIdx]=useState(null);
+  // 編集中・別名パネル・ポジションパネルの対象は「スタッフ名」で持つ（indexで持ってはいけない）。
+  // indexで持つと、パネルを開いたまま別の行を削除する／並べ替える／他端末がstaffListを変えると、
+  // 同じindexが別人を指すようになり、開いたままの編集欄が別人の行に移って保存が別人を書き換える
+  // （実測: [田中,佐藤,鈴木,高橋,渡辺] で高橋を編集中に田中を削除すると、"高橋"を入れた編集欄が
+  // 渡辺の行に移り、保存すると onRenameStaff("渡辺","高橋 太郎") が走る）。名前は add/confirmEdit が
+  // 重複を禁止し、空白列も "__spacer__"+genToken() で一意なので、キーとして安全に使える。
+  const[editKey,setEditKey]=useState(null);
   const[editName,setEditName]=useState("");
-  const[aliasIdx,setAliasIdx]=useState(null); // 別名編集中のスタッフindex
-  const[posIdx,setPosIdx]=useState(null); // ポジション編集中のスタッフindex
+  const[aliasKey,setAliasKey]=useState(null); // 別名編集中のスタッフ名
+  const[posKey,setPosKey]=useState(null); // ポジション編集中のスタッフ名
   const isPro=plan==="pro"||plan==="premium";
   const isPremium=plan==="premium";
   const[dragIdx,setDragIdx]=useState(null);
@@ -2355,8 +2361,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     const next=cur==="black"?"red":"black";
     onSaveSettings&&onSaveSettings({...settings,staffColors:{...staffColors,[name]:next}});
   };
-  const startEdit=i=>{setEditIdx(i);setEditName(staffList[i]);};
-  const cancelEdit=()=>{setEditIdx(null);setEditName("");};
+  const startEdit=n=>{setEditKey(n);setEditName(n);};
+  const cancelEdit=()=>{setEditKey(null);setEditName("");};
   // スタッフ名は7つの設定マップ（staffColors/staffAttributes/staffNumbers/staffPositions/
   // staffAliases/staffWorkplaces/overtimeSettings.byStaff）でFirebaseのキーになる。禁止文字を
   // 含む名前を通すと、色や属性を1つ設定した瞬間に settings の set() が同期例外を投げ、
@@ -2368,14 +2374,14 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     tt(`▲ 名前に使えない文字があります（${bad.join(" ")}）`);
     return true;
   };
-  const confirmEdit=i=>{
+  const confirmEdit=n=>{
     const trimmed=editName.trim();
     if(!trimmed){tt("▲ 名前を入力してください");return;}
-    if(staffList.includes(trimmed)&&trimmed!==staffList[i]){tt("▲ 既に登録されている名前です");return;}
-    if(trimmed===staffList[i]){cancelEdit();return;}
+    if(staffList.includes(trimmed)&&trimmed!==n){tt("▲ 既に登録されている名前です");return;}
+    if(trimmed===n){cancelEdit();return;}
     if(rejectBadName(trimmed))return;
-    onRenameStaff&&onRenameStaff(staffList[i],trimmed);
-    setEditIdx(null);setEditName("");
+    onRenameStaff&&onRenameStaff(n,trimmed);
+    setEditKey(null);setEditName("");
   };
   const add=()=>{
     if(!newName.trim()){tt("▲ 名前を入力");return;}
@@ -2471,11 +2477,11 @@ const dragIdxRef=useRef(null);
             :<div data-staff-idx={i} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:dragOverIdx===i&&dragIdx!==null?"2px solid var(--c-accent)":"1px solid var(--c-border)",borderRadius:8,opacity:dragIdx===i?.4:1,transition:"opacity .15s"}}>
             {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} onContextMenu={e=>e.preventDefault()} style={{cursor:"grab",color:dragIdx===i?"var(--c-accent)":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",WebkitUserSelect:"none",lineHeight:1,flexShrink:0,touchAction:"none"}}>⠿</span>}
             <span style={{fontSize:13,color:"var(--c-text4)",minWidth:24,textAlign:"center"}}>{staffList.slice(0,i).filter(x=>!isSpacer(x)).length+1}</span>
-            {editIdx===i
+            {editKey===n
               ?<>
-                {isPro&&<div style={{width:18,height:18,borderRadius:"50%",background:(staffColors[staffList[i]]||"black")==="red"?"#FF4757":"#374151",border:"2px solid var(--c-border2)",flexShrink:0}}/>}
-                <input value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmEdit(i);if(e.key==="Escape")cancelEdit();}} autoFocus maxLength={50} style={{...AI,flex:1,padding:"6px 10px",fontSize:16}}/>
-                <button onClick={()=>confirmEdit(i)} style={{...AB,padding:"6px 12px",fontSize:12}}>保存</button>
+                {isPro&&<div style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid var(--c-border2)",flexShrink:0}}/>}
+                <input value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmEdit(n);if(e.key==="Escape")cancelEdit();}} autoFocus maxLength={50} style={{...AI,flex:1,padding:"6px 10px",fontSize:16}}/>
+                <button onClick={()=>confirmEdit(n)} style={{...AB,padding:"6px 12px",fontSize:12}}>保存</button>
                 <button onClick={cancelEdit} style={{...AGray,padding:"6px 12px",fontSize:12}}>ｷｬﾝｾﾙ</button>
               </>
               :<>
@@ -2485,19 +2491,19 @@ const dragIdxRef=useRef(null);
                 {isPremium&&<select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
                   {Object.entries({employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})}).map(([v,t])=>{const label=(typeof t==="object"?t.name:"")||STAFF_TYPE_LABELS[v]||"";return label?<option key={v} value={v}>{label}</option>:null;})}
                 </select>}
-                {isPro&&<button onClick={()=>{setAliasIdx(aliasIdx===i?null:i);}} style={{padding:"6px 10px",background:aliasIdx===i?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasIdx===i?"var(--c-accent)":"rgba(248,112,54,.3)"}`,borderRadius:4,color:"var(--c-accent)",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
+                {isPro&&<button onClick={()=>{setAliasKey(aliasKey===n?null:n);}} style={{padding:"6px 10px",background:aliasKey===n?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasKey===n?"var(--c-accent)":"rgba(248,112,54,.3)"}`,borderRadius:4,color:"var(--c-accent)",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
                   別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
                 </button>}
-                {isPremium&&<button onClick={()=>{setPosIdx(posIdx===i?null:i);}} style={{padding:"6px 8px",background:posIdx===i?"rgba(59,130,246,.15)":"rgba(59,130,246,.06)",border:`1px solid ${posIdx===i?"#3B82F6":"rgba(59,130,246,.3)"}`,borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer",width:118,boxSizing:"border-box",flexShrink:0,whiteSpace:"nowrap",textAlign:"center"}}>
+                {isPremium&&<button onClick={()=>{setPosKey(posKey===n?null:n);}} style={{padding:"6px 8px",background:posKey===n?"rgba(59,130,246,.15)":"rgba(59,130,246,.06)",border:`1px solid ${posKey===n?"#3B82F6":"rgba(59,130,246,.3)"}`,borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer",width:118,boxSizing:"border-box",flexShrink:0,whiteSpace:"nowrap",textAlign:"center"}}>
                   ポジション{(((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length)>0?` (${((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length})`:""}
                 </button>}
-                <button onClick={()=>startEdit(i)} style={{padding:"6px 10px",background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.25)",borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer"}}>編集</button>
+                <button onClick={()=>startEdit(n)} style={{padding:"6px 10px",background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.25)",borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer"}}>編集</button>
                 <button onClick={()=>del(i)} style={AD}>削除</button>
               </>
             }
           </div>}
           {/* 別名パネル（Pro・展開時） */}
-          {isPro&&aliasIdx===i&&(
+          {isPro&&aliasKey===n&&(
             <div style={{marginTop:4,padding:"12px 14px",background:"rgba(248,112,54,.04)",border:"1px solid rgba(248,112,54,.2)",borderRadius:8,position:"sticky",left:0,maxWidth:"calc(100vw - 76px)",boxSizing:"border-box"}}>
               <div style={{fontSize:12,fontWeight:700,color:"var(--c-accent)",marginBottom:8}}>別名（スタッフが入力できる名前）</div>
               {/* 登録済み別名 */}
@@ -2530,7 +2536,7 @@ const dragIdxRef=useRef(null);
             </div>
           )}
           {/* ポジションパネル（Premium・展開時） */}
-          {isPremium&&posIdx===i&&(
+          {isPremium&&posKey===n&&(
             <div style={{marginTop:4,padding:"12px 14px",background:"rgba(59,130,246,.04)",border:"1px solid rgba(59,130,246,.2)",borderRadius:8,position:"sticky",left:0,maxWidth:"calc(100vw - 76px)",boxSizing:"border-box"}}>
               <div style={{fontSize:12,fontWeight:700,color:"#3B82F6",marginBottom:8}}>ポジション（設定タブで登録したポジションから選択）</div>
               {allPositions.length===0
