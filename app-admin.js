@@ -1427,12 +1427,17 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           const sh=_getSub(nm)?.shifts?.[ds];
           const r=pdfResolve(nm,ds,field);
           const otherHas=pdfResolve(nm,ds,field==="start"?"end":"start").disp;
+          // 変更マーク(緑)は画面(cellBgFor:1194)が changed を最優先・無条件で塗るので、PDFも同じにする。
+          // 下の早期returnは「表示する時刻が無い」セルを先に返してしまうため、ここで先に決めておかないと
+          // 空白セル・休み希望セルの緑だけがPDFで落ちる（画面では斜線と緑が両方乗る）。
+          // background の一括指定は background-color を transparent に戻すので、必ず後ろに置くこと。
+          const chgBg=sh&&sh.changed===true?"background-color:#B7EBC6;":"";
           // 管理者入力の休み希望(y)はフィールド単位で斜線（画面のholidayCellDashと同じ扱い）
-          if(!r.disp&&sh&&sh.adminRest&&sh.adminRest[field]){h+=`<td style="border:${BDp};background:${hatch};height:15px;"></td>`;return;}
+          if(!r.disp&&sh&&sh.adminRest&&sh.adminRest[field]){h+=`<td style="border:${BDp};background:${hatch};${chgBg}height:15px;"></td>`;return;}
           if(!r.disp&&!otherHas){
             // 休み提出のみ斜線（出勤で上書きされていればdispがあるためここに来ない）
-            if(sh&&sh.status==="holiday"){h+=`<td style="border:${BDp};background:${hatch};height:15px;"></td>`;return;}
-            h+=`<td style="border:${BDp};height:15px;"></td>`;return;
+            if(sh&&sh.status==="holiday"){h+=`<td style="border:${BDp};background:${hatch};${chgBg}height:15px;"></td>`;return;}
+            h+=`<td style="border:${BDp};${chgBg}height:15px;"></td>`;return;
           }
           // 背景: 緑(スタッフ変更) > 黄(サフィックスnote) — 画面と同じ優先順位
           const cbg=sh&&sh.changed===true?"#B7EBC6":r.note?"#FFFF00":"transparent";
