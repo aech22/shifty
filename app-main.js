@@ -172,7 +172,14 @@ function App(){
 
     const loadShops=(authUser)=>{
     // 店舗はglobal/shopsの全件読みをやめ、必要なIDの直キー読みで取得する（一覧の公開を前提にしない）
-    const readShop=id=>firebaseDB.ref(`global/shops/${id}`).once("value").then(s=>{const v=s.val();return v&&v.id?v:null;});
+    // ref() は禁止文字（. # $ [ ]）に対して「同期に」throwする。ここはPhase1のトップレベルから
+    // 直接呼ばれる（loadShops内）ため、同期throwは呼び出し元の .catch では拾えず、setReady も
+    // setUnbound も走らないまま「データを読み込み中...」で永久に固まる。Firebaseのキーになれない
+    // IDはそもそも存在する店舗を指せないので、「見つからなかった（null）」と同じ扱いにする。
+    const readShop=id=>{
+      if(!id||firebaseKeyForbiddenChars(String(id)).length) return Promise.resolve(null);
+      return firebaseDB.ref(`global/shops/${id}`).once("value").then(s=>{const v=s.val();return v&&v.id?v:null;});
+    };
     const enterShop=(shopObj,shopList)=>{
       const list=shopList&&shopList.length>0?shopList:[shopObj];
       setShops(list);
@@ -222,6 +229,14 @@ function App(){
     // URLにtokenがある場合: tokens逆引きインデックスでshop/periodを特定
     if(parsed&&parsed.token&&parsed.type==="staff"){
       const token=parsed.token;
+      // URLのhashはそのままFirebaseのパスになる。メールやLINEのリンク化で末尾に "." が
+      // くっついた等で禁止文字が混ざると ref() が同期throwし、下の .catch は付く前に
+      // 投げられるため拾えない（＝「読み込み中...」のまま固まる。watchdogは既にclear済み）。
+      // 禁止文字を含むトークンは tokens に存在しえないので「一致なし」と同じ扱いにする。
+      if(firebaseKeyForbiddenChars(token).length){
+        console.warn("URLトークンに使用できない文字:",token,"→ Cookieチェックへ");
+        setInitError("resolve"); cookieFallback(); return;
+      }
       firebaseDB.ref(`tokens/${token}`).once("value").then(tsnap=>{
         const tv=tsnap.val();
         if(!tv||!tv.shopId) return false;
