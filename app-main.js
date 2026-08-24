@@ -65,8 +65,6 @@ function App(){
   const[unbound,setUnbound]=useState(false); // 引き継ぎコード未入力（未所属）状態
   const[inviteCode,setInviteCode]=useState(""); // 引き継ぎコード入力値
   const[inviteError,setInviteError]=useState(""); // エラーメッセージ
-  const[inviteCodeDisplay,setInviteCodeDisplay]=useState(null); // 企業アカウント招待コード表示用
-  const[inviteCodeGenLoading,setInviteCodeGenLoading]=useState(false); // 招待コード生成中フラグ
   const[companyInfo,setCompanyInfo]=useState(null); // {companyId,code,name} 企業アカウント（作成者本人 or 企業ログイン中）
   const[companyLoginMode,setCompanyLoginMode]=useState(false); // ログイン画面で企業コードログインフォーム表示中
   const[companyCodeVal,setCompanyCodeVal]=useState("");
@@ -80,7 +78,7 @@ function App(){
   const[emailVal,setEmailVal]=useState("");
   const[passwordVal,setPasswordVal]=useState("");
   const[password2Val,setPassword2Val]=useState("");
-  // App スコープのトースト（generateInviteCode など App 内関数から使用）
+  // App スコープのトースト（Auth 系など App 内関数から使用）
   const[appToast,setAppToast]=useState(null);
   const appToastRef=useRef();
   const tt=m=>{setAppToast(m);clearTimeout(appToastRef.current);appToastRef.current=setTimeout(()=>setAppToast(null),2500);};
@@ -864,52 +862,6 @@ function App(){
     setUnbound(true);
     // ルールがauth必須のため匿名セッションに戻す（戻せないとログイン画面の店舗コード参加等が失敗する）
     await _restoreAnonSession();
-  };
-
-  // 企業アカウント招待コード関数
-  const generateInviteCode=async()=>{
-    if(!authUser || !firebaseDB) return;
-    setInviteCodeGenLoading(true);
-    try{
-      const code=genToken();
-      const now=new Date();
-      const expiresAt=new Date(now.getTime() + 24*60*60*1000);  // 24時間後
-      // 旧コードを削除（管理キー入りの失効コードをDBに残さない）
-      try{
-        const prev=(await firebaseDB.ref(`accounts/${authUser.uid}/inviteCode`).once("value")).val();
-        if(prev&&prev.code&&prev.code!==code) await firebaseDB.ref(`inviteCodes/${prev.code}`).remove();
-      }catch{}
-      await fbSet(`accounts/${authUser.uid}/inviteCode`, {
-        code,
-        createdAt:now.toISOString(),
-        expiresAt:expiresAt.toISOString(),
-        createdBy:authUser.email
-      });
-      // 参加者が招待主のaccountsを読まなくて済むよう、店舗紐付けのスナップショットを埋め込む
-      const shopsSnap=await firebaseDB.ref(`accounts/${authUser.uid}/shops`).once("value");
-      const shopIds=Object.keys(shopsSnap.val()||{});
-      // 参加者が各店舗のオーナーになれるよう管理キーも埋め込む（自分が読める店舗のみ。24時間で失効するコード内に限定）
-      const adminKeyMap={};
-      await Promise.all(shopIds.map(async id=>{
-        let k=getAdminKeyLS(id);
-        if(!k){ try{ k=(await firebaseDB.ref(`shops/${id}/private/adminKey`).once("value")).val(); }catch{} }
-        if(k) adminKeyMap[id]=k;
-      }));
-      await fbSet(`inviteCodes/${code}`, {
-        uid:authUser.uid,
-        expiresAt:expiresAt.toISOString(),
-        expiresAtMs:expiresAt.getTime(), // 締めルールが期限切れコードの読み取りを拒否する判定用
-        shops:shopsSnap.val()||null,
-        adminKeys:Object.keys(adminKeyMap).length>0?adminKeyMap:null
-      });
-      setInviteCodeDisplay(code);
-      dlog("招待コード生成:", code);
-    }catch(e){
-      console.warn("招待コード生成失敗:", e);
-      tt("招待コードの生成に失敗しました: " + (e?.message||e?.code||"不明なエラー"));
-    }finally{
-      setInviteCodeGenLoading(false);
-    }
   };
 
   const linkExistingShopToAuth=async(shopId)=>{
