@@ -38,6 +38,30 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟢 E2E検証ハーネス（shifty-e2e-verify）がバージョン管理外にあり、失うと復元できない
+
+**目的**: 2026-08-24（バグチェック#93 の後）に、**#91・#92・#93 で3回ゼロから書き直していた「コンポーネント1つだけを実ブラウザにマウントするハーネス」を関数化して**スキルに同梱した。ところが `.gitignore` の2行目が `.claude/` なので、**この成果物はコミットされていない**（ローカルのファイルとしてのみ存在する）。マシンが変わる・ディレクトリを消す・別のworktreeで作業する、のいずれでも失われ、失えば**また書き直しになる**（3回書き直した実績がそれを示している）。
+
+**現物（すべて未コミット・ローカルのみ）**:
+- `.claude/skills/shifty-e2e-verify/scripts/mount-component.js` — `openHarness({jsx, waitFor, engine, viewport, scripts, root})`。chromium/webkit の起動・`route.fulfill` での配信物供給・エラー収集を引き受け、`page` / `errors` / `setInput` / `blur` / `fill` / `clickByText` / `cell(name,date,field)` / `evaluate` / `close` を返す
+- `.claude/skills/shifty-e2e-verify/scripts/example-shift-edit-tab.js` — #93 の再現をそのまま動くテストにしたもの（修正後 EXIT=0／修正前の配信物へ `SHIFTY_ROOT` を向けると EXIT=1 になることを実測済み）
+- `.claude/skills/shifty-e2e-verify/SKILL.md` の **1.6節**（呼び出し方・必ず踏む罠2つ・「素通りするテストではない」ことの確かめ方）と、frontmatter の description 追記
+
+**なぜループが勝手にコミットしなかったか**: **SKILL.md の0節に dev 標準テスト店舗の管理コード（`shopId.adminKey`）が平文で書かれている**。ファイル自身が「dev専用の使い捨てテストデータの鍵であり実害はないため、**この非公開スキルファイルへの記録は許容範囲**」と明記しており、`.claude/` の除外はその前提とセットになっている。`git add -f` で押し込むと**その前提を黙って壊す**（GitHub Pages 公開リポジトリなので、devとはいえ鍵が公開履歴に残る）。追跡方針の変更はユーザー判断。
+
+**受け入れ条件**:
+- [ ] どう扱うかを決める（**ユーザー判断**）
+  - **案A: 鍵を分離してから `scripts/` だけ追跡する** — 管理コードを `.claude/skills/shifty-e2e-verify/.secrets.local`（gitignore継続）等へ追い出し、SKILL.md はそこを参照する形にする。`.gitignore` に `!.claude/skills/` の除外解除を足す。**スクリプト本体には鍵が入っていない**ので、`scripts/` だけなら鍵の分離を待たずに追跡できる
+  - **案B: リポジトリ外のバックアップ先（Obsidian Vault / Google Drive）へ写しを置く** — リポジトリの公開範囲を変えずに済むが、写しの同期は手作業になる（CLAUDE.md の「Obsidian側は手動コピーで同内容とは限らない」問題を1つ増やす）
+  - **案C: 現状維持** — 失ったら書き直す。3回書き直した実績があるので、4回目も書ける
+- [ ] 決めた案を実施し、**別の場所から `node .../example-shift-edit-tab.js` が EXIT=0 で通ることを確認する**（復元できることの実証。ファイルが存在するだけでは足りない）
+- [ ] 案Aを採る場合、`.gitignore` の除外解除が `.claude/` 配下の他のもの（settings.local.json・commands・launch.json 等）を巻き込んでいないことを確認する
+
+**影響範囲**: `.gitignore`、`.claude/skills/shifty-e2e-verify/`（SKILL.md・scripts/）。**アプリ本体（app-*.js・index.html・functions/）には一切触れない**
+**備考**: バグチェック#93（2026-08-24）の後にユーザー依頼で実装・**条件B（追跡方針＝鍵をどこに置くかの判断）と条件C（公開リポジトリに何を載せてよいかはユーザーしか決められない）に該当**。**ハーネス自体は完成していて今すぐ使える**（実測: 修正後 `verdict.allPass=true`／修正前 `step4_noLeak:false`）。ここで残しているのは**保全の問題だけ**で、機能の未完成ではない。優先度が🟢なのは、失っても壊れるのはアプリではなく検証の道具だから。ただし**「据え置き項目（#74のタップ領域44px実測・WebKit再測定・スタッフ20名超の上限UI）を片付けるのはこの道具が前提」**なので、失うとそれらがまた止まる。
+
+---
+
 ## 🟡 期間の確定（写し）が `periods` ノードを肥大化させ、起動時のDL量が期間数に比例して増える
 
 **目的**: `1c5272b`（期間確定）は各期間に `period.snapshot` として **staffList ＋ 凍結対象settings 15キーの丸ごとのコピー**を持たせる。`periods` は起動時に `startSubscriptions` が**全件・無条件で購読する**（[app-main.js:385](app-main.js) — subs のような期間窓が無い）ため、**写しの合計サイズがそのまま毎回の起動コストになる**。「データ保存上限②」で subs を直近3ヶ月に絞ってDL量を下げた努力と逆向きに効く。
