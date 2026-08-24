@@ -735,25 +735,30 @@ function periodSnapshotEqual(a,b){return JSON.stringify(_normSnap(a))===JSON.str
 // **列は元の位置に戻す**（末尾送りにしない）。要素は {name,index} で、index は削除した時点の並び順。
 // 位置が意味を持つのは見た目だけではない: staffList の空白列(スペーサー)がキッチン/ホールの境界
 // （ShiftEditTab の spIdx）なので、末尾に付けるとその人の所属セクションまで変わってしまう。
-// 挿入は index の小さい順に行う（大きい順に入れると、先に入れた分だけ後続の位置がずれる）。
+// **挿入は keepStaff の後ろから（＝最後に削除した人から）行う**。index を小さい順に入れてはいけない。
+// 各 index は「その人を削除した瞬間の一覧」での位置であって、元の一覧での位置ではない
+// （StaffTab は確定時に staffList.indexOf で採るため、先に削除・保持した人が既に抜けた座標系になる）。
+// 削除を新しい順に巻き戻すと、そのつど「その削除の直前の一覧」が再現されるので index がそのまま使える。
+// 例: ["A","B","_spacer","C"] で B(index1)→C(index2) の順に削除すると keepStaff=[B:1, C:2]。
+// index昇順だと B→C の順に入れて ["A","B","C","_spacer"] となり **C が空白列を跨いでキッチン側へ移る**。
+// 逆順なら C→B で ["A","B","_spacer","C"] ＝元どおりになる。
 // Firebaseは配列を数値キーのオブジェクトにして返すことがあるので両方の形を受ける。
 // index を持たない旧形式（名前だけの文字列）は末尾に足す。
 function mergeKeepStaff(list,period){
   const raw=period&&period.keepStaff;
   const keep=Array.isArray(raw)?raw:(raw&&typeof raw==="object"?Object.values(raw):[]);
   const out=(list||[]).filter(n=>typeof n==="string");
-  const NOPOS=Number.MAX_SAFE_INTEGER;
   const entries=keep.map(e=>{
     if(typeof e==="string")return{name:e,index:null};
     if(e&&typeof e==="object"&&typeof e.name==="string")return{name:e.name,index:Number.isInteger(e.index)?Math.max(0,e.index):null};
     return null;
   }).filter(e=>e&&e.name);
-  entries.sort((a,b)=>(a.index==null?NOPOS:a.index)-(b.index==null?NOPOS:b.index));
-  entries.forEach(e=>{
-    if(out.includes(e.name))return;
+  for(let i=entries.length-1;i>=0;i--){
+    const e=entries[i];
+    if(out.includes(e.name))continue;
     if(e.index==null||e.index>=out.length)out.push(e.name);
     else out.splice(e.index,0,e.name);
-  });
+  }
   return out;
 }
 // シフト作成タブが実際に使う staffList / settings を解決する。locked=true のときだけ写しを採用する。

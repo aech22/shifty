@@ -1396,9 +1396,41 @@ test("mergeKeepStaff: 削除前の位置に戻す（末尾送りにしない）"
 });
 
 test("mergeKeepStaff: 複数人を残しても互いの位置がずれない", () => {
-  // index の小さい順に挿入しないと、先に入れた分だけ後続がずれる
+  // keepStaff の後ろ（＝最後に削除した人）から挿入しないと、先に入れた分だけ後続がずれる
   const r = u.mergeKeepStaff(["A", "D"], { keepStaff: [{ name: "C", index: 2 }, { name: "B", index: 1 }] });
   assert.deepStrictEqual(r, ["A", "B", "C", "D"]);
+});
+
+// StaffTab.confirmDelete と同じ式（位置は indexOf・除外は名前）で削除を再現する。
+// index は「その削除の瞬間の一覧」での位置なので、削除の順番によって同じ人でも別の値になる。
+const _delKeep = (list, keep, name) =>
+  ({ list: list.filter(x => x !== name), keep: [...keep, { name, index: list.indexOf(name) }] });
+const _restore = (orig, order) => {
+  let list = [...orig], keep = [];
+  order.forEach(n => { const r = _delKeep(list, keep, n); list = r.list; keep = r.keep; });
+  return u.mergeKeepStaff(list, { keepStaff: keep });
+};
+
+test("mergeKeepStaff: 削除の順番が変わっても元の並びに戻る", () => {
+  // 後ろの人から消した場合（index は元の一覧と同じ値になる＝以前から通っていたケース）
+  assert.deepStrictEqual(_restore(["A", "B", "C", "D"], ["C", "B"]), ["A", "B", "C", "D"]);
+  // 前の人から消した場合。2人目の index は1人目が抜けた一覧で採られるため、
+  // index昇順に挿入すると ["A","C","B","D"] になっていた
+  assert.deepStrictEqual(_restore(["A", "B", "C", "D"], ["B", "C"]), ["A", "B", "C", "D"]);
+  assert.deepStrictEqual(_restore(["A", "B", "C", "D", "E"], ["A", "C", "E"]), ["A", "B", "C", "D", "E"]);
+  assert.deepStrictEqual(_restore(["A", "B", "C"], ["A", "B", "C"]), ["A", "B", "C"]);
+});
+
+test("mergeKeepStaff: 残した人が空白列を跨いで別セクションへ移らない", () => {
+  // 空白列(スペーサー)は ShiftEditTab の spIdx ＝キッチン/ホールの境界なので、
+  // 位置がずれると列順だけでなく所属セクションまで変わる
+  assert.deepStrictEqual(
+    _restore(["A", "B", "__spacer__s1", "C"], ["B", "C"]),
+    ["A", "B", "__spacer__s1", "C"],
+    "C はスペーサーより後（ホール）のまま");
+  assert.deepStrictEqual(
+    _restore(["田中", "佐藤", "__spacer__s1", "鈴木", "高橋"], ["佐藤", "鈴木"]),
+    ["田中", "佐藤", "__spacer__s1", "鈴木", "高橋"]);
 });
 
 test("mergeKeepStaff: 重複しない・Firebaseのオブジェクト形も受ける・壊れた値を無視する", () => {
