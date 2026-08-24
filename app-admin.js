@@ -2534,7 +2534,9 @@ const dragIdxRef=useRef(null);
                   `${(p.startDate||"").replace(/-/g,"/")}〜${(p.endDate||"").replace(/-/g,"/")}`
                   +(idx===0?"":` ／ 最新から${idx+1}件目まで`)
                   +(p.snapshot?" ／ 確定済み（選ばなくても残ります）":"")))}
-                {opt(0,"どの期間にも残さない","削除した時点で、すべてのシフト表からこの人の列が消えます")}
+                {/* 「残さない」でも完全には消えない: 提出のある人は expXl(:2087)・buildPdfCols(:1337) が
+                    未登録名として末尾に足すため、Excel・PDFには出る。文言をそちらに合わせる。 */}
+                {opt(0,"どの期間にも残さない","シフト作成タブから列が消えます（提出がある人は、Excel・PDFには未登録の名前として末尾に出ます）")}
               </div>}
             <div style={{fontSize:11,color:"var(--c-text4)",margin:"6px 0 12px"}}>※ これより古い期間は確定済みの設定期間に入っており、表示は変わりません。</div>
             <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
