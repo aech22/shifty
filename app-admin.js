@@ -438,10 +438,16 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     return m;
   },[companyData]);
 
-  // periodsが非同期ロード後に届いた場合、selPidが""のままなら先頭に補正
+  // periodsが非同期ロード後に届いた場合、selPidが""のままなら先頭に補正。
+  // 選択中の期間が他端末・他セッションで削除されたときもここへ来て別の期間へ移る。その場合は
+  // 期間ドロップダウン(:1573)・店舗切替(:388)と同じく localEdits/heatEdits を必ずクリアする。
+  // 両者は `名前|日付|フィールド` キーのバッファで期間を持たないため、残したまま「保存」を押すと
+  // handleSaveAll が現在の selPid（＝移った先の期間）に対して applyEditToSubs を再適用し、
+  // 消えた期間の日付が別の期間のsubへ書き込まれる（グリッドは期間内の日付しか描かないので画面には出ない）。
   useEffect(()=>{
     if(periods.length>0&&!periods.find(p=>p.id===selPid)){
       setSelPid(periods[0].id);
+      setLocalEdits({});setHeatEdits({});setFocusKey(null);
     }
   },[periods]);
 
