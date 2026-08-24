@@ -1342,6 +1342,31 @@ test("buildPeriodSnapshot: 凍結対象キーだけを写し取り、対象外�
   assert.strictEqual(_liveStaff.length, 3, "元のstaffListを破壊しない");
 });
 
+test("buildPeriodSnapshot: 日付キーの候補（dateCandidates系）は写さない＝periodsを肥大化させない", () => {
+  const dateCandidates = {}, posTypes = {};
+  for (let i = 0; i < 400; i++) {
+    const d = new Date(Date.UTC(2026, 0, 1) + i * 86400000).toISOString().slice(0, 10);
+    dateCandidates[d] = [{ start: "09:00", end: "17:00" }];
+    posTypes[d] = "weekday";
+  }
+  const snap = u.buildPeriodSnapshot(["田中"], { ..._liveSettings, dateCandidates, dateCandidatePosTypes: posTypes });
+  assert.strictEqual(snap.settings.dateCandidates, undefined, "日付別候補は凍結しない");
+  assert.strictEqual(snap.settings.dateCandidatePosTypes, undefined, "日付別の区分も凍結しない");
+  assert.ok(snap.settings.breakTimes, "他の凍結対象は従来どおり写す");
+  // 400日ぶんの候補を持つ店舗でも写しが1KB未満に収まること（起動時DL量の回帰検知）
+  assert.ok(JSON.stringify(snap).length < 1024, `写しが大きすぎる: ${JSON.stringify(snap).length} bytes`);
+});
+
+test("resolvePeriodMaster: 確定済み期間でも日付別候補は現在値を使う（凍結対象外）", () => {
+  const snap = u.buildPeriodSnapshot(["田中", "佐藤"], { positions: ["調理"] });
+  const p = { ..._basePeriod, snapshot: snap };
+  const now = { positions: ["フロア"], dateCandidates: { "2026-07-05": [{ start: "10:00", end: "15:00" }] } };
+  const r = u.resolvePeriodMaster(p, ["田中"], now, "2026-08-24");
+  assert.strictEqual(r.locked, true);
+  assert.deepStrictEqual(r.settings.positions, ["調理"], "凍結対象は写しの値");
+  assert.deepStrictEqual(r.settings.dateCandidates, now.dateCandidates, "日付別候補は現在値のまま渡る");
+});
+
 test("periodSnapshotEqual: Firebaseが空配列・空オブジェクトを落としても等価と判定する（書き込みループ防止）", () => {
   const a = u.buildPeriodSnapshot(["田中"], { staffAttributes: {}, staffNumbers: { 田中: "1" }, breakTimes: { weekday: [] } });
   const readBack = { staffList: ["田中"], settings: { staffNumbers: { 田中: "1" } } }; // 空が落ちた形

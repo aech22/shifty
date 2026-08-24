@@ -705,9 +705,15 @@ function isSpecialRedDate(dateStr,settings){
 // 更新し続け、最終日を超えたら更新を止める＝その時点の内容がそのまま凍結される、という形にする。
 // 写しを持たない過去期間（この機能より前に終わった期間）は従来どおり現在値で動かす。今日の値で
 // 過去を固定すると「既に削除済みのスタッフが欠けた状態」を正として焼き付けてしまうため。
+// 期間の確定（写し）で凍結する settings のキー。
+// dateCandidates / dateCandidatePosTypes は**意図的に外している**。この2つは日付をキーに持つため
+// 店舗の運用年数ぶんだけ積み上がり、実測で写し1件 57,620 bytes のうち 51,146 bytes（89%）を占めていた。
+// periods は起動時に全件購読するので、その重さがアプリを開くたびのDL量に直結する（バグチェック#88）。
+// 日付キーの候補は「その日の候補」であって過去の日付ぶんが後から書き換わることは稀なため、
+// 凍結対象から外して現在値を参照する。確定済み期間でも日付別候補を編集すれば表示は動く（承知の上）。
 const PERIOD_SNAPSHOT_SETTING_KEYS=["staffAttributes","staffTypeLimits","staffPositions","positions",
   "requiredPositions","staffNumbers","overtimeSettings","staffColors","staffAliases","staffWorkplaces",
-  "breakTimes","candidates","weekdayCandidates","dateCandidates","dateCandidatePosTypes"];
+  "breakTimes","candidates","weekdayCandidates"];
 function isPeriodEnded(period,todayStr){return!!(period&&period.endDate&&todayStr&&todayStr>period.endDate);}
 function buildPeriodSnapshot(staffList,settings){
   const s={};
