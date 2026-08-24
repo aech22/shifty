@@ -1555,10 +1555,24 @@ function App(){
             }}
             onDeleteSub={subId=>{
               const currentSid=currentShopIdRef.current||sid;
+              const removed=subs.find(s=>s&&s.id===subId)||null;
               const a=subs.filter(s=>s.id!==subId);
               setSubs(a);
               ls(storeKey(currentSid,"subs_v6"),a);
-              if(firebaseDB&&!DEMO_MODE) firebaseDB.ref(`shops/${currentSid}/subs/${subId}`).remove().catch(e=>console.warn("sub削除失敗:",e));
+              if(firebaseDB&&!DEMO_MODE) firebaseDB.ref(`shops/${currentSid}/subs/${subId}`).remove().catch(e=>{
+                console.warn("sub削除失敗:",e);
+                // ルールは sub の削除を「提出した端末（submitterUid）か店舗オーナー」だけに許す。
+                // 拒否されたときに画面から消えたままにすると、消えたように見えて実際は残る
+                // ＝リロードで戻る（データを失っていないのに失ったように見える／その逆も起きる）。
+                // 楽観的に消した行を戻し、理由を伝える。
+                setSubs(prev=>{
+                  if(!removed||prev.some(s=>s&&s.id===subId))return prev;
+                  const back=[...prev,removed];
+                  ls(storeKey(currentSid,"subs_v6"),back);
+                  return back;
+                });
+                tt("△ この提出は削除できません（提出した端末か、店舗の管理者のみ削除できます）");
+              });
             }}
             shopName={shop?.name}/>
         :<AdminView settings={effectiveSettings} periods={periods} subs={subs} staffList={staffList} shops={shops}
