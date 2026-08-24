@@ -2421,9 +2421,21 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   // 削除ポップアップに出す期間: 最新から3つまで（startDate降順）。
   // 4つ目以降を出さないのは、そこまで遡ると必ず確定済みの設定期間に入っており、かつ最短（2週間単位）でも
   // 1ヶ月半前になるため、名前の出し分けを変える必要が実務上考えられないから。
-  const delPeriodChoices=useMemo(()=>
-    [...periods].filter(p=>p&&p.id).sort((a,b)=>String(b.startDate||"").localeCompare(String(a.startDate||""))).slice(0,3)
+  const delPeriodsSorted=useMemo(()=>
+    [...periods].filter(p=>p&&p.id).sort((a,b)=>String(b.startDate||"").localeCompare(String(a.startDate||"")))
   ,[periods]);
+  const delPeriodChoices=useMemo(()=>delPeriodsSorted.slice(0,3),[delPeriodsSorted]);
+  // 選べない4つ目以降で列が実際に残るのは「終了済み **かつ** 写し(snapshot)を持つ」期間だけ
+  // （resolvePeriodMaster は locked のときしか写しを採用しない）。写しはシフト作成タブをその期間の
+  // 終了前に開いたときにだけ撮られるので、一度も開かないまま終わった期間・この機能より前に終わった
+  // 期間は写しを持たず、そこからは列が消える。ポップアップの注記はこの実測に合わせて出し分ける
+  // （「古い期間は確定済みなので変わりません」と無条件に書くと、その場合に嘘になる）。
+  const delOlder=useMemo(()=>{
+    const t=fd(new Date());
+    const rest=delPeriodsSorted.slice(3);
+    const kept=rest.filter(p=>isPeriodEnded(p,t)&&p.snapshot).length;
+    return{kept,lost:rest.length-kept};
+  },[delPeriodsSorted]);
   const delSubCount=n=>subs.filter(s=>(s.staffName===n||(staffAliases[n]||[]).includes(s.staffName))&&s.source!=="grid").length;
   // keepStaff の要素（文字列の旧形式 / {name,index}）を素直な形に均す
   const keepEntriesOf=p=>{
