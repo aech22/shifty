@@ -1,7 +1,7 @@
 // ============================================================
-// Shifty v6 - Firebase リアルタイム同期版 [build:20260824-95990ec]
+// Shifty v6 - Firebase リアルタイム同期版 [build:20260824-5256014]
 // ============================================================
-console.log("[Shifty] app.js loaded: build 20260824-95990ec");
+console.log("[Shifty] app.js loaded: build 20260824-5256014");
 const {useState,useEffect,useCallback,useRef,useMemo}=React;
 
 // ============================================================
