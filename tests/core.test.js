@@ -1378,6 +1378,47 @@ test("resolvePeriodMaster: Firebaseがオブジェクト化して返したstaffL
   assert.deepStrictEqual(r.staffList, ["田中", "佐藤"]);
 });
 
+// ===== 削除済みスタッフを期間ごとに残す（period.keepStaff）=====
+// スタッフ一覧から消しても、削除時のポップアップで「残す」と選んだ期間のシフト表には列を残す。
+// 写し(snapshot)とは独立した足し算なので、確定済み期間の凍結を壊さず、期間の終了前にも効く。
+test("mergeKeepStaff: 名前を末尾に足す・重複しない・Firebaseのオブジェクト形も受ける", () => {
+  assert.deepStrictEqual(u.mergeKeepStaff(["田中", "佐藤"], { keepStaff: ["鈴木"] }), ["田中", "佐藤", "鈴木"]);
+  assert.deepStrictEqual(u.mergeKeepStaff(["田中"], { keepStaff: { 0: "鈴木", 1: "高橋" } }), ["田中", "鈴木", "高橋"]);
+  assert.deepStrictEqual(u.mergeKeepStaff(["田中"], { keepStaff: ["田中"] }), ["田中"], "既に居る人を二重に足さない");
+  assert.deepStrictEqual(u.mergeKeepStaff(["田中"], {}), ["田中"], "keepStaffが無ければ素通し");
+  assert.deepStrictEqual(u.mergeKeepStaff(["田中"], null), ["田中"]);
+  assert.deepStrictEqual(u.mergeKeepStaff(null, { keepStaff: ["鈴木"] }), ["鈴木"]);
+  assert.deepStrictEqual(u.mergeKeepStaff(["田中"], { keepStaff: ["", null, 3] }), ["田中"], "空・非文字列は足さない");
+});
+
+test("resolvePeriodMaster: keepStaff は終了前の期間でも名簿に残る（写しはまだ採用されない時期）", () => {
+  const p = { ..._basePeriod, keepStaff: ["退職者"] };
+  const r = u.resolvePeriodMaster(p, _liveStaff, _liveSettings, "2026-07-20"); // 終了前
+  assert.strictEqual(r.locked, false, "keepStaff は確定扱いにしない");
+  assert.deepStrictEqual(r.staffList, [..._liveStaff, "退職者"]);
+});
+
+test("resolvePeriodMaster: keepStaff は確定済み期間の写しにも足す（写し自体は書き換えない）", () => {
+  const snap = u.buildPeriodSnapshot(["田中"], {});
+  const p = { ..._basePeriod, snapshot: snap, keepStaff: ["退職者"] };
+  const r = u.resolvePeriodMaster(p, _liveStaff, _liveSettings, "2026-08-05"); // 終了後
+  assert.strictEqual(r.locked, true);
+  assert.deepStrictEqual(r.staffList, ["田中", "退職者"]);
+  assert.deepStrictEqual(snap.staffList, ["田中"], "写しの中身は変わらない");
+});
+
+test("resolvePeriodMaster: 確定済みの写しに既に居る人は keepStaff で二重に出ない", () => {
+  const p = { ..._basePeriod, snapshot: u.buildPeriodSnapshot(["田中", "退職者"], {}), keepStaff: ["退職者"] };
+  const r = u.resolvePeriodMaster(p, _liveStaff, _liveSettings, "2026-08-05");
+  assert.deepStrictEqual(r.staffList, ["田中", "退職者"]);
+});
+
+test("resolvePeriodMaster: keepStaff を持たない期間は従来と1バイトも変わらない", () => {
+  const p = { ..._basePeriod, snapshot: u.buildPeriodSnapshot(["田中", "佐藤"], {}) };
+  assert.deepStrictEqual(u.resolvePeriodMaster(p, _liveStaff, _liveSettings, "2026-08-05").staffList, ["田中", "佐藤"]);
+  assert.deepStrictEqual(u.resolvePeriodMaster(p, _liveStaff, _liveSettings, "2026-07-20").staffList, _liveStaff);
+});
+
 // ===== スタッフ名のFirebase禁止文字 =====
 // 名前は staffColors 等7つの設定マップでキーになる。禁止文字を含むと set() が同期例外を投げ、
 // fbW の .catch では拾えないまま保存が失われる（バグチェック#89）。

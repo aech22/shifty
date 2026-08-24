@@ -183,7 +183,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           <button onClick={()=>setTab("mypage")} style={{padding:"6px 12px",background:"#DC2626",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>マイページへ</button>
         </div>}
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings}/>}
-        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} onRenameStaff={(oldName,newName)=>{
+        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
@@ -2317,8 +2317,12 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
 }
 
 // ===== スタッフ登録タブ =====
-function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[]}){
+function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods}){
   const[newName,setNewName]=useState("");
+  // 削除確認ポップアップ。対象は index ではなく「スタッフ名」で持つ（下のコメントと同じ理由）。
+  const[delTarget,setDelTarget]=useState(null);
+  // 「最新から何個目の期間まで名前を残すか」。0=どの期間にも残さない。既定は最新の1期間。
+  const[delKeepCount,setDelKeepCount]=useState(1);
   // 編集中・別名パネル・ポジションパネルの対象は「スタッフ名」で持つ（indexで持ってはいけない）。
   // indexで持つと、パネルを開いたまま別の行を削除する／並べ替える／他端末がstaffListを変えると、
   // 同じindexが別人を指すようになり、開いたままの編集欄が別人の行に移って保存が別人を書き換える
@@ -2414,13 +2418,40 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   // :2172 / :3069 / :552-559）は既に別名込みで数えており、ここだけが名前一致だった。
   // 提出データ自体は del では消えない（onSave は staffList のみ）ため「残る」と明示する。取り消し不能とは書かない
   // ——同名で追加し直せば設定マップもsubsも復帰し、失われるのは並び順だけである。
+  // 削除ポップアップに出す期間: 最新から3つまで（startDate降順）。
+  // 4つ目以降を出さないのは、そこまで遡ると必ず確定済みの設定期間に入っており、かつ最短（2週間単位）でも
+  // 1ヶ月半前になるため、名前の出し分けを変える必要が実務上考えられないから。
+  const delPeriodChoices=useMemo(()=>
+    [...periods].filter(p=>p&&p.id).sort((a,b)=>String(b.startDate||"").localeCompare(String(a.startDate||""))).slice(0,3)
+  ,[periods]);
+  const delSubCount=n=>subs.filter(s=>(s.staffName===n||(staffAliases[n]||[]).includes(s.staffName))&&s.source!=="grid").length;
   const del=i=>{
     const n=staffList[i];
-    if(!isSpacer(n)){
-      const sc=subs.filter(s=>(s.staffName===n||(staffAliases[n]||[]).includes(s.staffName))&&s.source!=="grid").length;
-      if(!confirm(`「${n}」を削除しますか？${sc>0?`\n提出済みのシフト${sc}件は削除されません（提出一覧とExcelには残ります）。`:""}`))return;
+    // 空白列は表示上の区切りでしかなく、期間ごとの出し分けを持たないので従来どおり即削除する
+    if(isSpacer(n)){const a=[...staffList];a.splice(i,1);onSave(a);tt("削除しました");return;}
+    setDelTarget(n);
+    setDelKeepCount(1);
+  };
+  // 削除の実行。名前を残すと選んだ期間には period.keepStaff へ名前を足す（写し=snapshot は触らない）。
+  // keepStaff は resolvePeriodMaster（app-utils.js）が名簿へマージするので、シフト作成グリッド・
+  // ヒートマップ・Excel・PDF に列が残る。スタッフ一覧と提出一覧は生の staffList を見るので従来どおり消える。
+  const confirmDelete=()=>{
+    const n=delTarget;
+    if(!n)return;
+    const keepIn=delPeriodChoices.slice(0,delKeepCount);
+    if(keepIn.length&&savePeriods){
+      savePeriods(periods.map(p=>{
+        if(!p||!keepIn.some(k=>k.id===p.id))return p;
+        const raw=p.keepStaff;
+        const cur=Array.isArray(raw)?raw:(raw&&typeof raw==="object"?Object.values(raw):[]);
+        if(cur.includes(n))return p;
+        return{...p,keepStaff:[...cur,n]};
+      }));
     }
-    const a=[...staffList];a.splice(i,1);onSave(a);tt("削除しました");
+    // 名前で除外する（index の splice にしない。ポップアップが開いている間に他端末が並べ替えると別人が消える）
+    onSave(staffList.filter(x=>x!==n));
+    setDelTarget(null);
+    tt(keepIn.length?`削除しました（直近${keepIn.length}期間のシフト表には名前を残します）`:"削除しました");
   };
 const dragIdxRef=useRef(null);
   const longPressTimer=useRef(null);
@@ -2467,6 +2498,47 @@ const dragIdxRef=useRef(null);
   };
   return(
     <div>
+      {/* 削除確認ポップアップ。confirm() では選択肢を出せないためモーダルにしてある。
+          「どの期間まで名前を残すか」は累積の選択（k個目を選ぶと最新〜k個目まで残す）。 */}
+      {delTarget&&(()=>{
+        const sc=delSubCount(delTarget);
+        const opt=(i,label,note)=>(
+          <label key={i} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"8px 10px",marginBottom:4,borderRadius:8,cursor:"pointer",
+            background:delKeepCount===i?"rgba(248,112,54,.10)":"var(--c-input)",
+            border:`1px solid ${delKeepCount===i?"var(--c-accent)":"var(--c-border)"}`}}>
+            <input type="radio" name="delKeep" checked={delKeepCount===i} onChange={()=>setDelKeepCount(i)} style={{marginTop:2,flexShrink:0,width:16,height:16}}/>
+            <span style={{minWidth:0}}>
+              <span style={{fontSize:13,color:"var(--c-text)",fontWeight:600}}>{label}</span>
+              {note&&<span style={{display:"block",fontSize:11,color:"var(--c-text4)",marginTop:2}}>{note}</span>}
+            </span>
+          </label>
+        );
+        return(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={()=>setDelTarget(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:"18px 18px 14px",maxWidth:440,width:"100%",maxHeight:"85vh",overflowY:"auto",boxShadow:"0 8px 32px var(--c-shadow)"}}>
+            <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>「{delTarget}」を削除します</div>
+            {sc>0&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>提出済みのシフト{sc}件は削除されません（提出一覧とExcelには残ります）。</div>}
+            <div style={{fontSize:13,fontWeight:700,color:"var(--c-text2)",marginTop:10,marginBottom:2}}>シフト表に名前をどの期間まで残しますか？</div>
+            <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:8}}>残した期間では、シフト作成タブ・Excel・PDF にこの人の列が出たままになります（スタッフ一覧からは消えます）。</div>
+            {delPeriodChoices.length===0
+              ?<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>期間がまだありません。</div>
+              :<div>
+                {delPeriodChoices.map((p,idx)=>opt(idx+1,
+                  `${p.label||"(名称なし)"} まで残す`,
+                  `${(p.startDate||"").replace(/-/g,"/")}〜${(p.endDate||"").replace(/-/g,"/")}`
+                  +(idx===0?"":` ／ 最新から${idx+1}件目まで`)
+                  +(p.snapshot?" ／ 確定済み（選ばなくても残ります）":"")))}
+                {opt(0,"どの期間にも残さない","削除した時点で、すべてのシフト表からこの人の列が消えます")}
+              </div>}
+            <div style={{fontSize:11,color:"var(--c-text4)",margin:"6px 0 12px"}}>※ これより古い期間は確定済みの設定期間に入っており、表示は変わりません。</div>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button onClick={()=>setDelTarget(null)} style={AGray}>キャンセル</button>
+              <button onClick={confirmDelete} style={AD}>削除する</button>
+            </div>
+          </div>
+        </div>);
+      })()}
       <AT>スタッフ登録</AT>
       <AC title="スタッフ一覧">
         {!isPro&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:8,padding:"7px 10px"}}>

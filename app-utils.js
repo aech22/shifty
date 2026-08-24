@@ -727,21 +727,36 @@ function _normSnap(v){
   return v;
 }
 function periodSnapshotEqual(a,b){return JSON.stringify(_normSnap(a))===JSON.stringify(_normSnap(b));}
+// 削除済みスタッフのうち「この期間のシフト表には名前を残す」と指定された分（period.keepStaff）を名簿へ足す。
+// スタッフ一覧から消しても、作成中・配布済みのシフト表からその人の列が黙って消えないようにするための仕組みで、
+// 削除時のポップアップ（StaffTab）が最新3期間まで選ばせて書き込む。
+// **足すだけで消さない**のが要点: 確定済み期間の写し(snapshot)を書き換えないので凍結の意味を壊さず、
+// 期間が終了する前（写しがまだ採用されない時期）にも効く。列は末尾に付く
+// ——未登録名を Excel(expXl)/PDF(buildPdfCols) が末尾に足すのと同じ扱いに揃えてある。
+// Firebaseは配列を数値キーのオブジェクトにして返すことがあるので両方の形を受ける。
+function mergeKeepStaff(list,period){
+  const raw=period&&period.keepStaff;
+  const keep=Array.isArray(raw)?raw:(raw&&typeof raw==="object"?Object.values(raw):[]);
+  const out=(list||[]).filter(n=>typeof n==="string");
+  keep.forEach(n=>{if(typeof n==="string"&&n&&!out.includes(n))out.push(n);});
+  return out;
+}
 // シフト作成タブが実際に使う staffList / settings を解決する。locked=true のときだけ写しを採用する。
 // 凍結対象キーは「写しに無ければ現在値も消す」＝写しを撮ったあとに新設された設定が過去期間へ
 // 漏れ込まないようにする。凍結対象外のキー（xlShopName・periodUnit・templates 等）は現在値のまま。
+// staffList はどちらの経路でも最後に keepStaff をマージする（確定済み・未確定の両方で名前が残る）。
 function resolvePeriodMaster(period,staffList,settings,todayStr){
   const snap=period&&period.snapshot;
   const rawSl=snap&&snap.staffList;
   const sl=Array.isArray(rawSl)?rawSl:(rawSl&&typeof rawSl==="object"?Object.values(rawSl):null);
-  if(!isPeriodEnded(period,todayStr)||!sl)return{staffList,settings,locked:false};
+  if(!isPeriodEnded(period,todayStr)||!sl)return{staffList:mergeKeepStaff(staffList,period),settings,locked:false};
   const merged={...(settings||{})};
   const ss=snap.settings||{};
   PERIOD_SNAPSHOT_SETTING_KEYS.forEach(k=>{if(ss[k]===undefined)delete merged[k];else merged[k]=ss[k];});
-  return{staffList:sl.filter(n=>typeof n==="string"),settings:merged,locked:true};
+  return{staffList:mergeKeepStaff(sl,period),settings:merged,locked:true};
 }
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
+  module.exports={PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
 }
