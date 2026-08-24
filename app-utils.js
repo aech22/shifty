@@ -731,14 +731,29 @@ function periodSnapshotEqual(a,b){return JSON.stringify(_normSnap(a))===JSON.str
 // スタッフ一覧から消しても、作成中・配布済みのシフト表からその人の列が黙って消えないようにするための仕組みで、
 // 削除時のポップアップ（StaffTab）が最新3期間まで選ばせて書き込む。
 // **足すだけで消さない**のが要点: 確定済み期間の写し(snapshot)を書き換えないので凍結の意味を壊さず、
-// 期間が終了する前（写しがまだ採用されない時期）にも効く。列は末尾に付く
-// ——未登録名を Excel(expXl)/PDF(buildPdfCols) が末尾に足すのと同じ扱いに揃えてある。
+// 期間が終了する前（写しがまだ採用されない時期）にも効く。
+// **列は元の位置に戻す**（末尾送りにしない）。要素は {name,index} で、index は削除した時点の並び順。
+// 位置が意味を持つのは見た目だけではない: staffList の空白列(スペーサー)がキッチン/ホールの境界
+// （ShiftEditTab の spIdx）なので、末尾に付けるとその人の所属セクションまで変わってしまう。
+// 挿入は index の小さい順に行う（大きい順に入れると、先に入れた分だけ後続の位置がずれる）。
 // Firebaseは配列を数値キーのオブジェクトにして返すことがあるので両方の形を受ける。
+// index を持たない旧形式（名前だけの文字列）は末尾に足す。
 function mergeKeepStaff(list,period){
   const raw=period&&period.keepStaff;
   const keep=Array.isArray(raw)?raw:(raw&&typeof raw==="object"?Object.values(raw):[]);
   const out=(list||[]).filter(n=>typeof n==="string");
-  keep.forEach(n=>{if(typeof n==="string"&&n&&!out.includes(n))out.push(n);});
+  const NOPOS=Number.MAX_SAFE_INTEGER;
+  const entries=keep.map(e=>{
+    if(typeof e==="string")return{name:e,index:null};
+    if(e&&typeof e==="object"&&typeof e.name==="string")return{name:e.name,index:Number.isInteger(e.index)?Math.max(0,e.index):null};
+    return null;
+  }).filter(e=>e&&e.name);
+  entries.sort((a,b)=>(a.index==null?NOPOS:a.index)-(b.index==null?NOPOS:b.index));
+  entries.forEach(e=>{
+    if(out.includes(e.name))return;
+    if(e.index==null||e.index>=out.length)out.push(e.name);
+    else out.splice(e.index,0,e.name);
+  });
   return out;
 }
 // シフト作成タブが実際に使う staffList / settings を解決する。locked=true のときだけ写しを採用する。

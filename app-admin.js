@@ -2438,14 +2438,19 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const confirmDelete=()=>{
     const n=delTarget;
     if(!n)return;
+    // 位置は「確定を押した時点」の並びから取る。ポップアップを開いている間に他端末が並べ替えたら、
+    // 開いたときの位置ではなく今の位置が正しい（対象の同一性は名前で持っているのでズレない）。
+    const keepIdx=staffList.indexOf(n);
+    if(keepIdx<0){setDelTarget(null);tt("▲ この人は既に一覧から削除されています");return;}
     const keepIn=delPeriodChoices.slice(0,delKeepCount);
     if(keepIn.length&&savePeriods){
       savePeriods(periods.map(p=>{
         if(!p||!keepIn.some(k=>k.id===p.id))return p;
         const raw=p.keepStaff;
         const cur=Array.isArray(raw)?raw:(raw&&typeof raw==="object"?Object.values(raw):[]);
-        if(cur.includes(n))return p;
-        return{...p,keepStaff:[...cur,n]};
+        if(cur.some(e=>e===n||(e&&e.name===n)))return p;
+        // {name,index} で持つ＝削除前の並び順に列を戻す（末尾送りにしない）
+        return{...p,keepStaff:[...cur,{name:n,index:keepIdx}]};
       }));
     }
     // 名前で除外する（index の splice にしない。ポップアップが開いている間に他端末が並べ替えると別人が消える）
