@@ -83,6 +83,93 @@ test("getBreaksFor: 9時間未満・ランチのみの短時間シフトでも�
   );
 });
 
+test("carryAdminShiftFields: 休みで出し直した日は調整時刻・追加出勤を引き継がない（メモと休み希望は残す）", () => {
+  const old = {
+    status: "work", start: "09:00", end: "17:00",
+    adjustedStart: "10:00", adjustedEnd: "18:00",
+    adjustedStartNote: "研修", adminRest: { end: "13:00" },
+    extraStart: "23:00", extraEnd: "25:00", adjustedStartFixed: true,
+  };
+  const holiday = u.carryAdminShiftFields({ status: "holiday" }, old);
+  assert.strictEqual(holiday.status, "work", "「締」がある日は従来どおり出勤へ戻る");
+  assert.strictEqual(holiday.adjustedStart, undefined);
+  assert.strictEqual(holiday.adjustedEnd, undefined);
+  assert.strictEqual(holiday.extraStart, "23:00", "「締」の追加出勤は別軸なので残す");
+  assert.strictEqual(holiday.adjustedStartFixed, true);
+  assert.strictEqual(holiday.adjustedStartNote, "研修", "メモは残す");
+  assert.deepStrictEqual(holiday.adminRest, { end: "13:00" }, "休み希望マークは残す");
+  const plain = u.carryAdminShiftFields({ status: "holiday" }, { status: "work", start: "09:00", end: "17:00", adjustedStart: "10:00", adjustedEnd: "18:00", adjustedEndNote: "早番" });
+  assert.strictEqual(plain.status, "holiday");
+  assert.strictEqual(plain.adjustedStart, undefined, "休みの日に調整時刻を残さない");
+  assert.strictEqual(plain.adjustedEnd, undefined);
+  assert.strictEqual(plain.adjustedEndNote, "早番", "メモは残す");
+  assert.strictEqual(u.calcNetWorkMinutes(plain, []), 0);
+  // 出勤で出し直した日は従来どおり全部引き継ぐ
+  const work = u.carryAdminShiftFields({ status: "work", start: "11:00", end: "20:00" }, old);
+  assert.strictEqual(work.adjustedStart, "10:00");
+  assert.strictEqual(work.extraStart, "23:00");
+  assert.strictEqual(work.status, "work");
+});
+
+test("validatePeriodDates: 空・逆転はエラー、重なりは警告、隣接は通す", () => {
+  const others = [
+    { id: "p1", label: "8月前半", startDate: "2026-08-01", endDate: "2026-08-15" },
+    { id: "p2", label: "8月後半", startDate: "2026-08-16", endDate: "2026-08-31" },
+  ];
+  assert.ok(u.validatePeriodDates({ startDate: "", endDate: "2026-09-01" }, others).error, "空はエラー");
+  assert.ok(u.validatePeriodDates({ startDate: "2026-09-10", endDate: "2026-09-01" }, others).error, "終了日<開始日はエラー");
+  assert.deepStrictEqual(u.validatePeriodDates({ startDate: "2026-09-01", endDate: "2026-09-15" }, others), {}, "重ならなければ何も返さない");
+  const w = u.validatePeriodDates({ startDate: "2026-08-10", endDate: "2026-08-20" }, others);
+  assert.ok(w.warning && w.warning.includes("8月前半") && w.warning.includes("8月後半"), "重なった期間を全部挙げる");
+  // 自分自身は重なり判定から外す（編集で日付を変えないまま保存できる）
+  assert.deepStrictEqual(u.validatePeriodDates({ id: "p1", startDate: "2026-08-01", endDate: "2026-08-15" }, others), {});
+  // 端が接するだけ（8/15 と 8/16）は重なりではない
+  assert.deepStrictEqual(u.validatePeriodDates({ startDate: "2026-07-20", endDate: "2026-07-31" }, others), {});
+});
+
+test("getBreaksFor: 休憩の内側から出勤して休憩をまたぐ日には適用する（#89）", () => {
+  const settings = { breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] } };
+  const sh = { status: "work", start: "12:30", end: "20:00" };
+  assert.strictEqual(u.getBreaksFor(settings, "2026-07-06", "A", sh).length, 1, "7時間半のシフトに休憩が付く");
+  // 控除は重なった分（30分）だけ
+  assert.strictEqual(u.calcNetWorkMinutes(sh, u.getBreaksFor(settings, "2026-07-06", "A", sh)), 7 * 60);
+});
+
+test("oneSidedFillBounds: 候補時間から補完境界を出す（候補が無ければ 15:00 / 17:00）", () => {
+  assert.deepStrictEqual(u.oneSidedFillBounds(null), { lunchEnd: 900, dinnerStart: 1020 });
+  const settings = { candidates: [{ start: "09:30", end: "16:00" }, { start: "17:30", end: "23:00" }] };
+  assert.deepStrictEqual(u.oneSidedFillBounds(settings), { lunchEnd: 960, dinnerStart: 1050 });
+  const closedOnly = { candidates: [{ closed: true }] };
+  assert.deepStrictEqual(u.oneSidedFillBounds(closedOnly), { lunchEnd: 900, dinnerStart: 1020 });
+});
+
+test("calcNetWorkMinutes: 片側だけ入力された日を、settingsを渡したときだけ補完して数える（#82）", () => {
+  const settings = { candidates: [{ start: "09:00", end: "15:00" }, { start: "17:00", end: "23:00" }], breakTimes: {} };
+  const onlyStart = { status: "work", start: "09:00" };
+  const onlyEnd = { status: "work", end: "22:00" };
+  assert.strictEqual(u.calcNetWorkMinutes(onlyStart, [], 0), 0, "settings無しでは従来どおり0分");
+  assert.strictEqual(u.calcNetWorkMinutes(onlyStart, [], 0, settings), 6 * 60, "出勤のみ→ランチ終わりまで");
+  assert.strictEqual(u.calcNetWorkMinutes(onlyEnd, [], 0, settings), 5 * 60, "退勤のみ→ディナー始まりから");
+  // 上限判定に効く: 補完後は休憩も重なりで引かれる
+  const withBreak = { ...settings, breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] } };
+  assert.strictEqual(
+    u.calcNetWorkMinutes(onlyStart, u.getBreaksFor(withBreak, "2026-07-06", "A", onlyStart), 0, withBreak),
+    5 * 60
+  );
+});
+
+test("shiftBandInfo: 片側だけの日は補完して0.5日として数える（settings無しでは0）", () => {
+  const settings = { candidates: [{ start: "09:00", end: "15:00" }, { start: "17:00", end: "23:00" }] };
+  const onlyStart = { status: "work", start: "09:00" };
+  assert.strictEqual(u.shiftBandInfo(onlyStart).attendance, 0, "settings無しでは従来どおり判定材料なし");
+  const b = u.shiftBandInfo(onlyStart, settings);
+  assert.strictEqual(b.attendance, 0.5);
+  assert.strictEqual(b.hasLunch, true);
+  assert.strictEqual(b.hasDinner, false);
+  const both = u.shiftBandInfo({ status: "work", start: "09:00", end: "22:00" }, settings);
+  assert.strictEqual(both.attendance, 1, "両方ある日は従来どおり");
+});
+
 test("getBreaksFor: ランチのみ（退勤=休憩終了と同時刻）は適用しない", () => {
   const settings = { breakTimes: { weekday: [{ start: "15:00", end: "17:00" }] } };
   // 10:00-17:00: 休憩の後半（17時以降）に及ばないため適用しない

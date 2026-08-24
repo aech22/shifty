@@ -243,10 +243,11 @@ const ADMIN_SHIFT_FIELDS=["adjustedStart","adjustedEnd","adjustedStartNote","adj
 // スタッフが「休み」で出し直した日は、時刻を持つ管理者フィールドを引き継がない（バグチェック#52 の判断・2026-08-25 決定）。
 // 以前は adjustedStart/adjustedEnd を引き継いだうえで status は holiday のままだったため、
 // 「休みなのに調整時刻が入っている」日が残り、画面によって出勤扱い・休み扱いが割れる元になっていた。
-// 落とすのは時刻そのもの（調整値・追加出勤）だけで、メモ（adjustedXxxNote）と休み希望マーク（adminRest）は
-// 休みの日でも意味が成立するため残す。SmModal のセル編集（app-staff.js applyCellEdit）が
-// 休みに変えたときに消すフィールドと同じ集合にしてある。
-const HOLIDAY_DROP_SHIFT_FIELDS=["adjustedStart","adjustedEnd","adjustedStartFixed","adjustedEndFixed","extraStart","extraEnd"];
+// 落とすのは管理者が入れた出退勤の調整値だけ。メモ（adjustedXxxNote）と休み希望マーク（adminRest）は
+// 休みの日でも意味が成立するので残し、「締」の追加出勤（extraStart/extraEnd と adjustedXxxFixed）も残す
+// ——こちらは 2026-07-12 に決めた「店舗が固定で入れる深夜の追加出勤」で、スタッフの休み希望とは別軸の
+// 出勤（フラグがある日は status="work" に戻す）という明示的な不変条件を持つため。
+const HOLIDAY_DROP_SHIFT_FIELDS=["adjustedStart","adjustedEnd"];
 function carryAdminShiftFields(newShift,oldShift){
   const nw={...(newShift||{})};
   if(!oldShift)return nw;
