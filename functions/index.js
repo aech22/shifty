@@ -1044,19 +1044,25 @@ exports.createCompany = functions
 
     // 連携店舗: 作成者がオーナーの店舗のみ登録し、企業ログインuidをownerに追加
     const linked = [];
+    const skipped = [];
     for (const shopId of shopIds) {
       // デモ店舗は owners を持たないため下の未claim分岐を通ってしまう。誰でも開ける
       // デモURLから自分の企業のオーナーにされないよう、連携対象から外す
       if (isDemoShop(shopId)) continue;
       const ownersSnap = await db.ref(`shops/${shopId}/owners`).once("value");
       const owners = ownersSnap.val();
-      // 未claim(owners無し) または 作成者がオーナー の店舗のみ
-      if (owners && !owners[uid]) continue;
+      // オーナーとして登録済みの店舗だけを連携する。
+      // 以前は「未claim(owners無し)」も許可していたが、shopIdはスタッフURLのtokens逆引きから
+      // 誰でも辿れるうえ、店舗を開いただけで accounts/{uid}/shops に載る経路があるため、
+      // 「先に触った人がオーナーになれる」窓が開いていた（バグチェック#67・デモ店舗で実際に到達）。
+      // 未claim店舗は、その店舗の管理者画面を一度開いて claim してから
+      // 管理コードで linkStoreToCompany を使う。
+      if (!owners || !owners[uid]) { skipped.push(shopId); continue; }
       await db.ref(`companies/${companyId}/pub/shops/${shopId}`).set(true);
       await registerCompanyAsOwner(companyId, shopId);
       linked.push(shopId);
     }
-    return { companyId, code, name, linkedShops: linked };
+    return { companyId, code, name, linkedShops: linked, skippedShops: skipped };
   });
 
 // 企業コード＋パスワードでログイン → カスタムトークンを発行
@@ -1127,8 +1133,16 @@ exports.linkStoreToCompany = functions
     // createCompany 側は同じ理由で owners[uid] を確認している。ここでも同等の証明を要求する。
     const ownersSnap = await db.ref(`shops/${shopId}/owners`).once("value");
     const owners = ownersSnap.val();
-    let allowed = !owners;                                  // 未claim店舗（createCompanyと同じ扱い）
-    if (!allowed && owners[callerUid]) allowed = true;       // 呼び出し元が既にこの店舗のオーナー
+    // 未claim(owners無し)を無条件で許可しない。shopIdは誰でも辿れるので、それだけを根拠に
+    // オーナーになれると「先に触った人がオーナーになれる」窓が残る（バグチェック#65・#67）。
+    if (!owners) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "この店舗はまだ管理者端末が登録されていません。先に店舗の管理者画面を開いてから、管理コード（店舗コード.管理キー）で連携してください"
+      );
+    }
+    let allowed = false;
+    if (owners[callerUid]) allowed = true;                   // 呼び出し元が既にこの店舗のオーナー
     if (!allowed) {                                          // 企業の作成者本人がオーナー（企業uidで呼んだ場合）
       const ownerUid = (await db.ref(`companies/${companyId}/pub/ownerUid`).once("value")).val();
       if (ownerUid && owners[ownerUid]) allowed = true;
@@ -1151,7 +1165,19 @@ exports.unlinkStoreFromCompany = functions
     const shopId = (data && typeof data.shopId === "string") ? data.shopId.trim() : "";
     if (!companyId || !shopId) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗IDが無効です");
     await assertCompanyMember(context, companyId);
+    // 企業ログインのセッションで作った店舗はオーナーが企業uidだけなので、無条件に外すと
+    // owners が空＝未claim状態へ戻ってしまう。その状態は「shopIdを知る第三者が
+    // 自分の企業のオーナーになれる」窓そのものなので、最後のオーナーは外さない（バグチェック#65）。
+    const cUid = companyUid(companyId);
+    const owners = (await db.ref(`shops/${shopId}/owners`).once("value")).val() || {};
+    const others = Object.keys(owners).filter(u => u !== cUid);
+    if (owners[cUid] && others.length === 0) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "この店舗の管理者はこの企業アカウントだけです。解除するとどの端末からも管理できなくなるため、先に別の端末を管理コードで追加してください"
+      );
+    }
     await db.ref(`companies/${companyId}/pub/shops/${shopId}`).remove();
-    await db.ref(`shops/${shopId}/owners/${companyUid(companyId)}`).remove();
+    await db.ref(`shops/${shopId}/owners/${cUid}`).remove();
     return { ok: true };
   });

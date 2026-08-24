@@ -3667,7 +3667,8 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
                 if(!coName.trim()){setCoErr("企業名を入力してください");return;}
                 if(coPw.length<6){setCoErr("パスワードは6文字以上にしてください");return;}
                 setCoBusy(true); const r=await onCreateCompany(coName.trim(),coPw); setCoBusy(false);
-                if(r&&r.error)setCoErr(r.error); else {setCoCreated({code:r.code});setCoName("");setCoPw("");tt("✓ 企業アカウントを作成しました");}
+                if(r&&r.error)setCoErr(r.error); else {setCoCreated({code:r.code});setCoName("");setCoPw("");
+                  tt(r&&r.skipped>0?`✓ 作成しました（管理者未登録の${r.skipped}店舗は連携していません。その店舗の管理コードで追加してください）`:"✓ 企業アカウントを作成しました");}
               }} style={{...AB,width:"100%"}}>{coBusy?"作成中...":"企業アカウントを作成する"}</button>
             )}
           </div>

@@ -1018,9 +1018,11 @@ function App(){
     if(!authUser||authUser.isAnonymous) return {error:"メールまたはGoogleでログインしてください"};
     try{
       const shopIds=(allLinkedShops.length>0?allLinkedShops:shops).map(s=>s&&s.id).filter(Boolean);
-      const {companyId,code}=await _callCF("createCompany",{name,password,shopIds});
+      const {companyId,code,skippedShops}=await _callCF("createCompany",{name,password,shopIds});
       setCompanyInfo({companyId,code,name});
-      return {code};
+      // CFは「オーナー登録済みの店舗」だけを連携する。未claimの店舗は黙って落ちると
+      // 連携し忘れに見えるため、件数を返して画面で知らせる
+      return {code,skipped:(skippedShops||[]).length};
     }catch(e){ return {error:(e&&e.message)||"作成に失敗しました"}; }
   };
   const changeCompanyPassword=async(newPassword)=>{
