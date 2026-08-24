@@ -2630,7 +2630,11 @@ const dragIdxRef=useRef(null);
                     未登録名として末尾に足すため、Excel・PDFには出る。文言をそちらに合わせる。 */}
                 {opt(0,"どの期間にも残さない","シフト作成タブから列が消えます（提出がある人は、Excel・PDFには未登録の名前として末尾に出ます）")}
               </div>}
-            <div style={{fontSize:11,color:"var(--c-text4)",margin:"6px 0 12px"}}>※ これより古い期間は確定済みの設定期間に入っており、表示は変わりません。</div>
+            {(delOlder.kept+delOlder.lost)>0&&<div style={{fontSize:11,color:delOlder.lost?"var(--c-text3)":"var(--c-text4)",margin:"6px 0 12px"}}>
+              {delOlder.lost===0
+                ?"※ これより古い期間は確定済みのため、表示は変わりません。"
+                :`※ これより古い期間は選べません。${delOlder.kept?`確定済みの${delOlder.kept}件は表示が変わりませんが、`:""}未確定の${delOlder.lost}件からはこの人の列が消えます（シフト作成タブで「この期間を確定」すると残せます）。`}
+            </div>}
             <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap"}}>
               <button onClick={()=>setDelTarget(null)} style={AGray}>キャンセル</button>
               {isRetained&&<button onClick={undoDelete} style={{...AGray,color:"var(--c-accent)",borderColor:"var(--c-accent)"}}>削除を取り消す</button>}
