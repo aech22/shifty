@@ -1,5 +1,16 @@
 .DS_Store
-.claude/
+.claude/*
+# E2E検証ハーネス（scripts/ と SKILL.md）はリポジトリで保全する。
+# 失うと「コンポーネント1つだけを実ブラウザにマウントする」道具を書き直しになるため（BACKLOG参照）。
+# 鍵は .secrets.local に分離してあり、それだけは追跡しない。
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/shifty-e2e-verify/
+.claude/skills/shifty-e2e-verify/.secrets.local
+# サブディレクトリ側の .claude/（旧 `.claude/` パターンが拾っていた分。ルートを `.claude/*` に
+# 変えたことで対象から外れるため、明示的に戻す）
+functions/.claude/
+x-bot/.claude/
 app.js.bak
 node_modules/
 functions/node_modules/
