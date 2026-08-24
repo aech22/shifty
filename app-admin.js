@@ -888,8 +888,23 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const wps=Object.keys(wpAll[name]||{}).filter(id=>companyData[id]);
       if(wps.length===0)return;
       dates.forEach(date=>{
+        // x（ヘルプ・カウント外）は他店舗勤務が前提。略称によるヘルプ指定を下で除外しているのと
+        // 同じ理由でここでも除外する。heatData(:821)・positionErrors(:938) と同じ入口に揃える（バグチェック#85）
+        if(isCountExcluded(name,date))return;
         let s=timeToMin(getEffHHMM(name,date,"start")),e=timeToMin(getEffHHMM(name,date,"end"));
-        if(s===null||e===null)return;
+        // 片側セルのみ入力はヒートマップ・ポジション判定と同じ規則で補完する（バグチェック#86）。
+        // 補完せず早期returnすると「出勤だけ入っている日は他店舗と重なっていても一度も見に行かない」になる
+        if(s===null&&e===null)return;
+        if(e===null)e=HEAT_LUNCH_END_MIN;
+        if(s===null)s=HEAT_DINNER_START_MIN;
+        if(s>=e)return;
+        // 退勤延長（残業）は勤務時間として数えている時間なので、二重予約の判定にも含める（バグチェック#86）。
+        // 他店舗側の延長は companyData が overtimeSettings を読んでいないため加算できない＝自店舗側のみ。
+        {
+          const dsh=_getWorkShift(name,date);
+          const ot=dsh?getOT(name,settings,dsh):0;
+          if(ot>0){const wasLunch=e<=HEAT_BAND_SPLIT_MIN;e+=ot;if(wasLunch)e=Math.min(e,HEAT_BAND_SPLIT_MIN);}
+        }
         // ヘルプ指定帯は他店舗勤務が前提なので判定から除外（帯の解決規則はヒートマップと共通）
         const help=getHelpInfo(name,date);
         if(help){
@@ -1060,7 +1075,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const p=periods.find(pp=>pp.id===pid);if(!p)return 0;
     const sub=_getSubForPeriod(pid,name); // 日ループの外で1回だけ引く。別名提出者も解決する
     if(!sub)return 0;
-    return gd(p.startDate,p.endDate).reduce((acc,d)=>{const sh=sub.shifts?.[d];return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh)):0);},0);
+    return gd(p.startDate,p.endDate).reduce((acc,d)=>{const sh=sub.shifts?.[d];return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh),settings):0);},0);
   };
 
   // 週間勤務時間（前の期間を跨ぐ）
@@ -1072,7 +1087,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     return[...wkSet].sort();
   })();
   const getWeekMin=(monStr,name)=>{
-    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sh=_getWorkShift(name,ds);if(sh)tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh));}
+    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sh=_getWorkShift(name,ds);if(sh)tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh),settings);}
     return tot;
   };
 
@@ -1914,7 +1929,10 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
     return true;
   };
   const create=()=>{
-    if(!form.startDate||!form.endDate){tt("▲ 開始日・終了日を入力");return;}
+    // 日付の検証は作成・編集で同じ関数を通す（片方にしか無いと、編集だけ素通りする）
+    const v=validatePeriodDates(form,periods);
+    if(v.error){tt("▲ "+v.error);return;}
+    if(v.warning&&!confirm(`${v.warning}。\nこのまま作成しますか？（同じ日に2つの期間があると、提出やシフトが期間ごとに分かれます）`))return;
     if(!checkPeriodLimit())return;
     const p={id:`p_${Date.now()}`,urlToken:genToken(),shopId,
       label:form.label||`${form.startDate.replace(/-/g,"/")}〜${form.endDate.replace(/-/g,"/")}`,
@@ -2019,7 +2037,12 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
         return(
           <div key={p.id} style={{background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:12,padding:18,marginBottom:12,cursor:"pointer"}} onClick={e=>{if(e.target.tagName==="BUTTON"||e.target.closest("button"))return;setViewPeriodId(p.id);}}>
             {eid===p.id
-              ?<PEF period={p} onSave={u=>{onSave(periods.map(pp=>pp.id===p.id?{...pp,...u}:pp));tt("✓ 保存しました");setEid(null);}} onCancel={()=>setEid(null)}/>
+              ?<PEF period={p} onSave={u=>{
+                  const v=validatePeriodDates({...u,id:p.id},periods);
+                  if(v.error){tt("▲ "+v.error);return;}
+                  if(v.warning&&!confirm(`${v.warning}。\nこのまま保存しますか？`))return;
+                  onSave(periods.map(pp=>pp.id===p.id?{...pp,...u}:pp));tt("✓ 保存しました");setEid(null);
+                }} onCancel={()=>setEid(null)}/>
               :<>
                 <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
                   <div>
@@ -2546,6 +2569,26 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     }
     // 名前で除外する（index の splice にしない。ポップアップが開いている間に他端末が並べ替えると別人が消える）
     if(inList)onSave(staffList.filter(x=>x!==n));
+    // スタッフ名をキーに持つ設定マップの後始末（バグチェック#79）。
+    // リネーム(onRenameStaff)は7マップを漏れなく移し替えるのに、削除は何も触っていなかったため
+    // ①同名で追加し直すと前任者の社員番号・属性・ポジションをそのまま継承する
+    // ②退職者の別名が staffAliases に残り、URLを持ったままの本人の提出が登録名へ解決され続ける
+    // という差が出ていた。**一覧から完全に消えるとき（どの期間にも残さない）だけ**消す:
+    // 期間に名前を残す場合はシフト表の表示にその設定（退勤延長・従業員番号）が要るうえ、
+    // 一覧に行が残っている間は「削除を取り消す」で戻せるため、設定も戻せる状態にしておく。
+    if(onSaveSettings&&keepIds.size===0){
+      const dropKey=map=>{
+        if(!map||map[n]===undefined)return null;
+        const m={...map};delete m[n];return m;
+      };
+      const ns={...settings};let touched=false;
+      ["staffColors","staffAttributes","staffNumbers","staffPositions","staffAliases","staffWorkplaces"].forEach(k=>{
+        const m=dropKey(settings[k]);if(m){ns[k]=m;touched=true;}
+      });
+      const ot=settings.overtimeSettings&&dropKey(settings.overtimeSettings.byStaff);
+      if(ot){ns.overtimeSettings={...settings.overtimeSettings,byStaff:ot};touched=true;}
+      if(touched)onSaveSettings(ns);
+    }
     setDelTarget(null);
     const kept=keepIds.size;
     if(!inList)tt(kept?`表示範囲を変更しました（直近${kept}期間）`:"シフト表から外しました");
@@ -3325,8 +3368,8 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           </tr></thead>
           <tbody>{fil.length===0
             ?<tr><td colSpan={4} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
-            :fil.map(sub=>{const resolvedName=resolveAlias(sub.staffName,staffAliases);const ds=Object.keys(sub.shifts||{}).sort(),wkDays=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work");const att=wkDays.reduce((acc,d)=>{const sh=sub.shifts[d];const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;return acc+(((st&&en)||(sh.extraStart&&sh.extraEnd))?shiftBandInfo(sh).attendance:1);},0);const attLabel=`${att}日`;const at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const subPeriod=periods.find(p=>p.id===sub.periodId);const hasRealUpdate=subHasRealUpdate(sub,subPeriod?.deadlineDate);
-              const staffType=isPremium?(((settings.staffAttributes)||{})[resolvedName]||"parttime"):null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly||typeLim.customDays)){const weekMap={};const monthMap={};const _min=(n,d2)=>{const sh=_shiftAt(n,d2);return sh?calcNetWorkMinutes(sh,getBreaksFor(settings,d2,n,sh),getOT(n,settings,sh)):0;};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreaksFor(settings,d,resolvedName,sh),getOT(resolvedName,settings,sh));if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;});const wkSet2=new Set(),moSet2=new Set();ds.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet2.add(fd(mon));moSet2.add(d.slice(0,7));});wkSet2.forEach(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=pd(monStr);dd.setDate(dd.getDate()+i);tot+=_min(resolvedName,fd(dd));}weekMap[monStr]=tot;});moSet2.forEach(mo=>{let tot=0;const[yy,mm]=mo.split("-").map(Number);const dim=new Date(yy,mm,0).getDate();for(let i=1;i<=dim;i++)tot+=_min(resolvedName,`${mo}-${String(i).padStart(2,"0")}`);monthMap[mo]=tot;});let _awCache=null;const _allWork=()=>(_awCache||(_awCache=_workDatesOf(resolvedName)));const _windowVio=(days,limitHours)=>{const startDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();const allWork=_allWork();for(const sd of startDs){const start=pd(sd);let tot=0;for(const d2 of allWork){if(d2<sd)continue;const diffD=(pd(d2)-start)/86400000;if(diffD>=days)break;tot+=_min(resolvedName,d2);}if(tot>limitHours*60)return true;}return false;};if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly)biweeklyVio=_windowVio(14,typeLim.biweekly);if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});if(typeLim.customDays&&typeLim.customHours)customVio=_windowVio(typeLim.customDays,typeLim.customHours);}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;
+            :fil.map(sub=>{const resolvedName=resolveAlias(sub.staffName,staffAliases);const ds=Object.keys(sub.shifts||{}).sort(),wkDays=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work");const att=wkDays.reduce((acc,d)=>{const sh=sub.shifts[d];return acc+(shiftBandInfo(sh,settings).attendance||1);},0);const attLabel=`${att}日`;const at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const subPeriod=periods.find(p=>p.id===sub.periodId);const hasRealUpdate=subHasRealUpdate(sub,subPeriod?.deadlineDate);
+              const staffType=isPremium?(((settings.staffAttributes)||{})[resolvedName]||"parttime"):null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly||typeLim.customDays)){const weekMap={};const monthMap={};const _min=(n,d2)=>{const sh=_shiftAt(n,d2);return sh?calcNetWorkMinutes(sh,getBreaksFor(settings,d2,n,sh),getOT(n,settings,sh),settings):0;};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreaksFor(settings,d,resolvedName,sh),getOT(resolvedName,settings,sh),settings);if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;});const wkSet2=new Set(),moSet2=new Set();ds.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet2.add(fd(mon));moSet2.add(d.slice(0,7));});wkSet2.forEach(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=pd(monStr);dd.setDate(dd.getDate()+i);tot+=_min(resolvedName,fd(dd));}weekMap[monStr]=tot;});moSet2.forEach(mo=>{let tot=0;const[yy,mm]=mo.split("-").map(Number);const dim=new Date(yy,mm,0).getDate();for(let i=1;i<=dim;i++)tot+=_min(resolvedName,`${mo}-${String(i).padStart(2,"0")}`);monthMap[mo]=tot;});let _awCache=null;const _allWork=()=>(_awCache||(_awCache=_workDatesOf(resolvedName)));const _windowVio=(days,limitHours)=>{const startDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();const allWork=_allWork();for(const sd of startDs){const start=pd(sd);let tot=0;for(const d2 of allWork){if(d2<sd)continue;const diffD=(pd(d2)-start)/86400000;if(diffD>=days)break;tot+=_min(resolvedName,d2);}if(tot>limitHours*60)return true;}return false;};if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly)biweeklyVio=_windowVio(14,typeLim.biweekly);if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});if(typeLim.customDays&&typeLim.customHours)customVio=_windowVio(typeLim.customDays,typeLim.customHours);}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;
               {/* 超過行は塗りつぶさず左に線を引く。塗ると行内の他の情報が読みにくくなる。
                   線は tr ではなく先頭の td に置くこと: WebKit(Safari/iOS Safari) は tr への
                   box-shadow を描画しないため、tr に置くと Safari でだけ目印が消える
@@ -3383,16 +3426,16 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           <button onClick={()=>setDet(null)} style={{background:"var(--c-input)",border:"none",borderRadius:"50%",width:32,height:32,color:"var(--c-text2)",fontSize:18,cursor:"pointer"}}>✕</button>
         </div>
         <div style={{overflowY:"auto",padding:"8px 16px 24px"}}>
-          {isPremium&&(()=>{const dDs=Object.keys(det.shifts||{}).sort();const dWorkDs=dDs.filter(d=>det.shifts[d]?.status==="work");const dAtt=dWorkDs.reduce((acc,d)=>{const sh=det.shifts[d];const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;return acc+(((st&&en)||(sh.extraStart&&sh.extraEnd))?shiftBandInfo(sh).attendance:1);},0);const dTot=dDs.reduce((a,d)=>a+calcNetWorkMinutes(det.shifts[d],getBreaksFor(settings,d,det.staffName,det.shifts[d]),getOT(det.staffName,settings,det.shifts[d])),0);const detOTMax=dDs.reduce((mx,d)=>{const s=det.shifts[d];return s&&s.status==="work"?Math.max(mx,getOT(det.staffName,settings,s)):mx;},0);const SB=(l,v,c,bg)=>(<div style={{background:bg,borderRadius:8,padding:"6px 10px",textAlign:"center",border:`1px solid ${c}33`,minWidth:56}}><div style={{fontSize:10,color:"var(--c-text4)",marginBottom:1}}>{l}</div><div style={{fontSize:13,fontWeight:700,color:c}}>{v}</div></div>);return(<div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"8px 0 4px"}}>{SB("出勤",`${dAtt}日`,"var(--c-accent-text)","rgba(248,112,54,.1)")}{dTot>0&&SB("勤務計",fmtMin(dTot),"var(--c-text2)","var(--c-input)")}{detOTMax>0&&SB("延長",`+${detOTMax}分`,"#10B981","rgba(52,211,153,.1)")}</div>);})()}
+          {isPremium&&(()=>{const dDs=Object.keys(det.shifts||{}).sort();const dWorkDs=dDs.filter(d=>det.shifts[d]?.status==="work");const dAtt=dWorkDs.reduce((acc,d)=>{const sh=det.shifts[d];return acc+(shiftBandInfo(sh,settings).attendance||1);},0);const dTot=dDs.reduce((a,d)=>a+calcNetWorkMinutes(det.shifts[d],getBreaksFor(settings,d,det.staffName,det.shifts[d]),getOT(det.staffName,settings,det.shifts[d]),settings),0);const detOTMax=dDs.reduce((mx,d)=>{const s=det.shifts[d];return s&&s.status==="work"?Math.max(mx,getOT(det.staffName,settings,s)):mx;},0);const SB=(l,v,c,bg)=>(<div style={{background:bg,borderRadius:8,padding:"6px 10px",textAlign:"center",border:`1px solid ${c}33`,minWidth:56}}><div style={{fontSize:10,color:"var(--c-text4)",marginBottom:1}}>{l}</div><div style={{fontSize:13,fontWeight:700,color:c}}>{v}</div></div>);return(<div style={{display:"flex",gap:6,flexWrap:"wrap",padding:"8px 0 4px"}}>{SB("出勤",`${dAtt}日`,"var(--c-accent-text)","rgba(248,112,54,.1)")}{dTot>0&&SB("勤務計",fmtMin(dTot),"var(--c-text2)","var(--c-input)")}{detOTMax>0&&SB("延長",`+${detOTMax}分`,"#10B981","rgba(52,211,153,.1)")}</div>);})()}
           {/* 週・月の集計は日付ごとに _shiftAt で1シフトだけ引く（行の上限判定 :3044 の _min と同じ引き方に揃える）。
               sub を走査して足すと、同一人物・同一日に2つのsubがあるとき（別名ぶん＋登録名ぶん）に同じ日を二重計上する。
               属性・退勤延長は「登録名」をキーに持つ設定（staffAttributes / overtimeSettings.byStaff）なので、
               別名で提出されたsubの日でも det.staffName（解決済みの登録名）で引く。 */}
-          {isPremium&&(()=>{const wP=periods.find(p=>p.id===det.periodId);if(!wP)return null;const wSS=subs.filter(s=>s.staffName===det.staffName||(staffAliases[det.staffName]||[]).includes(s.staffName));const perDs=gd(wP.startDate,wP.endDate);const wkSet=new Set();perDs.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet.add(fd(mon));});const weeks=[...wkSet].sort();const mo=wP.startDate.slice(0,7);const _dayMin=d=>{const sh=_shiftAt(det.staffName,d);return sh?calcNetWorkMinutes(sh,getBreaksFor(settings,d,det.staffName,sh),getOT(det.staffName,settings,sh)):0;};const moDs=new Set();wSS.forEach(s=>Object.keys(s.shifts||{}).forEach(d=>{if(d.startsWith(mo))moDs.add(d);}));let moTot=0;moDs.forEach(d=>{moTot+=_dayMin(d);});const wkData=weeks.map(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);tot+=_dayMin(fd(dd));}return{monStr,tot};});return(<div style={{marginBottom:4}}><div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",margin:"6px 0 5px"}}>週間勤務時間</div><div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{wkData.map(({monStr,tot})=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);const lbl=`${m.getMonth()+1}/${m.getDate()}〜${sun.getMonth()+1}/${sun.getDate()}`;return(<div key={monStr} style={{background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"var(--c-text4)"}}>{lbl}</div><div style={{fontSize:12,fontWeight:700,color:tot>0?"var(--c-text2)":"var(--c-text4)"}}>{tot>0?fmtMin(tot):"−"}</div></div>);})}{moTot>0&&<div style={{background:"rgba(248,112,54,.08)",border:"1px solid rgba(248,112,54,.2)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"var(--c-accent-text)"}}>{mo.replace("-","年")}月計</div><div style={{fontSize:12,fontWeight:700,color:"var(--c-accent-text)"}}>{fmtMin(moTot)}</div></div>}</div></div>);})()}
+          {isPremium&&(()=>{const wP=periods.find(p=>p.id===det.periodId);if(!wP)return null;const wSS=subs.filter(s=>s.staffName===det.staffName||(staffAliases[det.staffName]||[]).includes(s.staffName));const perDs=gd(wP.startDate,wP.endDate);const wkSet=new Set();perDs.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet.add(fd(mon));});const weeks=[...wkSet].sort();const mo=wP.startDate.slice(0,7);const _dayMin=d=>{const sh=_shiftAt(det.staffName,d);return sh?calcNetWorkMinutes(sh,getBreaksFor(settings,d,det.staffName,sh),getOT(det.staffName,settings,sh),settings):0;};const moDs=new Set();wSS.forEach(s=>Object.keys(s.shifts||{}).forEach(d=>{if(d.startsWith(mo))moDs.add(d);}));let moTot=0;moDs.forEach(d=>{moTot+=_dayMin(d);});const wkData=weeks.map(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);tot+=_dayMin(fd(dd));}return{monStr,tot};});return(<div style={{marginBottom:4}}><div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",margin:"6px 0 5px"}}>週間勤務時間</div><div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{wkData.map(({monStr,tot})=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);const lbl=`${m.getMonth()+1}/${m.getDate()}〜${sun.getMonth()+1}/${sun.getDate()}`;return(<div key={monStr} style={{background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"var(--c-text4)"}}>{lbl}</div><div style={{fontSize:12,fontWeight:700,color:tot>0?"var(--c-text2)":"var(--c-text4)"}}>{tot>0?fmtMin(tot):"−"}</div></div>);})}{moTot>0&&<div style={{background:"rgba(248,112,54,.08)",border:"1px solid rgba(248,112,54,.2)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"var(--c-accent-text)"}}>{mo.replace("-","年")}月計</div><div style={{fontSize:12,fontWeight:700,color:"var(--c-accent-text)"}}>{fmtMin(moTot)}</div></div>}</div></div>);})()}
           {det.comment&&<div style={{background:"var(--c-input)",borderRadius:8,padding:"10px 12px",margin:"8px 0",fontSize:13,color:"var(--c-text2)"}}>{det.comment}</div>}
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
             <thead><tr>{["日付","区分","出勤","退勤",...(isPremium?["時間"]:[])].map(h=><th key={h} style={{background:"var(--c-input)",color:"var(--c-text2)",padding:"8px 12px",textAlign:"left",fontWeight:600}}>{h}</th>)}</tr></thead>
-            <tbody>{Object.keys(det.shifts||{}).sort().map(ds=>{const d=pd(ds),s=det.shifts[ds],iw=s&&s.status==="work";const detOT2=isPremium&&iw?getOT(det.staffName,settings,s):0;const nm=iw?calcNetWorkMinutes(s,getBreaksFor(settings,ds,det.staffName,s),detOT2):0;const effEnd=isPremium&&iw&&detOT2>0&&(s.adjustedEnd??s.end)?`→${(()=>{const en=s.adjustedEnd??s.end;const[h,m]=en.split(":").map(Number);const tot=h*60+m+detOT2;return`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;})()}`:null;return(<tr key={ds}>
+            <tbody>{Object.keys(det.shifts||{}).sort().map(ds=>{const d=pd(ds),s=det.shifts[ds],iw=s&&s.status==="work";const detOT2=isPremium&&iw?getOT(det.staffName,settings,s):0;const nm=iw?calcNetWorkMinutes(s,getBreaksFor(settings,ds,det.staffName,s),detOT2,settings):0;const effEnd=isPremium&&iw&&detOT2>0&&(s.adjustedEnd??s.end)?`→${(()=>{const en=s.adjustedEnd??s.end;const[h,m]=en.split(":").map(Number);const tot=h*60+m+detOT2;return`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;})()}`:null;return(<tr key={ds}>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:"var(--c-text2)"}}>{d.getMonth()+1}/{d.getDate()}（{WD[d.getDay()]}）</td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>{iw?<span style={{background:"rgba(248,112,54,.15)",color:"var(--c-accent-text)",border:"1px solid rgba(248,112,54,.3)",padding:"2px 7px",borderRadius:4,fontSize:12,fontWeight:600}}>出勤</span>:<span style={{background:"var(--c-input)",color:"var(--c-text3)",padding:"2px 7px",borderRadius:4,fontSize:12}}>休み</span>}</td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
@@ -3405,7 +3448,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
             </tr>);})}
             </tbody>
           </table>
-          {isPremium&&(()=>{const tot=Object.keys(det.shifts||{}).reduce((acc,ds)=>{const s=det.shifts[ds];return acc+calcNetWorkMinutes(s,getBreaksFor(settings,ds,det.staffName,s),getOT(det.staffName,settings,s));},0);return tot>0?<div style={{textAlign:"right",padding:"6px 12px",fontSize:13,color:"var(--c-text2)",fontWeight:700}}>合計：{fmtMin(tot)}</div>:null;})()}
+          {isPremium&&(()=>{const tot=Object.keys(det.shifts||{}).reduce((acc,ds)=>{const s=det.shifts[ds];return acc+calcNetWorkMinutes(s,getBreaksFor(settings,ds,det.staffName,s),getOT(det.staffName,settings,s),settings);},0);return tot>0?<div style={{textAlign:"right",padding:"6px 12px",fontSize:13,color:"var(--c-text2)",fontWeight:700}}>合計：{fmtMin(tot)}</div>:null;})()}
         </div>
       </div>
     </div>}
@@ -3930,6 +3973,11 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             const v=(newPosInput[sec]||"").trim();
             if(!v)return;
             if(list.includes(v)){tt("▲ 既に登録されているポジションです");return;}
+            // 同名を別セクションにも登録できると、名前をキーにする staffPositions / requiredPositions で
+            // どちらのポジションを指すのか決められない（バグチェック#46）。登録の入口で弾く。
+            const otherSec=sec==="kitchen"?"hall":"kitchen";
+            const otherList=((settings.positions||{})[otherSec])||[];
+            if(otherList.includes(v)){tt(`▲ 「${v}」は${otherSec==="kitchen"?"キッチン":"ホール"}に登録済みです（同じ名前は使えません）`);return;}
             onSave({...settings,positions:{...(settings.positions||{}),[sec]:[...list,v]}});
             setNewPosInput({...newPosInput,[sec]:""});
           };

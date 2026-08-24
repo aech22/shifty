@@ -122,18 +122,67 @@ function effShiftEnd(shift){
 }
 // extraStart/extraEnd（「締」等の店舗限定固定シフトコマンドによる追加出勤期間）がある場合は主シフトとは別に加算する。
 // 追加期間は休憩控除・残業延長の対象外（主シフトの休憩帯と重ならない深夜帯を想定した単純加算）。
-function calcNetWorkMinutes(shift,breaks,overtimeMins=0){
+// ===== 期間の日付検証 =====
+// 作成・編集の両方から呼ぶ。error があれば保存させない（純粋な入力ミス）、
+// warning は「重なっているが運用上そうしたい」場合があるので確認だけ取って通す（バグチェック#83・#92）。
+function validatePeriodDates(cand,others){
+  const st=(cand&&cand.startDate)||"",en=(cand&&cand.endDate)||"";
+  if(!st||!en)return{error:"開始日と終了日を入力してください"};
+  if(en<st)return{error:"終了日が開始日より前になっています"};
+  const hit=(others||[]).filter(o=>o&&o.id!==(cand&&cand.id)&&o.startDate&&o.endDate&&o.startDate<=en&&st<=o.endDate);
+  if(hit.length>0){
+    const names=hit.map(o=>o.label||`${o.startDate}〜${o.endDate}`).join("、");
+    return{warning:`「${names}」と日付が重なっています`};
+  }
+  return{};
+}
+// ===== 片側セルのみ入力された日の時間補完 =====
+// 出勤だけ／退勤だけが入っている日を、ヒートマップ（ShiftEditTab）と同じ規則で補完する。
+// 以前は勤務時間・期間集計・週/月上限判定だけが「0分」として扱っており、ヒートマップは出勤者に数え
+// 休みカウントは0.5休みにする、という食い違いがあった（上限超過の見落としにつながる。バグチェック#82）。
+// 境界は候補時間から算出する: ランチ終わり=17:00以前に終わる候補の最も遅い退勤、
+// ディナー始まり=17:00以降に始まる候補の最も早い出勤。候補が無ければ 15:00 / 17:00。
+const _fillBoundsCache=typeof WeakMap!=="undefined"?new WeakMap():null;
+function oneSidedFillBounds(settings){
+  if(!settings)return{lunchEnd:900,dinnerStart:HEAT_BAND_SPLIT_MIN};
+  if(_fillBoundsCache&&_fillBoundsCache.has(settings))return _fillBoundsCache.get(settings);
+  const toMin=t=>{if(!t||typeof t!=="string")return null;const[h,m]=t.split(":").map(Number);return Number.isFinite(h)&&Number.isFinite(m)?h*60+m:null;};
+  const all=[...(settings.candidates||[]),...Object.values(settings.weekdayCandidates||{}).flat(),...Object.values(settings.dateCandidates||{}).flat()]
+    .filter(c=>c&&!c.closed&&c.start&&c.end);
+  const lunchEnds=all.map(c=>toMin(c.end)).filter(m=>m!==null&&m<=HEAT_BAND_SPLIT_MIN);
+  const dinnerStarts=all.map(c=>toMin(c.start)).filter(m=>m!==null&&m>=HEAT_BAND_SPLIT_MIN);
+  const r={lunchEnd:lunchEnds.length?Math.max(...lunchEnds):900,dinnerStart:dinnerStarts.length?Math.min(...dinnerStarts):HEAT_BAND_SPLIT_MIN};
+  if(_fillBoundsCache)_fillBoundsCache.set(settings,r);
+  return r;
+}
+// 主シフトの実効レンジ（分）。片側しか無い日は settings を渡すと補完する。
+// settings を渡さない＝補完しない（従来どおり「時間が確定しない日」として扱う）。
+function effShiftRangeMin(shift,settings){
+  const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
+  const st=effShiftStart(shift),en=effShiftEnd(shift);
+  let s=st?toMin(st):null,e=en?toMin(en):null;
+  if(s===null&&e===null)return null;
+  if(settings&&(s===null||e===null)){
+    const b=oneSidedFillBounds(settings);
+    if(e===null)e=b.lunchEnd;
+    if(s===null)s=b.dinnerStart;
+  }
+  if(s===null||e===null)return null;
+  return e>s?{startMin:s,endMin:e}:null;
+}
+function calcNetWorkMinutes(shift,breaks,overtimeMins=0,settings=null){
   if(!shift||shift.status!=="work")return 0;
   const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
   let net=0;
-  const st=effShiftStart(shift);
-  let en=effShiftEnd(shift);
-  if(st&&en){
-    if(overtimeMins>0){const[h,m]=en.split(":").map(Number);const tot=h*60+m+overtimeMins;en=`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;}
-    const ws=toMin(st),we=toMin(en);
+  // settings を渡すと、出勤だけ／退勤だけの日も補完して数える（渡さなければ従来どおり0分）
+  const rng=effShiftRangeMin(shift,settings);
+  if(rng){
+    const ws=rng.startMin;
+    const we=rng.endMin+(overtimeMins>0?overtimeMins:0);
     if(we>ws){
       let seg=we-ws;
-      (breaks||[]).forEach(br=>{const bs=toMin(br.start),be=toMin(br.end);if(ws>=bs)return;const ol=Math.min(we,be)-Math.max(ws,bs);if(ol>0)seg-=ol;});
+      // 休憩は「重なった分だけ」引く。適用するかどうかの判定は getBreaksFor 側（重なりが正なら適用）。
+      (breaks||[]).forEach(br=>{const bs=toMin(br.start),be=toMin(br.end);const ol=Math.min(we,be)-Math.max(ws,bs);if(ol>0)seg-=ol;});
       net+=Math.max(0,seg);
     }
   }
@@ -157,14 +206,15 @@ function getBreakList(settings,dateStr){
 // 17:00(1020分)を境界にランチ帯/ディナー帯を判定し出勤数を返す。
 // extraStart/extraEnd（「締」等の追加出勤期間）があれば主シフトと合算してhasLunch/hasDinner/attendanceを判定する
 // （主シフトがランチのみ・追加期間がディナー帯なら合わせて終日出勤=attendance1になる）。
-function shiftBandInfo(shift){
+function shiftBandInfo(shift,settings=null){
   if(!shift||shift.status!=="work")return{startMin:0,endMin:0,hasLunch:false,hasDinner:false,attendance:0};
   const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
-  const st=effShiftStart(shift);const en=effShiftEnd(shift);
   let startMin=0,endMin=0,hasLunch=false,hasDinner=false,totalMin=0,any=false;
-  if(st&&en){
-    const s0=toMin(st),e0=toMin(en);
-    if(e0>s0){startMin=s0;endMin=e0;hasLunch=s0<1020;hasDinner=e0>1020;totalMin+=e0-s0;any=true;}
+  // settings を渡すと片側セルのみの日も補完する（渡さなければ従来どおり主シフトは無いものとして扱う）
+  const rng=effShiftRangeMin(shift,settings);
+  if(rng){
+    const s0=rng.startMin,e0=rng.endMin;
+    startMin=s0;endMin=e0;hasLunch=s0<1020;hasDinner=e0>1020;totalMin+=e0-s0;any=true;
   }
   if(shift.extraStart&&shift.extraEnd){
     const s1=toMin(shift.extraStart),e1=toMin(shift.extraEnd);
@@ -190,10 +240,21 @@ const ADMIN_SHIFT_FIELDS=["adjustedStart","adjustedEnd","adjustedStartNote","adj
 // applyEditToSubs（app-admin.js）が「締」適用時に置いているのと同じ不変条件で、戻さないと
 // extraStart/extraEndだけが残り calcNetWorkMinutes/shiftBandInfo の status!=="work" 早期returnで
 // 追加出勤が0分に落ちる。newShift は破壊せず新しいオブジェクトを返す。
+// スタッフが「休み」で出し直した日は、時刻を持つ管理者フィールドを引き継がない（バグチェック#52 の判断・2026-08-25 決定）。
+// 以前は adjustedStart/adjustedEnd を引き継いだうえで status は holiday のままだったため、
+// 「休みなのに調整時刻が入っている」日が残り、画面によって出勤扱い・休み扱いが割れる元になっていた。
+// 落とすのは時刻そのもの（調整値・追加出勤）だけで、メモ（adjustedXxxNote）と休み希望マーク（adminRest）は
+// 休みの日でも意味が成立するため残す。SmModal のセル編集（app-staff.js applyCellEdit）が
+// 休みに変えたときに消すフィールドと同じ集合にしてある。
+const HOLIDAY_DROP_SHIFT_FIELDS=["adjustedStart","adjustedEnd","adjustedStartFixed","adjustedEndFixed","extraStart","extraEnd"];
 function carryAdminShiftFields(newShift,oldShift){
   const nw={...(newShift||{})};
   if(!oldShift)return nw;
-  ADMIN_SHIFT_FIELDS.forEach(k=>{if(oldShift[k]!=null&&nw[k]==null)nw[k]=oldShift[k];});
+  const toHoliday=nw.status==="holiday";
+  ADMIN_SHIFT_FIELDS.forEach(k=>{
+    if(toHoliday&&HOLIDAY_DROP_SHIFT_FIELDS.includes(k))return;
+    if(oldShift[k]!=null&&nw[k]==null)nw[k]=oldShift[k];
+  });
   if(nw.adjustedStartFixed||nw.adjustedEndFixed){
     if(nw.status!=="work"&&nw.origStatus===undefined)nw.origStatus=nw.status;
     nw.status="work";
@@ -256,17 +317,24 @@ function getBreaksFor(settings,dateStr,staffName,shift){
   const list=getBreakList(settings,dateStr);
   const attr=((settings&&settings.staffAttributes)||{})[staffName]||"parttime";
   const hasTagged=list.some(br=>br&&br.tags&&br.tags.length&&br.tags.includes(attr));
-  const stStr=shift&&(shift.adjustedStart??shift.start);
-  const enStr=shift&&(shift.adjustedEnd??shift.end);
   const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
-  const ws=stStr?toMin(stStr):null;
-  const we=enStr?toMin(enStr):null;
+  // 片側セルのみの日も補完して判定する（calcNetWorkMinutes と同じ実効レンジ）
+  const rng=effShiftRangeMin(shift,settings);
   return list.filter(br=>{
     const tags=br&&br.tags;
     if(tags&&tags.length){if(!tags.includes(attr))return false;}
     else if(hasTagged)return false;
-    if(ws!==null&&br&&br.start&&ws>=toMin(br.start))return false;
-    if(we!==null&&br&&br.end&&we<=toMin(br.end))return false;
+    if(!br||!br.start||!br.end)return false;
+    if(!rng)return false;
+    const bs=toMin(br.start),be=toMin(br.end),ws=rng.startMin,we=rng.endMin;
+    // 「休憩の内側から出勤して、休憩をまたいで働き続ける」日にも適用する（バグチェック#89）。
+    // 2026-07-10 の実装は出勤が休憩開始以降なら一律で外していたため、12:30〜20:00（休憩12:00〜13:00）の
+    // ような7時間半のシフトに休憩が1分も付かなかった。ここで緩めるのは「出勤が休憩の内側」の一点だけで、
+    // 同日に決めた意図——ランチのみ（休憩の終わりまでに退勤）・ディナーのみ（休憩開始と同時刻に出勤）には
+    // 適用しない——はそのまま残す。控除量は calcNetWorkMinutes が重なった分だけ引く。
+    if(ws>=be)return false;   // 休憩が終わってから出勤
+    if(we<=be)return false;   // 休憩の終わりまでに退勤（＝ランチのみ）
+    if(ws===bs)return false;  // 出勤が休憩開始と同時刻（＝ディナーのみ）
     return true;
   });
 }
@@ -784,5 +852,5 @@ function resolvePeriodMaster(period,staffList,settings,todayStr){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
 }
