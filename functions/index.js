@@ -318,7 +318,16 @@ function subscriptionIdOf(obj) {
 
 async function resolveShopMeta(obj) {
   const md = obj && obj.metadata;
-  if (md && md.shopId) return { shopId: md.shopId, plan: md.plan || null };
+  if (md && md.shopId) {
+    // 対象が Subscription 本体（customer.subscription.updated / .deleted）のときは、
+    // プランを metadata ではなく **契約の実際のprice** から解決する。下の retrieve 経路と同じ理由で、
+    // 期間終了時ダウングレード（Subscription Schedule）は price だけを差し替えるため
+    // metadata.plan が変更前のまま残りうる。ここで metadata を信じると、
+    // customer.subscription.deleted のプラン照合が食い違って解約が握り潰され、
+    // 契約が消えた後も有料プランのまま残る（以後イベントが来ないので自動回復しない）。
+    const livePlan = planOfSubscription(obj);
+    return { shopId: md.shopId, plan: livePlan || md.plan || null };
+  }
 
   const subId = subscriptionIdOf(obj);
   if (!subId) return { shopId: null, plan: null };
@@ -391,8 +400,15 @@ function periodEndOf(sub) {
   const item = sub.items && sub.items.data && sub.items.data[0];
   return (item && item.current_period_end) || null;
 }
+// Cloud Functions のサーバー時刻はUTCのため、日付だけを取り出すと JST 9:00〜24:00 の
+// 出来事が前日として記録される（2026-08-11 の実購入テストで planExpiry が1日巻き戻った）。
+// アプリの表示はすべて日本時間が前提なので、日付へ落とすときは必ずJSTへ寄せてから切る。
+const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
+function toJstDateStr(d) {
+  return new Date(d.getTime() + JST_OFFSET_MS).toISOString().split("T")[0];
+}
 function tsToDate(ts) {
-  return ts ? new Date(ts * 1000).toISOString().split("T")[0] : null;
+  return ts ? toJstDateStr(new Date(ts * 1000)) : null;
 }
 
 // 店舗の「いま有効な契約」を1本だけ返す。プラン変更(changePlan)と、
@@ -456,10 +472,11 @@ exports.stripeWebhook = functions
           if (!apply) console.log(`現行プラン(${currentPlan})より下位の契約(${plan})の更新のため反映しない: shopId=${shopId}`);
         }
         if (apply) {
-          const expiry = new Date();
-          expiry.setMonth(expiry.getMonth() + 1);
+          // JSTの「今日」から1ヶ月後。UTCのまま計算すると JST午前9時以降の購入で1日短くなる
+          const expiry = new Date(Date.now() + JST_OFFSET_MS);
+          expiry.setUTCMonth(expiry.getUTCMonth() + 1);
           await db.ref(`accounts/${shopId}/plan`).set(plan);
-          await db.ref(`accounts/${shopId}/planExpiry`).set(expiry.toISOString().split("T")[0]);
+          await db.ref(`accounts/${shopId}/planExpiry`).set(expiry.toISOString().split("T")[0]); // 既にJSTへ寄せた値
           // Stripe顧客IDを保存（Customer Portal用）
           const subId = subscriptionIdOf(obj);
           const customerId = obj.customer || (subId ? (await getStripe().subscriptions.retrieve(subId).catch(()=>null))?.customer : null);
@@ -561,6 +578,10 @@ exports.stripeWebhook = functions
         // 無条件でFreeに落とすと、支払い済みのPremiumごと剥奪してしまう。
         // 解約された契約のプランが現行プランと食い違う場合は、別契約の解約とみなして何もしない。
         // （プランが特定できない古い契約は従来どおりダウングレードする＝安全側の既定動作）
+        // なお createCheckoutSession が有効契約のある店舗を409で拒否するようになった今、
+        // 1店舗2契約は構造的に作れない。それでもこのガードを残すのは多重防御としてであり、
+        // resolveShopMeta が price からプランを解決するようになったことで
+        // 「metadataが古いだけで解約が握り潰される」誤爆はなくなっている。
         const currentPlan = (await db.ref(`accounts/${shopId}/plan`).once("value")).val();
         if (plan && currentPlan && plan !== currentPlan) {
           console.log(`現行プラン(${currentPlan})と異なる契約(${plan})の解約のためダウングレードしない: shopId=${shopId}`);
