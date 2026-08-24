@@ -49,8 +49,11 @@
           ".read": "auth != null",
           ".indexOn": ["periodId"],
           "$subId": {
-            ".write": "auth != null && $shopId !== 'demo-toriMatsu-v1'",
-            ".validate": "newData.hasChildren(['id','staffName','periodId','shifts','submittedAt']) && newData.child('staffName').isString() && newData.child('staffName').val().length <= 50"
+            ".write": "auth != null && $shopId !== 'demo-toriMatsu-v1' && (newData.exists() || root.child('shops').child($shopId).child('owners').child(auth.uid).exists() || data.child('submitterUid').val() === auth.uid)",
+            ".validate": "newData.hasChildren(['id','staffName','periodId','shifts','submittedAt']) && newData.child('staffName').isString() && newData.child('staffName').val().length <= 50",
+            "submitterUid": {
+              ".validate": "newData.isString() && newData.val().length <= 128 && (newData.val() === auth.uid || root.child('shops').child($shopId).child('owners').child(auth.uid).exists())"
+            }
           }
         },
         "owners": {
