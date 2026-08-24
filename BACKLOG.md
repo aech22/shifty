@@ -38,30 +38,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🔴 未デプロイの変更を本番へ反映する（Cloud Functions ＋ セキュリティルール）
-
-**目的**: 2026-08-25 に develop へ入れた修正のうち、**クライアント（GitHub Pages）以外**は自動では本番へ出ない。
-出るまでは効かないので、リリースの一部として必ず実施する。**順序を守ること。**
-
-**受け入れ条件**:
-- [ ] **① クライアントを main へリリースする**（`/release-to-main`。`?v=` と `build:` のバンプを含む）
-      対象: 提出削除の権限UI（`submitterUid` を書く側）・招待コード削除・色/タップの是正・写しの縮小
-- [ ] **② ①の本番配信を確認してから** `firebase deploy --only database --project thirty-dev-b6958` → `--project ontheshift`
-      ルールの変更点: `subs/$subId` の削除をオーナー／`submitterUid` 一致に限定・`submitterUid` の `.validate`・
-      `inviteCodes`／`accounts/{uid}/members`／`accounts/{uid}/inviteCode` の削除
-      **順序が逆になると、`submitterUid` を書かない旧クライアントの利用者が自分の提出を消せなくなる**
-- [ ] **③ `cd functions && firebase deploy --only functions --project ontheshift`**
-      変更点: 日付のJST化（`toJstDateStr`）・`resolveShopMeta` の price 優先・企業連携の未claim分岐廃止と
-      最後のオーナー保護。**③は①②と独立**（クライアントとルールに依存しない）
-- [ ] ③の前に**本番13店舗が全てclaim済み**であることを確認する（企業連携の変更が未claim店舗の連携を拒否するため）
-- [ ] 反映後、`stripeWebhook` のログと `companies` 系の呼び出しでエラーが出ていないことを確認する
-
-**影響範囲**: functions/index.js、database.rules.json / database.rules.tightened.json、index.html（版数）
-**備考**: 2026-08-25 のBACKLOG一括実装（`c51b62e`・`d6c826a`・`8952f8f`・`3464eaa`・`8384467`・`d22653c`・`2602095`）の申し送り。
-**条件A（本番反映はユーザーの判断・操作）に該当**するためループでは実施しない。
-
----
-
 ## 🟡 「閲覧専用」端末に設定・シフトの書き換えを許すか（仕様判断まとめの最後の1件）
 
 **目的**: 管理キーを持たない端末は `ownerReadOnly=true` になり「この端末は管理者として登録されていません（閲覧のみ）」と
@@ -366,6 +342,36 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 2026-08-25 の一括実装を本番へ反映（2026-08-25 完了・`d3dfb3f`）
+
+クライアント → セキュリティルール → Cloud Functions の順で反映し、各段で実測を取った。
+
+**① クライアント（GitHub Pages・`d3dfb3f`）**
+版数 `20260824-5256014` → **`20260825-92a9e27`**（index.html 5箇所＋app-core.js 1箇所・旧版数の残り0）。
+配信物6ファイルすべてが `origin/main` と SHA一致、`DEV_MODE` は式のまま。
+本番の3画面（デスクトップ／モバイル／`#/demo`）を実ブラウザで開き **pageerror・console.error ともに0件**。
+
+**② セキュリティルール（dev → 本番）**
+dev へ先に出して REST で **10項目すべてパス**（匿名認証トークン2つで検証・使い捨てデータは検証内で削除済み）:
+提出者本人は削除できる／提出者でもオーナーでもない端末は削除できない／`submitterUid` に他人のuidは書けない／
+別端末からの再提出（更新）は通る／拒否された削除でデータが消えていない／`inviteCodes` は書き込めない、など。
+そのうえで本番へ反映。
+
+**③ Cloud Functions（本番）**
+15関数すべて `Successful update operation`（今回は全て update ＝ 取りこぼしなし）。
+事前に本番の店舗の claim 状況を監査し、**15店舗中14が claim 済み／未claim はデモ店舗のみ**であることを確認した
+（デモは `isDemoShop` で先に弾かれるため、未claim分岐の廃止による影響を受けない）。
+
+> **教訓**: claim 監査を最初 zsh スクリプトで書いたところ、スクリプト内で `python3` が見つからず
+> パスのパーセントエンコードが空になり、**全15店舗が「未claim」と出た**。Node で書き直して正しい結果を得た。
+> 「全件が同じ異常値」を見たら、まず測定手段の故障を疑うこと。
+
+**残（このタスクの対象外）**: 実購入テストが要る項目（二重課金の全遷移・解約通知・#68 の解約時プラン判定）は
+別タスクのまま。既存の sub には `submitterUid` が無いため、**当面はオーナーのみが提出を削除できる**
+（本人が一度再提出すれば以後は本人でも削除できる）。
+
+---
 
 ### ✅ 仕様判断まとめの10件が決着（2026-08-25 完了・`a082d5d` ほか）
 
