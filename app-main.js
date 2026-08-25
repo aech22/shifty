@@ -1158,7 +1158,19 @@ function App(){
           // よる巻き戻し（flushSubs参照）からこの変更を保護する
           Object.entries(flat).forEach(([path,val])=>{ pendingSubWritesRef.current[path]=val; });
           fbUpd(fbPath(sid,"subs"),flat)
-            .catch(e=>console.warn("subs書き込み失敗:",e))
+            .catch(e=>{
+              console.warn("subs書き込み失敗:",e);
+              // sub全体の削除はルール上「提出した端末（submitterUid）か店舗オーナー」だけに
+              // 許される。管理キーを持たない端末（ownerReadOnly）で削除すると拒否されるが、
+              // 画面はローカルの結果（削除済み）を映したままになる: 保護を解除しても
+              // サーバー側は変わっていない＝valueイベントが二度と来ないため描き直されない。
+              // 保護を外してサーバーの内容で明示的に描き直し、理由を伝える。
+              // （スタッフ画面側の同じ経路は app-main.js:1508 の onDeleteSub で手当て済み）
+              if(!deletedId)return;
+              Object.entries(flat).forEach(([path,val])=>{ if(pendingSubWritesRef.current[path]===val)delete pendingSubWritesRef.current[path]; });
+              if(reconcileSubsRef.current)reconcileSubsRef.current();
+              tt("△ この提出は削除できません（提出した端末か、店舗の管理者のみ削除できます）");
+            })
             .finally(()=>{
               // このPromiseで送った値からまだ書き換わっていなければ保護を解除する
               // （解除中に別の編集が同じパスに上書きしていればそちらのPromiseに任せる）
