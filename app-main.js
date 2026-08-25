@@ -45,6 +45,9 @@ function App(){
   const subsMapRef=useRef({});          // subId→sub（複数期間購読のマージ先）
   const subsListenersRef=useRef({});    // periodId→Firebaseクエリref（期間ごとのon購読）
   const periodsForSubsRef=useRef([]);   // reconcileが参照する最新periods
+  // リアルタイム購読が最後に受け取ったサーバーの値（settings/periods/staff/templates）。
+  // 管理系の書き込みが拒否されたときに画面を戻す復元元として使う（revertAdminWrite参照）。
+  const serverSnapRef=useRef({});
   const apidRef=useRef(null);           // reconcileが参照する最新apid
   const pastSubsLoadedRef=useRef(false);// 過去参照ボタンで全期間購読に切替済みか
   const subsSidRef=useRef(null);        // 現在subsを購読中のshopId（店舗切替後の遅延コールバック無視用）
@@ -323,7 +326,7 @@ function App(){
     const targetSid=currentShopIdRef.current;
     if(!targetSid||targetSid==="default")return;
     ls(storeKey(targetSid,"templates_v6"),v);
-    if(firebaseDB) fbSet(fbPath(targetSid,"templates"),v).catch(e=>console.warn("templates保存失敗:",e));
+    if(firebaseDB) fbSet(fbPath(targetSid,"templates"),v).catch(e=>revertAdminWrite("templates",e));
   },[]);
   useEffect(()=>{ if(!_hasUrlToken&&!DEMO_MODE) ssSave(SS_APID,apid); },[apid]);
   useEffect(()=>{ if(!_hasUrlToken&&!DEMO_MODE) ssSave(SS_VIEW,view); },[view]);
@@ -339,6 +342,7 @@ function App(){
     subsMapRef.current={};
     pendingSubWritesRef.current={}; // 前店舗の未確定書き込み保護を持ち越さない
     periodsForSubsRef.current=[]; // 前店舗のperiodsで購読を張らないようクリア
+    serverSnapRef.current={};     // 前店舗のサーバー値で復元しない（revertAdminWrite参照）
     subsSidRef.current=null;
     pastSubsLoadedRef.current=false; setPastSubsLoaded(false);
   },[]);
@@ -373,11 +377,12 @@ function App(){
 
     // 曜日別候補テンプレート（店舗単位: shops/{shopId}/templates）
     on(fbPath(targetSid,"templates"),val=>{
-      if(!val){setShopTemplates([]);return;}
+      if(!val){setShopTemplates([]);serverSnapRef.current.templates=[];return;}
       // periods/staffと同様に要素単位で妥当性を検証する（テンプレートはオブジェクト構造）。
       // 配列ケースのfilter(Boolean)だけでなく、オブジェクトケース(Object.values)のnull要素・不正型も除去。
       const arr=(Array.isArray(val)?val:Object.values(val)).filter(t=>t&&typeof t==="object");
       setShopTemplates(arr);
+      serverSnapRef.current.templates=arr;
       ls(storeKey(targetSid,"templates_v6"),arr);
     });
 
@@ -391,8 +396,8 @@ function App(){
     // shopListなし（店舗切り替え時）は既存のshopsを維持
     // settings
     on(fbPath(targetSid,"settings"),val=>{
-      if(val&&typeof val==="object"){ setSettings(val); ls(storeKey(targetSid,"settings_v6"),val); }
-      else{ setSettings(makeSettings(targetSid)); }
+      if(val&&typeof val==="object"){ setSettings(val); serverSnapRef.current.settings=val; ls(storeKey(targetSid,"settings_v6"),val); }
+      else{ const d=makeSettings(targetSid); setSettings(d); serverSnapRef.current.settings=d; }
     });
     // periods
     on(fbPath(targetSid,"periods"),val=>{
@@ -407,18 +412,18 @@ function App(){
         arr.forEach(p=>{ if(!p.shopId) p.shopId=targetSid; });
         arr.sort((a,b)=>new Date(b.startDate||0)-new Date(a.startDate||0));
       }
-      setPeriods(arr); ls(storeKey(targetSid,"periods_v6"),arr);
+      setPeriods(arr); serverSnapRef.current.periods=arr; ls(storeKey(targetSid,"periods_v6"),arr);
       // 期間の増減に追随してsubsの期間別購読を張り替える
       periodsForSubsRef.current=arr;
       reconcileSubsRef.current&&reconcileSubsRef.current();
     });
     // staff
     on(fbPath(targetSid,"staff"),val=>{
-      if(!val){ setStaffList([]); return; }
+      if(!val){ setStaffList([]); serverSnapRef.current.staff=[]; return; }
       const arr=Array.isArray(val)
         ?val.filter(s=>s&&typeof s==="string")
         :typeof val==="object"?Object.values(val).filter(s=>s&&typeof s==="string"):[];
-      setStaffList(arr); ls(storeKey(targetSid,"staff_v6"),arr);
+      setStaffList(arr); serverSnapRef.current.staff=arr; ls(storeKey(targetSid,"staff_v6"),arr);
     });
     // subs（リロード時にキャッシュを先に表示してからFirebaseで上書き）
     // 全期間を一括購読するのではなく、期間ベースで直近3ヶ月＋アクティブ期間だけを購読しDL量を抑える。
@@ -1093,11 +1098,38 @@ function App(){
   // ===================================================================
   // 保存関数（Firebase + localStorage 二重書き）
   // ===================================================================
-  const fbW=(path,val)=>{ if(firebaseDB) fbSet(path,val).catch(e=>console.warn("書き込み失敗:",path,e)); };
+  // 管理系のパス（settings/periods/staff/templates/global-shops）は
+  // shops/{shopId}/owners/{auth.uid} に登録された端末だけが書き込める。管理キーを持たない端末
+  // （ownerReadOnly＝「この端末は管理者として登録されていません（閲覧のみ）」と表示される端末）が
+  // 保存すると Firebase は PERMISSION_DENIED を返すが、ローカルstateは先に書き換わっており、
+  // サーバー側は変わらない＝valueイベントが二度と来ないため画面は変更後のまま残る。呼び出し元は
+  // 成功前提で「削除しました」等を出すので、拒否されたのに成功表示だけが残っていた
+  // （提出データの削除で同じ形を b2220fe で修正済み。バグチェック#96 で管理系の残り5経路を揃えた）。
+  // サーバーが持っている最新値（serverSnapRef＝各購読が最後に受け取った値）へ戻し、理由を伝える。
+  // オフラインでは RTDB SDK が再接続まで書き込みを保持し reject しないため、ここは通らない。
+  const revertAdminWrite=useCallback((kind,e)=>{
+    console.warn(`${kind}書き込み失敗:`,e);
+    const snap=serverSnapRef.current,tsid=currentShopIdRef.current;
+    if(kind==="settings"&&snap.settings){ setSettings(snap.settings); ls(storeKey(tsid,"settings_v6"),snap.settings); }
+    if(kind==="staff"&&snap.staff){ setStaffList(snap.staff); ls(storeKey(tsid,"staff_v6"),snap.staff); }
+    if(kind==="templates"&&snap.templates){ setShopTemplates(snap.templates); ls(storeKey(tsid,"templates_v6"),snap.templates); }
+    if(kind==="periods"&&snap.periods){
+      setPeriods(snap.periods); periodsForSubsRef.current=snap.periods; ls(storeKey(tsid,"periods_v6"),snap.periods);
+      // 期間の削除はローカルのsubsも巻き添えで消している（savePeriods参照）ため一緒に戻す
+      if(reconcileSubsRef.current)reconcileSubsRef.current();
+    }
+    // global/shops は Phase1 のloadShopsが起点で購読の復元元を持たないため、表示は次回読み込みで直る
+    // 権限以外の失敗（.validate違反など）で「管理者として登録されていません」と出すと誤誘導になるため文言を分ける
+    const denied=!!e&&(e.code==="PERMISSION_DENIED"||/permission[_ ]denied/i.test(String(e.message||e)));
+    tt(denied
+      ?"△ 保存できませんでした（この端末は管理者として登録されていません。設定タブの「コードで追加」から登録できます）"
+      :"△ 保存できませんでした（通信エラー）");
+  },[]);
+  const fbW=(path,val,kind)=>{ if(firebaseDB) fbSet(path,val).catch(e=>revertAdminWrite(kind||path,e)); };
   const touchLastActivity=useCallback(()=>{
     if(firebaseDB&&sid) fbSet(`shops/${sid}/lastActivity`, new Date().toISOString()).catch(()=>{});
   },[sid]);
-  const saveSettings=useCallback(v=>{ setSettings(v); ls(storeKey(sid,"settings_v6"),v); fbW(fbPath(sid,"settings"),v); touchLastActivity(); },[sid,touchLastActivity]);
+  const saveSettings=useCallback(v=>{ setSettings(v); ls(storeKey(sid,"settings_v6"),v); fbW(fbPath(sid,"settings"),v,"settings"); touchLastActivity(); },[sid,touchLastActivity]);
   const savePeriods =useCallback(v=>{
     // 削除された期間のsubsとURLトークン逆引きをFirebaseから削除
     const deletedPeriods=periods.filter(p=>!v.find(np=>np.id===p.id));
@@ -1110,15 +1142,17 @@ function App(){
         const val=snap.val(); if(!val)return;
         const updates={};
         Object.keys(val).forEach(k=>{ if(deletedIds.includes(val[k]?.periodId)) updates[k]=null; });
-        if(Object.keys(updates).length>0) fbUpd(fbPath(sid,"subs"), updates);
-      });
+        // 期間の削除に連鎖するsubsの削除。ここだけcatchが無く、拒否されると
+        // unhandled rejection になっていた（periods本体の失敗は下のcatchが拾う）
+        if(Object.keys(updates).length>0) fbUpd(fbPath(sid,"subs"), updates).catch(e=>console.warn("subs連鎖削除失敗:",e));
+      }).catch(e=>console.warn("subs読み取り失敗:",e));
     }
     setPeriods(v);
     ls(storeKey(sid,"periods_v6"),v);
     if(firebaseDB){
       const obj={};
       v.forEach(p=>{ if(p&&p.id) obj[p.id]=p; });
-      fbSet(fbPath(sid,"periods"),obj).catch(e=>console.warn("periods書き込み失敗:",e));
+      fbSet(fbPath(sid,"periods"),obj).catch(e=>revertAdminWrite("periods",e));
       // 追加された期間のURLトークン逆引きを登録（スタッフURLのO(1)解決用）
       v.filter(p=>p&&p.urlToken&&!periods.find(op=>op.id===p.id)).forEach(p=>{
         fbSet(`tokens/${p.urlToken}`, {shopId:sid,periodId:p.id}).catch(()=>{});
@@ -1126,7 +1160,7 @@ function App(){
     }
     touchLastActivity();
   },[sid,periods,subs,touchLastActivity]);
-  const saveStaff   =useCallback(v=>{ setStaffList(v);ls(storeKey(sid,"staff_v6"),v);    fbW(fbPath(sid,"staff"),v); touchLastActivity();   },[sid,touchLastActivity]);
+  const saveStaff   =useCallback(v=>{ setStaffList(v);ls(storeKey(sid,"staff_v6"),v);    fbW(fbPath(sid,"staff"),v,"staff"); touchLastActivity();   },[sid,touchLastActivity]);
   const saveSubs    =useCallback((v,deletedId=null)=>{
     // vは配列そのもの、または (prevSubs=>newArray) の関数のどちらでも受け付ける。
     // 関数型はReactのsetState関数型更新でprevSubsを取るため、直前のクロージャ値ではなく
@@ -1192,7 +1226,7 @@ function App(){
         if(!s||!s.id)return;
         const old=prev.find(p=>p&&p.id===s.id);
         if(old&&JSON.stringify(old)===JSON.stringify(s))return;
-        fbSet(`global/shops/${s.id}`, s).catch(e=>console.warn("shops書き込み失敗:",s.id,e));
+        fbSet(`global/shops/${s.id}`, s).catch(e=>revertAdminWrite("shops",e));
       });
     }
   },[shops]);
