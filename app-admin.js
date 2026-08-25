@@ -2000,6 +2000,13 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
                 {availPresets.map((p,i)=>(
                   <button key={i} onClick={()=>{
                     if(periods.some(pp=>pp.startDate===p.startDate&&pp.endDate===p.endDate)){tt("▲ この期間はすでに作成済みです");return;}
+                    // 完全一致の作成済みチェックだけでは「一部だけ重なる期間」を素通りさせる。
+                    // 手入力で 9/05〜9/20 を作ったあとの「9月前半」、periodUnit を 2week→1month に
+                    // 切り替えたあとの「9月」がこれに当たる。作成の入口は手入力・編集・ここの3つあり、
+                    // ここだけが validatePeriodDates を通っていなかった（バグチェック#95）
+                    const pv=validatePeriodDates(p,periods);
+                    if(pv.error){tt("▲ "+pv.error);return;}
+                    if(pv.warning&&!confirm(`${pv.warning}。\nこのまま作成しますか？（同じ日に2つの期間があると、提出やシフトが期間ごとに分かれます）`))return;
                     if(!checkPeriodLimit())return;
                     const np={id:`p_${Date.now()}`,urlToken:genToken(),shopId,label:p.label,startDate:p.startDate,endDate:p.endDate,deadlineDate:presetDeadline,createdAt:new Date().toISOString()};
                     ph("period_created",{period_id:np.id,shop_id:shopId});
