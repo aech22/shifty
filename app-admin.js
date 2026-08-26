@@ -2943,8 +2943,17 @@ function CandTab({settings,onSave,shopTemplates=[],saveShopTemplates,tt,plan="fr
     tt(`✓ ${wdLabelFull(wkey)}の候補（${wcands.length}件）を${selDates.length}日付に追加`);
   };
 
+  // テンプレートはPro以上の機能。UI側は pointerEvents:"none" で覆っているが、これはマウスしか止めない
+  // （ボタンもinputも disabled ではないためTabで到達でき、Enterで発火する＝Freeのまま保存・適用・削除ができた）。
+  // 入口ごとに判定を置いて、経路に依らずFreeでは実行されないようにする。
+  const proOnlyTemplate=()=>{
+    if(plan!=="free")return false;
+    tt("▲ テンプレート機能はProプラン（500円/月）で利用できます");
+    return true;
+  };
   // テンプレート保存
   const saveTemplate=()=>{
+    if(proOnlyTemplate())return;
     if(!tmplName.trim()){tt("▲ テンプレート名を入力");return;}
     const wdCopy={...(settings.weekdayCandidates||{})};
     const tmpl={name:tmplName.trim(),weekdayCandidates:wdCopy,savedAt:new Date().toISOString()};
@@ -2954,6 +2963,7 @@ function CandTab({settings,onSave,shopTemplates=[],saveShopTemplates,tt,plan="fr
   // テンプレを選択した曜日にだけ適用する。選択曜日のみ w[d]=テンプレの候補(空なら[])で上書きし、未選択曜日は現状維持。
   // 全曜日(WDAY_OPTS)を選択すれば従来の一括適用と同じ結果になる。
   const doApplyTemplate=(t,weekdays)=>{
+    if(proOnlyTemplate())return;
     if(!weekdays.length){tt("▲ 適用する曜日を選択してください");return;}
     const names=weekdays.slice().sort((a,b)=>a-b).map(wdLabel).join("・");
     if(!confirm(`テンプレート「${t.name}」の候補を ${names} に適用しますか？選択した曜日の候補が上書きされます。`))return;
@@ -2961,7 +2971,7 @@ function CandTab({settings,onSave,shopTemplates=[],saveShopTemplates,tt,plan="fr
     weekdays.forEach(d=>{w[d]=(t.weekdayCandidates||{})[d]||[];});
     onSave({...settings,weekdayCandidates:w});setTmplApply(null);tt(`✓ テンプレート「${t.name}」を ${names} に適用しました`);
   };
-  const delTemplate=i=>{const ts=[...shopTemplates];ts.splice(i,1);saveShopTemplates(ts);tt("削除しました");};
+  const delTemplate=i=>{if(proOnlyTemplate())return;const ts=[...shopTemplates];ts.splice(i,1);saveShopTemplates(ts);tt("削除しました");};
 
   // 選択中の日付の候補（複数選択時は全日付の和集合）
   const dC=selDates.length===1?((settings.dateCandidates||{})[selDates[0]]||[]):[];
