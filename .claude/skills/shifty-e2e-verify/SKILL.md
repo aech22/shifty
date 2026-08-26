@@ -158,6 +158,31 @@ SHIFTY_ROOT=$S node .claude/skills/shifty-e2e-verify/scripts/example-shift-edit-
 
 `root` はworktree隔離（0.5節）でも使える。1.5節の罠（`preview_start` は常にメインの作業ディレクトリを配信する）がそもそも発生しない。
 
+### 1.7 アプリ全体は起動したいがdevを汚したくない（書き込みの発行を数える）
+
+1.6節は「App()を読み込まない」ことで書き込みを止めるが、**App()全体が要る検証**（プラン境界・`#/demo`・タブ巡回・権限バナー）ではその手が使えない。
+そのときは1.5節で起動したあと、`firebaseDB.ref` を差し替えて **`set`/`update`/`remove` を記録だけして `Promise.resolve()` を返す**。読みは素通しなので実データで描画したまま、**書き込みは1バイトも出ない**。
+
+```js
+await page.evaluate(() => {
+  window.__writes = [];
+  const db = eval("firebaseDB");           // Babel Standalone のトップレベル const は window に載らない（3節）
+  const orig = db.ref.bind(db);
+  db.ref = p => { const r = orig(p);
+    ["set","update","remove"].forEach(m => { r[m] = (...a) => { window.__writes.push(m+" "+p); return Promise.resolve(); }; });
+    return r; };
+});
+// …UI操作…
+console.log(await page.evaluate(() => window.__writes));
+```
+
+`fbSet`/`fbUpd` の `DEMO_MODE` ガードより **下**（`ref()` の層）で捕まえるので、`.remove()` の直呼び（app-main.js の3箇所）も漏らさない。
+
+**おまけに `__writes` は「その操作が本当に保存まで到達したか」の判定そのものになる。** 「トーストが出た」ではなく「どのパスへ何を発行したか」で修正前後をA/Bできる
+（2026-08-26 バグチェック#98: Freeプランのテンプレ保存が修正前は `set shops/{sid}/templates` を発行、修正後は **0件**、pro/premiumは発行のまま＝非回帰、を1本のスクリプトで示した）。
+
+**ゲートの検証はマウスだけで済ませない。** `pointerEvents:"none"` は**マウスしか止めない**——`disabled` でなければ Tab で到達し Enter で発火する。`document.elementFromPoint()` が対象ボタンではなく親DIVを返すことを確認しても、それは「クリックが届かない」の証明であって「押せない」の証明ではない。**`page.keyboard.press("Tab")` で到達できるか、`Enter` で実際に発火するかまで測る**（#98 の 🟡 はこれで見つかった。コードを読むだけなら「ゲートがある」で終わっていた）。
+
 ## 2. Playwrightツールをロード
 
 ToolSearchで一括ロード（1回で済ませる）:
