@@ -796,7 +796,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 実際の候補時間帯から算出し、該当候補がなければ標準値（ランチ終わり15:00・ディナー始まり17:00）にフォールバック。
   // ランチ終わり = 17時以前(17時含む)に終わる候補のうち最も遅い退勤。ディナー始まり = 17時以降(17時含む)に始まる候補のうち最も早い出勤。
   const{HEAT_LUNCH_END_MIN,HEAT_DINNER_START_MIN}=(()=>{
-    const allCands=[...(settings.candidates||[]),...Object.values(settings.weekdayCandidates||{}).flat(),...Object.values(settings.dateCandidates||{}).flat()].filter(c=>!c.closed&&c.start&&c.end);
+    // c&& は app-utils.js の oneSidedFillBounds と同じ規則（同じ式の3つ目の写し）。配列の穴を
+    // スプレッドすると undefined 要素になり、ガードが無いと c.closed で TypeError を投げて
+    // タブ全体が描画不能になる（Firebaseはnull要素をキーごと削除するため、候補配列は
+    // {0:..,2:..}→疎な配列として戻りうる）。ガードがあれば単に除外されるだけで済む。
+    const allCands=[...(settings.candidates||[]),...Object.values(settings.weekdayCandidates||{}).flat(),...Object.values(settings.dateCandidates||{}).flat()].filter(c=>c&&!c.closed&&c.start&&c.end);
     const lunchEnds=allCands.map(c=>timeToMin(c.end)).filter(m=>m!==null&&m<=1020);
     const dinnerStarts=allCands.map(c=>timeToMin(c.start)).filter(m=>m!==null&&m>=1020);
     return{HEAT_LUNCH_END_MIN:lunchEnds.length?Math.max(...lunchEnds):900,HEAT_DINNER_START_MIN:dinnerStarts.length?Math.min(...dinnerStarts):1020};
@@ -1049,7 +1053,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const heatHours=(()=>{
     const hrs=new Set();
     // 候補管理から時間帯を収集
-    const allCands=[...(settings.candidates||[]),...Object.values(settings.weekdayCandidates||{}).flat(),...Object.values(settings.dateCandidates||{}).flat()].filter(c=>!c.closed&&c.start&&c.end);
+    const allCands=[...(settings.candidates||[]),...Object.values(settings.weekdayCandidates||{}).flat(),...Object.values(settings.dateCandidates||{}).flat()].filter(c=>c&&!c.closed&&c.start&&c.end); // c&& の理由は :798 のコメント参照
     allCands.forEach(c=>{const sh=parseInt(c.start);const eh=parseInt(c.end);for(let h=sh;h<=eh;h++)hrs.add(h);});
     // 実際の提出・入力値から時間帯を収集（退勤延長分・「締」等の追加出勤(extraStart/extraEnd)も含める）
     subs.filter(s=>s.periodId===selPid).forEach(sub=>{Object.values(sub.shifts||{}).forEach(sh=>{if(sh.status!=="work")return;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(st)hrs.add(parseInt(st));if(en){hrs.add(parseInt(en));const ot=getOT(resolveAlias(sub.staffName,staffAliases),settings,sh);if(ot>0){const[h,m]=en.split(":").map(Number);hrs.add(Math.floor((h*60+m+ot)/60));}}if(sh.extraStart)hrs.add(parseInt(sh.extraStart));if(sh.extraEnd)hrs.add(parseInt(sh.extraEnd));});});
