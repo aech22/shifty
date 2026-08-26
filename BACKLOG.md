@@ -82,7 +82,8 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] `?v=` と `build:` のバンプはリリース工程（`/release-to-main` 手順63）で行う
 
 **影響範囲**: app-admin.js（`getHeatShift`:828・`confirmDelete`:2570・一覧の自動消去）、app-utils.js（`oneSidedFillBounds` の再利用）
-**備考**: **どちらも `a082d5d` の実装漏れではなく、決定の射程の外**。同じ回で見つかった「プリセットが日付検証を通っていない」（`93c1022`）と「管理者の削除拒否が無言」（`b2220fe`）は**判断が要らなかったため即修正済み**。あわせて申し送り（判断不要・BACKLOG化しない）: 片側セル補完の境界が [app-admin.js:798](app-admin.js) と [app-utils.js:146](app-utils.js) の2箇所に同じ式で書かれている（現時点で出力は一致。app-admin 側を `oneSidedFillBounds` の呼び出しに置き換えれば閉じる）。
+**備考**: **どちらも `a082d5d` の実装漏れではなく、決定の射程の外**。同じ回で見つかった「プリセットが日付検証を通っていない」（`93c1022`）と「管理者の削除拒否が無言」（`b2220fe`）は**判断が要らなかったため即修正済み**。あわせて申し送り（判断不要・BACKLOG化しない）: 片側セル補完の境界が [app-admin.js:798](app-admin.js) と [app-utils.js:146](app-utils.js) の2箇所に同じ式で書かれている（app-admin 側を `oneSidedFillBounds` の呼び出しに置き換えれば閉じる）。
+> **⚠️ 2026-08-26（バグチェック#97）訂正**: この申し送りの「**2箇所**」「現時点で出力は一致」は**どちらも誤り**だった。同じ式は**3箇所**（app-utils.js:150・app-admin.js:798・app-admin.js:1052）にあり、**app-utils だけが `.filter(c=>c&&…)` の null ガードを持っていた**。配列に穴があるとガードの無い側は `c.closed` で **TypeError を投げて `ShiftEditTab` が描画不能**になる（ガードがある側は該当要素を除外して継続）＝出力は一致しない。`4d1fad1` で app-admin の2箇所にガードを足して規則を揃えた（正常データでの出力が変わらないことは dev の実 settings で実測済み: 候補24件・境界・時間列すべて一致）。**:1052 は境界ではなく候補リスト自体を使うため `oneSidedFillBounds` へは置き換えられない**ので、統合するなら「平坦化した候補リストを返す関数」を app-utils に切り出す形になる。
 
 ---
 
@@ -109,9 +110,26 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 > **したがって本タスクに残る判断は「編集UIそのものを止めるか（案A）／バナーの文言を実態に合わせるか（案B）」だけ**で、
 > 「失敗が伝わらない」という不具合の側は選択肢に関係なく閉じている。
 >
-> **案を決める材料（未取得）**: 閲覧専用端末で提出のセル編集が**実際に通る**ことの実測。
-> #96 で「店舗コードだけで参加すると閲覧専用端末になる」手順を実ブラウザで確立したので、
-> 同じ手順でセル編集を1回行えば確認できる（`subs` の書き込みは `auth != null` のため通る想定）。
+> **✅ 2026-08-26（バグチェック#97）— 案を決める材料は取得済み。残るのは案の選択だけ**
+> dev で新しい匿名uid（＝`owners` 未登録＝「閲覧のみ」バナーが出る端末と同じ状態。`owners/{自分}` の
+> 読みは **401**）を作り、標準テスト店舗の実データに対して測定した:
+>
+> | 操作 | 結果 |
+> |---|---|
+> | `subs/{id}/shifts/{date}/adjustedStartNote` の書き込み（＝管理者のセル編集と同じ形） | **HTTP 200・書けて読み返せる** |
+> | `settings/xlShopName` の書き込み | **401 Permission denied** |
+> | `subs/{id}` 全体の削除 | **401 Permission denied**（削除後も sub は現存） |
+>
+> ルール側の根拠も一致する: `shops/$shopId/subs/$subId/.write` は
+> `auth != null && $shopId !== 'demo-toriMatsu-v1' && (newData.exists() || owners… || submitterUid === auth.uid)` で、
+> **編集（`newData.exists()` が真）は認証済みなら誰でも通る**。つまり「バナーの文言と実際の権限が
+> 食い違っている」という本タスクの前提は、**推測ではなく実データで確定した**。
+> 書き換えた1フィールドは着手前の値（`""`）へ復元済み。
+>
+> **案Aを選ぶ場合の追加作業**: [app-main.js:1204](app-main.js) `saveSubs` の catch にある
+> `if(!deletedId)return;` を同時に直すこと。削除以外の拒否は今も無言で握り潰されるため、
+> ルールで編集を締めると**「拒否されたのに成功と表示される」が subs 編集で再発する**
+> （`b2220fe`→`14194e9` で塞いできた形の、残った最後の隣）。
 
 **受け入れ条件**:
 - [ ] 案A〜Cのいずれかを選ぶ（**ユーザー判断**）
@@ -224,7 +242,7 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 **受け入れ条件**:
 - [x] `planExpiry` をJST基準で算出する（UTC+9してから日付を取る）→ `c51b62e`
 - [x] 既存の `planExpiry` を持つアカウントの扱いを決める → 放置（次回更新で直る）
-- [ ] **Cloud Functions を本番へデプロイする**（下の「未デプロイの変更」タスクにまとめてある）
+- [x] **Cloud Functions を本番へデプロイする** → **2026-08-25 のリリースで実施済み**（15関数すべて update 成功）。`c51b62e` は 2026-08-24 のコミットでデプロイに含まれており、`git diff d3dfb3f HEAD -- functions/` が空＝リリース以降 functions/ は変わっていない（バグチェック#97 で確認。参照先だった「未デプロイの変更」タスクは存在しないので削除した）
 **影響範囲**: functions/index.js（`stripeWebhook` の expiry 計算1箇所）
 **備考**: 2026-08-11 の実購入テストで検出。`planExpiry` は表示専用（app-admin.js:3957 の「〜まで有効」）で機能ゲートは `plan` のみを見るため実害は軽微。既知の🟢「`purgeOldPeriods` のカットオフがUTC日付」と同種の取りこぼし。
 **影響範囲**: 本番Firebase の `accounts/{shopId}`（データのみ・コード変更なし）、Stripeダッシュボード操作
@@ -319,7 +337,7 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
   - 案C: 解除時に企業の作成者uid（`companies/{id}/pub/ownerUid`）へオーナーを移し替える
 - [x] `linkStoreToCompany` / `createCompany` の未claim分岐（「先に触った人がオーナーになれる」）の扱いを合わせて決める → **廃止**（`d6c826a`）
 - [ ] 本番13店舗が全てclaim済みであることを再確認してから適用する（締めルール切替時と同じゲート）
-- [ ] Cloud Functions を本番へデプロイする（下の「未デプロイの変更」タスク）
+- [x] Cloud Functions を本番へデプロイする → **2026-08-25 のリリースで実施済み**（`d6c826a` は 2026-08-24 のコミットでデプロイに含まれる。バグチェック#97 で確認）。**したがってこのタスクに残るのは本番店舗の claim 監査だけ**
 **影響範囲**: functions/index.js（`unlinkStoreFromCompany`・`linkStoreToCompany`・`createCompany`）、app-admin.js（CompanyTab の解除UI・エラー表示）
 **備考**: バグチェック #65（2026-08-10）で検出・**条件B（仕様判断）に該当**。既存の🟢「未claim店舗は先に触った人がownerになれる」は「新規店舗作成直後の一瞬」と整理していたが、**解除操作が既存店舗を後からその状態に戻せる**点が新しい。本番13店舗は全てclaim済みのため現時点の実害はなく、解除操作を行った瞬間にだけ窓が開く。
 
