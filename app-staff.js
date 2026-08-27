@@ -602,7 +602,10 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                     <div style={{fontSize:12,fontWeight:700,color:"var(--c-text)",wordBreak:"break-all",lineHeight:1.3}}>{resolveAlias(sub.staffName,staffAliases)}</div>
                     <div style={{fontSize:10,color:"var(--c-accent-text)",marginTop:2}}>✎ 修正</div>
                   </div>
-                  {(plan==="pro"||plan==="premium")&&onDeleteSub&&(!myName||resolveAlias(sub.staffName,staffAliases)===myName)&&(
+                  {/* 全行に出すのは「管理者画面からの利用＝myNameを渡していない」ときだけ。
+                      !myName で判定すると、スタッフ画面が渡す空文字（＝まだ名前を入力していない初回訪問者）も
+                      管理者と同じ扱いになり、他人の行にも削除ボタンが出る（バグチェック#99で実測）。 */}
+                  {(plan==="pro"||plan==="premium")&&onDeleteSub&&(myName===null||resolveAlias(sub.staffName,staffAliases)===myName)&&(
                     <button onClick={e=>{e.stopPropagation();if(confirm(`「${resolveAlias(sub.staffName,staffAliases)}」の提出を削除しますか？`)){onDeleteSub(sub.id);}}}
                       style={{width:"100%",padding:"2px 4px",background:"var(--c-danger-bg)",border:"1px solid var(--c-danger-border)",borderRadius:4,color:"var(--c-danger-text)",fontSize:10,cursor:"pointer",fontWeight:600}}>
                       削除
