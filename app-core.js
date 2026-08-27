@@ -237,9 +237,9 @@ const APP_CHECK_SITE_KEY = DEV_MODE ? "" : "";
 
 // ===== 共通スタイル定数 =====
 const AI={width:"100%",padding:"11px 14px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none"};
-const AB={padding:"10px 18px",background:"var(--c-accent-solid)",border:"none",borderRadius:8,color:"white",fontSize:14,fontWeight:700,cursor:"pointer"};
+const AB={padding:"10px 18px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:14,fontWeight:700,cursor:"pointer"};
 // 削除ボタン。marginLeft は「破壊的操作だけ他のボタンから離す」ための余白（バグチェック#74）。
 // 375px幅の実測で、削除は隣のボタンと4〜6pxしか離れていない場所が多かった。寸法そのものは
 // 密度を優先して据え置き、取り返しのつかない操作だけ指1本ぶんの距離を確保する。
-const AD={padding:"6px 11px",background:"var(--c-danger-bg)",border:"1px solid var(--c-danger-border)",borderRadius:4,color:"var(--c-danger-text)",fontSize:12,fontWeight:600,cursor:"pointer",marginLeft:10};
+const AD={padding:"6px 11px",background:"rgba(255,71,87,.1)",border:"1px solid rgba(255,71,87,.25)",borderRadius:4,color:"#FF4757",fontSize:12,fontWeight:600,cursor:"pointer",marginLeft:10};
 const AGray={padding:"10px 16px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text2)",fontSize:14,cursor:"pointer"};

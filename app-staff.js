@@ -251,17 +251,17 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"50px 20px",textAlign:"center"}}>
         <div style={{fontSize:68,animation:"bI .5s"}}>✓</div>
-        <div style={{fontSize:22,fontWeight:700,color:"var(--c-accent-text)",marginTop:14,marginBottom:8}}>提出完了！</div>
+        <div style={{fontSize:22,fontWeight:700,color:"var(--c-accent)",marginTop:14,marginBottom:8}}>提出完了！</div>
         {/* 背景がテーマ非依存の固定色なので文字色も自前で持つ。body の color:var(--c-text) を
             継承するとダークで薄い文字＋明るい背景になって読めなくなる */}
         <div style={{background:"#FEF0E8",border:"1px solid #FDDCC7",borderRadius:12,padding:"14px 20px",marginBottom:24,fontSize:14,lineHeight:1.9,display:"inline-block",textAlign:"left",color:"#1A1A2E"}}>
-          <strong style={{color:"var(--c-accent-text)"}}>{ap?.label}</strong><br/>
+          <strong style={{color:"var(--c-accent)"}}>{ap?.label}</strong><br/>
           {ap?.startDate?.replace(/-/g,"/")} 〜 {ap?.endDate?.replace(/-/g,"/")}<br/>
-          出勤予定：<strong style={{color:"var(--c-accent-text)"}}>{wk}日</strong>　休み：{dates.length-wk}日
+          出勤予定：<strong style={{color:"var(--c-accent)"}}>{wk}日</strong>　休み：{dates.length-wk}日
           {comment&&<><br/>コメント：{comment}</>}
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"center",flexWrap:"wrap"}}>
-          <button onClick={()=>{editingRef.current=true;setDone(false);setConf(false);setSm(false);}} style={{padding:"11px 22px",background:"var(--c-card)",border:"2px solid var(--c-accent)",borderRadius:8,color:"var(--c-accent-text)",fontSize:14,fontWeight:700,cursor:"pointer"}}>修正する</button>
+          <button onClick={()=>{editingRef.current=true;setDone(false);setConf(false);setSm(false);}} style={{padding:"11px 22px",background:"var(--c-card)",border:"2px solid var(--c-accent)",borderRadius:8,color:"var(--c-accent)",fontSize:14,fontWeight:700,cursor:"pointer"}}>修正する</button>
           <button onClick={reset} style={{padding:"11px 22px",background:"var(--c-bg)",border:"2px solid var(--c-border)",borderRadius:8,color:"var(--c-text3)",fontSize:14,fontWeight:700,cursor:"pointer"}}>↺ 最初から</button>
         </div>
       </div>
@@ -273,7 +273,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
       {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"14px 12px 120px"}}>
-        {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#C81E2B":"#92400E"}}>{dl?`▲ 締切日（${ap.deadlineDate.replace(/-/g,"/")}）を過ぎています（提出・修正は可能です）`:`締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
+        {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`▲ 締切日（${ap.deadlineDate.replace(/-/g,"/")}）を過ぎています（提出・修正は可能です）`:`締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
 
         {/* 名前カード */}
         <div style={{background:"var(--c-card)",borderRadius:12,boxShadow:"0 1px 4px var(--c-shadow)",marginBottom:14,padding:"16px 18px",display:"flex",alignItems:"center",gap:14}}>
@@ -295,7 +295,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                   <button onClick={()=>{
                     if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);dirtyRef.current=true;setName(resolved);}
                     setEditN(false);setShowSuggest(false);
-                  }} style={{padding:"10px 16px",background:"var(--c-accent-solid)",border:"none",borderRadius:8,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",flexShrink:0}}>確定</button>
+                  }} style={{padding:"10px 16px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",flexShrink:0}}>確定</button>
                 </div>
                 {showSuggest&&filteredSuggests.length>0&&(
                   <div className="name-suggest">
@@ -303,7 +303,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                       <div key={i} className="name-suggest-item" onMouseDown={e=>{e.preventDefault();dirtyRef.current=true;setName(s.registered);setNi(s.registered);setEditN(false);setShowSuggest(false);}}
                         style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                         <span>{s.display}</span>
-                        {s.isAlias&&<span style={{fontSize:11,color:"var(--c-accent-text)",background:"rgba(248,112,54,.1)",padding:"1px 6px",borderRadius:4,flexShrink:0}}>→ {s.registered}</span>}
+                        {s.isAlias&&<span style={{fontSize:11,color:"var(--c-accent)",background:"rgba(248,112,54,.1)",padding:"1px 6px",borderRadius:4,flexShrink:0}}>→ {s.registered}</span>}
                       </div>
                     ))}
                   </div>
@@ -322,7 +322,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                 <div style={{fontSize:13,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>お名前を入力してください（必須）</div>
                 <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"var(--c-bg)",borderRadius:8,border:"2px dashed var(--c-border)"}}>
                   <span style={{fontSize:16,color:"var(--c-text4)"}}>例）山田 太郎</span>
-                  <span style={{marginLeft:"auto",fontSize:12,color:"var(--c-accent-text)",fontWeight:700}}>タップして入力 →</span>
+                  <span style={{marginLeft:"auto",fontSize:12,color:"var(--c-accent)",fontWeight:700}}>タップして入力 →</span>
                 </div>
               </div>
             )}
@@ -333,7 +333,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
         <div style={{display:"flex",gap:8,marginBottom:14}}>
           {[["through","通し"],["lunch","ランチ"],["dinner","ディナー"]].map(([k,l])=>(
             <button key={k} onClick={()=>bulkFill(k)}
-              style={{flex:1,padding:"10px 0",background:"rgba(248,112,54,.1)",border:"1.5px solid #FDDCC7",borderRadius:8,color:"var(--c-accent-text)",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+              style={{flex:1,padding:"10px 0",background:"rgba(248,112,54,.1)",border:"1.5px solid #FDDCC7",borderRadius:8,color:"var(--c-accent)",fontSize:13,fontWeight:700,cursor:"pointer"}}>
               全日程「{l}」
             </button>
           ))}
@@ -350,10 +350,10 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
               <div style={{padding:"11px 15px 9px",display:"flex",alignItems:"center",justifyContent:"space-between",background:"var(--c-card)"}}>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:17,fontWeight:700,color:"var(--c-text)"}}>{m}/{day}</span>
-                  <span style={{fontSize:13,fontWeight:700,padding:"2px 8px",borderRadius:4,background:iS?"#EFF6FF":iSu?"#FFF0F1":"var(--c-input)",color:iS?"#1565C0":iSu?"#C81E2B":"var(--c-text3)"}}>{wd}{isHoliday(ds)?"祝":""}</span>
+                  <span style={{fontSize:13,fontWeight:700,padding:"2px 8px",borderRadius:4,background:iS?"#EFF6FF":iSu?"#FFF0F1":"var(--c-input)",color:iS?"#3B82F6":iSu?"#FF4757":"var(--c-text3)"}}>{wd}{isHoliday(ds)?"祝":""}</span>
                   {dayIsClosed&&<span style={{fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:4,background:"rgba(255,71,87,.1)",color:"#FF4757"}}>× 休業日</span>}
                 </div>
-                <span style={{fontSize:12,fontWeight:700,padding:"3px 10px",borderRadius:12,background:dayIsClosed?"rgba(255,71,87,.1)":iw?"#FEF0E8":"var(--c-input)",color:dayIsClosed?"#C81E2B":iw?"#9A3412":"var(--c-text3)"}}>{dayIsClosed?"休業":iw?"出勤":"休み"}</span>
+                <span style={{fontSize:12,fontWeight:700,padding:"3px 10px",borderRadius:12,background:dayIsClosed?"rgba(255,71,87,.1)":iw?"#FEF0E8":"var(--c-input)",color:dayIsClosed?"#FF4757":iw?"#d4601a":"var(--c-text3)"}}>{dayIsClosed?"休業":iw?"出勤":"休み"}</span>
               </div>
               {dayIsClosed
                 ?<div style={{padding:"8px 15px 12px"}}></div>
@@ -361,7 +361,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                 {[["work","出勤"],["holiday","休み"]].map(([v,l])=>{
                   const a=st.status===v,iW=v==="work";
                   return(<div key={v} onClick={()=>upd(ds,{status:v,start:iW?(st.start||cds[0]?.start||"18:00"):undefined,end:iW?(st.end||cds[0]?.end||"23:00"):undefined})}
-                    style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,cursor:"pointer",border:`2px solid ${a?(iW?"var(--c-accent)":"var(--c-danger)"):"var(--c-border)"}`,background:a?(iW?"var(--c-accent-solid)":"var(--c-danger)"):"var(--c-input)",color:a?"#fff":"var(--c-text3)",fontSize:14,fontWeight:a?700:600,transition:"all .15s"}}>
+                    style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 0",borderRadius:8,cursor:"pointer",border:`2px solid ${a?(iW?"var(--c-accent)":"var(--c-danger)"):"var(--c-border)"}`,background:a?(iW?"var(--c-accent)":"var(--c-danger)"):"var(--c-input)",color:a?"#fff":"var(--c-text3)",fontSize:14,fontWeight:a?700:600,transition:"all .15s"}}>
                     <div style={{width:15,height:15,borderRadius:"50%",border:"2px solid currentColor",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{a&&<div style={{width:7,height:7,borderRadius:"50%",background:"currentColor"}}/>}</div>{l}
                   </div>);
                 })}
@@ -373,7 +373,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                     <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
                       {cds.map((c,i)=>{const sel=st.start===c.start&&st.end===c.end;return(
                         <button key={i} className="cb" onClick={()=>upd(ds,{start:c.start,end:c.end})}
-                          style={{padding:"6px 11px",fontSize:13,fontWeight:700,background:sel?"var(--c-accent-solid)":"rgba(248,112,54,.1)",color:sel?"white":"var(--c-accent-text)",border:`1.5px solid ${sel?"var(--c-accent)":"#FDDCC7"}`,borderRadius:8,whiteSpace:"nowrap",cursor:"pointer"}}>
+                          style={{padding:"6px 11px",fontSize:13,fontWeight:700,background:sel?"var(--c-accent)":"rgba(248,112,54,.1)",color:sel?"white":"var(--c-accent)",border:`1.5px solid ${sel?"var(--c-accent)":"#FDDCC7"}`,borderRadius:8,whiteSpace:"nowrap",cursor:"pointer"}}>
                           {c.start}〜{c.end}
                         </button>
                       );})}
@@ -422,7 +422,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
         <div style={{maxWidth:560,margin:"0 auto",display:"flex",gap:8}}>
           <button onClick={reset} style={{padding:"13px 14px",background:"var(--c-card)",border:"2px solid var(--c-border)",borderRadius:8,color:"var(--c-text3)",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>↺ リセット</button>
           <button onClick={()=>{if(!name.trim()){tt_("▲ 名前を入力してください");return;}setConf(true);}}
-            style={{flex:1,padding:13,background:"var(--c-accent-solid)",color:"white",border:"none",borderRadius:8,fontSize:16,fontWeight:700,boxShadow:"0 4px 16px rgba(248,112,54,.35)",cursor:"pointer"}}>
+            style={{flex:1,padding:13,background:"var(--c-accent)",color:"white",border:"none",borderRadius:8,fontSize:16,fontWeight:700,boxShadow:"0 4px 16px rgba(248,112,54,.35)",cursor:"pointer"}}>
             シフトを提出する
           </button>
         </div>
@@ -440,7 +440,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
           </div>
           <div style={{display:"flex",gap:8}}>
             <button disabled={sending} onClick={()=>setConf(false)} style={{flex:1,padding:12,background:"var(--c-bg)",border:"none",borderRadius:8,fontSize:14,fontWeight:600,color:"var(--c-text3)",cursor:sending?"default":"pointer",opacity:sending?.5:1}}>キャンセル</button>
-            <button disabled={sending} onClick={submit} style={{flex:2,padding:12,background:"var(--c-accent-solid)",border:"none",borderRadius:8,fontSize:14,fontWeight:700,color:"white",cursor:sending?"default":"pointer",opacity:sending?.7:1}}>{sending?"送信中...":"提出する"}</button>
+            <button disabled={sending} onClick={submit} style={{flex:2,padding:12,background:"var(--c-accent)",border:"none",borderRadius:8,fontSize:14,fontWeight:700,color:"white",cursor:sending?"default":"pointer",opacity:sending?.7:1}}>{sending?"送信中...":"提出する"}</button>
           </div>
         </div>
       </div>}
@@ -454,23 +454,23 @@ function StaffHdr({ap,p0,pe,nd,subs,apid,onSm,shopName}){
   // source:"grid"はシフト作成タブの管理者入力用sub（実際の提出ではない）なのでバッジ件数から除外する
   const submitted=subs.filter(s=>s.periodId===apid&&s.source!=="grid");
   return(
-    <div style={{background:"var(--c-accent-solid)",boxShadow:"0 2px 12px rgba(248,112,54,.25)",padding:"12px 14px"}}>
+    <div style={{background:"var(--c-accent)",boxShadow:"0 2px 12px rgba(248,112,54,.25)",padding:"12px 14px"}}>
       <div style={{maxWidth:560,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
         <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
           <ShiftyIcon size={28}/>
           <div style={{minWidth:0}}>
             <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-              {shopName&&<span style={{fontSize:11,background:"rgba(0,0,0,.18)",color:"white",padding:"1px 7px",borderRadius:8,fontWeight:700,whiteSpace:"nowrap"}}>{shopName}</span>}
+              {shopName&&<span style={{fontSize:11,background:"rgba(255,255,255,.25)",color:"white",padding:"1px 7px",borderRadius:8,fontWeight:700,whiteSpace:"nowrap"}}>{shopName}</span>}
               <div style={{fontSize:15,fontWeight:700,color:"white",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
                 {ap?.label||"シフト希望提出"}
               </div>
             </div>
-            <div style={{fontSize:11,color:"rgba(255,255,255,.95)",marginTop:1}}>{p0} 〜 {pe}（{nd}日間）</div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.85)",marginTop:1}}>{p0} 〜 {pe}（{nd}日間）</div>
           </div>
         </div>
-        <button onClick={onSm} style={{flexShrink:0,background:"rgba(0,0,0,.16)",border:"1px solid rgba(255,255,255,.45)",borderRadius:12,padding:"7px 14px",color:"white",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
+        <button onClick={onSm} style={{flexShrink:0,background:"rgba(255,255,255,.18)",border:"1px solid rgba(255,255,255,.4)",borderRadius:12,padding:"7px 14px",color:"white",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
           提出状況
-          <span style={{background:submitted.length>0?"white":"rgba(255,255,255,.3)",color:submitted.length>0?"#C2410C":"white",borderRadius:12,padding:"1px 8px",fontSize:12,fontWeight:800}}>{submitted.length}</span>
+          <span style={{background:submitted.length>0?"white":"rgba(255,255,255,.3)",color:submitted.length>0?"var(--c-accent)":"white",borderRadius:12,padding:"1px 8px",fontSize:12,fontWeight:800}}>{submitted.length}</span>
         </button>
       </div>
     </div>
@@ -497,7 +497,7 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
         <div style={{display:"flex",gap:8,marginBottom:14}}>
           {[["work","出勤"],["holiday","休み"]].map(([v,l])=>(
             <button key={v} onClick={()=>handleStatus(v)}
-              style={{flex:1,padding:"10px 0",border:`2px solid ${status===v?(v==="work"?"var(--c-accent)":"var(--c-danger)"):"var(--c-border)"}`,borderRadius:8,background:status===v?(v==="work"?"var(--c-accent-solid)":"var(--c-danger)"):"var(--c-input)",color:status===v?"#fff":"var(--c-text3)",fontWeight:700,fontSize:14,cursor:"pointer"}}>{l}</button>
+              style={{flex:1,padding:"10px 0",border:`2px solid ${status===v?(v==="work"?"var(--c-accent)":"var(--c-danger)"):"var(--c-border)"}`,borderRadius:8,background:status===v?(v==="work"?"var(--c-accent)":"var(--c-danger)"):"var(--c-input)",color:status===v?"#fff":"var(--c-text3)",fontWeight:700,fontSize:14,cursor:"pointer"}}>{l}</button>
           ))}
         </div>
         {status==="work"&&<>
@@ -512,7 +512,7 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
               </div>
             ))}
           </div>
-          <button onClick={()=>onApply(status,start,end)} style={{width:"100%",padding:"12px",background:"var(--c-accent-solid)",border:"none",borderRadius:8,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>✓ 確定</button>
+          <button onClick={()=>onApply(status,start,end)} style={{width:"100%",padding:"12px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:8}}>✓ 確定</button>
         </>}
         <button onClick={onClose} style={{width:"100%",padding:"10px",background:"var(--c-bg)",border:"none",borderRadius:8,color:"var(--c-text3)",fontSize:14,fontWeight:600,cursor:"pointer"}}>キャンセル</button>
       </div>
@@ -574,13 +574,13 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
 
   return(
     <div style={{position:"fixed",inset:0,background:"var(--c-card)",zIndex:300,display:"flex",flexDirection:"column",animation:"fI .2s"}}>
-      <div style={{background:"var(--c-accent-solid)",padding:"12px 16px",flexShrink:0,boxShadow:"0 2px 8px rgba(248,112,54,.3)"}}>
+      <div style={{background:"var(--c-accent)",padding:"12px 16px",flexShrink:0,boxShadow:"0 2px 8px rgba(248,112,54,.3)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>
             <div style={{fontSize:16,fontWeight:700,color:"white"}}>提出状況一覧</div>
-            <div style={{fontSize:11,color:"rgba(255,255,255,.95)",marginTop:1}}>{period?.label}　提出済み {submitted.length}名</div>
+            <div style={{fontSize:11,color:"rgba(255,255,255,.85)",marginTop:1}}>{period?.label}　提出済み {submitted.length}名</div>
           </div>
-          <button onClick={onClose} style={{background:"rgba(0,0,0,.16)",border:"1px solid rgba(255,255,255,.45)",borderRadius:"50%",width:36,height:36,color:"white",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+          <button onClick={onClose} style={{background:"rgba(255,255,255,.2)",border:"1px solid rgba(255,255,255,.4)",borderRadius:"50%",width:36,height:36,color:"white",fontSize:20,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
         </div>
       </div>
       {submitted.length===0
@@ -600,14 +600,14 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                     onMouseEnter={e=>e.currentTarget.style.opacity=".7"}
                     onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
                     <div style={{fontSize:12,fontWeight:700,color:"var(--c-text)",wordBreak:"break-all",lineHeight:1.3}}>{resolveAlias(sub.staffName,staffAliases)}</div>
-                    <div style={{fontSize:10,color:"var(--c-accent-text)",marginTop:2}}>✎ 修正</div>
+                    <div style={{fontSize:10,color:"var(--c-accent)",marginTop:2}}>✎ 修正</div>
                   </div>
                   {/* 全行に出すのは「管理者画面からの利用＝myNameを渡していない」ときだけ。
                       !myName で判定すると、スタッフ画面が渡す空文字（＝まだ名前を入力していない初回訪問者）も
                       管理者と同じ扱いになり、他人の行にも削除ボタンが出る（バグチェック#99で実測）。 */}
                   {(plan==="pro"||plan==="premium")&&onDeleteSub&&(myName===null||resolveAlias(sub.staffName,staffAliases)===myName)&&(
                     <button onClick={e=>{e.stopPropagation();if(confirm(`「${resolveAlias(sub.staffName,staffAliases)}」の提出を削除しますか？`)){onDeleteSub(sub.id);}}}
-                      style={{width:"100%",padding:"2px 4px",background:"var(--c-danger-bg)",border:"1px solid var(--c-danger-border)",borderRadius:4,color:"var(--c-danger-text)",fontSize:10,cursor:"pointer",fontWeight:600}}>
+                      style={{width:"100%",padding:"2px 4px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:4,color:"#FF4757",fontSize:10,cursor:"pointer",fontWeight:600}}>
                       削除
                     </button>
                   )}
@@ -625,7 +625,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                 return(
                   <div key={ds} style={{width:CW,flexShrink:0,textAlign:"center",height:52,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",borderRight:"1px solid var(--c-border)",borderLeft:"1px solid var(--c-border)"}}>
                     <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)"}}>{m}/{day}</div>
-                    <div style={{fontSize:11,fontWeight:700,padding:"1px 6px",borderRadius:4,background:iS?"#EFF6FF":iSu?"#FFF0F1":"var(--c-input)",color:iS?"#1565C0":iSu?"#C81E2B":"var(--c-text3)",marginTop:2}}>{wd}{isHoliday(ds)?"祝":""}</div>
+                    <div style={{fontSize:11,fontWeight:700,padding:"1px 6px",borderRadius:4,background:iS?"#EFF6FF":iSu?"#FFF0F1":"var(--c-input)",color:iS?"#3B82F6":iSu?"#FF4757":"var(--c-text3)",marginTop:2}}>{wd}{isHoliday(ds)?"祝":""}</div>
                   </div>
                 );
               })}
@@ -644,11 +644,11 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                       onMouseEnter={e=>{if(!isEditing)e.currentTarget.style.background="#F0FFF4";}}
                       onMouseLeave={e=>{if(!isEditing)e.currentTarget.style.background="transparent";}}>
                       {iw?(<>
-                        <div style={{fontSize:10,fontWeight:700,background:"#FEF0E8",color:"#9A3412",padding:"1px 5px",borderRadius:4,border:"1px solid #FDDCC7"}}>出勤</div>
+                        <div style={{fontSize:10,fontWeight:700,background:"#FEF0E8",color:"#d4601a",padding:"1px 5px",borderRadius:4,border:"1px solid #FDDCC7"}}>出勤</div>
                         {/* 編集中は背景が固定の明色(#FEF0E8)になるため、文字色もテーマ非依存の暗色に固定する。
                             ライトの var(--c-text) は #1A1A2E と同値なので見た目は変わらない。 */}
                         <div style={{fontSize:11,fontWeight:700,color:isEditing?"#1A1A2E":"var(--c-text)",whiteSpace:"nowrap"}}>{s.start||"--:--"}</div>
-                        <div style={{fontSize:9,color:isEditing?"#4B5563":"var(--c-text4)"}}>〜</div>
+                        <div style={{fontSize:9,color:"var(--c-text4)"}}>〜</div>
                         <div style={{fontSize:11,fontWeight:700,color:isEditing?"#1A1A2E":"var(--c-text)",whiteSpace:"nowrap"}}>{s.end||"--:--"}</div>
                       </>):null}
                     </div>
@@ -677,7 +677,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
       {notSubmitted.length>0&&<div style={{background:"var(--c-card)",borderTop:"1px solid var(--c-border)",padding:"10px 16px",flexShrink:0}}>
         <div style={{fontSize:12,fontWeight:700,color:"var(--c-text4)",marginBottom:6}}>未提出（{notSubmitted.length}名）</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-          {notSubmitted.map((n,i)=><span key={i} style={{fontSize:12,background:"#FFF0F1",color:"#C81E2B",border:"1px solid rgba(255,71,87,.2)",padding:"3px 10px",borderRadius:12,fontWeight:600}}>{n}</span>)}
+          {notSubmitted.map((n,i)=><span key={i} style={{fontSize:12,background:"#FFF0F1",color:"#FF4757",border:"1px solid rgba(255,71,87,.2)",padding:"3px 10px",borderRadius:12,fontWeight:600}}>{n}</span>)}
         </div>
       </div>}
     </div>

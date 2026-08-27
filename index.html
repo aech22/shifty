@@ -119,44 +119,12 @@
       --c-border2: #D1D5DB;
       --c-text:    #1A1A2E;
       --c-text2:   #374151;
-      /* text3/text4 は「薄い」ではなく「読める中で最も控えめ」。以前の #6B7280/#9CA3AF は
-         白地でも 4.83/2.54:1 で、カード以外の淡い地では AA を割っていた（バグチェック#72の残り） */
-      --c-text3:   #4B5563;
-      --c-text4:   #606875;
+      --c-text3:   #6B7280;
+      --c-text4:   #9CA3AF;
       --c-shadow:  rgba(0,0,0,.06);
       /* ブランド色はテーマ非依存のため :root のみで定義する（ダーク側で上書きしない） */
       --c-accent:  #f87036;
       --c-danger:  #DC2626;
-      /* 塗りの上に白文字を置くとき専用のオレンジ。ブランドの --c-accent(#f87036) は
-         白文字と 2.85:1 しかなく AA(4.5:1) に届かないため、塗り面だけこちらを使う。
-         白文字と 5.18:1（バグチェック#72 決めること2・案A） */
-      --c-accent-solid: #C2410C;
-      /* アクセントを「文字色」として明るい地に置くとき用。ライトの #f87036 は白地で 2.85:1 しかない。
-         ダークは暗い地に載るので明るいブランド色のままでよい（#1E293B 上で 5.13:1） */
-      --c-accent-text: #A63709;
-      /* ヒートマップの濃淡。ライトは白地に橙を重ねて明るくなるので黒インク、
-         ダークは同じ重ね方だと中間の明るさに入って黒でも白でも AA を割るため、
-         重ねる量を抑えて暗いまま保ち白インクにする（バグチェック#72の実測で判明） */
-      --c-heat-scale: 1;
-      --c-heat-ink:   #1A1A2E;
-      /* 告知の帯（警告=アンバー / 注記=オレンジ / 異常=レッド）。
-         以前は「淡いティント背景＋濃い文字色の直書き」だったため、ダークでは暗い背景に
-         暗い文字が乗って 2.2:1 前後まで落ちていた（#72 決めること1・5）。地と文字を対で持つ */
-      --c-warn-bg:     #FEF5E7;
-      --c-warn-border: #F5CE86;
-      --c-warn-text:   #92400E;
-      --c-note-bg:     #FEF1EB;
-      --c-note-border: #F8C0A3;
-      --c-note-text:   #9A3412;
-      --c-danger-bg:     #FCE9E9;
-      --c-danger-border: #F3B0B0;
-      --c-danger-text:   #B91C1C;
-      /* 土日祝の日付色。以前は固定リテラル（土=#1976d2 / 日=#e53935）で、
-         ダークでは 3.2〜3.5:1 に沈んでいた（#72 決めること3・案A） */
-      --c-sat: #1565C0;
-      --c-sun: #C81E2B;
-      /* 対応表の「できる」印。#10B981 は白地で 2.48:1 しかない */
-      --c-ok:  #047857;
     }
     /* ダークモード変数 */
     :root[data-theme="dark"] {
@@ -168,24 +136,9 @@
       --c-border2: #475569;
       --c-text:    #F1F5F9;
       --c-text2:   #CBD5E1;
-      --c-text3:   #A3B0C2;
-      --c-text4:   #92A0B2;
+      --c-text3:   #94A3B8;
+      --c-text4:   #64748B;
       --c-shadow:  rgba(0,0,0,.3);
-      --c-warn-bg:     #3A2C10;
-      --c-warn-border: #6B4E14;
-      --c-warn-text:   #FCD34D;
-      --c-note-bg:     #3A2415;
-      --c-note-border: #6B3A1F;
-      --c-note-text:   #FDBA74;
-      --c-danger-bg:     #3B1D1D;
-      --c-danger-border: #6B2E2E;
-      --c-danger-text:   #FCA5A5;
-      --c-sat: #7FB6F5;
-      --c-sun: #FF9AA2;
-      --c-ok:  #34D399;
-      --c-accent-text: #FF8A50;
-      --c-heat-scale: 0.42;
-      --c-heat-ink:   #F1F5F9;
     }
     /* OS設定がダークのときのデフォルト（手動設定がない場合） */
     @media (prefers-color-scheme: dark) {
@@ -198,24 +151,9 @@
         --c-border2: #475569;
         --c-text:    #F1F5F9;
         --c-text2:   #CBD5E1;
-        --c-text3:   #A3B0C2;
-        --c-text4:   #92A0B2;
+        --c-text3:   #94A3B8;
+        --c-text4:   #64748B;
         --c-shadow:  rgba(0,0,0,.3);
-      --c-warn-bg:     #3A2C10;
-      --c-warn-border: #6B4E14;
-      --c-warn-text:   #FCD34D;
-      --c-note-bg:     #3A2415;
-      --c-note-border: #6B3A1F;
-      --c-note-text:   #FDBA74;
-      --c-danger-bg:     #3B1D1D;
-      --c-danger-border: #6B2E2E;
-      --c-danger-text:   #FCA5A5;
-      --c-sat: #7FB6F5;
-      --c-sun: #FF9AA2;
-      --c-ok:  #34D399;
-      --c-accent-text: #FF8A50;
-      --c-heat-scale: 0.42;
-      --c-heat-ink:   #F1F5F9;
       }
     }
     *{box-sizing:border-box;margin:0;padding:0;}

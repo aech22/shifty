@@ -1253,7 +1253,7 @@ function App(){
         メニューから「ブラウザで開く」「Safariで開く」を選ぶか、URLをコピーしてSafariやChromeに貼り付けて開いてください。<br/>
         それでも開けない場合は、管理者に最新のURLを確認してください。
       </div>
-      <button onClick={()=>window.location.reload()} style={{marginTop:8,padding:"12px 36px",background:"var(--c-accent-solid)",border:"none",borderRadius:8,fontSize:15,fontWeight:700,color:"white",cursor:"pointer"}}>再試行</button>
+      <button onClick={()=>window.location.reload()} style={{marginTop:8,padding:"12px 36px",background:"var(--c-accent)",border:"none",borderRadius:8,fontSize:15,fontWeight:700,color:"white",cursor:"pointer"}}>再試行</button>
     </div>
   );
 
@@ -1399,7 +1399,7 @@ function App(){
               {authError&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:12,background:"rgba(255,71,87,.1)",padding:"8px 12px",borderRadius:8}}>{authError}</div>}
               <button disabled={locked||authLoading}
                 onClick={()=>emailMode==="login"?signInWithEmail(emailVal,passwordVal):(password2Val!==passwordVal?setAuthError("パスワードが一致しません"):signUpWithEmail(emailVal,passwordVal))}
-                style={{width:"100%",padding:"13px",background:locked?"var(--c-text3)":"var(--c-accent-solid)",border:"none",borderRadius:12,color:"white",fontSize:15,fontWeight:700,cursor:locked?"not-allowed":"pointer",marginBottom:12}}>
+                style={{width:"100%",padding:"13px",background:locked?"var(--c-text3)":"var(--c-accent)",border:"none",borderRadius:12,color:"white",fontSize:15,fontWeight:700,cursor:locked?"not-allowed":"pointer",marginBottom:12}}>
                 {emailMode==="login"?"ログイン":"アカウント作成"}
               </button>
               </React.Fragment>
@@ -1408,10 +1408,10 @@ function App(){
                 ?<div style={{textAlign:"center",fontSize:12,color:"var(--c-text4)"}}>
                   <button onClick={()=>sendPasswordReset(emailVal)} style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:12,cursor:"pointer",textDecoration:"underline",marginBottom:6,display:"block",width:"100%"}}>パスワードを忘れた方</button>
                   アカウントがない場合は
-                  <button onClick={()=>{setEmailMode("register");setAuthError("");}} style={{background:"none",border:"none",color:"var(--c-accent-text)",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>新規登録</button>
+                  <button onClick={()=>{setEmailMode("register");setAuthError("");}} style={{background:"none",border:"none",color:"var(--c-accent)",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>新規登録</button>
                 </div>
                 :<div style={{textAlign:"center",fontSize:12,color:"var(--c-text4)"}}>既にアカウントがある場合は
-                  <button onClick={()=>{setEmailMode("login");setAuthError("");}} style={{background:"none",border:"none",color:"var(--c-accent-text)",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>ログイン</button>
+                  <button onClick={()=>{setEmailMode("login");setAuthError("");}} style={{background:"none",border:"none",color:"var(--c-accent)",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>ログイン</button>
                 </div>
               }
             </div>
@@ -1431,7 +1431,7 @@ function App(){
                 style={{width:"100%",padding:"12px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:16}}/>
               {authError&&<div style={{color:"#FF4757",fontSize:12,textAlign:"center",marginBottom:12,background:"rgba(255,71,87,.1)",padding:"8px 12px",borderRadius:8}}>{authError}</div>}
               <button disabled={authLoading} onClick={_doCompanyLogin}
-                style={{width:"100%",padding:"13px",background:"var(--c-accent-solid)",border:"none",borderRadius:12,color:"white",fontSize:15,fontWeight:700,cursor:authLoading?"not-allowed":"pointer"}}>
+                style={{width:"100%",padding:"13px",background:"var(--c-accent)",border:"none",borderRadius:12,color:"white",fontSize:15,fontWeight:700,cursor:authLoading?"not-allowed":"pointer"}}>
                 {authLoading?"ログイン中...":"ログイン"}
               </button>
               <div style={{textAlign:"center",fontSize:11,color:"var(--c-text4)",marginTop:12,lineHeight:1.6}}>企業コードとパスワードは、企業アカウントの作成者から共有されます。</div>
@@ -1475,15 +1475,15 @@ function App(){
             style={{flex:1,padding:"12px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:14,outline:"none"}}
           />
           <button onClick={applyInviteCode}
-            style={{padding:"12px 16px",background:"var(--c-accent-solid)",border:"none",borderRadius:8,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+            style={{padding:"12px 16px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
             参加
           </button>
         </div>
-        {inviteError&&<div style={{color:inviteError==="確認中..."||inviteError==="作成中..."?"var(--c-warn-text)":"var(--c-danger)",fontSize:12,marginBottom:8,textAlign:"center"}}>{inviteError}</div>}
+        {inviteError&&<div style={{color:inviteError==="確認中..."||inviteError==="作成中..."?"#F59E0B":"#FF4757",fontSize:12,marginBottom:8,textAlign:"center"}}>{inviteError}</div>}
 
         {/* 新規作成 */}
         <button onClick={createNewShop}
-          style={{width:"100%",padding:"12px",background:"rgba(248,112,54,.12)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"var(--c-accent-text)",fontSize:14,fontWeight:700,cursor:"pointer",marginTop:8}}>
+          style={{width:"100%",padding:"12px",background:"rgba(248,112,54,.12)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"var(--c-accent)",fontSize:14,fontWeight:700,cursor:"pointer",marginTop:8}}>
           ＋ 新規店舗を作成する
         </button>
 
@@ -1513,7 +1513,7 @@ function App(){
       </div>}
       {/* タブ: URLロック時はスタッフ画面のみ表示 */}
       {!urlLocked&&<div style={{display:"flex",position:"sticky",top:0,zIndex:100,boxShadow:"0 2px 8px rgba(0,0,0,.15)"}}>
-        <button onClick={()=>setView("staff")} style={{flex:1,padding:"13px 0",border:"none",cursor:"pointer",fontSize:14,fontWeight:700,background:view==="staff"?"var(--c-accent-solid)":"#1A1A2E",color:"white"}}>スタッフ画面</button>
+        <button onClick={()=>setView("staff")} style={{flex:1,padding:"13px 0",border:"none",cursor:"pointer",fontSize:14,fontWeight:700,background:view==="staff"?"var(--c-accent)":"#1A1A2E",color:"white"}}>スタッフ画面</button>
         <button onClick={()=>setView("admin")} style={{flex:1,padding:"13px 0",border:"none",cursor:"pointer",fontSize:14,fontWeight:700,background:view==="admin"?"#16213E":"#111827",color:"white"}}>管理者画面</button>
       </div>}
       {/* メインコンテンツ */}
