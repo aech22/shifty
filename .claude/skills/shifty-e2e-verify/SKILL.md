@@ -267,6 +267,32 @@ db.ref("shops/{shopId}/subs").once("value").then(s=>...)
 **保存状態の検証**はlocalStorageでもできる:
 `shift_{shopId}_settings_v6` / `_subs_v6` / `_periods_v6` / `shift_shops_v6`（店舗一覧）。
 
+### 3.5 スタッフ提出画面を操作するときの罠（#99 で3回踏んだ）
+
+**名前は blur では確定しない。** 名前カードの入力欄は `ni`（下書き）を持ち、`name`（本番の state）へ
+移すのは **Enter キーか「確定」ボタン**だけ（app-staff.js:286・:295）。3節の native setter + `input`
+イベントだけでは `ni` しか変わらないので、`name` を見る分岐（`SmModal` の `myName`・提出時の
+`staffName`・氏名Cookie）はすべて**未入力のまま**動く。画面上は名前が入って見えるので偽陰性になる。
+
+```js
+// 値を入れる → 「確定」を押す、までで1セット
+await page.evaluate(v=>{const i=[...document.querySelectorAll("input")].find(x=>x.placeholder==="お名前を入力");
+  const st=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,"value").set;
+  i.focus(); st.call(i,v); i.dispatchEvent(new Event("input",{bubbles:true}));}, "田中");
+await page.evaluate(()=>[...document.querySelectorAll("button")].find(x=>x.innerText.trim()==="確定").click());
+```
+
+**確定したかの見分け方**: 入力欄が消えて名前が表示に戻る。`input[placeholder="お名前を入力"]` が
+まだ DOM にあるなら確定していない。
+
+**提出状況一覧を閉じたあと、同じページで名前カードをクリックしても編集に入れないことがある。**
+「名前の状態を変えて一覧を開き直す」比較をしたいときは、同一ページで往復せず
+**ケースごとに新しいページ（`context.newPage()`）で開き直す**のがいちばん速い。`ots_shopId` は
+`addInitScript` で入れているのでページを作り直しても店舗バインドは維持される。
+
+**提出の確定ボタンはテキスト完全一致で拾う。** 部分一致だと画面下部に常設の「シフトを提出する」が
+先にヒットして、確認パネルの「提出する」を押せない（`x.innerText.trim()==="提出する"` と書く）。
+
 ## 4. よく使うフロー
 
 - **初回はログイン画面**（Cookieなし）。「＋ 新規店舗を作成する」（prompt上書き必須）→ スタッフ画面 → 上部の「管理者画面」タブで管理者UIへ。
