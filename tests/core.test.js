@@ -1557,6 +1557,28 @@ test("mergeKeepStaff: 重複しない・Firebaseのオブジェクト形も受�
   assert.deepStrictEqual(u.mergeKeepStaff(["田中"], { keepStaff: ["鈴木"] }), ["田中", "鈴木"], "旧形式(名前だけ)は末尾");
 });
 
+// choices は startDate 降順（新しい順）＝ StaffTab の delPeriodChoices と同じ並び
+const _CH = [{ id: "p9a", label: "9月前半" }, { id: "p8b", label: "8月後半" }, { id: "p8a", label: "8月前半" }];
+
+test("retainedPeriodIds: 「この期間まで残す」は時系列で読む（選んだ期間と、それより古い方に残す）", () => {
+  // 本番で起きた取り違え: 「8月後半まで残す」を選んだのに、より新しい9月前半にも名前が出続けた。
+  assert.deepStrictEqual(u.retainedPeriodIds(_CH, 2), ["p8b", "p8a"],
+    "8月後半を選んだら 8月後半と8月前半。9月前半（より新しい）は含めない");
+  assert.ok(!u.retainedPeriodIds(_CH, 2).includes("p9a"), "選んだ期間より新しい期間からは外す");
+  assert.deepStrictEqual(u.retainedPeriodIds(_CH, 1), ["p9a", "p8b", "p8a"], "最新を選べば全部に残る");
+  assert.deepStrictEqual(u.retainedPeriodIds(_CH, 3), ["p8a"], "いちばん古いのを選べばそれだけ");
+});
+
+test("retainedPeriodIds: 0・範囲外・壊れた入力はどこにも残さない", () => {
+  assert.deepStrictEqual(u.retainedPeriodIds(_CH, 0), [], "「どの期間にも残さない」");
+  assert.deepStrictEqual(u.retainedPeriodIds(_CH, -1), []);
+  assert.deepStrictEqual(u.retainedPeriodIds(_CH, undefined), []);
+  assert.deepStrictEqual(u.retainedPeriodIds([], 2), []);
+  assert.deepStrictEqual(u.retainedPeriodIds(null, 2), []);
+  assert.deepStrictEqual(u.retainedPeriodIds(_CH, 99), [], "選択位置が件数を超えたら空");
+  assert.deepStrictEqual(u.retainedPeriodIds([{ id: "a" }, null, {}], 1), ["a"], "idの無い要素は落とす");
+});
+
 test("resolvePeriodMaster: keepStaff は終了前の期間でも名簿に残る（写しはまだ採用されない時期）", () => {
   const p = { ..._basePeriod, keepStaff: [{ name: "退職者", index: 0 }] };
   const r = u.resolvePeriodMaster(p, _liveStaff, _liveSettings, "2026-07-20"); // 終了前

@@ -2491,7 +2491,10 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
       if(staffList.includes(e.name))return; // 同名で登録し直された人は通常の行として出る
       const cur=m.get(e.name)||{name:e.name,index:e.index,upto:0,labels:[],maxEnd:""};
       if(cur.index==null&&e.index!=null)cur.index=e.index;
-      cur.upto=Math.max(cur.upto,pi+1);
+      // 選んだ位置＝残っている期間のうち **いちばん新しいもの**（そこから古い側へ続く）。
+      // 「削除」を押し直したときにポップアップが同じ選択肢を選んだ状態で開くための値なので、
+      // 最大ではなく最小を採る（最大だといちばん古い期間が選ばれた状態で開いてしまう）。
+      cur.upto=cur.upto?Math.min(cur.upto,pi+1):pi+1;
       cur.labels.push(p.label||"(名称なし)");
       if((p.endDate||"")>cur.maxEnd)cur.maxEnd=p.endDate||"";
       m.set(e.name,cur);
@@ -2555,7 +2558,9 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     // 既に削除済みの人（範囲の変更）は、そのとき記録した位置をそのまま引き継ぐ。
     const keepIdx=inList?staffList.indexOf(n):(already&&already.index!=null?already.index:null);
     if(!inList&&!already){setDelTarget(null);tt("▲ この人は既に一覧から削除されています");return;}
-    const keepIds=new Set(delPeriodChoices.slice(0,delKeepCount).map(p=>p.id));
+    // 「この期間まで残す」は時系列で読む＝選んだ期間とそれより古い方に残し、新しい方からは外す
+    // （retainedPeriodIds・app-utils.js に理由つきで切り出してある）。
+    const keepIds=new Set(retainedPeriodIds(delPeriodChoices,delKeepCount));
     // 最新3期間だけを対象に、選んだ期間へは足し、選ばなかった期間からは外す（＝取り消しもここで効く）。
     // 4つ目以降の期間の keepStaff には触れない（ポップアップに出していない＝変更対象ではない）。
     if(savePeriods&&delPeriodChoices.length){
@@ -2601,8 +2606,10 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     }
     setDelTarget(null);
     const kept=keepIds.size;
-    if(!inList)tt(kept?`表示範囲を変更しました（直近${kept}期間）`:"シフト表から外しました");
-    else tt(kept?`削除しました（直近${kept}期間のシフト表には名前を残します）`:"削除しました");
+    // 「直近N期間」は新しい側から数える言い方で、時系列の指定と食い違う。最後に残る期間を名指しする。
+    const keptLabel=delKeepCount>=1&&delPeriodChoices[delKeepCount-1]?(delPeriodChoices[delKeepCount-1].label||"(名称なし)"):"";
+    if(!inList)tt(kept?`表示範囲を変更しました（「${keptLabel}」まで）`:"シフト表から外しました");
+    else tt(kept?`削除しました（「${keptLabel}」までのシフト表には名前を残します）`:"削除しました");
   };
 const dragIdxRef=useRef(null);
   const longPressTimer=useRef(null);
@@ -2678,10 +2685,13 @@ const dragIdxRef=useRef(null);
             {delPeriodChoices.length===0
               ?<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>期間がまだありません。</div>
               :<div>
+                {/* 選ぶと「その期間とそれより古い期間」に残り、それより新しい期間からは消える。
+                    どの期間が消えるかを名指しで書く（件数だけだと、退職者が新しい期間に出続ける
+                    のを見落とす。実際その取り違えが本番で起きた）。 */}
                 {delPeriodChoices.map((p,idx)=>opt(idx+1,
                   `${p.label||"(名称なし)"} まで残す`,
                   `${(p.startDate||"").replace(/-/g,"/")}〜${(p.endDate||"").replace(/-/g,"/")}`
-                  +(idx===0?"":` ／ 最新から${idx+1}件目まで`)
+                  +(idx===0?"":` ／ ${delPeriodChoices.slice(0,idx).map(q=>q.label||"(名称なし)").join("・")} からは消えます`)
                   +(p.snapshot?" ／ 確定済み（選ばなくても残ります）":"")))}
                 {/* 「残さない」でも完全には消えない: 提出のある人は expXl(:2087)・buildPdfCols(:1337) が
                     未登録名として末尾に足すため、Excel・PDFには出る。文言をそちらに合わせる。 */}
