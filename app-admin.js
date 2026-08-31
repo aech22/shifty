@@ -784,14 +784,19 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const bv=resolveBandValues(stM,enM,noteToHeatSection(getFieldNote(name,date,"start")),noteToHeatSection(getFieldNote(name,date,"end")),HEAT_BAND_SPLIT_MIN);
     return{lunch:bv.lunch||def,dinner:bv.dinner||def};
   };
-  // ヒートマップ休憩判定用: 実効start/endを反映した一時シフトオブジェクト
+  // ヒートマップの休憩・退勤延長判定用: 実効start/endを反映した一時シフトオブジェクト。
+  // 片側セル（出勤だけ・退勤だけ）の日も返す。2026-08-31 の決定3で「片側セルの日にも
+  // 退勤延長は反映する（休憩は引かない）」と決めたため、ここで null を返すと延長まで落ちる。
+  // 片側であることは adjustedStart / adjustedEnd の片方が "" のまま残ることで保たれ、
+  // getBreaksFor（app-utils.js）はその日を空配列で返す＝休憩は付かない。
   const getHeatShift=(name,date)=>{
     const base=_getSub(name)?.shifts?.[date];
     const st=getEffHHMM(name,date,"start"),en=getEffHHMM(name,date,"end");
-    if(!st||!en)return null;
+    if(!st&&!en)return null;
     return{...(base||{}),status:"work",adjustedStart:st,adjustedEnd:en};
   };
   const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
+  const minToHHMM=m=>`${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`;
   // ヒートマップ補完用の境界（片側セルのみ入力時）: 候補タブ(candidates/weekdayCandidates/dateCandidates)の
   // 実際の候補時間帯から算出し、該当候補がなければ標準値（ランチ終わり15:00・ディナー始まり17:00）にフォールバック。
   // ランチ終わり = 17時以前(17時含む)に終わる候補のうち最も遅い退勤。ディナー始まり = 17時以降(17時含む)に始まる候補のうち最も早い出勤。
@@ -833,7 +838,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
               // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）。
               // ただしランチ帯（延長前の退勤が17:00以内）に収まるシフトは、延長でディナー帯に
               // 跨いでディナー帯の出勤人数に混入しないよう17:00で頭打ちにする（ヒートマップ計上のみ・純勤務時間は別）。
-              if(hsh){const ot=getOT(name,settings,hsh);if(ot>0){const wasLunch=pEnM<=HEAT_BAND_SPLIT_MIN;pEnM+=ot;if(wasLunch)pEnM=Math.min(pEnM,HEAT_BAND_SPLIT_MIN);}}
+              // 延長のランチ/ディナー判定は補完後の退勤時刻で行う。片側セル（出勤だけ）の日は
+              // 実効退勤が空文字なので、hsh をそのまま渡すと getOT が一律ディナー扱いになる。
+              if(hsh){const ot=getOT(name,settings,{...hsh,adjustedEnd:minToHHMM(pEnM)});if(ot>0){const wasLunch=pEnM<=HEAT_BAND_SPLIT_MIN;pEnM+=ot;if(wasLunch)pEnM=Math.min(pEnM,HEAT_BAND_SPLIT_MIN);}}
               // 他店舗ヘルプ帯は自店舗のカウントから除外。h/kと同じ帯規則（resolveBandValues）で解決する。跨ぎシフトは
               // 出勤側略称=ランチ帯・退勤側略称=ディナー帯、片帯のみのシフトは反対側セルの略称も有効。
               const help=getHelpInfo(name,date);
