@@ -10,11 +10,13 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   // 課金対象外の店舗ではマイページを出さない（2026-08-31 決定6）。
-  // billingExempt は null=未確定（購読が返る前・店舗切替の直後）。**未確定のうちは「出さない」側へ倒す**:
-  // 「一瞬出て消える」より「少し遅れて出る」ほうが害が小さいため（前者は本番で191ms実測された）。
+  // billingExempt は null=未確定（購読が返る前・店舗切替の直後）。**未確定のうちは「出す」**——
+  // 2026-08-31 のユーザー判断で、フラグの無い店舗（＝実際の利用者）の操作感を優先し、
+  // マイページを1往復ぶん遅らせないことを選んだ。**隠すのは確定して true のときだけ**。
+  // 代償として、フラグ持ちの店舗では店舗切替のたびにタブが約190ms描画される（実測済み・承知のうえ）。
   // タブ配列・決済失敗バナー・レンダリングの3箇所は必ずこの1つを共用する（食い違うと
   // 「タブは無いのに中身が出る」状態になる）。
-  const hideMypage=billingExempt!==false;
+  const hideMypage=billingExempt===true;
   // タブは sessionStorage から復元されるので、前回 "mypage" で閉じた端末が取り残されないよう
   // 期間タブへ戻す。**確定して true のときだけ**戻す（未確定で戻すと、フラグの無い店舗の
   // ユーザーが復元したマイページから勝手に弾かれる）。

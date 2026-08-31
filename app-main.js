@@ -78,11 +78,12 @@ function App(){
   // 課金の対象外にしている店舗（自家用の手動シード等）。true ならマイページタブごと出さない。
   // 手で書く運用フラグで Cloud Functions は触らない（Stripe契約の有無はクライアントからは読めない
   // ＝ stripeCustomerId / stripeSubscriptionId は .read:false なので、印を足すしか区別する手がない）。
-  // **null = まだ購読が返っていない（未確定）**。false（＝出す）を「分からない」の代用にすると、
-  // 購読が返るまでの1往復ぶんマイページタブが実際に描画される（2026-08-31 に本番で191ms実測）。
-  // 未確定は AdminView 側で「出さない」に倒す。Firebaseが使えない環境では購読自体が走らないので、
-  // 初期値をそこだけ false にしておく（そうしないとマイページが永久に出ない）。
-  const[billingExempt,setBillingExempt]=useState(firebaseEnabled?null:false);
+  // **null = まだ購読が返っていない（未確定）**。false（＝課金対象と確定）とは区別して持つ。
+  // 未確定のときマイページを出すか出さないかは店舗によって答えが違うので、**前回の値を
+  // localStorage に憶えて初期値に使う**（下の startSubscriptions）。これで
+  // 「フラグの無い店舗は未確定でも出す／フラグ持ちの店舗は最初から出さない」が両立する。
+  // 憶えていない初回訪問だけは未確定＝出す側に倒れる（AdminView の hideMypage は === true）。
+  const[billingExempt,setBillingExempt]=useState(null);
   // 契約の予定状態（Stripeのsubscriptionから同期。解約予約とプラン変更予約を画面に出すために持つ）
   const[billingSchedule,setBillingSchedule]=useState({cancelAtPeriodEnd:false,currentPeriodEnd:null,scheduledPlan:null,scheduledPlanDate:null});
   const[emailMode,setEmailMode]=useState(null); // null | "login" | "register"
@@ -374,11 +375,12 @@ function App(){
     // 契約の予定状態は店舗ごとに違うので、購読が返るまでの間に前店舗の「解約済み」表示を
     // 引きずらないよう同期的にクリアする（各フィールドのon()が新店舗の値で埋め直す）
     setBillingSchedule({cancelAtPeriodEnd:false,currentPeriodEnd:null,scheduledPlan:null,scheduledPlanDate:null});
-    // 課金対象外フラグも店舗ごとなので同じ理由でクリアする。ただし false（＝出す）ではなく
-    // null（＝未確定）へ。false に戻すと、前後どちらの店舗もフラグ持ちでも切り替えのたびに
-    // マイページタブが一瞬描画される（この行が上の early return より後にあるので、
-    // ここへ来る＝firebaseDB がある＝必ず購読が返って確定する）。
-    setBillingExempt(null);
+    // 課金対象外フラグも店舗ごとなので同じ理由でクリアする。ただし null（＝未確定）で塗ると、
+    // フラグ持ちの店舗では購読が返るまでの1往復ぶんマイページタブが描画される（実測195ms）。
+    // staffList・settings・periods と同じく **localStorage の前回値を初期値に使う**ことで、
+    // フラグ持ちの店舗は最初から出さず、フラグの無い店舗は待たずに出せる（両立する）。
+    // 憶えていない（初回訪問）ときだけ null＝出す側に倒れ、購読が返った時点で確定する。
+    setBillingExempt(lg(storeKey(targetSid,"billingExempt_v1"),null));
     const on=(path,cb)=>{
       const r=firebaseDB.ref(path);
       r.on("value",snap=>cb(snap.val()),err=>console.warn("購読失敗:",path,err));
@@ -523,6 +525,8 @@ function App(){
     // （accounts/{shopId} をまとめて読むと stripeCustomerId の .read:false で丸ごと落ちる）
     on(`accounts/${targetSid}/billingExempt`,val=>{
       setBillingExempt(!!val);
+      // 次回この店舗を開く・切り替えるときの初期値にする（点滅を出さないため）
+      ls(storeKey(targetSid,"billingExempt_v1"),!!val);
     });
 
     // settingsデフォルト書き込み（スタッフセッションはルールで拒否されるためcatchで握る）
