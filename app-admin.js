@@ -2374,7 +2374,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const[delTarget,setDelTarget]=useState(null);
   // 「どの期間まで名前を残すか」の選択位置（delPeriodChoices の1始まりindex）。0=どの期間にも残さない。
   // 範囲は時系列で読む＝選んだ期間と **それより古い** 期間に残す（685c219。retainedPeriodIds・app-utils.js）。
-  const[delKeepCount,setDelKeepCount]=useState(1);
+  // 初期値は del() がポップアップを開くたびに defaultKeepCount で入れ直す（ここの 0 は使われない）。
+  const[delKeepCount,setDelKeepCount]=useState(0);
   // 編集中・別名パネル・ポジションパネルの対象は「スタッフ名」で持つ（indexで持ってはいけない）。
   // indexで持つと、パネルを開いたまま別の行を削除する／並べ替える／他端末がstaffListを変えると、
   // 同じindexが別人を指すようになり、開いたままの編集欄が別人の行に移って保存が別人を書き換える
@@ -2578,7 +2579,10 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     // 空白列は表示上の区切りでしかなく、期間ごとの出し分けを持たないので従来どおり即削除する
     if(isSpacer(n)){const a=[...staffList];a.splice(i,1);onSave(a);tt("削除しました");return;}
     setDelTarget(n);
-    setDelKeepCount(1);
+    // 既定は「いちばん新しい **終了済み** の期間まで残す」（2026-08-31 決定・案B）。
+    // 何も選ばずに確定したときに、配り終えた期間には名前が残り、これから配る期間からは消える。
+    // 終了済みの期間が無ければ 0＝残さない。
+    setDelKeepCount(defaultKeepCount(delPeriodChoices,todayStr));
   };
   // 削除済み・表示中の人の行から「削除」を押したとき。同じポップアップを今の範囲を選んだ状態で開く
   const editRetention=n=>{setDelTarget(n);setDelKeepCount(retainedOf(n)?.upto||0);};

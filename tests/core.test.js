@@ -1605,6 +1605,39 @@ test("retainedPeriodIds: 「この期間まで残す」は時系列で読む（�
   assert.deepStrictEqual(u.retainedPeriodIds(_CH, 3), ["p8a"], "いちばん古いのを選べばそれだけ");
 });
 
+// 削除ポップアップを開いた瞬間の既定（2026-08-31 決定・案B）。choices は新しい順。
+const _CHD = [
+  { id: "p9a", label: "9月前半", endDate: "2026-09-15" },
+  { id: "p8b", label: "8月後半", endDate: "2026-08-31" },
+  { id: "p8a", label: "8月前半", endDate: "2026-08-15" },
+];
+
+test("defaultKeepCount: 既定は「いちばん新しい終了済みの期間まで残す」", () => {
+  // 2026-09-01 時点: 9月前半はまだ終わっていない、8月後半が終了済みの最新。
+  assert.strictEqual(u.defaultKeepCount(_CHD, "2026-09-01"), 2, "8月後半（index1）を選んだ状態で開く");
+  // 修正前の既定（1＝最新の期間まで残す）だと、これから配る9月前半にも名前が残っていた。
+  assert.ok(!u.retainedPeriodIds(_CHD, u.defaultKeepCount(_CHD, "2026-09-01")).includes("p9a"),
+    "既定のまま確定しても、これから配る期間には名前を残さない");
+  assert.deepStrictEqual(u.retainedPeriodIds(_CHD, u.defaultKeepCount(_CHD, "2026-09-01")), ["p8b", "p8a"],
+    "配り終えた期間には残る（機能の当初の動機を壊さない）");
+});
+
+test("defaultKeepCount: 終了済みの期間が無ければ「どの期間にも残さない」", () => {
+  assert.strictEqual(u.defaultKeepCount(_CHD, "2026-08-01"), 0, "全期間がまだ終わっていない");
+  assert.deepStrictEqual(u.retainedPeriodIds(_CHD, u.defaultKeepCount(_CHD, "2026-08-01")), []);
+  assert.strictEqual(u.defaultKeepCount(_CHD, "2026-08-15"), 0, "最終日当日はまだ終わっていない");
+  assert.strictEqual(u.defaultKeepCount(_CHD, "2026-08-16"), 3, "翌日から終了済み＝8月前半が選ばれる");
+});
+
+test("defaultKeepCount: 壊れた入力・期間なしは0（残さない側に倒す）", () => {
+  assert.strictEqual(u.defaultKeepCount([], "2026-09-01"), 0);
+  assert.strictEqual(u.defaultKeepCount(null, "2026-09-01"), 0);
+  assert.strictEqual(u.defaultKeepCount(_CHD, ""), 0, "今日が取れなければ残さない");
+  assert.strictEqual(u.defaultKeepCount([{ id: "x" }, null], "2026-09-01"), 0, "endDateが無い期間は終了済みと見なさない");
+  assert.strictEqual(u.defaultKeepCount([{ id: "x" }, { id: "y", endDate: "2026-01-01" }], "2026-09-01"), 2,
+    "endDateの無い期間は飛ばして、その先の終了済みを選ぶ");
+});
+
 test("retainedPeriodIds: 0・範囲外・壊れた入力はどこにも残さない", () => {
   assert.deepStrictEqual(u.retainedPeriodIds(_CH, 0), [], "「どの期間にも残さない」");
   assert.deepStrictEqual(u.retainedPeriodIds(_CH, -1), []);

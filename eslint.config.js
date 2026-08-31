@@ -35,6 +35,7 @@ const sharedGlobals = {
   periodSnapshotEqual: "writable",
   resolvePeriodMaster: "writable",
   retainedPeriodIds: "writable",
+  defaultKeepCount: "writable",
   AUTH_LOGGED_OUT_LS: "writable",
   APP_CHECK_SITE_KEY: "writable",
   AdminView: "writable",
