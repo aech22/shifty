@@ -200,9 +200,10 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       periodId:apid,
       staffName,
       // 提出した端末の匿名uid。スタッフ画面には本人性の概念が無い（設計原則1）ため、
-      // 「この提出を出したのは誰か」を残せるのはここだけ。セキュリティルールは
-      // sub の削除をこの uid と店舗オーナーだけに許す（提出者とオーナーの2者のみ削除可）。
-      // 別端末から出し直した場合は最後に提出した端末が提出者になる。
+      // 「この提出を出したのは誰か」を残せるのはここだけ。
+      // 2026-08-31 の決定1で提出の権限判定は「名前の一致」だけになり、この uid は
+      // 削除・編集の可否には一切使われなくなった（記録・監査用に書き込みだけ残している）。
+      // 別端末から出し直した場合は最後に提出した端末が提出者として記録される。
       ...(firebaseAuth&&firebaseAuth.currentUser?{submitterUid:firebaseAuth.currentUser.uid}:{}),
       submittedAt:isFirstSubmission?new Date().toISOString():existSub.submittedAt,
       ...(isFirstSubmission?{}:{updatedAt:new Date().toISOString(),isUpdated:true}),
@@ -523,8 +524,8 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
 // ============================================================
 // 提出状況モーダル（全画面・名前固定・横スクロール）
 // ============================================================
-// myName を渡すと「その名前の行だけ」削除ボタンを出す（スタッフ画面用）。
-// 渡さない＝管理者画面からの利用で、従来どおり全行に出す。
+// myName を渡すと「その名前の行だけ」操作できる（スタッフ画面用）。削除・セル編集・「✎ 修正」の3つとも同じ絞り込み。
+// 渡さない＝管理者画面からの利用で、従来どおり全行を操作できる。
 function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onDeleteSub,plan="free",staffAliases={},myName=null}){
   const period=periods.find(p=>p.id===apid);
   // source:"grid"はシフト作成タブが未提出スタッフのセルに直接作成した管理者入力用のsub（実際の提出ではない）。
@@ -535,7 +536,16 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
   // 別名照合: 提出名が登録名そのもの、または登録名の別名配列に含まれれば「提出済み」とみなす（提出一覧タブ/Excel出力と同じ照合）。
   const notSubmitted=staffList.filter(n=>!isSpacer(n)&&!submitted.some(s=>s.staffName===n||(staffAliases[n]||[]).includes(s.staffName)));
   const NW=88,CW=86,COMMENT_W=150;
-  const handleCellClick=(sub,ds)=>{if(!sub)return;setEditTarget({subId:sub.id,ds});};
+  // 提出データを操作できるかの唯一の判定（2026-08-31 決定1・決定5）。提出の「提出・変更・削除」は
+  // 名前の一致だけで決める＝同じ名前を名乗る端末なら誰でも触れる、という仕様上の決定。
+  // 削除・セル編集・「✎ 修正」で必ずこの述語を通すこと（規則が食い違うと「削除はできるのに編集はできない」
+  // 行が生まれる）。両側を resolveAlias で登録名へ寄せるので、別名で提出した行も自分の行として扱える。
+  // myName===null は管理者画面からの利用（全行を操作できる）。空文字（名前未入力の初回訪問者）は
+  // どの行にも一致しないので何も操作できない（バグチェック#99）。
+  // ⚠ セキュリティルールはクライアントが名乗る名前を検証できないため、この絞り込みはUIにしか無い。
+  //   ルール上は認証済みなら任意のsubを削除・編集できる（decision1のトレードオフとして引き受けた）。
+  const canTouch=sub=>myName===null||resolveAlias(sub.staffName,staffAliases)===resolveAlias(myName,staffAliases);
+  const handleCellClick=(sub,ds)=>{if(!sub||!canTouch(sub))return;setEditTarget({subId:sub.id,ds});};
   const applyCellEdit=(subId,ds,newStatus,newStart,newEnd)=>{
     const sub=submitted.find(s=>s.id===subId);if(!sub)return;
     // 既存フィールドを保持してマージ（adjustedStart/End等の管理者調整値・changedフラグを消さない）
@@ -565,6 +575,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
   };
   // 名前クリック→ホーム画面で修正
   const handleNameClick=(sub)=>{
+    if(!canTouch(sub))return;
     if(onEditByName)onEditByName(sub);
     onClose();
   };
@@ -596,16 +607,16 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
               {submitted.map((sub,ri)=>(
                 <div key={sub.id}
                   style={{height:72,borderBottom:"2px solid var(--c-border)",display:"flex",alignItems:"center",justifyContent:"center",padding:"4px 6px",background:ri%2===0?"var(--c-card)":"var(--c-input2)",flexShrink:0,flexDirection:"column",gap:4}}>
-                  <div onClick={()=>handleNameClick(sub)} style={{textAlign:"center",cursor:"pointer",flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}
-                    onMouseEnter={e=>e.currentTarget.style.opacity=".7"}
+                  <div onClick={()=>handleNameClick(sub)} style={{textAlign:"center",cursor:canTouch(sub)?"pointer":"default",flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}
+                    onMouseEnter={e=>{if(canTouch(sub))e.currentTarget.style.opacity=".7";}}
                     onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
                     <div style={{fontSize:12,fontWeight:700,color:"var(--c-text)",wordBreak:"break-all",lineHeight:1.3}}>{resolveAlias(sub.staffName,staffAliases)}</div>
-                    <div style={{fontSize:10,color:"var(--c-accent)",marginTop:2}}>✎ 修正</div>
+                    {canTouch(sub)&&<div style={{fontSize:10,color:"var(--c-accent)",marginTop:2}}>✎ 修正</div>}
                   </div>
                   {/* 全行に出すのは「管理者画面からの利用＝myNameを渡していない」ときだけ。
                       !myName で判定すると、スタッフ画面が渡す空文字（＝まだ名前を入力していない初回訪問者）も
                       管理者と同じ扱いになり、他人の行にも削除ボタンが出る（バグチェック#99で実測）。 */}
-                  {(plan==="pro"||plan==="premium")&&onDeleteSub&&(myName===null||resolveAlias(sub.staffName,staffAliases)===myName)&&(
+                  {(plan==="pro"||plan==="premium")&&onDeleteSub&&canTouch(sub)&&(
                     <button onClick={e=>{e.stopPropagation();if(confirm(`「${resolveAlias(sub.staffName,staffAliases)}」の提出を削除しますか？`)){onDeleteSub(sub.id);}}}
                       style={{width:"100%",padding:"2px 4px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.2)",borderRadius:4,color:"#FF4757",fontSize:10,cursor:"pointer",fontWeight:600}}>
                       削除
@@ -640,8 +651,8 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
                   const isEditing=editTarget&&editTarget.subId===sub.id&&editTarget.ds===ds;
                   return(
                     <div key={ds} onClick={()=>handleCellClick(sub,ds)}
-                      style={{width:CW,flexShrink:0,height:72,padding:"4px",borderRight:"1px solid var(--c-border)",borderLeft:"1px solid var(--c-border)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,cursor:"pointer",background:isEditing?"#FEF0E8":"transparent"}}
-                      onMouseEnter={e=>{if(!isEditing)e.currentTarget.style.background="#F0FFF4";}}
+                      style={{width:CW,flexShrink:0,height:72,padding:"4px",borderRight:"1px solid var(--c-border)",borderLeft:"1px solid var(--c-border)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,cursor:canTouch(sub)?"pointer":"default",background:isEditing?"#FEF0E8":"transparent"}}
+                      onMouseEnter={e=>{if(!isEditing&&canTouch(sub))e.currentTarget.style.background="#F0FFF4";}}
                       onMouseLeave={e=>{if(!isEditing)e.currentTarget.style.background="transparent";}}>
                       {iw?(<>
                         <div style={{fontSize:10,fontWeight:700,background:"#FEF0E8",color:"#d4601a",padding:"1px 5px",borderRadius:4,border:"1px solid #FDDCC7"}}>出勤</div>

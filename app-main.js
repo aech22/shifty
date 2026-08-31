@@ -1194,16 +1194,15 @@ function App(){
           fbUpd(fbPath(sid,"subs"),flat)
             .catch(e=>{
               console.warn("subs書き込み失敗:",e);
-              // sub全体の削除はルール上「提出した端末（submitterUid）か店舗オーナー」だけに
-              // 許される。管理キーを持たない端末（ownerReadOnly）で削除すると拒否されるが、
-              // 画面はローカルの結果（削除済み）を映したままになる: 保護を解除しても
-              // サーバー側は変わっていない＝valueイベントが二度と来ないため描き直されない。
-              // 保護を外してサーバーの内容で明示的に描き直し、理由を伝える。
-              // （スタッフ画面側の同じ経路は app-main.js:1508 の onDeleteSub で手当て済み）
+              // 削除が拒否されたとき（デモ店舗・通信エラー等。2026-08-31 の決定1で権限による
+              // 拒否は無くなった）、画面はローカルの結果（削除済み）を映したままになる:
+              // 保護を解除してもサーバー側は変わっていない＝valueイベントが二度と来ないため
+              // 描き直されない。保護を外してサーバーの内容で明示的に描き直し、理由を伝える。
+              // （スタッフ画面側の同じ経路は onDeleteSub のcatchで手当て済み）
               if(!deletedId)return;
               Object.entries(flat).forEach(([path,val])=>{ if(pendingSubWritesRef.current[path]===val)delete pendingSubWritesRef.current[path]; });
               if(reconcileSubsRef.current)reconcileSubsRef.current();
-              tt("△ この提出は削除できません（提出した端末か、店舗の管理者のみ削除できます）");
+              tt("△ この提出を削除できませんでした（通信エラーの可能性があります）");
             })
             .finally(()=>{
               // このPromiseで送った値からまだ書き換わっていなければ保護を解除する
@@ -1559,7 +1558,8 @@ function App(){
               ls(storeKey(currentSid,"subs_v6"),a);
               if(firebaseDB&&!DEMO_MODE) firebaseDB.ref(`shops/${currentSid}/subs/${subId}`).remove().catch(e=>{
                 console.warn("sub削除失敗:",e);
-                // ルールは sub の削除を「提出した端末（submitterUid）か店舗オーナー」だけに許す。
+                // 削除が拒否されることがある（デモ店舗・通信エラー等。2026-08-31 の決定1で
+                // 権限による拒否は無くなった）。
                 // 拒否されたときに画面から消えたままにすると、消えたように見えて実際は残る
                 // ＝リロードで戻る（データを失っていないのに失ったように見える／その逆も起きる）。
                 // 楽観的に消した行を戻し、理由を伝える。
@@ -1569,7 +1569,7 @@ function App(){
                   ls(storeKey(currentSid,"subs_v6"),back);
                   return back;
                 });
-                tt("△ この提出は削除できません（提出した端末か、店舗の管理者のみ削除できます）");
+                tt("△ この提出を削除できませんでした（通信エラーの可能性があります）");
               });
             }}
             shopName={shop?.name}/>
