@@ -4492,7 +4492,9 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
   const expiryLabel=planExpiry?`${planExpiry} まで有効`:"";
 
   // 使用量バー
-  const Bar=({used,max,label})=>{
+  // unit は無制限プランでの単位。Bar はスタッフ数と期間数の両方に使うので、
+  // 「名」を決め打ちにすると期間数が「2名 / 無制限」になる（Pro・Premium で実際に出ていた）。
+  const Bar=({used,max,label,unit="名"})=>{
     const pct=max===Infinity?0:Math.min(100,Math.round(used/max*100));
     const isOver=used>=max;
     return(
@@ -4500,7 +4502,7 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
           <span style={{fontSize:13,color:"var(--c-text2)",fontWeight:600}}>{label}</span>
           <span style={{fontSize:13,fontWeight:700,color:isOver?"#FF4757":max===Infinity?"#10B981":"var(--c-text)"}}>
-            {max===Infinity?`${used}名 / 無制限`:`${used} / ${max}`}
+            {max===Infinity?`${used}${unit} / 無制限`:`${used} / ${max}`}
           </span>
         </div>
         {max!==Infinity&&<div style={{height:6,background:"var(--c-border)",borderRadius:4,overflow:"hidden"}}>
@@ -4576,8 +4578,12 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
         {/* 使用量 */}
         <div style={{borderTop:"1px solid var(--c-border)",paddingTop:16}}>
           <div style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:12}}>使用状況</div>
-          <Bar used={staffList.length} max={lim.staff} label="スタッフ数"/>
-          <Bar used={periods.length} max={lim.periods} label="期間数"/>
+          {/* 上限判定（StaffTab:2442）と同じ式で数える。staffList には空白列（スペーサー）が
+              混ざっていて、それは登録スタッフではなくキッチン/ホールの区切りでしかない。
+              生の length で数えると、同じ店舗を見ている StaffTab の「17/20名」に対して
+              ここだけ「20 / 20」（赤＝上限）と出て、画面どうしで数が食い違う（バグチェック#56 と同じ形）。 */}
+          <Bar used={staffList.filter(n=>!isSpacer(n)).length} max={lim.staff} label="スタッフ数"/>
+          <Bar used={periods.length} max={lim.periods} label="期間数" unit="件"/>
         </div>
 
         {/* 新規申し込み（Freeのみ）。
