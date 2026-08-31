@@ -310,16 +310,21 @@ function getAttrOptions(settings){
 // 休憩適用の統一入口: 属性タグフィルタ + 実際のシフト時間帯との重なり判定
 // 属性一致のタグ付き休憩がその日区分にある場合はタグなし休憩を適用しない（差し替え方式）
 // 休憩の適用可否は出勤日数(attendance=1出勤等)のような汎用閾値では判定しない（2026-07-10改修）。
-// その代わり、休憩を丸ごとまたいでいるか（出勤が休憩開始より前 かつ 退勤が休憩終了より後）だけを見る。
-// ランチのみ（休憩終了と同時刻に退勤）やディナーのみ（休憩開始と同時刻に出勤）のような
-// 休憩の片側にしか触れないシフトには適用しない（2026-07-10追加修正）。
+// その代わり「勤務が休憩を丸ごと含むか」（出勤が休憩開始より前 かつ 退勤が休憩終了より後）だけを見る。
+// 境界に一致する日（退勤=休憩終了のランチのみ／出勤=休憩開始のディナーのみ）も、
+// 休憩の内側に出勤・退勤が入る日も適用しない（2026-08-31 決定3）。
 function getBreaksFor(settings,dateStr,staffName,shift){
   if(!shift||shift.status!=="work")return[];
   const list=getBreakList(settings,dateStr);
   const attr=((settings&&settings.staffAttributes)||{})[staffName]||"parttime";
   const hasTagged=list.some(br=>br&&br.tags&&br.tags.length&&br.tags.includes(attr));
   const toMin=t=>{const[h,m]=t.split(":").map(Number);return h*60+m;};
-  // 片側セルのみの日も補完して判定する（calcNetWorkMinutes と同じ実効レンジ）
+  // 片側セル（出勤だけ・退勤だけ入力された日）には休憩を一切適用しない（2026-08-31 決定3）。
+  // 半日勤務が大半で、補完した境界まで働いた前提で休憩を引くと実運用と合わないため。
+  // ＃82（2026-08-25 案A）で入れた「補完して数える」は勤務時間・出勤日数の側だけに残り、
+  // 休憩はここで落ちる。退勤延長は片側セルの日でも反映する（calcNetWorkMinutes の
+  // overtimeMins・ヒートマップの app-admin.js getHeatShift はこの関数を経由しない）。
+  if(!effShiftStart(shift)||!effShiftEnd(shift))return[];
   const rng=effShiftRangeMin(shift,settings);
   return list.filter(br=>{
     const tags=br&&br.tags;
@@ -328,14 +333,12 @@ function getBreaksFor(settings,dateStr,staffName,shift){
     if(!br||!br.start||!br.end)return false;
     if(!rng)return false;
     const bs=toMin(br.start),be=toMin(br.end),ws=rng.startMin,we=rng.endMin;
-    // 「休憩の内側から出勤して、休憩をまたいで働き続ける」日にも適用する（バグチェック#89）。
-    // 2026-07-10 の実装は出勤が休憩開始以降なら一律で外していたため、12:30〜20:00（休憩12:00〜13:00）の
-    // ような7時間半のシフトに休憩が1分も付かなかった。ここで緩めるのは「出勤が休憩の内側」の一点だけで、
-    // 同日に決めた意図——ランチのみ（休憩の終わりまでに退勤）・ディナーのみ（休憩開始と同時刻に出勤）には
-    // 適用しない——はそのまま残す。控除量は calcNetWorkMinutes が重なった分だけ引く。
-    if(ws>=be)return false;   // 休憩が終わってから出勤
-    if(we<=be)return false;   // 休憩の終わりまでに退勤（＝ランチのみ）
-    if(ws===bs)return false;  // 出勤が休憩開始と同時刻（＝ディナーのみ）
+    // 勤務が休憩を完全に含む日にだけ適用する（2026-08-31 決定3）。
+    // 2026-08-25 の案C（#89・「休憩の内側から出勤して休憩をまたぐ日にも適用する」）は撤回した。
+    // 撤回により 12:30〜20:00（休憩12:00〜13:00）の純勤務は 7:00 → 7:30 に戻る。
+    // 控除量は calcNetWorkMinutes が重なった分だけ引くが、ここを通った日は必ず全部が重なる。
+    if(ws>=bs)return false;   // 出勤が休憩開始以降（同時刻・休憩の内側を含む）
+    if(we<=be)return false;   // 退勤が休憩終了以前（同時刻・休憩の内側を含む）
     return true;
   });
 }
