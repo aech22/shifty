@@ -127,12 +127,45 @@ test("validatePeriodDates: 空・逆転はエラー、重なりは警告、隣�
   assert.deepStrictEqual(u.validatePeriodDates({ startDate: "2026-07-20", endDate: "2026-07-31" }, others), {});
 });
 
-test("getBreaksFor: 休憩の内側から出勤して休憩をまたぐ日には適用する（#89）", () => {
+test("getBreaksFor: 休憩の内側から出勤して休憩をまたぐ日には適用しない（2026-08-31 決定3・#89の案Cを撤回）", () => {
   const settings = { breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] } };
   const sh = { status: "work", start: "12:30", end: "20:00" };
-  assert.strictEqual(u.getBreaksFor(settings, "2026-07-06", "A", sh).length, 1, "7時間半のシフトに休憩が付く");
-  // 控除は重なった分（30分）だけ
-  assert.strictEqual(u.calcNetWorkMinutes(sh, u.getBreaksFor(settings, "2026-07-06", "A", sh)), 7 * 60);
+  assert.deepStrictEqual(u.getBreaksFor(settings, "2026-07-06", "A", sh), [], "出勤が休憩の内側なので適用しない");
+  // 案Cの下では30分引かれて7:00だった。撤回により控除なしの7:30へ戻る。
+  assert.strictEqual(u.calcNetWorkMinutes(sh, u.getBreaksFor(settings, "2026-07-06", "A", sh)), 7 * 60 + 30);
+});
+
+test("getBreaksFor: 勤務が休憩を完全に含む日にだけ適用する（決定3の境界）", () => {
+  const settings = { breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] } };
+  const b = sh => u.getBreaksFor(settings, "2026-07-06", "A", { status: "work", ...sh });
+  // 完全に含む → 適用（60分控除）
+  assert.strictEqual(b({ start: "09:00", end: "18:00" }).length, 1);
+  assert.strictEqual(
+    u.calcNetWorkMinutes({ status: "work", start: "09:00", end: "18:00" }, b({ start: "09:00", end: "18:00" })),
+    8 * 60
+  );
+  // 出勤が休憩開始と同時刻・休憩の内側 → 適用しない
+  assert.deepStrictEqual(b({ start: "12:00", end: "20:00" }), []);
+  assert.deepStrictEqual(b({ start: "12:30", end: "20:00" }), []);
+  // 退勤が休憩終了と同時刻・休憩の内側 → 適用しない
+  assert.deepStrictEqual(b({ start: "09:00", end: "13:00" }), []);
+  assert.deepStrictEqual(b({ start: "09:00", end: "12:30" }), []);
+  // 休憩の完全に内側で始まって内側で終わる → 適用しない
+  assert.deepStrictEqual(b({ start: "12:10", end: "12:50" }), []);
+});
+
+test("getBreaksFor: 片側セル（出勤だけ・退勤だけ）の日には休憩を一切適用しない（決定3）", () => {
+  const settings = {
+    candidates: [{ start: "09:00", end: "15:00" }, { start: "17:00", end: "23:00" }],
+    breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] },
+  };
+  // 補完すると 09:00〜15:00 で休憩を丸ごと含むが、片側セルなので適用しない
+  assert.deepStrictEqual(u.getBreaksFor(settings, "2026-07-06", "A", { status: "work", start: "09:00" }), []);
+  assert.deepStrictEqual(u.getBreaksFor(settings, "2026-07-06", "A", { status: "work", end: "22:00" }), []);
+  // 両側そろえば従来どおり適用される（片側判定が両側の日を巻き込んでいないことの確認）
+  assert.strictEqual(
+    u.getBreaksFor(settings, "2026-07-06", "A", { status: "work", start: "09:00", end: "15:00" }).length, 1
+  );
 });
 
 test("oneSidedFillBounds: 候補時間から補完境界を出す（候補が無ければ 15:00 / 17:00）", () => {
@@ -150,12 +183,15 @@ test("calcNetWorkMinutes: 片側だけ入力された日を、settingsを渡し�
   assert.strictEqual(u.calcNetWorkMinutes(onlyStart, [], 0), 0, "settings無しでは従来どおり0分");
   assert.strictEqual(u.calcNetWorkMinutes(onlyStart, [], 0, settings), 6 * 60, "出勤のみ→ランチ終わりまで");
   assert.strictEqual(u.calcNetWorkMinutes(onlyEnd, [], 0, settings), 5 * 60, "退勤のみ→ディナー始まりから");
-  // 上限判定に効く: 補完後は休憩も重なりで引かれる
+  // 補完して数えるのは勤務時間・出勤日数だけで、休憩は引かない（2026-08-31 決定3）。
+  // 案C下では休憩60分が引かれて5:00だった。
   const withBreak = { ...settings, breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] } };
   assert.strictEqual(
     u.calcNetWorkMinutes(onlyStart, u.getBreaksFor(withBreak, "2026-07-06", "A", onlyStart), 0, withBreak),
-    5 * 60
+    6 * 60
   );
+  // 退勤延長は片側セルの日でも反映する（決定3）
+  assert.strictEqual(u.calcNetWorkMinutes(onlyStart, [], 30, settings), 6 * 60 + 30);
 });
 
 test("shiftBandInfo: 片側だけの日は補完して0.5日として数える（settings無しでは0）", () => {
