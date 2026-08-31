@@ -75,6 +75,10 @@ function App(){
   const[plan,setPlan]=useState("free"); // サブスクプラン
   const[planExpiry,setPlanExpiry]=useState(null); // プラン有効期限
   const[paymentFailed,setPaymentFailed]=useState(false); // 決済失敗フラグ
+  // 課金の対象外にしている店舗（自家用の手動シード等）。true ならマイページタブごと出さない。
+  // 手で書く運用フラグで Cloud Functions は触らない（Stripe契約の有無はクライアントからは読めない
+  // ＝ stripeCustomerId / stripeSubscriptionId は .read:false なので、印を足すしか区別する手がない）。
+  const[billingExempt,setBillingExempt]=useState(false);
   // 契約の予定状態（Stripeのsubscriptionから同期。解約予約とプラン変更予約を画面に出すために持つ）
   const[billingSchedule,setBillingSchedule]=useState({cancelAtPeriodEnd:false,currentPeriodEnd:null,scheduledPlan:null,scheduledPlanDate:null});
   const[emailMode,setEmailMode]=useState(null); // null | "login" | "register"
@@ -366,6 +370,8 @@ function App(){
     // 契約の予定状態は店舗ごとに違うので、購読が返るまでの間に前店舗の「解約済み」表示を
     // 引きずらないよう同期的にクリアする（各フィールドのon()が新店舗の値で埋め直す）
     setBillingSchedule({cancelAtPeriodEnd:false,currentPeriodEnd:null,scheduledPlan:null,scheduledPlanDate:null});
+    // 課金対象外フラグも店舗ごとなので同じ理由でクリアする（前店舗の値でタブを消したままにしない）
+    setBillingExempt(false);
     const on=(path,cb)=>{
       const r=firebaseDB.ref(path);
       r.on("value",snap=>cb(snap.val()),err=>console.warn("購読失敗:",path,err));
@@ -505,6 +511,11 @@ function App(){
     });
     on(`accounts/${targetSid}/scheduledPlanDate`,val=>{
       setBillingSchedule(p=>({...p,scheduledPlanDate:val||null}));
+    });
+    // 課金対象外フラグ。上と同じ理由で親ノードではなく子フィールド単位で購読する
+    // （accounts/{shopId} をまとめて読むと stripeCustomerId の .read:false で丸ごと落ちる）
+    on(`accounts/${targetSid}/billingExempt`,val=>{
+      setBillingExempt(!!val);
     });
 
     // settingsデフォルト書き込み（スタッフセッションはルールで拒否されるためcatchで握る）
@@ -1579,7 +1590,7 @@ function App(){
               adminCode={adminKeys[sid]?`${sid}.${adminKeys[sid]}`:sid} ownerReadOnly={ownerReadOnly}
               onRememberAdminKey={rememberAdminKey} onClaimShop={claimOwnership}
               shopTemplates={shopTemplates} saveShopTemplates={saveShopTemplates}
-              plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed} billingSchedule={billingSchedule}
+              plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed} billingSchedule={billingSchedule} billingExempt={billingExempt}
               setCurrentShopId={id=>{
                 currentShopIdRef.current=id;
                 setCurrentShopId(id);
