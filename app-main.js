@@ -78,7 +78,11 @@ function App(){
   // 課金の対象外にしている店舗（自家用の手動シード等）。true ならマイページタブごと出さない。
   // 手で書く運用フラグで Cloud Functions は触らない（Stripe契約の有無はクライアントからは読めない
   // ＝ stripeCustomerId / stripeSubscriptionId は .read:false なので、印を足すしか区別する手がない）。
-  const[billingExempt,setBillingExempt]=useState(false);
+  // **null = まだ購読が返っていない（未確定）**。false（＝出す）を「分からない」の代用にすると、
+  // 購読が返るまでの1往復ぶんマイページタブが実際に描画される（2026-08-31 に本番で191ms実測）。
+  // 未確定は AdminView 側で「出さない」に倒す。Firebaseが使えない環境では購読自体が走らないので、
+  // 初期値をそこだけ false にしておく（そうしないとマイページが永久に出ない）。
+  const[billingExempt,setBillingExempt]=useState(firebaseEnabled?null:false);
   // 契約の予定状態（Stripeのsubscriptionから同期。解約予約とプラン変更予約を画面に出すために持つ）
   const[billingSchedule,setBillingSchedule]=useState({cancelAtPeriodEnd:false,currentPeriodEnd:null,scheduledPlan:null,scheduledPlanDate:null});
   const[emailMode,setEmailMode]=useState(null); // null | "login" | "register"
@@ -370,8 +374,11 @@ function App(){
     // 契約の予定状態は店舗ごとに違うので、購読が返るまでの間に前店舗の「解約済み」表示を
     // 引きずらないよう同期的にクリアする（各フィールドのon()が新店舗の値で埋め直す）
     setBillingSchedule({cancelAtPeriodEnd:false,currentPeriodEnd:null,scheduledPlan:null,scheduledPlanDate:null});
-    // 課金対象外フラグも店舗ごとなので同じ理由でクリアする（前店舗の値でタブを消したままにしない）
-    setBillingExempt(false);
+    // 課金対象外フラグも店舗ごとなので同じ理由でクリアする。ただし false（＝出す）ではなく
+    // null（＝未確定）へ。false に戻すと、前後どちらの店舗もフラグ持ちでも切り替えのたびに
+    // マイページタブが一瞬描画される（この行が上の early return より後にあるので、
+    // ここへ来る＝firebaseDB がある＝必ず購読が返って確定する）。
+    setBillingExempt(null);
     const on=(path,cb)=>{
       const r=firebaseDB.ref(path);
       r.on("value",snap=>cb(snap.val()),err=>console.warn("購読失敗:",path,err));
