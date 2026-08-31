@@ -186,7 +186,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           <button onClick={()=>setTab("mypage")} style={{padding:"6px 12px",background:"#DC2626",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>マイページへ</button>
         </div>}
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings}/>}
-        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} onRenameStaff={(oldName,newName)=>{
+        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
@@ -2361,7 +2361,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
 }
 
 // ===== スタッフ登録タブ =====
-function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods}){
+function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods,ownerReadOnly=false}){
   const[newName,setNewName]=useState("");
   // 削除確認ポップアップ。対象は index ではなく「スタッフ名」で持つ（下のコメントと同じ理由）。
   const[delTarget,setDelTarget]=useState(null);
@@ -2511,6 +2511,50 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     return[...m.values()].filter(r=>r.maxEnd&&todayStr<=r.maxEnd);
   },[delPeriodChoices,staffList,todayStr]);
   const retainedOf=n=>retained.find(r=>r.name===n)||null;
+  // 期限切れ＝残した期間の最終日を過ぎて、上の retained から落ちた人（＝一覧から行が消えた人）。
+  // retained と同じ材料（最新3期間の keepStaff）から、日付の条件だけを反転して拾う。
+  const expiredRetained=useMemo(()=>{
+    const m=new Map();
+    delPeriodChoices.forEach(p=>keepEntriesOf(p).forEach(e=>{
+      if(staffList.includes(e.name))return; // 同名で登録し直された人は現役なので触らない
+      const cur=m.get(e.name)||{name:e.name,maxEnd:""};
+      if((p.endDate||"")>cur.maxEnd)cur.maxEnd=p.endDate||"";
+      m.set(e.name,cur);
+    }));
+    return[...m.values()].filter(r=>r.maxEnd&&todayStr>r.maxEnd);
+  },[delPeriodChoices,staffList,todayStr]);
+  // スタッフ名をキーに持つ設定マップから、指定した名前をまとめて落とした settings を返す。
+  // 変化が無ければ null（無駄な書き込みを出さないため。後始末のuseEffectが収束する根拠でもある）。
+  const settingsWithoutStaff=names=>{
+    const targets=(names||[]).filter(Boolean);
+    if(!targets.length)return null;
+    const dropKeys=map=>{
+      if(!map)return null;
+      const hit=targets.filter(t=>map[t]!==undefined);
+      if(!hit.length)return null;
+      const m={...map};hit.forEach(t=>delete m[t]);return m;
+    };
+    const ns={...settings};let touched=false;
+    ["staffColors","staffAttributes","staffNumbers","staffPositions","staffAliases","staffWorkplaces"].forEach(k=>{
+      const m=dropKeys(settings[k]);if(m){ns[k]=m;touched=true;}
+    });
+    const ot=settings.overtimeSettings&&dropKeys(settings.overtimeSettings.byStaff);
+    if(ot){ns.overtimeSettings={...settings.overtimeSettings,byStaff:ot};touched=true;}
+    return touched?ns:null;
+  };
+  // 行が一覧から自動で消えるタイミングでの設定の後始末（2026-08-31 決定4・案A）。
+  // confirmDelete は「どの期間にも残さない」ときにしか消さないので、「残す」を選んだ人は
+  // 期限切れで行が消えたあとも設定7マップと別名が残り続けていた（#79 の②がこの経路でだけ生き残る）。
+  // 実行主体は **オーナー端末がスタッフタブを開いたとき1回**。閲覧専用端末は settings への
+  // 書き込みがルールで拒否されるので走らせない（拒否のトーストが出るだけになる）。
+  // 収束の根拠: 書いたあとに再実行されても settingsWithoutStaff が null を返すので二度書かない。
+  // 対象は最新3期間の keepStaff に載っている人だけ。それより古い期間にしか残っていない人は
+  // そもそも一覧に出たことがないので、ここでは触らない（写しの側で名前が要る可能性を残す）。
+  useEffect(()=>{
+    if(ownerReadOnly||!onSaveSettings||expiredRetained.length===0)return;
+    const ns=settingsWithoutStaff(expiredRetained.map(r=>r.name));
+    if(ns)onSaveSettings(ns);
+  },[expiredRetained,ownerReadOnly,settings]);
   // スタッフ一覧に描く行の並び。実スタッフは staffList の index をそのまま持たせる
   // （ドラッグ・編集・削除は従来どおり staffList の index で動くため、意味を一切変えない）。
   const displayRows=useMemo(()=>{
@@ -2599,18 +2643,12 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     // という差が出ていた。**一覧から完全に消えるとき（どの期間にも残さない）だけ**消す:
     // 期間に名前を残す場合はシフト表の表示にその設定（退勤延長・従業員番号）が要るうえ、
     // 一覧に行が残っている間は「削除を取り消す」で戻せるため、設定も戻せる状態にしておく。
+    // 期間に名前を残す場合はシフト表の表示にその設定（退勤延長・従業員番号）が要るうえ、
+    // 一覧に行が残っている間は「削除を取り消す」で戻せるため、ここでは消さない。
+    // 残した期間の最終日を過ぎて行が消えたときは、上の useEffect が同じ後始末を行う（決定4）。
     if(onSaveSettings&&keepIds.size===0){
-      const dropKey=map=>{
-        if(!map||map[n]===undefined)return null;
-        const m={...map};delete m[n];return m;
-      };
-      const ns={...settings};let touched=false;
-      ["staffColors","staffAttributes","staffNumbers","staffPositions","staffAliases","staffWorkplaces"].forEach(k=>{
-        const m=dropKey(settings[k]);if(m){ns[k]=m;touched=true;}
-      });
-      const ot=settings.overtimeSettings&&dropKey(settings.overtimeSettings.byStaff);
-      if(ot){ns.overtimeSettings={...settings.overtimeSettings,byStaff:ot};touched=true;}
-      if(touched)onSaveSettings(ns);
+      const ns=settingsWithoutStaff([n]);
+      if(ns)onSaveSettings(ns);
     }
     setDelTarget(null);
     const kept=keepIds.size;
