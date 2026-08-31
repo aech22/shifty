@@ -133,10 +133,16 @@ await h.close();
 返り値: `page` / `errors`（pageerror・console errorを起動時から収集）/ `setInput` / `blur` / `fill` / `clickByText` / `cell(name,date,field)` / `evaluate` / `close`。
 オプション: `engine:"webkit"`（Safari相当）・`viewport:{width:375,height:812}`（モバイル）・`scripts`（読み込むアプリファイル）・`root`（後述）・`headed:true`。
 
-**必ず踏む罠が2つある。**
+**必ず踏む罠が4つある。** 1・2 はハーネスが起動しない罠、3・4 は**起動するのに測定結果が嘘になる**罠で、後者のほうが危ない（「アプリが壊れている」と読み違える）。
 
 1. **`jsx` のトップレベルで React のフックを分割代入しない**。`const {useState}=React` と書くと app-staff.js が同名でグローバル宣言済みのため `Identifier 'useState' has already been declared` で**スクリプトごと落ちる**（画面は空のまま、原因は pageerror にしか出ない）。`React.useState(...)` の形で呼ぶ。`openHarness` はこのエラーを検出したらヒントを出す。
 2. **`scripts` に `app-main.js` を足さない**。足すと App() がマウントされて Firebase に繋がり、この節の利点が消える（警告は出るが止めはしない）。アプリ全体を起動したいときは1.5節を使う。
+3. **記録用の配列を `Harness` の本体で初期化しない**。`window.__edits=[]` とコンポーネント本体に書くと、**`setState` による再レンダーのたびに空へ戻る**。「操作したのに記録が0件」＝**アプリが発火していないように見える偽陰性**になる。onSave がstateを更新する（＝再レンダーする）ハーネスでは必ず踏む。`window.__edits=window.__edits||[]` と冪等に書く。
+   2026-08-31 実測: セル編集が保存されているのに `window.__edits` が空で、修正が効いていないと3分読み違えた。
+4. **`sessionStorage` に JSON を入れない**。`ssGet`（app-core.js:194）は `sessionStorage.getItem()` の**生の文字列をそのまま返す**（`JSON.parse` しない）。`sessionStorage.setItem("ss_tab", JSON.stringify("mypage"))` と書くと値が `"\"mypage\""` になり、`tab==="mypage"` がどこにも一致せず、**タブ復元の分岐を1行も通らないまま「PASS」になる**。`setItem("ss_tab","mypage")` と生の文字列で置く。
+   2026-08-31 実測: `billingExempt` のタブ復元フォールバックのテストが、この形で素通りしていた。
+
+**3・4 の教訓は同じ**: 結果が期待と違ったとき、**アプリを疑う前に測り方を疑う**。#101 の「全件が同じ異常値を見たら、まず測定手段の故障を疑う」の小さい版で、ここでは「1件だけ想定外」でも同じことが起きる。判定に使う値は、**修正前の実装に対して流して期待どおり落ちるか**（下記の `SHIFTY_ROOT`）で必ず裏を取る——素通りしている測定はここで露見する。
 
 **セレクタ**: シフト作成グリッドのセルは `data-sc="日付|start|end"` と `data-scn="名前"` を持つ（Enterでのフォーカス移動用に元から付いている属性で、検証用に足したものではない）。DOM構造に依存せず狙ったセルを掴めるので `h.cell()` がこれを組み立てる。
 
