@@ -2358,7 +2358,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const[newName,setNewName]=useState("");
   // 削除確認ポップアップ。対象は index ではなく「スタッフ名」で持つ（下のコメントと同じ理由）。
   const[delTarget,setDelTarget]=useState(null);
-  // 「最新から何個目の期間まで名前を残すか」。0=どの期間にも残さない。既定は最新の1期間。
+  // 「どの期間まで名前を残すか」の選択位置（delPeriodChoices の1始まりindex）。0=どの期間にも残さない。
+  // 範囲は時系列で読む＝選んだ期間と **それより古い** 期間に残す（685c219。retainedPeriodIds・app-utils.js）。
   const[delKeepCount,setDelKeepCount]=useState(1);
   // 編集中・別名パネル・ポジションパネルの対象は「スタッフ名」で持つ（indexで持ってはいけない）。
   // indexで持つと、パネルを開いたまま別の行を削除する／並べ替える／他端末がstaffListを変えると、
@@ -2657,7 +2658,8 @@ const dragIdxRef=useRef(null);
   return(
     <div>
       {/* 削除確認ポップアップ。confirm() では選択肢を出せないためモーダルにしてある。
-          「どの期間まで名前を残すか」は累積の選択（k個目を選ぶと最新〜k個目まで残す）。 */}
+          「どの期間まで名前を残すか」は時系列の選択（k個目を選ぶと、その期間とそれより古い期間に残り、
+          それより新しい期間からは消える）。新しい側から累積する読み方は 685c219 で廃止した。 */}
       {delTarget&&(()=>{
         const sc=delSubCount(delTarget);
         // 既にスタッフ一覧から消えている人＝「表示範囲の変更」として開いている（取り消し導線）
