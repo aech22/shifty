@@ -342,13 +342,20 @@ function getBreaksFor(settings,dateStr,staffName,shift){
     return true;
   });
 }
-// 退勤延長: shiftの実効終了時刻で ランチ(≤17:00)/ディナー(>17:00) を判定して延長分を返す
+// 退勤延長: shiftの実効終了時刻で ランチ(≤17:00)/ディナー(>17:00) を判定して延長分を返す。
+// 判定には calcNetWorkMinutes / shiftBandInfo と同じ effShiftRangeMin の実効レンジを使う
+// （settings を渡した呼び出しでは片側セルの補完後の退勤で判定される）。生の end を見ていた頃は、
+// 出勤セルだけ入力された日＝実効退勤が無い日が一律ディナー扱いになり、同じ日を
+// 「補完してランチ帯として」数える calcNetWorkMinutes に、ディナー側の延長が足されていた。
 function getOT(staffName,settings,shift){
   const raw=(settings?.overtimeSettings?.byStaff||{})[staffName];
   if(raw==null)return 0;
   if(typeof raw==="number")return raw; // レガシー数値
   const lunch=raw.lunch||0,dinner=raw.dinner||0;
   if(!shift)return dinner;
+  const rng=effShiftRangeMin(shift,settings);
+  if(rng)return rng.endMin<=1020?lunch:dinner;
+  // 補完できない日（settings なしの呼び出し・時刻がどちらも無い日）は従来どおり生の値で判定する
   const en=shift.adjustedEnd??shift.end;
   if(!en)return dinner;
   const[h,m]=en.split(":").map(Number);

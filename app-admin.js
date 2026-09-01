@@ -853,8 +853,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
               // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）。
               // ただしランチ帯（延長前の退勤が17:00以内）に収まるシフトは、延長でディナー帯に
               // 跨いでディナー帯の出勤人数に混入しないよう17:00で頭打ちにする（ヒートマップ計上のみ・純勤務時間は別）。
-              // 延長のランチ/ディナー判定は補完後の退勤時刻で行う。片側セル（出勤だけ）の日は
-              // 実効退勤が空文字なので、hsh をそのまま渡すと getOT が一律ディナー扱いになる。
+              // 延長のランチ/ディナー判定は補完後の退勤時刻で行う。getOT 自身も同じ規則で補完する
+              // ようになった（app-utils.js）が、ヒートマップが実際に使う pEnM を明示して渡し、
+              // 表示している時間帯と延長の帯判定が必ず同じ値を見るようにしておく。
               if(hsh){const ot=getOT(name,settings,{...hsh,adjustedEnd:minToHHMM(pEnM)});if(ot>0){const wasLunch=pEnM<=HEAT_BAND_SPLIT_MIN;pEnM+=ot;if(wasLunch)pEnM=Math.min(pEnM,HEAT_BAND_SPLIT_MIN);}}
               // 他店舗ヘルプ帯は自店舗のカウントから除外。h/kと同じ帯規則（resolveBandValues）で解決する。跨ぎシフトは
               // 出勤側略称=ランチ帯・退勤側略称=ディナー帯、片帯のみのシフトは反対側セルの略称も有効。

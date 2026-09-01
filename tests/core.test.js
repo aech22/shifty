@@ -206,6 +206,35 @@ test("shiftBandInfo: 片側だけの日は補完して0.5日として数える�
   assert.strictEqual(both.attendance, 1, "両方ある日は従来どおり");
 });
 
+test("getOT: 片側セル（出勤だけ）の日は補完後の退勤で帯を判定する（ディナー扱いにしない）", () => {
+  const settings = {
+    candidates: [{ start: "09:00", end: "15:00" }, { start: "17:00", end: "23:00" }],
+    overtimeSettings: { byStaff: { 田中: { lunch: 15, dinner: 60 } } },
+  };
+  const onlyStart = { status: "work", start: "09:00" };
+  // 補完すると 09:00〜15:00 ＝ 両側そろったランチのシフトと同じレンジになる。
+  // 生の end を見ていた頃はここが dinner(60) に落ち、純勤務が 6:15 ではなく 7:00 になっていた。
+  assert.strictEqual(u.getOT("田中", settings, onlyStart), 15, "補完後の退勤15:00＝ランチ帯");
+  assert.strictEqual(
+    u.getOT("田中", settings, { status: "work", start: "09:00", end: "15:00" }),
+    15,
+    "両側そろったランチと同じ値になる"
+  );
+  assert.strictEqual(
+    u.calcNetWorkMinutes(onlyStart, [], u.getOT("田中", settings, onlyStart), settings),
+    6 * 60 + 15
+  );
+  // 退勤だけの日・両側そろったディナーは従来どおりディナー側
+  assert.strictEqual(u.getOT("田中", settings, { status: "work", end: "23:00" }), 60);
+  assert.strictEqual(u.getOT("田中", settings, { status: "work", start: "17:00", end: "23:00" }), 60);
+  // settings に候補が無い＝補完できない呼び出しは従来の生の値による判定へフォールバックする
+  const noCand = { overtimeSettings: settings.overtimeSettings };
+  assert.strictEqual(u.getOT("田中", noCand, { status: "work", end: "14:00" }), 15);
+  assert.strictEqual(u.getOT("田中", noCand, null), 60, "シフトが無い日は従来どおりディナー");
+  assert.strictEqual(u.getOT("未登録", settings, onlyStart), 0, "設定の無い人は0");
+  assert.strictEqual(u.getOT("田中", { overtimeSettings: { byStaff: { 田中: 20 } } }, onlyStart), 20, "レガシー数値");
+});
+
 test("getBreaksFor: ランチのみ（退勤=休憩終了と同時刻）は適用しない", () => {
   const settings = { breakTimes: { weekday: [{ start: "15:00", end: "17:00" }] } };
   // 10:00-17:00: 休憩の後半（17時以降）に及ばないため適用しない
