@@ -1493,7 +1493,7 @@ function App(){
             onChange={e=>{setInviteCode(e.target.value);setInviteError("");}}
             onKeyDown={e=>e.key==="Enter"&&applyInviteCode()}
             placeholder="店舗コードを貼り付け" maxLength={100}
-            style={{flex:1,padding:"12px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:14,outline:"none"}}
+            style={{flex:1,padding:"12px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none"}}
           />
           <button onClick={applyInviteCode}
             style={{padding:"12px 16px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
