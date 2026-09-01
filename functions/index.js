@@ -63,7 +63,9 @@ async function registerCompanyAsOwner(companyId, shopId) {
 // Stripeは関数実行時に初期化（デプロイ解析時にAPIキーが不要）
 function getStripe() {
   const key = process.env.STRIPE_SECRET_KEY;
-  console.log("STRIPE_SECRET_KEY prefix:", key ? key.substring(0, 12) : "EMPTY");
+  // 値そのものは出さない（ログに平文が蓄積するため）。読み込めているかとバイト長だけで
+  // 「未設定 / 二重ペースト・改行混入による長さ異常」は切り分けられる。
+  console.log("STRIPE_SECRET_KEY:", key ? `loaded(${Buffer.byteLength(key)}b)` : "EMPTY");
   return Stripe(key);
 }
 
@@ -116,7 +118,7 @@ exports.createCheckoutSession = functions
     if (req.method === "OPTIONS") { res.status(204).send(""); return; }
     if (req.method !== "POST") { res.status(405).send("Method Not Allowed"); return; }
 
-    console.log("createCheckoutSession called, KEY:", process.env.STRIPE_SECRET_KEY ? process.env.STRIPE_SECRET_KEY.substring(0,12) : "EMPTY");
+    console.log("createCheckoutSession called, KEY:", process.env.STRIPE_SECRET_KEY ? `loaded(${Buffer.byteLength(process.env.STRIPE_SECRET_KEY)}b)` : "EMPTY");
 
     const { shopId, plan, successUrl, cancelUrl } = req.body;
     if (!shopId || !plan) { res.status(400).json({ error: "shopId, plan は必須です" }); return; }
