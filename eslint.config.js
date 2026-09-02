@@ -148,6 +148,7 @@ const sharedGlobals = {
   pd: "writable",
   ph: "writable",
   resolveAlias: "writable",
+  resolveSubByAlias: "writable",
   sc: "writable",
   setAdminKeyLS: "writable",
   setCookie: "writable",

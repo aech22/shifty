@@ -364,6 +364,37 @@ test("resolveAlias: 未知名はそのまま", () => {
   assert.strictEqual(u.resolveAlias("未知", { "田中太郎": ["たろ"] }), "未知");
 });
 
+// resolveSubByAlias（バグチェック#105）: 登録名subと別名subが併存したとき、どちらを採るか。
+// 修正前の expXl は `find(登録名一致||別名一致)` ＝配列順で決めており、Firebaseのキー順しだいで
+// グリッド・PDF と違うsubを採っていた。並び順に依存しないことをここで固定する。
+const _dupSubs = () => [
+  { id: "A", periodId: "p1", staffName: "たなか" },
+  { id: "B", periodId: "p1", staffName: "田中" },
+];
+const _lookupBy = (list) => (n) => list.find((s) => s.staffName === n);
+
+test("resolveSubByAlias: 登録名のsubを必ず優先する（別名subが先に並んでいても）", () => {
+  const al = { "田中": ["たなか"] };
+  assert.strictEqual(u.resolveSubByAlias(_lookupBy(_dupSubs()), "田中", al).id, "B");
+});
+
+test("resolveSubByAlias: 並び順を逆にしても同じsubを返す（配列順に依存しない）", () => {
+  const al = { "田中": ["たなか"] };
+  const rev = _dupSubs().reverse();
+  assert.strictEqual(u.resolveSubByAlias(_lookupBy(rev), "田中", al).id, "B");
+});
+
+test("resolveSubByAlias: 登録名のsubが無ければ別名を登録順に探す", () => {
+  const al = { "田中": ["たなか", "タナカ"] };
+  const only = [{ id: "C", staffName: "タナカ" }, { id: "A", staffName: "たなか" }];
+  assert.strictEqual(u.resolveSubByAlias(_lookupBy(only), "田中", al).id, "A");
+});
+
+test("resolveSubByAlias: どれにも当たらなければ undefined", () => {
+  assert.strictEqual(u.resolveSubByAlias(_lookupBy([]), "田中", { "田中": ["たなか"] }), undefined);
+  assert.strictEqual(u.resolveSubByAlias(_lookupBy(_dupSubs()), "佐藤", undefined), undefined);
+});
+
 test("sc: closed が末尾に来る", () => {
   const sorted = u.sc([
     { closed: true },

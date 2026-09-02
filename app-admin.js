@@ -556,31 +556,14 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     });
     return m;
   },[subs]);
-  // Excel出力（expXl）と同じ別名解決: 登録名で見つからなければ別名で提出されたsubにフォールバック
+  // 別名解決は app-utils.js の resolveSubByAlias に一本化する（完全一致を必ず優先）。
+  // Excel出力（expXl）も同じ関数を通す＝画面とExcelが別のsubを見ることが構造的に起きない（バグチェック#105）
   const staffAliases=settings?.staffAliases||{};
   // pidを外から指定できる版（期間別勤務時間は前半/後半/月計で selPid 以外の期間も参照するため）
-  const _getSubForPeriod=(pid,name)=>{
-    const exact=subsByKey.get(pid+"|"+name);
-    if(exact)return exact;
-    const aliases=staffAliases[name]||[];
-    for(const alias of aliases){
-      const s=subsByKey.get(pid+"|"+alias);
-      if(s)return s;
-    }
-    return undefined;
-  };
+  const _getSubForPeriod=(pid,name)=>resolveSubByAlias(n=>subsByKey.get(pid+"|"+n),name,staffAliases);
   const _getSub=(name)=>_getSubForPeriod(selPid,name);
   // workShiftByStaffDate も同様に別名フォールバックする（週間勤務時間の集計用）
-  const _getWorkShift=(name,date)=>{
-    const exact=workShiftByStaffDate.get(name+"|"+date);
-    if(exact)return exact;
-    const aliases=staffAliases[name]||[];
-    for(const alias of aliases){
-      const sh=workShiftByStaffDate.get(alias+"|"+date);
-      if(sh)return sh;
-    }
-    return undefined;
-  };
+  const _getWorkShift=(name,date)=>resolveSubByAlias(n=>workShiftByStaffDate.get(n+"|"+date),name,staffAliases);
   // 管理者編集値(adjustedXxx)優先、なければスタッフ提出値(xxx)にフォールバック。
   // 管理者入力の休み希望(adminRest)が付いたフィールドは実効値なし=""（休みカウント・ヒートマップ・集計・表示すべて休み扱いになる）
   const fieldRest=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];return!!(sh&&sh.adminRest&&sh.adminRest[field]);};
@@ -2142,6 +2125,12 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   if(typeof ExcelJS==="undefined"){tt("▲ ExcelJS未読込み");return;}
   const dates=gd(p.startDate,p.endDate);
   const staffAliases=options.staffAliases||{};
+  // 名前→sub の逆引き（重複時は最初の1件＝ShiftEditTab の subsByKey と同じ規則）。
+  // 以前はセルごとに ss.find(登録名一致||別名一致) を回しており、同一期間に登録名subと別名subが
+  // 併存すると採用されるのが配列順＝Firebaseのキー順（提出時刻順ではない）で決まっていた。
+  // グリッド・PDF は完全一致優先なので、同じ期間で画面とExcelが別のsubを見ることがあった（バグチェック#105）。
+  const subByName=new Map();
+  ss.forEach(s=>{if(s&&s.staffName&&!subByName.has(s.staffName))subByName.set(s.staffName,s);});
   const allAliases=Object.values(staffAliases).flat();
   const submittedNames=ss.map(s=>s.staffName);
   const unregistered=submittedNames.filter(n=>!staffList.includes(n)&&!isSpacer(n)&&!allAliases.includes(n)).sort((a,b)=>a.localeCompare(b,"ja"));
@@ -2298,7 +2287,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
 
     // スタッフ列
     sl.forEach((nm,si)=>{
-      const sub=ss.find(s=>s.staffName===nm||(staffAliases[nm]||[]).includes(s.staffName)),sh=sub?.shifts?.[ds];
+      const sub=resolveSubByAlias(n=>subByName.get(n),nm,staffAliases),sh=sub?.shifts?.[ds];
       const isWork=sh&&sh.status==="work";
       const ci=C_STAFF+si;
       // 上行: top:medium, bot:hair
@@ -3427,7 +3416,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   // ここだけ無条件 set ＝最後の1件だった（実測: 重なった週の勤務時間が シフト作成タブ 25:00 に対し
   // 提出一覧 65:00 と食い違い、週上限40hの判定が画面ごとに反転した）。衝突が無い通常時の挙動は不変。
   const shiftByStaffDate=useMemo(()=>{const m=new Map();subs.forEach(s=>{if(!s||!s.shifts)return;Object.keys(s.shifts).forEach(d=>{const sh=s.shifts[d];const k=s.staffName+"|"+d;if(sh&&sh.status==="work"&&!m.has(k))m.set(k,sh);});});return m;},[subs]);
-  const _shiftAt=(name,date)=>{const ex=shiftByStaffDate.get(name+"|"+date);if(ex)return ex;for(const a of(staffAliases[name]||[])){const s=shiftByStaffDate.get(a+"|"+date);if(s)return s;}return undefined;};
+  const _shiftAt=(name,date)=>resolveSubByAlias(n=>shiftByStaffDate.get(n+"|"+date),name,staffAliases);
   const _workDatesOf=name=>{const names=[name,...(staffAliases[name]||[])];const out=new Set();shiftByStaffDate.forEach((_v,k)=>{const i=k.lastIndexOf("|");if(names.includes(k.slice(0,i)))out.add(k.slice(i+1));});return[...out].sort();};
   const registerAlias=(subName,registeredName)=>{
     const cur=staffAliases[registeredName]||[];
