@@ -2574,15 +2574,27 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   },[expiredRetained,ownerReadOnly,settings]);
   // スタッフ一覧に描く行の並び。実スタッフは staffList の index をそのまま持たせる
   // （ドラッグ・編集・削除は従来どおり staffList の index で動くため、意味を一切変えない）。
+  // **並びはシフト作成グリッドと同じ関数（mergeKeepStaff）に決めさせる**。ここで独自に
+  // index の昇順で splice してはいけない: 各 index は「その人を削除した瞬間の一覧」での位置であって
+  // 元の一覧での位置ではないため、昇順に入れると座標系がズレてグリッド・Excel・PDF と別の場所に行が出る
+  // （実測: ["A","B","_spacer","C"] から B→C の順に削除すると、グリッドは ["A","B","_spacer","C"] に
+  //  戻るのに一覧は ["A","B","C","_spacer"] ＝ C がスペーサーを跨いでキッチン側の行になる。
+  //  スペーサーが無くても ["A","B","C"] が一覧では ["A","C","B"] になる）。
+  // 並び順の材料には **最も古い選択肢の keepStaff** を使う。retainedPeriodIds はどの選択位置でも
+  // 最古の期間を必ず含む（slice(k-1) は末尾を落とさない）ので、そこに retained 全員が削除順で並んでいる。
   const displayRows=useMemo(()=>{
-    const rows=staffList.map((n,i)=>({kind:"staff",n,i}));
-    [...retained].sort((a,b)=>(a.index==null?Number.MAX_SAFE_INTEGER:a.index)-(b.index==null?Number.MAX_SAFE_INTEGER:b.index))
-      .forEach(r=>{
-        const at=(r.index==null||r.index>=rows.length)?rows.length:r.index;
-        rows.splice(at,0,{kind:"retained",n:r.name,r});
-      });
-    return rows;
-  },[staffList,retained]);
+    const retMap=new Map(retained.map(r=>[r.name,r]));
+    const order=keepEntriesOf(delPeriodChoices[delPeriodChoices.length-1]).filter(e=>retMap.has(e.name));
+    // 期間を消した等で最古の選択肢に載っていない人は取りこぼさず末尾へ回す
+    retained.forEach(r=>{if(!order.some(e=>e.name===r.name))order.push({name:r.name,index:r.index});});
+    // mergeKeepStaff は staffList の並びを変えずに名前を差し込むだけなので、
+    // 差し込み以外の行は staffList の index と1対1で対応する
+    let si=0;
+    return mergeKeepStaff(staffList,{keepStaff:order}).map(n=>{
+      const r=retMap.get(n);
+      return r?{kind:"retained",n,r}:{kind:"staff",n,i:si++};
+    });
+  },[staffList,retained,delPeriodChoices]);
   const del=i=>{
     const n=staffList[i];
     // 空白列は表示上の区切りでしかなく、期間ごとの出し分けを持たないので従来どおり即削除する

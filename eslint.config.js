@@ -34,6 +34,7 @@ const sharedGlobals = {
   buildPeriodSnapshot: "writable",
   periodSnapshotEqual: "writable",
   resolvePeriodMaster: "writable",
+  mergeKeepStaff: "writable",
   retainedPeriodIds: "writable",
   defaultKeepCount: "writable",
   AUTH_LOGGED_OUT_LS: "writable",
