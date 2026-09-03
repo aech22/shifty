@@ -1788,3 +1788,76 @@ test("cookieSafeKey: 置換が別のshopIdと衝突しない（'.' は genSecure
   assert.strictEqual(u.cookieSafeKey("A=B"), "A.B");
   assert.strictEqual(u.cookieSafeKey(null), "");
 });
+
+// ===== 改名の写しへの反映（バグチェック#107）=====
+// sub.staffName は改名時に全期間ぶん書き換わる。確定済み期間の写し(period.snapshot)だけ旧名で
+// 残ると、旧名の行で新名のsubを引くことになりシフトが丸ごと空欄になる。
+const _renSettings = () => ({
+  staffAttributes: { "田中": "emp", "鈴木": "part" },
+  staffNumbers: { "田中": "001" },
+  overtimeSettings: { byStaff: { "田中": { lunch: 15, dinner: 0 } } },
+  xlShopName: "テスト店",
+});
+
+test("renameStaffInSettings: 名前をキーに持つマップだけを移し替える", () => {
+  const r = u.renameStaffInSettings(_renSettings(), "田中", "田中太郎");
+  assert.strictEqual(r.staffAttributes["田中太郎"], "emp");
+  assert.strictEqual(r.staffAttributes["田中"], undefined);
+  assert.strictEqual(r.staffAttributes["鈴木"], "part", "他人を巻き込んではいけない");
+  assert.strictEqual(r.staffNumbers["田中太郎"], "001");
+  assert.deepStrictEqual(r.overtimeSettings.byStaff["田中太郎"], { lunch: 15, dinner: 0 });
+  assert.strictEqual(r.overtimeSettings.byStaff["田中"], undefined);
+  assert.strictEqual(r.xlShopName, "テスト店", "凍結対象外のキーは触らない");
+});
+
+test("renameStaffInSettings: 元から無いキーを作らない（写しの凍結対象キーの有無を変えない）", () => {
+  const r = u.renameStaffInSettings({ staffAttributes: { "田中": "emp" } }, "田中", "田中太郎");
+  assert.strictEqual("staffColors" in r, false);
+  assert.strictEqual("staffAliases" in r, false);
+  // 元オブジェクトは書き換えない
+  const src = _renSettings();
+  u.renameStaffInSettings(src, "田中", "田中太郎");
+  assert.strictEqual(src.staffAttributes["田中"], "emp");
+});
+
+test("renameStaffInPeriods: 写しの staffList と設定マップを改名し、変更の有無を返す", () => {
+  const periods = [
+    { id: "P1", endDate: "2026-08-15", snapshot: { staffList: ["田中", "鈴木"], settings: _renSettings() } },
+    { id: "P2", endDate: "2026-07-15", snapshot: { staffList: ["鈴木"], settings: { staffAttributes: { "鈴木": "part" } } } },
+    { id: "P3", endDate: "2026-09-30" },
+  ];
+  const r = u.renameStaffInPeriods(periods, "田中", "田中太郎");
+  assert.strictEqual(r.changed, true);
+  assert.deepStrictEqual(r.periods[0].snapshot.staffList, ["田中太郎", "鈴木"]);
+  assert.strictEqual(r.periods[0].snapshot.settings.staffAttributes["田中太郎"], "emp");
+  assert.strictEqual(r.periods[1], periods[1], "その人が居ない写しは参照ごと据え置く");
+  assert.strictEqual(r.periods[2], periods[2], "写しの無い期間は触らない");
+});
+
+test("renameStaffInPeriods: 該当者が居なければ changed=false（無駄な書き込みをしない）", () => {
+  const periods = [{ id: "P1", snapshot: { staffList: ["鈴木"], settings: {} } }, { id: "P2" }];
+  assert.strictEqual(u.renameStaffInPeriods(periods, "田中", "田中太郎").changed, false);
+  assert.strictEqual(u.renameStaffInPeriods([], "田中", "田中太郎").changed, false);
+  assert.strictEqual(u.renameStaffInPeriods(null, "田中", "田中太郎").changed, false);
+});
+
+test("renameStaffInPeriods: 名簿に居なくても設定マップにだけ残る人を拾う", () => {
+  const periods = [{ id: "P1", snapshot: { staffList: ["鈴木"], settings: { staffAttributes: { "田中": "emp" } } } }];
+  const r = u.renameStaffInPeriods(periods, "田中", "田中太郎");
+  assert.strictEqual(r.changed, true);
+  assert.strictEqual(r.periods[0].snapshot.settings.staffAttributes["田中太郎"], "emp");
+});
+
+test("renameStaffInPeriods: 改名後も確定済み期間の行がその人のsubを引ける（結合の回帰）", () => {
+  const settings = _renSettings();
+  const period = { id: "P1", endDate: "2026-08-15", snapshot: u.buildPeriodSnapshot(["田中", "鈴木"], settings) };
+  const subs = [{ id: "S1", periodId: "P1", staffName: "田中太郎", shifts: { "2026-08-10": { status: "work", start: "09:00", end: "18:00" } } }];
+  const r = u.renameStaffInPeriods([period], "田中", "田中太郎");
+  const pm = u.resolvePeriodMaster(r.periods[0], ["田中太郎", "鈴木"], u.renameStaffInSettings(settings, "田中", "田中太郎"), "2026-09-03");
+  assert.strictEqual(pm.locked, true);
+  // app-admin.js:563 の _getSubForPeriod と同じ引き方
+  const byKey = new Map(subs.map(s => [s.periodId + "|" + s.staffName, s]));
+  const got = u.resolveSubByAlias(n => byKey.get("P1|" + n), pm.staffList[0], pm.settings.staffAliases || {});
+  assert.strictEqual(got && got.id, "S1", "改名後も写しの行から提出を引けなければならない");
+  assert.strictEqual(pm.settings.staffAttributes[pm.staffList[0]], "emp");
+});

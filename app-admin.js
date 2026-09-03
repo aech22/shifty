@@ -206,23 +206,15 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
           saveSubs(newSubs);
-          // スタッフ名をキーに持つ設定マップは全てキーを移し替える（漏れると属性・ポジション等が黙って初期値に戻る）
-          const renameKey=map=>{
-            const m={...(map||{})};
-            if(m[oldName]===undefined)return m;
-            m[newName]=m[oldName];delete m[oldName];
-            return m;
-          };
-          const ns={...settings,
-            staffColors:renameKey(settings.staffColors),
-            staffAttributes:renameKey(settings.staffAttributes),
-            staffNumbers:renameKey(settings.staffNumbers),
-            staffPositions:renameKey(settings.staffPositions),
-            staffAliases:renameKey(settings.staffAliases),
-            staffWorkplaces:renameKey(settings.staffWorkplaces)};
-          if(settings.overtimeSettings&&settings.overtimeSettings.byStaff)
-            ns.overtimeSettings={...settings.overtimeSettings,byStaff:renameKey(settings.overtimeSettings.byStaff)};
-          saveSettings(ns);
+          // スタッフ名をキーに持つ設定マップは全てキーを移し替える（漏れると属性・ポジション等が黙って初期値に戻る）。
+          // 規則は app-utils.js の renameStaffInSettings に一本化し、下の写しにも同じものを当てる。
+          saveSettings(renameStaffInSettings(settings,oldName,newName));
+          // 確定済み期間の写し（period.snapshot）も同時に改名する。上で sub.staffName を全期間ぶん
+          // 書き換えるため、写しだけ旧名で残るとシフト作成タブ・Excel・PDF がその人のsubを引けなくなる。
+          if(savePeriods){
+            const r=renameStaffInPeriods(periods,oldName,newName);
+            if(r.changed)savePeriods(r.periods);
+          }
           tt(`✓ ${oldName} → ${newName} に変更しました`);
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} shopTemplates={shopTemplates} saveShopTemplates={saveShopTemplates} tt={tt} plan={plan} periods={periods}/>}
