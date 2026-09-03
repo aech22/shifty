@@ -158,14 +158,15 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     // 再提出すると staffName が登録名へ正規化される（2026-08-21 ユーザー判断で確定）。
     const staffName=name.trim();
     // 既存subを検索（同じperiod+名前 → 上書き）。登録名で見つからなければ別名でも探す。
-    // 完全一致を先に引くのは app-admin.js:563-573（applyEditToSubs）・_getSub と同じ規則。
     // 別名フォールバックが無いと、別名「たなか」で提出済みの人が別端末（Cookieなし）から
     // 名前を打ち直したとき resolveAlias で "田中" になって既存subに当たらず、同一人物・同一期間に
-    // 2つ目のsubができる。そうなるとExcel(expXl:2185のfind)が古い方を出し、管理者が入れた
-    // adjustedStart等は引き継がれず元のsubに取り残される。
-    const aliasesOfName=(settings?.staffAliases||{})[staffName]||[];
-    const existSub=subs.find(s=>s.staffName===staffName&&s.periodId===apid)
-      ||subs.find(s=>s.periodId===apid&&aliasesOfName.includes(s.staffName));
+    // 2つ目のsubができる。そうなると管理者が入れた adjustedStart 等は引き継がれず元のsubに残る。
+    // 解決規則は app-utils.js の resolveSubByAlias に一本化する（グリッド・週集計・提出一覧・
+    // Excel と同じ入口）。自前で `完全一致 || 別名includes` と書くと、完全一致は優先できても
+    // 「別名が複数あるときどの別名を先に見るか」が subs の配列順＝Firebase のキー順
+    // （提出時刻順ではない）で決まり、別名の登録順で引く画面側と食い違う。実測では別名2つ・
+    // sub2つの期間で、再提出が上書きするsubと画面/Excelが読むsubが別になった（バグチェック#106）。
+    const existSub=resolveSubByAlias(n=>subs.find(s=>s.staffName===n&&s.periodId===apid),staffName,settings?.staffAliases);
     // source:"grid" は管理者がシフト作成タブのセルに直接下書きして生まれたsubで、スタッフの提出ではない
     // （バグチェック#56で導入した印）。これを「前回の提出」として扱うと、スタッフの初回提出なのに
     // submittedAt が管理者の入力時刻のまま残り、isUpdated と日ごとの changed マークまで立つ（#58）。
