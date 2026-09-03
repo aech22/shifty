@@ -38,6 +38,7 @@ const sharedGlobals = {
   STAFF_KEYED_SETTING_MAPS: "writable",
   renameStaffInSettings: "writable",
   renameStaffInPeriods: "writable",
+  aliasOwnerOf: "writable",
   retainedPeriodIds: "writable",
   defaultKeepCount: "writable",
   AUTH_LOGGED_OUT_LS: "writable",

@@ -2432,12 +2432,23 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     tt(`▲ 名前に使えない文字があります（${bad.join(" ")}）`);
     return true;
   };
+  // 他人の別名と同じ名前は登録できない。resolveAlias（app-utils.js）は入力名が誰かの別名なら
+  // 登録名へ寄せるため、通してしまうと本人が自分の名前を入力しても別人の提出になり、
+  // 管理者側のその人の行は空のままになる（バグチェック#107 で実測）。
+  // addAlias(:2388) は逆向き（登録名と同じ別名）を既に禁じている。同じ不変条件の反対側の入口。
+  const rejectAliasCollision=(n,selfName)=>{
+    const owner=aliasOwnerOf(n,staffAliases,selfName);
+    if(!owner)return false;
+    tt(`▲「${n}」は ${owner} さんの別名として登録されています`);
+    return true;
+  };
   const confirmEdit=n=>{
     const trimmed=editName.trim();
     if(!trimmed){tt("▲ 名前を入力してください");return;}
     if(staffList.includes(trimmed)&&trimmed!==n){tt("▲ 既に登録されている名前です");return;}
     if(trimmed===n){cancelEdit();return;}
     if(rejectBadName(trimmed))return;
+    if(rejectAliasCollision(trimmed,n))return;
     onRenameStaff&&onRenameStaff(n,trimmed);
     setEditKey(null);setEditName("");
   };
@@ -2445,6 +2456,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     if(!newName.trim()){tt("▲ 名前を入力");return;}
     if(staffList.includes(newName.trim())){tt("▲ 既に登録されています");return;}
     if(rejectBadName(newName.trim()))return;
+    if(rejectAliasCollision(newName.trim(),null))return;
     if(staffList.filter(n=>!isSpacer(n)).length>=lim){onUpgrade&&onUpgrade({type:"staff",limit:lim,plan});return;}
     ph("staff_added",{staff_count:staffList.filter(n=>!isSpacer(n)).length+1});
     onSave([...staffList,newName.trim()]);setNewName("");tt(`✓ ${newName.trim()} を追加しました`);

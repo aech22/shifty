@@ -1861,3 +1861,34 @@ test("renameStaffInPeriods: 改名後も確定済み期間の行がその人のs
   assert.strictEqual(got && got.id, "S1", "改名後も写しの行から提出を引けなければならない");
   assert.strictEqual(pm.settings.staffAttributes[pm.staffList[0]], "emp");
 });
+
+// ===== 他人の別名と同名のスタッフ登録（バグチェック#107）=====
+// resolveAlias は入力名が誰かの別名なら登録名へ寄せる。別名と同名のスタッフを作ると、
+// 本人が自分の名前を入力しても別人の提出になる。
+test("aliasOwnerOf: その名前を別名にしている他人を返す", () => {
+  const al = { "鈴木": ["たなか", "スズキ"], "高橋": [] };
+  assert.strictEqual(u.aliasOwnerOf("たなか", al), "鈴木");
+  assert.strictEqual(u.aliasOwnerOf(" たなか ", al), "鈴木", "前後の空白は resolveAlias と同じく無視する");
+  assert.strictEqual(u.aliasOwnerOf("高橋", al), null, "登録名そのものは別名ではない");
+  assert.strictEqual(u.aliasOwnerOf("佐藤", al), null);
+});
+
+test("aliasOwnerOf: 自分自身の別名は衝突にしない（自分の通称へ改名できる）", () => {
+  const al = { "鈴木": ["スズキ"] };
+  assert.strictEqual(u.aliasOwnerOf("スズキ", al, "鈴木"), null);
+  assert.strictEqual(u.aliasOwnerOf("スズキ", al, "高橋"), "鈴木");
+});
+
+test("aliasOwnerOf: 空・未設定を安全に扱う", () => {
+  assert.strictEqual(u.aliasOwnerOf("", { "鈴木": ["たなか"] }), null);
+  assert.strictEqual(u.aliasOwnerOf("たなか", null), null);
+  assert.strictEqual(u.aliasOwnerOf("たなか", { "鈴木": null }), null);
+});
+
+test("aliasOwnerOf: 弾かなかった場合に実際に起きること（resolveAlias との対応）", () => {
+  const al = { "鈴木": ["たなか"] };
+  // 「たなか」というスタッフを登録してしまうと、本人の入力が鈴木へ寄る
+  assert.strictEqual(u.resolveAlias("たなか", al), "鈴木");
+  // aliasOwnerOf はまさにその状態を作る名前を検出する
+  assert.strictEqual(u.aliasOwnerOf("たなか", al), "鈴木");
+});
