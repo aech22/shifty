@@ -1892,3 +1892,23 @@ test("aliasOwnerOf: 弾かなかった場合に実際に起きること（resolv
   // aliasOwnerOf はまさにその状態を作る名前を検出する
   assert.strictEqual(u.aliasOwnerOf("たなか", al), "鈴木");
 });
+
+test("STAFF_KEYED_SETTING_MAPS: スタッフ名キーの設定マップ一覧が app-admin.js に書き写されていない", () => {
+  // 改名（renameStaffInSettings）と削除の後始末（settingsWithoutStaff）は、同じ「スタッフ名を
+  // キーに持つ設定マップ」という不変条件を守る2つの入口。片方が一覧を書き写していると、
+  // 新しいマップを足したときに黙って守る範囲が食い違う（#105〜#107 が3回続けて踏んだ形）。
+  const fs = require("node:fs");
+  const src = fs.readFileSync(require("node:path").join(__dirname, "..", "app-admin.js"), "utf8");
+  const literals = src.match(/\[\s*"staff[A-Za-z]+"(?:\s*,\s*"staff[A-Za-z]+")+\s*\]/g) || [];
+  assert.deepStrictEqual(literals, [],
+    `app-admin.js にスタッフ設定マップ一覧の直書きが残っている（STAFF_KEYED_SETTING_MAPS を使うこと）: ${literals.join(" / ")}`);
+  assert.ok(/STAFF_KEYED_SETTING_MAPS\.forEach/.test(src),
+    "settingsWithoutStaff が STAFF_KEYED_SETTING_MAPS を参照していない");
+});
+
+test("STAFF_KEYED_SETTING_MAPS: 凍結対象キー(PERIOD_SNAPSHOT_SETTING_KEYS)に全て含まれる", () => {
+  // 含まれないマップがあると、そのマップだけ写しの側で改名が届かない＝#107 の再発になる。
+  const missing = u.STAFF_KEYED_SETTING_MAPS.filter(k => !u.PERIOD_SNAPSHOT_SETTING_KEYS.includes(k));
+  assert.deepStrictEqual(missing, [],
+    `写しに凍結されないスタッフ設定マップがある: ${missing.join(",")}`);
+});

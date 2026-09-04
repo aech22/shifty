@@ -2545,7 +2545,10 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
       const m={...map};hit.forEach(t=>delete m[t]);return m;
     };
     const ns={...settings};let touched=false;
-    ["staffColors","staffAttributes","staffNumbers","staffPositions","staffAliases","staffWorkplaces"].forEach(k=>{
+    // 対象マップは app-utils.js の STAFF_KEYED_SETTING_MAPS を正とする。ここに同じ一覧を
+    // 書き写すと、改名（renameStaffInSettings）と削除（ここ）で守る範囲が黙って食い違う
+    // ——#105〜#107 が3回続けて踏んだ「同じ不変条件に入口が2つあり、片方だけが知っている」形。
+    STAFF_KEYED_SETTING_MAPS.forEach(k=>{
       const m=dropKeys(settings[k]);if(m){ns[k]=m;touched=true;}
     });
     const ot=settings.overtimeSettings&&dropKeys(settings.overtimeSettings.byStaff);
