@@ -878,6 +878,20 @@ function mergeKeepStaff(list,period){
   }
   return out;
 }
+// 提出された名前が「その期間の名簿にも別名にも無い名前」か＝管理者が別名を紐づける必要がある名前か。
+// 名簿は **staffList に period.keepStaff をマージしたもの**（mergeKeepStaff）で、シフト作成グリッド・
+// Excel・PDF が使う名簿（resolvePeriodMaster 経由）と同じものになる。
+// 期限付き削除で「この期間まで残す」と指定した人は staffList から消えて keepStaff にだけ載るため、
+// 生の staffList で判定すると **その期間のシフト表には列があるのに、本人の提出だけが「未登録」扱い**になる
+// （提出一覧に「別名を登録」が出る・スタッフタブの未登録名に並ぶ）。判定の入口が3つあり、
+// keepStaff を後から足したときに Excel/PDF 側（マージ済み名簿を受け取る）しか追従していなかった。
+// 同じ不変条件に入口が複数あり片方だけが知っている形（#105〜#107）を作らないよう、ここへ一本化する。
+// period を渡さない呼び出しは keepStaff 抜き＝従来どおりの判定になる。
+function isUnregisteredSubName(name,staffList,staffAliases,period){
+  if(!name||isSpacer(name))return false;
+  if(mergeKeepStaff(staffList,period).includes(name))return false;
+  return!Object.values(staffAliases||{}).flat().includes(name);
+}
 // 削除ポップアップの「この期間まで残す」を、実際に keepStaff を書き込む期間IDへ変換する。
 // choices は startDate 降順（＝新しい順）に並んだ最新3件。keepCount は1始まりの選択位置で、
 // 0（および範囲外）は「どの期間にも残さない」。
@@ -962,5 +976,5 @@ function renameStaffInPeriods(periods,oldName,newName){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,isUnregisteredSubName,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
 }

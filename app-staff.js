@@ -234,9 +234,12 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   const pe=dates[dates.length-1]?`${pd(dates[dates.length-1]).getMonth()+1}/${pd(dates[dates.length-1]).getDate()}`:"";
   const wk=dates.filter(d=>sd[d]?.status==="work").length;
 
-  // スタッフ名候補（登録名 + 別名）
+  // スタッフ名候補（登録名 + 別名）。名簿には表示中の期間の keepStaff をマージする
+  // ＝期限付き削除で「この期間まで残す」と指定された人は、その期間の提出画面でだけ自分の名前を選べる。
+  // マージしないと本人は名前を手打ちするしかなく、1文字でも違えば別人の提出として記録され、
+  // 管理者側に「別名を登録」が出る（シフト表にはその人の列が出ているのに、である）。
   const staffAliases=settings?.staffAliases||{};
-  const allSuggests=useMemo(()=>buildSuggestList(staffList.filter(n=>!isSpacer(n)),staffAliases),[staffList,staffAliases]);
+  const allSuggests=useMemo(()=>buildSuggestList(mergeKeepStaff(staffList,ap).filter(n=>!isSpacer(n)),staffAliases),[staffList,ap,staffAliases]);
   const filteredSuggests=ni
     ?allSuggests.filter(s=>s.display.includes(ni)||s.registered.includes(ni))
     :allSuggests;

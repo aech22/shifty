@@ -2404,13 +2404,15 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   // キッチン/ホールで同名ポジションを登録できる（追加時の重複チェックはセクション内のみ）ため、
   // 合算リストは必ず重複排除する。しないと同じ「＋ ○○」ボタンが2つ並び、key重複でReactが警告する。
   const allPositions=[...new Set([...((settings.positions&&settings.positions.kitchen)||[]),...((settings.positions&&settings.positions.hall)||[])])];
-  // 最新期間の提出名のうち、未登録かつ未エイリアスのもの
-  const allAliases=Object.values(staffAliases).flat();
+  // 最新期間の提出名のうち、未登録かつ未エイリアスのもの。
+  // 判定は提出一覧の「別名を登録」と同じ述語（isUnregisteredSubName・app-utils.js）に通す。
+  // その期間の keepStaff に載っている人＝期限付き削除で名前を残した人は名簿にいる扱いなので、
+  // ここの別名候補にも出さない（出すと、残すと決めた本人を自分自身の別名として登録させる導線になる）。
   const latestPeriod=[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate))[0];
   const unregisteredNames=useMemo(()=>{
     if(!latestPeriod)return[];
     const names=subs.filter(s=>s.periodId===latestPeriod.id).map(s=>s.staffName);
-    return[...new Set(names)].filter(n=>!staffList.includes(n)&&!allAliases.includes(n));
+    return[...new Set(names)].filter(n=>isUnregisteredSubName(n,staffList,staffAliases,latestPeriod));
   },[subs,latestPeriod,staffList,staffAliases]);
   const lim=PLAN_LIMITS[plan]?.staff??10;
   const staffColors=settings.staffColors||{};
@@ -3400,8 +3402,11 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   const isPro=plan==="pro"||plan==="premium";
   const isPremium=plan==="premium";
   const staffAliases=settings.staffAliases||{};
-  const allAliases=Object.values(staffAliases).flat();
-  const isUnregistered=name=>!staffList.includes(name)&&!allAliases.includes(name);
+  // 「別名を登録」を出すかは **その提出が属する期間の名簿** で決める（isUnregisteredSubName・app-utils.js）。
+  // 期限付き削除で名前を残した期間では、シフト作成グリッド・Excel・PDF に本人の列が出ている一方、
+  // ここだけが生の staffList を見ていたため、本人が提出すると「別名を登録」が出ていた。
+  const periodById=useMemo(()=>{const m=new Map();periods.forEach(p=>{if(p&&p.id)m.set(p.id,p);});return m;},[periods]);
+  const isUnregisteredSub=sub=>isUnregisteredSubName(sub.staffName,staffList,staffAliases,periodById.get(sub.periodId));
   // 週・月・連続日数の上限判定は「期間をまたいだ実際の勤務」で数える。1つのsubは1期間ぶんの日付しか持たないため、
   // sub自身のshiftsだけで数えると、期間の境界にかかる週と、periodUnit:"2week" のときの月が必ず過少になる
   // （実測: 8月を2週×2期間で20日×8h＝160h働いても、月上限100hの判定は両期間とも false）。
@@ -3486,7 +3491,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
                   {hasRealUpdate&&<span style={{fontSize:10,background:"var(--c-accent)",color:"#fff",padding:"2px 7px",borderRadius:4,fontWeight:700}}>変更あり</span>}
                   {/* 超過は異常だが「今すぐ操作する」項目ではないので、要対応バッジとは別の見え方にする */}
                   {hasVio&&<span style={{fontSize:11,color:"#FF4757",fontWeight:700,whiteSpace:"nowrap"}}>{dailyVio?"1日超過":""}{dailyVio&&weeklyVio?" / ":""}{weeklyVio?"週超過":""}</span>}
-                  {isPro&&isUnregistered(sub.staffName)&&(
+                  {isPro&&isUnregisteredSub(sub)&&(
                     linkTarget?.subName===sub.staffName
                       ?<div style={{display:"flex",alignItems:"center",gap:4,marginTop:4,width:"100%"}}>
                         <select defaultValue="" onChange={e=>e.target.value&&registerAlias(sub.staffName,e.target.value)}

@@ -1653,6 +1653,25 @@ test("mergeKeepStaff: 重複しない・Firebaseのオブジェクト形も受�
   assert.deepStrictEqual(u.mergeKeepStaff(["田中"], { keepStaff: ["鈴木"] }), ["田中", "鈴木"], "旧形式(名前だけ)は末尾");
 });
 
+test("isUnregisteredSubName: 期限付き削除で名前を残した期間では未登録扱いにしない", () => {
+  const list = ["田中", "鈴木"];
+  const aliases = { 田中: ["たなか"] };
+  // 本番で起きた症状: 「9月後半まで残す」で削除した佐藤が9月後半に提出すると「別名を登録」が出た。
+  const kept = { id: "p9b", keepStaff: [{ name: "佐藤", index: 2 }] };
+  assert.strictEqual(u.isUnregisteredSubName("佐藤", list, aliases, kept), false,
+    "keepStaff に載っている＝その期間のシフト表に列がある人は未登録ではない");
+  assert.strictEqual(u.isUnregisteredSubName("佐藤", list, aliases, { id: "p10a" }), true,
+    "残していない期間では従来どおり未登録として扱う");
+  assert.strictEqual(u.isUnregisteredSubName("佐藤", list, aliases, null), true,
+    "期間を渡さなければ keepStaff 抜き＝従来の判定");
+  assert.strictEqual(u.isUnregisteredSubName("田中", list, aliases, kept), false, "登録名は未登録ではない");
+  assert.strictEqual(u.isUnregisteredSubName("たなか", list, aliases, kept), false, "別名は未登録ではない");
+  assert.strictEqual(u.isUnregisteredSubName("山田", list, aliases, kept), true, "本当に知らない名前だけ true");
+  assert.strictEqual(u.isUnregisteredSubName("__spacer__1", list, aliases, kept), false, "空白列は名前ではない");
+  assert.strictEqual(u.isUnregisteredSubName("", list, aliases, kept), false);
+  assert.strictEqual(u.isUnregisteredSubName("山田", list, undefined, kept), true, "別名マップ未設定でも落ちない");
+});
+
 // choices は startDate 降順（新しい順）＝ StaffTab の delPeriodChoices と同じ並び
 const _CH = [{ id: "p9a", label: "9月前半" }, { id: "p8b", label: "8月後半" }, { id: "p8a", label: "8月前半" }];
 
