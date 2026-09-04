@@ -1672,6 +1672,22 @@ test("isUnregisteredSubName: 期限付き削除で名前を残した期間では
   assert.strictEqual(u.isUnregisteredSubName("山田", list, undefined, kept), true, "別名マップ未設定でも落ちない");
 });
 
+test("isUnregisteredSubName: 未登録名の判定が app-admin.js に書き写されていない", () => {
+  // 「提出された名前が名簿にも別名にも無いか」の入口は4つある（提出一覧の別名バッジ・
+  // スタッフタブの未登録名・Excelの列構成・PDFの列構成）。keepStaff のような名簿の要素を
+  // 後から足したとき、書き写した側だけが追随せず黙って食い違う（#105〜#108 と同じ形）。
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const admin = fs.readFileSync(path.join(__dirname, "..", "app-admin.js"), "utf8");
+  const staff = fs.readFileSync(path.join(__dirname, "..", "app-staff.js"), "utf8");
+  const inline = (admin + staff).match(/Object\.values\(\s*staffAlias[A-Za-z]*[^)]*\)\.flat\(\)/g) || [];
+  assert.deepStrictEqual(inline, [],
+    `別名リストの自前展開が残っている（isUnregisteredSubName を使うこと）: ${inline.join(" / ")}`);
+  const calls = (admin.match(/isUnregisteredSubName\(/g) || []).length;
+  assert.strictEqual(calls, 4,
+    `app-admin.js の未登録名判定は4箇所（提出一覧・スタッフタブ・Excel・PDF）のはずが ${calls} 箇所`);
+});
+
 // choices は startDate 降順（新しい順）＝ StaffTab の delPeriodChoices と同じ並び
 const _CH = [{ id: "p9a", label: "9月前半" }, { id: "p8b", label: "8月後半" }, { id: "p8a", label: "8月前半" }];
 

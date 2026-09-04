@@ -1352,9 +1352,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const buildPdfCols=(dept="all")=>{
     if(dept==="kit")return realStaff.filter(n=>!hallStaff.includes(n)||kitExtraSet.has(n));
     if(dept==="hall")return realStaff.filter(n=>hallStaff.includes(n)||hallExtraSet.has(n));
-    const allAliases=Object.values(staffAliasesPdf).flat();
     const submittedNames=subs.filter(s=>s.periodId===selPid).map(s=>s.staffName);
-    const unreg=submittedNames.filter(n=>!staffList.includes(n)&&!isSpacer(n)&&!allAliases.includes(n)).sort((a,b)=>a.localeCompare(b,"ja"));
+    const unreg=submittedNames.filter(n=>isUnregisteredSubName(n,staffList,staffAliasesPdf,period)).sort((a,b)=>a.localeCompare(b,"ja"));
     return[...staffList,...unreg];
   };
   const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -2123,9 +2122,8 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   // グリッド・PDF は完全一致優先なので、同じ期間で画面とExcelが別のsubを見ることがあった（バグチェック#105）。
   const subByName=new Map();
   ss.forEach(s=>{if(s&&s.staffName&&!subByName.has(s.staffName))subByName.set(s.staffName,s);});
-  const allAliases=Object.values(staffAliases).flat();
   const submittedNames=ss.map(s=>s.staffName);
-  const unregistered=submittedNames.filter(n=>!staffList.includes(n)&&!isSpacer(n)&&!allAliases.includes(n)).sort((a,b)=>a.localeCompare(b,"ja"));
+  const unregistered=submittedNames.filter(n=>isUnregisteredSubName(n,staffList,staffAliases,p)).sort((a,b)=>a.localeCompare(b,"ja"));
   const sl=[...staffList,...unregistered];
   const realStaffCount=sl.filter(n=>!isSpacer(n)).length;
   if(realStaffCount===0){tt("▲ スタッフが登録されていません");return;}
