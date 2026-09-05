@@ -537,8 +537,15 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
   const submitted=subs.filter(s=>s.periodId===apid&&s.source!=="grid");
   const dates=period?gd(period.startDate,period.endDate):[];
   const[editTarget,setEditTarget]=useState(null);
+  // 名簿は **staffList に period.keepStaff をマージしたもの**（mergeKeepStaff）を使う。生の staffList を
+  // 見ると、期限付き削除で「この期間まで残す」と指定した人が、シフト表には列があり提出画面では本人の名前を
+  // サジェストされるのに **未提出の一覧にだけ出てこない**（管理者が「全員出した」と読んで締め切れてしまう）。
+  // シフト作成グリッド・Excel・PDF・「別名を登録」・名前サジェストと同じ名簿にそろえている（#109/#110）。
+  // 呼び出し元は3つ（StaffView から2つ・PeriodsTab から1つ）だが、period はここで apid から解決しているので
+  // このマージ1箇所で全経路に効く。名簿の要素を増やすときもここを直せばよい。
+  const roster=mergeKeepStaff(staffList,period);
   // 別名照合: 提出名が登録名そのもの、または登録名の別名配列に含まれれば「提出済み」とみなす（提出一覧タブ/Excel出力と同じ照合）。
-  const notSubmitted=staffList.filter(n=>!isSpacer(n)&&!submitted.some(s=>s.staffName===n||(staffAliases[n]||[]).includes(s.staffName)));
+  const notSubmitted=roster.filter(n=>!isSpacer(n)&&!submitted.some(s=>s.staffName===n||(staffAliases[n]||[]).includes(s.staffName)));
   const NW=88,CW=86,COMMENT_W=150;
   // 提出データを操作できるかの唯一の判定（2026-08-31 決定1・決定5）。提出の「提出・変更・削除」は
   // 名前の一致だけで決める＝同じ名前を名乗る端末なら誰でも触れる、という仕様上の決定。
