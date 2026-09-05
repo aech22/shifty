@@ -893,13 +893,17 @@ test("dayTypeOf: 前後を平日に挟まれた単独の祝日はholSat（土曜
 });
 
 test("dayTypeOf: 連休（2日以上の休み日の塊）の初日〜最終日前日はholSat", () => {
-  // 2026年GW: 5/2(土,休日ではないが週末)〜5/3(日,祝)〜5/4(月,祝)〜5/5(火,祝)の4日連続休み。5/4は最終日(5/5)より前
+  // 2026年GW: 5/2(土)〜5/3(日,祝)〜5/4(月,祝)〜5/5(火,祝)〜5/6(水,振替)の5日連続休み。5/4は最終日より前
   assert.strictEqual(u.dayTypeOf("2026-05-04"), "holSat");
 });
 
 test("dayTypeOf: 連休（2日以上の休み日の塊）の最終日はholSun", () => {
-  // 同じGWの塊の最終日である5/5(火・こどもの日)
-  assert.strictEqual(u.dayTypeOf("2026-05-05"), "holSun");
+  // 同じGWの塊の最終日である5/6(水・振替休日)。
+  // #110 で 2026-05-06 の振替休日を足すまで塊が5/5で終わっていたため、この行は 5/5 を最終日と書いていた。
+  // 祝日テーブルの欠落は「その日が消える」だけでなく **隣の日の曜日区分まで変える**（＝休憩・必要ポジションが
+  // 連休最終日の設定で適用されなくなる）ことの実例なので、5/5がholSatへ移ったことも併せて固定する。
+  assert.strictEqual(u.dayTypeOf("2026-05-06"), "holSun");
+  assert.strictEqual(u.dayTypeOf("2026-05-05"), "holSat");
 });
 
 test("dayTypeOf: 祝日自体が日曜日ならholSun（連休の位置によらず常に）", () => {
@@ -1946,4 +1950,78 @@ test("STAFF_KEYED_SETTING_MAPS: 凍結対象キー(PERIOD_SNAPSHOT_SETTING_KEYS)
   const missing = u.STAFF_KEYED_SETTING_MAPS.filter(k => !u.PERIOD_SNAPSHOT_SETTING_KEYS.includes(k));
   assert.deepStrictEqual(missing, [],
     `写しに凍結されないスタッフ設定マップがある: ${missing.join(",")}`);
+});
+
+// ===== 祝日テーブルのドリフト検出（バグチェック#110）=====
+// JH_DATES は手で並べた文字列の集合なので、抜けても何も壊れず「その日が平日になる」だけになる。
+// 実際 2025-02-24・2025-05-06・2026-05-06 の振替休日3件が落ちていて、同じ性質の 2025-11-24 は
+// 入っていた（＝方針ではなく記入漏れ）。落ちると休憩時間・必要ポジション・候補時間の区分と
+// シフト表の「祝」表示が全部ずれるのに、コンソールにも npm test にも何も出ない。
+// そこで計算で出した参照カレンダーと全欄を突き合わせる。年を足すときはこのテストを通すこと。
+// 春分・秋分は1980〜2099で使える近似式（既存の2025〜2028の実データと完全一致することを確認済み）。
+function _jpHolidayRef(y) {
+  const set = new Map();
+  const pad = n => String(n).padStart(2, "0");
+  const key = (m, d) => `${y}-${pad(m)}-${pad(d)}`;
+  const nthMonday = (m, n) => {
+    let c = 0;
+    for (let i = 1; i <= 31; i++) {
+      const t = new Date(Date.UTC(y, m - 1, i));
+      if (t.getUTCMonth() !== m - 1) break;
+      if (t.getUTCDay() === 1 && ++c === n) return i;
+    }
+    return null;
+  };
+  const eq = base => Math.floor(base + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4));
+  [[1, 1], [1, nthMonday(1, 2)], [2, 11], [2, 23], [3, eq(20.8431)], [4, 29], [5, 3], [5, 4], [5, 5],
+   [7, nthMonday(7, 3)], [8, 11], [9, nthMonday(9, 3)], [9, eq(23.2488)], [10, nthMonday(10, 2)],
+   [11, 3], [11, 23]].forEach(([m, d]) => set.set(key(m, d), true));
+  // 国民の休日: 祝日に前後を挟まれた平日（敬老の日と秋分の日の間に出る）
+  [...set.keys()].sort().forEach(k => {
+    const d = new Date(k + "T00:00:00Z");
+    const mid = new Date(d); mid.setUTCDate(d.getUTCDate() - 1);
+    const prev = new Date(d); prev.setUTCDate(d.getUTCDate() - 2);
+    const ms = mid.toISOString().slice(0, 10);
+    if (set.has(prev.toISOString().slice(0, 10)) && !set.has(ms) && mid.getUTCDay() !== 0) set.set(ms, true);
+  });
+  // 振替休日: 日曜の祝日 → その後の最初の「祝日でない日」
+  [...set.keys()].sort().forEach(k => {
+    const d = new Date(k + "T00:00:00Z");
+    if (d.getUTCDay() !== 0) return;
+    const n = new Date(d);
+    do { n.setUTCDate(n.getUTCDate() + 1); } while (set.has(n.toISOString().slice(0, 10)));
+    set.set(n.toISOString().slice(0, 10), true);
+  });
+  return set;
+}
+
+test("isHoliday: 祝日テーブルが計算した日本の祝日と一致する（JH_DATES が覆う全年）", () => {
+  const years = [...new Set([...u.JH_DATES].map(s => Number(String(s).slice(0, 4))))].sort();
+  assert.ok(years.length > 0, "JH_DATES が空");
+  const problems = [];
+  years.forEach(y => {
+    const ref = _jpHolidayRef(y);
+    ref.forEach((_, k) => { if (!u.isHoliday(k)) problems.push(`欠落 ${k}`); });
+    for (let m = 1; m <= 12; m++) {
+      for (let d = 1; d <= 31; d++) {
+        const dt = new Date(Date.UTC(y, m - 1, d));
+        if (dt.getUTCMonth() !== m - 1) continue;
+        const k = dt.toISOString().slice(0, 10);
+        if (u.isHoliday(k) && !ref.has(k)) problems.push(`余分 ${k}`);
+      }
+    }
+  });
+  assert.deepStrictEqual(problems, [],
+    `祝日テーブルが参照カレンダーと食い違う（対象年 ${years.join(",")}）: ${problems.join(" / ")}`);
+});
+
+test("isHoliday: 欠落していた振替休日3件（#110の回帰）", () => {
+  // どれも「祝日が日曜 → 連休の先へ押し出された振替休日」。修正前は false だった。
+  assert.strictEqual(u.isHoliday("2025-02-24"), true, "2025-02-23(日)天皇誕生日の振替");
+  assert.strictEqual(u.isHoliday("2025-05-06"), true, "2025-05-04(日)みどりの日の振替（5/5を飛ばす）");
+  assert.strictEqual(u.isHoliday("2026-05-06"), true, "2026-05-03(日)憲法記念日の振替（5/4・5/5を飛ばす）");
+  // 土日祝の判定と曜日区分にも届いていること（休憩・必要ポジション・候補時間がこれで切り替わる）
+  assert.strictEqual(u.isWeekendOrHoliday("2026-05-06"), true);
+  assert.ok(["holSat", "holSun"].includes(u.dayTypeOf("2026-05-06")),
+    `振替休日が祝日区分にならない: ${u.dayTypeOf("2026-05-06")}`);
 });
