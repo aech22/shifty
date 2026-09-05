@@ -81,9 +81,9 @@ developブランチ・mainブランチのどちらにチェックアウトして
 │   └── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗/期間の自動削除・企業アカウント）
 ├── RULES.md            ← やってはいけないこと（必読）
 ├── firebase.json       ← Firebase Hosting / Functions 設定
-├── database.rules.json ← Firebase セキュリティルール（現行。2026-07-28 に締めルールへ切替済み）
-├── database.rules.tightened.json ← 上と**バイト単位で同一の残骸**。切替は完了済みで差し替え先としての役目は無い
-│                          （消すまでは二重管理。ルールを変えたら必ず両方を同じ内容にする）
+├── database.rules.json ← Firebase セキュリティルール（**正本はこの1ファイルのみ**。2026-07-28 に締めルールへ切替済み）
+│                          ※ `database.rules.tightened.json` は 2026-09-05 に削除（切替完了後はバイト同一の残骸で、
+│                            ルール変更のたびに二重管理を強いていた。`firebase.json` はこの1本だけを参照する）
 ├── CNAME               ← shiftyshifty.app
 ├── privacy.html / terms.html ← 静的ページ（プライバシー・規約）
 ├── ogp.png             ← OGP画像（実配信物。index.html の og:image が参照）
@@ -287,7 +287,7 @@ Firebase Realtime Database
 - 全クライアントは起動時に `signInAnonymously()`（LOCAL永続化・端末ごとにuid安定）。**全ルールが `auth != null` 必須**のため未認証RESTは全拒否。実ログイン（Google/メール）は従来通り永続化しない（サインイン直前にNONEへ切替）。
 - 管理系パス（settings/periods/staff/templates/tokens/global/shops）の書き込みは `shops/{shopId}/owners/{auth.uid}` 登録者のみ。owners への自己登録は `private/adminKey` との値照合が必要で、adminKeyは管理者端末のlocalStorage（`ots_adminKeys_v1`）にのみ保存される。**スタッフURLから得られるshopIdだけでは管理操作できない**。
 - スタッフは subs の読み書きと settings/periods/staff の読みのみ（従来機能を維持）。**subs の書き込み・削除は認証済みなら誰でも通る**（`.write: auth != null && $shopId !== 'demo-toriMatsu-v1'`）。提出を触れるのを本人だけに絞っているのは **UI（app-staff.js の `canTouch`）だけ**で、ルールは名乗った名前を検証できない——2026-08-31 決定1で承知のうえ引き受けたトレードオフなので、**再検出しても「バグ」として直さない**。
-- **移行猶予は 2026-07-28 に終了済み**（`dbdd9d9`）。未claim店舗への「誰でも書き込み可」ブランチは撤去され、管理系パスは owner uid 一致が必須。**`database.rules.tightened.json` は `database.rules.json` とバイト単位で同一の残骸**で、切り替え先としての役目はもう無い（ルールを変えるときは両方を同じ内容に保つこと。2026-08-31 の `0c236ac`・`8384467` はどちらも両方を編集している）。
+- **移行猶予は 2026-07-28 に終了済み**（`dbdd9d9`）。未claim店舗への「誰でも書き込み可」ブランチは撤去され、管理系パスは owner uid 一致が必須。**ルールファイルは `database.rules.json` の1本だけ**（同内容の残骸だった `database.rules.tightened.json` は 2026-09-05 に削除済み。以後この二重管理は無い）。
 - Cloud Functions（createCheckoutSession/createPortalSession）はIDトークン検証+オーナー照合。App CheckはSDK読込済み・サイトキー未設定でスキップ中（BACKLOG参照）。
 
 ### Firebase 書き込みルール（最重要）
