@@ -361,6 +361,32 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 **2026-08-11 追記（バグチェック#67）**: 同じ根に**別の入口から2回目の到達**をした。#65 は `unlinkStoreFromCompany` 経由、#67 は `createCompany` 経由（`if (owners && !owners[uid]) continue` の未claim分岐）で、**本番のデモ店舗が owners を空のまま公開されていたため、デモURLの訪問者が自分の企業のオーナーとして登録できる状態だった**。#67 ではデモ店舗をdenylistに入れる対症療法で塞いだ（上の🔴タスク）ので、**このタスクの対象は「未claim店舗を誰でも取り込める」という設計そのものの可否**に絞られる。3回目の入口が現れる前に決着させたい。
 
+**2026-09-05 追記（バグチェック#111）— 同じ根が Cloud Functions 側にも残っている（3つ目の入口）**:
+`verifyShopOwner`（[functions/index.js:102](functions/index.js)）は `if (owners && !owners[decoded.uid])` と書かれており、
+**`owners` が空（未claim）の店舗では、認証さえ通っていれば誰でも `ok:true` が返る**。直上のコメントは
+これを「移行猶予として許可する」と説明しているが、**その移行猶予は 2026-07-28（`dbdd9d9`）に
+`database.rules.json` 側では終了している**。つまり**ルールだけが締められ、Cloud Functions は猶予のまま**という
+非対称が残っており、コメントを読んだ人は「現行の意図的な仕様」と受け取る（実際には期限切れの記述）。
+
+この判定を通っているのは**課金系4エンドポイントすべて**（`createCheckoutSession`:127・`changePlan`:195・
+**`cancelPlanChange`:320（2026-09-05 新設）**・`createPortalSession`:684）。新しい関数が同じ穴を自動的に
+引き継ぐ構造なので、エンドポイントが増えるたびに露出面が広がる。
+
+**現時点の実害は小さい**（ただし下記はいずれも実測ではなく既存記録とコード上の推論）:
+- 2026-08-25 の claim 監査（BACKLOG 記載）では、本番15店舗中14が claim 済みで**未claim はデモのみ**。
+  そのデモは4エンドポイント全てで `isDemoShop` により先に403で弾かれることを行番号で確認済み
+- 未claim店舗は Stripe の customer/subscription を持たないため、`changePlan`・`cancelPlanChange` は
+  `findActiveSubscription` が null を返して**409で止まる**。素通りしうるのは `createCheckoutSession`（＝#67 の形）
+- `unlinkStoreFromCompany` が owners を空に戻す経路は `d6c826a`（案A）で塞がれているため、
+  **稼働中の店舗が後から未claim へ戻ることは無い**
+
+**したがって残る判断は1つ**: 上の受け入れ条件で「未claim分岐を廃止する」と決めた方針を、
+`linkStoreToCompany`/`createCompany` だけでなく **`verifyShopOwner` にも適用するか**。適用するなら
+`if (!owners || !owners[decoded.uid]) return 403` の1行で、**同時にコメントの「移行猶予」の記述も消す**
+（記述だけが残ると、次に読んだ人が同じ誤解をする）。適用しない場合も、コメントを実態
+（「未claim店舗は誰でも通る。デモは isDemoShop で別途拒否している」）に直す必要がある。
+**条件A（Cloud Functions の本番デプロイ）と条件B（猶予を残すかの判断）に該当**するためループでは変更しない。
+
 ---
 
 ## 🟢 データ保存上限④-b: dry-run観察後の36ヶ月超期間データ削除の本有効化
@@ -378,6 +404,28 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] 有効化後、実際に削除が行われ`period`・`subs`・`tokens/{urlToken}`が正しく消えることを本番ログで確認する
 **影響範囲**: functions/index.js（`PURGE_OLD_PERIODS_DRY_RUN`定数1箇所）
 **備考**: 本番稼働開始 2026-08-11（デプロイ日）。孤児subs（periodIdが現存する期間に紐付かないもの）はこの削除の対象外（endDateという判定基準を持たないため）。列挙元は`/global/shops`のため、そこに載っていない孤児店舗の期間データは対象外（孤児店舗自体は`purgeInactiveShops`が別途処理）。**教訓: 「コミットした日」ではなく「本番にデプロイされた日」を観察期間の起点にすること**（バグチェック#65 の「いつ書かれたかではなく、いつから実際に走るかで判定する」と同じ形の見落とし）。
+
+**2026-09-05 追記（バグチェック#111）— 有効化する前に、カットオフ計算のJST未適用を見ておくこと**:
+`purgeOldPeriodsCutoff`（[functions/index.js:913](functions/index.js)）は
+`d.toISOString().slice(0,10)` で日付へ落としており、**`toJstDateStr` を通していない**。
+スケジュールは `timeZone("Asia/Tokyo")` なので、**JST 00:00〜09:00 に発火するとカットオフが1日古くなる**。
+
+実測（同じ式をそのまま評価）:
+
+| 発火時刻 | 算出されるカットオフ | JST基準の期待値 |
+|---|---|---|
+| JST 2026-09-05 00:30 | **2023-09-04** | 2023-09-05 |
+| JST 2026-09-05 12:00 | 2023-09-05 | 2023-09-05（一致） |
+
+**ずれる向きは「消しすぎ」ではなく「1日多く残す」**（`period.endDate >= cutoff` で残す判定のため）。
+したがって**このまま有効化してもデータを余分に消すことは無い**——今すぐ直す必要は無く、
+`PURGE_OLD_PERIODS_DRY_RUN=false` の作業を止める理由にはならない。ただし
+**削除を実際に走らせる前に「向きが安全側である」と確認したうえで着手したほうがよい**ので、
+ここに実測を残す。ついでに直すなら `tsToDate`/`toJstDateStr` と同じ扱いに揃える1行で済む
+（同じUTC/JST問題は 2026-08-25 に `planExpiry` で一度直しており、そのとき**この関数には届いていなかった**）。
+
+なお `d.setMonth(d.getMonth()-36)` の月跨ぎは、36ヶ月＝ちょうど3年で月インデックスが変わらないため
+**2月29日に発火した場合だけ**が例外（存在しない日付が3月1日へ繰り上がる＝これも1日多く残す向き）。
 
 ---
 
