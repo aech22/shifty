@@ -293,6 +293,66 @@ exports.changePlan = functions
   });
 
 // ============================================================
+// プラン変更の予約（ダウングレード）を取り消す
+//
+// 有料プランは Pro と Premium の2つしかないため、予約が入っている状態では
+// マイページの「プランを変更」の選択肢が現在プランと予約プランで2つとも除外され、
+// セクションごと消える。カスタマーポータルにもプラン変更のUIは無いので、
+// この関数が無いと **ユーザーは自分で入れた予約から降りられない**。
+//
+// changePlan は end_behavior:"release" でスケジュールを作っているので、
+// release すれば現行priceのまま通常の契約へ戻る（契約は解約されない）。
+// ============================================================
+exports.cancelPlanChange = functions
+  .region("asia-northeast1")
+  .runWith({ secrets: ["STRIPE_SECRET_KEY"] })
+  .https.onRequest(async (req, res) => {
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    if (req.method === "OPTIONS") { res.status(204).send(""); return; }
+    if (req.method !== "POST") { res.status(405).send("Method Not Allowed"); return; }
+
+    const { shopId } = req.body || {};
+    if (!shopId) { res.status(400).json({ error: "shopId は必須です" }); return; }
+    if (isDemoShop(shopId)) { res.status(403).json({ error: "デモ店舗ではプラン変更のお手続きはできません。" }); return; }
+
+    const auth = await verifyShopOwner(req, shopId);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+
+    const stripe = getStripe();
+    try {
+      const sub = await findActiveSubscription(shopId);
+      if (!sub) {
+        res.status(409).json({ error: "有効な契約が見つかりません。", code: "no_subscription" });
+        return;
+      }
+      let released = false;
+      if (sub.schedule) {
+        const scheduleId = typeof sub.schedule === "string" ? sub.schedule : sub.schedule.id;
+        try {
+          await stripe.subscriptionSchedules.release(scheduleId);
+          released = true;
+          console.log(`プラン変更予約を取り消し: shopId=${shopId} schedule=${scheduleId} sub=${sub.id}`);
+        } catch (e) {
+          // 既に released/canceled/completed なスケジュールは release できない。
+          // その場合 Stripe 側には予約が残っていないので、DBの予約表示だけ消せばよい。
+          console.warn(`スケジュールの解放をスキップ: shopId=${shopId} schedule=${scheduleId} ${e.message}`);
+        }
+      }
+      // Stripe に予約が無かった場合でも DB の予約表示は必ず消す。
+      // （予約バナーだけが残って取り消せない、という状態を作らないため）
+      await db.ref(`accounts/${shopId}`).update({ scheduledPlan: null, scheduledPlanDate: null });
+      const plan = planOfSubscription(sub);
+      if (plan) await db.ref(`accounts/${shopId}/plan`).set(plan);
+      res.status(200).json({ ok: true, released, plan: plan || null });
+    } catch (e) {
+      console.error("プラン変更予約の取り消し失敗:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+// ============================================================
 // Webhookイベント → 対象店舗(shopId)とプランの解決
 //
 // metadata は checkout.session.completed のときだけイベント本体に載っている。

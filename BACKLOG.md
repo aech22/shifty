@@ -40,6 +40,27 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ## 🟡 プラン変更の予約（ダウングレード）を、ユーザーが自分で取り消せない
 
+> **✅ 2026-09-05 実装済み（案A）／残るは Stripe 実データでの確認のみ**
+> ユーザー判断は **案A**。Cloud Function `cancelPlanChange` を新設し、有効な契約に紐づく
+> Subscription Schedule を `stripe.subscriptionSchedules.release(scheduleId)` で解放する。
+> `changePlan` が `end_behavior:"release"` で作っているので、release すれば**現行priceのまま
+> 通常の契約へ戻る**（契約は解約されない）。`changePlan` の 400 分岐（`currentPlan===plan` を弾く）
+> には触っていない。Stripe 側にスケジュールが残っていなかった場合（既に released/completed 等）も
+> **DB の `scheduledPlan`・`scheduledPlanDate` は必ず消す**——予約バナーだけが残って取り消せない、
+> という状態を作らないため。あわせてマイページの予約バナーに「予約を取り消す」ボタンを追加した。
+>
+> **実測**（375px・実ブラウザ・`MyPageTab` だけをマウントし `fetch` をスパイに差し替え＝
+> **Stripe にも Firebase にも1バイトも出していない**。`plan="premium"`・`scheduledPlan="pro"`）:
+>
+> | | 予約あり | 予約なし（対照） |
+> |---|---|---|
+> | 「プラン変更の予約中」バナー | 出る | 出ない |
+> | 「予約を取り消す」ボタン | **1個** | 0個 |
+> | 「プランを変更」セクション | **出ない**（＝起票時の問題そのもの） | 出る（「Proプランに変更」） |
+>
+> ボタンを押すと `cancelPlanChange` へ `{"shopId":"shop_test"}` を POST し、
+> 「✓ プラン変更の予約を取り消しました」が出る。`pageerror`・`console.error` ともに 0件。
+
 **目的**: Premium → Pro のダウングレードは `changePlan` が Subscription Schedule を作り、
 期間終了時に切り替える「予約」になる。マイページには青い「プラン変更の予約中」バナー
 （[app-admin.js:4614](app-admin.js)）が出るが、**その予約を取り消す導線がアプリ内にどこにも無い**。
@@ -65,7 +86,7 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 差額を払う以外に戻す手段が無い**。
 
 **受け入れ条件**:
-- [ ] 予約を取り消せるようにするかを決める（**ユーザー判断**）
+- [x] 予約を取り消せるようにするかを決める（**ユーザー判断**）→ **案A**（2026-09-05）
   - 案A: Cloud Function を1本足す（`stripe.subscriptionSchedules.release(scheduleId)`）。
     `end_behavior:"release"` で作っているので、release すれば現行priceのまま通常契約に戻る。
     バナー内に「予約を取り消す」ボタンを置く
@@ -73,7 +94,9 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
     選べるようにする（＝`changePlan(現在のplan)` を予約解除として扱えるようサーバー側も対応する）。
     現状の `changePlan` は `currentPlan===plan` を400で弾く（functions/index.js:206）ので、その分岐も変える
   - 案C: 現状維持。バナーに「取り消しはお問い合わせください」と明記するだけ（最小）
-- [ ] 決めた案を実装し、予約解除後に `accounts/{shopId}` の `scheduledPlan`・`scheduledPlanDate` が消えることを確認する
+- [x] 決めた案を実装する（`cancelPlanChange` ＋ バナーの「予約を取り消す」ボタン）。
+      **予約解除後に `accounts/{shopId}` の `scheduledPlan`・`scheduledPlanDate` が消えることは
+      コード上そう書いてあるだけで、実データでは未確認**（下の条件と同じ購入テストで閉じる）
 - [ ] Stripe の実購入（またはテスト環境）で「降格予約 → 取り消し → 期間終了をまたいでも降格しない」を通す
 
 **影響範囲**: functions/index.js（`changePlan` または新規の予約解除関数）、app-admin.js（MyPageTab の予約バナー・`changeOptions`）

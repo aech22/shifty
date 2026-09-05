@@ -4543,6 +4543,35 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
       : `✓ ${r.effectiveAt||"期間終了時"}から${PLAN_LABELS[next]}プランに変更されます`);
   };
 
+  // プラン変更の予約（ダウングレード）の取り消し。有料プランは2つしかないため、予約が入ると
+  // changeOptions が必ず空になり「プランを変更」セクションごと消える。カスタマーポータルにも
+  // プラン変更のUIが無い（2026-08-11 実測）ので、この導線が無いと利用者は自分で入れた予約から
+  // 降りられず、切替後に再アップグレードして差額を払う以外に戻す手段が無くなる。
+  const[cancelingChange,setCancelingChange]=useState(false);
+  const cancelPlanChange=async()=>{
+    if(DEMO_MODE){ tt("✕ デモではプランの購入・変更はできません"); return; }
+    if(!confirm(
+      `${PLAN_LABELS[bs.scheduledPlan]}プランへの変更予約を取り消します。\n\n`+
+      `・${PLAN_LABELS[plan]}プランのまま継続します\n`+
+      `・${bs.scheduledPlanDate||"次の更新日"}以降も現在の料金で自動更新されます\n\n`+
+      `よろしいですか？`
+    ))return;
+    ph("plan_change_canceled",{from:plan,scheduled:bs.scheduledPlan});
+    setCancelingChange(true);
+    try{
+      const idToken=await firebaseAuth?.currentUser?.getIdToken().catch(()=>null);
+      const r=await fetch(`${CF_BASE}/cancelPlanChange`,{
+        method:"POST",
+        headers:{"Content-Type":"application/json",...(idToken?{"Authorization":`Bearer ${idToken}`}:{})},
+        body:JSON.stringify({shopId}),
+      });
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok){ tt("✕ "+(d.error||"予約を取り消せませんでした")); return; }
+      tt("✓ プラン変更の予約を取り消しました");
+    }catch(e){ tt("✕ 通信エラーが発生しました"); }
+    finally{ setCancelingChange(false); }
+  };
+
   const openPortal=async()=>{
     // デモ店舗のポータルを開かせない（requestPlanAction と同じ理由）。誰かが一度でも
     // デモ店舗で決済してしまうと、以降のデモ訪問者にその人の請求情報が開いてしまう
@@ -4622,6 +4651,12 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
               {PLAN_LABELS[bs.scheduledPlan]}プランに切り替わります。
               それまでは{PLAN_LABELS[plan]}の機能をご利用いただけます。
             </div>
+            {!DEMO_MODE&&(
+              <button onClick={cancelPlanChange} disabled={cancelingChange}
+                style={{...AGray,marginTop:9,opacity:cancelingChange?.6:1}}>
+                {cancelingChange?"取り消し中…":"予約を取り消す"}
+              </button>
+            )}
           </div>
         )}
 
