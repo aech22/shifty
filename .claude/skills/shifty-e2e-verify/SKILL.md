@@ -241,6 +241,44 @@ console.log(await page.evaluate(() => window.__writes));
 
 **ゲートの検証はマウスだけで済ませない。** `pointerEvents:"none"` は**マウスしか止めない**——`disabled` でなければ Tab で到達し Enter で発火する。`document.elementFromPoint()` が対象ボタンではなく親DIVを返すことを確認しても、それは「クリックが届かない」の証明であって「押せない」の証明ではない。**`page.keyboard.press("Tab")` で到達できるか、`Enter` で実際に発火するかまで測る**（#98 の 🟡 はこれで見つかった。コードを読むだけなら「ゲートがある」で終わっていた）。
 
+### 1.8 生成されたファイル（Excel）の中身を読む＝「ユーザー操作が要る」と諦めない
+
+**Excelの実物確認は17回連続で「未検証」と書かれ続けたが、実際は出口を2つ差し替えるだけで自動化できた**（バグチェック#110）。
+`expXl` は**グローバル関数**なので、1.6節のハーネスに ExcelJS を載せて直接呼べる。
+保存は `URL.createObjectURL(blob)` → `a.click()` の2段なので、そこを差し替えて **Blob を捕まえてから ExcelJS で読み直す**。
+
+```js
+const h = await openHarness({
+  jsx: `function Harness(){return React.createElement("div",{id:"ok"},"ready");}
+        ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(Harness));`,
+  waitFor: "#ok",
+  extraHead: `<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>`,
+});
+const out = await h.page.evaluate(async () => {
+  const captured = [];
+  URL.createObjectURL = b => { captured.push(b); return "blob:stub"; };
+  HTMLAnchorElement.prototype.click = function(){};            // 保存させない
+  expXl(period, subs, staffList, m => {}, "検証店舗", { settings, staffAliases:{}, staffColors:{}, staffNumbers:{} });
+  await new Promise(r => setTimeout(r, 1200));                 // writeBuffer() は非同期
+  const wb = new ExcelJS.Workbook(); await wb.xlsx.load(await captured[0].arrayBuffer());
+  const ws = wb.worksheets[0], head = [];
+  ws.getRow(2).eachCell({ includeEmpty: true }, c => head.push(c.value == null ? "" : String(c.value)));
+  return { head, rows: ws.rowCount, cols: ws.columnCount };
+});
+```
+
+**罠**:
+- **ヘッダーは2行目**（1行目は空）。列は `[期間ラベル, 曜日, ...名前..., 曜日, 店舗名]` で、名前は前後を挟まれている。
+- **スペーサーは `"__spacer__"+token`**（`isSpacer` は `startsWith("__spacer__")`）。`"_spacer"` のような自作の値は**ただの名前として列に出る**ので、テストデータを間違えると「空白列が名前として漏れている」と誤読する。
+- **`resolver`（第7引数）の有無でファイル名が変わる**。渡さない＝期間管理タブからの出力で `_修正前.xlsx` が付き、管理者調整値を反映しない。**両方の入口を測らないと片方しか確認していないことになる**（列構成は同じでも、値は違う）。
+- `writeBuffer()` は Promise なので、`expXl` から戻った直後にはまだ Blob が無い。1秒前後待つ。
+
+**PDFはこの手が使えない**。jsPDF が `html2canvas` で**ラスタ画像に変換してから**埋め込むため、出力に読み取れる文字が残らない。
+列を機械的に見るには `buildShiftTableHtml` の戻り値を捕まえる必要があるが、これは `ShiftEditTab` 内のクロージャで外から呼べない。**PDFだけは目視が要る**。
+
+**一般化**: 「ユーザーがファイルを開かないと分からない」と分類した項目は、**まず出口の実装を読む**こと。
+`createObjectURL`/`click`/`saveAs` のような差し替え可能な出口なら自動化でき、ラスタ化のように情報がそこで失われる形なら本当に目視が要る。**理由を確かめずに「条件A（ユーザー操作）」へ送ると、今回のように17回持ち越される。**
+
 ## 2. Playwrightツールをロード
 
 ToolSearchで一括ロード（1回で済ませる）:
