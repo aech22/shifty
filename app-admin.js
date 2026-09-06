@@ -481,8 +481,13 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // Excel(:1580)・PDF(buildPdfCols) も同じ凍結名簿で出力される。他タブは props のまま＝現在値で動く。
   const todayStr=fd(new Date());
   const periodMaster=useMemo(()=>resolvePeriodMaster(period,staffListProp,settingsProp,todayStr),[period,staffListProp,settingsProp,todayStr]);
-  const staffList=periodMaster.staffList;
   const settings=periodMaster.settings;
+  // rosterStaffList = その期間の名簿そのもの（非表示スタッフを含む）。staffList = 表示・出力用に
+  // 非表示スタッフを落としたもの。以降の描画・集計・Excel・PDF はすべて staffList 側を使い、
+  // 「提出名がこの期間の名簿にあるか」の判定（isUnregisteredSubName）だけ rosterStaffList を使う。
+  // 逆にすると非表示の人の提出が未登録名に化けて、隠したはずの列が末尾に復活する（visibleStaffList のコメント）。
+  const rosterStaffList=periodMaster.staffList;
+  const staffList=visibleStaffList(rosterStaffList,settings);
   const periodLocked=periodMaster.locked;
   // 期間が生きている間はシフト作成タブを開くたびに写しを最新化し、最終日を超えたら更新を止める＝そこで凍結。
   // 「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、最終日を過ぎてから初めてアプリを
@@ -1353,7 +1358,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(dept==="kit")return realStaff.filter(n=>!hallStaff.includes(n)||kitExtraSet.has(n));
     if(dept==="hall")return realStaff.filter(n=>hallStaff.includes(n)||hallExtraSet.has(n));
     const submittedNames=subs.filter(s=>s.periodId===selPid).map(s=>s.staffName);
-    const unreg=submittedNames.filter(n=>isUnregisteredSubName(n,staffList,staffAliasesPdf,period)).sort((a,b)=>a.localeCompare(b,"ja"));
+    const unreg=submittedNames.filter(n=>isUnregisteredSubName(n,rosterStaffList,staffAliasesPdf,period)).sort((a,b)=>a.localeCompare(b,"ja"));
     return[...staffList,...unreg];
   };
   const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -1647,7 +1652,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           // 既にそうしており、設定の説明文も「Excel出力時のファイル名・シート内店舗名に反映されます」と
           // 約束している。ここだけ登録名を使うと、実際に配る側のシートにだけ設定が効かない。
           // xlShopName は凍結対象キーではないため、確定済み期間でも現在値が入る（期間タブ側と同じ）。
-          expXl(period,subs,staffList,tt,settings.xlShopName||shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings},adjResolver);
+          expXl(period,subs,rosterStaffList,tt,settings.xlShopName||shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings},adjResolver);
         }}
           style={{padding:"6px 14px",background:"#1D6F42",border:"none",borderRadius:8,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           Excel出力
@@ -2124,7 +2129,10 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   ss.forEach(s=>{if(s&&s.staffName&&!subByName.has(s.staffName))subByName.set(s.staffName,s);});
   const submittedNames=ss.map(s=>s.staffName);
   const unregistered=submittedNames.filter(n=>isUnregisteredSubName(n,staffList,staffAliases,p)).sort((a,b)=>a.localeCompare(b,"ja"));
-  const sl=[...staffList,...unregistered];
+  // 受け取る staffList は名簿そのもの（非表示スタッフを含む）。未登録名の判定には名簿を使い、
+  // 列にするときだけ非表示スタッフを落とす。呼び出し元2箇所（シフト作成タブ・期間タブ）の
+  // どちらも名簿を渡すので、絞り込みはここ1箇所で完結する。
+  const sl=[...visibleStaffList(staffList,settings),...unregistered];
   const realStaffCount=sl.filter(n=>!isSpacer(n)).length;
   if(realStaffCount===0){tt("▲ スタッフが登録されていません");return;}
   // スタッフ35名以上: 部門仕切り用スペーサー列が常に空白のままだと、印刷時に日付を見失いやすいため日付を表示する
@@ -2418,6 +2426,18 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     const cur=staffColors[name]||"black";
     const next=cur==="black"?"red":"black";
     onSaveSettings&&onSaveSettings({...settings,staffColors:{...staffColors,[name]:next}});
+  };
+  const staffHidden=settings.staffHidden||{};
+  // 非表示は「削除せずにシフト表からだけ外す」操作。staffList には手を触れないので、配布済みの提出URL・
+  // 別名・既存の提出データの紐付けは全部生きたまま、シフト作成グリッド・Excel・PDF からだけ名前が消える
+  // （実際に落としているのは visibleStaffList・app-utils.js の1箇所）。プラン制限の人数には従来どおり数える
+  // ＝登録は残っているため。値は true のみ持ち、解除時はキーごと消す（false を残すと写しの比較が無駄に動く）。
+  const toggleHidden=name=>{
+    const h={...staffHidden};
+    const next=!h[name];
+    if(next)h[name]=true;else delete h[name];
+    onSaveSettings&&onSaveSettings({...settings,staffHidden:h});
+    tt(next?`「${name}」をシフト表から非表示にしました`:`「${name}」をシフト表に表示します`);
   };
   const startEdit=n=>{setEditKey(n);setEditName(n);};
   const cancelEdit=()=>{setEditKey(null);setEditName("");};
@@ -2809,7 +2829,7 @@ const dragIdxRef=useRef(null);
               <button onClick={()=>editRetention(row.n)} style={AD}>削除</button>
             </div>
           </div>
-        ):(()=>{const n=row.n,i=row.i;return(
+        ):(()=>{const n=row.n,i=row.i;const hidden=!isSpacer(n)&&!!staffHidden[n];return(
           <div key={i} style={{marginBottom:6}}>
           {isSpacer(n)
             ?<div data-staff-idx={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",border:dragOverIdx===i&&dragIdx!==null?"2px solid var(--c-accent)":"1px dashed var(--c-border2)",borderRadius:8,background:"transparent",opacity:dragIdx===i?.4:1,transition:"opacity .15s"}}>
@@ -2817,7 +2837,7 @@ const dragIdxRef=useRef(null);
               <span style={{flex:1,fontSize:12,textAlign:"center",color:"var(--c-text4)",letterSpacing:2}}>─ 空白列 ─</span>
               <button onClick={()=>del(i)} style={AD}>削除</button>
             </div>
-            :<div data-staff-idx={i} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:dragOverIdx===i&&dragIdx!==null?"2px solid var(--c-accent)":"1px solid var(--c-border)",borderRadius:8,opacity:dragIdx===i?.4:1,transition:"opacity .15s"}}>
+            :<div data-staff-idx={i} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:dragOverIdx===i&&dragIdx!==null?"2px solid var(--c-accent)":"1px solid var(--c-border)",borderRadius:8,opacity:dragIdx===i?.4:(hidden?.6:1),transition:"opacity .15s"}}>
             {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} onContextMenu={e=>e.preventDefault()} style={{cursor:"grab",color:dragIdx===i?"var(--c-accent)":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",WebkitUserSelect:"none",lineHeight:1,flexShrink:0,touchAction:"none"}}>⠿</span>}
             <span style={{fontSize:13,color:"var(--c-text4)",minWidth:24,textAlign:"center"}}>{staffList.slice(0,i).filter(x=>!isSpacer(x)).length+1}</span>
             {editKey===n
@@ -2829,7 +2849,10 @@ const dragIdxRef=useRef(null);
               </>
               :<>
                 {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid var(--c-border2)",cursor:"pointer",flexShrink:0,padding:0}}/>}
-                <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{n}</span>
+                <span style={{flex:1,minWidth:0}}>
+                  <span style={{fontSize:14,color:hidden?"var(--c-text3)":"var(--c-text)",fontWeight:600}}>{n}</span>
+                  {hidden&&<span style={{display:"block",fontSize:11,color:"var(--c-text4)",marginTop:2,whiteSpace:"nowrap"}}>非表示 ／ シフト作成タブ・Excel・PDF に出ません（提出は今までどおりできます）</span>}
+                </span>
                 {isPremium&&<input value={(settings.staffNumbers||{})[n]||""} onChange={e=>{const v=e.target.value;const nums={...(settings.staffNumbers||{})};if(v)nums[n]=v;else delete nums[n];onSaveSettings&&onSaveSettings({...settings,staffNumbers:nums});}} maxLength={8} placeholder="番号" style={{width:64,fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",flexShrink:0,textAlign:"center"}}/>}
                 {isPremium&&<select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
                   {Object.entries({employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})}).map(([v,t])=>{const label=(typeof t==="object"?t.name:"")||STAFF_TYPE_LABELS[v]||"";return label?<option key={v} value={v}>{label}</option>:null;})}
@@ -2840,6 +2863,7 @@ const dragIdxRef=useRef(null);
                 {isPremium&&<button onClick={()=>{setPosKey(posKey===n?null:n);}} style={{padding:"6px 8px",background:posKey===n?"rgba(59,130,246,.15)":"rgba(59,130,246,.06)",border:`1px solid ${posKey===n?"#3B82F6":"rgba(59,130,246,.3)"}`,borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer",width:118,boxSizing:"border-box",flexShrink:0,whiteSpace:"nowrap",textAlign:"center"}}>
                   ポジション{(((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length)>0?` (${((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length})`:""}
                 </button>}
+                <button onClick={()=>toggleHidden(n)} title="シフト作成タブ・Excel・PDF から名前を外す（登録と提出URLはそのまま）" style={{padding:"6px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text3)",fontSize:12,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>{hidden?"表示":"非表示"}</button>
                 <button onClick={()=>startEdit(n)} style={{padding:"6px 10px",background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.25)",borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer"}}>編集</button>
                 <button onClick={()=>del(i)} style={AD}>削除</button>
               </>
