@@ -487,7 +487,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 「提出名がこの期間の名簿にあるか」の判定（isUnregisteredSubName）だけ rosterStaffList を使う。
   // 逆にすると非表示の人の提出が未登録名に化けて、隠したはずの列が末尾に復活する（visibleStaffList のコメント）。
   const rosterStaffList=periodMaster.staffList;
-  const staffList=visibleStaffList(rosterStaffList,settings);
+  const staffList=visibleStaffList(rosterStaffList,settings,period);
   const periodLocked=periodMaster.locked;
   // 期間が生きている間はシフト作成タブを開くたびに写しを最新化し、最終日を超えたら更新を止める＝そこで凍結。
   // 「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、最終日を過ぎてから初めてアプリを
@@ -2132,7 +2132,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   // 受け取る staffList は名簿そのもの（非表示スタッフを含む）。未登録名の判定には名簿を使い、
   // 列にするときだけ非表示スタッフを落とす。呼び出し元2箇所（シフト作成タブ・期間タブ）の
   // どちらも名簿を渡すので、絞り込みはここ1箇所で完結する。
-  const sl=[...visibleStaffList(staffList,settings),...unregistered];
+  const sl=[...visibleStaffList(staffList,settings,p),...unregistered];
   const realStaffCount=sl.filter(n=>!isSpacer(n)).length;
   if(realStaffCount===0){tt("▲ スタッフが登録されていません");return;}
   // スタッフ35名以上: 部門仕切り用スペーサー列が常に空白のままだと、印刷時に日付を見失いやすいため日付を表示する
@@ -2427,17 +2427,31 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     const next=cur==="black"?"red":"black";
     onSaveSettings&&onSaveSettings({...settings,staffColors:{...staffColors,[name]:next}});
   };
-  const staffHidden=settings.staffHidden||{};
   // 非表示は「削除せずにシフト表からだけ外す」操作。staffList には手を触れないので、配布済みの提出URL・
   // 別名・既存の提出データの紐付けは全部生きたまま、シフト作成グリッド・Excel・PDF からだけ名前が消える
   // （実際に落としているのは visibleStaffList・app-utils.js の1箇所）。プラン制限の人数には従来どおり数える
-  // ＝登録は残っているため。値は true のみ持ち、解除時はキーごと消す（false を残すと写しの比較が無駄に動く）。
+  // ＝登録は残っているため。
+  // **範囲で持つ**（2026-09-06 決定）: 非表示にした時点の最新期間から、解除した時点の最新期間の
+  // 1つ手前までが非表示になり、解除した期間からは再び出る。境界はどちらも latestPeriod の startDate。
+  // 範囲の読み書きは app-utils.js（hideStaffFrom / showStaffFrom）に寄せてあり、ここは入口だけ持つ。
+  const hiddenNow=name=>isStaffHiddenNow(settings,name);
+  const openHiddenFrom=name=>{
+    const r=staffHiddenRanges(settings,name).find(x=>x.to==null);
+    return r?r.from:null;
+  };
+  const periodLabelOfStart=sd=>{
+    const p=periods.find(x=>x&&x.startDate===sd);
+    return (p&&p.label)||sd||"";
+  };
   const toggleHidden=name=>{
-    const h={...staffHidden};
-    const next=!h[name];
-    if(next)h[name]=true;else delete h[name];
-    onSaveSettings&&onSaveSettings({...settings,staffHidden:h});
-    tt(next?`「${name}」をシフト表から非表示にしました`:`「${name}」をシフト表に表示します`);
+    const sd=latestPeriod?latestPeriod.startDate:null;
+    const turningOn=!hiddenNow(name);
+    const ns=turningOn?hideStaffFrom(settings,name,sd):showStaffFrom(settings,name,sd);
+    if(ns===settings)return; // 変化なし（既に同じ状態）なら書き込まない
+    onSaveSettings&&onSaveSettings(ns);
+    const lbl=sd?`「${periodLabelOfStart(sd)}」`:"";
+    if(turningOn)tt(sd?`「${name}」を${lbl}以降のシフト表から非表示にしました`:`「${name}」をシフト表から非表示にしました`);
+    else tt(sd?`「${name}」を${lbl}から表示に戻しました（それより前の期間は非表示のままです）`:`「${name}」をシフト表に表示します`);
   };
   const startEdit=n=>{setEditKey(n);setEditName(n);};
   const cancelEdit=()=>{setEditKey(null);setEditName("");};
@@ -2829,7 +2843,7 @@ const dragIdxRef=useRef(null);
               <button onClick={()=>editRetention(row.n)} style={AD}>削除</button>
             </div>
           </div>
-        ):(()=>{const n=row.n,i=row.i;const hidden=!isSpacer(n)&&!!staffHidden[n];return(
+        ):(()=>{const n=row.n,i=row.i;const hidden=!isSpacer(n)&&hiddenNow(n);const hiddenFrom=hidden?openHiddenFrom(n):null;return(
           <div key={i} style={{marginBottom:6}}>
           {isSpacer(n)
             ?<div data-staff-idx={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",border:dragOverIdx===i&&dragIdx!==null?"2px solid var(--c-accent)":"1px dashed var(--c-border2)",borderRadius:8,background:"transparent",opacity:dragIdx===i?.4:1,transition:"opacity .15s"}}>
@@ -2851,7 +2865,9 @@ const dragIdxRef=useRef(null);
                 {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid var(--c-border2)",cursor:"pointer",flexShrink:0,padding:0}}/>}
                 <span style={{flex:1,minWidth:0}}>
                   <span style={{fontSize:14,color:hidden?"var(--c-text3)":"var(--c-text)",fontWeight:600}}>{n}</span>
-                  {hidden&&<span style={{display:"block",fontSize:11,color:"var(--c-text4)",marginTop:2,whiteSpace:"nowrap"}}>非表示 ／ シフト作成タブ・Excel・PDF に出ません（提出は今までどおりできます）</span>}
+                  {hidden&&<span style={{display:"block",fontSize:11,color:"var(--c-text4)",marginTop:2,whiteSpace:"nowrap"}}>
+                    {hiddenFrom?`非表示（${periodLabelOfStart(hiddenFrom)}以降）`:"非表示"} ／ シフト作成タブ・Excel・PDF に出ません（提出は今までどおりできます）
+                  </span>}
                 </span>
                 {isPremium&&<input value={(settings.staffNumbers||{})[n]||""} onChange={e=>{const v=e.target.value;const nums={...(settings.staffNumbers||{})};if(v)nums[n]=v;else delete nums[n];onSaveSettings&&onSaveSettings({...settings,staffNumbers:nums});}} maxLength={8} placeholder="番号" style={{width:64,fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",flexShrink:0,textAlign:"center"}}/>}
                 {isPremium&&<select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>

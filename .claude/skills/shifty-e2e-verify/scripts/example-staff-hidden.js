@@ -51,6 +51,8 @@ async function staffTab() {
   });
   R.clickShow = await h.clickExact("表示", { rowText: "佐藤" });
   R.afterToggleBack = await h.evaluate(() => window.__settings.staffHidden);
+  // 同じ期間の中で付けて外したので、何も隠していない範囲は残さない＝キーごと消える
+  R.afterToggleBackIsGone = R.afterToggleBack === undefined;
   R.spacerHasNoHideBtn = await h.evaluate(() => {
     const sp = [...document.querySelectorAll("[data-staff-idx]")].find(r => r.innerText.includes("空白列"));
     return sp ? ![...sp.querySelectorAll("button")].some(b => b.innerText.trim() === "非表示") : "spacer-row-not-found";
@@ -82,9 +84,17 @@ async function shiftEditTab() {
     `,
   });
   R.gridBefore = await h.gridStaffNames();
-  await h.evaluate(() => window.__setSettings({ shopId: "s1", candidates: [], staffColors: {}, staffAliases: {}, staffHidden: { "佐藤": true } }));
+  await h.evaluate(() => window.__setSettings({ shopId: "s1", candidates: [], staffColors: {}, staffAliases: {}, staffHidden: { "佐藤": [{ from: "2026-10-01", to: null }] } }));
   await h.page.waitForTimeout(400);
   R.gridAfter = await h.gridStaffNames();
+  // 範囲が本当に期間ごとに評価されているかを確かめる。開始をこの期間より後（11/01）にすると、
+  // 同じ非表示設定のままでも 佐藤 は戻ってくるはず。戻らなければ期間を見ずに隠している。
+  await h.evaluate(() => window.__setSettings({ shopId: "s1", candidates: [], staffColors: {}, staffAliases: {}, staffHidden: { "佐藤": [{ from: "2026-11-01", to: null }] } }));
+  await h.page.waitForTimeout(400);
+  R.gridWithLaterRange = await h.gridStaffNames();
+  // 検証の続きは「この期間が非表示の範囲に入っている」状態で行う
+  await h.evaluate(() => window.__setSettings({ shopId: "s1", candidates: [], staffColors: {}, staffAliases: {}, staffHidden: { "佐藤": [{ from: "2026-10-01", to: null }] } }));
+  await h.page.waitForTimeout(400);
 
   // グリッドの列だけでなく、タブ全体（ヒートマップ・休みカウント・勤務時間集計）から
   // 名前が消えていることを見る。これらは realStaff = staffList.filter(!isSpacer) から導出されるので
@@ -107,7 +117,7 @@ async function shiftEditTab() {
   R.excelHeadFromTab = await readExcelHead();
   // Excel②: 期間管理タブと同じ呼び方（resolver なし）。列構成は同じでも入口が違うので両方測る。
   R.excelHead = await h.evaluate(async () => {
-    const settings = { shopId: "s1", candidates: [], staffColors: {}, staffAliases: {}, staffHidden: { "佐藤": true } };
+    const settings = { shopId: "s1", candidates: [], staffColors: {}, staffAliases: {}, staffHidden: { "佐藤": [{ from: "2026-10-01", to: null }] } };
     expXl(window.__period, window.__subs, window.__staffList, () => { }, "検証店舗",
       { staffColors: {}, staffAliases: {}, staffNumbers: {}, settings });
     await new Promise(r => setTimeout(r, 1500));
@@ -138,15 +148,17 @@ async function shiftEditTab() {
   const verdict = {
     step1_hideButtonOnEveryRealStaff: R.hideButtonRows === 3,
     step1_clickHit: R.clickHide === "ok" && R.clickShow === "ok",
-    step1_savedToStaffHidden: JSON.stringify(R.savedHidden) === JSON.stringify({ "佐藤": true }),
+    step1_savedAsRangeFromLatestPeriod: JSON.stringify(R.savedHidden)
+      === JSON.stringify({ "佐藤": [{ from: "2026-10-01", to: null }] }),
     step1_staffListUntouched: R.staffListUntouched === true,
     step1_labelFlipsToShow: (R.labelsAfterHide || []).includes("表示") && !(R.labelsAfterHide || []).includes("非表示"),
     step1_captionShown: R.captionShown === true,
-    step1_toggleBackDeletesKey: JSON.stringify(R.afterToggleBack) === "{}",
+    step1_toggleBackDeletesKey: R.afterToggleBackIsGone === true,
     step1_spacerHasNoHideButton: R.spacerHasNoHideBtn === true,
     step2_gridHadThree: (R.gridBefore || []).length === 3,
     step2_gridDropsHidden: !(R.gridAfter || []).includes("佐藤")
       && (R.gridAfter || []).includes("田中") && (R.gridAfter || []).includes("鈴木"),
+    step2_rangeIsEvaluatedPerPeriod: (R.gridWithLaterRange || []).includes("佐藤"),
     step2_tabDropsHiddenEverywhere: R.tabTextHasHidden === false,
     step2_excelFromTabButton: Array.isArray(R.excelHeadFromTab) && R.excelHeadFromTab.length > 0
       && !R.excelHeadFromTab.includes("佐藤")

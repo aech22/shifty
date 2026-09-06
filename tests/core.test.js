@@ -1932,16 +1932,80 @@ test("aliasOwnerOf: 弾かなかった場合に実際に起きること（resolv
   assert.strictEqual(u.aliasOwnerOf("たなか", al), "鈴木");
 });
 
+// 期間の並び（startDate 昇順）。P2 で非表示にし、P4 で解除する筋書きを共有する。
+const HP = {
+  p1: { id: "p1", label: "9月前半", startDate: "2026-09-01", endDate: "2026-09-15" },
+  p2: { id: "p2", label: "9月後半", startDate: "2026-09-16", endDate: "2026-09-30" },
+  p3: { id: "p3", label: "10月前半", startDate: "2026-10-01", endDate: "2026-10-15" },
+  p4: { id: "p4", label: "10月後半", startDate: "2026-10-16", endDate: "2026-10-31" },
+  p5: { id: "p5", label: "11月前半", startDate: "2026-11-01", endDate: "2026-11-15" },
+};
+
+test("staffHidden: 非表示にした期間から解除した期間の1つ前までが非表示（2026-09-06 ユーザー決定・仕様の本体）", () => {
+  // 「非表示にした時の最新の期間から、解除した時の最新の期間の1個前まで非表示。
+  //   解除時の最新の期間では表示される」をそのまま固定する。
+  const hidden = u.hideStaffFrom({}, "佐藤", HP.p2.startDate);      // P2 が最新のときに非表示にした
+  const after = u.showStaffFrom(hidden, "佐藤", HP.p4.startDate);   // P4 が最新のときに解除した
+  const inP = p => u.isStaffHiddenInPeriod("佐藤", after, p);
+  assert.strictEqual(inP(HP.p1), false, "非表示にする前の期間は表示のまま");
+  assert.strictEqual(inP(HP.p2), true, "非表示にした時点の最新期間から非表示");
+  assert.strictEqual(inP(HP.p3), true, "その間の期間も非表示");
+  assert.strictEqual(inP(HP.p4), false, "解除した時点の最新期間からは表示に戻る");
+  assert.strictEqual(inP(HP.p5), false, "それ以降も表示");
+  // 解除前は上限が無いので、以降ずっと非表示
+  assert.strictEqual(u.isStaffHiddenInPeriod("佐藤", hidden, HP.p5), true, "未解除なら先の期間も非表示");
+  assert.strictEqual(u.isStaffHiddenNow(hidden, "佐藤"), true);
+  assert.strictEqual(u.isStaffHiddenNow(after, "佐藤"), false, "解除後は『いま非表示』ではない");
+});
+
+test("staffHidden: 非表示と解除を繰り返しても過去の範囲が消えない", () => {
+  let s = u.hideStaffFrom({}, "佐藤", HP.p1.startDate);
+  s = u.showStaffFrom(s, "佐藤", HP.p2.startDate);   // P1 だけ非表示
+  s = u.hideStaffFrom(s, "佐藤", HP.p3.startDate);
+  s = u.showStaffFrom(s, "佐藤", HP.p5.startDate);   // P3・P4 が非表示
+  assert.strictEqual(u.staffHiddenRanges(s, "佐藤").length, 2, "範囲は2本残る（上書きしない）");
+  const inP = p => u.isStaffHiddenInPeriod("佐藤", s, p);
+  assert.deepStrictEqual([inP(HP.p1), inP(HP.p2), inP(HP.p3), inP(HP.p4), inP(HP.p5)],
+    [true, false, true, true, false], "1回目の休職中に配った期間に名前が生えない");
+});
+
+test("staffHidden: 同じ期間の中で付けて外したら範囲ごと消える", () => {
+  const s = u.showStaffFrom(u.hideStaffFrom({}, "佐藤", HP.p2.startDate), "佐藤", HP.p2.startDate);
+  assert.deepStrictEqual(u.staffHiddenRanges(s, "佐藤"), [], "何も隠していない範囲は残さない");
+  assert.strictEqual(s.staffHidden, undefined, "空になったらキーごと消す（Firebaseの読み戻しと形を揃える）");
+  assert.strictEqual(u.hideStaffFrom(s, "佐藤", HP.p2.startDate) !== s, true, "付け直しはできる");
+  // 既に非表示なら二重に開かない
+  const h = u.hideStaffFrom({}, "佐藤", HP.p2.startDate);
+  assert.strictEqual(u.hideStaffFrom(h, "佐藤", HP.p3.startDate), h, "変化なしなら同じ参照を返す＝書き込まない");
+});
+
+test("staffHidden: 旧形式（true）を読んでも壊れない（本番に出ているデータの後方互換）", () => {
+  const legacy = { staffHidden: { "佐藤": true } };
+  assert.deepStrictEqual(u.staffHiddenRanges(legacy, "佐藤"), [{ from: null, to: null }],
+    "下限も上限もない1本の範囲として読む＝従来どおり全期間で非表示");
+  assert.strictEqual(u.isStaffHiddenInPeriod("佐藤", legacy, HP.p1), true);
+  assert.strictEqual(u.isStaffHiddenNow(legacy, "佐藤"), true);
+  const released = u.showStaffFrom(legacy, "佐藤", HP.p4.startDate);
+  assert.strictEqual(u.isStaffHiddenInPeriod("佐藤", released, HP.p3), true, "解除前の期間は非表示のまま");
+  assert.strictEqual(u.isStaffHiddenInPeriod("佐藤", released, HP.p4), false, "解除した期間からは表示");
+  // Firebaseが配列を数値キーのオブジェクトで返す形も読める
+  const fb = { staffHidden: { "佐藤": { 0: { from: "2026-09-16", to: null } } } };
+  assert.strictEqual(u.isStaffHiddenInPeriod("佐藤", fb, HP.p2), true);
+});
+
 test("visibleStaffList: 非表示スタッフだけを名簿から落とす（空白列は残す）", () => {
   const list = ["田中", "佐藤", "__spacer__1", "鈴木"];
-  assert.deepStrictEqual(u.visibleStaffList(list, { staffHidden: { "佐藤": true } }),
+  const hideSato = u.hideStaffFrom({}, "佐藤", HP.p1.startDate);
+  assert.deepStrictEqual(u.visibleStaffList(list, hideSato, HP.p2),
     ["田中", "__spacer__1", "鈴木"], "非表示にした人だけ消える");
-  assert.deepStrictEqual(u.visibleStaffList(list, {}), list, "設定が無ければ全員出る");
-  assert.deepStrictEqual(u.visibleStaffList(list, undefined), list, "settings 未指定でも落ちない");
-  assert.deepStrictEqual(u.visibleStaffList(undefined, { staffHidden: { "佐藤": true } }), [], "名簿未指定でも落ちない");
+  assert.deepStrictEqual(u.visibleStaffList(list, {}, HP.p2), list, "設定が無ければ全員出る");
+  assert.deepStrictEqual(u.visibleStaffList(list, undefined, HP.p2), list, "settings 未指定でも落ちない");
+  assert.deepStrictEqual(u.visibleStaffList(undefined, hideSato, HP.p2), [], "名簿未指定でも落ちない");
+  assert.deepStrictEqual(u.visibleStaffList(list, hideSato, null), list,
+    "期間が特定できないときは隠さない（渡し忘れで全員消えるより安全側）");
   // 空白列は staffList の中でキッチン/ホールの境界（ShiftEditTab の spIdx）なので、
   // 非表示にしても実スタッフの前後関係が入れ替わらないことを確かめる
-  const v = u.visibleStaffList(["田中", "佐藤", "__spacer__1", "鈴木"], { staffHidden: { "田中": true } });
+  const v = u.visibleStaffList(list, u.hideStaffFrom({}, "田中", HP.p1.startDate), HP.p2);
   assert.ok(v.indexOf("__spacer__1") < v.indexOf("鈴木"), "鈴木はホール側のまま");
 });
 
@@ -1950,28 +2014,30 @@ test("visibleStaffList: 非表示にしても『未登録の提出名』には�
   // expXl / buildPdfCols が末尾に足す未登録列としてそのまま復活する（隠したのに出る）。
   // 判定は必ず生の名簿で行う、という取り決めをここで固定する。
   const roster = ["田中", "佐藤"];
-  const settings = { staffHidden: { "佐藤": true } };
+  const settings = u.hideStaffFrom({}, "佐藤", HP.p1.startDate);
   assert.strictEqual(u.isUnregisteredSubName("佐藤", roster, {}, null), false,
     "名簿で判定すれば未登録ではない");
-  assert.strictEqual(u.isUnregisteredSubName("佐藤", u.visibleStaffList(roster, settings), {}, null), true,
+  assert.strictEqual(u.isUnregisteredSubName("佐藤", u.visibleStaffList(roster, settings, HP.p2), {}, null), true,
     "絞り込み後の名簿で判定すると未登録に化ける＝この渡し方をしてはいけない");
 });
 
-test("staffHidden: 確定済み期間では非表示にしても名前が残る（2026-09-06 ユーザー決定）", () => {
-  // 「確定済みの期間は表示で良い」＝配り終えたシフト表は後から変えない、という決定を固定する。
-  // staffHidden を PERIOD_SNAPSHOT_SETTING_KEYS に入れてあるので、終了して写しを持つ期間では
-  // 写しに無い凍結対象キーが現在値ごと落ち、その期間だけ従来どおり全員が出る。
-  const settings = { staffHidden: { "佐藤": true }, staffColors: {} };
-  const ended = { id: "p1", endDate: "2026-08-31", snapshot: { staffList: ["田中", "佐藤"], settings: { staffColors: {} } } };
-  const m = u.resolvePeriodMaster(ended, ["田中", "佐藤"], settings, "2026-09-06");
-  assert.strictEqual(m.locked, true, "終了＋写しあり＝凍結");
-  assert.strictEqual(m.settings.staffHidden, undefined, "写しに無い凍結対象キーは現在値ごと落ちる");
-  assert.deepStrictEqual(u.visibleStaffList(m.staffList, m.settings), ["田中", "佐藤"],
-    "確定済み期間のシフト表・Excel・PDF には名前が残る");
-  // 生きている期間は現在値を見るので、非表示にした瞬間に消える
-  const live = u.resolvePeriodMaster({ id: "p2", endDate: "2026-09-30" }, ["田中", "佐藤"], settings, "2026-09-06");
-  assert.strictEqual(live.locked, false);
-  assert.deepStrictEqual(u.visibleStaffList(live.staffList, live.settings), ["田中"]);
+test("staffHidden: 写しに凍結しない（範囲が唯一の正本。終了した期間でも現在の範囲で判定する）", () => {
+  // staffHidden は値そのものが期間の範囲を持つので、写しへ焼くと同じ問いへの答えが2つできる。
+  // 凍結対象外のキーは resolvePeriodMaster が現在値のまま残す＝終了した期間もその startDate で評価される。
+  assert.ok(!u.PERIOD_SNAPSHOT_SETTING_KEYS.includes("staffHidden"), "凍結対象に入れない");
+  assert.ok(u.PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS.includes("staffHidden"), "除外は明示的に登録する");
+  const settings = { ...u.hideStaffFrom({}, "佐藤", HP.p3.startDate), staffColors: {} };
+  // P1 は終了して写しを持つ。非表示の範囲は P3 以降なので、この期間には名前が残る。
+  const endedBefore = { ...HP.p1, snapshot: { staffList: ["田中", "佐藤"], settings: { staffColors: {} } } };
+  const m1 = u.resolvePeriodMaster(endedBefore, ["田中", "佐藤"], settings, "2026-11-20");
+  assert.strictEqual(m1.locked, true, "終了＋写しあり＝凍結");
+  assert.deepStrictEqual(u.visibleStaffList(m1.staffList, m1.settings, endedBefore), ["田中", "佐藤"],
+    "非表示にする前に配り終えた期間には名前が残る");
+  // P3 も終了して写しを持つが、こちらは非表示の範囲に入るので消える（写しに焼いていないから効く）
+  const endedInside = { ...HP.p3, snapshot: { staffList: ["田中", "佐藤"], settings: { staffColors: {} } } };
+  const m3 = u.resolvePeriodMaster(endedInside, ["田中", "佐藤"], settings, "2026-11-20");
+  assert.deepStrictEqual(u.visibleStaffList(m3.staffList, m3.settings, endedInside), ["田中"],
+    "非表示にしていた間の期間は、終了後も非表示のまま");
 });
 
 test("staffHidden: プランの人数制限には数える（2026-09-06 ユーザー決定）", () => {
@@ -1986,8 +2052,9 @@ test("staffHidden: プランの人数制限には数える（2026-09-06 ユー�
 });
 
 test("staffHidden: 改名でキーが移り、削除の後始末で落ちる（STAFF_KEYED_SETTING_MAPS 登録の実効確認）", () => {
-  const s = u.renameStaffInSettings({ staffHidden: { "佐藤": true } }, "佐藤", "佐藤 花子");
-  assert.deepStrictEqual(s.staffHidden, { "佐藤 花子": true },
+  const ranges = [{ from: "2026-09-16", to: null }];
+  const s = u.renameStaffInSettings({ staffHidden: { "佐藤": ranges } }, "佐藤", "佐藤 花子");
+  assert.deepStrictEqual(s.staffHidden, { "佐藤 花子": ranges },
     "改名で移し替わらないと、改名した瞬間にその人がシフト表へ復活する");
   assert.ok(u.STAFF_KEYED_SETTING_MAPS.includes("staffHidden"),
     "settingsWithoutStaff（削除の後始末）はこの一覧を見るので、登録が無いと削除後もキーが残る");
@@ -2008,9 +2075,21 @@ test("STAFF_KEYED_SETTING_MAPS: スタッフ名キーの設定マップ一覧が
 
 test("STAFF_KEYED_SETTING_MAPS: 凍結対象キー(PERIOD_SNAPSHOT_SETTING_KEYS)に全て含まれる", () => {
   // 含まれないマップがあると、そのマップだけ写しの側で改名が届かない＝#107 の再発になる。
-  const missing = u.STAFF_KEYED_SETTING_MAPS.filter(k => !u.PERIOD_SNAPSHOT_SETTING_KEYS.includes(k));
+  // 例外は PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS に**名指しで**登録したものだけ。
+  // 「凍結しない」という判断は個別に理由が要るので、うっかり足したマップが素通りしないよう
+  // 除外リスト側も STAFF_KEYED_SETTING_MAPS に載っていることを併せて確かめる。
+  const exempt = u.PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS;
+  const missing = u.STAFF_KEYED_SETTING_MAPS
+    .filter(k => !exempt.includes(k))
+    .filter(k => !u.PERIOD_SNAPSHOT_SETTING_KEYS.includes(k));
   assert.deepStrictEqual(missing, [],
     `写しに凍結されないスタッフ設定マップがある: ${missing.join(",")}`);
+  const stray = exempt.filter(k => !u.STAFF_KEYED_SETTING_MAPS.includes(k));
+  assert.deepStrictEqual(stray, [],
+    `除外リストにスタッフ設定マップでないキーがある: ${stray.join(",")}`);
+  const both = exempt.filter(k => u.PERIOD_SNAPSHOT_SETTING_KEYS.includes(k));
+  assert.deepStrictEqual(both, [],
+    `除外と凍結の両方に載っている（どちらが正か決まっていない）: ${both.join(",")}`);
 });
 
 // ===== 祝日テーブルのドリフト検出（バグチェック#110）=====

@@ -116,8 +116,14 @@ genToken() / genSecureId(len)   // ランダムID生成
 isSpacer(n) / resolveAlias / buildSuggestList
 aliasOwnerOf(name, staffAliases, selfName)  // その名前を別名にしている他人。addAlias（登録名と同じ別名を禁止）の反対側の入口＝スタッフ追加・改名で使う。通さないと「他人の別名と同名のスタッフ」が作れ、本人の提出が別人のsubへ入る（#107）
 renameStaffInSettings / renameStaffInPeriods // 改名時のキー移し替え。settings 本体と period.snapshot.settings の両方に同じものを当てる（写しだけ旧名で残ると確定済み期間のシフトが空欄になる・#107）
-visibleStaffList(list, settings)         // settings.staffHidden の名前を名簿から落とす（非表示スタッフ）。シフト作成グリッド・ヒートマップ・Excel・PDF はこれを通した名簿で描く。**isUnregisteredSubName には通さない**（通すと非表示の人の提出が未登録名に化けてExcel/PDFの末尾に列として復活する）。staffList 本体は触らないので提出URL・別名・提出データの紐付けは生きたまま
+staffHiddenRanges / isStaffHiddenInPeriod / isStaffHiddenNow / hideStaffFrom / showStaffFrom
+                           // スタッフの非表示。**期間の範囲**で持つ（2026-09-06 決定）。`settings.staffHidden[名前] = [{from,to}]` で
+                           // from=非表示にした時点の最新期間のstartDate（含む）・to=解除した時点の最新期間のstartDate（**含まない**）。
+                           // 「解除した期間からは再び出る／その1つ前までは非表示のまま」を to の非包含で表している。複数回の休職に耐えるよう配列。
+                           // 旧形式 `true`（範囲を持たなかった頃の本番データ）は下限も上限もない1本の範囲として読む
+visibleStaffList(list, settings, period) // 上の判定で名簿から落とす。シフト作成グリッド・ヒートマップ・Excel・PDF はこれを通した名簿で描く。**period を必ず渡す**（渡さないと隠さない側に倒れる）。**isUnregisteredSubName には通さない**（通すと非表示の人の提出が未登録名に化けてExcel/PDFの末尾に列として復活する）。staffList 本体は触らないので提出URL・別名・提出データの紐付けは生きたまま
 STAFF_KEYED_SETTING_MAPS   // スタッフ名をキーに持つ設定マップ7件の**正本**（+ overtimeSettings.byStaff で計8）。改名（renameStaffInSettings）と削除の後始末（app-admin.js の settingsWithoutStaff）の**両方がここを参照する**。新しいマップを足すときはここに登録し、あわせて PERIOD_SNAPSHOT_SETTING_KEYS にも入れる（入れないと写しの側で改名が届かず #107 が再発する）。一覧を別の場所へ書き写さないこと——tests/core.test.js がドリフトを検出する（#108）
+PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS // 上の例外＝**意図的に凍結しない**マップ（現在は staffHidden だけ）。値そのものが期間の範囲を持つので写しに焼くと同じ問いへの答えが2つできる。凍結対象外のキーは resolvePeriodMaster が現在値のまま残すため、終了した期間もその startDate で評価される
 // 末尾に module.exports ガード（Nodeテスト用）
 ```
 
@@ -335,7 +341,7 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              staffAttributes?: {[name]: 属性ID}, staffTypeLimits?: {[属性ID]: 制限},
              overtimeSettings?: {byStaff: {[name]: {lunch,dinner}}}, staffNumbers?: {[name]: string},
              xlShopName?: string, staffColors?: {[name]: "red"|"black"},
-             staffAliases?: {[registered]: string[]}, staffHidden?: {[name]: true}, periodUnit?: "2week"|"1month" }
+             staffAliases?: {[registered]: string[]}, staffHidden?: {[name]: {from:string|null,to:string|null}[]}, periodUnit?: "2week"|"1month" }
 ```
 
 ---

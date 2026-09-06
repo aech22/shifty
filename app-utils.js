@@ -833,7 +833,14 @@ function isSpecialRedDate(dateStr,settings){
 // 凍結対象から外して現在値を参照する。確定済み期間でも日付別候補を編集すれば表示は動く（承知の上）。
 const PERIOD_SNAPSHOT_SETTING_KEYS=["staffAttributes","staffTypeLimits","staffPositions","positions",
   "requiredPositions","staffNumbers","overtimeSettings","staffColors","staffAliases","staffWorkplaces",
-  "staffHidden","breakTimes","candidates","weekdayCandidates"];
+  "breakTimes","candidates","weekdayCandidates"];
+// スタッフ名キーの設定マップのうち、**意図的に凍結しない**もの。
+// staffHidden は値そのものが期間の範囲（from/to）を持つので、いつの期間かは範囲が決める。
+// 写しにも焼くと「範囲」と「凍結された当時の値」という**同じ問いへの答えが2つ**でき、
+// #105〜#107 で3回踏んだ「入口が2つあり片方だけが知っている」形をまた作る。
+// 凍結対象外のキーは resolvePeriodMaster が現在値のまま残すので、終了した期間でも
+// 現在の範囲がその期間の startDate に対して評価される＝過去のシフト表も正しく再現される。
+const PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS=["staffHidden"];
 function isPeriodEnded(period,todayStr){return!!(period&&period.endDate&&todayStr&&todayStr>period.endDate);}
 function buildPeriodSnapshot(staffList,settings){
   const s={};
@@ -938,16 +945,78 @@ function resolvePeriodMaster(period,staffList,settings,todayStr){
   PERIOD_SNAPSHOT_SETTING_KEYS.forEach(k=>{if(ss[k]===undefined)delete merged[k];else merged[k]=ss[k];});
   return{staffList:mergeKeepStaff(sl,period),settings:merged,locked:true};
 }
-// 非表示スタッフ（settings.staffHidden）を名簿から落とす。シフト作成グリッド・ヒートマップ・集計・
-// Excel・PDF はこれを通した名簿を描く。**落とすのは表示だけ**で staffList 本体は触らないため、
-// スタッフ提出画面の名前候補（buildSuggestList）と提出名の解決（resolveAlias）は従来どおり効く
-// ＝非表示にした人も配布済みのURLでそのまま提出でき、その提出は本人の登録名に紐づいたままになる。
+// ===== スタッフの非表示（期間の範囲で持つ・2026-09-06 決定）=====
+//
+// 非表示は「今この瞬間の設定」ではなく **期間の範囲** で持つ。休職などで一時的に外した人が復帰したとき、
+// 外していた間に作った・配ったシフト表からは名前が消えたまま、復帰後の最新期間からは再び出るようにするため。
+// 「その時点の設定」で持つと、解除した瞬間に配布済みの期間まで名前が生えてしまう。
+//
+// settings.staffHidden[名前] = [{from, to}, ...]
+//   from = 非表示にした時点の最新期間の startDate（**含む**）。null は下限なし。
+//   to   = 解除した時点の最新期間の startDate（**含まない**）。null は未解除＝以降ずっと非表示。
+// 「解除した時点の最新期間からは表示に戻る」＝ to を含まないことで表現している（その1つ前までが非表示）。
+// 複数回の非表示・解除に耐えるよう配列で持つ。上書きにすると過去の範囲が消え、
+// 一度目の休職中に配ったシフト表に名前が生える。
+//
+// Firebaseは配列を数値キーのオブジェクトにして返すので両方の形を受ける。
+// 旧形式（`true` = 全期間で非表示。範囲を持たなかった頃の本番データ）は下限も上限もない1本の範囲として読む。
+function staffHiddenRanges(settings,name){
+  const raw=((settings||{}).staffHidden||{})[name];
+  if(raw===true)return[{from:null,to:null}];
+  const arr=Array.isArray(raw)?raw:(raw&&typeof raw==="object"?Object.values(raw):[]);
+  return arr.filter(r=>r&&typeof r==="object").map(r=>({
+    from:typeof r.from==="string"?r.from:null,
+    to:typeof r.to==="string"?r.to:null,
+  }));
+}
+// その期間でその人が非表示か。期間の startDate が範囲に入るかだけで決まる。
+// **期間が特定できないとき（startDate なし）は隠さない**。判断材料が無いまま隠すと、
+// 呼び出し側が期間を渡し忘れただけで全員が消えるという壊れ方をする（安全側に倒す）。
+function isStaffHiddenInPeriod(name,settings,period){
+  const s=period&&period.startDate;
+  if(!s)return false;
+  return staffHiddenRanges(settings,name).some(r=>(r.from==null||s>=r.from)&&(r.to==null||s<r.to));
+}
+// いま非表示の指定が生きているか（未解除の範囲を持つか）。スタッフ一覧のボタン表記・行の見た目に使う。
+// 期間ごとの表示判定には使わない（それは isStaffHiddenInPeriod）。
+function isStaffHiddenNow(settings,name){
+  return staffHiddenRanges(settings,name).some(r=>r.to==null);
+}
+function _writeHiddenRanges(settings,name,ranges){
+  const map={...((settings||{}).staffHidden||{})};
+  if(ranges.length)map[name]=ranges;else delete map[name];
+  const out={...(settings||{})};
+  if(Object.keys(map).length)out.staffHidden=map;else delete out.staffHidden;
+  return out;
+}
+// 非表示にする。startDate はその時点の最新期間の startDate（期間が1件も無ければ null＝下限なし）。
+// 既に未解除の範囲があるなら何もしない（二重に開かない）。
+function hideStaffFrom(settings,name,startDate){
+  const ranges=staffHiddenRanges(settings,name);
+  if(ranges.some(r=>r.to==null))return settings;
+  return _writeHiddenRanges(settings,name,[...ranges,{from:startDate||null,to:null}]);
+}
+// 解除する。未解除の範囲に上限を入れる＝その期間からは再び表示される。
+// **同じ期間の中で付けて外した範囲（from >= to）は捨てる**。何も隠していないので残す意味がなく、
+// 残すと空の範囲が積み上がって設定が太る。期間が1件も無いときは範囲ごと捨てる（上限を書けないため）。
+function showStaffFrom(settings,name,startDate){
+  const ranges=staffHiddenRanges(settings,name);
+  if(!ranges.some(r=>r.to==null))return settings;
+  const next=ranges
+    .map(r=>r.to!=null?r:(startDate?{from:r.from,to:startDate}:null))
+    .filter(Boolean)
+    .filter(r=>!(r.from!=null&&r.to!=null&&r.from>=r.to));
+  return _writeHiddenRanges(settings,name,next);
+}
+// 非表示スタッフを名簿から落とす。シフト作成グリッド・ヒートマップ・集計・Excel・PDF はこれを通した名簿を描く。
+// **落とすのは表示だけ**で staffList 本体は触らないため、スタッフ提出画面の名前候補（buildSuggestList）と
+// 提出名の解決（resolveAlias）は従来どおり効く＝非表示にした人も配布済みのURLでそのまま提出でき、
+// その提出は本人の登録名に紐づいたままになる。
 // **名簿にいるかどうかの判定（isUnregisteredSubName）には通さないこと**。通すと非表示の人の提出が
 // 「未登録の提出名」に化け、Excel・PDF が末尾に足す未登録列として復活する（隠したのに出る）。
 // 空白列（スペーサー）は staffHidden にキーを持たないのでそのまま残る＝キッチン/ホールの境界は動かない。
-function visibleStaffList(list,settings){
-  const hidden=(settings||{}).staffHidden||{};
-  return(list||[]).filter(n=>!hidden[n]);
+function visibleStaffList(list,settings,period){
+  return(list||[]).filter(n=>!isStaffHiddenInPeriod(n,settings,period));
 }
 // スタッフ名をキーに持つ設定マップ。改名でキーを移し替えないと属性・ポジション・別名等が黙って初期値に戻る。
 const STAFF_KEYED_SETTING_MAPS=["staffColors","staffAttributes","staffNumbers","staffPositions","staffAliases","staffWorkplaces","staffHidden"];
@@ -996,5 +1065,5 @@ function renameStaffInPeriods(periods,oldName,newName){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,isUnregisteredSubName,visibleStaffList,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
 }
