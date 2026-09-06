@@ -2372,6 +2372,12 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   // 範囲は時系列で読む＝選んだ期間と **それより古い** 期間に残す（685c219。retainedPeriodIds・app-utils.js）。
   // 初期値は del() がポップアップを開くたびに defaultKeepCount で入れ直す（ここの 0 は使われない）。
   const[delKeepCount,setDelKeepCount]=useState(0);
+  // 非表示ポップアップ。対象は削除ポップアップと同じ理由で「スタッフ名」で持つ（indexで持たない）。
+  // mode は開いた時点の状態で決まる（"hide"=これから非表示にする / "show"=解除する）。
+  // choiceIdx は delPeriodChoices（最新3期間・startDate降順）の0始まりindexで、0が最新期間。
+  const[hideTarget,setHideTarget]=useState(null);
+  const[hideMode,setHideMode]=useState("hide");
+  const[hideChoiceIdx,setHideChoiceIdx]=useState(0);
   // 編集中・別名パネル・ポジションパネルの対象は「スタッフ名」で持つ（indexで持ってはいけない）。
   // indexで持つと、パネルを開いたまま別の行を削除する／並べ替える／他端末がstaffListを変えると、
   // 同じindexが別人を指すようになり、開いたままの編集欄が別人の行に移って保存が別人を書き換える
@@ -2443,15 +2449,40 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     const p=periods.find(x=>x&&x.startDate===sd);
     return (p&&p.label)||sd||"";
   };
-  const toggleHidden=name=>{
-    const sd=latestPeriod?latestPeriod.startDate:null;
-    const turningOn=!hiddenNow(name);
-    const ns=turningOn?hideStaffFrom(settings,name,sd):showStaffFrom(settings,name,sd);
-    if(ns===settings)return; // 変化なし（既に同じ状態）なら書き込まない
+  // 開始・解除の期間は押した瞬間に確定させず、必ずポップアップで選ばせる（2026-09-06 決定）。
+  // 既定は最新期間で、そのまま確定すれば「いま非表示にする／いまから戻す」になる。
+  // 境界を1期間ずらしたいことが実務では普通にあり（先に伝えられていた休職の開始が前の期間だった等）、
+  // あとから直す導線が無いと、範囲を直すためだけに非表示と解除を往復することになる。
+  const openHiddenDialog=name=>{
+    setHideTarget(name);
+    setHideMode(hiddenNow(name)?"show":"hide");
+    setHideChoiceIdx(0);
+  };
+  const confirmHidden=()=>{
+    const n=hideTarget;
+    if(!n){setHideTarget(null);return;}
+    // 期間が1件も無ければ選択肢も無い。その場合は下限・上限を書けないので null で従来どおり扱う
+    // （非表示は全期間・解除は指定ごと取り消し）。
+    const p=delPeriodChoices[hideChoiceIdx];
+    const sd=p?p.startDate:null;
+    // 解除の開始が非表示の開始と同じか手前なら、範囲は空になって捨てられる＝非表示そのものの取り消し。
+    // 「戻しました」と言うと、実際には何も隠されていない状態を「一部は非表示のまま」と誤解させる。
+    const cancels=hideMode==="show"&&hideStaffRangeWouldVanish(n,sd);
+    const ns=hideMode==="hide"?hideStaffFrom(settings,n,sd):showStaffFrom(settings,n,sd);
+    setHideTarget(null);
+    if(ns===settings){tt("変更はありません");return;}
     onSaveSettings&&onSaveSettings(ns);
     const lbl=sd?`「${periodLabelOfStart(sd)}」`:"";
-    if(turningOn)tt(sd?`「${name}」を${lbl}以降のシフト表から非表示にしました`:`「${name}」をシフト表から非表示にしました`);
-    else tt(sd?`「${name}」を${lbl}から表示に戻しました（それより前の期間は非表示のままです）`:`「${name}」をシフト表に表示します`);
+    if(hideMode==="hide")tt(sd?`「${n}」を${lbl}以降のシフト表から非表示にしました`:`「${n}」をシフト表から非表示にしました`);
+    else if(cancels)tt(`「${n}」の非表示を取り消しました`);
+    else tt(`「${n}」を${lbl}から表示に戻しました（それより前の期間は非表示のままです）`);
+  };
+  // 解除の開始をこの期間にすると、非表示の範囲が丸ごと消えるか（＝何も隠していない状態になるか）。
+  // ポップアップの説明文とトーストの両方が同じ判定を使う。
+  const hideStaffRangeWouldVanish=(name,startDate)=>{
+    if(!startDate)return true; // 上限を書けない＝範囲ごと捨てる
+    const from=openHiddenFrom(name);
+    return from!=null&&startDate<=from;
   };
   const startEdit=n=>{setEditKey(n);setEditName(n);};
   const cancelEdit=()=>{setEditKey(null);setEditName("");};
@@ -2817,6 +2848,61 @@ const dragIdxRef=useRef(null);
           </div>
         </div>);
       })()}
+      {/* 非表示の開始／解除の期間を選ぶポップアップ。選択肢は削除ポップアップと同じ最新3期間
+          （delPeriodChoices・startDate降順）で、先頭が最新期間。既定は最新期間。 */}
+      {hideTarget&&(()=>{
+        const isShow=hideMode==="show";
+        const openFrom=openHiddenFrom(hideTarget);
+        const opt=(idx,p)=>{
+          const dates=`${(p.startDate||"").replace(/-/g,"/")}〜${(p.endDate||"").replace(/-/g,"/")}`;
+          const note=isShow
+            ?(hideStaffRangeWouldVanish(hideTarget,p.startDate)
+              ?`${dates} ／ 非表示にした期間と同じか手前なので、非表示の指定ごと取り消されます`
+              :`${dates} ／ この期間から名前が戻ります（これより前は非表示のまま）`)
+            :`${dates} ／ この期間から先のシフト表に名前が出なくなります`;
+          return(
+            <label key={idx} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"8px 10px",marginBottom:4,borderRadius:8,cursor:"pointer",
+              background:hideChoiceIdx===idx?"rgba(248,112,54,.10)":"var(--c-input)",
+              border:`1px solid ${hideChoiceIdx===idx?"var(--c-accent)":"var(--c-border)"}`}}>
+              <input type="radio" name="hideChoice" checked={hideChoiceIdx===idx} onChange={()=>setHideChoiceIdx(idx)} style={{marginTop:2,flexShrink:0,width:16,height:16}}/>
+              <span style={{minWidth:0}}>
+                <span style={{fontSize:13,color:"var(--c-text)",fontWeight:600}}>{(p.label||"(名称なし)")+(idx===0?"（最新）":"")}</span>
+                <span style={{display:"block",fontSize:11,color:"var(--c-text4)",marginTop:2}}>{note}</span>
+              </span>
+            </label>
+          );
+        };
+        return(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={()=>setHideTarget(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:"18px 18px 14px",maxWidth:440,width:"100%",maxHeight:"85vh",overflowY:"auto",boxShadow:"0 8px 32px var(--c-shadow)"}}>
+            <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>
+              {isShow?`「${hideTarget}」を表示に戻します`:`「${hideTarget}」を非表示にします`}
+            </div>
+            <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>
+              スタッフ登録も提出用URLも消えません。シフト作成タブ・Excel・PDF から名前が出なくなるだけで、本人はこれまでどおり提出できます。
+            </div>
+            {isShow&&openFrom&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>
+              いまは「{periodLabelOfStart(openFrom)}」以降を非表示にしています。
+            </div>}
+            <div style={{fontSize:13,fontWeight:700,color:"var(--c-text2)",marginTop:10,marginBottom:8}}>
+              {isShow?"どの期間から表示に戻しますか？":"どの期間から非表示にしますか？"}
+            </div>
+            {delPeriodChoices.length===0
+              ?<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>
+                期間がまだありません。{isShow?"非表示の指定を取り消します。":"これから作る期間もすべて非表示になります。"}
+              </div>
+              :<div>{delPeriodChoices.map((p,idx)=>opt(idx,p))}</div>}
+            {delPeriodsSorted.length>delPeriodChoices.length&&<div style={{fontSize:11,color:"var(--c-text4)",margin:"6px 0 12px"}}>
+              ※ これより古い期間は選べません（表示は変わりません）。
+            </div>}
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap"}}>
+              <button onClick={()=>setHideTarget(null)} style={AGray}>キャンセル</button>
+              <button onClick={confirmHidden} style={AB}>{isShow?"表示に戻す":"非表示にする"}</button>
+            </div>
+          </div>
+        </div>);
+      })()}
       <AT>スタッフ登録</AT>
       <AC title="スタッフ一覧">
         {!isPro&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:8,padding:"7px 10px"}}>
@@ -2879,7 +2965,7 @@ const dragIdxRef=useRef(null);
                 {isPremium&&<button onClick={()=>{setPosKey(posKey===n?null:n);}} style={{padding:"6px 8px",background:posKey===n?"rgba(59,130,246,.15)":"rgba(59,130,246,.06)",border:`1px solid ${posKey===n?"#3B82F6":"rgba(59,130,246,.3)"}`,borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer",width:118,boxSizing:"border-box",flexShrink:0,whiteSpace:"nowrap",textAlign:"center"}}>
                   ポジション{(((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length)>0?` (${((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length})`:""}
                 </button>}
-                <button onClick={()=>toggleHidden(n)} title="シフト作成タブ・Excel・PDF から名前を外す（登録と提出URLはそのまま）" style={{padding:"6px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text3)",fontSize:12,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>{hidden?"表示":"非表示"}</button>
+                <button onClick={()=>openHiddenDialog(n)} title="シフト作成タブ・Excel・PDF から名前を外す（登録と提出URLはそのまま）" style={{padding:"6px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text3)",fontSize:12,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>{hidden?"表示":"非表示"}</button>
                 <button onClick={()=>startEdit(n)} style={{padding:"6px 10px",background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.25)",borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer"}}>編集</button>
                 <button onClick={()=>del(i)} style={AD}>削除</button>
               </>
