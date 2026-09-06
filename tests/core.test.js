@@ -1993,6 +1993,36 @@ test("staffHidden: 旧形式（true）を読んでも壊れない（本番に出
   assert.strictEqual(u.isStaffHiddenInPeriod("佐藤", fb, HP.p2), true);
 });
 
+test("staffHidden: 期間が1件も無い店舗で非表示にしても、Firebaseの往復で消えない", () => {
+  // 期間が無いと下限・上限を書けず {from:null,to:null} になる。全キーがnullの範囲は
+  // Firebaseに保存できない（nullのキーは書かれず、キーの残らない空オブジェクトはノードごと消える）ため、
+  // 配列のまま書くと非表示が黙って無かったことになる。旧形式の true で書いて往復させる。
+  const s = u.hideStaffFrom({}, "佐藤", null);
+  assert.strictEqual(u.isStaffHiddenInPeriod("佐藤", s, HP.p1), true, "書いた直後は非表示");
+  // Firebase RTDB の set() 意味論: null のキーは書かれない／空オブジェクト・空配列はノードごと消える
+  const roundTrip = v => {
+    if (Array.isArray(v)) {
+      const o = {};
+      v.forEach((el, i) => { const r = roundTrip(el); if (r !== undefined) o[i] = r; });
+      return Object.keys(o).length ? o : undefined;
+    }
+    if (v !== null && typeof v === "object") {
+      const o = {};
+      Object.keys(v).forEach(k => { const r = roundTrip(v[k]); if (r !== undefined) o[k] = r; });
+      return Object.keys(o).length ? o : undefined;
+    }
+    return v === null ? undefined : v;
+  };
+  const back = roundTrip(u.sanitizeForSet(s).value) || {};
+  assert.notStrictEqual(back.staffHidden, undefined, "往復しても staffHidden が消えない");
+  assert.strictEqual(u.isStaffHiddenInPeriod("佐藤", back, HP.p1), true, "往復後も非表示のまま");
+  assert.strictEqual(u.isStaffHiddenNow(back, "佐藤"), true, "往復後も未解除として扱う");
+  // 往復後の値からそのまま解除でき、以前の期間は非表示のまま残る
+  const released = u.showStaffFrom(back, "佐藤", HP.p4.startDate);
+  assert.strictEqual(u.isStaffHiddenInPeriod("佐藤", released, HP.p3), true, "解除前の期間は非表示のまま");
+  assert.strictEqual(u.isStaffHiddenInPeriod("佐藤", released, HP.p4), false, "解除した期間からは表示");
+});
+
 test("visibleStaffList: 非表示スタッフだけを名簿から落とす（空白列は残す）", () => {
   const list = ["田中", "佐藤", "__spacer__1", "鈴木"];
   const hideSato = u.hideStaffFrom({}, "佐藤", HP.p1.startDate);

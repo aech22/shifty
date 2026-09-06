@@ -984,7 +984,16 @@ function isStaffHiddenNow(settings,name){
 }
 function _writeHiddenRanges(settings,name,ranges){
   const map={...((settings||{}).staffHidden||{})};
-  if(ranges.length)map[name]=ranges;else delete map[name];
+  // 下限も上限も無い範囲（{from:null,to:null}）は **そのままでは保存できない**。全キーがnullで、
+  // Firebaseはnullのキーを書かず、キーの残らない空オブジェクトはノードごと消すため、配列に入れて
+  // 書くとその要素が消え、要素が1つならstaffHidden自体が消えて非表示が黙って無かったことになる
+  // （トーストは成功と言う）。到達するのは期間が1件も無い店舗で非表示にしたときで、
+  // ポップアップが「これから作る期間もすべて非表示になります」と約束している経路そのもの。
+  // 旧形式の true がまさに「下限も上限もない1本の範囲」を表すので、その形で書く
+  // （staffHiddenRanges がそのまま読み戻す）。全期間を覆う範囲は他の範囲があっても結果が同じなので、
+  // 1つでも含まれていれば true に潰してよい（近似ではなく同値）。
+  const v=ranges.some(r=>r.from==null&&r.to==null)?true:ranges;
+  if(v===true||v.length)map[name]=v;else delete map[name];
   const out={...(settings||{})};
   if(Object.keys(map).length)out.staffHidden=map;else delete out.staffHidden;
   return out;
