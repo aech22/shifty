@@ -56,9 +56,15 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   useEffect(()=>{
     if(!apid||!ap)return;
     if(editingRef.current||dirtyRef.current||done)return;
-    const ckName=shopId&&apid?getCookie(ckStaffKey(shopId,apid))||"":"";
-    if(!ckName)return;
-    const prevSub=subs.find(s=>s.staffName===ckName&&s.periodId===apid);
+    const ckRaw=shopId&&apid?getCookie(ckStaffKey(shopId,apid))||"":"";
+    if(!ckRaw)return;
+    // Cookieは提出した時点の表記のまま1年残る。その後に管理者がその表記を別名として登録し、
+    // 別端末からの再提出で sub.staffName が登録名へ正規化されると（c889660 の漸進移行）、
+    // 完全一致では自分の提出を見つけられず「未提出」の空フォームが出る（バグチェック#112）。
+    // 入力欄（:292/:301）と同じく登録名へ寄せ、探索は resolveSubByAlias に合わせる
+    // ＝sub側がまだ別名のままの端末でも見つかる。
+    const ckName=resolveAlias(ckRaw,settings?.staffAliases);
+    const prevSub=resolveSubByAlias(n=>subs.find(s=>s.staffName===n&&s.periodId===apid),ckName,settings?.staffAliases);
     if(!prevSub)return;
     setName(ckName);
     const init={};
@@ -68,7 +74,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     setSd(init);
     setComment(prevSub.comment||"");
     setDone(true);
-  },[apid,ap?.startDate,ap?.endDate,shopId,subs,done]);
+  },[apid,ap?.startDate,ap?.endDate,shopId,subs,done,settings?.staffAliases]);
 
   const tt_=m=>{setToast(m);clearTimeout(tr.current);tr.current=setTimeout(()=>setToast(null),2500);};
   // Firebaseはundefinedを含むオブジェクトのset()で例外を投げる（休みボタンでstart/endをundefinedにする既存の実装と相性が悪いため必須）
@@ -153,10 +159,12 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       submittingRef.current=false;setSending(false);setConf(false);
       return;
     }
-    // name は入力・サジェスト確定の時点で resolveAlias 済み（:272/:281）＝常に登録名。
-    // したがってここで作る sub の staffName は必ず登録名になり、別名で提出済みの人が
-    // 再提出すると staffName が登録名へ正規化される（2026-08-21 ユーザー判断で確定）。
-    const staffName=name.trim();
+    // ここで作る sub の staffName は必ず登録名にする（別名で提出済みの人が再提出すると
+    // staffName が登録名へ正規化される・2026-08-21 ユーザー判断で確定）。
+    // 入力・サジェスト確定の経路（:292/:301）は既に resolveAlias 済みだが、Cookieから復元した
+    // name はその経路を通らないため、そこに頼ると別名のまま提出されて正規化が起きない。
+    // 冪等（登録名を渡せばそのまま返る）なのでここで寄せ、この不変条件を構成で保証する（#112）。
+    const staffName=resolveAlias(name.trim(),settings?.staffAliases);
     // 既存subを検索（同じperiod+名前 → 上書き）。登録名で見つからなければ別名でも探す。
     // 別名フォールバックが無いと、別名「たなか」で提出済みの人が別端末（Cookieなし）から
     // 名前を打ち直したとき resolveAlias で "田中" になって既存subに当たらず、同一人物・同一期間に
