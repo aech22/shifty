@@ -36,6 +36,7 @@ const sharedGlobals = {
   resolvePeriodMaster: "writable",
   mergeKeepStaff: "writable",
   isUnregisteredSubName: "writable",
+  visibleStaffList: "writable",
   STAFF_KEYED_SETTING_MAPS: "writable",
   renameStaffInSettings: "writable",
   renameStaffInPeriods: "writable",

@@ -157,12 +157,92 @@ async function openHarness(o) {
     }
     return false;
   };
+  // 完全一致でボタンを押す。**状態で表記が変わるボタンは必ずこちらを使う**。
+  // clickByText は部分一致（innerText.includes）なので、スタッフ一覧の表示/非表示トグルでは
+  // `clickByText("表示")` が **「非表示」ボタンに当たる**。しかも押せた扱いで true を返すため、
+  // 誤爆が成功として通り、あとの assert だけが不可解に落ちる（2026-09-06 実測）。
+  // ラベルが2行のボタン（PDF出力の「シフト\nシフト表のみ（Excelと同じ形式）」）は1行目の完全一致で拾う。
+  // rowText を渡すと、その文字列を1行として持つ rowSelector の要素の中だけを探す（同じラベルが複数行にある表向け）。
+  // 返り値は "ok" / "row-not-found" / "button-not-found"。**必ず受け取って確認すること**。
+  const clickExact = async (label, opts = {}) => {
+    const rowText = opts.rowText == null ? null : opts.rowText;
+    const rowSelector = opts.rowSelector || "[data-staff-idx]";
+    const r = await page.evaluate(([label, rowText, rowSelector]) => {
+      let scope = document;
+      if (rowText != null) {
+        scope = [...document.querySelectorAll(rowSelector)]
+          .find(el => (el.innerText || "").split("\n").some(t => t.trim() === rowText));
+        if (!scope) return "row-not-found";
+      }
+      const btns = [...scope.querySelectorAll("button")];
+      const full = x => (x.innerText || "").trim();
+      const b = btns.find(x => full(x) === label) || btns.find(x => full(x).split("\n")[0].trim() === label);
+      if (!b) return "button-not-found";
+      b.click();
+      return "ok";
+    }, [label, rowText, rowSelector]);
+    await page.waitForTimeout(250);
+    return r;
+  };
+
+  // 保存の出口（URL.createObjectURL → a.click()）を差し替えて Blob を捕まえる（1.8節）。
+  // 捕まえた Blob はページ側にしか置けないので、読むときは h.evaluate の中で
+  // `window.__dl.blobs[0]` を触る（ExcelJS で load する等）。
+  // **測り終えたら必ず restore() を呼ぶ**。差し替えたまま PDF を出すと jsPDF の save() が
+  // "Not allowed to load local resource: blob:stub" を投げ、コンソールエラー判定だけが落ちて
+  // 原因を別の場所に探すことになる（2026-09-06 実測）。
+  const captureDownloads = async () => {
+    await page.evaluate(() => {
+      window.__dl = {
+        blobs: [],
+        origCreate: URL.createObjectURL.bind(URL),
+        origClick: HTMLAnchorElement.prototype.click,
+      };
+      URL.createObjectURL = b => { window.__dl.blobs.push(b); return "blob:stub"; };
+      HTMLAnchorElement.prototype.click = function () { };
+    });
+    return {
+      count: () => page.evaluate(() => (window.__dl ? window.__dl.blobs.length : 0)),
+      restore: () => page.evaluate(() => {
+        if (!window.__dl) return;
+        URL.createObjectURL = window.__dl.origCreate;
+        HTMLAnchorElement.prototype.click = window.__dl.origClick;
+      }),
+    };
+  };
+
+  // PDF: renderBlock（app-admin.js:1507）が html2canvas へ渡す直前の HTML を捕まえる。
+  // renderBlock は innerHTML を入れてから appendChild するので、クロージャの中の
+  // buildShiftTableHtml を外から呼ばなくても出力そのものが取れる。
+  // **判定には html ではなく text を使う**。列見出しは vtext（app-admin.js:1364）で
+  // 1文字ずつ <br> に割られる縦書きなので、`html.includes("田中")` は必ず false になり、
+  // 「PDFから全員消えた」＝実装の不具合に見える（2026-09-06 実測）。
+  const capturePdf = async () => {
+    await page.evaluate(() => {
+      window.__pdf = { blocks: [] };
+      const orig = document.body.appendChild.bind(document.body);
+      document.body.appendChild = function (node) {
+        if (node && node.style && node.style.left === "-30000px") window.__pdf.blocks.push(node.innerHTML);
+        return orig(node);
+      };
+    });
+    return {
+      count: () => page.evaluate(() => (window.__pdf ? window.__pdf.blocks.length : 0)),
+      html: () => page.evaluate(() => (window.__pdf ? window.__pdf.blocks.join("") : "")),
+      text: () => page.evaluate(() => (window.__pdf ? window.__pdf.blocks.join("").replace(/<[^>]*>/g, "").replace(/\s+/g, "") : "")),
+    };
+  };
+
   // シフト作成グリッドのセル（data-sc / data-scn は Enter でのフォーカス移動用に元から付いている）
   const cell = (name, date, field) => `[data-sc="${date}|${field}"][data-scn="${name}"]`;
+  // グリッドに実際に描かれているスタッフ列（重複なし）。表示系の絞り込みの検証に使う。
+  const gridStaffNames = () => page.evaluate(() =>
+    [...new Set([...document.querySelectorAll("[data-scn]")].map(e => e.getAttribute("data-scn")))]);
 
   return {
     browser, context, page, errors,
-    setInput, blur, fill, clickByText, cell,
+    setInput, blur, fill, clickByText, clickExact, cell, gridStaffNames,
+    captureDownloads, capturePdf,
     evaluate: (...a) => page.evaluate(...a),
     close: () => browser.close(),
   };

@@ -1932,6 +1932,67 @@ test("aliasOwnerOf: 弾かなかった場合に実際に起きること（resolv
   assert.strictEqual(u.aliasOwnerOf("たなか", al), "鈴木");
 });
 
+test("visibleStaffList: 非表示スタッフだけを名簿から落とす（空白列は残す）", () => {
+  const list = ["田中", "佐藤", "__spacer__1", "鈴木"];
+  assert.deepStrictEqual(u.visibleStaffList(list, { staffHidden: { "佐藤": true } }),
+    ["田中", "__spacer__1", "鈴木"], "非表示にした人だけ消える");
+  assert.deepStrictEqual(u.visibleStaffList(list, {}), list, "設定が無ければ全員出る");
+  assert.deepStrictEqual(u.visibleStaffList(list, undefined), list, "settings 未指定でも落ちない");
+  assert.deepStrictEqual(u.visibleStaffList(undefined, { staffHidden: { "佐藤": true } }), [], "名簿未指定でも落ちない");
+  // 空白列は staffList の中でキッチン/ホールの境界（ShiftEditTab の spIdx）なので、
+  // 非表示にしても実スタッフの前後関係が入れ替わらないことを確かめる
+  const v = u.visibleStaffList(["田中", "佐藤", "__spacer__1", "鈴木"], { staffHidden: { "田中": true } });
+  assert.ok(v.indexOf("__spacer__1") < v.indexOf("鈴木"), "鈴木はホール側のまま");
+});
+
+test("visibleStaffList: 非表示にしても『未登録の提出名』にはならない（Excel/PDF に列が復活しない）", () => {
+  // isUnregisteredSubName に visibleStaffList を通した名簿を渡すと、非表示の人の提出が未登録名に化け、
+  // expXl / buildPdfCols が末尾に足す未登録列としてそのまま復活する（隠したのに出る）。
+  // 判定は必ず生の名簿で行う、という取り決めをここで固定する。
+  const roster = ["田中", "佐藤"];
+  const settings = { staffHidden: { "佐藤": true } };
+  assert.strictEqual(u.isUnregisteredSubName("佐藤", roster, {}, null), false,
+    "名簿で判定すれば未登録ではない");
+  assert.strictEqual(u.isUnregisteredSubName("佐藤", u.visibleStaffList(roster, settings), {}, null), true,
+    "絞り込み後の名簿で判定すると未登録に化ける＝この渡し方をしてはいけない");
+});
+
+test("staffHidden: 確定済み期間では非表示にしても名前が残る（2026-09-06 ユーザー決定）", () => {
+  // 「確定済みの期間は表示で良い」＝配り終えたシフト表は後から変えない、という決定を固定する。
+  // staffHidden を PERIOD_SNAPSHOT_SETTING_KEYS に入れてあるので、終了して写しを持つ期間では
+  // 写しに無い凍結対象キーが現在値ごと落ち、その期間だけ従来どおり全員が出る。
+  const settings = { staffHidden: { "佐藤": true }, staffColors: {} };
+  const ended = { id: "p1", endDate: "2026-08-31", snapshot: { staffList: ["田中", "佐藤"], settings: { staffColors: {} } } };
+  const m = u.resolvePeriodMaster(ended, ["田中", "佐藤"], settings, "2026-09-06");
+  assert.strictEqual(m.locked, true, "終了＋写しあり＝凍結");
+  assert.strictEqual(m.settings.staffHidden, undefined, "写しに無い凍結対象キーは現在値ごと落ちる");
+  assert.deepStrictEqual(u.visibleStaffList(m.staffList, m.settings), ["田中", "佐藤"],
+    "確定済み期間のシフト表・Excel・PDF には名前が残る");
+  // 生きている期間は現在値を見るので、非表示にした瞬間に消える
+  const live = u.resolvePeriodMaster({ id: "p2", endDate: "2026-09-30" }, ["田中", "佐藤"], settings, "2026-09-06");
+  assert.strictEqual(live.locked, false);
+  assert.deepStrictEqual(u.visibleStaffList(live.staffList, live.settings), ["田中"]);
+});
+
+test("staffHidden: プランの人数制限には数える（2026-09-06 ユーザー決定）", () => {
+  // 非表示にしても登録は残るので上限判定の母数から外さない。StaffTab の上限判定は
+  // staffList.filter(n=>!isSpacer(n)).length で、staffHidden を一切参照しないことを固定する。
+  const fs = require("node:fs");
+  const src = fs.readFileSync(require("node:path").join(__dirname, "..", "app-admin.js"), "utf8");
+  const limitLines = src.split("\n").filter(l => l.includes("PLAN_LIMITS[plan]") || (l.includes(">=lim") && l.includes("isSpacer")));
+  assert.ok(limitLines.length > 0, "上限判定の行が見つからない（実装が変わったらこのテストを見直すこと）");
+  assert.ok(limitLines.every(l => !l.includes("staffHidden")),
+    `上限判定が staffHidden を見ている（非表示で上限を回避できてしまう）: ${limitLines.join(" / ")}`);
+});
+
+test("staffHidden: 改名でキーが移り、削除の後始末で落ちる（STAFF_KEYED_SETTING_MAPS 登録の実効確認）", () => {
+  const s = u.renameStaffInSettings({ staffHidden: { "佐藤": true } }, "佐藤", "佐藤 花子");
+  assert.deepStrictEqual(s.staffHidden, { "佐藤 花子": true },
+    "改名で移し替わらないと、改名した瞬間にその人がシフト表へ復活する");
+  assert.ok(u.STAFF_KEYED_SETTING_MAPS.includes("staffHidden"),
+    "settingsWithoutStaff（削除の後始末）はこの一覧を見るので、登録が無いと削除後もキーが残る");
+});
+
 test("STAFF_KEYED_SETTING_MAPS: スタッフ名キーの設定マップ一覧が app-admin.js に書き写されていない", () => {
   // 改名（renameStaffInSettings）と削除の後始末（settingsWithoutStaff）は、同じ「スタッフ名を
   // キーに持つ設定マップ」という不変条件を守る2つの入口。片方が一覧を書き写していると、

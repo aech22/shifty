@@ -116,7 +116,8 @@ genToken() / genSecureId(len)   // ランダムID生成
 isSpacer(n) / resolveAlias / buildSuggestList
 aliasOwnerOf(name, staffAliases, selfName)  // その名前を別名にしている他人。addAlias（登録名と同じ別名を禁止）の反対側の入口＝スタッフ追加・改名で使う。通さないと「他人の別名と同名のスタッフ」が作れ、本人の提出が別人のsubへ入る（#107）
 renameStaffInSettings / renameStaffInPeriods // 改名時のキー移し替え。settings 本体と period.snapshot.settings の両方に同じものを当てる（写しだけ旧名で残ると確定済み期間のシフトが空欄になる・#107）
-STAFF_KEYED_SETTING_MAPS   // スタッフ名をキーに持つ設定マップ6件の**正本**（+ overtimeSettings.byStaff で計7）。改名（renameStaffInSettings）と削除の後始末（app-admin.js の settingsWithoutStaff）の**両方がここを参照する**。新しいマップを足すときはここに登録し、あわせて PERIOD_SNAPSHOT_SETTING_KEYS にも入れる（入れないと写しの側で改名が届かず #107 が再発する）。一覧を別の場所へ書き写さないこと——tests/core.test.js がドリフトを検出する（#108）
+visibleStaffList(list, settings)         // settings.staffHidden の名前を名簿から落とす（非表示スタッフ）。シフト作成グリッド・ヒートマップ・Excel・PDF はこれを通した名簿で描く。**isUnregisteredSubName には通さない**（通すと非表示の人の提出が未登録名に化けてExcel/PDFの末尾に列として復活する）。staffList 本体は触らないので提出URL・別名・提出データの紐付けは生きたまま
+STAFF_KEYED_SETTING_MAPS   // スタッフ名をキーに持つ設定マップ7件の**正本**（+ overtimeSettings.byStaff で計8）。改名（renameStaffInSettings）と削除の後始末（app-admin.js の settingsWithoutStaff）の**両方がここを参照する**。新しいマップを足すときはここに登録し、あわせて PERIOD_SNAPSHOT_SETTING_KEYS にも入れる（入れないと写しの側で改名が届かず #107 が再発する）。一覧を別の場所へ書き写さないこと——tests/core.test.js がドリフトを検出する（#108）
 // 末尾に module.exports ガード（Nodeテスト用）
 ```
 
@@ -334,7 +335,7 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              staffAttributes?: {[name]: 属性ID}, staffTypeLimits?: {[属性ID]: 制限},
              overtimeSettings?: {byStaff: {[name]: {lunch,dinner}}}, staffNumbers?: {[name]: string},
              xlShopName?: string, staffColors?: {[name]: "red"|"black"},
-             staffAliases?: {[registered]: string[]}, periodUnit?: "2week"|"1month" }
+             staffAliases?: {[registered]: string[]}, staffHidden?: {[name]: true}, periodUnit?: "2week"|"1month" }
 ```
 
 ---

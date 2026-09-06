@@ -175,6 +175,18 @@ await h.close();
    **押せたかは結果ではなく状態で確かめる**（名前カードなら `input[placeholder="お名前を入力"]` が
    DOM に出たか）。2026-09-04 実測: サジェスト0件を「サジェストが壊れている」と読み違えかけた。
 
+   **さらに `clickByText` は部分一致で、最初に当たった1つを押す**（`innerText.includes(text)`）。
+   Shifty のボタン名は**片方がもう片方の部分文字列になっている組が実在する**——スタッフ一覧の
+   表示/非表示トグルは状態で `非表示`⇄`表示` に変わるので、`clickByText("表示")` は
+   **「非表示」ボタンに当たる**。同じ行に複数の候補があるトグル・状態つきボタンを押すときは、
+   行を絞ってから**完全一致**で拾うこと（2026-09-06 実測。押した本人は成功扱いで返るので静かに嘘をつく）:
+
+   **これはヘルパーになっている。手で書かずに `h.clickExact` を使う**（返り値を必ず確認する）:
+
+   ```js
+   const r = await h.clickExact("非表示", { rowText: "佐藤" });   // "ok" 以外なら押せていない
+   ```
+
 7. **タブ側が「初期表示の絞り込み」を勝手に決めることがある**。提出一覧タブは
    `app-admin.js:3398` の `useEffect` が、マウント直後に期間の絞り込みを **最新期間** へ自動設定する
    （`fp` の初期値は `"all"` なので、ソースを読んだだけだと全期間が出ると誤解する）。
@@ -198,11 +210,23 @@ await h.close();
 
 **セレクタ**: シフト作成グリッドのセルは `data-sc="日付|start|end"` と `data-scn="名前"` を持つ（Enterでのフォーカス移動用に元から付いている属性で、検証用に足したものではない）。DOM構造に依存せず狙ったセルを掴めるので `h.cell()` がこれを組み立てる。
 
-**動くサンプル兼リグレッションテスト**: `scripts/example-shift-edit-tab.js`（#93 の再現そのもの）。
+**踏みやすい罠は文書ではなくAPIで潰してある。素の `page.evaluate` を書く前に返り値のヘルパーを見る**:
+
+| ヘルパー | 何を防ぐか |
+|---|---|
+| `clickExact(label, {rowText, rowSelector})` | `clickByText` の部分一致（罠8）。完全一致＋行スコープで押し、`"ok"` / `"row-not-found"` / `"button-not-found"` を返す。2行ラベルは1行目の完全一致で拾う |
+| `captureDownloads()` | `URL.createObjectURL` の差し替えと**戻し忘れ**。`restore()` を必ず呼ぶ。Blob はページ側の `window.__dl.blobs` にある |
+| `capturePdf()` | PDFブロックの捕獲と縦書き（`vtext`）。判定は `html()` ではなく `text()` を使う |
+| `gridStaffNames()` | グリッドに実際に描かれているスタッフ列の取得 |
+
+**動くサンプル兼リグレッションテスト**は2本ある。
 
 ```bash
-node .claude/skills/shifty-e2e-verify/scripts/example-shift-edit-tab.js   # verdict.allPass=true / EXIT=0
+node .claude/skills/shifty-e2e-verify/scripts/example-shift-edit-tab.js   # #93 の再現。allPass=true / EXIT=0
+node .claude/skills/shifty-e2e-verify/scripts/example-staff-hidden.js     # スタッフ非表示。allPass=true / EXIT=0
 ```
+
+`example-staff-hidden.js` は上のヘルパー4つを全部使う実例で、**グリッド・Excel・PDFの3経路を1本で測る形**の雛形になる。
 
 **「素通りするテストではない」ことの確かめ方**（新しく再現を書いたら必ずやる）。`root`（または環境変数 `SHIFTY_ROOT`）で配信元を差し替えられるので、**修正前のコミットの配信物を置いたディレクトリに向けて同じスクリプトを流し、落ちることを確認する**:
 
@@ -213,6 +237,27 @@ SHIFTY_ROOT=$S node .claude/skills/shifty-e2e-verify/scripts/example-shift-edit-
 ```
 
 2026-08-24 実測: 修正後 `EXIT=0`、修正前（`62cbee8` の app-admin.js）`EXIT=1`（`step4_noLeak:false` ＝ 消えた期間の 2026-07-02 が期間Bのsubに現れる）。**この差が出ないテストは、何も検証していない。**
+
+**`git show HEAD:` を「修正前」として使ってはいけない。** このリポジトリの `.claude/settings.json` には
+**Stop フック**があり、ターンが終わるたびに `app-*.js` を `Auto-commit: app-*.js changes` として
+**自動でコミットし push する**（main 以外・DEV_MODE が式のときだけ動く）。作業中のセッションから見ると
+`HEAD` は**自分が今書いたコードそのもの**になっているので、`git show HEAD:app-admin.js` で作った
+「修正前」ディレクトリは修正後と同一で、**反証チェックが通ってしまう＝素通りを見逃す**。
+
+2026-09-06 実測: スタッフ非表示機能の反証で `SHIFTY_ROOT` に `HEAD` の写しを置いたところ 16/16 が
+そのまま true になった。`git log` を見て初めて `41eb674 Auto-commit` が挟まっていたと分かり、
+`41eb674^` を基準に取り直すと 9項目が false に反転した。**基準SHAを決めたら
+`grep -c <新しい識別子> $S/app-utils.js` が 0 であることを先に確かめる**（1行で済む）:
+
+```bash
+S=/tmp/pre-$$; mkdir -p $S
+for f in app-utils.js app-core.js app-staff.js app-admin.js; do git show <修正前SHA>:$f > $S/$f; done
+grep -c staffHidden $S/app-utils.js    # 0 でなければ基準SHAが間違っている
+```
+
+このフックは**報告の正しさにも効く**。「コミットしていない」と書いてターンを終えると、その直後に
+フックがコミットして push するため、**報告が終わった瞬間に嘘になる**。コミットの有無を報告に書くなら、
+フックが `app-*.js` だけをステージすること（他のファイルは残る）を前提に書く。
 
 `root` はworktree隔離（0.5節）でも使える。1.5節の罠（`preview_start` は常にメインの作業ディレクトリを配信する）がそもそも発生しない。
 
@@ -273,8 +318,40 @@ const out = await h.page.evaluate(async () => {
 - **`resolver`（第7引数）の有無でファイル名が変わる**。渡さない＝期間管理タブからの出力で `_修正前.xlsx` が付き、管理者調整値を反映しない。**両方の入口を測らないと片方しか確認していないことになる**（列構成は同じでも、値は違う）。
 - `writeBuffer()` は Promise なので、`expXl` から戻った直後にはまだ Blob が無い。1秒前後待つ。
 
-**PDFはこの手が使えない**。jsPDF が `html2canvas` で**ラスタ画像に変換してから**埋め込むため、出力に読み取れる文字が残らない。
-列を機械的に見るには `buildShiftTableHtml` の戻り値を捕まえる必要があるが、これは `ShiftEditTab` 内のクロージャで外から呼べない。**PDFだけは目視が要る**。
+**PDFは「この手（Blob捕獲）」が使えないだけで、中身の検証は自動化できる**。jsPDF が `html2canvas` で
+**ラスタ画像に変換してから**埋め込むため、生成された .pdf のバイト列に読み取れる文字は残らない。
+だが `buildShiftTableHtml` の戻り値は `renderBlock`（app-admin.js:1507）が
+**`c.innerHTML=html` してから `document.body.appendChild(c)` する**ので、5節の appendChild フックで
+そのままの HTML 文字列として捕まえられる。クロージャを外から呼ぶ必要はない。
+
+2026-09-06 実測（スタッフ非表示機能の検証）: 1.6節のハーネスに html2canvas と jsPDF を
+`extraHead` で載せ、「PDF出力」→「シフト」を押して `window.__pdfBlocks[0]` を読むと、
+`検証店舗10月前半シフト表10月前半曜日田中鈴木曜日検証店舗1木11木1192金金23土土3` が取れた。
+**列構成もセルの値も機械的に assert できる**。目視が本当に要るのはラスタ化の先＝フォント・改ページ・
+スケーリングの見た目だけで、「誰の列が出ているか」は目視項目ではない。
+
+**PDF固有の罠が2つある**:
+- **列見出しは1文字ずつ `<br>` で割られる縦書き**（`vtext`・app-admin.js:1364）。`html.includes("田中")`
+  は**必ず false になる**。タグと空白を落としてから照合すること
+  （`html.replace(/<[^>]*>/g,"").replace(/\s+/g,"")`）。2026-09-06 実測: この一致失敗を
+  「PDFから全員消えている」＝実装の不具合と3分読み違えた。1.6節の罠3〜7と同じ「測り方を疑う」型。
+- **`URL.createObjectURL` を差し替えたまま PDF を出すと jsPDF の `save()` が
+  `Not allowed to load local resource: blob:stub` を投げる**。1.8節のExcel検証と同じページで
+  続けてPDFを測るなら、Excelの捕獲が終わった時点で元の実装に戻す。戻さないと
+  「コンソールエラーなし」の判定だけが落ちて原因を探すことになる。
+
+**この3つはヘルパーになっている**。`h.capturePdf()` は捕獲と平文化を、`h.captureDownloads()` は
+差し替えと `restore()` を持つ。PDF出力ボタンのラベルは2行（`シフト\nシフト表のみ（Excelと同じ形式）`）だが、
+`h.clickExact("シフト")` は1行目の完全一致で拾うのでそのまま押せる。実例は `scripts/example-staff-hidden.js`。
+
+```js
+const dl = await h.captureDownloads();
+/* …expXl を呼んで window.__dl.blobs[0] を ExcelJS で読む… */
+await dl.restore();                       // 戻さないと次のPDFで blob:stub のエラーが出る
+const pdf = await h.capturePdf();
+await h.clickExact("PDF出力"); await h.clickExact("シフト");
+const text = await pdf.text();            // html() ではなく text() で判定する
+```
 
 **一般化**: 「ユーザーがファイルを開かないと分からない」と分類した項目は、**まず出口の実装を読む**こと。
 `createObjectURL`/`click`/`saveAs` のような差し替え可能な出口なら自動化でき、ラスタ化のように情報がそこで失われる形なら本当に目視が要る。**理由を確かめずに「条件A（ユーザー操作）」へ送ると、今回のように17回持ち越される。**
