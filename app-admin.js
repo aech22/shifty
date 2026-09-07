@@ -2486,8 +2486,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   };
   const startEdit=n=>{setEditKey(n);setEditName(n);};
   const cancelEdit=()=>{setEditKey(null);setEditName("");};
-  // スタッフ名は7つの設定マップ（staffColors/staffAttributes/staffNumbers/staffPositions/
-  // staffAliases/staffWorkplaces/overtimeSettings.byStaff）でFirebaseのキーになる。禁止文字を
+  // スタッフ名は STAFF_KEYED_SETTING_MAPS の各マップ（+ overtimeSettings.byStaff）で
+  // Firebaseのキーになる（一覧は app-utils.js のその定数が正本）。禁止文字を
   // 含む名前を通すと、色や属性を1つ設定した瞬間に settings の set() が同期例外を投げ、
   // fbW の .catch では拾えないまま保存が黙って失われる（画面とlocalStorageだけが更新される）。
   // ID生成側（genSecureId・app-utils.js）は既に同じ集合を除外している。入口をそちらに揃える。

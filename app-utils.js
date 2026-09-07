@@ -512,8 +512,8 @@ function genSecureId(len=24){
 }
 const isSpacer=n=>typeof n==="string"&&n.startsWith("__spacer__");
 // Firebaseのキーに使えない文字（genSecureId が記号から除外しているのと同じ集合）。
-// スタッフ名は staffColors / staffAttributes / staffNumbers / staffPositions / staffAliases /
-// staffWorkplaces / overtimeSettings.byStaff の7つの設定マップで「キー」として使われるため、
+// スタッフ名は STAFF_KEYED_SETTING_MAPS の各マップ（+ overtimeSettings.byStaff）で「キー」として
+// 使われるため（一覧はそちらが正本。ここに書き写すとマップが増えたとき黙って食い違う）、
 // この文字を含む名前を登録すると saveSettings の set() が同期例外を投げる。fbW の
 // `fbSet(...).catch(...)` は同期throwを受け取れない（.catchを付ける前に投げられる）ので
 // 書き込み失敗のログすら出ず、setSettings/localStorage だけが先に成功して画面上は保存されたように見える。
