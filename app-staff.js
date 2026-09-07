@@ -61,7 +61,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     // Cookieは提出した時点の表記のまま1年残る。その後に管理者がその表記を別名として登録し、
     // 別端末からの再提出で sub.staffName が登録名へ正規化されると（c889660 の漸進移行）、
     // 完全一致では自分の提出を見つけられず「未提出」の空フォームが出る（バグチェック#112）。
-    // 入力欄（:292/:301）と同じく登録名へ寄せ、探索は resolveSubByAlias に合わせる
+    // 入力欄・サジェスト確定（onBlur/候補クリックの resolveAlias）と同じく登録名へ寄せ、探索は resolveSubByAlias に合わせる
     // ＝sub側がまだ別名のままの端末でも見つかる。
     const ckName=resolveAlias(ckRaw,settings?.staffAliases);
     const prevSub=resolveSubByAlias(n=>subs.find(s=>s.staffName===n&&s.periodId===apid),ckName,settings?.staffAliases);
@@ -161,7 +161,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     }
     // ここで作る sub の staffName は必ず登録名にする（別名で提出済みの人が再提出すると
     // staffName が登録名へ正規化される・2026-08-21 ユーザー判断で確定）。
-    // 入力・サジェスト確定の経路（:292/:301）は既に resolveAlias 済みだが、Cookieから復元した
+    // 入力・サジェスト確定の経路（onBlur/候補クリック）は既に resolveAlias 済みだが、Cookieから復元した
     // name はその経路を通らないため、そこに頼ると別名のまま提出されて正規化が起きない。
     // 冪等（登録名を渡せばそのまま返る）なのでここで寄せ、この不変条件を構成で保証する（#112）。
     const staffName=resolveAlias(name.trim(),settings?.staffAliases);
@@ -569,7 +569,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
     const sub=submitted.find(s=>s.id===subId);if(!sub)return;
     // 既存フィールドを保持してマージ（adjustedStart/End等の管理者調整値・changedフラグを消さない）
     const next={...((sub.shifts||{})[ds]||{}),status:newStatus};
-    // 休みにした日はスタッフ提出の start/end を残さない（StaffViewの日付カード:336・一括反映:138と同じ扱い）。
+    // 休みにした日はスタッフ提出の start/end を残さない（StaffViewの日付カード・一括反映と同じ扱い）。
     // 残すと status は holiday なのに getStoredTime が時刻を返し、シフト作成グリッド・PDF・Excel・
     // ヒートマップだけがその日を出勤として表示・カウントする一方、勤務時間・出勤日数は0のままになる
     // （＝画面内で矛盾する。バグチェック#55）。CellEditPanelは休み側でも選択中の時刻をそのまま渡してくる。
@@ -578,11 +578,11 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
     else{
       delete next.start;delete next.end;
       // 管理者が入れた実効出退勤（グリッドの調整値・「締」の追加出勤）も同じ理由で残さない。
-      // 残すと status は holiday なのに getStoredTime（app-admin.js:514）が調整値を返し、
+      // 残すと status は holiday なのに getStoredTime（app-admin.js）が調整値を返し、
       // グリッド・PDF・Excel・ヒートマップ・休みカウントだけがその日を出勤として扱う一方、
       // 勤務時間・出勤日数は0のままになる（#55と同じ矛盾。バグチェック#57）。
       // 追加出勤フラグを残したまま status を holiday にするのは、carryAdminShiftFields
-      // （app-utils.js:186）が宣言している「フラグがある日は status="work"」の不変条件にも反する。
+      // （app-utils.js）が宣言している「フラグがある日は status="work"」の不変条件にも反する。
       // メモ（adjustedXxxNote）と休み希望（adminRest）は休みの日でも表示・意味が成立するため残す。
       delete next.adjustedStart;delete next.adjustedEnd;
       delete next.adjustedStartFixed;delete next.adjustedEndFixed;

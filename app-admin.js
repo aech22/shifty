@@ -412,7 +412,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         const abbrs=aS?Object.values(aS.val()||{}).filter(v=>typeof v==="string"):[];
         // 別名で提出されたsubは staffName に別名がそのまま残る（registerAlias は staffAliases に
         // 登録するだけで staffName を書き換えない）。キーを生の名前のまま持つと、参照側の
-        // dupErrors(:861) が自店舗の登録名で引いたときに必ず外れ、店舗間の勤務重複が検出されない。
+        // dupErrors が自店舗の登録名で引いたときに必ず外れ、店舗間の勤務重複が検出されない。
         // 他店舗自身の staffAliases で登録名へ解決してからキーにする（別名未使用の店舗では
         // resolveAlias が入力をそのまま返すため挙動は変わらない）。
         const otherAliases=(alS&&alS.val())||{};
@@ -450,7 +450,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
   // periodsが非同期ロード後に届いた場合、selPidが""のままなら先頭に補正。
   // 選択中の期間が他端末・他セッションで削除されたときもここへ来て別の期間へ移る。その場合は
-  // 期間ドロップダウン(:1573)・店舗切替(:388)と同じく localEdits/heatEdits を必ずクリアする。
+  // 期間ドロップダウン・店舗切替と同じく localEdits/heatEdits を必ずクリアする。
   // 両者は `名前|日付|フィールド` キーのバッファで期間を持たないため、残したまま「保存」を押すと
   // handleSaveAll が現在の selPid（＝移った先の期間）に対して applyEditToSubs を再適用し、
   // 消えた期間の日付が別の期間のsubへ書き込まれる（グリッドは期間内の日付しか描かないので画面には出ない）。
@@ -478,7 +478,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const period=periods.find(p=>p.id===selPid)||null;
   // 選択中の期間が終了済み（today > endDate）で写しを持つなら、staffList と凍結対象settingsを写しから読む。
   // 以降このコンポーネントが参照する staffList / settings はすべてこの解決後の値になるため、
-  // Excel(:1580)・PDF(buildPdfCols) も同じ凍結名簿で出力される。他タブは props のまま＝現在値で動く。
+  // Excel(expXl)・PDF(buildPdfCols) も同じ凍結名簿で出力される。他タブは props のまま＝現在値で動く。
   const todayStr=fd(new Date());
   const periodMaster=useMemo(()=>resolvePeriodMaster(period,staffListProp,settingsProp,todayStr),[period,staffListProp,settingsProp,todayStr]);
   const settings=periodMaster.settings;
@@ -896,7 +896,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(wps.length===0)return;
       dates.forEach(date=>{
         // x（ヘルプ・カウント外）は他店舗勤務が前提。略称によるヘルプ指定を下で除外しているのと
-        // 同じ理由でここでも除外する。heatData(:821)・positionErrors(:938) と同じ入口に揃える（バグチェック#85）
+        // 同じ理由でここでも除外する。heatData・positionErrors と同じ入口に揃える（バグチェック#85）
         if(isCountExcluded(name,date))return;
         let s=timeToMin(getEffHHMM(name,date,"start")),e=timeToMin(getEffHHMM(name,date,"end"));
         // 片側セルのみ入力はヒートマップ・ポジション判定と同じ規則で補完する（バグチェック#86）。
@@ -949,7 +949,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const attendees={lunch:{kitchen:[],hall:[]},dinner:{kitchen:[],hall:[]}};
       realStaff.forEach(name=>{
         let s=timeToMin(getEffHHMM(name,date,"start"));let e=timeToMin(getEffHHMM(name,date,"end"));
-        // 片側セルのみ入力はヒートマップ(heatData:766-768)と同じ規則で補完する
+        // 片側セルのみ入力はヒートマップ(heatData)と同じ規則で補完する
         // （出勤のみ→ランチ終わりまで、退勤のみ→ディナー始まりから出勤扱い）。
         // 補完せず早期returnすると、ヒートマップでは出勤として数えているスタッフが
         // ポジション判定でだけ不在扱いになり、実際には埋まっている枠を「不足」と誤報する（バグチェック#53）
@@ -1056,7 +1056,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const heatHours=(()=>{
     const hrs=new Set();
     // 候補管理から時間帯を収集
-    const allCands=[...(settings.candidates||[]),...Object.values(settings.weekdayCandidates||{}).flat(),...Object.values(settings.dateCandidates||{}).flat()].filter(c=>c&&!c.closed&&c.start&&c.end); // c&& の理由は :798 のコメント参照
+    const allCands=[...(settings.candidates||[]),...Object.values(settings.weekdayCandidates||{}).flat(),...Object.values(settings.dateCandidates||{}).flat()].filter(c=>c&&!c.closed&&c.start&&c.end); // c&& の理由は HEAT_LUNCH_END_MIN のコメント参照
     allCands.forEach(c=>{const sh=parseInt(c.start);const eh=parseInt(c.end);for(let h=sh;h<=eh;h++)hrs.add(h);});
     // 実際の提出・入力値から時間帯を収集（退勤延長分・「締」等の追加出勤(extraStart/extraEnd)も含める）
     subs.filter(s=>s.periodId===selPid).forEach(sub=>{Object.values(sub.shifts||{}).forEach(sh=>{if(sh.status!=="work")return;const st=sh.adjustedStart??sh.start,en=sh.adjustedEnd??sh.end;if(st)hrs.add(parseInt(st));if(en){hrs.add(parseInt(en));const ot=getOT(resolveAlias(sub.staffName,staffAliases),settings,sh);if(ot>0){const[h,m]=en.split(":").map(Number);hrs.add(Math.floor((h*60+m+ot)/60));}}if(sh.extraStart)hrs.add(parseInt(sh.extraStart));if(sh.extraEnd)hrs.add(parseInt(sh.extraEnd));});});
@@ -1457,7 +1457,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           const sh=_getSub(nm)?.shifts?.[ds];
           const r=pdfResolve(nm,ds,field);
           const otherHas=pdfResolve(nm,ds,field==="start"?"end":"start").disp;
-          // 変更マーク(緑)は画面(cellBgFor:1194)が changed を最優先・無条件で塗るので、PDFも同じにする。
+          // 変更マーク(緑)は画面(cellBgFor)が changed を最優先・無条件で塗るので、PDFも同じにする。
           // 下の早期returnは「表示する時刻が無い」セルを先に返してしまうため、ここで先に決めておかないと
           // 空白セル・休み希望セルの緑だけがPDFで落ちる（画面では斜線と緑が両方乗る）。
           // background の一括指定は background-color を transparent に戻すので、必ず後ろに置くこと。
@@ -1648,7 +1648,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             // ここで返さないとExcelでだけ締めが脱落する（バグチェック#52）
             return{time,note,fixed};
           };
-          // 店舗名は settings.xlShopName（設定タブ「Excel書き出し設定」）を優先する。期間タブのExcel(:2016)は
+          // 店舗名は settings.xlShopName（設定タブ「Excel書き出し設定」）を優先する。期間タブのExcel（PeriodsTab の expXl 呼び出し）は
           // 既にそうしており、設定の説明文も「Excel出力時のファイル名・シート内店舗名に反映されます」と
           // 約束している。ここだけ登録名を使うと、実際に配る側のシートにだけ設定が効かない。
           // xlShopName は凍結対象キーではないため、確定済み期間でも現在値が入る（期間タブ側と同じ）。
@@ -2490,7 +2490,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   // staffAliases/staffWorkplaces/overtimeSettings.byStaff）でFirebaseのキーになる。禁止文字を
   // 含む名前を通すと、色や属性を1つ設定した瞬間に settings の set() が同期例外を投げ、
   // fbW の .catch では拾えないまま保存が黙って失われる（画面とlocalStorageだけが更新される）。
-  // ID生成側（genSecureId・app-utils.js:419）は既に同じ集合を除外している。入口をそちらに揃える。
+  // ID生成側（genSecureId・app-utils.js）は既に同じ集合を除外している。入口をそちらに揃える。
   const rejectBadName=n=>{
     const bad=firebaseKeyForbiddenChars(n);
     if(!bad.length)return false;
@@ -2500,7 +2500,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   // 他人の別名と同じ名前は登録できない。resolveAlias（app-utils.js）は入力名が誰かの別名なら
   // 登録名へ寄せるため、通してしまうと本人が自分の名前を入力しても別人の提出になり、
   // 管理者側のその人の行は空のままになる（バグチェック#107 で実測）。
-  // addAlias(:2388) は逆向き（登録名と同じ別名）を既に禁じている。同じ不変条件の反対側の入口。
+  // addAlias は逆向き（登録名と同じ別名）を既に禁じている。同じ不変条件の反対側の入口。
   const rejectAliasCollision=(n,selfName)=>{
     const owner=aliasOwnerOf(n,staffAliases,selfName);
     if(!owner)return false;
@@ -2526,16 +2526,16 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     ph("staff_added",{staff_count:staffList.filter(n=>!isSpacer(n)).length+1});
     onSave([...staffList,newName.trim()]);setNewName("");tt(`✓ ${newName.trim()} を追加しました`);
   };
-  // 他の破壊的操作（:132 店舗 / :1966 期間 / :3032 提出 / :3618 ポジション）は全て confirm で対象を示すのに、
+  // 他の破壊的操作（店舗 / 期間 / 提出 / ポジション）は全て confirm で対象を示すのに、
   // スタッフ削除だけが素通りだった。ここは1行に 別名/ポジション/編集/削除 が並ぶ最も密なリスト（バグチェック#74:
-  // スタッフタブは43要素中39個が44px未満）で、押した瞬間に対象がシフト作成の列（gridStaff・:1060）と
-  // ヒートマップ（heatData・:762）から消える。件数は「提出済みのシフト」の語に合わせて source:"grid"
+  // スタッフタブは43要素中39個が44px未満）で、押した瞬間に対象がシフト作成の列（gridStaff）と
+  // ヒートマップ（heatData）から消える。件数は「提出済みのシフト」の語に合わせて source:"grid"
   // （管理者がセルに直接入力した分）を除く＝提出一覧・SmModal と同じ式にする（食い違うとバグチェック#56 の再来）。
-  // 別名ぶんも必ず数える: registerAlias（:2969）は sub.staffName を書き換えず staffAliases に登録するだけなので、
-  // 別名で出された提出は staffName に別名が入ったまま残る。一方 提出一覧（:3010）は resolveAlias 済みの名前で表示し、
-  // Excel（expXl・:2172）も別名を登録名の列に出す。名前一致だけで数えると、この文が名指しした2つの出力に
-  // 残るものを数え落とす（全提出が別名ぶんなら 0件 になり警告文ごと消える）。他4箇所（app-staff.js:519 /
-  // :2172 / :3069 / :552-559）は既に別名込みで数えており、ここだけが名前一致だった。
+  // 別名ぶんも必ず数える: registerAlias は sub.staffName を書き換えず staffAliases に登録するだけなので、
+  // 別名で出された提出は staffName に別名が入ったまま残る。一方 提出一覧は resolveAlias 済みの名前で表示し、
+  // Excel（expXl）も別名を登録名の列に出す。名前一致だけで数えると、この文が名指しした2つの出力に
+  // 残るものを数え落とす（全提出が別名ぶんなら 0件 になり警告文ごと消える）。他4箇所（app-staff.js の未提出リスト /
+  // expXl / 提出一覧 / _getSubForPeriod）は既に別名込みで数えており、ここだけが名前一致だった。
   // 提出データ自体は del では消えない（onSave は staffList のみ）ため「残る」と明示する。取り消し不能とは書かない
   // ——同名で追加し直せば設定マップもsubsも復帰し、失われるのは並び順だけである。
   // 削除ポップアップに出す期間: 最新から3つまで（startDate降順）。
@@ -3537,7 +3537,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   // 週・月・連続日数の上限判定は「期間をまたいだ実際の勤務」で数える。1つのsubは1期間ぶんの日付しか持たないため、
   // sub自身のshiftsだけで数えると、期間の境界にかかる週と、periodUnit:"2week" のときの月が必ず過少になる
   // （実測: 8月を2週×2期間で20日×8h＝160h働いても、月上限100hの判定は両期間とも false）。
-  // 同じ「その週/月の勤務時間」を、シフト作成タブの getWeekMin（:1026・_getWorkShift 経由）と
+  // 同じ「その週/月の勤務時間」を、シフト作成タブの getWeekMin（_getWorkShift 経由）と
   // 詳細モーダルの週間勤務時間/月計（:3074・wSS フォールバック）は既に期間跨ぎで出しており、
   // 行バッジの判定だけが期間内に閉じていた。同じ問いに2つの式がある状態を、多数派（期間跨ぎ）へ揃える。
   // 別名も必ず解決する: registerAlias は sub.staffName を書き換えないため、別名で出された提出は別名のまま残る。
@@ -3550,8 +3550,8 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   // 一本化して biweekly を days=14 で通す。以後どちらかだけが直る形にはならない。
   // 重複キー（同じ staffName|date が複数のsubにある）は「最初の1件」を採る。期間の重複は PEF に
   // バリデーションが無いため作成でき、重なった日に両方の期間へ提出があるとキーが衝突する。
-  // 同じ形のマップが2つあり、ShiftEditTab の workShiftByStaffDate（:490-500）は !m.has(k) で最初を、
-  // subsByKey（:485）も「重複時はfindと同じ最初の1件を採用」とコメントで明示しているのに、
+  // 同じ形のマップが2つあり、ShiftEditTab の workShiftByStaffDate は !m.has(k) で最初を、
+  // subsByKey も「重複時はfindと同じ最初の1件を採用」とコメントで明示しているのに、
   // ここだけ無条件 set ＝最後の1件だった（実測: 重なった週の勤務時間が シフト作成タブ 25:00 に対し
   // 提出一覧 65:00 と食い違い、週上限40hの判定が画面ごとに反転した）。衝突が無い通常時の挙動は不変。
   const shiftByStaffDate=useMemo(()=>{const m=new Map();subs.forEach(s=>{if(!s||!s.shifts)return;Object.keys(s.shifts).forEach(d=>{const sh=s.shifts[d];const k=s.staffName+"|"+d;if(sh&&sh.status==="work"&&!m.has(k))m.set(k,sh);});});return m;},[subs]);
@@ -3569,7 +3569,7 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   const tg=f=>{if(sf===f)setSdr(d=>d==="asc"?"desc":"asc");else{setSf(f);setSdr("asc");}};
   // source:"grid" はシフト作成タブが直接作成したsub（スタッフのURL提出ではない）なので提出一覧には出さない
   // 提出日時での並べ替えは subLastActionTime（再提出＝変更ありはupdatedAt）を使い、再提出も新規提出と同じ土俵で上位に来るようにする
-  // 氏名の絞り込み・並べ替えは表示名（:3051 が resolveAlias で解決した登録名）でも突き合わせる。
+  // 氏名の絞り込み・並べ替えは表示名（resolveAlias で解決した登録名）でも突き合わせる。
   // 生の s.staffName だけを見ると、別名で提出されたsubは行に「田中」と表示されているのに「田中」で
   // 絞り込むと消える＝画面に出ている名前でその行を引けない。氏名列の並べ替えも同じ理由で表示名を使う
   // （生の別名でも従来どおり引けるよう、絞り込みは生の名前との一致も残す＝ヒットが減ることはない）。
