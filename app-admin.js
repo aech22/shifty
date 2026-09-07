@@ -3422,7 +3422,10 @@ function CandTab({settings,onSave,shopTemplates=[],saveShopTemplates,tt,plan="fr
         const toggleTag=(dt,i,tagId)=>{const bt={...(settings.breakTimes||{})};bt[dt]=[...(bt[dt]||[])];const cur=bt[dt][i]||{};const tags=[...(cur.tags||[])];const p=tags.indexOf(tagId);if(p>=0)tags.splice(p,1);else tags.push(tagId);const nb={...cur};if(tags.length)nb.tags=tags;else delete nb.tags;bt[dt][i]=nb;onSave({...settings,breakTimes:bt});};
         return(<AC title="休憩時間設定">
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>設定した休憩時間は出勤〜退勤から自動的に差し引かれ、純勤務時間として表示されます。</div>
-        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>休憩は出退勤時間が実際に休憩時間帯と重なるスタッフにのみ適用されます。</div>
+        {/* 適用条件の正本は getBreaksFor（app-utils.js）。2026-08-25〜08-31 の決定3で「重なる日」から
+            「丸ごと含む日」へ絞り、片側セルを対象外にしたが、この注記だけが 2026-07-10 の旧仕様のまま
+            6週間残っていた（バグチェック#114）。条件を変えるときはこの文も同じコミットで直す。 */}
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>休憩は勤務時間が休憩時間帯を丸ごと含む日にのみ適用されます（出勤が休憩開始より前・退勤が休憩終了より後）。出勤・退勤の片方だけを入力した日には適用されません。</div>
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>タグを設定した休憩はその属性のスタッフにのみ適用されます。タグなしの休憩は、タグ付き休憩がない属性のスタッフに適用されます。</div>
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>日区分は必要ポジション設定と同じ5分類です。祝日は「連休中・単日」と「最終日」に分かれ、各日付は候補タブの日付別で選んだ区分に自動で追従します。</div>
         {/* 追加フォーム */}
