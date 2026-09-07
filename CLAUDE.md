@@ -595,7 +595,7 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 ### 修正済み
 
 - **🟡 コメント内の行番号参照27件が、ほぼ全て別のコードを指していた**
-  （[app-admin.js](app-admin.js)・[app-staff.js](app-staff.js)・`70e1e9c`）
+  （[app-admin.js](app-admin.js)・[app-staff.js](app-staff.js)・`7fa0330`）
 
   このコードベースは「同じ不変条件を持つ別の場所」をコメントで相互参照する規約を持つ。
   `dupErrors(:861)`・`registerAlias（:2969）`・`getStoredTime（app-admin.js:514）` のように
@@ -629,7 +629,7 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
   **コードは1バイトも変えていない**ことを、`// 以降を除去した差分が両ファイルとも空`で確認した。
 
 - **🟢→🟡 「スタッフ名がキーになる設定マップは7つ」という注記が `staffHidden` を数え落としていた**
-  （[app-utils.js:513](app-utils.js)・[app-admin.js:2489](app-admin.js)・`e9e6dd9`）
+  （[app-utils.js:513](app-utils.js)・[app-admin.js:2489](app-admin.js)・`4e274a4`）
 
   2箇所の注記が `STAFF_KEYED_SETTING_MAPS` の中身を書き写しており、
   **2026-09-06 に `staffHidden` が足された時点で古くなっていた**。
