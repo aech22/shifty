@@ -171,7 +171,6 @@ AI / AB / AD / AGray // スタイル定数
 | `staffList` | string[] | スタッフ名一覧 |
 | `subs` | Sub[] | 提出データ一覧 |
 | `shopTemplates` | Template[] | 曜日別候補テンプレート（shops/{shopId}/templates・店舗単位） |
-| `inviteCodeDisplay` | string\|null | 企業招待コード表示用 |
 | `syncStatus` | "init"\|"online"\|"offline"\|"no_config" | Firebase接続状態 |
 
 主要関数：
