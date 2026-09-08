@@ -126,6 +126,16 @@ staffHiddenRanges / isStaffHiddenInPeriod / isStaffHiddenNow / hideStaffFrom / s
                            // `_writeHiddenRanges` は下限も上限も無い範囲が1つでもあれば `true` に潰す（全期間を覆うので同値。#113）
 visibleStaffList(list, settings, period) // 上の判定で名簿から落とす。シフト作成グリッド・ヒートマップ・Excel・PDF はこれを通した名簿で描く。**period を必ず渡す**（渡さないと隠さない側に倒れる）。**isUnregisteredSubName には通さない**（通すと非表示の人の提出が未登録名に化けてExcel/PDFの末尾に列として復活する）。staffList 本体は触らないので提出URL・別名・提出データの紐付けは生きたまま
 STAFF_KEYED_SETTING_MAPS   // スタッフ名をキーに持つ設定マップ7件の**正本**（+ overtimeSettings.byStaff で計8）。改名（renameStaffInSettings）と削除の後始末（app-admin.js の settingsWithoutStaff）の**両方がここを参照する**。新しいマップを足すときはここに登録し、あわせて PERIOD_SNAPSHOT_SETTING_KEYS にも入れる（入れないと写しの側で改名が届かず #107 が再発する）。一覧を別の場所へ書き写さないこと——tests/core.test.js がドリフトを検出する（#108）
+keepAttrsOf(period) / applyKeepAttrs(settings,period)
+                           // 属性の期間指定（2026-09-08 決定）。`period.keepAttrs = {名前: 属性ID}` に**旧属性を書き置き**、
+                           // resolvePeriodMaster が写しマージの**後**に staffAttributes へ上書きする（写しと食い違えば keepAttrs が勝つ）。
+                           // 夏休みだけ上限の大きい属性にして戻すと、戻した瞬間に配り終えた期間まで新しい上限で
+                           // 再判定され上限超過エラーになる、という報告への対応。keepStaff と同じ「期間側に足すだけ」の形で、
+                           // settings.staffAttributes の形は変えない＝既存の読み手はそのまま動く。
+                           // 書くのは StaffTab の属性変更ポップアップ（最新3期間から「どの期間まで旧属性のままか」を選ぶ3択）。
+                           // **指定の無い期間では同じ参照を返す**ので、持たない期間は従来と1バイトも変わらない。
+                           // 提出一覧(SubsTab)だけは resolvePeriodMaster を通らないので、上限判定の直前で個別に当てている。
+                           // 改名では renameStaffInPeriods がキーを移す（移さないと過去期間の指定が引けずエラーが戻る）。
 PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS // 上の例外＝**意図的に凍結しない**マップ（現在は staffHidden だけ）。値そのものが期間の範囲を持つので写しに焼くと同じ問いへの答えが2つできる。凍結対象外のキーは resolvePeriodMaster が現在値のまま残すため、終了した期間もその startDate で評価される
 // 末尾に module.exports ガード（Nodeテスト用）
 ```
@@ -322,7 +332,10 @@ Shop = { id: string, name: string, createdAt: string, lastActivity: string }
 
 // 期間
 Period = { id: string, urlToken: string, shopId: string, label: string,
-           startDate: string, endDate: string, deadlineDate: string, createdAt: string }
+           startDate: string, endDate: string, deadlineDate: string, createdAt: string,
+           snapshot?: {staffList: string[], settings: Settings},  // 確定済み期間の写し
+           keepStaff?: {name: string, index: number}[],           // 削除しても列を残す人
+           keepAttrs?: {[name: string]: 属性ID} }                 // その期間に効かせる旧属性
 
 // 提出
 Sub = { id: string, periodId: string, staffName: string, shopId: string,

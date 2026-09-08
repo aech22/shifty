@@ -224,7 +224,12 @@ await h.close();
 ```bash
 node .claude/skills/shifty-e2e-verify/scripts/example-shift-edit-tab.js   # #93 の再現。allPass=true / EXIT=0
 node .claude/skills/shifty-e2e-verify/scripts/example-staff-hidden.js     # スタッフ非表示。allPass=true / EXIT=0
+node .claude/skills/shifty-e2e-verify/scripts/example-staff-attr-period.js # 属性の期間指定。allPass=true / EXIT=0
 ```
+
+`example-staff-attr-period.js` は **StaffTab（書く側）と ShiftEditTab（読む側）を1本で測る**形の雛形。
+ポップアップが何を保存したかだけでなく、その保存が終了済み期間の上限判定に効いて赤い超過表示が
+消えることまで、`getComputedStyle` の背景色で確かめている（「保存された」で止めない）。
 
 `example-staff-hidden.js` は上のヘルパー4つを全部使う実例で、**グリッド・Excel・PDFの3経路を1本で測る形**の雛形になる。
 

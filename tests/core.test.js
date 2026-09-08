@@ -1775,6 +1775,81 @@ test("resolvePeriodMaster: keepStaff を持たない期間は従来と1バイト
   assert.deepStrictEqual(u.resolvePeriodMaster(p, _liveStaff, _liveSettings, "2026-07-20").staffList, _liveStaff);
 });
 
+// ===== 属性を期間ごとに残す（period.keepAttrs）=====
+// 夏休みだけ上限の大きい属性にして元へ戻したとき、配り終えた期間まで新しい上限で再判定されて
+// 上限超過エラーが出る、という報告への対応（2026-09-08）。旧属性を期間側へ書き置いて解決する。
+test("keepAttrsOf: 文字列の値だけを拾い、空・非オブジェクトは null", () => {
+  assert.deepStrictEqual(u.keepAttrsOf({ keepAttrs: { 田中: "summer" } }), { 田中: "summer" });
+  assert.strictEqual(u.keepAttrsOf({ keepAttrs: {} }), null, "空マップは指定なし扱い");
+  assert.strictEqual(u.keepAttrsOf({}), null);
+  assert.strictEqual(u.keepAttrsOf(null), null);
+  assert.strictEqual(u.keepAttrsOf({ keepAttrs: true }), null, "非オブジェクトは無視");
+  assert.deepStrictEqual(u.keepAttrsOf({ keepAttrs: { 田中: "", 佐藤: 3, 山田: "employee" } }), { 山田: "employee" },
+    "空文字・非文字列の値は落とす");
+});
+
+test("applyKeepAttrs: 指定が無ければ同じ参照を返す（持たない期間は従来と変わらない）", () => {
+  assert.strictEqual(u.applyKeepAttrs(_liveSettings, _basePeriod), _liveSettings);
+  assert.strictEqual(u.applyKeepAttrs(_liveSettings, { keepAttrs: {} }), _liveSettings);
+});
+
+test("applyKeepAttrs: staffAttributes だけを差し替え、元の settings を壊さない", () => {
+  const r = u.applyKeepAttrs(_liveSettings, { keepAttrs: { 田中: "summer" } });
+  assert.strictEqual(r.staffAttributes.田中, "summer");
+  assert.strictEqual(r.xlShopName, "現在の店舗名", "他のキーはそのまま");
+  assert.strictEqual(_liveSettings.staffAttributes.田中, "employee", "元のsettingsは破壊しない");
+});
+
+test("applyKeepAttrs: 指定の無い人の属性は現在値のまま残る", () => {
+  const s = { staffAttributes: { 田中: "employee", 佐藤: "parttime" } };
+  const r = u.applyKeepAttrs(s, { keepAttrs: { 田中: "summer" } });
+  assert.deepStrictEqual(r.staffAttributes, { 田中: "summer", 佐藤: "parttime" });
+});
+
+test("resolvePeriodMaster: keepAttrs は終了前の期間にも効く（写しがまだ採用されない時期）", () => {
+  const p = { ..._basePeriod, keepAttrs: { 田中: "summer" } };
+  const r = u.resolvePeriodMaster(p, _liveStaff, _liveSettings, "2026-07-20");
+  assert.strictEqual(r.locked, false);
+  assert.strictEqual(r.settings.staffAttributes.田中, "summer");
+});
+
+test("resolvePeriodMaster: 確定済みの写しと食い違ったら keepAttrs が勝つ", () => {
+  // 写しは「その期間を開いた瞬間の値」を受動的に撮ったもの。keepAttrs は管理者がその期間を
+  // 名指しで指定した記録なので、あとから入った明示の指定を優先する。
+  const snap = u.buildPeriodSnapshot(_liveStaff, { staffAttributes: { 田中: "parttime" } });
+  const p = { ..._basePeriod, snapshot: snap, keepAttrs: { 田中: "summer" } };
+  const r = u.resolvePeriodMaster(p, _liveStaff, _liveSettings, "2026-08-05");
+  assert.strictEqual(r.locked, true);
+  assert.strictEqual(r.settings.staffAttributes.田中, "summer");
+  assert.strictEqual(snap.settings.staffAttributes.田中, "parttime", "写しの中身は変わらない");
+});
+
+test("renameStaffInPeriods: keepAttrs のキーも移す（写しを持たない期間でも）", () => {
+  // 移し替えないと改名した瞬間に過去期間の属性指定が引けなくなり、現在の属性で再判定される
+  // ＝消したはずの上限超過エラーが黙って戻る（#107 と同じ形）。
+  const periods = [{ id: "p1", keepAttrs: { 田中: "summer" } }, { id: "p2" }];
+  const r = u.renameStaffInPeriods(periods, "田中", "田中 太郎");
+  assert.strictEqual(r.changed, true);
+  assert.deepStrictEqual(r.periods[0].keepAttrs, { "田中 太郎": "summer" });
+  assert.strictEqual(r.periods[1], periods[1], "関係ない期間は同じ参照のまま");
+  assert.deepStrictEqual(periods[0].keepAttrs, { 田中: "summer" }, "元の配列は破壊しない");
+});
+
+test("renameStaffInPeriods: keepAttrs と写しの両方を1回で移す", () => {
+  const snap = u.buildPeriodSnapshot(["田中"], { staffAttributes: { 田中: "employee" } });
+  const r = u.renameStaffInPeriods([{ id: "p1", snapshot: snap, keepAttrs: { 田中: "summer" } }], "田中", "T");
+  assert.deepStrictEqual(r.periods[0].keepAttrs, { T: "summer" });
+  assert.deepStrictEqual(r.periods[0].snapshot.staffList, ["T"]);
+  assert.strictEqual(r.periods[0].snapshot.settings.staffAttributes.T, "employee");
+});
+
+test("renameStaffInPeriods: keepAttrs に居ない人の改名では何も起きない", () => {
+  const periods = [{ id: "p1", keepAttrs: { 佐藤: "summer" } }];
+  const r = u.renameStaffInPeriods(periods, "田中", "T");
+  assert.strictEqual(r.changed, false);
+  assert.strictEqual(r.periods[0], periods[0]);
+});
+
 // ===== スタッフ名のFirebase禁止文字 =====
 // 名前は staffColors 等7つの設定マップでキーになる。禁止文字を含むと set() が同期例外を投げ、
 // fbW の .catch では拾えないまま保存が失われる（バグチェック#89）。

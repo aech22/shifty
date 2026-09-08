@@ -2378,6 +2378,13 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const[hideTarget,setHideTarget]=useState(null);
   const[hideMode,setHideMode]=useState("hide");
   const[hideChoiceIdx,setHideChoiceIdx]=useState(0);
+  // 属性変更ポップアップ。対象は上の2つと同じ理由で「スタッフ名」で持つ（indexで持たない）。
+  // attrNext は選ばれた新しい属性ID、attrKeepCount は「どの期間まで旧属性のままにするか」の
+  // 選択位置（delPeriodChoices の1始まりindex）。削除ポップアップと違い 0（＝残さない）は無い
+  // ＝3択（2026-09-08 ユーザー決定）。属性は必ずどこかの期間まで旧属性のまま残る。
+  const[attrTarget,setAttrTarget]=useState(null);
+  const[attrNext,setAttrNext]=useState("");
+  const[attrKeepCount,setAttrKeepCount]=useState(1);
   // 編集中・別名パネル・ポジションパネルの対象は「スタッフ名」で持つ（indexで持ってはいけない）。
   // indexで持つと、パネルを開いたまま別の行を削除する／並べ替える／他端末がstaffListを変えると、
   // 同じindexが別人を指すようになり、開いたままの編集欄が別人の行に移って保存が別人を書き換える
@@ -2483,6 +2490,54 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     if(!startDate)return true; // 上限を書けない＝範囲ごと捨てる
     const from=openHiddenFrom(name);
     return from!=null&&startDate<=from;
+  };
+  // ===== 属性の変更（旧属性をどの期間まで残すか）=====
+  // 属性は押した瞬間には反映せず、必ずポップアップで「どの期間まで旧属性のままにするか」を選ばせる
+  // （2026-09-08 ユーザー決定）。夏休みだけ上限の大きい属性にして元へ戻すと、戻した瞬間に
+  // 配り終えた期間まで新しい上限で再判定され、過去のシフト表が上限超過エラーになるため。
+  // 旧属性は選んだ期間とそれより古い期間の period.keepAttrs へ書く（読む側は app-utils.js の
+  // applyKeepAttrs＝resolvePeriodMaster 経由でシフト作成タブ・ヒートマップ・集計・Excel・PDF に効く）。
+  const attrLabelOf=id=>{const f=getAttrOptions(settings).find(([v])=>v===id);return f?f[1]:(STAFF_TYPE_LABELS[id]||id||"");};
+  const curAttrOf=n=>(settings.staffAttributes||{})[n]||"parttime";
+  const saveAttr=(n,v)=>{
+    const attrs={...(settings.staffAttributes||{})};
+    if(v)attrs[n]=v;else delete attrs[n];
+    onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});
+  };
+  const openAttrDialog=(n,v)=>{
+    if(!v||v===curAttrOf(n))return;
+    // 期間が1件も無ければ旧属性を書き置く先が無い。過去のシフト表も存在しないので従来どおり即反映する。
+    if(!delPeriodChoices.length){saveAttr(n,v);tt(`✓「${n}」を${attrLabelOf(v)}に変更しました`);return;}
+    setAttrTarget(n);setAttrNext(v);
+    // 既定は「いちばん新しい **終了済み** の期間まで旧属性のまま」＝削除ポップアップと同じ考え方。
+    // 9月に夏休み属性を戻すなら 8月後半（終了済み）までが旧属性、進行中の9月前半から新属性になる。
+    // 終了済みが1つも無ければ 0 が返るが 0 の選択肢は無いので、最新期間（＝1）へ丸める。
+    setAttrKeepCount(Math.max(1,defaultKeepCount(delPeriodChoices,todayStr)));
+  };
+  const confirmAttr=()=>{
+    const n=attrTarget,v=attrNext;
+    if(!n||!v){setAttrTarget(null);return;}
+    const old=curAttrOf(n);
+    const keepIds=new Set(retainedPeriodIds(delPeriodChoices,attrKeepCount));
+    let wrote=0;
+    if(!ownerReadOnly&&savePeriods&&keepIds.size){
+      const next=periods.map(p=>{
+        if(!p||!keepIds.has(p.id))return p;
+        // **既に指定のある期間は上書きしない**。そこに入っている値は前回の属性変更で
+        // 「その期間に効いていた属性」として書き置いたものなので、いまの属性で塗り替えると
+        // 過去の記録のほうが壊れる（足すだけで消さない＝keepStaff と同じ原則）。
+        if((keepAttrsOf(p)||{})[n])return p;
+        wrote++;
+        return{...p,keepAttrs:{...(keepAttrsOf(p)||{}),[n]:old}};
+      });
+      if(wrote)savePeriods(next);
+    }
+    saveAttr(n,v);
+    setAttrTarget(null);
+    const last=delPeriodChoices[attrKeepCount-1];
+    tt(wrote
+      ?`✓「${n}」を${attrLabelOf(v)}に変更しました（「${last?(last.label||"(名称なし)"):""}」までは${attrLabelOf(old)}のままです）`
+      :`✓「${n}」を${attrLabelOf(v)}に変更しました`);
   };
   const startEdit=n=>{setEditKey(n);setEditName(n);};
   const cancelEdit=()=>{setEditKey(null);setEditName("");};
@@ -2903,6 +2958,60 @@ const dragIdxRef=useRef(null);
           </div>
         </div>);
       })()}
+      {/* 属性変更ポップアップ。選択肢は削除・非表示と同じ最新3期間（delPeriodChoices・startDate降順）。
+          「この期間まで旧属性のまま」＝選んだ期間とそれより古い期間に旧属性を書き置き、
+          それより新しい期間から新しい属性で判定される（retainedPeriodIds と同じ時系列の読み方）。 */}
+      {attrTarget&&(()=>{
+        const old=curAttrOf(attrTarget);
+        const oldL=attrLabelOf(old),newL=attrLabelOf(attrNext);
+        const opt=(idx,p)=>{
+          const dates=`${(p.startDate||"").replace(/-/g,"/")}〜${(p.endDate||"").replace(/-/g,"/")}`;
+          // 前回の属性変更で既に指定が入っている期間は上書きしない（confirmAttr と同じ判定）。
+          // 「選んだのに変わらない」を黙って起こさないよう、選択肢の側で名指しする。
+          const fixed=(keepAttrsOf(p)||{})[attrTarget];
+          const newer=delPeriodChoices.slice(0,idx).map(q=>q.label||"(名称なし)");
+          return(
+            <label key={idx} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"8px 10px",marginBottom:4,borderRadius:8,cursor:"pointer",
+              background:attrKeepCount===idx+1?"rgba(248,112,54,.10)":"var(--c-input)",
+              border:`1px solid ${attrKeepCount===idx+1?"var(--c-accent)":"var(--c-border)"}`}}>
+              <input type="radio" name="attrKeep" checked={attrKeepCount===idx+1} onChange={()=>setAttrKeepCount(idx+1)} style={{marginTop:2,flexShrink:0,width:16,height:16}}/>
+              <span style={{minWidth:0}}>
+                <span style={{fontSize:13,color:"var(--c-text)",fontWeight:600}}>{`${p.label||"(名称なし)"} まで ${oldL} のまま`}</span>
+                <span style={{display:"block",fontSize:11,color:"var(--c-text4)",marginTop:2}}>
+                  {dates}
+                  {newer.length?` ／ ${newer.join("・")} から ${newL} になります`:` ／ これより新しい期間から ${newL} になります`}
+                  {fixed?` ／ この期間は前回の変更で ${attrLabelOf(fixed)} に固定済み（変わりません）`:""}
+                </span>
+              </span>
+            </label>
+          );
+        };
+        return(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+          onClick={()=>setAttrTarget(null)}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:"18px 18px 14px",maxWidth:440,width:"100%",maxHeight:"85vh",overflowY:"auto",boxShadow:"0 8px 32px var(--c-shadow)"}}>
+            <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>
+              {`「${attrTarget}」の属性を ${oldL} → ${newL} に変更します`}
+            </div>
+            <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>
+              属性は勤務時間の上限判定に使います。何も指定せずに変えると、配り終えた過去のシフト表まで新しい上限で判定し直され、上限超過のエラーが出ます。
+            </div>
+            <div style={{fontSize:13,fontWeight:700,color:"var(--c-text2)",marginTop:10,marginBottom:8}}>
+              {`どの期間まで ${oldL} のままにしますか？`}
+            </div>
+            <div>{delPeriodChoices.map((p,idx)=>opt(idx,p))}</div>
+            {(delOlder.kept+delOlder.lost)>0&&<div style={{fontSize:11,color:delOlder.lost?"var(--c-text3)":"var(--c-text4)",margin:"6px 0 12px"}}>
+              {delOlder.lost===0
+                ?"※ これより古い期間は確定済みのため、属性は変わりません。"
+                :`※ これより古い期間は選べません。${delOlder.kept?`確定済みの${delOlder.kept}件は変わりませんが、`:""}未確定の${delOlder.lost}件は ${newL} で判定されます（シフト作成タブで「この期間を確定」すると変わらなくなります）。`}
+            </div>}
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap"}}>
+              <button onClick={()=>setAttrTarget(null)} style={AGray}>キャンセル</button>
+              <button onClick={confirmAttr} style={AB}>変更する</button>
+            </div>
+          </div>
+        </div>);
+      })()}
       <AT>スタッフ登録</AT>
       <AC title="スタッフ一覧">
         {!isPro&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:8,padding:"7px 10px"}}>
@@ -2957,7 +3066,10 @@ const dragIdxRef=useRef(null);
                     title（ツールチップ）へ移し、行の幅は非表示でない行と同じに保つ。 */}
                 {hidden&&<span title={`${hiddenFrom?`${periodLabelOfStart(hiddenFrom)}以降 ／ `:""}シフト作成タブ・Excel・PDF に出ません（提出は今までどおりできます）`} style={{fontSize:11,color:"var(--c-text4)",flexShrink:0,whiteSpace:"nowrap"}}>(非表示)</span>}
                 {isPremium&&<input value={(settings.staffNumbers||{})[n]||""} onChange={e=>{const v=e.target.value;const nums={...(settings.staffNumbers||{})};if(v)nums[n]=v;else delete nums[n];onSaveSettings&&onSaveSettings({...settings,staffNumbers:nums});}} maxLength={8} placeholder="番号" style={{width:64,fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",flexShrink:0,textAlign:"center"}}/>}
-                {isPremium&&<select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
+                {/* 属性は選んだ瞬間には保存しない。openAttrDialog がポップアップを開き、
+                    「どの期間まで旧属性のままにするか」を確定してから保存する。value は
+                    settings のまま＝キャンセルすれば表示も元の属性に戻る。 */}
+                {isPremium&&<select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>openAttrDialog(n,e.target.value)} style={{fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
                   {Object.entries({employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})}).map(([v,t])=>{const label=(typeof t==="object"?t.name:"")||STAFF_TYPE_LABELS[v]||"";return label?<option key={v} value={v}>{label}</option>:null;})}
                 </select>}
                 {isPro&&<button onClick={()=>{setAliasKey(aliasKey===n?null:n);}} style={{padding:"6px 10px",background:aliasKey===n?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasKey===n?"var(--c-accent)":"rgba(248,112,54,.3)"}`,borderRadius:4,color:"var(--c-accent)",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
@@ -3605,7 +3717,12 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
           <tbody>{fil.length===0
             ?<tr><td colSpan={4} style={{textAlign:"center",color:"var(--c-text4)",padding:24}}>提出データがありません</td></tr>
             :fil.map(sub=>{const resolvedName=resolveAlias(sub.staffName,staffAliases);const ds=Object.keys(sub.shifts||{}).sort(),wkDays=ds.filter(d=>sub.shifts[d]&&sub.shifts[d].status==="work");const att=wkDays.reduce((acc,d)=>{const sh=sub.shifts[d];return acc+(shiftBandInfo(sh,settings).attendance||1);},0);const attLabel=`${att}日`;const at=new Date(sub.submittedAt).toLocaleString("ja-JP",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"});const subPeriod=periods.find(p=>p.id===sub.periodId);const hasRealUpdate=subHasRealUpdate(sub,subPeriod?.deadlineDate);
-              const staffType=isPremium?(((settings.staffAttributes)||{})[resolvedName]||"parttime"):null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly||typeLim.customDays)){const weekMap={};const monthMap={};const _min=(n,d2)=>{const sh=_shiftAt(n,d2);return sh?calcNetWorkMinutes(sh,getBreaksFor(settings,d2,n,sh),getOT(n,settings,sh),settings):0;};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreaksFor(settings,d,resolvedName,sh),getOT(resolvedName,settings,sh),settings);if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;});const wkSet2=new Set(),moSet2=new Set();ds.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet2.add(fd(mon));moSet2.add(d.slice(0,7));});wkSet2.forEach(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=pd(monStr);dd.setDate(dd.getDate()+i);tot+=_min(resolvedName,fd(dd));}weekMap[monStr]=tot;});moSet2.forEach(mo=>{let tot=0;const[yy,mm]=mo.split("-").map(Number);const dim=new Date(yy,mm,0).getDate();for(let i=1;i<=dim;i++)tot+=_min(resolvedName,`${mo}-${String(i).padStart(2,"0")}`);monthMap[mo]=tot;});let _awCache=null;const _allWork=()=>(_awCache||(_awCache=_workDatesOf(resolvedName)));const _windowVio=(days,limitHours)=>{const startDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();const allWork=_allWork();for(const sd of startDs){const start=pd(sd);let tot=0;for(const d2 of allWork){if(d2<sd)continue;const diffD=(pd(d2)-start)/86400000;if(diffD>=days)break;tot+=_min(resolvedName,d2);}if(tot>limitHours*60)return true;}return false;};if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly)biweeklyVio=_windowVio(14,typeLim.biweekly);if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});if(typeLim.customDays&&typeLim.customHours)customVio=_windowVio(typeLim.customDays,typeLim.customHours);}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;
+              // 上限超過の判定に使う属性は **その提出の期間の属性**。このタブは他タブと違い
+              // resolvePeriodMaster を通していないので、ここで keepAttrs だけを当てる
+              // （当てないと、属性を戻した瞬間に過去の提出が現在の上限で再判定されて赤線が出る）。
+              // 休憩の属性タグ（getBreaksFor）も同じ属性で引く必要があるので同じ settings を渡す。
+              const pAttrSettings=applyKeepAttrs(settings,subPeriod);
+              const staffType=isPremium?(((pAttrSettings.staffAttributes)||{})[resolvedName]||"parttime"):null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly||typeLim.customDays)){const weekMap={};const monthMap={};const _min=(n,d2)=>{const sh=_shiftAt(n,d2);return sh?calcNetWorkMinutes(sh,getBreaksFor(pAttrSettings,d2,n,sh),getOT(n,settings,sh),settings):0;};ds.forEach(d=>{const sh=sub.shifts[d];const nm=calcNetWorkMinutes(sh,getBreaksFor(pAttrSettings,d,resolvedName,sh),getOT(resolvedName,settings,sh),settings);if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;});const wkSet2=new Set(),moSet2=new Set();ds.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet2.add(fd(mon));moSet2.add(d.slice(0,7));});wkSet2.forEach(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=pd(monStr);dd.setDate(dd.getDate()+i);tot+=_min(resolvedName,fd(dd));}weekMap[monStr]=tot;});moSet2.forEach(mo=>{let tot=0;const[yy,mm]=mo.split("-").map(Number);const dim=new Date(yy,mm,0).getDate();for(let i=1;i<=dim;i++)tot+=_min(resolvedName,`${mo}-${String(i).padStart(2,"0")}`);monthMap[mo]=tot;});let _awCache=null;const _allWork=()=>(_awCache||(_awCache=_workDatesOf(resolvedName)));const _windowVio=(days,limitHours)=>{const startDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();const allWork=_allWork();for(const sd of startDs){const start=pd(sd);let tot=0;for(const d2 of allWork){if(d2<sd)continue;const diffD=(pd(d2)-start)/86400000;if(diffD>=days)break;tot+=_min(resolvedName,d2);}if(tot>limitHours*60)return true;}return false;};if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly)biweeklyVio=_windowVio(14,typeLim.biweekly);if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});if(typeLim.customDays&&typeLim.customHours)customVio=_windowVio(typeLim.customDays,typeLim.customHours);}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;
               {/* 超過行は塗りつぶさず左に線を引く。塗ると行内の他の情報が読みにくくなる。
                   線は tr ではなく先頭の td に置くこと: WebKit(Safari/iOS Safari) は tr への
                   box-shadow を描画しないため、tr に置くと Safari でだけ目印が消える

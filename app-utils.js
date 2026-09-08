@@ -931,19 +931,47 @@ function defaultKeepCount(choices,todayStr){
   const i=choices.findIndex(p=>isPeriodEnded(p,todayStr));
   return i<0?0:i+1;
 }
+// ===== 属性の期間指定（period.keepAttrs）=====
+// 属性（社員／バイト／夏休み等）は勤務時間の上限判定に直結する。夏休みのあいだだけ上限の大きい属性へ
+// 変えて、夏休みが終わってから元へ戻すと、**戻した瞬間に夏休み中の期間まで新しい上限で再判定され**、
+// 配り終えたシフト表が上限超過エラーだらけになる（2026-09-08 ユーザー報告）。
+// そこで属性を変えるときに「どの期間まで旧属性のままにするか」を選ばせ、選んだ期間とそれより古い
+// 期間へ **旧属性を書き置く**。keepStaff と同じ「期間側に足すだけ」の形にしてあり、同じ理由で
+//   - settings.staffAttributes（＝現在の属性）の形を一切変えない＝既存の読み手はそのまま動く
+//   - 確定済み期間の写し(snapshot)を書き換えないので凍結の意味を壊さない
+//   - 期間が終了する前（写しがまだ採用されない時期）にも効く
+// が成り立つ。値は {スタッフ名: 属性ID} の1階層マップ（keepStaff と違って順序を持たないため配列にしない）。
+// 写し(snapshot.settings.staffAttributes)と食い違うときは **keepAttrs が勝つ**。写しは「その期間を
+// 開いた瞬間の値」を受動的に撮ったものだが、keepAttrs は管理者がその期間を名指しで指定した記録なので、
+// あとから入った明示の指定を優先する。
+function keepAttrsOf(period){
+  const raw=period&&period.keepAttrs;
+  if(!raw||typeof raw!=="object")return null;
+  const out={};
+  Object.keys(raw).forEach(k=>{if(typeof raw[k]==="string"&&raw[k])out[k]=raw[k];});
+  return Object.keys(out).length?out:null;
+}
+// keepAttrs を settings へ当てる。指定が無ければ **同じ参照をそのまま返す**
+// ＝ keepAttrs を持たない期間は従来と1バイトも変わらない（useMemo の下流も再計算されない）。
+function applyKeepAttrs(settings,period){
+  const ka=keepAttrsOf(period);
+  if(!ka)return settings;
+  return{...(settings||{}),staffAttributes:{...((settings||{}).staffAttributes||{}),...ka}};
+}
 // シフト作成タブが実際に使う staffList / settings を解決する。locked=true のときだけ写しを採用する。
 // 凍結対象キーは「写しに無ければ現在値も消す」＝写しを撮ったあとに新設された設定が過去期間へ
 // 漏れ込まないようにする。凍結対象外のキー（xlShopName・periodUnit・templates 等）は現在値のまま。
 // staffList はどちらの経路でも最後に keepStaff をマージする（確定済み・未確定の両方で名前が残る）。
+// settings は最後に keepAttrs を当てる（同上。確定済み・未確定の両方で旧属性が効く）。
 function resolvePeriodMaster(period,staffList,settings,todayStr){
   const snap=period&&period.snapshot;
   const rawSl=snap&&snap.staffList;
   const sl=Array.isArray(rawSl)?rawSl:(rawSl&&typeof rawSl==="object"?Object.values(rawSl):null);
-  if(!isPeriodEnded(period,todayStr)||!sl)return{staffList:mergeKeepStaff(staffList,period),settings,locked:false};
+  if(!isPeriodEnded(period,todayStr)||!sl)return{staffList:mergeKeepStaff(staffList,period),settings:applyKeepAttrs(settings,period),locked:false};
   const merged={...(settings||{})};
   const ss=snap.settings||{};
   PERIOD_SNAPSHOT_SETTING_KEYS.forEach(k=>{if(ss[k]===undefined)delete merged[k];else merged[k]=ss[k];});
-  return{staffList:mergeKeepStaff(sl,period),settings:merged,locked:true};
+  return{staffList:mergeKeepStaff(sl,period),settings:applyKeepAttrs(merged,period),locked:true};
 }
 // ===== スタッフの非表示（期間の範囲で持つ・2026-09-06 決定）=====
 //
@@ -1055,17 +1083,26 @@ function renameStaffInSettings(settings,oldName,newName){
 // 反映しないと確定済み期間のシフト作成タブ・Excel・PDF が「旧名の行 × 新名のsub」になり、
 // _getSubForPeriod が引けず **その人のシフトが丸ごと空欄になる**（バグチェック#107）。
 // keepStaff は触らない（削除済みの行に改名の導線が無く、旧名が入ることがないため）。
+// keepAttrs は逆に **必ず移し替える**。こちらは現役のスタッフ名をキーに持ち、改名の導線が普通にある。
+// 移し替えないと改名した瞬間に過去期間の属性指定が引けなくなり、現在の属性で再判定される
+// ＝この機能で消したはずの上限超過エラーが黙って戻る（#107 と同じ「片方だけが知っている」形）。
 function renameStaffInPeriods(periods,oldName,newName){
   let changed=false;
   const out=(periods||[]).map(p=>{
-    const snap=p&&p.snapshot;
-    if(!snap)return p;
+    let np=p;
+    const ka=keepAttrsOf(p);
+    if(ka&&ka[oldName]!==undefined){
+      changed=true;
+      np={...np,keepAttrs:_renameMapKey(ka,oldName,newName)};
+    }
+    const snap=np&&np.snapshot;
+    if(!snap)return np;
     const rawSl=snap.staffList;
     const sl=Array.isArray(rawSl)?rawSl:(rawSl&&typeof rawSl==="object"?Object.values(rawSl):null);
-    if(!sl)return p;
-    if(!sl.includes(oldName)&&!_hasStaffKey(snap.settings,oldName))return p;
+    if(!sl)return np;
+    if(!sl.includes(oldName)&&!_hasStaffKey(snap.settings,oldName))return np;
     changed=true;
-    return{...p,snapshot:{...snap,
+    return{...np,snapshot:{...snap,
       staffList:sl.map(n=>n===oldName?newName:n),
       settings:renameStaffInSettings(snap.settings,oldName,newName)}};
   });
@@ -1074,5 +1111,5 @@ function renameStaffInPeriods(periods,oldName,newName){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
 }
