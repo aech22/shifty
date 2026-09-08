@@ -56,9 +56,16 @@ async function staffTab() {
     const row = [...document.querySelectorAll("[data-staff-idx]")].find(r => r.innerText.includes("佐藤"));
     return [...row.querySelectorAll("button")].map(b => b.innerText.trim());
   });
+  // 行に出る印は "(非表示)" だけ（2026-09-08 ユーザー決定）。説明文は title へ移したので
+  // innerText には出ない。
   R.captionShown = await h.evaluate(() => {
     const row = [...document.querySelectorAll("[data-staff-idx]")].find(r => r.innerText.includes("佐藤"));
-    return row.innerText.includes("シフト作成タブ・Excel・PDF に出ません");
+    return {
+      badge: row.innerText.includes("(非表示)"),
+      noLongCaption: !row.innerText.includes("シフト作成タブ・Excel・PDF に出ません"),
+      titleHasDetail: [...row.querySelectorAll("span[title]")]
+        .some(s => (s.title || "").includes("シフト作成タブ・Excel・PDF に出ません")),
+    };
   });
   R.clickShow = await h.clickExact("表示", { rowText: "佐藤" });
   R.dialogAfterShowClick = await h.evaluate(() => {
@@ -79,6 +86,47 @@ async function staffTab() {
     return sp ? ![...sp.querySelectorAll("button")].some(b => b.innerText.trim() === "非表示") : "spacer-row-not-found";
   });
   R.staffTabErrors = h.errors.slice();
+  await h.close();
+}
+
+// ---- 1c. 非表示にしても行の幅が変わらない（2026-09-08 ユーザー報告の回帰） --------
+// 以前は名前の下に nowrap の長い説明文を敷いていたため、行が数百px押し広げられ、
+// 別名・ポジション以降のボタンが横スクロールの向こうへ送られて押せなくなっていた。
+// 幅の広い窓では説明文が入りきってしまい再現しないので、ここだけ窓を狭くして測る。
+async function staffTabNarrowWidth() {
+  const h = await openHarness({
+    root: ROOT,
+    viewport: { width: 820, height: 900 },
+    waitFor: "input[placeholder='スタッフ名を入力']",
+    jsx: `
+      function Harness(){
+        const [settings,setSettings]=React.useState({shopId:"s1",candidates:[],staffColors:{},staffAliases:{}});
+        window.__settings=settings;
+        return <StaffTab staffList={["田中","佐藤"]} onSave={()=>{}} tt={()=>{}}
+          plan="premium" onUpgrade={()=>{}} onRenameStaff={()=>{}}
+          settings={settings} onSaveSettings={s=>{window.__settings=s;setSettings(s);}}
+          subs={[]} periods={[${PERIOD}]} savePeriods={()=>{}} ownerReadOnly={false}/>;
+      }
+      ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);
+    `,
+  });
+  // 行の幅は行自身ではなく「行を囲む max-content のコンテナ」が決める（行はコンテナ幅まで
+  // 広がるので、行同士を比べても差は出ない）。そのコンテナを非表示の前後で測る。
+  const measure = () => h.evaluate(() => {
+    const r = document.querySelector("[data-staff-idx]");
+    if (!r) return null;
+    const inner = r.parentElement.parentElement;   // minWidth:"max-content" の箱
+    const scroller = inner.parentElement;          // overflowX:"auto" の箱
+    return { content: inner.scrollWidth, visible: scroller.clientWidth };
+  });
+  R.narrowBefore = await measure();
+  await h.clickExact("非表示", { rowText: "佐藤" });
+  await h.clickExact("非表示にする");
+  R.narrowAfter = await measure();
+  R.narrowWidthDelta = R.narrowBefore && R.narrowAfter ? R.narrowAfter.content - R.narrowBefore.content : null;
+  // 非表示にしたことで新たに横スクロールが必要になっていないこと（＝ボタンが画面外へ出ない）。
+  R.narrowStillFits = !!R.narrowAfter && R.narrowAfter.content <= R.narrowAfter.visible;
+  R.narrowErrors = h.errors.slice();
   await h.close();
 }
 
@@ -206,6 +254,7 @@ async function shiftEditTab() {
 
 (async () => {
   await staffTab();
+  await staffTabNarrowWidth();
   await staffTabThreePeriods();
   await shiftEditTab();
   const head = Array.isArray(R.excelHead) ? R.excelHead : [];
@@ -223,7 +272,11 @@ async function shiftEditTab() {
       === JSON.stringify({ "佐藤": [{ from: "2026-10-01", to: null }] }),
     step1_staffListUntouched: R.staffListUntouched === true,
     step1_labelFlipsToShow: (R.labelsAfterHide || []).includes("表示") && !(R.labelsAfterHide || []).includes("非表示"),
-    step1_captionShown: R.captionShown === true,
+    step1_captionShown: !!R.captionShown && R.captionShown.badge === true
+      && R.captionShown.noLongCaption === true && R.captionShown.titleHasDetail === true,
+    step1c_hiddenRowKeepsWidth: R.narrowWidthDelta === 0,
+    step1c_hiddenRowStillFits: R.narrowStillFits === true,
+    step1c_noErrors: (R.narrowErrors || []).length === 0,
     step1_toggleBackDeletesKey: R.afterToggleBackIsGone === true,
     step1_spacerHasNoHideButton: R.spacerHasNoHideBtn === true,
     step1b_showsLatestPlusTwoOlder: !!R.threePeriodDialog && R.threePeriodDialog.choices === 3

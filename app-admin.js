@@ -2949,12 +2949,13 @@ const dragIdxRef=useRef(null);
               </>
               :<>
                 {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid var(--c-border2)",cursor:"pointer",flexShrink:0,padding:0}}/>}
-                <span style={{flex:1,minWidth:0}}>
-                  <span style={{fontSize:14,color:hidden?"var(--c-text3)":"var(--c-text)",fontWeight:600}}>{n}</span>
-                  {hidden&&<span style={{display:"block",fontSize:11,color:"var(--c-text4)",marginTop:2,whiteSpace:"nowrap"}}>
-                    {hiddenFrom?`非表示（${periodLabelOfStart(hiddenFrom)}以降）`:"非表示"} ／ シフト作成タブ・Excel・PDF に出ません（提出は今までどおりできます）
-                  </span>}
-                </span>
+                <span style={{flex:1,minWidth:0,fontSize:14,color:hidden?"var(--c-text3)":"var(--c-text)",fontWeight:600}}>{n}</span>
+                {/* 非表示の印は「(非表示)」だけにする（2026-09-08 ユーザー決定）。以前はここに
+                    「シフト作成タブ・Excel・PDF に出ません」という nowrap の説明を敷いていたが、
+                    親が minWidth:"max-content" なので行がカード幅を越え、別名・ポジション以降の
+                    ボタンが右へ押し出されて横スクロールしないと押せなかった。説明と対象期間は
+                    title（ツールチップ）へ移し、行の幅は非表示でない行と同じに保つ。 */}
+                {hidden&&<span title={`${hiddenFrom?`${periodLabelOfStart(hiddenFrom)}以降 ／ `:""}シフト作成タブ・Excel・PDF に出ません（提出は今までどおりできます）`} style={{fontSize:11,color:"var(--c-text4)",flexShrink:0,whiteSpace:"nowrap"}}>(非表示)</span>}
                 {isPremium&&<input value={(settings.staffNumbers||{})[n]||""} onChange={e=>{const v=e.target.value;const nums={...(settings.staffNumbers||{})};if(v)nums[n]=v;else delete nums[n];onSaveSettings&&onSaveSettings({...settings,staffNumbers:nums});}} maxLength={8} placeholder="番号" style={{width:64,fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",flexShrink:0,textAlign:"center"}}/>}
                 {isPremium&&<select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>{const v=e.target.value;const attrs={...(settings.staffAttributes||{})};if(v)attrs[n]=v;else delete attrs[n];onSaveSettings&&onSaveSettings({...settings,staffAttributes:attrs});}} style={{fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
                   {Object.entries({employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})}).map(([v,t])=>{const label=(typeof t==="object"?t.name:"")||STAFF_TYPE_LABELS[v]||"";return label?<option key={v} value={v}>{label}</option>:null;})}
