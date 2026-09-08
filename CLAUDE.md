@@ -188,8 +188,7 @@ AI / AB / AD / AGray // スタイル定数
 | `sendEmailOtp() / verifyAndLinkEmail()` | OTP経由メール連携（Cloud Function呼び出し） |
 | `doLogout()` | セッションのみクリア（Firebase Auth は維持） |
 | `doFullSignOut()` | Firebase Auth 含む完全サインアウト |
-| ~~`generateInviteCode()`~~ | **デッドコード**（app-main.js:819 に定義はあるが呼び出し元ゼロ。2026-07-08 の CompanyTab 新設で企業コード＋パスワード方式に置き換わった） |
-| ~~`joinByInviteCode(code)`~~ | **存在しない**（コード上に実体なし。招待コード方式の名残の記述） |
+| ~~`generateInviteCode()` / `joinByInviteCode(code)`~~ | **どちらもコード上に存在しない**。2026-07-08 の CompanyTab 新設で企業コード＋パスワード方式に置き換わり、残っていた `generateInviteCode` の定義も 2026-08-24 に削除済み（`8384467`） |
 | `applyInviteCode()` | 店舗コード（shopId）で端末を店舗に紐付け |
 | `createNewShop()` | 新規店舗作成（global/shops に追加） |
 | `linkExistingShopToAuth(shopId)` | 既存店舗を Auth UIDに紐付け |
@@ -278,11 +277,8 @@ Firebase Realtime Database
 │       ├── stripeCustomerId ← Stripe Customer Portal 用
 │       └── paymentFailed    = true（決済失敗時）
 │   └── {uid}/               ← Firebase Auth UIDで複数店舗管理（本人のみ読み書き可）
-│       ├── shops            ← {shopId: true} 紐付けマップ
-│       ├── inviteCode       ← {code, createdAt, expiresAt, createdBy}
-│       └── members/         ← {uid: {email, joinedAt, role:"member"}}（自分の追加のみ可）
-├── inviteCodes/
-│   └── {code}           ← {uid, expiresAt, shops}（企業招待コード・shopsスナップショット埋め込み）
+│       └── shops            ← {shopId: true} 紐付けマップ
+│                              ※ inviteCode / members は旧・招待コード方式のもので 2026-08-24 に削除済み（8384467）
 ├── email_otps/
 │   └── {uid}            ← {code, email, emailLink, expiry, attempts}（OTP・5回失敗で無効化）
 ├── companies/
@@ -357,7 +353,7 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
    - `createCompany`（Cloud Function）で企業コード（8桁）とパスワードを発行し、`companies/{companyId}` と `companyCodes/{code}` を作る
    - 別端末・別ユーザーは `companyLogin`（企業コード＋パスワード）でカスタムトークンを受け取り、`company_{companyId}` uid としてログインする
    - 店舗の追加・解除は `linkStoreToCompany` / `unlinkStoreFromCompany`（管理コード `shopId.adminKey` の提示が必要）
-   - ~~旧・企業招待コード方式（`inviteCodes/{token}` + `accounts/{uid}/members`）~~: **現在は未使用**。`generateInviteCode` は app-main.js:819 に残っているが呼び出し元がなく、`joinByInviteCode` は実体自体が存在しない。`database.rules.json` の `inviteCodes` ルールも呼び出し元のない状態で維持されている（バグチェック#66）
+   - ~~旧・企業招待コード方式（`inviteCodes/{token}` + `accounts/{uid}/members`）~~: **2026-08-24 に完全削除済み**（`8384467`）。`generateInviteCode` の定義・`inviteCodes` と `accounts/{uid}/members` のセキュリティルールがこのとき消え、コード側にもルール側にも痕跡は無い（バグチェック#66 で検出 → #116 で本記述を実態に訂正）
 4. **店舗切り替え**: `onSwitchToShop(id)` → `startSubscriptions(id)` を shopList なしで呼ぶ（既存の shops リストを維持しつつ購読先だけ切り替え）
 5. `doLogout()` はセッションのみクリア（authUser・allLinkedShops は維持）
 6. `doFullSignOut()` は Firebase Auth も含む完全サインアウト
