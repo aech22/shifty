@@ -2003,7 +2003,7 @@ test("renameStaffInPeriods: 改名後も確定済み期間の行がその人のs
   const r = u.renameStaffInPeriods([period], "田中", "田中太郎");
   const pm = u.resolvePeriodMaster(r.periods[0], ["田中太郎", "鈴木"], u.renameStaffInSettings(settings, "田中", "田中太郎"), "2026-09-03");
   assert.strictEqual(pm.locked, true);
-  // app-admin.js:563 の _getSubForPeriod と同じ引き方
+  // app-admin.js の _getSubForPeriod と同じ引き方
   const byKey = new Map(subs.map(s => [s.periodId + "|" + s.staffName, s]));
   const got = u.resolveSubByAlias(n => byKey.get("P1|" + n), pm.staffList[0], pm.settings.staffAliases || {});
   assert.strictEqual(got && got.id, "S1", "改名後も写しの行から提出を引けなければならない");

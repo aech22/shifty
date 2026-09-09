@@ -2072,7 +2072,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
                     {/* 確定済み期間はシフト作成タブと同じ凍結名簿・凍結設定で出力する。
                         ここだけ現在値のまま出すと、同じ期間のExcelが出す場所によって中身が変わる。 */}
                     <button onClick={e=>{e.stopPropagation();const m=resolvePeriodMaster(p,staffList,settings,fd(new Date()));expXl(p,subs,m.staffList,tt,m.settings.xlShopName||shopName,{staffColors:m.settings.staffColors||{},staffAliases:m.settings.staffAliases||{},staffNumbers:m.settings.staffNumbers||{},settings:m.settings});}} style={{padding:"5px 9px",background:"#1D6F42",border:"none",borderRadius:4,color:"white",fontSize:11,fontWeight:700,cursor:"pointer"}}>Excel</button>
-                    {/* 期間の削除は savePeriods（app-main.js:1132）でこの期間のsubsと tokens/{urlToken} まで
+                    {/* 期間の削除は app-main.js の savePeriods でこの期間のsubsと tokens/{urlToken} まで
                         連鎖削除される。件数は上の「提出：N件」と同じ式で数える（食い違うとバグチェック#56 と同じ混乱になる）。 */}
                     <button onClick={e=>{e.stopPropagation();const sc=subs.filter(s=>s.periodId===p.id&&s.source!=="grid").length;if(!confirm(`「${p.label}」を削除しますか？\n${sc>0?`提出済みのシフト${sc}件も一緒に削除されます。\n`:""}スタッフ用URLも無効になります。この操作は取り消せません。`))return;onSave(periods.filter(pp=>pp.id!==p.id));tt("削除しました");}} style={AD}>削除</button>
                   </div>
@@ -2886,7 +2886,7 @@ const dragIdxRef=useRef(null);
                   `${(p.startDate||"").replace(/-/g,"/")}〜${(p.endDate||"").replace(/-/g,"/")}`
                   +(idx===0?"":` ／ ${delPeriodChoices.slice(0,idx).map(q=>q.label||"(名称なし)").join("・")} からは消えます`)
                   +(p.snapshot?" ／ 確定済み（選ばなくても残ります）":"")))}
-                {/* 「残さない」でも完全には消えない: 提出のある人は expXl(:2087)・buildPdfCols(:1337) が
+                {/* 「残さない」でも完全には消えない: 提出のある人は expXl・buildPdfCols が
                     未登録名として末尾に足すため、Excel・PDFには出る。文言をそちらに合わせる。 */}
                 {opt(0,"どの期間にも残さない","シフト作成タブから列が消えます（提出がある人は、Excel・PDFには未登録の名前として末尾に出ます）")}
               </div>}
