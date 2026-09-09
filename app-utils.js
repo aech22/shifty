@@ -1082,15 +1082,42 @@ function renameStaffInSettings(settings,oldName,newName){
 // sub.staffName は改名時に全期間ぶん書き換わるのに、写しの staffList は旧名のまま残る。
 // 反映しないと確定済み期間のシフト作成タブ・Excel・PDF が「旧名の行 × 新名のsub」になり、
 // _getSubForPeriod が引けず **その人のシフトが丸ごと空欄になる**（バグチェック#107）。
-// keepStaff は触らない（削除済みの行に改名の導線が無く、旧名が入ることがないため）。
-// keepAttrs は逆に **必ず移し替える**。こちらは現役のスタッフ名をキーに持ち、改名の導線が普通にある。
+// keepStaff も **移し替える**。「削除済みの行に改名の導線が無いから旧名は入らない」という前提で
+// 長く触っていなかったが、その前提は同じ名前を **追加し直せる**ことで崩れる（StaffTab の del が
+// 明記しているとおり、同名で足せば設定マップもsubsも復帰する）。復帰したあとの行は現役スタッフなので
+// 編集ボタンから普通に改名でき、そのとき keepStaff だけが旧名で残る。すると mergeKeepStaff が
+// 旧名を別人として名簿に足し、**同じ人がシフト作成グリッド・Excel・PDF で2列に割れる**。
+// keepAttrs も同じ理由で **必ず移し替える**。こちらは現役のスタッフ名をキーに持ち、改名の導線が普通にある。
 // 移し替えないと改名した瞬間に過去期間の属性指定が引けなくなり、現在の属性で再判定される
 // ＝この機能で消したはずの上限超過エラーが黙って戻る（#107 と同じ「片方だけが知っている」形）。
+// keepStaff（{name,index}[]・Firebase往復で数値キーのobjectにもなる）の名前を移す。
+// 該当者が居なければ null を返して呼び出し元に「書かない」を選ばせる（無駄な書き込みをしない）。
+// 改名先が既に居るときは重複させずに旧名の要素を落とす（mergeKeepStaff は先勝ちで無視するが、記録にも残さない）。
+// 名前を持たない壊れた要素はそのまま通す（mergeKeepStaff 側が無視するので、ここで消して形を変えない）。
+function _renameKeepStaff(raw,oldName,newName){
+  const list=Array.isArray(raw)?raw:(raw&&typeof raw==="object"?Object.values(raw):null);
+  if(!list||!list.length)return null;
+  const nameOf=e=>typeof e==="string"?e:(e&&typeof e==="object"&&typeof e.name==="string"?e.name:null);
+  if(!list.some(e=>nameOf(e)===oldName))return null;
+  const hasNew=list.some(e=>nameOf(e)===newName);
+  const out=[];
+  list.forEach(e=>{
+    if(nameOf(e)!==oldName){out.push(e);return;}
+    if(hasNew)return;
+    out.push(typeof e==="string"?newName:{...e,name:newName});
+  });
+  return out;
+}
 function renameStaffInPeriods(periods,oldName,newName){
   let changed=false;
   const out=(periods||[]).map(p=>{
     let np=p;
-    const ka=keepAttrsOf(p);
+    const ks=_renameKeepStaff(p&&p.keepStaff,oldName,newName);
+    if(ks){
+      changed=true;
+      np={...np,keepStaff:ks};
+    }
+    const ka=keepAttrsOf(np);
     if(ka&&ka[oldName]!==undefined){
       changed=true;
       np={...np,keepAttrs:_renameMapKey(ka,oldName,newName)};

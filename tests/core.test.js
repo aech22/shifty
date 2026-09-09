@@ -1948,6 +1948,40 @@ test("renameStaffInPeriods: 写しの staffList と設定マップを改名し�
   assert.strictEqual(r.periods[2], periods[2], "写しの無い期間は触らない");
 });
 
+test("renameStaffInPeriods: keepStaff の名前も移す（削除して残す→同名で追加し直す→改名）", () => {
+  // 「残す」で削除した人を同名で追加し直すと現役スタッフに戻り、編集ボタンから改名できる。
+  // keepStaff が旧名のまま残ると mergeKeepStaff が旧名を別人として足し、同じ人が2列に割れる。
+  const periods = [{ id: "P1", endDate: "2026-09-15", keepStaff: [{ name: "田中", index: 1 }] }];
+  const r = u.renameStaffInPeriods(periods, "田中", "田中太郎");
+  assert.strictEqual(r.changed, true);
+  assert.deepStrictEqual(r.periods[0].keepStaff, [{ name: "田中太郎", index: 1 }], "index は保つ");
+  assert.deepStrictEqual(
+    u.mergeKeepStaff(["佐藤", "田中太郎", "鈴木"], r.periods[0]),
+    ["佐藤", "田中太郎", "鈴木"],
+    "改名後の名簿に旧名の列が復活しない"
+  );
+});
+
+test("renameStaffInPeriods: keepStaff が数値キーのobject・文字列要素でも移す（Firebase往復の形）", () => {
+  const r = u.renameStaffInPeriods([{ id: "P1", keepStaff: { 0: { name: "田中", index: 2 }, 1: { name: "鈴木", index: 0 } } }], "田中", "T");
+  assert.deepStrictEqual(r.periods[0].keepStaff, [{ name: "T", index: 2 }, { name: "鈴木", index: 0 }]);
+  const r2 = u.renameStaffInPeriods([{ id: "P1", keepStaff: ["田中", "鈴木"] }], "田中", "T");
+  assert.deepStrictEqual(r2.periods[0].keepStaff, ["T", "鈴木"]);
+});
+
+test("renameStaffInPeriods: 改名先が既に keepStaff に居れば重複させない", () => {
+  const r = u.renameStaffInPeriods([{ id: "P1", keepStaff: [{ name: "田中", index: 1 }, { name: "田中太郎", index: 3 }] }], "田中", "田中太郎");
+  assert.strictEqual(r.changed, true);
+  assert.deepStrictEqual(r.periods[0].keepStaff, [{ name: "田中太郎", index: 3 }]);
+});
+
+test("renameStaffInPeriods: keepStaff に居ない人の改名では keepStaff を触らない", () => {
+  const periods = [{ id: "P1", keepStaff: [{ name: "鈴木", index: 0 }] }];
+  const r = u.renameStaffInPeriods(periods, "田中", "田中太郎");
+  assert.strictEqual(r.changed, false);
+  assert.strictEqual(r.periods[0], periods[0], "参照ごと据え置く");
+});
+
 test("renameStaffInPeriods: 該当者が居なければ changed=false（無駄な書き込みをしない）", () => {
   const periods = [{ id: "P1", snapshot: { staffList: ["鈴木"], settings: {} } }, { id: "P2" }];
   assert.strictEqual(u.renameStaffInPeriods(periods, "田中", "田中太郎").changed, false);
