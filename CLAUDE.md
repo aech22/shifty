@@ -167,7 +167,7 @@ AI / AB / AD / AGray // スタイル定数
 | `currentShopId` | string | 現在アクティブな店舗ID |
 | `currentShopIdRef` | Ref | 非同期処理内で最新shopIdを参照するためのRef |
 | `authUser` | FirebaseUser\|null | Firebase Auth ユーザー（null=未ログイン） |
-| ~~`authChecked`~~ | bool | **書かれるが読まれない**（app-main.js:37 で宣言。`setAuthChecked` は :119・:150・:169 で呼ばれるが、**値を読む箇所はゼロ**でAuth待ちのゲートには使われていない。#70でこの記述を訂正） |
+| ~~`authChecked`~~ | bool | **書かれるが読まれない**（app-main.js 冒頭で宣言。`setAuthChecked` は Firebase初期化失敗・Auth復元・未ログイン確定の3経路で呼ばれるが、**値を読む箇所は宣言以外にゼロ**でAuth待ちのゲートには使われていない。#70でこの記述を訂正） |
 | `view` | "staff"\|"admin" | 現在の画面 |
 | `apid` | string | アクティブ期間ID |
 | `urlLocked` | bool | URLにtokenがある場合true（スタッフ専用モード） |
