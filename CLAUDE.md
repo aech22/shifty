@@ -564,9 +564,35 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 
 - iOS Safari ズーム問題（input の fontSize<16）は **2026-09-01 にようやく全箇所解消**（バグチェック#103・`bc7bf2e`）。
   一括是正 `b7c084d`（2026-07-08）が見たのは app-staff.js と app-admin.js だけで、**その2日前の5分割（`f02cc80`）で
-  生まれたばかりの app-main.js（フォーム部品6件）を一度も開いていない**。そのままここに「全箇所解消済み」と
-  書かれ、ログイン画面の店舗コード入力（`fontSize:14`）が約2ヶ月残った。現在はフォーム部品56件を全ファイル
-  走査して0件（`<input>`/`<select>`/`<textarea>` のタグ内 `fontSize` を機械的に検査）
+  生まれたばかりの app-main.js を一度も開いていない**。そのままここに「全箇所解消済み」と
+  書かれ、ログイン画面の店舗コード入力（`fontSize:14`）が約2ヶ月残った。**件数をここに書かない**
+  ——フォーム部品はUIを足すたびに増えるので、書いた数はコード変更なしに黙って偽になる（実際 56→57→58 と
+  ずれた）。見るのは**16未満が0件**であることだけで、判定は毎回この走査で採る
+  （2026-09-10 実測: フォーム部品58件・違反0件）。
+
+  **タグの終端は「波括弧の外にある `>`」で決めること。** 素朴な `indexOf(">")` は
+  `onChange={e=>…}` の矢印に当たってタグを途中で切り、その先の `style` を読まないまま
+  「0件」と言う（**偽陰性**）。2026-09-10 に実測で確認した——素朴版を `bc7bf2e~1`
+  （`fontSize:14` が実在した版）に当てると **0件と答える**。下の走査は同じ版で
+  正しく1件を出す:
+  ```bash
+  node -e '
+  const fs=require("fs");let total=0;const bad=[];
+  for(const f of ["app-utils.js","app-core.js","app-staff.js","app-admin.js","app-main.js"]){
+    const s=fs.readFileSync(f,"utf8");const re=/<(input|select|textarea)[\s\/>]/g;let m;
+    while((m=re.exec(s))){
+      total++;let d=0,end=-1;
+      for(let i=m.index+m[0].length-1;i<s.length;i++){
+        const c=s[i];
+        if(c==="{")d++;else if(c==="}")d--;else if(c===">"&&d===0){end=i;break;}
+      }
+      if(end<0)continue;
+      const t=s.slice(m.index,end+1).match(/fontSize:\s*(\d+)/);
+      if(t&&+t[1]<16)bad.push(f+":"+s.slice(0,m.index).split("\n").length+" fontSize:"+t[1]);
+    }
+  }
+  console.log("form elements:",total,"/ fontSize<16:",bad.length);bad.forEach(b=>console.log("  "+b));'
+  ```
 - 残存する既知の設計課題は「shopIdを知る者=管理可」のcapabilityモデル（恒久対応は BACKLOG の Anonymous Auth 権限分離を参照）
 - ~~`globalTemplates` という state/prop 名の不一致~~ → 2026-08-10 に `shopTemplates` / `setShopTemplates` / `saveShopTemplates` へ改名して解消（Firebaseパス `shops/{shopId}/templates` と localStorage キー `templates_v6` は変更なし＝データ移行不要）
 
