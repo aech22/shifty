@@ -2062,9 +2062,9 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
                     <div style={{fontSize:13,color:"var(--c-text3)"}}>{p.startDate?.replace(/-/g,"/")} 〜 {p.endDate?.replace(/-/g,"/")}（{dates.length}日間）</div>
                     {p.deadlineDate&&<div style={{fontSize:12,marginTop:3,color:ip?"#FF8C94":"var(--c-text4)"}}>締切：{p.deadlineDate.replace(/-/g,"/")} {ip?"（済み）":""}</div>}
                     {/* source:"grid" は管理者がシフト作成タブのセルに直接入力して生まれたsubで、スタッフの提出ではない
-                        （app-admin.js:554/:563 applyEditToSubs）。除外しないと、このカードをタップして開くSmModalの
-                        「提出済み N名」（app-staff.js:505）や提出一覧タブ（:2928 SubsTab）と件数が食い違う（バグチェック#56）。
-                        Excel出力（expXl:1973）は管理者入力も出力対象なので、そちらは除外しないままでよい。 */}
+                        （app-admin.js の applyEditToSubs）。除外しないと、このカードをタップして開くSmModalの
+                        「提出済み N名」（app-staff.js）や提出一覧タブ（app-admin.js の SubsTab）と件数が食い違う（バグチェック#56）。
+                        Excel出力（expXl）は管理者入力も出力対象なので、そちらは除外しないままでよい。 */}
                     <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>提出：{subs.filter(s=>s.periodId===p.id&&s.source!=="grid").length}件</div>
                   </div>
                   <div style={{display:"flex",gap:5,flexShrink:0,flexWrap:"wrap",justifyContent:"flex-end"}}>
