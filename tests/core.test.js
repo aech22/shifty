@@ -2325,3 +2325,37 @@ test("isHoliday: 2029年の移動祝日9件（テーブル切れの回帰）", (
   assert.ok(["holSat", "holSun"].includes(u.dayTypeOf("2029-01-08")),
     `2029-01-08 が祝日区分にならない: ${u.dayTypeOf("2029-01-08")}`);
 });
+
+// ===== 店舗間シフト重複（dupErrors）の他店舗側の解決規則（バグチェック#118）=====
+// dupErrors（app-admin.js）は自店舗側の出退勤を「片側セルなら候補時間から補完する」規則で解決する
+// （バグチェック#86。補完せずに落とすと『出勤だけ入っている日は他店舗と重なっていても一度も
+// 見に行かない』になる、というのが #86 の指摘そのもの）。他店舗側は長らく
+// `if(os===null||oe===null)continue` で、休み希望マークと**片側セルを区別せずまとめて落として**いた。
+// 直上のコメントは「休み希望マークが付いたセルは勤務ではないので重複エラーにしない」と
+// 理由つきで**否定**しており、その理由自体は正しいぶん、片側セルまで落ちることが読み取れなかった。
+test("dupErrors: 他店舗側の出退勤も effShiftRangeMin（自店舗側と同じ規則）で解決する", () => {
+  const fs = require("node:fs");
+  const src = fs.readFileSync(require("node:path").join(__dirname, "..", "app-admin.js"), "utf8");
+  const i = src.indexOf("companyData[osid].workMap.get");
+  assert.ok(i > 0, "dupErrors の他店舗ルックアップが見つからない（このテストの前提が崩れている）");
+  const block = src.slice(i, i + 1200);
+  assert.ok(/effShiftRangeMin\(\s*osh\s*,\s*settings\s*\)/.test(block),
+    "他店舗側が effShiftRangeMin を通っていない（片側セルの補完が自店舗側と食い違う）");
+  assert.ok(!/\bos\s*===\s*null\s*\|\|\s*oe\s*===\s*null/.test(block),
+    "生の null チェックが残っている＝休み希望と片側セルを区別せず落としている（#86 の穴が他店舗側に再発）");
+});
+
+test("effShiftRangeMin: dupErrors が他店舗側で頼っている4ケース", () => {
+  // 自店舗側の補完境界（app-admin.js の HEAT_LUNCH_END_MIN / HEAT_DINNER_START_MIN）と
+  // 同じ値になることは oneSidedFillBounds が担保する。ここは dupErrors が区別したい
+  // 「勤務なし（落とす）」と「片側セル（補完して見る）」の切り分けを固定する。
+  const settings = { candidates: [{ start: "09:00", end: "15:00" }, { start: "17:00", end: "23:00" }] };
+  assert.deepStrictEqual(u.effShiftRangeMin({ status: "work", end: "22:00" }, settings),
+    { startMin: 1020, endMin: 1320 }, "退勤だけの日はディナー始まりから補完して重複判定に乗せる");
+  assert.strictEqual(u.effShiftRangeMin({ status: "work", start: "17:00", end: "22:00",
+    adminRest: { start: true, end: true } }, settings), null, "休み希望マークは勤務なし＝落とす");
+  assert.strictEqual(u.effShiftRangeMin({ status: "work", adjustedStart: "", adjustedEnd: "" }, settings),
+    null, "メモだけのセルは勤務なし＝落とす");
+  assert.strictEqual(u.effShiftRangeMin({ status: "work", start: "17:00" }, settings), null,
+    "出勤17:00だけの日はランチ終わり(15:00)まで補完すると逆転する＝自店舗側の s>=e と同じく落とす");
+});

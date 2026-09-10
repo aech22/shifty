@@ -924,10 +924,19 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         for(const osid of wps){
           const osh=companyData[osid].workMap.get(name+"|"+date);
           if(!osh)continue;
-          // 他店舗側で休み希望マークが付いたセルは勤務ではないので重複エラーにしない。
-          // effShiftStart/End が "" を返し timeToMin(null相当)→null になるため直後の continue で除外される。
-          const os=timeToMin(effShiftStart(osh)),oe=timeToMin(effShiftEnd(osh));
-          if(os===null||oe===null)continue;
+          // 他店舗側も自店舗側（上の s/e）と**同じ規則**で解決する。effShiftRangeMin（app-utils.js）は
+          // 休み希望マーク（effShiftStart/End が "" を返す）とメモだけのセルを null にし、
+          // 片側セルは候補時間から補完する＝この2行上の補完と同じことを1関数でやる。
+          // かつては生の effShiftStart/End を読んで「どちらかが null なら continue」としていたが、
+          // それだと休み希望と一緒に**片側セルまで落ちる**。他店舗が「退勤22:00だけ」の日は
+          // 自店舗と実際に重なっていても一度も見に行かず、重複エラーが出ないまま二重予約になる
+          // （自店舗側で同じ穴を塞いだのがバグチェック#86。他店舗側だけ取り残されていた）。
+          // 補完境界は自店舗の候補時間から採る。companyData は他店舗の settings を読んでいないため
+          // それしか無く、落として見ないより近い（見落としより過検出のほうが安全な向き＝
+          // 重複エラーは表示だけで保存を止めないため）。
+          const orng=effShiftRangeMin(osh,settings);
+          if(!orng)continue;
+          const os=orng.startMin,oe=orng.endMin;
           if(os<e&&oe>s){errs[`${name}|${date}`]=companyData[osid].name;break;}
         }
       });
