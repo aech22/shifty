@@ -1824,6 +1824,65 @@ test("resolvePeriodMaster: 確定済みの写しと食い違ったら keepAttrs 
   assert.strictEqual(snap.settings.staffAttributes.田中, "parttime", "写しの中身は変わらない");
 });
 
+// 属性を削除しても keepAttrs は掃除されない（SetTab の deleteType は periods を props に持たない）。
+// 消えたIDを当てると staffTypeLimits の引きが undefined になり、読み手が typeLim を全0の既定へ
+// 落として **上限判定そのものが走らなくなる**——掃除された他の人は "parttime" にフォールバックして
+// 上限が効くので、固定した人だけエラーが出ない（バグチェック#119）。
+test("applyKeepAttrs: 削除済みの属性を指す指定は当てない（固定した人だけ上限が消えるのを防ぐ）", () => {
+  const stl = { employee: { name: "社員" }, parttime: { name: "バイト", weekly: 28 } };
+  const s = { staffTypeLimits: stl, staffAttributes: { 鈴木: "parttime" } };
+  // custom_summer は deleteType が staffTypeLimits から消した後＝もう引けない
+  const r = u.applyKeepAttrs(s, { keepAttrs: { 田中: "custom_summer" } });
+  assert.strictEqual(r, s, "当てるものが1件も無ければ同じ参照を返す");
+  assert.strictEqual((r.staffAttributes || {}).田中, undefined,
+    "指定を当てないので、掃除済みの他の人と同じ既定（parttime）へフォールバックする");
+});
+
+test("applyKeepAttrs: 生きている属性の指定は当てる／死んだ指定だけを落とす", () => {
+  const s = {
+    staffTypeLimits: { employee: { name: "社員" }, parttime: { name: "バイト" }, custom_a: { name: "夏季" } },
+    staffAttributes: {},
+  };
+  const r = u.applyKeepAttrs(s, { keepAttrs: { 田中: "custom_a", 佐藤: "custom_gone", 山田: "employee" } });
+  assert.strictEqual(r.staffAttributes.田中, "custom_a", "実在する custom は当てる");
+  assert.strictEqual(r.staffAttributes.山田, "employee", "組み込みは常に当てる");
+  assert.strictEqual(r.staffAttributes.佐藤, undefined, "消えた custom だけ落とす");
+});
+
+test("applyKeepAttrs: staffTypeLimits を持たない settings では何も落とさない（消えた証拠が無い）", () => {
+  // 上限を1つも設定していない店舗と「その属性が削除された」は区別できない。ここで落とすと
+  // 上限には影響しないのに staffAttributes だけが変わり、休憩の属性タグが別の休憩を引く。
+  const r = u.applyKeepAttrs({ staffAttributes: {} }, { keepAttrs: { 田中: "summer" } });
+  assert.strictEqual(r.staffAttributes.田中, "summer");
+});
+
+test("attrIdExists: 組み込みは常に有効・一覧が無ければ有効・一覧にあれば有効", () => {
+  assert.strictEqual(u.attrIdExists({ staffTypeLimits: {} }, "parttime"), true, "組み込みは消せない");
+  assert.strictEqual(u.attrIdExists({ staffTypeLimits: {} }, "custom_x"), false);
+  assert.strictEqual(u.attrIdExists({}, "custom_x"), true, "一覧そのものが無ければ判定しない");
+  assert.strictEqual(u.attrIdExists({ staffTypeLimits: { custom_x: { name: "夏" } } }, "custom_x"), true);
+  assert.ok(u.BUILTIN_TYPES.includes("employee") && u.BUILTIN_TYPES.includes("parttime"),
+    "判定は SetTab の削除ボタンと同じ BUILTIN_TYPES を使う（一覧を書き写さない）");
+});
+
+test("resolvePeriodMaster: 確定済み期間は写しが属性を覚えている限り指定が生き続ける", () => {
+  // 凍結の意味を壊さないための性質。判定に使う staffTypeLimits は「その期間を支配する側」。
+  const snap = u.buildPeriodSnapshot(_liveStaff, {
+    staffTypeLimits: { employee: { name: "社員" }, parttime: { name: "バイト" }, custom_a: { name: "夏季" } },
+    staffAttributes: { 田中: "parttime" },
+  });
+  const p = { ..._basePeriod, snapshot: snap, keepAttrs: { 田中: "custom_a" } };
+  // 現在の settings からは削除済み。それでも写しが覚えているので確定済み期間では効く
+  const now = { staffTypeLimits: { employee: { name: "社員" }, parttime: { name: "バイト" } } };
+  const r = u.resolvePeriodMaster(p, _liveStaff, now, "2026-08-05");
+  assert.strictEqual(r.locked, true);
+  assert.strictEqual(r.settings.staffAttributes.田中, "custom_a");
+  // 同じ期間がまだ終わっていなければ現在値で判定する＝消えた属性は当たらない
+  const live = u.resolvePeriodMaster(p, _liveStaff, now, "2026-07-20");
+  assert.strictEqual(live.locked, false);
+  assert.strictEqual((live.settings.staffAttributes || {}).田中, undefined);
+});
+
 test("renameStaffInPeriods: keepAttrs のキーも移す（写しを持たない期間でも）", () => {
   // 移し替えないと改名した瞬間に過去期間の属性指定が引けなくなり、現在の属性で再判定される
   // ＝消したはずの上限超過エラーが黙って戻る（#107 と同じ形）。

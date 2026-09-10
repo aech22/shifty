@@ -951,12 +951,44 @@ function keepAttrsOf(period){
   Object.keys(raw).forEach(k=>{if(typeof raw[k]==="string"&&raw[k])out[k]=raw[k];});
   return Object.keys(out).length?out:null;
 }
+// その属性IDが今も実在するか。**BUILTIN_TYPES は常に true**——SetTab の削除ボタンが
+// `!isBuiltin` のときしか出ない＝組み込みIDは削除で消えようがないうえ、employee/parttime は
+// staffTypeLimits に無くても getAttrOptions が補完するため「登録が無い＝無効」ではない。
+// 逆にそれ以外（custom_*）は deleteType が staffTypeLimits からキーごと消すので、
+// 存在の有無がそのまま生死になる。判定に使う一覧は呼び出し元が渡した settings のもの
+// ＝**その期間を支配する側**（確定済みなら写しの、未確定なら現在の staffTypeLimits）。
+// **一覧そのものが無いときは true**（消えた証拠が無い）。staffTypeLimits を1件も持たない店舗は
+// 上限を1つも設定していないだけで、そこから「その属性は削除された」は導けない。ここで false に
+// 倒すと、上限判定に影響が無いのに staffAttributes だけが変わり、同じ属性で引いている
+// 休憩の属性タグ（getBreaksFor）が黙って別の休憩を引く。落とすのは
+// **一覧が実在し、そこに無いと言い切れるときだけ**にする。
+function attrIdExists(settings,id){
+  if(BUILTIN_TYPES.includes(id))return true;
+  const stl=(settings||{}).staffTypeLimits;
+  if(!stl||typeof stl!=="object")return true;
+  return stl[id]!==undefined;
+}
 // keepAttrs を settings へ当てる。指定が無ければ **同じ参照をそのまま返す**
 // ＝ keepAttrs を持たない期間は従来と1バイトも変わらない（useMemo の下流も再計算されない）。
+//
+// **消えた属性を指す指定は当てない。** 属性を削除する deleteType（app-admin.js の SetTab）は
+// staffTypeLimits と settings.staffAttributes しか掃除しない——SetTab は periods を props に
+// 持たないので、そもそも keepAttrs へ手が届かない。掃除されないこと自体は keepStaff/keepAttrs の
+// 「期間側に足すだけ」の原則どおりで正しいが、**消えたIDを当ててしまう**と話が変わる:
+// 読み手はどこも `(settings.staffTypeLimits||{})[staffType]` で引くだけなので undefined になり、
+// typeLim が全項目0の既定へ落ちて `if(typeLim.daily||typeLim.weekly||…)` が偽＝**上限判定そのものが
+// 走らなくなる**。掃除された他の人は staffAttributes から落ちて "parttime" にフォールバックし
+// 上限が効くので、**旧属性を固定した人だけ上限超過エラーが出ない**（バグチェック#119 で実測）。
+// 当てなければその人も同じフォールバックに乗る＝削除の結果が全員で揃う。
+// 確定済み期間は写しの staffTypeLimits で判定するため、写しが属性を覚えている限り指定は生き続ける
+// （凍結の意味を壊さない）。
 function applyKeepAttrs(settings,period){
   const ka=keepAttrsOf(period);
   if(!ka)return settings;
-  return{...(settings||{}),staffAttributes:{...((settings||{}).staffAttributes||{}),...ka}};
+  const live={};
+  Object.keys(ka).forEach(n=>{if(attrIdExists(settings,ka[n]))live[n]=ka[n];});
+  if(!Object.keys(live).length)return settings;
+  return{...(settings||{}),staffAttributes:{...((settings||{}).staffAttributes||{}),...live}};
 }
 // シフト作成タブが実際に使う staffList / settings を解決する。locked=true のときだけ写しを採用する。
 // 凍結対象キーは「写しに無ければ現在値も消す」＝写しを撮ったあとに新設された設定が過去期間へ
@@ -1138,5 +1170,5 @@ function renameStaffInPeriods(periods,oldName,newName){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,isSpecialRedDate};
 }
