@@ -110,6 +110,7 @@ isHoliday / isWeekendOrHoliday(dateStr) // 土日祝判定
 calcNetWorkMinutes / getBreakList / getBreaksFor / getOT // 純勤務時間計算
 shiftBandInfo              // ランチ/ディナー帯判定（isBreakEligible は b5e23c1 で廃止。休憩適用は getBreaksFor が時間帯の重なりだけで判定する）
 dayTypeOf(dateStr) / POSITION_DAY_TYPES // 祝日をholSat/holSunに分割した5分類。必要ポジション設定タブと breakTimes（休憩時間設定）が共有する（getBreakList が positionDayTypeFor で日付→区分を解決。旧4区分の "hol" データは後方互換で流用）
+requiredPositionsFor(settings,dateStr) // 日付に適用する必要ポジション枠。getBreakList と同じ規則で旧 "hol" を流用する（祝日区分に枠が無いときだけ）。分割（1cdcd6b）で移行が無く祝日判定から消えていた枠を拾う（#120）
 firebaseKeyForbiddenChars(name)          // Firebaseがキーに使えない文字（. # $ / [ ] 制御文字）の検出。スタッフ名は7つの設定マップでキーになるため追加・改名の入口で弾く
 matchPositionSlots(slots, attendees)    // 必要ポジションと出勤者の最大二部マッチング（Kuhn法・ポジション不足エラー判定＝Premium限定）
 genToken() / genSecureId(len)   // ランダムID生成
@@ -619,164 +620,143 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-09-10 自動実行 #119）
+## Shifty バグチェックレポート（2026-09-11 自動実行 #120）
 
-> 着手時の HEAD は `22e03cc`。観点は **#118 の申し送りをそのまま実行**した——
-> 「今度は『掃除される側』を当たる。`period` と `settings` に載るフィールドを機械的に列挙し、
-> **①書く ②改名で移す ③削除で落とす ④期間の写しに焼く／焼かない** の4つが揃っているかの表を作る」。
+> 着手時の HEAD は `9e3db41`。観点は **#119 の申し送りをそのまま実行**した——
+> 「今度は『間接参照』を当たる。`settings` と `period` の値を引数にして別のマップを引いている箇所を集め、
+> **引けなかったときに何が起きるか**を1件ずつ当たる。とくに既定値へ落ちる先が『制限なし』になっていないか」。
 >
-> **申し送りの予想は当たった。ただし「削除」の主語が予想と違った。**
-> #118 は「スタッフを削除したときの掃除」を想定していた。同じ表を作ると `keepAttrs` の③が
-> 空いているのは確かにそのとおりで、そこは #118 が既に BACKLOG へ起こしている。今回見つかったのは
-> **「属性そのものを削除したとき」** の穴で、掃除する関数が別（`deleteType`）、壊れ方も別
-> （キーが残るのではなく、**残った値が指す先が消える**）だった。
-> **同じフィールドに、掃除されない経路が2本あった。**
+> **申し送りの予想は当たった。ただし引く側のキーは値ではなく「区分名」だった。**
+> 属性ID・ポジション名・店舗ID・プラン名はどれも引けなかったときに安全側（`parttime`／不足を出す／
+> 絞り込みで外れる／`free`）へ落ちていた。`staffTypeLimits` のような「値→別マップ」だけでなく、
+> **日付→曜日区分→必要ポジション**という**2段の間接参照**の2段目で、区分名そのものが
+> 過去に変わっていた。
 
 ### 修正済み
 
-- **🟡 属性を削除すると、`period.keepAttrs` で旧属性を固定した人だけ上限判定が消えていた**
-  （[app-utils.js](app-utils.js) の `applyKeepAttrs`・`dc3926a`）
+- **🟡 旧4区分「祝日」で保存した必要ポジションが、祝日の不足判定から消えていた**
+  （[app-admin.js](app-admin.js) の `positionErrors`・`561a601`）
 
-  属性を削除する `deleteType`（app-admin.js の SetTab）は `settings.staffTypeLimits` から
-  その属性を消し、`settings.staffAttributes` からその属性を指していた人も落とす。
-  **`period.keepAttrs` には手が届かない**——SetTab は `periods` を props に持っていない。
+  必要ポジションは **2026-07-10（`7c087cb`）** に入り、**翌日の `1cdcd6b`** で祝日を
+  `holSat`/`holSun` に分けた。このとき `requiredPositions.hol` の**移行が無かった**。
+  休憩（`getBreakList`）には旧 `hol` を流用する後方互換があるのに、必要ポジションには無い。
 
-  掃除されないこと自体は `keepStaff`／`keepAttrs` の「期間側に足すだけで消さない」原則どおりで
-  正しい。問題は**消えた属性IDを当ててしまう**ことだった。読み手はどこも
-  `(settings.staffTypeLimits||{})[staffType]` と引くだけなので `undefined` になり、`typeLim` が
-  全項目0の既定へ落ち、直後の `if(typeLim.daily||typeLim.weekly||…)` が偽になって
-  **上限判定そのものが1つも走らなくなる**。
+  読み手は `reqAll[positionDayTypeFor(date)]||{}` と引くだけなので、祝日は `holSat`/`holSun` を引いて
+  `undefined` になり、空オブジェクトへ落ちる。**`hasAnyRequiredPosition` は旧 `hol` を数えて true を返すので
+  判定自体は走り、祝日だけ枠が見つからずに不足0件になる**。つまり制限なしへ落ちていた。
+  設定画面も `POSITION_DAY_TYPES` の5区分しか描かないので、**残った枠は見えず、消すこともできなかった**。
 
-  **掃除された他の人は落ちるので助かる**という非対称がこの件の本体である。`staffAttributes` から
-  キーごと消えた人は `||"parttime"` のフォールバックに乗って上限が効く。固定した人だけが
-  「実在しない属性」を持ち続けて素通りする。
+  実測（配信物の app-utils.js を Node で実行・`requiredPositions:{hol:…}` と `breakTimes:{hol:…}` を同時に持つ設定）:
 
-  実測（配信物の app-utils.js と、`deleteType`・上限解決の**ソース行を app-admin.js から抜き出して**
-  そのまま Node で評価。`custom_summer`＝週40h／`parttime`＝週28h、`custom_summer` を削除した直後）:
+  | 日付 | 区分 | 休憩 | 必要ポジション枠 |
+  |---|---|---|---|
+  | 2026-02-11 | holSat | 旧holを流用（14:00〜15:00） | **`{}`（引けない）** |
+  | 2026-07-20 | holSun | 旧holを流用 | **`{}`（引けない）** |
+  | 2026-07-13 | weekday | なし | なし |
 
-  | | 修正前 | 修正後 |
-  |---|---|---|
-  | 田中（`keepAttrs` あり） | `custom_summer`（実在しない）／**判定が走らない** | `parttime`／28h で走る |
-  | 鈴木（`keepAttrs` なし・対照） | `parttime`／28h で走る | `parttime`／28h で走る |
+  修正は `requiredPositionsFor`（app-utils.js）を足し、`getBreakList` と**同じ規則**で引くこと。
+  規則は「祝日区分に枠が無いときだけ旧 `hol` を流用する」で、休憩で既に決まっている後方互換の先例に揃えた。
+  設定画面には休憩と同じく「祝日（旧設定・自動適用中）」を**枠がある間だけ**出し、見えて消せるようにした。
 
-  実害は「週40時間を超えても、シフト作成タブ・提出一覧・Excel・PDF が上限超過エラーを出さない」。
-  **エラーが出ないので管理者に気づく手がかりが無い**——#118 の `dupErrors` と同じ形の被害である。
+  **実ブラウザ（`SetTab`・`ShiftEditTab` だけをマウント＝Firebase へは1バイトも出していない）で8項目を確認した。**
+  - 旧枠のタブが出て、中の「調理長」を×で消せる（保存値 `[]`）。消すとタブも消える。旧枠が無い店舗には出ない。
+  - グリッドでは 2026-11-23（勤労感謝の日・holSun）に「23日ランチ調理長 -1」が出る。平日の 11-24 には出ない。
+  - `pageerror`・`console.error` はどちらも0件だった。
+  - **同じスクリプトを修正前の配信物に当てると、旧枠の表示と祝日の不足判定の5項目が落ちる。**
+  - ユニットテストを3件追加し、3件とも修正前の実装で落ちることを確認した。
 
-  修正は**当てる側**（`applyKeepAttrs`）で存在を確かめる形にした。`deleteType` 側へカスケードを
-  足す案は SetTab へ `periods`・`savePeriods` を通す必要があり、**既に書かれたデータを直せない**。
-  当てる側なら3つの呼び出し経路（`resolvePeriodMaster` の未確定・確定、SubsTab の直接呼び出し）が
-  1箇所で揃う。判定に使う一覧は**呼び出し元が渡した settings のもの＝その期間を支配する側**なので、
-  確定済み期間は写しの `staffTypeLimits` で判定する＝**写しが属性を覚えている限り指定は生き続ける**
-  （凍結の意味を壊さない）。組み込み（`BUILTIN_TYPES`）は削除ボタンが出ないので常に有効とし、
-  **一覧そのものを持たない settings では何も落とさない**——上限を1つも設定していない店舗と
-  「その属性が削除された」は区別できず、落とすと上限に影響しないのに `staffAttributes` だけが変わり、
-  休憩の属性タグ（`getBreaksFor`）が黙って別の休憩を引くため。
+  **本番に旧 `hol` の枠を持つ店舗があるかは確認していない**（本番データには触れていない）。
+  保存されえたのは約1日だけなので該当は少ないはずだが、あっても修正後は自動で効き、画面にも出る。
 
-  **ユニットテスト5件を追加し、うち4件が修正前の app-utils.js で落ちることを確認済み。**
+### 修正済み（🟢）
+
+- **🟢 `createCheckoutSession` が `plan` の値を検証していなかった**
+  （[functions/index.js](functions/index.js)・`eae38ff`）。`changePlan` は `pro`/`premium` 以外を400で弾くが、
+  こちらは無検証だった。`premium` 以外の値はすべて Pro の price で課金されるのに、`metadata.plan` には
+  受け取った値がそのまま載る。`checkout.session.completed` はプラン序列の照合を通さずにそれを `accounts` へ書く。
+  実測（同じ式を Node で評価）では `plan="Premium"` のとき、Pro 500円で課金され、`accounts.plan="Premium"` が書かれ、
+  画面は **free** になる。UI からは `pro`/`premium` しか送らないので、**改ざんしたリクエスト経由でしか起きず、
+  損をするのも本人だけ**。そのため🟢とした。
+  **本番に効かせるには Cloud Functions のデプロイが要る**。重大度が🟢でコード修正は完了しているため、
+  BACKLOG へは起こさず、次に functions をデプロイするときに一緒に載る扱いにした。
+- **🟢 app-main.js のコメント2件が、`apid` を選び直す effect を「line1122」と行番号で指していた**（実体は1113行・`53c30ea`）。
+  #116・#117 と同じ形のずれ。行番号をやめ、effect のコメント見出しで指すようにした。
 
 ### 要確認（未修正）
 
 - **🟢 配信版数が直近コミットを含んでいない**。6箇所とも `20260908-0d5aba8` で相互に一致しているが、
-  今回 app-utils.js を変更した。**`/release-to-main` の手順63 がバンプするので申し送りのみ**（#115〜#118 から継続）。
-- **🟢 休憩の属性タグ（`breakTimes[*].tags`）も属性削除で掃除されない**が、**実害は無いので直さない**。
-  消えた属性IDだけを持つ休憩は誰の `attr` とも一致せず適用されない＝正しい結果になる。`hasTagged`
-  （タグ付き休憩があるとタグ無し休憩を除外する規則）も、その属性を持つ人がもう居ないので
-  他の人の判定を変えない。**今回この非対称を読んで無害だと確認したので記録しておく。**
-- **🟢 `staffWorkplaces` に解除済み店舗のIDが残る**が、読み手（`dupErrors`）が
-  `filter(id=>companyData[id])` で存在するものだけに絞るため無害。上と同じく「読み手が守っている」形。
-- **🟢 過去レポート本文の引用は直していない**（この記録ブロック内）。**意図的**。その日に測った値の
-  記録であり、後から書き換えると記録が偽になる。
-- **🟢 `oneSidedFillBounds` の式が app-admin.js にもう1つある**（#118 から継続・変化なし）。
-- **🟢 属性変更の既定が、終了済み期間ゼロのとき最新3期間すべてを旧属性のままにする**（#118 から継続・意図的）。
-- **🟢 略称バリデーションのコメントはトースト文言について依然として偽**（#114 から継続）。
-- **🟢「残す」を選んだときのポップアップの括弧書きが実態とずれる**（#114 から継続）。
-- **🟢 プラン上限モーダルの「店舗」文言に到達経路が無い**（#114 から継続）。
+  #119 と今回で app-utils.js・app-admin.js を変えた。**`/release-to-main` の手順63 がバンプするので申し送りのみ**。
+- **🟢 `PLAN_LIMITS[plan]?.staff??10` の既定値10は free の20と食い違う**が、`plan` は購読時に3値へ正規化されるので
+  到達しない。記録のみ。
+- **🟢 SubsTab は確定済み期間でも現在の `staffTypeLimits` で上限を判定する**（シフト作成タブは写しで判定する）。
+  提出一覧は写しを通らない設計なので意図どおり。属性を消した後は両者の赤線が食い違いうるが、どちらも安全側（上限あり）。
+- **#119 から継続（変化なし）**: 休憩タグ・`staffWorkplaces` の残骸は読み手が一致で引くので無害。
+  `oneSidedFillBounds` の式の二重化。属性変更の既定の件。略称バリデーションのコメント。
+  「残す」ポップアップの括弧書き。プラン上限モーダルの「店舗」文言。
 - **変化なし（BACKLOG化済み・条件A/Bでループの権限外）**: 二重課金の根治／特商法表記（🔴 2件）／
-  解約通知／解約時のプラン判定／企業連携の解除と `verifyShopOwner` の移行猶予／別名提出の重複の**根**（#81）／
-  PDF の実物確認／`purgeOldPeriodsCutoff` の UTC 切り（**本有効化は 2026-09-11 以降**）／
-  非表示スタッフを「未提出」に数えるか（#113）／「締」の休みの入口2つ（#118）／
-  **完全削除したスタッフの `keepAttrs` が残る（#118）**。
+  解約通知／解約時のプラン判定／企業連携の解除と `verifyShopOwner` の移行猶予／別名提出の重複の根（#81）／
+  PDF の実物確認／`purgeOldPeriodsCutoff` の UTC 切り（**本有効化は今日 2026-09-11 以降に着手可**）／
+  非表示スタッフを「未提出」に数えるか（#113）／「締」の休みの入口2つ（#118）／完全削除したスタッフの `keepAttrs`（#118）。
 - **引き受け済みのトレードオフ（再検出しても直さない）**: `subs/$subId/.write` は認証済みなら通り、
   提出を触れるのを本人に絞っているのは UI（`canTouch`）のみ。2026-08-31 決定1。
 
-**今回 BACKLOG へ起こしたものは無い**（見つかった 🟡 1件はその場で修正・検証・コミットまで完了したため）。
+**今回 BACKLOG へ起こしたものは無い**。
 
 ### 検証したこと
 
-`npm test` **256件パス**（+5・うち4件は修正前の app-utils.js で落ちることを確認済み）／
-`npx eslint app-*.js` **0 errors 95 warnings**（96→95。`BUILTIN_TYPES` が使われるようになった分）／
-`node --check functions/index.js` OK。
+- `npm test` は **259件パス**（+3件）。
+- `npx eslint app-*.js` は **0 errors・95 warnings**（前回と同数）。
+- `node --check functions/index.js` は OK。
+- **RULES.md のスキャン項目はすべてクリア**。
+  - `DEV_MODE` は式のまま（app-core.js:12）。
+  - `subs` の `set()` による全体上書きは **0件**。`filter(s=>s.id!==…)` は全件、`deletedId` 付きか店舗一覧の操作。
+  - `accounts`・`global/shops` の全件読みは **0件**。
+  - 読み込み順（utils→core→staff→admin→main）を維持。SRI は **11本**。
+  - `functions/index.js` の `.delete()` 誤用は **0件**。
 
-**「掃除される側」の棚卸し**（申し送りの本題）。⊘ は「その列が構造的に存在しない」。
+**間接参照の棚卸し**（申し送りの本題）:
 
-| フィールド | ①書く | ②改名で移す | ③削除で落とす | ④写しに焼く |
-|---|---|---|---|---|
-| `period.keepStaff` | `confirmDelete` | `_renameKeepStaff` ✅ | `undoDelete` ✅ | ⊘（period直下） |
-| `period.keepAttrs` | `confirmAttr` | `_renameMapKey` ✅ | **スタッフ削除＝無い**（#118・BACKLOG）／**属性削除＝無い**（❌ 本件で対処） | ⊘ |
-| `period.snapshot` | ShiftEditTab・確定ボタン | `renameStaffInPeriods` ✅ | 意図的に残す | 自身が写し |
-| `period.urlToken` | 期間作成 | ⊘ | `savePeriods`＋CF ✅ | ⊘ |
-| `period.lockedAt` | 確定ボタン | ⊘ | 確定解除 ✅ | ⊘ |
-| `settings` のスタッフ名キー7マップ | 各UI | `STAFF_KEYED_SETTING_MAPS` ✅ | 同左 ✅ | `PERIOD_SNAPSHOT_SETTING_KEYS` ✅（テストで担保） |
-| `settings.staffTypeLimits` | SetTab | ⊘（属性IDキー） | `deleteType` ✅ | ✅ |
-| `settings.positions` | SetTab | ⊘ | `delPosition` が `requiredPositions`・`staffPositions` までカスケード ✅ | ✅ |
-| `settings.dateCandidatePosTypes` | CandTab | ⊘（日付キー） | `delD` が候補0件で落とす ✅ | ⊘（凍結対象外） |
-| `settings.staffWorkplaces` の店舗ID | CompanyTab | ⊘ | 無い（読み手が絞るので無害・🟢） | ✅ |
-| `breakTimes[*].tags` の属性ID | CandTab | ⊘ | 無い（読み手が一致で引くので無害・🟢） | ✅ |
+| 引く値 → 引く先 | 引けなかったとき | 判定 |
+|---|---|---|
+| 属性ID → `staffTypeLimits` | `typeLim` 全0＝制限なし | #119 で `applyKeepAttrs` を修正済み。`staffAttributes` は `deleteType` が掃除する |
+| 名前 → `staffAttributes` | `parttime` | 安全側 |
+| 名前 → `staffPositions` | 持ちポジション無し＝不足を出す | 安全側（音が出る） |
+| **日付 → 区分 → `requiredPositions`** | **`{}`＝不足0件** | **❌ 旧 `hol` が引けない（本件）** |
+| 日付 → 区分 → `breakTimes` | 旧 `hol` を流用 | ✅ |
+| 店舗ID → `companyData` | `filter` で外れる | 安全側 |
+| `plan` → `PLAN_LIMITS` | 購読時に3値へ正規化 | 到達しない |
+| price ID → プラン名 | `metadata.plan` へフォールバック | `metadata.plan` の入口が無検証だった（本件🟢） |
+| URLトークン → 期間 | 期間削除時にトークンも消す | ✅ |
 
-**RULES.md のスキャン項目は全項目クリア**: `DEV_MODE` は式のまま（app-core.js:12）／
-`subs` の `set()` 全体上書き **0件**／`accounts`・`global/shops` の全件読み **0件**／
-読み込み順（utils→core→staff→admin→main）維持／SRI **11本**／
-**フォーム部品58件の `fontSize<16` 0件**／`functions/index.js` の `.delete()` 誤用 **0件**／`secrets` 7箇所。
-
-**Firebase・Stripe には読み書きとも一切アクセスしていない。実ブラウザ検証は行っていない。**
-**未検証**: 実ブラウザでの上限超過エラーの赤線表示／属性の削除操作を実機のUIから通すこと／
-iOS 実機／PDF の実物／本番データ／Stripe 実データ。
+**Firebase・Stripe には読み書きとも一切アクセスしていない。**
+**未検証**: iOS 実機、本番に旧 `hol` 枠を持つ店舗があるか、Cloud Functions の本番デプロイ。
 
 ### 測り方の記録
 
-**同じフィールドに、掃除されない経路が2本あった。** #118 は `keepAttrs` について
-「消す経路がどこにも無い」と書いた。その記述は正しいのだが、**暗黙に「消す＝スタッフを削除したとき」
-だけを見ていた**。`keepAttrs` は `{スタッフ名: 属性ID}` という**2つの実体を結ぶ**マップなので、
-掃除の引き金も2つある——スタッフが消えたときと、**属性が消えたとき**。前者は
-`settingsWithoutStaff`、後者は `deleteType` の担当で、**関数もファイル上の位置も別**である。
-`grep keepAttrs` は前者しか教えてくれない（`deleteType` はその語を含まないため）。
+**効いたのは、区分名の履歴を引いたこと。** `positionDayTypeFor` の結果で `requiredPositions` を引く1行は、
+それだけ読むと正しい。おかしいと分かったのは、同じ区分で引く**隣の読み手**（`getBreakList`）が
+旧 `hol` の後方互換を持っていたからで、**「同じキーで引く2人の読み手のうち、片方だけが旧キーを知っている」**
+という非対称が手がかりになった。そこから `git log -S POSITION_DAY_TYPES` で分割コミットを引き、
+その**前日**に機能が入っていたことが分かった。
 
-**次に効いたのは、grep の向きを逆にしたこと。** `keepAttrs` を grep する代わりに
-「`keepAttrs` の**値**は何か」→ 属性ID →「属性IDを消すのは誰か」→ `deleteType` と辿った。
-**キーの掃除は grep で出るが、値の掃除は grep で出ない。**
-マップを見たらキー側と値側の両方に「それを消す人」を探すのが最低限の歯止めになる。
+**形式変更はキーの意味を変える。** #119 は「値が指す先が消える」だった。今回は
+「値そのものは生きているのに、**それを引く側のキーの語彙が変わった**」。
+**消えたのは引き先ではなく、引く側の辞書である**。
 
-**壊れ方が #118 とちょうど裏返しだった。** #118 の `dupErrors` は「除外する理由は真のまま、
-除外の**範囲**が広すぎた」。今回は逆で、`deleteType` の掃除は**範囲が狭すぎた**。どちらも
-「その1行がやっていることは正しい」点で共通していて、間違っているのは**及ぶ先の広さ**だけである。
-
-**「掃除されない」と「壊れる」は別物だと分かった。** あわせて調べた `breakTimes[*].tags` と
-`staffWorkplaces` の店舗IDは `keepAttrs` と**まったく同じ形**で消えたIDを持ち続ける。それでも
-無害なのは、読み手が `tags.includes(attr)` や `filter(id=>companyData[id])` と**一致で引いている**
-からで、存在しないIDは自然に外れる。`keepAttrs` だけが壊れたのは、読み手が一致ではなく
-**`staffAttributes` へ書き込んでから別のマップを引く**という間接参照をしていたためである。
-**危ないのは「消えたIDが残ること」ではなく「消えたIDを他所へ書き込むこと」**だった。
-
-**申し送り（次回の観点）**: **今度は「間接参照」を当たる。** 今回の分かれ目は、読み手が値を
-**そのまま照合する**か、いったん**別のマップの引数として使う**かだった。後者は値が無効でも
-「引けなかった」としか分からず、既定値へ落ちて黙る。`settings` と `period` の値を引数にして
-別のマップ・別の関数を引いている箇所を機械的に集め、**引けなかったときに何が起きるか
-（例外／既定値／素通り）**を1件ずつ当たれば拾える。`(settings.staffTypeLimits||{})[staffType]`・
-`(settings.positions||{})[sec]`・`companyData[id]`・`staffAliases[登録名]` あたりが入口になる。
-**とくに「既定値へ落ちる」ものは、落ちた先が『制限なし』になっていないかを見ること**
-——今回の `typeLim` が全0＝制限なしだったのが実害の正体である。
+**申し送り（次回の観点）**: **今度は「形式を変えたコミット」を当たる。** 今回の穴は、キーの語彙を変えた
+コミット（`1cdcd6b`）が読み手を1つずつしか直さなかったことから生まれた。`git log` からキー名・区分名・
+値の形を変えたコミットを拾う。例は `hol` の分割、`staffHidden` の `true` から範囲への変更、
+`staffTypeLimits` の文字列からオブジェクトへの変更、`overtimeSettings.byStaff` の数値から `{lunch,dinner}` への変更などである。
+そのうえで、**そのキーの読み手を今の全ファイルで数え、旧形式を扱えているかを1つずつ確かめる**。
+`grep` は新しい語でしか引けないので、**旧い語（`"hol"`・`===true`・`typeof …==="number"`）でも引く**こと。
 
 ### 総括
 
-**🔴 ゼロ。🟡 は1件検出し、その場で修正・検証・コミットまで完了した（BACKLOG 起票なし）。**
-#118 の申し送りをそのまま実行し、`period`・`settings` のフィールドを4列の表で棚卸しした。
-見つかったのは **属性を削除したときに `period.keepAttrs` が消えた属性IDを指したまま残り、
-それを `staffAttributes` へ書き込むことで上限判定そのものが消える**という穴で、
-**旧属性を固定した人だけが週40時間を超えてもエラーにならない**。掃除された他の人は
-`parttime` へフォールバックして上限が効くため、この非対称は画面に出ない。
-#118 が `keepAttrs` について「消す経路が無い」と書いたのは正しかったが、**その「消す」が
-スタッフ削除しか指しておらず、属性削除という2本目の引き金を見ていなかった**。
-`grep keepAttrs` では出ない——`deleteType` はその語を含まないからである。
+**🔴 はゼロ。🟡 を1件検出し、その場で修正・実ブラウザ検証・コミットまで完了した。🟢 を2件修正した。BACKLOG への起票は無い。**
+#119 の申し送りどおり間接参照を棚卸しした。見つかったのは、**2026-07-10 に入った必要ポジションが翌日に祝日区分を
+分けられ、その1日に保存された「祝日」の枠が以後どこからも引かれなくなっていた**という穴である。
+**祝日だけポジション不足が出ない**うえに、設定画面にも出ないので気づく手がかりが無い。
+休憩には同じ分割の後方互換があったので、それに揃えた。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
