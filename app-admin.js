@@ -954,7 +954,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const staffPos=settings.staffPositions||{};
     if(!hasAnyRequiredPosition(reqAll))return result;
     dates.forEach(date=>{
-      const req=reqAll[positionDayTypeFor(date,settings)]||{};
+      const req=requiredPositionsFor(settings,date);
       const attendees={lunch:{kitchen:[],hall:[]},dinner:{kitchen:[],hall:[]}};
       realStaff.forEach(name=>{
         let s=timeToMin(getEffHHMM(name,date,"start"));let e=timeToMin(getEffHHMM(name,date,"end"));
@@ -4403,7 +4403,8 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
     {plan==="premium"&&<AC title="必要ポジション設定">
       <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>曜日区分・ランチ/ディナーごとに必要なポジションをタグで追加します。同じポジションを複数回追加すると、その人数分が必要になります（シフト作成タブで不足を判定）。</div>
       <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
-        {POSITION_DAY_TYPES.map(([id,label])=>(
+        {/* 旧4区分の「祝日」枠は requiredPositionsFor が祝日区分に流用するので、休憩設定と同じく見える場所に出して消せるようにする */}
+        {[...POSITION_DAY_TYPES,...(hasAnyRequiredPosition({hol:(settings.requiredPositions||{}).hol})?[["hol","祝日（旧設定・自動適用中）"]]:[])].map(([id,label])=>(
           <button key={id} onClick={()=>setReqDayType(id)} style={{padding:"6px 12px",background:reqDayType===id?"var(--c-accent)":"var(--c-input)",border:`1px solid ${reqDayType===id?"var(--c-accent)":"var(--c-border2)"}`,borderRadius:8,color:reqDayType===id?"white":"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{label}</button>
         ))}
       </div>

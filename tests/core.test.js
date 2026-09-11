@@ -1022,6 +1022,30 @@ test("getBreakList: 旧hol流用は祝日区分限定（平日/日曜等には�
   assert.deepStrictEqual(u.getBreakList(s, "2026-07-13"), []); // 月曜=weekday未設定→旧holは流用しない
 });
 
+// requiredPositionsFor: 必要ポジションも休憩と同じ旧"hol"後方互換を持つ（バグチェック#120）。
+// 2026-07-10 に必要ポジションが入り、翌日 1cdcd6b で祝日を holSat/holSun に分けたが移行が無く、
+// その1日に「祝日」で保存された枠は祝日の不足判定から黙って消えていた。
+const holSlot = { lunch: { kitchen: ["調理長"], hall: [], all: [] }, dinner: { kitchen: [], hall: [], all: [] } };
+
+test("requiredPositionsFor: 祝日区分が未設定なら旧holの枠を流用する", () => {
+  const s = { requiredPositions: { hol: holSlot } };
+  assert.deepStrictEqual(u.requiredPositionsFor(s, "2026-02-11"), holSlot); // holSat
+  assert.deepStrictEqual(u.requiredPositionsFor(s, "2026-07-20"), holSlot); // holSun
+});
+
+test("requiredPositionsFor: 祝日区分に枠があれば旧holより優先する（空の器だけなら流用する）", () => {
+  const own = { lunch: { kitchen: [], hall: ["リーダー"], all: [] }, dinner: { kitchen: [], hall: [], all: [] } };
+  const empty = { lunch: { kitchen: [], hall: [], all: [] }, dinner: { kitchen: [], hall: [], all: [] } };
+  assert.deepStrictEqual(u.requiredPositionsFor({ requiredPositions: { holSat: own, hol: holSlot } }, "2026-02-11"), own);
+  assert.deepStrictEqual(u.requiredPositionsFor({ requiredPositions: { holSat: empty, hol: holSlot } }, "2026-02-11"), holSlot);
+});
+
+test("requiredPositionsFor: 旧holは祝日以外に波及せず、何も無ければ空オブジェクト", () => {
+  const s = { requiredPositions: { hol: holSlot } };
+  assert.deepStrictEqual(u.requiredPositionsFor(s, "2026-07-13"), {}); // 月曜
+  assert.deepStrictEqual(u.requiredPositionsFor({}, "2026-02-11"), {});
+});
+
 test("hasAnyRequiredPosition: 必要ポジションが1件でもあればtrue、なければfalse", () => {
   assert.strictEqual(u.hasAnyRequiredPosition(undefined), false);
   assert.strictEqual(u.hasAnyRequiredPosition({}), false);

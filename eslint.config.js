@@ -189,6 +189,7 @@ const sharedGlobals = {
   matchingPositionDayTypes: "writable",
   positionDayTypeFor: "writable",
   hasAnyRequiredPosition: "writable",
+  requiredPositionsFor: "writable",
   isSpecialRedDate: "writable",
   ssGet: "writable",
   ssSave: "writable",
