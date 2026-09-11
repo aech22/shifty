@@ -313,7 +313,15 @@ function getAttrOptions(settings){
   const out=[];
   if(stl.employee&&stl.employee.name)out.push(["employee",stl.employee.name]);else out.push(["employee","社員"]);
   if(stl.parttime&&stl.parttime.name)out.push(["parttime",stl.parttime.name]);else out.push(["parttime","バイト"]);
-  Object.keys(stl).forEach(id=>{if(id!=="employee"&&id!=="parttime"&&stl[id]&&stl[id].name)out.push([id,stl[id].name]);});
+  // 組み込みの dispatch/other は名前が無くても既定名で補う。2026-06-16〜06-28 の makeSettings は
+  // name を持たない {daily,weekly} で保存しており、スタッフタブの属性選択・設定タブの制限一覧は
+  // STAFF_TYPE_LABELS で「派遣」「その他」を出すのに、ここだけ落として休憩タグに選べなかった（バグチェック#121）。
+  Object.keys(stl).forEach(id=>{
+    if(id==="employee"||id==="parttime")return;
+    const t=stl[id];
+    const nm=t&&typeof t==="object"?(t.name||(BUILTIN_TYPES.includes(id)?STAFF_TYPE_LABELS[id]:"")):"";
+    if(nm)out.push([id,nm]);
+  });
   return out;
 }
 // 休憩適用の統一入口: 属性タグフィルタ + 実際のシフト時間帯との重なり判定

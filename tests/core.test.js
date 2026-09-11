@@ -2442,3 +2442,18 @@ test("effShiftRangeMin: dupErrors が他店舗側で頼っている4ケース", 
   assert.strictEqual(u.effShiftRangeMin({ status: "work", start: "17:00" }, settings), null,
     "出勤17:00だけの日はランチ終わり(15:00)まで補完すると逆転する＝自店舗側の s>=e と同じく落とす");
 });
+
+test("getAttrOptions: 名前を持たない組み込み属性（2026-06-16〜06-28 の既定値）も既定名で選択肢に出す", () => {
+  // 当時の makeSettings は dispatch/other を {daily,weekly} だけで保存した。スタッフタブの属性選択と
+  // 設定タブの制限一覧は STAFF_TYPE_LABELS で補うので、休憩タグの選択肢だけ落ちると食い違う（バグチェック#121）。
+  const legacy = { staffTypeLimits: { employee: { daily: 0, weekly: 0 }, parttime: { daily: 0, weekly: 0 },
+    dispatch: { daily: 0, weekly: 0 }, other: { daily: 0, weekly: 0 } } };
+  assert.deepStrictEqual(u.getAttrOptions(legacy),
+    [["employee", "社員"], ["parttime", "バイト"], ["dispatch", "派遣"], ["other", "その他"]]);
+  // 名前の無いカスタム属性は従来どおり出さない（ID をそのまま見せないため）
+  assert.deepStrictEqual(u.getAttrOptions({ staffTypeLimits: { custom_x: { daily: 0 } } }),
+    [["employee", "社員"], ["parttime", "バイト"]]);
+  // 一覧に無い組み込み属性は足さない（現行の既定＝社員・バイトのみ の店舗に派遣を生やさない）
+  assert.deepStrictEqual(u.getAttrOptions({ staffTypeLimits: { custom_y: { name: "学生" } } }),
+    [["employee", "社員"], ["parttime", "バイト"], ["custom_y", "学生"]]);
+});
