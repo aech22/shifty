@@ -505,27 +505,47 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const spIdx=staffList.findIndex(n=>isSpacer(n));
   const hallStaff=spIdx>-1?staffList.slice(spIdx+1).filter(n=>!isSpacer(n)):[];
 
-  // 横スクロール同期（onScroll経由で確実に同期）
+  // スクロール同期（onScroll経由で確実に同期）。
+  //
+  // 同期先はそれぞれ自分の最大スクロール量までしか動けない。連動する表は幅が揃っておらず
+  // （日付/ラベル列の padding 差で集計表だけ8px狭い、メイングリッドだけ縦スクロールバー分
+  // clientWidth が狭い）、限界に達した相手は書いた値ではなくクランプ後の値になる。その値が
+  // 相手の scroll イベントとして戻ってきて本体へ書き戻されると、操作中のスクロールが引き戻される。
+  // **スクロールバーがレイアウト幅を占有する環境（Windows）でだけ幅の差が開くため、macOS では
+  // ほぼ出ず Windows で「引っかかる」として出る。** 自分が書いた値の反射はここで捨てる。
+  //
+  // あわせて、値が変わる領域にだけ書く。グリッドの onScroll は縦スクロールでも syncScrollH を
+  // 呼ぶため、比較が無いと scrollLeft が1pxも動かない縦操作でも集計表3つへ毎イベント書き込みが
+  // 走り、そのたびに3つの表がレイアウトと再描画をやり直す。
   const syncingRef=useRef(false);
-  // 値が変わる領域にだけ書く。グリッドの onScroll は縦スクロールでもこの関数を呼ぶため、
-  // 比較が無いと scrollLeft が1pxも動いていない縦操作で、集計表3つへ毎イベント書き込みが走り、
-  // そのたびに3つの表がレイアウトと再描画をやり直す（Chrome でフレーム落ちの原因になる）。
+  const echoHRef=useRef(null);
+  const echoVRef=useRef(null);
+  if(echoHRef.current===null)echoHRef.current=new WeakMap();
+  if(echoVRef.current===null)echoVRef.current=new WeakMap();
+  // 読み（clientWidth等）と書き（scrollLeft代入）を2段に分ける。混ぜるとレイアウトが毎回やり直される。
+  const syncAxis=(src,refs,posKey,sizeKey,clientKey,echo)=>{
+    const cur=src[posKey];
+    const wrote=echo.get(src);
+    if(wrote!==undefined&&Math.abs(wrote-cur)<0.5){echo.delete(src);return;} // 自分が書いた分の反射
+    const targets=[];
+    refs.forEach(r=>{
+      const el=r.current;if(!el||el===src)return;
+      const v=Math.max(0,Math.min(cur,el[sizeKey]-el[clientKey]));
+      if(Math.abs(el[posKey]-v)>=0.5)targets.push([el,v]);
+    });
+    targets.forEach(t=>{t[0][posKey]=t[1];echo.set(t[0],t[1]);});
+  };
   const syncScrollH=useCallback((src)=>{
     if(syncingRef.current)return;
     syncingRef.current=true;
-    const left=src.scrollLeft;const targets=[];
-    [mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef].forEach(r=>{
-      const el=r.current;if(!el||el===src)return;
-      if(Math.abs(el.scrollLeft-left)>=0.5)targets.push(el);
-    });
-    targets.forEach(el=>{el.scrollLeft=left;});
+    syncAxis(src,[mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef],"scrollLeft","scrollWidth","clientWidth",echoHRef.current);
     requestAnimationFrame(()=>{syncingRef.current=false;});
   },[]);
-  // 縦スクロール同期（メイングリッド⇔左右ヒートマップ。同値代入はscrollイベントを発火しないためループしない）
+  // 縦スクロール同期（メイングリッド⇔左右ヒートマップ）
   const kitHeatRef=useRef(null);
   const hallHeatRef=useRef(null);
   const syncScrollV=useCallback((src)=>{
-    [mainScrollRef,kitHeatRef,hallHeatRef].forEach(r=>{if(r.current&&r.current!==src&&r.current.scrollTop!==src.scrollTop)r.current.scrollTop=src.scrollTop;});
+    syncAxis(src,[mainScrollRef,kitHeatRef,hallHeatRef],"scrollTop","scrollHeight","clientHeight",echoVRef.current);
   },[]);
 
   const toDecimal=t=>{if(!t)return"";const[h,m]=t.split(":").map(Number);return m===0?String(h):String(h+m/60);};
