@@ -122,6 +122,10 @@ exports.createCheckoutSession = functions
 
     const { shopId, plan, successUrl, cancelUrl } = req.body;
     if (!shopId || !plan) { res.status(400).json({ error: "shopId, plan は必須です" }); return; }
+    // changePlan と同じ検証。ここを通さないと "premium" 以外の値はすべて Pro の price で課金されるのに、
+    // metadata.plan には受け取った値がそのまま載り、checkout.session.completed がそれを accounts へ書く
+    // （クライアントは未知のプラン名を free に倒すので、Pro を払って Free になる）。
+    if (plan !== "pro" && plan !== "premium") { res.status(400).json({ error: "plan は pro または premium を指定してください" }); return; }
     if (isDemoShop(shopId)) { res.status(403).json({ error: "デモ店舗では購入のお手続きはできません。" }); return; }
 
     const auth = await verifyShopOwner(req, shopId);
