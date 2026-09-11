@@ -1606,7 +1606,7 @@ function App(){
                 currentShopIdRef.current=id;
                 setCurrentShopId(id);
                 ssSave(SS_SHOP,id);
-                setApid(null); // 旧店舗のapidを持ち越さない（新店舗の最新期間をline1122のeffectが選び直す）
+                setApid(null); // 旧店舗のapidを持ち越さない（新店舗の最新期間を「periodsが来たらapidを設定」のeffectが選び直す）
                 startSubscriptions(id);
               }}
               startSubscriptions={startSubscriptions}
@@ -1619,7 +1619,7 @@ function App(){
                 const alreadyIn=shops.some(s=>s.id===id);
                 if(!alreadyIn){const ns=[...shops,sh];setShops(ns);ls("shift_shops_v6",ns);}
                 currentShopIdRef.current=id;setCurrentShopId(id);ssSave(SS_SHOP,id);
-                setApid(null); // 旧店舗のapidを持ち越さない（新店舗の最新期間をline1122のeffectが選び直す）
+                setApid(null); // 旧店舗のapidを持ち越さない（新店舗の最新期間を「periodsが来たらapidを設定」のeffectが選び直す）
                 startSubscriptions(id); // shopListなし→既存のshopsリストを維持しつつ購読先だけ切り替え
               }}
               onLinkProvider={linkProvider} onSendEmailOtp={sendEmailOtp}
