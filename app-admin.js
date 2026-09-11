@@ -507,10 +507,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
   // 横スクロール同期（onScroll経由で確実に同期）
   const syncingRef=useRef(false);
+  // 値が変わる領域にだけ書く。グリッドの onScroll は縦スクロールでもこの関数を呼ぶため、
+  // 比較が無いと scrollLeft が1pxも動いていない縦操作で、集計表3つへ毎イベント書き込みが走り、
+  // そのたびに3つの表がレイアウトと再描画をやり直す（Chrome でフレーム落ちの原因になる）。
   const syncScrollH=useCallback((src)=>{
     if(syncingRef.current)return;
     syncingRef.current=true;
-    [mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef].forEach(r=>{if(r.current&&r.current!==src)r.current.scrollLeft=src.scrollLeft;});
+    const left=src.scrollLeft;const targets=[];
+    [mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef].forEach(r=>{
+      const el=r.current;if(!el||el===src)return;
+      if(Math.abs(el.scrollLeft-left)>=0.5)targets.push(el);
+    });
+    targets.forEach(el=>{el.scrollLeft=left;});
     requestAnimationFrame(()=>{syncingRef.current=false;});
   },[]);
   // 縦スクロール同期（メイングリッド⇔左右ヒートマップ。同値代入はscrollイベントを発火しないためループしない）
