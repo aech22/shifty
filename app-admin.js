@@ -487,7 +487,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 「提出名がこの期間の名簿にあるか」の判定（isUnregisteredSubName）だけ rosterStaffList を使う。
   // 逆にすると非表示の人の提出が未登録名に化けて、隠したはずの列が末尾に復活する（visibleStaffList のコメント）。
   const rosterStaffList=periodMaster.staffList;
-  const staffList=visibleStaffList(rosterStaffList,settings,period);
+  // **参照を安定させるために useMemo にする**。下の重い useMemo 6つ（heatData / dupErrors /
+  // positionErrors / positionErrorEntries / restCounts / consecCounts）は依存配列に staffList・
+  // dates・realStaff を並べている。ここで毎レンダー新しい配列を返すと依存が毎回「変化した」と
+  // 判定され、**メモ化が1度も効かない**＝打鍵ごとにヒートマップ・ポジション不足の二部マッチング・
+  // 休みカウント・連勤カウントを全部やり直す（実測: 4打鍵＝4レンダーで6つとも4回再計算）。
+  const staffList=useMemo(()=>visibleStaffList(rosterStaffList,settings,period),[rosterStaffList,settings,period]);
   const periodLocked=periodMaster.locked;
   // 期間が生きている間はシフト作成タブを開くたびに写しを最新化し、最終日を超えたら更新を止める＝そこで凍結。
   // 「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、最終日を過ぎてから初めてアプリを
@@ -500,8 +505,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(periodSnapshotEqual(period.snapshot,next))return;
     savePeriods(periods.map(p=>(p&&p.id===period.id)?{...p,snapshot:next}:p));
   },[period,staffListProp,settingsProp,periods,ownerReadOnly,todayStr]);
-  const dates=period?gd(period.startDate,period.endDate):[];
-  const realStaff=staffList.filter(n=>!isSpacer(n));
+  // dates / realStaff も同じ理由で参照を安定させる（上の staffList のコメント参照）。
+  const dates=useMemo(()=>period?gd(period.startDate,period.endDate):[],[period]);
+  const realStaff=useMemo(()=>staffList.filter(n=>!isSpacer(n)),[staffList]);
   const spIdx=staffList.findIndex(n=>isSpacer(n));
   const hallStaff=spIdx>-1?staffList.slice(spIdx+1).filter(n=>!isSpacer(n)):[];
 
