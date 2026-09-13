@@ -83,6 +83,15 @@ const STRIPE_PRICES = {
 const DEMO_SHOP_IDS = ["demo-toriMatsu-v1"];
 function isDemoShop(shopId) { return DEMO_SHOP_IDS.includes(shopId); }
 
+// リクエスト本文の shopId を DB パスへ埋め込む前に形を確かめる。isDemoShop より先に通すこと。
+// Admin SDK はパスの空セグメントを詰めるため、"demo-toriMatsu-v1/" や配列 ["demo-toriMatsu-v1"] は
+// isDemoShop の比較には一致しないのに、DB 上は本物のデモ店舗を読む（バグチェック#125で実測）。
+// 禁止文字（. # $ [ ]）は ref() が同期に throw し、onRequest はそれを捕まえないので応答が返らない。
+// 正規の shopId は genSecureId の文字種（これらを含まない）なので既存店舗は弾かれない。
+function isValidShopId(shopId) {
+  return typeof shopId === "string" && shopId.length > 0 && !/[/.#$[\]\x00-\x1f\x7f]/.test(shopId);
+}
+
 // ============================================================
 // Firebase IDトークン検証 + 店舗オーナー照合
 // owners未登録（未claim）の店舗は移行猶予として許可する。
@@ -126,6 +135,7 @@ exports.createCheckoutSession = functions
     // metadata.plan には受け取った値がそのまま載り、checkout.session.completed がそれを accounts へ書く
     // （クライアントは未知のプラン名を free に倒すので、Pro を払って Free になる）。
     if (plan !== "pro" && plan !== "premium") { res.status(400).json({ error: "plan は pro または premium を指定してください" }); return; }
+    if (!isValidShopId(shopId)) { res.status(400).json({ error: "shopId が不正です" }); return; }
     if (isDemoShop(shopId)) { res.status(403).json({ error: "デモ店舗では購入のお手続きはできません。" }); return; }
 
     const auth = await verifyShopOwner(req, shopId);
@@ -194,6 +204,7 @@ exports.changePlan = functions
     const { shopId, plan } = req.body || {};
     if (!shopId || !plan) { res.status(400).json({ error: "shopId, plan は必須です" }); return; }
     if (plan !== "pro" && plan !== "premium") { res.status(400).json({ error: "plan は pro または premium を指定してください" }); return; }
+    if (!isValidShopId(shopId)) { res.status(400).json({ error: "shopId が不正です" }); return; }
     if (isDemoShop(shopId)) { res.status(403).json({ error: "デモ店舗ではプラン変更のお手続きはできません。" }); return; }
 
     const auth = await verifyShopOwner(req, shopId);
@@ -319,6 +330,7 @@ exports.cancelPlanChange = functions
 
     const { shopId } = req.body || {};
     if (!shopId) { res.status(400).json({ error: "shopId は必須です" }); return; }
+    if (!isValidShopId(shopId)) { res.status(400).json({ error: "shopId が不正です" }); return; }
     if (isDemoShop(shopId)) { res.status(403).json({ error: "デモ店舗ではプラン変更のお手続きはできません。" }); return; }
 
     const auth = await verifyShopOwner(req, shopId);
@@ -683,6 +695,7 @@ exports.createPortalSession = functions
 
     const { shopId, returnUrl } = req.body;
     if (!shopId) { res.status(400).json({ error: "shopId は必須です" }); return; }
+    if (!isValidShopId(shopId)) { res.status(400).json({ error: "shopId が不正です" }); return; }
     if (isDemoShop(shopId)) { res.status(403).json({ error: "デモ店舗では請求管理をご利用いただけません。" }); return; }
 
     const auth = await verifyShopOwner(req, shopId);
