@@ -530,6 +530,21 @@ adjustedStartFixed:true,extraStart:"23:00",extraEnd:"25:00"}`）。上表がそ�
 （「未claim店舗は誰でも通る。デモは isDemoShop で別途拒否している」）に直す必要がある。
 **条件A（Cloud Functions の本番デプロイ）と条件B（猶予を残すかの判断）に該当**するためループでは変更しない。
 
+**2026-09-13 追記（バグチェック#125）— 上の「デモは `isDemoShop` で先に403で弾かれる」は、直接POSTでは成り立っていなかった**:
+課金系4エンドポイントは `req.body.shopId` を検証せずに `shops/${shopId}/owners` へ埋め込んでいた。
+Admin SDK はパスの空セグメントを詰めるので、`"demo-toriMatsu-v1/"`・`"/demo-toriMatsu-v1"`・配列 `["demo-toriMatsu-v1"]` は
+**`isDemoShop` の文字列比較に一致しないのに、DB 上は本物のデモ店舗を読む**（firebase-admin 12.7.0 で `ref().toString()` を実測）。
+デモは owners を持たないので `verifyShopOwner` も通り、#67 の denylist が迂回できた。
+
+- **修正はコード上で済んでいる**（`d4867ef`・`isValidShopId` を4エンドポイントの `isDemoShop` より前に通す）。
+  すり抜け3種と禁止文字（`. # $ [ ]`）は 400 になり、`genSecureId` 形式の10万件は全件通過（既存店舗に影響なし）
+- **ただし本番は未デプロイ**。`cd functions && firebase deploy --only functions --project ontheshift` が要る（**条件A**）
+- **実害は小さい**: 悪用するには攻撃者自身がデモ店舗名義で決済する必要がある。そうすると、同じ細工をした第三者が
+  **その決済者のカスタマーポータルを開ける**（#67 の①と同じ形）。正規のUIはデモで購入導線を出さないので、
+  一般利用者がこの状態に入ることは無い
+- **根はこのタスクと同じ**（未claim店舗が `verifyShopOwner` を通る）。上の判断で `!owners` を 403 にすれば、
+  入力検証が無くてもデモの変種は弾かれる。入力検証は判断を待たずに入れられる多重防御として先行した
+
 ---
 
 ## 🟢 データ保存上限④-b: dry-run観察後の36ヶ月超期間データ削除の本有効化
