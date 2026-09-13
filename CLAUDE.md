@@ -620,55 +620,54 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-09-13 自動実行 #124）
+## Shifty バグチェックレポート（2026-09-13 自動実行 #125・21時の回）
 
-> 着手時の HEAD は `cef2c45`。**#123 以降にコード（app-*.js・functions・rules・index.html）の変更は無い**。
-> #123 の申し送りどおり、AST（`@babel/parser`）で「値が読まれない state」と「一度も参照されない関数」を取った。
-> **コードは1バイトも変えていない。**
+> 着手時の HEAD は `5a79615`。**#124 以降にコードの変更は無い**。過去ログに一度も当たっていない観点として、
+> **Cloud Functions の HTTP エンドポイントが外部入力（`req.body`）をどう DB パスへ埋め込むか**を当てた。
 
 ### 修正済み
 
-- **[🟢] CLAUDE.md の「締」の判定経路の記述が実態と違っていた**（「よくある修正パターン」5）。
-  `fixedShiftCommandFor` は 2026-07-12 の `2a68ea6` で呼び出しが消えており、現在の判定は
-  `extractNote` の `hasFixed` と `fixedShiftEnabled`（app-admin.js:620）。記述を実態に直した（ドキュメントのみ）。
+- **[🟡] 課金系CFの `shopId` が未検証で、デモ店舗の拒否（#67）を直接POSTで迂回できた**（functions/index.js:91・`d4867ef`）。
+  Admin SDK はパスの空セグメントを詰めるので、`"demo-toriMatsu-v1/"`・`"/demo-toriMatsu-v1"`・配列 `["demo-toriMatsu-v1"]` は
+  `isDemoShop` に一致しないのに本物のデモ店舗を読む。デモは owners を持たないため `verifyShopOwner` も通る。
+  禁止文字（`. # $ [ ]`）は `ref()` が同期 throw し、onRequest（firebase-functions 5.1.1）はそれを捕まえない。
+  `isValidShopId` を足し、4エンドポイントで `isDemoShop` より前に通した。
+  **本番は未デプロイ**（条件A）→ **BACKLOG化済み**（既存🟡「企業連携の解除…」の #111 追記と同根なのでそこへ追記）。
 
-### 当てた走査（すべて対照つき）
+### 実測
 
-| 走査 | 結果 |
-|---|---|
-| ① トップレベル関数で全5ファイルから参照ゼロ | **0件** |
-| ② `module.exports` からしか参照されない関数（＝テスト専用） | **2件** |
-| ③ `useState` の値が読まれない／setter が参照されない | **1件**＝`authChecked`（既知） |
-| ④ 関数内の未参照ローカル変数・関数 | **1件**＝`fmtH4` |
+| 入力 | 修正前 | 修正後 |
+|---|---|---|
+| `"demo-toriMatsu-v1"` | 403 | 403 |
+| `"demo-toriMatsu-v1/"`・`"/demo-toriMatsu-v1"`・`["demo-toriMatsu-v1"]` | **通過** | 400 |
+| `"x.y"`・`"a#b"`・制御文字 | 通過（その後 `ref()` が throw） | 400 |
+| 既存 shopId 4種・`genSecureId` 形式10万件 | 通過 | **通過（弾いたのは0件）** |
 
-写しに仕込んだ6件の欠陥をすべて検出し、パース範囲は 538,482/538,482 文字＝全量だった。
+**実害は小さい**。悪用には攻撃者自身がデモ名義で決済する必要があり、その結果として同じ細工をした第三者が
+その決済者のポータルを開けるようになる、という形に留まる。
 
-### 要確認（未修正・すべて🟢）
+### 要確認（未修正）
 
-- **🟢 `fixedShiftCommandFor`（app-utils.js:670）はテストからしか呼ばれず、テストが現行と逆の規則を固定している**。
-  tests/core.test.js:502 は「9締」を null と表明するが、実測では `"9締"`・`"17締"` とも `extractNote().hasFixed=true`。
-  本番経路は使っていないので実害は無い。
-- **🟢 `recentPeriodIds`（app-utils.js:85）もテストからしか呼ばれない**。本番の購読選定は
-  app-main.js の `reconcileSubs` が同じ条件をインラインで持つ。現時点で条件は一致しているが、
-  テストが守っているのは写しの側。
-- **🟢 `fmtH4` が ShiftEditTab（app-admin.js:1148）に未使用で残っている**（`SummaryTable` へ切り出した残骸・直上コメントも2行重複）。
-- **#123 から継続（変化なし）**: `subsWindowCutoff` の月末繰り上がり／`staffAliases` 欠落時のメモ作り直し2件／
-  **配信版数 `20260911-fe54a15` が `e8c2980` の app-admin.js 変更に追随していない**（リリース時にバンプ）／#121・#122 からの継続項目。
-- **変化なし（BACKLOG化済み・条件A/Bでループの権限外）**: 二重課金の根治／特商法表記（🔴）／解約通知／解約時のプラン判定／
-  `verifyShopOwner` の移行猶予／別名提出の重複の根（#81）／PDF の実物確認／**`purgeOldPeriods` の本有効化（2026-09-11 から着手可）**／
-  非表示スタッフの未提出カウント（#113）／「締」の休みの入口2つ（#118）／完全削除したスタッフの `keepAttrs`（#118）。
+- **🟢 禁止文字で `ref()` が throw したときの本番の挙動**（タイムアウトまで待つのか、即500か）は**未検証**。
+  入力検証で到達しなくなったので追っていない。
+- **#124 から継続（変化なし）**: `fixedShiftCommandFor`・`recentPeriodIds` がテスト専用／`fmtH4` の残骸／
+  `subsWindowCutoff` の月末繰り上がり／`staffAliases` 欠落時のメモ作り直し2件／
+  **配信版数 `20260911-fe54a15` が `e8c2980` に追随していない**（リリース時にバンプ）。
+- **変化なし（BACKLOG化済み）**: 二重課金の根治／特商法表記（🔴）／解約通知／解約時のプラン判定／
+  `verifyShopOwner` の移行猶予（**今回の修正のデプロイもここに追記**）／別名提出の重複の根（#81）／PDF の実物確認／
+  `purgeOldPeriods` の本有効化（2026-09-11 から着手可）／非表示スタッフの未提出カウント（#113）／
+  「締」の休みの入口2つ（#118）／完全削除したスタッフの `keepAttrs`（#118）。
 - **引き受け済みのトレードオフ（再検出しても直さない）**: `subs/$subId/.write` は認証済みなら通る。2026-08-31 決定1。
-
-**今回 BACKLOG へ起こしたものは無い。**
 
 ### 検証したこと
 
 - `npm test` **260件パス**・`npx eslint app-*.js` **0 errors / 94 warnings**・`node --check functions/index.js` OK。
-- RULES.md スキャン項目はすべてクリア（`DEV_MODE` は式のまま・`subs` 全体 `set()` 0件・`accounts` 全件読み0件・SRI 11本・読み込み順・`.delete()` 0件・`secrets:` 7件）。
-- Firebase・Stripe には一切アクセスしていない。
+- RULES.md スキャン項目はすべてクリア（`DEV_MODE` は式のまま・`subs` 全体 `set()` 0件・`accounts` 全件読み0件・SRI 11本・`.delete()` 0件・`secrets:` 7件）。
+- パスの正規化は、ダミーの databaseURL で `ref().toString()` を取るだけで確かめた（ネットワークに出ない）。Firebase・Stripe には一切アクセスしていない。
+- あわせてイベントリスナー（add 4／remove 4）とタイマーの解除漏れも見たが、問題は無かった。
 
-**申し送り（次回の観点）**: テスト専用になった関数は「テストが写しを守る」形のドリフトなので、
-`module.exports` からしか参照されない関数の一覧（今回2件）が増えていないかを毎回見るとよい。
+**申し送り（次回の観点）**: 外部から来た ID を「文字列で比較してから DB パスへ埋め込む」箇所は、正規化の食い違いで比較をすり抜ける。
+Callable 側の `companyId`（`typeof` の確認だけで `/` を弾いていない）にも同じ形が無いかを当てるとよい（今回は未確認）。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
@@ -1206,6 +1205,21 @@ adjustedStartFixed:true,extraStart:"23:00",extraEnd:"25:00"}`）。上表がそ�
 （記述だけが残ると、次に読んだ人が同じ誤解をする）。適用しない場合も、コメントを実態
 （「未claim店舗は誰でも通る。デモは isDemoShop で別途拒否している」）に直す必要がある。
 **条件A（Cloud Functions の本番デプロイ）と条件B（猶予を残すかの判断）に該当**するためループでは変更しない。
+
+**2026-09-13 追記（バグチェック#125）— 上の「デモは `isDemoShop` で先に403で弾かれる」は、直接POSTでは成り立っていなかった**:
+課金系4エンドポイントは `req.body.shopId` を検証せずに `shops/${shopId}/owners` へ埋め込んでいた。
+Admin SDK はパスの空セグメントを詰めるので、`"demo-toriMatsu-v1/"`・`"/demo-toriMatsu-v1"`・配列 `["demo-toriMatsu-v1"]` は
+**`isDemoShop` の文字列比較に一致しないのに、DB 上は本物のデモ店舗を読む**（firebase-admin 12.7.0 で `ref().toString()` を実測）。
+デモは owners を持たないので `verifyShopOwner` も通り、#67 の denylist が迂回できた。
+
+- **修正はコード上で済んでいる**（`d4867ef`・`isValidShopId` を4エンドポイントの `isDemoShop` より前に通す）。
+  すり抜け3種と禁止文字（`. # $ [ ]`）は 400 になり、`genSecureId` 形式の10万件は全件通過（既存店舗に影響なし）
+- **ただし本番は未デプロイ**。`cd functions && firebase deploy --only functions --project ontheshift` が要る（**条件A**）
+- **実害は小さい**: 悪用するには攻撃者自身がデモ店舗名義で決済する必要がある。そうすると、同じ細工をした第三者が
+  **その決済者のカスタマーポータルを開ける**（#67 の①と同じ形）。正規のUIはデモで購入導線を出さないので、
+  一般利用者がこの状態に入ることは無い
+- **根はこのタスクと同じ**（未claim店舗が `verifyShopOwner` を通る）。上の判断で `!owners` を 403 にすれば、
+  入力検証が無くてもデモの変種は弾かれる。入力検証は判断を待たずに入れられる多重防御として先行した
 
 ---
 
