@@ -620,54 +620,55 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-09-13 自動実行 #125・21時の回）
+## Shifty バグチェックレポート（2026-09-14 自動実行 #126・9時の回）
 
-> 着手時の HEAD は `5a79615`。**#124 以降にコードの変更は無い**。過去ログに一度も当たっていない観点として、
-> **Cloud Functions の HTTP エンドポイントが外部入力（`req.body`）をどう DB パスへ埋め込むか**を当てた。
+> 着手時の HEAD は `44b53fe`。**#125 以降にコードの変更は無い**。#125 の申し送りどおり、
+> **Callable 側の `companyId` が DB パスへ入る経路**を当てた。
 
 ### 修正済み
 
-- **[🟡] 課金系CFの `shopId` が未検証で、デモ店舗の拒否（#67）を直接POSTで迂回できた**（functions/index.js:91・`d4867ef`）。
-  Admin SDK はパスの空セグメントを詰めるので、`"demo-toriMatsu-v1/"`・`"/demo-toriMatsu-v1"`・配列 `["demo-toriMatsu-v1"]` は
-  `isDemoShop` に一致しないのに本物のデモ店舗を読む。デモは owners を持たないため `verifyShopOwner` も通る。
-  禁止文字（`. # $ [ ]`）は `ref()` が同期 throw し、onRequest（firebase-functions 5.1.1）はそれを捕まえない。
-  `isValidShopId` を足し、4エンドポイントで `isDemoShop` より前に通した。
-  **本番は未デプロイ**（条件A）→ **BACKLOG化済み**（既存🟡「企業連携の解除…」の #111 追記と同根なのでそこへ追記）。
+- **[🟡] 企業系 Callable の `companyId` が未検証で、「最後のオーナーは外さない」判定（#65）を偽のキーで迂回できた**（functions/index.js:98・`a8169c0`）。
+  `"/C1"` は権限チェックを C1 として正しく通るが、owners への登録先が `shops/S/owners/company_/C1` になり、
+  owners に `"company_"` という偽のキーが入る。`unlinkStoreFromCompany` はそれを他のオーナーと数えるため、
+  企業uidだけが管理する店舗から最後の実オーナーを外せた。push().key の文字種に限る `isValidCompanyId` を4本の入口で通した。
+  **本番は未デプロイ**（条件A）→ **BACKLOG化済み**（#125 と同じ1回のデプロイで反映。同タスクへ追記）。
 
 ### 実測
 
-| 入力 | 修正前 | 修正後 |
-|---|---|---|
-| `"demo-toriMatsu-v1"` | 403 | 403 |
-| `"demo-toriMatsu-v1/"`・`"/demo-toriMatsu-v1"`・`["demo-toriMatsu-v1"]` | **通過** | 400 |
-| `"x.y"`・`"a#b"`・制御文字 | 通過（その後 `ref()` が throw） | 400 |
-| 既存 shopId 4種・`genSecureId` 形式10万件 | 通過 | **通過（弾いたのは0件）** |
+| 対象 | 結果 |
+|---|---|
+| 権限チェックと書き込み（`C1`・`C1/`・`/C1`・`C1//`） | 両方とも `companies/C1/...` へ正規化＝**食い違いなし** |
+| owners への登録先（`/C1`） | **`/shops/S/owners/company_/C1`**（他は `company_C1`） |
+| 最後のオーナーのガード（同じ式で評価） | 通常は拒否 → `/C1` で連携した後は **others=["company_"] で素通り** |
+| 修正後のゲート | すり抜け3種・`. # $ [ ]`・制御文字・空白・65文字以上は 400、`push().key` 10万件は全件通過 |
 
-**実害は小さい**。悪用には攻撃者自身がデモ名義で決済する必要があり、その結果として同じ細工をした第三者が
-その決済者のポータルを開けるようになる、という形に留まる。
+**実害は小さい**。行えるのは、すでにその店舗を管理している企業メンバーだけで、第三者による権限奪取ではない。
+外した後も `private/adminKey` は残るので、管理コードを持つ端末はルールで自分を登録し直せる。
+`createCompany` の `shopIds` の変種は `owners[uid]` を要求するので自分の店舗にしか効かず、`companyLogin` の `companyId` は DB 由来なので対象外。
 
 ### 要確認（未修正）
 
-- **🟢 禁止文字で `ref()` が throw したときの本番の挙動**（タイムアウトまで待つのか、即500か）は**未検証**。
-  入力検証で到達しなくなったので追っていない。
+- **🟢 `sendEmailOtp`・`verifyEmailOtp` は `data` が null だと `data.email` で TypeError になる**（internal エラーで返るだけで実害なし）。
+  OTP は `Math.random` だが、5回失敗で無効化されるので据え置き。
+- **🟢 禁止文字で `ref()` が throw したときの本番の挙動**は #125 から未検証のまま（入力検証で到達しなくなった）。
 - **#124 から継続（変化なし）**: `fixedShiftCommandFor`・`recentPeriodIds` がテスト専用／`fmtH4` の残骸／
   `subsWindowCutoff` の月末繰り上がり／`staffAliases` 欠落時のメモ作り直し2件／
   **配信版数 `20260911-fe54a15` が `e8c2980` に追随していない**（リリース時にバンプ）。
 - **変化なし（BACKLOG化済み）**: 二重課金の根治／特商法表記（🔴）／解約通知／解約時のプラン判定／
-  `verifyShopOwner` の移行猶予（**今回の修正のデプロイもここに追記**）／別名提出の重複の根（#81）／PDF の実物確認／
+  `verifyShopOwner` の移行猶予（**#125 と #126 の修正の CF デプロイもここ**）／別名提出の重複の根（#81）／PDF の実物確認／
   `purgeOldPeriods` の本有効化（2026-09-11 から着手可）／非表示スタッフの未提出カウント（#113）／
   「締」の休みの入口2つ（#118）／完全削除したスタッフの `keepAttrs`（#118）。
 - **引き受け済みのトレードオフ（再検出しても直さない）**: `subs/$subId/.write` は認証済みなら通る。2026-08-31 決定1。
 
 ### 検証したこと
 
-- `npm test` **260件パス**・`npx eslint app-*.js` **0 errors / 94 warnings**・`node --check functions/index.js` OK。
+- `npm test` **260件パス**・`npx eslint app-*.js` **0 errors / 94 warnings**・`node --check functions/index.js` OK（修正後も）。
 - RULES.md スキャン項目はすべてクリア（`DEV_MODE` は式のまま・`subs` 全体 `set()` 0件・`accounts` 全件読み0件・SRI 11本・`.delete()` 0件・`secrets:` 7件）。
-- パスの正規化は、ダミーの databaseURL で `ref().toString()` を取るだけで確かめた（ネットワークに出ない）。Firebase・Stripe には一切アクセスしていない。
-- あわせてイベントリスナー（add 4／remove 4）とタイマーの解除漏れも見たが、問題は無かった。
+- 修正後のゲートは、実ソースから `isValidCompanyId` を切り出して評価した。`companyId` を受ける入口4本すべてが通ることを grep で確認し、クライアントの呼び出し元4箇所が渡すのは `companyInfo.companyId`（push キー）だけだった。
+- パスは #125 と同じくダミーの databaseURL で `ref().toString()` を取って確かめた。Firebase・Stripe には一切アクセスしていない。
 
-**申し送り（次回の観点）**: 外部から来た ID を「文字列で比較してから DB パスへ埋め込む」箇所は、正規化の食い違いで比較をすり抜ける。
-Callable 側の `companyId`（`typeof` の確認だけで `/` を弾いていない）にも同じ形が無いかを当てるとよい（今回は未確認）。
+**申し送り（次回の観点）**: CF の入力検証は #125・#126 でひと巡りした。次は `stripeWebhook` が `metadata.shopId` を信じてパスへ入れる経路を当てるとよい。
+metadata は自分で付けた値だが、Stripe ダッシュボードで手編集できる（今回は未確認）。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
@@ -1220,6 +1221,19 @@ Admin SDK はパスの空セグメントを詰めるので、`"demo-toriMatsu-v1
   一般利用者がこの状態に入ることは無い
 - **根はこのタスクと同じ**（未claim店舗が `verifyShopOwner` を通る）。上の判断で `!owners` を 403 にすれば、
   入力検証が無くてもデモの変種は弾かれる。入力検証は判断を待たずに入れられる多重防御として先行した
+
+**2026-09-14 追記（バグチェック#126）— 企業系 Callable の `companyId` も同じ形で、#65 のガードを迂回できた**:
+`changeCompanyPassword`・`renameCompany`・`linkStoreToCompany`・`unlinkStoreFromCompany` は `companyId` を
+`typeof === "string"` だけで受けていた。`"/C1"` は権限チェック（`companies//C1/pub/ownerUid` → C1）を正しく通る一方、
+`registerCompanyAsOwner` が `shops/S/owners/company_/C1` へ書くため、owners に **`"company_"` という偽のキー**が入る。
+`unlinkStoreFromCompany` の「最後のオーナーは外さない」判定はそれを他のオーナーと数えるので、
+**実オーナーが企業uidだけの店舗から、最後の実オーナーを外せた**（同じ式で評価: 通常は拒否 → `/C1` で連携した後は素通り）。
+
+- **修正はコード上で済んでいる**（`a8169c0`・push().key の文字種に限る `isValidCompanyId` を4本の入口で通す）。
+  すり抜け3種・禁止文字・空白・65文字以上は `invalid-argument` になり、`push().key` 10万件は全件通過
+- **本番は未デプロイ**。上の `d4867ef` と**同じ1回のデプロイ**で両方が反映される（**条件A**）
+- **実害は小さい**: 行えるのは、すでにその店舗を管理している企業メンバーだけ（第三者の権限奪取ではない）。
+  外した後も `private/adminKey` は残り、管理コードを持つ端末はルール（owners/$uid の書き込み）で自分を登録し直せる
 
 ---
 
