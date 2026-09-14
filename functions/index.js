@@ -91,6 +91,13 @@ function isDemoShop(shopId) { return DEMO_SHOP_IDS.includes(shopId); }
 function isValidShopId(shopId) {
   return typeof shopId === "string" && shopId.length > 0 && !/[/.#$[\]\x00-\x1f\x7f]/.test(shopId);
 }
+// companyId は createCompany の push().key だけから生まれるので、その文字種に限る。
+// "/C1" は権限チェック（companies//C1/pub/ownerUid → C1）を通る一方、owners には
+// "company_" という偽のキーを作り、unlinkStoreFromCompany の「最後のオーナーは外さない」判定が
+// それを他のオーナーと数えて素通りする（バグチェック#126で実測）。
+function isValidCompanyId(companyId) {
+  return typeof companyId === "string" && /^[-0-9A-Za-z_]{1,64}$/.test(companyId);
+}
 
 // ============================================================
 // Firebase IDトークン検証 + 店舗オーナー照合
@@ -1170,7 +1177,7 @@ exports.changeCompanyPassword = functions
   .https.onCall(async (data, context) => {
     const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
     const newPassword = (data && typeof data.newPassword === "string") ? data.newPassword : "";
-    if (!companyId) throw new functions.https.HttpsError("invalid-argument", "企業IDが無効です");
+    if (!isValidCompanyId(companyId)) throw new functions.https.HttpsError("invalid-argument", "企業IDが無効です");
     if (newPassword.length < 6 || newPassword.length > 128) throw new functions.https.HttpsError("invalid-argument", "パスワードは6〜128文字にしてください");
     await assertCompanyMember(context, companyId);
     await db.ref(`companies/${companyId}/private/passwordHash`).set(hashPassword(newPassword));
@@ -1183,7 +1190,7 @@ exports.renameCompany = functions
   .https.onCall(async (data, context) => {
     const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
     const name = (data && typeof data.name === "string") ? data.name.trim() : "";
-    if (!companyId || !name || name.length > 100) throw new functions.https.HttpsError("invalid-argument", "企業名が無効です");
+    if (!isValidCompanyId(companyId) || !name || name.length > 100) throw new functions.https.HttpsError("invalid-argument", "企業名が無効です");
     await assertCompanyMember(context, companyId);
     await db.ref(`companies/${companyId}/pub/name`).set(name);
     // 作成者ポインタの表示名も更新
@@ -1199,7 +1206,7 @@ exports.linkStoreToCompany = functions
     const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
     const shopId = (data && typeof data.shopId === "string") ? data.shopId.trim() : "";
     const adminKey = (data && typeof data.adminKey === "string") ? data.adminKey.trim() : "";
-    if (!companyId || !shopId) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗コードが無効です");
+    if (!isValidCompanyId(companyId) || !shopId) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗コードが無効です");
     // デモ店舗は未claimのまま運用するため、下の allowed = !owners を素通りしてしまう
     if (isDemoShop(shopId)) throw new functions.https.HttpsError("permission-denied", "デモ店舗は企業アカウントに連携できません");
     const callerUid = await assertCompanyMember(context, companyId);
@@ -1242,7 +1249,7 @@ exports.unlinkStoreFromCompany = functions
   .https.onCall(async (data, context) => {
     const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
     const shopId = (data && typeof data.shopId === "string") ? data.shopId.trim() : "";
-    if (!companyId || !shopId) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗IDが無効です");
+    if (!isValidCompanyId(companyId) || !shopId) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗IDが無効です");
     await assertCompanyMember(context, companyId);
     // 企業ログインのセッションで作った店舗はオーナーが企業uidだけなので、無条件に外すと
     // owners が空＝未claim状態へ戻ってしまう。その状態は「shopIdを知る第三者が
