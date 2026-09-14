@@ -545,6 +545,19 @@ Admin SDK はパスの空セグメントを詰めるので、`"demo-toriMatsu-v1
 - **根はこのタスクと同じ**（未claim店舗が `verifyShopOwner` を通る）。上の判断で `!owners` を 403 にすれば、
   入力検証が無くてもデモの変種は弾かれる。入力検証は判断を待たずに入れられる多重防御として先行した
 
+**2026-09-14 追記（バグチェック#126）— 企業系 Callable の `companyId` も同じ形で、#65 のガードを迂回できた**:
+`changeCompanyPassword`・`renameCompany`・`linkStoreToCompany`・`unlinkStoreFromCompany` は `companyId` を
+`typeof === "string"` だけで受けていた。`"/C1"` は権限チェック（`companies//C1/pub/ownerUid` → C1）を正しく通る一方、
+`registerCompanyAsOwner` が `shops/S/owners/company_/C1` へ書くため、owners に **`"company_"` という偽のキー**が入る。
+`unlinkStoreFromCompany` の「最後のオーナーは外さない」判定はそれを他のオーナーと数えるので、
+**実オーナーが企業uidだけの店舗から、最後の実オーナーを外せた**（同じ式で評価: 通常は拒否 → `/C1` で連携した後は素通り）。
+
+- **修正はコード上で済んでいる**（`a8169c0`・push().key の文字種に限る `isValidCompanyId` を4本の入口で通す）。
+  すり抜け3種・禁止文字・空白・65文字以上は `invalid-argument` になり、`push().key` 10万件は全件通過
+- **本番は未デプロイ**。上の `d4867ef` と**同じ1回のデプロイ**で両方が反映される（**条件A**）
+- **実害は小さい**: 行えるのは、すでにその店舗を管理している企業メンバーだけ（第三者の権限奪取ではない）。
+  外した後も `private/adminKey` は残り、管理コードを持つ端末はルール（owners/$uid の書き込み）で自分を登録し直せる
+
 ---
 
 ## 🟢 データ保存上限④-b: dry-run観察後の36ヶ月超期間データ削除の本有効化
