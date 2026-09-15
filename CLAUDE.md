@@ -620,41 +620,32 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-09-14 自動実行 #126・9時の回）
+## Shifty バグチェックレポート（2026-09-14 自動実行 #127・21時の回）
 
-> 着手時の HEAD は `44b53fe`。**#125 以降にコードの変更は無い**。#125 の申し送りどおり、
-> **Callable 側の `companyId` が DB パスへ入る経路**を当てた。
+> 着手時の HEAD は `022b880`。**#126 以降にコードの変更は無い**（docs のみ）。#126 の申し送りどおり、
+> **`stripeWebhook` が Stripe 由来の値でプランを書く経路**を当てた。
 
 ### 修正済み
 
-- **[🟡] 企業系 Callable の `companyId` が未検証で、「最後のオーナーは外さない」判定（#65）を偽のキーで迂回できた**（functions/index.js:98・`a8169c0`）。
-  `"/C1"` は権限チェックを C1 として正しく通るが、owners への登録先が `shops/S/owners/company_/C1` になり、
-  owners に `"company_"` という偽のキーが入る。`unlinkStoreFromCompany` はそれを他のオーナーと数えるため、
-  企業uidだけが管理する店舗から最後の実オーナーを外せた。push().key の文字種に限る `isValidCompanyId` を4本の入口で通した。
-  **本番は未デプロイ**（条件A）→ **BACKLOG化済み**（#125 と同じ1回のデプロイで反映。同タスクへ追記）。
-
-### 実測
-
-| 対象 | 結果 |
-|---|---|
-| 権限チェックと書き込み（`C1`・`C1/`・`/C1`・`C1//`） | 両方とも `companies/C1/...` へ正規化＝**食い違いなし** |
-| owners への登録先（`/C1`） | **`/shops/S/owners/company_/C1`**（他は `company_C1`） |
-| 最後のオーナーのガード（同じ式で評価） | 通常は拒否 → `/C1` で連携した後は **others=["company_"] で素通り** |
-| 修正後のゲート | すり抜け3種・`. # $ [ ]`・制御文字・空白・65文字以上は 400、`push().key` 10万件は全件通過 |
-
-**実害は小さい**。行えるのは、すでにその店舗を管理している企業メンバーだけで、第三者による権限奪取ではない。
-外した後も `private/adminKey` は残るので、管理コードを持つ端末はルールで自分を登録し直せる。
-`createCompany` の `shopIds` の変種は `owners[uid]` を要求するので自分の店舗にしか効かず、`companyLogin` の `companyId` は DB 由来なので対象外。
+なし。🟡を1件検出したが、下記の理由でコードは変えていない。
 
 ### 要確認（未修正）
 
-- **🟢 `sendEmailOtp`・`verifyEmailOtp` は `data` が null だと `data.email` で TypeError になる**（internal エラーで返るだけで実害なし）。
-  OTP は `Math.random` だが、5回失敗で無効化されるので据え置き。
-- **🟢 禁止文字で `ref()` が throw したときの本番の挙動**は #125 から未検証のまま（入力検証で到達しなくなった）。
+- **[🟡] 解約済みの契約の請求書が後から支払われると、店舗が有料プランに戻ったまま降りない**（functions/index.js:545）→ **BACKLOG化済み**（「解約イベントだけが…metadata でプランを判定」タスクへ追記）。
+  `invoice.payment_succeeded` の分岐は契約の `status` を見ない。解約済みでも retrieve した契約には metadata と price が残るので、プランは pro と解決される。
+  `shouldApplyRenewalPlan("free","pro")` が true になり `plan="pro"` が書かれるが、その契約はもう消えているので free へ戻すイベントは二度と来ない。
+  `planExpiry` はプラン判定に使わないため、**1回分の支払いで有料機能が無期限に続く**。
+  前提（解約時に open な請求書は無効化されず、手動で回収できる）は Stripe 公式ドキュメントで確認した。
+  **直さなかった理由**は3つある。Shifty の「再試行が尽きたら canceled にするか」の設定が不明（条件C。unpaid・past_due なら起きない）。
+  モックでの再現が Bash フックの「stripe 変更系」ゲートで止まった（承認が要る）。効かせるには CF デプロイが要る（条件A）。
+- **🟢 `metadata.shopId` に禁止文字があると `ref()` が throw し、Webhook が応答を返さない**（Stripe が再送を続ける）。
+  metadata を付けるのは `isValidShopId` を通した後の自分の関数だけで、書き換えられるのはダッシュボードに入れる運営者だけなので据え置き。**これが #126 の申し送りへの答え**。
+- **🟢 `invoice.payment_succeeded` は `resolveShopMeta` を2回呼び、契約の retrieve が2回走る**（547行と592行）。正しさには影響しない。
+- **#126 から継続**: `sendEmailOtp`・`verifyEmailOtp` の `data` が null のときの TypeError（実害なし）／禁止文字で `ref()` が throw したときの本番の挙動が未検証。
 - **#124 から継続（変化なし）**: `fixedShiftCommandFor`・`recentPeriodIds` がテスト専用／`fmtH4` の残骸／
   `subsWindowCutoff` の月末繰り上がり／`staffAliases` 欠落時のメモ作り直し2件／
   **配信版数 `20260911-fe54a15` が `e8c2980` に追随していない**（リリース時にバンプ）。
-- **変化なし（BACKLOG化済み）**: 二重課金の根治／特商法表記（🔴）／解約通知／解約時のプラン判定／
+- **変化なし（BACKLOG化済み）**: 二重課金の根治／特商法表記（🔴）／解約通知／解約時のプラン判定（**#127 の追記もここ**）／
   `verifyShopOwner` の移行猶予（**#125 と #126 の修正の CF デプロイもここ**）／別名提出の重複の根（#81）／PDF の実物確認／
   `purgeOldPeriods` の本有効化（2026-09-11 から着手可）／非表示スタッフの未提出カウント（#113）／
   「締」の休みの入口2つ（#118）／完全削除したスタッフの `keepAttrs`（#118）。
@@ -662,13 +653,12 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 
 ### 検証したこと
 
-- `npm test` **260件パス**・`npx eslint app-*.js` **0 errors / 94 warnings**・`node --check functions/index.js` OK（修正後も）。
-- RULES.md スキャン項目はすべてクリア（`DEV_MODE` は式のまま・`subs` 全体 `set()` 0件・`accounts` 全件読み0件・SRI 11本・`.delete()` 0件・`secrets:` 7件）。
-- 修正後のゲートは、実ソースから `isValidCompanyId` を切り出して評価した。`companyId` を受ける入口4本すべてが通ることを grep で確認し、クライアントの呼び出し元4箇所が渡すのは `companyInfo.companyId`（push キー）だけだった。
-- パスは #125 と同じくダミーの databaseURL で `ref().toString()` を取って確かめた。Firebase・Stripe には一切アクセスしていない。
+- `npm test` **260件パス**・`npx eslint app-*.js` **0 errors / 94 warnings**・`node --check functions/index.js` OK。
+- RULES.md スキャン項目はすべてクリア（`DEV_MODE` は式のまま・`subs` 全体 `set()` 0件・`accounts` 全件読み0件・SRI 11本・`.delete()` 0件・`secrets:` 7件・読み込み順正常）。
+- Webhook の経路はコードを読んで追った（`resolveShopMeta` 404行 → `shouldApplyRenewalPlan` 462行 → 書き込み 563〜573行）。**実行による再現はしていない**（上記ゲート）。
+- 前提は Stripe 公式ドキュメント3ページ（cancel・smart-retries・subscriptions/overview）で確認した。Firebase・Stripe には一切アクセスしていない。
 
-**申し送り（次回の観点）**: CF の入力検証は #125・#126 でひと巡りした。次は `stripeWebhook` が `metadata.shopId` を信じてパスへ入れる経路を当てるとよい。
-metadata は自分で付けた値だが、Stripe ダッシュボードで手編集できる（今回は未確認）。
+**申し送り（次回の観点）**: Webhook のイベント順序を当てるとよい。`subscription_schedule.updated` が遅れて再送されると、取り消し済みの予約バナーが復活しうる（今回は未確認）。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
@@ -1155,6 +1145,31 @@ adjustedStartFixed:true,extraStart:"23:00",extraEnd:"25:00"}`）。上表がそ�
 - [ ] Stripe のテスト環境またはテスト店舗の実購入で「ダウングレード予約 → 期間終了で切替 → 解約」を通し、解約後に `plan` が `free` に落ちることを実データで確認する
 **影響範囲**: functions/index.js（`resolveShopMeta`・`customer.subscription.deleted` ハンドラ）
 **備考**: バグチェック#68（2026-08-11）で検出・**条件A（Cloud Functionsの本番デプロイとStripe実データでの確認）に該当**。ループ内では Stripe の状態を再現できないため未修正。**コード上の非対称は確実だが、「実際に食い違いが発生するか」は Stripe がフェーズのmetadataを適用するかに依存し未検証**。上の「実購入での全遷移検証」（二重課金タスクの残作業）と同じ操作で確認できるので、まとめて実施するのが効率的。
+
+**2026-09-14 追記（バグチェック#127）— 同じ Webhook の別経路: 解約済みの契約の請求書が後から支払われると、有料プランに戻ったまま降りない**:
+`invoice.payment_succeeded` の分岐（functions/index.js の `stripeWebhook`）は、**契約がいま生きているか（`status`）を一度も見ない**。
+支払い失敗の再試行が尽きて契約が `canceled` になった後に、その未払いの請求書が支払われると、次の順で有料プランに戻る（コードを読んで確定）。
+
+1. `resolveShopMeta(invoice)` は invoice に `metadata.shopId` が無いので契約を retrieve する。解約済みでも契約の metadata と price は残るので `{shopId, plan:"pro"}` が返る
+2. `shouldApplyRenewalPlan("free","pro")` は `true` を返す（引き上げ方向は常に反映する）
+3. `plan="pro"`・`planExpiry`・`stripeSubscriptionId`（解約済みのID）が書かれる
+4. その契約はもう消えているので、**以後この店舗を free へ戻すイベントは来ない**。`planExpiry` は表示専用でプラン判定に使わないため、**1回分の支払いで有料機能が無期限に使える**
+
+**前提は Stripe 公式ドキュメントで確認済み**: 解約時に open な請求書は `auto_advance=false` になるだけで無効化されず、手動での回収は引き続き可能
+（[サブスクリプションをキャンセル](https://docs.stripe.com/billing/subscriptions/cancel)）。再試行が尽きたときに契約を canceled／unpaid／past_due のどれにするかはダッシュボードの設定で決まる
+（[支払いの再試行を自動化する](https://docs.stripe.com/billing/revenue-recovery/smart-retries)）。
+
+**ループで直さなかった理由**:
+- **Shifty の Stripe 設定がどれか分からない**（条件C）。unpaid・past_due なら契約は生きたままなので、この経路は起きない
+- 局所モックでの再現（Firebase・Stripe へは出ない Node スクリプト）が **Bash フックの「stripe 変更系」ゲートで止まり**、承認なしには実行できなかった。実行で検証できない修正はしない
+- 直しても、効かせるには CF の本番デプロイが要る（条件A）
+
+**直すなら（案）**: `resolveShopMeta` の retrieve 経路で `sub.status` も返し、`invoice.payment_succeeded` のプラン反映を `LIVE_SUB_STATUSES` の契約に限る。
+`paymentFailed` の解除はそのままでよい。`checkout.session.completed` は対象外にする（初回購入の反映を止めないため）。
+
+**受け入れ条件（追加）**:
+- [ ] Stripe ダッシュボードの「失敗した支払いの管理」で、再試行が尽きた後の契約の扱いを確認する（**canceled でなければ🟢へ下げてよい**）
+- [ ] canceled の場合は上の案で修正し、承認を得てモックでの再現（修正前は pro に戻る／修正後は free のまま／有効契約の更新は従来どおり反映）を通してからデプロイする
 
 ---
 
