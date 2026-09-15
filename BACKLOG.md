@@ -504,6 +504,38 @@ adjustedStartFixed:true,extraStart:"23:00",extraEnd:"25:00"}`）。上表がそ�
 - [ ] Stripe ダッシュボードの「失敗した支払いの管理」で、再試行が尽きた後の契約の扱いを確認する（**canceled でなければ🟢へ下げてよい**）
 - [ ] canceled の場合は上の案で修正し、承認を得てモックでの再現（修正前は pro に戻る／修正後は free のまま／有効契約の更新は従来どおり反映）を通してからデプロイする
 
+**2026-09-15 追記（バグチェック#128）— 同じ根の3つ目: `customer.subscription.updated` はイベントの写しをそのまま書き、届いた順を疑わない**:
+このハンドラ（functions/index.js:605）は `event.data.object`（**イベントが作られた瞬間の写し**）から
+`cancelAtPeriodEnd`・`currentPeriodEnd`・`plan` を作り、623行でそのまま書く。どのイベントが新しいかを比べる処理も、
+契約を取り直す処理も無い。一方 Stripe は**配信順を保証しない**。本番では失敗した配信を**最長3日間**再送し、
+`created` は秒単位なので順序判定に使うなとも書いている（[Webhook](https://docs.stripe.com/webhooks) の「イベントの順序付け」「自動での再試行」）。
+そのため、古い写しが後から届くと DB が過去の状態へ戻る。コードを読んで次の3形を確定した。
+
+| 起きること | 届く順 | 結果 | 自然に直るか |
+|---|---|---|---|
+| ポータルで解約してすぐ取り消す | 取り消し(cancel=false) → 解約(cancel=true) | アプリは「解約済み・X をもって終了」を出し、プラン変更欄も隠れる（app-admin.js:4927・4957）。**実際には更新されて課金される** | 次の更新時の updated で直る（最大1期間） |
+| Pro→Premium のアップグレード直前の updated(price=pro) が失敗し再送される | アップグレード → 古い updated | `plan="pro"` が書かれ、**払っている Premium の機能が止まる** | 次の更新請求で直る（最大1ヶ月） |
+| 督促中の updated(status=past_due) が失敗し、3日以内に解約される | deleted → 古い updated | `tracked` は解約で null にされているので、古い写しの契約IDと `plan` が書き戻される（past_due は `LIVE_SUB_STATUSES` に入っている） | **直らない**（契約はもう無く、以後イベントが来ない＝#127 と同じ形） |
+
+**#127 の申し送りへの答え（外れ）**: 「`subscription_schedule.updated` の遅延再送で取り消した予約バナーが復活する」は、
+記録上の設定では起きない。購読しているイベントは `scripts/stripe-setup.js` の `REQUIRED_EVENTS` の5種類で、
+`subscription_schedule.*` は含まれない（functions/index.js:303 のコメントも同じ）。
+さらにクライアントは `scheduledPlan===plan` のときバナーを出さない（app-admin.js:4937）ので、切り替え後に古い予約が残っても見えない。
+**ただし本番エンドポイントの実際の購読一覧は未確認**（Stripe には触れていない）。
+
+**ループで直さなかった理由**: 上の #127 と同じ3つ（再現モックがフックのゲートに当たる／CF デプロイが要る＝条件A／
+直し方が #127 の案と同じ関数に重なるので一緒に決めるべき＝条件D）。起きる確率はどれも「配信の失敗か入れ替わり」が前提で低い。
+
+**直すなら（案・#127 の案と統合）**: Webhook でプランや契約の状態を書く前に、**`stripe.subscriptions.retrieve(id)` で契約を取り直し、
+その値だけを書く**（Stripe が勧める「API から最新のオブジェクトを取得する」形）。取り直した契約が `LIVE_SUB_STATUSES` に無ければ
+`plan` も `stripeSubscriptionId` も書かない。こうすると届いた順に関係なく、最後に処理した回が最新の状態を書く。
+`invoice.payment_succeeded`（#127）と `customer.subscription.updated`（本件）を同じ取り直しの関数に通せば、
+`resolveShopMeta` の2回呼び（#127 の🟢）も同時に消える。
+
+**受け入れ条件（追加）**:
+- [ ] Stripe の Webhook エンドポイントの購読イベント一覧が `REQUIRED_EVENTS` の5種類であることを確認する（`subscription_schedule.*` が入っていれば、そのハンドラも取り直しの対象に含める）
+- [ ] 上の案で修正し、承認を得てモックで「古い写しを後から処理しても DB が最新の状態のまま」を3形とも通してからデプロイする
+
 ---
 
 ## 🟡 企業連携の解除が、稼働中の店舗を「オーナー0人」に戻してしまう
