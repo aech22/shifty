@@ -479,6 +479,31 @@ adjustedStartFixed:true,extraStart:"23:00",extraEnd:"25:00"}`）。上表がそ�
 **影響範囲**: functions/index.js（`resolveShopMeta`・`customer.subscription.deleted` ハンドラ）
 **備考**: バグチェック#68（2026-08-11）で検出・**条件A（Cloud Functionsの本番デプロイとStripe実データでの確認）に該当**。ループ内では Stripe の状態を再現できないため未修正。**コード上の非対称は確実だが、「実際に食い違いが発生するか」は Stripe がフェーズのmetadataを適用するかに依存し未検証**。上の「実購入での全遷移検証」（二重課金タスクの残作業）と同じ操作で確認できるので、まとめて実施するのが効率的。
 
+**2026-09-14 追記（バグチェック#127）— 同じ Webhook の別経路: 解約済みの契約の請求書が後から支払われると、有料プランに戻ったまま降りない**:
+`invoice.payment_succeeded` の分岐（functions/index.js の `stripeWebhook`）は、**契約がいま生きているか（`status`）を一度も見ない**。
+支払い失敗の再試行が尽きて契約が `canceled` になった後に、その未払いの請求書が支払われると、次の順で有料プランに戻る（コードを読んで確定）。
+
+1. `resolveShopMeta(invoice)` は invoice に `metadata.shopId` が無いので契約を retrieve する。解約済みでも契約の metadata と price は残るので `{shopId, plan:"pro"}` が返る
+2. `shouldApplyRenewalPlan("free","pro")` は `true` を返す（引き上げ方向は常に反映する）
+3. `plan="pro"`・`planExpiry`・`stripeSubscriptionId`（解約済みのID）が書かれる
+4. その契約はもう消えているので、**以後この店舗を free へ戻すイベントは来ない**。`planExpiry` は表示専用でプラン判定に使わないため、**1回分の支払いで有料機能が無期限に使える**
+
+**前提は Stripe 公式ドキュメントで確認済み**: 解約時に open な請求書は `auto_advance=false` になるだけで無効化されず、手動での回収は引き続き可能
+（[サブスクリプションをキャンセル](https://docs.stripe.com/billing/subscriptions/cancel)）。再試行が尽きたときに契約を canceled／unpaid／past_due のどれにするかはダッシュボードの設定で決まる
+（[支払いの再試行を自動化する](https://docs.stripe.com/billing/revenue-recovery/smart-retries)）。
+
+**ループで直さなかった理由**:
+- **Shifty の Stripe 設定がどれか分からない**（条件C）。unpaid・past_due なら契約は生きたままなので、この経路は起きない
+- 局所モックでの再現（Firebase・Stripe へは出ない Node スクリプト）が **Bash フックの「stripe 変更系」ゲートで止まり**、承認なしには実行できなかった。実行で検証できない修正はしない
+- 直しても、効かせるには CF の本番デプロイが要る（条件A）
+
+**直すなら（案）**: `resolveShopMeta` の retrieve 経路で `sub.status` も返し、`invoice.payment_succeeded` のプラン反映を `LIVE_SUB_STATUSES` の契約に限る。
+`paymentFailed` の解除はそのままでよい。`checkout.session.completed` は対象外にする（初回購入の反映を止めないため）。
+
+**受け入れ条件（追加）**:
+- [ ] Stripe ダッシュボードの「失敗した支払いの管理」で、再試行が尽きた後の契約の扱いを確認する（**canceled でなければ🟢へ下げてよい**）
+- [ ] canceled の場合は上の案で修正し、承認を得てモックでの再現（修正前は pro に戻る／修正後は free のまま／有効契約の更新は従来どおり反映）を通してからデプロイする
+
 ---
 
 ## 🟡 企業連携の解除が、稼働中の店舗を「オーナー0人」に戻してしまう
