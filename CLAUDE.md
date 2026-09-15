@@ -620,32 +620,32 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-09-14 自動実行 #127・21時の回）
+## Shifty バグチェックレポート（2026-09-15 自動実行 #128・12時の回）
 
-> 着手時の HEAD は `022b880`。**#126 以降にコードの変更は無い**（docs のみ）。#126 の申し送りどおり、
-> **`stripeWebhook` が Stripe 由来の値でプランを書く経路**を当てた。
+> 着手時の HEAD は `0f4a012`。**#126 以降にコードの変更は無い**（docs のみ）。#127 の申し送りどおり、
+> **Webhook のイベント順序**を当てた。
 
 ### 修正済み
 
-なし。🟡を1件検出したが、下記の理由でコードは変えていない。
+なし。🟡を1件検出したが、#127 と同じ理由でコードは変えていない。
 
 ### 要確認（未修正）
 
-- **[🟡] 解約済みの契約の請求書が後から支払われると、店舗が有料プランに戻ったまま降りない**（functions/index.js:545）→ **BACKLOG化済み**（「解約イベントだけが…metadata でプランを判定」タスクへ追記）。
-  `invoice.payment_succeeded` の分岐は契約の `status` を見ない。解約済みでも retrieve した契約には metadata と price が残るので、プランは pro と解決される。
-  `shouldApplyRenewalPlan("free","pro")` が true になり `plan="pro"` が書かれるが、その契約はもう消えているので free へ戻すイベントは二度と来ない。
-  `planExpiry` はプラン判定に使わないため、**1回分の支払いで有料機能が無期限に続く**。
-  前提（解約時に open な請求書は無効化されず、手動で回収できる）は Stripe 公式ドキュメントで確認した。
-  **直さなかった理由**は3つある。Shifty の「再試行が尽きたら canceled にするか」の設定が不明（条件C。unpaid・past_due なら起きない）。
-  モックでの再現が Bash フックの「stripe 変更系」ゲートで止まった（承認が要る）。効かせるには CF デプロイが要る（条件A）。
-- **🟢 `metadata.shopId` に禁止文字があると `ref()` が throw し、Webhook が応答を返さない**（Stripe が再送を続ける）。
-  metadata を付けるのは `isValidShopId` を通した後の自分の関数だけで、書き換えられるのはダッシュボードに入れる運営者だけなので据え置き。**これが #126 の申し送りへの答え**。
-- **🟢 `invoice.payment_succeeded` は `resolveShopMeta` を2回呼び、契約の retrieve が2回走る**（547行と592行）。正しさには影響しない。
+- **[🟡] `customer.subscription.updated` はイベントの写しをそのまま書くので、古いイベントが後から届くと DB が過去の状態へ戻る**（functions/index.js:605・623）→ **BACKLOG化済み**（#127 と同じ「解約イベントだけが…metadata でプランを判定」タスクへ追記）。
+  Stripe は配信順を保証せず、本番では失敗した配信を最長3日間再送する（公式ドキュメントで確認）。コードを読んで3形を確定した。
+  解約→取り消しが逆順に届くと「解約済み」表示のまま課金される／古い updated(price=pro) の再送で払っている Premium が止まる／
+  督促中の updated(past_due) が解約後に届くと**プランが書き戻されたまま直らない**（#127 と同じ形）。
+  **直さなかった理由**: 再現モックが Bash フックの Stripe ゲートに当たる／CF デプロイが要る（条件A）／直す場所が #127 の案と重なる（条件D）。
+  案は「書く前に契約を retrieve し直し、生きている契約の値だけを書く」で、#127 と本件を同じ関数に通せる。
+- **#127 の申し送りは外れ**: 記録上の購読イベントは `scripts/stripe-setup.js` の `REQUIRED_EVENTS` の5種類で `subscription_schedule.*` は届かず、
+  クライアントも `scheduledPlan===plan` のときバナーを出さない（app-admin.js:4937）。**本番の実際の購読一覧は未確認**（BACKLOG の受け入れ条件に入れた）。
+- **#127 から継続**: 解約済みの契約の請求書支払いで有料プランに戻る（🟡・BACKLOG化済み）／
+  `metadata.shopId` の禁止文字で `ref()` が throw し Webhook が応答しない（🟢）／`resolveShopMeta` の2回呼び（🟢・547行と592行）。
 - **#126 から継続**: `sendEmailOtp`・`verifyEmailOtp` の `data` が null のときの TypeError（実害なし）／禁止文字で `ref()` が throw したときの本番の挙動が未検証。
 - **#124 から継続（変化なし）**: `fixedShiftCommandFor`・`recentPeriodIds` がテスト専用／`fmtH4` の残骸／
   `subsWindowCutoff` の月末繰り上がり／`staffAliases` 欠落時のメモ作り直し2件／
   **配信版数 `20260911-fe54a15` が `e8c2980` に追随していない**（リリース時にバンプ）。
-- **変化なし（BACKLOG化済み）**: 二重課金の根治／特商法表記（🔴）／解約通知／解約時のプラン判定（**#127 の追記もここ**）／
+- **変化なし（BACKLOG化済み）**: 二重課金の根治／特商法表記（🔴）／解約通知／解約時のプラン判定（**#127・#128 の追記もここ**）／
   `verifyShopOwner` の移行猶予（**#125 と #126 の修正の CF デプロイもここ**）／別名提出の重複の根（#81）／PDF の実物確認／
   `purgeOldPeriods` の本有効化（2026-09-11 から着手可）／非表示スタッフの未提出カウント（#113）／
   「締」の休みの入口2つ（#118）／完全削除したスタッフの `keepAttrs`（#118）。
@@ -655,10 +655,11 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 
 - `npm test` **260件パス**・`npx eslint app-*.js` **0 errors / 94 warnings**・`node --check functions/index.js` OK。
 - RULES.md スキャン項目はすべてクリア（`DEV_MODE` は式のまま・`subs` 全体 `set()` 0件・`accounts` 全件読み0件・SRI 11本・`.delete()` 0件・`secrets:` 7件・読み込み順正常）。
-- Webhook の経路はコードを読んで追った（`resolveShopMeta` 404行 → `shouldApplyRenewalPlan` 462行 → 書き込み 563〜573行）。**実行による再現はしていない**（上記ゲート）。
-- 前提は Stripe 公式ドキュメント3ページ（cancel・smart-retries・subscriptions/overview）で確認した。Firebase・Stripe には一切アクセスしていない。
+- fontSize 走査（波括弧を数える版）: フォーム部品58件・16未満0件。
+- Webhook の経路はコードを読んで追った（updated ハンドラ 605〜627行・deleted ハンドラ 657〜685行・バナー条件 app-admin.js:4927/4937/4957）。**実行による再現はしていない**（上記ゲート）。
+- 前提は Stripe 公式ドキュメント2ページ（webhooks・billing/subscriptions/webhooks）で確認した。Firebase・Stripe には一切アクセスしていない。
 
-**申し送り（次回の観点）**: Webhook のイベント順序を当てるとよい。`subscription_schedule.updated` が遅れて再送されると、取り消し済みの予約バナーが復活しうる（今回は未確認）。
+**申し送り（次回の観点）**: Webhook はひと巡りした。次はクライアント側で、`billingSchedule` の購読4本（app-main.js:512〜522）が店舗切り替え時に前の店舗の値を残さないかを当てるとよい（377行でリセットしているが、購読解除との順序は未確認）。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
@@ -1170,6 +1171,38 @@ adjustedStartFixed:true,extraStart:"23:00",extraEnd:"25:00"}`）。上表がそ�
 **受け入れ条件（追加）**:
 - [ ] Stripe ダッシュボードの「失敗した支払いの管理」で、再試行が尽きた後の契約の扱いを確認する（**canceled でなければ🟢へ下げてよい**）
 - [ ] canceled の場合は上の案で修正し、承認を得てモックでの再現（修正前は pro に戻る／修正後は free のまま／有効契約の更新は従来どおり反映）を通してからデプロイする
+
+**2026-09-15 追記（バグチェック#128）— 同じ根の3つ目: `customer.subscription.updated` はイベントの写しをそのまま書き、届いた順を疑わない**:
+このハンドラ（functions/index.js:605）は `event.data.object`（**イベントが作られた瞬間の写し**）から
+`cancelAtPeriodEnd`・`currentPeriodEnd`・`plan` を作り、623行でそのまま書く。どのイベントが新しいかを比べる処理も、
+契約を取り直す処理も無い。一方 Stripe は**配信順を保証しない**。本番では失敗した配信を**最長3日間**再送し、
+`created` は秒単位なので順序判定に使うなとも書いている（[Webhook](https://docs.stripe.com/webhooks) の「イベントの順序付け」「自動での再試行」）。
+そのため、古い写しが後から届くと DB が過去の状態へ戻る。コードを読んで次の3形を確定した。
+
+| 起きること | 届く順 | 結果 | 自然に直るか |
+|---|---|---|---|
+| ポータルで解約してすぐ取り消す | 取り消し(cancel=false) → 解約(cancel=true) | アプリは「解約済み・X をもって終了」を出し、プラン変更欄も隠れる（app-admin.js:4927・4957）。**実際には更新されて課金される** | 次の更新時の updated で直る（最大1期間） |
+| Pro→Premium のアップグレード直前の updated(price=pro) が失敗し再送される | アップグレード → 古い updated | `plan="pro"` が書かれ、**払っている Premium の機能が止まる** | 次の更新請求で直る（最大1ヶ月） |
+| 督促中の updated(status=past_due) が失敗し、3日以内に解約される | deleted → 古い updated | `tracked` は解約で null にされているので、古い写しの契約IDと `plan` が書き戻される（past_due は `LIVE_SUB_STATUSES` に入っている） | **直らない**（契約はもう無く、以後イベントが来ない＝#127 と同じ形） |
+
+**#127 の申し送りへの答え（外れ）**: 「`subscription_schedule.updated` の遅延再送で取り消した予約バナーが復活する」は、
+記録上の設定では起きない。購読しているイベントは `scripts/stripe-setup.js` の `REQUIRED_EVENTS` の5種類で、
+`subscription_schedule.*` は含まれない（functions/index.js:303 のコメントも同じ）。
+さらにクライアントは `scheduledPlan===plan` のときバナーを出さない（app-admin.js:4937）ので、切り替え後に古い予約が残っても見えない。
+**ただし本番エンドポイントの実際の購読一覧は未確認**（Stripe には触れていない）。
+
+**ループで直さなかった理由**: 上の #127 と同じ3つ（再現モックがフックのゲートに当たる／CF デプロイが要る＝条件A／
+直し方が #127 の案と同じ関数に重なるので一緒に決めるべき＝条件D）。起きる確率はどれも「配信の失敗か入れ替わり」が前提で低い。
+
+**直すなら（案・#127 の案と統合）**: Webhook でプランや契約の状態を書く前に、**`stripe.subscriptions.retrieve(id)` で契約を取り直し、
+その値だけを書く**（Stripe が勧める「API から最新のオブジェクトを取得する」形）。取り直した契約が `LIVE_SUB_STATUSES` に無ければ
+`plan` も `stripeSubscriptionId` も書かない。こうすると届いた順に関係なく、最後に処理した回が最新の状態を書く。
+`invoice.payment_succeeded`（#127）と `customer.subscription.updated`（本件）を同じ取り直しの関数に通せば、
+`resolveShopMeta` の2回呼び（#127 の🟢）も同時に消える。
+
+**受け入れ条件（追加）**:
+- [ ] Stripe の Webhook エンドポイントの購読イベント一覧が `REQUIRED_EVENTS` の5種類であることを確認する（`subscription_schedule.*` が入っていれば、そのハンドラも取り直しの対象に含める）
+- [ ] 上の案で修正し、承認を得てモックで「古い写しを後から処理しても DB が最新の状態のまま」を3形とも通してからデプロイする
 
 ---
 
