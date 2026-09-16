@@ -148,7 +148,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                             {/* この操作は店舗を削除しない。Authなら accounts/{uid}/shops から、非Authならこの端末の一覧から外すだけで、
                                 shops/{shopId} も global/shops/{shopId} も残る（クライアントに削除経路は無く、消すのは CF の purgeInactiveShops だけ）。
                                 CompanyTab の同じ操作（:3203）が「解除」と呼んでいるのに合わせる。戻すには店舗コードが要る点が実際の損失。 */}
-                            {shops.length>1&&<button onClick={async()=>{if(!confirm(`「${sh.name}」を一覧から外しますか？\nシフトデータは削除されません。戻すには店舗コード（設定タブ）が必要です。`))return;if(authUser&&onUnlinkShop){await onUnlinkShop(sh.id);}else{const ns=shops.filter(s=>s.id!==sh.id);saveShops(ns);if(sh.id===currentShopId){setCurrentShopId(ns[0].id);startSubscriptions(ns[0].id,ns);}tt("✓ 一覧から外しました");}}} style={{padding:"4px 8px",background:"none",border:"none",borderRadius:4,fontSize:11,color:"#FF4757",cursor:"pointer"}}>解除</button>}
+                            {shops.length>1&&<button onClick={async()=>{if(!confirm(`「${sh.name}」を一覧から外しますか？\nシフトデータは削除されません。戻すには店舗コード（設定タブ）が必要です。`))return;if(authUser&&onUnlinkShop){const r=await onUnlinkShop(sh.id);tt(r&&r.error?("✕ "+r.error):"✓ 一覧から外しました");}else{const ns=shops.filter(s=>s.id!==sh.id);saveShops(ns);if(sh.id===currentShopId){setCurrentShopId(ns[0].id);startSubscriptions(ns[0].id,ns);}tt("✓ 一覧から外しました");}}} style={{padding:"4px 8px",background:"none",border:"none",borderRadius:4,fontSize:11,color:"#FF4757",cursor:"pointer"}}>解除</button>}
                           </div>
                         ))}
                       </div>}
@@ -3974,9 +3974,14 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
               </button>
             )}
             {canUnlink&&<button onClick={async()=>{
-              if(!window.confirm(`「${shop.name}」の連携を解除しますか？`))return;
-              if(companyInfo&&onUnlinkStoreFromCompany){const r=await onUnlinkStoreFromCompany(shop.id);tt(r&&r.error?("✕ "+r.error):`✓ 「${shop.name}」の連携を解除しました`);}
-              else if(onUnlinkShop)onUnlinkShop(shop.id);
+              // companyInfo の有無で分岐しない。企業情報の復元は非同期なので押した時点で null でも
+              // 企業側の登録は残っていることがあり、片方だけ消すとリロードで一覧へ戻る。
+              // App 側の1つの実装（unlinkShopFromAuth）が accounts と companies の両方を消す。
+              if(!window.confirm(`「${shop.name}」の連携を解除しますか？\nシフトデータは削除されません。戻すには店舗コード（設定タブ）が必要です。`))return;
+              const unlink=onUnlinkStoreFromCompany||onUnlinkShop;
+              if(!unlink)return;
+              const r=await unlink(shop.id);
+              tt(r&&r.error?("✕ "+r.error):`✓ 「${shop.name}」の連携を解除しました`);
             }}
               style={{padding:"5px 10px",background:"var(--c-bg)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text3)",fontSize:12,fontWeight:600,cursor:"pointer"}}>
               解除

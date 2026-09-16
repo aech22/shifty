@@ -932,34 +932,65 @@ function App(){
     }
   };
 
-  const unlinkShopFromAuth=async(targetShopId)=>{
-    if(!authUser || !firebaseDB) return;
-    if(allLinkedShops.length>0&&allLinkedShops.length<=1){tt("✕ 最後の店舗は解除できません");return;}
-    if(allLinkedShops.length===0&&shops.length<=1){tt("✕ 最後の店舗は解除できません");return;}
+  // 企業IDの解決。companyInfo は accounts/{uid}/company からの**非同期**復元なので、押した瞬間に
+  // 処理を確定させたい操作（解除）は companyInfo を待たずに自分で引く。企業ログインセッションは
+  // uid そのものが企業IDを含む。企業アカウントを持たない利用者では空文字を返す。
+  const _resolveCompanyId=async()=>{
+    if(companyInfo&&companyInfo.companyId) return companyInfo.companyId;
+    if(!authUser||!firebaseDB) return "";
+    if(String(authUser.uid).startsWith("company_")) return authUser.uid.slice("company_".length);
     try{
-      await firebaseDB.ref(`accounts/${authUser.uid}/shops/${targetShopId}`).remove();
-      const remainingLinked=allLinkedShops.filter(s=>s.id!==targetShopId);
-      setAllLinkedShops(remainingLinked);
-      let newShops=shops.filter(s=>s.id!==targetShopId);
-      if(currentShopId===targetShopId){
-        // セッションのshopsが空になる場合は残りの連携店舗から次を選ぶ（TypeError防止）
-        const next=newShops[0]||remainingLinked[0];
-        if(next){
-          if(newShops.length===0)newShops=[next];
-          setCurrentShopId(next.id);
-          startSubscriptions(next.id,newShops);
-        }else{
-          setCurrentShopId(null);
-          setUnbound(true);
-        }
+      const snap=await firebaseDB.ref(`accounts/${authUser.uid}/company`).once("value");
+      const v=snap.val();
+      return (v&&v.companyId)||"";
+    }catch{ return ""; }
+  };
+
+  // 店舗の連携解除（企業連携タブの「解除」・店舗メニューの「解除」の共通実装）。
+  // **連携の実体は2箇所にある**: accounts/{uid}/shops（Phase1 が読む）と
+  // companies/{companyId}/pub/shops（企業ログインのPhase1 と、companyInfo 確定時の一覧合流が読む）。
+  // 片方だけ消すと、残った側からリロード時に一覧へ戻る（＝解除したのに再表示される）。必ず両方消す。
+  // 戻り値は {error} で、トーストは呼び出し側が出す（App と AdminView でトーストの出口が別なため、
+  // ここで出すと呼び出し側のぶんと二重に表示される）。
+  const unlinkShopFromAuth=async(targetShopId)=>{
+    if(!authUser || !firebaseDB) return {error:"ログインが必要です"};
+    if(allLinkedShops.length>0&&allLinkedShops.length<=1) return {error:"最後の店舗は解除できません"};
+    if(allLinkedShops.length===0&&shops.length<=1) return {error:"最後の店舗は解除できません"};
+    // 企業側を先に解除する。CFは「外すと管理者が居なくなる解除」を拒否するので（バグチェック#65）、
+    // accounts 側を先に消すと、拒否されたときに片側だけ消えた状態が残る。
+    const companyId=await _resolveCompanyId();
+    if(companyId){
+      try{ await _callCF("unlinkStoreFromCompany",{companyId,shopId:targetShopId}); }
+      catch(e){ return {error:(e&&e.message)||"解除に失敗しました"}; }
+    }
+    try{
+      // 企業ログインuid（company_*）は accounts/{uid}/shops を持たないので消すものが無い
+      if(!String(authUser.uid).startsWith("company_")){
+        await firebaseDB.ref(`accounts/${authUser.uid}/shops/${targetShopId}`).remove();
       }
-      setShops(newShops);
-      ls("shift_shops_v6",newShops);
-      tt("✓ 店舗の連携を解除しました");
     }catch(e){
       console.warn("連携解除失敗:", e);
-      tt("✕ 解除に失敗しました");
+      return {error:"解除に失敗しました"};
     }
+    const remainingLinked=allLinkedShops.filter(s=>s.id!==targetShopId);
+    setAllLinkedShops(remainingLinked);
+    let newShops=shops.filter(s=>s.id!==targetShopId);
+    if(currentShopId===targetShopId){
+      // セッションのshopsが空になる場合は残りの連携店舗から次を選ぶ（TypeError防止）
+      const next=newShops[0]||remainingLinked[0];
+      if(next){
+        if(newShops.length===0)newShops=[next];
+        currentShopIdRef.current=next.id;
+        setCurrentShopId(next.id);
+        startSubscriptions(next.id,newShops);
+      }else{
+        setCurrentShopId(null);
+        setUnbound(true);
+      }
+    }
+    setShops(newShops);
+    ls("shift_shops_v6",newShops);
+    return {};
   };
 
   // ===================================================================
@@ -1054,26 +1085,25 @@ function App(){
       return {name};
     }catch(e){ return {error:/not-found|正しく/.test((e&&e.message)||"")?"店舗コードが正しくありません":((e&&e.message)||"追加に失敗しました")}; }
   };
-  const unlinkStoreFromCompany=async(shopId)=>{
-    if(!companyInfo) return {error:"企業アカウントがありません"};
-    try{
-      await _callCF("unlinkStoreFromCompany",{companyId:companyInfo.companyId,shopId});
-      await _refreshCompanyLinkedShops(shopId);
-      return {};
-    }catch(e){ return {error:(e&&e.message)||"解除に失敗しました"}; }
-  };
-  const _refreshCompanyLinkedShops=async(removedId)=>{
-    if(!companyInfo) return;
-    const snap=await firebaseDB.ref(`companies/${companyInfo.companyId}/pub/shops`).once("value");
-    const ids=Object.keys(snap.val()||{});
-    const objs=await Promise.all(ids.map(id=>firebaseDB.ref(`global/shops/${id}`).once("value").catch(()=>null)));
+  // 店舗の追加後の連携店舗一覧の作り直し。**リロード後と同じ集合**を作る必要がある。
+  // companies/pub/shops だけで置き換えると、企業に連携していない自分の店舗（accounts/{uid}/shops
+  // にしか無い店舗）が一覧から消え、リロードで戻ってくる＝操作直後とリロード後で一覧が食い違う。
+  // 解除はこれを使わない（unlinkShopFromAuth が自分で一覧とセッションを更新する）。
+  const _refreshCompanyLinkedShops=async()=>{
+    if(!firebaseDB||!authUser) return;
+    const ids=new Set();
+    if(!String(authUser.uid).startsWith("company_")){
+      const accSnap=await firebaseDB.ref(`accounts/${authUser.uid}/shops`).once("value");
+      Object.keys(accSnap.val()||{}).forEach(id=>ids.add(id));
+    }
+    const companyId=await _resolveCompanyId();
+    if(companyId){
+      const snap=await firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value");
+      Object.keys(snap.val()||{}).forEach(id=>ids.add(id));
+    }
+    const objs=await Promise.all([...ids].map(id=>firebaseDB.ref(`global/shops/${id}`).once("value").catch(()=>null)));
     const linked=objs.map(s=>s&&s.val()).filter(s=>s&&s.id);
     setAllLinkedShops(linked);
-    if(removedId&&currentShopId===removedId){
-      const next=linked[0];
-      if(next){ const ns=[next]; setShops(ns); ls("shift_shops_v6",ns); currentShopIdRef.current=next.id; setCurrentShopId(next.id); startSubscriptions(next.id,ns); }
-      else { setCurrentShopId(null); setUnbound(true); }
-    }
   };
   // 作成者本人（メール/グーグル）ログイン時に自分の企業アカウント情報を復元
   useEffect(()=>{
@@ -1680,7 +1710,7 @@ function App(){
               onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkEmail={signInAndLinkEmail}
               onLinkExistingShop={linkExistingShopToAuth} onUnlinkShop={unlinkShopFromAuth}
               companyInfo={companyInfo} onCreateCompany={createCompany} onChangeCompanyPassword={changeCompanyPassword}
-              onRenameCompany={renameCompany} onLinkStoreToCompany={linkStoreToCompany} onUnlinkStoreFromCompany={unlinkStoreFromCompany}/>
+              onRenameCompany={renameCompany} onLinkStoreToCompany={linkStoreToCompany} onUnlinkStoreFromCompany={unlinkShopFromAuth}/>
       }
     </div>
   );
