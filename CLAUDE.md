@@ -384,7 +384,9 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
 
 | 関数 | トリガー | 説明 |
 |---|---|---|
-| `createCheckoutSession` | POST `/createCheckoutSession` | Stripe Checkout セッション作成 |
+| `createCheckoutSession` | POST `/createCheckoutSession` | Stripe Checkout セッション作成（**新規契約のみ**。有効な契約がある店舗は409で拒否する） |
+| `changePlan` | POST `/changePlan` | **既存契約の price 差し替え**（Pro⇔Premium）。契約を作り直さないので二重課金が起こらない。降格は Subscription Schedule で期間終了時に予約する |
+| `cancelPlanChange` | POST `/cancelPlanChange` | 降格予約の取り消し（`subscriptionSchedules.release`）。Stripe側に予約が残っていなくても `scheduledPlan` は必ず消す |
 | `stripeWebhook` | POST `/stripeWebhook` | Webhook受信（plan更新・失敗フラグ・キャンセル） |
 | `createPortalSession` | POST `/createPortalSession` | Stripe Customer Portal セッション |
 | `sendEmailOtp` | Callable `sendEmailOtp` | メール連携用OTP送信 |
