@@ -98,6 +98,11 @@ function isValidShopId(shopId) {
 function isValidCompanyId(companyId) {
   return typeof companyId === "string" && /^[-0-9A-Za-z_]{1,64}$/.test(companyId);
 }
+// uid も DB パスのキーになる（owners/{uid}・grants/{shopId}/{uid}）。Auth の uid に
+// 禁止文字は入らないが、isValidShopId と同じ多重防御をかけておく。
+function isSafeDbKey(k) {
+  return typeof k === "string" && k.length > 0 && k.length <= 128 && !/[/.#$[\]\x00-\x1f\x7f]/.test(k);
+}
 
 // ============================================================
 // Firebase IDトークン検証 + 店舗オーナー照合
@@ -1243,6 +1248,48 @@ exports.linkStoreToCompany = functions
     return { ok: true, name: shop.name || "" };
   });
 
+// 企業に連携済みの店舗を、いま使っているuidでも管理できるようにオーナー登録する。
+// 企業連携タブの「ログイン」（他店舗への切り替え）から呼ぶ。
+//
+// 企業ログインuid（company_{companyId}）は linkStoreToCompany の時点で owners に入るが、
+// 企業の作成者本人（Google/メールのuid）は自分がclaimした店舗のownersにしか居ない。
+// そのため作成者が企業連携タブから他店舗へ切り替えると「管理者として登録されていません
+// （閲覧のみ）」になり、店舗ごとに管理コードを入力し直す必要があった。
+// ここでの権限の根拠は「呼び出し元が企業メンバー」＋「その店舗が企業に連携済み」の2つで、
+// 連携の時点で管理コード（または既存オーナーであること）の証明は済んでいる。
+exports.claimCompanyShop = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
+    const shopId = (data && typeof data.shopId === "string") ? data.shopId.trim() : "";
+    if (!isValidCompanyId(companyId) || !isValidShopId(shopId)) {
+      throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗IDが無効です");
+    }
+    if (isDemoShop(shopId)) throw new functions.https.HttpsError("permission-denied", "デモ店舗は企業アカウントで管理できません");
+    const callerUid = await assertCompanyMember(context, companyId);
+    if (!isSafeDbKey(callerUid)) throw new functions.https.HttpsError("permission-denied", "このアカウントでは登録できません");
+    // 連携済みの店舗だけが対象。shopId は誰でも辿れるので、連携マップを唯一の根拠にする
+    const linked = (await db.ref(`companies/${companyId}/pub/shops/${shopId}`).once("value")).val();
+    if (linked !== true) throw new functions.https.HttpsError("permission-denied", "この店舗は企業アカウントに連携されていません");
+    const owners = (await db.ref(`shops/${shopId}/owners`).once("value")).val();
+    // owners が空の店舗をここで初claimさせない（「先に触った人がオーナーになれる」窓を
+    // 作らないため。linkStoreToCompany・createCompany と同じ判断）
+    if (!owners) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "この店舗はまだ管理者端末が登録されていません。先に店舗の管理者画面を開いてください"
+      );
+    }
+    if (owners[callerUid]) return { ok: true, already: true };
+    const key = (await db.ref(`shops/${shopId}/private/adminKey`).once("value")).val();
+    if (!key) throw new functions.https.HttpsError("failed-precondition", "この店舗の管理キーが見つかりません");
+    await db.ref(`shops/${shopId}/owners/${callerUid}`).set(key);
+    // 企業経由で与えた権限だけを解除時に回収できるよう台帳に残す（元からのオーナーは記録しない）。
+    // companies/{companyId}/grants はクライアントに読み書きルールが無い＝CF専用パス。
+    await db.ref(`companies/${companyId}/grants/${shopId}/${callerUid}`).set(true);
+    return { ok: true };
+  });
+
 // 店舗の企業連携を解除（企業ログインuidをownerから外す）
 exports.unlinkStoreFromCompany = functions
   .region("asia-northeast1")
@@ -1256,14 +1303,19 @@ exports.unlinkStoreFromCompany = functions
     // 自分の企業のオーナーになれる」窓そのものなので、最後のオーナーは外さない（バグチェック#65）。
     const cUid = companyUid(companyId);
     const owners = (await db.ref(`shops/${shopId}/owners`).once("value")).val() || {};
-    const others = Object.keys(owners).filter(u => u !== cUid);
-    if (owners[cUid] && others.length === 0) {
+    // 企業uidに加え、claimCompanyShop が企業経由で与えたuidも一緒に外す。残すと
+    // 「連携を解除したのに、企業の作成者だけは店舗を編集できたまま」になる
+    const granted = Object.keys((await db.ref(`companies/${companyId}/grants/${shopId}`).once("value")).val() || {});
+    const revoke = [cUid, ...granted.filter(u => u !== cUid)].filter(isSafeDbKey);
+    const others = Object.keys(owners).filter(u => !revoke.includes(u));
+    if (revoke.some(u => owners[u]) && others.length === 0) {
       throw new functions.https.HttpsError(
         "failed-precondition",
         "この店舗の管理者はこの企業アカウントだけです。解除するとどの端末からも管理できなくなるため、先に別の端末を管理コードで追加してください"
       );
     }
     await db.ref(`companies/${companyId}/pub/shops/${shopId}`).remove();
-    await db.ref(`shops/${shopId}/owners/${cUid}`).remove();
+    for (const u of revoke) await db.ref(`shops/${shopId}/owners/${u}`).remove();
+    await db.ref(`companies/${companyId}/grants/${shopId}`).remove();
     return { ok: true };
   });

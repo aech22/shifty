@@ -69,6 +69,7 @@ function App(){
   const[inviteCode,setInviteCode]=useState(""); // 引き継ぎコード入力値
   const[inviteError,setInviteError]=useState(""); // エラーメッセージ
   const[companyInfo,setCompanyInfo]=useState(null); // {companyId,code,name} 企業アカウント（作成者本人 or 企業ログイン中）
+  const companyInfoRef=useRef(null); // claimOwnership（useCallback）から最新の企業情報を読む
   const[companyLoginMode,setCompanyLoginMode]=useState(false); // ログイン画面で企業コードログインフォーム表示中
   const[companyCodeVal,setCompanyCodeVal]=useState("");
   const[companyPwVal,setCompanyPwVal]=useState("");
@@ -573,6 +574,21 @@ function App(){
     setAdminKeyLS(shopId,key);
     setAdminKeys(m=>({...m,[shopId]:key}));
   },[]);
+  // 企業に連携済みの店舗なら、管理コードの入力なしにこのuidをownerへ登録してもらう。
+  // 企業連携タブの「ログイン」で他店舗へ切り替えたとき、その店舗の管理キーを持たない端末
+  // （＝企業の作成者本人のセッション）が「閲覧のみ」に落ちるのを防ぐ。CF側で
+  // 「呼び出し元が企業メンバー」＋「その店舗が企業に連携済み」を確認している。
+  const claimViaCompany=useCallback(async(shopId)=>{
+    const ci=companyInfoRef.current;
+    if(DEMO_MODE||!ci||!ci.companyId||!firebaseFunctions)return false;
+    try{
+      await firebaseFunctions.httpsCallable("claimCompanyShop")({companyId:ci.companyId,shopId});
+      return true;
+    }catch(e){
+      dlog("企業経由のオーナー登録に失敗:",(e&&e.message)||e);
+      return false;
+    }
+  },[]);
   const claimOwnership=useCallback(async(shopId)=>{
     const applyResult=ok=>{ if(shopId===currentShopIdRef.current) setOwnerReadOnly(!ok); return ok; };
     // デモ: 書き込みは全て無効化済みなのでclaimしない。localStorageに偽のadminKeyを残さないため。
@@ -595,8 +611,19 @@ function App(){
         try{
           await fbSet(`shops/${shopId}/private/adminKey`, key);
         }catch(e){
-          dlog("adminKey取得不可（オーナー未登録端末）:",shopId);
-          return applyResult(false);
+          // claim済みの他店舗。企業に連携済みならCF経由でownerに登録してもらい、
+          // オーナーになった後であれば private/adminKey を読めるので読み直す
+          key=null;
+          if(await claimViaCompany(shopId)){
+            try{
+              const s=await firebaseDB.ref(`shops/${shopId}/private/adminKey`).once("value");
+              key=s.val();
+            }catch(e2){ key=null; }
+          }
+          if(!key){
+            dlog("adminKey取得不可（オーナー未登録端末）:",shopId);
+            return applyResult(false);
+          }
         }
       }
     }
@@ -609,7 +636,7 @@ function App(){
       console.warn("オーナー登録失敗:",shopId,e);
       return applyResult(false);
     }
-  },[rememberAdminKey]);
+  },[rememberAdminKey,claimViaCompany]);
 
   // 店舗をアカウントに紐付け（Google/Apple ユーザーのみ）
   const linkShopToAccount=(uid,shopId)=>{
@@ -1060,6 +1087,30 @@ function App(){
     return()=>{cancelled=true;};
   },[authUser,companyInfo]);
 
+  // 最新の企業情報をRefへ。claimViaCompany は useCallback([]) で作り直さないのでRef経由で読む
+  useEffect(()=>{ companyInfoRef.current=companyInfo; },[companyInfo]);
+
+  // 企業の連携店舗を店舗一覧へ合流させる（既存の一覧は消さずに不足ぶんだけ足す）。
+  // 作成者本人のセッションは accounts/{uid}/shops しか読まないため、企業に連携しただけの
+  // 他店舗はリロードすると企業連携タブの一覧から消えていた＝「他店舗ログイン」が使えなかった。
+  useEffect(()=>{
+    if(!firebaseDB||!companyInfo||!companyInfo.companyId)return;
+    let cancelled=false;
+    firebaseDB.ref(`companies/${companyInfo.companyId}/pub/shops`).once("value").then(async snap=>{
+      const ids=Object.keys(snap.val()||{});
+      if(cancelled||ids.length===0)return;
+      const objs=await Promise.all(ids.map(id=>firebaseDB.ref(`global/shops/${id}`).once("value").catch(()=>null)));
+      const linked=objs.map(s=>s&&s.val()).filter(s=>s&&s.id);
+      if(cancelled||linked.length===0)return;
+      setAllLinkedShops(prev=>{
+        const seen=new Set(prev.map(s=>s&&s.id));
+        const add=linked.filter(s=>!seen.has(s.id));
+        return add.length?[...prev,...add]:prev;
+      });
+    }).catch(()=>{});
+    return()=>{cancelled=true;};
+  },[companyInfo]);
+
   // URLにtokenが含まれるか（スタッフ専用モード・期間固定）
   const [urlLocked]=useState(()=>{ const p=parseUrl(); return !!(p&&p.token); });
 
@@ -1072,7 +1123,9 @@ function App(){
     let cancelled=false;
     claimOwnership(sid).then(ok=>{ if(!cancelled) setOwnerReadOnly(!ok); });
     return()=>{ cancelled=true; };
-  },[ready,sid,view,urlLocked,claimOwnership]);
+    // companyInfo を依存に入れているのは、企業情報の復元（非同期）が claim より後に
+    // 終わったときに企業経由のオーナー登録をやり直すため
+  },[ready,sid,view,urlLocked,claimOwnership,companyInfo]);
 
   // tokens逆引きインデックスの補完（既存期間の自動移行・冪等）。管理者セッションのみ実行
   useEffect(()=>{

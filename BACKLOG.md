@@ -606,6 +606,26 @@ adjustedStartFixed:true,extraStart:"23:00",extraEnd:"25:00"}`）。上表がそ�
 
 ---
 
+## 🟢 企業経由でオーナーになった端末は、連携解除後も管理コードで戻れる
+
+**目的**: `claimCompanyShop`（2026-09-16 追加）で企業メンバーが連携済み店舗のオーナーになると、その端末は
+オーナーとして `shops/{shopId}/private/adminKey` を読める＝**その店舗の管理コードを手に入れる**。
+`unlinkStoreFromCompany` は `companies/{id}/grants` を見て owners から外すが、**既に渡った管理コードは
+取り消せない**ので、解除後に「コードで追加」から自分を再登録できる。
+
+**受け入れ条件**:
+- [ ] 解除時に `private/adminKey` をローテーションするかを決める（ローテーションすると、**古いキーを
+      localStorage に持つ既存のオーナー端末が `owners/{uid}` の再登録に失敗して閲覧のみに落ちる**
+      ——ルールが値一致を要求するため。単純なローテーションでは店舗側が壊れる）
+- [ ] 代案: owners に「企業由来」の印を持たせ、解除時にキーではなく **owners 側の再登録を拒否**する
+
+**影響範囲**: functions/index.js（`claimCompanyShop`・`unlinkStoreFromCompany`）、database.rules.json（owners の write 条件）
+**備考**: 元々「管理コードを渡した相手は以後ずっと管理者になれる」という性質は管理キー方式そのものが持つもので、
+本件はその適用範囲が**企業連携経由でも起きるようになった**という話。連携には管理コードの提示（または
+既存オーナーであること）が要るので、**第三者の権限奪取ではない**。
+
+---
+
 ## 🟡 企業連携の解除が、稼働中の店舗を「オーナー0人」に戻してしまう
 
 **目的**: `unlinkStoreFromCompany`（functions/index.js）は `shops/{shopId}/owners/company_{companyId}` を無条件に削除する。企業ログインのセッションで作った店舗はオーナーが企業uidだけなので、**解除すると owners が空になる**。`linkStoreToCompany` は未claim店舗（`allowed = !owners`）を**管理キーなしで連携できる**ため、その隙に shopId を知る第三者が自分の企業へ連携してオーナーになれる。shopId はスタッフURLの `tokens` 逆引きから辿れるため、店舗コードは秘密情報として扱えない。

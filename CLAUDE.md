@@ -294,6 +294,10 @@ Firebase Realtime Database
 ├── companies/
 │   └── {companyId}/     ← 企業アカウント（CompanyTab・企業コード＋パスワード方式。accounts/{uid}のcompanyLinkとは別系統）
 │       ├── pub          ← {name, ownerUid, shops:{shopId:true}}（連携店舗マップ）
+│       ├── grants/{shopId}/{uid} ← claimCompanyShop が企業経由で与えたオーナー権限の台帳。
+│       │                            解除時にここに載ったuidだけを owners から外す（元からの
+│       │                            オーナーは載せない＝巻き添えにしない）。**ルールを持たない
+│       │                            ＝クライアントからは読み書きできないCF専用パス**
 │       └── private/passwordHash ← パスワードハッシュ（Cloud Functions経由のみ）
 └── companyCodes/
     └── {code}           ← companyId（企業コードの逆引き。companyLoginでカスタムトークン発行に使用）
@@ -368,6 +372,8 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
    - 店舗の追加・解除は `linkStoreToCompany` / `unlinkStoreFromCompany`（管理コード `shopId.adminKey` の提示が必要）
    - ~~旧・企業招待コード方式（`inviteCodes/{token}` + `accounts/{uid}/members`）~~: **2026-08-24 に完全削除済み**（`8384467`）。`generateInviteCode` の定義・`inviteCodes` と `accounts/{uid}/members` のセキュリティルールがこのとき消え、コード側にもルール側にも痕跡は無い（バグチェック#66 で検出 → #116 で本記述を実態に訂正）
 4. **店舗切り替え**: `onSwitchToShop(id)` → `startSubscriptions(id)` を shopList なしで呼ぶ（既存の shops リストを維持しつつ購読先だけ切り替え）
+   - **切り替え先の管理権限は管理コード無しで揃う（2026-09-16）**: 企業ログインuidは連携時に owners へ入るが、**企業の作成者本人（Google/メールのuid）は自分がclaimした店舗の owners にしか居ない**ため、企業連携タブの「ログイン」で他店舗へ移ると「管理者として登録されていません（閲覧のみ）」になり、店舗ごとに管理コードを入れ直す必要があった。`claimOwnership`（app-main.js）は管理キーを持たない店舗で `private/adminKey` の書き込みが拒否されたとき、`claimCompanyShop` CF を呼んで owners に登録してもらい、オーナーになってから `private/adminKey` を読み直す。**権限の根拠は「呼び出し元が企業メンバー」＋「その店舗が企業に連携済み」の2つだけ**で、連携の時点で管理コードの提示は済んでいる。企業情報の復元は非同期なので、lazy claim の useEffect は `companyInfo` を依存に持ちやり直す
+   - **連携店舗の一覧合流**: 作成者本人のセッションは `accounts/{uid}/shops` しか読まないため、企業に連携しただけの他店舗はリロードすると一覧から消えていた。`companyInfo` が決まった時点で `companies/{id}/pub/shops` を読み、**既存の一覧に足りないぶんだけ足す**（既存の一覧は消さない）
 5. `doLogout()` はセッションのみクリア（authUser・allLinkedShops は維持）
 6. `doFullSignOut()` は Firebase Auth も含む完全サインアウト
 
@@ -390,7 +396,8 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
 | `changeCompanyPassword` | Callable `changeCompanyPassword` | 企業パスワード変更 |
 | `renameCompany` | Callable `renameCompany` | 企業名変更（作成者ポインタの表示名も更新） |
 | `linkStoreToCompany` | Callable `linkStoreToCompany` | 店舗コード（shopId / shopId.adminKey）で店舗を企業に連携 |
-| `unlinkStoreFromCompany` | Callable `unlinkStoreFromCompany` | 店舗の企業連携を解除 |
+| `claimCompanyShop` | Callable `claimCompanyShop` | 連携済み店舗のオーナーに**呼び出し元のuid**を登録（企業連携タブの「ログイン」で管理コードの再入力を無くす。付与は `companies/{id}/grants/{shopId}/{uid}` に記録し、解除時に回収する） |
+| `unlinkStoreFromCompany` | Callable `unlinkStoreFromCompany` | 店舗の企業連携を解除（企業uid＋`grants` の付与uidを owners から外す） |
 
 ### Stripe Webhook イベント処理
 
@@ -1271,6 +1278,26 @@ adjustedStartFixed:true,extraStart:"23:00",extraEnd:"25:00"}`）。上表がそ�
 **受け入れ条件（追加）**:
 - [ ] Stripe の Webhook エンドポイントの購読イベント一覧が `REQUIRED_EVENTS` の5種類であることを確認する（`subscription_schedule.*` が入っていれば、そのハンドラも取り直しの対象に含める）
 - [ ] 上の案で修正し、承認を得てモックで「古い写しを後から処理しても DB が最新の状態のまま」を3形とも通してからデプロイする
+
+---
+
+## 🟢 企業経由でオーナーになった端末は、連携解除後も管理コードで戻れる
+
+**目的**: `claimCompanyShop`（2026-09-16 追加）で企業メンバーが連携済み店舗のオーナーになると、その端末は
+オーナーとして `shops/{shopId}/private/adminKey` を読める＝**その店舗の管理コードを手に入れる**。
+`unlinkStoreFromCompany` は `companies/{id}/grants` を見て owners から外すが、**既に渡った管理コードは
+取り消せない**ので、解除後に「コードで追加」から自分を再登録できる。
+
+**受け入れ条件**:
+- [ ] 解除時に `private/adminKey` をローテーションするかを決める（ローテーションすると、**古いキーを
+      localStorage に持つ既存のオーナー端末が `owners/{uid}` の再登録に失敗して閲覧のみに落ちる**
+      ——ルールが値一致を要求するため。単純なローテーションでは店舗側が壊れる）
+- [ ] 代案: owners に「企業由来」の印を持たせ、解除時にキーではなく **owners 側の再登録を拒否**する
+
+**影響範囲**: functions/index.js（`claimCompanyShop`・`unlinkStoreFromCompany`）、database.rules.json（owners の write 条件）
+**備考**: 元々「管理コードを渡した相手は以後ずっと管理者になれる」という性質は管理キー方式そのものが持つもので、
+本件はその適用範囲が**企業連携経由でも起きるようになった**という話。連携には管理コードの提示（または
+既存オーナーであること）が要るので、**第三者の権限奪取ではない**。
 
 ---
 
