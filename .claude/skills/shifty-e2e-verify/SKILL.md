@@ -266,6 +266,37 @@ grep -c staffHidden $S/app-utils.js    # 0 でなければ基準SHAが間違っ�
 
 `root` はworktree隔離（0.5節）でも使える。1.5節の罠（`preview_start` は常にメインの作業ディレクトリを配信する）がそもそも発生しない。
 
+### 1.65 App() の中のロジックを検証する（Firebase SDK ごと差し替える・リロードもまたげる）
+
+1.6節は `app-main.js` を読まないことで Firebase 接続を避けるが、その代償として **App() のクロージャの中にある処理は1行も実行できない**——ログイン・店舗切替・連携解除・3フェーズ初期化・`companyInfo` の復元はすべてそこにあり、タブ単体をマウントしても触れない。dev を使う手もあるが、**dev は Spark プランで Cloud Functions が無い**ので Callable を呼ぶ画面（企業連携）は dev でも通らない。
+
+`scripts/stub-firebase.js` の `makeStub()` を `extraHead` に入れると、`window.firebase` が compat SDK と同じ形のメモリ実装に差し替わる。`scripts` に `app-main.js` を足しても**実ネットワークへは出ない**（mount-component.js は警告を出すが、この用途では無視してよい）。
+
+```js
+const { openHarness } = require(".../mount-component.js");
+const { makeStub } = require(".../stub-firebase.js");
+const h = await openHarness({
+  jsx: "window.__harnessReady=true;",          // App() は app-main.js 自身がマウントする
+  extraHead: makeStub({
+    seed: { global:{shops:{...}}, shops:{...}, accounts:{...}, companies:{...} },
+    uid: "U1",                                  // "company_C1" にすると企業ログインセッションになる
+    view: "admin", tab: "company",              // 起動時の画面・タブ
+    cfHandlers: { unlinkStoreFromCompany: "unlink" },  // "ok" | "reject:メッセージ" | "unlink" | "link"
+  }),
+  scripts: [ /* utils, core, staff, admin, **main** */ ],
+});
+await h.evaluate(() => window.__db("accounts/U1/shops"));   // モックDBを読む
+await h.evaluate(() => window.__cf.map(c => c.name));       // 呼ばれた Callable
+await h.page.reload({ waitUntil: "networkidle" });          // ← DBと認証状態は localStorage 上なので残る
+```
+
+**この節の価値はリロードをまたげること**にある。「操作直後は消えたのにリロードで戻る」型のバグ（2026-09-16 の企業連携タブの解除）は、`page.reload()` の前後で同じモックDBを見ないと再現できない。雛形は `scripts/example-company-unlink.js`（解除・追加を5シナリオ×8項目で回す）。
+
+**罠**:
+- **`cfHandlers` に書く後始末は本物のCFの写し**なので、CF 側の挙動そのものはここでは検証されない。CF は `shifty-cf-verify` のハーネスで**本物のコードを実行して**確かめる（2つを混同すると「CFも検証した」と誤って報告する）。
+- **セキュリティルールは一切評価しない**（1.6節と同じ）。許可・拒否の確認には使えない。
+- **`SHIFTY_ROOT` に修正前の版を渡して落ちることを必ず見る**。`git show <sha>:app-*.js` を一時ディレクトリへ書き出せばよい（配信物5本だけで足りる）。
+
 ### 1.7 アプリ全体は起動したいがdevを汚したくない（書き込みの発行を数える）
 
 1.6節は「App()を読み込まない」ことで書き込みを止めるが、**App()全体が要る検証**（プラン境界・`#/demo`・タブ巡回・権限バナー）ではその手が使えない。
