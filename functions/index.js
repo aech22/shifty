@@ -1221,7 +1221,7 @@ exports.linkStoreToCompany = functions
     const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
     const shopId = (data && typeof data.shopId === "string") ? data.shopId.trim() : "";
     const adminKey = (data && typeof data.adminKey === "string") ? data.adminKey.trim() : "";
-    if (!isValidCompanyId(companyId) || !shopId) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗コードが無効です");
+    if (!isValidCompanyId(companyId) || !isValidShopId(shopId)) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗コードが無効です");
     // デモ店舗は未claimのまま運用するため、下の allowed = !owners を素通りしてしまう
     if (isDemoShop(shopId)) throw new functions.https.HttpsError("permission-denied", "デモ店舗は企業アカウントに連携できません");
     const callerUid = await assertCompanyMember(context, companyId);
@@ -1306,7 +1306,11 @@ exports.unlinkStoreFromCompany = functions
   .https.onCall(async (data, context) => {
     const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
     const shopId = (data && typeof data.shopId === "string") ? data.shopId.trim() : "";
-    if (!isValidCompanyId(companyId) || !shopId) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗IDが無効です");
+    // shopId も形を確かめる。`"/"` は truthy なので `!shopId` を素通りし、Admin SDK の
+    // パス正規化で `companies/{id}/pub/shops` と `companies/{id}/grants` を**丸ごと**指す。
+    // 下の「最後のオーナーは外さない」判定は `shops//owners`（→ `shops/owners`）を読んで
+    // 空と判断するため発火せず、連携マップと付与台帳が一度に消える（バグチェック#132で実測）。
+    if (!isValidCompanyId(companyId) || !isValidShopId(shopId)) throw new functions.https.HttpsError("invalid-argument", "企業ID・店舗IDが無効です");
     await assertCompanyMember(context, companyId);
     // 企業ログインのセッションで作った店舗はオーナーが企業uidだけなので、無条件に外すと
     // owners が空＝未claim状態へ戻ってしまう。その状態は「shopIdを知る第三者が
