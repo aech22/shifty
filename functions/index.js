@@ -849,6 +849,13 @@ exports.purgeInactiveShops = functions
 
     for (const [id, shopData] of Object.entries(allShops)) {
       if (!shopData) continue;
+      // デモ店舗は「1年未更新なら捨ててよい放置店舗」ではなく、広告の着地先として置いてある常設の展示物。
+      // しかも lastActivity を更新できる経路が1つも無い: touchLastActivity（app-main.js）は fbSet 経由で、
+      // #/demo は fbSet の入口で書き込みを握り潰し、スタッフURL経由で開いた端末はオーナーではないので
+      // ルールが lastActivity の書き込みを拒否する（demo は owners が空で、adminKey も設定済のため
+      // 誰もオーナーになれない）。つまり放っておけば投入時刻のまま必ず古くなり、ある日 archived/ へ
+      // 退避されて #/demo がログイン画面に落ちる。プランでも救えない（accounts ノードを持たない＝Free扱い）。
+      if (isDemoShop(id)) continue;
 
       const planSnap = await db.ref(`accounts/${id}/plan`).once("value");
       const planVal = planSnap.val();
@@ -957,6 +964,9 @@ exports.purgeOldPeriods = functions
     const globalShops = globalShopsSnap.val() || {};
 
     for (const shopId of Object.keys(globalShops)) {
+      // デモ店舗は展示物なので期間も間引かない（上の purgeInactiveShops と同じ理由）。
+      // 期間が消えると tokens も subs も一緒に消え、中身の無い店舗が残る＝デモとして機能しなくなる。
+      if (isDemoShop(shopId)) continue;
       const periodsSnap = await db.ref(`shops/${shopId}/periods`).once("value");
       const periods = periodsSnap.val() || {};
 
