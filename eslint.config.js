@@ -151,6 +151,7 @@ const sharedGlobals = {
   cookieSafeKey: "writable",
   isHoliday: "writable",
   isRestCommand: "writable",
+  isReservedShopAbbr: "writable",
   isSpacer: "writable",
   isWeekendOrHoliday: "writable",
   lg: "writable",

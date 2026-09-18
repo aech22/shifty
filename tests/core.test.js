@@ -558,6 +558,27 @@ test("extractNote: 「9三締」のように略称と締めを併用すると no
   assert.strictEqual(r.hasFixed, true);
 });
 
+test("isReservedShopAbbr: 固定シフトコマンド(締)は『含む』だけで予約語（#133の回帰）", () => {
+  // extractNote は締を部分一致で取り除くので、含む略称は登録できてはいけない。
+  // 「西締」が登録できると、セル「9西締」は note="西" に化けて abbrToShop の完全一致lookupが
+  // 必ず外れる（ヘルプ判定も店舗間重複判定も無言で止まる）。
+  for (const v of ["締", "西締", "締西", "東締店"]) {
+    assert.strictEqual(u.isReservedShopAbbr(v), true, `${v} が予約語として弾かれていない`);
+    // 実際にパースが壊れることを同時に示す（note に元の略称が残らない）
+    assert.notStrictEqual(u.extractNote("9" + v).note, v, `${v} は extractNote が原形を保っていない`);
+  }
+});
+
+test("isReservedShopAbbr: suffix/rest は完全一致だけが予約語・通常の略称は通る（#133の非回帰）", () => {
+  for (const v of ["h", "K", "x", "y", "休", "ｙ"]) assert.strictEqual(u.isReservedShopAbbr(v), true, `${v}`);
+  for (const v of ["2号", ".西", ":東", "", "   "]) assert.strictEqual(u.isReservedShopAbbr(v), true, `${v}`);
+  // 既存の正常な略称は従来どおり登録できる（締を含まず、コマンドと完全一致もしない）
+  for (const v of ["三", "西", "hk", "梅田", "東通"]) {
+    assert.strictEqual(u.isReservedShopAbbr(v), false, `${v} が誤って弾かれた`);
+    assert.strictEqual(u.extractNote("9" + v).note, v, `${v} のパースが壊れている`);
+  }
+});
+
 test("extractNote: 締めを含まない通常入力はhasFixed=false", () => {
   assert.strictEqual(u.extractNote("9h").hasFixed, false);
   assert.strictEqual(u.extractNote("9").hasFixed, false);
