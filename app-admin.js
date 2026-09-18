@@ -2229,6 +2229,11 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   const fSat  ={type:"pattern",pattern:"solid",fgColor:{argb:R("DDEEFF")},bgColor:{argb:"FFFFFFFF"}};
   const fHol  ={type:"pattern",pattern:"solid",fgColor:{argb:R("FFEEEE")},bgColor:{argb:"FFFFFFFF"}};
   const fYel  ={type:"pattern",pattern:"solid",fgColor:{argb:R("FFFF00")},bgColor:{argb:"FFFFFFFF"}};
+  // 変更マーク（CELL_COLOR_LEGEND の "changed"）。PDF（buildShiftTableHtml の chgBg）と同じ #B7EBC6 を使う。
+  // 画面・PDF・Excel の3つが同じレジストリの色を描くので、**どれか1つだけ描かない状態を作らないこと**
+  // （2026-09-18 まで Excel だけがこの塗りを持たず、トリプルクリックで付けた目印が
+  //   配布した Excel からだけ無言で消えていた。バグチェック#134）。
+  const fChg  ={type:"pattern",pattern:"solid",fgColor:{argb:R("B7EBC6")},bgColor:{argb:"FFFFFFFF"}};
   const fNone ={type:"pattern",pattern:"none"};
 
   const wb=new ExcelJS.Workbook();
@@ -2330,6 +2335,9 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
     sl.forEach((nm,si)=>{
       const sub=resolveSubByAlias(n=>subByName.get(n),nm,staffAliases),sh=sub?.shifts?.[ds];
       const isWork=sh&&sh.status==="work";
+      // 変更マーク（トリプルクリックで付ける緑）。出勤・休みのどちらの分岐でも塗る
+      // （PDFも同じく出勤・休み・空白のすべてに chgBg を乗せる。984dc54 で空白セルの脱落を直した経緯がある）
+      const isChanged=!!(sh&&sh.changed===true);
       const ci=C_STAFF+si;
       // 上行: top:medium, bot:hair
       // 下行: top:hair, bot:thin (最終日はbot:medium)
@@ -2356,9 +2364,10 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
         const sNote=rv?rv.st.note:(sh.startNote||""), eNote=rv?rv.en.note:(sh.endNote||"");
         // 「締」等の店舗限定固定シフトコマンドはnoteとは別枠で永続化されるため、ここで表示へ合成する
         const sFx=rv&&rv.st.fixed?FIXED_KEY:"", eFx=rv&&rv.en.fixed?FIXED_KEY:"";
-        // サフィックスh/k/xがある場合は黄色塗り（締めは対象外＝PDFのセル背景判定と同じくnoteだけで決める）
-        const startFill=sNote?fYel:fill;
-        const endFill=eNote?fYel:fill;
+        // サフィックスh/k/xがある場合は黄色塗り（締めは対象外＝PDFのセル背景判定と同じくnoteだけで決める）。
+        // 変更マーク（緑）は画面（cellBgFor）・PDF（cbg）と同じく note より優先する。
+        const startFill=isChanged?fChg:(sNote?fYel:fill);
+        const endFill=isChanged?fChg:(eNote?fYel:fill);
         // 時刻が無くてもnote・締めがあれば表示する。従来は時刻の有無だけで判定していたため、
         // 単独「締」やメモのみのセルがグリッド・PDFには出るのにExcelでだけ空欄に落ちていた
         // （バグチェック#52）。グリッドのgetVal・PDFのpdfResolveと同じ真偽判定に揃える
@@ -2371,10 +2380,11 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
         SC(rT,ci,startDisp,aH,startFill,stB,{name:"Yu Gothic",bold:false,size:12});
         SC(rB,ci,endDisp,aH,endFill,enB,{name:"Yu Gothic",bold:false,size:12});
       } else {
-        // 休み: 斜線（右上→左下）
+        // 休み: 斜線（右上→左下）。休みの日に付けた変更マークも画面・PDFと同じく塗る
         const diagU={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
-        SC(rT,ci,null,aH,fill,{top:M,bottom:H,left:T,right:T,diagonal:diagU});
-        SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T,diagonal:diagU});
+        const restFill=isChanged?fChg:fill;
+        SC(rT,ci,null,aH,restFill,{top:M,bottom:H,left:T,right:T,diagonal:diagU});
+        SC(rB,ci,null,aH,restFill,{top:H,bottom:botT,left:T,right:T,diagonal:diagU});
       }
     });
 
