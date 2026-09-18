@@ -2302,13 +2302,29 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   SC(2,C_WD_R,"曜日",aV,fNone,{top:T,bottom:M,left:M,right:T},{bold:true,size:14});
   SC(2,C_SHOP_R,shopName||"",aV,fNone,{top:T,bottom:M,left:T,right:T},{bold:true,size:14});
 
+  // 呼び出し元が resolver を渡さないとき（期間管理タブのExcelボタン）に使う既定の解決。
+  // シフト作成タブの adjResolver の「保存値」分岐（getStoredTime/getStoredNote/getStoredFixed）と同じ規則で、
+  // **管理者調整値・休み希望(y)・「締」を必ず通す**。ここを null のままにしていた間、同じ期間でも
+  // 期間管理タブから出した Excel だけがスタッフの提出値そのままになっていた（バグチェック#134）。
+  // 未保存の localEdits はシフト作成タブしか持たないので、その差だけは resolver 側に残る。
+  // fixed は店舗の対象判定(isFixedShiftEligibleShop)を掛け直さない——このフラグは対象店舗でしか
+  // 書かれないうえ、ここへ渡る shopName は xlShopName で上書きされうる表示名で店舗の識別に使えない。
+  const storedRv=(sh,field)=>{
+    if(!sh)return{time:"",note:"",fixed:false};
+    if(sh.adminRest&&sh.adminRest[field])return{time:"",note:"",fixed:false,rest:true};
+    return{
+      time:(field==="start"?(sh.adjustedStart??sh.start):(sh.adjustedEnd??sh.end))||"",
+      note:(field==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"",
+      fixed:!!(field==="start"?sh.adjustedStartFixed:sh.adjustedEndFixed),
+    };
+  };
+  const shiftOf=(nm,ds)=>resolveSubByAlias(n=>subByName.get(n),nm,staffAliases)?.shifts?.[ds];
+  const effResolver=resolver||((nm,ds,field)=>storedRv(shiftOf(nm,ds),field));
   // 管理者調整（resolver経由）で表示すべき値があるか。スタッフが1日休みで提出した日でも、管理者が
   // メモ・「締」・時刻を入れていればグリッド(getVal)・PDF(pdfResolve)は表示する。スタッフ提出の
   // status だけで分岐すると Excel でだけ斜線に潰れて内容が落ちる（バグチェック#54）
-  const hasAdminDisp=(nm,ds)=>{
-    if(!resolver)return false;
-    return["start","end"].some(f=>{const v=resolver(nm,ds,f);return!!(v&&(v.time||v.note||v.fixed));});
-  };
+  const hasAdminDisp=(nm,ds)=>
+    ["start","end"].some(f=>{const v=effResolver(nm,ds,f);return!!(v&&(v.time||v.note||v.fixed));});
 
   // ===== データ行 (1日=2行) =====
   dates.forEach((ds,di)=>{
@@ -2358,12 +2374,13 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
         SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
       } else if(isWork||hasAdminDisp(nm,ds)){
         const fmtT=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return m===0?String(h):String(h+m/60);};
-        // resolver がある場合は調整済み値を使用
-        const rv=resolver?{st:resolver(nm,ds,"start"),en:resolver(nm,ds,"end")}:null;
-        const startT=rv?rv.st.time:sh.start, endT=rv?rv.en.time:sh.end;
-        const sNote=rv?rv.st.note:(sh.startNote||""), eNote=rv?rv.en.note:(sh.endNote||"");
+        // 調整済み値の解決は必ず effResolver を通す（呼び出し元が resolver を渡さない場合も既定の
+        // 解決が入るので、2つの入口が同じ中身のExcelを出す。バグチェック#134）
+        const rv={st:effResolver(nm,ds,"start"),en:effResolver(nm,ds,"end")};
+        const startT=rv.st.time, endT=rv.en.time;
+        const sNote=rv.st.note, eNote=rv.en.note;
         // 「締」等の店舗限定固定シフトコマンドはnoteとは別枠で永続化されるため、ここで表示へ合成する
-        const sFx=rv&&rv.st.fixed?FIXED_KEY:"", eFx=rv&&rv.en.fixed?FIXED_KEY:"";
+        const sFx=rv.st.fixed?FIXED_KEY:"", eFx=rv.en.fixed?FIXED_KEY:"";
         // サフィックスh/k/xがある場合は黄色塗り（締めは対象外＝PDFのセル背景判定と同じくnoteだけで決める）。
         // 変更マーク（緑）は画面（cellBgFor）・PDF（cbg）と同じく note より優先する。
         const startFill=isChanged?fChg:(sNote?fYel:fill);
@@ -2373,10 +2390,10 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
         // （バグチェック#52）。グリッドのgetVal・PDFのpdfResolveと同じ真偽判定に揃える
         const startDisp=(startT||sNote||sFx)?((fmtT(startT)||"")+sNote+sFx):null;
         const endDisp=(endT||eNote||eFx)?((fmtT(endT)||"")+eNote+eFx):null;
-        // 管理者入力の休み希望(y)はフィールド単位で斜線（resolver経由=シフト作成タブからの出力時のみ）
+        // 管理者入力の休み希望(y)はフィールド単位で斜線（どちらの入口から出しても同じ）
         const diagR={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
-        const stB={top:M,bottom:H,left:T,right:T,...(rv&&rv.st.rest?{diagonal:diagR}:{})};
-        const enB={top:H,bottom:botT,left:T,right:T,...(rv&&rv.en.rest?{diagonal:diagR}:{})};
+        const stB={top:M,bottom:H,left:T,right:T,...(rv.st.rest?{diagonal:diagR}:{})};
+        const enB={top:H,bottom:botT,left:T,right:T,...(rv.en.rest?{diagonal:diagR}:{})};
         SC(rT,ci,startDisp,aH,startFill,stB,{name:"Yu Gothic",bold:false,size:12});
         SC(rB,ci,endDisp,aH,endFill,enB,{name:"Yu Gothic",bold:false,size:12});
       } else {
