@@ -1147,6 +1147,10 @@ exports.createCompany = functions
     const linked = [];
     const skipped = [];
     for (const shopId of shopIds) {
+      // 呼び出し元由来の shopId は DB パスへ入る前に形を確かめる。#125（課金系4本）・#132（企業系2本）で
+      // 同じ検証を入れたが、**複数形の `shopIds` を取るここだけが両方の網から漏れていた**（#133 で数え直して検出）。
+      // isDemoShop より先に通すこと（"demo-toriMatsu-v1/" は文字列比較に一致しないのに同じノードを読む）。
+      if (!isValidShopId(shopId)) continue;
       // デモ店舗は owners を持たないため下の未claim分岐を通ってしまう。誰でも開ける
       // デモURLから自分の企業のオーナーにされないよう、連携対象から外す
       if (isDemoShop(shopId)) continue;
