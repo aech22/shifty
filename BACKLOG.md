@@ -95,15 +95,16 @@ app-admin.js（CompanyTab のエラー表示）
 
 ---
 
-## 🟡 Cloud Functions を本番へ反映する（未デプロイの修正が2件たまっている）
+## 🟡 Cloud Functions を本番へ反映する（未デプロイの修正が3件たまっている）
 
 **目的**: コード側は直っているが、**Cloud Functions は本番へデプロイするまで1バイトも効かない**。
-現在2件たまっており、どちらも同じ1回のデプロイで出る。
+現在3件たまっており、どれも同じ1回のデプロイで出る。
 
 | コミット | 内容 | 効かないと起きること |
 |---|---|---|
 | `be8143e`（#132） | `linkStoreToCompany`・`unlinkStoreFromCompany` の `shopId` を `isValidShopId` に通す | 企業メンバーが `shopId:"/"` を送ると、`companies/{id}/pub/shops`（連携マップ）と `companies/{id}/grants`（付与台帳）が**丸ごと消える**。「最後のオーナーは外さない」判定（#65）も発火しない。**台帳が消えると企業経由で与えたオーナー権限を後から回収できない** |
 | `0727598`（#131） | `purgeInactiveShops`・`purgeOldPeriods` に `isDemoShop` のガード | 本番のデモ店舗（`demo-toriMatsu-v1`・広告の着地先 `#/demo`）が1年未更新の自動アーカイブで消える |
+| `aa17c88`（#133） | `createCompany` の `shopIds`（複数形）を `isValidShopId` に通す | **到達可能な穴は無い**（多重防御）。`shopId:"/"` は `companies/{id}/pub/shops` を `true` で上書きしうる形だが、通過には `shops/owners` が呼び出し元の uid を持つ必要があり、`shops/$shopId` の任意の子は `database.rules.json` に `.write` が無いのでクライアントからは作れない |
 
 **受け入れ条件**:
 - [ ] `cd functions && firebase deploy --only functions --project ontheshift`
@@ -114,7 +115,7 @@ app-admin.js（CompanyTab のエラー表示）
       （ログの「アーカイブ: demo-toriMatsu-v1」はそもそも1年経つまで出ないので、確認は更新成功まででよい）
 
 **影響範囲**: functions/index.js（デプロイのみ・コード変更は済んでいる）
-**備考**: バグチェック#131（2026-09-17）・#132（2026-09-17）で検出・**条件A（本番デプロイ）に該当**。
+**備考**: バグチェック#131（2026-09-17）・#132（2026-09-17）・#133（2026-09-18）で検出・**条件A（本番デプロイ）に該当**。
 `be8143e` の追加で優先度を 🟢 → 🟡 に上げた（デモの保護は期限が遠いが、連携マップの消失は
 呼ばれた瞬間に起きる）。**期限もある**: デモ店舗の `lastActivity` が投入時刻（2026-08-11 ごろ）の
 ままなら **2027-08-12** にアーカイブ対象へ変わる。

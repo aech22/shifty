@@ -630,128 +630,135 @@ firebaseDB.ref(fbPath(sid, "periods")).set(obj);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-09-17 自動実行 #132）
+## Shifty バグチェックレポート（2026-09-18 自動実行 #133）
 
-> 着手時の HEAD は `919df43`。**#131 以降 app-*.js は1バイトも変わっていない**（`0727598` は
-> functions のみ、`4fea574`・`919df43` は docs）。そこで #131 の申し送り「誰も操作しなくても
-> 走るもの」を一段ずらし、**「あとから足したエンドポイントは、既に2回閉じたはずの入力検証を
-> 継いでいるか」**を見た。🟡を1件見つけて修正し、🟢を1件起こした。
+> 着手時の HEAD は `d0ad675`。**#131 以降 app-*.js は1バイトも変わっていない**（#132 は functions のみ）。
+> そこで #132 の申し送り「**『N箇所に揃えた』と書かれた決定を、書かれた時点の N と今の N で数え直す**」を
+> 名指しされた2つのレジストリに当てた。`STAFF_KEYED_SETTING_MAPS` は無傷だったが、
+> **`CELL_COMMANDS` の側で「数」ではなく「照合の規則」がずれていた**——🟡を1件見つけて修正し、
+> ついでに同じ形の入口の数え落としをもう1件（functions 側）塞いだ。
 
 ### 修正済み
 
-- **[🟡] 企業連携の解除が、細工した `shopId` で連携マップと付与台帳を丸ごと消せる**
-  （functions/index.js:1224・1313／`be8143e`）
-  `unlinkStoreFromCompany` と `linkStoreToCompany` は `shopId` を **truthy 判定だけ**で受けて
-  DB パスへ埋め込んでいた。`"/"` は truthy なので素通りし、Admin SDK のパス正規化（#125 で実測済み）で
-  **親ノードそのもの**を指す。
+- **[🟡] 「締」を含む他店舗略称が登録でき、セルに書くと別店舗のヘルプに化けて追加出勤まで付く**
+  （app-admin.js:3931・app-utils.js:633／`297aedc`）
 
-  **実測**（firebase-admin 12.7.0 で `ref().toString()` のみ。**Firebase へは1バイトも出していない**。
-  `companyId="C1"`）:
+  企業連携タブの略称バリデーション（`addAbbr`）は「予約語は CELL_COMMANDS レジストリ駆動」と
+  コメントしているが、照合しているのは **完全一致だけ**だった。一方 `extractNote` は
+  `kind:"fixed"`（締）を **部分一致で取り除く**（`s.split(fixedKey).join("")`）。
+  **同じレジストリを見ているのに、照合の規則が2つある**。
 
-  | 送った `shopId` | `companies/C1/pub/shops/{shopId}` が指す先 | `companies/C1/grants/{shopId}` が指す先 |
-  |---|---|---|
-  | `"S1"`（正規） | `/companies/C1/pub/shops/S1` | `/companies/C1/grants/S1` |
-  | **`"/"`** | **`/companies/C1/pub/shops`** | **`/companies/C1/grants`** |
+  **実測**（配信物の関数をそのまま Node で実行。店舗A=略称「西締」／店舗B=略称「西」）:
 
-  つまり `.remove()` が**連携マップ全体**と**付与台帳全体**に当たる。
-  **#65 で入れた「最後のオーナーは外さない」判定も発火しない**——判定は
-  `shops/{shopId}/owners` を読むが、`shops//owners` は `shops/owners` へ詰められて
-  空と見なされるため。同じ式をそのまま実行して確認した:
-
-  | | 判定結果 |
+  | | 結果 |
   |---|---|
-  | 正規の `shopId="S1"`（実オーナーが企業uidだけの店舗） | **拒否（最後のオーナー）** |
-  | 細工した `shopId="/"` | **素通り → 削除を実行する** |
+  | 旧バリデータが「西締」を弾くか | **false（登録できる）** |
+  | セル「9西締」の `extractNote` | `{numeric:"9", note:"西", hasFixed:true}` |
+  | `abbrToShop["西"]` が返す店舗 | **店舗B**（期待は店舗A） |
+  | 純勤務（`hasFixed` → 23:00〜25:00 が追加出勤） | 480分 → **600分** |
 
-  **行えるのは企業メンバーだけ**（`assertCompanyMember` を通る）＝第三者の権限奪取ではない。
-  店舗データと `shops/{id}/owners` は無傷なので、各店舗の管理コードで連携し直せば戻せる。
-  ただし**付与台帳（`grants`）だけは戻せない**ので、`claimCompanyShop` が企業経由で与えた
-  オーナー権限を以後の解除で回収できなくなる。
+  つまり「西締店へ9時からヘルプ」と書いたセルが、**別の店舗（西店）のヘルプとして解決され**、
+  対象店舗（`isFixedShiftEligibleShop`）では**誰も入力していない2時間の深夜出勤が勤務時間に乗る**。
+  エラーもトーストも出ない。
 
-  **同じ形を2回閉じたのに、ここだけ両方の網から漏れていた**。#125（2026-09-13）は課金系4本の
-  `shopId` を、#126（2026-09-14）は企業系4本の `companyId` を締めたが、**企業系の `shopId`** は
-  どちらの対象でもなかった。**2026-09-16 に足した `claimCompanyShop` は最初から両方を
-  検証している**（functions/index.js:1275）ので、新しいほうが厳しく古いほうが緩いという
-  非対称がそのまま証拠になっていた。
+  **同じ失敗を、コード自身がすぐ隣で先回りして防いでいた**。`addAbbr` の直上のコメントは
+  先頭が数字の略称（「2号」）について「`abbrToShop` の完全一致lookupが必ず外れる＝ヘルプ判定も
+  店舗間重複判定も無言で効かなくなる」と書き、だから弾くと明記している。
+  **固定シフトコマンドだけがその網から漏れていた。**
 
-  修正は `isValidShopId(shopId)` を2箇所の入口に通すだけ。**既存店舗を締め出さないことを実測済み**:
-  細工5種（`"/"` `"//"` `"S1/"` `"/S1"` `"demo-toriMatsu-v1/"`）は `invalid-argument` で拒否、
-  実在形式3つ（`shop_1780453329813`・`eb6AfsQv4JAht+cX*xP7fuDa`・`demo-toriMatsu-v1`）と
-  `genSecureId` 形式の無作為10万件は**全件通過（弾かれた数 0）**。
+  修正は判定を `isReservedShopAbbr`（app-utils.js・純粋関数）へ一本化し、
+  **`kind:"fixed"` は部分一致・`suffix`/`rest` は完全一致**という `extractNote` の規則と
+  1対1で対応させた。既存の正常な略称（三・西・hk・梅田・東通）が従来どおり通ることも
+  テストで固定している。回帰テスト2件を追加（`npm test` 260件 → **262件パス**）。
 
-  **効かせるには Cloud Functions の本番デプロイが要る → BACKLOG化済み**（#131 の
-  「Cloud Functions を本番へ反映する」へ集約し、優先度を 🟢 → 🟡 に上げた）。
+- **[🟢→多重防御] `createCompany` の `shopIds` だけが shopId の形の検証を継いでいない**
+  （functions/index.js:1148／`aa17c88`）
+
+  呼び出し元由来の shopId を DB パスへ埋め込む入口は4つある。#125 が課金系4本、#132 が
+  企業系の**単数** `shopId` 2本を締めたが、**複数形の `data.shopIds` を取る `createCompany` だけが
+  両方の網から漏れていた**。
+
+  **実測**（`ref().toString()` のみ。**Firebase へは1バイトも出していない**）:
+
+  | 送った shopId | gate `shops/{id}/owners` | 書き込み `companies/C1/pub/shops/{id}` |
+  |---|---|---|
+  | `"S1"`（正規） | `/shops/S1/owners` | `/companies/C1/pub/shops/S1` |
+  | `"S1/"` / `"/S1"` | `/shops/S1/owners` | `/companies/C1/pub/shops/S1` |
+  | **`"/"`** | `/shops/owners` | **`/companies/C1/pub/shops`**（連携マップ本体） |
+
+  **現時点で悪用は成立しない**。破壊的な変種は gate（`owners && owners[uid]`）を通る必要があり、
+  そのためには `shops/owners` が呼び出し元の uid をキーに持たねばならない。`shops/$shopId` の
+  任意の子には `database.rules.json` に `.write` が無く、クライアントからは作れない。
+  **したがってこれは多重防御であって、到達可能な穴を塞いだものではない**（#132 の🟡とはそこが違う）。
+  既存店舗を締め出さないことは実測済み（細工5種・禁止文字・空・非文字列は false、
+  実在形式3つと `genSecureId` 形式10万件は**全件通過・弾かれた数 0**）。
+  **効かせるには Cloud Functions の本番デプロイが要る → BACKLOG の既存タスクへ集約済み**（新規起票はしない）。
 
 ### 要確認（未修正）
 
-- **[🟢] 店舗切替で `plan` だけが同期リセットされない**（app-main.js:368-384）
-  `startSubscriptions` は店舗を切り替えるとき `staffList`・`settings`・`periods`・`shopTemplates`・
-  `billingSchedule`・`billingExempt` を**同期的に**新店舗の値（localStorage の前回値）へ落とす。
-  コメントも「購読が返るまでの間に前店舗の状態を引きずらない」と明示している。
-  **`plan`・`planExpiry`・`paymentFailed` だけがこの扱いを受けていない**ので、
-  `accounts/{新shopId}/plan` の購読が返るまでの間（`billingExempt` の実測で約195ms）
-  前店舗のプランのまま描画される。
-  **実害は小さい**——タブ一覧はプランで絞っていない（`ShiftEditTab` の中で `plan==="premium"` を見る）ので
-  出るのは一瞬のちらつきで、その間に上限チェックを跨ぐ操作を完了させるのは現実的でない。
-  **そのまま直せない理由**: `plan` を `"free"` へ同期リセットすると Premium 店舗で逆向きのちらつき
-  （シフト作成タブが一度消えて戻る）が出る。`billingExempt` と同じく localStorage の前回値を使う手もあるが、
-  **プランはキャッシュを信じて機能を開ける向きに倒れる**ので同じ手が使えない。どちらを取るかは仕様判断。
-- **[🟢] `purgeInactiveShops` が、削除済みの機能の後始末を毎日実行している**（#131 から継続・内容を確定）
-  `inviteCodes` を毎日読んで期限切れを消すが、招待コード方式は 2026-08-24（`8384467`）に削除済み。
-  **今回「例外で日次ジョブごと落ちていないか」を確かめた**——`inviteSnap.val() || {}` で
-  null を受けているので `Object.entries` は throw せず、**空ノードを1回読むだけで害は無い**（#131 の判断は正しかった）。
-  次に functions を触るときに一緒に落とすとよい。
+- **[🟢] 「締」が有効でない店舗でも、メモから「締」だけが無言で消える**（app-utils.js:662）
+  `extractNote` は `isFixedShiftEligibleShop` を見ずに固定コマンドを取り除くので、
+  対象外の店舗でもセル「9締会議」は `note:"会議"` になる（実測）。操作方法レジェンド
+  （`GridLegend`・app-admin.js:339）は対象店舗にしか「締」を出さないため、
+  **説明されていないコマンドに文字を食われる**形になる。追加出勤は付かない（`fixedShiftEnabled` が false）ので
+  実害はメモ1文字の欠落にとどまる。パーサを店舗依存にすると純粋関数でなくなるため、直すなら判断が要る。
+- **[🟢] 既に登録されている「締」入りの略称は、今回の修正では直らない**
+  今回締めたのは**新規登録の入口だけ**。本番データに該当する略称があるかは確認していない
+  （**Firebase には一切アクセスしていない**）。企業連携タブの略称一覧を目視すれば足りる。
+- **#132 から継続（変化なし）**: 店舗切替で `plan` だけが同期リセットされない（🟢）／
+  `purgeInactiveShops` が削除済みの招待コード機能の後始末を毎日実行している（🟢）。
 - **#131 から継続（変化なし）**: 企業ログインにサーバー側の試行回数制限が無い（🟡・BACKLOG化済み）／
   `companyCodes/${code}` が形を確かめずにパスへ入る（🟢）／`recentPeriodIds` がテスト専用（🟢）。
 - **#130・#129 から継続（変化なし）**: `ShiftEditTab` の他店舗 `subs` 全件読み（🟢）／
   退勤を出勤より前に入れると集計だけ黙って0になる（🟡・BACKLOG化済み）。
-- **変化なし（BACKLOG化済み）**: 二重課金の根治／特商法表記（🔴）／解約通知／解約時のプラン判定／
-  `verifyShopOwner` の移行猶予／別名提出の重複の根（#81）／PDFの実物確認／`purgeOldPeriods` の本有効化／
-  非表示スタッフの未提出カウント（#113）／「締」の休みの入口2つ（#118）／完全削除したスタッフの `keepAttrs`（#118）／
-  企業経由オーナーは解除後も管理コードで戻れる（🟢）。
+- **変化なし（BACKLOG化済み）**: Cloud Functions の本番反映（🟡・**今回 `aa17c88` が3件目として加わった**）／
+  二重課金の根治／特商法表記（🔴）／解約通知／解約時のプラン判定／`verifyShopOwner` の移行猶予／
+  別名提出の重複の根（#81）／PDFの実物確認／`purgeOldPeriods` の本有効化／
+  非表示スタッフの未提出カウント（#113）／「締」の休みの入口2つ（#118）／
+  完全削除したスタッフの `keepAttrs`（#118）／企業経由オーナーは解除後も管理コードで戻れる（🟢）。
 - **引き受け済みのトレードオフ（再検出しても直さない）**: `subs/$subId/.write` は認証済みなら通る。2026-08-31 決定1。
 
-### 立てて、実測で否定した仮説5つ
+### 立てて、実測で否定した仮説4つ
 
-いずれも「**新しく足したものが、古い決定を自動的には継いでいない**」という、今回の🟡と同じ形を狙った。
+いずれも「**揃えたはずの箇所が、あとから1つ増えて/減って食い違っていないか**」を狙った。
 
-1. **「有料プランが切れて Free に落ちた店舗は、20名を超えるスタッフが黙って消える」→ 否定**。
-   `PLAN_LIMITS` の使い所は**追加を止めるガード（`checkPeriodLimit` 等）と上限の表示だけ**で、
-   名簿や期間を切り詰める `slice` は無い（`staffList.slice` の2箇所はホール/キッチンの分割と
-   行番号の採番）。上限を超えたデータはそのまま保持される。
-2. **「店舗を切り替えると `apid` が前店舗のまま残り、他店舗の periodId を持つ孤児 sub ができる」→ 否定**。
-   app-main.js:1692・1705 が切替時に `setApid(null)` している。
-   `ShiftEditTab` の `selPid` も :458 の useEffect が periods 到着時に補正し、あわせて
-   `localEdits`/`heatEdits` をクリアしている（`SubsTab` は `key={currentShopId}` で remount）。
-3. **「`staffHidden` は `STAFF_KEYED_SETTING_MAPS` の例外なので、改名すると非表示が解ける」→ 否定**。
-   `PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS`（写しに焼かない）の対象ではあるが、
-   `STAFF_KEYED_SETTING_MAPS` には**入っている**（app-utils.js:1110）ので改名でキーが移る。
-4. **「`lastActivity` を更新できるのは owner だけなので、稼働中の Free 店舗が1年で消える」→ 否定**。
-   `touchLastActivity` の呼び出し元は `saveSettings`・`savePeriods`・`saveStaff`・`saveSubs` の4つで、
-   **期間を作る・シフトを編集するという通常運用がすべて owner 操作**なので更新され続ける。
-   デモ店舗（#131）が消えるのは「owner が1人も居ない＝誰も更新できない」という別の理由。
-5. **「`purgeInactiveShops` の `inviteCodes` 読みが例外を投げ、日次ジョブごと死んでいる」→ 否定**（上の🟢へ降格）。
-   `|| {}` で null を受けている。
+1. **「`STAFF_KEYED_SETTING_MAPS` に載っていないスタッフ名キーの設定マップが増えている」→ 否定**。
+   コード中で参照される `settings.*` キー19種と `makeSettings` の既定値を突き合わせた結果、
+   スタッフ名をキーに持つのは**登録済みの7マップ＋`overtimeSettings.byStaff` でちょうど8**。
+   8番目は改名（`renameStaffInSettings`）・削除の後始末（`settingsWithoutStaff`）・在籍判定（`_hasStaffKey`）の
+   **3箇所すべてが個別に扱っている**（片側だけという形になっていない）。
+2. **「`visibleStaffList` に `period` を渡し忘れた呼び出しが増えている」→ 否定**。
+   呼び出しは2箇所（app-admin.js:495 の `ShiftEditTab`・:2178 の期間管理タブ Excel）で、**両方とも渡している**。
+3. **「`resolveSubByAlias` に7つ目の入口ができている」→ 否定**。
+   **現在も6箇所ちょうど**（app-staff.js:67・:177／app-admin.js:594・:597・:2331・:3714）で #132 から変化なし。
+4. **「2026-09-16 に足した企業経由の lazy claim は、参照が同期されておらず一度も動かない」→ 否定**。
+   `claimViaCompany` は `companyInfoRef.current` を読む（依存配列が空の `useCallback`）が、
+   app-main.js:1121 の `useEffect` が `companyInfo` の変化ごとに ref を書いており、
+   **その effect は claim の effect（:1148）より前に宣言されている**ので同じコミット内で先に走る。
 
 ### 検証したこと
 
-- `npm test` **260件パス**・`npx eslint app-*.js` **0 errors / 95 warnings**・`node --check functions/index.js` OK。
+- `npm test` **262件パス**（+2）・`npx eslint app-*.js` **0 errors / 95 warnings**（増減なし）・
+  `node --check functions/index.js` OK。
+- 今回の🟡は**素通りするテストではない**: 修正前の判定式（`git` 上の `addAbbr` の行をそのまま評価）は
+  「西締」に **false**（＝登録を許す）を返し、修正後は **true** を返すことを実測で確認した。
 - RULES.md のスキャン項目はすべてクリア（`DEV_MODE` は式のまま・`subs` 全体 `set()` 0件・
   `accounts` 全件読み0件・SRI 11本・`.delete()` 0件・`secrets:` 7件・
   読み込み順 utils→core→staff→admin→main）。
   fontSize 走査: **フォーム部品58件・16未満0件**。CSS変数の未定義参照 0件。
-- 配信版数は追随している（`?v=` 5箇所＋`build:` 1箇所が `20260916-c20a092`＝最後の app-*.js 変更 `c20a092` と一致）。
-  **今回の修正は functions のみなので版数のバンプは不要**。
-- **Firebase・Stripe には一切アクセスしていない。** 上の実測はすべて `ref().toString()` と
-  配信物の式をローカルで評価したもので、本番・dev のデータは読んでも書いてもいない。
+- **配信版数は今回から遅れている**: `?v=` 5箇所と `build:` 1箇所は `20260916-c20a092` のままで、
+  今日の app-*.js 変更（`297aedc`）を指していない。**リリース時にバンプすれば足りる**
+  （`/release-to-main` の標準工程。BACKLOG化はしない）。
+- **Firebase・Stripe には一切アクセスしていない。** 上の実測はすべて配信物の関数と
+  `ref().toString()` をローカルで評価したもので、本番・dev のデータは読んでも書いてもいない。
 
-**申し送り（次回の観点）**: 今回効いたのは「**一括で塞いだ回のあとに足した仲間が、その塞ぎを継いでいるか**」
-だった。#125・#126 で入力検証を2回に分けて入れた結果、**引数の組み合わせ（企業系 × shopId）が1マス空いた**。
-**この見方は「N箇所に揃えた」と書かれた決定を、書かれた時点の N と今の N で数え直すだけで当てられる。**
-今回ついでに1つ数え直した——`resolveSubByAlias`（#105・#106・#112 で 4→5→6経路に増やしてきたもの）は
-**現在も6箇所ちょうど**（app-staff.js:67・:177／app-admin.js:594・:597・:2331・:3714）で、
-7つ目の入口は増えていない。次回は同じ数え直しを `STAFF_KEYED_SETTING_MAPS`（7マップ＋
-`overtimeSettings.byStaff`）と `CELL_COMMANDS` レジストリに当てるとよい。
+**申し送り（次回の観点）**: 今回の🟡は「数え直し」では出てこなかった——**数は合っていて、照合の規則が2つあった**。
+`CELL_COMMANDS` を見ている箇所は7つあり、うち `extractNote` だけが `kind:"fixed"` を**部分一致**で扱う。
+**次回は「同じレジストリを読む複数の箇所が、同じ照合規則で読んでいるか」を見るとよい**——
+完全一致／部分一致／大文字小文字の正規化がどこかで1つだけ違う、という形。
+手近な候補は `CELL_COLOR_LEGEND`（色の意味と実際に塗っている箇所）と
+`PERIOD_SNAPSHOT_SETTING_KEYS`（凍結する13キーと、`ShiftEditTab` が実際に読む `settings.*` 12キーの対応。
+`dateCandidates` が意図的に外れているので、**意図的な例外と取りこぼしが見た目で区別できない**）。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
@@ -855,15 +862,16 @@ app-admin.js（CompanyTab のエラー表示）
 
 ---
 
-## 🟡 Cloud Functions を本番へ反映する（未デプロイの修正が2件たまっている）
+## 🟡 Cloud Functions を本番へ反映する（未デプロイの修正が3件たまっている）
 
 **目的**: コード側は直っているが、**Cloud Functions は本番へデプロイするまで1バイトも効かない**。
-現在2件たまっており、どちらも同じ1回のデプロイで出る。
+現在3件たまっており、どれも同じ1回のデプロイで出る。
 
 | コミット | 内容 | 効かないと起きること |
 |---|---|---|
 | `be8143e`（#132） | `linkStoreToCompany`・`unlinkStoreFromCompany` の `shopId` を `isValidShopId` に通す | 企業メンバーが `shopId:"/"` を送ると、`companies/{id}/pub/shops`（連携マップ）と `companies/{id}/grants`（付与台帳）が**丸ごと消える**。「最後のオーナーは外さない」判定（#65）も発火しない。**台帳が消えると企業経由で与えたオーナー権限を後から回収できない** |
 | `0727598`（#131） | `purgeInactiveShops`・`purgeOldPeriods` に `isDemoShop` のガード | 本番のデモ店舗（`demo-toriMatsu-v1`・広告の着地先 `#/demo`）が1年未更新の自動アーカイブで消える |
+| `aa17c88`（#133） | `createCompany` の `shopIds`（複数形）を `isValidShopId` に通す | **到達可能な穴は無い**（多重防御）。`shopId:"/"` は `companies/{id}/pub/shops` を `true` で上書きしうる形だが、通過には `shops/owners` が呼び出し元の uid を持つ必要があり、`shops/$shopId` の任意の子は `database.rules.json` に `.write` が無いのでクライアントからは作れない |
 
 **受け入れ条件**:
 - [ ] `cd functions && firebase deploy --only functions --project ontheshift`
@@ -874,7 +882,7 @@ app-admin.js（CompanyTab のエラー表示）
       （ログの「アーカイブ: demo-toriMatsu-v1」はそもそも1年経つまで出ないので、確認は更新成功まででよい）
 
 **影響範囲**: functions/index.js（デプロイのみ・コード変更は済んでいる）
-**備考**: バグチェック#131（2026-09-17）・#132（2026-09-17）で検出・**条件A（本番デプロイ）に該当**。
+**備考**: バグチェック#131（2026-09-17）・#132（2026-09-17）・#133（2026-09-18）で検出・**条件A（本番デプロイ）に該当**。
 `be8143e` の追加で優先度を 🟢 → 🟡 に上げた（デモの保護は期限が遠いが、連携マップの消失は
 呼ばれた瞬間に起きる）。**期限もある**: デモ店舗の `lastActivity` が投入時刻（2026-08-11 ごろ）の
 ままなら **2027-08-12** にアーカイブ対象へ変わる。
