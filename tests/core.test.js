@@ -2478,3 +2478,30 @@ test("getAttrOptions: 名前を持たない組み込み属性（2026-06-16〜06-
   assert.deepStrictEqual(u.getAttrOptions({ staffTypeLimits: { custom_y: { name: "学生" } } }),
     [["employee", "社員"], ["parttime", "バイト"], ["custom_y", "学生"]]);
 });
+
+test("moveStaffHiddenBoundaries: 期間の開始日を編集すると非表示の境界も追随する（バグチェック#136）", () => {
+  let s = u.hideStaffFrom({}, "佐藤", HP.p2.startDate);
+  s = u.showStaffFrom(s, "佐藤", HP.p4.startDate);   // P2・P3 が非表示
+  const hiddenIn = (st, ps) => ps.map(p => u.isStaffHiddenInPeriod("佐藤", st, p));
+  // 非表示にした期間(P2)の開始日を前へ
+  const p2e = { ...HP.p2, startDate: "2026-09-15" };
+  const others2 = [HP.p1, HP.p3, HP.p4, HP.p5];
+  assert.deepStrictEqual(hiddenIn(s, [p2e, HP.p3, HP.p4]), [false, true, false], "追随しないと P2 で再び表示される");
+  const s2 = u.moveStaffHiddenBoundaries(s, HP.p2.startDate, p2e.startDate, others2);
+  assert.deepStrictEqual(hiddenIn(s2, [HP.p1, p2e, HP.p3, HP.p4]), [false, true, true, false]);
+  // 解除した期間(P4)の開始日を前へ
+  const p4e = { ...HP.p4, startDate: "2026-10-15" };
+  assert.deepStrictEqual(hiddenIn(s, [HP.p3, p4e]), [true, true], "追随しないと解除した P4 で消える");
+  const s4 = u.moveStaffHiddenBoundaries(s, HP.p4.startDate, p4e.startDate, [HP.p1, HP.p2, HP.p3, HP.p5]);
+  assert.deepStrictEqual(hiddenIn(s4, [HP.p2, HP.p3, p4e]), [true, true, false]);
+});
+
+test("moveStaffHiddenBoundaries: 変化が無いときは同じ参照を返す（無駄な書き込みをしない）", () => {
+  const s = u.hideStaffFrom({}, "佐藤", HP.p2.startDate);
+  assert.strictEqual(u.moveStaffHiddenBoundaries(s, HP.p2.startDate, HP.p2.startDate, []), s, "開始日を変えていない");
+  assert.strictEqual(u.moveStaffHiddenBoundaries(s, HP.p3.startDate, "2026-10-02", []), s, "境界に使われていない開始日");
+  assert.strictEqual(u.moveStaffHiddenBoundaries(s, HP.p2.startDate, "2026-09-17", [{ ...HP.p3, startDate: HP.p2.startDate }]), s, "同じ開始日の期間が他にもある＝どちらの境界か区別できない");
+  const legacy = { staffHidden: { "佐藤": true } };
+  assert.strictEqual(u.moveStaffHiddenBoundaries(legacy, HP.p2.startDate, "2026-09-17", []), legacy, "旧形式 true は境界を持たない");
+  assert.strictEqual(u.moveStaffHiddenBoundaries({}, HP.p2.startDate, "2026-09-17", []).staffHidden, undefined);
+});

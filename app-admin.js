@@ -200,7 +200,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           </div>
           <button onClick={()=>setTab("mypage")} style={{padding:"6px 12px",background:"#DC2626",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>マイページへ</button>
         </div>}
-        {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings}/>}
+        {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings}/>}
         {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
@@ -1940,7 +1940,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 }
 
 // ===== 期間管理タブ =====
-function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shopName,plan="free",onUpgrade,settings={}}){
+function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shopName,plan="free",onUpgrade,settings={},onSaveSettings}){
   const[eid,setEid]=useState(null);
   const[form,setForm]=useState({label:"",startDate:"",endDate:"",deadlineDate:""});
   const[show,setShow]=useState(false);
@@ -2096,7 +2096,12 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
                   const v=validatePeriodDates({...u,id:p.id},periods);
                   if(v.error){tt("▲ "+v.error);return;}
                   if(v.warning&&!confirm(`${v.warning}。\nこのまま保存しますか？`))return;
-                  onSave(periods.map(pp=>pp.id===p.id?{...pp,...u}:pp));tt("✓ 保存しました");setEid(null);
+                  onSave(periods.map(pp=>pp.id===p.id?{...pp,...u}:pp));
+                  // 非表示の範囲は期間の開始日を値で持つので、開始日を動かしたら境界も一緒に動かす
+                  // （動かさないと非表示にした人がシフト表に戻る／表示に戻した人が消える。バグチェック#136）
+                  const ns=moveStaffHiddenBoundaries(settings,p.startDate,u.startDate,periods.filter(pp=>pp.id!==p.id));
+                  if(ns!==settings)onSaveSettings&&onSaveSettings(ns);
+                  tt("✓ 保存しました");setEid(null);
                 }} onCancel={()=>setEid(null)}/>
               :<>
                 <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>

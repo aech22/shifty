@@ -1115,6 +1115,25 @@ function showStaffFrom(settings,name,startDate){
     .filter(r=>!(r.from!=null&&r.to!=null&&r.from>=r.to));
   return _writeHiddenRanges(settings,name,next);
 }
+// 期間の開始日を編集したとき、その開始日を境界に持つ非表示の範囲を新しい開始日へ移す。
+// 境界は「その時点のどれかの期間の startDate」を値で写したものなので、期間側だけ動かすと
+// 範囲がその期間から外れる。開始日を前へずらすと非表示にした人がシフト表・Excel・PDFに戻り、
+// 解除した期間の開始日を前へずらすと表示に戻したはずの人が消える（どちらも無言。バグチェック#136）。
+// 他の期間も同じ開始日を持つときは、その境界がどちらの期間を指して書かれたか区別できないので動かさない。
+function moveStaffHiddenBoundaries(settings,oldStart,newStart,otherPeriods){
+  if(!oldStart||!newStart||oldStart===newStart)return settings;
+  if((otherPeriods||[]).some(p=>p&&p.startDate===oldStart))return settings;
+  let out=settings;
+  Object.keys(((settings||{}).staffHidden)||{}).forEach(name=>{
+    const ranges=staffHiddenRanges(out,name);
+    if(!ranges.some(r=>r.from===oldStart||r.to===oldStart))return;
+    const next=ranges
+      .map(r=>({from:r.from===oldStart?newStart:r.from,to:r.to===oldStart?newStart:r.to}))
+      .filter(r=>!(r.from!=null&&r.to!=null&&r.from>=r.to));
+    out=_writeHiddenRanges(out,name,next);
+  });
+  return out;
+}
 // 非表示スタッフを名簿から落とす。シフト作成グリッド・ヒートマップ・集計・Excel・PDF はこれを通した名簿を描く。
 // **落とすのは表示だけ**で staffList 本体は触らないため、スタッフ提出画面の名前候補（buildSuggestList）と
 // 提出名の解決（resolveAlias）は従来どおり効く＝非表示にした人も配布済みのURLでそのまま提出でき、
@@ -1208,5 +1227,5 @@ function renameStaffInPeriods(periods,oldName,newName){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate};
 }

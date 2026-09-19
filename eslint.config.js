@@ -44,6 +44,7 @@ const sharedGlobals = {
   isStaffHiddenNow: "writable",
   hideStaffFrom: "writable",
   showStaffFrom: "writable",
+  moveStaffHiddenBoundaries: "writable",
   PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS: "writable",
   STAFF_KEYED_SETTING_MAPS: "writable",
   renameStaffInSettings: "writable",
