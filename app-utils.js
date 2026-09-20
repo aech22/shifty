@@ -833,6 +833,15 @@ function subLastActionTime(sub){
 // 「一覧では変更ありにならないのにシフト表のセルだけ緑になる」という食い違いが残っていた
 // （CLAUDE.md #44 申し送りの「変更マークの締切ゲート対象外」。2026-09-20 にユーザー判断でゲート対象へ）。
 // at 省略時は現在時刻。ミリ秒・ISO文字列のどちらでも受ける。
+//
+// ⚠ **2つの surface が同じ規則を通るのは「1度の提出の瞬間」だけで、一致は保証されていない**
+// （バグチェック#138 で実測）。バッジは読み取り時に毎回 subHasRealUpdate が現在の deadlineDate で
+// 計算し直すのに対し、緑セルは提出した瞬間の判定を shifts[日付].changed に焼いて凍結する。
+// そのため次の2つで食い違う。直すには仕様判断が要るので BACKLOG に起票してある。
+//   ① 提出後に管理者が締切日を編集すると、バッジだけが新しい締切で再判定される
+//      （延長: 一覧は変更なしなのにセルは緑のまま／短縮: 一覧は変更ありなのにセルは緑にならない）。
+//   ② スタッフが提出状況一覧のセル編集（app-staff.js の SmModal applyCellEdit）で変えたときは、
+//      updatedAt だけ進むのでバッジは出るが、その経路は changed を立てないので緑にならない。
 function deadlineGatePassed(deadlineDate,at){
   if(!deadlineDate)return true;          // 締切なし→常に通す
   const dl=new Date(deadlineDate+"T23:59:59").getTime();
