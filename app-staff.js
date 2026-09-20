@@ -181,6 +181,13 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     // レコード自体（id・管理者フィールド）は引き継ぎ先として使うが、「前回提出」としては数えない。
     // ここで source を新subに引き継がないのは意図的で、提出後は実際の提出として数えられるようにする。
     const isFirstSubmission=!existSub||existSub.source==="grid";
+    // 変更マーク（シフト作成タブの緑セル）の締切ゲート。締切日を設けた期間では、締切内の作り直しは
+    // 「まだ締切前なので変更のうちに入らない」＝緑にしない。締切を過ぎてからの変更だけを緑にする
+    // （2026-09-20 ユーザー判断。それまでは提出一覧の「変更あり」バッジだけがゲート対象で、
+    // 一覧は変更なしなのにセルだけ緑、という食い違いが残っていた）。締切なしの期間は従来どおり常に付く。
+    // **提出した瞬間の時刻で判定する**（描画時の dl を使うと、締切をまたいで開きっぱなしのタブからの
+    // 提出が開いた時点の判定のままになる）。判定規則はバッジと同じ deadlineGatePassed に一本化してある。
+    const markChanged=deadlineGatePassed(ap?.deadlineDate);
     // 再提出時: 日付ごとに旧シフトと比較し、変更があれば changed:true を付与。
     // 管理者調整値(adjustedXxx)は旧シフトから引き継ぐ。
     const buildShift=d=>{
@@ -196,7 +203,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
           nw=carryAdminShiftFields(nw,old);
           // changed は status 復元後の最終形で判定する（引き継ぎで元と同じ状態に戻った日を
           // 「変更あり」と誤表示しないため）
-          if(!isFirstSubmission){
+          if(!isFirstSubmission&&markChanged){
             const changed=(old.status!==nw.status)||((old.start||"")!==(nw.start||""))||((old.end||"")!==(nw.end||""));
             if(changed)nw.changed=true;
           }

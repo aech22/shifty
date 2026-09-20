@@ -1162,6 +1162,41 @@ test("subLastActionTime: 日付が不正・sub が無い場合も例外にせず
   );
 });
 
+// ===== deadlineGatePassed（変更あり判定の締切ゲート・バッジとセルの緑で共有・2026-09-20） =====
+test("deadlineGatePassed: 締切なしは常に true（従来どおり常に変更マークを付ける）", () => {
+  assert.strictEqual(u.deadlineGatePassed("", "2026-07-20T09:00:00.000Z"), true);
+  assert.strictEqual(u.deadlineGatePassed(undefined, "2026-07-20T09:00:00.000Z"), true);
+  assert.strictEqual(u.deadlineGatePassed(null, "2026-07-20T09:00:00.000Z"), true);
+});
+
+test("deadlineGatePassed: 締切内の変更は false・締切後の変更は true", () => {
+  assert.strictEqual(u.deadlineGatePassed("2026-07-25", "2026-07-22T09:00:00.000Z"), false);
+  assert.strictEqual(u.deadlineGatePassed("2026-07-25", "2026-07-28T09:00:00.000Z"), true);
+});
+
+test("deadlineGatePassed: 締切当日中は false・翌日以降は true（境界＝当日23:59:59まで締切内）", () => {
+  // 締切のパースと同じローカル時刻表記で比較する（実行環境のTZに依存させない）
+  assert.strictEqual(u.deadlineGatePassed("2026-07-25", "2026-07-25T23:59:59"), false);
+  assert.strictEqual(u.deadlineGatePassed("2026-07-25", "2026-07-26T00:00:00"), true);
+});
+
+test("deadlineGatePassed: 締切日・時刻が不正なら通す（従来判定へフォールバック）", () => {
+  assert.strictEqual(u.deadlineGatePassed("こわれた締切", "2026-07-22T09:00:00.000Z"), true);
+  assert.strictEqual(u.deadlineGatePassed("2026-07-25", "こわれた時刻"), true);
+});
+
+test("deadlineGatePassed: 時刻を省略すると現在時刻で判定する", () => {
+  const past = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+  const future = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+  assert.strictEqual(u.deadlineGatePassed(past), true);
+  assert.strictEqual(u.deadlineGatePassed(future), false);
+});
+
+test("deadlineGatePassed: ミリ秒（数値）でも判定できる（subHasRealUpdate からの呼び出し形）", () => {
+  assert.strictEqual(u.deadlineGatePassed("2026-07-25", new Date("2026-07-22T09:00:00.000Z").getTime()), false);
+  assert.strictEqual(u.deadlineGatePassed("2026-07-25", new Date("2026-07-28T09:00:00.000Z").getTime()), true);
+});
+
 // ===== subHasRealUpdate（提出一覧の「変更あり」バッジ・締切日ゲート付き・2026-07-21） =====
 test("subHasRealUpdate: 変更なし（updatedAtなし）は締切あり/なしどちらも false", () => {
   const sub = { submittedAt: "2026-07-20T09:00:00.000Z" };

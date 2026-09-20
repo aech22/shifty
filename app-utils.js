@@ -826,6 +826,22 @@ function subLastActionTime(sub){
   return mn(ut)>mn(base)?ut:base;
 }
 
+// 締切日ゲート。「その時刻の変更を変更として扱ってよいか」の唯一の判定で、締切日がある期間は
+// 締切日（23:59:59）を過ぎてからの変更だけを通す。締切なし・締切日が不正な日付は常に通す（従来判定）。
+// **提出一覧の「変更あり」バッジ（subHasRealUpdate）と、シフト作成タブの日ごとの変更マーク＝緑セル
+// （app-staff.js の buildShift）の両方がここを通る**。2026-07-21 にバッジだけゲートを入れた結果、
+// 「一覧では変更ありにならないのにシフト表のセルだけ緑になる」という食い違いが残っていた
+// （CLAUDE.md #44 申し送りの「変更マークの締切ゲート対象外」。2026-09-20 にユーザー判断でゲート対象へ）。
+// at 省略時は現在時刻。ミリ秒・ISO文字列のどちらでも受ける。
+function deadlineGatePassed(deadlineDate,at){
+  if(!deadlineDate)return true;          // 締切なし→常に通す
+  const dl=new Date(deadlineDate+"T23:59:59").getTime();
+  if(Number.isNaN(dl))return true;       // 不正な締切→常に通す
+  const t=at==null?Date.now():new Date(at).getTime();
+  if(Number.isNaN(t))return true;        // 不正な時刻→常に通す
+  return t>dl;
+}
+
 // 提出一覧の「変更あり」バッジ判定。締切日がある期間は「締切日（23:59）を過ぎてからの変更」のみ変更ありとする。
 // 締切日なし・締切日が不正な日付の場合は従来判定（初回提出より1分以上後の更新があれば変更あり）。
 function subHasRealUpdate(sub,deadlineDate){
@@ -834,10 +850,7 @@ function subHasRealUpdate(sub,deadlineDate){
   const st=new Date(sub.submittedAt||0).getTime();
   const base=Number.isNaN(st)?0:st;
   if(last<=base)return false;            // 変更なし（subLastActionTimeの分単位判定に一本化）
-  if(!deadlineDate)return true;          // 締切なし→従来判定
-  const dl=new Date(deadlineDate+"T23:59:59").getTime();
-  if(Number.isNaN(dl))return true;       // 不正な締切→従来判定
-  return last>dl;                        // 締切後の変更のみ変更あり
+  return deadlineGatePassed(deadlineDate,last); // 締切後の変更のみ変更あり
 }
 
 // 平日（月〜金・非祝日）に日祝系ポジション区分が設定されている日付判定（シフト表・Excel・PDF の赤背景表示用）。
@@ -1227,5 +1240,5 @@ function renameStaffInPeriods(periods,oldName,newName){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate};
 }

@@ -2031,7 +2031,8 @@ dev へ先に出して REST で **10項目すべてパス**（匿名認証トー
 - [x] **`VISION.md` の作成（2026-08-10 完了・コミット`df925ca`）**（#27から継続で不在だった）: `/bug-check` と `/shifty-feature` の両ループが PHASE 0 で参照する完了基準の正本として作成。プロダクトの目的・ターゲット・プラン・設計原則6項目・バグチェックループ完了基準・機能実装ループ完了基準・やらないと決めたこと（Expo/Vite+TS/AdminLogin の理由と再着手条件）・現在の重点を記載
 - [x] **`globalTemplates` の命名整理（2026-08-10 完了・コミット`5e725b0`）**: `shopTemplates` / `setShopTemplates` / `saveShopTemplates` へ改名（app-main.js 8箇所・app-admin.js 8箇所）。**Firebaseパス `shops/{shopId}/templates` と localStorage キー `templates_v6` は変更していない＝データ移行不要**。CLAUDE.md の state一覧・技術負債欄も更新済み
 **影響範囲**: tests/core.test.js（テスト追加）、新規VISION.md、.git運用（フック）、app-main.js/app-admin.js（命名整理は任意・広範）
-**備考**: 「変更マークの締切ゲート対象外」（app-staff.js:166）・capabilityモデルの残存リスクも#44申し送りに含まれるが、前者は仕様判断待ち、後者は上記「App Checkの有効化」で恒久対応するため本まとめには含めない。リリース時のindex.htmlキャッシュバスティング版数バンプはrelease-to-mainフローの標準工程のため別管理。
+**備考**: 「変更マークの締切ゲート対象外」（app-staff.js:166）・capabilityモデルの残存リスクも#44申し送りに含まれるが、前者は仕様判断待ち、後者は上記「App Checkの有効化」で恒久対応するため本まとめには含めない。
+**追記（2026-09-20）**: 前者の「仕様判断待ち」はユーザー判断で決着した——**締切日を設けた期間では、締切内の変更で変更マーク（シフト作成タブの緑セル）を付けない**。判定は `deadlineGatePassed`（app-utils.js）に一本化し、提出一覧の「変更あり」バッジ（`subHasRealUpdate`）と日ごとの緑セル（app-staff.js の `buildShift`）が同じ規則を通る。締切なしの期間は従来どおり常に付く。管理者のトリプルクリックによる手動マーク（`toggleChanged`・app-admin.js）はゲート対象外で従来どおり。リリース時のindex.htmlキャッシュバスティング版数バンプはrelease-to-mainフローの標準工程のため別管理。
 
 
 ### ✅ スタッフの提出書き込み（onSub）の差分書き込み化（2026-08-10）
