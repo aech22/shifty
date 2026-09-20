@@ -2401,6 +2401,20 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
         const enB={top:H,bottom:botT,left:T,right:T,...(rv.en.rest?{diagonal:diagR}:{})};
         SC(rT,ci,startDisp,aH,startFill,stB,{name:"Yu Gothic",bold:false,size:12});
         SC(rB,ci,endDisp,aH,endFill,enB,{name:"Yu Gothic",bold:false,size:12});
+      } else if(!sh){
+        // その日のエントリ自体を持たない: 空白（未提出の列と同じ）。
+        // 下の「休み」へ落とすと **提出していない日が休み希望として配布Excelに出る**。
+        // sub はあるのに sh が無い状態は例外ではなく常用経路で生まれる（バグチェック#137）:
+        //   - 管理者がシフト作成グリッドで未提出スタッフのセルに入力すると、applyEditToSubs が
+        //     **その日だけ**を持つ sub（source:"grid"）を作る＝期間の残り全日がここへ来る
+        //   - スタッフの提出後に期間の終了日を延ばすと、増えた日は提出時の shifts に無い
+        //     （buildShift は提出した時点の dates ぶんしか作らない）
+        // 画面(holidayCellDash は `if(!sh)return false`)・PDF(`if(sh&&sh.status==="holiday")`)は
+        // どちらも空白にしており、Excel だけが else に落ちていた。斜線はレジェンドで
+        // 「スタッフが提出した休み希望、または管理者が y で入力した休み」と定義されているので、
+        // 何も提出されていない日に出してはいけない。
+        SC(rT,ci,null,aH,fill,{top:M,bottom:H,left:T,right:T});
+        SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
       } else {
         // 休み: 斜線（右上→左下）。休みの日に付けた変更マークも画面・PDFと同じく塗る
         const diagU={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
