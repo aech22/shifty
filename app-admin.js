@@ -1211,14 +1211,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 下へ回したときは全表示と同じく両方のヒートマップを並べる。
   const HEAT_PANEL_MIN_HOURS=4;
   const heatPanelUsable=heatFitsAll||heatVisibleHours>=HEAT_PANEL_MIN_HOURS;
-  // あわせて、横パネルを置くとスタッフが横スクロールしてしまう場合も横パネルを使わない。
-  // **幅を縮めるのではなくパネルごと下へ回す**ことで、幅の固定とスタッフ全表示を両立させる。
-  // +32 の内訳（実測 2026-09-23・1400px/縦バーあり）: グリッド枠の border 2px、flex コンテナの
-  // gap 4px と左右 padding 16px、そして丸め誤差。
-  const gridNeedW=90+39*Math.max(1,gridStaff.length)+32;
-  const gridFitsWithPanel=(viewW-24-heatPanelW)>=gridNeedW;
+  // **人数が多くても横パネルは下ろさない**（2026-09-23 ユーザー指示。セルとヒートマップの大きさを
+  // 維持したままセルの横に出す）。横パネルを置くとスタッフが入りきらない場合は、パネルを下ろすのでも
+  // 幅を縮めるのでもなく、**グリッド側を横スクロールさせる**。置き場を決めるのは上の時間帯の条件だけ。
   const hasPanel=deptSidePanel
-    ?(heatPanelW>=150&&heatPanelUsable&&gridFitsWithPanel)
+    ?(heatPanelW>=150&&heatPanelUsable)
     :(hasSplit&&!fitAll&&rawPanelW>=150);
   const kitShownAsPanel=hasPanel&&deptSidePanel!=="hall";
   const hallShownAsPanel=hasPanel&&deptSidePanel!=="kit"&&hasSplit;
