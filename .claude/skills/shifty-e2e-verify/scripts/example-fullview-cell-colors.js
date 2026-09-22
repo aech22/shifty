@@ -125,14 +125,21 @@ const MEASURE = () => {
   const verdict = {
     // 通常表示では td の色が帯として見えている（対照）
     normalShowsTdBand: normal.every(r => r.bandX >= 2 && r.bandY >= 2),
-    // 全表示でも同じ規則で見えること（＝受け入れ条件）。現状これが false。
-    fullShowsTdBand: full.every(r => r.bandX >= 2 && r.bandY >= 2),
+    // 全表示でも同じ規則で見えること。**帯だけを見ると偽陰性になる**——全表示には
+    // td の色をセル全面に透かす方式（input の背景を透明にする・?fvcolor=fill）があり、
+    // その場合は帯が0でも td の色は見えている。受け入れ条件は「td の色が見えるか」なので
+    // 「帯がある」か「input が透明」かのどちらかを満たせば可とする。
+    fullShowsTdColor: full.every(r =>
+      (r.bandX >= 2 && r.bandY >= 2) || /rgba\([^)]*,\s*0\)$/.test(r.inputBg || "")),
+    // 参考値（どちらの方式で出しているかの内訳。判定には使わない）
+    fullMode: full.every(r => /rgba\([^)]*,\s*0\)$/.test(r.inputBg || "")) ? "fill(input透明)"
+      : full.every(r => r.bandX >= 2 && r.bandY >= 2) ? "edge(帯)" : "色が出ていない",
     // td 以外に出る色（スタッフ名・日付文字）は全表示でも再現されている
     staffNameColorKept: full.every(r => r.staffNameColorRed === "rgb(229, 57, 53)"),
     weekendDateTextKept: full.every(r => /rgb\(25, 118, 210\)|rgb\(229, 57, 53\)/.test(r.weekendDateTextColor || "")),
     noConsoleErrors: results.every(r => r.errors === 0),
   };
-  verdict.allPass = Object.values(verdict).every(v => v === true);
+  verdict.allPass = Object.entries(verdict).every(([k, v]) => k === "fullMode" || v === true);
   console.log(JSON.stringify({ results, verdict }, null, 2));
   process.exitCode = verdict.allPass ? 0 : 1;
 })().catch(e => { console.error("FATAL", e); process.exit(1); });
