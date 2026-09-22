@@ -279,14 +279,14 @@ function HeatTable({label,section,maxC,rowH,theadH,sectionLabel,dates,heatHours,
 // 空列を足す。グリッドが [日付][スタッフ×n][日付] になるので、こちらも [ラベル][スタッフ×n][空] に
 // 揃えないとスタッフ列が横にずれる。**休みカウント表はスタッフ名のヘッダを持たず列位置だけで
 // 誰の数字かを示している**ので、ずれると読めなくなる。
-function SummaryTable({title,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols,spacerTh,spacerCell,colW,VTH,labelW=90,fullView=false}){
+function SummaryTable({title,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols,spacerTh,spacerCell,colW,VTH,labelW=90,fullView=false,tableW=null}){
   const BD="1px solid var(--c-border)",BD2="1px solid var(--c-border2)",CRD="var(--c-card)";
   const fmtH4=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;if(h>=100)return String(h);return m===0?String(h):`${h}:${String(m).padStart(2,"0")}`;};
   return(
     <div style={{marginBottom:16}}>
       <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>{title}</div>
-      <div ref={scrollRef} onScroll={onScroll} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8}}>
-        <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
+      <div ref={scrollRef} onScroll={onScroll} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,...(fullView?{width:"fit-content",marginLeft:"auto",marginRight:"auto"}:{})}}>
+        <table style={{borderCollapse:"collapse",width:fullView&&tableW?tableW:(fitAll?"100%":"unset"),minWidth:fitAll?"unset":"max-content"}}>
           <thead><tr>
             <th style={{...(fullView?{boxSizing:"border-box"}:{position:"sticky",left:0,zIndex:2}),background:CRD,padding:0,fontSize:11,fontWeight:600,borderBottom:BD2,width:labelW,minWidth:labelW,maxWidth:labelW}}><div style={{width:labelW,padding:fullView?"2px 2px":"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{rowLabel}</div></th>
             {mapGridCols(name=>VTH(name),spacerTh)}
@@ -1197,14 +1197,24 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const fvAvailW=Math.max(320,centerW-8);
   const fvAvailH=Math.max(200,(gridTop!=null?window.innerHeight-gridTop:Math.round(window.innerHeight*0.72))-8);
   const fvNameH=Math.min(72,Math.max(24,Math.round(fvAvailH*0.12)));  // 縦書きスタッフ名の高さ
+  // thead は tr に height を明示して高さを確定させる（明示しないと中身なりの高さになり、予約とズレる）。
+  // 行高は**小数のまま**使う。整数に丸めると1px刻みでしか調整できず、収まる最大値を1px下回った時点で
+  // 行数ぶん（31日なら62px）まとめて捨てることになる。
+  // 差し引く 0.5 は border-collapse の分け合うボーダー。実測で1行あたり指定値+0.5pxになる。
+  // さらに 6px は枠線(2px)と丸め誤差のための安全代（実測: これが無いと4pxはみ出す）。
   const fvTheadH=fvNameH+10;
-  const fvRowH=Math.max(6,Math.floor((fvAvailH-fvTheadH)/Math.max(1,dates.length*2)));
-  const fvFont=Math.max(5,Math.min(16,fvRowH-2));     // 2週間期間なら16pxのまま収まる。1ヶ月期間は一桁まで落ちる
-  const fvDateFont=Math.max(7,Math.min(13,fvRowH*2-4));
+  const fvRowH=Math.max(6,(fvAvailH-6-fvTheadH)/Math.max(1,dates.length*2)-0.5);
+  const fvFont=Math.max(5,Math.min(16,Math.floor(fvRowH)-2));  // 2週間期間なら16pxのまま収まる。1ヶ月期間は一桁まで落ちる
+  const fvDateFont=Math.max(7,Math.min(13,Math.floor(fvRowH*2)-4));
   // 全表示では border-box に揃える。既定の content-box のままだと padding のぶん実幅が式より
   // 広くなり（日付列+8px・スタッフ列+4px/列）、overflowX:"hidden" と相まって右端が黙って切れる。
-  const colW=fullView?Math.max(12,Math.floor((fvAvailW-fvDateW*2)/Math.max(1,gridStaff.length)))
+  // スタッフが少なくても列は引き伸ばさない。**上限は通常表示と同じ39px**にして、余った幅は
+  // 引き伸ばしではなく左右の余白にする（表自体は中央寄せ・2026-09-23 ユーザー指示）。
+  const colW=fullView?Math.max(12,Math.min(39,Math.floor((fvAvailW-fvDateW*2)/Math.max(1,gridStaff.length))))
     :fitAll?Math.max(24,Math.floor((centerW-90)/Math.max(1,gridStaff.length))):39;
+  // 全表示の表の実幅。グリッド・休みカウント表・集計表がこの同じ幅で中央に並ぶので列位置が揃う。
+  const fvTableW=fvDateW*2+colW*gridStaff.length;
+  const fvCenter=fullView?{width:"fit-content",marginLeft:"auto",marginRight:"auto"}:{};
   // boxSizing は全表示のときだけ border-box にする。無条件に入れると通常表示・本番の「全員表示」でも
   // 列幅が padding のぶん狭くなる（実測 43px→39px）＝Dev限定の約束を破るため。
   const BOXS=fullView?"border-box":undefined;
@@ -1832,10 +1842,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
           {/* ===メイングリッド（SL列廃止・日付のみstickyで15名対応）=== */}
           {/* overflowXが"auto"だとoverflowYも暗黙にautoへ昇格し、maxHeightがないと内部スクロールが発生せずposition:stickyのtopが機能しない。名前行を画面上端に固定するためmaxHeightで実スクロール領域にする */}
-          <div ref={mainScrollRef} onScroll={e=>{syncScrollH(e.currentTarget);syncScrollV(e.currentTarget);}} style={{overflowX:fitAll?"hidden":"auto",overflowY:"auto",maxHeight:fullView?fvAvailH:"70vh",border:BD,borderRadius:8,marginBottom:16}}>
-            <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
+          <div ref={mainScrollRef} onScroll={e=>{syncScrollH(e.currentTarget);syncScrollV(e.currentTarget);}} style={{overflowX:fitAll?"hidden":"auto",overflowY:"auto",maxHeight:fullView?fvAvailH:"70vh",border:BD,borderRadius:8,marginBottom:16,...fvCenter}}>
+            <table style={{borderCollapse:"collapse",width:fullView?fvTableW:(fitAll?"100%":"unset"),minWidth:fitAll?"unset":"max-content"}}>
               <thead ref={gridTheadRef}>
-                <tr>
+                <tr style={fullView?{height:fvTheadH}:undefined}>
                   <th style={{...SD,...(fullView?{}:{top:0,zIndex:4,padding:"4px"}),fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>
                   {mapGridCols(name=>VTH(name,true),key=>spacerTh(key,true))}
                   {fullView&&<th style={{...SDR,fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>}
@@ -1910,8 +1920,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           )}
 
           {/* === 休みカウント / 連勤カウント === */}
-          <div ref={restScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16}}>
-            <table style={{borderCollapse:"collapse",width:fitAll?"100%":"unset",minWidth:fitAll?"unset":"max-content"}}>
+          <div ref={restScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16,...fvCenter}}>
+            <table style={{borderCollapse:"collapse",width:fullView?fvTableW:(fitAll?"100%":"unset"),minWidth:fitAll?"unset":"max-content"}}>
               {/* 全表示ではラベル列がグリッドの日付列と同じ45pxまで詰まるので、省略記号で消えないよう
                   短い見出しに差し替える（title属性に元の見出しを残す）。右端にも同幅の空列を足して
                   スタッフ列の位置をグリッドと揃える。**この表はスタッフ名のヘッダを持たないので、
@@ -1950,7 +1960,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           </div>}
 
           {/* ===期間別勤務時間（前半/後半/月計を常に3行）=== */}
-          <SummaryTable title="期間別勤務時間" rowLabel="期間" scrollRef={periodScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} rows={periodRows} fitAll={fitAll} mapGridCols={mapGridCols} spacerTh={spacerTh} spacerCell={spacerCell} colW={colW} VTH={VTH} labelW={fullView?fvDateW:90} fullView={fullView}/>
+          <SummaryTable title="期間別勤務時間" rowLabel="期間" scrollRef={periodScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} rows={periodRows} fitAll={fitAll} mapGridCols={mapGridCols} spacerTh={spacerTh} spacerCell={spacerCell} colW={colW} VTH={VTH} labelW={fullView?fvDateW:90} fullView={fullView} tableW={fvTableW}/>
 
           {/* ===週間勤務時間=== */}
           {weeks.length>0&&<SummaryTable
@@ -1961,6 +1971,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             fitAll={fitAll}
             labelW={fullView?fvDateW:90}
             fullView={fullView}
+            tableW={fvTableW}
             mapGridCols={mapGridCols}
             spacerTh={spacerTh}
             spacerCell={spacerCell}
