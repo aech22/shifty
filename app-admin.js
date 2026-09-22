@@ -1201,22 +1201,25 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // （2026-09-23 ユーザー指示）。2枚並びを基準に、通常表示の幅の半分（gap 10px を引く）で固定する。
   // 絞り込み無しの通常表示の横パネルだけは従来どおり左余白の幅のまま（既存の見た目を変えないため）。
   const heatBelowW=normalW?Math.floor((normalW-10)/2):null;
-  const heatPanelW=(deptSidePanel&&heatBelowW)?heatBelowW:rawPanelW;
+  // 絞り込み中の横パネルの幅。**スタッフの全表示を最優先**し、グリッドが必要な幅を先に確保してから、
+  // 余った幅をヒートマップに回す（2026-09-23 ユーザー指示）。ただし下に出すときと同じ幅を上限にして、
+  // それ以上には広げない。+32 はグリッド枠の border・flex の gap と左右 padding・丸め（実測）。
+  const gridNeedW=90+39*Math.max(1,gridStaff.length)+32;
+  const heatLeftoverW=Math.max(0,viewW-24-gridNeedW);
+  const heatPanelW=deptSidePanel
+    ?Math.min(heatBelowW||rawPanelW,heatLeftoverW)
+    :rawPanelW;
   const HEAT_MIN_HOURW=9;
   const heatHourCount=Math.max(1,heatHours.length);
   const heatInnerW=heatPanelW-52-8;              // 日付列52pxと枠線を引いた、時間帯に使える幅
   const heatFitsAll=heatInnerW>=HEAT_MIN_HOURW*heatHourCount;
   const heatVisibleHours=Math.max(0,Math.floor(heatInnerW/22)); // スクロール時に一度に見える時間数
-  // **4時間ぶん出せるならセルの横（横パネル）、3時間以下になるなら下へ回す**（2026-09-23 ユーザー指示）。
+  // **3時間ぶん出せるならセルの横（横パネル）、2時間以下になるなら下へ回す**（2026-09-23 ユーザー指示）。
   // 下へ回したときは全表示と同じく両方のヒートマップを並べる。
-  const HEAT_PANEL_MIN_HOURS=4;
+  const HEAT_PANEL_MIN_HOURS=3;
   const heatPanelUsable=heatFitsAll||heatVisibleHours>=HEAT_PANEL_MIN_HOURS;
-  // **人数が多くても横パネルは下ろさない**（2026-09-23 ユーザー指示。セルとヒートマップの大きさを
-  // 維持したままセルの横に出す）。横パネルを置くとスタッフが入りきらない場合は、パネルを下ろすのでも
-  // 幅を縮めるのでもなく、**グリッド側を横スクロールさせる**。置き場を決めるのは上の時間帯の条件だけ。
-  const hasPanel=deptSidePanel
-    ?(heatPanelW>=150&&heatPanelUsable)
-    :(hasSplit&&!fitAll&&rawPanelW>=150);
+  // 余った幅で4時間ぶんも出せないならセルの横をあきらめて下へ回す（時間帯の条件だけで決める）。
+  const hasPanel=deptSidePanel?heatPanelUsable:(hasSplit&&!fitAll&&rawPanelW>=150);
   const kitShownAsPanel=hasPanel&&deptSidePanel!=="hall";
   const hallShownAsPanel=hasPanel&&deptSidePanel!=="kit"&&hasSplit;
   const kitBelow=!kitShownAsPanel;
@@ -1241,10 +1244,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     marginLeft:centerColLeft!=null?Math.round((viewW-normalW)/2-centerColLeft):0,
   }:{};
   // === 全表示（新レイアウト）===
-  // **DEV_MODE でのみ有効**（2026-09-23 ユーザー指示「一旦Devのみで表示して」）。本番（shiftyshifty.app）は
-  // 従来の「全員表示」＝横だけを画面幅に収める挙動のまま1バイトも変わらない。本番へ出すときはこの
-  // 1行の条件を外す（DEV_MODE は app-core.js でホスト名から自動判定される）。
-  const fullView=fitAll&&DEV_MODE;
+  // 2026-09-23 に本番解放（それまでは `fitAll&&DEV_MODE` で Dev 限定にしていた）。
+  const fullView=fitAll;
   // レイアウトは毎レンダーの割り算だけで決める（都度計算）。DOM計測は gridTop の1つだけで、
   // その値はここの出力に依存しないため測り直しのループが起きない。
   const fvDateW=45;                                   // 両端の日付列。fmtDL の "31(土)"＝半角4+全角1 が収まる幅
@@ -1288,7 +1289,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 全表示の表の実幅。グリッド・休みカウント表・集計表がこの同じ幅で中央に並ぶので列位置が揃う。
   const fvTableW=fvDateW*2+colW*gridStaff.length;
   const fvCenter=fullView?{width:"fit-content",marginLeft:"auto",marginRight:"auto"}:{};
-  // boxSizing は全表示のときだけ border-box にする。無条件に入れると通常表示・本番の「全員表示」でも
+  // boxSizing は全表示のときだけ border-box にする。無条件に入れると通常表示でも
   // 列幅が padding のぶん狭くなる（実測 43px→39px）＝Dev限定の約束を破るため。
   // 絞り込み表示（キッチン/ホールのみ）も border-box にする。content-box のままだと
   // gridContentW=90+colW×人数 が padding を勘定せず、**最後のスタッフ列が6pxほど切れる**。
@@ -1300,7 +1301,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const mapGridCols=(renderFn,spacerFn)=>gridStaff.map((name,i)=>isSpacer(name)?spacerFn(`sp${i}`):renderFn(name,i));
   // キッチン/ホール絞り込み表示（片側パネルのみ）時: ヒートマップ+グリッドの塊が画面に収まるなら画面中央に配置する。
   // 収まらない場合は現状どおりパネルを端に固定しグリッドを残り幅いっぱいに広げる（flex:1、内部は横スクロール）。
-  // fitAll（全表示／本番では全員表示）時はグリッド自体が既にcenterWいっぱいに広がる設計のため対象外。
+  // fitAll（全表示）時はグリッド自体が既にcenterWいっぱいに広がる設計のため対象外。
   const singlePanel=panelCount===1&&!fitAll;
   // +6 は枠線と丸めの実測分。これが無いと、グリッドを中央寄せする経路（片側パネル＋収まる幅）で
   // **最後のスタッフ列が6px切れる**（2026-09-23 実測。3名でも28名でも同じ6px）。
@@ -1841,7 +1842,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPremium?("例: 9, 9.5, 930, 9:30"+(Object.keys(abbrToShop).length>0?" / 略称でヘルプ（例: 9三）":"")):"閲覧のみ（編集はPremiumプランで）"}</span>
         <button onClick={()=>{setFitAll(v=>!v);setDeptFilter("all");}}
           style={{padding:"5px 10px",background:fitAll?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
-          {fitAll?"通常表示":(DEV_MODE?"全表示":"全員表示")}
+          {fitAll?"通常表示":"全表示"}
         </button>
         {hasSplit&&<button onClick={()=>{setDeptFilter(f=>f==="kit"?"all":"kit");setFitAll(false);}}
           style={{padding:"5px 10px",background:deptFilter==="kit"?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
