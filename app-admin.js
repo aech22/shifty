@@ -243,28 +243,32 @@ const HDASH_IMG=`url("data:image/svg+xml;charset=utf-8,${encodeURIComponent("<sv
 // 時間帯別出勤人数（ヒートマップ）。ShiftEditTab の外（モジュールスコープ）で定義しコンポーネント型を固定する。
 // ShiftEditTab内で定義すると親の再レンダー（セル選択等）のたびに新しい関数=新しい型になり、
 // Reactが毎回このサブツリーをアンマウント→再マウントしてスクロール位置がリセットされてしまうため。
-function HeatTable({label,section,maxC,rowH,theadH,sectionLabel,dates,heatHours,countHeat,hBg,scrollRef,onScroll,maxH}){
+// fitHours を立てると **横スクロールを無くして全時間帯を幅いっぱいに割り付ける**
+// （キッチン/ホール絞り込み時・2026-09-23 ユーザー指示）。px を計算せず table-layout:fixed に
+// 割らせるので、横パネル（幅が containerLeft 依存）でもグリッド下（flex:1）でも同じ1本で効く。
+// 渡さなければ従来どおり1列22pxの最小幅で、入りきらない分は横スクロールになる。
+function HeatTable({label,section,maxC,rowH,theadH,sectionLabel,dates,heatHours,countHeat,hBg,scrollRef,onScroll,maxH,fitHours,fixedW}){
   const BD="1px solid var(--c-border)",BD2="1px solid var(--c-border2)",CRD="var(--c-card)";
   const fmtDL=date=>{const d=pd(date);return`${d.getDate()}(${WD[d.getDay()]})`;};
   // maxH指定時（サイドパネル）: グリッドと同じ高さの縦スクロール領域にし、ヘッダーをsticky固定して日付行の位置を揃える
   return(
-    <div ref={scrollRef} onScroll={onScroll} style={{overflowX:"auto",...(maxH?{overflowY:"auto",maxHeight:maxH}:{}),border:BD,borderRadius:8,flex:rowH?undefined:1,minWidth:rowH?undefined:200}}>
+    <div ref={scrollRef} onScroll={onScroll} style={{overflowX:fitHours?"hidden":"auto",...(maxH?{overflowY:"auto",maxHeight:maxH}:{}),border:BD,borderRadius:8,...(fixedW?{flex:"0 0 auto",width:fixedW,minWidth:fixedW,maxWidth:fixedW}:{flex:rowH?undefined:1,minWidth:rowH?undefined:200})}}>
       {label&&<div style={{fontSize:12,fontWeight:700,padding:"4px 8px",borderBottom:BD,color:"var(--c-text2)"}}>{label}</div>}
-      <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
+      <table style={{borderCollapse:"collapse",minWidth:fitHours?"unset":"max-content",width:fitHours?"100%":undefined,tableLayout:fitHours?"fixed":undefined}}>
         <thead><tr style={theadH?{height:theadH}:{}}>
-          <th style={{position:"sticky",left:0,...(maxH?{top:0,zIndex:3}:{zIndex:2}),background:CRD,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,whiteSpace:"nowrap",verticalAlign:"bottom"}}>
+          <th style={{position:"sticky",left:0,...(maxH?{top:0,zIndex:3}:{zIndex:2}),background:CRD,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,...(fitHours?{width:52,maxWidth:52,boxSizing:"border-box"}:{}),whiteSpace:"nowrap",verticalAlign:"bottom"}}>
             {sectionLabel&&<div style={{fontSize:10,fontWeight:700,color:"var(--c-text2)",marginBottom:4}}>{sectionLabel}</div>}
             日付
           </th>
-          {heatHours.map(hr=><th key={hr} style={{minWidth:22,padding:"2px 1px",fontSize:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500,verticalAlign:"bottom",...(maxH?{position:"sticky",top:0,zIndex:2}:{})}}>{hr}</th>)}
+          {heatHours.map(hr=><th key={hr} style={{minWidth:fitHours?0:22,boxSizing:fitHours?"border-box":undefined,padding:fitHours?"2px 0":"2px 1px",fontSize:fitHours?9:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500,verticalAlign:"bottom",...(maxH?{position:"sticky",top:0,zIndex:2}:{})}}>{hr}</th>)}
         </tr></thead>
         <tbody>{dates.map(date=>{
           const d=pd(date);const day=d.getDay();const isHol=isHoliday(date);
           const dc=(day===0||isHol)?"#e53935":day===6?"#1976d2":"var(--c-text)";
           return(<tr key={date} style={rowH?{height:rowH}:{}}>
-            <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:15,fontWeight:600,color:dc,borderBottom:BD,whiteSpace:"nowrap",verticalAlign:"middle"}}>{fmtDL(date)}</td>
+            <td style={{position:"sticky",left:0,background:CRD,zIndex:1,padding:"2px 6px",fontSize:15,fontWeight:600,color:dc,borderBottom:BD,...(fitHours?{width:52,minWidth:52,maxWidth:52,boxSizing:"border-box",fontSize:13}:{}),whiteSpace:"nowrap",verticalAlign:"middle"}}>{fmtDL(date)}</td>
             {heatHours.map((hr,hi)=>{const n=countHeat(section,date,hr);return(
-              <td key={hi} style={{minWidth:22,padding:"2px 1px",textAlign:"center",fontSize:11,borderLeft:BD,borderBottom:BD,background:hBg(n,maxC),color:n===0?"var(--c-text4)":"var(--c-text)",fontWeight:n>0?600:400,verticalAlign:"middle"}}>{n||""}</td>
+              <td key={hi} style={{minWidth:fitHours?0:22,boxSizing:fitHours?"border-box":undefined,padding:fitHours?"2px 0":"2px 1px",textAlign:"center",fontSize:fitHours?10:11,borderLeft:BD,borderBottom:BD,background:hBg(n,maxC),color:n===0?"var(--c-text4)":"var(--c-text)",fontWeight:n>0?600:400,verticalAlign:"middle"}}>{n||""}</td>
             );})}
           </tr>);
         })}</tbody>
@@ -398,6 +402,14 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // **行高・フォントの計算結果はここへ戻らない**ので measuredRowH と違い再計測ループにならない
   // （グリッドの上端は自分の高さではなく上に積まれた要素だけで決まる）。
   const[gridTop,setGridTop]=useState(null);
+  // 通常表示のときの中央カラム幅。全表示・絞り込み中はグリッドだけを画面幅いっぱいに広げ、
+  // 不足情報・ヒートマップ・操作方法は**この幅のまま**据え置く（2026-09-23 ユーザー指示）。
+  const[normalW,setNormalW]=useState(null);
+  // 中央カラムの画面上の左端。全表示・絞り込みで親の位置が変わる（fitsCentered の中央寄せ・
+  // 横パネル・スクロールバー）ので、**式で当てずに実測する**。出力（ブロックの幅）はこの値に
+  // 依存しないので測り直しのループにならない。
+  const centerColRef=useRef(null);
+  const[centerColLeft,setCenterColLeft]=useState(null);
 
   const isPremium=plan==="premium";
 
@@ -478,6 +490,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         const rect=outerRef.current.getBoundingClientRect();
         setContainerLeft(rect.left);
         setContainerW(window.innerWidth-16);
+        // outerRef はブレイクアウトの外側なので、全表示・絞り込み中でも通常表示の幅のまま
+        if(rect.width>0)setNormalW(Math.round(rect.width));
       }
     };
     update();
@@ -1161,21 +1175,14 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const BD="1px solid var(--c-border)";const BD2="1px solid var(--c-border2)";const CRD="var(--c-card)";
   // サイドパネル: 通常表示+split時かつ左右に十分な余白があるPC幅のみ（携帯・タブレットではグリッド下に表示）
   const hasSplit=hallStaff.length>0;
+  // **縦スクロールバーの幅を含まない**表示幅。window.innerWidth はバーを含むので、
+  // それで幅を割り振ると実測で6pxほど足りず最後の列が切れる（2026-09-23 実測）。
+  const viewW=(document.documentElement&&document.documentElement.clientWidth)||window.innerWidth;
   const rawPanelW=Math.max(0,containerLeft-4);
   // キッチン/ホール絞り込み中は絞り込んだ側のみ横パネル候補にする（もう一方は常にグリッド下）
   const deptSidePanel=deptFilter==="kit"?"kit":deptFilter==="hall"?"hall":null;
-  const hasPanel=deptSidePanel?rawPanelW>=150:(hasSplit&&!fitAll&&rawPanelW>=150);
-  const kitShownAsPanel=hasPanel&&deptSidePanel!=="hall";
-  const hallShownAsPanel=hasPanel&&deptSidePanel!=="kit"&&hasSplit;
-  const kitBelow=!kitShownAsPanel;
-  const hallBelow=hasSplit&&!hallShownAsPanel;
-  const useBreakout=hasPanel||fitAll;
-  const panelW=hasPanel?rawPanelW:0;
-  const panelCount=(kitShownAsPanel?1:0)+(hallShownAsPanel?1:0);
   // 熱マップ行高: 計測値があれば使う、なければフォールバック
   const heatRowH=measuredRowH||48;
-  // 中央グリッド幅 = ブレイクアウト時はビューポート幅 - パネル分
-  const centerW=useBreakout?(window.innerWidth-panelW*panelCount-24):containerW;
   // キッチン/ホール絞り込み時の追加表示スタッフ: 相手グループでも該当サフィックス(k/h)が
   // 期間内のどこかのシフトに付いていればヘルプ要員として表示に含める
   const kitchenGroup=realStaff.filter(n=>!hallStaff.includes(n));
@@ -1186,6 +1193,56 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const gridStaff=deptFilter==="kit"?realStaff.filter(n=>!hallStaff.includes(n)||kitExtraSet.has(n))
     :deptFilter==="hall"?realStaff.filter(n=>hallStaff.includes(n)||hallExtraSet.has(n))
     :staffList;
+  // === 横パネルを使うか・ヒートマップの時間帯をどう出すか ===
+  // **ヒートマップの幅は常に通常表示と同じ（rawPanelW）に固定する**（2026-09-23 ユーザー指示）。
+  // スタッフ数に応じて伸縮させない。その固定幅のまま「全時間帯を詰めて出す」か「横スクロールする」かを
+  // 切り替える。1列9px を確保できるなら詰めて全部出し、足りなければ従来どおり22px幅でスクロールする。
+  // ヒートマップ1枚の幅。**置き場所（セルの横の横パネル／グリッド下）によらず同じ幅**にする
+  // （2026-09-23 ユーザー指示）。2枚並びを基準に、通常表示の幅の半分（gap 10px を引く）で固定する。
+  // 絞り込み無しの通常表示の横パネルだけは従来どおり左余白の幅のまま（既存の見た目を変えないため）。
+  const heatBelowW=normalW?Math.floor((normalW-10)/2):null;
+  const heatPanelW=(deptSidePanel&&heatBelowW)?heatBelowW:rawPanelW;
+  const HEAT_MIN_HOURW=9;
+  const heatHourCount=Math.max(1,heatHours.length);
+  const heatInnerW=heatPanelW-52-8;              // 日付列52pxと枠線を引いた、時間帯に使える幅
+  const heatFitsAll=heatInnerW>=HEAT_MIN_HOURW*heatHourCount;
+  const heatVisibleHours=Math.max(0,Math.floor(heatInnerW/22)); // スクロール時に一度に見える時間数
+  // **4時間ぶん出せるならセルの横（横パネル）、3時間以下になるなら下へ回す**（2026-09-23 ユーザー指示）。
+  // 下へ回したときは全表示と同じく両方のヒートマップを並べる。
+  const HEAT_PANEL_MIN_HOURS=4;
+  const heatPanelUsable=heatFitsAll||heatVisibleHours>=HEAT_PANEL_MIN_HOURS;
+  // あわせて、横パネルを置くとスタッフが横スクロールしてしまう場合も横パネルを使わない。
+  // **幅を縮めるのではなくパネルごと下へ回す**ことで、幅の固定とスタッフ全表示を両立させる。
+  // +32 の内訳（実測 2026-09-23・1400px/縦バーあり）: グリッド枠の border 2px、flex コンテナの
+  // gap 4px と左右 padding 16px、そして丸め誤差。
+  const gridNeedW=90+39*Math.max(1,gridStaff.length)+32;
+  const gridFitsWithPanel=(viewW-24-heatPanelW)>=gridNeedW;
+  const hasPanel=deptSidePanel
+    ?(heatPanelW>=150&&heatPanelUsable&&gridFitsWithPanel)
+    :(hasSplit&&!fitAll&&rawPanelW>=150);
+  const kitShownAsPanel=hasPanel&&deptSidePanel!=="hall";
+  const hallShownAsPanel=hasPanel&&deptSidePanel!=="kit"&&hasSplit;
+  const kitBelow=!kitShownAsPanel;
+  const hallBelow=hasSplit&&!hallShownAsPanel;
+  // 絞り込み中は横パネルの有無にかかわらず画面幅を使う。パネルを下へ回したときに通常幅へ戻ると、
+  // せっかく空けた幅をグリッドが使えず**28名で332pxの横スクロールに戻る**（実測）。
+  const useBreakout=hasPanel||fitAll||deptFilter!=="all";
+  const panelCount=(kitShownAsPanel?1:0)+(hallShownAsPanel?1:0);
+  const panelW=hasPanel?heatPanelW:0;
+  const fitHeatHoursPanel=deptFilter!=="all"&&heatFitsAll;
+  // グリッド下のヒートマップは中央幅いっぱいを使えるので、絞り込み中は常に全時間帯を出す。
+  const fitHeatHoursBelow=deptFilter!=="all";
+  // 中央グリッド幅 = ブレイクアウト時はビューポート幅 - パネル分
+  const centerW=useBreakout?(viewW-panelW*panelCount-24):containerW;
+  // 不足情報・ヒートマップ・操作方法は、全表示でも絞り込み中でも**通常表示の幅のまま**据え置く。
+  // 広げてよいのはシフト表のグリッドと、それに列を揃える集計表だけ（2026-09-23 ユーザー指示）。
+  // **maxWidth では足りない**——親（中央カラム）が横パネルのぶん狭くなると一緒に縮んでしまう。
+  // 幅を実値で固定したうえで、画面中央に戻す（従来どおりの中央揃え）。親の左端は
+  // ブレイクアウトの padding 8px ＋ 左パネル（キッチン側）なので、その分を marginLeft で打ち消す。
+  const NORMAL_W=(useBreakout&&normalW)?{
+    width:normalW,maxWidth:"none",boxSizing:"border-box",marginRight:0,
+    marginLeft:centerColLeft!=null?Math.round((viewW-normalW)/2-centerColLeft):0,
+  }:{};
   // === 全表示（新レイアウト）===
   // **DEV_MODE でのみ有効**（2026-09-23 ユーザー指示「一旦Devのみで表示して」）。本番（shiftyshifty.app）は
   // 従来の「全員表示」＝横だけを画面幅に収める挙動のまま1バイトも変わらない。本番へ出すときはこの
@@ -1203,8 +1260,27 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 差し引く 0.5 は border-collapse の分け合うボーダー。実測で1行あたり指定値+0.5pxになる。
   // さらに 6px は枠線(2px)と丸め誤差のための安全代（実測: これが無いと4pxはみ出す）。
   const fvTheadH=fvNameH+10;
-  const fvRowH=Math.max(6,(fvAvailH-6-fvTheadH)/Math.max(1,dates.length*2)-0.5);
-  const fvFont=Math.max(5,Math.min(16,Math.floor(fvRowH)-2));  // 2週間期間なら16pxのまま収まる。1ヶ月期間は一桁まで落ちる
+  // **1画面に収めるのは2週間ぶんまで**（2026-09-23 ユーザー指示）。1ヶ月の期間を選んでいても
+  // 行高は2週間ぶんで決め、はみ出す日は縦スクロールで見る。こうしないと1ヶ月×30名で
+  // セルのフォントが下限の5pxまで落ちて時刻が読めなくなる（実測）。
+  // 16日なのは Shifty の「2週間」期間が半月単位＝最長16日（16日〜月末）だから。
+  const FV_MAX_DAYS=16;
+  const fvFitDays=Math.max(1,Math.min(dates.length,FV_MAX_DAYS));
+  // 2週間ぶんに収める結果、1ヶ月の期間では縦スクロールが起きる。**そのときだけスタッフ名の行を
+  // 上端に固定する**（2026-09-23 ユーザー指示）。固定しないと下へスクロールした時点でどの列が
+  // 誰か分からなくなる。全部が1画面に収まる期間（16日以下）では固定しない＝当初の指示どおり。
+  const fvScrolls=fullView&&dates.length>FV_MAX_DAYS;
+  const fvRowH=Math.max(6,(fvAvailH-6-fvTheadH)/(fvFitDays*2)-0.5);
+  // 全表示のセル色の出し方。通常表示は input が td より一回り小さく、**周囲に見える td の帯**で
+  // 土日祝の行色とポジション不足の黄色を見せている。全表示では input が td を覆い切るので
+  // この2色が画面から消える（バグチェック#141 の実測: 通常表示 7px/4.5px → 全表示 0px/0.5px）。
+  // 2案（fill＝input を透明にして td の色をセル全面に出す／edge＝input を一回り小さくして通常表示と
+  // 同じ帯で見せる）を実装して見比べ、**2026-09-23 に fill で確定**した。edge は通常表示と見た目が
+  // 揃う代わりに行高を4px使いフォントが落ちる（実測: 15日×30名で16px→12px）ため採らない。
+  const fvEdge=false;
+  const fvInnerH=fvRowH;
+  // 出勤・退勤セルの文字は行高から出した値より **さらに2px小さく**する（2026-09-23 ユーザー指示）。
+  const fvFont=Math.max(5,Math.min(16,Math.floor(fvInnerH)-2)-2);
   const fvDateFont=Math.max(7,Math.min(13,Math.floor(fvRowH*2)-4));
   // 全表示では border-box に揃える。既定の content-box のままだと padding のぶん実幅が式より
   // 広くなり（日付列+8px・スタッフ列+4px/列）、overflowX:"hidden" と相まって右端が黙って切れる。
@@ -1217,30 +1293,38 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const fvCenter=fullView?{width:"fit-content",marginLeft:"auto",marginRight:"auto"}:{};
   // boxSizing は全表示のときだけ border-box にする。無条件に入れると通常表示・本番の「全員表示」でも
   // 列幅が padding のぶん狭くなる（実測 43px→39px）＝Dev限定の約束を破るため。
-  const BOXS=fullView?"border-box":undefined;
+  // 絞り込み表示（キッチン/ホールのみ）も border-box にする。content-box のままだと
+  // gridContentW=90+colW×人数 が padding を勘定せず、**最後のスタッフ列が6pxほど切れる**。
+  // 列幅は 43px→39px（＝指定どおり）に変わる。
+  const BOXS=(fullView||deptFilter!=="all")?"border-box":undefined;
   const spacerCell=(key)=>(<td key={key} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,borderLeft:BD2,background:"var(--c-input2, var(--c-input))",padding:0}}></td>);
-  const spacerTh=(key,sticky=false)=>(<th key={key} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,borderLeft:BD2,background:"var(--c-input2, var(--c-input))",padding:0,...(sticky&&!fullView?{position:"sticky",top:0,zIndex:3}:{})}}></th>);
+  const spacerTh=(key,sticky=false)=>(<th key={key} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,borderLeft:BD2,background:"var(--c-input2, var(--c-input))",padding:0,...(sticky&&(!fullView||fvScrolls)?{position:"sticky",top:0,zIndex:3}:{})}}></th>);
   // gridStaffを列描画: spacer位置はspacerFnで空セル、実スタッフはrenderFnで描画
   const mapGridCols=(renderFn,spacerFn)=>gridStaff.map((name,i)=>isSpacer(name)?spacerFn(`sp${i}`):renderFn(name,i));
   // キッチン/ホール絞り込み表示（片側パネルのみ）時: ヒートマップ+グリッドの塊が画面に収まるなら画面中央に配置する。
   // 収まらない場合は現状どおりパネルを端に固定しグリッドを残り幅いっぱいに広げる（flex:1、内部は横スクロール）。
   // fitAll（全表示／本番では全員表示）時はグリッド自体が既にcenterWいっぱいに広がる設計のため対象外。
   const singlePanel=panelCount===1&&!fitAll;
-  const gridContentW=90+colW*gridStaff.length;
-  const fitsCentered=singlePanel&&(panelW+4+gridContentW+24)<=window.innerWidth;
+  // +6 は枠線と丸めの実測分。これが無いと、グリッドを中央寄せする経路（片側パネル＋収まる幅）で
+  // **最後のスタッフ列が6px切れる**（2026-09-23 実測。3名でも28名でも同じ6px）。
+  const gridContentW=90+colW*gridStaff.length+6;
+  const fitsCentered=singlePanel&&(panelW+4+gridContentW+24)<=viewW;
   // 全表示では枠・角丸・paddingを外して高さを行高ちょうどに固定する（行高が決定的になり縦の計算が当たる）。
   // fontSize が16pxを下回るのは全表示のセルだけ。RULES.md の16px規約に対する**明示的な例外**で、
   // 2026-09-23 にユーザーが「全表示の際、フォントの縮小はok」と決めた（編集は維持する）。
   // iOS/iPadOSでは全表示のセルをタップするとフォーカス時に自動ズームが起きる。
   const AI2=fullView
-    ?{width:"100%",height:fvRowH,display:"block",fontSize:fvFont,lineHeight:fvRowH+"px",border:"none",borderRadius:0,padding:0,background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"}
+    ?{width:fvEdge?"calc(100% - 6px)":"100%",height:fvInnerH,display:"block",margin:fvEdge?"2px 3px":0,
+      fontSize:fvFont,lineHeight:fvInnerH+"px",border:fvEdge?BD:"none",borderRadius:fvEdge?3:0,padding:0,
+      // fill は透明にして td（土日祝の行色・ポジション不足の黄色）をセル全面に透かす
+      background:fvEdge?"var(--c-input)":"transparent",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"}
     :{width:colW-3,fontSize:16,border:BD,borderRadius:4,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
   // 斜線画像 HDASH_IMG はモジュールスコープ（GridLegend・cellBgStyleと共用）
   // 全表示では日付列を左右両端に置くため sticky を外す（全体が見えるので固定する意味が無い）。
   // 休みカウント表・集計表のラベル列も同じ SD を使うので、幅を変えると3表の列位置が一緒に揃う。
   const SD=fullView
     ?{background:CRD,whiteSpace:"nowrap",width:fvDateW,minWidth:fvDateW,maxWidth:fvDateW,boxSizing:"border-box",padding:"0 1px",fontSize:fvDateFont,fontWeight:600,borderRight:BD2,overflow:"hidden",textAlign:"center"}
-    :{position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,padding:"2px 4px",fontSize:16,fontWeight:600,borderRight:BD2};
+    :{position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,boxSizing:BOXS,padding:"2px 4px",fontSize:16,fontWeight:600,borderRight:BD2};
   // 右端の日付列。左端と鏡像にする（境界線を右ではなく左に置く）
   const SDR={...SD,borderRight:undefined,borderLeft:BD2};
   // スタッフ名色（Excel書き出しと同ルール: staffColors[name]==="red"→赤）
@@ -1248,7 +1332,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // sticky=true: メイングリッドの名前行のみ画面上端に固定（出勤・退勤行はその下をスクロール、テーブル末尾を過ぎると自然に解除される）。
   // 全表示では縦スクロールが起きないので固定しない。
   const VTH=(name,sticky=false)=>(
-    <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,padding:fullView?0:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"middle",...(sticky&&!fullView?{position:"sticky",top:0,zIndex:3}:{})}}>
+    <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,padding:fullView?0:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"middle",...(sticky&&(!fullView||fvScrolls)?{position:"sticky",top:0,zIndex:3}:{})}}>
       <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:fullView?fvNameH:72,display:"inline-block",fontSize:fullView?Math.max(7,Math.min(11,colW-2)):11,fontWeight:600,color:nameColor(name),whiteSpace:"nowrap",textAlign:"center",lineHeight:String(colW-4)+"px",overflow:fullView?"hidden":undefined}}>{name}</div>
     </th>
   );
@@ -1345,7 +1429,29 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // td側の行背景(土日tint・ポジション不足の赤)が input を透過して混色するのを防ぎ、非土日セルと同じ見た目になる
   // （--c-input はライト/ダーク両テーマとも不透明色なので合成結果もテーマ非依存で通常セルと揃う）。
   // 休み希望の斜線(HDASH_IMG)も backgroundImage を使うため、両方付くケースでは斜線を前面にカンマ合成して消えないようにする。
+  // 全表示は input の背景を透明にして td/tr の色（曜日・不足）を透かすので、レジェンド色を
+  // 半透明のまま重ねると**下の色と混ざる**。そこで全表示だけは優先順位で勝った1色だけを
+  // 不透明ベース(CRD)の上に塗り、負けた色は完全に隠す。
+  // 優先順位: 変更 > 不足 > 企業間他店舗被り > ヘルプ(メモ) > 曜日（2026-09-23 ユーザー指示）。
+  const FV_NONE="__fv_none__";
+  const cellBgStyleFullView=(name,date,field)=>{
+    const key=`${name}|${date}|${field}`;
+    const editing=focusKey===key;
+    let col=editing?null:cellBgFor(name,date,field,FV_NONE);
+    if(col===FV_NONE)col=null;
+    // 不足は changed の次・dup より前に割り込ませる（cellBgFor は td 側の不足色を知らないため）
+    if(!editing&&col!==LEGEND_COLORS.changed&&cellPosErr(name,date,field==="start"?"lunch":"dinner"))col=LEGEND_COLORS.posErr;
+    const layers=[];
+    if(holidayCellDash(name,date,field))layers.push(HDASH_IMG);
+    if(col)layers.push(`linear-gradient(${col},${col})`);
+    // 色が付くセルだけ不透明ベースを敷く＝下の曜日色・不足色を完全に隠す。
+    // 色が無いセルは透明のままにして、tr の曜日色をそのまま1色で見せる。
+    const st={backgroundColor:col?CRD:"transparent"};
+    if(layers.length){st.backgroundImage=layers.join(",");st.backgroundRepeat="no-repeat";st.backgroundSize="100% 100%";}
+    return st;
+  };
   const cellBgStyle=(name,date,field)=>{
+    if(fullView)return cellBgStyleFullView(name,date,field);
     const col=cellBgFor(name,date,field,AI2.background);
     const layers=[];
     if(holidayCellDash(name,date,field))layers.push(HDASH_IMG); // 斜線を最前面（色の上に描く）
@@ -1419,6 +1525,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const el=mainScrollRef.current;if(!el)return;
       const t=Math.round(el.getBoundingClientRect().top+(window.scrollY||0));
       setGridTop(prev=>(prev!==null&&Math.abs(prev-t)<2)?prev:t);
+      const cc=centerColRef.current;
+      if(cc){const l=Math.round(cc.getBoundingClientRect().left);
+        setCenterColLeft(prev=>(prev!==null&&Math.abs(prev-l)<2)?prev:l);}
     };
     update();
     window.addEventListener("resize",update);
@@ -1780,7 +1889,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
       {/* 店舗間シフト重複エラー一覧 */}
       {Object.keys(dupErrors).length>0&&(
-        <div style={{background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+        <div style={{background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
           <div style={{fontSize:12,fontWeight:700,color:"#FF4757",marginBottom:4}}>⚠ 出勤がだぶついています（他店舗と時間重複）</div>
           <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
             {Object.entries(dupErrors).map(([k,shopNm])=>{
@@ -1827,18 +1936,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       )}
 
       {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
-        <div style={useBreakout?{marginLeft:-(containerLeft+8),width:"100vw",paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:hasPanel?"flex":"block",justifyContent:fitsCentered?"center":"flex-start",alignItems:"flex-start",gap:4}:{}}>
+        <div style={useBreakout?{marginLeft:-(containerLeft+8),width:viewW,paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:hasPanel?"flex":"block",justifyContent:fitsCentered?"center":"flex-start",alignItems:"flex-start",gap:4}:{}}>
 
           {/* === 左パネル: キッチン熱マップ（通常表示+split時、またはキッチン絞り込み時） === */}
           {kitShownAsPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
-            <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="キッチン" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} scrollRef={kitHeatRef} onScroll={e=>syncScrollV(e.currentTarget)} maxH="70vh"/>
+            <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="キッチン" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} scrollRef={kitHeatRef} onScroll={e=>syncScrollV(e.currentTarget)} maxH="70vh" fitHours={fitHeatHoursPanel}/>
           </div>}
 
           {/* === 中央: グリッド + 集計 === */}
           {/* fitsCentered時はwidthを明示指定する。GridLegend/集計表など幅auto(=block)の子要素の
               max-content幅（折り返し前提の説明文など）に引きずられてflex:0 0 autoだけでは
               グリッド表本来の幅に収まらないため、グリッドの実幅(gridContentW)で強制的に固定する */}
-          <div style={hasPanel?(fitsCentered?{flex:"0 0 auto",width:gridContentW,minWidth:0}:{flex:1,minWidth:0}):{}}>
+          <div ref={centerColRef} style={hasPanel?(fitsCentered?{flex:"0 0 auto",width:gridContentW,minWidth:0}:{flex:1,minWidth:0}):{}}>
 
           {/* ===メイングリッド（SL列廃止・日付のみstickyで15名対応）=== */}
           {/* overflowXが"auto"だとoverflowYも暗黙にautoへ昇格し、maxHeightがないと内部スクロールが発生せずposition:stickyのtopが機能しない。名前行を画面上端に固定するためmaxHeightで実スクロール領域にする */}
@@ -1846,9 +1955,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             <table style={{borderCollapse:"collapse",width:fullView?fvTableW:(fitAll?"100%":"unset"),minWidth:fitAll?"unset":"max-content"}}>
               <thead ref={gridTheadRef}>
                 <tr style={fullView?{height:fvTheadH}:undefined}>
-                  <th style={{...SD,...(fullView?{}:{top:0,zIndex:4,padding:"4px"}),fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>
+                  <th style={{...SD,...(fullView?(fvScrolls?{position:"sticky",top:0,zIndex:4}:{}):{top:0,zIndex:4,padding:"4px"}),fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>
                   {mapGridCols(name=>VTH(name,true),key=>spacerTh(key,true))}
-                  {fullView&&<th style={{...SDR,fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>}
+                  {fullView&&<th style={{...SDR,...(fvScrolls?{position:"sticky",top:0,zIndex:4}:{}),fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>}
                 </tr>
               </thead>
               <tbody ref={gridBodyRef}>
@@ -1909,7 +2018,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
           {/* ポジション不足エラー一覧: 通常/ホール絞り込み時はホール→キッチンの順、キッチン絞り込み時は逆順 */}
           {(positionErrorEntries.kitchen.length>0||positionErrorEntries.hall.length>0||positionErrorEntries.all.length>0)&&(
-            <div style={{background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10}}>
+            <div style={{background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
               <div style={{fontSize:12,fontWeight:700,color:"#DC2626",marginBottom:4}}>⚠ ポジションが不足しています</div>
               <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
                 {(deptFilter==="kit"?[...positionErrorEntries.kitchen,...positionErrorEntries.hall,...positionErrorEntries.all]:[...positionErrorEntries.hall,...positionErrorEntries.kitchen,...positionErrorEntries.all])
@@ -1948,14 +2057,14 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           </div>
 
           {/* ===時間帯別出勤人数 (サイドパネル非表示分・絞り込み時の相手側は常にここに表示) === */}
-          {(kitBelow||hallBelow)&&<div style={{marginBottom:16}}>
+          {(kitBelow||hallBelow)&&<div style={{marginBottom:16,...NORMAL_W}}>
             <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>時間帯別出勤人数</div>
             {/* flexWrap は必須: 子は minWidth:200 で縮まないため、幅が 410px(200*2+gap) を
                 下回るモバイルでは折り返さないと横並びのまま親をはみ出し、ページ全体が横スクロールする
                 （デスクトップ幅では2つとも収まるので折り返さず見た目は不変。実測: バグチェック#73） */}
-            <div style={{display:"flex",flexDirection:"row",flexWrap:"wrap",gap:10}}>
-              {kitBelow&&<HeatTable label={hasSplit?"キッチン":""} section="kit" maxC={kitMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>}
-              {hallBelow&&<HeatTable label="ホール" section="hall" maxC={hallMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg}/>}
+            <div style={{display:"flex",flexDirection:"row",flexWrap:"wrap",gap:10,justifyContent:"center"}}>
+              {kitBelow&&<HeatTable label={hasSplit?"キッチン":""} section="kit" maxC={kitMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} fitHours={fitHeatHoursBelow} fixedW={heatBelowW}/>}
+              {hallBelow&&<HeatTable label="ホール" section="hall" maxC={hallMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} fitHours={fitHeatHoursBelow} fixedW={heatBelowW}/>}
             </div>
           </div>}
 
@@ -1986,13 +2095,13 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           />}
 
           {/* ===操作方法レジェンド（CELL_COMMANDS / CELL_COLOR_LEGEND から自動生成）=== */}
-          <GridLegend abbrToShop={abbrToShop} shopName={shopName}/>
+          <div style={{...NORMAL_W,overflow:"hidden"}}><GridLegend abbrToShop={abbrToShop} shopName={shopName}/></div>
 
           </div>{/* end center */}
 
           {/* === 右パネル: ホール熱マップ（通常表示+split時、またはホール絞り込み時） === */}
           {hallShownAsPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
-            <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="ホール" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} scrollRef={hallHeatRef} onScroll={e=>syncScrollV(e.currentTarget)} maxH="70vh"/>
+            <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="ホール" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} scrollRef={hallHeatRef} onScroll={e=>syncScrollV(e.currentTarget)} maxH="70vh" fitHours={fitHeatHoursPanel}/>
           </div>}
 
         </div>
