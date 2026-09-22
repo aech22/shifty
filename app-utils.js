@@ -812,6 +812,44 @@ function applyFlatSubWrite(map,path,value){
   map[id]=base;
 }
 
+// ===== periods保存: キー単位・フィールド単位のFirebase書き込み =====
+// savePeriods は長らく `shops/{shopId}/periods` を **コレクション全体 set()** で書いていた。
+// この形は「保存する端末が期間の全体像を持っている」ことを前提にしているが、その前提は成り立たない——
+// startSubscriptions は購読が返るまでの間 periods を **localStorage の前回値**で埋める（app-main.js）。
+// キャッシュ以降に別端末が作った期間を知らないまま1回保存すると、その端末にとっては削除ではないので
+// tokens も subs も触らないまま、**その期間のレコードだけがサーバーから消える**。
+// 2026-09-23 に本番で実害（鷄えん3ビルの「2026年10月前半」。提出40件と tokens は無傷で残り、
+// 期間レコードだけが消えた＝削除経路を通っていない証拠）。オフライン中の保存が再接続時に
+// 流れる場合も同じ形になる。
+//
+// 対策は subs（diffSubForFlatWrite）と同じ「変わったところだけを update() する」形にすること。
+// 知らないキーには触らないので、**古い state から保存しても他の期間は消えない**＝
+// 正しさが state の鮮度に依存しなくなる。
+//
+// フィールド単位まで割るのは、期間1件の中でも書き手が分かれているため。シフト作成タブは
+// 期間を開くたびに snapshot を**自動で**書き（app-admin.js の写し更新）、期間管理タブは label や
+// 日付を、スタッフタブは keepStaff / keepAttrs を書く。キー単位（期間まるごと set）のままだと
+// 自動で走る写し更新が、他端末が直したばかりの label を黙って巻き戻す。
+//
+// 新規の期間（prev に無い）は丸ごと1エントリとして返す（`.validate: hasChildren(['id'])` を満たす）。
+// 逆に、ローカルにしか無い期間（別端末が削除済み）を編集した場合はフィールド単位のパスだけが
+// 送られ id を持たないため、ルールがその update 全体を弾く。revertAdminWrite がサーバーの内容へ
+// 描き直すので、消えた期間が中身の無いレコードとして復活することはない。
+function diffPeriodsForFlatWrite(prevList,nextList){
+  const out={};
+  const prevById={},nextById={};
+  (prevList||[]).forEach(p=>{ if(p&&p.id) prevById[p.id]=p; });
+  (nextList||[]).forEach(p=>{ if(p&&p.id) nextById[p.id]=p; });
+  Object.keys(nextById).forEach(id=>{
+    const prev=prevById[id],next=nextById[id];
+    if(!prev){ out[id]=next; return; }
+    Object.keys(next).forEach(k=>{ if(!deepEqValue(next[k],prev[k])) out[`${id}/${k}`]=next[k]; });
+    Object.keys(prev).forEach(k=>{ if(!(k in next)) out[`${id}/${k}`]=null; });
+  });
+  Object.keys(prevById).forEach(id=>{ if(!(id in nextById)) out[id]=null; });
+  return out;
+}
+
 // 提出一覧のソート用「最終アクション時刻」（ミリ秒）。再提出（変更あり）はupdatedAt、それ以外は初回提出時刻を返す。
 // 変更ありの判定は分単位で比較する。提出直後にupdatedAtが数秒だけ進むケースを再提出とみなさないための基準。
 // 「変更あり」バッジの判定は subHasRealUpdate（締切日ゲート付き）に移した。ここは並べ替え専用。
@@ -1249,5 +1287,5 @@ function renameStaffInPeriods(periods,oldName,newName){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate};
 }

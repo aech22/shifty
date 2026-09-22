@@ -3,7 +3,7 @@
 ## コード全般
 
 - `DEV_MODE` はホスト名で自動判定する式（`location.hostname !== "shiftyshifty.app"`）。固定値の `true`/`false` に書き換えない
-- Firebase の `set()` でコレクション全体を上書きしない（他端末データが消える）
+- Firebase の `set()` でコレクション全体を上書きしない（他端末データが消える）。**`subs` だけでなく `periods` も対象**（2026-09-23 に本番で期間レコードが1件消えた）
 - `firebaseDB.ref('accounts').once('value')` など全件読み取りを新規追加しない
 
 ## セキュリティ
@@ -36,7 +36,12 @@ firebaseDB.ref(path).update(obj);
 
 // ❌ 禁止: set() でコレクション全体を上書き
 firebaseDB.ref(`shops/${shopId}/subs`).set(allSubs);
+firebaseDB.ref(`shops/${shopId}/periods`).set(allPeriods);
 ```
+
+`periods` の保存は `diffPeriodsForFlatWrite`（app-utils.js）で差分に落としてから `fbUpd` する。
+購読が返る前の periods は localStorage の前回値なので、全体 `set()` は
+**その端末が知らない期間を消す**（2026-09-23 の本番事故。詳細は CLAUDE.md「期間の保存」）。
 
 ## ブランチ・デプロイ
 

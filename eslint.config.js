@@ -183,6 +183,7 @@ const sharedGlobals = {
   subHasRealUpdate: "writable",
   SUBS_WINDOW_MONTHS: "writable",
   diffSubForFlatWrite: "writable",
+  diffPeriodsForFlatWrite: "writable",
   applyFlatSubWrite: "writable",
   dayTypeOf: "writable",
   matchPositionSlots: "writable",

@@ -316,12 +316,16 @@ Firebase Realtime Database
 // ✅ subs: 個別パスに書き込む（競合防止）
 firebaseDB.ref(`shops/${shopId}/subs/${sub.id}`).set(sub);
 
-// ✅ コレクション更新: update() でマージ
-firebaseDB.ref(fbPath(sid, "periods")).set(periodsObj); // periods は全体set OK
-firebaseDB.ref(fbPath(sid, "subs")).update(subsObj);    // subs は必ず update
+// ✅ コレクション更新: update() でマージ（periods も subs も同じ）
+firebaseDB.ref(fbPath(sid, "periods")).update(periodsFlat); // 変わったキーだけ・削除は null
+firebaseDB.ref(fbPath(sid, "subs")).update(subsObj);        // subs は必ず update
 
 // ❌ 禁止: subs を set() で全体上書き → 他端末の提出が消える
 firebaseDB.ref(`shops/${shopId}/subs`).set(allSubs);
+
+// ❌ 禁止: periods を set() で全体上書き → この端末が知らない期間が消える
+// （2026-09-23 に本番で実害。下の「期間の保存」を参照）
+firebaseDB.ref(fbPath(sid, "periods")).set(periodsObj);
 
 // ❌ 禁止: accounts 全件読み取り
 firebaseDB.ref('accounts').once('value');
@@ -552,14 +556,30 @@ on(`accounts/${targetSid}/newField`, val => {
 コンポーネント内では `tt(message)` を使う。`tt` は各コンポーネントのローカル関数。  
 App スコープのトーストは `appToast` state（招待コード生成エラーなど、Auth 関数から呼ぶ場合）。
 
-### 期間の保存（periods は全体 set が安全）
+### 期間の保存（periods も subs と同じく差分 update・2026-09-23 訂正）
+
+**ここには長らく「periods は競合リスクが低いので全体 set でよい」と書かれていたが、これは誤りだった。**
+`shops/{shopId}/periods` を `set()` すると、保存する端末が知らない期間まで一緒に消える。
+`startSubscriptions` は購読が返るまでの間 periods を **localStorage の前回値**で埋めるので
+（app-main.js）、前提の「保存する端末は期間の全体像を持っている」は普通に崩れる。
+
+**2026-09-23 に本番で実害**: 鷄えん3ビル（`shop_1780453339520`）の「2026年10月前半」
+（`p_1789525131346`）の期間レコードが消え、**提出40件と `tokens/ays323mr` は無傷で残った**。
+`savePeriods` の削除経路は tokens と subs を先に消すので、**それらが残っていること自体が
+「削除ではなく `set()` に巻き込まれた」証拠**になる。オフライン中の保存が再接続時に流れる場合も同じ形。
 
 ```js
-// OK: periods は競合リスクが低いので全体 set でよい
-const obj = {};
-newPeriods.forEach(p => { if (p && p.id) obj[p.id] = p; });
-firebaseDB.ref(fbPath(sid, "periods")).set(obj);
+// OK: 変わったフィールドと、この端末が実際に削除した期間（null）だけを update() する
+const flat = diffPeriodsForFlatWrite(prevPeriods, newPeriods); // app-utils.js
+if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 ```
+
+`diffPeriodsForFlatWrite`（app-utils.js）は subs の `diffSubForFlatWrite` と同じ形で、
+**期間の中のフィールド単位**まで割る。新規の期間だけは丸ごと1エントリで返す
+（セキュリティルールの `.validate: hasChildren(['id'])` を満たすため）。
+フィールド単位にしてあるのは、シフト作成タブが期間を開くたびに `snapshot` を**自動で**書くためで、
+期間まるごとの書き込みだと、その自動更新が他端末の直したばかりの `label` を黙って巻き戻す。
+**正しさが state の鮮度に依存しない**のがこの形の要点で、古い state から保存しても他の期間は消えない。
 
 ### シフト作成タブにセル操作・セル色を追加（2026-07-09〜）
 

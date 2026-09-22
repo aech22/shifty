@@ -869,6 +869,62 @@ test("diffSubForFlatWrite: 削除されたフィールド・日付はnullで返�
   assert.deepStrictEqual(diff, { "s1/shifts/2026-07-10": null, "s1/note": null });
 });
 
+// ===== diffPeriodsForFlatWrite（期間の差分書き込み）=====
+// 2026-09-23 に本番で期間レコードが1件だけ消えた事故の再発防止。
+// 「保存する端末が知らない期間には触らない」ことがこの関数の存在理由なので、
+// 最初のテストが本丸（全体 set() だったころの実装では必ず落ちる）。
+test("diffPeriodsForFlatWrite: 保存する端末が知らない期間には触らない（本番事故の再現）", () => {
+  // 端末Aの periods は localStorage の前回値のままで、別端末が作った p_new を知らない
+  const stale = [{ id: "p_old", label: "9月後半", startDate: "2026-09-16" }];
+  const next = [{ id: "p_old", label: "9月後半（改）", startDate: "2026-09-16" }];
+  const diff = u.diffPeriodsForFlatWrite(stale, next);
+  assert.deepStrictEqual(diff, { "p_old/label": "9月後半（改）" });
+  assert.ok(!("p_new" in diff));
+  // update() の意味論では「payloadに無いキー＝触らない」なので p_new は残る
+  const server = { p_old: stale[0], p_new: { id: "p_new", label: "10月前半" } };
+  Object.entries(diff).forEach(([path, val]) => {
+    const [id, key] = path.split("/");
+    if (key === undefined) { if (val === null) delete server[id]; else server[id] = val; return; }
+    server[id] = { ...server[id], [key]: val };
+  });
+  assert.deepStrictEqual(Object.keys(server).sort(), ["p_new", "p_old"]);
+  assert.strictEqual(server.p_new.label, "10月前半");
+});
+
+test("diffPeriodsForFlatWrite: 新規の期間は丸ごと1エントリ（.validateのidを満たす）", () => {
+  const np = { id: "p2", label: "10月前半", startDate: "2026-10-01" };
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([{ id: "p1" }], [{ id: "p1" }, np]), { p2: np });
+});
+
+test("diffPeriodsForFlatWrite: この端末が削除した期間だけを null にする", () => {
+  const prev = [{ id: "p1", label: "A" }, { id: "p2", label: "B" }];
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite(prev, [{ id: "p1", label: "A" }]), { p2: null });
+});
+
+test("diffPeriodsForFlatWrite: 変更が無ければ空（＝書き込みを発行しない）", () => {
+  const list = [{ id: "p1", label: "A", keepStaff: [{ name: "田中", index: 0 }] }];
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite(list, [{ id: "p1", label: "A", keepStaff: [{ name: "田中", index: 0 }] }]), {});
+});
+
+test("diffPeriodsForFlatWrite: 写しの更新は同じ期間の他フィールドを巻き込まない", () => {
+  // シフト作成タブは期間を開くたび snapshot を自動で書く。キー単位（期間まるごと）だと
+  // 他端末が直したばかりの label をここで巻き戻す
+  const prev = [{ id: "p1", label: "A", snapshot: { staffList: ["田中"] } }];
+  const next = [{ id: "p1", label: "A", snapshot: { staffList: ["田中", "鈴木"] } }];
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite(prev, next), { "p1/snapshot": { staffList: ["田中", "鈴木"] } });
+});
+
+test("diffPeriodsForFlatWrite: 確定の解除で消えたフィールドは null で明示する", () => {
+  const prev = [{ id: "p1", label: "A", snapshot: { staffList: [] }, lockedAt: "2026-09-01T00:00:00Z" }];
+  const next = [{ id: "p1", label: "A" }];
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite(prev, next), { "p1/snapshot": null, "p1/lockedAt": null });
+});
+
+test("diffPeriodsForFlatWrite: idを持たない要素・空リストで落ちない", () => {
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite(null, undefined), {});
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([null, { label: "idなし" }], []), {});
+});
+
 test("applyFlatSubWrite: subId丸ごとの新規追加・削除", () => {
   const map = {};
   u.applyFlatSubWrite(map, "s1", { id: "s1", shifts: {} });

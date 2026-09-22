@@ -1255,9 +1255,12 @@ function App(){
     setPeriods(v);
     ls(storeKey(sid,"periods_v6"),v);
     if(firebaseDB){
-      const obj={};
-      v.forEach(p=>{ if(p&&p.id) obj[p.id]=p; });
-      fbSet(fbPath(sid,"periods"),obj).catch(e=>revertAdminWrite("periods",e));
+      // コレクション全体の set() は使わない。この端末が知らない期間まで消えるため
+      // （購読が返る前は periods が localStorage の前回値なので、ごく普通の操作で起きる。
+      //  2026-09-23 に本番で期間レコードが1件消えた。詳細は diffPeriodsForFlatWrite のコメント）。
+      // 変わったフィールドと、この端末が実際に削除した期間（値 null）だけを update() する。
+      const flat=diffPeriodsForFlatWrite(periods,v);
+      if(Object.keys(flat).length>0) fbUpd(fbPath(sid,"periods"),flat).catch(e=>revertAdminWrite("periods",e));
       // 追加された期間のURLトークン逆引きを登録（スタッフURLのO(1)解決用）
       v.filter(p=>p&&p.urlToken&&!periods.find(op=>op.id===p.id)).forEach(p=>{
         fbSet(`tokens/${p.urlToken}`, {shopId:sid,periodId:p.id}).catch(()=>{});
