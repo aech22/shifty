@@ -1852,6 +1852,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           style={{padding:"5px 10px",background:deptFilter==="hall"?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           ホール
         </button>}
+        {/* 出力・保存はひとまとまりの操作なので、折り返さない1グループにする。
+            以前は親の flexWrap がボタン単位で折り返すため、幅が足りない行末で「保存」だけが
+            次の行に落ちて PDF出力 から離れていた。グループごと次の行へ送れば並びは崩れない。 */}
+        {(period||isPremium)&&<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"nowrap"}}>
         {period&&<button onClick={()=>{
           const adjResolver=(name,date,field)=>{
             if(fieldRest(name,date,field))return{time:"",note:"",fixed:false,rest:true}; // 休み希望(y)はExcelで斜線描画
@@ -1883,6 +1887,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           style={{padding:"6px 14px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           保存
         </button>}
+        </div>}
       </div>
 
       {/* 店舗間シフト重複エラー一覧 */}
