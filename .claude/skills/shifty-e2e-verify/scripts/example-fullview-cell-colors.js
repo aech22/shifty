@@ -8,15 +8,18 @@
 //   node .claude/skills/shifty-e2e-verify/scripts/example-fullview-cell-colors.js
 //
 // ShiftEditTab だけを実ブラウザ（1400x900）にマウントし、通常表示と全表示の2モードで
-// 「セルの td 背景のうち、中の input に覆われずに見える帯の太さ」を測る。
+// 「td 側の色が画面に出ているか」を測る。
 // **Firebase へは1バイトも出さない**（app-main.js を読み込まないので firebaseDB は null）。
 //
-// なぜ「帯の太さ」を測るのか:
+// 何を測っているのか:
 //   土日祝の行色（baseRb）とポジション不足の黄色（rbS/rbE）は **td の背景**にしか出ない。
-//   一方セルコマンドの色（cellBgStyle）は **input の背景**に出る。通常表示は
-//   td に padding "1px 1px"・input を width:colW-3 にして td の背景を帯として覗かせることで
-//   この2系統を同時に見せている。全表示は td padding:0・input width:100%/height:行高 なので、
-//   帯が消えると td 側の2色（土日祝・ポジション不足）が画面から消える。
+//   一方セルコマンドの色（cellBgStyle）は **input の背景**に出る。この2系統が同時に見える
+//   経路は2つあり、どちらでも受け入れ条件（td の色が見える）を満たす:
+//     ・edge … input を td より一回り小さくして td の背景を帯として覗かせる
+//     ・fill … input の背景を透明にして td の色をセル全面に透かす
+//   **2026-09-23 に通常表示・全表示とも fill へ一本化した**（cellBgStyle の分岐を廃止）ので、
+//   両モードとも判定は同じ「帯があるか、input が透明か」でよい。帯の太さだけを見ると
+//   fill が偽陰性になる（通常表示の帯は border-box 統一で 7px→3px に細くなっている）。
 //
 // index.html は読み込まないので、テーマ変数（--c-input 等）を extraHead で注入する。
 // 注入しないと var(--c-input) が無効値になり input の背景が透明になって、
@@ -122,24 +125,25 @@ const MEASURE = () => {
   }
   const full = results.filter(r => r.mode === "full");
   const normal = results.filter(r => r.mode === "normal");
+  // 「帯がある」か「input が透明」かのどちらかを満たせば td の色は見えている。
+  // **帯だけを見ると fill が偽陰性になる**ので、両モードとも同じこの述語で判定する。
+  const showsTdColor = r => (r.bandX >= 2 && r.bandY >= 2) || /rgba\([^)]*,\s*0\)$/.test(r.inputBg || "");
+  const modeOf = rs => rs.every(r => /rgba\([^)]*,\s*0\)$/.test(r.inputBg || "")) ? "fill(input透明)"
+    : rs.every(r => r.bandX >= 2 && r.bandY >= 2) ? "edge(帯)" : "色が出ていない";
   const verdict = {
-    // 通常表示では td の色が帯として見えている（対照）
-    normalShowsTdBand: normal.every(r => r.bandX >= 2 && r.bandY >= 2),
-    // 全表示でも同じ規則で見えること。**帯だけを見ると偽陰性になる**——全表示には
-    // td の色をセル全面に透かす方式（input の背景を透明にする・?fvcolor=fill）があり、
-    // その場合は帯が0でも td の色は見えている。受け入れ条件は「td の色が見えるか」なので
-    // 「帯がある」か「input が透明」かのどちらかを満たせば可とする。
-    fullShowsTdColor: full.every(r =>
-      (r.bandX >= 2 && r.bandY >= 2) || /rgba\([^)]*,\s*0\)$/.test(r.inputBg || "")),
-    // 参考値（どちらの方式で出しているかの内訳。判定には使わない）
-    fullMode: full.every(r => /rgba\([^)]*,\s*0\)$/.test(r.inputBg || "")) ? "fill(input透明)"
-      : full.every(r => r.bandX >= 2 && r.bandY >= 2) ? "edge(帯)" : "色が出ていない",
+    // 通常表示・全表示とも td の色が見えていること（2026-09-23 に両方 fill へ一本化）
+    normalShowsTdColor: normal.every(showsTdColor),
+    fullShowsTdColor: full.every(showsTdColor),
+    // 参考値（どちらの方式で出しているかの内訳。判定には使わない）。
+    // 一本化後は両方とも "fill(input透明)" になるのが期待値。
+    normalMode: modeOf(normal),
+    fullMode: modeOf(full),
     // td 以外に出る色（スタッフ名・日付文字）は全表示でも再現されている
     staffNameColorKept: full.every(r => r.staffNameColorRed === "rgb(229, 57, 53)"),
     weekendDateTextKept: full.every(r => /rgb\(25, 118, 210\)|rgb\(229, 57, 53\)/.test(r.weekendDateTextColor || "")),
     noConsoleErrors: results.every(r => r.errors === 0),
   };
-  verdict.allPass = Object.entries(verdict).every(([k, v]) => k === "fullMode" || v === true);
+  verdict.allPass = Object.entries(verdict).every(([k, v]) => k === "fullMode" || k === "normalMode" || v === true);
   console.log(JSON.stringify({ results, verdict }, null, 2));
   process.exitCode = verdict.allPass ? 0 : 1;
 })().catch(e => { console.error("FATAL", e); process.exit(1); });

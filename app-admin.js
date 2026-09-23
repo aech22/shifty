@@ -248,7 +248,8 @@ const HDASH_IMG=`url("data:image/svg+xml;charset=utf-8,${encodeURIComponent("<sv
 // ShiftEditTab内で定義すると親の再レンダー（セル選択等）のたびに新しい関数=新しい型になり、
 // Reactが毎回このサブツリーをアンマウント→再マウントしてスクロール位置がリセットされてしまうため。
 // fitHours を立てると **横スクロールを無くして全時間帯を幅いっぱいに割り付ける**
-// （キッチン/ホール絞り込み時・2026-09-23 ユーザー指示）。px を計算せず table-layout:fixed に
+// （2026-09-23 ユーザー指示。通常表示・絞り込み表示のどちらでも、幅が足りる限りこちらを使う）。
+// 立てるかどうかは呼び出し側が幅だけで決める（heatFitsIn）。px を計算せず table-layout:fixed に
 // 割らせるので、横パネル（幅が containerLeft 依存）でもグリッド下（flex:1）でも同じ1本で効く。
 // 渡さなければ従来どおり1列22pxの最小幅で、入りきらない分は横スクロールになる。
 function HeatTable({label,section,maxC,rowH,theadH,sectionLabel,dates,heatHours,countHeat,hBg,scrollRef,onScroll,maxH,fitHours,fixedW}){
@@ -283,11 +284,12 @@ function HeatTable({label,section,maxC,rowH,theadH,sectionLabel,dates,heatHours,
 
 // 集計表：scrollRefを外から渡してスクロール同期、sticky背景を確実に塗る。
 // HeatTable と同じ理由でモジュールスコープに固定（親の再レンダーで型が変わりスクロール位置がリセットされるのを防ぐ）。
-// fullView（全表示）ではラベル列の幅をメイングリッドの両端日付と同じ labelW に詰め、右端に同幅の
-// 空列を足す。グリッドが [日付][スタッフ×n][日付] になるので、こちらも [ラベル][スタッフ×n][空] に
-// 揃えないとスタッフ列が横にずれる。**休みカウント表はスタッフ名のヘッダを持たず列位置だけで
-// 誰の数字かを示している**ので、ずれると読めなくなる。
-function SummaryTable({title,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols,spacerTh,spacerCell,colW,VTH,labelW=90,fullView=false,tableW=null}){
+// ラベル列の幅はメイングリッドの日付列と同じ labelW（通常表示・全表示とも45px）に詰める。
+// fullView ではさらに右端に同幅の空列を足す。グリッドが [日付][スタッフ×n][日付] になるので、
+// こちらも [ラベル][スタッフ×n][空] に揃えないとスタッフ列が横にずれる。
+// **休みカウント表はスタッフ名のヘッダを持たず列位置だけで誰の数字かを示している**ので、
+// ずれると読めなくなる。ラベルは45pxに入りきらないので省略記号＋title で全文を残す。
+function SummaryTable({title,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols,spacerTh,spacerCell,colW,VTH,labelW=45,fullView=false,tableW=null}){
   const BD="1px solid var(--c-border)",BD2="1px solid var(--c-border2)",CRD="var(--c-card)";
   const fmtH4=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;if(h>=100)return String(h);return m===0?String(h):`${h}:${String(m).padStart(2,"0")}`;};
   return(
@@ -296,14 +298,14 @@ function SummaryTable({title,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols
       <div ref={scrollRef} onScroll={onScroll} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,...(fullView?{width:"fit-content",marginLeft:"auto",marginRight:"auto"}:{})}}>
         <table style={{borderCollapse:"collapse",width:fullView&&tableW?tableW:(fitAll?"100%":"unset"),minWidth:fitAll?"unset":"max-content"}}>
           <thead><tr>
-            <th style={{...(fullView?{boxSizing:"border-box"}:{position:"sticky",left:0,zIndex:2}),background:CRD,padding:0,fontSize:11,fontWeight:600,borderBottom:BD2,width:labelW,minWidth:labelW,maxWidth:labelW}}><div style={{width:labelW,padding:fullView?"2px 2px":"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{rowLabel}</div></th>
+            <th title={rowLabel} style={{boxSizing:"border-box",...(fullView?{}:{position:"sticky",left:0,zIndex:2}),background:CRD,padding:0,fontSize:11,fontWeight:600,borderBottom:BD2,width:labelW,minWidth:labelW,maxWidth:labelW}}><div style={{width:labelW,padding:"2px 2px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{rowLabel}</div></th>
             {mapGridCols(name=>VTH(name),spacerTh)}
             {fullView&&<th style={{background:CRD,padding:0,borderBottom:BD2,borderLeft:BD2,boxSizing:"border-box",width:labelW,minWidth:labelW,maxWidth:labelW}}></th>}
           </tr></thead>
           <tbody>{rows.map(row=>{
             const bg=row._bg||"transparent";const stickyBg=row._bg?`linear-gradient(${row._bg},${row._bg}),${CRD}`:CRD;
             return(<tr key={row.id} style={{background:bg}}>
-              <td style={{...(fullView?{boxSizing:"border-box"}:{position:"sticky",left:0,zIndex:1}),background:stickyBg,padding:0,fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,width:labelW,minWidth:labelW,maxWidth:labelW}}><div title={fullView?row.label:undefined} style={{width:labelW,padding:fullView?"2px 2px":"4px 8px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{row.label}</div></td>
+              <td style={{boxSizing:"border-box",...(fullView?{}:{position:"sticky",left:0,zIndex:1}),background:stickyBg,padding:0,fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,width:labelW,minWidth:labelW,maxWidth:labelW}}><div title={row.label} style={{width:labelW,padding:"2px 2px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{row.label}</div></td>
               {mapGridCols(name=>{const min=row.getMin(name);const vio=row._violateFn?row._violateFn(name,min):false;const cellBg=vio?"rgba(255,71,87,.15)":bg;return(
                 <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:"border-box",padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:cellBg,fontWeight:(row._bold||vio)&&min>0?700:400,color:min>0?(vio?"#FF4757":(row._color||"var(--c-text2)")):"var(--c-text4)"}}>{min>0?fmtH4(min):""}</td>
               );},spacerCell)}
@@ -1201,27 +1203,52 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // **ヒートマップの幅は常に通常表示と同じ（rawPanelW）に固定する**（2026-09-23 ユーザー指示）。
   // スタッフ数に応じて伸縮させない。その固定幅のまま「全時間帯を詰めて出す」か「横スクロールする」かを
   // 切り替える。1列9px を確保できるなら詰めて全部出し、足りなければ従来どおり22px幅でスクロールする。
+  const HEAT_MIN_HOURW=9;
+  const heatHourCount=Math.max(1,heatHours.length);
+  // その幅なら全時間帯を横スクロールなしで出せるか。52pxは日付列・8pxは枠線（heatInnerW と同じ内訳）。
+  const heatFitsIn=w=>((w||0)-52-8)>=HEAT_MIN_HOURW*heatHourCount;
   // ヒートマップ1枚の幅。**置き場所（セルの横の横パネル／グリッド下）によらず同じ幅**にする
   // （2026-09-23 ユーザー指示）。2枚並びを基準に、通常表示の幅の半分（gap 10px を引く）で固定する。
   // 絞り込み無しの通常表示の横パネルだけは従来どおり左余白の幅のまま（既存の見た目を変えないため）。
-  const heatBelowW=normalW?Math.floor((normalW-10)/2):null;
+  // **半分の幅では全時間帯が収まらず、全幅なら収まるときは1枚あたり全幅にする**（＝縦積みになる。
+  // 2026-09-23 ユーザー指示）。携帯（幅375px）では半分が約166pxで時間帯に使えるのは約106pxしかなく、
+  // 16時間ぶんは最小の9px/列にも届かないため、半分のままだと必ず横スクロールに落ちる。
+  const heatBelowHalfW=normalW?Math.floor((normalW-10)/2):null;
+  // 縦積みにしたときの1枚の幅。**normalW をそのまま使ってはいけない**——測っている outerRef は
+  // 左右 padding 8px を持つので、中身が実際に使えるのは normalW-16 しかない。normalW を渡すと
+  // 横パネルを使わない通常表示でページ全体が16px横スクロールする（バグチェック#73 と同じ形）。
+  const heatBelowFullW=normalW?normalW-16:null;
+  const heatBelowStacked=!!normalW&&!heatFitsIn(heatBelowHalfW)&&heatFitsIn(heatBelowFullW);
+  const heatBelowW=heatBelowStacked?heatBelowFullW:heatBelowHalfW;
+  // グリッド下へ回したときに全時間帯を出せるか。置き場所の選択（heatPanelUsable）にも使う。
+  const belowFitsAll=heatFitsIn(heatBelowW);
   // 絞り込み中の横パネルの幅。**スタッフの全表示を最優先**し、グリッドが必要な幅を先に確保してから、
   // 余った幅をヒートマップに回す（2026-09-23 ユーザー指示）。ただし下に出すときと同じ幅を上限にして、
-  // それ以上には広げない。+32 はグリッド枠の border・flex の gap と左右 padding・丸め（実測）。
-  const gridNeedW=90+39*Math.max(1,gridStaff.length)+32;
+  // それ以上には広げない。上限は**縦積みにする前の半分幅**で据え置く——縦積みは下に出すときの話で、
+  // 横パネルを広げる理由にはならない。+32 はグリッド枠の border・flex の gap と左右 padding・丸め（実測）。
+  // 日付列（グリッド左端と、休みカウント表・集計表のラベル列）の幅。**通常表示と全表示で同じ値**に
+  // 統一する（2026-09-23 ユーザー指示。それまでは通常表示90px・全表示45pxで食い違っていた）。
+  // 45px は fmtDL の "31(土)"＝半角4+全角1 が収まる幅として全表示で実証済み。
+  const DATE_COL_W=45;
+  // 45px に 16px のフォントは入らない（"31(土)" で約43px必要）ので、通常表示の日付も詰める。
+  // RULES.md の16px規約は input/select/textarea が対象で、td/th のここは対象外。
+  const DATE_COL_FONT=13;
+  const gridNeedW=DATE_COL_W+39*Math.max(1,gridStaff.length)+32;
   const heatLeftoverW=Math.max(0,viewW-24-gridNeedW);
   const heatPanelW=deptSidePanel
-    ?Math.min(heatBelowW||rawPanelW,heatLeftoverW)
+    ?Math.min(heatBelowHalfW||rawPanelW,heatLeftoverW)
     :rawPanelW;
-  const HEAT_MIN_HOURW=9;
-  const heatHourCount=Math.max(1,heatHours.length);
   const heatInnerW=heatPanelW-52-8;              // 日付列52pxと枠線を引いた、時間帯に使える幅
-  const heatFitsAll=heatInnerW>=HEAT_MIN_HOURW*heatHourCount;
+  const heatFitsAll=heatFitsIn(heatPanelW);
   const heatVisibleHours=Math.max(0,Math.floor(heatInnerW/22)); // スクロール時に一度に見える時間数
   // **3時間ぶん出せるならセルの横（横パネル）、2時間以下になるなら下へ回す**（2026-09-23 ユーザー指示）。
   // 下へ回したときは全表示と同じく両方のヒートマップを並べる。
+  // ただし**横パネルでは全時間帯を出せないのに、下へ回せば出せるときは下を選ぶ**
+  // （2026-09-23 ユーザー指示の「全時間帯をスクロールなしで出す」を置き場所より優先する）。
+  // これが無いと、日付列を90px→45pxに詰めてグリッドが軽くなった分だけ横パネルが成立してしまい、
+  // 携帯の絞り込み表示が「全幅で全時間帯」から「157pxで4時間ぶんの横スクロール」へ戻る（実測）。
   const HEAT_PANEL_MIN_HOURS=3;
-  const heatPanelUsable=heatFitsAll||heatVisibleHours>=HEAT_PANEL_MIN_HOURS;
+  const heatPanelUsable=heatFitsAll||(heatVisibleHours>=HEAT_PANEL_MIN_HOURS&&!belowFitsAll);
   // 余った幅で4時間ぶんも出せないならセルの横をあきらめて下へ回す（時間帯の条件だけで決める）。
   const hasPanel=deptSidePanel?heatPanelUsable:(hasSplit&&!fitAll&&rawPanelW>=150);
   const kitShownAsPanel=hasPanel&&deptSidePanel!=="hall";
@@ -1233,9 +1260,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const useBreakout=hasPanel||fitAll||deptFilter!=="all";
   const panelCount=(kitShownAsPanel?1:0)+(hallShownAsPanel?1:0);
   const panelW=hasPanel?heatPanelW:0;
-  const fitHeatHoursPanel=deptFilter!=="all"&&heatFitsAll;
-  // グリッド下のヒートマップは中央幅いっぱいを使えるので、絞り込み中は常に全時間帯を出す。
-  const fitHeatHoursBelow=deptFilter!=="all";
+  // **時間帯を詰めて全部出すか横スクロールするかは、置き場所の幅だけで決める**（2026-09-23 ユーザー指示）。
+  // 通常表示でも絞り込み表示でも同じ出し方にする＝最小の9px/列で全時間帯が収まるなら詰めて全部出し、
+  // 幅を超えるときだけ従来どおり1列22pxの横スクロールにする。
+  const fitHeatHoursPanel=heatFitsAll;
+  const fitHeatHoursBelow=belowFitsAll;
   // 中央グリッド幅 = ブレイクアウト時はビューポート幅 - パネル分
   const centerW=useBreakout?(viewW-panelW*panelCount-24):containerW;
   // 不足情報・ヒートマップ・操作方法は、全表示でも絞り込み中でも**通常表示の幅のまま**据え置く。
@@ -1252,7 +1281,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const fullView=fitAll;
   // レイアウトは毎レンダーの割り算だけで決める（都度計算）。DOM計測は gridTop の1つだけで、
   // その値はここの出力に依存しないため測り直しのループが起きない。
-  const fvDateW=45;                                   // 両端の日付列。fmtDL の "31(土)"＝半角4+全角1 が収まる幅
+  const fvDateW=DATE_COL_W;                           // 両端の日付列。通常表示と同じ幅（DATE_COL_W）
   const fvAvailW=Math.max(320,centerW-8);
   const fvAvailH=Math.max(200,(gridTop!=null?window.innerHeight-gridTop:Math.round(window.innerHeight*0.72))-8);
   const fvNameH=Math.min(72,Math.max(24,Math.round(fvAvailH*0.12)));  // 縦書きスタッフ名の高さ
@@ -1289,16 +1318,21 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // スタッフが少なくても列は引き伸ばさない。**上限は通常表示と同じ39px**にして、余った幅は
   // 引き伸ばしではなく左右の余白にする（表自体は中央寄せ・2026-09-23 ユーザー指示）。
   const colW=fullView?Math.max(12,Math.min(39,Math.floor((fvAvailW-fvDateW*2)/Math.max(1,gridStaff.length))))
-    :fitAll?Math.max(24,Math.floor((centerW-90)/Math.max(1,gridStaff.length))):39;
+    :fitAll?Math.max(24,Math.floor((centerW-DATE_COL_W)/Math.max(1,gridStaff.length))):39;  // fullView=fitAll なのでこの枝は現在到達しない
   // 全表示の表の実幅。グリッド・休みカウント表・集計表がこの同じ幅で中央に並ぶので列位置が揃う。
   const fvTableW=fvDateW*2+colW*gridStaff.length;
   const fvCenter=fullView?{width:"fit-content",marginLeft:"auto",marginRight:"auto"}:{};
-  // boxSizing は全表示のときだけ border-box にする。無条件に入れると通常表示でも
-  // 列幅が padding のぶん狭くなる（実測 43px→39px）＝Dev限定の約束を破るため。
-  // 絞り込み表示（キッチン/ホールのみ）も border-box にする。content-box のままだと
-  // gridContentW=90+colW×人数 が padding を勘定せず、**最後のスタッフ列が6pxほど切れる**。
-  // 列幅は 43px→39px（＝指定どおり）に変わる。
-  const BOXS=(fullView||deptFilter!=="all")?"border-box":undefined;
+  // boxSizing は**どの表示でも border-box**にする（2026-09-23 ユーザー指示）。
+  // かつては通常表示だけ content-box のままにしていた（全表示が Dev 限定だった頃の
+  // 「通常表示を1pxも変えない」という約束の名残）が、そのせいで通常表示だけ
+  // **グリッドのスタッフ列が43px・集計表が39px**と食い違い、人数が増えるほど
+  // 列位置が1列4pxずつずれていた。指定どおりの39pxに揃える。
+  // gridContentW=日付列+colW×人数 が padding を勘定しないので、content-box のままだと
+  // **最後のスタッフ列が6pxほど切れる**問題も同時に消える。
+  // これで input の周りに見える td の帯は 7px→3px に細くなるが、**色の見え方には効かない**——
+  // 同じ 2026-09-23 に cellBgStyle を fill へ一本化し、土日祝の行色とポジション不足の黄色は
+  // 帯ではなく透明な input を透かしてセル全面に出るようにしたため。
+  const BOXS="border-box";
   const spacerCell=(key)=>(<td key={key} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,borderLeft:BD2,background:"var(--c-input2, var(--c-input))",padding:0}}></td>);
   const spacerTh=(key,sticky=false)=>(<th key={key} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,borderLeft:BD2,background:"var(--c-input2, var(--c-input))",padding:0,...(sticky&&(!fullView||fvScrolls)?{position:"sticky",top:0,zIndex:3}:{})}}></th>);
   // gridStaffを列描画: spacer位置はspacerFnで空セル、実スタッフはrenderFnで描画
@@ -1309,7 +1343,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const singlePanel=panelCount===1&&!fitAll;
   // +6 は枠線と丸めの実測分。これが無いと、グリッドを中央寄せする経路（片側パネル＋収まる幅）で
   // **最後のスタッフ列が6px切れる**（2026-09-23 実測。3名でも28名でも同じ6px）。
-  const gridContentW=90+colW*gridStaff.length+6;
+  const gridContentW=DATE_COL_W+colW*gridStaff.length+6;
   const fitsCentered=singlePanel&&(panelW+4+gridContentW+24)<=viewW;
   // 全表示では枠・角丸・paddingを外して高さを行高ちょうどに固定する（行高が決定的になり縦の計算が当たる）。
   // fontSize が16pxを下回るのは全表示のセルだけ。RULES.md の16px規約に対する**明示的な例外**で、
@@ -1320,13 +1354,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       fontSize:fvFont,lineHeight:fvInnerH+"px",border:fvEdge?BD:"none",borderRadius:fvEdge?3:0,padding:0,
       // fill は透明にして td（土日祝の行色・ポジション不足の黄色）をセル全面に透かす
       background:fvEdge?"var(--c-input)":"transparent",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"}
-    :{width:colW-3,fontSize:16,border:BD,borderRadius:4,padding:"1px 1px",background:"var(--c-input)",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
+    // 通常表示も fill に統一（2026-09-23 ユーザー指示）。枠と角丸は残して入力欄と分かる形は保ち、
+    // 背景だけ透明にして td の色をセル全面に透かす。実際の塗りは cellBgStyle が決める。
+    :{width:colW-3,fontSize:16,border:BD,borderRadius:4,padding:"1px 1px",background:"transparent",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
   // 斜線画像 HDASH_IMG はモジュールスコープ（GridLegend・cellBgStyleと共用）
   // 全表示では日付列を左右両端に置くため sticky を外す（全体が見えるので固定する意味が無い）。
   // 休みカウント表・集計表のラベル列も同じ SD を使うので、幅を変えると3表の列位置が一緒に揃う。
+  // **幅は通常表示も全表示も DATE_COL_W で同じ**（2026-09-23 ユーザー指示）。通常表示だけは
+  // グリッドが横スクロールするので sticky を残す。box-sizing も border-box に揃える——
+  // content-box のままだと padding のぶん実幅が45pxを超え、スタッフ列の位置が下段3表とずれる。
   const SD=fullView
     ?{background:CRD,whiteSpace:"nowrap",width:fvDateW,minWidth:fvDateW,maxWidth:fvDateW,boxSizing:"border-box",padding:"0 1px",fontSize:fvDateFont,fontWeight:600,borderRight:BD2,overflow:"hidden",textAlign:"center"}
-    :{position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:90,minWidth:90,boxSizing:BOXS,padding:"2px 4px",fontSize:16,fontWeight:600,borderRight:BD2};
+    :{position:"sticky",left:0,background:CRD,zIndex:2,whiteSpace:"nowrap",width:DATE_COL_W,minWidth:DATE_COL_W,maxWidth:DATE_COL_W,boxSizing:"border-box",padding:"2px 1px",fontSize:DATE_COL_FONT,fontWeight:600,borderRight:BD2,overflow:"hidden",textAlign:"center"};
   // 右端の日付列。左端と鏡像にする（境界線を右ではなく左に置く）
   const SDR={...SD,borderRight:undefined,borderLeft:BD2};
   // スタッフ名色（Excel書き出しと同ルール: staffColors[name]==="red"→赤）
@@ -1426,21 +1465,22 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";}
     return note?"#333":undefined;
   };
-  // セル背景を2層で作る: backgroundColorは常に不透明ベース(var(--c-input))、その上に cellBgFor が返す
-  // 半透明レジェンド色(緑=変更/赤=重複)や不透明色(黄=特記)を linear-gradient 層で重ねる。こうすると
-  // td側の行背景(土日tint・ポジション不足の赤)が input を透過して混色するのを防ぎ、非土日セルと同じ見た目になる
-  // （--c-input はライト/ダーク両テーマとも不透明色なので合成結果もテーマ非依存で通常セルと揃う）。
-  // 休み希望の斜線(HDASH_IMG)も backgroundImage を使うため、両方付くケースでは斜線を前面にカンマ合成して消えないようにする。
-  // 全表示は input の背景を透明にして td/tr の色（曜日・不足）を透かすので、レジェンド色を
-  // 半透明のまま重ねると**下の色と混ざる**。そこで全表示だけは優先順位で勝った1色だけを
-  // 不透明ベース(CRD)の上に塗り、負けた色は完全に隠す。
+  // セル背景は **fill 方式に一本化する**（2026-09-23 ユーザー指示）。
+  // input の背景を透明にして td/tr の色（土日祝の行色・ポジション不足の黄色）をセル全面に透かし、
+  // 色が付くセルだけ不透明ベース(CRD)の上に**優先順位で勝った1色だけ**を塗って下の色を完全に隠す。
+  // 半透明のレジェンド色（緑=変更・赤=重複）を透明の上に重ねると下の色と混ざるので、この
+  // 「勝った1色だけ・不透明ベース」が要になる。
+  // 以前は通常表示だけ別実装で、backgroundColor に不透明の var(--c-input) を敷いて td の色を
+  // **隠していた**（だから土日祝色と不足色は input の外側の帯にしか出なかった）。列幅を
+  // border-box に揃えてその帯が 7px→3px に細くなったため、全表示と同じ fill に統一した。
+  // 休み希望の斜線(HDASH_IMG)も backgroundImage を使うため、両方付くときは斜線を前面にカンマ合成する。
   // 優先順位: 変更 > 不足 > 企業間他店舗被り > ヘルプ(メモ) > 曜日（2026-09-23 ユーザー指示）。
-  const FV_NONE="__fv_none__";
-  const cellBgStyleFullView=(name,date,field)=>{
+  const BG_NONE="__bg_none__";
+  const cellBgStyle=(name,date,field)=>{
     const key=`${name}|${date}|${field}`;
     const editing=focusKey===key;
-    let col=editing?null:cellBgFor(name,date,field,FV_NONE);
-    if(col===FV_NONE)col=null;
+    let col=editing?null:cellBgFor(name,date,field,BG_NONE);
+    if(col===BG_NONE)col=null;
     // 不足は changed の次・dup より前に割り込ませる（cellBgFor は td 側の不足色を知らないため）
     if(!editing&&col!==LEGEND_COLORS.changed&&cellPosErr(name,date,field==="start"?"lunch":"dinner"))col=LEGEND_COLORS.posErr;
     const layers=[];
@@ -1449,16 +1489,6 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // 色が付くセルだけ不透明ベースを敷く＝下の曜日色・不足色を完全に隠す。
     // 色が無いセルは透明のままにして、tr の曜日色をそのまま1色で見せる。
     const st={backgroundColor:col?CRD:"transparent"};
-    if(layers.length){st.backgroundImage=layers.join(",");st.backgroundRepeat="no-repeat";st.backgroundSize="100% 100%";}
-    return st;
-  };
-  const cellBgStyle=(name,date,field)=>{
-    if(fullView)return cellBgStyleFullView(name,date,field);
-    const col=cellBgFor(name,date,field,AI2.background);
-    const layers=[];
-    if(holidayCellDash(name,date,field))layers.push(HDASH_IMG); // 斜線を最前面（色の上に描く）
-    if(col!==AI2.background)layers.push(`linear-gradient(${col},${col})`); // レジェンド色を不透明ベースに重ねる
-    const st={backgroundColor:AI2.background};
     if(layers.length){st.backgroundImage=layers.join(",");st.backgroundRepeat="no-repeat";st.backgroundSize="100% 100%";}
     return st;
   };
@@ -1538,14 +1568,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
   // HeatTable / SummaryTable はモジュールスコープに移動済み（スクロール位置リセットバグ対策）
 
+  // 期間ラベルから先頭の年号（例:「2026年」）を除去して「10月前半」等のみにする。
+  // 画面の集計表とPDFで同じ規則を使う（2026-09-23 ユーザー指示で画面側も揃えた）。
+  // 集計表のラベル列は45pxしかなく、年号を残すと「2026年…」で本体が省略されて読めない。
+  const periodLabelShort=l=>String(l||"").replace(/^\d+年/,"");
   // 期間行：前半/後半/月計を常に3行表示
   const mo2=period?pd(period.startDate).getMonth()+1:0;
   const firstHalf=sameMoPeriods.find(p=>pd(p.startDate).getDate()<=15)||null;
   const secondHalf=sameMoPeriods.find(p=>pd(p.startDate).getDate()>15)||null;
   const periodRows=[
-    {id:firstHalf?.id||"nofirst",label:firstHalf?.label||`${mo2}月前半`,getMin:name=>firstHalf?getPeriodMin(firstHalf.id,name):0,
+    {id:firstHalf?.id||"nofirst",label:periodLabelShort(firstHalf?.label)||`${mo2}月前半`,getMin:name=>firstHalf?getPeriodMin(firstHalf.id,name):0,
       _bold:firstHalf?.id===selPid,_color:firstHalf?.id===selPid?"var(--c-accent)":undefined,_bg:firstHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
-    {id:secondHalf?.id||"nosecond",label:secondHalf?.label||`${mo2}月後半`,getMin:name=>secondHalf?getPeriodMin(secondHalf.id,name):0,
+    {id:secondHalf?.id||"nosecond",label:periodLabelShort(secondHalf?.label)||`${mo2}月後半`,getMin:name=>secondHalf?getPeriodMin(secondHalf.id,name):0,
       _bold:secondHalf?.id===selPid,_color:secondHalf?.id===selPid?"var(--c-accent)":undefined,_bg:secondHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
     {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"var(--c-accent)",
       _violateFn:(name,min)=>{const t=(settings.staffAttributes||{})[name]||"parttime";const l=(settings.staffTypeLimits||{})[t];const lim=l&&typeof l==="object"&&l.monthly?l.monthly*60:0;return lim>0&&min>lim;}},
@@ -1584,8 +1618,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     return[...staffList,...unreg];
   };
   const esc=s=>String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-  // 期間ラベルから先頭の年号（例:「2026年」）を除去して「○月前半」等のみ表示する
-  const pdfPeriodLabel=l=>String(l||"").replace(/^\d+年/,"");
+  // PDFも画面の集計表と同じ規則（periodLabelShort）を使う。ここは別名の残り。
+  const pdfPeriodLabel=periodLabelShort;
   // 縦書き: html2canvasはwriting-modeを描画できないため1文字ずつ<br>で縦積みする
   // 長音記号(ー)等の横棒文字は縦書きだと本来90度回転するため個別に回転させる
   const vtext=s=>String(s==null?"":s).replace(/\s+/g,"").split("").map(ch=>{
@@ -1964,7 +1998,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             <table style={{borderCollapse:"collapse",width:fullView?fvTableW:(fitAll?"100%":"unset"),minWidth:fitAll?"unset":"max-content"}}>
               <thead ref={gridTheadRef}>
                 <tr style={fullView?{height:fvTheadH}:undefined}>
-                  <th style={{...SD,...(fullView?(fvScrolls?{position:"sticky",top:0,zIndex:4}:{}):{top:0,zIndex:4,padding:"4px"}),fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>
+                  {/* 通常表示のヘッダは padding を SD（2px 1px）のまま使う。4px にすると45pxの
+                      border-box では中身が37pxになり、「日付」の位置だけ下の行とずれて見える */}
+                  <th style={{...SD,...(fullView?(fvScrolls?{position:"sticky",top:0,zIndex:4}:{}):{top:0,zIndex:4}),fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>
                   {mapGridCols(name=>VTH(name,true),key=>spacerTh(key,true))}
                   {fullView&&<th style={{...SDR,...(fvScrolls?{position:"sticky",top:0,zIndex:4}:{}),fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>}
                 </tr>
@@ -2040,8 +2076,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           {/* === 休みカウント / 連勤カウント === */}
           <div ref={restScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16,...fvCenter}}>
             <table style={{borderCollapse:"collapse",width:fullView?fvTableW:(fitAll?"100%":"unset"),minWidth:fitAll?"unset":"max-content"}}>
-              {/* 全表示ではラベル列がグリッドの日付列と同じ45pxまで詰まるので、省略記号で消えないよう
-                  短い見出しに差し替える（title属性に元の見出しを残す）。右端にも同幅の空列を足して
+              {/* ラベル列はグリッドの日付列と同じ45pxなので、省略記号で消えないよう
+                  短い見出しに差し替える（title属性に元の見出しを残す）。全表示では右端にも同幅の空列を足して
                   スタッフ列の位置をグリッドと揃える。**この表はスタッフ名のヘッダを持たないので、
                   列がずれるとどの数字が誰のものか分からなくなる。** */}
               <tbody>
@@ -2052,7 +2088,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                   {key:"consec",label:"最大連勤数",short:"連勤",bb:BD2,val:name=>consecCounts[name]||0},
                 ].map(r=>(
                   <tr key={r.key}>
-                    <td title={fullView?r.label:undefined} style={{...SD,fontWeight:600,borderBottom:r.bb,background:CRD,fontSize:fullView?Math.min(11,fvDateFont):11}}>{fullView?r.short:r.label}</td>
+                    <td title={r.label} style={{...SD,fontWeight:600,borderBottom:r.bb,background:CRD,fontSize:fullView?Math.min(11,fvDateFont):11}}>{r.short}</td>
                     {mapGridCols(name=>(
                       <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,padding:"3px 2px",textAlign:"center",borderLeft:BD,borderBottom:r.bb,background:CRD,fontSize:11,fontWeight:400,color:"var(--c-text2)"}}>
                         {r.val(name)}
@@ -2078,7 +2114,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           </div>}
 
           {/* ===期間別勤務時間（前半/後半/月計を常に3行）=== */}
-          <SummaryTable title="期間別勤務時間" rowLabel="期間" scrollRef={periodScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} rows={periodRows} fitAll={fitAll} mapGridCols={mapGridCols} spacerTh={spacerTh} spacerCell={spacerCell} colW={colW} VTH={VTH} labelW={fullView?fvDateW:90} fullView={fullView} tableW={fvTableW}/>
+          <SummaryTable title="期間別勤務時間" rowLabel="期間" scrollRef={periodScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} rows={periodRows} fitAll={fitAll} mapGridCols={mapGridCols} spacerTh={spacerTh} spacerCell={spacerCell} colW={colW} VTH={VTH} labelW={DATE_COL_W} fullView={fullView} tableW={fvTableW}/>
 
           {/* ===週間勤務時間=== */}
           {weeks.length>0&&<SummaryTable
@@ -2087,7 +2123,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             scrollRef={weekScrollRef}
             onScroll={e=>syncScrollH(e.currentTarget)}
             fitAll={fitAll}
-            labelW={fullView?fvDateW:90}
+            labelW={DATE_COL_W}
             fullView={fullView}
             tableW={fvTableW}
             mapGridCols={mapGridCols}
