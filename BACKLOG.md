@@ -457,6 +457,23 @@ app-admin.js（CompanyTab のエラー表示）
 
 ## 🟡 Cloud Functions を本番へ反映する（未デプロイの修正が3件たまっている）
 
+> **✅ 2026-09-23 に実測で解決——3件とも既に本番へ反映されていた（このタスクの前提が誤りだった）**
+> `firebase deploy --only functions --project ontheshift` を実行したところ、
+> **17関数すべてが `Skipped (No changes detected)`** で、本番は1バイトも変わらなかった。
+> firebase-tools はソースのハッシュを突き合わせてスキップを決めるので、これは
+> **本番に載っているソースが現在の `functions/index.js` と一致している**ことの証明になる。
+> `main` と `develop` の `functions/` にも差分は無い（`git diff main develop -- functions/` が空）。
+>
+> **起票時の判定が誤っていた。** 3件が「未デプロイ」とされた根拠はコミット履歴だけで、
+> 本番の状態は一度も測られていない。**完了済みの「Stripe秘密鍵の一部がログに出続けていた」
+> タスクが残した教訓（「本番の状態はコミット履歴ではなく本番のログ／監査ログで確かめる」）が、
+> ここに届いていなかった**——同じ形の取り違えが2回目。
+>
+> **残り（🟢 に下げてよい）**: 「企業連携タブから正規の解除が従来どおり通る」は**未検証**。
+> 反映自体はいつの間にか済んでいたので、デプロイ直後の確認という形では取れない。
+> 次に企業連携の解除を使う機会に見れば足りる（`isValidShopId` が既存店舗のIDを全件通すことは
+> ローカルで実測済みで、締め出される想定は無い）。
+
 **目的**: コード側は直っているが、**Cloud Functions は本番へデプロイするまで1バイトも効かない**。
 現在3件たまっており、どれも同じ1回のデプロイで出る。
 
@@ -467,12 +484,13 @@ app-admin.js（CompanyTab のエラー表示）
 | `aa17c88`（#133） | `createCompany` の `shopIds`（複数形）を `isValidShopId` に通す | **到達可能な穴は無い**（多重防御）。`shopId:"/"` は `companies/{id}/pub/shops` を `true` で上書きしうる形だが、通過には `shops/owners` が呼び出し元の uid を持つ必要があり、`shops/$shopId` の任意の子は `database.rules.json` に `.write` が無いのでクライアントからは作れない |
 
 **受け入れ条件**:
-- [ ] `cd functions && firebase deploy --only functions --project ontheshift`
+- [x] `cd functions && firebase deploy --only functions --project ontheshift`
+      → 2026-09-23 実行。**17関数すべて `Skipped (No changes detected)`＝反映済みだった**
 - [ ] 反映後、企業連携タブから正規の解除が従来どおり通ることを確認する（`isValidShopId` は
       `genSecureId` 形式10万件・`shop_1780453329813`・`eb6AfsQv4JAht+cX*xP7fuDa` を全件通すことを
-      ローカルで実測済みなので、既存店舗が締め出される想定は無い）
-- [ ] `purgeInactiveShops` の関数更新が成功したことを確認する
-      （ログの「アーカイブ: demo-toriMatsu-v1」はそもそも1年経つまで出ないので、確認は更新成功まででよい）
+      ローカルで実測済みなので、既存店舗が締め出される想定は無い）→ **未検証**
+- [x] `purgeInactiveShops` の関数更新が成功したことを確認する
+      → 上の一覧に `purgeInactiveShops`・`purgeOldPeriods` とも載っており、現行ソースと一致している
 
 **影響範囲**: functions/index.js（デプロイのみ・コード変更は済んでいる）
 **備考**: バグチェック#131（2026-09-17）・#132（2026-09-17）・#133（2026-09-18）で検出・**条件A（本番デプロイ）に該当**。
