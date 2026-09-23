@@ -835,6 +835,18 @@ function applyFlatSubWrite(map,path,value){
 // 逆に、ローカルにしか無い期間（別端末が削除済み）を編集した場合はフィールド単位のパスだけが
 // 送られ id を持たないため、ルールがその update 全体を弾く。revertAdminWrite がサーバーの内容へ
 // 描き直すので、消えた期間が中身の無いレコードとして復活することはない。
+// フィールドが変わったかの判定。**素朴な deepEqValue では足りない**——Firebaseは空配列・空オブジェクトを
+// キーごと落として返すので、書いた値と読み戻した値を素直に比べると毎回「変化あり」になる。
+// periodSnapshotEqual が使うのと同じ正規形（_normSnap）で比べ直す。
+// snapshot がこれに当たる: buildPeriodSnapshot は breakTimes の空配列・staffAttributes の空オブジェクト等を
+// そのまま含むため（既定設定の店舗でも7キーが空）、正規化しないと**保存のたびに写し全体が書き込み対象になる**。
+// 無駄な書き込みが増えるだけでなく、ユーザーが触っていない写しを毎回このクライアントの値で上書きするので、
+// 古い state（購読が返る前・オフライン中の保存の再送）からの保存が他端末の新しい写しを消しうる＝
+// この関数が成立させたはずの「正しさが state の鮮度に依存しない」が写しについてだけ崩れる（#142）。
+function _periodFieldEqual(a,b){
+  if(deepEqValue(a,b))return true;
+  return JSON.stringify(_normSnap(a))===JSON.stringify(_normSnap(b));
+}
 function diffPeriodsForFlatWrite(prevList,nextList){
   const out={};
   const prevById={},nextById={};
@@ -843,8 +855,12 @@ function diffPeriodsForFlatWrite(prevList,nextList){
   Object.keys(nextById).forEach(id=>{
     const prev=prevById[id],next=nextById[id];
     if(!prev){ out[id]=next; return; }
-    Object.keys(next).forEach(k=>{ if(!deepEqValue(next[k],prev[k])) out[`${id}/${k}`]=next[k]; });
-    Object.keys(prev).forEach(k=>{ if(!(k in next)) out[`${id}/${k}`]=null; });
+    // next に無いキーは削除（null）。両側を1周で見るので「next に空で入っている」と
+    // 「next からキーごと消えた」が同じ正規形に落ち、どちらも書き込みなしに収束する。
+    new Set([...Object.keys(next),...Object.keys(prev)]).forEach(k=>{
+      if(_periodFieldEqual(next[k],prev[k]))return;
+      out[`${id}/${k}`]=(k in next)?next[k]:null;
+    });
   });
   Object.keys(prevById).forEach(id=>{ if(!(id in nextById)) out[id]=null; });
   return out;

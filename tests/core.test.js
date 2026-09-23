@@ -915,9 +915,27 @@ test("diffPeriodsForFlatWrite: 写しの更新は同じ期間の他フィール�
 });
 
 test("diffPeriodsForFlatWrite: 確定の解除で消えたフィールドは null で明示する", () => {
-  const prev = [{ id: "p1", label: "A", snapshot: { staffList: [] }, lockedAt: "2026-09-01T00:00:00Z" }];
+  const prev = [{ id: "p1", label: "A", snapshot: { staffList: ["田中"] }, lockedAt: "2026-09-01T00:00:00Z" }];
   const next = [{ id: "p1", label: "A" }];
   assert.deepStrictEqual(u.diffPeriodsForFlatWrite(prev, next), { "p1/snapshot": null, "p1/lockedAt": null });
+});
+
+test("diffPeriodsForFlatWrite: Firebaseが落とした空の入れ物を「変化」と読まない（写しの再書き込み）", () => {
+  // buildPeriodSnapshot は既定設定の店舗でも breakTimes の空配列・staffAttributes の空オブジェクトを
+  // そのまま含む。Firebaseはそれをキーごと落として返すので、素朴に比べると保存のたびに
+  // 写し全体が書き込み対象になり、触っていない写しを古い state で上書きしうる（#142）
+  const local = { staffList: ["田中"], settings: { staffAttributes: {}, breakTimes: { weekday: [], sat: [] }, candidates: [{ start: "09:00", end: "17:00" }] } };
+  const server = { staffList: ["田中"], settings: { candidates: [{ start: "09:00", end: "17:00" }] } }; // 往復後
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([{ id: "p1", snapshot: server }], [{ id: "p1", snapshot: local }]), {});
+  // 同じ理由で、空のまま持っているキーと「キーごと無い」も行き来で書き込みを生まない
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([{ id: "p1" }], [{ id: "p1", keepStaff: [], keepAttrs: {} }]), {});
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([{ id: "p1", keepStaff: [] }], [{ id: "p1" }]), {});
+});
+
+test("diffPeriodsForFlatWrite: 中身のある値が空になったときは消す（正規化で握りつぶさない）", () => {
+  const prev = [{ id: "p1", keepStaff: [{ name: "佐藤", index: 1 }], keepAttrs: { 田中: "summer" } }];
+  const next = [{ id: "p1", keepStaff: [], keepAttrs: {} }];
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite(prev, next), { "p1/keepStaff": [], "p1/keepAttrs": {} });
 });
 
 test("diffPeriodsForFlatWrite: idを持たない要素・空リストで落ちない", () => {
