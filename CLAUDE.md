@@ -656,116 +656,128 @@ if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-09-23 自動実行 #142）
+## Shifty バグチェックレポート（2026-09-23 自動実行 #143）
 
-> 着手時の HEAD は `39ad63d`。#141 以降に入った新しいコードは3つで、**どれも今日のもの**——
-> 全表示の本番解放（`f59a579`）・**期間保存の差分化**（`156a925`）・スクロールバーの溝に出る
-> オレンジの帯（`39ad63d`）。#141 の申し送り「**1つの意味に surface が2つある所**を次は
-> Excel・PDF に当てるとよい」をまず当てたが、Excel・PDF 側は**別々の色を別々の場所で持っており
-> 食い違いは無かった**（下の否定した仮説を参照）。代わりに、**その形になっていたのは最も新しい
-> コード自身**だった——期間の差分書き込みが「写しが変わったか」を判定する式を独自に持ち、
-> 同じ問いに答える既存の `periodSnapshotEqual` と**逆の答えを返していた**。
+> 着手時の HEAD は `9d2579b`。#142 以降に入ったコードは**すべて同じ日のシフト作成タブの見た目**で、
+> 日付列を通常表示も45pxへ統一（`d79d952`）・セル色を fill に一本化・休み希望の斜線に viewBox を追加
+> （`b8ea2dc`）・ヒートマップの列幅固定と縦積み（`7910bb8`）・その「下優先」を携帯幅に限定（`bb394a3`）。
+> **この範囲に新しい 🔴🟡 は見つからなかった**——並行セッションが同じ日に足した回帰スクリプト3本を含む
+> 7本を実行し、すべて `allPass` だった（下の「検証したこと」）。
+>
+> 代わりに #142 の申し送り（「**同種の教訓が関数のコメントにしか書かれていない所**を洗う。
+> `carryAdminShiftFields` の不変条件は #112 で一度これで破れている」）を当てたところ、
+> **`ADMIN_SHIFT_FIELDS` の「新しい管理者フィールドを追加したら必ずここに登録すること」という
+> コメントが、`changed` について守られていなかった**。
 
 ### 修正済み
 
-- **[🟡] 期間の差分書き込みが「Firebaseが落とした空の入れ物」を変化と誤判定し、保存のたびに写し全体を書き直す**（app-utils.js `diffPeriodsForFlatWrite`・`a844f15`）
-
-  `156a925` はフィールドの比較に `deepEqValue` を使っていた。Firebase は**空配列・空オブジェクトを
-  キーごと落として返す**ので、書いた値と読み戻した値を素朴に比べると毎回「変化あり」になる。
-  **同じ罠は `periodSnapshotEqual` が `_normSnap` で既に避けており**、そのコメント自身が
-  「永久に変化ありと判定されて書き込みループになる」と書いている。**新しい関数だけがその正規化を
-  通っていなかった。**
-
-  実害は `snapshot` に出る。`buildPeriodSnapshot` は設定をそのまま焼くので、**既定設定の店舗でも7キー**
-  （`staffAttributes`・`staffPositions`・`positions`・`requiredPositions`・`staffNumbers`・
-  `staffWorkplaces`・`breakTimes`）が空の入れ物として入る。
-
-  **実測**（配信物の関数をそのまま Node で実行。**Firebase へは1バイトも出していない**）:
-
-  | | 修正前 | 修正後 |
-  |---|---|---|
-  | `periodSnapshotEqual`（写しの自動更新の判定） | 一致（更新しない） | 一致（同じ） |
-  | `diffPeriodsForFlatWrite` が書くパス | **`p1/snapshot`（556 bytes・中身はサーバーと同じ）** | **なし** |
-  | 往復後に収束するケース | **3/6** | **6/6** |
-
-  **無駄な書き込みが増えるだけの話ではない。** ユーザーが触っていない写しを毎回このクライアントの
-  値で上書きするので、**古い state からの保存**（購読が返る前・オフライン中の保存の再送）が
-  他端末の新しい写しを消しうる。`156a925` が成立させたはずの「**正しさが state の鮮度に依存しない**」が、
-  写し・`keepStaff`・`keepAttrs` についてだけ崩れていた。
-
-  比較を `_periodFieldEqual` に出し、`deepEqValue` で一致しなければ `periodSnapshotEqual` と同じ
-  正規形で比べ直す。あわせて next 側と prev 側の2周を union の1周にまとめた。
-  ユニットテスト2件追加（**279件パス**）。**追加した3つの assert は修正前の app-utils.js に対して
-  3/3 落ちる**ことを確認済み＝素通りするテストではない。
+なし（今回の検出は仕様判断を要するもの1件のみ。下記）。
 
 ### 要確認（未修正）
 
-- **[🟡] `settings` / `staff` / `templates` は今も「コレクション全体 `set()`」で、期間を1件失ったのと同じ形が3経路残っている** → **BACKLOG化済み**
+- **[🟡] 管理者がトリプルクリックで付けた「変更マーク（緑）」が、スタッフの再提出で1つ残らず消える** → **BACKLOG化済み**
 
-  2026-09-23 の本番事故の根は「**古い state をそのまま全体 `set()` する**」で、`periods` は塞がれた。
-  **`settings`（app-main.js:1237）・`staff`（:1271）・`templates`（:339）は全体 `set()` のまま**で、
-  しかも**3つとも localStorage の前回値から state を埋める**（:372-375）。
+  `buildShift`（app-staff.js:195）は再提出のたび **`delete nw.changed` を無条件に実行**し、そのあと
+  「スタッフ提出値が前回と違う日」にだけ付け直す。引き継ぎ対象の管理者フィールド一覧
+  `ADMIN_SHIFT_FIELDS`（app-utils.js:244）に **`changed` は入っていない**ので、
+  `carryAdminShiftFields` も拾わない。一方 `toggleChanged`（app-admin.js:1514）は
+  **その同じ `shifts[日付].changed`** に `true` を書く。
 
-  **実測**（`sanitizeForSet` と `set()` のセマンティクスを Node で再現。**Firebase には出していない**）。
-  端末Aが古い settings を持ったまま、設定タブで**Excelの店舗名だけ**を変えて保存すると:
+  **実測**（配信物の `carryAdminShiftFields`／`deadlineGatePassed` を読み込み、`buildShift` の式を
+  1文字も変えずに Node で実行。管理者が 9/10 を手動で緑にし、スタッフは別の日だけ直して再提出。
+  **Firebase へは1バイトも出していない**）:
 
-  | 端末Bが直前に足したもの | 保存後 |
-  |---|---|
-  | `staffAttributes` の「佐藤: 社員」 | **消える** |
-  | `breakTimes.weekday` の 12:00〜13:00 | **0件に戻る** |
-  | `staffAliases` の「田中 ←たなか」 | **消える** |
+  | 期間の締切 | 管理者が付けた緑（再提出前） | 再提出後の緑 | 同じ日の `adjustedStart` |
+  |---|---|---|---|
+  | なし | あり | **消える** | 残る |
+  | 2026-09-01（締切後） | あり | **消える** | 残る |
+  | 2099-01-01（締切前） | あり | **消える** | 残る |
 
-  警告もエラーも出ない（`set()` は成功する）。**直さなかった理由（条件D＋条件B）**: `settings` は
-  1つのオブジェクトの中にスタッフ名キーのマップを8つ持つ（`STAFF_KEYED_SETTING_MAPS`）ので、
-  トップレベルだけ割っても**同じ問題が1階層下に移るだけ**。どこまで割るかがユーザー判断になる。
-  `staff` は順序つき配列でキー単位に落とすとデータの形が変わる。
+  **他の管理者フィールドは全部残るのに手動マークだけが消える**。しかも締切前の期間は付け直される日が
+  1日も無いので、**1回の再提出でその sub の手動マークが全滅する**。`SmModal` のセル編集
+  （app-staff.js:577）は既存フィールドを保持するため消えない＝**消えるのはホーム画面からの再提出だけ**という
+  気づきにくい壊れ方をする。
 
-- **[🟢] 配信版数 `20260923-bbe3929` が、その後の5ファイルの変更を指していない**
-  `bbe3929` 以降に `app-admin.js`・`app-core.js`・`app-main.js`・`app-utils.js`・`index.html` が変わった
-  （**期間の差分書き込みもこの中**）。壊れた状態にはならず「黙って届かない」だけなので、
-  リリース時に `/release-to-main` の手順63でバンプすれば足りる。BACKLOG化はしない。
+  **直さなかった理由（条件B）**: `ADMIN_SHIFT_FIELDS` に `changed` を足す素直な修正は、
+  **前回の自動マークまで引き継いでしまう**（`carryAdminShiftFields` は手動と自動を区別できない）ため、
+  `delete nw.changed;` のコメント「過去のchangedは作り直す」と正面から衝突する。
+  既存の 🟡「変更マーク（緑セル）と提出一覧のバッジが食い違う」の**案B（手動マークに別の印を持たせる）を
+  決めない限り直せない**ので、新規タスクを作らずそのタスクの**③として追記した**（`749c640`）。
 
-- **#141 から継続（変化なし）**: 全表示の td 色（`fill` 方式で解決済み）・高さだけのリサイズ（並行セッションが
-  その後 app-admin.js を大きく書き換えたため、この回では再測していない）。
-  **BACKLOG化済みの既存項目**は変化なし: 確定済み期間のタブ間の食い違い／変更マークとバッジ／
-  企業ログインの試行制限／退勤が出勤より前／Cloud Functions の本番反映3件／二重課金の根治／
-  特商法表記（🔴）／解約時のプラン判定／`verifyShopOwner` の移行猶予／別名提出の重複の根（#81）／
-  PDFの実物確認／`purgeOldPeriods` の本有効化／属性削除と休憩タグ／完全削除と `keepAttrs`。
+- **[🟢] 「1時間ぶんの列幅」を答える式がヒートマップに2本あり、値が違う**（app-admin.js:1272 / :1259）
+
+  今日の `7910bb8` が足した `HEAT_NAT_HOURW=24`（自然幅の1列）に対し、
+  既存の `heatVisibleHours=Math.floor(heatInnerW/22)` は **22** を使っている。実測では自然幅は
+  **24px**（`example-heat-colw-fixed.js` の `distinctColW:[24]`）なので、22 のほうが見える時間数を
+  約9%多く見積もる。影響は「横パネルに3時間ぶん出せるか」の判定だけで、食い違うのは
+  `heatInnerW` が **66〜71px の6pxの帯**に入るときに限られる（そこでは2.75時間しか出ないのに
+  「3時間出せる」と判定して横パネルを維持する）。ユーザーが同日に2度測って決めた閾値
+  （414px×6名＝194px／768px×24名＝199px）は**どちらの式でも判定が変わらない**ことを確認済み。
+  **見た目の粗さだけで、データにも権限にも影響しない**ので 🟢 とし、閾値の再調整はユーザーの領分として
+  BACKLOG化しない。
+
+- **[🟢] 全表示の `fvEdge=false` が定数のままで、`fvEdge?…:…` の分岐が4箇所とも死んでいる**（app-admin.js:1324）
+  2026-09-23 に `fill` 方式へ確定したときの残骸で、BACKLOG・CLAUDE.md に「不採用」と記録済み。
+  比較のために残してあるとも読めるので、消すかどうかはユーザー判断。挙動には影響しない。
+
+- **#142 から継続（変化なし）**: BACKLOG化済みの既存項目はいずれも変化なし。
+  `settings`/`staff`/`templates` の全体 `set()`／確定済み期間のタブ間の食い違い／企業ログインの試行制限／
+  退勤が出勤より前／二重課金の根治／特商法表記（🔴）／解約時のプラン判定／`verifyShopOwner` の移行猶予／
+  別名提出の重複の根（#81）／PDFの実物確認／`purgeOldPeriods` の本有効化／属性削除と休憩タグ／
+  完全削除と `keepAttrs`。
+- **#142 の 🟢（配信版数が新しいコードを指していない）は解消**。`9d2579b` が `20260923-bb394a3` へ
+  バンプ済みで、**それ以降に app-*.js・index.html の変更は無い**（release コミット自身を除く）。
 - **引き受け済みのトレードオフ（再検出しても直さない）**: `subs/$subId/.write` は認証済みなら通る（2026-08-31 決定1）。
 
 ### 当てて否定した仮説
 
-- **Excel・PDF が画面の td/input の色を取り違えている → 否定**。PDF（`buildShiftTableHtml`）は
-  土日祝を `<tr>` の `rowBg`、変更緑・メモ黄を `<td>` に置き、Excel（`expXl`）は `fSat`/`fHol`/`fChg`/`fYel` を
-  同じ規則で持つ。**ポジション不足の黄色だけは両方に無い**が、これは作成中の不足を知らせる画面上の
-  信号で、配るシフト表には出さないのが筋なので不具合として扱わない。
-- **全表示で色の判定が2本に分かれている → 否定**。`cellBgStyleFullView` は `cellBgFor`（優先順位の正本）へ
-  委譲し、td 側しか知らない不足色だけを足す形なので、セルコマンドを増やしても片方に取り残されない。
-- **`diffSubForFlatWrite` にも同じ空の入れ物の穴がある → 否定**。空になりうるのは `adminRest` だけで、
-  app-admin.js:691・:698 がどちらも `Object.keys(ar).length` を見て**空ならキーごと delete する**。
-- **`html{background:var(--c-bg)}`（`39ad63d`）がテーマの定義漏れを作る → 否定**。`--c-bg` は
-  `:root` ライト・`:root[data-theme="dark"]`・`prefers-color-scheme: dark` の3箇所すべてにあり、
-  `applyTheme` は `documentElement`（＝`html` 自身）に属性を置くので両テーマで解決する。
-- **CSS変数の未定義参照・ダーク定義の二重管理の乖離 → どちらも0件**。
-  SVG属性内の `var()` は `app-staff.js:9` の1件のみで、これは 2026-08-13 に Chromium・WebKit で解決を実測済み。
-- **`isPro` で Premium 機能 → 否定**。**CF の `secrets` 抜け → 否定**（7つの `runWith` すべてに宣言・`.delete()` 0件）。
+- **セル色の fill 一本化で通常表示の色が壊れる → 否定**。`example-fullview-cell-colors.js` が
+  通常表示・全表示とも `fill(input透明)` で `normalShowsTdColor:true`／`fullShowsTdColor:true` を返し、
+  スタッフ名色・土日祝の日付文字色も保持されている。
+- **`boxSizing` を全表示以外にも広げたことで列がずれる → 否定**。`example-fitall-geometry.js` の
+  `columnOffsets` が4表とも 45 で一致し、`summaryTablesAligned:true`。
+- **日付列 90px→45px の変更に追随していない箇所がある → 否定**。グリッド・休みカウント表・集計表の
+  すべてが `DATE_COL_W` を参照し、`app-admin.js` に残る `90` はすべて無関係（`maxWidth:900`・
+  `rotate(90deg)`・延長分数の選択肢・コメント）。
+- **ヒートマップを全幅にすると親からはみ出す → 否定**。置き場所の親が `flexWrap:"wrap"` なので
+  2枚が縦に折り返す。`heatBelowFullW` も `normalW-16`（左右 padding 8px を引いた値）で、
+  `example-heatmap-mobile-fit.js` が携帯幅で `noHorizontalScroll:true`。
+- **`_periodFieldEqual`（#142 の修正）が文字列や配列で誤動作する → 否定**。`_normSnap` は
+  プリミティブをそのまま返し、`false`・`0`・`""` を落とさない。削除の向き（prev にあり next に無い）も
+  union の1周で `null` を出す。
+- **`ADMIN_SHIFT_FIELDS` に他の取りこぼしがある → `changed` の1件だけ**。管理者コードが
+  `shifts[日付]` へ書くキーを機械的に列挙して突き合わせた結果、一覧に無いのは `changed` のみ
+  （`status` はスタッフ側の値、他は全部登録済み）。
+- **管理者の編集の書き込み先が表示と食い違う（#105/#106 と同じ形）→ 否定**。
+  `applyEditToSubs` の手書きの「完全一致→別名を登録順」ループは `resolveSubByAlias` と同じ順序で、
+  重複時の採用規則（最初の1件）も `subsByKey` と一致する。
+- **テーマ変数の未定義参照・ダーク定義の乖離・SVG属性内 `var()` → いずれも0件**
+  （`var(--c-input2, …)` のフォールバック付き参照も含めて定義済みであることを確認）。
 
 ### 検証したこと
 
-- `npm test` **279件パス**（#141 の 270 から +9＝期間差分の7件と今回の2件）・
-  `npx eslint app-*.js` **0 errors / 95 warnings**（#141 から増減なし）・`node --check functions/index.js` 通過。
-- RULES.md スキャン: `DEV_MODE` は式のまま／`subs`・`periods` の全体 `set()` **0件**／`accounts` 全件読み 0件／
-  SRI 11/11／読み込み順 utils→core→staff→admin→main／フォーム部品 **58件・`fontSize<16` は0件**
-  （RULES.md の例外1件＝全表示のセルは変数 `fvFont` なのでこの走査は数えない）。
-- **Firebase・Stripe・本番データには一切アクセスしていない。** 実測はすべて配信物の関数を Node で実行したもの。
+- `npm test` **279件パス**（#142 から増減なし）・`npx eslint app-*.js` **0 errors / 95 warnings**
+  （同）・`node --check functions/index.js` 通過・`no-undef` 0件。
+- **実ブラウザの回帰スクリプト7本すべて `allPass`／EXIT=0**（Playwright・Firebase非接続）:
+  `example-heat-colw-fixed`・`example-heatmap-mobile-fit`・`example-fullview-cell-colors`・
+  `example-fitall-geometry`・`example-shift-edit-tab`・`example-toolbar-save-button`。
+  コンソールエラーは全水準で0件。
+- RULES.md スキャン: `DEV_MODE` は式のまま／`subs`・`periods` の全体 `set()` **0件**／
+  `accounts` 全件読み 0件／SRI 11/11／読み込み順 utils→core→staff→admin→main／
+  フォーム部品 **58件・`fontSize<16` は0件**（RULES.md の例外1件＝全表示のセルは変数 `fvFont` なので
+  この走査は数えない）。
+- `functions/` と `database.rules.json` は #142 以降**1バイトも変わっていない**。
+- **Firebase・Stripe・本番データには一切アクセスしていない。** 実測はすべて配信物の関数を
+  Node で実行したか、配信物をローカルのヘッドレスブラウザへ読ませたもの。
 
-**申し送り（次回の観点）**: 今回は「**同じ問いに答える式が2本あり、新しく書いたほうだけが
-既存の教訓を知らない**」形だった。`_normSnap` のコメントは罠を正確に説明していたのに、
-2週間後に書かれた関数はその2行上を通らなかった。**同種の教訓が「関数のコメント」にしか
-書かれていない所**を次は洗うとよい——`deepEqValue`・`sanitizeForUpdate`・`carryAdminShiftFields` の
-不変条件は、いずれも「読んだ人だけが守る」形で置かれている（#112 で `carryAdminShiftFields` が
-一度これで破れている）。あわせて、**BACKLOG に起票した `settings` の全体 `set()` は
-`periods` と同じ根**なので、決めるなら一緒に決めるのが早い。
+**申し送り（次回の観点）**: #142 の申し送り（コメントにしか無い不変条件）は**当たりで、1件出た**。
+同じ形はまだ残っている——**「登録すること」と書かれた一覧**は `ADMIN_SHIFT_FIELDS` のほかに
+`STAFF_KEYED_SETTING_MAPS`・`PERIOD_SNAPSHOT_SETTING_KEYS`・`CELL_COMMANDS`／`CELL_COLOR_LEGEND` があり、
+**後ろ2つはテストがドリフトを検出する仕掛けを持っているのに、`ADMIN_SHIFT_FIELDS` は持っていない**。
+次は「一覧とその一覧を使う側の実装が食い違っていないか」を機械で照合するテストを足せるかを見るとよい。
+あわせて、今日入った**ヒートマップの寸法定数**（`HEAT_MIN_HOURW`・`HEAT_NAT_HOURW`・`HEAT_PANEL_MIN_HOURS`・
+`HEAT_BELOW_FIRST_MAX_W`）は**どれも実測から決めた値なのにコード側に実測の再現手段が無い**ので、
+`example-heat-colw-fixed.js` にこれらの境界を踏む水準を足しておくと、次に誰かが触ったときに気づける。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
@@ -1094,6 +1106,33 @@ app-utils.js（`resolvePeriodMaster` の呼び出し位置）
 
 管理者は「締切後に誰かが変えた」と分かるのに、**どの日が変わったかがシフト表のどこにも出ない**。
 
+**③ 管理者がトリプルクリックで付けた手動マークが、スタッフの再提出で1つ残らず消える**（2026-09-23・#143 で追加）。
+`buildShift`（app-staff.js:195）は再提出のたび **`delete nw.changed` を無条件に実行**し、そのあと
+「スタッフ提出値が前回と違う日」にだけ付け直す。`carryAdminShiftFields` が引き継ぐ管理者フィールドの一覧
+（`ADMIN_SHIFT_FIELDS`・app-utils.js:244）に **`changed` は入っていない**ので、引き継ぎの対象にもならない。
+`toggleChanged`（app-admin.js:1514）はその同じ `shifts[日付].changed` に `true` を書くため、
+**管理者の手動マークは「前回のスタッフ提出と同じ値の日」に付いている限り必ず消える**。
+
+**実測**（配信物の `carryAdminShiftFields`／`deadlineGatePassed` を読み込み、`buildShift` の式をそのまま
+Node で実行。管理者が 9/10 を手動で緑にし、スタッフが別の日（9/12）だけ直して再提出した場合。
+**Firebase へは1バイトも出していない**）:
+
+| 期間の締切 | markChanged | 管理者が付けた緑（再提出前） | 再提出後の緑 | 同じ日の `adjustedStart` |
+|---|---|---|---|---|
+| なし | true | あり | **消える** | 残る |
+| 2026-09-01（締切後） | true | あり | **消える** | 残る |
+| 2099-01-01（締切前） | false | あり | **消える** | 残る |
+
+**他の管理者フィールドは全部残るのに、手動マークだけが消える**のが要点で、しかも締切前
+（`markChanged=false`）の期間では**付け直される日が1日も無い**ため、1回の再提出でその sub の手動マークが
+全滅する。`SmModal` のセル編集（app-staff.js:577）は既存フィールドを保持するので消えない＝
+**消えるのはホーム画面からの再提出だけ**という、気づきにくい壊れ方をする。
+
+**素直な修正が効かない**: `ADMIN_SHIFT_FIELDS` に `changed` を足すと、**前回の自動マークまで引き継がれる**
+（`carryAdminShiftFields` は手動と自動を区別できない）。これは `delete nw.changed;` のコメント
+「過去のchangedは作り直す」と正面から衝突する。つまり③も①②と同じく、**先に案B（手動マークに別の印を持たせる）を
+決めない限り直せない**。
+
 **ループで直さなかった理由（条件B・仕様判断）**: 素直な直し方は「緑セルも読み取り時ゲートにする」
 （`deadlineGatePassed(period.deadlineDate, subLastActionTime(sub))` を描画時に当てる）だが、
 **`changed` は管理者のトリプルクリックによる手動マーク（`toggleChanged`・app-admin.js:1304）と同じフィールドを共有しており、
@@ -1111,12 +1150,17 @@ app-utils.js（`resolvePeriodMaster` の呼び出し位置）
 - [ ] ②（セル編集で緑が付かない）を直すかも合わせて決める。**管理者が同じ `SmModal` を期間管理タブから開いて編集する経路がある**
       ので、直す場合は `myName===null`（管理者）を除外しないと、管理者自身の編集が「スタッフが締切後に変えた」印になる
       （`isUpdated` は同じ理由で既に除外済み＝バグチェック#59）
+- [ ] ③（手動マークが再提出で消える）も同じ案で塞ぐ。案Bを採るなら `changedManual` を
+      `ADMIN_SHIFT_FIELDS` に登録する（登録しないと、印を分けても再提出のたびに消える点は変わらない）。
+      案A／案C を採る場合は「手動マークは次のスタッフ再提出まで」という寿命を UI で示すか決める
 - [ ] 決めた案を実装し、2つの surface が同じ答えを返すユニットテストを追加する
 
 **影響範囲**: app-utils.js（`deadlineGatePassed` の呼び出し位置）、app-staff.js（`buildShift`・`SmModal` の `applyCellEdit`）、
 app-admin.js（緑セル描画 `LEGEND_COLORS.changed`・`toggleChanged`・`expXl`・`buildShiftTableHtml` の `chgBg`）
-**備考**: バグチェック#138（2026-09-20）で検出・**条件B（手動マークと同じフィールドを共有するため、区別を持つかの仕様判断が要る）に該当**。
-①②は**同じ根**（変更マークは書き込み時に1経路でだけ決まるのに、バッジは読み取り時に毎回決まる）なので1タスクにまとめた。
+**備考**: バグチェック#138（2026-09-20）で検出・③はバグチェック#143（2026-09-23）で追加・
+**条件B（手動マークと同じフィールドを共有するため、区別を持つかの仕様判断が要る）に該当**。
+①②③は**同じ根**（変更マークは書き込み時に1経路でだけ決まるのに、バッジは読み取り時に毎回決まる。
+そのうえ手動マークが同じフィールドに同居している）なので1タスクにまとめた。
 **Firebase・Stripe には一切アクセスしていない**（実測はすべて配信物の関数を Node で実行したもの）。
 
 ---
