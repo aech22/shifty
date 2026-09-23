@@ -1248,12 +1248,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const heatVisibleHours=Math.max(0,Math.floor(heatInnerW/22)); // スクロール時に一度に見える時間数
   // **3時間ぶん出せるならセルの横（横パネル）、2時間以下になるなら下へ回す**（2026-09-23 ユーザー指示）。
   // 下へ回したときは全表示と同じく両方のヒートマップを並べる。
-  // ただし**横パネルでは全時間帯を出せないのに、下へ回せば出せるときは下を選ぶ**
-  // （2026-09-23 ユーザー指示の「全時間帯をスクロールなしで出す」を置き場所より優先する）。
+  // ただし**携帯幅だけは、横パネルで全時間帯を出せないのに下へ回せば出せるとき、下を選ぶ**
+  // （2026-09-23 ユーザー指示の「全時間帯をスクロールなしで出す」を、携帯に限り置き場所より優先する）。
   // これが無いと、日付列を90px→45pxに詰めてグリッドが軽くなった分だけ横パネルが成立してしまい、
   // 携帯の絞り込み表示が「全幅で全時間帯」から「157pxで4時間ぶんの横スクロール」へ戻る（実測）。
+  // **この下優先を携帯幅に限るのは同日の再指示**。幅を見ずに効かせていた版では、タブレット幅でも
+  // 下へ回っていた（実測: 768px×24名が横パネル199px→下。以前は横パネルだった条件）。
+  // パネル幅も見える時間数も 414px×6名（194px・6時間）と 768px×24名（199px・6時間）でほぼ同値なので、
+  // **この2つを分けられる変数は画面幅しかない**。600px は両者の間で、iPhone の横持ち(844px)は
+  // タブレット側に入る。
   const HEAT_PANEL_MIN_HOURS=3;
-  const heatPanelUsable=heatFitsAll||(heatVisibleHours>=HEAT_PANEL_MIN_HOURS&&!belowFitsAll);
+  const HEAT_BELOW_FIRST_MAX_W=600;
+  const heatPanelUsable=heatFitsAll||(heatVisibleHours>=HEAT_PANEL_MIN_HOURS&&!(belowFitsAll&&viewW<HEAT_BELOW_FIRST_MAX_W));
   // 余った幅で4時間ぶんも出せないならセルの横をあきらめて下へ回す（時間帯の条件だけで決める）。
   const hasPanel=deptSidePanel?heatPanelUsable:(hasSplit&&!fitAll&&rawPanelW>=150);
   const kitShownAsPanel=hasPanel&&deptSidePanel!=="hall";
