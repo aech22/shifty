@@ -1207,6 +1207,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const heatHourCount=Math.max(1,heatHours.length);
   // その幅なら全時間帯を横スクロールなしで出せるか。52pxは日付列・8pxは枠線（heatInnerW と同じ内訳）。
   const heatFitsIn=w=>((w||0)-52-8)>=HEAT_MIN_HOURW*heatHourCount;
+  // 詰めない（fitHours なし）ときの実測の列幅。HeatTable の `minWidth:22` に padding 左右1pxが付く。
+  const HEAT_NAT_HOURW=24;
+  // 固定幅のまま全時間帯を置くのに要る枠幅。これを下回るときだけ詰める。
+  const heatNaturalW=52+HEAT_NAT_HOURW*heatHourCount+8;
+  const heatNeedsFit=w=>(w||0)<heatNaturalW;
   // ヒートマップ1枚の幅。**置き場所（セルの横の横パネル／グリッド下）によらず同じ幅**にする
   // （2026-09-23 ユーザー指示）。2枚並びを基準に、通常表示の幅の半分（gap 10px を引く）で固定する。
   // 絞り込み無しの通常表示の横パネルだけは従来どおり左余白の幅のまま（既存の見た目を変えないため）。
@@ -1260,11 +1265,13 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const useBreakout=hasPanel||fitAll||deptFilter!=="all";
   const panelCount=(kitShownAsPanel?1:0)+(hallShownAsPanel?1:0);
   const panelW=hasPanel?heatPanelW:0;
-  // **時間帯を詰めて全部出すか横スクロールするかは、置き場所の幅だけで決める**（2026-09-23 ユーザー指示）。
-  // 通常表示でも絞り込み表示でも同じ出し方にする＝最小の9px/列で全時間帯が収まるなら詰めて全部出し、
-  // 幅を超えるときだけ従来どおり1列22pxの横スクロールにする。
-  const fitHeatHoursPanel=heatFitsAll;
-  const fitHeatHoursBelow=belowFitsAll;
+  // **時間帯の列幅は1列24pxに固定し、枠いっぱいに引き伸ばさない**（2026-09-23 ユーザー指示）。
+  // `fitHours` は `table-layout:fixed` + `width:100%` なので、立てると列が枠幅まで伸びる。
+  // 立てるのは**自然幅では収まらないときだけ**にする＝収まるなら固定幅のまま、収まらないなら
+  // 詰めて全時間帯を出す（それでも足りなければ従来どおり横スクロール）。
+  // これを無条件にしていた版では、通常表示・全表示の列幅が24px→39.7pxへ伸びていた（実測）。
+  const fitHeatHoursPanel=heatFitsAll&&heatNeedsFit(heatPanelW);
+  const fitHeatHoursBelow=belowFitsAll&&heatNeedsFit(heatBelowW);
   // 中央グリッド幅 = ブレイクアウト時はビューポート幅 - パネル分
   const centerW=useBreakout?(viewW-panelW*panelCount-24):containerW;
   // 不足情報・ヒートマップ・操作方法は、全表示でも絞り込み中でも**通常表示の幅のまま**据え置く。
@@ -1354,9 +1361,14 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       fontSize:fvFont,lineHeight:fvInnerH+"px",border:fvEdge?BD:"none",borderRadius:fvEdge?3:0,padding:0,
       // fill は透明にして td（土日祝の行色・ポジション不足の黄色）をセル全面に透かす
       background:fvEdge?"var(--c-input)":"transparent",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"}
-    // 通常表示も fill に統一（2026-09-23 ユーザー指示）。枠と角丸は残して入力欄と分かる形は保ち、
-    // 背景だけ透明にして td の色をセル全面に透かす。実際の塗りは cellBgStyle が決める。
-    :{width:colW-3,fontSize:16,border:BD,borderRadius:4,padding:"1px 1px",background:"transparent",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
+    // 通常表示も fill に統一し、**input がセル全面を覆う**（2026-09-23 ユーザー指示）。
+    // fill にする前は input を一回り小さくして td の色を周りの帯として見せていたが、fill では
+    // td の色が input を透かして全面に出るので、その帯は要らなくなった。
+    // 帯を外すぶん input 自身の枠・角丸も外す——残すと td の borderLeft と隣り合って
+    // 縦線が2pxに見える（帯が無くなり両者が接するため）。セルの区切りは td 側の罫線が担う。
+    // 縦の padding 4px は、td の padding と input の余白を合わせて**行の高さを従来どおり**に保つため
+    // （帯を外しただけで行が詰まると、行ストライドが 52px→44px になりグリッド全体の高さが変わる）。
+    :{width:"100%",display:"block",fontSize:16,border:"none",borderRadius:0,padding:"4px 1px",background:"transparent",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
   // 斜線画像 HDASH_IMG はモジュールスコープ（GridLegend・cellBgStyleと共用）
   // 全表示では日付列を左右両端に置くため sticky を外す（全体が見えるので固定する意味が無い）。
   // 休みカウント表・集計表のラベル列も同じ SD を使うので、幅を変えると3表の列位置が一緒に揃う。
@@ -2020,7 +2032,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                     <tr key={date+"-s"} style={{background:baseRb}}>
                       <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:fullView?0:"1px 1px",boxSizing:BOXS,borderLeft:BD,borderBottom:"none",textAlign:"center",background:rbS(name),width:colW,minWidth:colW,maxWidth:colW}}>
+                        <td key={name} style={{padding:0,boxSizing:BOXS,borderLeft:BD,borderBottom:"none",textAlign:"center",background:rbS(name),width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             readOnly={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
@@ -2041,7 +2053,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                     </tr>,
                     <tr key={date+"-e"} style={{background:baseRb}}>
                       {mapGridCols(name=>(
-                        <td key={name} style={{padding:fullView?0:"1px 1px",boxSizing:BOXS,borderLeft:BD,borderBottom:BD,textAlign:"center",background:rbE(name),width:colW,minWidth:colW,maxWidth:colW}}>
+                        <td key={name} style={{padding:0,boxSizing:BOXS,borderLeft:BD,borderBottom:BD,textAlign:"center",background:rbE(name),width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             readOnly={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
