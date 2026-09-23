@@ -237,8 +237,12 @@ const LEGEND_COLORS=Object.fromEntries(CELL_COLOR_LEGEND.filter(c=>c.color).map(
 const FIXED_ENTRY=CELL_COMMANDS.find(c=>c.kind==="fixed")||null;
 const FIXED_KEY=FIXED_ENTRY?FIXED_ENTRY.key:"";
 // 休み希望セルの斜線（右上→左下・PDF出力のhatchと同じSVG方式）。#999はライト/ダーク両テーマで視認可、
-// non-scaling-strokeでセルサイズに引き伸ばしても線幅一定。inputのbackgroundImageに敷き、色背景はbackgroundColorと2層で共存させる
-const HDASH_IMG=`url("data:image/svg+xml;charset=utf-8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' preserveAspectRatio='none'><line x1='10' y1='0' x2='0' y2='10' stroke='#999' stroke-width='1.5' vector-effect='non-scaling-stroke'/></svg>")}")`;
+// non-scaling-strokeでセルサイズに引き伸ばしても線幅一定。inputのbackgroundImageに敷き、色背景はbackgroundColorと2層で共存させる。
+// **viewBox は必須**（2026-09-23）: width/height だけで viewBox を持たないSVGを背景画像として引き伸ばすと、
+// WebKit（Safari）は non-scaling-stroke を効かせずセルの大きさに比例して線を太くする。実測（直交線幅・
+// アンチエイリアス込み）では 36x22 のセルで Chromium 2.61px に対し WebKit 5.21px と約2倍になっていた。
+// viewBox を付けると両エンジンとも同じ太さになる（同条件で 2.09px / 2.09px）。
+const HDASH_IMG=`url("data:image/svg+xml;charset=utf-8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' preserveAspectRatio='none'><line x1='10' y1='0' x2='0' y2='10' stroke='#999' stroke-width='1' vector-effect='non-scaling-stroke'/></svg>")}")`;
 
 // 時間帯別出勤人数（ヒートマップ）。ShiftEditTab の外（モジュールスコープ）で定義しコンポーネント型を固定する。
 // ShiftEditTab内で定義すると親の再レンダー（セル選択等）のたびに新しい関数=新しい型になり、
@@ -1839,7 +1843,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           過去データ読込
         </button>}
-        <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPremium?("例: 9, 9.5, 930, 9:30"+(Object.keys(abbrToShop).length>0?" / 略称でヘルプ（例: 9三）":"")):"閲覧のみ（編集はPremiumプランで）"}</span>
+        {/* 入力例の案内は 2026-09-23 のユーザー指示で削除（操作方法はタブ最下部のレジェンドにある）。
+            span 自体は flex:1 の伸び代として残す＝これを外すと右側のボタン群が左へ寄る。 */}
+        <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPremium?"":"閲覧のみ（編集はPremiumプランで）"}</span>
         <button onClick={()=>{setFitAll(v=>!v);setDeptFilter("all");}}
           style={{padding:"5px 10px",background:fitAll?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
           {fitAll?"通常表示":"全表示"}
