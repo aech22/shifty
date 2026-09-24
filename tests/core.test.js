@@ -1989,18 +1989,72 @@ test("isUnregisteredSubName: 期限付き削除で名前を残した期間では
   assert.strictEqual(u.isUnregisteredSubName("山田", list, undefined, kept), true, "別名マップ未設定でも落ちない");
 });
 
+// 配信物を AST で読むための共通ヘルパー（#144 の collectShiftDayWrites と同じ設定）。
+// **「禁止された書き方が残っていないこと」を主張するテストを正規表現で書かないこと。**
+// 文字列の正規表現は書き方の揺れ（`settings.staffAliases` 経由・オプショナルチェーン・
+// 改行・クォートの種類）を静かに見逃し、**見逃しても assert は通る**＝必ず通るテストになる。
+// バグチェック#145 で実測: 移行前の2本はそれぞれ 7件中4件・5件中3件の再発形を見逃していた。
+// envVar は走査の検出力を対照で確かめるための差し替え口（配信物は編集すると自動コミットされるため写しで採る）。
+function _parseAppFile(relPath, envVar) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const babel = require("@babel/core"); // devDependencies に宣言済み
+  const file = (envVar && process.env[envVar]) || path.join(__dirname, "..", relPath);
+  const src = fs.readFileSync(file, "utf8");
+  const ast = babel.parseSync(src, {
+    configFile: false, babelrc: false, sourceType: "script",
+    parserOpts: { plugins: ["jsx"], errorRecovery: true },
+  });
+  const srcOf = n => src.slice(n.start, n.end);
+  const walk = (node, fn) => {
+    if (!node || typeof node.type !== "string") return;
+    fn(node);
+    for (const k of Object.keys(node)) {
+      if (k === "loc" || k === "leadingComments" || k === "trailingComments") continue;
+      const v = node[k];
+      if (Array.isArray(v)) v.forEach(c => c && typeof c.type === "string" && walk(c, fn));
+      else if (v && typeof v.type === "string") walk(v, fn);
+    }
+  };
+  return { src, ast, srcOf, walk };
+}
+
 test("isUnregisteredSubName: 未登録名の判定が app-admin.js に書き写されていない", () => {
   // 「提出された名前が名簿にも別名にも無いか」の入口は4つある（提出一覧の別名バッジ・
   // スタッフタブの未登録名・Excelの列構成・PDFの列構成）。keepStaff のような名簿の要素を
   // 後から足したとき、書き写した側だけが追随せず黙って食い違う（#105〜#108 と同じ形）。
-  const fs = require("node:fs");
-  const path = require("node:path");
-  const admin = fs.readFileSync(path.join(__dirname, "..", "app-admin.js"), "utf8");
-  const staff = fs.readFileSync(path.join(__dirname, "..", "app-staff.js"), "utf8");
-  const inline = (admin + staff).match(/Object\.values\(\s*staffAlias[A-Za-z]*[^)]*\)\.flat\(\)/g) || [];
-  assert.deepStrictEqual(inline, [],
-    `別名リストの自前展開が残っている（isUnregisteredSubName を使うこと）: ${inline.join(" / ")}`);
-  const calls = (admin.match(/isUnregisteredSubName\(/g) || []).length;
+  const found = [];
+  let objectValuesSeen = 0, adminSrc = "";
+  for (const [rel, env] of [["app-admin.js", "SHIFTY_ADMIN_SRC"], ["app-staff.js", "SHIFTY_STAFF_SRC"]]) {
+    const { src, ast, srcOf, walk } = _parseAppFile(rel, env);
+    if (rel === "app-admin.js") adminSrc = src;
+    // 別名マップを中間変数に入れてから展開する形も拾う（app-admin.js:622 の
+    // `const staffAliases=settings?.staffAliases||{}` のように名前が変わりうるため）。
+    const aliasVars = new Set();
+    walk(ast, n => {
+      if (n.type === "VariableDeclarator" && n.id.type === "Identifier" && n.init &&
+          /staffAlias/i.test(srcOf(n.init))) aliasVars.add(n.id.name);
+    });
+    walk(ast, n => {
+      if (n.type !== "CallExpression") return;
+      if (srcOf(n.callee) === "Object.values") objectValuesSeen++;
+      const c = n.callee;
+      if (!(c.type === "MemberExpression" && !c.computed &&
+            c.property.type === "Identifier" && c.property.name === "flat")) return;
+      const inner = c.object;
+      if (!(inner && inner.type === "CallExpression" && srcOf(inner.callee) === "Object.values")) return;
+      const arg = inner.arguments[0];
+      if (!arg) return;
+      if (/staffAlias/i.test(srcOf(arg)) || (arg.type === "Identifier" && aliasVars.has(arg.name))) {
+        found.push(`${rel}: ${srcOf(n).replace(/\s+/g, " ").slice(0, 80)}`);
+      }
+    });
+  }
+  // 走査が機能していること自体を先に確かめる（「0件」が測定失敗でないことの担保）。
+  assert.ok(objectValuesSeen > 0, "Object.values の呼び出しを1つも見つけられていない＝走査が壊れている");
+  assert.deepStrictEqual(found, [],
+    `別名リストの自前展開が残っている（isUnregisteredSubName を使うこと）: ${found.join(" / ")}`);
+  const calls = (adminSrc.match(/isUnregisteredSubName\(/g) || []).length;
   assert.strictEqual(calls, 4,
     `app-admin.js の未登録名判定は4箇所（提出一覧・スタッフタブ・Excel・PDF）のはずが ${calls} 箇所`);
 });
@@ -2575,9 +2629,22 @@ test("STAFF_KEYED_SETTING_MAPS: スタッフ名キーの設定マップ一覧が
   // 改名（renameStaffInSettings）と削除の後始末（settingsWithoutStaff）は、同じ「スタッフ名を
   // キーに持つ設定マップ」という不変条件を守る2つの入口。片方が一覧を書き写していると、
   // 新しいマップを足したときに黙って守る範囲が食い違う（#105〜#107 が3回続けて踏んだ形）。
-  const fs = require("node:fs");
-  const src = fs.readFileSync(require("node:path").join(__dirname, "..", "app-admin.js"), "utf8");
-  const literals = src.match(/\[\s*"staff[A-Za-z]+"(?:\s*,\s*"staff[A-Za-z]+")+\s*\]/g) || [];
+  // 検出は AST で行う（正規表現だとクォートの種類・改行・コメントの有無で静かに見逃す。#145）。
+  const { src, ast, srcOf, walk } = _parseAppFile("app-admin.js", "SHIFTY_ADMIN_SRC");
+  const literals = [];
+  let arraysSeen = 0;
+  walk(ast, n => {
+    if (n.type !== "ArrayExpression") return;
+    arraysSeen++;
+    // 要素が全て "staffXxx" の文字列リテラルで2つ以上＝一覧の書き写し。
+    // `[...STAFF_KEYED_SETTING_MAPS,"staffMemo"]` は SpreadElement を含むので対象外（正当な拡張）。
+    const els = n.elements;
+    if (els.length < 2) return;
+    if (!els.every(e => e && e.type === "StringLiteral" && /^staff[A-Za-z]+$/.test(e.value))) return;
+    literals.push(srcOf(n).replace(/\s+/g, " "));
+  });
+  // 走査が機能していること自体の担保（「0件」が測定失敗でないこと）。
+  assert.ok(arraysSeen > 0, "配列リテラルを1つも見つけられていない＝走査が壊れている");
   assert.deepStrictEqual(literals, [],
     `app-admin.js にスタッフ設定マップ一覧の直書きが残っている（STAFF_KEYED_SETTING_MAPS を使うこと）: ${literals.join(" / ")}`);
   assert.ok(/STAFF_KEYED_SETTING_MAPS\.forEach/.test(src),
