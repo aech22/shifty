@@ -424,6 +424,11 @@ Node で実行。管理者が 9/10 を手動で緑にし、スタッフが別の
 - [ ] ③（手動マークが再提出で消える）も同じ案で塞ぐ。案Bを採るなら `changedManual` を
       `ADMIN_SHIFT_FIELDS` に登録する（登録しないと、印を分けても再提出のたびに消える点は変わらない）。
       案A／案C を採る場合は「手動マークは次のスタッフ再提出まで」という寿命を UI で示すか決める
+- [ ] **着手時に `tests/core.test.js` の `NOT_ADMIN_FIELDS` を更新する**（バグチェック#144 で追加）。
+      `app-admin.js` がシフト日へ書くキーと `ADMIN_SHIFT_FIELDS` を機械照合するテストがあり、
+      `changed` は「一覧に無いのが既知」として理由つきで除外リストに置いてある。
+      案Bで `changedManual` を導入する・`changed` を一覧へ登録するのどちらでも**このテストが落ちる**ので、
+      除外リストを同じコミットで直すこと（落ちること自体は想定どおりで、直し忘れの検出が目的）
 - [ ] 決めた案を実装し、2つの surface が同じ答えを返すユニットテストを追加する
 
 **影響範囲**: app-utils.js（`deadlineGatePassed` の呼び出し位置）、app-staff.js（`buildShift`・`SmModal` の `applyCellEdit`）、
