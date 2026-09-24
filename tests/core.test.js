@@ -1472,6 +1472,165 @@ test("ADMIN_SHIFT_FIELDS: 管理者が日ごとに書き込む全フィールド
   assert.deepStrictEqual([...u.ADMIN_SHIFT_FIELDS].sort(), expected.sort());
 });
 
+// ===== ADMIN_SHIFT_FIELDS のドリフト検出（バグチェック#144）=====
+// 直上のテストは ADMIN_SHIFT_FIELDS を「手で書き写した同じ一覧」と突き合わせているだけで、
+// app-admin.js の実装を一度も読まない。そのため #143 が手で見つけた「toggleChanged が書く
+// changed が一覧に無い」を素通りさせていた（実測: app-admin.js に新フィールドを注入しても
+// 直上のテストは落ちない）。定義側の「新しい管理者フィールドを追加したら必ずここに登録すること」
+// というコメントを、コメントではなく機械で守らせるのがこのテスト。
+//
+// app-admin.js を AST で読み、シフト日オブジェクト（sub.shifts[日付]）へ実際に書かれるキーを
+// 列挙して一覧と突き合わせる。文字列マスクではなく @babel/core の parseSync を使う
+// （JSX・テンプレートリテラルを含むファイルを正規表現で読むと誤検出・見落としが出るため）。
+function collectShiftDayWrites() {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const babel = require("@babel/core"); // devDependencies に宣言済み（@babel/parser は推移的依存なので直接requireしない）
+  // 既定は配信物そのもの。SHIFTY_ADMIN_SRC は**この走査が本当に検出できるかを確かめる**ための
+  // 差し替え口（app-admin.js は編集すると自動コミット＆pushされるため、対照は写しで採る）。
+  const file = process.env.SHIFTY_ADMIN_SRC || path.join(__dirname, "..", "app-admin.js");
+  const src = fs.readFileSync(file, "utf8");
+  const ast = babel.parseSync(src, {
+    configFile: false, babelrc: false, sourceType: "script",
+    parserOpts: { plugins: ["jsx"], errorRecovery: true },
+  });
+  const srcOf = n => src.slice(n.start, n.end);
+  const walk = (node, fn) => {
+    if (!node || typeof node.type !== "string") return;
+    fn(node);
+    for (const k of Object.keys(node)) {
+      if (k === "loc" || k === "leadingComments" || k === "trailingComments") continue;
+      const v = node[k];
+      if (Array.isArray(v)) v.forEach(c => c && typeof c.type === "string" && walk(c, fn));
+      else if (v && typeof v.type === "string") walk(v, fn);
+    }
+  };
+
+  // シフト日オブジェクトを指す式:  shifts[date] / sh[date] / ns.shifts[date] …
+  const isShiftDayMember = n =>
+    !!n && n.type === "MemberExpression" && n.computed && /(^|\.)(shifts|sh)$/.test(srcOf(n.object));
+  // シフト日オブジェクトを保持する変数:  const sd={...(shifts[date]||{status:"work"})} / const sd0={status:"work"}
+  // **オブジェクトリテラルに限る**。アロー関数を通すと関数本体の同じ形に反応して関数名まで拾い、
+  // `newSubs[idx]=sub` を書き込みとして誤検出する（実測で確認して絞り込んだ）。
+  const shiftVars = new Set();
+  walk(ast, n => {
+    if (n.type !== "VariableDeclarator" || n.id.type !== "Identifier" || !n.init) return;
+    if (n.init.type !== "ObjectExpression") return;
+    const s = srcOf(n.init);
+    if (/\.\.\.\s*\(?\s*(shifts|sh)\s*\[/.test(s) || /^\{\s*status\s*:/.test(s.replace(/\s+/g, " "))) {
+      shiftVars.add(n.id.name);
+    }
+  });
+  const isShiftBase = o => !!o && ((o.type === "Identifier" && shiftVars.has(o.name)) || isShiftDayMember(o));
+
+  // 計算キーの解決。`const adjField = field==="start" ? "adjustedStart" : "adjustedEnd"` のような
+  // 文字列リテラルだけの三項は両辺を採る。関数引数（saveAdj の field）は呼び出し側の実引数から採る。
+  const ternaryVals = new Map();
+  walk(ast, n => {
+    if (n.type !== "VariableDeclarator" || n.id.type !== "Identifier" || !n.init) return;
+    const strs = [];
+    const collect = e => {
+      if (!e) return false;
+      if (e.type === "StringLiteral") { strs.push(e.value); return true; }
+      if (e.type === "ConditionalExpression") return collect(e.consequent) && collect(e.alternate);
+      return false;
+    };
+    if (collect(n.init)) ternaryVals.set(n.id.name, strs);
+  });
+  // 関数名 → 仮引数名の位置
+  const fnParams = new Map();
+  walk(ast, n => {
+    if (n.type === "VariableDeclarator" && n.id.type === "Identifier" && n.init &&
+        (n.init.type === "ArrowFunctionExpression" || n.init.type === "FunctionExpression")) {
+      fnParams.set(n.id.name, n.init.params.map(p => (p.type === "Identifier" ? p.name : null)));
+    }
+    if (n.type === "FunctionDeclaration" && n.id) {
+      fnParams.set(n.id.name, n.params.map(p => (p.type === "Identifier" ? p.name : null)));
+    }
+  });
+  const paramVals = new Map(); // "fn:param" → [literal,...]
+  walk(ast, n => {
+    if (n.type !== "CallExpression" || n.callee.type !== "Identifier") return;
+    const params = fnParams.get(n.callee.name);
+    if (!params) return;
+    n.arguments.forEach((a, i) => {
+      if (a.type !== "StringLiteral" || !params[i]) return;
+      const key = `${n.callee.name}:${params[i]}`;
+      if (!paramVals.has(key)) paramVals.set(key, new Set());
+      paramVals.get(key).add(a.value);
+    });
+  });
+  // どの関数の中にいるかを辿れるよう、関数ノード→名前を持っておく
+  const fnNameByNode = new Map();
+  walk(ast, n => {
+    if (n.type === "VariableDeclarator" && n.id.type === "Identifier" && n.init &&
+        (n.init.type === "ArrowFunctionExpression" || n.init.type === "FunctionExpression")) {
+      fnNameByNode.set(n.init, n.id.name);
+    }
+    if (n.type === "FunctionDeclaration" && n.id) fnNameByNode.set(n, n.id.name);
+  });
+
+  const written = new Set();
+  const unresolved = [];
+  const addKey = (keyNode, computed, enclosingFns) => {
+    if (!computed && keyNode.type === "Identifier") { written.add(keyNode.name); return; }
+    if (keyNode.type === "StringLiteral") { written.add(keyNode.value); return; }
+    if (keyNode.type === "Identifier") {
+      if (ternaryVals.has(keyNode.name)) { ternaryVals.get(keyNode.name).forEach(v => written.add(v)); return; }
+      for (const fn of enclosingFns) {
+        const vals = paramVals.get(`${fn}:${keyNode.name}`);
+        if (vals) { vals.forEach(v => written.add(v)); return; }
+      }
+    }
+    unresolved.push(srcOf(keyNode));
+  };
+  // 親を辿れないので、関数ノードの範囲で包含関係を判定する
+  const fnRanges = [...fnNameByNode.entries()].map(([node, name]) => ({ name, start: node.start, end: node.end }));
+  const enclosing = n => fnRanges.filter(f => f.start <= n.start && n.end <= f.end).map(f => f.name);
+
+  walk(ast, n => {
+    if (n.type === "AssignmentExpression" && n.left.type === "MemberExpression" && isShiftBase(n.left.object)) {
+      addKey(n.left.property, n.left.computed, enclosing(n));
+    }
+    if (n.type === "UnaryExpression" && n.operator === "delete" &&
+        n.argument.type === "MemberExpression" && isShiftBase(n.argument.object)) {
+      addKey(n.argument.property, n.argument.computed, enclosing(n));
+    }
+    const litInto = props => props.forEach(p => { if (p.type === "ObjectProperty") addKey(p.key, p.computed, enclosing(p)); });
+    if (n.type === "AssignmentExpression" && isShiftDayMember(n.left) && n.right.type === "ObjectExpression") litInto(n.right.properties);
+    if (n.type === "VariableDeclarator" && n.id.type === "Identifier" && shiftVars.has(n.id.name) &&
+        n.init && n.init.type === "ObjectExpression") litInto(n.init.properties);
+  });
+  return { written, unresolved, shiftVars: [...shiftVars] };
+}
+
+test("ADMIN_SHIFT_FIELDS: app-admin.js が実際に書くキーと一覧が食い違っていない（実装を読んで照合）", () => {
+  const { written, unresolved, shiftVars } = collectShiftDayWrites();
+  // 走査が機能していること自体を先に確かめる（「0件」が測定失敗でないことの担保）。
+  assert.ok(shiftVars.length > 0, "シフト日オブジェクトを保持する変数を1つも見つけられていない＝走査が壊れている");
+  assert.deepStrictEqual(unresolved, [],
+    `シフト日への書き込みキーを解決できなかった: ${unresolved.join(" / ")}（テスト側の解決規則を足すこと）`);
+  assert.ok(written.has("adjustedStart") && written.has("adminRest"),
+    "既知の管理者フィールドを検出できていない＝走査が壊れている");
+
+  // 一覧に載せない2つ。増やすときは理由を書くこと。
+  const NOT_ADMIN_FIELDS = [
+    // スタッフ提出値そのもの。再提出では buildShift がスタッフの新しい値で作り直すのが正しい。
+    "status",
+    // 管理者のトリプルクリックによる手動マーク。**一覧に無いのは既知の未修正**で、
+    // BACKLOG「変更マーク（緑セル）と提出一覧のバッジが…」の③として起票済み（#143）。
+    // 素直に登録すると carryAdminShiftFields が前回の「自動」マークまで引き継いでしまい、
+    // buildShift の `delete nw.changed`（過去のchangedは作り直す）と衝突するため、
+    // 案B（手動マークに別の印を持たせる）を決めるまで足せない。
+    "changed",
+  ];
+  const expected = [...u.ADMIN_SHIFT_FIELDS, ...NOT_ADMIN_FIELDS].sort();
+  assert.deepStrictEqual([...written].sort(), expected,
+    "app-admin.js がシフト日へ書くキーと ADMIN_SHIFT_FIELDS が食い違っている。" +
+    "新しい管理者フィールドなら ADMIN_SHIFT_FIELDS に登録する（登録しないとスタッフ再提出で黙って消える）。" +
+    "引き継がないフィールドなら上の NOT_ADMIN_FIELDS に理由つきで足す。");
+});
+
 test("carryAdminShiftFields: 管理者の休み希望(adminRest)が再提出で消えない", () => {
   const old = { status: "work", start: "9:00", end: "18:00", adjustedStart: "10:00", adminRest: { start: true, end: true } };
   const resubmitted = { status: "work", start: "9:00", end: "18:00" }; // Cookieなし端末＝管理者フィールドを持たない
