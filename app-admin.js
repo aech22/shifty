@@ -694,7 +694,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(rest){
         // 休み希望(y)を未提出スタッフのセルに入力: adminRestのみ持つsubを新規作成
         const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString(),source:"grid"};
-        // ya/yc は終日の休暇（第3弾・判断6）。y は従来どおり入れたフィールドだけ。
+        // yu/ke は終日の休暇（第3弾・判断6）。y は従来どおり入れたフィールドだけ。
         ns.shifts[date]=leaveCmd
           ?{status:"work",adminRest:{start:true,end:true},leaveType:leaveCmd}
           :{status:"work",adminRest:{[field]:true}};
@@ -718,7 +718,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     }else{
       const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};
       if(rest&&leaveCmd){
-        // ya/yc は**終日**の休暇種別（第3弾・判断6）。同じ種別をもう一度入れると解除する。
+        // yu/ke は**終日**の休暇種別（第3弾・判断6）。同じ種別をもう一度入れると解除する。
         if(sd.leaveType===leaveCmd){delete sd.leaveType;delete sd.adminRest;}
         else{
           sd.leaveType=leaveCmd;sd.adminRest={start:true,end:true};
@@ -1251,11 +1251,17 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const ym=period.startDate.slice(0,7);
     return Array.from({length:daysInMonthOf(ym)},(_,i)=>`${ym}-${String(i+1).padStart(2,"0")}`);
   },[period]);
-  // その月の全日がデータで埋まっているか。**埋まっていないうちは月単位の判定を出さない**——
-  // 半月運用では後半の期間を作る前に月実働が必ず不足し、素直に判定すると前半を編集している
-  // 全員に「所定未満」が出続ける。S-5 の「全日が無記入の週は評価対象外」と同じ考え方。
+  // 月単位の判定を出す条件（2026-09-26 ユーザー決定）。次の2つを両方満たすときだけ出す。
+  //  ① **その月の最後の期間を開いている**こと。2週間運用では前半を編集している段階で月の判定を
+  //     出さない——後半を作る前は月実働が必ず不足するうえ、前半だけ見て「所定未満」と言われても
+  //     直しようがない。**判定は後半のシフトを組むときに行う。**
+  //     1ヶ月運用ではその月の期間が1つしかないので常に最後＝従来どおり判定する。
+  //  ② その月の全日がデータで埋まっていること（期間が存在し、subs の購読窓の中にある）。
+  // S-5 の「全日が無記入の週は評価対象外」と同じ考え方で、材料が揃う前に判定しない。
   const laborMonthReady=useMemo(()=>{
     if(!period)return false;
+    const last=sameMoPeriods[sameMoPeriods.length-1];
+    if(!last||last.id!==period.id)return false;
     const cut=subsWindowCutoff();
     return laborMonthDays.every(d=>{
       const p=periods.find(q=>q&&q.startDate&&q.endDate&&q.startDate<=d&&d<=q.endDate);
@@ -1263,7 +1269,14 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(!pastSubsLoaded&&p.startDate<cut)return false;   // 購読窓の外＝subs を読めていない
       return true;
     });
-  },[period,periods,laborMonthDays,pastSubsLoaded]);
+  },[period,periods,sameMoPeriods,laborMonthDays,pastSubsLoaded]);
+  // 「まだ判定しない」理由を画面に出し分ける（前半を開いている／月が埋まっていない）。
+  const laborPendingReason=useMemo(()=>{
+    if(!period||laborMonthReady)return "";
+    const last=sameMoPeriods[sameMoPeriods.length-1];
+    if(last&&last.id!==period.id)return `月の判定は「${last.label}」を開いたときに出ます（月の後半のシフトを組むときに判定します）`;
+    return "その月の日がまだデータで埋まっていません（後半の期間が未作成、または購読の窓の外）";
+  },[period,sameMoPeriods,laborMonthReady]);
 
   // その日のデータが読めているか（期間が存在し、subs の購読窓の中か）。
   const laborDayHasData=useCallback(d=>{
@@ -1342,7 +1355,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         monthOtH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthReady});
       const guide=sys!=="A"?{key:"none",label:"",color:null}
         :(laborMonthReady?guideStatusOf(monthWorkMin,laborFrame.baseMin,ls.fixedOvertimeMin,laborFrame.guideMin)
-          :{key:"none",label:"要確認",color:"var(--c-text3)",title:"その月の日がまだデータで埋まっていません（後半の期間が未作成、または購読の窓の外）"});
+          :{key:"none",label:"要確認",color:"var(--c-text3)",title:laborPendingReason});
       const overall=overallVerdictOf({laborSystem:sys,findings,guideKey:guide.key,weekNoRest,monthReady:laborMonthReady});
       // この期間の休暇日数（公休は無記入も数える。ただし出勤も休暇も1日も無い人は0＝記録しない）
       const kinds=dates.map(d=>dayRestKindOf(_getAnyShift(name,d),true));
@@ -1364,7 +1377,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     });
     laborTotalsRef.current=totals;
     return out;
-  },[isPremium,period,laborFrame,laborMonthDays,laborMonthReady,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart]);
+  },[isPremium,period,laborFrame,laborMonthDays,laborMonthReady,laborPendingReason,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart]);
 
   // 期間が生きている間はシフト作成タブを開くたびに写しと労務の合計を最新化し、最終日を超えたら
   // 更新を止める＝そこで凍結。「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、
@@ -4491,7 +4504,7 @@ if(typeLim.customDays&&(typeLim.customHours||typeLim.customHoursMin)){const r=_w
                     style={{fontSize:16,padding:"3px 5px",width:64,background:"var(--c-input)",border:`1px solid ${s.adjustedBreak!=null?"#3B82F6":"var(--c-border)"}`,borderRadius:4,color:s.adjustedBreak!=null?"#3B82F6":"var(--c-text)",marginTop:2}}/>
                 </div>:"-"}
               </td>}
-              {/* 休暇種別（第3弾・項目9）。グリッドの y/ya/yc と同じ shift.leaveType を編集する。 */}
+              {/* 休暇種別（第3弾・項目9）。グリッドの y/yu/ke と同じ shift.leaveType を編集する。 */}
               {isPremium&&<td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
                 <select value={leaveTypeOf(s)||""} onChange={e=>saveAdj(det.id,ds,"leaveType",e.target.value||"")}
                   style={{fontSize:16,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.leaveType?"#3B82F6":"var(--c-border)"}`,borderRadius:4,color:s.leaveType?"#3B82F6":"var(--c-text)",cursor:"pointer",maxWidth:86}}>

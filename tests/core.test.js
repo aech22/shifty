@@ -3470,18 +3470,23 @@ test("項目8 設定キーの無い既存店舗は時間帯方式＝現行挙動
     { status: "work", start: "09:00", end: "20:00" })[0].synthetic, "時間帯方式は実在の帯");
 });
 
-test("項目9 休暇種別: ya=有給・yc=慶弔 がコマンドとして登録され、略称に使えない", () => {
-  assert.strictEqual(u.restCommandOf("ya").leaveType, "paid");
-  assert.strictEqual(u.restCommandOf("yc").leaveType, "ceremony");
+test("項目9 休暇種別: yu=有給・ke=慶弔 がコマンドとして登録され、略称に使えない", () => {
+  assert.strictEqual(u.restCommandOf("yu").leaveType, "paid");
+  assert.strictEqual(u.restCommandOf("ke").leaveType, "ceremony");
   assert.strictEqual(u.restCommandOf("y").leaveType, undefined, "y は種別を持たない（終日なら公休）");
   assert.strictEqual(u.restCommandOf("休").key, "y", "別名");
   assert.strictEqual(u.restCommandOf("ｙ").key, "y");
-  assert.strictEqual(u.restCommandOf("9ya"), null, "時間付きはコマンドではない");
-  assert.strictEqual(u.extractNote("ya").rest, true);
-  assert.strictEqual(u.extractNote("ya").leaveType, "paid");
-  assert.ok(u.isReservedShopAbbr("ya"), "店舗略称として登録できない");
-  assert.ok(u.isReservedShopAbbr("yc"));
+  assert.strictEqual(u.restCommandOf("YU").leaveType, "paid", "大文字でも受ける");
+  assert.strictEqual(u.restCommandOf("9yu"), null, "時間付きはコマンドではない");
+  assert.strictEqual(u.extractNote("yu").rest, true);
+  assert.strictEqual(u.extractNote("yu").leaveType, "paid");
+  assert.strictEqual(u.extractNote("ke").leaveType, "ceremony");
+  assert.ok(u.isReservedShopAbbr("yu"), "店舗略称として登録できない");
+  assert.ok(u.isReservedShopAbbr("ke"));
   assert.ok(!u.isReservedShopAbbr("三"), "通常の略称は通る（非回帰）");
+  // k（キッチン入り）は1文字のサフィックスのままで、ke に食われない
+  assert.strictEqual(u.restCommandOf("k"), null);
+  assert.strictEqual(u.extractNote("9k").note, "k");
   ["leavePublic", "leavePaid", "leaveCeremony"].forEach(k =>
     assert.ok(u.CELL_COLOR_LEGEND.some(c => c.key === k), `legend ${k} missing`));
 });

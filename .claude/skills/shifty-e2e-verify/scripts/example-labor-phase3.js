@@ -80,11 +80,11 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
       c14s:cell("2026-10-14","start"),c14e:cell("2026-10-14","end")};
   });
   const before=await read();
-  // 10/14 に ya（終日の有給）を入れる
+  // 10/14 に yu（終日の有給）を入れる
   await h.evaluate(()=>{
     const i=document.querySelector('input[data-sc="2026-10-14|start"][data-scn="田中"]');
     const st=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,"value").set;
-    i.focus();st.call(i,"ya");i.dispatchEvent(new Event("input",{bubbles:true}));
+    i.focus();st.call(i,"yu");i.dispatchEvent(new Event("input",{bubbles:true}));
     i.blur();i.dispatchEvent(new Event("focusout",{bubbles:true}));
   });
   await h.page.waitForTimeout(800);
@@ -184,11 +184,11 @@ const cellOf=(t,row,i=0)=>((t&&t[row])||[])[i];
     week_unknown:Object.values(s.before.weekRest||{}).some(v=>v[0]==="要確認"),
     week_count:Object.values(s.after.weekRest||{}).some(v=>/^休\d+$/.test(v[0])),
     verdict_fix:cellOf(s.before.labor,"総括")==="要修正",
-    // ya を入れると leaveType が保存され、両セルが有給色になる
-    ya_saved:!!s.after.saved&&s.after.saved.leaveType==="paid"&&!!s.after.saved.adminRest
+    // yu を入れると leaveType が保存され、両セルが有給色になる
+    yu_saved:!!s.after.saved&&s.after.saved.leaveType==="paid"&&!!s.after.saved.adminRest
       &&s.after.saved.adminRest.start===true&&s.after.saved.adminRest.end===true,
-    ya_color:!!s.after.c14s&&s.after.c14s.img.includes("rgb(220,235,251)")&&!!s.after.c14e&&s.after.c14e.img.includes("rgb(220,235,251)"),
-    ya_counted:/有1\//.test(cellOf(s.after.labor,"休暇")||""),
+    yu_color:!!s.after.c14s&&s.after.c14s.img.includes("rgb(220,235,251)")&&!!s.after.c14e&&s.after.c14e.img.includes("rgb(220,235,251)"),
+    yu_counted:/有1\//.test(cellOf(s.after.labor,"休暇")||""),
     paid_remaining:cellOf(s.after.labor,"有給残")==="9日",
     year_total:cellOf(s.before.labor,"2026年度計")==="100:00",
     // 提出一覧の詳細モーダル: 休憩・休暇の列があり、上書きがその日の実働に反映される

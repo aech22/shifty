@@ -91,8 +91,49 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
   return m;
 }
 
+// ---- 3. 2週間運用の月判定タイミング（2026-09-26 ユーザー決定）--------------------
+// 月単位の判定は**その月の最後の期間を開いているときだけ**出す。前半を編集している段階では
+// 「要確認」にして出さない（後半を作る前は月実働が必ず不足し、前半だけ見ても直しようがない）。
+async function halfMonth(){
+  const wd=[1,2,5,6,7,8,9,12,13,14,15,16,19,20,21,22,23,26,27,28,29,30];
+  const sh=wd.map(d=>`"2026-10-${String(d).padStart(2,"0")}":{status:"work",start:"09:00",end:"19:00"}`).join(",");
+  const h=await openHarness({root:ROOT,extraHead:EXTRA_HEAD,waitFor:"select",jsx:`
+const PB={id:"pb",urlToken:"tb",shopId:"S1",label:"10月後半",startDate:"2026-10-16",endDate:"2026-10-31",deadlineDate:"",createdAt:"2026-09-01T00:00:00.000Z"};
+const PA={id:"pa",urlToken:"ta",shopId:"S1",label:"10月前半",startDate:"2026-10-01",endDate:"2026-10-15",deadlineDate:"",createdAt:"2026-09-01T00:00:00.000Z"};
+const SUBS=[
+ {id:"s1",periodId:"pa",staffName:"田中",shopId:"S1",comment:"",submittedAt:"2026-09-02T00:00:00.000Z",shifts:{${sh}}},
+ {id:"s2",periodId:"pb",staffName:"田中",shopId:"S1",comment:"",submittedAt:"2026-09-02T00:00:00.000Z",shifts:{}}];
+const SETTINGS={shopId:"S1",candidates:[{start:"09:00",end:"23:00"}],weekdayCandidates:{},dateCandidates:{},
+  breakTimes:{weekday:[{start:"12:00",end:"13:00"}],sat:[{start:"12:00",end:"13:00"}],sun:[{start:"12:00",end:"13:00"}],holSat:[{start:"12:00",end:"13:00"}],holSun:[{start:"12:00",end:"13:00"}]},
+  staffAttributes:{田中:"employee"},staffTypeLimits:{employee:{name:"社員"}},periodUnit:"2week",
+  staffColors:{},staffAliases:{},positions:{kitchen:[],hall:[]},requiredPositions:{},staffPositions:{}};
+function Harness(){
+  const [subs,setSubs]=React.useState(SUBS);
+  return <ShiftEditTab subs={subs} periods={[PB,PA]} staffList={["田中"]}
+    onSave={v=>setSubs(p=>typeof v==="function"?v(p):v)} tt={()=>{}}
+    settings={SETTINGS} plan="premium" shopId="S1" shopName="テスト店" onUpgrade={()=>{}}
+    savePeriods={()=>{}} ownerReadOnly={false} pastSubsLoaded={true}/>;
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
+  await h.page.waitForTimeout(800);
+  const read=()=>h.evaluate(()=>{
+    const w=[...document.querySelectorAll("div")].find(d=>(d.innerText||"").startsWith("労務判定（"));
+    if(!w)return null;const r={};[...w.querySelectorAll("tbody tr")].forEach(tr=>{
+      const td=[...tr.querySelectorAll("td")];r[td[0].innerText.trim()]={v:td[1]?td[1].innerText.trim():"",t:td[1]?td[1].getAttribute("title")||"":""};});
+    return r;});
+  const latter=await read();           // 既定＝配列の先頭＝後半
+  await h.evaluate(()=>{const s2=document.querySelector("select");
+    Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,"value").set.call(s2,"pa");
+    s2.dispatchEvent(new Event("change",{bubbles:true}));});
+  await h.page.waitForTimeout(900);
+  const former=await read();           // 前半に切り替える
+  const errors=h.errors.slice();
+  await h.close();
+  return{latter,former,errors};
+}
+
 (async()=>{
-  const st=await setTab(), sh=await shiftTab();
+  const st=await setTab(), sh=await shiftTab(), hm=await halfMonth();
   const pass={
     set_has_36:st.has36&&st.daily&&st.monthly,
     set_checklist:st.judged>=3&&st.unjudged===4&&st.notJudgedNote,
@@ -108,9 +149,14 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
     // 鈴木(B制): 実働9h の日が1日＝8h超 → 残業あり。目安は空欄（A制のみ）
     shift_b_guide_blank:sh.found&&sh.rows["目安"]&&sh.rows["目安"][1]==="",
     shift_b_verdict:sh.found&&sh.rows["総括"]&&sh.rows["総括"][1]==="残業あり",
-    no_console_errors:st.errors.length===0&&sh.errors.length===0,
+    // 2週間運用: 後半を開いているときだけ月の判定が出る。前半では「要確認」
+    half_latter_judged:!!hm.latter&&hm.latter["目安"].v==="目安未満 あと2h",
+    half_former_pending:!!hm.former&&hm.former["目安"].v==="要確認"
+      &&/10月後半/.test(hm.former["目安"].t||""),
+    half_former_verdict:!!hm.former&&hm.former["総括"].v==="要確認",
+    no_console_errors:st.errors.length===0&&sh.errors.length===0&&hm.errors.length===0,
   };
   const allPass=Object.values(pass).every(Boolean);
-  console.log(JSON.stringify({setTab:st,shiftTab:sh,pass,allPass},null,1));
+  console.log(JSON.stringify({setTab:st,shiftTab:sh,halfMonth:hm,pass,allPass},null,1));
   process.exit(allPass?0:1);
 })().catch(e=>{console.error(e);process.exit(1);});
