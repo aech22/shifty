@@ -1352,12 +1352,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(!pastSubsLoaded&&pp.startDate<subsWindowCutoff())return null;
     let workMin=0,paid=0,publicOff=0,ceremony=0;
     const ds=gd(pp.startDate,pp.endDate);
+    // **空欄も公休として数える**（2026-09-26 ユーザー指示）。以前は「出勤も休暇も1日も無い期間」を
+    // 0に倒していたが、空欄が公休である以上その期間はまるごと公休で、0ではない。
     const kinds=ds.map(d=>dayRestKindOf(_getAnyShift(name,d),true));
-    const active=kinds.some(k=>k==="work"||k==="leave");
     ds.forEach((d,i)=>{
       const sh=_getWorkShift(name,d);
       if(sh)workMin+=calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh),settings);
-      if(!active)return;
       const hd=leaveHalfDaysOf(_getAnyShift(name,d));
       paid+=hd.paid;ceremony+=hd.ceremony;
       if(!hd.paid&&!hd.ceremony&&kinds[i]==="rest")publicOff++;
@@ -1404,7 +1404,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         return arr;
       }):[];
       const te=dates.reduce((a,d)=>a+(timeErrors[`${name}|${d}`]?1:0),0);
-      const bsCount=dates.reduce((a,d)=>{const sh=_getWorkShift(name,d);return a+(sh&&isBreakShort(sh,settings,d,name)?1:0);},0);
+      // 休憩不足は**日ごと**に持つ（件数は findings、日はセル色に使う）
+      const bsDays=dates.map(d=>{const sh=_getWorkShift(name,d);return !!(sh&&isBreakShort(sh,settings,d,name));});
+      const bsCount=bsDays.reduce((a,b)=>a+(b?1:0),0);
       const weekNoRest=(weekRestByStaff[name]||[]).some(w=>w&&w.key==="none");
       const findings=laborFindingsFor({laborSystem:sys,dayMins,weekDayMins:weekMins,timeErrorCount:te,breakShortCount:bsCount,
         monthOtH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthReady});
@@ -1419,19 +1421,22 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         :(laborMonthReady?guideStatusOf(monthWorkMin,laborFrame.baseMin,ls.fixedOvertimeMin,laborFrame.guideMin)
           :{key:"none",label:"要確認",color:"var(--c-text3)",title:laborPendingReason});
       const overall=overallVerdictOf({laborSystem:sys,findings,guideKey:guide.key,weekNoRest,monthReady:laborMonthReady});
-      // この期間の休暇日数（公休は無記入も数える。ただし出勤も休暇も1日も無い人は0＝記録しない）
+      // この期間の休暇日数。**シフト表の空欄は公休**（2026-09-26 ユーザー指示）なので、
+      // 1日も出勤が無い人もその期間ぶんが丸ごと公休になる（以前はここを0に倒していた）。
       const kinds=dates.map(d=>dayRestKindOf(_getAnyShift(name,d),true));
-      const active=kinds.some(k=>k==="work"||k==="leave");
       let paidD=0,pubD=0,ceD=0;
       // 有給・慶弔は**半日＝0.5日**で数える。公休は日単位（無記入の日も含む）。
-      if(active)dates.forEach((d,i)=>{
+      dates.forEach((d,i)=>{
         const hd=leaveHalfDaysOf(_getAnyShift(name,d));
         paidD+=hd.paid;ceD+=hd.ceremony;
         if(!hd.paid&&!hd.ceremony&&kinds[i]==="rest")pubD++;
       });
       // 年度の累計。**期間が凍結時に残した laborTotals を優先**するので、過去参照を押さなくても出る。
       const yr=fy==null?null:yearLaborSummary(periods,name,fy,fyStart,liveTotalFor(name));
-      out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,monthCovered:laborMonthCovered,yearOt,findings,guide,overall,weekNoRest,
+      // その日に帰属する要修正（セル色で該当日を示す。dates と同じ並び）
+      const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins:dates.map(d=>laborDayMin(name,d)),
+        dayOtH:periodOtH,agreementDailyOtH:agDay,breakShortDays:bsDays});
+      out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,monthCovered:laborMonthCovered,yearOt,findings,guide,overall,weekNoRest,dayFindings,
         periodLeave:{paid:paidD,publicOff:pubD,ceremony:ceD},year:yr,
         paidRemain:yr?paidLeaveRemaining(settings,name,yr.paid):null};
       // この期間ぶんの合計（凍結時に periods へ残す値）。上の useEffect が書く。
@@ -1482,6 +1487,25 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     });
     return out;
   },[isPremium,realStaff,dates,settings,laborByStaff]);
+
+  // 労務の要修正が当たっている日（セル色用）。`名前|日付` → 理由キーの配列。
+  // 週・月に帰属する判定（週40h超・月の残業・目安）は日を特定できないので含まない
+  // ＝パネルに名前が出ていてもセルが塗られないことがある。
+  const laborDayErrors=useMemo(()=>{
+    const m={};
+    if(!isPremium)return m;
+    Object.entries(laborByStaff).forEach(([name,l])=>{
+      (l&&l.dayFindings||[]).forEach((keys,i)=>{
+        if(keys&&keys.length&&dates[i])m[`${name}|${dates[i]}`]=keys;
+      });
+    });
+    return m;
+  },[isPremium,laborByStaff,dates]);
+  const laborErrTitle=(name,date)=>{
+    const keys=laborDayErrors[`${name}|${date}`];
+    if(!keys||!keys.length)return"";
+    return"労務の要修正: "+keys.map(k=>LABOR_DAY_ERR_LABELS[k]||k).join("・");
+  };
 
   // "h"なし勤務時間フォーマット
   const fmtH=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;return m===0?String(h):`${h}:${String(m).padStart(2,"0")}`;};
@@ -1777,6 +1801,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(focusKey===key)return rb; // 編集中は通常背景
     if(timeErrors[`${name}|${date}`])return LEGEND_COLORS.timeErr;
     if(dupErrors[`${name}|${date}`])return LEGEND_COLORS.dup;
+    // 労務の要修正（12h超・4h未満・1日の残業が上限超・休憩不足）が当たっている日。
+    // 休み希望の斜線より先に見る——4h未満は半日勤務なので、片側が休みのことがある。
+    if(laborDayErrors[`${name}|${date}`])return LEGEND_COLORS.laborErr;
     // 休み希望(y)・休暇セルは通常背景+斜線（noteの黄色も休暇の色も付けない）。
     // 休暇は色ではなく**セルに種別名を出して**見せる（2026-09-26 ユーザー指示・getVal 参照）。
     if(fieldRest(name,date,field))return rb;
@@ -1817,7 +1844,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // **時刻の入力ミス（timeErr）には割り込ませない**——入力そのものの誤りで、直さない限り
     // その日の実働は0のまま集計にも出ない。不足に上書きさせると、ポジションが足りない日は
     // 両方のセルが黄色になって**セル側の手がかりが消える**（2026-09-26 に dev 実機で実測）。
-    if(!editing&&col!==LEGEND_COLORS.changed&&col!==LEGEND_COLORS.timeErr&&cellPosErr(name,date,field==="start"?"lunch":"dinner"))col=LEGEND_COLORS.posErr;
+    if(!editing&&col!==LEGEND_COLORS.changed&&col!==LEGEND_COLORS.timeErr&&col!==LEGEND_COLORS.laborErr&&cellPosErr(name,date,field==="start"?"lunch":"dinner"))col=LEGEND_COLORS.posErr;
     const layers=[];
     // 休暇の種別名を出すセルには斜線を引かない（文字と重なって読めなくなる・2026-09-26 ユーザー指示）。
     // スタッフ提出の休み（種別名を出さない）は従来どおり斜線のまま。
@@ -2294,18 +2321,6 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         </div>
       )}
 
-      {/* 労務判定（S-4）。判定対象外の属性（応援・外部）は労働時間の判定・集計から外れる */}
-      {laborFindings.length>0&&(
-        <div style={{background:"rgba(248,112,54,.07)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
-          <div style={{fontSize:12,fontWeight:700,color:"var(--c-accent)",marginBottom:4}}>⚠ 労務の確認が必要です</div>
-          <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
-            {laborFindings.map(({name,findings})=>(
-              <div key={name}>{name}：{findings.join("、")}</div>
-            ))}
-          </div>
-        </div>
-      )}
-
       {pdfModal&&(
         <div onClick={()=>{if(!pdfBusy)setPdfModal(false);}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9998,padding:16}}>
           <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:"22px 20px",width:"100%",maxWidth:340,boxShadow:"0 8px 32px var(--c-shadow)"}}>
@@ -2385,6 +2400,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                       {mapGridCols(name=>(
                         <td key={name} style={{padding:0,boxSizing:BOXS,borderLeft:BD,borderBottom:"none",textAlign:"center",background:rbS(name),width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
+                            title={laborErrTitle(name,date)||undefined}
                             readOnly={!isPremium}
                             data-sc={`${date}|start`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"start",e.target.value)}
@@ -2406,6 +2422,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                       {mapGridCols(name=>(
                         <td key={name} style={{padding:0,boxSizing:BOXS,borderLeft:BD,borderBottom:BD,textAlign:"center",background:rbE(name),width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
+                            title={laborErrTitle(name,date)||undefined}
                             readOnly={!isPremium}
                             data-sc={`${date}|end`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"end",e.target.value)}
@@ -2432,6 +2449,20 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                 {(deptFilter==="kit"?[...positionErrorEntries.kitchen,...positionErrorEntries.hall,...positionErrorEntries.all]:[...positionErrorEntries.hall,...positionErrorEntries.kitchen,...positionErrorEntries.all])
                   .map(e=>`${pd(e.date).getDate()}日${e.meal==="lunch"?"ランチ":"ディナー"}${e.posName} -${e.short}`)
                   .join("、")}
+              </div>
+            </div>
+          )}
+
+          {/* 労務判定（S-4）。判定対象外の属性（応援・外部）は労働時間の判定・集計から外れる。
+              **ポジション不足の下に置く**（2026-09-26 ユーザー指示）。グリッドの上ではなく、
+              ポジション不足の一覧と同じ場所で、シフトを組み終えてから順に見る並びにしている */}
+          {laborFindings.length>0&&(
+            <div style={{background:"rgba(248,112,54,.07)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
+              <div style={{fontSize:12,fontWeight:700,color:"var(--c-accent)",marginBottom:4}}>⚠ 労務の確認が必要です</div>
+              <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
+                {laborFindings.map(({name,findings})=>(
+                  <div key={name}>{name}：{findings.join("、")}</div>
+                ))}
               </div>
             </div>
           )}

@@ -424,7 +424,11 @@ const LABOR_SHORT_DAY_MIN=4*60; // 0より大きくこれ「未満」の日が 4
 // スタッフ単位ではなく**属性単位**で持つ（判断1・案a）。割当UI・期間指定(keepAttrs)・
 // 改名/削除の後始末がすべて属性の仕組みに乗っているため、別軸を作ると同じ配線が2系統になる。
 const LABOR_SYSTEMS=["A","B","none"];
-const LABOR_SYSTEM_LABELS={A:"1か月単位の変形労働時間制",B:"通常の労働時間制",none:"判定対象外"};
+// 設定画面の選択肢。**括弧の中は「その制がどの雇用形態に当たるか」の目安**で、
+// ユーザー指定の文言（2026-09-26）。判定は属性ごとの laborSystem で決まるので、
+// この括弧は選ぶときの手がかりにすぎない（括弧の中の語でマッチングはしない）。
+const LABOR_SYSTEM_LABELS={A:"1か月単位の変形労働時間制（正社員・契約社員・特定技能）",
+  B:"通常の労働時間制（パート・アルバイト）",none:"判定対象外（応援・外部）"};
 // 組み込み属性の既定。dispatch/other は Excel の「応援・外部」に対応し、労働時間の判定・集計から外す。
 // 属性が未割当のスタッフは既存フォールバックで parttime に倒れる＝B制（安全側）になる。
 const DEFAULT_LABOR_SYSTEM_BY_ATTR={employee:"A",parttime:"B",dispatch:"none",other:"none"};
@@ -722,6 +726,34 @@ function laborFindingsFor(o){
   if(laborSystem===null||laborSystem===undefined)push("badSystem","区分が空欄か誤り");
   return out;
 }
+// 労務判定のうち「その日」に帰属する**要修正**だけを日ごとに返す（セル色で該当日を示すため）。
+// 週・月に帰属するもの（週40h超・月の残業・目安・年の36協定）は日を特定できないので含めない。
+// 8h超（B制の残業）と週40h超は OVERALL_FIX_KEYS に無い＝要修正ではないので色を塗らない
+// ——塗ると残業のある日が全部同じ色になり、直すべき日が埋もれる。
+// 時刻の入力ミスは専用の色（timeErr）を先に持っているのでここには入れない。
+// **laborFindingsFor と件数が必ず一致する**ことを tests/core.test.js が照合する。
+const LABOR_DAY_FIX_KEYS=["over12","under4","dayOtOverAgreement","dayOverAgreementB","breakShort"];
+// セルの title に出す短い理由。**LABOR_DAY_FIX_KEYS の全キーを持つ**ことをテストが照合する。
+const LABOR_DAY_ERR_LABELS={over12:"12h超",under4:"4h未満",dayOtOverAgreement:"1日の残業予定が上限超",
+  dayOverAgreementB:"1日の残業が上限超",breakShort:"休憩不足"};
+function laborDayFindingsFor(o){
+  const {laborSystem=null,dayMins=[],dayOtH=[],agreementDailyOtH=0,breakShortDays=[]}=o||{};
+  const mins=(dayMins||[]).map(m=>Math.max(0,Number(m)||0));
+  const dOt=(dayOtH||[]).map(h=>Math.max(0,Number(h)||0));
+  const agDay=Math.max(0,Number(agreementDailyOtH)||0);
+  return mins.map((m,i)=>{
+    const keys=[];
+    if(laborSystem==="A"){
+      if(m>LABOR_LONG_DAY_MIN)keys.push("over12");
+      if(m>0&&m<LABOR_SHORT_DAY_MIN)keys.push("under4");
+      if(agDay>0&&(dOt[i]||0)>agDay)keys.push("dayOtOverAgreement");
+    }else if(laborSystem==="B"){
+      if(agDay>0&&m>LEGAL_DAILY_MIN+agDay*60)keys.push("dayOverAgreementB");
+    }
+    if(laborSystem!=="none"&&(breakShortDays||[])[i])keys.push("breakShort");
+    return keys;
+  });
+}
 // 表示用。パネルはこちらを使う（総括判定は key を見るので laborFindingsFor をそのまま使う）。
 function laborFindingLabels(o){return laborFindingsFor(o).map(f=>f.label);}
 
@@ -906,12 +938,13 @@ function dayRestKindOf(shift,hasData){
   if(shift.status!=="work")return"rest";
   return"rest";
 }
-// 週（7日）の状態（S-5）。**全日が無記入の週は評価対象外**——未提出の期間を「休みだらけ」と
-// 数えて判定を空回りさせないため。
+// 週（7日）の状態（S-5）。**シフト表の空欄は公休として数える**（2026-09-26 ユーザー指示）。
+// 以前は「全日が無記入の週」を評価対象外（skip）にしていたが、空欄が公休である以上その週は
+// 休7 であって「数えられない週」ではない。データそのものが無い日（期間が無い・購読の窓の外）は
+// 従来どおり要確認で、これだけが「まだ分からない」に当たる。
 function weekRestStateOf(kinds){
   const k=kinds||[];
   if(k.some(x=>x==="nodata"))return{key:"unknown",label:"要確認"};
-  if(!k.some(x=>x==="work"||x==="leave"))return{key:"skip",label:"",count:0};
   const n=k.filter(x=>x==="rest").length;
   if(n===0)return{key:"none",label:"×休なし",count:0};
   return{key:"ok",label:`休${n}`,count:n};
@@ -1229,6 +1262,7 @@ const CELL_COLOR_LEGEND=[
   {key:"rest",hatch:true,label:"休み希望（斜線）",desc:"スタッフが提出した休み希望、または管理者が y で入力した休み"},
   {key:"posErr",color:"rgba(250,204,21,0.35)",label:"ポジション不足",desc:"必要ポジション設定に対して出勤人数・ポジションが不足しているランチ/ディナーの行"},
   {key:"timeErr",color:"rgba(190,24,93,.25)",label:"時刻の入力ミス",desc:"退勤が出勤以前になっている。深夜は 25:00・26:00 のように24時を超える表記で入力する"},
+  {key:"laborErr",color:"rgba(139,92,246,.28)",label:"労務の要修正",desc:"12h超・4h未満・1日の残業が36協定超・休憩不足のいずれかに当たる日。下の「労務の確認が必要です」に理由が出る"},
 ];
 // 休みコマンド判定（セル全体が y / 休 / yu / ke のとき。時間付きの「9y」は通常サフィックス扱い）。
 // **レジストリ駆動**にしてあるので kind:"rest" を足せば判定・予約語（isReservedShopAbbr）に自動で乗る。
@@ -1918,5 +1952,5 @@ function renameStaffInPeriods(periods,oldName,newName){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,laborFindingsFor,laborFindingLabels,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings};
 }
