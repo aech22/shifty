@@ -3573,3 +3573,48 @@ test("compactLaborTotal / laborTotalsEqual: 0 は持たず、同値なら書き�
   assert.ok(!u.laborTotalsEqual({ 田中: { workMin: 600 } }, { 田中: { workMin: 601 } }));
   assert.ok(!u.laborTotalsEqual({ 田中: { workMin: 600 } }, {}));
 });
+
+// ===== 勤務時間の下限（2026-09-26 追加要件）=====
+test("limitStateOf: 上限超過は over、下限割れは under、勤務0の窓は判定しない", () => {
+  assert.strictEqual(u.limitStateOf(HM(9, 0), 8, 0), "over");
+  assert.strictEqual(u.limitStateOf(HM(8, 0), 8, 0), null, "ちょうどは超過でない");
+  assert.strictEqual(u.limitStateOf(HM(3, 0), 8, 4), "under");
+  assert.strictEqual(u.limitStateOf(HM(4, 0), 8, 4), null, "ちょうどは不足でない");
+  assert.strictEqual(u.limitStateOf(0, 8, 4), null, "勤務が1分もない窓は下限割れにしない");
+  assert.strictEqual(u.limitStateOf(HM(3, 0), 0, 0), null, "どちらも未設定なら判定しない");
+  // 上限が先。矛盾した設定（下限>上限）でも上限側を返して黙らない
+  assert.strictEqual(u.limitStateOf(HM(20, 0), 8, 40), "over");
+});
+
+test("staffLimitOf / hasAnyStaffLimit: 未設定は0で埋まり、下限だけでも判定が走る", () => {
+  const st = { staffTypeLimits: { employee: { name: "社員", weekly: 40, weeklyMin: 30 } } };
+  const l = u.staffLimitOf(st, "employee");
+  assert.strictEqual(l.weekly, 40);
+  assert.strictEqual(l.weeklyMin, 30);
+  assert.strictEqual(l.monthly, 0);
+  assert.strictEqual(l.monthlyMin, 0);
+  assert.strictEqual(l.customHoursMin, 0);
+  assert.strictEqual(u.staffLimitOf({}, "parttime").weekly, 0, "属性が無くても0で返る");
+  assert.ok(u.hasAnyStaffLimit(l));
+  assert.ok(u.hasAnyStaffLimit({ ...u.STAFF_LIMIT_DEFAULTS, monthlyMin: 60 }), "下限だけでも走る");
+  assert.ok(!u.hasAnyStaffLimit(u.STAFF_LIMIT_DEFAULTS));
+  assert.ok(!u.hasAnyStaffLimit({ ...u.STAFF_LIMIT_DEFAULTS, customDays: 10 }), "日数だけでは走らない");
+  assert.ok(u.hasAnyStaffLimit({ ...u.STAFF_LIMIT_DEFAULTS, customDays: 10, customHoursMin: 30 }));
+});
+
+test("STAFF_LIMIT_WINDOWS: 上限キーと下限キーが対で揃っている", () => {
+  assert.deepStrictEqual(u.STAFF_LIMIT_WINDOWS.map(w => w.key), ["daily", "weekly", "biweekly", "monthly"]);
+  u.STAFF_LIMIT_WINDOWS.forEach(w => {
+    assert.strictEqual(w.minKey, w.key + "Min", `${w.key} の下限キー`);
+    assert.ok(w.label && w.max > 0);
+    assert.strictEqual(u.STAFF_LIMIT_DEFAULTS[w.key], 0);
+    assert.strictEqual(u.STAFF_LIMIT_DEFAULTS[w.minKey], 0);
+  });
+});
+
+test("勤務時間の下限: 既存店舗（下限キーなし）は従来どおり上限だけで判定する（非回帰）", () => {
+  const st = { staffTypeLimits: { parttime: { name: "バイト", weekly: 28 } } };
+  const l = u.staffLimitOf(st, "parttime");
+  assert.strictEqual(u.limitStateOf(HM(29, 0), l.weekly, l.weeklyMin), "over");
+  assert.strictEqual(u.limitStateOf(HM(1, 0), l.weekly, l.weeklyMin), null, "下限が無ければ何時間でも不足にしない");
+});

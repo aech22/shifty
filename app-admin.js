@@ -311,8 +311,14 @@ function SummaryTable({title,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols
                 if(row.getText){const t=row.getText(name)||{};return(
                   <td key={name} title={t.title||t.label||""} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:"border-box",padding:"3px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:10,lineHeight:1.25,background:t.bg||bg,fontWeight:t.bold?700:400,color:t.color||"var(--c-text2)",overflow:"hidden"}}>{t.label||""}</td>
                 );}
-                const min=row.getMin(name);const vio=row._violateFn?row._violateFn(name,min):false;const cellBg=vio?"rgba(255,71,87,.15)":bg;return(
-                <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:"border-box",padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:cellBg,fontWeight:(row._bold||vio)&&min>0?700:400,color:min>0?(vio?"#FF4757":(row._color||"var(--c-text2)")):"var(--c-text4)"}}>{min>0?fmtH4(min):""}</td>
+                const min=row.getMin(name);
+                // _violateFn は true（＝上限超過・従来互換）か "over"／"under"／falsy を返す。
+                const vr=row._violateFn?row._violateFn(name,min):false;
+                const vio=(vr===true||vr==="over")?"over":(vr==="under"?"under":null);
+                const cellBg=vio==="over"?"rgba(255,71,87,.15)":vio==="under"?"rgba(59,130,246,.15)":bg;
+                const vioColor=vio==="over"?"#FF4757":vio==="under"?"#2563EB":null;
+                return(
+                <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:"border-box",padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:cellBg,fontWeight:(row._bold||vio)&&min>0?700:400,color:min>0?(vioColor||row._color||"var(--c-text2)"):"var(--c-text4)"}}>{min>0?fmtH4(min):""}</td>
               );},spacerCell)}
               {fullView&&<td style={{background:stickyBg,padding:0,borderBottom:BD,borderLeft:BD2,boxSizing:"border-box",width:labelW,minWidth:labelW,maxWidth:labelW}}></td>}
             </tr>);
@@ -1828,8 +1834,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     {id:secondHalf?.id||"nosecond",label:periodLabelShort(secondHalf?.label)||`${mo2}月後半`,getMin:name=>secondHalf?getPeriodMin(secondHalf.id,name):0,
       _bold:secondHalf?.id===selPid,_color:secondHalf?.id===selPid?"var(--c-accent)":undefined,_bg:secondHalf?.id===selPid?"rgba(248,112,54,0.15)":undefined},
     {id:"total",label:"月計",getMin:name=>sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0),_bold:true,_color:"var(--c-accent)",
-      _violateFn:(name,min)=>{const t=(settings.staffAttributes||{})[name]||"parttime";const l=(settings.staffTypeLimits||{})[t];const lim=l&&typeof l==="object"&&l.monthly?l.monthly*60:0;return lim>0&&min>lim;}},
-    {id:"monthly_limit",label:"月上限",getMin:name=>{const t=(settings.staffAttributes||{})[name]||"parttime";const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};const l=tls[t];return(l&&typeof l==="object"&&l.monthly)?l.monthly*60:0;},_color:"#3B82F6",_bg:"rgba(96,165,250,0.07)"}
+      _violateFn:(name,min)=>{const l=staffLimitOf(settings,(settings.staffAttributes||{})[name]);return limitStateOf(min,l.monthly,l.monthlyMin);}},
+    {id:"monthly_limit",label:"月上限",getMin:name=>staffLimitOf(settings,(settings.staffAttributes||{})[name]).monthly*60,_color:"#3B82F6",_bg:"rgba(96,165,250,0.07)"},
+    // 下限は設定している店舗にだけ行を出す（使っていない店舗の集計表を長くしない）
+    ...(realStaff.some(n=>staffLimitOf(settings,(settings.staffAttributes||{})[n]).monthlyMin>0)
+      ?[{id:"monthly_min",label:"月下限",getMin:name=>staffLimitOf(settings,(settings.staffAttributes||{})[name]).monthlyMin*60,_color:"#2563EB",_bg:"rgba(59,130,246,0.07)"}]:[])
   ];
 
   // ============ PDF書き出し ============
@@ -2056,7 +2065,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           t+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;text-align:left;">週</th>`;
           cols.forEach(nm=>{if(isSpacer(nm)){t+=`<th style="border:${BDp};"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";t+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:${vfontSize(nm,10)}px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
           t+='</tr></thead><tbody>';
-          weeks.forEach(monStr=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);t+=`<tr><td style="border:${BDp};padding:3px 6px;white-space:nowrap;">${m.getDate()}〜${sun.getDate()}日</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};"></td>`;return;}const min=getWeekMin(monStr,nm);const wl=(settings.staffTypeLimits||{})[(settings.staffAttributes||{})[nm]||"parttime"];const wlim=wl&&typeof wl==="object"&&wl.weekly?wl.weekly*60:0;const vio=wlim>0&&min>wlim;const vs=vio?"background:#FFE0E3;color:#e53935;font-weight:700;":"";t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;${vs}">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
+          weeks.forEach(monStr=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);t+=`<tr><td style="border:${BDp};padding:3px 6px;white-space:nowrap;">${m.getDate()}〜${sun.getDate()}日</td>`;cols.forEach(nm=>{if(isSpacer(nm)){t+=`<td style="border:${BDp};"></td>`;return;}const min=getWeekMin(monStr,nm);const wl=staffLimitOf(settings,(settings.staffAttributes||{})[nm]);const st=limitStateOf(min,wl.weekly,wl.weeklyMin);const vs=st==="over"?"background:#FFE0E3;color:#e53935;font-weight:700;":st==="under"?"background:#DCEAFB;color:#2563EB;font-weight:700;":"";t+=`<td style="border:${BDp};padding:3px 2px;text-align:center;${vs}">${min>0?esc(fmtH(min)):""}</td>`;});t+='</tr>';});
           t+='</tbody></table>';blocks.push(t);
         }
       }
@@ -2402,10 +2411,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             VTH={VTH}
             rows={[...weeks.map(monStr=>{
               const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);
-              const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};
               return{id:monStr,label:`${m.getDate()}〜${sun.getDate()}日`,getMin:name=>getWeekMin(monStr,name),
-                _violateFn:(name,min)=>{const t=(settings.staffAttributes||{})[name]||"parttime";const l=tls[t];const lim=l&&typeof l==="object"&&l.weekly?l.weekly*60:0;return lim>0&&min>lim;}};
-            }),{id:"weekly_limit",label:"週上限",getMin:name=>{const t=(settings.staffAttributes||{})[name]||"parttime";const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};const l=tls[t];return(l&&typeof l==="object"&&l.weekly)?l.weekly*60:0;},_color:"#3B82F6",_bg:"rgba(96,165,250,0.07)"}]}
+                _violateFn:(name,min)=>{const l=staffLimitOf(settings,(settings.staffAttributes||{})[name]);return limitStateOf(min,l.weekly,l.weeklyMin);}};
+            }),{id:"weekly_limit",label:"週上限",getMin:name=>staffLimitOf(settings,(settings.staffAttributes||{})[name]).weekly*60,_color:"#3B82F6",_bg:"rgba(96,165,250,0.07)"},
+            ...(realStaff.some(n=>staffLimitOf(settings,(settings.staffAttributes||{})[n]).weeklyMin>0)
+              ?[{id:"weekly_min",label:"週下限",getMin:name=>staffLimitOf(settings,(settings.staffAttributes||{})[name]).weeklyMin*60,_color:"#2563EB",_bg:"rgba(59,130,246,0.07)"}]:[])]}
           />}
 
           {/* === 労務（A制の目安・総括判定）。判定対象外の属性は空欄になる === */}
@@ -4375,27 +4385,33 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
               // （当てないと、属性を戻した瞬間に過去の提出が現在の上限で再判定されて赤線が出る）。
               // 休憩の属性タグ（getBreaksFor）も同じ属性で引く必要があるので同じ settings を渡す。
               const pAttrSettings=applyKeepAttrs(settings,subPeriod);
-              const staffType=isPremium?(((pAttrSettings.staffAttributes)||{})[resolvedName]||"parttime"):null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;if(isPremium&&staffType&&(typeLim.daily||typeLim.weekly||typeLim.biweekly||typeLim.monthly||typeLim.customDays)){const weekMap={};const monthMap={};const _min=(n,d2)=>{const sh=_shiftAt(n,d2);return sh?calcNetWorkMinutes(sh,getBreaksFor(pAttrSettings,d2,n,sh),getOT(n,settings,sh),settings):0;};/* 1日上限も _min（_shiftAt 経由）で引く。このバッジが出す5つの判定のうち、週・2週・月・任意日数の
+              const staffType=isPremium?(((pAttrSettings.staffAttributes)||{})[resolvedName]||"parttime"):null;const typeLimRaw=staffType?((settings.staffTypeLimits)||{})[staffType]:null;const typeLim={...STAFF_LIMIT_DEFAULTS,...(typeLimRaw&&typeof typeLimRaw==="object"?typeLimRaw:{})};let dailyVio=false,weeklyVio=false,biweeklyVio=false,monthlyVio=false,customVio=false;let dailyUnd=false,weeklyUnd=false,biweeklyUnd=false,monthlyUnd=false,customUnd=false;if(isPremium&&staffType&&hasAnyStaffLimit(typeLim)){const weekMap={};const monthMap={};const _min=(n,d2)=>{const sh=_shiftAt(n,d2);return sh?calcNetWorkMinutes(sh,getBreaksFor(pAttrSettings,d2,n,sh),getOT(n,settings,sh),settings):0;};/* 1日上限も _min（_shiftAt 経由）で引く。このバッジが出す5つの判定のうち、週・2週・月・任意日数の
    4つは _min を通すのに、1日だけが sub.shifts[d] を直に読んでいた＝同じ人・同じ日について別のシフトを
    見うる。同じ名前|日付のシフトが2つある状態は別名だけでなく **期間の重なり** でも作れる（PEF は
    重なりを警告のみで通す・2026-08-25 決定 案B）ので、別名を使わない店舗でも到達する。
    実測: 9/1 が両方に含まれる2期間で、片方が 9:00-18:00・もう片方が 9:00-13:00 のとき、
    行は「1日超過」バッジ（9:00 と判定）を出すのに、同じ行の週集計と詳細モーダルの週間勤務時間は
    4:00 を数えていた。重複が無い通常時は 28 ケースすべてで現行と同じ分数を返すことを確認済み。 */
-ds.forEach(d=>{const nm=_min(resolvedName,d);if(typeLim.daily&&nm>typeLim.daily*60)dailyVio=true;});const wkSet2=new Set(),moSet2=new Set();ds.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet2.add(fd(mon));moSet2.add(d.slice(0,7));});wkSet2.forEach(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=pd(monStr);dd.setDate(dd.getDate()+i);tot+=_min(resolvedName,fd(dd));}weekMap[monStr]=tot;});moSet2.forEach(mo=>{let tot=0;const[yy,mm]=mo.split("-").map(Number);const dim=new Date(yy,mm,0).getDate();for(let i=1;i<=dim;i++)tot+=_min(resolvedName,`${mo}-${String(i).padStart(2,"0")}`);monthMap[mo]=tot;});let _awCache=null;const _allWork=()=>(_awCache||(_awCache=_workDatesOf(resolvedName)));const _windowVio=(days,limitHours)=>{const startDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();const allWork=_allWork();for(const sd of startDs){const start=pd(sd);let tot=0;for(const d2 of allWork){if(d2<sd)continue;const diffD=(pd(d2)-start)/86400000;if(diffD>=days)break;tot+=_min(resolvedName,d2);}if(tot>limitHours*60)return true;}return false;};if(typeLim.weekly)Object.values(weekMap).forEach(wm=>{if(wm>typeLim.weekly*60)weeklyVio=true;});if(typeLim.biweekly)biweeklyVio=_windowVio(14,typeLim.biweekly);if(typeLim.monthly)Object.values(monthMap).forEach(mm=>{if(mm>typeLim.monthly*60)monthlyVio=true;});if(typeLim.customDays&&typeLim.customHours)customVio=_windowVio(typeLim.customDays,typeLim.customHours);}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;
+ds.forEach(d=>{const nm=_min(resolvedName,d);const st=limitStateOf(nm,typeLim.daily,typeLim.dailyMin);if(st==="over")dailyVio=true;else if(st==="under")dailyUnd=true;});const wkSet2=new Set(),moSet2=new Set();ds.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet2.add(fd(mon));moSet2.add(d.slice(0,7));});wkSet2.forEach(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=pd(monStr);dd.setDate(dd.getDate()+i);tot+=_min(resolvedName,fd(dd));}weekMap[monStr]=tot;});moSet2.forEach(mo=>{let tot=0;const[yy,mm]=mo.split("-").map(Number);const dim=new Date(yy,mm,0).getDate();for(let i=1;i<=dim;i++)tot+=_min(resolvedName,`${mo}-${String(i).padStart(2,"0")}`);monthMap[mo]=tot;});let _awCache=null;const _allWork=()=>(_awCache||(_awCache=_workDatesOf(resolvedName)));/* 上限・下限を同じ窓で1度に見る（下限は勤務が1分もない窓には当てない＝limitStateOf の規則）。 */
+const _windowStates=(days,upH,loH)=>{const startDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();const allWork=_allWork();const r={over:false,under:false};for(const sd of startDs){const start=pd(sd);let tot=0;for(const d2 of allWork){if(d2<sd)continue;const diffD=(pd(d2)-start)/86400000;if(diffD>=days)break;tot+=_min(resolvedName,d2);}const st=limitStateOf(tot,upH,loH);if(st==="over")r.over=true;else if(st==="under")r.under=true;}return r;};
+Object.values(weekMap).forEach(wm=>{const st=limitStateOf(wm,typeLim.weekly,typeLim.weeklyMin);if(st==="over")weeklyVio=true;else if(st==="under")weeklyUnd=true;});
+if(typeLim.biweekly||typeLim.biweeklyMin){const r=_windowStates(14,typeLim.biweekly,typeLim.biweeklyMin);biweeklyVio=r.over;biweeklyUnd=r.under;}
+Object.values(monthMap).forEach(mm=>{const st=limitStateOf(mm,typeLim.monthly,typeLim.monthlyMin);if(st==="over")monthlyVio=true;else if(st==="under")monthlyUnd=true;});
+if(typeLim.customDays&&(typeLim.customHours||typeLim.customHoursMin)){const r=_windowStates(typeLim.customDays,typeLim.customHours,typeLim.customHoursMin);customVio=r.over;customUnd=r.under;}}const hasVio=dailyVio||weeklyVio||biweeklyVio||monthlyVio||customVio;const hasUnd=dailyUnd||weeklyUnd||biweeklyUnd||monthlyUnd||customUnd;
               {/* 超過行は塗りつぶさず左に線を引く。塗ると行内の他の情報が読みにくくなる。
                   線は tr ではなく先頭の td に置くこと: WebKit(Safari/iOS Safari) は tr への
                   box-shadow を描画しないため、tr に置くと Safari でだけ目印が消える
                   （getComputedStyle は指定どおりの値を返すので気づけない。実測: バグチェック#72） */}
               return(<tr key={sub.id}>
-              <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text)",fontWeight:600,...(hasVio?{boxShadow:"inset 2px 0 0 #FF4757"}:{})}}>
+              <td style={{padding:"10px 14px",borderBottom:"1px solid rgba(0,0,0,.03)",color:"var(--c-text)",fontWeight:600,...(hasVio?{boxShadow:"inset 2px 0 0 #FF4757"}:hasUnd?{boxShadow:"inset 2px 0 0 #2563EB"}:{})}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                   <span>{resolvedName}</span>
                   {/* 「変更あり」と「別名を登録」は管理者の対応が要る項目。同じアクセント塗りに揃えて
                       「オレンジの箱がある行＝手を動かす必要がある行」という規則を1つだけ作る */}
                   {hasRealUpdate&&<span style={{fontSize:10,background:"var(--c-accent)",color:"#fff",padding:"2px 7px",borderRadius:4,fontWeight:700}}>変更あり</span>}
                   {/* 超過は異常だが「今すぐ操作する」項目ではないので、要対応バッジとは別の見え方にする */}
-                  {hasVio&&<span style={{fontSize:11,color:"#FF4757",fontWeight:700,whiteSpace:"nowrap"}}>{dailyVio?"1日超過":""}{dailyVio&&weeklyVio?" / ":""}{weeklyVio?"週超過":""}</span>}
+                  {hasVio&&<span style={{fontSize:11,color:"#FF4757",fontWeight:700,whiteSpace:"nowrap"}}>{[dailyVio&&"1日超過",weeklyVio&&"週超過",biweeklyVio&&"2週超過",monthlyVio&&"月超過",customVio&&"任意超過"].filter(Boolean).join(" / ")}</span>}
+                  {hasUnd&&<span style={{fontSize:11,color:"#2563EB",fontWeight:700,whiteSpace:"nowrap"}}>{[dailyUnd&&"1日不足",weeklyUnd&&"週不足",biweeklyUnd&&"2週不足",monthlyUnd&&"月不足",customUnd&&"任意不足"].filter(Boolean).join(" / ")}</span>}
                   {isPro&&isUnregisteredSub(sub)&&(
                     linkTarget?.subName===sub.staffName
                       ?<div style={{display:"flex",alignItems:"center",gap:4,marginTop:4,width:"100%"}}>
@@ -4921,7 +4937,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       const typeName=(id,raw)=>(raw&&typeof raw==="object"?raw.name:raw)||STAFF_TYPE_LABELS[id]||id;
       const typeEntries=Object.entries(tlsMerged).sort(([ta,la],[tb,lb])=>String(typeName(ta,la)).localeCompare(String(typeName(tb,lb)),"ja"));
       return(<AC title="スタッフ属性別 勤務時間制限">
-        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は無制限。制限を超えたスタッフは提出一覧で赤くハイライトされます。</div>
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は未設定。上限を超えたスタッフは提出一覧と集計表で赤く、下限に足りないスタッフは青くハイライトされます。下限は勤務が1分もない週・日には当たりません。</div>
         {typeEntries.map(([type,limRaw])=>{
           const lim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeof limRaw==="object"?limRaw:{name:limRaw})};
           const isBuiltin=BUILTIN_TYPES.includes(type);
@@ -4946,28 +4962,35 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                 {LABOR_SYSTEMS.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
               </select>
             </div>
-            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-              {[["daily","1日",24],["weekly","週",168],["biweekly","2週間",336],["monthly","1ヶ月",744]].map(([key,lbl,mx])=>(
-                <div key={key} style={{display:"flex",alignItems:"center",gap:4}}>
-                  <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{lbl}</span>
-                  <input type="number" min={0} max={mx} value={lim[key]||""} placeholder="0"
-                    onChange={e=>{const v=Math.max(0,Math.min(mx,parseInt(e.target.value)||0));saveLim(type,key,v);}}
+            {/* 上限と下限を同じ窓で対にして入力する（窓の一覧は app-utils.js の STAFF_LIMIT_WINDOWS）。
+                どちらも0＝未設定。下限は「その窓に勤務がある人」にだけ当たる。 */}
+            {[["上限",false],["下限",true]].map(([rowLbl,isMin])=>(
+              <div key={rowLbl} style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:isMin?0:6}}>
+                <span style={{fontSize:11,fontWeight:700,color:isMin?"#2563EB":"#FF4757",minWidth:26,whiteSpace:"nowrap"}}>{rowLbl}</span>
+                {STAFF_LIMIT_WINDOWS.map(w=>{const k=isMin?w.minKey:w.key;return(
+                  <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
+                    <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{w.label}</span>
+                    <input type="number" min={0} max={w.max} value={lim[k]||""} placeholder="0"
+                      onChange={e=>{const v=Math.max(0,Math.min(w.max,parseInt(e.target.value)||0));saveLim(type,k,v);}}
+                      style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
+                    <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+                  </div>
+                );})}
+                <div style={{display:"flex",alignItems:"center",gap:4,paddingLeft:4,borderLeft:"1px solid var(--c-border)"}}>
+                  <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>任意</span>
+                  {isMin
+                    ?<span style={{fontSize:11,color:"var(--c-text4)",minWidth:52,textAlign:"center"}}>{lim.customDays||"—"}日で</span>
+                    :<input type="number" min={0} max={365} value={lim.customDays||""} placeholder="日数"
+                      onChange={e=>{const v=Math.max(0,Math.min(365,parseInt(e.target.value)||0));saveLim(type,"customDays",v);}}
+                      style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
+                  {!isMin&&<span style={{fontSize:11,color:"var(--c-text4)"}}>日で</span>}
+                  <input type="number" min={0} max={744} value={(isMin?lim.customHoursMin:lim.customHours)||""} placeholder="時間"
+                    onChange={e=>{const v=Math.max(0,Math.min(744,parseInt(e.target.value)||0));saveLim(type,isMin?"customHoursMin":"customHours",v);}}
                     style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
                   <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
                 </div>
-              ))}
-              <div style={{display:"flex",alignItems:"center",gap:4,paddingLeft:4,borderLeft:"1px solid var(--c-border)"}}>
-                <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>任意</span>
-                <input type="number" min={0} max={365} value={lim.customDays||""} placeholder="日数"
-                  onChange={e=>{const v=Math.max(0,Math.min(365,parseInt(e.target.value)||0));saveLim(type,"customDays",v);}}
-                  style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
-                <span style={{fontSize:11,color:"var(--c-text4)"}}>日で</span>
-                <input type="number" min={0} max={744} value={lim.customHours||""} placeholder="時間"
-                  onChange={e=>{const v=Math.max(0,Math.min(744,parseInt(e.target.value)||0));saveLim(type,"customHours",v);}}
-                  style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
-                <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
               </div>
-            </div>
+            ))}
           </div>);
         })}
         {pendingNewType&&<div style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-accent)",borderRadius:8}}>
