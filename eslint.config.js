@@ -195,6 +195,8 @@ const sharedGlobals = {
   hasAnyRequiredPosition: "writable",
   requiredPositionsFor: "writable",
   isSpecialRedDate: "writable",
+  TIME_ORDER_ERROR_HINT: "writable",
+  isTimeOrderInvalid: "writable",
   ssGet: "writable",
   ssSave: "writable",
   storeKey: "writable",

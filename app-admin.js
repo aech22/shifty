@@ -645,6 +645,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 両方をこの1関数で処理する。extraStart/extraEndは日全体で1組のみのため、2フィールドのうち
   // どちらかが締めならON、どちらも締めでなくなればOFFという形で毎回のblurごとに再判定する。
   const applyEditToSubs=(newSubs,name,date,field,rawValue)=>{
+    // 退勤≦出勤の日を検出して印を置く（項目12・案C。**保存は止めない**）。
+    // 提出一覧の saveAdj と同じ isTimeOrderInvalid を通す——片方だけだと同じ状態をもう一方から作れる。
+    const _flagTimeOrder=sd=>{if(isTimeOrderInvalid(sd))timeErrToastRef.current=true;return sd;};
     const{numeric,note,rest,hasFixed}=extractNote(rawValue);
     const parsed=parseTime(numeric);
     const fixedCmd=(fixedShiftEnabled&&hasFixed)?FIXED_ENTRY:null;
@@ -686,6 +689,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(fixedCmd){sd0[fixedFieldKey]=true;sd0.extraStart=fixedCmd.start;sd0.extraEnd=fixedCmd.end;}
       ns.shifts[date]=sd0;
       newSubs.push(ns);
+      return _flagTimeOrder(sd0);
     }else{
       const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};
       if(rest){
@@ -732,12 +736,22 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         }
       }
       shifts[date]=sd;sub.shifts=shifts;newSubs[idx]=sub;
+      return _flagTimeOrder(sd);
     }
   };
   // 休み希望(y)の二重適用ガード: Enterキー確定はhandleBlurを直接呼んだ後にフォーカス移動で
   // ネイティブblurイベントも発火し、同じ値で2回呼ばれる。時間入力は再適用が冪等なので無害だが、
   // yはトグルのため2回目で打ち消されてしまう。同一セル・短時間の連続rest適用を1回に抑止する。
   const restAppliedRef=useRef({key:null,t:0});
+  // 時刻の入力ミス（項目12・案C）のトースト。applyEditToSubs は onSave の関数型更新の中で
+  // 走る＝同期的には結果を受け取れないため、ここに印だけ置いて次のレンダー後に出す。
+  // （updater はコミット毎に厳密に1回だけ呼ばれる＝app-main.js の saveSubs のコメント参照）
+  const timeErrToastRef=useRef(false);
+  useEffect(()=>{
+    if(!timeErrToastRef.current)return;
+    timeErrToastRef.current=false;
+    tt(TIME_ORDER_ERROR_HINT);
+  });
   const handleBlur=(name,date,field,rawValue)=>{
     if(!isPremium)return;
     const ekey=`${name}|${date}|${field}`;
@@ -1007,6 +1021,22 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     });
     return errs;
   },[companyData,heatEdits,subs,settings,selPid,staffList,periods]);
+  // 時刻の入力ミス（項目12・案C）: 退勤≦出勤 のセル。保存は通し、色とエラーパネルで知らせる。
+  // 判定は dupErrors と同じ入口（getEffHHMM＝blur確定値）から引くので、保存前の編集も反映される。
+  // **両側とも入力されている日だけ**が対象（片側セルは補完の領分で入力ミスではない）。
+  // 区分（laborSystem）で絞らない——これは労務の判定ではなく入力データそのものの誤りで、
+  // 判定対象外の属性（応援・外部）のスタッフでも直す必要があるため。
+  const timeErrors=useMemo(()=>{
+    const errs={};
+    realStaff.forEach(name=>{
+      dates.forEach(date=>{
+        const st=getEffHHMM(name,date,"start"),en=getEffHHMM(name,date,"end");
+        if(!st||!en)return;
+        if(isTimeOrderInvalid({status:"work",start:st,end:en}))errs[`${name}|${date}`]=true;
+      });
+    });
+    return errs;
+  },[realStaff,dates,heatEdits,subs,selPid]);
   // ポジション不足エラー: 日付×ランチ/ディナー×キッチン/ホールで、必要ポジション(settings.requiredPositions)に対する
   // 出勤スタッフの保有ポジション(settings.staffPositions)を最大二部マッチング(matchPositionSlots)し、埋まらない枠を不足として集計する。
   // section判定はheatDataと同じ入口(bandSectionsOf)を使い、ランチ帯/ディナー帯で別々に振り分ける
@@ -1464,6 +1494,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const key=`${name}|${date}|${field}`;
     if(_getSub(name)?.shifts?.[date]?.changed===true)return LEGEND_COLORS.changed;
     if(focusKey===key)return rb; // 編集中は通常背景
+    if(timeErrors[`${name}|${date}`])return LEGEND_COLORS.timeErr;
     if(dupErrors[`${name}|${date}`])return LEGEND_COLORS.dup;
     if(fieldRest(name,date,field))return rb; // 休み希望(y)セルは通常背景+斜線（noteの黄色は付けない）
     // note有無を localEdits/保存値から判定
@@ -1958,6 +1989,17 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
               return`${nm} ${fmtDL(d)}（${shopNm}）`;
             }).join("、")}
           </div>
+        </div>
+      )}
+
+      {/* 時刻の入力ミス（項目12・案C）: 保存は通し、ここと セル色で知らせる */}
+      {Object.keys(timeErrors).length>0&&(
+        <div style={{background:"rgba(190,24,93,.08)",border:"1px solid rgba(190,24,93,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#BE185D",marginBottom:4}}>⚠ 時刻の入力ミス（退勤が出勤より前）</div>
+          <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
+            {Object.keys(timeErrors).map(k=>{const i=k.indexOf("|");return`${k.slice(0,i)} ${fmtDL(k.slice(i+1))}`;}).join("、")}
+          </div>
+          <div style={{fontSize:11,color:"var(--c-text3)",marginTop:4}}>深夜は 25:00・26:00 のように入力します</div>
         </div>
       )}
 
@@ -4015,6 +4057,10 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   const saveAdj=(subId,date,field,value)=>{
     const newSubs=subs.map(s=>{if(s.id!==subId)return s;const sh={...(s.shifts||{})};sh[date]={...sh[date]};if(value)sh[date][field]=value;else delete sh[date][field];return{...s,shifts:sh};});
     onSave(newSubs);
+    // 退勤≦出勤（項目12・案C）。**保存は止めない**——シフト作成タブの applyEditToSubs と
+    // 同じ isTimeOrderInvalid を通す。片方だけに入れると同じ状態をもう一方の入口から作れる。
+    {const after=(newSubs.find(x=>x.id===subId)||{}).shifts;
+     if(after&&isTimeOrderInvalid(after[date])&&tt)tt(TIME_ORDER_ERROR_HINT);}
     setDet(prev=>{if(!prev||prev.id!==subId)return prev;const sh={...(prev.shifts||{})};sh[date]={...sh[date]};if(value)sh[date][field]=value;else delete sh[date][field];return{...prev,shifts:sh};});
   };
   // 詳細モーダルの勤務時間も「その提出の期間の属性」で引く。行の上限判定（:3815 の pAttrSettings）だけが

@@ -3013,3 +3013,69 @@ test("subs部分購読の窓: app-main.js の reconcileSubs が recentPeriodIds 
       `${c.label}: reconcileSubs の写しと recentPeriodIds が違う期間を選んだ`);
   }
 });
+
+// ===== 項目12: 退勤≦出勤のセル（BACKLOG #129・案C）=====
+test("項目12 isTimeOrderInvalid: 退勤≦出勤の日だけを true にする", () => {
+  assert.strictEqual(u.isTimeOrderInvalid({ status: "work", start: "22:00", end: "02:00" }), true);
+  assert.strictEqual(u.isTimeOrderInvalid({ status: "work", start: "18:00", end: "01:00" }), true);
+  assert.strictEqual(u.isTimeOrderInvalid({ status: "work", start: "10:00", end: "10:00" }), true, "同時刻も実働0で誤り");
+  // 24時超え表記の正常入力は影響を受けない（非回帰）
+  assert.strictEqual(u.isTimeOrderInvalid({ status: "work", start: "22:00", end: "26:00" }), false);
+  assert.strictEqual(u.isTimeOrderInvalid({ status: "work", start: "18:00", end: "25:00" }), false);
+  assert.strictEqual(u.isTimeOrderInvalid({ status: "work", start: "10:00", end: "15:00" }), false);
+  // 片側セルは対象外（補完の領分）
+  assert.strictEqual(u.isTimeOrderInvalid({ status: "work", start: "22:00" }), false);
+  assert.strictEqual(u.isTimeOrderInvalid({ status: "work", end: "02:00" }), false);
+  // 休み・空は対象外
+  assert.strictEqual(u.isTimeOrderInvalid({ status: "holiday", start: "22:00", end: "02:00" }), false);
+  assert.strictEqual(u.isTimeOrderInvalid(null), false);
+  // 管理者調整値が優先される
+  assert.strictEqual(u.isTimeOrderInvalid({ status: "work", start: "10:00", end: "15:00", adjustedEnd: "09:00" }), true);
+  assert.strictEqual(u.isTimeOrderInvalid({ status: "work", start: "22:00", end: "02:00", adjustedEnd: "26:00" }), false);
+});
+
+test("項目12: 退勤≦出勤の日は effShiftRangeMin が null＝実働0 のまま（案C＝データを変えない）", () => {
+  const sh = { status: "work", start: "22:00", end: "02:00" };
+  assert.strictEqual(u.effShiftRangeMin(sh, null), null);
+  assert.strictEqual(u.calcNetWorkMinutes(sh, [], 0, null), 0);
+  assert.strictEqual(u.isTimeOrderInvalid(sh), true, "0になること自体は変えず、誤りとして検出だけする");
+});
+
+test("項目12 ドリフト検出: applyEditToSubs と saveAdj が同じ isTimeOrderInvalid を通る", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  // 既定は配信物そのもの。SHIFTY_ADMIN_SRC はこの走査が本当に検出できるかを確かめる差し替え口。
+  const file = process.env.SHIFTY_ADMIN_SRC || path.join(__dirname, "..", "app-admin.js");
+  const raw = fs.readFileSync(file, "utf8");
+  // **コメントを先に落とす。** 落とさないと「同じ isTimeOrderInvalid を通す」と書いた説明コメントだけで
+  // 走査が通り、呼び出しを外しても検出できない（対照で実測した偽陰性）。
+  // 落とすのは行まるごとのコメントと、引用符・スラッシュを1つも含まない行の末尾コメントだけ
+  // ＝文字列や正規表現の途中を誤って切らない。
+  const src = raw.split("\n").map(l => {
+    if (l.trim().startsWith("//")) return "";
+    const i2 = l.indexOf("//");
+    if (i2 < 0) return l;
+    return /["'`/]/.test(l.slice(0, i2)) ? l : l.slice(0, i2);
+  }).join("\n");
+  // 宣言位置から波括弧の対応で本文を切り出す（文字列・テンプレートリテラル中の括弧は数えない）
+  const bodyOf = name => {
+    const i3 = src.indexOf(`const ${name}=(`);
+    assert.ok(i3 >= 0, `${name} の宣言が見つからない`);
+    const open = src.indexOf("{", src.indexOf("=>", i3));
+    let d = 0, q = null;
+    for (let j = open; j < src.length; j++) {
+      const c = src[j], prev = src[j - 1];
+      if (q) { if (c === q && prev !== "\\") q = null; continue; }
+      if (c === '"' || c === "'" || c === "`") { q = c; continue; }
+      if (c === "{") d++;
+      else if (c === "}") { d--; if (d === 0) return src.slice(open, j + 1); }
+    }
+    assert.fail(`${name} の本文を切り出せない`);
+  };
+  ["applyEditToSubs", "saveAdj"].forEach(n =>
+    assert.ok(/isTimeOrderInvalid/.test(bodyOf(n)),
+      `${n} が isTimeOrderInvalid を通っていない（片方だけだと同じ状態をもう一方の入口から作れる）`));
+  // セル色・エラーパネルの単一ソースになる timeErrors も同じ関数から作る（表示と保存時の判定がずれない）
+  const ti = src.indexOf("const timeErrors=useMemo(");
+  assert.ok(ti >= 0, "timeErrors が見つからない");
+  assert.ok(/isTimeOrderInvalid/.test(src.slice(ti, ti + 900)), "timeErrors が isTimeOrderInvalid を通っていない");
+});
