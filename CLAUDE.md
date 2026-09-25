@@ -138,6 +138,28 @@ keepAttrsOf(period) / applyKeepAttrs(settings,period)
                            // 提出一覧(SubsTab)だけは resolvePeriodMaster を通らないので、上限判定の直前で個別に当てている。
                            // 改名では renameStaffInPeriods がキーを移す（移さないと過去期間の指定が引けずエラーが戻る）。
 PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS // 上の例外＝**意図的に凍結しない**マップ（現在は staffHidden だけ）。値そのものが期間の範囲を持つので写しに焼くと同じ問いへの答えが2つできる。凍結対象外のキーは resolvePeriodMaster が現在値のまま残すため、終了した期間もその startDate で評価される
+LEGAL_DAILY_MIN / LEGAL_WEEKLY_MIN     // 労基法32条の法定基準（480分・2400分）。B制の 8h超n日(残業)・週40h超(残業) に使う
+LABOR_SYSTEMS / laborSystemOf / laborSystemForStaff
+                           // 労働時間制（A=1か月単位の変形／B=通常／none=判定対象外）。**属性単位**で持ち
+                           // `staffTypeLimits[属性ID].laborSystem` に入る（2026-09-26・労務判定 第1弾）。
+                           // 既定は 社員=A・バイト=B・派遣/その他=none（DEFAULT_LABOR_SYSTEM_BY_ATTR）。
+                           // **null を返したら「区分が空欄か誤り」**＝staffTypeLimits に無い属性か、
+                           // custom属性で laborSystem が未設定。組み込みIDは既定が必ず答えるので null にならない
+                           // （既存店舗の employee/parttime が一斉に警告になるのを防ぐ）
+laborSettingsOf / DEFAULT_LABOR_SETTINGS // 労務設定の読み手側フォールバック。**makeSettings は変更していない**
+weeklyLegalMinFromBase31 / monthlyBaseMin / monthlyGuideMin / monthlyCapMin / laborMonthFrame
+                           // A制の月の枠。**31日の総枠だけを手入力**し、週の法定労働時間 W を30分単位に
+                           // 丸めて逆算してから各月を FLOOR(W × 暦日数 ÷ 7 × 60, 1) ÷ 60 で出す。
+                           // 丸めないと28日の月が 159:59 になり Excel と1分ずれる。週44時間の特例措置対象
+                           // 事業場は別トグルを作らず、31日に 194:51 を入れれば W=44h になる
+weeklyOverMinB / weeklyOverTotalMinB    // B制の週40h超。各日の実働を1日8hで切ってから週で足し40h超だけ取る
+isTimeOrderInvalid / TIME_ORDER_ERROR_HINT
+                           // 退勤≦出勤の日（BACKLOG #129・案C）。**両側とも入力されている日だけ**が対象で、
+                           // 片側セルは補完の領分。`effShiftRangeMin` は「退勤≦出勤」と「片側だけ」の
+                           // 両方を null にして区別できないので専用に持つ。入口2つ（applyEditToSubs・
+                           // saveAdj）の両方がこれを通る（tests/core.test.js のドリフト検出が守る）
+laborFindingsFor           // 日次の労務判定（S-4）。laborSystem==="none" は労働時間の判定・集計から外すが、
+                           // 「時刻の入力ミス」だけは入力データそのものの誤りなので区分によらず出す
 // 末尾に module.exports ガード（Nodeテスト用）
 ```
 
@@ -358,7 +380,8 @@ Cand = { start: string, end: string } | { closed: true }
 Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              dateCandidates: {[date]: Cand[]}, templates: Template[],
              breakTimes?: {weekday|sat|sun|hol: {start,end,tags?}[]},
-             staffAttributes?: {[name]: 属性ID}, staffTypeLimits?: {[属性ID]: 制限},
+             staffAttributes?: {[name]: 属性ID}, staffTypeLimits?: {[属性ID]: 制限 & {laborSystem?: "A"|"B"|"none"}},
+             laborSettings?: {monthlyBase31Min, fixedOvertimeMin, marginMin, agreementDailyOtMin, agreementMonthlyOtMin}, // 分単位・既定は読み手側フォールバック
              overtimeSettings?: {byStaff: {[name]: {lunch,dinner}}}, staffNumbers?: {[name]: string},
              xlShopName?: string, staffColors?: {[name]: "red"|"black"},
              staffAliases?: {[registered]: string[]}, staffHidden?: {[name]: {from:string|null,to:string|null}[]}, periodUnit?: "2week"|"1month" }
