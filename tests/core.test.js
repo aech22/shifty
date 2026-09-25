@@ -2840,3 +2840,88 @@ test("moveStaffHiddenBoundaries: 変化が無いときは同じ参照を返す�
   assert.strictEqual(u.moveStaffHiddenBoundaries(legacy, HP.p2.startDate, "2026-09-17", []), legacy, "旧形式 true は境界を持たない");
   assert.strictEqual(u.moveStaffHiddenBoundaries({}, HP.p2.startDate, "2026-09-17", []).staffHidden, undefined);
 });
+
+// 片側セル補完の境界は app-utils.js の oneSidedFillBounds が正本だが、app-admin.js の
+// ヒートマップは同じ式の**2つ目の写し**を持ち、帯境界を HEAT_BAND_SPLIT_MIN ではなく
+// 数値リテラル 1020 で直書きしている（app-admin.js の HEAT_LUNCH_END_MIN/HEAT_DINNER_START_MIN）。
+// 値が一致している限り実害は無いが、HEAT_BAND_SPLIT_MIN を変えると**集計側だけが追随し
+// ヒートマップは17:00固定のまま残る**——「ヒートマップと勤務時間集計が同じ日を別扱いする」
+// ＝バグチェック#82 で一度直した食い違いがそのまま再発する。写しを消すのは配信物の
+// リファクタなので、ここでは #144・#145 と同じく**ドリフトを検出するテストで留める**。
+// バグチェック#146（2026-09-25）で検出。
+function _adminFillBounds() {
+  const { ast, srcOf, walk } = _parseAppFile("app-admin.js", "SHIFTY_ADMIN_SRC");
+  let iife = null, timeToMin = null;
+  walk(ast, n => {
+    if (n.type !== "VariableDeclarator") return;
+    if (n.id && n.id.type === "Identifier" && n.id.name === "timeToMin" && !timeToMin) timeToMin = srcOf(n);
+    if (n.id && n.id.type === "ObjectPattern") {
+      const keys = n.id.properties.map(p => p.key && p.key.name);
+      if (keys.includes("HEAT_LUNCH_END_MIN") && keys.includes("HEAT_DINNER_START_MIN")) iife = n.init;
+    }
+  });
+  return { iife, iifeSrc: iife ? srcOf(iife) : null, timeToMin };
+}
+
+test("片側セル補完の境界: app-admin.js の写しが app-utils.js の oneSidedFillBounds と同じ答えを出す", () => {
+  const { iife, iifeSrc, timeToMin } = _adminFillBounds();
+  // 0件が測定失敗でないことの担保（#145 の教訓）。見つからなければ走査が壊れている。
+  assert.ok(iife, "app-admin.js に HEAT_LUNCH_END_MIN/HEAT_DINNER_START_MIN の分解代入が無い（走査が壊れている）");
+  assert.ok(timeToMin, "app-admin.js に timeToMin の宣言が無い（走査が壊れている）");
+  assert.match(iifeSrc, /lunchEnds/, "抽出したのが境界計算の式ではない（走査が壊れている）");
+
+  const run = new Function("settings", `
+    const ${timeToMin};
+    const {HEAT_LUNCH_END_MIN,HEAT_DINNER_START_MIN}=${iifeSrc};
+    return {lunchEnd:HEAT_LUNCH_END_MIN,dinnerStart:HEAT_DINNER_START_MIN};
+  `);
+  const C = (s, e) => ({ start: s, end: e });
+  const sparse = []; sparse[0] = C("11:00", "15:00"); sparse[2] = C("17:00", "22:00");
+  const cases = [
+    ["通常", { candidates: [C("11:00", "15:00"), C("17:00", "23:00")] }],
+    ["候補なし", { candidates: [] }],
+    ["曜日別・日付別を混在", { candidates: [C("10:00", "14:00")], weekdayCandidates: { 1: [C("11:00", "16:00")] }, dateCandidates: { "2026-10-01": [C("18:00", "24:00")] } }],
+    ["closed を含む", { candidates: [C("11:00", "15:00"), { closed: true }] }],
+    // 帯境界ちょうどの候補。<= / >= を < / > に変えるとここだけが動くので必ず残す
+    // （境界に掛からない候補しか無いと、両方の写しが同じフォールバックへ落ちて差が消える）
+    ["帯境界ちょうど・退勤17:00が最も遅い", { candidates: [C("11:00", "15:00"), C("11:00", "17:00")] }],
+    ["帯境界ちょうど・出勤17:00が最も早い", { candidates: [C("17:00", "23:00"), C("18:00", "24:00")] }],
+    ["疎な配列（Firebase往復）", { candidates: sparse }],
+    ["26時超え表記", { candidates: [C("18:00", "26:00")] }],
+    ["不正な時刻文字列", { candidates: [C("abc", "xyz"), C("11:00", "15:00")] }],
+    ["コロンなし", { candidates: [C("9", "17"), C("11:00", "15:00")] }],
+  ];
+  for (const [label, settings] of cases) {
+    // oneSidedFillBounds は settings を WeakMap でキャッシュするので毎回新しい参照を渡す
+    const a = u.oneSidedFillBounds(JSON.parse(JSON.stringify(settings)));
+    const b = run(settings);
+    assert.deepStrictEqual({ lunchEnd: b.lunchEnd, dinnerStart: b.dinnerStart },
+      { lunchEnd: a.lunchEnd, dinnerStart: a.dinnerStart },
+      `${label}: ヒートマップの補完境界が勤務時間・集計側と食い違う（#82 の再発）`);
+  }
+});
+
+test("片側セル補完の境界: app-admin.js の写しが帯境界を HEAT_BAND_SPLIT_MIN からずらしていない", () => {
+  const { iife, iifeSrc } = _adminFillBounds();
+  assert.ok(iife, "境界計算の式が見つからない（走査が壊れている）");
+  // 式に出てくる数値のうち 900（ランチ終わりの既定値・帯境界とは独立）以外は
+  // すべて帯境界でなければならない。HEAT_BAND_SPLIT_MIN を変えてここを直し忘れると落ちる。
+  const nums = [];
+  const walk2 = n => {
+    if (!n || typeof n.type !== "string") return;
+    if (n.type === "NumericLiteral") nums.push(n.value);
+    for (const k of Object.keys(n)) {
+      if (k === "loc") continue;
+      const v = n[k];
+      if (Array.isArray(v)) v.forEach(c => c && typeof c.type === "string" && walk2(c));
+      else if (v && typeof v.type === "string") walk2(v);
+    }
+  };
+  walk2(iife);
+  assert.ok(nums.length > 0, "数値が1つも無い＝走査が壊れている");
+  const stray = nums.filter(v => v !== 900 && v !== u.HEAT_BAND_SPLIT_MIN);
+  assert.deepStrictEqual(stray, [],
+    `app-admin.js の補完境界に HEAT_BAND_SPLIT_MIN(${u.HEAT_BAND_SPLIT_MIN}) でも 900 でもない数値がある: ${stray.join(",")}（帯境界を変えたなら両方の写しを直すこと）`);
+  assert.ok(nums.includes(u.HEAT_BAND_SPLIT_MIN),
+    `app-admin.js の補完境界に HEAT_BAND_SPLIT_MIN(${u.HEAT_BAND_SPLIT_MIN}) が現れない＝写しがずれている`);
+});
