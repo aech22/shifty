@@ -2925,3 +2925,91 @@ test("片側セル補完の境界: app-admin.js の写しが帯境界を HEAT_BA
   assert.ok(nums.includes(u.HEAT_BAND_SPLIT_MIN),
     `app-admin.js の補完境界に HEAT_BAND_SPLIT_MIN(${u.HEAT_BAND_SPLIT_MIN}) が現れない＝写しがずれている`);
 });
+
+// ============================================================
+// subs 部分購読の窓: app-main.js の reconcileSubs が app-utils.js の recentPeriodIds と同じ規則か
+// ------------------------------------------------------------
+// recentPeriodIds は **配信物のどこからも呼ばれていない**（呼ぶのはこのテストだけ）。
+// startSubscriptions の reconcileSubs（app-main.js）は subsWindowCutoff だけを借りて、
+// 「どの期間を購読するか」の判定は自前で書いた同じ式を持っている。値が一致している今は
+// ユーザーに見える差は無いが、**窓の規則を変えたときに片方だけが追随する**——そのとき壊れるのは
+// 「直近3ヶ月の提出だけを購読する」という DL 量の前提そのもので、症状は
+// 「古い期間の提出が出てこない」か「全期間を読んでしまう」のどちらかになり、どちらも気づきにくい。
+// fixedShiftCommandFor（#124）と同じ「テストからしか呼ばれない純粋関数」の形で、これが2例目。
+// 写しを消すのは配信物のリファクタなので、ここではドリフトの検出だけを行う。
+test("subs部分購読の窓: app-main.js の reconcileSubs が recentPeriodIds と同じ期間を選ぶ", () => {
+  const fs = require("fs"), path = require("path"), babel = require("@babel/core");
+  // 既定は配信物そのもの。SHIFTY_MAIN_SRC はこの走査が本当に検出できるかを確かめるための差し替え口。
+  const file = process.env.SHIFTY_MAIN_SRC || path.join(__dirname, "..", "app-main.js");
+  const src = fs.readFileSync(file, "utf8");
+  const ast = babel.parseSync(src, {
+    configFile: false, babelrc: false, sourceType: "script",
+    parserOpts: { plugins: ["jsx"], errorRecovery: true },
+  });
+  const srcOf = n => src.slice(n.start, n.end);
+  const walk = (node, fn) => {
+    if (!node || typeof node.type !== "string") return;
+    fn(node);
+    for (const k of Object.keys(node)) {
+      if (k === "loc" || k === "leadingComments" || k === "trailingComments") continue;
+      const v = node[k];
+      if (Array.isArray(v)) v.forEach(c => c && typeof c.type === "string" && walk(c, fn));
+      else if (v && typeof v.type === "string") walk(v, fn);
+    }
+  };
+
+  let fnBody = null;
+  walk(ast, n => {
+    if (n.type !== "VariableDeclarator" || !n.id || n.id.name !== "reconcileSubs") return;
+    if (!n.init || n.init.type !== "ArrowFunctionExpression" || n.init.body.type !== "BlockStatement") return;
+    fnBody = n.init.body;
+  });
+  assert.ok(fnBody, "app-main.js に reconcileSubs のアロー関数が見つからない（名前か形が変わった）");
+
+  // 窓の下限を決める行と、want へ期間IDを入れる行だけを取り出す
+  let cutoffInit = null, addStmt = null;
+  fnBody.body.forEach(st => {
+    if (st.type === "VariableDeclaration") {
+      st.declarations.forEach(d => { if (d.id && d.id.name === "cutoff" && d.init) cutoffInit = srcOf(d.init); });
+    }
+    const s = srcOf(st);
+    if (/want\.add\(p\.id\)/.test(s)) addStmt = s;
+  });
+  assert.ok(cutoffInit, "reconcileSubs に cutoff の宣言が見つからない");
+  assert.ok(addStmt, "reconcileSubs に want.add(p.id) を含む文が見つからない");
+  // 窓の下限は app-utils.js の subsWindowCutoff で決めること（自前の月計算へ分岐していない）
+  assert.match(cutoffInit, /subsWindowCutoff\(/,
+    `reconcileSubs の cutoff が subsWindowCutoff を通っていない: ${cutoffInit}`);
+
+  // 取り出した2行をそのまま実行して、選ばれる期間IDを採る（wantAll=false・active=null＝窓の規則だけを見る）
+  const inlineWant = (periods, refDate) => {
+    const all = periods, want = new Set(), wantAll = false, active = null;
+    const subsWindowCutoff = (d, m) => u.subsWindowCutoff(d || refDate, m);
+    const cutoff = eval(cutoffInit); // eslint-disable-line no-eval
+    eval(addStmt); // eslint-disable-line no-eval
+    return [...want].sort();
+  };
+
+  const REF = "2026-09-25"; // 窓の下限はちょうど 2026-06-25
+  assert.strictEqual(u.subsWindowCutoff(REF), "2026-06-25", "前提: 3ヶ月窓の下限");
+  const cases = [
+    // 境界そのものを必ず入れる。境界に掛かる期間が無いと >= を > に変えても両者が一致してしまう（#146 の教訓）
+    { label: "下限ちょうど", periods: [{ id: "p1", startDate: "2026-06-25" }] },
+    { label: "下限の1日前", periods: [{ id: "p2", startDate: "2026-06-24" }] },
+    { label: "窓の内側", periods: [{ id: "p3", startDate: "2026-09-01" }] },
+    { label: "ずっと古い", periods: [{ id: "p4", startDate: "2026-01-01" }] },
+    { label: "startDate なし", periods: [{ id: "p5" }] },
+    { label: "id なし", periods: [{ startDate: "2026-09-01" }] },
+    { label: "null 要素", periods: [null, { id: "p7", startDate: "2026-09-10" }] },
+    { label: "混在", periods: [
+      { id: "a", startDate: "2026-06-25" }, { id: "b", startDate: "2026-06-24" },
+      { id: "c", startDate: "2026-12-01" }, null, { id: "d" },
+    ] },
+  ];
+  for (const c of cases) {
+    assert.deepStrictEqual(
+      inlineWant(c.periods, REF),
+      [...u.recentPeriodIds(c.periods, REF)].sort(),
+      `${c.label}: reconcileSubs の写しと recentPeriodIds が違う期間を選んだ`);
+  }
+});
