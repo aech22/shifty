@@ -70,7 +70,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
       return i?{v:i.value,img:(getComputedStyle(i).backgroundImage||"").replace(/\s/g,"")}:null;};
     return{labor:tbl("労務判定（2026年10月）"),weekRest:tbl("週の休み"),
       panel:panel?panel.innerText.replace(/\s+/g," "):null,
-      c14s:cell("2026-10-14","start"),c14e:cell("2026-10-14","end")};
+      c14s:cell("2026-10-14","start"),c14e:cell("2026-10-14","end"),cY:cell("2026-10-15","start")};
   });
   const before=await read();
   // 10/14 に yu（終日の有給）を入れる
@@ -81,6 +81,16 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
     i.blur();i.dispatchEvent(new Event("focusout",{bubbles:true}));
   });
   await h.page.waitForTimeout(800);
+  // 10/15 は y を出勤・退勤の両方に入れて終日の休み希望にする（斜線のまま・文字なし）
+  for(const f of ["start","end"]){
+    await h.evaluate(fl=>{
+      const i=document.querySelector(`input[data-sc="2026-10-15|${fl}"][data-scn="田中"]`);
+      const st=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,"value").set;
+      i.focus();st.call(i,"y");i.dispatchEvent(new Event("input",{bubbles:true}));
+      i.blur();i.dispatchEvent(new Event("focusout",{bubbles:true}));
+    },f);
+    await h.page.waitForTimeout(600);
+  }
   const after=await read();
   after.saved=await h.evaluate(()=>((window.__subs[0].shifts||{})["2026-10-14"]||null));
   after.errors=h.errors.slice();
@@ -220,15 +230,19 @@ const cellOf=(t,row,i=0)=>((t&&t[row])||[])[i];
     week_count:Object.values(s.after.weekRest||{}).some(v=>/^休\d+$/.test(v[0])),
     verdict_fix:cellOf(s.before.labor,"総括")==="要修正",
     // yu を入れると leaveType が保存され、両セルが有給色になる
-    yu_saved:!!s.after.saved&&s.after.saved.leaveType==="paid"&&!!s.after.saved.adminRest
-      &&s.after.saved.adminRest.start===true&&s.after.saved.adminRest.end===true,
-    // 休暇は色ではなくセルの文字で見せる（2026-09-26 ユーザー指示）。出勤・退勤の両方に出す
-    yu_cell_text:!!s.after.c14s&&s.after.c14s.v==="有給"&&!!s.after.c14e&&s.after.c14e.v==="有給",
+    // 有給は半日単位＝**打ち込んだ帯だけ**に入る（出勤セルに yu → start だけ）
+    yu_saved:!!s.after.saved&&!!s.after.saved.leaveTypes&&s.after.saved.leaveTypes.start==="paid"
+      &&s.after.saved.leaveTypes.end===undefined&&!!s.after.saved.adminRest
+      &&s.after.saved.adminRest.start===true&&s.after.saved.adminRest.end===undefined,
+    // 休暇は色ではなくセルの文字で見せる。**打ち込んだセルだけ**に出る（有給は半日単位）
+    yu_cell_text:!!s.after.c14s&&s.after.c14s.v==="有給"&&!!s.after.c14e&&s.after.c14e.v==="",
     yu_no_color:!!s.after.c14s&&!s.after.c14s.img.includes("rgb(220,235,251)"),
     // 種別名を出すセルには斜線も引かない（文字と重なって読めなくなるため）
     yu_no_hatch:!!s.after.c14s&&!/svg/.test(s.after.c14s.img||""),
-    yu_counted:/有1\//.test(cellOf(s.after.labor,"休暇")||""),
-    paid_remaining:cellOf(s.after.labor,"有給残")==="9日",
+    // y は文字を出さず斜線のまま（2026-09-26 ユーザー指示）。数え方は公休のまま
+    y_hatch_no_text:!!s.after.cY&&s.after.cY.v===""&&/svg/.test(s.after.cY.img||""),
+    yu_counted:/有0\.5\//.test(cellOf(s.after.labor,"休暇")||""),
+    paid_remaining:cellOf(s.after.labor,"有給残")==="9.5日",
     year_total:cellOf(s.before.labor,"2026年度計")==="100:00",
     // 提出一覧の詳細モーダル: 休憩・休暇の列があり、上書きがその日の実働に反映される
     modal_columns:sb.head.includes("休憩")&&sb.head.includes("休暇"),

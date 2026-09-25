@@ -244,6 +244,8 @@ const sharedGlobals = {
   LEAVE_TYPE_LABELS: "writable",
   LEAVE_TYPE_CELL_TEXT: "writable",
   leaveCellTextOf: "writable",
+  leaveFieldsOf: "writable",
+  leaveHalfDaysOf: "writable",
   leaveTypeOf: "writable",
   dayRestKindOf: "writable",
   weekRestStateOf: "writable",

@@ -659,7 +659,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 出勤・退勤の**両方**に出す——片方だけだと半日の休み希望と見分けがつかない。
   const leaveCellText=(name,date,field)=>{
     if(!fieldRest(name,date,field))return "";
-    return leaveCellTextOf(_getSub(name)?.shifts?.[date]);
+    return leaveCellTextOf(_getSub(name)?.shifts?.[date],field);
   };
   const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const lv=leaveCellText(name,date,field);if(lv)return lv;const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);const fx=getStoredFixed(name,date,field)?FIXED_KEY:"";if(t)return t+n+fx;return(n+fx)||"";};
   const handleChange=(name,date,field,value)=>{setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
@@ -701,8 +701,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         // 休み希望(y)を未提出スタッフのセルに入力: adminRestのみ持つsubを新規作成
         const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString(),source:"grid"};
         // yu/ke は終日の休暇（第3弾・判断6）。y は従来どおり入れたフィールドだけ。
+        // yu/ke は**打ち込んだ帯だけ**（有給は半日単位で取れる）。ko（公休）だけ終日。
         ns.shifts[date]=leaveCmd
-          ?{status:"work",adminRest:{start:true,end:true},leaveType:leaveCmd}
+          ?(leaveCmd==="public"
+            ?{status:"work",adminRest:{start:true,end:true},leaveTypes:{start:"public",end:"public"}}
+            :{status:"work",adminRest:{[field]:true},leaveTypes:{[field]:leaveCmd}})
           :{status:"work",adminRest:{[field]:true}};
         newSubs.push(ns);
         return _flagTimeOrder(ns.shifts[date]);
@@ -724,14 +727,28 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     }else{
       const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};
       if(rest&&leaveCmd){
-        // yu/ke は**終日**の休暇種別（第3弾・判断6）。同じ種別をもう一度入れると解除する。
-        if(sd.leaveType===leaveCmd){delete sd.leaveType;delete sd.adminRest;}
-        else{
-          sd.leaveType=leaveCmd;sd.adminRest={start:true,end:true};
-          delete sd.adjustedStart;delete sd.adjustedEnd;
-          delete sd.adjustedStartNote;delete sd.adjustedEndNote;
-          delete sd.adjustedStartFixed;delete sd.adjustedEndFixed;
+        // 休暇種別。**yu/ke は打ち込んだ帯だけ**（有給は半日単位で取れる）、ko は終日。
+        // 同じ種別をもう一度入れると解除する。旧い日単位の leaveType は触った時点で捨てる。
+        const cur=leaveFieldsOf(sd);
+        const whole=leaveCmd==="public";
+        const already=whole?(cur.start===leaveCmd&&cur.end===leaveCmd):(cur[field]===leaveCmd);
+        const lt={...(sd.leaveTypes||{})};
+        if(!sd.leaveTypes){if(cur.start)lt.start=cur.start;if(cur.end)lt.end=cur.end;}
+        const ar={...(sd.adminRest||{})};
+        if(already){
+          if(whole){delete lt.start;delete lt.end;delete ar.start;delete ar.end;}
+          else{delete lt[field];delete ar[field];}
+        }else{
+          if(whole){lt.start="public";lt.end="public";ar.start=true;ar.end=true;
+            delete sd.adjustedStart;delete sd.adjustedEnd;
+            delete sd.adjustedStartNote;delete sd.adjustedEndNote;
+            delete sd.adjustedStartFixed;delete sd.adjustedEndFixed;}
+          else{lt[field]=leaveCmd;ar[field]=true;
+            delete sd[adjField];delete sd[nk];delete sd[fixedFieldKey];}
         }
+        delete sd.leaveType;
+        if(Object.keys(lt).length)sd.leaveTypes=lt;else delete sd.leaveTypes;
+        if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;
       }else if(rest){
         // 休み希望トグル: 同じセルへの再入力で解除。セット時は同フィールドの管理者調整値を消す
         // （スタッフ提出のstart/end/statusには触れない。実効値の抑制はgetStoredTimeのadminRest判定が担う）
@@ -739,14 +756,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         if(ar[field]){delete ar[field];}
         else{ar[field]=true;delete sd[adjField];delete sd[nk];delete sd[fixedFieldKey];}
         if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;
-        // 出勤・退勤の両方が y になったら**公休**として記録する（判断6）。片側は従来どおり休み希望。
-        if(sd.adminRest&&sd.adminRest.start&&sd.adminRest.end)sd.leaveType="public";
-        else if(sd.leaveType==="public")delete sd.leaveType;
+        // **y は leaveType を書かない**（2026-09-26 ユーザー指示）。終日でもセルは斜線のままで、
+        // 「公休」の文字は出さない。文字を出す＝記録として残すのは ko（leaveType:"public"）のほう。
+        // 週の休みに数えるかは leaveTypeOf が終日 y も公休として扱うので、この変更では動かない。
+        if(sd.leaveType==="public")delete sd.leaveType;
       }else if(parsed){
         // 休み希望セルへの入力は出勤扱いに変えるが、元のstatusをorigStatusに退避して消去時に復元できるようにする
         if(sd.status!=="work"&&sd.origStatus===undefined)sd.origStatus=sd.status;
         sd[adjField]=parsed;sd[nk]=note;sd.status="work";
-        if(sd.leaveType)delete sd.leaveType; // 時間を入れた＝出勤日に戻す
+        // 時間を入れた＝その帯は出勤に戻す
+        if(sd.leaveType)delete sd.leaveType;
+        if(sd.leaveTypes&&sd.leaveTypes[field]){const lt2={...sd.leaveTypes};delete lt2[field];
+          if(Object.keys(lt2).length)sd.leaveTypes=lt2;else delete sd.leaveTypes;}
         if(fixedCmd)sd[fixedFieldKey]=true;else delete sd[fixedFieldKey];
         // 時間入力は同フィールドの休み希望マーク(adminRest)を解除する
         if(sd.adminRest&&sd.adminRest[field]){const ar={...sd.adminRest};delete ar[field];if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;}
@@ -1337,8 +1358,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const sh=_getWorkShift(name,d);
       if(sh)workMin+=calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh),settings);
       if(!active)return;
-      const lt=leaveTypeOf(_getAnyShift(name,d));
-      if(lt==="paid")paid++;else if(lt==="ceremony")ceremony++;else if(kinds[i]==="rest")publicOff++;
+      const hd=leaveHalfDaysOf(_getAnyShift(name,d));
+      paid+=hd.paid;ceremony+=hd.ceremony;
+      if(!hd.paid&&!hd.ceremony&&kinds[i]==="rest")publicOff++;
     });
     return{workMin,paid,publicOff,ceremony};
   },[settings,subs,pastSubsLoaded,staffAliases,anyShiftByStaffDate,workShiftByStaffDate]);
@@ -1401,9 +1423,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const kinds=dates.map(d=>dayRestKindOf(_getAnyShift(name,d),true));
       const active=kinds.some(k=>k==="work"||k==="leave");
       let paidD=0,pubD=0,ceD=0;
+      // 有給・慶弔は**半日＝0.5日**で数える。公休は日単位（無記入の日も含む）。
       if(active)dates.forEach((d,i)=>{
-        const lt=leaveTypeOf(_getAnyShift(name,d));
-        if(lt==="paid")paidD++;else if(lt==="ceremony")ceD++;else if(kinds[i]==="rest")pubD++;
+        const hd=leaveHalfDaysOf(_getAnyShift(name,d));
+        paidD+=hd.paid;ceD+=hd.ceremony;
+        if(!hd.paid&&!hd.ceremony&&kinds[i]==="rest")pubD++;
       });
       // 年度の累計。**期間が凍結時に残した laborTotals を優先**するので、過去参照を押さなくても出る。
       const yr=fy==null?null:yearLaborSummary(periods,name,fy,fyStart,liveTotalFor(name));
@@ -3592,7 +3616,7 @@ const dragIdxRef=useRef(null);
           </label>
         );
         return(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
           onClick={()=>setDelTarget(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:"18px 18px 14px",maxWidth:440,width:"100%",maxHeight:"85vh",overflowY:"auto",boxShadow:"0 8px 32px var(--c-shadow)"}}>
             <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>{isRetained?`「${delTarget}」の表示範囲を変えます`:`「${delTarget}」を削除します`}</div>
@@ -3653,7 +3677,7 @@ const dragIdxRef=useRef(null);
           );
         };
         return(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
           onClick={()=>setHideTarget(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:"18px 18px 14px",maxWidth:440,width:"100%",maxHeight:"85vh",overflowY:"auto",boxShadow:"0 8px 32px var(--c-shadow)"}}>
             <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>
@@ -3712,7 +3736,7 @@ const dragIdxRef=useRef(null);
           );
         };
         return(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.6)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
           onClick={()=>setAttrTarget(null)}>
           <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:"18px 18px 14px",maxWidth:440,width:"100%",maxHeight:"85vh",overflowY:"auto",boxShadow:"0 8px 32px var(--c-shadow)"}}>
             <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>
@@ -3848,7 +3872,9 @@ const dragIdxRef=useRef(null);
       </AC>
 
       {/* スタッフの編集モーダル（2026-09-26 ユーザー指示）。名前・従業員番号・属性・別名・退勤延長を
-          1画面にまとめる。行に残すのは 有給日数・ポジション・非表示・編集・削除 の5ボタンだけ。 */}
+          1画面にまとめる。行に残すのは 有給日数・ポジション・非表示・編集・削除 の5ボタンだけ。
+          **zIndex は 9998。** 上の3つのポップアップ（削除・非表示・属性）は 9999 にしてある——
+          属性の変更はこのモーダルの中から開くので、同じ値だと DOM 順で下に潜って操作できない。 */}
       {editKey&&(()=>{
         const n=editKey;
         const otRaw=(settings.overtimeSettings?.byStaff||{})[n];
@@ -4618,7 +4644,7 @@ if(typeLim.customDays&&(typeLim.customHours||typeLim.customHoursMin)){const r=_w
               </td>}
               {/* 休暇種別（第3弾・項目9）。グリッドの y/yu/ke と同じ shift.leaveType を編集する。 */}
               {isPremium&&<td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
-                <select value={leaveTypeOf(s)||""} onChange={e=>saveAdj(det.id,ds,"leaveType",e.target.value||"")}
+                <select value={leaveTypeOf(s)||""} onChange={e=>saveAdj(det.id,ds,"leaveTypes",e.target.value?{start:e.target.value,end:e.target.value}:"")}
                   style={{fontSize:16,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.leaveType?"#3B82F6":"var(--c-border)"}`,borderRadius:4,color:s.leaveType?"#3B82F6":"var(--c-text)",cursor:"pointer",maxWidth:86}}>
                   <option value="">—</option>
                   {LEAVE_TYPES.map(t=><option key={t} value={t}>{LEAVE_TYPE_LABELS[t]}</option>)}

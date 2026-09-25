@@ -1468,7 +1468,7 @@ test("ADMIN_SHIFT_FIELDS: 管理者が日ごとに書き込む全フィールド
   const expected = [
     "adjustedStart", "adjustedEnd", "adjustedStartNote", "adjustedEndNote",
     "adminRest", "extraStart", "extraEnd", "adjustedStartFixed", "adjustedEndFixed", "origStatus",
-    "adjustedBreak", "leaveType",
+    "adjustedBreak", "leaveType", "leaveTypes",
   ];
   assert.deepStrictEqual([...u.ADMIN_SHIFT_FIELDS].sort(), expected.sort());
 });
@@ -3490,10 +3490,21 @@ test("項目9 休暇種別: yu=有給・ke=慶弔 がコマンドとして登録
   // 休暇は色ではなくセルの文字で見せる（2026-09-26 ユーザー指示）。色のレジェンドは持たない。
   ["leavePublic", "leavePaid", "leaveCeremony"].forEach(k =>
     assert.ok(!u.CELL_COLOR_LEGEND.some(c => c.key === k), `legend ${k} は色で持たない`));
-  assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveType: "paid" }), "有給");
-  assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveType: "ceremony" }), "慶弔");
-  assert.strictEqual(u.leaveCellTextOf({ status: "work", adminRest: { start: true, end: true } }), "公休");
-  assert.strictEqual(u.leaveCellTextOf({ status: "work", adminRest: { start: true } }), "", "半日 y は文字を出さない");
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveType: "paid" }), "有給", "旧い日単位の形も読む");
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveTypes: { start: "paid", end: "paid" } }), "有給");
+  // **有給は半日単位。打ち込んだ帯にだけ文字が出る**（2026-09-26 ユーザー指示）
+  const halfPaid = { status: "work", adminRest: { start: true }, leaveTypes: { start: "paid" }, end: "22:00" };
+  assert.strictEqual(u.leaveCellTextOf(halfPaid, "start"), "有給");
+  assert.strictEqual(u.leaveCellTextOf(halfPaid, "end"), "");
+  assert.deepStrictEqual(u.leaveHalfDaysOf(halfPaid), { paid: 0.5, ceremony: 0 });
+  assert.strictEqual(u.dayRestKindOf(halfPaid, true), "work", "半日有給の日は出勤日のまま");
+  assert.deepStrictEqual(u.leaveHalfDaysOf({ status: "work", leaveTypes: { start: "paid", end: "ceremony" } }),
+    { paid: 0.5, ceremony: 0.5 }, "午前有給・午後慶弔も数えられる");
+  // y は終日でも文字を出さない（斜線のまま）。文字が出るのは leaveType が明示的に入った日だけ
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", adminRest: { start: true, end: true } }), "");
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", adminRest: { start: true } }), "");
+  // 数え方（週の休み）のほうは終日 y も公休のまま
+  assert.strictEqual(u.leaveTypeOf({ status: "work", adminRest: { start: true, end: true } }), "public");
   assert.strictEqual(u.leaveCellTextOf({ status: "work", start: "09:00", end: "18:00" }), "");
 });
 
@@ -3714,13 +3725,45 @@ test("休暇コマンド: ko=公休・yu=有給・ke=慶弔 の3つが終日の�
 
 test("leaveCellTextOf: セルに出す文字（色も斜線も使わない）", () => {
   assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveType: "public" }), "公休");
-  assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveType: "paid" }), "有給");
-  assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveType: "ceremony" }), "慶弔");
-  // y を両方に入れた終日も公休（導入前のデータ互換と同じ規則）
-  assert.strictEqual(u.leaveCellTextOf({ status: "work", adminRest: { start: true, end: true } }), "公休");
-  assert.strictEqual(u.leaveCellTextOf({ status: "work", adminRest: { end: true } }), "", "半日 y は文字なし");
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveType: "paid" }), "有給", "旧い日単位の形も読む");
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveTypes: { start: "paid", end: "paid" } }), "有給");
+  // **有給は半日単位。打ち込んだ帯にだけ文字が出る**（2026-09-26 ユーザー指示）
+  const halfPaid = { status: "work", adminRest: { start: true }, leaveTypes: { start: "paid" }, end: "22:00" };
+  assert.strictEqual(u.leaveCellTextOf(halfPaid, "start"), "有給");
+  assert.strictEqual(u.leaveCellTextOf(halfPaid, "end"), "");
+  assert.deepStrictEqual(u.leaveHalfDaysOf(halfPaid), { paid: 0.5, ceremony: 0 });
+  assert.strictEqual(u.dayRestKindOf(halfPaid, true), "work", "半日有給の日は出勤日のまま");
+  assert.deepStrictEqual(u.leaveHalfDaysOf({ status: "work", leaveTypes: { start: "paid", end: "ceremony" } }),
+    { paid: 0.5, ceremony: 0.5 }, "午前有給・午後慶弔も数えられる");
+  // y は終日でも文字を出さない（2026-09-26 ユーザー指示・斜線のまま）
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", adminRest: { start: true, end: true } }), "");
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", adminRest: { end: true } }), "");
+  assert.strictEqual(u.leaveCellTextOf({ status: "holiday" }), "", "スタッフ提出の休みも文字なし");
   assert.strictEqual(u.leaveCellTextOf(null), "");
   // 色のレジェンドは持たない
   ["leavePublic", "leavePaid", "leaveCeremony"].forEach(k =>
     assert.ok(!u.CELL_COLOR_LEGEND.some(c => c.key === k), `legend ${k} は持たない`));
+});
+
+test("斜線（y・提出の休み）も公休として数える — 見せ方と数え方を分けたあとの非回帰", () => {
+  // 2026-09-26: y は**セルに文字を出さない**（斜線のまま）が、**数え方は公休のまま**。
+  // 見せ方（leaveCellTextOf）と数え方（leaveTypeOf / dayRestKindOf）を別の関数で答える。
+  const cases = [
+    ["終日 y（管理者）", { status: "work", adminRest: { start: true, end: true } }],
+    ["提出の休み", { status: "holiday" }],
+    ["ko（明示の公休）", { status: "work", leaveType: "public", adminRest: { start: true, end: true } }],
+  ];
+  cases.forEach(([label, sh]) => {
+    assert.strictEqual(u.leaveTypeOf(sh), "public", `${label}: 公休として扱う`);
+    assert.strictEqual(u.dayRestKindOf(sh, true), "rest", `${label}: 週の休みに数える`);
+  });
+  // 文字が出るのは ko（明示）だけ
+  assert.strictEqual(u.leaveCellTextOf(cases[0][1]), "");
+  assert.strictEqual(u.leaveCellTextOf(cases[1][1]), "");
+  assert.strictEqual(u.leaveCellTextOf(cases[2][1]), "公休");
+  // 無記入も公休として週の休みに数える（判断8）
+  assert.strictEqual(u.dayRestKindOf(undefined, true), "rest");
+  // 有給・慶弔は休みに数えない（出勤日に取る休暇のため）
+  assert.strictEqual(u.dayRestKindOf({ status: "work", leaveType: "paid" }, true), "leave");
+  assert.strictEqual(u.dayRestKindOf({ status: "work", leaveType: "ceremony" }, true), "leave");
 });

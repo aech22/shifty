@@ -243,7 +243,7 @@ function shiftBandInfo(shift,settings=null){
 // 新しい管理者フィールドを追加したら必ずここに登録すること。
 const ADMIN_SHIFT_FIELDS=["adjustedStart","adjustedEnd","adjustedStartNote","adjustedEndNote",
   "adminRest","extraStart","extraEnd","adjustedStartFixed","adjustedEndFixed","origStatus",
-  "adjustedBreak","leaveType"];
+  "adjustedBreak","leaveType","leaveTypes"];
 // 新しい日オブジェクト(newShift)に、既存提出(oldShift)の管理者フィールドを引き継ぐ。
 // newShift側に既に値があるフィールドは上書きしない（スタッフの新しい入力を優先する）。
 // 追加出勤フラグ(adjustedStartFixed/adjustedEndFixed)を引き継いだ日は status="work" に戻す。
@@ -847,14 +847,42 @@ const LEAVE_TYPE_LABELS={public:"公休",paid:"有給",ceremony:"慶弔"};
 // 入力欄の value にそのまま入れるので、表示のまま blur しても保存されないよう
 // handleBlur が「表示中の種別名と同じ入力は何もしない」で受ける（app-admin.js）。
 const LEAVE_TYPE_CELL_TEXT={public:"公休",paid:"有給",ceremony:"慶弔"};
-function leaveCellTextOf(shift){const t=leaveTypeOf(shift);return t?LEAVE_TYPE_CELL_TEXT[t]:"";}
+// **休暇種別は帯（出勤セル=ランチ／退勤セル=ディナー）ごとに持つ**（2026-09-26 ユーザー指示）。
+// 有給は半日単位で取れるので、打ち込んだセルにだけ種別名が出る。`shift.leaveTypes={start,end}`。
+// 旧い形（日単位の `shift.leaveType`）も読む——同日に一度その形で書いたデータがあるため。
+function leaveFieldsOf(shift){
+  const m=(shift&&shift.leaveTypes)||null;
+  const one=shift&&LEAVE_TYPES.indexOf(shift.leaveType)>=0?shift.leaveType:null;
+  const pick=f=>{
+    const v=m&&m[f];
+    if(LEAVE_TYPES.indexOf(v)>=0)return v;
+    return m?null:one;   // leaveTypes を持つ日は leaveType へ落とさない（片側だけの指定を潰さない）
+  };
+  return{start:pick("start"),end:pick("end")};
+}
+// **セルに文字を出すのはその帯に種別が入っているときだけ**。`y`（休み希望）は種別を持たないので
+// 従来どおり斜線のままで文字を出さない。一方 leaveTypeOf は「週の休みに数えるか」を決める判定で、
+// 終日 y も公休として扱い続ける——見せ方（ここ）と数え方は別の問いなので同じ関数で答えない。
+function leaveCellTextOf(shift,field){
+  const lv=leaveFieldsOf(shift);
+  const t=field?lv[field]:(lv.start&&lv.start===lv.end?lv.start:null);
+  return t?LEAVE_TYPE_CELL_TEXT[t]:"";
+}
+// 有給・慶弔の日数（半日＝0.5）。公休は日単位なのでここでは数えない。
+function leaveHalfDaysOf(shift){
+  const lv=leaveFieldsOf(shift);
+  const c=t=>((lv.start===t?0.5:0)+(lv.end===t?0.5:0));
+  return{paid:c("paid"),ceremony:c("ceremony")};
+}
 // その日の休暇種別。**本機能の導入前に入力済みの終日 y（leaveType なし）は公休として扱う**
 // ——データ移行はしない。これをしないと既存店舗で `×休なし` の誤警告が出る。
 function leaveTypeOf(shift){
   if(!shift)return null;
-  if(LEAVE_TYPES.indexOf(shift.leaveType)>=0)return shift.leaveType;
+  const lv=leaveFieldsOf(shift);
+  if(lv.start&&lv.start===lv.end)return lv.start;   // 終日ぶん指定されている
+  if(lv.start||lv.end)return null;                  // 半日だけ＝日単位の種別は決まらない
   const ar=shift.adminRest||{};
-  if(ar.start&&ar.end)return"public";        // 終日 y（既存データ）
+  if(ar.start&&ar.end)return"public";        // 終日 y（斜線も公休として数える）
   if(shift.status==="holiday")return"public"; // スタッフ提出の終日休み
   return null;
 }
@@ -866,12 +894,17 @@ function leaveTypeOf(shift){
 function dayRestKindOf(shift,hasData){
   if(hasData===false)return"nodata";
   if(!shift)return"rest";
+  // 半日の有給・慶弔は**その日を出勤日のまま**にする（残り半分を働くため）。
+  // 週の休みに数えないのは終日ぶん取ったときだけ。
+  const hasWork=shift.status==="work"
+    &&!!(effShiftStart(shift)||effShiftEnd(shift)||(shift.extraStart&&shift.extraEnd));
+  if(hasWork)return"work";
+  const hd=leaveHalfDaysOf(shift);
+  if(hd.paid>0||hd.ceremony>0)return"leave";
   const lt=leaveTypeOf(shift);
-  if(lt==="paid"||lt==="ceremony")return"leave";
   if(lt==="public")return"rest";
   if(shift.status!=="work")return"rest";
-  if(!effShiftStart(shift)&&!effShiftEnd(shift)&&!(shift.extraStart&&shift.extraEnd))return"rest";
-  return"work";
+  return"rest";
 }
 // 週（7日）の状態（S-5）。**全日が無記入の週は評価対象外**——未提出の期間を「休みだらけ」と
 // 数えて判定を空回りさせないため。
@@ -906,7 +939,9 @@ function fiscalYearLabel(fy,startMonth){
 // 0 のフィールドは落として持つ（periods は起動時に全件購読するため、サイズがDL量に直結する）。
 function compactLaborTotal(t){
   const o={};
-  ["workMin","paid","publicOff","ceremony"].forEach(k=>{const v=Math.round(Number(t&&t[k])||0);if(v>0)o[k]=v;});
+  ["workMin","publicOff"].forEach(k=>{const v=Math.round(Number(t&&t[k])||0);if(v>0)o[k]=v;});
+  // 有給・慶弔は半日（0.5）があるので小数1桁で持つ
+  ["paid","ceremony"].forEach(k=>{const v=excelRound(Number(t&&t[k])||0,1);if(v>0)o[k]=v;});
   // 月の残業予定（時間・小数2桁）。**その月の最後の期間にだけ載せる**（半月運用で2重に数えない）。
   const ot=Number(t&&t.monthOtH);
   if(Number.isFinite(ot)&&ot>0)o.monthOtH=excelRound(ot,2);
@@ -1180,10 +1215,10 @@ const CELL_COMMANDS=[
   {key:"h",kind:"suffix",usage:"9h",label:"ホール出張",desc:"キッチン所属のスタッフをホールの人数として集計する。出勤セルに付けるとランチ帯（〜17時）、退勤セルに付けるとディナー帯（17時〜）だけに反映する（例: 出勤9h・退勤22 → ランチはホール・ディナーはキッチン）。片方の帯しかないシフトでは、もう一方のセルのコマンドも有効になる",color:"#FFF3B0"},
   {key:"k",kind:"suffix",usage:"9k",label:"キッチン入り",desc:"ホール所属のスタッフをキッチンの人数として集計する。出勤セルに付けるとランチ帯（〜17時）、退勤セルに付けるとディナー帯（17時〜）だけに反映する。片方の帯しかないシフトでは、もう一方のセルのコマンドも有効になる",color:"#FFF3B0"},
   {key:"x",kind:"suffix",usage:"9x",label:"ヘルプ（カウント外）",desc:"時間帯別出勤人数に数えない。x単体入力も同じ扱い（コマンド以外の文字だけの入力はメモとしてそのまま表示される）",color:"#FFF3B0"},
-  {key:"y",kind:"rest",aliases:["ｙ","休"],usage:"y",label:"休み希望",desc:"セルを休み扱いにして斜線を表示する（出勤セル=ランチ帯・退勤セル=ディナー帯）。**両方に入れると終日の公休**になり、斜線の代わりにセルへ「公休」と表示される（ko と同じ）。もう一度 y で解除、時間を入力すると出勤に上書き。「休」でも入力できる",hatch:true},
-  {key:"ko",kind:"rest",leaveType:"public",usage:"ko",label:"公休（終日）",desc:"その日を終日の公休にする（セルに「公休」と表示される）。もう一度 ko で解除。**週の休みに数える**（何も入力していない日も公休として数える）。出勤・退勤の両方に y を入れても同じ結果になる",hatch:false},
-  {key:"yu",kind:"rest",leaveType:"paid",usage:"yu",label:"有給（終日）",desc:"その日を終日の有給にする（セルに「有給」と表示される）。もう一度 yu で解除。**週の休みには数えず**（有給は出勤日に取る休暇のため、有給の週も別に公休が1日以上要る）、実働にも入らない。管理者のみ入力できる",color:"#DCEBFB"},
-  {key:"ke",kind:"rest",leaveType:"ceremony",usage:"ke",label:"慶弔（終日）",desc:"その日を終日の慶弔休暇にする（セルに「慶弔」と表示される）。もう一度 ke で解除。有給と同じく週の休みには数えず、実働にも入らない。管理者のみ入力できる",color:"#FADCE6"},
+  {key:"y",kind:"rest",aliases:["ｙ","休"],usage:"y",label:"休み希望",desc:"セルを休み扱いにして斜線を表示する（出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日）。**表示は斜線のまま**で、終日でも「公休」の文字は出ない（文字を出したいときは ko を使う）。週の休みには終日の y も公休として数える。もう一度 y で解除、時間を入力すると出勤に上書き。「休」でも入力できる",hatch:true},
+  {key:"ko",kind:"rest",leaveType:"public",usage:"ko",label:"公休（終日）",desc:"その日を終日の公休にする（セルに「公休」と表示され、斜線は引かれない）。もう一度 ko で解除。**週の休みに数える**（何も入力していない日・終日の y も同じく公休として数える）",hatch:false},
+  {key:"yu",kind:"rest",leaveType:"paid",usage:"yu",label:"有給（終日）",desc:"**打ち込んだセルだけ**を有給にする（出勤セル=ランチ帯・退勤セル=ディナー帯。有給は半日単位で取れる）。そのセルに「有給」と表示される。もう一度 yu で解除。**週の休みには数えず**（有給は出勤日に取る休暇のため、有給の週も別に公休が1日以上要る）、実働にも入らない。管理者のみ入力できる",color:"#DCEBFB"},
+  {key:"ke",kind:"rest",leaveType:"ceremony",usage:"ke",label:"慶弔（終日）",desc:"**打ち込んだセルだけ**を慶弔休暇にする（有給と同じく半日単位）。そのセルに「慶弔」と表示される。もう一度 ke で解除。有給と同じく週の休みには数えず、実働にも入らない。管理者のみ入力できる",color:"#FADCE6"},
   {key:"締",kind:"fixed",usage:"16k締",label:"締め（東通り店専用・追加出勤）",desc:"出勤・退勤どちらのセルに単独入力、または数字・h/k/x・他店舗略称など他のコマンドと組み合わせて（前後どちらでも可）入力しても、23:00〜25:00(翌1:00)を主シフトとは別の追加出勤として計上する（例: 出勤13・退勤17締 → 13〜17時と23〜25時の2出勤。出勤16k締 → キッチン入りかつ追加出勤）。鷄えん東通り店でのみ有効",start:"23:00",end:"25:00"},
 ];
 // セル背景色・記号の意味（cellBgForとレジェンドの共通ソース）
@@ -1883,5 +1918,5 @@ function renameStaffInPeriods(periods,oldName,newName){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,laborFindingsFor,laborFindingLabels,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,laborFindingsFor,laborFindingLabels,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings};
 }

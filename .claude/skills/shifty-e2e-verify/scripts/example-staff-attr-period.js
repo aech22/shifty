@@ -96,6 +96,16 @@ async function part1() {
 async function part2() {
   const h = await staffTab();
   await selectAttr(h, "田中", "employee");
+  // 期間指定ポップアップは編集モーダル(zIndex:9998)より前面(9999)に出る。下に潜ると操作できない
+  R.dialogOnTop = await h.evaluate(() => {
+    const ov = [...document.querySelectorAll("div")].filter(d => getComputedStyle(d).position === "fixed"
+      && (d.innerText || "").includes("どの期間まで"));
+    if (!ov.length) return null;
+    const dlg = Math.max(...ov.map(d => parseInt(getComputedStyle(d).zIndex) || 0));
+    const modal = [...document.querySelectorAll("div")].filter(d => getComputedStyle(d).position === "fixed"
+      && / の設定/.test(d.innerText || "")).map(d => parseInt(getComputedStyle(d).zIndex) || 0);
+    return { dlg, modal: modal.length ? Math.max(...modal) : 0 };
+  });
   R.cancel = await h.clickExact("キャンセル");
   R.afterCancel = await h.evaluate(() => ({
     attr: window.__settings.staffAttributes.田中,
@@ -201,6 +211,7 @@ async function shiftEditTab(keepAttrs) {
     noConsoleErrors: [R.part1Errors, R.part2Errors, R.part3Errors, R.part4Errors, R.gridWithout.errors, R.gridWith.errors]
       .every(e => e.length === 0),
   };
+  checks.attrDialogAboveEditModal = !!R.dialogOnTop && R.dialogOnTop.dlg > R.dialogOnTop.modal;
   const allPass = Object.values(checks).every(Boolean);
   console.log(JSON.stringify({ checks, allPass, detail: R }, null, 2));
   process.exit(allPass ? 0 : 1);
