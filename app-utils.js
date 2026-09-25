@@ -455,6 +455,7 @@ const DEFAULT_LABOR_SETTINGS={
   marginMin:420,          // 余裕（分・7h）
   agreementDailyOtMin:180,    // 36協定 1日の延長上限（分・3h）※判定は第2弾。目安の算出には第1弾から効く
   agreementMonthlyOtMin:2700, // 36協定 1か月の延長上限（分・45h）
+  agreementAnnualOtMin:21600, // 36協定 1年の延長上限（分・360h）。法定の原則値で、協定で下げられる
   fiscalYearStartMonth:4      // 年度の開始月（1なら暦年）。有給残数と年間累計の区切りに使う
 };
 function laborSettingsOf(settings){
@@ -589,16 +590,78 @@ function guideStatusOf(monthWorkMin,baseMin,fixedOtMin,guideMin){
 // （Shifty に法定休日労働を区別するデータが無いため。法定の定義は時間外＋休日労働なので緩い側に倒れる）。
 // 判定しない4項目（年720h・複数月平均80h・年6回・年360h）は設定画面のチェックリストに明記する。
 const AGREEMENT_SINGLE_MONTH_CAP_H=100;
+// 年単位の絶対上限（判断4・案b。2026-09-26 にユーザーが追加を指示）。
+// 720h・80h・6回は**法律が決める値で協定では緩められない**のでコード側の定数にする。
+// 年360h だけは「協定で定める年間の上限」なので設定で変えられる（laborSettings.agreementAnnualOtMin）。
+const AGREEMENT_ANNUAL_CAP_H=720;      // 特別条項の年間の絶対上限
+const AGREEMENT_AVG_CAP_H=80;          // 複数月（2〜6ヶ月）平均の絶対上限
+const AGREEMENT_OVER45_H=45;           // 「月45時間超」の判定に使う法定の原則値
+const AGREEMENT_OVER45_COUNT_LIMIT=6;  // 月45時間超にできるのは年6回まで
+const AGREEMENT_AVG_MONTHS=[2,3,4,5,6];
 // 法定の上限一覧。設定画面のチェックリストをこのレジストリから自動生成する（判定の有無を取り違えない）。
 const AGREEMENT_LEGAL_ITEMS=[
   {key:"dailyOt",label:"1日の延長時間の上限",judged:true,note:"36協定で定めた時間。日ごとに判定します"},
   {key:"monthlyOt",label:"1か月の延長時間の上限（原則45時間）",judged:true,note:"36協定で定めた時間。月の残業予定と比べます"},
   {key:"singleMonth100",label:"単月100時間未満（特別条項の絶対上限）",judged:true,note:"月の残業予定だけと比べます。法定は時間外＋休日労働ですが、Shiftyは法定休日労働を区別できないため休日労働を足していません（法定より緩い側に倒れます）"},
-  {key:"year720",label:"年720時間以内（特別条項）",judged:false},
-  {key:"avg80",label:"複数月平均80時間以内（特別条項）",judged:false},
-  {key:"over45x6",label:"月45時間超は年6回まで（特別条項）",judged:false},
-  {key:"year360",label:"年360時間以内（原則）",judged:false},
+  {key:"year720",label:"年720時間以内（特別条項）",judged:true,note:"年度の各月の残業予定を足して比べます"},
+  {key:"avg80",label:"複数月平均80時間以内（特別条項）",judged:true,note:"連続する2〜6ヶ月の平均を全通り見ます"},
+  {key:"over45x6",label:"月45時間超は年6回まで（特別条項）",judged:true,note:"月の残業予定が45時間を超えた月を数えます"},
+  {key:"year360",label:"年360時間以内（原則）",judged:true,note:"36協定で定めた年間の上限。下の入力欄で変えられます"},
 ];
+// 年度の12ヶ月を開始月から並べる
+function fiscalYearMonths(fy,startMonth){
+  const st=Math.min(12,Math.max(1,Number(startMonth)||1));
+  const out=[];
+  for(let i=0;i<12;i++){
+    const m=st+i, y=Number(fy)+Math.floor((m-1)/12), mm=((m-1)%12)+1;
+    out.push(`${y}-${String(mm).padStart(2,"0")}`);
+  }
+  return out;
+}
+// 年度の各月の残業予定（時間）。**月の値はその月の最後の期間にだけ持たせる**ので、
+// 半月運用でも2重に数えない。凍結値（period.laborTotals[name].monthOtH）を優先し、
+// 無い月は live(ym) で数える。期間はあるのに読めない月は missingMonths に積む。
+// 期間が1つも無い月は 0（まだシフトを組んでいない月）で、判定の対象からも外す（scoped）。
+function yearOvertimeMonths(periods,name,fy,startMonth,live){
+  const list=fiscalYearMonths(fy,startMonth).map(ym=>{
+    const inMonth=(periods||[]).filter(p=>p&&p.startDate&&p.startDate.slice(0,7)===ym)
+      .slice().sort((a,b)=>String(a.startDate).localeCompare(String(b.startDate)));
+    const last=inMonth[inMonth.length-1];
+    let h=0,known=false;
+    if(last){
+      const t=last.laborTotals&&last.laborTotals[name];
+      const st=t?Number(t.monthOtH):NaN;
+      if(Number.isFinite(st)){h=st;known=true;}
+      else{const l=live?live(ym):null;if(typeof l==="number"){h=l;known=true;}}
+    }
+    return{ym,h:Math.max(0,h),hasPeriod:!!last,known};
+  });
+  let lastIdx=-1;list.forEach((v,i)=>{if(v.hasPeriod)lastIdx=i;});
+  return{list,scoped:lastIdx<0?[]:list.slice(0,lastIdx+1),
+    missingMonths:list.filter(v=>v.hasPeriod&&!v.known).map(v=>v.ym)};
+}
+// 36協定の年単位の判定（判断4・案b）。months は yearOvertimeMonths の scoped（連続した月）。
+// **シフトを組んである月までしか見ない**——未作成の月を0として平均に混ぜると実態より低く出る。
+function agreementYearFindings(months,annualLimitH){
+  const vals=(months||[]).map(v=>Math.max(0,Number(v&&v.h)||0));
+  const out=[];
+  if(!vals.length)return out;
+  const total=excelRound(vals.reduce((a,b)=>a+b,0),2);
+  const lim=Number(annualLimitH)||0;
+  if(lim>0&&total>lim)out.push({key:"yearOtOverAgreement",label:`年${excelRound(lim,2)}h超`});
+  if(total>AGREEMENT_ANNUAL_CAP_H)out.push({key:"yearOt720",label:`年${AGREEMENT_ANNUAL_CAP_H}h超`});
+  const n45=vals.filter(h=>h>AGREEMENT_OVER45_H).length;
+  if(n45>AGREEMENT_OVER45_COUNT_LIMIT)out.push({key:"over45Count",label:`月${AGREEMENT_OVER45_H}h超が年${n45}回`});
+  let worst=null;
+  AGREEMENT_AVG_MONTHS.forEach(w=>{
+    for(let i=0;i+w<=vals.length;i++){
+      const avg=vals.slice(i,i+w).reduce((a,b)=>a+b,0)/w;
+      if(avg>AGREEMENT_AVG_CAP_H&&(!worst||avg>worst.avg))worst={w,avg};
+    }
+  });
+  if(worst)out.push({key:"avgOver80",label:`複数月平均${AGREEMENT_AVG_CAP_H}h超(${worst.w}ヶ月)`});
+  return out;
+}
 // スタッフ1人ぶんの労務日次・月次判定（S-4）。文言と発火条件は S-4 の表に一致させる。
 // 引数はオプションオブジェクト（第2弾で項目が増えたため位置引数から変えた）。
 //   laborSystem      "A"|"B"|"none"|null（null＝区分が空欄か誤り）
@@ -839,6 +902,9 @@ function fiscalYearLabel(fy,startMonth){
 function compactLaborTotal(t){
   const o={};
   ["workMin","paid","publicOff","ceremony"].forEach(k=>{const v=Math.round(Number(t&&t[k])||0);if(v>0)o[k]=v;});
+  // 月の残業予定（時間・小数2桁）。**その月の最後の期間にだけ載せる**（半月運用で2重に数えない）。
+  const ot=Number(t&&t.monthOtH);
+  if(Number.isFinite(ot)&&ot>0)o.monthOtH=excelRound(ot,2);
   return Object.keys(o).length?o:null;
 }
 function laborTotalsEqual(a,b){
@@ -846,7 +912,7 @@ function laborTotalsEqual(a,b){
   if(ka.length!==kb.length)return false;
   return ka.every(n=>{
     const x=(a||{})[n]||{},y=(b||{})[n]||{};
-    return["workMin","paid","publicOff","ceremony"].every(k=>(Number(x[k])||0)===(Number(y[k])||0));
+    return["workMin","paid","publicOff","ceremony","monthOtH"].every(k=>(Number(x[k])||0)===(Number(y[k])||0));
   });
 }
 // 年度の合計。period.laborTotals（凍結時点の値）を優先し、無い期間は live(p) で数える。
@@ -1814,5 +1880,5 @@ function renameStaffInPeriods(periods,oldName,newName){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,laborFindingsFor,laborFindingLabels,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_LEGEND_KEY,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,laborFindingsFor,laborFindingLabels,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_LEGEND_KEY,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings};
 }

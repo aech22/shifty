@@ -3623,3 +3623,70 @@ test("勤務時間の下限: 既存店舗（下限キーなし）は従来どお
   assert.strictEqual(u.limitStateOf(HM(29, 0), l.weekly, l.weeklyMin), "over");
   assert.strictEqual(u.limitStateOf(HM(1, 0), l.weekly, l.weeklyMin), null, "下限が無ければ何時間でも不足にしない");
 });
+
+// ===== 36協定の年単位4項目（判断4・案b・2026-09-26 追加）=====
+test("fiscalYearMonths: 年度の12ヶ月を開始月から並べる", () => {
+  assert.deepStrictEqual(u.fiscalYearMonths(2026, 4).slice(0, 3), ["2026-04", "2026-05", "2026-06"]);
+  assert.strictEqual(u.fiscalYearMonths(2026, 4)[11], "2027-03");
+  assert.strictEqual(u.fiscalYearMonths(2026, 1)[0], "2026-01");
+  assert.strictEqual(u.fiscalYearMonths(2026, 1)[11], "2026-12");
+});
+
+test("agreementYearFindings: 年360h・年720h・月45h超が年6回・複数月平均80h", () => {
+  const M = hs => hs.map((h, i) => ({ ym: "m" + i, h }));
+  const L = (hs, lim) => u.agreementYearFindings(M(hs), lim).map(f => f.label);
+  // 協定の年間上限（既定360h）
+  assert.deepStrictEqual(L([40, 40, 40, 40, 40, 40, 40, 40, 40, 40], 360), ["年360h超"], "400h");
+  assert.deepStrictEqual(L([36, 36, 36, 36, 36, 36, 36, 36, 36, 36], 360), [], "360h ちょうどは超えない");
+  // 絶対上限 720h（協定値を大きくしても出る）
+  assert.ok(L([100, 100, 100, 100, 100, 100, 100, 30], 9999).includes("年720h超"));
+  // 月45h超は年6回まで
+  assert.ok(L([46, 46, 46, 46, 46, 46, 46], 9999).includes("月45h超が年7回"));
+  assert.ok(!L([46, 46, 46, 46, 46, 46], 9999).some(x => /45h超/.test(x)), "6回ちょうどは出ない");
+  assert.ok(!L([45, 45, 45, 45, 45, 45, 45], 9999).some(x => /45h超/.test(x)), "45h ちょうどは超えない");
+  // 複数月平均80h（2〜6ヶ月の連続する窓を全通り）
+  assert.ok(L([90, 90], 9999).includes("複数月平均80h超(2ヶ月)"));
+  assert.ok(!L([90, 60], 9999).some(x => /複数月平均/.test(x)), "2ヶ月平均75hは超えない");
+  // 平均が同じなら短い窓が報告される（2〜6ヶ月のうち平均がいちばん高い窓を1つだけ出す）
+  assert.ok(L([0, 0, 100, 100, 100, 0], 9999).includes("複数月平均80h超(2ヶ月)"));
+  assert.ok(L([0, 0, 90, 100, 90, 0], 9999).includes("複数月平均80h超(2ヶ月)"), "最大平均は 90/100 の2ヶ月");
+  assert.deepStrictEqual(L([10, 10, 10], 360), [], "どれにも当たらなければ空");
+  assert.deepStrictEqual(L([], 360), [], "月が1つも無ければ何も出さない");
+});
+
+test("yearOvertimeMonths: 月の値は「その月の最後の期間」からだけ取る（半月で2重に数えない）", () => {
+  const periods = [
+    // 4月は前半・後半の2期間。値は**後半にだけ**載っている
+    { id: "a1", startDate: "2026-04-01", endDate: "2026-04-15", laborTotals: { 田中: { monthOtH: 99 } } },
+    { id: "a2", startDate: "2026-04-16", endDate: "2026-04-30", laborTotals: { 田中: { monthOtH: 12 } } },
+    { id: "b1", startDate: "2026-05-01", endDate: "2026-05-31" }, // 凍結値なし→live
+    { id: "c1", startDate: "2026-06-01", endDate: "2026-06-30" }, // live も無い＝読めていない
+  ];
+  const live = ym => (ym === "2026-05" ? 7 : null);
+  const r = u.yearOvertimeMonths(periods, "田中", 2026, 4, live);
+  assert.strictEqual(r.list[0].h, 12, "4月は後半の値だけを使う（99 は無視）");
+  assert.strictEqual(r.list[1].h, 7, "5月は live");
+  assert.strictEqual(r.list[2].h, 0, "6月は読めない＝0 で置く");
+  assert.deepStrictEqual(r.missingMonths, ["2026-06"]);
+  // シフトを組んである月まででいったん打ち切る（未作成の月を0として平均に混ぜない）
+  assert.strictEqual(r.scoped.length, 3);
+  assert.strictEqual(u.excelRound(r.scoped.reduce((a, v) => a + v.h, 0), 2), 19);
+  // 期間が1つも無い年度は空
+  assert.strictEqual(u.yearOvertimeMonths([], "田中", 2026, 4, null).scoped.length, 0);
+});
+
+test("compactLaborTotal / laborTotalsEqual: 月の残業予定も持ち回る", () => {
+  assert.deepStrictEqual(u.compactLaborTotal({ workMin: 600, monthOtH: 5.366 }), { workMin: 600, monthOtH: 5.37 });
+  assert.strictEqual(u.compactLaborTotal({ workMin: 0, monthOtH: 0 }), null);
+  assert.ok(!u.laborTotalsEqual({ 田中: { monthOtH: 5.37 } }, { 田中: { monthOtH: 5.38 } }));
+  assert.ok(u.laborTotalsEqual({ 田中: { monthOtH: 5.37 } }, { 田中: { monthOtH: 5.37, paid: 0 } }));
+});
+
+test("AGREEMENT_LEGAL_ITEMS: 7項目すべてを判定するようになった（判断4・案b）", () => {
+  assert.strictEqual(u.AGREEMENT_LEGAL_ITEMS.length, 7);
+  assert.ok(u.AGREEMENT_LEGAL_ITEMS.every(i => i.judged), "未判定の項目は残っていない");
+  assert.strictEqual(u.AGREEMENT_ANNUAL_CAP_H, 720);
+  assert.strictEqual(u.AGREEMENT_AVG_CAP_H, 80);
+  assert.strictEqual(u.AGREEMENT_OVER45_COUNT_LIMIT, 6);
+  assert.strictEqual(u.laborSettingsOf({}).agreementAnnualOtMin, 21600, "既定は年360h");
+});

@@ -1258,10 +1258,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   //     1ヶ月運用ではその月の期間が1つしかないので常に最後＝従来どおり判定する。
   //  ② その月の全日がデータで埋まっていること（期間が存在し、subs の購読窓の中にある）。
   // S-5 の「全日が無記入の週は評価対象外」と同じ考え方で、材料が揃う前に判定しない。
-  const laborMonthReady=useMemo(()=>{
+  // ②: その月の全日がデータで埋まっているか。**残業予定の按分はこれだけを条件に計算する**
+  // ——前半を開いていても、月の材料が揃っていれば半月ぶんの残業予定は正しく出せる。
+  const laborMonthCovered=useMemo(()=>{
     if(!period)return false;
-    const last=sameMoPeriods[sameMoPeriods.length-1];
-    if(!last||last.id!==period.id)return false;
     const cut=subsWindowCutoff();
     return laborMonthDays.every(d=>{
       const p=periods.find(q=>q&&q.startDate&&q.endDate&&q.startDate<=d&&d<=q.endDate);
@@ -1269,14 +1269,20 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(!pastSubsLoaded&&p.startDate<cut)return false;   // 購読窓の外＝subs を読めていない
       return true;
     });
-  },[period,periods,sameMoPeriods,laborMonthDays,pastSubsLoaded]);
+  },[period,periods,laborMonthDays,pastSubsLoaded]);
+  // ①＋②: 月単位の**判定**（36協定・目安・総括）を出してよいか。
+  const laborIsLastOfMonth=useMemo(()=>{
+    const last=sameMoPeriods[sameMoPeriods.length-1];
+    return!!(period&&last&&last.id===period.id);
+  },[period,sameMoPeriods]);
+  const laborMonthReady=laborMonthCovered&&laborIsLastOfMonth;
   // 「まだ判定しない」理由を画面に出し分ける（前半を開いている／月が埋まっていない）。
   const laborPendingReason=useMemo(()=>{
     if(!period||laborMonthReady)return "";
+    if(!laborMonthCovered)return "その月の日がまだデータで埋まっていません（後半の期間が未作成、または購読の窓の外）";
     const last=sameMoPeriods[sameMoPeriods.length-1];
-    if(last&&last.id!==period.id)return `月の判定は「${last.label}」を開いたときに出ます（月の後半のシフトを組むときに判定します）`;
-    return "その月の日がまだデータで埋まっていません（後半の期間が未作成、または購読の窓の外）";
-  },[period,sameMoPeriods,laborMonthReady]);
+    return `月の判定は「${last?last.label:"月の最後の期間"}」を開いたときに出ます（月の後半のシフトを組むときに判定します）`;
+  },[period,sameMoPeriods,laborMonthReady,laborMonthCovered]);
 
   // その日のデータが読めているか（期間が存在し、subs の購読窓の中か）。
   const laborDayHasData=useCallback(d=>{
@@ -1325,6 +1331,17 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     return{workMin,paid,publicOff,ceremony};
   },[settings,subs,pastSubsLoaded,staffAliases,anyShiftByStaffDate,workShiftByStaffDate]);
 
+  // 年単位の36協定判定で、凍結値を持たない月の残業予定をその場で数える関数を返す。
+  // 月の全日が読めていないときは null（＝yearOvertimeMonths が missingMonths に積む）。
+  const liveMonthOtFor=useCallback(name=>(ym)=>{
+    const n=daysInMonthOf(ym);
+    if(!n)return null;
+    const days=Array.from({length:n},(_,i)=>`${ym}-${String(i+1).padStart(2,"0")}`);
+    if(!days.every(d=>laborDayHasData(d)))return null;
+    const mins=days.reduce((a,d)=>a+laborDayMin(name,d),0);
+    return monthlyOvertimeH(mins/60,laborMonthFrame(settings,ym).baseMin/60);
+  },[settings,subs,laborDayHasData,staffAliases,workShiftByStaffDate]);
+
   // スタッフ1人ぶんの労務の集計。日次の件数は**選択中の期間の日**、月単位の判定は**暦月**で数える
   // （利用者が今そこで直せる範囲＝期間、法令・協定の単位＝月）。
   const laborByStaff=useMemo(()=>{
@@ -1332,16 +1349,20 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(!isPremium||!period||!laborFrame)return out;
     const ls=laborSettingsOf(settings);
     const agDay=ls.agreementDailyOtMin/60, agMonth=ls.agreementMonthlyOtMin/60, fixOt=ls.fixedOvertimeMin/60;
+    const agYear=ls.agreementAnnualOtMin/60;
     const monthIdx={};laborMonthDays.forEach((d,i)=>{monthIdx[d]=i;});
     realStaff.forEach(name=>{
       const sys=laborSystemForStaff(settings,name);
       const monthMins=laborMonthDays.map(d=>laborDayMin(name,d));
       const monthWorkMin=monthMins.reduce((a,b)=>a+b,0);
       const monthWorkH=monthWorkMin/60;
-      const monthOtH=(sys==="A"&&laborMonthReady)?monthlyOvertimeH(monthWorkH,laborFrame.baseMin/60):0;
-      // 按分は**月の全日**でやる（日別の和が月の残業予定と一致する形が崩れるため期間で切らない）。
-      const monthOtDays=(sys==="A"&&laborMonthReady)?prorateOvertimeH(monthMins.map(m=>m/60),monthOtH,monthWorkH):[];
+      // 按分は月が埋まっていれば計算する（判定を出すかは別＝laborMonthReady）。
+      // **月の全日でやる**——日別の和が月の残業予定と一致する形が崩れるので期間で切らない。
+      const monthOtH=(sys==="A"&&laborMonthCovered)?monthlyOvertimeH(monthWorkH,laborFrame.baseMin/60):0;
+      const monthOtDays=(sys==="A"&&laborMonthCovered)?prorateOvertimeH(monthMins.map(m=>m/60),monthOtH,monthWorkH):[];
       const periodOtH=dates.map(d=>(monthIdx[d]!=null?(monthOtDays[monthIdx[d]]||0):0));
+      // この期間（半月運用なら半月）ぶんの残業予定。日別の按分をこの期間の日だけ足す。
+      const periodOtSumH=excelRound(periodOtH.reduce((a,b)=>a+b,0),2);
       const dayMins=dates.map(d=>laborDayMin(name,d)).filter(m=>m>0);
       const weekMins=sys==="B"?weeks.map(monStr=>{
         const arr=[];
@@ -1353,6 +1374,13 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const weekNoRest=(weekRestByStaff[name]||[]).some(w=>w&&w.key==="none");
       const findings=laborFindingsFor({laborSystem:sys,dayMins,weekDayMins:weekMins,timeErrorCount:te,breakShortCount:bsCount,
         monthOtH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthReady});
+      // 36協定の年単位4項目（年360h・年720h・月45h超が年6回・複数月平均80h）。
+      // 月の値は「その月の最後の期間」に残した凍結値を優先するので、過去参照を押さなくても効く。
+      let yearOt=null;
+      if(sys==="A"&&laborMonthReady&&fy!=null){
+        yearOt=yearOvertimeMonths(periods,name,fy,fyStart,liveMonthOtFor(name));
+        agreementYearFindings(yearOt.scoped,agYear).forEach(f=>findings.push(f));
+      }
       const guide=sys!=="A"?{key:"none",label:"",color:null}
         :(laborMonthReady?guideStatusOf(monthWorkMin,laborFrame.baseMin,ls.fixedOvertimeMin,laborFrame.guideMin)
           :{key:"none",label:"要確認",color:"var(--c-text3)",title:laborPendingReason});
@@ -1367,17 +1395,19 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       });
       // 年度の累計。**期間が凍結時に残した laborTotals を優先**するので、過去参照を押さなくても出る。
       const yr=fy==null?null:yearLaborSummary(periods,name,fy,fyStart,liveTotalFor(name));
-      out[name]={sys,monthWorkMin,monthOtH,findings,guide,overall,weekNoRest,
+      out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,monthCovered:laborMonthCovered,yearOt,findings,guide,overall,weekNoRest,
         periodLeave:{paid:paidD,publicOff:pubD,ceremony:ceD},year:yr,
         paidRemain:yr?paidLeaveRemaining(settings,name,yr.paid):null};
       // この期間ぶんの合計（凍結時に periods へ残す値）。上の useEffect が書く。
       const pm=dates.reduce((a,d)=>a+laborDayMin(name,d),0);
-      const c=compactLaborTotal({workMin:pm,paid:paidD,publicOff:pubD,ceremony:ceD});
+      // 月の残業予定は**その月の最後の期間にだけ**残す（半月運用で年度集計が2重にならない）。
+      const c=compactLaborTotal({workMin:pm,paid:paidD,publicOff:pubD,ceremony:ceD,
+        monthOtH:laborIsLastOfMonth?monthOtH:0});
       if(c)totals[name]=c;
     });
     laborTotalsRef.current=totals;
     return out;
-  },[isPremium,period,laborFrame,laborMonthDays,laborMonthReady,laborPendingReason,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart]);
+  },[isPremium,period,laborFrame,laborMonthDays,laborMonthReady,laborMonthCovered,laborIsLastOfMonth,laborPendingReason,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart,liveMonthOtFor]);
 
   // 期間が生きている間はシフト作成タブを開くたびに写しと労務の合計を最新化し、最終日を超えたら
   // 更新を止める＝そこで凍結。「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、
@@ -2460,12 +2490,22 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                 // 177:08 と 177:00 の差が判定を分けるので分まで出す。
                 return{label:fmtMin(l.monthWorkMin),title:`月の実働 ${fmtMin(l.monthWorkMin)}`};}},
               {id:"labor_guide",label:"目安",getText:name=>{const l=laborByStaff[name];if(!l||l.sys!=="A")return{};return{label:l.guide.label,color:l.guide.color,title:l.guide.title||l.guide.label};}},
+              {id:"labor_ot",label:"残業予定",getText:name=>{const l=laborByStaff[name];
+                if(!l||l.sys!=="A")return{};
+                if(!l.monthCovered)return{label:"要確認",color:"var(--c-text3)",title:laborPendingReason};
+                if(!(l.monthOtH>0))return{};
+                // この期間（半月運用なら半月）ぶん。月計はツールチップに出す。
+                return{label:`${l.periodOtSumH}h`,color:"#B8860B",
+                  title:`この期間 ${l.periodOtSumH}h ／ ${period?period.startDate.slice(0,7).replace("-","年"):""}月の合計 ${l.monthOtH}h`};}},
               {id:"labor_year",label:fy==null?"年計":`${fiscalYearLabel(fy,fyStart)}計`,getText:name=>{const l=laborByStaff[name];
                 if(!l||l.sys==="none"||!l.year)return{};
                 const miss=l.year.missingPeriodIds.length;
+                const yo=l.yearOt?excelRound(l.yearOt.scoped.reduce((a,v)=>a+v.h,0),2):null;
                 return{label:(l.year.workMin>0?fmtMin(l.year.workMin):"")+(miss?"＋":""),
                   color:miss?"var(--c-text3)":"var(--c-text2)",
-                  title:miss?`読み込めていない期間が${miss}件あります（「3ヶ月より前の提出データも読み込む」で正確になります）`:`${fiscalYearLabel(fy,fyStart)}の累計 ${fmtMin(l.year.workMin)}`};}},
+                  title:(miss?`読み込めていない期間が${miss}件あります（「3ヶ月より前の提出データも読み込む」で正確になります）／`:"")
+                    +`${fiscalYearLabel(fy,fyStart)}の累計 ${fmtMin(l.year.workMin)}`
+                    +(yo==null?"":`／残業予定の年計 ${yo}h`)};}},
               {id:"labor_leave",label:"休暇",getText:name=>{const l=laborByStaff[name];
                 if(!l||!l.periodLeave)return{};
                 const{paid,publicOff,ceremony}=l.periodLeave;
@@ -5101,6 +5141,13 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
               <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1か月の延長上限</span>
               <input type="number" min={0} max={200} value={Math.floor(ls.agreementMonthlyOtMin/60)||""} placeholder="0"
                 onChange={e=>{const h=Math.max(0,Math.min(200,parseInt(e.target.value)||0));saveLabor("agreementMonthlyOtMin",h*60);}}
+                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+              <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:4}}>
+              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1年の延長上限</span>
+              <input type="number" min={0} max={999} value={Math.floor(ls.agreementAnnualOtMin/60)||""} placeholder="0"
+                onChange={e=>{const h=Math.max(0,Math.min(999,parseInt(e.target.value)||0));saveLabor("agreementAnnualOtMin",h*60);}}
                 style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
               <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
             </div>
