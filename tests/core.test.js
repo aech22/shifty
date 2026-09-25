@@ -3797,16 +3797,25 @@ test("laborDayFindingsFor: 日ごとの該当数が laborFindingsFor の件数�
       breakShortCount: c.breakShortDays.filter(Boolean).length });
     const per = k => days.filter(ks => ks.includes(k)).length;
     assert.strictEqual(per("over12"), countOf(labels, /^12h超/), "12h超");
-    assert.strictEqual(per("under4"), countOf(labels, /^4h未満/), "4h未満");
     assert.strictEqual(per("dayOtOverAgreement"), countOf(labels, /^1日の残業予定が上限超/), "A制の1日残業");
     assert.strictEqual(per("dayOverAgreementB"), countOf(labels, /^1日の残業が上限超/), "B制の1日残業");
-    assert.strictEqual(per("breakShort"), countOf(labels, /^休憩不足/), "休憩不足");
+    // **塗らないと決めたもの**は日ごとの一覧に出ない（パネルには出る・2026-09-26 ユーザー指定）
+    assert.strictEqual(per("under4"), 0, "4h未満は塗らない");
+    assert.strictEqual(per("breakShort"), 0, "休憩不足は塗らない");
+    assert.ok(countOf(labels, /^4h未満/) + countOf(labels, /^休憩不足/) >= 0, "パネル側の件数は数えられる");
     // 返すキーは要修正だけ（8h超・週40h超のような「残業あり」は塗らない）
     days.forEach(ks => ks.forEach(k => {
       assert.ok(u.LABOR_DAY_FIX_KEYS.includes(k), `${k} は LABOR_DAY_FIX_KEYS にある`);
       assert.ok(u.OVERALL_FIX_KEYS.includes(k), `${k} は要修正のキー`);
     }));
   }
+  // パネルには出るが色は付かない、という非対称そのものを固定する
+  const panelOnly = { laborSystem: "A", dayMins: [120, 600], dayOtH: [0, 0], agreementDailyOtH: 0,
+    breakShortDays: [false, true] };
+  assert.deepStrictEqual(u.laborDayFindingsFor(panelOnly), [[], []], "4h未満と休憩不足の日は塗らない");
+  const panelLabels = u.laborFindingLabels({ ...panelOnly, monthReady: true, breakShortCount: 1 });
+  assert.ok(panelLabels.some(l => l.startsWith("4h未満")), "4h未満はパネルに出る");
+  assert.ok(panelLabels.some(l => l.startsWith("休憩不足")), "休憩不足はパネルに出る");
 });
 
 test("LABOR_DAY_FIX_KEYS: 全キーに title 用のラベルがあり、セル色が登録されている", () => {

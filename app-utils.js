@@ -726,18 +726,22 @@ function laborFindingsFor(o){
   if(laborSystem===null||laborSystem===undefined)push("badSystem","区分が空欄か誤り");
   return out;
 }
-// 労務判定のうち「その日」に帰属する**要修正**だけを日ごとに返す（セル色で該当日を示すため）。
-// 週・月に帰属するもの（週40h超・月の残業・目安・年の36協定）は日を特定できないので含めない。
-// 8h超（B制の残業）と週40h超は OVERALL_FIX_KEYS に無い＝要修正ではないので色を塗らない
-// ——塗ると残業のある日が全部同じ色になり、直すべき日が埋もれる。
-// 時刻の入力ミスは専用の色（timeErr）を先に持っているのでここには入れない。
+// 労務判定のうち「その日」に帰属するもので、**セル色で示すと決めた2種類だけ**を日ごとに返す
+// （2026-09-26 ユーザー指定）。12h超 と 1日の残業が上限超（A制の残業予定・B制の実残業）。
+// **塗らないもの**と、その理由:
+//   4h未満・休憩不足 … 要修正ではあるが該当日が多くなりやすく、塗ると直すべき日が埋もれる
+//                       （休憩を1件も設定していない店舗では実働6h超の日がすべて該当する）
+//   8h超・週40h超    … OVERALL_FIX_KEYS に無い＝要修正ではない
+//   月の残業・目安・年の36協定 … 週・月に帰属するので日を特定できない
+//   時刻の入力ミス   … 専用の色（timeErr）を先に持っている
+// どれもパネル（laborFindingsFor）には従来どおり出る。ここは**色を塗る日**の一覧にすぎない。
 // **laborFindingsFor と件数が必ず一致する**ことを tests/core.test.js が照合する。
-const LABOR_DAY_FIX_KEYS=["over12","under4","dayOtOverAgreement","dayOverAgreementB","breakShort"];
+const LABOR_DAY_FIX_KEYS=["over12","dayOtOverAgreement","dayOverAgreementB"];
 // セルの title に出す短い理由。**LABOR_DAY_FIX_KEYS の全キーを持つ**ことをテストが照合する。
-const LABOR_DAY_ERR_LABELS={over12:"12h超",under4:"4h未満",dayOtOverAgreement:"1日の残業予定が上限超",
-  dayOverAgreementB:"1日の残業が上限超",breakShort:"休憩不足"};
+const LABOR_DAY_ERR_LABELS={over12:"12h超",dayOtOverAgreement:"1日の残業予定が上限超",
+  dayOverAgreementB:"1日の残業が上限超"};
 function laborDayFindingsFor(o){
-  const {laborSystem=null,dayMins=[],dayOtH=[],agreementDailyOtH=0,breakShortDays=[]}=o||{};
+  const {laborSystem=null,dayMins=[],dayOtH=[],agreementDailyOtH=0}=o||{};
   const mins=(dayMins||[]).map(m=>Math.max(0,Number(m)||0));
   const dOt=(dayOtH||[]).map(h=>Math.max(0,Number(h)||0));
   const agDay=Math.max(0,Number(agreementDailyOtH)||0);
@@ -745,12 +749,10 @@ function laborDayFindingsFor(o){
     const keys=[];
     if(laborSystem==="A"){
       if(m>LABOR_LONG_DAY_MIN)keys.push("over12");
-      if(m>0&&m<LABOR_SHORT_DAY_MIN)keys.push("under4");
       if(agDay>0&&(dOt[i]||0)>agDay)keys.push("dayOtOverAgreement");
     }else if(laborSystem==="B"){
       if(agDay>0&&m>LEGAL_DAILY_MIN+agDay*60)keys.push("dayOverAgreementB");
     }
-    if(laborSystem!=="none"&&(breakShortDays||[])[i])keys.push("breakShort");
     return keys;
   });
 }
@@ -1262,7 +1264,7 @@ const CELL_COLOR_LEGEND=[
   {key:"rest",hatch:true,label:"休み希望（斜線）",desc:"スタッフが提出した休み希望、または管理者が y で入力した休み"},
   {key:"posErr",color:"rgba(250,204,21,0.35)",label:"ポジション不足",desc:"必要ポジション設定に対して出勤人数・ポジションが不足しているランチ/ディナーの行"},
   {key:"timeErr",color:"rgba(190,24,93,.25)",label:"時刻の入力ミス",desc:"退勤が出勤以前になっている。深夜は 25:00・26:00 のように24時を超える表記で入力する"},
-  {key:"laborErr",color:"rgba(139,92,246,.28)",label:"労務の要修正",desc:"12h超・4h未満・1日の残業が36協定超・休憩不足のいずれかに当たる日。下の「労務の確認が必要です」に理由が出る"},
+  {key:"laborErr",color:"rgba(139,92,246,.28)",label:"労務の要修正",desc:"1日12時間を超える日、または1日の残業が36協定の上限を超える日。他の労務の指摘（4h未満・休憩不足など）は色を付けず「労務の確認が必要です」にだけ出る"},
 ];
 // 休みコマンド判定（セル全体が y / 休 / yu / ke のとき。時間付きの「9y」は通常サフィックス扱い）。
 // **レジストリ駆動**にしてあるので kind:"rest" を足せば判定・予約語（isReservedShopAbbr）に自動で乗る。

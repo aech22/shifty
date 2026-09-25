@@ -1,5 +1,6 @@
 // 2026-09-26 のユーザー指示4件の実ブラウザ回帰テスト。
-//   ① 労務の要修正に当たる日のセルを色で示す（該当しない日は塗らない）
+//   ① 色で示すと決めた日（12h超・1日の残業が上限超）だけを塗り、
+//      パネルには出るが塗らないと決めたもの（4h未満・休憩不足）は塗らない
 //   ② 労務の確認パネルを労務判定表の下に置く
 //   ③ シフト表の空欄は公休として数える（全日が空欄の週も 休7）
 //   ④ 労働時間制の選択肢に雇用形態の括弧を出す
@@ -21,18 +22,25 @@ const LABOR_CELL_BG = "rgba(139,92,246,0.28)";
 
 const P = { id: "p1", urlToken: "t1", shopId: "S1", label: "9月後半", startDate: "2026-09-16",
   endDate: "2026-09-30", deadlineDate: "", createdAt: "2026-09-01T00:00:00.000Z" };
-// 田中: 12h超の日・正常な日・4h未満の日。鈴木: まるごと空欄（＝全日が公休になるはず）
-const SUBS = [{ id: "s1", periodId: "p1", staffName: "田中", shopId: "S1", comment: "",
-  submittedAt: "2026-09-02T00:00:00.000Z",
-  shifts: { "2026-09-16": { status: "work", start: "09:00", end: "22:30" },
-            "2026-09-17": { status: "work", start: "09:00", end: "18:00" },
-            "2026-09-18": { status: "work", start: "10:00", end: "12:00" } } }];
+// 田中（A制）: 12h超の日／正常な日／4h未満の日／休憩不足の日。
+//   休憩は平日にだけ設定してあるので、土曜の 9:00-18:00 は休憩0分＝休憩不足になる。
+// 佐藤（B制）: 1日の残業が36協定の上限（既定3h）を超える日。
+// 鈴木: まるごと空欄（＝全日が公休になるはず）。
+const SUBS = [
+  { id: "s1", periodId: "p1", staffName: "田中", shopId: "S1", comment: "",
+    submittedAt: "2026-09-02T00:00:00.000Z",
+    shifts: { "2026-09-16": { status: "work", start: "09:00", end: "22:30" }, // 実働12.5h → 12h超
+              "2026-09-17": { status: "work", start: "09:00", end: "18:00" }, // 実働8h → 正常
+              "2026-09-18": { status: "work", start: "10:00", end: "12:00" }, // 実働2h → 4h未満
+              "2026-09-19": { status: "work", start: "09:00", end: "18:00" } } }, // 土曜=休憩なし → 休憩不足
+  { id: "s2", periodId: "p1", staffName: "佐藤", shopId: "S1", comment: "",
+    submittedAt: "2026-09-02T00:00:00.000Z",
+    shifts: { "2026-09-16": { status: "work", start: "09:00", end: "22:00" } } }, // 実働12h → 8h+3h超
+];
 const SETTINGS = { shopId: "S1", candidates: [{ start: "09:00", end: "23:00" }], weekdayCandidates: {},
   dateCandidates: {}, templates: [],
-  // 休憩を入れておかないと 9:00-18:00 まで「休憩不足」に当たり、正常な日の対照が取れない
-  breakTimes: { weekday: [{ start: "12:00", end: "13:00" }], sat: [{ start: "12:00", end: "13:00" }],
-    sun: [], holSat: [], holSun: [] },
-  staffAttributes: { "田中": "employee", "鈴木": "employee" },
+  breakTimes: { weekday: [{ start: "12:00", end: "13:00" }], sat: [], sun: [], holSat: [], holSun: [] },
+  staffAttributes: { "田中": "employee", "鈴木": "employee", "佐藤": "parttime" },
   staffTypeLimits: { employee: { name: "社員", laborSystem: "A" }, parttime: { name: "バイト", laborSystem: "B" } },
   staffColors: {}, staffAliases: {}, positions: { kitchen: [], hall: [] },
   requiredPositions: {}, staffPositions: {} };
@@ -43,7 +51,7 @@ async function shiftEditTab() {
     jsx: `
 const P=${JSON.stringify(P)};const SUBS=${JSON.stringify(SUBS)};const SETTINGS=${JSON.stringify(SETTINGS)};
 function Harness(){const [subs,setSubs]=React.useState(SUBS);
-  return <ShiftEditTab subs={subs} periods={[P]} staffList={["田中","鈴木"]}
+  return <ShiftEditTab subs={subs} periods={[P]} staffList={["田中","鈴木","佐藤"]}
     onSave={v=>setSubs(p=>typeof v==="function"?v(p):v)} tt={()=>{}}
     settings={SETTINGS} plan="premium" shopId="S1" shopName="テスト店" onUpgrade={()=>{}}
     onLoadPastSubs={()=>{}} pastSubsLoaded={true}
@@ -81,8 +89,13 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
       const d = [...document.querySelectorAll("div")].find(x => (x.innerText || "").startsWith(p));
       return d ? [...d.querySelectorAll("tbody tr")].map(tr => [...tr.querySelectorAll("td")].map(td => td.innerText.trim())) : [];
     };
+    const panelText = (() => {
+      const d = [...document.querySelectorAll("div")].find(x => (x.innerText || "").startsWith("⚠ 労務の確認が必要です"));
+      return d ? d.innerText : null;
+    })();
     return { purple: purple.map(c => ({ n: c.n, sc: c.sc, title: c.title })),
       order: seen, laborRows: tblOf("労務判定（"), weekRows: tblOf("週の休み（"),
+      laborPanel: panelText,
       legendHasLabor: document.body.innerText.includes("労務の要修正") };
   }, LABOR_CELL_BG);
   const errors = h.errors.slice();
@@ -119,19 +132,23 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
   const painted = se.purple.map(key).sort();
   const rowOf = (rows, label) => (rows.find(r => r[0] === label) || []).slice(1);
   const pass = {
-    // ① 該当日だけが塗られる（12h超の 9/16 と 4h未満の 9/18 の両セル。正常な 9/17 は塗らない）
+    // ① 塗るのは 12h超（田中 9/16）と 1日の残業が上限超（佐藤 9/16）だけ。
+    //    正常な日（田中 9/17）・4h未満（同 9/18）・休憩不足（同 9/20）は塗らない。
     labor_cell_painted: painted.join(",") === [
       "田中|2026-09-16|start", "田中|2026-09-16|end",
-      "田中|2026-09-18|start", "田中|2026-09-18|end"].sort().join(","),
+      "佐藤|2026-09-16|start", "佐藤|2026-09-16|end"].sort().join(","),
     labor_cell_title: se.purple.every(c => c.title.startsWith("労務の要修正: "))
       && se.purple.some(c => c.title.includes("12h超"))
-      && se.purple.some(c => c.title.includes("4h未満")),
+      && se.purple.some(c => c.title.includes("1日の残業が上限超")),
+    // 塗らないと決めたものは、パネルには出るのにセルは塗られない
+    panel_has_unpainted: /4h未満/.test(se.laborPanel || "") && /休憩不足/.test(se.laborPanel || ""),
     labor_cell_in_legend: se.legendHasLabor === true,
     // ② 労務判定表 → 労務の確認 の順
     panel_below_table: se.order.join(">") === "労務判定表>労務の確認",
-    // ③ 空欄は公休。期間は 9/16〜9/30 の15日。田中は出勤3日なので公12、鈴木はまるごと空欄で公15
-    blank_counts_public: rowOf(se.laborRows, "休暇").join(",") === "有0/公12/慶0,有0/公15/慶0",
-    blank_week_is_rest7: (rowOf(se.weekRows, "21〜27日") || []).join(",") === "休7,休7",
+    // ③ 空欄は公休。期間は 9/16〜9/30 の15日。
+    //    田中は出勤4日で公11、鈴木はまるごと空欄で公15、佐藤は出勤1日で公14
+    blank_counts_public: rowOf(se.laborRows, "休暇").join(",") === "有0/公11/慶0,有0/公15/慶0,有0/公14/慶0",
+    blank_week_is_rest7: (rowOf(se.weekRows, "21〜27日") || []).join(",") === "休7,休7,休7",
     // ④ 括弧つきの文言
     system_labels: st.opts.join(" / ") ===
       "1か月単位の変形労働時間制（正社員・契約社員・特定技能） / 通常の労働時間制（パート・アルバイト） / 判定対象外（応援・外部）",

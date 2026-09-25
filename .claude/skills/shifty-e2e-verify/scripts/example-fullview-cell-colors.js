@@ -53,11 +53,6 @@ function Harness(){
     subs={[SUB]} periods={[P]} staffList={${JSON.stringify(names)}}
     onSave={()=>{}} tt={()=>{}}
     settings={{candidates:[{start:"09:00",end:"23:00"}],weekdayCandidates:{},dateCandidates:{},templates:[],
-      // 休憩を1時間入れておく。入れないと 9:00-18:00 が「休憩不足」に当たり、
-      // 2026-09-26 に入った労務の要修正のセル色（laborErr）が入力欄を不透明にして
-      // **この計測（td の曜日色が透けるか）が常に偽になる**。
-      breakTimes:{weekday:[{start:"12:00",end:"13:00"}],sat:[{start:"12:00",end:"13:00"}],
-        sun:[{start:"12:00",end:"13:00"}],holSat:[],holSun:[]},
       staffColors:{"佐藤":"red"}}}
     plan="premium" shopId="S1" shopName="テスト店" onUpgrade={()=>{}} allLinkedShops={[]}
     onLoadPastSubs={()=>{}} pastSubsLoaded={true}

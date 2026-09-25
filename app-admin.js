@@ -1404,9 +1404,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         return arr;
       }):[];
       const te=dates.reduce((a,d)=>a+(timeErrors[`${name}|${d}`]?1:0),0);
-      // 休憩不足は**日ごと**に持つ（件数は findings、日はセル色に使う）
-      const bsDays=dates.map(d=>{const sh=_getWorkShift(name,d);return !!(sh&&isBreakShort(sh,settings,d,name));});
-      const bsCount=bsDays.reduce((a,b)=>a+(b?1:0),0);
+      const bsCount=dates.reduce((a,d)=>{const sh=_getWorkShift(name,d);return a+(sh&&isBreakShort(sh,settings,d,name)?1:0);},0);
       const weekNoRest=(weekRestByStaff[name]||[]).some(w=>w&&w.key==="none");
       const findings=laborFindingsFor({laborSystem:sys,dayMins,weekDayMins:weekMins,timeErrorCount:te,breakShortCount:bsCount,
         monthOtH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthReady});
@@ -1435,7 +1433,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const yr=fy==null?null:yearLaborSummary(periods,name,fy,fyStart,liveTotalFor(name));
       // その日に帰属する要修正（セル色で該当日を示す。dates と同じ並び）
       const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins:dates.map(d=>laborDayMin(name,d)),
-        dayOtH:periodOtH,agreementDailyOtH:agDay,breakShortDays:bsDays});
+        dayOtH:periodOtH,agreementDailyOtH:agDay});
       out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,monthCovered:laborMonthCovered,yearOt,findings,guide,overall,weekNoRest,dayFindings,
         periodLeave:{paid:paidD,publicOff:pubD,ceremony:ceD},year:yr,
         paidRemain:yr?paidLeaveRemaining(settings,name,yr.paid):null};
@@ -1801,8 +1799,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(focusKey===key)return rb; // 編集中は通常背景
     if(timeErrors[`${name}|${date}`])return LEGEND_COLORS.timeErr;
     if(dupErrors[`${name}|${date}`])return LEGEND_COLORS.dup;
-    // 労務の要修正（12h超・4h未満・1日の残業が上限超・休憩不足）が当たっている日。
-    // 休み希望の斜線より先に見る——4h未満は半日勤務なので、片側が休みのことがある。
+    // 労務の要修正のうち**色で示すと決めた日**（12h超・1日の残業が上限超）。
+    // 一覧は app-utils.js の LABOR_DAY_FIX_KEYS が正本で、4h未満・休憩不足は
+    // パネルには出るが色は付けない（2026-09-26 ユーザー指定）。
     if(laborDayErrors[`${name}|${date}`])return LEGEND_COLORS.laborErr;
     // 休み希望(y)・休暇セルは通常背景+斜線（noteの黄色も休暇の色も付けない）。
     // 休暇は色ではなく**セルに種別名を出して**見せる（2026-09-26 ユーザー指示・getVal 参照）。
