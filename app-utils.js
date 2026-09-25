@@ -512,33 +512,149 @@ function isTimeOrderInvalid(shift){
   return e<=s;
 }
 
-// スタッフ1人ぶんの労務日次判定（S-4・第1弾ぶん）。文言と発火条件は S-4 の表に一致させる。
-// dayMins は**出勤日の実働分の配列**（休み・未入力の日は入れない）。
-// weekDayMins は週ごとの実働分の配列の配列（B制の週40h超用）。
+// ===== 労務判定 第2弾（A制の中核・2026-09-26）=====
+// Excel の丸め。**JavaScript の Math.round は負の値で挙動が違う**（-0.5→-0）ので直接使わない。
+// 二進小数の誤差で境界がずれるのを防ぐため、桁をずらしたあと toPrecision(15) で丸め直してから整数化する
+// （1.005*100 が 100.49999… になる類の取りこぼしを消す）。
+function _shift(x,d){return Number((Math.abs(Number(x)||0)*Math.pow(10,d)).toPrecision(15));}
+function excelRound(x,d=0){const s=(Number(x)||0)<0?-1:1;return s*Math.round(_shift(x,d))/Math.pow(10,d);}
+function excelRoundUp(x,d=0){const s=(Number(x)||0)<0?-1:1;return s*Math.ceil(_shift(x,d))/Math.pow(10,d);}
+function excelRoundDown(x,d=0){const s=(Number(x)||0)<0?-1:1;return s*Math.floor(_shift(x,d))/Math.pow(10,d);}
+const minToH=m=>(Number(m)||0)/60;
+
+// 月の残業予定（時間・小数2桁）= ROUNDUP(MAX(0, 月実働 − 総枠), 2)（S-2）
+function monthlyOvertimeH(monthWorkH,baseH){
+  return excelRoundUp(Math.max(0,(Number(monthWorkH)||0)-(Number(baseH)||0)),2);
+}
+// 日別の残業予定（S-2）。**累積の差分**で配る——「実働 × 比率」を毎日丸めると和が月の残業予定とずれる。
+// この形なら1銭単位で割れる代わりに、日別の和が月の残業予定と完全に一致する。
+// 実働0以下の日・月の残業予定が0・月実働が0 のときは全日0。
+function prorateOvertimeH(dayHours,monthOtH,monthWorkH){
+  const days=(dayHours||[]).map(h=>Math.max(0,Number(h)||0));
+  const ot=Number(monthOtH)||0, tot=Number(monthWorkH)||0;
+  if(!(ot>0)||!(tot>0))return days.map(()=>0);
+  let cum=0,prevRounded=0;
+  return days.map(h=>{
+    if(!(h>0))return 0;
+    cum+=h;
+    const r=excelRound(cum*ot/tot,2);
+    const d=excelRound(r-prevRounded,2);
+    prevRounded=r;
+    return d;
+  });
+}
+
+// 目安の確認（S-6）。A制のみ・月実働0の人は空欄（key:"none"）。
+// 上から順に評価する。丸めは S-6 のとおり（不足・超過は ROUNDUP、残りは ROUNDDOWN）。
+const GUIDE_STATUS_COLORS={over:"#e53935",under_base:"#e53935",under_guide:"#B8860B",ok:null,none:null};
+function guideStatusOf(monthWorkMin,baseMin,fixedOtMin,guideMin){
+  const w=minToH(monthWorkMin),b=minToH(baseMin),f=minToH(fixedOtMin),g=minToH(guideMin);
+  if(!(w>0))return{key:"none",label:"",color:null};
+  const cap=b+f;
+  if(w>excelRound(cap,2))return{key:"over",label:`みなし超 ${excelRoundUp(w-cap,2)}h`,color:GUIDE_STATUS_COLORS.over};
+  if(w<excelRound(b,2))return{key:"under_base",label:`所定未満 あと${excelRoundUp(b-w,2)}h`,color:GUIDE_STATUS_COLORS.under_base};
+  if(w<g)return{key:"under_guide",label:`目安未満 あと${excelRoundUp(g-w,2)}h`,color:GUIDE_STATUS_COLORS.under_guide};
+  return{key:"ok",label:`OK 上限まで${excelRoundDown(cap-w,2)}h`,color:null};
+}
+
+// 36協定の絶対上限のうち本機能が判定する1件。**「月の残業予定」だけと比べ、休日労働は足さない**
+// （Shifty に法定休日労働を区別するデータが無いため。法定の定義は時間外＋休日労働なので緩い側に倒れる）。
+// 判定しない4項目（年720h・複数月平均80h・年6回・年360h）は設定画面のチェックリストに明記する。
+const AGREEMENT_SINGLE_MONTH_CAP_H=100;
+// 法定の上限一覧。設定画面のチェックリストをこのレジストリから自動生成する（判定の有無を取り違えない）。
+const AGREEMENT_LEGAL_ITEMS=[
+  {key:"dailyOt",label:"1日の延長時間の上限",judged:true,note:"36協定で定めた時間。日ごとに判定します"},
+  {key:"monthlyOt",label:"1か月の延長時間の上限（原則45時間）",judged:true,note:"36協定で定めた時間。月の残業予定と比べます"},
+  {key:"singleMonth100",label:"単月100時間未満（特別条項の絶対上限）",judged:true,note:"月の残業予定だけと比べます。法定は時間外＋休日労働ですが、Shiftyは法定休日労働を区別できないため休日労働を足していません（法定より緩い側に倒れます）"},
+  {key:"year720",label:"年720時間以内（特別条項）",judged:false},
+  {key:"avg80",label:"複数月平均80時間以内（特別条項）",judged:false},
+  {key:"over45x6",label:"月45時間超は年6回まで（特別条項）",judged:false},
+  {key:"year360",label:"年360時間以内（原則）",judged:false},
+];
+// スタッフ1人ぶんの労務日次・月次判定（S-4）。文言と発火条件は S-4 の表に一致させる。
+// 引数はオプションオブジェクト（第2弾で項目が増えたため位置引数から変えた）。
+//   laborSystem      "A"|"B"|"none"|null（null＝区分が空欄か誤り）
+//   dayMins          出勤日の実働分の配列（休み・未入力の日は入れない）
+//   weekDayMins      週ごとの実働分の配列の配列（B制の週40h超用）
+//   timeErrorCount   退勤≦出勤の日数（項目12）
+//   breakShortCount  休憩不足の日数（第3弾）
+//   monthOtH         月の残業予定（時間・A制のみ）
+//   dayOtH           日別の残業予定（時間・A制のみ）
+//   agreementDailyOtH / agreementMonthlyOtH / fixedOtH  36協定と固定残業（時間）
+//   monthReady       その月の全日にデータが揃っているか。false なら月単位の判定を出さない
 // laborSystem==="none"（判定対象外＝Excelの「応援・外部」）は労働時間の判定・集計から外す。
 // ただし「時刻の入力ミス」は労務の判定ではなく入力データそのものの誤りなので区分によらず出す
 // （項目12・案Cのセル色と同じ集合を指す）。
-// 第2弾以降で足すもの: 月の残業が上限超／固定残業30h超／1日の残業予定が上限超（A制）、
-// 1日の残業が上限超／週40h超(協定なし)（B制）、休憩不足（共通・第3弾）。
-function laborFindingsFor(laborSystem,dayMins,timeErrorCount,weekDayMins){
+// 戻り値は {key,label} の配列。**総括判定が key で引く**ので、文言だけを返す形にはしない。
+function laborFindingsFor(o){
+  const {laborSystem=null,dayMins=[],weekDayMins=[],timeErrorCount=0,breakShortCount=0,
+    monthOtH=0,dayOtH=[],agreementDailyOtH=0,agreementMonthlyOtH=0,fixedOtH=0,monthReady=true}=o||{};
   const out=[];
+  const push=(key,label)=>out.push({key,label});
   const mins=(dayMins||[]).map(m=>Math.max(0,Number(m)||0));
+  const dOt=(dayOtH||[]).map(h=>Math.max(0,Number(h)||0));
+  const mOt=Math.max(0,Number(monthOtH)||0);
   if(laborSystem==="A"){
     const over12=mins.filter(m=>m>LABOR_LONG_DAY_MIN).length;
-    if(over12>0)out.push(`12h超${over12}日`);
+    if(over12>0)push("over12",`12h超${over12}日`);
     const under4=mins.filter(m=>m>0&&m<LABOR_SHORT_DAY_MIN).length;
-    if(under4>0)out.push(`4h未満${under4}日`);
+    if(under4>0)push("under4",`4h未満${under4}日`);
+    if(monthReady){
+      if(agreementMonthlyOtH>0&&mOt>agreementMonthlyOtH)push("monthOtOverAgreement","月の残業が上限超");
+      if(fixedOtH>0&&mOt>fixedOtH)push("monthOtOverFixed",`固定残業${excelRound(fixedOtH,2)}h超`);
+      // 単月100h未満（36協定の絶対上限）。S-4 の表には無い行で、文言はここで決めた（判断4）
+      if(mOt>=AGREEMENT_SINGLE_MONTH_CAP_H)push("monthOt100",`月の残業が${AGREEMENT_SINGLE_MONTH_CAP_H}h以上`);
+    }
+    if(agreementDailyOtH>0){
+      const n=dOt.filter(h=>h>agreementDailyOtH).length;
+      if(n>0)push("dayOtOverAgreement",`1日の残業予定が上限超${n}日`);
+    }
   }else if(laborSystem==="B"){
     const over8=mins.filter(m=>m>LEGAL_DAILY_MIN).length;
-    if(over8>0)out.push(`8h超${over8}日(残業)`);
-    if(weeklyOverTotalMinB(weekDayMins)>0)out.push("週40h超(残業)");
+    if(over8>0)push("over8",`8h超${over8}日(残業)`);
+    const weekOver=weeklyOverTotalMinB(weekDayMins);
+    if(weekOver>0)push("weekOver40","週40h超(残業)");
+    if(agreementDailyOtH>0){
+      const lim=LEGAL_DAILY_MIN+agreementDailyOtH*60;
+      const n=mins.filter(m=>m>lim).length;
+      if(n>0)push("dayOverAgreementB",`1日の残業が上限超${n}日`);
+    }else if(weekOver>0){
+      push("weekOver40NoAgreement","週40h超(協定なし)");
+    }
   }
+  const bs=Math.max(0,Number(breakShortCount)||0);
+  if(bs>0)push("breakShort",`休憩不足${bs}日`);
   const te=Math.max(0,Number(timeErrorCount)||0);
-  if(te>0)out.push(`時刻の入力ミス${te}日`);
-  if(laborSystem===null||laborSystem===undefined)out.push("区分が空欄か誤り");
+  if(te>0)push("timeError",`時刻の入力ミス${te}日`);
+  if(laborSystem===null||laborSystem===undefined)push("badSystem","区分が空欄か誤り");
   return out;
 }
+// 表示用。パネルはこちらを使う（総括判定は key を見るので laborFindingsFor をそのまま使う）。
+function laborFindingLabels(o){return laborFindingsFor(o).map(f=>f.label);}
 
+// 総括判定（S-6）。上から順に評価する4値＋Shifty固有の1値。
+//   要修正 / 目安未満 / 残業あり / OK  … S-6 の4値
+//   要確認 … その月の日にデータが揃っていないとき（Shifty は半月運用で1つの月が2期間に分かれる。
+//            後半を作る前は月実働が必ず不足するので、S-6 をそのまま当てると全員が所定未満になる）。
+// weekNoRest（週の休みに ×休なし がある）は第3弾で渡すようになるまで常に false。
+const OVERALL_FIX_KEYS=["over12","under4","monthOtOverAgreement","dayOtOverAgreement",
+  "monthOt100","dayOverAgreementB","weekOver40NoAgreement","breakShort","timeError","badSystem"];
+function overallVerdictOf(o){
+  const {laborSystem=null,findings=[],guideKey="none",weekNoRest=false,monthReady=true}=o||{};
+  if(laborSystem==="none")return{key:"none",label:""};
+  const keys=new Set((findings||[]).map(f=>f&&f.key));
+  // monthOt100 は S-6 の一覧に無いが、36協定の絶対上限の違反なので要修正に入れる（判断4）。
+  const fix=weekNoRest||keys.has("badSystem")||keys.has("timeError")||keys.has("breakShort")
+    ||(laborSystem==="A"&&(guideKey==="over"||guideKey==="under_base"
+        ||keys.has("over12")||keys.has("under4")||keys.has("monthOtOverAgreement")
+        ||keys.has("dayOtOverAgreement")||keys.has("monthOt100")))
+    ||(laborSystem==="B"&&(keys.has("dayOverAgreementB")||keys.has("weekOver40NoAgreement")));
+  if(fix)return{key:"fix",label:"要修正"};
+  if(!monthReady&&laborSystem==="A")return{key:"pending",label:"要確認"};
+  if(laborSystem==="A"&&guideKey==="under_guide")return{key:"under_guide",label:"目安未満"};
+  if(laborSystem==="B"&&(keys.has("over8")||keys.has("weekOver40")))return{key:"ot",label:"残業あり"};
+  return{key:"ok",label:"OK"};
+}
 
 // ===== ポジションエラー判定 =====
 // 休み日（土日祝のいずれか）判定。連休の塊を数えるための内部ヘルパー
@@ -1464,5 +1580,5 @@ function renameStaffInPeriods(periods,oldName,newName){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,laborFindingsFor};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,laborFindingsFor,laborFindingLabels,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS};
 }

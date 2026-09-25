@@ -3125,7 +3125,7 @@ test("S-4 区分が空欄か誤り: custom属性で未設定、または staffTy
   const st = { staffTypeLimits: { custom_a1: { name: "契約" } }, staffAttributes: { 田中: "custom_a1", 鈴木: "custom_zz" } };
   assert.strictEqual(u.laborSystemForStaff(st, "田中"), null, "custom属性で laborSystem 未設定");
   assert.strictEqual(u.laborSystemForStaff(st, "鈴木"), null, "staffTypeLimits に無い属性");
-  assert.deepStrictEqual(u.laborFindingsFor(null, [600], 0, []), ["区分が空欄か誤り"]);
+  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: null, dayMins: [600] }), ["区分が空欄か誤り"]);
   // 不正な値も未設定と同じ扱い
   assert.strictEqual(u.laborSystemOf({ staffTypeLimits: { custom_a1: { laborSystem: "X" } } }, "custom_a1"), null);
 });
@@ -3133,36 +3133,42 @@ test("S-4 区分が空欄か誤り: custom属性で未設定、または staffTy
 test("S-4 A制の日次判定: 12h超n日・4h未満n日（境界ちょうどは出ない）", () => {
   // 13h・12h（境界）・3h59m・4h（境界）・8h
   const mins = [HM(13, 0), HM(12, 0), HM(3, 59), HM(4, 0), HM(8, 0)];
-  assert.deepStrictEqual(u.laborFindingsFor("A", mins, 0, []), ["12h超1日", "4h未満1日"]);
-  assert.deepStrictEqual(u.laborFindingsFor("A", [HM(12, 1), HM(12, 1)], 0, []), ["12h超2日"]);
-  assert.deepStrictEqual(u.laborFindingsFor("A", [HM(8, 0)], 0, []), [], "どれにも当たらなければ空");
+  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "A", dayMins: mins }), ["12h超1日", "4h未満1日"]);
+  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "A", dayMins: [HM(12, 1), HM(12, 1)] }), ["12h超2日"]);
+  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "A", dayMins: [HM(8, 0)] }), [], "どれにも当たらなければ空");
 });
 
 test("S-4 B制の日次判定: 8h超n日(残業)・週40h超(残業)", () => {
   // 8h01m と 9h が超過、8hちょうど（境界）は出ない
-  assert.deepStrictEqual(u.laborFindingsFor("B", [HM(8, 1), HM(8, 0), HM(9, 0)], 0, []), ["8h超2日(残業)"]);
+  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "B", dayMins: [HM(8, 1), HM(8, 0), HM(9, 0)] }), ["8h超2日(残業)"]);
   assert.deepStrictEqual(
-    u.laborFindingsFor("B", [HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0)], 0,
-      [[HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), 0]]),
+    u.laborFindingLabels({ laborSystem: "B", dayMins: [HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0)],
+      weekDayMins: [[HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), 0]] }),
+    // 1日の残業上限が未設定(0)なので「週40h超(協定なし)」も同時に出る（S-4 の B制の4行目）
+    ["週40h超(残業)", "週40h超(協定なし)"]);
+  // 1日の残業上限を設定すると「協定なし」は出ない
+  assert.deepStrictEqual(
+    u.laborFindingLabels({ laborSystem: "B", dayMins: [HM(7, 0)], agreementDailyOtH: 3,
+      weekDayMins: [[HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), 0]] }),
     ["週40h超(残業)"]);
   // A制の判定（12h超・4h未満）はB制では出ない
-  assert.deepStrictEqual(u.laborFindingsFor("B", [HM(13, 0)], 0, []), ["8h超1日(残業)"]);
+  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "B", dayMins: [HM(13, 0)] }), ["8h超1日(残業)"]);
 });
 
 test("S-4 時刻の入力ミス: 区分によらず件数つきで出る", () => {
-  assert.deepStrictEqual(u.laborFindingsFor("A", [], 2, []), ["時刻の入力ミス2日"]);
-  assert.deepStrictEqual(u.laborFindingsFor("none", [], 1, []), ["時刻の入力ミス1日"]);
-  assert.deepStrictEqual(u.laborFindingsFor(null, [], 1, []), ["時刻の入力ミス1日", "区分が空欄か誤り"]);
+  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "A", timeErrorCount: 2 }), ["時刻の入力ミス2日"]);
+  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "none", timeErrorCount: 1 }), ["時刻の入力ミス1日"]);
+  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: null, timeErrorCount: 1 }), ["時刻の入力ミス1日", "区分が空欄か誤り"]);
 });
 
 test("項目1: 判定対象外（応援・外部）のスタッフは労働時間の判定から除外される", () => {
   // 13h・3h・9h が並んでも A制/B制 のどの判定も出ない（週40h超も出ない）
   const mins = [HM(13, 0), HM(3, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0)];
   const weeks = [[HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), 0]];
-  assert.deepStrictEqual(u.laborFindingsFor("none", mins, 0, weeks), []);
+  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "none", dayMins: mins, weekDayMins: weeks }), []);
   // 同じ入力を A制／B制 に入れると判定が出る＝素通りするテストではない
-  assert.ok(u.laborFindingsFor("A", mins, 0, weeks).length > 0);
-  assert.ok(u.laborFindingsFor("B", mins, 0, weeks).length > 0);
+  assert.ok(u.laborFindingLabels({ laborSystem: "A", dayMins: mins, weekDayMins: weeks }).length > 0);
+  assert.ok(u.laborFindingLabels({ laborSystem: "B", dayMins: mins, weekDayMins: weeks }).length > 0);
 });
 
 test("項目12 isTimeOrderInvalid: 退勤≦出勤の日だけを true にする", () => {
@@ -3260,4 +3266,119 @@ test("項目12 ドリフト検出: applyEditToSubs と saveAdj が同じ isTimeO
   assert.ok(pe, "posErr の割り込み行が見つからない");
   assert.ok(pe.includes("LEGEND_COLORS.timeErr"),
     "posErr の割り込みが timeErr を除外していない（不足のある日は入力ミスのセル色が消える）");
+});
+
+// ===== 労務判定 第2弾（A制の中核）=====
+// 期待値は確定仕様 S-2・S-4・S-6 からの転記。実装の出力から逆生成していない。
+
+test("Excel丸め: ROUND は絶対値が大きい方へ丸める（Math.round と負の値で違う）", () => {
+  assert.strictEqual(u.excelRound(0.5), 1);
+  assert.strictEqual(u.excelRound(-0.5), -1, "Math.round(-0.5) は -0 になる");
+  assert.strictEqual(u.excelRound(2.345, 2), 2.35);
+  assert.strictEqual(u.excelRound(-2.345, 2), -2.35);
+  assert.strictEqual(u.excelRound(1.005, 2), 1.01, "二進小数の取りこぼしを起こさない");
+  assert.strictEqual(u.excelRoundUp(5.3667, 2), 5.37);
+  assert.strictEqual(u.excelRoundUp(5.37, 2), 5.37, "ちょうどの値は増やさない");
+  assert.strictEqual(u.excelRoundDown(5.379, 2), 5.37);
+  assert.strictEqual(u.excelRoundDown(200.13333, 0), 200);
+});
+
+test("S-2 月の残業予定 = ROUNDUP(MAX(0, 月実働 − 総枠), 2)", () => {
+  const base = u.monthlyBaseMin(HM(40, 0), 31) / 60; // 177.1333…h
+  assert.strictEqual(u.monthlyOvertimeH(182.5, base), 5.37);
+  assert.strictEqual(u.monthlyOvertimeH(170, base), 0, "総枠以下なら0");
+  assert.strictEqual(u.monthlyOvertimeH(base, base), 0);
+});
+
+test("S-2 日別の按分: 24日の系列が Excel と一致し、和が月の残業予定と完全に一致する", () => {
+  // 1〜15日目 7.5h / 16〜20日目 6.0h / 21〜24日目 10.0h ＝ 月実働 182.5h
+  const days = [...Array(15).fill(7.5), ...Array(5).fill(6.0), ...Array(4).fill(10.0)];
+  assert.strictEqual(days.reduce((a, b) => a + b, 0), 182.5);
+  const base = u.monthlyBaseMin(HM(40, 0), 31) / 60;
+  const ot = u.monthlyOvertimeH(182.5, base);
+  assert.strictEqual(ot, 5.37);
+  const per = u.prorateOvertimeH(days, ot, 182.5);
+  const exp = [
+    0.22, 0.22, 0.22, 0.22, 0.22, 0.22, 0.22, // 1〜7日目
+    0.23,                                     // 8日目
+    0.22, 0.22, 0.22, 0.22, 0.22, 0.22, 0.22, // 9〜15日目
+    0.18, 0.17, 0.18, 0.18, 0.17,             // 16〜20日目
+    0.30, 0.29, 0.30, 0.29,                   // 21〜24日目
+  ];
+  assert.deepStrictEqual(per, exp);
+  assert.strictEqual(u.excelRound(per.reduce((a, b) => a + b, 0), 2), 5.37, "日別の和 = 月の残業予定");
+});
+
+test("S-2 按分の対象外: 実働0以下の日・月の残業予定0・月実働0 はすべて0", () => {
+  assert.deepStrictEqual(u.prorateOvertimeH([7.5, 0, 7.5], 0, 15), [0, 0, 0], "残業予定0");
+  assert.deepStrictEqual(u.prorateOvertimeH([7.5, 7.5], 5, 0), [0, 0], "月実働0");
+  const p = u.prorateOvertimeH([8, 0, 8], 2, 16);
+  assert.strictEqual(p[1], 0, "実働0の日は0");
+  assert.strictEqual(u.excelRound(p.reduce((a, b) => a + b, 0), 2), 2);
+});
+
+test("S-6 目安の確認: 4段階が条件・丸めともに一致する（総枠177:08・固定残業30h・目安200h）", () => {
+  const base = u.monthlyBaseMin(HM(40, 0), 31), fix = HM(30, 0), guide = HM(200, 0);
+  const g = w => u.guideStatusOf(w, base, fix, guide);
+  // みなし超: 月実働 > ROUND(総枠+固定残業,2) = 207.13h
+  assert.deepStrictEqual(
+    { k: g(HM(210, 0)).key, l: g(HM(210, 0)).label }, { k: "over", l: "みなし超 2.87h" });
+  // 所定未満: 月実働 < ROUND(総枠,2) = 177.13h
+  assert.deepStrictEqual(
+    { k: g(HM(170, 0)).key, l: g(HM(170, 0)).label }, { k: "under_base", l: "所定未満 あと7.14h" });
+  // 目安未満: 月実働 < 目安 200h
+  assert.deepStrictEqual(
+    { k: g(HM(190, 0)).key, l: g(HM(190, 0)).label }, { k: "under_guide", l: "目安未満 あと10h" });
+  // OK: 残りは ROUNDDOWN
+  assert.deepStrictEqual(
+    { k: g(HM(205, 0)).key, l: g(HM(205, 0)).label }, { k: "ok", l: "OK 上限まで2.13h" });
+  // 月実働0（1日も出勤がない人）は空欄
+  assert.strictEqual(g(0).key, "none");
+});
+
+test("S-4 第2弾ぶんの日次・月次判定: 文言と発火条件", () => {
+  const A = o => u.laborFindingLabels({ laborSystem: "A", monthReady: true, ...o });
+  assert.deepStrictEqual(A({ monthOtH: 46, agreementMonthlyOtH: 45 }), ["月の残業が上限超"]);
+  assert.deepStrictEqual(A({ monthOtH: 45, agreementMonthlyOtH: 45 }), [], "ちょうどは出ない");
+  assert.deepStrictEqual(A({ monthOtH: 31, fixedOtH: 30, agreementMonthlyOtH: 45 }), ["固定残業30h超"]);
+  assert.deepStrictEqual(A({ dayOtH: [3.5, 1, 4], agreementDailyOtH: 3 }), ["1日の残業予定が上限超2日"]);
+  assert.deepStrictEqual(A({ dayOtH: [3], agreementDailyOtH: 3 }), [], "ちょうどは出ない");
+  // 単月100h未満（S-4 の表に無い行。文言は判断4を受けてここで決めた）
+  assert.deepStrictEqual(A({ monthOtH: 100, agreementMonthlyOtH: 200, fixedOtH: 0 }), ["月の残業が100h以上"]);
+  assert.deepStrictEqual(A({ monthOtH: 99.99, agreementMonthlyOtH: 200, fixedOtH: 0 }), []);
+  // B制: 1日の残業が上限超（8h+協定値）
+  assert.deepStrictEqual(
+    u.laborFindingLabels({ laborSystem: "B", dayMins: [HM(11, 1), HM(11, 0)], agreementDailyOtH: 3 }),
+    ["8h超2日(残業)", "1日の残業が上限超1日"]);
+});
+
+test("S-4 月が埋まっていないときは月単位の判定を出さない（日単位は出す）", () => {
+  const o = { laborSystem: "A", dayMins: [HM(13, 0)], monthOtH: 60, agreementMonthlyOtH: 45, fixedOtH: 30 };
+  assert.deepStrictEqual(u.laborFindingLabels({ ...o, monthReady: true }),
+    ["12h超1日", "月の残業が上限超", "固定残業30h超"]);
+  assert.deepStrictEqual(u.laborFindingLabels({ ...o, monthReady: false }), ["12h超1日"]);
+});
+
+test("S-6 総括判定: 上から順に 要修正／目安未満／残業あり／OK", () => {
+  const v = o => u.overallVerdictOf(o).label;
+  const F = o => u.laborFindingsFor(o);
+  assert.strictEqual(v({ laborSystem: "A", findings: F({ laborSystem: "A", dayMins: [HM(13, 0)] }), guideKey: "ok" }), "要修正");
+  assert.strictEqual(v({ laborSystem: "A", findings: [], guideKey: "over" }), "要修正", "みなし超");
+  assert.strictEqual(v({ laborSystem: "A", findings: [], guideKey: "under_base" }), "要修正", "所定未満");
+  assert.strictEqual(v({ laborSystem: "A", findings: [], guideKey: "under_guide" }), "目安未満");
+  assert.strictEqual(v({ laborSystem: "B", findings: F({ laborSystem: "B", dayMins: [HM(9, 0)] }), guideKey: "none" }), "残業あり");
+  assert.strictEqual(v({ laborSystem: "B", findings: [], guideKey: "none" }), "OK");
+  // 共通の3つはどちらの区分でも要修正
+  for (const o of [{ timeErrorCount: 1 }, { breakShortCount: 1 }]) {
+    assert.strictEqual(v({ laborSystem: "B", findings: F({ laborSystem: "B", ...o }), guideKey: "none" }), "要修正");
+  }
+  assert.strictEqual(v({ laborSystem: null, findings: F({ laborSystem: null }), guideKey: "none" }), "要修正", "区分が空欄");
+  // 判定対象外は空欄
+  assert.strictEqual(v({ laborSystem: "none", findings: [], guideKey: "none" }), "");
+  // 月が埋まっていない A制は「要確認」（Shifty固有・S-6 の4値の外）
+  assert.strictEqual(v({ laborSystem: "A", findings: [], guideKey: "under_base", monthReady: false }), "要修正",
+    "ただし要修正が先に立つ場合はそちら");
+  assert.strictEqual(v({ laborSystem: "A", findings: [], guideKey: "none", monthReady: false }), "要確認");
+  // 週の休みの ×休なし は第3弾で渡す。渡せば要修正になる
+  assert.strictEqual(v({ laborSystem: "B", findings: [], guideKey: "none", weekNoRest: true }), "要修正");
 });

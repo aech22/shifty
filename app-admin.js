@@ -306,7 +306,12 @@ function SummaryTable({title,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols
             const bg=row._bg||"transparent";const stickyBg=row._bg?`linear-gradient(${row._bg},${row._bg}),${CRD}`:CRD;
             return(<tr key={row.id} style={{background:bg}}>
               <td style={{boxSizing:"border-box",...(fullView?{}:{position:"sticky",left:0,zIndex:1}),background:stickyBg,padding:0,fontSize:11,fontWeight:row._bold?700:400,color:row._color||"var(--c-text2)",borderBottom:BD,width:labelW,minWidth:labelW,maxWidth:labelW}}><div title={row.label} style={{width:labelW,padding:"2px 2px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{row.label}</div></td>
-              {mapGridCols(name=>{const min=row.getMin(name);const vio=row._violateFn?row._violateFn(name,min):false;const cellBg=vio?"rgba(255,71,87,.15)":bg;return(
+              {mapGridCols(name=>{
+                // getText を持つ行は文字セル（労務の目安・総括）。持たない行は従来どおり分→"H:MM"。
+                if(row.getText){const t=row.getText(name)||{};return(
+                  <td key={name} title={t.title||t.label||""} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:"border-box",padding:"3px 1px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:10,lineHeight:1.25,background:t.bg||bg,fontWeight:t.bold?700:400,color:t.color||"var(--c-text2)",overflow:"hidden"}}>{t.label||""}</td>
+                );}
+                const min=row.getMin(name);const vio=row._violateFn?row._violateFn(name,min):false;const cellBg=vio?"rgba(255,71,87,.15)":bg;return(
                 <td key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:"border-box",padding:"3px 2px",borderLeft:BD,borderBottom:BD,textAlign:"center",fontSize:11,background:cellBg,fontWeight:(row._bold||vio)&&min>0?700:400,color:min>0?(vio?"#FF4757":(row._color||"var(--c-text2)")):"var(--c-text4)"}}>{min>0?fmtH4(min):""}</td>
               );},spacerCell)}
               {fullView&&<td style={{background:stickyBg,padding:0,borderBottom:BD,borderLeft:BD2,boxSizing:"border-box",width:labelW,minWidth:labelW,maxWidth:labelW}}></td>}
@@ -398,6 +403,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const outerRef=useRef(null);
   const mainScrollRef=useRef(null);
   const periodScrollRef=useRef(null);
+  const laborScrollRef=useRef(null);
   const weekScrollRef=useRef(null);
   const restScrollRef=useRef(null);
   const gridBodyRef=useRef(null);
@@ -574,7 +580,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const syncScrollH=useCallback((src)=>{
     if(syncingRef.current)return;
     syncingRef.current=true;
-    syncAxis(src,[mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef],"scrollLeft","scrollWidth","clientWidth",echoHRef.current);
+    syncAxis(src,[mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef,laborScrollRef],"scrollLeft","scrollWidth","clientWidth",echoHRef.current);
     requestAnimationFrame(()=>{syncingRef.current=false;});
   },[]);
   // 縦スクロール同期（メイングリッド⇔左右ヒートマップ）
@@ -1205,6 +1211,63 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // その日の実働（分）。集計表・週集計とまったく同じ入口（_getWorkShift → calcNetWorkMinutes）を通す
   // ＝同じ日について労務判定と集計表が違う数字を出すことがない。
   const laborDayMin=(name,ds)=>{const sh=_getWorkShift(name,ds);return sh?calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh),settings):0;};
+  // 月の枠と、その月の全日。**按分・目安・上限の単位は暦月**だが Shifty の期間は半月のことがあるので、
+  // 「選択中の期間の startDate と同じ年月の全日」を月として集計する。
+  const laborFrame=useMemo(()=>period?laborMonthFrame(settings,period.startDate):null,[settings,period]);
+  const laborMonthDays=useMemo(()=>{
+    if(!period)return[];
+    const ym=period.startDate.slice(0,7);
+    return Array.from({length:daysInMonthOf(ym)},(_,i)=>`${ym}-${String(i+1).padStart(2,"0")}`);
+  },[period]);
+  // その月の全日がデータで埋まっているか。**埋まっていないうちは月単位の判定を出さない**——
+  // 半月運用では後半の期間を作る前に月実働が必ず不足し、素直に判定すると前半を編集している
+  // 全員に「所定未満」が出続ける。S-5 の「全日が無記入の週は評価対象外」と同じ考え方。
+  const laborMonthReady=useMemo(()=>{
+    if(!period)return false;
+    const cut=subsWindowCutoff();
+    return laborMonthDays.every(d=>{
+      const p=periods.find(q=>q&&q.startDate&&q.endDate&&q.startDate<=d&&d<=q.endDate);
+      if(!p)return false;                                 // その日を含む期間がまだ無い
+      if(!pastSubsLoaded&&p.startDate<cut)return false;   // 購読窓の外＝subs を読めていない
+      return true;
+    });
+  },[period,periods,laborMonthDays,pastSubsLoaded]);
+
+  // スタッフ1人ぶんの労務の集計。日次の件数は**選択中の期間の日**、月単位の判定は**暦月**で数える
+  // （利用者が今そこで直せる範囲＝期間、法令・協定の単位＝月）。
+  const laborByStaff=useMemo(()=>{
+    const out={};
+    if(!isPremium||!period||!laborFrame)return out;
+    const ls=laborSettingsOf(settings);
+    const agDay=ls.agreementDailyOtMin/60, agMonth=ls.agreementMonthlyOtMin/60, fixOt=ls.fixedOvertimeMin/60;
+    const monthIdx={};laborMonthDays.forEach((d,i)=>{monthIdx[d]=i;});
+    realStaff.forEach(name=>{
+      const sys=laborSystemForStaff(settings,name);
+      const monthMins=laborMonthDays.map(d=>laborDayMin(name,d));
+      const monthWorkMin=monthMins.reduce((a,b)=>a+b,0);
+      const monthWorkH=monthWorkMin/60;
+      const monthOtH=(sys==="A"&&laborMonthReady)?monthlyOvertimeH(monthWorkH,laborFrame.baseMin/60):0;
+      // 按分は**月の全日**でやる（日別の和が月の残業予定と一致する形が崩れるため期間で切らない）。
+      const monthOtDays=(sys==="A"&&laborMonthReady)?prorateOvertimeH(monthMins.map(m=>m/60),monthOtH,monthWorkH):[];
+      const periodOtH=dates.map(d=>(monthIdx[d]!=null?(monthOtDays[monthIdx[d]]||0):0));
+      const dayMins=dates.map(d=>laborDayMin(name,d)).filter(m=>m>0);
+      const weekMins=sys==="B"?weeks.map(monStr=>{
+        const arr=[];
+        for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);arr.push(laborDayMin(name,fd(dd)));}
+        return arr;
+      }):[];
+      const te=dates.reduce((a,d)=>a+(timeErrors[`${name}|${d}`]?1:0),0);
+      const findings=laborFindingsFor({laborSystem:sys,dayMins,weekDayMins:weekMins,timeErrorCount:te,
+        monthOtH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthReady});
+      const guide=sys!=="A"?{key:"none",label:"",color:null}
+        :(laborMonthReady?guideStatusOf(monthWorkMin,laborFrame.baseMin,ls.fixedOvertimeMin,laborFrame.guideMin)
+          :{key:"none",label:"要確認",color:"var(--c-text3)",title:"その月の日がまだデータで埋まっていません（後半の期間が未作成、または購読の窓の外）"});
+      const overall=overallVerdictOf({laborSystem:sys,findings,guideKey:guide.key,monthReady:laborMonthReady});
+      out[name]={sys,monthWorkMin,monthOtH,findings,guide,overall};
+    });
+    return out;
+  },[isPremium,period,laborFrame,laborMonthDays,laborMonthReady,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid]);
+
   const laborFindings=useMemo(()=>{
     if(!isPremium)return[];
     const out=[];
@@ -1213,17 +1276,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const dayMins=dates.map(d=>laborDayMin(name,d)).filter(m=>m>0);
       // B制の週40h超は月曜起算（weeks は前の期間ぶんも含む）。データの無い日は0分で入るので、
       // 前月・翌月にまたがる週は結果として「データのある日だけ」で計算されたのと同じになる（S-5）。
-      const weekMins=sys==="B"?weeks.map(monStr=>{
-        const arr=[];
-        for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);arr.push(laborDayMin(name,fd(dd)));}
-        return arr;
-      }):[];
-      const te=dates.reduce((a,d)=>a+(timeErrors[`${name}|${d}`]?1:0),0);
-      const f=laborFindingsFor(sys,dayMins,te,weekMins);
+      void sys;void dayMins;
+      const f=(laborByStaff[name]?.findings||[]).map(x=>x.label);
       if(f.length)out.push({name,findings:f});
     });
     return out;
-  },[isPremium,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid]);
+  },[isPremium,realStaff,dates,settings,laborByStaff]);
 
   // "h"なし勤務時間フォーマット
   const fmtH=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;return m===0?String(h):`${h}:${String(m).padStart(2,"0")}`;};
@@ -2235,6 +2293,34 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
               return{id:monStr,label:`${m.getDate()}〜${sun.getDate()}日`,getMin:name=>getWeekMin(monStr,name),
                 _violateFn:(name,min)=>{const t=(settings.staffAttributes||{})[name]||"parttime";const l=tls[t];const lim=l&&typeof l==="object"&&l.weekly?l.weekly*60:0;return lim>0&&min>lim;}};
             }),{id:"weekly_limit",label:"週上限",getMin:name=>{const t=(settings.staffAttributes||{})[name]||"parttime";const tls={employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})};const l=tls[t];return(l&&typeof l==="object"&&l.weekly)?l.weekly*60:0;},_color:"#3B82F6",_bg:"rgba(96,165,250,0.07)"}]}
+          />}
+
+          {/* === 労務（A制の目安・総括判定）。判定対象外の属性は空欄になる === */}
+          {isPremium&&Object.keys(laborByStaff).length>0&&<SummaryTable
+            title={`労務判定（${period?period.startDate.slice(0,7).replace("-","年")+"月":""}）`}
+            rowLabel="労務"
+            scrollRef={laborScrollRef}
+            onScroll={e=>syncScrollH(e.currentTarget)}
+            fitAll={fitAll}
+            labelW={DATE_COL_W}
+            fullView={fullView}
+            tableW={fvTableW}
+            mapGridCols={mapGridCols}
+            spacerTh={spacerTh}
+            spacerCell={spacerCell}
+            colW={colW}
+            VTH={VTH}
+            rows={[
+              {id:"labor_month",label:"月実働",getText:name=>{const l=laborByStaff[name];
+                if(!l||l.sys==="none"||!(l.monthWorkMin>0))return{};
+                // 集計表の既定フォーマッタ(fmtH4)は100時間以上で分を落とすが、労務では
+                // 177:08 と 177:00 の差が判定を分けるので分まで出す。
+                return{label:fmtMin(l.monthWorkMin),title:`月の実働 ${fmtMin(l.monthWorkMin)}`};}},
+              {id:"labor_guide",label:"目安",getText:name=>{const l=laborByStaff[name];if(!l||l.sys!=="A")return{};return{label:l.guide.label,color:l.guide.color,title:l.guide.title||l.guide.label};}},
+              {id:"labor_verdict",label:"総括",_bg:"rgba(248,112,54,0.05)",getText:name=>{const l=laborByStaff[name];if(!l)return{};
+                const c=l.overall.key==="fix"?"#e53935":l.overall.key==="under_guide"?"#B8860B":l.overall.key==="ot"?"#3B82F6":l.overall.key==="pending"?"var(--c-text3)":"var(--c-text2)";
+                return{label:l.overall.label,color:c,bold:l.overall.key==="fix",title:(l.findings||[]).map(f=>f.label).join("、")};}},
+            ]}
           />}
 
           {/* ===操作方法レジェンド（CELL_COMMANDS / CELL_COLOR_LEGEND から自動生成）=== */}
@@ -4782,7 +4868,41 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             </tr>))}</tbody>
           </table>
         </div>
-        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>目安 = 総枠 + 固定残業 − 余裕（時間未満を切り捨て）／上限 = 総枠 + 固定残業。36協定の設定と、残業予定の按分・総括判定は次の弾で追加します。</div>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>目安 = 総枠 + 固定残業 − 余裕（時間未満を切り捨て）／上限 = 総枠 + 固定残業。月の残業予定は「月実働 − 総枠」で、日別にはその日までの累計実働の比で配分します。</div>
+
+        <div style={{marginTop:16,paddingTop:14,borderTop:"1px solid var(--c-border)"}}>
+          <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>36協定</div>
+          <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:4}}>
+              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1日の延長上限</span>
+              <input type="number" min={0} max={16} value={Math.floor(ls.agreementDailyOtMin/60)||""} placeholder="0"
+                onChange={e=>{const h=Math.max(0,Math.min(16,parseInt(e.target.value)||0));saveLabor("agreementDailyOtMin",h*60);}}
+                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+              <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:4}}>
+              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1か月の延長上限</span>
+              <input type="number" min={0} max={200} value={Math.floor(ls.agreementMonthlyOtMin/60)||""} placeholder="0"
+                onChange={e=>{const h=Math.max(0,Math.min(200,parseInt(e.target.value)||0));saveLabor("agreementMonthlyOtMin",h*60);}}
+                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+              <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+            </div>
+          </div>
+          <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6}}>1日の延長上限を0にすると「残業を前提にしない運用」とみなし、目安＝総枠になります。</div>
+          {/* 法定の上限一覧。判定する・しないを取り違えないよう AGREEMENT_LEGAL_ITEMS から自動生成する */}
+          <div style={{background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,padding:"8px 10px"}}>
+            <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>法定の上限と、本機能が判定する範囲</div>
+            {AGREEMENT_LEGAL_ITEMS.map(it=>(
+              <div key={it.key} style={{display:"flex",gap:6,alignItems:"flex-start",marginTop:4}}>
+                <span style={{fontSize:11,fontWeight:700,whiteSpace:"nowrap",color:it.judged?"#10B981":"var(--c-text4)"}}>{it.judged?"判定":"未判定"}</span>
+                <span style={{fontSize:11,color:it.judged?"var(--c-text2)":"var(--c-text4)"}}>
+                  {it.label}{it.judged?"":"（本機能では判定しません）"}
+                  {it.note&&<span style={{display:"block",color:"var(--c-text4)"}}>{it.note}</span>}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       </AC>);
     })()}
 
