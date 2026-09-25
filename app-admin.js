@@ -3834,7 +3834,10 @@ const dragIdxRef=useRef(null);
             {hidden&&<span title={`${hiddenFrom?`${periodLabelOfStart(hiddenFrom)}以降 ／ `:""}シフト作成タブ・Excel・PDF に出ません（提出は今までどおりできます）`} style={{fontSize:11,color:"var(--c-text4)",flexShrink:0,whiteSpace:"nowrap"}}>(非表示)</span>}
             {/* 行に出すボタンは 有給日数・ポジション・非表示・編集・削除 の5つだけ（2026-09-26 ユーザー指示）。
                 従業員番号・属性・別名・退勤延長・名前は「編集」で開くモーダルにまとめてある。 */}
-            {isPremium&&<button onClick={()=>{setPaidKey(paidKey===n?null:n);}} style={{padding:"6px 8px",background:paidKey===n?"rgba(16,185,129,.15)":"rgba(16,185,129,.06)",border:`1px solid ${paidKey===n?"#10B981":"rgba(16,185,129,.3)"}`,borderRadius:4,color:"#10B981",fontSize:12,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+            {/* 幅は固定にする（ポジションボタンと同じ扱い）。日数の有無でボタンが伸び縮みすると、
+                右隣の4ボタンが横にずれて押し間違える。110px は最大値「有給日数 (80.5)」（実測103.9px）が
+                収まる幅＝**半日付与を入れても変わらない**。 */}
+            {isPremium&&<button onClick={()=>{setPaidKey(paidKey===n?null:n);}} style={{padding:"6px 8px",background:paidKey===n?"rgba(16,185,129,.15)":"rgba(16,185,129,.06)",border:`1px solid ${paidKey===n?"#10B981":"rgba(16,185,129,.3)"}`,borderRadius:4,color:"#10B981",fontSize:12,cursor:"pointer",width:110,boxSizing:"border-box",flexShrink:0,whiteSpace:"nowrap",textAlign:"center"}}>
               有給日数{(settings.paidLeaveGranted||{})[n]!=null?` (${(settings.paidLeaveGranted||{})[n]})`:""}
             </button>}
             {isPremium&&<button onClick={()=>{setPosKey(posKey===n?null:n);}} style={{padding:"6px 8px",background:posKey===n?"rgba(59,130,246,.15)":"rgba(59,130,246,.06)",border:`1px solid ${posKey===n?"#3B82F6":"rgba(59,130,246,.3)"}`,borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer",width:118,boxSizing:"border-box",flexShrink:0,whiteSpace:"nowrap",textAlign:"center"}}>
