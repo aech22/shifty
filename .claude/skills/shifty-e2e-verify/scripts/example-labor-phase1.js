@@ -33,7 +33,7 @@ async function setTab(plan) {
     const txt = document.body.innerText;
     const card = [...document.querySelectorAll("div")].find(d => (d.innerText || "").startsWith("労務判定（1か月単位の変形労働時間制）"));
     const rows = card ? [...card.querySelectorAll("tbody tr")].map(tr => [...tr.querySelectorAll("td")].map(td => td.innerText.trim())) : [];
-    const sels = [...document.querySelectorAll("select")].filter(s => [...s.options].some(o => o.text === "判定対象外"));
+    const sels = [...document.querySelectorAll("select")].filter(s => [...s.options].some(o => o.value === "none"));
     return {
       hasCard: !!card,
       wLine: (txt.match(/この値から週の法定労働時間を\s*(\S+)\s*と判定しました/) || [])[1] || null,
@@ -48,7 +48,7 @@ async function setTab(plan) {
 
   // 属性セレクトを変える → settings.staffTypeLimits[*].laborSystem に入る
   await h.evaluate(() => {
-    const sels = [...document.querySelectorAll("select")].filter(s => [...s.options].some(o => o.text === "判定対象外"));
+    const sels = [...document.querySelectorAll("select")].filter(s => [...s.options].some(o => o.value === "none"));
     const set = (el, v) => {
       Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set.call(el, v);
       el.dispatchEvent(new Event("change", { bubbles: true }));

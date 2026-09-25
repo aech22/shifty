@@ -2453,20 +2453,6 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             </div>
           )}
 
-          {/* 労務判定（S-4）。判定対象外の属性（応援・外部）は労働時間の判定・集計から外れる。
-              **ポジション不足の下に置く**（2026-09-26 ユーザー指示）。グリッドの上ではなく、
-              ポジション不足の一覧と同じ場所で、シフトを組み終えてから順に見る並びにしている */}
-          {laborFindings.length>0&&(
-            <div style={{background:"rgba(248,112,54,.07)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
-              <div style={{fontSize:12,fontWeight:700,color:"var(--c-accent)",marginBottom:4}}>⚠ 労務の確認が必要です</div>
-              <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
-                {laborFindings.map(({name,findings})=>(
-                  <div key={name}>{name}：{findings.join("、")}</div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* === 休みカウント / 連勤カウント === */}
           <div ref={restScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16,...fvCenter}}>
             <table style={{borderCollapse:"collapse",width:fullView?fvTableW:(fitAll?"100%":"unset"),minWidth:fitAll?"unset":"max-content"}}>
@@ -2613,6 +2599,20 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                 return{label:l.overall.label,color:c,bold:l.overall.key==="fix",title:(l.findings||[]).map(f=>f.label).join("、")};}},
             ]}
           />}
+
+          {/* 労務判定（S-4）。判定対象外の属性（応援・外部）は労働時間の判定・集計から外れる。
+              **労務判定の表のすぐ下に置く**（2026-09-26 ユーザー指示）。総括が「要修正」の人を
+              表で見つけ、そのまま下の一覧で理由を読む並びにしている */}
+          {laborFindings.length>0&&(
+            <div style={{background:"rgba(248,112,54,.07)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
+              <div style={{fontSize:12,fontWeight:700,color:"var(--c-accent)",marginBottom:4}}>⚠ 労務の確認が必要です</div>
+              <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
+                {laborFindings.map(({name,findings})=>(
+                  <div key={name}>{name}：{findings.join("、")}</div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* ===操作方法レジェンド（CELL_COMMANDS / CELL_COLOR_LEGEND から自動生成）=== */}
           <div style={{...NORMAL_W,overflow:"hidden"}}><GridLegend abbrToShop={abbrToShop} shopName={shopName}/></div>

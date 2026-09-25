@@ -3525,8 +3525,8 @@ test("S-5 週の休み: 休n／×休なし／要確認／評価対象外", () =>
   assert.strictEqual(W(["work", "work", "work", "work", "work", "leave", "rest"]).label, "休1");
   // 揃わない日があれば要確認
   assert.strictEqual(W(["work", "work", "nodata", "rest", "rest", "rest", "rest"]).label, "要確認");
-  // 全日が無記入の週は評価対象外（未提出の期間を「休みだらけ」と数えない）
-  assert.strictEqual(W(["rest", "rest", "rest", "rest", "rest", "rest", "rest"]).key, "skip");
+  // 全日が無記入の週も公休7日として数える（2026-09-26 ユーザー指示。以前は skip だった）
+  assert.strictEqual(W(["rest", "rest", "rest", "rest", "rest", "rest", "rest"]).label, "休7");
 });
 
 test("S-5 dayRestKindOf: 無記入は休み・有給と慶弔は leave・出勤は work", () => {
@@ -3766,4 +3766,98 @@ test("斜線（y・提出の休み）も公休として数える — 見せ方�
   // 有給・慶弔は休みに数えない（出勤日に取る休暇のため）
   assert.strictEqual(u.dayRestKindOf({ status: "work", leaveType: "paid" }, true), "leave");
   assert.strictEqual(u.dayRestKindOf({ status: "work", leaveType: "ceremony" }, true), "leave");
+});
+
+// === 労務の要修正をセル色で示すための「日ごとの判定」（2026-09-26 ユーザー指示） ===
+// laborDayFindingsFor は laborFindingsFor と**同じ規則**で日を選ぶ。件数が食い違うと
+// 「パネルには n日と出ているのに塗られているセルは m個」という形で静かに嘘になるので、
+// ここで日ごとの件数と集計の件数を突き合わせる。
+test("laborDayFindingsFor: 日ごとの該当数が laborFindingsFor の件数と一致する", () => {
+  const cases = [
+    { laborSystem: "A", dayMins: [800, 200, 480, 0, 900], dayOtH: [0, 0, 4, 0, 1],
+      agreementDailyOtH: 3, breakShortDays: [false, false, true, false, false] },
+    { laborSystem: "B", dayMins: [700, 480, 660, 0], dayOtH: [], agreementDailyOtH: 2,
+      breakShortDays: [true, false, false, false] },
+    { laborSystem: "A", dayMins: [480, 480], dayOtH: [0, 0], agreementDailyOtH: 0,
+      breakShortDays: [false, false] },
+    { laborSystem: "none", dayMins: [900, 100], dayOtH: [0, 0], agreementDailyOtH: 3,
+      breakShortDays: [true, true] },
+  ];
+  const countOf = (labels, re) => {
+    const hit = labels.find(l => re.test(l));
+    if (!hit) return 0;
+    const m = hit.match(/(\d+)日$/);
+    return m ? Number(m[1]) : 1;
+  };
+  for (const c of cases) {
+    const days = u.laborDayFindingsFor(c);
+    assert.strictEqual(days.length, c.dayMins.length, "日数ぶん返る");
+    // 集計側は件数で受ける（日ごとの配列を件数に畳んで同じ入力にする）
+    const labels = u.laborFindingLabels({ ...c, monthReady: true,
+      breakShortCount: c.breakShortDays.filter(Boolean).length });
+    const per = k => days.filter(ks => ks.includes(k)).length;
+    assert.strictEqual(per("over12"), countOf(labels, /^12h超/), "12h超");
+    assert.strictEqual(per("under4"), countOf(labels, /^4h未満/), "4h未満");
+    assert.strictEqual(per("dayOtOverAgreement"), countOf(labels, /^1日の残業予定が上限超/), "A制の1日残業");
+    assert.strictEqual(per("dayOverAgreementB"), countOf(labels, /^1日の残業が上限超/), "B制の1日残業");
+    assert.strictEqual(per("breakShort"), countOf(labels, /^休憩不足/), "休憩不足");
+    // 返すキーは要修正だけ（8h超・週40h超のような「残業あり」は塗らない）
+    days.forEach(ks => ks.forEach(k => {
+      assert.ok(u.LABOR_DAY_FIX_KEYS.includes(k), `${k} は LABOR_DAY_FIX_KEYS にある`);
+      assert.ok(u.OVERALL_FIX_KEYS.includes(k), `${k} は要修正のキー`);
+    }));
+  }
+});
+
+test("LABOR_DAY_FIX_KEYS: 全キーに title 用のラベルがあり、セル色が登録されている", () => {
+  u.LABOR_DAY_FIX_KEYS.forEach(k =>
+    assert.ok(u.LABOR_DAY_ERR_LABELS[k], `${k} のラベルが無い`));
+  const legend = u.CELL_COLOR_LEGEND.find(c => c.key === "laborErr");
+  assert.ok(legend && legend.color, "laborErr の色が CELL_COLOR_LEGEND に登録されている");
+});
+
+// 労務の要修正の色は**画面だけ**の目印で、配る Excel・PDF には出さない（2026-09-26 ユーザー指示）。
+// 現状そうなっているのは「書き出しが画面とは別の色付けを持っている」からで、
+// 誰かが揃えようとして参照を足すと黙って配布物に出る。ここで参照が無いことを固定する。
+test("Excel・PDF の書き出しは労務の要修正の色を参照しない", () => {
+  const fs = require("fs");
+  const path = require("path");
+  const file = process.env.SHIFTY_ADMIN_SRC || path.join(__dirname, "..", "app-admin.js");
+  const src = fs.readFileSync(file, "utf8");
+  // 行コメントを落とす（説明文の中の「画面（cellBgFor）」を参照と読み違えないため）
+  const strip = t => t.split("\n").map(l => {
+    const i = l.indexOf("//");
+    if (i < 0) return l;
+    const before = l.slice(0, i);
+    // 文字列・正規表現の中の // は落とさない（引用符の数が偶数のときだけコメントとみなす）
+    const q = (before.match(/"/g) || []).length + (before.match(/'/g) || []).length
+      + (before.match(/`/g) || []).length;
+    return q % 2 === 0 ? before : l;
+  }).join("\n");
+  const bodyFrom = (marker) => {
+    const i = src.indexOf(marker);
+    assert.ok(i >= 0, `${marker} が見つからない`);
+    // 引数の既定値（options={}）を本体の波括弧と読み違えないよう、**引数の括弧を閉じてから**数える
+    let pd = 0, sawParen = false, k = i;
+    for (; k < src.length; k++) {
+      const c = src[k];
+      if (c === "(") { pd++; sawParen = true; }
+      else if (c === ")") { pd--; if (sawParen && pd === 0) { k++; break; } }
+    }
+    let d = 0, started = false;
+    for (let j = k; j < src.length; j++) {
+      const c = src[j];
+      if (c === "{") { d++; started = true; }
+      else if (c === "}") { d--; if (started && d === 0) return strip(src.slice(i, j + 1)); }
+    }
+    assert.fail(`${marker} の本体を切り出せなかった`);
+  };
+  const targets = [["PDF", "const buildShiftTableHtml="], ["Excel", "function expXl("]];
+  for (const [label, marker] of targets) {
+    const body = bodyFrom(marker);
+    assert.ok(body.split("\n").length > 50, `${label}: 本体の切り出しが短すぎる（${body.split("\n").length}行）`);
+    for (const ident of ["laborDayErrors", "laborErrTitle", "LEGEND_COLORS.laborErr"]) {
+      assert.ok(!body.includes(ident), `${label} の書き出しが ${ident} を参照している`);
+    }
+  }
 });
