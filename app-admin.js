@@ -404,6 +404,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const mainScrollRef=useRef(null);
   const periodScrollRef=useRef(null);
   const laborScrollRef=useRef(null);
+  const weekRestScrollRef=useRef(null);
   const weekScrollRef=useRef(null);
   const restScrollRef=useRef(null);
   const gridBodyRef=useRef(null);
@@ -541,6 +542,20 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(periodSnapshotEqual(period.snapshot,next))return;
     savePeriods(periods.map(p=>(p&&p.id===period.id)?{...p,snapshot:next}:p));
   },[period,staffListProp,settingsProp,periods,ownerReadOnly,todayStr]);
+  // 期間ごとの労務の合計を**期間が終わるまで書き続け、終わったら止める＝そこで凍結**する。
+  // 写し(snapshot)と同じゲート・同じ理由。これがあると年度の累計を出すのに古い期間の subs を
+  // 読み直さなくて済む（subs は直近3ヶ月の部分購読だが periods は起動時に全件購読するため）。
+  // 0 のフィールドは落として持つ（periods のサイズは毎回のDL量に直結する）。
+  const laborTotalsRef=useRef(null);
+  useEffect(()=>{
+    if(ownerReadOnly||!savePeriods||!period)return;
+    if(isPeriodEnded(period,todayStr))return;
+    const next={};
+    Object.keys(laborTotalsRef.current||{}).forEach(k=>{next[k]=laborTotalsRef.current[k];});
+    if(!Object.keys(next).length)return;
+    if(laborTotalsEqual(period.laborTotals,next))return;
+    savePeriods(periods.map(p=>(p&&p.id===period.id)?{...p,laborTotals:next}:p));
+  },[period,periods,ownerReadOnly,todayStr,savePeriods]);
   // dates / realStaff も同じ理由で参照を安定させる（上の staffList のコメント参照）。
   const dates=useMemo(()=>period?gd(period.startDate,period.endDate):[],[period]);
   const realStaff=useMemo(()=>staffList.filter(n=>!isSpacer(n)),[staffList]);
@@ -580,7 +595,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const syncScrollH=useCallback((src)=>{
     if(syncingRef.current)return;
     syncingRef.current=true;
-    syncAxis(src,[mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef,laborScrollRef],"scrollLeft","scrollWidth","clientWidth",echoHRef.current);
+    syncAxis(src,[mainScrollRef,periodScrollRef,weekScrollRef,restScrollRef,laborScrollRef,weekRestScrollRef],"scrollLeft","scrollWidth","clientWidth",echoHRef.current);
     requestAnimationFrame(()=>{syncingRef.current=false;});
   },[]);
   // 縦スクロール同期（メイングリッド⇔左右ヒートマップ）
@@ -623,6 +638,16 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     });
     return m;
   },[subs]);
+  // 休みの日も含む全シフトのマップ。週の休み判定（S-5）は「出勤が無い日」ではなく
+  // 「公休か・有給か・無記入か」を区別する必要があるため、work 限定の上のマップでは足りない。
+  const anyShiftByStaffDate=useMemo(()=>{
+    const m=new Map();
+    subs.forEach(s=>{
+      if(!s||!s.staffName||!s.shifts)return;
+      Object.entries(s.shifts).forEach(([d,sh])=>{const k=s.staffName+"|"+d;if(sh&&!m.has(k))m.set(k,sh);});
+    });
+    return m;
+  },[subs]);
   // 別名解決は app-utils.js の resolveSubByAlias に一本化する（完全一致を必ず優先）。
   // Excel出力（expXl）も同じ関数を通す＝画面とExcelが別のsubを見ることが構造的に起きない（バグチェック#105）
   const staffAliases=settings?.staffAliases||{};
@@ -631,6 +656,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const _getSub=(name)=>_getSubForPeriod(selPid,name);
   // workShiftByStaffDate も同様に別名フォールバックする（週間勤務時間の集計用）
   const _getWorkShift=(name,date)=>resolveSubByAlias(n=>workShiftByStaffDate.get(n+"|"+date),name,staffAliases);
+  const _getAnyShift=(name,date)=>resolveSubByAlias(n=>anyShiftByStaffDate.get(n+"|"+date),name,staffAliases);
   // 管理者編集値(adjustedXxx)優先、なければスタッフ提出値(xxx)にフォールバック。
   // 管理者入力の休み希望(adminRest)が付いたフィールドは実効値なし=""（休みカウント・ヒートマップ・集計・表示すべて休み扱いになる）
   const fieldRest=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];return!!(sh&&sh.adminRest&&sh.adminRest[field]);};
@@ -654,7 +680,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // 退勤≦出勤の日を検出して印を置く（項目12・案C。**保存は止めない**）。
     // 提出一覧の saveAdj と同じ isTimeOrderInvalid を通す——片方だけだと同じ状態をもう一方から作れる。
     const _flagTimeOrder=sd=>{if(isTimeOrderInvalid(sd))timeErrToastRef.current=true;return sd;};
-    const{numeric,note,rest,hasFixed}=extractNote(rawValue);
+    const{numeric,note,rest,hasFixed,leaveType:leaveCmd}=extractNote(rawValue);
     const parsed=parseTime(numeric);
     const fixedCmd=(fixedShiftEnabled&&hasFixed)?FIXED_ENTRY:null;
     // 管理者編集はadjustedXxxに保存（スタッフ提出のstart/endを保護）
@@ -678,9 +704,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(rest){
         // 休み希望(y)を未提出スタッフのセルに入力: adminRestのみ持つsubを新規作成
         const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString(),source:"grid"};
-        ns.shifts[date]={status:"work",adminRest:{[field]:true}};
+        // ya/yc は終日の休暇（第3弾・判断6）。y は従来どおり入れたフィールドだけ。
+        ns.shifts[date]=leaveCmd
+          ?{status:"work",adminRest:{start:true,end:true},leaveType:leaveCmd}
+          :{status:"work",adminRest:{[field]:true}};
         newSubs.push(ns);
-        return;
+        return _flagTimeOrder(ns.shifts[date]);
       }
       // 時間も締めもメモ(コマンド外の任意文字)も無いなら新規作成不要
       if(!parsed&&!fixedCmd&&!note)return;
@@ -698,17 +727,30 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       return _flagTimeOrder(sd0);
     }else{
       const sub={...newSubs[idx]};const shifts={...(sub.shifts||{})};const sd={...(shifts[date]||{status:"work"})};
-      if(rest){
+      if(rest&&leaveCmd){
+        // ya/yc は**終日**の休暇種別（第3弾・判断6）。同じ種別をもう一度入れると解除する。
+        if(sd.leaveType===leaveCmd){delete sd.leaveType;delete sd.adminRest;}
+        else{
+          sd.leaveType=leaveCmd;sd.adminRest={start:true,end:true};
+          delete sd.adjustedStart;delete sd.adjustedEnd;
+          delete sd.adjustedStartNote;delete sd.adjustedEndNote;
+          delete sd.adjustedStartFixed;delete sd.adjustedEndFixed;
+        }
+      }else if(rest){
         // 休み希望トグル: 同じセルへの再入力で解除。セット時は同フィールドの管理者調整値を消す
         // （スタッフ提出のstart/end/statusには触れない。実効値の抑制はgetStoredTimeのadminRest判定が担う）
         const ar={...(sd.adminRest||{})};
         if(ar[field]){delete ar[field];}
         else{ar[field]=true;delete sd[adjField];delete sd[nk];delete sd[fixedFieldKey];}
         if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;
+        // 出勤・退勤の両方が y になったら**公休**として記録する（判断6）。片側は従来どおり休み希望。
+        if(sd.adminRest&&sd.adminRest.start&&sd.adminRest.end)sd.leaveType="public";
+        else if(sd.leaveType==="public")delete sd.leaveType;
       }else if(parsed){
         // 休み希望セルへの入力は出勤扱いに変えるが、元のstatusをorigStatusに退避して消去時に復元できるようにする
         if(sd.status!=="work"&&sd.origStatus===undefined)sd.origStatus=sd.status;
         sd[adjField]=parsed;sd[nk]=note;sd.status="work";
+        if(sd.leaveType)delete sd.leaveType; // 時間を入れた＝出勤日に戻す
         if(fixedCmd)sd[fixedFieldKey]=true;else delete sd[fixedFieldKey];
         // 時間入力は同フィールドの休み希望マーク(adminRest)を解除する
         if(sd.adminRest&&sd.adminRest[field]){const ar={...sd.adminRest};delete ar[field];if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;}
@@ -1233,10 +1275,57 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     });
   },[period,periods,laborMonthDays,pastSubsLoaded]);
 
+  // その日のデータが読めているか（期間が存在し、subs の購読窓の中か）。
+  const laborDayHasData=useCallback(d=>{
+    const p=periods.find(q=>q&&q.startDate&&q.endDate&&q.startDate<=d&&d<=q.endDate);
+    if(!p)return false;
+    return pastSubsLoaded||!(p.startDate<subsWindowCutoff());
+  },[periods,pastSubsLoaded]);
+
+  // 週の休み（S-5・判断8）。月曜起算で、前の期間を跨いで数える（weeks が既に跨いでいる）。
+  // 公休と**無記入**だけを休みに数え、有給・慶弔は数えない（出勤日に取る休暇のため）。
+  const weekRestByStaff=useMemo(()=>{
+    const out={};
+    if(!isPremium)return out;
+    realStaff.forEach(name=>{
+      out[name]=weeks.map(monStr=>{
+        const kinds=[];
+        for(let i=0;i<7;i++){
+          const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);
+          kinds.push(dayRestKindOf(_getAnyShift(name,ds),laborDayHasData(ds)));
+        }
+        return weekRestStateOf(kinds);
+      });
+    });
+    return out;
+  },[isPremium,realStaff,weeks,subs,heatEdits,laborDayHasData,selPid]);
+
+  // 年度の区切り（既定4月。設定で暦年にできる）。
+  const fyStart=useMemo(()=>fiscalYearStartMonthOf(settings),[settings]);
+  const fy=useMemo(()=>period?fiscalYearOf(period.startDate,fyStart):null,[period,fyStart]);
+  // 凍結値を持たない期間ぶんを、読めている範囲でその場で数える関数を返す。
+  // 読めていない期間は null を返す＝yearLaborSummary が missingPeriodIds に積み、画面で明示する。
+  const liveTotalFor=useCallback(name=>(pp)=>{
+    if(!pp||!pp.startDate||!pp.endDate)return null;
+    if(!pastSubsLoaded&&pp.startDate<subsWindowCutoff())return null;
+    let workMin=0,paid=0,publicOff=0,ceremony=0;
+    const ds=gd(pp.startDate,pp.endDate);
+    const kinds=ds.map(d=>dayRestKindOf(_getAnyShift(name,d),true));
+    const active=kinds.some(k=>k==="work"||k==="leave");
+    ds.forEach((d,i)=>{
+      const sh=_getWorkShift(name,d);
+      if(sh)workMin+=calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh),settings);
+      if(!active)return;
+      const lt=leaveTypeOf(_getAnyShift(name,d));
+      if(lt==="paid")paid++;else if(lt==="ceremony")ceremony++;else if(kinds[i]==="rest")publicOff++;
+    });
+    return{workMin,paid,publicOff,ceremony};
+  },[settings,subs,pastSubsLoaded,staffAliases,anyShiftByStaffDate,workShiftByStaffDate]);
+
   // スタッフ1人ぶんの労務の集計。日次の件数は**選択中の期間の日**、月単位の判定は**暦月**で数える
   // （利用者が今そこで直せる範囲＝期間、法令・協定の単位＝月）。
   const laborByStaff=useMemo(()=>{
-    const out={};
+    const out={},totals={};
     if(!isPremium||!period||!laborFrame)return out;
     const ls=laborSettingsOf(settings);
     const agDay=ls.agreementDailyOtMin/60, agMonth=ls.agreementMonthlyOtMin/60, fixOt=ls.fixedOvertimeMin/60;
@@ -1257,16 +1346,35 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         return arr;
       }):[];
       const te=dates.reduce((a,d)=>a+(timeErrors[`${name}|${d}`]?1:0),0);
-      const findings=laborFindingsFor({laborSystem:sys,dayMins,weekDayMins:weekMins,timeErrorCount:te,
+      const bsCount=dates.reduce((a,d)=>{const sh=_getWorkShift(name,d);return a+(sh&&isBreakShort(sh,settings,d,name)?1:0);},0);
+      const weekNoRest=(weekRestByStaff[name]||[]).some(w=>w&&w.key==="none");
+      const findings=laborFindingsFor({laborSystem:sys,dayMins,weekDayMins:weekMins,timeErrorCount:te,breakShortCount:bsCount,
         monthOtH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthReady});
       const guide=sys!=="A"?{key:"none",label:"",color:null}
         :(laborMonthReady?guideStatusOf(monthWorkMin,laborFrame.baseMin,ls.fixedOvertimeMin,laborFrame.guideMin)
           :{key:"none",label:"要確認",color:"var(--c-text3)",title:"その月の日がまだデータで埋まっていません（後半の期間が未作成、または購読の窓の外）"});
-      const overall=overallVerdictOf({laborSystem:sys,findings,guideKey:guide.key,monthReady:laborMonthReady});
-      out[name]={sys,monthWorkMin,monthOtH,findings,guide,overall};
+      const overall=overallVerdictOf({laborSystem:sys,findings,guideKey:guide.key,weekNoRest,monthReady:laborMonthReady});
+      // この期間の休暇日数（公休は無記入も数える。ただし出勤も休暇も1日も無い人は0＝記録しない）
+      const kinds=dates.map(d=>dayRestKindOf(_getAnyShift(name,d),true));
+      const active=kinds.some(k=>k==="work"||k==="leave");
+      let paidD=0,pubD=0,ceD=0;
+      if(active)dates.forEach((d,i)=>{
+        const lt=leaveTypeOf(_getAnyShift(name,d));
+        if(lt==="paid")paidD++;else if(lt==="ceremony")ceD++;else if(kinds[i]==="rest")pubD++;
+      });
+      // 年度の累計。**期間が凍結時に残した laborTotals を優先**するので、過去参照を押さなくても出る。
+      const yr=fy==null?null:yearLaborSummary(periods,name,fy,fyStart,liveTotalFor(name));
+      out[name]={sys,monthWorkMin,monthOtH,findings,guide,overall,weekNoRest,
+        periodLeave:{paid:paidD,publicOff:pubD,ceremony:ceD},year:yr,
+        paidRemain:yr?paidLeaveRemaining(settings,name,yr.paid):null};
+      // この期間ぶんの合計（凍結時に periods へ残す値）。上の useEffect が書く。
+      const pm=dates.reduce((a,d)=>a+laborDayMin(name,d),0);
+      const c=compactLaborTotal({workMin:pm,paid:paidD,publicOff:pubD,ceremony:ceD});
+      if(c)totals[name]=c;
     });
+    laborTotalsRef.current=totals;
     return out;
-  },[isPremium,period,laborFrame,laborMonthDays,laborMonthReady,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid]);
+  },[isPremium,period,laborFrame,laborMonthDays,laborMonthReady,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart]);
 
   const laborFindings=useMemo(()=>{
     if(!isPremium)return[];
@@ -1577,7 +1685,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(focusKey===key)return rb; // 編集中は通常背景
     if(timeErrors[`${name}|${date}`])return LEGEND_COLORS.timeErr;
     if(dupErrors[`${name}|${date}`])return LEGEND_COLORS.dup;
-    if(fieldRest(name,date,field))return rb; // 休み希望(y)セルは通常背景+斜線（noteの黄色は付けない）
+    if(fieldRest(name,date,field)){
+      // 終日の休暇（公休=灰・有給=薄青・慶弔=桃）は色で見せる。半日の y は従来どおり通常背景+斜線。
+      const lt=leaveTypeOf(_getSub(name)?.shifts?.[date]);
+      const lk=lt?LEAVE_TYPE_LEGEND_KEY[lt]:null;
+      return(lk&&LEGEND_COLORS[lk])?LEGEND_COLORS[lk]:rb;
+    }
     // note有無を localEdits/保存値から判定
     let note="";
     if(key in localEdits){note=extractNote(localEdits[key]).note;}
@@ -2317,10 +2430,52 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                 // 177:08 と 177:00 の差が判定を分けるので分まで出す。
                 return{label:fmtMin(l.monthWorkMin),title:`月の実働 ${fmtMin(l.monthWorkMin)}`};}},
               {id:"labor_guide",label:"目安",getText:name=>{const l=laborByStaff[name];if(!l||l.sys!=="A")return{};return{label:l.guide.label,color:l.guide.color,title:l.guide.title||l.guide.label};}},
+              {id:"labor_year",label:fy==null?"年計":`${fiscalYearLabel(fy,fyStart)}計`,getText:name=>{const l=laborByStaff[name];
+                if(!l||l.sys==="none"||!l.year)return{};
+                const miss=l.year.missingPeriodIds.length;
+                return{label:(l.year.workMin>0?fmtMin(l.year.workMin):"")+(miss?"＋":""),
+                  color:miss?"var(--c-text3)":"var(--c-text2)",
+                  title:miss?`読み込めていない期間が${miss}件あります（「3ヶ月より前の提出データも読み込む」で正確になります）`:`${fiscalYearLabel(fy,fyStart)}の累計 ${fmtMin(l.year.workMin)}`};}},
+              {id:"labor_leave",label:"休暇",getText:name=>{const l=laborByStaff[name];
+                if(!l||!l.periodLeave)return{};
+                const{paid,publicOff,ceremony}=l.periodLeave;
+                if(!paid&&!publicOff&&!ceremony)return{};
+                return{label:`有${paid}/公${publicOff}/慶${ceremony}`,title:`この期間 有給${paid}日・公休${publicOff}日・慶弔${ceremony}日`};}},
+              {id:"labor_paid",label:"有給残",getText:name=>{const l=laborByStaff[name];
+                if(!l||l.paidRemain==null)return{};
+                return{label:`${l.paidRemain}日`,color:l.paidRemain<0?"#e53935":"var(--c-text2)",bold:l.paidRemain<0,
+                  title:`付与 ${(settings.paidLeaveGranted||{})[name]}日 − ${fiscalYearLabel(fy,fyStart)}の消化 ${l.year?l.year.paid:0}日`};}},
               {id:"labor_verdict",label:"総括",_bg:"rgba(248,112,54,0.05)",getText:name=>{const l=laborByStaff[name];if(!l)return{};
                 const c=l.overall.key==="fix"?"#e53935":l.overall.key==="under_guide"?"#B8860B":l.overall.key==="ot"?"#3B82F6":l.overall.key==="pending"?"var(--c-text3)":"var(--c-text2)";
                 return{label:l.overall.label,color:c,bold:l.overall.key==="fix",title:(l.findings||[]).map(f=>f.label).join("、")};}},
             ]}
+          />}
+
+          {/* === 週の休み（S-5）。公休と無記入だけを数え、有給・慶弔は数えない === */}
+          {isPremium&&weeks.length>0&&<SummaryTable
+            title="週の休み（前期間含む）"
+            rowLabel="週"
+            scrollRef={weekRestScrollRef}
+            onScroll={e=>syncScrollH(e.currentTarget)}
+            fitAll={fitAll}
+            labelW={DATE_COL_W}
+            fullView={fullView}
+            tableW={fvTableW}
+            mapGridCols={mapGridCols}
+            spacerTh={spacerTh}
+            spacerCell={spacerCell}
+            colW={colW}
+            VTH={VTH}
+            rows={weeks.map((monStr,wi)=>{
+              const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);
+              return{id:"wr_"+monStr,label:`${m.getDate()}〜${sun.getDate()}日`,getText:name=>{
+                const st=(weekRestByStaff[name]||[])[wi];
+                if(!st||st.key==="skip")return{};
+                return{label:st.label,bold:st.key==="none",
+                  color:st.key==="none"?"#e53935":st.key==="unknown"?"var(--c-text3)":"var(--c-text2)",
+                  title:st.key==="unknown"?"この週の7日ぶんのデータが揃っていません":st.label};
+              }};
+            })}
           />}
 
           {/* ===操作方法レジェンド（CELL_COMMANDS / CELL_COLOR_LEGEND から自動生成）=== */}
@@ -4179,13 +4334,13 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   const fil=subs.filter(s=>s.source!=="grid"&&(!fn||s.staffName.includes(fn)||dispName(s).includes(fn))&&(fp==="all"||s.periodId===fp)).sort((a,b)=>{let va=sf==="submittedAt"?subLastActionTime(a):(sf==="staffName"?dispName(a):(a[sf]||"")),vb=sf==="submittedAt"?subLastActionTime(b):(sf==="staffName"?dispName(b):(b[sf]||""));return(va<vb?-1:va>vb?1:0)*(sdr==="asc"?1:-1);});
   const gpl=id=>periods.find(p=>p.id===id)?.label||"不明";
   const saveAdj=(subId,date,field,value)=>{
-    const newSubs=subs.map(s=>{if(s.id!==subId)return s;const sh={...(s.shifts||{})};sh[date]={...sh[date]};if(value)sh[date][field]=value;else delete sh[date][field];return{...s,shifts:sh};});
+    const newSubs=subs.map(s=>{if(s.id!==subId)return s;const sh={...(s.shifts||{})};sh[date]={...sh[date]};if(value!==""&&value!=null)sh[date][field]=value;else delete sh[date][field];return{...s,shifts:sh};});
     onSave(newSubs);
     // 退勤≦出勤（項目12・案C）。**保存は止めない**——シフト作成タブの applyEditToSubs と
     // 同じ isTimeOrderInvalid を通す。片方だけに入れると同じ状態をもう一方の入口から作れる。
     {const after=(newSubs.find(x=>x.id===subId)||{}).shifts;
      if(after&&isTimeOrderInvalid(after[date])&&tt)tt(TIME_ORDER_ERROR_HINT);}
-    setDet(prev=>{if(!prev||prev.id!==subId)return prev;const sh={...(prev.shifts||{})};sh[date]={...sh[date]};if(value)sh[date][field]=value;else delete sh[date][field];return{...prev,shifts:sh};});
+    setDet(prev=>{if(!prev||prev.id!==subId)return prev;const sh={...(prev.shifts||{})};sh[date]={...sh[date]};if(value!==""&&value!=null)sh[date][field]=value;else delete sh[date][field];return{...prev,shifts:sh};});
   };
   // 詳細モーダルの勤務時間も「その提出の期間の属性」で引く。行の上限判定（:3815 の pAttrSettings）だけが
   // keepAttrs を当てていたため、keepAttrs を持つ期間では **同じ提出の同じ日** が行とモーダルで食い違っていた
@@ -4292,7 +4447,7 @@ ds.forEach(d=>{const nm=_min(resolvedName,d);if(typeLim.daily&&nm>typeLim.daily*
           {isPremium&&(()=>{const wP=periods.find(p=>p.id===det.periodId);if(!wP)return null;const wSS=subs.filter(s=>s.staffName===det.staffName||(staffAliases[det.staffName]||[]).includes(s.staffName));const perDs=gd(wP.startDate,wP.endDate);const wkSet=new Set();perDs.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet.add(fd(mon));});const weeks=[...wkSet].sort();const mo=wP.startDate.slice(0,7);const _dayMin=d=>{const sh=_shiftAt(det.staffName,d);return sh?calcNetWorkMinutes(sh,getBreaksFor(detAttrSettings,d,det.staffName,sh),getOT(det.staffName,settings,sh),settings):0;};const moDs=new Set();wSS.forEach(s=>Object.keys(s.shifts||{}).forEach(d=>{if(d.startsWith(mo))moDs.add(d);}));let moTot=0;moDs.forEach(d=>{moTot+=_dayMin(d);});const wkData=weeks.map(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);tot+=_dayMin(fd(dd));}return{monStr,tot};});return(<div style={{marginBottom:4}}><div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",margin:"6px 0 5px"}}>週間勤務時間</div><div style={{display:"flex",gap:4,flexWrap:"wrap"}}>{wkData.map(({monStr,tot})=>{const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);const lbl=`${m.getMonth()+1}/${m.getDate()}〜${sun.getMonth()+1}/${sun.getDate()}`;return(<div key={monStr} style={{background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"var(--c-text4)"}}>{lbl}</div><div style={{fontSize:12,fontWeight:700,color:tot>0?"var(--c-text2)":"var(--c-text4)"}}>{tot>0?fmtMin(tot):"−"}</div></div>);})}{moTot>0&&<div style={{background:"rgba(248,112,54,.08)",border:"1px solid rgba(248,112,54,.2)",borderRadius:8,padding:"5px 8px",textAlign:"center",minWidth:76}}><div style={{fontSize:9,color:"#FFA070"}}>{mo.replace("-","年")}月計</div><div style={{fontSize:12,fontWeight:700,color:"#FFA070"}}>{fmtMin(moTot)}</div></div>}</div></div>);})()}
           {det.comment&&<div style={{background:"var(--c-input)",borderRadius:8,padding:"10px 12px",margin:"8px 0",fontSize:13,color:"var(--c-text2)"}}>{det.comment}</div>}
           <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-            <thead><tr>{["日付","区分","出勤","退勤",...(isPremium?["時間"]:[])].map(h=><th key={h} style={{background:"var(--c-input)",color:"var(--c-text2)",padding:"8px 12px",textAlign:"left",fontWeight:600}}>{h}</th>)}</tr></thead>
+            <thead><tr>{["日付","区分","出勤","退勤",...(isPremium?["休憩","休暇","時間"]:[])].map(h=><th key={h} style={{background:"var(--c-input)",color:"var(--c-text2)",padding:"8px 12px",textAlign:"left",fontWeight:600}}>{h}</th>)}</tr></thead>
             <tbody>{Object.keys(det.shifts||{}).sort().map(ds=>{const d=pd(ds),s=det.shifts[ds],iw=s&&s.status==="work";const detOT2=isPremium&&iw?getOT(det.staffName,settings,s):0;const nm=iw?calcNetWorkMinutes(s,getBreaksFor(detAttrSettings,ds,det.staffName,s),detOT2,settings):0;const effEnd=isPremium&&iw&&detOT2>0&&(s.adjustedEnd??s.end)?`→${(()=>{const en=s.adjustedEnd??s.end;const[h,m]=en.split(":").map(Number);const tot=h*60+m+detOT2;return`${Math.floor(tot/60)}:${String(tot%60).padStart(2,"0")}`;})()}`:null;return(<tr key={ds}>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:"var(--c-text2)"}}>{d.getMonth()+1}/{d.getDate()}（{WD[d.getDay()]}）</td>
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>{iw?<span style={{background:"rgba(248,112,54,.15)",color:"#FFA070",border:"1px solid rgba(248,112,54,.3)",padding:"2px 7px",borderRadius:4,fontSize:12,fontWeight:600}}>出勤</span>:<span style={{background:"var(--c-input)",color:"var(--c-text3)",padding:"2px 7px",borderRadius:4,fontSize:12}}>休み</span>}</td>
@@ -4302,6 +4457,25 @@ ds.forEach(d=>{const nm=_min(resolvedName,d);if(typeLim.daily&&nm>typeLim.daily*
               <td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
                 {iw?<div>{isPremium&&<div style={{color:"var(--c-text4)",fontSize:11}}>{s.end}</div>}{isPremium?<><select value={s.adjustedEnd||""} onChange={e=>saveAdj(det.id,ds,"adjustedEnd",e.target.value||"")} style={{fontSize:16,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.adjustedEnd?"#3B82F6":"var(--c-border)"}`,borderRadius:4,color:s.adjustedEnd?"#3B82F6":"var(--c-text)",cursor:"pointer",marginTop:2,maxWidth:72}}><option value="">提出値</option>{TO.map(t=><option key={t} value={t}>{t}</option>)}</select>{effEnd&&<div style={{fontSize:10,color:"#10B981",marginTop:2,fontWeight:600}}>{effEnd}（+{detOT2}分）</div>}</>:<span style={{fontSize:13,color:"var(--c-text2)"}}>{s.end||"-"}</span>}</div>:"-"}
               </td>
+              {/* 休憩の日別上書き（第3弾・項目8）。空欄＝店舗の設定どおり、0＝休憩なし。
+                  saveAdj は "" を削除・0 を値として扱う（0 が falsy で消えないようにしてある）。 */}
+              {isPremium&&<td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
+                {iw?<div>
+                  <div style={{color:"var(--c-text4)",fontSize:11}}>{(()=>{const b=getBreaksFor(detAttrSettings,ds,det.staffName,s);const st2=x=>{const q=String(x).split(":").map(Number);return q[0]*60+q[1];};const mn=b.reduce((a,br)=>a+Math.max(0,st2(br.end)-st2(br.start)),0);return mn>0?`${mn}分`:"なし";})()}</div>
+                  <input type="number" min={0} max={480} step={5} value={s.adjustedBreak==null?"":s.adjustedBreak}
+                    placeholder="設定"
+                    onChange={e=>{const v=e.target.value;saveAdj(det.id,ds,"adjustedBreak",v===""?"":Math.max(0,Math.min(480,parseInt(v)||0)));}}
+                    style={{fontSize:16,padding:"3px 5px",width:64,background:"var(--c-input)",border:`1px solid ${s.adjustedBreak!=null?"#3B82F6":"var(--c-border)"}`,borderRadius:4,color:s.adjustedBreak!=null?"#3B82F6":"var(--c-text)",marginTop:2}}/>
+                </div>:"-"}
+              </td>}
+              {/* 休暇種別（第3弾・項目9）。グリッドの y/ya/yc と同じ shift.leaveType を編集する。 */}
+              {isPremium&&<td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
+                <select value={leaveTypeOf(s)||""} onChange={e=>saveAdj(det.id,ds,"leaveType",e.target.value||"")}
+                  style={{fontSize:16,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.leaveType?"#3B82F6":"var(--c-border)"}`,borderRadius:4,color:s.leaveType?"#3B82F6":"var(--c-text)",cursor:"pointer",maxWidth:86}}>
+                  <option value="">—</option>
+                  {LEAVE_TYPES.map(t=><option key={t} value={t}>{LEAVE_TYPE_LABELS[t]}</option>)}
+                </select>
+              </td>}
               {isPremium&&<td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)",color:nm>0?"var(--c-text2)":"var(--c-text3)"}}>{iw?fmtMin(nm):"-"}</td>}
             </tr>);})}
             </tbody>
@@ -4889,6 +5063,17 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             </div>
           </div>
           <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6}}>1日の延長上限を0にすると「残業を前提にしない運用」とみなし、目安＝総枠になります。</div>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
+            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>年の区切り</span>
+            <select value={fiscalYearStartMonthOf(settings)} onChange={e=>saveLabor("fiscalYearStartMonth",parseInt(e.target.value)||4)}
+              style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+              <option value={1}>1月（暦年）</option>
+              <option value={4}>4月（年度）</option>
+              <option value={7}>7月</option>
+              <option value={10}>10月</option>
+            </select>
+            <span style={{fontSize:11,color:"var(--c-text4)"}}>有給の残数と年間の累計勤務時間の区切りに使います</span>
+          </div>
           {/* 法定の上限一覧。判定する・しないを取り違えないよう AGREEMENT_LEGAL_ITEMS から自動生成する */}
           <div style={{background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,padding:"8px 10px"}}>
             <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>法定の上限と、本機能が判定する範囲</div>
@@ -4903,6 +5088,56 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             ))}
           </div>
         </div>
+      </AC>);
+    })()}
+
+    {plan==="premium"&&(()=>{
+      const mode=breakModeOf(settings);
+      const L=breakLengthOf(settings);
+      const saveMode=m=>onSave({...settings,breakMode:m});
+      const saveLen=(k,v)=>onSave({...settings,breakLength:{...L,[k]:v}});
+      return(<AC title="休憩の決め方">
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>勤務時間から差し引く休憩の決め方を選びます。変更しなければ従来どおり「時間帯方式」で、候補タブで登録した休憩帯と勤務が重なった分だけを引きます。</div>
+        {BREAK_MODES.map(m=>(
+          <label key={m} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:8,cursor:"pointer"}}>
+            <input type="radio" name="breakmode" checked={mode===m} onChange={()=>saveMode(m)} style={{marginTop:3,width:18,height:18,flexShrink:0}}/>
+            <span style={{fontSize:13,color:"var(--c-text)"}}>{BREAK_MODE_LABELS[m]}</span>
+          </label>
+        ))}
+        {mode==="length"&&<div style={{marginTop:6,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
+          <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:8}}>引いたあとの実働がその段を超える範囲で、いちばん長い段を使います（労基法34条の「労働時間」は実働のため）。</div>
+          <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+            {[["over8Min","実働8時間超"],["over6Min","実働6時間超"]].map(([k,lbl])=>(
+              <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
+                <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{lbl}</span>
+                <input type="number" min={0} max={240} step={5} value={L[k]}
+                  onChange={e=>saveLen(k,Math.max(0,Math.min(240,parseInt(e.target.value)||0)))}
+                  style={{...AI,width:64,textAlign:"center",padding:"5px 6px"}}/>
+                <span style={{fontSize:11,color:"var(--c-text4)"}}>分</span>
+              </div>
+            ))}
+          </div>
+        </div>}
+        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:10}}>どちらの方式でも「実働6時間超なのに休憩が足りない日」はシフト作成タブの労務判定に出ます。日ごとの例外は提出一覧の詳細から変更できます。</div>
+      </AC>);
+    })()}
+
+    {plan==="premium"&&staffList.filter(n=>!isSpacer(n)).length>0&&(()=>{
+      const granted=settings.paidLeaveGranted||{};
+      const saveG=(n,v)=>{const g={...granted};if(v==="")delete g[n];else g[n]=v;onSave({...settings,paidLeaveGranted:g});};
+      return(<AC title="有給の付与日数">
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>スタッフごとの付与日数を入力すると、シフト作成タブの労務判定に「有給残」が出ます（付与日数 −{" "}{fiscalYearLabel(fiscalYearOf(fd(new Date()),fiscalYearStartMonthOf(settings)),fiscalYearStartMonthOf(settings))}に消化した有給の日数）。空欄にすると残数を出しません。</div>
+        <div style={{overflowX:"auto"}}><div style={{minWidth:"max-content"}}>
+          {staffList.filter(n=>!isSpacer(n)).map(n=>(
+            <div key={n} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+              <span style={{fontSize:13,color:"var(--c-text2)",minWidth:96,whiteSpace:"nowrap"}}>{n}</span>
+              <input type="number" min={0} max={80} step={0.5} value={granted[n]==null?"":granted[n]} placeholder="未設定"
+                onChange={e=>{const v=e.target.value;saveG(n,v===""?"":Math.max(0,Math.min(80,parseFloat(v)||0)));}}
+                style={{...AI,width:80,textAlign:"center",padding:"5px 6px"}}/>
+              <span style={{fontSize:11,color:"var(--c-text4)"}}>日</span>
+            </div>
+          ))}
+        </div></div>
       </AC>);
     })()}
 

@@ -1468,6 +1468,7 @@ test("ADMIN_SHIFT_FIELDS: 管理者が日ごとに書き込む全フィールド
   const expected = [
     "adjustedStart", "adjustedEnd", "adjustedStartNote", "adjustedEndNote",
     "adminRest", "extraStart", "extraEnd", "adjustedStartFixed", "adjustedEndFixed", "origStatus",
+    "adjustedBreak", "leaveType",
   ];
   assert.deepStrictEqual([...u.ADMIN_SHIFT_FIELDS].sort(), expected.sort());
 });
@@ -3372,6 +3373,9 @@ test("S-6 総括判定: 上から順に 要修正／目安未満／残業あり�
   for (const o of [{ timeErrorCount: 1 }, { breakShortCount: 1 }]) {
     assert.strictEqual(v({ laborSystem: "B", findings: F({ laborSystem: "B", ...o }), guideKey: "none" }), "要修正");
   }
+  // 判定対象外は休憩不足も出さない（労務の判定のため）。時刻の入力ミスだけは区分によらず出る
+  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "none", breakShortCount: 2, timeErrorCount: 1 }),
+    ["時刻の入力ミス1日"]);
   assert.strictEqual(v({ laborSystem: null, findings: F({ laborSystem: null }), guideKey: "none" }), "要修正", "区分が空欄");
   // 判定対象外は空欄
   assert.strictEqual(v({ laborSystem: "none", findings: [], guideKey: "none" }), "");
@@ -3381,4 +3385,191 @@ test("S-6 総括判定: 上から順に 要修正／目安未満／残業あり�
   assert.strictEqual(v({ laborSystem: "A", findings: [], guideKey: "none", monthReady: false }), "要確認");
   // 週の休みの ×休なし は第3弾で渡す。渡せば要修正になる
   assert.strictEqual(v({ laborSystem: "B", findings: [], guideKey: "none", weekNoRest: true }), "要修正");
+});
+
+// ===== 労務判定 第3弾（休みと休憩）=====
+// 期待値は確定仕様 S-3・S-5・S-6 からの転記。実装の出力から逆生成していない。
+const BT = b => ({ breakTimes: { weekday: b, sat: [], sun: [], holSat: [], holSun: [] }, candidates: [] });
+const WD = "2026-10-01"; // 木曜（平日）
+const netOf = (st, sh, name = "田中") =>
+  u.calcNetWorkMinutes(sh, u.getBreaksFor(st, WD, name, sh), u.getOT(name, st, sh), st);
+
+test("S-3 休憩: 両方式で結果が食い違う4ケースが表どおりになる", () => {
+  const cases = [
+    // [シフト, 休憩帯, 長さ方式の実働, 時間帯方式の実働]
+    [["09:00", "15:00"], [{ start: "12:00", end: "13:00" }], HM(6, 0), HM(5, 0)],
+    [["11:00", "23:00"], [{ start: "14:00", end: "17:00" }], HM(11, 0), HM(9, 0)],
+    [["12:30", "21:00"], [{ start: "12:00", end: "13:00" }], HM(7, 45), HM(8, 30)],
+    [["17:30", "23:00"], [], HM(5, 30), HM(5, 30)],
+  ];
+  cases.forEach(([[a, b], breaks, lenExp, bandExp], i) => {
+    const sh = { status: "work", start: a, end: b };
+    assert.strictEqual(netOf({ ...BT(breaks), breakMode: "length" }, sh), lenExp, `ケース${i + 1} 長さ方式`);
+    assert.strictEqual(netOf(BT(breaks), sh), bandExp, `ケース${i + 1} 時間帯方式`);
+  });
+});
+
+test("S-3 休憩の段は実働で決める（拘束8.5h は 1.0h ではなく 0.75h）", () => {
+  // S-3 の本文は「拘束>8h→1.0h」だが同じ節の表はケース3で 0.75h・実働7.75h としている。
+  // 労基法34条の「労働時間」も実働なので表を採った。この境界を固定する。
+  const st = { ...BT([]), breakMode: "length" };
+  assert.strictEqual(netOf(st, { status: "work", start: "12:30", end: "21:00" }), HM(7, 45), "拘束8.5h → 45分");
+  assert.strictEqual(netOf(st, { status: "work", start: "11:00", end: "23:00" }), HM(11, 0), "拘束12h → 60分");
+  assert.strictEqual(netOf(st, { status: "work", start: "09:00", end: "15:00" }), HM(6, 0), "拘束6h ちょうどは0");
+  assert.strictEqual(netOf(st, { status: "work", start: "09:00", end: "15:46" }), HM(6, 1), "拘束6h46m → 45分");
+});
+
+test("S-3 休憩不足: 実働>6h の日だけが対象で、基準を下回ると不足", () => {
+  const short = (st, sh) => u.isBreakShort(sh, st, WD, "田中");
+  // 時間帯方式で 12:30〜21:00＋休憩帯12:00〜13:00 は控除0＝主たる検出対象
+  assert.strictEqual(short(BT([{ start: "12:00", end: "13:00" }]), { status: "work", start: "12:30", end: "21:00" }), true);
+  // 長さ方式なら 0.75h 引かれるので不足にならない（S-3 の注記どおり）
+  assert.strictEqual(short({ ...BT([{ start: "12:00", end: "13:00" }]), breakMode: "length" },
+    { status: "work", start: "12:30", end: "21:00" }), false);
+  // 実働6h ちょうどは対象外
+  assert.strictEqual(short(BT([]), { status: "work", start: "09:00", end: "15:00" }), false);
+  // 実働>8h は 0.999h が基準。45分では不足、60分なら足りる
+  assert.strictEqual(short(BT([]), { status: "work", start: "09:00", end: "18:30", adjustedBreak: 45 }), true);
+  assert.strictEqual(short(BT([]), { status: "work", start: "09:00", end: "18:30", adjustedBreak: 60 }), false);
+  // 休みの日は対象外
+  assert.strictEqual(short(BT([]), { status: "holiday" }), false);
+});
+
+test("S-3 休憩不足: 退勤延長が付いた日でも 拘束 − 実働 が負にならない", () => {
+  // 拘束も実働も同じ範囲（延長・締を含む）で測るので、控除より延長が長くても負にならない。
+  const st = { ...BT([{ start: "12:00", end: "13:00" }]), overtimeSettings: { byStaff: { 田中: { lunch: 120, dinner: 120 } } } };
+  const sh = { status: "work", start: "09:00", end: "18:00" };
+  const work = netOf(st, sh);
+  const bind = u.shiftBindingMin(sh, st, "田中");
+  assert.ok(bind - work >= 0, `拘束${bind} − 実働${work} が負`);
+  assert.strictEqual(bind - work, 60, "引かれた休憩そのものと一致する");
+  // 締の追加出勤がある日も同じ
+  const sh2 = { status: "work", start: "09:00", end: "18:00", extraStart: "23:00", extraEnd: "25:00" };
+  assert.ok(u.shiftBindingMin(sh2, st, "田中") - netOf(st, sh2) >= 0);
+});
+
+test("項目8 日別の休憩上書き(adjustedBreak): 方式によらず最優先で効く", () => {
+  const sh = m => ({ status: "work", start: "09:00", end: "18:00", adjustedBreak: m });
+  assert.strictEqual(netOf(BT([{ start: "12:00", end: "13:00" }]), sh(30)), HM(8, 30), "時間帯方式の60分より優先");
+  assert.strictEqual(netOf({ ...BT([]), breakMode: "length" }, sh(30)), HM(8, 30), "長さ方式の60分より優先");
+  assert.strictEqual(netOf(BT([{ start: "12:00", end: "13:00" }]), sh(0)), HM(9, 0), "0 は「休憩なし」として効く");
+  assert.ok(u.ADMIN_SHIFT_FIELDS.includes("adjustedBreak"), "再提出で消えないよう登録されている");
+  assert.ok(u.ADMIN_SHIFT_FIELDS.includes("leaveType"));
+});
+
+test("項目8 設定キーの無い既存店舗は時間帯方式＝現行挙動（既定の担保）", () => {
+  assert.strictEqual(u.breakModeOf({}), "band");
+  assert.strictEqual(u.breakModeOf(null), "band");
+  assert.strictEqual(u.breakModeOf({ breakMode: "なにか" }), "band");
+  assert.deepStrictEqual(u.breakLengthOf({}), u.DEFAULT_BREAK_LENGTH);
+  // 合成の休憩帯には synthetic:true が付く（時間帯として読む側＝ヒートマップが除外できる）
+  const b = u.getBreaksFor({ ...BT([]), breakMode: "length" }, WD, "田中", { status: "work", start: "09:00", end: "20:00" });
+  assert.strictEqual(b.length, 1);
+  assert.strictEqual(b[0].synthetic, true);
+  assert.ok(!u.getBreaksFor(BT([{ start: "12:00", end: "13:00" }]), WD, "田中",
+    { status: "work", start: "09:00", end: "20:00" })[0].synthetic, "時間帯方式は実在の帯");
+});
+
+test("項目9 休暇種別: ya=有給・yc=慶弔 がコマンドとして登録され、略称に使えない", () => {
+  assert.strictEqual(u.restCommandOf("ya").leaveType, "paid");
+  assert.strictEqual(u.restCommandOf("yc").leaveType, "ceremony");
+  assert.strictEqual(u.restCommandOf("y").leaveType, undefined, "y は種別を持たない（終日なら公休）");
+  assert.strictEqual(u.restCommandOf("休").key, "y", "別名");
+  assert.strictEqual(u.restCommandOf("ｙ").key, "y");
+  assert.strictEqual(u.restCommandOf("9ya"), null, "時間付きはコマンドではない");
+  assert.strictEqual(u.extractNote("ya").rest, true);
+  assert.strictEqual(u.extractNote("ya").leaveType, "paid");
+  assert.ok(u.isReservedShopAbbr("ya"), "店舗略称として登録できない");
+  assert.ok(u.isReservedShopAbbr("yc"));
+  assert.ok(!u.isReservedShopAbbr("三"), "通常の略称は通る（非回帰）");
+  ["leavePublic", "leavePaid", "leaveCeremony"].forEach(k =>
+    assert.ok(u.CELL_COLOR_LEGEND.some(c => c.key === k), `legend ${k} missing`));
+});
+
+test("判断8 leaveTypeOf: 導入前の終日 y（leaveType なし）は公休として扱う", () => {
+  assert.strictEqual(u.leaveTypeOf({ status: "work", adminRest: { start: true, end: true } }), "public");
+  assert.strictEqual(u.leaveTypeOf({ status: "holiday" }), "public", "スタッフ提出の終日休み");
+  assert.strictEqual(u.leaveTypeOf({ status: "work", adminRest: { start: true } }), null, "半日 y は休み希望のまま");
+  assert.strictEqual(u.leaveTypeOf({ status: "work", leaveType: "paid" }), "paid");
+  assert.strictEqual(u.leaveTypeOf({ status: "work", start: "09:00", end: "18:00" }), null);
+});
+
+test("S-5 週の休み: 休n／×休なし／要確認／評価対象外", () => {
+  const W = k => u.weekRestStateOf(k);
+  assert.strictEqual(W(["work", "work", "work", "work", "work", "rest", "rest"]).label, "休2");
+  assert.strictEqual(W(["work", "work", "work", "work", "work", "work", "work"]).label, "×休なし");
+  // 有給・慶弔は休みに数えない（有給の週も別に公休が1日以上要る）
+  assert.strictEqual(W(["work", "work", "work", "work", "work", "work", "leave"]).label, "×休なし");
+  assert.strictEqual(W(["work", "work", "work", "work", "work", "leave", "rest"]).label, "休1");
+  // 揃わない日があれば要確認
+  assert.strictEqual(W(["work", "work", "nodata", "rest", "rest", "rest", "rest"]).label, "要確認");
+  // 全日が無記入の週は評価対象外（未提出の期間を「休みだらけ」と数えない）
+  assert.strictEqual(W(["rest", "rest", "rest", "rest", "rest", "rest", "rest"]).key, "skip");
+});
+
+test("S-5 dayRestKindOf: 無記入は休み・有給と慶弔は leave・出勤は work", () => {
+  assert.strictEqual(u.dayRestKindOf(undefined, true), "rest", "無記入＝公休として数える");
+  assert.strictEqual(u.dayRestKindOf(undefined, false), "nodata");
+  assert.strictEqual(u.dayRestKindOf({ status: "work", leaveType: "paid" }, true), "leave");
+  assert.strictEqual(u.dayRestKindOf({ status: "work", leaveType: "ceremony" }, true), "leave");
+  assert.strictEqual(u.dayRestKindOf({ status: "work", adminRest: { start: true, end: true } }, true), "rest");
+  assert.strictEqual(u.dayRestKindOf({ status: "work", start: "09:00", end: "18:00" }, true), "work");
+  assert.strictEqual(u.dayRestKindOf({ status: "holiday" }, true), "rest");
+  assert.strictEqual(u.dayRestKindOf({ status: "work", adminRest: { start: true }, end: "22:00" }, true), "work",
+    "半日 y は出勤日のまま");
+});
+
+test("S-6 総括判定: 週の休みに ×休なし があれば要修正（第3弾で戻した条件）", () => {
+  assert.strictEqual(u.overallVerdictOf({ laborSystem: "B", findings: [], guideKey: "none", weekNoRest: true }).label, "要修正");
+  assert.strictEqual(u.overallVerdictOf({ laborSystem: "A", findings: [], guideKey: "ok", weekNoRest: true }).label, "要修正");
+  assert.strictEqual(u.overallVerdictOf({ laborSystem: "A", findings: [], guideKey: "ok", weekNoRest: false }).label, "OK");
+});
+
+test("年度の区切り: 既定は4月開始、設定で暦年にできる", () => {
+  assert.strictEqual(u.fiscalYearStartMonthOf({}), 4);
+  assert.strictEqual(u.fiscalYearStartMonthOf({ laborSettings: { fiscalYearStartMonth: 1 } }), 1);
+  assert.strictEqual(u.fiscalYearOf("2026-03-31", 4), 2025);
+  assert.strictEqual(u.fiscalYearOf("2026-04-01", 4), 2026);
+  assert.strictEqual(u.fiscalYearOf("2026-12-31", 1), 2026);
+  assert.strictEqual(u.fiscalYearLabel(2026, 4), "2026年度");
+  assert.strictEqual(u.fiscalYearLabel(2026, 1), "2026年");
+});
+
+test("年度の合計: 期間に残した laborTotals を優先し、無い期間は live で数える", () => {
+  const periods = [
+    { id: "p1", startDate: "2026-04-01", laborTotals: { 田中: { workMin: 9600, paid: 2 } } },
+    { id: "p2", startDate: "2026-05-01" },                       // 凍結値なし→live
+    { id: "p3", startDate: "2026-06-01" },                       // live も無い＝読めていない
+    { id: "p4", startDate: "2026-03-01", laborTotals: { 田中: { workMin: 99999 } } }, // 前年度＝対象外
+  ];
+  const live = p => (p.id === "p2" ? { workMin: 600, paid: 1, publicOff: 8 } : null);
+  const r = u.yearLaborSummary(periods, "田中", 2026, 4, live);
+  assert.strictEqual(r.workMin, 10200);
+  assert.strictEqual(r.paid, 3);
+  assert.strictEqual(r.publicOff, 8);
+  assert.deepStrictEqual(r.missingPeriodIds, ["p3"], "読めていない期間を明示できる");
+  // 凍結値だけでも（live なしでも）年度の合計が出る＝過去参照を押さなくてよい
+  const r2 = u.yearLaborSummary(periods, "田中", 2026, 4, null);
+  assert.strictEqual(r2.workMin, 9600);
+  assert.deepStrictEqual(r2.missingPeriodIds, ["p2", "p3"]);
+});
+
+test("有給の残数: 付与日数から年度の消化分を引く。未入力なら null", () => {
+  const st = { paidLeaveGranted: { 田中: 10, 佐藤: 0 } };
+  assert.strictEqual(u.paidLeaveRemaining(st, "田中", 3), 7);
+  assert.strictEqual(u.paidLeaveRemaining(st, "田中", 0), 10);
+  assert.strictEqual(u.paidLeaveRemaining(st, "田中", 12), -2, "使いすぎはマイナスで見せる");
+  assert.strictEqual(u.paidLeaveRemaining(st, "佐藤", 1), -1, "0日付与も入力済みとして扱う");
+  assert.strictEqual(u.paidLeaveRemaining(st, "鈴木", 1), null, "未入力は残数を出さない");
+  assert.ok(u.STAFF_KEYED_SETTING_MAPS.includes("paidLeaveGranted"), "改名・削除の後始末に乗る");
+  assert.ok(u.PERIOD_SNAPSHOT_SETTING_KEYS.includes("paidLeaveGranted"));
+  ["breakMode", "breakLength"].forEach(k => assert.ok(u.PERIOD_SNAPSHOT_SETTING_KEYS.includes(k), k));
+});
+
+test("compactLaborTotal / laborTotalsEqual: 0 は持たず、同値なら書き直さない", () => {
+  assert.deepStrictEqual(u.compactLaborTotal({ workMin: 600, paid: 0 }), { workMin: 600 });
+  assert.strictEqual(u.compactLaborTotal({ workMin: 0, paid: 0 }), null);
+  assert.ok(u.laborTotalsEqual({ 田中: { workMin: 600 } }, { 田中: { workMin: 600, paid: 0 } }));
+  assert.ok(!u.laborTotalsEqual({ 田中: { workMin: 600 } }, { 田中: { workMin: 601 } }));
+  assert.ok(!u.laborTotalsEqual({ 田中: { workMin: 600 } }, {}));
 });
