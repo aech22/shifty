@@ -1553,8 +1553,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const editing=focusKey===key;
     let col=editing?null:cellBgFor(name,date,field,BG_NONE);
     if(col===BG_NONE)col=null;
-    // 不足は changed の次・dup より前に割り込ませる（cellBgFor は td 側の不足色を知らないため）
-    if(!editing&&col!==LEGEND_COLORS.changed&&cellPosErr(name,date,field==="start"?"lunch":"dinner"))col=LEGEND_COLORS.posErr;
+    // 不足は changed の次・dup より前に割り込ませる（cellBgFor は td 側の不足色を知らないため）。
+    // **時刻の入力ミス（timeErr）には割り込ませない**——入力そのものの誤りで、直さない限り
+    // その日の実働は0のまま集計にも出ない。不足に上書きさせると、ポジションが足りない日は
+    // 両方のセルが黄色になって**セル側の手がかりが消える**（2026-09-26 に dev 実機で実測）。
+    if(!editing&&col!==LEGEND_COLORS.changed&&col!==LEGEND_COLORS.timeErr&&cellPosErr(name,date,field==="start"?"lunch":"dinner"))col=LEGEND_COLORS.posErr;
     const layers=[];
     if(holidayCellDash(name,date,field))layers.push(HDASH_IMG);
     if(col)layers.push(`linear-gradient(${col},${col})`);

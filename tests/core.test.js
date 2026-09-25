@@ -3254,4 +3254,10 @@ test("項目12 ドリフト検出: applyEditToSubs と saveAdj が同じ isTimeO
   const ti = src.indexOf("const timeErrors=useMemo(");
   assert.ok(ti >= 0, "timeErrors が見つからない");
   assert.ok(/isTimeOrderInvalid/.test(src.slice(ti, ti + 900)), "timeErrors が isTimeOrderInvalid を通っていない");
+  // ポジション不足の割り込みは入力ミス色を上書きしない。2026-09-26 に dev 実機で、不足のある日の
+  // 出勤セルが黄色に塗り替えられて**セル側の手がかりが消える**のを実測して直した。
+  const pe = src.split("\n").find(l => l.includes("cellPosErr(name,date,field===") && l.includes("LEGEND_COLORS.posErr"));
+  assert.ok(pe, "posErr の割り込み行が見つからない");
+  assert.ok(pe.includes("LEGEND_COLORS.timeErr"),
+    "posErr の割り込みが timeErr を除外していない（不足のある日は入力ミスのセル色が消える）");
 });
