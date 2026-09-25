@@ -541,27 +541,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、最終日を過ぎてから初めてアプリを
   // 開くまでの間に行われたスタッフ削除を取りこぼす（写しはアプリが動いている瞬間しか撮れないため）。
   // 内容に変化があるときだけ書く。ownerReadOnly端末は periods への書き込みがルールで拒否されるので何もしない。
-  useEffect(()=>{
-    if(ownerReadOnly||!savePeriods||!period)return;
-    if(isPeriodEnded(period,todayStr))return;
-    const next=buildPeriodSnapshot(staffListProp,settingsProp);
-    if(periodSnapshotEqual(period.snapshot,next))return;
-    savePeriods(periods.map(p=>(p&&p.id===period.id)?{...p,snapshot:next}:p));
-  },[period,staffListProp,settingsProp,periods,ownerReadOnly,todayStr]);
-  // 期間ごとの労務の合計を**期間が終わるまで書き続け、終わったら止める＝そこで凍結**する。
-  // 写し(snapshot)と同じゲート・同じ理由。これがあると年度の累計を出すのに古い期間の subs を
-  // 読み直さなくて済む（subs は直近3ヶ月の部分購読だが periods は起動時に全件購読するため）。
-  // 0 のフィールドは落として持つ（periods のサイズは毎回のDL量に直結する）。
+  // 期間ごとの労務の合計（写しと同じゲートで凍結する）。実体の書き込みは laborByStaff の直後の
+  // useEffect が写しとまとめて1回で行う——**別々の effect にすると互いを上書きする**。
+  // どちらも自分のレンダーの periods を map するので、同じコミットで2つ走ると後勝ちで片方が消え、
+  // 次のレンダーで消えた側が書き直す＝毎回2回書く（2026-09-26 にハーネスで実測した）。
   const laborTotalsRef=useRef(null);
-  useEffect(()=>{
-    if(ownerReadOnly||!savePeriods||!period)return;
-    if(isPeriodEnded(period,todayStr))return;
-    const next={};
-    Object.keys(laborTotalsRef.current||{}).forEach(k=>{next[k]=laborTotalsRef.current[k];});
-    if(!Object.keys(next).length)return;
-    if(laborTotalsEqual(period.laborTotals,next))return;
-    savePeriods(periods.map(p=>(p&&p.id===period.id)?{...p,laborTotals:next}:p));
-  },[period,periods,ownerReadOnly,todayStr,savePeriods]);
   // dates / realStaff も同じ理由で参照を安定させる（上の staffList のコメント参照）。
   const dates=useMemo(()=>period?gd(period.startDate,period.endDate):[],[period]);
   const realStaff=useMemo(()=>staffList.filter(n=>!isSpacer(n)),[staffList]);
@@ -1381,6 +1365,29 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     laborTotalsRef.current=totals;
     return out;
   },[isPremium,period,laborFrame,laborMonthDays,laborMonthReady,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart]);
+
+  // 期間が生きている間はシフト作成タブを開くたびに写しと労務の合計を最新化し、最終日を超えたら
+  // 更新を止める＝そこで凍結。「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、
+  // 最終日を過ぎてから初めてアプリを開くまでの間に行われたスタッフ削除を取りこぼす。
+  // 合計を残しておくと、年度の累計を出すのに古い期間の subs を読み直さなくて済む
+  // （subs は直近3ヶ月の部分購読だが periods は起動時に全件購読するため）。
+  // 内容に変化があるときだけ書く。ownerReadOnly端末は periods への書き込みがルールで拒否される。
+  useEffect(()=>{
+    if(ownerReadOnly||!savePeriods||!period)return;
+    if(isPeriodEnded(period,todayStr))return;
+    const nextSnap=buildPeriodSnapshot(staffListProp,settingsProp);
+    const nextTotals=laborTotalsRef.current||{};
+    const snapSame=periodSnapshotEqual(period.snapshot,nextSnap);
+    const totalsSame=!Object.keys(nextTotals).length||laborTotalsEqual(period.laborTotals,nextTotals);
+    if(snapSame&&totalsSame)return;
+    savePeriods(periods.map(p=>{
+      if(!p||p.id!==period.id)return p;
+      const n={...p};
+      if(!snapSame)n.snapshot=nextSnap;
+      if(!totalsSame)n.laborTotals=nextTotals;
+      return n;
+    }));
+  },[period,staffListProp,settingsProp,periods,ownerReadOnly,todayStr,savePeriods,laborByStaff]);
 
   const laborFindings=useMemo(()=>{
     if(!isPremium)return[];

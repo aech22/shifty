@@ -133,11 +133,42 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
   return{head,before,after,saved,errors};
 }
 
+// ---- 4. 期間ごとの労務合計を「凍結するまで書き続ける」（ユーザー案の実装）----------
+// 進行中の期間では savePeriods に laborTotals が渡り、終了済みの期間では渡らない（＝そこで凍結）。
+async function periodTotals(startDate,endDate){
+  const d2=startDate.slice(0,8)+String(Number(startDate.slice(8))+1).padStart(2,"0");
+  const h=await openHarness({root:ROOT,extraHead:EXTRA_HEAD,waitFor:"select",jsx:`
+const P={id:"p1",urlToken:"t1",shopId:"S1",label:"P",startDate:${JSON.stringify(startDate)},endDate:${JSON.stringify(endDate)},deadlineDate:"",createdAt:"2026-09-01T00:00:00.000Z"};
+const SUBS=[{id:"s1",periodId:"p1",staffName:"田中",shopId:"S1",comment:"",submittedAt:"2026-09-02T00:00:00.000Z",
+  shifts:{[${JSON.stringify(startDate)}]:{status:"work",start:"09:00",end:"18:00"},
+          [${JSON.stringify(d2)}]:{status:"work",adminRest:{start:true,end:true},leaveType:"paid"}}}];
+const SETTINGS={shopId:"S1",candidates:[],weekdayCandidates:{},dateCandidates:{},
+  breakTimes:{weekday:[],sat:[],sun:[],holSat:[],holSun:[]},
+  staffAttributes:{田中:"employee"},staffTypeLimits:{employee:{name:"社員"}},
+  staffColors:{},staffAliases:{},positions:{kitchen:[],hall:[]},requiredPositions:{},staffPositions:{}};
+function Harness(){
+  const [periods,setPeriods]=React.useState([P]);
+  window.__savedTotals=window.__savedTotals||[];
+  return <ShiftEditTab subs={SUBS} periods={periods} staffList={["田中"]}
+    onSave={()=>{}} tt={()=>{}} settings={SETTINGS} plan="premium" shopId="S1" shopName="テスト店"
+    onUpgrade={()=>{}} ownerReadOnly={false} pastSubsLoaded={true}
+    savePeriods={ps=>{const t=(ps[0]||{}).laborTotals;if(t)window.__savedTotals.push(t);setPeriods(ps);}}/>;
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
+  });
+  await h.page.waitForTimeout(1500);
+  const saved=await h.evaluate(()=>window.__savedTotals||[]);
+  const errors=h.errors.slice();
+  await h.close();
+  return{saved,errors};
+}
+
 // 行が無い配信物（反証）で例外にならないよう、行の取得は必ずこれを通す。
 const cellOf=(t,row,i=0)=>((t&&t[row])||[])[i];
 
 (async()=>{
   const st=await setTab(), s=await shiftTab(), sb=await subsTab();
+  const live=await periodTotals("2099-01-01","2099-01-31"), ended=await periodTotals("2020-01-01","2020-01-31");
   const pass={
     set_break_card:!!st.breakCard&&/時間帯方式/.test(st.breakCard)&&/長さ方式/.test(st.breakCard),
     set_thresholds_toggle:st.thresholdsHiddenByDefault&&st.thresholdsShown,
@@ -164,9 +195,16 @@ const cellOf=(t,row,i=0)=>((t&&t[row])||[])[i];
     modal_columns:sb.head.includes("休憩")&&sb.head.includes("休暇"),
     modal_break_saved:!!sb.saved&&sb.saved.adjustedBreak===60,
     modal_break_applied:/9:00/.test(sb.before||"")&&/8:00/.test(sb.after||""),
-    no_console_errors:st.errors.length===0&&s.after.errors.length===0&&sb.errors.length===0,
+    // 進行中の期間では期間ごとの合計が書かれ、終了済みの期間では書かれない（＝そこで凍結）
+    // **1回だけ**書く。写しと合計を別々の effect にすると互いを上書きして毎回2回書く
+    totals_written_once:live.saved.length===1,
+    totals_written_while_live:live.saved.length>0&&!!live.saved[0]["田中"]
+      &&live.saved[0]["田中"].workMin===540&&live.saved[0]["田中"].paid===1,
+    totals_frozen_after_end:ended.saved.length===0,
+    no_console_errors:st.errors.length===0&&s.after.errors.length===0&&sb.errors.length===0
+      &&live.errors.length===0&&ended.errors.length===0,
   };
   const allPass=Object.values(pass).every(Boolean);
-  console.log(JSON.stringify({setTab:st,shiftTab:s,subsTab:sb,pass,allPass},null,1));
+  console.log(JSON.stringify({setTab:st,shiftTab:s,subsTab:sb,periodTotals:{live,ended},pass,allPass},null,1));
   process.exit(allPass?0:1);
 })().catch(e=>{console.error(e);process.exit(1);});
