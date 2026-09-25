@@ -222,7 +222,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly}/>}
         {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany}/>}
         {tab==="mypage"&&!hideMypage&&<MyPageTab plan={plan} planExpiry={planExpiry} billingSchedule={billingSchedule} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} staffList={staffList} adminCode={adminCode} ownerReadOnly={ownerReadOnly}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} adminCode={adminCode} ownerReadOnly={ownerReadOnly}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:12,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -655,7 +655,13 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 締めフラグ（adjustedStartFixed/adjustedEndFixed）: noteとは独立に永続化する。noteは締め文字を含まない
   // 「素の」値（h/k/x・略称等）のまま保つことで、h/k判定・abbrToShop完全一致lookupに影響を与えない
   const getStoredFixed=(name,date,field)=>{if(!fixedShiftEnabled)return false;const sh=_getSub(name)?.shifts?.[date];const fk=field==="start"?"adjustedStartFixed":"adjustedEndFixed";return!!(sh&&sh[fk]);};
-  const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);const fx=getStoredFixed(name,date,field)?FIXED_KEY:"";if(t)return t+n+fx;return(n+fx)||"";};
+  // 終日の休暇はセルに種別名（公休/有給/慶弔）を出す。色は塗らない（2026-09-26 ユーザー指示）。
+  // 出勤・退勤の**両方**に出す——片方だけだと半日の休み希望と見分けがつかない。
+  const leaveCellText=(name,date,field)=>{
+    if(!fieldRest(name,date,field))return "";
+    return leaveCellTextOf(_getSub(name)?.shifts?.[date]);
+  };
+  const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const lv=leaveCellText(name,date,field);if(lv)return lv;const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);const fx=getStoredFixed(name,date,field)?FIXED_KEY:"";if(t)return t+n+fx;return(n+fx)||"";};
   const handleChange=(name,date,field,value)=>{setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
   // 店舗限定固定シフトコマンド（「締」等）が有効な店舗かどうか
   const fixedShiftEnabled=useMemo(()=>isFixedShiftEligibleShop(shopName),[shopName]);
@@ -793,6 +799,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const handleBlur=(name,date,field,rawValue)=>{
     if(!isPremium)return;
     const ekey=`${name}|${date}|${field}`;
+    // セルに出している休暇の種別名をそのまま blur しても何もしない（メモとして保存しない）。
+    // 種別を外すときは同じコマンド（y/yu/ke）をもう一度入れるか、時間を入力して出勤に戻す。
+    if(leaveCellText(name,date,field)===String(rawValue==null?"":rawValue).trim()){
+      setLocalEdits(prev=>{if(!(ekey in prev))return prev;const n={...prev};delete n[ekey];return n;});
+      return;
+    }
     const{numeric,note,rest,hasFixed}=extractNote(rawValue);
     if(rest){
       const now=Date.now();
@@ -1741,12 +1753,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(focusKey===key)return rb; // 編集中は通常背景
     if(timeErrors[`${name}|${date}`])return LEGEND_COLORS.timeErr;
     if(dupErrors[`${name}|${date}`])return LEGEND_COLORS.dup;
-    if(fieldRest(name,date,field)){
-      // 終日の休暇（公休=灰・有給=薄青・慶弔=桃）は色で見せる。半日の y は従来どおり通常背景+斜線。
-      const lt=leaveTypeOf(_getSub(name)?.shifts?.[date]);
-      const lk=lt?LEAVE_TYPE_LEGEND_KEY[lt]:null;
-      return(lk&&LEGEND_COLORS[lk])?LEGEND_COLORS[lk]:rb;
-    }
+    // 休み希望(y)・休暇セルは通常背景+斜線（noteの黄色も休暇の色も付けない）。
+    // 休暇は色ではなく**セルに種別名を出して**見せる（2026-09-26 ユーザー指示・getVal 参照）。
+    if(fieldRest(name,date,field))return rb;
     // note有無を localEdits/保存値から判定
     let note="";
     if(key in localEdits){note=extractNote(localEdits[key]).note;}
@@ -1786,7 +1795,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // 両方のセルが黄色になって**セル側の手がかりが消える**（2026-09-26 に dev 実機で実測）。
     if(!editing&&col!==LEGEND_COLORS.changed&&col!==LEGEND_COLORS.timeErr&&cellPosErr(name,date,field==="start"?"lunch":"dinner"))col=LEGEND_COLORS.posErr;
     const layers=[];
-    if(holidayCellDash(name,date,field))layers.push(HDASH_IMG);
+    // 休暇の種別名を出すセルには斜線を引かない（文字と重なって読めなくなる・2026-09-26 ユーザー指示）。
+    // スタッフ提出の休み（種別名を出さない）は従来どおり斜線のまま。
+    if(holidayCellDash(name,date,field)&&!leaveCellText(name,date,field))layers.push(HDASH_IMG);
     if(col)layers.push(`linear-gradient(${col},${col})`);
     // 色が付くセルだけ不透明ベースを敷く＝下の曜日色・不足色を完全に隠す。
     // 色が無いセルは透明のままにして、tr の曜日色をそのまま1色で見せる。
@@ -2468,6 +2479,33 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
               ?[{id:"weekly_min",label:"週下限",getMin:name=>staffLimitOf(settings,(settings.staffAttributes||{})[name]).weeklyMin*60,_color:"#2563EB",_bg:"rgba(59,130,246,0.07)"}]:[])]}
           />}
 
+          {/* === 週の休み（S-5）。公休と無記入だけを数え、有給・慶弔は数えない === */}
+          {isPremium&&weeks.length>0&&<SummaryTable
+            title="週の休み（前期間含む）"
+            rowLabel="週"
+            scrollRef={weekRestScrollRef}
+            onScroll={e=>syncScrollH(e.currentTarget)}
+            fitAll={fitAll}
+            labelW={DATE_COL_W}
+            fullView={fullView}
+            tableW={fvTableW}
+            mapGridCols={mapGridCols}
+            spacerTh={spacerTh}
+            spacerCell={spacerCell}
+            colW={colW}
+            VTH={VTH}
+            rows={weeks.map((monStr,wi)=>{
+              const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);
+              return{id:"wr_"+monStr,label:`${m.getDate()}〜${sun.getDate()}日`,getText:name=>{
+                const st=(weekRestByStaff[name]||[])[wi];
+                if(!st||st.key==="skip")return{};
+                return{label:st.label,bold:st.key==="none",
+                  color:st.key==="none"?"#e53935":st.key==="unknown"?"var(--c-text3)":"var(--c-text2)",
+                  title:st.key==="unknown"?"この週の7日ぶんのデータが揃っていません":st.label};
+              }};
+            })}
+          />}
+
           {/* === 労務（A制の目安・総括判定）。判定対象外の属性は空欄になる === */}
           {isPremium&&Object.keys(laborByStaff).length>0&&<SummaryTable
             title={`労務判定（${period?period.startDate.slice(0,7).replace("-","年")+"月":""}）`}
@@ -2519,33 +2557,6 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                 const c=l.overall.key==="fix"?"#e53935":l.overall.key==="under_guide"?"#B8860B":l.overall.key==="ot"?"#3B82F6":l.overall.key==="pending"?"var(--c-text3)":"var(--c-text2)";
                 return{label:l.overall.label,color:c,bold:l.overall.key==="fix",title:(l.findings||[]).map(f=>f.label).join("、")};}},
             ]}
-          />}
-
-          {/* === 週の休み（S-5）。公休と無記入だけを数え、有給・慶弔は数えない === */}
-          {isPremium&&weeks.length>0&&<SummaryTable
-            title="週の休み（前期間含む）"
-            rowLabel="週"
-            scrollRef={weekRestScrollRef}
-            onScroll={e=>syncScrollH(e.currentTarget)}
-            fitAll={fitAll}
-            labelW={DATE_COL_W}
-            fullView={fullView}
-            tableW={fvTableW}
-            mapGridCols={mapGridCols}
-            spacerTh={spacerTh}
-            spacerCell={spacerCell}
-            colW={colW}
-            VTH={VTH}
-            rows={weeks.map((monStr,wi)=>{
-              const m=pd(monStr);const sun=new Date(m);sun.setDate(m.getDate()+6);
-              return{id:"wr_"+monStr,label:`${m.getDate()}〜${sun.getDate()}日`,getText:name=>{
-                const st=(weekRestByStaff[name]||[])[wi];
-                if(!st||st.key==="skip")return{};
-                return{label:st.label,bold:st.key==="none",
-                  color:st.key==="none"?"#e53935":st.key==="unknown"?"var(--c-text3)":"var(--c-text2)",
-                  title:st.key==="unknown"?"この週の7日ぶんのデータが揃っていません":st.label};
-              }};
-            })}
           />}
 
           {/* ===操作方法レジェンド（CELL_COMMANDS / CELL_COLOR_LEGEND から自動生成）=== */}
@@ -3107,7 +3118,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   // 重複を禁止し、空白列も "__spacer__"+genToken() で一意なので、キーとして安全に使える。
   const[editKey,setEditKey]=useState(null);
   const[editName,setEditName]=useState("");
-  const[aliasKey,setAliasKey]=useState(null); // 別名編集中のスタッフ名
+  const[paidKey,setPaidKey]=useState(null);   // 有給日数パネルを開いているスタッフ名
   const[posKey,setPosKey]=useState(null); // ポジション編集中のスタッフ名
   const isPro=plan==="pro"||plan==="premium";
   const isPremium=plan==="premium";
@@ -3763,72 +3774,35 @@ const dragIdxRef=useRef(null);
             :<div data-staff-idx={i} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:dragOverIdx===i&&dragIdx!==null?"2px solid var(--c-accent)":"1px solid var(--c-border)",borderRadius:8,opacity:dragIdx===i?.4:(hidden?.6:1),transition:"opacity .15s"}}>
             {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} onContextMenu={e=>e.preventDefault()} style={{cursor:"grab",color:dragIdx===i?"var(--c-accent)":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",WebkitUserSelect:"none",lineHeight:1,flexShrink:0,touchAction:"none"}}>⠿</span>}
             <span style={{fontSize:13,color:"var(--c-text4)",minWidth:24,textAlign:"center"}}>{staffList.slice(0,i).filter(x=>!isSpacer(x)).length+1}</span>
-            {editKey===n
-              ?<>
-                {isPro&&<div style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid var(--c-border2)",flexShrink:0}}/>}
-                <input value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmEdit(n);if(e.key==="Escape")cancelEdit();}} autoFocus maxLength={50} style={{...AI,flex:1,padding:"6px 10px",fontSize:16}}/>
-                <button onClick={()=>confirmEdit(n)} style={{...AB,padding:"6px 12px",fontSize:12}}>保存</button>
-                <button onClick={cancelEdit} style={{...AGray,padding:"6px 12px",fontSize:12}}>ｷｬﾝｾﾙ</button>
-              </>
-              :<>
-                {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid var(--c-border2)",cursor:"pointer",flexShrink:0,padding:0}}/>}
-                <span style={{flex:1,minWidth:0,fontSize:14,color:hidden?"var(--c-text3)":"var(--c-text)",fontWeight:600}}>{n}</span>
-                {/* 非表示の印は「(非表示)」だけにする（2026-09-08 ユーザー決定）。以前はここに
-                    「シフト作成タブ・Excel・PDF に出ません」という nowrap の説明を敷いていたが、
-                    親が minWidth:"max-content" なので行がカード幅を越え、別名・ポジション以降の
-                    ボタンが右へ押し出されて横スクロールしないと押せなかった。説明と対象期間は
-                    title（ツールチップ）へ移し、行の幅は非表示でない行と同じに保つ。 */}
-                {hidden&&<span title={`${hiddenFrom?`${periodLabelOfStart(hiddenFrom)}以降 ／ `:""}シフト作成タブ・Excel・PDF に出ません（提出は今までどおりできます）`} style={{fontSize:11,color:"var(--c-text4)",flexShrink:0,whiteSpace:"nowrap"}}>(非表示)</span>}
-                {isPremium&&<input value={(settings.staffNumbers||{})[n]||""} onChange={e=>{const v=e.target.value;const nums={...(settings.staffNumbers||{})};if(v)nums[n]=v;else delete nums[n];onSaveSettings&&onSaveSettings({...settings,staffNumbers:nums});}} maxLength={8} placeholder="番号" style={{width:64,fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",flexShrink:0,textAlign:"center"}}/>}
-                {/* 属性は選んだ瞬間には保存しない。openAttrDialog がポップアップを開き、
-                    「どの期間まで旧属性のままにするか」を確定してから保存する。value は
-                    settings のまま＝キャンセルすれば表示も元の属性に戻る。 */}
-                {isPremium&&<select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>openAttrDialog(n,e.target.value)} style={{fontSize:16,padding:"4px 6px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",cursor:"pointer",flexShrink:0}}>
-                  {Object.entries({employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})}).map(([v,t])=>{const label=(typeof t==="object"?t.name:"")||STAFF_TYPE_LABELS[v]||"";return label?<option key={v} value={v}>{label}</option>:null;})}
-                </select>}
-                {isPro&&<button onClick={()=>{setAliasKey(aliasKey===n?null:n);}} style={{padding:"6px 10px",background:aliasKey===n?"rgba(248,112,54,.15)":"rgba(248,112,54,.06)",border:`1px solid ${aliasKey===n?"var(--c-accent)":"rgba(248,112,54,.3)"}`,borderRadius:4,color:"var(--c-accent)",fontSize:12,cursor:"pointer",minWidth:64,textAlign:"center"}}>
-                  別名{(staffAliases[n]||[]).length>0?` (${(staffAliases[n]||[]).length})`:""}
-                </button>}
-                {isPremium&&<button onClick={()=>{setPosKey(posKey===n?null:n);}} style={{padding:"6px 8px",background:posKey===n?"rgba(59,130,246,.15)":"rgba(59,130,246,.06)",border:`1px solid ${posKey===n?"#3B82F6":"rgba(59,130,246,.3)"}`,borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer",width:118,boxSizing:"border-box",flexShrink:0,whiteSpace:"nowrap",textAlign:"center"}}>
-                  ポジション{(((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length)>0?` (${((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length})`:""}
-                </button>}
-                <button onClick={()=>openHiddenDialog(n)} title="シフト作成タブ・Excel・PDF から名前を外す（登録と提出URLはそのまま）" style={{padding:"6px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text3)",fontSize:12,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>{hidden?"表示":"非表示"}</button>
-                <button onClick={()=>startEdit(n)} style={{padding:"6px 10px",background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.25)",borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer"}}>編集</button>
-                <button onClick={()=>del(i)} style={AD}>削除</button>
-              </>
-            }
+            {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid var(--c-border2)",cursor:"pointer",flexShrink:0,padding:0}}/>}
+            <span style={{flex:1,minWidth:0,fontSize:14,color:hidden?"var(--c-text3)":"var(--c-text)",fontWeight:600}}>{n}</span>
+            {/* 非表示の印は「(非表示)」だけにする（2026-09-08 ユーザー決定）。説明と対象期間は title へ。 */}
+            {hidden&&<span title={`${hiddenFrom?`${periodLabelOfStart(hiddenFrom)}以降 ／ `:""}シフト作成タブ・Excel・PDF に出ません（提出は今までどおりできます）`} style={{fontSize:11,color:"var(--c-text4)",flexShrink:0,whiteSpace:"nowrap"}}>(非表示)</span>}
+            {/* 行に出すボタンは 有給日数・ポジション・非表示・編集・削除 の5つだけ（2026-09-26 ユーザー指示）。
+                従業員番号・属性・別名・退勤延長・名前は「編集」で開くモーダルにまとめてある。 */}
+            {isPremium&&<button onClick={()=>{setPaidKey(paidKey===n?null:n);}} style={{padding:"6px 8px",background:paidKey===n?"rgba(16,185,129,.15)":"rgba(16,185,129,.06)",border:`1px solid ${paidKey===n?"#10B981":"rgba(16,185,129,.3)"}`,borderRadius:4,color:"#10B981",fontSize:12,cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+              有給日数{(settings.paidLeaveGranted||{})[n]!=null?` (${(settings.paidLeaveGranted||{})[n]})`:""}
+            </button>}
+            {isPremium&&<button onClick={()=>{setPosKey(posKey===n?null:n);}} style={{padding:"6px 8px",background:posKey===n?"rgba(59,130,246,.15)":"rgba(59,130,246,.06)",border:`1px solid ${posKey===n?"#3B82F6":"rgba(59,130,246,.3)"}`,borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer",width:118,boxSizing:"border-box",flexShrink:0,whiteSpace:"nowrap",textAlign:"center"}}>
+              ポジション{(((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length)>0?` (${((staffPositions[n]&&staffPositions[n].lunch)||[]).length+((staffPositions[n]&&staffPositions[n].dinner)||[]).length})`:""}
+            </button>}
+            <button onClick={()=>openHiddenDialog(n)} title="シフト作成タブ・Excel・PDF から名前を外す（登録と提出URLはそのまま）" style={{padding:"6px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text3)",fontSize:12,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>{hidden?"表示":"非表示"}</button>
+            <button onClick={()=>startEdit(n)} style={{padding:"6px 10px",background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.25)",borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer",flexShrink:0}}>編集</button>
+            <button onClick={()=>del(i)} style={{...AD,flexShrink:0}}>削除</button>
           </div>}
-          {/* 別名パネル（Pro・展開時） */}
-          {isPro&&aliasKey===n&&(
-            <div style={{marginTop:4,padding:"12px 14px",background:"rgba(248,112,54,.04)",border:"1px solid rgba(248,112,54,.2)",borderRadius:8,position:"sticky",left:0,maxWidth:"calc(100vw - 76px)",boxSizing:"border-box"}}>
-              <div style={{fontSize:12,fontWeight:700,color:"var(--c-accent)",marginBottom:8}}>別名（スタッフが入力できる名前）</div>
-              {/* 登録済み別名 */}
-              {(staffAliases[n]||[]).length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
-                {(staffAliases[n]||[]).map((alias,ai)=>(
-                  <div key={ai} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(248,112,54,.1)",border:"1px solid rgba(248,112,54,.25)",borderRadius:12,padding:"3px 10px 3px 12px",fontSize:13,color:"#c45b1a",fontWeight:600}}>
-                    {alias}
-                    <button onClick={()=>delAlias(n,alias)} style={{background:"none",border:"none",color:"var(--c-accent)",cursor:"pointer",padding:"0 0 0 4px",fontSize:14,lineHeight:1}}>×</button>
-                  </div>
-                ))}
-              </div>}
-              {/* 最新期間の未登録名から選ぶ */}
-              <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:6}}>
-                最新期間「{latestPeriod?.label||""}」の未登録の名前：
+          {/* 有給日数パネル（Premium・展開時） */}
+          {isPremium&&paidKey===n&&(
+            <div style={{marginTop:4,padding:"12px 14px",background:"rgba(16,185,129,.04)",border:"1px solid rgba(16,185,129,.2)",borderRadius:8,position:"sticky",left:0,maxWidth:"calc(100vw - 76px)",boxSizing:"border-box"}}>
+              <div style={{fontSize:12,fontWeight:700,color:"#10B981",marginBottom:8}}>有給の付与日数</div>
+              <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                <input type="number" min={0} max={80} step={0.5} value={(settings.paidLeaveGranted||{})[n]==null?"":(settings.paidLeaveGranted||{})[n]} placeholder="未設定"
+                  onChange={e=>{const v=e.target.value;const g={...(settings.paidLeaveGranted||{})};
+                    if(v==="")delete g[n];else g[n]=Math.max(0,Math.min(80,parseFloat(v)||0));
+                    onSaveSettings&&onSaveSettings({...settings,paidLeaveGranted:g});}}
+                  style={{...AI,width:90,textAlign:"center",padding:"6px 8px"}}/>
+                <span style={{fontSize:12,color:"var(--c-text4)"}}>日</span>
               </div>
-              {unregisteredNames.length===0
-                ?<div style={{fontSize:12,color:"var(--c-text4)",padding:"6px 0"}}>
-                    {latestPeriod?"未登録の提出名はありません":"期間データがありません"}
-                  </div>
-                :<div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-                  {unregisteredNames.map((alias,ai)=>(
-                    <button key={ai} onClick={()=>addAlias(n,alias)}
-                      style={{padding:"5px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:12,fontSize:13,color:"var(--c-text2)",cursor:"pointer",fontWeight:600}}>
-                      ＋ {alias}
-                    </button>
-                  ))}
-                </div>
-              }
-              <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>タップした名前が「{n}」の別名として登録されます</div>
+              <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>シフト作成タブの労務判定に「有給残」（付与日数 − その年度に消化した有給の日数）が出ます。空欄にすると残数を出しません。</div>
             </div>
           )}
           {/* ポジションパネル（Premium・展開時） */}
@@ -3872,6 +3846,104 @@ const dragIdxRef=useRef(null);
         {isPro&&<button onClick={()=>{onSave([...staffList,"__spacer__"+genToken()]);tt("✓ 空白列を追加しました");}} style={{...AGray,width:"100%",fontSize:13,marginTop:8}}>＋ 空白列を追加（末尾）</button>}
         {staffList.filter(n=>!isSpacer(n)).length>=lim&&<div style={{marginTop:10,fontSize:12,color:"#F59E0B",textAlign:"center"}}>▲ 上限に達しています。アップグレードするとさらに追加できます。</div>}
       </AC>
+
+      {/* スタッフの編集モーダル（2026-09-26 ユーザー指示）。名前・従業員番号・属性・別名・退勤延長を
+          1画面にまとめる。行に残すのは 有給日数・ポジション・非表示・編集・削除 の5ボタンだけ。 */}
+      {editKey&&(()=>{
+        const n=editKey;
+        const otRaw=(settings.overtimeSettings?.byStaff||{})[n];
+        const ot=typeof otRaw==="number"?{lunch:otRaw,dinner:otRaw}:(otRaw||{lunch:0,dinner:0});
+        const setOT=(band,v)=>{
+          const bs={...(settings.overtimeSettings?.byStaff||{})};
+          const prevRaw=bs[n];const prev=typeof prevRaw==="number"?{lunch:prevRaw,dinner:prevRaw}:(prevRaw||{lunch:0,dinner:0});
+          const next={...prev,[band]:v};
+          if((next.lunch||0)>0||(next.dinner||0)>0)bs[n]={lunch:next.lunch||0,dinner:next.dinner||0};else delete bs[n];
+          onSaveSettings&&onSaveSettings({...settings,overtimeSettings:{...(settings.overtimeSettings||{}),byStaff:bs}});
+        };
+        const selStyle={fontSize:16,padding:"5px 8px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",cursor:"pointer"};
+        const sec=(title,body)=>(<div style={{marginBottom:16}}>
+          <div style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:6}}>{title}</div>{body}</div>);
+        return(
+        <div onClick={cancelEdit} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9998,padding:16}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:"20px 20px 16px",width:"100%",maxWidth:460,maxHeight:"86vh",overflowY:"auto",boxShadow:"0 8px 32px var(--c-shadow)"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+              <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{n} の設定</div>
+              <button onClick={cancelEdit} style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:20,cursor:"pointer",lineHeight:1,padding:"0 4px"}}>×</button>
+            </div>
+
+            {sec("名前",<>
+              <div style={{display:"flex",gap:8}}>
+                <input value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmEdit(n);if(e.key==="Escape")cancelEdit();}} maxLength={50} style={{...AI,flex:1,padding:"8px 10px"}}/>
+                <button onClick={()=>confirmEdit(n)} style={{...AB,padding:"8px 14px",fontSize:13,whiteSpace:"nowrap"}}>名前を保存</button>
+              </div>
+              <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>改名すると設定・過去の期間の記録も一緒に移ります。</div>
+            </>)}
+
+            {isPremium&&sec("従業員番号",<>
+              <input value={(settings.staffNumbers||{})[n]||""} maxLength={8} placeholder="番号"
+                onChange={e=>{const v=e.target.value;const nums={...(settings.staffNumbers||{})};if(v)nums[n]=v;else delete nums[n];onSaveSettings&&onSaveSettings({...settings,staffNumbers:nums});}}
+                style={{...AI,width:120,textAlign:"center",padding:"6px 8px"}}/>
+            </>)}
+
+            {isPremium&&sec("属性",<>
+              {/* 選んだ瞬間には保存しない。openAttrDialog が「どの期間まで旧属性のままにするか」を
+                  確定してから保存する。value は settings のままなのでキャンセルすれば表示も戻る。 */}
+              <select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>openAttrDialog(n,e.target.value)} style={{...selStyle,width:"auto",minWidth:140}}>
+                {Object.entries({employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})}).map(([v,t])=>{const label=(typeof t==="object"?t.name:"")||STAFF_TYPE_LABELS[v]||"";return label?<option key={v} value={v}>{label}</option>:null;})}
+              </select>
+            </>)}
+
+            {isPremium&&sec("退勤延長",<>
+              <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:8}}>シフト終了後の延長時間。ランチ帯（退勤17:00以前）とディナー帯（17:00超）で別に設定できます。勤務時間の合計に加算されます。</div>
+              <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+                {[["lunch","ランチ"],["dinner","ディナー"]].map(([band,lbl])=>(
+                  <div key={band} style={{display:"flex",alignItems:"center",gap:4}}>
+                    <span style={{fontSize:12,color:"var(--c-text3)"}}>{lbl}</span>
+                    <select value={ot[band]||0} onChange={e=>setOT(band,parseInt(e.target.value)||0)} style={selStyle}>
+                      <option value={0}>延長なし</option>{[15,30,45,60,90,120].map(m=><option key={m} value={m}>+{m}分</option>)}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </>)}
+
+            {isPro&&sec("別名",<>
+              <div style={{padding:"10px 12px",background:"rgba(248,112,54,.04)",border:"1px solid rgba(248,112,54,.2)",borderRadius:8}}>
+    <div style={{fontSize:12,fontWeight:700,color:"var(--c-accent)",marginBottom:8}}>別名（スタッフが入力できる名前）</div>
+                  {/* 登録済み別名 */}
+                  {(staffAliases[n]||[]).length>0&&<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
+                    {(staffAliases[n]||[]).map((alias,ai)=>(
+                      <div key={ai} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(248,112,54,.1)",border:"1px solid rgba(248,112,54,.25)",borderRadius:12,padding:"3px 10px 3px 12px",fontSize:13,color:"#c45b1a",fontWeight:600}}>
+                        {alias}
+                        <button onClick={()=>delAlias(n,alias)} style={{background:"none",border:"none",color:"var(--c-accent)",cursor:"pointer",padding:"0 0 0 4px",fontSize:14,lineHeight:1}}>×</button>
+                      </div>
+                    ))}
+                  </div>}
+                  {/* 最新期間の未登録名から選ぶ */}
+                  <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:6}}>
+                    最新期間「{latestPeriod?.label||""}」の未登録の名前：
+                  </div>
+                  {unregisteredNames.length===0
+                    ?<div style={{fontSize:12,color:"var(--c-text4)",padding:"6px 0"}}>
+                        {latestPeriod?"未登録の提出名はありません":"期間データがありません"}
+                      </div>
+                    :<div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                      {unregisteredNames.map((alias,ai)=>(
+                        <button key={ai} onClick={()=>addAlias(n,alias)}
+                          style={{padding:"5px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:12,fontSize:13,color:"var(--c-text2)",cursor:"pointer",fontWeight:600}}>
+                          ＋ {alias}
+                        </button>
+                      ))}
+                    </div>
+                  }
+                  <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>タップした名前が「{n}」の別名として登録されます</div>
+              </div>
+            </>)}
+
+            <button onClick={cancelEdit} style={{...AGray,width:"100%",marginTop:4}}>閉じる</button>
+          </div>
+        </div>);
+      })()}
     </div>
   );
 }
@@ -4873,7 +4945,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
   </div>);
 }
 
-function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,staffList=[],
+function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                  authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
                  onSignInAndLinkGoogle,onSignInAndLinkEmail,adminCode=null,ownerReadOnly=false}){
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
@@ -5212,54 +5284,8 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       </AC>);
     })()}
 
-    {plan==="premium"&&staffList.filter(n=>!isSpacer(n)).length>0&&(()=>{
-      const granted=settings.paidLeaveGranted||{};
-      const saveG=(n,v)=>{const g={...granted};if(v==="")delete g[n];else g[n]=v;onSave({...settings,paidLeaveGranted:g});};
-      return(<AC title="有給の付与日数">
-        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>スタッフごとの付与日数を入力すると、シフト作成タブの労務判定に「有給残」が出ます（付与日数 −{" "}{fiscalYearLabel(fiscalYearOf(fd(new Date()),fiscalYearStartMonthOf(settings)),fiscalYearStartMonthOf(settings))}に消化した有給の日数）。空欄にすると残数を出しません。</div>
-        <div style={{overflowX:"auto"}}><div style={{minWidth:"max-content"}}>
-          {staffList.filter(n=>!isSpacer(n)).map(n=>(
-            <div key={n} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-              <span style={{fontSize:13,color:"var(--c-text2)",minWidth:96,whiteSpace:"nowrap"}}>{n}</span>
-              <input type="number" min={0} max={80} step={0.5} value={granted[n]==null?"":granted[n]} placeholder="未設定"
-                onChange={e=>{const v=e.target.value;saveG(n,v===""?"":Math.max(0,Math.min(80,parseFloat(v)||0)));}}
-                style={{...AI,width:80,textAlign:"center",padding:"5px 6px"}}/>
-              <span style={{fontSize:11,color:"var(--c-text4)"}}>日</span>
-            </div>
-          ))}
-        </div></div>
-      </AC>);
-    })()}
-
-    {plan==="premium"&&staffList.filter(n=>!isSpacer(n)).length>0&&<AC title="退勤延長設定">
-      <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>スタッフごとにシフト終了後の延長時間を設定します。ランチ帯（退勤17:00以前）とディナー帯（退勤17:00超）で個別に設定できます。勤務時間合計に加算され、提出一覧の退勤欄に表示されます。</div>
-      {/* 行がカード幅を超える場合（携帯・タブレット）はカード内で横スクロールしてスタッフ名を確認できる */}
-      <div style={{overflowX:"auto"}}>
-      <div style={{minWidth:"max-content"}}>
-      {staffList.filter(n=>!isSpacer(n)).map(n=>{
-        const raw=(settings.overtimeSettings?.byStaff||{})[n];
-        const ot=typeof raw==="number"?{lunch:raw,dinner:raw}:(raw||{lunch:0,dinner:0});
-        const setOT=(band,v)=>{const bs={...(settings.overtimeSettings?.byStaff||{})};const prevRaw=bs[n];const prev=typeof prevRaw==="number"?{lunch:prevRaw,dinner:prevRaw}:(prevRaw||{lunch:0,dinner:0});const next={...prev,[band]:v};if((next.lunch||0)>0||(next.dinner||0)>0)bs[n]={lunch:next.lunch||0,dinner:next.dinner||0};else delete bs[n];onSave({...settings,overtimeSettings:{...(settings.overtimeSettings||{}),byStaff:bs}});};
-        const selStyle={fontSize:16,padding:"5px 8px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",cursor:"pointer"};
-        return(<div key={n} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,marginBottom:6}}>
-          <span style={{flex:1,fontSize:13,color:"var(--c-text)",fontWeight:600,whiteSpace:"nowrap"}}>{n}</span>
-          <div style={{display:"flex",alignItems:"center",gap:4}}>
-            <span style={{fontSize:11,color:"var(--c-text3)"}}>ランチ</span>
-            <select value={ot.lunch||0} onChange={e=>setOT("lunch",parseInt(e.target.value)||0)} style={selStyle}>
-              <option value={0}>延長なし</option>{[15,30,45,60,90,120].map(m=><option key={m} value={m}>+{m}分</option>)}
-            </select>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:4}}>
-            <span style={{fontSize:11,color:"var(--c-text3)"}}>ディナー</span>
-            <select value={ot.dinner||0} onChange={e=>setOT("dinner",parseInt(e.target.value)||0)} style={selStyle}>
-              <option value={0}>延長なし</option>{[15,30,45,60,90,120].map(m=><option key={m} value={m}>+{m}分</option>)}
-            </select>
-          </div>
-        </div>);
-      })}
-      </div>
-      </div>
-    </AC>}
+    {/* 有給の付与日数・退勤延長設定は 2026-09-26 にスタッフタブへ移した
+        （有給日数＝行のボタン、退勤延長＝「編集」で開くモーダル）。設定タブには置かない。 */}
 
     {plan==="premium"&&<AC title="ポジション設定">
       <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>キッチン・ホールそれぞれのポジション名を登録します。下の「必要ポジション設定」・スタッフ一覧タブのポジション選択で使用します。</div>

@@ -3487,8 +3487,14 @@ test("項目9 休暇種別: yu=有給・ke=慶弔 がコマンドとして登録
   // k（キッチン入り）は1文字のサフィックスのままで、ke に食われない
   assert.strictEqual(u.restCommandOf("k"), null);
   assert.strictEqual(u.extractNote("9k").note, "k");
+  // 休暇は色ではなくセルの文字で見せる（2026-09-26 ユーザー指示）。色のレジェンドは持たない。
   ["leavePublic", "leavePaid", "leaveCeremony"].forEach(k =>
-    assert.ok(u.CELL_COLOR_LEGEND.some(c => c.key === k), `legend ${k} missing`));
+    assert.ok(!u.CELL_COLOR_LEGEND.some(c => c.key === k), `legend ${k} は色で持たない`));
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveType: "paid" }), "有給");
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveType: "ceremony" }), "慶弔");
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", adminRest: { start: true, end: true } }), "公休");
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", adminRest: { start: true } }), "", "半日 y は文字を出さない");
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", start: "09:00", end: "18:00" }), "");
 });
 
 test("判断8 leaveTypeOf: 導入前の終日 y（leaveType なし）は公休として扱う", () => {
@@ -3689,4 +3695,32 @@ test("AGREEMENT_LEGAL_ITEMS: 7項目すべてを判定するようになった�
   assert.strictEqual(u.AGREEMENT_AVG_CAP_H, 80);
   assert.strictEqual(u.AGREEMENT_OVER45_COUNT_LIMIT, 6);
   assert.strictEqual(u.laborSettingsOf({}).agreementAnnualOtMin, 21600, "既定は年360h");
+});
+
+// ===== 休暇の見せ方（2026-09-26 ユーザー指示・色と斜線をやめて文字にする）=====
+test("休暇コマンド: ko=公休・yu=有給・ke=慶弔 の3つが終日の休暇種別を付ける", () => {
+  assert.strictEqual(u.restCommandOf("ko").leaveType, "public");
+  assert.strictEqual(u.restCommandOf("yu").leaveType, "paid");
+  assert.strictEqual(u.restCommandOf("ke").leaveType, "ceremony");
+  assert.strictEqual(u.extractNote("ko").leaveType, "public");
+  assert.ok(u.isReservedShopAbbr("ko"), "店舗略称として登録できない");
+  // 1文字のサフィックス（k=キッチン入り）は食われない
+  assert.strictEqual(u.restCommandOf("k"), null);
+  assert.strictEqual(u.extractNote("9k").note, "k");
+  // レジストリに3つとも載っている（レジェンドが自動生成される）
+  ["ko", "yu", "ke"].forEach(k =>
+    assert.ok(u.CELL_COMMANDS.some(c => c.kind === "rest" && c.key === k), `CELL_COMMANDS ${k}`));
+});
+
+test("leaveCellTextOf: セルに出す文字（色も斜線も使わない）", () => {
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveType: "public" }), "公休");
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveType: "paid" }), "有給");
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", leaveType: "ceremony" }), "慶弔");
+  // y を両方に入れた終日も公休（導入前のデータ互換と同じ規則）
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", adminRest: { start: true, end: true } }), "公休");
+  assert.strictEqual(u.leaveCellTextOf({ status: "work", adminRest: { end: true } }), "", "半日 y は文字なし");
+  assert.strictEqual(u.leaveCellTextOf(null), "");
+  // 色のレジェンドは持たない
+  ["leavePublic", "leavePaid", "leaveCeremony"].forEach(k =>
+    assert.ok(!u.CELL_COLOR_LEGEND.some(c => c.key === k), `legend ${k} は持たない`));
 });

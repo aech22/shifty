@@ -22,7 +22,9 @@ async function setTab(){
     }
     ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
   const cardOf=t=>h.evaluate(x=>{const d=[...document.querySelectorAll("div")].find(y=>(y.innerText||"").startsWith(x));return d?d.innerText:null;},t);
-  const m={breakCard:await cardOf("休憩の決め方"),paidCard:await cardOf("有給の付与日数")};
+  const m={breakCard:await cardOf("休憩の決め方"),
+    // 有給の付与日数と退勤延長設定は 2026-09-26 にスタッフタブへ移した（設定タブには無い）
+    paidCardGone:!(await cardOf("有給の付与日数")),otCardGone:!(await cardOf("退勤延長設定"))};
   m.hasFiscal=/年の区切り/.test(await cardOf("労務判定（1か月単位の変形労働時間制）")||"");
   m.thresholdsHiddenByDefault=!/実働8時間超/.test(m.breakCard||"");
   // 長さ方式に切り替える → しきい値が出て settings に入る
@@ -30,15 +32,6 @@ async function setTab(){
   await h.page.waitForTimeout(400);
   m.breakMode=await h.evaluate(()=>window.__settings.breakMode);
   m.thresholdsShown=/実働8時間超/.test(await cardOf("休憩の決め方")||"");
-  // 有給の付与日数を入れる
-  await h.evaluate(()=>{
-    const card=[...document.querySelectorAll("div")].find(d=>(d.innerText||"").startsWith("有給の付与日数"));
-    const i=card&&card.querySelector("input[type=number]");if(!i)return;
-    const st=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,"value").set;
-    i.focus();st.call(i,"10");i.dispatchEvent(new Event("input",{bubbles:true}));
-  });
-  await h.page.waitForTimeout(400);
-  m.granted=await h.evaluate(()=>window.__settings.paidLeaveGranted||null);
   m.fontsizes=await h.evaluate(()=>[...document.querySelectorAll("input[type=number],select")].map(e=>parseFloat(getComputedStyle(e).fontSize)));
   m.errors=h.errors.slice();
   await h.close();
@@ -163,18 +156,60 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
   return{saved,errors};
 }
 
+// ---- 5. スタッフタブの再構成（2026-09-26 ユーザー指示）--------------------------
+// 行に出すのは 有給日数・ポジション・非表示・編集・削除 の5つだけ。名前・従業員番号・属性・
+// 別名・退勤延長は「編集」で開くモーダルにまとめる。
+async function staffTab(){
+  const h=await openHarness({root:ROOT,extraHead:EXTRA_HEAD,waitFor:"input[placeholder='スタッフ名を入力']",jsx:`
+    function Harness(){
+      const [settings,setSettings]=React.useState({shopId:"s1",candidates:[],staffColors:{},staffAliases:{},
+        staffAttributes:{田中:"parttime"},staffTypeLimits:{employee:{name:"社員"},parttime:{name:"バイト"}},
+        positions:{kitchen:[],hall:[]},staffPositions:{}});
+      window.__settings=settings;
+      return <StaffTab staffList={["田中","佐藤"]} onSave={()=>{}} tt={()=>{}} plan="premium"
+        onUpgrade={()=>{}} onRenameStaff={()=>{}} settings={settings} onSaveSettings={s=>setSettings(s)}
+        subs={[]} periods={[]} savePeriods={()=>{}} ownerReadOnly={false}/>;
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
+  await h.page.waitForTimeout(400);
+  const rowButtons=await h.evaluate(()=>{
+    const row=[...document.querySelectorAll("[data-staff-idx]")].find(r=>(r.innerText||"").includes("田中"));
+    if(!row)return[];
+    return[...row.querySelectorAll("button")].map(b=>(b.innerText||"").trim().replace(/\s*\(\d+\)$/,"")).filter(Boolean);
+  });
+  await h.clickExact("有給日数",{rowText:"田中"});
+  await h.page.waitForTimeout(300);
+  await h.evaluate(()=>{
+    const i=[...document.querySelectorAll("input[type=number]")][0];if(!i)return;
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,"value").set.call(i,"10");
+    i.dispatchEvent(new Event("input",{bubbles:true}));
+  });
+  await h.page.waitForTimeout(400);
+  const granted=await h.evaluate(()=>window.__settings.paidLeaveGranted||null);
+  await h.clickExact("編集",{rowText:"田中"});
+  await h.page.waitForTimeout(400);
+  const modal=await h.evaluate(()=>{
+    const d=[...document.querySelectorAll("div")].find(x=>(x.innerText||"").startsWith("田中 の設定"));
+    return d?d.innerText.replace(/\s+/g," "):null;});
+  const errors=h.errors.slice();
+  await h.close();
+  return{rowButtons,granted,modal,errors};
+}
+
 // 行が無い配信物（反証）で例外にならないよう、行の取得は必ずこれを通す。
 const cellOf=(t,row,i=0)=>((t&&t[row])||[])[i];
 
 (async()=>{
-  const st=await setTab(), s=await shiftTab(), sb=await subsTab();
+  const st=await setTab(), s=await shiftTab(), sb=await subsTab(), sf=await staffTab();
   const live=await periodTotals("2099-01-01","2099-01-31"), ended=await periodTotals("2020-01-01","2020-01-31");
   const pass={
     set_break_card:!!st.breakCard&&/時間帯方式/.test(st.breakCard)&&/長さ方式/.test(st.breakCard),
     set_thresholds_toggle:st.thresholdsHiddenByDefault&&st.thresholdsShown,
     set_break_mode_saved:st.breakMode==="length",
-    set_paid_card:!!st.paidCard,
-    set_paid_saved:!!st.granted&&st.granted["田中"]===10,
+    set_moved_to_stafftab:st.paidCardGone&&st.otCardGone,
+    staff_row_buttons:sf.rowButtons.join(",")==="有給日数,ポジション,非表示,編集,削除",
+    staff_paid_saved:!!sf.granted&&sf.granted["田中"]===10,
+    staff_modal_sections:["名前","従業員番号","属性","退勤延長","別名"].every(x=>(sf.modal||"").includes(x)),
     set_fiscal:st.hasFiscal,
     set_fontsize16:st.fontsizes.every(f=>f>=16),
     // 休憩不足（休憩帯なしで実働10h の日が10日）
@@ -187,7 +222,11 @@ const cellOf=(t,row,i=0)=>((t&&t[row])||[])[i];
     // yu を入れると leaveType が保存され、両セルが有給色になる
     yu_saved:!!s.after.saved&&s.after.saved.leaveType==="paid"&&!!s.after.saved.adminRest
       &&s.after.saved.adminRest.start===true&&s.after.saved.adminRest.end===true,
-    yu_color:!!s.after.c14s&&s.after.c14s.img.includes("rgb(220,235,251)")&&!!s.after.c14e&&s.after.c14e.img.includes("rgb(220,235,251)"),
+    // 休暇は色ではなくセルの文字で見せる（2026-09-26 ユーザー指示）。出勤・退勤の両方に出す
+    yu_cell_text:!!s.after.c14s&&s.after.c14s.v==="有給"&&!!s.after.c14e&&s.after.c14e.v==="有給",
+    yu_no_color:!!s.after.c14s&&!s.after.c14s.img.includes("rgb(220,235,251)"),
+    // 種別名を出すセルには斜線も引かない（文字と重なって読めなくなるため）
+    yu_no_hatch:!!s.after.c14s&&!/svg/.test(s.after.c14s.img||""),
     yu_counted:/有1\//.test(cellOf(s.after.labor,"休暇")||""),
     paid_remaining:cellOf(s.after.labor,"有給残")==="9日",
     year_total:cellOf(s.before.labor,"2026年度計")==="100:00",
@@ -202,9 +241,9 @@ const cellOf=(t,row,i=0)=>((t&&t[row])||[])[i];
       &&live.saved[0]["田中"].workMin===540&&live.saved[0]["田中"].paid===1,
     totals_frozen_after_end:ended.saved.length===0,
     no_console_errors:st.errors.length===0&&s.after.errors.length===0&&sb.errors.length===0
-      &&live.errors.length===0&&ended.errors.length===0,
+      &&live.errors.length===0&&ended.errors.length===0&&sf.errors.length===0,
   };
   const allPass=Object.values(pass).every(Boolean);
-  console.log(JSON.stringify({setTab:st,shiftTab:s,subsTab:sb,periodTotals:{live,ended},pass,allPass},null,1));
+  console.log(JSON.stringify({setTab:st,shiftTab:s,subsTab:sb,staffTab:sf,periodTotals:{live,ended},pass,allPass},null,1));
   process.exit(allPass?0:1);
 })().catch(e=>{console.error(e);process.exit(1);});

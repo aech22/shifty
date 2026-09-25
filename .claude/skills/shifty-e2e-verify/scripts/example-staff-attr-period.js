@@ -20,15 +20,25 @@ const P1 = `{id:"p1",label:"8月前半",startDate:"2026-08-01",endDate:"2026-08-
 const P0 = `{id:"p0",label:"7月後半",startDate:"2026-07-16",endDate:"2026-07-31"}`;
 const TYPE_LIMITS = `{employee:{name:"社員"},parttime:{name:"バイト",monthly:1},summer:{name:"夏休み",monthly:200}}`;
 
-const selectAttr = (h, staffName, value) => h.evaluate(([n, v]) => {
-  const row = [...document.querySelectorAll("[data-staff-idx]")].find(r => r.innerText.includes(n));
-  if (!row) return "row-not-found";
-  const sel = row.querySelector("select");
-  if (!sel) return "select-not-found";
-  Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set.call(sel, v);
-  sel.dispatchEvent(new Event("change", { bubbles: true }));
-  return "ok";
-}, [staffName, value]);
+// 属性のセレクトは 2026-09-26 にスタッフ行から「編集」モーダルへ移った（行に残るボタンは
+// 有給日数・ポジション・非表示・編集・削除 の5つだけ）。モーダルを開いてから選ぶ。
+const attrSelect = () => ([...document.querySelectorAll("select")]
+  .filter(x => [...x.options].some(o => o.text === "社員")).pop() || null);
+const selectAttr = async (h, staffName, value) => {
+  if (!(await h.evaluate(() => !!document.body.innerText.match(/ の設定/)))) {
+    const r = await h.clickExact("編集", { rowText: staffName });
+    if (r !== "ok") return r;
+    await h.page.waitForTimeout(250);
+  }
+  return h.evaluate(v => {
+    const sel = [...document.querySelectorAll("select")]
+      .filter(x => [...x.options].some(o => o.text === "社員")).pop();
+    if (!sel) return "select-not-found";
+    Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set.call(sel, v);
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    return "ok";
+  }, value);
+};
 
 // ---- 1. スタッフ一覧の属性変更ポップアップ ------------------------------------
 async function staffTab({ preset = "{}", periods = `[${P3},${P2},${P1},${P0}]` } = {}) {
@@ -92,8 +102,8 @@ async function part2() {
     periodsUntouched: window.__savedPeriods === undefined,
     dialogClosed: !document.body.innerText.includes("どの期間まで"),
     // value は settings のままなので、キャンセルすると select の表示も元の属性へ戻る
-    selectValue: [...document.querySelectorAll("[data-staff-idx]")]
-      .find(r => r.innerText.includes("田中")).querySelector("select").value,
+    selectValue: ([...document.querySelectorAll("select")]
+      .filter(x => [...x.options].some(o => o.text === "社員")).pop() || {}).value,
   }));
   R.part2Errors = h.errors.slice();
   await h.close();
