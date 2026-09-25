@@ -3014,7 +3014,157 @@ test("subs部分購読の窓: app-main.js の reconcileSubs が recentPeriodIds 
   }
 });
 
-// ===== 項目12: 退勤≦出勤のセル（BACKLOG #129・案C）=====
+// ===== 労務判定（2026-09-26・第1弾）=====
+// 期待値はすべて実装計画書『労務判定_実装計画.html』の確定仕様 S-1〜S-5 からの転記。
+// **実装の出力から逆生成していない。**
+const HM = (h, m) => h * 60 + (m || 0);
+
+test("S-1 総枠: 31/30/29/28日が Excel と分単位で一致（W=40h）", () => {
+  const W = u.weeklyLegalMinFromBase31(HM(177, 8)); // 31日の総枠 177:08 を入力
+  assert.strictEqual(W, HM(40, 0), "週の法定労働時間が40時間に丸まる");
+  assert.strictEqual(u.monthlyBaseMin(W, 31), HM(177, 8));
+  assert.strictEqual(u.monthlyBaseMin(W, 30), HM(171, 25));
+  assert.strictEqual(u.monthlyBaseMin(W, 29), HM(165, 42));
+  assert.strictEqual(u.monthlyBaseMin(W, 28), HM(160, 0));
+});
+
+test("S-1 総枠: W は30分単位に丸めてから各月を計算する（端数のまま使わない）", () => {
+  // 177:08 から素直に割った W は 40時間ちょうどではない（39.9977…h）。丸めずにそのまま
+  // 各月へ配ると Excel とずれるので、30分単位に丸めて確定させてから計算する（判断2）。
+  // 判断2 が例に挙げる「比例配分だと30日が 171:27」は、こちらで再現できる式が見つからなかったため
+  // 期待値として固定していない（S-1 に無い値を実装から逆生成しないという規則に従う）。
+  const raw = HM(177, 8) * 7 / 31;
+  assert.ok(Math.abs(raw - HM(40, 0)) > 0, "素の逆算は40時間ちょうどではない");
+  assert.strictEqual(u.weeklyLegalMinFromBase31(HM(177, 8)), HM(40, 0), "30分単位に丸めて40時間へ確定する");
+  assert.strictEqual(u.monthlyBaseMin(u.weeklyLegalMinFromBase31(HM(177, 8)), 30), HM(171, 25));
+  // 丸めずに端数の W をそのまま使うと合わない月が出る（＝丸めが効いていることの対照）。
+  // 28日の月は 159:59 になり、S-1 の 160:00 と1分ずれる。
+  assert.strictEqual(u.monthlyBaseMin(raw, 28), HM(159, 59));
+  assert.strictEqual(u.monthlyBaseMin(HM(40, 0), 28), HM(160, 0));
+});
+
+test("S-1注記 W=44h: 31日に 194:51 を入力すると週44時間に丸まる（特例措置対象事業場）", () => {
+  const W = u.weeklyLegalMinFromBase31(HM(194, 51));
+  assert.strictEqual(W, HM(44, 0));
+  assert.strictEqual(u.monthlyBaseMin(W, 31), HM(194, 51));
+});
+
+test("S-1 目安・上限: 固定残業30h・余裕7h で Excel と一致", () => {
+  const W = u.weeklyLegalMinFromBase31(HM(177, 8));
+  const FIX = HM(30, 0), MG = HM(7, 0), DOT = HM(3, 0);
+  const exp = {
+    31: { guide: HM(200, 0), cap: HM(207, 8) },
+    30: { guide: HM(194, 0), cap: HM(201, 25) },
+    29: { guide: HM(188, 0), cap: HM(195, 42) },
+    28: { guide: HM(183, 0), cap: HM(190, 0) },
+  };
+  [31, 30, 29, 28].forEach(d => {
+    const b = u.monthlyBaseMin(W, d);
+    assert.strictEqual(u.monthlyGuideMin(b, FIX, MG, DOT), exp[d].guide, `${d}日の目安`);
+    assert.strictEqual(u.monthlyCapMin(b, FIX), exp[d].cap, `${d}日の上限`);
+  });
+});
+
+test("S-1 目安: 1日の残業上限を0にすると目安＝総枠に切り替わる", () => {
+  const b = u.monthlyBaseMin(HM(40, 0), 31);
+  assert.strictEqual(u.monthlyGuideMin(b, HM(30, 0), HM(7, 0), 0), b);
+  assert.strictEqual(u.monthlyGuideMin(b, HM(30, 0), HM(7, 0), HM(3, 0)), HM(200, 0), "0以外なら従来どおり");
+});
+
+test("laborMonthFrame: 設定を持たない店舗は既定（W=40h）で動き、暦日数を月から引く", () => {
+  const f = u.laborMonthFrame({}, "2026-08"); // 8月=31日
+  assert.strictEqual(f.days, 31);
+  assert.strictEqual(f.weeklyMin, HM(40, 0));
+  assert.strictEqual(f.baseMin, HM(177, 8));
+  assert.strictEqual(f.guideMin, HM(200, 0));
+  assert.strictEqual(f.capMin, HM(207, 8));
+  assert.strictEqual(u.laborMonthFrame({}, "2026-02").days, 28);
+  assert.strictEqual(u.laborMonthFrame({}, "2028-02-15").days, 29, "うるう年・日付つきでも月から引く");
+});
+
+test("項目6: 法定基準 1日8時間・週40時間が定数として存在する", () => {
+  assert.strictEqual(u.LEGAL_DAILY_HOURS, 8);
+  assert.strictEqual(u.LEGAL_WEEKLY_HOURS, 40);
+  assert.strictEqual(u.LEGAL_DAILY_MIN, 480);
+  assert.strictEqual(u.LEGAL_WEEKLY_MIN, 2400);
+});
+
+test("S-5 B制の週40h超: 1日8hで切ってから週で足し、40h超のぶんだけを取る", () => {
+  // 10h×5日 → 8h×5=40h で超過0（1日8hで切るため）
+  assert.strictEqual(u.weeklyOverMinB([600, 600, 600, 600, 600, 0, 0]), 0);
+  // 8h×6日 → 48h で 8h超過
+  assert.strictEqual(u.weeklyOverMinB([480, 480, 480, 480, 480, 480, 0]), HM(8, 0));
+  // 7h×6日 = 42h で 2h超過
+  assert.strictEqual(u.weeklyOverMinB([420, 420, 420, 420, 420, 420, 0]), HM(2, 0));
+  // ちょうど40hは超過なし（境界）
+  assert.strictEqual(u.weeklyOverMinB([480, 480, 480, 480, 480]), 0);
+  // 週ごとの合計。負の週は0に丸めてから足す（引き算で相殺しない）
+  assert.strictEqual(u.weeklyOverTotalMinB([[480, 480, 480, 480, 480, 480], [120]]), HM(8, 0));
+  // 期間をまたぐ週は「データのある日だけ」を渡す＝渡さなかった日は加算されない
+  assert.strictEqual(u.weeklyOverTotalMinB([[480, 480, 480]]), 0);
+});
+
+test("項目1 laborSystemOf: 組み込み属性の既定は 社員=A・バイト=B・派遣/その他=対象外", () => {
+  assert.strictEqual(u.laborSystemOf({}, "employee"), "A");
+  assert.strictEqual(u.laborSystemOf({}, "parttime"), "B");
+  assert.strictEqual(u.laborSystemOf({}, "dispatch"), "none");
+  assert.strictEqual(u.laborSystemOf({}, "other"), "none");
+  // 属性が未割当のスタッフは既存フォールバックで parttime＝B制（安全側）
+  assert.strictEqual(u.laborSystemForStaff({}, "田中"), "B");
+});
+
+test("項目1 laborSystemOf: 明示の laborSystem が既定より優先する", () => {
+  const st = { staffTypeLimits: { employee: { name: "社員", laborSystem: "B" }, parttime: { name: "バイト", laborSystem: "A" } },
+               staffAttributes: { 田中: "employee" } };
+  assert.strictEqual(u.laborSystemOf(st, "employee"), "B");
+  assert.strictEqual(u.laborSystemOf(st, "parttime"), "A");
+  assert.strictEqual(u.laborSystemForStaff(st, "田中"), "B");
+});
+
+test("S-4 区分が空欄か誤り: custom属性で未設定、または staffTypeLimits に無い属性は null", () => {
+  const st = { staffTypeLimits: { custom_a1: { name: "契約" } }, staffAttributes: { 田中: "custom_a1", 鈴木: "custom_zz" } };
+  assert.strictEqual(u.laborSystemForStaff(st, "田中"), null, "custom属性で laborSystem 未設定");
+  assert.strictEqual(u.laborSystemForStaff(st, "鈴木"), null, "staffTypeLimits に無い属性");
+  assert.deepStrictEqual(u.laborFindingsFor(null, [600], 0, []), ["区分が空欄か誤り"]);
+  // 不正な値も未設定と同じ扱い
+  assert.strictEqual(u.laborSystemOf({ staffTypeLimits: { custom_a1: { laborSystem: "X" } } }, "custom_a1"), null);
+});
+
+test("S-4 A制の日次判定: 12h超n日・4h未満n日（境界ちょうどは出ない）", () => {
+  // 13h・12h（境界）・3h59m・4h（境界）・8h
+  const mins = [HM(13, 0), HM(12, 0), HM(3, 59), HM(4, 0), HM(8, 0)];
+  assert.deepStrictEqual(u.laborFindingsFor("A", mins, 0, []), ["12h超1日", "4h未満1日"]);
+  assert.deepStrictEqual(u.laborFindingsFor("A", [HM(12, 1), HM(12, 1)], 0, []), ["12h超2日"]);
+  assert.deepStrictEqual(u.laborFindingsFor("A", [HM(8, 0)], 0, []), [], "どれにも当たらなければ空");
+});
+
+test("S-4 B制の日次判定: 8h超n日(残業)・週40h超(残業)", () => {
+  // 8h01m と 9h が超過、8hちょうど（境界）は出ない
+  assert.deepStrictEqual(u.laborFindingsFor("B", [HM(8, 1), HM(8, 0), HM(9, 0)], 0, []), ["8h超2日(残業)"]);
+  assert.deepStrictEqual(
+    u.laborFindingsFor("B", [HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0)], 0,
+      [[HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), HM(7, 0), 0]]),
+    ["週40h超(残業)"]);
+  // A制の判定（12h超・4h未満）はB制では出ない
+  assert.deepStrictEqual(u.laborFindingsFor("B", [HM(13, 0)], 0, []), ["8h超1日(残業)"]);
+});
+
+test("S-4 時刻の入力ミス: 区分によらず件数つきで出る", () => {
+  assert.deepStrictEqual(u.laborFindingsFor("A", [], 2, []), ["時刻の入力ミス2日"]);
+  assert.deepStrictEqual(u.laborFindingsFor("none", [], 1, []), ["時刻の入力ミス1日"]);
+  assert.deepStrictEqual(u.laborFindingsFor(null, [], 1, []), ["時刻の入力ミス1日", "区分が空欄か誤り"]);
+});
+
+test("項目1: 判定対象外（応援・外部）のスタッフは労働時間の判定から除外される", () => {
+  // 13h・3h・9h が並んでも A制/B制 のどの判定も出ない（週40h超も出ない）
+  const mins = [HM(13, 0), HM(3, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0)];
+  const weeks = [[HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), 0]];
+  assert.deepStrictEqual(u.laborFindingsFor("none", mins, 0, weeks), []);
+  // 同じ入力を A制／B制 に入れると判定が出る＝素通りするテストではない
+  assert.ok(u.laborFindingsFor("A", mins, 0, weeks).length > 0);
+  assert.ok(u.laborFindingsFor("B", mins, 0, weeks).length > 0);
+});
+
 test("項目12 isTimeOrderInvalid: 退勤≦出勤の日だけを true にする", () => {
   assert.strictEqual(u.isTimeOrderInvalid({ status: "work", start: "22:00", end: "02:00" }), true);
   assert.strictEqual(u.isTimeOrderInvalid({ status: "work", start: "18:00", end: "01:00" }), true);
@@ -3039,6 +3189,32 @@ test("項目12: 退勤≦出勤の日は effShiftRangeMin が null＝実働0 の
   assert.strictEqual(u.effShiftRangeMin(sh, null), null);
   assert.strictEqual(u.calcNetWorkMinutes(sh, [], 0, null), 0);
   assert.strictEqual(u.isTimeOrderInvalid(sh), true, "0になること自体は変えず、誤りとして検出だけする");
+});
+
+test("laborSettingsOf: 設定キーの無い店舗は既定、部分指定はその項目だけ上書き", () => {
+  assert.deepStrictEqual(u.laborSettingsOf({}), u.DEFAULT_LABOR_SETTINGS);
+  assert.deepStrictEqual(u.laborSettingsOf(null), u.DEFAULT_LABOR_SETTINGS);
+  const p = u.laborSettingsOf({ laborSettings: { marginMin: 600 } });
+  assert.strictEqual(p.marginMin, 600);
+  assert.strictEqual(p.monthlyBase31Min, u.DEFAULT_LABOR_SETTINGS.monthlyBase31Min);
+  // 不正値は既定に倒す（負・NaN）
+  assert.strictEqual(u.laborSettingsOf({ laborSettings: { marginMin: -5 } }).marginMin, u.DEFAULT_LABOR_SETTINGS.marginMin);
+  assert.strictEqual(u.laborSettingsOf({ laborSettings: { marginMin: "x" } }).marginMin, u.DEFAULT_LABOR_SETTINGS.marginMin);
+});
+
+test("凍結: laborSettings が PERIOD_SNAPSHOT_SETTING_KEYS に登録され、確定済み期間で写しの値が使われる", () => {
+  assert.ok(u.PERIOD_SNAPSHOT_SETTING_KEYS.includes("laborSettings"));
+  const period = { id: "p1", startDate: "2026-08-01", endDate: "2026-08-31",
+    snapshot: { staffList: ["田中"], settings: { laborSettings: { monthlyBase31Min: 10628, marginMin: 420 } } } };
+  const now = { laborSettings: { monthlyBase31Min: 11691, marginMin: 1200 } }; // 期間終了後に44hへ変更した
+  const locked = u.resolvePeriodMaster(period, ["田中"], now, "2026-09-05");
+  assert.strictEqual(locked.locked, true);
+  assert.strictEqual(u.laborSettingsOf(locked.settings).monthlyBase31Min, 10628, "写しの値で判定する");
+  assert.strictEqual(u.laborMonthFrame(locked.settings, "2026-08").weeklyMin, 2400);
+  // 未確定の期間は現在値
+  const live = u.resolvePeriodMaster(period, ["田中"], now, "2026-08-15");
+  assert.strictEqual(live.locked, false);
+  assert.strictEqual(u.laborMonthFrame(live.settings, "2026-08").weeklyMin, 2640);
 });
 
 test("項目12 ドリフト検出: applyEditToSubs と saveAdj が同じ isTimeOrderInvalid を通る", () => {

@@ -1201,7 +1201,30 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     return tot;
   };
 
-  // "h"なし勤務時間フォーマット
+  // ===== 労務判定（S-4・第1弾ぶん）=====
+  // その日の実働（分）。集計表・週集計とまったく同じ入口（_getWorkShift → calcNetWorkMinutes）を通す
+  // ＝同じ日について労務判定と集計表が違う数字を出すことがない。
+  const laborDayMin=(name,ds)=>{const sh=_getWorkShift(name,ds);return sh?calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh),settings):0;};
+  const laborFindings=useMemo(()=>{
+    if(!isPremium)return[];
+    const out=[];
+    realStaff.forEach(name=>{
+      const sys=laborSystemForStaff(settings,name);
+      const dayMins=dates.map(d=>laborDayMin(name,d)).filter(m=>m>0);
+      // B制の週40h超は月曜起算（weeks は前の期間ぶんも含む）。データの無い日は0分で入るので、
+      // 前月・翌月にまたがる週は結果として「データのある日だけ」で計算されたのと同じになる（S-5）。
+      const weekMins=sys==="B"?weeks.map(monStr=>{
+        const arr=[];
+        for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);arr.push(laborDayMin(name,fd(dd)));}
+        return arr;
+      }):[];
+      const te=dates.reduce((a,d)=>a+(timeErrors[`${name}|${d}`]?1:0),0);
+      const f=laborFindingsFor(sys,dayMins,te,weekMins);
+      if(f.length)out.push({name,findings:f});
+    });
+    return out;
+  },[isPremium,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid]);
+
   // "h"なし勤務時間フォーマット
   const fmtH=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;return m===0?String(h):`${h}:${String(m).padStart(2,"0")}`;};
   // 画面の集計表用: 4桁以内に抑える（100時間以上は時間のみ）。列幅がグリッドとずれるのを防ぐ
@@ -2000,6 +2023,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             {Object.keys(timeErrors).map(k=>{const i=k.indexOf("|");return`${k.slice(0,i)} ${fmtDL(k.slice(i+1))}`;}).join("、")}
           </div>
           <div style={{fontSize:11,color:"var(--c-text3)",marginTop:4}}>深夜は 25:00・26:00 のように入力します</div>
+        </div>
+      )}
+
+      {/* 労務判定（S-4）。判定対象外の属性（応援・外部）は労働時間の判定・集計から外れる */}
+      {laborFindings.length>0&&(
+        <div style={{background:"rgba(248,112,54,.07)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
+          <div style={{fontSize:12,fontWeight:700,color:"var(--c-accent)",marginBottom:4}}>⚠ 労務の確認が必要です</div>
+          <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
+            {laborFindings.map(({name,findings})=>(
+              <div key={name}>{name}：{findings.join("、")}</div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -4637,6 +4672,17 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
               }
               {!isBuiltin&&<button onClick={()=>deleteType(type)} style={{padding:"4px 10px",background:"rgba(229,57,53,.1)",border:"1px solid rgba(229,57,53,.3)",borderRadius:4,color:"#e53935",fontSize:12,cursor:"pointer"}}>削除</button>}
             </div>
+            {/* 労働時間制（項目1）。組み込み属性は既定（社員=変形・バイト=通常・派遣/その他=対象外）が
+                入った状態で表示されるので、既存店舗が「区分が空欄」にならない。 */}
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+              <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>労働時間制</span>
+              <select value={LABOR_SYSTEMS.indexOf(lim.laborSystem)>=0?lim.laborSystem:(DEFAULT_LABOR_SYSTEM_BY_ATTR[type]||"")}
+                onChange={e=>saveLim(type,"laborSystem",e.target.value)}
+                style={{...AI,width:"auto",flex:"1 1 220px",minWidth:180,padding:"5px 8px",cursor:"pointer"}}>
+                {LABOR_SYSTEMS.indexOf(lim.laborSystem)<0&&!DEFAULT_LABOR_SYSTEM_BY_ATTR[type]&&<option value="">未設定</option>}
+                {LABOR_SYSTEMS.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
+              </select>
+            </div>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
               {[["daily","1日",24],["weekly","週",168],["biweekly","2週間",336],["monthly","1ヶ月",744]].map(([key,lbl,mx])=>(
                 <div key={key} style={{display:"flex",alignItems:"center",gap:4}}>
@@ -4673,6 +4719,67 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
           <div style={{fontSize:11,color:"var(--c-text4)"}}>保存後に制限値を設定できます</div>
         </div>}
         {!pendingNewType&&<button onClick={()=>setPendingNewType({name:""})} style={{width:"100%",padding:"8px",background:"transparent",border:"1px dashed var(--c-border2)",borderRadius:8,color:"var(--c-text3)",fontSize:12,cursor:"pointer",marginTop:4}}>＋ 属性を追加</button>}
+      </AC>);
+    })()}
+
+    {plan==="premium"&&(()=>{
+      // 労務判定の枠（項目2＋3）。**31日の月の総枠だけを手入力**し、そこから週の法定労働時間 W を
+      // 30分単位に丸めて逆算して、各月を FLOOR(W × 暦日数 ÷ 7 × 60, 1) ÷ 60 で出す（判断2）。
+      // 週44時間の特例措置対象事業場は別トグルを作らず、31日の総枠に 194:51 を入れれば W=44h になる。
+      const ls=laborSettingsOf(settings);
+      const saveLabor=(k,v)=>onSave({...settings,laborSettings:{...ls,[k]:v}});
+      const W=weeklyLegalMinFromBase31(ls.monthlyBase31Min);
+      const wLabel=W%60===0?`${W/60}時間`:`${Math.floor(W/60)}時間${W%60}分`;
+      const b31h=Math.floor(ls.monthlyBase31Min/60),b31m=ls.monthlyBase31Min%60;
+      const rows=[31,30,29,28].map(d=>{
+        const b=monthlyBaseMin(W,d);
+        return{d,base:b,guide:monthlyGuideMin(b,ls.fixedOvertimeMin,ls.marginMin,ls.agreementDailyOtMin),cap:monthlyCapMin(b,ls.fixedOvertimeMin)};
+      });
+      const TD={border:"1px solid var(--c-border)",padding:"4px 8px",textAlign:"right",fontSize:12,whiteSpace:"nowrap"};
+      return(<AC title="労務判定（1か月単位の変形労働時間制）">
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>労働時間制を「1か月単位の変形労働時間制」にした属性のスタッフに適用します。「通常の労働時間制」の月の上限は上の「スタッフ属性別 勤務時間制限」の設定値をそのまま使います（こちらは法定・協定ではなく店舗の設定値による判定です）。</div>
+        <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap",marginBottom:6}}>
+          <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap",minWidth:110}}>31日の月の総枠</span>
+          <input type="number" min={0} max={744} value={b31h} placeholder="0"
+            onChange={e=>{const h=Math.max(0,Math.min(744,parseInt(e.target.value)||0));saveLabor("monthlyBase31Min",h*60+b31m);}}
+            style={{...AI,width:64,textAlign:"center",padding:"5px 6px"}}/>
+          <span style={{fontSize:11,color:"var(--c-text4)"}}>時間</span>
+          <input type="number" min={0} max={59} value={b31m} placeholder="0"
+            onChange={e=>{const m=Math.max(0,Math.min(59,parseInt(e.target.value)||0));saveLabor("monthlyBase31Min",b31h*60+m);}}
+            style={{...AI,width:64,textAlign:"center",padding:"5px 6px"}}/>
+          <span style={{fontSize:11,color:"var(--c-text4)"}}>分</span>
+        </div>
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12}}>この値から週の法定労働時間を <strong style={{color:"var(--c-accent)"}}>{wLabel}</strong> と判定しました。</div>
+        <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:12}}>
+          <div style={{display:"flex",alignItems:"center",gap:4}}>
+            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>固定残業</span>
+            <input type="number" min={0} max={200} value={Math.floor(ls.fixedOvertimeMin/60)||""} placeholder="0"
+              onChange={e=>{const h=Math.max(0,Math.min(200,parseInt(e.target.value)||0));saveLabor("fixedOvertimeMin",h*60);}}
+              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+            <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:4}}>
+            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>余裕</span>
+            <input type="number" min={0} max={200} value={Math.floor(ls.marginMin/60)||""} placeholder="0"
+              onChange={e=>{const h=Math.max(0,Math.min(200,parseInt(e.target.value)||0));saveLabor("marginMin",h*60);}}
+              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+            <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+          </div>
+        </div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
+            <thead><tr>
+              {["暦日数","総枠（所定）","目安","上限"].map(h=><th key={h} style={{...TD,textAlign:"center",background:"var(--c-input)",fontWeight:700,color:"var(--c-text3)"}}>{h}</th>)}
+            </tr></thead>
+            <tbody>{rows.map(r=>(<tr key={r.d}>
+              <td style={{...TD,textAlign:"center",color:"var(--c-text3)"}}>{r.d}日</td>
+              <td style={{...TD,color:"var(--c-text)"}}>{fmtMin(r.base)}</td>
+              <td style={{...TD,color:"var(--c-text)"}}>{fmtMin(r.guide)}</td>
+              <td style={{...TD,color:"var(--c-text)"}}>{fmtMin(r.cap)}</td>
+            </tr>))}</tbody>
+          </table>
+        </div>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>目安 = 総枠 + 固定残業 − 余裕（時間未満を切り捨て）／上限 = 総枠 + 固定残業。36協定の設定と、残業予定の按分・総括判定は次の弾で追加します。</div>
       </AC>);
     })()}
 

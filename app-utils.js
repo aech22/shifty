@@ -379,6 +379,124 @@ function getOT(staffName,settings,shift){
   return(h*60+m)<=1020?lunch:dinner;
 }
 function fmtMin(min){if(!min&&min!==0)return"";const h=Math.floor(min/60),m=min%60;return`${h}:${String(m).padStart(2,"0")}`;}
+// ===== 労務判定（2026-09-26・第1弾）=====
+// 職場のシフトExcelひな型（1か月単位の変形労働時間制＋36協定）が持つ判定の移植。
+// 期待値の正本は実装計画書『労務判定_実装計画.html』の確定仕様 S-1〜S-7 で、
+// **この節の実装の出力からテストの期待値を逆生成してはいけない**。
+
+// 労基法32条の法定基準。B制（通常の労働時間制）の日次・週次判定に使う。
+const LEGAL_DAILY_HOURS=8;
+const LEGAL_WEEKLY_HOURS=40;
+const LEGAL_DAILY_MIN=LEGAL_DAILY_HOURS*60;    // 480
+const LEGAL_WEEKLY_MIN=LEGAL_WEEKLY_HOURS*60;  // 2400
+// A制の日次判定のしきい値（S-4）
+const LABOR_LONG_DAY_MIN=12*60; // これを「超える」日が 12h超
+const LABOR_SHORT_DAY_MIN=4*60; // 0より大きくこれ「未満」の日が 4h未満
+
+// 労働時間制。Excelの「区分」列（A／B／応援・外部）に対応する。
+// スタッフ単位ではなく**属性単位**で持つ（判断1・案a）。割当UI・期間指定(keepAttrs)・
+// 改名/削除の後始末がすべて属性の仕組みに乗っているため、別軸を作ると同じ配線が2系統になる。
+const LABOR_SYSTEMS=["A","B","none"];
+const LABOR_SYSTEM_LABELS={A:"1か月単位の変形労働時間制",B:"通常の労働時間制",none:"判定対象外"};
+// 組み込み属性の既定。dispatch/other は Excel の「応援・外部」に対応し、労働時間の判定・集計から外す。
+// 属性が未割当のスタッフは既存フォールバックで parttime に倒れる＝B制（安全側）になる。
+const DEFAULT_LABOR_SYSTEM_BY_ATTR={employee:"A",parttime:"B",dispatch:"none",other:"none"};
+
+// 属性IDの労働時間制。**null は「区分が空欄か誤り」**（S-4の注記）＝
+// staffTypeLimits に無い属性、または custom 属性で laborSystem が未設定のとき。
+// 組み込みIDは DEFAULT_LABOR_SYSTEM_BY_ATTR が必ず答えるので null にならない
+// （既存店舗の employee/parttime が一斉に「区分が空欄」になるのを防ぐ）。
+function laborSystemOf(settings,attrId){
+  const id=attrId||"parttime";
+  const stl=(settings&&settings.staffTypeLimits)||{};
+  const t=stl[id];
+  const raw=t&&typeof t==="object"?t.laborSystem:undefined;
+  if(LABOR_SYSTEMS.indexOf(raw)>=0)return raw;
+  if(BUILTIN_TYPES.indexOf(id)>=0)return DEFAULT_LABOR_SYSTEM_BY_ATTR[id]||null;
+  return null;
+}
+function laborSystemForStaff(settings,name){
+  return laborSystemOf(settings,((settings&&settings.staffAttributes)||{})[name]);
+}
+
+// 労務設定の既定値。**makeSettings は変更せず読み手側のフォールバックで持つ**
+// （既存の staffTypeLimits 等と同じ形。設定を持たない店舗は既定値で動く）。
+// 既定の monthlyBase31Min=10628分(177:08) は週40時間の法定どおりの値。
+const DEFAULT_LABOR_SETTINGS={
+  monthlyBase31Min:10628, // 31日の月の総枠（分）＝この1つから他の月を逆算する
+  fixedOvertimeMin:1800,  // 固定残業（分・30h）
+  marginMin:420,          // 余裕（分・7h）
+  agreementDailyOtMin:180,    // 36協定 1日の延長上限（分・3h）※判定は第2弾。目安の算出には第1弾から効く
+  agreementMonthlyOtMin:2700  // 36協定 1か月の延長上限（分・45h）※判定は第2弾
+};
+function laborSettingsOf(settings){
+  const raw=(settings&&settings.laborSettings)||null;
+  const out={...DEFAULT_LABOR_SETTINGS};
+  if(raw&&typeof raw==="object"){
+    Object.keys(DEFAULT_LABOR_SETTINGS).forEach(k=>{
+      const v=Number(raw[k]);
+      if(Number.isFinite(v)&&v>=0)out[k]=Math.round(v);
+    });
+  }
+  return out;
+}
+
+// 31日の月の総枠（分）から週の法定労働時間（分）を逆算し、30分単位に丸める（判断2）。
+// 丸めずに比例配分すると Excel と最大2分ずれる（30日が 171:25 ではなく 171:27 になる）。
+// 週44時間の特例措置対象事業場は別トグルを作らず、31日の総枠に 194:51 を入れれば W=44h に丸まる。
+const LABOR_W_GRID_MIN=30;
+function weeklyLegalMinFromBase31(base31Min){
+  const v=Number(base31Min);
+  if(!Number.isFinite(v)||v<=0)return 0;
+  return Math.round(v*7/31/LABOR_W_GRID_MIN)*LABOR_W_GRID_MIN;
+}
+// 総枠（所定）= FLOOR(W × 暦日数 ÷ 7 × 60, 1) ÷ 60。分で持つので FLOOR(weeklyMin × 暦日数 ÷ 7)。
+function monthlyBaseMin(weeklyMin,days){
+  const w=Number(weeklyMin),d=Number(days);
+  if(!Number.isFinite(w)||!Number.isFinite(d)||w<=0||d<=0)return 0;
+  return Math.floor(w*d/7);
+}
+// 目安 = ROUNDDOWN(総枠 + 固定残業 − 余裕, 0)（**時間単位**での切り捨て）。
+// 36協定の1日の延長上限が0＝残業を前提にしない運用では目安＝総枠にする。
+function monthlyGuideMin(baseMin,fixedOtMin,marginMin,agreementDailyOtMin){
+  const b=Math.max(0,Number(baseMin)||0);
+  if(!(Number(agreementDailyOtMin)>0))return b;
+  const raw=b+(Number(fixedOtMin)||0)-(Number(marginMin)||0);
+  return Math.max(0,Math.floor(raw/60)*60);
+}
+// 上限 = 総枠 + 固定残業（切り捨てなし）
+function monthlyCapMin(baseMin,fixedOtMin){
+  return Math.max(0,(Number(baseMin)||0)+(Number(fixedOtMin)||0));
+}
+// "YYYY-MM" または "YYYY-MM-DD" の暦日数
+function daysInMonthOf(ym){
+  const m=typeof ym==="string"?/^(\d{4})-(\d{2})/.exec(ym):null;
+  if(!m)return 0;
+  const mo=Number(m[2]);
+  if(mo<1||mo>12)return 0;
+  return new Date(Number(m[1]),mo,0).getDate();
+}
+// その月のA制の枠を一括で出す。ym は "YYYY-MM"（期間の startDate をそのまま渡してもよい）。
+function laborMonthFrame(settings,ym){
+  const ls=laborSettingsOf(settings);
+  const weeklyMin=weeklyLegalMinFromBase31(ls.monthlyBase31Min);
+  const days=daysInMonthOf(ym);
+  const baseMin=monthlyBaseMin(weeklyMin,days);
+  return{days,weeklyMin,baseMin,
+    guideMin:monthlyGuideMin(baseMin,ls.fixedOvertimeMin,ls.marginMin,ls.agreementDailyOtMin),
+    capMin:monthlyCapMin(baseMin,ls.fixedOvertimeMin)};
+}
+
+// B制の週40h超（分）。各日の実働を1日8hで切ってから週で足し、40hを超えた分だけを取る（S-5）。
+// 前月・翌月にまたがる週は、呼び出し元が**データのある日だけ**を渡す。
+function weeklyOverMinB(dayMins){
+  const sum=(dayMins||[]).reduce((a,m)=>a+Math.min(Math.max(0,Number(m)||0),LEGAL_DAILY_MIN),0);
+  return Math.max(0,sum-LEGAL_WEEKLY_MIN);
+}
+function weeklyOverTotalMinB(weeks){
+  return(weeks||[]).reduce((a,w)=>a+weeklyOverMinB(w),0);
+}
+
 // 退勤が出勤以下の日（項目12・案C）。**両側とも入力されている日だけ**を対象にする——
 // 片側セルは oneSidedFillBounds の補完の領分で、入力ミスではない。
 // effShiftRangeMin は「退勤≦出勤」と「片側だけ」の両方を null にして区別できないので専用に持つ。
@@ -392,6 +510,33 @@ function isTimeOrderInvalid(shift){
   const s=toMin(st),e=toMin(en);
   if(!Number.isFinite(s)||!Number.isFinite(e))return false;
   return e<=s;
+}
+
+// スタッフ1人ぶんの労務日次判定（S-4・第1弾ぶん）。文言と発火条件は S-4 の表に一致させる。
+// dayMins は**出勤日の実働分の配列**（休み・未入力の日は入れない）。
+// weekDayMins は週ごとの実働分の配列の配列（B制の週40h超用）。
+// laborSystem==="none"（判定対象外＝Excelの「応援・外部」）は労働時間の判定・集計から外す。
+// ただし「時刻の入力ミス」は労務の判定ではなく入力データそのものの誤りなので区分によらず出す
+// （項目12・案Cのセル色と同じ集合を指す）。
+// 第2弾以降で足すもの: 月の残業が上限超／固定残業30h超／1日の残業予定が上限超（A制）、
+// 1日の残業が上限超／週40h超(協定なし)（B制）、休憩不足（共通・第3弾）。
+function laborFindingsFor(laborSystem,dayMins,timeErrorCount,weekDayMins){
+  const out=[];
+  const mins=(dayMins||[]).map(m=>Math.max(0,Number(m)||0));
+  if(laborSystem==="A"){
+    const over12=mins.filter(m=>m>LABOR_LONG_DAY_MIN).length;
+    if(over12>0)out.push(`12h超${over12}日`);
+    const under4=mins.filter(m=>m>0&&m<LABOR_SHORT_DAY_MIN).length;
+    if(under4>0)out.push(`4h未満${under4}日`);
+  }else if(laborSystem==="B"){
+    const over8=mins.filter(m=>m>LEGAL_DAILY_MIN).length;
+    if(over8>0)out.push(`8h超${over8}日(残業)`);
+    if(weeklyOverTotalMinB(weekDayMins)>0)out.push("週40h超(残業)");
+  }
+  const te=Math.max(0,Number(timeErrorCount)||0);
+  if(te>0)out.push(`時刻の入力ミス${te}日`);
+  if(laborSystem===null||laborSystem===undefined)out.push("区分が空欄か誤り");
+  return out;
 }
 
 
@@ -963,7 +1108,7 @@ function isSpecialRedDate(dateStr,settings){
 // 凍結対象から外して現在値を参照する。確定済み期間でも日付別候補を編集すれば表示は動く（承知の上）。
 const PERIOD_SNAPSHOT_SETTING_KEYS=["staffAttributes","staffTypeLimits","staffPositions","positions",
   "requiredPositions","staffNumbers","overtimeSettings","staffColors","staffAliases","staffWorkplaces",
-  "breakTimes","candidates","weekdayCandidates"];
+  "breakTimes","candidates","weekdayCandidates","laborSettings"];
 // スタッフ名キーの設定マップのうち、**意図的に凍結しない**もの。
 // staffHidden は値そのものが期間の範囲（from/to）を持つので、いつの期間かは範囲が決める。
 // 写しにも焼くと「範囲」と「凍結された当時の値」という**同じ問いへの答えが2つ**でき、
@@ -1319,5 +1464,5 @@ function renameStaffInPeriods(periods,oldName,newName){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,laborFindingsFor};
 }
