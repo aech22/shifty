@@ -158,8 +158,36 @@ isTimeOrderInvalid / TIME_ORDER_ERROR_HINT
                            // 片側セルは補完の領分。`effShiftRangeMin` は「退勤≦出勤」と「片側だけ」の
                            // 両方を null にして区別できないので専用に持つ。入口2つ（applyEditToSubs・
                            // saveAdj）の両方がこれを通る（tests/core.test.js のドリフト検出が守る）
-laborFindingsFor           // 日次の労務判定（S-4）。laborSystem==="none" は労働時間の判定・集計から外すが、
-                           // 「時刻の入力ミス」だけは入力データそのものの誤りなので区分によらず出す
+laborFindingsFor / laborFindingLabels / overallVerdictOf
+                           // 日次・月次の労務判定（S-4）と総括判定（S-6）。引数はオプションオブジェクト。
+                           // laborSystem==="none" は労働時間の判定・集計から外す（休憩不足も出さない）が、
+                           // **「時刻の入力ミス」だけは区分によらず出す**——労務ではなく入力データの誤りのため。
+                           // 戻り値は {key,label}。総括判定が key で引くので文字列だけを返す形にしない
+excelRound / excelRoundUp / excelRoundDown
+                           // Excel の丸め。**Math.round を直接使わない**（負の値で挙動が違う）。
+                           // 桁をずらしたあと toPrecision(15) で丸め直し、1.005*100 の取りこぼしも消す
+monthlyOvertimeH / prorateOvertimeH     // 月の残業予定と日別の按分（S-2）。**累積の差分**で配るので
+                           // 日別の和が月の残業予定と完全に一致する（毎日「実働×比率」を丸めるとずれる）
+guideStatusOf              // 目安の4段階（S-6）。みなし超／所定未満／目安未満／OK 上限まで
+AGREEMENT_LEGAL_ITEMS / AGREEMENT_SINGLE_MONTH_CAP_H
+                           // 36協定の法定上限の一覧（判定する・しないを含む）。設定画面のチェックリストは
+                           // これを自動生成する。単月100h未満は**月の残業予定だけと比べ休日労働を足さない**
+breakModeOf / breakLengthOf / shiftBindingMin / isBreakShort
+                           // 休憩方式（band=既定／length）と拘束時間・休憩不足（S-3）。
+                           // **長さ方式のしきい値は実働で見る**——S-3 の本文は「拘束>8h→1.0h」だが
+                           // 同じ節の表（拘束8.5h→控除0.75h・実働7.75h）は実働基準でしか再現できない。
+                           // 労基法34条の「労働時間」も実働なので表を採った
+LEAVE_TYPES / leaveTypeOf / dayRestKindOf / weekRestStateOf
+                           // 休暇種別（公休/有給/慶弔）と週の休み3状態（S-5）。**導入前の終日 y
+                           // （leaveType なし）は公休として扱う**（データ移行はしない）
+fiscalYearOf / fiscalYearStartMonthOf / yearLaborSummary / paidLeaveRemaining
+                           // 年度（既定4月開始・設定で暦年にできる）の累計と有給残。累計は
+                           // **period.laborTotals（凍結時点の値）を優先**するので過去参照が要らない
+STAFF_LIMIT_WINDOWS / staffLimitOf / limitStateOf / hasAnyStaffLimit
+                           // 属性別の勤務時間の上限・下限（1日/週/2週間/1ヶ月＋任意日数）。0＝未設定。
+                           // **勤務が1分もない窓は下限割れにしない**（休んだ人が全員ハイライトされるのを防ぐ）。
+                           // 窓の一覧をここに1本化してある——設定UI・集計表・提出一覧のバッジ・PDFが
+                           // 組を書き写すと、項目を足したときにどれかが取り残される
 // 末尾に module.exports ガード（Nodeテスト用）
 ```
 
@@ -366,10 +394,13 @@ Period = { id: string, urlToken: string, shopId: string, label: string,
            startDate: string, endDate: string, deadlineDate: string, createdAt: string,
            snapshot?: {staffList: string[], settings: Settings},  // 確定済み期間の写し
            keepStaff?: {name: string, index: number}[],           // 削除しても列を残す人
-           keepAttrs?: {[name: string]: 属性ID} }                 // その期間に効かせる旧属性
+           keepAttrs?: {[name: string]: 属性ID},                  // その期間に効かせる旧属性
+           laborTotals?: {[name]: {workMin,paid,publicOff,ceremony}} } // 凍結時点の労務の合計（年度の累計用）
 
 // 提出
 Sub = { id: string, periodId: string, staffName: string, shopId: string,
+        // shift の管理者フィールドは ADMIN_SHIFT_FIELDS（app-utils.js）が正本。
+        // adjustedBreak（分・日別の休憩上書き）と leaveType（"public"|"paid"|"ceremony"）を含む
         shifts: {[date: string]: {status:"work"|"holiday", start?:string, end?:string}},
         comment: string, submittedAt: string, updatedAt?: string, isUpdated?: boolean }
 
@@ -380,8 +411,14 @@ Cand = { start: string, end: string } | { closed: true }
 Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              dateCandidates: {[date]: Cand[]}, templates: Template[],
              breakTimes?: {weekday|sat|sun|hol: {start,end,tags?}[]},
-             staffAttributes?: {[name]: 属性ID}, staffTypeLimits?: {[属性ID]: 制限 & {laborSystem?: "A"|"B"|"none"}},
-             laborSettings?: {monthlyBase31Min, fixedOvertimeMin, marginMin, agreementDailyOtMin, agreementMonthlyOtMin}, // 分単位・既定は読み手側フォールバック
+             staffAttributes?: {[name]: 属性ID},
+             staffTypeLimits?: {[属性ID]: {name, laborSystem?: "A"|"B"|"none",
+                 daily,weekly,biweekly,monthly,customDays,customHours,          // 上限（0=未設定）
+                 dailyMin,weeklyMin,biweeklyMin,monthlyMin,customHoursMin}},    // 下限（0=未設定）
+             laborSettings?: {monthlyBase31Min, fixedOvertimeMin, marginMin,
+                 agreementDailyOtMin, agreementMonthlyOtMin, fiscalYearStartMonth}, // 分単位・既定は読み手側フォールバック
+             breakMode?: "band"|"length", breakLength?: {over8Min, over6Min},   // 休憩の決め方（既定 band＝従来）
+             paidLeaveGranted?: {[name]: 日数},                                  // 有給の付与日数（残数の基準）
              overtimeSettings?: {byStaff: {[name]: {lunch,dinner}}}, staffNumbers?: {[name]: string},
              xlShopName?: string, staffColors?: {[name]: "red"|"black"},
              staffAliases?: {[registered]: string[]}, staffHidden?: {[name]: {from:string|null,to:string|null}[]}, periodUnit?: "2week"|"1month" }
@@ -617,6 +654,52 @@ if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 3. パーサ（`extractNote`・app-utils.js）もレジストリ駆動。`tests/core.test.js` の完全性テストが登録漏れ・実装との乖離を検出する
 4. 既存コマンド: `h`/`k`/`x`（サフィックス）、`y`/`休`（休み希望・`adminRest`フィールドに保存・トグル式）、`締`（kind:"fixed"・店舗限定の追加出勤コマンド。詳細は下記5参照）。店舗略称バリデーション（CompanyTab）の予約語も忘れずに更新する
 5. 店舗限定コマンドの例: `締`（鷄えん東通り店専用・2026-07-12追加、2026-07-12に数字と組み合わせ可能な追加出勤方式へ拡張）。出勤・退勤どちらのセルにも、単独（例:「締」）でも数字と組み合わせ（例: 出勤セル`13`+退勤セル`17締`）でも入力でき、主シフトとは別に23:00〜25:00(翌1:00)を**追加出勤**(`shift.extraStart`/`extraEnd`)として計上する（1日に2出勤が成立する）。判定は`applyEditToSubs`内で`extractNote`が返す`hasFixed`（セル値に締めキーを含むか）と`fixedShiftEnabled`をblurごとに再評価しON/OFFする（`applyFixedShiftToSubs`という専用関数は廃止済み）。**`fixedShiftCommandFor`（app-utils.js）は 2026-07-12 の`2a68ea6`で呼び出しが無くなり、現在はテストからしか呼ばれない**——その完全一致規則（「9締」はnull）は現行の併用可能な挙動と逆なので、判定の根拠として読まないこと（バグチェック#124）。`calcNetWorkMinutes`/`shiftBandInfo`（app-utils.js）は`extraStart`/`extraEnd`を主シフトと合算する形で対応済み。ヒートマップ（`heatData`/`heatHours`）・休みカウント（`restCounts`等）・`isWorkDay`もextra期間を考慮する。店舗の識別は店舗名の部分一致（`isFixedShiftEligibleShop`）で行っており、店舗名変更で無効化されうる点に注意
+
+---
+
+## 労務判定（2026-09-26・3弾すべて実装済み）
+
+職場のシフトExcelひな型（1か月単位の変形労働時間制＋36協定）の判定を移植したもの。
+**期待値の正本はリポジトリ直下の `労務判定_実装計画.html` の確定仕様 S-1〜S-7**で、
+テストの数値はそこからの転記。実装の出力から逆生成してはいけない。
+
+| 弾 | 内容 | コミット |
+|---|---|---|
+| 第1弾 | 労働時間制（属性別のA/B/対象外）・月の総枠の自動算出・法定8h/40h・退勤≦出勤の検出 | `44e7561` `d4a026f` |
+| 第2弾 | 残業の累積比例按分・36協定3項目・目安の4段階・総括判定 | `322c73b` |
+| 第3弾 | 週1休の3状態・休憩方式と日別上書きと休憩不足・休暇種別 ＋ 年度の累計と有給残 | `a6b0883` |
+| 追加 | 勤務時間の**下限**を上限と対で設定できるようにする | `b63627d` |
+
+**計画と食い違えた3点（実装はこちらを採っている）**
+
+- **S-3 の本文と表が矛盾していた。** 本文は「拘束>8h→1.0h／拘束>6h→0.75h」だが、同じ節の表の
+  ケース3（12:30〜21:00＝拘束8.5h）は控除0.75h・実働7.75h で、**しきい値を実働で見ないと再現できない**。
+  労基法34条の「労働時間」も実働なので**表を採った**。4ケースすべて表と一致する。Excel の数式を
+  確かめられるのはユーザーだけなので、突き合わせ（検証手順5）のときにここを見ること。
+- **単月100h未満の文言は S-4 の表に無い。** 判断4を受けて `月の残業が100h以上` とここで決めた。
+  S-6 の総括判定の一覧にも無いが、**法定の絶対上限の違反なので要修正に入れている**。
+- **`ya` のプルダウンは詳細モーダルに置いた。** 計画は「`ya`（終日）＝プルダウンで有給/慶事」だが、
+  グリッドのセルに選択UIを載せるには新しいポップアップ層が要る。`ya`＝有給・`yc`＝慶弔の2コマンドにし、
+  種別の変更は**提出一覧の詳細モーダルのプルダウン**で行う（日別の休憩上書きも同じ場所）。
+
+**月の集計範囲（計画に無かったので決めた）**: 按分も目安も上限も暦月が単位だが Shifty の期間は
+半月のことがある。「選択中の期間の startDate と同じ年月の全日」を月として集計し、**その月の日が
+データで埋まっていないうちは月単位の判定を出さず「要確認」にする**——半月運用で後半の期間を作る前は
+月実働が必ず不足し、素直に判定すると前半を編集している全員に「所定未満」が出続けるため。
+
+**年度の累計が過去参照なしで出る仕組み（2026-09-26 ユーザー案）**: `subs` は直近3ヶ月の部分購読だが
+`periods` は起動時に全件購読する。そこで**期間が終わるまで `period.laborTotals` を書き続け、
+終わったら止める**（写し＝`snapshot` と同じゲート・**同じ useEffect**）。凍結値を持たない期間だけ
+その場で数え、読めていない期間は画面に「＋」で明示する。
+**写しと合計を別々の effect にしてはいけない**——どちらも自分のレンダーの `periods` を map するので
+同じコミットで2つ走ると後勝ちで片方が消え、毎回2回書く（`6856168` で1つにまとめた）。
+
+**第2弾以降で入れていないもの**: 36協定の年単位4項目（年720h・複数月平均80h・年6回・年360h）。
+判断4の決定で、再着手条件は「期間をまたぐ年間集計の基盤を別件で作ったとき」。**その基盤は
+上の `period.laborTotals` で出来たので、再着手の前提は満たされている**（判定自体は未実装）。
+
+**未検証**: 計画の検証手順5（職場の実データ1ヶ月分を Excel と Shifty の両方に入れて全数値を
+突き合わせる）。xlsm の操作はユーザーの領分。**Shifty 側の計算値を Excel 側の値として代用しない。**
 
 ---
 
