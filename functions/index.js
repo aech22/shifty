@@ -1234,9 +1234,16 @@ exports.changeCompanyPassword = functions
   .https.onCall(async (data, context) => {
     const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
     const newPassword = (data && typeof data.newPassword === "string") ? data.newPassword : "";
+    const currentPassword = (data && typeof data.currentPassword === "string") ? data.currentPassword : "";
     if (!isValidCompanyId(companyId)) throw new functions.https.HttpsError("invalid-argument", "企業IDが無効です");
     if (newPassword.length < 6 || newPassword.length > 128) throw new functions.https.HttpsError("invalid-argument", "パスワードは6〜128文字にしてください");
     await assertCompanyMember(context, companyId);
+    // 現在のパスワードを照合する（2026-09-27）。企業メンバーのセッションを開いたまま離席した端末から、
+    // 第三者がパスワードを書き換えて企業を乗っ取るのを防ぐ
+    const stored = (await db.ref(`companies/${companyId}/private/passwordHash`).once("value")).val();
+    if (!currentPassword || !stored || !verifyPassword(currentPassword, stored)) {
+      throw new functions.https.HttpsError("permission-denied", "現在のパスワードが正しくありません");
+    }
     await db.ref(`companies/${companyId}/private/passwordHash`).set(hashPassword(newPassword));
     return { ok: true };
   });

@@ -1076,9 +1076,10 @@ function App(){
       return {code,skipped:(skippedShops||[]).length};
     }catch(e){ return {error:(e&&e.message)||"作成に失敗しました"}; }
   };
-  const changeCompanyPassword=async(newPassword)=>{
+  // 現在のパスワードも送る（CF が照合する・2026-09-27）。CF の反映前でも余分な項目として無視されるだけで壊れない
+  const changeCompanyPassword=async(currentPassword,newPassword)=>{
     if(!companyInfo) return {error:"企業アカウントがありません"};
-    try{ await _callCF("changeCompanyPassword",{companyId:companyInfo.companyId,newPassword}); return {}; }
+    try{ await _callCF("changeCompanyPassword",{companyId:companyInfo.companyId,currentPassword,newPassword}); return {}; }
     catch(e){ return {error:(e&&e.message)||"変更に失敗しました"}; }
   };
   const renameCompany=async(name)=>{

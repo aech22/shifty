@@ -1791,18 +1791,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const nameColor=name=>((settings.staffColors||{})[name]==="red"?"#e53935":"var(--c-text)");
   // sticky=true: メイングリッドの名前行のみ画面上端に固定（出勤・退勤行はその下をスクロール、テーブル末尾を過ぎると自然に解除される）。
   // 全表示では縦スクロールが起きないので固定しない。
-  // ヘルプ（所属店舗が他店舗）の人は名前の横に所属店舗名を細く添える。全表示では行高を食うので出さない。
-  // 色・バッジ・記号は使わない（kill-ai-slop: 装飾は意味を持つ）。
-  const homeShopNameOf=id=>((allLinkedShops||[]).find(s=>s&&s.id===id)||{}).name||(companyData[id]&&companyData[id].name)||"他店舗";
-  const VTH=(name,sticky=false)=>{
-    const helper=!fullView&&isHelperAt(settings,name,shopId);
-    const lh=helper?Math.max(8,Math.floor((colW-4)/2)):colW-4;
-    return(
-    <th key={name} title={helper?`${name}（所属: ${homeShopNameOf(homeShopOf(settings,name,shopId))}）`:undefined} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,padding:fullView?0:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"middle",...(sticky&&(!fullView||fvScrolls)?{position:"sticky",top:0,zIndex:3}:{})}}>
-      <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:fullView?fvNameH:72,display:"inline-block",fontSize:fullView?Math.max(7,Math.min(11,colW-2)):11,fontWeight:600,color:nameColor(name),whiteSpace:"nowrap",textAlign:"center",lineHeight:String(lh)+"px",overflow:fullView||helper?"hidden":undefined}}>{name}{helper&&<span data-home-shop="1" style={{display:"block",fontSize:9,fontWeight:400,color:"var(--c-text3)"}}>{homeShopNameOf(homeShopOf(settings,name,shopId))}</span>}</div>
+  // 列見出しは名前だけ（所属店舗名は出さない・2026-09-27 ユーザー指示）。所属店舗は重複エラーの判定にだけ使う。
+  const VTH=(name,sticky=false)=>(
+    <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,padding:fullView?0:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"middle",...(sticky&&(!fullView||fvScrolls)?{position:"sticky",top:0,zIndex:3}:{})}}>
+      <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:fullView?fvNameH:72,display:"inline-block",fontSize:fullView?Math.max(7,Math.min(11,colW-2)):11,fontWeight:600,color:nameColor(name),whiteSpace:"nowrap",textAlign:"center",lineHeight:String(colW-4)+"px",overflow:fullView?"hidden":undefined}}>{name}</div>
     </th>
-    );
-  };
+  );
   // 集計用の実効値（heatEdits＝blur確定値ベース）
   const getHeatVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in heatEdits)return heatEdits[key];const t=toDecimal(getStoredTime(name,date,field));return t||"";};
   // その日出勤しているか（0.5出勤含む）: start か end のどちらかに有効値がある
@@ -5026,7 +5020,7 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
 // 対象店舗は companies/{id}/pub/shops（企業に連携した店舗）で、allLinkedShops ではない
 // （あちらは企業に入れていない自分の店舗も含む）。期間は店舗ごとにIDが違うので、開始日_終了日で
 // 対応づけ、「2026年10月前半」のような選択肢にする（企業内は同じ作成期間で運用する前提）。
-// 提出期限は企業が期間ごとに日付を直接入れる（全店舗共通＋店舗別の上書き）。
+// 提出期限は企業が期間ごとに日付を直接入れる（全店舗共通の1つだけ。店舗別は 2026-09-27 のユーザー指示で廃止）。
 // 読めなかった店舗は「読み込み失敗」と出し、提出済みにも未提出にも数えない（丸めない）。
 // ============================================================
 function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,renderDownload}){
@@ -5034,8 +5028,9 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
   const[loadErr,setLoadErr]=useState(false);
   const[rangeKey,setRangeKey]=useState("");
   const[dlAll,setDlAll]=useState("");
-  const[dlShops,setDlShops]=useState({});
   const[dlDirty,setDlDirty]=useState(false);
+  // ユーザーがセレクトで期間を選んだか。選んでいなければ、読み込みのたびに最新の期間へ合わせる
+  const userPickedRef=useRef(false);
   const[busy,setBusy]=useState(false);
   const[reloadTick,setReloadTick]=useState(0);
   useEffect(()=>{
@@ -5067,18 +5062,18 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
     const ok={};Object.keys(state.periods).forEach(sid=>{if(state.periods[sid])ok[sid]=state.periods[sid];});
     return collectPeriodRanges(ok);
   },[state]);
-  // 既定の期間: 今日を含む範囲、無ければ最新
+  // 既定の期間: 連携店舗のどれか1店舗でも作っている最新の期間（2026-09-27 ユーザー指示。以前は
+  // 「今日を含む期間」で、次の期間を作り始めても表示が前の期間のままだった）。
+  // ユーザーが選び直した期間は、期限の保存などの再読み込みで戻さない（無くなったときだけ最新へ）。
   useEffect(()=>{
     if(!ranges.length){setRangeKey("");return;}
-    if(ranges.some(x=>x.key===rangeKey))return;
-    const t=fd(new Date());
-    const cur=ranges.find(x=>x.startDate<=t&&t<=x.endDate);
-    setRangeKey((cur||ranges[0]).key);
-  },[ranges]); // rangeKey は依存に入れない（ユーザーが選んだ期間を範囲の再計算のたびに戻さないため）
+    if(userPickedRef.current&&ranges.some(x=>x.key===rangeKey))return;
+    setRangeKey(ranges[0].key);
+  },[ranges]); // rangeKey は依存に入れない（選んだ直後に最新へ戻さないため）
   // 期間を切り替えたら、その期間の期限を入力欄へ読み込む（未保存の入力は捨てる）
   useEffect(()=>{
     const e=(state&&state.deadlines&&state.deadlines[rangeKey])||{};
-    setDlAll(e.all||"");setDlShops({...(e.shops||{})});setDlDirty(false);
+    setDlAll(e.all||"");setDlDirty(false);
   },[rangeKey,state]);
   if(loadErr)return(<AC title="シフトの提出状況"><div style={{fontSize:12,color:"#FF4757"}}>✕ 提出状況を読み込めませんでした。<button onClick={()=>setReloadTick(t=>t+1)} style={{...AGray,marginLeft:8,padding:"4px 10px",fontSize:12}}>再読み込み</button></div></AC>);
   if(!state)return(<AC title="シフトの提出状況"><div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div></AC>);
@@ -5088,18 +5083,18 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
     const p=findShopPeriodByRange(ps,rangeKey);
     if(!p)return{sid,name:state.names[sid],status:"none"};
     const sub=p.submission&&p.submission.at?p.submission:null;
-    const effDl=isValidDateStr(dlShops[sid])?dlShops[sid]:(isValidDateStr(dlAll)?dlAll:null);
-    return{sid,name:state.names[sid],period:p,status:sub?"submitted":"pending",submission:sub,deadline:effDl};
+    // 期限切れの判定は保存済みの全店共通の日付で行う（入力中の未保存の値では赤くしない）
+    const savedDl=((state.deadlines||{})[rangeKey]||{}).all;
+    return{sid,name:state.names[sid],period:p,status:sub?"submitted":"pending",submission:sub,deadline:isValidDateStr(savedDl)?savedDl:null};
   }).sort((a,b)=>String(a.name).localeCompare(String(b.name),"ja"));
   const nSub=rows.filter(x=>x.status==="submitted").length;
   const nPend=rows.filter(x=>x.status==="pending").length;
   const today=fd(new Date());
-  const fmtMD=ds=>{const d=pd(ds);return isNaN(d)?ds:`${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;};
   const fmtAt=iso=>{const d=new Date(iso);return isNaN(d)?"":`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
   const saveDeadlines=async()=>{
     if(!onSaveCompanyConfig||!rangeKey)return;
-    const shops={};Object.keys(dlShops).forEach(sid=>{if(isValidDateStr(dlShops[sid]))shops[sid]=dlShops[sid];});
-    const entry={};if(isValidDateStr(dlAll))entry.all=dlAll;if(Object.keys(shops).length)entry.shops=shops;
+    // 期間の期限はまるごと置き換わる＝以前の店舗別の日付もここで消える
+    const entry={};if(isValidDateStr(dlAll))entry.all=dlAll;
     setBusy(true);
     const r=await onSaveCompanyConfig({deadlines:{[rangeKey]:Object.keys(entry).length?entry:null}});
     setBusy(false);
@@ -5113,24 +5108,23 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
   return(<AC title="シフトの提出状況">
     {ranges.length===0?<div style={{fontSize:12,color:"var(--c-text4)"}}>連携店舗に期間がありません。</div>:(<>
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
-        <select value={rangeKey} onChange={e=>setRangeKey(e.target.value)} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+        <select value={rangeKey} onChange={e=>{userPickedRef.current=true;setRangeKey(e.target.value);}} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
           {ranges.map(x=><option key={x.key} value={x.key}>{x.label}</option>)}
         </select>
         <button onClick={()=>setReloadTick(t=>t+1)} style={{...AGray,padding:"6px 12px",fontSize:12}}>更新</button>
       </div>
       <div data-co-summary="1" style={{fontSize:13,color:"var(--c-text)",marginBottom:10}}>提出済み {nSub} ／ 未提出 {nPend}</div>
       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
-        <span style={{fontSize:12,color:"var(--c-text3)"}}>提出期限（全店舗共通）</span>
+        <span style={{fontSize:12,color:"var(--c-text3)"}}>提出期限</span>
         {dateIn(dlAll,setDlAll)}
       </div>
       <div style={{overflowX:"auto"}}>
-        <table style={{borderCollapse:"collapse",width:"100%",minWidth:460}}>
-          <thead><tr>{["店舗","期間","提出期限（店舗別）","状況"].map(h=><th key={h} style={{...TD,fontSize:11,color:"var(--c-text3)",textAlign:"left",fontWeight:700}}>{h}</th>)}</tr></thead>
+        <table style={{borderCollapse:"collapse",width:"100%",minWidth:320}}>
+          <thead><tr>{["店舗","期間","状況"].map(h=><th key={h} style={{...TD,fontSize:11,color:"var(--c-text3)",textAlign:"left",fontWeight:700}}>{h}</th>)}</tr></thead>
           <tbody>{rows.map(x=>(
             <tr key={x.sid} data-co-row={x.sid}>
               <td style={{...TD,fontWeight:600}}>{x.name}</td>
               <td style={{...TD,color:"var(--c-text2)"}}>{x.status==="failed"?"—":x.status==="none"?"該当期間なし":(x.period.label||cur&&cur.label)}</td>
-              <td style={TD}>{x.status==="failed"||x.status==="none"?"—":<>{dateIn(dlShops[x.sid],v=>setDlShops(m=>{const n={...m};if(v)n[x.sid]=v;else delete n[x.sid];return n;}))}{!dlShops[x.sid]&&x.deadline&&<span style={{fontSize:11,color:"var(--c-text4)",marginLeft:6}}>共通 {fmtMD(x.deadline)}</span>}</>}</td>
               <td data-co-status={x.status} style={{...TD,whiteSpace:"nowrap",color:x.status==="pending"&&x.deadline&&today>x.deadline?"#FF4757":"var(--c-text)"}}>
                 {x.status==="submitted"?`提出済み ${fmtAt(x.submission.at)}`:x.status==="pending"?"未提出":x.status==="none"?"—":"読み込み失敗"}
               </td>
@@ -5238,6 +5232,17 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
   const[coCreated,setCoCreated]=useState(null); // 作成直後に表示する {code}
   const[coPwEdit,setCoPwEdit]=useState(false);
   const[coNewPw,setCoNewPw]=useState("");
+  // パスワードは2回入力して一致したときだけ採用し、「パスワードを表示」で伏せ字を外せる（2026-09-27 ユーザー指示）。
+  // 変更は現在のパスワードを先に入れる（CF の changeCompanyPassword でも照合する）。
+  const[coPw2,setCoPw2]=useState("");
+  const[coCurPw,setCoCurPw]=useState("");
+  const[coNewPw2,setCoNewPw2]=useState("");
+  const[coShowPw,setCoShowPw]=useState(false);
+  const pwType=coShowPw?"text":"password";
+  const showPwBox=(<label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"var(--c-text3)",marginBottom:10,cursor:"pointer",width:"fit-content"}}>
+    <input type="checkbox" checked={coShowPw} onChange={e=>setCoShowPw(e.target.checked)} style={{width:18,height:18,cursor:"pointer"}}/>パスワードを表示
+  </label>);
+  const resetPwEdit=()=>{setCoPwEdit(false);setCoCurPw("");setCoNewPw("");setCoNewPw2("");setCoShowPw(false);};
   const[coAddCode,setCoAddCode]=useState("");
   const[coAddOpen,setCoAddOpen]=useState(false);
   // 店舗一覧トグル・略称（スタッフの勤務先店舗は 2026-09-27 に廃止。スタッフタブの「所属店舗」へ移した）
@@ -5417,15 +5422,22 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
           {/* パスワード変更 */}
           {coPwEdit?(
             <div style={{marginBottom:4}}>
+              <AL>現在のパスワード</AL>
+              <input type={pwType} value={coCurPw} onChange={e=>setCoCurPw(e.target.value)} maxLength={128} placeholder="現在のパスワード" autoComplete="current-password" style={{...AI,marginBottom:10}}/>
               <AL>新しいパスワード（6文字以上）</AL>
+              <input type={pwType} value={coNewPw} onChange={e=>setCoNewPw(e.target.value)} maxLength={128} placeholder="新しいパスワード" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
+              <input type={pwType} value={coNewPw2} onChange={e=>setCoNewPw2(e.target.value)} maxLength={128} placeholder="新しいパスワード（確認）" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
+              {showPwBox}
               <div style={{display:"flex",gap:8}}>
-                <input type="password" value={coNewPw} onChange={e=>setCoNewPw(e.target.value)} maxLength={128} placeholder="新しいパスワード" style={{...AI,flex:1}}/>
                 <button disabled={coBusy} onClick={async()=>{
-                  if(coNewPw.length<6){tt("✕ パスワードは6文字以上にしてください");return;}
-                  setCoBusy(true); const r=await onChangeCompanyPassword(coNewPw); setCoBusy(false);
-                  if(r&&r.error)tt("✕ "+r.error); else {tt("✓ パスワードを変更しました");setCoNewPw("");setCoPwEdit(false);}
-                }} style={{...AB,whiteSpace:"nowrap"}}>変更</button>
-                <button onClick={()=>{setCoPwEdit(false);setCoNewPw("");}} style={{...AGray,whiteSpace:"nowrap"}}>取消</button>
+                  if(!coCurPw){tt("✕ 現在のパスワードを入力してください");return;}
+                  if(coNewPw.length<6){tt("✕ 新しいパスワードは6文字以上にしてください");return;}
+                  if(coNewPw!==coNewPw2){tt("✕ 新しいパスワードが一致しません");return;}
+                  if(coNewPw===coCurPw){tt("✕ 現在と同じパスワードです");return;}
+                  setCoBusy(true); const r=await onChangeCompanyPassword(coCurPw,coNewPw); setCoBusy(false);
+                  if(r&&r.error)tt("✕ "+r.error); else {tt("✓ パスワードを変更しました");resetPwEdit();}
+                }} style={{...AB,flex:1,whiteSpace:"nowrap"}}>{coBusy?"変更中...":"変更"}</button>
+                <button onClick={resetPwEdit} style={{...AGray,whiteSpace:"nowrap"}}>取消</button>
               </div>
             </div>
           ):(
@@ -5443,7 +5455,9 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
             <AL>企業名</AL>
             <input value={coName} onChange={e=>setCoName(e.target.value)} maxLength={100} placeholder="例）〇〇フーズ" style={{...AI,marginBottom:10}}/>
             <AL>ログイン用パスワード（6文字以上）</AL>
-            <input type="password" value={coPw} onChange={e=>setCoPw(e.target.value)} maxLength={128} placeholder="パスワード" style={{...AI,marginBottom:10}}/>
+            <input type={pwType} value={coPw} onChange={e=>setCoPw(e.target.value)} maxLength={128} placeholder="パスワード" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
+            <input type={pwType} value={coPw2} onChange={e=>setCoPw2(e.target.value)} maxLength={128} placeholder="パスワード（確認）" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
+            {showPwBox}
             {coErr&&<div style={{color:"#FF4757",fontSize:12,marginBottom:8}}>{coErr}</div>}
             {coCreated?(
               <div style={{background:"rgba(34,197,94,.1)",border:"1px solid rgba(34,197,94,.3)",borderRadius:8,padding:"12px 14px"}}>
@@ -5455,8 +5469,9 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
                 setCoErr("");
                 if(!coName.trim()){setCoErr("企業名を入力してください");return;}
                 if(coPw.length<6){setCoErr("パスワードは6文字以上にしてください");return;}
+                if(coPw!==coPw2){setCoErr("パスワードが一致しません");return;}
                 setCoBusy(true); const r=await onCreateCompany(coName.trim(),coPw); setCoBusy(false);
-                if(r&&r.error)setCoErr(r.error); else {setCoCreated({code:r.code});setCoName("");setCoPw("");
+                if(r&&r.error)setCoErr(r.error); else {setCoCreated({code:r.code});setCoName("");setCoPw("");setCoPw2("");setCoShowPw(false);
                   tt(r&&r.skipped>0?`✓ 作成しました（管理者未登録の${r.skipped}店舗は連携していません。その店舗の管理コードで追加してください）`:"✓ 企業アカウントを作成しました");}
               }} style={{...AB,width:"100%"}}>{coBusy?"作成中...":"企業アカウントを作成する"}</button>
             )}

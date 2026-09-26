@@ -204,7 +204,8 @@ applyCompanySettings / stripCompanySettings / companyControlledKeys / genCompany
 periodRangeKey / periodRangeLabel / collectPeriodRanges / findShopPeriodByRange
                            // 企業内の期間の対応づけ（"開始日_終了日"）と「2026年10月前半」等の表示名
 isValidDateStr / companyDeadlineFor / shopDeadlineFromLink
-                           // 企業→店舗の完成シフトの提出期限（店舗別の日付が全店共通より優先）。period.deadlineDate とは別物
+                           // 企業→店舗の完成シフトの提出期限。period.deadlineDate とは別物。
+                           // UI は全店舗共通の日付だけ（店舗別は 2026-09-27 に廃止）。関数は旧データの店舗別も読める
 homeShopOf / isHelperAt / dupTargetShopsFor
                            // 所属店舗（staffHomeShop）とヘルプ判定。重複判定の対象店舗は「所属が一致する同名」
 // 末尾に module.exports ガード（Nodeテスト用）
@@ -494,7 +495,10 @@ CompanyLink = { id: string, name: string, settings: {laborSettings?, staffTypeLi
   null のときは剥がしも重ね合わせもしない＝店舗の保存値は壊れない
 - **所属店舗とヘルプ判定**: `settings.staffHomeShop`。店舗間シフト重複で見に行く他店舗は `dupTargetShopsFor` が
   「所属店舗が一致する同名」で決める（同名別人を誤検出しない）。旧 `staffWorkplaces` は UI を廃止し、
-  判定は1リリースだけ和集合で併用する（撤去は BACKLOG）。略称サフィックス（`9三`）のヘルプ入力は従来どおり
+  判定は1リリースだけ和集合で併用する（撤去は BACKLOG）。略称サフィックス（`9三`）のヘルプ入力は従来どおり。
+  **シフト作成タブの列見出しには所属店舗名を出さない**（2026-09-27 ユーザー指示で撤回。所属店舗は判定にだけ使う）
+- **提出状況の期間は、どれか1店舗でも作っている最新の期間が既定**（2026-09-27 ユーザー指示。以前は今日を含む期間で、
+  次の期間を作り始めても表示が前の期間のままだった）。提出期限は全店舗共通の1つだけ（店舗別は廃止）
 - **提出**: シフト作成タブの「提出」が `period.submission` を `savePeriods`（差分 update）で書く。提出は保存と同じ処理
   （`flushEdits(true)`）を黙って済ませてから記録する——`localEdits` は blur 後も表示用に残るので「未保存なら提出不可」とは判定できない
 - **一括PDF**: 企業連携タブが対象店舗ごとに `ShiftEditTab` を画面外へ1店舗ずつマウントし、`exportJob` で既存の `exportPdf` を
@@ -528,7 +532,7 @@ CompanyLink = { id: string, name: string, settings: {laborSettings?, staffTypeLi
 | `sendSurveyEmails` | POST `/sendSurveyEmails` | ユーザーアンケート一斉送信（要秘密トークン） |
 | `createCompany` | Callable `createCompany` | 企業アカウント作成（企業コード発行・パスワードハッシュ保存・作成者オーナー店舗を連携） |
 | `companyLogin` | Callable `companyLogin` | 企業コード＋パスワードで認証しカスタムトークンを発行 |
-| `changeCompanyPassword` | Callable `changeCompanyPassword` | 企業パスワード変更 |
+| `changeCompanyPassword` | Callable `changeCompanyPassword` | 企業パスワード変更。**現在のパスワード（`currentPassword`）を照合してから**変える（2026-09-27）。UI は新しいパスワードを2回入力して一致したときだけ送る |
 | `renameCompany` | Callable `renameCompany` | 企業名変更（作成者ポインタの表示名も更新） |
 | `linkStoreToCompany` | Callable `linkStoreToCompany` | 店舗コード（shopId / shopId.adminKey）で店舗を企業に連携 |
 | `saveCompanyConfig` | Callable `saveCompanyConfig` | 企業の共通設定（settings は丸ごと置換）と提出期限（期間ごとの差分）を保存し、連携全店舗の `shops/{sid}/company` を作り直す（2026-09-27）。検証は `functions/company-config.js`（純粋関数・テストで照合） |

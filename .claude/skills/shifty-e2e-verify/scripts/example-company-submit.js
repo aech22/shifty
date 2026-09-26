@@ -8,8 +8,10 @@
 //   - companyLink が無い店舗では提出ボタンも期限も出ない
 // B. アプリ全体（stub-firebase.js）:
 //   - 企業連携タブの「シフトの提出状況」に「2026年10月前半」の選択肢、店舗ごとの状況、件数行が出る
+//   - 既定の期間は、どれか1店舗でも作っている最新の期間（2026-09-27 ユーザー指示）
+//   - 提出期限は全店舗共通の1つだけで、表に店舗別の期限の列・入力欄は無い
 //   - 期間の無い店舗は「該当期間なし」で件数に数えない
-//   - 全店舗共通の提出期限を変えて保存すると saveCompanyConfig が deadlines 付きで1回呼ばれ、
+//   - 提出期限を変えて保存すると saveCompanyConfig が deadlines 付きで1回呼ばれ、
 //     各店舗の写し（shops/{sid}/company/deadlines）に反映される
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-company-submit.js → allPass=true / EXIT=0
@@ -72,7 +74,7 @@ async function partB() {
       S1: shop("S1", { p1: per("p1", "S1", { submission: { at: "2026-09-24T05:03:00.000Z", byUid: "x" } }) }),
       S2: shop("S2", { p2: per("p2", "S2") }),
       S3: shop("S3", { p3: per("p3", "S3", { submission: { at: "2026-09-25T01:00:00.000Z", byUid: "y" } }) }),
-      S4: shop("S4", { p4: { ...per("p4", "S4"), startDate: "2026-09-16", endDate: "2026-09-30", label: "9月後半" } }),
+      S4: shop("S4", { p4: { ...per("p4", "S4"), startDate: "2026-10-16", endDate: "2026-10-31", label: "10月後半" } }),
     },
     accounts: { S1: { plan: "premium" }, [UID]: { shops: { S1: true, S2: true, S3: true, S4: true }, company: { companyId: CID, code: "ABCD1234", name: "テスト企業" } } },
     companies: { [CID]: { pub: { name: "テスト企業", ownerUid: UID, code: "ABCD1234", shops: { S1: true, S2: true, S3: true, S4: true },
@@ -87,18 +89,20 @@ async function partB() {
   try {
     await h.page.waitForFunction(() => !!document.querySelector("[data-co-summary]"), { timeout: 15000 });
     R.options = await h.evaluate(() => { const c = document.querySelector("[data-co-summary]").closest("div").parentElement; return [...c.querySelectorAll("select option")].map(o => o.text); });
-    // 既定は今日を含む期間（9月後半）。10月前半へ切り替えてから測る
+    // 既定は最新の期間＝D店1店舗だけが作っている「10月後半」。そのあと10月前半を選んで測る
     R.defaultSelected = await h.evaluate(() => { const c = document.querySelector("[data-co-summary]").closest("div").parentElement; const sel = c.querySelector("select"); return sel.options[sel.selectedIndex].text; });
     await h.evaluate(rk => { const c = document.querySelector("[data-co-summary]").closest("div").parentElement; const sel = c.querySelector("select");
       const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set; set.call(sel, rk); sel.dispatchEvent(new Event("change", { bubbles: true })); }, RK);
     await h.page.waitForTimeout(300);
     R.summary = await h.evaluate(() => document.querySelector("[data-co-summary]").innerText.trim());
+    R.headers = await h.evaluate(() => [...document.querySelector("[data-co-row]").closest("table").querySelectorAll("th")].map(t => t.innerText.trim()));
+    R.rowDateInputs = await h.evaluate(() => [...document.querySelectorAll("[data-co-row] input")].length);
     R.rows = await h.evaluate(() => Object.fromEntries([...document.querySelectorAll("[data-co-row]")].map(tr => {
       const st = tr.querySelector("[data-co-status]");
       return [tr.getAttribute("data-co-row"), { status: st.getAttribute("data-co-status"), text: st.innerText.trim(), color: getComputedStyle(st).color }];
     })));
     R.setDate = await h.evaluate(() => {
-      const lab = [...document.querySelectorAll("span")].find(s => s.innerText.trim() === "提出期限（全店舗共通）");
+      const lab = [...document.querySelectorAll("span")].find(s => s.innerText.trim() === "提出期限");
       const inp = lab.parentElement.querySelector("input[type=date]");
       const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
       set.call(inp, "2026-10-05"); inp.dispatchEvent(new Event("input", { bubbles: true })); inp.dispatchEvent(new Event("change", { bubbles: true }));
@@ -130,8 +134,9 @@ async function partB() {
     A_cancelWritesNull: !!(A.writes && A.writes[1] && Object.keys(A.writes[1]).join() === "p1/submission" && A.writes[1]["p1/submission"] === null),
     A_backToSubmit: !!(A.afterCancel && A.afterCancel.submitBtn),
     A0_hiddenWithoutCompany: A0.hasSubmit === false && A0.deadline === null,
-    B_options: !!(B.options && B.options.join("|") === "2026年10月前半|2026年9月後半"),
-    B_defaultIsToday: B.defaultSelected === "2026年9月後半",
+    B_options: !!(B.options && B.options.join("|") === "2026年10月後半|2026年10月前半"),
+    B_defaultIsNewest: B.defaultSelected === "2026年10月後半",
+    B_noPerShopDeadline: !!(B.headers && B.headers.join("|") === "店舗|期間|状況" && B.rowDateInputs === 0),
     B_summary: B.summary === "提出済み 2 ／ 未提出 1",
     B_rows: !!(B.rows && B.rows.S1.status === "submitted" && B.rows.S2.status === "pending" && B.rows.S3.status === "submitted" && B.rows.S4.status === "none"),
     B_overdueRed: !!(B.rows && B.rows.S2.color === RED),

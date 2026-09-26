@@ -6,7 +6,7 @@
 //  (a) B店のグリッドで所属A店の田中が、A店の提出と時間が重なる → 重複エラーに「田中 …（A店）」が出る
 //  (b) 両店とも自店所属の同名（所属の指定なし）→ 重複エラーは出ない（同名別人を誤検出しない）
 //  (c) 旧データ staffWorkplaces だけを持つ店舗 → 従来どおり重複エラーが出る（非回帰）
-//  (d) 所属A店の田中は列見出しに「A店」が添えられ、自店所属の山田には添えられない
+//  (d) 列見出しには所属店舗名を出さない（2026-09-27 ユーザー指示で廃止。判定にだけ使う）
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-home-shop-dup.js → allPass=true / EXIT=0
 // 反証: SHIFTY_ROOT=<所属店舗より前の配信物> node ... → EXIT=1
@@ -79,8 +79,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
     a_yamadaNotDup: !!(a.dup && !a.dup.includes("山田")),
     b_noDupForSameNameSelf: b.dup === null,
     c_legacyWorkplacesStillWorks: !!(c.dup && c.dup.includes("田中") && c.dup.includes("A店")),
-    d_headerHelper: a.heads["田中"] === "A店",
-    d_headerSelf: a.heads["山田"] === null,
+    d_noHomeShopInHeader: a.heads["田中"] === null && a.heads["山田"] === null,
     noErrors: [a, b, c].every(x => x.errors.length === 0),
   };
   verdict.allPass = Object.values(verdict).every(Boolean);
