@@ -1120,7 +1120,7 @@ exports.sendSurveyEmails = functions
 // キーと値の規則はクライアントの app-utils.js（COMPANY_LABOR_KEYS・COMPANY_LIMIT_KEYS・COMPANY_ATTR_ID_RE・
 // isValidDateStr）と**同じ内容**にする。functions/ は app-utils.js を読めないので書き写している。
 // ============================================================
-const { sanitizeCompanySettings, sanitizeCompanyDeadlines, effectiveDeadlinesForShop } = require("./company-config");
+const { sanitizeCompanySettings, sanitizeCompanyDeadlines, effectiveDeadlinesForShop, sanitizeMonthlyDeadlineDays } = require("./company-config");
 // 連携店舗の shops/{shopId}/company を正本から作り直す。shopIds を省けば連携全店舗。
 // 1店舗の失敗で残りを止めない（冪等なので、失敗した店舗は次の保存で書き直される）。
 async function syncCompanyMirror(companyId, shopIds) {
@@ -1132,6 +1132,7 @@ async function syncCompanyMirror(companyId, shopIds) {
     try { names[sid] = ((await db.ref(`global/shops/${sid}/name`).once("value")).val()) || ""; } catch (e) { names[sid] = ""; }
   }
   const targets = (shopIds || linked).filter(sid => linked.includes(sid));
+  const monthly = sanitizeMonthlyDeadlineDays(cfg.monthlyDeadlineDays);
   const synced = [], failed = [];
   for (const sid of targets) {
     try {
@@ -1140,6 +1141,8 @@ async function syncCompanyMirror(companyId, shopIds) {
         name: pub.name || "",
         settings: cfg.settings || {},
         deadlines: effectiveDeadlinesForShop(cfg.deadlines, sid),
+        // 空配列は Firebase に保存されない（ノードごと消える）ので、無いときはキーを持たない
+        ...(monthly.length ? { monthlyDeadlineDays: monthly } : {}),
         shops: names,
         syncedAt: new Date().toISOString(),
       });
@@ -1396,7 +1399,7 @@ exports.unlinkStoreFromCompany = functions
     return { ok: true };
   });
 
-// 企業の共通設定（労務設定・属性別の勤務時間制限）と提出期限を保存し、連携全店舗のミラーを更新する。
+// 企業の共通設定（労務設定・属性別の勤務時間制限）と提出期限（期間ごとの日付・毎月の固定締切）を保存し、連携全店舗のミラーを更新する。
 // settings は丸ごと置き換える（空欄にした項目を消せるように）。deadlines は期間ごとの差分で、
 // 渡した期間だけを置き換える（null でその期間の期限を消す）。
 exports.saveCompanyConfig = functions
@@ -1408,11 +1411,17 @@ exports.saveCompanyConfig = functions
     const linked = Object.keys((await db.ref(`companies/${companyId}/pub/shops`).once("value")).val() || {});
     const hasSettings = data && data.settings !== undefined;
     const hasDeadlines = data && data.deadlines !== undefined;
-    if (!hasSettings && !hasDeadlines) throw new functions.https.HttpsError("invalid-argument", "保存する内容がありません");
+    const hasMonthly = data && data.monthlyDeadlineDays !== undefined;
+    if (!hasSettings && !hasDeadlines && !hasMonthly) throw new functions.https.HttpsError("invalid-argument", "保存する内容がありません");
     if (hasSettings) await db.ref(`companies/${companyId}/pub/config/settings`).set(sanitizeCompanySettings(data.settings));
     if (hasDeadlines) {
       const dl = sanitizeCompanyDeadlines(data.deadlines, linked);
       for (const rk of Object.keys(dl)) await db.ref(`companies/${companyId}/pub/config/deadlines/${rk}`).set(dl[rk]);
+    }
+    if (hasMonthly) {
+      // 毎月の固定締切は丸ごと置き換える（空で送れば消える）
+      const md = sanitizeMonthlyDeadlineDays(data.monthlyDeadlineDays);
+      await db.ref(`companies/${companyId}/pub/config/monthlyDeadlineDays`).set(md.length ? md : null);
     }
     await db.ref(`companies/${companyId}/pub/config/updatedAt`).set(new Date().toISOString());
     const { synced, failed } = await syncCompanyMirror(companyId);

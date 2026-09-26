@@ -5131,8 +5131,11 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
     tt("✓ 提出期限を保存しました");
     setReloadTick(t=>t+1);
   };
+  // 日は人が選ぶ（2026-09-27 ユーザー指示「初期値は人間が決める」）。「＋ 追加」は未選択(null)の欄を足すだけで、
+  // 未選択が残っている間は保存できない（黙って捨てて保存しない）。
+  const monthlyUnchosen=monthly.some(d=>d===null);
   const saveMonthly=async()=>{
-    if(!onSaveCompanyConfig)return;
+    if(!onSaveCompanyConfig||monthlyUnchosen)return;
     setBusy(true);
     const r=await onSaveCompanyConfig({monthlyDeadlineDays:sanitizeMonthlyDeadlineDays(monthly)});
     setBusy(false);
@@ -5148,15 +5151,17 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
       {monthly.length===0&&<span style={{fontSize:12,color:"var(--c-text4)"}}>未設定</span>}
       {monthly.map((d,i)=>(<span key={i} style={{display:"inline-flex",alignItems:"center",gap:4}}>
         <span style={{fontSize:12,color:"var(--c-text3)"}}>毎月</span>
-        <select data-co-monthly-day={i} value={d} onChange={e=>{const v=Number(e.target.value);setMonthly(ms=>ms.map((x,j)=>j===i?v:x));setMonthlyDirty(true);}} style={{...AI,width:"auto",padding:"4px 6px",cursor:"pointer"}}>
+        <select data-co-monthly-day={i} value={d===null?"":d} onChange={e=>{const v=e.target.value===""?null:Number(e.target.value);setMonthly(ms=>ms.map((x,j)=>j===i?v:x));setMonthlyDirty(true);}} style={{...AI,width:"auto",padding:"4px 6px",cursor:"pointer"}}>
+          {d===null&&<option value="">日を選択</option>}
           {DAY_OPTS.map(n=><option key={n} value={n}>{monthlyDeadlineDayLabel(n)}</option>)}
         </select>
         <button onClick={()=>{setMonthly(ms=>ms.filter((_,j)=>j!==i));setMonthlyDirty(true);}} style={{...AGray,padding:"4px 8px",fontSize:12}}>削除</button>
       </span>))}
-      {monthly.length<MONTHLY_DEADLINE_MAX&&<button data-co-monthly-add="1" onClick={()=>{setMonthly(ms=>[...ms,ms.length?Math.min(31,ms[ms.length-1]+15):25]);setMonthlyDirty(true);}} style={{...AGray,padding:"4px 10px",fontSize:12}}>＋ 追加</button>}
+      {monthly.length<MONTHLY_DEADLINE_MAX&&<button data-co-monthly-add="1" onClick={()=>{setMonthly(ms=>[...ms,null]);setMonthlyDirty(true);}} style={{...AGray,padding:"4px 10px",fontSize:12}}>＋ 追加</button>}
     </div>
     <div style={{fontSize:11,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8}}>各期間の開始日より前で、いちばん近い締切日がその期間の提出期限になります。下で期間ごとに日付を指定した場合はそちらが優先されます。29〜31日は短い月では月末になります。</div>
-    <button disabled={busy||!monthlyDirty} onClick={saveMonthly} style={{...AGray,width:"100%",opacity:busy||!monthlyDirty?0.5:1}}>{busy?"保存中...":"毎月の提出締切を保存"}</button>
+    {monthlyUnchosen&&<div style={{fontSize:11,color:"#FF4757",marginBottom:6}}>日を選んでいない締切があります。選ぶか削除してから保存してください。</div>}
+    <button disabled={busy||!monthlyDirty||monthlyUnchosen} onClick={saveMonthly} style={{...AGray,width:"100%",opacity:busy||!monthlyDirty||monthlyUnchosen?0.5:1}}>{busy?"保存中...":"毎月の提出締切を保存"}</button>
   </div>);
   const TD={borderBottom:"1px solid var(--c-border)",padding:"8px 6px",fontSize:13,verticalAlign:"middle"};
   const dateIn=(v,onCh)=>(<input type="date" value={v||""} onChange={e=>{onCh(e.target.value);setDlDirty(true);}} style={{...AI,width:"auto",padding:"4px 6px"}}/>);

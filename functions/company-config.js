@@ -96,7 +96,15 @@ function effectiveDeadlinesForShop(deadlines, shopId) {
   });
   return out;
 }
+// 毎月の固定締切（日だけ・1〜31・最大4件）。クライアントの sanitizeMonthlyDeadlineDays と同じ規則。
+const MONTHLY_DEADLINE_MAX = 4;
+function sanitizeMonthlyDeadlineDays(raw) {
+  const vals = Array.isArray(raw) ? raw : (raw && typeof raw === "object" ? Object.values(raw) : []);
+  const set = new Set();
+  vals.forEach(v => { const n = Number(v); if (Number.isInteger(n) && n >= 1 && n <= 31) set.add(n); });
+  return [...set].sort((a, b) => a - b).slice(0, MONTHLY_DEADLINE_MAX);
+}
 
 module.exports = { COMPANY_LABOR_KEYS, COMPANY_LIMIT_NUM_KEYS, COMPANY_LABOR_SYSTEMS, COMPANY_BUILTIN_ATTRS,
   COMPANY_ATTR_ID_RE, PERIOD_RANGE_KEY_RE, isValidDateStrCF, sanitizeCompanySettings, sanitizeCompanyDeadlines,
-  effectiveDeadlinesForShop };
+  effectiveDeadlinesForShop, MONTHLY_DEADLINE_MAX, sanitizeMonthlyDeadlineDays };

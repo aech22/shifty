@@ -4153,3 +4153,42 @@ test("sanitizeCompanyDeadlines / effectiveDeadlinesForShop: 期間キー・日�
   assert.strictEqual(u.companyDeadlineFor(full, "2026-10-01_2026-10-15", "A"), "2026-09-27");
   assert.strictEqual(u.companyDeadlineFor(full, "2026-10-01_2026-10-15", "B"), "2026-09-25");
 });
+
+// ===== 毎月の固定締切（2026-09-27）=====
+test("sanitizeMonthlyDeadlineDays: 1〜31の整数だけ・重複なし・昇順・最大4件、Firebaseのオブジェクト形も受ける", () => {
+  assert.deepStrictEqual(u.sanitizeMonthlyDeadlineDays([25, "10", 10, 0, 32, 1.5, null]), [10, 25]);
+  assert.deepStrictEqual(u.sanitizeMonthlyDeadlineDays({ 0: 20, 1: 5 }), [5, 20]);
+  assert.deepStrictEqual(u.sanitizeMonthlyDeadlineDays([1, 2, 3, 4, 5]), [1, 2, 3, 4]);
+  assert.deepStrictEqual(u.sanitizeMonthlyDeadlineDays(null), []);
+  assert.deepStrictEqual(u.sanitizeMonthlyDeadlineDays("10"), []);
+});
+test("monthlyDeadlineFor: 開始日より前で最も遅い固定日（2週間運用で月2回）", () => {
+  const days = [10, 25];
+  assert.strictEqual(u.monthlyDeadlineFor(days, "2026-10-01"), "2026-09-25", "前半は前月25日");
+  assert.strictEqual(u.monthlyDeadlineFor(days, "2026-10-16"), "2026-10-10", "後半は当月10日");
+  assert.strictEqual(u.monthlyDeadlineFor([20], "2026-11-01"), "2026-10-20", "1ヶ月運用は前月20日");
+  assert.strictEqual(u.monthlyDeadlineFor([10], "2026-10-10"), "2026-09-10", "開始日と同じ日は締切にしない");
+  assert.strictEqual(u.monthlyDeadlineFor([10], "2026-10-11"), "2026-10-10");
+  assert.strictEqual(u.monthlyDeadlineFor([31], "2026-03-01"), "2026-02-28", "月末は短い月の末日に丸める");
+  assert.strictEqual(u.monthlyDeadlineFor([30], "2026-03-16"), "2026-02-28");
+  assert.strictEqual(u.monthlyDeadlineFor([25], "2027-01-01"), "2026-12-25", "年をまたぐ");
+  assert.strictEqual(u.monthlyDeadlineFor([], "2026-10-01"), null);
+  assert.strictEqual(u.monthlyDeadlineFor([10], "bad"), null);
+});
+test("shopDeadlineInfoFromLink: 日付指定が毎月の固定締切より優先", () => {
+  const P1 = { startDate: "2026-10-01", endDate: "2026-10-15" };
+  const P2 = { startDate: "2026-10-16", endDate: "2026-10-31" };
+  const link = { deadlines: { "2026-10-01_2026-10-15": "2026-09-20" }, monthlyDeadlineDays: [10, 25] };
+  assert.deepStrictEqual(u.shopDeadlineInfoFromLink(link, P1), { date: "2026-09-20", source: "date" });
+  assert.deepStrictEqual(u.shopDeadlineInfoFromLink(link, P2), { date: "2026-10-10", source: "monthly" });
+  assert.deepStrictEqual(u.shopDeadlineInfoFromLink({ deadlines: {} }, P1), null);
+  assert.strictEqual(u.shopDeadlineInfoFromLink(null, P1), null);
+  // 不正な日付指定は無いものとして毎月の固定締切へ落ちる
+  assert.deepStrictEqual(u.shopDeadlineInfoFromLink({ deadlines: { "2026-10-01_2026-10-15": "nope" }, monthlyDeadlineDays: [25] }, P1),
+    { date: "2026-09-25", source: "monthly" });
+});
+test("company-config: 毎月の固定締切の検証がクライアントと一致する（書き写しのドリフト検出）", () => {
+  assert.strictEqual(cfc.MONTHLY_DEADLINE_MAX, u.MONTHLY_DEADLINE_MAX);
+  const inputs = [[25, "10", 10, 0, 32, 1.5, null], { 0: 20, 1: 5 }, [1, 2, 3, 4, 5], null, "10", [31, 31, 29], [-1, 15]];
+  inputs.forEach(x => assert.deepStrictEqual(cfc.sanitizeMonthlyDeadlineDays(x), u.sanitizeMonthlyDeadlineDays(x), JSON.stringify(x)));
+});
