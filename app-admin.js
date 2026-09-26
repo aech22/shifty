@@ -6,8 +6,16 @@
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,shopTemplates,saveShopTemplates,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,shopTemplates,saveShopTemplates,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
+  // 所属店舗の選択肢。企業の写しが持つ連携店舗の一覧を優先し、この端末が知っている店舗（allLinkedShops）で補う。
+  // 企業の作成者でも企業ログインでもない端末（Cookie・管理コードで追加した端末）は allLinkedShops を持たないため。
+  const homeShopChoices=(()=>{
+    const m=new Map();
+    Object.entries((companyLink&&companyLink.shops)||{}).forEach(([id,nm])=>{if(id)m.set(id,{id,name:nm||id});});
+    (allLinkedShops||[]).forEach(s=>{if(s&&s.id&&!m.has(s.id))m.set(s.id,{id:s.id,name:s.name||s.id});});
+    return[...m.values()];
+  })();
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   // 課金対象外の店舗ではマイページを出さない（2026-08-31 決定6）。
   // billingExempt は null=未確定（購読が返る前・店舗切替の直後）。**未確定のうちは「出す」**——
@@ -201,7 +209,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           <button onClick={()=>setTab("mypage")} style={{padding:"6px 12px",background:"#DC2626",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>マイページへ</button>
         </div>}
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings}/>}
-        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} onRenameStaff={(oldName,newName)=>{
+        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} shopId={currentShopId} linkedShops={homeShopChoices} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
@@ -219,10 +227,10 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} shopTemplates={shopTemplates} saveShopTemplates={saveShopTemplates} tt={tt} plan={plan} periods={periods}/>}
         {tab==="submissions"&&<SubsTab key={currentShopId} subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
-        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly}/>}
-        {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany}/>}
+        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
+        {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany} plan={plan} onSaveCompanyConfig={onSaveCompanyConfig}/>}
         {tab==="mypage"&&!hideMypage&&<MyPageTab plan={plan} planExpiry={planExpiry} billingSchedule={billingSchedule} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} adminCode={adminCode} ownerReadOnly={ownerReadOnly}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} adminCode={adminCode} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:12,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -395,11 +403,12 @@ function GridLegend({abbrToShop,shopName}){
 // staffList/settings を props 名のまま受けないのは、このタブだけが「選択中の期間が終了済みなら
 // その期間の写し(period.snapshot)を使う」＝他タブと違う値で動くため。以降の本文が参照する
 // staffList/settings は解決後の値で、写しの更新にだけ生の staffListProp/settingsProp を使う。
-function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:settingsProp,plan,shopId,shopName,onUpgrade,allLinkedShops=[],onLoadPastSubs,pastSubsLoaded=false,savePeriods,ownerReadOnly=false}){
+function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:settingsProp,plan,shopId,shopName,onUpgrade,allLinkedShops=[],onLoadPastSubs,pastSubsLoaded=false,savePeriods,ownerReadOnly=false,companyLink=null,initialPeriodId="",exportJob=null}){
   // 直近3ヶ月より古い期間があり、まだ過去分未読なら「過去参照」ボタンを出す（古い期間のシフトを見るため）
   const hasOlderPeriods=periods.some(p=>p&&p.startDate&&p.startDate<subsWindowCutoff());
   const firstPid=(periods[0]||{}).id||"";
-  const[selPid,setSelPid]=useState(firstPid);
+  // initialPeriodId は企業連携タブの一括PDF（非表示マウント）が対象期間を指定するために使う
+  const[selPid,setSelPid]=useState(initialPeriodId||firstPid);
   const[localEdits,setLocalEdits]=useState({});
   const[heatEdits,setHeatEdits]=useState({}); // blur確定値のみ（集計・ヒートマップ用）
   const[focusKey,setFocusKey]=useState(null); // フォーカス中セルkey（黄色ハイライト抑制用）
@@ -453,7 +462,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         firebaseDB.ref(`shops/${os.id}/settings/shopAbbrs`).once("value").catch(()=>null),
         firebaseDB.ref(`shops/${os.id}/subs`).once("value").catch(()=>null),
         firebaseDB.ref(`shops/${os.id}/settings/staffAliases`).once("value").catch(()=>null),
-      ]).then(([aS,sS,alS])=>{
+        // 所属店舗による同一人物の判定（dupTargetShopsFor）に使う。名簿と所属店舗の2つ。
+        firebaseDB.ref(`shops/${os.id}/staff`).once("value").catch(()=>null),
+        firebaseDB.ref(`shops/${os.id}/settings/staffHomeShop`).once("value").catch(()=>null),
+      ]).then(([aS,sS,alS,stS,hsS])=>{
         const abbrs=aS?Object.values(aS.val()||{}).filter(v=>typeof v==="string"):[];
         // 別名で提出されたsubは staffName に別名がそのまま残る（registerAlias は staffAliases に
         // 登録するだけで staffName を書き換えない）。キーを生の名前のまま持つと、参照側の
@@ -477,7 +489,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             if(!cur||(!hasBoth(cur)&&hasBoth(sh)))workMap.set(k,sh);
           });
         });
-        return[os.id,{name:os.name,abbrs,workMap}];
+        const staffSet=new Set(Object.values((stS&&stS.val())||{}).filter(n=>typeof n==="string"&&!isSpacer(n)));
+        const homeShop=(hsS&&hsS.val())||null;
+        // 読めなかった店舗を「データが無い」と区別できるよう印を残す（丸めて黙る箇所を増やさない。
+        // 倒す向きの判断は BACKLOG「読みの失敗を『問題なし』に丸めている3箇所」のまま）
+        const loadFailed=!aS||!sS||!alS||!stS||!hsS;
+        return[os.id,{name:os.name,abbrs,workMap,staffSet,homeShop,loadFailed}];
       })
     )).then(entries=>{if(!cancelled)setCompanyData(Object.fromEntries(entries));});
     return()=>{cancelled=true;};
@@ -889,12 +906,14 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 「保存」ボタン: localEditsに残っている全セルをまとめて確定書き込みする。
   // 個々のセルはonBlur/Enterで既に確定済みのはずだが、それでも保存漏れの不安を訴える声があったため、
   // 「明示的に押せば確実に保存される」導線として用意する（同じ値の再適用は冪等なので害はない）。
-  const handleSaveAll=()=>{
-    if(!isPremium)return;
+  // silent=true は提出ボタンから呼ぶ（保存と同じ処理を黙って済ませてから提出を記録する）。
+  // localEdits は blur 後も表示用に残るので「未保存があれば提出させない」とは判定できない。
+  const flushEdits=(silent)=>{
+    if(!isPremium)return 0;
     // フォーカス中セルがあれば先にblurさせ、その場のonBlurで確定させてから一括処理する
     if(document.activeElement&&document.activeElement.tagName==="INPUT")document.activeElement.blur();
     const entries=Object.entries(localEdits);
-    if(entries.length===0){tt("変更はありません");return;}
+    if(entries.length===0){if(!silent)tt("変更はありません");return 0;}
     onSave(prevSubs=>{
       const newSubs=[...prevSubs];
       entries.forEach(([key,rawValue])=>{
@@ -908,8 +927,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       return newSubs;
     });
     setHeatEdits(prev=>({...prev,...localEdits}));
-    tt(`✓ ${entries.length}件のシフトを保存しました`);
+    if(!silent)tt(`✓ ${entries.length}件のシフトを保存しました`);
+    return entries.length;
   };
+  const handleSaveAll=()=>{flushEdits(false);};
 
   // 集計/ヒートマップ用は heatEdits（blur確定値）を参照
   const getEffHHMM=(name,date,field,src=heatEdits)=>{const key=`${name}|${date}|${field}`;if(key in src){const{numeric}=extractNote(src[key]);return parseTime(numeric)||"";}return getStoredTime(name,date,field);};
@@ -1064,13 +1085,14 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     });
     return perDate;
   },[subs,heatEdits,settings,selPid,staffList,periods,companyData,fixedShiftEnabled]);
-  // 店舗間シフト重複エラー: 勤務先登録済みスタッフが他店舗と時間重複していないか（blur確定値ベース）
+  // 店舗間シフト重複エラー: 同じ人が他店舗と時間重複していないか（blur確定値ベース）。
+  // 見に行く他店舗は所属店舗の一致で決める（dupTargetShopsFor・2026-09-27）。旧データの
+  // staffWorkplaces（企業連携タブの「勤務先店舗」・UIは廃止）はその関数の中で1リリースだけ併用する。
   const dupErrors=useMemo(()=>{
     const errs={}; // {name|date: 他店舗名}
-    const wpAll=settings.staffWorkplaces||{};
     if(Object.keys(companyData).length===0)return errs;
     realStaff.forEach(name=>{
-      const wps=Object.keys(wpAll[name]||{}).filter(id=>companyData[id]);
+      const wps=dupTargetShopsFor({name,shopId,settings,otherShops:companyData}).filter(id=>companyData[id]);
       if(wps.length===0)return;
       dates.forEach(date=>{
         // x（ヘルプ・カウント外）は他店舗勤務が前提。略称によるヘルプ指定を下で除外しているのと
@@ -1120,7 +1142,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       });
     });
     return errs;
-  },[companyData,heatEdits,subs,settings,selPid,staffList,periods]);
+  },[companyData,heatEdits,subs,settings,selPid,staffList,periods,shopId]);
   // 時刻の入力ミス（項目12・案C）: 退勤≦出勤 のセル。保存は通し、色とエラーパネルで知らせる。
   // 判定は dupErrors と同じ入口（getEffHHMM＝blur確定値）から引くので、保存前の編集も反映される。
   // **両側とも入力されている日だけ**が対象（片側セルは補完の領分で入力ミスではない）。
@@ -1769,11 +1791,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const nameColor=name=>((settings.staffColors||{})[name]==="red"?"#e53935":"var(--c-text)");
   // sticky=true: メイングリッドの名前行のみ画面上端に固定（出勤・退勤行はその下をスクロール、テーブル末尾を過ぎると自然に解除される）。
   // 全表示では縦スクロールが起きないので固定しない。
-  const VTH=(name,sticky=false)=>(
-    <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,padding:fullView?0:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"middle",...(sticky&&(!fullView||fvScrolls)?{position:"sticky",top:0,zIndex:3}:{})}}>
-      <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:fullView?fvNameH:72,display:"inline-block",fontSize:fullView?Math.max(7,Math.min(11,colW-2)):11,fontWeight:600,color:nameColor(name),whiteSpace:"nowrap",textAlign:"center",lineHeight:String(colW-4)+"px",overflow:fullView?"hidden":undefined}}>{name}</div>
+  // ヘルプ（所属店舗が他店舗）の人は名前の横に所属店舗名を細く添える。全表示では行高を食うので出さない。
+  // 色・バッジ・記号は使わない（kill-ai-slop: 装飾は意味を持つ）。
+  const homeShopNameOf=id=>((allLinkedShops||[]).find(s=>s&&s.id===id)||{}).name||(companyData[id]&&companyData[id].name)||"他店舗";
+  const VTH=(name,sticky=false)=>{
+    const helper=!fullView&&isHelperAt(settings,name,shopId);
+    const lh=helper?Math.max(8,Math.floor((colW-4)/2)):colW-4;
+    return(
+    <th key={name} title={helper?`${name}（所属: ${homeShopNameOf(homeShopOf(settings,name,shopId))}）`:undefined} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,padding:fullView?0:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"middle",...(sticky&&(!fullView||fvScrolls)?{position:"sticky",top:0,zIndex:3}:{})}}>
+      <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:fullView?fvNameH:72,display:"inline-block",fontSize:fullView?Math.max(7,Math.min(11,colW-2)):11,fontWeight:600,color:nameColor(name),whiteSpace:"nowrap",textAlign:"center",lineHeight:String(lh)+"px",overflow:fullView||helper?"hidden":undefined}}>{name}{helper&&<span data-home-shop="1" style={{display:"block",fontSize:9,fontWeight:400,color:"var(--c-text3)"}}>{homeShopNameOf(homeShopOf(settings,name,shopId))}</span>}</div>
     </th>
-  );
+    );
+  };
   // 集計用の実効値（heatEdits＝blur確定値ベース）
   const getHeatVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in heatEdits)return heatEdits[key];const t=toDecimal(getStoredTime(name,date,field));return t||"";};
   // その日出勤しているか（0.5出勤含む）: start か end のどちらかに有効値がある
@@ -2182,9 +2211,13 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   };
   const PDF_PAGEBREAK="__PAGEBREAK__";
   const PDF_SYNCSCALE="__SYNCSCALE__"; // 直前のブロックと同じmm/pxスケールを使う（ページ間で日付行の高さ・幅を揃えるため）
-  const exportPdf=async(mode,dept="all")=>{
-    if(!period)return;
-    if(typeof window.html2canvas==="undefined"||typeof window.jspdf==="undefined"){tt("▲ PDFライブラリ未読込み");return;}
+  // opts は企業連携タブの一括PDF用（2026-09-27）: pdf＝既存の jsPDF に追記、first===false＝先頭で改ページ
+  // （new jsPDF は最初から1ページ持つので、ページ数で判定すると1店舗目の前に空白ページができる）、
+  // save===false＝保存・トースト・モーダル閉じ・分析イベントを行わず、失敗は呼び出し元へ投げ直す。
+  const exportPdf=async(mode,dept="all",opts={})=>{
+    const batch=opts.save===false;
+    if(!period){if(batch)throw new Error("期間が見つかりません");return;}
+    if(typeof window.html2canvas==="undefined"||typeof window.jspdf==="undefined"){if(batch)throw new Error("PDFライブラリ未読込み");tt("▲ PDFライブラリ未読込み");return;}
     setPdfBusy(true);
     try{
       const heading=`${esc(shopName||"店舗")} ${esc(pdfPeriodLabel(period.label)||"")}`;
@@ -2227,7 +2260,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         }
       }
       const{jsPDF}=window.jspdf;
-      const pdf=new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+      const pdf=opts.pdf||new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+      if(opts.pdf&&opts.first===false)pdf.addPage();
       const pageW=297,pageH=210,margin=5,imgW=pageW-margin*2,imgH=pageH-margin*2;
       let y=margin,lastMmPerPx=null,syncNext=false;
       for(const bh of blocks){
@@ -2249,6 +2283,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         pdf.addImage(canvas.toDataURL("image/jpeg",0.92),"JPEG",margin,y,wMm,hMm);
         y+=hMm+4;
       }
+      if(batch)return;
       const deptSuffix=dept==="kit"?"_キッチン":dept==="hall"?"_ホール":"";
       const fname=`${pdfSanitize(shopName||"店舗")}${pdfSanitize(period.label||"")}${mode==="shift"?"シフト":"全データ"}${deptSuffix}.pdf`;
       pdf.save(fname);
@@ -2257,11 +2292,25 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       setPdfModal(false);
     }catch(e){
       console.error("PDF生成失敗:",e);
+      if(batch)throw e;
       tt("✕ PDF生成に失敗しました: "+e.message);
     }finally{
       setPdfBusy(false);
     }
   };
+  // 企業連携タブの一括PDF（非表示マウント）から渡される書き出しジョブ。描画と集計が落ち着いてから1回だけ実行し、
+  // 結果を onDone(null | Error) で返す。キーで重複実行を防ぐ（再レンダーで二重に書き出さない）。
+  const exportJobDoneRef=useRef(null);
+  useEffect(()=>{
+    if(!exportJob||!period||exportJobDoneRef.current===exportJob.key)return;
+    const t=setTimeout(()=>{
+      if(exportJobDoneRef.current===exportJob.key)return;
+      exportJobDoneRef.current=exportJob.key;
+      exportPdf(exportJob.mode,"all",{pdf:exportJob.pdf,first:exportJob.first,save:false})
+        .then(()=>exportJob.onDone(null),e=>exportJob.onDone(e||new Error("PDF生成失敗")));
+    },300);
+    return()=>clearTimeout(t);
+  },[exportJob,period]);
 
   // 「過去データ読込」は労務判定の見出しの右に置く（2026-09-26 ユーザー指示）。年計・有給残が
   // 購読窓の外の期間を読めていないときに押すボタンなので、その表のそばに置く。
@@ -2274,6 +2323,28 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     </button>
   ):null;
   const showLaborTable=isPremium&&Object.keys(laborByStaff).length>0;
+  // 企業への完成シフトの提出と提出期限（2026-09-27 企業連携の拡張）。企業に連携した店舗（companyLink）で、
+  // Premium のときだけ出す。提出の状態は期間レコードの submission={at,byUid} に持ち、savePeriods
+  // （差分 update）で書く。提出後の編集は自由・取り消し可・再提出で at を更新する。
+  const submission=period&&period.submission&&period.submission.at?period.submission:null;
+  const coDeadline=companyLink&&period?shopDeadlineFromLink(companyLink,period):null;
+  const coDeadlineOver=!!(coDeadline&&!submission&&todayStr>coDeadline);
+  const canSubmit=!!companyLink&&isPremium&&!!period&&!ownerReadOnly&&!!savePeriods;
+  const fmtMD=ds=>{const d=pd(ds);return isNaN(d)?ds:`${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;};
+  const fmtAt=iso=>{const d=new Date(iso);return isNaN(d)?"":`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
+  const submitShift=()=>{
+    if(!canSubmit)return;
+    flushEdits(true);
+    const by=(typeof firebaseAuth!=="undefined"&&firebaseAuth&&firebaseAuth.currentUser&&firebaseAuth.currentUser.uid)||"";
+    savePeriods(periods.map(p=>p.id===period.id?{...p,submission:{at:new Date().toISOString(),byUid:by}}:p));
+    tt("✓ 企業にシフトを提出しました");
+  };
+  const unsubmitShift=()=>{
+    if(!canSubmit||!submission)return;
+    if(!confirm("提出を取り消しますか？\n企業連携タブの一括ダウンロードの対象から外れます。"))return;
+    savePeriods(periods.map(p=>{if(p.id!==period.id)return p;const n={...p};delete n.submission;return n;}));
+    tt("✓ 提出を取り消しました");
+  };
 
   return(
     <div ref={outerRef} style={{padding:"12px 8px"}}>
@@ -2297,6 +2368,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           :<button onClick={()=>{if(!confirm("この期間を現在の設定内容で確定しますか？\n以後、スタッフの追加・削除や属性・退勤延長の変更はこの期間に反映されなくなります（シフトの編集は可能）。"))return;savePeriods(periods.map(p=>(p&&p.id===period.id)?{...p,snapshot:buildPeriodSnapshot(staffListProp,settingsProp),lockedAt:new Date().toISOString()}:p));tt("✓ この期間を確定しました");}}
               style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>この期間を確定</button>
         )}
+        {canSubmit&&coDeadline&&<span data-co-deadline="1" style={{fontSize:11,fontWeight:600,color:coDeadlineOver?"#FF4757":"var(--c-text3)",whiteSpace:"nowrap"}}>提出期限 {fmtMD(coDeadline)}</span>}
         {!showLaborTable&&pastSubsBtn}
         {/* 入力例の案内は 2026-09-23 のユーザー指示で削除（操作方法はタブ最下部のレジェンドにある）。
             span 自体は flex:1 の伸び代として残す＝これを外すと右側のボタン群が左へ寄る。 */}
@@ -2347,6 +2419,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         {isPremium&&<button onClick={handleSaveAll}
           style={{padding:"6px 14px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           保存
+        </button>}
+        {/* 提出（企業へ）。アクセントは保存に残し、提出は無彩色の枠線ボタンにする（アクセントは1つ） */}
+        {canSubmit&&submission&&<span data-co-submitted="1" style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>提出済み {fmtAt(submission.at)}</span>}
+        {canSubmit&&<button onClick={submission?unsubmitShift:submitShift}
+          style={{padding:"6px 14px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+          {submission?"提出を取り消す":"提出"}
         </button>}
         </div>}
       </div>
@@ -3213,7 +3291,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
 }
 
 // ===== スタッフ登録タブ =====
-function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods,ownerReadOnly=false}){
+function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods,ownerReadOnly=false,shopId="",linkedShops=[]}){
   const[newName,setNewName]=useState("");
   // 削除確認ポップアップ。対象は index ではなく「スタッフ名」で持つ（下のコメントと同じ理由）。
   const[delTarget,setDelTarget]=useState(null);
@@ -4023,6 +4101,29 @@ const dragIdxRef=useRef(null);
               </select>
             </>)}
 
+            {/* 所属店舗（2026-09-27 企業連携の拡張）。他店舗を所属にした人は、この店舗のシフトでは「ヘルプ」として
+                列見出しに所属店舗名が出て、所属店舗と時間が重なるとシフト作成タブに重複エラーが出る。
+                同一人物の判定は「所属店舗が一致すること」（app-utils.js の dupTargetShopsFor）。 */}
+            {isPremium&&(()=>{
+              const others=(linkedShops||[]).filter(s=>s&&s.id&&s.id!==shopId);
+              const cur=((settings.staffHomeShop||{})[n])||"";
+              if(others.length===0&&!cur)return null;
+              const known=!cur||others.some(s=>s.id===cur);
+              const setHome=v=>{
+                const h={...(settings.staffHomeShop||{})};
+                if(v&&v!==shopId)h[n]=v;else delete h[n];
+                onSaveSettings&&onSaveSettings({...settings,staffHomeShop:h});
+              };
+              return sec("所属店舗",<>
+                <select value={cur} onChange={e=>setHome(e.target.value)} style={{...selStyle,width:"auto",minWidth:180}}>
+                  <option value="">この店舗</option>
+                  {others.map(s=><option key={s.id} value={s.id}>{s.name||s.id}</option>)}
+                  {!known&&<option value={cur}>連携していない店舗</option>}
+                </select>
+                <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>他店舗を選ぶと、この店舗のシフトではヘルプとして扱われます。所属店舗と勤務時間が重なるとシフト作成タブにエラーが出ます。</div>
+              </>);
+            })()}
+
             {isPremium&&sec("退勤延長",<>
               <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:8}}>シフト終了後の延長時間。ランチ帯（退勤17:00以前）とディナー帯（17:00超）で別に設定できます。勤務時間の合計に加算されます。</div>
               <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
@@ -4790,7 +4891,343 @@ if(typeLim.customDays&&(typeLim.customHours||typeLim.customHoursMin)){const r=_w
 }
 
 // ===== 企業連携タブ =====
-function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
+// ============================================================
+// 企業の共通設定（2026-09-27 企業連携の拡張）
+// 企業が決めた項目だけを持ち、空欄＝「店舗で設定」。企業設定＞店舗設定で、店舗は企業が決めていない
+// 項目を自分で足せる。重ね合わせは App の effectiveSettings（applyCompanySettings）が行う。
+// 保存は下のボタン1つで CF saveCompanyConfig を呼ぶ（入力のたびに CF を走らせない）。
+// 単位は店舗設定と同じ: 労務設定は分（入力は時間）・勤務時間の上限下限は時間。
+// 労務設定は 0 も企業の決定（1日の延長上限0＝残業を前提にしない運用）、上限・下限の 0 は未設定。
+// ============================================================
+const CO_LABOR_FIELDS=[
+  {key:"fixedOvertimeMin",label:"固定残業",max:200},
+  {key:"marginMin",label:"余裕",max:200},
+  {key:"agreementDailyOtMin",label:"36協定 1日の延長上限",max:16},
+  {key:"agreementMonthlyOtMin",label:"36協定 1か月の延長上限",max:200},
+  {key:"agreementAnnualOtMin",label:"36協定 1年の延長上限",max:999},
+];
+function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
+  const[draft,setDraft]=useState(null);
+  const[loadErr,setLoadErr]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const[dirty,setDirty]=useState(false);
+  useEffect(()=>{
+    if(!firebaseDB||!companyId){setDraft({});return;}
+    let cancelled=false;
+    setDraft(null);setLoadErr(false);setDirty(false);
+    firebaseDB.ref(`companies/${companyId}/pub/config/settings`).once("value")
+      .then(sn=>{if(!cancelled)setDraft(sn.val()||{});})
+      .catch(()=>{if(!cancelled)setLoadErr(true);});
+    return()=>{cancelled=true;};
+  },[companyId]);
+  if(loadErr)return(<AC title="企業の共通設定"><div style={{fontSize:12,color:"#FF4757"}}>✕ 企業の共通設定を読み込めませんでした。再読み込みしてください。</div></AC>);
+  if(!draft)return(<AC title="企業の共通設定"><div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div></AC>);
+  const labor=draft.laborSettings||{};
+  const stl=draft.staffTypeLimits||{};
+  const upd=next=>{setDraft(next);setDirty(true);};
+  const setLabor=(k,v)=>{const l={...labor};if(v===null||v===undefined)delete l[k];else l[k]=v;upd({...draft,laborSettings:l});};
+  const setLim=(id,k,v)=>{
+    const e={...(stl[id]||{})};
+    if(v===null||v===undefined||v===""||(k!=="laborSystem"&&k!=="name"&&!(v>0)))delete e[k];else e[k]=v;
+    upd({...draft,staffTypeLimits:{...stl,[id]:e}});
+  };
+  const numIn=(val,onCh,max,w=58)=>(<input type="number" min={0} max={max} value={val===undefined||val===null?"":val} placeholder="店舗"
+    onChange={e=>{const t=e.target.value;if(t===""){onCh(null);return;}onCh(Math.max(0,Math.min(max,parseInt(t)||0)));}}
+    style={{...AI,width:w,textAlign:"center",padding:"5px 6px"}}/>);
+  const coAttrIds=Object.keys(stl).filter(isCompanyAttrId);
+  const attrRows=[...BUILTIN_TYPES.map(id=>[id,STAFF_TYPE_LABELS[id]]),...coAttrIds.map(id=>[id,null])];
+  const addAttr=()=>upd({...draft,staffTypeLimits:{...stl,[genCompanyAttrId()]:{name:""}}});
+  const delAttr=id=>{
+    if(!window.confirm("この属性を削除しますか？\n各店舗でこの属性にしていたスタッフは「属性未設定」の扱いになります。"))return;
+    const n={...stl};delete n[id];upd({...draft,staffTypeLimits:n});
+  };
+  const save=async()=>{
+    if(!onSaveCompanyConfig)return;
+    if(coAttrIds.some(id=>!((stl[id]||{}).name||"").trim())){tt("✕ 名前の無い属性があります。名前を入れるか削除してください");return;}
+    setBusy(true);
+    const r=await onSaveCompanyConfig({settings:draft});
+    setBusy(false);
+    if(r&&r.error){tt("✕ "+r.error);return;}
+    setDirty(false);
+    const f=(r&&r.failed)||[];
+    tt(f.length?`△ ${(r.synced||[]).length}件に反映し、${f.length}件は失敗しました。もう一度保存してください`:`✓ 連携店舗 ${(r&&r.synced||[]).length} 件に反映しました`);
+  };
+  const b31=labor.monthlyBase31Min;
+  const LBL={fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"};
+  const UNIT={fontSize:11,color:"var(--c-text4)"};
+  return(<AC title="企業の共通設定">
+    <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+      連携している全店舗の設定タブに、ここで入れた値が優先して適用されます。空欄の項目は各店舗が自分で設定できます。
+    </div>
+    <AL>労務判定</AL>
+    <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+      <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+        <span style={{...LBL,minWidth:150}}>31日の月の総枠</span>
+        {numIn(b31===undefined?null:Math.floor(b31/60),v=>setLabor("monthlyBase31Min",v===null?null:v*60+(b31===undefined?0:b31%60)),744,64)}
+        <span style={UNIT}>時間</span>
+        {numIn(b31===undefined?null:b31%60,v=>setLabor("monthlyBase31Min",(b31===undefined?0:Math.floor(b31/60))*60+(v||0)),59,64)}
+        <span style={UNIT}>分</span>
+      </div>
+      {CO_LABOR_FIELDS.map(f=>(
+        <div key={f.key} style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+          <span style={{...LBL,minWidth:150}}>{f.label}</span>
+          {numIn(labor[f.key]===undefined?null:Math.floor(labor[f.key]/60),v=>setLabor(f.key,v===null?null:v*60),f.max)}
+          <span style={UNIT}>h</span>
+        </div>
+      ))}
+      <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+        <span style={{...LBL,minWidth:150}}>年の区切り</span>
+        <select value={labor.fiscalYearStartMonth||""} onChange={e=>setLabor("fiscalYearStartMonth",e.target.value?parseInt(e.target.value):null)}
+          style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+          <option value="">店舗で設定</option>
+          <option value={1}>1月（暦年）</option><option value={4}>4月（年度）</option><option value={7}>7月</option><option value={10}>10月</option>
+        </select>
+      </div>
+    </div>
+    <AL>属性別の勤務時間制限</AL>
+    {attrRows.map(([id,label])=>{
+      const e=stl[id]||{};
+      const isCo=isCompanyAttrId(id);
+      return(<div key={id} data-co-attr={id} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+          {isCo
+            ?<input value={e.name||""} maxLength={20} placeholder="属性名を入力" onChange={ev=>setLim(id,"name",ev.target.value)} style={{...AI,flex:1,fontWeight:700,padding:"4px 8px"}}/>
+            :<div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",flex:1}}>{label}</div>}
+          {isCo&&<button onClick={()=>delAttr(id)} style={{...AD,padding:"4px 10px",fontSize:12}}>削除</button>}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+          <span style={LBL}>労働時間制</span>
+          <select value={LABOR_SYSTEMS.indexOf(e.laborSystem)>=0?e.laborSystem:""} onChange={ev=>setLim(id,"laborSystem",ev.target.value||null)}
+            style={{...AI,width:"auto",flex:"1 1 220px",minWidth:180,padding:"5px 8px",cursor:"pointer"}}>
+            <option value="">店舗で設定</option>
+            {LABOR_SYSTEMS.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
+          </select>
+        </div>
+        {[["上限",false],["下限",true]].map(([rowLbl,isMin])=>(
+          <div key={rowLbl} style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:isMin?0:6}}>
+            <span style={{fontSize:11,fontWeight:700,color:isMin?"#2563EB":"#FF4757",minWidth:26}}>{rowLbl}</span>
+            {STAFF_LIMIT_WINDOWS.map(w=>{const k=isMin?w.minKey:w.key;return(
+              <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
+                <span style={LBL}>{w.label}</span>
+                {numIn(e[k]>0?e[k]:null,v=>setLim(id,k,v),w.max,52)}
+                <span style={UNIT}>h</span>
+              </div>);})}
+          </div>
+        ))}
+      </div>);
+    })}
+    <button onClick={addAttr} style={{width:"100%",padding:"8px",background:"transparent",border:"1px dashed var(--c-border2)",borderRadius:8,color:"var(--c-text3)",fontSize:12,cursor:"pointer",marginBottom:12}}>＋ 企業の属性を追加</button>
+    <button disabled={busy||!dirty} onClick={save} style={{...AB,width:"100%",opacity:busy||!dirty?0.5:1}}>{busy?"保存中...":"企業の共通設定を保存"}</button>
+  </AC>);
+}
+
+// ============================================================
+// シフトの提出状況と提出期限（2026-09-27 企業連携の拡張）
+// 対象店舗は companies/{id}/pub/shops（企業に連携した店舗）で、allLinkedShops ではない
+// （あちらは企業に入れていない自分の店舗も含む）。期間は店舗ごとにIDが違うので、開始日_終了日で
+// 対応づけ、「2026年10月前半」のような選択肢にする（企業内は同じ作成期間で運用する前提）。
+// 提出期限は企業が期間ごとに日付を直接入れる（全店舗共通＋店舗別の上書き）。
+// 読めなかった店舗は「読み込み失敗」と出し、提出済みにも未提出にも数えない（丸めない）。
+// ============================================================
+function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,renderDownload}){
+  const[state,setState]=useState(null); // {shopIds,names,periods:{sid:Period[]|null},deadlines}
+  const[loadErr,setLoadErr]=useState(false);
+  const[rangeKey,setRangeKey]=useState("");
+  const[dlAll,setDlAll]=useState("");
+  const[dlShops,setDlShops]=useState({});
+  const[dlDirty,setDlDirty]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const[reloadTick,setReloadTick]=useState(0);
+  useEffect(()=>{
+    if(!firebaseDB||!companyId){setState({shopIds:[],names:{},periods:{},deadlines:{}});return;}
+    let cancelled=false;
+    setLoadErr(false);
+    Promise.all([
+      firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value"),
+      firebaseDB.ref(`companies/${companyId}/pub/config/deadlines`).once("value"),
+    ]).then(async([shS,dlS])=>{
+      const shopIds=Object.keys(shS.val()||{});
+      const names={},periods={};
+      await Promise.all(shopIds.map(async sid=>{
+        const[nS,pS]=await Promise.all([
+          firebaseDB.ref(`global/shops/${sid}/name`).once("value").catch(()=>null),
+          firebaseDB.ref(`shops/${sid}/periods`).once("value").catch(()=>null),
+        ]);
+        names[sid]=(nS&&nS.val())||shopNames[sid]||sid;
+        // 配列はオブジェクトで返るので Object.values → id 持ちに絞る（CLAUDE.md の読み取り規則）
+        periods[sid]=pS?Object.values(pS.val()||{}).filter(x=>x&&x.id).sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate))):null;
+      }));
+      if(cancelled)return;
+      setState({shopIds,names,periods,deadlines:dlS.val()||{}});
+    }).catch(()=>{if(!cancelled)setLoadErr(true);});
+    return()=>{cancelled=true;};
+  },[companyId,reloadTick]);
+  const ranges=useMemo(()=>{
+    if(!state)return[];
+    const ok={};Object.keys(state.periods).forEach(sid=>{if(state.periods[sid])ok[sid]=state.periods[sid];});
+    return collectPeriodRanges(ok);
+  },[state]);
+  // 既定の期間: 今日を含む範囲、無ければ最新
+  useEffect(()=>{
+    if(!ranges.length){setRangeKey("");return;}
+    if(ranges.some(x=>x.key===rangeKey))return;
+    const t=fd(new Date());
+    const cur=ranges.find(x=>x.startDate<=t&&t<=x.endDate);
+    setRangeKey((cur||ranges[0]).key);
+  },[ranges]); // rangeKey は依存に入れない（ユーザーが選んだ期間を範囲の再計算のたびに戻さないため）
+  // 期間を切り替えたら、その期間の期限を入力欄へ読み込む（未保存の入力は捨てる）
+  useEffect(()=>{
+    const e=(state&&state.deadlines&&state.deadlines[rangeKey])||{};
+    setDlAll(e.all||"");setDlShops({...(e.shops||{})});setDlDirty(false);
+  },[rangeKey,state]);
+  if(loadErr)return(<AC title="シフトの提出状況"><div style={{fontSize:12,color:"#FF4757"}}>✕ 提出状況を読み込めませんでした。<button onClick={()=>setReloadTick(t=>t+1)} style={{...AGray,marginLeft:8,padding:"4px 10px",fontSize:12}}>再読み込み</button></div></AC>);
+  if(!state)return(<AC title="シフトの提出状況"><div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div></AC>);
+  const rows=state.shopIds.map(sid=>{
+    const ps=state.periods[sid];
+    if(ps===null)return{sid,name:state.names[sid],status:"failed"};
+    const p=findShopPeriodByRange(ps,rangeKey);
+    if(!p)return{sid,name:state.names[sid],status:"none"};
+    const sub=p.submission&&p.submission.at?p.submission:null;
+    const effDl=isValidDateStr(dlShops[sid])?dlShops[sid]:(isValidDateStr(dlAll)?dlAll:null);
+    return{sid,name:state.names[sid],period:p,status:sub?"submitted":"pending",submission:sub,deadline:effDl};
+  }).sort((a,b)=>String(a.name).localeCompare(String(b.name),"ja"));
+  const nSub=rows.filter(x=>x.status==="submitted").length;
+  const nPend=rows.filter(x=>x.status==="pending").length;
+  const today=fd(new Date());
+  const fmtMD=ds=>{const d=pd(ds);return isNaN(d)?ds:`${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;};
+  const fmtAt=iso=>{const d=new Date(iso);return isNaN(d)?"":`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
+  const saveDeadlines=async()=>{
+    if(!onSaveCompanyConfig||!rangeKey)return;
+    const shops={};Object.keys(dlShops).forEach(sid=>{if(isValidDateStr(dlShops[sid]))shops[sid]=dlShops[sid];});
+    const entry={};if(isValidDateStr(dlAll))entry.all=dlAll;if(Object.keys(shops).length)entry.shops=shops;
+    setBusy(true);
+    const r=await onSaveCompanyConfig({deadlines:{[rangeKey]:Object.keys(entry).length?entry:null}});
+    setBusy(false);
+    if(r&&r.error){tt("✕ "+r.error);return;}
+    tt("✓ 提出期限を保存しました");
+    setReloadTick(t=>t+1);
+  };
+  const TD={borderBottom:"1px solid var(--c-border)",padding:"8px 6px",fontSize:13,verticalAlign:"middle"};
+  const dateIn=(v,onCh)=>(<input type="date" value={v||""} onChange={e=>{onCh(e.target.value);setDlDirty(true);}} style={{...AI,width:"auto",padding:"4px 6px"}}/>);
+  const cur=ranges.find(x=>x.key===rangeKey);
+  return(<AC title="シフトの提出状況">
+    {ranges.length===0?<div style={{fontSize:12,color:"var(--c-text4)"}}>連携店舗に期間がありません。</div>:(<>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
+        <select value={rangeKey} onChange={e=>setRangeKey(e.target.value)} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+          {ranges.map(x=><option key={x.key} value={x.key}>{x.label}</option>)}
+        </select>
+        <button onClick={()=>setReloadTick(t=>t+1)} style={{...AGray,padding:"6px 12px",fontSize:12}}>更新</button>
+      </div>
+      <div data-co-summary="1" style={{fontSize:13,color:"var(--c-text)",marginBottom:10}}>提出済み {nSub} ／ 未提出 {nPend}</div>
+      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
+        <span style={{fontSize:12,color:"var(--c-text3)"}}>提出期限（全店舗共通）</span>
+        {dateIn(dlAll,setDlAll)}
+      </div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{borderCollapse:"collapse",width:"100%",minWidth:460}}>
+          <thead><tr>{["店舗","期間","提出期限（店舗別）","状況"].map(h=><th key={h} style={{...TD,fontSize:11,color:"var(--c-text3)",textAlign:"left",fontWeight:700}}>{h}</th>)}</tr></thead>
+          <tbody>{rows.map(x=>(
+            <tr key={x.sid} data-co-row={x.sid}>
+              <td style={{...TD,fontWeight:600}}>{x.name}</td>
+              <td style={{...TD,color:"var(--c-text2)"}}>{x.status==="failed"?"—":x.status==="none"?"該当期間なし":(x.period.label||cur&&cur.label)}</td>
+              <td style={TD}>{x.status==="failed"||x.status==="none"?"—":<>{dateIn(dlShops[x.sid],v=>setDlShops(m=>{const n={...m};if(v)n[x.sid]=v;else delete n[x.sid];return n;}))}{!dlShops[x.sid]&&x.deadline&&<span style={{fontSize:11,color:"var(--c-text4)",marginLeft:6}}>共通 {fmtMD(x.deadline)}</span>}</>}</td>
+              <td data-co-status={x.status} style={{...TD,whiteSpace:"nowrap",color:x.status==="pending"&&x.deadline&&today>x.deadline?"#FF4757":"var(--c-text)"}}>
+                {x.status==="submitted"?`提出済み ${fmtAt(x.submission.at)}`:x.status==="pending"?"未提出":x.status==="none"?"—":"読み込み失敗"}
+              </td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+      <button disabled={busy||!dlDirty} onClick={saveDeadlines} style={{...AB,width:"100%",marginTop:12,opacity:busy||!dlDirty?0.5:1}}>{busy?"保存中...":"提出期限を保存"}</button>
+      {renderDownload&&renderDownload({rangeKey,range:cur,rows})}
+    </>)}
+  </AC>);
+}
+
+// ============================================================
+// 連携店舗のシフト一括PDF（2026-09-27 企業連携の拡張）
+// 対象は提出状況表で「提出済み」かつ対応する期間を持つ店舗だけ。店舗ごとに ShiftEditTab を画面外
+// （display:none）へ1店舗ずつマウントし、既存の PDF 出力（exportPdf）に書き出しジョブを渡して
+// 1つの jsPDF に追記する＝店舗単体の PDF と同じ経路・同じ計算で出る（計算を二重に持たない）。
+// 非表示マウントでは書き込みを塞ぐ: savePeriods=null・ownerReadOnly=true（写し・労務合計を書かない）、
+// onSave は何もしない、allLinkedShops=[]（他店舗の提出を読みに行かない）。
+// 読めなかった店舗は飛ばして、最後のトーストで名前を出す（成功に丸めない）。
+// ============================================================
+function CompanyBulkPdf({range,rows,companyName,tt}){
+  const targets=rows.filter(x=>x.status==="submitted"&&x.period);
+  const[job,setJob]=useState(null);
+  const[progress,setProgress]=useState("");
+  const runRef=useRef(0);
+  const pendingRef=useRef(null);
+  // タブを離れたら進行中の一括出力を止める（待っている Promise を解放する）
+  useEffect(()=>()=>{runRef.current++;if(pendingRef.current)pendingRef.current(new Error("cancelled"));},[]);
+  const loadShop=async(sid,period)=>{
+    const ref=p=>firebaseDB.ref(p).once("value");
+    const[stS,seS,coS,pS]=await Promise.all([ref(`shops/${sid}/staff`),ref(`shops/${sid}/settings`),ref(`shops/${sid}/company/settings`),ref(`shops/${sid}/periods`)]);
+    const periods=Object.values(pS.val()||{}).filter(x=>x&&x.id).sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate)));
+    // 連勤・週の跨ぎを店舗単体の出力と揃えるため、直前の期間の提出も読む
+    const prev=periods.find(p=>String(p.startDate)<String(period.startDate));
+    const q=pid=>firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(pid).once("value");
+    const subSnaps=await Promise.all([q(period.id),...(prev?[q(prev.id)]:[])]);
+    const subs=[];subSnaps.forEach(sn=>Object.values(sn.val()||{}).forEach(x=>{if(x&&x.id)subs.push(x);}));
+    const staffList=Object.values(stS.val()||{}).filter(n=>typeof n==="string");
+    const settings=applyCompanySettings(seS.val()||makeSettings(sid),coS.val()||{});
+    return{staffList,settings,periods,subs,periodId:period.id};
+  };
+  const start=async(mode)=>{
+    if(!targets.length||job)return;
+    if(!firebaseDB){tt("✕ Firebase未初期化");return;}
+    if(typeof window.html2canvas==="undefined"||typeof window.jspdf==="undefined"){tt("▲ PDFライブラリ未読込み");return;}
+    const runId=++runRef.current;
+    const{jsPDF}=window.jspdf;
+    const pdf=new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+    const skipped=[];let first=true;let done=0;
+    for(let i=0;i<targets.length;i++){
+      if(runRef.current!==runId)return;
+      const t=targets[i];
+      setProgress(`${i+1} / ${targets.length} 店舗を処理中…`);
+      let data;
+      try{data=await loadShop(t.sid,t.period);}catch{skipped.push(t.name);continue;}
+      if(runRef.current!==runId)return;
+      const key=`${runId}_${t.sid}`;
+      const err=await new Promise(res=>{
+        pendingRef.current=res;
+        setJob({key,sid:t.sid,shopName:t.name,data,exportJob:{key,mode,pdf,first,onDone:res}});
+      });
+      pendingRef.current=null;
+      setJob(null);
+      if(runRef.current!==runId)return;
+      if(err){skipped.push(t.name);continue;}
+      first=false;done++;
+    }
+    setProgress("");
+    const miss=skipped.length?`（${skipped.join("・")} は取得に失敗したため含まれていません）`:"";
+    if(done===0){tt("✕ PDFを作れませんでした"+miss);return;}
+    const san=v=>String(v||"").replace(/[\\/:*?"<>|]/g,"");
+    const fname=`${san(companyName||"企業")}_${range.startDate}〜${range.endDate}_${mode==="shift"?"シフト":"全データ"}.pdf`;
+    pdf.save(fname);
+    ph("company_pdf_exported",{mode,shops:done});
+    tt(`✓ ${fname} をダウンロードしました${miss}`);
+  };
+  const busy=!!job||!!progress;
+  const B=(mode,label)=>(<button disabled={busy||targets.length===0} onClick={()=>start(mode)}
+    style={{flex:1,padding:"10px 6px",background:mode==="shift"?"#C0392B":"var(--c-card)",border:mode==="shift"?"none":"1px solid var(--c-border2)",borderRadius:8,
+      color:mode==="shift"?"white":"var(--c-text)",fontSize:13,fontWeight:700,cursor:busy||targets.length===0?"default":"pointer",opacity:busy||targets.length===0?0.5:1}}>
+    {label}（{targets.length}店舗）</button>);
+  return(<div style={{marginTop:16,paddingTop:14,borderTop:"1px solid var(--c-border)"}}>
+    <AL>一括ダウンロード（提出済みの店舗のみ）</AL>
+    <div style={{display:"flex",gap:8}}>{B("shift","シフトのみPDF")}{B("all","全データPDF")}</div>
+    {progress&&<div data-co-progress="1" style={{fontSize:12,color:"var(--c-text3)",marginTop:8}}>{progress}</div>}
+    {job&&<div style={{display:"none"}} aria-hidden="true">
+      <ShiftEditTab key={job.key} subs={job.data.subs} periods={job.data.periods} staffList={job.data.staffList}
+        onSave={()=>{}} tt={()=>{}} settings={job.data.settings} plan="premium" shopId={job.sid} shopName={job.shopName}
+        onUpgrade={()=>{}} allLinkedShops={[]} savePeriods={null} ownerReadOnly={true} pastSubsLoaded={true}
+        initialPeriodId={job.data.periodId} exportJob={job.exportJob}/>
+    </div>}
+  </div>);
+}
+
+function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompanyConfig,
                      shops=[],allLinkedShops=[],onSwitchToShop,onUnlinkShop,
                      companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
   // 企業アカウントUI（SetTabから移動）
@@ -4803,25 +5240,20 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
   const[coNewPw,setCoNewPw]=useState("");
   const[coAddCode,setCoAddCode]=useState("");
   const[coAddOpen,setCoAddOpen]=useState(false);
-  // 店舗一覧トグル・略称・スタッフ勤務先
+  // 店舗一覧トグル・略称（スタッフの勤務先店舗は 2026-09-27 に廃止。スタッフタブの「所属店舗」へ移した）
   const[expanded,setExpanded]=useState({});   // {shopId:true}
-  const[shopMeta,setShopMeta]=useState({});   // {shopId:{abbrs:[],staff:[],workplaces:{},loaded:true}}
+  const[shopMeta,setShopMeta]=useState({});   // {shopId:{abbrs:[],loaded:true}}
   const[abbrInput,setAbbrInput]=useState({}); // {shopId:"入力中の略称"}
   const[allAbbrs,setAllAbbrs]=useState({});   // {shopId:[略称]} 重複チェック専用（未展開店舗ぶんも先読み）
   const listShops=allLinkedShops.length>0?allLinkedShops:shops;
 
   const loadShopMeta=(sid)=>{
     if(!firebaseDB)return;
-    Promise.all([
-      firebaseDB.ref(`shops/${sid}/settings/shopAbbrs`).once("value"),
-      firebaseDB.ref(`shops/${sid}/staff`).once("value"),
-      firebaseDB.ref(`shops/${sid}/settings/staffWorkplaces`).once("value"),
-    ]).then(([aS,stS,wS])=>{
+    firebaseDB.ref(`shops/${sid}/settings/shopAbbrs`).once("value").then(aS=>{
       const abbrs=Object.values(aS.val()||{}).filter(v=>typeof v==="string");
-      const staff=Object.values(stS.val()||{}).filter(n=>typeof n==="string"&&!isSpacer(n));
-      setShopMeta(m=>({...m,[sid]:{abbrs,staff,workplaces:wS.val()||{},loaded:true}}));
+      setShopMeta(m=>({...m,[sid]:{abbrs,loaded:true}}));
     }).catch(()=>{
-      setShopMeta(m=>({...m,[sid]:{abbrs:[],staff:[],workplaces:{},loaded:true}}));
+      setShopMeta(m=>({...m,[sid]:{abbrs:[],loaded:true}}));
       tt("✕ 店舗データの読み込みに失敗しました");
     });
   };
@@ -4831,13 +5263,13 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
   };
   // 表示中店舗はライブなsettingsを使い、他店舗は読み込んだメタを使う
   const metaFor=(sid)=>sid===shopId
-    ?{abbrs:settings.shopAbbrs||[],staff:staffList.filter(n=>!isSpacer(n)),workplaces:settings.staffWorkplaces||{},loaded:true}
+    ?{abbrs:settings.shopAbbrs||[],loaded:true}
     :(shopMeta[sid]||null);
-  // 略称・勤務先の保存: 表示中店舗はsaveSettings経由（localStorage二重書き維持）、他店舗はFirebaseへupdateマージ
+  // 略称の保存: 表示中店舗はsaveSettings経由（localStorage二重書き維持）、他店舗はFirebaseへupdateマージ
   const saveMetaField=(sid,field,value)=>{
-    const stateKey=field==="shopAbbrs"?"abbrs":"workplaces";
+    const stateKey="abbrs";
     if(sid===shopId){onSave({...settings,[field]:value});setShopMeta(m=>m[sid]?{...m,[sid]:{...m[sid],[stateKey]:value}}:m);return;}
-    setShopMeta(m=>({...m,[sid]:{...(m[sid]||{abbrs:[],staff:[],workplaces:{},loaded:true}),[stateKey]:value}}));
+    setShopMeta(m=>({...m,[sid]:{...(m[sid]||{abbrs:[],loaded:true}),[stateKey]:value}}));
     if(field==="shopAbbrs")setAllAbbrs(a=>({...a,[sid]:value}));
     if(!firebaseDB)return;
     fbUpd(`shops/${sid}/settings`,{[field]:value})
@@ -4883,21 +5315,12 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
     const cur=(metaFor(sid)||{}).abbrs||[];
     saveMetaField(sid,"shopAbbrs",cur.filter(a=>a!==abbr));
   };
-  const toggleWorkplace=(sid,staffName,targetShopId)=>{
-    const meta=metaFor(sid);if(!meta)return;
-    const wp={...(meta.workplaces||{})};
-    const cur={...(wp[staffName]||{})};
-    if(cur[targetShopId])delete cur[targetShopId];else cur[targetShopId]=true;
-    if(Object.keys(cur).length)wp[staffName]=cur;else delete wp[staffName];
-    saveMetaField(sid,"staffWorkplaces",wp);
-  };
 
   const shopCard=(shop)=>{
     const isCurrent=shop.id===shopId;
     const open=!!expanded[shop.id];
     const meta=metaFor(shop.id);
     const canUnlink=listShops.length>1;
-    const others=listShops.filter(s=>s.id!==shop.id);
     return(
       <div key={shop.id} style={{background:"var(--c-input)",borderRadius:8,border:`1px solid ${isCurrent?"rgba(248,112,54,.4)":"var(--c-border2)"}`,marginBottom:8,overflow:"hidden"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",cursor:"pointer"}} onClick={()=>toggleExpand(shop.id)}>
@@ -4950,29 +5373,6 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
                   style={{...AI,flex:1,maxWidth:200}}/>
                 <button onClick={()=>addAbbr(shop.id)} style={{...AB,padding:"8px 14px",fontSize:13,whiteSpace:"nowrap"}}>追加</button>
               </div>
-              {/* スタッフ一覧と勤務先登録 */}
-              <AL>スタッフの勤務先店舗（複数店舗で働くスタッフに登録すると、シフト重複を自動チェックします）</AL>
-              {meta.staff.length===0&&<div style={{fontSize:12,color:"var(--c-text4)"}}>スタッフが登録されていません</div>}
-              {meta.staff.map(nm=>{
-                const wps=(meta.workplaces||{})[nm]||{};
-                return(
-                  <div key={nm} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid var(--c-border)",flexWrap:"wrap"}}>
-                    <span style={{fontSize:13,fontWeight:600,color:"var(--c-text)",minWidth:80}}>{nm}</span>
-                    <div style={{display:"flex",gap:5,flexWrap:"wrap",flex:1}}>
-                      {others.length===0&&<span style={{fontSize:11,color:"var(--c-text4)"}}>他に連携店舗がありません</span>}
-                      {others.map(os=>{
-                        const sel=!!wps[os.id];
-                        return(<button key={os.id} onClick={()=>toggleWorkplace(shop.id,nm,os.id)}
-                          style={{padding:"4px 10px",borderRadius:12,border:`1px solid ${sel?"var(--c-accent)":"var(--c-border2)"}`,
-                            background:sel?"rgba(248,112,54,.12)":"var(--c-bg)",color:sel?"var(--c-accent)":"var(--c-text3)",
-                            fontSize:12,fontWeight:sel?700:400,cursor:"pointer",whiteSpace:"nowrap"}}>
-                          {sel?"✓ ":""}{os.name}
-                        </button>);
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
             </>)}
           </div>
         )}
@@ -5064,10 +5464,13 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
         )
       )}
     </AC>
+    {companyInfo&&plan==="premium"&&<CompanyConfigCard companyId={companyInfo.companyId} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}/>}
+    {companyInfo&&plan==="premium"&&<CompanySubmissionsCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}
+      renderDownload={({range,rows})=>range?<CompanyBulkPdf key={range.key} range={range} rows={rows} companyName={companyInfo.name} tt={tt}/>:null}/>}
     {listShops.length>0&&<AC title="連携店舗">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
         {companyInfo?"この企業アカウントに紐付いている店舗の一覧です。管理コードで追加・不要な店舗は連携解除できます（追加する店舗の設定タブに表示されている「管理コード」が必要です）。":"このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。"}
-        店舗名をタップすると略称・スタッフの勤務先を設定できます。
+        店舗名をタップすると略称を設定できます。
       </div>
       {companyInfo&&(
         coAddOpen?(
@@ -5092,7 +5495,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
         ・<b>出勤セルのみ</b>に略称 → その店舗のランチ帯（〜17時）のみヘルプ<br/>
         ・<b>退勤セルのみ</b>に略称 → その店舗のディナー帯（17時〜）のみヘルプ<br/>
         ・<b>両方のセル</b>に略称 → 出勤から退勤まで終日ヘルプ<br/>
-        ヘルプ帯は自店舗の時間帯別出勤人数から除外されます。勤務先店舗を登録したスタッフは、他店舗と時間が重複するとシフト作成タブにエラーが表示されます。
+        ヘルプ帯は自店舗の時間帯別出勤人数から除外されます。<br/>スタッフタブの編集で所属店舗を他店舗にすると、その人はこの店舗のシフトでヘルプとして扱われ、所属店舗と時間が重複するとシフト作成タブにエラーが表示されます。
       </div>
     </AC>
     </>)}
@@ -5101,8 +5504,19 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
 
 function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                  authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
-                 onSignInAndLinkGoogle,onSignInAndLinkEmail,adminCode=null,ownerReadOnly=false}){
+                 onSignInAndLinkGoogle,onSignInAndLinkEmail,adminCode=null,ownerReadOnly=false,companyLink=null}){
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
+  // 企業が決めている項目（2026-09-27 企業連携の拡張）。入力欄を出さず値と「企業設定」を出す。
+  // settings は App で企業設定を重ねた値。保存は App の saveSettings が剥がすが、この2枚のカードは
+  // 自分でも剥がしてから渡す（ハーネスなど App を通らない経路でも企業の値を店舗へ書かない二重防御）。
+  const coSettings=companyLink?(companyLink.settings||{}):null;
+  const coKeys=companyControlledKeys(coSettings);
+  const coLabor=k=>coKeys.labor.has(k);
+  const coLim=(type,k)=>!!(coKeys.limits[type]&&coKeys.limits[type].has(k));
+  const onSaveOwn=v=>onSave(coSettings?stripCompanySettings(v,coSettings):v);
+  const coTag=<span style={{fontSize:10,color:"var(--c-text3)",whiteSpace:"nowrap"}}>企業設定</span>;
+  const coVal=(text,minW=52)=>(<span data-company-fixed="1" style={{display:"inline-flex",alignItems:"baseline",gap:4}}><span style={{fontSize:13,color:"var(--c-text)",minWidth:minW,textAlign:"center"}}>{text}</span>{coTag}</span>);
+  const coNote=companyLink&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>「企業設定」の項目は企業アカウント（{companyLink.name||"企業"}）が決めているため、この店舗では変更できません。変更は企業連携タブから行います。</div>;
   const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
   const[emailInput,setEmailInput]=useState("");
   const[codeInput,setCodeInput]=useState("");
@@ -5211,7 +5625,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
 
     {plan==="premium"&&(()=>{
       const tls=settings.staffTypeLimits||{};
-      const saveAllLimits=(newTls)=>onSave({...settings,staffTypeLimits:newTls});
+      const saveAllLimits=(newTls)=>onSaveOwn({...settings,staffTypeLimits:newTls});
       const saveLim=(type,key,val)=>saveAllLimits({...tls,[type]:{...tls[type],[key]:val}});
       const confirmAddType=()=>{if(!pendingNewType)return;const nm=pendingNewType.name.trim();if(!nm){setPendingNewType(null);return;}const id="custom_"+genSecureId(8);saveAllLimits({...tls,[id]:{name:nm,daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}});setPendingNewType(null);};
       const deleteType=(id)=>{const n={...tls};delete n[id];const attrs={...(settings.staffAttributes||{})};Object.keys(attrs).forEach(k=>{if(attrs[k]===id)delete attrs[k];});onSave({...settings,staffTypeLimits:n,staffAttributes:attrs});};
@@ -5224,30 +5638,35 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       // 使わないのは、名前が空のカスタム属性まで落ちて**入力欄ごと消える**ため（付け直せなくなる）。
       const typeEntries=sortAttrEntries(Object.entries(tlsMerged).map(([id,raw])=>[id,typeName(id,raw)])).map(([id])=>[id,tlsMerged[id]]);
       return(<AC title="スタッフ属性別 勤務時間制限">
+        {coNote}
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は未設定。上限を超えたスタッフは提出一覧と集計表で赤く、下限に足りないスタッフは青くハイライトされます。下限は勤務が1分もない週・日には当たりません。</div>
         {typeEntries.map(([type,limRaw])=>{
           const lim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeof limRaw==="object"?limRaw:{name:limRaw})};
           const isBuiltin=BUILTIN_TYPES.includes(type);
+          // 企業が作った属性は名前も削除も企業の領分（店舗では名前を固定表示し削除ボタンを出さない）
+          const isCo=isCompanyAttrId(type);
           const displayName=typeName(type,lim);
           return(<div key={type} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-              {isBuiltin
-                ?<div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",flex:1}}>{displayName}</div>
+              {isBuiltin||isCo
+                ?<div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",flex:1}}>{displayName}{isCo&&<span style={{marginLeft:6,fontWeight:400}}>{coTag}</span>}</div>
                 :<input value={lim.name||""} placeholder="属性名を入力" onChange={e=>renameType(type,e.target.value)}
                     style={{...AI,flex:1,fontSize:16,fontWeight:700,padding:"4px 8px"}}/>
               }
-              {!isBuiltin&&<button onClick={()=>deleteType(type)} style={{padding:"4px 10px",background:"rgba(229,57,53,.1)",border:"1px solid rgba(229,57,53,.3)",borderRadius:4,color:"#e53935",fontSize:12,cursor:"pointer"}}>削除</button>}
+              {!isBuiltin&&!isCo&&<button onClick={()=>deleteType(type)} style={{padding:"4px 10px",background:"rgba(229,57,53,.1)",border:"1px solid rgba(229,57,53,.3)",borderRadius:4,color:"#e53935",fontSize:12,cursor:"pointer"}}>削除</button>}
             </div>
             {/* 労働時間制（項目1）。組み込み属性は既定（社員=変形・バイト=通常・派遣/その他=対象外）が
                 入った状態で表示されるので、既存店舗が「区分が空欄」にならない。 */}
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
               <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>労働時間制</span>
-              <select value={LABOR_SYSTEMS.indexOf(lim.laborSystem)>=0?lim.laborSystem:(DEFAULT_LABOR_SYSTEM_BY_ATTR[type]||"")}
+              {coLim(type,"laborSystem")
+                ?coVal(LABOR_SYSTEM_LABELS[lim.laborSystem]||lim.laborSystem,0)
+                :<select value={LABOR_SYSTEMS.indexOf(lim.laborSystem)>=0?lim.laborSystem:(DEFAULT_LABOR_SYSTEM_BY_ATTR[type]||"")}
                 onChange={e=>saveLim(type,"laborSystem",e.target.value)}
                 style={{...AI,width:"auto",flex:"1 1 220px",minWidth:180,padding:"5px 8px",cursor:"pointer"}}>
                 {LABOR_SYSTEMS.indexOf(lim.laborSystem)<0&&!DEFAULT_LABOR_SYSTEM_BY_ATTR[type]&&<option value="">未設定</option>}
                 {LABOR_SYSTEMS.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
-              </select>
+              </select>}
             </div>
             {/* 上限と下限を同じ窓で対にして入力する（窓の一覧は app-utils.js の STAFF_LIMIT_WINDOWS）。
                 どちらも0＝未設定。下限は「その窓に勤務がある人」にだけ当たる。 */}
@@ -5257,9 +5676,9 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                 {STAFF_LIMIT_WINDOWS.map(w=>{const k=isMin?w.minKey:w.key;return(
                   <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
                     <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{w.label}</span>
-                    <input type="number" min={0} max={w.max} value={lim[k]||""} placeholder="0"
+                    {coLim(type,k)?coVal(lim[k]):<input type="number" min={0} max={w.max} value={lim[k]||""} placeholder="0"
                       onChange={e=>{const v=Math.max(0,Math.min(w.max,parseInt(e.target.value)||0));saveLim(type,k,v);}}
-                      style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
+                      style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
                     <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
                   </div>
                 );})}
@@ -5267,13 +5686,13 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                   <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>任意</span>
                   {isMin
                     ?<span style={{fontSize:11,color:"var(--c-text4)",minWidth:52,textAlign:"center"}}>{lim.customDays||"—"}日で</span>
-                    :<input type="number" min={0} max={365} value={lim.customDays||""} placeholder="日数"
+                    :coLim(type,"customDays")?coVal(lim.customDays):<input type="number" min={0} max={365} value={lim.customDays||""} placeholder="日数"
                       onChange={e=>{const v=Math.max(0,Math.min(365,parseInt(e.target.value)||0));saveLim(type,"customDays",v);}}
                       style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
                   {!isMin&&<span style={{fontSize:11,color:"var(--c-text4)"}}>日で</span>}
-                  <input type="number" min={0} max={744} value={(isMin?lim.customHoursMin:lim.customHours)||""} placeholder="時間"
+                  {coLim(type,isMin?"customHoursMin":"customHours")?coVal(isMin?lim.customHoursMin:lim.customHours):<input type="number" min={0} max={744} value={(isMin?lim.customHoursMin:lim.customHours)||""} placeholder="時間"
                     onChange={e=>{const v=Math.max(0,Math.min(744,parseInt(e.target.value)||0));saveLim(type,isMin?"customHoursMin":"customHours",v);}}
-                    style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
+                    style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
                   <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
                 </div>
               </div>
@@ -5300,7 +5719,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       // 30分単位に丸めて逆算して、各月を FLOOR(W × 暦日数 ÷ 7 × 60, 1) ÷ 60 で出す（判断2）。
       // 週44時間の特例措置対象事業場は別トグルを作らず、31日の総枠に 194:51 を入れれば W=44h になる。
       const ls=laborSettingsOf(settings);
-      const saveLabor=(k,v)=>onSave({...settings,laborSettings:{...ls,[k]:v}});
+      const saveLabor=(k,v)=>onSaveOwn({...settings,laborSettings:{...ls,[k]:v}});
       const W=weeklyLegalMinFromBase31(ls.monthlyBase31Min);
       const wLabel=W%60===0?`${W/60}時間`:`${Math.floor(W/60)}時間${W%60}分`;
       const b31h=Math.floor(ls.monthlyBase31Min/60),b31m=ls.monthlyBase31Min%60;
@@ -5310,9 +5729,11 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       });
       const TD={border:"1px solid var(--c-border)",padding:"4px 8px",textAlign:"right",fontSize:12,whiteSpace:"nowrap"};
       return(<AC title="労務判定（1か月単位の変形労働時間制）">
+        {coNote}
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>労働時間制を「1か月単位の変形労働時間制」にした属性のスタッフに適用します。「通常の労働時間制」の月の上限は上の「スタッフ属性別 勤務時間制限」の設定値をそのまま使います（こちらは法定・協定ではなく店舗の設定値による判定です）。</div>
         <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap",marginBottom:6}}>
           <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap",minWidth:110}}>31日の月の総枠</span>
+          {coLabor("monthlyBase31Min")?coVal(`${b31h}時間${b31m}分`,0):<>
           <input type="number" min={0} max={744} value={b31h} placeholder="0"
             onChange={e=>{const h=Math.max(0,Math.min(744,parseInt(e.target.value)||0));saveLabor("monthlyBase31Min",h*60+b31m);}}
             style={{...AI,width:64,textAlign:"center",padding:"5px 6px"}}/>
@@ -5320,22 +5741,22 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
           <input type="number" min={0} max={59} value={b31m} placeholder="0"
             onChange={e=>{const m=Math.max(0,Math.min(59,parseInt(e.target.value)||0));saveLabor("monthlyBase31Min",b31h*60+m);}}
             style={{...AI,width:64,textAlign:"center",padding:"5px 6px"}}/>
-          <span style={{fontSize:11,color:"var(--c-text4)"}}>分</span>
+          <span style={{fontSize:11,color:"var(--c-text4)"}}>分</span></>}
         </div>
         <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12}}>この値から週の法定労働時間を <strong style={{color:"var(--c-accent)"}}>{wLabel}</strong> と判定しました。</div>
         <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:12}}>
           <div style={{display:"flex",alignItems:"center",gap:4}}>
             <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>固定残業</span>
-            <input type="number" min={0} max={200} value={Math.floor(ls.fixedOvertimeMin/60)||""} placeholder="0"
+            {coLabor("fixedOvertimeMin")?coVal(Math.floor(ls.fixedOvertimeMin/60)):<input type="number" min={0} max={200} value={Math.floor(ls.fixedOvertimeMin/60)||""} placeholder="0"
               onChange={e=>{const h=Math.max(0,Math.min(200,parseInt(e.target.value)||0));saveLabor("fixedOvertimeMin",h*60);}}
-              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
             <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:4}}>
             <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>余裕</span>
-            <input type="number" min={0} max={200} value={Math.floor(ls.marginMin/60)||""} placeholder="0"
+            {coLabor("marginMin")?coVal(Math.floor(ls.marginMin/60)):<input type="number" min={0} max={200} value={Math.floor(ls.marginMin/60)||""} placeholder="0"
               onChange={e=>{const h=Math.max(0,Math.min(200,parseInt(e.target.value)||0));saveLabor("marginMin",h*60);}}
-              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
             <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
           </div>
         </div>
@@ -5359,36 +5780,36 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
           <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:10}}>
             <div style={{display:"flex",alignItems:"center",gap:4}}>
               <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1日の延長上限</span>
-              <input type="number" min={0} max={16} value={Math.floor(ls.agreementDailyOtMin/60)||""} placeholder="0"
+              {coLabor("agreementDailyOtMin")?coVal(Math.floor(ls.agreementDailyOtMin/60)):<input type="number" min={0} max={16} value={Math.floor(ls.agreementDailyOtMin/60)||""} placeholder="0"
                 onChange={e=>{const h=Math.max(0,Math.min(16,parseInt(e.target.value)||0));saveLabor("agreementDailyOtMin",h*60);}}
-                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
               <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:4}}>
               <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1か月の延長上限</span>
-              <input type="number" min={0} max={200} value={Math.floor(ls.agreementMonthlyOtMin/60)||""} placeholder="0"
+              {coLabor("agreementMonthlyOtMin")?coVal(Math.floor(ls.agreementMonthlyOtMin/60)):<input type="number" min={0} max={200} value={Math.floor(ls.agreementMonthlyOtMin/60)||""} placeholder="0"
                 onChange={e=>{const h=Math.max(0,Math.min(200,parseInt(e.target.value)||0));saveLabor("agreementMonthlyOtMin",h*60);}}
-                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
               <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:4}}>
               <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1年の延長上限</span>
-              <input type="number" min={0} max={999} value={Math.floor(ls.agreementAnnualOtMin/60)||""} placeholder="0"
+              {coLabor("agreementAnnualOtMin")?coVal(Math.floor(ls.agreementAnnualOtMin/60)):<input type="number" min={0} max={999} value={Math.floor(ls.agreementAnnualOtMin/60)||""} placeholder="0"
                 onChange={e=>{const h=Math.max(0,Math.min(999,parseInt(e.target.value)||0));saveLabor("agreementAnnualOtMin",h*60);}}
-                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
               <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
             </div>
           </div>
           <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6}}>1日の延長上限を0にすると「残業を前提にしない運用」とみなし、目安＝総枠になります。</div>
           <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
             <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>年の区切り</span>
-            <select value={fiscalYearStartMonthOf(settings)} onChange={e=>saveLabor("fiscalYearStartMonth",parseInt(e.target.value)||4)}
+            {coLabor("fiscalYearStartMonth")?coVal(`${fiscalYearStartMonthOf(settings)}月`,0):<select value={fiscalYearStartMonthOf(settings)} onChange={e=>saveLabor("fiscalYearStartMonth",parseInt(e.target.value)||4)}
               style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
               <option value={1}>1月（暦年）</option>
               <option value={4}>4月（年度）</option>
               <option value={7}>7月</option>
               <option value={10}>10月</option>
-            </select>
+            </select>}
             <span style={{fontSize:11,color:"var(--c-text4)"}}>有給の残数と年間の累計勤務時間の区切りに使います</span>
           </div>
           {/* 法定の上限一覧。判定する・しないを取り違えないよう AGREEMENT_LEGAL_ITEMS から自動生成する */}

@@ -1112,6 +1112,43 @@ exports.sendSurveyEmails = functions
 
 // 企業アカウント作成（メール/グーグルでログイン済みの本人が実行）
 // name: 企業名, password: 企業ログイン用パスワード, shopIds: 連携する既存店舗（作成者がオーナーの店舗）
+
+// ============================================================
+// 企業の共通設定・提出期限（2026-09-27 企業連携の拡張）
+// 正本は companies/{companyId}/pub/config。各連携店舗の shops/{shopId}/company に写し（ミラー）を置き、
+// 店舗側はミラーだけを読む（companies 配下はクライアントから書けず、読みも企業uidと作成者に限られるため）。
+// キーと値の規則はクライアントの app-utils.js（COMPANY_LABOR_KEYS・COMPANY_LIMIT_KEYS・COMPANY_ATTR_ID_RE・
+// isValidDateStr）と**同じ内容**にする。functions/ は app-utils.js を読めないので書き写している。
+// ============================================================
+const { sanitizeCompanySettings, sanitizeCompanyDeadlines, effectiveDeadlinesForShop } = require("./company-config");
+// 連携店舗の shops/{shopId}/company を正本から作り直す。shopIds を省けば連携全店舗。
+// 1店舗の失敗で残りを止めない（冪等なので、失敗した店舗は次の保存で書き直される）。
+async function syncCompanyMirror(companyId, shopIds) {
+  const pub = (await db.ref(`companies/${companyId}/pub`).once("value")).val() || {};
+  const linked = Object.keys(pub.shops || {}).filter(isValidShopId);
+  const cfg = pub.config || {};
+  const names = {};
+  for (const sid of linked) {
+    try { names[sid] = ((await db.ref(`global/shops/${sid}/name`).once("value")).val()) || ""; } catch (e) { names[sid] = ""; }
+  }
+  const targets = (shopIds || linked).filter(sid => linked.includes(sid));
+  const synced = [], failed = [];
+  for (const sid of targets) {
+    try {
+      await db.ref(`shops/${sid}/company`).set({
+        id: companyId,
+        name: pub.name || "",
+        settings: cfg.settings || {},
+        deadlines: effectiveDeadlinesForShop(cfg.deadlines, sid),
+        shops: names,
+        syncedAt: new Date().toISOString(),
+      });
+      synced.push(sid);
+    } catch (e) { failed.push(sid); }
+  }
+  return { synced, failed };
+}
+
 exports.createCompany = functions
   .region("asia-northeast1")
   .https.onCall(async (data, context) => {
@@ -1167,6 +1204,7 @@ exports.createCompany = functions
       await registerCompanyAsOwner(companyId, shopId);
       linked.push(shopId);
     }
+    if (linked.length) await syncCompanyMirror(companyId, linked);
     return { companyId, code, name, linkedShops: linked, skippedShops: skipped };
   });
 
@@ -1215,6 +1253,7 @@ exports.renameCompany = functions
     // 作成者ポインタの表示名も更新
     const ownerSnap = await db.ref(`companies/${companyId}/pub/ownerUid`).once("value");
     if (ownerSnap.val()) await db.ref(`accounts/${ownerSnap.val()}/company/name`).set(name);
+    await syncCompanyMirror(companyId);
     return { ok: true };
   });
 
@@ -1259,6 +1298,8 @@ exports.linkStoreToCompany = functions
     if (!allowed) throw new functions.https.HttpsError("permission-denied", "この店舗の管理コード（店舗コード.管理キー）を入力してください");
     await db.ref(`companies/${companyId}/pub/shops/${shopId}`).set(true);
     await registerCompanyAsOwner(companyId, shopId);
+    // 追加した店舗にミラーを作り、既存店舗のミラーの店舗一覧（所属店舗の選択肢）も更新する
+    await syncCompanyMirror(companyId);
     return { ok: true, name: shop.name || "" };
   });
 
@@ -1335,5 +1376,38 @@ exports.unlinkStoreFromCompany = functions
     await db.ref(`companies/${companyId}/pub/shops/${shopId}`).remove();
     for (const u of revoke) await db.ref(`shops/${shopId}/owners/${u}`).remove();
     await db.ref(`companies/${companyId}/grants/${shopId}`).remove();
+    // 解除した店舗のミラーを消し（企業設定・提出期限・提出ボタンの表示が外れる）、
+    // 企業の提出期限表からその店舗の上書きを取り除く。残りの店舗のミラーは店舗一覧を更新する。
+    await db.ref(`shops/${shopId}/company`).remove();
+    const dls = (await db.ref(`companies/${companyId}/pub/config/deadlines`).once("value")).val() || {};
+    for (const rk of Object.keys(dls)) {
+      if (dls[rk] && dls[rk].shops && dls[rk].shops[shopId] !== undefined) {
+        await db.ref(`companies/${companyId}/pub/config/deadlines/${rk}/shops/${shopId}`).remove();
+      }
+    }
+    await syncCompanyMirror(companyId);
     return { ok: true };
+  });
+
+// 企業の共通設定（労務設定・属性別の勤務時間制限）と提出期限を保存し、連携全店舗のミラーを更新する。
+// settings は丸ごと置き換える（空欄にした項目を消せるように）。deadlines は期間ごとの差分で、
+// 渡した期間だけを置き換える（null でその期間の期限を消す）。
+exports.saveCompanyConfig = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
+    if (!isValidCompanyId(companyId)) throw new functions.https.HttpsError("invalid-argument", "企業IDが無効です");
+    await assertCompanyMember(context, companyId);
+    const linked = Object.keys((await db.ref(`companies/${companyId}/pub/shops`).once("value")).val() || {});
+    const hasSettings = data && data.settings !== undefined;
+    const hasDeadlines = data && data.deadlines !== undefined;
+    if (!hasSettings && !hasDeadlines) throw new functions.https.HttpsError("invalid-argument", "保存する内容がありません");
+    if (hasSettings) await db.ref(`companies/${companyId}/pub/config/settings`).set(sanitizeCompanySettings(data.settings));
+    if (hasDeadlines) {
+      const dl = sanitizeCompanyDeadlines(data.deadlines, linked);
+      for (const rk of Object.keys(dl)) await db.ref(`companies/${companyId}/pub/config/deadlines/${rk}`).set(dl[rk]);
+    }
+    await db.ref(`companies/${companyId}/pub/config/updatedAt`).set(new Date().toISOString());
+    const { synced, failed } = await syncCompanyMirror(companyId);
+    return { ok: true, synced, failed };
   });

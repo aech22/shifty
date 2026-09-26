@@ -85,6 +85,11 @@ function App(){
   // 「フラグの無い店舗は未確定でも出す／フラグ持ちの店舗は最初から出さない」が両立する。
   // 憶えていない初回訪問だけは未確定＝出す側に倒れる（AdminView の hideMypage は === true）。
   const[billingExempt,setBillingExempt]=useState(null);
+  // 企業設定の写し（shops/{shopId}/company・2026-09-27）。null＝企業に連携していない、または購読が未着。
+  // 未着の間を null（企業なし）側に倒すのは、逆に倒すと非連携の店舗に提出ボタンが一瞬出るため。
+  // saveSettings は useCallback で依存が固定なので、剥がす処理は ref から読む。
+  const[companyLink,setCompanyLink]=useState(null);
+  const companyLinkRef=useRef(null);
   // 契約の予定状態（Stripeのsubscriptionから同期。解約予約とプラン変更予約を画面に出すために持つ）
   const[billingSchedule,setBillingSchedule]=useState({cancelAtPeriodEnd:false,currentPeriodEnd:null,scheduledPlan:null,scheduledPlanDate:null});
   const[emailMode,setEmailMode]=useState(null); // null | "login" | "register"
@@ -382,6 +387,8 @@ function App(){
     // フラグ持ちの店舗は最初から出さず、フラグの無い店舗は待たずに出せる（両立する）。
     // 憶えていない（初回訪問）ときだけ null＝出す側に倒れ、購読が返った時点で確定する。
     setBillingExempt(lg(storeKey(targetSid,"billingExempt_v1"),null));
+    // 企業設定の写しも店舗ごと。前店舗の企業設定を新店舗に重ねない（保存時の剥がしにも使うため）
+    setCompanyLink(null);companyLinkRef.current=null;
     const on=(path,cb)=>{
       const r=firebaseDB.ref(path);
       r.on("value",snap=>cb(snap.val()),err=>console.warn("購読失敗:",path,err));
@@ -528,6 +535,13 @@ function App(){
       setBillingExempt(!!val);
       // 次回この店舗を開く・切り替えるときの初期値にする（点滅を出さないため）
       ls(storeKey(targetSid,"billingExempt_v1"),!!val);
+    });
+    // 企業設定の写し（CF の syncCompanyMirror だけが書く）。企業設定＞店舗設定の重ね合わせ・
+    // 提出ボタンと提出期限の表示・所属店舗の選択肢に使う。
+    on(fbPath(targetSid,"company"),val=>{
+      const v=val&&typeof val==="object"&&val.id?val:null;
+      companyLinkRef.current=v;
+      setCompanyLink(v);
     });
 
     // settingsデフォルト書き込み（スタッフセッションはルールで拒否されるためcatchで握る）
@@ -1072,6 +1086,17 @@ function App(){
     try{ await _callCF("renameCompany",{companyId:companyInfo.companyId,name}); setCompanyInfo(c=>({...c,name})); return {}; }
     catch(e){ return {error:(e&&e.message)||"変更に失敗しました"}; }
   };
+  // 企業の共通設定（労務設定・属性別の勤務時間制限）と提出期限の保存（2026-09-27 企業連携の拡張）。
+  // 書き込みは CF 経由だけ（companies 配下はクライアントから書けない）。CF が連携全店舗の
+  // shops/{shopId}/company を作り直し、店舗側は startSubscriptions の購読でそれを受け取る。
+  // patch は {settings} か {deadlines} のどちらか（両方でもよい）。戻り値は {synced,failed} か {error}。
+  const saveCompanyConfig=async(patch)=>{
+    if(!companyInfo) return {error:"企業アカウントがありません"};
+    try{
+      const r=await _callCF("saveCompanyConfig",{companyId:companyInfo.companyId,...(patch||{})});
+      return {synced:(r&&r.synced)||[],failed:(r&&r.failed)||[]};
+    }catch(e){ return {error:(e&&e.message)||"保存に失敗しました"}; }
+  };
   // 店舗コードで企業に連携（SetTabの連携店舗一覧の追加ボタン）
   const linkStoreToCompany=async(rawCode)=>{
     if(!companyInfo) return {error:"企業アカウントがありません"};
@@ -1234,7 +1259,13 @@ function App(){
   const touchLastActivity=useCallback(()=>{
     if(firebaseDB&&sid) fbSet(`shops/${sid}/lastActivity`, new Date().toISOString()).catch(()=>{});
   },[sid]);
-  const saveSettings=useCallback(v=>{ setSettings(v); ls(storeKey(sid,"settings_v6"),v); fbW(fbPath(sid,"settings"),v,"settings"); touchLastActivity(); },[sid,touchLastActivity]);
+  // 企業が決めている項目は保存前に剥がす（stripCompanySettings）。画面が受け取る settings は企業設定を
+  // 重ねた値なので、そのまま書くと企業の値が店舗の「自分の設定」として残り、企業が外しても消えなくなる。
+  const saveSettings=useCallback(v=>{
+    const cl=companyLinkRef.current;
+    const own=cl?stripCompanySettings(v,cl.settings||{}):v;
+    setSettings(own); ls(storeKey(sid,"settings_v6"),own); fbW(fbPath(sid,"settings"),own,"settings"); touchLastActivity();
+  },[sid,touchLastActivity]);
   const savePeriods =useCallback(v=>{
     // 削除された期間のsubsとURLトークン逆引きをFirebaseから削除
     const deletedPeriods=periods.filter(p=>!v.find(np=>np.id===p.id));
@@ -1346,7 +1377,9 @@ function App(){
   const latestPeriod=periods.length>0?[...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate))[0]:null;
   // urlLocked時はapidが確定するまで表示しない、それ以外は最新期間をデフォルトに
   const ap=periods.find(p=>p.id===apid)||(urlLocked?null:latestPeriod);
-  const effectiveSettings=settings||makeSettings(sid);
+  // 企業設定＞店舗設定の重ね合わせはここ1箇所だけで行う（読み手ごとにマージを書かない）。
+  // 毎回新しいオブジェクトを作るとシフト作成タブの useMemo 連鎖が毎レンダー再計算されるので memo する。
+  const effectiveSettings=useMemo(()=>applyCompanySettings(settings||makeSettings(sid),companyLink?(companyLink.settings||{}):null),[settings,sid,companyLink]);
 
   // 初期化失敗画面（匿名認証失敗/ハング・スタッフURL解決失敗。アプリ内ブラウザの制限や無効URLで発生）
   // ローディング判定より先に出す（urlLocked時はapidが確定しないため、これがないと無限ローディングになる）
@@ -1687,7 +1720,7 @@ function App(){
               adminCode={adminKeys[sid]?`${sid}.${adminKeys[sid]}`:sid} ownerReadOnly={ownerReadOnly}
               onRememberAdminKey={rememberAdminKey} onClaimShop={claimOwnership}
               shopTemplates={shopTemplates} saveShopTemplates={saveShopTemplates}
-              plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed} billingSchedule={billingSchedule} billingExempt={billingExempt}
+              plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed} billingSchedule={billingSchedule} billingExempt={billingExempt} companyLink={companyLink}
               setCurrentShopId={id=>{
                 currentShopIdRef.current=id;
                 setCurrentShopId(id);
@@ -1713,7 +1746,7 @@ function App(){
               onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkEmail={signInAndLinkEmail}
               onLinkExistingShop={linkExistingShopToAuth} onUnlinkShop={unlinkShopFromAuth}
               companyInfo={companyInfo} onCreateCompany={createCompany} onChangeCompanyPassword={changeCompanyPassword}
-              onRenameCompany={renameCompany} onLinkStoreToCompany={linkStoreToCompany} onUnlinkStoreFromCompany={unlinkShopFromAuth}/>
+              onRenameCompany={renameCompany} onSaveCompanyConfig={saveCompanyConfig} onLinkStoreToCompany={linkStoreToCompany} onUnlinkStoreFromCompany={unlinkShopFromAuth}/>
       }
     </div>
   );

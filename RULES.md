@@ -43,6 +43,9 @@ firebaseDB.ref(`shops/${shopId}/periods`).set(allPeriods);
 購読が返る前の periods は localStorage の前回値なので、全体 `set()` は
 **その端末が知らない期間を消す**（2026-09-23 の本番事故。詳細は CLAUDE.md「期間の保存」）。
 
+`shops/{shopId}/company`（企業設定の写し）と `companies/*` はクライアントから書かない（CF 専用・ルールも .write:false）。
+企業設定を店舗設定へ書き戻さないこと——保存は必ず `saveSettings`（企業が決めた項目を剥がす）を通す。
+
 ## ブランチ・デプロイ
 
 - `main` ブランチへの直接プッシュをしない（develop → main の PR フローを守る）

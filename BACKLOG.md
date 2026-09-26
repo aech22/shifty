@@ -38,6 +38,43 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟡 企業連携の拡張（2026-09-27 実装・develop のみ）の本番反映と実データ確認
+
+**目的**: 企業連携の拡張（一括PDF・企業の共通設定・提出期限・提出ボタン・所属店舗）は develop に入ったが、
+**Cloud Functions（`saveCompanyConfig` と既存4本のミラー同期）とルール（`shops/$shopId/company`）が本番に無い間は、
+企業設定・提出期限・提出ボタンは本番で1つも表示されない**（写しが作られないため）。所属店舗（P1）だけは CF 無しで動く。
+dev（Spark）には CF をデプロイできないので、CF 本体の動作は本番反映後まで未検証。
+
+**受け入れ条件**:
+- [ ] 全部取り消す可能性がある（ユーザー発言）ので、先に dev で画面を触ってもらい採否を決める（所属店舗は dev でも動く）
+- [ ] 採用なら `/release-to-main` でクライアント → ルール（`firebase deploy --only database`）→ CF の順に反映する（それぞれユーザー確認）
+- [ ] 反映後、企業の作成者のセッションで「企業の共通設定を保存」を1回押し、各連携店舗の `shops/{sid}/company` が書かれることを
+      `shifty-prod-data-probe`（読み取り専用）で確認する
+- [ ] 本番の店舗で「提出」「提出状況表」「一括PDF（シフトのみ・全データ）」を1回ずつ通す
+
+**取り消し方**: develop の `feature/company-ext` の `--no-ff` マージコミットを `git revert -m 1` する。データは追加だけで既存を消していない。
+**影響範囲**: app-utils.js・app-main.js・app-admin.js・functions/index.js・functions/company-config.js・database.rules.json
+
+---
+
+## 🟢 staffWorkplaces（旧「スタッフの勤務先店舗」）の読み取りと一覧登録の撤去
+
+**目的**: 2026-09-27 に企業連携タブの「勤務先店舗」UI を廃止し、店舗間重複の判定を所属店舗（staffHomeShop）へ移した。
+既存データを1リリースだけ `dupTargetShopsFor` の和集合で併用しているので、所属店舗の登録が済んだら撤去する。
+**再着手条件**: 本番のヘルプ要員全員に staffHomeShop が入っていることを `shifty-prod-data-probe` で確認したとき。
+**撤去箇所**: `dupTargetShopsFor` の和集合・`STAFF_KEYED_SETTING_MAPS`・`PERIOD_SNAPSHOT_SETTING_KEYS`・`makeSettings`（app-core.js）の4箇所と、
+tests/core.test.js の旧データのテスト。
+
+---
+
+## 🟢 シフト作成タブの「公開」ボタン（従業員画面への公開）
+
+**目的**: 2026-09-27 のユーザー指示「公開ボタンの実装は従業員画面ができた時に一緒に実装」。今回は置いていない（使えないボタンを出さない）。
+**再着手条件**: 従業員画面の実装計画（リポジトリ直下の `従業員画面_実装計画.html`）が確定し、公開状態を読む側が決まったとき。
+置き場は `period.published={at}` が自然で、`period.submission` と同じ形（savePeriods の差分 update）で書ける。
+
+---
+
 ## 🟡 匿名サインインに失敗しても起動を続け、エラー画面も出さないまま「キャッシュだけのアプリ」になる
 
 **目的**: 起動時の匿名サインインが失敗したとき、アプリは**失敗を握り潰して先へ進む**。
