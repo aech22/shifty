@@ -6,8 +6,16 @@
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,shopTemplates,saveShopTemplates,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,shopTemplates,saveShopTemplates,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
+  // 所属店舗の選択肢。企業の写しが持つ連携店舗の一覧を優先し、この端末が知っている店舗（allLinkedShops）で補う。
+  // 企業の作成者でも企業ログインでもない端末（Cookie・管理コードで追加した端末）は allLinkedShops を持たないため。
+  const homeShopChoices=(()=>{
+    const m=new Map();
+    Object.entries((companyLink&&companyLink.shops)||{}).forEach(([id,nm])=>{if(id)m.set(id,{id,name:nm||id});});
+    (allLinkedShops||[]).forEach(s=>{if(s&&s.id&&!m.has(s.id))m.set(s.id,{id:s.id,name:s.name||s.id});});
+    return[...m.values()];
+  })();
   useEffect(()=>{ssSave(SS_TAB,tab);ph("admin_tab_changed",{tab});},[tab]);
   // 課金対象外の店舗ではマイページを出さない（2026-08-31 決定6）。
   // billingExempt は null=未確定（購読が返る前・店舗切替の直後）。**未確定のうちは「出す」**——
@@ -201,7 +209,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           <button onClick={()=>setTab("mypage")} style={{padding:"6px 12px",background:"#DC2626",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>マイページへ</button>
         </div>}
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings}/>}
-        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} shopId={currentShopId} linkedShops={allLinkedShops} onRenameStaff={(oldName,newName)=>{
+        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} shopId={currentShopId} linkedShops={homeShopChoices} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
@@ -219,10 +227,10 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} shopTemplates={shopTemplates} saveShopTemplates={saveShopTemplates} tt={tt} plan={plan} periods={periods}/>}
         {tab==="submissions"&&<SubsTab key={currentShopId} subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
-        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly}/>}
-        {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany}/>}
+        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
+        {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany} plan={plan} onSaveCompanyConfig={onSaveCompanyConfig}/>}
         {tab==="mypage"&&!hideMypage&&<MyPageTab plan={plan} planExpiry={planExpiry} billingSchedule={billingSchedule} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
-        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} adminCode={adminCode} ownerReadOnly={ownerReadOnly}/>}
+        {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} adminCode={adminCode} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
       </div>
       {toast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:12,fontSize:14,fontWeight:500,zIndex:999,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)"}}>{toast}</div>}
       {upgradeReason&&<UpgradeModal reason={upgradeReason} currentPlan={plan} shopId={currentShopId} onClose={()=>setUpgradeReason(null)}/>}
@@ -4829,7 +4837,137 @@ if(typeLim.customDays&&(typeLim.customHours||typeLim.customHoursMin)){const r=_w
 }
 
 // ===== 企業連携タブ =====
-function CompanyTab({settings,onSave,tt,shopId,authUser,
+// ============================================================
+// 企業の共通設定（2026-09-27 企業連携の拡張）
+// 企業が決めた項目だけを持ち、空欄＝「店舗で設定」。企業設定＞店舗設定で、店舗は企業が決めていない
+// 項目を自分で足せる。重ね合わせは App の effectiveSettings（applyCompanySettings）が行う。
+// 保存は下のボタン1つで CF saveCompanyConfig を呼ぶ（入力のたびに CF を走らせない）。
+// 単位は店舗設定と同じ: 労務設定は分（入力は時間）・勤務時間の上限下限は時間。
+// 労務設定は 0 も企業の決定（1日の延長上限0＝残業を前提にしない運用）、上限・下限の 0 は未設定。
+// ============================================================
+const CO_LABOR_FIELDS=[
+  {key:"fixedOvertimeMin",label:"固定残業",max:200},
+  {key:"marginMin",label:"余裕",max:200},
+  {key:"agreementDailyOtMin",label:"36協定 1日の延長上限",max:16},
+  {key:"agreementMonthlyOtMin",label:"36協定 1か月の延長上限",max:200},
+  {key:"agreementAnnualOtMin",label:"36協定 1年の延長上限",max:999},
+];
+function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
+  const[draft,setDraft]=useState(null);
+  const[loadErr,setLoadErr]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const[dirty,setDirty]=useState(false);
+  useEffect(()=>{
+    if(!firebaseDB||!companyId){setDraft({});return;}
+    let cancelled=false;
+    setDraft(null);setLoadErr(false);setDirty(false);
+    firebaseDB.ref(`companies/${companyId}/pub/config/settings`).once("value")
+      .then(sn=>{if(!cancelled)setDraft(sn.val()||{});})
+      .catch(()=>{if(!cancelled)setLoadErr(true);});
+    return()=>{cancelled=true;};
+  },[companyId]);
+  if(loadErr)return(<AC title="企業の共通設定"><div style={{fontSize:12,color:"#FF4757"}}>✕ 企業の共通設定を読み込めませんでした。再読み込みしてください。</div></AC>);
+  if(!draft)return(<AC title="企業の共通設定"><div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div></AC>);
+  const labor=draft.laborSettings||{};
+  const stl=draft.staffTypeLimits||{};
+  const upd=next=>{setDraft(next);setDirty(true);};
+  const setLabor=(k,v)=>{const l={...labor};if(v===null||v===undefined)delete l[k];else l[k]=v;upd({...draft,laborSettings:l});};
+  const setLim=(id,k,v)=>{
+    const e={...(stl[id]||{})};
+    if(v===null||v===undefined||v===""||(k!=="laborSystem"&&k!=="name"&&!(v>0)))delete e[k];else e[k]=v;
+    upd({...draft,staffTypeLimits:{...stl,[id]:e}});
+  };
+  const numIn=(val,onCh,max,w=58)=>(<input type="number" min={0} max={max} value={val===undefined||val===null?"":val} placeholder="店舗"
+    onChange={e=>{const t=e.target.value;if(t===""){onCh(null);return;}onCh(Math.max(0,Math.min(max,parseInt(t)||0)));}}
+    style={{...AI,width:w,textAlign:"center",padding:"5px 6px"}}/>);
+  const coAttrIds=Object.keys(stl).filter(isCompanyAttrId);
+  const attrRows=[...BUILTIN_TYPES.map(id=>[id,STAFF_TYPE_LABELS[id]]),...coAttrIds.map(id=>[id,null])];
+  const addAttr=()=>upd({...draft,staffTypeLimits:{...stl,[genCompanyAttrId()]:{name:""}}});
+  const delAttr=id=>{
+    if(!window.confirm("この属性を削除しますか？\n各店舗でこの属性にしていたスタッフは「属性未設定」の扱いになります。"))return;
+    const n={...stl};delete n[id];upd({...draft,staffTypeLimits:n});
+  };
+  const save=async()=>{
+    if(!onSaveCompanyConfig)return;
+    if(coAttrIds.some(id=>!((stl[id]||{}).name||"").trim())){tt("✕ 名前の無い属性があります。名前を入れるか削除してください");return;}
+    setBusy(true);
+    const r=await onSaveCompanyConfig({settings:draft});
+    setBusy(false);
+    if(r&&r.error){tt("✕ "+r.error);return;}
+    setDirty(false);
+    const f=(r&&r.failed)||[];
+    tt(f.length?`△ ${(r.synced||[]).length}件に反映し、${f.length}件は失敗しました。もう一度保存してください`:`✓ 連携店舗 ${(r&&r.synced||[]).length} 件に反映しました`);
+  };
+  const b31=labor.monthlyBase31Min;
+  const LBL={fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"};
+  const UNIT={fontSize:11,color:"var(--c-text4)"};
+  return(<AC title="企業の共通設定">
+    <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+      連携している全店舗の設定タブに、ここで入れた値が優先して適用されます。空欄の項目は各店舗が自分で設定できます。
+    </div>
+    <AL>労務判定</AL>
+    <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+      <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+        <span style={{...LBL,minWidth:150}}>31日の月の総枠</span>
+        {numIn(b31===undefined?null:Math.floor(b31/60),v=>setLabor("monthlyBase31Min",v===null?null:v*60+(b31===undefined?0:b31%60)),744,64)}
+        <span style={UNIT}>時間</span>
+        {numIn(b31===undefined?null:b31%60,v=>setLabor("monthlyBase31Min",(b31===undefined?0:Math.floor(b31/60))*60+(v||0)),59,64)}
+        <span style={UNIT}>分</span>
+      </div>
+      {CO_LABOR_FIELDS.map(f=>(
+        <div key={f.key} style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+          <span style={{...LBL,minWidth:150}}>{f.label}</span>
+          {numIn(labor[f.key]===undefined?null:Math.floor(labor[f.key]/60),v=>setLabor(f.key,v===null?null:v*60),f.max)}
+          <span style={UNIT}>h</span>
+        </div>
+      ))}
+      <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+        <span style={{...LBL,minWidth:150}}>年の区切り</span>
+        <select value={labor.fiscalYearStartMonth||""} onChange={e=>setLabor("fiscalYearStartMonth",e.target.value?parseInt(e.target.value):null)}
+          style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+          <option value="">店舗で設定</option>
+          <option value={1}>1月（暦年）</option><option value={4}>4月（年度）</option><option value={7}>7月</option><option value={10}>10月</option>
+        </select>
+      </div>
+    </div>
+    <AL>属性別の勤務時間制限</AL>
+    {attrRows.map(([id,label])=>{
+      const e=stl[id]||{};
+      const isCo=isCompanyAttrId(id);
+      return(<div key={id} data-co-attr={id} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+          {isCo
+            ?<input value={e.name||""} maxLength={20} placeholder="属性名を入力" onChange={ev=>setLim(id,"name",ev.target.value)} style={{...AI,flex:1,fontWeight:700,padding:"4px 8px"}}/>
+            :<div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",flex:1}}>{label}</div>}
+          {isCo&&<button onClick={()=>delAttr(id)} style={{...AD,padding:"4px 10px",fontSize:12}}>削除</button>}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+          <span style={LBL}>労働時間制</span>
+          <select value={LABOR_SYSTEMS.indexOf(e.laborSystem)>=0?e.laborSystem:""} onChange={ev=>setLim(id,"laborSystem",ev.target.value||null)}
+            style={{...AI,width:"auto",flex:"1 1 220px",minWidth:180,padding:"5px 8px",cursor:"pointer"}}>
+            <option value="">店舗で設定</option>
+            {LABOR_SYSTEMS.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
+          </select>
+        </div>
+        {[["上限",false],["下限",true]].map(([rowLbl,isMin])=>(
+          <div key={rowLbl} style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:isMin?0:6}}>
+            <span style={{fontSize:11,fontWeight:700,color:isMin?"#2563EB":"#FF4757",minWidth:26}}>{rowLbl}</span>
+            {STAFF_LIMIT_WINDOWS.map(w=>{const k=isMin?w.minKey:w.key;return(
+              <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
+                <span style={LBL}>{w.label}</span>
+                {numIn(e[k]>0?e[k]:null,v=>setLim(id,k,v),w.max,52)}
+                <span style={UNIT}>h</span>
+              </div>);})}
+          </div>
+        ))}
+      </div>);
+    })}
+    <button onClick={addAttr} style={{width:"100%",padding:"8px",background:"transparent",border:"1px dashed var(--c-border2)",borderRadius:8,color:"var(--c-text3)",fontSize:12,cursor:"pointer",marginBottom:12}}>＋ 企業の属性を追加</button>
+    <button disabled={busy||!dirty} onClick={save} style={{...AB,width:"100%",opacity:busy||!dirty?0.5:1}}>{busy?"保存中...":"企業の共通設定を保存"}</button>
+  </AC>);
+}
+
+function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompanyConfig,
                      shops=[],allLinkedShops=[],onSwitchToShop,onUnlinkShop,
                      companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
   // 企業アカウントUI（SetTabから移動）
@@ -5066,6 +5204,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,
         )
       )}
     </AC>
+    {companyInfo&&plan==="premium"&&<CompanyConfigCard companyId={companyInfo.companyId} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}/>}
     {listShops.length>0&&<AC title="連携店舗">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
         {companyInfo?"この企業アカウントに紐付いている店舗の一覧です。管理コードで追加・不要な店舗は連携解除できます（追加する店舗の設定タブに表示されている「管理コード」が必要です）。":"このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。"}
@@ -5103,8 +5242,19 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,
 
 function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                  authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
-                 onSignInAndLinkGoogle,onSignInAndLinkEmail,adminCode=null,ownerReadOnly=false}){
+                 onSignInAndLinkGoogle,onSignInAndLinkEmail,adminCode=null,ownerReadOnly=false,companyLink=null}){
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
+  // 企業が決めている項目（2026-09-27 企業連携の拡張）。入力欄を出さず値と「企業設定」を出す。
+  // settings は App で企業設定を重ねた値。保存は App の saveSettings が剥がすが、この2枚のカードは
+  // 自分でも剥がしてから渡す（ハーネスなど App を通らない経路でも企業の値を店舗へ書かない二重防御）。
+  const coSettings=companyLink?(companyLink.settings||{}):null;
+  const coKeys=companyControlledKeys(coSettings);
+  const coLabor=k=>coKeys.labor.has(k);
+  const coLim=(type,k)=>!!(coKeys.limits[type]&&coKeys.limits[type].has(k));
+  const onSaveOwn=v=>onSave(coSettings?stripCompanySettings(v,coSettings):v);
+  const coTag=<span style={{fontSize:10,color:"var(--c-text3)",whiteSpace:"nowrap"}}>企業設定</span>;
+  const coVal=(text,minW=52)=>(<span data-company-fixed="1" style={{display:"inline-flex",alignItems:"baseline",gap:4}}><span style={{fontSize:13,color:"var(--c-text)",minWidth:minW,textAlign:"center"}}>{text}</span>{coTag}</span>);
+  const coNote=companyLink&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>「企業設定」の項目は企業アカウント（{companyLink.name||"企業"}）が決めているため、この店舗では変更できません。変更は企業連携タブから行います。</div>;
   const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
   const[emailInput,setEmailInput]=useState("");
   const[codeInput,setCodeInput]=useState("");
@@ -5213,7 +5363,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
 
     {plan==="premium"&&(()=>{
       const tls=settings.staffTypeLimits||{};
-      const saveAllLimits=(newTls)=>onSave({...settings,staffTypeLimits:newTls});
+      const saveAllLimits=(newTls)=>onSaveOwn({...settings,staffTypeLimits:newTls});
       const saveLim=(type,key,val)=>saveAllLimits({...tls,[type]:{...tls[type],[key]:val}});
       const confirmAddType=()=>{if(!pendingNewType)return;const nm=pendingNewType.name.trim();if(!nm){setPendingNewType(null);return;}const id="custom_"+genSecureId(8);saveAllLimits({...tls,[id]:{name:nm,daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}});setPendingNewType(null);};
       const deleteType=(id)=>{const n={...tls};delete n[id];const attrs={...(settings.staffAttributes||{})};Object.keys(attrs).forEach(k=>{if(attrs[k]===id)delete attrs[k];});onSave({...settings,staffTypeLimits:n,staffAttributes:attrs});};
@@ -5226,30 +5376,35 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       // 使わないのは、名前が空のカスタム属性まで落ちて**入力欄ごと消える**ため（付け直せなくなる）。
       const typeEntries=sortAttrEntries(Object.entries(tlsMerged).map(([id,raw])=>[id,typeName(id,raw)])).map(([id])=>[id,tlsMerged[id]]);
       return(<AC title="スタッフ属性別 勤務時間制限">
+        {coNote}
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は未設定。上限を超えたスタッフは提出一覧と集計表で赤く、下限に足りないスタッフは青くハイライトされます。下限は勤務が1分もない週・日には当たりません。</div>
         {typeEntries.map(([type,limRaw])=>{
           const lim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeof limRaw==="object"?limRaw:{name:limRaw})};
           const isBuiltin=BUILTIN_TYPES.includes(type);
+          // 企業が作った属性は名前も削除も企業の領分（店舗では名前を固定表示し削除ボタンを出さない）
+          const isCo=isCompanyAttrId(type);
           const displayName=typeName(type,lim);
           return(<div key={type} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
-              {isBuiltin
-                ?<div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",flex:1}}>{displayName}</div>
+              {isBuiltin||isCo
+                ?<div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",flex:1}}>{displayName}{isCo&&<span style={{marginLeft:6,fontWeight:400}}>{coTag}</span>}</div>
                 :<input value={lim.name||""} placeholder="属性名を入力" onChange={e=>renameType(type,e.target.value)}
                     style={{...AI,flex:1,fontSize:16,fontWeight:700,padding:"4px 8px"}}/>
               }
-              {!isBuiltin&&<button onClick={()=>deleteType(type)} style={{padding:"4px 10px",background:"rgba(229,57,53,.1)",border:"1px solid rgba(229,57,53,.3)",borderRadius:4,color:"#e53935",fontSize:12,cursor:"pointer"}}>削除</button>}
+              {!isBuiltin&&!isCo&&<button onClick={()=>deleteType(type)} style={{padding:"4px 10px",background:"rgba(229,57,53,.1)",border:"1px solid rgba(229,57,53,.3)",borderRadius:4,color:"#e53935",fontSize:12,cursor:"pointer"}}>削除</button>}
             </div>
             {/* 労働時間制（項目1）。組み込み属性は既定（社員=変形・バイト=通常・派遣/その他=対象外）が
                 入った状態で表示されるので、既存店舗が「区分が空欄」にならない。 */}
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
               <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>労働時間制</span>
-              <select value={LABOR_SYSTEMS.indexOf(lim.laborSystem)>=0?lim.laborSystem:(DEFAULT_LABOR_SYSTEM_BY_ATTR[type]||"")}
+              {coLim(type,"laborSystem")
+                ?coVal(LABOR_SYSTEM_LABELS[lim.laborSystem]||lim.laborSystem,0)
+                :<select value={LABOR_SYSTEMS.indexOf(lim.laborSystem)>=0?lim.laborSystem:(DEFAULT_LABOR_SYSTEM_BY_ATTR[type]||"")}
                 onChange={e=>saveLim(type,"laborSystem",e.target.value)}
                 style={{...AI,width:"auto",flex:"1 1 220px",minWidth:180,padding:"5px 8px",cursor:"pointer"}}>
                 {LABOR_SYSTEMS.indexOf(lim.laborSystem)<0&&!DEFAULT_LABOR_SYSTEM_BY_ATTR[type]&&<option value="">未設定</option>}
                 {LABOR_SYSTEMS.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
-              </select>
+              </select>}
             </div>
             {/* 上限と下限を同じ窓で対にして入力する（窓の一覧は app-utils.js の STAFF_LIMIT_WINDOWS）。
                 どちらも0＝未設定。下限は「その窓に勤務がある人」にだけ当たる。 */}
@@ -5259,9 +5414,9 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                 {STAFF_LIMIT_WINDOWS.map(w=>{const k=isMin?w.minKey:w.key;return(
                   <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
                     <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{w.label}</span>
-                    <input type="number" min={0} max={w.max} value={lim[k]||""} placeholder="0"
+                    {coLim(type,k)?coVal(lim[k]):<input type="number" min={0} max={w.max} value={lim[k]||""} placeholder="0"
                       onChange={e=>{const v=Math.max(0,Math.min(w.max,parseInt(e.target.value)||0));saveLim(type,k,v);}}
-                      style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
+                      style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
                     <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
                   </div>
                 );})}
@@ -5269,13 +5424,13 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                   <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>任意</span>
                   {isMin
                     ?<span style={{fontSize:11,color:"var(--c-text4)",minWidth:52,textAlign:"center"}}>{lim.customDays||"—"}日で</span>
-                    :<input type="number" min={0} max={365} value={lim.customDays||""} placeholder="日数"
+                    :coLim(type,"customDays")?coVal(lim.customDays):<input type="number" min={0} max={365} value={lim.customDays||""} placeholder="日数"
                       onChange={e=>{const v=Math.max(0,Math.min(365,parseInt(e.target.value)||0));saveLim(type,"customDays",v);}}
                       style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
                   {!isMin&&<span style={{fontSize:11,color:"var(--c-text4)"}}>日で</span>}
-                  <input type="number" min={0} max={744} value={(isMin?lim.customHoursMin:lim.customHours)||""} placeholder="時間"
+                  {coLim(type,isMin?"customHoursMin":"customHours")?coVal(isMin?lim.customHoursMin:lim.customHours):<input type="number" min={0} max={744} value={(isMin?lim.customHoursMin:lim.customHours)||""} placeholder="時間"
                     onChange={e=>{const v=Math.max(0,Math.min(744,parseInt(e.target.value)||0));saveLim(type,isMin?"customHoursMin":"customHours",v);}}
-                    style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>
+                    style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
                   <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
                 </div>
               </div>
@@ -5302,7 +5457,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       // 30分単位に丸めて逆算して、各月を FLOOR(W × 暦日数 ÷ 7 × 60, 1) ÷ 60 で出す（判断2）。
       // 週44時間の特例措置対象事業場は別トグルを作らず、31日の総枠に 194:51 を入れれば W=44h になる。
       const ls=laborSettingsOf(settings);
-      const saveLabor=(k,v)=>onSave({...settings,laborSettings:{...ls,[k]:v}});
+      const saveLabor=(k,v)=>onSaveOwn({...settings,laborSettings:{...ls,[k]:v}});
       const W=weeklyLegalMinFromBase31(ls.monthlyBase31Min);
       const wLabel=W%60===0?`${W/60}時間`:`${Math.floor(W/60)}時間${W%60}分`;
       const b31h=Math.floor(ls.monthlyBase31Min/60),b31m=ls.monthlyBase31Min%60;
@@ -5312,9 +5467,11 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       });
       const TD={border:"1px solid var(--c-border)",padding:"4px 8px",textAlign:"right",fontSize:12,whiteSpace:"nowrap"};
       return(<AC title="労務判定（1か月単位の変形労働時間制）">
+        {coNote}
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>労働時間制を「1か月単位の変形労働時間制」にした属性のスタッフに適用します。「通常の労働時間制」の月の上限は上の「スタッフ属性別 勤務時間制限」の設定値をそのまま使います（こちらは法定・協定ではなく店舗の設定値による判定です）。</div>
         <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap",marginBottom:6}}>
           <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap",minWidth:110}}>31日の月の総枠</span>
+          {coLabor("monthlyBase31Min")?coVal(`${b31h}時間${b31m}分`,0):<>
           <input type="number" min={0} max={744} value={b31h} placeholder="0"
             onChange={e=>{const h=Math.max(0,Math.min(744,parseInt(e.target.value)||0));saveLabor("monthlyBase31Min",h*60+b31m);}}
             style={{...AI,width:64,textAlign:"center",padding:"5px 6px"}}/>
@@ -5322,22 +5479,22 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
           <input type="number" min={0} max={59} value={b31m} placeholder="0"
             onChange={e=>{const m=Math.max(0,Math.min(59,parseInt(e.target.value)||0));saveLabor("monthlyBase31Min",b31h*60+m);}}
             style={{...AI,width:64,textAlign:"center",padding:"5px 6px"}}/>
-          <span style={{fontSize:11,color:"var(--c-text4)"}}>分</span>
+          <span style={{fontSize:11,color:"var(--c-text4)"}}>分</span></>}
         </div>
         <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12}}>この値から週の法定労働時間を <strong style={{color:"var(--c-accent)"}}>{wLabel}</strong> と判定しました。</div>
         <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:12}}>
           <div style={{display:"flex",alignItems:"center",gap:4}}>
             <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>固定残業</span>
-            <input type="number" min={0} max={200} value={Math.floor(ls.fixedOvertimeMin/60)||""} placeholder="0"
+            {coLabor("fixedOvertimeMin")?coVal(Math.floor(ls.fixedOvertimeMin/60)):<input type="number" min={0} max={200} value={Math.floor(ls.fixedOvertimeMin/60)||""} placeholder="0"
               onChange={e=>{const h=Math.max(0,Math.min(200,parseInt(e.target.value)||0));saveLabor("fixedOvertimeMin",h*60);}}
-              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
             <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:4}}>
             <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>余裕</span>
-            <input type="number" min={0} max={200} value={Math.floor(ls.marginMin/60)||""} placeholder="0"
+            {coLabor("marginMin")?coVal(Math.floor(ls.marginMin/60)):<input type="number" min={0} max={200} value={Math.floor(ls.marginMin/60)||""} placeholder="0"
               onChange={e=>{const h=Math.max(0,Math.min(200,parseInt(e.target.value)||0));saveLabor("marginMin",h*60);}}
-              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
             <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
           </div>
         </div>
@@ -5361,36 +5518,36 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
           <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:10}}>
             <div style={{display:"flex",alignItems:"center",gap:4}}>
               <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1日の延長上限</span>
-              <input type="number" min={0} max={16} value={Math.floor(ls.agreementDailyOtMin/60)||""} placeholder="0"
+              {coLabor("agreementDailyOtMin")?coVal(Math.floor(ls.agreementDailyOtMin/60)):<input type="number" min={0} max={16} value={Math.floor(ls.agreementDailyOtMin/60)||""} placeholder="0"
                 onChange={e=>{const h=Math.max(0,Math.min(16,parseInt(e.target.value)||0));saveLabor("agreementDailyOtMin",h*60);}}
-                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
               <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:4}}>
               <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1か月の延長上限</span>
-              <input type="number" min={0} max={200} value={Math.floor(ls.agreementMonthlyOtMin/60)||""} placeholder="0"
+              {coLabor("agreementMonthlyOtMin")?coVal(Math.floor(ls.agreementMonthlyOtMin/60)):<input type="number" min={0} max={200} value={Math.floor(ls.agreementMonthlyOtMin/60)||""} placeholder="0"
                 onChange={e=>{const h=Math.max(0,Math.min(200,parseInt(e.target.value)||0));saveLabor("agreementMonthlyOtMin",h*60);}}
-                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
               <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:4}}>
               <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1年の延長上限</span>
-              <input type="number" min={0} max={999} value={Math.floor(ls.agreementAnnualOtMin/60)||""} placeholder="0"
+              {coLabor("agreementAnnualOtMin")?coVal(Math.floor(ls.agreementAnnualOtMin/60)):<input type="number" min={0} max={999} value={Math.floor(ls.agreementAnnualOtMin/60)||""} placeholder="0"
                 onChange={e=>{const h=Math.max(0,Math.min(999,parseInt(e.target.value)||0));saveLabor("agreementAnnualOtMin",h*60);}}
-                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
               <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
             </div>
           </div>
           <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6}}>1日の延長上限を0にすると「残業を前提にしない運用」とみなし、目安＝総枠になります。</div>
           <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
             <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>年の区切り</span>
-            <select value={fiscalYearStartMonthOf(settings)} onChange={e=>saveLabor("fiscalYearStartMonth",parseInt(e.target.value)||4)}
+            {coLabor("fiscalYearStartMonth")?coVal(`${fiscalYearStartMonthOf(settings)}月`,0):<select value={fiscalYearStartMonthOf(settings)} onChange={e=>saveLabor("fiscalYearStartMonth",parseInt(e.target.value)||4)}
               style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
               <option value={1}>1月（暦年）</option>
               <option value={4}>4月（年度）</option>
               <option value={7}>7月</option>
               <option value={10}>10月</option>
-            </select>
+            </select>}
             <span style={{fontSize:11,color:"var(--c-text4)"}}>有給の残数と年間の累計勤務時間の区切りに使います</span>
           </div>
           {/* 法定の上限一覧。判定する・しないを取り違えないよう AGREEMENT_LEGAL_ITEMS から自動生成する */}
