@@ -3970,3 +3970,135 @@ test("Excel・PDF の書き出しは労務の要修正の色を参照しない",
     }
   }
 });
+
+// ===== 企業連携の拡張（2026-09-27）=====
+test("applyCompanySettings: 企業設定が無ければ同じ参照を返す（持たない店舗は1バイトも変わらない）", () => {
+  const s = { laborSettings: { fixedOvertimeMin: 1800 }, staffTypeLimits: { parttime: { weekly: 28 } } };
+  assert.strictEqual(u.applyCompanySettings(s, null), s);
+  assert.strictEqual(u.applyCompanySettings(s, undefined), s);
+  assert.strictEqual(u.applyCompanySettings(s, {}), s);
+});
+
+test("applyCompanySettings: 企業が決めた窓だけ企業優先、店舗の他の窓は残る", () => {
+  const s = { staffTypeLimits: { parttime: { weekly: 28, daily: 8 } } };
+  const r = u.applyCompanySettings(s, { staffTypeLimits: { parttime: { weekly: 40 } } });
+  assert.strictEqual(r.staffTypeLimits.parttime.weekly, 40);
+  assert.strictEqual(r.staffTypeLimits.parttime.daily, 8);
+  assert.strictEqual(s.staffTypeLimits.parttime.weekly, 28, "元の settings を書き換えない");
+});
+
+test("applyCompanySettings: 労務設定の 0 は企業の決定、上限・下限の 0 は未設定", () => {
+  const s = { laborSettings: { agreementDailyOtMin: 180 }, staffTypeLimits: { parttime: { weekly: 28 } } };
+  const r = u.applyCompanySettings(s, { laborSettings: { agreementDailyOtMin: 0 }, staffTypeLimits: { parttime: { weekly: 0 } } });
+  assert.strictEqual(r.laborSettings.agreementDailyOtMin, 0);
+  assert.strictEqual(r.staffTypeLimits.parttime.weekly, 28);
+});
+
+test("applyCompanySettings: 企業属性は店舗に無くても現れ、属性の選択肢に出る。店舗の custom_ は企業が決められない", () => {
+  const r = u.applyCompanySettings({ staffTypeLimits: { custom_x: { name: "店独自", weekly: 10 } } },
+    { staffTypeLimits: { co_AbCd1234: { name: "契約社員", laborSystem: "A", weekly: 40 }, custom_x: { weekly: 99 } } });
+  assert.deepStrictEqual(r.staffTypeLimits.co_AbCd1234, { name: "契約社員", laborSystem: "A", weekly: 40 });
+  assert.strictEqual(r.staffTypeLimits.custom_x.weekly, 10);
+  assert.ok(u.getAttrOptions(r).some(([id, nm]) => id === "co_AbCd1234" && nm === "契約社員"));
+});
+
+test("applyCompanySettings: 企業が消した属性への割当は未設定扱い。ミラー未着（null）では落とさない", () => {
+  const s = { staffAttributes: { "田中": "co_AbCd1234", "佐藤": "employee" } };
+  const r = u.applyCompanySettings(s, { staffTypeLimits: { co_ZZZZ9999: { name: "別" } } });
+  assert.deepStrictEqual(r.staffAttributes, { "佐藤": "employee" });
+  assert.strictEqual(u.laborSystemForStaff(r, "田中"), "B", "未設定＝parttime 既定に倒れ、区分が空欄にならない");
+  assert.strictEqual(u.applyCompanySettings(s, null), s);
+  assert.deepStrictEqual(u.applyCompanySettings(s, {}).staffAttributes, { "佐藤": "employee" }, "企業が属性を1つも持たないときも落とす");
+});
+
+test("stripCompanySettings: strip(apply(raw)) と strip(raw) が一致する（往復で企業値が漏れない）", () => {
+  const raw = { laborSettings: { fixedOvertimeMin: 1800, marginMin: 420 },
+    staffTypeLimits: { parttime: { weekly: 28, daily: 8 }, employee: { monthly: 200 }, custom_x: { name: "店", weekly: 10 } },
+    staffAttributes: { "田中": "co_AbCd1234" } };
+  const cs = { laborSettings: { fixedOvertimeMin: 1200 },
+    staffTypeLimits: { parttime: { weekly: 40, laborSystem: "B" }, co_AbCd1234: { name: "契約", weekly: 30 } } };
+  assert.deepStrictEqual(u.stripCompanySettings(u.applyCompanySettings(raw, cs), cs), u.stripCompanySettings(raw, cs));
+  const st = u.stripCompanySettings(raw, cs);
+  assert.ok(!("fixedOvertimeMin" in st.laborSettings));
+  assert.strictEqual(st.laborSettings.marginMin, 420);
+  assert.deepStrictEqual(st.staffTypeLimits.parttime, { daily: 8 });
+  assert.ok(!("co_AbCd1234" in st.staffTypeLimits));
+  assert.strictEqual(st.staffAttributes["田中"], "co_AbCd1234", "割当そのものは店舗の値なので残す");
+});
+
+test("stripCompanySettings: 値の一致ではなくキーの支配で落とす／企業設定が無ければ同じ参照", () => {
+  const raw = { staffTypeLimits: { parttime: { weekly: 40 } } };
+  assert.deepStrictEqual(u.stripCompanySettings(raw, { staffTypeLimits: { parttime: { weekly: 40 } } }).staffTypeLimits.parttime, {});
+  assert.strictEqual(u.stripCompanySettings(raw, null), raw);
+});
+
+test("companyControlledKeys: 企業が決めた項目だけを返す", () => {
+  const k = u.companyControlledKeys({ laborSettings: { marginMin: 0, x: 1 }, staffTypeLimits: { parttime: { weekly: 40, daily: 0 }, co_AbCd1234: { name: "契約" } } });
+  assert.deepStrictEqual([...k.labor], ["marginMin"]);
+  assert.deepStrictEqual([...k.limits.parttime], ["weekly"]);
+  assert.deepStrictEqual([...k.attrs], ["co_AbCd1234"]);
+});
+
+test("genCompanyAttrId: 1,000件すべてが COMPANY_ATTR_ID_RE に一致する（genSecureId の記号を含まない）", () => {
+  for (let i = 0; i < 1000; i++) {
+    const id = u.genCompanyAttrId();
+    assert.ok(u.COMPANY_ATTR_ID_RE.test(id), id);
+  }
+  assert.ok(!u.isCompanyAttrId("co_ab!d1234"));
+  assert.ok(!u.isCompanyAttrId("custom_abc"));
+});
+
+test("periodRangeLabel: 前半・後半・1か月・それ以外", () => {
+  assert.strictEqual(u.periodRangeLabel("2026-10-01", "2026-10-15"), "2026年10月前半");
+  assert.strictEqual(u.periodRangeLabel("2026-10-16", "2026-10-31"), "2026年10月後半");
+  assert.strictEqual(u.periodRangeLabel("2026-02-15", "2026-02-28"), "2026年2月後半");
+  assert.strictEqual(u.periodRangeLabel("2026-10-01", "2026-10-31"), "2026年10月");
+  assert.strictEqual(u.periodRangeLabel("2026-10-05", "2026-10-18"), "2026/10/5〜10/18");
+});
+
+test("collectPeriodRanges: 同じ範囲を1件に畳み、店舗を集約し、新しい順に並べる", () => {
+  const r = u.collectPeriodRanges({
+    A: [{ startDate: "2026-10-01", endDate: "2026-10-15" }, { startDate: "2026-09-16", endDate: "2026-09-30" }],
+    B: [{ startDate: "2026-10-01", endDate: "2026-10-15" }],
+  });
+  assert.deepStrictEqual(r.map(x => [x.key, x.shopIds]), [["2026-10-01_2026-10-15", ["A", "B"]], ["2026-09-16_2026-09-30", ["A"]]]);
+  assert.strictEqual(r[0].label, "2026年10月前半");
+  assert.strictEqual(u.findShopPeriodByRange([{ id: "p1", startDate: "2026-10-01", endDate: "2026-10-15" }], "2026-10-01_2026-10-15").id, "p1");
+});
+
+test("companyDeadlineFor / shopDeadlineFromLink: 店舗別の日付が全店共通より優先、不正な日付は無視", () => {
+  const dl = { "2026-10-01_2026-10-15": { all: "2026-09-25", shops: { B: "2026-09-27", C: "2026-02-30" } } };
+  assert.strictEqual(u.companyDeadlineFor(dl, "2026-10-01_2026-10-15", "A"), "2026-09-25");
+  assert.strictEqual(u.companyDeadlineFor(dl, "2026-10-01_2026-10-15", "B"), "2026-09-27");
+  assert.strictEqual(u.companyDeadlineFor(dl, "2026-10-01_2026-10-15", "C"), "2026-09-25", "存在しない日付は全店共通へ");
+  assert.strictEqual(u.companyDeadlineFor(dl, "2026-11-01_2026-11-15", "A"), null);
+  const link = { deadlines: { "2026-10-01_2026-10-15": "2026-09-25" } };
+  assert.strictEqual(u.shopDeadlineFromLink(link, { startDate: "2026-10-01", endDate: "2026-10-15" }), "2026-09-25");
+  assert.strictEqual(u.shopDeadlineFromLink(null, { startDate: "2026-10-01", endDate: "2026-10-15" }), null);
+});
+
+test("dupTargetShopsFor: 所属が一致する同名だけを同一人物とみなす（双方向）", () => {
+  const A = { staffSet: new Set(["田中"]), homeShop: null };
+  const Bstaff = { staffSet: new Set(["田中"]), homeShop: { "田中": "A" } };
+  // B店から見る: 田中の所属はA店、A店の田中は自店所属＝一致
+  assert.deepStrictEqual(u.dupTargetShopsFor({ name: "田中", shopId: "B", settings: { staffHomeShop: { "田中": "A" } }, otherShops: { A } }), ["A"]);
+  // A店から見る: B店の田中は所属A店＝一致
+  assert.deepStrictEqual(u.dupTargetShopsFor({ name: "田中", shopId: "A", settings: {}, otherShops: { B: Bstaff } }), ["B"]);
+  // 両店とも自店所属の同名は別人
+  assert.deepStrictEqual(u.dupTargetShopsFor({ name: "田中", shopId: "A", settings: {}, otherShops: { B: { staffSet: new Set(["田中"]), homeShop: null } } }), []);
+  // 名簿に無い店舗は返さない
+  assert.deepStrictEqual(u.dupTargetShopsFor({ name: "田中", shopId: "B", settings: { staffHomeShop: { "田中": "A" } }, otherShops: { A: { staffSet: new Set(["佐藤"]) } } }), []);
+});
+
+test("dupTargetShopsFor: 旧 staffWorkplaces だけを持つ店舗では従来どおりの対象が返る", () => {
+  assert.deepStrictEqual(u.dupTargetShopsFor({ name: "田中", shopId: "A", settings: { staffWorkplaces: { "田中": { B: true, A: true } } }, otherShops: {} }), ["B"]);
+});
+
+test("staffHomeShop: 2つの一覧に登録され、改名でキーが移る", () => {
+  assert.ok(u.STAFF_KEYED_SETTING_MAPS.includes("staffHomeShop"));
+  assert.ok(u.PERIOD_SNAPSHOT_SETTING_KEYS.includes("staffHomeShop"));
+  const s = u.renameStaffInSettings({ staffHomeShop: { "田中": "A" } }, "田中", "田中 太郎");
+  assert.deepStrictEqual(s.staffHomeShop, { "田中 太郎": "A" });
+  assert.strictEqual(u.isHelperAt({ staffHomeShop: { "田中": "A" } }, "田中", "B"), true);
+  assert.strictEqual(u.isHelperAt({}, "田中", "B"), false);
+});
