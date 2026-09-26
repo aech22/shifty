@@ -1425,18 +1425,21 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const periodOtH=dates.map(d=>(monthIdx[d]!=null?(monthOtDays[monthIdx[d]]||0):0));
       // この期間（半月運用なら半月）ぶんの残業予定。日別の按分をこの期間の日だけ足す。
       const periodOtSumH=excelRound(periodOtH.reduce((a,b)=>a+b,0),2);
-      const dayMins=dates.map(d=>laborDayMin(name,d)).filter(m=>m>0);
+      // **dates と同じ並びで渡す**（0分の日も落とさない）。労務判定は該当日をラベルに出すので、
+      // 添字が dates・periodOtH とずれると別の日が表示される。`4h未満` は関数側が m>0 で絞る。
+      const dayMins=dates.map(d=>laborDayMin(name,d));
       const weekMins=sys==="B"?weeks.map(monStr=>{
         const arr=[];
         for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);arr.push(laborDayMin(name,fd(dd)));}
         return arr;
       }):[];
-      const te=dates.reduce((a,d)=>a+(timeErrors[`${name}|${d}`]?1:0),0);
-      // 休憩不足は**該当日をラベルに出す**（2026-09-26 ユーザー指示）。セル色を付けないと決めた
-      // 判定なので、日付を出さないと管理者がどの日を直せばよいか画面から辿れない。
+      const teDates=dates.filter(d=>!!timeErrors[`${name}|${d}`]);
+      // **該当日をラベルに出す**（2026-09-26 ユーザー指示）。日に帰属する判定はすべて対象で、
+      // 特にセル色を付けない判定（4h未満・休憩不足）は日付が無いと画面から辿れない。
       const bsDates=dates.filter(d=>{const sh=_getWorkShift(name,d);return !!sh&&isBreakShort(sh,settings,d,name);});
       const weekNoRest=(weekRestByStaff[name]||[]).some(w=>w&&w.key==="none");
-      const findings=laborFindingsFor({laborSystem:sys,dayMins,weekDayMins:weekMins,timeErrorCount:te,breakShortDates:bsDates,
+      const findings=laborFindingsFor({laborSystem:sys,dayMins,dayDates:dates,weekDayMins:weekMins,weekDates:weeks,
+        timeErrorDates:teDates,breakShortDates:bsDates,
         monthOtH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthCovered});
       // 36協定の年単位4項目（年360h・年720h・月45h超が年6回・複数月平均80h）。
       // 月の値は「その月の最後の期間」に残した凍結値を優先するので、過去参照を押さなくても効く。
@@ -1468,8 +1471,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // 年度の累計。**期間が凍結時に残した laborTotals を優先**するので、過去参照を押さなくても出る。
       const yr=fy==null?null:yearLaborSummary(periods,name,fy,fyStart,liveTotalFor(name));
       // その日に帰属する要修正（セル色で該当日を示す。dates と同じ並び）
-      const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins:dates.map(d=>laborDayMin(name,d)),
-        dayOtH:periodOtH,agreementDailyOtH:agDay});
+      const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins,dayOtH:periodOtH,agreementDailyOtH:agDay});
       out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,monthCovered:laborMonthCovered,yearOt,findings,guide,overall,weekNoRest,dayFindings,
         periodLeave:{paid:paidD,publicOff:pubD,ceremony:ceD},year:yr,
         paidRemain:yr?paidLeaveRemaining(settings,name,yr.paid):null};
