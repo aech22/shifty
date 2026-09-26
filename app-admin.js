@@ -2425,13 +2425,19 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         </div>}
       </div>
 
+      {/* 企業への提出期限。未提出の間は赤地の帯で目立たせる（2026-09-27 ユーザー指示）。提出済みになったら
+          落ち着いた色へ戻す。赤は白文字とのコントラストが 4.5:1 を超える #C62828（#FF4757 だと約3.3:1で足りない） */}
       {coDeadline&&(
-        <div data-co-deadline="1" data-co-deadline-source={coDeadlineInfo.source}
-          style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap",marginBottom:10,fontSize:13,color:"var(--c-text2)"}}>
+        <div data-co-deadline="1" data-co-deadline-source={coDeadlineInfo.source} data-co-deadline-alert={submission?"0":"1"}
+          style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:10,padding:"10px 14px",borderRadius:8,
+            fontSize:13,fontWeight:600,
+            ...(submission
+              ?{background:"var(--c-input)",border:"1px solid var(--c-border2)",color:"var(--c-text2)"}
+              :{background:"#C62828",border:"1px solid #C62828",color:"#FFFFFF"})}}>
           <span>企業への提出期限</span>
-          <span data-co-deadline-date="1" style={{fontWeight:700,color:coDeadlineOver?"#FF4757":"var(--c-text)"}}>{fmtMD(coDeadline)}</span>
-          <span style={{fontSize:11,color:"var(--c-text3)"}}>{coDeadlineInfo.source==="date"?"日付指定":"毎月の提出締切"}</span>
-          <span data-co-deadline-state="1" style={{fontSize:12,fontWeight:600,color:coDeadlineOver?"#FF4757":"var(--c-text3)"}}>
+          <span data-co-deadline-date="1" style={{fontSize:18,fontWeight:800}}>{fmtMD(coDeadline)}</span>
+          <span style={{fontSize:12,fontWeight:500,opacity:.85}}>{coDeadlineInfo.source==="date"?"日付指定":"毎月の提出締切"}</span>
+          <span data-co-deadline-state="1" style={{fontSize:14,fontWeight:700}}>
             {submission?"提出済み":coDeadlineOver?"期限を過ぎています":coDaysLeft===0?"今日まで":`あと${coDaysLeft}日`}
           </span>
         </div>
@@ -5120,29 +5126,30 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
   const nPend=rows.filter(x=>x.status==="pending").length;
   const today=fd(new Date());
   const fmtAt=iso=>{const d=new Date(iso);return isNaN(d)?"":`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
+  // 日は人が選ぶ（2026-09-27 ユーザー指示「初期値は人間が決める」）。「＋ 追加」は未選択(null)の欄を足すだけで、
+  // 未選択が残っている間は保存できない（黙って捨てて保存しない）。
+  const monthlyUnchosen=monthly.some(d=>d===null);
+  // 保存ボタンは「提出期限を保存」1つだけ（2026-09-27 ユーザー指示）。毎月の締切と期間ごとの日付のうち、
+  // 変えたほうだけを1回の呼び出しで送る（変えていないほうを送ると、他の端末の保存を古い値で上書きする）。
+  const saveDirty=dlDirty||monthlyDirty;
   const saveDeadlines=async()=>{
-    if(!onSaveCompanyConfig||!rangeKey)return;
-    // 期間の期限はまるごと置き換わる＝以前の店舗別の日付もここで消える
-    const entry={};if(isValidDateStr(dlAll))entry.all=dlAll;
+    if(!onSaveCompanyConfig||!saveDirty||monthlyUnchosen)return;
+    const patch={};
+    if(dlDirty&&rangeKey){
+      // 期間の期限はまるごと置き換わる＝以前の店舗別の日付もここで消える
+      const entry={};if(isValidDateStr(dlAll))entry.all=dlAll;
+      patch.deadlines={[rangeKey]:Object.keys(entry).length?entry:null};
+    }
+    if(monthlyDirty)patch.monthlyDeadlineDays=sanitizeMonthlyDeadlineDays(monthly);
+    if(!Object.keys(patch).length)return;
     setBusy(true);
-    const r=await onSaveCompanyConfig({deadlines:{[rangeKey]:Object.keys(entry).length?entry:null}});
+    const r=await onSaveCompanyConfig(patch);
     setBusy(false);
     if(r&&r.error){tt("✕ "+r.error);return;}
     tt("✓ 提出期限を保存しました");
     setReloadTick(t=>t+1);
   };
-  // 日は人が選ぶ（2026-09-27 ユーザー指示「初期値は人間が決める」）。「＋ 追加」は未選択(null)の欄を足すだけで、
-  // 未選択が残っている間は保存できない（黙って捨てて保存しない）。
-  const monthlyUnchosen=monthly.some(d=>d===null);
-  const saveMonthly=async()=>{
-    if(!onSaveCompanyConfig||monthlyUnchosen)return;
-    setBusy(true);
-    const r=await onSaveCompanyConfig({monthlyDeadlineDays:sanitizeMonthlyDeadlineDays(monthly)});
-    setBusy(false);
-    if(r&&r.error){tt("✕ "+r.error);return;}
-    tt("✓ 毎月の提出締切を保存しました");
-    setReloadTick(t=>t+1);
-  };
+  const saveBtn=(<button disabled={busy||!saveDirty||monthlyUnchosen} onClick={saveDeadlines} style={{...AB,width:"100%",marginTop:12,opacity:busy||!saveDirty||monthlyUnchosen?0.5:1}}>{busy?"保存中...":"提出期限を保存"}</button>);
   const fmtMDW=ds=>{const d=pd(ds);return isNaN(d)?ds:`${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;};
   const DAY_OPTS=Array.from({length:31},(_,i)=>i+1);
   const monthlyEditor=(<div data-co-monthly="1" style={{marginBottom:14,paddingBottom:12,borderBottom:"1px solid var(--c-border)"}}>
@@ -5159,16 +5166,15 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
       </span>))}
       {monthly.length<MONTHLY_DEADLINE_MAX&&<button data-co-monthly-add="1" onClick={()=>{setMonthly(ms=>[...ms,null]);setMonthlyDirty(true);}} style={{...AGray,padding:"4px 10px",fontSize:12}}>＋ 追加</button>}
     </div>
-    <div style={{fontSize:11,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8}}>各期間の開始日より前で、いちばん近い締切日がその期間の提出期限になります。下で期間ごとに日付を指定した場合はそちらが優先されます。29〜31日は短い月では月末になります。</div>
-    {monthlyUnchosen&&<div style={{fontSize:11,color:"#FF4757",marginBottom:6}}>日を選んでいない締切があります。選ぶか削除してから保存してください。</div>}
-    <button disabled={busy||!monthlyDirty||monthlyUnchosen} onClick={saveMonthly} style={{...AGray,width:"100%",opacity:busy||!monthlyDirty||monthlyUnchosen?0.5:1}}>{busy?"保存中...":"毎月の提出締切を保存"}</button>
+    <div style={{fontSize:11,color:"var(--c-text3)",lineHeight:1.6,marginBottom:monthlyUnchosen?6:0}}>各期間の開始日より前で、いちばん近い締切日がその期間の提出期限になります。下で期間ごとに日付を指定した場合はそちらが優先されます。29〜31日は短い月では月末になります。</div>
+    {monthlyUnchosen&&<div style={{fontSize:11,color:"#FF4757"}}>日を選んでいない締切があります。選ぶか削除してから保存してください。</div>}
   </div>);
   const TD={borderBottom:"1px solid var(--c-border)",padding:"8px 6px",fontSize:13,verticalAlign:"middle"};
   const dateIn=(v,onCh)=>(<input type="date" value={v||""} onChange={e=>{onCh(e.target.value);setDlDirty(true);}} style={{...AI,width:"auto",padding:"4px 6px"}}/>);
   const cur=curRange;
   return(<AC title="シフトの提出状況">
     {monthlyEditor}
-    {ranges.length===0?<div style={{fontSize:12,color:"var(--c-text4)"}}>連携店舗に期間がありません。</div>:(<>
+    {ranges.length===0?<><div style={{fontSize:12,color:"var(--c-text4)"}}>連携店舗に期間がありません。</div>{saveBtn}</>:(<>
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
         <select value={rangeKey} onChange={e=>{userPickedRef.current=true;setRangeKey(e.target.value);}} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
           {ranges.map(x=><option key={x.key} value={x.key}>{x.label}</option>)}
@@ -5199,7 +5205,7 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
           ))}</tbody>
         </table>
       </div>
-      <button disabled={busy||!dlDirty} onClick={saveDeadlines} style={{...AB,width:"100%",marginTop:12,opacity:busy||!dlDirty?0.5:1}}>{busy?"保存中...":"提出期限を保存"}</button>
+      {saveBtn}
       {renderDownload&&renderDownload({rangeKey,range:cur,rows})}
     </>)}
   </AC>);

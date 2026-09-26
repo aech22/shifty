@@ -2,7 +2,8 @@
 // Firebase へは1バイトも出ない。
 //
 // A. シフト作成タブ単体:
-//   - 企業に連携した店舗（companyLink あり）では「提出」ボタンと、ボタン行の下に「企業への提出期限 9/25(金) 日付指定」が出る。期限切れの未提出は赤
+//   - 企業に連携した店舗（companyLink あり）では「提出」ボタンと、ボタン行の下に「企業への提出期限 9/25(金) 日付指定」が出る。
+//     未提出の間は赤地（#C62828）に白文字の帯、提出済みになったら赤地をやめる
 //   - 日付指定が無い期間は毎月の固定締切（[10,25]）から 9/25 が出て、出どころが「毎月の提出締切」になる
 //   - 提出で savePeriods に period.submission={at,byUid} が入り、差分書き込みは "p1/submission" の1本だけ
 //   - 取り消しで submission が消え、差分は {"p1/submission": null} の1本だけ（periods を丸ごと set しない）
@@ -14,7 +15,8 @@
 //   - 期間の無い店舗は「該当期間なし」で件数に数えない
 //   - 提出期限を変えて保存すると saveCompanyConfig が deadlines 付きで1回呼ばれ、
 //     各店舗の写し（shops/{sid}/company/deadlines）に反映される
-//   - 毎月の提出締切を追加して保存すると saveCompanyConfig が monthlyDeadlineDays 付きで呼ばれ、写しに入る
+//   - 保存ボタンは「提出期限を保存」1つだけ。毎月の提出締切を追加して保存すると saveCompanyConfig が
+//     monthlyDeadlineDays だけを付けて呼ばれ（変えていない deadlines は送らない）、写しに入る
 //   - 日付指定の無い期間（10月後半）の日付欄は、毎月の締切から出した日付が初期値になる
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-company-submit.js → allPass=true / EXIT=0
@@ -55,12 +57,14 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
   R.hasSubmit = await h.evaluate(btn("提出"));
   R.deadline = await h.evaluate(`(()=>{const e=document.querySelector("[data-co-deadline]");if(!e)return null;const d=e.querySelector("[data-co-deadline-date]");
     const hdr=[...document.querySelectorAll("button")].find(b=>b.innerText.trim()==="提出");
-    return{text:e.innerText.replace(/\\s+/g," ").trim(),source:e.getAttribute("data-co-deadline-source"),color:getComputedStyle(d).color,
+    return{text:e.innerText.replace(/\\s+/g," ").trim(),source:e.getAttribute("data-co-deadline-source"),color:getComputedStyle(d).color,bg:getComputedStyle(e).backgroundColor,
       belowButtons:!!(hdr&&e.getBoundingClientRect().top>=hdr.getBoundingClientRect().bottom)};})()`);
   if (withLink && !monthlyOnly) {
     await h.clickExact("提出");
     await h.page.waitForTimeout(300);
-    R.afterSubmit = { cancelBtn: await h.evaluate(btn("提出を取り消す")), label: await h.evaluate(`(document.querySelector("[data-co-submitted]")||{}).innerText||null`), toast: await h.evaluate(() => window.__toast) };
+    R.afterSubmit = { cancelBtn: await h.evaluate(btn("提出を取り消す")), label: await h.evaluate(`(document.querySelector("[data-co-submitted]")||{}).innerText||null`), toast: await h.evaluate(() => window.__toast),
+      bannerBg: await h.evaluate(`getComputedStyle(document.querySelector("[data-co-deadline]")).backgroundColor`),
+      bannerState: await h.evaluate(`document.querySelector("[data-co-deadline-state]").innerText.trim()`) };
     await h.clickExact("提出を取り消す");
     await h.page.waitForTimeout(300);
     R.afterCancel = { submitBtn: await h.evaluate(btn("提出")) };
@@ -119,7 +123,9 @@ async function partB() {
     await h.page.waitForTimeout(200);
     R.clickSave = await h.clickByText("提出期限を保存");
     await h.page.waitForTimeout(900);
-    R.cf = await h.evaluate(() => window.__cf.map(c => ({ name: c.name, deadlines: c.payload.deadlines })));
+    R.cf = await h.evaluate(() => window.__cf.map(c => ({ name: c.name, deadlines: c.payload.deadlines, hasMonthly: c.payload.monthlyDeadlineDays !== undefined })));
+    R.saveButtons = await h.evaluate(() => { const c = document.querySelector("[data-co-summary]").closest("div").parentElement;
+      return [...c.querySelectorAll("button")].map(b => b.innerText.trim()).filter(t => /保存/.test(t)); });
     R.mirrorS2 = await h.evaluate(rk => (window.__db("shops/S2/company/deadlines") || {})[rk] || null, RK);
     R.pendingColorAfter = await h.evaluate(() => getComputedStyle(document.querySelector('[data-co-row="S2"] [data-co-status]')).color);
     // 毎月の提出締切: 「＋ 追加」で2件（25日・10日）にして保存
@@ -129,14 +135,14 @@ async function partB() {
     await h.page.waitForTimeout(150);
     // 追加直後は日が未選択（初期値は人が決める・2026-09-27 ユーザー指示）。未選択のままでは保存できない
     R.monthlyUnchosen = await h.evaluate(() => [...document.querySelectorAll("[data-co-monthly-day]")].map(x => x.value));
-    R.monthlySaveDisabledWhileUnchosen = await h.evaluate(() => [...document.querySelectorAll("button")].find(b => b.innerText.trim() === "毎月の提出締切を保存").disabled);
+    R.monthlySaveDisabledWhileUnchosen = await h.evaluate(() => [...document.querySelectorAll("button")].find(b => b.innerText.trim() === "提出期限を保存").disabled);
     const pick = async (i, v) => { await h.evaluate(([i, v]) => { const s = document.querySelector(`[data-co-monthly-day="${i}"]`); const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
       set.call(s, v); s.dispatchEvent(new Event("change", { bubbles: true })); }, [i, v]); await h.page.waitForTimeout(150); };
     await pick(0, "25");
     await pick(1, "10");
-    R.clickMonthly = await h.clickByText("毎月の提出締切を保存");
+    R.clickMonthly = await h.clickByText("提出期限を保存");
     await h.page.waitForTimeout(900);
-    R.cfMonthly = await h.evaluate(() => window.__cf.filter(c => c.payload.monthlyDeadlineDays !== undefined).map(c => c.payload.monthlyDeadlineDays));
+    R.cfMonthly = await h.evaluate(() => window.__cf.filter(c => c.payload.monthlyDeadlineDays !== undefined).map(c => ({ days: c.payload.monthlyDeadlineDays, hasDeadlines: c.payload.deadlines !== undefined })));
     R.mirrorMonthlyS4 = await h.evaluate(() => window.__db("shops/S4/company/monthlyDeadlineDays"));
     // 日付指定の無い10月後半へ切り替え、日付欄の初期値と「適用される期限」を見る
     await h.evaluate(() => { const c = document.querySelector("[data-co-summary]").closest("div").parentElement; const sel = c.querySelector("select:not([data-co-monthly-day])");
@@ -161,7 +167,8 @@ async function partB() {
     A_deadlineText: !!(A.deadline && A.deadline.text === "企業への提出期限 9/25(金) 日付指定 期限を過ぎています" && A.deadline.source === "date"),
     A_deadlineBelowButtons: !!(A.deadline && A.deadline.belowButtons),
     AM_monthlyFallback: !!(AM.deadline && AM.deadline.source === "monthly" && /^企業への提出期限 9\/25\(金\) 毎月の提出締切 /.test(AM.deadline.text)),
-    A_deadlineOverRed: !!(A.deadline && A.deadline.color === RED),
+    A_deadlineRedBanner: !!(A.deadline && A.deadline.bg === "rgb(198, 40, 40)" && A.deadline.color === "rgb(255, 255, 255)"),
+    A_bannerCalmAfterSubmit: !!(A.afterSubmit && A.afterSubmit.bannerBg !== "rgb(198, 40, 40)" && A.afterSubmit.bannerState === "提出済み"),
     A_submitWritesOneKey: !!(A.writes && A.writes[0] && Object.keys(A.writes[0]).join() === "p1/submission" && A.writes[0]["p1/submission"].at),
     A_submittedLabel: !!(A.afterSubmit && A.afterSubmit.cancelBtn && /^提出済み \d+\/\d+ \d\d:\d\d$/.test(A.afterSubmit.label || "")),
     A_cancelWritesNull: !!(A.writes && A.writes[1] && Object.keys(A.writes[1]).join() === "p1/submission" && A.writes[1]["p1/submission"] === null),
@@ -173,10 +180,11 @@ async function partB() {
     B_summary: B.summary === "提出済み 2 ／ 未提出 1",
     B_rows: !!(B.rows && B.rows.S1.status === "submitted" && B.rows.S2.status === "pending" && B.rows.S3.status === "submitted" && B.rows.S4.status === "none"),
     B_overdueRed: !!(B.rows && B.rows.S2.color === RED),
-    B_cfDeadlines: !!(B.cf && B.cf.length === 1 && B.cf[0].name === "saveCompanyConfig" && JSON.stringify(B.cf[0].deadlines) === JSON.stringify({ [RK]: { all: "2026-10-05" } })),
+    B_cfDeadlines: !!(B.cf && B.cf.length === 1 && B.cf[0].name === "saveCompanyConfig" && JSON.stringify(B.cf[0].deadlines) === JSON.stringify({ [RK]: { all: "2026-10-05" } }) && B.cf[0].hasMonthly === false),
+    B_oneSaveButton: !!(B.saveButtons && B.saveButtons.join("|") === "提出期限を保存"),
     B_mirrorUpdated: B.mirrorS2 === "2026-10-05",
     B_monthlyAddIsUnchosen: !!(B.monthlyUnchosen && B.monthlyUnchosen.join() === "," && B.monthlySaveDisabledWhileUnchosen === true),
-    B_cfMonthly: !!(B.cfMonthly && B.cfMonthly.length === 1 && JSON.stringify(B.cfMonthly[0]) === "[10,25]"),
+    B_cfMonthly: !!(B.cfMonthly && B.cfMonthly.length === 1 && JSON.stringify(B.cfMonthly[0].days) === "[10,25]" && B.cfMonthly[0].hasDeadlines === false),
     B_mirrorMonthly: JSON.stringify(B.mirrorMonthlyS4) === "[10,25]",
     B_laterInitialFromMonthly: B.laterInput === "2026-10-10" && B.laterEffective === "適用される期限: 10/10(土)（毎月の提出締切）",
     noErrors: A.errors.length === 0 && A0.errors.length === 0 && AM.errors.length === 0 && B.errors.length === 0 && !B.exception,
