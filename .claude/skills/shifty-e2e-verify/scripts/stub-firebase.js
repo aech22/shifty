@@ -25,7 +25,7 @@
  * @param {string} o.uid         サインイン済みとして扱うuid（"company_XXX" なら企業ログインセッション）
  * @param {string} [o.view]      起動時の画面（既定 "admin"）
  * @param {string} [o.tab]       起動時の管理者タブ（既定 "periods"）
- * @param {object} [o.cfHandlers] Callable名 → "ok" | "reject:メッセージ" | "unlink" | "link"（本物のCFと同じ後始末）
+ * @param {object} [o.cfHandlers] Callable名 → "ok" | "reject:メッセージ" | "unlink" | "link" | "companyConfig"（本物のCFと同じ後始末）
  * @param {boolean}[o.confirm]   window.confirm の戻り値（既定 true）
  */
 function makeStub(o) {
@@ -180,6 +180,22 @@ function makeStub(o) {
       var h=CF[name]||"ok";
       if(h.indexOf("reject:")===0) return Promise.reject(new Error(h.slice("reject:".length)));
       if(h==="unlink") runUnlink(payload||{});
+      if(h==="companyConfig"){
+        // 本物の saveCompanyConfig（functions/index.js）と同じ後始末: 正本を保存し、連携全店舗の
+        // shops/{sid}/company を作り直す。検証（sanitize）はしない＝CF側の検証は tests/core.test.js が見る。
+        var cid=payload.companyId, base="companies/"+cid+"/pub";
+        if(payload.settings!==undefined) setPath(base+"/config/settings",payload.settings);
+        if(payload.deadlines!==undefined) Object.keys(payload.deadlines||{}).forEach(function(rk){ setPath(base+"/config/deadlines/"+rk,payload.deadlines[rk]); });
+        var pub=getPath(base)||{}, cfg=pub.config||{}, linked=Object.keys(pub.shops||{}), names={};
+        linked.forEach(function(sid){ names[sid]=((getPath("global/shops/"+sid)||{}).name)||""; });
+        linked.forEach(function(sid){
+          var dl={}, all=cfg.deadlines||{};
+          Object.keys(all).forEach(function(rk){ var e=all[rk]||{}; var v=(e.shops&&e.shops[sid])||e.all; if(v) dl[rk]=v; });
+          setPath("shops/"+sid+"/company",{id:cid,name:pub.name||"",settings:cfg.settings||{},deadlines:dl,shops:names,syncedAt:"stub"});
+        });
+        notify();
+        return Promise.resolve({data:{ok:true,synced:linked,failed:[]}});
+      }
       if(h==="link"){
         // 本物の linkStoreToCompany が書くもの: 連携マップと owners への企業uid登録
         setPath("companies/"+payload.companyId+"/pub/shops/"+payload.shopId,true);
