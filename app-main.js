@@ -1072,6 +1072,17 @@ function App(){
     try{ await _callCF("renameCompany",{companyId:companyInfo.companyId,name}); setCompanyInfo(c=>({...c,name})); return {}; }
     catch(e){ return {error:(e&&e.message)||"変更に失敗しました"}; }
   };
+  // 企業の共通設定（労務設定・属性別の勤務時間制限）と提出期限の保存（2026-09-27 企業連携の拡張）。
+  // 書き込みは CF 経由だけ（companies 配下はクライアントから書けない）。CF が連携全店舗の
+  // shops/{shopId}/company を作り直し、店舗側は startSubscriptions の購読でそれを受け取る。
+  // patch は {settings} か {deadlines} のどちらか（両方でもよい）。戻り値は {synced,failed} か {error}。
+  const saveCompanyConfig=async(patch)=>{
+    if(!companyInfo) return {error:"企業アカウントがありません"};
+    try{
+      const r=await _callCF("saveCompanyConfig",{companyId:companyInfo.companyId,...(patch||{})});
+      return {synced:(r&&r.synced)||[],failed:(r&&r.failed)||[]};
+    }catch(e){ return {error:(e&&e.message)||"保存に失敗しました"}; }
+  };
   // 店舗コードで企業に連携（SetTabの連携店舗一覧の追加ボタン）
   const linkStoreToCompany=async(rawCode)=>{
     if(!companyInfo) return {error:"企業アカウントがありません"};
@@ -1713,7 +1724,7 @@ function App(){
               onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkEmail={signInAndLinkEmail}
               onLinkExistingShop={linkExistingShopToAuth} onUnlinkShop={unlinkShopFromAuth}
               companyInfo={companyInfo} onCreateCompany={createCompany} onChangeCompanyPassword={changeCompanyPassword}
-              onRenameCompany={renameCompany} onLinkStoreToCompany={linkStoreToCompany} onUnlinkStoreFromCompany={unlinkShopFromAuth}/>
+              onRenameCompany={renameCompany} onSaveCompanyConfig={saveCompanyConfig} onLinkStoreToCompany={linkStoreToCompany} onUnlinkStoreFromCompany={unlinkShopFromAuth}/>
       }
     </div>
   );

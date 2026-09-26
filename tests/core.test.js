@@ -4102,3 +4102,54 @@ test("staffHomeShop: 2つの一覧に登録され、改名でキーが移る", (
   assert.strictEqual(u.isHelperAt({ staffHomeShop: { "田中": "A" } }, "田中", "B"), true);
   assert.strictEqual(u.isHelperAt({}, "田中", "B"), false);
 });
+
+// ===== 企業の共通設定・提出期限（Cloud Functions 側の検証。functions/company-config.js）=====
+const cfc = require("../functions/company-config.js");
+test("company-config: CF 側のキー一覧・属性ID・労働時間制がクライアントと一致する（書き写しのドリフト検出）", () => {
+  assert.deepStrictEqual(cfc.COMPANY_LABOR_KEYS, u.COMPANY_LABOR_KEYS);
+  assert.deepStrictEqual(["laborSystem", ...cfc.COMPANY_LIMIT_NUM_KEYS].sort(), [...u.COMPANY_LIMIT_KEYS].sort());
+  assert.deepStrictEqual(cfc.COMPANY_LABOR_SYSTEMS, u.LABOR_SYSTEMS);
+  assert.deepStrictEqual(cfc.COMPANY_BUILTIN_ATTRS, u.BUILTIN_TYPES);
+  assert.strictEqual(String(cfc.COMPANY_ATTR_ID_RE), String(u.COMPANY_ATTR_ID_RE));
+  for (let i = 0; i < 1000; i++) {
+    const id = u.genCompanyAttrId();
+    assert.ok(cfc.COMPANY_ATTR_ID_RE.test(id), `CF の検証で捨てられる企業属性ID: ${id}`);
+  }
+});
+
+test("sanitizeCompanySettings: 許可外キー・範囲外の値・不正な属性IDを捨てる", () => {
+  const r = cfc.sanitizeCompanySettings({
+    xlShopName: "x", staffAttributes: { a: "b" },
+    laborSettings: { fixedOvertimeMin: 1200, marginMin: -1, monthlyBase31Min: "abc", agreementDailyOtMin: 0, fiscalYearStartMonth: 13, foo: 1 },
+    staffTypeLimits: {
+      parttime: { weekly: 30, daily: 0, laborSystem: "B", evil: 1 },
+      custom_abc: { weekly: 10 }, "/": { weekly: 1 }, co_short: { name: "x" },
+      "co_ab!d1234": { name: "x", weekly: 1 }, co_AbCd1234: { name: " 契約社員 ", weekly: 40 }, co_NoName12: { weekly: 1 },
+    },
+  });
+  assert.deepStrictEqual(r, {
+    laborSettings: { fixedOvertimeMin: 1200, agreementDailyOtMin: 0 },
+    staffTypeLimits: { parttime: { weekly: 30, laborSystem: "B" }, co_AbCd1234: { name: "契約社員", weekly: 40 } },
+  });
+  assert.deepStrictEqual(cfc.sanitizeCompanySettings(null), {});
+});
+
+test("sanitizeCompanyDeadlines / effectiveDeadlinesForShop: 期間キー・日付・連携店舗を検証し、店舗別を優先する", () => {
+  const d = cfc.sanitizeCompanyDeadlines({
+    "2026-10-01_2026-10-15": { all: "2026-09-25", shops: { A: "2026-09-27", Z: "2026-09-20", "a/b": "2026-09-20", B: "2026-02-30" } },
+    "2026-11-01_2026-11-15": null,
+    "bad key": { all: "2026-09-25" },
+    "2026-12-01_2026-12-15": { all: "nope" },
+  }, ["A", "B"]);
+  assert.deepStrictEqual(d, {
+    "2026-10-01_2026-10-15": { all: "2026-09-25", shops: { A: "2026-09-27" } },
+    "2026-11-01_2026-11-15": null,
+    "2026-12-01_2026-12-15": null,
+  });
+  const full = { "2026-10-01_2026-10-15": { all: "2026-09-25", shops: { A: "2026-09-27" } } };
+  assert.deepStrictEqual(cfc.effectiveDeadlinesForShop(full, "A"), { "2026-10-01_2026-10-15": "2026-09-27" });
+  assert.deepStrictEqual(cfc.effectiveDeadlinesForShop(full, "B"), { "2026-10-01_2026-10-15": "2026-09-25" });
+  // クライアントの companyDeadlineFor と同じ答えを返す
+  assert.strictEqual(u.companyDeadlineFor(full, "2026-10-01_2026-10-15", "A"), "2026-09-27");
+  assert.strictEqual(u.companyDeadlineFor(full, "2026-10-01_2026-10-15", "B"), "2026-09-25");
+});

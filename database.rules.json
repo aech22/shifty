@@ -45,6 +45,10 @@
           ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
           ".validate": "newData.isString() && newData.val().length <= 40"
         },
+        "company": {
+          ".read": "auth != null",
+          ".write": false
+        },
         "subs": {
           ".read": "auth != null",
           ".indexOn": ["periodId"],
