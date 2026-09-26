@@ -4543,6 +4543,30 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
      if(after&&isTimeOrderInvalid(after[date])&&tt)tt(TIME_ORDER_ERROR_HINT);}
     setDet(prev=>{if(!prev||prev.id!==subId)return prev;const sh={...(prev.shifts||{})};sh[date]={...sh[date]};if(value!==""&&value!=null)sh[date][field]=value;else delete sh[date][field];return{...prev,shifts:sh};});
   };
+  // 休暇種別のプルダウン。**シフト作成タブの ko（終日）と同じ形で書く**——leaveTypes だけを書くと
+  // 休み扱い（adminRest）が付かず、出勤時刻が残った日が「実働8h＋有給1日」と二重に数えられ、
+  // 外す側も adminRest が残るので「公休」に戻って外せなかった（バグチェック#148）。
+  const applyLeave=(sd0,type)=>{
+    const sd={...(sd0||{status:"work"})};
+    delete sd.leaveType;
+    if(type){
+      sd.leaveTypes={start:type,end:type};
+      sd.adminRest={...(sd.adminRest||{}),start:true,end:true};
+      delete sd.adjustedStart;delete sd.adjustedEnd;
+      delete sd.adjustedStartNote;delete sd.adjustedEndNote;
+      delete sd.adjustedStartFixed;delete sd.adjustedEndFixed;
+    }else{
+      delete sd.leaveTypes;
+      const ar={...(sd.adminRest||{})};delete ar.start;delete ar.end;
+      if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;
+    }
+    return sd;
+  };
+  const saveLeave=(subId,date,type)=>{
+    const upd=s=>{const sh={...(s.shifts||{})};sh[date]=applyLeave(sh[date],type);return{...s,shifts:sh};};
+    onSave(subs.map(s=>s.id===subId?upd(s):s));
+    setDet(prev=>(!prev||prev.id!==subId)?prev:upd(prev));
+  };
   // 詳細モーダルの勤務時間も「その提出の期間の属性」で引く。行の上限判定（:3815 の pAttrSettings）だけが
   // keepAttrs を当てていたため、keepAttrs を持つ期間では **同じ提出の同じ日** が行とモーダルで食い違っていた
   // （実測: 属性タグ付き休憩 60分/120分 の店舗で 行 8:00 / モーダル 7:00）。休憩は属性タグで絞るので、
@@ -4675,10 +4699,10 @@ if(typeLim.customDays&&(typeLim.customHours||typeLim.customHoursMin)){const r=_w
                     style={{fontSize:16,padding:"3px 5px",width:64,background:"var(--c-input)",border:`1px solid ${s.adjustedBreak!=null?"#3B82F6":"var(--c-border)"}`,borderRadius:4,color:s.adjustedBreak!=null?"#3B82F6":"var(--c-text)",marginTop:2}}/>
                 </div>:"-"}
               </td>}
-              {/* 休暇種別（第3弾・項目9）。グリッドの y/yu/ke と同じ shift.leaveType を編集する。 */}
+              {/* 休暇種別（第3弾・項目9）。グリッドの ko と同じ形で終日の leaveTypes と adminRest を書く（saveLeave）。 */}
               {isPremium&&<td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
-                <select value={leaveTypeOf(s)||""} onChange={e=>saveAdj(det.id,ds,"leaveTypes",e.target.value?{start:e.target.value,end:e.target.value}:"")}
-                  style={{fontSize:16,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${s.leaveType?"#3B82F6":"var(--c-border)"}`,borderRadius:4,color:s.leaveType?"#3B82F6":"var(--c-text)",cursor:"pointer",maxWidth:86}}>
+                <select value={leaveTypeOf(s)||""} onChange={e=>saveLeave(det.id,ds,e.target.value||null)}
+                  style={{fontSize:16,padding:"3px 5px",background:"var(--c-input)",border:`1px solid ${leaveTypeOf(s)?"#3B82F6":"var(--c-border)"}`,borderRadius:4,color:leaveTypeOf(s)?"#3B82F6":"var(--c-text)",cursor:"pointer",maxWidth:86}}>
                   <option value="">—</option>
                   {LEAVE_TYPES.map(t=><option key={t} value={t}>{LEAVE_TYPE_LABELS[t]}</option>)}
                 </select>
