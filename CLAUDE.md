@@ -198,6 +198,15 @@ STAFF_LIMIT_WINDOWS / staffLimitOf / limitStateOf / hasAnyStaffLimit
                            // **勤務が1分もない窓は下限割れにしない**（休んだ人が全員ハイライトされるのを防ぐ）。
                            // 窓の一覧をここに1本化してある——設定UI・集計表・提出一覧のバッジ・PDFが
                            // 組を書き写すと、項目を足したときにどれかが取り残される
+applyCompanySettings / stripCompanySettings / companyControlledKeys / genCompanyAttrId / isCompanyAttrId
+                           // 企業設定＞店舗設定の重ね合わせ（App の effectiveSettings で1回だけ）と保存前の剥がし（2026-09-27）。
+                           // CF 側の同じ規則は functions/company-config.js にあり、tests/core.test.js が一致を照合する
+periodRangeKey / periodRangeLabel / collectPeriodRanges / findShopPeriodByRange
+                           // 企業内の期間の対応づけ（"開始日_終了日"）と「2026年10月前半」等の表示名
+isValidDateStr / companyDeadlineFor / shopDeadlineFromLink
+                           // 企業→店舗の完成シフトの提出期限（店舗別の日付が全店共通より優先）。period.deadlineDate とは別物
+homeShopOf / isHelperAt / dupTargetShopsFor
+                           // 所属店舗（staffHomeShop）とヘルプ判定。重複判定の対象店舗は「所属が一致する同名」
 // 末尾に module.exports ガード（Nodeテスト用）
 ```
 
@@ -336,6 +345,9 @@ Firebase Realtime Database
 │       ├── lastActivity ← ISO文字列（CFの1年未更新アーカイブ判定に使用）
 │       ├── subs/      ← 提出データ {subId: subObj}（書き込みは.validateで形状検証・auth必須）
 │       ├── owners/    ← {uid: adminKey} 管理者登録（自uid追加はadminKey照合が必要・読みはオーナーのみ）
+│       ├── company    ← 企業設定の写し（2026-09-27）{id, name, settings, deadlines:{期間キー:日付}, shops:{shopId:店舗名}, syncedAt}。
+│       │                 **CF（syncCompanyMirror）だけが書く**（.write:false）・読みは auth != null。
+│       │                 無い＝企業に連携していない。店舗側の企業機能（設定の重ね合わせ・提出ボタン・提出期限・所属店舗の選択肢）はこれだけを見る
 │       └── private/
 │           └── adminKey ← 管理キー（32桁）。読みはオーナー（未claim時はauth済み全員）のみ
 ├── archived/
@@ -354,6 +366,8 @@ Firebase Realtime Database
 ├── companies/
 │   └── {companyId}/     ← 企業アカウント（CompanyTab・企業コード＋パスワード方式。accounts/{uid}のcompanyLinkとは別系統）
 │       ├── pub          ← {name, ownerUid, shops:{shopId:true}}（連携店舗マップ）
+│       │   └── config   ← 企業の共通設定の正本（2026-09-27・CF saveCompanyConfig だけが書く）
+│       │                   {settings:{laborSettings?, staffTypeLimits?}, deadlines:{期間キー:{all?, shops?:{shopId:日付}}}, updatedAt}
 │       ├── grants/{shopId}/{uid} ← claimCompanyShop が企業経由で与えたオーナー権限の台帳。
 │       │                            解除時にここに載ったuidだけを owners から外す（元からの
 │       │                            オーナーは載せない＝巻き添えにしない）。**ルールを持たない
@@ -405,7 +419,8 @@ Period = { id: string, urlToken: string, shopId: string, label: string,
            snapshot?: {staffList: string[], settings: Settings},  // 確定済み期間の写し
            keepStaff?: {name: string, index: number}[],           // 削除しても列を残す人
            keepAttrs?: {[name: string]: 属性ID},                  // その期間に効かせる旧属性
-           laborTotals?: {[name]: {workMin,paid,publicOff,ceremony}} } // 凍結時点の労務の合計（年度の累計用）
+           laborTotals?: {[name]: {workMin,paid,publicOff,ceremony}},  // 凍結時点の労務の合計（年度の累計用）
+           submission?: {at: string, byUid: string} }                 // 企業への完成シフトの提出（2026-09-27。無ければ未提出）
 
 // 提出
 Sub = { id: string, periodId: string, staffName: string, shopId: string,
@@ -431,7 +446,12 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              paidLeaveGranted?: {[name]: 日数},                                  // 有給の付与日数（残数の基準）
              overtimeSettings?: {byStaff: {[name]: {lunch,dinner}}}, staffNumbers?: {[name]: string},
              xlShopName?: string, staffColors?: {[name]: "red"|"black"},
-             staffAliases?: {[registered]: string[]}, staffHidden?: {[name]: {from:string|null,to:string|null}[]}, periodUnit?: "2week"|"1month" }
+             staffAliases?: {[registered]: string[]}, staffHidden?: {[name]: {from:string|null,to:string|null}[]}, periodUnit?: "2week"|"1month",
+             staffHomeShop?: {[name]: shopId} }   // 所属店舗（2026-09-27。無ければ自店所属。STAFF_KEYED_SETTING_MAPS 登録済み）
+
+// 企業設定の写し（shops/{shopId}/company・2026-09-27）
+CompanyLink = { id: string, name: string, settings: {laborSettings?, staffTypeLimits?}, deadlines: {[期間キー]: "YYYY-MM-DD"},
+                shops: {[shopId]: 店舗名}, syncedAt: string }   // 期間キー = periodRangeKey(period) = "開始日_終了日"
 ```
 
 ---
@@ -458,6 +478,38 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
 5. `doLogout()` はセッションのみクリア（authUser・allLinkedShops は維持）
 6. `doFullSignOut()` は Firebase Auth も含む完全サインアウト
 
+### 企業連携の拡張（2026-09-27・develop のみ・未リリース）
+
+計画書（Fable 作成・Fable レビュー済み）の P0〜P5。ユーザー決定: 所属一致で同一人物を判定・略称入力は残す（D4）／
+提出期限は期間ごとに日付を直接入れる（D5）／企業内の期間は「2026年10月前半」等の選択肢で選ぶ（D8）／
+企業機能と所属店舗はすべて Premium（D9）／公開ボタンは従業員画面の実装時（D10）。
+
+- **企業設定＞店舗設定の重ね合わせは App の `effectiveSettings` で1回だけ**（`applyCompanySettings`・useMemo）。
+  読み手（laborSettingsOf・staffLimitOf・laborSystemOf・getAttrOptions）は何も変えていない。
+  **`saveSettings` は企業が決めた項目を剥がしてから保存する**（`stripCompanySettings`）。settings は全体 set() なので、
+  剥がさないと企業の値が店舗の設定として残り、企業が外しても消えなくなる。判定は値の一致ではなく**キーの支配**。
+  労務設定は 0 も企業の決定、上限・下限の 0 は未設定。企業属性の ID は `genCompanyAttrId()`（`co_`＋英数字8桁）で、
+  **`genSecureId` を使わない**（記号を含み、CF の検証で約7割が捨てられる）。企業が消した属性への割当は未設定扱い
+- **写し（`shops/{sid}/company`）の購読が返る前は `companyLink=null`＝企業なし側に倒す**（非連携店舗に提出ボタンを一瞬出さないため）。
+  null のときは剥がしも重ね合わせもしない＝店舗の保存値は壊れない
+- **所属店舗とヘルプ判定**: `settings.staffHomeShop`。店舗間シフト重複で見に行く他店舗は `dupTargetShopsFor` が
+  「所属店舗が一致する同名」で決める（同名別人を誤検出しない）。旧 `staffWorkplaces` は UI を廃止し、
+  判定は1リリースだけ和集合で併用する（撤去は BACKLOG）。略称サフィックス（`9三`）のヘルプ入力は従来どおり
+- **提出**: シフト作成タブの「提出」が `period.submission` を `savePeriods`（差分 update）で書く。提出は保存と同じ処理
+  （`flushEdits(true)`）を黙って済ませてから記録する——`localEdits` は blur 後も表示用に残るので「未保存なら提出不可」とは判定できない
+- **一括PDF**: 企業連携タブが対象店舗ごとに `ShiftEditTab` を画面外へ1店舗ずつマウントし、`exportJob` で既存の `exportPdf` を
+  呼ばせて1つの jsPDF に追記する（計算を二重に持たない）。**非表示マウントでは `savePeriods={null}`・`ownerReadOnly={true}`・
+  `allLinkedShops={[]}` を必ず渡す**（渡さないと写し・労務合計を他店舗の期間へ書く／他店舗の提出を読みに行く）
+- **企業機能の対象店舗は `companies/{id}/pub/shops`**（`allLinkedShops` ではない。あちらは企業に入れていない自分の店舗も含む）
+- **dev では企業機能を実機で確かめられない**: dev（Spark）に CF をデプロイできず写しが作られないため。検証は
+  `.claude/skills/shifty-e2e-verify/scripts/example-company-{settings,submit,bulk-pdf}.js`・`example-home-shop-dup.js`・
+  `example-staff-home-shop.js`（スタブ Firebase・実ブラウザ）と `tests/core.test.js`（CF 側の検証 `functions/company-config.js` を含む）で行う
+- **ルールの反映順は従来どおり（クライアントが先）でよい**: 新クライアントは `shops/{sid}/company` の読みを拒否されても、
+  購読が `console.warn` を出して企業機能が出ないだけで壊れない。CF は写しを Admin SDK で書くのでルールと独立
+- **取り消し方**: develop へは `feature/company-ext` を `--no-ff` の1マージで入れてある。`git revert -m 1 <そのマージ>` で全部戻る。
+  データ面は追加だけ（`staffHomeShop`・`period.submission`・`shops/{sid}/company`・`companies/{id}/pub/config`）で、
+  既存のデータ・`staffWorkplaces` は消していないので、コードを戻せば従来の挙動に戻る
+
 ---
 
 ## Cloud Functions（functions/index.js）
@@ -479,6 +531,7 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
 | `changeCompanyPassword` | Callable `changeCompanyPassword` | 企業パスワード変更 |
 | `renameCompany` | Callable `renameCompany` | 企業名変更（作成者ポインタの表示名も更新） |
 | `linkStoreToCompany` | Callable `linkStoreToCompany` | 店舗コード（shopId / shopId.adminKey）で店舗を企業に連携 |
+| `saveCompanyConfig` | Callable `saveCompanyConfig` | 企業の共通設定（settings は丸ごと置換）と提出期限（期間ごとの差分）を保存し、連携全店舗の `shops/{sid}/company` を作り直す（2026-09-27）。検証は `functions/company-config.js`（純粋関数・テストで照合） |
 | `claimCompanyShop` | Callable `claimCompanyShop` | 連携済み店舗のオーナーに**呼び出し元のuid**を登録（企業連携タブの「ログイン」で管理コードの再入力を無くす。付与は `companies/{id}/grants/{shopId}/{uid}` に記録し、解除時に回収する） |
 | `unlinkStoreFromCompany` | Callable `unlinkStoreFromCompany` | 店舗の企業連携を解除（企業uid＋`grants` の付与uidを owners から外す） |
 
