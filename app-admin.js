@@ -787,7 +787,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           const lt={...(sd.leaveTypes||{})};
           if(!sd.leaveTypes){if(curLv.start)lt.start=curLv.start;if(curLv.end)lt.end=curLv.end;}
           const ar={...(sd.adminRest||{})};
-          if(whole){delete lt.start;delete lt.end;delete ar.start;delete ar.end;}
+          if(whole){delete lt.start;delete lt.end;delete ar.start;delete ar.end;
+            // 反対側のセルも空欄の上書きにする。下で空欄にするのは打ったセルだけなので、
+            // これが無いとスタッフ提出のある日は反対側に提出時刻が戻り、片側だけの勤務になる。
+            // ko を入れた時点で両側の調整値は消してあるので、ここで失われる入力は無い。
+            if(field==="start"){sd.adjustedEnd="";sd.adjustedEndNote="";delete sd.adjustedEndFixed;}
+            else{sd.adjustedStart="";sd.adjustedStartNote="";delete sd.adjustedStartFixed;}}
           else{delete lt[field];delete ar[field];}
           delete sd.leaveType;
           if(Object.keys(lt).length)sd.leaveTypes=lt;else delete sd.leaveTypes;

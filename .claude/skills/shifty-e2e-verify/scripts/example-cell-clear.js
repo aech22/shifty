@@ -26,7 +26,7 @@ const JSX = `
 const PA={id:"pA",urlToken:"tA",shopId:"S1",label:"7月前半",startDate:"2026-07-01",endDate:"2026-07-15",deadlineDate:"",createdAt:"2026-06-01T00:00:00.000Z"};
 // 田中はスタッフ提出あり（7/2 09:00-17:00）。空欄化＝提出値を管理者が消す操作になる。
 const SUB_A={id:"subA",periodId:"pA",staffName:"田中",shopId:"S1",comment:"",submittedAt:"2026-06-20T00:00:00.000Z",
-  shifts:{"2026-07-02":{status:"work",start:"09:00",end:"17:00"}}};
+  shifts:{"2026-07-02":{status:"work",start:"09:00",end:"17:00"},"2026-07-13":{status:"work",start:"09:00",end:"17:00"}}};
 
 function Harness(){
   const [subs,setSubs]=React.useState([SUB_A]);
@@ -106,6 +106,13 @@ const shiftOf = (h, name, date) => h.evaluate(([n, d]) => {
                             await cellValue(h.cell("佐藤", "2026-07-10", "end"))];
     out.yu_after_shift = await shiftOf(h, "佐藤", "2026-07-10");
 
+    // 6) スタッフ提出のある日に ko を入れ、出勤セルの「公休」を消す（バグチェック#149）。
+    //    打ったセルだけを空欄にしていたため、退勤セルに提出時刻が戻り片側だけの勤務になっていた。
+    await h.fill(h.cell("田中", "2026-07-13", "start"), "ko");
+    await h.fill(h.cell("田中", "2026-07-13", "start"), "");
+    out.ko3_after_display = [await cellValue(h.cell("田中", "2026-07-13", "start")),
+                             await cellValue(h.cell("田中", "2026-07-13", "end"))];
+
     out.errors = h.errors;
     const s1 = out.clear1_after_shift || {}, s2 = out.clear2_after_shift || {};
     const s3 = out.leave_after_shift || {}, s4 = out.time_after_shift || {};
@@ -123,6 +130,7 @@ const shiftOf = (h, name, date) => h.evaluate(([n, d]) => {
       ko1_typeGone: !k1.leaveTypes && !k1.leaveType && !k1.adminRest,
       ko2_bothBlank: eq(out.ko2_after_display, ["", ""]),
       ko2_typeGone: !k2.leaveTypes && !k2.leaveType && !k2.adminRest,
+      ko3_staffDayBothBlank: eq(out.ko3_after_display, ["", ""]),
       yu_shown: eq(out.yu_display, ["有給", "有給"]),
       yu_onlyStartCleared: eq(out.yu_after_display, ["", "有給"]),
       yu_endKept: !!(y.leaveTypes && y.leaveTypes.end === "paid" && !y.leaveTypes.start)
