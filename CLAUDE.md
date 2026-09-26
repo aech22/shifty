@@ -206,6 +206,10 @@ periodRangeKey / periodRangeLabel / collectPeriodRanges / findShopPeriodByRange
 isValidDateStr / companyDeadlineFor / shopDeadlineFromLink
                            // 企業→店舗の完成シフトの提出期限。period.deadlineDate とは別物。
                            // UI は全店舗共通の日付だけ（店舗別は 2026-09-27 に廃止）。関数は旧データの店舗別も読める
+sanitizeMonthlyDeadlineDays / monthlyDeadlineFor / shopDeadlineInfoFromLink
+                           // 毎月の固定締切（2026-09-27）。日だけ（1〜31・最大4件・29〜31は短い月の月末）。
+                           // 期間の締切＝開始日より前で最も遅い固定日。優先は 期間ごとの日付指定 ＞ 毎月の固定。
+                           // CF 側の同じ規則は functions/company-config.js（tests/core.test.js が一致を照合）
 homeShopOf / isHelperAt / dupTargetShopsFor
                            // 所属店舗（staffHomeShop）とヘルプ判定。重複判定の対象店舗は「所属が一致する同名」
 // 末尾に module.exports ガード（Nodeテスト用）
@@ -368,7 +372,8 @@ Firebase Realtime Database
 │   └── {companyId}/     ← 企業アカウント（CompanyTab・企業コード＋パスワード方式。accounts/{uid}のcompanyLinkとは別系統）
 │       ├── pub          ← {name, ownerUid, shops:{shopId:true}}（連携店舗マップ）
 │       │   └── config   ← 企業の共通設定の正本（2026-09-27・CF saveCompanyConfig だけが書く）
-│       │                   {settings:{laborSettings?, staffTypeLimits?}, deadlines:{期間キー:{all?, shops?:{shopId:日付}}}, updatedAt}
+│       │                   {settings:{laborSettings?, staffTypeLimits?}, deadlines:{期間キー:{all?, shops?:{shopId:日付}}},
+│       │                    monthlyDeadlineDays?:[日], updatedAt}
 │       ├── grants/{shopId}/{uid} ← claimCompanyShop が企業経由で与えたオーナー権限の台帳。
 │       │                            解除時にここに載ったuidだけを owners から外す（元からの
 │       │                            オーナーは載せない＝巻き添えにしない）。**ルールを持たない
@@ -452,6 +457,7 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
 
 // 企業設定の写し（shops/{shopId}/company・2026-09-27）
 CompanyLink = { id: string, name: string, settings: {laborSettings?, staffTypeLimits?}, deadlines: {[期間キー]: "YYYY-MM-DD"},
+                monthlyDeadlineDays?: number[],   // 毎月の固定締切（日付指定の無い期間に効く・2026-09-27）
                 shops: {[shopId]: 店舗名}, syncedAt: string }   // 期間キー = periodRangeKey(period) = "開始日_終了日"
 ```
 
