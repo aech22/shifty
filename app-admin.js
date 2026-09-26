@@ -2319,7 +2319,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const showLaborTable=isPremium&&Object.keys(laborByStaff).length>0;
   // 企業への完成シフトの提出と提出期限（2026-09-27 企業連携の拡張）。企業に連携した店舗（companyLink）で、
   // Premium のときだけ出す。提出の状態は期間レコードの submission={at,byUid} に持ち、savePeriods
-  // （差分 update）で書く。提出後の編集は自由・取り消し可・再提出で at を更新する。
+  // （差分 update）で書く。提出後の編集は自由。提出後のボタンは「再提出」で、押すと submission を丸ごと
+  // 置き換える＝以前の提出記録は残さない。取り消しは無い（2026-09-27 ユーザー指示）。
   const submission=period&&period.submission&&period.submission.at?period.submission:null;
   // 期限は 日付指定 ＞ 毎月の固定締切（企業連携タブで設定）。ボタン行の下に1行で出す（2026-09-27 ユーザー指示）
   const coDeadlineInfo=companyLink&&period&&isPremium?shopDeadlineInfoFromLink(companyLink,period):null;
@@ -2334,13 +2335,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     flushEdits(true);
     const by=(typeof firebaseAuth!=="undefined"&&firebaseAuth&&firebaseAuth.currentUser&&firebaseAuth.currentUser.uid)||"";
     savePeriods(periods.map(p=>p.id===period.id?{...p,submission:{at:new Date().toISOString(),byUid:by}}:p));
-    tt("✓ 企業にシフトを提出しました");
-  };
-  const unsubmitShift=()=>{
-    if(!canSubmit||!submission)return;
-    if(!confirm("提出を取り消しますか？\n企業連携タブの一括ダウンロードの対象から外れます。"))return;
-    savePeriods(periods.map(p=>{if(p.id!==period.id)return p;const n={...p};delete n.submission;return n;}));
-    tt("✓ 提出を取り消しました");
+    tt(submission?"✓ 企業にシフトを再提出しました":"✓ 企業にシフトを提出しました");
   };
 
   return(
@@ -2418,9 +2413,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         </button>}
         {/* 提出（企業へ）。アクセントは保存に残し、提出は無彩色の枠線ボタンにする（アクセントは1つ） */}
         {canSubmit&&submission&&<span data-co-submitted="1" style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>提出済み {fmtAt(submission.at)}</span>}
-        {canSubmit&&<button onClick={submission?unsubmitShift:submitShift}
+        {canSubmit&&<button data-co-submit-btn="1" onClick={submitShift}
           style={{padding:"6px 14px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
-          {submission?"提出を取り消す":"提出"}
+          {submission?"再提出":"提出"}
         </button>}
         </div>}
       </div>

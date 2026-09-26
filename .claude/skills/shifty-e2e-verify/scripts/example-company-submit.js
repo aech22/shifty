@@ -6,7 +6,8 @@
 //     未提出の間は赤地（#C62828）に白文字の帯、提出済みになったら赤地をやめる
 //   - 日付指定が無い期間は毎月の固定締切（[10,25]）から 9/25 が出て、出どころが「毎月の提出締切」になる
 //   - 提出で savePeriods に period.submission={at,byUid} が入り、差分書き込みは "p1/submission" の1本だけ
-//   - 取り消しで submission が消え、差分は {"p1/submission": null} の1本だけ（periods を丸ごと set しない）
+//   - 提出後のボタンは「再提出」（取り消しは無い）。再提出で submission が新しい {at,byUid} に丸ごと置き換わり、
+//     差分は "p1/submission" の1本だけ（periods を丸ごと set しない）
 //   - companyLink が無い店舗では提出ボタンも期限も出ない
 // B. アプリ全体（stub-firebase.js）:
 //   - 企業連携タブの「シフトの提出状況」に「2026年10月前半」の選択肢、店舗ごとの状況、件数行が出る
@@ -62,12 +63,13 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
   if (withLink && !monthlyOnly) {
     await h.clickExact("提出");
     await h.page.waitForTimeout(300);
-    R.afterSubmit = { cancelBtn: await h.evaluate(btn("提出を取り消す")), label: await h.evaluate(`(document.querySelector("[data-co-submitted]")||{}).innerText||null`), toast: await h.evaluate(() => window.__toast),
+    R.afterSubmit = { resubmitBtn: await h.evaluate(btn("再提出")), cancelBtnGone: !(await h.evaluate(btn("提出を取り消す"))), label: await h.evaluate(`(document.querySelector("[data-co-submitted]")||{}).innerText||null`), toast: await h.evaluate(() => window.__toast),
       bannerBg: await h.evaluate(`getComputedStyle(document.querySelector("[data-co-deadline]")).backgroundColor`),
       bannerState: await h.evaluate(`document.querySelector("[data-co-deadline-state]").innerText.trim()`) };
-    await h.clickExact("提出を取り消す");
+    await h.page.waitForTimeout(20);
+    await h.clickExact("再提出");
     await h.page.waitForTimeout(300);
-    R.afterCancel = { submitBtn: await h.evaluate(btn("提出")) };
+    R.afterResubmit = { resubmitBtn: await h.evaluate(btn("再提出")), toast: await h.evaluate(() => window.__toast) };
     // 1本目以降には期間を開いたときの既存の写し書き込み（snapshot・laborTotals）が入りうるので、最後の2本を見る
     R.writes = await h.evaluate(() => window.__writes.slice(-2));
   }
@@ -170,9 +172,11 @@ async function partB() {
     A_deadlineRedBanner: !!(A.deadline && A.deadline.bg === "rgb(198, 40, 40)" && A.deadline.color === "rgb(255, 255, 255)"),
     A_bannerCalmAfterSubmit: !!(A.afterSubmit && A.afterSubmit.bannerBg !== "rgb(198, 40, 40)" && A.afterSubmit.bannerState === "提出済み"),
     A_submitWritesOneKey: !!(A.writes && A.writes[0] && Object.keys(A.writes[0]).join() === "p1/submission" && A.writes[0]["p1/submission"].at),
-    A_submittedLabel: !!(A.afterSubmit && A.afterSubmit.cancelBtn && /^提出済み \d+\/\d+ \d\d:\d\d$/.test(A.afterSubmit.label || "")),
-    A_cancelWritesNull: !!(A.writes && A.writes[1] && Object.keys(A.writes[1]).join() === "p1/submission" && A.writes[1]["p1/submission"] === null),
-    A_backToSubmit: !!(A.afterCancel && A.afterCancel.submitBtn),
+    A_submittedLabel: !!(A.afterSubmit && A.afterSubmit.resubmitBtn && A.afterSubmit.cancelBtnGone && /^提出済み \d+\/\d+ \d\d:\d\d$/.test(A.afterSubmit.label || "")),
+    A_resubmitReplaces: !!(A.writes && A.writes[1] && Object.keys(A.writes[1]).join() === "p1/submission"
+      && A.writes[1]["p1/submission"] && Object.keys(A.writes[1]["p1/submission"]).sort().join() === "at,byUid"
+      && A.writes[1]["p1/submission"].at > A.writes[0]["p1/submission"].at),
+    A_resubmitStays: !!(A.afterResubmit && A.afterResubmit.resubmitBtn && A.afterResubmit.toast === "✓ 企業にシフトを再提出しました"),
     A0_hiddenWithoutCompany: A0.hasSubmit === false && A0.deadline === null,
     B_options: !!(B.options && B.options.join("|") === "2026年10月後半|2026年10月前半"),
     B_defaultIsNewest: B.defaultSelected === "2026年10月後半",
