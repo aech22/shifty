@@ -403,7 +403,7 @@ function GridLegend({abbrToShop,shopName}){
 // staffList/settings を props 名のまま受けないのは、このタブだけが「選択中の期間が終了済みなら
 // その期間の写し(period.snapshot)を使う」＝他タブと違う値で動くため。以降の本文が参照する
 // staffList/settings は解決後の値で、写しの更新にだけ生の staffListProp/settingsProp を使う。
-function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:settingsProp,plan,shopId,shopName,onUpgrade,allLinkedShops=[],onLoadPastSubs,pastSubsLoaded=false,savePeriods,ownerReadOnly=false}){
+function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:settingsProp,plan,shopId,shopName,onUpgrade,allLinkedShops=[],onLoadPastSubs,pastSubsLoaded=false,savePeriods,ownerReadOnly=false,companyLink=null}){
   // 直近3ヶ月より古い期間があり、まだ過去分未読なら「過去参照」ボタンを出す（古い期間のシフトを見るため）
   const hasOlderPeriods=periods.some(p=>p&&p.startDate&&p.startDate<subsWindowCutoff());
   const firstPid=(periods[0]||{}).id||"";
@@ -905,12 +905,14 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 「保存」ボタン: localEditsに残っている全セルをまとめて確定書き込みする。
   // 個々のセルはonBlur/Enterで既に確定済みのはずだが、それでも保存漏れの不安を訴える声があったため、
   // 「明示的に押せば確実に保存される」導線として用意する（同じ値の再適用は冪等なので害はない）。
-  const handleSaveAll=()=>{
-    if(!isPremium)return;
+  // silent=true は提出ボタンから呼ぶ（保存と同じ処理を黙って済ませてから提出を記録する）。
+  // localEdits は blur 後も表示用に残るので「未保存があれば提出させない」とは判定できない。
+  const flushEdits=(silent)=>{
+    if(!isPremium)return 0;
     // フォーカス中セルがあれば先にblurさせ、その場のonBlurで確定させてから一括処理する
     if(document.activeElement&&document.activeElement.tagName==="INPUT")document.activeElement.blur();
     const entries=Object.entries(localEdits);
-    if(entries.length===0){tt("変更はありません");return;}
+    if(entries.length===0){if(!silent)tt("変更はありません");return 0;}
     onSave(prevSubs=>{
       const newSubs=[...prevSubs];
       entries.forEach(([key,rawValue])=>{
@@ -924,8 +926,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       return newSubs;
     });
     setHeatEdits(prev=>({...prev,...localEdits}));
-    tt(`✓ ${entries.length}件のシフトを保存しました`);
+    if(!silent)tt(`✓ ${entries.length}件のシフトを保存しました`);
+    return entries.length;
   };
+  const handleSaveAll=()=>{flushEdits(false);};
 
   // 集計/ヒートマップ用は heatEdits（blur確定値）を参照
   const getEffHHMM=(name,date,field,src=heatEdits)=>{const key=`${name}|${date}|${field}`;if(key in src){const{numeric}=extractNote(src[key]);return parseTime(numeric)||"";}return getStoredTime(name,date,field);};
@@ -2298,6 +2302,28 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     </button>
   ):null;
   const showLaborTable=isPremium&&Object.keys(laborByStaff).length>0;
+  // 企業への完成シフトの提出と提出期限（2026-09-27 企業連携の拡張）。企業に連携した店舗（companyLink）で、
+  // Premium のときだけ出す。提出の状態は期間レコードの submission={at,byUid} に持ち、savePeriods
+  // （差分 update）で書く。提出後の編集は自由・取り消し可・再提出で at を更新する。
+  const submission=period&&period.submission&&period.submission.at?period.submission:null;
+  const coDeadline=companyLink&&period?shopDeadlineFromLink(companyLink,period):null;
+  const coDeadlineOver=!!(coDeadline&&!submission&&todayStr>coDeadline);
+  const canSubmit=!!companyLink&&isPremium&&!!period&&!ownerReadOnly&&!!savePeriods;
+  const fmtMD=ds=>{const d=pd(ds);return isNaN(d)?ds:`${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;};
+  const fmtAt=iso=>{const d=new Date(iso);return isNaN(d)?"":`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
+  const submitShift=()=>{
+    if(!canSubmit)return;
+    flushEdits(true);
+    const by=(typeof firebaseAuth!=="undefined"&&firebaseAuth&&firebaseAuth.currentUser&&firebaseAuth.currentUser.uid)||"";
+    savePeriods(periods.map(p=>p.id===period.id?{...p,submission:{at:new Date().toISOString(),byUid:by}}:p));
+    tt("✓ 企業にシフトを提出しました");
+  };
+  const unsubmitShift=()=>{
+    if(!canSubmit||!submission)return;
+    if(!confirm("提出を取り消しますか？\n企業連携タブの一括ダウンロードの対象から外れます。"))return;
+    savePeriods(periods.map(p=>{if(p.id!==period.id)return p;const n={...p};delete n.submission;return n;}));
+    tt("✓ 提出を取り消しました");
+  };
 
   return(
     <div ref={outerRef} style={{padding:"12px 8px"}}>
@@ -2321,6 +2347,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           :<button onClick={()=>{if(!confirm("この期間を現在の設定内容で確定しますか？\n以後、スタッフの追加・削除や属性・退勤延長の変更はこの期間に反映されなくなります（シフトの編集は可能）。"))return;savePeriods(periods.map(p=>(p&&p.id===period.id)?{...p,snapshot:buildPeriodSnapshot(staffListProp,settingsProp),lockedAt:new Date().toISOString()}:p));tt("✓ この期間を確定しました");}}
               style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>この期間を確定</button>
         )}
+        {canSubmit&&coDeadline&&<span data-co-deadline="1" style={{fontSize:11,fontWeight:600,color:coDeadlineOver?"#FF4757":"var(--c-text3)",whiteSpace:"nowrap"}}>提出期限 {fmtMD(coDeadline)}</span>}
         {!showLaborTable&&pastSubsBtn}
         {/* 入力例の案内は 2026-09-23 のユーザー指示で削除（操作方法はタブ最下部のレジェンドにある）。
             span 自体は flex:1 の伸び代として残す＝これを外すと右側のボタン群が左へ寄る。 */}
@@ -2371,6 +2398,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         {isPremium&&<button onClick={handleSaveAll}
           style={{padding:"6px 14px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           保存
+        </button>}
+        {/* 提出（企業へ）。アクセントは保存に残し、提出は無彩色の枠線ボタンにする（アクセントは1つ） */}
+        {canSubmit&&submission&&<span data-co-submitted="1" style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>提出済み {fmtAt(submission.at)}</span>}
+        {canSubmit&&<button onClick={submission?unsubmitShift:submitShift}
+          style={{padding:"6px 14px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+          {submission?"提出を取り消す":"提出"}
         </button>}
         </div>}
       </div>
@@ -4967,6 +5000,129 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
   </AC>);
 }
 
+// ============================================================
+// シフトの提出状況と提出期限（2026-09-27 企業連携の拡張）
+// 対象店舗は companies/{id}/pub/shops（企業に連携した店舗）で、allLinkedShops ではない
+// （あちらは企業に入れていない自分の店舗も含む）。期間は店舗ごとにIDが違うので、開始日_終了日で
+// 対応づけ、「2026年10月前半」のような選択肢にする（企業内は同じ作成期間で運用する前提）。
+// 提出期限は企業が期間ごとに日付を直接入れる（全店舗共通＋店舗別の上書き）。
+// 読めなかった店舗は「読み込み失敗」と出し、提出済みにも未提出にも数えない（丸めない）。
+// ============================================================
+function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,renderDownload}){
+  const[state,setState]=useState(null); // {shopIds,names,periods:{sid:Period[]|null},deadlines}
+  const[loadErr,setLoadErr]=useState(false);
+  const[rangeKey,setRangeKey]=useState("");
+  const[dlAll,setDlAll]=useState("");
+  const[dlShops,setDlShops]=useState({});
+  const[dlDirty,setDlDirty]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const[reloadTick,setReloadTick]=useState(0);
+  useEffect(()=>{
+    if(!firebaseDB||!companyId){setState({shopIds:[],names:{},periods:{},deadlines:{}});return;}
+    let cancelled=false;
+    setLoadErr(false);
+    Promise.all([
+      firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value"),
+      firebaseDB.ref(`companies/${companyId}/pub/config/deadlines`).once("value"),
+    ]).then(async([shS,dlS])=>{
+      const shopIds=Object.keys(shS.val()||{});
+      const names={},periods={};
+      await Promise.all(shopIds.map(async sid=>{
+        const[nS,pS]=await Promise.all([
+          firebaseDB.ref(`global/shops/${sid}/name`).once("value").catch(()=>null),
+          firebaseDB.ref(`shops/${sid}/periods`).once("value").catch(()=>null),
+        ]);
+        names[sid]=(nS&&nS.val())||shopNames[sid]||sid;
+        // 配列はオブジェクトで返るので Object.values → id 持ちに絞る（CLAUDE.md の読み取り規則）
+        periods[sid]=pS?Object.values(pS.val()||{}).filter(x=>x&&x.id).sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate))):null;
+      }));
+      if(cancelled)return;
+      setState({shopIds,names,periods,deadlines:dlS.val()||{}});
+    }).catch(()=>{if(!cancelled)setLoadErr(true);});
+    return()=>{cancelled=true;};
+  },[companyId,reloadTick]);
+  const ranges=useMemo(()=>{
+    if(!state)return[];
+    const ok={};Object.keys(state.periods).forEach(sid=>{if(state.periods[sid])ok[sid]=state.periods[sid];});
+    return collectPeriodRanges(ok);
+  },[state]);
+  // 既定の期間: 今日を含む範囲、無ければ最新
+  useEffect(()=>{
+    if(!ranges.length){setRangeKey("");return;}
+    if(ranges.some(x=>x.key===rangeKey))return;
+    const t=fd(new Date());
+    const cur=ranges.find(x=>x.startDate<=t&&t<=x.endDate);
+    setRangeKey((cur||ranges[0]).key);
+  },[ranges]); // rangeKey は依存に入れない（ユーザーが選んだ期間を範囲の再計算のたびに戻さないため）
+  // 期間を切り替えたら、その期間の期限を入力欄へ読み込む（未保存の入力は捨てる）
+  useEffect(()=>{
+    const e=(state&&state.deadlines&&state.deadlines[rangeKey])||{};
+    setDlAll(e.all||"");setDlShops({...(e.shops||{})});setDlDirty(false);
+  },[rangeKey,state]);
+  if(loadErr)return(<AC title="シフトの提出状況"><div style={{fontSize:12,color:"#FF4757"}}>✕ 提出状況を読み込めませんでした。<button onClick={()=>setReloadTick(t=>t+1)} style={{...AGray,marginLeft:8,padding:"4px 10px",fontSize:12}}>再読み込み</button></div></AC>);
+  if(!state)return(<AC title="シフトの提出状況"><div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div></AC>);
+  const rows=state.shopIds.map(sid=>{
+    const ps=state.periods[sid];
+    if(ps===null)return{sid,name:state.names[sid],status:"failed"};
+    const p=findShopPeriodByRange(ps,rangeKey);
+    if(!p)return{sid,name:state.names[sid],status:"none"};
+    const sub=p.submission&&p.submission.at?p.submission:null;
+    const effDl=isValidDateStr(dlShops[sid])?dlShops[sid]:(isValidDateStr(dlAll)?dlAll:null);
+    return{sid,name:state.names[sid],period:p,status:sub?"submitted":"pending",submission:sub,deadline:effDl};
+  }).sort((a,b)=>String(a.name).localeCompare(String(b.name),"ja"));
+  const nSub=rows.filter(x=>x.status==="submitted").length;
+  const nPend=rows.filter(x=>x.status==="pending").length;
+  const today=fd(new Date());
+  const fmtMD=ds=>{const d=pd(ds);return isNaN(d)?ds:`${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;};
+  const fmtAt=iso=>{const d=new Date(iso);return isNaN(d)?"":`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
+  const saveDeadlines=async()=>{
+    if(!onSaveCompanyConfig||!rangeKey)return;
+    const shops={};Object.keys(dlShops).forEach(sid=>{if(isValidDateStr(dlShops[sid]))shops[sid]=dlShops[sid];});
+    const entry={};if(isValidDateStr(dlAll))entry.all=dlAll;if(Object.keys(shops).length)entry.shops=shops;
+    setBusy(true);
+    const r=await onSaveCompanyConfig({deadlines:{[rangeKey]:Object.keys(entry).length?entry:null}});
+    setBusy(false);
+    if(r&&r.error){tt("✕ "+r.error);return;}
+    tt("✓ 提出期限を保存しました");
+    setReloadTick(t=>t+1);
+  };
+  const TD={borderBottom:"1px solid var(--c-border)",padding:"8px 6px",fontSize:13,verticalAlign:"middle"};
+  const dateIn=(v,onCh)=>(<input type="date" value={v||""} onChange={e=>{onCh(e.target.value);setDlDirty(true);}} style={{...AI,width:"auto",padding:"4px 6px"}}/>);
+  const cur=ranges.find(x=>x.key===rangeKey);
+  return(<AC title="シフトの提出状況">
+    {ranges.length===0?<div style={{fontSize:12,color:"var(--c-text4)"}}>連携店舗に期間がありません。</div>:(<>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
+        <select value={rangeKey} onChange={e=>setRangeKey(e.target.value)} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+          {ranges.map(x=><option key={x.key} value={x.key}>{x.label}</option>)}
+        </select>
+        <button onClick={()=>setReloadTick(t=>t+1)} style={{...AGray,padding:"6px 12px",fontSize:12}}>更新</button>
+      </div>
+      <div data-co-summary="1" style={{fontSize:13,color:"var(--c-text)",marginBottom:10}}>提出済み {nSub} ／ 未提出 {nPend}</div>
+      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
+        <span style={{fontSize:12,color:"var(--c-text3)"}}>提出期限（全店舗共通）</span>
+        {dateIn(dlAll,setDlAll)}
+      </div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{borderCollapse:"collapse",width:"100%",minWidth:460}}>
+          <thead><tr>{["店舗","期間","提出期限（店舗別）","状況"].map(h=><th key={h} style={{...TD,fontSize:11,color:"var(--c-text3)",textAlign:"left",fontWeight:700}}>{h}</th>)}</tr></thead>
+          <tbody>{rows.map(x=>(
+            <tr key={x.sid} data-co-row={x.sid}>
+              <td style={{...TD,fontWeight:600}}>{x.name}</td>
+              <td style={{...TD,color:"var(--c-text2)"}}>{x.status==="failed"?"—":x.status==="none"?"該当期間なし":(x.period.label||cur&&cur.label)}</td>
+              <td style={TD}>{x.status==="failed"||x.status==="none"?"—":<>{dateIn(dlShops[x.sid],v=>setDlShops(m=>{const n={...m};if(v)n[x.sid]=v;else delete n[x.sid];return n;}))}{!dlShops[x.sid]&&x.deadline&&<span style={{fontSize:11,color:"var(--c-text4)",marginLeft:6}}>共通 {fmtMD(x.deadline)}</span>}</>}</td>
+              <td data-co-status={x.status} style={{...TD,whiteSpace:"nowrap",color:x.status==="pending"&&x.deadline&&today>x.deadline?"#FF4757":"var(--c-text)"}}>
+                {x.status==="submitted"?`提出済み ${fmtAt(x.submission.at)}`:x.status==="pending"?"未提出":x.status==="none"?"—":"読み込み失敗"}
+              </td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+      <button disabled={busy||!dlDirty} onClick={saveDeadlines} style={{...AB,width:"100%",marginTop:12,opacity:busy||!dlDirty?0.5:1}}>{busy?"保存中...":"提出期限を保存"}</button>
+      {renderDownload&&renderDownload({rangeKey,range:cur,rows})}
+    </>)}
+  </AC>);
+}
+
 function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompanyConfig,
                      shops=[],allLinkedShops=[],onSwitchToShop,onUnlinkShop,
                      companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
@@ -5205,6 +5361,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
       )}
     </AC>
     {companyInfo&&plan==="premium"&&<CompanyConfigCard companyId={companyInfo.companyId} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}/>}
+    {companyInfo&&plan==="premium"&&<CompanySubmissionsCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}/>}
     {listShops.length>0&&<AC title="連携店舗">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
         {companyInfo?"この企業アカウントに紐付いている店舗の一覧です。管理コードで追加・不要な店舗は連携解除できます（追加する店舗の設定タブに表示されている「管理コード」が必要です）。":"このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。"}
