@@ -2270,6 +2270,25 @@ test("renameStaffInPeriods: keepAttrs と写しの両方を1回で移す", () =>
   assert.strictEqual(r.periods[0].snapshot.settings.staffAttributes.T, "employee");
 });
 
+test("renameStaffInPeriods: 凍結した労務の合計（laborTotals）のキーも移す", () => {
+  // 移さないと終わった期間の年度累計・有給の消化・月の残業予定が旧名に取り残され、
+  // 改名後は「読めていない期間」扱いになる（有給残が多く出る／36協定の年判定が月を見落とす・#148）。
+  const periods = [
+    { id: "p1", startDate: "2026-04-01", endDate: "2026-04-30", laborTotals: { 田中: { workMin: 10000, paid: 1, monthOtH: 50 }, 佐藤: { workMin: 1 } } },
+    { id: "p2", startDate: "2026-05-01", endDate: "2026-05-31", laborTotals: { 佐藤: { workMin: 2 } } },
+  ];
+  const r = u.renameStaffInPeriods(periods, "田中", "田中太郎");
+  assert.strictEqual(r.changed, true);
+  assert.deepStrictEqual(r.periods[0].laborTotals, { 田中太郎: { workMin: 10000, paid: 1, monthOtH: 50 }, 佐藤: { workMin: 1 } });
+  assert.strictEqual(r.periods[1], periods[1], "その人の合計を持たない期間は同じ参照のまま");
+  const ys = u.yearLaborSummary(r.periods, "田中太郎", 2026, 4, () => null);
+  assert.strictEqual(ys.workMin, 10000);
+  assert.strictEqual(ys.paid, 1);
+  const yo = u.yearOvertimeMonths(r.periods, "田中太郎", 2026, 4, () => null);
+  assert.deepStrictEqual(yo.missingMonths, ["2026-05"], "4月は凍結値から読める（5月は田中の合計を持たない）");
+  assert.strictEqual(yo.list[0].h, 50);
+});
+
 test("renameStaffInPeriods: keepAttrs に居ない人の改名では何も起きない", () => {
   const periods = [{ id: "p1", keepAttrs: { 佐藤: "summer" } }];
   const r = u.renameStaffInPeriods(periods, "田中", "T");

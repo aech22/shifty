@@ -1938,6 +1938,13 @@ function renameStaffInPeriods(periods,oldName,newName){
       changed=true;
       np={...np,keepAttrs:_renameMapKey(ka,oldName,newName)};
     }
+    // 凍結時点の労務の合計も名前がキー。移さないと、終わった期間の年度累計・有給の消化・
+    // 月の残業予定が「読めていない期間」に落ち、有給残が多く出て36協定の年判定が月を見落とす。
+    const lt=np&&np.laborTotals;
+    if(lt&&typeof lt==="object"&&lt[oldName]!==undefined){
+      changed=true;
+      np={...np,laborTotals:_renameMapKey(lt,oldName,newName)};
+    }
     const snap=np&&np.snapshot;
     if(!snap)return np;
     const rawSl=snap.staffList;
