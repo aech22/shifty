@@ -1031,7 +1031,8 @@ function App(){
     const linked=objs.map(s=>s&&s.val()).filter(s=>s&&s.id);
     setAllLinkedShops(linked);
     if(linked.length>0){
-      const t=linked[0];
+      // 企業連携タブからログインしたときは、いま開いている店舗が企業に連携していればそのまま残る
+      const t=linked.find(x=>x.id===currentShopIdRef.current)||linked[0];
       setShops([t]); ls("shift_shops_v6",[t]);
       currentShopIdRef.current=t.id; setCurrentShopId(t.id);
       startSubscriptions(t.id,[t]); setUnbound(false);
@@ -1747,7 +1748,7 @@ function App(){
               onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkEmail={signInAndLinkEmail}
               onLinkExistingShop={linkExistingShopToAuth} onUnlinkShop={unlinkShopFromAuth}
               companyInfo={companyInfo} onCreateCompany={createCompany} onChangeCompanyPassword={changeCompanyPassword}
-              onRenameCompany={renameCompany} onSaveCompanyConfig={saveCompanyConfig} onLinkStoreToCompany={linkStoreToCompany} onUnlinkStoreFromCompany={unlinkShopFromAuth}/>
+              onRenameCompany={renameCompany} onSaveCompanyConfig={saveCompanyConfig} onCompanyLogin={companyLoginAndEnter} onLinkStoreToCompany={linkStoreToCompany} onUnlinkStoreFromCompany={unlinkShopFromAuth}/>
       }
     </div>
   );

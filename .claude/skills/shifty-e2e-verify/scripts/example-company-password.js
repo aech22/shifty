@@ -23,6 +23,7 @@ const base = () => ({
 const setVal = (ph, v) => `(()=>{const i=document.querySelector('input[placeholder=${JSON.stringify(ph)}]');if(!i)return "no-input";const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value").set;set.call(i,${JSON.stringify(v)});i.dispatchEvent(new Event("input",{bubbles:true}));return "ok";})()`;
 const typeOf = ph => `(document.querySelector('input[placeholder=${JSON.stringify(ph)}]')||{}).type||null`;
 const toggleShow = `(()=>{const l=[...document.querySelectorAll("label")].find(x=>x.innerText.trim()==="パスワードを表示");if(!l)return false;l.querySelector("input").click();return true;})()`;
+const toggleShowIn = ph => `(()=>{const i=document.querySelector('input[placeholder=${JSON.stringify(ph)}]');const l=i&&[...i.parentElement.querySelectorAll("label")].find(x=>x.innerText.trim()==="パスワードを表示");if(!l)return false;l.querySelector("input").click();return true;})()`;
 const cfCalls = name => `window.__cf.filter(c=>c.name===${JSON.stringify(name)}).map(c=>c.payload)`;
 
 async function create() {
@@ -32,12 +33,13 @@ async function create() {
   try {
     await h.page.waitForFunction(() => document.body.innerText.includes("企業アカウントを作成する"), { timeout: 15000 });
     R.confirmField = await h.evaluate(`!!document.querySelector('input[placeholder="パスワード（確認）"]')`);
-    R.typeBefore = await h.evaluate(typeOf("パスワード"));
-    R.toggled = await h.evaluate(toggleShow);
+    // 同じ画面に「企業アカウントでログイン」のカードもあるので、作成フォームの欄と表示切替に絞る
+    R.typeBefore = await h.evaluate(typeOf("パスワード（6文字以上）"));
+    R.toggled = await h.evaluate(toggleShowIn("パスワード（確認）"));
     await h.page.waitForTimeout(150);
-    R.typeAfter = await h.evaluate(typeOf("パスワード"));
+    R.typeAfter = await h.evaluate(typeOf("パスワード（6文字以上）"));
     await h.evaluate(setVal("例）〇〇フーズ", "テスト企業"));
-    await h.evaluate(setVal("パスワード", "abc123"));
+    await h.evaluate(setVal("パスワード（6文字以上）", "abc123"));
     await h.evaluate(setVal("パスワード（確認）", "abc124"));
     await h.clickByText("企業アカウントを作成する");
     await h.page.waitForTimeout(300);
@@ -77,7 +79,7 @@ async function change(cfHandlers) {
     await h.evaluate(setVal("新しいパスワード（確認）", "oldpw1"));
     await press(); R.same = await toast();
     R.cfBefore = await h.evaluate(cfCalls("changeCompanyPassword"));
-    R.toggled = await h.evaluate(toggleShow);
+    R.toggled = await h.evaluate(toggleShowIn("新しいパスワード（確認）"));
     await h.page.waitForTimeout(150);
     R.typesShown = await h.evaluate(() => ["現在のパスワード", "新しいパスワード", "新しいパスワード（確認）"].map(p => (document.querySelector(`input[placeholder="${p}"]`) || {}).type));
     await h.evaluate(setVal("新しいパスワード", "newpw1"));

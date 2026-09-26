@@ -25,7 +25,7 @@
  * @param {string} o.uid         サインイン済みとして扱うuid（"company_XXX" なら企業ログインセッション）
  * @param {string} [o.view]      起動時の画面（既定 "admin"）
  * @param {string} [o.tab]       起動時の管理者タブ（既定 "periods"）
- * @param {object} [o.cfHandlers] Callable名 → "ok" | "reject:メッセージ" | "unlink" | "link" | "companyConfig"（本物のCFと同じ後始末）
+ * @param {object} [o.cfHandlers] Callable名 → "ok" | "reject:メッセージ" | "unlink" | "link" | "companyConfig" | "companyLogin:<companyId>"（本物のCFと同じ後始末）
  * @param {boolean}[o.confirm]   window.confirm の戻り値（既定 true）
  */
 function makeStub(o) {
@@ -180,6 +180,11 @@ function makeStub(o) {
       var h=CF[name]||"ok";
       if(h.indexOf("reject:")===0) return Promise.reject(new Error(h.slice("reject:".length)));
       if(h==="unlink") runUnlink(payload||{});
+      if(h.indexOf("companyLogin:")===0){
+        // 本物の companyLogin（functions/index.js）の成功応答の形: {token, companyId, name}
+        var lcid=h.slice("companyLogin:".length);
+        return Promise.resolve({data:{token:"stub-token",companyId:lcid,name:getPath("companies/"+lcid+"/pub/name")||""}});
+      }
       if(h==="companyConfig"){
         // 本物の saveCompanyConfig（functions/index.js）と同じ後始末: 正本を保存し、連携全店舗の
         // shops/{sid}/company を作り直す。検証（sanitize）はしない＝CF側の検証は tests/core.test.js が見る。

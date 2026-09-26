@@ -6,7 +6,7 @@
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,shopTemplates,saveShopTemplates,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,shopTemplates,saveShopTemplates,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   // 所属店舗の選択肢。企業の写しが持つ連携店舗の一覧を優先し、この端末が知っている店舗（allLinkedShops）で補う。
   // 企業の作成者でも企業ログインでもない端末（Cookie・管理コードで追加した端末）は allLinkedShops を持たないため。
@@ -228,7 +228,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} shopTemplates={shopTemplates} saveShopTemplates={saveShopTemplates} tt={tt} plan={plan} periods={periods}/>}
         {tab==="submissions"&&<SubsTab key={currentShopId} subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
         {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
-        {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany} plan={plan} onSaveCompanyConfig={onSaveCompanyConfig}/>}
+        {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany} plan={plan} onSaveCompanyConfig={onSaveCompanyConfig} onCompanyLogin={onCompanyLogin}/>}
         {tab==="mypage"&&!hideMypage&&<MyPageTab plan={plan} planExpiry={planExpiry} billingSchedule={billingSchedule} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
         {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} adminCode={adminCode} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
       </div>
@@ -5222,9 +5222,46 @@ function CompanyBulkPdf({range,rows,companyName,tt}){
   </div>);
 }
 
+// ============================================================
+// 企業アカウントでログイン（2026-09-27 ユーザー指示）
+// 企業コード（ID）とパスワードだけでログインできる。メール/Google のアカウントが要るのは企業アカウントの
+// 作成時だけで、作成後はこの2つを共有すれば誰でも企業の連携店舗を管理できる。
+// ログイン画面（未連携の端末）と同じ companyLoginAndEnter（app-main.js）を呼ぶ。
+// ============================================================
+function CompanyLoginCard({onCompanyLogin,tt}){
+  const[code,setCode]=useState("");
+  const[pw,setPw]=useState("");
+  const[show,setShow]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const submit=async()=>{
+    if(busy||!onCompanyLogin)return;
+    setErr("");
+    if(!code.trim()||!pw){setErr("企業コードとパスワードを入力してください");return;}
+    setBusy(true);
+    const r=await onCompanyLogin(code.trim(),pw);
+    setBusy(false);
+    if(r&&r.error){setErr(r.error);return;}
+    setCode("");setPw("");setShow(false);
+    tt("✓ 企業アカウントでログインしました");
+  };
+  return(<AC title="企業アカウントでログイン">
+    <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>作成済みの企業アカウントには、企業コードとパスワードだけでログインできます（メールアドレスは不要）。</div>
+    <AL>企業コード</AL>
+    <input value={code} onChange={e=>setCode(e.target.value)} maxLength={16} placeholder="企業コード" autoComplete="username" style={{...AI,marginBottom:10,letterSpacing:"0.05em"}}/>
+    <AL>パスワード</AL>
+    <input type={show?"text":"password"} value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")submit();}} maxLength={128} placeholder="パスワード" autoComplete="current-password" style={{...AI,marginBottom:8}}/>
+    <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"var(--c-text3)",marginBottom:10,cursor:"pointer",width:"fit-content"}}>
+      <input type="checkbox" checked={show} onChange={e=>setShow(e.target.checked)} style={{width:18,height:18,cursor:"pointer"}}/>パスワードを表示
+    </label>
+    {err&&<div data-co-login-err="1" style={{color:"#FF4757",fontSize:12,marginBottom:8}}>{err}</div>}
+    <button disabled={busy} onClick={submit} style={{...AB,width:"100%",opacity:busy?0.6:1}}>{busy?"ログイン中...":"企業アカウントでログイン"}</button>
+  </AC>);
+}
+
 function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompanyConfig,
                      shops=[],allLinkedShops=[],onSwitchToShop,onUnlinkShop,
-                     companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
+                     companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin}){
   // 企業アカウントUI（SetTabから移動）
   const[coName,setCoName]=useState("");
   const[coPw,setCoPw]=useState("");
@@ -5388,10 +5425,11 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
 
   return(<div>
     <AT>企業連携</AT>
+    {!companyInfo&&onCompanyLogin&&<CompanyLoginCard onCompanyLogin={onCompanyLogin} tt={tt}/>}
     {!authUser?(
-      <AC title="企業連携を利用するには">
+      <AC title="企業アカウントを作成するには">
         <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.7}}>
-          企業連携を利用するには、まず「設定」タブの<b>アカウント連携</b>からGoogleまたはメールアドレスでアカウントを登録してください。
+          企業アカウントを<b>新しく作成する</b>ときだけ、「設定」タブの<b>アカウント連携</b>からGoogleまたはメールアドレスでアカウントを登録してください。作成済みの企業には、上の企業コードとパスワードでログインできます。
         </div>
       </AC>
     ):(<>
@@ -5447,7 +5485,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
         </div>
       ):(
         authUser.isAnonymous?(
-          <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6}}>企業アカウントの作成にはメールまたはGoogleでのログインが必要です。「設定」タブのアカウント連携から登録してください。</div>
+          <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6}}>企業アカウントの作成にはメールまたはGoogleでのログインが必要です。「設定」タブのアカウント連携から登録してください。作成済みの企業には、上の企業コードとパスワードでログインできます。</div>
         ):(
           <div>
             <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
@@ -5456,7 +5494,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
             <AL>企業名</AL>
             <input value={coName} onChange={e=>setCoName(e.target.value)} maxLength={100} placeholder="例）〇〇フーズ" style={{...AI,marginBottom:10}}/>
             <AL>ログイン用パスワード（6文字以上）</AL>
-            <input type={pwType} value={coPw} onChange={e=>setCoPw(e.target.value)} maxLength={128} placeholder="パスワード" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
+            <input type={pwType} value={coPw} onChange={e=>setCoPw(e.target.value)} maxLength={128} placeholder="パスワード（6文字以上）" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
             <input type={pwType} value={coPw2} onChange={e=>setCoPw2(e.target.value)} maxLength={128} placeholder="パスワード（確認）" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
             {showPwBox}
             {coErr&&<div style={{color:"#FF4757",fontSize:12,marginBottom:8}}>{coErr}</div>}
