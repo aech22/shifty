@@ -43,7 +43,7 @@ async function partA() {
   const h = await openHarness({
     root: ROOT, extraHead: THEME, waitFor: "#root > *",
     jsx: `
-      const CS={laborSettings:{fixedOvertimeMin:1200},staffTypeLimits:{parttime:{weekly:30}}};
+      const CS={laborSettings:{fixedOvertimeMin:1200},staffTypeLimits:{parttime:{weekly:30},co_AbCd1234:{name:"特定技能1",laborSystem:"A",monthly:210}}};
       const RAW={shopId:"S1",candidates:[],staffAttributes:{},laborSettings:{fixedOvertimeMin:1800,marginMin:420},staffTypeLimits:{parttime:{weekly:28,daily:8}}};
       window.__saved=null;
       function Harness(){
@@ -58,6 +58,17 @@ async function partA() {
   R.fixedOvertime = await h.evaluate(rowFixedText("労務判定", "固定残業"));
   R.marginIsInput = await h.evaluate(`(()=>{const sp=[...document.querySelectorAll("span")].find(s=>s.innerText.trim()==="余裕");return !!(sp&&sp.parentElement.querySelector("input[type=number]"));})()`);
   R.limitsFixedCount = await h.evaluate(`[...document.querySelectorAll("[data-company-fixed]")].length`);
+  // 企業の属性（co_）の行は入力欄・セレクトを1つも出さない。組み込みの属性は企業が決めていない項目を入力できる
+  R.coBlock = await h.evaluate(() => {
+    const blk = [...document.querySelectorAll("div")].filter(d => (d.innerText || "").trim().startsWith("特定技能1") && d.querySelector("[data-company-fixed]")).pop();
+    const card = blk && blk.closest("div[style*='margin-bottom: 8px']");
+    const root = card || blk;
+    return root ? { inputs: root.querySelectorAll("input").length, selects: root.querySelectorAll("select").length, fixed: root.querySelectorAll("[data-company-fixed]").length, deleteBtn: [...root.querySelectorAll("button")].some(b => b.innerText.trim() === "削除") } : null;
+  });
+  R.parttimeInputs = await h.evaluate(() => {
+    const blk = [...document.querySelectorAll("div[style*='margin-bottom: 8px']")].find(d => (d.innerText || "").trim().startsWith("パート・アルバイト"));
+    return blk ? blk.querySelectorAll("input[type=number]").length : null;
+  });
   R.note = await h.evaluate(`document.body.innerText.includes("企業アカウント（テスト企業）が決めているため")`);
   R.setMargin = await h.evaluate(setNumberByLabel("労務判定", "余裕", 5));
   await h.page.waitForTimeout(300);
@@ -88,6 +99,7 @@ async function partB() {
   try {
     await h.page.waitForFunction(() => document.body.innerText.includes("企業の共通設定を保存"), { timeout: 15000 });
     R.cardShown = true;
+    R.configRows = await h.evaluate(() => [...document.querySelectorAll("[data-co-attr]")].map(e => e.getAttribute("data-co-attr")));
     R.setFixed = await h.evaluate(setNumberByLabel("企業の共通設定", "固定残業", 20));
     await h.page.waitForTimeout(200);
     R.clickSave = await h.clickByText("企業の共通設定を保存");
@@ -116,6 +128,9 @@ async function partB() {
     A_fixedShown: A.fixedOvertime === "20 企業設定",
     A_marginStillInput: A.marginIsInput === true,
     A_limitFixed: A.limitsFixedCount >= 2,
+    A_coAttrAllFixed: !!(A.coBlock && A.coBlock.inputs === 0 && A.coBlock.selects === 0 && A.coBlock.fixed >= 10 && !A.coBlock.deleteBtn),
+    A_builtinStillEditable: A.parttimeInputs >= 8,
+    B_noOtherRow: !!(B.configRows && !B.configRows.includes("other") && B.configRows.includes("dispatch")),
     A_note: A.note === true,
     A_saveExcludesCompanyKeys: !!(A.saved && A.saved.laborSettings && !("fixedOvertimeMin" in A.saved.laborSettings)
       && A.saved.laborSettings.marginMin === 300 && !("weekly" in ((A.saved.staffTypeLimits || {}).parttime || {}))),

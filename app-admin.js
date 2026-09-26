@@ -4929,7 +4929,8 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
     onChange={e=>{const t=e.target.value;if(t===""){onCh(null);return;}onCh(Math.max(0,Math.min(max,parseInt(t)||0)));}}
     style={{...AI,width:w,textAlign:"center",padding:"5px 6px"}}/>);
   const coAttrIds=Object.keys(stl).filter(isCompanyAttrId);
-  const attrRows=[...BUILTIN_TYPES.map(id=>[id,STAFF_TYPE_LABELS[id]]),...coAttrIds.map(id=>[id,null])];
+  // 「その他」は企業の属性設定に出さない（2026-09-27 ユーザー指示）。店舗側の「その他」は従来どおり
+  const attrRows=[...BUILTIN_TYPES.filter(id=>id!=="other").map(id=>[id,STAFF_TYPE_LABELS[id]]),...coAttrIds.map(id=>[id,null])];
   const addAttr=()=>upd({...draft,staffTypeLimits:{...stl,[genCompanyAttrId()]:{name:""}}});
   const delAttr=id=>{
     if(!window.confirm("この属性を削除しますか？\n各店舗でこの属性にしていたスタッフは「属性未設定」の扱いになります。"))return;
@@ -5527,7 +5528,9 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
   const coSettings=companyLink?(companyLink.settings||{}):null;
   const coKeys=companyControlledKeys(coSettings);
   const coLabor=k=>coKeys.labor.has(k);
-  const coLim=(type,k)=>!!(coKeys.limits[type]&&coKeys.limits[type].has(k));
+  // 企業が作った属性（co_）は全項目が企業のもの＝店舗では1つも変えられない（空欄の項目も入力欄を出さず「—」）。
+  // 入力欄を出すと、編集しても保存時に剥がされて黙って元に戻る（2026-09-27 ユーザー報告）。
+  const coLim=(type,k)=>isCompanyAttrId(type)||!!(coKeys.limits[type]&&coKeys.limits[type].has(k));
   const onSaveOwn=v=>onSave(coSettings?stripCompanySettings(v,coSettings):v);
   const coTag=<span style={{fontSize:10,color:"var(--c-text3)",whiteSpace:"nowrap"}}>企業設定</span>;
   const coVal=(text,minW=52)=>(<span data-company-fixed="1" style={{display:"inline-flex",alignItems:"baseline",gap:4}}><span style={{fontSize:13,color:"var(--c-text)",minWidth:minW,textAlign:"center"}}>{text}</span>{coTag}</span>);
@@ -5675,7 +5678,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
               <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>労働時間制</span>
               {coLim(type,"laborSystem")
-                ?coVal(LABOR_SYSTEM_LABELS[lim.laborSystem]||lim.laborSystem,0)
+                ?coVal(LABOR_SYSTEM_LABELS[lim.laborSystem]||lim.laborSystem||"—",0)
                 :<select value={LABOR_SYSTEMS.indexOf(lim.laborSystem)>=0?lim.laborSystem:(DEFAULT_LABOR_SYSTEM_BY_ATTR[type]||"")}
                 onChange={e=>saveLim(type,"laborSystem",e.target.value)}
                 style={{...AI,width:"auto",flex:"1 1 220px",minWidth:180,padding:"5px 8px",cursor:"pointer"}}>
@@ -5691,7 +5694,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                 {STAFF_LIMIT_WINDOWS.map(w=>{const k=isMin?w.minKey:w.key;return(
                   <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
                     <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{w.label}</span>
-                    {coLim(type,k)?coVal(lim[k]):<input type="number" min={0} max={w.max} value={lim[k]||""} placeholder="0"
+                    {coLim(type,k)?coVal(lim[k]||"—"):<input type="number" min={0} max={w.max} value={lim[k]||""} placeholder="0"
                       onChange={e=>{const v=Math.max(0,Math.min(w.max,parseInt(e.target.value)||0));saveLim(type,k,v);}}
                       style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
                     <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
@@ -5701,11 +5704,11 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                   <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>任意</span>
                   {isMin
                     ?<span style={{fontSize:11,color:"var(--c-text4)",minWidth:52,textAlign:"center"}}>{lim.customDays||"—"}日で</span>
-                    :coLim(type,"customDays")?coVal(lim.customDays):<input type="number" min={0} max={365} value={lim.customDays||""} placeholder="日数"
+                    :coLim(type,"customDays")?coVal(lim.customDays||"—"):<input type="number" min={0} max={365} value={lim.customDays||""} placeholder="日数"
                       onChange={e=>{const v=Math.max(0,Math.min(365,parseInt(e.target.value)||0));saveLim(type,"customDays",v);}}
                       style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
                   {!isMin&&<span style={{fontSize:11,color:"var(--c-text4)"}}>日で</span>}
-                  {coLim(type,isMin?"customHoursMin":"customHours")?coVal(isMin?lim.customHoursMin:lim.customHours):<input type="number" min={0} max={744} value={(isMin?lim.customHoursMin:lim.customHours)||""} placeholder="時間"
+                  {coLim(type,isMin?"customHoursMin":"customHours")?coVal((isMin?lim.customHoursMin:lim.customHours)||"—"):<input type="number" min={0} max={744} value={(isMin?lim.customHoursMin:lim.customHours)||""} placeholder="時間"
                     onChange={e=>{const v=Math.max(0,Math.min(744,parseInt(e.target.value)||0));saveLim(type,isMin?"customHoursMin":"customHours",v);}}
                     style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
                   <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
