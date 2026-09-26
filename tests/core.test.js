@@ -3495,6 +3495,44 @@ test("S-3 休憩不足: 退勤延長が付いた日でも 拘束 − 実働 が�
   assert.ok(u.shiftBindingMin(sh2, st, "田中") - netOf(st, sh2) >= 0);
 });
 
+test("労務判定: 日に帰属する項目すべてに該当日を出す（月は出さず日だけ）", () => {
+  const D = ["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-05"];
+  // A制: 1日=13h(12h超) / 2日=2h(4h未満) / 3日=8h / 4日=休み / 5日=9h・残業予定4h(上限3h超)
+  assert.deepStrictEqual(u.laborFindingLabels({
+    laborSystem: "A", dayDates: D, dayMins: [HM(13, 0), HM(2, 0), HM(8, 0), 0, HM(9, 0)],
+    dayOtH: [0, 0, 0, 0, 4], agreementDailyOtH: 3,
+    breakShortDates: ["2026-10-03", "2026-10-05"], timeErrorDates: ["2026-10-02"],
+  }), ["12h超1日（1）", "4h未満1日（2）", "1日の残業予定が上限超1日（5）",
+    "休憩不足2日（3・5）", "時刻の入力ミス1日（2）"]);
+  // B制: 8h超は日で、週40h超は**該当週**（月曜〜日曜の日）で出す
+  const W = [[HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), 0], [HM(8, 0), HM(8, 0), 0, 0, 0, 0, 0]];
+  assert.deepStrictEqual(u.laborFindingLabels({
+    laborSystem: "B", dayDates: D, dayMins: [HM(9, 0), HM(8, 0), 0, 0, 0],
+    weekDayMins: W, weekDates: ["2026-10-05", "2026-10-12"], agreementDailyOtH: 2,
+  }), ["8h超1日(残業)（1）", "週40h超(残業)（5〜11）"]);
+  // 協定なしの側も同じ該当週を出す（同じ週を2つの文言で説明するので食い違わせない）
+  assert.deepStrictEqual(u.laborFindingLabels({
+    laborSystem: "B", weekDayMins: W, weekDates: ["2026-10-05", "2026-10-12"],
+  }), ["週40h超(残業)（5〜11）", "週40h超(協定なし)（5〜11）"]);
+  // 日付を渡さない従来の呼び出しは表示が変わらない（後方互換）
+  assert.deepStrictEqual(u.laborFindingLabels({
+    laborSystem: "A", dayMins: [HM(13, 0)], breakShortCount: 2, timeErrorCount: 1,
+  }), ["12h超1日", "休憩不足2日", "時刻の入力ミス1日"]);
+  // 日付を渡したときは件数もそこから数える（同じ問いへの答えを2つ持たない）
+  assert.deepStrictEqual(u.laborFindingLabels({
+    laborSystem: "A", breakShortCount: 9, breakShortDates: ["2026-09-17"],
+  }), ["休憩不足1日（17）"]);
+  // 多い日は上限まで並べて残りを件数で示す（休憩を1件も設定していない店舗では全出勤日が該当する）
+  const many = Array.from({ length: u.LABOR_FINDING_DATES_MAX + 3 },
+    (_, i) => `2026-10-${String(i + 1).padStart(2, "0")}`);
+  const lbl = u.laborFindingLabels({ laborSystem: "A", breakShortDates: many })[0];
+  assert.ok(lbl.startsWith(`休憩不足${many.length}日（1・2・`), lbl);
+  assert.ok(lbl.endsWith(" ほか3日）"), lbl);
+  assert.strictEqual((lbl.match(/・/g) || []).length, u.LABOR_FINDING_DATES_MAX - 1, "並べる日付は上限まで");
+  // 判定対象外は日付を渡しても休憩不足そのものを出さない（区分の規則が先）
+  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "none", breakShortDates: ["2026-09-17"] }), []);
+});
+
 test("項目8 日別の休憩上書き(adjustedBreak): 方式によらず最優先で効く", () => {
   const sh = m => ({ status: "work", start: "09:00", end: "18:00", adjustedBreak: m });
   assert.strictEqual(netOf(BT([{ start: "12:00", end: "13:00" }]), sh(30)), HM(8, 30), "時間帯方式の60分より優先");
@@ -3847,7 +3885,8 @@ test("laborDayFindingsFor: 日ごとの該当数が laborFindingsFor の件数�
   const countOf = (labels, re) => {
     const hit = labels.find(l => re.test(l));
     if (!hit) return 0;
-    const m = hit.match(/(\d+)日$/);
+    // 該当日を出す形（`…2日（3・5）`）でも件数が読めるように、「n日」の直後で切る
+    const m = hit.match(/(\d+)日(?:\(残業\))?(?:（|$)/);
     return m ? Number(m[1]) : 1;
   };
   for (const c of cases) {

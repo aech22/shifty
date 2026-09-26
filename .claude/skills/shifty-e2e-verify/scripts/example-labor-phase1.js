@@ -167,9 +167,11 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
     // 鈴木 10/1 の出勤・退勤の2セルだけが入力ミス色になる（他の人・他の日には付かない）
     time_err_cell_color: se.timeErrCells.length === 2 && se.timeErrCells.join(",") === "22,2",
     // 日次判定パネル（S-4）
-    labor_panel_a: !!se.laborPanel && /田中：12h超1日、4h未満1日、休憩不足1日/.test(se.laborPanel),
-    labor_panel_b: !!se.laborPanel && /鈴木：時刻の入力ミス1日/.test(se.laborPanel),
-    labor_panel_badsystem: !!se.laborPanel && /佐藤：休憩不足1日、区分が空欄か誤り/.test(se.laborPanel),
+    // 日に帰属する判定はすべて該当日を（）付きで出す（2026-09-26 ユーザー指示）。**日だけで月は出さない**
+    // ——日次の判定は選択中の期間で絞られている。セル色を付けない判定は日付が無いと画面から辿れない
+    labor_panel_a: !!se.laborPanel && /田中：12h超1日（1）、4h未満1日（2）、休憩不足1日（1）/.test(se.laborPanel),
+    labor_panel_b: !!se.laborPanel && /鈴木：時刻の入力ミス1日（1）/.test(se.laborPanel),
+    labor_panel_badsystem: !!se.laborPanel && /佐藤：休憩不足1日（1）、区分が空欄か誤り/.test(se.laborPanel),
     // 項目1: 対象外（派遣）は労務判定に出ない
     labor_panel_excludes_none: !!se.laborPanel && !/平/.test(se.laborPanel),
     no_console_errors: se.errors.length === 0,
