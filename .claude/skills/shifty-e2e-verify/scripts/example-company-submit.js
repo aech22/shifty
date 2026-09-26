@@ -2,7 +2,7 @@
 // Firebase へは1バイトも出ない。
 //
 // A. シフト作成タブ単体:
-//   - 企業に連携した店舗（companyLink あり）では「提出」ボタンと、ボタン行の下に「提出期限 9/25(金) 日付指定」が出る。
+//   - 企業に連携した店舗（companyLink あり）では「提出」ボタンと、ボタン行の下に「提出期限 9/25(金)」が出る（出どころの文言は出さない）。
 //     未提出の間は赤地（#C62828）に白文字の帯、提出済みになったら赤地をやめる
 //   - 日付指定が無い期間は毎月の固定締切（[10,25]）から 9/25 が出て、出どころが「毎月の提出締切」になる
 //   - 提出で savePeriods に period.submission={at,byUid} が入り、差分書き込みは "p1/submission" の1本だけ
@@ -166,9 +166,9 @@ async function partB() {
   const RED = "rgb(255, 71, 87)";
   const v = {
     A_submitShown: A.hasSubmit === true,
-    A_deadlineText: !!(A.deadline && A.deadline.text === "提出期限 9/25(金) 日付指定 期限を過ぎています" && A.deadline.source === "date"),
+    A_deadlineText: !!(A.deadline && A.deadline.text === "提出期限 9/25(金) 期限を過ぎています" && A.deadline.source === "date"),
     A_deadlineBelowButtons: !!(A.deadline && A.deadline.belowButtons),
-    AM_monthlyFallback: !!(AM.deadline && AM.deadline.source === "monthly" && /^提出期限 9\/25\(金\) 毎月の提出締切 /.test(AM.deadline.text)),
+    AM_monthlyFallback: !!(AM.deadline && AM.deadline.source === "monthly" && /^提出期限 9\/25\(金\) 期限を過ぎています$/.test(AM.deadline.text)),
     A_deadlineRedBanner: !!(A.deadline && A.deadline.bg === "rgb(198, 40, 40)" && A.deadline.color === "rgb(255, 255, 255)"),
     A_bannerCalmAfterSubmit: !!(A.afterSubmit && A.afterSubmit.bannerBg !== "rgb(198, 40, 40)" && A.afterSubmit.bannerState === "提出済み"),
     A_submitWritesOneKey: !!(A.writes && A.writes[0] && Object.keys(A.writes[0]).join() === "p1/submission" && A.writes[0]["p1/submission"].at),

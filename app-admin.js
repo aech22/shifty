@@ -2431,7 +2431,6 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
               :{background:"#C62828",border:"1px solid #C62828",color:"#FFFFFF"})}}>
           <span>提出期限</span>
           <span data-co-deadline-date="1" style={{fontSize:18,fontWeight:800}}>{fmtMD(coDeadline)}</span>
-          <span style={{fontSize:12,fontWeight:500,opacity:.85}}>{coDeadlineInfo.source==="date"?"日付指定":"毎月の提出締切"}</span>
           <span data-co-deadline-state="1" style={{fontSize:14,fontWeight:700}}>
             {submission?"提出済み":coDeadlineOver?"期限を過ぎています":coDaysLeft===0?"今日まで":`あと${coDaysLeft}日`}
           </span>
