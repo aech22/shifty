@@ -2434,7 +2434,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             ...(submission
               ?{background:"var(--c-input)",border:"1px solid var(--c-border2)",color:"var(--c-text2)"}
               :{background:"#C62828",border:"1px solid #C62828",color:"#FFFFFF"})}}>
-          <span>企業への提出期限</span>
+          <span>提出期限</span>
           <span data-co-deadline-date="1" style={{fontSize:18,fontWeight:800}}>{fmtMD(coDeadline)}</span>
           <span style={{fontSize:12,fontWeight:500,opacity:.85}}>{coDeadlineInfo.source==="date"?"日付指定":"毎月の提出締切"}</span>
           <span data-co-deadline-state="1" style={{fontSize:14,fontWeight:700}}>
