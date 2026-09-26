@@ -2321,8 +2321,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // Premium のときだけ出す。提出の状態は期間レコードの submission={at,byUid} に持ち、savePeriods
   // （差分 update）で書く。提出後の編集は自由・取り消し可・再提出で at を更新する。
   const submission=period&&period.submission&&period.submission.at?period.submission:null;
-  const coDeadline=companyLink&&period?shopDeadlineFromLink(companyLink,period):null;
+  // 期限は 日付指定 ＞ 毎月の固定締切（企業連携タブで設定）。ボタン行の下に1行で出す（2026-09-27 ユーザー指示）
+  const coDeadlineInfo=companyLink&&period&&isPremium?shopDeadlineInfoFromLink(companyLink,period):null;
+  const coDeadline=coDeadlineInfo?coDeadlineInfo.date:null;
   const coDeadlineOver=!!(coDeadline&&!submission&&todayStr>coDeadline);
+  const coDaysLeft=coDeadline?Math.round((pd(coDeadline)-pd(todayStr))/86400000):null;
   const canSubmit=!!companyLink&&isPremium&&!!period&&!ownerReadOnly&&!!savePeriods;
   const fmtMD=ds=>{const d=pd(ds);return isNaN(d)?ds:`${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;};
   const fmtAt=iso=>{const d=new Date(iso);return isNaN(d)?"":`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
@@ -2362,7 +2365,6 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           :<button onClick={()=>{if(!confirm("この期間を現在の設定内容で確定しますか？\n以後、スタッフの追加・削除や属性・退勤延長の変更はこの期間に反映されなくなります（シフトの編集は可能）。"))return;savePeriods(periods.map(p=>(p&&p.id===period.id)?{...p,snapshot:buildPeriodSnapshot(staffListProp,settingsProp),lockedAt:new Date().toISOString()}:p));tt("✓ この期間を確定しました");}}
               style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>この期間を確定</button>
         )}
-        {canSubmit&&coDeadline&&<span data-co-deadline="1" style={{fontSize:11,fontWeight:600,color:coDeadlineOver?"#FF4757":"var(--c-text3)",whiteSpace:"nowrap"}}>提出期限 {fmtMD(coDeadline)}</span>}
         {!showLaborTable&&pastSubsBtn}
         {/* 入力例の案内は 2026-09-23 のユーザー指示で削除（操作方法はタブ最下部のレジェンドにある）。
             span 自体は flex:1 の伸び代として残す＝これを外すと右側のボタン群が左へ寄る。 */}
@@ -2422,6 +2424,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         </button>}
         </div>}
       </div>
+
+      {coDeadline&&(
+        <div data-co-deadline="1" data-co-deadline-source={coDeadlineInfo.source}
+          style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap",marginBottom:10,fontSize:13,color:"var(--c-text2)"}}>
+          <span>企業への提出期限</span>
+          <span data-co-deadline-date="1" style={{fontWeight:700,color:coDeadlineOver?"#FF4757":"var(--c-text)"}}>{fmtMD(coDeadline)}</span>
+          <span style={{fontSize:11,color:"var(--c-text3)"}}>{coDeadlineInfo.source==="date"?"日付指定":"毎月の提出締切"}</span>
+          <span data-co-deadline-state="1" style={{fontSize:12,fontWeight:600,color:coDeadlineOver?"#FF4757":"var(--c-text3)"}}>
+            {submission?"提出済み":coDeadlineOver?"期限を過ぎています":coDaysLeft===0?"今日まで":`あと${coDaysLeft}日`}
+          </span>
+        </div>
+      )}
 
       {/* 店舗間シフト重複エラー一覧 */}
       {Object.keys(dupErrors).length>0&&(
@@ -5022,26 +5036,30 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
 // （あちらは企業に入れていない自分の店舗も含む）。期間は店舗ごとにIDが違うので、開始日_終了日で
 // 対応づけ、「2026年10月前半」のような選択肢にする（企業内は同じ作成期間で運用する前提）。
 // 提出期限は企業が期間ごとに日付を直接入れる（全店舗共通の1つだけ。店舗別は 2026-09-27 のユーザー指示で廃止）。
+// 期間ごとの日付を入れていない期間には「毎月の固定締切」（例: 毎月10日・25日）が効く。優先は 日付指定 ＞ 毎月の固定。
 // 読めなかった店舗は「読み込み失敗」と出し、提出済みにも未提出にも数えない（丸めない）。
 // ============================================================
 function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,renderDownload}){
-  const[state,setState]=useState(null); // {shopIds,names,periods:{sid:Period[]|null},deadlines}
+  const[state,setState]=useState(null); // {shopIds,names,periods:{sid:Period[]|null},deadlines,monthly}
   const[loadErr,setLoadErr]=useState(false);
   const[rangeKey,setRangeKey]=useState("");
   const[dlAll,setDlAll]=useState("");
   const[dlDirty,setDlDirty]=useState(false);
+  const[monthly,setMonthly]=useState([]);
+  const[monthlyDirty,setMonthlyDirty]=useState(false);
   // ユーザーがセレクトで期間を選んだか。選んでいなければ、読み込みのたびに最新の期間へ合わせる
   const userPickedRef=useRef(false);
   const[busy,setBusy]=useState(false);
   const[reloadTick,setReloadTick]=useState(0);
   useEffect(()=>{
-    if(!firebaseDB||!companyId){setState({shopIds:[],names:{},periods:{},deadlines:{}});return;}
+    if(!firebaseDB||!companyId){setState({shopIds:[],names:{},periods:{},deadlines:{},monthly:[]});return;}
     let cancelled=false;
     setLoadErr(false);
     Promise.all([
       firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value"),
       firebaseDB.ref(`companies/${companyId}/pub/config/deadlines`).once("value"),
-    ]).then(async([shS,dlS])=>{
+      firebaseDB.ref(`companies/${companyId}/pub/config/monthlyDeadlineDays`).once("value"),
+    ]).then(async([shS,dlS,mdS])=>{
       const shopIds=Object.keys(shS.val()||{});
       const names={},periods={};
       await Promise.all(shopIds.map(async sid=>{
@@ -5054,7 +5072,7 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
         periods[sid]=pS?Object.values(pS.val()||{}).filter(x=>x&&x.id).sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate))):null;
       }));
       if(cancelled)return;
-      setState({shopIds,names,periods,deadlines:dlS.val()||{}});
+      setState({shopIds,names,periods,deadlines:dlS.val()||{},monthly:sanitizeMonthlyDeadlineDays(mdS.val())});
     }).catch(()=>{if(!cancelled)setLoadErr(true);});
     return()=>{cancelled=true;};
   },[companyId,reloadTick]);
@@ -5076,17 +5094,27 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
     const e=(state&&state.deadlines&&state.deadlines[rangeKey])||{};
     setDlAll(e.all||"");setDlDirty(false);
   },[rangeKey,state]);
+  // 保存済みの毎月の固定締切を編集欄へ読み込む（再読み込みのたび。未保存の編集は捨てる）
+  useEffect(()=>{setMonthly((state&&state.monthly)||[]);setMonthlyDirty(false);},[state]);
   if(loadErr)return(<AC title="シフトの提出状況"><div style={{fontSize:12,color:"#FF4757"}}>✕ 提出状況を読み込めませんでした。<button onClick={()=>setReloadTick(t=>t+1)} style={{...AGray,marginLeft:8,padding:"4px 10px",fontSize:12}}>再読み込み</button></div></AC>);
   if(!state)return(<AC title="シフトの提出状況"><div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div></AC>);
+  const savedDlDate=((state.deadlines||{})[rangeKey]||{}).all;
+  const curRange=ranges.find(x=>x.key===rangeKey);
+  const effOf=(dateStr,days)=>isValidDateStr(dateStr)?{date:dateStr,source:"date"}:(curRange?(d=>d?{date:d,source:"monthly"}:null)(monthlyDeadlineFor(days,curRange.startDate)):null);
+  const savedEff=effOf(savedDlDate,state.monthly);
+  const draftEff=effOf(dlAll,monthly);
+  // 日付指定が無い期間は、毎月の固定締切から出した日付を入力欄の初期値にする（2026-09-27 ユーザー指示）。
+  // 書き換えて保存すると、その期間だけの日付指定になる。書き換えずに保存しても日付指定にはしない
+  // （毎月の締切を後から変えたときに追随させるため）。
+  const monthlyInitial=!dlAll&&draftEff&&draftEff.source==="monthly"?draftEff.date:"";
   const rows=state.shopIds.map(sid=>{
     const ps=state.periods[sid];
     if(ps===null)return{sid,name:state.names[sid],status:"failed"};
     const p=findShopPeriodByRange(ps,rangeKey);
     if(!p)return{sid,name:state.names[sid],status:"none"};
     const sub=p.submission&&p.submission.at?p.submission:null;
-    // 期限切れの判定は保存済みの全店共通の日付で行う（入力中の未保存の値では赤くしない）
-    const savedDl=((state.deadlines||{})[rangeKey]||{}).all;
-    return{sid,name:state.names[sid],period:p,status:sub?"submitted":"pending",submission:sub,deadline:isValidDateStr(savedDl)?savedDl:null};
+    // 期限切れの判定は保存済みの値で行う（入力中の未保存の値では赤くしない）。日付指定が無ければ毎月の固定締切
+    return{sid,name:state.names[sid],period:p,status:sub?"submitted":"pending",submission:sub,deadline:savedEff?savedEff.date:null};
   }).sort((a,b)=>String(a.name).localeCompare(String(b.name),"ja"));
   const nSub=rows.filter(x=>x.status==="submitted").length;
   const nPend=rows.filter(x=>x.status==="pending").length;
@@ -5103,10 +5131,38 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
     tt("✓ 提出期限を保存しました");
     setReloadTick(t=>t+1);
   };
+  const saveMonthly=async()=>{
+    if(!onSaveCompanyConfig)return;
+    setBusy(true);
+    const r=await onSaveCompanyConfig({monthlyDeadlineDays:sanitizeMonthlyDeadlineDays(monthly)});
+    setBusy(false);
+    if(r&&r.error){tt("✕ "+r.error);return;}
+    tt("✓ 毎月の提出締切を保存しました");
+    setReloadTick(t=>t+1);
+  };
+  const fmtMDW=ds=>{const d=pd(ds);return isNaN(d)?ds:`${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;};
+  const DAY_OPTS=Array.from({length:31},(_,i)=>i+1);
+  const monthlyEditor=(<div data-co-monthly="1" style={{marginBottom:14,paddingBottom:12,borderBottom:"1px solid var(--c-border)"}}>
+    <div style={{fontSize:12,fontWeight:700,color:"var(--c-text2)",marginBottom:6}}>毎月の提出締切</div>
+    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+      {monthly.length===0&&<span style={{fontSize:12,color:"var(--c-text4)"}}>未設定</span>}
+      {monthly.map((d,i)=>(<span key={i} style={{display:"inline-flex",alignItems:"center",gap:4}}>
+        <span style={{fontSize:12,color:"var(--c-text3)"}}>毎月</span>
+        <select data-co-monthly-day={i} value={d} onChange={e=>{const v=Number(e.target.value);setMonthly(ms=>ms.map((x,j)=>j===i?v:x));setMonthlyDirty(true);}} style={{...AI,width:"auto",padding:"4px 6px",cursor:"pointer"}}>
+          {DAY_OPTS.map(n=><option key={n} value={n}>{monthlyDeadlineDayLabel(n)}</option>)}
+        </select>
+        <button onClick={()=>{setMonthly(ms=>ms.filter((_,j)=>j!==i));setMonthlyDirty(true);}} style={{...AGray,padding:"4px 8px",fontSize:12}}>削除</button>
+      </span>))}
+      {monthly.length<MONTHLY_DEADLINE_MAX&&<button data-co-monthly-add="1" onClick={()=>{setMonthly(ms=>[...ms,ms.length?Math.min(31,ms[ms.length-1]+15):25]);setMonthlyDirty(true);}} style={{...AGray,padding:"4px 10px",fontSize:12}}>＋ 追加</button>}
+    </div>
+    <div style={{fontSize:11,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8}}>各期間の開始日より前で、いちばん近い締切日がその期間の提出期限になります。下で期間ごとに日付を指定した場合はそちらが優先されます。29〜31日は短い月では月末になります。</div>
+    <button disabled={busy||!monthlyDirty} onClick={saveMonthly} style={{...AGray,width:"100%",opacity:busy||!monthlyDirty?0.5:1}}>{busy?"保存中...":"毎月の提出締切を保存"}</button>
+  </div>);
   const TD={borderBottom:"1px solid var(--c-border)",padding:"8px 6px",fontSize:13,verticalAlign:"middle"};
   const dateIn=(v,onCh)=>(<input type="date" value={v||""} onChange={e=>{onCh(e.target.value);setDlDirty(true);}} style={{...AI,width:"auto",padding:"4px 6px"}}/>);
-  const cur=ranges.find(x=>x.key===rangeKey);
+  const cur=curRange;
   return(<AC title="シフトの提出状況">
+    {monthlyEditor}
     {ranges.length===0?<div style={{fontSize:12,color:"var(--c-text4)"}}>連携店舗に期間がありません。</div>:(<>
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
         <select value={rangeKey} onChange={e=>{userPickedRef.current=true;setRangeKey(e.target.value);}} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
@@ -5116,8 +5172,13 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
       </div>
       <div data-co-summary="1" style={{fontSize:13,color:"var(--c-text)",marginBottom:10}}>提出済み {nSub} ／ 未提出 {nPend}</div>
       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
-        <span style={{fontSize:12,color:"var(--c-text3)"}}>提出期限</span>
-        {dateIn(dlAll,setDlAll)}
+        <span style={{fontSize:12,color:"var(--c-text3)"}}>この期間の提出期限（日付指定）</span>
+        {dateIn(dlAll||monthlyInitial,setDlAll)}
+        {monthlyInitial&&<span style={{fontSize:11,color:"var(--c-text3)"}}>毎月の提出締切から</span>}
+        {dlAll&&<button onClick={()=>{setDlAll("");setDlDirty(true);}} style={{...AGray,padding:"4px 8px",fontSize:12}}>日付指定を外す</button>}
+      </div>
+      <div data-co-effective="1" style={{fontSize:12,color:"var(--c-text2)",marginBottom:10}}>
+        {draftEff?`適用される期限: ${fmtMDW(draftEff.date)}（${draftEff.source==="date"?"日付指定":"毎月の提出締切"}）`:"適用される期限: 未設定"}
       </div>
       <div style={{overflowX:"auto"}}>
         <table style={{borderCollapse:"collapse",width:"100%",minWidth:320}}>
