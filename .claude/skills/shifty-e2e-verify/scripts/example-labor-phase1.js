@@ -147,7 +147,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
   const pass = {
     // 項目1: 属性ごとに労働時間制を選べ、laborSystem に保存される
     labor_select_rendered: st.before.laborSelects.length === 3,
-    labor_select_defaults: st.before.laborSelects.map(s => s.value).join(",") === "B,A," // バイト/社員/契約（50音順）
+    // 社員/パート・アルバイト/契約（2026-09-26 以降の並び＝組み込み2つを固定してから50音順）
+    labor_select_defaults: st.before.laborSelects.map(s => s.value).join(",") === "A,B,"
       || st.before.laborSelects.map(s => s.value).sort().join(",") === ",A,B",
     labor_select_options: st.before.laborSelects.every(s => s.options.join(",").endsWith("A,B,none")),
     labor_select_saved: st.savedLabor.custom_x1 === "A",

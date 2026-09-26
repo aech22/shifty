@@ -22,7 +22,8 @@ async function setTab(){
     }
     ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
   const card=await h.evaluate(()=>{const d=[...document.querySelectorAll("div")].find(x=>(x.innerText||"").startsWith("スタッフ属性別 勤務時間制限"));return d?d.innerText.replace(/\s+/g," "):null;});
-  // 下限行の「週」欄に 30 を入れる。属性ブロックは表示名の50音順なので先頭は「バイト」(parttime)。
+  // 下限行の「週」欄に 30 を入れる。属性ブロックは 社員 → パート・アルバイト を固定して
+  // 残りを50音順（2026-09-26 のユーザー指示）なので、**先頭は「社員」(employee)**。
   const set=await h.evaluate(()=>{
     const blocks=[...document.querySelectorAll("div")].filter(d=>/^上限/.test((d.innerText||"").trim()));
     const minRow=[...document.querySelectorAll("div")].filter(d=>/^下限/.test((d.innerText||"").trim()))[0];
@@ -34,7 +35,7 @@ async function setTab(){
     return "ok:"+blocks.length+"/"+ins.length;
   });
   await h.page.waitForTimeout(400);
-  const saved=await h.evaluate(()=>((window.__settings.staffTypeLimits||{}).parttime||null));
+  const saved=await h.evaluate(()=>((window.__settings.staffTypeLimits||{}).employee||null));
   const fs=await h.evaluate(()=>[...document.querySelectorAll("input[type=number]")].map(i=>parseFloat(getComputedStyle(i).fontSize)));
   const errors=h.errors.slice();
   await h.close();

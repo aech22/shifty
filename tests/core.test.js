@@ -2824,14 +2824,36 @@ test("getAttrOptions: 名前を持たない組み込み属性（2026-06-16〜06-
   // 設定タブの制限一覧は STAFF_TYPE_LABELS で補うので、休憩タグの選択肢だけ落ちると食い違う（バグチェック#121）。
   const legacy = { staffTypeLimits: { employee: { daily: 0, weekly: 0 }, parttime: { daily: 0, weekly: 0 },
     dispatch: { daily: 0, weekly: 0 }, other: { daily: 0, weekly: 0 } } };
+  // 固定は 社員 → パート・アルバイト の2つだけ。派遣／その他は固定の外なので50音順に入る（その他 < 派遣）
   assert.deepStrictEqual(u.getAttrOptions(legacy),
-    [["employee", "社員"], ["parttime", "バイト"], ["dispatch", "派遣"], ["other", "その他"]]);
+    [["employee", "社員"], ["parttime", "パート・アルバイト"], ["other", "その他"], ["dispatch", "派遣"]]);
   // 名前の無いカスタム属性は従来どおり出さない（ID をそのまま見せないため）
   assert.deepStrictEqual(u.getAttrOptions({ staffTypeLimits: { custom_x: { daily: 0 } } }),
-    [["employee", "社員"], ["parttime", "バイト"]]);
-  // 一覧に無い組み込み属性は足さない（現行の既定＝社員・バイトのみ の店舗に派遣を生やさない）
+    [["employee", "社員"], ["parttime", "パート・アルバイト"]]);
+  // 一覧に無い組み込み属性は足さない（現行の既定＝社員・パート・アルバイトのみ の店舗に派遣を生やさない）
   assert.deepStrictEqual(u.getAttrOptions({ staffTypeLimits: { custom_y: { name: "学生" } } }),
-    [["employee", "社員"], ["parttime", "バイト"], ["custom_y", "学生"]]);
+    [["employee", "社員"], ["parttime", "パート・アルバイト"], ["custom_y", "学生"]]);
+});
+
+test("getAttrOptions / sortAttrEntries: 社員→パート・アルバイトを固定し、自由追加分を表示名の50音順に並べる（2026-09-26）", () => {
+  // スタッフタブの属性プルダウンと設定タブの属性別勤務時間設定が同じ並びになることの正本。
+  // Firebase のキー順（≒辞書順の custom_a, custom_b, …）で並んでいたものが、表示名で並ぶ。
+  const s = { staffTypeLimits: {
+    custom_c: { name: "夏季" }, custom_a: { name: "アルバイトB" },
+    custom_b: { name: "学生" }, custom_d: { name: "契約社員" },
+    parttime: { name: "バイト" }, employee: { name: "社員" } } };
+  assert.deepStrictEqual(u.getAttrOptions(s).map(([, n]) => n),
+    ["社員", "パート・アルバイト", "アルバイトB", "夏季", "学生", "契約社員"],
+    "組み込み2つが先頭・残りは50音順（かなが漢字より先に来るのは localeCompare('ja') の照合順で許容）");
+  // 組み込みの表示名は staffTypeLimits の name を読まない＝既存店舗に残る旧既定名「バイト」が出ない
+  assert.strictEqual(u.getAttrOptions(s)[1][1], "パート・アルバイト");
+  // 設定タブは lim 本体が要るので [ID, 表示名] を自分で組んで sortAttrEntries に渡す（同じ並びになる）
+  assert.deepStrictEqual(u.sortAttrEntries([["custom_b", "学生"], ["parttime", "パート・アルバイト"],
+    ["custom_a", "アルバイトB"], ["employee", "社員"]]).map(([id]) => id),
+    ["employee", "parttime", "custom_a", "custom_b"]);
+  // 名前が空のカスタム属性（設定タブで名前を消した直後）は落とさず先頭側に置く＝入力欄が消えない
+  assert.deepStrictEqual(u.sortAttrEntries([["custom_a", "学生"], ["custom_b", ""]]).map(([id]) => id),
+    ["custom_b", "custom_a"]);
 });
 
 test("moveStaffHiddenBoundaries: 期間の開始日を編集すると非表示の境界も追随する（バグチェック#136）", () => {
@@ -3398,10 +3420,16 @@ test("S-6 総括判定: 上から順に 要修正／目安未満／残業あり�
   assert.strictEqual(v({ laborSystem: null, findings: F({ laborSystem: null }), guideKey: "none" }), "要修正", "区分が空欄");
   // 判定対象外は空欄
   assert.strictEqual(v({ laborSystem: "none", findings: [], guideKey: "none" }), "");
-  // 月が埋まっていない A制は「要確認」（Shifty固有・S-6 の4値の外）
-  assert.strictEqual(v({ laborSystem: "A", findings: [], guideKey: "under_base", monthReady: false }), "要修正",
-    "ただし要修正が先に立つ場合はそちら");
-  assert.strictEqual(v({ laborSystem: "A", findings: [], guideKey: "none", monthReady: false }), "要確認");
+  // 月が埋まっていない A制は「＋OK」（Shifty固有・S-6 の4値の外。2026-09-26 に「要確認」から変更）
+  assert.strictEqual(v({ laborSystem: "A", findings: [], guideKey: "none", monthReady: false }), "＋OK");
+  // **月に帰属する目安は総括に入れない。** 呼び出し側は月が埋まる前も現状の実数で guideStatusOf を
+  // 出すので、その key を採ると暦月の枠に対して全員が所定未満＝要修正になる
+  assert.strictEqual(v({ laborSystem: "A", findings: [], guideKey: "under_base", monthReady: false }), "＋OK");
+  assert.strictEqual(v({ laborSystem: "A", findings: [], guideKey: "under_guide", monthReady: false }), "＋OK");
+  // 日に帰属する要修正は月が埋まっていなくても出る（材料が揃っているので伏せる理由が無い）
+  assert.strictEqual(v({ laborSystem: "A", findings: [{ key: "over12" }], guideKey: "none", monthReady: false }), "要修正");
+  // B制は月に帰属する判定を持たないので monthReady に影響されない
+  assert.strictEqual(v({ laborSystem: "B", findings: [], guideKey: "none", monthReady: false }), "OK");
   // 週の休みの ×休なし は第3弾で渡す。渡せば要修正になる
   assert.strictEqual(v({ laborSystem: "B", findings: [], guideKey: "none", weekNoRest: true }), "要修正");
 });
@@ -3535,15 +3563,29 @@ test("判断8 leaveTypeOf: 導入前の終日 y（leaveType なし）は公休�
   assert.strictEqual(u.leaveTypeOf({ status: "work", start: "09:00", end: "18:00" }), null);
 });
 
-test("S-5 週の休み: 休n／×休なし／要確認／評価対象外", () => {
+test("S-5 週の休み: 休n／×休なし／揃わない週も実数", () => {
   const W = k => u.weekRestStateOf(k);
   assert.strictEqual(W(["work", "work", "work", "work", "work", "rest", "rest"]).label, "休2");
   assert.strictEqual(W(["work", "work", "work", "work", "work", "work", "work"]).label, "×休なし");
   // 有給・慶弔は休みに数えない（有給の週も別に公休が1日以上要る）
   assert.strictEqual(W(["work", "work", "work", "work", "work", "work", "leave"]).label, "×休なし");
   assert.strictEqual(W(["work", "work", "work", "work", "work", "leave", "rest"]).label, "休1");
-  // 揃わない日があれば要確認
-  assert.strictEqual(W(["work", "work", "nodata", "rest", "rest", "rest", "rest"]).label, "要確認");
+  // 揃わない日がある週も、データのある日だけで数えた実数を出す（2026-09-26 に「要確認」から変更）
+  const p = W(["work", "work", "nodata", "rest", "rest", "rest", "rest"]);
+  assert.strictEqual(p.label, "＋休4");
+  assert.strictEqual(p.key, "partial");
+  assert.strictEqual(p.count, 4);
+  assert.strictEqual(p.missing, 1);
+  // **揃わない週を ×休なし にしてはいけない**——総括が key==="none" を週1休の違反として
+  // 要修正に直結させるので、3日出勤・4日不明の週が誤って要修正になる
+  const p0 = W(["work", "work", "work", "nodata", "nodata", "nodata", "nodata"]);
+  assert.strictEqual(p0.key, "partial");
+  assert.strictEqual(p0.label, "＋休0");
+  assert.strictEqual(u.overallVerdictOf({ laborSystem: "A", findings: [], guideKey: "none",
+    weekNoRest: p0.key === "none" }).label, "OK", "揃わない週は要修正にしない");
+  // 7日揃って休み0 のときだけ ×休なし＝要修正になる
+  assert.strictEqual(u.overallVerdictOf({ laborSystem: "A", findings: [], guideKey: "none",
+    weekNoRest: W(["work", "work", "work", "work", "work", "work", "work"]).key === "none" }).label, "要修正");
   // 全日が無記入の週も公休7日として数える（2026-09-26 ユーザー指示。以前は skip だった）
   assert.strictEqual(W(["rest", "rest", "rest", "rest", "rest", "rest", "rest"]).label, "休7");
 });

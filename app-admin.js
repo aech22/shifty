@@ -289,12 +289,16 @@ function HeatTable({label,section,maxC,rowH,theadH,sectionLabel,dates,heatHours,
 // こちらも [ラベル][スタッフ×n][空] に揃えないとスタッフ列が横にずれる。
 // **休みカウント表はスタッフ名のヘッダを持たず列位置だけで誰の数字かを示している**ので、
 // ずれると読めなくなる。ラベルは45pxに入りきらないので省略記号＋title で全文を残す。
-function SummaryTable({title,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols,spacerTh,spacerCell,colW,VTH,labelW=45,fullView=false,tableW=null}){
+function SummaryTable({title,titleRight=null,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols,spacerTh,spacerCell,colW,VTH,labelW=45,fullView=false,tableW=null}){
   const BD="1px solid var(--c-border)",BD2="1px solid var(--c-border2)",CRD="var(--c-card)";
   const fmtH4=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;if(h>=100)return String(h);return m===0?String(h):`${h}:${String(m).padStart(2,"0")}`;};
   return(
     <div style={{marginBottom:16}}>
-      <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>{title}</div>
+      {/* titleRight は見出しの右隣に置くボタン用のスロット（労務判定の「過去データ読込」）。
+          渡されないときは従来どおり見出しだけを描く。 */}
+      <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+        <span>{title}</span>{titleRight}
+      </div>
       <div ref={scrollRef} onScroll={onScroll} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,...(fullView?{width:"fit-content",marginLeft:"auto",marginRight:"auto"}:{})}}>
         <table style={{borderCollapse:"collapse",width:fullView&&tableW?tableW:(fitAll?"100%":"unset"),minWidth:fitAll?"unset":"max-content"}}>
           <thead><tr>
@@ -772,6 +776,23 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         // 時間入力は同フィールドの休み希望マーク(adminRest)を解除する
         if(sd.adminRest&&sd.adminRest[field]){const ar={...sd.adminRest};delete ar[field];if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;}
       }else{
+        // セルの文字を消して空欄にしたら、そのセルに出ている休暇の種別も外す（2026-09-26 ユーザー指示）。
+        // **外す範囲は「同じコマンドをもう一度入れたとき」と揃える**——公休は終日（ko は終日でしか
+        // 入らないので、片方のセルだけ外すと残った側が「公休」のまま消せなくなる）、有給・慶弔は
+        // 打ち込んだ帯だけ。判定は表示ではなく保存値（leaveFieldsOf）で行うので、旧い日単位の
+        // leaveType しか持たない日にも同じ規則が当たる。メモ・締めを伴う入力は空欄ではないので外さない。
+        const curLv=leaveFieldsOf(sd);
+        if(!note&&!fixedCmd&&curLv[field]){
+          const whole=curLv[field]==="public";
+          const lt={...(sd.leaveTypes||{})};
+          if(!sd.leaveTypes){if(curLv.start)lt.start=curLv.start;if(curLv.end)lt.end=curLv.end;}
+          const ar={...(sd.adminRest||{})};
+          if(whole){delete lt.start;delete lt.end;delete ar.start;delete ar.end;}
+          else{delete lt[field];delete ar[field];}
+          delete sd.leaveType;
+          if(Object.keys(lt).length)sd.leaveTypes=lt;else delete sd.leaveTypes;
+          if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;
+        }
         // セルを空欄にする＝「時間なし」の明示的な上書きとして保存する（空文字はnullish coalescing
         // では素通りしないため、getStoredTime/getStoredNoteがスタッフ提出値にフォールバックしなくなる）。
         // スタッフ提出値そのものを消したいときはこの上書きで対応でき、提出値に戻したいときは
@@ -822,7 +843,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const ekey=`${name}|${date}|${field}`;
     // セルに出している休暇の種別名をそのまま blur しても何もしない（メモとして保存しない）。
     // 種別を外すときは同じコマンド（y/yu/ke）をもう一度入れるか、時間を入力して出勤に戻す。
-    if(leaveCellText(name,date,field)===String(rawValue==null?"":rawValue).trim()){
+    // **種別名が出ているセルだけが対象**。空文字どうしの一致で早期returnすると、休暇でない
+    // セルを空欄にする blur が丸ごと捨てられ、消したはずの文字が保存値から復活する（本番報告）。
+    const leaveShown=leaveCellText(name,date,field);
+    if(leaveShown&&leaveShown===String(rawValue==null?"":rawValue).trim()){
       setLocalEdits(prev=>{if(!(ekey in prev))return prev;const n={...prev};delete n[ekey];return n;});
       return;
     }
@@ -1284,15 +1308,19 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const ym=period.startDate.slice(0,7);
     return Array.from({length:daysInMonthOf(ym)},(_,i)=>`${ym}-${String(i+1).padStart(2,"0")}`);
   },[period]);
-  // 月単位の判定を出す条件（2026-09-26 ユーザー決定）。次の2つを両方満たすときだけ出す。
-  //  ① **その月の最後の期間を開いている**こと。2週間運用では前半を編集している段階で月の判定を
-  //     出さない——後半を作る前は月実働が必ず不足するうえ、前半だけ見て「所定未満」と言われても
-  //     直しようがない。**判定は後半のシフトを組むときに行う。**
-  //     1ヶ月運用ではその月の期間が1つしかないので常に最後＝従来どおり判定する。
-  //  ② その月の全日がデータで埋まっていること（期間が存在し、subs の購読窓の中にある）。
-  // S-5 の「全日が無記入の週は評価対象外」と同じ考え方で、材料が揃う前に判定しない。
-  // ②: その月の全日がデータで埋まっているか。**残業予定の按分はこれだけを条件に計算する**
-  // ——前半を開いていても、月の材料が揃っていれば半月ぶんの残業予定は正しく出せる。
+  // 月単位の値と判定を出す条件（2026-09-26 ユーザー指示で1つに減らした）。
+  // **条件は「その月の全日がデータで埋まっていること」（laborMonthCovered）だけ。**
+  // 以前はこれに「その月の最後の期間を開いていること」を AND していたが、月が埋まっていれば
+  // 前半を開いていても月実働・目安・総括の材料は完全に揃っており、**計算済みの値を表示段階で
+  // 捨てていただけ**だった。1ヶ月運用ではその月の期間が1つなので元から差が出ない。
+  // 月が埋まっていないときも「要確認」で止めず、**データのある日だけで数えた実数の先頭に `＋` を
+  // 付けて出す**（同日ユーザー指示。`＋0h` の形で、`0h＋` のように後ろへ置かない——数値の後ろだと
+  // 単位のように読める）。ただし月に帰属する**判定**（目安・月の残業・年の36協定）は
+  // 出さない——暦月の枠に途中までの実働を当てると全員が所定未満になり、直しようがない警告で
+  // 埋まる。数字は出す・判定は出さない、の切り分けがこの変更の要点。
+  // laborIsLastOfMonth は判定には使わず、**period.laborTotals へ月の残業予定を二重に
+  // 書かないためだけに残してある**（半月運用で同じ月を2回数えない不変条件）。
+  // その月の全日がデータで埋まっているか（期間が存在し、subs の購読窓の中にある）。
   const laborMonthCovered=useMemo(()=>{
     if(!period)return false;
     const cut=subsWindowCutoff();
@@ -1303,19 +1331,17 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       return true;
     });
   },[period,periods,laborMonthDays,pastSubsLoaded]);
-  // ①＋②: 月単位の**判定**（36協定・目安・総括）を出してよいか。
+  // その月の最後の期間を開いているか。**判定には使わない**（上のコメント参照）。
   const laborIsLastOfMonth=useMemo(()=>{
     const last=sameMoPeriods[sameMoPeriods.length-1];
     return!!(period&&last&&last.id===period.id);
   },[period,sameMoPeriods]);
-  const laborMonthReady=laborMonthCovered&&laborIsLastOfMonth;
-  // 「まだ判定しない」理由を画面に出し分ける（前半を開いている／月が埋まっていない）。
+  // 月の数字が途中である理由。`＋` が付いたセルの title に出す。
   const laborPendingReason=useMemo(()=>{
-    if(!period||laborMonthReady)return "";
-    if(!laborMonthCovered)return "その月の日がまだデータで埋まっていません（後半の期間が未作成、または購読の窓の外）";
-    const last=sameMoPeriods[sameMoPeriods.length-1];
-    return `月の判定は「${last?last.label:"月の最後の期間"}」を開いたときに出ます（月の後半のシフトを組むときに判定します）`;
-  },[period,sameMoPeriods,laborMonthReady,laborMonthCovered]);
+    if(!period||laborMonthCovered)return "";
+    return "その月の日がまだデータで埋まっていません（後半の期間が未作成、または購読の窓の外）。"
+      +"数字はデータのある日だけの合計で、月に帰属する判定（目安・月の残業）は月が埋まってから出ます";
+  },[period,laborMonthCovered]);
 
   // その日のデータが読めているか（期間が存在し、subs の購読窓の中か）。
   const laborDayHasData=useCallback(d=>{
@@ -1390,10 +1416,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const monthMins=laborMonthDays.map(d=>laborDayMin(name,d));
       const monthWorkMin=monthMins.reduce((a,b)=>a+b,0);
       const monthWorkH=monthWorkMin/60;
-      // 按分は月が埋まっていれば計算する（判定を出すかは別＝laborMonthReady）。
+      // 按分は**月が埋まっていなくても計算する**（2026-09-26 ユーザー指示。以前は
+      // laborMonthCovered を条件にして 0 に倒していた）。暦月の枠に途中までの実働を当てるので
+      // 月が埋まるまでは 0h になりやすいが、それが現時点の実数。画面は `＋` で途中を示す。
       // **月の全日でやる**——日別の和が月の残業予定と一致する形が崩れるので期間で切らない。
-      const monthOtH=(sys==="A"&&laborMonthCovered)?monthlyOvertimeH(monthWorkH,laborFrame.baseMin/60):0;
-      const monthOtDays=(sys==="A"&&laborMonthCovered)?prorateOvertimeH(monthMins.map(m=>m/60),monthOtH,monthWorkH):[];
+      const monthOtH=sys==="A"?monthlyOvertimeH(monthWorkH,laborFrame.baseMin/60):0;
+      const monthOtDays=sys==="A"?prorateOvertimeH(monthMins.map(m=>m/60),monthOtH,monthWorkH):[];
       const periodOtH=dates.map(d=>(monthIdx[d]!=null?(monthOtDays[monthIdx[d]]||0):0));
       // この期間（半月運用なら半月）ぶんの残業予定。日別の按分をこの期間の日だけ足す。
       const periodOtSumH=excelRound(periodOtH.reduce((a,b)=>a+b,0),2);
@@ -1407,18 +1435,24 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const bsCount=dates.reduce((a,d)=>{const sh=_getWorkShift(name,d);return a+(sh&&isBreakShort(sh,settings,d,name)?1:0);},0);
       const weekNoRest=(weekRestByStaff[name]||[]).some(w=>w&&w.key==="none");
       const findings=laborFindingsFor({laborSystem:sys,dayMins,weekDayMins:weekMins,timeErrorCount:te,breakShortCount:bsCount,
-        monthOtH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthReady});
+        monthOtH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthCovered});
       // 36協定の年単位4項目（年360h・年720h・月45h超が年6回・複数月平均80h）。
       // 月の値は「その月の最後の期間」に残した凍結値を優先するので、過去参照を押さなくても効く。
       let yearOt=null;
-      if(sys==="A"&&laborMonthReady&&fy!=null){
+      if(sys==="A"&&laborMonthCovered&&fy!=null){
         yearOt=yearOvertimeMonths(periods,name,fy,fyStart,liveMonthOtFor(name));
         agreementYearFindings(yearOt.scoped,agYear).forEach(f=>findings.push(f));
       }
-      const guide=sys!=="A"?{key:"none",label:"",color:null}
-        :(laborMonthReady?guideStatusOf(monthWorkMin,laborFrame.baseMin,ls.fixedOvertimeMin,laborFrame.guideMin)
-          :{key:"none",label:"要確認",color:"var(--c-text3)",title:laborPendingReason});
-      const overall=overallVerdictOf({laborSystem:sys,findings,guideKey:guide.key,weekNoRest,monthReady:laborMonthReady});
+      // 目安は**月が埋まっていなくても現状の実数で出す**（2026-09-26 ユーザー指示。以前は
+      // 「要確認」に倒していた）。暦月の枠に対する途中の値なので `＋` と淡色で示し、
+      // **総括には入れない**（overallVerdictOf の monthReady が key を捨てる）。
+      const guideRaw=sys!=="A"?{key:"none",label:"",color:null}
+        :guideStatusOf(monthWorkMin,laborFrame.baseMin,ls.fixedOvertimeMin,laborFrame.guideMin);
+      const guide=(sys==="A"&&!laborMonthCovered&&guideRaw.label)
+        ?{...guideRaw,label:`＋${guideRaw.label}`,color:"var(--c-text3)",
+          title:`${guideRaw.label}（データのある日だけで計算した途中の値）／${laborPendingReason}`}
+        :guideRaw;
+      const overall=overallVerdictOf({laborSystem:sys,findings,guideKey:guide.key,weekNoRest,monthReady:laborMonthCovered});
       // この期間の休暇日数。**シフト表の空欄は公休**（2026-09-26 ユーザー指示）なので、
       // 1日も出勤が無い人もその期間ぶんが丸ごと公休になる（以前はここを0に倒していた）。
       const kinds=dates.map(d=>dayRestKindOf(_getAnyShift(name,d),true));
@@ -1440,13 +1474,16 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // この期間ぶんの合計（凍結時に periods へ残す値）。上の useEffect が書く。
       const pm=dates.reduce((a,d)=>a+laborDayMin(name,d),0);
       // 月の残業予定は**その月の最後の期間にだけ**残す（半月運用で年度集計が2重にならない）。
+      // **月が埋まっていない間は残さない**（0＝compactLaborTotal が落とす）。画面には途中の実数を
+      // 出すが、凍結値に途中の値を書くと yearOvertimeMonths が live での数え直しに降りず、
+      // 「読めていない月」の印も付かないまま年度の合計が黙って小さく出る。
       const c=compactLaborTotal({workMin:pm,paid:paidD,publicOff:pubD,ceremony:ceD,
-        monthOtH:laborIsLastOfMonth?monthOtH:0});
+        monthOtH:(laborIsLastOfMonth&&laborMonthCovered)?monthOtH:0});
       if(c)totals[name]=c;
     });
     laborTotalsRef.current=totals;
     return out;
-  },[isPremium,period,laborFrame,laborMonthDays,laborMonthReady,laborMonthCovered,laborIsLastOfMonth,laborPendingReason,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart,liveMonthOtFor]);
+  },[isPremium,period,laborFrame,laborMonthDays,laborMonthCovered,laborIsLastOfMonth,laborPendingReason,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart,liveMonthOtFor]);
 
   // 期間が生きている間はシフト作成タブを開くたびに写しと労務の合計を最新化し、最終日を超えたら
   // 更新を止める＝そこで凍結。「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、
@@ -2217,6 +2254,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     }
   };
 
+  // 「過去データ読込」は労務判定の見出しの右に置く（2026-09-26 ユーザー指示）。年計・有給残が
+  // 購読窓の外の期間を読めていないときに押すボタンなので、その表のそばに置く。
+  // ただし労務判定表は「期間を選択済み・Premium・判定対象が1人以上」のときしか描かれないので、
+  // 描かれないときだけ従来どおりヘッダーに出す（出す条件そのものは変えない＝ボタンが消えない）。
+  const pastSubsBtn=(onLoadPastSubs&&!pastSubsLoaded&&hasOlderPeriods)?(
+    <button onClick={onLoadPastSubs}
+      style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+      過去データ読込
+    </button>
+  ):null;
+  const showLaborTable=isPremium&&Object.keys(laborByStaff).length>0;
+
   return(
     <div ref={outerRef} style={{padding:"12px 8px"}}>
       {cellTip&&<div style={{position:"fixed",left:cellTip.x,top:cellTip.y-26,transform:"translateX(-50%)",background:"rgba(30,30,30,0.82)",color:"#fff",fontSize:11,fontWeight:600,padding:"2px 7px",borderRadius:8,pointerEvents:"none",zIndex:9999,whiteSpace:"nowrap",backdropFilter:"blur(4px)"}}>{cellTip.value}</div>}
@@ -2239,10 +2288,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           :<button onClick={()=>{if(!confirm("この期間を現在の設定内容で確定しますか？\n以後、スタッフの追加・削除や属性・退勤延長の変更はこの期間に反映されなくなります（シフトの編集は可能）。"))return;savePeriods(periods.map(p=>(p&&p.id===period.id)?{...p,snapshot:buildPeriodSnapshot(staffListProp,settingsProp),lockedAt:new Date().toISOString()}:p));tt("✓ この期間を確定しました");}}
               style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>この期間を確定</button>
         )}
-        {onLoadPastSubs&&!pastSubsLoaded&&hasOlderPeriods&&<button onClick={onLoadPastSubs}
-          style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
-          過去データ読込
-        </button>}
+        {!showLaborTable&&pastSubsBtn}
         {/* 入力例の案内は 2026-09-23 のユーザー指示で削除（操作方法はタブ最下部のレジェンドにある）。
             span 自体は flex:1 の伸び代として残す＝これを外すと右側のボタン群が左へ寄る。 */}
         <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>{isPremium?"":"閲覧のみ（編集はPremiumプランで）"}</span>
@@ -2540,15 +2586,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                 const st=(weekRestByStaff[name]||[])[wi];
                 if(!st||st.key==="skip")return{};
                 return{label:st.label,bold:st.key==="none",
-                  color:st.key==="none"?"#e53935":st.key==="unknown"?"var(--c-text3)":"var(--c-text2)",
-                  title:st.key==="unknown"?"この週の7日ぶんのデータが揃っていません":st.label};
+                  color:st.key==="none"?"#e53935":st.key==="partial"?"var(--c-text3)":"var(--c-text2)",
+                  title:st.key==="partial"
+                    ?`データのある日だけで数えた休み${st.count}日（残り${st.missing}日はまだデータがありません。週1休の判定は7日揃ってから出ます）`
+                    :st.label};
               }};
             })}
           />}
 
           {/* === 労務（A制の目安・総括判定）。判定対象外の属性は空欄になる === */}
-          {isPremium&&Object.keys(laborByStaff).length>0&&<SummaryTable
+          {showLaborTable&&<SummaryTable
             title={`労務判定（${period?period.startDate.slice(0,7).replace("-","年")+"月":""}）`}
+            titleRight={pastSubsBtn}
             rowLabel="労務"
             scrollRef={laborScrollRef}
             onScroll={e=>syncScrollH(e.currentTarget)}
@@ -2566,11 +2615,19 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                 if(!l||l.sys==="none"||!(l.monthWorkMin>0))return{};
                 // 集計表の既定フォーマッタ(fmtH4)は100時間以上で分を落とすが、労務では
                 // 177:08 と 177:00 の差が判定を分けるので分まで出す。
-                return{label:fmtMin(l.monthWorkMin),title:`月の実働 ${fmtMin(l.monthWorkMin)}`};}},
+                // 月が埋まっていない間も実数を出すが、**途中であることを `＋` で明示する**
+                // （以前は印が無く、半月ぶんの合計が月の合計に見えた）。
+                const t=fmtMin(l.monthWorkMin);
+                return l.monthCovered?{label:t,title:`月の実働 ${t}`}
+                  :{label:`＋${t}`,color:"var(--c-text3)",title:`データのある日だけの合計 ${t}／${laborPendingReason}`};}},
               {id:"labor_guide",label:"目安",getText:name=>{const l=laborByStaff[name];if(!l||l.sys!=="A")return{};return{label:l.guide.label,color:l.guide.color,title:l.guide.title||l.guide.label};}},
               {id:"labor_ot",label:"残業予定",getText:name=>{const l=laborByStaff[name];
                 if(!l||l.sys!=="A")return{};
-                if(!l.monthCovered)return{label:"要確認",color:"var(--c-text3)",title:laborPendingReason};
+                // 月が埋まっていない間も現状の実数を出す（2026-09-26 ユーザー指示。以前は「要確認」）。
+                // 暦月の枠に途中までの実働を当てるので 0h になりやすいが、それが現時点の実数。
+                // **0h でも `＋` を付けて出す**——空欄にすると「判定して問題なし」と読める。
+                if(!l.monthCovered)return{label:`＋${l.periodOtSumH}h`,color:"var(--c-text3)",
+                  title:`データのある日だけで計算した途中の値（この期間 ${l.periodOtSumH}h ／ 月の合計 ${l.monthOtH}h）／${laborPendingReason}`};
                 if(!(l.monthOtH>0))return{};
                 // この期間（半月運用なら半月）ぶん。月計はツールチップに出す。
                 return{label:`${l.periodOtSumH}h`,color:"#B8860B",
@@ -2579,7 +2636,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                 if(!l||l.sys==="none"||!l.year)return{};
                 const miss=l.year.missingPeriodIds.length;
                 const yo=l.yearOt?excelRound(l.yearOt.scoped.reduce((a,v)=>a+v.h,0),2):null;
-                return{label:(l.year.workMin>0?fmtMin(l.year.workMin):"")+(miss?"＋":""),
+                // 年計の `＋` も先頭に置く（2026-09-26 ユーザー指示。表の中で印の位置を揃える）
+                return{label:(miss?"＋":"")+(l.year.workMin>0?fmtMin(l.year.workMin):""),
                   color:miss?"var(--c-text3)":"var(--c-text2)",
                   title:(miss?`読み込めていない期間が${miss}件あります（「3ヶ月より前の提出データも読み込む」で正確になります）／`:"")
                     +`${fiscalYearLabel(fy,fyStart)}の累計 ${fmtMin(l.year.workMin)}`
@@ -2594,8 +2652,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                 return{label:`${l.paidRemain}日`,color:l.paidRemain<0?"#e53935":"var(--c-text2)",bold:l.paidRemain<0,
                   title:`付与 ${(settings.paidLeaveGranted||{})[name]}日 − ${fiscalYearLabel(fy,fyStart)}の消化 ${l.year?l.year.paid:0}日`};}},
               {id:"labor_verdict",label:"総括",_bg:"rgba(248,112,54,0.05)",getText:name=>{const l=laborByStaff[name];if(!l)return{};
-                const c=l.overall.key==="fix"?"#e53935":l.overall.key==="under_guide"?"#B8860B":l.overall.key==="ot"?"#3B82F6":l.overall.key==="pending"?"var(--c-text3)":"var(--c-text2)";
-                return{label:l.overall.label,color:c,bold:l.overall.key==="fix",title:(l.findings||[]).map(f=>f.label).join("、")};}},
+                const c=l.overall.key==="fix"?"#e53935":l.overall.key==="under_guide"?"#B8860B":l.overall.key==="ot"?"#3B82F6":l.overall.key==="ok_partial"?"var(--c-text3)":"var(--c-text2)";
+                // ＋OK は「日・週の判定では問題なし。月の判定は月が埋まってから」。理由を title に出す。
+                const ft=(l.findings||[]).map(f=>f.label).join("、");
+                return{label:l.overall.label,color:c,bold:l.overall.key==="fix",
+                  title:l.overall.key==="ok_partial"?`日・週の判定では問題ありません／${laborPendingReason}`:ft};}},
             ]}
           />}
 
@@ -3948,7 +4009,8 @@ const dragIdxRef=useRef(null);
               {/* 選んだ瞬間には保存しない。openAttrDialog が「どの期間まで旧属性のままにするか」を
                   確定してから保存する。value は settings のままなのでキャンセルすれば表示も戻る。 */}
               <select value={(settings.staffAttributes||{})[n]||"parttime"} onChange={e=>openAttrDialog(n,e.target.value)} style={{...selStyle,width:"auto",minWidth:140}}>
-                {Object.entries({employee:{name:"社員"},parttime:{name:"バイト"},...(settings.staffTypeLimits||{})}).map(([v,t])=>{const label=(typeof t==="object"?t.name:"")||STAFF_TYPE_LABELS[v]||"";return label?<option key={v} value={v}>{label}</option>:null;})}
+                {/* 並びは getAttrOptions（＝sortAttrEntries）が正本。設定タブの属性別勤務時間設定と同じ順に出す */}
+                {getAttrOptions(settings).map(([v,label])=><option key={v} value={v}>{label}</option>)}
               </select>
             </>)}
 
@@ -5145,18 +5207,19 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       const confirmAddType=()=>{if(!pendingNewType)return;const nm=pendingNewType.name.trim();if(!nm){setPendingNewType(null);return;}const id="custom_"+genSecureId(8);saveAllLimits({...tls,[id]:{name:nm,daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}});setPendingNewType(null);};
       const deleteType=(id)=>{const n={...tls};delete n[id];const attrs={...(settings.staffAttributes||{})};Object.keys(attrs).forEach(k=>{if(attrs[k]===id)delete attrs[k];});onSave({...settings,staffTypeLimits:n,staffAttributes:attrs});};
       const renameType=(id,name)=>saveAllLimits({...tls,[id]:{...tls[id],name}});
-      // builtinで未登録のものはデフォルト値で補完（社員・バイトのみ）
-      const DEFAULT_TYPES=["employee","parttime"];
-      const tlsMerged={...tls};DEFAULT_TYPES.forEach(k=>{if(!tlsMerged[k])tlsMerged[k]={name:STAFF_TYPE_LABELS[k],daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0};});
-      // 表示名(displayNameと同ルール)で50音順ソート。漢字は読み仮名を持たないため文字コード順になる点は許容
-      const typeName=(id,raw)=>(raw&&typeof raw==="object"?raw.name:raw)||STAFF_TYPE_LABELS[id]||id;
-      const typeEntries=Object.entries(tlsMerged).sort(([ta,la],[tb,lb])=>String(typeName(ta,la)).localeCompare(String(typeName(tb,lb)),"ja"));
+      // builtinで未登録のものはデフォルト値で補完（社員・パート・アルバイトのみ）
+      const tlsMerged={...tls};ATTR_PINNED_ORDER.forEach(k=>{if(!tlsMerged[k])tlsMerged[k]={name:STAFF_TYPE_LABELS[k],daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0};});
+      // 表示名(displayNameと同ルール)。組み込みは STAFF_TYPE_LABELS が正本＝保存された旧既定名（"バイト"）を読まない
+      const typeName=(id,raw)=>(BUILTIN_TYPES.includes(id)?STAFF_TYPE_LABELS[id]:"")||(raw&&typeof raw==="object"?raw.name:raw)||id;
+      // 並びは sortAttrEntries が正本（スタッフタブの属性プルダウンと同じ順）。ここで getAttrOptions を
+      // 使わないのは、名前が空のカスタム属性まで落ちて**入力欄ごと消える**ため（付け直せなくなる）。
+      const typeEntries=sortAttrEntries(Object.entries(tlsMerged).map(([id,raw])=>[id,typeName(id,raw)])).map(([id])=>[id,tlsMerged[id]]);
       return(<AC title="スタッフ属性別 勤務時間制限">
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は未設定。上限を超えたスタッフは提出一覧と集計表で赤く、下限に足りないスタッフは青くハイライトされます。下限は勤務が1分もない週・日には当たりません。</div>
         {typeEntries.map(([type,limRaw])=>{
           const lim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeof limRaw==="object"?limRaw:{name:limRaw})};
           const isBuiltin=BUILTIN_TYPES.includes(type);
-          const displayName=lim.name||STAFF_TYPE_LABELS[type]||type;
+          const displayName=typeName(type,lim);
           return(<div key={type} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
               {isBuiltin

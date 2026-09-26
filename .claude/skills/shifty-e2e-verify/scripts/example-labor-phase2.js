@@ -90,9 +90,10 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
   return m;
 }
 
-// ---- 3. 2週間運用の月判定タイミング（2026-09-26 ユーザー決定）--------------------
-// 月単位の判定は**その月の最後の期間を開いているときだけ**出す。前半を編集している段階では
-// 「要確認」にして出さない（後半を作る前は月実働が必ず不足し、前半だけ見ても直しようがない）。
+// ---- 3. 2週間運用の月判定タイミング（2026-09-26 ユーザー指示で条件を1つに減らした）------
+// 月単位の判定の条件は**その月の全日がデータで埋まっていること**だけになった。この筋書きは
+// 10月前半・後半の両方の期間が存在する＝月が埋まっているので、**前半を開いていても後半と
+// まったく同じ月の判定が出る**（以前はここで「要確認」に倒していた）。
 async function halfMonth(){
   const wd=[1,2,5,6,7,8,9,12,13,14,15,16,19,20,21,22,23,26,27,28,29,30];
   const sh=wd.map(d=>`"2026-10-${String(d).padStart(2,"0")}":{status:"work",start:"09:00",end:"19:00"}`).join(",");
@@ -181,11 +182,14 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
     // 鈴木(B制): 実働9h の日が1日＝8h超 → 残業あり。目安は空欄（A制のみ）
     shift_b_guide_blank:sh.found&&sh.rows["目安"]&&sh.rows["目安"][1]==="",
     shift_b_verdict:sh.found&&sh.rows["総括"]&&sh.rows["総括"][1]==="残業あり",
-    // 2週間運用: 後半を開いているときだけ月の判定が出る。前半では「要確認」
+    // 2週間運用: 月が埋まっていれば**前半を開いていても後半と同じ月の判定が出る**
+    // （2026-09-26 に「前半では要確認」から変更。材料が揃っている値を隠さない）
     half_latter_judged:!!hm.latter&&hm.latter["目安"].v==="目安未満 あと2h",
-    half_former_pending:!!hm.former&&hm.former["目安"].v==="要確認"
-      &&/10月後半/.test(hm.former["目安"].t||""),
-    half_former_verdict:!!hm.former&&hm.former["総括"].v==="要確認",
+    half_former_same_as_latter:!!hm.former&&hm.former["目安"].v==="目安未満 あと2h",
+    half_former_verdict:!!hm.former&&hm.former["総括"].v==="目安未満",
+    // 「＋」は付かない（月が埋まっているので途中の値ではない）
+    half_former_not_partial:!!hm.former&&!/＋/.test(hm.former["目安"].v)
+      &&!/＋/.test(hm.former["総括"].v),
     // 残業予定は**半月ごと**に出る（前半を開いていても月の材料が揃っていれば出す）
     half_ot_former:!!hm.former&&/^\d+(\.\d+)?h$/.test(hm.former["残業予定"].v),
     half_ot_latter:!!hm.latter&&/^\d+(\.\d+)?h$/.test(hm.latter["残業予定"].v),

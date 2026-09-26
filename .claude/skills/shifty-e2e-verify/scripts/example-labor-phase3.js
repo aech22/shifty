@@ -224,9 +224,11 @@ const cellOf=(t,row,i=0)=>((t&&t[row])||[])[i];
     set_fontsize16:st.fontsizes.every(f=>f>=16),
     // 休憩不足（休憩帯なしで実働10h の日が10日）
     shift_break_short:!!s.before.panel&&/休憩不足10日/.test(s.before.panel),
-    // 週の休み: 10/5〜10/11 は全日出勤 → ×休なし。期間の外に掛かる週は要確認
+    // 週の休み: 10/5〜10/11 は全日出勤 → ×休なし。期間の外に掛かる週は
+    // **データのある日だけで数えた実数の先頭に「＋」**（2026-09-26 に「要確認」から変更）
     week_no_rest:Object.values(s.before.weekRest||{}).some(v=>v[0]==="×休なし"),
-    week_unknown:Object.values(s.before.weekRest||{}).some(v=>v[0]==="要確認"),
+    week_partial:Object.values(s.before.weekRest||{}).some(v=>/^＋休\d+$/.test(v[0])),
+    week_no_pending_label:!Object.values(s.before.weekRest||{}).some(v=>v[0]==="要確認"),
     week_count:Object.values(s.after.weekRest||{}).some(v=>/^休\d+$/.test(v[0])),
     verdict_fix:cellOf(s.before.labor,"総括")==="要修正",
     // yu を入れると leaveType が保存され、両セルが有給色になる

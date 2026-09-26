@@ -70,8 +70,8 @@ async function part1() {
   R.afterSelect = await h.evaluate(() => {
     const t = document.body.innerText;
     return {
-      dialogShown: t.includes("の属性を バイト → 夏休み に変更します"),
-      asksUntil: t.includes("どの期間まで バイト のままにしますか？"),
+      dialogShown: t.includes("の属性を パート・アルバイト → 夏休み に変更します"),
+      asksUntil: t.includes("どの期間まで パート・アルバイト のままにしますか？"),
       choices: [...document.querySelectorAll("input[name='attrKeep']")].length,
       // 「期限なし」は作らない（2026-09-08 ユーザー決定・3択）
       noUnlimitedOption: !t.includes("期限なし"),
@@ -196,7 +196,7 @@ async function shiftEditTab(keepAttrs) {
     attrChanged: R.afterConfirm.attr === "summer",
     // P2(選択)とP1(それより古い)に旧属性、P3(新しい側)とP0(選択肢外)は触らない
     keepWrittenToChosenAndOlder: JSON.stringify(R.afterConfirm.keep) === JSON.stringify({ p3: null, p2: "parttime", p1: "parttime", p0: null }),
-    toastMentionsBoundary: /「8月後半」まではバイトのまま/.test(R.afterConfirm.toast || ""),
+    toastMentionsBoundary: /「8月後半」まではパート・アルバイトのまま/.test(R.afterConfirm.toast || ""),
     cancelKeepsAttr: R.afterCancel.attr === "parttime" && R.afterCancel.periodsUntouched,
     cancelClosesDialog: R.afterCancel.dialogClosed && R.afterCancel.selectValue === "parttime",
     fixedNoteShown: R.fixedNoteShown,

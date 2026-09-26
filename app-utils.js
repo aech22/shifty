@@ -49,7 +49,7 @@ const PLAN_LABELS = { free: "Free", pro: "Pro", premium: "Premium" };
 // プランの序列。free < pro < premium。アップグレードとダウングレードを判別するために使う。
 // Cloud Functions 側の PLAN_RANK（functions/index.js）と同じ値を保つこと。
 const PLAN_RANK_UI = { free: 0, pro: 1, premium: 2 };
-const STAFF_TYPE_LABELS = {employee:"社員",parttime:"バイト",dispatch:"派遣",other:"その他"};
+const STAFF_TYPE_LABELS = {employee:"社員",parttime:"パート・アルバイト",dispatch:"派遣",other:"その他"};
 const BUILTIN_TYPES = ["employee","parttime","dispatch","other"];
 
 // ===== デフォルト候補時間 =====
@@ -308,22 +308,41 @@ function heatSectionEntries(o){
   if(ls===ds)return[{stM,enM,section:ls}];
   return[{stM,enM:sp,section:ls},{stM:sp,enM,section:ds}];
 }
-// 属性ID→名称のリスト（staffTypeLimits優先・社員/バイト補完）
+// 属性の並び順の正本（2026-09-26 ユーザー指示）。組み込みの 社員 → パート・アルバイト を上に固定し、
+// 残り（自由追加した属性と、旧 makeSettings が入れていた 派遣／その他）を**表示名の50音順**で並べる。
+// スタッフタブの属性プルダウンと設定タブの属性別勤務時間設定の**両方がここを通る**
+// ——並べ替えを画面ごとに書くと、片方だけ直したときに並びが食い違う。
+// 漢字は読み仮名を持たないので localeCompare の照合順（かな→漢字）になる点は許容する。
+// 引数は [属性ID, 表示名] の組の配列で、**表示名は呼び出し側が解決してから渡す**
+// （設定タブは lim 本体が要るので ID→名前のマップを作れない）。
+const ATTR_PINNED_ORDER=["employee","parttime"];
+function sortAttrEntries(entries){
+  return (entries||[]).slice().sort((a,b)=>{
+    const ia=ATTR_PINNED_ORDER.indexOf(a[0]),ib=ATTR_PINNED_ORDER.indexOf(b[0]);
+    if(ia>=0&&ib>=0)return ia-ib;
+    if(ia>=0)return -1;
+    if(ib>=0)return 1;
+    return String(a[1]||"").localeCompare(String(b[1]||""),"ja");
+  });
+}
+// 属性ID→名称のリスト（並びは sortAttrEntries・組み込みは STAFF_TYPE_LABELS が正本）
+// **組み込み属性の表示名は staffTypeLimits の name を読まない**（2026-09-26）。組み込みの名前を変える
+// 入口は UI に無い（設定タブは組み込みだけ input ではなく固定表示）ので、name に入っているのは
+// makeSettings が書いた当時の既定名だけ。読むと「バイト」→「パート・アルバイト」の改称が
+// 既存店舗に届かない（データ移行をしないための選択）。
 function getAttrOptions(settings){
   const stl=(settings&&settings.staffTypeLimits)||{};
-  const out=[];
-  if(stl.employee&&stl.employee.name)out.push(["employee",stl.employee.name]);else out.push(["employee","社員"]);
-  if(stl.parttime&&stl.parttime.name)out.push(["parttime",stl.parttime.name]);else out.push(["parttime","バイト"]);
+  const out=[["employee",STAFF_TYPE_LABELS.employee],["parttime",STAFF_TYPE_LABELS.parttime]];
   // 組み込みの dispatch/other は名前が無くても既定名で補う。2026-06-16〜06-28 の makeSettings は
   // name を持たない {daily,weekly} で保存しており、スタッフタブの属性選択・設定タブの制限一覧は
   // STAFF_TYPE_LABELS で「派遣」「その他」を出すのに、ここだけ落として休憩タグに選べなかった（バグチェック#121）。
   Object.keys(stl).forEach(id=>{
     if(id==="employee"||id==="parttime")return;
     const t=stl[id];
-    const nm=t&&typeof t==="object"?(t.name||(BUILTIN_TYPES.includes(id)?STAFF_TYPE_LABELS[id]:"")):"";
+    const nm=BUILTIN_TYPES.includes(id)?STAFF_TYPE_LABELS[id]:(t&&typeof t==="object"?(t.name||""):"");
     if(nm)out.push([id,nm]);
   });
-  return out;
+  return sortAttrEntries(out);
 }
 // 休憩適用の統一入口: 属性タグフィルタ + 実際のシフト時間帯との重なり判定
 // 属性一致のタグ付き休憩がその日区分にある場合はタグなし休憩を適用しない（差し替え方式）
@@ -761,8 +780,11 @@ function laborFindingLabels(o){return laborFindingsFor(o).map(f=>f.label);}
 
 // 総括判定（S-6）。上から順に評価する4値＋Shifty固有の1値。
 //   要修正 / 目安未満 / 残業あり / OK  … S-6 の4値
-//   要確認 … その月の日にデータが揃っていないとき（Shifty は半月運用で1つの月が2期間に分かれる。
-//            後半を作る前は月実働が必ず不足するので、S-6 をそのまま当てると全員が所定未満になる）。
+//   ＋OK … 月に帰属する判定（目安・月の残業）をまだ出せないとき。Shifty は半月運用で1つの月が
+//          2期間に分かれ、月が埋まるまで月実働が必ず不足するので、S-6 をそのまま当てると
+//          全員が所定未満になる。**日・週に帰属する判定は材料が揃っているので出す**ので、
+//          「いま分かっている範囲では問題なし。月の判定は月が埋まってから」を意味する。
+//          2026-09-26 にユーザー指示で「要確認」から変えた（出せる判定は出し、実数も見せる）。
 // weekNoRest（週の休みに ×休なし がある）は第3弾で渡すようになるまで常に false。
 const OVERALL_FIX_KEYS=["over12","under4","monthOtOverAgreement","dayOtOverAgreement",
   "monthOt100","dayOverAgreementB","weekOver40NoAgreement","breakShort","timeError","badSystem"];
@@ -770,16 +792,20 @@ function overallVerdictOf(o){
   const {laborSystem=null,findings=[],guideKey="none",weekNoRest=false,monthReady=true}=o||{};
   if(laborSystem==="none")return{key:"none",label:""};
   const keys=new Set((findings||[]).map(f=>f&&f.key));
+  // **月が埋まっていない間は目安を総括に入れない。** 呼び出し側は月が埋まる前も現状の実数で
+  // guideStatusOf を出すようになった（画面に「＋所定未満 あと90h」と出る）ので、その key を
+  // そのまま採ると全員が要修正になる。月に帰属する findings は laborFindingsFor 側が落としている。
+  const gk=monthReady?guideKey:"none";
   // monthOt100 は S-6 の一覧に無いが、36協定の絶対上限の違反なので要修正に入れる（判断4）。
   const fix=weekNoRest||keys.has("badSystem")||keys.has("timeError")||keys.has("breakShort")
-    ||(laborSystem==="A"&&(guideKey==="over"||guideKey==="under_base"
+    ||(laborSystem==="A"&&(gk==="over"||gk==="under_base"
         ||keys.has("over12")||keys.has("under4")||keys.has("monthOtOverAgreement")
         ||keys.has("dayOtOverAgreement")||keys.has("monthOt100")))
     ||(laborSystem==="B"&&(keys.has("dayOverAgreementB")||keys.has("weekOver40NoAgreement")));
   if(fix)return{key:"fix",label:"要修正"};
-  if(!monthReady&&laborSystem==="A")return{key:"pending",label:"要確認"};
-  if(laborSystem==="A"&&guideKey==="under_guide")return{key:"under_guide",label:"目安未満"};
+  if(laborSystem==="A"&&gk==="under_guide")return{key:"under_guide",label:"目安未満"};
   if(laborSystem==="B"&&(keys.has("over8")||keys.has("weekOver40")))return{key:"ot",label:"残業あり"};
+  if(!monthReady&&laborSystem==="A")return{key:"ok_partial",label:"＋OK"};
   return{key:"ok",label:"OK"};
 }
 
@@ -924,7 +950,7 @@ function leaveTypeOf(shift){
 //  rest   公休（終日 y・提出の休み）と**無記入** → 週の休みに数える
 //  work   出勤
 //  leave  有給・慶弔 → 休みに数えない（出勤日に取る休暇のため）。ただし「データはある」
-//  nodata その日を含む期間が無い／購読の窓の外 → 要確認
+//  nodata その日を含む期間が無い／購読の窓の外 → その週は数え切れないので `＋休n`（下記）
 function dayRestKindOf(shift,hasData){
   if(hasData===false)return"nodata";
   if(!shift)return"rest";
@@ -942,14 +968,23 @@ function dayRestKindOf(shift,hasData){
 }
 // 週（7日）の状態（S-5）。**シフト表の空欄は公休として数える**（2026-09-26 ユーザー指示）。
 // 以前は「全日が無記入の週」を評価対象外（skip）にしていたが、空欄が公休である以上その週は
-// 休7 であって「数えられない週」ではない。データそのものが無い日（期間が無い・購読の窓の外）は
-// 従来どおり要確認で、これだけが「まだ分からない」に当たる。
+// 休7 であって「数えられない週」ではない。
+// データそのものが無い日（期間が無い・購読の窓の外）がある週も、**要確認で止めずに
+// データのある日だけで数えた実数を返す**（2026-09-26 ユーザー指示で「要確認」から変更）。
+// 不明な日が休みに転ぶ可能性があるので count は下限で、**先頭に `＋`** を付けて途中であることを示す
+// （`＋` は必ず前に置く。2026-09-26 ユーザー指示。数値の後ろに置くと単位のように読めるため）
+// （労務判定表の年計が既に使っている表記に揃える）。
+// **揃わない週の key を "none" にしてはいけない**——総括判定は key==="none"（×休なし）を
+// 週1休の違反として要修正に直結させるので、3日出勤・4日不明の週を ×休なし と呼ぶと
+// 誤って要修正になる。**表示の実数（count）と週1休の判定（key）は別の問いで、
+// 判定は7日揃った週だけで行う。**
 function weekRestStateOf(kinds){
   const k=kinds||[];
-  if(k.some(x=>x==="nodata"))return{key:"unknown",label:"要確認"};
   const n=k.filter(x=>x==="rest").length;
-  if(n===0)return{key:"none",label:"×休なし",count:0};
-  return{key:"ok",label:`休${n}`,count:n};
+  const missing=k.filter(x=>x==="nodata").length;
+  if(missing>0)return{key:"partial",label:`＋休${n}`,count:n,missing};
+  if(n===0)return{key:"none",label:"×休なし",count:0,missing:0};
+  return{key:"ok",label:`休${n}`,count:n,missing:0};
 }
 
 // ===== 年度の集計（2026-09-26 追加要件）=====
@@ -1251,9 +1286,9 @@ const CELL_COMMANDS=[
   {key:"k",kind:"suffix",usage:"9k",label:"キッチン入り",desc:"ホール所属のスタッフをキッチンの人数として集計する。出勤セルに付けるとランチ帯（〜17時）、退勤セルに付けるとディナー帯（17時〜）だけに反映する。片方の帯しかないシフトでは、もう一方のセルのコマンドも有効になる",color:"#FFF3B0"},
   {key:"x",kind:"suffix",usage:"9x",label:"ヘルプ（カウント外）",desc:"時間帯別出勤人数に数えない。x単体入力も同じ扱い（コマンド以外の文字だけの入力はメモとしてそのまま表示される）",color:"#FFF3B0"},
   {key:"y",kind:"rest",aliases:["ｙ","休"],usage:"y",label:"休み希望",desc:"セルを休み扱いにして斜線を表示する（出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日）。**表示は斜線のまま**で、終日でも「公休」の文字は出ない（文字を出したいときは ko を使う）。週の休みには終日の y も公休として数える。もう一度 y で解除、時間を入力すると出勤に上書き。「休」でも入力できる",hatch:true},
-  {key:"ko",kind:"rest",leaveType:"public",usage:"ko",label:"公休（終日）",desc:"その日を終日の公休にする（セルに「公休」と表示され、斜線は引かれない）。もう一度 ko で解除。**週の休みに数える**（何も入力していない日・終日の y も同じく公休として数える）",hatch:false},
-  {key:"yu",kind:"rest",leaveType:"paid",usage:"yu",label:"有給（終日）",desc:"**打ち込んだセルだけ**を有給にする（出勤セル=ランチ帯・退勤セル=ディナー帯。有給は半日単位で取れる）。そのセルに「有給」と表示される。もう一度 yu で解除。**週の休みには数えず**（有給は出勤日に取る休暇のため、有給の週も別に公休が1日以上要る）、実働にも入らない。管理者のみ入力できる",color:"#DCEBFB"},
-  {key:"ke",kind:"rest",leaveType:"ceremony",usage:"ke",label:"慶弔（終日）",desc:"**打ち込んだセルだけ**を慶弔休暇にする（有給と同じく半日単位）。そのセルに「慶弔」と表示される。もう一度 ke で解除。有給と同じく週の休みには数えず、実働にも入らない。管理者のみ入力できる",color:"#FADCE6"},
+  {key:"ko",kind:"rest",leaveType:"public",usage:"ko",label:"公休（終日）",desc:"その日を終日の公休にする（セルに「公休」と表示され、斜線は引かれない）。もう一度 ko で解除、または**セルの「公休」の文字を消しても解除**（終日なので出勤・退勤どちらのセルから消しても両方外れる）。**週の休みに数える**（何も入力していない日・終日の y も同じく公休として数える）",hatch:false},
+  {key:"yu",kind:"rest",leaveType:"paid",usage:"yu",label:"有給（終日）",desc:"**打ち込んだセルだけ**を有給にする（出勤セル=ランチ帯・退勤セル=ディナー帯。有給は半日単位で取れる）。そのセルに「有給」と表示される。もう一度 yu で解除、または**そのセルの「有給」の文字を消しても解除**。**週の休みには数えず**（有給は出勤日に取る休暇のため、有給の週も別に公休が1日以上要る）、実働にも入らない。管理者のみ入力できる",color:"#DCEBFB"},
+  {key:"ke",kind:"rest",leaveType:"ceremony",usage:"ke",label:"慶弔（終日）",desc:"**打ち込んだセルだけ**を慶弔休暇にする（有給と同じく半日単位）。そのセルに「慶弔」と表示される。もう一度 ke で解除、または**そのセルの「慶弔」の文字を消しても解除**。有給と同じく週の休みには数えず、実働にも入らない。管理者のみ入力できる",color:"#FADCE6"},
   {key:"締",kind:"fixed",usage:"16k締",label:"締め（東通り店専用・追加出勤）",desc:"出勤・退勤どちらのセルに単独入力、または数字・h/k/x・他店舗略称など他のコマンドと組み合わせて（前後どちらでも可）入力しても、23:00〜25:00(翌1:00)を主シフトとは別の追加出勤として計上する（例: 出勤13・退勤17締 → 13〜17時と23〜25時の2出勤。出勤16k締 → キッチン入りかつ追加出勤）。鷄えん東通り店でのみ有効",start:"23:00",end:"25:00"},
 ];
 // セル背景色・記号の意味（cellBgForとレジェンドの共通ソース）
@@ -1961,5 +1996,5 @@ function renameStaffInPeriods(periods,oldName,newName){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings};
 }
