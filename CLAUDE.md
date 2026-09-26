@@ -478,7 +478,7 @@ CompanyLink = { id: string, name: string, settings: {laborSettings?, staffTypeLi
 5. `doLogout()` はセッションのみクリア（authUser・allLinkedShops は維持）
 6. `doFullSignOut()` は Firebase Auth も含む完全サインアウト
 
-### 企業連携の拡張（2026-09-27・develop のみ・未リリース）
+### 企業連携の拡張（2026-09-27・本番反映済み: クライアント 2282f11／ルール／Cloud Functions）
 
 計画書（Fable 作成・Fable レビュー済み）の P0〜P5。ユーザー決定: 所属一致で同一人物を判定・略称入力は残す（D4）／
 提出期限は期間ごとに日付を直接入れる（D5）／企業内の期間は「2026年10月前半」等の選択肢で選ぶ（D8）／
@@ -1080,6 +1080,43 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 ---
 
 ## 実装待ちタスク
+
+---
+
+## 🟡 企業連携の拡張（2026-09-27 実装・本番反映済み）の実データ確認
+
+**目的**: 企業連携の拡張（一括PDF・企業の共通設定・提出期限・提出ボタン・所属店舗）は 2026-09-27 に本番へ反映した
+（ユーザー指示「デプロイまでして」）。**既存の企業には写し（`shops/{sid}/company`）がまだ無い**ので、企業設定・提出期限・
+提出ボタンは、企業連携タブで「企業の共通設定を保存」か「提出期限を保存」を1回押すまで出ない（押すと CF が全店舗へ写しを作る）。
+CF 本体の動作は本番の実データでは未検証（dev＝Spark には CF をデプロイできない）。
+
+**受け入れ条件**:
+- [x] `/release-to-main` でクライアント（2282f11・配信6ファイルが origin/main とバイト一致）→ ルール（dev→本番。dev で読み200・書き401を実測）
+      → CF（18関数・saveCompanyConfig は create。未認証は UNAUTHENTICATED・不正IDは INVALID_ARGUMENT を実測）の順に反映した
+- [ ] 反映後、企業の作成者のセッションで「企業の共通設定を保存」を1回押し、各連携店舗の `shops/{sid}/company` が書かれることを
+      `shifty-prod-data-probe`（読み取り専用）で確認する
+- [ ] 本番の店舗で「提出」「提出状況表」「一括PDF（シフトのみ・全データ）」を1回ずつ通す
+
+**取り消し方**: develop の `feature/company-ext` の `--no-ff` マージコミットを `git revert -m 1` する。データは追加だけで既存を消していない。
+**影響範囲**: app-utils.js・app-main.js・app-admin.js・functions/index.js・functions/company-config.js・database.rules.json
+
+---
+
+## 🟢 staffWorkplaces（旧「スタッフの勤務先店舗」）の読み取りと一覧登録の撤去
+
+**目的**: 2026-09-27 に企業連携タブの「勤務先店舗」UI を廃止し、店舗間重複の判定を所属店舗（staffHomeShop）へ移した。
+既存データを1リリースだけ `dupTargetShopsFor` の和集合で併用しているので、所属店舗の登録が済んだら撤去する。
+**再着手条件**: 本番のヘルプ要員全員に staffHomeShop が入っていることを `shifty-prod-data-probe` で確認したとき。
+**撤去箇所**: `dupTargetShopsFor` の和集合・`STAFF_KEYED_SETTING_MAPS`・`PERIOD_SNAPSHOT_SETTING_KEYS`・`makeSettings`（app-core.js）の4箇所と、
+tests/core.test.js の旧データのテスト。
+
+---
+
+## 🟢 シフト作成タブの「公開」ボタン（従業員画面への公開）
+
+**目的**: 2026-09-27 のユーザー指示「公開ボタンの実装は従業員画面ができた時に一緒に実装」。今回は置いていない（使えないボタンを出さない）。
+**再着手条件**: 従業員画面の実装計画（リポジトリ直下の `従業員画面_実装計画.html`）が確定し、公開状態を読む側が決まったとき。
+置き場は `period.published={at}` が自然で、`period.submission` と同じ形（savePeriods の差分 update）で書ける。
 
 ---
 
@@ -1721,6 +1758,24 @@ app-admin.js（CompanyTab のエラー表示）
 ---
 
 ## 🟡 管理者が退勤を出勤より前の時刻で入力すると、シフト表には正しく見えるのに勤務時間・ヒートマップ・上限判定が黙って0になる
+
+> **✅ 2026-09-26 案Cで実装済み（`44e7561`）／残りは dev 実機E2Eのみ**
+> ユーザー判断は **案C**（保存は通し、`dupErrors` と同じくセル色付け＋エラーパネル）で確定。
+> 判定を `isTimeOrderInvalid`（app-utils.js）に切り出し、**両側とも入力されている日だけ**を対象にした
+> （片側セルは補完の領分なので対象外・24時超え表記の 25:00・26:00 は影響を受けない）。
+> 入口2つ（シフト作成タブの `applyEditToSubs`・提出一覧の `saveAdj`）の**両方**から同じ関数を通す。
+> シフト作成タブにはセル色（`CELL_COLOR_LEGEND` の `timeErr`）と「⚠ 時刻の入力ミス」パネルが出る。
+> **データの扱いは1バイトも変えていない**（`effShiftRangeMin` が null を返すことも実働0のままも変えない）。
+>
+> 検証: ユニットテスト（`isTimeOrderInvalid` の境界・24時超え表記の非回帰）、
+> ドリフト検出テスト（両経路が同じ関数を通ることを走査。対照3種で落ちることを確認済み）、
+> 実ブラウザ（`example-labor-phase1.js` 17項目 allPass・コンソールエラー0件）、
+> 既存回帰 `example-shift-edit-tab.js` allPass。
+> dev 実機E2E（検証手順4）も 2026-09-26 に実施済み。標準テスト店舗（8月前半・`?plan=premium`）で
+> セル編集→保存→表示を踏み、Firebase に `adjustedStart/adjustedEnd` が書かれること（既存subを再利用し
+> 新規作成していないこと）、トースト・エラーパネル・セル色が出ること、Excel（10,721 bytes）と PDF の
+> 出力が通ることを確認した。pageerror・console error ともに0件。**この検証でセル色の不具合を1件見つけて
+> 直した**（ポジション不足の黄色が入力ミス色を上書きしていた・`a67b27b`）。触ったデータは元に戻してある。
 
 **目的**: 深夜まで営業する店舗で、管理者が22:00〜翌2:00のシフトを**退勤セルに「2」**と入力すると、
 セルにもExcelにも「22 / 2」と普通の深夜シフトとして印字されるのに、**そこから計算される数字がすべて0になる**。
