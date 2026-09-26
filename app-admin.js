@@ -403,11 +403,12 @@ function GridLegend({abbrToShop,shopName}){
 // staffList/settings を props 名のまま受けないのは、このタブだけが「選択中の期間が終了済みなら
 // その期間の写し(period.snapshot)を使う」＝他タブと違う値で動くため。以降の本文が参照する
 // staffList/settings は解決後の値で、写しの更新にだけ生の staffListProp/settingsProp を使う。
-function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:settingsProp,plan,shopId,shopName,onUpgrade,allLinkedShops=[],onLoadPastSubs,pastSubsLoaded=false,savePeriods,ownerReadOnly=false,companyLink=null}){
+function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:settingsProp,plan,shopId,shopName,onUpgrade,allLinkedShops=[],onLoadPastSubs,pastSubsLoaded=false,savePeriods,ownerReadOnly=false,companyLink=null,initialPeriodId="",exportJob=null}){
   // 直近3ヶ月より古い期間があり、まだ過去分未読なら「過去参照」ボタンを出す（古い期間のシフトを見るため）
   const hasOlderPeriods=periods.some(p=>p&&p.startDate&&p.startDate<subsWindowCutoff());
   const firstPid=(periods[0]||{}).id||"";
-  const[selPid,setSelPid]=useState(firstPid);
+  // initialPeriodId は企業連携タブの一括PDF（非表示マウント）が対象期間を指定するために使う
+  const[selPid,setSelPid]=useState(initialPeriodId||firstPid);
   const[localEdits,setLocalEdits]=useState({});
   const[heatEdits,setHeatEdits]=useState({}); // blur確定値のみ（集計・ヒートマップ用）
   const[focusKey,setFocusKey]=useState(null); // フォーカス中セルkey（黄色ハイライト抑制用）
@@ -2210,9 +2211,13 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   };
   const PDF_PAGEBREAK="__PAGEBREAK__";
   const PDF_SYNCSCALE="__SYNCSCALE__"; // 直前のブロックと同じmm/pxスケールを使う（ページ間で日付行の高さ・幅を揃えるため）
-  const exportPdf=async(mode,dept="all")=>{
-    if(!period)return;
-    if(typeof window.html2canvas==="undefined"||typeof window.jspdf==="undefined"){tt("▲ PDFライブラリ未読込み");return;}
+  // opts は企業連携タブの一括PDF用（2026-09-27）: pdf＝既存の jsPDF に追記、first===false＝先頭で改ページ
+  // （new jsPDF は最初から1ページ持つので、ページ数で判定すると1店舗目の前に空白ページができる）、
+  // save===false＝保存・トースト・モーダル閉じ・分析イベントを行わず、失敗は呼び出し元へ投げ直す。
+  const exportPdf=async(mode,dept="all",opts={})=>{
+    const batch=opts.save===false;
+    if(!period){if(batch)throw new Error("期間が見つかりません");return;}
+    if(typeof window.html2canvas==="undefined"||typeof window.jspdf==="undefined"){if(batch)throw new Error("PDFライブラリ未読込み");tt("▲ PDFライブラリ未読込み");return;}
     setPdfBusy(true);
     try{
       const heading=`${esc(shopName||"店舗")} ${esc(pdfPeriodLabel(period.label)||"")}`;
@@ -2255,7 +2260,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         }
       }
       const{jsPDF}=window.jspdf;
-      const pdf=new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+      const pdf=opts.pdf||new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+      if(opts.pdf&&opts.first===false)pdf.addPage();
       const pageW=297,pageH=210,margin=5,imgW=pageW-margin*2,imgH=pageH-margin*2;
       let y=margin,lastMmPerPx=null,syncNext=false;
       for(const bh of blocks){
@@ -2277,6 +2283,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         pdf.addImage(canvas.toDataURL("image/jpeg",0.92),"JPEG",margin,y,wMm,hMm);
         y+=hMm+4;
       }
+      if(batch)return;
       const deptSuffix=dept==="kit"?"_キッチン":dept==="hall"?"_ホール":"";
       const fname=`${pdfSanitize(shopName||"店舗")}${pdfSanitize(period.label||"")}${mode==="shift"?"シフト":"全データ"}${deptSuffix}.pdf`;
       pdf.save(fname);
@@ -2285,11 +2292,25 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       setPdfModal(false);
     }catch(e){
       console.error("PDF生成失敗:",e);
+      if(batch)throw e;
       tt("✕ PDF生成に失敗しました: "+e.message);
     }finally{
       setPdfBusy(false);
     }
   };
+  // 企業連携タブの一括PDF（非表示マウント）から渡される書き出しジョブ。描画と集計が落ち着いてから1回だけ実行し、
+  // 結果を onDone(null | Error) で返す。キーで重複実行を防ぐ（再レンダーで二重に書き出さない）。
+  const exportJobDoneRef=useRef(null);
+  useEffect(()=>{
+    if(!exportJob||!period||exportJobDoneRef.current===exportJob.key)return;
+    const t=setTimeout(()=>{
+      if(exportJobDoneRef.current===exportJob.key)return;
+      exportJobDoneRef.current=exportJob.key;
+      exportPdf(exportJob.mode,"all",{pdf:exportJob.pdf,first:exportJob.first,save:false})
+        .then(()=>exportJob.onDone(null),e=>exportJob.onDone(e||new Error("PDF生成失敗")));
+    },300);
+    return()=>clearTimeout(t);
+  },[exportJob,period]);
 
   // 「過去データ読込」は労務判定の見出しの右に置く（2026-09-26 ユーザー指示）。年計・有給残が
   // 購読窓の外の期間を読めていないときに押すボタンなので、その表のそばに置く。
@@ -5123,6 +5144,89 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
   </AC>);
 }
 
+// ============================================================
+// 連携店舗のシフト一括PDF（2026-09-27 企業連携の拡張）
+// 対象は提出状況表で「提出済み」かつ対応する期間を持つ店舗だけ。店舗ごとに ShiftEditTab を画面外
+// （display:none）へ1店舗ずつマウントし、既存の PDF 出力（exportPdf）に書き出しジョブを渡して
+// 1つの jsPDF に追記する＝店舗単体の PDF と同じ経路・同じ計算で出る（計算を二重に持たない）。
+// 非表示マウントでは書き込みを塞ぐ: savePeriods=null・ownerReadOnly=true（写し・労務合計を書かない）、
+// onSave は何もしない、allLinkedShops=[]（他店舗の提出を読みに行かない）。
+// 読めなかった店舗は飛ばして、最後のトーストで名前を出す（成功に丸めない）。
+// ============================================================
+function CompanyBulkPdf({range,rows,companyName,tt}){
+  const targets=rows.filter(x=>x.status==="submitted"&&x.period);
+  const[job,setJob]=useState(null);
+  const[progress,setProgress]=useState("");
+  const runRef=useRef(0);
+  const pendingRef=useRef(null);
+  // タブを離れたら進行中の一括出力を止める（待っている Promise を解放する）
+  useEffect(()=>()=>{runRef.current++;if(pendingRef.current)pendingRef.current(new Error("cancelled"));},[]);
+  const loadShop=async(sid,period)=>{
+    const ref=p=>firebaseDB.ref(p).once("value");
+    const[stS,seS,coS,pS]=await Promise.all([ref(`shops/${sid}/staff`),ref(`shops/${sid}/settings`),ref(`shops/${sid}/company/settings`),ref(`shops/${sid}/periods`)]);
+    const periods=Object.values(pS.val()||{}).filter(x=>x&&x.id).sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate)));
+    // 連勤・週の跨ぎを店舗単体の出力と揃えるため、直前の期間の提出も読む
+    const prev=periods.find(p=>String(p.startDate)<String(period.startDate));
+    const q=pid=>firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(pid).once("value");
+    const subSnaps=await Promise.all([q(period.id),...(prev?[q(prev.id)]:[])]);
+    const subs=[];subSnaps.forEach(sn=>Object.values(sn.val()||{}).forEach(x=>{if(x&&x.id)subs.push(x);}));
+    const staffList=Object.values(stS.val()||{}).filter(n=>typeof n==="string");
+    const settings=applyCompanySettings(seS.val()||makeSettings(sid),coS.val()||{});
+    return{staffList,settings,periods,subs,periodId:period.id};
+  };
+  const start=async(mode)=>{
+    if(!targets.length||job)return;
+    if(!firebaseDB){tt("✕ Firebase未初期化");return;}
+    if(typeof window.html2canvas==="undefined"||typeof window.jspdf==="undefined"){tt("▲ PDFライブラリ未読込み");return;}
+    const runId=++runRef.current;
+    const{jsPDF}=window.jspdf;
+    const pdf=new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+    const skipped=[];let first=true;let done=0;
+    for(let i=0;i<targets.length;i++){
+      if(runRef.current!==runId)return;
+      const t=targets[i];
+      setProgress(`${i+1} / ${targets.length} 店舗を処理中…`);
+      let data;
+      try{data=await loadShop(t.sid,t.period);}catch{skipped.push(t.name);continue;}
+      if(runRef.current!==runId)return;
+      const key=`${runId}_${t.sid}`;
+      const err=await new Promise(res=>{
+        pendingRef.current=res;
+        setJob({key,sid:t.sid,shopName:t.name,data,exportJob:{key,mode,pdf,first,onDone:res}});
+      });
+      pendingRef.current=null;
+      setJob(null);
+      if(runRef.current!==runId)return;
+      if(err){skipped.push(t.name);continue;}
+      first=false;done++;
+    }
+    setProgress("");
+    const miss=skipped.length?`（${skipped.join("・")} は取得に失敗したため含まれていません）`:"";
+    if(done===0){tt("✕ PDFを作れませんでした"+miss);return;}
+    const san=v=>String(v||"").replace(/[\\/:*?"<>|]/g,"");
+    const fname=`${san(companyName||"企業")}_${range.startDate}〜${range.endDate}_${mode==="shift"?"シフト":"全データ"}.pdf`;
+    pdf.save(fname);
+    ph("company_pdf_exported",{mode,shops:done});
+    tt(`✓ ${fname} をダウンロードしました${miss}`);
+  };
+  const busy=!!job||!!progress;
+  const B=(mode,label)=>(<button disabled={busy||targets.length===0} onClick={()=>start(mode)}
+    style={{flex:1,padding:"10px 6px",background:mode==="shift"?"#C0392B":"var(--c-card)",border:mode==="shift"?"none":"1px solid var(--c-border2)",borderRadius:8,
+      color:mode==="shift"?"white":"var(--c-text)",fontSize:13,fontWeight:700,cursor:busy||targets.length===0?"default":"pointer",opacity:busy||targets.length===0?0.5:1}}>
+    {label}（{targets.length}店舗）</button>);
+  return(<div style={{marginTop:16,paddingTop:14,borderTop:"1px solid var(--c-border)"}}>
+    <AL>一括ダウンロード（提出済みの店舗のみ）</AL>
+    <div style={{display:"flex",gap:8}}>{B("shift","シフトのみPDF")}{B("all","全データPDF")}</div>
+    {progress&&<div data-co-progress="1" style={{fontSize:12,color:"var(--c-text3)",marginTop:8}}>{progress}</div>}
+    {job&&<div style={{display:"none"}} aria-hidden="true">
+      <ShiftEditTab key={job.key} subs={job.data.subs} periods={job.data.periods} staffList={job.data.staffList}
+        onSave={()=>{}} tt={()=>{}} settings={job.data.settings} plan="premium" shopId={job.sid} shopName={job.shopName}
+        onUpgrade={()=>{}} allLinkedShops={[]} savePeriods={null} ownerReadOnly={true} pastSubsLoaded={true}
+        initialPeriodId={job.data.periodId} exportJob={job.exportJob}/>
+    </div>}
+  </div>);
+}
+
 function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompanyConfig,
                      shops=[],allLinkedShops=[],onSwitchToShop,onUnlinkShop,
                      companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
@@ -5361,7 +5465,8 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
       )}
     </AC>
     {companyInfo&&plan==="premium"&&<CompanyConfigCard companyId={companyInfo.companyId} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}/>}
-    {companyInfo&&plan==="premium"&&<CompanySubmissionsCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}/>}
+    {companyInfo&&plan==="premium"&&<CompanySubmissionsCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}
+      renderDownload={({range,rows})=>range?<CompanyBulkPdf key={range.key} range={range} rows={rows} companyName={companyInfo.name} tt={tt}/>:null}/>}
     {listShops.length>0&&<AC title="連携店舗">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
         {companyInfo?"この企業アカウントに紐付いている店舗の一覧です。管理コードで追加・不要な店舗は連携解除できます（追加する店舗の設定タブに表示されている「管理コード」が必要です）。":"このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。"}
