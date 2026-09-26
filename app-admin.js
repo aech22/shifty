@@ -1432,9 +1432,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         return arr;
       }):[];
       const te=dates.reduce((a,d)=>a+(timeErrors[`${name}|${d}`]?1:0),0);
-      const bsCount=dates.reduce((a,d)=>{const sh=_getWorkShift(name,d);return a+(sh&&isBreakShort(sh,settings,d,name)?1:0);},0);
+      // 休憩不足は**該当日をラベルに出す**（2026-09-26 ユーザー指示）。セル色を付けないと決めた
+      // 判定なので、日付を出さないと管理者がどの日を直せばよいか画面から辿れない。
+      const bsDates=dates.filter(d=>{const sh=_getWorkShift(name,d);return !!sh&&isBreakShort(sh,settings,d,name);});
       const weekNoRest=(weekRestByStaff[name]||[]).some(w=>w&&w.key==="none");
-      const findings=laborFindingsFor({laborSystem:sys,dayMins,weekDayMins:weekMins,timeErrorCount:te,breakShortCount:bsCount,
+      const findings=laborFindingsFor({laborSystem:sys,dayMins,weekDayMins:weekMins,timeErrorCount:te,breakShortDates:bsDates,
         monthOtH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthCovered});
       // 36協定の年単位4項目（年360h・年720h・月45h超が年6回・複数月平均80h）。
       // 月の値は「その月の最後の期間」に残した凍結値を優先するので、過去参照を押さなくても効く。
