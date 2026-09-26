@@ -201,7 +201,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           <button onClick={()=>setTab("mypage")} style={{padding:"6px 12px",background:"#DC2626",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>マイページへ</button>
         </div>}
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings}/>}
-        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} onRenameStaff={(oldName,newName)=>{
+        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} shopId={currentShopId} linkedShops={allLinkedShops} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
@@ -453,7 +453,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         firebaseDB.ref(`shops/${os.id}/settings/shopAbbrs`).once("value").catch(()=>null),
         firebaseDB.ref(`shops/${os.id}/subs`).once("value").catch(()=>null),
         firebaseDB.ref(`shops/${os.id}/settings/staffAliases`).once("value").catch(()=>null),
-      ]).then(([aS,sS,alS])=>{
+        // 所属店舗による同一人物の判定（dupTargetShopsFor）に使う。名簿と所属店舗の2つ。
+        firebaseDB.ref(`shops/${os.id}/staff`).once("value").catch(()=>null),
+        firebaseDB.ref(`shops/${os.id}/settings/staffHomeShop`).once("value").catch(()=>null),
+      ]).then(([aS,sS,alS,stS,hsS])=>{
         const abbrs=aS?Object.values(aS.val()||{}).filter(v=>typeof v==="string"):[];
         // 別名で提出されたsubは staffName に別名がそのまま残る（registerAlias は staffAliases に
         // 登録するだけで staffName を書き換えない）。キーを生の名前のまま持つと、参照側の
@@ -477,7 +480,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             if(!cur||(!hasBoth(cur)&&hasBoth(sh)))workMap.set(k,sh);
           });
         });
-        return[os.id,{name:os.name,abbrs,workMap}];
+        const staffSet=new Set(Object.values((stS&&stS.val())||{}).filter(n=>typeof n==="string"&&!isSpacer(n)));
+        const homeShop=(hsS&&hsS.val())||null;
+        // 読めなかった店舗を「データが無い」と区別できるよう印を残す（丸めて黙る箇所を増やさない。
+        // 倒す向きの判断は BACKLOG「読みの失敗を『問題なし』に丸めている3箇所」のまま）
+        const loadFailed=!aS||!sS||!alS||!stS||!hsS;
+        return[os.id,{name:os.name,abbrs,workMap,staffSet,homeShop,loadFailed}];
       })
     )).then(entries=>{if(!cancelled)setCompanyData(Object.fromEntries(entries));});
     return()=>{cancelled=true;};
@@ -1064,13 +1072,14 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     });
     return perDate;
   },[subs,heatEdits,settings,selPid,staffList,periods,companyData,fixedShiftEnabled]);
-  // 店舗間シフト重複エラー: 勤務先登録済みスタッフが他店舗と時間重複していないか（blur確定値ベース）
+  // 店舗間シフト重複エラー: 同じ人が他店舗と時間重複していないか（blur確定値ベース）。
+  // 見に行く他店舗は所属店舗の一致で決める（dupTargetShopsFor・2026-09-27）。旧データの
+  // staffWorkplaces（企業連携タブの「勤務先店舗」・UIは廃止）はその関数の中で1リリースだけ併用する。
   const dupErrors=useMemo(()=>{
     const errs={}; // {name|date: 他店舗名}
-    const wpAll=settings.staffWorkplaces||{};
     if(Object.keys(companyData).length===0)return errs;
     realStaff.forEach(name=>{
-      const wps=Object.keys(wpAll[name]||{}).filter(id=>companyData[id]);
+      const wps=dupTargetShopsFor({name,shopId,settings,otherShops:companyData}).filter(id=>companyData[id]);
       if(wps.length===0)return;
       dates.forEach(date=>{
         // x（ヘルプ・カウント外）は他店舗勤務が前提。略称によるヘルプ指定を下で除外しているのと
@@ -1120,7 +1129,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       });
     });
     return errs;
-  },[companyData,heatEdits,subs,settings,selPid,staffList,periods]);
+  },[companyData,heatEdits,subs,settings,selPid,staffList,periods,shopId]);
   // 時刻の入力ミス（項目12・案C）: 退勤≦出勤 のセル。保存は通し、色とエラーパネルで知らせる。
   // 判定は dupErrors と同じ入口（getEffHHMM＝blur確定値）から引くので、保存前の編集も反映される。
   // **両側とも入力されている日だけ**が対象（片側セルは補完の領分で入力ミスではない）。
@@ -1769,11 +1778,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const nameColor=name=>((settings.staffColors||{})[name]==="red"?"#e53935":"var(--c-text)");
   // sticky=true: メイングリッドの名前行のみ画面上端に固定（出勤・退勤行はその下をスクロール、テーブル末尾を過ぎると自然に解除される）。
   // 全表示では縦スクロールが起きないので固定しない。
-  const VTH=(name,sticky=false)=>(
-    <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,padding:fullView?0:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"middle",...(sticky&&(!fullView||fvScrolls)?{position:"sticky",top:0,zIndex:3}:{})}}>
-      <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:fullView?fvNameH:72,display:"inline-block",fontSize:fullView?Math.max(7,Math.min(11,colW-2)):11,fontWeight:600,color:nameColor(name),whiteSpace:"nowrap",textAlign:"center",lineHeight:String(colW-4)+"px",overflow:fullView?"hidden":undefined}}>{name}</div>
+  // ヘルプ（所属店舗が他店舗）の人は名前の横に所属店舗名を細く添える。全表示では行高を食うので出さない。
+  // 色・バッジ・記号は使わない（kill-ai-slop: 装飾は意味を持つ）。
+  const homeShopNameOf=id=>((allLinkedShops||[]).find(s=>s&&s.id===id)||{}).name||(companyData[id]&&companyData[id].name)||"他店舗";
+  const VTH=(name,sticky=false)=>{
+    const helper=!fullView&&isHelperAt(settings,name,shopId);
+    const lh=helper?Math.max(8,Math.floor((colW-4)/2)):colW-4;
+    return(
+    <th key={name} title={helper?`${name}（所属: ${homeShopNameOf(homeShopOf(settings,name,shopId))}）`:undefined} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,padding:fullView?0:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"middle",...(sticky&&(!fullView||fvScrolls)?{position:"sticky",top:0,zIndex:3}:{})}}>
+      <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:fullView?fvNameH:72,display:"inline-block",fontSize:fullView?Math.max(7,Math.min(11,colW-2)):11,fontWeight:600,color:nameColor(name),whiteSpace:"nowrap",textAlign:"center",lineHeight:String(lh)+"px",overflow:fullView||helper?"hidden":undefined}}>{name}{helper&&<span data-home-shop="1" style={{display:"block",fontSize:9,fontWeight:400,color:"var(--c-text3)"}}>{homeShopNameOf(homeShopOf(settings,name,shopId))}</span>}</div>
     </th>
-  );
+    );
+  };
   // 集計用の実効値（heatEdits＝blur確定値ベース）
   const getHeatVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in heatEdits)return heatEdits[key];const t=toDecimal(getStoredTime(name,date,field));return t||"";};
   // その日出勤しているか（0.5出勤含む）: start か end のどちらかに有効値がある
@@ -3213,7 +3229,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
 }
 
 // ===== スタッフ登録タブ =====
-function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods,ownerReadOnly=false}){
+function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods,ownerReadOnly=false,shopId="",linkedShops=[]}){
   const[newName,setNewName]=useState("");
   // 削除確認ポップアップ。対象は index ではなく「スタッフ名」で持つ（下のコメントと同じ理由）。
   const[delTarget,setDelTarget]=useState(null);
@@ -4023,6 +4039,29 @@ const dragIdxRef=useRef(null);
               </select>
             </>)}
 
+            {/* 所属店舗（2026-09-27 企業連携の拡張）。他店舗を所属にした人は、この店舗のシフトでは「ヘルプ」として
+                列見出しに所属店舗名が出て、所属店舗と時間が重なるとシフト作成タブに重複エラーが出る。
+                同一人物の判定は「所属店舗が一致すること」（app-utils.js の dupTargetShopsFor）。 */}
+            {isPremium&&(()=>{
+              const others=(linkedShops||[]).filter(s=>s&&s.id&&s.id!==shopId);
+              const cur=((settings.staffHomeShop||{})[n])||"";
+              if(others.length===0&&!cur)return null;
+              const known=!cur||others.some(s=>s.id===cur);
+              const setHome=v=>{
+                const h={...(settings.staffHomeShop||{})};
+                if(v&&v!==shopId)h[n]=v;else delete h[n];
+                onSaveSettings&&onSaveSettings({...settings,staffHomeShop:h});
+              };
+              return sec("所属店舗",<>
+                <select value={cur} onChange={e=>setHome(e.target.value)} style={{...selStyle,width:"auto",minWidth:180}}>
+                  <option value="">この店舗</option>
+                  {others.map(s=><option key={s.id} value={s.id}>{s.name||s.id}</option>)}
+                  {!known&&<option value={cur}>連携していない店舗</option>}
+                </select>
+                <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>他店舗を選ぶと、この店舗のシフトではヘルプとして扱われます。所属店舗と勤務時間が重なるとシフト作成タブにエラーが出ます。</div>
+              </>);
+            })()}
+
             {isPremium&&sec("退勤延長",<>
               <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:8}}>シフト終了後の延長時間。ランチ帯（退勤17:00以前）とディナー帯（17:00超）で別に設定できます。勤務時間の合計に加算されます。</div>
               <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
@@ -4790,7 +4829,7 @@ if(typeLim.customDays&&(typeLim.customHours||typeLim.customHoursMin)){const r=_w
 }
 
 // ===== 企業連携タブ =====
-function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
+function CompanyTab({settings,onSave,tt,shopId,authUser,
                      shops=[],allLinkedShops=[],onSwitchToShop,onUnlinkShop,
                      companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany}){
   // 企業アカウントUI（SetTabから移動）
@@ -4803,25 +4842,20 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
   const[coNewPw,setCoNewPw]=useState("");
   const[coAddCode,setCoAddCode]=useState("");
   const[coAddOpen,setCoAddOpen]=useState(false);
-  // 店舗一覧トグル・略称・スタッフ勤務先
+  // 店舗一覧トグル・略称（スタッフの勤務先店舗は 2026-09-27 に廃止。スタッフタブの「所属店舗」へ移した）
   const[expanded,setExpanded]=useState({});   // {shopId:true}
-  const[shopMeta,setShopMeta]=useState({});   // {shopId:{abbrs:[],staff:[],workplaces:{},loaded:true}}
+  const[shopMeta,setShopMeta]=useState({});   // {shopId:{abbrs:[],loaded:true}}
   const[abbrInput,setAbbrInput]=useState({}); // {shopId:"入力中の略称"}
   const[allAbbrs,setAllAbbrs]=useState({});   // {shopId:[略称]} 重複チェック専用（未展開店舗ぶんも先読み）
   const listShops=allLinkedShops.length>0?allLinkedShops:shops;
 
   const loadShopMeta=(sid)=>{
     if(!firebaseDB)return;
-    Promise.all([
-      firebaseDB.ref(`shops/${sid}/settings/shopAbbrs`).once("value"),
-      firebaseDB.ref(`shops/${sid}/staff`).once("value"),
-      firebaseDB.ref(`shops/${sid}/settings/staffWorkplaces`).once("value"),
-    ]).then(([aS,stS,wS])=>{
+    firebaseDB.ref(`shops/${sid}/settings/shopAbbrs`).once("value").then(aS=>{
       const abbrs=Object.values(aS.val()||{}).filter(v=>typeof v==="string");
-      const staff=Object.values(stS.val()||{}).filter(n=>typeof n==="string"&&!isSpacer(n));
-      setShopMeta(m=>({...m,[sid]:{abbrs,staff,workplaces:wS.val()||{},loaded:true}}));
+      setShopMeta(m=>({...m,[sid]:{abbrs,loaded:true}}));
     }).catch(()=>{
-      setShopMeta(m=>({...m,[sid]:{abbrs:[],staff:[],workplaces:{},loaded:true}}));
+      setShopMeta(m=>({...m,[sid]:{abbrs:[],loaded:true}}));
       tt("✕ 店舗データの読み込みに失敗しました");
     });
   };
@@ -4831,13 +4865,13 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
   };
   // 表示中店舗はライブなsettingsを使い、他店舗は読み込んだメタを使う
   const metaFor=(sid)=>sid===shopId
-    ?{abbrs:settings.shopAbbrs||[],staff:staffList.filter(n=>!isSpacer(n)),workplaces:settings.staffWorkplaces||{},loaded:true}
+    ?{abbrs:settings.shopAbbrs||[],loaded:true}
     :(shopMeta[sid]||null);
-  // 略称・勤務先の保存: 表示中店舗はsaveSettings経由（localStorage二重書き維持）、他店舗はFirebaseへupdateマージ
+  // 略称の保存: 表示中店舗はsaveSettings経由（localStorage二重書き維持）、他店舗はFirebaseへupdateマージ
   const saveMetaField=(sid,field,value)=>{
-    const stateKey=field==="shopAbbrs"?"abbrs":"workplaces";
+    const stateKey="abbrs";
     if(sid===shopId){onSave({...settings,[field]:value});setShopMeta(m=>m[sid]?{...m,[sid]:{...m[sid],[stateKey]:value}}:m);return;}
-    setShopMeta(m=>({...m,[sid]:{...(m[sid]||{abbrs:[],staff:[],workplaces:{},loaded:true}),[stateKey]:value}}));
+    setShopMeta(m=>({...m,[sid]:{...(m[sid]||{abbrs:[],loaded:true}),[stateKey]:value}}));
     if(field==="shopAbbrs")setAllAbbrs(a=>({...a,[sid]:value}));
     if(!firebaseDB)return;
     fbUpd(`shops/${sid}/settings`,{[field]:value})
@@ -4883,21 +4917,12 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
     const cur=(metaFor(sid)||{}).abbrs||[];
     saveMetaField(sid,"shopAbbrs",cur.filter(a=>a!==abbr));
   };
-  const toggleWorkplace=(sid,staffName,targetShopId)=>{
-    const meta=metaFor(sid);if(!meta)return;
-    const wp={...(meta.workplaces||{})};
-    const cur={...(wp[staffName]||{})};
-    if(cur[targetShopId])delete cur[targetShopId];else cur[targetShopId]=true;
-    if(Object.keys(cur).length)wp[staffName]=cur;else delete wp[staffName];
-    saveMetaField(sid,"staffWorkplaces",wp);
-  };
 
   const shopCard=(shop)=>{
     const isCurrent=shop.id===shopId;
     const open=!!expanded[shop.id];
     const meta=metaFor(shop.id);
     const canUnlink=listShops.length>1;
-    const others=listShops.filter(s=>s.id!==shop.id);
     return(
       <div key={shop.id} style={{background:"var(--c-input)",borderRadius:8,border:`1px solid ${isCurrent?"rgba(248,112,54,.4)":"var(--c-border2)"}`,marginBottom:8,overflow:"hidden"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",cursor:"pointer"}} onClick={()=>toggleExpand(shop.id)}>
@@ -4950,29 +4975,6 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
                   style={{...AI,flex:1,maxWidth:200}}/>
                 <button onClick={()=>addAbbr(shop.id)} style={{...AB,padding:"8px 14px",fontSize:13,whiteSpace:"nowrap"}}>追加</button>
               </div>
-              {/* スタッフ一覧と勤務先登録 */}
-              <AL>スタッフの勤務先店舗（複数店舗で働くスタッフに登録すると、シフト重複を自動チェックします）</AL>
-              {meta.staff.length===0&&<div style={{fontSize:12,color:"var(--c-text4)"}}>スタッフが登録されていません</div>}
-              {meta.staff.map(nm=>{
-                const wps=(meta.workplaces||{})[nm]||{};
-                return(
-                  <div key={nm} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:"1px solid var(--c-border)",flexWrap:"wrap"}}>
-                    <span style={{fontSize:13,fontWeight:600,color:"var(--c-text)",minWidth:80}}>{nm}</span>
-                    <div style={{display:"flex",gap:5,flexWrap:"wrap",flex:1}}>
-                      {others.length===0&&<span style={{fontSize:11,color:"var(--c-text4)"}}>他に連携店舗がありません</span>}
-                      {others.map(os=>{
-                        const sel=!!wps[os.id];
-                        return(<button key={os.id} onClick={()=>toggleWorkplace(shop.id,nm,os.id)}
-                          style={{padding:"4px 10px",borderRadius:12,border:`1px solid ${sel?"var(--c-accent)":"var(--c-border2)"}`,
-                            background:sel?"rgba(248,112,54,.12)":"var(--c-bg)",color:sel?"var(--c-accent)":"var(--c-text3)",
-                            fontSize:12,fontWeight:sel?700:400,cursor:"pointer",whiteSpace:"nowrap"}}>
-                          {sel?"✓ ":""}{os.name}
-                        </button>);
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
             </>)}
           </div>
         )}
@@ -5067,7 +5069,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
     {listShops.length>0&&<AC title="連携店舗">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
         {companyInfo?"この企業アカウントに紐付いている店舗の一覧です。管理コードで追加・不要な店舗は連携解除できます（追加する店舗の設定タブに表示されている「管理コード」が必要です）。":"このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。"}
-        店舗名をタップすると略称・スタッフの勤務先を設定できます。
+        店舗名をタップすると略称を設定できます。
       </div>
       {companyInfo&&(
         coAddOpen?(
@@ -5092,7 +5094,7 @@ function CompanyTab({settings,onSave,tt,shopId,staffList=[],authUser,
         ・<b>出勤セルのみ</b>に略称 → その店舗のランチ帯（〜17時）のみヘルプ<br/>
         ・<b>退勤セルのみ</b>に略称 → その店舗のディナー帯（17時〜）のみヘルプ<br/>
         ・<b>両方のセル</b>に略称 → 出勤から退勤まで終日ヘルプ<br/>
-        ヘルプ帯は自店舗の時間帯別出勤人数から除外されます。勤務先店舗を登録したスタッフは、他店舗と時間が重複するとシフト作成タブにエラーが表示されます。
+        ヘルプ帯は自店舗の時間帯別出勤人数から除外されます。<br/>スタッフタブの編集で所属店舗を他店舗にすると、その人はこの店舗のシフトでヘルプとして扱われ、所属店舗と時間が重複するとシフト作成タブにエラーが表示されます。
       </div>
     </AC>
     </>)}
