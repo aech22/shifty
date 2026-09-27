@@ -4,7 +4,8 @@
 // 測るもの:
 //  - Premium で連携店舗があるとき、編集モーダルに「所属店舗」のセレクトが出る（fontSize 16px 以上）
 //  - A店を選ぶと onSaveSettings に staffHomeShop.田中="A1" が入る
-//  - 「この店舗」に戻すとキーが消える
+//  - 先頭の項目（value=""）は自店舗の店舗名（2026-09-28・空なら「この店舗」）
+//  - 自店舗に戻すとキーが消える
 //  - Pro では出ない（D9: Premium のみ）／連携店舗が無ければ出ない
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-staff-home-shop.js → allPass=true / EXIT=0
@@ -13,7 +14,7 @@
 const { openHarness } = require(require("node:path").join(__dirname, "mount-component.js"));
 const ROOT = process.env.SHIFTY_ROOT || undefined;
 
-async function mount(plan, linked) {
+async function mount(plan, linked, shopName = "B店") {
   return openHarness({
     root: ROOT,
     waitFor: "input[placeholder='スタッフ名を入力']",
@@ -25,7 +26,7 @@ async function mount(plan, linked) {
           plan="${plan}" onUpgrade={()=>{}} onRenameStaff={()=>{}}
           settings={settings} onSaveSettings={s=>{window.__settings=s;setSettings(s);}}
           subs={[]} periods={[]} savePeriods={()=>{}} ownerReadOnly={false}
-          shopId="S1" linkedShops={${JSON.stringify(linked)}}/>;
+          shopId="S1" shopName={${JSON.stringify(shopName)}} linkedShops={${JSON.stringify(linked)}}/>;
       }
       ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
   });
@@ -64,11 +65,19 @@ const findHomeSelect = () => {
   R.noLinked = await h.evaluate(`!!(${findHomeSelect.toString()})()`);
   await h.close();
 
+  // 店舗名が空のときは「この店舗」にフォールバックする
+  h = await mount("premium", LINKED, "");
+  await h.clickExact("編集", { rowText: "田中" });
+  await h.page.waitForTimeout(300);
+  R.emptyName = await h.evaluate(`(${findHomeSelect.toString()})()?(${findHomeSelect.toString()})().options[0].text:null`);
+  await h.close();
+
   const verdict = {
-    shownOnPremium: !!(R.premium && R.premium.options.join(",") === "この店舗,A店"),
+    shownOnPremium: !!(R.premium && R.premium.options.join(",") === "B店,A店"),
     font16: !!(R.premium && R.premium.font >= 16),
     savesHome: !!(R.afterA && R.afterA["田中"] === "A1"),
     selfRemovesKey: !!(R.afterSelf && !("田中" in R.afterSelf)),
+    fallbackWhenNameEmpty: R.emptyName === "この店舗",
     hiddenOnPro: R.pro === false,
     hiddenWithoutLinked: R.noLinked === false,
     noErrors: R.errors1.length === 0,

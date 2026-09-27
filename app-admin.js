@@ -209,7 +209,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           <button onClick={()=>setTab("mypage")} style={{padding:"6px 12px",background:"#DC2626",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>マイページへ</button>
         </div>}
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings}/>}
-        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} shopId={currentShopId} linkedShops={homeShopChoices} onRenameStaff={(oldName,newName)=>{
+        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name||""} linkedShops={homeShopChoices} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
@@ -3308,7 +3308,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
 }
 
 // ===== スタッフ登録タブ =====
-function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods,ownerReadOnly=false,shopId="",linkedShops=[]}){
+function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods,ownerReadOnly=false,shopId="",shopName="",linkedShops=[]}){
   const[newName,setNewName]=useState("");
   // 削除確認ポップアップ。対象は index ではなく「スタッフ名」で持つ（下のコメントと同じ理由）。
   const[delTarget,setDelTarget]=useState(null);
@@ -4133,11 +4133,11 @@ const dragIdxRef=useRef(null);
               };
               return sec("所属店舗",<>
                 <select value={cur} onChange={e=>setHome(e.target.value)} style={{...selStyle,width:"auto",minWidth:180}}>
-                  <option value="">この店舗</option>
+                  <option value="">{shopName||"この店舗"}</option>
                   {others.map(s=><option key={s.id} value={s.id}>{s.name||s.id}</option>)}
                   {!known&&<option value={cur}>連携していない店舗</option>}
                 </select>
-                <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>他店舗を選ぶと、この店舗のシフトではヘルプとして扱われます。所属店舗と勤務時間が重なるとシフト作成タブにエラーが出ます。</div>
+                <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>他店舗を選ぶと、{shopName||"この店舗"}のシフトではヘルプとして扱われます。所属店舗と勤務時間が重なるとシフト作成タブにエラーが出ます。</div>
               </>);
             })()}
 
