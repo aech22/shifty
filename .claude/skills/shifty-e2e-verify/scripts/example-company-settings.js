@@ -6,6 +6,8 @@
 //    saveCompanyConfig が1回だけ呼ばれ、店舗の写し（shops/S1/company）経由で設定タブが「企業設定」表示に
 //    変わる。その後に設定タブで余裕を変えても、shops/S1/settings に企業の値（fixedOvertimeMin）が書かれない
 //    （App の saveSettings の剥がし）。
+//    あわせて企業の属性ブロック（先頭＝社員）の「＋残業」に 20 を入れると payload の staffTypeLimits に monthlyOt が入り、
+//    設定タブのその欄が「企業設定」表示になる（2026-09-28・1ヶ月の残業）
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-company-settings.js → allPass=true / EXIT=0
 // 反証: SHIFTY_ROOT=<企業設定より前の配信物> node ... → EXIT≠0
@@ -101,15 +103,17 @@ async function partB() {
     R.cardShown = true;
     R.configRows = await h.evaluate(() => [...document.querySelectorAll("[data-co-attr]")].map(e => e.getAttribute("data-co-attr")));
     R.setFixed = await h.evaluate(setNumberByLabel("企業の共通設定", "固定残業", 20));
+    R.setOt = await h.evaluate(setNumberByLabel("企業の共通設定", "＋残業", 20));
     await h.page.waitForTimeout(200);
     R.clickSave = await h.clickByText("企業の共通設定を保存");
     await h.page.waitForTimeout(900);
-    R.cf = await h.evaluate(() => window.__cf.map(c => ({ name: c.name, lab: c.payload && c.payload.settings && c.payload.settings.laborSettings })));
+    R.cf = await h.evaluate(() => window.__cf.map(c => ({ name: c.name, lab: c.payload && c.payload.settings && c.payload.settings.laborSettings, stl: c.payload && c.payload.settings && c.payload.settings.staffTypeLimits })));
     R.mirror = await h.evaluate(() => window.__db("shops/S1/company/settings"));
     R.toast = await h.evaluate(() => document.body.innerText.includes("連携店舗 2 件に反映しました"));
     await h.clickByText("設定");
     await h.page.waitForTimeout(700);
     R.settingsFixed = await h.evaluate(rowFixedText("労務判定", "固定残業"));
+    R.settingsOtFixed = await h.evaluate(rowFixedText("スタッフ属性別 勤務時間制限", "＋残業"));
     R.setMargin = await h.evaluate(setNumberByLabel("労務判定", "余裕", 6));
     await h.page.waitForTimeout(700);
     R.storedLabor = await h.evaluate(() => window.__db("shops/S1/settings/laborSettings"));
@@ -138,6 +142,8 @@ async function partB() {
     B_cfCalledOnce: !!(B.cf && B.cf.length === 1 && B.cf[0].name === "saveCompanyConfig" && B.cf[0].lab && B.cf[0].lab.fixedOvertimeMin === 1200),
     B_mirrorWritten: !!(B.mirror && B.mirror.laborSettings && B.mirror.laborSettings.fixedOvertimeMin === 1200),
     B_toast: B.toast === true,
+    B_otSent: !!(B.setOt === "ok" && B.cf && B.cf[0] && B.cf[0].stl && Object.values(B.cf[0].stl).some(e => e && e.monthlyOt === 20)),
+    B_otFixedOnSettingsTab: B.settingsOtFixed === "20 企業設定",
     B_settingsTabFixed: B.settingsFixed === "20 企業設定",
     B_storeDoesNotHoldCompanyValue: !!(B.storedLabor && !("fixedOvertimeMin" in B.storedLabor) && B.storedLabor.marginMin === 360),
     noErrors: A.errors.length === 0 && B.errors.length === 0 && !B.exception,

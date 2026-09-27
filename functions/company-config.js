@@ -11,7 +11,7 @@ function isValidShopId(shopId) {
 const COMPANY_LABOR_KEYS = ["monthlyBase31Min", "fixedOvertimeMin", "marginMin", "agreementDailyOtMin",
   "agreementMonthlyOtMin", "agreementAnnualOtMin", "fiscalYearStartMonth"];
 const COMPANY_LIMIT_NUM_KEYS = ["customDays", "customHours", "customHoursMin", "daily", "dailyMin", "weekly",
-  "weeklyMin", "biweekly", "biweeklyMin", "monthly", "monthlyMin"];
+  "weeklyMin", "biweekly", "biweeklyMin", "monthly", "monthlyMin", "monthlyOt"];
 const COMPANY_LABOR_SYSTEMS = ["A", "B", "none"];
 const COMPANY_BUILTIN_ATTRS = ["employee", "parttime", "dispatch", "other"];
 const COMPANY_ATTR_ID_RE = /^co_[A-Za-z0-9]{8}$/;

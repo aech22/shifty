@@ -196,9 +196,12 @@ LEAVE_TYPES / leaveTypeOf / dayRestKindOf / weekRestStateOf
 fiscalYearOf / fiscalYearStartMonthOf / yearLaborSummary / paidLeaveRemaining
                            // 年度（既定4月開始・設定で暦年にできる）の累計と有給残。累計は
                            // **period.laborTotals（凍結時点の値）を優先**するので過去参照が要らない
-STAFF_LIMIT_WINDOWS / staffLimitOf / limitStateOf / hasAnyStaffLimit
-                           // 属性別の勤務時間の上限・下限（1日/週/2週間/1ヶ月＋任意日数）。0＝未設定。
-                           // **勤務が1分もない窓は下限割れにしない**（休んだ人が全員ハイライトされるのを防ぐ）。
+STAFF_LIMIT_WINDOWS / staffLimitOf / limitStateOf / hasAnyStaffLimit / prorateMonthlyHours / attrMonthFrameOf / attrMonthFrame
+                           // 属性別の勤務時間の上限・目安（1日/週/2週間/1ヶ月＋任意日数）。0＝未設定。
+                           // **「下限」は 2026-09-28 に「目安」へ改め、何も判定しない**（limitStateOf は "over" だけ。キーは *Min のまま＝移行なし）。
+                           // 1ヶ月の上限・目安は入力値を31日の月の値とみなし、労務設定と同じ式（W を30分単位→FLOOR(W×暦日数÷7)）で
+                           // 月の暦日数に日割りし、1ヶ月の残業 monthlyOt（時間・日割りしない）を足す（attrMonthFrameOf）。
+                           // monthlyOt は企業の共通設定でも決められる（COMPANY_LIMIT_KEYS と CF の COMPANY_LIMIT_NUM_KEYS の両方に登録済み）。
                            // 窓の一覧をここに1本化してある——設定UI・集計表・提出一覧のバッジ・PDFが
                            // 組を書き写すと、項目を足したときにどれかが取り残される
 applyCompanySettings / stripCompanySettings / companyControlledKeys / genCompanyAttrId / isCompanyAttrId

@@ -3696,18 +3696,19 @@ test("compactLaborTotal / laborTotalsEqual: 0 は持たず、同値なら書き�
 });
 
 // ===== 勤務時間の下限（2026-09-26 追加要件）=====
-test("limitStateOf: 上限超過は over、下限割れは under、勤務0の窓は判定しない", () => {
+// 2026-09-28: 下限は「目安」に改め、判定しない（under を返さない）
+test("limitStateOf: 上限超過だけを over にし、目安（旧・下限）は判定しない", () => {
   assert.strictEqual(u.limitStateOf(HM(9, 0), 8, 0), "over");
   assert.strictEqual(u.limitStateOf(HM(8, 0), 8, 0), null, "ちょうどは超過でない");
-  assert.strictEqual(u.limitStateOf(HM(3, 0), 8, 4), "under");
-  assert.strictEqual(u.limitStateOf(HM(4, 0), 8, 4), null, "ちょうどは不足でない");
-  assert.strictEqual(u.limitStateOf(0, 8, 4), null, "勤務が1分もない窓は下限割れにしない");
+  assert.strictEqual(u.limitStateOf(HM(3, 0), 8, 4), null, "目安（旧・下限）を下回っても判定しない");
+  assert.strictEqual(u.limitStateOf(HM(3, 0), 8), null);
+  assert.strictEqual(u.limitStateOf(0, 8, 4), null, "勤務が1分もない窓は判定しない");
   assert.strictEqual(u.limitStateOf(HM(3, 0), 0, 0), null, "どちらも未設定なら判定しない");
   // 上限が先。矛盾した設定（下限>上限）でも上限側を返して黙らない
   assert.strictEqual(u.limitStateOf(HM(20, 0), 8, 40), "over");
 });
 
-test("staffLimitOf / hasAnyStaffLimit: 未設定は0で埋まり、下限だけでも判定が走る", () => {
+test("staffLimitOf / hasAnyStaffLimit: 未設定は0で埋まり、目安だけでは判定を走らせない", () => {
   const st = { staffTypeLimits: { employee: { name: "社員", weekly: 40, weeklyMin: 30 } } };
   const l = u.staffLimitOf(st, "employee");
   assert.strictEqual(l.weekly, 40);
@@ -3717,10 +3718,12 @@ test("staffLimitOf / hasAnyStaffLimit: 未設定は0で埋まり、下限だけ�
   assert.strictEqual(l.customHoursMin, 0);
   assert.strictEqual(u.staffLimitOf({}, "parttime").weekly, 0, "属性が無くても0で返る");
   assert.ok(u.hasAnyStaffLimit(l));
-  assert.ok(u.hasAnyStaffLimit({ ...u.STAFF_LIMIT_DEFAULTS, monthlyMin: 60 }), "下限だけでも走る");
+  assert.ok(!u.hasAnyStaffLimit({ ...u.STAFF_LIMIT_DEFAULTS, monthlyMin: 60 }), "目安だけでは走らない（判定しないため）");
+  assert.strictEqual(l.monthlyOt, 0, "1ヶ月の残業も0で埋まる");
   assert.ok(!u.hasAnyStaffLimit(u.STAFF_LIMIT_DEFAULTS));
   assert.ok(!u.hasAnyStaffLimit({ ...u.STAFF_LIMIT_DEFAULTS, customDays: 10 }), "日数だけでは走らない");
-  assert.ok(u.hasAnyStaffLimit({ ...u.STAFF_LIMIT_DEFAULTS, customDays: 10, customHoursMin: 30 }));
+  assert.ok(!u.hasAnyStaffLimit({ ...u.STAFF_LIMIT_DEFAULTS, customDays: 10, customHoursMin: 30 }), "任意日数の目安だけでも走らない");
+  assert.ok(u.hasAnyStaffLimit({ ...u.STAFF_LIMIT_DEFAULTS, customDays: 10, customHours: 30 }));
 });
 
 test("STAFF_LIMIT_WINDOWS: 上限キーと下限キーが対で揃っている", () => {
@@ -4232,4 +4235,37 @@ test("excludedBandsOf: x は出勤セル=ランチ帯・退勤セル=ディナ�
   assert.deepStrictEqual(u.excludedBandsOf({ stM: M(9), enM: M(22), startNote: "三", endNote: "", abbrToShop: ab }), { lunch: true, dinner: false }, "略称の規則は従来どおり");
   assert.deepStrictEqual(u.excludedBandsOf({ stM: M(9), enM: M(22), startNote: "h", endNote: "k", abbrToShop: ab }), { lunch: false, dinner: false }, "h/kは外さない");
   assert.deepStrictEqual(u.excludedBandsOf({ stM: M(9), enM: M(22), startNote: "constructor", endNote: "", abbrToShop: ab }), { lunch: false, dinner: false }, "未登録の略称（プロトタイプの名前）は外さない");
+});
+
+// ===== ① 1ヶ月の上限・目安を月の暦日数で日割りし、1ヶ月の残業を足す（2026-09-28）=====
+// 期待値は労務設定と同じ丸め（W を30分単位→FLOOR(W×暦日数÷7)）から手計算した値（計画書の表）。実装の出力から逆生成しない
+test("prorateMonthlyHours: 31日の月の値を労務設定と同じ式で日割りする", () => {
+  assert.strictEqual(u.prorateMonthlyHours(177, "2026-03"), HM(177, 8), "31日 177:08");
+  assert.strictEqual(u.prorateMonthlyHours(177, "2026-04"), HM(171, 25), "30日 171:25");
+  assert.strictEqual(u.prorateMonthlyHours(177, "2026-02"), HM(160, 0), "28日 160:00");
+  assert.strictEqual(u.prorateMonthlyHours(160, "2026-03"), HM(159, 25), "160h は W=36h に丸まり 31日でも 159:25");
+  assert.strictEqual(u.prorateMonthlyHours(150, "2026-04"), HM(145, 42), "目安 150h の 30日");
+  assert.strictEqual(u.prorateMonthlyHours(0, "2026-04"), 0);
+  assert.strictEqual(u.prorateMonthlyHours(177, "bad"), 0);
+});
+
+test("attrMonthFrameOf: 上限・目安とも日割り＋1ヶ月の残業。残業だけでは枠にならない", () => {
+  const D = u.STAFF_LIMIT_DEFAULTS;
+  assert.deepStrictEqual(u.attrMonthFrameOf({ ...D, monthly: 177, monthlyOt: 20 }, "2026-04"), { capMin: HM(191, 25), guideMin: 0 });
+  assert.deepStrictEqual(u.attrMonthFrameOf({ ...D, monthly: 177, monthlyOt: 20 }, "2026-03"), { capMin: HM(197, 8), guideMin: 0 });
+  assert.deepStrictEqual(u.attrMonthFrameOf({ ...D, monthly: 0, monthlyOt: 20 }, "2026-04"), { capMin: 0, guideMin: 0 }, "上限が無ければ残業だけでは枠にしない");
+  assert.deepStrictEqual(u.attrMonthFrameOf({ ...D, monthlyMin: 150, monthlyOt: 20 }, "2026-04"), { capMin: 0, guideMin: HM(165, 42) });
+  assert.deepStrictEqual(u.attrMonthFrameOf({ ...D, monthly: 177 }, "2026-04"), { capMin: HM(171, 25), guideMin: 0 }, "残業未設定は日割りだけ");
+  const st = { staffTypeLimits: { employee: { monthly: 177, monthlyOt: 20 } } };
+  assert.strictEqual(u.attrMonthFrame(st, "employee", "2026-04").capMin, HM(191, 25));
+  // 4月に 172:00 働いた人: 残業0なら4月の上限 171:25 を超える／3月の 177:08 は超えない
+  const noOt = { ...D, monthly: 177 };
+  assert.strictEqual(u.limitStateOf(HM(172, 0), u.attrMonthFrameOf(noOt, "2026-04").capMin / 60), "over");
+  assert.strictEqual(u.limitStateOf(HM(172, 0), u.attrMonthFrameOf(noOt, "2026-03").capMin / 60), null);
+});
+
+test("1ヶ月の残業（monthlyOt）は企業の共通設定でも決められ、CF の検証でも捨てられない", () => {
+  assert.ok(u.COMPANY_LIMIT_KEYS.includes("monthlyOt"));
+  const r = cfc.sanitizeCompanySettings({ staffTypeLimits: { parttime: { monthly: 177, monthlyOt: 20 } } });
+  assert.deepStrictEqual(r.staffTypeLimits.parttime, { monthly: 177, monthlyOt: 20 });
 });
