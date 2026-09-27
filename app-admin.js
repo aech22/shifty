@@ -453,8 +453,17 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
   // 企業連携の他店舗データ（略称・提出シフト）。ヘルプ判定・重複チェックに使用
   const[companyData,setCompanyData]=useState({}); // {shopId:{name,abbrs:[],workMap:Map(name|date→shift)}}
+  // 見に行く他店舗は 企業の写しの連携店舗 ∪ allLinkedShops。管理コード（Cookie）で入った端末は
+  // allLinkedShops を持たないので、写しを見ないと所属店舗を設定できても重複エラーが出ない（バグチェック#150）。
+  // 依存を id の文字列にするのは、写しの syncedAt が変わるたびに他店舗を読み直さないため。
+  const otherShopsKey=(()=>{
+    const m=new Map();
+    (allLinkedShops||[]).forEach(s=>{if(s&&s.id&&s.id!==shopId)m.set(s.id,s.name||s.id);});
+    Object.entries((companyLink&&companyLink.shops)||{}).forEach(([id,nm])=>{if(id&&id!==shopId&&!m.has(id))m.set(id,nm||id);});
+    return JSON.stringify([...m.entries()]);
+  })();
   useEffect(()=>{
-    const otherShops=(allLinkedShops||[]).filter(s=>s&&s.id&&s.id!==shopId);
+    const otherShops=JSON.parse(otherShopsKey).map(([id,name])=>({id,name}));
     if(!firebaseDB||otherShops.length===0){setCompanyData({});return;}
     let cancelled=false;
     Promise.all(otherShops.map(os=>
@@ -502,7 +511,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // 参照側のdupErrors/heatDataが自分のselPid依存で再計算する）。依存に入れると期間ドロップダウンを
     // 切り替えるたびに連携店舗ぶんの shops/{id}/subs を毎回まるごと再取得してしまう（期間の絞り込みが
     // 効かない全件読みのため、店舗数×蓄積データに比例して増える）。
-  },[shopId,allLinkedShops]);
+  },[shopId,otherShopsKey]);
   // 略称→他店舗の逆引き
   const abbrToShop=useMemo(()=>{
     const m={};
