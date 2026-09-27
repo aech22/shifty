@@ -538,7 +538,7 @@ CompanyLink = { id: string, name: string, settings: {laborSettings?, staffTypeLi
 | `sendSurveyEmails` | POST `/sendSurveyEmails` | ユーザーアンケート一斉送信（要秘密トークン） |
 | `createCompany` | Callable `createCompany` | 企業アカウント作成（企業コード発行・パスワードハッシュ保存・作成者オーナー店舗を連携） |
 | `companyLogin` | Callable `companyLogin` | 企業コード＋パスワードで認証しカスタムトークンを発行。**カスタムトークンの署名に、CF の実行サービスアカウントの「サービス アカウント トークン作成者」（`iam.serviceAccounts.signBlob`）が要る**——無いと照合は通るのに `createCustomToken` が `auth/insufficient-permission` で 500 になり、画面は「ログインに失敗しました」だけを出す（2026-09-27 に本番で実際に発生・`firebase functions:log --only companyLogin` で確認）。ログイン画面と企業連携タブの「企業アカウントでログイン」の両方がこれを呼ぶ |
-| `changeCompanyPassword` | Callable `changeCompanyPassword` | 企業パスワード変更。**現在のパスワード（`currentPassword`）を照合してから**変える（2026-09-27）。UI は新しいパスワードを2回入力して一致したときだけ送る |
+| `changeCompanyPassword` | Callable `changeCompanyPassword` | 企業パスワード変更。**現在のパスワード（`currentPassword`）を照合してから**変える（2026-09-27）。UI は新しいパスワードを2回入力して一致したときだけ送る。**変更できるのは企業の作成者のアカウント（`pub/ownerUid`）だけ**で、企業コードでログインしたセッション（uid が `company_` で始まる）は `permission-denied`（2026-09-28・判定は `functions/company-config.js` の `canChangeCompanyPassword`）。UI もそのセッションではボタンを出さない |
 | `renameCompany` | Callable `renameCompany` | 企業名変更（作成者ポインタの表示名も更新） |
 | `linkStoreToCompany` | Callable `linkStoreToCompany` | 店舗コード（shopId / shopId.adminKey）で店舗を企業に連携 |
 | `saveCompanyConfig` | Callable `saveCompanyConfig` | 企業の共通設定（settings は丸ごと置換）と提出期限（期間ごとの差分）を保存し、連携全店舗の `shops/{sid}/company` を作り直す（2026-09-27）。検証は `functions/company-config.js`（純粋関数・テストで照合） |

@@ -6,6 +6,8 @@
 // B. 変更: 現在のパスワード欄がある／現在が空・新しい2つが不一致・現在と同じ のそれぞれで CF を呼ばない／
 //    正しく入れると changeCompanyPassword に currentPassword と newPassword が送られる／
 //    CF が「現在のパスワードが正しくありません」を返すとその文言が出る
+// D. 企業コードでログインしたセッション（uid="company_C1"・2026-09-28）: 「パスワードを変更する」ボタンが無く、
+//    「作成者のアカウント（メール／Google）でログインしたときだけ変更できます」の説明が出る
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-company-password.js → allPass=true / EXIT=0
 "use strict";
@@ -92,7 +94,26 @@ async function change(cfHandlers) {
   return R;
 }
 
+async function companySession() {
+  const seed = base();
+  seed.companies = { [CID]: { pub: { name: "テスト企業", ownerUid: UID, code: "ABCD1234", shops: { S1: true } } } };
+  seed.shops.S1.owners["company_" + CID] = "K1";
+  const h = await openHarness({ root: ROOT, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport: { width: 1200, height: 900 },
+    extraHead: makeStub({ seed, uid: "company_" + CID, view: "admin", tab: "company" }), scripts: SCRIPTS });
+  const R = {};
+  try {
+    await h.page.waitForFunction(() => document.body.innerText.includes("ABCD1234"), { timeout: 15000 });
+    await h.page.waitForTimeout(300);
+    R.hasButton = await h.evaluate(() => [...document.querySelectorAll("button")].some(b => b.innerText.trim() === "パスワードを変更する"));
+    R.note = await h.evaluate(() => document.body.innerText.includes("作成者のアカウント（メール／Google）でログインしたときだけ変更できます"));
+  } catch (e) { R.exception = e.message; }
+  R.errors = h.errors.slice();
+  await h.close();
+  return R;
+}
+
 (async () => {
+  const D = await companySession();
   const A = await create();
   const B = await change({});
   const C = await change({ changeCompanyPassword: "reject:現在のパスワードが正しくありません" });
@@ -110,9 +131,10 @@ async function change(cfHandlers) {
     B_sendsCurrentAndNew: !!(B.cfAfter && B.cfAfter.length === 1 && B.cfAfter[0].currentPassword === "oldpw1" && B.cfAfter[0].newPassword === "newpw1" && B.cfAfter[0].companyId === CID),
     B_successToast: B.final === "✓ パスワードを変更しました",
     C_wrongCurrentShown: C.final === "✕ 現在のパスワードが正しくありません",
-    noErrors: [A, B, C].every(x => x.errors.length === 0 && !x.exception),
+    D_noButtonForCompanySession: D.hasButton === false && D.note === true,
+    noErrors: [A, B, C, D].every(x => x.errors.length === 0 && !x.exception),
   };
   v.allPass = Object.values(v).every(Boolean);
-  console.log(JSON.stringify({ A, B, C, verdict: v }, null, 2));
+  console.log(JSON.stringify({ A, B, C, D, verdict: v }, null, 2));
   process.exit(v.allPass ? 0 : 1);
 })().catch(e => { console.error(e); process.exit(2); });

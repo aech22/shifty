@@ -4192,3 +4192,29 @@ test("company-config: 毎月の固定締切の検証がクライアントと一�
   const inputs = [[25, "10", 10, 0, 32, 1.5, null], { 0: 20, 1: 5 }, [1, 2, 3, 4, 5], null, "10", [31, 31, 29], [-1, 15]];
   inputs.forEach(x => assert.deepStrictEqual(cfc.sanitizeMonthlyDeadlineDays(x), u.sanitizeMonthlyDeadlineDays(x), JSON.stringify(x)));
 });
+
+// ===== ⑦ 企業パスワード変更は作成者のアカウントだけ（2026-09-28）=====
+test("isCompanySessionUid: 企業コードでログインしたセッションの uid だけを true にする", () => {
+  assert.strictEqual(u.isCompanySessionUid("company_-Nabc123"), true);
+  assert.strictEqual(u.isCompanySessionUid("gX9aUid"), false, "Google/メールの uid");
+  assert.strictEqual(u.isCompanySessionUid("xcompany_1"), false, "先頭一致だけ");
+  assert.strictEqual(u.isCompanySessionUid(null), false);
+  assert.strictEqual(u.isCompanySessionUid(undefined), false);
+});
+
+test("company-config: canChangeCompanyPassword は作成者本人だけ許し、企業コードのセッションは拒否する", () => {
+  const cc = require("../functions/company-config.js");
+  assert.strictEqual(cc.canChangeCompanyPassword("ownerUid1", "ownerUid1"), true, "作成者本人");
+  assert.strictEqual(cc.canChangeCompanyPassword("company_C1", "ownerUid1"), false, "企業コードのセッション");
+  assert.strictEqual(cc.canChangeCompanyPassword("company_C1", "company_C1"), false, "ownerUid が壊れていても企業uidには許さない");
+  assert.strictEqual(cc.canChangeCompanyPassword("otherUid", "ownerUid1"), false, "作成者以外");
+  assert.strictEqual(cc.canChangeCompanyPassword("ownerUid1", null), false, "ownerUid 不明");
+  assert.strictEqual(cc.canChangeCompanyPassword("", ""), false);
+});
+
+test("company-config: 企業セッションの uid の接頭辞がクライアントと一致する（書き写しのドリフト検出）", () => {
+  const cc = require("../functions/company-config.js");
+  assert.strictEqual(cc.COMPANY_SESSION_UID_PREFIX, u.COMPANY_SESSION_UID_PREFIX);
+  const idx = require("node:fs").readFileSync(require("node:path").join(__dirname, "../functions/index.js"), "utf8");
+  assert.ok(idx.includes("function companyUid(companyId) { return `company_${companyId}`; }"), "CF の companyUid が同じ接頭辞で uid を作る");
+});

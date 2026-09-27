@@ -1120,7 +1120,7 @@ exports.sendSurveyEmails = functions
 // キーと値の規則はクライアントの app-utils.js（COMPANY_LABOR_KEYS・COMPANY_LIMIT_KEYS・COMPANY_ATTR_ID_RE・
 // isValidDateStr）と**同じ内容**にする。functions/ は app-utils.js を読めないので書き写している。
 // ============================================================
-const { sanitizeCompanySettings, sanitizeCompanyDeadlines, effectiveDeadlinesForShop, sanitizeMonthlyDeadlineDays } = require("./company-config");
+const { sanitizeCompanySettings, sanitizeCompanyDeadlines, effectiveDeadlinesForShop, sanitizeMonthlyDeadlineDays, canChangeCompanyPassword } = require("./company-config");
 // 連携店舗の shops/{shopId}/company を正本から作り直す。shopIds を省けば連携全店舗。
 // 1店舗の失敗で残りを止めない（冪等なので、失敗した店舗は次の保存で書き直される）。
 async function syncCompanyMirror(companyId, shopIds) {
@@ -1241,6 +1241,12 @@ exports.changeCompanyPassword = functions
     if (!isValidCompanyId(companyId)) throw new functions.https.HttpsError("invalid-argument", "企業IDが無効です");
     if (newPassword.length < 6 || newPassword.length > 128) throw new functions.https.HttpsError("invalid-argument", "パスワードは6〜128文字にしてください");
     await assertCompanyMember(context, companyId);
+    // 変更は作成者のアカウント（メール／Google）だけ（2026-09-28）。企業コードでログインした人は現在の
+    // パスワードを知っているので、下の照合だけでは作成者を締め出す変更を防げない
+    const ownerUidForPw = (await db.ref(`companies/${companyId}/pub/ownerUid`).once("value")).val();
+    if (!canChangeCompanyPassword(context.auth.uid, ownerUidForPw)) {
+      throw new functions.https.HttpsError("permission-denied", "企業コードでログインしたセッションではパスワードを変更できません。作成者のアカウント（メール／Google）でログインしてください");
+    }
     // 現在のパスワードを照合する（2026-09-27）。企業メンバーのセッションを開いたまま離席した端末から、
     // 第三者がパスワードを書き換えて企業を乗っ取るのを防ぐ
     const stored = (await db.ref(`companies/${companyId}/private/passwordHash`).once("value")).val();

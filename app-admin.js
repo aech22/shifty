@@ -5492,6 +5492,8 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
                 <button onClick={resetPwEdit} style={{...AGray,whiteSpace:"nowrap"}}>取消</button>
               </div>
             </div>
+          ):isCompanySessionUid(authUser&&authUser.uid)?(
+            <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6}}>パスワードは、企業の作成者のアカウント（メール／Google）でログインしたときだけ変更できます。</div>
           ):(
             <button onClick={()=>setCoPwEdit(true)} style={{...AGray,width:"100%"}}>パスワードを変更する</button>
           )}

@@ -105,6 +105,16 @@ function sanitizeMonthlyDeadlineDays(raw) {
   return [...set].sort((a, b) => a - b).slice(0, MONTHLY_DEADLINE_MAX);
 }
 
-module.exports = { COMPANY_LABOR_KEYS, COMPANY_LIMIT_NUM_KEYS, COMPANY_LABOR_SYSTEMS, COMPANY_BUILTIN_ATTRS,
+// 企業パスワードの変更を許すか（2026-09-28）。作成者本人（pub/ownerUid）のアカウントだけに許し、
+// 企業コード＋パスワードでログインしたセッション（uid が "company_" で始まる）には許さない。
+// コードとパスワードを共有された人が作成者を締め出せないようにするため。
+const COMPANY_SESSION_UID_PREFIX = "company_";
+function canChangeCompanyPassword(uid, ownerUid) {
+  if (typeof uid !== "string" || !uid) return false;
+  if (uid.indexOf(COMPANY_SESSION_UID_PREFIX) === 0) return false;
+  return typeof ownerUid === "string" && ownerUid === uid;
+}
+
+module.exports = { COMPANY_SESSION_UID_PREFIX, canChangeCompanyPassword, COMPANY_LABOR_KEYS, COMPANY_LIMIT_NUM_KEYS, COMPANY_LABOR_SYSTEMS, COMPANY_BUILTIN_ATTRS,
   COMPANY_ATTR_ID_RE, PERIOD_RANGE_KEY_RE, isValidDateStrCF, sanitizeCompanySettings, sanitizeCompanyDeadlines,
   effectiveDeadlinesForShop, MONTHLY_DEADLINE_MAX, sanitizeMonthlyDeadlineDays };

@@ -297,6 +297,8 @@ const sharedGlobals = {
   homeShopOf: "writable",
   isHelperAt: "writable",
   dupTargetShopsFor: "writable",
+  COMPANY_SESSION_UID_PREFIX: "writable",
+  isCompanySessionUid: "writable",
   OVERALL_FIX_KEYS: "writable",
   minToH: "writable",
   laborFindingsFor: "writable",
