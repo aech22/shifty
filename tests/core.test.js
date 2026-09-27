@@ -4218,3 +4218,18 @@ test("company-config: 企業セッションの uid の接頭辞がクライア�
   const idx = require("node:fs").readFileSync(require("node:path").join(__dirname, "../functions/index.js"), "utf8");
   assert.ok(idx.includes("function companyUid(companyId) { return `company_${companyId}`; }"), "CF の companyUid が同じ接頭辞で uid を作る");
 });
+
+// ===== ② x（ヘルプ・カウント外）を半日単位にする（2026-09-28）=====
+test("excludedBandsOf: x は出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日", () => {
+  const M = h => h * 60;
+  const ab = { "三": "S3" };
+  assert.deepStrictEqual(u.excludedBandsOf({ stM: M(9), enM: M(22), startNote: "x", endNote: "", abbrToShop: ab }), { lunch: true, dinner: false }, "出勤セルのx=ランチだけ");
+  assert.deepStrictEqual(u.excludedBandsOf({ stM: M(9), enM: M(22), startNote: "", endNote: "x", abbrToShop: ab }), { lunch: false, dinner: true }, "退勤セルのx=ディナーだけ");
+  assert.deepStrictEqual(u.excludedBandsOf({ stM: M(9), enM: M(22), startNote: "x", endNote: "x", abbrToShop: ab }), { lunch: true, dinner: true }, "両方=終日");
+  assert.deepStrictEqual(u.excludedBandsOf({ stM: M(9), enM: M(15), startNote: "", endNote: "x", abbrToShop: ab }), { lunch: true, dinner: true }, "17時をまたがないシフトは反対側セルのxも有効（h/kと同じ）");
+  assert.deepStrictEqual(u.excludedBandsOf({ stM: M(18), enM: M(23), startNote: "x", endNote: "", abbrToShop: ab }), { lunch: true, dinner: true }, "ディナーのみシフトの出勤セルのxが黙殺されない");
+  assert.deepStrictEqual(u.excludedBandsOf({ stM: M(9), enM: M(22), startNote: "三", endNote: "x", abbrToShop: ab }), { lunch: true, dinner: true }, "略称とxの混在");
+  assert.deepStrictEqual(u.excludedBandsOf({ stM: M(9), enM: M(22), startNote: "三", endNote: "", abbrToShop: ab }), { lunch: true, dinner: false }, "略称の規則は従来どおり");
+  assert.deepStrictEqual(u.excludedBandsOf({ stM: M(9), enM: M(22), startNote: "h", endNote: "k", abbrToShop: ab }), { lunch: false, dinner: false }, "h/kは外さない");
+  assert.deepStrictEqual(u.excludedBandsOf({ stM: M(9), enM: M(22), startNote: "constructor", endNote: "", abbrToShop: ab }), { lunch: false, dinner: false }, "未登録の略称（プロトタイプの名前）は外さない");
+});

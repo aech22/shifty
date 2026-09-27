@@ -115,6 +115,9 @@ firebaseKeyForbiddenChars(name)          // Firebaseがキーに使えない文�
 matchPositionSlots(slots, attendees)    // 必要ポジションと出勤者の最大二部マッチング（Kuhn法・ポジション不足エラー判定＝Premium限定）
 genToken() / genSecureId(len)   // ランダムID生成
 isSpacer(n) / resolveAlias / buildSuggestList
+excludedBandsOf({stM,enM,startNote,endNote,abbrToShop}) // 自店舗のカウントから外す帯（2026-09-28）。x と他店舗ヘルプ略称を h/k と同じ resolveBandValues で
+                           // 出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日に解決する。以前 x だけは日単位（isCountExcluded）で、片側でも終日になっていた。
+                           // ヒートマップ・店舗間重複・ポジション判定・セルの赤ハイライトの4箇所がこれを共有する
 aliasOwnerOf(name, staffAliases, selfName)  // その名前を別名にしている他人。addAlias（登録名と同じ別名を禁止）の反対側の入口＝スタッフ追加・改名で使う。通さないと「他人の別名と同名のスタッフ」が作れ、本人の提出が別人のsubへ入る（#107）
 renameStaffInSettings / renameStaffInPeriods // 改名時のキー移し替え。settings 本体と period.snapshot.settings の両方に同じものを当てる（写しだけ旧名で残ると確定済み期間のシフトが空欄になる・#107）
 staffHiddenRanges / isStaffHiddenInPeriod / isStaffHiddenNow / hideStaffFrom / showStaffFrom

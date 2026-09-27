@@ -957,10 +957,6 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const origNk=field==="start"?"startNote":"endNote";
     return(sh?.[adjNk]??sh?.[origNk])||"";
   };
-  // x（カウント外）は出勤・退勤どちらのセルに付いてもシフト全体を集計・ヒートマップから除外する。
-  // getShiftNoteは最初に見つかった非空noteを返すため、退勤セルのxが出勤セルのh/k・ヘルプ略称に
-  // 隠れて無効化される非対称があった。両フィールドを個別に評価し、いずれかがxなら除外する。
-  const isCountExcluded=(name,date,src=heatEdits)=>getFieldNote(name,date,"start",src)==="x"||getFieldNote(name,date,"end",src)==="x";
   // フィールド別「締め」フラグ取得（edits最優先→永続化済みadjustedXFixed）。getFieldNoteと対で使う。
   // noteとは独立管理のため、h/k/x・略称等と組み合わせた入力でもnote側の完全一致判定に影響しない
   const getFieldFixed=(name,date,field,src=heatEdits)=>{
@@ -972,13 +968,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const fk=field==="start"?"adjustedStartFixed":"adjustedEndFixed";
     return!!(sh&&sh[fk]);
   };
-  // 他店舗ヘルプ判定: 出勤セルの略称=ランチ帯ヘルプ、退勤セルの略称=ディナー帯ヘルプ、両方=終日ヘルプ
-  const getHelpInfo=(name,date,src=heatEdits)=>{
-    const startShop=abbrToShop[getFieldNote(name,date,"start",src)]||null;
-    const endShop=abbrToShop[getFieldNote(name,date,"end",src)]||null;
-    if(!startShop&&!endShop)return null;
-    return{startShop,endShop,full:!!(startShop&&endShop)};
-  };
+  // 自店舗のカウントから外す帯（x と他店舗ヘルプ略称・2026-09-28）。出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日。
+  // 規則は app-utils.js の excludedBandsOf（h/k と同じ resolveBandValues）。4箇所の判定がこれを共有する
+  const exBandsOf=(name,date,s,e,src=heatEdits)=>excludedBandsOf({stM:s,enM:e,startNote:getFieldNote(name,date,"start",src),endNote:getFieldNote(name,date,"end",src),abbrToShop});
   // ランチ帯/ディナー帯それぞれのセクションを返す（"kit"/"hall"）。ヒートマップ(heatSectionEntries)と
   // ポジション不足判定・セル赤ハイライトで同じ規則を共有するための入口。
   const bandSectionsOf=(name,date,stM,enM)=>{
@@ -1027,10 +1019,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         // 組み合わせ入力でも）、主シフトとは別の追加出勤(固定時間帯)としてカウントする
         const fixedCmd=(getFieldFixed(name,date,"start")||getFieldFixed(name,date,"end"))?FIXED_ENTRY:null;
         if(stM===null&&enM===null&&!fixedCmd)return;
-        // xサフィックスは日単位で判定（どちらのセルに付いてもシフト全体を除外＝isCountExcluded）。
-        // h/kサフィックスと他店舗ヘルプ略称はフィールド別(getFieldNote)に判定し、
-        // startセル→ランチ帯・endセル→ディナー帯に適用する（heatSectionEntries / resolveBandValues）。
-        if(!isCountExcluded(name,date)){
+        // h/k・x・他店舗ヘルプ略称はフィールド別(getFieldNote)に判定し、
+        // startセル→ランチ帯・endセル→ディナー帯に適用する（heatSectionEntries / excludedBandsOf）。
+        {
           if(stM!==null||enM!==null){
             // 片側セルのみ入力: 出勤のみ→ランチ終わり(HEAT_LUNCH_END_MIN)まで、退勤のみ→ディナー始まり(HEAT_DINNER_START_MIN)から出勤扱い
             let pStM=stM,pEnM=enM;
@@ -1045,18 +1036,15 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
               // ようになった（app-utils.js）が、ヒートマップが実際に使う pEnM を明示して渡し、
               // 表示している時間帯と延長の帯判定が必ず同じ値を見るようにしておく。
               if(hsh){const ot=getOT(name,settings,{...hsh,adjustedEnd:minToHHMM(pEnM)});if(ot>0){const wasLunch=pEnM<=HEAT_BAND_SPLIT_MIN;pEnM+=ot;if(wasLunch)pEnM=Math.min(pEnM,HEAT_BAND_SPLIT_MIN);}}
-              // 他店舗ヘルプ帯は自店舗のカウントから除外。h/kと同じ帯規則（resolveBandValues）で解決する。跨ぎシフトは
-              // 出勤側略称=ランチ帯・退勤側略称=ディナー帯、片帯のみのシフトは反対側セルの略称も有効。
-              const help=getHelpInfo(name,date);
+              // x と他店舗ヘルプの帯は自店舗のカウントから除外。h/kと同じ帯規則（excludedBandsOf）で解決する。跨ぎシフトは
+              // 出勤側=ランチ帯・退勤側=ディナー帯、片帯のみのシフトは反対側セルの印も有効。
+              const hv=exBandsOf(name,date,pStM,pEnM);
               let ok=true;
-              if(help){
-                const hv=resolveBandValues(pStM,pEnM,help.startShop,help.endShop,HEAT_BAND_SPLIT_MIN);
-                if(hv.lunch&&hv.dinner)ok=false;
-                else{
-                  if(hv.lunch)pStM=Math.max(pStM,HEAT_BAND_SPLIT_MIN);
-                  if(hv.dinner)pEnM=Math.min(pEnM,HEAT_BAND_SPLIT_MIN);
-                  if(pStM>=pEnM)ok=false;
-                }
+              if(hv.lunch&&hv.dinner)ok=false;
+              else{
+                if(hv.lunch)pStM=Math.max(pStM,HEAT_BAND_SPLIT_MIN);
+                if(hv.dinner)pEnM=Math.min(pEnM,HEAT_BAND_SPLIT_MIN);
+                if(pStM>=pEnM)ok=false;
               }
               if(ok){
                 // 休憩区間（時間帯セルを完全に覆う場合にカウント除外するため保持）
@@ -1104,9 +1092,6 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const wps=dupTargetShopsFor({name,shopId,settings,otherShops:companyData}).filter(id=>companyData[id]);
       if(wps.length===0)return;
       dates.forEach(date=>{
-        // x（ヘルプ・カウント外）は他店舗勤務が前提。略称によるヘルプ指定を下で除外しているのと
-        // 同じ理由でここでも除外する。heatData・positionErrors と同じ入口に揃える（バグチェック#85）
-        if(isCountExcluded(name,date))return;
         let s=timeToMin(getEffHHMM(name,date,"start")),e=timeToMin(getEffHHMM(name,date,"end"));
         // 片側セルのみ入力はヒートマップ・ポジション判定と同じ規則で補完する（バグチェック#86）。
         // 補完せず早期returnすると「出勤だけ入っている日は他店舗と重なっていても一度も見に行かない」になる
@@ -1121,10 +1106,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           const ot=dsh?getOT(name,settings,dsh):0;
           if(ot>0){const wasLunch=e<=HEAT_BAND_SPLIT_MIN;e+=ot;if(wasLunch)e=Math.min(e,HEAT_BAND_SPLIT_MIN);}
         }
-        // ヘルプ指定帯は他店舗勤務が前提なので判定から除外（帯の解決規則はヒートマップと共通）
-        const help=getHelpInfo(name,date);
-        if(help){
-          const hv=resolveBandValues(s,e,help.startShop,help.endShop,HEAT_BAND_SPLIT_MIN);
+        // x と他店舗ヘルプの帯は他店舗勤務が前提なので判定から除外（帯の解決規則はヒートマップと共通＝excludedBandsOf。バグチェック#85）
+        {
+          const hv=exBandsOf(name,date,s,e);
           if(hv.lunch&&hv.dinner)return;
           if(hv.lunch)s=Math.max(s,HEAT_BAND_SPLIT_MIN);
           if(hv.dinner)e=Math.min(e,HEAT_BAND_SPLIT_MIN);
@@ -1191,10 +1175,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         if(e===null)e=HEAT_LUNCH_END_MIN;
         if(s===null)s=HEAT_DINNER_START_MIN;
         if(s>=e)return;
-        if(isCountExcluded(name,date))return;
-        const help=getHelpInfo(name,date);
-        if(help){
-          const hv=resolveBandValues(s,e,help.startShop,help.endShop,HEAT_BAND_SPLIT_MIN);
+        {
+          const hv=exBandsOf(name,date,s,e);
           if(hv.lunch&&hv.dinner)return;
           if(hv.lunch)s=Math.max(s,HEAT_BAND_SPLIT_MIN);
           if(hv.dinner)e=Math.min(e,HEAT_BAND_SPLIT_MIN);
@@ -1240,11 +1222,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // positionErrors 側の帯振り分けとセル赤ハイライトの帯がズレる（バグチェック#53）
     if(e===null&&s!==null)e=HEAT_LUNCH_END_MIN;
     if(s===null&&e!==null)s=HEAT_DINNER_START_MIN;
-    // positionErrorsと同じヘルプ帯クリップ。他店舗ヘルプ帯は自店舗カウント外なので所属判定からも外す。
-    // これを行わないと、ヘルプで自店舗カウント外の帯をこの赤ハイライト判定だけ自店舗所属扱いしてズレる。
-    const help=getHelpInfo(name,date);
-    if(help&&s!=null&&e!=null&&s<e){
-      const hv=resolveBandValues(s,e,help.startShop,help.endShop,HEAT_BAND_SPLIT_MIN);
+    // positionErrorsと同じ帯クリップ（x・他店舗ヘルプ＝excludedBandsOf）。自店舗カウント外の帯は所属判定からも外す。
+    // これを行わないと、自店舗カウント外の帯をこの赤ハイライト判定だけ自店舗所属扱いしてズレる。
+    if(s!=null&&e!=null&&s<e){
+      const hv=exBandsOf(name,date,s,e);
       if(hv.lunch&&hv.dinner)return null;
       if(hv.lunch)s=Math.max(s,HEAT_BAND_SPLIT_MIN);
       if(hv.dinner)e=Math.min(e,HEAT_BAND_SPLIT_MIN);
