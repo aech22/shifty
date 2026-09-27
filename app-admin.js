@@ -8,6 +8,8 @@
 // ============================================================
 function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
+  // 管理者画面の中身を丸ごと差し替える全画面ビュー（企業内登録スタッフ・2026-09-28）。null＝通常のタブ表示
+  const[fullPage,setFullPage]=useState(null);
   // 所属店舗の選択肢。企業の写しが持つ連携店舗の一覧を優先し、この端末が知っている店舗（allLinkedShops）で補う。
   // 企業の作成者でも企業ログインでもない端末（Cookie・管理コードで追加した端末）は allLinkedShops を持たないため。
   const homeShopChoices=(()=>{
@@ -100,6 +102,8 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
     };
   },[shopMenuOpen]);
 
+  if(fullPage==="companyStaff"&&companyInfo&&plan==="premium")
+    return <CompanyStaffDirectory companyId={companyInfo.companyId} onBack={()=>setFullPage(null)}/>;
   return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       {/* 管理ヘッダー */}
@@ -228,7 +232,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} tt={tt} plan={plan} periods={periods}/>}
         {tab==="submissions"&&<SubsTab key={currentShopId} subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
         {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
-        {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany} plan={plan} onSaveCompanyConfig={onSaveCompanyConfig} onCompanyLogin={onCompanyLogin}/>}
+        {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany} plan={plan} onSaveCompanyConfig={onSaveCompanyConfig} onCompanyLogin={onCompanyLogin} onOpenCompanyStaff={()=>setFullPage("companyStaff")}/>}
         {tab==="mypage"&&!hideMypage&&<MyPageTab plan={plan} planExpiry={planExpiry} billingSchedule={billingSchedule} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
         {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} adminCode={adminCode} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
       </div>
@@ -5035,6 +5039,104 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
 // 期間ごとの日付を入れていない期間には「毎月の固定締切」（例: 毎月10日・25日）が効く。優先は 日付指定 ＞ 毎月の固定。
 // 読めなかった店舗は「読み込み失敗」と出し、提出済みにも未提出にも数えない（丸めない）。
 // ============================================================
+// ============================================================
+// 企業内登録スタッフ（2026-09-28）。企業連携タブのカードから全画面の一覧を開く。人数が多いので
+// 管理者画面の中身を丸ごと差し替えて出す（AdminView の fullPage）。ブラウザの新しいタブは使わない——
+// 実ログインは永続化しない設計なので、新しいタブでは未ログインになり companies/{id}/pub を読めない。
+// 載せるのは店舗に依存しない情報だけ（従業員番号・属性・所属店舗・有給）。計算は buildCompanyStaffRows（app-utils.js）。
+function CompanyStaffCard({onOpen}){
+  return(<AC title="企業内登録スタッフ">
+    <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>企業に連携している全店舗の登録スタッフを、従業員番号・属性・所属店舗・有給日数の一覧で確認できます。</div>
+    <button onClick={()=>onOpen&&onOpen()} style={{...AGray,width:"100%"}}>一覧を開く</button>
+  </AC>);
+}
+function CompanyStaffDirectory({companyId,onBack}){
+  const[data,setData]=useState(null); // {rows, failed:[店舗名]}
+  const[loadErr,setLoadErr]=useState(false);
+  const[reloadTick,setReloadTick]=useState(0);
+  const[mode,setMode]=useState("number");
+  const[query,setQuery]=useState("");
+  useEffect(()=>{
+    if(!firebaseDB||!companyId){setData({rows:[],failed:[]});return;}
+    let cancelled=false;
+    setData(null);setLoadErr(false);
+    Promise.all([
+      firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value"),
+      firebaseDB.ref(`companies/${companyId}/pub/config/settings`).once("value").catch(()=>null),
+    ]).then(async([shS,csS])=>{
+      const ids=Object.keys(shS.val()||{});
+      const failed=[];
+      const shops=(await Promise.all(ids.map(async sid=>{
+        const nS=await firebaseDB.ref(`global/shops/${sid}/name`).once("value").catch(()=>null);
+        const name=(nS&&nS.val())||sid;
+        try{
+          // subs は読まない（有給の残数は期間の凍結値 laborTotals だけで数える）
+          const[st,se,pe]=await Promise.all(["staff","settings","periods"].map(p=>firebaseDB.ref(`shops/${sid}/${p}`).once("value").then(x=>x.val())));
+          return{id:sid,name,staff:st||[],settings:se||{},periods:pe||{}};
+        }catch{failed.push(name);return null;}
+      }))).filter(Boolean);
+      if(cancelled)return;
+      setData({rows:buildCompanyStaffRows(shops,(csS&&csS.val())||null,fd(new Date())),failed});
+    }).catch(()=>{if(!cancelled)setLoadErr(true);});
+    return()=>{cancelled=true;};
+  },[companyId,reloadTick]);
+  const shown=useMemo(()=>{
+    if(!data)return[];
+    return filterCompanyStaffRows(data.rows,query).slice().sort((a,b)=>compareCompanyStaffRows(a,b,mode));
+  },[data,query,mode]);
+  const TH={padding:"8px 10px",textAlign:"left",fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input)",borderBottom:"1px solid var(--c-border)",whiteSpace:"nowrap"};
+  const TD={padding:"8px 10px",fontSize:13,color:"var(--c-text)",borderBottom:"1px solid var(--c-border)",whiteSpace:"nowrap"};
+  const modeBtn=(id,label)=><button key={id} onClick={()=>setMode(id)} style={{padding:"7px 12px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",background:mode===id?"var(--c-accent)":"var(--c-input)",color:mode===id?"#fff":"var(--c-text2)",border:`1px solid ${mode===id?"var(--c-accent)":"var(--c-border)"}`}}>{label}</button>;
+  const paidCell=r=>{
+    if(r.paidGranted==null)return"—";
+    const miss=r.paidMissing&&r.paidMissing.length>0;
+    const remain=r.paidRemain==null?"—":(miss?"＋":"")+r.paidRemain;
+    return<span title={miss?`凍結値の無い期間があるため途中の値です: ${r.paidMissing.join("・")}`:""}>付与 {r.paidGranted}／残 <b style={{color:miss?"var(--c-text3)":"var(--c-text)"}}>{remain}</b></span>;
+  };
+  let lastShop=null;
+  return(<div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
+    <div style={{background:"var(--c-card)",borderBottom:"1px solid var(--c-border)",padding:"12px 16px"}}>
+      <div style={{maxWidth:900,margin:"0 auto",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={onBack} style={{...AGray,whiteSpace:"nowrap"}}>← 戻る</button>
+        <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>企業内登録スタッフ</div>
+      </div>
+    </div>
+    <div style={{maxWidth:900,margin:"0 auto",padding:"16px 14px 60px"}}>
+      <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="従業員番号・名前で検索" style={{...AI,boxSizing:"border-box",marginBottom:10}}/>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10}}>
+        {modeBtn("number","従業員番号順")}{modeBtn("shop","店舗別")}
+        <span style={{fontSize:12,color:"var(--c-text3)",marginLeft:"auto"}}>{data?`${shown.length}名`:""}</span>
+        <button onClick={()=>setReloadTick(t=>t+1)} style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:12,cursor:"pointer"}}>再読み込み</button>
+      </div>
+      {loadErr&&<div style={{fontSize:13,color:"#DC2626",marginBottom:10}}>読み込めませんでした。再読み込みしてください。</div>}
+      {data&&data.failed.length>0&&<div style={{fontSize:12,color:"#B45309",marginBottom:10}}>{data.failed.join("・")}は読み込めませんでした（一覧に含まれていません）。</div>}
+      {!data&&!loadErr&&<div style={{fontSize:13,color:"var(--c-text3)"}}>読み込み中...</div>}
+      {data&&<div style={{overflowX:"auto",border:"1px solid var(--c-border)",borderRadius:8,background:"var(--c-card)"}}>
+        <table style={{borderCollapse:"collapse",width:"100%",minWidth:560}}>
+          <thead><tr>{["従業員番号","名前","属性","所属店舗","有給（日）"].map(h=><th key={h} style={TH}>{h}</th>)}</tr></thead>
+          <tbody>
+            {shown.length===0&&<tr><td colSpan={5} style={{...TD,textAlign:"center",color:"var(--c-text4)",padding:20}}>該当するスタッフはいません</td></tr>}
+            {shown.map(r=>{
+              const shopName=r.homeShopName||r.shopName;
+              const head=mode==="shop"&&shopName!==lastShop;lastShop=shopName;
+              return(<React.Fragment key={r.shopId+"|"+r.name}>
+                {head&&<tr><td colSpan={5} style={{...TD,fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input2)"}}>{shopName}</td></tr>}
+                <tr>
+                  <td style={TD}>{r.number||<span style={{color:"var(--c-text4)"}}>—</span>}</td>
+                  <td style={TD}>{r.name}{r.hidden&&<span style={{marginLeft:6,fontSize:11,color:"var(--c-text3)"}}>非表示中</span>}</td>
+                  <td style={TD}>{r.attrLabel||<span style={{color:"var(--c-text4)"}}>未設定</span>}</td>
+                  <td style={TD}>{shopName||<span style={{color:"var(--c-text4)"}}>連携していない店舗</span>}</td>
+                  <td style={TD}>{paidCell(r)}</td>
+                </tr>
+              </React.Fragment>);
+            })}
+          </tbody>
+        </table>
+      </div>}
+    </div>
+  </div>);
+}
+
 function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,renderDownload}){
   const[state,setState]=useState(null); // {shopIds,names,periods:{sid:Period[]|null},deadlines,monthly}
   const[loadErr,setLoadErr]=useState(false);
@@ -5321,7 +5423,7 @@ function CompanyLoginCard({onCompanyLogin,tt}){
   </AC>);
 }
 
-function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompanyConfig,
+function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompanyConfig,onOpenCompanyStaff,
                      shops=[],allLinkedShops=[],onSwitchToShop,onUnlinkShop,
                      companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin}){
   // 企業アカウントUI（SetTabから移動）
@@ -5495,6 +5597,10 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
         </div>
       </AC>
     ):(<>
+    {/* カードの並び（2026-09-28 ユーザー指示）: シフト提出状況 → 企業内登録スタッフ → 企業アカウント → 連携店舗 → 企業の共通設定 */}
+    {companyInfo&&plan==="premium"&&<CompanySubmissionsCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}
+      renderDownload={({range,rows})=>range?<CompanyBulkPdf key={range.key} range={range} rows={rows} companyName={companyInfo.name} tt={tt}/>:null}/>}
+    {companyInfo&&plan==="premium"&&<CompanyStaffCard onOpen={onOpenCompanyStaff}/>}
     <AC title="企業アカウント">
       {companyInfo?(
         <div>
@@ -5582,9 +5688,6 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
         )
       )}
     </AC>
-    {companyInfo&&plan==="premium"&&<CompanyConfigCard companyId={companyInfo.companyId} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}/>}
-    {companyInfo&&plan==="premium"&&<CompanySubmissionsCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}
-      renderDownload={({range,rows})=>range?<CompanyBulkPdf key={range.key} range={range} rows={rows} companyName={companyInfo.name} tt={tt}/>:null}/>}
     {listShops.length>0&&<AC title="連携店舗">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
         {companyInfo?"この企業アカウントに紐付いている店舗の一覧です。管理コードで追加・不要な店舗は連携解除できます（追加する店舗の設定タブに表示されている「管理コード」が必要です）。":"このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。"}
@@ -5607,6 +5710,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
       )}
       <div>{listShops.map(shopCard)}</div>
     </AC>}
+    {companyInfo&&plan==="premium"&&<CompanyConfigCard companyId={companyInfo.companyId} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}/>}
     <AC title="シフト作成タブでのヘルプ入力">
       <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.8}}>
         店舗略称を登録すると、シフト作成タブのセルで「時間＋略称」（例: <b>9三</b>）と入力することで他店舗ヘルプとして扱われます。<br/>

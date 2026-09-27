@@ -4297,3 +4297,53 @@ test("mergeStaffMatches: 同じ人の複数登録は1人にまとめ、所属店
   assert.strictEqual(u.mergeStaffMatches([A, C]).length, 2, "同じ番号で別の名前＝選択肢");
   assert.deepStrictEqual(u.mergeStaffMatches([]), []);
 });
+
+// ===== ⑤ 企業内登録スタッフ（2026-09-28）=====
+test("compareCompanyStaffRows: 数字のみ→数字＋文字→文字（50音）→番号なし。同じ番号は名前の50音", () => {
+  // かなの種類（あ／ア）の前後は照合の実装で入れ替わる（Node と Chromium で違った）ので、50音で位置の違う字で測る
+  const rows = ["3", "10", "2A", "10B", "い", "ア", "", "2"].map((n, i) => ({ number: n, name: "n" + i }));
+  assert.deepStrictEqual(rows.slice().sort((a, b) => u.compareCompanyStaffRows(a, b, "number")).map(r => r.number), ["2", "3", "10", "2A", "10B", "ア", "い", ""]);
+  const same = [{ number: "5", name: "佐藤" }, { number: "5", name: "伊藤" }];
+  assert.deepStrictEqual(same.sort((a, b) => u.compareCompanyStaffRows(a, b, "number")).map(r => r.name), ["伊藤", "佐藤"].sort((a, b) => a.localeCompare(b, "ja")));
+  assert.ok(u.compareCompanyStaffRows({ number: "02", name: "a" }, { number: "2", name: "a" }, "number") > 0, "同値なら桁数の少ない順");
+  const byShop = [{ number: "1", name: "x", homeShopName: "B店" }, { number: "9", name: "y", homeShopName: "A店" }, { number: "2", name: "z", homeShopName: "A店" }];
+  assert.deepStrictEqual(byShop.sort((a, b) => u.compareCompanyStaffRows(a, b, "shop")).map(r => r.number), ["2", "9", "1"], "店舗名の50音 → その中で番号順");
+});
+
+test("filterCompanyStaffRows: 番号と名前の部分一致。空は全件", () => {
+  const rows = [{ number: "012", name: "田中" }, { number: "120", name: "佐藤" }, { number: "7", name: "12号室" }, { number: "5", name: "鈴木" }];
+  assert.deepStrictEqual(u.filterCompanyStaffRows(rows, "12").map(r => r.name), ["田中", "佐藤", "12号室"]);
+  assert.strictEqual(u.filterCompanyStaffRows(rows, " ").length, 4);
+  assert.deepStrictEqual(u.filterCompanyStaffRows(rows, "鈴").map(r => r.number), ["5"]);
+});
+
+test("buildCompanyStaffRows: ヘルプ先の登録は所属店舗側に同名がいれば出さず、有給は所属店舗の凍結値だけで数える", () => {
+  const P = (id, start, paid) => ({ id, label: id + "の期間", startDate: start, endDate: start, ...(paid == null ? {} : { laborTotals: { "田中": { workMin: 0, paid, publicOff: 0, ceremony: 0 } } }) });
+  const shops = [
+    { id: "A1", name: "A店", staff: ["田中", "__spacer__1", "佐藤"],
+      settings: { staffNumbers: { "田中": "12" }, staffAttributes: { "田中": "employee" }, paidLeaveGranted: { "田中": 20 }, staffHidden: { "佐藤": true } },
+      periods: { a: P("pa", "2026-05-01", 1), b: P("pb", "2026-06-01", 0.5), c: P("pc", "2026-07-01", null), old: P("po", "2025-05-01", 3) } },
+    { id: "B1", name: "B店", staff: ["田中", "山田"],
+      settings: { staffNumbers: { "田中": "12" }, staffAttributes: { "田中": "parttime", "山田": "co_Abcdefgh" }, staffHomeShop: { "田中": "A1", "山田": "A1" } },
+      periods: { x: { id: "px", label: "B", startDate: "2026-05-01", endDate: "2026-05-15", laborTotals: { "田中": { paid: 5 } } } } },
+  ];
+  const cs = { staffTypeLimits: { co_Abcdefgh: { name: "契約" } } };
+  const rows = u.buildCompanyStaffRows(shops, cs, "2026-09-28");
+  const key = rows.map(r => `${r.shopId}:${r.name}`).sort();
+  assert.deepStrictEqual(key, ["A1:佐藤", "A1:田中", "B1:山田"], "B店の田中（所属A店・A店にも居る）は出さない／A店に居ない山田は B店の行で残る／spacer は出さない");
+  const t = rows.find(r => r.name === "田中");
+  assert.strictEqual(t.attrLabel, "社員");
+  assert.strictEqual(t.paidGranted, 20);
+  assert.strictEqual(t.paidUsed, 1.5, "年度（4月開始）内の凍結値だけ。ヘルプ先 B店の5日は足さない・前年度の3日も足さない");
+  assert.strictEqual(t.paidRemain, 18.5);
+  assert.deepStrictEqual(t.paidMissing, ["pcの期間"], "凍結値の無い期間");
+  // シフト作成タブの「有給残」と同じ式（yearLaborSummary＋paidLeaveRemaining）に通した値と一致する
+  const same = u.paidLeaveRemaining(shops[0].settings, "田中", u.yearLaborSummary(Object.values(shops[0].periods), "田中", 2026, 4, null).paid);
+  assert.strictEqual(t.paidRemain, same);
+  const y = rows.find(r => r.name === "山田");
+  assert.strictEqual(y.homeShopName, "A店", "所属店舗の列は所属先の店舗名");
+  assert.strictEqual(y.attrLabel, "契約", "企業属性の名前は企業の共通設定から");
+  assert.strictEqual(y.paidGranted, null);
+  assert.strictEqual(y.paidRemain, null, "付与が未入力なら残数は出さない");
+  assert.strictEqual(rows.find(r => r.name === "佐藤").hidden, true);
+});

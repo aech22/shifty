@@ -1,0 +1,118 @@
+// 企業連携タブのカードの並びと「企業内登録スタッフ」（2026-09-28）の実ブラウザ回帰テスト。
+// アプリ全体をスタブ Firebase（stub-firebase.js）で動かす。Firebase へは1バイトも出ない。
+//
+//  - 企業連携タブのカードが シフトの提出状況 → 企業内登録スタッフ → 企業アカウント → 連携店舗 → 企業の共通設定 の順
+//  - 「一覧を開く」で全画面の一覧に差し替わり、タブバーが消える。「← 戻る」で企業連携タブに戻る
+//  - 既定は従業員番号順（数字のみ→数字＋文字→文字の50音→番号なし）。「店舗別」で所属店舗ごとに区切る
+//  - ヘルプ先での登録（所属店舗側にも同名がいる）は1行にまとめる。所属店舗側に居なければヘルプ先の行で残る
+//  - 有給は「付与／残」。凍結値の無い期間がある人は残日数の前に「＋」
+//  - 番号・名前で検索できる。提出データ（shops/{sid}/subs）は読みに行かない
+//  - Pro ではカードが出ない。375px 幅でページ全体が横に動かない
+//
+// 実行: node .claude/skills/shifty-e2e-verify/scripts/example-company-staff-directory.js → allPass=true / EXIT=0
+"use strict";
+const path = require("node:path");
+const { openHarness, REPO_ROOT } = require(path.join(__dirname, "mount-component.js"));
+const { makeStub } = require(path.join(__dirname, "stub-firebase.js"));
+const ROOT = process.env.SHIFTY_ROOT || REPO_ROOT;
+const THEME = `<style>:root{--c-bg:#F0F2F5;--c-card:#FFFFFF;--c-input:#F3F4F6;--c-input2:#F0F2F5;` +
+  `--c-border:#E5E7EB;--c-border2:#D1D5DB;--c-text:#1A1A2E;--c-text2:#374151;--c-text3:#6B7280;` +
+  `--c-text4:#9CA3AF;--c-shadow:rgba(0,0,0,.06);--c-accent:#f87036;--c-danger:#DC2626;}</style>`;
+const UID = "U1", CID = "C1";
+const per = (id, sid, start, lt) => ({ id, urlToken: "t" + id, shopId: sid, label: id, startDate: start, endDate: start, deadlineDate: "", createdAt: "2026-04-01T00:00:00.000Z", ...(lt ? { laborTotals: lt } : {}) });
+const shop = (sid, staff, settings, periods) => ({ owners: { [UID]: "K" + sid }, private: { adminKey: "K" + sid }, staff, settings: { shopId: sid, candidates: [], ...settings }, periods });
+const seed = plan => ({
+  global: { shops: { S1: { id: "S1", name: "A店" }, S2: { id: "S2", name: "B店" }, S3: { id: "S3", name: "C店" } } },
+  shops: {
+    S1: shop("S1", ["田中", "佐藤", "__spacer__1", "鈴木"],
+      { staffNumbers: { "田中": "12", "佐藤": "3", "鈴木": "2A" }, staffAttributes: { "田中": "employee" }, paidLeaveGranted: { "田中": 20 } },
+      { a: per("a", "S1", "2026-05-01", { "田中": { paid: 1 } }), b: per("b", "S1", "2026-06-01", { "田中": { paid: 0.5 } }), c: per("c", "S1", "2026-07-01", null) }),
+    S2: shop("S2", ["田中", "山田", "高橋"],
+      { staffNumbers: { "田中": "12", "山田": "10", "高橋": "い" }, staffHomeShop: { "田中": "S1" }, paidLeaveGranted: { "山田": 10 } },
+      { d: per("d", "S2", "2026-05-01", { "山田": { paid: 2 }, "田中": { paid: 5 } }) }),
+    S3: shop("S3", ["伊藤", "渡辺", "中村", "小林"],
+      { staffNumbers: { "伊藤": "ア", "中村": "10B", "小林": "5" }, staffHomeShop: { "小林": "S1" } }, {}),
+  },
+  accounts: { S1: { plan }, [UID]: { shops: { S1: true, S2: true, S3: true }, company: { companyId: CID, code: "ABCD1234", name: "テスト企業" } } },
+  companies: { [CID]: { pub: { name: "テスト企業", ownerUid: UID, code: "ABCD1234", shops: { S1: true, S2: true, S3: true }, config: {} } } },
+});
+const TITLES = ["シフトの提出状況", "企業内登録スタッフ", "企業アカウント", "連携店舗", "企業の共通設定"];
+const tableRows = () => [...document.querySelectorAll("table tbody tr")].map(tr => [...tr.querySelectorAll("td")].map(td => td.innerText.trim()));
+
+async function open(plan, viewport) {
+  return openHarness({
+    root: ROOT, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport: viewport || { width: 1200, height: 900 },
+    extraHead: THEME + makeStub({ seed: seed(plan), uid: UID, view: "admin", tab: "company" }),
+    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
+  });
+}
+
+(async () => {
+  const R = {};
+  let h = await open("premium");
+  try {
+    await h.page.waitForFunction(() => document.body.innerText.includes("企業内登録スタッフ") && document.body.innerText.includes("企業の共通設定を保存"), { timeout: 15000 });
+    R.order = await h.evaluate(t => {
+      const els = [...document.querySelectorAll("div")].filter(d => t.includes((d.innerText || "").trim()) && d.children.length === 0 && getComputedStyle(d).fontWeight === "700");
+      return els.map(e => e.innerText.trim());
+    }, TITLES);
+    await h.clickExact("一覧を開く");
+    await h.page.waitForFunction(() => !!document.querySelector("table tbody tr td") && !document.body.innerText.includes("読み込み中..."), { timeout: 10000 });
+    R.tabBarGone = await h.evaluate(() => ![...document.querySelectorAll("button")].some(b => b.innerText.trim() === "期間"));
+    R.numberRows = await h.evaluate(tableRows);
+    R.count = await h.evaluate(() => [...document.querySelectorAll("span")].map(s => s.innerText.trim()).find(t => /^\d+名$/.test(t)) || null);
+    await h.clickExact("店舗別"); await h.page.waitForTimeout(200);
+    R.shopRows = await h.evaluate(tableRows);
+    await h.clickExact("従業員番号順");
+    const search = async q => { await h.setInput('input[placeholder="従業員番号・名前で検索"]', q); await h.page.waitForTimeout(150); return h.evaluate(() => [...document.querySelectorAll("table tbody tr")].map(tr => tr.querySelectorAll("td")[1]?.innerText.trim())); };
+    R.q12 = await search("12"); R.qYama = await search("山"); await search("");
+    R.searchFont = await h.evaluate(() => parseFloat(getComputedStyle(document.querySelector('input[placeholder="従業員番号・名前で検索"]')).fontSize));
+    R.reads = await h.evaluate(() => (window.__reads || []).filter(p => /\/subs/.test(p)));
+    await h.clickExact("← 戻る"); await h.page.waitForTimeout(300);
+    R.back = await h.evaluate(() => document.body.innerText.includes("企業アカウント") && [...document.querySelectorAll("button")].some(b => b.innerText.trim() === "企業連携"));
+  } catch (e) { R.exception = e.message; }
+  R.errors = h.errors.slice(); await h.close();
+
+  h = await open("pro");
+  try {
+    await h.page.waitForFunction(() => document.body.innerText.includes("企業アカウント"), { timeout: 15000 });
+    await h.page.waitForTimeout(500);
+    R.proCard = await h.evaluate(() => [...document.querySelectorAll("button")].some(b => b.innerText.trim() === "一覧を開く"));
+  } catch (e) { R.exceptionPro = e.message; }
+  await h.close();
+
+  h = await open("premium", { width: 375, height: 812 });
+  try {
+    await h.page.waitForFunction(() => [...document.querySelectorAll("button")].some(b => b.innerText.trim() === "一覧を開く"), { timeout: 15000 });
+    await h.clickExact("一覧を開く");
+    await h.page.waitForFunction(() => !!document.querySelector("table tbody tr td"), { timeout: 10000 });
+    await h.page.waitForTimeout(300);
+    R.mobile = await h.evaluate(() => ({ page: document.documentElement.scrollWidth, tableScrolls: [...document.querySelectorAll("div")].some(d => getComputedStyle(d).overflowX === "auto" && d.scrollWidth > d.clientWidth) }));
+  } catch (e) { R.exceptionMobile = e.message; }
+  await h.close();
+
+  const names = rows => rows.filter(r => r.length === 5).map(r => r[1].replace(/非表示中$/, ""));
+  const v = {
+    cardOrder: JSON.stringify(R.order) === JSON.stringify(TITLES),
+    opensFullPage: R.tabBarGone === true,
+    numberOrder: !!R.numberRows && JSON.stringify(names(R.numberRows)) === JSON.stringify(["佐藤", "小林", "山田", "田中", "鈴木", "中村", "伊藤", "高橋", "渡辺"]),
+    helpDeduped: !!R.numberRows && names(R.numberRows).filter(n => n === "田中").length === 1,
+    helpOnlyRowKept: !!R.numberRows && (R.numberRows.find(r => r[1] === "小林") || [])[3] === "A店",
+    paidWithPlus: !!R.numberRows && (R.numberRows.find(r => r[1] === "田中") || [])[4] === "付与 20／残 ＋18.5",
+    paidNoPlus: !!R.numberRows && (R.numberRows.find(r => r[1] === "山田") || [])[4] === "付与 10／残 8",
+    paidUnset: !!R.numberRows && (R.numberRows.find(r => r[1] === "佐藤") || [])[4] === "—",
+    count: R.count === "9名",
+    shopGroups: !!R.shopRows && JSON.stringify(R.shopRows.filter(r => r.length === 1).map(r => r[0])) === JSON.stringify(["A店", "B店", "C店"])
+      && JSON.stringify(names(R.shopRows)) === JSON.stringify(["佐藤", "小林", "田中", "鈴木", "山田", "高橋", "中村", "伊藤", "渡辺"]),
+    search: JSON.stringify(R.q12) === JSON.stringify(["田中"]) && JSON.stringify(R.qYama) === JSON.stringify(["山田"]),
+    font16: R.searchFont >= 16,
+    noSubsRead: Array.isArray(R.reads) && R.reads.length === 0,
+    backToCompanyTab: R.back === true,
+    hiddenOnPro: R.proCard === false,
+    mobileNoPageScroll: !!R.mobile && R.mobile.page <= 375,
+    noErrors: R.errors.length === 0 && !R.exception && !R.exceptionPro && !R.exceptionMobile,
+  };
+  v.allPass = Object.values(v).every(Boolean);
+  console.log(JSON.stringify({ R, verdict: v }, null, 2));
+  process.exit(v.allPass ? 0 : 1);
+})().catch(e => { console.error(e); process.exit(2); });
