@@ -206,7 +206,8 @@ async function shiftEditTab(keepAttrs) {
     withoutKeepShowsParttimeLimit: R.gridWithout.limit && R.gridWithout.limit.text === "1",
     withoutKeepIsViolation: R.gridWithout.total && R.gridWithout.total.bg === VIO,
     // 5: keepAttrs 有り＝その期間は夏休み(月200h)のままなので超過しない
-    withKeepShowsSummerLimit: R.gridWith.limit && R.gridWith.limit.text === "200",
+    // 1ヶ月の上限は月の日数で日割りされる（2026-09-28）。夏休みの 200h は8月（31日）で W=45h → 199:17（表示は時間のみ）
+    withKeepShowsSummerLimit: R.gridWith.limit && R.gridWith.limit.text === "199",
     withKeepNoViolation: R.gridWith.total && R.gridWith.total.bg !== VIO,
     noConsoleErrors: [R.part1Errors, R.part2Errors, R.part3Errors, R.part4Errors, R.gridWithout.errors, R.gridWith.errors]
       .every(e => e.length === 0),

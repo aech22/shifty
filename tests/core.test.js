@@ -4247,6 +4247,8 @@ test("prorateMonthlyHours: 31日の月の値を労務設定と同じ式で日割
   assert.strictEqual(u.prorateMonthlyHours(150, "2026-04"), HM(145, 42), "目安 150h の 30日");
   assert.strictEqual(u.prorateMonthlyHours(0, "2026-04"), 0);
   assert.strictEqual(u.prorateMonthlyHours(177, "bad"), 0);
+  assert.strictEqual(u.prorateMonthlyHours(1, "2026-03"), 60, "W が0に丸まる小さい値でも上限を消さない（比例で出す）");
+  assert.strictEqual(u.prorateMonthlyHours(1, "2026-04"), 58);
 });
 
 test("attrMonthFrameOf: 上限・目安とも日割り＋1ヶ月の残業。残業だけでは枠にならない", () => {

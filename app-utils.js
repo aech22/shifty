@@ -909,10 +909,14 @@ function hasAnyStaffLimit(lim){
 // 31日の月の値（時間）を、その月の暦日数に日割りした分数（2026-09-28）。労務設定の月の総枠と**同じ2段の丸め**
 // （週の値 W を30分単位に丸めてから FLOOR(W×暦日数÷7)）を使う。そのため入力値そのものが31日でも
 // そのまま戻らないことがある（160h → W=36h → 31日は 159:25）。0・未設定は0。
+// ごく小さい値（約1.1h未満）は W が0に丸まって**上限が黙って消える**ので、そのときだけ丸めずに比例で出す。
 function prorateMonthlyHours(hours31,ym){
   const h=Number(hours31)||0;
   if(!(h>0))return 0;
-  return monthlyBaseMin(weeklyLegalMinFromBase31(h*60),daysInMonthOf(ym));
+  const days=daysInMonthOf(ym);
+  const w=weeklyLegalMinFromBase31(h*60);
+  if(!(w>0))return days>0?Math.floor(h*60*days/31):0;
+  return monthlyBaseMin(w,days);
 }
 // 属性の1ヶ月の枠（分）。{capMin, guideMin}。0＝未設定。
 // 上限・目安とも日割りしたうえで1ヶ月の残業（monthlyOt・時間・日割りしない）を足す。残業だけでは枠にならない。
