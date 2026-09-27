@@ -16,6 +16,10 @@
 //   実装後 … 6水準すべてで fitsH かつ fitsV が true になること。
 //
 // ラベルは実装で「全員表示」→「全表示」に変わるので、どちらでも押せるようにしてある。
+//
+// 2026-09-28 追加: 人数が多いときだけ列を横幅に合わせる（fullViewColW・2週間以下の期間だけ）。
+//   16日×8/15/25名 は従来どおり列 39px（非回帰）。16日×28/30名 は横幅いっぱいに割った列幅（1350px 幅で 45/42px）、
+//   16日×35名 は 36px で文字も列幅に比例して小さくなる（行高由来の値以下）。31日×30名 は従来どおり 39px。
 "use strict";
 
 const path = require("node:path");
@@ -26,6 +30,11 @@ const LEVELS = [];
 for (const [label, start, end] of [["16日", "2026-10-01", "2026-10-16"], ["31日", "2026-10-01", "2026-10-31"]]) {
   for (const staff of [8, 15, 25]) LEVELS.push({ label: `${label}×${staff}名`, start, end, staff });
 }
+for (const staff of [28, 30, 35]) LEVELS.push({ label: `16日×${staff}名`, start: "2026-10-01", end: "2026-10-16", staff });
+LEVELS.push({ label: "31日×30名", start: "2026-10-01", end: "2026-10-31", staff: 30 });
+// 期待する列幅（1400×900 のハーネスで横幅に使える幅 fvAvailW=1350・日付列 45px×2）
+const EXPECT_COL = { "16日×8名": 39, "16日×15名": 39, "16日×25名": 39, "31日×8名": 39, "31日×15名": 39, "31日×25名": 39,
+  "16日×28名": 45, "16日×30名": 42, "16日×35名": 36, "31日×30名": 39 };
 
 const jsxFor = (start, end, staff) => {
   const names = [];
@@ -122,6 +131,10 @@ const MEASURE = () => {
     dateColumnAtBothEnds: results.every(r => r.lastHeaderText === "日付"),
     summaryTablesAligned: results.every(r => new Set(r.columnOffsets).size === 1),
     noConsoleErrors: results.every(r => r.errors === 0),
+    staffColumnWidths: results.every(r => r.staffColW === EXPECT_COL[r.level]),
+    // 列を広げても文字は大きくしない（28名は25名と同じ）／細い列（35名）では小さくする
+    fontNotEnlarged: (() => { const f = l => parseFloat((results.find(r => r.level === l) || {}).inputFontSize); return f("16日×28名") === f("16日×25名"); })(),
+    fontShrinksWithNarrowColumn: (() => { const f = l => parseFloat((results.find(r => r.level === l) || {}).inputFontSize); return f("16日×35名") <= 12 && f("16日×35名") < f("16日×25名"); })(),
   };
   verdict.allPass = Object.values(verdict).every(v => v === true);
   console.log(JSON.stringify({ results, verdict }, null, 2));

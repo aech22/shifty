@@ -217,6 +217,9 @@ sanitizeMonthlyDeadlineDays / monthlyDeadlineFor / shopDeadlineInfoFromLink
                            // 期間の締切＝開始日より前で最も遅い固定日。優先は 期間ごとの日付指定 ＞ 毎月の固定。
                            // CF 側の同じ規則は functions/company-config.js（tests/core.test.js が一致を照合）
 homeShopOf / isHelperAt / dupTargetShopsFor
+fullViewColW / fullViewFontOf // シフト作成タブの全表示（2026-09-28）。2週間以下の期間で人数が多いときだけ列を横幅に合わせる
+                           // （横幅いっぱいに割った列幅が48px以下になる人数から・少人数は39pxのまま・1ヶ月の期間は従来どおり）。
+                           // 縦は常に高さいっぱいなので拡大は列幅だけ。列が39pxより細いときは文字も比例して小さくする
 findStaffByNumber / mergeStaffMatches
                            // 従業員番号（数字だけ）で企業内の他店舗のスタッフを呼び出す（2026-09-28・スタッフタブの「呼び出す」）。
                            // 完全一致（「012」≠「12」）。同じ人の所属店舗・ヘルプ先の登録は1人にまとめ所属店舗側の属性・所属を採る。

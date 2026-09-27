@@ -4347,3 +4347,29 @@ test("buildCompanyStaffRows: ヘルプ先の登録は所属店舗側に同名が
   assert.strictEqual(y.paidRemain, null, "付与が未入力なら残数は出さない");
   assert.strictEqual(rows.find(r => r.name === "佐藤").hidden, true);
 });
+
+// ===== ⑧ 全表示: 人数が多いときだけ列を横幅に合わせる（2026-09-28）=====
+test("fullViewColW: 少人数は39px・横幅いっぱいに割った列幅が48px以下になる人数から横幅に合わせる（2週間以下のみ）", () => {
+  const f = (n, days) => u.fullViewColW({ availW: 1350, staffCount: n, days, maxDays: 16, dateW: 45 });
+  assert.deepStrictEqual(f(4, 16), { colW: 39, expanded: false, fillW: 315 }, "少人数は従来どおり");
+  assert.deepStrictEqual([f(25, 16).colW, f(25, 16).expanded], [39, false], "25名は fillW=50>48 なので従来どおり");
+  assert.deepStrictEqual([f(26, 16).colW, f(26, 16).expanded], [48, true], "26名から横幅に合わせる");
+  assert.strictEqual(f(27, 16).colW, 46);
+  assert.strictEqual(f(32, 16).colW, 39);
+  assert.strictEqual(f(35, 16).colW, 36, "33名以上は従来と同じ値（横幅に合わせて細くなる）");
+  assert.strictEqual(f(40, 16).colW, 31);
+  assert.strictEqual(f(200, 16).colW, 12, "下限12px");
+  // 1ヶ月（17日以上）は人数に関係なく従来の式 min(39, fillW)
+  assert.deepStrictEqual([f(26, 31).colW, f(26, 31).expanded], [39, false]);
+  assert.strictEqual(f(35, 31).colW, 36);
+  // 横幅を超えない
+  for (let n = 1; n <= 60; n++) { const r = f(n, 16); assert.ok(45 * 2 + r.colW * n <= 1350 || r.colW === 12, `n=${n}`); }
+});
+
+test("fullViewFontOf: 列を広げても文字は大きくせず、39pxより細い列では比例して小さくする", () => {
+  assert.strictEqual(u.fullViewFontOf(14, 48), 14);
+  assert.strictEqual(u.fullViewFontOf(14, 39), 14);
+  assert.strictEqual(u.fullViewFontOf(14, 36), 12);
+  assert.strictEqual(u.fullViewFontOf(14, 31), 11);
+  assert.strictEqual(u.fullViewFontOf(14, 12), 5);
+});

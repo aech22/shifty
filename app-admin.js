@@ -1719,14 +1719,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const fvEdge=false;
   const fvInnerH=fvRowH;
   // 出勤・退勤セルの文字は行高から出した値より **さらに2px小さく**する（2026-09-23 ユーザー指示）。
-  const fvFont=Math.max(5,Math.min(16,Math.floor(fvInnerH)-2)-2);
+  const fvRowFont=Math.max(5,Math.min(16,Math.floor(fvInnerH)-2)-2);
   const fvDateFont=Math.max(7,Math.min(13,Math.floor(fvRowH*2)-4));
   // 全表示では border-box に揃える。既定の content-box のままだと padding のぶん実幅が式より
   // 広くなり（日付列+8px・スタッフ列+4px/列）、overflowX:"hidden" と相まって右端が黙って切れる。
-  // スタッフが少なくても列は引き伸ばさない。**上限は通常表示と同じ39px**にして、余った幅は
-  // 引き伸ばしではなく左右の余白にする（表自体は中央寄せ・2026-09-23 ユーザー指示）。
-  const colW=fullView?Math.max(12,Math.min(39,Math.floor((fvAvailW-fvDateW*2)/Math.max(1,gridStaff.length))))
+  // スタッフが少ないときは列を引き伸ばさない（39px・余りは左右の余白・2026-09-23 ユーザー指示）。
+  // **人数が多いときだけ列を横幅いっぱいに合わせる**（2026-09-28 ユーザー指示・2週間以下の期間だけ）。
+  // 規則は app-utils.js の fullViewColW（横幅いっぱいに割った列幅が48px以下になる人数から）。
+  const fvCol=fullViewColW({availW:fvAvailW,staffCount:gridStaff.length,days:dates.length,maxDays:FV_MAX_DAYS,dateW:fvDateW});
+  const colW=fullView?fvCol.colW
     :fitAll?Math.max(24,Math.floor((centerW-DATE_COL_W)/Math.max(1,gridStaff.length))):39;  // fullView=fitAll なのでこの枝は現在到達しない
+  // 列が細くなったら文字も細くする（2週間以下の期間だけ。1ヶ月の期間は従来どおり行高だけで決める＝R21）
+  const fvFont=dates.length<=FV_MAX_DAYS?fullViewFontOf(fvRowFont,colW):fvRowFont;
   // 全表示の表の実幅。グリッド・休みカウント表・集計表がこの同じ幅で中央に並ぶので列位置が揃う。
   const fvTableW=fvDateW*2+colW*gridStaff.length;
   const fvCenter=fullView?{width:"fit-content",marginLeft:"auto",marginRight:"auto"}:{};
