@@ -217,6 +217,10 @@ sanitizeMonthlyDeadlineDays / monthlyDeadlineFor / shopDeadlineInfoFromLink
                            // 期間の締切＝開始日より前で最も遅い固定日。優先は 期間ごとの日付指定 ＞ 毎月の固定。
                            // CF 側の同じ規則は functions/company-config.js（tests/core.test.js が一致を照合）
 homeShopOf / isHelperAt / dupTargetShopsFor
+findStaffByNumber / mergeStaffMatches
+                           // 従業員番号（数字だけ）で企業内の他店舗のスタッフを呼び出す（2026-09-28・スタッフタブの「呼び出す」）。
+                           // 完全一致（「012」≠「12」）。同じ人の所属店舗・ヘルプ先の登録は1人にまとめ所属店舗側の属性・所属を採る。
+                           // 対象は企業の写しの連携店舗（companyShops）だけで、有給の付与日数は持ち込まない
                            // 所属店舗（staffHomeShop）とヘルプ判定。重複判定の対象店舗は「所属が一致する同名」
 // 末尾に module.exports ガード（Nodeテスト用）
 ```

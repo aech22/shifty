@@ -209,7 +209,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           <button onClick={()=>setTab("mypage")} style={{padding:"6px 12px",background:"#DC2626",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>マイページへ</button>
         </div>}
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings}/>}
-        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name||""} linkedShops={homeShopChoices} onRenameStaff={(oldName,newName)=>{
+        {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name||""} linkedShops={homeShopChoices} companyShops={Object.entries((companyLink&&companyLink.shops)||{}).filter(([id])=>id&&id!==currentShopId).map(([id,nm])=>({id,name:nm||id}))} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
@@ -3292,7 +3292,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
 }
 
 // ===== スタッフ登録タブ =====
-function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods,ownerReadOnly=false,shopId="",shopName="",linkedShops=[]}){
+function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods,ownerReadOnly=false,shopId="",shopName="",linkedShops=[],companyShops=[]}){
   const[newName,setNewName]=useState("");
   // 削除確認ポップアップ。対象は index ではなく「スタッフ名」で持つ（下のコメントと同じ理由）。
   const[delTarget,setDelTarget]=useState(null);
@@ -3499,6 +3499,51 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     if(rejectAliasCollision(trimmed,n))return;
     onRenameStaff&&onRenameStaff(n,trimmed);
     setEditKey(null);setEditName("");
+  };
+  // 従業員番号（数字だけ）で企業内の他店舗から呼び出して登録する（2026-09-28）。対象は企業の写しの連携店舗だけ
+  // （companyShops。企業に入れていない自分の店舗は読まない）。名前・番号・属性・所属店舗を揃え、有給の付与日数は持ち込まない
+  // （残数は所属店舗の期間データから数えるので、ヘルプ先にも持つと残数が2つできる）。
+  const[lookupNum,setLookupNum]=useState("");
+  const[lookupBusy,setLookupBusy]=useState(false);
+  const[lookupChoices,setLookupChoices]=useState(null);
+  const registerLookup=m=>{
+    const name=m.name;
+    if(staffList.includes(name)){tt("▲ 既に登録されています");return;}
+    if(rejectBadName(name))return;
+    if(rejectAliasCollision(name,null))return;
+    if(staffList.filter(n=>!isSpacer(n)).length>=lim){onUpgrade&&onUpgrade({type:"staff",limit:lim,plan});return;}
+    const num=lookupNum.trim();
+    const attrOk=m.attrId&&(BUILTIN_TYPES.includes(m.attrId)||((settings.staffTypeLimits||{})[m.attrId]!==undefined));
+    const home={...(settings.staffHomeShop||{})};
+    if(m.homeShopId&&m.homeShopId!==shopId)home[name]=m.homeShopId;else delete home[name];
+    ph("staff_added",{staff_count:staffList.filter(n=>!isSpacer(n)).length+1,via:"number_lookup"});
+    onSave([...staffList,name]);
+    onSaveSettings&&onSaveSettings({...settings,
+      staffNumbers:{...(settings.staffNumbers||{}),[name]:num},
+      ...(attrOk?{staffAttributes:{...(settings.staffAttributes||{}),[name]:m.attrId}}:{}),
+      staffHomeShop:home});
+    setLookupNum("");setLookupChoices(null);
+    tt(`✓ ${name}（${m.homeShopName||"所属店舗"}）を追加しました`);
+  };
+  const lookupByNumber=async()=>{
+    const num=lookupNum.trim();
+    if(!/^\d+$/.test(num)){tt("▲ 従業員番号は数字だけで入力してください");return;}
+    if(!firebaseDB){tt("✕ 読み込めませんでした（オフライン）");return;}
+    setLookupBusy(true);setLookupChoices(null);
+    const failed=[];
+    const shops=(await Promise.all((companyShops||[]).map(async s=>{
+      try{
+        const [st,nums,attrs,homes]=await Promise.all(["staff","settings/staffNumbers","settings/staffAttributes","settings/staffHomeShop"]
+          .map(p=>firebaseDB.ref(`shops/${s.id}/${p}`).once("value").then(x=>x.val())));
+        return{id:s.id,name:s.name,staff:st||[],staffNumbers:nums||{},staffAttributes:attrs||{},staffHomeShop:homes||{}};
+      }catch{failed.push(s.name||s.id);return null;}
+    }))).filter(Boolean);
+    setLookupBusy(false);
+    const matches=mergeStaffMatches(findStaffByNumber(num,shops));
+    if(failed.length)tt(`▲ 読み込めなかった店舗があります（${failed.join("・")}）`);
+    if(matches.length===0){if(!failed.length)tt(`▲ 従業員番号 ${num} のスタッフは見つかりませんでした`);return;}
+    if(matches.length===1){registerLookup(matches[0]);return;}
+    setLookupChoices(matches);
   };
   const add=()=>{
     if(!newName.trim()){tt("▲ 名前を入力");return;}
@@ -4049,6 +4094,19 @@ const dragIdxRef=useRef(null);
           <input value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="スタッフ名を入力" maxLength={50} style={AI}/>
           <button onClick={add} style={AB}>＋ 追加</button>
         </div>
+        {/* 従業員番号で企業内の他店舗から呼び出す（Premium・企業の写しに他店舗があるときだけ）。番号が数字以外の人は対象外 */}
+        {isPremium&&!ownerReadOnly&&(companyShops||[]).length>0&&<div style={{marginTop:10}}>
+          <div style={{display:"flex",gap:8}}>
+            <input value={lookupNum} onChange={e=>setLookupNum(e.target.value.replace(/\s/g,""))} onKeyDown={e=>e.key==="Enter"&&!lookupBusy&&lookupByNumber()} inputMode="numeric" maxLength={8} placeholder="従業員番号（数字）で他店舗から呼び出す" style={AI}/>
+            <button disabled={lookupBusy} onClick={lookupByNumber} style={{...AGray,whiteSpace:"nowrap"}}>{lookupBusy?"検索中...":"呼び出す"}</button>
+          </div>
+          <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>企業に連携している店舗から、同じ従業員番号（数字だけの番号）の人を名前・属性・所属店舗ごと登録します。</div>
+          {lookupChoices&&<div style={{marginTop:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
+            <div style={{fontSize:12,color:"var(--c-text2)",marginBottom:6}}>同じ従業員番号で別の名前が登録されています。登録する人を選んでください。</div>
+            {lookupChoices.map(m=><button key={m.name} onClick={()=>registerLookup(m)} style={{...AGray,display:"block",width:"100%",textAlign:"left",marginBottom:6}}>{m.name}（{m.homeShopName||"所属不明"}）</button>)}
+            <button onClick={()=>setLookupChoices(null)} style={{background:"none",border:"none",color:"var(--c-text4)",fontSize:12,cursor:"pointer"}}>取消</button>
+          </div>}
+        </div>}
         {isPro&&<button onClick={()=>{onSave([...staffList,"__spacer__"+genToken()]);tt("✓ 空白列を追加しました");}} style={{...AGray,width:"100%",fontSize:13,marginTop:8}}>＋ 空白列を追加（末尾）</button>}
         {staffList.filter(n=>!isSpacer(n)).length>=lim&&<div style={{marginTop:10,fontSize:12,color:"#F59E0B",textAlign:"center"}}>▲ 上限に達しています。アップグレードするとさらに追加できます。</div>}
       </AC>

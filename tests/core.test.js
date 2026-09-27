@@ -4269,3 +4269,29 @@ test("1ヶ月の残業（monthlyOt）は企業の共通設定でも決められ�
   const r = cfc.sanitizeCompanySettings({ staffTypeLimits: { parttime: { monthly: 177, monthlyOt: 20 } } });
   assert.deepStrictEqual(r.staffTypeLimits.parttime, { monthly: 177, monthlyOt: 20 });
 });
+
+// ===== ④ 従業員番号で企業内の他店舗のスタッフを呼び出す（2026-09-28）=====
+test("findStaffByNumber: 数字だけの番号を文字列の完全一致で探す", () => {
+  const shops = [
+    { id: "A1", name: "A店", staff: ["田中", "__spacer__x", "佐藤", "鈴木"], staffNumbers: { "田中": "12", "佐藤": "A12", "鈴木": "012", "__spacer__x": "12" }, staffAttributes: { "田中": "employee" }, staffHomeShop: {} },
+    { id: "B1", name: "B店", staff: { 0: "田中", 1: "山田" }, staffNumbers: { "田中": "12", "山田": "99", "幽霊": "12" }, staffAttributes: { "田中": "parttime" }, staffHomeShop: { "田中": "A1" } },
+  ];
+  const r = u.findStaffByNumber("12", shops);
+  assert.deepStrictEqual(r.map(x => `${x.shopId}:${x.name}`), ["A1:田中", "B1:田中"], "同番号が2店舗にあれば2件・spacer と名簿に無い名前は除外");
+  assert.strictEqual(r[0].homeShopId, "A1", "所属が未設定ならその店舗");
+  assert.strictEqual(r[1].homeShopId, "A1", "ヘルプ先の登録は所属先を指す");
+  assert.deepStrictEqual(u.findStaffByNumber("012", shops).map(x => x.name), ["鈴木"], "「012」と「12」は別");
+  assert.deepStrictEqual(u.findStaffByNumber("12a", shops), [], "入力が数字以外なら探さない");
+  assert.deepStrictEqual(u.findStaffByNumber("A12", shops), [], "数字以外の番号の人は対象外");
+  assert.deepStrictEqual(u.findStaffByNumber("", shops), []);
+});
+
+test("mergeStaffMatches: 同じ人の複数登録は1人にまとめ、所属店舗側の登録を正とする", () => {
+  const A = { shopId: "A1", shopName: "A店", name: "田中", attrId: "employee", homeShopId: "A1" };
+  const B = { shopId: "B1", shopName: "B店", name: "田中", attrId: "parttime", homeShopId: "A1" };
+  assert.deepStrictEqual(u.mergeStaffMatches([B, A]), [{ name: "田中", attrId: "employee", homeShopId: "A1", homeShopName: "A店", shops: ["B1", "A1"] }], "所属A店・社員");
+  assert.deepStrictEqual(u.mergeStaffMatches([B]), [{ name: "田中", attrId: "parttime", homeShopId: "A1", homeShopName: null, shops: ["B1"] }], "B店にしか居なくても所属はA店");
+  const C = { shopId: "C1", shopName: "C店", name: "佐藤", attrId: null, homeShopId: "C1" };
+  assert.strictEqual(u.mergeStaffMatches([A, C]).length, 2, "同じ番号で別の名前＝選択肢");
+  assert.deepStrictEqual(u.mergeStaffMatches([]), []);
+});

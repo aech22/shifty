@@ -297,6 +297,8 @@ const sharedGlobals = {
   homeShopOf: "writable",
   isHelperAt: "writable",
   dupTargetShopsFor: "writable",
+  findStaffByNumber: "writable",
+  mergeStaffMatches: "writable",
   prorateMonthlyHours: "writable",
   attrMonthFrameOf: "writable",
   attrMonthFrame: "writable",

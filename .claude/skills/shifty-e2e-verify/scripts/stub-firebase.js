@@ -14,6 +14,7 @@
 //   window.__db(path)   … モックDBの値を読む（検証のアサーションに使う）
 //   window.__dbDump()   … 全体のスナップショット
 //   window.__cf         … httpsCallable の呼び出し記録 [{name,payload}]
+//   window.__reads      … once() で読まれたパスの記録（どの店舗を読みに行ったかの確認に使う）
 //
 // 守備範囲の外: セキュリティルール（database.rules.json）は一切評価しない。Admin SDK と同じで
 // 素通りするので、ルールの許可・拒否を確かめたいときは実クライアントか認証付きRESTで測る。
@@ -111,6 +112,7 @@ function makeStub(o) {
       child:function(c){ return refFor(p+"/"+c); },
       once:function(){
         if(p===".info/connected") return Promise.resolve(snap(true));
+        (window.__reads=window.__reads||[]).push(p);
         return Promise.resolve(snap(applyQuery(getPath(p),q)));
       },
       on:function(ev,cb){
