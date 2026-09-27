@@ -45,7 +45,7 @@ function App(){
   const subsMapRef=useRef({});          // subId→sub（複数期間購読のマージ先）
   const subsListenersRef=useRef({});    // periodId→Firebaseクエリref（期間ごとのon購読）
   const periodsForSubsRef=useRef([]);   // reconcileが参照する最新periods
-  // リアルタイム購読が最後に受け取ったサーバーの値（settings/periods/staff/templates）。
+  // リアルタイム購読が最後に受け取ったサーバーの値（settings/periods/staff）。
   // 管理系の書き込みが拒否されたときに画面を戻す復元元として使う（revertAdminWrite参照）。
   const serverSnapRef=useRef({});
   const apidRef=useRef(null);           // reconcileが参照する最新apid
@@ -334,15 +334,6 @@ function App(){
     }
   },[sid]);
 
-  // 曜日別候補テンプレート（店舗単位: shops/{shopId}/templates）
-  const[shopTemplates,setShopTemplates]=useState([]);
-  const saveShopTemplates=useCallback(v=>{
-    setShopTemplates(v);
-    const targetSid=currentShopIdRef.current;
-    if(!targetSid||targetSid==="default")return;
-    ls(storeKey(targetSid,"templates_v6"),v);
-    if(firebaseDB) fbSet(fbPath(targetSid,"templates"),v).catch(e=>revertAdminWrite("templates",e));
-  },[]);
   useEffect(()=>{ if(!_hasUrlToken&&!DEMO_MODE) ssSave(SS_APID,apid); },[apid]);
   useEffect(()=>{ if(!_hasUrlToken&&!DEMO_MODE) ssSave(SS_VIEW,view); },[view]);
 
@@ -370,14 +361,13 @@ function App(){
     // subs期間別購読もクリア（店舗切替時に前店舗のリスナー・マージ結果を持ち越さない）
     stopSubsListeners();
     subsSidRef.current=targetSid;
-    // staffList/settings/periods/shopTemplatesをキャッシュ値へ同期リセットする（subsと同じパターン）。
+    // staffList/settings/periodsをキャッシュ値へ同期リセットする（subsと同じパターン）。
     // Firebaseのon("value")が新店舗のデータを非同期で返すまでの間、これらのstateが前店舗のデータの
     // ままだと、その間に「スタッフ登録」の追加等でstaffListをそのまま書き込む操作をした場合、
     // 前店舗の配列（＋変更分）が新店舗（sidは既に新店舗を指す）のFirebaseパスへ上書きされてしまう。
     setStaffList(lg(storeKey(targetSid,"staff_v6"),[]));
     setSettings(lg(storeKey(targetSid,"settings_v6"),null)||makeSettings(targetSid));
     setPeriods(lg(storeKey(targetSid,"periods_v6"),[]));
-    setShopTemplates(lg(storeKey(targetSid,"templates_v6"),[]));
     // 契約の予定状態は店舗ごとに違うので、購読が返るまでの間に前店舗の「解約済み」表示を
     // 引きずらないよう同期的にクリアする（各フィールドのon()が新店舗の値で埋め直す）
     setBillingSchedule({cancelAtPeriodEnd:false,currentPeriodEnd:null,scheduledPlan:null,scheduledPlanDate:null});
@@ -397,17 +387,6 @@ function App(){
     dlog("購読開始 targetSid=",targetSid);
     try { window.posthog && window.posthog.identify(targetSid); } catch {}
     ph("app_loaded",{shop_id:targetSid});
-
-    // 曜日別候補テンプレート（店舗単位: shops/{shopId}/templates）
-    on(fbPath(targetSid,"templates"),val=>{
-      if(!val){setShopTemplates([]);serverSnapRef.current.templates=[];return;}
-      // periods/staffと同様に要素単位で妥当性を検証する（テンプレートはオブジェクト構造）。
-      // 配列ケースのfilter(Boolean)だけでなく、オブジェクトケース(Object.values)のnull要素・不正型も除去。
-      const arr=(Array.isArray(val)?val:Object.values(val)).filter(t=>t&&typeof t==="object");
-      setShopTemplates(arr);
-      serverSnapRef.current.templates=arr;
-      ls(storeKey(targetSid,"templates_v6"),arr);
-    });
 
     // 店舗リスト設定（shopListが明示的に渡された時のみ更新）
     dlog("startSubscriptions: shopList=",shopList?.length,shopList?.map(s=>s?.id));
@@ -1244,7 +1223,6 @@ function App(){
     const snap=serverSnapRef.current,tsid=currentShopIdRef.current;
     if(kind==="settings"&&snap.settings){ setSettings(snap.settings); ls(storeKey(tsid,"settings_v6"),snap.settings); }
     if(kind==="staff"&&snap.staff){ setStaffList(snap.staff); ls(storeKey(tsid,"staff_v6"),snap.staff); }
-    if(kind==="templates"&&snap.templates){ setShopTemplates(snap.templates); ls(storeKey(tsid,"templates_v6"),snap.templates); }
     if(kind==="periods"&&snap.periods){
       setPeriods(snap.periods); periodsForSubsRef.current=snap.periods; ls(storeKey(tsid,"periods_v6"),snap.periods);
       // 期間の削除はローカルのsubsも巻き添えで消している（savePeriods参照）ため一緒に戻す
@@ -1721,7 +1699,6 @@ function App(){
               saveStaff={saveStaff} saveShops={saveShops}
               adminCode={adminKeys[sid]?`${sid}.${adminKeys[sid]}`:sid} ownerReadOnly={ownerReadOnly}
               onRememberAdminKey={rememberAdminKey} onClaimShop={claimOwnership}
-              shopTemplates={shopTemplates} saveShopTemplates={saveShopTemplates}
               plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed} billingSchedule={billingSchedule} billingExempt={billingExempt} companyLink={companyLink}
               setCurrentShopId={id=>{
                 currentShopIdRef.current=id;

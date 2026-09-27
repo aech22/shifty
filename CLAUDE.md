@@ -255,7 +255,6 @@ AI / AB / AD / AGray // スタイル定数
 | `periods` | Period[] | 期間一覧（startDate降順ソート済み） |
 | `staffList` | string[] | スタッフ名一覧 |
 | `subs` | Sub[] | 提出データ一覧 |
-| `shopTemplates` | Template[] | 曜日別候補テンプレート（shops/{shopId}/templates・店舗単位） |
 | `syncStatus` | "init"\|"online"\|"offline"\|"no_config" | Firebase接続状態 |
 
 主要関数：
@@ -290,7 +289,7 @@ Phase1 (useEffect[]) — Firebase初期化 → onAuthStateChanged → loadShops(
   ※ global/shops の全件読みはセキュリティルールで拒否される（一覧の公開廃止・直キー読みのみ）
 
 Phase2 (startSubscriptions関数) — sid確定後にuseEffectを経由せず直接呼ぶ
-  → shops/{sid}/templates, settings, periods, staff, subs
+  → shops/{sid}/settings, periods, staff, subs（templates は 2026-09-28 に購読を撤去）
   → accounts/{sid}/plan, planExpiry, paymentFailed をリアルタイム購読
 
 Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
@@ -346,7 +345,8 @@ Firebase Realtime Database
 │       ├── settings   ← 候補時間・スタッフ色・別名・休憩・属性・Excel設定など
 │       ├── periods    ← 期間一覧 {periodId: periodObj}
 │       ├── staff      ← スタッフ名一覧（文字列配列）
-│       ├── templates  ← 曜日別候補テンプレート（店舗単位・Pro以上）
+│       ├── templates  ← 旧・曜日別候補テンプレート。**2026-09-28 に UI・購読・保存を撤去**（機能していなかったため）。
+│       │                 ノードとルールは残置（ルールのデプロイを避ける）。クライアントはもう読み書きしない
 │       ├── lastActivity ← ISO文字列（CFの1年未更新アーカイブ判定に使用）
 │       ├── subs/      ← 提出データ {subId: subObj}（書き込みは.validateで形状検証・auth必須）
 │       ├── owners/    ← {uid: adminKey} 管理者登録（自uid追加はadminKey照合が必要・読みはオーナーのみ）

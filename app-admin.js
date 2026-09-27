@@ -6,7 +6,7 @@
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,shopTemplates,saveShopTemplates,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   // 所属店舗の選択肢。企業の写しが持つ連携店舗の一覧を優先し、この端末が知っている店舗（allLinkedShops）で補う。
   // 企業の作成者でも企業ログインでもない端末（Cookie・管理コードで追加した端末）は allLinkedShops を持たないため。
@@ -225,7 +225,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           }
           tt(`✓ ${oldName} → ${newName} に変更しました`);
         }}/>}
-        {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} shopTemplates={shopTemplates} saveShopTemplates={saveShopTemplates} tt={tt} plan={plan} periods={periods}/>}
+        {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} tt={tt} plan={plan} periods={periods}/>}
         {tab==="submissions"&&<SubsTab key={currentShopId} subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
         {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
         {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany} plan={plan} onSaveCompanyConfig={onSaveCompanyConfig} onCompanyLogin={onCompanyLogin}/>}
@@ -4197,7 +4197,7 @@ const dragIdxRef=useRef(null);
 }
 
 // ===== 候補管理タブ（複数選択対応）=====
-function CandTab({settings,onSave,shopTemplates=[],saveShopTemplates,tt,plan="free",periods=[]}){
+function CandTab({settings,onSave,tt,plan="free",periods=[]}){
   const[mode,setMode]=useState("global");
   const[selDows,setSelDows]=useState([1]);
   const[selDates,setSelDates]=useState([tds]);
@@ -4209,14 +4209,12 @@ function CandTab({settings,onSave,shopTemplates=[],saveShopTemplates,tt,plan="fr
   const[wSelEnd,setWSelEnd]=useState("");
   const[dSelStart,setDSelStart]=useState("");
   const[dSelEnd,setDSelEnd]=useState("");
-  const[tmplName,setTmplName]=useState("");
   const[selDayType,setSelDayType]=useState("weekday");
   const[brkStart,setBrkStart]=useState("");
   const[brkEnd,setBrkEnd]=useState("");
   const[brkTags,setBrkTags]=useState([]); // 新規休憩に付与する属性タグ
   const[editTagKey,setEditTagKey]=useState(null); // タグ編集中の "dayType_index"
   const[posTypeModal,setPosTypeModal]=useState(null); // {date, types:[posType,...]} 必要ポジションの曜日区分選択ポップアップ
-  const[tmplApply,setTmplApply]=useState(null); // {index, weekdays:[0..8]} テンプレ適用時の曜日選択パネル
 
   const toggleArr=(arr,setArr,val)=>setArr(prev=>prev.includes(val)?prev.filter(v=>v!==val):[...prev,val]);
 
@@ -4298,36 +4296,6 @@ function CandTab({settings,onSave,shopTemplates=[],saveShopTemplates,tt,plan="fr
     tt(`✓ ${wdLabelFull(wkey)}の候補（${wcands.length}件）を${selDates.length}日付に追加`);
   };
 
-  // テンプレートはPro以上の機能。UI側は pointerEvents:"none" で覆っているが、これはマウスしか止めない
-  // （ボタンもinputも disabled ではないためTabで到達でき、Enterで発火する＝Freeのまま保存・適用・削除ができた）。
-  // 入口ごとに判定を置いて、経路に依らずFreeでは実行されないようにする。
-  const proOnlyTemplate=()=>{
-    if(plan!=="free")return false;
-    tt("▲ テンプレート機能はProプラン（500円/月）で利用できます");
-    return true;
-  };
-  // テンプレート保存
-  const saveTemplate=()=>{
-    if(proOnlyTemplate())return;
-    if(!tmplName.trim()){tt("▲ テンプレート名を入力");return;}
-    const wdCopy={...(settings.weekdayCandidates||{})};
-    const tmpl={name:tmplName.trim(),weekdayCandidates:wdCopy,savedAt:new Date().toISOString()};
-    const ts=[...shopTemplates,tmpl];
-    saveShopTemplates(ts);setTmplName("");tt(`✓ テンプレート「${tmplName.trim()}」を保存しました（この店舗）`);
-  };
-  // テンプレを選択した曜日にだけ適用する。選択曜日のみ w[d]=テンプレの候補(空なら[])で上書きし、未選択曜日は現状維持。
-  // 全曜日(WDAY_OPTS)を選択すれば従来の一括適用と同じ結果になる。
-  const doApplyTemplate=(t,weekdays)=>{
-    if(proOnlyTemplate())return;
-    if(!weekdays.length){tt("▲ 適用する曜日を選択してください");return;}
-    const names=weekdays.slice().sort((a,b)=>a-b).map(wdLabel).join("・");
-    if(!confirm(`テンプレート「${t.name}」の候補を ${names} に適用しますか？選択した曜日の候補が上書きされます。`))return;
-    const w={...(settings.weekdayCandidates||{})};
-    weekdays.forEach(d=>{w[d]=(t.weekdayCandidates||{})[d]||[];});
-    onSave({...settings,weekdayCandidates:w});setTmplApply(null);tt(`✓ テンプレート「${t.name}」を ${names} に適用しました`);
-  };
-  const delTemplate=i=>{if(proOnlyTemplate())return;const ts=[...shopTemplates];ts.splice(i,1);saveShopTemplates(ts);tt("削除しました");};
-
   // 選択中の日付の候補（複数選択時は全日付の和集合）
   const dC=selDates.length===1?((settings.dateCandidates||{})[selDates[0]]||[]):[];
 
@@ -4353,7 +4321,7 @@ function CandTab({settings,onSave,shopTemplates=[],saveShopTemplates,tt,plan="fr
     <div>
       <AT>候補管理</AT>
       <div style={{display:"flex",gap:6,marginBottom:16,flexWrap:"wrap"}}>
-        {[["global","全体"],["weekday","曜日別"],["date","日付別"],["template","テンプレ"],...(plan==="premium"?[["break","休憩"]]:[])] .map(([id,l])=>(
+        {[["global","全体"],["weekday","曜日別"],["date","日付別"],...(plan==="premium"?[["break","休憩"]]:[])] .map(([id,l])=>(
           <button key={id} onClick={()=>setMode(id)} style={{padding:"8px 14px",background:mode===id?"var(--c-accent)":"var(--c-border)",border:`1px solid ${mode===id?"var(--c-accent)":"var(--c-border)"}`,borderRadius:8,color:"var(--c-text)",fontSize:13,fontWeight:600,cursor:"pointer"}}>{l}</button>
         ))}
       </div>
@@ -4527,36 +4495,6 @@ function CandTab({settings,onSave,shopTemplates=[],saveShopTemplates,tt,plan="fr
             <div style={{display:"flex",flexWrap:"wrap",gap:5}}>{dispDates.map(dt=>{const sel=selDates.includes(dt);return(<button key={dt} onClick={()=>setSelDates(prev=>(prev.length===1&&prev[0]===dt)?[]:[dt])} style={{padding:"4px 9px",borderRadius:4,background:sel?"var(--c-accent)":"var(--c-border)",border:`1px solid ${sel?"var(--c-accent)":"var(--c-border2)"}`,color:"var(--c-text)",fontSize:11,fontWeight:600,cursor:"pointer"}}>{dt.replace(/-/g,"/")}（{((settings.dateCandidates||{})[dt]||[]).length}件）</button>);})}</div>
           </div>);
         })()}
-      </AC>}
-
-      {mode==="template"&&<AC title="曜日別候補テンプレート">
-        {plan==="free"&&<div style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,color:"#F59E0B"}}>テンプレート機能はProプラン（500円/月）で利用できます</div>}
-        <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:12,opacity:plan==="free"?.4:1}}>現在の曜日別候補をテンプレートとして保存し、後で再利用できます。</div>
-        <div style={{display:"flex",gap:8,marginBottom:16,opacity:plan==="free"?.4:1,pointerEvents:plan==="free"?"none":"auto"}}>
-          <input value={tmplName} onChange={e=>setTmplName(e.target.value)} placeholder="テンプレート名を入力" style={{...AI,flex:1}}/>
-          <button onClick={saveTemplate} style={AB}>保存</button>
-        </div>
-        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>この店舗に保存されます</div>
-        {shopTemplates.length===0&&<div style={{fontSize:13,color:"var(--c-text4)"}}>保存済みテンプレートはありません</div>}
-        {shopTemplates.map((t,i)=>{
-          const open=tmplApply&&tmplApply.index===i;
-          return(<div key={i} style={{marginBottom:6,opacity:plan==="free"?.4:1,pointerEvents:plan==="free"?"none":"auto"}}>
-            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:open?"10px 10px 0 0":10}}>
-              <span style={{flex:1,fontSize:14,color:"var(--c-text)",fontWeight:600}}>{t.name}</span>
-              <button onClick={()=>setTmplApply(open?null:{index:i,weekdays:WDAY_OPTS.filter(d=>(((t.weekdayCandidates||{})[d])||[]).length>0)})} style={{...AB,padding:"6px 12px",fontSize:12}}>適用</button>
-              <button onClick={()=>delTemplate(i)} style={AD}>削除</button>
-            </div>
-            {open&&<div style={{padding:"12px 14px",background:"var(--c-input2)",border:"1px solid var(--c-border)",borderTop:"none",borderRadius:"0 0 10px 10px"}}>
-              <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8}}>適用する曜日を選択（テンプレに候補がある曜日を初期選択）</div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{WDAY_OPTS.map(d=>{const sel=tmplApply.weekdays.includes(d);const cnt=(((t.weekdayCandidates||{})[d])||[]).length;return(
-                <button key={d} onClick={()=>setTmplApply(cur=>({...cur,weekdays:cur.weekdays.includes(d)?cur.weekdays.filter(x=>x!==d):[...cur.weekdays,d]}))} style={{padding:"6px 12px",borderRadius:12,fontSize:12,fontWeight:700,border:"1px solid",cursor:"pointer",background:sel?"var(--c-accent)":"var(--c-input)",borderColor:sel?"transparent":"var(--c-border2)",color:sel?"white":"var(--c-text2)"}}>{wdLabel(d)}（{cnt}）</button>);})}</div>
-              <div style={{display:"flex",gap:8}}>
-                <button onClick={()=>doApplyTemplate(t,tmplApply.weekdays)} style={{...AB,padding:"8px 14px",fontSize:13}}>選択した曜日に適用</button>
-                <button onClick={()=>setTmplApply(null)} style={{...AGray,padding:"8px 14px",fontSize:13}}>キャンセル</button>
-              </div>
-            </div>}
-          </div>);
-        })}
       </AC>}
 
       {mode==="break"&&(()=>{
@@ -6663,7 +6601,6 @@ function MyPageTab({plan="free",planExpiry,billingSchedule=null,staffList=[],per
                 ["期間数","1件","無制限","無制限"],
                 ["Excel書き出し","✓","✓","✓"],
                 ["スタッフ並べ替え・名前色","✕","✓","✓"],
-                ["テンプレート共有","✕","✓","✓"],
                 ["Excel店舗名変更","✕","✓","✓"],
                 ["名前リンク（別名）","✕","✓","✓"],
                 ["シフト作成・時間調整","✕","✕","✓"],
@@ -6775,8 +6712,8 @@ function UpgradeModal({reason,currentPlan,shopId,onClose}){
 
   const proLabel=currentPlan==="pro"?"Pro（現在）":"Pro";
   const planRows=isEditType
-    ?[["Free","無料","スタッフ20名 / 期間1件"],[proLabel,"500円/月","スタッフ・期間 無制限＋並べ替え・テンプレート・名前色"],["Premium","2,980円/月","Proの全機能＋シフト作成・調整・休憩/属性管理・PDF出力"]]
-    :[["Free","無料","スタッフ20名 / 期間1件"],["Pro","500円/月","スタッフ・期間 無制限＋並べ替え・テンプレート・名前色"],["Premium","2,980円/月","Proの全機能＋シフト作成・調整・休憩/属性管理・PDF出力"]];
+    ?[["Free","無料","スタッフ20名 / 期間1件"],[proLabel,"500円/月","スタッフ・期間 無制限＋並べ替え・名前色"],["Premium","2,980円/月","Proの全機能＋シフト作成・調整・休憩/属性管理・PDF出力"]]
+    :[["Free","無料","スタッフ20名 / 期間1件"],["Pro","500円/月","スタッフ・期間 無制限＋並べ替え・名前色"],["Premium","2,980円/月","Proの全機能＋シフト作成・調整・休憩/属性管理・PDF出力"]];
 
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.65)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20,animation:"fI .2s"}} onClick={onClose}>
