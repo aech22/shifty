@@ -59,7 +59,7 @@ function buildHtml(scripts, jsx, extraHead) {
       ? `<script type="text/babel" src="${s.src}" data-presets="react"></script>`
       : `<script src="${s.src}"></script>`
   ).join("\n");
-  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>shifty-harness</title>
+  return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>shifty-harness</title>
 ${extraHead || ""}</head><body>
 <div id="root"></div>
 ${CDN.map(u => `<script src="${u}"></script>`).join("\n")}
@@ -92,7 +92,10 @@ async function openHarness(o) {
   if (!o || typeof o.jsx !== "string") throw new Error("openHarness: jsx（Harnessを定義して描画するソース）は必須です");
   const root = o.root || process.env.SHIFTY_ROOT || REPO_ROOT;
   const scripts = o.scripts || DEFAULT_SCRIPTS;
-  const engine = o.engine || "chromium";
+  // SHIFTY_ENGINE=webkit で既存のスクリプトをそのまま Safari 相当で回せる（2026-09-28）。
+  // SHIFTY_DEVICE="iPhone 13" のように Playwright の端末名を渡すと、その端末の画面サイズ・タッチ・UA で開く
+  // （スクリプトが指定した viewport より優先する）。
+  const engine = o.engine || process.env.SHIFTY_ENGINE || "chromium";
   const waitFor = o.waitFor || "#root > *";
   const timeout = o.timeout || 20000;
 
@@ -106,7 +109,9 @@ async function openHarness(o) {
   if (!browserType) throw new Error(`未知のengine: ${engine}`);
 
   const browser = await browserType.launch({ headless: !o.headed });
-  const context = await browser.newContext({ viewport: o.viewport || { width: 1400, height: 900 } });
+  const dev = process.env.SHIFTY_DEVICE ? pw.devices[process.env.SHIFTY_DEVICE] : null;
+  if (process.env.SHIFTY_DEVICE && !dev) throw new Error("未知の端末名: " + process.env.SHIFTY_DEVICE);
+  const context = await browser.newContext(dev ? { ...dev, defaultBrowserType: undefined } : { viewport: o.viewport || { width: 1400, height: 900 } });
   const page = await context.newPage();
 
   const errors = [];

@@ -131,6 +131,7 @@ await h.close();
 ```
 
 返り値: `page` / `errors`（pageerror・console errorを起動時から収集）/ `setInput` / `blur` / `fill` / `clickByText` / `cell(name,date,field)` / `evaluate` / `close`。
+**iPhone で確かめる（2026-09-28）**: この Mac には Xcode が無く iOS シミュレーターは使えないので、`SHIFTY_ENGINE=webkit SHIFTY_DEVICE="iPhone 13" node <script>` で既存のスクリプトを iPhone の画面幅・タッチ・UA・DPR3 の WebKit で回す（端末指定はスクリプトの viewport より優先）。ハーネスのページには `<meta name="viewport">` を入れてある（無いとモバイル WebKit は 980px で描いて測定が嘘になる）。1400px 前提の数値を期待値に持つスクリプト（example-fitall-geometry.js の列幅など）はこの条件では落ちるのが正しいので、**修正前の版でも同じ落ち方をするか**で切り分ける。
 オプション: `engine:"webkit"`（Safari相当）・`viewport:{width:375,height:812}`（モバイル）・`scripts`（読み込むアプリファイル）・`root`（後述）・`headed:true`。
 
 **必ず踏む罠が7つある。** 1・2 はハーネスが起動しない罠、3〜7 は**起動するのに測定結果が嘘になる**罠で、後者のほうが危ない（「アプリが壊れている」と読み違える）。

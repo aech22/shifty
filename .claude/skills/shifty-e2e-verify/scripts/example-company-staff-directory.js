@@ -87,7 +87,7 @@ async function open(plan, viewport) {
     await h.clickExact("一覧を開く");
     await h.page.waitForFunction(() => !!document.querySelector("table tbody tr td"), { timeout: 10000 });
     await h.page.waitForTimeout(300);
-    R.mobile = await h.evaluate(() => ({ page: document.documentElement.scrollWidth, tableScrolls: [...document.querySelectorAll("div")].some(d => getComputedStyle(d).overflowX === "auto" && d.scrollWidth > d.clientWidth) }));
+    R.mobile = await h.evaluate(() => ({ page: document.documentElement.scrollWidth, vw: innerWidth, tableScrolls: [...document.querySelectorAll("div")].some(d => getComputedStyle(d).overflowX === "auto" && d.scrollWidth > d.clientWidth) }));
   } catch (e) { R.exceptionMobile = e.message; }
   await h.close();
 
@@ -109,7 +109,7 @@ async function open(plan, viewport) {
     noSubsRead: Array.isArray(R.reads) && R.reads.length === 0,
     backToCompanyTab: R.back === true,
     hiddenOnPro: R.proCard === false,
-    mobileNoPageScroll: !!R.mobile && R.mobile.page <= 375,
+    mobileNoPageScroll: !!R.mobile && R.mobile.page <= R.mobile.vw,   // SHIFTY_DEVICE で端末幅が変わっても成り立つよう実幅と比べる
     noErrors: R.errors.length === 0 && !R.exception && !R.exceptionPro && !R.exceptionMobile,
   };
   v.allPass = Object.values(v).every(Boolean);
