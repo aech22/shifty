@@ -2389,10 +2389,17 @@ function compareCompanyStaffRows(a,b,mode){
 // 企業内の全店舗の登録スタッフを1つの表の行にする。載せるのは**店舗に依存しない情報**だけ
 // （従業員番号・属性・所属店舗・有給）。ポジションや退勤延長は店舗依存なので出さない（2026-09-28 ユーザー指示）。
 // shops: [{id, name, staff, settings, periods}]。companySettings は企業の共通設定（属性名・年度の開始月を重ねる）。
-// 行＝「店舗×登録名」。ただしヘルプ先での登録（所属店舗が別の連携店舗で、所属店舗側にも同名がいる）は出さない。
-// 有給は所属店舗の期間だけで数える（ヘルプ先で取った分は足さない＝所属店舗のシフト作成タブの「有給残」と同じ答え）。
+// 行＝「同じ人」。次の2つの登録を1行にまとめる（2026-09-29 ユーザー指示で1つ目を追加）:
+//   ① 従業員番号が**数字だけ**で同じ登録（店舗によって「田中」「田中 太郎」と書き方が違っても同じ人とみなす）
+//   ② ヘルプ先での登録（所属店舗が別の連携店舗で、所属店舗側にも同名がいる）
+// 名前は空白を除いた長さが最も長い表記（＝フルネーム）に寄せる。他の表記は otherNames に残し、
+// フルネームに含まれない表記（番号が同じなのに名前が食い違う＝データの不整合）だけ conflictNames に出す。
+// 所属店舗は、まとめた登録それぞれの所属を重複なく並べる（homeShopIds / homeShopNames）。
+// 有給は代表の登録（所属店舗に登録されている方を優先）の所属店舗の期間だけで数える
+// （ヘルプ先で取った分は足さない＝所属店舗のシフト作成タブの「有給残」と同じ答え）。
 // 残日数は yearLaborSummary（凍結値 laborTotals だけ・subs は読まない）と paidLeaveRemaining をそのまま使う。
 // 凍結値の無い期間は paidMissing に期間ラベルで返し、画面は残日数の前に「＋」を付ける。
+function _staffNameLen(n){return String(n||"").replace(/[\s\u3000]/g,"").length;}
 function buildCompanyStaffRows(shops,companySettings,today){
   const list=(shops||[]).filter(s=>s&&s.id);
   const byId={};
@@ -2402,39 +2409,73 @@ function buildCompanyStaffRows(shops,companySettings,today){
     const periods=Object.values(s.periods||{}).filter(p=>p&&p.id);
     byId[s.id]={id:s.id,name:s.name||s.id,eff,staff,staffSet:new Set(staff),periods};
   });
-  const rows=[];
+  // 登録（店舗×名前）を並べ、同じ人どうしを union-find でつなぐ
+  const regs=[];
   list.forEach(s=>{
     const sh=byId[s.id];const eff=sh.eff;
     sh.staff.forEach(name=>{
       const h=((eff.staffHomeShop||{})[name]);
-      const homeShopId=typeof h==="string"&&h?h:sh.id;
-      if(homeShopId!==sh.id&&byId[homeShopId]&&byId[homeShopId].staffSet.has(name))return;
-      const home=byId[homeShopId]||sh;
-      const heff=home.eff;
-      const attrId=((eff.staffAttributes||{})[name])||null;
-      const stl=(eff.staffTypeLimits||{})[attrId];
-      const attrLabel=!attrId?"":(BUILTIN_TYPES.includes(attrId)?STAFF_TYPE_LABELS[attrId]:((stl&&typeof stl==="object"&&stl.name)||attrId));
-      const fyStart=fiscalYearStartMonthOf(heff);
-      const fy=fiscalYearOf(today,fyStart);
-      const yr=fy==null?null:yearLaborSummary(home.periods,name,fy,fyStart,null);
-      const g=Number(((heff.paidLeaveGranted||{})[name]));
-      const labelOf={};home.periods.forEach(p=>{labelOf[p.id]=p.label||p.startDate||p.id;});
-      rows.push({shopId:sh.id,shopName:sh.name,name,
-        number:String(((eff.staffNumbers||{})[name])==null?"":((eff.staffNumbers||{})[name])).trim(),
-        attrId,attrLabel,homeShopId,homeShopName:byId[homeShopId]?byId[homeShopId].name:null,
-        paidGranted:Number.isFinite(g)?g:null,paidUsed:yr?yr.paid:0,
-        paidRemain:yr?paidLeaveRemaining(heff,name,yr.paid):null,
-        paidMissing:yr?yr.missingPeriodIds.map(id=>labelOf[id]||id):[],
-        hidden:isStaffHiddenNow(eff,name)});
+      const num=((eff.staffNumbers||{})[name]);
+      regs.push({shop:sh,name,homeShopId:typeof h==="string"&&h?h:sh.id,number:String(num==null?"":num).trim()});
     });
+  });
+  const parent=regs.map((_,i)=>i);
+  const find=i=>{while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;};
+  const union=(a,b)=>{const ra=find(a),rb=find(b);if(ra!==rb)parent[Math.max(ra,rb)]=Math.min(ra,rb);};
+  const byNumber=new Map(),byShopName=new Map();
+  regs.forEach((r,i)=>{
+    byShopName.set(r.shop.id+"\u0000"+r.name,i);
+    if(!/^\d+$/.test(r.number))return;
+    if(byNumber.has(r.number))union(byNumber.get(r.number),i);else byNumber.set(r.number,i);
+  });
+  regs.forEach((r,i)=>{
+    if(r.homeShopId===r.shop.id)return;
+    const j=byShopName.get(r.homeShopId+"\u0000"+r.name);
+    if(j!=null)union(i,j);
+  });
+  const groups=new Map();
+  regs.forEach((r,i)=>{const k=find(i);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(r);});
+  const rows=[];
+  groups.forEach(rs=>{
+    // 代表: 所属店舗に登録されている方 → 有給の付与がある方 → 店舗の並び順
+    const atHome=rs.filter(r=>r.homeShopId===r.shop.id);
+    const pool=atHome.length?atHome:rs;
+    const base=pool.find(r=>Number.isFinite(Number(((r.shop.eff.paidLeaveGranted||{})[r.name]))))||pool[0];
+    const ordered=[base,...rs.filter(r=>r!==base)];
+    let name=base.name;
+    ordered.forEach(r=>{if(_staffNameLen(r.name)>_staffNameLen(name))name=r.name;});
+    const otherNames=[];ordered.forEach(r=>{if(r.name!==name&&otherNames.indexOf(r.name)<0)otherNames.push(r.name);});
+    const nameKey=String(name).replace(/[\s\u3000]/g,"");
+    const conflictNames=otherNames.filter(n=>!nameKey.includes(String(n).replace(/[\s\u3000]/g,"")));
+    const homeShopIds=[];ordered.forEach(r=>{if(homeShopIds.indexOf(r.homeShopId)<0)homeShopIds.push(r.homeShopId);});
+    const homeShopNames=homeShopIds.map(id=>byId[id]?byId[id].name:null);
+    const eff=base.shop.eff;
+    const attrOwner=ordered.find(r=>(r.shop.eff.staffAttributes||{})[r.name])||null;
+    const attrId=attrOwner?(attrOwner.shop.eff.staffAttributes||{})[attrOwner.name]:null;
+    const stl=((attrOwner?attrOwner.shop.eff:eff).staffTypeLimits||{})[attrId];
+    const attrLabel=!attrId?"":(BUILTIN_TYPES.includes(attrId)?STAFF_TYPE_LABELS[attrId]:((stl&&typeof stl==="object"&&stl.name)||attrId));
+    const number=(ordered.find(r=>r.number)||base).number;
+    const home=byId[base.homeShopId]||base.shop;
+    const heff=home.eff;
+    const fyStart=fiscalYearStartMonthOf(heff);
+    const fy=fiscalYearOf(today,fyStart);
+    const yr=fy==null?null:yearLaborSummary(home.periods,base.name,fy,fyStart,null);
+    const g=Number(((heff.paidLeaveGranted||{})[base.name]));
+    const labelOf={};home.periods.forEach(p=>{labelOf[p.id]=p.label||p.startDate||p.id;});
+    rows.push({key:base.shop.id+"|"+base.name,shopId:base.shop.id,shopName:base.shop.name,name,otherNames,conflictNames,
+      number,attrId,attrLabel,homeShopId:base.homeShopId,homeShopName:homeShopNames.find(n=>n)||null,homeShopIds,homeShopNames,
+      paidGranted:Number.isFinite(g)?g:null,paidUsed:yr?yr.paid:0,
+      paidRemain:yr?paidLeaveRemaining(heff,base.name,yr.paid):null,
+      paidMissing:yr?yr.missingPeriodIds.map(id=>labelOf[id]||id):[],
+      hidden:isStaffHiddenNow(eff,base.name)});
   });
   return rows;
 }
-// 従業員番号と名前の部分一致（大小文字・全角半角の正規化はしない）。空なら全件
+// 従業員番号と名前の部分一致（まとめる前の別表記 otherNames も見る。大小文字・全角半角の正規化はしない）。空なら全件
 function filterCompanyStaffRows(rows,query){
   const q=String(query==null?"":query).trim();
   if(!q)return rows||[];
-  return(rows||[]).filter(r=>String(r.number||"").includes(q)||String(r.name||"").includes(q));
+  return(rows||[]).filter(r=>String(r.number||"").includes(q)||String(r.name||"").includes(q)||(r.otherNames||[]).some(n=>String(n).includes(q)));
 }
 
 // ===== シフト作成タブの全表示: 人数が多いときだけ列を横幅に合わせる（2026-09-28）=====

@@ -5,6 +5,8 @@
 //  - 「一覧を開く」で全画面の一覧に差し替わり、タブバーが消える。「← 戻る」で企業連携タブに戻る
 //  - 既定は従業員番号順（数字のみ→数字＋文字→文字の50音→番号なし）。「店舗別」で所属店舗ごとに区切る
 //  - ヘルプ先での登録（所属店舗側にも同名がいる）は1行にまとめる。所属店舗側に居なければヘルプ先の行で残る
+//  - 数字だけの同じ従業員番号は1行にまとめ、名前はフルネームに寄せ、所属店舗を全部並べる（2026-09-29）
+//  - 設定タブの管理コードの見出しは「店舗管理コード」（2026-09-29）
 //  - 有給は「付与／残」。凍結値の無い期間がある人は残日数の前に「＋」
 //  - 番号・名前で検索できる。提出データ（shops/{sid}/subs）は読みに行かない
 //  - Pro ではカードが出ない。375px 幅でページ全体が横に動かない
@@ -24,11 +26,11 @@ const shop = (sid, staff, settings, periods) => ({ owners: { [UID]: "K" + sid },
 const seed = plan => ({
   global: { shops: { S1: { id: "S1", name: "A店" }, S2: { id: "S2", name: "B店" }, S3: { id: "S3", name: "C店" } } },
   shops: {
-    S1: shop("S1", ["田中", "佐藤", "__spacer__1", "鈴木"],
-      { staffNumbers: { "田中": "12", "佐藤": "3", "鈴木": "2A" }, staffAttributes: { "田中": "employee" }, paidLeaveGranted: { "田中": 20 } },
+    S1: shop("S1", ["田中", "佐藤", "__spacer__1", "鈴木", "森"],
+      { staffNumbers: { "田中": "12", "佐藤": "3", "鈴木": "2A", "森": "40" }, staffAttributes: { "田中": "employee" }, paidLeaveGranted: { "田中": 20 } },
       { a: per("a", "S1", "2026-05-01", { "田中": { paid: 1 } }), b: per("b", "S1", "2026-06-01", { "田中": { paid: 0.5 } }), c: per("c", "S1", "2026-07-01", null) }),
-    S2: shop("S2", ["田中", "山田", "高橋"],
-      { staffNumbers: { "田中": "12", "山田": "10", "高橋": "い" }, staffHomeShop: { "田中": "S1" }, paidLeaveGranted: { "山田": 10 } },
+    S2: shop("S2", ["田中", "山田", "高橋", "森 花子"],
+      { staffNumbers: { "田中": "12", "山田": "10", "高橋": "い", "森 花子": "40" }, staffHomeShop: { "田中": "S1" }, paidLeaveGranted: { "山田": 10 } },
       { d: per("d", "S2", "2026-05-01", { "山田": { paid: 2 }, "田中": { paid: 5 } }) }),
     S3: shop("S3", ["伊藤", "渡辺", "中村", "小林"],
       { staffNumbers: { "伊藤": "ア", "中村": "10B", "小林": "5" }, staffHomeShop: { "小林": "S1" } }, {}),
@@ -65,11 +67,13 @@ async function open(plan, viewport) {
     R.shopRows = await h.evaluate(tableRows);
     await h.clickExact("従業員番号順");
     const search = async q => { await h.setInput('input[placeholder="従業員番号・名前で検索"]', q); await h.page.waitForTimeout(150); return h.evaluate(() => [...document.querySelectorAll("table tbody tr")].map(tr => tr.querySelectorAll("td")[1]?.innerText.trim())); };
-    R.q12 = await search("12"); R.qYama = await search("山"); await search("");
+    R.q12 = await search("12"); R.qYama = await search("山"); R.qMori = await search("森"); await search("");
     R.searchFont = await h.evaluate(() => parseFloat(getComputedStyle(document.querySelector('input[placeholder="従業員番号・名前で検索"]')).fontSize));
     R.reads = await h.evaluate(() => (window.__reads || []).filter(p => /\/subs/.test(p)));
     await h.clickExact("← 戻る"); await h.page.waitForTimeout(300);
     R.back = await h.evaluate(() => document.body.innerText.includes("企業アカウント") && [...document.querySelectorAll("button")].some(b => b.innerText.trim() === "企業連携"));
+    await h.clickExact("設定"); await h.page.waitForTimeout(400);
+    R.settingsTitle = await h.evaluate(() => ({ now: document.body.innerText.includes("店舗管理コード"), old: document.body.innerText.includes("この端末の管理コード") }));
   } catch (e) { R.exception = e.message; }
   R.errors = h.errors.slice(); await h.close();
 
@@ -95,19 +99,21 @@ async function open(plan, viewport) {
   const v = {
     cardOrder: JSON.stringify(R.order) === JSON.stringify(TITLES),
     opensFullPage: R.tabBarGone === true,
-    numberOrder: !!R.numberRows && JSON.stringify(names(R.numberRows)) === JSON.stringify(["佐藤", "小林", "山田", "田中", "鈴木", "中村", "伊藤", "高橋", "渡辺"]),
+    numberOrder: !!R.numberRows && JSON.stringify(names(R.numberRows)) === JSON.stringify(["佐藤", "小林", "山田", "田中", "森 花子", "鈴木", "中村", "伊藤", "高橋", "渡辺"]),
     helpDeduped: !!R.numberRows && names(R.numberRows).filter(n => n === "田中").length === 1,
     helpOnlyRowKept: !!R.numberRows && (R.numberRows.find(r => r[1] === "小林") || [])[3] === "A店",
     paidWithPlus: !!R.numberRows && (R.numberRows.find(r => r[1] === "田中") || [])[4] === "付与 20／残 ＋18.5",
     paidNoPlus: !!R.numberRows && (R.numberRows.find(r => r[1] === "山田") || [])[4] === "付与 10／残 8",
     paidUnset: !!R.numberRows && (R.numberRows.find(r => r[1] === "佐藤") || [])[4] === "—",
-    count: R.count === "9名",
+    count: R.count === "10名",
+    numberMerged: !!R.numberRows && JSON.stringify(R.numberRows.find(r => r[0] === "40")) === JSON.stringify(["40", "森 花子", "未設定", "A店・B店", "—"]),
     shopGroups: !!R.shopRows && JSON.stringify(R.shopRows.filter(r => r.length === 1).map(r => r[0])) === JSON.stringify(["A店", "B店", "C店"])
-      && JSON.stringify(names(R.shopRows)) === JSON.stringify(["佐藤", "小林", "田中", "鈴木", "山田", "高橋", "中村", "伊藤", "渡辺"]),
-    search: JSON.stringify(R.q12) === JSON.stringify(["田中"]) && JSON.stringify(R.qYama) === JSON.stringify(["山田"]),
+      && JSON.stringify(names(R.shopRows)) === JSON.stringify(["佐藤", "小林", "田中", "森 花子", "鈴木", "山田", "高橋", "中村", "伊藤", "渡辺"]),
+    search: JSON.stringify(R.q12) === JSON.stringify(["田中"]) && JSON.stringify(R.qYama) === JSON.stringify(["山田"]) && JSON.stringify(R.qMori) === JSON.stringify(["森 花子"]),
     font16: R.searchFont >= 16,
     noSubsRead: Array.isArray(R.reads) && R.reads.length === 0,
     backToCompanyTab: R.back === true,
+    settingsTitle: !!R.settingsTitle && R.settingsTitle.now === true && R.settingsTitle.old === false,
     hiddenOnPro: R.proCard === false,
     mobileNoPageScroll: !!R.mobile && R.mobile.page <= R.mobile.vw,   // SHIFTY_DEVICE で端末幅が変わっても成り立つよう実幅と比べる
     noErrors: R.errors.length === 0 && !R.exception && !R.exceptionPro && !R.exceptionMobile,

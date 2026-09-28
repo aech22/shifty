@@ -5136,13 +5136,15 @@ function CompanyStaffDirectory({companyId,onBack}){
             {shown.map(r=>{
               const shopName=r.homeShopName||r.shopName;
               const head=mode==="shop"&&shopName!==lastShop;lastShop=shopName;
-              return(<React.Fragment key={r.shopId+"|"+r.name}>
+              const homes=(r.homeShopNames||[r.homeShopName]).map(n=>n||"連携していない店舗");
+              return(<React.Fragment key={r.key||r.shopId+"|"+r.name}>
                 {head&&<tr><td colSpan={5} style={{...TD,fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input2)"}}>{shopName}</td></tr>}
                 <tr>
                   <td style={TD}>{r.number||<span style={{color:"var(--c-text4)"}}>—</span>}</td>
-                  <td style={TD}>{r.name}{r.hidden&&<span style={{marginLeft:6,fontSize:11,color:"var(--c-text3)"}}>非表示中</span>}</td>
+                  <td style={TD}>{r.name}{r.hidden&&<span style={{marginLeft:6,fontSize:11,color:"var(--c-text3)"}}>非表示中</span>}
+                    {r.conflictNames&&r.conflictNames.length>0&&<div title="同じ従業員番号で名前の違う登録があります" style={{fontSize:11,color:"#B45309",marginTop:2}}>別の登録名: {r.conflictNames.join("・")}</div>}</td>
                   <td style={TD}>{r.attrLabel||<span style={{color:"var(--c-text4)"}}>未設定</span>}</td>
-                  <td style={TD}>{shopName||<span style={{color:"var(--c-text4)"}}>連携していない店舗</span>}</td>
+                  <td style={{...TD,whiteSpace:"normal"}}>{homes.map((n,i)=><span key={i} style={{whiteSpace:"nowrap",color:n==="連携していない店舗"?"var(--c-text4)":undefined}}>{i>0?"・":""}{n}</span>)}</td>
                   <td style={TD}>{paidCell(r)}</td>
                 </tr>
               </React.Fragment>);
@@ -5847,7 +5849,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
 
   return(<div>
     <AT>システム設定</AT>
-    {shopId&&<AC title="この端末の管理コード">
+    {shopId&&<AC title="店舗管理コード">
       {ownerReadOnly?(
         <div style={{fontSize:12,color:"#B45309",lineHeight:1.6}}>この端末は管理者登録されていないため、正しい管理コードを表示できません。既に管理者登録済みの端末（設定変更ができる端末）でこのコードを確認してください。</div>
       ):(<>

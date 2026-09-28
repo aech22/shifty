@@ -4348,6 +4348,34 @@ test("buildCompanyStaffRows: ヘルプ先の登録は所属店舗側に同名が
   assert.strictEqual(rows.find(r => r.name === "佐藤").hidden, true);
 });
 
+test("buildCompanyStaffRows: 数字だけの同じ従業員番号は1行にまとめ、名前はフルネームに寄せ、所属店舗を全部並べる（2026-09-29）", () => {
+  const shops = [
+    { id: "A1", name: "A店", staff: ["田中", "鈴木", "高橋"],
+      settings: { staffNumbers: { "田中": "12", "鈴木": "A7", "高橋": "30" }, staffAttributes: { "田中": "employee" }, paidLeaveGranted: { "田中": 10 } },
+      periods: { a: { id: "pa", label: "5月", startDate: "2026-05-01", endDate: "2026-05-15", laborTotals: { "田中": { paid: 2 } } } } },
+    { id: "B1", name: "B店", staff: ["田中 太郎", "鈴木一郎", "佐藤"],
+      settings: { staffNumbers: { "田中 太郎": "12", "鈴木一郎": "A7", "佐藤": "30" } },
+      periods: {} },
+    { id: "C1", name: "C店", staff: ["田中太郎"], settings: { staffNumbers: { "田中太郎": " 12 " } }, periods: {} },
+  ];
+  const rows = u.buildCompanyStaffRows(shops, null, "2026-09-28");
+  const t = rows.filter(r => r.number === "12");
+  assert.strictEqual(t.length, 1, "3店舗の番号12は1行");
+  assert.strictEqual(t[0].name, "田中 太郎", "空白を除いて最も長い表記。同じ長さなら先に見つかった方");
+  assert.deepStrictEqual(t[0].otherNames, ["田中", "田中太郎"]);
+  assert.deepStrictEqual(t[0].conflictNames, [], "名字だけ・空白違いは食い違いにしない");
+  assert.deepStrictEqual(t[0].homeShopNames, ["A店", "B店", "C店"], "所属店舗を全部並べる");
+  assert.strictEqual(t[0].homeShopName, "A店");
+  assert.strictEqual(t[0].attrLabel, "社員", "属性は代表（有給の付与がある A店の登録）から");
+  assert.strictEqual(t[0].paidRemain, 8, "有給は代表の所属店舗の凍結値だけ");
+  assert.strictEqual(rows.filter(r => r.name.startsWith("鈴木")).length, 2, "数字以外の番号（A7）はまとめない");
+  const x = rows.filter(r => r.number === "30");
+  assert.strictEqual(x.length, 1);
+  assert.deepStrictEqual(x[0].conflictNames.length, 1, "同じ番号で名前が食い違う登録は印を付けて残す");
+  assert.strictEqual(new Set(rows.map(r => r.key)).size, rows.length, "行のキーは重複しない");
+  assert.deepStrictEqual(u.filterCompanyStaffRows(rows, "田中太郎").map(r => r.number), ["12"], "まとめる前の表記でも検索に当たる");
+});
+
 // ===== ⑧ 全表示: 人数が多いときだけ列を横幅に合わせる（2026-09-28）=====
 test("fullViewColW: 少人数は39px・横幅いっぱいに割った列幅が48px以下になる人数から横幅に合わせる（2週間以下のみ）", () => {
   const f = (n, days) => u.fullViewColW({ availW: 1350, staffCount: n, days, maxDays: 16, dateW: 45 });
