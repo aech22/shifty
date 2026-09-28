@@ -51,6 +51,9 @@ CF 本体の動作は本番の実データでは未検証（dev＝Spark には C
 - [ ] 反映後、企業の作成者のセッションで「企業の共通設定を保存」を1回押し、各連携店舗の `shops/{sid}/company` が書かれることを
       `shifty-prod-data-probe`（読み取り専用）で確認する
 - [ ] 本番の店舗で「提出」「提出状況表」「一括PDF（シフトのみ・全データ）」を1回ずつ通す
+- [ ] **`changeCompanyPassword` の作成者限定（`e696d1f`・2026-09-28）を CF へ反映する**。コミット時点で CF は未デプロイ
+      （計画どおり別ステップ）。反映するまで、UI はボタンを隠すが企業コードのセッションから CF を直接呼べば変更が通る。
+      バグチェック#152（2026-09-28）で申し送り・条件A（本番デプロイ）に該当
 
 **取り消し方**: develop の `feature/company-ext` の `--no-ff` マージコミットを `git revert -m 1` する。データは追加だけで既存を消していない。
 **影響範囲**: app-utils.js・app-main.js・app-admin.js・functions/index.js・functions/company-config.js・database.rules.json
