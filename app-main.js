@@ -534,10 +534,14 @@ function App(){
   useEffect(()=>{ apidRef.current=apid; reconcileSubsRef.current&&reconcileSubsRef.current(); },[apid]);
 
   // 過去参照ボタン: 3ヶ月より古い期間の提出データもオンデマンドで購読対象に加える（全期間購読へ切替）。
+  // 戻り値は「購読中の全期間の提出が最初の1回届いた」ときに解決する Promise。
+  // PDF の書き出しはこれを待ってから数える（待たないと、届く前の空の提出で年計を数えてしまう）。
+  // once は同じクエリの on より後に登録されるので、解決した時点で setPeriodSubs は済んでいる。
   const loadPastSubs=useCallback(()=>{
     pastSubsLoadedRef.current=true;
     setPastSubsLoaded(true);
     reconcileSubsRef.current&&reconcileSubsRef.current();
+    return Promise.all(Object.values(subsListenersRef.current).map(q=>q.once("value").catch(()=>null)));
   },[]);
 
   // ===================================================================

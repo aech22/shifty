@@ -1109,13 +1109,17 @@ function laborTotalsEqual(a,b){
 }
 // 年度の合計。period.laborTotals（凍結時点の値）を優先し、無い期間は live(p) で数える。
 // live が null を返した期間は missingPeriodIds に積む＝「読めていない期間がある」と画面に出せる。
-function yearLaborSummary(periods,name,fy,startMonth,live){
+// preferLive=true のときは逆に**提出を読めている期間は live を優先**し、凍結値は読めない期間の
+// 代わりにだけ使う（2026-09-29 ユーザー指示「年間の勤務時間は実データで」）。凍結値は期間の
+// 最終日で止まるので、終了後に直した提出が年計に届かない。
+function yearLaborSummary(periods,name,fy,startMonth,live,preferLive=false){
   let workMin=0,paid=0,publicOff=0,ceremony=0;const missing=[];
   (periods||[]).forEach(p=>{
     if(!p||!p.startDate)return;
     if(fiscalYearOf(p.startDate,startMonth)!==fy)return;
     const stored=p.laborTotals&&typeof p.laborTotals==="object"?p.laborTotals[name]:null;
-    const l=(stored&&typeof stored==="object")?stored:(live?live(p):null);
+    const st=(stored&&typeof stored==="object")?stored:null;
+    const l=preferLive?((live&&live(p))||st):(st||(live?live(p):null));
     if(!l){missing.push(p.id);return;}
     workMin+=Number(l.workMin)||0;paid+=Number(l.paid)||0;
     publicOff+=Number(l.publicOff)||0;ceremony+=Number(l.ceremony)||0;
