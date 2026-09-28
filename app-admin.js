@@ -4004,9 +4004,11 @@ const dragIdxRef=useRef(null);
           {!isPro&&<span style={{marginLeft:8,color:"#F59E0B",fontSize:11}}>並べ替え・名前色変更はProプラン（500円/月）で利用できます</span>}
         </div>}
         {staffList.length===0&&<div style={{fontSize:13,color:"var(--c-text4)",marginBottom:12}}>スタッフが登録されていません</div>}
-        {/* 行がカード幅を超える場合はカード内で横スクロール（行背景は末尾の削除ボタンまで届く） */}
+        {/* 行はカード幅に収め、入りきらないボタンは次の行へ折り返す（2026-09-29）。
+            以前は max-content の箱で横スクロールさせていたため、スマホでは編集・削除が画面外にあった
+            （iPhone 17 の Safari で実測）。横スクロールの箱は保険として残す。 */}
         <div style={{overflowX:"auto"}}>
-        <div style={{minWidth:"max-content"}}>
+        <div>
         {/* 行の並びは displayRows（staffList ＋ 削除済みで表に残している人を元の位置に差し込んだもの）。
             実スタッフの行に渡す i は staffList の index のままなので、ドラッグ・編集・削除の意味は一切変えていない。 */}
         {displayRows.map(row=>row.kind==="retained"?(
@@ -4031,13 +4033,19 @@ const dragIdxRef=useRef(null);
               <span style={{flex:1,fontSize:12,textAlign:"center",color:"var(--c-text4)",letterSpacing:2}}>─ 空白列 ─</span>
               <button onClick={()=>del(i)} style={AD}>削除</button>
             </div>
-            :<div data-staff-idx={i} style={{display:"flex",alignItems:"center",gap:8,padding:"10px 12px",background:"var(--c-card)",border:dragOverIdx===i&&dragIdx!==null?"2px solid var(--c-accent)":"1px solid var(--c-border)",borderRadius:8,opacity:dragIdx===i?.4:(hidden?.6:1),transition:"opacity .15s"}}>
+            :<div data-staff-idx={i} style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:8,padding:"10px 12px",background:"var(--c-card)",border:dragOverIdx===i&&dragIdx!==null?"2px solid var(--c-accent)":"1px solid var(--c-border)",borderRadius:8,opacity:dragIdx===i?.4:(hidden?.6:1),transition:"opacity .15s"}}>
+            {/* 名前側とボタン側の2つに分ける。1行に収まらないときはボタン側が丸ごと次の行へ回り、
+                ボタン側の中でも入りきらない分だけ折り返す。名前側の 140px は折り返しを決める幅で、
+                1行に収まるときは残り幅いっぱいに広がる（名前の flex:1 を直接並べると幅0まで潰れて折り返さない）。 */}
+            <div style={{display:"flex",alignItems:"center",gap:8,flex:"1 1 140px",minWidth:0}}>
             {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} onContextMenu={e=>e.preventDefault()} style={{cursor:"grab",color:dragIdx===i?"var(--c-accent)":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",WebkitUserSelect:"none",lineHeight:1,flexShrink:0,touchAction:"none"}}>⠿</span>}
             <span style={{fontSize:13,color:"var(--c-text4)",minWidth:24,textAlign:"center"}}>{staffList.slice(0,i).filter(x=>!isSpacer(x)).length+1}</span>
             {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid var(--c-border2)",cursor:"pointer",flexShrink:0,padding:0}}/>}
             <span style={{flex:1,minWidth:0,fontSize:14,color:hidden?"var(--c-text3)":"var(--c-text)",fontWeight:600}}>{n}</span>
             {/* 非表示の印は「(非表示)」だけにする（2026-09-08 ユーザー決定）。説明と対象期間は title へ。 */}
             {hidden&&<span title={`${hiddenFrom?`${periodLabelOfStart(hiddenFrom)}以降 ／ `:""}シフト作成タブ・Excel・PDF に出ません（提出は今までどおりできます）`} style={{fontSize:11,color:"var(--c-text4)",flexShrink:0,whiteSpace:"nowrap"}}>(非表示)</span>}
+            </div>
+            <div style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:8,minWidth:0}}>
             {/* 行に出すボタンは 有給日数・ポジション・非表示・編集・削除 の5つだけ（2026-09-26 ユーザー指示）。
                 従業員番号・属性・別名・退勤延長・名前は「編集」で開くモーダルにまとめてある。 */}
             {/* 幅は固定にする（ポジションボタンと同じ扱い）。日数の有無でボタンが伸び縮みすると、
@@ -4052,6 +4060,7 @@ const dragIdxRef=useRef(null);
             <button onClick={()=>openHiddenDialog(n)} title="シフト作成タブ・Excel・PDF から名前を外す（登録と提出URLはそのまま）" style={{padding:"6px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text3)",fontSize:12,cursor:"pointer",flexShrink:0,whiteSpace:"nowrap"}}>{hidden?"表示":"非表示"}</button>
             <button onClick={()=>startEdit(n)} style={{padding:"6px 10px",background:"rgba(59,130,246,.08)",border:"1px solid rgba(59,130,246,.25)",borderRadius:4,color:"#3B82F6",fontSize:12,cursor:"pointer",flexShrink:0}}>編集</button>
             <button onClick={()=>del(i)} style={{...AD,flexShrink:0}}>削除</button>
+            </div>
           </div>}
           {/* 有給日数パネル（Premium・展開時） */}
           {isPremium&&paidKey===n&&(
