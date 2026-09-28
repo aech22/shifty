@@ -3675,6 +3675,22 @@ test("年度の合計: 期間に残した laborTotals を優先し、無い期�
   assert.deepStrictEqual(r2.missingPeriodIds, ["p2", "p3"]);
 });
 
+test("yearLaborSummary: preferLive なら読めている期間は凍結値より実データを使う（2026-09-29）", () => {
+  const periods = [
+    { id: "p1", startDate: "2026-04-01", laborTotals: { 田中: { workMin: 9600, paid: 2 } } },
+    { id: "p2", startDate: "2026-05-01", laborTotals: { 田中: { workMin: 100 } } },
+    { id: "p3", startDate: "2026-06-01" },
+  ];
+  // p1 は読めない（凍結値を使う）・p2 は終了後に直した実データ・p3 は読めない上に凍結値も無い
+  const live = p => (p.id === "p2" ? { workMin: 600, paid: 1 } : null);
+  const r = u.yearLaborSummary(periods, "田中", 2026, 4, live, true);
+  assert.strictEqual(r.workMin, 10200, "p2 は凍結値100ではなく実データ600");
+  assert.strictEqual(r.paid, 3);
+  assert.deepStrictEqual(r.missingPeriodIds, ["p3"]);
+  // 既定（preferLive なし）は従来どおり凍結値が勝つ
+  assert.strictEqual(u.yearLaborSummary(periods, "田中", 2026, 4, live).workMin, 9700);
+});
+
 test("有給の残数: 付与日数から年度の消化分を引く。未入力なら null", () => {
   const st = { paidLeaveGranted: { 田中: 10, 佐藤: 0 } };
   assert.strictEqual(u.paidLeaveRemaining(st, "田中", 3), 7);
