@@ -7,6 +7,8 @@
 //  (b) 退勤セルだけ「22x」→ 19時台だけ減り 12時台は残る。自店舗の勤務は17時までなので重複エラーは出ない
 //  (c) 両方に x → 12時台・19時台とも減る
 //  (d) 9:00-15:00（17時をまたがない）の退勤セルだけ「15x」→ 反対側の帯にも効いて終日カウント外（h/k と同じ規則）
+//  (e) 「締」が有効な店舗（東通り）で 18:00-22:00 の退勤セル「22x締」→ 締の追加出勤（23〜25時）も x で外れる（バグチェック#152）
+//  (f) 同じ店舗で退勤セル「22締」だけ → 23時台・24時台に数える（非回帰）
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-help-x-band.js → allPass=true / EXIT=0
 // 反証: SHIFTY_ROOT=<修正前の配信物> node ... → EXIT=1（x が日単位なので (a)(b) が落ちる）
@@ -30,7 +32,7 @@ const SEED = {
   },
 };
 
-async function run(start, end, cells) {
+async function run(start, end, cells, shopName = "B店") {
   const h = await openHarness({
     root: ROOT, extraHead: THEME + makeStub({ seed: SEED, uid: "u_test" }), waitFor: "select",
     jsx: `
@@ -47,7 +49,7 @@ function Harness(){
   const [subs,setSubs]=React.useState(SUBS);
   return <ShiftEditTab subs={subs} periods={[P]} staffList={["田中","山田"]}
     onSave={v=>setSubs(p=>typeof v==="function"?v(p):v)} tt={()=>{}}
-    settings={SETTINGS} plan="premium" shopId="S1" shopName="B店" onUpgrade={()=>{}}
+    settings={SETTINGS} plan="premium" shopId="S1" shopName="${shopName}" onUpgrade={()=>{}}
     allLinkedShops={[{id:"S1",name:"B店"},{id:"A1",name:"A店"}]}
     savePeriods={null} ownerReadOnly={true} pastSubsLoaded={true}/>;
 }
@@ -71,7 +73,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
   });
   m.errors = h.errors.slice();
   await h.close();
-  return { h12: m.heat["12"], h19: m.heat["19"], dup: m.dup, errors: m.errors };
+  return { h12: m.heat["12"], h19: m.heat["19"], h23: m.heat["23"], h24: m.heat["24"], dup: m.dup, errors: m.errors };
 }
 
 (async () => {
@@ -80,6 +82,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
   const b = await run("09:00", "22:00", [["end", "22x"]]);
   const c = await run("09:00", "22:00", [["start", "9x"], ["end", "22x"]]);
   const d = await run("09:00", "15:00", [["end", "15x"]]);
+  const e = await run("18:00", "22:00", [["end", "22x締"]], "東通り店");
+  const f = await run("18:00", "22:00", [["end", "22締"]], "東通り店");
   const v = {
     base_bothCounted: base.h12 === 2 && base.h19 === 2,
     a_lunchOnly: a.h12 === 1 && a.h19 === 2,
@@ -88,9 +92,11 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
     b_noDup: b.dup === null,
     c_both: c.h12 === 1 && c.h19 === 1,
     d_fallbackWholeDay: d.h12 === 1,
-    noErrors: [base, a, b, c, d].every(x => x.errors.length === 0),
+    e_shimeExcludedByX: e.h23 === 0 && e.h24 === 0,
+    f_shimeCounted: f.h23 === 1 && f.h24 === 1,
+    noErrors: [base, a, b, c, d, e, f].every(x => x.errors.length === 0),
   };
   v.allPass = Object.values(v).every(Boolean);
-  console.log(JSON.stringify({ base, a, b, c, d, verdict: v }, null, 2));
+  console.log(JSON.stringify({ base, a, b, c, d, e, f, verdict: v }, null, 2));
   process.exit(v.allPass ? 0 : 1);
 })().catch(e => { console.error(e); process.exit(2); });

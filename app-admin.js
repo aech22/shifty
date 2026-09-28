@@ -1070,7 +1070,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           if(fixedCmd){
             // 「締」の追加出勤(23:00〜25:00)はディナー帯のみのため退勤セルのnote優先（片帯シフトと同じ規則）
             const exStM=timeToMin(fixedCmd.start),exEnM=timeToMin(fixedCmd.end);
-            if(exStM!==null&&exEnM!==null&&exStM<exEnM){
+            // x（カウント外）は追加出勤にも同じ帯規則で当てる（片帯なので反対側セルの x も有効＝x があれば外れる）。
+            // af91045 で x を日単位の除外から帯判定へ移したとき、このブロックだけ判定から漏れて「22x締」の
+            // 23〜25時が数えられるようになった（修正前は外れていた）。他店舗略称＋締は従来から数えており変えていない
+            const exX=excludedBandsOf({stM:exStM,enM:exEnM,startNote:getFieldNote(name,date,"start"),endNote:getFieldNote(name,date,"end"),abbrToShop:{}});
+            if(exStM!==null&&exEnM!==null&&exStM<exEnM&&!exX.lunch&&!exX.dinner){
               heatSectionEntries({
                 stM:exStM,enM:exEnM,
                 startNote:getFieldNote(name,date,"start"),
