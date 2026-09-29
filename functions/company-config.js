@@ -269,7 +269,366 @@ function otherCompanyLinksOf(owners, mirror, companyId) {
   return [...out];
 }
 
-module.exports = { MIN_WAGE_MAX_ENTRIES, sanitizeWageSettings, PAY_CODE_DEFAULT, isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,
+// ============================================================
+// 人物ID（personId）と企業スタッフ一覧の編集（2026-09-30・労務給与_複数法人_実装計画.md §3.8・P1b）
+// 正本は companies/{id}/pub/people/{personId} = {displayName, entityId?, number?, links:{shopId: 登録名}, createdAt, updatedAt, mergedFrom?}
+// 書くのは CF だけ（companies/* は .write:false）。店舗側の名前キーは変えない（企業レベルの上乗せ）。
+// 規則のうちクライアントにもあるもの（同一人物の推定・改名の後始末）は app-utils.js と**同じ内容**にし、
+// tests/core.test.js が一致を照合する（functions/ は app-utils.js を読めないため書き写している）。
+// ============================================================
+// personId は「数字だけの従業員番号（1〜20桁）」か「p_ + 英数字8桁」。どちらも Firebase のキー禁止文字を含まない。
+const PERSON_ID_RE = /^(\d{1,20}|p_[A-Za-z0-9]{8})$/;
+function isValidPersonId(id) { return typeof id === "string" && PERSON_ID_RE.test(id); }
+// 自動採番の文字集合。**genSecureId（記号を含む）を使わない**——記号はキー禁止文字ではなくても
+// PERSON_ID_RE を通らず、検証で捨てられる（genCompanyAttrId と同じ理由）。
+const PERSON_AUTO_ID_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+// randBytes(n): 0〜255 の整数 n 個を返す関数（CF は crypto.randomBytes、テストは決まった列）
+function genPersonAutoId(randBytes) {
+  const b = randBytes(8);
+  let t = "";
+  for (let i = 0; i < 8; i++) t += PERSON_AUTO_ID_CHARS[b[i] % PERSON_AUTO_ID_CHARS.length];
+  return "p_" + t;
+}
+// 数字だけの番号ならその番号、それ以外（数字以外を含む・未設定・既に使われている）は自動採番（決定 #13）。
+// 既に使われている＝企業内の別法人に同じ番号の人がいる（番号は法人内で一意なので、同じ法人では推定がまとめている）。
+function personIdFor(number, takenIds, genAuto) {
+  const taken = takenIds instanceof Set ? takenIds : new Set(takenIds || []);
+  const n = String(number == null ? "" : number).trim();
+  if (/^\d{1,20}$/.test(n) && !taken.has(n)) return n;
+  for (let i = 0; i < 100; i++) {
+    const id = genAuto();
+    if (isValidPersonId(id) && !taken.has(id)) return id;
+  }
+  throw new Error("personId を採番できませんでした");
+}
+// 従業員番号の検証（空＝番号なし）。キーにはならないが、表示と Excel に出るので長さと制御文字だけ弾く
+const STAFF_NUMBER_MAX = 20;
+function sanitizeStaffNumber(raw) {
+  const s = String(raw == null ? "" : raw).trim();
+  if (s.length > STAFF_NUMBER_MAX || /[\x00-\x1f\x7f]/.test(s)) return null;
+  return s;
+}
+function _staffNameLenCF(n) { return String(n || "").replace(/[\s　]/g, "").length; }
+// 企業内の同一人物の推定（app-utils.js の groupStaffRegs と同じ規則）。regs: [{shopId, name, entityId, number, homeShopId}]
+// ① 同じ法人で、数字だけの同じ従業員番号 ② ヘルプ先の登録（所属店舗側に同名がいる）を同じ人とみなす。
+// 戻り値: 同じ人の regs の添字の配列の配列（先頭の添字の昇順）
+function groupStaffRegsCF(regs) {
+  const list = regs || [];
+  const parent = list.map((_, i) => i);
+  const find = i => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
+  const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[Math.max(ra, rb)] = Math.min(ra, rb); };
+  const byNumber = new Map(), byShopName = new Map();
+  list.forEach((r, i) => {
+    byShopName.set(r.shopId + "\u0000" + r.name, i);
+    const num = String(r.number == null ? "" : r.number).trim();
+    if (!/^\d+$/.test(num)) return;
+    const nk = (r.entityId || "") + "\u0000" + num;
+    if (byNumber.has(nk)) union(byNumber.get(nk), i); else byNumber.set(nk, i);
+  });
+  list.forEach((r, i) => {
+    const home = r.homeShopId || r.shopId;
+    if (home === r.shopId) return;
+    const j = byShopName.get(home + "\u0000" + r.name);
+    if (j != null) union(i, j);
+  });
+  const groups = new Map();
+  list.forEach((_, i) => { const k = find(i); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(i); });
+  return [...groups.values()];
+}
+function _personObj(p) { return p && typeof p === "object" ? p : null; }
+function _linksOf(p) { const l = (_personObj(p) || {}).links; return l && typeof l === "object" ? l : {}; }
+// 表示名は、つながっている登録名のうち空白を除いて最も長い表記（buildCompanyStaffRows と同じ＝フルネームに寄せる）
+function personDisplayName(names) {
+  let best = "";
+  (names || []).forEach(n => { if (typeof n === "string" && _staffNameLenCF(n) > _staffNameLenCF(best)) best = n; });
+  return best;
+}
+// 人物の代表の登録（所属店舗に登録されている方を優先）から、法人と番号を決める
+function _personSeed(regsOfGroup) {
+  const atHome = regsOfGroup.filter(r => (r.homeShopId || r.shopId) === r.shopId);
+  const ordered = [...(atHome.length ? atHome : regsOfGroup), ...regsOfGroup];
+  const base = ordered[0];
+  const numReg = ordered.find(r => String(r.number || "").trim());
+  return { entityId: base.entityId || "", number: numReg ? String(numReg.number).trim() : "" };
+}
+// 人物の同期（CF ensureCompanyPeople）。保存済みの people が正で、まだどの人物にもつながっていない登録名
+// （未リンク）だけを推定で拾う:
+//   - 推定で同じ人とされた登録のうち、既につながっている人物が1人だけならそこへ足す
+//     （その人物がその店舗に別の生きた登録名を持っていれば足さず、新しい人物にする＝1店舗1名前）
+//   - つながっている人物がいなければ、同じ法人・同じ番号でその店舗の登録名が消えている（店舗側で改名された）人物へ戻す
+//   - それ以外は新しい人物を作る（ID は personIdFor）
+// つながっている人物が2人以上（統合解除で分けた等）のときは勝手にまとめず、新しい人物にする。
+// 戻り値: people ノードへの update 用のパッチ（無ければ null）と、作った人物の ID
+function planPeopleSync(people, regs, genAuto, nowIso) {
+  const P = {};
+  Object.keys(_personObj(people) || {}).forEach(id => { if (isValidPersonId(id) && _personObj(people[id])) P[id] = people[id]; });
+  const list = regs || [];
+  const key = (sid, n) => sid + "\u0000" + n;
+  const live = new Set(list.map(r => key(r.shopId, r.name)));
+  const ownerOf = new Map();
+  Object.keys(P).forEach(id => {
+    const l = _linksOf(P[id]);
+    Object.keys(l).forEach(sid => { if (live.has(key(sid, l[sid])) && !ownerOf.has(key(sid, l[sid]))) ownerOf.set(key(sid, l[sid]), id); });
+  });
+  const unlinked = new Set(list.map((r, i) => ownerOf.has(key(r.shopId, r.name)) ? -1 : i).filter(i => i >= 0));
+  if (!unlinked.size) return { patch: null, created: [] };
+  const patch = {};
+  const taken = new Set(Object.keys(P));
+  const created = [];
+  const links = {}; // 人物ID → この同期で決まった links（既存＋追加）
+  const linksOf = id => { if (!links[id]) links[id] = { ..._linksOf(P[id]) }; return links[id]; };
+  const newPerson = idxs => {
+    const rs = idxs.map(i => list[i]);
+    const seed = _personSeed(rs);
+    const id = personIdFor(seed.number, taken, genAuto);
+    taken.add(id); created.push(id);
+    const l = {};
+    rs.forEach(r => { if (l[r.shopId] === undefined) l[r.shopId] = r.name; });
+    const rec = { displayName: personDisplayName(Object.values(l)), links: l, createdAt: nowIso, updatedAt: nowIso };
+    if (seed.entityId) rec.entityId = seed.entityId;
+    if (seed.number) rec.number = seed.number;
+    patch[id] = rec;
+    // 同じ店舗に2つ目の登録名があれば、それぞれ別の人物にする（1店舗1名前）
+    const extra = rs.filter(r => l[r.shopId] !== r.name);
+    extra.forEach(r => newPerson([list.indexOf(r)]));
+  };
+  groupStaffRegsCF(list).forEach(group => {
+    const un = group.filter(i => unlinked.has(i));
+    if (!un.length) return;
+    const persons = [...new Set(group.map(i => ownerOf.get(key(list[i].shopId, list[i].name))).filter(Boolean))];
+    let target = persons.length === 1 ? persons[0] : null;
+    if (!target && persons.length === 0) {
+      const r0 = list[un[0]];
+      const num = String(r0.number || "").trim();
+      if (num) {
+        const cand = Object.keys(P).filter(id => {
+          const p = P[id];
+          if (String(p.number || "") !== num || (p.entityId || "") !== (r0.entityId || "")) return false;
+          const l = _linksOf(p);
+          return un.some(i => { const s = l[list[i].shopId]; return typeof s === "string" && !live.has(key(list[i].shopId, s)); });
+        });
+        if (cand.length === 1) target = cand[0];
+      }
+    }
+    if (!target) { newPerson(un); return; }
+    const l = linksOf(target);
+    const rest = [];
+    un.forEach(i => {
+      const r = list[i];
+      const cur = l[r.shopId];
+      if (typeof cur === "string" && cur !== r.name && live.has(key(r.shopId, cur))) { rest.push(i); return; }
+      l[r.shopId] = r.name;
+      patch[`${target}/links/${r.shopId}`] = r.name;
+    });
+    patch[`${target}/displayName`] = personDisplayName(Object.keys(l).filter(sid => live.has(key(sid, l[sid]))).map(sid => l[sid]));
+    patch[`${target}/updatedAt`] = nowIso;
+    rest.forEach(i => newPerson([i]));
+  });
+  return { patch: Object.keys(patch).length ? patch : null, created };
+}
+// その法人でその番号を既に使っている人物（自分以外）。保存済みの人物の番号と、店舗の登録の番号
+// （regs・自分につながっていない登録）の両方を見る。見つかれば {personId?, shopId?, name?}、無ければ null
+function staffNumberConflict(people, regs, entityId, number, selfPersonId) {
+  const n = String(number == null ? "" : number).trim();
+  if (!n) return null;
+  const e = entityId || "";
+  const P = _personObj(people) || {};
+  for (const id of Object.keys(P)) {
+    if (id === selfPersonId || !_personObj(P[id])) continue;
+    if (String(P[id].number || "").trim() === n && (P[id].entityId || "") === e) return { personId: id };
+  }
+  const own = _linksOf(P[selfPersonId]);
+  for (const r of regs || []) {
+    if ((r.entityId || "") !== e || String(r.number || "").trim() !== n) continue;
+    if (own[r.shopId] === r.name) continue;
+    return { shopId: r.shopId, name: r.name };
+  }
+  return null;
+}
+// 統合: keepId の番号・法人を残し、dropId の links を合流して dropId を消す（店舗側のデータは動かさない）。
+// 同じ店舗に別の登録名があるときは統合できない（1店舗1名前）。戻り値 {patch} か {error}
+function planMergePeople(people, keepId, dropId, nowIso) {
+  const P = _personObj(people) || {};
+  if (!isValidPersonId(keepId) || !isValidPersonId(dropId) || keepId === dropId) return { error: "統合する2人を選んでください" };
+  const k = _personObj(P[keepId]), d = _personObj(P[dropId]);
+  if (!k || !d) return { error: "人物が見つかりません" };
+  const lk = _linksOf(k), ld = _linksOf(d);
+  const merged = { ...lk };
+  for (const sid of Object.keys(ld)) {
+    if (merged[sid] !== undefined && merged[sid] !== ld[sid]) return { error: "同じ店舗に別の登録名があるため統合できません" };
+    merged[sid] = ld[sid];
+  }
+  return { patch: {
+    [`${keepId}/links`]: merged,
+    [`${keepId}/displayName`]: personDisplayName(Object.values(merged)),
+    [`${keepId}/mergedFrom/${dropId}`]: nowIso,
+    [`${keepId}/updatedAt`]: nowIso,
+    [dropId]: null,
+  } };
+}
+// 統合解除: personId から shopId の登録を切り出して新しい人物にする。reg はその登録（{shopId,name,entityId,number}）。
+// 新しい人物の番号は店舗の番号。ただし元の人物と同じ法人で同じ番号なら持たせない（番号は法人内で一意）。
+function planSplitPerson(people, personId, reg, genAuto, nowIso) {
+  const P = _personObj(people) || {};
+  const p = _personObj(P[personId]);
+  if (!p) return { error: "人物が見つかりません" };
+  const l = _linksOf(p);
+  if (!reg || l[reg.shopId] !== reg.name) return { error: "この人物につながっていない登録です" };
+  if (Object.keys(l).length < 2) return { error: "登録が1つだけの人物は切り出せません" };
+  let num = String(reg.number || "").trim();
+  if (num && num === String(p.number || "").trim() && (reg.entityId || "") === (p.entityId || "")) num = "";
+  const id = personIdFor(num, new Set(Object.keys(P)), genAuto);
+  const rest = { ...l }; delete rest[reg.shopId];
+  const rec = { displayName: reg.name, links: { [reg.shopId]: reg.name }, createdAt: nowIso, updatedAt: nowIso };
+  if (reg.entityId) rec.entityId = reg.entityId;
+  if (num) rec.number = num;
+  return { newId: id, patch: {
+    [id]: rec,
+    [`${personId}/links/${reg.shopId}`]: null,
+    [`${personId}/displayName`]: personDisplayName(Object.values(rest)),
+    [`${personId}/updatedAt`]: nowIso,
+  } };
+}
+// ID を番号に振り直す（明示操作のみ）。番号が数字だけで、その ID がまだ使われていないときだけ。
+// 今は人物を参照するノードが people の中だけなので移すのはこの1件（P3 以降で laborMonths 等を足す担当が付け替えを足す）
+function planReassignPersonId(people, personId) {
+  const P = _personObj(people) || {};
+  const p = _personObj(P[personId]);
+  if (!p) return { error: "人物が見つかりません" };
+  const n = String(p.number || "").trim();
+  if (!/^\d{1,20}$/.test(n)) return { error: "従業員番号が数字だけのときに振り直せます" };
+  if (n === personId) return { error: "既に番号と同じIDです" };
+  if (P[n]) return { error: `ID ${n} は既に別の人物が使っています` };
+  return { newId: n, patch: { [n]: { ...p, updatedAt: p.updatedAt }, [personId]: null } };
+}
+
+// ---- 改名の後始末（CF companyRenameStaff）。app-utils.js の renameStaffInSettings / renameStaffInPeriods /
+// renameStaffInPay と同じ規則を、update 用の差分パッチで返す（settings も periods も全体 set() しない）。
+// 名前キーのノードを足したら、ここと app-utils.js の両方に足す（テストが照合する）。
+// 以後 P3・P4 で足す laborMonths・actuals も名前キーなので、その担当がここへ追加する。
+const STAFF_KEYED_SETTING_MAPS_CF = ["staffColors", "staffAttributes", "staffNumbers", "staffPositions", "staffAliases", "staffWorkplaces", "staffHidden", "paidLeaveGranted", "staffHomeShop"];
+const STAFF_KEYED_PRIVATE_NODES_CF = ["pay"];
+const STAFF_NAME_FORBIDDEN_RE = /[.#$\/[\]\u0000-\u001F\u007F]/;
+// 改名の検証（StaffTab の confirmEdit と同じ規則）。問題が無ければ null、あれば理由
+function validateStaffRename(staff, settings, oldName, newName) {
+  const list = (Array.isArray(staff) ? staff : Object.values(staff || {})).filter(n => typeof n === "string");
+  const nn = String(newName || "").trim();
+  if (!list.includes(oldName)) return "この店舗に登録されていない名前です";
+  if (!nn) return "名前を入力してください";
+  if (nn === oldName) return "名前が変わっていません";
+  if (list.includes(nn)) return "既に登録されている名前です";
+  if (STAFF_NAME_FORBIDDEN_RE.test(nn)) return "名前に使えない文字があります（. # $ / [ ] と制御文字）";
+  const al = (_personObj(settings) || {}).staffAliases || {};
+  for (const reg of Object.keys(al)) {
+    if (reg === oldName) continue;
+    const a = al[reg];
+    const arr = Array.isArray(a) ? a : (a && typeof a === "object" ? Object.values(a) : []);
+    if (arr.some(x => String(x || "").trim() === nn)) return `「${nn}」は ${reg} さんの別名として登録されています`;
+  }
+  return null;
+}
+function renameStaffListCF(staff, oldName, newName) {
+  const list = Array.isArray(staff) ? staff : Object.values(staff || {});
+  return list.map(n => n === oldName ? newName : n);
+}
+function _renameMapKeyCF(map, oldName, newName) {
+  const m = { ...(map || {}) };
+  if (m[oldName] === undefined) return m;
+  m[newName] = m[oldName]; delete m[oldName];
+  return m;
+}
+function _hasStaffKeyCF(settings, name) {
+  const st = settings || {};
+  if (STAFF_KEYED_SETTING_MAPS_CF.some(k => st[k] && st[k][name] !== undefined)) return true;
+  return !!(st.overtimeSettings && st.overtimeSettings.byStaff && st.overtimeSettings.byStaff[name] !== undefined);
+}
+// settings の差分（shops/{sid}/settings への update 用）。元から無いキーは作らない
+function renameStaffSettingsPatch(settings, oldName, newName) {
+  const st = _personObj(settings) || {};
+  const out = {};
+  STAFF_KEYED_SETTING_MAPS_CF.forEach(k => {
+    const m = st[k];
+    if (m && typeof m === "object" && m[oldName] !== undefined) { out[`${k}/${newName}`] = m[oldName]; out[`${k}/${oldName}`] = null; }
+  });
+  const bs = st.overtimeSettings && st.overtimeSettings.byStaff;
+  if (bs && typeof bs === "object" && bs[oldName] !== undefined) {
+    out[`overtimeSettings/byStaff/${newName}`] = bs[oldName]; out[`overtimeSettings/byStaff/${oldName}`] = null;
+  }
+  return out;
+}
+function _renameSettingsWholeCF(settings, oldName, newName) {
+  const out = { ...(settings || {}) };
+  STAFF_KEYED_SETTING_MAPS_CF.forEach(k => { if (out[k] !== undefined) out[k] = _renameMapKeyCF(out[k], oldName, newName); });
+  if (out.overtimeSettings && out.overtimeSettings.byStaff)
+    out.overtimeSettings = { ...out.overtimeSettings, byStaff: _renameMapKeyCF(out.overtimeSettings.byStaff, oldName, newName) };
+  return out;
+}
+function _renameKeepStaffCF(raw, oldName, newName) {
+  const list = Array.isArray(raw) ? raw : (raw && typeof raw === "object" ? Object.values(raw) : null);
+  if (!list || !list.length) return null;
+  const nameOf = e => typeof e === "string" ? e : (e && typeof e === "object" && typeof e.name === "string" ? e.name : null);
+  if (!list.some(e => nameOf(e) === oldName)) return null;
+  const hasNew = list.some(e => nameOf(e) === newName);
+  const out = [];
+  list.forEach(e => {
+    if (nameOf(e) !== oldName) { out.push(e); return; }
+    if (hasNew) return;
+    out.push(typeof e === "string" ? newName : { ...e, name: newName });
+  });
+  return out;
+}
+function _keepAttrsOfCF(period) {
+  const raw = period && period.keepAttrs;
+  if (!raw || typeof raw !== "object") return null;
+  const out = {};
+  Object.keys(raw).forEach(k => { if (typeof raw[k] === "string" && raw[k]) out[k] = raw[k]; });
+  return Object.keys(out).length ? out : null;
+}
+// periods の差分（shops/{sid}/periods への update 用・期間のフィールド単位）。全体 set() しない（CLAUDE.md の書き込み規則）
+function renameStaffPeriodsPatch(periods, oldName, newName) {
+  const out = {};
+  const obj = Array.isArray(periods) ? Object.fromEntries(periods.map((p, i) => [(p && p.id) || String(i), p])) : (_personObj(periods) || {});
+  Object.keys(obj).forEach(pk => {
+    const p = obj[pk];
+    if (!p || typeof p !== "object") return;
+    const ks = _renameKeepStaffCF(p.keepStaff, oldName, newName);
+    if (ks) out[`${pk}/keepStaff`] = ks;
+    const ka = _keepAttrsOfCF(p);
+    if (ka && ka[oldName] !== undefined) out[`${pk}/keepAttrs`] = _renameMapKeyCF(ka, oldName, newName);
+    const lt = p.laborTotals;
+    if (lt && typeof lt === "object" && lt[oldName] !== undefined) out[`${pk}/laborTotals`] = _renameMapKeyCF(lt, oldName, newName);
+    const snap = p.snapshot;
+    if (!snap) return;
+    const rawSl = snap.staffList;
+    const sl = Array.isArray(rawSl) ? rawSl : (rawSl && typeof rawSl === "object" ? Object.values(rawSl) : null);
+    if (!sl) return;
+    if (!sl.includes(oldName) && !_hasStaffKeyCF(snap.settings, oldName)) return;
+    out[`${pk}/snapshot`] = { ...snap, staffList: sl.map(n => n === oldName ? newName : n), settings: _renameSettingsWholeCF(snap.settings, oldName, newName) };
+  });
+  return out;
+}
+// private/pay の差分（app-utils.js の renameStaffInPay と同じ）。移すものが無ければ null
+function renameStaffPayPatch(payMap, oldName, newName) {
+  const m = payMap && typeof payMap === "object" ? payMap : {};
+  if (!oldName || !newName || oldName === newName || m[oldName] == null) return null;
+  return { [newName]: m[oldName], [oldName]: null };
+}
+// subs の差分（shops/{sid}/subs への update 用）。3ヶ月の購読窓の外の期間も含めて全件を移す
+// （StaffTab の改名は読み込み済みの subs しか直せないが、CF は全件を読める）
+function renameStaffSubsPatch(subs, oldName, newName) {
+  const out = {};
+  Object.keys(_personObj(subs) || {}).forEach(id => {
+    const s = subs[id];
+    if (s && typeof s === "object" && s.staffName === oldName) out[`${id}/staffName`] = newName;
+  });
+  return out;
+}
+
+module.exports = { PERSON_ID_RE, isValidPersonId, PERSON_AUTO_ID_CHARS, genPersonAutoId, personIdFor, STAFF_NUMBER_MAX, sanitizeStaffNumber,
+  groupStaffRegsCF, personDisplayName, planPeopleSync, staffNumberConflict, planMergePeople, planSplitPerson, planReassignPersonId,
+  STAFF_KEYED_SETTING_MAPS_CF, STAFF_KEYED_PRIVATE_NODES_CF, validateStaffRename, renameStaffListCF, renameStaffSettingsPatch,
+  renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffSubsPatch,
+  MIN_WAGE_MAX_ENTRIES, sanitizeWageSettings, PAY_CODE_DEFAULT, isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,
   ENTITY_ID_RE, isValidEntityId, SHOP_KINDS, ENTITY_NAME_MAX, sanitizeEntityName, entityIdOfShop, shopKindOf,
   planEntityMigration, mergeEntitySettings, buildShopMirror, otherCompanyLinksOf,
   COMPANY_SESSION_UID_PREFIX, canChangeCompanyPassword, COMPANY_LABOR_KEYS, COMPANY_LIMIT_NUM_KEYS, COMPANY_LABOR_SYSTEMS, COMPANY_BUILTIN_ATTRS,

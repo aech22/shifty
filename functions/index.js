@@ -1122,7 +1122,11 @@ exports.sendSurveyEmails = functions
 // ============================================================
 const { sanitizeCompanySettings, sanitizeCompanyDeadlines, sanitizeMonthlyDeadlineDays, canChangeCompanyPassword,
   isValidEntityId, sanitizeEntityName, planEntityMigration, buildShopMirror, otherCompanyLinksOf, SHOP_KINDS,
-  isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF } = require("./company-config");
+  isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,
+  isValidPersonId, genPersonAutoId, sanitizeStaffNumber, entityIdOfShop, planPeopleSync, staffNumberConflict,
+  planMergePeople, planSplitPerson, planReassignPersonId, validateStaffRename, renameStaffListCF,
+  renameStaffSettingsPatch, renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffSubsPatch,
+  COMPANY_BUILTIN_ATTRS, COMPANY_ATTR_ID_RE } = require("./company-config");
 // 法人レイヤーの片方向移行（2026-09-30・P1）。法人が無い企業には企業名と同名の法人を1つ作り、
 // 割当の無い連携店舗をすべて既定の法人へ割り当てる。冪等なので、写しを作り直す前に毎回通してよい。
 async function ensureCompanyEntities(companyId) {
@@ -1609,4 +1613,230 @@ exports.setCompanyPayCode = functions
       try { await db.ref(`shops/${sid}/private/payCode`).set(rec); synced.push(sid); } catch (e) { failed.push(sid); }
     }
     return { ok: true, synced, failed };
+  });
+
+// ============================================================
+// 人物ID（personId）と企業スタッフ一覧の編集（2026-09-30・労務給与_複数法人_実装計画.md §3.8・P1b）
+// 正本は companies/{id}/pub/people/{personId}（書くのは CF だけ。読みは pub のルール＝企業uidと作成者）。
+// 店舗側の名前キーは変えない。改名だけは店舗のデータを書き換える（StaffTab の改名と同じ結果）。
+// 権限はすべて assertCompanyMember（企業コードのセッションと作成者本人）。
+// 規則は functions/company-config.js の純粋関数（tests/core.test.js がクライアントとの一致を照合する）。
+// ============================================================
+const genPersonId = () => genPersonAutoId(n => [...crypto.randomBytes(n)]);
+// 連携全店舗の登録（店舗×名前）を読む。読めなかった店舗は failed に入れて登録を持たない
+async function readCompanyRegs(companyId, pub) {
+  const linked = Object.keys((pub && pub.shops) || {}).filter(isValidShopId);
+  const regs = [], shopData = {}, failed = [];
+  for (const sid of linked) {
+    try {
+      const [staff, settings] = await Promise.all(["staff", "settings"].map(k => db.ref(`shops/${sid}/${k}`).once("value").then(x => x.val())));
+      const st = settings || {};
+      const list = (Array.isArray(staff) ? staff : Object.values(staff || {})).filter(n => typeof n === "string" && n && !n.startsWith("__spacer__"));
+      shopData[sid] = { staff: staff || [], settings: st };
+      const eid = entityIdOfShop(pub, sid) || "";
+      list.forEach(name => {
+        const h = (st.staffHomeShop || {})[name];
+        const num = (st.staffNumbers || {})[name];
+        regs.push({ shopId: sid, name, entityId: eid, homeShopId: typeof h === "string" && h ? h : sid, number: String(num == null ? "" : num).trim() });
+      });
+    } catch (e) { failed.push(sid); }
+  }
+  return { regs, shopData, failed, linked };
+}
+async function readPub(companyId) {
+  return (await db.ref(`companies/${companyId}/pub`).once("value")).val() || {};
+}
+function readPersonArg(data) {
+  const personId = data && data.personId;
+  if (!isValidPersonId(personId)) throw new functions.https.HttpsError("invalid-argument", "人物IDが無効です");
+  return personId;
+}
+function personOr404(pub, personId) {
+  const p = ((pub.people || {})[personId]);
+  if (!p || typeof p !== "object") throw new functions.https.HttpsError("not-found", "人物が見つかりません");
+  return p;
+}
+
+// 人物の自動生成と未リンクの登録名の取り込み（企業内登録スタッフの一覧を開いたときに呼ぶ・冪等）。
+// 初回は既存の推定（buildCompanyStaffRows と同じ規則）から全員分を作る。以後は保存済みの people が正で、
+// どの人物にもつながっていない登録名だけを拾う（計画書の upsertPerson にあたる。人物を作るのはこの関数だけ）。
+exports.ensureCompanyPeople = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = readEntityArgs(data);
+    await assertCompanyMember(context, companyId);
+    await ensureCompanyEntities(companyId);
+    const pub = await readPub(companyId);
+    const { regs, failed } = await readCompanyRegs(companyId, pub);
+    // 読めなかった店舗があるときは作らない（その店舗の登録が未リンクのまま別人物として作られるのを防ぐ）
+    if (failed.length) return { ok: false, failed, created: [] };
+    const { patch, created } = planPeopleSync(pub.people || {}, regs, genPersonId, new Date().toISOString());
+    if (patch) await db.ref(`companies/${companyId}/pub/people`).update(patch);
+    return { ok: true, created, changed: !!patch };
+  });
+
+// 統合: 2人を同一人物として束ねる。keepPersonId の番号・法人を残す（店舗側のデータは動かさない）
+exports.mergePeople = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = readEntityArgs(data);
+    const keepId = data && data.keepPersonId, dropId = data && data.dropPersonId;
+    if (!isValidPersonId(keepId) || !isValidPersonId(dropId)) throw new functions.https.HttpsError("invalid-argument", "人物IDが無効です");
+    await assertCompanyMember(context, companyId);
+    const pub = await readPub(companyId);
+    const r = planMergePeople(pub.people || {}, keepId, dropId, new Date().toISOString());
+    if (r.error) throw new functions.https.HttpsError("failed-precondition", r.error);
+    await db.ref(`companies/${companyId}/pub/people`).update(r.patch);
+    return { ok: true, personId: keepId };
+  });
+
+// 統合解除: 人物から1店舗の登録を切り出して別の人物にする
+exports.splitPerson = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = readEntityArgs(data);
+    const personId = readPersonArg(data);
+    const shopId = (data && typeof data.shopId === "string") ? data.shopId : "";
+    await assertCompanyMember(context, companyId);
+    await assertLinkedShop(companyId, shopId);
+    const pub = await readPub(companyId);
+    const p = personOr404(pub, personId);
+    const name = (p.links || {})[shopId];
+    const settings = (await db.ref(`shops/${shopId}/settings`).once("value")).val() || {};
+    const num = (settings.staffNumbers || {})[name];
+    const reg = { shopId, name, entityId: entityIdOfShop(pub, shopId) || "", number: String(num == null ? "" : num).trim() };
+    const r = planSplitPerson(pub.people || {}, personId, reg, genPersonId, new Date().toISOString());
+    if (r.error) throw new functions.https.HttpsError("failed-precondition", r.error);
+    await db.ref(`companies/${companyId}/pub/people`).update(r.patch);
+    return { ok: true, personId: r.newId };
+  });
+
+// ID を番号に振り直す（明示操作のみ・決定 #13）
+exports.reassignPersonId = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = readEntityArgs(data);
+    const personId = readPersonArg(data);
+    await assertCompanyMember(context, companyId);
+    const pub = await readPub(companyId);
+    personOr404(pub, personId);
+    const r = planReassignPersonId(pub.people || {}, personId);
+    if (r.error) throw new functions.https.HttpsError("failed-precondition", r.error);
+    // 以後 laborMonths 等の personId を参照するノードを足した担当は、ここで付け替えを足す（P3 以降）
+    await db.ref(`companies/${companyId}/pub/people`).update(r.patch);
+    return { ok: true, personId: r.newId };
+  });
+
+// 名前の変更。選んだ店舗ごとに、店舗の staff・全 subs.staffName・settings（名前キーの8マップ）・
+// periods（snapshot / keepStaff / keepAttrs / laborTotals）・private/pay を移し、people.links を書き換える。
+// 規則は StaffTab の改名（renameStaffInSettings / renameStaffInPeriods / renameStaffInPay）と同じ（tests が照合）。
+// subs と periods と settings は差分 update（全体 set() しない）。staff は配列なのでトランザクションで置き換える。
+// **P3・P4 で足す laborMonths・actuals も名前キー**なので、その担当がここに移し替えを足すこと。
+exports.companyRenameStaff = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = readEntityArgs(data);
+    const personId = readPersonArg(data);
+    const newName = (data && typeof data.newName === "string") ? data.newName.trim() : "";
+    const shopIds = Array.isArray(data && data.shopIds) ? data.shopIds.filter(x => typeof x === "string") : [];
+    if (!shopIds.length) throw new functions.https.HttpsError("invalid-argument", "名前を変える店舗を選んでください");
+    await assertCompanyMember(context, companyId);
+    for (const sid of shopIds) await assertLinkedShop(companyId, sid);
+    const pub = await readPub(companyId);
+    const p = personOr404(pub, personId);
+    const links = p.links || {};
+    // 先に全店舗を検証してから書く（途中の店舗で拒否されて半端に終わらないように）
+    const plans = [];
+    for (const sid of shopIds) {
+      const oldName = links[sid];
+      if (typeof oldName !== "string") throw new functions.https.HttpsError("failed-precondition", "この人物はその店舗に登録されていません");
+      const [staff, settings] = await Promise.all(["staff", "settings"].map(k => db.ref(`shops/${sid}/${k}`).once("value").then(x => x.val())));
+      const err = validateStaffRename(staff, settings || {}, oldName, newName);
+      if (err) throw new functions.https.HttpsError("failed-precondition", err);
+      plans.push({ sid, oldName, settings: settings || {} });
+    }
+    const done = [], failed = [];
+    for (const { sid, oldName, settings } of plans) {
+      try {
+        await db.ref(`shops/${sid}/staff`).transaction(cur => cur == null ? cur : renameStaffListCF(cur, oldName, newName));
+        const sp = renameStaffSettingsPatch(settings, oldName, newName);
+        if (Object.keys(sp).length) await db.ref(`shops/${sid}/settings`).update(sp);
+        // staffName の索引はルールに無いので全件を読む（3ヶ月の購読窓の外の期間も含めて移す）
+        const subs = (await db.ref(`shops/${sid}/subs`).once("value")).val() || {};
+        const subP = renameStaffSubsPatch(subs, oldName, newName);
+        if (Object.keys(subP).length) await db.ref(`shops/${sid}/subs`).update(subP);
+        const periods = (await db.ref(`shops/${sid}/periods`).once("value")).val() || {};
+        const pp = renameStaffPeriodsPatch(periods, oldName, newName);
+        if (Object.keys(pp).length) await db.ref(`shops/${sid}/periods`).update(pp);
+        const pay = (await db.ref(`shops/${sid}/private/pay`).once("value")).val() || {};
+        const payP = renameStaffPayPatch(pay, oldName, newName);
+        if (payP) await db.ref(`shops/${sid}/private/pay`).update(payP);
+        await db.ref(`companies/${companyId}/pub/people/${personId}/links/${sid}`).set(newName);
+        done.push(sid);
+      } catch (e) { failed.push(sid); }
+    }
+    const fresh = ((await db.ref(`companies/${companyId}/pub/people/${personId}/links`).once("value")).val()) || {};
+    const names = Object.values(fresh).filter(n => typeof n === "string");
+    let best = ""; names.forEach(n => { if (n.replace(/[\s　]/g, "").length > best.replace(/[\s　]/g, "").length) best = n; });
+    await db.ref(`companies/${companyId}/pub/people/${personId}`).update({ displayName: best, updatedAt: new Date().toISOString() });
+    return { ok: failed.length === 0, done, failed };
+  });
+
+// 従業員番号・法人・属性・所属店舗の変更。番号は法人内で一意（衝突は拒否）。番号は人物と、つながっている
+// 全店舗の settings/staffNumbers に書く。属性と所属店舗は該当店舗の settings に書く（StaffTab と同じ値）。
+// 渡した項目だけを変える（undefined は触らない）。属性・所属店舗は {shopId: 値} で店舗ごとに渡す。
+exports.companyUpdateStaff = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = readEntityArgs(data);
+    const personId = readPersonArg(data);
+    await assertCompanyMember(context, companyId);
+    const pub = await readPub(companyId);
+    const p = personOr404(pub, personId);
+    const links = p.links || {};
+    const hasNumber = data && data.number !== undefined;
+    const hasEntity = data && data.entityId !== undefined;
+    const number = hasNumber ? sanitizeStaffNumber(data.number) : String(p.number || "");
+    if (number === null) throw new functions.https.HttpsError("invalid-argument", "従業員番号は20文字以内にしてください");
+    const entityId = hasEntity ? data.entityId : (p.entityId || "");
+    if (hasEntity) await assertEntityExists(companyId, entityId);
+    if (hasNumber || hasEntity) {
+      const { regs } = await readCompanyRegs(companyId, pub);
+      const c = staffNumberConflict(pub.people || {}, regs, entityId, number, personId);
+      if (c) throw new functions.https.HttpsError("already-exists", `従業員番号 ${number} はこの法人で既に使われています${c.name ? `（${c.name}）` : ""}`);
+    }
+    const attrs = (data && data.attrs && typeof data.attrs === "object") ? data.attrs : {};
+    const homes = (data && data.homeShops && typeof data.homeShops === "object") ? data.homeShops : {};
+    const linkedShops = Object.keys(pub.shops || {});
+    for (const sid of [...Object.keys(attrs), ...Object.keys(homes)]) {
+      if (typeof links[sid] !== "string") throw new functions.https.HttpsError("failed-precondition", "この人物はその店舗に登録されていません");
+    }
+    for (const sid of Object.keys(attrs)) {
+      const a = attrs[sid];
+      if (a !== null && !(COMPANY_BUILTIN_ATTRS.includes(a) || (typeof a === "string" && (COMPANY_ATTR_ID_RE.test(a) || /^custom_[A-Za-z0-9!@%&*+\-=?_~]{1,16}$/.test(a))))) {
+        throw new functions.https.HttpsError("invalid-argument", "属性が無効です");
+      }
+    }
+    for (const sid of Object.keys(homes)) {
+      const h = homes[sid];
+      if (h !== null && !(typeof h === "string" && linkedShops.includes(h))) throw new functions.https.HttpsError("invalid-argument", "所属店舗が無効です");
+    }
+    const now = new Date().toISOString();
+    const upd = { updatedAt: now };
+    if (hasNumber) upd.number = number || null;
+    if (hasEntity) upd.entityId = entityId;
+    await db.ref(`companies/${companyId}/pub/people/${personId}`).update(upd);
+    const failed = [];
+    for (const sid of Object.keys(links)) {
+      if (!isValidShopId(sid) || !linkedShops.includes(sid)) continue;
+      const name = links[sid];
+      const sp = {};
+      if (hasNumber) sp[`staffNumbers/${name}`] = number || null;
+      if (attrs[sid] !== undefined) sp[`staffAttributes/${name}`] = attrs[sid];
+      // 所属店舗は自店なら消す（無い＝自店所属。StaffTab と同じ）
+      if (homes[sid] !== undefined) sp[`staffHomeShop/${name}`] = homes[sid] && homes[sid] !== sid ? homes[sid] : null;
+      if (!Object.keys(sp).length) continue;
+      try { await db.ref(`shops/${sid}/settings`).update(sp); } catch (e) { failed.push(sid); }
+    }
+    return { ok: failed.length === 0, failed };
   });
