@@ -994,6 +994,8 @@ exports.purgeOldPeriods = functions
         if (period.urlToken) {
           await db.ref(`tokens/${period.urlToken}`).remove();
         }
+        // 実績（P4・shops/{sid}/actuals/{期間ID}）も期間と一緒に消す
+        await db.ref(`shops/${shopId}/actuals/${periodId}`).remove();
         await db.ref(`shops/${shopId}/periods/${periodId}`).remove();
         console.log(`削除: shop=${shopId} period=${periodId} (endDate=${period.endDate}) subs=${subCount}件`);
       }
@@ -1125,7 +1127,7 @@ const { sanitizeCompanySettings, sanitizeCompanyDeadlines, sanitizeMonthlyDeadli
   isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,
   isValidPersonId, genPersonAutoId, sanitizeStaffNumber, entityIdOfShop, planPeopleSync, staffNumberConflict,
   planMergePeople, planSplitPerson, planReassignPersonId, validateStaffRename, renameStaffListCF,
-  renameStaffSettingsPatch, renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffLaborMonthsPatch, renameStaffSubsPatch,
+  renameStaffSettingsPatch, renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffLaborMonthsPatch, renameStaffActualsPatch, renameStaffSubsPatch,
   COMPANY_BUILTIN_ATTRS, COMPANY_ATTR_ID_RE } = require("./company-config");
 // 法人レイヤーの片方向移行（2026-09-30・P1）。法人が無い企業には企業名と同名の法人を1つ作り、
 // 割当の無い連携店舗をすべて既定の法人へ割り当てる。冪等なので、写しを作り直す前に毎回通してよい。
@@ -1740,10 +1742,10 @@ exports.reassignPersonId = functions
   });
 
 // 名前の変更。選んだ店舗ごとに、店舗の staff・全 subs.staffName・settings（名前キーの8マップ）・
-// periods（snapshot / keepStaff / keepAttrs / laborTotals）・private/pay・laborMonths を移し、people.links を書き換える。
+// periods（snapshot / keepStaff / keepAttrs / laborTotals）・private/pay・laborMonths・actuals を移し、people.links を書き換える。
 // 規則は StaffTab の改名（renameStaffInSettings / renameStaffInPeriods / renameStaffInPay）と同じ（tests が照合）。
 // subs と periods と settings は差分 update（全体 set() しない）。staff は配列なのでトランザクションで置き換える。
-// laborMonths（P3）は移している。**P4 で足す actuals も名前キー**なので、その担当がここに移し替えを足すこと。
+// laborMonths（P3）と actuals（P4）も名前キーなので移す。名前キーのノードを足したらここにも足す（テストが照合する）。
 exports.companyRenameStaff = functions
   .region("asia-northeast1")
   .https.onCall(async (data, context) => {
@@ -1787,6 +1789,10 @@ exports.companyRenameStaff = functions
         const lm = (await db.ref(`shops/${sid}/laborMonths`).once("value")).val() || {};
         const lmP = renameStaffLaborMonthsPatch(lm, oldName, newName);
         if (lmP) await db.ref(`shops/${sid}/laborMonths`).update(lmP);
+        // 実績（P4）も名前キー。期間ごとに旧名のキーを新名へ移す（renameStaffInActuals と同じ規則）
+        const ac = (await db.ref(`shops/${sid}/actuals`).once("value")).val() || {};
+        const acP = renameStaffActualsPatch(ac, oldName, newName);
+        if (acP) await db.ref(`shops/${sid}/actuals`).update(acP);
         await db.ref(`companies/${companyId}/pub/people/${personId}/links/${sid}`).set(newName);
         done.push(sid);
       } catch (e) { failed.push(sid); }
