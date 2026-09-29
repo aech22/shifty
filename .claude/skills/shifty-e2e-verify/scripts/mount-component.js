@@ -116,7 +116,11 @@ async function openHarness(o) {
 
   const errors = [];
   page.on("pageerror", e => errors.push("pageerror: " + e.message));
-  page.on("console", m => { if (m.type() === "error") errors.push("console: " + m.text()); });
+  // Babel Standalone は変換するソースが 500,000 文字を超えると、整形を省いた旨の「Note」を console.error で出す
+  // （app-admin.js が 2026-09-30・P1b で超えた）。変換結果の動作は変わらない情報表示なので、この1文だけは数えない。
+  // 他のコンソールエラーは従来どおりすべて数える。
+  const BABEL_SIZE_NOTE = /^\[BABEL\] Note: The code generator has deoptimised the styling of .* as it exceeds the max of 500KB\.$/;
+  page.on("console", m => { if (m.type() === "error" && !BABEL_SIZE_NOTE.test(m.text())) errors.push("console: " + m.text()); });
 
   const html = buildHtml(scripts, o.jsx, o.extraHead);
 

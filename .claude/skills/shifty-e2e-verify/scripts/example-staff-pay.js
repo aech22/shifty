@@ -293,7 +293,7 @@ const payInputs = h => h.evaluate(() => [...document.querySelectorAll("[data-sta
     entityMinWage: JSON.stringify(R.mirrorWage) === JSON.stringify([{ from: "2025-10-01", yen: 1177 }, { from: "2026-10-01", yen: 1231 }, { from: "2027-10-01", yen: 1300 }]) && R.minWageRows === 2,
     companyCodeSynced: !!R.coCode && R.coCode.has && R.coCode.same,
     dirOrder: JSON.stringify(R.dirOrder) === JSON.stringify(["従業員番号順", "店舗別", "パスコード"]),
-    dirWageColumn: Array.isArray(R.dirHeaders) && R.dirHeaders[R.dirHeaders.length - 1] === "賃金" && R.dirMasked === "••••" && R.dirOldCodeRejected === true
+    dirWageColumn: Array.isArray(R.dirHeaders) && JSON.stringify(R.dirHeaders.slice(-2)) === JSON.stringify(["賃金", ""]) /* 最後は「編集」の列（P1b・見出しなし） */ && R.dirMasked === "••••" && R.dirOldCodeRejected === true
       && !!R.dirWage && R.dirWage.t === "時給 1,300円" && R.dirWage.k === "月給 213,500円" && R.dirWage.helper === "—",
     shopOwnCode: !!R.shopCode && R.shopCode.hashLen === 64 && R.shopCode.salt && R.shopCodeNotInSettings === true && R.shopOldRejected === true && R.shopNewAccepted === true && R.noDefaultHintAfterChange === true,
     hiddenOnPro: R.proNoBox === true && R.proNoButton === true,

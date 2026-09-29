@@ -129,7 +129,8 @@ const waitText = (h, t, ms = 15000) => h.page.waitForFunction(x => document.body
     await h.page.waitForFunction(() => !!document.querySelector("table tbody tr td") && !document.body.innerText.includes("読み込み中..."), { timeout: 10000 });
     await h.page.waitForTimeout(300);
     R.dirSections = await h.evaluate(() => [...document.querySelectorAll("[data-co-section]")].map(x => x.getAttribute("data-co-section")));
-    R.dir12 = await h.evaluate(() => [...document.querySelectorAll("table tbody tr")].map(tr => [...tr.querySelectorAll("td")].map(td => td.innerText.trim())).filter(r => r[0] === "12").map(r => r[1]));
+    // セルの1行目だけを読む（番号のセルには別法人との重なりの注記が2行目に付く・P1b）
+    R.dir12 = await h.evaluate(() => [...document.querySelectorAll("table tbody tr")].map(tr => [...tr.querySelectorAll("td")].map(td => td.innerText.trim().split("\n")[0])).filter(r => r[0] === "12").map(r => r[1]));
     R.dirFilter = await h.evaluate(() => document.querySelectorAll("[data-co-entity-filter]").length);
   } catch (e) { R.exceptionAB = e.message; }
   R.errorsAB = h.errors.slice(); await h.close();

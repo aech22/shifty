@@ -30,7 +30,9 @@ const CFC_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "fu
  * @param {string} o.uid         サインイン済みとして扱うuid（"company_XXX" なら企業ログインセッション）
  * @param {string} [o.view]      起動時の画面（既定 "admin"）
  * @param {string} [o.tab]       起動時の管理者タブ（既定 "periods"）
- * @param {object} [o.cfHandlers] Callable名 → "ok" | "reject:メッセージ" | "unlink" | "link" | "companyConfig" | "companyLogin:<companyId>" | "entity" | "payCode"（本物のCFと同じ後始末）
+ * @param {object} [o.cfHandlers] Callable名 → "ok" | "reject:メッセージ" | "unlink" | "link" | "companyConfig" | "companyLogin:<companyId>" | "entity" | "people" | "payCode"（本物のCFと同じ後始末）
+ *                                "people" は人物の6本（P1b: ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId /
+ *                                companyRenameStaff / companyUpdateStaff）。規則は functions/company-config.js をそのまま使う。
  *                                "payCode" は setCompanyPayCode（P6a）。現在の番号を照合して企業と連携全店舗の private/payCode を書く。
  *                                "entity" は法人の6本（ensureCompanyEntities / createEntity / renameEntity / assignShopEntity /
  *                                saveEntityConfig / setShopKind）。移行と写しの組み立ては **functions/company-config.js をそのまま読み込んで**
@@ -246,6 +248,91 @@ function makeStub(o) {
           setPath(eb+"/shopKinds/"+payload.shopId,payload.kind==="hq"?"hq":null);
           setPath("global/shops/"+payload.shopId+"/kind",payload.kind==="hq"?"hq":null);
           return Promise.resolve({data:sync()});
+        }
+      }
+      if(h==="people"){
+        // 本物の人物 CF（functions/index.js・P1b）と同じ後始末。規則は functions/company-config.js をそのまま使う
+        // （planPeopleSync・planMergePeople・planSplitPerson・planReassignPersonId・改名の差分パッチ）。
+        var qcid=payload.companyId, qb="companies/"+qcid+"/pub", now="stub";
+        var gen=function(){ return CFC.genPersonAutoId(function(n){ var a=[]; for(var i=0;i<n;i++) a.push(Math.floor(Math.random()*256)); return a; }); };
+        var err=function(m){ return Promise.reject(new Error(m)); };
+        var applyP=function(base,patch){ Object.keys(patch||{}).forEach(function(k){ setPath(base+"/"+k,patch[k]); }); };
+        var regsOf=function(pub){
+          var out=[];
+          Object.keys(pub.shops||{}).forEach(function(sid){
+            var st=getPath("shops/"+sid+"/settings")||{}, staff=getPath("shops/"+sid+"/staff")||[];
+            (Array.isArray(staff)?staff:Object.values(staff)).filter(function(n){ return typeof n==="string"&&n&&n.indexOf("__spacer__")!==0; }).forEach(function(n){
+              var hh=(st.staffHomeShop||{})[n], num=(st.staffNumbers||{})[n];
+              out.push({shopId:sid,name:n,entityId:CFC.entityIdOfShop(pub,sid)||"",homeShopId:typeof hh==="string"&&hh?hh:sid,number:String(num==null?"":num).trim()});
+            });
+          });
+          return out;
+        };
+        var qpub=getPath(qb)||{}, people=qpub.people||{};
+        if(name==="ensureCompanyPeople"){
+          var sy=CFC.planPeopleSync(people,regsOf(qpub),gen,now);
+          if(sy.patch) applyP(qb+"/people",sy.patch);
+          notify();
+          return Promise.resolve({data:{ok:true,created:sy.created,changed:!!sy.patch}});
+        }
+        var pid=payload.personId, per=people[pid];
+        if(name==="mergePeople"){
+          var mr=CFC.planMergePeople(people,payload.keepPersonId,payload.dropPersonId,now);
+          if(mr.error) return err(mr.error);
+          applyP(qb+"/people",mr.patch); notify();
+          return Promise.resolve({data:{ok:true}});
+        }
+        if(!per) return err("人物が見つかりません");
+        if(name==="splitPerson"){
+          var ssid=payload.shopId, snm=(per.links||{})[ssid], sst=getPath("shops/"+ssid+"/settings")||{};
+          var sr=CFC.planSplitPerson(people,pid,{shopId:ssid,name:snm,entityId:CFC.entityIdOfShop(qpub,ssid)||"",number:String(((sst.staffNumbers||{})[snm])||"").trim()},gen,now);
+          if(sr.error) return err(sr.error);
+          applyP(qb+"/people",sr.patch); notify();
+          return Promise.resolve({data:{ok:true,personId:sr.newId}});
+        }
+        if(name==="reassignPersonId"){
+          var rr=CFC.planReassignPersonId(people,pid);
+          if(rr.error) return err(rr.error);
+          applyP(qb+"/people",rr.patch); notify();
+          return Promise.resolve({data:{ok:true,personId:rr.newId}});
+        }
+        if(name==="companyRenameStaff"){
+          var nn=String(payload.newName||"").trim(), sids=payload.shopIds||[];
+          for(var i=0;i<sids.length;i++){
+            var e1=CFC.validateStaffRename(getPath("shops/"+sids[i]+"/staff"),getPath("shops/"+sids[i]+"/settings")||{},(per.links||{})[sids[i]],nn);
+            if(e1) return err(e1);
+          }
+          sids.forEach(function(sid){
+            var on=per.links[sid];
+            setPath("shops/"+sid+"/staff",CFC.renameStaffListCF(getPath("shops/"+sid+"/staff")||[],on,nn));
+            applyP("shops/"+sid+"/settings",CFC.renameStaffSettingsPatch(getPath("shops/"+sid+"/settings")||{},on,nn));
+            applyP("shops/"+sid+"/subs",CFC.renameStaffSubsPatch(getPath("shops/"+sid+"/subs")||{},on,nn));
+            applyP("shops/"+sid+"/periods",CFC.renameStaffPeriodsPatch(getPath("shops/"+sid+"/periods")||{},on,nn));
+            applyP("shops/"+sid+"/private/pay",CFC.renameStaffPayPatch(getPath("shops/"+sid+"/private/pay")||{},on,nn)||{});
+            setPath(qb+"/people/"+pid+"/links/"+sid,nn);
+          });
+          setPath(qb+"/people/"+pid+"/displayName",CFC.personDisplayName(Object.values(getPath(qb+"/people/"+pid+"/links")||{})));
+          notify();
+          return Promise.resolve({data:{ok:true,done:sids,failed:[]}});
+        }
+        if(name==="companyUpdateStaff"){
+          var hasN=payload.number!==undefined, hasE=payload.entityId!==undefined;
+          var num2=hasN?CFC.sanitizeStaffNumber(payload.number):String(per.number||"");
+          var eid=hasE?payload.entityId:(per.entityId||"");
+          if(hasN||hasE){
+            var cc=CFC.staffNumberConflict(people,regsOf(qpub),eid,num2,pid);
+            if(cc) return err("従業員番号 "+num2+" はこの法人で既に使われています"+(cc.name?"（"+cc.name+"）":""));
+          }
+          if(hasN) setPath(qb+"/people/"+pid+"/number",num2||null);
+          if(hasE) setPath(qb+"/people/"+pid+"/entityId",eid);
+          Object.keys(per.links||{}).forEach(function(sid){
+            var nm=per.links[sid], base="shops/"+sid+"/settings/";
+            if(hasN) setPath(base+"staffNumbers/"+nm,num2||null);
+            if(payload.attrs&&payload.attrs[sid]!==undefined) setPath(base+"staffAttributes/"+nm,payload.attrs[sid]);
+            if(payload.homeShops&&payload.homeShops[sid]!==undefined) setPath(base+"staffHomeShop/"+nm,payload.homeShops[sid]&&payload.homeShops[sid]!==sid?payload.homeShops[sid]:null);
+          });
+          notify();
+          return Promise.resolve({data:{ok:true,failed:[]}});
         }
       }
       if(h==="payCode"){
