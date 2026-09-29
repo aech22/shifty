@@ -1121,7 +1121,8 @@ exports.sendSurveyEmails = functions
 // isValidDateStr）と**同じ内容**にする。functions/ は app-utils.js を読めないので書き写している。
 // ============================================================
 const { sanitizeCompanySettings, sanitizeCompanyDeadlines, sanitizeMonthlyDeadlineDays, canChangeCompanyPassword,
-  isValidEntityId, sanitizeEntityName, planEntityMigration, buildShopMirror, otherCompanyLinksOf, SHOP_KINDS } = require("./company-config");
+  isValidEntityId, sanitizeEntityName, planEntityMigration, buildShopMirror, otherCompanyLinksOf, SHOP_KINDS,
+  isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF } = require("./company-config");
 // 法人レイヤーの片方向移行（2026-09-30・P1）。法人が無い企業には企業名と同名の法人を1つ作り、
 // 割当の無い連携店舗をすべて既定の法人へ割り当てる。冪等なので、写しを作り直す前に毎回通してよい。
 async function ensureCompanyEntities(companyId) {
@@ -1163,6 +1164,16 @@ async function syncCompanyMirror(companyId, shopIds) {
       synced.push(sid);
     } catch (e) { failed.push(sid); }
   }
+  // 賃金の閲覧パスコード（P6a）も企業のものに揃える。後から連携した店舗にも、次の写しの作り直しで届く。
+  // 企業がまだ設定していなければ店舗のものは触らない（店舗は未設定＝0000 のまま）
+  try {
+    const code = (await db.ref(`companies/${companyId}/private/payCode`).once("value")).val();
+    if (isPayCodeRecordCF(code)) {
+      for (const sid of synced) {
+        try { await db.ref(`shops/${sid}/private/payCode`).set(code); } catch (e) { /* 次の同期で書き直される */ }
+      }
+    }
+  } catch (e) { /* パスコードの同期の失敗で写しの作り直しを失敗扱いにしない */ }
   return { synced, failed };
 }
 
@@ -1565,5 +1576,37 @@ exports.setShopKind = functions
     await db.ref(`companies/${companyId}/pub/shopKinds/${shopId}`).set(kind === "hq" ? "hq" : null);
     await db.ref(`global/shops/${shopId}/kind`).set(kind === "hq" ? "hq" : null);
     const { synced, failed } = await syncCompanyMirror(companyId, [shopId]);
+    return { ok: true, synced, failed };
+  });
+
+// ============================================================
+// 賃金の閲覧パスコード（2026-09-30・労務給与_複数法人_実装計画.md §3.7・P6a）
+// 企業に連携している店舗は企業のパスコードに統一する（店長ごとに別の番号を覚えさせない）。
+// 正本は companies/{id}/private/payCode = {hash, salt, updatedAt}（企業uidと作成者だけが読める）。
+// 連携全店舗の shops/{sid}/private/payCode（owners だけが読める）に同じ値を書く。
+// 画面ロック用の4桁なので総当たりに耐える設計にはしない。代わりにハッシュを auth != null で読める場所に置かない。
+// 変更は企業コードのセッションと作成者本人の両方が可（assertCompanyMember）。現在の番号の照合を必須にする。
+// ============================================================
+exports.setCompanyPayCode = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
+    const currentCode = (data && typeof data.currentCode === "string") ? data.currentCode : "";
+    const newCode = (data && typeof data.newCode === "string") ? data.newCode : "";
+    if (!isValidCompanyId(companyId)) throw new functions.https.HttpsError("invalid-argument", "企業IDが無効です");
+    if (!isValidPayCodeCF(newCode)) throw new functions.https.HttpsError("invalid-argument", "パスコードは4桁の数字にしてください");
+    await assertCompanyMember(context, companyId);
+    const stored = (await db.ref(`companies/${companyId}/private/payCode`).once("value")).val();
+    if (!verifyPayCodeCF(currentCode, stored)) {
+      throw new functions.https.HttpsError("permission-denied", "現在のパスコードが正しくありません");
+    }
+    const salt = crypto.randomBytes(16).toString("hex");
+    const rec = { hash: payCodeHashCF(salt, newCode), salt, updatedAt: new Date().toISOString() };
+    await db.ref(`companies/${companyId}/private/payCode`).set(rec);
+    const linked = Object.keys((await db.ref(`companies/${companyId}/pub/shops`).once("value")).val() || {}).filter(isValidShopId);
+    const synced = [], failed = [];
+    for (const sid of linked) {
+      try { await db.ref(`shops/${sid}/private/payCode`).set(rec); synced.push(sid); } catch (e) { failed.push(sid); }
+    }
     return { ok: true, synced, failed };
   });
