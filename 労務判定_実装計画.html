@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Shifty 労務判定機能 実装計画</title>
+<style>
+  :root{
+    --ink:#1c1917; --ink2:#57534e; --ink3:#78716c;
+    --bg:#fafaf9; --paper:#ffffff; --line:#e7e5e4; --line2:#d6d3d1;
+    --accent:#c2410c; /* Shiftyブランドのオレンジ系。リンク・強調ラベル専用の1色 */
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif;
+    font-size:15px; line-height:1.75;}
+  .wrap{max-width:920px; margin:0 auto; padding:48px 24px 96px;}
+  header{margin-bottom:40px; border-bottom:1px solid var(--line2); padding-bottom:28px;}
+  h1{font-size:26px; line-height:1.4; margin:0 0 6px; font-weight:700;}
+  .sub{color:var(--ink2); font-size:14px; margin:0;}
+  h2{font-size:20px; font-weight:700; margin:64px 0 8px; padding-top:24px; border-top:2px solid var(--ink);}
+  h2 .role{display:block; font-size:13px; font-weight:600; color:var(--accent); letter-spacing:.02em;}
+  h3{font-size:16px; font-weight:700; margin:36px 0 10px;}
+  h4{font-size:14.5px; font-weight:700; margin:24px 0 6px;}
+  p{margin:8px 0;}
+  ul,ol{margin:8px 0; padding-left:1.6em;}
+  li{margin:4px 0;}
+  code{font-family:"SF Mono",Menlo,Consolas,monospace; font-size:.88em; background:#f1efee; padding:1px 5px; border-radius:3px;}
+  pre{background:#f1efee; padding:12px 14px; border-radius:4px; overflow-x:auto; font-size:13px; line-height:1.6;}
+  pre code{background:none; padding:0;}
+  table{border-collapse:collapse; width:100%; margin:12px 0; font-size:14px;}
+  th,td{border:1px solid var(--line2); padding:7px 10px; text-align:left; vertical-align:top;}
+  th{background:#f5f5f4; font-weight:600;}
+  .dec{margin:0 0 44px;}
+  .dec table td:first-child{width:4.5em; font-weight:600; color:var(--ink2); background:#f5f5f4;}
+  .dec table tr.rec td:first-child{color:var(--accent);}
+  .note{color:var(--ink3); font-size:13.5px;}
+  .box{border:1px solid var(--line2); background:var(--paper); padding:16px 20px; margin:16px 0;}
+  .box p:first-child{margin-top:0;} .box p:last-child{margin-bottom:0;}
+  .chk{list-style:none; padding-left:0;}
+  .chk li{padding-left:1.7em; position:relative; margin:6px 0;}
+  .chk li::before{content:"□"; position:absolute; left:0; color:var(--ink3);}
+  .toc{font-size:14px; color:var(--ink2);}
+  .toc a{color:var(--accent); text-decoration:none;}
+  .toc a:hover{text-decoration:underline;}
+  hr{border:none; border-top:1px solid var(--line); margin:32px 0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Shifty 労務判定機能 実装計画</h1>
+  <p class="sub">職場のシフトExcelひな型（xlsm＋VBA）が持つ労務判定を Shifty に移植し、Shifty だけでシフトの適法性を判断できるようにする。作成 2026-09-25。対象項目は差分13項目のうち 1〜9・12（10は保留、11・13は代替機能ありのため導入しない）。</p>
+</header>
+
+<div class="box">
+  <p><strong>この計画で置いた前提（ユーザー未確認）</strong></p>
+  <ul>
+    <li>「実装はdemo版で進める」＝ dev環境のデモ店舗「居酒屋 とり松」（shopId <code>ML2JUEd~eC8a2L=zbcKA=2h7</code>）を<strong>通常の店舗として</strong>開いて実装・検証する。<code>#/demo</code> の体験版モードは <code>fbSet</code>/<code>fbUpd</code> が書き込みを握り潰して設定を保存できないため、設定を伴う検証には使えない（app-core.js:15-30, 80-95）。</li>
+    <li>新しい設定キーの既定値は読み手側のフォールバックで持ち、<code>makeSettings()</code>（app-core.js）は触らない。指定された影響範囲（app-core.js を含まない）に収めるための前提で、既存の <code>staffTypeLimits</code> 等もこの形で動いている。</li>
+    <li>本機能は既存の労務系（勤務時間制限・休憩・属性別設定・従業員番号）と同じく <strong>Premium ガード</strong>に置く。開発中は <code>?plan=premium</code> でテストする。</li>
+  </ul>
+</div>
+
+<p class="toc">構成:
+  <a href="#review">1. 要レビュー（判断1〜10）</a> ／
+  <a href="#spec">2. 確定仕様（テストの期待値の正本）</a> ／
+  <a href="#must">3. 必須項目（目的・受け入れ条件・影響範囲・検証手順）</a> ／
+  <a href="#trust">4. 信頼して任せる</a>
+</p>
+
+<!-- ============================================================ -->
+<h2 id="review"><span class="role">冒頭 — ここを先にレビューしてください</span>データモデル・ユーザー向け挙動・アーキテクチャの判断 10 件</h2>
+<p>以下はユーザーが決めないと実装が分岐する点です。判断ごとに現状・案・推奨を1つずつ出しています。「ここは変えたい」があれば番号で指摘してください。<strong>10件すべてへの回答（番号ごと、または一括で「推奨どおり」）が実装着手の条件</strong>で、回答が無いまま実装を始めてはいけません（末尾の「実装セッションへの引き継ぎ」を参照）。</p>
+
+<section class="dec">
+<h3>判断1. 労働時間制（A／B／対象外）をどこに持たせるか</h3>
+<table>
+<tr><td>現状</td><td>属性は <code>settings.staffTypeLimits[属性ID] = {name, daily, weekly, biweekly, monthly, customDays, customHours}</code>（0=無制限）。組み込みIDは <code>employee</code>/<code>parttime</code>/<code>dispatch</code>/<code>other</code>、追加は <code>custom_</code>+ID で自由に作れる。スタッフへの割当は <code>settings.staffAttributes[名前]</code>。未設定のスタッフは <code>parttime</code> に倒れる。労働時間制という概念は無い。</td></tr>
+<tr><td>案</td><td>(a) 属性オブジェクトに <code>laborSystem: "A"|"B"|"none"</code> フィールドを追加する（属性1つに制1つ。「A制の属性」「B制の属性」を複数作れる）。(b) 属性とは別の軸として、スタッフごとに制を割り当てる新しいマップを作る。</td></tr>
+<tr class="rec"><td>推奨</td><td><strong>案a（属性に持たせる）。</strong>割当UI（StaffTab）・期間指定（<code>period.keepAttrs</code>）・改名/削除の後始末（<code>STAFF_KEYED_SETTING_MAPS</code>）がすべて属性の仕組みに乗っているので、別軸を作ると同じ配線をもう1系統維持することになる。「夏だけ上限の違うA制属性」のような複数A制属性も自然に作れて有用。組み込みの既定は employee=A、parttime=B、dispatch/other=対象外（Excelの「応援・外部」に対応。労働時間の判定・集計から除外し人数チェックには入れる）。未設定→parttime→B制 という既存フォールバックは「通常の労働時間制」で安全側に倒れる。</td></tr>
+</table>
+</section>
+
+<section class="dec">
+<h3>判断2. 月の総枠の算出方式（31日の値を手入力→他月を計算）</h3>
+<table>
+<tr><td>現状</td><td><code>staffTypeLimits.monthly</code> は手入力の時間数1つで、月の日数に関係なく同じ値。Excelは <code>FLOOR(40 × 暦日数 ÷ 7 × 60, 1) ÷ 60</code> で月ごとに自動算出（31日=177:08、30日=171:25、29日=165:42、28日=160:00）。</td></tr>
+<tr><td>案</td><td>入力された「31日の月の総枠」から週の法定労働時間 W を逆算し、<strong>W を30分単位に丸めて確定</strong>したうえで各月を <code>FLOOR(W × 暦日数 ÷ 7 × 60, 1) ÷ 60</code> で計算する。単純な比例配分は Excel と最大2分ずれる（30日が171:27になる）が、この方式なら4パターンすべて一致することを実測済み（177:08 → W=40h に丸まる）。</td></tr>
+<tr class="rec"><td>推奨</td><td><strong>丸め方式を採用する。</strong>週44時間（特例措置対象事業場: 接客娯楽業で常時10人未満）は<strong>別のトグルを作らず、この逆算が自動で吸収する</strong>——44h の事業場は31日の総枠として 194:51 を入力すれば W=44h に丸まり、全月が44h基準で計算される。誤入力に気づけるよう、設定画面に「この値から週の法定労働時間を 40時間 と判定しました」のように導出結果を表示する。今の職場（46名）は40hで正しい。</td></tr>
+</table>
+</section>
+
+<section class="dec">
+<h3>判断3. B（パート・アルバイト）の月上限をどうするか</h3>
+<table>
+<tr><td>現状</td><td>Excel には B の月の下限・上限が<strong>存在しない</strong>（B に効くのは1日8時間・週40時間だけで、月次の枠という概念自体が無い）。一方 Shifty の <code>staffTypeLimits.monthly</code> は全属性が持てる。</td></tr>
+<tr><td>案</td><td>(a) A制の属性だけ総枠の自動算出（判断2）に切り替え、B制は既存の <code>monthly</code> 手入力を「店舗独自の目安」として残す。(b) B制から月上限の概念を消す。</td></tr>
+<tr class="rec"><td>推奨</td><td><strong>案a。</strong>既存店舗で <code>monthly</code> を設定済みの場合に挙動を変えない（消すと既存の上限チェックが黙って外れる＝安全側と逆）。表示上は、A制の総枠・目安・上限は「法定・協定に基づく判定」、B制の <code>monthly</code> は「店舗の設定値による判定」と出どころを分けて示し、混同させない。</td></tr>
+</table>
+</section>
+
+<section class="dec">
+<h3>判断4. 36協定の実装範囲</h3>
+<table>
+<tr><td>現状</td><td>Shifty に36協定の概念は無い。Excel が実装しているのは「1日の延長時間の上限（3h）」「1か月の延長時間の上限（45h）」の2つだけ。法定にはほかに 年360h／特別条項の絶対上限（年720h・単月100h未満・複数月平均80h・月45h超は年6回まで）がある（2026-09-25 時点の調査。2026年9月からの労基署運用見直しでも法律上の上限自体は不変）。</td></tr>
+<tr><td>案</td><td>(a) Excel と同じ2つ（1日の延長上限・月の延長上限）に留める。(b) 法定の絶対上限（年720h・単月100h未満・複数月平均80h・年6回・年360h）まで入れる。年単位の判定は期間をまたぐ通年集計が要り、subs の部分購読（直近3ヶ月窓）とも衝突するため実装コストが段違い。</td></tr>
+<tr class="rec"><td>推奨</td><td><strong>案a に「単月100h未満」だけ足した3項目。</strong>単月100h未満は月次集計の比較1つで済み追加コストがほぼ無いのに、唯一「未満」条件の絶対上限で違反の影響が大きい。年単位の4項目（720h・複数月平均80h・年6回・360h）は<strong>今回は入れない</strong>。再着手条件は「期間をまたぐ年間集計の基盤（過去購読の拡張）を別件で作ったとき」。設定画面の36協定欄には法定全項目のチェックリストを載せ、判定しない項目は「本機能では判定しません」と明記する（判定していると誤読させない）。</td></tr>
+</table>
+</section>
+
+<section class="dec">
+<h3>判断5. 休憩をどう揃えるか（方式・日別上書き・休憩不足検査）</h3>
+<table>
+<tr><td>現状</td><td>3つ違う。(a) Excel は勤務の長さで自動決定（拘束&gt;8h→1.0h、&gt;6h→0.75h、手入力があればその値）。Shifty は登録した休憩帯を勤務が<strong>完全に含む</strong>ときだけ重なり分を控除（<code>getBreaksFor</code>・<code>calcNetWorkMinutes</code>）。例: 12:30〜21:00 に休憩帯 12:00〜13:00 は Excel 0.75h控除＋休憩不足警告／Shifty 控除0・警告なし。(b) Shifty には「その日だけ休憩を変える」手段が無い。(c) Shifty には休憩不足の検査が無い。</td></tr>
+<tr><td>案</td><td>(1) 長さ方式へ全面切替。(2) 時間帯方式のまま休憩不足検査だけ追加。(3) 店舗ごとに方式を選択できるようにし、日別上書きと休憩不足検査も追加。</td></tr>
+<tr class="rec"><td>推奨</td><td><strong>案3。</strong>店舗設定に休憩方式（<code>時間帯方式=既定</code>／<code>長さ方式</code>）を追加し、<strong>既存店舗は設定キーが無い限り時間帯方式＝現行挙動と1分も変わらない</strong>（回帰テストで担保）。職場のExcel運用を移すには長さ方式が必須で、逆にアイドルタイム休憩を時間帯で運用している既存店舗から時間帯方式は奪えないため、両方式の併存が唯一両立する形。長さ方式のしきい値（&gt;8h→1.0h、&gt;6h→0.75h）は店舗ごとに変更可（Excelと同じ）。日別上書きは提出一覧の詳細モーダルに <code>adjustedBreak</code>（分）として追加（既存の <code>adjustedStart/End</code> と同じ形・同じ保存経路）。休憩不足検査（実働&gt;6h かつ <code>拘束 − 実働</code> &lt; 実働&gt;8h?0.999h:0.749h。<strong>拘束の定義は S-3 の枠内</strong>）は<strong>方式によらず</strong>日次判定に出す——時間帯方式の店舗でも「8.5時間働いて休憩0」に気づけるようにする。</td></tr>
+</table>
+</section>
+
+<section class="dec">
+<h3>判断6. 休暇種別（<code>y</code>／<code>ya</code>）と半日の扱い・スタッフ側に出すか</h3>
+<table>
+<tr><td>現状</td><td><code>y</code> は <code>kind:"rest"</code> の「休み希望」で、出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日という<strong>半日単位</strong>の扱いを持つ（<code>adminRest.start/end</code> を立てるだけで提出値は壊さない）。<code>y</code> は <code>isReservedShopAbbr</code> で予約済みだが <code>kind:"rest"</code> は完全一致のみ衝突。スタッフ提出側の状態は <code>work</code>/<code>holiday</code> の2値だけで、有給・公休・慶事を区別する手段が無い。Excel は有給・公休・慶事の3種をプルダウンで選び、色分け（有給=薄青・公休=灰・慶事=桃）と日数の別集計を持つ。</td></tr>
+<tr><td>案</td><td>(a) <code>y</code>（終日）=公休、<code>ya</code>（終日）=プルダウンで有給/慶事を選択。休暇種別は<strong>日単位（終日）のみ</strong>で、半日の <code>y</code> は従来どおり「休み希望」のまま。管理者専用。(b) スタッフ提出側（app-staff.js）にも休暇種別の選択を出す。</td></tr>
+<tr class="rec"><td>推奨</td><td><strong>案a。</strong>半日公休は導入しない——Excelにも無く、週1休の判定は終日の休みしか数えないので半日種別は判定に寄与しない。有給・慶事は労務管理上の記録（賃金・年5日取得義務に関わる）なので<strong>管理者だけが付けられる</strong>ようにし、スタッフ側は今回は現状維持（holiday提出→管理者が種別を確定、という運用。要望が出たら別件で再検討）。データは <code>shift.leaveType: "paid"|"public"|"ceremony"</code> を管理者フィールドとして持ち、<code>ADMIN_SHIFT_FIELDS</code> に登録して再提出で消えないようにする。<code>ya</code> の追加に伴い <code>isReservedShopAbbr</code> の予約判定を更新する。Excelの運用ルール（有給の週も別に公休1日以上・有給は実働に入れない・無記入日は公休扱い）は判断8の集計規則として引き継ぐ。</td></tr>
+</table>
+</section>
+
+<section class="dec">
+<h3>判断7. 項目12のバグ（退勤≦出勤で黙って0になる）をどの案で直すか</h3>
+<table>
+<tr><td>現状</td><td><code>effShiftRangeMin</code> が 退勤≦出勤 のとき <code>null</code> を返し、<code>calcNetWorkMinutes</code>・<code>shiftBandInfo</code>・<code>getBreaksFor</code> がそろって「勤務なし」扱いにする。Excel/PDFには「22 / 2」と正しく印字されるため気づけない。入口は <code>applyEditToSubs</code>（シフト作成タブ）と <code>saveAdj</code>（提出一覧の詳細モーダル）の2つ。BACKLOG（🟡・#129）に案A（保存前に弾く。ただしセルは1つずつ確定するので途中経過が弾かれる）・案B（24時間足して解釈。打ち間違いを黙って深夜シフトに確定する向き）・案C（保存は通し <code>dupErrors</code> と同じセル色付け＋エラーパネル）の3案でユーザー判断待ち。</td></tr>
+<tr><td>案</td><td>A／B／C（上記）。</td></tr>
+<tr class="rec"><td>推奨</td><td><strong>案C。</strong>理由は3つ。①Excel側もこの状態を「時刻の入力ミスn日」という<strong>検査項目</strong>として出す設計で、今回の移植で作る日次判定パネルにそのまま載る——直し方自体が本機能の一部になる。②案Aはセルを1つずつ確定する編集フローと衝突し（#51・#56・#58 の回帰が全部起きた場所）、案Bは打ち間違いを黙って4時間の深夜シフトにする向きに倒れる。③データを変えないので既存データ・既存挙動への影響が最小。判定は純粋関数に切り出し、<code>applyEditToSubs</code> と <code>saveAdj</code> の<strong>両方</strong>から同じ関数を通す（片方だけだと同じ状態をもう一方から作れる）。エラー文には「深夜は 25:00・26:00 のように入力します」を添える。</td></tr>
+</table>
+</section>
+
+<section class="dec">
+<h3>判断8. 有給・慶事・公休を集計でどう区別するか（週の休み判定）</h3>
+<table>
+<tr><td>現状</td><td><code>status:"holiday"</code> は0分として扱われ実働には入らない（この点はExcelの有給の扱いと既に一致）。ただし休みの種類の区別が無いので、休みカウント・週の休み判定はすべて同列。Excelの運用ルール: 有給・慶事は「出勤日に取る休暇」なので<strong>週の休みに数えない</strong>（有給を取る週も別に公休1日以上）。公休は週の休みに数え、<strong>何も書かない日も公休として数える</strong>。有給は所定にも月の実働・目安にも入れない。</td></tr>
+<tr><td>案</td><td>週1休の判定（項目7）で「休み」と数えるのは <code>leaveType:"public"</code>（公休）と<strong>無記入の日</strong>のみ。有給（paid）・慶事（ceremony）は休みに数えず、実働にも入れない（0分のまま）。集計表に有給・公休・慶事の日数を別々に出す。</td></tr>
+<tr class="rec"><td>推奨</td><td><strong>案のとおり実装する（Excelの運用ルールをそのまま移す）。</strong>注意点は「無記入=公休」の扱いで、Shiftyでは未提出・提出前の期間は全日が無記入になるため、<strong>週1休のチェックは何らかのシフトが入っている週に限って評価する</strong>（全日無記入の週を「休みだらけ」と数えて判定を空回りさせない）。Excelの <code>要確認</code>（週の7日がファイル内に揃わない）に相当する状態は、前期間の提出が購読窓に無い場合に出す（項目7の期間跨ぎと同じ枠組み）。</td></tr>
+</table>
+</section>
+
+<section class="dec">
+<h3>判断9. 新しい設定キーを <code>period.snapshot</code> の凍結対象に含めるか</h3>
+<table>
+<tr><td>現状</td><td>確定済み期間はシフト作成タブが <code>period.snapshot</code> の写しの settings で判定する。凍結対象は <code>PERIOD_SNAPSHOT_SETTING_KEYS</code> で管理され、意図的な例外は <code>staffHidden</code> のみ（値自体が期間の範囲を持つため）。スタッフ名キーの新マップは <code>STAFF_KEYED_SETTING_MAPS</code> と両方への登録が必須（tests/core.test.js がドリフト検出）。</td></tr>
+<tr><td>案</td><td>今回の新キー（労働時間制を含む属性設定の拡張・月総枠の設定値・固定残業/余裕・36協定値・休憩方式としきい値）を凍結対象に含める／含めない。</td></tr>
+<tr class="rec"><td>推奨</td><td><strong>すべて凍結対象に含める。</strong>これらは「配ったシフト表がどの基準で適法と判定されたか」の根拠であり、退勤延長・上限と同じ性質。含めないと、期間終了後に協定値や休憩方式を変えた瞬間、配り終えたシフト表の判定が黙って変わる（BACKLOGの「確定済み期間でタブ間の数字が食い違う」問題を新機能で再生産する）。属性拡張は既存の <code>staffTypeLimits</code>（凍結済み）の中のフィールド追加なので自動的に凍結に乗る。日別上書き <code>adjustedBreak</code> は settings ではなく sub 側なので凍結の対象外（提出データは元から期間に属する）。写しの肥大は数値フィールドの追加のみで無視できる量。</td></tr>
+</table>
+</section>
+
+<section class="dec">
+<h3>判断10. 導入の順序と本番リリースの切りどころ</h3>
+<table>
+<tr><td>現状</td><td>対象は9項目＋バグ修正1件。すべて未着手。実装・検証は dev のデモ店舗で行う前提。</td></tr>
+<tr><td>案</td><td>一括リリース／3段階の段階リリース。</td></tr>
+<tr class="rec"><td>推奨</td><td><strong>3段階に分け、弾ごとに <code>/release-to-main</code> で本番へ出す。</strong>
+<br>第1弾（基盤と修正）: 項目12のバグ修正（案C）・項目1（労働時間制の導入）・項目2＋3（総枠の自動算出）・項目6（8h/40hハードコード）・B制の8h超/週40h超判定。ここまでで日次判定パネルの土台ができ、バグ修正だけでも単独の価値がある。
+<br>第2弾（A制の中核）: 項目4（残業の累積比例按分・退勤延長込みの担保）・項目5（36協定3項目）・目安の4段階判定（みなし超/所定未満/目安未満/OK）・総括判定。
+<br>第3弾（休みと休憩）: 項目7（週1休の期間跨ぎ）・項目8（休憩方式・日別上書き・休憩不足）・項目9（休暇種別）＋判断8の集計規則。
+<br>理由: 一括だと app-admin.js の集計・判定・Excel/PDF を1回で大きく書き換えることになり、回帰の切り分けができない。各弾は独立に検証可能で、弾の中では前の弾の判定を壊さないことを非回帰項目にする。並行セッションがある場合はリリースを全作業完了後にまとめる既存ルールに従う。</td></tr>
+</table>
+</section>
+
+<!-- ============================================================ -->
+<h2 id="spec"><span class="role">確定仕様 — テストの期待値はここを正本にする</span>Excelの数式から抽出した判定規則と実測値</h2>
+<p>受け入れ条件と検証手順が「Excel実測値」と書いている箇所は、すべてこの節を指す。<strong>この節に無い期待値を実装の出力から逆生成してテストに書き戻してはいけない</strong>。必要な値がここに無ければ、実装を止めてユーザーに確認する。</p>
+
+<h3>S-1. 月の枠（A制のみ）</h3>
+<p>総枠（所定）= <code>FLOOR(W × 暦日数 ÷ 7 × 60, 1) ÷ 60</code>（W=週の法定労働時間）。目安 = <code>ROUNDDOWN(総枠 + 固定残業 − 余裕, 0)</code>。上限 = <code>総枠 + 固定残業</code>。下表は W=40h・固定残業30h・余裕7h のときの値で、<strong>判断2への回答で設定値が変わったらこの表も変わる（実装時はこの表の4行を唯一の期待値とする）</strong>。</p>
+<table>
+<tr><th>暦日数</th><th>総枠（所定）</th><th>総枠（時間の小数）</th><th>目安</th><th>上限</th></tr>
+<tr><td>31日</td><td>177時間08分</td><td>177.13333…</td><td>200時間</td><td>207時間08分</td></tr>
+<tr><td>30日</td><td>171時間25分</td><td>171.41666…</td><td>194時間</td><td>201時間25分</td></tr>
+<tr><td>29日（うるう年2月）</td><td>165時間42分</td><td>165.70000</td><td>188時間</td><td>195時間42分</td></tr>
+<tr><td>28日（2月）</td><td>160時間00分</td><td>160.00000</td><td>183時間</td><td>190時間00分</td></tr>
+</table>
+<p class="note">W=44h（特例措置対象事業場）のときの31日の総枠は 194時間51分。判断2の推奨どおり「31日の値を入力してWを30分単位に丸めて逆算」する場合、194:51 の入力が W=44h に丸まることをテストで固定する。</p>
+
+<h3>S-2. 残業予定の按分（項目4）</h3>
+<p>月の残業予定 = <code>ROUNDUP(MAX(0, 月実働 − 総枠), 2)</code>。日別 = <code>ROUND(当日までの累計実働 × 月残業 ÷ 月実働, 2) − ROUND(前日までの累計実働 × 月残業 ÷ 月実働, 2)</code>。<strong>ROUND はExcel仕様の「絶対値が大きい方へ丸める」</strong>で、JavaScript の <code>Math.round</code>（負の値で挙動が異なる）や銀行丸めに置き換えてはいけない。</p>
+<p>この累積差分方式の要点は、<strong>同じ実働時間の日でも配分が1銭単位で割れ、その代わり日別の和が月の残業予定と完全に一致する</strong>こと。単純に「実働 × 比率」を毎日丸めると和がずれる。次の系列をテストの期待値として固定する（総枠177.13333…h の月・実働24日・月実働182.5h・月の残業予定5.37h・日別の和5.37h）。</p>
+<table>
+<tr><th>日</th><th>実働(h)</th><th>残業予定(h)</th><th>日</th><th>実働(h)</th><th>残業予定(h)</th></tr>
+<tr><td>1〜7日目</td><td>7.5</td><td>各 0.22</td><td>16日目</td><td>6.0</td><td>0.18</td></tr>
+<tr><td><strong>8日目</strong></td><td>7.5</td><td><strong>0.23</strong></td><td>17日目</td><td>6.0</td><td>0.17</td></tr>
+<tr><td>9〜15日目</td><td>7.5</td><td>各 0.22</td><td>18〜19日目</td><td>6.0</td><td>各 0.18</td></tr>
+<tr><td>21日目</td><td>10.0</td><td>0.30</td><td>20日目</td><td>6.0</td><td>0.17</td></tr>
+<tr><td>22日目</td><td>10.0</td><td>0.29</td><td>23日目</td><td>10.0</td><td>0.30</td></tr>
+<tr><td>24日目</td><td>10.0</td><td>0.29</td><td>合計</td><td>182.5</td><td><strong>5.37</strong></td></tr>
+</table>
+<p class="note">実働0以下の日・A制でない人・月の残業予定が0の人は按分の対象外で、日別の残業予定は0。その日の所定 = その日の実働 − その日の残業予定。</p>
+
+<h3>S-3. 実働と休憩（項目8）</h3>
+<p>Excelの実働 = <code>退勤 − 出勤 − 休憩</code>。休憩は手入力があればその値、無ければ <strong>拘束&gt;8h→1.0h／拘束&gt;6h→0.75h／それ以外0</strong>（しきい値と控除量は店舗設定）。休憩不足 = <strong>実働&gt;6h かつ（拘束 − 実働）&lt; (実働&gt;8h ? 0.999 : 0.749)</strong> のとき、その日を1としてカウントする。</p>
+<div class="box">
+<p><strong>Shifty での「拘束」の定義（2026-09-26 ユーザー決定）</strong></p>
+<p>式は <strong><code>(拘束 − 実働) &lt; 基準</code></strong> に統一する（<code>控除 &lt; 基準</code> とは書かない）。Shifty は Excel に無い「退勤延長」と「締の追加出勤」を実働に足すので、拘束も<strong>同じ範囲で測る</strong>。</p>
+<ul>
+  <li><code>拘束 = (実効退勤 + 退勤延長) − 実効出勤 + 締の追加出勤の長さ</code></li>
+  <li><code>実働 = calcNetWorkMinutes(...)</code>（同じ範囲から休憩控除を引いた値）</li>
+  <li>6h／8h のしきい値判定に使うのは<strong>実働</strong>（Excelと同じ）。退勤延長も実働に含まれる。</li>
+</ul>
+<p>この定義では <code>拘束 − 実働</code> はその日に実際に引かれた休憩と一致する。<strong>拘束を「退勤 − 出勤」（延長を含まない生の幅）で測ってはいけない</strong>——延長が控除より長い日に値が負になり、休憩を取っているのに休憩不足が出る。</p>
+<p><strong>日次判定の文言は「<code>休憩不足n日</code>」のまま</strong>にする。レビューで出た「休憩不足（予定）」への変更案は<strong>不採用</strong>（2026-09-26 ユーザー決定）。この判定はシフトの組み方に対する検査で、Excel と同じ語にそろえる。</p>
+</div>
+<p>Shiftyの現行（時間帯方式）は「勤務が休憩帯を完全に含む」ときだけ重なり分を控除する（<code>出勤 &lt; 休憩開始</code> かつ <code>退勤 &gt; 休憩終了</code>。境界一致・休憩の内側・片側セルは非適用）。両方式で結果が食い違う4ケースを期待値として固定する。</p>
+<table>
+<tr><th>#</th><th>シフト</th><th>店舗の休憩設定</th><th>Excel（長さ方式）</th><th>Shifty 現行（時間帯方式）</th></tr>
+<tr><td>1</td><td>9:00〜15:00（拘束6.0h）</td><td>12:00〜13:00</td><td>控除0・実働6.0h</td><td>控除60分・実働5.0h</td></tr>
+<tr><td>2</td><td>11:00〜23:00（拘束12.0h）</td><td>14:00〜17:00（アイドル）</td><td>控除1.0h・実働11.0h</td><td>控除3.0h・実働9.0h</td></tr>
+<tr><td>3</td><td>12:30〜21:00（拘束8.5h）</td><td>12:00〜13:00</td><td>控除0.75h・実働7.75h・<strong>休憩不足</strong></td><td>控除0・実働8.5h・<strong>警告なし</strong></td></tr>
+<tr><td>4</td><td>17:30〜23:00（拘束5.5h）</td><td>ディナー帯に設定なし</td><td>控除0・実働5.5h</td><td>控除0・実働5.5h（一致）</td></tr>
+</table>
+<p class="note">ケース3が休憩不足の判定対象。実働7.75h（&gt;6h・8h以下）で控除0.75h は 0.749 を超えるため、Excel側で不足になるのは<strong>手入力で休憩を0.5h等に減らした場合</strong>。時間帯方式のまま控除0（&lt;0.749）になるケース3の Shifty 側が、休憩不足検査の主たる検出対象になる。</p>
+
+<h3>S-4. 日次判定の文言と発火条件</h3>
+<p>Excelは該当する項目を件数つきで連結して1セルに出す。Shiftyの日次判定パネルもこの文言と条件をそのまま使う（<code>n</code> は該当日数）。</p>
+<table>
+<tr><th>対象</th><th>文言</th><th>発火条件</th></tr>
+<tr><td rowspan="5">A制</td><td><code>12h超n日</code></td><td>その日の実働 &gt; 12</td></tr>
+<tr><td><code>4h未満n日</code></td><td>その日の実働 &gt; 0 かつ &lt; 4</td></tr>
+<tr><td><code>月の残業が上限超</code></td><td>月の残業予定 &gt; 36協定の月の残業上限（既定45）</td></tr>
+<tr><td><code>固定残業30h超</code></td><td>月の残業予定 &gt; 固定残業の設定値（既定30）</td></tr>
+<tr><td><code>1日の残業予定が上限超n日</code></td><td>その日の残業予定 &gt; 36協定の1日の残業上限（既定3）</td></tr>
+<tr><td rowspan="4">B制</td><td><code>8h超n日(残業)</code></td><td>その日の実働 &gt; 8</td></tr>
+<tr><td><code>週40h超(残業)</code></td><td>B週40h超（S-5）が正</td></tr>
+<tr><td><code>1日の残業が上限超n日</code></td><td>その日の実働 &gt; 8 + 1日の残業上限</td></tr>
+<tr><td><code>週40h超(協定なし)</code></td><td>1日の残業上限が0 かつ B週40h超が正</td></tr>
+<tr><td rowspan="3">共通</td><td><code>休憩不足n日</code></td><td>S-3の休憩不足条件</td></tr>
+<tr><td><code>時刻の入力ミスn日</code></td><td>その日の実働が負（Shiftyでは退勤≦出勤。項目12と同じ判定関数を使う）</td></tr>
+<tr><td><code>区分が空欄か誤り</code></td><td>下の注を参照</td></tr>
+</table>
+<p class="note"><strong>「区分」の Shifty での定義</strong>: Excelの「区分」列（A／B／応援／外部）は、Shiftyでは<strong>スタッフに割り当てられた属性の <code>laborSystem</code></strong>（判断1）に対応する。発火条件は「そのスタッフの属性が <code>staffTypeLimits</code> に存在しない、または存在するが <code>laborSystem</code> が未設定」。属性が未割当のスタッフは既存フォールバックで <code>parttime</code>（=B制）に倒れるので発火しない。Excelの「従業員番号が空欄」「派遣は区分「外部」にする」の2項目は、Shiftyの従業員番号が出力専用で検証を持たないため<strong>移植しない</strong>（判断1の対象外・実装しないことを明記する）。</p>
+
+<h3>S-5. 週の判定（項目6・項目7）</h3>
+<p><strong>B制の週40h超(h)</strong> = 各週について「その週の各日の実働を1日8hで切った値」の合計から40を引き、正の分だけを足し上げた値。前月・翌月にまたがる週は当月（＝データのある期間）の日だけで計算する。式: <code>MAX(0, Σ min(その日の実働, 8) − 40)</code> を週ごとに求めて合計。</p>
+<p><strong>週の休み</strong>は月曜起算。前半・後半の両期間を合算して数える。3状態: <code>休n</code>（その週の休みの日数）／<code>×休なし</code>（その週の7日すべてのデータが揃っていて休みが0）／<code>要確認</code>（7日のうちデータが揃わない日がある週）。</p>
+<p class="note"><strong>休みとして数える日</strong>: <code>leaveType:"public"</code>（公休）と、シフトが入っていない日（無記入）。有給・慶事は「出勤日に取る休暇」なので数えない（判断8）。<strong>既存データの扱い</strong>: 本機能の導入前に入力された終日の <code>y</code> は <code>leaveType</code> を持たないが、<strong>判定上は公休として扱う</strong>（データ移行はしない）。これをしないと既存店舗で <code>×休なし</code> の誤警告が出る。<strong>全日が無記入の週は評価対象外</strong>（未提出の期間を「休みだらけ」と数えて判定を空回りさせないため）。</p>
+
+<h3>S-6. 目安の確認と総括判定</h3>
+<p>いずれもA制のみ。月の実働が0の人（1日も出勤がない人）と、A制でない人は空欄。</p>
+<table>
+<tr><th>状態</th><th>条件（上から順に評価）</th><th>表示</th><th>色</th></tr>
+<tr><td>みなし超</td><td>月実働 &gt; ROUND(総枠 + 固定残業, 2)</td><td><code>みなし超 ○h</code>（超過分・ROUNDUP 2桁）</td><td>赤</td></tr>
+<tr><td>所定未満</td><td>月実働 &lt; ROUND(総枠, 2)</td><td><code>所定未満 あと○h</code>（不足分・ROUNDUP 2桁）</td><td>赤</td></tr>
+<tr><td>目安未満</td><td>月実働 &lt; 目安</td><td><code>目安未満 あと○h</code>（不足分・ROUNDUP 2桁）</td><td>黄</td></tr>
+<tr><td>OK</td><td>上記以外</td><td><code>OK 上限まで○h</code>（残り・ROUNDDOWN 2桁）</td><td>—</td></tr>
+</table>
+<p><strong>総括判定</strong>は4値。上から順に評価する。</p>
+<table>
+<tr><th>判定</th><th>条件</th></tr>
+<tr><td><code>要修正</code></td><td>週の休みに <code>×休なし</code> がある、またはA制で（みなし超・所定未満・12h超・4h未満・月の残業が上限超・1日の残業予定が上限超）のいずれか、またはB制で（1日の残業が上限超・協定0なのに週40h超）のいずれか、または（休憩不足・時刻の入力ミス・区分が空欄か誤り）のいずれか</td></tr>
+<tr><td><code>目安未満</code></td><td>A制で月実働 &lt; 目安（要修正に該当しない場合）</td></tr>
+<tr><td><code>残業あり</code></td><td>B制で（8h超の日がある または 週40h超が正）</td></tr>
+<tr><td><code>OK</code></td><td>上記以外</td></tr>
+</table>
+<p class="note">判定対象外（判断1の「対象外」属性＝Excelの応援・外部）のスタッフは、目安の確認・総括判定・実働の集計すべてで空欄にする。人数系（ヒートマップ・必要ポジション）には従来どおり入れる。</p>
+
+<h3>S-7. 休暇種別の集計規則（項目9・判断8）</h3>
+<ul>
+  <li>有給・公休・慶事の<strong>日数を別々に集計</strong>して表示する。</li>
+  <li><strong>有給の日は所定労働時間に換算しない。</strong>月の実働・目安・按分のいずれにも入らない（Shiftyでは <code>status:"holiday"</code> が0分なので現行どおりで満たせる）。</li>
+  <li><strong>有給と慶事は週の休みに数えない。</strong>公休と無記入だけを数える（S-5）。</li>
+  <li>公休を有給に置き換えない運用（有給を取る週も別に公休1日以上を入れる）は、S-5の判定が自動的に担保する。</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="must"><span class="role">必須項目</span>目的・受け入れ条件・影響範囲・検証手順</h2>
+
+<h3>目的</h3>
+<p>株式会社NITOエンタープライズ・鶏えん梅田駅前第3ビルで実運用しているシフトExcelひな型（xlsm＋VBA）の労務判定を Shifty に移植し、<strong>Excelに転記しなくても Shifty の画面上でシフトの適法性（労基法の法定基準・36協定の協定値・店舗の運用ルール）を判断できる</strong>ようにする。判定基準はExcelの数式から抽出した確定仕様（総枠4パターン・按分式・休憩規則・週休規則・日次/総括判定）に一致させる。</p>
+
+<h3>受け入れ条件チェックリスト</h3>
+<p class="note">すべて検証可能な項目のみ。番号は対象項目に対応。<strong>判定値の照合は「確定仕様」節（S-1〜S-7）を正とする。</strong>そこに無い期待値を実装の出力から逆生成しない。</p>
+
+<h4>第1弾（基盤と修正）</h4>
+<ul class="chk">
+  <li>[項目1] SetTab の「スタッフ属性別 勤務時間制限」で属性ごとに労働時間制（1か月単位の変形労働時間制／通常の労働時間制／判定対象外）を選べ、<code>settings.staffTypeLimits[属性ID].laborSystem</code> に保存される。既定は employee=A・parttime=B・dispatch/other=対象外。</li>
+  <li>[項目1] 対象外の属性を持つスタッフは労務判定・労働時間集計から除外されるが、ヒートマップ等の人数系には従来どおり入る（ユニットテスト＋画面実測）。</li>
+  <li>[項目2] 31日の月の総枠を入力すると週法定労働時間Wが30分単位で逆算・表示され、31/30/29/28日の総枠が <strong>S-1 の表の4行</strong>と分単位で一致する（ユニットテスト4件）。W=44h の入力（S-1注記の 194:51）でも同式で全月が算出される。</li>
+  <li>[項目3] A制の目安=<code>ROUNDDOWN(総枠+固定残業−余裕,0)</code>・上限=<code>総枠+固定残業</code> が固定残業30h・余裕7hの設定値から自動算出され、<strong>S-1 の表の目安・上限の列</strong>と一致する。1日の残業上限を0にすると目安=総枠に切り替わる。</li>
+  <li>[項目3] B制の月次判定は既存の <code>staffTypeLimits.monthly</code>（店舗設定値）のままで、挙動が1分も変わらない（回帰テスト）。</li>
+  <li>[項目6] 法定基準 1日8時間・週40時間が app-utils.js の定数として存在し、B制の <code>8h超n日(残業)</code>・<code>週40h超</code> 判定（各週で「1日8h上限で切った実働」の合計−40の正数の和。前月・翌月にまたがる週は当月の日だけ）に使われる（ユニットテスト）。</li>
+  <li>[項目12] 退勤≦出勤のセルが保存後にエラー色＋エラーパネル「時刻の入力ミス」で表示される（案C）。判定は純粋関数で、<code>applyEditToSubs</code> と <code>saveAdj</code> の両経路から同じ関数を通ることをテストで担保。24時超え表記（25:00・26:00）の正常入力は影響を受けない（回帰テスト）。</li>
+  <li>[横断] シフト作成タブに日次判定パネル（<code>dupErrors</code> のエラーパネルと同じ形）が出て、A制: <code>12h超n日</code>／<code>4h未満n日</code>、B制: <code>8h超n日</code>、共通: <code>時刻の入力ミスn日</code>／<code>区分が空欄か誤り</code> が件数つきで表示される。文言と発火条件は <strong>S-4 の表</strong>に一致させる（<code>区分が空欄か誤り</code> の Shifty での定義は S-4 の注記。「従業員番号が空欄」「派遣は区分「外部」にする」は移植しない）。</li>
+</ul>
+
+<h4>第2弾（A制の中核）</h4>
+<ul class="chk">
+  <li>[項目4] 月の残業予定=<code>ROUNDUP(MAX(0, 月実働−総枠), 2)</code>、日別の残業予定=累積比例配分（<code>ROUND(当日累計×月残業÷月実働,2) − ROUND(前日累計×月残業÷月実働,2)</code>）が、端数を消さずにExcelと一致する（ユニットテスト・端数が出る系列を含む）。</li>
+  <li>[項目4] 実働の入力が <code>calcNetWorkMinutes</code>＋<code>getOT</code>（退勤延長込み）・<code>extraStart/End</code>（締の追加出勤）を通ることをテストで担保する——新規実装ではなく、月次判定・按分が既存の <code>getPeriodMin</code> と同じ関数経路を通ることの確認。</li>
+  <li>[項目5] 36協定の設定（1日の延長上限・月の延長上限）を SetTab で入力でき、<code>1日の残業予定が上限超n日</code>・<code>月の残業が上限超</code>・<code>固定残業30h超</code>・B制の <code>1日の残業が上限超n日</code>（8h+協定値超）・<code>週40h超(協定なし)</code>（1日上限0のとき）が判定される。</li>
+  <li>[項目5] 単月100h未満が月次判定に出る。<strong>比較に使うのは「月の残業予定」だけで、休日労働は加算しない</strong>——Shiftyには法定休日労働を区別するデータが無く、本計画でも導入しないため（法定の定義は「時間外＋休日労働」なので、この判定は法定より緩い側に倒れる）。設定画面の36協定欄に法定全項目のチェックリストを置き、この差と、判定しない項目（年720h・複数月平均80h・年6回・年360h）に「本機能では判定しません」を明記する。</li>
+  <li>[目安の確認] A制の4段階判定（<code>みなし超</code>／<code>所定未満</code>／<code>目安未満</code>／<code>OK 上限まで○h</code>）が不足・超過時間つきで表示され、総括判定（<code>要修正</code>／<code>目安未満</code>／<code>残業あり</code>／<code>OK</code>）が出る。</li>
+</ul>
+
+<h4>第3弾（休みと休憩）</h4>
+<ul class="chk">
+  <li>[項目7] 週の休み（月曜起算）が前の期間の提出を跨いで数えられ、<code>休n</code>／<code>×休なし</code>（7日分のデータが揃う週で休み0）／<code>要確認</code>（データが揃わない週）の3状態が出る（既存の <code>weeks</code>/<code>getWeekMin</code> の期間跨ぎ実装を流用。ユニットテスト）。</li>
+  <li>[項目8] 店舗設定に休憩方式（時間帯方式=既定／長さ方式）が追加され、長さ方式で 拘束&gt;8h→1.0h・&gt;6h→0.75h（しきい値は店舗ごとに変更可）が控除される。<strong>設定キーの無い既存店舗は現行挙動と完全一致</strong>（既存の休憩テストが全件そのままパス）。</li>
+  <li>[項目8] 提出一覧の詳細モーダルで日別の休憩上書き（<code>adjustedBreak</code>）ができ、その日の実働に反映される。</li>
+  <li>[項目8] 休憩不足（実働&gt;6h かつ <code>拘束 − 実働</code> &lt; 基準。拘束は S-3 の定義＝延長と締を含む）が方式によらず日次判定 <code>休憩不足n日</code> に出る。12:30〜21:00＋休憩帯12:00〜13:00 のケースで警告が出る（現状は控除0・警告なし）。<strong>退勤延長が付いた日で値が負にならない</strong>ことをユニットテストで固定する。</li>
+  <li>[項目9] 終日 <code>y</code>=公休、終日 <code>ya</code>=プルダウンで有給/慶事を選択でき、<code>shift.leaveType</code> に保存される（<code>y</code> は入力時に <code>leaveType:"public"</code> を設定する。既存データの遡及更新はしない）。<code>leaveType</code> が <code>ADMIN_SHIFT_FIELDS</code> に登録され、スタッフの再提出で消えない（ユニットテスト）。半日の <code>y</code> は従来どおり休み希望（回帰テスト）。</li>
+  <li>[項目9] セル色（有給=薄青・公休=灰・慶事=桃）が <code>CELL_COLOR_LEGEND</code> に登録され、レジェンドに自動表示される。集計表に有給・公休・慶事の日数が別々に出る。<code>ya</code> が <code>isReservedShopAbbr</code> の予約判定に追加され、店舗略称として登録できない。</li>
+  <li>[判断8] 週1休の判定で公休＋無記入のみを休みと数え、有給・慶事は数えない。有給の日は実働・目安に入らない。全日無記入の週は評価対象外。<strong>導入前に入力済みの終日 <code>y</code>（<code>leaveType</code> なし）は判定上，公休として扱い、データ移行はしない</strong>（既存店舗で <code>×休なし</code> の誤警告を出さないため。S-5の注記）。この既存データ互換をユニットテストで固定する。</li>
+</ul>
+
+<h4>全弾共通</h4>
+<ul class="chk">
+  <li><code>npm test</code> が全件パス（着手時点283件＋新規。失敗は失敗のまま報告）。<code>npx eslint app-*.js</code> 0 errors。</li>
+  <li>新しい設定キーが <code>PERIOD_SNAPSHOT_SETTING_KEYS</code> に登録され、確定済み期間で凍結値が使われる（ユニットテスト）。スタッフ名キーのマップを足した場合は <code>STAFF_KEYED_SETTING_MAPS</code> にも登録（ドリフト検出テストがパス）。</li>
+  <li>労務判定UIは Premium ガード内にあり、free/pro では表示されない。</li>
+  <li>新規追加の <code>input</code>/<code>select</code> の fontSize が16px以上（走査スクリプトで違反0件）。</li>
+  <li>既存判定（属性別上限・週上限・提出一覧のバッジ）が労務設定未使用の店舗で変更前と同一の結果を返す（非回帰テスト）。</li>
+  <li>Excelひな型と同一の1ヶ月分シフトを両方に入力し、総枠・目安・上限・月実働・残業予定（月・日別）・週の休み・休憩不足・日次/総括判定の全数値が一致する（最終突き合わせ・検証手順5）。</li>
+</ul>
+
+<h3>影響範囲</h3>
+<table>
+<tr><th>区分</th><th>対象</th><th>内容</th></tr>
+<tr><td rowspan="4">触る</td><td><code>app-utils.js</code></td><td>労務判定の純粋関数を新設（総枠算出・W逆算・按分・週休・休憩不足・時刻整合判定・休暇種別の集計規則）。<code>CELL_COMMANDS</code>／<code>CELL_COLOR_LEGEND</code>／<code>extractNote</code>／<code>isReservedShopAbbr</code>／<code>ADMIN_SHIFT_FIELDS</code>／<code>PERIOD_SNAPSHOT_SETTING_KEYS</code> の更新。すべて <code>npm test</code> の対象。</td></tr>
+<tr><td><code>app-admin.js</code></td><td>SetTab（労働時間制・総枠・36協定・休憩方式の設定UI）、ShiftEditTab（日次判定パネル・目安4段階・総括・集計表の休暇日数）、SubsTab（上限判定の労務化・詳細モーダルの <code>adjustedBreak</code>）、<code>applyEditToSubs</code>／<code>saveAdj</code>（項目12の判定）、<code>expXl</code>・PDF（判定・休暇種別の反映）。</td></tr>
+<tr><td><code>app-staff.js</code></td><td><strong>原則触らない</strong>（判断6の推奨=休暇種別は管理者のみ）。触るのは判断6で「スタッフ側にも出す」に変更された場合のみ。</td></tr>
+<tr><td><code>tests/</code></td><td>ユニットテスト追加（Excel実測値の固定・回帰・レジストリ完全性・凍結キー）。</td></tr>
+<tr><td rowspan="4">触らない</td><td><code>functions/index.js</code></td><td>サーバ側の労務検証は入れない。</td></tr>
+<tr><td><code>database.rules.json</code></td><td><code>settings</code> 配下への追加のみなのでルール変更不要。</td></tr>
+<tr><td>課金・Stripe・企業連携</td><td>対象外。</td></tr>
+<tr><td><code>app-core.js</code>・<code>index.html</code></td><td>新設定キーの既定値は読み手側フォールバックで対応し <code>makeSettings</code> は変更しない（前提参照）。CDN・読み込み順に変更なし。</td></tr>
+</table>
+<p class="note">修正前に <code>grep -n "関数名" app-*.js</code> で全呼び出し元を洗い出してから編集する（5ファイル分割のため定義と呼び出しが別ファイルにあるのが普通）。特に <code>calcNetWorkMinutes</code>・<code>getBreaksFor</code>・<code>getOT</code>・<code>getPeriodMin</code>・<code>getWeekMin</code> は複数箇所から呼ばれている。</p>
+
+<h3>検証手順</h3>
+<ol>
+  <li><strong>毎コミット</strong>: <code>npm test</code> と <code>npx eslint app-*.js</code> を実行し、結果を省略せず報告する（失敗は失敗のまま）。1コミット=1論点。</li>
+  <li><strong>Excel一致のユニットテスト</strong>: 総枠4パターン（S-1）・目安・上限（S-1）・按分の端数系列（S-2の24日の表。日別の和が5.37hに一致することを含む）・B週40h超（S-5。期間跨ぎ週を含む）・休憩の食い違い4ケース（S-3の表）・休憩不足（S-3）・週休3状態と既存 <code>y</code> 互換（S-5）・目安4段階と総括判定（S-6）・休暇種別の集計（S-7）を tests/core.test.js に数値で固定する。<strong>期待値は S-1〜S-7 から転記し、実装の出力から作らない。</strong>既存関数を変更する項目（項目12・項目8の休憩・週40h）は<strong>修正前の実装に当てると落ちることを確認してから採用する</strong>（素通りするテストを作らない）。新規関数はこの確認ができないので、代わりに<strong>S節の数値を先に書いてから実装する</strong>（テストを先に書く）。</li>
+  <li><strong>実ブラウザのコンポーネント検証</strong>: <code>shifty-e2e-verify</code> のハーネス（<code>mount-component.js</code>）で SetTab・ShiftEditTab・SubsTab を単体マウントし、Firebase 非接続で設定UI・判定パネル・4段階表示を確認する（pageerror・console.error 0件）。</li>
+  <li><strong>dev 実機E2E</strong>: <code>/run-dev</code> で localhost を起動し、デモ店舗「居酒屋 とり松」を通常店舗として <code>?plan=premium</code> で開いて、設定の保存→判定の表示→Excel/PDF出力までを通す。<code>#/demo</code> は使わない（前提参照）。項目12はセル編集フロー（#51・#56・#58 の回帰が起きた場所）なので、セル編集→保存→表示の非回帰を実機で必ず踏む。</li>
+  <li><strong>Excelひな型との最終突き合わせ</strong>: 職場の実データ1ヶ月分を Excel ひな型と Shifty の両方に入力し、受け入れ条件「全弾共通」最終項目の全数値一致を確認する。不一致は原因を特定してから修正する（推測で直さない）。<strong>この手順は xlsm（VBA付き・Excelデスクトップが要る）の操作を含むためユーザーが実施する</strong>——実装者は Shifty 側の数値一覧を出力して渡すところまでを行う。xlsm の所在はユーザーに確認する（このセッションの一時アップロードは残らない）。<strong>実施できない場合は「未検証」と明記して報告し、勝手に Shifty 側の計算値を Excel 側の値として代用しない。</strong>S-1〜S-7 のユニットテストが通っていればリリース自体は止めない。</li>
+  <li><strong>非回帰</strong>: 労務設定を持たない既存形の店舗データで、集計・上限判定・Excel/PDF が変更前と一致することを確認する（既存の回帰スクリプト <code>example-shift-edit-tab.js</code> ほかが allPass）。<strong>比較の単位</strong>: テキスト成果物（JSON・スナップショット）はバイト単位、Excel/PDF は<strong>数値単位</strong>で比較する——xlsx は zip 内のタイムスタンプで毎回バイト列が変わるためバイト比較は成立しない。</li>
+  <li><strong>本番リリース</strong>: 弾ごとに <code>/release-to-main</code> 経由（<code>?v=</code> バンプ含む）。並行セッションの作業が未完なら待つ。DEV_MODE が式のままであることのチェックリストに従う。</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="trust"><span class="role">末尾 — 信頼して任せてよい部分</span>機械的なリファクタリング・ボイラープレート・定型的な変更</h2>
+<p>以下は既存の型・レジストリ・規約に従うだけの作業で、判断の余地が無いか、テストが機械的に守るもの。レビュー不要。</p>
+<ul>
+  <li><strong>Excel数式のJS移植</strong>: FLOOR/ROUNDDOWN/ROUNDUP の分単位演算。期待値は<strong>確定仕様 S-1〜S-7</strong> で固定済みで、テストが一致を機械照合する。ROUND はExcel仕様（絶対値が大きい方へ丸める）のヘルパーを1つ作って全箇所で使う（<code>Math.round</code> を直接使わない）。</li>
+  <li><strong>セルコマンドのレジストリ登録</strong>: <code>CELL_COMMANDS</code>・<code>CELL_COLOR_LEGEND</code>・<code>extractNote</code> への <code>ya</code> と休暇色の登録。GridLegend の説明はレジストリから自動生成され、完全性テストが登録漏れを検出する。</li>
+  <li><strong>設定キーの配線</strong>: <code>PERIOD_SNAPSHOT_SETTING_KEYS</code>・（該当時）<code>STAFF_KEYED_SETTING_MAPS</code> への登録。ドリフト検出テストが二重管理を防ぐ。</li>
+  <li><strong>純粋関数の切り出しと <code>module.exports</code> ガード</strong>: app-utils.js の既存パターンどおり。Node テスト対象化も定型。</li>
+  <li><strong>SetTab のフォーム追加</strong>: <code>AI</code>/<code>AB</code>/<code>AGray</code> スタイル定数・inline style・fontSize 16px規約・Premium ガード（<code>plan==="premium"</code>）の既存パターンを踏襲するだけ。</li>
+  <li><strong>判定パネル・バッジの表示</strong>: <code>dupErrors</code> のエラーパネル・SubsTab の既存バッジと同じ形の踏襲。</li>
+  <li><strong>保存経路</strong>: 設定は <code>onSave({...settings, 新キー})</code>（saveSettings 経由）、sub への書き込みは <code>diffSubForFlatWrite</code>＋個別パス update の既存規約どおり。全体 <code>set()</code> は使わない（RULES.md）。</li>
+  <li><strong>eslint 対応・<code>dlog()</code> の使用・周囲のコードスタイルへの追従</strong>。</li>
+  <li><strong>ドキュメント更新</strong>: CLAUDE.md のソースファイル内容欄への関数追記、BACKLOG.md の項目12タスクの消し込み（案C採用の記録つき）。</li>
+</ul>
+
+<hr>
+<div class="box">
+<p><strong>実装セッションへの引き継ぎ（この節は実装者が読む）</strong></p>
+<ul>
+  <li><strong>着手条件</strong>: 実装の指示文に判断1〜10への回答（番号ごと、または一括で「推奨どおり」）が含まれていること。<strong>含まれていなければ実装せず、回答を求めて終える。</strong>「この計画で実装して」だけの指示は回答とみなさない。</li>
+  <li><strong>スキルの経由</strong>: <code>/shifty-feature</code> は <code>BACKLOG.md</code> の<strong>先頭タスクを取り出して実装する</strong>設計で、受け入れ条件も BACKLOG から読む。BACKLOG に労務判定の項目は無いので、<strong>このまま起動すると無関係な別タスクが実装される。</strong>先に第1〜3弾を BACKLOG.md に弾単位のタスク（本書の受け入れ条件チェックリストを転記）として登録し、各弾を <code>/shifty-feature</code> の1ループとして回す。登録しない場合は <code>/shifty-feature</code> を使わず、Shifty CLAUDE.md「実装依頼の受け方」を直接適用する。</li>
+  <li>項目12は既存バグ（BACKLOG #129）なので <code>/bug-check</code> を経由してよい（BACKLOG に実在する）。</li>
+  <li><strong>期待値の出どころ</strong>: テストの数値は確定仕様 S-1〜S-7 からのみ転記する。S節に無い値が必要になったら実装を止めてユーザーに確認する。</li>
+  <li><strong>同一アプローチで2回失敗したら</strong>、3回目は繰り返さず別アプローチか現状報告に切り替える。一部が実行不能でも残りは全部仕上げ、やらなかった部分と理由を明記する。</li>
+</ul>
+</div>
+<p class="note">本計画は実装計画書であり、<strong>提出をもって計画セッションのターンは完了</strong>とする（計画セッションは実装に進まない）。この一文は計画を作成したセッションに対する規定で、実装セッションへの停止命令ではない。</p>
+
+</div>
+</body>
+</html>
