@@ -1,0 +1,121 @@
+// P3.5a（休憩の中休み方式＋長さ方式のしきい値設定）の実ブラウザ回帰テスト。
+// app-main.js を読み込まないので Firebase へは1バイトも出ない（SKILL.md 1.6節）。
+//   1. 設定タブ: 長さ方式の「段の判定」（実働／拘束）と「段を自分で決める」、中休みの設定が settings に入る
+//   2. 提出一覧の詳細: 自動＝灰（中休み／長さ）・手動＝太字、「自動に戻す」で adjustedBreak が消える
+// 実行: node .claude/skills/shifty-e2e-verify/scripts/example-break-idle.js → allPass=true / EXIT=0
+// 反証: SHIFTY_ROOT=<P3.5a より前の配信物> node ... → EXIT=1（中休みの UI が無い）
+"use strict";
+const path = require("node:path");
+const { openHarness } = require(path.join(__dirname, "mount-component.js"));
+const ROOT = process.env.SHIFTY_ROOT || undefined;
+const EXTRA_HEAD = `<style>:root{--c-bg:#F0F2F5;--c-card:#FFFFFF;--c-input:#F3F4F6;--c-input2:#F0F2F5;` +
+  `--c-border:#E5E7EB;--c-border2:#D1D5DB;--c-text:#1A1A2E;--c-text2:#374151;--c-text3:#6B7280;` +
+  `--c-text4:#9CA3AF;--c-shadow:rgba(0,0,0,.06);--c-accent:#f87036;--c-danger:#DC2626;}</style>`;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const setVal = (h, sel, v, idx = 0) => h.evaluate(([s, val, i]) => {
+  const el = document.querySelectorAll(s)[i];
+  if (!el) throw new Error("no " + s);
+  const proto = el.tagName === "SELECT" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value").set.call(el, String(val));
+  el.dispatchEvent(new Event(el.tagName === "SELECT" ? "change" : "input", { bubbles: true }));
+  if (el.tagName !== "SELECT") el.dispatchEvent(new Event("change", { bubbles: true }));
+}, [sel, v, idx]);
+
+async function setTab() {
+  const h = await openHarness({ root: ROOT, extraHead: EXTRA_HEAD, waitFor: "#root > *", jsx: `
+    function Harness(){
+      const [settings,setSettings]=React.useState({shopId:"s1",candidates:[],staffAttributes:{},breakMode:"length",
+        staffTypeLimits:{employee:{name:"社員"},parttime:{name:"バイト"}}});
+      window.__settings=settings;
+      return <SetTab settings={settings} onSave={s=>setSettings(s)} subs={[]} saveSubs={()=>{}}
+        tt={()=>{}} syncStatus="online" plan="premium" shopId="s1"/>;
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);` });
+  const m = {};
+  m.lengthBox = await h.evaluate(() => !!document.querySelector("[data-break-length]"));
+  m.defaultTwoTier = await h.evaluate(() => /実働8時間超/.test(document.querySelector("[data-break-length]").innerText));
+  await setVal(h, "[data-break-basis]", "binding"); await sleep(250);
+  await h.evaluate(() => document.querySelector("[data-break-tier-add]").click()); await sleep(250);
+  // 段: 6時間 0分 以上 → 60分（値は店舗設定の例。コードには無い）
+  await setVal(h, "[data-break-tier='0'] input", 6, 0); await sleep(200);
+  await setVal(h, "[data-break-tier='0'] select", "1"); await sleep(200);
+  await setVal(h, "[data-break-tier='0'] input", 60, 2); await sleep(200);
+  m.breakLength = await h.evaluate(() => window.__settings.breakLength);
+  m.twoTierHidden = await h.evaluate(() => !/実働8時間超/.test(document.querySelector("[data-break-length]").innerText));
+  // 中休み
+  await h.evaluate(() => document.querySelector("[data-idle-break] input[type=checkbox]").click()); await sleep(250);
+  m.idleWarnBeforeValues = await h.evaluate(() => /時刻と分を入れるまで/.test(document.querySelector("[data-idle-break]").innerText));
+  await setVal(h, "[data-idle='startBy']", "14:30"); await sleep(200);
+  await setVal(h, "[data-idle='endAfter']", "17:00"); await sleep(200);
+  await setVal(h, "[data-idle-break] input[type=number]", 120); await sleep(200);
+  await setVal(h, "[data-idle='days']", "weekday"); await sleep(200);
+  m.idleBreak = await h.evaluate(() => window.__settings.idleBreak);
+  m.fontsizes = await h.evaluate(() => [...document.querySelectorAll("[data-idle-break] input[type=number],[data-idle-break] select,[data-break-length] input,[data-break-length] select")].map(e => parseFloat(getComputedStyle(e).fontSize)));
+  m.errors = h.errors.slice();
+  await h.close();
+  return m;
+}
+
+async function detail() {
+  const h = await openHarness({ root: ROOT, extraHead: EXTRA_HEAD, waitFor: "table", jsx: `
+    function Harness(){
+      const periods=[{id:"p1",label:"10月前半",startDate:"2026-10-01",endDate:"2026-10-15",deadlineDate:"2026-10-15"}];
+      const settings={shopId:"s1",candidates:[],staffColors:{},staffAliases:{},staffAttributes:{},breakMode:"length",
+        breakLength:{basis:"binding",tiers:[{overMin:360,breakMin:60,inclusive:true}]},
+        idleBreak:{enabled:true,startBy:"14:30",endAfter:"17:00",min:120,days:"weekday"}};
+      const [subs,setSubs]=React.useState([{id:"sub1",periodId:"p1",staffName:"田中",shopId:"s1",
+        submittedAt:"2026-09-20T10:00:00.000Z",comment:"",
+        shifts:{"2026-10-01":{status:"work",start:"10:00",end:"22:00"},
+                "2026-10-02":{status:"work",start:"17:00",end:"23:00"},
+                "2026-10-05":{status:"work",start:"10:00",end:"22:00",adjustedBreak:30}}}]);
+      window.__subs=()=>subs;
+      return <SubsTab subs={subs} periods={periods} staffList={["田中"]}
+        onSave={setSubs} tt={()=>{}} settings={settings} onSaveSettings={()=>{}} plan="premium"/>;
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);` });
+  await h.evaluate(() => { const b = [...document.querySelectorAll("button")].find(x => x.textContent.trim() === "詳細"); b.click(); });
+  await sleep(400);
+  const read = () => h.evaluate(() => [...document.querySelectorAll("[data-break-src]")].map(e => ({
+    src: e.getAttribute("data-break-src"), text: e.innerText.replace(/\s+/g, " ").trim(),
+    bold: e.querySelector("span") ? getComputedStyle(e.querySelector("span")).fontWeight : getComputedStyle(e).fontWeight,
+    color: getComputedStyle(e.querySelector("span") || e).color })));
+  const m = { before: await read(), total: await h.evaluate(() => (document.body.innerText.match(/合計：([0-9]+:[0-9]{2})/) || [])[1] || null) };
+  await h.evaluate(() => { const b = [...document.querySelectorAll("button")].find(x => x.textContent.trim() === "自動に戻す"); b.click(); });
+  await sleep(300);
+  m.after = await read();
+  m.day05 = await h.evaluate(() => window.__subs()[0].shifts["2026-10-05"]);
+  m.totalAfter = await h.evaluate(() => (document.body.innerText.match(/合計：([0-9]+:[0-9]{2})/) || [])[1] || null);
+  m.errors = h.errors.slice();
+  await h.close();
+  return m;
+}
+
+(async () => {
+  const a = await setTab();
+  const b = await detail();
+  const v = {
+    lengthBoxShown: a.lengthBox && a.defaultTwoTier,
+    tierSaved: !!(a.breakLength && a.breakLength.basis === "binding" && Array.isArray(a.breakLength.tiers)
+      && a.breakLength.tiers.length === 1 && a.breakLength.tiers[0].overMin === 360
+      && a.breakLength.tiers[0].breakMin === 60 && a.breakLength.tiers[0].inclusive === true),
+    twoTierReplaced: a.twoTierHidden,
+    idleWarned: a.idleWarnBeforeValues,
+    idleSaved: !!(a.idleBreak && a.idleBreak.enabled === true && a.idleBreak.startBy === "14:30"
+      && a.idleBreak.endAfter === "17:00" && a.idleBreak.min === 120 && a.idleBreak.days === "weekday"),
+    font16: a.fontsizes.length > 0 && a.fontsizes.every(f => f >= 16),
+    // 10/1 中休み120（自動・灰）/ 10/2 長さ60（自動）/ 10/5 手動30（太字・自動120を併記）
+    autoIdle: b.before[0] && b.before[0].src === "idle" && /自動 120分（中休み）/.test(b.before[0].text),
+    autoLength: b.before[1] && b.before[1].src === "length" && /自動 60分（長さ）/.test(b.before[1].text),
+    manualBold: b.before[2] && b.before[2].src === "manual" && /手動 30分/.test(b.before[2].text)
+      && /自動 120分/.test(b.before[2].text) && Number(b.before[2].bold) >= 700,
+    autoNotBold: b.before[0] && Number(b.before[0].bold) < 700,
+    // 合計: 10/1 12h−120=10:00, 10/2 6h−60=5:00, 10/5 12h−30=11:30 → 26:30
+    totalBefore: b.total === "26:30",
+    revertCleared: b.day05 && !("adjustedBreak" in b.day05) && b.after[2] && b.after[2].src === "idle",
+    totalAfterRevert: b.totalAfter === "25:00",
+    noErrors: a.errors.length === 0 && b.errors.length === 0,
+  };
+  v.allPass = Object.values(v).every(Boolean);
+  console.log(JSON.stringify({ setTab: a, detail: b, verdict: v }, null, 2));
+  process.exit(v.allPass ? 0 : 1);
+})().catch(e => { console.error(e); process.exit(2); });
