@@ -770,7 +770,7 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
         {dupCands.map(g=>(<div key={g.rows.map(r=>r.personId).join("|")} data-co-dup-cand={g.name} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",padding:"6px 0",borderTop:"1px solid rgba(245,158,11,.25)"}}>
           <span style={{fontSize:13,fontWeight:700,color:"var(--c-text)"}}>{g.name}</span>
           <span style={{fontSize:12,color:"var(--c-text2)"}}>{g.rows.map(r=>`${(r.links||[]).map(l=>shopNameOf(l.shopId)).join("・")}${r.number?`（${r.number}）`:""}`).join(" ／ ")}</span>
-          {g.rows.some(r=>!r.homeExplicit)&&<span data-co-dup-home-hint="1" style={{fontSize:11,color:"#B45309"}}>所属店舗を設定してください（{g.rows.filter(r=>!r.homeExplicit).map(r=>r.name).join("・")}）</span>}
+          {g.rows.some(r=>!r.homeExplicit)&&<span data-co-dup-home-hint="1" style={{fontSize:11,color:"#B45309"}}>所属店舗を設定してください（{g.rows.filter(r=>!r.homeExplicit).map(r=>(r.links||[]).map(l=>shopNameOf(l.shopId)).join("・")).join(" ／ ")}の{g.name}）</span>}
           {g.rows.length===2
             ?<button disabled={busy} onClick={()=>{setPicked(g.rows.map(r=>r.personId));setMergeOpen(true);}} style={{...AB,padding:"5px 12px",fontSize:12,marginLeft:"auto",opacity:busy?0.5:1}}>統合する</button>
             :<span style={{fontSize:11,color:"var(--c-text3)",marginLeft:"auto"}}>統合する2人を一覧で選んでください</span>}
