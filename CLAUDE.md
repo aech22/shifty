@@ -638,7 +638,7 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
   オーナー200・形の不正401・企業の payCode 401）を実測済み
 - 検証: `tests/core.test.js`（数値・CF との一致・ドリフト検出）と `example-staff-pay.js`（スタブ・34項目・375px 含む）
 
-### 人×月の所定・確定ロック・交付（2026-09-30・P3・develop のみ・ルールは dev へのデプロイ待ち・CF は本番未反映）
+### 人×月の所定・確定ロック・交付（2026-09-30・P3・develop のみ・ルールは dev に反映済み・CF は本番未反映）
 
 `労務給与_複数法人_実装計画.md` §3.4・§3.5・P3（決定 #1・#10・#18・#21）。
 - **確定の意味が変わった**: 以前の「この期間を確定」（終了後だけ・写しでマスタ固定・セルは編集可・`lockedAt` は誰も読まない）を
@@ -651,7 +651,8 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
 - 本部店舗（写しの `kind:"hq"`）のシフト作成タブに「固定勤務パターン」（既定 9:00〜18:00・休憩60分＝`adjustedBreak`）
 - 企業連携タブの提出状況表に「確定」「交付」列と「履歴」。店舗の staff・settings・company/settings・periods・laborMonths とその月の subs を読み、
   シフト作成タブと同じ `planPeriodConfirmation` で書く（期間は差分 update）。企業の作成者がその店舗の owners に居ないと書き込みは拒否される
-- ルール: `laborMonths` は新ノード（オーナーのみ）＝本番はルールが先。subs の確定条件は既存パスの締め付け＝CLAUDE.md の順（クライアント先）
+- ルール: `laborMonths` は新ノード（オーナーのみ）＝本番はルールが先。subs の確定条件は既存パスの締め付け＝CLAUDE.md の順（クライアント先）。
+  dev は 2026-09-30 に反映し、`probe-rules-confirm.js` で32項目（匿名uidの未確定への提出200・確定済みへの提出/付け替え/修正/削除401・オーナー200・laborMonths の非オーナー401と形の不正401）を実測済み
 - 検証: `tests/core.test.js`（計画・凍結条件・履歴の差分・改名の CF 一致・ルールと入口のドリフト検出）と `example-labor-confirm.js`（28項目）
 
 ### 人物ID と企業スタッフ一覧の編集（2026-09-30・P1b・develop のみ・CF は本番未反映・ルールの変更なし）
