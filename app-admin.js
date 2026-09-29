@@ -1457,8 +1457,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(!n)return null;
     const days=Array.from({length:n},(_,i)=>`${ym}-${String(i+1).padStart(2,"0")}`);
     if(!days.every(d=>laborDayHasData(d)))return null;
-    const mins=days.reduce((a,d)=>a+laborDayMin(name,d),0);
-    return monthlyOvertimeH(mins/60,laborMonthFrame(settings,ym).baseMin/60);
+    // 按分窓（属性の otProrate・P3.5b）を画面と同じ overtimePlanOf で通す（年の36協定と画面の月の残業予定を揃える）
+    return overtimePlanOf({dates:days,dayMins:days.map(d=>laborDayMin(name,d)),baseMin:laborMonthFrame(settings,ym).baseMin,
+      prorate:staffOtProrateOf(settings,name)}).monthOtH;
   },[settings,subs,laborDayHasData,staffAliases,workShiftByStaffDate]);
 
   // スタッフ1人ぶんの労務の集計。日次の件数は**選択中の期間の日**、月単位の判定は**暦月**で数える
@@ -1474,19 +1475,23 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const sys=laborSystemForStaff(settings,name);
       const monthMins=laborMonthDays.map(d=>laborDayMin(name,d));
       const monthWorkMin=monthMins.reduce((a,b)=>a+b,0);
-      const monthWorkH=monthWorkMin/60;
       // 按分は**月が埋まっていなくても計算する**（2026-09-26 ユーザー指示。以前は
       // laborMonthCovered を条件にして 0 に倒していた）。暦月の枠に途中までの実働を当てるので
       // 月が埋まるまでは 0h になりやすいが、それが現時点の実数。画面は `＋` で途中を示す。
       // **月の全日でやる**——日別の和が月の残業予定と一致する形が崩れるので期間で切らない。
-      const monthOtH=sys==="A"?monthlyOvertimeH(monthWorkH,laborFrame.baseMin/60):0;
-      const monthOtDays=sys==="A"?prorateOvertimeH(monthMins.map(m=>m/60),monthOtH,monthWorkH):[];
+      // 按分窓は属性の設定（otProrate・P3.5b）。未設定なら従来どおり「月実働−総枠」を月の全日に配る。
+      const otPlan=sys==="A"?overtimePlanOf({dates:laborMonthDays,dayMins:monthMins,baseMin:laborFrame.baseMin,
+        prorate:staffOtProrateOf(settings,name)}):null;
+      const monthOtH=otPlan?otPlan.monthOtH:0;
+      const monthOtDays=otPlan?otPlan.dayOtH:[];
       const periodOtH=dates.map(d=>(monthIdx[d]!=null?(monthOtDays[monthIdx[d]]||0):0));
       // この期間（半月運用なら半月）ぶんの残業予定。日別の按分をこの期間の日だけ足す。
       const periodOtSumH=excelRound(periodOtH.reduce((a,b)=>a+b,0),2);
       // **dates と同じ並びで渡す**（0分の日も落とさない）。労務判定は該当日をラベルに出すので、
       // 添字が dates・periodOtH とずれると別の日が表示される。`4h未満` は関数側が m>0 で絞る。
       const dayMins=dates.map(d=>laborDayMin(name,d));
+      // B制の日ごとの「しきい値超」（店舗トグル showDailyOverB・P3.5b）。オフなら null＝表に出さない
+      const dayOverB=(sys==="B"&&ls.showDailyOverB===1)?dailyOverMinB(dayMins,dailyOverThresholdOf(ls)):null;
       const weekMins=sys==="B"?weeks.map(monStr=>{
         const arr=[];
         for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);arr.push(laborDayMin(name,fd(dd)));}
@@ -1532,7 +1537,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const yr=fy==null?null:yearLaborSummary(periods,name,fy,fyStart,liveTotalFor(name),true);
       // その日に帰属する要修正（セル色で該当日を示す。dates と同じ並び）
       const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins,dayOtH:periodOtH,agreementDailyOtH:agDay});
-      out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,monthCovered:laborMonthCovered,yearOt,findings,guide,overall,weekNoRest,dayFindings,
+      out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,otWindow:otPlan&&otPlan.fixed?otPlan.window:null,dayOverB,
+        monthCovered:laborMonthCovered,yearOt,findings,guide,overall,weekNoRest,dayFindings,
         periodLeave:{paid:paidD,publicOff:pubD,ceremony:ceD},year:yr,
         paidRemain:yr?paidLeaveRemaining(settings,name,yr.paid):null};
       // この期間ぶんの合計（凍結時に periods へ残す値）。上の useEffect が書く。
@@ -2327,6 +2333,16 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           +(miss?`／読み込めていない月 ${av.missing.join("・")}（「3ヶ月より前の提出データも読み込む」で正確になります）`:"")};}},
     {id:"labor_guide",label:"目安",getText:name=>{const l=laborByStaff[name];if(!l||l.sys!=="A")return{};return{label:l.guide.label,color:l.guide.color,title:l.guide.title||l.guide.label};}},
     {id:"labor_ot",label:"残業予定",getText:name=>{const l=laborByStaff[name];
+      // B制は店舗トグル（showDailyOverB）がオンのときだけ、日ごとの「しきい値超」の合計を出す（P3.5b）。
+      // 週40h超は週の欄（労務判定）のまま。オフの店舗は従来どおり空欄。
+      if(l&&l.sys==="B"&&l.dayOverB){
+        const hits=dates.map((d,i)=>[d,l.dayOverB[i]||0]).filter(([,m])=>m>0);
+        if(!hits.length)return{};
+        const tot=hits.reduce((a,[,m])=>a+m,0);
+        const th=dailyOverThresholdOf(laborSettingsOf(settings));
+        return{label:`${excelRound(tot/60,2)}h`,color:"#B8860B",
+          title:`この期間の1日${fmtMin(th)}超の合計 ${fmtMin(tot)}（${hits.map(([d,m])=>`${Number(d.slice(8,10))}日 ${fmtMin(m)}`).join("・")}）`};
+      }
       if(!l||l.sys!=="A")return{};
       // 月が埋まっていない間も現状の実数を出す（2026-09-26 ユーザー指示。以前は「要確認」）。
       // 暦月の枠に途中までの実働を当てるので 0h になりやすいが、それが現時点の実数。
@@ -2336,7 +2352,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(!(l.monthOtH>0))return{};
       // この期間（半月運用なら半月）ぶん。月計はツールチップに出す。
       return{label:`${l.periodOtSumH}h`,color:"#B8860B",
-        title:`この期間 ${l.periodOtSumH}h ／ ${period?period.startDate.slice(0,7).replace("-","年"):""}月の合計 ${l.monthOtH}h`};}},
+        title:`この期間 ${l.periodOtSumH}h ／ ${period?period.startDate.slice(0,7).replace("-","年"):""}月の合計 ${l.monthOtH}h`
+          +(l.otWindow?`（属性の設定で${OT_PRORATE_WINDOW_LABELS[l.otWindow]||""}の固定枠を配っています）`:"")};}},
     {id:"labor_year",label:fy==null?"年計":`${fiscalYearLabel(fy,fyStart)}計`,getText:name=>{const l=laborByStaff[name];
       if(!l||l.sys==="none"||!l.year)return{};
       const miss=l.year.missingPeriodIds.length;

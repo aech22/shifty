@@ -10,12 +10,23 @@ function isValidShopId(shopId) {
 }
 const COMPANY_LABOR_KEYS = ["monthlyBase31Min", "fixedOvertimeMin", "marginMin", "agreementDailyOtMin",
   "agreementMonthlyOtMin", "agreementAnnualOtMin", "fiscalYearStartMonth",
-  "annualScheduledMin", "rateDenominatorMin", "weekStartDow", "weekSplitAtMonthEdge"];
+  "annualScheduledMin", "rateDenominatorMin", "weekStartDow", "weekSplitAtMonthEdge",
+  "showDailyOverB", "dailyOverThresholdMin"];
 // 範囲の決まっているキー（クライアントの LABOR_SETTING_RANGES と同じ。tests/core.test.js が照合する）
-const COMPANY_LABOR_RANGES = { fiscalYearStartMonth: [1, 12], weekStartDow: [0, 6], weekSplitAtMonthEdge: [0, 1] };
+const COMPANY_LABOR_RANGES = { fiscalYearStartMonth: [1, 12], weekStartDow: [0, 6], weekSplitAtMonthEdge: [0, 1], showDailyOverB: [0, 1] };
 const COMPANY_LIMIT_NUM_KEYS = ["customDays", "customHours", "customHoursMin", "daily", "dailyMin", "weekly",
   "weeklyMin", "biweekly", "biweeklyMin", "monthly", "monthlyMin", "monthlyOt"];
 const COMPANY_LABOR_SYSTEMS = ["A", "B", "none"];
+// 残業予定の按分窓（P3.5b）。クライアントの otProrateOf（app-utils.js）と同じ規則（tests/core.test.js が照合する）
+const COMPANY_OT_PRORATE_WINDOWS = ["month", "halfMonth"];
+const COMPANY_OT_PRORATE_FIXED_MAX_MIN = 744 * 60;
+function sanitizeOtProrate(raw) {
+  if (!raw || typeof raw !== "object" || !COMPANY_OT_PRORATE_WINDOWS.includes(raw.window)) return null;
+  const o = { window: raw.window };
+  const f = Number(raw.fixedMin);
+  if (Number.isFinite(f) && f > 0 && f <= COMPANY_OT_PRORATE_FIXED_MAX_MIN) o.fixedMin = Math.round(f);
+  return o;
+}
 const COMPANY_BUILTIN_ATTRS = ["employee", "parttime", "dispatch", "other"];
 const COMPANY_ATTR_ID_RE = /^co_[A-Za-z0-9]{8}$/;
 const PERIOD_RANGE_KEY_RE = /^\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}$/;
@@ -52,6 +63,8 @@ function sanitizeCompanySettings(raw) {
       if (!e || typeof e !== "object") return;
       const eo = {};
       if (COMPANY_LABOR_SYSTEMS.includes(e.laborSystem)) eo.laborSystem = e.laborSystem;
+      const op = sanitizeOtProrate(e.otProrate);
+      if (op) eo.otProrate = op;
       COMPANY_LIMIT_NUM_KEYS.forEach(k => {
         const v = Number(e[k]);
         if (Number.isFinite(v) && v > 0 && v <= 10000) eo[k] = v;
@@ -649,6 +662,6 @@ module.exports = { PERSON_ID_RE, isValidPersonId, PERSON_AUTO_ID_CHARS, genPerso
   MIN_WAGE_MAX_ENTRIES, sanitizeWageSettings, PAY_CODE_DEFAULT, isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,
   ENTITY_ID_RE, isValidEntityId, SHOP_KINDS, ENTITY_NAME_MAX, sanitizeEntityName, entityIdOfShop, shopKindOf,
   planEntityMigration, mergeEntitySettings, buildShopMirror, otherCompanyLinksOf,
-  COMPANY_SESSION_UID_PREFIX, canChangeCompanyPassword, COMPANY_LABOR_KEYS, COMPANY_LABOR_RANGES, COMPANY_LIMIT_NUM_KEYS, COMPANY_LABOR_SYSTEMS, COMPANY_BUILTIN_ATTRS,
+  COMPANY_SESSION_UID_PREFIX, canChangeCompanyPassword, COMPANY_LABOR_KEYS, COMPANY_LABOR_RANGES, COMPANY_LIMIT_NUM_KEYS, COMPANY_LABOR_SYSTEMS, COMPANY_OT_PRORATE_WINDOWS, COMPANY_OT_PRORATE_FIXED_MAX_MIN, sanitizeOtProrate, COMPANY_BUILTIN_ATTRS,
   COMPANY_ATTR_ID_RE, PERIOD_RANGE_KEY_RE, isValidDateStrCF, sanitizeCompanySettings, sanitizeCompanyDeadlines,
   effectiveDeadlinesForShop, MONTHLY_DEADLINE_MAX, sanitizeMonthlyDeadlineDays };

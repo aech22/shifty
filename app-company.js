@@ -252,6 +252,30 @@ function HoursDecimalInput({min,onCommit,placeholder,max=9999,width=84,zeroBlank
     onChange={e=>setText(e.target.value)} onBlur={commit} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
     style={{...AI,width,textAlign:"center",padding:"5px 6px"}}/>);
 }
+// 残業予定の配り方（属性の otProrate・2026-09-30 P3.5b）。企業の共通設定と店舗の設定タブで共有する。
+// 空＝blankLabel（店舗なら既定の月ごと、企業なら店舗で設定）。固定枠は時間で入れ分で保存する。
+function OtProrateField({value,onChange,blankLabel,fixedText}){
+  const p=otProrateOf(value);
+  const win=p?p.window:"";
+  const LBL={fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"};
+  if(fixedText!==undefined)return(<div data-ot-prorate style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:8}}>
+    <span style={LBL}>残業予定の配り方</span>{fixedText}</div>);
+  return(<div data-ot-prorate style={{marginBottom:8}}>
+    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+      <span style={LBL}>残業予定の配り方</span>
+      <select value={win} onChange={e=>{const w=e.target.value;onChange(w?{window:w,...(p&&p.fixedMin?{fixedMin:p.fixedMin}:{})}:null);}}
+        style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+        <option value="">{blankLabel}</option>
+        {OT_PRORATE_WINDOWS.map(w=><option key={w} value={w}>{OT_PRORATE_WINDOW_LABELS[w]}</option>)}
+      </select>
+      {win&&<><span style={LBL}>固定枠</span>
+        <HoursDecimalInput min={p.fixedMin||0} zeroBlank max={744} width={64} placeholder="なし" onCommit={v=>onChange({window:win,...(v>0?{fixedMin:v}:{})})}/>
+        <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span></>}
+    </div>
+    {win&&<div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>固定枠を入れると、区切りごとにその時間（区切りの実働が短ければ実働まで）を勤務日に実働の比で配ります。固定枠が無ければ従来どおり「月実働 − 総枠」を月の勤務日に配ります。1か月単位の変形労働時間制の人にだけ効きます。</div>}
+  </div>);
+}
+const fmtOtProrate=v=>{const p=otProrateOf(v);return p?`${OT_PRORATE_WINDOW_LABELS[p.window]}${p.fixedMin?` 固定${minToH1(p.fixedMin)}h`:""}`:"—";};
 const WEEK_START_OPTIONS=[[1,"月曜"],[2,"火曜"],[3,"水曜"],[4,"木曜"],[5,"金曜"],[6,"土曜"],[0,"日曜"]];
 const minToH1=m=>String(Math.round((Number(m)||0)/6)/10);
 // 労務判定の入力欄（企業の共通設定と法人の設定で共有・2026-09-30 に CompanyConfigCard から切り出し）。
@@ -328,7 +352,7 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
   const setLabor=(k,v)=>{const l={...labor};if(v===null||v===undefined)delete l[k];else l[k]=v;upd({...draft,laborSettings:l});};
   const setLim=(id,k,v)=>{
     const e={...(stl[id]||{})};
-    if(v===null||v===undefined||v===""||(k!=="laborSystem"&&k!=="name"&&!(v>0)))delete e[k];else e[k]=v;
+    if(v===null||v===undefined||v===""||(k!=="laborSystem"&&k!=="name"&&k!=="otProrate"&&!(v>0)))delete e[k];else e[k]=v;
     upd({...draft,staffTypeLimits:{...stl,[id]:e}});
   };
   const numIn=(val,onCh,max,w=58)=>(<input type="number" min={0} max={max} value={val===undefined||val===null?"":val} placeholder="店舗"
@@ -380,6 +404,7 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
             {LABOR_SYSTEMS.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
           </select>
         </div>
+        <OtProrateField value={e.otProrate} blankLabel="店舗で設定" onChange={v=>setLim(id,"otProrate",v)}/>
         {[["上限",false],["目安",true]].map(([rowLbl,isMin])=>(
           <div key={rowLbl} style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:isMin?0:6}}>
             <span style={{fontSize:11,fontWeight:700,color:isMin?"#2563EB":"#FF4757",minWidth:26}}>{rowLbl}</span>
@@ -1740,6 +1765,9 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                 {LABOR_SYSTEMS.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
               </select>}
             </div>
+            <OtProrateField value={lim.otProrate} blankLabel={OT_PRORATE_WINDOW_LABELS.month+"（既定）"}
+              fixedText={coLim(type,"otProrate")?coVal(fmtOtProrate(lim.otProrate),0):undefined}
+              onChange={v=>saveLim(type,"otProrate",v)}/>
             {/* 上限と目安を同じ窓で対にして入力する（窓の一覧は app-utils.js の STAFF_LIMIT_WINDOWS）。
                 どちらも0＝未設定。目安は判定しない（2026-09-28）。1ヶ月の窓だけ「残業」欄を上限の行に持つ。 */}
             {[["上限",false],["目安",true]].map(([rowLbl,isMin])=>(
@@ -1880,6 +1908,30 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
           </table>
         </div>
         <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>目安 = {hasAnnual?"所定上限":"総枠"} + 固定残業 − 余裕（時間未満を切り捨て）／上限 = 総枠 + 固定残業。{hasAnnual?"29日はうるう年の2月の値です。":""}月の残業予定は「月実働 − 総枠」で、日別にはその日までの累計実働の比で配分します。</div>
+
+        {/* 通常の労働時間制（B制）の日ごとのしきい値超を数値で出す（店舗トグル・既定オフ・P3.5b）。
+            判定（8h超・週40h超）は法定のまま変えず、シフト作成タブの「残業予定」の行に数値を足すだけ。 */}
+        <div data-daily-over-b style={{marginTop:16,paddingTop:14,borderTop:"1px solid var(--c-border)"}}>
+          <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>通常の労働時間制の日ごとの残業</div>
+          {coLabor("showDailyOverB")?coVal(ls.showDailyOverB===1?"表示する":"表示しない",0):
+          <label style={{display:"flex",gap:8,alignItems:"center",cursor:"pointer",marginBottom:6}}>
+            <input type="checkbox" checked={ls.showDailyOverB===1} onChange={e=>saveLabor("showDailyOverB",e.target.checked?1:0)} style={{width:18,height:18}}/>
+            <span style={{fontSize:13,color:"var(--c-text)"}}>その日の実働がしきい値を超えた分を「残業予定」に数値で出す</span>
+          </label>}
+          {ls.showDailyOverB===1&&<div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap",marginBottom:4}}>
+            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>しきい値</span>
+            {coLabor("dailyOverThresholdMin")?coVal(fmtMin(dailyOverThresholdOf(ls)),0):<>
+            <input type="number" min={0} max={24} value={Math.floor(dailyOverThresholdOf(ls)/60)} placeholder="0"
+              onChange={e=>{const h=Math.max(0,Math.min(24,parseInt(e.target.value)||0));saveLabor("dailyOverThresholdMin",h*60+dailyOverThresholdOf(ls)%60);}}
+              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+            <span style={{fontSize:11,color:"var(--c-text4)"}}>時間</span>
+            <input type="number" min={0} max={59} value={dailyOverThresholdOf(ls)%60} placeholder="0"
+              onChange={e=>{const m=Math.max(0,Math.min(59,parseInt(e.target.value)||0));saveLabor("dailyOverThresholdMin",Math.floor(dailyOverThresholdOf(ls)/60)*60+m);}}
+              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
+            <span style={{fontSize:11,color:"var(--c-text4)"}}>分</span></>}
+          </div>}
+          <div style={{fontSize:11,color:"var(--c-text4)"}}>「通常の労働時間制」の属性の人が対象です。週40時間超は従来どおり労務判定の欄に出ます。</div>
+        </div>
 
         <div style={{marginTop:16,paddingTop:14,borderTop:"1px solid var(--c-border)"}}>
           <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>36協定</div>
