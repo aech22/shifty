@@ -300,6 +300,19 @@ STAFF_KEYED_MONTH_NODES / renameStaffInLaborMonths / dropStaffFromLaborMonths / 
                            // 月キー付きの名前ノード（いまは laborMonths だけ）。改名は lm.rename、削除は lm.drop（pay と同じ2つの入口）。
                            // CF の companyRenameStaff も renameStaffLaborMonthsPatch で移す（tests が一致を照合）。
                            // fillFixedPattern は本部店舗の固定勤務パターン（土日祝・閉店日を除き、**何も入っていない日だけ**に入れる）
+scheduledDay / resolveActualDay / planActualEdit / actualOf / parseClockInput / minToClock
+                           // 実績（2026-09-30・P4・§3.6・§4.1）。scheduledDay は確定シフトのその日（laborDayMin・aggregateScheduledMonth と同じ
+                           // calcNetWorkMinutes 経路。endMin は退勤延長を足した後）。resolveActualDay は「actual ?? 確定シフト」の1日
+                           // {startMin,endMin,breakMin,workMin,absentMin,isRest,isLegalHoliday,…,segments}＝**P5 の割増はこれだけを入力にする**。
+                           // 実績の start/end は主シフトを置き換え（退勤延長は足さない）、締の追加出勤は確定シフトのまま足す。休憩は breakMin があれば
+                           // それ、無ければ getBreaksFor で判定し直す。absentMin（遅刻早退）は控除用の値で実働からは引かない。legalHoliday は手動のフラグだけ
+                           // （既定の自動判定は P5）。planActualEdit は入力を**確定シフトと違う項目だけ**の記録にし、同じなら null（＝消す）
+STAFF_KEYED_PERIOD_NODES / renameStaffInActuals / dropStaffFromActuals
+                           // 期間キー付きの名前ノード（いまは actuals だけ）。改名は act.rename、削除は act.drop（lm と同じ2つの入口）、
+                           // 期間の削除（savePeriods）でも actuals/{期間ID} を消す。CF の companyRenameStaff も renameStaffActualsPatch で移す
+actualsCsvMappingOf / parseCsvRows / parseCsvDate / planActualsImport / DEFAULT_ACTUALS_CSV_MAPPING
+                           // 実績の CSV 取込（P4 後半）。列の位置（1始まり・0=使わない）と見出しの有無は settings.actualsCsv。名前は resolveAlias、
+                           // 取り込む先は選択中の期間だけ。打刻の来た日は欠勤を外し、法定休日・遅刻早退・メモは残す。同じ人・同じ日の2行目以降は使わない
 STAFF_KEYED_PRIVATE_NODES / renameStaffInPay / dropStaffFromPay
                            // 名前キーの private ノード（いまは pay だけ）。STAFF_KEYED_SETTING_MAPS とは別リスト（settings 配下ではないため）。
                            // 改名（AdminView の onRenameStaff）と削除（settingsWithoutStaff を呼ぶ2か所）が必ず pay.rename / pay.drop を通る
@@ -418,6 +431,7 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `SmModal` | app-staff.js | 提出状況一覧（名前列固定・日付横スクロール） |
 | `AdminView` | app-admin.js | 管理者画面（タブ切り替え） |
 | `ShiftEditTab` | app-admin.js | シフト作成グリッド・ヒートマップ・集計・PDF出力（Premium） |
+| `ActualsGrid / ActualsCsvDialog` | app-admin.js | 実績の入力（P4）。シフト作成タブの「実績」切替（確定済みの期間・オーナーの端末だけ）で ShiftEditTab のグリッドと差し替わる |
 | `PeriodsTab` | app-admin.js | 期間管理・URL シェア |
 | `PEF` | app-admin.js | 期間編集フォーム |
 | `expXl()` | app-admin.js | ExcelJS による Excel 生成 |
@@ -462,6 +476,10 @@ Firebase Realtime Database
 │       ├── laborMonths/{YYYY-MM}/{名前} ← 人×月の所定 {days, min, auto:{days,min}, frozenAt?, frozenBy?}（2026-09-30・P3）。
 │       │                 **読み書きともオーナーのみ**（所定は個人の労働条件）。確定で自動集計・凍結、確定前は手修正（10月分の遡り登録も）。
 │       │                 名前キー＝改名・削除の後始末は STAFF_KEYED_MONTH_NODES
+│       ├── actuals/{期間ID}/{名前}/{YYYY-MM-DD} ← 実績（2026-09-30・P4）{start?, end?, breakMin?, absent?, absentMin?, legalHoliday?, note?}。
+│       │                 **確定シフトと違う項目だけ**を持つ（未入力＝確定シフトが実績）。subs には書かない。読み書きともオーナーのみ・
+│       │                 .validate で項目の形（start/end は HH:MM で 30:00 まで・分は 0〜1440・真偽・メモ200字・他の項目は拒否）。
+│       │                 名前キー＝改名・削除の後始末は STAFF_KEYED_PERIOD_NODES。期間の削除と purgeOldPeriods で一緒に消す
 │       ├── company    ← 企業設定の写し（2026-09-27）{id, name, entityId?, entityName?, kind, settings, deadlines:{期間キー:日付}, shops:{shopId:店舗名},
 │       │                 people?:{personId:{shopId:登録名}}, shopEntities?:{shopId:法人ID}, syncedAt}。
 │       │                 settings は「企業共通 → 法人」を CF が重ねた値。entityId/entityName/kind は 2026-09-30（P1）から。
@@ -595,7 +613,11 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              overtimeSettings?: {byStaff: {[name]: {lunch,dinner}}}, staffNumbers?: {[name]: string},
              xlShopName?: string, staffColors?: {[name]: "red"|"black"},
              staffAliases?: {[registered]: string[]}, staffHidden?: {[name]: {from:string|null,to:string|null}[]}, periodUnit?: "2week"|"1month",
-             staffHomeShop?: {[name]: shopId} }   // 所属店舗（2026-09-27。無ければ自店所属。STAFF_KEYED_SETTING_MAPS 登録済み）
+             staffHomeShop?: {[name]: shopId},    // 所属店舗（2026-09-27。無ければ自店所属。STAFF_KEYED_SETTING_MAPS 登録済み）
+             actualsCsv?: {hasHeader, date, name, start, end, breakMin} }  // 実績の CSV 取込の列の位置（1始まり・0=使わない・P4）
+
+// 実績（shops/{shopId}/actuals/{期間ID}/{名前}/{日付}・2026-09-30・P4）。確定シフトと違う項目だけ。解決は resolveActualDay
+Actual = { start?: "HH:MM", end?: "HH:MM", breakMin?: number, absent?: true, absentMin?: number, legalHoliday?: true, note?: string }
 
 // 賃金マスタ（shops/{shopId}/private/pay/{名前}・2026-09-30・P6a）。1版の形は normalizePayVersion が正本
 Pay = { payType: "monthly"|"hourly", base: number,            // 月給は基本給（月）・時給は時給。社員は常に monthly
@@ -706,7 +728,7 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
   settings・subs・periods・pay は**差分 update**（全体 set() しない）。規則は `functions/company-config.js` の
   `renameStaffSettingsPatch / renameStaffPeriodsPatch / renameStaffPayPatch / renameStaffSubsPatch / validateStaffRename` で、
   **クライアントの renameStaffInSettings / renameStaffInPeriods / renameStaffInPay を当てた結果と一致することをテストが照合する**。
-  laborMonths（P3）は `renameStaffLaborMonthsPatch` で移している。**P4 で足す `actuals` も名前キーなので、その担当が companyRenameStaff（と STAFF_KEYED_*_CF）へ移し替えを足す**
+  laborMonths（P3）は `renameStaffLaborMonthsPatch`、actuals（P4）は `renameStaffActualsPatch` で移している（`STAFF_KEYED_PERIOD_NODES_CF`）
 - 統合・統合解除は企業側の束ね方（people）だけを変え、店舗のデータは動かさない。統合は同じ店舗に別の登録名があると拒否（1店舗1名前）
 - 属性・所属店舗の変更は、つながっている全店舗の settings に同じ値を書く（StaffTab の「どの期間まで旧属性のままか」の確認は出さない）
 - 検証: `tests/core.test.js`（規則・CF とクライアントの一致・ドリフト検出）と `example-company-people.js`（スタブ・26項目・375px 含む。
@@ -744,12 +766,33 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
 - **写しの people**: CF の `buildShopMirror` が `mirrorPeopleOf`（連携店舗ぶん・人物ID の形を満たすもの）と `mirrorShopEntitiesOf` を焼く。
   人物を変える CF（ensureCompanyPeople・mergePeople・splitPerson・reassignPersonId・companyRenameStaff）は `syncPeopleMirror` で写しを作り直す
 - **合算するのは予定（subs）だけ**。他店の `laborMonths`・`actuals`・`private/pay` はオーナーしか読めず、店長のセッションは自分の店舗の
-  オーナーでしかない。**P4（実績）の他店合算は、そのセッションが行き先の店のオーナーであるときだけ行う**（企業コードのログインは全連携店舗の
+  オーナーでしかない。**実績（P4 のノード。読む計算は P5）の他店合算は、そのセッションが行き先の店のオーナーであるときだけ行う**（企業コードのログインは全連携店舗の
   オーナーなので読める）。読めないときは同じく「＋」と「他店の実績を読み込めていません」を出す。賃金（P6b）の合算は企業コードのログインで開いた
   月次賃金ページに限る（計画書 §3.9 の「読み取り権限の制約」）
 - 検証: `tests/core.test.js`（同一人物・所属と行き先・行き先の休憩と写し・期間の切り方が違う2店舗・laborMonths の凍結値・写しの people・
   重複候補・入口のドリフト）と `example-helper-aggregate.js`（店長のセッション・14項目）・`example-company-dup-candidates.js`（統合で写しが作り直される）。
   どちらも P3.6 より前の配信物に向けると落ちる
+
+### 実績（2026-09-30・P4・develop のみ・ルールは dev へのデプロイ待ち・CF は本番未反映）
+
+`労務給与_複数法人_実装計画.md` §3.6・§4.1・P4（決定 #8: 手入力が先・CSV は列の位置を設定に持つ）。確定シフトとは別ノードに実労働を持つ。
+- **置き場は `shops/{sid}/actuals/{期間ID}/{名前}/{日付}`**。subs に書かないので、スタッフの提出で消えず、確定ロック中でも書ける。
+  読み書きはオーナーだけ（`laborMonths` と同じ形のルール）。App は claim が通った店舗でだけ購読する（所定・賃金と同じ理由）。
+  書き込みは `fbUpd` の差分だけ（`{"期間ID/名前/日付": 記録|null}`）。**コレクション全体を set() しない**
+- **確定シフトと違う日だけを保存する**。`planActualEdit` が入力から確定シフトと同じ項目を落とし、何も残らなければ null で消す。
+  実績の出勤・退勤の初期値は `scheduledDay`（退勤延長を足した後の退勤）なので、見えている値をそのまま保存しても記録は増えない
+- **解決は `resolveActualDay` 1本**（P5 の割増はこれだけを入力にする）。出勤・退勤は主シフトを置き換え、退勤延長は足さない
+  （入れた退勤が実際の退勤）。締の追加出勤は確定シフトのまま足す。休憩は breakMin が無ければ変わった時刻で `getBreaksFor` を通し直す。
+  欠勤の不就労は確定シフトの実働。遅刻・早退（absentMin）は賃金の控除（P6b）用の値で、実働からは引かない
+- **UI**: シフト作成タブの「実績」切替は**確定済みの期間・オーナーの端末・Premium だけ**。出勤・退勤はセルで直し（空欄で予定に戻る）、
+  セルを選ぶと出る欄で休憩・欠勤・遅刻早退・法定休日・メモ・「予定に戻す」。差分のある日だけ色（`ACT_DIFF_BG`）と太字、法定休日は「法」
+- **CSV取込**（同じダイアログ）: 1行＝1人1日（日付・名前・出勤・退勤・休憩）。列の位置と見出しの有無は `settings.actualsCsv`（変えて取り込んだときだけ保存）。
+  文字コードは Shift_JIS（既定）と UTF-8。打刻機の形式が分かった時点で既定の列を変える
+- **他店の実績の合算はまだしていない**（P4 には実績を読む計算が無いため）。P5 で割増に使うとき、P3.6 の申し送りどおり
+  「そのセッションが行き先の店のオーナーのときだけ」他店の actuals を読み、読めなければ「＋」を出す
+- 改名・削除: `STAFF_KEYED_PERIOD_NODES`（act.rename／act.drop・CF は `renameStaffActualsPatch`）。期間の削除（savePeriods）と CF の purgeOldPeriods も actuals/{期間ID} を消す
+- ルールは新ノードだけ＝**本番はルールが先**（計画書 §6 冒頭）。dev の実測は `probe-rules-actuals.js`（匿名uidの読み書き401・オーナー200・形の不正401）
+- 検証: `tests/core.test.js`（解決・差分保存・改名削除・CF との一致・ルールと入口のドリフト・CSV）と `example-actuals.js`（21項目・375px 含む）
 
 ### 企業連携の拡張（2026-09-27・本番反映済み: クライアント 2282f11／ルール／Cloud Functions）
 
@@ -800,7 +843,7 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
 | `sendEmailOtp` | Callable `sendEmailOtp` | メール連携用OTP送信 |
 | `verifyEmailOtp` | Callable `verifyEmailOtp` | OTP検証（5回失敗で無効化） |
 | `purgeInactiveShops` | schedule 毎日（JST） | 1年未更新店舗を archived/ へ退避→30日後に本削除。Invalid Dateはスキップしてログ |
-| `purgeOldPeriods` | schedule 毎日（JST） | endDateが36ヶ月超の期間の period・subs・tokens を削除。`PURGE_OLD_PERIODS_DRY_RUN=true` でdry-run中（本有効化はBACKLOG参照） |
+| `purgeOldPeriods` | schedule 毎日（JST） | endDateが36ヶ月超の期間の period・subs・tokens・actuals（P4）を削除。`PURGE_OLD_PERIODS_DRY_RUN=true` でdry-run中（本有効化はBACKLOG参照） |
 | `sendSurveyEmails` | POST `/sendSurveyEmails` | ユーザーアンケート一斉送信（要秘密トークン） |
 | `createCompany` | Callable `createCompany` | 企業アカウント作成（企業コード発行・パスワードハッシュ保存・作成者オーナー店舗を連携） |
 | `companyLogin` | Callable `companyLogin` | 企業コード＋パスワードで認証しカスタムトークンを発行。**カスタムトークンの署名に、CF の実行サービスアカウントの「サービス アカウント トークン作成者」（`iam.serviceAccounts.signBlob`）が要る**——無いと照合は通るのに `createCustomToken` が `auth/insufficient-permission` で 500 になり、画面は「ログインに失敗しました」だけを出す（2026-09-27 に本番で実際に発生・`firebase functions:log --only companyLogin` で確認）。ログイン画面と企業連携タブの「企業アカウントでログイン」の両方がこれを呼ぶ |
