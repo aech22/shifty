@@ -257,6 +257,9 @@ sanitizeMonthlyDeadlineDays / monthlyDeadlineFor / shopDeadlineInfoFromLink
                            // 期間の締切＝開始日より前で最も遅い固定日。優先は 期間ごとの日付指定 ＞ 毎月の固定。
                            // CF 側の同じ規則は functions/company-config.js（tests/core.test.js が一致を照合）
 homeShopOf / isHelperAt / dupTargetShopsFor
+personIndexOfMirror / samePersonRegistrations / personHomeShopOf / helperPersonOf / helperShopSettingsOn / helperWorkOn
+otherShopDataOf / helperShopsOf / helperScheduleContext / duplicatePersonCandidates
+                           // ヘルプ先勤務の所属店舗への合算（2026-09-30・P3.6）。詳細は「企業アカウント」の P3.6 の節
 COMPANY_ENTITY_ID_RE / COMPANY_SHOP_KINDS / companyEntityIdOfShop / companyShopKindOf / companyEntityList
                            // 法人レイヤー（2026-09-30・P1）。店舗の法人（割当が無い・消えた法人を指すなら既定の法人）と本部の種別。
                            // CF 側の entityIdOfShop / shopKindOf（functions/company-config.js）と同じ規則で、tests/core.test.js が照合する。
@@ -423,7 +426,7 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `SubsTab` | app-admin.js | 提出一覧・セル編集・変更履歴 |
 | `CompanyTab` | app-company.js | 企業連携。カードの並びは シフトの提出状況 → 企業内登録スタッフ → 企業アカウント → 連携店舗 → 法人 → 企業の共通設定（2026-09-28・法人は 2026-09-30） |
 | `CompanyEntityCard / EntityFilter / CoLaborFields` | app-company.js | 法人（2026-09-30・P1）。法人の追加・改名・法人の労務設定・店舗の法人と種別（店舗／本部）を CF（App の `callCompanyCF`）で書く。法人の無い企業ではカードが `ensureCompanyEntities` を1回呼んで移行する。`EntityFilter` は法人が2つ以上のときだけ出る絞り込み（提出状況・企業内登録スタッフ）。`CoLaborFields` は企業の共通設定と法人の設定が共有する労務判定の入力欄 |
-| `CompanyStaffCard / CompanyStaffDirectory` | app-company.js | 企業内登録スタッフ（2026-09-28・Premium）。カードの「一覧を開く」で AdminView の `fullPage` が管理者画面の中身を差し替える（新しいブラウザタブは使わない＝実ログインは永続化しないため）。従業員番号順（既定）／店舗別・番号と名前で検索。載せるのは店舗依存でない情報（番号・属性・所属店舗・有給の付与と残）だけ。計算は `buildCompanyStaffRows`（有給は所属店舗の `laborTotals` だけ・subs は読まない・凍結値の無い期間があれば残に「＋」）。**数字だけの同じ従業員番号は1行にまとめ**（2026-09-29）、名前は空白を除いて最も長い表記＝フルネームに寄せ、所属店舗は全部並べる。フルネームに含まれない別の名前（番号が同じなのに名前が食い違う）は「別の登録名」として残す。店舗タブの「呼び出す」（`mergeStaffMatches`）は名前でまとめるので、こちらの規則とは別。上部の並びは「従業員番号順」「店舗別」「パスコード」（2026-09-30・P6a）で、「賃金」列は企業のパスコードで解除するまで「••••」。**行は人物ID（P1b）で束ね**、開いたときに未リンクの登録があれば CF `ensureCompanyPeople` を1回呼ぶ。行の右端に「編集」、番号の前のチェックで2人を選んで「同一人物として統合」。別法人と番号が重なる行には「番号 X は◯◯法人でも使われています」 |
+| `CompanyStaffCard / CompanyStaffDirectory` | app-company.js | 企業内登録スタッフ（2026-09-28・Premium）。カードの「一覧を開く」で AdminView の `fullPage` が管理者画面の中身を差し替える（新しいブラウザタブは使わない＝実ログインは永続化しないため）。従業員番号順（既定）／店舗別・番号と名前で検索。載せるのは店舗依存でない情報（番号・属性・所属店舗・有給の付与と残）だけ。計算は `buildCompanyStaffRows`（有給は所属店舗の `laborTotals` だけ・subs は読まない・凍結値の無い期間があれば残に「＋」）。**数字だけの同じ従業員番号は1行にまとめ**（2026-09-29）、名前は空白を除いて最も長い表記＝フルネームに寄せ、所属店舗は全部並べる。フルネームに含まれない別の名前（番号が同じなのに名前が食い違う）は「別の登録名」として残す。店舗タブの「呼び出す」（`mergeStaffMatches`）は名前でまとめるので、こちらの規則とは別。上部の並びは「従業員番号順」「店舗別」「パスコード」（2026-09-30・P6a）で、「賃金」列は企業のパスコードで解除するまで「••••」。**行は人物ID（P1b）で束ね**、開いたときに未リンクの登録があれば CF `ensureCompanyPeople` を1回呼ぶ。行の右端に「編集」、番号の前のチェックで2人を選んで「同一人物として統合」。別法人と番号が重なる行には「番号 X は◯◯法人でも使われています」。**先頭に「重複候補」**（同じ名前が2店舗以上にあって人物が別・`duplicatePersonCandidates`・P3.6）を出し「統合する」で統合モーダルを開く。2店舗以上に登録があって所属店舗が明示されていない行と候補の側に「所属店舗を設定してください」（ヘルプ先の勤務の合算先が決まらないため） |
 | `CompanyPersonEditModal / CompanyPersonMergeModal` | app-company.js | 企業内登録スタッフの編集（2026-09-30・P1b）。名前の変更（店舗ごとにチェック・CF `companyRenameStaff`）・番号/法人/属性/所属店舗（`companyUpdateStaff`・属性と所属店舗はつながっている全店舗に同じ値）・統合の解除（店舗ごとに「切り出す」＝`splitPerson`）・「ID を番号に振り直す」（`reassignPersonId`・番号が数字だけで ID と違うときだけ）。統合は残す方（番号・法人・所属）を選ぶ（`mergePeople`）。結果は一覧の上に出す（全画面なので AdminView のトーストは出ない） |
 | `StaffPayPage` | app-company.js | 賃金設定ページ（2026-09-30・P6a・Premium・オーナー）。スタッフタブ → 編集 → 「賃金設定を開く →」で AdminView の `fullPage={kind:"staffPay",name}` が管理者画面を差し替える（`CompanyStaffDirectory` と同じ方式）。「← 戻る」で編集モーダルを開き直す（`returnEdit` → StaffTab の `initialEditKey`）。**所属店舗のスタッフだけ**編集でき、ヘルプの人は編集モーダルで「賃金は所属店舗（◯◯）で設定します」。保存先は `shops/{sid}/private/pay/{名前}`（`applyPayRevision` を通す） |
 | `PayCodeBox / PayCodeChangeModal / PAY_OFF` | app-company.js | 賃金の閲覧パスコード（P6a）。ボックスはスタッフタブの「スタッフ登録」の横・`StaffPayPage` の上部・企業内登録スタッフの上部（従業員番号順・店舗別の次）。解除前は金額を「••••」にして編集させない（時間と最賃の可否は伏せない）。`PAY_OFF` は pay を持たない呼び出し元の既定値 |
@@ -459,8 +462,11 @@ Firebase Realtime Database
 │       ├── laborMonths/{YYYY-MM}/{名前} ← 人×月の所定 {days, min, auto:{days,min}, frozenAt?, frozenBy?}（2026-09-30・P3）。
 │       │                 **読み書きともオーナーのみ**（所定は個人の労働条件）。確定で自動集計・凍結、確定前は手修正（10月分の遡り登録も）。
 │       │                 名前キー＝改名・削除の後始末は STAFF_KEYED_MONTH_NODES
-│       ├── company    ← 企業設定の写し（2026-09-27）{id, name, entityId?, entityName?, kind, settings, deadlines:{期間キー:日付}, shops:{shopId:店舗名}, syncedAt}。
-│       │                 settings は「企業共通 → 法人」を CF が重ねた値。entityId/entityName/kind は 2026-09-30（P1）から
+│       ├── company    ← 企業設定の写し（2026-09-27）{id, name, entityId?, entityName?, kind, settings, deadlines:{期間キー:日付}, shops:{shopId:店舗名},
+│       │                 people?:{personId:{shopId:登録名}}, shopEntities?:{shopId:法人ID}, syncedAt}。
+│       │                 settings は「企業共通 → 法人」を CF が重ねた値。entityId/entityName/kind は 2026-09-30（P1）から。
+│       │                 people / shopEntities は 2026-09-30（P3.6）から＝人物の正本 companies/{id}/pub/people は企業コードのログインと
+│       │                 作成者しか読めないので、店長のセッションがヘルプ先勤務の合算で同一人物を引くためにここへ焼く
 │       │                 **CF（syncCompanyMirror）だけが書く**（.write:false）・読みは auth != null。
 │       │                 無い＝企業に連携していない。店舗側の企業機能（設定の重ね合わせ・提出ボタン・提出期限・所属店舗の選択肢）はこれだけを見る
 │       └── private/     ← 読みはオーナーのみ（配下すべて）
@@ -606,7 +612,10 @@ Person = { displayName: string, entityId?: string, number?: string, links: {[sho
 CompanyLink = { id: string, name: string, entityId?: string, entityName?: string, kind?: "shop"|"hq",   // 法人と本部（2026-09-30・P1）
                 settings: {laborSettings?, staffTypeLimits?, wageSettings?: {minWage?: {from, yen}[]}}, deadlines: {[期間キー]: "YYYY-MM-DD"},
                 monthlyDeadlineDays?: number[],   // 毎月の固定締切（日付指定の無い期間に効く・2026-09-27）
-                shops: {[shopId]: 店舗名}, syncedAt: string }   // 期間キー = periodRangeKey(period) = "開始日_終了日"
+                shops: {[shopId]: 店舗名},
+                people?: {[personId]: {[shopId]: 登録名}},   // 連携店舗ぶんの人物（P3.6・CF の mirrorPeopleOf）
+                shopEntities?: {[shopId]: 法人ID},            // 連携店舗の法人（P3.6・同じ法人の中だけで合算する）
+                syncedAt: string }   // 期間キー = periodRangeKey(period) = "開始日_終了日"
 ```
 
 ---
@@ -702,6 +711,45 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
 - 属性・所属店舗の変更は、つながっている全店舗の settings に同じ値を書く（StaffTab の「どの期間まで旧属性のままか」の確認は出さない）
 - 検証: `tests/core.test.js`（規則・CF とクライアントの一致・ドリフト検出）と `example-company-people.js`（スタブ・26項目・375px 含む。
   HEAD の配信物に向けると25項目が落ちる＝素通りしない）
+
+### ヘルプ先勤務の所属店舗への合算（2026-09-30・P3.6・develop のみ・CF は本番未反映・ルールの変更なし）
+
+sub は行き先の店にあるので、以前は所属店舗の労務判定・月計・週の休みがその人の他店勤務を知らなかった（空欄＝休みに見えた）。
+所属店舗のシフト作成タブが店舗間の重複判定のために読んでいる連携店舗のデータ（`companyData`。他店の settings・subs・staff・periods は
+`auth != null` で読める）を使って合算する。形の組み立ては `otherShopDataOf` で、企業の確定（企業連携タブの提出状況表）も同じ関数で読む。
+
+- **対象店舗**: 企業の写し（`companyLink.shops`）の連携店舗だけ（`allLinkedShops` のうち企業に入れていない店舗は含めない）。
+  写しの `shopEntities` があれば**同じ法人の店舗だけ**（`helperShopsOf`）
+- **同一人物（`samePersonRegistrations`）**: ① 写しの `people` に自店の登録が載っていれば、その人物の links が正（登録名は店舗ごとに違ってよい）。
+  ② どちらかの登録が people に無ければ `dupTargetShopsFor` と同じ規則（同じ名前で両方の登録の所属店舗が一致）。
+  **両方の登録が別の人物に載っていれば別人**（同姓同名を束ねない）。名前が同じで番号も所属も無い登録も別人
+- **所属（`personHomeShopOf`）**: 同じ人の登録の `staffHomeShop` に**明示された値が1つに決まる**ときだけ。両方未設定・食い違いは null＝
+  **どちらにも合算しない**（両方が自店を所属とみなすと同じ時間を2店舗で数えるため）。企業内登録スタッフの一覧が「所属店舗を設定してください」を出す
+- **役割（`helperPersonOf`）**: 所属側（role "home"）が他店の勤務を足す。行き先（role "dest"）は労務判定表の総括を「所属店舗で判定」にし、
+  **`laborTotals`・`laborMonths` に入れない**（有給残と同じ「所属店舗に1本化」）。dest は所属店舗の登録を自分が知っているときだけ
+  （知らないと、どこでも数えられなくなる）。行き先の表示（人数・ポジション・重複判定）はそのまま
+- **他店の勤務（`helperWorkOn`）**: 休憩は**行き先の店の設定**（企業設定を重ね、その日を含む期間が確定・終了済みなら写し＝`helperShopSettingsOn`）で
+  引いた実働を持ち込む（所属店舗の設定で数え直さない）。**自店のその日の勤務と時間が重なる他店の勤務は足さない**——ヘルプコマンド
+  （略称サフィックス）で自店にも同じ勤務を入れているか、重複エラーの日で、足すと二重に数える。期間の切り方が違っても日付で拾う
+- **合算する画面**: 所属店舗のシフト作成タブの `laborDayMin`（月実働・残業予定・労務判定・laborTotals・年計）・`getWeekMin`（週計）・
+  `getPeriodMin`（期間別勤務時間の月計）・週の休み（`dayKindWithHelper`＝自店が空欄でも他店で働いた日は出勤日）・休暇の公休日数・休憩不足（行き先の判定）・PDF。
+  **休みカウント表（1日休・半日休）と最大連勤は合算していない**（計画の対象外）
+- **グリッド**: 自店のその日が出勤・退勤とも空欄のとき、他店の勤務を**読み取り専用セル**で出す（出勤セル「→三17」・退勤セル「23」。
+  `data-helper`・灰色の斜体・title に店舗名と実働）。blur しても保存しない。PDF のシフト表も同じ
+- **laborMonths**: 確定の2つの入口（シフト作成タブ・企業の確定）がどちらも `helperScheduleContext` を通して `planPeriodConfirmation` の
+  `extraDayMin`／`excludeNames` に渡す（`aggregateScheduledMonth` が他店の勤務を足し、行き先では所属店舗で判定する人を数えない）
+- **読めない他店**: 読み込みに失敗した店舗に登録がある人（people に載っていない人は、失敗した店舗が1つでもあれば）は月実働・総括に「＋」と
+  「他店の勤務を読み込めていません」。**他店を読み終えるまでは laborTotals を書かない**（合算前の値で凍結しない・`companyDataReady`）。
+  一括PDF（非表示マウント）は写しを渡し、他店の読み込みを待ってから書き出す
+- **写しの people**: CF の `buildShopMirror` が `mirrorPeopleOf`（連携店舗ぶん・人物ID の形を満たすもの）と `mirrorShopEntitiesOf` を焼く。
+  人物を変える CF（ensureCompanyPeople・mergePeople・splitPerson・reassignPersonId・companyRenameStaff）は `syncPeopleMirror` で写しを作り直す
+- **合算するのは予定（subs）だけ**。他店の `laborMonths`・`actuals`・`private/pay` はオーナーしか読めず、店長のセッションは自分の店舗の
+  オーナーでしかない。**P4（実績）の他店合算は、そのセッションが行き先の店のオーナーであるときだけ行う**（企業コードのログインは全連携店舗の
+  オーナーなので読める）。読めないときは同じく「＋」と「他店の実績を読み込めていません」を出す。賃金（P6b）の合算は企業コードのログインで開いた
+  月次賃金ページに限る（計画書 §3.9 の「読み取り権限の制約」）
+- 検証: `tests/core.test.js`（同一人物・所属と行き先・行き先の休憩と写し・期間の切り方が違う2店舗・laborMonths の凍結値・写しの people・
+  重複候補・入口のドリフト）と `example-helper-aggregate.js`（店長のセッション・14項目）・`example-company-dup-candidates.js`（統合で写しが作り直される）。
+  どちらも P3.6 より前の配信物に向けると落ちる
 
 ### 企業連携の拡張（2026-09-27・本番反映済み: クライアント 2282f11／ルール／Cloud Functions）
 

@@ -38,15 +38,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🟡 労務・給与と複数法人 P3.6: ヘルプ先勤務の所属店舗への合算
-
-**目的**: `労務給与_複数法人_実装計画.md`（リポジトリ直下・v9）§6 P3.6 の「目的」。
-**受け入れ条件**: 同 §6 P3.6 の受け入れ条件が正本（ここへ書き写さない）。共通の検証手段は §6 冒頭。
-**影響範囲**: 同 §6 P3.6 の影響範囲。
-**備考**: 実装順は計画書 §0 の表。2026-09-30 ユーザー指示で P0〜P7 を順に develop へ実装し、本番反映は全フェーズ完了後に1回だけ確認する（途中で main・本番ルール・本番CFに触れない）。P8（NITOへの適用）は対象外。
-
----
-
 ## 🟡 労務・給与と複数法人 P4: 実績レイヤー（actuals）
 
 **目的**: `労務給与_複数法人_実装計画.md`（リポジトリ直下・v9）§6 P4 の「目的」。
@@ -118,6 +109,23 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 - [ ] 反映後、企業内登録スタッフを1回開いて `companies/{id}/pub/people` ができ、行数と並びが反映前と同じことを `shifty-prod-data-probe`（読み取り専用）で確認する
 - [ ] 本番で1人の改名を企業の一覧から通し、店舗の staff・全 subs・settings・periods・private/pay が移ったことを同じく読み取りで確認する
       （Admin SDK での `staff` のトランザクションと subs 全件の読みは実データでしか確かめられない）
+**影響範囲**: functions/index.js・functions/company-config.js（コード変更は済み）
+
+---
+
+## 🟡 労務・給与と複数法人: ヘルプ先勤務の合算（P3.6）の Cloud Functions の本番反映と実データ確認（全フェーズ完了後に1回）
+
+**目的**: P3.6（2026-09-30・develop `a892d85`〜）は写し `shops/{sid}/company` に `people`・`shopEntities` を焼くよう CF を変えた。**本番に未デプロイ**。
+中身は `tests/core.test.js`（`buildShopMirror`・`mirrorPeopleOf`）とスタブの実ブラウザ回帰（`example-helper-aggregate.js`・`example-company-dup-candidates.js`）でしか確かめていない。
+**反映が要るもの**:
+- [ ] CF: `syncCompanyMirror` を使う全関数（写しの形が変わる）と、人物を変える5本（`ensureCompanyPeople`・`mergePeople`・`splitPerson`・`reassignPersonId`・`companyRenameStaff`）の `syncPeopleMirror`。
+      P1b の CF と同じデプロイで出せば足りる
+- [ ] ルール: **変更なし**（写しは既存ルールで CF 専用・読みは `auth != null`。他店の subs・staff・settings・periods も既存ルールで `auth != null` で読める）
+- [ ] 順序: CF を先に出してからクライアント。**クライアントだけ先に出ると**、写しに `people` が無いので同一人物は後方互換の規則（所属店舗の一致）だけで判定され、
+      人物で束ねた（登録名が違う・所属店舗が未設定の）登録は合算されない（壊れはしない＝以前と同じ表示に倒れる）
+- [ ] 反映後、企業内登録スタッフを1回開き（または人物を1つ統合し）、写し `shops/{sid}/company.people` ができたことを `shifty-prod-data-probe`（読み取り専用）で確かめる
+- [ ] 本番で、所属店舗が明示されていて他店にもシフトがある人を1人選び、所属店舗のシフト作成タブで読み取り専用セル・月実働の合算を目で確かめる
+      （行き先の店の設定で引いた実働が、その店のシフト作成タブの値と一致すること）
 **影響範囲**: functions/index.js・functions/company-config.js（コード変更は済み）
 
 ---
@@ -1689,6 +1697,22 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 🟡 労務・給与と複数法人 P3.6: ヘルプ先勤務の所属店舗への合算（2026-09-30 develop 完了・`a892d85`〜`bc60037`／ルール変更なし・CF は本番未反映）
+
+**目的**: `労務給与_複数法人_実装計画.md` §3.9「ヘルプ先勤務の所属店舗への合算」・§6 P3.6・決定 #15。詳細は CLAUDE.md の「ヘルプ先勤務の所属店舗への合算」の節。
+- [x] 所属店舗のシフト作成タブに他店勤務日が読み取り専用セル（出勤セル「→三17」・退勤セル「23」）で出て、月実働・週計・月計・週の休み・残業予定・労務判定表・PDF が合算後（`example-helper-aggregate.js`）
+- [x] 行き先の店の `laborTotals` に入らず、総括が「所属店舗で判定」（同上）
+- [x] 読めない他店があれば月実働・総括に「＋」と注記（`helperPersonOf` の unread・テスト。実ブラウザでは読み込み失敗を作れないので未検証）
+- [x] `laborTotals`（実ブラウザ・他店を読み終えるまで書かない）／`laborMonths`（テスト・シフト作成タブと企業の確定の両方が `helperScheduleContext` を通す）の凍結値が合算後
+- [x] 期間の切り方が違う2店舗（1か月と半月×2）でも日付で拾う（テスト・実ブラウザ）
+- [x] 略称サフィックスを使わず2店舗で組んだ同一人物（写しの people で束なる）が合算され、同姓同名で personId が別の2人は合算されない（テスト・実ブラウザ）
+- [x] 企業内登録スタッフに「重複候補」が出て、その場で統合でき、統合で写しの people が作り直される（`example-company-dup-candidates.js`）
+- [x] 店長のセッション（企業コードのログインではない）で写し `shops/{sid}/company.people` から同一人物を引いて合算される（`example-helper-aggregate.js` は uid が企業uidでなく allLinkedShops も空）
+- 検証: `npm test` 459件パス・`npx eslint app-*.js` 0 errors・上の2本は P3.6 より前の配信物で非0。既存の回帰（重複判定・企業・労務・PDF の22本）はすべて通過。
+  `example-company-staff-directory.js` は所属店舗の注記を期待値に足した
+- 置いた前提: 所属店舗は「同じ人の登録の staffHomeShop に明示された値が1つに決まる」ときだけ決まる（両方未設定は合算しない）。
+  休みカウント表（1日休・半日休）と最大連勤は合算していない（計画の対象外）
 
 ### ✅ 🟡 労務・給与と複数法人 P3.5: 店舗別ルール4件（2026-09-30 develop 完了・`f97cb72`〜`a921796`／ルール変更なし・CF は本番未反映）
 
