@@ -4750,3 +4750,230 @@ test("P6a buildCompanyStaffRows: 賃金の置き場は所属店舗に登録さ�
   assert.deepStrictEqual([t.payShopId, t.payName], ["A", "田中"]);
   assert.deepStrictEqual([k.payShopId, k.payName], [null, null]);
 });
+
+// ===== P1b 人物ID（personId）と企業スタッフ一覧の編集（2026-09-30・労務給与_複数法人_実装計画.md §3.8）=====
+const cfp = require("../functions/company-config.js");
+// CF の readCompanyRegs（functions/index.js）と同じ形で、店舗の配列から登録（店舗×名前）を作る
+const p1bRegs = shops => {
+  const regs = [];
+  shops.forEach(s => {
+    const st = s.settings || {};
+    (s.staff || []).filter(n => typeof n === "string" && n && !n.startsWith("__spacer__")).forEach(name => {
+      const h = (st.staffHomeShop || {})[name], num = (st.staffNumbers || {})[name];
+      regs.push({ shopId: s.id, name, entityId: s.entityId || "", homeShopId: typeof h === "string" && h ? h : s.id, number: String(num == null ? "" : num).trim() });
+    });
+  });
+  return regs;
+};
+// Firebase の update（パス＝値・null で削除・空になったノードは消える）を JS オブジェクトに当てる
+const p1bApply = (obj, patch) => {
+  const out = JSON.parse(JSON.stringify(obj || {}));
+  Object.keys(patch || {}).forEach(k => {
+    const ks = k.split("/"); let n = out;
+    for (let i = 0; i < ks.length - 1; i++) { if (!n[ks[i]] || typeof n[ks[i]] !== "object") n[ks[i]] = {}; n = n[ks[i]]; }
+    if (patch[k] === null) delete n[ks[ks.length - 1]]; else n[ks[ks.length - 1]] = JSON.parse(JSON.stringify(patch[k]));
+  });
+  const prune = o => { Object.keys(o).forEach(k => { if (o[k] && typeof o[k] === "object") { prune(o[k]); if (!Object.keys(o[k]).length) delete o[k]; } }); return o; };
+  return prune(out);
+};
+const p1bNorm = v => { const o = JSON.parse(JSON.stringify(v)); const prune = x => { if (x && typeof x === "object") Object.keys(x).forEach(k => { prune(x[k]); if (x[k] && typeof x[k] === "object" && !Array.isArray(x[k]) && !Object.keys(x[k]).length) delete x[k]; }); return x; }; return prune(o); };
+const p1bSeq = () => { let i = 0; return n => Array.from({ length: n }, () => (i++ * 7) % 256); };
+
+test("P1b 改名の後始末: CF の名前キー一覧がクライアントと一致する（書き写しのドリフト検出）", () => {
+  assert.deepStrictEqual(cfp.STAFF_KEYED_SETTING_MAPS_CF, u.STAFF_KEYED_SETTING_MAPS);
+  assert.deepStrictEqual(cfp.STAFF_KEYED_PRIVATE_NODES_CF, u.STAFF_KEYED_PRIVATE_NODES);
+});
+test("P1b 改名の後始末: settings の差分パッチを当てた結果が renameStaffInSettings と一致する", () => {
+  const cases = [
+    { staffColors: { "田中": "red", "佐藤": "black" }, staffAttributes: { "田中": "employee" }, staffNumbers: { "田中": "12" }, staffPositions: { "田中": ["k"] },
+      staffAliases: { "田中": ["たなか"] }, staffWorkplaces: { "田中": ["S2"] }, staffHidden: { "田中": [{ from: "2026-04-01", to: null }] },
+      paidLeaveGranted: { "田中": 10 }, staffHomeShop: { "田中": "S2" }, overtimeSettings: { byStaff: { "田中": { lunch: 15, dinner: 0 } } }, xlShopName: "A" },
+    { staffColors: { "佐藤": "red" } },
+    {},
+    { overtimeSettings: { byStaff: { "佐藤": { lunch: 0 } } }, staffAttributes: { "田中": "parttime" } },
+  ];
+  cases.forEach((st, i) => {
+    const patched = p1bApply(st, cfp.renameStaffSettingsPatch(st, "田中", "田中 太郎"));
+    assert.deepStrictEqual(p1bNorm(patched), p1bNorm(u.renameStaffInSettings(st, "田中", "田中 太郎")), "ケース" + i);
+  });
+  assert.deepStrictEqual(cfp.renameStaffSettingsPatch({ staffColors: { "佐藤": "red" } }, "田中", "X"), {}, "無いキーは作らない");
+});
+test("P1b 改名の後始末: periods の差分パッチ（フィールド単位）を当てた結果が renameStaffInPeriods と一致する", () => {
+  const periods = {
+    p1: { id: "p1", startDate: "2026-04-01", keepStaff: [{ name: "田中", index: 0 }, { name: "佐藤", index: 1 }], keepAttrs: { "田中": "employee" },
+      laborTotals: { "田中": { workMin: 600, paid: 1 } }, snapshot: { staffList: ["田中", "佐藤"], settings: { staffAttributes: { "田中": "employee" } } } },
+    p2: { id: "p2", startDate: "2026-05-01", keepStaff: { 0: { name: "田中", index: 0 } }, snapshot: { staffList: ["佐藤"], settings: { staffNumbers: { "田中": "12" } } } },
+    p3: { id: "p3", startDate: "2026-06-01", snapshot: { staffList: ["佐藤"], settings: {} } },
+    p4: { id: "p4", startDate: "2026-07-01", keepStaff: [{ name: "田中", index: 0 }, { name: "田中 太郎", index: 1 }] },
+  };
+  const patch = cfp.renameStaffPeriodsPatch(periods, "田中", "田中 太郎");
+  assert.ok(!Object.keys(patch).some(k => k.startsWith("p3/")), "関係の無い期間には書かない");
+  assert.ok(Object.keys(patch).every(k => k.split("/").length === 2), "期間のフィールド単位（期間を丸ごと set しない）");
+  const expected = u.renameStaffInPeriods(Object.values(periods), "田中", "田中 太郎").periods;
+  const got = p1bApply(periods, patch);
+  expected.forEach(p => assert.deepStrictEqual(p1bNorm(got[p.id]), p1bNorm(p), p.id));
+});
+test("P1b 改名の後始末: private/pay・subs・staff の差分", () => {
+  const pay = { "田中": { payType: "hourly", base: 1200 } };
+  assert.deepStrictEqual(cfp.renameStaffPayPatch(pay, "田中", "田中 太郎"), u.renameStaffInPay(pay, "田中", "田中 太郎"));
+  assert.strictEqual(cfp.renameStaffPayPatch(pay, "佐藤", "X"), u.renameStaffInPay(pay, "佐藤", "X"));
+  const subs = { a: { staffName: "田中", periodId: "p1" }, b: { staffName: "佐藤" }, c: { staffName: "田中", periodId: "p_old" } };
+  assert.deepStrictEqual(cfp.renameStaffSubsPatch(subs, "田中", "田中 太郎"), { "a/staffName": "田中 太郎", "c/staffName": "田中 太郎" }, "3ヶ月の窓の外の期間も含めて全件");
+  assert.deepStrictEqual(cfp.renameStaffListCF(["田中", "__spacer__1", "佐藤"], "田中", "田中 太郎"), ["田中 太郎", "__spacer__1", "佐藤"]);
+});
+test("P1b 改名の検証: StaffTab と同じ規則（空・同名・重複・禁止文字・他人の別名）", () => {
+  const staff = ["田中", "佐藤"], st = { staffAliases: { "佐藤": ["さとう"], "田中": ["たなか"] } };
+  assert.strictEqual(cfp.validateStaffRename(staff, st, "田中", "田中 太郎"), null);
+  assert.ok(cfp.validateStaffRename(staff, st, "田中", " "));
+  assert.ok(cfp.validateStaffRename(staff, st, "田中", "田中"));
+  assert.ok(cfp.validateStaffRename(staff, st, "田中", "佐藤"));
+  assert.ok(cfp.validateStaffRename(staff, st, "田中", "田.中"));
+  assert.ok(/佐藤 さんの別名/.test(cfp.validateStaffRename(staff, st, "田中", "さとう")));
+  assert.strictEqual(cfp.validateStaffRename(staff, st, "田中", "たなか"), null, "自分の別名への改名は許す（StaffTab の aliasOwnerOf と同じ）");
+  assert.ok(cfp.validateStaffRename(staff, st, "山田", "山田 花子"), "店舗に居ない名前は改名できない");
+  // 禁止文字の集合はクライアントの firebaseKeyForbiddenChars と同じ
+  [".", "#", "$", "/", "[", "]", "\u0001", "\u007f"].forEach(c => assert.strictEqual(!!cfp.validateStaffRename(["a"], {}, "a", "b" + c), u.firebaseKeyForbiddenChars("b" + c).length > 0, JSON.stringify(c)));
+});
+test("P1b 同一人物の推定: CF の groupStaffRegsCF がクライアントの groupStaffRegs と一致する（ドリフト検出）", () => {
+  const regs = [
+    { shopId: "A", name: "田中", entityId: "E1", number: "12", homeShopId: "A" },
+    { shopId: "B", name: "田中 太郎", entityId: "E1", number: "12", homeShopId: "B" },
+    { shopId: "C", name: "田中 次郎", entityId: "E2", number: "12", homeShopId: "C" },
+    { shopId: "B", name: "小林", entityId: "E1", number: "", homeShopId: "A" },
+    { shopId: "A", name: "小林", entityId: "E1", number: "A7", homeShopId: "A" },
+    { shopId: "A", name: "鈴木", entityId: "E1", number: "A7", homeShopId: "A" },
+    { shopId: "C", name: "森", entityId: "", number: " 40 ", homeShopId: "C" },
+    { shopId: "D", name: "森 花子", entityId: "", number: "40", homeShopId: "D" },
+  ];
+  assert.deepStrictEqual(cfp.groupStaffRegsCF(regs), u.groupStaffRegs(regs));
+  assert.deepStrictEqual(u.groupStaffRegs(regs), [[0, 1], [2], [3, 4], [5], [6, 7]]);
+  // 乱数の登録でも一致する
+  let seed = 7; const rnd = n => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  for (let t = 0; t < 30; t++) {
+    const rs = Array.from({ length: 12 }, () => ({ shopId: "S" + rnd(3), name: "N" + rnd(5), entityId: "E" + rnd(2), number: ["", "1", "2", "3A"][rnd(4)], homeShopId: "S" + rnd(3) }));
+    assert.deepStrictEqual(cfp.groupStaffRegsCF(rs), u.groupStaffRegs(rs), "乱数" + t);
+  }
+});
+test("P1b personId: 数字だけの番号はその番号・それ以外と別法人との衝突は p_ 自動採番（キー禁止文字を含まない）", () => {
+  const gen = () => cfp.genPersonAutoId(p1bSeq());
+  assert.strictEqual(cfp.personIdFor("1042", new Set(), gen), "1042");
+  assert.strictEqual(cfp.personIdFor(" 012 ", new Set(), gen), "012", "先頭の0は残す（「012」と「12」は別の番号）");
+  assert.ok(/^p_[A-Za-z0-9]{8}$/.test(cfp.personIdFor("1042", new Set(["1042"]), gen)), "既に使われていれば自動採番");
+  assert.ok(/^p_/.test(cfp.personIdFor("A7", new Set(), gen)));
+  assert.ok(/^p_/.test(cfp.personIdFor("", new Set(), gen)));
+  assert.ok(/^p_/.test(cfp.personIdFor("123456789012345678901", new Set(), gen)), "21桁以上は番号にしない");
+  // 自動採番は全バイト値で英数字だけ（genSecureId と違って記号を含まない）
+  for (let b = 0; b < 256; b++) {
+    const id = cfp.genPersonAutoId(n => Array(n).fill(b));
+    assert.ok(cfp.isValidPersonId(id) && u.firebaseKeyForbiddenChars(id).length === 0, id);
+  }
+  assert.strictEqual(String(cfp.PERSON_ID_RE), String(u.PERSON_ID_RE), "クライアントと同じ形");
+});
+
+const P1B_SHOPS = [
+  { id: "A1", name: "A店", entityId: "E1", staff: ["田中", "小林", "鈴木"], settings: { staffNumbers: { "田中": "12", "鈴木": "A7" } }, periods: {} },
+  { id: "B1", name: "B店", entityId: "E1", staff: ["田中 太郎", "小林", "高橋"], settings: { staffNumbers: { "田中 太郎": "12" }, staffHomeShop: { "小林": "A1" } }, periods: {} },
+  { id: "C1", name: "C店", entityId: "E2", staff: ["田中 次郎", "伊藤"], settings: { staffNumbers: { "田中 次郎": "12", "伊藤": "5" } }, periods: {} },
+];
+const p1bInit = () => { const seq = p1bSeq(); return cfp.planPeopleSync(null, p1bRegs(P1B_SHOPS), () => cfp.genPersonAutoId(seq), "T0"); };
+test("P1b 人物の自動生成: 既存の推定と同じまとまりで作り、一覧の見た目が変わらない", () => {
+  const { patch, created } = p1bInit();
+  const people = p1bApply({}, patch);
+  assert.strictEqual(created.length, Object.keys(people).length);
+  assert.strictEqual(people["12"].displayName, "田中 太郎");
+  assert.deepStrictEqual(people["12"].links, { A1: "田中", B1: "田中 太郎" }, "同じ法人の番号12は1人");
+  assert.strictEqual(people["12"].entityId, "E1");
+  const jiro = Object.keys(people).find(id => people[id].links.C1 === "田中 次郎");
+  assert.ok(/^p_/.test(jiro), "別法人で番号12が衝突した側だけ自動採番");
+  assert.strictEqual(people[jiro].number, "12");
+  assert.strictEqual(people["5"].links.C1, "伊藤");
+  const kob = Object.keys(people).find(id => people[id].links.A1 === "小林");
+  assert.deepStrictEqual(people[kob].links, { A1: "小林", B1: "小林" }, "ヘルプ先の登録は所属店舗の人物に");
+  // 一覧: people で束ねた行と推定だけの行が、人物IDと links 以外で一致する
+  const strip = rows => rows.map(r => { const o = { ...r }; delete o.personId; delete o.key; delete o.links; return o; })
+    .sort((a, b) => (a.shopId + a.name).localeCompare(b.shopId + b.name));
+  const before = u.buildCompanyStaffRows(P1B_SHOPS, null, "2026-09-30");
+  const after = u.buildCompanyStaffRows(P1B_SHOPS, null, "2026-09-30", people);
+  assert.deepStrictEqual(strip(after), strip(before));
+  assert.ok(after.every(r => r.personId), "全員に人物IDが付く");
+  assert.strictEqual(cfp.planPeopleSync(people, p1bRegs(P1B_SHOPS), () => "p_zzzzzzzz", "T1").patch, null, "2回目は何もしない（冪等）");
+});
+test("P1b 人物の同期: 未リンクの登録だけを拾う（推定で1人につながれば足す・店舗側の改名は番号で同じ人物へ戻す）", () => {
+  const people = p1bApply({}, p1bInit().patch);
+  // C店に田中 太郎のヘルプ登録（所属 B店）を足す → 人物12へ
+  const shops2 = JSON.parse(JSON.stringify(P1B_SHOPS));
+  shops2[2].staff.push("田中 太郎"); shops2[2].settings.staffHomeShop = { "田中 太郎": "B1" };
+  const r1 = cfp.planPeopleSync(people, p1bRegs(shops2), () => "p_newnewne", "T1");
+  assert.deepStrictEqual(r1.created, []);
+  assert.strictEqual(r1.patch["12/links/C1"], "田中 太郎");
+  // 店舗側（StaffTab）で伊藤→伊藤 一郎に改名（staffNumbers も移る）→ 同じ人物5へ戻す
+  const shops3 = JSON.parse(JSON.stringify(P1B_SHOPS));
+  shops3[2].staff = ["田中 次郎", "伊藤 一郎"]; shops3[2].settings.staffNumbers = { "田中 次郎": "12", "伊藤 一郎": "5" };
+  const r2 = cfp.planPeopleSync(people, p1bRegs(shops3), () => "p_newnewne", "T1");
+  assert.deepStrictEqual(r2.created, [], "新しい人物を作らない＝personId が変わらない");
+  assert.strictEqual(r2.patch["5/links/C1"], "伊藤 一郎");
+  assert.strictEqual(r2.patch["5/displayName"], "伊藤 一郎");
+  // 番号の無い新人は新しい人物
+  const shops4 = JSON.parse(JSON.stringify(P1B_SHOPS)); shops4[0].staff.push("新人");
+  const r3 = cfp.planPeopleSync(people, p1bRegs(shops4), () => "p_newnewne", "T1");
+  assert.deepStrictEqual(r3.created, ["p_newnewne"]);
+  assert.deepStrictEqual(r3.patch.p_newnewne.links, { A1: "新人" });
+});
+test("P1b 統合・統合解除: 企業側の束ね方だけを変え、解除した登録は同期で再びまとめない", () => {
+  let people = p1bApply({}, p1bInit().patch);
+  const suz = Object.keys(people).find(id => people[id].links.A1 === "鈴木");
+  const tak = Object.keys(people).find(id => people[id].links.B1 === "高橋");
+  const m = cfp.planMergePeople(people, suz, tak, "T2");
+  people = p1bApply(people, m.patch);
+  assert.strictEqual(people[tak], undefined);
+  assert.deepStrictEqual(people[suz].links, { A1: "鈴木", B1: "高橋" });
+  assert.strictEqual(people[suz].number, "A7", "残す方の番号");
+  assert.ok(people[suz].mergedFrom[tak], "統合の履歴");
+  const rows = u.buildCompanyStaffRows(P1B_SHOPS, null, "2026-09-30", people);
+  assert.strictEqual(rows.filter(r => r.personId === suz).length, 1, "2人が1行になる");
+  assert.strictEqual(rows.length, u.buildCompanyStaffRows(P1B_SHOPS, null, "2026-09-30").length - 1);
+  assert.ok(cfp.planMergePeople(people, "12", suz, "T2").error, "同じ店舗に別の登録名があれば統合できない");
+  assert.ok(cfp.planMergePeople(people, suz, suz, "T2").error);
+  // 統合解除: 12 から B店の田中 太郎を切り出す。同じ法人で同じ番号なので新しい人物は番号を持たない
+  const sp = cfp.planSplitPerson(people, "12", { shopId: "B1", name: "田中 太郎", entityId: "E1", number: "12" }, () => "p_splitaaa", "T3");
+  people = p1bApply(people, sp.patch);
+  assert.strictEqual(sp.newId, "p_splitaaa");
+  assert.deepStrictEqual(people["12"].links, { A1: "田中" });
+  assert.strictEqual(people["12"].displayName, "田中");
+  assert.strictEqual(people.p_splitaaa.number, undefined);
+  assert.strictEqual(cfp.planPeopleSync(people, p1bRegs(P1B_SHOPS), () => "p_x", "T4").patch, null, "推定では同じ人でも、解除した登録は再びまとめない");
+  assert.ok(cfp.planSplitPerson(people, "12", { shopId: "A1", name: "田中" }, () => "p_x", "T").error, "登録が1つだけなら切り出せない");
+});
+test("P1b 従業員番号は法人内で一意（保存時の衝突検出）・ID の振り直しは明示操作", () => {
+  const people = p1bApply({}, p1bInit().patch);
+  const regs = p1bRegs(P1B_SHOPS);
+  const suz = Object.keys(people).find(id => people[id].links.A1 === "鈴木");
+  assert.deepStrictEqual(cfp.staffNumberConflict(people, regs, "E1", "12", suz), { personId: "12" }, "同じ法人の別人");
+  assert.strictEqual(cfp.staffNumberConflict(people, regs, "E1", "12", "12"), null, "自分自身とは衝突しない");
+  assert.strictEqual(cfp.staffNumberConflict(people, regs, "E1", "5", suz), null, "別法人の同じ番号は衝突しない");
+  assert.strictEqual(cfp.staffNumberConflict(people, regs, "E1", "", suz), null);
+  // 人物に番号が無くても、店舗の登録にその番号があれば衝突（未リンクの登録も見る）
+  const regs2 = [...regs, { shopId: "A1", name: "新人", entityId: "E1", number: "99", homeShopId: "A1" }];
+  assert.deepStrictEqual(cfp.staffNumberConflict(people, regs2, "E1", "99", suz), { shopId: "A1", name: "新人" });
+  const jiro = Object.keys(people).find(id => people[id].links.C1 === "田中 次郎");
+  assert.ok(cfp.planReassignPersonId(people, jiro).error, "番号の ID が別の人物に使われていれば振り直せない");
+  const p2 = { ...people, [jiro]: { ...people[jiro], number: "77" } };
+  const r = cfp.planReassignPersonId(p2, jiro);
+  assert.strictEqual(r.newId, "77");
+  assert.strictEqual(r.patch[jiro], null);
+  assert.deepStrictEqual(r.patch["77"].links, people[jiro].links);
+  assert.ok(cfp.planReassignPersonId(people, suz).error, "数字だけでない番号（A7）は振り直せない");
+});
+test("P1b ドリフト検出: companyRenameStaff が名前キーの後始末をすべて通り、クライアントが新しい CF を呼べる", () => {
+  const fs = require("node:fs");
+  const idx = fs.readFileSync(require("node:path").join(__dirname, "..", "functions", "index.js"), "utf8");
+  const body = idx.slice(idx.indexOf("exports.companyRenameStaff"), idx.indexOf("exports.companyUpdateStaff"));
+  ["renameStaffListCF(", "renameStaffSettingsPatch(", "renameStaffSubsPatch(", "renameStaffPeriodsPatch(", "renameStaffPayPatch(", "validateStaffRename("]
+    .forEach(f => assert.ok(body.includes(f), "companyRenameStaff が " + f + " を通っていない"));
+  // private の名前キーノードを足したら、CF の改名もそのノードを読むこと
+  u.STAFF_KEYED_PRIVATE_NODES.forEach(n => assert.ok(body.includes("private/" + n), "private/" + n + " を移していない"));
+  assert.ok(!/\.ref\(`shops\/\$\{sid\}\/(periods|subs|settings)`\)\.set\(/.test(body), "periods・subs・settings を全体 set() しない");
+  const main = fs.readFileSync(require("node:path").join(__dirname, "..", "app-main.js"), "utf8");
+  ["ensureCompanyPeople", "mergePeople", "splitPerson", "reassignPersonId", "companyRenameStaff", "companyUpdateStaff"]
+    .forEach(n => { assert.ok(idx.includes("exports." + n + " "), n + " が CF に無い"); assert.ok(new RegExp('COMPANY_ENTITY_CFS=\\[[^\\]]*"' + n + '"').test(main), n + " を callCompanyCF が通さない"); });
+});
