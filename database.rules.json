@@ -70,6 +70,26 @@
             }
           }
         },
+        "actuals": {
+          ".read": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
+          ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
+          "$periodId": {
+            "$name": {
+              ".validate": "$name.length <= 50",
+              "$date": {
+                ".validate": "$date.matches(/^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/) && newData.hasChildren()",
+                "start": { ".validate": "newData.isString() && newData.val().matches(/^([0-2][0-9]|30):[0-5][0-9]$/)" },
+                "end": { ".validate": "newData.isString() && newData.val().matches(/^([0-2][0-9]|30):[0-5][0-9]$/)" },
+                "breakMin": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1440" },
+                "absent": { ".validate": "newData.isBoolean()" },
+                "absentMin": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1440" },
+                "legalHoliday": { ".validate": "newData.isBoolean()" },
+                "note": { ".validate": "newData.isString() && newData.val().length <= 200" },
+                "$other": { ".validate": false }
+              }
+            }
+          }
+        },
         "owners": {
           ".read": "auth != null && data.child(auth.uid).exists()",
           "$uid": {
