@@ -5341,7 +5341,8 @@ test("P3 ドリフト検出: ルール（laborMonths はオーナーのみ・確
   const main = fs.readFileSync(require("node:path").join(__dirname, "..", "app-main.js"), "utf8");
   assert.ok(/renameStaffInLaborMonths\(/.test(main) && /dropStaffFromLaborMonths\(/.test(main));
   // セルのロック: グリッドの2つの input は確定で readOnly になり、写しの最新化は確定済みで止まる
-  assert.strictEqual((admin.match(/readOnly=\{!canEditCells\}/g) || []).length, 2);
+  // （P3.6 で他店での勤務を出すセルも読み取り専用に足した。確定のロックはそのまま両方の input に掛かる）
+  assert.strictEqual((admin.match(/readOnly=\{!canEditCells(\|\|isHelperCell\(name,date\))?\}/g) || []).length, 2);
   assert.ok(!/readOnly=\{!isPremium\}/.test(admin));
   assert.ok(/const snapSame=isPeriodConfirmed\(period\)\|\|periodSnapshotEqual\(/.test(admin));
   // 確定はシフト作成タブと提出状況表の2つの入口で、どちらも同じ planPeriodConfirmation を通る
@@ -5487,4 +5488,166 @@ test("P3.5d 昼・夜の人数は PDF だけに出る（画面のグリッドと
   while ((i = src.indexOf("headcountAtOf(settings)", i + 1)) >= 0) { hits++; if (!/data-headcount-card/.test(src.slice(i, i + 800))) assert.ok(inBuilder(i), "PDF の外で人数を読んでいる"); }
   assert.ok(hits >= 1);
   ["pdfHeadcount(", "countPresentAt("].forEach(k => { let j = -1; while ((j = src.indexOf(k, j + 1)) >= 0) assert.ok(inBuilder(j), `${k} が PDF の外にある`); });
+});
+
+// ===== P3.6 ヘルプ先勤務の所属店舗への合算（労務給与_複数法人_実装計画.md §3.9・§6 P3.6）=====
+const cf36 = require("../functions/company-config.js");
+const _w36 = (s, e) => ({ status: "work", start: s, end: e });
+const _shop36 = (name, o) => u.otherShopDataOf({ name, settings: o.settings || {}, subs: o.subs || {}, staff: o.staff || [], periods: o.periods || {}, loadFailed: !!o.loadFailed });
+
+test("P3.6 同一人物: 写しの people が第1の根拠（登録名が違っても束なる）・別の人物の同姓同名は束ねない・人物に無い登録は所属店舗の一致", () => {
+  const B = _shop36("B店", { staff: ["田中 太郎", "佐藤", "鈴木"], settings: { staffHomeShop: { "鈴木": "A" } } });
+  const shops = { B: { ...B, entityId: null } };
+  const people = { "1042": { A: "田中", B: "田中 太郎" }, "p_AAAAAAAA": { A: "佐藤" }, "p_BBBBBBBB": { B: "佐藤" } };
+  assert.deepStrictEqual(u.samePersonRegistrations({ shopId: "A", name: "田中", settings: {}, people, otherShops: shops }), [{ shopId: "B", name: "田中 太郎", by: "person" }]);
+  assert.deepStrictEqual(u.samePersonRegistrations({ shopId: "A", name: "佐藤", settings: {}, people, otherShops: shops }), [], "同じ名前でも人物が別なら別人");
+  // 鈴木はどの人物にも載っていない＝後方互換の規則（B店の登録の所属が A＝自店の所属と一致）
+  assert.deepStrictEqual(u.samePersonRegistrations({ shopId: "A", name: "鈴木", settings: {}, people, otherShops: shops }), [{ shopId: "B", name: "鈴木", by: "home" }]);
+  // 名前が同じで番号も所属も無い登録は別人（people が無くても）
+  const C = { C: { ..._shop36("C店", { staff: ["山田"] }), entityId: null } };
+  assert.deepStrictEqual(u.samePersonRegistrations({ shopId: "A", name: "山田", settings: {}, people: null, otherShops: C }), []);
+  // 法人が違う店舗は対象外
+  assert.deepStrictEqual(u.samePersonRegistrations({ shopId: "A", name: "田中", settings: {}, people, otherShops: { B: { ...B, entityId: "E2" } }, entityId: "E1" }), []);
+  assert.strictEqual(u.samePersonRegistrations({ shopId: "A", name: "田中", settings: {}, people, otherShops: { B: { ...B, entityId: "E1" } }, entityId: "E1" }).length, 1);
+});
+
+test("P3.6 所属と行き先: 明示された所属店舗が1つに決まれば所属側が合算し行き先は所属店舗で判定。両方未設定・食い違いはどちらにも合算しない", () => {
+  const people = { "1042": { A: "田中", B: "田中" } };
+  const Bh = { B: { ..._shop36("B店", { staff: ["田中"], settings: { staffHomeShop: { "田中": "A" } } }), entityId: null } };
+  const Ah = { A: { ..._shop36("A店", { staff: ["田中"] }), entityId: null } };
+  assert.strictEqual(u.helperPersonOf({ shopId: "A", name: "田中", settings: {}, people, otherShops: Bh }).role, "home");
+  assert.strictEqual(u.helperPersonOf({ shopId: "B", name: "田中", settings: { staffHomeShop: { "田中": "A" } }, people, otherShops: Ah }).role, "dest");
+  const Bn = { B: { ..._shop36("B店", { staff: ["田中"] }), entityId: null } };
+  const h0 = u.helperPersonOf({ shopId: "A", name: "田中", settings: {}, people, otherShops: Bn });
+  assert.deepStrictEqual([h0.role, h0.home], [null, null], "両方とも所属店舗が未設定なら決めない（2店舗で二重に数えない）");
+  const Bx = { B: { ..._shop36("B店", { staff: ["田中"], settings: { staffHomeShop: { "田中": "A" } } }), entityId: null } };
+  assert.strictEqual(u.helperPersonOf({ shopId: "A", name: "田中", settings: { staffHomeShop: { "田中": "B" } }, people, otherShops: Bx }).role, null, "食い違いは決めない");
+  // 所属店舗の登録を知らない行き先は「所属店舗で判定」にしない（どこでも数えられなくなるのを防ぐ）
+  assert.strictEqual(u.helperPersonOf({ shopId: "B", name: "田中", settings: { staffHomeShop: { "田中": "Z" } }, people: null, otherShops: Ah }).role, null);
+  // 読めない他店があれば unread
+  const Bf = { B: { ..._shop36("B店", { staff: [], loadFailed: true }), entityId: null } };
+  assert.strictEqual(u.helperPersonOf({ shopId: "A", name: "田中", settings: {}, people, otherShops: Bf }).unread, true);
+  assert.strictEqual(u.helperPersonOf({ shopId: "A", name: "田中", settings: {}, people, otherShops: Bh }).unread, false);
+});
+
+test("P3.6 他店の勤務: 行き先の店の休憩で引いた実働を持ち込み、自店の勤務と重なる勤務は足さない。確定済みの期間は写しの設定", () => {
+  const brk = { weekday: [{ start: "19:00", end: "19:30" }], sat: [], sun: [], holSat: [], holSun: [] };
+  const B = { ..._shop36("B店", {
+    staff: ["田中"], settings: { staffHomeShop: { "田中": "A" }, breakTimes: brk, shopAbbrs: ["三"] },
+    subs: { s1: { id: "s1", staffName: "田中", periodId: "pb", shifts: { "2026-10-05": _w36("17:00", "23:00"), "2026-10-06": _w36("12:00", "16:00") } } },
+  }), entityId: null };
+  const regs = [{ shopId: "B", name: "田中", by: "person" }];
+  const e1 = u.helperWorkOn({ regs, otherShops: { B }, date: "2026-10-05", todayStr: "2026-10-01" });
+  assert.deepStrictEqual(e1.map(e => [e.abbr, e.start, e.end, e.min]), [["三", "17:00", "23:00", 330]], "行き先の休憩30分を引いた 5:30");
+  // 自店が 10-15 で他店が 12-16 の日は重なる＝ヘルプコマンドで自店にも入れている／重複の日なので足さない
+  assert.deepStrictEqual(u.helperWorkOn({ regs, otherShops: { B }, date: "2026-10-06", ownRange: { startMin: 600, endMin: 900 } }), []);
+  // 重ならない（自店 10-12・他店 12-16）なら足す
+  assert.strictEqual(u.helperWorkOn({ regs, otherShops: { B }, date: "2026-10-06", ownRange: { startMin: 600, endMin: 720 } })[0].min, 240);
+  // 行き先の期間が確定済みで写しの休憩が違えば、写しの休憩で数える（行き先の画面と同じ）
+  const snapBrk = { weekday: [{ start: "19:00", end: "20:00" }], sat: [], sun: [], holSat: [], holSun: [] };
+  const Bc = { ...B, periods: { pb: { id: "pb", startDate: "2026-10-01", endDate: "2026-10-15", confirmation: { at: "2026-09-30T00:00:00Z" },
+    snapshot: { staffList: ["田中"], settings: { breakTimes: snapBrk } } } } };
+  assert.strictEqual(u.helperWorkOn({ regs, otherShops: { B: Bc }, date: "2026-10-05", todayStr: "2026-10-01", cache: new Map() })[0].min, 300);
+  // 読めなかった店舗は足さない（unread 側で「＋」を出す）
+  assert.deepStrictEqual(u.helperWorkOn({ regs, otherShops: { B: { ...B, loadFailed: true } }, date: "2026-10-05" }), []);
+});
+
+test("P3.6 期間の切り方が違う2店舗: 日付の重なりで拾い、所属店舗の laborMonths は合算後・行き先の店では数えない", () => {
+  // 所属 A は1か月の期間、行き先 B は半月の期間2つ。B の2つの期間の勤務がどちらも A の月に入る
+  const B = { ..._shop36("B店", {
+    staff: ["田中"], settings: { staffHomeShop: { "田中": "A" } },
+    periods: { b1: { id: "b1", startDate: "2026-10-01", endDate: "2026-10-15" }, b2: { id: "b2", startDate: "2026-10-16", endDate: "2026-10-31" } },
+    subs: { x1: { id: "x1", staffName: "田中", periodId: "b1", shifts: { "2026-10-05": _w36("17:00", "22:00") } },
+      x2: { id: "x2", staffName: "田中", periodId: "b2", shifts: { "2026-10-20": _w36("17:00", "21:00") } } },
+  }), entityId: null };
+  const cl = { shops: { A: "A店", B: "B店" }, people: { "1042": { A: "田中", B: "田中" } } };
+  const subsA = [{ id: "a1", staffName: "田中", periodId: "pa", shifts: { "2026-10-01": _w36("10:00", "15:00") } }];
+  const ctx = u.helperScheduleContext({ shopId: "A", names: ["田中"], settings: {}, companyLink: cl, otherShops: u.helperShopsOf(cl, { B }, "A"), subs: subsA, todayStr: "2026-10-01" });
+  assert.deepStrictEqual([ctx.dayMin("田中", "2026-10-05"), ctx.dayMin("田中", "2026-10-20"), ctx.dayMin("田中", "2026-10-01")], [300, 240, 0]);
+  const agg = u.aggregateScheduledMonth({ subs: subsA, names: ["田中"], settings: {}, ym: "2026-10", extraDayMin: ctx.dayMin });
+  assert.deepStrictEqual(agg["田中"], { days: 3, min: 300 + 300 + 240 }, "所定日数・所定時間とも他店の勤務を含む");
+  const PA = { id: "pa", startDate: "2026-10-01", endDate: "2026-10-31" };
+  const r = u.planPeriodConfirmation({ period: PA, periods: [PA], subs: subsA, staffList: ["田中"], settings: {}, laborMonths: {}, todayStr: "2026-10-01", uid: "u",
+    nowIso: "2026-10-01T00:00:00Z", extraDayMin: ctx.dayMin, excludeNames: ctx.excludeNames });
+  assert.strictEqual(r.laborMonthsPatch["2026-10/田中"].min, 840);
+  assert.ok(r.laborMonthsPatch["2026-10/田中"].frozenAt, "凍結値が合算後");
+  // 行き先 B から見ると田中は所属店舗で判定する人＝ B の所定に載せない
+  const A = { ..._shop36("A店", { staff: ["田中"], subs: { a1: subsA[0] } }), entityId: null };
+  const ctxB = u.helperScheduleContext({ shopId: "B", names: ["田中"], settings: { staffHomeShop: { "田中": "A" } }, companyLink: cl, otherShops: u.helperShopsOf(cl, { A }, "B"), subs: [], todayStr: "2026-10-01" });
+  assert.deepStrictEqual(ctxB.excludeNames, ["田中"]);
+  const PB = { id: "b1", startDate: "2026-10-01", endDate: "2026-10-15" };
+  const rB = u.planPeriodConfirmation({ period: PB, periods: [PB], subs: [], staffList: ["田中"], settings: { staffHomeShop: { "田中": "A" } }, laborMonths: {}, todayStr: "2026-10-01", uid: "u",
+    extraDayMin: ctxB.dayMin, excludeNames: ctxB.excludeNames });
+  assert.strictEqual(rB.laborMonthsPatch["2026-10/田中"], undefined, "行き先の店の laborMonths には入れない");
+  // 同姓同名で人物が別なら合算しない
+  const cl2 = { shops: { A: "A店", B: "B店" }, people: { "p_AAAAAAAA": { A: "田中" }, "p_BBBBBBBB": { B: "田中" } } };
+  const Bn = { ...B, homeShop: null, settings: {} };
+  const ctx2 = u.helperScheduleContext({ shopId: "A", names: ["田中"], settings: {}, companyLink: cl2, otherShops: u.helperShopsOf(cl2, { B: Bn }, "A"), subs: subsA, todayStr: "2026-10-01" });
+  assert.strictEqual(ctx2.dayMin("田中", "2026-10-05"), 0);
+  // 設定の無い呼び出しは従来どおり（extraDayMin 無し）
+  assert.deepStrictEqual(u.aggregateScheduledMonth({ subs: subsA, names: ["田中"], settings: {}, ym: "2026-10" })["田中"], { days: 1, min: 300 });
+});
+
+test("P3.6 otherShopDataOf: 他店の別名で提出された sub を登録名へ解決し、同じ日は両方揃ったシフトを優先", () => {
+  const d = _shop36("B店", { staff: ["田中", "__spacer__1"], settings: { staffAliases: { "田中": ["たなか"] }, shopAbbrs: { 0: "三" } },
+    subs: { a: { staffName: "たなか", shifts: { "2026-10-05": { status: "work", start: "17:00" } } }, b: { staffName: "田中", shifts: { "2026-10-05": _w36("18:00", "22:00") } } } });
+  assert.deepStrictEqual(d.workMap.get("田中|2026-10-05"), _w36("18:00", "22:00"));
+  assert.deepStrictEqual([...d.staffSet], ["田中"]);
+  assert.deepStrictEqual(d.abbrs, ["三"]);
+});
+
+test("P3.6 写し: CF の buildShopMirror が people（連携店舗ぶん・人物ID の形を満たすもの）と店舗の法人を焼き込む", () => {
+  const pub = { name: "x", shops: { S1: true, S2: true }, entities: { E1: { name: "甲" }, E2: { name: "乙" } }, defaultEntityId: "E1", shopEntities: { S2: "E2" },
+    people: { "1042": { links: { S1: "田中", S2: "田中 太郎", S9: "外" } }, "bad.id": { links: { S1: "a" } }, "p_AbCdEfGh": { links: { S9: "外だけ" } } } };
+  const m = cf36.buildShopMirror("C1", pub, "S1", { S1: "A店" }, "t");
+  assert.deepStrictEqual(m.people, { "1042": { S1: "田中", S2: "田中 太郎" } }, "連携していない店舗・不正な人物ID・連携店舗に登録の無い人物は載せない");
+  assert.deepStrictEqual(m.shopEntities, { S1: "E1", S2: "E2" });
+  const m0 = cf36.buildShopMirror("C1", { name: "x", shops: { S1: true } }, "S1", {}, "t");
+  assert.ok(!("people" in m0) && !("shopEntities" in m0), "無いときはキーを持たない（空のマップは Firebase に残らない）");
+  // 店舗側の索引と CF の人物ID の形が同じ（PERSON_ID_RE の一致）
+  assert.strictEqual(String(u.PERSON_ID_RE), String(cf36.PERSON_ID_RE));
+  assert.strictEqual(u.personIndexOfMirror(m.people).get("S2\u0000田中 太郎"), "1042");
+});
+
+test("P3.6 重複候補: 同じ名前が2店舗以上にあって人物が別の行を束ねる（同じ店舗だけの同名・1人だけの名前は出さない）", () => {
+  const rows = [
+    { personId: "1", name: "田中", links: [{ shopId: "A", name: "田中" }] },
+    { personId: "p_x", name: "田中", links: [{ shopId: "B", name: "田 中" }] },
+    { personId: "3", name: "佐藤", links: [{ shopId: "A", name: "佐藤" }, { shopId: "B", name: "佐藤" }] },
+    { personId: "4", name: "山田", links: [{ shopId: "A", name: "山田" }] },
+    { personId: "5", name: "山田", links: [{ shopId: "A", name: "山田" }] },
+    { personId: null, name: "鈴木", links: [{ shopId: "A", name: "鈴木" }] },
+  ];
+  const c = u.duplicatePersonCandidates(rows);
+  assert.deepStrictEqual(c.map(g => [g.name, g.rows.map(r => r.personId), g.shopIds.sort()]), [["田中", ["1", "p_x"], ["A", "B"]]]);
+  // 企業内登録スタッフの行に「所属店舗が明示されているか」が載る
+  const rs = u.buildCompanyStaffRows([
+    { id: "A", name: "A店", staff: ["田中"], settings: {} },
+    { id: "B", name: "B店", staff: ["田中"], settings: { staffHomeShop: { "田中": "A" } } },
+    { id: "C", name: "C店", staff: ["佐藤"], settings: {} },
+  ], null, "2026-10-01", null);
+  const byName = Object.fromEntries(rs.map(r => [r.name, r.homeExplicit]));
+  assert.deepStrictEqual(byName, { "田中": true, "佐藤": false });
+});
+
+test("P3.6 入口の固定: 確定の2つの入口がヘルプ先の合算を渡し、労務の日次の入口が他店の勤務を足す", () => {
+  const admin = _readAdminSurface();
+  const calls = [];
+  let i = -1;
+  while ((i = admin.indexOf("planPeriodConfirmation({", i + 1)) >= 0) calls.push(admin.slice(i, admin.indexOf("})", i)));
+  assert.strictEqual(calls.length, 2);
+  calls.forEach(c => assert.ok(/extraDayMin:/.test(c) && /excludeNames:/.test(c), "確定で他店の勤務を渡していない: " + c.slice(0, 80)));
+  assert.ok((admin.match(/helperScheduleContext\(/g) || []).length >= 2, "シフト作成タブと企業の確定が同じ helperScheduleContext を通る");
+  assert.ok(/const laborDayMin=\(name,ds\)=>\{[^\n]*helperMinOn\(name,ds\)/.test(admin), "laborDayMin に他店の勤務が入っていない");
+  assert.ok(/const getWeekMin=[\s\S]{0,400}helperMinOn\(name,ds\)/.test(admin), "週計に他店の勤務が入っていない");
+  assert.ok(/const getPeriodMin=[\s\S]{0,600}helperMinOn\(name,d\)/.test(admin), "期間別勤務時間（月計）に他店の勤務が入っていない");
+  // 他店の読み込みは一本化した otherShopDataOf を通る（企業の確定と同じ形）
+  assert.ok((admin.match(/otherShopDataOf\(/g) || []).length >= 2);
+  // CF: 人物を変える CF は写しを作り直す（写しの people を店長のセッションが読む）
+  const idx = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "functions", "index.js"), "utf8");
+  ["ensureCompanyPeople", "mergePeople", "splitPerson", "reassignPersonId", "companyRenameStaff"].forEach(n => {
+    const at = idx.indexOf(`exports.${n} = functions`);
+    const body = idx.slice(at, idx.indexOf("exports.", at + 10));
+    assert.ok(/syncPeopleMirror\(companyId\)/.test(body), `${n} が写しを作り直していない`);
+  });
 });
