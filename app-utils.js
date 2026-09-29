@@ -2389,6 +2389,201 @@ function companyEntityList(pub){
     .sort((a,b)=>a.isDefault!==b.isDefault?(a.isDefault?-1:1):a.name.localeCompare(b.name,"ja"));
 }
 
+// ===== 機能のプランゲート（2026-09-30・労務給与_複数法人_実装計画.md §3.7・決定6）=====
+// 法人・所定・確定・実績・賃金は Premium。将来「法人プラン」を足すときに各所の plan==="premium" を
+// 探して回らないよう、新しい機能のゲートはこの1本だけを通す（法人プランを足すときはここだけ触る）。
+const GATED_FEATURES=["entity","scheduled","confirm","actuals","pay"];
+function featureEnabled(kind,o){
+  if(!GATED_FEATURES.includes(kind))return false;
+  const plan=o&&o.plan;
+  return plan==="premium";
+}
+
+// ===== 賃金マスタ（2026-09-30・労務給与_複数法人_実装計画.md §3.7・§4.5・P6a）=====
+// 置き場は shops/{所属店舗}/private/pay/{名前}（owners しか読めない）。settings 配下には絶対に置かない
+// （settings は auth != null で誰でも読める）。期間の写しにも入れない。
+// 1時間当たり賃金の分母（分）。P2 で法人設定 laborSettings.rateDenominatorMin に入る。無ければ 173.3h。
+const DEFAULT_RATE_DENOMINATOR_MIN=10398;
+function rateDenominatorMinOf(laborSettings){
+  const v=Number(laborSettings&&laborSettings.rateDenominatorMin);
+  return Number.isFinite(v)&&v>0?Math.round(v):DEFAULT_RATE_DENOMINATOR_MIN;
+}
+const PAY_TYPES=["monthly","hourly"];
+const PAY_TYPE_LABELS={monthly:"月給",hourly:"時給"};
+// 属性「社員」は固定給のため月給固定（決定17）。給与形態の切替も時給欄も出さない
+function isPayTypeFixed(attrId){return attrId==="employee";}
+// 既定の給与形態: 社員・企業属性（特定技能・契約社員など）=月給、それ以外（パート・アルバイト等）=時給
+function defaultPayTypeOf(attrId){
+  if(isPayTypeFixed(attrId)||isCompanyAttrId(attrId))return"monthly";
+  return"hourly";
+}
+function _payInt(v){const n=Number(v);return Number.isFinite(n)&&n>=0?Math.round(n):0;}
+function _payArr(v){return Array.isArray(v)?v.filter(x=>x!=null):(v&&typeof v==="object"?Object.values(v).filter(x=>x!=null):[]);}
+// 割増の基礎に入る手当の合計（excludeFromRate の手当と通勤手当は除く）
+function payRateBaseYen(pay){
+  if(!pay||typeof pay!=="object")return 0;
+  return _payInt(pay.base)+_payArr(pay.allowances).reduce((s,a)=>s+(a&&!a.excludeFromRate?_payInt(a.amount):0),0);
+}
+// 時給換算（円/時・端数そのまま）。月給者は (基本給+割増の基礎に入る手当) ÷ 分母、時給者は時給
+function hourlyRateOf(pay,denomMin){
+  if(!pay||typeof pay!=="object")return null;
+  if(pay.payType==="hourly")return _payInt(pay.base)||null;
+  const d=Number(denomMin)>0?Number(denomMin):DEFAULT_RATE_DENOMINATOR_MIN;
+  const b=payRateBaseYen(pay);
+  return b>0?b*60/d:null;
+}
+// 整数どうしの切上げ除算（浮動小数の誤差で 46199.000001 が 46200 にならないように整数で割る）
+function _ceilDiv(num,den){return Math.floor(num/den)+(num%den?1:0);}
+// 固定残業代の自動計算: 基本給 ÷ 分母(時間) × 1.25 × 時間 を1円未満切上げ（§4.5）。
+// 213,500 ÷ 173.3 × 1.25 × 30 = 46,198.79… → 46,199
+function fixedOtAmountOf(baseYen,hours,denomMin){
+  const b=_payInt(baseYen);
+  const hMin=Math.round((Number(hours)||0)*60);
+  const d=Number(denomMin)>0?Math.round(Number(denomMin)):DEFAULT_RATE_DENOMINATOR_MIN;
+  if(!b||hMin<=0)return 0;
+  return _ceilDiv(b*125*hMin,d*100);
+}
+// 最低賃金の履歴（法人設定 wageSettings.minWage=[{from,yen}]）の検証。
+// functions/company-config.js の sanitizeWageSettings と**同じ規則**（tests/core.test.js が照合する）。
+const MIN_WAGE_MAX_ENTRIES=20;
+function sanitizeWageSettings(raw){
+  const out={};
+  if(!raw||typeof raw!=="object")return out;
+  const byFrom={};
+  _payArr(raw.minWage).forEach(e=>{
+    if(!e||typeof e!=="object"||!isValidDateStr(e.from))return;
+    const y=Number(e.yen);
+    if(!Number.isInteger(y)||y<1||y>100000)return;
+    byFrom[e.from]=y;
+  });
+  const mw=Object.keys(byFrom).sort().slice(-MIN_WAGE_MAX_ENTRIES).map(from=>({from,yen:byFrom[from]}));
+  if(mw.length)out.minWage=mw;
+  return out;
+}
+// その日に効いている最低賃金（円）。履歴に無ければ null（＝比較を出さない）
+function minWageOn(wageSettings,dateStr){
+  const mw=sanitizeWageSettings(wageSettings).minWage||[];
+  let yen=null;
+  mw.forEach(e=>{if(e.from<=dateStr)yen=e.yen;});
+  return yen;
+}
+// 最賃との比較（§4.5）。月給者は 基本給 ÷ 分母、時給者は時給で比べる。最賃が分からなければ null
+function minWageCheck(pay,minWageYen,denomMin){
+  if(!pay||typeof pay!=="object"||!(Number(minWageYen)>0))return null;
+  const d=Number(denomMin)>0?Number(denomMin):DEFAULT_RATE_DENOMINATOR_MIN;
+  const rate=pay.payType==="hourly"?_payInt(pay.base):_payInt(pay.base)*60/d;
+  if(!rate)return null;
+  return{rate,min:Number(minWageYen),ok:rate>=Number(minWageYen)};
+}
+// 賃金の1版（history を除く）を正規化する。保存・比較・履歴の積み上げはこの形で行う
+function normalizePayVersion(v){
+  const p=v&&typeof v==="object"?v:{};
+  const payType=PAY_TYPES.includes(p.payType)?p.payType:"monthly";
+  const out={payType,base:_payInt(p.base),effectiveFrom:isValidDateStr(p.effectiveFrom)?p.effectiveFrom:""};
+  const cm=p.commute&&typeof p.commute==="object"?p.commute:{};
+  out.commute={amount:_payInt(cm.amount),per:cm.per==="day"?"day":"month"};
+  if(payType==="monthly"){
+    out.allowances=_payArr(p.allowances).filter(a=>a&&typeof a==="object").map(a=>({
+      name:String(a.name||"").slice(0,30),amount:_payInt(a.amount),excludeFromRate:!!a.excludeFromRate,excludeFromDeduction:!!a.excludeFromDeduction,
+    })).filter(a=>a.name||a.amount);
+    const fo=p.fixedOt&&typeof p.fixedOt==="object"?p.fixedOt:{};
+    const hours=Math.max(0,Math.round((Number(fo.hours)||0)*100)/100);
+    out.fixedOt={hours,auto:fo.auto!==false,amount:_payInt(fo.amount)};
+    const fn=p.fixedNight&&typeof p.fixedNight==="object"?p.fixedNight:{};
+    out.fixedNight={hours:Math.max(0,Math.round((Number(fn.hours)||0)*100)/100),amount:_payInt(fn.amount)};
+  }
+  return out;
+}
+// 自動計算の固定残業代を入れた版を返す（auto のときだけ額を式で置き換える）
+function withFixedOtAmount(v,denomMin){
+  const n=normalizePayVersion(v);
+  if(n.payType==="monthly"&&n.fixedOt.auto)n.fixedOt={...n.fixedOt,amount:fixedOtAmountOf(n.base,n.fixedOt.hours,denomMin)};
+  return n;
+}
+function _payVersionEqual(a,b){return JSON.stringify(normalizePayVersion(a))===JSON.stringify(normalizePayVersion(b));}
+// 改定を当てる。**上書きせず版を足す**（§3.7）: 適用開始日が変わった保存は、それまでの版を history へ積む。
+// 同じ適用開始日のままの保存はその版の訂正として置き換える（入力の打ち間違いで版が増え続けないように）。
+// 返り値は保存する1人分のレコード。内容も日付も変わらなければ prev をそのまま返す（書かない判定に使える）。
+function applyPayRevision(prev,next,nowIso){
+  const hist=prev?_payArr(prev.history).map(normalizePayVersion):[];
+  const n=normalizePayVersion(next);
+  if(prev&&_payVersionEqual(prev,n))return prev;
+  if(prev&&normalizePayVersion(prev).effectiveFrom!==n.effectiveFrom){
+    const old={...normalizePayVersion(prev),...(prev.updatedAt?{updatedAt:prev.updatedAt}:{})};
+    hist.push(old);
+  }
+  hist.sort((a,b)=>String(a.effectiveFrom).localeCompare(String(b.effectiveFrom)));
+  return{...n,updatedAt:nowIso,...(hist.length?{history:hist}:{})};
+}
+// その日に効いている版（effectiveFrom が日付以前で最も新しい版）。無ければ null（P6b が使う）
+function payVersionOn(pay,dateStr){
+  if(!pay||typeof pay!=="object")return null;
+  const all=[..._payArr(pay.history),pay].map(normalizePayVersion);
+  let best=null;
+  all.forEach(v=>{if((!v.effectiveFrom||v.effectiveFrom<=dateStr)&&(!best||String(v.effectiveFrom)>=String(best.effectiveFrom)))best=v;});
+  return best;
+}
+// スタッフ名キーの private ノード（STAFF_KEYED_SETTING_MAPS とは別リスト。settings 配下ではないため）。
+// 改名は renameStaffInPay、削除は dropStaffFromPay を通す。ノードを足したらここに登録する（テストが照合する）。
+const STAFF_KEYED_PRIVATE_NODES=["pay"];
+// 改名: 旧名のレコードを新名へ移す差分（update 用 {新名: レコード, 旧名: null}）。移すものが無ければ null
+function renameStaffInPay(payMap,oldName,newName){
+  const m=payMap&&typeof payMap==="object"?payMap:{};
+  if(!oldName||!newName||oldName===newName||m[oldName]==null)return null;
+  return{[newName]:m[oldName],[oldName]:null};
+}
+// 削除: 名前のレコードを消す差分（update 用 {名前: null}）。消すものが無ければ null
+function dropStaffFromPay(payMap,names){
+  const m=payMap&&typeof payMap==="object"?payMap:{};
+  const out={};
+  (names||[]).forEach(n=>{if(n&&m[n]!=null)out[n]=null;});
+  return Object.keys(out).length?out:null;
+}
+// 金額の表示。伏せるときは「••••」（桁数も出さない）
+function maskYen(v,unlocked){
+  if(!unlocked)return"••••";
+  const n=Number(v);
+  if(v==null||v===""||!Number.isFinite(n))return"—";
+  return Math.round(n).toLocaleString("ja-JP")+"円";
+}
+
+// ===== 賃金の閲覧パスコード（2026-09-30・§3.7・決定12）=====
+// 画面ロック（覗き見・開きっぱなし対策）。アクセス制御そのものはルール（private は owners のみ）が担う。
+// 置き場は shops/{sid}/private/payCode = {hash, salt, updatedAt}（企業連携店舗は企業のコードを CF が同期）。
+// 未設定なら「0000」を受け付ける。hash = SHA-256(salt + code) の16進（functions/company-config.js の payCodeHashCF と同じ）。
+const PAY_CODE_DEFAULT="0000";
+const PAY_CODE_RE=/^\d{4}$/;
+function isValidPayCode(c){return typeof c==="string"&&PAY_CODE_RE.test(c);}
+async function payCodeHash(salt,code){
+  const data=new TextEncoder().encode(String(salt||"")+String(code||""));
+  const buf=await globalThis.crypto.subtle.digest("SHA-256",data);
+  return Array.from(new Uint8Array(buf),b=>b.toString(16).padStart(2,"0")).join("");
+}
+function isPayCodeRecord(rec){
+  return!!rec&&typeof rec==="object"&&typeof rec.hash==="string"&&/^[0-9a-f]{64}$/.test(rec.hash)&&typeof rec.salt==="string";
+}
+async function verifyPayCode(code,rec){
+  if(!isValidPayCode(code))return false;
+  if(!isPayCodeRecord(rec))return code===PAY_CODE_DEFAULT;
+  return(await payCodeHash(rec.salt,code))===rec.hash;
+}
+// 解除状態の照合キー。パスコードのレコードが同じなら（企業連携店舗どうし）解除を持ち越し、別のコードの店舗へ移ると伏せ直す
+function payCodeIdentity(rec){return isPayCodeRecord(rec)?rec.hash:"default";}
+// 失敗回数のロック（5回失敗で60秒待たせる）。state={fails, lockedUntil}。ok なら数え直し
+const PAY_CODE_MAX_FAILS=5;
+const PAY_CODE_LOCK_MS=60000;
+const PAY_UNLOCK_IDLE_MS=10*60*1000;
+function nextPayCodeLockout(state,ok,now){
+  if(ok)return{fails:0,lockedUntil:0};
+  const fails=((state&&state.fails)||0)+1;
+  if(fails>=PAY_CODE_MAX_FAILS)return{fails:0,lockedUntil:now+PAY_CODE_LOCK_MS};
+  return{fails,lockedUntil:0};
+}
+function payCodeWaitSec(state,now){
+  const u=Number(state&&state.lockedUntil)||0;
+  return u>now?Math.ceil((u-now)/1000):0;
+}
+
 // ===== 企業内登録スタッフ（企業連携タブの一覧・2026-09-28）=====
 // 従業員番号の並びの鍵。0=数字のみ（数値の昇順・同値なら桁数の少ない順）→1=数字＋文字（先頭の数値、次に残りを50音）
 // →2=文字のみ（50音）→3=番号なし。50音は sortAttrEntries と同じ localeCompare(…,"ja")（漢字は照合順のまま）。
@@ -2498,6 +2693,8 @@ function buildCompanyStaffRows(shops,companySettings,today){
     const labelOf={};home.periods.forEach(p=>{labelOf[p.id]=p.label||p.startDate||p.id;});
     rows.push({key:base.shop.id+"|"+base.name,shopId:base.shop.id,shopName:base.shop.name,name,otherNames,conflictNames,
       entityId:base.shop.entityId||null,isHq:home.kind==="hq",
+      // 賃金の置き場（所属店舗に登録されている名前・§3.7）。所属店舗側に登録が無ければ null（賃金列は「—」）
+      payShopId:base.homeShopId===base.shop.id?base.shop.id:null,payName:base.homeShopId===base.shop.id?base.name:null,
       number,attrId,attrLabel,homeShopId:base.homeShopId,homeShopName:homeShopNames.find(n=>n)||null,homeShopIds,homeShopNames,
       paidGranted:Number.isFinite(g)?g:null,paidUsed:yr?yr.paid:0,
       paidRemain:yr?paidLeaveRemaining(heff,base.name,yr.paid):null,
@@ -2538,5 +2735,5 @@ function fullViewFontOf(rowFont,colW){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,buildCompanyStaffRows,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,buildCompanyStaffRows,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,GATED_FEATURES,featureEnabled,DEFAULT_RATE_DENOMINATOR_MIN,rateDenominatorMinOf,PAY_TYPES,PAY_TYPE_LABELS,isPayTypeFixed,defaultPayTypeOf,payRateBaseYen,hourlyRateOf,fixedOtAmountOf,MIN_WAGE_MAX_ENTRIES,sanitizeWageSettings,minWageOn,minWageCheck,normalizePayVersion,withFixedOtAmount,applyPayRevision,payVersionOn,STAFF_KEYED_PRIVATE_NODES,renameStaffInPay,dropStaffFromPay,maskYen,PAY_CODE_DEFAULT,PAY_CODE_RE,isValidPayCode,payCodeHash,isPayCodeRecord,verifyPayCode,payCodeIdentity,PAY_CODE_MAX_FAILS,PAY_CODE_LOCK_MS,PAY_UNLOCK_IDLE_MS,nextPayCodeLockout,payCodeWaitSec,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf};
 }

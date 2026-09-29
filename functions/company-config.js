@@ -60,7 +60,46 @@ function sanitizeCompanySettings(raw) {
     });
     if (Object.keys(so).length) out.staffTypeLimits = so;
   }
+  const w = sanitizeWageSettings(raw.wageSettings);
+  if (Object.keys(w).length) out.wageSettings = w;
   return out;
+}
+// 賃金の法人設定（2026-09-30・P6a）。いまは最低賃金の履歴 minWage=[{from,yen}] だけ。
+// クライアントの sanitizeWageSettings（app-utils.js）と**同じ規則**（tests/core.test.js が照合する）。
+const MIN_WAGE_MAX_ENTRIES = 20;
+function sanitizeWageSettings(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object") return out;
+  const src = Array.isArray(raw.minWage) ? raw.minWage : (raw.minWage && typeof raw.minWage === "object" ? Object.values(raw.minWage) : []);
+  const byFrom = {};
+  src.forEach(e => {
+    if (!e || typeof e !== "object" || !isValidDateStrCF(e.from)) return;
+    const y = Number(e.yen);
+    if (!Number.isInteger(y) || y < 1 || y > 100000) return;
+    byFrom[e.from] = y;
+  });
+  const mw = Object.keys(byFrom).sort().slice(-MIN_WAGE_MAX_ENTRIES).map(from => ({ from, yen: byFrom[from] }));
+  if (mw.length) out.minWage = mw;
+  return out;
+}
+// 賃金の閲覧パスコード（2026-09-30・P6a）。4桁の数字。hash = SHA-256(salt + code) の16進で、
+// クライアントの payCodeHash（app-utils.js・Web Crypto）と同じ値になる（tests/core.test.js が照合する）。
+// crypto は呼んだときにだけ読む（このファイルは E2E のスタブでブラウザにも埋め込まれるため）。
+const PAY_CODE_DEFAULT = "0000";
+function isValidPayCodeCF(c) { return typeof c === "string" && /^\d{4}$/.test(c); }
+function payCodeHashCF(salt, code) {
+  return require("crypto").createHash("sha256").update(String(salt || "") + String(code || ""), "utf8").digest("hex");
+}
+function isPayCodeRecordCF(rec) {
+  return !!rec && typeof rec === "object" && typeof rec.hash === "string" && /^[0-9a-f]{64}$/.test(rec.hash) && typeof rec.salt === "string";
+}
+// 現在のパスコードの照合。記録が無ければ初期値 0000 を受け付ける
+function verifyPayCodeCF(code, rec) {
+  if (!isValidPayCodeCF(code)) return false;
+  if (!isPayCodeRecordCF(rec)) return code === PAY_CODE_DEFAULT;
+  const h = payCodeHashCF(rec.salt, code);
+  const a = Buffer.from(h, "hex"), b = Buffer.from(rec.hash, "hex");
+  return a.length === b.length && require("crypto").timingSafeEqual(a, b);
 }
 // 提出期限の差分を検証する。{[periodRangeKey]: {all?, shops?:{shopId:date}} | null}。
 // null は「その期間の期限を消す」。shops のキーは連携中の店舗だけを通す。
@@ -190,6 +229,9 @@ function mergeEntitySettings(companySettings, entitySettings) {
     ids.forEach(id => { stl[id] = { ...(_obj(cs[id]) || {}), ...(_obj(es[id]) || {}) }; });
     out.staffTypeLimits = stl;
   }
+  // 賃金の法人設定はキー単位（最低賃金の履歴は丸ごと）。法人が持てば法人が勝つ
+  const wage = { ...(_obj(c.wageSettings) || {}), ...(_obj(e.wageSettings) || {}) };
+  if (Object.keys(wage).length) out.wageSettings = wage;
   return out;
 }
 // 店舗の写し（shops/{sid}/company）を作る。syncCompanyMirror とテスト・E2E のスタブが同じ関数を使う。
@@ -227,7 +269,8 @@ function otherCompanyLinksOf(owners, mirror, companyId) {
   return [...out];
 }
 
-module.exports = { ENTITY_ID_RE, isValidEntityId, SHOP_KINDS, ENTITY_NAME_MAX, sanitizeEntityName, entityIdOfShop, shopKindOf,
+module.exports = { MIN_WAGE_MAX_ENTRIES, sanitizeWageSettings, PAY_CODE_DEFAULT, isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,
+  ENTITY_ID_RE, isValidEntityId, SHOP_KINDS, ENTITY_NAME_MAX, sanitizeEntityName, entityIdOfShop, shopKindOf,
   planEntityMigration, mergeEntitySettings, buildShopMirror, otherCompanyLinksOf,
   COMPANY_SESSION_UID_PREFIX, canChangeCompanyPassword, COMPANY_LABOR_KEYS, COMPANY_LIMIT_NUM_KEYS, COMPANY_LABOR_SYSTEMS, COMPANY_BUILTIN_ATTRS,
   COMPANY_ATTR_ID_RE, PERIOD_RANGE_KEY_RE, isValidDateStrCF, sanitizeCompanySettings, sanitizeCompanyDeadlines,

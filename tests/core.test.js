@@ -4564,3 +4564,168 @@ test("companyEntityList: 既定の法人を先頭に、残りは名前の50音�
   assert.strictEqual(u.companyEntityList(pub).length, 3, "不正なIDは出さない");
   assert.deepStrictEqual(u.companyEntityList(null), []);
 });
+
+// ===== 賃金マスタ・閲覧パスコード（2026-09-30・労務給与_複数法人_実装計画.md §3.7・P6a）=====
+test("P6a fixedOtAmountOf: 213,500 ÷ 173.3 × 1.25 × 30 = 46,199（1円未満切上げ）", () => {
+  assert.strictEqual(u.fixedOtAmountOf(213500, 30, 10398), 46199);
+  assert.strictEqual(u.fixedOtAmountOf(213500, 30), 46199, "分母が無ければ 173.3h（10398分）");
+  assert.strictEqual(u.DEFAULT_RATE_DENOMINATOR_MIN, 10398);
+  // 割り切れるときは切り上げない（浮動小数の誤差で1円増えない）: 10398×100 の倍数になる基本給
+  assert.strictEqual(u.fixedOtAmountOf(173300, 1, 10398), 1250);
+  assert.strictEqual(u.fixedOtAmountOf(0, 30, 10398), 0);
+  assert.strictEqual(u.fixedOtAmountOf(213500, 0, 10398), 0);
+});
+test("P6a rateDenominatorMinOf: 法人設定の値、無ければ 10398", () => {
+  assert.strictEqual(u.rateDenominatorMinOf({ rateDenominatorMin: 10400 }), 10400);
+  assert.strictEqual(u.rateDenominatorMinOf({}), 10398);
+  assert.strictEqual(u.rateDenominatorMinOf(null), 10398);
+  assert.strictEqual(u.rateDenominatorMinOf({ rateDenominatorMin: 0 }), 10398);
+  assert.strictEqual(u.rateDenominatorMinOf({ rateDenominatorMin: "abc" }), 10398);
+});
+test("P6a 給与形態: 社員は月給固定、企業属性は月給既定、パート・アルバイトは時給既定", () => {
+  assert.strictEqual(u.isPayTypeFixed("employee"), true);
+  assert.strictEqual(u.isPayTypeFixed("parttime"), false);
+  assert.strictEqual(u.isPayTypeFixed("co_AbCd1234"), false);
+  assert.strictEqual(u.defaultPayTypeOf("employee"), "monthly");
+  assert.strictEqual(u.defaultPayTypeOf("parttime"), "hourly");
+  assert.strictEqual(u.defaultPayTypeOf("co_AbCd1234"), "monthly");
+  assert.strictEqual(u.defaultPayTypeOf("dispatch"), "hourly");
+  assert.strictEqual(u.defaultPayTypeOf(undefined), "hourly");
+});
+test("P6a 最賃比較: 時給 1,230 円 vs 最賃 1,231 円は NG、月給は 基本給÷分母 で比べる", () => {
+  const ws = { minWage: [{ from: "2025-10-01", yen: 1177 }, { from: "2026-10-01", yen: 1231 }] };
+  assert.strictEqual(u.minWageOn(ws, "2026-09-30"), 1177);
+  assert.strictEqual(u.minWageOn(ws, "2026-10-01"), 1231);
+  assert.strictEqual(u.minWageOn(ws, "2025-01-01"), null, "履歴より前は分からない");
+  assert.strictEqual(u.minWageOn(null, "2026-10-01"), null, "法人設定が無ければ比較しない");
+  const ng = u.minWageCheck({ payType: "hourly", base: 1230 }, 1231, 10398);
+  assert.deepStrictEqual([ng.rate, ng.min, ng.ok], [1230, 1231, false]);
+  assert.strictEqual(u.minWageCheck({ payType: "hourly", base: 1231 }, 1231).ok, true);
+  const m = u.minWageCheck({ payType: "monthly", base: 213500, allowances: [{ name: "資格", amount: 50000 }] }, 1231, 10398);
+  assert.ok(Math.abs(m.rate - 213500 * 60 / 10398) < 1e-9, "月給の最賃比較は基本給だけ（§4.5）");
+  assert.strictEqual(m.ok, true);
+  assert.strictEqual(u.minWageCheck({ payType: "hourly", base: 1230 }, null), null);
+  // 時給換算は割増の基礎に入る手当を含む
+  const r = u.hourlyRateOf({ payType: "monthly", base: 173300, allowances: [{ name: "a", amount: 17330 }, { name: "b", amount: 99999, excludeFromRate: true }] }, 10398);
+  assert.ok(Math.abs(r - 1100) < 1e-9);
+  assert.strictEqual(u.hourlyRateOf({ payType: "hourly", base: 1300 }, 10398), 1300);
+});
+test("P6a sanitizeWageSettings: CF 側と同じ規則（書き写しのドリフト検出）", () => {
+  const cases = [
+    null, {}, { minWage: [] },
+    { minWage: [{ from: "2026-10-01", yen: 1231 }, { from: "2025-10-01", yen: 1177 }] },
+    { minWage: { 0: { from: "2026-10-01", yen: 1231 }, 1: { from: "2026-10-01", yen: 1250 } } },
+    { minWage: [{ from: "2026-02-30", yen: 1231 }, { from: "2026-10-01", yen: 0 }, { from: "2026-10-01", yen: 1.5 }, { from: "2026-11-01", yen: "1300" }, null, 5] },
+    { minWage: Array.from({ length: 25 }, (_, i) => ({ from: `20${String(10 + i).padStart(2, "0")}-10-01`, yen: 900 + i })) },
+  ];
+  cases.forEach((c, i) => assert.deepStrictEqual(cfc.sanitizeWageSettings(c), u.sanitizeWageSettings(c), `case#${i}`));
+  assert.deepStrictEqual(u.sanitizeWageSettings(cases[3]), { minWage: [{ from: "2025-10-01", yen: 1177 }, { from: "2026-10-01", yen: 1231 }] }, "日付順に並べる");
+  assert.strictEqual(u.sanitizeWageSettings(cases[6]).minWage.length, u.MIN_WAGE_MAX_ENTRIES);
+  assert.strictEqual(cfc.MIN_WAGE_MAX_ENTRIES, u.MIN_WAGE_MAX_ENTRIES);
+  // 企業の共通設定・法人設定の検証に通り、法人が勝つ形で写しへ重なる
+  const s = cfc.sanitizeCompanySettings({ wageSettings: cases[3], evil: 1 });
+  assert.deepStrictEqual(s.wageSettings, u.sanitizeWageSettings(cases[3]));
+  const merged = cfc.mergeEntitySettings({ wageSettings: { minWage: [{ from: "2025-10-01", yen: 1177 }] } }, { wageSettings: { minWage: [{ from: "2026-10-01", yen: 1231 }] } });
+  assert.deepStrictEqual(merged.wageSettings, { minWage: [{ from: "2026-10-01", yen: 1231 }] });
+  assert.deepStrictEqual(cfc.mergeEntitySettings({ wageSettings: { minWage: [{ from: "2025-10-01", yen: 1177 }] } }, {}).wageSettings.minWage[0].yen, 1177);
+  // 店舗の settings には入らない（applyCompanySettings は労務設定と属性別の制限だけを重ねる）
+  assert.strictEqual(u.applyCompanySettings({}, merged).wageSettings, undefined);
+});
+test("P6a 改定は版を足す（適用開始日が変われば history へ積み、同じ日なら訂正）", () => {
+  const v1 = { payType: "hourly", base: 1200, effectiveFrom: "2026-04-01", commute: { amount: 500, per: "day" } };
+  const r1 = u.applyPayRevision(null, v1, "t1");
+  assert.strictEqual(r1.history, undefined);
+  assert.strictEqual(r1.base, 1200);
+  assert.strictEqual(u.applyPayRevision(r1, v1, "t9"), r1, "変化が無ければ同じ参照（書かない）");
+  const r1b = u.applyPayRevision(r1, { ...v1, base: 1210 }, "t2");
+  assert.strictEqual(r1b.base, 1210);
+  assert.strictEqual(r1b.history, undefined, "同じ適用開始日は訂正");
+  const r2 = u.applyPayRevision(r1b, { ...v1, base: 1250, effectiveFrom: "2026-10-01" }, "t3");
+  assert.strictEqual(r2.base, 1250);
+  assert.deepStrictEqual(r2.history.map(h => [h.effectiveFrom, h.base, h.updatedAt]), [["2026-04-01", 1210, "t2"]]);
+  const r3 = u.applyPayRevision(r2, { ...v1, base: 1300, effectiveFrom: "2027-04-01" }, "t4");
+  assert.deepStrictEqual(r3.history.map(h => h.base), [1210, 1250], "古い版は上書きしない");
+  assert.strictEqual(u.payVersionOn(r3, "2026-12-31").base, 1250);
+  assert.strictEqual(u.payVersionOn(r3, "2027-04-01").base, 1300);
+  assert.strictEqual(u.payVersionOn(r3, "2026-05-01").base, 1210);
+  // Firebase の配列→オブジェクト変換にも耐える
+  const fb = { ...r3, history: { 0: r3.history[0], 1: r3.history[1] } };
+  assert.strictEqual(u.payVersionOn(fb, "2026-05-01").base, 1210);
+});
+test("P6a normalizePayVersion: 社員は月給・時給者は月給の項目を持たない・固定残業の自動計算", () => {
+  const n = u.withFixedOtAmount({ payType: "monthly", base: 213500, fixedOt: { hours: 30, auto: true, amount: 1 },
+    fixedNight: { hours: 32, amount: 10000 }, allowances: [{ name: "資格手当", amount: 5000, excludeFromRate: true }, { name: "", amount: 0 }] }, 10398);
+  assert.strictEqual(n.fixedOt.amount, 46199);
+  assert.deepStrictEqual(n.allowances, [{ name: "資格手当", amount: 5000, excludeFromRate: true, excludeFromDeduction: false }], "空行は捨てる");
+  const manual = u.withFixedOtAmount({ payType: "monthly", base: 213500, fixedOt: { hours: 30, auto: false, amount: 45000 } }, 10398);
+  assert.strictEqual(manual.fixedOt.amount, 45000, "手修正は式で置き換えない");
+  const h = u.normalizePayVersion({ payType: "hourly", base: 1300, fixedOt: { hours: 30 }, allowances: [{ name: "x", amount: 1 }] });
+  assert.strictEqual(h.fixedOt, undefined);
+  assert.strictEqual(h.allowances, undefined);
+  assert.strictEqual(u.normalizePayVersion({ payType: "weekly" }).payType, "monthly");
+});
+test("P6a 改名・削除の後始末: private/pay が追随する（STAFF_KEYED_PRIVATE_NODES）", () => {
+  assert.deepStrictEqual(u.STAFF_KEYED_PRIVATE_NODES, ["pay"]);
+  const m = { "田中": { payType: "hourly", base: 1200 } };
+  assert.deepStrictEqual(u.renameStaffInPay(m, "田中", "田中 太郎"), { "田中 太郎": m["田中"], "田中": null });
+  assert.strictEqual(u.renameStaffInPay(m, "佐藤", "佐藤 次郎"), null);
+  assert.strictEqual(u.renameStaffInPay(m, "田中", "田中"), null);
+  assert.deepStrictEqual(u.dropStaffFromPay(m, ["田中", "佐藤"]), { "田中": null });
+  assert.strictEqual(u.dropStaffFromPay(m, ["佐藤"]), null);
+  assert.strictEqual(u.dropStaffFromPay(null, ["田中"]), null);
+});
+test("P6a パスコード: SHA-256(salt+code) がクライアントと CF で一致し、未設定は 0000 を受け付ける", async () => {
+  for (const [salt, code] of [["ab", "1234"], ["", "0000"], ["0123456789abcdef0123456789abcdef", "9876"]]) {
+    assert.strictEqual(await u.payCodeHash(salt, code), cfc.payCodeHashCF(salt, code));
+  }
+  assert.strictEqual(await u.verifyPayCode("0000", null), true);
+  assert.strictEqual(await u.verifyPayCode("1234", null), false);
+  assert.strictEqual(await u.verifyPayCode("000", null), false);
+  const rec = { hash: cfc.payCodeHashCF("s1", "4321"), salt: "s1", updatedAt: "t" };
+  assert.strictEqual(await u.verifyPayCode("4321", rec), true);
+  assert.strictEqual(await u.verifyPayCode("0000", rec), false, "設定済みなら 0000 は通らない");
+  assert.strictEqual(cfc.verifyPayCodeCF("4321", rec), true);
+  assert.strictEqual(cfc.verifyPayCodeCF("0000", null), true);
+  assert.strictEqual(cfc.verifyPayCodeCF("0000", rec), false);
+  assert.strictEqual(cfc.verifyPayCodeCF("12a4", null), false);
+  assert.strictEqual(cfc.PAY_CODE_DEFAULT, u.PAY_CODE_DEFAULT);
+  ["0000", "1234"].forEach(c => assert.strictEqual(cfc.isValidPayCodeCF(c), u.isValidPayCode(c)));
+  ["", "123", "12345", "１２３４", "12a4", 1234, null].forEach(c => assert.strictEqual(cfc.isValidPayCodeCF(c), u.isValidPayCode(c), String(c)));
+  assert.strictEqual(u.payCodeIdentity(rec), rec.hash);
+  assert.strictEqual(u.payCodeIdentity(null), "default");
+});
+test("P6a パスコード: 5回失敗で60秒待たせ、成功で数え直す", () => {
+  let st = { fails: 0, lockedUntil: 0 };
+  for (let i = 0; i < 4; i++) st = u.nextPayCodeLockout(st, false, 1000);
+  assert.deepStrictEqual(st, { fails: 4, lockedUntil: 0 });
+  assert.strictEqual(u.payCodeWaitSec(st, 1000), 0);
+  st = u.nextPayCodeLockout(st, false, 1000);
+  assert.strictEqual(st.lockedUntil, 61000);
+  assert.strictEqual(u.payCodeWaitSec(st, 1000), 60);
+  assert.strictEqual(u.payCodeWaitSec(st, 60500), 1);
+  assert.strictEqual(u.payCodeWaitSec(st, 61000), 0);
+  assert.deepStrictEqual(u.nextPayCodeLockout({ fails: 3 }, true, 5), { fails: 0, lockedUntil: 0 });
+  assert.strictEqual(u.PAY_UNLOCK_IDLE_MS, 600000, "10分無操作で伏せ直す");
+});
+test("P6a featureEnabled: 賃金などの新機能は Premium だけ・知らない機能は出さない", () => {
+  assert.strictEqual(u.featureEnabled("pay", { plan: "premium" }), true);
+  assert.strictEqual(u.featureEnabled("pay", { plan: "pro" }), false);
+  assert.strictEqual(u.featureEnabled("pay", { plan: "free" }), false);
+  assert.strictEqual(u.featureEnabled("pay", null), false);
+  assert.strictEqual(u.featureEnabled("unknown", { plan: "premium" }), false);
+  ["entity", "scheduled", "confirm", "actuals", "pay"].forEach(k => assert.ok(u.GATED_FEATURES.includes(k)));
+});
+test("P6a maskYen: 伏せると桁数も出さない", () => {
+  assert.strictEqual(u.maskYen(213500, false), "••••");
+  assert.strictEqual(u.maskYen(213500, true), "213,500円");
+  assert.strictEqual(u.maskYen(null, true), "—");
+});
+test("P6a buildCompanyStaffRows: 賃金の置き場は所属店舗に登録されている名前（ヘルプ先だけの人は null）", () => {
+  const rows = u.buildCompanyStaffRows([
+    { id: "A", name: "A店", staff: ["田中"], settings: {}, periods: {} },
+    { id: "B", name: "B店", staff: ["田中", "小林"], settings: { staffHomeShop: { "田中": "A", "小林": "A" } }, periods: {} },
+  ], null, "2026-09-30");
+  const t = rows.find(r => r.name === "田中"), k = rows.find(r => r.name === "小林");
+  assert.deepStrictEqual([t.payShopId, t.payName], ["A", "田中"]);
+  assert.deepStrictEqual([k.payShopId, k.payName], [null, null]);
+});
