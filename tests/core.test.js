@@ -5232,3 +5232,24 @@ test("P3 本部の固定勤務パターン: 土日祝と閉店日を除き、何
   const again = u.fillFixedPattern({ subs: r.subs, periodId: "hp", names: ["田中", "佐藤"], dates, start: "09:00", end: "18:00", breakMin: 60, settings });
   assert.strictEqual(again.filled, 0, "押し直しても入っている日は上書きしない");
 });
+test("P3 改名の後始末（CF）: laborMonths の一覧と差分パッチがクライアントと一致し、companyRenameStaff が laborMonths を移す", () => {
+  const fs = require("node:fs");
+  assert.deepStrictEqual(cfp.STAFF_KEYED_MONTH_NODES_CF, u.STAFF_KEYED_MONTH_NODES);
+  const cases = [
+    { "2026-10": { "田中": { days: 1, min: 60 }, "佐藤": { days: 2, min: 120 } }, "2026-11": { "田中": { days: 3, min: 180, frozenAt: "t" } } },
+    { "2026-10": { "佐藤": { days: 2, min: 120 } } },
+    {},
+  ];
+  cases.forEach(lm => {
+    assert.deepStrictEqual(cfp.renameStaffLaborMonthsPatch(lm, "田中", "田中 太郎"), u.renameStaffInLaborMonths(lm, "田中", "田中 太郎"));
+    const patch = u.renameStaffInLaborMonths(lm, "田中", "田中 太郎");
+    if (patch) {
+      const after = p1bApply(lm, patch);
+      Object.keys(lm).forEach(ym => { if (lm[ym]["田中"]) assert.deepStrictEqual(after[ym]["田中 太郎"], lm[ym]["田中"]); assert.ok(!(after[ym] || {})["田中"]); });
+    }
+  });
+  const idx = fs.readFileSync(require("node:path").join(__dirname, "..", "functions", "index.js"), "utf8");
+  const body = idx.slice(idx.indexOf("exports.companyRenameStaff"), idx.indexOf("exports.companyUpdateStaff"));
+  u.STAFF_KEYED_MONTH_NODES.forEach(n => assert.ok(body.includes("shops/${sid}/" + n), n + " を移していない"));
+  assert.ok(body.includes("renameStaffLaborMonthsPatch("), "companyRenameStaff が renameStaffLaborMonthsPatch を通っていない");
+});

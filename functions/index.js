@@ -1125,7 +1125,7 @@ const { sanitizeCompanySettings, sanitizeCompanyDeadlines, sanitizeMonthlyDeadli
   isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,
   isValidPersonId, genPersonAutoId, sanitizeStaffNumber, entityIdOfShop, planPeopleSync, staffNumberConflict,
   planMergePeople, planSplitPerson, planReassignPersonId, validateStaffRename, renameStaffListCF,
-  renameStaffSettingsPatch, renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffSubsPatch,
+  renameStaffSettingsPatch, renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffLaborMonthsPatch, renameStaffSubsPatch,
   COMPANY_BUILTIN_ATTRS, COMPANY_ATTR_ID_RE } = require("./company-config");
 // 法人レイヤーの片方向移行（2026-09-30・P1）。法人が無い企業には企業名と同名の法人を1つ作り、
 // 割当の無い連携店舗をすべて既定の法人へ割り当てる。冪等なので、写しを作り直す前に毎回通してよい。
@@ -1722,16 +1722,16 @@ exports.reassignPersonId = functions
     personOr404(pub, personId);
     const r = planReassignPersonId(pub.people || {}, personId);
     if (r.error) throw new functions.https.HttpsError("failed-precondition", r.error);
-    // 以後 laborMonths 等の personId を参照するノードを足した担当は、ここで付け替えを足す（P3 以降）
+    // laborMonths（P3）は名前キーで personId を参照しないので付け替えは要らない。personId を参照するノードを足した担当はここで付け替える
     await db.ref(`companies/${companyId}/pub/people`).update(r.patch);
     return { ok: true, personId: r.newId };
   });
 
 // 名前の変更。選んだ店舗ごとに、店舗の staff・全 subs.staffName・settings（名前キーの8マップ）・
-// periods（snapshot / keepStaff / keepAttrs / laborTotals）・private/pay を移し、people.links を書き換える。
+// periods（snapshot / keepStaff / keepAttrs / laborTotals）・private/pay・laborMonths を移し、people.links を書き換える。
 // 規則は StaffTab の改名（renameStaffInSettings / renameStaffInPeriods / renameStaffInPay）と同じ（tests が照合）。
 // subs と periods と settings は差分 update（全体 set() しない）。staff は配列なのでトランザクションで置き換える。
-// **P3・P4 で足す laborMonths・actuals も名前キー**なので、その担当がここに移し替えを足すこと。
+// laborMonths（P3）は移している。**P4 で足す actuals も名前キー**なので、その担当がここに移し替えを足すこと。
 exports.companyRenameStaff = functions
   .region("asia-northeast1")
   .https.onCall(async (data, context) => {
@@ -1771,6 +1771,10 @@ exports.companyRenameStaff = functions
         const pay = (await db.ref(`shops/${sid}/private/pay`).once("value")).val() || {};
         const payP = renameStaffPayPatch(pay, oldName, newName);
         if (payP) await db.ref(`shops/${sid}/private/pay`).update(payP);
+        // 人×月の所定（P3）も名前キー。月ごとに旧名のキーを新名へ移す（renameStaffInLaborMonths と同じ規則）
+        const lm = (await db.ref(`shops/${sid}/laborMonths`).once("value")).val() || {};
+        const lmP = renameStaffLaborMonthsPatch(lm, oldName, newName);
+        if (lmP) await db.ref(`shops/${sid}/laborMonths`).update(lmP);
         await db.ref(`companies/${companyId}/pub/people/${personId}/links/${sid}`).set(newName);
         done.push(sid);
       } catch (e) { failed.push(sid); }

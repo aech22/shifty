@@ -510,9 +510,11 @@ function planReassignPersonId(people, personId) {
 // ---- 改名の後始末（CF companyRenameStaff）。app-utils.js の renameStaffInSettings / renameStaffInPeriods /
 // renameStaffInPay と同じ規則を、update 用の差分パッチで返す（settings も periods も全体 set() しない）。
 // 名前キーのノードを足したら、ここと app-utils.js の両方に足す（テストが照合する）。
-// 以後 P3・P4 で足す laborMonths・actuals も名前キーなので、その担当がここへ追加する。
+// P3 の laborMonths は renameStaffLaborMonthsPatch で移す。P4 で足す actuals も名前キーなので、その担当がここへ追加する。
 const STAFF_KEYED_SETTING_MAPS_CF = ["staffColors", "staffAttributes", "staffNumbers", "staffPositions", "staffAliases", "staffWorkplaces", "staffHidden", "paidLeaveGranted", "staffHomeShop"];
 const STAFF_KEYED_PRIVATE_NODES_CF = ["pay"];
+// 月キー付きの名前ノード（shops/{sid}/laborMonths/{YYYY-MM}/{名前}・P3）。app-utils.js の STAFF_KEYED_MONTH_NODES と一致（テストが照合する）
+const STAFF_KEYED_MONTH_NODES_CF = ["laborMonths"];
 const STAFF_NAME_FORBIDDEN_RE = /[.#$\/[\]\u0000-\u001F\u007F]/;
 // 改名の検証（StaffTab の confirmEdit と同じ規則）。問題が無ければ null、あれば理由
 function validateStaffRename(staff, settings, oldName, newName) {
@@ -618,6 +620,17 @@ function renameStaffPayPatch(payMap, oldName, newName) {
   if (!oldName || !newName || oldName === newName || m[oldName] == null) return null;
   return { [newName]: m[oldName], [oldName]: null };
 }
+// laborMonths の差分（app-utils.js の renameStaffInLaborMonths と同じ）。月ごとに旧名のキーを新名へ移す。移すものが無ければ null
+function renameStaffLaborMonthsPatch(laborMonths, oldName, newName) {
+  const lm = _personObj(laborMonths) || {};
+  if (!oldName || !newName || oldName === newName) return null;
+  const out = {};
+  Object.keys(lm).forEach(ym => {
+    const m = lm[ym];
+    if (m && typeof m === "object" && !Array.isArray(m) && m[oldName] != null) { out[`${ym}/${newName}`] = m[oldName]; out[`${ym}/${oldName}`] = null; }
+  });
+  return Object.keys(out).length ? out : null;
+}
 // subs の差分（shops/{sid}/subs への update 用）。3ヶ月の購読窓の外の期間も含めて全件を移す
 // （StaffTab の改名は読み込み済みの subs しか直せないが、CF は全件を読める）
 function renameStaffSubsPatch(subs, oldName, newName) {
@@ -631,8 +644,8 @@ function renameStaffSubsPatch(subs, oldName, newName) {
 
 module.exports = { PERSON_ID_RE, isValidPersonId, PERSON_AUTO_ID_CHARS, genPersonAutoId, personIdFor, STAFF_NUMBER_MAX, sanitizeStaffNumber,
   groupStaffRegsCF, personDisplayName, planPeopleSync, staffNumberConflict, planMergePeople, planSplitPerson, planReassignPersonId,
-  STAFF_KEYED_SETTING_MAPS_CF, STAFF_KEYED_PRIVATE_NODES_CF, validateStaffRename, renameStaffListCF, renameStaffSettingsPatch,
-  renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffSubsPatch,
+  STAFF_KEYED_SETTING_MAPS_CF, STAFF_KEYED_PRIVATE_NODES_CF, STAFF_KEYED_MONTH_NODES_CF, validateStaffRename, renameStaffListCF, renameStaffSettingsPatch,
+  renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffLaborMonthsPatch, renameStaffSubsPatch,
   MIN_WAGE_MAX_ENTRIES, sanitizeWageSettings, PAY_CODE_DEFAULT, isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,
   ENTITY_ID_RE, isValidEntityId, SHOP_KINDS, ENTITY_NAME_MAX, sanitizeEntityName, entityIdOfShop, shopKindOf,
   planEntityMigration, mergeEntitySettings, buildShopMirror, otherCompanyLinksOf,
