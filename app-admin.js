@@ -5252,6 +5252,27 @@ const CO_LABOR_FIELDS=[
   {key:"agreementMonthlyOtMin",label:"36協定 1か月の延長上限",max:200},
   {key:"agreementAnnualOtMin",label:"36協定 1年の延長上限",max:999},
 ];
+// 時間を小数1桁で入力し、分で返す（年間所定・分母。2026-09-30 P2）。入力途中の「2080.」を消さないよう
+// 文字列で持ち、確定（blur・Enter）のときだけ 0.1h 単位に丸めて返す。空欄は null（呼び出し側が意味を決める）。
+function HoursDecimalInput({min,onCommit,placeholder,max=9999,width=84,zeroBlank=false}){
+  const toText=m=>m===undefined||m===null||m===""||(zeroBlank&&!(Number(m)>0))?"":String(Math.round(Number(m)/6)/10);
+  const[text,setText]=useState(toText(min));
+  useEffect(()=>{setText(toText(min));},[min]);
+  const commit=()=>{
+    const t=text.trim();
+    if(t===""){if(toText(min)!=="")onCommit(null);return;}
+    const h=Number(t);
+    if(!Number.isFinite(h)||h<0){setText(toText(min));return;}
+    const v=Math.round(Math.min(max,h)*10)*6;
+    setText(toText(v));
+    if(v!==Number(min))onCommit(v);
+  };
+  return(<input type="text" inputMode="decimal" value={text} placeholder={placeholder}
+    onChange={e=>setText(e.target.value)} onBlur={commit} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+    style={{...AI,width,textAlign:"center",padding:"5px 6px"}}/>);
+}
+const WEEK_START_OPTIONS=[[1,"月曜"],[2,"火曜"],[3,"水曜"],[4,"木曜"],[5,"金曜"],[6,"土曜"],[0,"日曜"]];
+const minToH1=m=>String(Math.round((Number(m)||0)/6)/10);
 // 労務判定の入力欄（企業の共通設定と法人の設定で共有・2026-09-30 に CompanyConfigCard から切り出し）。
 // 空欄＝上の層（企業の共通設定なら店舗、法人なら企業の共通設定）の値を使う。
 function CoLaborFields({labor,setLabor,placeholder,blankLabel}){
@@ -5282,6 +5303,24 @@ function CoLaborFields({labor,setLabor,placeholder,blankLabel}){
         style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
         <option value="">{blankLabel}</option>
         <option value={1}>1月（暦年）</option><option value={4}>4月（年度）</option><option value={7}>7月</option><option value={10}>10月</option>
+      </select>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+      <span style={{...LBL,minWidth:150}}>年間所定労働時間</span>
+      <HoursDecimalInput min={labor.annualScheduledMin} onCommit={v=>setLabor("annualScheduledMin",v)} placeholder={placeholder}/>
+      <span style={UNIT}>h（0＝使わない）</span>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+      <span style={{...LBL,minWidth:150}}>1時間当たり賃金の分母</span>
+      <HoursDecimalInput min={labor.rateDenominatorMin} onCommit={v=>setLabor("rateDenominatorMin",v)} placeholder={placeholder}/>
+      <span style={UNIT}>h（0＝年間所定÷12 を0.1h未満切り捨て）</span>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+      <span style={{...LBL,minWidth:150}}>週の起算</span>
+      <select value={labor.weekStartDow===undefined||labor.weekStartDow===null?"":labor.weekStartDow} onChange={e=>setLabor("weekStartDow",e.target.value===""?null:parseInt(e.target.value))}
+        style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+        <option value="">{blankLabel}</option>
+        {WEEK_START_OPTIONS.map(([v,l])=><option key={v} value={v}>{l}</option>)}
       </select>
     </div>
   </div>);
@@ -6716,10 +6755,13 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       const W=weeklyLegalMinFromBase31(ls.monthlyBase31Min);
       const wLabel=W%60===0?`${W/60}時間`:`${Math.floor(W/60)}時間${W%60}分`;
       const b31h=Math.floor(ls.monthlyBase31Min/60),b31m=ls.monthlyBase31Min%60;
-      const rows=[31,30,29,28].map(d=>{
-        const b=monthlyBaseMin(W,d);
-        return{d,base:b,guide:monthlyGuideMin(b,ls.fixedOvertimeMin,ls.marginMin,ls.agreementDailyOtMin),cap:monthlyCapMin(b,ls.fixedOvertimeMin)};
+      // 各暦日数の代表月で laborMonthFrame を引く（年間所定の年按分はその暦年の日数を使うので、29日はうるう年の2月）
+      const rows=[[31,"2027-01"],[30,"2027-04"],[29,"2028-02"],[28,"2027-02"]].map(([d,ym])=>{
+        const f=laborMonthFrame(settings,ym);
+        return{d,base:f.baseMin,sched:f.scheduledCapMin,guide:f.guideMin,cap:f.capMin};
       });
+      const hasAnnual=ls.annualScheduledMin>0;
+      const denomAuto=rateDenominatorMinOf({...ls,rateDenominatorMin:0});
       const TD={border:"1px solid var(--c-border)",padding:"4px 8px",textAlign:"right",fontSize:12,whiteSpace:"nowrap"};
       return(<AC title="労務判定（1か月単位の変形労働時間制）">
         {coNote}
@@ -6753,20 +6795,44 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
           </div>
         </div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:12}}>
+          <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap",minWidth:150}}>年間所定労働時間</span>
+            {coLabor("annualScheduledMin")?coVal(hasAnnual?`${minToH1(ls.annualScheduledMin)}h`:"使わない",0):<>
+            <HoursDecimalInput min={ls.annualScheduledMin} zeroBlank onCommit={v=>saveLabor("annualScheduledMin",v||0)} placeholder="未設定"/>
+            <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span></>}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap",minWidth:150}}>1時間当たり賃金の分母</span>
+            {coLabor("rateDenominatorMin")?coVal(ls.rateDenominatorMin>0?`${minToH1(ls.rateDenominatorMin)}h`:`自動 ${minToH1(denomAuto)}h`,0):<>
+            <HoursDecimalInput min={ls.rateDenominatorMin} zeroBlank onCommit={v=>saveLabor("rateDenominatorMin",v||0)} placeholder={`自動 ${minToH1(denomAuto)}`}/>
+            <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span></>}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap",minWidth:150}}>週の起算</span>
+            {coLabor("weekStartDow")?coVal(((WEEK_START_OPTIONS.find(([v])=>v===ls.weekStartDow))||[])[1]||"",0):
+            <select value={ls.weekStartDow} onChange={e=>saveLabor("weekStartDow",parseInt(e.target.value))}
+              style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+              {WEEK_START_OPTIONS.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+            </select>}
+          </div>
+          <div style={{fontSize:11,color:"var(--c-text4)"}}>年間所定を入れると、各月の所定上限（年間所定 × 暦日数 ÷ その年の日数）を出し、目安をそこから引きます。分母を空欄にすると年間所定 ÷ 12 を0.1時間未満切り捨てで使い、年間所定も無ければ173.3時間です。</div>
+        </div>
         <div style={{overflowX:"auto"}}>
           <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
             <thead><tr>
-              {["暦日数","総枠（所定）","目安","上限"].map(h=><th key={h} style={{...TD,textAlign:"center",background:"var(--c-input)",fontWeight:700,color:"var(--c-text3)"}}>{h}</th>)}
+              {["暦日数","総枠（所定）",...(hasAnnual?["所定上限"]:[]),"目安","上限"].map(h=><th key={h} style={{...TD,textAlign:"center",background:"var(--c-input)",fontWeight:700,color:"var(--c-text3)"}}>{h}</th>)}
             </tr></thead>
             <tbody>{rows.map(r=>(<tr key={r.d}>
               <td style={{...TD,textAlign:"center",color:"var(--c-text3)"}}>{r.d}日</td>
               <td style={{...TD,color:"var(--c-text)"}}>{fmtMin(r.base)}</td>
+              {hasAnnual&&<td style={{...TD,color:"var(--c-text)"}}>{fmtMin(r.sched)}</td>}
               <td style={{...TD,color:"var(--c-text)"}}>{fmtMin(r.guide)}</td>
               <td style={{...TD,color:"var(--c-text)"}}>{fmtMin(r.cap)}</td>
             </tr>))}</tbody>
           </table>
         </div>
-        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>目安 = 総枠 + 固定残業 − 余裕（時間未満を切り捨て）／上限 = 総枠 + 固定残業。月の残業予定は「月実働 − 総枠」で、日別にはその日までの累計実働の比で配分します。</div>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>目安 = {hasAnnual?"所定上限":"総枠"} + 固定残業 − 余裕（時間未満を切り捨て）／上限 = 総枠 + 固定残業。{hasAnnual?"29日はうるう年の2月の値です。":""}月の残業予定は「月実働 − 総枠」で、日別にはその日までの累計実働の比で配分します。</div>
 
         <div style={{marginTop:16,paddingTop:14,borderTop:"1px solid var(--c-border)"}}>
           <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>36協定</div>
