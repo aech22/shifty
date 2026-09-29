@@ -1694,6 +1694,38 @@ Vite + TS へのフル移行は不要。
 
 ## 完了済みタスク
 
+### ✅ 🔴 app-admin.js の2回目の分割（40万字の上限の手前・シフト作成タブ一式を app-shift.js へ）（2026-09-30 develop 完了・`a5d9c3c` `018ceeb`／ルール・CF の変更なし）
+
+**目的**: P3〜P5 の追加で app-admin.js が 399,977 字になり、回帰 `example-index-html-load.js` の上限（40万字・Babel Standalone の
+500KB 上限の手前）まで残り 23 字だった。P6b・P7 の追加を受けられるよう、挙動を1バイトも変えずに2回目の分割をする
+（ユーザー指示「必要があれば分割して」2026-09-30）。
+
+- [x] 新ファイル `app-shift.js` に、シフト作成タブ一式（app-admin.js の 271〜3463 行＝LEGEND_COLORS・FIXED_ENTRY・FIXED_KEY・HDASH_IMG・
+      HeatTable・SummaryTable・GridLegend・ACT_DIFF_BG・ActualsGrid・ActualsCsvDialog・ShiftEditTab）を**そのまま**移した。
+      選んだ理由: 範囲の外から参照される名前が ShiftEditTab（AdminView の描画・app-company.js の一括PDF）と FIXED_KEY（expXl の関数本体）の
+      2つだけで、どちらも実行時の参照。読み込み時の依存は app-utils.js の定数だけ（AST で確認）。
+      結果 app-admin.js 198,981 字・app-shift.js 201,775 字（app-company.js 175,052 字は変わらず）
+- [x] 移動のコミット（`a5d9c3c`）は移動だけ。`git diff --numstat`: app-admin.js は追加0行・削除3,194行（移したブロック3,193行＋直後の空行1行）で、
+      削除行はブロック＋空行と完全一致。ブロックの sha256 先頭16桁 `b8258275242617e3` が app-shift.js の本文（見出しコメントを除く）と一致
+- [x] index.html: app-admin.js の直後・app-company.js の前に app-shift.js（同じ版数）。?v= は7箇所・読み込み順は utils→core→staff→admin→shift→company→main
+- [x] package.json の lint・eslint.config.js（files・sharedGlobals に FIXED_KEY・説明コメント）。lint 0 errors / 113 warnings（分割前と同数・
+      警告の ruleId と文言の集合も一致。app-admin.js の30件が admin 21＋shift 9 に分かれた）
+- [x] tests/core.test.js: `_readAdminSurface` を admin→shift→company の3本の連結にし、差し替え口 `SHIFTY_SHIFT_SRC` を足した。476件パス。
+      読み口を直す前は12件が落ちた（移した範囲を検査しているテストが素通りにならない）。反証: app-shift.js の写しで isTimeOrderInvalid を
+      別名に置き換えると項目12が、シフト日に新フィールドを書かせると ADMIN_SHIFT_FIELDS が、それぞれ1件落ちる
+- [x] mount-component.js の既定の読み込みと、自前で並べる回帰スクリプト12本に app-shift.js を足した。回帰49本すべて EXIT=0
+      （出力に console.error・Babel の 500KB 警告なし）
+- [x] `example-index-html-load.js` を7ファイルに合わせ、期間を1つ持たせてシフト作成タブ（app-shift.js）が描けることを確かめる項目を足した。EXIT=0。
+      反証: app-shift.js の行を抜いた index.html では `ReferenceError: ShiftEditTab is not defined` で EXIT=1。
+      あわせて実物の Firebase SDK（dev）で index.html をそのまま開き、7ファイルを読み込んでログイン画面まで console.error 0件
+- [x] CLAUDE.md（ファイル構成・分割の仕組み・読み込み順・コンポーネント一覧のファイル列・P5 の文字数の申し送り・既知の技術負債・
+      fontSize 走査の一覧＝7ファイルで151件・違反0件、app-shift.js を抜くと21件を数え落とす）、RULES.md（全表示セルの例外の場所）、
+      shifty-e2e-verify の SKILL.md、`~/.claude/commands/bug-check.md` を追随
+
+**申し送り**: `.claude/settings.json` の Stop フック（Auto-commit）は5ファイルを名指ししていて app-shift.js も含まない
+（フックの対象を増やすかはユーザー判断待ちなので触っていない）。app-shift.js の変更は自分でコミットすること。
+**本番反映で要るもの**: 次のリリースで `?v=` のバンプ（app-shift.js が新しく配信物に加わる）。ルール・CF・データ移行は無し。
+
 ### ✅ 🟡 労務・給与と複数法人 P5: 割増の計算（2026-09-30 develop 完了・`d88e1cc`〜`8ea5b27`／ルールと CF の変更なし）
 
 **目的**: `労務給与_複数法人_実装計画.md` §4.1〜§4.4・§6 P5・決定 #3・#4・#5。詳細は CLAUDE.md の「割増の計算（P5）」の節。

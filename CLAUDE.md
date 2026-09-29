@@ -18,7 +18,7 @@ Free / Pro / Premium の 3 段階プラン制。Stripe サブスク（Pro 500円
 
 1. **着手前にタスクを定型化する**: フリーフォームの依頼（「〜を直して」「〜を追加して」）は、実装前に「**目的**（なぜ必要か）/ **受け入れ条件**（チェックリスト）/ **影響範囲**（ファイル・コンポーネント）」の3点に変換して提示してから着手する。typo修正などの自明な1行修正は省略してよい。
 2. **該当スキルを必ず経由する**: バグ調査・修正 → `/bug-check`、BACKLOG実装 → `/shifty-feature`、本番リリース → `/release-to-main`。スキル内のPHASE・チェックリストを省略しない。
-3. **修正前に全呼び出し元を洗い出す**: 6ファイル分割のため定義と呼び出しが別ファイルにあるのが普通。`grep -n "関数名" app-*.js` で全ファイル横断で確認してから編集する。
+3. **修正前に全呼び出し元を洗い出す**: 7ファイル分割のため定義と呼び出しが別ファイルにあるのが普通。`grep -n "関数名" app-*.js` で全ファイル横断で確認してから編集する。
 4. **コミット前の検証は固定**: `npm test` と `npx eslint app-*.js` を必ず実行し、結果を省略せず報告する。失敗したら失敗のまま報告する（成功したことにしない）。
 5. **受け入れ条件を1つずつ照合してから完了報告する**: 未検証の項目は「未検証」と明記する。
 
@@ -65,7 +65,7 @@ developブランチ・mainブランチのどちらにチェックアウトして
 
 ---
 
-## ファイル構成（2026-07-06 に app.js を5ファイルに分割・2026-09-30 に app-company.js を切り出して6ファイル）
+## ファイル構成（2026-07-06 に app.js を5ファイルに分割・2026-09-30 に app-company.js と app-shift.js を切り出して7ファイル）
 
 ```
 /
@@ -73,12 +73,13 @@ developブランチ・mainブランチのどちらにチェックアウトして
 ├── app-utils.js        ← 純粋関数・定数（ブラウザAPI非依存 = Nodeでテスト可能・プレーンscript）
 ├── app-core.js         ← DEV_MODE・Firebase設定・Cookie/テーマ/localStorage・スタイル定数（プレーンscript）
 ├── app-staff.js        ← ShiftyIcon, StaffView, StaffHdr, CellEditPanel, SmModal（babel）
-├── app-admin.js        ← AdminView・シフト作成/期間/スタッフ/候補/提出一覧/マイページの各タブ, expXl, UpgradeModal, AC/AL/AT/CL（babel）
+├── app-admin.js        ← AdminView・期間/スタッフ/候補/提出一覧/マイページの各タブ, expXl, UpgradeModal, AC/AL/AT/CL（babel）
+├── app-shift.js        ← シフト作成タブ一式（ShiftEditTab・実績の ActualsGrid/ActualsCsvDialog・HeatTable/SummaryTable/GridLegend・LEGEND_COLORS/FIXED_KEY 等）（babel）
 ├── app-company.js      ← 企業連携タブ一式（CompanyTab と部品・企業の一括PDF）・設定タブ（SetTab）・賃金マスタ（StaffPayPage・PayCodeBox）（babel）
 ├── app-main.js         ← App() 本体 + ReactDOM マウント（babel）
 ├── tests/
 │   └── core.test.js    ← app-utils.js の Node ユニットテスト（node --test）。管理者画面の実装を読むドリフト検出は
-│                          app-admin.js＋app-company.js を連結して読む（`_readAdminSurface`）
+│                          app-admin.js＋app-shift.js＋app-company.js を連結して読む（`_readAdminSurface`）
 ├── functions/
 │   └── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗/期間の自動削除・企業アカウント）
 ├── RULES.md            ← やってはいけないこと（必読）
@@ -96,7 +97,7 @@ developブランチ・mainブランチのどちらにチェックアウトして
 └── scripts/            ← 運用スクリプト（stripe-setup / seed_shops / list_shops / copy-prod-to-dev / obsidian-sync 等。service-account-*.jsonはgitignore済み）
 ```
 
-**分割の仕組み**: Babel Standalone は複数の `<script type="text/babel">` を同一グローバルスコープで順に実行するため、`import`/`export` なしでファイル間参照が成立する（実証済み）。**index.html の読み込み順（utils→core→staff→admin→company→main）を変えてはいけない**。新しいコンポーネント・関数は所属に応じたファイルへ追加する。
+**分割の仕組み**: Babel Standalone は複数の `<script type="text/babel">` を同一グローバルスコープで順に実行するため、`import`/`export` なしでファイル間参照が成立する（実証済み）。**index.html の読み込み順（utils→core→staff→admin→shift→company→main）を変えてはいけない**。新しいコンポーネント・関数は所属に応じたファイルへ追加する。
 
 **app-company.js の切り出し（2026-09-30）**: app-admin.js が 50.8 万字になり、Babel Standalone が変換時に
 「[BABEL] Note: The code generator has deoptimised the styling of … as it exceeds the max of 500KB.」を console.error で
@@ -108,6 +109,18 @@ AdminView（app-admin.js）が app-company.js のコンポーネントを描け�
 回帰スクリプトのハーネス（`mount-component.js`）の既定の読み込みにも app-company.js が入っている。
 **Stop フックの自動コミット（`.claude/settings.json`）は5ファイルを名指ししており app-company.js を含まない**——
 app-company.js の変更は自分でコミットすること。
+
+**app-shift.js の切り出し（2026-09-30・2回目の分割）**: P3〜P5 の追加で app-admin.js が再び 399,977 字になり、
+上の40万字の上限（`example-index-html-load`）まで残り23字になった。シフト作成タブ一式（app-admin.js の 271〜3463 行＝
+LEGEND_COLORS・FIXED_ENTRY・FIXED_KEY・HDASH_IMG・HeatTable・SummaryTable・GridLegend・ACT_DIFF_BG・ActualsGrid・
+ActualsCsvDialog・ShiftEditTab）を**中身を変えずに**移し、app-admin.js 198,981 字・app-shift.js 201,775 字になった
+（移動は `a5d9c3c`・参照の追随は `018ceeb`。移した範囲の sha256 先頭16桁 `b8258275242617e3` が一致）。
+この塊を選んだのは、範囲の外から参照される名前が ShiftEditTab（AdminView の描画と app-company.js の一括PDF）と
+FIXED_KEY（app-admin.js の expXl の関数本体）の2つだけで、どちらも実行時の参照だから。読み込み時に使うのは
+app-utils.js の定数（CELL_COLOR_LEGEND・CELL_COMMANDS）だけなので、admin の直後に置いて問題ない。
+**シフト作成タブ（グリッド・ヒートマップ・集計表・実績・PDF）を直すときの編集先は app-shift.js**。
+Excel（expXl）・提出一覧・スタッフタブは app-admin.js に残っている。app-shift.js も Stop フックの自動コミットの
+対象外なので、変更は自分でコミットすること（フックの対象を増やすかはユーザー判断待ち）。
 
 ## ソースファイルの内容
 
@@ -435,8 +448,8 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `CellEditPanel` | app-staff.js | 提出状況ビュー内のセル編集（既存データを初期値） |
 | `SmModal` | app-staff.js | 提出状況一覧（名前列固定・日付横スクロール） |
 | `AdminView` | app-admin.js | 管理者画面（タブ切り替え） |
-| `ShiftEditTab` | app-admin.js | シフト作成グリッド・ヒートマップ・集計・PDF出力（Premium） |
-| `ActualsGrid / ActualsCsvDialog` | app-admin.js | 実績の入力（P4）。シフト作成タブの「実績」切替（確定済みの期間・オーナーの端末だけ）で ShiftEditTab のグリッドと差し替わる |
+| `ShiftEditTab` | app-shift.js | シフト作成グリッド・ヒートマップ・集計・PDF出力（Premium） |
+| `ActualsGrid / ActualsCsvDialog` | app-shift.js | 実績の入力（P4）。シフト作成タブの「実績」切替（確定済みの期間・オーナーの端末だけ）で ShiftEditTab のグリッドと差し替わる |
 | `PeriodsTab` | app-admin.js | 期間管理・URL シェア |
 | `PEF` | app-admin.js | 期間編集フォーム |
 | `expXl()` | app-admin.js | ExcelJS による Excel 生成 |
@@ -453,7 +466,7 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `MyPageTab` | app-admin.js | マイページ（プラン確認・アップグレード・利用規約） |
 | `TermsModal` | app-admin.js | 利用規約全文モーダル（`TERMS_TEXT` 定数を表示） |
 | `UpgradeModal` | app-admin.js | アップグレード促進モーダル（Stripe Checkout 呼び出し） |
-| `GridLegend / HeatTable / SummaryTable` | app-admin.js | シフト作成タブの操作説明レジェンド・ヒートマップ表・集計表 |
+| `GridLegend / HeatTable / SummaryTable` | app-shift.js | シフト作成タブの操作説明レジェンド・ヒートマップ表・集計表 |
 | `AC / AL / AT / CL` | app-admin.js | 汎用UIパーツ（カード・ラベル・タイトル・候補リスト） |
 
 ※ 管理者パスワード認証（AdminLogin）は廃止・削除済み。管理者権限は2026-07-07から**管理キー（adminKey）方式**: `shops/{shopId}/owners/{uid}` に登録された端末のみ管理系パスに書き込める。端末追加は管理コード（`shopId.adminKey`）を「コードで追加」に入力する。
@@ -827,7 +840,8 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
   行き先の店の設定と実績で解決する。**読めない確定済みの期間があれば「＋」と「他店の実績を読み込めていません」**（未確定の期間は実績の入口が無いので印を付けない）。
   他店の実績を読めていない人の月の値は laborTotals に残さない
 - **app-admin.js の文字数**: P5 で 40万字の上限（`example-index-html-load`）を超えたので、セルと1日の組み立てを app-utils.js へ移して
-  399,977 字に戻した。**余裕は 23 字しかない**——次のフェーズ（P6b・P7）で app-admin.js に足すなら先に分割を考える
+  399,977 字に戻した。余裕が23字しかなかったので、同日シフト作成タブ一式を app-shift.js へ切り出して解消した
+  （上の「app-shift.js の切り出し」。app-admin.js 198,981 字・app-shift.js 201,775 字）
 - 検証: `tests/core.test.js`（手計算の期待値: 締23〜25時の深夜・帯と按分の休憩・12h勤務・所定4hの日・③と60h超・休日ゼロ週・
   月をまたぐ週・36協定の休日労働込み・他店の実績）と `example-labor-premium.js`（18項目・WebKit の iPhone 13 でも通る。P5 より前の配信物では16項目が落ちる）
 
@@ -969,7 +983,7 @@ npx eslint app-*.js  # 0 errors を維持（CIでも実行）
 ### React・スタイル制約
 
 - **ビルド不要**: Babel Standalone がブラウザでトランスパイル。`import`/`export` は使えない
-- **ファイル分割の制約**: index.html の読み込み順（utils→core→staff→admin→company→main）を変えない。全ファイルがグローバルスコープを共有する
+- **ファイル分割の制約**: index.html の読み込み順（utils→core→staff→admin→shift→company→main）を変えない。全ファイルがグローバルスコープを共有する
 - **スタイルは inline style のみ**: 外部 CSS ファイル・CSS モジュール追加禁止
 - **`input`/`select`/`textarea` の `fontSize` は 16px 以上**: iOS Safari ズーム防止（2026-07-06に全箇所解消済み。新規追加時に守ること）
 - **CDNスクリプトはSRI付き**: バージョン変更時は integrity ハッシュの再計算が必要（`curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`）
@@ -1072,7 +1086,7 @@ if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 ### シフト作成タブにセル操作・セル色を追加（2026-07-09〜）
 
 1. `app-utils.js` の `CELL_COMMANDS`（セル内コマンド）/ `CELL_COLOR_LEGEND`（色・記号の意味）レジストリに**必ず登録**する
-2. タブ最下部の「操作方法」レジェンド（`GridLegend`・app-admin.js）はレジストリから自動生成されるため、個別編集は不要（登録するだけで説明が自動追記される）
+2. タブ最下部の「操作方法」レジェンド（`GridLegend`・app-shift.js）はレジストリから自動生成されるため、個別編集は不要（登録するだけで説明が自動追記される）
 3. パーサ（`extractNote`・app-utils.js）もレジストリ駆動。`tests/core.test.js` の完全性テストが登録漏れ・実装との乖離を検出する
 4. 既存コマンド: `h`/`k`/`x`（サフィックス）、`/`・全角`／`（休み希望・`adminRest`フィールドに保存・トグル式）、`ko`/`yu`/`ke`（休暇種別）、`締`（kind:"fixed"・店舗限定の追加出勤コマンド。詳細は下記5参照）。店舗略称バリデーション（CompanyTab）の予約語は `isReservedShopAbbr` がレジストリから自動で決める（`/`・`／` も略称に登録できない）
    - **休み希望は 2026-09-30 に `y` から `/` へ変えた**（`労務給与_複数法人_実装計画.md` §3.9・P0・決定 #16）。
@@ -1305,11 +1319,12 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   ——フォーム部品はUIを足すたびに増えるので、書いた数はコード変更なしに黙って偽になる（実際 56→57→58 と
   ずれた）。見るのは**16未満が0件**であることだけで、判定は毎回この走査で採る
   （2026-09-10 実測: フォーム部品58件・違反0件）。
-  **走査するファイルに app-company.js を必ず入れる**（2026-09-30 分割）。実測: 6ファイルで117件・違反0件、
+  **走査するファイルに app-company.js と app-shift.js を必ず入れる**（2026-09-30 分割）。実測: 6ファイルで117件・違反0件、
   app-company.js を抜いた旧5ファイルの一覧だと43件＝**設定タブ・企業連携タブの74件を黙って数え落とす**。
+  2回目の分割後の実測: 7ファイルで151件・違反0件、app-shift.js を抜いた6ファイルの一覧だと130件＝**シフト作成タブの21件を数え落とす**。
 
   **走査が数えない例外が1件ある（2026-09-23〜）**: シフト作成タブの「全表示」のセル
-  （app-admin.js の `AI2` の `fullView` 分岐）は、行高から font を算出するので1ヶ月期間では
+  （app-shift.js の `AI2` の `fullView` 分岐。2026-09-30 の分割までは app-admin.js）は、行高から font を算出するので1ヶ月期間では
   10px程度になる。走査は `fontSize:\s*(\d+)` の**数値リテラルしか見ない**ため、変数で渡すこの1件は
   黙って対象から外れ、**走査は「0件」と答え続ける**（実測: 変更後も 58件/違反0件）。
   RULES.md に例外として明記済みで、**規約違反として16pxへ戻さないこと**。
@@ -1322,7 +1337,7 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   ```bash
   node -e '
   const fs=require("fs");let total=0;const bad=[];
-  for(const f of ["app-utils.js","app-core.js","app-staff.js","app-admin.js","app-company.js","app-main.js"]){
+  for(const f of ["app-utils.js","app-core.js","app-staff.js","app-admin.js","app-shift.js","app-company.js","app-main.js"]){
     const s=fs.readFileSync(f,"utf8");const re=/<(input|select|textarea)[\s\/>]/g;let m;
     while((m=re.exec(s))){
       total++;let d=0,end=-1;
