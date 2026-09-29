@@ -115,6 +115,11 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
 
   if(fullPage&&fullPage.kind==="companyStaff"&&companyInfo&&plan==="premium")
     return <CompanyStaffDirectory companyId={companyInfo.companyId} pay={pay} plan={plan} onCompanyCall={onCompanyCall} onBack={()=>setFullPage(null)}/>;
+  // 月次賃金（P6b）。自店はスタッフタブ（オーナーの端末）、他の連携店舗は企業連携タブの法人カードから開く。
+  // 読めるかどうか（オーナーか・対象店舗が Premium か）はページが読み込みで確かめる
+  if(fullPage&&fullPage.kind==="payroll"&&featureEnabled("pay",{plan}))
+    return <PayrollPage shopId={fullPage.shopId||currentShopId} shopName={fullPage.shopName||(shops.find(s=>s.id===currentShopId)||shops[0])?.name||""}
+      pay={pay} tt={tt} onBack={()=>setFullPage(null)}/>;
   if(fullPage&&fullPage.kind==="staffPay"&&pay.enabled){
     const pn=fullPage.name;
     const hs=homeShopOf(settings,pn,currentShopId);
@@ -233,7 +238,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         </div>}
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} isHqShop={isHqShop}/>}
         {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name||""} linkedShops={homeShopChoices} companyShops={Object.entries((companyLink&&companyLink.shops)||{}).filter(([id])=>id&&id!==currentShopId).map(([id,nm])=>({id,name:nm||id}))}
-          pay={pay} laborMonths={lm} actuals={act} companyLinked={!!companyLink} onOpenPay={n=>setFullPage({kind:"staffPay",name:n})} initialEditKey={returnEdit} onInitialEditConsumed={()=>setReturnEdit(null)} onRenameStaff={(oldName,newName)=>{
+          pay={pay} laborMonths={lm} actuals={act} companyLinked={!!companyLink} onOpenPay={n=>setFullPage({kind:"staffPay",name:n})} onOpenPayroll={()=>setFullPage({kind:"payroll"})} initialEditKey={returnEdit} onInitialEditConsumed={()=>setReturnEdit(null)} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
@@ -258,7 +263,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} tt={tt} plan={plan} periods={periods}/>}
         {tab==="submissions"&&<SubsTab key={currentShopId} subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
         {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} companyLink={companyLink} companyInfo={companyInfo} laborMonths={lm} actuals={act}/>}
-        {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany} plan={plan} onSaveCompanyConfig={onSaveCompanyConfig} onCompanyLogin={onCompanyLogin} onCompanyCall={onCompanyCall} onOpenCompanyStaff={()=>setFullPage({kind:"companyStaff"})}/>}
+        {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany} plan={plan} onSaveCompanyConfig={onSaveCompanyConfig} onCompanyLogin={onCompanyLogin} onCompanyCall={onCompanyCall} onOpenCompanyStaff={()=>setFullPage({kind:"companyStaff"})} onOpenPayroll={(sid,nm)=>setFullPage({kind:"payroll",shopId:sid,shopName:nm})}/>}
         {tab==="mypage"&&!hideMypage&&<MyPageTab plan={plan} planExpiry={planExpiry} billingSchedule={billingSchedule} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
         {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} adminCode={adminCode} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
       </div>
@@ -790,7 +795,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
 
 // ===== スタッフ登録タブ =====
 function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods,ownerReadOnly=false,shopId="",shopName="",linkedShops=[],companyShops=[],
-  pay=PAY_OFF,laborMonths:lm=LABOR_MONTHS_OFF,actuals:act=ACTUALS_OFF,companyLinked=false,onOpenPay,initialEditKey=null,onInitialEditConsumed}){
+  pay=PAY_OFF,laborMonths:lm=LABOR_MONTHS_OFF,actuals:act=ACTUALS_OFF,companyLinked=false,onOpenPay,onOpenPayroll,initialEditKey=null,onInitialEditConsumed}){
   const[newName,setNewName]=useState("");
   // 削除確認ポップアップ。対象は index ではなく「スタッフ名」で持つ（下のコメントと同じ理由）。
   const[delTarget,setDelTarget]=useState(null);
@@ -1500,7 +1505,10 @@ const dragIdxRef=useRef(null);
       {/* 賃金の閲覧パスコード（P6a）は「スタッフ登録」の横。Premium・オーナーの端末だけ */}
       <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
         <AT>スタッフ登録</AT>
-        {pay.enabled&&<PayCodeBox pay={pay} onOpenChange={()=>setPayCodeModal(true)}/>}
+        {pay.enabled&&<div style={{display:"flex",alignItems:"flex-start",gap:8,flexWrap:"wrap"}}>
+          {onOpenPayroll&&<button data-open-payroll="1" onClick={onOpenPayroll} style={{...AGray,padding:"7px 12px",fontSize:12,whiteSpace:"nowrap"}}>月次賃金 →</button>}
+          <PayCodeBox pay={pay} onOpenChange={()=>setPayCodeModal(true)}/>
+        </div>}
       </div>
       {payCodeModal&&<PayCodeChangeModal tt={tt} onClose={()=>setPayCodeModal(false)} onSubmit={pay.changeCode}
         note={companyLinked?"企業に連携している店舗は、企業のパスコードに統一されています。企業連携タブの「企業アカウント」で変更してください。":null}/>}

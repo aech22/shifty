@@ -2386,6 +2386,33 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     realStaff.forEach(n=>{o[n]=schedAvgOf(n);});
     return o;
   },[isPremium,realStaff,fy,fyStart,lmYm,lm.map,laborByStaff,periods,liveTotalFor]);
+  // 月次賃金ページ（P6b）へ渡す1か月の時間。**労務判定表と同じ計算（laborByStaff の割増・月所定・年平均所定）を
+  // そのまま渡す**＝賃金の入力が画面の表と食い違わない。月所定は laborMonths の確定値、無ければシフトから集計した月実働。
+  // 所属店舗で判定する人（行き先の店・P3.6）は時間を渡さない（所属店舗の月次賃金に合算される）
+  const payrollReportRef=useRef(null);
+  payrollReportRef.current=()=>{
+    const ls=laborSettingsOf(settings);
+    const attrOpts=getAttrOptions(settings);
+    return{ym:lmYm,denomMin:rateDenominatorMinOf(ls),monthCovered:laborMonthCovered,pendingReason:laborPendingReason,
+      actualsReadable:!!act.enabled,
+      rows:realStaff.map(name=>{
+        const attrId=(settings.staffAttributes||{})[name]||"";
+        const base={name,number:(settings.staffNumbers||{})[name]||"",attrId,
+          attr:((attrOpts.find(([v])=>v===attrId))||[])[1]||STAFF_TYPE_LABELS[attrId]||attrId,
+          sys:laborSystemForStaff(settings,name)};
+        const l=laborByStaff[name];
+        if(!l)return{...base,skip:"noData"};
+        if(l.dest)return{...base,dest:true,homeName:l.homeName||""};
+        if(!l.prem)return{...base,skip:"none"};
+        const b=l.prem;const rec=laborMonthOf(lm.map,lmYm,name);const av=schedAvgByStaff[name]||null;
+        return{...base,
+          times:{scheduledMin:rec?(Number(rec.min)||0):l.monthWorkMin,workMin:b.workMin,dayOverMin:b.dayOverMin,weekOverMin:b.weekOverMin,
+            monthOverMin:b.monthOverMin,otMin:b.otMin,over60Min:b.over60Min,nightMin:b.nightMin,legalHolidayMin:b.legalHolidayMin,absentMin:b.absentMin},
+          schedSource:rec?(isLaborMonthFrozen(rec)?"frozen":"registered"):"auto",
+          schedAvgMin:av&&av.avgMin!=null?av.avgMin:null,schedAvgMissing:av?av.missing.length:0,
+          partial:!l.monthCovered,unread:!!b.unread,helperUnread:!!l.helperUnread};
+      })};
+  };
   // 人×月の所定の手修正欄（確定前のみ。前の月を遡って登録するときは、その月の期間を選んで入力する）
   const[lmOpen,setLmOpen]=useState(false);
   const[lmDraft,setLmDraft]=useState({});
@@ -2660,6 +2687,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const t=setTimeout(()=>{
       if(exportJobDoneRef.current===exportJob.key)return;
       exportJobDoneRef.current=exportJob.key;
+      // 月次賃金ページ（P6b）: PDF は作らず、月の時間だけを返す
+      if(exportJob.kind==="payroll"){
+        let rep=null;try{rep=payrollReportRef.current();}catch(e){exportJob.onDone(e);return;}
+        exportJob.onDone(null,rep);return;
+      }
       exportPdf(exportJob.mode,"all",{pdf:exportJob.pdf,first:exportJob.first,save:false})
         .then(()=>exportJob.onDone(null),e=>exportJob.onDone(e||new Error("PDF生成失敗")));
     },300);

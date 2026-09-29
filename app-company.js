@@ -217,6 +217,145 @@ function StaffPayPage({name,settings,shopId,shopName,homeShopName,companyLink,pa
   </div>);
 }
 
+// ============================================================
+// 月次賃金ページ（2026-09-30・労務給与_複数法人_実装計画.md §4.5・P6b）。管理者画面を丸ごと差し替えて出す（AdminView の fullPage）。
+// 入口はスタッフタブ（自店・オーナーの端末）と企業連携タブの法人カード（法人 → 店舗）。Premium・オーナーだけ。
+// 時間は**シフト作成タブの労務判定表と同じ計算**で出す: 対象店舗の ShiftEditTab を画面外へマウントし、書き出しジョブ
+// （exportJob.kind="payroll"）で割増の内訳・月所定・年平均所定を返させる（一括PDFと同じ形＝計算を二重に持たない）。
+// 非表示マウントは書き込みを塞ぐ（savePeriods=null・ownerReadOnly・onSave は何もしない・laborMonths は読むだけ）。
+// 金額は閲覧パスコードの解除まで「••••」（時間は伏せない）。CSV も解除するまで出せない。**PDF・Excel には出さない**。
+// 社会保険・所得税・住民税・支給総額は対象外（CSV を給与ソフトへ渡す）。
+// ============================================================
+function PayrollPage({shopId,shopName,pay=PAY_OFF,tt,onBack}){
+  const[ym,setYm]=useState(()=>{const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-1);return fd(d).slice(0,7);});
+  const[data,setData]=useState(null);   // 読み込んだ店舗のデータ | {error}
+  const[report,setReport]=useState(null); // ShiftEditTab が返した1か月の時間 | {error}
+  const[tick,setTick]=useState(0);
+  const runRef=useRef(0);
+  useEffect(()=>{
+    if(!firebaseDB||!shopId||!/^\d{4}-\d{2}$/.test(ym)){setData({error:"月を選んでください"});return;}
+    const run=++runRef.current;
+    setData(null);setReport(null);
+    const ref=p=>firebaseDB.ref(p).once("value").then(x=>x.val());
+    (async()=>{
+      const[staff,settingsRaw,coLink,periodsRaw,plan]=await Promise.all([ref(`shops/${shopId}/staff`),ref(`shops/${shopId}/settings`),
+        ref(`shops/${shopId}/company`).catch(()=>null),ref(`shops/${shopId}/periods`),ref(`accounts/${shopId}/plan`).catch(()=>null)]);
+      if(!featureEnabled("pay",{plan}))return{error:"この店舗は Premium ではないため、月次賃金は使えません"};
+      // 賃金・所定・実績はオーナーしか読めない（private・laborMonths・actuals）
+      let priv,lmMap;
+      try{[priv,lmMap]=await Promise.all([ref(`shops/${shopId}/private`),ref(`shops/${shopId}/laborMonths`)]);}
+      catch{return{error:"この店舗の賃金を読み込めませんでした（この端末・アカウントが店舗の管理者として登録されていません）"};}
+      const settings=applyCompanySettings(settingsRaw||makeSettings(shopId),(coLink&&coLink.settings)||{});
+      const periods=Object.values(periodsRaw||{}).filter(x=>x&&x.id&&isValidDateStr(x.startDate)&&isValidDateStr(x.endDate))
+        .sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate)));
+      const n=daysInMonthOf(ym);const first=`${ym}-01`,last=`${ym}-${String(n).padStart(2,"0")}`;
+      const inMonth=periods.filter(p=>p.startDate<=last&&p.endDate>=first);
+      if(!inMonth.length)return{error:"この月にかかる期間がありません"};
+      const target=inMonth.find(p=>p.startDate.slice(0,7)===ym)||inMonth[0];
+      // 提出は年度の始め（年平均所定）〜月末の期間と、月初の週（法定休日の判定）にかかる直前の期間を読む
+      const fyStart=fiscalYearStartMonthOf(settings);
+      const fyFirst=`${fiscalYearMonths(fiscalYearOf(first,fyStart),fyStart)[0]}-01`;
+      const from=fyFirst<addDays(first,-7)?fyFirst:addDays(first,-7);
+      const subPids=periods.filter(p=>p.startDate<=last&&p.endDate>=from).map(p=>p.id);
+      const actPids=periods.filter(p=>p.startDate<=addDays(last,7)&&p.endDate>=addDays(first,-7)).map(p=>p.id);
+      const q=pid=>firebaseDB.ref(`shops/${shopId}/subs`).orderByChild("periodId").equalTo(pid).once("value");
+      const[subSnaps,actList]=await Promise.all([Promise.all(subPids.map(q)),
+        Promise.all(actPids.map(pid=>ref(`shops/${shopId}/actuals/${pid}`).then(v=>[pid,v||{}])))]);
+      const subs=[];subSnaps.forEach(sn=>Object.values(sn.val()||{}).forEach(x=>{if(x&&x.id)subs.push(x);}));
+      return{staffList:Object.values(staff||{}).filter(x=>typeof x==="string"),settings,periods,subs,companyLink:coLink||null,
+        laborMonths:lmMap||{},actuals:Object.fromEntries(actList),payMap:(priv&&priv.pay)||{},codeRec:(priv&&priv.payCode)||null,
+        wageSettings:((coLink&&coLink.settings)||{}).wageSettings||null,periodId:target.id,key:`${run}_${shopId}_${ym}`};
+    })().then(d=>{if(runRef.current===run)setData(d);},()=>{if(runRef.current===run)setData({error:"読み込みに失敗しました"});});
+  },[shopId,ym,tick]);
+  // 書き出しジョブは読み込み1回につき1つ（描画のたびに作り直すと ShiftEditTab の待ち時間がやり直しになる）
+  const jobKey=data&&!data.error?data.key:null;
+  const job=useMemo(()=>jobKey?{key:jobKey,kind:"payroll",
+    onDone:(err,rep)=>{if(runRef.current!==Number(String(jobKey).split("_")[0]))return;setReport(err?{error:"計算に失敗しました"}:rep);}}:null,[jobKey]);
+  const unlocked=!!(data&&!data.error&&pay.unlockedFor(data.codeRec));
+  const rows=(report&&!report.error?report.rows:[]).map(r=>{
+    const sysLabel=r.sys==="A"?"A":r.sys==="B"?"B":"対象外";
+    if(r.dest)return{...r,sysLabel,note:`所属店舗（${r.homeName||"別の店舗"}）で計算します`};
+    if(r.skip)return{...r,sysLabel,note:r.skip==="none"?"労働時間制が判定対象外のため計算しません":"データがありません"};
+    const notes=[];
+    if(r.partial)notes.push("＋月の日がデータで埋まっていない途中の値");
+    if(r.unread||r.helperUnread)notes.push("＋他店の勤務・実績を読み込めていない途中の値");
+    if(r.schedSource==="auto")notes.push("所定は未確定（シフトから集計）");
+    return{...r,sysLabel,notes,calc:monthlyPayBreakdown({pay:data.payMap[r.name]||null,ym:report.ym,times:r.times,
+      denomMin:report.denomMin,wageSettings:data.wageSettings,schedAvgMin:r.schedAvgMin})};
+  });
+  const calcRows=rows.filter(r=>r.calc);
+  const rates=premiumRatesOf(data&&data.wageSettings);
+  const rule=roundingRuleOf(data&&data.wageSettings);
+  const downloadCsv=()=>{
+    if(!unlocked||!calcRows.length)return;
+    const blob=new Blob(["﻿"+payrollCsvOf(calcRows,true)],{type:"text/csv;charset=utf-8"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download=`${String(shopName||shopId).replace(/[\\/:*?"<>|]/g,"")}_${ym}_月次賃金.csv`;
+    document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},0);
+    ph("payroll_csv_exported",{rows:calcRows.length});tt&&tt("✓ CSV をダウンロードしました");
+  };
+  const TH={borderBottom:"1px solid var(--c-border2)",padding:"6px 6px",fontSize:11,color:"var(--c-text3)",fontWeight:700,textAlign:"left",whiteSpace:"nowrap",position:"sticky",top:0,background:"var(--c-card)"};
+  const TD={borderBottom:"1px solid var(--c-border)",padding:"6px 6px",fontSize:12,whiteSpace:"nowrap",verticalAlign:"top"};
+  return(<div data-payroll-page="1" style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
+    <div style={{background:"var(--c-card)",borderBottom:"1px solid var(--c-border)",padding:"12px 16px"}}>
+      <div style={{maxWidth:1200,margin:"0 auto",display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+        <button onClick={onBack} style={{...AGray,padding:"6px 12px"}}>← 戻る</button>
+        <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)",flex:"1 1 160px"}}>月次賃金<span style={{fontSize:13,fontWeight:400,color:"var(--c-text3)",marginLeft:8}}>{shopName}</span></div>
+        {data&&!data.error&&<PayCodeBox pay={pay} rec={data.codeRec}/>}
+      </div>
+    </div>
+    <div style={{maxWidth:1200,margin:"0 auto",padding:16}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
+        <input type="month" value={ym} aria-label="対象の月" onChange={e=>{if(/^\d{4}-\d{2}$/.test(e.target.value))setYm(e.target.value);}} style={{...AI,width:"auto",padding:"7px 10px"}}/>
+        <button onClick={()=>setTick(t=>t+1)} style={{...AGray,padding:"7px 12px",fontSize:12}}>再読み込み</button>
+        <button data-payroll-csv="1" disabled={!unlocked||!calcRows.length} onClick={downloadCsv}
+          title={unlocked?"":"パスコードを入力すると出力できます"}
+          style={{...AB,padding:"8px 14px",width:"auto",opacity:!unlocked||!calcRows.length?0.5:1}}>CSV を出力</button>
+      </div>
+      <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:12}}>
+        割増賃金と欠勤控除の内訳です。社会保険・所得税・住民税・支給総額は計算しません（CSV を給与ソフトへ取り込んでください）。
+        月給者は基本給を動かさず、割増と控除だけを出します。時給者は時給×実労働に割増を足します。
+        賃金はこの月の1日時点の版で計算します（月の途中の改定は日割りしません）。
+        割増率: {PREMIUM_RATE_KEYS.map(k=>`${PREMIUM_RATE_LABELS[k]}${rates[k]}%`).join("・")}。端数: {ROUNDING_RULE_LABELS[rule]}（欠勤控除は労働者に有利な向き）。
+        {report&&!report.error&&<>分母 {fmtMin(report.denomMin)}。</>}
+        {report&&!report.error&&!report.actualsReadable&&<>実績を読めないため確定シフトで計算しています。</>}
+      </div>
+      {!data?<div style={{fontSize:13,color:"var(--c-text3)"}}>読み込み中...</div>
+        :data.error?<div data-payroll-error="1" style={{fontSize:13,color:"#DC2626"}}>✕ {data.error}</div>
+        :!report?<div style={{fontSize:13,color:"var(--c-text3)"}}>計算中...</div>
+        :report.error?<div data-payroll-error="1" style={{fontSize:13,color:"#DC2626"}}>✕ {report.error}</div>
+        :<div style={{overflowX:"auto",background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:8}}>
+          <table data-payroll-table="1" style={{borderCollapse:"collapse",width:"100%"}}>
+            <thead><tr>{PAYROLL_COLUMNS.map(c=><th key={c.key} style={{...TH,textAlign:c.kind==="text"?"left":"right"}}>{c.label}</th>)}</tr></thead>
+            <tbody>{rows.map(r=>{
+              if(!r.calc)return(<tr key={r.name} data-payroll-row={r.name}>
+                {PAYROLL_COLUMNS.slice(0,5).map(c=><td key={c.key} style={TD}>{c.key==="number"?r.number:c.key==="name"?r.name:c.key==="attr"?r.attr:c.key==="sys"?r.sysLabel:""}</td>)}
+                <td colSpan={PAYROLL_COLUMNS.length-5} style={{...TD,color:"var(--c-text3)"}}>{r.note}</td></tr>);
+              const val=payrollRowValues(r);
+              const warn=(r.calc.warnings||[]).length>0;
+              return(<tr key={r.name} data-payroll-row={r.name}>{PAYROLL_COLUMNS.map(c=>{
+                const t=payrollCellText(c,val,unlocked);
+                const masked=c.kind==="yen"&&!unlocked&&t==="••••";
+                return<td key={c.key} data-col={c.key} data-masked={masked?"1":undefined}
+                  style={{...TD,textAlign:c.kind==="text"?"left":"right",color:c.key==="notes"&&warn?"#DC2626":masked?"var(--c-text3)":"var(--c-text)",
+                    whiteSpace:c.key==="notes"?"normal":"nowrap",minWidth:c.key==="notes"?220:undefined,fontWeight:c.key==="name"?700:400}}>
+                  {c.kind==="yen"&&t&&!masked?Number(t).toLocaleString("ja-JP"):t}</td>;})}</tr>);
+            })}</tbody>
+          </table>
+        </div>}
+    </div>
+    {job&&!report&&<div style={{display:"none"}} aria-hidden="true">
+      <ShiftEditTab key={job.key} subs={data.subs} periods={data.periods} staffList={data.staffList}
+        onSave={()=>{}} tt={()=>{}} settings={data.settings} plan="premium" shopId={shopId} shopName={shopName}
+        onUpgrade={()=>{}} allLinkedShops={[]} savePeriods={null} ownerReadOnly={true} pastSubsLoaded={true}
+        initialPeriodId={data.periodId} exportJob={job}
+        laborMonths={{...LABOR_MONTHS_OFF,loaded:true,map:data.laborMonths||{}}}
+        actuals={{...ACTUALS_OFF,enabled:true,loaded:true,map:data.actuals||{}}}
+        companyLink={data.companyLink}/>
+    </div>}
+  </div>);
+}
+
 // ===== 企業連携タブ =====
 // ============================================================
 // 企業の共通設定（2026-09-27 企業連携の拡張）
@@ -458,7 +597,7 @@ async function readCompanyStructure(companyId){
   const out={};keys.forEach((k,i)=>{out[k]=vals[i];});
   return out;
 }
-function CompanyEntityCard({companyId,shopNames={},onCompanyCall,tt,onChanged}){
+function CompanyEntityCard({companyId,shopNames={},onCompanyCall,tt,onChanged,onOpenPayroll}){
   const[st,setSt]=useState(null); // {pub, shopIds, names}
   const[loadErr,setLoadErr]=useState(false);
   const[tick,setTick]=useState(0);
@@ -468,6 +607,8 @@ function CompanyEntityCard({companyId,shopNames={},onCompanyCall,tt,onChanged}){
   const[openCfg,setOpenCfg]=useState(null);   // 設定を開いている法人ID
   const[cfgDraft,setCfgDraft]=useState(null); // その法人の laborSettings の下書き
   const[wageDraft,setWageDraft]=useState([]); // その法人の最低賃金の履歴 [{from,yen}]（P6a・賃金設定ページの最賃比較に使う）
+  const[rateDraft,setRateDraft]=useState({}); // 割増率の上乗せ {ot,over60,night,holiday: 入力中の文字列}（P6b・空欄＝法定値）
+  const[roundDraft,setRoundDraft]=useState("ceil"); // 金額の端数規則（P6b）
   const triedEnsureRef=useRef(false);
   useEffect(()=>{
     if(!firebaseDB||!companyId){setSt({pub:{},shopIds:[],names:{}});return;}
@@ -514,14 +655,20 @@ function CompanyEntityCard({companyId,shopNames={},onCompanyCall,tt,onChanged}){
     const cur=((((st.pub.entities||{})[e.id]||{}).settings)||{});
     setOpenCfg(e.id);setCfgDraft({...(cur.laborSettings||{})});
     setWageDraft(((cur.wageSettings&&sanitizeWageSettings(cur.wageSettings).minWage)||[]).map(x=>({from:x.from,yen:String(x.yen)})));
+    const cw=sanitizeWageSettings(cur.wageSettings);
+    setRateDraft(Object.fromEntries(PREMIUM_RATE_KEYS.map(k=>[k,cw.premiumRates&&cw.premiumRates[k]?String(cw.premiumRates[k]):""])));
+    setRoundDraft(roundingRuleOf(cur.wageSettings));
   };
   const setLabor=(k,v)=>setCfgDraft(d=>{const n={...(d||{})};if(v===null||v===undefined)delete n[k];else n[k]=v;return n;});
   const saveConfig=async eid=>{
     // 法人の設定は丸ごと置き換える。属性別の制限は画面から触らないので、保存済みの値をそのまま送り直す
     const cur=((((st.pub.entities||{})[eid]||{}).settings)||{});
-    const wage=sanitizeWageSettings({minWage:wageDraft.map(x=>({from:x.from,yen:Number(x.yen)}))});
+    const pr={};PREMIUM_RATE_KEYS.forEach(k=>{if(String(rateDraft[k]||"").trim())pr[k]=Number(rateDraft[k]);});
+    const wage=sanitizeWageSettings({minWage:wageDraft.map(x=>({from:x.from,yen:Number(x.yen)})),premiumRates:pr,roundingRule:roundDraft});
     if(wageDraft.some(x=>x.from||x.yen)&&(wage.minWage||[]).length!==wageDraft.filter(x=>x.from||x.yen).length){tt("▲ 最低賃金は適用開始日と時間額（1〜100,000円の整数）を両方入れてください。同じ日付は1つだけです");return;}
-    const settings={...(cur.staffTypeLimits?{staffTypeLimits:cur.staffTypeLimits}:{}),laborSettings:cfgDraft||{},...(wage.minWage?{wageSettings:wage}:{})};
+    const badRate=PREMIUM_RATE_KEYS.find(k=>pr[k]!==undefined&&!(Number.isInteger(pr[k])&&pr[k]>=LEGAL_PREMIUM_RATES[k]&&pr[k]<=PREMIUM_RATE_MAX));
+    if(badRate){tt(`▲ ${PREMIUM_RATE_LABELS[badRate]}の割増率は ${LEGAL_PREMIUM_RATES[badRate]}〜${PREMIUM_RATE_MAX}% の整数で入れてください（法定より下げられません）`);return;}
+    const settings={...(cur.staffTypeLimits?{staffTypeLimits:cur.staffTypeLimits}:{}),laborSettings:cfgDraft||{},...(Object.keys(wage).length?{wageSettings:wage}:{})};
     if(await call("saveEntityConfig",{entityId:eid,settings},"法人の設定を保存しました")){setOpenCfg(null);setCfgDraft(null);}
   };
   return(<AC title="法人">
@@ -540,6 +687,11 @@ function CompanyEntityCard({companyId,shopNames={},onCompanyCall,tt,onChanged}){
           <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{nShops}店舗{e.isDefault?"・既定":""}</span>
           <button onClick={()=>openConfig(e)} style={{...AGray,padding:"5px 10px",fontSize:12}}>{openCfg===e.id?"閉じる":"法人の設定"}</button>
         </div>
+        {onOpenPayroll&&nShops>0&&<div data-co-entity-payroll={e.id} style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginTop:8}}>
+          <span style={{fontSize:12,color:"var(--c-text3)"}}>月次賃金:</span>
+          {st.shopIds.filter(sid=>entOf(sid)===e.id).sort((a,b)=>String(st.names[a]).localeCompare(String(st.names[b]),"ja")).map(sid=>(
+            <button key={sid} data-co-payroll-btn={sid} onClick={()=>onOpenPayroll(sid,st.names[sid])} style={{...AGray,padding:"4px 10px",fontSize:12}}>{st.names[sid]} →</button>))}
+        </div>}
         {openCfg===e.id&&cfgDraft&&<div style={{marginTop:10}}>
           <AL>労務判定（空欄は企業の共通設定の値）</AL>
           <CoLaborFields labor={cfgDraft} setLabor={setLabor} placeholder="企業" blankLabel="企業の共通設定"/>
@@ -552,6 +704,16 @@ function CompanyEntityCard({companyId,shopNames={},onCompanyCall,tt,onChanged}){
             <button onClick={()=>setWageDraft(a=>a.filter((_,j)=>j!==i))} style={{...AD,marginLeft:0}}>削除</button>
           </div>))}
           <button onClick={()=>setWageDraft(a=>[...a,{from:"",yen:""}])} style={{...AGray,fontSize:12,padding:"6px 10px",marginBottom:12}}>＋ 最低賃金を追加</button>
+          <AL>割増率（空欄は法定の率・上乗せだけできます）</AL>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:10}}>{PREMIUM_RATE_KEYS.map(k=>(<label key={k} data-co-premium-rate={k} style={{display:"flex",alignItems:"center",gap:4,fontSize:12,color:"var(--c-text2)"}}>
+            {PREMIUM_RATE_LABELS[k]}
+            <input inputMode="numeric" value={rateDraft[k]||""} placeholder={String(LEGAL_PREMIUM_RATES[k])} aria-label={`${PREMIUM_RATE_LABELS[k]}の割増率`}
+              onChange={ev=>{const v=ev.target.value.replace(/\D/g,"").slice(0,3);setRateDraft(d=>({...d,[k]:v}));}} style={{...AI,width:64,padding:"5px 8px",textAlign:"right"}}/>%
+          </label>))}</div>
+          <AL>金額の端数（月次賃金の各項目）</AL>
+          <select data-co-rounding="1" value={roundDraft} onChange={ev=>setRoundDraft(ev.target.value)} style={{...AI,width:"auto",padding:"5px 8px",marginBottom:12,cursor:"pointer"}}>
+            {ROUNDING_RULES.map(r=><option key={r} value={r}>{ROUNDING_RULE_LABELS[r]}{r==="ceil"?"（既定）":""}</option>)}
+          </select>
           <button disabled={busy} onClick={()=>saveConfig(e.id)} style={{...AB,width:"100%",opacity:busy?0.5:1}}>{busy?"保存中...":"この法人の設定を保存"}</button>
         </div>}
       </div>);
@@ -1315,7 +1477,7 @@ function CompanyLoginCard({onCompanyLogin,tt}){
   </AC>);
 }
 
-function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompanyConfig,onOpenCompanyStaff,
+function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompanyConfig,onOpenCompanyStaff,onOpenPayroll,
                      shops=[],allLinkedShops=[],onSwitchToShop,onUnlinkShop,
                      companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin,onCompanyCall}){
   // 企業アカウントUI（SetTabから移動）
@@ -1617,7 +1779,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
       )}
       <div>{listShops.map(shopCard)}</div>
     </AC>}
-    {companyInfo&&plan==="premium"&&<CompanyEntityCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onCompanyCall={onCompanyCall} tt={tt} onChanged={()=>setStructureTick(t=>t+1)}/>}
+    {companyInfo&&plan==="premium"&&<CompanyEntityCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onCompanyCall={onCompanyCall} tt={tt} onChanged={()=>setStructureTick(t=>t+1)} onOpenPayroll={onOpenPayroll}/>}
     {companyInfo&&plan==="premium"&&<CompanyConfigCard companyId={companyInfo.companyId} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}/>}
     <AC title="シフト作成タブでのヘルプ入力">
       <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.8}}>
