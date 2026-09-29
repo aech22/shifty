@@ -30,7 +30,8 @@ const CFC_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "fu
  * @param {string} o.uid         サインイン済みとして扱うuid（"company_XXX" なら企業ログインセッション）
  * @param {string} [o.view]      起動時の画面（既定 "admin"）
  * @param {string} [o.tab]       起動時の管理者タブ（既定 "periods"）
- * @param {object} [o.cfHandlers] Callable名 → "ok" | "reject:メッセージ" | "unlink" | "link" | "companyConfig" | "companyLogin:<companyId>" | "entity"（本物のCFと同じ後始末）
+ * @param {object} [o.cfHandlers] Callable名 → "ok" | "reject:メッセージ" | "unlink" | "link" | "companyConfig" | "companyLogin:<companyId>" | "entity" | "payCode"（本物のCFと同じ後始末）
+ *                                "payCode" は setCompanyPayCode（P6a）。現在の番号を照合して企業と連携全店舗の private/payCode を書く。
  *                                "entity" は法人の6本（ensureCompanyEntities / createEntity / renameEntity / assignShopEntity /
  *                                saveEntityConfig / setShopKind）。移行と写しの組み立ては **functions/company-config.js をそのまま読み込んで**
  *                                使う（planEntityMigration・buildShopMirror）ので、CF と同じ規則で写しができる。
@@ -246,6 +247,26 @@ function makeStub(o) {
           setPath("global/shops/"+payload.shopId+"/kind",payload.kind==="hq"?"hq":null);
           return Promise.resolve({data:sync()});
         }
+      }
+      if(h==="payCode"){
+        // 本物の setCompanyPayCode（functions/index.js・P6a）と同じ後始末: 現在の番号を照合し（未設定なら 0000）、
+        // SHA-256(salt+code) を companies/{id}/private/payCode と連携全店舗の shops/{sid}/private/payCode に書く
+        var pcid=payload.companyId, pstored=getPath("companies/"+pcid+"/private/payCode");
+        // ハッシュは app-utils.js の payCodeHash をそのまま使う（ハーネスは http で配信するので crypto.subtle が無い）
+        var hex=function(salt,code){ return window.payCodeHash(salt,code); };
+        if(!/^[0-9]{4}$/.test(String(payload.newCode||""))) return Promise.reject(new Error("パスコードは4桁の数字にしてください"));
+        var pcheck=(pstored&&pstored.hash)?hex(pstored.salt,payload.currentCode).then(function(x){ return x===pstored.hash; }):Promise.resolve(payload.currentCode==="0000");
+        return pcheck.then(function(ok){
+          if(!ok) return Promise.reject(new Error("現在のパスコードが正しくありません"));
+          var salt="stubsalt"+(++pushSeq);
+          return hex(salt,payload.newCode).then(function(hh){
+            var rec={hash:hh,salt:salt,updatedAt:"stub"}, plinked=Object.keys(getPath("companies/"+pcid+"/pub/shops")||{});
+            setPath("companies/"+pcid+"/private/payCode",rec);
+            plinked.forEach(function(sid){ setPath("shops/"+sid+"/private/payCode",rec); });
+            notify();
+            return {data:{ok:true,synced:plinked,failed:[]}};
+          });
+        });
       }
       if(h==="link"){
         // 本物の linkStoreToCompany が書くもの: 連携マップと owners への企業uid登録

@@ -10,6 +10,7 @@
 //  - 有給は「付与／残」。凍結値の無い期間がある人は残日数の前に「＋」
 //  - 番号・名前で検索できる。提出データ（shops/{sid}/subs）は読みに行かない
 //  - Pro ではカードが出ない。375px 幅でページ全体が横に動かない
+//  - 賃金列（P6a）はパスコードを入れるまで全行「••••」（解除後の中身は example-staff-pay.js が測る）
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-company-staff-directory.js → allPass=true / EXIT=0
 "use strict";
@@ -95,7 +96,8 @@ async function open(plan, viewport) {
   } catch (e) { R.exceptionMobile = e.message; }
   await h.close();
 
-  const names = rows => rows.filter(r => r.length === 5).map(r => r[1].replace(/非表示中$/, ""));
+  // 列は 従業員番号・名前・属性・所属店舗・有給・賃金 の6つ（賃金は P6a・2026-09-30。パスコードを入れるまで「••••」）
+  const names = rows => rows.filter(r => r.length === 6).map(r => r[1].replace(/非表示中$/, ""));
   const v = {
     cardOrder: JSON.stringify(R.order) === JSON.stringify(TITLES),
     opensFullPage: R.tabBarGone === true,
@@ -106,7 +108,8 @@ async function open(plan, viewport) {
     paidNoPlus: !!R.numberRows && (R.numberRows.find(r => r[1] === "山田") || [])[4] === "付与 10／残 8",
     paidUnset: !!R.numberRows && (R.numberRows.find(r => r[1] === "佐藤") || [])[4] === "—",
     count: R.count === "10名",
-    numberMerged: !!R.numberRows && JSON.stringify(R.numberRows.find(r => r[0] === "40")) === JSON.stringify(["40", "森 花子", "未設定", "A店・B店", "—"]),
+    numberMerged: !!R.numberRows && JSON.stringify(R.numberRows.find(r => r[0] === "40")) === JSON.stringify(["40", "森 花子", "未設定", "A店・B店", "—", "••••"]),
+    wageMasked: !!R.numberRows && R.numberRows.filter(r => r.length === 6).every(r => r[5] === "••••"),
     shopGroups: !!R.shopRows && JSON.stringify(R.shopRows.filter(r => r.length === 1).map(r => r[0])) === JSON.stringify(["A店", "B店", "C店"])
       && JSON.stringify(names(R.shopRows)) === JSON.stringify(["佐藤", "小林", "田中", "森 花子", "鈴木", "山田", "高橋", "中村", "伊藤", "渡辺"]),
     search: JSON.stringify(R.q12) === JSON.stringify(["田中"]) && JSON.stringify(R.qYama) === JSON.stringify(["山田"]) && JSON.stringify(R.qMori) === JSON.stringify(["森 花子"]),
