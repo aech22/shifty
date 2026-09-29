@@ -38,15 +38,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🔴 労務・給与と複数法人 P1: 法人レイヤー（企業の下に法人・店舗は1法人に属す・本部店舗 kind:hq）
-
-**目的**: `労務給与_複数法人_実装計画.md`（リポジトリ直下・v9）§6 P1 の「目的」。
-**受け入れ条件**: 同 §6 P1 の受け入れ条件が正本（ここへ書き写さない）。共通の検証手段は §6 冒頭。
-**影響範囲**: 同 §6 P1 の影響範囲。
-**備考**: 実装順は計画書 §0 の表。2026-09-30 ユーザー指示で P0〜P7 を順に develop へ実装し、本番反映は全フェーズ完了後に1回だけ確認する（途中で main・本番ルール・本番CFに触れない）。P8（NITOへの適用）は対象外。
-
----
-
 ## 🔴 労務・給与と複数法人 P6a: 賃金マスタ（StaffPayPage・private/pay・閲覧パスコード）
 
 **目的**: `労務給与_複数法人_実装計画.md`（リポジトリ直下・v9）§6 P6a の「目的」。
@@ -137,6 +128,24 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+
+## 🟡 労務・給与と複数法人: 法人レイヤー（P1）の Cloud Functions の本番反映と実データ確認（全フェーズ完了後に1回）
+
+**目的**: P1（2026-09-30・develop `6074b26`〜）の CF は **本番に未デプロイ**。dev は Spark で CF をデプロイできないため、
+CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋関数）とスタブ Firebase の実ブラウザ回帰
+（`example-company-entities.js`）でしか確かめていない。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
+**反映が要るもの**:
+- [ ] CF: 新規6本（`ensureCompanyEntities`・`createEntity`・`renameEntity`・`assignShopEntity`・`saveEntityConfig`・`setShopKind`）と
+      既存の更新（`syncCompanyMirror` を使う全関数・`createCompany`・`linkStoreToCompany`・`unlinkStoreFromCompany`）
+- [ ] ルール: **変更なし**（新ノードはすべて `companies/$id/pub` 配下＝既存ルールで CF 専用・企業 uid と作成者だけ読める。dev の REST で19項目実測済み）
+- [ ] 順序: CF を先に出してからクライアント。**クライアントだけ先に出ると**、法人カードの `ensureCompanyEntities` が存在しない CF を呼んで
+      「法人を準備できませんでした」のトーストが出る（他の機能は壊れない。法人の無い企業は従来どおり1法人扱いで表示される）
+- [ ] 反映後、既存企業で企業連携タブを1回開き、`companies/{id}/pub/entities` ができて全店舗が割り当たり、写し `shops/{sid}/company` に
+      `entityId`・`entityName`・`kind` が入ることを `shifty-prod-data-probe`（読み取り専用）で確認する
+- [ ] 別の企業に連携中の店舗を `linkStoreToCompany` で追加すると拒否されることを本番で1回確かめる（dev では CF が動かず未検証）
+**影響範囲**: functions/index.js・functions/company-config.js（コード変更は済み）
+
+---
 
 ## 🟡 企業連携の拡張（2026-09-27 実装・本番反映済み）の実データ確認
 
@@ -1656,6 +1665,23 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 労務・給与と複数法人 P1: 法人レイヤー（2026-09-30 develop 完了・`6074b26` `d7feafa` `dc0ff72` `9d2a77b`／CF は本番未反映）
+
+計画書 `労務給与_複数法人_実装計画.md` §3.1・§6 P1（決定 #7・#11）。企業の下に法人を置き、店舗は必ず1法人に属す。
+正本は `companies/{id}/pub/{entities, shopEntities, defaultEntityId, shopKinds}`（CF 専用）。店舗は写しの
+`entityId`・`entityName`・`kind` と、企業共通 → 法人 を重ねた `settings` を読む（クライアントの `applyCompanySettings` 系は無変更）。
+
+- 移行: `syncCompanyMirror` が毎回 `planEntityMigration` を通し、法人の無い企業に企業名と同名の法人を作って全店舗を割り当てる。
+  企業連携タブの法人カードが法人の無い企業で `ensureCompanyEntities` を1回呼ぶ。**既存の `pub/config.settings` は法人へ写さない**
+  （計画書 §3.1 の「defaultEntity.settings に写す」とは違う。写すと企業の共通設定を後で変えても既定の法人の店舗に効かなくなるため、
+  企業共通の層のまま残し、既定の法人は設定を持たない。写しの settings は移行前後で同じ＝テストと実ブラウザで確認）
+- 本部店舗 `kind:"hq"` の正本は `pub/shopKinds`（CF `setShopKind`）。`global/shops/{sid}/kind` にも写すが、オーナーなら書け、
+  クライアントの `saveShops` が店舗オブジェクトを丸ごと `set()` するので消えうる＝正本にしない（dev REST でオーナー PUT 200 を実測）
+- 法人の設定の画面は労務設定だけ。属性別の制限の法人上書きは CF と重ね合わせは対応済みだが、入力欄は作っていない
+- 法人の削除は作っていない（再着手条件: 法人を間違えて作った運用が出たとき。削除時は店舗を既定の法人へ戻す）
+- 検証: `npm test` 390件・`example-company-entities.js` 25項目（375px 含む）・既存の回帰スクリプト35本すべて EXIT=0・dev REST 19項目
+
 
 ### ✅ 労務・給与と複数法人 P0: 休みコマンドを「/」に（2026-09-30 完了・`a77134a`）
 

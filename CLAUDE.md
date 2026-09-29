@@ -217,6 +217,11 @@ sanitizeMonthlyDeadlineDays / monthlyDeadlineFor / shopDeadlineInfoFromLink
                            // 期間の締切＝開始日より前で最も遅い固定日。優先は 期間ごとの日付指定 ＞ 毎月の固定。
                            // CF 側の同じ規則は functions/company-config.js（tests/core.test.js が一致を照合）
 homeShopOf / isHelperAt / dupTargetShopsFor
+COMPANY_ENTITY_ID_RE / COMPANY_SHOP_KINDS / companyEntityIdOfShop / companyShopKindOf / companyEntityList
+                           // 法人レイヤー（2026-09-30・P1）。店舗の法人（割当が無い・消えた法人を指すなら既定の法人）と本部の種別。
+                           // CF 側の entityIdOfShop / shopKindOf（functions/company-config.js）と同じ規則で、tests/core.test.js が照合する。
+                           // buildCompanyStaffRows は店舗に entityId・kind・coSettings（写しの settings）を持たせると、
+                           // **従業員番号でまとめるのを同じ法人の中だけ**にし、行に entityId・isHq を載せる
 fullViewColW / fullViewFontOf // シフト作成タブの全表示（2026-09-28）。2週間以下の期間で人数が多いときだけ列を横幅に合わせる
                            // （横幅いっぱいに割った列幅が48px以下になる人数から・少人数は39pxのまま・1ヶ月の期間は従来どおり）。
                            // 縦は常に高さいっぱいなので拡大は列幅だけ。列が39pxより細いときは文字も比例して小さくする
@@ -333,7 +338,8 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `StaffTab` | app-admin.js | スタッフ登録・並べ替え・別名設定 |
 | `CandTab` | app-admin.js | 候補時間・休業日・休憩管理 |
 | `SubsTab` | app-admin.js | 提出一覧・セル編集・変更履歴 |
-| `CompanyTab` | app-admin.js | 企業連携。カードの並びは シフトの提出状況 → 企業内登録スタッフ → 企業アカウント → 連携店舗 → 企業の共通設定（2026-09-28） |
+| `CompanyTab` | app-admin.js | 企業連携。カードの並びは シフトの提出状況 → 企業内登録スタッフ → 企業アカウント → 連携店舗 → 法人 → 企業の共通設定（2026-09-28・法人は 2026-09-30） |
+| `CompanyEntityCard / EntityFilter / CoLaborFields` | app-admin.js | 法人（2026-09-30・P1）。法人の追加・改名・法人の労務設定・店舗の法人と種別（店舗／本部）を CF（App の `callCompanyCF`）で書く。法人の無い企業ではカードが `ensureCompanyEntities` を1回呼んで移行する。`EntityFilter` は法人が2つ以上のときだけ出る絞り込み（提出状況・企業内登録スタッフ）。`CoLaborFields` は企業の共通設定と法人の設定が共有する労務判定の入力欄 |
 | `CompanyStaffCard / CompanyStaffDirectory` | app-admin.js | 企業内登録スタッフ（2026-09-28・Premium）。カードの「一覧を開く」で AdminView の `fullPage` が管理者画面の中身を差し替える（新しいブラウザタブは使わない＝実ログインは永続化しないため）。従業員番号順（既定）／店舗別・番号と名前で検索。載せるのは店舗依存でない情報（番号・属性・所属店舗・有給の付与と残）だけ。計算は `buildCompanyStaffRows`（有給は所属店舗の `laborTotals` だけ・subs は読まない・凍結値の無い期間があれば残に「＋」）。**数字だけの同じ従業員番号は1行にまとめ**（2026-09-29）、名前は空白を除いて最も長い表記＝フルネームに寄せ、所属店舗は全部並べる。フルネームに含まれない別の名前（番号が同じなのに名前が食い違う）は「別の登録名」として残す。店舗タブの「呼び出す」（`mergeStaffMatches`）は名前でまとめるので、こちらの規則とは別 |
 | `SetTab` | app-admin.js | 設定（管理コード・属性別制限・退勤延長・Excel・期間単位・テーマ・アカウント連携） |
 | `MyPageTab` | app-admin.js | マイページ（プラン確認・アップグレード・利用規約） |
@@ -364,7 +370,8 @@ Firebase Realtime Database
 │       ├── lastActivity ← ISO文字列（CFの1年未更新アーカイブ判定に使用）
 │       ├── subs/      ← 提出データ {subId: subObj}（書き込みは.validateで形状検証・auth必須）
 │       ├── owners/    ← {uid: adminKey} 管理者登録（自uid追加はadminKey照合が必要・読みはオーナーのみ）
-│       ├── company    ← 企業設定の写し（2026-09-27）{id, name, settings, deadlines:{期間キー:日付}, shops:{shopId:店舗名}, syncedAt}。
+│       ├── company    ← 企業設定の写し（2026-09-27）{id, name, entityId?, entityName?, kind, settings, deadlines:{期間キー:日付}, shops:{shopId:店舗名}, syncedAt}。
+│       │                 settings は「企業共通 → 法人」を CF が重ねた値。entityId/entityName/kind は 2026-09-30（P1）から
 │       │                 **CF（syncCompanyMirror）だけが書く**（.write:false）・読みは auth != null。
 │       │                 無い＝企業に連携していない。店舗側の企業機能（設定の重ね合わせ・提出ボタン・提出期限・所属店舗の選択肢）はこれだけを見る
 │       └── private/
@@ -385,6 +392,11 @@ Firebase Realtime Database
 ├── companies/
 │   └── {companyId}/     ← 企業アカウント（CompanyTab・企業コード＋パスワード方式。accounts/{uid}のcompanyLinkとは別系統）
 │       ├── pub          ← {name, ownerUid, shops:{shopId:true}}（連携店舗マップ）
+│       │   ├── entities/{entityId} ← 法人 {name, createdAt, settings?:{laborSettings?, staffTypeLimits?}}（2026-09-30・P1・CF だけが書く）
+│       │   ├── shopEntities/{shopId} ← その店舗の法人ID（無い・消えた法人なら defaultEntityId の法人）
+│       │   ├── defaultEntityId       ← 既定の法人（移行で企業名と同名の法人を作ってここに置く）
+│       │   ├── shopKinds/{shopId}    ← "hq"＝本部店舗（無ければ通常の店舗）。**正本はここ**。global/shops/{sid}/kind にも
+│       │   │                            写すが、クライアントの saveShops が店舗オブジェクトを丸ごと set() するので消えうる
 │       │   └── config   ← 企業の共通設定の正本（2026-09-27・CF saveCompanyConfig だけが書く）
 │       │                   {settings:{laborSettings?, staffTypeLimits?}, deadlines:{期間キー:{all?, shops?:{shopId:日付}}},
 │       │                    monthlyDeadlineDays?:[日], updatedAt}
@@ -470,7 +482,8 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              staffHomeShop?: {[name]: shopId} }   // 所属店舗（2026-09-27。無ければ自店所属。STAFF_KEYED_SETTING_MAPS 登録済み）
 
 // 企業設定の写し（shops/{shopId}/company・2026-09-27）
-CompanyLink = { id: string, name: string, settings: {laborSettings?, staffTypeLimits?}, deadlines: {[期間キー]: "YYYY-MM-DD"},
+CompanyLink = { id: string, name: string, entityId?: string, entityName?: string, kind?: "shop"|"hq",   // 法人と本部（2026-09-30・P1）
+                settings: {laborSettings?, staffTypeLimits?}, deadlines: {[期間キー]: "YYYY-MM-DD"},
                 monthlyDeadlineDays?: number[],   // 毎月の固定締切（日付指定の無い期間に効く・2026-09-27）
                 shops: {[shopId]: 店舗名}, syncedAt: string }   // 期間キー = periodRangeKey(period) = "開始日_終了日"
 ```
@@ -498,6 +511,18 @@ CompanyLink = { id: string, name: string, settings: {laborSettings?, staffTypeLi
    - **連携店舗の一覧合流**: 作成者本人のセッションは `accounts/{uid}/shops` しか読まないため、企業に連携しただけの他店舗はリロードすると一覧から消えていた。`companyInfo` が決まった時点で `companies/{id}/pub/shops` を読み、**既存の一覧に足りないぶんだけ足す**（既存の一覧は消さない）
 5. `doLogout()` はセッションのみクリア（authUser・allLinkedShops は維持）
 6. `doFullSignOut()` は Firebase Auth も含む完全サインアウト
+
+### 法人レイヤー（2026-09-30・develop のみ・CF は本番未反映）
+
+`労務給与_複数法人_実装計画.md` §3.1・P1。企業（管理グループ）の下に法人を置き、店舗は必ず1法人に属す。
+- **重ね合わせは CF 側**（`buildShopMirror`・`mergeEntitySettings`）。写しの settings は「企業共通 → 法人」を重ねた値で、
+  店舗のクライアント（`applyCompanySettings / stripCompanySettings / companyControlledKeys`）は変えていない。
+  法人が決めた項目も写しにキーがあるので、設定タブでは「企業設定」の固定表示になる
+- **移行は片方向**: `syncCompanyMirror` が毎回 `planEntityMigration` を通す（法人が無ければ企業名と同名の法人を作り、割当の無い店舗を既定へ）。
+  **既存の `pub/config.settings` は法人へ写さない**（企業共通の層のまま。既定の法人は設定を持たないので写しの settings は移行前後で同じ）
+- `linkStoreToCompany` は別の企業に連携中の店舗を拒否し、`createCompany` はスキップする（`otherCompanyLinksOf`＋相手企業の pub/shops で確認）
+- 本部店舗（`kind:"hq"`）は期間管理タブでスタッフ提出URLを隠し（ボタンで表示可）、企業内登録スタッフで「本部」の見出しに分かれる
+- 検証は `tests/core.test.js`（CF の規則）と `example-company-entities.js`（スタブが company-config.js をそのまま読み込む）。ルールの変更は無い
 
 ### 企業連携の拡張（2026-09-27・本番反映済み: クライアント 2282f11／ルール／Cloud Functions）
 
@@ -556,6 +581,7 @@ CompanyLink = { id: string, name: string, settings: {laborSettings?, staffTypeLi
 | `renameCompany` | Callable `renameCompany` | 企業名変更（作成者ポインタの表示名も更新） |
 | `linkStoreToCompany` | Callable `linkStoreToCompany` | 店舗コード（shopId / shopId.adminKey）で店舗を企業に連携 |
 | `saveCompanyConfig` | Callable `saveCompanyConfig` | 企業の共通設定（settings は丸ごと置換）と提出期限（期間ごとの差分）を保存し、連携全店舗の `shops/{sid}/company` を作り直す（2026-09-27）。検証は `functions/company-config.js`（純粋関数・テストで照合） |
+| `ensureCompanyEntities / createEntity / renameEntity / assignShopEntity / saveEntityConfig / setShopKind` | Callable | 法人の管理（2026-09-30・P1・**本番未デプロイ**）。権限は `assertCompanyMember`。保存後に写しを作り直す。規則は `functions/company-config.js` |
 | `claimCompanyShop` | Callable `claimCompanyShop` | 連携済み店舗のオーナーに**呼び出し元のuid**を登録（企業連携タブの「ログイン」で管理コードの再入力を無くす。付与は `companies/{id}/grants/{shopId}/{uid}` に記録し、解除時に回収する） |
 | `unlinkStoreFromCompany` | Callable `unlinkStoreFromCompany` | 店舗の企業連携を解除（企業uid＋`grants` の付与uidを owners から外す） |
 
@@ -1010,6 +1036,7 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 - [VISION.md](VISION.md) — プロダクトビジョン
 - [BACKLOG.md](BACKLOG.md) — 機能バックログ
 - [サブスク_プラン設計書.md](サブスク_プラン設計書.md) — プラン仕様詳細
+- [労務給与_複数法人_実装計画.md](労務給与_複数法人_実装計画.md) — 労務・給与計算と複数法人の実装計画（P0〜P8）。労務判定 S-1〜S-7 の正本は 労務判定_実装計画.html のまま
 
 ---
 
