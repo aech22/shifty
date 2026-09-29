@@ -391,6 +391,7 @@ const sharedGlobals = {
   premiumFindingsFor: "writable",
   breakBandsOf: "writable",
   helperActualDaysOn: "writable",
+  addDays: "writable",
   planActualEdit: "writable",
   actualOf: "writable",
   STAFF_KEYED_PERIOD_NODES: "writable",
