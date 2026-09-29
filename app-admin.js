@@ -747,14 +747,17 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         firebaseDB.ref(`shops/${os.id}/staff`).once("value").catch(()=>null),
         // 行き先の店の期間（確定・終了済みの日は写しの設定で数える＝行き先の画面と同じ実働・P3.6）
         firebaseDB.ref(`shops/${os.id}/periods`).once("value").catch(()=>null),
-      ]).then(([seS,sS,stS,peS])=>{
+        // 行き先の店の実績（P5）。オーナーしか読めない＝店長のセッションでは拒否される。読めないことは印（actualsUnread）で残し、
+        // loadFailed には数えない（予定の合算は従来どおり行う）
+        firebaseDB.ref(`shops/${os.id}/actuals`).once("value").then(s=>({ok:true,v:s.val()})).catch(()=>({ok:false})),
+      ]).then(([seS,sS,stS,peS,acR])=>{
         // 形の組み立ては otherShopDataOf（app-utils.js）に一本化（企業の確定の集計も同じ関数で読む）。
         // 別名で提出された sub は他店舗自身の staffAliases で登録名へ解決してからキーにする（参照側の dupErrors が
         // 自店舗の登録名で引いたときに外れないように）。休み希望のセルは勤務時間なし＝両方揃ったシフトに負ける。
         // 読めなかった店舗を「データが無い」と区別できるよう印を残す（丸めて黙る箇所を増やさない。
         // 倒す向きの判断は BACKLOG「読みの失敗を『問題なし』に丸めている3箇所」のまま）
         return[os.id,otherShopDataOf({name:os.name,settings:seS&&seS.val(),subs:sS&&sS.val(),staff:stS&&stS.val(),periods:peS&&peS.val(),
-          loadFailed:!seS||!sS||!stS||!peS})];
+          loadFailed:!seS||!sS||!stS||!peS,actuals:acR&&acR.ok?(acR.v||{}):undefined,actualsUnread:!(acR&&acR.ok)})];
       })
     )).then(entries=>{if(!cancelled){setCompanyData(Object.fromEntries(entries));setCompanyDataReady(true);}});
     return()=>{cancelled=true;};
@@ -1743,17 +1746,62 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     return{workMin,paid,publicOff,ceremony};
   },[settings,subs,pastSubsLoaded,staffAliases,anyShiftByStaffDate,workShiftByStaffDate,periodSettingsCache,period,helperCache]);
 
+  // ===== 割増の計算（2026-09-30・P5・計画書 §4.1〜§4.4）=====
+  // その日の1日を resolveActualDay（実績が無い日は確定シフト）で解決し、所属店舗の人は他店での勤務（P3.6）も足す。
+  // 自店の実績は act（オーナーの端末だけが読める）、他店の実績は**そのセッションが行き先の店のオーナーのときだけ**読める
+  // （companyData の actuals）。読めない確定済みの他店の期間があれば unread を立てる（行に「＋」と注記）。
+  // 休憩・退勤延長は laborDayMin と同じ settings（選択中の期間の設定）で数える＝月実働と同じ前提。
+  const premiumDayCache=useMemo(()=>new Map(),[settings,subs,act.map,helperCache,periods,pastSubsLoaded]);
+  const premiumDayOf=(name,d)=>{
+    const k=name+"|"+d;
+    if(premiumDayCache.has(k))return premiumDayCache.get(k);
+    const hasData=laborDayHasData(d);
+    const sh=_getWorkShift(name,d);
+    const pp=periods.find(q=>q&&q.startDate&&q.endDate&&q.startDate<=d&&d<=q.endDate);
+    const a=pp&&act.enabled?actualOf(act.map,pp.id,name,d):null;
+    const own=resolveActualDay({shifts:sh?{[d]:sh}:{}},a,d,settings,name);
+    const hi=helperInfo[name];
+    const hs=hi&&hi.role==="home"?helperActualDaysOn({regs:hi.regs,otherShops:helperShops,date:d,todayStr,
+      companySettings:companyLink?(companyLink.settings||null):null,ownRange:sh?effShiftRangeMin(sh,settings):null,cache:helperCache.settings}):[];
+    const workMin=own.workMin+hs.reduce((t,e)=>t+e.day.workMin,0);
+    const kind=dayKindWithHelper(name,d,hasData);
+    const v={date:d,workMin,
+      scheduledMin:own.scheduledWorkMin+hs.reduce((t,e)=>t+e.day.scheduledWorkMin,0),
+      nightMin:nightMinutesOf(own)+hs.reduce((t,e)=>t+nightMinutesOf(e.day),0),
+      manualLegal:own.isLegalHoliday||hs.some(e=>e.day.isLegalHoliday),
+      // 休日は週の休みと同じ数え方（公休・空欄）。実績で働いた日・欠勤の日は休日にしない。データの無い日は null
+      rest:!hasData?null:(workMin>0||own.absent||hs.some(e=>e.day.absent))?false:kind==="rest",
+      unread:hs.some(e=>e.actualUnread),hasActual:own.hasActual||hs.some(e=>e.day.hasActual)};
+    premiumDayCache.set(k,v);
+    return v;
+  };
+  // 1人・1か月の割増の内訳。週の法定休日の判定のため、月の前後の週の日も入れる（月で切るのは時間外の週だけ）
+  const premiumForMonth=(name,ym,sys)=>{
+    const n=daysInMonthOf(ym);if(!n)return null;
+    const ls=laborSettingsOf(settings);
+    const first=premiumWeekStartOf(`${ym}-01`,ls.weekStartDow);
+    const lastWs=premiumWeekStartOf(`${ym}-${String(n).padStart(2,"0")}`,ls.weekStartDow);
+    const days=[];for(let d=first;d<=addDays(lastWs,6);d=addDays(d,1))days.push(premiumDayOf(name,d));
+    const b=premiumBreakdownOf({system:sys,days,ym,weekStartDow:ls.weekStartDow,splitAtMonthEdge:ls.weekSplitAtMonthEdge,
+      monthFrameMin:laborMonthFrame(settings,ym).baseMin});
+    const inM=days.filter(x=>x.date.slice(0,7)===ym);
+    return{...b,unread:inM.some(x=>x.unread),hasActual:inM.some(x=>x.hasActual)};
+  };
   // 年単位の36協定判定で、凍結値を持たない月の残業予定をその場で数える関数を返す。
   // 月の全日が読めていないときは null（＝yearOvertimeMonths が missingMonths に積む）。
+  // 戻り値は {h, ag}: h は A制が「月実働−総枠」（残業予定）・B制が割増の①＋②、ag は時間外＋法定休日労働（単月100h・平均80h 用・P5）
   const liveMonthOtFor=useCallback(name=>(ym)=>{
     const n=daysInMonthOf(ym);
     if(!n)return null;
     const days=Array.from({length:n},(_,i)=>`${ym}-${String(i+1).padStart(2,"0")}`);
     if(!days.every(d=>laborDayHasData(d)))return null;
+    const sys=laborSystemForStaff(settings,name);
+    const pb=premiumForMonth(name,ym,sys);
+    if(sys==="B")return{h:excelRound(pb.otMin/60,2),ag:premiumAgreementH(pb)};
     // 按分窓（属性の otProrate・P3.5b）を画面と同じ overtimePlanOf で通す（年の36協定と画面の月の残業予定を揃える）
-    return overtimePlanOf({dates:days,dayMins:days.map(d=>laborDayMin(name,d)),baseMin:laborMonthFrame(settings,ym).baseMin,
-      prorate:staffOtProrateOf(settings,name)}).monthOtH;
-  },[settings,subs,laborDayHasData,staffAliases,workShiftByStaffDate,helperCache]);
+    return{h:overtimePlanOf({dates:days,dayMins:days.map(d=>laborDayMin(name,d)),baseMin:laborMonthFrame(settings,ym).baseMin,
+      prorate:staffOtProrateOf(settings,name)}).monthOtH,ag:premiumAgreementH(pb)};
+  },[settings,subs,laborDayHasData,staffAliases,workShiftByStaffDate,helperCache,premiumDayCache]);
 
   // スタッフ1人ぶんの労務の集計。日次の件数は**選択中の期間の日**、月単位の判定は**暦月**で数える
   // （利用者が今そこで直せる範囲＝期間、法令・協定の単位＝月）。
@@ -1804,13 +1852,19 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // 他店での勤務の休憩不足は行き先の店の設定で判定した結果（P3.6・helperWorkOn）
       const bsDates=dates.filter(d=>{const sh=_getWorkShift(name,d);return(!!sh&&isBreakShort(sh,settings,d,name))||helperEntriesOn(name,d).some(e=>e.breakShort);});
       const weekNoRest=(weekRestByStaff[name]||[]).some(w=>w&&w.key==="none");
+      // 割増の計算（P5）。A制・B制だけ（判定対象外は労働時間の集計から外す）。暦月で数え、日に帰属するものは期間の日で出す
+      const prem=(sys==="A"||sys==="B")?premiumForMonth(name,laborMonthDays[0].slice(0,7),sys):null;
+      // B制の月の時間外（①＋②）。36協定の月45h・年の集計（laborTotals.monthOtH）に使う
+      const monthOtB=sys==="B"&&prem?excelRound(prem.otMin/60,2):0;
+      const monthAgH=prem?premiumAgreementH(prem):0;
       const findings=laborFindingsFor({laborSystem:sys,dayMins,dayDates:dates,weekDayMins:weekMins,weekDates:weeks,
         timeErrorDates:teDates,breakShortDates:bsDates,
-        monthOtH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthCovered});
+        monthOtH:sys==="B"?monthOtB:monthOtH,monthAgreementH:monthAgH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthCovered});
       // 36協定の年単位4項目（年360h・年720h・月45h超が年6回・複数月平均80h）。
       // 月の値は「その月の最後の期間」に残した凍結値を優先するので、過去参照を押さなくても効く。
+      // B制にも出す（P5・§4.3）。B制の月の値は割増の①＋②（laborTotals.monthOtH に書く）
       let yearOt=null;
-      if(sys==="A"&&laborMonthCovered&&fy!=null){
+      if((sys==="A"||sys==="B")&&laborMonthCovered&&fy!=null){
         yearOt=yearOvertimeMonths(periods,name,fy,fyStart,liveMonthOtFor(name));
         agreementYearFindings(yearOt.scoped,agYear).forEach(f=>findings.push(f));
       }
@@ -1824,6 +1878,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           title:`${guideRaw.label}（データのある日だけで計算した途中の値）／${laborPendingReason}`}
         :guideRaw;
       const overall=overallVerdictOf({laborSystem:sys,findings,guideKey:guide.key,weekNoRest,monthReady:laborMonthCovered});
+      // 割増の該当日（時間外・深夜・法定休日・60h超）を労務確認パネルに出す。要修正ではない（総括を決めた後に足す）
+      if(prem)premiumFindingsFor(prem,{system:sys,dates}).forEach(f=>findings.push(f));
+      // この期間ぶんの B制の①＋②（①はその日、②は週の最後の日に載っている）
+      const periodOtB=sys==="B"&&prem?dates.reduce((a,d)=>a+(prem.perDay[d]||0),0):0;
       // この期間の休暇日数。**シフト表の空欄は公休**（2026-09-26 ユーザー指示）なので、
       // 1日も出勤が無い人もその期間ぶんが丸ごと公休になる（以前はここを0に倒していた）。
       const kinds=dates.map(d=>dayKindWithHelper(name,d,true));
@@ -1841,6 +1899,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins,dayOtH:periodOtH,agreementDailyOtH:agDay,
         externalOverMin:externalOverThresholdOf(ls)});
       out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,otWindow:otPlan&&otPlan.fixed?otPlan.window:null,dayOverB,
+        prem,monthOtB,periodOtB,
         monthCovered:laborMonthCovered,yearOt,findings,guide,overall,weekNoRest,dayFindings,
         periodLeave:{paid:paidD,publicOff:pubD,ceremony:ceD},year:yr,
         paidRemain:yr?paidLeaveRemaining(settings,name,yr.paid):null,
@@ -1852,13 +1911,16 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // **月が埋まっていない間は残さない**（0＝compactLaborTotal が落とす）。画面には途中の実数を
       // 出すが、凍結値に途中の値を書くと yearOvertimeMonths が live での数え直しに降りず、
       // 「読めていない月」の印も付かないまま年度の合計が黙って小さく出る。
+      // B制は割増の①＋②を月の残業として残す（年の36協定・P5）。monthAgH は単月100h・平均80h 用の時間外＋法定休日労働。
+      // 他店の実績を読めていない人は途中の値なので残さない（残すと年の集計が live に降りない）
+      const lastOk=laborIsLastOfMonth&&laborMonthCovered&&!(prem&&prem.unread);
       const c=compactLaborTotal({workMin:pm,paid:paidD,publicOff:pubD,ceremony:ceD,
-        monthOtH:(laborIsLastOfMonth&&laborMonthCovered)?monthOtH:0});
+        monthOtH:lastOk?(sys==="B"?monthOtB:monthOtH):0,monthAgH:lastOk?monthAgH:0});
       if(c)totals[name]=c;
     });
     laborTotalsRef.current=totals;
     return out;
-  },[isPremium,period,laborFrame,laborMonthDays,laborMonthCovered,laborIsLastOfMonth,laborPendingReason,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart,liveMonthOtFor,liveTotalFor,helperInfo,helperCache]);
+  },[isPremium,period,laborFrame,laborMonthDays,laborMonthCovered,laborIsLastOfMonth,laborPendingReason,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart,liveMonthOtFor,liveTotalFor,helperInfo,helperCache,premiumDayCache]);
 
   // 期間が生きている間はシフト作成タブを開くたびに写しと労務の合計を最新化し、最終日を超えたら
   // 更新を止める＝そこで凍結。「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、
@@ -2630,6 +2692,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(r.error){tt("▲ "+r.error);return;}
     lm.save(r.patch).then(()=>{setLmDraft(x=>{const n={...x};delete n[name];return n;});tt(`✓ ${name} の所定を登録しました`);}).catch(()=>{});
   };
+  // 割増の行（P5）の途中表示と計算の前提。自店の実績はオーナーの端末だけが読める（act.enabled）
+  const premiumPartial=l=>!l.monthCovered||!!(l.prem&&l.prem.unread);
+  const premiumBasisNote=l=>(l.prem&&l.prem.unread?"／他店の実績を読み込めていません（その店舗のオーナーとして開くと合算されます）":"")
+    +(!l.monthCovered?`／${laborPendingReason}`:"")
+    +(act.enabled?"／実績（入力の無い日は確定シフト）で計算":"／この端末は実績を読めないため確定シフトで計算");
   const laborRows=[
     {id:"labor_month",label:"月実働",getText:name=>{const l=laborByStaff[name];
       if(!l||l.sys==="none"||!(l.monthWorkMin>0))return{};
@@ -2675,6 +2742,16 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         return{label:`${excelRound(tot/60,2)}h`,color:"#B8860B",
           title:`この期間の1日${fmtMin(th)}超の合計 ${fmtMin(tot)}（${hits.map(([d,m])=>`${Number(d.slice(8,10))}日 ${fmtMin(m)}`).join("・")}）`};
       }
+      // B制（トグルがオフの店舗）は割増の計算の ①日8h超＋②週40h超 のうちこの期間に載る分（P5・§4.3）。
+      // 実績が無い間は確定シフト＝予定なので「残業予定」の見込みとして読める。月の合計は title
+      if(l&&l.sys==="B"&&l.prem){
+        const part=!l.monthCovered||l.prem.unread;
+        const ph=excelRound(l.periodOtB/60,2);
+        if(!part&&!(l.periodOtB>0))return{};
+        return{label:`${part?"＋":""}${ph}h`,color:part?"var(--c-text3)":"#B8860B",
+          title:`この期間 ${ph}h ／ ${period?period.startDate.slice(0,7).replace("-","年"):""}月の合計 ${l.monthOtB}h`
+            +`（1日8時間超 ${fmtMin(l.prem.dayOverMin)}・週40時間超 ${fmtMin(l.prem.weekOverMin)}）`+premiumBasisNote(l)};
+      }
       if(!l||l.sys!=="A")return{};
       // 月が埋まっていない間も現状の実数を出す（2026-09-26 ユーザー指示。以前は「要確認」）。
       // 暦月の枠に途中までの実働を当てるので 0h になりやすいが、それが現時点の実数。
@@ -2686,6 +2763,34 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       return{label:`${l.periodOtSumH}h`,color:"#B8860B",
         title:`この期間 ${l.periodOtSumH}h ／ ${period?period.startDate.slice(0,7).replace("-","年"):""}月の合計 ${l.monthOtH}h`
           +(l.otWindow?`（属性の設定で${OT_PRORATE_WINDOW_LABELS[l.otWindow]||""}の固定枠を配っています）`:"")};}},
+    // 割増の計算（P5・§4.2〜§4.4）。暦月の値。月が埋まっていない・他店の実績を読めていないときは「＋」（途中の値）
+    {id:"labor_p5_ot",label:"時間外①②③",getText:name=>{const l=laborByStaff[name];
+      if(!l||!l.prem)return{};
+      const b=l.prem;const part=premiumPartial(l);
+      if(!part&&!(b.otMin>0))return{};
+      const br=l.sys==="A"?`①日 ${fmtMin(b.dayOverMin)}／②週 ${fmtMin(b.weekOverMin)}／③月 ${fmtMin(b.monthOverMin)}`
+        :`①日8時間超 ${fmtMin(b.dayOverMin)}／②週40時間超 ${fmtMin(b.weekOverMin)}`;
+      return{label:`${part?"＋":""}${fmtMin(b.otMin)}`,color:part?"var(--c-text3)":b.otMin>0?"#B8860B":"var(--c-text2)",
+        title:`月の時間外 ${fmtMin(b.otMin)}（${br}。法定休日の労働は含めない）`+premiumBasisNote(l)};}},
+    {id:"labor_p5_night",label:"深夜",getText:name=>{const l=laborByStaff[name];
+      if(!l||!l.prem||!(l.prem.nightMin>0))return{};
+      const part=premiumPartial(l);const b=l.prem;
+      return{label:`${part?"＋":""}${fmtMin(b.nightMin)}`,color:part?"var(--c-text3)":"var(--c-text2)",
+        title:`22:00〜翌5:00 の労働 ${fmtMin(b.nightMin)}（${b.nightDates.map(d=>Number(d.slice(8,10))+"日").join("・")}）`
+          +(b.legalHolidayNightMin>0?`／うち法定休日 ${fmtMin(b.legalHolidayNightMin)}`:"")+premiumBasisNote(l)};}},
+    {id:"labor_p5_legal",label:"法定休日",getText:name=>{const l=laborByStaff[name];
+      if(!l||!l.prem||!(l.prem.legalHolidayMin>0))return{};
+      const part=premiumPartial(l);const b=l.prem;
+      const auto=b.legalHolidayDates.filter(d=>!b.legalHolidayManual.includes(d));
+      return{label:`${part?"＋":""}${fmtMin(b.legalHolidayMin)}`,color:part?"var(--c-text3)":"var(--c-text2)",
+        title:`法定休日の労働 ${fmtMin(b.legalHolidayMin)}（${b.legalHolidayDates.map(d=>Number(d.slice(8,10))+"日").join("・")}）`
+          +(auto.length?"／休日が1日も無い週の最後の勤務日":"")+(b.legalHolidayManual.length?"／実績で指定した日":"")
+          +"。時間外には含めません"+premiumBasisNote(l)};}},
+    {id:"labor_p5_over60",label:"60h超",getText:name=>{const l=laborByStaff[name];
+      if(!l||!l.prem||!(l.prem.over60Min>0))return{};
+      const part=premiumPartial(l);
+      return{label:`${part?"＋":""}${fmtMin(l.prem.over60Min)}`,color:part?"var(--c-text3)":"#e53935",bold:!part,
+        title:`月の時間外 ${fmtMin(l.prem.otMin)} のうち60時間を超えた分（法定休日の労働は含めない）`+premiumBasisNote(l)};}},
     {id:"labor_year",label:fy==null?"年計":`${fiscalYearLabel(fy,fyStart)}計`,getText:name=>{const l=laborByStaff[name];
       if(!l||l.sys==="none"||!l.year)return{};
       const miss=l.year.missingPeriodIds.length;
