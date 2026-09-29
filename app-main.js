@@ -1084,7 +1084,7 @@ function App(){
   };
   // 法人（entity）の管理（2026-09-30・労務給与_複数法人_実装計画.md P1）。書き込みは CF だけ。
   // 呼べる CF をここで限り、companyId はこちらで足す。戻り値は CF の data か {error}。
-  const COMPANY_ENTITY_CFS=["ensureCompanyEntities","createEntity","renameEntity","assignShopEntity","saveEntityConfig","setShopKind"];
+  const COMPANY_ENTITY_CFS=["ensureCompanyEntities","createEntity","renameEntity","assignShopEntity","saveEntityConfig","setShopKind","setCompanyPayCode"];
   const callCompanyCF=async(name,payload)=>{
     if(!companyInfo) return {error:"企業アカウントがありません"};
     if(!COMPANY_ENTITY_CFS.includes(name)) return {error:"この操作はできません"};
@@ -1170,11 +1170,90 @@ function App(){
     if(view!=="admin")return;
     if(!sid||sid==="default")return;
     let cancelled=false;
-    claimOwnership(sid).then(ok=>{ if(!cancelled) setOwnerReadOnly(!ok); });
+    claimOwnership(sid).then(ok=>{ if(!cancelled){ setOwnerReadOnly(!ok); setOwnerClaimedSid(ok?sid:null); } });
     return()=>{ cancelled=true; };
     // companyInfo を依存に入れているのは、企業情報の復元（非同期）が claim より後に
     // 終わったときに企業経由のオーナー登録をやり直すため
   },[ready,sid,view,urlLocked,claimOwnership,companyInfo]);
+
+  // ===== 賃金マスタ・閲覧パスコード（2026-09-30・労務給与_複数法人_実装計画.md §3.7・P6a）=====
+  // shops/{sid}/private/pay と private/payCode は owners しか読めない。**claim が通った店舗でだけ購読する**
+  // （先に購読すると、オーナーでない端末では拒否されてリスナーが外れ、あとで claim が通っても戻らない）。
+  const[ownerClaimedSid,setOwnerClaimedSid]=useState(null);
+  const[payMap,setPayMap]=useState({});
+  const[payCodeRec,setPayCodeRec]=useState(null);
+  const[payLoaded,setPayLoaded]=useState(false);
+  useEffect(()=>{
+    setPayMap({});setPayCodeRec(null);setPayLoaded(false);
+    if(!firebaseDB||DEMO_MODE||urlLocked||view!=="admin"||!sid||sid==="default"||ownerClaimedSid!==sid)return;
+    const rPay=firebaseDB.ref(`shops/${sid}/private/pay`), rCode=firebaseDB.ref(`shops/${sid}/private/payCode`);
+    const cPay=rPay.on("value",s=>{setPayMap(s.val()||{});setPayLoaded(true);},e=>console.warn("賃金の購読に失敗:",e));
+    const cCode=rCode.on("value",s=>setPayCodeRec(s.val()||null),e=>console.warn("閲覧パスコードの購読に失敗:",e));
+    return()=>{rPay.off("value",cPay);rCode.off("value",cCode);};
+  },[sid,view,urlLocked,ownerClaimedSid]);
+  // 解除状態は **App のメモリに持つ**（sessionStorage に置くとリロードをまたいで残り、「リロードで伏せ直す」と
+  // 食い違うため。計画書 §3.7 の SS_PAY_UNLOCK から変えた）。値はどのパスコードで解除したか（payCodeIdentity）で、
+  // 同じコードの店舗（企業連携店舗どうし）では解除を持ち越し、別のコードの店舗へ移ると伏せ直す。
+  // 失敗回数のロック（5回で60秒）だけは sessionStorage に置く（リロードで待ち時間を回避させないため）。
+  const PAY_LOCK_SS="ss_payCodeLock";
+  const[payUnlockedId,setPayUnlockedId]=useState(null);
+  const[payUnlockedDefault,setPayUnlockedDefault]=useState(false);
+  const payActRef=useRef(0);
+  useEffect(()=>{
+    if(!payUnlockedId)return;
+    payActRef.current=Date.now();
+    const bump=()=>{payActRef.current=Date.now();};
+    window.addEventListener("pointerdown",bump,true);window.addEventListener("keydown",bump,true);
+    // 10分無操作で伏せ直す（計画書の推奨）
+    const iv=setInterval(()=>{if(Date.now()-payActRef.current>=PAY_UNLOCK_IDLE_MS)setPayUnlockedId(null);},15000);
+    return()=>{window.removeEventListener("pointerdown",bump,true);window.removeEventListener("keydown",bump,true);clearInterval(iv);};
+  },[payUnlockedId]);
+  const readPayLock=()=>{try{return JSON.parse(sessionStorage.getItem(PAY_LOCK_SS)||"null")||{};}catch{return{};}};
+  // パスコードの照合（解除と変更の両方が通る）。失敗は回数に数え、5回目で60秒待たせる
+  const checkPayCode=async(code,rec)=>{
+    const now=Date.now();
+    const st=readPayLock();
+    const wait=payCodeWaitSec(st,now);
+    if(wait)return{ok:false,wait};
+    const ok=await verifyPayCode(code,rec);
+    const ns=nextPayCodeLockout(st,ok,now);
+    try{sessionStorage.setItem(PAY_LOCK_SS,JSON.stringify(ns));}catch{}
+    return ok?{ok:true}:{ok:false,wait:payCodeWaitSec(ns,now),left:ns.lockedUntil?0:PAY_CODE_MAX_FAILS-ns.fails};
+  };
+  // rec を省けばこの店舗のパスコード。企業内登録スタッフは企業のパスコード（companies/{id}/private/payCode）を渡す
+  const unlockPay=async(code,rec)=>{
+    const r=rec===undefined?payCodeRec:rec;
+    const res=await checkPayCode(code,r);
+    if(res.ok){setPayUnlockedId(payCodeIdentity(r));setPayUnlockedDefault(code===PAY_CODE_DEFAULT);}
+    return res;
+  };
+  const payUnlockedFor=rec=>!!payUnlockedId&&payUnlockedId===payCodeIdentity(rec===undefined?payCodeRec:rec);
+  const savePay=(name,record)=>{
+    if(!firebaseDB||!sid||sid==="default")return Promise.reject(new Error("店舗がありません"));
+    setPayMap(m=>({...m,[name]:record}));
+    return fbUpd(`shops/${sid}/private/pay`,{[name]:record}).catch(e=>{console.warn("賃金の保存に失敗:",e);tt("△ 賃金を保存できませんでした");throw e;});
+  };
+  // 改名・削除の後始末（STAFF_KEYED_PRIVATE_NODES）。購読していない端末（オーナーでない）は何もしない
+  const renamePay=(oldName,newName)=>{
+    const d=renameStaffInPay(payMap,oldName,newName);
+    if(d&&firebaseDB)fbUpd(`shops/${sid}/private/pay`,d).catch(e=>console.warn("賃金の改名に失敗:",e));
+  };
+  const dropPay=names=>{
+    const d=dropStaffFromPay(payMap,names);
+    if(d&&firebaseDB)fbUpd(`shops/${sid}/private/pay`,d).catch(e=>console.warn("賃金の削除に失敗:",e));
+  };
+  // 店舗のパスコードの変更（企業に連携していない店舗だけ。連携店舗は企業連携タブ＝CF setCompanyPayCode）
+  const changeShopPayCode=async(cur,next)=>{
+    if(companyLinkRef.current)return{error:"企業に連携している店舗のパスコードは、企業連携タブの「企業アカウント」で変更します"};
+    if(!isValidPayCode(next))return{error:"新しいパスコードは4桁の数字にしてください"};
+    const r=await checkPayCode(cur,payCodeRec);
+    if(!r.ok)return{error:r.wait?`${r.wait}秒待ってからもう一度入力してください`:"現在のパスコードが正しくありません"};
+    const salt=genSecureId(16);
+    const rec={hash:await payCodeHash(salt,next),salt,updatedAt:new Date().toISOString()};
+    try{await fbSet(`shops/${sid}/private/payCode`,rec);}catch{return{error:"保存できませんでした"};}
+    setPayCodeRec(rec);setPayUnlockedId(payCodeIdentity(rec));setPayUnlockedDefault(next===PAY_CODE_DEFAULT);
+    return{};
+  };
 
   // tokens逆引きインデックスの補完（既存期間の自動移行・冪等）。管理者セッションのみ実行
   useEffect(()=>{
@@ -1711,6 +1790,9 @@ function App(){
               currentShopId={sid} saveSettings={saveSettings} savePeriods={savePeriods} saveSubs={saveSubs}
               saveStaff={saveStaff} saveShops={saveShops}
               adminCode={adminKeys[sid]?`${sid}.${adminKeys[sid]}`:sid} ownerReadOnly={ownerReadOnly}
+              pay={{enabled:!ownerReadOnly&&ownerClaimedSid===sid&&featureEnabled("pay",{plan,companyLink}),loaded:payLoaded,map:payMap,codeRec:payCodeRec,
+                unlockedFor:payUnlockedFor,unlockedDefault:payUnlockedDefault,unlock:unlockPay,lock:()=>setPayUnlockedId(null),
+                save:savePay,rename:renamePay,drop:dropPay,changeCode:changeShopPayCode}}
               onRememberAdminKey={rememberAdminKey} onClaimShop={claimOwnership}
               plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed} billingSchedule={billingSchedule} billingExempt={billingExempt} companyLink={companyLink}
               setCurrentShopId={id=>{
