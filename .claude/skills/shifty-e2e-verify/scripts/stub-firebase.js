@@ -269,9 +269,15 @@ function makeStub(o) {
           return out;
         };
         var qpub=getPath(qb)||{}, people=qpub.people||{};
+        // 本物の CF と同じく、人物が変わったら連携全店舗の写し（people・P3.6）を作り直す
+        var resync=function(){
+          var pub=getPath(qb)||{}, linked=Object.keys(pub.shops||{}), names={};
+          linked.forEach(function(sid){ names[sid]=((getPath("global/shops/"+sid)||{}).name)||""; });
+          linked.forEach(function(sid){ setPath("shops/"+sid+"/company",CFC.buildShopMirror(qcid,pub,sid,names,"stub")); });
+        };
         if(name==="ensureCompanyPeople"){
           var sy=CFC.planPeopleSync(people,regsOf(qpub),gen,now);
-          if(sy.patch) applyP(qb+"/people",sy.patch);
+          if(sy.patch){ applyP(qb+"/people",sy.patch); resync(); }
           notify();
           return Promise.resolve({data:{ok:true,created:sy.created,changed:!!sy.patch}});
         }
@@ -279,7 +285,7 @@ function makeStub(o) {
         if(name==="mergePeople"){
           var mr=CFC.planMergePeople(people,payload.keepPersonId,payload.dropPersonId,now);
           if(mr.error) return err(mr.error);
-          applyP(qb+"/people",mr.patch); notify();
+          applyP(qb+"/people",mr.patch); resync(); notify();
           return Promise.resolve({data:{ok:true}});
         }
         if(!per) return err("人物が見つかりません");
@@ -287,13 +293,13 @@ function makeStub(o) {
           var ssid=payload.shopId, snm=(per.links||{})[ssid], sst=getPath("shops/"+ssid+"/settings")||{};
           var sr=CFC.planSplitPerson(people,pid,{shopId:ssid,name:snm,entityId:CFC.entityIdOfShop(qpub,ssid)||"",number:String(((sst.staffNumbers||{})[snm])||"").trim()},gen,now);
           if(sr.error) return err(sr.error);
-          applyP(qb+"/people",sr.patch); notify();
+          applyP(qb+"/people",sr.patch); resync(); notify();
           return Promise.resolve({data:{ok:true,personId:sr.newId}});
         }
         if(name==="reassignPersonId"){
           var rr=CFC.planReassignPersonId(people,pid);
           if(rr.error) return err(rr.error);
-          applyP(qb+"/people",rr.patch); notify();
+          applyP(qb+"/people",rr.patch); resync(); notify();
           return Promise.resolve({data:{ok:true,personId:rr.newId}});
         }
         if(name==="companyRenameStaff"){
@@ -312,7 +318,7 @@ function makeStub(o) {
             setPath(qb+"/people/"+pid+"/links/"+sid,nn);
           });
           setPath(qb+"/people/"+pid+"/displayName",CFC.personDisplayName(Object.values(getPath(qb+"/people/"+pid+"/links")||{})));
-          notify();
+          resync(); notify();
           return Promise.resolve({data:{ok:true,done:sids,failed:[]}});
         }
         if(name==="companyUpdateStaff"){

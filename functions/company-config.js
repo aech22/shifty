@@ -252,6 +252,33 @@ function mergeEntitySettings(companySettings, entitySettings) {
   if (Object.keys(wage).length) out.wageSettings = wage;
   return out;
 }
+// 写しに焼く人物（P3.6）。{personId: {shopId: 登録名}} を連携店舗ぶんだけ。人物の正本 companies/{id}/pub/people は
+// 企業コードのログインと作成者しか読めないので、店長のセッション（店舗の管理者）がヘルプ先の勤務を所属店舗へ合算する
+// ときの同一人物の判定はこの写しを読む。1店舗にしか登録の無い人物も載せる——「別の人物に載っている＝別人」を
+// 店舗側が判定するのに要る（同姓同名を束ねない）。
+function mirrorPeopleOf(pub) {
+  const p = _obj(pub) || {};
+  const linked = new Set(Object.keys(_obj(p.shops) || {}).filter(isValidShopId));
+  const out = {};
+  Object.keys(_obj(p.people) || {}).forEach(id => {
+    if (!isValidPersonId(id)) return;
+    const l = _obj((_obj(p.people[id]) || {}).links) || {};
+    const m = {};
+    Object.keys(l).forEach(sid => { if (linked.has(sid) && typeof l[sid] === "string" && l[sid]) m[sid] = l[sid]; });
+    if (Object.keys(m).length) out[id] = m;
+  });
+  return out;
+}
+// 連携店舗それぞれの法人（P3.6）。ヘルプ先の合算を同じ法人の中に絞るのに使う（法人の無い企業では空）
+function mirrorShopEntitiesOf(pub) {
+  const p = _obj(pub) || {};
+  const out = {};
+  Object.keys(_obj(p.shops) || {}).filter(isValidShopId).forEach(sid => {
+    const e = entityIdOfShop(p, sid);
+    if (e) out[sid] = e;
+  });
+  return out;
+}
 // 店舗の写し（shops/{sid}/company）を作る。syncCompanyMirror とテスト・E2E のスタブが同じ関数を使う。
 function buildShopMirror(companyId, pub, shopId, names, nowIso) {
   const p = _obj(pub) || {};
@@ -259,6 +286,8 @@ function buildShopMirror(companyId, pub, shopId, names, nowIso) {
   const eid = entityIdOfShop(p, shopId);
   const ent = eid ? (_obj((p.entities || {})[eid]) || {}) : {};
   const monthly = sanitizeMonthlyDeadlineDays(cfg.monthlyDeadlineDays);
+  const people = mirrorPeopleOf(p);
+  const shopEntities = mirrorShopEntitiesOf(p);
   return {
     id: companyId,
     name: p.name || "",
@@ -269,6 +298,9 @@ function buildShopMirror(companyId, pub, shopId, names, nowIso) {
     // 空配列は Firebase に保存されない（ノードごと消える）ので、無いときはキーを持たない
     ...(monthly.length ? { monthlyDeadlineDays: monthly } : {}),
     shops: names || {},
+    // 空のマップは Firebase に保存されない（ノードごと消える）ので、無いときはキーを持たない
+    ...(Object.keys(people).length ? { people } : {}),
+    ...(Object.keys(shopEntities).length ? { shopEntities } : {}),
     syncedAt: nowIso,
   };
 }
@@ -661,7 +693,7 @@ module.exports = { PERSON_ID_RE, isValidPersonId, PERSON_AUTO_ID_CHARS, genPerso
   renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffLaborMonthsPatch, renameStaffSubsPatch,
   MIN_WAGE_MAX_ENTRIES, sanitizeWageSettings, PAY_CODE_DEFAULT, isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,
   ENTITY_ID_RE, isValidEntityId, SHOP_KINDS, ENTITY_NAME_MAX, sanitizeEntityName, entityIdOfShop, shopKindOf,
-  planEntityMigration, mergeEntitySettings, buildShopMirror, otherCompanyLinksOf,
+  planEntityMigration, mergeEntitySettings, mirrorPeopleOf, mirrorShopEntitiesOf, buildShopMirror, otherCompanyLinksOf,
   COMPANY_SESSION_UID_PREFIX, canChangeCompanyPassword, COMPANY_LABOR_KEYS, COMPANY_LABOR_RANGES, COMPANY_LIMIT_NUM_KEYS, COMPANY_LABOR_SYSTEMS, COMPANY_OT_PRORATE_WINDOWS, COMPANY_OT_PRORATE_FIXED_MAX_MIN, sanitizeOtProrate, COMPANY_BUILTIN_ATTRS,
   COMPANY_ATTR_ID_RE, PERIOD_RANGE_KEY_RE, isValidDateStrCF, sanitizeCompanySettings, sanitizeCompanyDeadlines,
   effectiveDeadlinesForShop, MONTHLY_DEADLINE_MAX, sanitizeMonthlyDeadlineDays };

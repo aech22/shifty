@@ -1643,6 +1643,11 @@ async function readCompanyRegs(companyId, pub) {
   }
   return { regs, shopData, failed, linked };
 }
+// 人物が変わったあとの写しの作り直し（P3.6）。写しの people を店長のセッションが同一人物の判定に使う。
+// 失敗しても人物の保存は済んでいるので呼び出しを失敗にしない（写しは次の保存で作り直される＝冪等）
+async function syncPeopleMirror(companyId) {
+  try { await syncCompanyMirror(companyId); } catch (e) { console.warn("syncPeopleMirror", companyId, e && e.message); }
+}
 async function readPub(companyId) {
   return (await db.ref(`companies/${companyId}/pub`).once("value")).val() || {};
 }
@@ -1671,7 +1676,11 @@ exports.ensureCompanyPeople = functions
     // 読めなかった店舗があるときは作らない（その店舗の登録が未リンクのまま別人物として作られるのを防ぐ）
     if (failed.length) return { ok: false, failed, created: [] };
     const { patch, created } = planPeopleSync(pub.people || {}, regs, genPersonId, new Date().toISOString());
-    if (patch) await db.ref(`companies/${companyId}/pub/people`).update(patch);
+    if (patch) {
+      await db.ref(`companies/${companyId}/pub/people`).update(patch);
+      // 写しの people（P3.6・ヘルプ先勤務の合算の同一人物の判定）を作り直す
+      await syncPeopleMirror(companyId);
+    }
     return { ok: true, created, changed: !!patch };
   });
 
@@ -1687,6 +1696,7 @@ exports.mergePeople = functions
     const r = planMergePeople(pub.people || {}, keepId, dropId, new Date().toISOString());
     if (r.error) throw new functions.https.HttpsError("failed-precondition", r.error);
     await db.ref(`companies/${companyId}/pub/people`).update(r.patch);
+    await syncPeopleMirror(companyId);
     return { ok: true, personId: keepId };
   });
 
@@ -1708,6 +1718,7 @@ exports.splitPerson = functions
     const r = planSplitPerson(pub.people || {}, personId, reg, genPersonId, new Date().toISOString());
     if (r.error) throw new functions.https.HttpsError("failed-precondition", r.error);
     await db.ref(`companies/${companyId}/pub/people`).update(r.patch);
+    await syncPeopleMirror(companyId);
     return { ok: true, personId: r.newId };
   });
 
@@ -1724,6 +1735,7 @@ exports.reassignPersonId = functions
     if (r.error) throw new functions.https.HttpsError("failed-precondition", r.error);
     // laborMonths（P3）は名前キーで personId を参照しないので付け替えは要らない。personId を参照するノードを足した担当はここで付け替える
     await db.ref(`companies/${companyId}/pub/people`).update(r.patch);
+    await syncPeopleMirror(companyId);
     return { ok: true, personId: r.newId };
   });
 
@@ -1783,6 +1795,7 @@ exports.companyRenameStaff = functions
     const names = Object.values(fresh).filter(n => typeof n === "string");
     let best = ""; names.forEach(n => { if (n.replace(/[\s　]/g, "").length > best.replace(/[\s　]/g, "").length) best = n; });
     await db.ref(`companies/${companyId}/pub/people/${personId}`).update({ displayName: best, updatedAt: new Date().toISOString() });
+    await syncPeopleMirror(companyId);
     return { ok: failed.length === 0, done, failed };
   });
 
