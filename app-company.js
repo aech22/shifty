@@ -1014,9 +1014,9 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
   // この表は企業セッション（企業コードのログインと企業の作成者本人）にしか出ない＝確定できるのはここと、
   // 企業セッションで開いた店舗のシフト作成タブだけ。店舗の提出データ・設定・所定を読み、シフト作成タブと
   // 同じ planPeriodConfirmation で集計する（計算を二重に持たない）。期間は差分 update（全体 set() しない）。
-  const loadForConfirm=async(sid,period)=>{
+  const loadForConfirm=async(sid,period,withHelper)=>{
     const ref=p=>firebaseDB.ref(p).once("value");
-    const[stS,seS,coS,pS,lmS]=await Promise.all([ref(`shops/${sid}/staff`),ref(`shops/${sid}/settings`),ref(`shops/${sid}/company/settings`),ref(`shops/${sid}/periods`),ref(`shops/${sid}/laborMonths`)]);
+    const[stS,seS,coS,pS,lmS]=await Promise.all([ref(`shops/${sid}/staff`),ref(`shops/${sid}/settings`),ref(`shops/${sid}/company`),ref(`shops/${sid}/periods`),ref(`shops/${sid}/laborMonths`)]);
     const periods=Object.values(pS.val()||{}).filter(x=>x&&x.id);
     const cur=periods.find(p=>p.id===period.id);
     if(!cur)throw new Error("期間が見つかりません");
@@ -1025,8 +1025,21 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
     const overl=periods.filter(p=>p.startDate&&p.endDate&&months.some(ym=>p.startDate<=`${ym}-31`&&p.endDate>=`${ym}-01`));
     const snaps=await Promise.all(overl.map(p=>firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(p.id).once("value")));
     const subs=[];snaps.forEach(sn=>Object.values(sn.val()||{}).forEach(x=>{if(x&&x.id)subs.push(x);}));
-    return{cur,periods,subs,staffList:Object.values(stS.val()||{}).filter(n=>typeof n==="string"),
-      settings:applyCompanySettings(seS.val()||makeSettings(sid),coS.val()||{}),laborMonths:lmS.val()||{}};
+    const coLink=coS.val()||null;
+    const staffList=Object.values(stS.val()||{}).filter(n=>typeof n==="string");
+    const settings=applyCompanySettings(seS.val()||makeSettings(sid),(coLink&&coLink.settings)||{});
+    // ヘルプ先勤務の合算（P3.6）。同じ法人の連携店舗の予定（subs）を読み、所属店舗の所定に足す／行き先の店では
+    // 所属店舗で判定する人を数えない。シフト作成タブの確定と同じ helperScheduleContext を通す
+    const ents=(coLink&&coLink.shopEntities)||{};
+    // 読むのは確定のときだけ（解除・交付は所定を集計しない）
+    const others=withHelper?Object.keys((coLink&&coLink.shops)||{}).filter(o=>o!==sid&&!(coLink.entityId&&ents[o]&&ents[o]!==coLink.entityId)):[];
+    const raw=await Promise.all(others.map(async o=>{
+      const r=await Promise.all(["settings","subs","staff","periods"].map(k=>ref(`shops/${o}/${k}`).catch(()=>null)));
+      return[o,otherShopDataOf({name:(coLink.shops||{})[o]||o,settings:r[0]&&r[0].val(),subs:r[1]&&r[1].val(),staff:r[2]&&r[2].val(),periods:r[3]&&r[3].val(),
+        loadFailed:r.some(x=>!x)})];
+    }));
+    const hctx=helperScheduleContext({shopId:sid,names:staffList,settings,companyLink:coLink,otherShops:helperShopsOf(coLink,Object.fromEntries(raw),sid),subs,todayStr:fd(new Date())});
+    return{cur,periods,subs,staffList,settings,laborMonths:lmS.val()||{},helper:hctx};
   };
   const uidNow=()=>(typeof firebaseAuth!=="undefined"&&firebaseAuth&&firebaseAuth.currentUser&&firebaseAuth.currentUser.uid)||"";
   const writePlan=async(sid,orig,r)=>{
@@ -1042,9 +1055,10 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
     if(kind==="deliver"&&!confirm(`${x.name}の「${x.period.label||cur&&cur.label}」を本人へ交付したことを記録しますか？`))return;
     setActSid(x.sid);
     try{
-      const d=await loadForConfirm(x.sid,x.period);
+      const d=await loadForConfirm(x.sid,x.period,kind==="confirm");
       const r=kind==="confirm"
-        ?planPeriodConfirmation({period:d.cur,periods:d.periods,subs:d.subs,staffList:d.staffList,settings:d.settings,laborMonths:d.laborMonths,todayStr:fd(new Date()),uid:uidNow()})
+        ?planPeriodConfirmation({period:d.cur,periods:d.periods,subs:d.subs,staffList:d.staffList,settings:d.settings,laborMonths:d.laborMonths,todayStr:fd(new Date()),uid:uidNow(),
+          extraDayMin:d.helper.dayMin,excludeNames:d.helper.excludeNames})
         :kind==="unconfirm"?planPeriodUnconfirm({period:d.cur,laborMonths:d.laborMonths,uid:uidNow(),note})
         :planPeriodDelivery({period:d.cur,uid:uidNow()});
       if(r.error){tt("✕ "+r.error);return;}
@@ -1177,7 +1191,8 @@ function CompanyBulkPdf({range,rows,companyName,tt}){
   useEffect(()=>()=>{runRef.current++;if(pendingRef.current)pendingRef.current(new Error("cancelled"));},[]);
   const loadShop=async(sid,period)=>{
     const ref=p=>firebaseDB.ref(p).once("value");
-    const[stS,seS,coS,pS]=await Promise.all([ref(`shops/${sid}/staff`),ref(`shops/${sid}/settings`),ref(`shops/${sid}/company/settings`),ref(`shops/${sid}/periods`)]);
+    // 写しは丸ごと読む（settings に加え、ヘルプ先勤務の合算（P3.6）が使う連携店舗・人物・法人）
+    const[stS,seS,coS,pS]=await Promise.all([ref(`shops/${sid}/staff`),ref(`shops/${sid}/settings`),ref(`shops/${sid}/company`),ref(`shops/${sid}/periods`)]);
     const periods=Object.values(pS.val()||{}).filter(x=>x&&x.id).sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate)));
     // 連勤・週の跨ぎを店舗単体の出力と揃えるため、直前の期間の提出も読む
     const prev=periods.find(p=>String(p.startDate)<String(period.startDate));
@@ -1185,10 +1200,11 @@ function CompanyBulkPdf({range,rows,companyName,tt}){
     const subSnaps=await Promise.all([q(period.id),...(prev?[q(prev.id)]:[])]);
     const subs=[];subSnaps.forEach(sn=>Object.values(sn.val()||{}).forEach(x=>{if(x&&x.id)subs.push(x);}));
     const staffList=Object.values(stS.val()||{}).filter(n=>typeof n==="string");
-    const settings=applyCompanySettings(seS.val()||makeSettings(sid),coS.val()||{});
+    const coLink=coS.val()||null;
+    const settings=applyCompanySettings(seS.val()||makeSettings(sid),(coLink&&coLink.settings)||{});
     // 人×月の所定（P3）。企業セッションは連携店舗のオーナーなので読めるが、読めなければ無しで出す（シフトから集計した値になる）
     const lmS=await firebaseDB.ref(`shops/${sid}/laborMonths`).once("value").catch(()=>null);
-    return{staffList,settings,periods,subs,periodId:period.id,laborMonths:(lmS&&lmS.val())||{}};
+    return{staffList,settings,periods,subs,periodId:period.id,laborMonths:(lmS&&lmS.val())||{},companyLink:coLink};
   };
   const start=async(mode)=>{
     if(!targets.length||job)return;
@@ -1238,7 +1254,8 @@ function CompanyBulkPdf({range,rows,companyName,tt}){
       <ShiftEditTab key={job.key} subs={job.data.subs} periods={job.data.periods} staffList={job.data.staffList}
         onSave={()=>{}} tt={()=>{}} settings={job.data.settings} plan="premium" shopId={job.sid} shopName={job.shopName}
         onUpgrade={()=>{}} allLinkedShops={[]} savePeriods={null} ownerReadOnly={true} pastSubsLoaded={true}
-        initialPeriodId={job.data.periodId} exportJob={job.exportJob} laborMonths={{...LABOR_MONTHS_OFF,loaded:true,map:job.data.laborMonths||{}}}/>
+        initialPeriodId={job.data.periodId} exportJob={job.exportJob} laborMonths={{...LABOR_MONTHS_OFF,loaded:true,map:job.data.laborMonths||{}}}
+        companyLink={job.data.companyLink||null}/>
     </div>}
   </div>);
 }

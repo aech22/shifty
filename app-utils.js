@@ -2554,6 +2554,186 @@ function dupTargetShopsFor({name,shopId,settings,otherShops}){
   return out;
 }
 
+// ===== ヘルプ先勤務の所属店舗への合算（2026-09-30・労務給与_複数法人_実装計画.md §3.9・P3.6）=====
+// sub は行き先の店にあるので、所属店舗の労務判定・月計・週の休みはその人の他店勤務を知らない（空欄＝休みに見える）。
+// 所属店舗のシフト作成タブが店舗間の重複判定のために読んでいる連携店舗の subs を使って合算する。
+// 合算するのは**予定（subs）だけ**。他店の laborMonths・actuals・private/pay はオーナーしか読めないので、
+// P4（実績）の他店合算はそのセッションが行き先の店のオーナーのときだけ行う（CLAUDE.md に申し送り）。
+//
+// 写しの people（shops/{sid}/company.people = {personId: {shopId: 登録名}}）から「店舗×登録名 → personId」
+function personIndexOfMirror(people){
+  const m=new Map();
+  const p=_coObj(people);
+  if(!p)return m;
+  Object.keys(p).forEach(id=>{
+    if(!PERSON_ID_RE.test(id))return;
+    const l=_coObj(p[id]);if(!l)return;
+    Object.keys(l).forEach(sid=>{if(typeof l[sid]==="string"&&l[sid])m.set(sid+"\u0000"+l[sid],id);});
+  });
+  return m;
+}
+// 同じ人の他店舗での登録 [{shopId, name, by:"person"|"home"}]。
+// o: {shopId, name, settings, people(写しの people・無ければ null), otherShops:{sid:{staffSet, homeShop, entityId?}}, entityId?}
+//  ① 自店の登録が people に載っていれば、その人物の links が正（他店での登録名は自店と違ってよい）。
+//  ② どちらかの登録が people に載っていなければ、後方互換として dupTargetShopsFor と同じ規則
+//     （同じ名前で、両方の登録の所属店舗が同じ店舗を指す）。
+//  両方の登録が people に載っていて人物が違えば別人（同姓同名を束ねない）。名前が同じで番号も所属も無い登録も別人。
+//  entityId（自店の法人）と相手の entityId がどちらも分かっていて違う店舗は対象外（同じ法人の中だけで合算する）。
+function samePersonRegistrations(o){
+  const x=o||{};const sid0=x.shopId,name=x.name;
+  const shops=_coObj(x.otherShops)||{};
+  const idx=personIndexOfMirror(x.people);
+  const myPid=idx.get(sid0+"\u0000"+name)||null;
+  const links=myPid?(_coObj(x.people)[myPid]||{}):null;
+  const myHome=homeShopOf(x.settings,name,sid0);
+  const out=[];
+  Object.keys(shops).forEach(sid=>{
+    if(sid===sid0)return;
+    const o2=shops[sid]||{};
+    if(x.entityId&&o2.entityId&&o2.entityId!==x.entityId)return;
+    if(links&&typeof links[sid]==="string"&&links[sid]){out.push({shopId:sid,name:links[sid],by:"person"});return;}
+    if(!o2.staffSet||!o2.staffSet.has(name))return;
+    if(myPid&&idx.get(sid+"\u0000"+name))return;
+    const oh=_coObj(o2.homeShop)||{};
+    const theirHome=typeof oh[name]==="string"&&oh[name]?oh[name]:sid;
+    if(theirHome===myHome)out.push({shopId:sid,name,by:"home"});
+  });
+  return out;
+}
+// その人の所属店舗。自店と同じ人の登録の staffHomeShop に**明示された値**が1つに決まればその店舗。
+// 他店に登録が無ければ自店。明示が無い（両方とも未設定）・食い違うときは null＝どちらにも合算しない
+// （両方が自店を所属とみなすと同じ時間を2店舗で数える。企業内登録スタッフ一覧が「所属店舗を設定してください」を出す）。
+function personHomeShopOf(o){
+  const x=o||{};const regs=x.regs||[];
+  const ex=new Set();
+  const own=(_coObj(x.settings&&x.settings.staffHomeShop)||{})[x.name];
+  if(typeof own==="string"&&own)ex.add(own);
+  regs.forEach(r=>{const o2=(x.otherShops||{})[r.shopId];const h=(_coObj(o2&&o2.homeShop)||{})[r.name];if(typeof h==="string"&&h)ex.add(h);});
+  if(ex.size===1)return[...ex][0];
+  if(ex.size===0&&!regs.length)return x.shopId;
+  return null;
+}
+// この店舗から見たその人の扱い。{regs, home, role, unread}
+//  role "home": 所属店舗＝他店の勤務を合算する／"dest": 行き先＝所属店舗で判定する（この店舗の laborTotals に入れない）／null: どちらでもない
+//  "dest" は所属店舗の登録を自分が知っているときだけ（所属店舗が企業に連携していない・登録が無いと、どこでも数えられなくなる）。
+//  unread: 合算に要る他店を読めていない（読めない店舗の勤務が抜けた値になる。画面は「＋」と注記）。
+function helperPersonOf(o){
+  const x=o||{};
+  const shops=_coObj(x.otherShops)||{};
+  const regs=samePersonRegistrations(x);
+  const home=personHomeShopOf({shopId:x.shopId,name:x.name,settings:x.settings,regs,otherShops:shops});
+  let role=null;
+  if(regs.length&&home===x.shopId)role="home";
+  else if(home&&home!==x.shopId&&regs.some(r=>r.shopId===home))role="dest";
+  const failed=Object.keys(shops).filter(sid=>sid!==x.shopId&&shops[sid]&&shops[sid].loadFailed
+    &&!(x.entityId&&shops[sid].entityId&&shops[sid].entityId!==x.entityId));
+  const inPeople=personIndexOfMirror(x.people).has(x.shopId+"\u0000"+x.name);
+  const unread=role!=="dest"&&(regs.some(r=>failed.indexOf(r.shopId)>=0)||(!inPeople&&failed.length>0));
+  return{regs,home,role,unread};
+}
+// 行き先の店がその日に使う設定。店舗の設定に企業（同じ法人なので自店と同じ）の設定を重ね、その日を含む期間が
+// 確定・終了済みなら写し（resolvePeriodMaster）を当てる＝行き先のシフト作成タブが同じ日に使う設定と同じ。
+// shop: {settings, periods:[…]|{…}, staffList}。cache（Map）を渡すと期間ごとに1回だけ解決する。
+function helperShopSettingsOn(shop,sid,date,todayStr,companySettings,cache){
+  const ps=Array.isArray(shop.periods)?shop.periods:Object.values(shop.periods||{});
+  const p=ps.find(q=>q&&q.startDate&&q.endDate&&q.startDate<=date&&date<=q.endDate)||null;
+  const key=sid+"\u0000"+(p?p.id:"");
+  if(cache&&cache.has(key))return cache.get(key);
+  const base=applyCompanySettings(shop.settings||{},companySettings||null);
+  const sl=Array.isArray(shop.staffList)?shop.staffList:Object.values(shop.staffList||{});
+  const v=p?resolvePeriodMaster(p,sl,base,todayStr).settings:base;
+  if(cache)cache.set(key,v);
+  return v;
+}
+// その日の他店での勤務 [{shopId, name, abbr, start, end, min, breakShort}]。休憩は**行き先の店の設定で引いた実働**を
+// そのまま持ち込む（所属店舗の設定で数え直さない）。自店のその日の勤務と時間が重なる他店の勤務は足さない
+// ——ヘルプコマンド（略称サフィックス）で自店にも同じ勤務を入れている、または重複エラーの日で、足すと二重に数える。
+// o: {regs, otherShops:{sid:{workMap, abbrs, name, settings, periods, staffList, loadFailed}}, date, todayStr,
+//     companySettings, ownRange:{startMin,endMin}|null, cache}
+function helperWorkOn(o){
+  const x=o||{};const d=x.date;const out=[];
+  (x.regs||[]).forEach(r=>{
+    const shop=(x.otherShops||{})[r.shopId];
+    if(!shop||shop.loadFailed||!shop.workMap)return;
+    const sh=shop.workMap.get(r.name+"|"+d);
+    if(!sh||sh.status!=="work")return;
+    const st=helperShopSettingsOn(shop,r.shopId,d,x.todayStr,x.companySettings,x.cache);
+    const rng=effShiftRangeMin(sh,st);
+    const own=x.ownRange;
+    if(rng&&own&&rng.startMin<own.endMin&&own.startMin<rng.endMin)return;
+    const min=calcNetWorkMinutes(sh,getBreaksFor(st,d,r.name,sh),getOT(r.name,st,sh),st);
+    if(!(min>0))return;
+    const abbrs=(shop.abbrs||[]).filter(a=>typeof a==="string"&&a);
+    out.push({shopId:r.shopId,name:r.name,shopName:shop.name||r.shopId,abbr:abbrs[0]||String(shop.name||r.shopId).slice(0,1),
+      start:effShiftStart(sh)||"",end:effShiftEnd(sh)||"",min,breakShort:isBreakShort(sh,st,d,r.name)});
+  });
+  return out;
+}
+// 他店舗の読み込み結果（settings・subs・staff・periods の生の値）を、店舗間の重複判定とヘルプ先勤務の合算が使う形にする。
+// シフト作成タブ（companyData）と企業の確定（loadForConfirm）が同じ規則で読む。
+// workMap は「登録名|日付 → 出勤シフト」。別名で提出された sub はその店舗自身の staffAliases で登録名へ解決してからキーにし、
+// 同じキーに複数あれば出勤・退勤の両方が揃ったシフトを優先する（休み希望のセルは effShiftStart/End が "" ＝揃っていない）。
+function otherShopDataOf(o){
+  const x=o||{};
+  const st=_coObj(x.settings)||{};
+  const abbrs=Object.values(st.shopAbbrs||{}).filter(v=>typeof v==="string");
+  const aliases=st.staffAliases||{};
+  const workMap=new Map();
+  const hasBoth=sh=>!!(effShiftStart(sh)&&effShiftEnd(sh));
+  Object.values(_coObj(x.subs)||{}).forEach(sub=>{
+    if(!sub||!sub.staffName||!sub.shifts)return;
+    const resolved=resolveAlias(sub.staffName,aliases);
+    Object.entries(sub.shifts).forEach(([d,sh])=>{
+      if(!sh||sh.status!=="work")return;
+      const k=resolved+"|"+d;
+      const cur=workMap.get(k);
+      if(!cur||(!hasBoth(cur)&&hasBoth(sh)))workMap.set(k,sh);
+    });
+  });
+  const staffList=Object.values(_coObj(x.staff)||{}).filter(n=>typeof n==="string");
+  return{name:x.name,abbrs,workMap,staffSet:new Set(staffList.filter(n=>!isSpacer(n))),homeShop:st.staffHomeShop||null,
+    loadFailed:!!x.loadFailed,settings:st,staffList,periods:_coObj(x.periods)||{}};
+}
+// ヘルプ先勤務の合算の対象店舗（企業の写しの連携店舗で、読み込んだもの）。写しの法人を entityId として載せる
+function helperShopsOf(companyLink,otherShops,shopId){
+  const out={};
+  if(!companyLink)return out;
+  const ents=_coObj(companyLink.shopEntities)||{};
+  Object.keys(_coObj(companyLink.shops)||{}).forEach(sid=>{
+    if(sid===shopId||!otherShops||!otherShops[sid])return;
+    out[sid]={...otherShops[sid],entityId:typeof ents[sid]==="string"?ents[sid]:null};
+  });
+  return out;
+}
+// 企業の確定（シフト作成タブを開かずに集計する経路）でヘルプ先の勤務を合算するための関数を返す。
+// o: {shopId, names, settings, companyLink, otherShops（helperShopsOf の戻り値）, subs（自店）, todayStr}
+// 戻り値: {info:{名前:helperPersonOf}, excludeNames:[所属店舗で判定する人], dayMin(名前,日付)}
+// シフト作成タブの helperEntriesOn と同じ規則（自店の勤務と重なる他店の勤務は足さない）。
+function helperScheduleContext(o){
+  const x=o||{};const settings=x.settings||{};
+  const cl=x.companyLink||null;
+  const people=(cl&&cl.people)||null;
+  const eid=cl&&typeof cl.entityId==="string"?cl.entityId:null;
+  const shops=x.otherShops||{};
+  const info={};
+  if(Object.keys(shops).length)(x.names||[]).forEach(n=>{if(n&&!isSpacer(n))info[n]=helperPersonOf({shopId:x.shopId,name:n,settings,people,otherShops:shops,entityId:eid});});
+  const own=new Map();
+  (x.subs||[]).forEach(s=>{
+    if(!s||!s.staffName||!s.shifts)return;
+    Object.keys(s.shifts).forEach(d=>{const sh=s.shifts[d];const k=s.staffName+"|"+d;if(sh&&sh.status==="work"&&!own.has(k))own.set(k,sh);});
+  });
+  const aliases=settings.staffAliases||{};
+  const cache=new Map();
+  const dayMin=(name,d)=>{
+    const h=info[name];
+    if(!h||h.role!=="home")return 0;
+    const sh=resolveSubByAlias(n=>own.get(n+"|"+d),name,aliases);
+    return helperWorkOn({regs:h.regs,otherShops:shops,date:d,todayStr:x.todayStr,companySettings:cl?(cl.settings||null):null,
+      ownRange:sh?effShiftRangeMin(sh,settings):null,cache}).reduce((a,e)=>a+e.min,0);
+  };
+  return{info,excludeNames:Object.keys(info).filter(n=>info[n].role==="dest"),dayMin};
+}
+
 // 企業コード＋パスワードでログインしたセッション（companyLogin のカスタムトークン）の uid は "company_"+企業ID。
 // 企業パスワードの変更は作成者のアカウント（メール／Google）に限る（2026-09-28）ので、UI はこれでボタンを出し分ける。
 // 同じ規則は functions/company-config.js の COMPANY_SESSION_UID_PREFIX にあり、tests/core.test.js が一致を照合する。
@@ -2965,7 +3145,7 @@ function buildCompanyStaffRows(shops,companySettings,today,people){
     sh.staff.forEach(name=>{
       const h=((eff.staffHomeShop||{})[name]);
       const num=((eff.staffNumbers||{})[name]);
-      regs.push({shop:sh,shopId:sh.id,name,entityId:sh.entityId,homeShopId:typeof h==="string"&&h?h:sh.id,number:String(num==null?"":num).trim()});
+      regs.push({shop:sh,shopId:sh.id,name,entityId:sh.entityId,homeShopId:typeof h==="string"&&h?h:sh.id,homeSet:typeof h==="string"&&!!h,number:String(num==null?"":num).trim()});
     });
   });
   const groups=new Map();
@@ -3006,12 +3186,40 @@ function buildCompanyStaffRows(shops,companySettings,today,people){
       // 賃金の置き場（所属店舗に登録されている名前・§3.7）。所属店舗側に登録が無ければ null（賃金列は「—」）
       payShopId:base.homeShopId===base.shop.id?base.shop.id:null,payName:base.homeShopId===base.shop.id?base.name:null,
       number,attrId,attrLabel,homeShopId:base.homeShopId,homeShopName:homeShopNames.find(n=>n)||null,homeShopIds,homeShopNames,
+      // どれかの登録で所属店舗が明示されているか（P3.6）。2店舗以上に登録があって明示が無い人は、ヘルプ先の勤務を
+      // どちらの店舗へ合算するか決まらないので合算されない（一覧が「所属店舗を設定してください」を出す）
+      homeExplicit:ordered.some(r=>r.homeSet),
       paidGranted:Number.isFinite(g)?g:null,paidUsed:yr?yr.paid:0,
       paidRemain:yr?paidLeaveRemaining(heff,base.name,yr.paid):null,
       paidMissing:yr?yr.missingPeriodIds.map(id=>labelOf[id]||id):[],
       hidden:isStaffHiddenNow(eff,base.name)});
   });
   return rows;
+}
+// 重複候補（P3.6）: 同じ名前（空白を除いて一致）の登録が2店舗以上にあるのに人物（personId）が別の行の組。
+// ヘルプ先の勤務の合算は人物（people.links）で束ねるので、別人物のままだと所属店舗に合算されない。
+// 一覧の先頭に出し、その場で統合できるようにする（同姓同名の別人もここに出るので、統合するかは人が決める）。
+// 戻り値: [{name, rows:[行…]（人物IDの昇順）, shopIds:[その名前で登録のある店舗]}]
+function duplicatePersonCandidates(rows){
+  const norm=n=>String(n==null?"":n).replace(/[\s\u3000]/g,"");
+  const by=new Map();
+  (rows||[]).forEach(r=>{
+    if(!r||!r.personId)return;
+    (r.links||[]).forEach(l=>{
+      const n=norm(l&&l.name);if(!n)return;
+      if(!by.has(n))by.set(n,{name:l.name,rows:new Map(),shops:new Set()});
+      const g=by.get(n);g.rows.set(r.personId,r);g.shops.add(l.shopId);
+    });
+  });
+  const out=[];const seen=new Set();
+  by.forEach(g=>{
+    if(g.rows.size<2||g.shops.size<2)return;
+    const rs=[...g.rows.values()].sort((a,b)=>String(a.personId).localeCompare(String(b.personId)));
+    const key=rs.map(r=>r.personId).join("|");
+    if(seen.has(key))return;seen.add(key);
+    out.push({name:g.name,rows:rs,shopIds:[...g.shops]});
+  });
+  return out;
 }
 // 従業員番号と名前の部分一致（まとめる前の別表記 otherNames も見る。大小文字・全角半角の正規化はしない）。空なら全件
 function filterCompanyStaffRows(rows,query){
@@ -3110,8 +3318,12 @@ function monthDatesOf(ym){
 // 人×月の所定の自動集計（§3.4）。シフト作成タブの月実働（laborDayMin）と同じ経路:
 // 名前＋日付の最初の出勤シフト（別名は resolveSubByAlias）→ calcNetWorkMinutes（休憩控除後・締の追加出勤を含む・
 // 休暇日は 0）。所定労働日数 = 実働が 0 分より大きい日の数。settings はその期間の設定（確定済みなら写し）を渡す。
+// extraDayMin(名前, 日付) はヘルプ先での勤務（P3.6・行き先の店の設定で引いた実働）。所属店舗の所定は合算後の値にする。
+// excludeNames は所属店舗で判定する人（行き先の店では数えない＝同じ時間を2店舗で数えない）。
 function aggregateScheduledMonth(o){
   const x=o||{};const ym=x.ym;const settings=x.settings||{};
+  const extra=typeof x.extraDayMin==="function"?x.extraDayMin:null;
+  const excl=new Set(x.excludeNames||[]);
   const work=new Map();
   (x.subs||[]).forEach(s=>{
     if(!s||!s.staffName||!s.shifts)return;
@@ -3125,12 +3337,12 @@ function aggregateScheduledMonth(o){
   const dates=monthDatesOf(ym);
   const out={};
   (x.names||[]).forEach(name=>{
-    if(!name||typeof name!=="string"||isSpacer(name))return;
+    if(!name||typeof name!=="string"||isSpacer(name)||excl.has(name))return;
     let days=0,min=0;
     dates.forEach(d=>{
       const sh=resolveSubByAlias(n=>work.get(n+"|"+d),name,aliases);
-      if(!sh)return;
-      const m=calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh),settings);
+      const m=(sh?calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh),settings):0)
+        +(extra?(Number(extra(name,d))||0):0);
       if(m>0){days++;min+=m;}
     });
     out[name]={days,min};
@@ -3179,7 +3391,7 @@ function planPeriodConfirmation(o){
   const laborMonthsPatch={};
   const months=monthsOfPeriod(period);
   months.forEach(ym=>{
-    const agg=aggregateScheduledMonth({subs:x.subs,names,settings:master.settings,ym});
+    const agg=aggregateScheduledMonth({subs:x.subs,names,settings:master.settings,ym,extraDayMin:x.extraDayMin,excludeNames:x.excludeNames});
     const frozen=isMonthFullyConfirmed(nextPeriods,ym);
     Object.keys(agg).forEach(name=>{
       const cur=laborMonthOf(x.laborMonths,ym,name);
@@ -3326,5 +3538,5 @@ function fillFixedPattern(o){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,yearDaysOf,monthlyScheduledCapMin,LABOR_SETTING_RANGES,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,dailyOverThresholdOf,dailyOverMinB,externalOverThresholdOf,OT_PRORATE_WINDOWS,OT_PRORATE_WINDOW_LABELS,OT_PRORATE_FIXED_MAX_MIN,HALF_MONTH_LAST_DAY,otProrateOf,staffOtProrateOf,overtimePlanOf,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,BREAK_LENGTH_BASES,BREAK_LENGTH_BASIS_LABELS,BREAK_LENGTH_TIERS_MAX,breakLengthRuleOf,IDLE_BREAK_DAYS,IDLE_BREAK_DAY_LABELS,idleBreakOf,breakMinutesOf,breakDecisionOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,headcountAtOf,countPresentAt,headcountLabelOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,groupStaffRegs,groupStaffRegsWithPeople,PERSON_ID_RE,buildCompanyStaffRows,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,GATED_FEATURES,featureEnabled,DEFAULT_RATE_DENOMINATOR_MIN,rateDenominatorMinOf,PAY_TYPES,PAY_TYPE_LABELS,isPayTypeFixed,defaultPayTypeOf,payRateBaseYen,hourlyRateOf,fixedOtAmountOf,MIN_WAGE_MAX_ENTRIES,sanitizeWageSettings,minWageOn,minWageCheck,normalizePayVersion,withFixedOtAmount,applyPayRevision,payVersionOn,STAFF_KEYED_PRIVATE_NODES,renameStaffInPay,dropStaffFromPay,maskYen,sha256HexOfBytes,PAY_CODE_DEFAULT,PAY_CODE_RE,isValidPayCode,payCodeHash,isPayCodeRecord,verifyPayCode,payCodeIdentity,PAY_CODE_MAX_FAILS,PAY_CODE_LOCK_MS,PAY_UNLOCK_IDLE_MS,nextPayCodeLockout,payCodeWaitSec,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf,isPeriodConfirmed,isPeriodDelivered,PERIOD_STATES,PERIOD_STATE_LABELS,periodStateOf,canConfirmPeriod,PERIOD_HISTORY_KINDS,PERIOD_HISTORY_LABELS,genPeriodHistoryKey,periodHistoryEntry,withPeriodHistory,periodHistoryList,monthsOfPeriod,monthDatesOf,aggregateScheduledMonth,isMonthFullyConfirmed,laborMonthOf,isLaborMonthFrozen,isLaborMonthEdited,planPeriodConfirmation,planPeriodUnconfirm,planPeriodDelivery,LABOR_MONTH_MAX_MIN,planLaborMonthManual,parseHoursMinutes,fmtSignedMin,STAFF_KEYED_MONTH_NODES,renameStaffInLaborMonths,dropStaffFromLaborMonths,yearScheduledAverage,isClosedDateOf,fillFixedPattern};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,yearDaysOf,monthlyScheduledCapMin,LABOR_SETTING_RANGES,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,dailyOverThresholdOf,dailyOverMinB,externalOverThresholdOf,OT_PRORATE_WINDOWS,OT_PRORATE_WINDOW_LABELS,OT_PRORATE_FIXED_MAX_MIN,HALF_MONTH_LAST_DAY,otProrateOf,staffOtProrateOf,overtimePlanOf,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,BREAK_LENGTH_BASES,BREAK_LENGTH_BASIS_LABELS,BREAK_LENGTH_TIERS_MAX,breakLengthRuleOf,IDLE_BREAK_DAYS,IDLE_BREAK_DAY_LABELS,idleBreakOf,breakMinutesOf,breakDecisionOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,personIndexOfMirror,samePersonRegistrations,personHomeShopOf,helperPersonOf,helperShopSettingsOn,helperWorkOn,otherShopDataOf,helperShopsOf,helperScheduleContext,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,headcountAtOf,countPresentAt,headcountLabelOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,groupStaffRegs,groupStaffRegsWithPeople,PERSON_ID_RE,buildCompanyStaffRows,duplicatePersonCandidates,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,GATED_FEATURES,featureEnabled,DEFAULT_RATE_DENOMINATOR_MIN,rateDenominatorMinOf,PAY_TYPES,PAY_TYPE_LABELS,isPayTypeFixed,defaultPayTypeOf,payRateBaseYen,hourlyRateOf,fixedOtAmountOf,MIN_WAGE_MAX_ENTRIES,sanitizeWageSettings,minWageOn,minWageCheck,normalizePayVersion,withFixedOtAmount,applyPayRevision,payVersionOn,STAFF_KEYED_PRIVATE_NODES,renameStaffInPay,dropStaffFromPay,maskYen,sha256HexOfBytes,PAY_CODE_DEFAULT,PAY_CODE_RE,isValidPayCode,payCodeHash,isPayCodeRecord,verifyPayCode,payCodeIdentity,PAY_CODE_MAX_FAILS,PAY_CODE_LOCK_MS,PAY_UNLOCK_IDLE_MS,nextPayCodeLockout,payCodeWaitSec,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf,isPeriodConfirmed,isPeriodDelivered,PERIOD_STATES,PERIOD_STATE_LABELS,periodStateOf,canConfirmPeriod,PERIOD_HISTORY_KINDS,PERIOD_HISTORY_LABELS,genPeriodHistoryKey,periodHistoryEntry,withPeriodHistory,periodHistoryList,monthsOfPeriod,monthDatesOf,aggregateScheduledMonth,isMonthFullyConfirmed,laborMonthOf,isLaborMonthFrozen,isLaborMonthEdited,planPeriodConfirmation,planPeriodUnconfirm,planPeriodDelivery,LABOR_MONTH_MAX_MIN,planLaborMonthManual,parseHoursMinutes,fmtSignedMin,STAFF_KEYED_MONTH_NODES,renameStaffInLaborMonths,dropStaffFromLaborMonths,yearScheduledAverage,isClosedDateOf,fillFixedPattern};
 }

@@ -477,6 +477,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
   // 企業連携の他店舗データ（略称・提出シフト）。ヘルプ判定・重複チェックに使用
   const[companyData,setCompanyData]=useState({}); // {shopId:{name,abbrs:[],workMap:Map(name|date→shift)}}
+  // 他店舗の読み込みが終わったか。一括PDF（exportJob）は終わってから書き出す（ヘルプ先勤務の合算・P3.6 が入った値で出す）
+  const[companyDataReady,setCompanyDataReady]=useState(false);
   // 見に行く他店舗は 企業の写しの連携店舗 ∪ allLinkedShops。管理コード（Cookie）で入った端末は
   // allLinkedShops を持たないので、写しを見ないと所属店舗を設定できても重複エラーが出ない（バグチェック#150）。
   // 依存を id の文字列にするのは、写しの syncedAt が変わるたびに他店舗を読み直さないため。
@@ -488,48 +490,29 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   })();
   useEffect(()=>{
     const otherShops=JSON.parse(otherShopsKey).map(([id,name])=>({id,name}));
-    if(!firebaseDB||otherShops.length===0){setCompanyData({});return;}
+    if(!firebaseDB||otherShops.length===0){setCompanyData({});setCompanyDataReady(true);return;}
+    setCompanyDataReady(false);
     let cancelled=false;
     Promise.all(otherShops.map(os=>
       Promise.all([
-        firebaseDB.ref(`shops/${os.id}/settings/shopAbbrs`).once("value").catch(()=>null),
+        // 設定は丸ごと読む（略称・別名・所属店舗に加え、ヘルプ先勤務の合算（P3.6）が行き先の店の休憩・退勤延長で
+        // 実働を数えるため）。どれも auth != null で読める
+        firebaseDB.ref(`shops/${os.id}/settings`).once("value").catch(()=>null),
         firebaseDB.ref(`shops/${os.id}/subs`).once("value").catch(()=>null),
-        firebaseDB.ref(`shops/${os.id}/settings/staffAliases`).once("value").catch(()=>null),
-        // 所属店舗による同一人物の判定（dupTargetShopsFor）に使う。名簿と所属店舗の2つ。
+        // 所属店舗による同一人物の判定（dupTargetShopsFor）に使う名簿
         firebaseDB.ref(`shops/${os.id}/staff`).once("value").catch(()=>null),
-        firebaseDB.ref(`shops/${os.id}/settings/staffHomeShop`).once("value").catch(()=>null),
-      ]).then(([aS,sS,alS,stS,hsS])=>{
-        const abbrs=aS?Object.values(aS.val()||{}).filter(v=>typeof v==="string"):[];
-        // 別名で提出されたsubは staffName に別名がそのまま残る（registerAlias は staffAliases に
-        // 登録するだけで staffName を書き換えない）。キーを生の名前のまま持つと、参照側の
-        // dupErrors が自店舗の登録名で引いたときに必ず外れ、店舗間の勤務重複が検出されない。
-        // 他店舗自身の staffAliases で登録名へ解決してからキーにする（別名未使用の店舗では
-        // resolveAlias が入力をそのまま返すため挙動は変わらない）。
-        const otherAliases=(alS&&alS.val())||{};
-        const workMap=new Map();
-        // 出勤・退勤が両方揃ったシフトを優先（同名の部分データsubに完全データが隠されるのを防ぐ）
-        // 管理者が休み希望(y/休)を入れたセルは effShiftStart/End が "" を返す＝勤務時間なしとして扱う。
-        // 生の adjustedStart??start を読むと、休みマーク済みのセルが「両方入っている」と判定され、
-        // 実際に勤務している別subより優先されてしまう（判定を app-utils の定義に一本化する）。
-        const hasBoth=sh=>!!(effShiftStart(sh)&&effShiftEnd(sh));
-        Object.values((sS&&sS.val())||{}).forEach(sub=>{
-          if(!sub||!sub.staffName||!sub.shifts)return;
-          const resolved=resolveAlias(sub.staffName,otherAliases);
-          Object.entries(sub.shifts).forEach(([d,sh])=>{
-            if(!sh||sh.status!=="work")return;
-            const k=resolved+"|"+d;
-            const cur=workMap.get(k);
-            if(!cur||(!hasBoth(cur)&&hasBoth(sh)))workMap.set(k,sh);
-          });
-        });
-        const staffSet=new Set(Object.values((stS&&stS.val())||{}).filter(n=>typeof n==="string"&&!isSpacer(n)));
-        const homeShop=(hsS&&hsS.val())||null;
+        // 行き先の店の期間（確定・終了済みの日は写しの設定で数える＝行き先の画面と同じ実働・P3.6）
+        firebaseDB.ref(`shops/${os.id}/periods`).once("value").catch(()=>null),
+      ]).then(([seS,sS,stS,peS])=>{
+        // 形の組み立ては otherShopDataOf（app-utils.js）に一本化（企業の確定の集計も同じ関数で読む）。
+        // 別名で提出された sub は他店舗自身の staffAliases で登録名へ解決してからキーにする（参照側の dupErrors が
+        // 自店舗の登録名で引いたときに外れないように）。休み希望のセルは勤務時間なし＝両方揃ったシフトに負ける。
         // 読めなかった店舗を「データが無い」と区別できるよう印を残す（丸めて黙る箇所を増やさない。
         // 倒す向きの判断は BACKLOG「読みの失敗を『問題なし』に丸めている3箇所」のまま）
-        const loadFailed=!aS||!sS||!alS||!stS||!hsS;
-        return[os.id,{name:os.name,abbrs,workMap,staffSet,homeShop,loadFailed}];
+        return[os.id,otherShopDataOf({name:os.name,settings:seS&&seS.val(),subs:sS&&sS.val(),staff:stS&&stS.val(),periods:peS&&peS.val(),
+          loadFailed:!seS||!sS||!stS||!peS})];
       })
-    )).then(entries=>{if(!cancelled)setCompanyData(Object.fromEntries(entries));});
+    )).then(entries=>{if(!cancelled){setCompanyData(Object.fromEntries(entries));setCompanyDataReady(true);}});
     return()=>{cancelled=true;};
     // selPidは依存に入れない: この取得は期間に依存しない（workMapは名前|日付キーで全期間を保持し、
     // 参照側のdupErrors/heatDataが自分のselPid依存で再計算する）。依存に入れると期間ドロップダウンを
@@ -608,6 +591,26 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // dates / realStaff も同じ理由で参照を安定させる（上の staffList のコメント参照）。
   const dates=useMemo(()=>period?gd(period.startDate,period.endDate):[],[period]);
   const realStaff=useMemo(()=>staffList.filter(n=>!isSpacer(n)),[staffList]);
+  // ===== ヘルプ先勤務の所属店舗への合算（2026-09-30・P3.6・計画書 §3.9）=====
+  // 対象は企業の写しの連携店舗（allLinkedShops のうち企業に入れていない店舗は含めない）で、写しに法人が
+  // 焼いてあれば同じ法人の店舗だけ。読み込みは店舗間の重複判定の companyData をそのまま使う（他店の subs・staff・
+  // settings・periods は auth != null で読める＝店長のセッションでも合算できる）。
+  // 同一人物は写しの people（P1b の人物）が第1の根拠、無い人は所属店舗の一致（dupTargetShopsFor と同じ規則）。
+  const helperShops=useMemo(()=>helperShopsOf(companyLink,companyData,shopId),[companyLink,companyData,shopId]);
+  // {名前: {role:"home"|"dest"|null, home, homeName, regs, unread}}。role の無い人は載せない
+  const helperInfo=useMemo(()=>{
+    const out={};
+    if(!Object.keys(helperShops).length)return out;
+    const people=(companyLink&&companyLink.people)||null;
+    const eid=companyLink&&typeof companyLink.entityId==="string"?companyLink.entityId:null;
+    realStaff.forEach(name=>{
+      const h=helperPersonOf({shopId,name,settings,people,otherShops:helperShops,entityId:eid});
+      if(!h.role&&!h.unread)return;
+      const hs=h.home&&helperShops[h.home];
+      out[name]={...h,homeName:hs?hs.name:(((companyLink&&companyLink.shops)||{})[h.home]||"")};
+    });
+    return out;
+  },[helperShops,companyLink,shopId,settings,realStaff]);
   const spIdx=staffList.findIndex(n=>isSpacer(n));
   const hallStaff=spIdx>-1?staffList.slice(spIdx+1).filter(n=>!isSpacer(n)):[];
 
@@ -706,6 +709,26 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // workShiftByStaffDate も同様に別名フォールバックする（週間勤務時間の集計用）
   const _getWorkShift=(name,date)=>resolveSubByAlias(n=>workShiftByStaffDate.get(n+"|"+date),name,staffAliases);
   const _getAnyShift=(name,date)=>resolveSubByAlias(n=>anyShiftByStaffDate.get(n+"|"+date),name,staffAliases);
+  // 所属店舗から見た、その日の他店での勤務（P3.6）。所属店舗（role "home"）の人だけ。行き先の店の設定で引いた実働を
+  // そのまま使い、自店の勤務と時間が重なる他店の勤務は足さない（helperWorkOn）。名前×日付で1回だけ数える。
+  const helperCache=useMemo(()=>({days:new Map(),settings:new Map()}),[helperInfo,helperShops,subs,settings,todayStr]);
+  const helperEntriesOn=(name,d)=>{
+    const hi=helperInfo[name];
+    if(!hi||hi.role!=="home")return[];
+    const k=name+"|"+d;
+    if(helperCache.days.has(k))return helperCache.days.get(k);
+    const own=_getWorkShift(name,d);
+    const v=helperWorkOn({regs:hi.regs,otherShops:helperShops,date:d,todayStr,companySettings:companyLink?(companyLink.settings||null):null,
+      ownRange:own?effShiftRangeMin(own,settings):null,cache:helperCache.settings});
+    helperCache.days.set(k,v);
+    return v;
+  };
+  const helperMinOn=(name,d)=>helperEntriesOn(name,d).reduce((a,e)=>a+e.min,0);
+  // 週の休み・休暇の数え方の入口。自店が空欄（公休）でも他店で働いた日は出勤日
+  const dayKindWithHelper=(name,d,hasData)=>{
+    const k=dayRestKindOf(_getAnyShift(name,d),hasData);
+    return k==="rest"&&helperMinOn(name,d)>0?"work":k;
+  };
   // 管理者編集値(adjustedXxx)優先、なければスタッフ提出値(xxx)にフォールバック。
   // 管理者入力の休み希望(adminRest)が付いたフィールドは実効値なし=""（休みカウント・ヒートマップ・集計・表示すべて休み扱いになる）
   const fieldRest=(name,date,field)=>{const sh=_getSub(name)?.shifts?.[date];return!!(sh&&sh.adminRest&&sh.adminRest[field]);};
@@ -720,7 +743,24 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(!fieldRest(name,date,field))return "";
     return leaveCellTextOf(_getSub(name)?.shifts?.[date],field);
   };
-  const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const lv=leaveCellText(name,date,field);if(lv)return lv;const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);const fx=getStoredFixed(name,date,field)?FIXED_KEY:"";if(t)return t+n+fx;return(n+fx)||"";};
+  const ownVal=(name,date,field)=>{const lv=leaveCellText(name,date,field);if(lv)return lv;const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);const fx=getStoredFixed(name,date,field)?FIXED_KEY:"";if(t)return t+n+fx;return(n+fx)||"";};
+  // 所属店舗のグリッドに、他店で働く日を**読み取り専用**で出す（P3.6）。自店のその日が出勤・退勤とも空欄のときだけ。
+  // 出勤セル「→三17」・退勤セル「23」（行き先の略称＋時刻。列幅に「→三 17-23」が1セルで入らないので2行に分ける）。
+  // 編集は行き先の店で行う（このセルは blur しても保存しない・handleBlur）。
+  const helperCellText=(name,date,field)=>{
+    const hi=helperInfo[name];
+    if(!hi||hi.role!=="home")return"";
+    if(`${name}|${date}|start` in localEdits||`${name}|${date}|end` in localEdits)return"";
+    if(ownVal(name,date,"start")||ownVal(name,date,"end"))return"";
+    const es=helperEntriesOn(name,date);
+    if(!es.length)return"";
+    const e=es[0];
+    return field==="start"?`→${e.abbr}${toDecimal(e.start)}`:toDecimal(e.end);
+  };
+  const isHelperCell=(name,date)=>!!helperCellText(name,date,"start");
+  const helperCellTitle=(name,date)=>helperEntriesOn(name,date).map(e=>`${e.shopName}で勤務 ${e.start}〜${e.end}（実働 ${fmtMin(e.min)}）`).join("／")
+    +"。編集は勤務先の店舗のシフト作成タブで行います";
+  const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];return ownVal(name,date,field)||helperCellText(name,date,field);};
   const handleChange=(name,date,field,value)=>{if(periodConfirmed)return;setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
   // 店舗限定固定シフトコマンド（「締」等）が有効な店舗かどうか
   const fixedShiftEnabled=useMemo(()=>isFixedShiftEligibleShop(shopName),[shopName]);
@@ -910,6 +950,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       setLocalEdits(prev=>{if(!(ekey in prev))return prev;const n={...prev};delete n[ekey];return n;});
       return;
     }
+    // 他店での勤務（読み取り専用の表示・P3.6）をそのまま blur しても保存しない
+    const helperShown=helperCellText(name,date,field);
+    if(helperShown&&helperShown===String(rawValue==null?"":rawValue).trim())return;
     const{numeric,note,rest,hasFixed}=extractNote(rawValue);
     if(rest){
       const now=Date.now();
@@ -1329,8 +1372,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const getPeriodMin=(pid,name)=>{
     const p=periods.find(pp=>pp.id===pid);if(!p)return 0;
     const sub=_getSubForPeriod(pid,name); // 日ループの外で1回だけ引く。別名提出者も解決する
-    if(!sub)return 0;
-    return gd(p.startDate,p.endDate).reduce((acc,d)=>{const sh=sub.shifts?.[d];return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh),settings):0);},0);
+    // 他店での勤務（P3.6）は自店の提出が無い期間でも足す
+    return gd(p.startDate,p.endDate).reduce((acc,d)=>{const sh=sub&&sub.shifts?.[d];return acc+(sh&&sh.status==="work"?calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh),settings):0)+helperMinOn(name,d);},0);
   };
 
   // 週間勤務時間（前の期間を跨ぐ）
@@ -1342,14 +1385,15 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     return[...wkSet].sort();
   })();
   const getWeekMin=(monStr,name)=>{
-    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sh=_getWorkShift(name,ds);if(sh)tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh),settings);}
+    let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sh=_getWorkShift(name,ds);if(sh)tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh),settings);tot+=helperMinOn(name,ds);}
     return tot;
   };
 
   // ===== 労務判定（S-4・第1弾ぶん）=====
   // その日の実働（分）。集計表・週集計とまったく同じ入口（_getWorkShift → calcNetWorkMinutes）を通す
   // ＝同じ日について労務判定と集計表が違う数字を出すことがない。
-  const laborDayMin=(name,ds)=>{const sh=_getWorkShift(name,ds);return sh?calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh),settings):0;};
+  // 他店での勤務（P3.6・所属店舗の人だけ）を足した値。月計・週計・労務判定・laborTotals・laborMonths が同じ入口を通る
+  const laborDayMin=(name,ds)=>{const sh=_getWorkShift(name,ds);return(sh?calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh),settings):0)+helperMinOn(name,ds);};
   // 月の枠と、その月の全日。**按分・目安・上限の単位は暦月**だが Shifty の期間は半月のことがあるので、
   // 「選択中の期間の startDate と同じ年月の全日」を月として集計する。
   const laborFrame=useMemo(()=>period?laborMonthFrame(settings,period.startDate):null,[settings,period]);
@@ -1410,13 +1454,13 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         const kinds=[];
         for(let i=0;i<7;i++){
           const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);
-          kinds.push(dayRestKindOf(_getAnyShift(name,ds),laborDayHasData(ds)));
+          kinds.push(dayKindWithHelper(name,ds,laborDayHasData(ds)));
         }
         return weekRestStateOf(kinds);
       });
     });
     return out;
-  },[isPremium,realStaff,weeks,subs,heatEdits,laborDayHasData,selPid]);
+  },[isPremium,realStaff,weeks,subs,heatEdits,laborDayHasData,selPid,helperCache]);
 
   // 年度の区切り（既定4月。設定で暦年にできる）。
   const fyStart=useMemo(()=>fiscalYearStartMonthOf(settings),[settings]);
@@ -1439,16 +1483,17 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const ds=gd(pp.startDate,pp.endDate);
     // **空欄も公休として数える**（2026-09-26 ユーザー指示）。以前は「出勤も休暇も1日も無い期間」を
     // 0に倒していたが、空欄が公休である以上その期間はまるごと公休で、0ではない。
-    const kinds=ds.map(d=>dayRestKindOf(_getAnyShift(name,d),true));
+    const kinds=ds.map(d=>dayKindWithHelper(name,d,true));
     ds.forEach((d,i)=>{
       const sh=_getWorkShift(name,d);
       if(sh)workMin+=calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh),settings);
+      workMin+=helperMinOn(name,d); // 他店での勤務（P3.6）
       const hd=leaveHalfDaysOf(_getAnyShift(name,d));
       paid+=hd.paid;ceremony+=hd.ceremony;
       if(!hd.paid&&!hd.ceremony&&kinds[i]==="rest")publicOff++;
     });
     return{workMin,paid,publicOff,ceremony};
-  },[settings,subs,pastSubsLoaded,staffAliases,anyShiftByStaffDate,workShiftByStaffDate,periodSettingsCache,period]);
+  },[settings,subs,pastSubsLoaded,staffAliases,anyShiftByStaffDate,workShiftByStaffDate,periodSettingsCache,period,helperCache]);
 
   // 年単位の36協定判定で、凍結値を持たない月の残業予定をその場で数える関数を返す。
   // 月の全日が読めていないときは null（＝yearOvertimeMonths が missingMonths に積む）。
@@ -1460,7 +1505,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // 按分窓（属性の otProrate・P3.5b）を画面と同じ overtimePlanOf で通す（年の36協定と画面の月の残業予定を揃える）
     return overtimePlanOf({dates:days,dayMins:days.map(d=>laborDayMin(name,d)),baseMin:laborMonthFrame(settings,ym).baseMin,
       prorate:staffOtProrateOf(settings,name)}).monthOtH;
-  },[settings,subs,laborDayHasData,staffAliases,workShiftByStaffDate]);
+  },[settings,subs,laborDayHasData,staffAliases,workShiftByStaffDate,helperCache]);
 
   // スタッフ1人ぶんの労務の集計。日次の件数は**選択中の期間の日**、月単位の判定は**暦月**で数える
   // （利用者が今そこで直せる範囲＝期間、法令・協定の単位＝月）。
@@ -1472,6 +1517,14 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const agYear=ls.agreementAnnualOtMin/60;
     const monthIdx={};laborMonthDays.forEach((d,i)=>{monthIdx[d]=i;});
     realStaff.forEach(name=>{
+      // 所属店舗が別の連携店舗にある人（P3.6）は所属店舗で合算して判定する。この店舗では判定せず、
+      // 凍結値（laborTotals）にも入れない（同じ時間を2店舗で数えない。有給残と同じ「所属店舗に1本化」）
+      const hi=helperInfo[name];
+      if(hi&&hi.role==="dest"){
+        out[name]={dest:true,homeName:hi.homeName,sys:"none",monthWorkMin:0,findings:[],dayFindings:[],guide:{key:"none",label:"",color:null},
+          overall:{key:"dest",label:"所属店舗で判定"},monthCovered:laborMonthCovered,paidRemain:null,year:null};
+        return;
+      }
       const sys=laborSystemForStaff(settings,name);
       const monthMins=laborMonthDays.map(d=>laborDayMin(name,d));
       const monthWorkMin=monthMins.reduce((a,b)=>a+b,0);
@@ -1500,7 +1553,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const teDates=dates.filter(d=>!!timeErrors[`${name}|${d}`]);
       // **該当日をラベルに出す**（2026-09-26 ユーザー指示）。日に帰属する判定はすべて対象で、
       // 特にセル色を付けない判定（4h未満・休憩不足）は日付が無いと画面から辿れない。
-      const bsDates=dates.filter(d=>{const sh=_getWorkShift(name,d);return !!sh&&isBreakShort(sh,settings,d,name);});
+      // 他店での勤務の休憩不足は行き先の店の設定で判定した結果（P3.6・helperWorkOn）
+      const bsDates=dates.filter(d=>{const sh=_getWorkShift(name,d);return(!!sh&&isBreakShort(sh,settings,d,name))||helperEntriesOn(name,d).some(e=>e.breakShort);});
       const weekNoRest=(weekRestByStaff[name]||[]).some(w=>w&&w.key==="none");
       const findings=laborFindingsFor({laborSystem:sys,dayMins,dayDates:dates,weekDayMins:weekMins,weekDates:weeks,
         timeErrorDates:teDates,breakShortDates:bsDates,
@@ -1524,7 +1578,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const overall=overallVerdictOf({laborSystem:sys,findings,guideKey:guide.key,weekNoRest,monthReady:laborMonthCovered});
       // この期間の休暇日数。**シフト表の空欄は公休**（2026-09-26 ユーザー指示）なので、
       // 1日も出勤が無い人もその期間ぶんが丸ごと公休になる（以前はここを0に倒していた）。
-      const kinds=dates.map(d=>dayRestKindOf(_getAnyShift(name,d),true));
+      const kinds=dates.map(d=>dayKindWithHelper(name,d,true));
       let paidD=0,pubD=0,ceD=0;
       // 有給・慶弔は**半日＝0.5日**で数える。公休は日単位（無記入の日も含む）。
       dates.forEach((d,i)=>{
@@ -1541,7 +1595,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,otWindow:otPlan&&otPlan.fixed?otPlan.window:null,dayOverB,
         monthCovered:laborMonthCovered,yearOt,findings,guide,overall,weekNoRest,dayFindings,
         periodLeave:{paid:paidD,publicOff:pubD,ceremony:ceD},year:yr,
-        paidRemain:yr?paidLeaveRemaining(settings,name,yr.paid):null};
+        paidRemain:yr?paidLeaveRemaining(settings,name,yr.paid):null,
+        // 他店の勤務を読めていない（合算値が足りない）。表は「＋」と注記を出す（P3.6）
+        helperUnread:!!(hi&&hi.unread),helperShopNames:hi&&hi.role==="home"?[...new Set(hi.regs.map(r=>(helperShops[r.shopId]||{}).name||r.shopId))]:[]};
       // この期間ぶんの合計（凍結時に periods へ残す値）。上の useEffect が書く。
       const pm=dates.reduce((a,d)=>a+laborDayMin(name,d),0);
       // 月の残業予定は**その月の最後の期間にだけ**残す（半月運用で年度集計が2重にならない）。
@@ -1554,7 +1610,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     });
     laborTotalsRef.current=totals;
     return out;
-  },[isPremium,period,laborFrame,laborMonthDays,laborMonthCovered,laborIsLastOfMonth,laborPendingReason,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart,liveMonthOtFor,liveTotalFor]);
+  },[isPremium,period,laborFrame,laborMonthDays,laborMonthCovered,laborIsLastOfMonth,laborPendingReason,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart,liveMonthOtFor,liveTotalFor,helperInfo,helperCache]);
 
   // 期間が生きている間はシフト作成タブを開くたびに写しと労務の合計を最新化し、最終日を超えたら
   // 更新を止める＝そこで凍結。「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、
@@ -2211,6 +2267,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             h+=showSpacerDate?mergeTd(day,top):`<td style="border:${BDp};"></td>`;
             return;
           }
+          // 他店での勤務（読み取り専用・P3.6）。画面と同じく自店が空欄の日だけ、灰色の斜体で出す
+          const hx=helperCellText(nm,ds,field);
+          if(hx){h+=`<td data-helper="1" style="border:${BDp};padding:1px;text-align:center;color:#888;font-style:italic;height:15px;white-space:nowrap;">${esc(hx)}</td>`;return;}
           if(!pdfHasSub(nm,ds)){h+=`<td style="border:${BDp};"></td>`;return;}
           const sh=_getSub(nm)?.shifts?.[ds];
           const r=pdfResolve(nm,ds,field);
@@ -2309,7 +2368,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const[lmOpen,setLmOpen]=useState(false);
   const[lmDraft,setLmDraft]=useState({});
   useEffect(()=>{setLmDraft({});},[lmYm,shopId]);
-  const lmAuto=useMemo(()=>(isPremium&&lmOpen&&lmYm)?aggregateScheduledMonth({subs,names:realStaff,settings,ym:lmYm}):{},[isPremium,lmOpen,lmYm,subs,realStaff,settings]);
+  // 自動集計も他店での勤務（P3.6）を足した値。行き先の店で所属店舗で判定する人は数えない
+  const lmAuto=useMemo(()=>(isPremium&&lmOpen&&lmYm)?aggregateScheduledMonth({subs,names:realStaff,settings,ym:lmYm,
+    extraDayMin:helperMinOn,excludeNames:Object.keys(helperInfo).filter(n=>helperInfo[n].role==="dest")}):{},[isPremium,lmOpen,lmYm,subs,realStaff,settings,helperInfo,helperCache]);
   const saveLmRow=name=>{
     const rec=laborMonthOf(lm.map,lmYm,name);const a=lmAuto[name]||{days:0,min:0};
     const d=lmDraft[name]||{};
@@ -2328,8 +2389,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // 月が埋まっていない間も実数を出すが、**途中であることを `＋` で明示する**
       // （以前は印が無く、半月ぶんの合計が月の合計に見えた）。
       const t=fmtMin(l.monthWorkMin);
-      return l.monthCovered?{label:t,title:`月の実働 ${t}`}
-        :{label:`＋${t}`,color:"var(--c-text3)",title:`データのある日だけの合計 ${t}／${laborPendingReason}`};}},
+      // 他店での勤務（P3.6）を足した値。読めていない他店があれば途中の値として「＋」を付ける
+      const hs=l.helperShopNames&&l.helperShopNames.length?`（${l.helperShopNames.join("・")}での勤務を含む）`:"";
+      if(l.helperUnread)return{label:`＋${t}`,color:"var(--c-text3)",title:`他店の勤務を読み込めていません。合計 ${t}${hs}は他店の分が足りない途中の値です`};
+      return l.monthCovered?{label:t,title:`月の実働 ${t}${hs}`}
+        :{label:`＋${t}`,color:"var(--c-text3)",title:`データのある日だけの合計 ${t}${hs}／${laborPendingReason}`};}},
     {id:"labor_sched",label:"月所定/上限",getText:name=>{const l=laborByStaff[name];const cap=schedCapOf();
       if(!l||l.sys==="none"||!cap)return{};
       const rec=laborMonthOf(lm.map,lmYm,name);
@@ -2393,6 +2457,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       return{label:`${l.paidRemain}日`,color:l.paidRemain<0?"#e53935":"var(--c-text2)",bold:l.paidRemain<0,
         title:`付与 ${(settings.paidLeaveGranted||{})[name]}日 − ${fiscalYearLabel(fy,fyStart)}の消化 ${l.year?l.year.paid:0}日`};}},
     {id:"labor_verdict",label:"総括",_bg:"rgba(248,112,54,0.05)",getText:name=>{const l=laborByStaff[name];if(!l)return{};
+      // 所属店舗が別の連携店舗にある人（P3.6）。この店舗の勤務は所属店舗で合算して判定する
+      if(l.dest)return{label:"所属店舗で判定",color:"var(--c-text3)",
+        title:`${l.homeName||"所属店舗"}で、この店舗での勤務を合算して判定します（この店舗の集計には含めません）`};
+      if(l.helperUnread)return{label:(String(l.overall.label).startsWith("＋")?"":"＋")+l.overall.label,color:"var(--c-text3)",
+        title:`他店の勤務を読み込めていません。判定は他店の分が足りない途中の値です${(l.findings||[]).length?"／"+(l.findings||[]).map(f=>f.label).join("、"):""}`};
       const c=l.overall.key==="fix"?"#e53935":l.overall.key==="under_guide"?"#B8860B":l.overall.key==="ot"?"#3B82F6":l.overall.key==="ok_partial"?"var(--c-text3)":"var(--c-text2)";
       // ＋OK は「日・週の判定では問題なし。月の判定は月が埋まってから」。理由を title に出す。
       const ft=(l.findings||[]).map(f=>f.label).join("、");
@@ -2559,7 +2628,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 結果を onDone(null | Error) で返す。キーで重複実行を防ぐ（再レンダーで二重に書き出さない）。
   const exportJobDoneRef=useRef(null);
   useEffect(()=>{
-    if(!exportJob||!period||exportJobDoneRef.current===exportJob.key)return;
+    if(!exportJob||!period||!companyDataReady||exportJobDoneRef.current===exportJob.key)return;
     const t=setTimeout(()=>{
       if(exportJobDoneRef.current===exportJob.key)return;
       exportJobDoneRef.current=exportJob.key;
@@ -2567,7 +2636,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         .then(()=>exportJob.onDone(null),e=>exportJob.onDone(e||new Error("PDF生成失敗")));
     },300);
     return()=>clearTimeout(t);
-  },[exportJob,period]);
+  },[exportJob,period,companyDataReady]);
 
   // 「過去データ読込」は労務判定の見出しの右に置く（2026-09-26 ユーザー指示）。年計・有給残が
   // 購読窓の外の期間を読めていないときに押すボタンなので、その表のそばに置く。
@@ -2632,7 +2701,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const pid=period.id;
     setTimeout(()=>{
       const cur=periods.find(p=>p&&p.id===pid);
-      const r=planPeriodConfirmation({period:cur,periods,subs:subsRef.current,staffList:staffListProp,settings:settingsProp,laborMonths:lm.map,todayStr,uid:curUid()});
+      // 所属店舗の所定は他店での勤務を足した値、行き先の店では所属店舗で判定する人を数えない（P3.6）。
+      // 企業の確定（企業連携タブ）と同じ helperScheduleContext を通す
+      const hctx=helperScheduleContext({shopId,names:rosterStaffList,settings,companyLink,otherShops:helperShops,subs:subsRef.current,todayStr});
+      const r=planPeriodConfirmation({period:cur,periods,subs:subsRef.current,staffList:staffListProp,settings:settingsProp,laborMonths:lm.map,todayStr,uid:curUid(),
+        extraDayMin:hctx.dayMin,excludeNames:hctx.excludeNames});
       if(r.error){tt("✕ "+r.error);return;}
       savePeriods(periods.map(p=>p&&p.id===pid?r.period:p));
       lm.save(r.laborMonthsPatch).catch(()=>{});
@@ -2879,19 +2952,20 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                       {mapGridCols(name=>(
                         <td key={name} style={{padding:0,boxSizing:BOXS,borderLeft:BD,borderBottom:"none",textAlign:"center",background:rbS(name),width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
-                            title={laborErrTitle(name,date)||undefined}
-                            readOnly={!canEditCells}
+                            title={laborErrTitle(name,date)||(isHelperCell(name,date)?helperCellTitle(name,date):undefined)}
+                            data-helper={isHelperCell(name,date)?"1":undefined}
+                            readOnly={!canEditCells||isHelperCell(name,date)}
                             data-sc={`${date}|start`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"start",e.target.value)}
-                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(canEditCells&&e.detail===3)onCellTripleClick(name,date);}}
-                            onTouchEnd={()=>{if(!canEditCells)return;onCellTripleTap(name,date);}}
+                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(canEditCells&&e.detail===3&&!isHelperCell(name,date))onCellTripleClick(name,date);}}
+                            onTouchEnd={()=>{if(!canEditCells||isHelperCell(name,date))return;onCellTripleTap(name,date);}}
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|start`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);setFocusKey(null);}}
                             // 日本語IME変換確定のEnter(isComposing/keyCode229)はセル確定・フォーカス移動として扱わない。
                             // 除外しないと変換確定のEnterで即座に次セルへ移動し、IMEの確定処理がそのまま次セルに入って
                             // 手打ちしていないセルにも同じ文字（例:「締」）が入ってしまう
                             onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"start",e.target.value);if(e.ctrlKey||e.metaKey){const pdi=dates.indexOf(date)-1;if(pdi>=0)document.querySelector(`[data-sc="${dates[pdi]}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"start"),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:canEditCells?"text":(isPremium?"default":"pointer")}}/>
+                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"start"),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:canEditCells?"text":(isPremium?"default":"pointer"),...(isHelperCell(name,date)?{color:"var(--c-text3)",fontStyle:"italic",cursor:"default"}:{})}}/>
                         </td>
                       ),spacerCell)}
                       {/* 右端の日付（全表示のみ）。左端と同じ rowSpan=2 で出勤行に置く */}
@@ -2901,16 +2975,17 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                       {mapGridCols(name=>(
                         <td key={name} style={{padding:0,boxSizing:BOXS,borderLeft:BD,borderBottom:BD,textAlign:"center",background:rbE(name),width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
-                            title={laborErrTitle(name,date)||undefined}
-                            readOnly={!canEditCells}
+                            title={laborErrTitle(name,date)||(isHelperCell(name,date)?helperCellTitle(name,date):undefined)}
+                            data-helper={isHelperCell(name,date)?"1":undefined}
+                            readOnly={!canEditCells||isHelperCell(name,date)}
                             data-sc={`${date}|end`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"end",e.target.value)}
-                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(canEditCells&&e.detail===3)onCellTripleClick(name,date);}}
-                            onTouchEnd={()=>{if(!canEditCells)return;onCellTripleTap(name,date);}}
+                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(canEditCells&&e.detail===3&&!isHelperCell(name,date))onCellTripleClick(name,date);}}
+                            onTouchEnd={()=>{if(!canEditCells||isHelperCell(name,date))return;onCellTripleTap(name,date);}}
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"end"),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:canEditCells?"text":(isPremium?"default":"pointer")}}/>
+                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"end"),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:canEditCells?"text":(isPremium?"default":"pointer"),...(isHelperCell(name,date)?{color:"var(--c-text3)",fontStyle:"italic",cursor:"default"}:{})}}/>
                         </td>
                       ),spacerCell)}
                     </tr>
