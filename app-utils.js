@@ -3536,7 +3536,296 @@ function fillFixedPattern(o){
   return{subs:newSubs,filled,dates:targetDates.length};
 }
 
+// ===== 実績（2026-09-30・P4・計画書 §3.6・§4.1）=====
+// shops/{sid}/actuals/{periodId}/{名前}/{YYYY-MM-DD} = {start?, end?, breakMin?, absent?, absentMin?, legalHoliday?, note?}。
+// **確定シフトと違う項目だけを持つ**（未入力の日・項目は確定シフト＝実績とみなす）。subs には書かない
+// （スタッフの提出で消えない・確定ロックと独立に書ける・打刻 CSV の取込に差し替えやすい）。読み書きはオーナーのみ。
+// 以後の割増計算（P5）は resolveActualDay の戻り値だけを入力にする。
+const ACTUAL_FIELDS=["start","end","breakMin","absent","absentMin","legalHoliday","note"];
+const ACTUAL_NOTE_MAX=200;
+const ACTUAL_MIN_MAX=24*60;
+const ACTUAL_CLOCK_MAX=30*60; // 30:00（翌6:00）まで。シフト作成タブのセル（parseTime）と同じ上限
+function _clockToMin(t){
+  const m=/^(\d{1,2}):([0-5]\d)$/.exec(String(t==null?"":t).trim());
+  if(!m)return null;
+  const v=Number(m[1])*60+Number(m[2]);
+  return v<=ACTUAL_CLOCK_MAX?v:null;
+}
+function minToClock(min){
+  if(min==null||min==="")return""; // Number(null)=0 を 00:00 にしない
+  const n=Number(min);
+  if(!Number.isFinite(n)||n<0)return"";
+  const r=Math.round(n);
+  return`${String(Math.floor(r/60)).padStart(2,"0")}:${String(r%60).padStart(2,"0")}`;
+}
+// 時刻の入力（シフト作成タブのセルと同じ読み方）: "9" → 09:00、"930" → 09:30、"9:30"、"9.5" → 09:30、"25" → 25:00。
+// 読めなければ ""（空欄も ""）
+function parseClockInput(v){
+  const s=String(v==null?"":v).trim();
+  if(!s)return"";
+  const ok=(h,m)=>h>=0&&h<=30&&m>=0&&m<60&&h*60+m<=ACTUAL_CLOCK_MAX;
+  const out=(h,m)=>`${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
+  let m=/^(\d{1,2})[:：](\d{2})$/.exec(s);
+  if(m){const h=Number(m[1]),mi=Number(m[2]);return ok(h,mi)?out(h,mi):"";}
+  if(/^\d+\.\d+$/.test(s)){const n=parseFloat(s);const h=Math.floor(n);const mi=Math.round((n-h)*60);return ok(h,mi)?out(h,mi):"";}
+  if(/^\d+$/.test(s)){
+    const n=parseInt(s,10);
+    if(s.length<=2)return ok(n,0)?out(n,0):"";
+    const h=Math.floor(n/100),mi=n%100;return ok(h,mi)?out(h,mi):"";
+  }
+  return"";
+}
+// 分の入力（休憩・遅刻早退）: "60" → 60、"1:00" → 60。空欄は null、読めなければ NaN
+function parseMinutesInput(v){
+  const s=String(v==null?"":v).trim();
+  if(!s)return null;
+  if(/^\d{1,4}$/.test(s))return Number(s);
+  const m=/^(\d{1,2})[:：]([0-5]\d)$/.exec(s);
+  return m?Number(m[1])*60+Number(m[2]):NaN;
+}
+// 確定シフトのその日（§4.1 の scheduledDay）。シフト作成タブの月実働（laborDayMin）・人×月の所定（aggregateScheduledMonth）と
+// 同じ経路で数える: calcNetWorkMinutes（getBreaksFor の休憩控除・退勤延長・片側セルの補完・締の追加出勤を含む）。
+// endMin は退勤延長を足した後の退勤（実績の初期値として見せる値）。breakMin は主シフトから実際に引いた休憩。
+// settings はその期間の設定（確定済みなら写し）を渡す。staffName を省くと sub.staffName（別名のことがある）。
+function scheduledDay(sub,date,settings,staffName){
+  const st=settings||{};
+  const name=staffName||(sub&&sub.staffName)||"";
+  const sh=sub&&sub.shifts?sub.shifts[date]:null;
+  const out={startMin:null,endMin:null,breakMin:0,workMin:0,extraMin:0,isRest:true,segments:[]};
+  if(!sh||sh.status!=="work")return out;
+  const rng=effShiftRangeMin(sh,st);
+  const ot=getOT(name,st,sh);
+  const work=calcNetWorkMinutes(sh,getBreaksFor(st,date,name,sh),ot,st);
+  if(rng){
+    out.startMin=rng.startMin;out.endMin=rng.endMin+(ot>0?ot:0);
+    out.segments.push({startMin:out.startMin,endMin:out.endMin});
+  }
+  if(sh.extraStart&&sh.extraEnd){
+    const es=_clockToMin(sh.extraStart),ee=_clockToMin(sh.extraEnd);
+    if(es!=null&&ee!=null&&ee>es){out.extraMin=ee-es;out.segments.push({startMin:es,endMin:ee,extra:true});}
+  }
+  out.workMin=work;
+  out.breakMin=Math.max(0,(rng?out.endMin-out.startMin:0)+out.extraMin-work);
+  out.isRest=work<=0;
+  return out;
+}
+// 実績の1日（§4.1 の resolveActualDay）。実績 = actual ?? 確定シフト。
+//  - 実績が無い日・項目は確定シフトの値（未入力＝確定シフトが実績）
+//  - start/end は主シフトを置き換える。**退勤延長は足さない**（入れた退勤が実際の退勤）。「締」の追加出勤は確定シフトのまま足す
+//  - 休憩は breakMin があればそれ、無ければ確定シフトと同じ getBreaksFor の経路（時刻が変わった日は変わった時刻で判定し直す）
+//  - absent（欠勤）は実働0・不就労＝確定シフトの実働（absentMin で上書き可）。absentMin（遅刻・早退の不就労分）は
+//    賃金の控除（P6b）に使う値で、実働（workMin）からは引かない（時刻を直せば実働に反映される）
+//  - legalHoliday は手動のフラグだけを返す（既定の自動判定＝週に休日が無いときの最後の勤務日は P5 の legalHolidayOf）
+function resolveActualDay(sub,actual,date,settings,staffName){
+  const st=settings||{};
+  const name=staffName||(sub&&sub.staffName)||"";
+  const sched=scheduledDay(sub,date,st,name);
+  const a=_isPlainObj(actual)?actual:null;
+  const hasActual=!!a&&ACTUAL_FIELDS.some(k=>a[k]!=null&&a[k]!==false&&a[k]!=="");
+  const legal=!!(a&&a.legalHoliday===true);
+  const numOr=(v,d)=>{const n=Number(v);return v!=null&&v!==""&&Number.isFinite(n)&&n>=0?Math.round(n):d;};
+  const base={scheduledWorkMin:sched.workMin,hasActual,note:a&&typeof a.note==="string"?a.note:""};
+  if(!a)return{...base,startMin:sched.startMin,endMin:sched.endMin,breakMin:sched.breakMin,workMin:sched.workMin,
+    absentMin:0,isRest:sched.isRest,isLegalHoliday:false,absent:false,segments:sched.segments};
+  if(a.absent===true){
+    return{...base,startMin:null,endMin:null,breakMin:0,workMin:0,absentMin:numOr(a.absentMin,sched.workMin),
+      isRest:false,isLegalHoliday:false,absent:true,segments:[]};
+  }
+  const absentMin=numOr(a.absentMin,0);
+  const as=a.start!=null&&a.start!==""?_clockToMin(a.start):null;
+  const ae=a.end!=null&&a.end!==""?_clockToMin(a.end):null;
+  const brkGiven=a.breakMin!=null&&a.breakMin!==""&&Number.isFinite(Number(a.breakMin));
+  const extraSeg=sched.segments.filter(sg=>sg.extra);
+  let startMin=sched.startMin,endMin=sched.endMin,breakMin=sched.breakMin,mainWork=sched.workMin-sched.extraMin;
+  if(as!=null||ae!=null){
+    startMin=as!=null?as:sched.startMin;endMin=ae!=null?ae:sched.endMin;
+    if(startMin==null||endMin==null||endMin<=startMin){
+      startMin=null;endMin=null;breakMin=0;mainWork=0;
+    }else if(brkGiven){
+      breakMin=Math.min(Math.max(0,Math.round(Number(a.breakMin))),endMin-startMin);mainWork=endMin-startMin-breakMin;
+    }else{
+      // 変わった時刻で休憩を判定し直す（確定シフトと同じ getBreaksFor の経路）。退勤延長は足さない
+      const sh=(sub&&sub.shifts&&sub.shifts[date])||{};
+      const synth={...sh,status:"work",adjustedStart:minToClock(startMin),adjustedEnd:minToClock(endMin)};
+      delete synth.adminRest;delete synth.extraStart;delete synth.extraEnd;
+      const stNoOt=st.overtimeSettings?{...st,overtimeSettings:undefined}:st;
+      mainWork=calcNetWorkMinutes(synth,getBreaksFor(stNoOt,date,name,synth),0,stNoOt);
+      breakMin=Math.max(0,endMin-startMin-mainWork);
+    }
+  }else if(brkGiven&&startMin!=null&&endMin!=null){
+    breakMin=Math.min(Math.max(0,Math.round(Number(a.breakMin))),endMin-startMin);mainWork=endMin-startMin-breakMin;
+  }
+  const segments=[...(startMin!=null?[{startMin,endMin}]:[]),...extraSeg];
+  const workMin=Math.max(0,mainWork)+sched.extraMin;
+  return{...base,startMin,endMin,breakMin,workMin,absentMin,isRest:workMin<=0,isLegalHoliday:legal,absent:false,segments};
+}
+// 実績の入力1件を、確定シフトと違う項目だけの記録にする。patch は shops/{sid}/actuals への update 用
+// （{"期間ID/名前/日付": 記録 | null}。null＝確定シフトに戻す）。入力: entry={start?,end?,breakMin?,absent?,absentMin?,legalHoliday?,note?}
+// （start/end は入力の文字列のまま・空欄は確定シフトの値、breakMin/absentMin は数値か入力の文字列）。
+function planActualEdit(o){
+  const x=o||{};
+  const pid=String(x.periodId||""),name=x.name,date=String(x.date||"");
+  if(!pid||firebaseKeyForbiddenChars(pid).length)return{error:"期間が正しくありません"};
+  if(!name||typeof name!=="string"||firebaseKeyForbiddenChars(name).length)return{error:"名前が正しくありません"};
+  if(!isValidDateStr(date))return{error:"日付が正しくありません"};
+  const key=`${pid}/${name}/${date}`;
+  const e=x.entry;
+  if(e==null)return{patch:{[key]:null},record:null};
+  const st=x.settings||{};
+  const sched=scheduledDay(x.sub,date,st,name);
+  const note=typeof e.note==="string"?e.note.trim():"";
+  if(note.length>ACTUAL_NOTE_MAX)return{error:`メモは${ACTUAL_NOTE_MAX}文字までです`};
+  const readMin=(v,label)=>{
+    const n=typeof v==="number"?v:parseMinutesInput(v);
+    if(n==null)return{v:null};
+    if(!Number.isInteger(n)||n<0||n>ACTUAL_MIN_MAX)return{error:`${label}は0〜${ACTUAL_MIN_MAX}分の整数にしてください`};
+    return{v:n};
+  };
+  const ab=readMin(e.absentMin,"遅刻・早退");
+  if(ab.error)return{error:ab.error};
+  const rec={};
+  if(e.absent===true){
+    if(sched.workMin<=0)return{error:"予定の無い日は欠勤にできません"};
+    rec.absent=true;
+    if(ab.v!=null&&ab.v!==sched.workMin)rec.absentMin=ab.v;
+    if(note)rec.note=note;
+    return{patch:{[key]:rec},record:rec};
+  }
+  const readClock=(v,label)=>{
+    if(v==null||String(v).trim()==="")return{v:null};
+    const c=parseClockInput(v);
+    return c?{v:c}:{error:`${label}の時刻が読めません（例: 9:30・25:00）`};
+  };
+  const sT=readClock(e.start,"出勤"),eT=readClock(e.end,"退勤");
+  if(sT.error)return{error:sT.error};
+  if(eT.error)return{error:eT.error};
+  const sMin=sT.v!=null?_clockToMin(sT.v):sched.startMin,eMin=eT.v!=null?_clockToMin(eT.v):sched.endMin;
+  if((sT.v!=null||eT.v!=null)&&(sMin==null||eMin==null))return{error:"予定の無い日は出勤と退勤の両方を入れてください"};
+  if(sMin!=null&&eMin!=null&&eMin<=sMin)return{error:"退勤は出勤より後にしてください（深夜は 25:00 のように入力します）"};
+  if(sT.v!=null&&_clockToMin(sT.v)!==sched.startMin)rec.start=sT.v;
+  if(eT.v!=null&&_clockToMin(eT.v)!==sched.endMin)rec.end=eT.v;
+  const bk=readMin(e.breakMin,"休憩");
+  if(bk.error)return{error:bk.error};
+  if(bk.v!=null){
+    if(sMin==null||eMin==null)return{error:"勤務の無い日に休憩は入れられません"};
+    if(bk.v>=eMin-sMin)return{error:"休憩が勤務時間以上になっています"};
+    // 自動で決まる休憩と同じ値なら持たない（確定シフトと同じ経路で決まる値＝差分ではない）
+    const auto=resolveActualDay(x.sub,{...rec},date,st,name);
+    if(bk.v!==auto.breakMin)rec.breakMin=bk.v;
+  }
+  if(ab.v)rec.absentMin=ab.v;
+  if(e.legalHoliday===true)rec.legalHoliday=true;
+  if(note)rec.note=note;
+  const has=Object.keys(rec).length>0;
+  return{patch:{[key]:has?rec:null},record:has?rec:null};
+}
+function actualOf(actuals,periodId,name,date){
+  const p=_isPlainObj(actuals)?actuals[periodId]:null;
+  const n=_isPlainObj(p)?p[name]:null;
+  const r=_isPlainObj(n)?n[date]:null;
+  return _isPlainObj(r)?r:null;
+}
+// スタッフ名キーの期間別ノード（shops/{sid}/actuals/{期間ID}/{名前}）。STAFF_KEYED_MONTH_NODES の隣の一覧。
+// 改名は renameStaffInActuals、削除は dropStaffFromActuals を通す。CF の改名（companyRenameStaff）も同じ規則（テストが照合する）
+const STAFF_KEYED_PERIOD_NODES=["actuals"];
+function renameStaffInActuals(actuals,oldName,newName){
+  const ac=_isPlainObj(actuals)?actuals:{};
+  if(!oldName||!newName||oldName===newName)return null;
+  const out={};
+  Object.keys(ac).forEach(pid=>{const m=ac[pid];if(_isPlainObj(m)&&m[oldName]!=null){out[`${pid}/${newName}`]=m[oldName];out[`${pid}/${oldName}`]=null;}});
+  return Object.keys(out).length?out:null;
+}
+function dropStaffFromActuals(actuals,names){
+  const ac=_isPlainObj(actuals)?actuals:{};
+  const out={};
+  Object.keys(ac).forEach(pid=>{const m=ac[pid];if(!_isPlainObj(m))return;(names||[]).forEach(n=>{if(n&&m[n]!=null)out[`${pid}/${n}`]=null;});});
+  return Object.keys(out).length?out:null;
+}
+// ===== 実績の CSV 取込（P4 後半）=====
+// 打刻機の形式は未確定なので、列の位置（1始まり・0=使わない）と見出し行の有無を店舗設定 settings.actualsCsv に持つ。
+// 1行＝1人1日（日付・名前・出勤・退勤・休憩）。名前は別名解決（resolveAlias）を通す。取り込む先は選択中の期間だけ。
+const ACTUALS_CSV_FIELDS=["date","name","start","end","breakMin"];
+const ACTUALS_CSV_FIELD_LABELS={date:"日付",name:"名前",start:"出勤",end:"退勤",breakMin:"休憩（分）"};
+const DEFAULT_ACTUALS_CSV_MAPPING={hasHeader:true,date:1,name:2,start:3,end:4,breakMin:5};
+function actualsCsvMappingOf(settings){
+  const raw=(settings&&settings.actualsCsv)||{};
+  const out={hasHeader:raw.hasHeader===undefined?DEFAULT_ACTUALS_CSV_MAPPING.hasHeader:raw.hasHeader===true};
+  ACTUALS_CSV_FIELDS.forEach(f=>{const n=Number(raw[f]);out[f]=Number.isInteger(n)&&n>=0&&n<=50?n:DEFAULT_ACTUALS_CSV_MAPPING[f];});
+  return out;
+}
+// CSV の行と列（引用符・"" のエスケープ・CRLF・先頭の BOM に対応。区切りはカンマかタブ＝1行目に多い方）
+function parseCsvRows(text){
+  const s=String(text==null?"":text).replace(/^﻿/,"");
+  const first=s.split(/\r?\n/)[0]||"";
+  const sep=(first.split("\t").length>first.split(",").length)?"\t":",";
+  const rows=[];let row=[],cur="",q=false;
+  for(let i=0;i<s.length;i++){
+    const c=s[i];
+    if(q){if(c==='"'){if(s[i+1]==='"'){cur+='"';i++;}else q=false;}else cur+=c;continue;}
+    if(c==='"'){q=true;continue;}
+    if(c===sep){row.push(cur);cur="";continue;}
+    if(c==="\r")continue;
+    if(c==="\n"){row.push(cur);rows.push(row);row=[];cur="";continue;}
+    cur+=c;
+  }
+  if(cur!==""||row.length){row.push(cur);rows.push(row);}
+  return rows.filter(r=>r.some(v=>String(v).trim()!==""));
+}
+// 日付: 2026-10-01 ／ 2026/10/1 ／ 2026年10月1日 ／ 10/1（年は期間から。期間に入る年を採る）
+function parseCsvDate(v,period){
+  const s=String(v==null?"":v).trim();
+  const f=(y,m,d)=>`${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+  let m=/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?$/.exec(s);
+  if(m){const ds=f(m[1],m[2],m[3]);return isValidDateStr(ds)?ds:null;}
+  m=/^(\d{1,2})[/月](\d{1,2})日?$/.exec(s);
+  if(m&&period&&isValidDateStr(period.startDate)&&isValidDateStr(period.endDate)){
+    const ys=[Number(period.startDate.slice(0,4)),Number(period.endDate.slice(0,4))];
+    for(const y of ys){const ds=f(y,m[1],m[2]);if(isValidDateStr(ds)&&period.startDate<=ds&&ds<=period.endDate)return ds;}
+    const ds=f(ys[0],m[1],m[2]);return isValidDateStr(ds)?ds:null;
+  }
+  return null;
+}
+// 取込の計画。返り値 {patch, applied, rows:[{line, date, name, ok, reason}]}。patch は planActualEdit と同じ形で、
+// 既存の実績の欠勤は外し、法定休日・遅刻早退・メモは残す（打刻が来た日は出勤した日）。同じ人・同じ日の2行目以降は使わない。
+function planActualsImport(o){
+  const x=o||{};
+  const period=x.period||{};const pid=period.id;
+  const mp=x.mapping||DEFAULT_ACTUALS_CSV_MAPPING;
+  const st=x.settings||{};const aliases=st.staffAliases||{};
+  const names=new Set((x.staffList||[]).filter(n=>n&&!isSpacer(n)));
+  const byName=new Map();
+  (x.subs||[]).forEach(s=>{if(s&&s.periodId===pid&&s.staffName&&!byName.has(s.staffName))byName.set(s.staffName,s);});
+  const subOf=n=>resolveSubByAlias(k=>byName.get(k),n,aliases);
+  const rows=parseCsvRows(x.text);
+  const body=mp.hasHeader?rows.slice(1):rows;
+  const col=(r,f)=>{const i=Number(mp[f]);return i>0?String(r[i-1]==null?"":r[i-1]).trim():"";};
+  const patch={};const out=[];const seen=new Set();let applied=0;
+  body.forEach((r,i)=>{
+    const line=i+1+(mp.hasHeader?1:0);
+    const date=parseCsvDate(col(r,"date"),period);
+    const raw=col(r,"name");
+    const name=resolveAlias(raw,aliases);
+    const res={line,date,name:name||raw,ok:false,reason:""};
+    out.push(res);
+    if(!date){res.reason="日付が読めません";return;}
+    if(!(period.startDate<=date&&date<=period.endDate)){res.reason="期間の外の日付です";return;}
+    if(!raw){res.reason="名前がありません";return;}
+    if(!names.has(name)){res.reason="この期間のスタッフにいない名前です";return;}
+    const k=name+"|"+date;
+    if(seen.has(k)){res.reason="同じ人・同じ日の2行目以降は取り込みません";return;}
+    seen.add(k);
+    const cur=actualOf(x.actuals,pid,name,date)||{};
+    const entry={start:col(r,"start"),end:col(r,"end"),breakMin:col(r,"breakMin")||null,
+      absentMin:cur.absentMin,legalHoliday:cur.legalHoliday===true,note:cur.note||""};
+    if(!entry.start||!entry.end){res.reason="出勤と退勤の両方が要ります";return;}
+    const pl=planActualEdit({periodId:pid,name,date,entry,sub:subOf(name),settings:st});
+    if(pl.error){res.reason=pl.error;return;}
+    Object.assign(patch,pl.patch);res.ok=true;applied++;
+  });
+  return{patch,applied,rows:out};
+}
+
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,yearDaysOf,monthlyScheduledCapMin,LABOR_SETTING_RANGES,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,dailyOverThresholdOf,dailyOverMinB,externalOverThresholdOf,OT_PRORATE_WINDOWS,OT_PRORATE_WINDOW_LABELS,OT_PRORATE_FIXED_MAX_MIN,HALF_MONTH_LAST_DAY,otProrateOf,staffOtProrateOf,overtimePlanOf,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,BREAK_LENGTH_BASES,BREAK_LENGTH_BASIS_LABELS,BREAK_LENGTH_TIERS_MAX,breakLengthRuleOf,IDLE_BREAK_DAYS,IDLE_BREAK_DAY_LABELS,idleBreakOf,breakMinutesOf,breakDecisionOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,personIndexOfMirror,samePersonRegistrations,personHomeShopOf,helperPersonOf,helperShopSettingsOn,helperWorkOn,otherShopDataOf,helperShopsOf,helperScheduleContext,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,headcountAtOf,countPresentAt,headcountLabelOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,groupStaffRegs,groupStaffRegsWithPeople,PERSON_ID_RE,buildCompanyStaffRows,duplicatePersonCandidates,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,GATED_FEATURES,featureEnabled,DEFAULT_RATE_DENOMINATOR_MIN,rateDenominatorMinOf,PAY_TYPES,PAY_TYPE_LABELS,isPayTypeFixed,defaultPayTypeOf,payRateBaseYen,hourlyRateOf,fixedOtAmountOf,MIN_WAGE_MAX_ENTRIES,sanitizeWageSettings,minWageOn,minWageCheck,normalizePayVersion,withFixedOtAmount,applyPayRevision,payVersionOn,STAFF_KEYED_PRIVATE_NODES,renameStaffInPay,dropStaffFromPay,maskYen,sha256HexOfBytes,PAY_CODE_DEFAULT,PAY_CODE_RE,isValidPayCode,payCodeHash,isPayCodeRecord,verifyPayCode,payCodeIdentity,PAY_CODE_MAX_FAILS,PAY_CODE_LOCK_MS,PAY_UNLOCK_IDLE_MS,nextPayCodeLockout,payCodeWaitSec,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf,isPeriodConfirmed,isPeriodDelivered,PERIOD_STATES,PERIOD_STATE_LABELS,periodStateOf,canConfirmPeriod,PERIOD_HISTORY_KINDS,PERIOD_HISTORY_LABELS,genPeriodHistoryKey,periodHistoryEntry,withPeriodHistory,periodHistoryList,monthsOfPeriod,monthDatesOf,aggregateScheduledMonth,isMonthFullyConfirmed,laborMonthOf,isLaborMonthFrozen,isLaborMonthEdited,planPeriodConfirmation,planPeriodUnconfirm,planPeriodDelivery,LABOR_MONTH_MAX_MIN,planLaborMonthManual,parseHoursMinutes,fmtSignedMin,STAFF_KEYED_MONTH_NODES,renameStaffInLaborMonths,dropStaffFromLaborMonths,yearScheduledAverage,isClosedDateOf,fillFixedPattern};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,yearDaysOf,monthlyScheduledCapMin,LABOR_SETTING_RANGES,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,dailyOverThresholdOf,dailyOverMinB,externalOverThresholdOf,OT_PRORATE_WINDOWS,OT_PRORATE_WINDOW_LABELS,OT_PRORATE_FIXED_MAX_MIN,HALF_MONTH_LAST_DAY,otProrateOf,staffOtProrateOf,overtimePlanOf,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,BREAK_LENGTH_BASES,BREAK_LENGTH_BASIS_LABELS,BREAK_LENGTH_TIERS_MAX,breakLengthRuleOf,IDLE_BREAK_DAYS,IDLE_BREAK_DAY_LABELS,idleBreakOf,breakMinutesOf,breakDecisionOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,personIndexOfMirror,samePersonRegistrations,personHomeShopOf,helperPersonOf,helperShopSettingsOn,helperWorkOn,otherShopDataOf,helperShopsOf,helperScheduleContext,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,headcountAtOf,countPresentAt,headcountLabelOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,groupStaffRegs,groupStaffRegsWithPeople,PERSON_ID_RE,buildCompanyStaffRows,duplicatePersonCandidates,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,GATED_FEATURES,featureEnabled,DEFAULT_RATE_DENOMINATOR_MIN,rateDenominatorMinOf,PAY_TYPES,PAY_TYPE_LABELS,isPayTypeFixed,defaultPayTypeOf,payRateBaseYen,hourlyRateOf,fixedOtAmountOf,MIN_WAGE_MAX_ENTRIES,sanitizeWageSettings,minWageOn,minWageCheck,normalizePayVersion,withFixedOtAmount,applyPayRevision,payVersionOn,STAFF_KEYED_PRIVATE_NODES,renameStaffInPay,dropStaffFromPay,maskYen,sha256HexOfBytes,PAY_CODE_DEFAULT,PAY_CODE_RE,isValidPayCode,payCodeHash,isPayCodeRecord,verifyPayCode,payCodeIdentity,PAY_CODE_MAX_FAILS,PAY_CODE_LOCK_MS,PAY_UNLOCK_IDLE_MS,nextPayCodeLockout,payCodeWaitSec,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf,isPeriodConfirmed,isPeriodDelivered,PERIOD_STATES,PERIOD_STATE_LABELS,periodStateOf,canConfirmPeriod,PERIOD_HISTORY_KINDS,PERIOD_HISTORY_LABELS,genPeriodHistoryKey,periodHistoryEntry,withPeriodHistory,periodHistoryList,monthsOfPeriod,monthDatesOf,aggregateScheduledMonth,isMonthFullyConfirmed,laborMonthOf,isLaborMonthFrozen,isLaborMonthEdited,planPeriodConfirmation,planPeriodUnconfirm,planPeriodDelivery,LABOR_MONTH_MAX_MIN,planLaborMonthManual,parseHoursMinutes,fmtSignedMin,STAFF_KEYED_MONTH_NODES,renameStaffInLaborMonths,dropStaffFromLaborMonths,yearScheduledAverage,isClosedDateOf,fillFixedPattern,ACTUAL_FIELDS,ACTUAL_NOTE_MAX,ACTUAL_MIN_MAX,minToClock,parseClockInput,parseMinutesInput,scheduledDay,resolveActualDay,planActualEdit,actualOf,STAFF_KEYED_PERIOD_NODES,renameStaffInActuals,dropStaffFromActuals,ACTUALS_CSV_FIELDS,ACTUALS_CSV_FIELD_LABELS,DEFAULT_ACTUALS_CSV_MAPPING,actualsCsvMappingOf,parseCsvRows,parseCsvDate,planActualsImport};
 }
