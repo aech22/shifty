@@ -223,6 +223,12 @@ COMPANY_ENTITY_ID_RE / COMPANY_SHOP_KINDS / companyEntityIdOfShop / companyShopK
                            // buildCompanyStaffRows は店舗に entityId・kind・coSettings（写しの settings）を持たせると、
                            // **従業員番号でまとめるのを同じ法人の中だけ**にし、行に entityId・isHq を載せる。
                            // 行には賃金の置き場 payShopId・payName（所属店舗に登録されている名前。ヘルプ先だけの人は null）も載る（P6a）
+groupStaffRegs / groupStaffRegsWithPeople / PERSON_ID_RE
+                           // 企業内の同一人物（2026-09-30・P1b）。groupStaffRegs は buildCompanyStaffRows から切り出した推定
+                           // （同じ法人で数字だけの同じ番号＋ヘルプ先の登録）で、**CF の groupStaffRegsCF（functions/company-config.js）と
+                           // 同じ規則**（tests/core.test.js が乱数の登録でも照合する）。buildCompanyStaffRows は第4引数 people
+                           // （companies/{id}/pub/people）を渡すと保存済みの人物で束ね、推定は**どの人物にもつながっていない登録だけ**に当てる。
+                           // 行に personId・links（[{shopId,shopName,name,number}]）が載り、entityId は人物の法人が優先
 featureEnabled(kind,{plan,companyLink}) / GATED_FEATURES
                            // 新機能のプランゲートの**1本だけの入口**（2026-09-30・計画書 §3.7・決定6）。法人・所定・確定・実績・賃金は Premium。
                            // 法人プランを足すときはここだけ触る。新しい機能で plan==="premium" を直接書かない
@@ -363,7 +369,8 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `SubsTab` | app-admin.js | 提出一覧・セル編集・変更履歴 |
 | `CompanyTab` | app-admin.js | 企業連携。カードの並びは シフトの提出状況 → 企業内登録スタッフ → 企業アカウント → 連携店舗 → 法人 → 企業の共通設定（2026-09-28・法人は 2026-09-30） |
 | `CompanyEntityCard / EntityFilter / CoLaborFields` | app-admin.js | 法人（2026-09-30・P1）。法人の追加・改名・法人の労務設定・店舗の法人と種別（店舗／本部）を CF（App の `callCompanyCF`）で書く。法人の無い企業ではカードが `ensureCompanyEntities` を1回呼んで移行する。`EntityFilter` は法人が2つ以上のときだけ出る絞り込み（提出状況・企業内登録スタッフ）。`CoLaborFields` は企業の共通設定と法人の設定が共有する労務判定の入力欄 |
-| `CompanyStaffCard / CompanyStaffDirectory` | app-admin.js | 企業内登録スタッフ（2026-09-28・Premium）。カードの「一覧を開く」で AdminView の `fullPage` が管理者画面の中身を差し替える（新しいブラウザタブは使わない＝実ログインは永続化しないため）。従業員番号順（既定）／店舗別・番号と名前で検索。載せるのは店舗依存でない情報（番号・属性・所属店舗・有給の付与と残）だけ。計算は `buildCompanyStaffRows`（有給は所属店舗の `laborTotals` だけ・subs は読まない・凍結値の無い期間があれば残に「＋」）。**数字だけの同じ従業員番号は1行にまとめ**（2026-09-29）、名前は空白を除いて最も長い表記＝フルネームに寄せ、所属店舗は全部並べる。フルネームに含まれない別の名前（番号が同じなのに名前が食い違う）は「別の登録名」として残す。店舗タブの「呼び出す」（`mergeStaffMatches`）は名前でまとめるので、こちらの規則とは別。上部の並びは「従業員番号順」「店舗別」「パスコード」（2026-09-30・P6a）で、最後の列「賃金」は企業のパスコードで解除するまで「••••」 |
+| `CompanyStaffCard / CompanyStaffDirectory` | app-admin.js | 企業内登録スタッフ（2026-09-28・Premium）。カードの「一覧を開く」で AdminView の `fullPage` が管理者画面の中身を差し替える（新しいブラウザタブは使わない＝実ログインは永続化しないため）。従業員番号順（既定）／店舗別・番号と名前で検索。載せるのは店舗依存でない情報（番号・属性・所属店舗・有給の付与と残）だけ。計算は `buildCompanyStaffRows`（有給は所属店舗の `laborTotals` だけ・subs は読まない・凍結値の無い期間があれば残に「＋」）。**数字だけの同じ従業員番号は1行にまとめ**（2026-09-29）、名前は空白を除いて最も長い表記＝フルネームに寄せ、所属店舗は全部並べる。フルネームに含まれない別の名前（番号が同じなのに名前が食い違う）は「別の登録名」として残す。店舗タブの「呼び出す」（`mergeStaffMatches`）は名前でまとめるので、こちらの規則とは別。上部の並びは「従業員番号順」「店舗別」「パスコード」（2026-09-30・P6a）で、「賃金」列は企業のパスコードで解除するまで「••••」。**行は人物ID（P1b）で束ね**、開いたときに未リンクの登録があれば CF `ensureCompanyPeople` を1回呼ぶ。行の右端に「編集」、番号の前のチェックで2人を選んで「同一人物として統合」。別法人と番号が重なる行には「番号 X は◯◯法人でも使われています」 |
+| `CompanyPersonEditModal / CompanyPersonMergeModal` | app-admin.js | 企業内登録スタッフの編集（2026-09-30・P1b）。名前の変更（店舗ごとにチェック・CF `companyRenameStaff`）・番号/法人/属性/所属店舗（`companyUpdateStaff`・属性と所属店舗はつながっている全店舗に同じ値）・統合の解除（店舗ごとに「切り出す」＝`splitPerson`）・「ID を番号に振り直す」（`reassignPersonId`・番号が数字だけで ID と違うときだけ）。統合は残す方（番号・法人・所属）を選ぶ（`mergePeople`）。結果は一覧の上に出す（全画面なので AdminView のトーストは出ない） |
 | `StaffPayPage` | app-admin.js | 賃金設定ページ（2026-09-30・P6a・Premium・オーナー）。スタッフタブ → 編集 → 「賃金設定を開く →」で AdminView の `fullPage={kind:"staffPay",name}` が管理者画面を差し替える（`CompanyStaffDirectory` と同じ方式）。「← 戻る」で編集モーダルを開き直す（`returnEdit` → StaffTab の `initialEditKey`）。**所属店舗のスタッフだけ**編集でき、ヘルプの人は編集モーダルで「賃金は所属店舗（◯◯）で設定します」。保存先は `shops/{sid}/private/pay/{名前}`（`applyPayRevision` を通す） |
 | `PayCodeBox / PayCodeChangeModal / PAY_OFF` | app-admin.js | 賃金の閲覧パスコード（P6a）。ボックスはスタッフタブの「スタッフ登録」の横・`StaffPayPage` の上部・企業内登録スタッフの上部（従業員番号順・店舗別の次）。解除前は金額を「••••」にして編集させない（時間と最賃の可否は伏せない）。`PAY_OFF` は pay を持たない呼び出し元の既定値 |
 | `SetTab` | app-admin.js | 設定（管理コード・属性別制限・退勤延長・Excel・期間単位・テーマ・アカウント連携） |
@@ -426,6 +433,9 @@ Firebase Realtime Database
 │       │   ├── defaultEntityId       ← 既定の法人（移行で企業名と同名の法人を作ってここに置く）
 │       │   ├── shopKinds/{shopId}    ← "hq"＝本部店舗（無ければ通常の店舗）。**正本はここ**。global/shops/{sid}/kind にも
 │       │   │                            写すが、クライアントの saveShops が店舗オブジェクトを丸ごと set() するので消えうる
+│       │   ├── people/{personId} ← 人物（2026-09-30・P1b・CF だけが書く・読みは pub のルールのまま＝企業uidと作成者）
+│       │   │                          {displayName, entityId?, number?, links:{shopId: 登録名}, createdAt, updatedAt, mergedFrom?:{personId: 日時}}。
+│       │   │                          personId は数字だけの従業員番号（1〜20桁）か p_+英数字8桁。**作成後は変えない**（振り直しは明示操作だけ）
 │       │   └── config   ← 企業の共通設定の正本（2026-09-27・CF saveCompanyConfig だけが書く）
 │       │                   {settings:{laborSettings?, staffTypeLimits?}, deadlines:{期間キー:{all?, shops?:{shopId:日付}}},
 │       │                    monthlyDeadlineDays?:[日], updatedAt}
@@ -519,6 +529,10 @@ Pay = { payType: "monthly"|"hourly", base: number,            // 月給は基本
         commute: {amount, per: "day"|"month"}, effectiveFrom: "YYYY-MM-DD", updatedAt: string,
         history?: Pay[] }   // 前の版（適用開始日の昇順・読み取り専用）
 
+// 企業の人物（companies/{id}/pub/people/{personId}・2026-09-30・P1b）。店舗側の名前キーは変えない（企業レベルの上乗せ）
+Person = { displayName: string, entityId?: string, number?: string, links: {[shopId]: 登録名},   // 1店舗1名前
+           createdAt: string, updatedAt: string, mergedFrom?: {[personId]: string} }
+
 // 企業設定の写し（shops/{shopId}/company・2026-09-27）
 CompanyLink = { id: string, name: string, entityId?: string, entityName?: string, kind?: "shop"|"hq",   // 法人と本部（2026-09-30・P1）
                 settings: {laborSettings?, staffTypeLimits?, wageSettings?: {minWage?: {from, yen}[]}}, deadlines: {[期間キー]: "YYYY-MM-DD"},
@@ -580,6 +594,29 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
   オーナー200・形の不正401・企業の payCode 401）を実測済み
 - 検証: `tests/core.test.js`（数値・CF との一致・ドリフト検出）と `example-staff-pay.js`（スタブ・34項目・375px 含む）
 
+### 人物ID と企業スタッフ一覧の編集（2026-09-30・P1b・develop のみ・CF は本番未反映・ルールの変更なし）
+
+`労務給与_複数法人_実装計画.md` §3.8・P1b（決定 #13）。企業レベルに personId を上乗せし、店舗側の名前キーは変えない。
+- **人物を作るのは CF `ensureCompanyPeople` だけ**（計画書の `upsertPerson` にあたる）。企業内登録スタッフを開いたとき、どの人物にも
+  つながっていない登録（未リンク）があれば1回呼ぶ。初回は既存の推定（`groupStaffRegs`）どおりに全員分を作る＝一覧の見た目は変わらない。
+  以後は保存済みの people が正で、未リンクの登録だけを拾う（推定で1人につながればそこへ足す／店舗側で改名された人は同じ法人・同じ番号で
+  同じ人物へ戻す／それ以外は新しい人物）。**つながっている人物が2人以上なら勝手にまとめない**＝統合解除した登録は再びまとまらない。
+  読めない店舗が1つでもあれば作らない（その店舗の登録を別人物として作らないため）
+- **personId**: 数字だけの従業員番号ならその番号、それ以外・未設定・既に使われている（別法人の同じ番号）なら `p_`＋英数字8桁
+  （`genPersonAutoId`。**genSecureId を使わない**＝記号を含むため）。作成後は変えない。番号を ID に揃えるのは「ID を番号に振り直す」だけ
+- **従業員番号は法人内で一意**（`staffNumberConflict`。保存済みの人物の番号と、店舗の登録の番号の両方を見る。衝突は `already-exists` で拒否）。
+  番号は人物とつながっている全店舗の `settings/staffNumbers` に書く（シフト表・Excel の番号と揃える）。一覧の番号列は従来どおり店舗の番号
+- **改名（`companyRenameStaff`）は StaffTab の改名と同じ結果**: 選んだ店舗ごとに staff（トランザクション）・**全** subs.staffName
+  （3ヶ月の購読窓の外も）・settings（名前キーの8マップ）・periods（snapshot / keepStaff / keepAttrs / laborTotals）・private/pay・people.links を移す。
+  settings・subs・periods・pay は**差分 update**（全体 set() しない）。規則は `functions/company-config.js` の
+  `renameStaffSettingsPatch / renameStaffPeriodsPatch / renameStaffPayPatch / renameStaffSubsPatch / validateStaffRename` で、
+  **クライアントの renameStaffInSettings / renameStaffInPeriods / renameStaffInPay を当てた結果と一致することをテストが照合する**。
+  **P3・P4 で足す `laborMonths`・`actuals` も名前キーなので、その担当が companyRenameStaff（と STAFF_KEYED_*_CF）へ移し替えを足す**
+- 統合・統合解除は企業側の束ね方（people）だけを変え、店舗のデータは動かさない。統合は同じ店舗に別の登録名があると拒否（1店舗1名前）
+- 属性・所属店舗の変更は、つながっている全店舗の settings に同じ値を書く（StaffTab の「どの期間まで旧属性のままか」の確認は出さない）
+- 検証: `tests/core.test.js`（規則・CF とクライアントの一致・ドリフト検出）と `example-company-people.js`（スタブ・26項目・375px 含む。
+  HEAD の配信物に向けると25項目が落ちる＝素通りしない）
+
 ### 企業連携の拡張（2026-09-27・本番反映済み: クライアント 2282f11／ルール／Cloud Functions）
 
 計画書（Fable 作成・Fable レビュー済み）の P0〜P5。ユーザー決定: 所属一致で同一人物を判定・略称入力は残す（D4）／
@@ -638,6 +675,7 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
 | `linkStoreToCompany` | Callable `linkStoreToCompany` | 店舗コード（shopId / shopId.adminKey）で店舗を企業に連携 |
 | `saveCompanyConfig` | Callable `saveCompanyConfig` | 企業の共通設定（settings は丸ごと置換）と提出期限（期間ごとの差分）を保存し、連携全店舗の `shops/{sid}/company` を作り直す（2026-09-27）。検証は `functions/company-config.js`（純粋関数・テストで照合） |
 | `ensureCompanyEntities / createEntity / renameEntity / assignShopEntity / saveEntityConfig / setShopKind` | Callable | 法人の管理（2026-09-30・P1・**本番未デプロイ**）。権限は `assertCompanyMember`。保存後に写しを作り直す。規則は `functions/company-config.js` |
+| `ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId / companyRenameStaff / companyUpdateStaff` | Callable | 人物ID と企業スタッフ一覧の編集（2026-09-30・P1b・**本番未デプロイ**）。権限は `assertCompanyMember`。人物（`companies/{id}/pub/people`）を作るのは `ensureCompanyPeople` だけ。改名は店舗のデータを差分 update で移す（上の「人物ID と企業スタッフ一覧の編集」）。規則は `functions/company-config.js` |
 | `setCompanyPayCode` | Callable | 企業の賃金閲覧パスコードの変更（2026-09-30・P6a・**本番未デプロイ**）。現在の番号を照合（未設定なら 0000）し、`companies/{id}/private/payCode` と連携全店舗の `shops/{sid}/private/payCode` に同じハッシュを書く。作成者と企業セッションの両方が可（`assertCompanyMember`）。`syncCompanyMirror` も写しを作り直すたびに企業のパスコードを同期する（後から連携した店舗に届く） |
 | `claimCompanyShop` | Callable `claimCompanyShop` | 連携済み店舗のオーナーに**呼び出し元のuid**を登録（企業連携タブの「ログイン」で管理コードの再入力を無くす。付与は `companies/{id}/grants/{shopId}/{uid}` に記録し、解除時に回収する） |
 | `unlinkStoreFromCompany` | Callable `unlinkStoreFromCompany` | 店舗の企業連携を解除（企業uid＋`grants` の付与uidを owners から外す） |
@@ -1038,6 +1076,11 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 
 ## 既知の技術負債
 
+- **app-admin.js が Babel Standalone の 500,000 文字を超えた（2026-09-30・P1b で 491,126 → 503,713 文字）**。超えると Babel が
+  「[BABEL] Note: The code generator has deoptimised the styling of … as it exceeds the max of 500KB.」を **console.error** で出す。
+  変換結果の動作は変わらない（整形を省くだけ）が、本番の利用者のコンソールにも赤い1行が出る。E2E ハーネス（`mount-component.js`）は
+  この1文だけを数えないようにした。**直すには app-admin.js の分割が要る**（例: 企業連携タブ一式を別ファイルへ。index.html の読み込み順に
+  1本足す＝アーキテクチャの変更なのでユーザー判断）。P2 以降も app-admin.js は増える見込み
 - iOS Safari ズーム問題（input の fontSize<16）は **2026-09-01 にようやく全箇所解消**（バグチェック#103・`bc7bf2e`）。
   一括是正 `b7c084d`（2026-07-08）が見たのは app-staff.js と app-admin.js だけで、**その2日前の5分割（`f02cc80`）で
   生まれたばかりの app-main.js を一度も開いていない**。そのままここに「全箇所解消済み」と

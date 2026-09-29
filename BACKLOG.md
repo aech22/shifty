@@ -38,15 +38,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🔴 労務・給与と複数法人 P1b: 人物ID（personId）と企業スタッフ一覧の編集
-
-**目的**: `労務給与_複数法人_実装計画.md`（リポジトリ直下・v9）§6 P1b の「目的」。
-**受け入れ条件**: 同 §6 P1b の受け入れ条件が正本（ここへ書き写さない）。共通の検証手段は §6 冒頭。
-**影響範囲**: 同 §6 P1b の影響範囲。
-**備考**: 実装順は計画書 §0 の表。2026-09-30 ユーザー指示で P0〜P7 を順に develop へ実装し、本番反映は全フェーズ完了後に1回だけ確認する（途中で main・本番ルール・本番CFに触れない）。P8（NITOへの適用）は対象外。
-
----
-
 ## 🔴 労務・給与と複数法人 P2: 年間所定労働時間と月の所定上限
 
 **目的**: `労務給与_複数法人_実装計画.md`（リポジトリ直下・v9）§6 P2 の「目的」。
@@ -134,6 +125,23 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 - [ ] 反映後、既存企業で企業連携タブを1回開き、`companies/{id}/pub/entities` ができて全店舗が割り当たり、写し `shops/{sid}/company` に
       `entityId`・`entityName`・`kind` が入ることを `shifty-prod-data-probe`（読み取り専用）で確認する
 - [ ] 別の企業に連携中の店舗を `linkStoreToCompany` で追加すると拒否されることを本番で1回確かめる（dev では CF が動かず未検証）
+**影響範囲**: functions/index.js・functions/company-config.js（コード変更は済み）
+
+---
+
+## 🟡 労務・給与と複数法人: 人物ID（P1b）の Cloud Functions の本番反映と実データ確認（全フェーズ完了後に1回）
+
+**目的**: P1b（2026-09-30・develop `a52a405`〜）の CF は **本番に未デプロイ**。dev は Spark で CF をデプロイできないため、
+中身は `tests/core.test.js`（`functions/company-config.js` の純粋関数とクライアントとの一致）とスタブ Firebase の実ブラウザ回帰
+（`example-company-people.js`）でしか確かめていない。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
+**反映が要るもの**:
+- [ ] CF: 新規6本（`ensureCompanyPeople`・`mergePeople`・`splitPerson`・`reassignPersonId`・`companyRenameStaff`・`companyUpdateStaff`）
+- [ ] ルール: **変更なし**（`companies/$id/pub/people` は既存の pub のルールで読みが企業uidと作成者・書きは `companies/$id/.write:false`＝CF 専用）
+- [ ] 順序: CF を先に出してからクライアント。**クライアントだけ先に出ると**、企業内登録スタッフを開いたときの `ensureCompanyPeople` が失敗し、
+      行に人物IDが付かないので「編集」と統合のチェックが押せないまま（一覧の表示は従来どおりで壊れない）
+- [ ] 反映後、企業内登録スタッフを1回開いて `companies/{id}/pub/people` ができ、行数と並びが反映前と同じことを `shifty-prod-data-probe`（読み取り専用）で確認する
+- [ ] 本番で1人の改名を企業の一覧から通し、店舗の staff・全 subs・settings・periods・private/pay が移ったことを同じく読み取りで確認する
+      （Admin SDK での `staff` のトランザクションと subs 全件の読みは実データでしか確かめられない）
 **影響範囲**: functions/index.js・functions/company-config.js（コード変更は済み）
 
 ---
@@ -1675,6 +1683,25 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 労務・給与と複数法人 P1b: 人物ID と企業スタッフ一覧の編集（2026-09-30 develop 完了・`a52a405` `6501627` `4a9c6b3` `ea385e4`／CF は本番未反映・ルールの変更なし）
+
+計画書 `労務給与_複数法人_実装計画.md` §3.8・§6 P1b（決定 #13）。企業レベルに `companies/{id}/pub/people/{personId}` を上乗せし、店舗側の名前キーは変えない。
+
+- [x] 初回に `people` が既存の推定から自動生成され、一覧の見た目が変わらない（テスト: 人物で束ねた行と推定だけの行が personId・links 以外で一致／
+      実ブラウザ: 人物を作らせない対照と行が一致）。作るのは CF `ensureCompanyPeople`（計画書の `upsertPerson` にあたる）で、一覧を開いたときに1回呼ぶ
+- [x] 「編集」から名前変更。店舗の `staff / subs（全件・3ヶ月の窓の外も） / settings / periods（snapshot・keepStaff・keepAttrs・laborTotals） / private/pay / people.links`
+      が移る。CF の差分パッチを当てた結果がクライアントの `renameStaffInSettings / renameStaffInPeriods / renameStaffInPay` と一致することをテストで照合。
+      `laborMonths / actuals` は未実装なので、足す担当（P3・P4）が `companyRenameStaff` に足す旨を関数のコメントと CLAUDE.md に残した
+- [x] 2行を選んで統合・誤統合の解除。統合は店舗のデータを動かさない（実ブラウザで店舗の staff・番号が変わらないことを確認）。解除した登録は同期で再びまとまらない
+- [x] personId は数字だけの番号ならその番号・それ以外は `p_`＋英数字8桁。別法人で番号が衝突した側だけ自動採番（テスト・実ブラウザ）。作成後は不変で、
+      振り直しは「ID を番号に振り直す」だけ（`reassignPersonId`）
+- [x] 従業員番号は法人内で一意（保存時に拒否。テストと実ブラウザ）
+- [x] 一覧上部が「従業員番号順」「店舗別」「パスコード」の並び（P6a で実装済みのまま）
+
+計画と変えた点: CF 名の `upsertPerson` は `ensureCompanyPeople` とした（人物を作る入口を1本にし、`ensureCompanyEntities` と同じ形にそろえた）。
+属性・所属店舗の変更は、つながっている全店舗に同じ値を書く（StaffTab の「どの期間まで旧属性のままか」の確認は出さない）。
+写し `shops/{sid}/company.people` への焼き込みは P3.6 の担当として今回は行っていない。
 
 ### ✅ 労務・給与と複数法人 P6a: 賃金マスタ・閲覧パスコード（2026-09-30 develop 完了・`65f7a49`〜`374e914`／ルールは dev のみ・CF は本番未反映）
 
