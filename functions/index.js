@@ -1120,32 +1120,46 @@ exports.sendSurveyEmails = functions
 // キーと値の規則はクライアントの app-utils.js（COMPANY_LABOR_KEYS・COMPANY_LIMIT_KEYS・COMPANY_ATTR_ID_RE・
 // isValidDateStr）と**同じ内容**にする。functions/ は app-utils.js を読めないので書き写している。
 // ============================================================
-const { sanitizeCompanySettings, sanitizeCompanyDeadlines, effectiveDeadlinesForShop, sanitizeMonthlyDeadlineDays, canChangeCompanyPassword } = require("./company-config");
+const { sanitizeCompanySettings, sanitizeCompanyDeadlines, sanitizeMonthlyDeadlineDays, canChangeCompanyPassword,
+  isValidEntityId, sanitizeEntityName, planEntityMigration, buildShopMirror, otherCompanyLinksOf, SHOP_KINDS } = require("./company-config");
+// 法人レイヤーの片方向移行（2026-09-30・P1）。法人が無い企業には企業名と同名の法人を1つ作り、
+// 割当の無い連携店舗をすべて既定の法人へ割り当てる。冪等なので、写しを作り直す前に毎回通してよい。
+async function ensureCompanyEntities(companyId) {
+  const pub = (await db.ref(`companies/${companyId}/pub`).once("value")).val() || {};
+  const patch = planEntityMigration(pub, () => db.ref(`companies/${companyId}/pub/entities`).push().key, new Date().toISOString());
+  if (patch) await db.ref(`companies/${companyId}/pub`).update(patch);
+  return !!patch;
+}
+// 店舗が別の企業に連携中なら、その企業IDを返す（owners の企業uid と写しの id から候補を出し、
+// 候補の企業の pub/shops で実際に連携中かを確かめる。解除済みの残骸では拒否しない）。
+async function linkedToOtherCompany(shopId, companyId) {
+  const [owners, mirror] = await Promise.all([
+    db.ref(`shops/${shopId}/owners`).once("value").then(x => x.val()),
+    db.ref(`shops/${shopId}/company`).once("value").then(x => x.val()),
+  ]);
+  for (const cid of otherCompanyLinksOf(owners, mirror, companyId)) {
+    if (!isValidCompanyId(cid)) continue;
+    const v = (await db.ref(`companies/${cid}/pub/shops/${shopId}`).once("value")).val();
+    if (v === true) return cid;
+  }
+  return null;
+}
 // 連携店舗の shops/{shopId}/company を正本から作り直す。shopIds を省けば連携全店舗。
 // 1店舗の失敗で残りを止めない（冪等なので、失敗した店舗は次の保存で書き直される）。
 async function syncCompanyMirror(companyId, shopIds) {
+  await ensureCompanyEntities(companyId);
   const pub = (await db.ref(`companies/${companyId}/pub`).once("value")).val() || {};
   const linked = Object.keys(pub.shops || {}).filter(isValidShopId);
-  const cfg = pub.config || {};
   const names = {};
   for (const sid of linked) {
     try { names[sid] = ((await db.ref(`global/shops/${sid}/name`).once("value")).val()) || ""; } catch (e) { names[sid] = ""; }
   }
   const targets = (shopIds || linked).filter(sid => linked.includes(sid));
-  const monthly = sanitizeMonthlyDeadlineDays(cfg.monthlyDeadlineDays);
   const synced = [], failed = [];
   for (const sid of targets) {
     try {
-      await db.ref(`shops/${sid}/company`).set({
-        id: companyId,
-        name: pub.name || "",
-        settings: cfg.settings || {},
-        deadlines: effectiveDeadlinesForShop(cfg.deadlines, sid),
-        // 空配列は Firebase に保存されない（ノードごと消える）ので、無いときはキーを持たない
-        ...(monthly.length ? { monthlyDeadlineDays: monthly } : {}),
-        shops: names,
-        syncedAt: new Date().toISOString(),
-      });
+      // 企業共通 → 法人 の重ね合わせ・法人名・本部店舗の種別はここで焼き込む（company-config.js の buildShopMirror）
+      await db.ref(`shops/${sid}/company`).set(buildShopMirror(companyId, pub, sid, names, new Date().toISOString()));
       synced.push(sid);
     } catch (e) { failed.push(sid); }
   }
@@ -1203,11 +1217,15 @@ exports.createCompany = functions
       // 未claim店舗は、その店舗の管理者画面を一度開いて claim してから
       // 管理コードで linkStoreToCompany を使う。
       if (!owners || !owners[uid]) { skipped.push(shopId); continue; }
+      // 別の企業に連携中の店舗は二重に連携しない（linkStoreToCompany と同じ判断）
+      if (await linkedToOtherCompany(shopId, companyId)) { skipped.push(shopId); continue; }
       await db.ref(`companies/${companyId}/pub/shops/${shopId}`).set(true);
       await registerCompanyAsOwner(companyId, shopId);
       linked.push(shopId);
     }
+    // 企業作成と同時に企業名と同名の法人を1つ作り、連携店舗をそこへ割り当てる（店舗が無くても作る）
     if (linked.length) await syncCompanyMirror(companyId, linked);
+    else await ensureCompanyEntities(companyId);
     return { companyId, code, name, linkedShops: linked, skippedShops: skipped };
   });
 
@@ -1312,6 +1330,11 @@ exports.linkStoreToCompany = functions
       if (safeEqualStr(adminKey, stored)) allowed = true;
     }
     if (!allowed) throw new functions.https.HttpsError("permission-denied", "この店舗の管理コード（店舗コード.管理キー）を入力してください");
+    // 別の企業に連携中の店舗は拒否する（2026-09-30・P1）。写しは1店舗に1つしか置けず、後から連携した企業が
+    // 前の企業の写しを黙って上書きしてしまうため。先に前の企業で連携を解除してもらう
+    if (await linkedToOtherCompany(shopId, companyId)) {
+      throw new functions.https.HttpsError("failed-precondition", "この店舗は別の企業アカウントに連携されています。先にその企業で連携を解除してください");
+    }
     await db.ref(`companies/${companyId}/pub/shops/${shopId}`).set(true);
     await registerCompanyAsOwner(companyId, shopId);
     // 追加した店舗にミラーを作り、既存店舗のミラーの店舗一覧（所属店舗の選択肢）も更新する
@@ -1392,6 +1415,10 @@ exports.unlinkStoreFromCompany = functions
     await db.ref(`companies/${companyId}/pub/shops/${shopId}`).remove();
     for (const u of revoke) await db.ref(`shops/${shopId}/owners/${u}`).remove();
     await db.ref(`companies/${companyId}/grants/${shopId}`).remove();
+    // 法人の割当と本部の種別も外す（再連携したときは既定の法人・通常の店舗から始まる）
+    await db.ref(`companies/${companyId}/pub/shopEntities/${shopId}`).remove();
+    await db.ref(`companies/${companyId}/pub/shopKinds/${shopId}`).remove();
+    await db.ref(`global/shops/${shopId}/kind`).remove();
     // 解除した店舗のミラーを消し（企業設定・提出期限・提出ボタンの表示が外れる）、
     // 企業の提出期限表からその店舗の上書きを取り除く。残りの店舗のミラーは店舗一覧を更新する。
     await db.ref(`shops/${shopId}/company`).remove();
@@ -1431,5 +1458,112 @@ exports.saveCompanyConfig = functions
     }
     await db.ref(`companies/${companyId}/pub/config/updatedAt`).set(new Date().toISOString());
     const { synced, failed } = await syncCompanyMirror(companyId);
+    return { ok: true, synced, failed };
+  });
+
+// ============================================================
+// 法人（entity）の管理（2026-09-30・労務給与_複数法人_実装計画.md §3.1・P1）
+// 書き込みはすべて CF（companies/* はクライアントから書けない）。権限は assertCompanyMember（企業コードの
+// セッションと作成者本人）。保存後に連携全店舗の写しを作り直す（法人名・法人の設定・本部の種別が写しに入る）。
+// ============================================================
+function readEntityArgs(data) {
+  const companyId = (data && typeof data.companyId === "string") ? data.companyId : "";
+  if (!isValidCompanyId(companyId)) throw new functions.https.HttpsError("invalid-argument", "企業IDが無効です");
+  return companyId;
+}
+async function assertEntityExists(companyId, entityId) {
+  if (!isValidEntityId(entityId)) throw new functions.https.HttpsError("invalid-argument", "法人IDが無効です");
+  const e = (await db.ref(`companies/${companyId}/pub/entities/${entityId}`).once("value")).val();
+  if (!e) throw new functions.https.HttpsError("not-found", "法人が見つかりません");
+}
+async function assertLinkedShop(companyId, shopId) {
+  if (!isValidShopId(shopId)) throw new functions.https.HttpsError("invalid-argument", "店舗IDが無効です");
+  const v = (await db.ref(`companies/${companyId}/pub/shops/${shopId}`).once("value")).val();
+  if (v !== true) throw new functions.https.HttpsError("permission-denied", "この店舗は企業アカウントに連携されていません");
+}
+
+// 既存企業の初回起動で法人を用意する（企業連携タブの法人カードが、法人が無いときに1回呼ぶ）
+exports.ensureCompanyEntities = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = readEntityArgs(data);
+    await assertCompanyMember(context, companyId);
+    const migrated = await ensureCompanyEntities(companyId);
+    if (migrated) await syncCompanyMirror(companyId);
+    return { ok: true, migrated };
+  });
+
+exports.createEntity = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = readEntityArgs(data);
+    const name = sanitizeEntityName(data && data.name);
+    if (!name) throw new functions.https.HttpsError("invalid-argument", "法人名は1〜100文字にしてください");
+    await assertCompanyMember(context, companyId);
+    await ensureCompanyEntities(companyId);
+    const count = Object.keys((await db.ref(`companies/${companyId}/pub/entities`).once("value")).val() || {}).length;
+    if (count >= 50) throw new functions.https.HttpsError("resource-exhausted", "法人は50件までです");
+    const ref = db.ref(`companies/${companyId}/pub/entities`).push();
+    await ref.set({ name, createdAt: new Date().toISOString() });
+    return { ok: true, entityId: ref.key };
+  });
+
+exports.renameEntity = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = readEntityArgs(data);
+    const entityId = data && data.entityId;
+    const name = sanitizeEntityName(data && data.name);
+    if (!name) throw new functions.https.HttpsError("invalid-argument", "法人名は1〜100文字にしてください");
+    await assertCompanyMember(context, companyId);
+    await assertEntityExists(companyId, entityId);
+    await db.ref(`companies/${companyId}/pub/entities/${entityId}/name`).set(name);
+    const { synced, failed } = await syncCompanyMirror(companyId);
+    return { ok: true, synced, failed };
+  });
+
+exports.assignShopEntity = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = readEntityArgs(data);
+    const shopId = (data && typeof data.shopId === "string") ? data.shopId.trim() : "";
+    const entityId = data && data.entityId;
+    await assertCompanyMember(context, companyId);
+    await assertLinkedShop(companyId, shopId);
+    await assertEntityExists(companyId, entityId);
+    await db.ref(`companies/${companyId}/pub/shopEntities/${shopId}`).set(entityId);
+    const { synced, failed } = await syncCompanyMirror(companyId, [shopId]);
+    return { ok: true, synced, failed };
+  });
+
+// 法人別の設定（労務設定・属性別の制限）。企業の共通設定と同じ検証を通し、丸ごと置き換える（空欄にした項目を消せるように）
+exports.saveEntityConfig = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = readEntityArgs(data);
+    const entityId = data && data.entityId;
+    await assertCompanyMember(context, companyId);
+    await assertEntityExists(companyId, entityId);
+    const settings = sanitizeCompanySettings(data && data.settings);
+    await db.ref(`companies/${companyId}/pub/entities/${entityId}/settings`).set(Object.keys(settings).length ? settings : null);
+    const { synced, failed } = await syncCompanyMirror(companyId);
+    return { ok: true, synced, failed };
+  });
+
+// 本部店舗（kind:"hq"）の設定。正本は companies/{id}/pub/shopKinds（CF専用）。global/shops/{sid}/kind にも写すが、
+// global/shops/{sid} はクライアントの saveShops が店舗オブジェクト丸ごと set() するため、そちらは消えうる写しであって正本ではない
+// （写し shops/{sid}/company.kind は正本から毎回作り直すので消えない）。
+exports.setShopKind = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = readEntityArgs(data);
+    const shopId = (data && typeof data.shopId === "string") ? data.shopId.trim() : "";
+    const kind = data && data.kind;
+    if (!SHOP_KINDS.includes(kind)) throw new functions.https.HttpsError("invalid-argument", "店舗の種別が無効です");
+    await assertCompanyMember(context, companyId);
+    await assertLinkedShop(companyId, shopId);
+    await db.ref(`companies/${companyId}/pub/shopKinds/${shopId}`).set(kind === "hq" ? "hq" : null);
+    await db.ref(`global/shops/${shopId}/kind`).set(kind === "hq" ? "hq" : null);
+    const { synced, failed } = await syncCompanyMirror(companyId, [shopId]);
     return { ok: true, synced, failed };
   });
