@@ -73,8 +73,10 @@ const payInputs = h => h.evaluate(() => [...document.querySelectorAll("[data-sta
   try {
     await h.page.waitForFunction(() => document.body.innerText.includes("スタッフ一覧") && !!document.querySelector("[data-pay-code-box]"), { timeout: 15000 });
     R.boxNextToHeading = await h.evaluate(() => {
-      const box = document.querySelector("[data-pay-code-box]"); const p = box.parentElement;
-      return [...p.children].some(c => c.innerText.trim() === "スタッフ登録");
+      // P6b でボックスの隣に「月次賃金 →」が入り、ボックスと月次賃金のボタンを1つの塊に包んだ（見出しの行の子は その塊）。
+      // 見出しと同じ行にあることを、ボックスの親か祖父の子に見出しがあることで確かめる
+      const box = document.querySelector("[data-pay-code-box]");
+      return [box.parentElement, box.parentElement.parentElement].some(p => [...p.children].some(c => c.innerText.trim() === "スタッフ登録"));
     });
     R.defaultHint = (await text(h)).includes("初期パスコードのままです");
     R.boxFont = await h.evaluate(s => parseFloat(getComputedStyle(document.querySelector(s)).fontSize), BOX);
