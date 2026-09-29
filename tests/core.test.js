@@ -4441,3 +4441,126 @@ test("fullViewFontOf: 列を広げても文字は大きくせず、39pxより細
   assert.strictEqual(u.fullViewFontOf(14, 31), 11);
   assert.strictEqual(u.fullViewFontOf(14, 12), 5);
 });
+
+// ===== 法人（entity）レイヤー（2026-09-30・労務給与_複数法人_実装計画.md P1）=====
+const cfe = require("../functions/company-config.js");
+test("法人: CF 側の法人ID・店舗種別・店舗の法人の解決がクライアントと一致する（書き写しのドリフト検出）", () => {
+  assert.strictEqual(String(cfe.ENTITY_ID_RE), String(u.COMPANY_ENTITY_ID_RE));
+  assert.deepStrictEqual(cfe.SHOP_KINDS, u.COMPANY_SHOP_KINDS);
+  const pubs = [
+    null, {},
+    { entities: { E1: { name: "甲" } }, defaultEntityId: "E1", shopEntities: { S1: "E1", S2: "E9", S3: "bad/id" }, shopKinds: { S1: "hq", S2: "shop", S3: "x" } },
+    { entities: { E1: { name: "甲" }, E2: { name: "乙" } }, defaultEntityId: "E9", shopEntities: { S1: "E2" } },
+    { entities: { E1: null }, defaultEntityId: "E1", shopEntities: { S1: "E1" } },
+  ];
+  pubs.forEach((p, i) => ["S1", "S2", "S3", "S4"].forEach(sid => {
+    assert.strictEqual(u.companyEntityIdOfShop(p, sid), cfe.entityIdOfShop(p, sid), `pub#${i} ${sid}`);
+    assert.strictEqual(u.companyShopKindOf(p, sid), cfe.shopKindOf(p, sid), `pub#${i} ${sid} kind`);
+  }));
+  assert.strictEqual(cfe.entityIdOfShop(pubs[2], "S2"), "E1", "消えた法人への割当は既定の法人へ倒す");
+  assert.strictEqual(cfe.entityIdOfShop(pubs[3], "S3"), null, "既定の法人も無ければ null");
+  assert.strictEqual(cfe.shopKindOf(pubs[2], "S1"), "hq");
+  assert.strictEqual(cfe.shopKindOf(pubs[2], "S3"), "shop", "hq 以外の値は通常の店舗");
+  assert.ok(cfe.isValidEntityId("-Nabc_09Z"));
+  ["", "a/b", "a.b", "a#b", "x".repeat(65), 12, null].forEach(v => assert.ok(!cfe.isValidEntityId(v), String(v)));
+});
+
+test("法人: 既存企業の移行は法人を1つ作って全店舗を割り当て、2回目は何もしない（冪等）", () => {
+  const pub = { name: "テスト企業", shops: { S1: true, S2: true, "bad/": true }, config: { settings: { laborSettings: { fixedOvertimeMin: 1800 } } } };
+  let n = 0;
+  const patch = cfe.planEntityMigration(pub, () => "E" + (++n), "2026-09-30T00:00:00Z");
+  assert.deepStrictEqual(patch, {
+    "entities/E1": { name: "テスト企業", createdAt: "2026-09-30T00:00:00Z" },
+    defaultEntityId: "E1", "shopEntities/S1": "E1", "shopEntities/S2": "E1",
+  });
+  // パッチを当てた後は何も要らない
+  const after = { ...pub, entities: { E1: { name: "テスト企業" } }, defaultEntityId: "E1", shopEntities: { S1: "E1", S2: "E1" } };
+  assert.strictEqual(cfe.planEntityMigration(after, () => "X", "t"), null);
+  // 新しく連携した店舗と、消えた法人を指す店舗だけが既定へ
+  const later = { ...after, shops: { S1: true, S2: true, S3: true }, entities: { E1: { name: "甲" }, E2: { name: "乙" } }, shopEntities: { S1: "E2", S2: "E7" } };
+  assert.deepStrictEqual(cfe.planEntityMigration(later, () => "X", "t"), { "shopEntities/S2": "E1", "shopEntities/S3": "E1" });
+  // 既定の法人が消えていたら、残っている法人のうち1つを既定にする（新しい法人は作らない）
+  assert.deepStrictEqual(cfe.planEntityMigration({ shops: {}, entities: { B: { name: "b" }, A: { name: "a" } }, defaultEntityId: "Z" }, () => "X", "t"), { defaultEntityId: "A" });
+  // 企業名が無くても法人名は空にしない
+  assert.strictEqual(cfe.planEntityMigration({}, () => "E1", "t")["entities/E1"].name, "法人");
+});
+
+test("法人: 企業共通 → 法人 の重ね合わせ（労務はキー単位・属性は属性×キー単位で法人が勝つ）", () => {
+  const c = { laborSettings: { fixedOvertimeMin: 1800, marginMin: 420 }, staffTypeLimits: { parttime: { weekly: 30, laborSystem: "B" }, co_AbCd1234: { name: "特定技能", laborSystem: "A" } } };
+  const e = { laborSettings: { fixedOvertimeMin: 2700, agreementDailyOtMin: 0 }, staffTypeLimits: { parttime: { weekly: 20 }, employee: { monthly: 200 } } };
+  assert.deepStrictEqual(cfe.mergeEntitySettings(c, e), {
+    laborSettings: { fixedOvertimeMin: 2700, marginMin: 420, agreementDailyOtMin: 0 },
+    staffTypeLimits: { parttime: { weekly: 20, laborSystem: "B" }, co_AbCd1234: { name: "特定技能", laborSystem: "A" }, employee: { monthly: 200 } },
+  });
+  assert.deepStrictEqual(cfe.mergeEntitySettings(c, null), c, "法人の設定が無ければ企業共通のまま");
+  assert.deepStrictEqual(cfe.mergeEntitySettings(null, null), {});
+  // 写しに焼いた法人の値は、店舗側で「企業が決めた項目」として固定表示・保存時に剥がされる（クライアントは変更なし）
+  const merged = cfe.mergeEntitySettings(c, e);
+  const keys = u.companyControlledKeys(merged);
+  assert.ok(keys.labor.has("agreementDailyOtMin") && keys.labor.has("fixedOvertimeMin"));
+  const eff = u.applyCompanySettings({ laborSettings: { fixedOvertimeMin: 60, monthlyBase31Min: 10628 } }, merged);
+  assert.strictEqual(eff.laborSettings.fixedOvertimeMin, 2700, "法人の値が店舗の値より優先");
+  assert.strictEqual(eff.laborSettings.monthlyBase31Min, 10628, "企業も法人も決めていない項目は店舗の値");
+  assert.deepStrictEqual(u.stripCompanySettings(eff, merged).laborSettings, { monthlyBase31Min: 10628 });
+});
+
+test("法人: 写し（buildShopMirror）に法人名・種別・重ねた設定が入り、移行前後で settings が変わらない", () => {
+  const before = { name: "テスト企業", shops: { S1: true, S2: true }, config: { settings: { laborSettings: { fixedOvertimeMin: 1800 } }, deadlines: { "2026-10-01_2026-10-15": { all: "2026-09-25" } }, monthlyDeadlineDays: [20] } };
+  const m0 = cfe.buildShopMirror("C1", before, "S1", { S1: "A店" }, "t");
+  let n = 0;
+  const patch = cfe.planEntityMigration(before, () => "E" + (++n), "t");
+  const after = JSON.parse(JSON.stringify(before));
+  Object.keys(patch).forEach(k => { const ks = k.split("/"); let o = after; ks.slice(0, -1).forEach(x => { o[x] = o[x] || {}; o = o[x]; }); o[ks[ks.length - 1]] = patch[k]; });
+  const m1 = cfe.buildShopMirror("C1", after, "S1", { S1: "A店" }, "t");
+  assert.deepStrictEqual(m1.settings, m0.settings, "既定の法人は設定を持たないので、移行で写しの設定は変わらない");
+  assert.deepStrictEqual(m1.deadlines, { "2026-10-01_2026-10-15": "2026-09-25" });
+  assert.deepStrictEqual(m1.monthlyDeadlineDays, [20]);
+  assert.strictEqual(m1.entityId, "E1");
+  assert.strictEqual(m1.entityName, "テスト企業");
+  assert.strictEqual(m1.kind, "shop");
+  assert.strictEqual(m0.entityId, undefined, "法人が無い企業の写しは entityId を持たない");
+  const two = { ...after, entities: { E1: { name: "甲" }, E2: { name: "乙", settings: { laborSettings: { fixedOvertimeMin: 2700 } } } }, shopEntities: { S1: "E1", S2: "E2" }, shopKinds: { S2: "hq" } };
+  const m2 = cfe.buildShopMirror("C1", two, "S2", {}, "t");
+  assert.deepStrictEqual([m2.entityId, m2.entityName, m2.kind, m2.settings.laborSettings.fixedOvertimeMin], ["E2", "乙", "hq", 2700]);
+  assert.strictEqual(cfe.buildShopMirror("C1", two, "S1", {}, "t").settings.laborSettings.fixedOvertimeMin, 1800, "別の法人の設定は混ざらない");
+});
+
+test("法人: 他企業に連携済みの店舗の検出（owners の企業uid と写しの id）", () => {
+  assert.deepStrictEqual(cfe.otherCompanyLinksOf({ U1: "k", company_C1: "k" }, { id: "C1" }, "C1"), [], "自分の企業だけなら拒否しない");
+  assert.deepStrictEqual(cfe.otherCompanyLinksOf({ U1: "k", company_C2: "k" }, null, "C1"), ["C2"]);
+  assert.deepStrictEqual(cfe.otherCompanyLinksOf({ U1: "k" }, { id: "C3" }, "C1"), ["C3"], "owners に無くても写しがあれば候補");
+  assert.deepStrictEqual(cfe.otherCompanyLinksOf({ company_C2: "k" }, { id: "C2" }, "C1"), ["C2"], "重複しない");
+  assert.deepStrictEqual(cfe.otherCompanyLinksOf(null, null, "C1"), []);
+});
+
+test("buildCompanyStaffRows: 従業員番号でまとめるのは同じ法人の中だけ・本部店舗の所属は isHq（2026-09-30・P1）", () => {
+  const shops = [
+    { id: "A1", name: "A店", entityId: "E1", staff: ["田中", "事務 花子"], settings: { staffNumbers: { "田中": "12", "事務 花子": "90" }, staffHomeShop: { "事務 花子": "H1" } }, periods: {} },
+    { id: "B1", name: "B店", entityId: "E1", staff: ["田中 太郎"], settings: { staffNumbers: { "田中 太郎": "12" } }, periods: {} },
+    { id: "C1", name: "C店", entityId: "E2", staff: ["田中 次郎"], settings: { staffNumbers: { "田中 次郎": "12" } }, periods: {} },
+    { id: "H1", name: "本部", entityId: "E1", kind: "hq", staff: ["事務 花子"], settings: { staffNumbers: { "事務 花子": "90" } }, periods: {} },
+  ];
+  const rows = u.buildCompanyStaffRows(shops, null, "2026-09-30");
+  const t = rows.filter(r => r.number === "12").sort((a, b) => a.entityId.localeCompare(b.entityId));
+  assert.strictEqual(t.length, 2, "別法人の同じ番号は別行");
+  assert.deepStrictEqual(t.map(r => [r.entityId, r.name, r.homeShopNames.join("・")]), [["E1", "田中 太郎", "A店・B店"], ["E2", "田中 次郎", "C店"]]);
+  const h = rows.filter(r => r.number === "90");
+  assert.strictEqual(h.length, 1);
+  assert.strictEqual(h[0].isHq, true, "所属店舗が本部なら isHq");
+  assert.strictEqual(t[0].isHq, false);
+  // 法人を持たない店舗（移行前）どうしは従来どおり番号でまとまる
+  const legacy = u.buildCompanyStaffRows(shops.map(s => ({ ...s, entityId: undefined })), null, "2026-09-30");
+  assert.strictEqual(legacy.filter(r => r.number === "12").length, 1);
+  // 写しの settings（coSettings）があれば店舗ごとにそちらを重ねる
+  const r2 = u.buildCompanyStaffRows([{ id: "A1", name: "A店", entityId: "E1", staff: ["佐藤"], settings: { staffAttributes: { "佐藤": "co_AbCd1234" } }, periods: {},
+    coSettings: { staffTypeLimits: { co_AbCd1234: { name: "特定技能" } } } }], null, "2026-09-30");
+  assert.strictEqual(r2[0].attrLabel, "特定技能");
+});
+
+test("companyEntityList: 既定の法人を先頭に、残りは名前の50音順", () => {
+  const pub = { entities: { E1: { name: "NITOエンタープライズ" }, E2: { name: "あ法人" }, E3: { name: "NITOエンターテイメント" }, "bad/": { name: "x" } }, defaultEntityId: "E3" };
+  assert.deepStrictEqual(u.companyEntityList(pub).map(e => e.id), ["E3", "E1", "E2"], "既定(E3)が先頭、残りは localeCompare(ja) の順");
+  assert.strictEqual(u.companyEntityList(pub)[0].isDefault, true);
+  assert.strictEqual(u.companyEntityList(pub).length, 3, "不正なIDは出さない");
+  assert.deepStrictEqual(u.companyEntityList(null), []);
+});

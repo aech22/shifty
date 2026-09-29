@@ -115,6 +115,120 @@ function canChangeCompanyPassword(uid, ownerUid) {
   return typeof ownerUid === "string" && ownerUid === uid;
 }
 
-module.exports = { COMPANY_SESSION_UID_PREFIX, canChangeCompanyPassword, COMPANY_LABOR_KEYS, COMPANY_LIMIT_NUM_KEYS, COMPANY_LABOR_SYSTEMS, COMPANY_BUILTIN_ATTRS,
+// ============================================================
+// 法人（entity）レイヤー（2026-09-30・労務給与_複数法人_実装計画.md §3.1・P1）
+// 企業（管理グループ）の下に法人を置き、店舗は必ず1法人に属す。正本は companies/{id}/pub の
+//   entities/{entityId}: {name, createdAt, settings?}
+//   shopEntities/{shopId}: entityId        ← pub/shops（{sid:true}）の形は変えない
+//   defaultEntityId                        ← 割当の無い店舗の受け皿
+//   shopKinds/{shopId}: "hq"               ← 本部店舗（無ければ通常の店舗）
+// 店舗は写し shops/{sid}/company だけを読むので、「企業共通 → 法人」の重ね合わせはここで焼き込む。
+// クライアントの applyCompanySettings / stripCompanySettings / companyControlledKeys は変えない
+// （写しの settings にキーがあれば「企業が決めた項目」として固定表示になる）。
+// ============================================================
+// 法人IDは CF の push().key だけから生まれる（companyId と同じ文字種）
+const ENTITY_ID_RE = /^[-0-9A-Za-z_]{1,64}$/;
+function isValidEntityId(id) { return typeof id === "string" && ENTITY_ID_RE.test(id); }
+const SHOP_KINDS = ["shop", "hq"];
+const ENTITY_NAME_MAX = 100;
+function sanitizeEntityName(raw) {
+  const s = typeof raw === "string" ? raw.trim() : "";
+  return s && s.length <= ENTITY_NAME_MAX ? s : "";
+}
+function _obj(v) { return v && typeof v === "object" ? v : null; }
+// 店舗の法人。割当が無い・割当先の法人が消えている店舗は既定の法人へ倒す。どれも無ければ null。
+function entityIdOfShop(pub, shopId) {
+  const p = _obj(pub) || {};
+  const ents = _obj(p.entities) || {};
+  const own = (_obj(p.shopEntities) || {})[shopId];
+  if (isValidEntityId(own) && _obj(ents[own])) return own;
+  const def = p.defaultEntityId;
+  if (isValidEntityId(def) && _obj(ents[def])) return def;
+  return null;
+}
+function shopKindOf(pub, shopId) {
+  const k = ((_obj(pub) || {}).shopKinds || {})[shopId];
+  return k === "hq" ? "hq" : "shop";
+}
+// 既存企業の片方向移行。足りないもの（法人・既定の法人・店舗の割当）だけをパッチで返す。何も要らなければ null。
+// newId: 新しい法人IDを返す関数（CF は push().key）。法人名は企業名（無ければ「法人」）。
+// 既存の pub/config.settings は動かさない＝企業共通の層のまま残り、既定の法人は設定を持たないので、
+// 移行前後で写しの settings は同じになる（既存ユーザーの見た目が変わらない）。
+function planEntityMigration(pub, newId, nowIso) {
+  const p = _obj(pub) || {};
+  const ents = _obj(p.entities) || {};
+  const patch = {};
+  let def = isValidEntityId(p.defaultEntityId) && _obj(ents[p.defaultEntityId]) ? p.defaultEntityId : null;
+  if (!def) {
+    const existing = Object.keys(ents).filter(id => isValidEntityId(id) && _obj(ents[id]));
+    if (existing.length) def = existing.sort()[0];
+    else {
+      def = newId();
+      patch[`entities/${def}`] = { name: sanitizeEntityName(p.name) || "法人", createdAt: nowIso };
+    }
+    patch.defaultEntityId = def;
+  }
+  const valid = id => isValidEntityId(id) && (_obj(ents[id]) || id === def);
+  const se = _obj(p.shopEntities) || {};
+  Object.keys(_obj(p.shops) || {}).filter(isValidShopId).forEach(sid => {
+    if (!valid(se[sid])) patch[`shopEntities/${sid}`] = def;
+  });
+  return Object.keys(patch).length ? patch : null;
+}
+// 企業共通 → 法人 の順で重ねる。労務設定はキー単位（法人が決めたキーが勝つ）、属性別の制限は属性×キー単位。
+// どちらも sanitizeCompanySettings を通した値を受け取る前提（ここでは形だけを見る）。
+function mergeEntitySettings(companySettings, entitySettings) {
+  const c = _obj(companySettings) || {};
+  const e = _obj(entitySettings) || {};
+  const out = {};
+  const lab = { ...(_obj(c.laborSettings) || {}), ...(_obj(e.laborSettings) || {}) };
+  if (Object.keys(lab).length) out.laborSettings = lab;
+  const cs = _obj(c.staffTypeLimits) || {}, es = _obj(e.staffTypeLimits) || {};
+  const ids = [...new Set([...Object.keys(cs), ...Object.keys(es)])];
+  if (ids.length) {
+    const stl = {};
+    ids.forEach(id => { stl[id] = { ...(_obj(cs[id]) || {}), ...(_obj(es[id]) || {}) }; });
+    out.staffTypeLimits = stl;
+  }
+  return out;
+}
+// 店舗の写し（shops/{sid}/company）を作る。syncCompanyMirror とテスト・E2E のスタブが同じ関数を使う。
+function buildShopMirror(companyId, pub, shopId, names, nowIso) {
+  const p = _obj(pub) || {};
+  const cfg = _obj(p.config) || {};
+  const eid = entityIdOfShop(p, shopId);
+  const ent = eid ? (_obj((p.entities || {})[eid]) || {}) : {};
+  const monthly = sanitizeMonthlyDeadlineDays(cfg.monthlyDeadlineDays);
+  return {
+    id: companyId,
+    name: p.name || "",
+    ...(eid ? { entityId: eid, entityName: ent.name || "" } : {}),
+    kind: shopKindOf(p, shopId),
+    settings: mergeEntitySettings(cfg.settings, ent.settings),
+    deadlines: effectiveDeadlinesForShop(cfg.deadlines, shopId),
+    // 空配列は Firebase に保存されない（ノードごと消える）ので、無いときはキーを持たない
+    ...(monthly.length ? { monthlyDeadlineDays: monthly } : {}),
+    shops: names || {},
+    syncedAt: nowIso,
+  };
+}
+// 店舗が別の企業に連携済みか。連携すると owners に "company_{企業ID}" が入り（registerCompanyAsOwner）、
+// 写しの id にも企業IDが入る。そのどちらかで自分以外の企業が見つかれば、その企業IDを返す（無ければ null）。
+// 呼び出し側は返った企業の pub/shops/{sid} を読んで、実際に連携中かを確かめてから拒否する。
+function otherCompanyLinksOf(owners, mirror, companyId) {
+  const out = new Set();
+  Object.keys(_obj(owners) || {}).forEach(u => {
+    if (u.indexOf(COMPANY_SESSION_UID_PREFIX) !== 0) return;
+    const cid = u.slice(COMPANY_SESSION_UID_PREFIX.length);
+    if (cid && cid !== companyId) out.add(cid);
+  });
+  const m = _obj(mirror);
+  if (m && typeof m.id === "string" && m.id && m.id !== companyId) out.add(m.id);
+  return [...out];
+}
+
+module.exports = { ENTITY_ID_RE, isValidEntityId, SHOP_KINDS, ENTITY_NAME_MAX, sanitizeEntityName, entityIdOfShop, shopKindOf,
+  planEntityMigration, mergeEntitySettings, buildShopMirror, otherCompanyLinksOf,
+  COMPANY_SESSION_UID_PREFIX, canChangeCompanyPassword, COMPANY_LABOR_KEYS, COMPANY_LIMIT_NUM_KEYS, COMPANY_LABOR_SYSTEMS, COMPANY_BUILTIN_ATTRS,
   COMPANY_ATTR_ID_RE, PERIOD_RANGE_KEY_RE, isValidDateStrCF, sanitizeCompanySettings, sanitizeCompanyDeadlines,
   effectiveDeadlinesForShop, MONTHLY_DEADLINE_MAX, sanitizeMonthlyDeadlineDays };
