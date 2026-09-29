@@ -71,6 +71,16 @@
           "adminKey": {
             ".write": "auth != null && (!data.exists() || root.child('shops').child($shopId).child('owners').child(auth.uid).exists())",
             ".validate": "newData.isString() && newData.val().length >= 16 && newData.val().length <= 64"
+          },
+          "pay": {
+            ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
+            "$name": {
+              ".validate": "newData.hasChildren(['payType','base']) && (newData.child('payType').val() === 'monthly' || newData.child('payType').val() === 'hourly') && newData.child('base').isNumber() && newData.child('base').val() >= 0"
+            }
+          },
+          "payCode": {
+            ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
+            ".validate": "newData.hasChildren(['hash','salt']) && newData.child('hash').isString() && newData.child('hash').val().length === 64 && newData.child('salt').isString() && newData.child('salt').val().length <= 64"
           }
         }
       }
@@ -103,7 +113,13 @@
         "pub": {
           ".read": "auth != null && (auth.uid === 'company_' + $companyId || data.child('ownerUid').val() === auth.uid)"
         },
-        "private": { ".read": false, ".write": false }
+        "private": {
+          ".read": false,
+          ".write": false,
+          "payCode": {
+            ".read": "auth != null && (auth.uid === 'company_' + $companyId || root.child('companies').child($companyId).child('pub').child('ownerUid').val() === auth.uid)"
+          }
+        }
       }
     },
     "companyCodes": { ".read": false, ".write": false }
