@@ -1,11 +1,13 @@
-// 本物の index.html を丸ごと起動する回帰テスト（2026-09-30 app-admin.js → app-company.js 分割）。
+// 本物の index.html を丸ごと起動する回帰テスト（2026-09-30 app-admin.js → app-company.js 分割・
+// 同日の2回目の分割で app-shift.js を追加）。
 //
 // mount-component.js（1.6節）は読み込むファイルを自前で並べるので、index.html の <script> の並びが
 // 壊れていても通ってしまう。ここでは **index.html をそのまま配信**し、次を確かめる:
-//   0. index.html の読み込み順が utils→core→staff→admin→company→main で、?v= が6箇所とも同じ版数
-//      ／app-admin.js と app-company.js がどちらも 40万字以下（Babel Standalone の 500KB 上限に余裕を残す）
+//   0. index.html の読み込み順が utils→core→staff→admin→shift→company→main で、?v= が7箇所とも同じ版数
+//      ／app-admin.js・app-shift.js・app-company.js がどれも 40万字以下（Babel Standalone の 500KB 上限に余裕を残す）
 //   1. 未ログインの端末でログイン画面が出る
-//   2. 管理者画面の企業連携タブ（app-company.js）・スタッフタブ（app-admin.js）・設定タブ（app-company.js）が描ける
+//   2. 管理者画面の企業連携タブ（app-company.js）・スタッフタブ（app-admin.js）・シフト作成タブ（app-shift.js）・
+//      設定タブ（app-company.js）が描ける
 //   すべてで console.error・pageerror が 0 件（Babel の 500KB 超過の Note も数える）。
 //
 // Firebase の CDN 5本だけを stub-firebase.js（1.65節）に差し替えるので、Firebase・Cloud Functions へは
@@ -27,7 +29,7 @@ const PW_CANDIDATES = [
 const pw = (() => { for (const c of PW_CANDIDATES) { try { return require(c); } catch (e) { /* 次の候補 */ } } throw new Error("playwright-core が見つかりません"); })();
 
 const MIME = { ".js": "application/javascript; charset=utf-8", ".html": "text/html; charset=utf-8", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json" };
-const APP_FILES = ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-company.js", "app-main.js"];
+const APP_FILES = ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"];
 const MAX_CHARS = 400000;
 
 const UID = "U1", CID = "C1";
@@ -35,7 +37,9 @@ const seed = () => ({
   global: { shops: { S1: { id: "S1", name: "A店" }, S2: { id: "S2", name: "B店" } } },
   shops: {
     S1: { owners: { [`company_${CID}`]: "K1" }, private: { adminKey: "K1" }, staff: { 0: "田中" } },
-    S2: { owners: { [UID]: "K2", [`company_${CID}`]: "K2" }, private: { adminKey: "K2" }, staff: { 0: "鈴木", 1: "佐藤" } },
+    S2: { owners: { [UID]: "K2", [`company_${CID}`]: "K2" }, private: { adminKey: "K2" }, staff: { 0: "鈴木", 1: "佐藤" },
+      // シフト作成タブ（app-shift.js）を描くための期間。提出は無くてよい（グリッドと操作方法は出る）
+      periods: { p1: { id: "p1", urlToken: "t1", shopId: "S2", label: "10月前半", startDate: "2026-10-01", endDate: "2026-10-15", deadlineDate: "", createdAt: "2026-09-01T00:00:00.000Z" } } },
   },
   accounts: { S2: { plan: "premium" }, [UID]: { shops: { S2: true } } },
   companies: { [CID]: { pub: { name: "テスト企業", ownerUid: "someoneElse", code: "ABCD1234", shops: { S1: true, S2: true } } } },
@@ -58,10 +62,10 @@ function staticChecks() {
   const order = tags.map(t => t[1]);
   const versions = [...new Set(tags.map(t => t[2]))];
   const babelOk = tags.every(t => /^(app-utils|app-core)\.js$/.test(t[1]) ? !/text\/babel/.test(t[0]) : /type="text\/babel"/.test(t[0]) && /data-presets="react"/.test(t[0]));
-  const sizes = Object.fromEntries(["app-admin.js", "app-company.js"].map(f => [f, fs.readFileSync(path.join(ROOT, f), "utf8").length]));
+  const sizes = Object.fromEntries(["app-admin.js", "app-shift.js", "app-company.js"].map(f => [f, fs.readFileSync(path.join(ROOT, f), "utf8").length]));
   return {
     order, orderOk: JSON.stringify(order) === JSON.stringify(APP_FILES),
-    vCount: tags.length, versions, versionOk: tags.length === 6 && versions.length === 1,
+    vCount: tags.length, versions, versionOk: tags.length === APP_FILES.length && versions.length === 1,
     babelOk,
     sizes, sizeOk: Object.values(sizes).every(n => n <= MAX_CHARS),
   };
@@ -122,6 +126,9 @@ const clickTab = (page, label) => page.evaluate(l => {
       A.staffClicked = await clickTab(h.page, "スタッフ");
       A.staffTab = await textHas(h.page, "佐藤") && await h.page.evaluate(() =>
         [...document.querySelectorAll("button")].filter(b => b.innerText.trim() === "編集").length >= 2);
+      // シフト作成タブ（app-shift.js の ShiftEditTab）。期間を1つ持たせてあるのでグリッドと操作方法が出る
+      A.editClicked = await clickTab(h.page, "シフト作成");
+      A.editTab = await textHas(h.page, "操作方法（セル入力コマンド・色の意味）");
       A.settingsClicked = await clickTab(h.page, "設定");
       A.settingsTab = await textHas(h.page, "テーマ");
       A.loaded = h.loaded.slice();
@@ -142,6 +149,7 @@ const clickTab = (page, label) => page.evaluate(l => {
     loginNoErrors: !!(R.login && R.login.errors.length === 0),
     companyTab: !!(R.admin && R.admin.companyTab),
     staffTab: !!(R.admin && R.admin.staffTab),
+    editTab: !!(R.admin && R.admin.editTab),
     settingsTab: !!(R.admin && R.admin.settingsTab),
     adminNoErrors: !!(R.admin && R.admin.errors.length === 0),
     noException: !R.exception,

@@ -218,15 +218,16 @@
     <p>飲食店・小売店向けの無料シフト作成サイト。スタッフがスマホから希望シフトを提出、店長はExcelで一括管理。登録不要ですぐ使える。</p>
   </noscript>
   <div id="root"></div>
-  <!-- app.js を5ファイルに分割（M-1）し、2026-09-30 に app-admin.js から app-company.js を切り出して6ファイル。
-       読み込み順厳守: utils→core→staff→admin→company→main。
-       utils/core は純JS/ブラウザ依存のプレーンscript。staff/admin/company/main は JSX を含むため Babel でトランスパイル。
-       ?v= はキャッシュバスティング用バージョン（ビルドレス構成のためデプロイ毎に手動更新。下の6箇所を
+  <!-- app.js を5ファイルに分割（M-1）し、2026-09-30 に app-admin.js から app-company.js と app-shift.js を切り出して7ファイル。
+       読み込み順厳守: utils→core→staff→admin→shift→company→main。
+       utils/core は純JS/ブラウザ依存のプレーンscript。staff/admin/shift/company/main は JSX を含むため Babel でトランスパイル。
+       ?v= はキャッシュバスティング用バージョン（ビルドレス構成のためデプロイ毎に手動更新。下の7箇所を
        app-core.js冒頭のconsole.logと揃える）。 -->
   <script src="app-utils.js?v=20260929-1d474a0"></script>
   <script src="app-core.js?v=20260929-1d474a0"></script>
   <script type="text/babel" src="app-staff.js?v=20260929-1d474a0" data-presets="react"></script>
   <script type="text/babel" src="app-admin.js?v=20260929-1d474a0" data-presets="react"></script>
+  <script type="text/babel" src="app-shift.js?v=20260929-1d474a0" data-presets="react"></script>
   <script type="text/babel" src="app-company.js?v=20260929-1d474a0" data-presets="react"></script>
   <script type="text/babel" src="app-main.js?v=20260929-1d474a0" data-presets="react"></script>
 </body>

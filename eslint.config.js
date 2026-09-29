@@ -5,10 +5,11 @@
 //
 // M-1 でファイルを5分割（app-utils / app-core / app-staff / app-admin / app-main）し、2026-09-30 に
 // app-admin.js が Babel Standalone の 500KB 上限を超えたため app-company.js（企業連携・設定・賃金マスタ）を
-// 切り出して6分割になった。
+// 切り出して6分割になり、同日 P3〜P5 の追加で再び40万字の手前まで育ったため、シフト作成タブ一式を
+// app-shift.js に切り出して7分割になった。
 // 各ファイルは独立して lint されるため、ファイルをまたいで参照される共有識別子
-// （utils/core の関数・定数、staff/admin/company のコンポーネント）を sharedGlobals に列挙し
-// no-undef の誤検知を防ぐ。読み込み順（utils→core→staff→admin→company→main）で全ファイルは同一グローバルスコープを共有する。
+// （utils/core の関数・定数、staff/admin/shift/company のコンポーネント）を sharedGlobals に列挙し
+// no-undef の誤検知を防ぐ。読み込み順（utils→core→staff→admin→shift→company→main）で全ファイルは同一グローバルスコープを共有する。
 
 const babelParser = require("@babel/eslint-parser");
 const reactPlugin = require("eslint-plugin-react");
@@ -458,6 +459,9 @@ const sharedGlobals = {
   PayCodeBox: "writable",
   PayCodeChangeModal: "writable",
   StaffPayPage: "writable",
+  // app-shift.js（2026-09-30 の2回目の分割）で定義し expXl（app-admin.js）が読む固定シフトコマンドのキー文字。
+  // ShiftEditTab は上の既存の登録（AdminView と一括PDF が描画する）をそのまま使う
+  FIXED_KEY: "writable",
   // app-company.js（2026-09-30 分割）で定義し AdminView（app-admin.js）が描画するタブ・ページ
   CompanyTab: "writable",
   CompanyStaffDirectory: "writable",
@@ -481,7 +485,7 @@ const sharedGlobals = {
 
 module.exports = [
   {
-    files: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-company.js", "app-main.js"],
+    files: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"],
     languageOptions: {
       // app-*.js は import/export を使わないグローバルスクリプト
       sourceType: "script",

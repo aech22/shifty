@@ -36,8 +36,11 @@ const DEFAULT_SCRIPTS = [
   { src: "app-core.js", babel: false },
   { src: "app-staff.js", babel: true },
   { src: "app-admin.js", babel: true },
+  // 2026-09-30 の2回目の分割で app-admin.js から切り出したシフト作成タブ一式（ShiftEditTab・実績・
+  // ヒートマップ・集計表）。AdminView と一括PDF が描画し、expXl が FIXED_KEY を読むので必ず一緒に読む。
+  { src: "app-shift.js", babel: true },
   // 2026-09-30 に app-admin.js から切り出した企業連携・SetTab・賃金マスタ。AdminView が描画するので
-  // 管理者画面の部品を載せるときは必ず一緒に読む（index.html と同じく admin の直後）。
+  // 管理者画面の部品を載せるときは必ず一緒に読む（index.html と同じく admin→shift の直後）。
   { src: "app-company.js", babel: true },
 ];
 

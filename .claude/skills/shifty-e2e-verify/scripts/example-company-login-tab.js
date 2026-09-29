@@ -13,7 +13,7 @@ const { openHarness, REPO_ROOT } = require(path.join(__dirname, "mount-component
 const { makeStub } = require(path.join(__dirname, "stub-firebase.js"));
 const ROOT = process.env.SHIFTY_ROOT || REPO_ROOT;
 const UID = "U1", CID = "C1";
-const SCRIPTS = ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) }));
+const SCRIPTS = ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) }));
 const seed = () => ({
   global: { shops: { S1: { id: "S1", name: "A店" }, S2: { id: "S2", name: "B店" } } },
   shops: {

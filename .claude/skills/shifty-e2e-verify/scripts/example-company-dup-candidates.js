@@ -52,7 +52,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const h = await openHarness({
     root: ROOT, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport: { width: 1200, height: 900 },
     extraHead: THEME + makeStub({ seed: seed(), uid: UID, view: "admin", tab: "company", cfHandlers }),
-    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
+    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
   });
   const R = {};
   try {

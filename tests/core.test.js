@@ -1508,21 +1508,25 @@ test("ADMIN_SHIFT_FIELDS: 管理者が日ごとに書き込む全フィールド
 // ===== 管理者画面の実装を読む検査の共通の読み口（2026-09-30 分割）=====
 // app-admin.js が Babel Standalone の 500KB 上限を超えたため、企業連携タブ一式・SetTab・賃金マスタを
 // app-company.js へそのまま移した。管理者画面の実装を読む検査（ドリフト検出など）は、移った関数も
-// 移る前と同じに見る必要があるので、2ファイルを読み込み順（admin→company）で連結した1本として読む。
-// どちらも import/export の無いグローバルスクリプトなので、連結しても1つのスクリプトとして構文が成り立つ。
-// 差し替え口: SHIFTY_ADMIN_SRC（app-admin.js の写し）・SHIFTY_COMPANY_SRC（app-company.js の写し）。
+// 移る前と同じに見る必要があるので、読み込み順（admin→shift→company）で連結した1本として読む。
+// 同日の2回目の分割で、シフト作成タブ一式（ShiftEditTab・ActualsGrid・HeatTable 等）を app-shift.js へ
+// そのまま移したので、それも admin と company の間に挟む（index.html の読み込み順と同じ）。
+// どれも import/export の無いグローバルスクリプトなので、連結しても1つのスクリプトとして構文が成り立つ。
+// 差し替え口: SHIFTY_ADMIN_SRC（app-admin.js の写し）・SHIFTY_SHIFT_SRC（app-shift.js の写し）・
+// SHIFTY_COMPANY_SRC（app-company.js の写し）。
 // 走査の検出力を対照で確かめるときに使う（配信物は編集すると自動コミットされるため写しで採る）。
 function _readAdminSurface() {
   const fs = require("node:fs");
   const path = require("node:path");
   const admin = process.env.SHIFTY_ADMIN_SRC || path.join(__dirname, "..", "app-admin.js");
+  const shift = process.env.SHIFTY_SHIFT_SRC || path.join(__dirname, "..", "app-shift.js");
   const company = process.env.SHIFTY_COMPANY_SRC || path.join(__dirname, "..", "app-company.js");
-  return fs.readFileSync(admin, "utf8") + "\n" + fs.readFileSync(company, "utf8");
+  return [admin, shift, company].map(f => fs.readFileSync(f, "utf8")).join("\n");
 }
 
 function collectShiftDayWrites() {
   const babel = require("@babel/core"); // devDependencies に宣言済み（@babel/parser は推移的依存なので直接requireしない）
-  // 既定は配信物そのもの（app-admin.js＋app-company.js）。SHIFTY_ADMIN_SRC／SHIFTY_COMPANY_SRC は
+  // 既定は配信物そのもの（app-admin.js＋app-shift.js＋app-company.js）。SHIFTY_ADMIN_SRC／SHIFTY_SHIFT_SRC／SHIFTY_COMPANY_SRC は
   // **この走査が本当に検出できるかを確かめる**ための差し替え口（_readAdminSurface）。
   const src = _readAdminSurface();
   const ast = babel.parseSync(src, {
@@ -2034,7 +2038,7 @@ function _parseAppFile(relPath, envVar) {
   const fs = require("node:fs");
   const path = require("node:path");
   const babel = require("@babel/core"); // devDependencies に宣言済み
-  // app-admin.js は切り出した app-company.js と連結して読む（_readAdminSurface。2026-09-30 分割）
+  // app-admin.js は切り出した app-shift.js・app-company.js と連結して読む（_readAdminSurface。2026-09-30 分割）
   const src = relPath === "app-admin.js" ? _readAdminSurface()
     : fs.readFileSync((envVar && process.env[envVar]) || path.join(__dirname, "..", relPath), "utf8");
   const ast = babel.parseSync(src, {
@@ -3299,7 +3303,7 @@ test("凍結: laborSettings が PERIOD_SNAPSHOT_SETTING_KEYS に登録され、�
 });
 
 test("項目12 ドリフト検出: applyEditToSubs と saveAdj が同じ isTimeOrderInvalid を通る", () => {
-  // 既定は配信物そのもの（app-admin.js＋app-company.js）。SHIFTY_ADMIN_SRC／SHIFTY_COMPANY_SRC は
+  // 既定は配信物そのもの（app-admin.js＋app-shift.js＋app-company.js）。SHIFTY_ADMIN_SRC／SHIFTY_SHIFT_SRC／SHIFTY_COMPANY_SRC は
   // この走査が本当に検出できるかを確かめる差し替え口（_readAdminSurface）。
   const raw = _readAdminSurface();
   // **コメントを先に落とす。** 落とさないと「同じ isTimeOrderInvalid を通す」と書いた説明コメントだけで
@@ -4048,7 +4052,7 @@ test("LABOR_DAY_FIX_KEYS: 全キーに title 用のラベルがあり、セル�
 // 現状そうなっているのは「書き出しが画面とは別の色付けを持っている」からで、
 // 誰かが揃えようとして参照を足すと黙って配布物に出る。ここで参照が無いことを固定する。
 test("Excel・PDF の書き出しは労務の要修正の色を参照しない", () => {
-  const src = _readAdminSurface(); // app-admin.js＋app-company.js（2026-09-30 分割）
+  const src = _readAdminSurface(); // app-admin.js＋app-shift.js＋app-company.js（2026-09-30 分割）
   // 行コメントを落とす（説明文の中の「画面（cellBgFor）」を参照と読み違えないため）
   const strip = t => t.split("\n").map(l => {
     const i = l.indexOf("//");
@@ -4750,7 +4754,7 @@ test("P6a 改名・削除の後始末: private/pay が追随する（STAFF_KEYED
 });
 test("P6a ドリフト検出: 改名と削除の入口が private/pay の後始末を通る", () => {
   const fs = require("node:fs");
-  const admin = _readAdminSurface(); // app-admin.js＋app-company.js（2026-09-30 分割）
+  const admin = _readAdminSurface(); // app-admin.js＋app-shift.js＋app-company.js（2026-09-30 分割）
   // 改名（AdminView の onRenameStaff）は renameStaffInSettings と同じ場所で pay も移す
   const ren = admin.slice(admin.indexOf("onRenameStaff={(oldName,newName)=>{"));
   const renBody = ren.slice(0, ren.indexOf("tt(`✓ ${oldName} → ${newName} に変更しました`)"));

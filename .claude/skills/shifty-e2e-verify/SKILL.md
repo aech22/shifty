@@ -238,7 +238,7 @@ node .claude/skills/shifty-e2e-verify/scripts/example-staff-attr-period.js # 属
 
 ```bash
 S=<scratchpad>/prefix-<SHA>; mkdir -p $S
-cp app-utils.js app-core.js app-staff.js app-company.js $S/ && git show <修正前SHA>:app-admin.js > $S/app-admin.js
+cp app-utils.js app-core.js app-staff.js app-shift.js app-company.js $S/ && git show <修正前SHA>:app-admin.js > $S/app-admin.js
 SHIFTY_ROOT=$S node .claude/skills/shifty-e2e-verify/scripts/example-shift-edit-tab.js   # EXIT=1 になるのが正しい
 ```
 
@@ -246,6 +246,11 @@ SHIFTY_ROOT=$S node .claude/skills/shifty-e2e-verify/scripts/example-shift-edit-
 ハーネスは両方を読む。修正が app-company.js 側なら `git show <修正前SHA>:app-company.js` を置く。
 分割より前（`8d271c8` より前）の SHA を基準にするときは、app-company.js が存在せず app-admin.js が
 全部を持っているので、`$S/app-company.js` は空ファイル（`: > $S/app-company.js`）にする。
+
+**同日の2回目の分割で、シフト作成タブ一式（ShiftEditTab・ActualsGrid・ActualsCsvDialog・HeatTable・
+SummaryTable・GridLegend と LEGEND_COLORS 等の定数）を app-shift.js に切り出した**（読み込みは admin→shift→company）。
+シフト作成タブの症状なら `git show <修正前SHA>:app-shift.js` を置く。2回目の分割（`a5d9c3c`）より前の SHA を
+基準にするときは app-shift.js が存在しないので、`$S/app-shift.js` を空ファイル（`: > $S/app-shift.js`）にする。
 
 2026-08-24 実測: 修正後 `EXIT=0`、修正前（`62cbee8` の app-admin.js）`EXIT=1`（`step4_noLeak:false` ＝ 消えた期間の 2026-07-02 が期間Bのsubに現れる）。**この差が出ないテストは、何も検証していない。**
 
@@ -262,7 +267,7 @@ SHIFTY_ROOT=$S node .claude/skills/shifty-e2e-verify/scripts/example-shift-edit-
 
 ```bash
 S=/tmp/pre-$$; mkdir -p $S
-for f in app-utils.js app-core.js app-staff.js app-admin.js app-company.js; do git show <修正前SHA>:$f > $S/$f; done
+for f in app-utils.js app-core.js app-staff.js app-admin.js app-shift.js app-company.js; do git show <修正前SHA>:$f > $S/$f; done
 grep -c staffHidden $S/app-utils.js    # 0 でなければ基準SHAが間違っている
 ```
 
@@ -584,7 +589,8 @@ document.body.appendChild = function(node){
 ```bash
 curl -s "https://shiftyshifty.app/app-admin.js" -o /tmp/prod.js
 git show origin/main:app-admin.js > /tmp/main.js && diff -q /tmp/prod.js /tmp/main.js
-# 企業連携タブ・設定タブ・賃金マスタの症状なら app-company.js（2026-09-30 分割）も同じ手順で比べる
+# 企業連携タブ・設定タブ・賃金マスタの症状なら app-company.js、シフト作成タブの症状なら app-shift.js
+# （どちらも 2026-09-30 分割）も同じ手順で比べる
 ```
 
 一致していれば「配信漏れ」は除外でき、localhost検証＝本番コードの検証になる（DEV_MODEはホスト名判定なので同一ファイルで成立）。GitHub Pagesは `max-age=600` だが、**デプロイ前から開きっぱなしのタブは再読み込みまで旧JSのまま動く**——修正済みの症状が報告されたら、まずタブの再読み込みを依頼する価値がある。
