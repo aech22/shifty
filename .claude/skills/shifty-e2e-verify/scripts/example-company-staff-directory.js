@@ -108,7 +108,8 @@ async function open(plan, viewport) {
     paidNoPlus: !!R.numberRows && (R.numberRows.find(r => r[1] === "山田") || [])[4] === "付与 10／残 8",
     paidUnset: !!R.numberRows && (R.numberRows.find(r => r[1] === "佐藤") || [])[4] === "—",
     count: R.count === "10名",
-    numberMerged: !!R.numberRows && JSON.stringify(R.numberRows.find(r => r[0] === "40")) === JSON.stringify(["40", "森 花子", "未設定", "A店・B店", "—", "••••", "編集"]),
+    // 2店舗に登録があって所属店舗が明示されていない人には「所属店舗を設定してください」が付く（P3.6・ヘルプ先の合算先が決まらないため）
+    numberMerged: !!R.numberRows && JSON.stringify(R.numberRows.find(r => r[0] === "40")) === JSON.stringify(["40", "森 花子", "未設定", "A店・B店\n所属店舗を設定してください", "—", "••••", "編集"]),
     wageMasked: !!R.numberRows && R.numberRows.filter(r => r.length === 7).every(r => r[5] === "••••"),
     shopGroups: !!R.shopRows && JSON.stringify(R.shopRows.filter(r => r.length === 1).map(r => r[0])) === JSON.stringify(["A店", "B店", "C店"])
       && JSON.stringify(names(R.shopRows)) === JSON.stringify(["佐藤", "小林", "田中", "森 花子", "鈴木", "山田", "高橋", "中村", "伊藤", "渡辺"]),
