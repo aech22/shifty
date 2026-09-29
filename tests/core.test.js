@@ -4977,3 +4977,91 @@ test("P1b ドリフト検出: companyRenameStaff が名前キーの後始末を�
   ["ensureCompanyPeople", "mergePeople", "splitPerson", "reassignPersonId", "companyRenameStaff", "companyUpdateStaff"]
     .forEach(n => { assert.ok(idx.includes("exports." + n + " "), n + " が CF に無い"); assert.ok(new RegExp('COMPANY_ENTITY_CFS=\\[[^\\]]*"' + n + '"').test(main), n + " を callCompanyCF が通さない"); });
 });
+
+// ===== P2 年間所定労働時間と月の所定上限（労務給与_複数法人_実装計画.md §3.3・§6 P2）=====
+// 期待値は計画書 §3.3 と設定メモ（31日 199h／30日 193h／2月 182h）からの転記。実装の出力から逆生成していない。
+test("P2 所定上限: 2,080h で 31/30/28日・うるう年2月 = 176:39／170:57／159:33／164:48", () => {
+  const ls = { laborSettings: { annualScheduledMin: HM(2080, 0) } };
+  assert.strictEqual(u.laborMonthFrame(ls, "2026-10").scheduledCapMin, HM(176, 39), "31日");
+  assert.strictEqual(u.laborMonthFrame(ls, "2026-11").scheduledCapMin, HM(170, 57), "30日");
+  assert.strictEqual(u.laborMonthFrame(ls, "2027-02").scheduledCapMin, HM(159, 33), "28日");
+  assert.strictEqual(u.laborMonthFrame(ls, "2028-02-15").scheduledCapMin, HM(164, 48), "うるう年2月（その暦年は366日）");
+  assert.strictEqual(u.yearDaysOf(2028), 366);
+  assert.strictEqual(u.yearDaysOf(2100), 365);
+  assert.strictEqual(u.yearDaysOf(2000), 366);
+});
+test("P2 目安: 年間所定を設定すると所定上限 + 固定残業 − 余裕（31日 199h／30日 193h／2月 182h）。上限は変えない", () => {
+  const ls = { laborSettings: { annualScheduledMin: HM(2080, 0) } };
+  assert.strictEqual(u.laborMonthFrame(ls, "2026-10").guideMin, HM(199, 0));
+  assert.strictEqual(u.laborMonthFrame(ls, "2026-11").guideMin, HM(193, 0));
+  assert.strictEqual(u.laborMonthFrame(ls, "2027-02").guideMin, HM(182, 0));
+  // 上限（総枠 + 固定残業）と総枠は年間所定に関係なく従来どおり
+  assert.strictEqual(u.laborMonthFrame(ls, "2026-10").capMin, HM(207, 8));
+  assert.strictEqual(u.laborMonthFrame(ls, "2026-10").baseMin, HM(177, 8));
+});
+test("P2 未設定: 年間所定が無い・0 なら所定上限は0、目安・総枠・上限は S-1 と完全に同じ値", () => {
+  [{}, { laborSettings: { annualScheduledMin: 0 } }, { laborSettings: { annualScheduledMin: "x" } }, null].forEach(s => {
+    ["2026-08", "2026-09", "2026-02", "2028-02"].forEach(ym => {
+      const f = u.laborMonthFrame(s, ym);
+      const b = u.monthlyBaseMin(HM(40, 0), u.daysInMonthOf(ym));
+      assert.strictEqual(f.scheduledCapMin, 0);
+      assert.strictEqual(f.baseMin, b);
+      assert.strictEqual(f.guideMin, u.monthlyGuideMin(b, HM(30, 0), HM(7, 0), HM(3, 0)), `${ym} の目安`);
+      assert.strictEqual(f.capMin, u.monthlyCapMin(b, HM(30, 0)));
+    });
+  });
+  assert.strictEqual(u.laborMonthFrame({}, "2026-08").guideMin, HM(200, 0), "S-1 の 31日目安 200h のまま");
+});
+test("P2 分母: 0（未設定）なら年間所定÷12 を 0.1h 単位で切り捨て（2,080h → 173.3h＝10398分）。年間所定も無ければ 10398", () => {
+  assert.strictEqual(u.rateDenominatorMinOf({ annualScheduledMin: HM(2080, 0) }), 10398);
+  assert.strictEqual(u.rateDenominatorMinOf({ annualScheduledMin: HM(2080, 0), rateDenominatorMin: 0 }), 10398);
+  assert.strictEqual(u.rateDenominatorMinOf({ annualScheduledMin: HM(2085, 0) }), 10422, "2,085h ÷ 12 = 173.75h → 173.7h");
+  assert.strictEqual(u.rateDenominatorMinOf({ annualScheduledMin: HM(2080, 0), rateDenominatorMin: 10500 }), 10500, "分母を入れればその値");
+  assert.strictEqual(u.rateDenominatorMinOf({ annualScheduledMin: 0 }), 10398);
+  assert.strictEqual(u.rateDenominatorMinOf(u.laborSettingsOf({})), 10398, "既定の労務設定は分母 173.3h");
+});
+test("P2 労務設定: 新キー4つの既定値と範囲（週の起算 0〜6・月をまたぐ週 0/1）", () => {
+  const d = u.laborSettingsOf({});
+  assert.strictEqual(d.annualScheduledMin, 0);
+  assert.strictEqual(d.rateDenominatorMin, 0);
+  assert.strictEqual(d.weekStartDow, 1);
+  assert.strictEqual(d.weekSplitAtMonthEdge, 1);
+  assert.strictEqual(u.laborSettingsOf({ laborSettings: { weekStartDow: 0 } }).weekStartDow, 0, "日曜起算");
+  assert.strictEqual(u.laborSettingsOf({ laborSettings: { weekStartDow: 7 } }).weekStartDow, 1, "範囲外は既定");
+  assert.strictEqual(u.laborSettingsOf({ laborSettings: { weekStartDow: 2.5 } }).weekStartDow, 1, "小数は既定");
+  assert.strictEqual(u.laborSettingsOf({ laborSettings: { weekSplitAtMonthEdge: 0 } }).weekSplitAtMonthEdge, 0);
+  assert.strictEqual(u.laborSettingsOf({ laborSettings: { weekSplitAtMonthEdge: 2 } }).weekSplitAtMonthEdge, 1);
+  assert.strictEqual(u.laborSettingsOf({ laborSettings: { annualScheduledMin: 124800 } }).annualScheduledMin, 124800);
+});
+test("P2 CF: 新キー4つを企業・法人の設定として受け、範囲外を捨てる（クライアントと同じ範囲）", () => {
+  const r = cfc.sanitizeCompanySettings({ laborSettings: { annualScheduledMin: 124800, rateDenominatorMin: 10398, weekStartDow: 0, weekSplitAtMonthEdge: 1 } });
+  assert.deepStrictEqual(r.laborSettings, { annualScheduledMin: 124800, rateDenominatorMin: 10398, weekStartDow: 0, weekSplitAtMonthEdge: 1 });
+  const bad = cfc.sanitizeCompanySettings({ laborSettings: { weekStartDow: 7, weekSplitAtMonthEdge: 2, annualScheduledMin: -1, fiscalYearStartMonth: 4 } });
+  assert.deepStrictEqual(bad.laborSettings, { fiscalYearStartMonth: 4 });
+  assert.deepStrictEqual(cfc.sanitizeCompanySettings({ laborSettings: { weekStartDow: 1.5 } }), {});
+  // 範囲の書き写しがクライアントと一致する（fiscalYearStartMonth は CF 側だけが範囲で捨てる既存の規則）
+  Object.keys(u.LABOR_SETTING_RANGES).forEach(k => assert.deepStrictEqual(cfc.COMPANY_LABOR_RANGES[k], u.LABOR_SETTING_RANGES[k], k));
+  // クライアントが範囲外として捨てる値は CF も捨てる（逆も同じ）
+  [-1, 0, 1, 2, 6, 7, 0.5].forEach(v => ["weekStartDow", "weekSplitAtMonthEdge"].forEach(k => {
+    const cfKeeps = (cfc.sanitizeCompanySettings({ laborSettings: { [k]: v } }).laborSettings || {})[k] !== undefined;
+    const clKeeps = u.laborSettingsOf({ laborSettings: { [k]: v } })[k] === v;
+    assert.strictEqual(cfKeeps, clKeeps, `${k}=${v}`);
+  }));
+});
+test("P2 写し: 企業共通→法人の順で年間所定・分母・週の起算が店舗の写しに焼かれ、店舗の目安と分母に効く", () => {
+  const pub = {
+    name: "テスト企業", shops: { S1: true }, defaultEntityId: "E1", shopEntities: { S1: "E2" },
+    config: { settings: cfc.sanitizeCompanySettings({ laborSettings: { annualScheduledMin: HM(2000, 0), weekStartDow: 0 } }) },
+    entities: { E1: { name: "既定" }, E2: { name: "法人B", settings: cfc.sanitizeCompanySettings({ laborSettings: { annualScheduledMin: HM(2080, 0) } }) } },
+  };
+  const m = cfc.buildShopMirror("C1", pub, "S1", { S1: "A店" }, "t");
+  assert.deepStrictEqual(m.settings.laborSettings, { annualScheduledMin: HM(2080, 0), weekStartDow: 0 }, "法人の年間所定が勝ち、企業の週の起算は残る");
+  const eff = u.applyCompanySettings({ laborSettings: { annualScheduledMin: HM(1000, 0), marginMin: 420 } }, m.settings);
+  assert.strictEqual(u.laborMonthFrame(eff, "2026-10").scheduledCapMin, HM(176, 39));
+  assert.strictEqual(u.laborMonthFrame(eff, "2026-10").guideMin, HM(199, 0));
+  assert.strictEqual(u.laborSettingsOf(eff).weekStartDow, 0);
+  assert.strictEqual(u.rateDenominatorMinOf(u.laborSettingsOf(eff)), 10398);
+  const keys = u.companyControlledKeys(m.settings);
+  assert.ok(keys.labor.has("annualScheduledMin") && keys.labor.has("weekStartDow") && !keys.labor.has("rateDenominatorMin"));
+  assert.ok(!("annualScheduledMin" in u.stripCompanySettings(eff, m.settings).laborSettings), "企業が決めた年間所定は店舗に保存しない");
+});
