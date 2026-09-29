@@ -1082,6 +1082,15 @@ function App(){
       return {synced:(r&&r.synced)||[],failed:(r&&r.failed)||[]};
     }catch(e){ return {error:(e&&e.message)||"保存に失敗しました"}; }
   };
+  // 法人（entity）の管理（2026-09-30・労務給与_複数法人_実装計画.md P1）。書き込みは CF だけ。
+  // 呼べる CF をここで限り、companyId はこちらで足す。戻り値は CF の data か {error}。
+  const COMPANY_ENTITY_CFS=["ensureCompanyEntities","createEntity","renameEntity","assignShopEntity","saveEntityConfig","setShopKind"];
+  const callCompanyCF=async(name,payload)=>{
+    if(!companyInfo) return {error:"企業アカウントがありません"};
+    if(!COMPANY_ENTITY_CFS.includes(name)) return {error:"この操作はできません"};
+    try{ return (await _callCF(name,{...(payload||{}),companyId:companyInfo.companyId}))||{}; }
+    catch(e){ return {error:(e&&e.message)||"保存に失敗しました"}; }
+  };
   // 店舗コードで企業に連携（SetTabの連携店舗一覧の追加ボタン）
   const linkStoreToCompany=async(rawCode)=>{
     if(!companyInfo) return {error:"企業アカウントがありません"};
@@ -1729,7 +1738,7 @@ function App(){
               onSignInAndLinkGoogle={signInAndLinkGoogle} onSignInAndLinkEmail={signInAndLinkEmail}
               onLinkExistingShop={linkExistingShopToAuth} onUnlinkShop={unlinkShopFromAuth}
               companyInfo={companyInfo} onCreateCompany={createCompany} onChangeCompanyPassword={changeCompanyPassword}
-              onRenameCompany={renameCompany} onSaveCompanyConfig={saveCompanyConfig} onCompanyLogin={companyLoginAndEnter} onLinkStoreToCompany={linkStoreToCompany} onUnlinkStoreFromCompany={unlinkShopFromAuth}/>
+              onRenameCompany={renameCompany} onSaveCompanyConfig={saveCompanyConfig} onCompanyCall={callCompanyCF} onCompanyLogin={companyLoginAndEnter} onLinkStoreToCompany={linkStoreToCompany} onUnlinkStoreFromCompany={unlinkShopFromAuth}/>
       }
     </div>
   );

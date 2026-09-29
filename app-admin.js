@@ -6,7 +6,7 @@
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin,onCompanyCall}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   // 管理者画面の中身を丸ごと差し替える全画面ビュー（企業内登録スタッフ・2026-09-28）。null＝通常のタブ表示
   const[fullPage,setFullPage]=useState(null);
@@ -104,6 +104,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
 
   if(fullPage==="companyStaff"&&companyInfo&&plan==="premium")
     return <CompanyStaffDirectory companyId={companyInfo.companyId} onBack={()=>setFullPage(null)}/>;
+  const isHqShop=!!(companyLink&&companyLink.kind==="hq");
   return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       {/* 管理ヘッダー */}
@@ -212,7 +213,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           </div>
           <button onClick={()=>setTab("mypage")} style={{padding:"6px 12px",background:"#DC2626",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>マイページへ</button>
         </div>}
-        {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings}/>}
+        {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} isHqShop={isHqShop}/>}
         {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name||""} linkedShops={homeShopChoices} companyShops={Object.entries((companyLink&&companyLink.shops)||{}).filter(([id])=>id&&id!==currentShopId).map(([id,nm])=>({id,name:nm||id}))} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
@@ -232,7 +233,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} tt={tt} plan={plan} periods={periods}/>}
         {tab==="submissions"&&<SubsTab key={currentShopId} subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
         {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
-        {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany} plan={plan} onSaveCompanyConfig={onSaveCompanyConfig} onCompanyLogin={onCompanyLogin} onOpenCompanyStaff={()=>setFullPage("companyStaff")}/>}
+        {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany} plan={plan} onSaveCompanyConfig={onSaveCompanyConfig} onCompanyLogin={onCompanyLogin} onCompanyCall={onCompanyCall} onOpenCompanyStaff={()=>setFullPage("companyStaff")}/>}
         {tab==="mypage"&&!hideMypage&&<MyPageTab plan={plan} planExpiry={planExpiry} billingSchedule={billingSchedule} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
         {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} adminCode={adminCode} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
       </div>
@@ -2862,8 +2863,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 }
 
 // ===== 期間管理タブ =====
-function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shopName,plan="free",onUpgrade,settings={},onSaveSettings}){
+function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shopName,plan="free",onUpgrade,settings={},onSaveSettings,isHqShop=false}){
   const[eid,setEid]=useState(null);
+  // 本部店舗（企業連携タブで種別を「本部」にした店舗・2026-09-30 P1）は固定勤務で希望を集めないので、
+  // スタッフ提出URLの案内を出さない。出すこと自体はできるよう、押せば表示する
+  const[hqShowUrl,setHqShowUrl]=useState(false);
   const[form,setForm]=useState({label:"",startDate:"",endDate:"",deadlineDate:""});
   const[show,setShow]=useState(false);
   const[usePreset,setUsePreset]=useState(true); // プリセット使用フラグ
@@ -3048,6 +3052,10 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
                   </div>
                 </div>
                 {/* URLシェア */}
+                {isHqShop&&!hqShowUrl?<div data-hq-url-hidden="1" style={{marginTop:10,padding:"8px 12px",background:"rgba(0,0,0,.03)",borderRadius:8,display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:11,color:"var(--c-text3)",flex:1}}>本部店舗のため、スタッフ提出URLは表示していません</span>
+                  <button onClick={e=>{e.stopPropagation();setHqShowUrl(true);}} style={{padding:"4px 10px",background:"var(--c-border)",border:"none",borderRadius:4,color:"var(--c-text)",fontSize:11,cursor:"pointer",flexShrink:0}}>URLを表示</button>
+                </div>:
                 <div style={{marginTop:10,padding:"8px 12px",background:"rgba(0,0,0,.03)",borderRadius:8,display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:11,color:"var(--c-text4)",flexShrink:0}}>URL</span>
                   <span style={{fontSize:11,color:"var(--c-text3)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pUrl}</span>
@@ -3060,7 +3068,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
               } else {
                 const el=document.createElement("textarea");el.value=pUrl;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ URLをコピーしました");
               }}} style={{padding:"4px 10px",background:"var(--c-border)",border:"none",borderRadius:4,color:"var(--c-text)",fontSize:11,cursor:"pointer",flexShrink:0}}>コピー</button>
-                </div>
+                </div>}
               </>
             }
           </div>
@@ -4995,6 +5003,40 @@ const CO_LABOR_FIELDS=[
   {key:"agreementMonthlyOtMin",label:"36協定 1か月の延長上限",max:200},
   {key:"agreementAnnualOtMin",label:"36協定 1年の延長上限",max:999},
 ];
+// 労務判定の入力欄（企業の共通設定と法人の設定で共有・2026-09-30 に CompanyConfigCard から切り出し）。
+// 空欄＝上の層（企業の共通設定なら店舗、法人なら企業の共通設定）の値を使う。
+function CoLaborFields({labor,setLabor,placeholder,blankLabel}){
+  const LBL={fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"};
+  const UNIT={fontSize:11,color:"var(--c-text4)"};
+  const numIn=(val,onCh,max,w=58)=>(<input type="number" min={0} max={max} value={val===undefined||val===null?"":val} placeholder={placeholder}
+    onChange={e=>{const t=e.target.value;if(t===""){onCh(null);return;}onCh(Math.max(0,Math.min(max,parseInt(t)||0)));}}
+    style={{...AI,width:w,textAlign:"center",padding:"5px 6px"}}/>);
+  const b31=labor.monthlyBase31Min;
+  return(<div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+    <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+      <span style={{...LBL,minWidth:150}}>31日の月の総枠</span>
+      {numIn(b31===undefined?null:Math.floor(b31/60),v=>setLabor("monthlyBase31Min",v===null?null:v*60+(b31===undefined?0:b31%60)),744,64)}
+      <span style={UNIT}>時間</span>
+      {numIn(b31===undefined?null:b31%60,v=>setLabor("monthlyBase31Min",(b31===undefined?0:Math.floor(b31/60))*60+(v||0)),59,64)}
+      <span style={UNIT}>分</span>
+    </div>
+    {CO_LABOR_FIELDS.map(f=>(
+      <div key={f.key} style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+        <span style={{...LBL,minWidth:150}}>{f.label}</span>
+        {numIn(labor[f.key]===undefined?null:Math.floor(labor[f.key]/60),v=>setLabor(f.key,v===null?null:v*60),f.max)}
+        <span style={UNIT}>h</span>
+      </div>
+    ))}
+    <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+      <span style={{...LBL,minWidth:150}}>年の区切り</span>
+      <select value={labor.fiscalYearStartMonth||""} onChange={e=>setLabor("fiscalYearStartMonth",e.target.value?parseInt(e.target.value):null)}
+        style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+        <option value="">{blankLabel}</option>
+        <option value={1}>1月（暦年）</option><option value={4}>4月（年度）</option><option value={7}>7月</option><option value={10}>10月</option>
+      </select>
+    </div>
+  </div>);
+}
 function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
   const[draft,setDraft]=useState(null);
   const[loadErr,setLoadErr]=useState(false);
@@ -5042,7 +5084,6 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
     const f=(r&&r.failed)||[];
     tt(f.length?`△ ${(r.synced||[]).length}件に反映し、${f.length}件は失敗しました。もう一度保存してください`:`✓ 連携店舗 ${(r&&r.synced||[]).length} 件に反映しました`);
   };
-  const b31=labor.monthlyBase31Min;
   const LBL={fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"};
   const UNIT={fontSize:11,color:"var(--c-text4)"};
   return(<AC title="企業の共通設定">
@@ -5050,30 +5091,7 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
       連携している全店舗の設定タブに、ここで入れた値が優先して適用されます。空欄の項目は各店舗が自分で設定できます。
     </div>
     <AL>労務判定</AL>
-    <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
-      <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
-        <span style={{...LBL,minWidth:150}}>31日の月の総枠</span>
-        {numIn(b31===undefined?null:Math.floor(b31/60),v=>setLabor("monthlyBase31Min",v===null?null:v*60+(b31===undefined?0:b31%60)),744,64)}
-        <span style={UNIT}>時間</span>
-        {numIn(b31===undefined?null:b31%60,v=>setLabor("monthlyBase31Min",(b31===undefined?0:Math.floor(b31/60))*60+(v||0)),59,64)}
-        <span style={UNIT}>分</span>
-      </div>
-      {CO_LABOR_FIELDS.map(f=>(
-        <div key={f.key} style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
-          <span style={{...LBL,minWidth:150}}>{f.label}</span>
-          {numIn(labor[f.key]===undefined?null:Math.floor(labor[f.key]/60),v=>setLabor(f.key,v===null?null:v*60),f.max)}
-          <span style={UNIT}>h</span>
-        </div>
-      ))}
-      <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
-        <span style={{...LBL,minWidth:150}}>年の区切り</span>
-        <select value={labor.fiscalYearStartMonth||""} onChange={e=>setLabor("fiscalYearStartMonth",e.target.value?parseInt(e.target.value):null)}
-          style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
-          <option value="">店舗で設定</option>
-          <option value={1}>1月（暦年）</option><option value={4}>4月（年度）</option><option value={7}>7月</option><option value={10}>10月</option>
-        </select>
-      </div>
-    </div>
+    <CoLaborFields labor={labor} setLabor={setLabor} placeholder="店舗" blankLabel="店舗で設定"/>
     <AL>属性別の勤務時間制限</AL>
     {attrRows.map(([id,label])=>{
       const e=stl[id]||{};
@@ -5132,6 +5150,145 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
 // 管理者画面の中身を丸ごと差し替えて出す（AdminView の fullPage）。ブラウザの新しいタブは使わない——
 // 実ログインは永続化しない設計なので、新しいタブでは未ログインになり companies/{id}/pub を読めない。
 // 載せるのは店舗に依存しない情報だけ（従業員番号・属性・所属店舗・有給）。計算は buildCompanyStaffRows（app-utils.js）。
+// ============================================================
+// 法人（entity）（2026-09-30・労務給与_複数法人_実装計画.md §3.1・P1）
+// 企業の下に法人を置き、店舗は必ず1法人に属す。正本は companies/{id}/pub の entities / shopEntities /
+// defaultEntityId / shopKinds（書くのは CF だけ）。法人の設定は企業の共通設定より優先して写しに焼かれる。
+// 法人が1つも無い企業（P1 より前に作った企業）は、このカードを開いたときに CF ensureCompanyEntities で
+// 企業名と同名の法人を1つ作り、全店舗をそこへ割り当てる（片方向の移行・見た目は変わらない）。
+// ============================================================
+// 企業の構造（法人・店舗の割当・本部の種別）を読む。読めなかった項目は null（呼び出し側は「法人なし」として扱う）
+async function readCompanyStructure(companyId){
+  const keys=["entities","shopEntities","defaultEntityId","shopKinds"];
+  const vals=await Promise.all(keys.map(k=>firebaseDB.ref(`companies/${companyId}/pub/${k}`).once("value").then(x=>x.val()).catch(()=>null)));
+  const out={};keys.forEach((k,i)=>{out[k]=vals[i];});
+  return out;
+}
+function CompanyEntityCard({companyId,shopNames={},onCompanyCall,tt,onChanged}){
+  const[st,setSt]=useState(null); // {pub, shopIds, names}
+  const[loadErr,setLoadErr]=useState(false);
+  const[tick,setTick]=useState(0);
+  const[busy,setBusy]=useState(false);
+  const[newName,setNewName]=useState("");
+  const[nameDraft,setNameDraft]=useState({}); // {entityId: 入力中の名前}
+  const[openCfg,setOpenCfg]=useState(null);   // 設定を開いている法人ID
+  const[cfgDraft,setCfgDraft]=useState(null); // その法人の laborSettings の下書き
+  const triedEnsureRef=useRef(false);
+  useEffect(()=>{
+    if(!firebaseDB||!companyId){setSt({pub:{},shopIds:[],names:{}});return;}
+    let cancelled=false;
+    setLoadErr(false);
+    Promise.all([readCompanyStructure(companyId),firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value")]).then(async([pub,shS])=>{
+      const shopIds=Object.keys(shS.val()||{});
+      // 法人の無い企業は1回だけ移行を頼む（CF が法人を作り、全店舗を割り当てて写しを作り直す）
+      if(companyEntityList(pub).length===0&&!triedEnsureRef.current&&onCompanyCall){
+        triedEnsureRef.current=true;
+        const r=await onCompanyCall("ensureCompanyEntities",{});
+        if(cancelled)return;
+        if(r&&r.error){tt("✕ 法人を準備できませんでした: "+r.error);}
+        else{setTick(t=>t+1);onChanged&&onChanged();return;}
+      }
+      const names={};
+      await Promise.all(shopIds.map(async sid=>{
+        const nS=await firebaseDB.ref(`global/shops/${sid}/name`).once("value").catch(()=>null);
+        names[sid]=(nS&&nS.val())||shopNames[sid]||sid;
+      }));
+      if(!cancelled)setSt({pub,shopIds,names});
+    }).catch(()=>{if(!cancelled)setLoadErr(true);});
+    return()=>{cancelled=true;};
+  },[companyId,tick]);
+  const call=async(name,payload,okMsg)=>{
+    if(!onCompanyCall)return false;
+    setBusy(true);
+    const r=await onCompanyCall(name,payload);
+    setBusy(false);
+    if(r&&r.error){tt("✕ "+r.error);return false;}
+    const f=(r&&r.failed)||[];
+    tt(f.length?`△ ${okMsg}（${f.length}店舗への反映に失敗しました。もう一度保存してください）`:"✓ "+okMsg);
+    setTick(t=>t+1);onChanged&&onChanged();
+    return true;
+  };
+  if(loadErr)return(<AC title="法人"><div style={{fontSize:12,color:"#FF4757"}}>✕ 法人を読み込めませんでした。<button onClick={()=>setTick(t=>t+1)} style={{...AGray,marginLeft:8,padding:"4px 10px",fontSize:12}}>再読み込み</button></div></AC>);
+  if(!st)return(<AC title="法人"><div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div></AC>);
+  const ents=companyEntityList(st.pub);
+  const entOf=sid=>companyEntityIdOfShop(st.pub,sid);
+  const kindOf=sid=>companyShopKindOf(st.pub,sid);
+  const TD={borderBottom:"1px solid var(--c-border)",padding:"8px 6px",fontSize:13,verticalAlign:"middle"};
+  const openConfig=e=>{
+    if(openCfg===e.id){setOpenCfg(null);setCfgDraft(null);return;}
+    const cur=((((st.pub.entities||{})[e.id]||{}).settings)||{});
+    setOpenCfg(e.id);setCfgDraft({...(cur.laborSettings||{})});
+  };
+  const setLabor=(k,v)=>setCfgDraft(d=>{const n={...(d||{})};if(v===null||v===undefined)delete n[k];else n[k]=v;return n;});
+  const saveConfig=async eid=>{
+    // 法人の設定は丸ごと置き換える。属性別の制限は画面から触らないので、保存済みの値をそのまま送り直す
+    const cur=((((st.pub.entities||{})[eid]||{}).settings)||{});
+    const settings={...(cur.staffTypeLimits?{staffTypeLimits:cur.staffTypeLimits}:{}),laborSettings:cfgDraft||{}};
+    if(await call("saveEntityConfig",{entityId:eid,settings},"法人の設定を保存しました")){setOpenCfg(null);setCfgDraft(null);}
+  };
+  return(<AC title="法人">
+    <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+      連携店舗を法人（雇用主）ごとに分けて管理します。店舗は必ずどれか1つの法人に属します。法人の設定は、企業の共通設定より優先してその法人の店舗に適用されます。
+    </div>
+    {ents.length===0&&<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:10}}>法人がまだありません。</div>}
+    {ents.map(e=>{
+      const draft=nameDraft[e.id];
+      const nm=draft!==undefined?draft:e.name;
+      const nShops=st.shopIds.filter(sid=>entOf(sid)===e.id).length;
+      return(<div key={e.id} data-co-entity={e.id} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          <input value={nm} maxLength={100} onChange={ev=>setNameDraft(d=>({...d,[e.id]:ev.target.value}))} style={{...AI,flex:"1 1 180px",fontWeight:700,padding:"5px 8px"}}/>
+          {draft!==undefined&&draft.trim()!==e.name&&<button disabled={busy||!draft.trim()} onClick={async()=>{if(await call("renameEntity",{entityId:e.id,name:draft.trim()},"法人名を変更しました"))setNameDraft(d=>{const n={...d};delete n[e.id];return n;});}} style={{...AGray,padding:"5px 10px",fontSize:12}}>名前を保存</button>}
+          <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{nShops}店舗{e.isDefault?"・既定":""}</span>
+          <button onClick={()=>openConfig(e)} style={{...AGray,padding:"5px 10px",fontSize:12}}>{openCfg===e.id?"閉じる":"法人の設定"}</button>
+        </div>
+        {openCfg===e.id&&cfgDraft&&<div style={{marginTop:10}}>
+          <AL>労務判定（空欄は企業の共通設定の値）</AL>
+          <CoLaborFields labor={cfgDraft} setLabor={setLabor} placeholder="企業" blankLabel="企業の共通設定"/>
+          <button disabled={busy} onClick={()=>saveConfig(e.id)} style={{...AB,width:"100%",opacity:busy?0.5:1}}>{busy?"保存中...":"この法人の設定を保存"}</button>
+        </div>}
+      </div>);
+    })}
+    <div style={{display:"flex",gap:8,margin:"4px 0 16px"}}>
+      <input value={newName} onChange={e=>setNewName(e.target.value)} maxLength={100} placeholder="法人名（例：株式会社〇〇）" style={{...AI,flex:1}}/>
+      <button disabled={busy||!newName.trim()} onClick={async()=>{if(await call("createEntity",{name:newName.trim()},"法人を追加しました"))setNewName("");}} style={{...AB,whiteSpace:"nowrap",opacity:busy||!newName.trim()?0.5:1}}>＋ 法人を追加</button>
+    </div>
+    <AL>店舗の法人と種別</AL>
+    {st.shopIds.length===0?<div style={{fontSize:12,color:"var(--c-text4)"}}>連携店舗がありません。</div>:(
+      <div style={{overflowX:"auto"}}>
+        <table style={{borderCollapse:"collapse",width:"100%",minWidth:320}}>
+          <thead><tr>{["店舗","法人","種別"].map(h=><th key={h} style={{...TD,fontSize:11,color:"var(--c-text3)",textAlign:"left",fontWeight:700}}>{h}</th>)}</tr></thead>
+          <tbody>{st.shopIds.slice().sort((a,b)=>String(st.names[a]).localeCompare(String(st.names[b]),"ja")).map(sid=>(
+            <tr key={sid} data-co-shop-entity={sid}>
+              <td style={{...TD,fontWeight:600}}>{st.names[sid]}</td>
+              <td style={TD}>
+                <select disabled={busy||ents.length===0} value={entOf(sid)||""} onChange={ev=>{if(ev.target.value)call("assignShopEntity",{shopId:sid,entityId:ev.target.value},`「${st.names[sid]}」の法人を変更しました`);}} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+                  {!entOf(sid)&&<option value="">未設定</option>}
+                  {ents.map(e=><option key={e.id} value={e.id}>{e.name||"（名前なし）"}</option>)}
+                </select>
+              </td>
+              <td style={TD}>
+                <select disabled={busy} value={kindOf(sid)} onChange={ev=>call("setShopKind",{shopId:sid,kind:ev.target.value},ev.target.value==="hq"?`「${st.names[sid]}」を本部にしました`:`「${st.names[sid]}」を店舗に戻しました`)} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+                  <option value="shop">店舗</option>
+                  <option value="hq">本部</option>
+                </select>
+              </td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    )}
+    <div style={{fontSize:11,color:"var(--c-text3)",marginTop:8,lineHeight:1.6}}>本部にした店舗では、期間管理タブにスタッフ提出URLを出しません（ボタンで表示はできます）。企業内登録スタッフでは「本部」の見出しで分かれます。</div>
+  </AC>);
+}
+// 法人で絞る選択肢（法人が2つ以上のときだけ出す）
+function EntityFilter({ents,value,onChange}){
+  if(!ents||ents.length<2)return null;
+  return(<select data-co-entity-filter="1" value={value} onChange={e=>onChange(e.target.value)} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+    <option value="">すべての法人</option>
+    {ents.map(e=><option key={e.id} value={e.id}>{e.name||"（名前なし）"}</option>)}
+  </select>);
+}
 function CompanyStaffCard({onOpen}){
   return(<AC title="企業内登録スタッフ">
     <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>企業に連携している全店舗の登録スタッフを、従業員番号・属性・所属店舗・有給日数の一覧で確認できます。</div>
@@ -5144,14 +5301,16 @@ function CompanyStaffDirectory({companyId,onBack}){
   const[reloadTick,setReloadTick]=useState(0);
   const[mode,setMode]=useState("number");
   const[query,setQuery]=useState("");
+  const[entityFilter,setEntityFilter]=useState("");
   useEffect(()=>{
-    if(!firebaseDB||!companyId){setData({rows:[],failed:[]});return;}
+    if(!firebaseDB||!companyId){setData({rows:[],failed:[],ents:[]});return;}
     let cancelled=false;
     setData(null);setLoadErr(false);
     Promise.all([
       firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value"),
       firebaseDB.ref(`companies/${companyId}/pub/config/settings`).once("value").catch(()=>null),
-    ]).then(async([shS,csS])=>{
+      readCompanyStructure(companyId),
+    ]).then(async([shS,csS,structure])=>{
       const ids=Object.keys(shS.val()||{});
       const failed=[];
       const shops=(await Promise.all(ids.map(async sid=>{
@@ -5160,18 +5319,34 @@ function CompanyStaffDirectory({companyId,onBack}){
         try{
           // subs は読まない（有給の残数は期間の凍結値 laborTotals だけで数える）
           const[st,se,pe]=await Promise.all(["staff","settings","periods"].map(p=>firebaseDB.ref(`shops/${sid}/${p}`).once("value").then(x=>x.val())));
-          return{id:sid,name,staff:st||[],settings:se||{},periods:pe||{}};
+          // 写しの settings（企業共通 → 法人 を重ねた値）。無ければ企業の共通設定で代える（2026-09-30・P1）
+          const coS=await firebaseDB.ref(`shops/${sid}/company/settings`).once("value").catch(()=>null);
+          return{id:sid,name,staff:st||[],settings:se||{},periods:pe||{},coSettings:(coS&&coS.val())||null,
+            entityId:companyEntityIdOfShop(structure,sid)||"",kind:companyShopKindOf(structure,sid)};
         }catch{failed.push(name);return null;}
       }))).filter(Boolean);
       if(cancelled)return;
-      setData({rows:buildCompanyStaffRows(shops,(csS&&csS.val())||null,fd(new Date())),failed});
+      setData({rows:buildCompanyStaffRows(shops,(csS&&csS.val())||null,fd(new Date())),failed,ents:companyEntityList(structure)});
     }).catch(()=>{if(!cancelled)setLoadErr(true);});
     return()=>{cancelled=true;};
   },[companyId,reloadTick]);
+  // 法人（2つ以上のときだけ見出し・絞り込み）→ 本部かどうか → 並び順（番号順／店舗別）。
+  // 本部の行は各法人の最後に「本部」の見出しでまとめる（2026-09-30・P1）
+  const ents=(data&&data.ents)||[];
+  const entIdx={};ents.forEach((e,i)=>{entIdx[e.id]=i;});
   const shown=useMemo(()=>{
     if(!data)return[];
-    return filterCompanyStaffRows(data.rows,query).slice().sort((a,b)=>compareCompanyStaffRows(a,b,mode));
-  },[data,query,mode]);
+    return filterCompanyStaffRows(data.rows,query).filter(r=>!entityFilter||r.entityId===entityFilter).slice().sort((a,b)=>{
+      const ea=entIdx[a.entityId]??99,eb=entIdx[b.entityId]??99;if(ea!==eb)return ea-eb;
+      if(!!a.isHq!==!!b.isHq)return a.isHq?1:-1;
+      return compareCompanyStaffRows(a,b,mode);
+    });
+  },[data,query,mode,entityFilter]);
+  const multiEnt=ents.length>=2;
+  const sectionOf=r=>{
+    const en=multiEnt&&!entityFilter?((ents[entIdx[r.entityId]]||{}).name||"法人未設定"):"";
+    return r.isHq?(en?en+"・本部":"本部"):en;
+  };
   const TH={padding:"8px 10px",textAlign:"left",fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input)",borderBottom:"1px solid var(--c-border)",whiteSpace:"nowrap"};
   const TD={padding:"8px 10px",fontSize:13,color:"var(--c-text)",borderBottom:"1px solid var(--c-border)",whiteSpace:"nowrap"};
   const modeBtn=(id,label)=><button key={id} onClick={()=>setMode(id)} style={{padding:"7px 12px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",background:mode===id?"var(--c-accent)":"var(--c-input)",color:mode===id?"#fff":"var(--c-text2)",border:`1px solid ${mode===id?"var(--c-accent)":"var(--c-border)"}`}}>{label}</button>;
@@ -5181,7 +5356,7 @@ function CompanyStaffDirectory({companyId,onBack}){
     const remain=r.paidRemain==null?"—":(miss?"＋":"")+r.paidRemain;
     return<span title={miss?`凍結値の無い期間があるため途中の値です: ${r.paidMissing.join("・")}`:""}>付与 {r.paidGranted}／残 <b style={{color:miss?"var(--c-text3)":"var(--c-text)"}}>{remain}</b></span>;
   };
-  let lastShop=null;
+  let lastShop=null,lastSection="";
   return(<div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
     <div style={{background:"var(--c-card)",borderBottom:"1px solid var(--c-border)",padding:"12px 16px"}}>
       <div style={{maxWidth:900,margin:"0 auto",display:"flex",alignItems:"center",gap:12}}>
@@ -5193,6 +5368,7 @@ function CompanyStaffDirectory({companyId,onBack}){
       <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="従業員番号・名前で検索" style={{...AI,boxSizing:"border-box",marginBottom:10}}/>
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10}}>
         {modeBtn("number","従業員番号順")}{modeBtn("shop","店舗別")}
+        <EntityFilter ents={ents} value={entityFilter} onChange={setEntityFilter}/>
         <span style={{fontSize:12,color:"var(--c-text3)",marginLeft:"auto"}}>{data?`${shown.length}名`:""}</span>
         <button onClick={()=>setReloadTick(t=>t+1)} style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:12,cursor:"pointer"}}>再読み込み</button>
       </div>
@@ -5206,9 +5382,12 @@ function CompanyStaffDirectory({companyId,onBack}){
             {shown.length===0&&<tr><td colSpan={5} style={{...TD,textAlign:"center",color:"var(--c-text4)",padding:20}}>該当するスタッフはいません</td></tr>}
             {shown.map(r=>{
               const shopName=r.homeShopName||r.shopName;
+              const sec=sectionOf(r);
+              const secHead=sec!==lastSection&&!!sec;if(sec!==lastSection){lastSection=sec;lastShop=null;}
               const head=mode==="shop"&&shopName!==lastShop;lastShop=shopName;
               const homes=(r.homeShopNames||[r.homeShopName]).map(n=>n||"連携していない店舗");
               return(<React.Fragment key={r.key||r.shopId+"|"+r.name}>
+                {secHead&&<tr data-co-section={sec}><td colSpan={5} style={{...TD,fontSize:13,fontWeight:700,color:"var(--c-text)",background:"var(--c-input)"}}>{sec}</td></tr>}
                 {head&&<tr><td colSpan={5} style={{...TD,fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input2)"}}>{shopName}</td></tr>}
                 <tr>
                   <td style={TD}>{r.number||<span style={{color:"var(--c-text4)"}}>—</span>}</td>
@@ -5227,8 +5406,10 @@ function CompanyStaffDirectory({companyId,onBack}){
   </div>);
 }
 
-function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,renderDownload}){
-  const[state,setState]=useState(null); // {shopIds,names,periods:{sid:Period[]|null},deadlines,monthly}
+function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,renderDownload,structureTick=0}){
+  const[state,setState]=useState(null); // {shopIds,names,periods:{sid:Period[]|null},deadlines,monthly,structure}
+  // 法人で絞る（2026-09-30・P1）。"" はすべての法人。法人が2つ以上のときだけ選択肢が出る
+  const[entityFilter,setEntityFilter]=useState("");
   const[loadErr,setLoadErr]=useState(false);
   const[rangeKey,setRangeKey]=useState("");
   const[dlAll,setDlAll]=useState("");
@@ -5240,14 +5421,15 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
   const[busy,setBusy]=useState(false);
   const[reloadTick,setReloadTick]=useState(0);
   useEffect(()=>{
-    if(!firebaseDB||!companyId){setState({shopIds:[],names:{},periods:{},deadlines:{},monthly:[]});return;}
+    if(!firebaseDB||!companyId){setState({shopIds:[],names:{},periods:{},deadlines:{},monthly:[],structure:{}});return;}
     let cancelled=false;
     setLoadErr(false);
     Promise.all([
       firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value"),
       firebaseDB.ref(`companies/${companyId}/pub/config/deadlines`).once("value"),
       firebaseDB.ref(`companies/${companyId}/pub/config/monthlyDeadlineDays`).once("value"),
-    ]).then(async([shS,dlS,mdS])=>{
+      readCompanyStructure(companyId),
+    ]).then(async([shS,dlS,mdS,structure])=>{
       const shopIds=Object.keys(shS.val()||{});
       const names={},periods={};
       await Promise.all(shopIds.map(async sid=>{
@@ -5260,15 +5442,20 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
         periods[sid]=pS?Object.values(pS.val()||{}).filter(x=>x&&x.id).sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate))):null;
       }));
       if(cancelled)return;
-      setState({shopIds,names,periods,deadlines:dlS.val()||{},monthly:sanitizeMonthlyDeadlineDays(mdS.val())});
+      setState({shopIds,names,periods,deadlines:dlS.val()||{},monthly:sanitizeMonthlyDeadlineDays(mdS.val()),structure:structure||{}});
     }).catch(()=>{if(!cancelled)setLoadErr(true);});
     return()=>{cancelled=true;};
-  },[companyId,reloadTick]);
+  },[companyId,reloadTick,structureTick]);
+  const ents=useMemo(()=>state?companyEntityList(state.structure):[],[state]);
+  // 選んでいた法人が消えたら「すべて」に戻す
+  useEffect(()=>{if(entityFilter&&!ents.some(e=>e.id===entityFilter))setEntityFilter("");},[ents,entityFilter]);
+  const inFilter=sid=>!entityFilter||(state&&companyEntityIdOfShop(state.structure,sid))===entityFilter;
+  // 期間の選択肢は法人ごとに分ける（法人ごとに期間の切り方が違ってよい・計画書 §3.1）
   const ranges=useMemo(()=>{
     if(!state)return[];
-    const ok={};Object.keys(state.periods).forEach(sid=>{if(state.periods[sid])ok[sid]=state.periods[sid];});
+    const ok={};Object.keys(state.periods).forEach(sid=>{if(state.periods[sid]&&inFilter(sid))ok[sid]=state.periods[sid];});
     return collectPeriodRanges(ok);
-  },[state]);
+  },[state,entityFilter]);
   // 既定の期間: 連携店舗のどれか1店舗でも作っている最新の期間（2026-09-27 ユーザー指示。以前は
   // 「今日を含む期間」で、次の期間を作り始めても表示が前の期間のままだった）。
   // ユーザーが選び直した期間は、期限の保存などの再読み込みで戻さない（無くなったときだけ最新へ）。
@@ -5295,7 +5482,10 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
   // 書き換えて保存すると、その期間だけの日付指定になる。書き換えずに保存しても日付指定にはしない
   // （毎月の締切を後から変えたときに追随させるため）。
   const monthlyInitial=!dlAll&&draftEff&&draftEff.source==="monthly"?draftEff.date:"";
-  const rows=state.shopIds.map(sid=>{
+  const entIdx={};ents.forEach((e,i)=>{entIdx[e.id]=i;});
+  const entName={};ents.forEach(e=>{entName[e.id]=e.name;});
+  const eOf=sid=>companyEntityIdOfShop(state.structure,sid);
+  const rows=state.shopIds.filter(inFilter).map(sid=>{
     const ps=state.periods[sid];
     if(ps===null)return{sid,name:state.names[sid],status:"failed"};
     const p=findShopPeriodByRange(ps,rangeKey);
@@ -5303,7 +5493,11 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
     const sub=p.submission&&p.submission.at?p.submission:null;
     // 期限切れの判定は保存済みの値で行う（入力中の未保存の値では赤くしない）。日付指定が無ければ毎月の固定締切
     return{sid,name:state.names[sid],period:p,status:sub?"submitted":"pending",submission:sub,deadline:savedEff?savedEff.date:null};
-  }).sort((a,b)=>String(a.name).localeCompare(String(b.name),"ja"));
+  }).map(x=>({...x,entityId:eOf(x.sid),isHq:companyShopKindOf(state.structure,x.sid)==="hq"}))
+    // 法人の順（既定の法人が先頭）→ 店舗名。一括PDFもこの順で出るので、法人ごとにまとまる
+    .sort((a,b)=>{const ea=entIdx[a.entityId]??99,eb=entIdx[b.entityId]??99;if(ea!==eb)return ea-eb;return String(a.name).localeCompare(String(b.name),"ja");});
+  // すべての法人を表示していて法人が2つ以上なら、法人の見出し行で分ける
+  const showEntityHeads=!entityFilter&&ents.length>=2;
   const nSub=rows.filter(x=>x.status==="submitted").length;
   const nPend=rows.filter(x=>x.status==="pending").length;
   const today=fd(new Date());
@@ -5361,6 +5555,7 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
         <select value={rangeKey} onChange={e=>{userPickedRef.current=true;setRangeKey(e.target.value);}} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
           {ranges.map(x=><option key={x.key} value={x.key}>{x.label}</option>)}
         </select>
+        <EntityFilter ents={ents} value={entityFilter} onChange={v=>{userPickedRef.current=false;setEntityFilter(v);}}/>
         <button onClick={()=>setReloadTick(t=>t+1)} style={{...AGray,padding:"6px 12px",fontSize:12}}>更新</button>
       </div>
       <div data-co-summary="1" style={{fontSize:13,color:"var(--c-text)",marginBottom:10}}>提出済み {nSub} ／ 未提出 {nPend}</div>
@@ -5376,15 +5571,16 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
       <div style={{overflowX:"auto"}}>
         <table style={{borderCollapse:"collapse",width:"100%",minWidth:320}}>
           <thead><tr>{["店舗","期間","状況"].map(h=><th key={h} style={{...TD,fontSize:11,color:"var(--c-text3)",textAlign:"left",fontWeight:700}}>{h}</th>)}</tr></thead>
-          <tbody>{rows.map(x=>(
-            <tr key={x.sid} data-co-row={x.sid}>
-              <td style={{...TD,fontWeight:600}}>{x.name}</td>
+          <tbody>{rows.map((x,i)=>(<React.Fragment key={x.sid}>
+            {showEntityHeads&&(i===0||rows[i-1].entityId!==x.entityId)&&<tr data-co-entity-head={x.entityId||""}><td colSpan={3} style={{...TD,fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input2)"}}>{entName[x.entityId]||"法人未設定"}</td></tr>}
+            <tr data-co-row={x.sid}>
+              <td style={{...TD,fontWeight:600}}>{x.name}{x.isHq&&<span style={{marginLeft:6,fontSize:11,fontWeight:400,color:"var(--c-text3)"}}>本部</span>}</td>
               <td style={{...TD,color:"var(--c-text2)"}}>{x.status==="failed"?"—":x.status==="none"?"該当期間なし":(x.period.label||cur&&cur.label)}</td>
               <td data-co-status={x.status} style={{...TD,whiteSpace:"nowrap",color:x.status==="pending"&&x.deadline&&today>x.deadline?"#FF4757":"var(--c-text)"}}>
                 {x.status==="submitted"?`提出済み ${fmtAt(x.submission.at)}`:x.status==="pending"?"未提出":x.status==="none"?"—":"読み込み失敗"}
               </td>
             </tr>
-          ))}</tbody>
+          </React.Fragment>))}</tbody>
         </table>
       </div>
       {saveBtn}
@@ -5515,7 +5711,7 @@ function CompanyLoginCard({onCompanyLogin,tt}){
 
 function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompanyConfig,onOpenCompanyStaff,
                      shops=[],allLinkedShops=[],onSwitchToShop,onUnlinkShop,
-                     companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin}){
+                     companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin,onCompanyCall}){
   // 企業アカウントUI（SetTabから移動）
   const[coName,setCoName]=useState("");
   const[coPw,setCoPw]=useState("");
@@ -5543,6 +5739,8 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
   const[abbrInput,setAbbrInput]=useState({}); // {shopId:"入力中の略称"}
   const[allAbbrs,setAllAbbrs]=useState({});   // {shopId:[略称]} 重複チェック専用（未展開店舗ぶんも先読み）
   const listShops=allLinkedShops.length>0?allLinkedShops:shops;
+  // 法人の割当・種別を変えたら提出状況（法人で絞る・見出し）を読み直す
+  const[structureTick,setStructureTick]=useState(0);
 
   const loadShopMeta=(sid)=>{
     if(!firebaseDB)return;
@@ -5688,7 +5886,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
       </AC>
     ):(<>
     {/* カードの並び（2026-09-28 ユーザー指示）: シフト提出状況 → 企業内登録スタッフ → 企業アカウント → 連携店舗 → 企業の共通設定 */}
-    {companyInfo&&plan==="premium"&&<CompanySubmissionsCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}
+    {companyInfo&&plan==="premium"&&<CompanySubmissionsCard structureTick={structureTick} companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}
       renderDownload={({range,rows})=>range?<CompanyBulkPdf key={range.key} range={range} rows={rows} companyName={companyInfo.name} tt={tt}/>:null}/>}
     {companyInfo&&plan==="premium"&&<CompanyStaffCard onOpen={onOpenCompanyStaff}/>}
     <AC title="企業アカウント">
@@ -5800,6 +5998,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
       )}
       <div>{listShops.map(shopCard)}</div>
     </AC>}
+    {companyInfo&&plan==="premium"&&<CompanyEntityCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onCompanyCall={onCompanyCall} tt={tt} onChanged={()=>setStructureTick(t=>t+1)}/>}
     {companyInfo&&plan==="premium"&&<CompanyConfigCard companyId={companyInfo.companyId} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}/>}
     <AC title="シフト作成タブでのヘルプ入力">
       <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.8}}>
@@ -5830,7 +6029,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
   const onSaveOwn=v=>onSave(coSettings?stripCompanySettings(v,coSettings):v);
   const coTag=<span style={{fontSize:10,color:"var(--c-text3)",whiteSpace:"nowrap"}}>企業設定</span>;
   const coVal=(text,minW=52)=>(<span data-company-fixed="1" style={{display:"inline-flex",alignItems:"baseline",gap:4}}><span style={{fontSize:13,color:"var(--c-text)",minWidth:minW,textAlign:"center"}}>{text}</span>{coTag}</span>);
-  const coNote=companyLink&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>「企業設定」の項目は企業アカウント（{companyLink.name||"企業"}）が決めているため、この店舗では変更できません。変更は企業連携タブから行います。</div>;
+  const coNote=companyLink&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>「企業設定」の項目は企業アカウント（{companyLink.name||"企業"}{companyLink.entityName&&companyLink.entityName!==companyLink.name?`・${companyLink.entityName}`:""}）が決めているため、この店舗では変更できません。変更は企業連携タブから行います。</div>;
   const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
   const[emailInput,setEmailInput]=useState("");
   const[codeInput,setCodeInput]=useState("");
