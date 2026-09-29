@@ -107,7 +107,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
   },[shopMenuOpen]);
 
   if(fullPage&&fullPage.kind==="companyStaff"&&companyInfo&&plan==="premium")
-    return <CompanyStaffDirectory companyId={companyInfo.companyId} pay={pay} plan={plan} onBack={()=>setFullPage(null)}/>;
+    return <CompanyStaffDirectory companyId={companyInfo.companyId} pay={pay} plan={plan} onCompanyCall={onCompanyCall} onBack={()=>setFullPage(null)}/>;
   if(fullPage&&fullPage.kind==="staffPay"&&pay.enabled){
     const pn=fullPage.name;
     const hs=homeShopOf(settings,pn,currentShopId);
@@ -5557,8 +5557,27 @@ function CompanyStaffCard({onOpen}){
     <button onClick={()=>onOpen&&onOpen()} style={{...AGray,width:"100%"}}>一覧を開く</button>
   </AC>);
 }
-function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free"}){
-  const[data,setData]=useState(null); // {rows, failed:[店舗名]}
+function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompanyCall}){
+  const[data,setData]=useState(null); // {rows, failed:[店舗名], ents, shops:[{id,name}], coAttrs:{属性ID:名前}, people}
+  // 人物ID（P1b）: 一覧を開いたとき、まだどの人物にもつながっていない登録があれば CF ensureCompanyPeople に
+  // 人物を作らせる（初回は全員分・既存の推定と同じまとまり）。1回開くごとに1回だけ頼む
+  const ensuredRef=useRef(false);
+  const[msg,setMsg]=useState(null);       // {ok:bool, text}
+  const[busy,setBusy]=useState(false);
+  const[editRow,setEditRow]=useState(null);
+  const[picked,setPicked]=useState([]);   // 統合のために選んだ personId（最大2）
+  const[mergeOpen,setMergeOpen]=useState(false);
+  const callPeople=async(name,payload,okText)=>{
+    if(!onCompanyCall){setMsg({ok:false,text:"企業アカウントでログインしてください"});return null;}
+    setBusy(true);
+    const r=await onCompanyCall(name,payload);
+    setBusy(false);
+    if(r&&r.error){setMsg({ok:false,text:"✕ "+r.error});return null;}
+    const f=(r&&r.failed)||[];
+    setMsg(f.length?{ok:false,text:`△ ${okText}（${f.length}店舗への反映に失敗しました。もう一度実行してください）`}:{ok:true,text:"✓ "+okText});
+    setReloadTick(t=>t+1);
+    return r||{};
+  };
   const[loadErr,setLoadErr]=useState(false);
   const[reloadTick,setReloadTick]=useState(0);
   const[mode,setMode]=useState("number");
@@ -5603,7 +5622,8 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free"}){
       firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value"),
       firebaseDB.ref(`companies/${companyId}/pub/config/settings`).once("value").catch(()=>null),
       readCompanyStructure(companyId),
-    ]).then(async([shS,csS,structure])=>{
+      firebaseDB.ref(`companies/${companyId}/pub/people`).once("value").then(x=>x.val()||{}).catch(()=>null),
+    ]).then(async([shS,csS,structure,people])=>{
       const ids=Object.keys(shS.val()||{});
       const failed=[];
       const shops=(await Promise.all(ids.map(async sid=>{
@@ -5619,7 +5639,16 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free"}){
         }catch{failed.push(name);return null;}
       }))).filter(Boolean);
       if(cancelled)return;
-      setData({rows:buildCompanyStaffRows(shops,(csS&&csS.val())||null,fd(new Date())),failed,ents:companyEntityList(structure)});
+      const cs=(csS&&csS.val())||null;
+      const rows=buildCompanyStaffRows(shops,cs,fd(new Date()),people);
+      const coAttrs={};Object.entries((cs&&cs.staffTypeLimits)||{}).forEach(([id,v])=>{if(isCompanyAttrId(id))coAttrs[id]=(v&&v.name)||id;});
+      setData({rows,failed,ents:companyEntityList(structure),shops:shops.map(x=>({id:x.id,name:x.name})),coAttrs,people});
+      // 未リンクの登録があれば人物を作らせる（読めない店舗があるときは頼まない＝その店舗の登録を別人物として作らない）
+      if(onCompanyCall&&people&&!failed.length&&rows.some(r=>!r.personId)&&!ensuredRef.current){
+        ensuredRef.current=true;
+        const r=await onCompanyCall("ensureCompanyPeople",{});
+        if(!cancelled&&r&&!r.error&&r.changed)setReloadTick(t=>t+1);
+      }
     }).catch(()=>{if(!cancelled)setLoadErr(true);});
     setWages(null);
     return()=>{cancelled=true;};
@@ -5637,6 +5666,18 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free"}){
     });
   },[data,query,mode,entityFilter]);
   const multiEnt=ents.length>=2;
+  // 同じ番号が別の法人でも使われている行（番号は法人内で一意なので通常は起きない。決定 #13）
+  const numEnts=useMemo(()=>{
+    const m={};(data?data.rows:[]).forEach(r=>{const n=String(r.number||"");if(!n)return;(m[n]=m[n]||new Set()).add(r.entityId||"");});
+    return m;
+  },[data]);
+  const otherEntNames=r=>{
+    const set=numEnts[String(r.number||"")];
+    if(!set||set.size<2)return[];
+    return[...set].filter(e=>e!==(r.entityId||"")).map(e=>(ents[entIdx[e]]||{}).name||"法人未設定");
+  };
+  const togglePick=pid=>setPicked(p=>p.includes(pid)?p.filter(x=>x!==pid):[...p.slice(-1),pid]);
+  const pickedRows=picked.map(pid=>(data?data.rows:[]).find(r=>r.personId===pid)).filter(Boolean);
   const sectionOf=r=>{
     const en=multiEnt&&!entityFilter?((ents[entIdx[r.entityId]]||{}).name||"法人未設定"):"";
     return r.isHq?(en?en+"・本部":"本部"):en;
@@ -5668,14 +5709,20 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free"}){
         <span style={{fontSize:12,color:"var(--c-text3)",marginLeft:"auto"}}>{data?`${shown.length}名`:""}</span>
         <button onClick={()=>setReloadTick(t=>t+1)} style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:12,cursor:"pointer"}}>再読み込み</button>
       </div>
+      {msg&&<div data-co-person-msg="1" style={{fontSize:13,color:msg.ok?"var(--c-text2)":"#B45309",marginBottom:10}}>{msg.text}</div>}
+      {pickedRows.length>0&&<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10,padding:"8px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
+        <span style={{fontSize:13,color:"var(--c-text2)"}}>{pickedRows.map(r=>r.name).join("・")}を選択中</span>
+        <button disabled={busy||pickedRows.length!==2} onClick={()=>setMergeOpen(true)} style={{...AB,padding:"6px 12px",fontSize:13,opacity:busy||pickedRows.length!==2?0.5:1}}>同一人物として統合</button>
+        <button onClick={()=>setPicked([])} style={{...AGray,padding:"6px 12px",fontSize:13}}>選択を解除</button>
+      </div>}
       {loadErr&&<div style={{fontSize:13,color:"#DC2626",marginBottom:10}}>読み込めませんでした。再読み込みしてください。</div>}
       {data&&data.failed.length>0&&<div style={{fontSize:12,color:"#B45309",marginBottom:10}}>{data.failed.join("・")}は読み込めませんでした（一覧に含まれていません）。</div>}
       {!data&&!loadErr&&<div style={{fontSize:13,color:"var(--c-text3)"}}>読み込み中...</div>}
       {data&&<div style={{overflowX:"auto",border:"1px solid var(--c-border)",borderRadius:8,background:"var(--c-card)"}}>
         <table style={{borderCollapse:"collapse",width:"100%",minWidth:560}}>
-          <thead><tr>{["従業員番号","名前","属性","所属店舗","有給（日）",...(payOn?["賃金"]:[])].map(h=><th key={h} style={TH}>{h}</th>)}</tr></thead>
+          <thead><tr>{["従業員番号","名前","属性","所属店舗","有給（日）",...(payOn?["賃金"]:[]),""].map(h=><th key={h||"edit"} style={TH}>{h}</th>)}</tr></thead>
           <tbody>
-            {shown.length===0&&<tr><td colSpan={payOn?6:5} style={{...TD,textAlign:"center",color:"var(--c-text4)",padding:20}}>該当するスタッフはいません</td></tr>}
+            {shown.length===0&&<tr><td colSpan={payOn?7:6} style={{...TD,textAlign:"center",color:"var(--c-text4)",padding:20}}>該当するスタッフはいません</td></tr>}
             {shown.map(r=>{
               const shopName=r.homeShopName||r.shopName;
               const sec=sectionOf(r);
@@ -5683,22 +5730,138 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free"}){
               const head=mode==="shop"&&shopName!==lastShop;lastShop=shopName;
               const homes=(r.homeShopNames||[r.homeShopName]).map(n=>n||"連携していない店舗");
               return(<React.Fragment key={r.key||r.shopId+"|"+r.name}>
-                {secHead&&<tr data-co-section={sec}><td colSpan={payOn?6:5} style={{...TD,fontSize:13,fontWeight:700,color:"var(--c-text)",background:"var(--c-input)"}}>{sec}</td></tr>}
-                {head&&<tr><td colSpan={payOn?6:5} style={{...TD,fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input2)"}}>{shopName}</td></tr>}
-                <tr>
-                  <td style={TD}>{r.number||<span style={{color:"var(--c-text4)"}}>—</span>}</td>
+                {secHead&&<tr data-co-section={sec}><td colSpan={payOn?7:6} style={{...TD,fontSize:13,fontWeight:700,color:"var(--c-text)",background:"var(--c-input)"}}>{sec}</td></tr>}
+                {head&&<tr><td colSpan={payOn?7:6} style={{...TD,fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input2)"}}>{shopName}</td></tr>}
+                <tr data-co-person={r.personId||""}>
+                  <td style={TD}>
+                    {/* 統合のための選択（2人まで）。人物IDの無い行（準備中）は選べない */}
+                    <input type="checkbox" aria-label={`${r.name}を選択`} disabled={!r.personId} checked={!!r.personId&&picked.includes(r.personId)} onChange={()=>r.personId&&togglePick(r.personId)} style={{marginRight:8,verticalAlign:"middle",width:16,height:16}}/>
+                    {r.number||<span style={{color:"var(--c-text4)"}}>—</span>}
+                    {otherEntNames(r).length>0&&<div style={{fontSize:11,color:"#B45309",marginTop:2,whiteSpace:"normal"}}>番号 {r.number} は{otherEntNames(r).join("・")}でも使われています</div>}
+                  </td>
                   <td style={TD}>{r.name}{r.hidden&&<span style={{marginLeft:6,fontSize:11,color:"var(--c-text3)"}}>非表示中</span>}
                     {r.conflictNames&&r.conflictNames.length>0&&<div title="同じ従業員番号で名前の違う登録があります" style={{fontSize:11,color:"#B45309",marginTop:2}}>別の登録名: {r.conflictNames.join("・")}</div>}</td>
                   <td style={TD}>{r.attrLabel||<span style={{color:"var(--c-text4)"}}>未設定</span>}</td>
                   <td style={{...TD,whiteSpace:"normal"}}>{homes.map((n,i)=><span key={i} style={{whiteSpace:"nowrap",color:n==="連携していない店舗"?"var(--c-text4)":undefined}}>{i>0?"・":""}{n}</span>)}</td>
                   <td style={TD}>{paidCell(r)}</td>
                   {payOn&&<td style={TD} data-co-wage={r.name}>{wageCell(r)}</td>}
+                  <td style={{...TD,textAlign:"right"}}><button disabled={!r.personId||busy} title={r.personId?"":"人物IDを準備中です"} onClick={()=>setEditRow(r)} style={{...AGray,padding:"5px 10px",fontSize:12,opacity:r.personId?1:0.5}}>編集</button></td>
                 </tr>
               </React.Fragment>);
             })}
           </tbody>
         </table>
       </div>}
+    </div>
+    {editRow&&data&&<CompanyPersonEditModal row={editRow} data={data} busy={busy} onClose={()=>setEditRow(null)}
+      onCall={async(name,payload,okText)=>{const r=await callPeople(name,{personId:editRow.personId,...payload},okText);if(r)setEditRow(null);return r;}}/>}
+    {mergeOpen&&pickedRows.length===2&&<CompanyPersonMergeModal rows={pickedRows} ents={ents} busy={busy} onClose={()=>setMergeOpen(false)}
+      onMerge={async(keep,drop)=>{const r=await callPeople("mergePeople",{keepPersonId:keep,dropPersonId:drop},"同一人物として統合しました");if(r){setMergeOpen(false);setPicked([]);}}}/>}
+  </div>);
+}
+// 企業内登録スタッフの「編集」（P1b・§3.8）。すべて CF 経由（店舗のデータを丸ごと読み込んで書き戻さない）。
+// 名前の変更は店舗の登録名を変える（StaffTab の改名と同じ結果）。番号・法人・属性・所属店舗は保存時にまとめて送る。
+// 属性と所属店舗は、この人がつながっている全店舗の設定に同じ値を書く（変えないときは「変更しない」のまま）。
+function CompanyPersonEditModal({row,data,busy,onClose,onCall}){
+  const links=row.links||[];
+  const[newName,setNewName]=useState(row.name);
+  const[renameShops,setRenameShops]=useState(links.map(l=>l.shopId));
+  const[number,setNumber]=useState(row.number||"");
+  const[entityId,setEntityId]=useState(row.entityId||"");
+  const[attr,setAttr]=useState("");
+  const[home,setHome]=useState("");
+  const ents=data.ents||[];
+  const attrOpts=[...BUILTIN_TYPES.map(id=>[id,STAFF_TYPE_LABELS[id]]),...Object.entries(data.coAttrs||{})];
+  const numberDigits=/^\d{1,20}$/.test(String(row.number||"").trim());
+  const save=()=>{
+    const payload={};
+    if(number.trim()!==String(row.number||""))payload.number=number.trim();
+    if(entityId&&entityId!==(row.entityId||""))payload.entityId=entityId;
+    if(attr)payload.attrs=Object.fromEntries(links.map(l=>[l.shopId,attr]));
+    if(home)payload.homeShops=Object.fromEntries(links.map(l=>[l.shopId,home]));
+    if(!Object.keys(payload).length){onClose();return;}
+    onCall("companyUpdateStaff",payload,"保存しました");
+  };
+  const SEC={borderTop:"1px solid var(--c-border)",paddingTop:12,marginTop:12};
+  return(<div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div data-co-person-modal={row.personId} onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:18,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxSizing:"border-box"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+        <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)",flex:1}}>{row.name}</div>
+        <button onClick={onClose} style={{...AGray,padding:"5px 10px",fontSize:12}}>閉じる</button>
+      </div>
+      <div style={{fontSize:11,color:"var(--c-text3)"}}>人物ID: <span data-co-person-id="1">{row.personId}</span></div>
+
+      <div style={SEC}>
+        <AL>名前の変更</AL>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>店舗の登録名を変えます（店舗のスタッフタブで変えるのと同じです。提出・設定・確定済みの期間・賃金も新しい名前に移ります）。</div>
+        <input value={newName} onChange={e=>setNewName(e.target.value)} aria-label="新しい名前" style={{...AI,boxSizing:"border-box",marginBottom:6}}/>
+        {links.map(l=>(<label key={l.shopId} style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:"var(--c-text2)",marginBottom:4}}>
+          <input type="checkbox" checked={renameShops.includes(l.shopId)} onChange={()=>setRenameShops(a=>a.includes(l.shopId)?a.filter(x=>x!==l.shopId):[...a,l.shopId])} style={{width:16,height:16}}/>
+          {l.shopName}（いまの登録名: {l.name}）
+        </label>))}
+        <button disabled={busy||!newName.trim()||!renameShops.length||renameShops.every(sid=>(links.find(l=>l.shopId===sid)||{}).name===newName.trim())}
+          onClick={()=>onCall("companyRenameStaff",{shopIds:renameShops,newName:newName.trim()},"名前を変更しました")}
+          style={{...AB,width:"100%",marginTop:6,opacity:busy?0.5:1}}>名前を変更</button>
+      </div>
+
+      <div style={SEC}>
+        <AL>従業員番号・法人・属性・所属店舗</AL>
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:4}}>従業員番号（法人の中で重複できません）</div>
+        <input value={number} onChange={e=>setNumber(e.target.value)} aria-label="従業員番号" style={{...AI,boxSizing:"border-box",marginBottom:8}}/>
+        {ents.length>0&&<><div style={{fontSize:12,color:"var(--c-text3)",marginBottom:4}}>法人</div>
+          <select value={entityId} onChange={e=>setEntityId(e.target.value)} aria-label="法人" style={{...AI,marginBottom:8,cursor:"pointer"}}>
+            {!entityId&&<option value="">未設定</option>}
+            {ents.map(e=><option key={e.id} value={e.id}>{e.name||"（名前なし）"}</option>)}
+          </select></>}
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:4}}>属性（いま: {row.attrLabel||"未設定"}）</div>
+        <select value={attr} onChange={e=>setAttr(e.target.value)} aria-label="属性" style={{...AI,marginBottom:8,cursor:"pointer"}}>
+          <option value="">変更しない</option>
+          {attrOpts.map(([id,nm])=><option key={id} value={id}>{nm}</option>)}
+        </select>
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:4}}>所属店舗（いま: {(row.homeShopNames||[row.homeShopName]).filter(Boolean).join("・")||"—"}）</div>
+        <select value={home} onChange={e=>setHome(e.target.value)} aria-label="所属店舗" style={{...AI,marginBottom:8,cursor:"pointer"}}>
+          <option value="">変更しない</option>
+          {(data.shops||[]).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}
+        </select>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>属性と所属店舗は、この人が登録されている全店舗（{links.map(l=>l.shopName).join("・")}）の設定に書きます。</div>
+        <button disabled={busy} onClick={save} style={{...AB,width:"100%",opacity:busy?0.5:1}}>保存</button>
+      </div>
+
+      {links.length>1&&<div style={SEC}>
+        <AL>統合の解除</AL>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>別の人を同じ人物にまとめてしまったときに、店舗の登録を別の人物として切り出します。店舗のデータは変わりません。</div>
+        {links.map(l=>(<div key={l.shopId} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <span style={{flex:1,fontSize:13,color:"var(--c-text2)"}}>{l.shopName}: {l.name}</span>
+          <button disabled={busy} onClick={()=>onCall("splitPerson",{shopId:l.shopId},`${l.shopName}の${l.name}を別の人物にしました`)} style={{...AGray,padding:"5px 10px",fontSize:12}}>切り出す</button>
+        </div>))}
+      </div>}
+
+      {numberDigits&&String(row.number).trim()!==row.personId&&<div style={SEC}>
+        <AL>人物ID</AL>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>人物IDは作成後に自動では変わりません。従業員番号（{row.number}）に揃えるときだけ押してください。</div>
+        <button disabled={busy} onClick={()=>onCall("reassignPersonId",{},"人物IDを従業員番号に振り直しました")} style={{...AGray,width:"100%"}}>ID を番号に振り直す</button>
+      </div>}
+    </div>
+  </div>);
+}
+// 統合: 2人のうち、番号・法人・所属店舗を残す方を選ぶ（店舗側のデータは動かさない）
+function CompanyPersonMergeModal({rows,ents,busy,onClose,onMerge}){
+  const[keep,setKeep]=useState(rows[0].personId);
+  const entName=id=>((ents||[]).find(e=>e.id===id)||{}).name||"";
+  const drop=rows.find(r=>r.personId!==keep).personId;
+  return(<div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div data-co-merge-modal="1" onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:18,width:"100%",maxWidth:440,boxSizing:"border-box"}}>
+      <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>同一人物として統合</div>
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>番号・法人・所属店舗を残す方を選んでください。店舗の登録名とデータはそのままで、一覧で1人にまとまります。誤って統合したときは「編集」から解除できます。</div>
+      {rows.map(r=>(<label key={r.personId} style={{display:"flex",gap:8,alignItems:"flex-start",padding:"8px 10px",marginBottom:6,border:`1px solid ${keep===r.personId?"var(--c-accent)":"var(--c-border)"}`,borderRadius:8,cursor:"pointer"}}>
+        <input type="radio" name="co-merge-keep" checked={keep===r.personId} onChange={()=>setKeep(r.personId)} style={{marginTop:3}}/>
+        <span style={{fontSize:13,color:"var(--c-text)"}}><b>{r.name}</b><br/>
+          <span style={{color:"var(--c-text3)"}}>番号 {r.number||"なし"}{entName(r.entityId)?`・${entName(r.entityId)}`:""}・所属 {(r.homeShopNames||[r.homeShopName]).filter(Boolean).join("・")||"—"}</span></span>
+      </label>))}
+      <div style={{display:"flex",gap:8,marginTop:10}}>
+        <button onClick={onClose} style={{...AGray,flex:1}}>やめる</button>
+        <button disabled={busy} onClick={()=>onMerge(keep,drop)} style={{...AB,flex:1,opacity:busy?0.5:1}}>統合する</button>
+      </div>
     </div>
   </div>);
 }
