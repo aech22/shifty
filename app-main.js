@@ -1193,6 +1193,33 @@ function App(){
     const cCode=rCode.on("value",s=>setPayCodeRec(s.val()||null),e=>console.warn("閲覧パスコードの購読に失敗:",e));
     return()=>{rPay.off("value",cPay);rCode.off("value",cCode);};
   },[sid,view,urlLocked,ownerClaimedSid]);
+  // ===== 人×月の所定（2026-09-30・§3.4・P3）=====
+  // shops/{sid}/laborMonths/{YYYY-MM}/{名前} は owners しか読めない（所定は個人の労働条件）。賃金と同じく
+  // **claim が通った店舗でだけ購読する**（先に購読すると拒否されてリスナーが外れ、claim 後も戻らない）。
+  const[laborMonths,setLaborMonths]=useState({});
+  const[laborMonthsLoaded,setLaborMonthsLoaded]=useState(false);
+  useEffect(()=>{
+    setLaborMonths({});setLaborMonthsLoaded(false);
+    if(!firebaseDB||DEMO_MODE||urlLocked||view!=="admin"||!sid||sid==="default"||ownerClaimedSid!==sid)return;
+    const r=firebaseDB.ref(`shops/${sid}/laborMonths`);
+    const c=r.on("value",s=>{setLaborMonths(s.val()||{});setLaborMonthsLoaded(true);},e=>console.warn("所定の購読に失敗:",e));
+    return()=>r.off("value",c);
+  },[sid,view,urlLocked,ownerClaimedSid]);
+  // 差分（{"YYYY-MM/名前": 記録 | null, "YYYY-MM/名前/frozenAt": null ...}）を update で書く。全体 set() はしない
+  const saveLaborMonths=patch=>{
+    if(!patch||!Object.keys(patch).length)return Promise.resolve();
+    if(!firebaseDB||!sid||sid==="default")return Promise.reject(new Error("店舗がありません"));
+    return fbUpd(`shops/${sid}/laborMonths`,patch).catch(e=>{console.warn("所定の保存に失敗:",e);tt("△ 所定を保存できませんでした");throw e;});
+  };
+  // 改名・削除の後始末（STAFF_KEYED_MONTH_NODES）。購読していない端末（オーナーでない）は何もしない
+  const renameLaborMonths=(oldName,newName)=>{
+    const d=renameStaffInLaborMonths(laborMonths,oldName,newName);
+    if(d&&firebaseDB)fbUpd(`shops/${sid}/laborMonths`,d).catch(e=>console.warn("所定の改名に失敗:",e));
+  };
+  const dropLaborMonths=names=>{
+    const d=dropStaffFromLaborMonths(laborMonths,names);
+    if(d&&firebaseDB)fbUpd(`shops/${sid}/laborMonths`,d).catch(e=>console.warn("所定の削除に失敗:",e));
+  };
   // 解除状態は **App のメモリに持つ**（sessionStorage に置くとリロードをまたいで残り、「リロードで伏せ直す」と
   // 食い違うため。計画書 §3.7 の SS_PAY_UNLOCK から変えた）。値はどのパスコードで解除したか（payCodeIdentity）で、
   // 同じコードの店舗（企業連携店舗どうし）では解除を持ち越し、別のコードの店舗へ移ると伏せ直す。
@@ -1795,6 +1822,8 @@ function App(){
               pay={{enabled:!ownerReadOnly&&ownerClaimedSid===sid&&featureEnabled("pay",{plan,companyLink}),loaded:payLoaded,map:payMap,codeRec:payCodeRec,
                 unlockedFor:payUnlockedFor,unlockedDefault:payUnlockedDefault,unlock:unlockPay,lock:()=>setPayUnlockedId(null),
                 save:savePay,rename:renamePay,drop:dropPay,changeCode:changeShopPayCode}}
+              laborMonths={{enabled:!ownerReadOnly&&ownerClaimedSid===sid,loaded:laborMonthsLoaded,map:laborMonths,
+                save:saveLaborMonths,rename:renameLaborMonths,drop:dropLaborMonths}}
               onRememberAdminKey={rememberAdminKey} onClaimShop={claimOwnership}
               plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed} billingSchedule={billingSchedule} billingExempt={billingExempt} companyLink={companyLink}
               setCurrentShopId={id=>{
