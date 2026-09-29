@@ -205,7 +205,8 @@ monthlyOvertimeH / prorateOvertimeH     // 月の残業予定と日別の按分�
 guideStatusOf              // 目安の4段階（S-6）。みなし超／所定未満／目安未満／OK 上限まで
 AGREEMENT_LEGAL_ITEMS / AGREEMENT_SINGLE_MONTH_CAP_H
                            // 36協定の法定上限の一覧（判定する・しないを含む）。設定画面のチェックリストは
-                           // これを自動生成する。単月100h未満は**月の残業予定だけと比べ休日労働を足さない**
+                           // これを自動生成する。単月100h未満と複数月平均80hは**時間外＋法定休日労働**で比べる（2026-09-30・P5。
+                           // 以前は休日労働を足していなかった）。laborFindingsFor の monthAgreementH・yearOvertimeMonths の ag
 breakModeOf / breakLengthOf / shiftBindingMin / isBreakShort
                            // 休憩方式（band=既定／length）と拘束時間・休憩不足（S-3）。
                            // **長さ方式のしきい値は実働で見る**——S-3 の本文は「拘束>8h→1.0h」だが
@@ -224,6 +225,7 @@ overtimePlanOf / otProrateOf / staffOtProrateOf / dailyOverMinB / dailyOverThres
                            // で固定枠を窓（月／半月＝1〜15日・16日〜）ごとに配る（窓の実働が固定枠未満なら実働まで）。未設定・固定枠なしは従来と同じ。
                            // otProrate は COMPANY_LIMIT_KEYS に入る（企業共通・法人でも決められる）。CF の sanitizeOtProrate と一致をテストで照合。
                            // B制は laborSettings.showDailyOverB=1 の店舗だけ、日ごとのしきい値超の合計を「残業予定」の行に出す
+                           // （オフの店舗の B制の残業予定は 2026-09-30 の P5 から割増の①＋②を出す）
 externalOverThresholdOf    // 判定対象外（区分 none）の長時間の日の色（P3.5c）。highlightExternalOver8h=1 のときのしきい値（オフなら0）。
                            // LABOR_DAY_FIX_KEYS の externalOver は**要修正でも労務判定の表でもない**（色だけ）
 headcountAtOf / countPresentAt / headcountLabelOf
@@ -310,6 +312,9 @@ scheduledDay / resolveActualDay / planActualEdit / actualOf / parseClockInput / 
 STAFF_KEYED_PERIOD_NODES / renameStaffInActuals / dropStaffFromActuals
                            // 期間キー付きの名前ノード（いまは actuals だけ）。改名は act.rename、削除は act.drop（lm と同じ2つの入口）、
                            // 期間の削除（savePeriods）でも actuals/{期間ID} を消す。CF の companyRenameStaff も renameStaffActualsPatch で移す
+premiumBreakdownOf / legalHolidayDatesOf / nightMinutesOf / nightOverlapMin / premiumWeekStartOf / premiumAgreementH / breakBandsOf
+premiumFindingsFor / PREMIUM_FINDING_KEYS / premiumDayInput / premiumMonthDates / premiumMonthOf / premiumRowCell / helperActualDaysOn
+                           // 割増の計算（2026-09-30・P5・計画書 §4.1〜§4.4）。入力は resolveActualDay の1日だけ（1分単位）。詳細は「割増の計算（P5）」の節
 actualsCsvMappingOf / parseCsvRows / parseCsvDate / planActualsImport / DEFAULT_ACTUALS_CSV_MAPPING
                            // 実績の CSV 取込（P4 後半）。列の位置（1始まり・0=使わない）と見出しの有無は settings.actualsCsv。名前は resolveAlias、
                            // 取り込む先は選択中の期間だけ。打刻の来た日は欠勤を外し、法定休日・遅刻早退・メモは残す。同じ人・同じ日の2行目以降は使わない
@@ -573,7 +578,8 @@ Period = { id: string, urlToken: string, shopId: string, label: string,
            snapshot?: {staffList: string[], settings: Settings},  // 確定済み期間の写し
            keepStaff?: {name: string, index: number}[],           // 削除しても列を残す人
            keepAttrs?: {[name: string]: 属性ID},                  // その期間に効かせる旧属性
-           laborTotals?: {[name]: {workMin,paid,publicOff,ceremony}},  // 凍結時点の労務の合計（年度の累計用）
+           laborTotals?: {[name]: {workMin,paid,publicOff,ceremony,monthOtH?,monthAgH?}},  // 凍結時点の労務の合計（年度の累計用）。
+                                                   // monthOtH＝月の残業（A制は残業予定・B制は割増の①＋②）、monthAgH＝時間外＋法定休日労働（P5）。どちらも月の最後の期間だけ
            submission?: {at: string, byUid: string},                  // 企業への完成シフトの提出（2026-09-27。無ければ未提出）
            confirmation?: {at: string, byUid: string, note?: string},  // 確定（2026-09-30・P3）。セルの編集とスタッフの再提出を止める。旧 lockedAt はここへ統合（確定で消す）
            delivery?: {at: string, byUid: string, method?: string},    // 本人への交付の記録（確定済みのときだけ。公開機能ではない）
@@ -766,8 +772,8 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
 - **写しの people**: CF の `buildShopMirror` が `mirrorPeopleOf`（連携店舗ぶん・人物ID の形を満たすもの）と `mirrorShopEntitiesOf` を焼く。
   人物を変える CF（ensureCompanyPeople・mergePeople・splitPerson・reassignPersonId・companyRenameStaff）は `syncPeopleMirror` で写しを作り直す
 - **合算するのは予定（subs）だけ**。他店の `laborMonths`・`actuals`・`private/pay` はオーナーしか読めず、店長のセッションは自分の店舗の
-  オーナーでしかない。**実績（P4 のノード。読む計算は P5）の他店合算は、そのセッションが行き先の店のオーナーであるときだけ行う**（企業コードのログインは全連携店舗の
-  オーナーなので読める）。読めないときは同じく「＋」と「他店の実績を読み込めていません」を出す。賃金（P6b）の合算は企業コードのログインで開いた
+  オーナーでしかない。**実績の他店合算は、そのセッションが行き先の店のオーナーであるときだけ行う**（P5 で実装。企業コードのログインは全連携店舗の
+  オーナーなので読める）。読めないときは同じく「＋」と「他店の実績を読み込めていません」を出す（割増の行だけ。予定の合算は従来どおり）。賃金（P6b）の合算は企業コードのログインで開いた
   月次賃金ページに限る（計画書 §3.9 の「読み取り権限の制約」）
 - 検証: `tests/core.test.js`（同一人物・所属と行き先・行き先の休憩と写し・期間の切り方が違う2店舗・laborMonths の凍結値・写しの people・
   重複候補・入口のドリフト）と `example-helper-aggregate.js`（店長のセッション・14項目）・`example-company-dup-candidates.js`（統合で写しが作り直される）。
@@ -788,11 +794,42 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
   セルを選ぶと出る欄で休憩・欠勤・遅刻早退・法定休日・メモ・「予定に戻す」。差分のある日だけ色（`ACT_DIFF_BG`）と太字、法定休日は「法」
 - **CSV取込**（同じダイアログ）: 1行＝1人1日（日付・名前・出勤・退勤・休憩）。列の位置と見出しの有無は `settings.actualsCsv`（変えて取り込んだときだけ保存）。
   文字コードは Shift_JIS（既定）と UTF-8。打刻機の形式が分かった時点で既定の列を変える
-- **他店の実績の合算はまだしていない**（P4 には実績を読む計算が無いため）。P5 で割増に使うとき、P3.6 の申し送りどおり
-  「そのセッションが行き先の店のオーナーのときだけ」他店の actuals を読み、読めなければ「＋」を出す
+- **他店の実績の合算は P5 の割増の計算で行う**（「割増の計算（P5）」の節）。行き先の店の actuals を読めたときだけ使い、読めなければ「＋」
 - 改名・削除: `STAFF_KEYED_PERIOD_NODES`（act.rename／act.drop・CF は `renameStaffActualsPatch`）。期間の削除（savePeriods）と CF の purgeOldPeriods も actuals/{期間ID} を消す
 - ルールは新ノードだけ＝**本番はルールが先**（計画書 §6 冒頭）。dev は 2026-09-30 に反映し `probe-rules-actuals.js` で22項目（匿名uidの読み書き・削除401・オーナー200・形の不正401）を実測済み
 - 検証: `tests/core.test.js`（解決・差分保存・改名削除・CF との一致・ルールと入口のドリフト・CSV）と `example-actuals.js`（21項目・375px 含む）
+
+### 割増の計算（2026-09-30・P5・develop のみ・ルールと CF の変更なし）
+
+`労務給与_複数法人_実装計画.md` §4.1〜§4.4・P5（決定 #3・#4・#5）。入力は `resolveActualDay`（実績が無い日は確定シフト）の1日だけで、単位は分・1分単位。
+- **A制（§4.2）**: ① max(0, 実働 − max(所定, 8h)) ② max(0, Σ週(実働−①) − max(Σ週所定, 40h)) ③ max(0, Σ月(実働−①−②) − 総枠)。
+  **B制（§4.3）**: ① max(0, 実働 − 8h) ② max(0, Σ週(実働−①) − 40h)。日の所定は確定シフト（`scheduledDay`）、総枠は `laborMonthFrame` の baseMin。
+  `laborMonths` の月の確定値は式に入らない（③の閾値は総枠）＝月所定の行（P3）でだけ使う
+- **週**は `laborSettings.weekStartDow` 起算。月をまたぐ週は既定でその月の日だけで切る（`weekSplitAtMonthEdge=1`）。
+  **この切り方は割増の計算にだけ効く**——既存の週の休み・B制の週40h超（労務判定の weekOver40）は今までどおり月で切らない（テストで固定）。
+  `weekSplitAtMonthEdge=0`（行政解釈）は週の開始日の月に7日まるごと入れる（UI なし・引数だけ）
+- **法定休日（決定 #5）**: 暦の7日（weekStartDow 起算・**月で切らない**）に休日が1日も無い週の最後の勤務日。実績の `legalHoliday` が付いた週は
+  その日だけ（自動判定しない）。休日は週の休みと同じ数え方（公休・空欄）で、有給・慶弔・欠勤・実績で働いた日は休日にしない。
+  **7日のどれかのデータが無い週は判定しない**。法定休日労働は①②③と60h超に含めず、深夜と重なった分は `legalHolidayNightMin` に別に持つ
+- **深夜（決定 #4）**: 0:00〜5:00 と 22:00〜29:00。休憩は、時間帯方式の帯（`breakBands`＝`resolveActualDay`/`scheduledDay` が返す位置）なら
+  深夜帯との重なりを引き、位置の無い休憩（長さ方式・中休み・日別の上書き・実績で分だけ入れた休憩＝`breakBands:null`）は
+  **拘束に占める深夜帯の比率で按分**（引く分は1分未満切り捨て）。締の追加出勤には休憩が無い
+- **60h超**: 月の時間外（法定休日を除く）が 3,600 分を超えた分
+- **36協定**: B制にも月45h・単月100h・年の4項目を当てる（総括の要修正も A制と同じ）。**単月100h と複数月平均80h は時間外＋法定休日労働**
+  （`premiumAgreementH`。A制は割増の①②③＋法定休日、以前の「残業予定だけ」より厳しい側）。年360h・720h・月45h超の回数は時間外だけ。
+  年の値は `laborTotals[名前].monthOtH`（A制は従来の残業予定、**B制は①＋②**）と `monthAgH`（時間外＋法定休日）。`monthAgH` の無い凍結値（P5 前）は monthOtH で代える
+- **表示**: 労務判定表に「時間外①②③」「深夜」「法定休日」「60h超」（暦月・title に内訳と計算の前提）。B制の「残業予定」はトグル
+  （showDailyOverB）がオフでも割増の①＋②のうちこの期間の分を出す（オンの店舗は P3.5b の日ごとのしきい値超のまま）。A制の「残業予定」は
+  予定ベースの見込みのまま。月が埋まっていない・他店の実績を読めていないときは先頭に「＋」。労務確認パネルに `日の時間外n日（…）`・
+  `週の時間外（2〜8）`・`深夜n日`・`法定休日労働n日`・`月60h超`（要修正ではない＝総括を変えない）。全データPDFは laborRows を共有して同じ行が載る
+- **実績の読み**: 自店の actuals はオーナーの端末だけ（`act.enabled`）。読めない端末は確定シフトで計算し title に書く。
+  他店は `companyData` の読み込みで `shops/{他店}/actuals` も読み（拒否は `actualsUnread`・`loadFailed` に数えない）、`helperActualDaysOn` が
+  行き先の店の設定と実績で解決する。**読めない確定済みの期間があれば「＋」と「他店の実績を読み込めていません」**（未確定の期間は実績の入口が無いので印を付けない）。
+  他店の実績を読めていない人の月の値は laborTotals に残さない
+- **app-admin.js の文字数**: P5 で 40万字の上限（`example-index-html-load`）を超えたので、セルと1日の組み立てを app-utils.js へ移して
+  399,977 字に戻した。**余裕は 23 字しかない**——次のフェーズ（P6b・P7）で app-admin.js に足すなら先に分割を考える
+- 検証: `tests/core.test.js`（手計算の期待値: 締23〜25時の深夜・帯と按分の休憩・12h勤務・所定4hの日・③と60h超・休日ゼロ週・
+  月をまたぐ週・36協定の休日労働込み・他店の実績）と `example-labor-premium.js`（18項目・WebKit の iPhone 13 でも通る。P5 より前の配信物では16項目が落ちる）
 
 ### 企業連携の拡張（2026-09-27・本番反映済み: クライアント 2282f11／ルール／Cloud Functions）
 
@@ -1125,6 +1162,7 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   半月運用で同じ月を2回数えないための不変条件で、`yearOvertimeMonths` も月の最後の期間からしか読まない。
 - **シフトを組んである月までしか見ない**（`scoped`）。未作成の月を0として平均に混ぜると実態より低く出る。
 - 720h・80h・6回は**法律が決める値なのでコード側の定数**。年360h だけは協定で定める値なので設定にした。
+- **2026-09-30（P5）から B制にも当てる**。B制の月の値は割増の①＋②。単月100h・複数月平均80h は時間外＋法定休日労働（「割増の計算（P5）」の節）
 - 複数月平均は連続する2〜6ヶ月の窓を全通り見て、**平均がいちばん高い窓を1つだけ**出す（同値なら短い窓）。
 
 **残業予定は半月ごとに見える（2026-09-26 ユーザー指示）**。按分は**月の全日**でやるが、表に出すのは
