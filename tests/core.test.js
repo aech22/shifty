@@ -4223,7 +4223,8 @@ test("staffHomeShop: 2つの一覧に登録され、改名でキーが移る", (
 const cfc = require("../functions/company-config.js");
 test("company-config: CF 側のキー一覧・属性ID・労働時間制がクライアントと一致する（書き写しのドリフト検出）", () => {
   assert.deepStrictEqual(cfc.COMPANY_LABOR_KEYS, u.COMPANY_LABOR_KEYS);
-  assert.deepStrictEqual(["laborSystem", ...cfc.COMPANY_LIMIT_NUM_KEYS].sort(), [...u.COMPANY_LIMIT_KEYS].sort());
+  // laborSystem と otProrate（按分窓・P3.5b）は数値でないキーとして別の検証を通る
+  assert.deepStrictEqual(["laborSystem", "otProrate", ...cfc.COMPANY_LIMIT_NUM_KEYS].sort(), [...u.COMPANY_LIMIT_KEYS].sort());
   assert.deepStrictEqual(cfc.COMPANY_LABOR_SYSTEMS, u.LABOR_SYSTEMS);
   assert.deepStrictEqual(cfc.COMPANY_BUILTIN_ATTRS, u.BUILTIN_TYPES);
   assert.strictEqual(String(cfc.COMPANY_ATTR_ID_RE), String(u.COMPANY_ATTR_ID_RE));
@@ -5345,4 +5346,74 @@ test("P3 ドリフト検出: ルール（laborMonths はオーナーのみ・確
   assert.ok(/const snapSame=isPeriodConfirmed\(period\)\|\|periodSnapshotEqual\(/.test(admin));
   // 確定はシフト作成タブと提出状況表の2つの入口で、どちらも同じ planPeriodConfirmation を通る
   assert.ok((admin.match(/planPeriodConfirmation\(/g) || []).length >= 2);
+});
+
+// ===== P3.5b 残業予定の日割り（労務給与_複数法人_実装計画.md §3.9-2・§6 P3.5b）=====
+// B制の日ごとの「しきい値超」（店舗トグル）と、属性の按分窓（月／半月＋固定枠）。値はすべて設定で、既定は従来どおり。
+const OCT = Array.from({ length: 31 }, (_, i) => `2026-10-${String(i + 1).padStart(2, "0")}`);
+test("P3.5b B制の日ごとのしきい値超: 既定はオフ・しきい値は法定8h", () => {
+  const ls = u.laborSettingsOf({});
+  assert.strictEqual(ls.showDailyOverB, 0, "既定はオフ");
+  assert.strictEqual(ls.dailyOverThresholdMin, u.LEGAL_DAILY_MIN);
+  assert.strictEqual(u.laborSettingsOf({ laborSettings: { showDailyOverB: 2 } }).showDailyOverB, 0, "範囲外は既定へ");
+  assert.strictEqual(u.laborSettingsOf({ laborSettings: { showDailyOverB: 1, dailyOverThresholdMin: 420 } }).dailyOverThresholdMin, 420);
+  assert.deepStrictEqual(u.dailyOverMinB([540, 480, 600, 0], 480), [60, 0, 120, 0], "ちょうど8hは0");
+  assert.deepStrictEqual(u.dailyOverMinB([540], 0), [60], "0以下のしきい値は法定8h");
+  assert.strictEqual(u.dailyOverThresholdOf({ dailyOverThresholdMin: 0 }), u.LEGAL_DAILY_MIN);
+});
+test("P3.5b 按分窓: 設定の無い属性は従来の月按分と完全に同じ", () => {
+  const mins = OCT.map((d, i) => (i % 3 === 0 ? 0 : 600));
+  const base = 10628 * 31 / 31; // 値は任意（従来関数と同じ入力を渡して一致を見る）
+  const plan = u.overtimePlanOf({ dates: OCT, dayMins: mins, baseMin: base, prorate: null });
+  const tot = mins.reduce((a, b) => a + b, 0);
+  const ot = u.monthlyOvertimeH(tot / 60, base / 60);
+  assert.strictEqual(plan.monthOtH, ot);
+  assert.deepStrictEqual(plan.dayOtH, u.prorateOvertimeH(mins.map(m => m / 60), ot, tot / 60));
+  assert.strictEqual(plan.fixed, false);
+  // 固定枠の無い半月は配る元が無いので月と同じ
+  assert.deepStrictEqual(u.overtimePlanOf({ dates: OCT, dayMins: mins, baseMin: base, prorate: { window: "halfMonth" } }).dayOtH, plan.dayOtH);
+  assert.deepStrictEqual(u.staffOtProrateOf({}, "田中"), { window: "month" });
+});
+test("P3.5b 按分窓: 半月15h（実働15h未満はその値）を各勤務日に実働比で按分する", () => {
+  // 前半: 1〜10日に 8h×10日＝80h → 15h を 1.5h ずつ。後半: 20・21日に 6h×2日＝12h（15h 未満）→ 12h を 6h ずつ
+  const mins = OCT.map((d, i) => (i < 10 ? 480 : (i === 19 || i === 20) ? 360 : 0));
+  const p = u.overtimePlanOf({ dates: OCT, dayMins: mins, baseMin: 99999, prorate: { window: "halfMonth", fixedMin: 900 } });
+  assert.deepStrictEqual(p.dayOtH.slice(0, 10), Array(10).fill(1.5), "前半は 15h を10日に");
+  assert.deepStrictEqual(p.dayOtH.slice(10, 19), Array(9).fill(0));
+  assert.strictEqual(p.dayOtH[19], 6); assert.strictEqual(p.dayOtH[20], 6);
+  assert.strictEqual(p.monthOtH, 27, "月の残業予定は半月ずつの和");
+  assert.strictEqual(p.window, "halfMonth"); assert.strictEqual(p.fixed, true);
+  // 実働比: 前半に 4h と 12h の日があれば 15h を 1:3 で配る（累積の差分なので和は窓の値に一致）
+  const m2 = OCT.map((d, i) => (i === 0 ? 240 : i === 1 ? 720 : 0));
+  const p2 = u.overtimePlanOf({ dates: OCT, dayMins: m2, baseMin: 0, prorate: { window: "halfMonth", fixedMin: 900 } });
+  assert.deepStrictEqual([p2.dayOtH[0], p2.dayOtH[1]], [3.75, 11.25]);
+  // 月の窓＋固定枠: 月に 15h（実働が短ければ実働）
+  const p3 = u.overtimePlanOf({ dates: OCT, dayMins: mins, baseMin: 0, prorate: { window: "month", fixedMin: 900 } });
+  assert.strictEqual(p3.monthOtH, 15);
+  assert.strictEqual(Math.round(p3.dayOtH.reduce((a, b) => a + b, 0) * 100) / 100, 15);
+  // 属性の設定から引く（staffAttributes → staffTypeLimits[属性].otProrate）
+  const st = { staffAttributes: { 田中: "co_AbCd1234" }, staffTypeLimits: { co_AbCd1234: { name: "特定技能", otProrate: { window: "halfMonth", fixedMin: 900 } } } };
+  assert.deepStrictEqual(u.staffOtProrateOf(st, "田中"), { window: "halfMonth", fixedMin: 900 });
+  assert.deepStrictEqual(u.staffOtProrateOf(st, "佐藤"), { window: "month" }, "属性の無い人は月");
+});
+test("P3.5b 按分窓は企業共通（法人上書き可）で効き、CF の検証と一致する", () => {
+  const inputs = [null, "x", {}, { window: "week" }, { window: "month" }, { window: "halfMonth", fixedMin: 900 },
+    { window: "halfMonth", fixedMin: -1 }, { window: "month", fixedMin: "600" }, { window: "halfMonth", fixedMin: 744 * 60 + 1 },
+    { window: "halfMonth", fixedMin: 900.4, extra: 1 }];
+  inputs.forEach(v => assert.deepStrictEqual(cfc.sanitizeOtProrate(v), u.otProrateOf(v), JSON.stringify(v)));
+  assert.deepStrictEqual(cfc.COMPANY_OT_PRORATE_WINDOWS, u.OT_PRORATE_WINDOWS);
+  assert.strictEqual(cfc.COMPANY_OT_PRORATE_FIXED_MAX_MIN, u.OT_PRORATE_FIXED_MAX_MIN);
+  const cs = cfc.sanitizeCompanySettings({ staffTypeLimits: { parttime: { otProrate: { window: "halfMonth", fixedMin: 900 } } },
+    laborSettings: { showDailyOverB: 1, dailyOverThresholdMin: 420 } });
+  assert.deepStrictEqual(cs.staffTypeLimits.parttime.otProrate, { window: "halfMonth", fixedMin: 900 });
+  assert.deepStrictEqual(cs.laborSettings, { showDailyOverB: 1, dailyOverThresholdMin: 420 });
+  // 店舗の値より企業が勝ち、保存時には店舗側の同じキーを剥がす
+  const shop = { staffTypeLimits: { parttime: { name: "パート", otProrate: { window: "month", fixedMin: 60 } } } };
+  const eff = u.applyCompanySettings(shop, cs);
+  assert.deepStrictEqual(eff.staffTypeLimits.parttime.otProrate, { window: "halfMonth", fixedMin: 900 });
+  assert.ok(u.companyControlledKeys(cs).limits.parttime.has("otProrate"));
+  assert.ok(!("otProrate" in u.stripCompanySettings(shop, cs).staffTypeLimits.parttime));
+  // 法人の上書き（属性×キー単位で丸ごと置き換わる）
+  const merged = cfc.mergeEntitySettings(cs, { staffTypeLimits: { parttime: { otProrate: { window: "month" } } } });
+  assert.deepStrictEqual(merged.staffTypeLimits.parttime.otProrate, { window: "month" });
 });
