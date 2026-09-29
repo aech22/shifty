@@ -5253,3 +5253,30 @@ test("P3 改名の後始末（CF）: laborMonths の一覧と差分パッチが�
   u.STAFF_KEYED_MONTH_NODES.forEach(n => assert.ok(body.includes("shops/${sid}/" + n), n + " を移していない"));
   assert.ok(body.includes("renameStaffLaborMonthsPatch("), "companyRenameStaff が renameStaffLaborMonthsPatch を通っていない");
 });
+test("P3 ドリフト検出: ルール（laborMonths はオーナーのみ・確定済み期間の subs はオーナーだけ書ける）と改名・削除・確定の入口", () => {
+  const fs = require("node:fs");
+  const rules = JSON.parse(fs.readFileSync(require("node:path").join(__dirname, "..", "database.rules.json"), "utf8")).rules.shops.$shopId;
+  const OWNER = "root.child('shops').child($shopId).child('owners').child(auth.uid).exists()";
+  assert.ok(rules.laborMonths[".read"].includes(OWNER) && rules.laborMonths[".write"].includes(OWNER), "laborMonths はオーナーだけが読み書きする");
+  assert.ok(!/^auth != null$/.test(rules.laborMonths[".read"]), "所定を auth != null で公開しない");
+  const w = rules.subs.$subId[".write"];
+  assert.ok(w.includes("demo-toriMatsu-v1") && w.includes(OWNER), "オーナーは確定済みでも書ける");
+  assert.ok(w.includes("newData.child('periodId').val()") && w.includes("data.child('periodId').val()") && (w.match(/child\('confirmation'\)\.exists\(\)/g) || []).length === 2,
+    "書き込み後と書き込み前（削除）の両方の期間の confirmation を見る");
+  const admin = _readAdminSurface();
+  const ren = admin.slice(admin.indexOf("onRenameStaff={(oldName,newName)=>{"));
+  const renBody = ren.slice(0, ren.indexOf("tt(`✓ ${oldName} → ${newName} に変更しました`)"));
+  assert.ok(/lm\.rename\(/.test(renBody), "改名で laborMonths を移していない");
+  const sites = [];
+  let i = -1;
+  while ((i = admin.indexOf("=settingsWithoutStaff(", i + 1)) >= 0) sites.push(i);
+  sites.forEach(at => assert.ok(admin.slice(at, at + 500).includes("lm.drop("), "settingsWithoutStaff の近くに lm.drop が無い"));
+  const main = fs.readFileSync(require("node:path").join(__dirname, "..", "app-main.js"), "utf8");
+  assert.ok(/renameStaffInLaborMonths\(/.test(main) && /dropStaffFromLaborMonths\(/.test(main));
+  // セルのロック: グリッドの2つの input は確定で readOnly になり、写しの最新化は確定済みで止まる
+  assert.strictEqual((admin.match(/readOnly=\{!canEditCells\}/g) || []).length, 2);
+  assert.ok(!/readOnly=\{!isPremium\}/.test(admin));
+  assert.ok(/const snapSame=isPeriodConfirmed\(period\)\|\|periodSnapshotEqual\(/.test(admin));
+  // 確定はシフト作成タブと提出状況表の2つの入口で、どちらも同じ planPeriodConfirmation を通る
+  assert.ok((admin.match(/planPeriodConfirmation\(/g) || []).length >= 2);
+});
