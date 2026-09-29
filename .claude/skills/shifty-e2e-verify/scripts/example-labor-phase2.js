@@ -26,7 +26,8 @@ async function setTab(){
     const nums=card?[...card.querySelectorAll("input[type=number]")].map(i=>({v:i.value,fs:getComputedStyle(i).fontSize})):[];
     return{has36:/36協定/.test(t),daily:/1日の延長上限/.test(t),monthly:/1か月の延長上限/.test(t),
       judged:(t.match(/判定(?!し)/g)||[]).length,unjudged:(t.match(/未判定/g)||[]).length,
-      holiday:/休日労働を足していません/.test(t),
+      // 2026-09-30（P5）から単月100h・平均80hは法定休日労働を足して比べる（以前は「足していません」と注記していた）
+      holiday:/時間外に法定休日労働を足して比べます/.test(t)&&!/休日労働を足していません/.test(t),
       nums,noNextPhaseNote:!/次の弾で追加します/.test(t)};
   });
   // 1日の延長上限を0にすると目安＝総枠（31日 177:08）になる

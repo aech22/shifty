@@ -1,7 +1,8 @@
 // P3.5b（残業予定の日割り: B制の日ごとのしきい値超・属性の按分窓）の実ブラウザ回帰テスト。
 // app-main.js を読み込まないので Firebase へは1バイトも出ない（SKILL.md 1.6節）。
 //   1. 設定タブ: B制トグル（既定オフ）としきい値、属性の「残業予定の配り方」が settings に入る
-//   2. シフト作成タブ: 半月15h 固定枠の属性（A制）と B制トグルの残業予定が表に出る／トグルオフの店舗は空欄
+//   2. シフト作成タブ: 半月15h 固定枠の属性（A制）と B制トグルの残業予定が表に出る／トグルオフの店舗は
+//      割増の計算（P5・2026-09-30）の ①日8h超＋②週40h超 が出る（以前は空欄だった）
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-labor-ot-window.js → allPass=true / EXIT=0
 // 反証: SHIFTY_ROOT=<P3.5b より前の配信物> node ... → EXIT≠0
 "use strict";
@@ -99,7 +100,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);` });
     font16: a.fontsizes.length > 0 && a.fontsizes.every(f => f >= 16),
     // B制 10h→2h、8h→0、9h→1h → 3h（日ごとの内訳は title）
     bShown: !!onT && onT.t === "3h" && /1日 2:00・3日 1:00/.test(onT.title),
-    bHiddenWhenOff: !!off.ot && (!offT || offT.t === ""),
+    // トグルオフでも B制の残業予定は割増の計算（P5）で出る。10/1〜3 の①= 2h+0+1h = 3h、週(10/1〜4・月で切る) Σ(実働−①)=24h ≦ 40h → ②0
+    bP5WhenOff: !!off.ot && !!offT && offT.t === "3h" && /1日8時間超 3:00・週40時間超 0:00/.test(offT.title),
     // A制・半月15h 固定枠: 月の残業予定＝15＋12＝27h（オン／オフに関係なく属性の設定で効く）
     halfMonthFixed: !!onS && /27h/.test(onS.t + onS.title) && /半月ごと/.test(onS.title) && !!offS && /27h/.test(offS.t + offS.title),
     noErrors: a.errors.length === 0 && on.errors.length === 0 && off.errors.length === 0,

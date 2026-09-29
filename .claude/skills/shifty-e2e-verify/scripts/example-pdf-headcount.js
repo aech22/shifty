@@ -44,7 +44,8 @@ function Harness(){const [subs,setSubs]=React.useState(SUBS);
 ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);` });
   await sleep(600);
   const m = {};
-  m.screenHas = await h.evaluate(() => /昼\d|夜\d/.test(document.body.innerText) || !!document.querySelector("[data-headcount]"));
+  // 「深夜3日」（割増の計算・P5 の労務確認パネル）は人数ではないので外す
+  m.screenHas = await h.evaluate(() => /昼\d|(?<!深)夜\d/.test(document.body.innerText) || !!document.querySelector("[data-headcount]"));
   // Excel（シフト作成タブの Excel出力）
   const dl = await h.captureDownloads();
   await h.clickExact("Excel出力");
