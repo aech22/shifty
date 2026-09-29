@@ -1013,9 +1013,9 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-09-29 自動実行 #153）
+## Shifty バグチェックレポート（2026-09-29 自動実行 #154）
 
-> 着手時の HEAD は `874842f`。#152 以降の変更は E2E ハーネスの1コミットだけで、配信コード（app-*.js・functions/・ルール・index.html）は変わっていない。
+> 着手時の HEAD は `a774fdf`。#153 以降の配信コードの変更は3件（スタッフタブの行の折り返し・企業内登録スタッフの番号統合・全データPDFの労務表と年計の実データ化）で、いずれも本番へリリース済み。
 
 ### 修正済み
 
@@ -1025,14 +1025,14 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 
 - **[🟢] 他店舗略称＋「締」は追加出勤を数える**。修正前からの挙動で、x とそろえるかは仕様判断（#152 から継続）。
 - **[🟢] 呼び出し候補を選ぶ前に番号欄を書き換えると、書き換えた番号で登録される**（StaffTab の registerLookup・#152 から継続）。
-- ~~**[🟡] `changeCompanyPassword` の作成者限定（`e696d1f`）は CF 未デプロイ**~~ → **2026-09-29 に本番へデプロイ済み**（BACKLOG の記録・`5878fe2`）。
 
 ### 異常なし
 
-- `npm test` **380件パス**・`npx eslint app-*.js` **0 errors / 101 warnings**（#152 と同数）。
+- `npm test` **382件パス**・`npx eslint app-*.js` **0 errors / 101 warnings**（#153 と同数）。
 - `DEV_MODE` は式のまま。フォーム部品88件で `fontSize` 16未満は0件。未定義のCSS変数・`subs` の全体 set()・`.delete()` はいずれも0件。
-- 変更後のハーネスで回帰スクリプト3本（shift-edit-tab・help-x-band・company-staff-directory）がすべて allPass。
-- **配信版数は `20260927-a882991` のままで、以降のコミットに追随していない。** リリース時にバンプすること。
+- PDF の書き出し前の読み込み待ちは、同期的に登録される購読まで含めて待っている（`loadPastSubs`）。
+- 回帰スクリプト4本（pdf-labor・company-staff-directory・shift-edit-tab・staff-hidden）がすべて allPass。
+- 配信版数は `20260929-1d474a0` で6箇所一致。以降のコミットは docs だけ。
 - **Firebase・Stripe・本番データには一切アクセスしていない。**
 <!-- BUG_CHECK_LATEST_END -->
 
@@ -1093,7 +1093,7 @@ CF 本体の動作は本番の実データでは未検証（dev＝Spark には C
 - [ ] 反映後、企業の作成者のセッションで「企業の共通設定を保存」を1回押し、各連携店舗の `shops/{sid}/company` が書かれることを
       `shifty-prod-data-probe`（読み取り専用）で確認する
 - [ ] 本番の店舗で「提出」「提出状況表」「一括PDF（シフトのみ・全データ）」を1回ずつ通す
-- [x] **`changeCompanyPassword` の作成者限定（`e696d1f`・2026-09-28）を CF へ反映する** → **2026-09-29 に本番へデプロイ済み**（18関数すべて更新成功・未認証呼び出しが UNAUTHENTICATED を返すことを確認。反映前に cf-harness で企業コードのセッション拒否・作成者の変更可を実行検証）。コミット時点で CF は未デプロイ
+- [ ] **`changeCompanyPassword` の作成者限定（`e696d1f`・2026-09-28）を CF へ反映する**。コミット時点で CF は未デプロイ
       （計画どおり別ステップ）。反映するまで、UI はボタンを隠すが企業コードのセッションから CF を直接呼べば変更が通る。
       バグチェック#152（2026-09-28）で申し送り・条件A（本番デプロイ）に該当
 
