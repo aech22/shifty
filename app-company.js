@@ -722,6 +722,10 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
     return[...set].filter(e=>e!==(r.entityId||"")).map(e=>(ents[entIdx[e]]||{}).name||"法人未設定");
   };
   const togglePick=pid=>setPicked(p=>p.includes(pid)?p.filter(x=>x!==pid):[...p.slice(-1),pid]);
+  // 重複候補（P3.6）: 同じ名前が2店舗以上にあるのに人物が別。ヘルプ先の勤務は人物で束ねて所属店舗へ合算するので、
+  // 別人物のままだと合算されない。一覧の先頭に出し、その場で統合できるようにする（同姓同名の別人もここに出る）
+  const dupCands=useMemo(()=>data?duplicatePersonCandidates(data.rows):[],[data]);
+  const shopNameOf=id=>((data&&data.shops)||[]).find(x=>x.id===id)?.name||id;
   const pickedRows=picked.map(pid=>(data?data.rows:[]).find(r=>r.personId===pid)).filter(Boolean);
   const sectionOf=r=>{
     const en=multiEnt&&!entityFilter?((ents[entIdx[r.entityId]]||{}).name||"法人未設定"):"";
@@ -760,6 +764,18 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
         <button disabled={busy||pickedRows.length!==2} onClick={()=>setMergeOpen(true)} style={{...AB,padding:"6px 12px",fontSize:13,opacity:busy||pickedRows.length!==2?0.5:1}}>同一人物として統合</button>
         <button onClick={()=>setPicked([])} style={{...AGray,padding:"6px 12px",fontSize:13}}>選択を解除</button>
       </div>}
+      {dupCands.length>0&&<div data-co-dup-cands="1" style={{marginBottom:12,padding:"10px 12px",background:"rgba(245,158,11,.08)",border:"1px solid rgba(245,158,11,.35)",borderRadius:8}}>
+        <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:4}}>重複候補（{dupCands.length}件）</div>
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8,lineHeight:1.6}}>同じ名前が2つ以上の店舗に別の人として登録されています。同じ人なら統合すると、ヘルプ先での勤務が所属店舗の労務集計に合算されます。同姓同名の別人ならそのままにしてください。</div>
+        {dupCands.map(g=>(<div key={g.rows.map(r=>r.personId).join("|")} data-co-dup-cand={g.name} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",padding:"6px 0",borderTop:"1px solid rgba(245,158,11,.25)"}}>
+          <span style={{fontSize:13,fontWeight:700,color:"var(--c-text)"}}>{g.name}</span>
+          <span style={{fontSize:12,color:"var(--c-text2)"}}>{g.rows.map(r=>`${(r.links||[]).map(l=>shopNameOf(l.shopId)).join("・")}${r.number?`（${r.number}）`:""}`).join(" ／ ")}</span>
+          {g.rows.some(r=>!r.homeExplicit)&&<span data-co-dup-home-hint="1" style={{fontSize:11,color:"#B45309"}}>所属店舗を設定してください（{g.rows.filter(r=>!r.homeExplicit).map(r=>r.name).join("・")}）</span>}
+          {g.rows.length===2
+            ?<button disabled={busy} onClick={()=>{setPicked(g.rows.map(r=>r.personId));setMergeOpen(true);}} style={{...AB,padding:"5px 12px",fontSize:12,marginLeft:"auto",opacity:busy?0.5:1}}>統合する</button>
+            :<span style={{fontSize:11,color:"var(--c-text3)",marginLeft:"auto"}}>統合する2人を一覧で選んでください</span>}
+        </div>))}
+      </div>}
       {loadErr&&<div style={{fontSize:13,color:"#DC2626",marginBottom:10}}>読み込めませんでした。再読み込みしてください。</div>}
       {data&&data.failed.length>0&&<div style={{fontSize:12,color:"#B45309",marginBottom:10}}>{data.failed.join("・")}は読み込めませんでした（一覧に含まれていません）。</div>}
       {!data&&!loadErr&&<div style={{fontSize:13,color:"var(--c-text3)"}}>読み込み中...</div>}
@@ -787,7 +803,9 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
                   <td style={TD}>{r.name}{r.hidden&&<span style={{marginLeft:6,fontSize:11,color:"var(--c-text3)"}}>非表示中</span>}
                     {r.conflictNames&&r.conflictNames.length>0&&<div title="同じ従業員番号で名前の違う登録があります" style={{fontSize:11,color:"#B45309",marginTop:2}}>別の登録名: {r.conflictNames.join("・")}</div>}</td>
                   <td style={TD}>{r.attrLabel||<span style={{color:"var(--c-text4)"}}>未設定</span>}</td>
-                  <td style={{...TD,whiteSpace:"normal"}}>{homes.map((n,i)=><span key={i} style={{whiteSpace:"nowrap",color:n==="連携していない店舗"?"var(--c-text4)":undefined}}>{i>0?"・":""}{n}</span>)}</td>
+                  <td style={{...TD,whiteSpace:"normal"}}>{homes.map((n,i)=><span key={i} style={{whiteSpace:"nowrap",color:n==="連携していない店舗"?"var(--c-text4)":undefined}}>{i>0?"・":""}{n}</span>)}
+                    {/* 2店舗以上に登録があって所属店舗が明示されていない人は、ヘルプ先の勤務をどちらへ合算するか決まらない（P3.6） */}
+                    {(r.links||[]).length>=2&&!r.homeExplicit&&<div data-co-home-hint="1" style={{fontSize:11,color:"#B45309",marginTop:2}}>所属店舗を設定してください</div>}</td>
                   <td style={TD}>{paidCell(r)}</td>
                   {payOn&&<td style={TD} data-co-wage={r.name}>{wageCell(r)}</td>}
                   <td style={{...TD,textAlign:"right"}}><button disabled={!r.personId||busy} title={r.personId?"":"人物IDを準備中です"} onClick={()=>setEditRow(r)} style={{...AGray,padding:"5px 10px",fontSize:12,opacity:r.personId?1:0.5}}>編集</button></td>
