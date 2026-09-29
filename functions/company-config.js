@@ -9,7 +9,10 @@ function isValidShopId(shopId) {
   return typeof shopId === "string" && shopId.length > 0 && !/[/.#$[\]\x00-\x1f\x7f]/.test(shopId);
 }
 const COMPANY_LABOR_KEYS = ["monthlyBase31Min", "fixedOvertimeMin", "marginMin", "agreementDailyOtMin",
-  "agreementMonthlyOtMin", "agreementAnnualOtMin", "fiscalYearStartMonth"];
+  "agreementMonthlyOtMin", "agreementAnnualOtMin", "fiscalYearStartMonth",
+  "annualScheduledMin", "rateDenominatorMin", "weekStartDow", "weekSplitAtMonthEdge"];
+// 範囲の決まっているキー（クライアントの LABOR_SETTING_RANGES と同じ。tests/core.test.js が照合する）
+const COMPANY_LABOR_RANGES = { fiscalYearStartMonth: [1, 12], weekStartDow: [0, 6], weekSplitAtMonthEdge: [0, 1] };
 const COMPANY_LIMIT_NUM_KEYS = ["customDays", "customHours", "customHoursMin", "daily", "dailyMin", "weekly",
   "weeklyMin", "biweekly", "biweeklyMin", "monthly", "monthlyMin", "monthlyOt"];
 const COMPANY_LABOR_SYSTEMS = ["A", "B", "none"];
@@ -32,7 +35,9 @@ function sanitizeCompanySettings(raw) {
     COMPANY_LABOR_KEYS.forEach(k => {
       const v = Number(l[k]);
       if (l[k] === undefined || l[k] === null || l[k] === "" || !Number.isFinite(v) || v < 0 || v > 1000000) return;
-      if (k === "fiscalYearStartMonth" && !(v >= 1 && v <= 12)) return;
+      const r = COMPANY_LABOR_RANGES[k];
+      if (r && !(v >= r[0] && v <= r[1])) return;
+      if (r && k !== "fiscalYearStartMonth" && !Number.isInteger(v)) return;
       lo[k] = Math.round(v);
     });
     if (Object.keys(lo).length) out.laborSettings = lo;
@@ -631,6 +636,6 @@ module.exports = { PERSON_ID_RE, isValidPersonId, PERSON_AUTO_ID_CHARS, genPerso
   MIN_WAGE_MAX_ENTRIES, sanitizeWageSettings, PAY_CODE_DEFAULT, isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,
   ENTITY_ID_RE, isValidEntityId, SHOP_KINDS, ENTITY_NAME_MAX, sanitizeEntityName, entityIdOfShop, shopKindOf,
   planEntityMigration, mergeEntitySettings, buildShopMirror, otherCompanyLinksOf,
-  COMPANY_SESSION_UID_PREFIX, canChangeCompanyPassword, COMPANY_LABOR_KEYS, COMPANY_LIMIT_NUM_KEYS, COMPANY_LABOR_SYSTEMS, COMPANY_BUILTIN_ATTRS,
+  COMPANY_SESSION_UID_PREFIX, canChangeCompanyPassword, COMPANY_LABOR_KEYS, COMPANY_LABOR_RANGES, COMPANY_LIMIT_NUM_KEYS, COMPANY_LABOR_SYSTEMS, COMPANY_BUILTIN_ATTRS,
   COMPANY_ATTR_ID_RE, PERIOD_RANGE_KEY_RE, isValidDateStrCF, sanitizeCompanySettings, sanitizeCompanyDeadlines,
   effectiveDeadlinesForShop, MONTHLY_DEADLINE_MAX, sanitizeMonthlyDeadlineDays };
