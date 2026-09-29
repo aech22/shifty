@@ -1622,7 +1622,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(ownerReadOnly||!savePeriods||!period)return;
     if(isPeriodEnded(period,todayStr))return;
     const nextSnap=buildPeriodSnapshot(staffListProp,settingsProp);
-    const nextTotals=laborTotalsRef.current||{};
+    // 他店舗の読み込みが終わるまでは労務の合計を書かない（ヘルプ先勤務の合算・P3.6 が入る前の値で凍結しない）
+    const nextTotals=companyDataReady?(laborTotalsRef.current||{}):{};
     // **確定済みの期間は写しを最新化しない**（P3）。確定の瞬間に書いた写しがその期間のマスタで、ここで上書きすると
     // 確定後のスタッフ・属性・退勤延長の変更が流れ込み、確定の意味がなくなる。労務の合計は従来どおり終了まで書く。
     const snapSame=isPeriodConfirmed(period)||periodSnapshotEqual(period.snapshot,nextSnap);
@@ -1635,7 +1636,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(!totalsSame)n.laborTotals=nextTotals;
       return n;
     }));
-  },[period,staffListProp,settingsProp,periods,ownerReadOnly,todayStr,savePeriods,laborByStaff]);
+  },[period,staffListProp,settingsProp,periods,ownerReadOnly,todayStr,savePeriods,laborByStaff,companyDataReady]);
 
   const laborFindings=useMemo(()=>{
     if(!isPremium)return[];
