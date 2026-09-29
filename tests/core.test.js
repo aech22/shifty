@@ -5417,3 +5417,29 @@ test("P3.5b 按分窓は企業共通（法人上書き可）で効き、CF の�
   const merged = cfc.mergeEntitySettings(cs, { staffTypeLimits: { parttime: { otProrate: { window: "month" } } } });
   assert.deepStrictEqual(merged.staffTypeLimits.parttime.otProrate, { window: "month" });
 });
+
+// ===== P3.5c 判定対象外（区分 none）の長時間の日に色を付ける（§3.9-3・§6 P3.5c）=====
+test("P3.5c 外部の長時間の日: トグル既定オフ・しきい値ちょうどは塗らない・表と総括には載せない", () => {
+  const ls0 = u.laborSettingsOf({});
+  assert.strictEqual(ls0.highlightExternalOver8h, 0, "既定はオフ");
+  assert.strictEqual(u.externalOverThresholdOf(ls0), 0, "オフならしきい値0＝塗らない");
+  const ls = u.laborSettingsOf({ laborSettings: { highlightExternalOver8h: 1 } });
+  assert.strictEqual(u.externalOverThresholdOf(ls), u.LEGAL_DAILY_MIN, "既定のしきい値は法定8h");
+  const th = u.externalOverThresholdOf(ls);
+  const d = u.laborDayFindingsFor({ laborSystem: "none", dayMins: [th, th + 1, 0, 900], externalOverMin: th });
+  assert.deepStrictEqual(d, [[], ["externalOver"], [], ["externalOver"]], "ちょうど閾値は塗らない・超えた日だけ");
+  assert.deepStrictEqual(u.laborDayFindingsFor({ laborSystem: "none", dayMins: [900] }), [[]], "トグルオフ（0）なら塗らない");
+  // 対象は区分 none だけ（A・B の人の長い日には付けない）
+  assert.deepStrictEqual(u.laborDayFindingsFor({ laborSystem: "B", dayMins: [900], externalOverMin: th }), [[]]);
+  assert.ok(!u.laborDayFindingsFor({ laborSystem: "A", dayMins: [600], externalOverMin: th })[0].includes("externalOver"));
+  // しきい値は設定値
+  assert.strictEqual(u.externalOverThresholdOf(u.laborSettingsOf({ laborSettings: { highlightExternalOver8h: 1, externalOverThresholdMin: 600 } })), 600);
+  // 判定表（laborFindingsFor）と総括（OVERALL_FIX_KEYS）には載せない
+  assert.ok(u.LABOR_DAY_FIX_KEYS.includes("externalOver") && u.LABOR_DAY_ERR_LABELS.externalOver);
+  assert.ok(!u.OVERALL_FIX_KEYS.includes("externalOver"));
+  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "none", dayMins: [900], externalOverMin: th }), []);
+  assert.strictEqual(u.overallVerdictOf({ laborSystem: "none", findings: [] }).key, "none");
+  // CF の書き写しと一致（キー一覧・範囲は上の company-config のドリフト検出が照合する）
+  assert.ok(cfc.COMPANY_LABOR_KEYS.includes("highlightExternalOver8h") && cfc.COMPANY_LABOR_KEYS.includes("externalOverThresholdMin"));
+  assert.deepStrictEqual(cfc.COMPANY_LABOR_RANGES.highlightExternalOver8h, u.LABOR_SETTING_RANGES.highlightExternalOver8h);
+});
