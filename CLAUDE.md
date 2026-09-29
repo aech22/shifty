@@ -149,12 +149,21 @@ LABOR_SYSTEMS / laborSystemOf / laborSystemForStaff
                            // **null を返したら「区分が空欄か誤り」**＝staffTypeLimits に無い属性か、
                            // custom属性で laborSystem が未設定。組み込みIDは既定が必ず答えるので null にならない
                            // （既存店舗の employee/parttime が一斉に警告になるのを防ぐ）
-laborSettingsOf / DEFAULT_LABOR_SETTINGS // 労務設定の読み手側フォールバック。**makeSettings は変更していない**
+laborSettingsOf / DEFAULT_LABOR_SETTINGS / LABOR_SETTING_RANGES // 労務設定の読み手側フォールバック。**makeSettings は変更していない**。
+                           // **DEFAULT_LABOR_SETTINGS に載っていないキーは黙って捨てる**ので、新キーは必ずここに既定値で足す
+                           // （COMPANY_LABOR_KEYS は自動で追随、functions/company-config.js の COMPANY_LABOR_KEYS は手で足す＝テストが照合）。
+                           // 2026-09-30（P2）に annualScheduledMin:0・rateDenominatorMin:0・weekStartDow:1・weekSplitAtMonthEdge:1 を追加。
+                           // 真偽値は 0/1 の数値で持つ。weekStartDow（0〜6）と weekSplitAtMonthEdge（0/1）は範囲外を既定へ倒す（CF も同じ範囲）
 weeklyLegalMinFromBase31 / monthlyBaseMin / monthlyGuideMin / monthlyCapMin / laborMonthFrame
                            // A制の月の枠。**31日の総枠だけを手入力**し、週の法定労働時間 W を30分単位に
                            // 丸めて逆算してから各月を FLOOR(W × 暦日数 ÷ 7 × 60, 1) ÷ 60 で出す。
                            // 丸めないと28日の月が 159:59 になり Excel と1分ずれる。週44時間の特例措置対象
                            // 事業場は別トグルを作らず、31日に 194:51 を入れれば W=44h になる
+yearDaysOf / monthlyScheduledCapMin     // 年間所定労働時間（P2・2026-09-30）。laborMonthFrame が返す scheduledCapMin（月の所定上限）＝
+                           // FLOOR(年間所定 × 暦日数 ÷ その暦年の日数)。2,080h で 31/30/28日・うるう年2月 = 176:39／170:57／159:33／164:48。
+                           // **年間所定を設定すると目安（guideMin）は総枠ではなく所定上限から引く**（31日 199h／30日 193h／2月 182h）。
+                           // 未設定（0）なら scheduledCapMin=0 で目安も従来どおり総枠から＝S-1 と1分も変わらない。上限（capMin）は変えない。
+                           // weekStartDow・weekSplitAtMonthEdge は**割増の計算（P5）だけ**に効く。既存の週の休み・B制の週40h超は変えていない
 weeklyOverMinB / weeklyOverTotalMinB    // B制の週40h超。各日の実働を1日8hで切ってから週で足し40h超だけ取る
 isTimeOrderInvalid / TIME_ORDER_ERROR_HINT
                            // 退勤≦出勤の日（BACKLOG #129・案C）。**両側とも入力されている日だけ**が対象で、
@@ -233,7 +242,8 @@ featureEnabled(kind,{plan,companyLink}) / GATED_FEATURES
                            // 新機能のプランゲートの**1本だけの入口**（2026-09-30・計画書 §3.7・決定6）。法人・所定・確定・実績・賃金は Premium。
                            // 法人プランを足すときはここだけ触る。新しい機能で plan==="premium" を直接書かない
 rateDenominatorMinOf / DEFAULT_RATE_DENOMINATOR_MIN / fixedOtAmountOf / hourlyRateOf / payRateBaseYen / minWageCheck
-                           // 賃金（P6a）。分母は laborSettings.rateDenominatorMin（P2 で法人設定化）が無ければ 10398分＝173.3h。
+                           // 賃金（P6a）。分母は laborSettings.rateDenominatorMin が正ならその値、0 なら年間所定÷12 を 0.1h（6分）単位で
+                           // 切り捨てた値（2,080h → 10398分＝173.3h・P2）、年間所定も無ければ 10398分。
                            // 固定残業代 = 基本給 ÷ 分母(h) × 1.25 × 時間 を1円未満切上げ（213,500→30h で 46,199）。**整数の切上げ除算**で計算する
                            // （浮動小数で割ると割り切れる額が1円増えうる）。最賃比較は月給なら基本給÷分母、時給なら時給（§4.5）
 sanitizeWageSettings / minWageOn / MIN_WAGE_MAX_ENTRIES
@@ -514,7 +524,8 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
                  daily,weekly,biweekly,monthly,customDays,customHours,          // 上限（0=未設定）
                  dailyMin,weeklyMin,biweeklyMin,monthlyMin,customHoursMin}},    // 下限（0=未設定）
              laborSettings?: {monthlyBase31Min, fixedOvertimeMin, marginMin,
-                 agreementDailyOtMin, agreementMonthlyOtMin, fiscalYearStartMonth}, // 分単位・既定は読み手側フォールバック
+                 agreementDailyOtMin, agreementMonthlyOtMin, agreementAnnualOtMin, fiscalYearStartMonth,
+                 annualScheduledMin, rateDenominatorMin, weekStartDow, weekSplitAtMonthEdge}, // 分単位・既定は読み手側フォールバック。後ろ4つは P2（0＝未設定・真偽値は0/1）
              breakMode?: "band"|"length", breakLength?: {over8Min, over6Min},   // 休憩の決め方（既定 band＝従来）
              paidLeaveGranted?: {[name]: 日数},                                  // 有給の付与日数（残数の基準）
              overtimeSettings?: {byStaff: {[name]: {lunch,dinner}}}, staffNumbers?: {[name]: string},
