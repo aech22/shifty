@@ -900,6 +900,9 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
   const userPickedRef=useRef(false);
   const[busy,setBusy]=useState(false);
   const[reloadTick,setReloadTick]=useState(0);
+  // 確定・交付（P3）。操作中の店舗と、履歴を開いている店舗
+  const[actSid,setActSid]=useState(null);
+  const[histSid,setHistSid]=useState(null);
   useEffect(()=>{
     if(!firebaseDB||!companyId){setState({shopIds:[],names:{},periods:{},deadlines:{},monthly:[],structure:{}});return;}
     let cancelled=false;
@@ -980,6 +983,54 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
   const showEntityHeads=!entityFilter&&ents.length>=2;
   const nSub=rows.filter(x=>x.status==="submitted").length;
   const nPend=rows.filter(x=>x.status==="pending").length;
+  const nConf=rows.filter(x=>x.period&&isPeriodConfirmed(x.period)).length;
+  const nDeliv=rows.filter(x=>x.period&&isPeriodDelivered(x.period)).length;
+  // ===== 確定・解除・交付（2026-09-30・P3・計画書 §3.5）=====
+  // この表は企業セッション（企業コードのログインと企業の作成者本人）にしか出ない＝確定できるのはここと、
+  // 企業セッションで開いた店舗のシフト作成タブだけ。店舗の提出データ・設定・所定を読み、シフト作成タブと
+  // 同じ planPeriodConfirmation で集計する（計算を二重に持たない）。期間は差分 update（全体 set() しない）。
+  const loadForConfirm=async(sid,period)=>{
+    const ref=p=>firebaseDB.ref(p).once("value");
+    const[stS,seS,coS,pS,lmS]=await Promise.all([ref(`shops/${sid}/staff`),ref(`shops/${sid}/settings`),ref(`shops/${sid}/company/settings`),ref(`shops/${sid}/periods`),ref(`shops/${sid}/laborMonths`)]);
+    const periods=Object.values(pS.val()||{}).filter(x=>x&&x.id);
+    const cur=periods.find(p=>p.id===period.id);
+    if(!cur)throw new Error("期間が見つかりません");
+    // その月にかかる期間の提出をすべて読む（半月運用では前半・後半を合わせて月を集計する）
+    const months=monthsOfPeriod(cur);
+    const overl=periods.filter(p=>p.startDate&&p.endDate&&months.some(ym=>p.startDate<=`${ym}-31`&&p.endDate>=`${ym}-01`));
+    const snaps=await Promise.all(overl.map(p=>firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(p.id).once("value")));
+    const subs=[];snaps.forEach(sn=>Object.values(sn.val()||{}).forEach(x=>{if(x&&x.id)subs.push(x);}));
+    return{cur,periods,subs,staffList:Object.values(stS.val()||{}).filter(n=>typeof n==="string"),
+      settings:applyCompanySettings(seS.val()||makeSettings(sid),coS.val()||{}),laborMonths:lmS.val()||{}};
+  };
+  const uidNow=()=>(typeof firebaseAuth!=="undefined"&&firebaseAuth&&firebaseAuth.currentUser&&firebaseAuth.currentUser.uid)||"";
+  const writePlan=async(sid,orig,r)=>{
+    const flat=diffPeriodsForFlatWrite([orig],[r.period]);
+    if(Object.keys(flat).length)await fbUpd(`shops/${sid}/periods`,flat);
+    if(r.laborMonthsPatch&&Object.keys(r.laborMonthsPatch).length)await fbUpd(`shops/${sid}/laborMonths`,r.laborMonthsPatch);
+  };
+  const periodAct=async(x,kind)=>{
+    if(!firebaseDB||!x.period||actSid)return;
+    let note="";
+    if(kind==="confirm"&&!confirm(`${x.name}の「${x.period.label||cur&&cur.label}」を確定しますか？\n確定すると、その期間のシフトは店舗で編集できなくなり、スタッフの再提出もできなくなります。人×月の所定を集計して記録します。`))return;
+    if(kind==="unconfirm"){const v=window.prompt(`${x.name}の確定を解除する理由を入力してください（履歴に残ります）`,"");if(v===null)return;if(!v.trim()){tt("理由を入力してください");return;}note=v.trim();}
+    if(kind==="deliver"&&!confirm(`${x.name}の「${x.period.label||cur&&cur.label}」を本人へ交付したことを記録しますか？`))return;
+    setActSid(x.sid);
+    try{
+      const d=await loadForConfirm(x.sid,x.period);
+      const r=kind==="confirm"
+        ?planPeriodConfirmation({period:d.cur,periods:d.periods,subs:d.subs,staffList:d.staffList,settings:d.settings,laborMonths:d.laborMonths,todayStr:fd(new Date()),uid:uidNow()})
+        :kind==="unconfirm"?planPeriodUnconfirm({period:d.cur,laborMonths:d.laborMonths,uid:uidNow(),note})
+        :planPeriodDelivery({period:d.cur,uid:uidNow()});
+      if(r.error){tt("✕ "+r.error);return;}
+      await writePlan(x.sid,d.cur,r);
+      tt(kind==="confirm"?`✓ ${x.name}を確定しました`:kind==="unconfirm"?`✓ ${x.name}の確定を解除しました`:`✓ ${x.name}の交付を記録しました`);
+      setReloadTick(t=>t+1);
+    }catch(e){
+      console.warn("確定・交付の書き込みに失敗:",e);
+      tt(`✕ ${x.name}に書き込めませんでした（その店舗の管理者として登録されていない可能性があります。企業連携タブの「ログイン」で一度その店舗を開いてください）`);
+    }finally{setActSid(null);}
+  };
   const today=fd(new Date());
   const fmtAt=iso=>{const d=new Date(iso);return isNaN(d)?"":`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
   // 日は人が選ぶ（2026-09-27 ユーザー指示「初期値は人間が決める」）。「＋ 追加」は未選択(null)の欄を足すだけで、
@@ -1038,7 +1089,7 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
         <EntityFilter ents={ents} value={entityFilter} onChange={v=>{userPickedRef.current=false;setEntityFilter(v);}}/>
         <button onClick={()=>setReloadTick(t=>t+1)} style={{...AGray,padding:"6px 12px",fontSize:12}}>更新</button>
       </div>
-      <div data-co-summary="1" style={{fontSize:13,color:"var(--c-text)",marginBottom:10}}>提出済み {nSub} ／ 未提出 {nPend}</div>
+      <div data-co-summary="1" style={{fontSize:13,color:"var(--c-text)",marginBottom:10}}>提出済み {nSub} ／ 未提出 {nPend}<span data-co-confirm-summary="1" style={{marginLeft:10,color:"var(--c-text2)"}}>確定 {nConf} ／ 交付 {nDeliv}</span></div>
       <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
         <span style={{fontSize:12,color:"var(--c-text3)"}}>この期間の提出期限（日付指定）</span>
         {dateIn(dlAll||monthlyInitial,setDlAll)}
@@ -1049,17 +1100,30 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
         {draftEff?`適用される期限: ${fmtMDW(draftEff.date)}（${draftEff.source==="date"?"日付指定":"毎月の提出締切"}）`:"適用される期限: 未設定"}
       </div>
       <div style={{overflowX:"auto"}}>
-        <table style={{borderCollapse:"collapse",width:"100%",minWidth:320}}>
-          <thead><tr>{["店舗","期間","状況"].map(h=><th key={h} style={{...TD,fontSize:11,color:"var(--c-text3)",textAlign:"left",fontWeight:700}}>{h}</th>)}</tr></thead>
+        <table style={{borderCollapse:"collapse",width:"100%",minWidth:520}}>
+          <thead><tr>{["店舗","期間","状況","確定","交付",""].map(h=><th key={h} style={{...TD,fontSize:11,color:"var(--c-text3)",textAlign:"left",fontWeight:700}}>{h}</th>)}</tr></thead>
           <tbody>{rows.map((x,i)=>(<React.Fragment key={x.sid}>
-            {showEntityHeads&&(i===0||rows[i-1].entityId!==x.entityId)&&<tr data-co-entity-head={x.entityId||""}><td colSpan={3} style={{...TD,fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input2)"}}>{entName[x.entityId]||"法人未設定"}</td></tr>}
+            {showEntityHeads&&(i===0||rows[i-1].entityId!==x.entityId)&&<tr data-co-entity-head={x.entityId||""}><td colSpan={6} style={{...TD,fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input2)"}}>{entName[x.entityId]||"法人未設定"}</td></tr>}
             <tr data-co-row={x.sid}>
               <td style={{...TD,fontWeight:600}}>{x.name}{x.isHq&&<span style={{marginLeft:6,fontSize:11,fontWeight:400,color:"var(--c-text3)"}}>本部</span>}</td>
               <td style={{...TD,color:"var(--c-text2)"}}>{x.status==="failed"?"—":x.status==="none"?"該当期間なし":(x.period.label||cur&&cur.label)}</td>
               <td data-co-status={x.status} style={{...TD,whiteSpace:"nowrap",color:x.status==="pending"&&x.deadline&&today>x.deadline?"#FF4757":"var(--c-text)"}}>
                 {x.status==="submitted"?`提出済み ${fmtAt(x.submission.at)}`:x.status==="pending"?"未提出":x.status==="none"?"—":"読み込み失敗"}
               </td>
+              <td data-co-confirm={x.period&&isPeriodConfirmed(x.period)?"1":"0"} style={{...TD,whiteSpace:"nowrap"}}>
+                {!x.period?"—":isPeriodConfirmed(x.period)
+                  ?<>{fmtAt(x.period.confirmation.at)}<button data-co-unconfirm-btn={x.sid} disabled={!!actSid} onClick={()=>periodAct(x,"unconfirm")} style={{...AGray,marginLeft:6,padding:"3px 8px",fontSize:11}}>解除</button></>
+                  :<button data-co-confirm-btn={x.sid} disabled={!!actSid} onClick={()=>periodAct(x,"confirm")} style={{...AGray,padding:"4px 10px",fontSize:12,opacity:actSid?0.5:1}}>{actSid===x.sid?"処理中...":"確定"}</button>}
+              </td>
+              <td data-co-deliver={x.period&&isPeriodDelivered(x.period)?"1":"0"} style={{...TD,whiteSpace:"nowrap"}}>
+                {!x.period||!isPeriodConfirmed(x.period)?"—":isPeriodDelivered(x.period)?fmtAt(x.period.delivery.at)
+                  :<button data-co-deliver-btn={x.sid} disabled={!!actSid} onClick={()=>periodAct(x,"deliver")} style={{...AGray,padding:"4px 10px",fontSize:12,opacity:actSid?0.5:1}}>交付</button>}
+              </td>
+              <td style={{...TD,whiteSpace:"nowrap"}}>{x.period&&periodHistoryList(x.period).length>0&&<button data-co-hist-btn={x.sid} onClick={()=>setHistSid(h=>h===x.sid?null:x.sid)} style={{background:"none",border:"none",padding:0,fontSize:12,color:"var(--c-text3)",cursor:"pointer",textDecoration:"underline"}}>履歴</button>}</td>
             </tr>
+            {histSid===x.sid&&x.period&&<tr data-co-hist={x.sid}><td colSpan={6} style={{...TD,fontSize:12,color:"var(--c-text2)",background:"var(--c-input2)"}}>
+              {periodHistoryList(x.period).map(h=>(<div key={h.key}>{fmtAt(h.at)} {PERIOD_HISTORY_LABELS[h.kind]||h.kind}{h.note?`（${h.note}）`:""}{h.method?`（${h.method}）`:""}{h.byUid?` — ${String(h.byUid).startsWith(COMPANY_SESSION_UID_PREFIX)?"企業アカウント":"作成者／店舗"}`:""}</div>))}
+            </td></tr>}
           </React.Fragment>))}</tbody>
         </table>
       </div>
@@ -1097,7 +1161,9 @@ function CompanyBulkPdf({range,rows,companyName,tt}){
     const subs=[];subSnaps.forEach(sn=>Object.values(sn.val()||{}).forEach(x=>{if(x&&x.id)subs.push(x);}));
     const staffList=Object.values(stS.val()||{}).filter(n=>typeof n==="string");
     const settings=applyCompanySettings(seS.val()||makeSettings(sid),coS.val()||{});
-    return{staffList,settings,periods,subs,periodId:period.id};
+    // 人×月の所定（P3）。企業セッションは連携店舗のオーナーなので読めるが、読めなければ無しで出す（シフトから集計した値になる）
+    const lmS=await firebaseDB.ref(`shops/${sid}/laborMonths`).once("value").catch(()=>null);
+    return{staffList,settings,periods,subs,periodId:period.id,laborMonths:(lmS&&lmS.val())||{}};
   };
   const start=async(mode)=>{
     if(!targets.length||job)return;
@@ -1147,7 +1213,7 @@ function CompanyBulkPdf({range,rows,companyName,tt}){
       <ShiftEditTab key={job.key} subs={job.data.subs} periods={job.data.periods} staffList={job.data.staffList}
         onSave={()=>{}} tt={()=>{}} settings={job.data.settings} plan="premium" shopId={job.sid} shopName={job.shopName}
         onUpgrade={()=>{}} allLinkedShops={[]} savePeriods={null} ownerReadOnly={true} pastSubsLoaded={true}
-        initialPeriodId={job.data.periodId} exportJob={job.exportJob}/>
+        initialPeriodId={job.data.periodId} exportJob={job.exportJob} laborMonths={{...LABOR_MONTHS_OFF,loaded:true,map:job.data.laborMonths||{}}}/>
     </div>}
   </div>);
 }
