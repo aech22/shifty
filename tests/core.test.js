@@ -6077,3 +6077,164 @@ test("P5 画面の入口: premiumDayInput（休日の数え方）・premiumMonth
   // B制の残業予定: この期間の①＋②（分）を時間で
   assert.strictEqual(u.premiumRowCell("bPlan", { ...l, sys: "B", periodOtB: 840, monthOtB: 14 }, { monthLabel: "2026年11" }).label, "14h");
 });
+
+// ===== P6b 賃金計算と出力（労務給与_複数法人_実装計画.md §4.5・§6 P6b）=====
+// 期待値は手計算（単価＝(基本給＋割増の基礎に入る手当) ÷ 分母(分)。例: 218,500 ÷ 10,398 × 1.25 × 600分 = 15,760.24… → 切上げ 15,761）
+const _p6bMonthly = { payType: "monthly", base: 213500, effectiveFrom: "2026-10-01",
+  allowances: [{ name: "資格手当", amount: 5000 }, { name: "住宅手当", amount: 20000, excludeFromRate: true, excludeFromDeduction: true }],
+  fixedOt: { hours: 30, auto: true }, fixedNight: { hours: 32, amount: 10000 }, commute: { amount: 8000, per: "month" } };
+test("P6b 月給者: 固定残業の時間を充当して超えた分だけ時間外手当・深夜割増から固定深夜手当を引く・法定休日・欠勤控除（控除は切捨て）", () => {
+  const w = u.wageOf({ pay: _p6bMonthly, denomMin: 10398, times: { workMin: 12000, otMin: 2400, over60Min: 0, nightMin: 2400, legalHolidayMin: 480 } });
+  assert.strictEqual(w.basePay, 213500, "月給者は基本給を動かさない");
+  assert.strictEqual(w.otCoveredMin, 1800, "固定残業30h を充当");
+  assert.strictEqual(w.otPaidMin, 600);
+  assert.strictEqual(w.otPay, 15761, "218,500 ÷ 10,398 × 1.25 × 600 = 15,760.24… → 15,761（住宅手当は割増の基礎から除く）");
+  assert.strictEqual(w.nightPremium, 12609, "218,500 ÷ 10,398 × 0.25 × 2,400 = 12,608.19… → 12,609");
+  assert.strictEqual(w.nightCovered, 10000, "固定深夜手当 10,000 円を充当");
+  assert.strictEqual(w.nightPay, 2609);
+  assert.strictEqual(w.holidayPay, 13617, "× 1.35 × 480 = 13,616.84… → 13,617");
+  assert.strictEqual(w.over60Pay, 0);
+  // 欠勤控除: (213,500 + 5,000) ÷ 10,398 × 120 = 2,521.63… → 労働者に有利な向き（切捨て）2,521。住宅手当は控除から除く
+  assert.strictEqual(u.deductionOf({ pay: _p6bMonthly, absentMin: 120, denomMin: 10398 }), 2521);
+  assert.strictEqual(u.deductionOf({ pay: _p6bMonthly, absentMin: 120, denomMin: 10398, rule: "floor" }), 2522, "支払いを切捨てにしたら控除は切上げ");
+  // 固定残業の時間に届かなければ時間外手当は 0（全部充当）
+  assert.strictEqual(u.wageOf({ pay: _p6bMonthly, denomMin: 10398, times: { otMin: 1200 } }).otPay, 0);
+  // 固定深夜の額が深夜割増を上回れば深夜の支払いは 0
+  assert.strictEqual(u.wageOf({ pay: _p6bMonthly, denomMin: 10398, times: { nightMin: 600 } }).nightPay, 0);
+  // 額が 0 で時間だけなら、その時間分の深夜割増を充当の上限にする（32h ぶん＝深夜 40h のうち 8h ぶんだけ払う）
+  const w2 = u.wageOf({ pay: { ..._p6bMonthly, fixedNight: { hours: 32, amount: 0 } }, denomMin: 10398, times: { nightMin: 2400 } });
+  assert.strictEqual(w2.nightCovered, 10087, "218,500 ÷ 10,398 × 0.25 × 1,920 = 10,086.55… → 10,087");
+  assert.strictEqual(w2.nightPay, 12609 - 10087);
+});
+test("P6b 時給者: 時給 × 実労働に、時間外・深夜・法定休日は率の分だけを足す（固定残業・欠勤控除は無い）／端数規則", () => {
+  const hp = { payType: "hourly", base: 1231, effectiveFrom: "2026-10-01" };
+  const t = { workMin: 10000, otMin: 600, nightMin: 120, legalHolidayMin: 60 };
+  const w = u.wageOf({ pay: hp, denomMin: 10398, times: t });
+  assert.strictEqual(w.basePay, 205167, "1,231 × 10,000 ÷ 60 = 205,166.66… → 205,167");
+  assert.strictEqual(w.otPay, 3078, "1,231 ÷ 60 × 0.25 × 600 = 3,077.5 → 3,078");
+  assert.strictEqual(w.nightPay, 616, "× 0.25 × 120 = 615.5 → 616");
+  assert.strictEqual(w.holidayPay, 431, "× 0.35 × 60 = 430.85 → 431");
+  assert.strictEqual(w.otCoveredMin, 0);
+  assert.strictEqual(u.deductionOf({ pay: hp, absentMin: 600, denomMin: 10398 }), 0, "時給者は控除しない");
+  const f = u.wageOf({ pay: hp, denomMin: 10398, times: t, rule: "floor" });
+  assert.deepStrictEqual([f.basePay, f.otPay, f.nightPay], [205166, 3077, 615]);
+  const r = u.wageOf({ pay: hp, denomMin: 10398, times: t, rule: "round" });
+  assert.deepStrictEqual([r.basePay, r.otPay, r.nightPay], [205167, 3078, 616], "0.5 は切上げ");
+  // 割増率の上乗せ（時間外30%）。1,231 ÷ 60 × 0.30 × 600 = 3,693 ちょうど（浮動小数だと 3,692.99… になるので整数で割る）
+  assert.strictEqual(u.wageOf({ pay: hp, denomMin: 10398, times: t, rates: { ...u.LEGAL_PREMIUM_RATES, ot: 30 } }).otPay, 3693);
+});
+test("P6b 月60h超: 60h を超えた時間外に追加の率（既定25%）", () => {
+  const mp = { payType: "monthly", base: 300000, effectiveFrom: "2026-01-01" };
+  const w = u.wageOf({ pay: mp, denomMin: 10398, times: { otMin: 4200, over60Min: 600 } });
+  assert.strictEqual(w.otPay, 151472, "300,000 ÷ 10,398 × 1.25 × 4,200 = 151,471.43… → 151,472");
+  assert.strictEqual(w.over60Pay, 4328, "× 0.25 × 600 = 4,327.75… → 4,328");
+  assert.strictEqual(w.premiumTotal, 151472 + 4328);
+});
+test("P6b 版の選択: 月初時点の版（月の途中の改定は日割りせず注記）／月の途中から適用の人／未設定", () => {
+  const pay = { payType: "monthly", base: 220000, effectiveFrom: "2026-11-15",
+    history: [{ payType: "monthly", base: 200000, effectiveFrom: "2026-04-01" }] };
+  const nov = u.monthlyPayBreakdown({ pay, ym: "2026-11", times: {}, denomMin: 10398 });
+  assert.strictEqual(nov.version.base, 200000, "11月は 11/1 時点の版");
+  assert.ok(nov.notes.some(x => x.includes("2026-11-15 に改定")), nov.notes.join("|"));
+  assert.strictEqual(u.monthlyPayBreakdown({ pay, ym: "2026-12", times: {}, denomMin: 10398 }).version.base, 220000);
+  const hire = u.monthlyPayBreakdown({ pay: { payType: "hourly", base: 1300, effectiveFrom: "2026-11-10" }, ym: "2026-11", times: { workMin: 600 } });
+  assert.strictEqual(hire.version.base, 1300);
+  assert.ok(hire.notes.some(x => x.includes("月の途中から適用")));
+  assert.strictEqual(hire.wage.basePay, 13000);
+  const none = u.monthlyPayBreakdown({ pay: null, ym: "2026-11", times: { workMin: 600 } });
+  assert.strictEqual(none.wage, null);
+  assert.ok(none.warnings.some(x => x.key === "noPay"));
+});
+test("P6b 警告: 年平均所定 > 分母（月給者だけ）・最低賃金割れ", () => {
+  const m = { payType: "monthly", base: 213500, effectiveFrom: "2026-10-01" };
+  const k = o => u.monthlyPayBreakdown({ ym: "2026-11", times: {}, denomMin: 10398, ...o }).warnings.map(x => x.key);
+  assert.ok(k({ pay: m, schedAvgMin: 10500 }).includes("schedAvgOverDenom"));
+  assert.ok(!k({ pay: m, schedAvgMin: 10398 }).includes("schedAvgOverDenom"), "等しいときは出さない");
+  assert.ok(!k({ pay: m, schedAvgMin: null }).includes("schedAvgOverDenom"));
+  assert.ok(!k({ pay: { payType: "hourly", base: 1300, effectiveFrom: "2026-10-01" }, schedAvgMin: 12000 }).includes("schedAvgOverDenom"), "時給者は分母を使わない");
+  const ws = { minWage: [{ from: "2026-10-01", yen: 1231 }] };
+  assert.ok(k({ pay: { payType: "hourly", base: 1230, effectiveFrom: "2026-10-01" }, wageSettings: ws }).includes("minWage"));
+  assert.ok(!k({ pay: { payType: "hourly", base: 1231, effectiveFrom: "2026-10-01" }, wageSettings: ws }).includes("minWage"));
+  // 月初時点の最賃（10/1 改定の前の月は旧額）
+  assert.ok(!k({ pay: { payType: "hourly", base: 1200, effectiveFrom: "2026-01-01" }, ym: "2026-09", wageSettings: { minWage: [{ from: "2025-10-01", yen: 1177 }, { from: "2026-10-01", yen: 1231 }] } }).includes("minWage"));
+});
+test("P6b 法人の賃金設定: 割増率は法定より下げられない・端数規則（クライアントと CF が同じ規則）", () => {
+  const cases = [
+    { premiumRates: { ot: 30, over60: 25, night: 24, holiday: 40 }, roundingRule: "round" },
+    { premiumRates: { ot: "35", over60: 50.5, night: 101, holiday: 35 }, roundingRule: "ceil" },
+    { premiumRates: { ot: 100 }, roundingRule: "floor", minWage: [{ from: "2026-10-01", yen: 1231 }] },
+    { premiumRates: "x", roundingRule: "bogus" },
+    null,
+  ];
+  cases.forEach(c => assert.deepStrictEqual(cfc.sanitizeWageSettings(c), u.sanitizeWageSettings(c), JSON.stringify(c)));
+  assert.deepStrictEqual(u.sanitizeWageSettings(cases[0]), { premiumRates: { ot: 30, holiday: 40 }, roundingRule: "round" }, "法定と同じ・下回る値は持たない");
+  assert.deepStrictEqual(u.sanitizeWageSettings(cases[1]), { premiumRates: { ot: 35 } }, "既定の ceil は持たない・整数でない・上限超は捨てる");
+  assert.deepStrictEqual(u.premiumRatesOf(null), { ot: 25, over60: 25, night: 25, holiday: 35 });
+  assert.deepStrictEqual(u.premiumRatesOf(cases[0]), { ot: 30, over60: 25, night: 25, holiday: 40 });
+  assert.strictEqual(u.roundingRuleOf(null), "ceil");
+  assert.strictEqual(u.roundingRuleOf(cases[2]), "floor");
+  // 企業共通と法人の重ね合わせ（CF）: 法人が持てば法人が勝つ（キー単位）
+  const merged = cfc.mergeEntitySettings({ wageSettings: { roundingRule: "floor", premiumRates: { ot: 30 } } }, { wageSettings: { premiumRates: { night: 30 } } });
+  assert.deepStrictEqual(merged.wageSettings, { roundingRule: "floor", premiumRates: { night: 30 } });
+  assert.deepStrictEqual(cfc.sanitizeCompanySettings({ wageSettings: cases[0] }).wageSettings, u.sanitizeWageSettings(cases[0]));
+});
+test("P6b 月次内訳と CSV: 列の定義を画面と共有・金額はパスコードを解除するまで伏せる（時間は伏せない）", () => {
+  const calc = u.monthlyPayBreakdown({ pay: _p6bMonthly, ym: "2026-11", denomMin: 10398,
+    times: { scheduledMin: 10598, workMin: 12000, dayOverMin: 600, weekOverMin: 1200, monthOverMin: 600, otMin: 2400, over60Min: 0, nightMin: 2400, legalHolidayMin: 480, absentMin: 120 } });
+  const row = { name: "特定 \"A\"", number: "9001", attr: "特定技能", sysLabel: "A", times: calc && { scheduledMin: 10598, workMin: 12000, dayOverMin: 600, weekOverMin: 1200, monthOverMin: 600, otMin: 2400, over60Min: 0, nightMin: 2400, legalHolidayMin: 480, absentMin: 120 }, calc, notes: ["所定は未確定（シフトから集計）"] };
+  const v = u.payrollRowValues(row);
+  assert.strictEqual(v.otPay, 15761);
+  assert.strictEqual(v.deduction, 2521);
+  assert.strictEqual(v.otCoveredMin, 1800);
+  const locked = u.payrollCsvOf([row], false);
+  const unlocked = u.payrollCsvOf([row], true);
+  assert.ok(locked.startsWith('"従業員番号","名前"'));
+  assert.ok(locked.endsWith("\r\n") && locked.split("\r\n").length === 3, "見出し＋1行・CRLF");
+  assert.ok(locked.includes('"特定 ""A"""'), "引用符を二重にする");
+  assert.ok(!locked.includes("15761") && locked.includes('"••••"'), "解除していなければ金額を出さない");
+  assert.ok(locked.includes('"40:00"') && locked.includes('"176:38"'), "時間は伏せない（時:分）");
+  assert.ok(unlocked.includes('"15761"') && unlocked.includes('"2521"') && unlocked.includes('"213500"'));
+  assert.ok(unlocked.includes("所定は未確定"));
+  // 列の種類: 金額の列は yen、時間の列は time（伏せる／伏せないの規則が列の定義で決まる）
+  const kinds = Object.fromEntries(u.PAYROLL_COLUMNS.map(c => [c.key, c.kind]));
+  ["otPay", "over60Pay", "nightPay", "nightCovered", "holidayPay", "deduction", "basePay", "rate"].forEach(k => assert.strictEqual(kinds[k], "yen", k));
+  ["scheduledMin", "workMin", "dayOverMin", "weekOverMin", "monthOverMin", "otMin", "over60Min", "nightMin", "legalHolidayMin", "absentMin", "otCoveredMin"].forEach(k => assert.strictEqual(kinds[k], "time", k));
+});
+test("P6b 割増の内訳に月の実労働・所定・不就労の合計が入る（前後の月の日は数えない）／premiumDayInput は他店の不就労も足す", () => {
+  const days = [
+    { date: "2026-10-31", workMin: 480, scheduledMin: 480, absentMin: 60, rest: false },
+    { date: "2026-11-02", workMin: 600, scheduledMin: 480, absentMin: 0, rest: false },
+    { date: "2026-11-03", workMin: 0, scheduledMin: 480, absentMin: 480, rest: false },
+  ];
+  const b = u.premiumBreakdownOf({ system: "B", days, ym: "2026-11" });
+  assert.deepStrictEqual([b.workMin, b.scheduledMin, b.absentMin], [600, 960, 480]);
+  const x = u.premiumDayInput({ date: "2026-11-04", own: { workMin: 300, absentMin: 30 }, kind: "work",
+    helpers: [{ day: { workMin: 120, absentMin: 15 } }] });
+  assert.strictEqual(x.absentMin, 45);
+});
+test("P6b 賃金は PDF・Excel に出ない（書き出しが月次賃金の関数・賃金マスタを参照しない）", () => {
+  const src = _readAdminSurface();
+  const bodyOf = marker => {
+    const i = src.indexOf(marker);
+    assert.ok(i > 0, `${marker} が見つからない`);
+    // 引数の分割代入（{...}）を本体と読み違えないよう、引数の括弧を閉じてから数える
+    let pd = 0, saw = false, k = i;
+    for (; k < src.length; k++) { const c = src[k]; if (c === "(") { pd++; saw = true; } else if (c === ")") { pd--; if (saw && pd === 0) { k++; break; } } }
+    let d = 0, started = false;
+    for (let j = k; j < src.length; j++) {
+      const c = src[j];
+      if (c === "{") { d++; started = true; } else if (c === "}") { d--; if (started && d === 0) return src.slice(i, j + 1); }
+    }
+    assert.fail(`${marker} の本体を切り出せなかった`);
+  };
+  for (const [label, marker] of [["PDF", "const buildShiftTableHtml="], ["Excel", "function expXl("], ["全データPDF", "const exportPdf="]]) {
+    const body = bodyOf(marker);
+    assert.ok(body.length > 1000, `${label}: 本体の切り出しが短すぎる`);
+    for (const ident of ["monthlyPayBreakdown", "payrollCsvOf", "payrollRowValues", "PAYROLL_COLUMNS", "wageOf(", "deductionOf(", "private/pay", "payMap", "payrollReportRef"]) {
+      assert.ok(!body.includes(ident), `${label} の書き出しが ${ident} を参照している`);
+    }
+  }
+  // 月次賃金ページは CSV だけを出す（jsPDF・ExcelJS を使わない）
+  const pg = bodyOf("function PayrollPage(");
+  assert.ok(pg.includes("payrollCsvOf(") && !/jspdf|jsPDF|ExcelJS|exportPdf|expXl/.test(pg));
+});

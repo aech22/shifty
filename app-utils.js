@@ -1200,7 +1200,11 @@ function premiumBreakdownOf(o){
   const legalInMonth=legal.dates.filter(d=>d.slice(0,7)===ym);
   const legalHolidayMin=legalInMonth.reduce((a,d)=>a+Math.max(0,Number((byDate.get(d)||{}).workMin)||0),0);
   const legalHolidayNightMin=legalInMonth.reduce((a,d)=>a+Math.max(0,Number((byDate.get(d)||{}).nightMin)||0),0);
-  return{system,dayOverMin:sumD1,weekOverMin:sumD2,monthOverMin:d3,otMin,
+  // この月の合計（P6b の賃金計算の入力）。実労働は法定休日の日も含めた実働、所定はその日の確定シフトの実働、
+  // 不就労（欠勤・遅刻・早退）は resolveActualDay の absentMin
+  const sumM=f=>monthDates.reduce((a,d)=>a+Math.max(0,Number((byDate.get(d)||{})[f])||0),0);
+  return{system,workMin:sumM("workMin"),scheduledMin:sumM("scheduledMin"),absentMin:sumM("absentMin"),
+    dayOverMin:sumD1,weekOverMin:sumD2,monthOverMin:d3,otMin,
     over60Min:Math.max(0,otMin-OVER60_THRESHOLD_MIN),
     nightMin,nightDates,legalHolidayMin,legalHolidayNightMin,legalHolidayDates:legalInMonth,
     legalHolidayManual:legal.manual.filter(d=>d.slice(0,7)===ym),
@@ -1242,6 +1246,7 @@ function premiumDayInput(o){
   const workMin=(Number(ow.workMin)||0)+sum(d=>Number(d.workMin)||0);
   return{date,workMin,scheduledMin:(Number(ow.scheduledWorkMin)||0)+sum(d=>Number(d.scheduledWorkMin)||0),
     nightMin:nightMinutesOf(ow)+sum(d=>nightMinutesOf(d)),
+    absentMin:(Number(ow.absentMin)||0)+sum(d=>Number(d.absentMin)||0),
     manualLegal:!!ow.isLegalHoliday||hs.some(e=>e.day.isLegalHoliday),
     rest:!hasData?null:(workMin>0||ow.absent||hs.some(e=>e.day.absent))?false:kind==="rest",
     unread:hs.some(e=>e.actualUnread),hasActual:!!ow.hasActual||hs.some(e=>e.day.hasActual)};
@@ -3147,12 +3152,29 @@ function fixedOtAmountOf(baseYen,hours,denomMin){
   if(!b||hMin<=0)return 0;
   return _ceilDiv(b*125*hMin,d*100);
 }
-// 最低賃金の履歴（法人設定 wageSettings.minWage=[{from,yen}]）の検証。
+// 賃金の法人設定 wageSettings の検証（P6a で最低賃金、P6b で割増率と端数規則を足した）。
+//   minWage       最低賃金の履歴 [{from,yen}]
+//   premiumRates  割増率（%）{ot, over60, night, holiday}。**法定値より下げられない**（上乗せだけ）。法定値と同じか空欄は持たない
+//                 （ot=時間外25・over60=月60h超の追加25・night=深夜25・holiday=法定休日35）
+//   roundingRule  金額の端数（"ceil" 円未満切上げ＝既定 | "round" 四捨五入 | "floor" 切捨て）。既定の "ceil" は持たない
 // functions/company-config.js の sanitizeWageSettings と**同じ規則**（tests/core.test.js が照合する）。
 const MIN_WAGE_MAX_ENTRIES=20;
+const PREMIUM_RATE_KEYS=["ot","over60","night","holiday"];
+const LEGAL_PREMIUM_RATES={ot:25,over60:25,night:25,holiday:35};
+const PREMIUM_RATE_LABELS={ot:"時間外",over60:"月60時間超（追加）",night:"深夜",holiday:"法定休日"};
+const PREMIUM_RATE_MAX=100;
+const ROUNDING_RULES=["ceil","round","floor"];
+const ROUNDING_RULE_LABELS={ceil:"円未満切上げ",round:"円未満四捨五入",floor:"円未満切捨て"};
 function sanitizeWageSettings(raw){
   const out={};
   if(!raw||typeof raw!=="object")return out;
+  const pr=raw.premiumRates&&typeof raw.premiumRates==="object"?raw.premiumRates:null;
+  if(pr){
+    const o={};
+    PREMIUM_RATE_KEYS.forEach(k=>{const v=Number(pr[k]);if(Number.isInteger(v)&&v>LEGAL_PREMIUM_RATES[k]&&v<=PREMIUM_RATE_MAX)o[k]=v;});
+    if(Object.keys(o).length)out.premiumRates=o;
+  }
+  if(ROUNDING_RULES.includes(raw.roundingRule)&&raw.roundingRule!=="ceil")out.roundingRule=raw.roundingRule;
   const byFrom={};
   _payArr(raw.minWage).forEach(e=>{
     if(!e||typeof e!=="object"||!isValidDateStr(e.from))return;
@@ -3249,6 +3271,160 @@ function maskYen(v,unlocked){
   const n=Number(v);
   if(v==null||v===""||!Number.isFinite(n))return"—";
   return Math.round(n).toLocaleString("ja-JP")+"円";
+}
+
+// ===== 月次の賃金計算（2026-09-30・労務給与_複数法人_実装計画.md §4.5・P6b）=====
+// 出すのは「割増賃金・控除の内訳」まで。社会保険・所得税・住民税・支給総額は対象外（給与ソフトへ CSV で渡す）。
+// 入力の時間は割増の内訳（premiumBreakdownOf・P5）と同じ1分単位。額は項目ごとに端数規則で丸める。
+// 割増率（%）。法人設定に無い項目は法定値
+function premiumRatesOf(wageSettings){
+  const pr=sanitizeWageSettings(wageSettings).premiumRates||{};
+  const out={};PREMIUM_RATE_KEYS.forEach(k=>{out[k]=pr[k]||LEGAL_PREMIUM_RATES[k];});
+  return out;
+}
+function roundingRuleOf(wageSettings){return sanitizeWageSettings(wageSettings).roundingRule||"ceil";}
+// num/den 円（正の整数どうし）を端数規則で円にする。整数で割る（46199.000001 のような浮動小数の誤差を出さない）
+function roundYenFrac(num,den,rule){
+  if(!(num>0)||!(den>0))return 0;
+  if(rule==="floor")return Math.floor(num/den);
+  if(rule==="round")return Math.floor((2*num+den)/(2*den));
+  return _ceilDiv(num,den);
+}
+// 控除の端数は労働者に有利な向き（支払いの規則を裏返す）。切上げで控除を多く取ると賃金の全額払いを割るため
+const DEDUCTION_ROUNDING={ceil:"floor",floor:"ceil",round:"round"};
+// 1分あたりの単価（円）を分数 {num,den} で持つ。月給者は (基本給＋割増の基礎に入る手当) ÷ 分母、時給者は時給 ÷ 60
+function _payRatePerMin(v,denomMin){
+  if(v.payType==="hourly")return{num:_payInt(v.base),den:60};
+  const d=Number(denomMin)>0?Math.round(Number(denomMin)):DEFAULT_RATE_DENOMINATOR_MIN;
+  return{num:payRateBaseYen(v),den:d};
+}
+// 単価 × 率(%) × 分
+function _payAmount(r,pct,min,rule){
+  const m=Math.max(0,Math.round(Number(min)||0));
+  return roundYenFrac(r.num*pct*m,r.den*100,rule);
+}
+// 割増額（§4.5）。v は賃金の1版（normalizePayVersion の形）、t は割増の内訳の時間（分）:
+//   {workMin, otMin, over60Min, nightMin, legalHolidayMin}
+// 月給者: 時間外 = 単価 × (1+時間外率) × (時間外 − 固定残業に充当した分)。固定残業の時間までは固定残業代で払い済み＝不支給
+//         法定休日 = 単価 × (1+休日率) × 法定休日労働（基本給は所定の対価なので時間の分も払う）
+// 時給者: 時給 × 実労働（時間外・法定休日の時間も含む）に、時間外・法定休日は率の分だけを足す（固定残業・固定深夜は持たない）
+// 共通:   60h超 = 単価 × 60h超率 × 60h超。深夜 = 単価 × 深夜率 × 深夜 − 固定深夜手当の充当
+// 固定深夜手当の充当（計画書 §8「残る確認」の未決事項。計画どおり深夜割増から引く）: 額があれば額、額が0で時間だけあれば
+// その時間分の深夜割増を充当の上限にする。充当しきれない深夜割増だけを払う
+function wageOf(o){
+  const x=o||{};
+  const v=normalizePayVersion(x.pay);
+  const t=x.times||{};
+  const rates=x.rates||premiumRatesOf(null);
+  const rule=ROUNDING_RULES.includes(x.rule)?x.rule:"ceil";
+  const r=_payRatePerMin(v,x.denomMin);
+  const hourly=v.payType==="hourly";
+  const otMin=Math.max(0,Math.round(Number(t.otMin)||0));
+  const fixedOtMin=hourly?0:Math.round((Number(v.fixedOt&&v.fixedOt.hours)||0)*60);
+  const otCoveredMin=Math.min(otMin,fixedOtMin);
+  const otPaidMin=otMin-otCoveredMin;
+  const basePay=hourly?_payAmount(r,100,t.workMin,rule):v.base;
+  const otPay=_payAmount(r,(hourly?0:100)+rates.ot,otPaidMin,rule);
+  const over60Pay=_payAmount(r,rates.over60,t.over60Min,rule);
+  const holidayPay=_payAmount(r,(hourly?0:100)+rates.holiday,t.legalHolidayMin,rule);
+  const nightPremium=_payAmount(r,rates.night,t.nightMin,rule);
+  const fn=v.fixedNight||{hours:0,amount:0};
+  const nightCoverLimit=hourly?0:(fn.amount>0?fn.amount:_payAmount(r,rates.night,Math.round((Number(fn.hours)||0)*60),rule));
+  const nightCovered=Math.min(nightPremium,nightCoverLimit);
+  const nightPay=nightPremium-nightCovered;
+  return{payType:v.payType,ratePerHour:r.den>0?r.num*60/r.den:0,basePay,otCoveredMin,otPaidMin,fixedOtMin,otPay,over60Pay,
+    nightPremium,nightCovered,nightPay,holidayPay,premiumTotal:otPay+over60Pay+nightPay+holidayPay};
+}
+// 欠勤控除（§4.5）: (基本給＋控除から除かない手当) ÷ 分母 × 不就労。月給者だけ（時給者は働いた分だけ払うので控除しない）。
+// 端数は支払いと逆の向き（DEDUCTION_ROUNDING）
+function deductionOf(o){
+  const x=o||{};
+  const v=normalizePayVersion(x.pay);
+  if(v.payType==="hourly")return 0;
+  const m=Math.max(0,Math.round(Number(x.absentMin)||0));
+  const b=_payInt(v.base)+(v.allowances||[]).reduce((s,a)=>s+(a&&!a.excludeFromDeduction?_payInt(a.amount):0),0);
+  const d=Number(x.denomMin)>0?Math.round(Number(x.denomMin)):DEFAULT_RATE_DENOMINATOR_MIN;
+  const rule=DEDUCTION_ROUNDING[ROUNDING_RULES.includes(x.rule)?x.rule:"ceil"];
+  return roundYenFrac(b*m,d,rule);
+}
+// 1人・1か月の内訳（月次賃金ページと CSV の1行）。
+//   pay        private/pay の1人分（history を含むレコード）。無ければ賃金は出さず時間だけ
+//   ym         "YYYY-MM"。**版は月初時点**（月の途中の改定は日割りせず、月初に効いている版で計算する。日割りは BACKLOG）
+//   times      {scheduledMin, workMin, otMin, dayOverMin, weekOverMin, monthOverMin, over60Min, nightMin, legalHolidayMin, absentMin}
+//   denomMin   1時間当たり賃金の分母（rateDenominatorMinOf）
+//   wageSettings 法人の賃金設定（最賃・割増率・端数規則）
+//   schedAvgMin 年平均所定（分）。分母を上回ると警告（月給者の時給換算が実態より高く出て、最低賃金を割るおそれ）
+function monthlyPayBreakdown(o){
+  const x=o||{};
+  const ym=String(x.ym||"");
+  const n=daysInMonthOf(ym);
+  const first=`${ym}-01`,last=n?`${ym}-${String(n).padStart(2,"0")}`:first;
+  const denomMin=Number(x.denomMin)>0?Math.round(Number(x.denomMin)):DEFAULT_RATE_DENOMINATOR_MIN;
+  const ws=x.wageSettings||null;
+  const warnings=[],notes=[];
+  let v=payVersionOn(x.pay,first);
+  if(!v){
+    v=payVersionOn(x.pay,last);
+    if(v)notes.push(`${v.effectiveFrom} からの賃金です（月の途中から適用・日割りしていません）`);
+  }
+  if(x.pay&&typeof x.pay==="object"&&v){
+    const mids=[..._payArr(x.pay.history),x.pay].map(normalizePayVersion).map(p=>p.effectiveFrom).filter(d=>d&&d>first&&d<=last&&d!==v.effectiveFrom);
+    [...new Set(mids)].sort().forEach(d=>notes.push(`${d} に改定があります（日割りせず月初時点の版で計算しています）`));
+  }
+  const out={ym,denomMin,version:v,notes,warnings,wage:null,deduction:0,minWage:null};
+  const sa=Number(x.schedAvgMin);
+  if(v&&v.payType==="monthly"&&Number.isFinite(sa)&&sa>denomMin)
+    warnings.push({key:"schedAvgOverDenom",label:`年平均所定 ${fmtMin(Math.round(sa))} が分母 ${fmtMin(denomMin)} を上回っています（時給換算が実態より高く出て、最低賃金を割るおそれがあります）`});
+  if(!v){warnings.push({key:"noPay",label:"賃金が未設定です"});return out;}
+  const t=x.times||{};
+  const rule=roundingRuleOf(ws);
+  out.wage=wageOf({pay:v,times:t,denomMin,rates:premiumRatesOf(ws),rule});
+  out.deduction=deductionOf({pay:v,absentMin:t.absentMin,denomMin,rule});
+  const mwYen=minWageOn(ws,first);
+  const chk=minWageCheck(v,mwYen,denomMin);
+  out.minWage=chk;
+  if(chk&&!chk.ok)warnings.push({key:"minWage",label:`時給換算 ${Math.floor(chk.rate).toLocaleString("ja-JP")}円 が最低賃金 ${chk.min.toLocaleString("ja-JP")}円 を下回っています`});
+  return out;
+}
+// 月次内訳の列（画面の表と CSV が同じ定義を使う）。kind: "text" | "time"（分・伏せない）| "yen"（パスコード解除まで伏せる）
+const PAYROLL_COLUMNS=[
+  {key:"number",label:"従業員番号",kind:"text"},{key:"name",label:"名前",kind:"text"},{key:"attr",label:"属性",kind:"text"},
+  {key:"sys",label:"労働時間制",kind:"text"},{key:"payType",label:"給与形態",kind:"text"},
+  {key:"scheduledMin",label:"所定",kind:"time"},{key:"workMin",label:"実労働",kind:"time"},
+  {key:"dayOverMin",label:"時間外①日",kind:"time"},{key:"weekOverMin",label:"時間外②週",kind:"time"},{key:"monthOverMin",label:"時間外③月",kind:"time"},
+  {key:"otMin",label:"時間外計",kind:"time"},{key:"over60Min",label:"60h超",kind:"time"},{key:"nightMin",label:"深夜",kind:"time"},
+  {key:"legalHolidayMin",label:"法定休日",kind:"time"},{key:"absentMin",label:"欠勤・遅刻早退",kind:"time"},
+  {key:"rate",label:"時給換算",kind:"yen"},{key:"basePay",label:"基本給／時給×実労働",kind:"yen"},
+  {key:"otCoveredMin",label:"固定残業の充当",kind:"time"},{key:"otPay",label:"時間外手当",kind:"yen"},
+  {key:"over60Pay",label:"60h超割増",kind:"yen"},{key:"nightPay",label:"深夜割増",kind:"yen"},{key:"nightCovered",label:"固定深夜の充当",kind:"yen"},
+  {key:"holidayPay",label:"法定休日手当",kind:"yen"},{key:"deduction",label:"欠勤控除",kind:"yen"},{key:"notes",label:"注記",kind:"text"},
+];
+// 1行の値（数値のまま）。r は {name, number, attr, sysLabel, times, calc: monthlyPayBreakdown の戻り値, notes[]}
+function payrollRowValues(r){
+  const t=r.times||{},c=r.calc||{},w=c.wage;
+  const val={number:r.number||"",name:r.name||"",attr:r.attr||"",sys:r.sysLabel||"",
+    payType:c.version?PAY_TYPE_LABELS[c.version.payType]:"",
+    scheduledMin:t.scheduledMin,workMin:t.workMin,dayOverMin:t.dayOverMin,weekOverMin:t.weekOverMin,monthOverMin:t.monthOverMin,
+    otMin:t.otMin,over60Min:t.over60Min,nightMin:t.nightMin,legalHolidayMin:t.legalHolidayMin,absentMin:t.absentMin,
+    rate:w?Math.floor(w.ratePerHour):null,basePay:w?w.basePay:null,otCoveredMin:w&&w.payType==="monthly"?w.otCoveredMin:null,
+    otPay:w?w.otPay:null,over60Pay:w?w.over60Pay:null,nightPay:w?w.nightPay:null,nightCovered:w&&w.payType==="monthly"?w.nightCovered:null,
+    holidayPay:w?w.holidayPay:null,deduction:w&&w.payType==="monthly"?c.deduction:null,
+    notes:[...(r.notes||[]),...(c.notes||[]),...((c.warnings||[]).map(x=>x.label))].join("／")};
+  return val;
+}
+// 1セルの表示。時間は H:MM、金額は伏せるときは「••••」（CSV も同じ規則＝解除していなければ金額を出さない）
+function payrollCellText(col,val,unlocked){
+  const v=val[col.key];
+  if(col.kind==="time")return v==null||v===""?"":fmtMin(Math.max(0,Math.round(Number(v)||0)));
+  if(col.kind==="yen"){if(v==null||v==="")return"";return unlocked?String(Math.round(Number(v)||0)):"••••";}
+  return v==null?"":String(v);
+}
+// CSV（給与ソフトへ渡す）。先頭に BOM を付けるのは呼び出し側。改行は CRLF・全セルを "" で囲む
+function payrollCsvOf(rows,unlocked){
+  const q=s=>`"${String(s).replace(/"/g,'""')}"`;
+  const head=PAYROLL_COLUMNS.map(c=>q(c.kind==="time"?`${c.label}（時:分）`:c.kind==="yen"?`${c.label}（円）`:c.label)).join(",");
+  const body=(rows||[]).map(r=>{const val=payrollRowValues(r);return PAYROLL_COLUMNS.map(c=>q(payrollCellText(c,val,unlocked))).join(",");});
+  return[head,...body].join("\r\n")+"\r\n";
 }
 
 // ===== 賃金の閲覧パスコード（2026-09-30・§3.7・決定12）=====
@@ -4125,5 +4301,5 @@ function planActualsImport(o){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={premiumMonthOf,premiumDayInput,premiumMonthDates,premiumRowCell,NIGHT_WINDOWS_MIN,OVER60_THRESHOLD_MIN,nightOverlapMin,nightMinutesOf,premiumWeekStartOf,legalHolidayDatesOf,premiumBreakdownOf,premiumAgreementH,PREMIUM_FINDING_KEYS,premiumFindingsFor,breakBandsOf,helperActualDaysOn,HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,yearDaysOf,monthlyScheduledCapMin,LABOR_SETTING_RANGES,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,dailyOverThresholdOf,dailyOverMinB,externalOverThresholdOf,OT_PRORATE_WINDOWS,OT_PRORATE_WINDOW_LABELS,OT_PRORATE_FIXED_MAX_MIN,HALF_MONTH_LAST_DAY,otProrateOf,staffOtProrateOf,overtimePlanOf,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,BREAK_LENGTH_BASES,BREAK_LENGTH_BASIS_LABELS,BREAK_LENGTH_TIERS_MAX,breakLengthRuleOf,IDLE_BREAK_DAYS,IDLE_BREAK_DAY_LABELS,idleBreakOf,breakMinutesOf,breakDecisionOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,personIndexOfMirror,samePersonRegistrations,personHomeShopOf,helperPersonOf,helperShopSettingsOn,helperWorkOn,otherShopDataOf,helperShopsOf,helperScheduleContext,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,headcountAtOf,countPresentAt,headcountLabelOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,groupStaffRegs,groupStaffRegsWithPeople,PERSON_ID_RE,buildCompanyStaffRows,duplicatePersonCandidates,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,GATED_FEATURES,featureEnabled,DEFAULT_RATE_DENOMINATOR_MIN,rateDenominatorMinOf,PAY_TYPES,PAY_TYPE_LABELS,isPayTypeFixed,defaultPayTypeOf,payRateBaseYen,hourlyRateOf,fixedOtAmountOf,MIN_WAGE_MAX_ENTRIES,sanitizeWageSettings,minWageOn,minWageCheck,normalizePayVersion,withFixedOtAmount,applyPayRevision,payVersionOn,STAFF_KEYED_PRIVATE_NODES,renameStaffInPay,dropStaffFromPay,maskYen,sha256HexOfBytes,PAY_CODE_DEFAULT,PAY_CODE_RE,isValidPayCode,payCodeHash,isPayCodeRecord,verifyPayCode,payCodeIdentity,PAY_CODE_MAX_FAILS,PAY_CODE_LOCK_MS,PAY_UNLOCK_IDLE_MS,nextPayCodeLockout,payCodeWaitSec,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf,isPeriodConfirmed,isPeriodDelivered,PERIOD_STATES,PERIOD_STATE_LABELS,periodStateOf,canConfirmPeriod,PERIOD_HISTORY_KINDS,PERIOD_HISTORY_LABELS,genPeriodHistoryKey,periodHistoryEntry,withPeriodHistory,periodHistoryList,monthsOfPeriod,monthDatesOf,aggregateScheduledMonth,isMonthFullyConfirmed,laborMonthOf,isLaborMonthFrozen,isLaborMonthEdited,planPeriodConfirmation,planPeriodUnconfirm,planPeriodDelivery,LABOR_MONTH_MAX_MIN,planLaborMonthManual,parseHoursMinutes,fmtSignedMin,STAFF_KEYED_MONTH_NODES,renameStaffInLaborMonths,dropStaffFromLaborMonths,yearScheduledAverage,isClosedDateOf,fillFixedPattern,ACTUAL_FIELDS,ACTUAL_NOTE_MAX,ACTUAL_MIN_MAX,minToClock,parseClockInput,parseMinutesInput,scheduledDay,resolveActualDay,planActualEdit,actualOf,STAFF_KEYED_PERIOD_NODES,renameStaffInActuals,dropStaffFromActuals,ACTUALS_CSV_FIELDS,ACTUALS_CSV_FIELD_LABELS,DEFAULT_ACTUALS_CSV_MAPPING,actualsCsvMappingOf,parseCsvRows,parseCsvDate,planActualsImport};
+  module.exports={premiumMonthOf,premiumDayInput,premiumMonthDates,premiumRowCell,NIGHT_WINDOWS_MIN,OVER60_THRESHOLD_MIN,nightOverlapMin,nightMinutesOf,premiumWeekStartOf,legalHolidayDatesOf,premiumBreakdownOf,premiumAgreementH,PREMIUM_FINDING_KEYS,premiumFindingsFor,breakBandsOf,helperActualDaysOn,HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,yearDaysOf,monthlyScheduledCapMin,LABOR_SETTING_RANGES,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,dailyOverThresholdOf,dailyOverMinB,externalOverThresholdOf,OT_PRORATE_WINDOWS,OT_PRORATE_WINDOW_LABELS,OT_PRORATE_FIXED_MAX_MIN,HALF_MONTH_LAST_DAY,otProrateOf,staffOtProrateOf,overtimePlanOf,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,BREAK_LENGTH_BASES,BREAK_LENGTH_BASIS_LABELS,BREAK_LENGTH_TIERS_MAX,breakLengthRuleOf,IDLE_BREAK_DAYS,IDLE_BREAK_DAY_LABELS,idleBreakOf,breakMinutesOf,breakDecisionOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,personIndexOfMirror,samePersonRegistrations,personHomeShopOf,helperPersonOf,helperShopSettingsOn,helperWorkOn,otherShopDataOf,helperShopsOf,helperScheduleContext,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,headcountAtOf,countPresentAt,headcountLabelOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,groupStaffRegs,groupStaffRegsWithPeople,PERSON_ID_RE,buildCompanyStaffRows,duplicatePersonCandidates,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,GATED_FEATURES,featureEnabled,DEFAULT_RATE_DENOMINATOR_MIN,rateDenominatorMinOf,PAY_TYPES,PAY_TYPE_LABELS,isPayTypeFixed,defaultPayTypeOf,payRateBaseYen,hourlyRateOf,fixedOtAmountOf,MIN_WAGE_MAX_ENTRIES,sanitizeWageSettings,minWageOn,minWageCheck,normalizePayVersion,withFixedOtAmount,applyPayRevision,payVersionOn,STAFF_KEYED_PRIVATE_NODES,renameStaffInPay,dropStaffFromPay,maskYen,PREMIUM_RATE_KEYS,LEGAL_PREMIUM_RATES,PREMIUM_RATE_LABELS,PREMIUM_RATE_MAX,ROUNDING_RULES,ROUNDING_RULE_LABELS,premiumRatesOf,roundingRuleOf,roundYenFrac,DEDUCTION_ROUNDING,wageOf,deductionOf,monthlyPayBreakdown,PAYROLL_COLUMNS,payrollRowValues,payrollCellText,payrollCsvOf,sha256HexOfBytes,PAY_CODE_DEFAULT,PAY_CODE_RE,isValidPayCode,payCodeHash,isPayCodeRecord,verifyPayCode,payCodeIdentity,PAY_CODE_MAX_FAILS,PAY_CODE_LOCK_MS,PAY_UNLOCK_IDLE_MS,nextPayCodeLockout,payCodeWaitSec,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf,isPeriodConfirmed,isPeriodDelivered,PERIOD_STATES,PERIOD_STATE_LABELS,periodStateOf,canConfirmPeriod,PERIOD_HISTORY_KINDS,PERIOD_HISTORY_LABELS,genPeriodHistoryKey,periodHistoryEntry,withPeriodHistory,periodHistoryList,monthsOfPeriod,monthDatesOf,aggregateScheduledMonth,isMonthFullyConfirmed,laborMonthOf,isLaborMonthFrozen,isLaborMonthEdited,planPeriodConfirmation,planPeriodUnconfirm,planPeriodDelivery,LABOR_MONTH_MAX_MIN,planLaborMonthManual,parseHoursMinutes,fmtSignedMin,STAFF_KEYED_MONTH_NODES,renameStaffInLaborMonths,dropStaffFromLaborMonths,yearScheduledAverage,isClosedDateOf,fillFixedPattern,ACTUAL_FIELDS,ACTUAL_NOTE_MAX,ACTUAL_MIN_MAX,minToClock,parseClockInput,parseMinutesInput,scheduledDay,resolveActualDay,planActualEdit,actualOf,STAFF_KEYED_PERIOD_NODES,renameStaffInActuals,dropStaffFromActuals,ACTUALS_CSV_FIELDS,ACTUALS_CSV_FIELD_LABELS,DEFAULT_ACTUALS_CSV_MAPPING,actualsCsvMappingOf,parseCsvRows,parseCsvDate,planActualsImport};
 }

@@ -82,12 +82,27 @@ function sanitizeCompanySettings(raw) {
   if (Object.keys(w).length) out.wageSettings = w;
   return out;
 }
-// 賃金の法人設定（2026-09-30・P6a）。いまは最低賃金の履歴 minWage=[{from,yen}] だけ。
+// 賃金の法人設定（2026-09-30・P6a で最低賃金の履歴 minWage=[{from,yen}]、P6b で割増率 premiumRates と端数規則 roundingRule）。
+// 割増率は法定値より下げられない（上乗せだけ・法定値と同じなら持たない）。端数規則の既定 "ceil" は持たない。
 // クライアントの sanitizeWageSettings（app-utils.js）と**同じ規則**（tests/core.test.js が照合する）。
 const MIN_WAGE_MAX_ENTRIES = 20;
+const PREMIUM_RATE_KEYS_CF = ["ot", "over60", "night", "holiday"];
+const LEGAL_PREMIUM_RATES_CF = { ot: 25, over60: 25, night: 25, holiday: 35 };
+const PREMIUM_RATE_MAX_CF = 100;
+const ROUNDING_RULES_CF = ["ceil", "round", "floor"];
 function sanitizeWageSettings(raw) {
   const out = {};
   if (!raw || typeof raw !== "object") return out;
+  const pr = raw.premiumRates && typeof raw.premiumRates === "object" ? raw.premiumRates : null;
+  if (pr) {
+    const o = {};
+    PREMIUM_RATE_KEYS_CF.forEach(k => {
+      const v = Number(pr[k]);
+      if (Number.isInteger(v) && v > LEGAL_PREMIUM_RATES_CF[k] && v <= PREMIUM_RATE_MAX_CF) o[k] = v;
+    });
+    if (Object.keys(o).length) out.premiumRates = o;
+  }
+  if (ROUNDING_RULES_CF.includes(raw.roundingRule) && raw.roundingRule !== "ceil") out.roundingRule = raw.roundingRule;
   const src = Array.isArray(raw.minWage) ? raw.minWage : (raw.minWage && typeof raw.minWage === "object" ? Object.values(raw.minWage) : []);
   const byFrom = {};
   src.forEach(e => {
@@ -704,7 +719,7 @@ module.exports = { PERSON_ID_RE, isValidPersonId, PERSON_AUTO_ID_CHARS, genPerso
   groupStaffRegsCF, personDisplayName, planPeopleSync, staffNumberConflict, planMergePeople, planSplitPerson, planReassignPersonId,
   STAFF_KEYED_SETTING_MAPS_CF, STAFF_KEYED_PRIVATE_NODES_CF, STAFF_KEYED_MONTH_NODES_CF, STAFF_KEYED_PERIOD_NODES_CF, validateStaffRename, renameStaffListCF, renameStaffSettingsPatch,
   renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffLaborMonthsPatch, renameStaffActualsPatch, renameStaffSubsPatch,
-  MIN_WAGE_MAX_ENTRIES, sanitizeWageSettings, PAY_CODE_DEFAULT, isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,
+  MIN_WAGE_MAX_ENTRIES, PREMIUM_RATE_KEYS_CF, LEGAL_PREMIUM_RATES_CF, PREMIUM_RATE_MAX_CF, ROUNDING_RULES_CF, sanitizeWageSettings, PAY_CODE_DEFAULT, isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,
   ENTITY_ID_RE, isValidEntityId, SHOP_KINDS, ENTITY_NAME_MAX, sanitizeEntityName, entityIdOfShop, shopKindOf,
   planEntityMigration, mergeEntitySettings, mirrorPeopleOf, mirrorShopEntitiesOf, buildShopMirror, otherCompanyLinksOf,
   COMPANY_SESSION_UID_PREFIX, canChangeCompanyPassword, COMPANY_LABOR_KEYS, COMPANY_LABOR_RANGES, COMPANY_LIMIT_NUM_KEYS, COMPANY_LABOR_SYSTEMS, COMPANY_OT_PRORATE_WINDOWS, COMPANY_OT_PRORATE_FIXED_MAX_MIN, sanitizeOtProrate, COMPANY_BUILTIN_ATTRS,
