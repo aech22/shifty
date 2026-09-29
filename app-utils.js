@@ -1002,9 +1002,9 @@ function leaveFieldsOf(shift){
   };
   return{start:pick("start"),end:pick("end")};
 }
-// **セルに文字を出すのはその帯に種別が入っているときだけ**。`y`（休み希望）は種別を持たないので
+// **セルに文字を出すのはその帯に種別が入っているときだけ**。`/`（休み希望・旧 y）は種別を持たないので
 // 従来どおり斜線のままで文字を出さない。一方 leaveTypeOf は「週の休みに数えるか」を決める判定で、
-// 終日 y も公休として扱い続ける——見せ方（ここ）と数え方は別の問いなので同じ関数で答えない。
+// 終日の休み希望も公休として扱い続ける——見せ方（ここ）と数え方は別の問いなので同じ関数で答えない。
 function leaveCellTextOf(shift,field){
   const lv=leaveFieldsOf(shift);
   const t=field?lv[field]:(lv.start&&lv.start===lv.end?lv.start:null);
@@ -1016,7 +1016,7 @@ function leaveHalfDaysOf(shift){
   const c=t=>((lv.start===t?0.5:0)+(lv.end===t?0.5:0));
   return{paid:c("paid"),ceremony:c("ceremony")};
 }
-// その日の休暇種別。**本機能の導入前に入力済みの終日 y（leaveType なし）は公休として扱う**
+// その日の休暇種別。**本機能の導入前に入力済みの終日の休み希望（旧 y・leaveType なし）は公休として扱う**
 // ——データ移行はしない。これをしないと既存店舗で `×休なし` の誤警告が出る。
 function leaveTypeOf(shift){
   if(!shift)return null;
@@ -1024,12 +1024,12 @@ function leaveTypeOf(shift){
   if(lv.start&&lv.start===lv.end)return lv.start;   // 終日ぶん指定されている
   if(lv.start||lv.end)return null;                  // 半日だけ＝日単位の種別は決まらない
   const ar=shift.adminRest||{};
-  if(ar.start&&ar.end)return"public";        // 終日 y（斜線も公休として数える）
+  if(ar.start&&ar.end)return"public";        // 終日の休み希望 /（斜線も公休として数える）
   if(shift.status==="holiday")return"public"; // スタッフ提出の終日休み
   return null;
 }
 // 週の休みの判定に使う日の種類（S-5・判断8）。
-//  rest   公休（終日 y・提出の休み）と**無記入** → 週の休みに数える
+//  rest   公休（終日の休み希望 /・提出の休み）と**無記入** → 週の休みに数える
 //  work   出勤
 //  leave  有給・慶弔 → 休みに数えない（出勤日に取る休暇のため）。ただし「データはある」
 //  nodata その日を含む期間が無い／購読の窓の外 → その週は数え切れないので `＋休n`（下記）
@@ -1371,7 +1371,7 @@ const CELL_COMMANDS=[
   {key:"h",kind:"suffix",usage:"9h",label:"ホール出張",desc:"キッチン所属のスタッフをホールの人数として集計する。出勤セルに付けるとランチ帯（〜17時）、退勤セルに付けるとディナー帯（17時〜）だけに反映する（例: 出勤9h・退勤22 → ランチはホール・ディナーはキッチン）。片方の帯しかないシフトでは、もう一方のセルのコマンドも有効になる",color:"#FFF3B0"},
   {key:"k",kind:"suffix",usage:"9k",label:"キッチン入り",desc:"ホール所属のスタッフをキッチンの人数として集計する。出勤セルに付けるとランチ帯（〜17時）、退勤セルに付けるとディナー帯（17時〜）だけに反映する。片方の帯しかないシフトでは、もう一方のセルのコマンドも有効になる",color:"#FFF3B0"},
   {key:"x",kind:"suffix",usage:"9x",label:"ヘルプ（カウント外）",desc:"時間帯別出勤人数・店舗間重複・ポジション判定から外す。出勤セルに付けるとランチ帯（〜17時）、退勤セルに付けるとディナー帯（17時〜）だけ、両方に付けると終日（片方の帯しかないシフトでは反対側のセルの x も有効）。x単体入力も同じ扱い（コマンド以外の文字だけの入力はメモとしてそのまま表示される）",color:"#FFF3B0"},
-  {key:"y",kind:"rest",aliases:["ｙ","休"],usage:"y",label:"休み希望",desc:"セルを休み扱いにして斜線を表示する（出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日）。**表示は斜線のまま**で、終日でも「公休」の文字は出ない（文字を出したいときは ko を使う）。週の休みには終日の y も公休として数える。もう一度 y で解除、時間を入力すると出勤に上書き。「休」でも入力できる",hatch:true},
+  {key:"/",kind:"rest",aliases:["／"],usage:"/",label:"休み希望",desc:"セルを休み扱いにして斜線を表示する（出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日）。**表示は斜線のまま**で、終日でも「公休」の文字は出ない（文字を出したいときは ko を使う）。週の休みには終日の / も公休として数える。もう一度 / で解除、時間を入力すると出勤に上書き。全角の「／」でも入力できる（「y」「休」は休みにならず、メモとして残る）",hatch:true},
   {key:"ko",kind:"rest",leaveType:"public",usage:"ko",label:"公休（終日）",desc:"その日を終日の公休にする（セルに「公休」と表示され、斜線は引かれない）。もう一度 ko で解除、または**セルの「公休」の文字を消しても解除**（終日なので出勤・退勤どちらのセルから消しても両方外れる）。**週の休みに数える**（何も入力していない日・終日の y も同じく公休として数える）",hatch:false},
   {key:"yu",kind:"rest",leaveType:"paid",usage:"yu",label:"有給（終日）",desc:"**打ち込んだセルだけ**を有給にする（出勤セル=ランチ帯・退勤セル=ディナー帯。有給は半日単位で取れる）。そのセルに「有給」と表示される。もう一度 yu で解除、または**そのセルの「有給」の文字を消しても解除**。**週の休みには数えず**（有給は出勤日に取る休暇のため、有給の週も別に公休が1日以上要る）、実働にも入らない。管理者のみ入力できる",color:"#DCEBFB"},
   {key:"ke",kind:"rest",leaveType:"ceremony",usage:"ke",label:"慶弔（終日）",desc:"**打ち込んだセルだけ**を慶弔休暇にする（有給と同じく半日単位）。そのセルに「慶弔」と表示される。もう一度 ke で解除、または**そのセルの「慶弔」の文字を消しても解除**。有給と同じく週の休みには数えず、実働にも入らない。管理者のみ入力できる",color:"#FADCE6"},
@@ -1382,18 +1382,18 @@ const CELL_COLOR_LEGEND=[
   {key:"changed",color:"rgba(52,199,89,.30)",label:"変更マーク",desc:"セルをトリプルクリック（スマホはトリプルタップ）でオン/オフ。確定後に変更したシフトの目印"},
   {key:"dup",color:"rgba(255,71,87,.35)",label:"店舗間シフト重複",desc:"企業連携している他店舗のシフトと勤務時間が重なっている"},
   {key:"note",color:"#FFF3B0",label:"特記あり",desc:"h・k・x・他店舗略称などのサフィックスが付いたセル"},
-  {key:"rest",hatch:true,label:"休み希望（斜線）",desc:"スタッフが提出した休み希望、または管理者が y で入力した休み"},
+  {key:"rest",hatch:true,label:"休み希望（斜線）",desc:"スタッフが提出した休み希望、または管理者が / で入力した休み"},
   {key:"posErr",color:"rgba(250,204,21,0.35)",label:"ポジション不足",desc:"必要ポジション設定に対して出勤人数・ポジションが不足しているランチ/ディナーの行"},
   {key:"timeErr",color:"rgba(190,24,93,.25)",label:"時刻の入力ミス",desc:"退勤が出勤以前になっている。深夜は 25:00・26:00 のように24時を超える表記で入力する"},
   {key:"laborErr",color:"rgba(139,92,246,.28)",label:"労務の要修正",desc:"1日12時間を超える日、または1日の残業が36協定の上限を超える日。他の労務の指摘（4h未満・休憩不足など）は色を付けず「労務の確認が必要です」にだけ出る"},
 ];
-// 休みコマンド判定（セル全体が y / 休 / yu / ke のとき。時間付きの「9y」は通常サフィックス扱い）。
+// 休みコマンド判定（セル全体が / ／ ko yu ke のとき。時間付きの「9/」は通常サフィックス＝メモ扱い）。
 // **レジストリ駆動**にしてあるので kind:"rest" を足せば判定・予約語（isReservedShopAbbr）に自動で乗る。
-// 長いキーを先に見る（"yu" が "y" に食われないように）。全角の ｙ は y の別名として従来どおり受ける。
+// 休み希望は 2026-09-30 に y から / へ変えた（計画書 §3.9・決定 #16）。y・ｙ・休 は別名に残さない。
 function restCommandOf(raw){
   const s=String(raw==null?"":raw).trim().toLowerCase();
   if(!s)return null;
-  // 長いキーを先に見る（"yu" が "y" に食われないように）。別名（全角ｙ・休）も同じ扱い。
+  // 長いキーを先に見る（キー同士が前方一致しても短い方に食われないように）。別名（全角／）も同じ扱い。
   const cands=CELL_COMMANDS.filter(c=>c.kind==="rest")
     .flatMap(c=>[c.key,...(c.aliases||[])].map(k=>({k:String(k).toLowerCase(),c})))
     .sort((a,b)=>b.k.length-a.k.length);
@@ -1404,7 +1404,7 @@ const isRestCommand=raw=>!!restCommandOf(raw);
 // 他店舗ヘルプの略称（settings.shopAbbrs）として使えない文字列。**判定は extractNote の
 // パース規則と1対1で対応させる**——ここが緩いと、登録はできるのにセルに書いても解決されない
 // 略称が作れてしまい、ヘルプ判定も店舗間重複判定も**エラーを出さずに止まる**。
-// - kind:"suffix"(h/k/x)・kind:"rest"(y/休) は **完全一致** だけが衝突する
+// - kind:"suffix"(h/k/x)・kind:"rest"(/ ／ ko yu ke) は **完全一致** だけが衝突する
 //   （extractNote は suffix を完全一致でしか拾わず、note も abbrToShop の完全一致で引くため）
 // - kind:"fixed"(締) は extractNote が **部分一致で取り除く**（`split(key).join("")`）ので、
 //   **含むだけで衝突する**。「西締」を許すと、セル「9西締」は note="西"・hasFixed=true に化け、

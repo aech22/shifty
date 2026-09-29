@@ -732,9 +732,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     }
     if(idx===-1){
       if(rest){
-        // 休み希望(y)を未提出スタッフのセルに入力: adminRestのみ持つsubを新規作成
+        // 休み希望(/)を未提出スタッフのセルに入力: adminRestのみ持つsubを新規作成
         const ns={id:genSecureId(24),periodId:selPid,staffName:name,shopId,shifts:{},comment:"",submittedAt:new Date().toISOString(),source:"grid"};
-        // yu/ke は終日の休暇（第3弾・判断6）。y は従来どおり入れたフィールドだけ。
+        // yu/ke は終日の休暇（第3弾・判断6）。/ は従来どおり入れたフィールドだけ。
         // yu/ke は**打ち込んだ帯だけ**（有給は半日単位で取れる）。ko（公休）だけ終日。
         ns.shifts[date]=leaveCmd
           ?(leaveCmd==="public"
@@ -790,9 +790,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         if(ar[field]){delete ar[field];}
         else{ar[field]=true;delete sd[adjField];delete sd[nk];delete sd[fixedFieldKey];}
         if(Object.keys(ar).length)sd.adminRest=ar;else delete sd.adminRest;
-        // **y は leaveType を書かない**（2026-09-26 ユーザー指示）。終日でもセルは斜線のままで、
+        // **/（旧 y）は leaveType を書かない**（2026-09-26 ユーザー指示）。終日でもセルは斜線のままで、
         // 「公休」の文字は出さない。文字を出す＝記録として残すのは ko（leaveType:"public"）のほう。
-        // 週の休みに数えるかは leaveTypeOf が終日 y も公休として扱うので、この変更では動かない。
+        // 週の休みに数えるかは leaveTypeOf が終日の / も公休として扱うので、この変更では動かない。
         if(sd.leaveType==="public")delete sd.leaveType;
       }else if(parsed){
         // 休み希望セルへの入力は出勤扱いに変えるが、元のstatusをorigStatusに退避して消去時に復元できるようにする
@@ -860,9 +860,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       return _flagTimeOrder(sd);
     }
   };
-  // 休み希望(y)の二重適用ガード: Enterキー確定はhandleBlurを直接呼んだ後にフォーカス移動で
+  // 休み希望(/)の二重適用ガード: Enterキー確定はhandleBlurを直接呼んだ後にフォーカス移動で
   // ネイティブblurイベントも発火し、同じ値で2回呼ばれる。時間入力は再適用が冪等なので無害だが、
-  // yはトグルのため2回目で打ち消されてしまう。同一セル・短時間の連続rest適用を1回に抑止する。
+  // / はトグルのため2回目で打ち消されてしまう。同一セル・短時間の連続rest適用を1回に抑止する。
   const restAppliedRef=useRef({key:null,t:0});
   // 時刻の入力ミス（項目12・案C）のトースト。applyEditToSubs は onSave の関数型更新の中で
   // 走る＝同期的には結果を受け取れないため、ここに印だけ置いて次のレンダー後に出す。
@@ -877,7 +877,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(!isPremium)return;
     const ekey=`${name}|${date}|${field}`;
     // セルに出している休暇の種別名をそのまま blur しても何もしない（メモとして保存しない）。
-    // 種別を外すときは同じコマンド（y/yu/ke）をもう一度入れるか、時間を入力して出勤に戻す。
+    // 種別を外すときは同じコマンド（ko/yu/ke）をもう一度入れるか、時間を入力して出勤に戻す。
     // **種別名が出ているセルだけが対象**。空文字どうしの一致で早期returnすると、休暇でない
     // セルを空欄にする blur が丸ごと捨てられ、消したはずの文字が保存値から復活する（本番報告）。
     const leaveShown=leaveCellText(name,date,field);
@@ -932,7 +932,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       entries.forEach(([key,rawValue])=>{
         const m=key.match(/^(.*)\|(\d{4}-\d{2}-\d{2})\|(start|end)$/);
         if(!m)return;
-        // 休み希望(y)はトグルのため一括再適用しない（直前のblurで既に適用済み。
+        // 休み希望(/)はトグルのため一括再適用しない（直前のblurで既に適用済み。
         // localEditsのstale closureに残った値を再適用すると打ち消されてしまう）
         if(isRestCommand(rawValue))return;
         applyEditToSubs(newSubs,m[1],m[2],m[3],rawValue);
@@ -1865,12 +1865,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
 
   // 休み希望の黒破線枠判定（field: "start"=出勤セル / "end"=退勤セル）
-  // 表示条件は2つのみ: スタッフが1日休みとして提出(status==="holiday") または 管理者がそのフィールドに休み希望(y)を明示入力(adminRest)。
+  // 表示条件は2つのみ: スタッフが1日休みとして提出(status==="holiday") または 管理者がそのフィールドに休み希望(/)を明示入力(adminRest)。
   // ランチ/ディナーの片方だけ入力された work 提出を「反対側は休み」とみなす自動推測は行わない。
   const holidayCellDash=(name,date,field)=>{
     const sh=_getSub(name)?.shifts?.[date];
     if(!sh)return false;
-    if(sh.adminRest&&sh.adminRest[field])return true; // 管理者入力の休み希望(y)
+    if(sh.adminRest&&sh.adminRest[field])return true; // 管理者入力の休み希望(/)
     return sh.status==="holiday"; // スタッフ提出の1日休み希望
   };
   // セルの色: 緑(スタッフ変更) > 赤(店舗間重複) > 黄(サフィックスnote・他店舗ヘルプ含む) > 行背景。フォーカス中セルは通常背景。
@@ -1884,7 +1884,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // 一覧は app-utils.js の LABOR_DAY_FIX_KEYS が正本で、4h未満・休憩不足は
     // パネルには出るが色は付けない（2026-09-26 ユーザー指定）。
     if(laborDayErrors[`${name}|${date}`])return LEGEND_COLORS.laborErr;
-    // 休み希望(y)・休暇セルは通常背景+斜線（noteの黄色も休暇の色も付けない）。
+    // 休み希望(/)・休暇セルは通常背景+斜線（noteの黄色も休暇の色も付けない）。
     // 休暇は色ではなく**セルに種別名を出して**見せる（2026-09-26 ユーザー指示・getVal 参照）。
     if(fieldRest(name,date,field))return rb;
     // note有無を localEdits/保存値から判定
@@ -2044,7 +2044,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const staffColorsPdf=settings.staffColors||{};
   // PDF用: シフト値の解決（localEdits優先→保存値、サフィックス連結）
   const pdfResolve=(name,date,field)=>{
-    if(fieldRest(name,date,field))return{disp:"",note:""}; // 休み希望(y)フィールドは空欄（斜線は呼び出し元で描画）
+    if(fieldRest(name,date,field))return{disp:"",note:""}; // 休み希望(/)フィールドは空欄（斜線は呼び出し元で描画）
     const key=`${name}|${date}|${field}`;
     let time="",note="",fixed=false;
     if(key in localEdits){const{numeric,note:nt,hasFixed}=extractNote(localEdits[key]);time=parseTime(numeric)||"";note=nt||"";fixed=fixedShiftEnabled&&hasFixed;}
@@ -2168,7 +2168,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           // 空白セル・休み希望セルの緑だけがPDFで落ちる（画面では斜線と緑が両方乗る）。
           // background の一括指定は background-color を transparent に戻すので、必ず後ろに置くこと。
           const chgBg=sh&&sh.changed===true?"background-color:#B7EBC6;":"";
-          // 管理者入力の休み希望(y)はフィールド単位で斜線（画面のholidayCellDashと同じ扱い）
+          // 管理者入力の休み希望(/)はフィールド単位で斜線（画面のholidayCellDashと同じ扱い）
           if(!r.disp&&sh&&sh.adminRest&&sh.adminRest[field]){h+=`<td style="border:${BDp};background:${hatch};${chgBg}height:15px;"></td>`;return;}
           if(!r.disp&&!otherHas){
             // 休み提出のみ斜線（出勤で上書きされていればdispがあるためここに来ない）
@@ -2516,7 +2516,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         {(period||isPremium)&&<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"nowrap"}}>
         {period&&<button onClick={()=>{
           const adjResolver=(name,date,field)=>{
-            if(fieldRest(name,date,field))return{time:"",note:"",fixed:false,rest:true}; // 休み希望(y)はExcelで斜線描画
+            if(fieldRest(name,date,field))return{time:"",note:"",fixed:false,rest:true}; // 休み希望(/)はExcelで斜線描画
             const key=`${name}|${date}|${field}`;
             let time="",fixed=false;
             if(key in localEdits){const{numeric,hasFixed}=extractNote(localEdits[key]);time=parseTime(numeric)||"";fixed=fixedShiftEnabled&&hasFixed;}
@@ -3231,7 +3231,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
 
   // 呼び出し元が resolver を渡さないとき（期間管理タブのExcelボタン）に使う既定の解決。
   // シフト作成タブの adjResolver の「保存値」分岐（getStoredTime/getStoredNote/getStoredFixed）と同じ規則で、
-  // **管理者調整値・休み希望(y)・「締」を必ず通す**。ここを null のままにしていた間、同じ期間でも
+  // **管理者調整値・休み希望(/)・「締」を必ず通す**。ここを null のままにしていた間、同じ期間でも
   // 期間管理タブから出した Excel だけがスタッフの提出値そのままになっていた（バグチェック#134）。
   // 未保存の localEdits はシフト作成タブしか持たないので、その差だけは resolver 側に残る。
   // fixed は店舗の対象判定(isFixedShiftEligibleShop)を掛け直さない——このフラグは対象店舗でしか
@@ -3317,7 +3317,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
         // （バグチェック#52）。グリッドのgetVal・PDFのpdfResolveと同じ真偽判定に揃える
         const startDisp=(startT||sNote||sFx)?((fmtT(startT)||"")+sNote+sFx):null;
         const endDisp=(endT||eNote||eFx)?((fmtT(endT)||"")+eNote+eFx):null;
-        // 管理者入力の休み希望(y)はフィールド単位で斜線（どちらの入口から出しても同じ）
+        // 管理者入力の休み希望(/)はフィールド単位で斜線（どちらの入口から出しても同じ）
         const diagR={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
         const stB={top:M,bottom:H,left:T,right:T,...(rv.st.rest?{diagonal:diagR}:{})};
         const enB={top:H,bottom:botT,left:T,right:T,...(rv.en.rest?{diagonal:diagR}:{})};
@@ -3333,7 +3333,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
         //     （buildShift は提出した時点の dates ぶんしか作らない）
         // 画面(holidayCellDash は `if(!sh)return false`)・PDF(`if(sh&&sh.status==="holiday")`)は
         // どちらも空白にしており、Excel だけが else に落ちていた。斜線はレジェンドで
-        // 「スタッフが提出した休み希望、または管理者が y で入力した休み」と定義されているので、
+        // 「スタッフが提出した休み希望、または管理者が / で入力した休み」と定義されているので、
         // 何も提出されていない日に出してはいけない。
         SC(rT,ci,null,aH,fill,{top:M,bottom:H,left:T,right:T});
         SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
@@ -5600,7 +5600,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
     // numeric="92"（parseTimeが弾いて時刻消失）・note="号" となり、abbrToShopの完全一致lookupが
     // 必ず外れる＝ヘルプ判定も店舗間重複判定も無言で効かなくなる。「92号」を 9+「2号」と
     // 92+「号」のどちらに解釈するかは原理的に決められないため、パーサ側では直せない。
-    if(isReservedShopAbbr(v)){tt("✕ h・k・x・y・休・「締」を含む・数字や記号（. :）で始まる略称は使用できません");return;}
+    if(isReservedShopAbbr(v)){tt("✕ h・k・x・/・ko・yu・ke・「締」を含む・数字や記号（. :）で始まる略称は使用できません");return;}
     const cur=(metaFor(sid)||{}).abbrs||[];
     if(cur.includes(v)){tt("✕ 既に登録済みの略称です");return;}
     const conflict=listShops.find(s=>s&&s.id!==sid&&abbrsOf(s.id).includes(v));

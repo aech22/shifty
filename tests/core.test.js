@@ -450,16 +450,32 @@ test("extractNote: 任意サフィックスはそのまま保持", () => {
   assert.deepStrictEqual(u.extractNote("9三"), { numeric: "9", note: "三", rest: false, hasFixed: false });
 });
 
-test("extractNote: y/休 は休み希望コマンド（時間付き9yは通常サフィックス）", () => {
-  for (const v of ["y", "Y", "ｙ", "休", " y "]) assert.strictEqual(u.extractNote(v).rest, true, `input: ${v}`);
-  assert.strictEqual(u.extractNote("9y").rest, false);
-  assert.strictEqual(u.extractNote("9y").note, "y");
+test("extractNote: / と ／ は休み希望コマンド（時間付き9/は通常サフィックス＝メモ）", () => {
+  for (const v of ["/", "／", " / ", " ／ "]) assert.strictEqual(u.extractNote(v).rest, true, `input: ${v}`);
+  assert.strictEqual(u.extractNote("/").leaveType, null, "/ は種別を持たない（斜線のまま）");
+  assert.strictEqual(u.extractNote("9/").rest, false);
+  assert.strictEqual(u.extractNote("9/").numeric, "9");
+  assert.strictEqual(u.extractNote("9/").note, "/");
   assert.strictEqual(u.extractNote("").rest, false);
 });
 
-test("isRestCommand: y/ｙ/休のみtrue", () => {
-  assert.strictEqual(u.isRestCommand("y"), true);
-  assert.strictEqual(u.isRestCommand("休"), true);
+// 休み希望は 2026-09-30 に y から / へ変えた（計画書 §3.9・決定 #16）。y・ｙ・休 は別名に残さない。
+// 打たれたら休みにならず、他のコマンド外の文字と同じくメモとして残る（廃止の案内トーストは出さない）。
+test("extractNote: 廃止した y・Y・ｙ・休 は休みにならずメモとして残る", () => {
+  for (const v of ["y", "Y", "ｙ", "休"]) {
+    const r = u.extractNote(v);
+    assert.strictEqual(r.rest, false, `${v} が休みになっている`);
+    assert.strictEqual(r.note, v, `${v} がメモとして残っていない`);
+    assert.strictEqual(r.numeric, "");
+  }
+  assert.deepStrictEqual(u.extractNote("9y"), { numeric: "9", note: "y", rest: false, hasFixed: false });
+  assert.deepStrictEqual(u.extractNote("9休"), { numeric: "9", note: "休", rest: false, hasFixed: false });
+});
+
+test("isRestCommand: / と ／ は true・廃止した y/ｙ/休 は false", () => {
+  assert.strictEqual(u.isRestCommand("/"), true);
+  assert.strictEqual(u.isRestCommand("／"), true);
+  for (const v of ["y", "Y", "ｙ", "休"]) assert.strictEqual(u.isRestCommand(v), false, `${v}`);
   assert.strictEqual(u.isRestCommand("9"), false);
   assert.strictEqual(u.isRestCommand("x"), false);
   assert.strictEqual(u.isRestCommand(""), false);
@@ -473,7 +489,11 @@ test("CELL_COMMANDS: レジストリの完全性（レジェンド自動生成�
   });
   // パーサが認識する予約サフィックス・休みコマンドがすべて登録されている
   ["h", "k", "x"].forEach(k => assert.ok(u.CELL_COMMANDS.some(c => c.kind === "suffix" && c.key === k), `suffix ${k} missing`));
-  assert.ok(u.CELL_COMMANDS.some(c => c.kind === "rest" && c.key === "y"), "rest command y missing");
+  assert.ok(u.CELL_COMMANDS.some(c => c.kind === "rest" && c.key === "/" && c.usage === "/"), "rest command / missing");
+  // 廃止した y・ｙ・休 はキーにも別名にも残っていない（レジェンドにも出ない）
+  const restKeys = u.CELL_COMMANDS.filter(c => c.kind === "rest").flatMap(c => [c.key, ...(c.aliases || [])]);
+  for (const v of ["y", "ｙ", "休"]) assert.ok(!restKeys.includes(v), `${v} がまだ休みコマンドに残っている`);
+  assert.deepStrictEqual(u.CELL_COMMANDS.find(c => c.key === "/").aliases, ["／"]);
   // レジストリと実装の乖離防止: 登録済みサフィックスは extractNote が正規化して認識する
   u.CELL_COMMANDS.filter(c => c.kind === "suffix").forEach(c => {
     assert.strictEqual(u.extractNote("9" + c.key.toUpperCase()).note, c.key, `suffix ${c.key} not recognized`);
@@ -570,7 +590,9 @@ test("isReservedShopAbbr: 固定シフトコマンド(締)は『含む』だけ�
 });
 
 test("isReservedShopAbbr: suffix/rest は完全一致だけが予約語・通常の略称は通る（#133の非回帰）", () => {
-  for (const v of ["h", "K", "x", "y", "休", "ｙ"]) assert.strictEqual(u.isReservedShopAbbr(v), true, `${v}`);
+  for (const v of ["h", "K", "x", "/", "／", "ko", "yu", "ke"]) assert.strictEqual(u.isReservedShopAbbr(v), true, `${v}`);
+  // 廃止した y・ｙ・休 は休みコマンドではなくなったので予約語でもない（略称として登録できる）
+  for (const v of ["y", "ｙ", "休"]) assert.strictEqual(u.isReservedShopAbbr(v), false, `${v}`);
   for (const v of ["2号", ".西", ":東", "", "   "]) assert.strictEqual(u.isReservedShopAbbr(v), true, `${v}`);
   // 既存の正常な略称は従来どおり登録できる（締を含まず、コマンドと完全一致もしない）
   for (const v of ["三", "西", "hk", "梅田", "東通"]) {
@@ -3558,9 +3580,11 @@ test("項目8 設定キーの無い既存店舗は時間帯方式＝現行挙動
 test("項目9 休暇種別: yu=有給・ke=慶弔 がコマンドとして登録され、略称に使えない", () => {
   assert.strictEqual(u.restCommandOf("yu").leaveType, "paid");
   assert.strictEqual(u.restCommandOf("ke").leaveType, "ceremony");
-  assert.strictEqual(u.restCommandOf("y").leaveType, undefined, "y は種別を持たない（終日なら公休）");
-  assert.strictEqual(u.restCommandOf("休").key, "y", "別名");
-  assert.strictEqual(u.restCommandOf("ｙ").key, "y");
+  assert.strictEqual(u.restCommandOf("/").leaveType, undefined, "/ は種別を持たない（終日なら公休）");
+  assert.strictEqual(u.restCommandOf("／").key, "/", "全角の別名");
+  assert.strictEqual(u.restCommandOf("y"), null, "y は廃止");
+  assert.strictEqual(u.restCommandOf("休"), null, "休 は廃止");
+  assert.strictEqual(u.restCommandOf("ｙ"), null, "ｙ は廃止");
   assert.strictEqual(u.restCommandOf("YU").leaveType, "paid", "大文字でも受ける");
   assert.strictEqual(u.restCommandOf("9yu"), null, "時間付きはコマンドではない");
   assert.strictEqual(u.extractNote("yu").rest, true);
@@ -3596,7 +3620,7 @@ test("項目9 休暇種別: yu=有給・ke=慶弔 がコマンドとして登録
 test("判断8 leaveTypeOf: 導入前の終日 y（leaveType なし）は公休として扱う", () => {
   assert.strictEqual(u.leaveTypeOf({ status: "work", adminRest: { start: true, end: true } }), "public");
   assert.strictEqual(u.leaveTypeOf({ status: "holiday" }), "public", "スタッフ提出の終日休み");
-  assert.strictEqual(u.leaveTypeOf({ status: "work", adminRest: { start: true } }), null, "半日 y は休み希望のまま");
+  assert.strictEqual(u.leaveTypeOf({ status: "work", adminRest: { start: true } }), null, "半日の / は休み希望のまま");
   assert.strictEqual(u.leaveTypeOf({ status: "work", leaveType: "paid" }), "paid");
   assert.strictEqual(u.leaveTypeOf({ status: "work", start: "09:00", end: "18:00" }), null);
 });
