@@ -38,6 +38,8 @@ const CFC_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "fu
  *                                saveEntityConfig / setShopKind）。移行と写しの組み立ては **functions/company-config.js をそのまま読み込んで**
  *                                使う（planEntityMigration・buildShopMirror）ので、CF と同じ規則で写しができる。
  * @param {boolean}[o.confirm]   window.confirm の戻り値（既定 true）
+ * @param {string[]}[o.denyRead] once() を PERMISSION_DENIED で拒否するパス（前方一致）。ルールは評価しないので、
+ *                                「オーナーでない店舗の actuals は読めない」のような拒否を再現するときに使う（P5）
  */
 function makeStub(o) {
   const seed = o.seed || {};
@@ -46,6 +48,7 @@ function makeStub(o) {
   const tab = o.tab || "periods";
   const cfHandlers = o.cfHandlers || {};
   const confirmValue = o.confirm === undefined ? true : !!o.confirm;
+  const denyRead = Array.isArray(o.denyRead) ? o.denyRead : [];
 
   return `<script>
 (function(){
@@ -54,6 +57,7 @@ function makeStub(o) {
   var CFC=(function(){var module={exports:{}};var exports=module.exports;${CFC_SRC}
 ;return module.exports;})();
   var CF=${JSON.stringify(cfHandlers)};
+  var DENY_READ=${JSON.stringify(denyRead.map(d => String(d).split("/").filter(Boolean).join("/")))};
   var root=null;
   try{ root=JSON.parse(localStorage.getItem(LS_DB)||"null"); }catch(e){}
   if(!root){ root=SEED; localStorage.setItem(LS_DB, JSON.stringify(root)); }
@@ -125,6 +129,10 @@ function makeStub(o) {
       once:function(){
         if(p===".info/connected") return Promise.resolve(snap(true));
         (window.__reads=window.__reads||[]).push(p);
+        var np=norm(p).join("/");
+        if(DENY_READ.some(function(d){ return np===d||np.indexOf(d+"/")===0; })){
+          var err=new Error("PERMISSION_DENIED: Permission denied"); err.code="PERMISSION_DENIED"; return Promise.reject(err);
+        }
         return Promise.resolve(snap(applyQuery(getPath(p),q)));
       },
       on:function(ev,cb){
