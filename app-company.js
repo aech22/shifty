@@ -1938,8 +1938,24 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
     {plan==="premium"&&(()=>{
       const mode=breakModeOf(settings);
       const L=breakLengthOf(settings);
+      const rawLen=(settings.breakLength&&typeof settings.breakLength==="object")?settings.breakLength:{};
+      const rule=breakLengthRuleOf(settings);
+      // 編集中は保存順のまま並べる（判定は breakLengthRuleOf がしきい値の高い順に並べ直して使う）
+      const rawTiers=Array.isArray(rawLen.tiers)?rawLen.tiers:(rawLen.tiers&&typeof rawLen.tiers==="object"?Object.values(rawLen.tiers):[]);
       const saveMode=m=>onSave({...settings,breakMode:m});
-      const saveLen=(k,v)=>onSave({...settings,breakLength:{...L,[k]:v}});
+      const saveLenAll=next=>onSave({...settings,breakLength:next});
+      const saveLen=(k,v)=>saveLenAll({...rawLen,...L,[k]:v});
+      const saveTiers=list=>{const n={...rawLen};if(list&&list.length)n.tiers=list;else delete n.tiers;saveLenAll(n);};
+      const setTier=(i,patch)=>saveTiers(rawTiers.map((t,j)=>j===i?{overMin:0,breakMin:0,inclusive:false,...t,...patch}:t));
+      const ib=idleBreakOf(settings);
+      const saveIdle=patch=>onSave({...settings,idleBreak:{...ib,...patch}});
+      const TOPT=["",...TO];
+      const numIn=(val,onCh,max,w=60)=>(<input type="number" min={0} max={max} value={val} placeholder="0"
+        onChange={e=>onCh(Math.max(0,Math.min(max,parseInt(e.target.value)||0)))}
+        style={{...AI,width:w,textAlign:"center",padding:"5px 6px"}}/>);
+      const SUB={marginTop:6,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8};
+      const LB={fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"};
+      const UN={fontSize:11,color:"var(--c-text4)"};
       return(<AC title="休憩の決め方">
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>勤務時間から差し引く休憩の決め方を選びます。変更しなければ従来どおり「時間帯方式」で、候補タブで登録した休憩帯と勤務が重なった分だけを引きます。</div>
         {BREAK_MODES.map(m=>(
@@ -1948,21 +1964,75 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             <span style={{fontSize:13,color:"var(--c-text)"}}>{BREAK_MODE_LABELS[m]}</span>
           </label>
         ))}
-        {mode==="length"&&<div style={{marginTop:6,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
-          <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:8}}>引いたあとの実働がその段を超える範囲で、いちばん長い段を使います（労基法34条の「労働時間」は実働のため）。</div>
-          <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
-            {[["over8Min","実働8時間超"],["over6Min","実働6時間超"]].map(([k,lbl])=>(
-              <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
-                <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{lbl}</span>
-                <input type="number" min={0} max={240} step={5} value={L[k]}
-                  onChange={e=>saveLen(k,Math.max(0,Math.min(240,parseInt(e.target.value)||0)))}
-                  style={{...AI,width:64,textAlign:"center",padding:"5px 6px"}}/>
-                <span style={{fontSize:11,color:"var(--c-text4)"}}>分</span>
-              </div>
-            ))}
+        {mode==="length"&&<div data-break-length style={SUB}>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:8}}>
+            <span style={LB}>段の判定</span>
+            <select data-break-basis value={rule.basis} onChange={e=>saveLenAll({...rawLen,basis:e.target.value})}
+              style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+              {BREAK_LENGTH_BASES.map(b=><option key={b} value={b}>{BREAK_LENGTH_BASIS_LABELS[b]}</option>)}
+            </select>
           </div>
+          {!rule.custom&&<>
+            <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:8}}>{rule.basis==="work"?"引いたあとの実働がその段を超える範囲で、いちばん長い段を使います（労基法34条の「労働時間」は実働のため）。":"拘束時間がその段を超える範囲で、いちばん長い段を使います。"}</div>
+            <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+              {[["over8Min","8時間超"],["over6Min","6時間超"]].map(([k,lbl])=>(
+                <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
+                  <span style={LB}>{rule.basis==="work"?"実働":"拘束"}{lbl}</span>
+                  <input type="number" min={0} max={240} step={5} value={L[k]}
+                    onChange={e=>saveLen(k,Math.max(0,Math.min(240,parseInt(e.target.value)||0)))}
+                    style={{...AI,width:64,textAlign:"center",padding:"5px 6px"}}/>
+                  <span style={UN}>分</span>
+                </div>
+              ))}
+            </div>
+          </>}
+          {rule.custom&&<div style={{fontSize:11,color:"var(--c-text4)",marginBottom:8}}>{rule.basis==="work"?"引いたあとの実働":"拘束時間"}が条件に当たる段のうち、しきい値のいちばん高い段を使います。</div>}
+          {rawTiers.map((t,i)=>{const o=Math.max(0,Number(t&&t.overMin)||0);return(
+            <div key={i} data-break-tier={i} style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap",marginBottom:6}}>
+              {numIn(Math.floor(o/60),v=>setTier(i,{overMin:v*60+o%60}),24,56)}<span style={UN}>時間</span>
+              {numIn(o%60,v=>setTier(i,{overMin:Math.floor(o/60)*60+Math.min(59,v)}),59,56)}<span style={UN}>分</span>
+              <select value={t&&t.inclusive===true?"1":"0"} onChange={e=>setTier(i,{inclusive:e.target.value==="1"})}
+                style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+                <option value="1">以上</option><option value="0">を超える</option>
+              </select>
+              <span style={LB}>→ 休憩</span>
+              {numIn(Math.max(0,Number(t&&t.breakMin)||0),v=>setTier(i,{breakMin:v}),480,64)}<span style={UN}>分</span>
+              <button onClick={()=>saveTiers(rawTiers.filter((_,j)=>j!==i))} style={{...AD,padding:"4px 10px",fontSize:12}}>削除</button>
+            </div>);})}
+          {rawTiers.length<BREAK_LENGTH_TIERS_MAX&&<button data-break-tier-add onClick={()=>saveTiers([...rawTiers,{overMin:0,breakMin:0,inclusive:false}])}
+            style={{width:"100%",padding:"6px",background:"transparent",border:"1px dashed var(--c-border2)",borderRadius:8,color:"var(--c-text3)",fontSize:12,cursor:"pointer",marginTop:4}}>
+            ＋ 段を自分で決める{rule.custom?"（段を追加）":"（上の2段の代わりに使います）"}</button>}
         </div>}
-        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:10}}>どちらの方式でも「実働6時間超なのに休憩が足りない日」はシフト作成タブの労務判定に出ます。日ごとの例外は提出一覧の詳細から変更できます。</div>
+        <div data-idle-break style={{...SUB,marginTop:12}}>
+          <label style={{display:"flex",gap:8,alignItems:"center",cursor:"pointer",marginBottom:ib.enabled?8:0}}>
+            <input type="checkbox" checked={ib.enabled} onChange={e=>saveIdle({enabled:e.target.checked})} style={{width:18,height:18}}/>
+            <span style={{fontSize:13,fontWeight:700,color:"var(--c-text)"}}>中休み（通し勤務の日に決まった分を引く）</span>
+          </label>
+          {ib.enabled&&<>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:6}}>
+              <span style={LB}>出勤が</span>
+              <select data-idle="startBy" value={ib.startBy} onChange={e=>saveIdle({startBy:e.target.value})} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+                {TOPT.map(t=><option key={t||"none"} value={t}>{t||"未設定"}</option>)}
+              </select>
+              <span style={LB}>以前、かつ退勤が</span>
+              <select data-idle="endAfter" value={ib.endAfter} onChange={e=>saveIdle({endAfter:e.target.value})} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+                {TOPT.map(t=><option key={t||"none"} value={t}>{t||"未設定"}</option>)}
+              </select>
+              <span style={LB}>以降の日</span>
+            </div>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+              <span style={LB}>休憩</span>
+              {numIn(ib.min||"",v=>saveIdle({min:v}),480,64)}<span style={UN}>分</span>
+              <span style={LB}>対象日</span>
+              <select data-idle="days" value={ib.days} onChange={e=>saveIdle({days:e.target.value})} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+                {IDLE_BREAK_DAYS.map(d=><option key={d} value={d}>{IDLE_BREAK_DAY_LABELS[d]}</option>)}
+              </select>
+            </div>
+            {(!ib.startBy||!ib.endAfter||!(ib.min>0))&&<div style={{fontSize:11,color:"#B8860B",marginTop:6}}>時刻と分を入れるまで中休みは効きません。</div>}
+          </>}
+          <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>当たる日は上の方式より中休みが優先します（日ごとの上書きがあればそちらが最優先）。</div>
+        </div>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:10}}>どの方式でも「実働6時間超なのに休憩が足りない日」はシフト作成タブの労務判定に出ます。日ごとの例外は提出一覧の詳細から変更できます。</div>
       </AC>);
     })()}
 

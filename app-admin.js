@@ -5189,7 +5189,15 @@ if(typeLim.customDays&&typeLim.customHours){customVio=_windowStates(typeLim.cust
                   saveAdj は "" を削除・0 を値として扱う（0 が falsy で消えないようにしてある）。 */}
               {isPremium&&<td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
                 {iw?<div>
-                  <div style={{color:"var(--c-text4)",fontSize:11}}>{(()=>{const b=getBreaksFor(detAttrSettings,ds,det.staffName,s);const st2=x=>{const q=String(x).split(":").map(Number);return q[0]*60+q[1];};const mn=b.reduce((a,br)=>a+Math.max(0,st2(br.end)-st2(br.start)),0);return mn>0?`${mn}分`:"なし";})()}</div>
+                  {/* 自動＝灰色（中休み・長さ方式・時間帯方式のどれで決まったか）／手動＝太字。「自動に戻す」は上書きを消す（P3.5a） */}
+                  {(()=>{const bd=breakDecisionOf(detAttrSettings,ds,det.staffName,s);const fm=m=>m>0?`${m}分`:"なし";
+                    const SRC={idle:"中休み",length:"長さ",band:"時間帯"};
+                    if(bd.source==="manual")return(<div data-break-src="manual" style={{fontSize:11}}>
+                      <span style={{fontWeight:700,color:"var(--c-text)"}}>手動 {fm(bd.min)}</span>
+                      <span style={{color:"var(--c-text4)",marginLeft:4}}>（自動 {fm(bd.autoMin)}）</span>
+                      <button onClick={()=>saveAdj(det.id,ds,"adjustedBreak","")} style={{display:"block",marginTop:2,padding:"2px 6px",background:"transparent",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text3)",fontSize:11,cursor:"pointer"}}>自動に戻す</button>
+                    </div>);
+                    return(<div data-break-src={bd.source} style={{color:"var(--c-text4)",fontSize:11}}>自動 {fm(bd.min)}{bd.min>0?`（${SRC[bd.source]||""}）`:""}</div>);})()}
                   <input type="number" min={0} max={480} step={5} value={s.adjustedBreak==null?"":s.adjustedBreak}
                     placeholder="設定"
                     onChange={e=>{const v=e.target.value;saveAdj(det.id,ds,"adjustedBreak",v===""?"":Math.max(0,Math.min(480,parseInt(v)||0)));}}
