@@ -221,7 +221,30 @@ COMPANY_ENTITY_ID_RE / COMPANY_SHOP_KINDS / companyEntityIdOfShop / companyShopK
                            // 法人レイヤー（2026-09-30・P1）。店舗の法人（割当が無い・消えた法人を指すなら既定の法人）と本部の種別。
                            // CF 側の entityIdOfShop / shopKindOf（functions/company-config.js）と同じ規則で、tests/core.test.js が照合する。
                            // buildCompanyStaffRows は店舗に entityId・kind・coSettings（写しの settings）を持たせると、
-                           // **従業員番号でまとめるのを同じ法人の中だけ**にし、行に entityId・isHq を載せる
+                           // **従業員番号でまとめるのを同じ法人の中だけ**にし、行に entityId・isHq を載せる。
+                           // 行には賃金の置き場 payShopId・payName（所属店舗に登録されている名前。ヘルプ先だけの人は null）も載る（P6a）
+featureEnabled(kind,{plan,companyLink}) / GATED_FEATURES
+                           // 新機能のプランゲートの**1本だけの入口**（2026-09-30・計画書 §3.7・決定6）。法人・所定・確定・実績・賃金は Premium。
+                           // 法人プランを足すときはここだけ触る。新しい機能で plan==="premium" を直接書かない
+rateDenominatorMinOf / DEFAULT_RATE_DENOMINATOR_MIN / fixedOtAmountOf / hourlyRateOf / payRateBaseYen / minWageCheck
+                           // 賃金（P6a）。分母は laborSettings.rateDenominatorMin（P2 で法人設定化）が無ければ 10398分＝173.3h。
+                           // 固定残業代 = 基本給 ÷ 分母(h) × 1.25 × 時間 を1円未満切上げ（213,500→30h で 46,199）。**整数の切上げ除算**で計算する
+                           // （浮動小数で割ると割り切れる額が1円増えうる）。最賃比較は月給なら基本給÷分母、時給なら時給（§4.5）
+sanitizeWageSettings / minWageOn / MIN_WAGE_MAX_ENTRIES
+                           // 法人設定 wageSettings.minWage=[{from,yen}]（最低賃金の履歴）。CF 側の同じ規則は functions/company-config.js
+                           // （tests/core.test.js が照合）。**店舗の settings には入らない**（applyCompanySettings は労務と属性だけを重ねる）。
+                           // 画面は companyLink.settings.wageSettings を直接読む。その日に効く最賃が無ければ比較を出さない
+PAY_TYPES / isPayTypeFixed / defaultPayTypeOf / normalizePayVersion / withFixedOtAmount / applyPayRevision / payVersionOn
+                           // 賃金の1版の形。社員（employee）は月給固定（決定17）、企業属性は月給・それ以外は時給が既定。
+                           // **改定は版を足す**: 適用開始日を変えた保存は前の版を history へ積み、同じ日のままの保存はその版の訂正
+STAFF_KEYED_PRIVATE_NODES / renameStaffInPay / dropStaffFromPay
+                           // 名前キーの private ノード（いまは pay だけ）。STAFF_KEYED_SETTING_MAPS とは別リスト（settings 配下ではないため）。
+                           // 改名（AdminView の onRenameStaff）と削除（settingsWithoutStaff を呼ぶ2か所）が必ず pay.rename / pay.drop を通る
+                           // ——tests/core.test.js のドリフト検出が守る。**ノードを足したらここに登録し、改名・削除の両方の入口へ足す**
+payCodeHash / sha256HexOfBytes / verifyPayCode / payCodeIdentity / nextPayCodeLockout / payCodeWaitSec / maskYen
+                           // 賃金の閲覧パスコード（4桁・画面ロック）。hash = SHA-256(salt+code) の16進で CF の payCodeHashCF と一致（テストで照合）。
+                           // **crypto.subtle が無い環境（http の LAN アドレス等）では sha256HexOfBytes に落ちる**——無いまま呼ぶと
+                           // パスコードが一切通らなくなる（E2E ハーネスは http 配信なので実際にこれで止まった）。未設定は 0000 を受け付ける
 fullViewColW / fullViewFontOf // シフト作成タブの全表示（2026-09-28）。2週間以下の期間で人数が多いときだけ列を横幅に合わせる
                            // （横幅いっぱいに割った列幅が48px以下になる人数から・少人数は39pxのまま・1ヶ月の期間は従来どおり）。
                            // 縦は常に高さいっぱいなので拡大は列幅だけ。列が39pxより細いときは文字も比例して小さくする
@@ -340,7 +363,9 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `SubsTab` | app-admin.js | 提出一覧・セル編集・変更履歴 |
 | `CompanyTab` | app-admin.js | 企業連携。カードの並びは シフトの提出状況 → 企業内登録スタッフ → 企業アカウント → 連携店舗 → 法人 → 企業の共通設定（2026-09-28・法人は 2026-09-30） |
 | `CompanyEntityCard / EntityFilter / CoLaborFields` | app-admin.js | 法人（2026-09-30・P1）。法人の追加・改名・法人の労務設定・店舗の法人と種別（店舗／本部）を CF（App の `callCompanyCF`）で書く。法人の無い企業ではカードが `ensureCompanyEntities` を1回呼んで移行する。`EntityFilter` は法人が2つ以上のときだけ出る絞り込み（提出状況・企業内登録スタッフ）。`CoLaborFields` は企業の共通設定と法人の設定が共有する労務判定の入力欄 |
-| `CompanyStaffCard / CompanyStaffDirectory` | app-admin.js | 企業内登録スタッフ（2026-09-28・Premium）。カードの「一覧を開く」で AdminView の `fullPage` が管理者画面の中身を差し替える（新しいブラウザタブは使わない＝実ログインは永続化しないため）。従業員番号順（既定）／店舗別・番号と名前で検索。載せるのは店舗依存でない情報（番号・属性・所属店舗・有給の付与と残）だけ。計算は `buildCompanyStaffRows`（有給は所属店舗の `laborTotals` だけ・subs は読まない・凍結値の無い期間があれば残に「＋」）。**数字だけの同じ従業員番号は1行にまとめ**（2026-09-29）、名前は空白を除いて最も長い表記＝フルネームに寄せ、所属店舗は全部並べる。フルネームに含まれない別の名前（番号が同じなのに名前が食い違う）は「別の登録名」として残す。店舗タブの「呼び出す」（`mergeStaffMatches`）は名前でまとめるので、こちらの規則とは別 |
+| `CompanyStaffCard / CompanyStaffDirectory` | app-admin.js | 企業内登録スタッフ（2026-09-28・Premium）。カードの「一覧を開く」で AdminView の `fullPage` が管理者画面の中身を差し替える（新しいブラウザタブは使わない＝実ログインは永続化しないため）。従業員番号順（既定）／店舗別・番号と名前で検索。載せるのは店舗依存でない情報（番号・属性・所属店舗・有給の付与と残）だけ。計算は `buildCompanyStaffRows`（有給は所属店舗の `laborTotals` だけ・subs は読まない・凍結値の無い期間があれば残に「＋」）。**数字だけの同じ従業員番号は1行にまとめ**（2026-09-29）、名前は空白を除いて最も長い表記＝フルネームに寄せ、所属店舗は全部並べる。フルネームに含まれない別の名前（番号が同じなのに名前が食い違う）は「別の登録名」として残す。店舗タブの「呼び出す」（`mergeStaffMatches`）は名前でまとめるので、こちらの規則とは別。上部の並びは「従業員番号順」「店舗別」「パスコード」（2026-09-30・P6a）で、最後の列「賃金」は企業のパスコードで解除するまで「••••」 |
+| `StaffPayPage` | app-admin.js | 賃金設定ページ（2026-09-30・P6a・Premium・オーナー）。スタッフタブ → 編集 → 「賃金設定を開く →」で AdminView の `fullPage={kind:"staffPay",name}` が管理者画面を差し替える（`CompanyStaffDirectory` と同じ方式）。「← 戻る」で編集モーダルを開き直す（`returnEdit` → StaffTab の `initialEditKey`）。**所属店舗のスタッフだけ**編集でき、ヘルプの人は編集モーダルで「賃金は所属店舗（◯◯）で設定します」。保存先は `shops/{sid}/private/pay/{名前}`（`applyPayRevision` を通す） |
+| `PayCodeBox / PayCodeChangeModal / PAY_OFF` | app-admin.js | 賃金の閲覧パスコード（P6a）。ボックスはスタッフタブの「スタッフ登録」の横・`StaffPayPage` の上部・企業内登録スタッフの上部（従業員番号順・店舗別の次）。解除前は金額を「••••」にして編集させない（時間と最賃の可否は伏せない）。`PAY_OFF` は pay を持たない呼び出し元の既定値 |
 | `SetTab` | app-admin.js | 設定（管理コード・属性別制限・退勤延長・Excel・期間単位・テーマ・アカウント連携） |
 | `MyPageTab` | app-admin.js | マイページ（プラン確認・アップグレード・利用規約） |
 | `TermsModal` | app-admin.js | 利用規約全文モーダル（`TERMS_TEXT` 定数を表示） |
@@ -374,8 +399,12 @@ Firebase Realtime Database
 │       │                 settings は「企業共通 → 法人」を CF が重ねた値。entityId/entityName/kind は 2026-09-30（P1）から
 │       │                 **CF（syncCompanyMirror）だけが書く**（.write:false）・読みは auth != null。
 │       │                 無い＝企業に連携していない。店舗側の企業機能（設定の重ね合わせ・提出ボタン・提出期限・所属店舗の選択肢）はこれだけを見る
-│       └── private/
-│           └── adminKey ← 管理キー（32桁）。読みはオーナー（未claim時はauth済み全員）のみ
+│       └── private/     ← 読みはオーナーのみ（配下すべて）
+│           ├── adminKey ← 管理キー（32桁）
+│           ├── pay/{名前} ← 賃金マスタ（2026-09-30・P6a）。書きもオーナーのみ・.validate で payType（monthly|hourly）と base（数値）必須。
+│           │                **給与は settings（auth != null で誰でも読める）に絶対に置かない**。期間の写しにも入れない。
+│           │                置き場は所属店舗。改名・削除の後始末は STAFF_KEYED_PRIVATE_NODES
+│           └── payCode  ← 賃金の閲覧パスコード {hash, salt, updatedAt}（P6a）。書きもオーナーのみ。企業連携店舗は CF が企業のものを同期
 ├── archived/
 │   └── shops/{shopId} ← purgeInactiveShops が退避した店舗（30日猶予後に本削除）
 ├── accounts/
@@ -392,7 +421,7 @@ Firebase Realtime Database
 ├── companies/
 │   └── {companyId}/     ← 企業アカウント（CompanyTab・企業コード＋パスワード方式。accounts/{uid}のcompanyLinkとは別系統）
 │       ├── pub          ← {name, ownerUid, shops:{shopId:true}}（連携店舗マップ）
-│       │   ├── entities/{entityId} ← 法人 {name, createdAt, settings?:{laborSettings?, staffTypeLimits?}}（2026-09-30・P1・CF だけが書く）
+│       │   ├── entities/{entityId} ← 法人 {name, createdAt, settings?:{laborSettings?, staffTypeLimits?, wageSettings?}}（2026-09-30・P1・CF だけが書く。wageSettings は P6a）
 │       │   ├── shopEntities/{shopId} ← その店舗の法人ID（無い・消えた法人なら defaultEntityId の法人）
 │       │   ├── defaultEntityId       ← 既定の法人（移行で企業名と同名の法人を作ってここに置く）
 │       │   ├── shopKinds/{shopId}    ← "hq"＝本部店舗（無ければ通常の店舗）。**正本はここ**。global/shops/{sid}/kind にも
@@ -400,6 +429,8 @@ Firebase Realtime Database
 │       │   └── config   ← 企業の共通設定の正本（2026-09-27・CF saveCompanyConfig だけが書く）
 │       │                   {settings:{laborSettings?, staffTypeLimits?}, deadlines:{期間キー:{all?, shops?:{shopId:日付}}},
 │       │                    monthlyDeadlineDays?:[日], updatedAt}
+│       ├── private/payCode ← 企業の賃金閲覧パスコード {hash, salt, updatedAt}（2026-09-30・P6a・CF setCompanyPayCode だけが書く）。
+│       │                     読みは企業uidと作成者だけ（private の他は閉じたまま）。連携全店舗の shops/{sid}/private/payCode に同じ値を書く
 │       ├── grants/{shopId}/{uid} ← claimCompanyShop が企業経由で与えたオーナー権限の台帳。
 │       │                            解除時にここに載ったuidだけを owners から外す（元からの
 │       │                            オーナーは載せない＝巻き添えにしない）。**ルールを持たない
@@ -481,9 +512,16 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              staffAliases?: {[registered]: string[]}, staffHidden?: {[name]: {from:string|null,to:string|null}[]}, periodUnit?: "2week"|"1month",
              staffHomeShop?: {[name]: shopId} }   // 所属店舗（2026-09-27。無ければ自店所属。STAFF_KEYED_SETTING_MAPS 登録済み）
 
+// 賃金マスタ（shops/{shopId}/private/pay/{名前}・2026-09-30・P6a）。1版の形は normalizePayVersion が正本
+Pay = { payType: "monthly"|"hourly", base: number,            // 月給は基本給（月）・時給は時給。社員は常に monthly
+        allowances?: {name, amount, excludeFromRate, excludeFromDeduction}[],   // 月給のみ
+        fixedOt?: {hours, amount, auto},  fixedNight?: {hours, amount},        // 月給のみ。auto なら amount は式で再計算
+        commute: {amount, per: "day"|"month"}, effectiveFrom: "YYYY-MM-DD", updatedAt: string,
+        history?: Pay[] }   // 前の版（適用開始日の昇順・読み取り専用）
+
 // 企業設定の写し（shops/{shopId}/company・2026-09-27）
 CompanyLink = { id: string, name: string, entityId?: string, entityName?: string, kind?: "shop"|"hq",   // 法人と本部（2026-09-30・P1）
-                settings: {laborSettings?, staffTypeLimits?}, deadlines: {[期間キー]: "YYYY-MM-DD"},
+                settings: {laborSettings?, staffTypeLimits?, wageSettings?: {minWage?: {from, yen}[]}}, deadlines: {[期間キー]: "YYYY-MM-DD"},
                 monthlyDeadlineDays?: number[],   // 毎月の固定締切（日付指定の無い期間に効く・2026-09-27）
                 shops: {[shopId]: 店舗名}, syncedAt: string }   // 期間キー = periodRangeKey(period) = "開始日_終了日"
 ```
@@ -523,6 +561,24 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
 - `linkStoreToCompany` は別の企業に連携中の店舗を拒否し、`createCompany` はスキップする（`otherCompanyLinksOf`＋相手企業の pub/shops で確認）
 - 本部店舗（`kind:"hq"`）は期間管理タブでスタッフ提出URLを隠し（ボタンで表示可）、企業内登録スタッフで「本部」の見出しに分かれる
 - 検証は `tests/core.test.js`（CF の規則）と `example-company-entities.js`（スタブが company-config.js をそのまま読み込む）。ルールの変更は無い
+
+### 賃金マスタ・閲覧パスコード（2026-09-30・P6a・develop のみ・ルールは dev だけ・CF は本番未反映）
+
+`労務給与_複数法人_実装計画.md` §3.7・P6a（決定 #6・#12・#17）。人ごとの時給・月給・手当を `shops/{所属店舗}/private/pay/{名前}` に持つ。
+- **購読は claim が通った店舗でだけ**（App の `ownerClaimedSid===sid`）。先に購読するとオーナーでない端末で拒否されてリスナーが外れ、
+  あとで claim が通っても戻らない。App が1つのオブジェクト `pay`（map・codeRec・unlock・save・rename・drop・changeCode…）を AdminView へ渡す
+- **パスコードの解除状態は App のメモリに持つ（計画書 §3.7 の `SS_PAY_UNLOCK`＝sessionStorage から変えた）**。sessionStorage はリロードを
+  またいで残るので、「リロードで伏せ直す」という受け入れ条件と食い違う。値は「どのパスコードで解除したか」（`payCodeIdentity`）で、
+  企業連携店舗どうし（同じコード）では解除を持ち越し、別のコードの店舗へ移ると伏せ直す。🔒・リロード・10分無操作で伏せ直す。
+  **失敗回数のロック（5回で60秒）だけは sessionStorage（`ss_payCodeLock`）**——メモリだとリロードで待ち時間を回避できるため
+- 企業連携店舗のパスコードは企業のものに統一（CF `setCompanyPayCode`・企業アカウントのカードから変更）。スタッフタブの「変更」は案内だけ。
+  連携していない店舗はクライアントが `private/payCode` を直接書く（オーナーのルール）
+- 最賃比較は法人設定 `wageSettings.minWage`（P1 の法人設定に P6a で追加。法人カードの「法人の設定」で入力）。登録が無ければ比較を出さない
+- 企業内登録スタッフの「賃金」列は解除後にだけ各所属店舗の `private/pay` を読む（企業のパスコードで解除。店舗の owners に入っている uid だけが読める）
+- ルールは新ノードだけ（`private/pay`・`private/payCode` の書き込み＝オーナー、`companies/$id/private/payCode` の読み＝企業uidと作成者）。
+  **新ノードなので本番はルールが先**（計画書 §6 冒頭）。dev は 2026-09-30 に反映し、`probe-rules-pay.js` で20項目（非オーナーの読み書き401・
+  オーナー200・形の不正401・企業の payCode 401）を実測済み
+- 検証: `tests/core.test.js`（数値・CF との一致・ドリフト検出）と `example-staff-pay.js`（スタブ・34項目・375px 含む）
 
 ### 企業連携の拡張（2026-09-27・本番反映済み: クライアント 2282f11／ルール／Cloud Functions）
 
@@ -582,6 +638,7 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
 | `linkStoreToCompany` | Callable `linkStoreToCompany` | 店舗コード（shopId / shopId.adminKey）で店舗を企業に連携 |
 | `saveCompanyConfig` | Callable `saveCompanyConfig` | 企業の共通設定（settings は丸ごと置換）と提出期限（期間ごとの差分）を保存し、連携全店舗の `shops/{sid}/company` を作り直す（2026-09-27）。検証は `functions/company-config.js`（純粋関数・テストで照合） |
 | `ensureCompanyEntities / createEntity / renameEntity / assignShopEntity / saveEntityConfig / setShopKind` | Callable | 法人の管理（2026-09-30・P1・**本番未デプロイ**）。権限は `assertCompanyMember`。保存後に写しを作り直す。規則は `functions/company-config.js` |
+| `setCompanyPayCode` | Callable | 企業の賃金閲覧パスコードの変更（2026-09-30・P6a・**本番未デプロイ**）。現在の番号を照合（未設定なら 0000）し、`companies/{id}/private/payCode` と連携全店舗の `shops/{sid}/private/payCode` に同じハッシュを書く。作成者と企業セッションの両方が可（`assertCompanyMember`）。`syncCompanyMirror` も写しを作り直すたびに企業のパスコードを同期する（後から連携した店舗に届く） |
 | `claimCompanyShop` | Callable `claimCompanyShop` | 連携済み店舗のオーナーに**呼び出し元のuid**を登録（企業連携タブの「ログイン」で管理コードの再入力を無くす。付与は `companies/{id}/grants/{shopId}/{uid}` に記録し、解除時に回収する） |
 | `unlinkStoreFromCompany` | Callable `unlinkStoreFromCompany` | 店舗の企業連携を解除（企業uid＋`grants` の付与uidを owners から外す） |
 
