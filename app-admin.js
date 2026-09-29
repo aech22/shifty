@@ -8,7 +8,9 @@
 // ============================================================
 // 人×月の所定（shops/{sid}/laborMonths・P3）を持たないとき（オーナーでない端末・一括PDFの非表示マウント）の既定
 const LABOR_MONTHS_OFF={enabled:false,loaded:false,map:{},save:()=>Promise.resolve(),rename:()=>{},drop:()=>{}};
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin,onCompanyCall,pay:payProp=null,laborMonths:lmProp=null}){
+// 実績（shops/{sid}/actuals・P4）を持たないとき（オーナーでない端末・一括PDFの非表示マウント）の既定
+const ACTUALS_OFF={enabled:false,loaded:false,map:{},save:()=>Promise.resolve(),rename:()=>{},drop:()=>{},csvMapping:null,saveCsvMapping:null};
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin,onCompanyCall,pay:payProp=null,laborMonths:lmProp,actuals:actProp=null}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   // 管理者画面の中身を丸ごと差し替える全画面ビュー。null＝通常のタブ表示。
   // {kind:"companyStaff"}＝企業内登録スタッフ（2026-09-28）／{kind:"staffPay",name}＝賃金設定（2026-09-30・P6a）
@@ -17,6 +19,8 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
   const[returnEdit,setReturnEdit]=useState(null);
   const pay=payProp||PAY_OFF;
   const lm=lmProp||LABOR_MONTHS_OFF;
+  // 実績（P4）。CSV取込の列の位置は店舗の設定（settings.actualsCsv）に持つ＝現在の設定から読み書きする（確定済み期間の写しではない）
+  const act=actProp?{...actProp,csvMapping:actualsCsvMappingOf(settings),saveCsvMapping:m=>saveSettings({...settings,actualsCsv:m})}:ACTUALS_OFF;
   // 所属店舗の選択肢。企業の写しが持つ連携店舗の一覧を優先し、この端末が知っている店舗（allLinkedShops）で補う。
   // 企業の作成者でも企業ログインでもない端末（Cookie・管理コードで追加した端末）は allLinkedShops を持たないため。
   const homeShopChoices=(()=>{
@@ -229,7 +233,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         </div>}
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} isHqShop={isHqShop}/>}
         {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name||""} linkedShops={homeShopChoices} companyShops={Object.entries((companyLink&&companyLink.shops)||{}).filter(([id])=>id&&id!==currentShopId).map(([id,nm])=>({id,name:nm||id}))}
-          pay={pay} laborMonths={lm} companyLinked={!!companyLink} onOpenPay={n=>setFullPage({kind:"staffPay",name:n})} initialEditKey={returnEdit} onInitialEditConsumed={()=>setReturnEdit(null)} onRenameStaff={(oldName,newName)=>{
+          pay={pay} laborMonths={lm} actuals={act} companyLinked={!!companyLink} onOpenPay={n=>setFullPage({kind:"staffPay",name:n})} initialEditKey={returnEdit} onInitialEditConsumed={()=>setReturnEdit(null)} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
@@ -241,6 +245,8 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           pay.rename(oldName,newName);
           // 人×月の所定（shops/{sid}/laborMonths/{月}/{名前}）も名前がキーなので移す（STAFF_KEYED_MONTH_NODES・P3）
           lm.rename(oldName,newName);
+          // 実績（shops/{sid}/actuals/{期間ID}/{名前}）も名前がキーなので移す（STAFF_KEYED_PERIOD_NODES・P4）
+          act.rename(oldName,newName);
           // 確定済み期間の写し（period.snapshot）も同時に改名する。上で sub.staffName を全期間ぶん
           // 書き換えるため、写しだけ旧名で残るとシフト作成タブ・Excel・PDF がその人のsubを引けなくなる。
           if(savePeriods){
@@ -251,7 +257,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} tt={tt} plan={plan} periods={periods}/>}
         {tab==="submissions"&&<SubsTab key={currentShopId} subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
-        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} companyLink={companyLink} companyInfo={companyInfo} laborMonths={lm}/>}
+        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} companyLink={companyLink} companyInfo={companyInfo} laborMonths={lm} actuals={act}/>}
         {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany} plan={plan} onSaveCompanyConfig={onSaveCompanyConfig} onCompanyLogin={onCompanyLogin} onCompanyCall={onCompanyCall} onOpenCompanyStaff={()=>setFullPage({kind:"companyStaff"})}/>}
         {tab==="mypage"&&!hideMypage&&<MyPageTab plan={plan} planExpiry={planExpiry} billingSchedule={billingSchedule} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
         {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} adminCode={adminCode} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
@@ -424,10 +430,248 @@ function GridLegend({abbrToShop,shopName}){
   );
 }
 
+// ===== 実績の入力（2026-09-30・P4・計画書 §3.6）=====
+// シフト作成タブの「実績」切替で出す。確定済みの期間だけ（確定シフトが実績の初期値になるため）。
+// セルには実績（無い日は確定シフト）を出し、確定シフトと違う日だけを shops/{sid}/actuals に保存して色を付ける。
+// 出勤・退勤はセルで直接直し、休憩・欠勤・遅刻早退・法定休日・メモはセルを選ぶと出る欄で入れる。
+// 確定ロック中でも書ける（actuals は subs と別ノードで、ルールもオーナーだけ）。
+const ACT_DIFF_BG="rgba(248,112,54,.14)";
+function ActualsGrid({period,dates,staff,subOf,settings,act,tt,subs}){
+  const pid=period.id;
+  const[edits,setEdits]=useState({});   // "名前|日付|start|end" → 入力中の文字列（blur で確定）
+  const[sel,setSel]=useState(null);     // {name,date}
+  const[form,setForm]=useState(null);   // 詳細欄の入力
+  const[csvOpen,setCsvOpen]=useState(false);
+  const busy=!act.loaded;
+  const recOf=(n,d)=>actualOf(act.map,pid,n,d);
+  const dayOf=(n,d)=>resolveActualDay(subOf(n),recOf(n,d),d,settings,n);
+  const schedOf=(n,d)=>scheduledDay(subOf(n),d,settings,n);
+  const fmtD=d=>{const x=pd(d);return`${x.getMonth()+1}/${x.getDate()}(${WD[x.getDay()]})`;};
+  const clk=m=>m==null?"":minToClock(m);
+  const cellValue=(n,d,f)=>{const r=dayOf(n,d);if(r.absent)return"";return clk(f==="start"?r.startMin:r.endMin);};
+  const entryFromRec=rec=>({start:(rec&&rec.start)||"",end:(rec&&rec.end)||"",breakMin:rec&&rec.breakMin!=null?String(rec.breakMin):"",
+    absent:!!(rec&&rec.absent),absentMin:rec&&rec.absentMin!=null?String(rec.absentMin):"",legalHoliday:!!(rec&&rec.legalHoliday),note:(rec&&rec.note)||""});
+  const save=(n,d,entry,okMsg)=>{
+    const r=planActualEdit({periodId:pid,name:n,date:d,entry,sub:subOf(n),settings});
+    if(r.error){tt("▲ "+r.error);return false;}
+    act.save(r.patch).then(()=>{if(okMsg)tt(okMsg);}).catch(()=>{});
+    return true;
+  };
+  const openDetail=(n,d)=>{
+    if(sel&&sel.name===n&&sel.date===d)return;
+    const rec=recOf(n,d);const r=dayOf(n,d);
+    setSel({name:n,date:d});
+    setForm({...entryFromRec(rec),start:r.absent?"":clk(r.startMin),end:r.absent?"":clk(r.endMin)});
+  };
+  // セルの出勤・退勤の確定。空欄にすると確定シフトの値に戻す。欠勤の日に時刻を入れると欠勤を外す
+  const commitCell=(n,d,f)=>{
+    const k=`${n}|${d}|${f}`;
+    if(!(k in edits))return;
+    const v=String(edits[k]).trim();
+    setEdits(p=>{const q={...p};delete q[k];return q;});
+    if(v===cellValue(n,d,f))return;
+    const e={...entryFromRec(recOf(n,d)),absent:false};
+    e[f]=v;
+    if(save(n,d,e)&&sel&&sel.name===n&&sel.date===d)setForm(fm=>fm&&{...fm,[f]:parseClockInput(v)||v,absent:false});
+  };
+  const submitForm=()=>{
+    if(!sel||!form)return;
+    if(save(sel.name,sel.date,form,"✓ 実績を保存しました")){setSel(null);setForm(null);}
+  };
+  const resetDay=()=>{
+    if(!sel)return;
+    if(save(sel.name,sel.date,null,"✓ 確定シフトに戻しました")){setSel(null);setForm(null);}
+  };
+  const diffCount=Object.values((act.map&&act.map[pid])||{}).reduce((a,m)=>a+(m&&typeof m==="object"?Object.keys(m).length:0),0);
+  const sumOf=n=>dates.reduce((a,d)=>{const r=dayOf(n,d);a.act+=r.workMin;a.sch+=r.scheduledWorkMin;return a;},{act:0,sch:0});
+  // 詳細欄の見込み（保存前）
+  const preview=(()=>{
+    if(!sel||!form)return null;
+    const pl=planActualEdit({periodId:pid,name:sel.name,date:sel.date,entry:form,sub:subOf(sel.name),settings});
+    if(pl.error)return{error:pl.error};
+    return{day:resolveActualDay(subOf(sel.name),pl.record,sel.date,settings,sel.name)};
+  })();
+  const selSched=sel?schedOf(sel.name,sel.date):null;
+  const autoBreak=(()=>{
+    if(!sel||!form)return null;
+    const pl=planActualEdit({periodId:pid,name:sel.name,date:sel.date,entry:{...form,breakMin:""},sub:subOf(sel.name),settings});
+    return pl.error?null:resolveActualDay(subOf(sel.name),pl.record,sel.date,settings,sel.name).breakMin;
+  })();
+  const BDc="1px solid var(--c-border)";
+  const thS={padding:"4px 6px",borderBottom:BDc,borderRight:BDc,background:"var(--c-card)",fontSize:12,fontWeight:700,color:"var(--c-text2)",whiteSpace:"nowrap"};
+  const lbl={fontSize:12,color:"var(--c-text3)",display:"flex",flexDirection:"column",gap:2};
+  const inS={...AI,width:96,padding:"6px 8px"};
+  return(
+    <div data-actuals="1">
+      <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:8}}>
+        <span style={{fontSize:14,fontWeight:700}}>実績</span>
+        <span style={{fontSize:12,color:"var(--c-text3)"}}>確定シフトを初期値に出しています。予定と違う日だけが保存され、色が付きます（空欄にすると予定に戻ります）。</span>
+        <span data-actuals-count={diffCount} style={{fontSize:12,color:"var(--c-text2)"}}>予定と違う日 {diffCount}件</span>
+        <span style={{flex:1}}/>
+        <button data-actuals-csv-open="1" disabled={busy} onClick={()=>setCsvOpen(true)} style={{...AGray,padding:"5px 12px",fontSize:12}}>CSV取込</button>
+      </div>
+      {busy&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8}}>実績を読み込み中です…</div>}
+      {sel&&form&&(
+        <div data-actuals-detail={`${sel.name}|${sel.date}`} style={{border:"1px solid var(--c-border2)",borderRadius:8,padding:"10px 12px",marginBottom:10,background:"var(--c-card)"}}>
+          <div style={{display:"flex",alignItems:"baseline",gap:10,flexWrap:"wrap",marginBottom:8}}>
+            <span style={{fontSize:14,fontWeight:700}}>{sel.name} {fmtD(sel.date)}</span>
+            <span data-actuals-sched="1" style={{fontSize:12,color:"var(--c-text3)"}}>
+              予定: {selSched.startMin!=null?`${clk(selSched.startMin)}〜${clk(selSched.endMin)}・休憩${selSched.breakMin}分`:"なし（休み）"}
+              {selSched.extraMin>0?`・締 ${selSched.segments.filter(s=>s.extra).map(s=>clk(s.startMin)+"〜"+clk(s.endMin)).join("")}（出勤・退勤とは別に数えます）`:""}
+              ・実働{fmtMin(selSched.workMin)}
+            </span>
+          </div>
+          <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"flex-end"}}>
+            <label style={lbl}>出勤<input data-actuals-f-start="1" value={form.start} disabled={form.absent} onChange={e=>setForm({...form,start:e.target.value})} placeholder="9:30" style={inS}/></label>
+            <label style={lbl}>退勤<input data-actuals-f-end="1" value={form.end} disabled={form.absent} onChange={e=>setForm({...form,end:e.target.value})} placeholder="25:00" style={inS}/></label>
+            <label style={lbl}>休憩（分）<input data-actuals-f-break="1" value={form.breakMin} disabled={form.absent} inputMode="numeric" onChange={e=>setForm({...form,breakMin:e.target.value})}
+              placeholder={autoBreak!=null?`自動 ${autoBreak}`:"自動"} style={inS}/></label>
+            <label style={lbl}>遅刻・早退（分）<input data-actuals-f-absentmin="1" value={form.absentMin} inputMode="numeric" onChange={e=>setForm({...form,absentMin:e.target.value})} placeholder="0" style={inS}/></label>
+            <label style={{...lbl,flexDirection:"row",alignItems:"center",gap:6,fontSize:13,color:"var(--c-text2)",minHeight:40}}>
+              <input data-actuals-f-absent="1" type="checkbox" checked={form.absent} onChange={e=>setForm({...form,absent:e.target.checked})} style={{width:18,height:18}}/>欠勤</label>
+            <label style={{...lbl,flexDirection:"row",alignItems:"center",gap:6,fontSize:13,color:"var(--c-text2)",minHeight:40}}>
+              <input data-actuals-f-legal="1" type="checkbox" checked={form.legalHoliday} disabled={form.absent} onChange={e=>setForm({...form,legalHoliday:e.target.checked})} style={{width:18,height:18}}/>法定休日の労働</label>
+            <label style={{...lbl,flex:"1 1 180px"}}>メモ<input data-actuals-f-note="1" value={form.note} maxLength={ACTUAL_NOTE_MAX} onChange={e=>setForm({...form,note:e.target.value})} style={{...AI,padding:"6px 8px"}}/></label>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginTop:10}}>
+            <button data-actuals-save="1" onClick={submitForm} style={{...AB,padding:"6px 14px",fontSize:13}}>保存</button>
+            <button data-actuals-reset="1" onClick={resetDay} style={{...AGray,padding:"6px 12px",fontSize:13}}>予定に戻す</button>
+            <button onClick={()=>{setSel(null);setForm(null);}} style={{...AGray,padding:"6px 12px",fontSize:13}}>閉じる</button>
+            <span data-actuals-preview="1" style={{fontSize:12,color:preview&&preview.error?"var(--c-danger)":"var(--c-text2)"}}>
+              {preview&&(preview.error?preview.error:preview.day.absent?`欠勤（不就労 ${fmtMin(preview.day.absentMin)}）`
+                :`実働 ${fmtMin(preview.day.workMin)}（予定との差 ${fmtSignedMin(preview.day.workMin-preview.day.scheduledWorkMin)}）`)}
+            </span>
+          </div>
+        </div>
+      )}
+      <div style={{overflow:"auto",maxHeight:"70vh",border:BDc,borderRadius:8}}>
+        <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
+          <thead>
+            <tr>
+              <th rowSpan={2} style={{...thS,position:"sticky",left:0,top:0,zIndex:3}}>日付</th>
+              {staff.map(n=><th key={n} colSpan={2} style={{...thS,position:"sticky",top:0,zIndex:2,textAlign:"center"}}>{n}</th>)}
+            </tr>
+            <tr>
+              {staff.map(n=><React.Fragment key={n}>
+                <th style={{...thS,position:"sticky",top:25,zIndex:2,fontWeight:500,fontSize:11}}>出勤</th>
+                <th style={{...thS,position:"sticky",top:25,zIndex:2,fontWeight:500,fontSize:11}}>退勤</th>
+              </React.Fragment>)}
+            </tr>
+          </thead>
+          <tbody>
+            {dates.map(d=>{
+              const dow=pd(d).getDay();const red=dow===0||isHoliday(d);
+              return(
+                <tr key={d}>
+                  <td style={{...thS,position:"sticky",left:0,zIndex:1,fontWeight:600,color:red?"#DC2626":dow===6?"#1D4ED8":"var(--c-text2)"}}>{fmtD(d)}</td>
+                  {staff.map(n=>{
+                    const rec=recOf(n,d);const r=dayOf(n,d);
+                    const isSel=!!(sel&&sel.name===n&&sel.date===d);
+                    const title=[rec?"予定と違う日":"予定どおり",r.absent?`欠勤（不就労 ${fmtMin(r.absentMin)}）`:`実働 ${fmtMin(r.workMin)}・休憩${r.breakMin}分`,
+                      r.absentMin&&!r.absent?`遅刻・早退 ${r.absentMin}分`:"",r.isLegalHoliday?"法定休日の労働":"",r.note?`メモ: ${r.note}`:""].filter(Boolean).join("／");
+                    return(<React.Fragment key={n}>{["start","end"].map(f=>{
+                      const k=`${n}|${d}|${f}`;
+                      return(
+                        <td key={f} data-actual-td={k} data-actual-diff={rec?"1":"0"} title={title}
+                          style={{borderBottom:BDc,borderRight:f==="end"?BDc:"none",padding:0,position:"relative",
+                            background:rec?ACT_DIFF_BG:"transparent",outline:isSel?"2px solid var(--c-accent)":"none",outlineOffset:-2}}>
+                          <input data-actual-cell={k} value={k in edits?edits[k]:cellValue(n,d,f)} readOnly={busy}
+                            placeholder={r.absent&&f==="start"?"欠勤":""}
+                            onFocus={()=>openDetail(n,d)} onChange={e=>setEdits(p=>({...p,[k]:e.target.value}))}
+                            onBlur={()=>commitCell(n,d,f)} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+                            style={{width:62,padding:"5px 2px",border:"none",background:"transparent",color:"var(--c-text)",fontSize:16,
+                              fontWeight:rec?700:400,textAlign:"center",outline:"none"}}/>
+                          {f==="end"&&(r.isLegalHoliday||r.note)&&<span aria-hidden="true" style={{position:"absolute",top:1,right:2,fontSize:9,color:"var(--c-text3)",pointerEvents:"none"}}>{r.isLegalHoliday?"法":"＊"}</span>}
+                        </td>
+                      );
+                    })}</React.Fragment>);
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr>
+              <td style={{...thS,position:"sticky",left:0,bottom:0,zIndex:2}}>実働計</td>
+              {staff.map(n=>{const s=sumOf(n);return(
+                <td key={n} colSpan={2} data-actual-sum={n} style={{...thS,position:"sticky",bottom:0,zIndex:1,textAlign:"center",fontWeight:700}}>
+                  {fmtMin(s.act)}<div style={{fontSize:10,fontWeight:400,color:"var(--c-text3)"}}>予定 {fmtMin(s.sch)}</div>
+                </td>);})}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {csvOpen&&<ActualsCsvDialog period={period} staff={staff} subs={subs} settings={settings} act={act} tt={tt} onClose={()=>setCsvOpen(false)}/>}
+    </div>
+  );
+}
+// 実績の CSV 取込（P4 後半）。打刻機の形式が決まっていないので列の位置を選べるようにし、店舗設定に覚える。
+// 取り込む先は選択中の期間だけで、名前は別名解決を通す。取り込めない行は理由つきで一覧に出す
+function ActualsCsvDialog({period,staff,subs,settings,act,tt,onClose}){
+  const[text,setText]=useState("");
+  const[enc,setEnc]=useState("Shift_JIS");
+  const[mp,setMp]=useState(()=>act.csvMapping||DEFAULT_ACTUALS_CSV_MAPPING);
+  const plan=useMemo(()=>text.trim()?planActualsImport({text,mapping:mp,period,staffList:staff,subs,settings,actuals:act.map}):null,[text,mp,period,staff,subs,settings,act.map]);
+  const readFile=f=>{
+    if(!f)return;
+    const fr=new FileReader();
+    fr.onload=()=>setText(String(fr.result||""));
+    fr.onerror=()=>tt("▲ ファイルを読めませんでした");
+    fr.readAsText(f,enc);
+  };
+  const doImport=()=>{
+    if(!plan||!plan.applied)return;
+    if(!confirm(`${plan.applied}件の実績を取り込みますか？\n同じ人・同じ日に入っている実績の出勤・退勤・休憩は上書きされます。`))return;
+    act.save(plan.patch).then(()=>{
+      tt(`✓ ${plan.applied}件の実績を取り込みました`);
+      const cur=act.csvMapping||DEFAULT_ACTUALS_CSV_MAPPING;
+      if(act.saveCsvMapping&&JSON.stringify(cur)!==JSON.stringify(mp))act.saveCsvMapping(mp);
+      onClose();
+    }).catch(()=>{});
+  };
+  const bad=plan?plan.rows.filter(r=>!r.ok):[];
+  return(
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9998,padding:16}}>
+      <div data-actuals-csv="1" onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:"20px 18px",width:"100%",maxWidth:560,maxHeight:"90vh",overflow:"auto",boxShadow:"0 8px 32px var(--c-shadow)"}}>
+        <div style={{fontSize:16,fontWeight:700,marginBottom:4}}>実績のCSV取込</div>
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12}}>{period.label||`${period.startDate}〜${period.endDate}`}に取り込みます。1行＝1人1日（日付・名前・出勤・退勤・休憩）。名前は別名でも登録名に寄せます。</div>
+        <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",marginBottom:8}}>
+          <input data-actuals-csv-file="1" type="file" accept=".csv,.txt,text/csv,text/plain" onChange={e=>readFile(e.target.files&&e.target.files[0])} style={{fontSize:16}}/>
+          <select value={enc} onChange={e=>setEnc(e.target.value)} style={{fontSize:16,padding:"4px 8px",border:"1px solid var(--c-border2)",borderRadius:4,background:"var(--c-input)",color:"var(--c-text)"}}>
+            <option value="Shift_JIS">Shift_JIS（Excel の既定）</option>
+            <option value="UTF-8">UTF-8</option>
+          </select>
+        </div>
+        <textarea data-actuals-csv-text="1" value={text} onChange={e=>setText(e.target.value)} rows={6} placeholder={"日付,名前,出勤,退勤,休憩\n2026-11-02,田中,9:58,18:05,60"}
+          style={{...AI,fontFamily:"monospace",resize:"vertical",marginBottom:10}}/>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end",marginBottom:10}}>
+          {ACTUALS_CSV_FIELDS.map(f=>(
+            <label key={f} style={{fontSize:12,color:"var(--c-text3)",display:"flex",flexDirection:"column",gap:2}}>{ACTUALS_CSV_FIELD_LABELS[f]}の列
+              <input data-actuals-csv-col={f} type="number" min={0} max={50} inputMode="numeric" value={mp[f]} onChange={e=>setMp({...mp,[f]:Math.max(0,Math.min(50,Number(e.target.value)||0))})}
+                style={{...AI,width:72,padding:"5px 6px"}}/></label>
+          ))}
+          <label style={{fontSize:13,color:"var(--c-text2)",display:"flex",alignItems:"center",gap:6,minHeight:40}}>
+            <input data-actuals-csv-header="1" type="checkbox" checked={mp.hasHeader} onChange={e=>setMp({...mp,hasHeader:e.target.checked})} style={{width:18,height:18}}/>1行目は見出し</label>
+        </div>
+        <div style={{fontSize:11,color:"var(--c-text3)",marginBottom:10}}>列は左から 1, 2, 3…。0 は使わない列（休憩を 0 にすると休憩は自動）。</div>
+        {plan&&<div data-actuals-csv-summary={`${plan.applied}/${bad.length}`} style={{fontSize:13,marginBottom:6}}>取り込める行 {plan.applied}件・取り込めない行 {bad.length}件</div>}
+        {bad.length>0&&<div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7,maxHeight:140,overflow:"auto",marginBottom:10}}>
+          {bad.slice(0,50).map(r=><div key={r.line}>{r.line}行目: {r.name||"（名前なし）"} {r.date||""} — {r.reason}</div>)}
+          {bad.length>50&&<div>ほか{bad.length-50}行</div>}
+        </div>}
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+          <button onClick={onClose} style={{...AGray,padding:"8px 14px",fontSize:13}}>キャンセル</button>
+          <button data-actuals-csv-import="1" disabled={!plan||!plan.applied} onClick={doImport} style={{...AB,padding:"8px 14px",fontSize:13,opacity:plan&&plan.applied?1:0.5}}>取り込む</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // staffList/settings を props 名のまま受けないのは、このタブだけが「選択中の期間が終了済みなら
 // その期間の写し(period.snapshot)を使う」＝他タブと違う値で動くため。以降の本文が参照する
 // staffList/settings は解決後の値で、写しの更新にだけ生の staffListProp/settingsProp を使う。
-function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:settingsProp,plan,shopId,shopName,onUpgrade,allLinkedShops=[],onLoadPastSubs,pastSubsLoaded=false,savePeriods,ownerReadOnly=false,companyLink=null,companyInfo=null,laborMonths:lm=LABOR_MONTHS_OFF,initialPeriodId="",exportJob=null}){
+function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:settingsProp,plan,shopId,shopName,onUpgrade,allLinkedShops=[],onLoadPastSubs,pastSubsLoaded=false,savePeriods,ownerReadOnly=false,companyLink=null,companyInfo=null,laborMonths:lm=LABOR_MONTHS_OFF,actuals:act=ACTUALS_OFF,initialPeriodId="",exportJob=null}){
   // 直近3ヶ月より古い期間があり、まだ過去分未読なら「過去参照」ボタンを出す（古い期間のシフトを見るため）
   const hasOlderPeriods=periods.some(p=>p&&p.startDate&&p.startDate<subsWindowCutoff());
   const firstPid=(periods[0]||{}).id||"";
@@ -577,6 +821,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // セルは編集できた）。スタッフの再提出はルール（database.rules.json の subs）が止める。
   const periodConfirmed=isPeriodConfirmed(period);
   const canEditCells=isPremium&&!periodConfirmed;
+  // 実績（P4）の切替は確定済みの期間だけ（確定シフトを初期値にするため）。オーナーの端末だけが actuals を読み書きできる
+  const[actualMode,setActualMode]=useState(false);
+  const canActuals=!!period&&periodConfirmed&&isPremium&&!ownerReadOnly&&act.enabled;
+  const showActuals=canActuals&&actualMode;
   // 最新の subs（確定の集計は、未確定のセルを flush した後の値で行う）
   const subsRef=useRef(subs);subsRef.current=subs;
   // 期間が生きている間はシフト作成タブを開くたびに写しを最新化し、最終日を超えたら更新を止める＝そこで凍結。
@@ -2739,7 +2987,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       {cellTip&&<div style={{position:"fixed",left:cellTip.x,top:cellTip.y-26,transform:"translateX(-50%)",background:"rgba(30,30,30,0.82)",color:"#fff",fontSize:11,fontWeight:600,padding:"2px 7px",borderRadius:8,pointerEvents:"none",zIndex:9999,whiteSpace:"nowrap",backdropFilter:"blur(4px)"}}>{cellTip.value}</div>}
       <div style={{marginBottom:10,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         <span style={{fontWeight:700,fontSize:15}}>シフト作成</span>
-        <select value={selPid} onChange={e=>{setSelPid(e.target.value);setLocalEdits({});setHeatEdits({});setFocusKey(null);}}
+        <select value={selPid} onChange={e=>{setSelPid(e.target.value);setLocalEdits({});setHeatEdits({});setFocusKey(null);setActualMode(false);}}
           style={{fontSize:16,padding:"4px 8px",border:BD,borderRadius:4,background:"var(--c-input)",color:"var(--c-text)"}}>
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
         </select>
@@ -2758,6 +3006,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           :<button data-period-confirm="1" onClick={confirmPeriod}
               style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>確定</button>
         )}
+        {canActuals&&<button data-actual-toggle={actualMode?"on":"off"} onClick={()=>setActualMode(v=>!v)}
+          style={{padding:"5px 10px",background:actualMode?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+          {actualMode?"シフト表示に戻る":"実績"}
+        </button>}
         {!showLaborTable&&pastSubsBtn}
         {/* 入力例の案内は 2026-09-23 のユーザー指示で削除（操作方法はタブ最下部のレジェンドにある）。
             span 自体は flex:1 の伸び代として残す＝これを外すと右側のボタン群が左へ寄る。 */}
@@ -2909,7 +3161,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         </div>
       )}
 
-      {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:(
+      {!period?<div style={{color:"var(--c-text3)"}}>期間を選択してください</div>:showActuals?(
+        <ActualsGrid period={period} dates={dates} staff={realStaff} subOf={_getSub} settings={settings} act={act} tt={tt} subs={subs}/>
+      ):(
         <div style={useBreakout?{marginLeft:-(containerLeft+8),width:viewW,paddingLeft:8,paddingRight:8,boxSizing:"border-box",display:hasPanel?"flex":"block",justifyContent:fitsCentered?"center":"flex-start",alignItems:"flex-start",gap:4}:{}}>
 
           {/* === 左パネル: キッチン熱マップ（通常表示+split時、またはキッチン絞り込み時） === */}
@@ -3694,7 +3948,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
 
 // ===== スタッフ登録タブ =====
 function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods,ownerReadOnly=false,shopId="",shopName="",linkedShops=[],companyShops=[],
-  pay=PAY_OFF,laborMonths:lm=LABOR_MONTHS_OFF,companyLinked=false,onOpenPay,initialEditKey=null,onInitialEditConsumed}){
+  pay=PAY_OFF,laborMonths:lm=LABOR_MONTHS_OFF,actuals:act=ACTUALS_OFF,companyLinked=false,onOpenPay,initialEditKey=null,onInitialEditConsumed}){
   const[newName,setNewName]=useState("");
   // 削除確認ポップアップ。対象は index ではなく「スタッフ名」で持つ（下のコメントと同じ理由）。
   const[delTarget,setDelTarget]=useState(null);
@@ -4072,7 +4326,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     // 賃金も同じタイミングで消す（private/pay・P6a）。購読が届く前は何も消さず、届いたら（pay.map の変化で）もう一度通る
     pay.drop(expiredRetained.map(r=>r.name));
     lm.drop(expiredRetained.map(r=>r.name)); // 人×月の所定（laborMonths・P3）も同じ
-  },[expiredRetained,ownerReadOnly,settings,pay.map,lm.map]);
+    act.drop(expiredRetained.map(r=>r.name)); // 実績（actuals・P4）も同じ
+  },[expiredRetained,ownerReadOnly,settings,pay.map,lm.map,act.map]);
   // スタッフ一覧に描く行の並び。実スタッフは staffList の index をそのまま持たせる
   // （ドラッグ・編集・削除は従来どおり staffList の index で動くため、意味を一切変えない）。
   // **並びはシフト作成グリッドと同じ関数（mergeKeepStaff）に決めさせる**。ここで独自に
@@ -4182,6 +4437,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
       if(ns)onSaveSettings(ns);
       pay.drop([n]); // 賃金（private/pay・P6a）も同じ条件で消す
       lm.drop([n]); // 人×月の所定（laborMonths・P3）も同じ条件で消す
+      act.drop([n]); // 実績（actuals・P4）も同じ条件で消す
     }
     setDelTarget(null);
     const kept=keepIds.size;

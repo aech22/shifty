@@ -1220,6 +1220,33 @@ function App(){
     const d=dropStaffFromLaborMonths(laborMonths,names);
     if(d&&firebaseDB)fbUpd(`shops/${sid}/laborMonths`,d).catch(e=>console.warn("所定の削除に失敗:",e));
   };
+  // ===== 実績（2026-09-30・§3.6・P4）=====
+  // shops/{sid}/actuals/{期間ID}/{名前}/{日付} も owners しか読めない（実労働は個人の労働条件）。所定と同じく
+  // **claim が通った店舗でだけ購読する**。確定シフトと違う日だけを持つので、店舗全体を1本で購読しても小さい。
+  const[actuals,setActuals]=useState({});
+  const[actualsLoaded,setActualsLoaded]=useState(false);
+  useEffect(()=>{
+    setActuals({});setActualsLoaded(false);
+    if(!firebaseDB||DEMO_MODE||urlLocked||view!=="admin"||!sid||sid==="default"||ownerClaimedSid!==sid)return;
+    const r=firebaseDB.ref(`shops/${sid}/actuals`);
+    const c=r.on("value",s=>{setActuals(s.val()||{});setActualsLoaded(true);},e=>console.warn("実績の購読に失敗:",e));
+    return()=>r.off("value",c);
+  },[sid,view,urlLocked,ownerClaimedSid]);
+  // 差分（{"期間ID/名前/日付": 記録 | null}）を update で書く。全体 set() はしない
+  const saveActuals=patch=>{
+    if(!patch||!Object.keys(patch).length)return Promise.resolve();
+    if(!firebaseDB||!sid||sid==="default")return Promise.reject(new Error("店舗がありません"));
+    return fbUpd(`shops/${sid}/actuals`,patch).catch(e=>{console.warn("実績の保存に失敗:",e);tt("△ 実績を保存できませんでした");throw e;});
+  };
+  // 改名・削除の後始末（STAFF_KEYED_PERIOD_NODES）。購読していない端末（オーナーでない）は何もしない
+  const renameActuals=(oldName,newName)=>{
+    const d=renameStaffInActuals(actuals,oldName,newName);
+    if(d&&firebaseDB)fbUpd(`shops/${sid}/actuals`,d).catch(e=>console.warn("実績の改名に失敗:",e));
+  };
+  const dropActuals=names=>{
+    const d=dropStaffFromActuals(actuals,names);
+    if(d&&firebaseDB)fbUpd(`shops/${sid}/actuals`,d).catch(e=>console.warn("実績の削除に失敗:",e));
+  };
   // 解除状態は **App のメモリに持つ**（sessionStorage に置くとリロードをまたいで残り、「リロードで伏せ直す」と
   // 食い違うため。計画書 §3.7 の SS_PAY_UNLOCK から変えた）。値はどのパスコードで解除したか（payCodeIdentity）で、
   // 同じコードの店舗（企業連携店舗どうし）では解除を持ち越し、別のコードの店舗へ移ると伏せ直す。
@@ -1373,6 +1400,8 @@ function App(){
     const deletedIds=deletedPeriods.map(p=>p.id);
     if(deletedIds.length>0&&firebaseDB&&!DEMO_MODE){
       deletedPeriods.forEach(p=>{ if(p.urlToken) firebaseDB.ref(`tokens/${p.urlToken}`).remove().catch(()=>{}); });
+      // 実績（P4）は期間IDがキーなので期間と一緒に消す（オーナーだけが書ける。拒否されても期間の削除は止めない）
+      deletedPeriods.forEach(p=>{ firebaseDB.ref(`shops/${sid}/actuals/${p.id}`).remove().catch(()=>{}); });
       const newSubs=subs.filter(s=>!deletedIds.includes(s.periodId));
       setSubs(newSubs); ls(storeKey(sid,"subs_v6"),newSubs);
       firebaseDB.ref(fbPath(sid,"subs")).once("value").then(snap=>{
@@ -1824,6 +1853,8 @@ function App(){
                 save:savePay,rename:renamePay,drop:dropPay,changeCode:changeShopPayCode}}
               laborMonths={{enabled:!ownerReadOnly&&ownerClaimedSid===sid,loaded:laborMonthsLoaded,map:laborMonths,
                 save:saveLaborMonths,rename:renameLaborMonths,drop:dropLaborMonths}}
+              actuals={{enabled:!ownerReadOnly&&ownerClaimedSid===sid,loaded:actualsLoaded,map:actuals,
+                save:saveActuals,rename:renameActuals,drop:dropActuals}}
               onRememberAdminKey={rememberAdminKey} onClaimShop={claimOwnership}
               plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed} billingSchedule={billingSchedule} billingExempt={billingExempt} companyLink={companyLink}
               setCurrentShopId={id=>{
