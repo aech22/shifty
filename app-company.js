@@ -157,7 +157,9 @@ function StaffPayPage({name,settings,shopId,shopName,homeShopName,companyLink,pa
               style={{padding:"7px 14px",borderRadius:8,fontSize:13,fontWeight:700,cursor:unlocked?"pointer":"default",background:d.payType===t?"var(--c-accent)":"var(--c-input)",color:d.payType===t?"#fff":"var(--c-text2)",border:`1px solid ${d.payType===t?"var(--c-accent)":"var(--c-border)"}`}}>{PAY_TYPE_LABELS[t]}</button>))}
         {!monthly&&<>
           {row("時給（円）",yenInput(d.base,v=>up({base:v}),"時給"))}
-          {row("割増率",<span style={{fontSize:13,color:"var(--c-text2)"}}>時間外 25%・深夜 25%・法定休日 35%・月60時間超 50%（法定の率）</span>,"率はこの画面では変えません。")}
+          {row("割増率",(()=>{const r=premiumRatesOf(coSet.wageSettings);const legal=PREMIUM_RATE_KEYS.every(k=>r[k]===LEGAL_PREMIUM_RATES[k]);
+            return<span data-pay-rates="1" style={{fontSize:13,color:"var(--c-text2)"}}>時間外 {r.ot}%・深夜 {r.night}%・法定休日 {r.holiday}%・月60時間超 {r.ot+r.over60}%（{legal?"法定の率":"法人の設定"}）</span>;})(),
+            "率はこの画面では変えません（企業連携タブの法人の設定で上乗せできます）。")}
         </>}
         {monthly&&<>
           {row("基本給（円・月）",yenInput(d.base,v=>up({base:v}),"基本給"))}

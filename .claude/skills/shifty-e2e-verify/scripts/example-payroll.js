@@ -14,7 +14,8 @@
 //  A. 自店（連携なし・Premium・オーナー）: スタッフタブの「月次賃金 →」で全画面が開く。解除前は金額が「••••」で時間は見え、
 //     CSV は押せない。0000 で解除すると金額が出て、CSV（BOM付き UTF-8）に同じ値が入る。「← 戻る」でスタッフタブへ
 //  B. 企業連携（法人の賃金設定: 時間外30%・円未満切捨て）: 企業連携タブの法人カード「月次賃金: A店 →」から開く。
-//     鈴木の時間外手当 = 1,231 × 0.30 × 840 ÷ 60 = 5,170.2 → 5,170（切捨て）。法人の設定を開くと割増率と端数の欄がある
+//     鈴木の時間外手当 = 1,231 × 0.30 × 840 ÷ 60 = 5,170.2 → 5,170（切捨て）。法人の設定を開くと割増率と端数の欄がある。
+//     賃金設定ページ（P6a）の割増率の表示も法人の設定になる（時間外 30%・月60時間超 55%）
 //  C. Pro: 「月次賃金 →」が出ない
 //  D. 375px: ページが横に動かない（表は枠の中でスクロール）
 //
@@ -147,6 +148,12 @@ const captureCsv = h => h.evaluate(async () => {
     await h.setInput(BOX, "0000"); await h.page.waitForTimeout(300);
     R.linked = await cellsOf(h);
     R.linkedNote = await h.evaluate(() => document.querySelector("[data-payroll-page]").innerText);
+    // 賃金設定ページの割増率の表示も法人の設定（時間外30%）になる
+    await h.clickExact("← 戻る"); await h.page.waitForTimeout(300);
+    await h.clickExact("スタッフ"); await h.page.waitForTimeout(300);
+    await h.clickExact("編集", { rowText: "鈴木" }); await h.page.waitForTimeout(200);
+    await h.clickExact("賃金設定を開く →"); await h.page.waitForSelector("[data-staff-pay-page]", { timeout: 5000 });
+    R.staffPayRates = await h.evaluate(() => (document.querySelector("[data-pay-rates]") || {}).innerText || "");
   } catch (e) { R.exceptionB = e.stack || e.message; }
   R.errorsB = h.errors.slice(); await h.close();
 
@@ -190,6 +197,7 @@ const captureCsv = h => h.evaluate(async () => {
     hiddenMountDoesNotWrite: R.noWrites === true,
     entityPayrollButton: R.entityBtn === "E1|A店 →" && !!R.entityRateFields && R.entityRateFields.n === 4 && R.entityRateFields.ot === "30" && R.entityRateFields.round === "floor",
     linkedRatesApplied: (K["鈴木"] || {}).otPay === "5,170" && (K["鈴木"] || {}).basePay === "66,474" && /時間外30%/.test(R.linkedNote || "") && /円未満切捨て/.test(R.linkedNote || ""),
+    staffPayPageShowsEntityRates: /時間外 30%.*月60時間超 55%（法人の設定）/.test(R.staffPayRates || ""),
     hiddenOnPro: R.proNoButton === true,
     mobileNoPageScroll: !!R.mobile && R.mobile.page <= R.mobile.vw,
     noErrors: R.errors.length === 0 && R.errorsB.length === 0 && R.errorsD.length === 0 && !R.exception && !R.exceptionB && !R.exceptionC && !R.exceptionD,
