@@ -309,7 +309,7 @@ function headcountAtOf(settings){
 // その時刻に出勤している人数。entries は [{name, stM, enM, leave:{lunch,dinner}}]（自店舗で数える区間。
 // 他店舗への応援・x の帯は呼び出し側が excludedBandsOf で外してから渡す＝ヒートマップと同じ区間）。
 // 数え方: 出勤≦確認時刻＜退勤。同じ人は1人（締の追加出勤などで区間が2つあっても）。
-// その帯（確認時刻が17:00より前＝ランチ／以降＝ディナー）に休暇（公休・有給・慶弔）がある人は数えない。
+// その帯（確認時刻が HEAT_BAND_SPLIT_MIN より前＝ランチ／以降＝ディナー）に休暇（公休・有給・慶弔）がある人は数えない。
 function countPresentAt(entries,atMin){
   if(!(Number.isFinite(atMin)))return 0;
   const band=atMin<HEAT_BAND_SPLIT_MIN?"lunch":"dinner";
