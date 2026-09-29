@@ -2257,6 +2257,28 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>設定した名前はExcel出力時のファイル名・シート内店舗名に反映されます</div>
     </AC>}
 
+    {/* PDF の日付ヘッダに出す昼・夜の人数（2026-09-30・P3.5d）。確認時刻は店舗の設定で、コードに既定の時刻は無い */}
+    {plan==="premium"&&(()=>{
+      const hc=headcountAtOf(settings);
+      const saveHc=patch=>onSave({...settings,headcountAt:{...hc,...patch}});
+      const TOPT=["",...TO];
+      const sel=(k,lbl)=>(<div style={{display:"flex",alignItems:"center",gap:4}}>
+        <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{lbl}</span>
+        <select data-headcount-at={k} value={hc[k]} onChange={e=>saveHc({[k]:e.target.value})} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+          {TOPT.map(t=><option key={t||"none"} value={t}>{t||"出さない"}</option>)}
+        </select></div>);
+      return(<AC title="PDF の昼・夜の人数">
+        <div data-headcount-card>
+          <label style={{display:"flex",gap:8,alignItems:"center",cursor:"pointer",marginBottom:hc.enabled?8:0}}>
+            <input type="checkbox" checked={hc.enabled} onChange={e=>saveHc({enabled:e.target.checked})} style={{width:18,height:18}}/>
+            <span style={{fontSize:13,color:"var(--c-text)"}}>PDF の曜日の下に、その時刻に出勤している人数を出す</span>
+          </label>
+          {hc.enabled&&<div style={{display:"flex",gap:14,flexWrap:"wrap"}}>{sel("lunch","昼の確認時刻")}{sel("dinner","夜の確認時刻")}</div>}
+          <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>出勤がその時刻以前で、退勤がその時刻より後の人を数えます。他店舗への応援と、その時間帯に休暇（公休・有給・慶弔）の人は数えません。0人の側と店休日は出しません。画面と Excel には出ません。</div>
+        </div>
+      </AC>);
+    })()}
+
     {(plan==="pro"||plan==="premium")&&<AC title="期間の単位（プリセット）">
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>期間を新規作成するときのプリセット選択肢を切り替えます。</div>
       <div style={{display:"flex",gap:8}}>

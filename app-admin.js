@@ -1088,7 +1088,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                   endNote:getFieldNote(name,date,"end"),
                   defaultSec:hallStaff.includes(name)?"hall":"kit",
                   splitEnabled:hallStaff.length>0,
-                }).forEach(e=>arr.push({...e,breaks}));
+                }).forEach(e=>arr.push({...e,breaks,name}));
               }
             }
           }
@@ -1106,7 +1106,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                 endNote:getFieldNote(name,date,"end"),
                 defaultSec:hallStaff.includes(name)?"hall":"kit",
                 splitEnabled:hallStaff.length>0,
-              }).forEach(e=>arr.push({...e,breaks:[]}));
+              }).forEach(e=>arr.push({...e,breaks:[],name}));
             }
           }
         }
@@ -2143,6 +2143,22 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // 日付・曜日・ヒートマップはセル2個分: html2canvasがrowspanを描画できないため上下2セルで境界線を消して結合風にする
     const mergeTd=(val,top)=>`<td style="border-left:${BDp2};border-right:${BDp2};border-top:${top?BDp2:"0"};border-bottom:${top?"0":BDp2};padding:1px 2px;text-align:center;font-weight:600;vertical-align:${top?"bottom":"top"};height:15px;">${top?val:""}</td>`;
     const mergeHeat=(val,top,bg)=>`<td style="border-left:${BDp};border-right:${BDp};border-top:${top?BDp:"0"};border-bottom:${top?"0":BDp};padding:1px 2px;text-align:center;font-weight:${val?600:400};vertical-align:${top?"bottom":"top"};height:15px;background:${bg};">${top?(val||""):""}</td>`;
+    // 日付ヘッダの「昼・夜の人数」（settings.headcountAt・P3.5d）。**PDF だけ**に出す（画面・Excel には出さない）。
+    // 数える区間はヒートマップと同じ heatData（片側セルの補完・退勤延長・応援と x の帯を外した後）。
+    // 帯に休暇（公休・有給・慶弔）がある人は数えない。店休日は曜日だけ。0人の側は出さない（headcountLabelOf）。
+    const hcCfg=headcountAtOf(settings);
+    const pdfHeadcount=ds=>{
+      if(!hcCfg.enabled||(!hcCfg.lunch&&!hcCfg.dinner))return"";
+      if(isClosedDateOf(settings,ds))return"";
+      const entries=(heatData[ds]||[]).map(e=>{const lv=leaveFieldsOf(_getSub(e.name)?.shifts?.[ds]);
+        return{name:e.name,stM:e.stM,enM:e.enM,leave:{lunch:!!lv.start,dinner:!!lv.end}};});
+      return headcountLabelOf({lunch:hcCfg.lunch?countPresentAt(entries,timeToMin(hcCfg.lunch)):0,
+        dinner:hcCfg.dinner?countPresentAt(entries,timeToMin(hcCfg.dinner)):0},false);
+    };
+    // 曜日セル。人数があるときは上段に曜日・下段に人数（html2canvas は rowspan を描けないので2セルで結合風にする）
+    const wdTd=(wd,hc,top)=>hc
+      ?`<td data-headcount="${esc(hc)}" style="border-left:${BDp2};border-right:${BDp2};border-top:${top?BDp2:"0"};border-bottom:${top?"0":BDp2};padding:0 2px;text-align:center;font-weight:600;vertical-align:${top?"bottom":"top"};height:15px;white-space:nowrap;${top?"":"font-size:8px;"}">${top?esc(wd):esc(hc)}</td>`
+      :mergeTd(esc(wd),top);
     let h='<table style="border-collapse:collapse;font-size:12px;">';
     // ヘッダー2行
     h+='<thead>';
@@ -2173,6 +2189,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     h+='</tr></thead><tbody>';
     dates.forEach((ds,di)=>{
       const d=pd(ds),dow=d.getDay(),day=d.getDate(),wd=WD[dow];
+      const hc=pdfHeadcount(ds);
       const isSat=dow===6,isSunHol=dow===0||isHoliday(ds);
       const isSpecRed=isSpecialRedDate(ds,settings);
       const rowBg=isSat?"#DDEEFF":(isSunHol||isSpecRed)?"#FFEEEE":"#fff";
@@ -2181,7 +2198,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         const top=ri===0;
         h+=`<tr style="background:${rowBg};">`;
         h+=mergeTd(day,top);
-        h+=mergeTd(esc(wd),top);
+        h+=wdTd(wd,hc,top);
         if(showKit)heatHours.forEach(hr=>{
           const n=countHeat("kit",ds,hr);
           const bg=heatBg(n,kitMax);
@@ -2218,7 +2235,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           const bg=heatBg(n,hallMax);
           h+=mergeHeat(n||"",top,bg);
         });}
-        h+=mergeTd(esc(wd),top);
+        h+=wdTd(wd,hc,top);
         h+=mergeTd(day,top);
         h+='</tr>';
       });
