@@ -5443,3 +5443,40 @@ test("P3.5c 外部の長時間の日: トグル既定オフ・しきい値ちょ
   assert.ok(cfc.COMPANY_LABOR_KEYS.includes("highlightExternalOver8h") && cfc.COMPANY_LABOR_KEYS.includes("externalOverThresholdMin"));
   assert.deepStrictEqual(cfc.COMPANY_LABOR_RANGES.highlightExternalOver8h, u.LABOR_SETTING_RANGES.highlightExternalOver8h);
 });
+
+// ===== P3.5d PDF の昼・夜の人数（§3.9-4・§6 P3.5d）=====
+test("P3.5d 昼・夜の人数: 既定オフ・出勤≦確認時刻＜退勤・休暇の帯は数えない・同じ人は1人・0人の側と店休日は出さない", () => {
+  assert.deepStrictEqual(u.headcountAtOf({}), { enabled: false, lunch: "", dinner: "" }, "既定はオフで時刻も無い");
+  assert.deepStrictEqual(u.headcountAtOf({ headcountAt: { enabled: true, lunch: "12:00", dinner: "x" } }), { enabled: true, lunch: "12:00", dinner: "" });
+  const E = [
+    { name: "A", stM: 600, enM: 900 },            // 10:00-15:00
+    { name: "B", stM: 720, enM: 1020 },           // 12:00-17:00（出勤＝確認時刻は数える）
+    { name: "B", stM: 1020, enM: 1320 },          // 同じ人の後半（17:00で帯が割れた区間）
+    { name: "C", stM: 540, enM: 720 },            // 9:00-12:00（退勤＝確認時刻は数えない）
+    { name: "D", stM: 600, enM: 1320, leave: { lunch: true, dinner: false } }, // 昼の帯に有給
+  ];
+  assert.strictEqual(u.countPresentAt(E, 720), 2, "12:00 は A・B（C は退勤ちょうど・D は休暇）");
+  assert.strictEqual(u.countPresentAt(E, 1140), 2, "19:00 は B・D（B は1人）");
+  assert.strictEqual(u.countPresentAt(E, NaN), 0);
+  assert.strictEqual(u.headcountLabelOf({ lunch: 3, dinner: 7 }, false), "昼3 夜7");
+  assert.strictEqual(u.headcountLabelOf({ lunch: 0, dinner: 2 }, false), "夜2", "0人の側は出さない");
+  assert.strictEqual(u.headcountLabelOf({ lunch: 0, dinner: 0 }, false), "");
+  assert.strictEqual(u.headcountLabelOf({ lunch: 3, dinner: 7 }, true), "", "店休日は曜日だけ");
+});
+test("P3.5d 昼・夜の人数は PDF だけに出る（画面のグリッドと Excel は参照しない）", () => {
+  const src = _readAdminSurface();
+  const x0 = src.indexOf("function expXl(");
+  assert.ok(x0 > 0, "expXl が見つからない");
+  const rest = src.slice(x0 + 1);
+  const x1 = rest.search(/\n(async )?function [A-Za-z]/);
+  const xlBody = rest.slice(0, x1 > 0 ? x1 : rest.length);
+  assert.ok(xlBody.length > 1000, "expXl の本体を切り出せていない");
+  assert.ok(!/headcount|countPresentAt/i.test(xlBody), "expXl が人数を参照している");
+  const b0 = src.indexOf("const buildShiftTableHtml=(");
+  assert.ok(b0 > 0);
+  const inBuilder = i => i > b0 && i < src.indexOf("\n  };\n", b0);
+  let i = -1, hits = 0;
+  while ((i = src.indexOf("headcountAtOf(settings)", i + 1)) >= 0) { hits++; if (!/data-headcount-card/.test(src.slice(i, i + 800))) assert.ok(inBuilder(i), "PDF の外で人数を読んでいる"); }
+  assert.ok(hits >= 1);
+  ["pdfHeadcount(", "countPresentAt("].forEach(k => { let j = -1; while ((j = src.indexOf(k, j + 1)) >= 0) assert.ok(inBuilder(j), `${k} が PDF の外にある`); });
+});
