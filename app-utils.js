@@ -1647,6 +1647,7 @@ function _periodFieldEqual(a,b){
   if(deepEqValue(a,b))return true;
   return JSON.stringify(_normSnap(a))===JSON.stringify(_normSnap(b));
 }
+function _isPlainObj(v){return!!v&&typeof v==="object"&&!Array.isArray(v);}
 function diffPeriodsForFlatWrite(prevList,nextList){
   const out={};
   const prevById={},nextById={};
@@ -1659,6 +1660,16 @@ function diffPeriodsForFlatWrite(prevList,nextList){
     // 「next からキーごと消えた」が同じ正規形に落ち、どちらも書き込みなしに収束する。
     new Set([...Object.keys(next),...Object.keys(prev)]).forEach(k=>{
       if(_periodFieldEqual(next[k],prev[k]))return;
+      // 履歴（period.history＝{キー: 記録}）は**記録1件ずつ**書く（2026-09-30・P3）。フィールドごと書くと、
+      // 他の端末が同じ時刻に足した記録をこの端末の古い一覧で上書きして消す（履歴は上書きしない約束）。
+      if(k==="history"&&_isPlainObj(next[k])&&(prev[k]==null||_isPlainObj(prev[k]))){
+        const ph=prev[k]||{};
+        new Set([...Object.keys(next[k]),...Object.keys(ph)]).forEach(hk=>{
+          if(_periodFieldEqual(next[k][hk],ph[hk]))return;
+          out[`${id}/history/${hk}`]=(hk in next[k])?next[k][hk]:null;
+        });
+        return;
+      }
       out[`${id}/${k}`]=(k in next)?next[k]:null;
     });
   });
@@ -1910,11 +1921,13 @@ function applyKeepAttrs(settings,period){
 // 漏れ込まないようにする。凍結対象外のキー（xlShopName・periodUnit・templates 等）は現在値のまま。
 // staffList はどちらの経路でも最後に keepStaff をマージする（確定済み・未確定の両方で名前が残る）。
 // settings は最後に keepAttrs を当てる（同上。確定済み・未確定の両方で旧属性が効く）。
+// **確定（period.confirmation）した期間も終了前から写しを採用する**（2026-09-30・P3・計画書 §3.5 の v8 注記 2）。
+// 確定の瞬間に写しを書くので、確定後のマスタ変更（スタッフ・属性・退勤延長）はその期間に流れ込まない。
 function resolvePeriodMaster(period,staffList,settings,todayStr){
   const snap=period&&period.snapshot;
   const rawSl=snap&&snap.staffList;
   const sl=Array.isArray(rawSl)?rawSl:(rawSl&&typeof rawSl==="object"?Object.values(rawSl):null);
-  if(!isPeriodEnded(period,todayStr)||!sl)return{staffList:mergeKeepStaff(staffList,period),settings:applyKeepAttrs(settings,period),locked:false};
+  if(!(isPeriodEnded(period,todayStr)||isPeriodConfirmed(period))||!sl)return{staffList:mergeKeepStaff(staffList,period),settings:applyKeepAttrs(settings,period),locked:false};
   const merged={...(settings||{})};
   const ss=snap.settings||{};
   PERIOD_SNAPSHOT_SETTING_KEYS.forEach(k=>{if(ss[k]===undefined)delete merged[k];else merged[k]=ss[k];});
@@ -2837,7 +2850,288 @@ function fullViewFontOf(rowFont,colW){
   return Math.min(Number(rowFont)||0,Math.max(5,Math.floor((Number(colW)||0)*14/FV_COL_NATURAL)));
 }
 
+// ===== 人×月の所定・確定ロック・交付（2026-09-30・労務給与_複数法人_実装計画.md §3.4・§3.5・P3）=====
+// 状態は 未提出 → 提出済み → 確定済み → 交付済み。確定（period.confirmation）はセルの編集もロックし
+// （シフト作成タブ）、スタッフの再提出をルールで止める（database.rules.json の subs）。
+// 以前の「この期間を確定」（period.lockedAt＋写し）は写しでマスタを固定するだけでセルは編集できた。
+// lockedAt は書くだけで誰も読まなかったので confirmation.at に統合し、確定のときに消す。
+function isPeriodConfirmed(p){return!!(p&&p.confirmation&&typeof p.confirmation.at==="string"&&p.confirmation.at);}
+function isPeriodDelivered(p){return isPeriodConfirmed(p)&&!!(p.delivery&&p.delivery.at);}
+const PERIOD_STATES=["pending","submitted","confirmed","delivered"];
+const PERIOD_STATE_LABELS={pending:"未提出",submitted:"提出済み",confirmed:"確定済み",delivered:"交付済み"};
+function periodStateOf(p){
+  if(isPeriodDelivered(p))return"delivered";
+  if(isPeriodConfirmed(p))return"confirmed";
+  if(p&&p.submission&&p.submission.at)return"submitted";
+  return"pending";
+}
+// 確定できるセッション（決定 #10・#21）。企業に連携している店舗は**企業セッション**だけ——企業コードの
+// ログイン（uid が company_ で始まる）と企業の作成者本人（CF の assertCompanyMember と同じ範囲）。
+// App の companyInfo はこの2種類のセッションにしか入らないので、その企業IDが店舗の連携先と一致するかで見る。
+// 企業に連携していない単独店舗は店舗のオーナーが確定する（本部が無いため）。**UI だけの制限**
+// （期間の書き込みはルール上オーナーなら誰でも通る）。
+function canConfirmPeriod(o){
+  const x=o||{};
+  if(x.ownerReadOnly)return false;
+  if(x.companyLinkId)return!!x.sessionCompanyId&&x.sessionCompanyId===x.companyLinkId;
+  return true;
+}
+// 履歴（period.history）は {キー: 記録} で持ち、**上書きしない**（diffPeriodsForFlatWrite が記録1件ずつ書く）。
+// 配列にしないのは、Firebase の配列は添字で上書きされ、2つの端末が同時に足すと片方が消えるため。
+const PERIOD_HISTORY_KINDS=["submit","resubmit","confirm","unconfirm","deliver"];
+const PERIOD_HISTORY_LABELS={submit:"提出",resubmit:"再提出",confirm:"確定",unconfirm:"確定の解除",deliver:"交付"};
+const _HIST_KEY_CHARS="abcdefghijklmnopqrstuvwxyz0123456789";
+function genPeriodHistoryKey(nowMs){
+  let r="";for(let i=0;i<4;i++)r+=_HIST_KEY_CHARS[Math.floor(Math.random()*_HIST_KEY_CHARS.length)];
+  return"h"+Math.max(0,Math.floor(Number(nowMs)||Date.now())).toString(36)+r;
+}
+function periodHistoryEntry(kind,o){
+  const x=o||{};
+  const e={kind,at:String(x.at||""),byUid:String(x.byUid||"")};
+  if(x.note)e.note=String(x.note).slice(0,200);
+  if(x.method)e.method=String(x.method).slice(0,40);
+  return e;
+}
+function withPeriodHistory(p,key,entry){
+  const h=_isPlainObj(p&&p.history)?p.history:{};
+  return{...p,history:{...h,[key]:entry}};
+}
+function periodHistoryList(p){
+  const h=p&&p.history;
+  const arr=Array.isArray(h)?h.map((e,i)=>e&&({...e,key:String(i)})):(_isPlainObj(h)?Object.keys(h).map(k=>h[k]&&({...h[k],key:k})):[]);
+  return arr.filter(e=>e&&PERIOD_HISTORY_KINDS.includes(e.kind)&&typeof e.at==="string")
+    .sort((a,b)=>String(a.at).localeCompare(String(b.at))||String(a.key).localeCompare(String(b.key)));
+}
+// 期間がかかる暦月（"YYYY-MM"）の一覧
+function monthsOfPeriod(p){
+  if(!p||!isValidDateStr(p.startDate)||!isValidDateStr(p.endDate)||p.endDate<p.startDate)return[];
+  const out=[];let y=Number(p.startDate.slice(0,4)),m=Number(p.startDate.slice(5,7));
+  const ey=Number(p.endDate.slice(0,4)),em=Number(p.endDate.slice(5,7));
+  while(y<ey||(y===ey&&m<=em)){out.push(`${y}-${String(m).padStart(2,"0")}`);m++;if(m>12){m=1;y++;}}
+  return out;
+}
+function monthDatesOf(ym){
+  const n=daysInMonthOf(ym);
+  return Array.from({length:n},(_,i)=>`${ym}-${String(i+1).padStart(2,"0")}`);
+}
+// 人×月の所定の自動集計（§3.4）。シフト作成タブの月実働（laborDayMin）と同じ経路:
+// 名前＋日付の最初の出勤シフト（別名は resolveSubByAlias）→ calcNetWorkMinutes（休憩控除後・締の追加出勤を含む・
+// 休暇日は 0）。所定労働日数 = 実働が 0 分より大きい日の数。settings はその期間の設定（確定済みなら写し）を渡す。
+function aggregateScheduledMonth(o){
+  const x=o||{};const ym=x.ym;const settings=x.settings||{};
+  const work=new Map();
+  (x.subs||[]).forEach(s=>{
+    if(!s||!s.staffName||!s.shifts)return;
+    Object.keys(s.shifts).forEach(d=>{
+      if(String(d).slice(0,7)!==ym)return;
+      const sh=s.shifts[d];const k=s.staffName+"|"+d;
+      if(sh&&sh.status==="work"&&!work.has(k))work.set(k,sh);
+    });
+  });
+  const aliases=settings.staffAliases||{};
+  const dates=monthDatesOf(ym);
+  const out={};
+  (x.names||[]).forEach(name=>{
+    if(!name||typeof name!=="string"||isSpacer(name))return;
+    let days=0,min=0;
+    dates.forEach(d=>{
+      const sh=resolveSubByAlias(n=>work.get(n+"|"+d),name,aliases);
+      if(!sh)return;
+      const m=calcNetWorkMinutes(sh,getBreaksFor(settings,d,name,sh),getOT(name,settings,sh),settings);
+      if(m>0){days++;min+=m;}
+    });
+    out[name]={days,min};
+  });
+  return out;
+}
+// その月が凍結できるか: 月の全日がどれかの期間に入っていて、その月にかかる期間がすべて確定済み。
+// 半月運用では前半だけ確定した時点では凍結しない（後半の確定で月全体を集計し直してから凍結する）。
+function isMonthFullyConfirmed(periods,ym){
+  const ps=(periods||[]).filter(p=>p&&isValidDateStr(p.startDate)&&isValidDateStr(p.endDate));
+  const dates=monthDatesOf(ym);
+  if(!dates.length)return false;
+  if(!dates.every(d=>ps.some(p=>p.startDate<=d&&d<=p.endDate)))return false;
+  return ps.filter(p=>p.startDate<=dates[dates.length-1]&&p.endDate>=dates[0]).every(isPeriodConfirmed);
+}
+function laborMonthOf(laborMonths,ym,name){
+  const m=laborMonths&&laborMonths[ym];
+  const r=m&&m[name];
+  return r&&typeof r==="object"?r:null;
+}
+function isLaborMonthFrozen(rec){return!!(rec&&rec.frozenAt);}
+// 手修正された記録か（確定値が自動集計と違う／自動集計を持たない＝手で登録した）。確定のやり直しで上書きしない
+function isLaborMonthEdited(rec){
+  if(!rec)return false;
+  const a=rec.auto;
+  if(!a||typeof a!=="object")return true;
+  return Number(rec.min)!==Number(a.min)||Number(rec.days)!==Number(a.days);
+}
+// 確定。返り値の period を savePeriods（差分 update）で、laborMonthsPatch を shops/{sid}/laborMonths への update で書く。
+// 写しは**確定の瞬間に書く**（終了済みで写しを持つ期間はその写しを残す＝終了時点で凍結したマスタを確定する）。
+function planPeriodConfirmation(o){
+  const x=o||{};const period=x.period;
+  if(!period||!period.id)return{error:"期間がありません"};
+  if(isPeriodConfirmed(period))return{error:"この期間は既に確定しています"};
+  const nowIso=x.nowIso||new Date().toISOString();const uid=x.uid||"";
+  const snap=period.snapshot;
+  const keepSnap=isPeriodEnded(period,x.todayStr)&&snap&&snap.staffList;
+  const confirmation={at:nowIso,byUid:uid};if(x.note)confirmation.note=String(x.note).slice(0,200);
+  let next={...period,confirmation,snapshot:keepSnap?snap:buildPeriodSnapshot(x.staffList,x.settings)};
+  delete next.lockedAt;
+  next=withPeriodHistory(next,x.historyKey||genPeriodHistoryKey(Date.parse(nowIso)),periodHistoryEntry("confirm",{at:nowIso,byUid:uid,note:x.note}));
+  const nextPeriods=(x.periods||[]).map(p=>p&&p.id===period.id?next:p);
+  if(!nextPeriods.some(p=>p&&p.id===period.id))nextPeriods.push(next);
+  const master=resolvePeriodMaster(next,x.staffList,x.settings,x.todayStr);
+  const names=visibleStaffList(master.staffList,master.settings,next).filter(n=>!isSpacer(n));
+  const laborMonthsPatch={};
+  const months=monthsOfPeriod(period);
+  months.forEach(ym=>{
+    const agg=aggregateScheduledMonth({subs:x.subs,names,settings:master.settings,ym});
+    const frozen=isMonthFullyConfirmed(nextPeriods,ym);
+    Object.keys(agg).forEach(name=>{
+      const cur=laborMonthOf(x.laborMonths,ym,name);
+      const keep=isLaborMonthEdited(cur);
+      const rec={days:keep?Number(cur.days)||0:agg[name].days,min:keep?Number(cur.min)||0:agg[name].min,auto:agg[name]};
+      if(frozen){rec.frozenAt=nowIso;rec.frozenBy=uid;}
+      laborMonthsPatch[`${ym}/${name}`]=rec;
+    });
+    // 名簿に居ない人の記録（手で登録した人など）も、月が凍結されるなら一緒に凍結する
+    if(frozen)Object.keys((x.laborMonths&&x.laborMonths[ym])||{}).forEach(name=>{
+      if(agg[name])return;
+      const cur=laborMonthOf(x.laborMonths,ym,name);
+      if(cur&&!cur.frozenAt){laborMonthsPatch[`${ym}/${name}/frozenAt`]=nowIso;laborMonthsPatch[`${ym}/${name}/frozenBy`]=uid;}
+    });
+  });
+  return{period:next,laborMonthsPatch,months};
+}
+// 確定の解除（理由を履歴に残す）。写しは残す（解除前の状態へ戻す＝終了済みの期間は終了時点のマスタのまま）。
+// 交付の記録も外す（確定し直したら交付し直す）。その月の所定は凍結を外し、手修正できる状態に戻す。
+function planPeriodUnconfirm(o){
+  const x=o||{};const period=x.period;
+  if(!period||!period.id)return{error:"期間がありません"};
+  if(!isPeriodConfirmed(period))return{error:"この期間は確定していません"};
+  const nowIso=x.nowIso||new Date().toISOString();const uid=x.uid||"";
+  let next={...period};
+  delete next.confirmation;delete next.delivery;delete next.lockedAt;
+  next=withPeriodHistory(next,x.historyKey||genPeriodHistoryKey(Date.parse(nowIso)),periodHistoryEntry("unconfirm",{at:nowIso,byUid:uid,note:x.note}));
+  const laborMonthsPatch={};
+  monthsOfPeriod(period).forEach(ym=>{
+    Object.keys((x.laborMonths&&x.laborMonths[ym])||{}).forEach(name=>{
+      const cur=laborMonthOf(x.laborMonths,ym,name);
+      if(cur&&cur.frozenAt){laborMonthsPatch[`${ym}/${name}/frozenAt`]=null;laborMonthsPatch[`${ym}/${name}/frozenBy`]=null;}
+    });
+  });
+  return{period:next,laborMonthsPatch};
+}
+// 交付（本人へ交付した記録。公開機能ではない）。確定済みの期間だけ
+function planPeriodDelivery(o){
+  const x=o||{};const period=x.period;
+  if(!period||!period.id)return{error:"期間がありません"};
+  if(!isPeriodConfirmed(period))return{error:"確定してから交付を記録してください"};
+  const nowIso=x.nowIso||new Date().toISOString();const uid=x.uid||"";
+  const delivery={at:nowIso,byUid:uid};if(x.method)delivery.method=String(x.method).slice(0,40);
+  const next=withPeriodHistory({...period,delivery},x.historyKey||genPeriodHistoryKey(Date.parse(nowIso)),periodHistoryEntry("deliver",{at:nowIso,byUid:uid,method:x.method}));
+  return{period:next};
+}
+// 確定前の手修正（10月分を遡って登録する欄もこれを通る）。凍結済みの月は拒否する
+const LABOR_MONTH_MAX_MIN=31*24*60;
+function planLaborMonthManual(o){
+  const x=o||{};const ym=String(x.ym||"");const name=x.name;
+  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym))return{error:"月が正しくありません"};
+  if(!name||typeof name!=="string"||firebaseKeyForbiddenChars(name).length)return{error:"名前が正しくありません"};
+  const cur=laborMonthOf(x.laborMonths,ym,name);
+  if(isLaborMonthFrozen(cur))return{error:"確定済みの月は変更できません（確定を解除してから）"};
+  const days=Number(x.days),min=Number(x.min);
+  if(!Number.isInteger(days)||days<0||days>31)return{error:"所定日数は0〜31の整数にしてください"};
+  if(!Number.isInteger(min)||min<0||min>LABOR_MONTH_MAX_MIN)return{error:"所定時間が正しくありません"};
+  const a=x.auto||(cur&&cur.auto)||null;
+  const rec={days,min};
+  if(a&&typeof a==="object")rec.auto={days:Number(a.days)||0,min:Number(a.min)||0};
+  return{patch:{[`${ym}/${name}`]:rec}};
+}
+// "H:MM"（または時間の整数）→ 分。読めなければ null
+function parseHoursMinutes(v){
+  const t=String(v==null?"":v).trim();
+  let m=/^(\d{1,3}):([0-5]\d)$/.exec(t);
+  if(m)return Number(m[1])*60+Number(m[2]);
+  m=/^(\d{1,3})$/.exec(t);
+  return m?Number(m[1])*60:null;
+}
+// 差の表示（+1:20 ／ −0:12 ／ ±0:00）
+function fmtSignedMin(d){
+  const n=Math.round(Number(d)||0);
+  return(n>0?"+":n<0?"−":"±")+fmtMin(Math.abs(n));
+}
+// スタッフ名キーの月別ノード（shops/{sid}/laborMonths/{YYYY-MM}/{名前}）。STAFF_KEYED_SETTING_MAPS・
+// STAFF_KEYED_PRIVATE_NODES の隣の「月キー付きマップ」の一覧。改名は renameStaffInLaborMonths、削除は
+// dropStaffFromLaborMonths を通す。CF の改名（companyRenameStaff）も同じ規則（テストが照合する）。
+const STAFF_KEYED_MONTH_NODES=["laborMonths"];
+function renameStaffInLaborMonths(laborMonths,oldName,newName){
+  const lm=_isPlainObj(laborMonths)?laborMonths:{};
+  if(!oldName||!newName||oldName===newName)return null;
+  const out={};
+  Object.keys(lm).forEach(ym=>{const m=lm[ym];if(_isPlainObj(m)&&m[oldName]!=null){out[`${ym}/${newName}`]=m[oldName];out[`${ym}/${oldName}`]=null;}});
+  return Object.keys(out).length?out:null;
+}
+function dropStaffFromLaborMonths(laborMonths,names){
+  const lm=_isPlainObj(laborMonths)?laborMonths:{};
+  const out={};
+  Object.keys(lm).forEach(ym=>{const m=lm[ym];if(!_isPlainObj(m))return;(names||[]).forEach(n=>{if(n&&m[n]!=null)out[`${ym}/${n}`]=null;});});
+  return Object.keys(out).length?out:null;
+}
+// 年平均所定（年度の開始月〜その月）。valueOf(ym) は月の所定（分）を返す:
+// 数値＝その月の値／null＝期間はあるが読めていない（missing に数える）／undefined＝期間が無い月（数えない）。
+// 値は laborMonths の確定値を優先し、無い月は呼び出し側が凍結値・実データで埋める（yearLaborSummary の preferLive と同じ考え）。
+function yearScheduledAverage(months,valueOf){
+  let sum=0,count=0;const missing=[];
+  (months||[]).forEach(ym=>{
+    const v=valueOf(ym);
+    if(v===undefined)return;
+    if(v===null||!Number.isFinite(Number(v))){missing.push(ym);return;}
+    sum+=Number(v);count++;
+  });
+  return{avgMin:count?Math.round(sum/count):null,count,missing};
+}
+// その日が休業日か（日付別候補を優先し、無ければ曜日別候補。休業日は候補に {closed:true} を持つ）
+function isClosedDateOf(settings,ds){
+  const st=settings||{};
+  const dc=(st.dateCandidates||{})[ds];
+  if(Array.isArray(dc)&&dc.length)return dc.some(c=>c&&c.closed);
+  const wc=(st.weekdayCandidates||{})[pd(ds).getDay()];
+  return Array.isArray(wc)&&wc.some(c=>c&&c.closed);
+}
+// 本部店舗（kind:"hq"）の固定勤務パターンの投入（§3.1・P3）。閉店日と土日祝は除外し、
+// **まだ何も入っていない日だけ**に入れる（手で直した日・休み希望・休暇を上書きしない＝押し直しても壊れない）。
+// 値は管理者の編集値（adjustedStart/End）と日別の休憩（adjustedBreak・分）で書く＝シフト作成タブのセル編集と同じ置き場。
+function fillFixedPattern(o){
+  const x=o||{};
+  const start=String(x.start||""),end=String(x.end||"");
+  const brk=Math.max(0,Math.round(Number(x.breakMin)||0));
+  const settings=x.settings||{};const aliases=settings.staffAliases||{};
+  const newSubs=[...(x.subs||[])];
+  let filled=0;
+  const targetDates=(x.dates||[]).filter(d=>!isWeekendOrHoliday(d)&&!isClosedDateOf(settings,d));
+  (x.names||[]).forEach(name=>{
+    if(!name||isSpacer(name))return;
+    let idx=newSubs.findIndex(s=>s&&s.periodId===x.periodId&&s.staffName===name);
+    if(idx<0)for(const a of(aliases[name]||[])){idx=newSubs.findIndex(s=>s&&s.periodId===x.periodId&&s.staffName===a);if(idx>=0)break;}
+    let sub=idx>=0?{...newSubs[idx],shifts:{...(newSubs[idx].shifts||{})}}
+      :{id:(x.genId||genSecureId)(24),periodId:x.periodId,staffName:name,shopId:x.shopId||"",shifts:{},comment:"",submittedAt:x.nowIso||new Date().toISOString(),source:"grid"};
+    let n=0;
+    targetDates.forEach(d=>{
+      if(sub.shifts[d])return;
+      const sd={status:"work",adjustedStart:start,adjustedEnd:end,adjustedStartNote:"",adjustedEndNote:""};
+      if(brk>0)sd.adjustedBreak=brk;
+      sub.shifts[d]=sd;n++;
+    });
+    if(!n)return;
+    filled+=n;
+    if(idx>=0)newSubs[idx]=sub;else newSubs.push(sub);
+  });
+  return{subs:newSubs,filled,dates:targetDates.length};
+}
+
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,yearDaysOf,monthlyScheduledCapMin,LABOR_SETTING_RANGES,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,groupStaffRegs,groupStaffRegsWithPeople,PERSON_ID_RE,buildCompanyStaffRows,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,GATED_FEATURES,featureEnabled,DEFAULT_RATE_DENOMINATOR_MIN,rateDenominatorMinOf,PAY_TYPES,PAY_TYPE_LABELS,isPayTypeFixed,defaultPayTypeOf,payRateBaseYen,hourlyRateOf,fixedOtAmountOf,MIN_WAGE_MAX_ENTRIES,sanitizeWageSettings,minWageOn,minWageCheck,normalizePayVersion,withFixedOtAmount,applyPayRevision,payVersionOn,STAFF_KEYED_PRIVATE_NODES,renameStaffInPay,dropStaffFromPay,maskYen,sha256HexOfBytes,PAY_CODE_DEFAULT,PAY_CODE_RE,isValidPayCode,payCodeHash,isPayCodeRecord,verifyPayCode,payCodeIdentity,PAY_CODE_MAX_FAILS,PAY_CODE_LOCK_MS,PAY_UNLOCK_IDLE_MS,nextPayCodeLockout,payCodeWaitSec,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,yearDaysOf,monthlyScheduledCapMin,LABOR_SETTING_RANGES,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,groupStaffRegs,groupStaffRegsWithPeople,PERSON_ID_RE,buildCompanyStaffRows,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,GATED_FEATURES,featureEnabled,DEFAULT_RATE_DENOMINATOR_MIN,rateDenominatorMinOf,PAY_TYPES,PAY_TYPE_LABELS,isPayTypeFixed,defaultPayTypeOf,payRateBaseYen,hourlyRateOf,fixedOtAmountOf,MIN_WAGE_MAX_ENTRIES,sanitizeWageSettings,minWageOn,minWageCheck,normalizePayVersion,withFixedOtAmount,applyPayRevision,payVersionOn,STAFF_KEYED_PRIVATE_NODES,renameStaffInPay,dropStaffFromPay,maskYen,sha256HexOfBytes,PAY_CODE_DEFAULT,PAY_CODE_RE,isValidPayCode,payCodeHash,isPayCodeRecord,verifyPayCode,payCodeIdentity,PAY_CODE_MAX_FAILS,PAY_CODE_LOCK_MS,PAY_UNLOCK_IDLE_MS,nextPayCodeLockout,payCodeWaitSec,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf,isPeriodConfirmed,isPeriodDelivered,PERIOD_STATES,PERIOD_STATE_LABELS,periodStateOf,canConfirmPeriod,PERIOD_HISTORY_KINDS,PERIOD_HISTORY_LABELS,genPeriodHistoryKey,periodHistoryEntry,withPeriodHistory,periodHistoryList,monthsOfPeriod,monthDatesOf,aggregateScheduledMonth,isMonthFullyConfirmed,laborMonthOf,isLaborMonthFrozen,isLaborMonthEdited,planPeriodConfirmation,planPeriodUnconfirm,planPeriodDelivery,LABOR_MONTH_MAX_MIN,planLaborMonthManual,parseHoursMinutes,fmtSignedMin,STAFF_KEYED_MONTH_NODES,renameStaffInLaborMonths,dropStaffFromLaborMonths,yearScheduledAverage,isClosedDateOf,fillFixedPattern};
 }

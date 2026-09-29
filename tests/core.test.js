@@ -5072,3 +5072,163 @@ test("P2 写し: 企業共通→法人の順で年間所定・分母・週の起
   assert.ok(keys.labor.has("annualScheduledMin") && keys.labor.has("weekStartDow") && !keys.labor.has("rateDenominatorMin"));
   assert.ok(!("annualScheduledMin" in u.stripCompanySettings(eff, m.settings).laborSettings), "企業が決めた年間所定は店舗に保存しない");
 });
+
+// ===== P3 人×月の所定・確定ロック・交付（労務給与_複数法人_実装計画.md §3.4・§3.5・§6 P3）=====
+// 期待値は手で数えた値（10:00-15:00＝300分、9:00-18:00 休憩60分＝480分など）。実装の出力から逆生成していない。
+const p3Half1 = { id: "p1", startDate: "2026-11-01", endDate: "2026-11-15", label: "11月前半" };
+const p3Half2 = { id: "p2", startDate: "2026-11-16", endDate: "2026-11-30", label: "11月後半" };
+const p3Subs = [
+  { id: "s1", periodId: "p1", staffName: "田中", shifts: {
+    "2026-11-02": { status: "work", start: "10:00", end: "15:00" },
+    "2026-11-03": { status: "holiday" },
+  } },
+  { id: "s2", periodId: "p2", staffName: "田中", shifts: {
+    "2026-11-20": { status: "work", adjustedStart: "09:00", adjustedEnd: "18:00", adjustedBreak: 60 },
+    "2026-12-01": { status: "work", start: "10:00", end: "15:00" },
+  } },
+  { id: "s3", periodId: "p2", staffName: "たなか", shifts: { "2026-11-25": { status: "work", start: "10:00", end: "12:00" } } },
+];
+const p3Settings = { staffAliases: { "田中": ["たなか"] } };
+
+test("P3 状態: 未提出 → 提出済み → 確定済み → 交付済み（交付は確定が無ければ数えない）", () => {
+  assert.strictEqual(u.periodStateOf({ id: "p" }), "pending");
+  assert.strictEqual(u.periodStateOf({ id: "p", submission: { at: "t" } }), "submitted");
+  assert.strictEqual(u.periodStateOf({ id: "p", submission: { at: "t" }, confirmation: { at: "t2" } }), "confirmed");
+  assert.strictEqual(u.periodStateOf({ id: "p", confirmation: { at: "t2" }, delivery: { at: "t3" } }), "delivered");
+  assert.strictEqual(u.periodStateOf({ id: "p", delivery: { at: "t3" } }), "pending", "確定の無い交付の記録は状態に数えない");
+  assert.strictEqual(u.isPeriodConfirmed({ lockedAt: "2026-09-01T00:00:00Z", snapshot: {} }), false, "旧 lockedAt は確定ではない");
+});
+test("P3 確定できるセッション: 連携店舗は企業セッション（同じ企業）だけ・単独店舗はオーナー", () => {
+  assert.strictEqual(u.canConfirmPeriod({ companyLinkId: "C1", sessionCompanyId: "C1" }), true);
+  assert.strictEqual(u.canConfirmPeriod({ companyLinkId: "C1", sessionCompanyId: "C2" }), false);
+  assert.strictEqual(u.canConfirmPeriod({ companyLinkId: "C1", sessionCompanyId: null }), false, "店舗のオーナーでも企業セッションでなければ確定できない");
+  assert.strictEqual(u.canConfirmPeriod({ companyLinkId: null }), true, "単独店舗はオーナーが確定");
+  assert.strictEqual(u.canConfirmPeriod({ companyLinkId: null, ownerReadOnly: true }), false);
+  assert.strictEqual(u.canConfirmPeriod({ companyLinkId: "C1", sessionCompanyId: "C1", ownerReadOnly: true }), false);
+});
+test("P3 resolvePeriodMaster: 確定した期間は終了前でも写しを使う（未確定の終了前は現在値）", () => {
+  const snap = { staffList: ["田中", "佐藤"], settings: { staffAttributes: { "佐藤": "employee" } } };
+  const live = u.resolvePeriodMaster({ ...p3Half1, snapshot: snap }, ["田中"], {}, "2026-11-05");
+  assert.strictEqual(live.locked, false);
+  assert.deepStrictEqual(live.staffList, ["田中"]);
+  const locked = u.resolvePeriodMaster({ ...p3Half1, snapshot: snap, confirmation: { at: "2026-11-05T00:00:00Z" } }, ["田中"], {}, "2026-11-05");
+  assert.strictEqual(locked.locked, true);
+  assert.deepStrictEqual(locked.staffList, ["田中", "佐藤"]);
+  assert.strictEqual(locked.settings.staffAttributes["佐藤"], "employee");
+});
+test("P3 履歴: 期間の差分書き込みは履歴を記録1件ずつ書き、他の端末の記録を上書きしない", () => {
+  const e1 = { kind: "submit", at: "2026-11-10T00:00:00Z", byUid: "u1" };
+  const e2 = { kind: "confirm", at: "2026-11-11T00:00:00Z", byUid: "u2" };
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([{ id: "p1" }], [{ id: "p1", history: { a: e1 } }]), { "p1/history/a": e1 });
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([{ id: "p1", history: { a: e1 } }], [{ id: "p1", history: { a: e1, b: e2 } }]), { "p1/history/b": e2 });
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([{ id: "p1", history: { a: e1 } }], [{ id: "p1", history: { a: e1 } }]), {});
+  assert.deepStrictEqual(u.periodHistoryList({ history: { b: e2, a: e1 } }).map(x => x.kind), ["submit", "confirm"], "時刻順");
+  assert.deepStrictEqual(u.periodHistoryList({ history: { a: { kind: "bogus", at: "t" } } }), [], "知らない種類は出さない");
+  assert.ok(/^h[0-9a-z]+$/.test(u.genPeriodHistoryKey(Date.parse("2026-11-10T00:00:00Z"))), "Firebase のキーに使えない文字を含まない");
+});
+test("P3 所定の自動集計: 休憩控除後・別名の提出も合算・休みと月外の日は数えない", () => {
+  const r = u.aggregateScheduledMonth({ subs: p3Subs, names: ["田中", "__spacer__1", "佐藤"], settings: p3Settings, ym: "2026-11" });
+  // 11/2 300分 ＋ 11/20 480分（9-18 から休憩60分）＋ 11/25 120分（別名たなか）= 900分・3日
+  assert.deepStrictEqual(r["田中"], { days: 3, min: 900 });
+  assert.deepStrictEqual(r["佐藤"], { days: 0, min: 0 });
+  assert.ok(!("__spacer__1" in r), "空白列は集計しない");
+  assert.deepStrictEqual(u.aggregateScheduledMonth({ subs: p3Subs, names: ["田中"], settings: p3Settings, ym: "2026-12" })["田中"], { days: 1, min: 300 });
+});
+test("P3 確定: 写し・確定・履歴を書き lockedAt を消す。前半だけでは月を凍結せず、後半の確定で月全体を凍結する", () => {
+  const legacy = { ...p3Half1, lockedAt: "2026-10-01T00:00:00Z" };
+  const r1 = u.planPeriodConfirmation({ period: legacy, periods: [legacy, p3Half2], subs: p3Subs, staffList: ["田中"], settings: p3Settings,
+    laborMonths: {}, todayStr: "2026-11-10", uid: "company_C1", nowIso: "2026-11-10T09:00:00Z", historyKey: "h1" });
+  assert.deepStrictEqual(r1.period.confirmation, { at: "2026-11-10T09:00:00Z", byUid: "company_C1" });
+  assert.strictEqual(r1.period.lockedAt, undefined);
+  assert.deepStrictEqual(r1.period.snapshot.staffList, ["田中"], "確定の瞬間に写しを書く");
+  assert.deepStrictEqual(r1.period.history.h1, { kind: "confirm", at: "2026-11-10T09:00:00Z", byUid: "company_C1" });
+  assert.deepStrictEqual(r1.months, ["2026-11"]);
+  assert.deepStrictEqual(r1.laborMonthsPatch, { "2026-11/田中": { days: 3, min: 900, auto: { days: 3, min: 900 } } }, "後半が未確定なので凍結しない");
+  const lm = { "2026-11": { "田中": r1.laborMonthsPatch["2026-11/田中"] } };
+  const r2 = u.planPeriodConfirmation({ period: p3Half2, periods: [r1.period, p3Half2], subs: p3Subs, staffList: ["田中"], settings: p3Settings,
+    laborMonths: lm, todayStr: "2026-11-30", uid: "company_C1", nowIso: "2026-11-30T09:00:00Z", historyKey: "h2" });
+  assert.deepStrictEqual(r2.laborMonthsPatch["2026-11/田中"], { days: 3, min: 900, auto: { days: 3, min: 900 }, frozenAt: "2026-11-30T09:00:00Z", frozenBy: "company_C1" });
+  assert.ok(u.planPeriodConfirmation({ period: r1.period, periods: [], subs: [], staffList: [], settings: {}, todayStr: "2026-11-10" }).error, "確定済みは二重に確定しない");
+});
+test("P3 確定: 手修正した所定は確定で上書きせず、自動集計だけ更新する。終了済みの期間は既存の写しを残す", () => {
+  const lm = { "2026-11": { "田中": { days: 10, min: 4800, auto: { days: 1, min: 300 } } } };
+  const ended = { ...p3Half1, snapshot: { staffList: ["田中", "退職者"], settings: { staffAliases: { "田中": ["たなか"] } } } }; // 写しの設定で集計する（別名も写しから）
+  const r = u.planPeriodConfirmation({ period: ended, periods: [ended, p3Half2], subs: p3Subs, staffList: ["田中"], settings: p3Settings,
+    laborMonths: lm, todayStr: "2026-12-05", uid: "u", nowIso: "2026-12-05T00:00:00Z", historyKey: "h" });
+  assert.deepStrictEqual(r.period.snapshot.staffList, ["田中", "退職者"], "終了時点で凍結した写しを確定する");
+  assert.deepStrictEqual(r.laborMonthsPatch["2026-11/田中"], { days: 10, min: 4800, auto: { days: 3, min: 900 } });
+  assert.deepStrictEqual(r.laborMonthsPatch["2026-11/退職者"], { days: 0, min: 0, auto: { days: 0, min: 0 } });
+});
+test("P3 凍結の条件: 月の全日が期間に入り、その月の期間がすべて確定済み", () => {
+  const c = p => ({ ...p, confirmation: { at: "t" } });
+  assert.strictEqual(u.isMonthFullyConfirmed([c(p3Half1)], "2026-11"), false, "後半の期間がまだ無い");
+  assert.strictEqual(u.isMonthFullyConfirmed([c(p3Half1), p3Half2], "2026-11"), false);
+  assert.strictEqual(u.isMonthFullyConfirmed([c(p3Half1), c(p3Half2)], "2026-11"), true);
+  assert.strictEqual(u.isMonthFullyConfirmed([c({ id: "m", startDate: "2026-11-01", endDate: "2026-11-30" })], "2026-11"), true);
+});
+test("P3 解除と交付: 解除は確定・交付を外して凍結を解き履歴に理由を残す。交付は確定済みだけ", () => {
+  const conf = { ...p3Half1, confirmation: { at: "t1", byUid: "u" }, delivery: { at: "t2", byUid: "u" }, history: { a: { kind: "confirm", at: "t1", byUid: "u" } } };
+  const lm = { "2026-11": { "田中": { days: 3, min: 900, auto: { days: 3, min: 900 }, frozenAt: "t1", frozenBy: "u" }, "佐藤": { days: 1, min: 60 } } };
+  const r = u.planPeriodUnconfirm({ period: conf, laborMonths: lm, uid: "u2", nowIso: "2026-11-12T00:00:00Z", historyKey: "b", note: "所定の直し" });
+  assert.strictEqual(r.period.confirmation, undefined);
+  assert.strictEqual(r.period.delivery, undefined);
+  assert.deepStrictEqual(r.period.history.b, { kind: "unconfirm", at: "2026-11-12T00:00:00Z", byUid: "u2", note: "所定の直し" });
+  assert.ok(r.period.history.a, "以前の履歴は残す");
+  assert.deepStrictEqual(r.laborMonthsPatch, { "2026-11/田中/frozenAt": null, "2026-11/田中/frozenBy": null });
+  assert.ok(u.planPeriodDelivery({ period: p3Half1 }).error, "未確定は交付できない");
+  const d = u.planPeriodDelivery({ period: conf, uid: "u3", nowIso: "2026-11-13T00:00:00Z", historyKey: "c", method: "LINE" });
+  assert.deepStrictEqual(d.period.delivery, { at: "2026-11-13T00:00:00Z", byUid: "u3", method: "LINE" });
+  assert.deepStrictEqual(d.period.history.c, { kind: "deliver", at: "2026-11-13T00:00:00Z", byUid: "u3", method: "LINE" });
+});
+test("P3 手修正（10月分の遡り登録を含む）: 凍結前だけ・値の範囲を検査する", () => {
+  const r = u.planLaborMonthManual({ laborMonths: {}, ym: "2026-10", name: "田中", days: 22, min: HM(176, 30), auto: { days: 21, min: HM(170, 0) } });
+  assert.deepStrictEqual(r.patch, { "2026-10/田中": { days: 22, min: HM(176, 30), auto: { days: 21, min: HM(170, 0) } } });
+  assert.ok(u.planLaborMonthManual({ laborMonths: { "2026-10": { "田中": { frozenAt: "t" } } }, ym: "2026-10", name: "田中", days: 1, min: 60 }).error);
+  assert.ok(u.planLaborMonthManual({ laborMonths: {}, ym: "2026-13", name: "田中", days: 1, min: 60 }).error);
+  assert.ok(u.planLaborMonthManual({ laborMonths: {}, ym: "2026-10", name: "田中", days: 32, min: 60 }).error);
+  assert.ok(u.planLaborMonthManual({ laborMonths: {}, ym: "2026-10", name: "a/b", days: 1, min: 60 }).error);
+  assert.strictEqual(u.isLaborMonthEdited(r.patch["2026-10/田中"]), true);
+  assert.strictEqual(u.isLaborMonthEdited({ days: 3, min: 900, auto: { days: 3, min: 900 } }), false);
+  assert.strictEqual(u.parseHoursMinutes("176:39"), HM(176, 39));
+  assert.strictEqual(u.parseHoursMinutes("170"), HM(170, 0));
+  assert.strictEqual(u.parseHoursMinutes("1:60"), null);
+  assert.strictEqual(u.fmtSignedMin(-12), "−0:12");
+  assert.strictEqual(u.fmtSignedMin(80), "+1:20");
+  assert.strictEqual(u.fmtSignedMin(0), "±0:00");
+});
+test("P3 改名・削除の後始末: laborMonths のキーが月ごとに移る（STAFF_KEYED_MONTH_NODES）", () => {
+  assert.deepStrictEqual(u.STAFF_KEYED_MONTH_NODES, ["laborMonths"]);
+  const lm = { "2026-10": { "田中": { days: 1, min: 60 }, "佐藤": { days: 2, min: 120 } }, "2026-11": { "田中": { days: 3, min: 180 } }, "2026-12": { "佐藤": { days: 1, min: 1 } } };
+  assert.deepStrictEqual(u.renameStaffInLaborMonths(lm, "田中", "田中 太郎"), {
+    "2026-10/田中 太郎": lm["2026-10"]["田中"], "2026-10/田中": null, "2026-11/田中 太郎": lm["2026-11"]["田中"], "2026-11/田中": null });
+  assert.strictEqual(u.renameStaffInLaborMonths(lm, "鈴木", "鈴木 一郎"), null);
+  assert.strictEqual(u.renameStaffInLaborMonths(lm, "田中", "田中"), null);
+  assert.deepStrictEqual(u.dropStaffFromLaborMonths(lm, ["佐藤"]), { "2026-10/佐藤": null, "2026-12/佐藤": null });
+  assert.strictEqual(u.dropStaffFromLaborMonths(lm, ["鈴木"]), null);
+});
+test("P3 年平均所定: 確定値・埋め値の月を平均し、読めない月は missing・期間の無い月は数えない", () => {
+  const v = { "2026-04": HM(170, 0), "2026-05": null, "2026-07": HM(180, 0) };
+  const r = u.yearScheduledAverage(["2026-04", "2026-05", "2026-06", "2026-07"], ym => v[ym]);
+  assert.deepStrictEqual(r, { avgMin: HM(175, 0), count: 2, missing: ["2026-05"] });
+  assert.deepStrictEqual(u.yearScheduledAverage(["2026-04"], () => undefined), { avgMin: null, count: 0, missing: [] });
+});
+test("P3 本部の固定勤務パターン: 土日祝と閉店日を除き、何も入っていない日だけに入れる", () => {
+  // 2026-11-01(日) 02(月) 03(火・文化の日) 04(水) 05(木) 06(金) 07(土)
+  const dates = ["2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07"];
+  const settings = { weekdayCandidates: { 4: [{ closed: true }] } }; // 木曜は閉店日
+  const subs = [{ id: "x", periodId: "hp", staffName: "田中", shopId: "S", shifts: { "2026-11-04": { status: "holiday" } } }];
+  let n = 0;
+  const r = u.fillFixedPattern({ subs, periodId: "hp", shopId: "S", names: ["田中", "佐藤"], dates, start: "09:00", end: "18:00", breakMin: 60,
+    settings, genId: () => "new" + (n++), nowIso: "2026-11-01T00:00:00Z" });
+  assert.strictEqual(r.dates, 3, "対象日は 11/2・11/4・11/6");
+  assert.strictEqual(r.filled, 5, "田中 2日（11/4 は休み希望があるので入れない）＋佐藤 3日");
+  const tanaka = r.subs.find(s => s.staffName === "田中");
+  assert.deepStrictEqual(Object.keys(tanaka.shifts).sort(), ["2026-11-02", "2026-11-04", "2026-11-06"]);
+  assert.deepStrictEqual(tanaka.shifts["2026-11-04"], { status: "holiday" });
+  const sato = r.subs.find(s => s.staffName === "佐藤");
+  assert.strictEqual(sato.source, "grid");
+  assert.strictEqual(u.calcNetWorkMinutes(sato.shifts["2026-11-02"], u.getBreaksFor({}, "2026-11-02", "佐藤", sato.shifts["2026-11-02"]), 0, {}), 480, "9:00-18:00・休憩60分＝8時間");
+  assert.strictEqual(subs[0].shifts["2026-11-02"], undefined, "元の配列は書き換えない");
+  const again = u.fillFixedPattern({ subs: r.subs, periodId: "hp", names: ["田中", "佐藤"], dates, start: "09:00", end: "18:00", breakMin: 60, settings });
+  assert.strictEqual(again.filled, 0, "押し直しても入っている日は上書きしない");
+});
