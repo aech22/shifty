@@ -19,6 +19,10 @@
 // 守備範囲の外: セキュリティルール（database.rules.json）は一切評価しない。Admin SDK と同じで
 // 素通りするので、ルールの許可・拒否を確かめたいときは実クライアントか認証付きRESTで測る。
 "use strict";
+const fs = require("node:fs");
+const path = require("node:path");
+// functions/company-config.js をページへ埋め込む（CommonJS を即時関数で包む）。法人の CF の後始末に使う
+const CFC_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "functions", "company-config.js"), "utf8");
 
 /**
  * @param {object} o
@@ -26,7 +30,10 @@
  * @param {string} o.uid         サインイン済みとして扱うuid（"company_XXX" なら企業ログインセッション）
  * @param {string} [o.view]      起動時の画面（既定 "admin"）
  * @param {string} [o.tab]       起動時の管理者タブ（既定 "periods"）
- * @param {object} [o.cfHandlers] Callable名 → "ok" | "reject:メッセージ" | "unlink" | "link" | "companyConfig" | "companyLogin:<companyId>"（本物のCFと同じ後始末）
+ * @param {object} [o.cfHandlers] Callable名 → "ok" | "reject:メッセージ" | "unlink" | "link" | "companyConfig" | "companyLogin:<companyId>" | "entity"（本物のCFと同じ後始末）
+ *                                "entity" は法人の6本（ensureCompanyEntities / createEntity / renameEntity / assignShopEntity /
+ *                                saveEntityConfig / setShopKind）。移行と写しの組み立ては **functions/company-config.js をそのまま読み込んで**
+ *                                使う（planEntityMigration・buildShopMirror）ので、CF と同じ規則で写しができる。
  * @param {boolean}[o.confirm]   window.confirm の戻り値（既定 true）
  */
 function makeStub(o) {
@@ -41,6 +48,8 @@ function makeStub(o) {
 (function(){
   var LS_DB="__stub_fdb", LS_AUTH="__stub_fauth";
   var SEED=${JSON.stringify(seed)};
+  var CFC=(function(){var module={exports:{}};var exports=module.exports;${CFC_SRC}
+;return module.exports;})();
   var CF=${JSON.stringify(cfHandlers)};
   var root=null;
   try{ root=JSON.parse(localStorage.getItem(LS_DB)||"null"); }catch(e){}
@@ -205,6 +214,38 @@ function makeStub(o) {
         });
         notify();
         return Promise.resolve({data:{ok:true,synced:linked,failed:[]}});
+      }
+      if(h==="entity"){
+        // 本物の法人 CF（functions/index.js）と同じ後始末。検証（名前の長さ・連携済みか等）の一部だけ真似る
+        var ecid=payload.companyId, eb="companies/"+ecid+"/pub", seq=0;
+        var newId=function(){ return "-Ent"+(++pushSeq); };
+        var migrate=function(){
+          var patch=CFC.planEntityMigration(getPath(eb)||{},newId,"stub");
+          if(patch) Object.keys(patch).forEach(function(k){ setPath(eb+"/"+k,patch[k]); });
+          return !!patch;
+        };
+        var sync=function(){
+          migrate();
+          var pub=getPath(eb)||{}, linked=Object.keys(pub.shops||{}), names={};
+          linked.forEach(function(sid){ names[sid]=((getPath("global/shops/"+sid)||{}).name)||""; });
+          linked.forEach(function(sid){ setPath("shops/"+sid+"/company",CFC.buildShopMirror(ecid,pub,sid,names,"stub")); });
+          notify();
+          return {ok:true,synced:linked,failed:[]};
+        };
+        if(name==="ensureCompanyEntities"){ var m=migrate(); if(m) sync(); return Promise.resolve({data:{ok:true,migrated:m}}); }
+        if(name==="createEntity"){
+          var nm=CFC.sanitizeEntityName(payload.name); if(!nm) return Promise.reject(new Error("法人名は1〜100文字にしてください"));
+          migrate(); var id=newId(); setPath(eb+"/entities/"+id,{name:nm,createdAt:"stub"}); notify();
+          return Promise.resolve({data:{ok:true,entityId:id}});
+        }
+        if(name==="renameEntity"){ setPath(eb+"/entities/"+payload.entityId+"/name",CFC.sanitizeEntityName(payload.name)); return Promise.resolve({data:sync()}); }
+        if(name==="assignShopEntity"){ setPath(eb+"/shopEntities/"+payload.shopId,payload.entityId); return Promise.resolve({data:sync()}); }
+        if(name==="saveEntityConfig"){ var st=CFC.sanitizeCompanySettings(payload.settings); setPath(eb+"/entities/"+payload.entityId+"/settings",Object.keys(st).length?st:null); return Promise.resolve({data:sync()}); }
+        if(name==="setShopKind"){
+          setPath(eb+"/shopKinds/"+payload.shopId,payload.kind==="hq"?"hq":null);
+          setPath("global/shops/"+payload.shopId+"/kind",payload.kind==="hq"?"hq":null);
+          return Promise.resolve({data:sync()});
+        }
       }
       if(h==="link"){
         // 本物の linkStoreToCompany が書くもの: 連携マップと owners への企業uid登録

@@ -125,7 +125,8 @@ async function partB() {
     await h.page.waitForTimeout(200);
     R.clickSave = await h.clickByText("提出期限を保存");
     await h.page.waitForTimeout(900);
-    R.cf = await h.evaluate(() => window.__cf.map(c => ({ name: c.name, deadlines: c.payload.deadlines, hasMonthly: c.payload.monthlyDeadlineDays !== undefined })));
+    // 法人カード（2026-09-30・P1）が移行の ensureCompanyEntities を呼ぶので、ここで測る saveCompanyConfig だけを数える
+    R.cf = await h.evaluate(() => window.__cf.filter(c => c.name !== "ensureCompanyEntities").map(c => ({ name: c.name, deadlines: c.payload.deadlines, hasMonthly: c.payload.monthlyDeadlineDays !== undefined })));
     R.saveButtons = await h.evaluate(() => { const c = document.querySelector("[data-co-summary]").closest("div").parentElement;
       return [...c.querySelectorAll("button")].map(b => b.innerText.trim()).filter(t => /保存/.test(t)); });
     R.mirrorS2 = await h.evaluate(rk => (window.__db("shops/S2/company/deadlines") || {})[rk] || null, RK);
@@ -144,7 +145,7 @@ async function partB() {
     await pick(1, "10");
     R.clickMonthly = await h.clickByText("提出期限を保存");
     await h.page.waitForTimeout(900);
-    R.cfMonthly = await h.evaluate(() => window.__cf.filter(c => c.payload.monthlyDeadlineDays !== undefined).map(c => ({ days: c.payload.monthlyDeadlineDays, hasDeadlines: c.payload.deadlines !== undefined })));
+    R.cfMonthly = await h.evaluate(() => window.__cf.filter(c => c.payload && c.payload.monthlyDeadlineDays !== undefined).map(c => ({ days: c.payload.monthlyDeadlineDays, hasDeadlines: c.payload.deadlines !== undefined })));
     R.mirrorMonthlyS4 = await h.evaluate(() => window.__db("shops/S4/company/monthlyDeadlineDays"));
     // 日付指定の無い10月後半へ切り替え、日付欄の初期値と「適用される期限」を見る
     await h.evaluate(() => { const c = document.querySelector("[data-co-summary]").closest("div").parentElement; const sel = c.querySelector("select:not([data-co-monthly-day])");

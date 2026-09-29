@@ -107,7 +107,8 @@ async function partB() {
     await h.page.waitForTimeout(200);
     R.clickSave = await h.clickByText("企業の共通設定を保存");
     await h.page.waitForTimeout(900);
-    R.cf = await h.evaluate(() => window.__cf.map(c => ({ name: c.name, lab: c.payload && c.payload.settings && c.payload.settings.laborSettings, stl: c.payload && c.payload.settings && c.payload.settings.staffTypeLimits })));
+    // 法人カード（2026-09-30・P1）が移行の ensureCompanyEntities を呼ぶので、ここで測る saveCompanyConfig だけを数える
+    R.cf = await h.evaluate(() => window.__cf.filter(c => c.name !== "ensureCompanyEntities").map(c => ({ name: c.name, lab: c.payload && c.payload.settings && c.payload.settings.laborSettings, stl: c.payload && c.payload.settings && c.payload.settings.staffTypeLimits })));
     R.mirror = await h.evaluate(() => window.__db("shops/S1/company/settings"));
     R.toast = await h.evaluate(() => document.body.innerText.includes("連携店舗 2 件に反映しました"));
     await h.clickByText("設定");
