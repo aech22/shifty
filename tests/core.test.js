@@ -5651,3 +5651,200 @@ test("P3.6 入口の固定: 確定の2つの入口がヘルプ先の合算を渡
     assert.ok(/syncPeopleMirror\(companyId\)/.test(body), `${n} が写しを作り直していない`);
   });
 });
+
+// ===== P4 実績レイヤー（労務給与_複数法人_実装計画.md §3.6・§4.1・§6 P4）=====
+const P4_S = { candidates: [], breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] }, staffAttributes: {},
+  overtimeSettings: { byStaff: { "田中": { lunch: 0, dinner: 30 } } } };
+const P4_D = "2026-11-02"; // 月曜（平日の休憩 12:00〜13:00 が当たる）
+const p4Sub = shifts => ({ id: "s1", periodId: "p1", staffName: "田中", shifts });
+test("P4 時刻の読み書き: parseClockInput はセルと同じ読み方、minToClock は 24時超えをそのまま出す", () => {
+  assert.strictEqual(u.parseClockInput("9"), "09:00");
+  assert.strictEqual(u.parseClockInput("930"), "09:30");
+  assert.strictEqual(u.parseClockInput("9:30"), "09:30");
+  assert.strictEqual(u.parseClockInput("9.5"), "09:30");
+  assert.strictEqual(u.parseClockInput("25"), "25:00");
+  assert.strictEqual(u.parseClockInput("31"), "");
+  assert.strictEqual(u.parseClockInput("abc"), "");
+  assert.strictEqual(u.parseClockInput(""), "");
+  assert.strictEqual(u.minToClock(1500), "25:00");
+  assert.strictEqual(u.minToClock(null), "", "null を 00:00 にしない");
+  assert.strictEqual(u.parseMinutesInput("60"), 60);
+  assert.strictEqual(u.parseMinutesInput("1:30"), 90);
+  assert.strictEqual(u.parseMinutesInput(""), null);
+  assert.ok(Number.isNaN(u.parseMinutesInput("x")));
+});
+test("P4 resolveActualDay: 未入力の日は確定シフトの値（休憩控除・退勤延長・締を含む）を返す", () => {
+  const sh = { status: "work", start: "10:00", end: "18:00" };
+  const sub = p4Sub({ [P4_D]: sh, "2026-11-04": { status: "work", start: "13:00", end: "17:00", extraStart: "23:00", extraEnd: "25:00" } });
+  const direct = u.calcNetWorkMinutes(sh, u.getBreaksFor(P4_S, P4_D, "田中", sh), u.getOT("田中", P4_S, sh), P4_S);
+  assert.strictEqual(direct, 450, "10:00-18:00・休憩60分・退勤延長30分");
+  const sd = u.scheduledDay(sub, P4_D, P4_S);
+  assert.deepStrictEqual({ s: sd.startMin, e: sd.endMin, b: sd.breakMin, w: sd.workMin }, { s: 600, e: 1110, b: 60, w: 450 });
+  [null, undefined, {}].forEach(a => {
+    const r = u.resolveActualDay(sub, a, P4_D, P4_S);
+    assert.deepStrictEqual({ s: r.startMin, e: r.endMin, b: r.breakMin, w: r.workMin, ab: r.absentMin, rest: r.isRest, lh: r.isLegalHoliday, has: r.hasActual },
+      { s: 600, e: 1110, b: 60, w: direct, ab: 0, rest: false, lh: false, has: false });
+  });
+  const ex = u.resolveActualDay(sub, null, "2026-11-04", P4_S);
+  assert.strictEqual(ex.workMin, 240 + 120, "締の追加出勤も確定シフトどおり数える");
+  assert.strictEqual(ex.segments.length, 2);
+  const rest = u.resolveActualDay(sub, null, "2026-11-05", P4_S);
+  assert.deepStrictEqual({ w: rest.workMin, rest: rest.isRest, s: rest.startMin }, { w: 0, rest: true, s: null });
+  // aggregateScheduledMonth（所定）と同じ値になる
+  const agg = u.aggregateScheduledMonth({ ym: "2026-11", names: ["田中"], subs: [sub], settings: P4_S });
+  const sum = u.monthDatesOf("2026-11").reduce((a, d) => a + u.scheduledDay(sub, d, P4_S).workMin, 0);
+  assert.strictEqual(sum, agg["田中"].min);
+});
+test("P4 resolveActualDay: 実績の時刻・休憩・欠勤・遅刻早退・法定休日", () => {
+  const sub = p4Sub({ [P4_D]: { status: "work", start: "10:00", end: "18:00" }, "2026-11-04": { status: "work", start: "13:00", end: "17:00", extraStart: "23:00", extraEnd: "25:00" } });
+  const R = a => u.resolveActualDay(sub, a, P4_D, P4_S);
+  let r = R({ start: "13:30" });
+  assert.deepStrictEqual({ s: r.startMin, e: r.endMin, b: r.breakMin, w: r.workMin }, { s: 810, e: 1110, b: 0, w: 300 }, "遅く出た日は休憩を判定し直す（休憩を含まない）");
+  r = R({ end: "18:00" });
+  assert.deepStrictEqual({ e: r.endMin, b: r.breakMin, w: r.workMin }, { e: 1080, b: 60, w: 420 }, "入れた退勤が実際の退勤（退勤延長は足さない）");
+  r = R({ start: "10:00", end: "20:00", breakMin: 45 });
+  assert.strictEqual(r.workMin, 555);
+  r = R({ breakMin: 30 });
+  assert.deepStrictEqual({ e: r.endMin, b: r.breakMin, w: r.workMin }, { e: 1110, b: 30, w: 480 }, "休憩だけ直した日");
+  r = R({ absent: true });
+  assert.deepStrictEqual({ w: r.workMin, ab: r.absentMin, rest: r.isRest, absent: r.absent }, { w: 0, ab: 450, rest: false, absent: true }, "欠勤＝不就労は予定の実働");
+  assert.strictEqual(R({ absent: true, absentMin: 240 }).absentMin, 240);
+  r = R({ absentMin: 30 });
+  assert.deepStrictEqual({ w: r.workMin, ab: r.absentMin }, { w: 450, ab: 30 }, "遅刻・早退の分は実働から引かない（控除用の値）");
+  r = R({ legalHoliday: true, note: "応援" });
+  assert.deepStrictEqual({ lh: r.isLegalHoliday, w: r.workMin, note: r.note, has: r.hasActual }, { lh: true, w: 450, note: "応援", has: true });
+  const rd = u.resolveActualDay(sub, { start: "10:00", end: "15:00" }, "2026-11-05", P4_S);
+  assert.deepStrictEqual({ w: rd.workMin, rest: rd.isRest }, { w: 240, rest: false }, "予定の無い日に働いた日");
+  const ex = u.resolveActualDay(sub, { end: "18:00" }, "2026-11-04", P4_S);
+  assert.strictEqual(ex.workMin, 300 + 120, "出勤・退勤は主シフトを置き換え、締は確定シフトのまま足す");
+});
+test("P4 planActualEdit: 確定シフトと違う項目だけを保存し、同じなら消す（差分のある日だけ）", () => {
+  const sub = p4Sub({ [P4_D]: { status: "work", start: "10:00", end: "18:00" } });
+  const P = (entry, date = P4_D) => u.planActualEdit({ periodId: "p1", name: "田中", date, entry, sub, settings: P4_S });
+  const K = "p1/田中/" + P4_D;
+  assert.deepStrictEqual(P({ start: "10:00", end: "18:30" }).patch, { [K]: null }, "予定どおり（延長後の退勤）なら持たない");
+  assert.deepStrictEqual(P({ start: "", end: "" }).patch, { [K]: null });
+  assert.deepStrictEqual(P({ start: "10", end: "1800" }).patch, { [K]: { end: "18:00" } });
+  assert.deepStrictEqual(P({ start: "9", end: "" }).patch, { [K]: { start: "09:00" } });
+  assert.deepStrictEqual(P({ breakMin: "60" }).patch, { [K]: null }, "自動で決まる休憩と同じ値は持たない");
+  assert.deepStrictEqual(P({ breakMin: "45" }).patch, { [K]: { breakMin: 45 } });
+  assert.deepStrictEqual(P({ start: "13:30", breakMin: "0" }).patch, { [K]: { start: "13:30" } }, "時刻を変えた後の自動の休憩（0分）と同じ");
+  assert.deepStrictEqual(P({ absent: true }).patch, { [K]: { absent: true } });
+  assert.deepStrictEqual(P({ absent: true, absentMin: "450" }).patch, { [K]: { absent: true } }, "予定の実働と同じ不就労は持たない");
+  assert.deepStrictEqual(P({ absent: true, start: "11:00", note: " 体調不良 " }).patch, { [K]: { absent: true, note: "体調不良" } }, "欠勤の日は時刻を持たない");
+  assert.deepStrictEqual(P({ absentMin: "30", legalHoliday: true }).patch, { [K]: { absentMin: 30, legalHoliday: true } });
+  assert.deepStrictEqual(P(null).patch, { [K]: null });
+  assert.ok(P({ absent: true }, "2026-11-05").error, "予定の無い日は欠勤にできない");
+  assert.ok(P({ start: "10:00" }, "2026-11-05").error, "予定の無い日は両方要る");
+  assert.deepStrictEqual(P({ start: "10:00", end: "15:00" }, "2026-11-05").patch, { "p1/田中/2026-11-05": { start: "10:00", end: "15:00" } });
+  assert.ok(P({ start: "18:00", end: "10:00" }).error, "退勤≦出勤");
+  assert.ok(P({ start: "ab" }).error);
+  assert.ok(P({ breakMin: "600" }).error, "休憩が勤務時間以上");
+  assert.ok(P({ breakMin: "-1" }).error);
+  assert.ok(P({ note: "x".repeat(201) }).error);
+  assert.ok(u.planActualEdit({ periodId: "p1", name: "田.中", date: P4_D, entry: {}, sub, settings: P4_S }).error);
+  assert.ok(u.planActualEdit({ periodId: "p1", name: "田中", date: "2026-13-01", entry: {}, sub, settings: P4_S }).error);
+  // 保存した記録から解決すると入力どおりになる
+  const rec = P({ start: "9:30", end: "19:00" }).record;
+  const r = u.resolveActualDay(sub, rec, P4_D, P4_S);
+  assert.deepStrictEqual({ s: r.startMin, e: r.endMin, w: r.workMin }, { s: 570, e: 1140, w: 510 });
+});
+test("P4 改名・削除の後始末: actuals のキーが期間ごとに移る（STAFF_KEYED_PERIOD_NODES）", () => {
+  assert.deepStrictEqual(u.STAFF_KEYED_PERIOD_NODES, ["actuals"]);
+  const ac = { p1: { "田中": { [P4_D]: { end: "18:00" } }, "佐藤": { [P4_D]: { absent: true } } }, p2: { "田中": { "2026-11-20": { legalHoliday: true } } }, p3: { "佐藤": {} } };
+  assert.deepStrictEqual(u.renameStaffInActuals(ac, "田中", "田中 太郎"), {
+    "p1/田中 太郎": ac.p1["田中"], "p1/田中": null, "p2/田中 太郎": ac.p2["田中"], "p2/田中": null });
+  assert.strictEqual(u.renameStaffInActuals(ac, "鈴木", "鈴木 一郎"), null);
+  assert.strictEqual(u.renameStaffInActuals(ac, "田中", "田中"), null);
+  assert.deepStrictEqual(u.dropStaffFromActuals(ac, ["佐藤"]), { "p1/佐藤": null, "p3/佐藤": null });
+  assert.strictEqual(u.dropStaffFromActuals(ac, ["鈴木"]), null);
+  assert.deepStrictEqual(u.actualOf(ac, "p1", "田中", P4_D), { end: "18:00" });
+  assert.strictEqual(u.actualOf(ac, "p9", "田中", P4_D), null);
+});
+test("P4 改名の後始末（CF）: actuals の一覧と差分パッチがクライアントと一致し、companyRenameStaff と purgeOldPeriods が actuals を扱う", () => {
+  const fs = require("node:fs");
+  assert.deepStrictEqual(cfp.STAFF_KEYED_PERIOD_NODES_CF, u.STAFF_KEYED_PERIOD_NODES);
+  const cases = [
+    { p1: { "田中": { [P4_D]: { end: "18:00" } }, "佐藤": { [P4_D]: { absent: true } } }, p2: { "田中": { "2026-11-20": { legalHoliday: true } } } },
+    { p1: { "佐藤": { [P4_D]: { absent: true } } } },
+    {},
+  ];
+  cases.forEach(ac => {
+    assert.deepStrictEqual(cfp.renameStaffActualsPatch(ac, "田中", "田中 太郎"), u.renameStaffInActuals(ac, "田中", "田中 太郎"));
+    const patch = u.renameStaffInActuals(ac, "田中", "田中 太郎");
+    if (patch) {
+      const after = p1bApply(ac, patch);
+      Object.keys(ac).forEach(pid => { if (ac[pid]["田中"]) assert.deepStrictEqual(after[pid]["田中 太郎"], ac[pid]["田中"]); assert.ok(!(after[pid] || {})["田中"]); });
+    }
+  });
+  const idx = fs.readFileSync(require("node:path").join(__dirname, "..", "functions", "index.js"), "utf8");
+  const body = idx.slice(idx.indexOf("exports.companyRenameStaff"), idx.indexOf("exports.companyUpdateStaff"));
+  u.STAFF_KEYED_PERIOD_NODES.forEach(n => assert.ok(body.includes("shops/${sid}/" + n), n + " を移していない"));
+  assert.ok(body.includes("renameStaffActualsPatch("), "companyRenameStaff が renameStaffActualsPatch を通っていない");
+  const purge = idx.slice(idx.indexOf("exports.purgeOldPeriods"), idx.indexOf("exports.sendSurveyEmails"));
+  assert.ok(purge.includes("shops/${shopId}/actuals/${periodId}"), "期間の自動削除で実績も消す");
+});
+test("P4 ドリフト検出: ルール（actuals はオーナーだけが読み書き・形の検証）と改名・削除・期間削除・保存の入口", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const rules = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "database.rules.json"), "utf8")).rules.shops.$shopId;
+  const OWNER = "root.child('shops').child($shopId).child('owners').child(auth.uid).exists()";
+  const A = rules.actuals;
+  assert.ok(A && A[".read"].includes(OWNER) && A[".write"].includes(OWNER), "actuals はオーナーだけが読み書きする");
+  const D = A.$periodId.$name.$date;
+  assert.ok(D[".validate"].includes("$date.matches("), "日付のキーを検証する");
+  ["start", "end", "breakMin", "absent", "absentMin", "legalHoliday", "note"].forEach(f => assert.ok(D[f] && D[f][".validate"], f + " の検証が無い"));
+  assert.deepStrictEqual(u.ACTUAL_FIELDS, ["start", "end", "breakMin", "absent", "absentMin", "legalHoliday", "note"], "ルールの項目と一致させる");
+  assert.strictEqual(D.$other[".validate"], false, "知らない項目は書けない");
+  const admin = _readAdminSurface();
+  const ren = admin.slice(admin.indexOf("onRenameStaff={(oldName,newName)=>{"));
+  const renBody = ren.slice(0, ren.indexOf("tt(`✓ ${oldName} → ${newName} に変更しました`)"));
+  assert.ok(/act\.rename\(/.test(renBody), "改名で actuals を移していない");
+  const sites = [];
+  let i = -1;
+  while ((i = admin.indexOf("=settingsWithoutStaff(", i + 1)) >= 0) sites.push(i);
+  assert.ok(sites.length >= 2);
+  sites.forEach(at => assert.ok(admin.slice(at, at + 600).includes("act.drop("), "settingsWithoutStaff の近くに act.drop が無い"));
+  const main = fs.readFileSync(path.join(__dirname, "..", "app-main.js"), "utf8");
+  assert.ok(main.includes("fbUpd(`shops/${sid}/actuals`,patch)"), "実績は差分 update で書く");
+  assert.ok(!/ref\(`shops\/\$\{sid\}\/actuals`\)\.set\(/.test(main), "actuals を全体 set() しない");
+  assert.ok(main.includes("firebaseDB.ref(`shops/${sid}/actuals/${p.id}`).remove()"), "期間の削除で実績も消す");
+  const sub = main.slice(main.indexOf("const[actuals,setActuals]"), main.indexOf("const saveActuals"));
+  assert.ok(sub.includes("ownerClaimedSid!==sid"), "claim が通った店舗でだけ購読する");
+  // 実績の切替は確定済みの期間だけ
+  assert.ok(/const canActuals=!!period&&periodConfirmed&&/.test(admin), "実績の切替を確定済みの期間に限る");
+});
+test("P4 CSV取込: 列の位置・見出し・別名・期間の外・知らない名前・2行目以降・既存の実績との合わせ方", () => {
+  assert.deepStrictEqual(u.parseCsvRows('﻿日付,名前\r\n"2026-11-02","田中, 太郎"\r\n\r\n"a""b",c'), [["日付", "名前"], ["2026-11-02", "田中, 太郎"], ['a"b', "c"]]);
+  assert.deepStrictEqual(u.parseCsvRows("a\tb\n1\t2"), [["a", "b"], ["1", "2"]], "タブ区切り");
+  const per = { id: "p1", startDate: "2026-12-16", endDate: "2027-01-15" };
+  assert.strictEqual(u.parseCsvDate("2026/11/2", per), "2026-11-02");
+  assert.strictEqual(u.parseCsvDate("2026年11月2日", per), "2026-11-02");
+  assert.strictEqual(u.parseCsvDate("1/5", per), "2027-01-05", "月/日は期間に入る年");
+  assert.strictEqual(u.parseCsvDate("12/20", per), "2026-12-20");
+  assert.strictEqual(u.parseCsvDate("2026-02-30", per), null);
+  assert.deepStrictEqual(u.actualsCsvMappingOf({}), u.DEFAULT_ACTUALS_CSV_MAPPING);
+  assert.deepStrictEqual(u.actualsCsvMappingOf({ actualsCsv: { hasHeader: false, date: 2, name: 1, start: 3, end: 4, breakMin: 0 } }),
+    { hasHeader: false, date: 2, name: 1, start: 3, end: 4, breakMin: 0 });
+  const period = { id: "p1", startDate: "2026-11-01", endDate: "2026-11-30" };
+  const settings = { ...P4_S, staffAliases: { "田中": ["たなか"] } };
+  const subs = [p4Sub({ [P4_D]: { status: "work", start: "10:00", end: "18:00" } })];
+  const actuals = { p1: { "田中": { [P4_D]: { absent: true, legalHoliday: true, note: "応援" } } } };
+  const text = ["日付,名前,出勤,退勤,休憩", "2026-11-02,たなか,9:58,18:05,60", "2026-11-02,田中,10:00,18:00,", "2026-12-01,田中,10:00,18:00,",
+    "11/5,佐藤,10:00,15:00,", "11/6,田中,10:00,,", "11/7,鈴木,10:00,15:00,", "11/9,田中,10:00,18:30,"].join("\n");
+  const r = u.planActualsImport({ text, mapping: u.DEFAULT_ACTUALS_CSV_MAPPING, period, staffList: ["田中", "佐藤", "--"], subs, settings, actuals });
+  const reasons = Object.fromEntries(r.rows.map(x => [x.line, x.ok ? "ok" : x.reason]));
+  assert.strictEqual(reasons[2], "ok");
+  assert.match(reasons[3], /2行目以降/);
+  assert.match(reasons[4], /期間の外/);
+  assert.strictEqual(reasons[5], "ok", "予定の無い日の打刻");
+  assert.match(reasons[6], /両方/);
+  assert.match(reasons[7], /スタッフにいない/);
+  assert.strictEqual(reasons[8], "ok");
+  assert.strictEqual(r.applied, 3);
+  assert.deepStrictEqual(r.patch["p1/田中/2026-11-02"], { start: "09:58", end: "18:05", legalHoliday: true, note: "応援" }, "欠勤は外し、法定休日とメモは残す・休憩60は自動と同じなので持たない");
+  assert.deepStrictEqual(r.patch["p1/佐藤/2026-11-05"], { start: "10:00", end: "15:00" });
+  assert.deepStrictEqual(r.patch["p1/田中/2026-11-09"], { start: "10:00", end: "18:30" }, "予定の無い日は両方を持つ");
+  const r2 = u.planActualsImport({ text: "田中,11/2,11:00,18:00", mapping: { hasHeader: false, name: 1, date: 2, start: 3, end: 4, breakMin: 0 }, period, staffList: ["田中"], subs, settings, actuals: {} });
+  assert.deepStrictEqual(r2.patch, { "p1/田中/2026-11-02": { start: "11:00", end: "18:00" } }, "列の位置を入れ替えられる");
+});
