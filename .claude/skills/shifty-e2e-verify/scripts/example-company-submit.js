@@ -172,17 +172,20 @@ async function partB() {
     AM_monthlyFallback: !!(AM.deadline && AM.deadline.source === "monthly" && /^提出期限 9\/25\(金\) 期限を過ぎています$/.test(AM.deadline.text)),
     A_deadlineRedBanner: !!(A.deadline && A.deadline.bg === "rgb(198, 40, 40)" && A.deadline.color === "rgb(255, 255, 255)"),
     A_bannerCalmAfterSubmit: !!(A.afterSubmit && A.afterSubmit.bannerBg !== "rgb(198, 40, 40)" && A.afterSubmit.bannerState === "提出済み"),
-    A_submitWritesOneKey: !!(A.writes && A.writes[0] && Object.keys(A.writes[0]).join() === "p1/submission" && A.writes[0]["p1/submission"].at),
+    // 2026-09-30（P3）から提出・再提出は履歴にも1件ずつ残す＝差分は submission と history の記録1件の2本
+    A_submitWritesOneKey: !!(A.writes && A.writes[0] && Object.keys(A.writes[0]).filter(k => k !== "p1/submission").every(k => /^p1\/history\/h[0-9a-z]+$/.test(k) && A.writes[0][k].kind === "submit")
+      && Object.keys(A.writes[0]).length === 2 && A.writes[0]["p1/submission"].at),
     A_submittedLabel: !!(A.afterSubmit && A.afterSubmit.resubmitBtn && A.afterSubmit.cancelBtnGone && /^提出済み \d+\/\d+ \d\d:\d\d$/.test(A.afterSubmit.label || "")),
-    A_resubmitReplaces: !!(A.writes && A.writes[1] && Object.keys(A.writes[1]).join() === "p1/submission"
+    A_resubmitReplaces: !!(A.writes && A.writes[1] && Object.keys(A.writes[1]).length === 2 && Object.keys(A.writes[1]).some(k => /^p1\/history\//.test(k) && A.writes[1][k].kind === "resubmit")
       && A.writes[1]["p1/submission"] && Object.keys(A.writes[1]["p1/submission"]).sort().join() === "at,byUid"
       && A.writes[1]["p1/submission"].at > A.writes[0]["p1/submission"].at),
     A_resubmitStays: !!(A.afterResubmit && A.afterResubmit.resubmitBtn && A.afterResubmit.toast === "✓ 企業にシフトを再提出しました"),
     A0_hiddenWithoutCompany: A0.hasSubmit === false && A0.deadline === null,
     B_options: !!(B.options && B.options.join("|") === "2026年10月後半|2026年10月前半"),
     B_defaultIsNewest: B.defaultSelected === "2026年10月後半",
-    B_noPerShopDeadline: !!(B.headers && B.headers.join("|") === "店舗|期間|状況" && B.rowDateInputs === 0),
-    B_summary: B.summary === "提出済み 2 ／ 未提出 1",
+    // 確定・交付の列と履歴のボタン列は 2026-09-30（P3）から
+    B_noPerShopDeadline: !!(B.headers && B.headers.join("|") === "店舗|期間|状況|確定|交付|" && B.rowDateInputs === 0),
+    B_summary: /^提出済み 2 ／ 未提出 1\s*確定 0 ／ 交付 0$/.test(B.summary || ""), // 確定・交付の件数は P3 から同じ行に
     B_rows: !!(B.rows && B.rows.S1.status === "submitted" && B.rows.S2.status === "pending" && B.rows.S3.status === "submitted" && B.rows.S4.status === "none"),
     B_overdueRed: !!(B.rows && B.rows.S2.color === RED),
     B_cfDeadlines: !!(B.cf && B.cf.length === 1 && B.cf[0].name === "saveCompanyConfig" && JSON.stringify(B.cf[0].deadlines) === JSON.stringify({ [RK]: { all: "2026-10-05" } }) && B.cf[0].hasMonthly === false),
