@@ -1,0 +1,2182 @@
+// ============================================================
+// Shifty - 企業連携・設定・賃金マスタのコンポーネント（2026-09-30 に app-admin.js から分割）
+// app-admin.js が Babel Standalone の 500KB 上限を超えたため、次の2つの塊をそのまま移した:
+//   1. 賃金マスタ・閲覧パスコード（PAY_OFF / PayCodeBox / PayCodeChangeModal / StaffPayPage）
+//   2. 企業連携タブ一式（CoLaborFields・CompanyConfigCard・CompanyEntityCard・EntityFilter・
+//      CompanyStaffCard / CompanyStaffDirectory・人物の編集と統合・CompanySubmissionsCard・
+//      CompanyBulkPdf・CompanyLoginCard・CompanyTab）と、それに続く設定タブ（SetTab）
+// index.html で app-admin.js の直後・app-main.js の直前に読み込む。全ファイルが同じ
+// グローバルスコープを共有し、描画は app-main.js の ReactDOM マウント時なので、
+// AdminView（app-admin.js）からここのコンポーネントを参照できる。
+// ============================================================
+
+// ============================================================
+// 賃金マスタ・閲覧パスコード（2026-09-30・労務給与_複数法人_実装計画.md §3.7・P6a）
+// pay は App（app-main.js）から来る1つのオブジェクト: {enabled, loaded, map, codeRec, unlockedFor(rec?), unlockedDefault,
+//   unlock(code, rec?), lock(), save(name, record), rename(old, new), drop(names), changeCode(cur, next)}。
+// パスコードは画面ロック（覗き見・開きっぱなし対策）。読み書きの権限そのものはルール（private は owners のみ）が決める。
+// ============================================================
+const PAY_OFF={enabled:false,loaded:false,map:{},codeRec:null,unlockedFor:()=>false,unlockedDefault:false,
+  unlock:async()=>({ok:false}),lock:()=>{},save:()=>Promise.reject(new Error("off")),rename:()=>{},drop:()=>{},changeCode:async()=>({error:"off"})};
+// 4桁の入力ボックス。rec を渡せばそのパスコード（企業内登録スタッフは企業のもの）で照合する
+function PayCodeBox({pay,rec,onOpenChange}){
+  const[v,setV]=useState("");
+  const[msg,setMsg]=useState("");
+  const r=rec===undefined?pay.codeRec:rec;
+  const unlocked=pay.unlockedFor(rec);
+  const submit=async code=>{
+    const res=await pay.unlock(code,rec);
+    setV("");
+    if(res.ok){setMsg("");return;}
+    setMsg(res.wait?`${res.wait}秒待ってからもう一度入力してください`:`パスコードが違います（あと${res.left}回で60秒待ちになります）`);
+  };
+  const isDefault=!isPayCodeRecord(r)||(unlocked&&pay.unlockedDefault);
+  return(<div data-pay-code-box="1" style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
+    <div style={{display:"flex",alignItems:"center",gap:6}}>
+      {unlocked
+        ?<><span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>賃金を表示中</span>
+          <button onClick={pay.lock} title="賃金を伏せる" aria-label="賃金を伏せる" style={{...AGray,padding:"6px 10px"}}>🔒</button></>
+        :<input type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={v} placeholder="パスコード" aria-label="賃金の閲覧パスコード（4桁）"
+          onChange={e=>{const x=e.target.value.replace(/\D/g,"").slice(0,4);setV(x);if(x.length===4)submit(x);}}
+          style={{...AI,width:120,padding:"7px 10px",textAlign:"center",letterSpacing:4}}/>}
+      {onOpenChange&&<button onClick={onOpenChange} style={{...AGray,padding:"6px 10px",fontSize:12,whiteSpace:"nowrap"}}>変更</button>}
+    </div>
+    {msg&&<div style={{fontSize:11,color:"#DC2626"}}>{msg}</div>}
+    {isDefault&&<div style={{fontSize:11,color:"#B45309"}}>初期パスコードのままです。変更してください</div>}
+  </div>);
+}
+// パスコードの変更（現在の番号と新しい番号）。onSubmit(cur,next) は {error?} を返す。note があればフォームの代わりに案内だけ出す
+function PayCodeChangeModal({onSubmit,onClose,note,tt}){
+  const[cur,setCur]=useState("");const[nx,setNx]=useState("");const[nx2,setNx2]=useState("");const[busy,setBusy]=useState(false);
+  const digits=s=>s.replace(/\D/g,"").slice(0,4);
+  const inp=(val,set,ph)=><input type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={val} placeholder={ph} onChange={e=>set(digits(e.target.value))} style={{...AI,marginBottom:8,textAlign:"center",letterSpacing:4}}/>;
+  const go=async()=>{
+    if(!isValidPayCode(cur)||!isValidPayCode(nx)){tt("✕ パスコードは4桁の数字で入力してください");return;}
+    if(nx!==nx2){tt("✕ 新しいパスコードが一致しません");return;}
+    setBusy(true);const r=await onSubmit(cur,nx);setBusy(false);
+    if(r&&r.error){tt("✕ "+r.error);return;}
+    tt("✓ 賃金の閲覧パスコードを変更しました");onClose();
+  };
+  return(<div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999,padding:16}}>
+    <div onClick={e=>e.stopPropagation()} data-pay-code-modal="1" style={{background:"var(--c-card)",borderRadius:12,padding:20,width:"100%",maxWidth:360,boxShadow:"0 8px 32px var(--c-shadow)"}}>
+      <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)",marginBottom:12}}>賃金の閲覧パスコードを変更</div>
+      {note?<div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6,marginBottom:12}}>{note}</div>:<>
+        <AL>現在のパスコード（未設定なら 0000）</AL>{inp(cur,setCur,"現在")}
+        <AL>新しいパスコード（4桁の数字）</AL>{inp(nx,setNx,"新しい番号")}{inp(nx2,setNx2,"新しい番号（確認）")}
+        <button disabled={busy} onClick={go} style={{...AB,width:"100%",marginBottom:8,opacity:busy?0.6:1}}>{busy?"変更中...":"変更する"}</button>
+      </>}
+      <button onClick={onClose} style={{...AGray,width:"100%"}}>閉じる</button>
+    </div>
+  </div>);
+}
+// 賃金設定ページ（スタッフタブ → 編集 → 「賃金設定を開く →」）。管理者画面を丸ごと差し替えて出す（AdminView の fullPage）。
+// 置き場は shops/{この店舗}/private/pay/{名前}。所属店舗でだけ編集できる（ヘルプ先では案内だけ）。
+function StaffPayPage({name,settings,shopId,shopName,homeShopName,companyLink,pay,tt,onBack}){
+  const attrId=(settings.staffAttributes||{})[name]||"parttime";
+  const attrLabel=((getAttrOptions(settings).find(([v])=>v===attrId))||[])[1]||STAFF_TYPE_LABELS[attrId]||attrId;
+  const sys=laborSystemForStaff(settings,name);
+  const sysLabel=sys==="A"?"A（1か月単位の変形労働時間制）":sys==="B"?"B（通常の労働時間制）":sys==="none"?"判定対象外":"未設定";
+  const number=(settings.staffNumbers||{})[name]||"";
+  const coSet=(companyLink&&companyLink.settings)||{};
+  const denom=rateDenominatorMinOf({...(settings.laborSettings||{}),...(coSet.laborSettings||{})});
+  const denomH=Math.round(denom/6)/10;
+  const fixedType=isPayTypeFixed(attrId);
+  const atHome=homeShopOf(settings,name,shopId)===shopId;
+  const prev=(pay.map||{})[name]||null;
+  const today=fd(new Date());
+  const draftOf=()=>{
+    const p=prev&&typeof prev==="object"?prev:{};
+    const al=Array.isArray(p.allowances)?p.allowances:Object.values(p.allowances||{});
+    return{payType:fixedType?"monthly":(PAY_TYPES.includes(p.payType)?p.payType:defaultPayTypeOf(attrId)),base:Number(p.base)||0,
+      allowances:al.filter(Boolean).map(a=>({name:a.name||"",amount:Number(a.amount)||0,excludeFromRate:!!a.excludeFromRate,excludeFromDeduction:!!a.excludeFromDeduction})),
+      fixedOt:{hours:Number(p.fixedOt&&p.fixedOt.hours)||0,auto:!(p.fixedOt&&p.fixedOt.auto===false),amount:Number(p.fixedOt&&p.fixedOt.amount)||0},
+      fixedNight:{hours:Number(p.fixedNight&&p.fixedNight.hours)||0,amount:Number(p.fixedNight&&p.fixedNight.amount)||0},
+      commute:{amount:Number(p.commute&&p.commute.amount)||0,per:p.commute&&p.commute.per==="day"?"day":(p.payType==="hourly"||(!prev&&defaultPayTypeOf(attrId)==="hourly")?"day":"month")},
+      effectiveFrom:isValidDateStr(p.effectiveFrom)?p.effectiveFrom:today};
+  };
+  const[d,setD]=useState(draftOf);
+  const[dirty,setDirty]=useState(false);
+  const[busy,setBusy]=useState(false);
+  // 購読が後から届いたら（まだ触っていなければ）保存済みの値で入れ直す
+  useEffect(()=>{if(!dirty)setD(draftOf());},[prev]);
+  const up=patch=>{setD(x=>({...x,...patch}));setDirty(true);};
+  const unlocked=pay.unlockedFor();
+  const cur=withFixedOtAmount(d,denom);
+  const monthly=d.payType==="monthly";
+  const minDate=d.effectiveFrom&&d.effectiveFrom>today?d.effectiveFrom:today;
+  const minYen=minWageOn(coSet.wageSettings,minDate);
+  const chk=minWageCheck(cur,minYen,denom);
+  const rate=hourlyRateOf(cur,denom);
+  const yen=v=>maskYen(v,unlocked);
+  const num=v=>{const n=parseInt(String(v).replace(/[^\d]/g,""),10);return Number.isFinite(n)?n:0;};
+  const hrs=v=>{const n=parseFloat(String(v).replace(/[^\d.]/g,""));return Number.isFinite(n)?Math.min(300,n):0;};
+  const yenInput=(val,onCh,label)=>unlocked
+    ?<input inputMode="numeric" value={val?String(val):""} placeholder="0" aria-label={label} onChange={e=>onCh(num(e.target.value))} style={{...AI,width:150,padding:"7px 10px",textAlign:"right"}}/>
+    :<span data-pay-masked="1" style={{display:"inline-block",minWidth:150,fontSize:16,color:"var(--c-text3)",letterSpacing:2}}>••••</span>;
+  const hoursInput=(val,onCh,label)=><input inputMode="decimal" disabled={!unlocked} value={val?String(val):""} placeholder="0" aria-label={label} onChange={e=>onCh(hrs(e.target.value))} style={{...AI,width:90,padding:"7px 10px",textAlign:"right",opacity:unlocked?1:0.6}}/>;
+  const row=(label,body,note)=>(<div style={{marginBottom:12}}>
+    <div style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>{label}</div>
+    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>{body}</div>
+    {note&&<div style={{fontSize:11,color:"var(--c-text4)",marginTop:4,lineHeight:1.5}}>{note}</div>}
+  </div>);
+  const back=()=>{if(dirty&&!window.confirm("保存していない変更があります。破棄して戻りますか？"))return;onBack();};
+  const save=async()=>{
+    if(!unlocked)return;
+    if(!isValidDateStr(d.effectiveFrom)){tt("▲ 適用開始日を入力してください");return;}
+    if(!(Number(d.base)>0)){tt(monthly?"▲ 基本給を入力してください":"▲ 時給を入力してください");return;}
+    const pv=prev?normalizePayVersion(prev):null;
+    if(pv&&pv.effectiveFrom&&d.effectiveFrom<pv.effectiveFrom){tt(`▲ 適用開始日は今の版（${pv.effectiveFrom}）以降にしてください`);return;}
+    const rec=applyPayRevision(prev,{...cur,payType:fixedType?"monthly":cur.payType},new Date().toISOString());
+    if(rec===prev){tt("変更はありません");setDirty(false);return;}
+    setBusy(true);
+    try{await pay.save(name,rec);setDirty(false);tt(pv&&pv.effectiveFrom!==rec.effectiveFrom?`✓ 保存しました（${pv.effectiveFrom} からの版は履歴に残しました）`:"✓ 保存しました");}
+    catch{/* savePay がトーストを出す */}
+    setBusy(false);
+  };
+  const history=prev?(Array.isArray(prev.history)?prev.history:Object.values(prev.history||{})).filter(Boolean).map(normalizePayVersion).sort((a,b)=>String(b.effectiveFrom).localeCompare(String(a.effectiveFrom))):[];
+  const card={background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:12,padding:16,marginBottom:14};
+  return(<div data-staff-pay-page="1" style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
+    <div style={{background:"var(--c-card)",borderBottom:"1px solid var(--c-border)",padding:"12px 16px"}}>
+      <div style={{maxWidth:720,margin:"0 auto",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={back} style={{...AGray,whiteSpace:"nowrap"}}>← 戻る</button>
+        <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{name} の賃金設定</div>
+      </div>
+    </div>
+    <div style={{maxWidth:720,margin:"0 auto",padding:"16px 14px 60px"}}>
+      <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}><PayCodeBox pay={pay}/></div>
+      <div style={card}>
+        {[["名前",name],["従業員番号",number||"—"],["属性",attrLabel],["労働時間制",sysLabel],["所属店舗",atHome?(shopName||"この店舗"):(homeShopName||"他の店舗")]].map(([k,v])=>(
+          <div key={k} style={{display:"flex",gap:12,fontSize:13,padding:"3px 0"}}><span style={{width:90,color:"var(--c-text3)",flexShrink:0}}>{k}</span><span style={{color:"var(--c-text)",fontWeight:600}}>{v}</span></div>))}
+      </div>
+      {!atHome?<div style={{...card,fontSize:13,color:"var(--c-text2)"}}>賃金は所属店舗（{homeShopName||"他の店舗"}）で設定します。</div>:!pay.loaded?<div style={{fontSize:13,color:"var(--c-text3)"}}>読み込み中...</div>:<>
+      {!unlocked&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>パスコードを入力するまで金額は伏せてあり、編集できません。</div>}
+      <div style={card}>
+        {fixedType
+          ?row("給与形態",<span style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>月給（社員は固定給）</span>)
+          :row("給与形態",PAY_TYPES.map(t=><button key={t} disabled={!unlocked} data-pay-type={t} onClick={()=>up({payType:t,commute:{...d.commute,per:t==="hourly"?"day":d.commute.per}})}
+              style={{padding:"7px 14px",borderRadius:8,fontSize:13,fontWeight:700,cursor:unlocked?"pointer":"default",background:d.payType===t?"var(--c-accent)":"var(--c-input)",color:d.payType===t?"#fff":"var(--c-text2)",border:`1px solid ${d.payType===t?"var(--c-accent)":"var(--c-border)"}`}}>{PAY_TYPE_LABELS[t]}</button>))}
+        {!monthly&&<>
+          {row("時給（円）",yenInput(d.base,v=>up({base:v}),"時給"))}
+          {row("割増率",<span style={{fontSize:13,color:"var(--c-text2)"}}>時間外 25%・深夜 25%・法定休日 35%・月60時間超 50%（法定の率）</span>,"率はこの画面では変えません。")}
+        </>}
+        {monthly&&<>
+          {row("基本給（円・月）",yenInput(d.base,v=>up({base:v}),"基本給"))}
+          <div style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>諸手当</div>
+          {d.allowances.length===0&&<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:6}}>なし</div>}
+          {d.allowances.map((a,i)=>(<div key={i} data-pay-allowance={i} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8,padding:"8px 10px",background:"var(--c-input)",borderRadius:8}}>
+            <input disabled={!unlocked} value={a.name} maxLength={30} placeholder="手当の名前" aria-label="手当の名前" onChange={e=>up({allowances:d.allowances.map((x,j)=>j===i?{...x,name:e.target.value}:x)})} style={{...AI,width:140,padding:"7px 10px"}}/>
+            {yenInput(a.amount,v=>up({allowances:d.allowances.map((x,j)=>j===i?{...x,amount:v}:x)}),"手当の金額")}
+            <label style={{fontSize:12,color:"var(--c-text2)",display:"flex",alignItems:"center",gap:4}}><input type="checkbox" disabled={!unlocked} checked={a.excludeFromRate} onChange={e=>up({allowances:d.allowances.map((x,j)=>j===i?{...x,excludeFromRate:e.target.checked}:x)})}/>割増の基礎から除く</label>
+            <label style={{fontSize:12,color:"var(--c-text2)",display:"flex",alignItems:"center",gap:4}}><input type="checkbox" disabled={!unlocked} checked={a.excludeFromDeduction} onChange={e=>up({allowances:d.allowances.map((x,j)=>j===i?{...x,excludeFromDeduction:e.target.checked}:x)})}/>欠勤控除から除く</label>
+            {unlocked&&<button onClick={()=>up({allowances:d.allowances.filter((_,j)=>j!==i)})} style={{...AD,marginLeft:0}}>削除</button>}
+          </div>))}
+          {unlocked&&<button onClick={()=>up({allowances:[...d.allowances,{name:"",amount:0,excludeFromRate:false,excludeFromDeduction:false}]})} style={{...AGray,fontSize:13,padding:"7px 12px",marginBottom:12}}>＋ 手当を追加</button>}
+          {row("固定残業",<>
+            {hoursInput(d.fixedOt.hours,v=>up({fixedOt:{...d.fixedOt,hours:v}}),"固定残業の時間")}<span style={{fontSize:13,color:"var(--c-text3)"}}>時間</span>
+            <label style={{fontSize:12,color:"var(--c-text2)",display:"flex",alignItems:"center",gap:4,marginLeft:8}}><input type="checkbox" disabled={!unlocked} checked={d.fixedOt.auto} onChange={e=>up({fixedOt:{...d.fixedOt,auto:e.target.checked,amount:e.target.checked?d.fixedOt.amount:cur.fixedOt.amount}})}/>額を自動計算</label>
+            {d.fixedOt.auto?<span data-pay-fixed-ot="1" style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{yen(cur.fixedOt.amount)}</span>:yenInput(d.fixedOt.amount,v=>up({fixedOt:{...d.fixedOt,amount:v}}),"固定残業の額")}
+          </>,d.fixedOt.auto?(unlocked&&d.base>0&&d.fixedOt.hours>0
+            ?`${Number(d.base).toLocaleString("ja-JP")} ÷ ${denomH}h × 1.25 × ${d.fixedOt.hours}h = ${cur.fixedOt.amount.toLocaleString("ja-JP")}円（1円未満切上げ）`
+            :`基本給 ÷ ${denomH}h × 1.25 × 時間（1円未満切上げ）`):"手修正の額を使います。")}
+          {row("固定深夜手当",<>
+            {hoursInput(d.fixedNight.hours,v=>up({fixedNight:{...d.fixedNight,hours:v}}),"固定深夜の時間")}<span style={{fontSize:13,color:"var(--c-text3)"}}>時間</span>
+            {yenInput(d.fixedNight.amount,v=>up({fixedNight:{...d.fixedNight,amount:v}}),"固定深夜の額")}
+          </>)}
+        </>}
+        {row("通勤手当",<>
+          {yenInput(d.commute.amount,v=>up({commute:{...d.commute,amount:v}}),"通勤手当")}
+          <select disabled={!unlocked} value={d.commute.per} onChange={e=>up({commute:{...d.commute,per:e.target.value}})} style={{...AI,width:"auto",padding:"7px 10px"}}>
+            <option value="day">日額</option><option value="month">月額</option>
+          </select>
+        </>,"割増の基礎と最低賃金の比較には入れません。")}
+      </div>
+      <div style={card} data-pay-check="1">
+        {monthly&&<div style={{fontSize:13,color:"var(--c-text2)",marginBottom:6}}>時給換算（基本給＋割増の基礎に入る手当 ÷ {denomH}h）: <b>{unlocked?(rate?`${Math.floor(rate*100)/100}円`:"—"):"••••"}</b></div>}
+        {minYen==null
+          ?<div style={{fontSize:12,color:"var(--c-text4)",lineHeight:1.6}}>{sanitizeWageSettings(coSet.wageSettings).minWage
+            ?`${minDate} に効く最低賃金が法人の設定にありません。`
+            :"最低賃金との比較は、企業連携タブの「法人」で最低賃金を登録すると出ます。"}</div>
+          :!chk?<div style={{fontSize:12,color:"var(--c-text4)"}}>金額を入力すると最低賃金（{minYen.toLocaleString("ja-JP")}円・{minDate} 時点）と比べます。</div>
+          :<div data-min-wage-ok={chk.ok?"1":"0"} style={{fontSize:13,fontWeight:700,color:chk.ok?"#059669":"#DC2626"}}>
+            {chk.ok?"最低賃金以上です":"最低賃金を下回っています"}（最低賃金 {minYen.toLocaleString("ja-JP")}円・{minDate} 時点{unlocked?`／${monthly?"基本給の時給換算":"時給"} ${Math.floor(chk.rate*100)/100}円`:""}）
+          </div>}
+      </div>
+      <div style={card}>
+        {row("適用開始日",<input type="date" disabled={!unlocked} value={d.effectiveFrom} onChange={e=>up({effectiveFrom:e.target.value})} style={{...AI,width:"auto",padding:"7px 10px"}}/>,
+          "適用開始日を変えて保存すると、今の版は改定履歴に残ります（上書きしません）。同じ日のまま保存するとその版の訂正になります。")}
+        {history.length>0&&<details data-pay-history="1" style={{marginTop:4}}>
+          <summary style={{fontSize:12,color:"var(--c-text3)",cursor:"pointer"}}>改定履歴（{history.length}件・読み取り専用）</summary>
+          {history.map((h,i)=><div key={i} style={{fontSize:12,color:"var(--c-text2)",padding:"6px 0",borderBottom:"1px solid var(--c-border)"}}>
+            {h.effectiveFrom||"（日付なし）"} から ／ {PAY_TYPE_LABELS[h.payType]} {yen(h.base)}{h.payType==="monthly"&&h.fixedOt&&h.fixedOt.hours?` ／ 固定残業 ${h.fixedOt.hours}h ${yen(h.fixedOt.amount)}`:""}
+          </div>)}
+        </details>}
+      </div>
+      <button disabled={!unlocked||busy} onClick={save} style={{...AB,width:"100%",opacity:!unlocked||busy?0.5:1}}>{busy?"保存中...":"保存"}</button>
+      </>}
+    </div>
+  </div>);
+}
+
+// ===== 企業連携タブ =====
+// ============================================================
+// 企業の共通設定（2026-09-27 企業連携の拡張）
+// 企業が決めた項目だけを持ち、空欄＝「店舗で設定」。企業設定＞店舗設定で、店舗は企業が決めていない
+// 項目を自分で足せる。重ね合わせは App の effectiveSettings（applyCompanySettings）が行う。
+// 保存は下のボタン1つで CF saveCompanyConfig を呼ぶ（入力のたびに CF を走らせない）。
+// 単位は店舗設定と同じ: 労務設定は分（入力は時間）・勤務時間の上限・目安は時間。
+// 労務設定は 0 も企業の決定（1日の延長上限0＝残業を前提にしない運用）、上限・目安・残業の 0 は未設定。
+// ============================================================
+const CO_LABOR_FIELDS=[
+  {key:"fixedOvertimeMin",label:"固定残業",max:200},
+  {key:"marginMin",label:"余裕",max:200},
+  {key:"agreementDailyOtMin",label:"36協定 1日の延長上限",max:16},
+  {key:"agreementMonthlyOtMin",label:"36協定 1か月の延長上限",max:200},
+  {key:"agreementAnnualOtMin",label:"36協定 1年の延長上限",max:999},
+];
+// 時間を小数1桁で入力し、分で返す（年間所定・分母。2026-09-30 P2）。入力途中の「2080.」を消さないよう
+// 文字列で持ち、確定（blur・Enter）のときだけ 0.1h 単位に丸めて返す。空欄は null（呼び出し側が意味を決める）。
+function HoursDecimalInput({min,onCommit,placeholder,max=9999,width=84,zeroBlank=false}){
+  const toText=m=>m===undefined||m===null||m===""||(zeroBlank&&!(Number(m)>0))?"":String(Math.round(Number(m)/6)/10);
+  const[text,setText]=useState(toText(min));
+  useEffect(()=>{setText(toText(min));},[min]);
+  const commit=()=>{
+    const t=text.trim();
+    if(t===""){if(toText(min)!=="")onCommit(null);return;}
+    const h=Number(t);
+    if(!Number.isFinite(h)||h<0){setText(toText(min));return;}
+    const v=Math.round(Math.min(max,h)*10)*6;
+    setText(toText(v));
+    if(v!==Number(min))onCommit(v);
+  };
+  return(<input type="text" inputMode="decimal" value={text} placeholder={placeholder}
+    onChange={e=>setText(e.target.value)} onBlur={commit} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}}
+    style={{...AI,width,textAlign:"center",padding:"5px 6px"}}/>);
+}
+const WEEK_START_OPTIONS=[[1,"月曜"],[2,"火曜"],[3,"水曜"],[4,"木曜"],[5,"金曜"],[6,"土曜"],[0,"日曜"]];
+const minToH1=m=>String(Math.round((Number(m)||0)/6)/10);
+// 労務判定の入力欄（企業の共通設定と法人の設定で共有・2026-09-30 に CompanyConfigCard から切り出し）。
+// 空欄＝上の層（企業の共通設定なら店舗、法人なら企業の共通設定）の値を使う。
+function CoLaborFields({labor,setLabor,placeholder,blankLabel}){
+  const LBL={fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"};
+  const UNIT={fontSize:11,color:"var(--c-text4)"};
+  const numIn=(val,onCh,max,w=58)=>(<input type="number" min={0} max={max} value={val===undefined||val===null?"":val} placeholder={placeholder}
+    onChange={e=>{const t=e.target.value;if(t===""){onCh(null);return;}onCh(Math.max(0,Math.min(max,parseInt(t)||0)));}}
+    style={{...AI,width:w,textAlign:"center",padding:"5px 6px"}}/>);
+  const b31=labor.monthlyBase31Min;
+  return(<div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:16}}>
+    <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+      <span style={{...LBL,minWidth:150}}>31日の月の総枠</span>
+      {numIn(b31===undefined?null:Math.floor(b31/60),v=>setLabor("monthlyBase31Min",v===null?null:v*60+(b31===undefined?0:b31%60)),744,64)}
+      <span style={UNIT}>時間</span>
+      {numIn(b31===undefined?null:b31%60,v=>setLabor("monthlyBase31Min",(b31===undefined?0:Math.floor(b31/60))*60+(v||0)),59,64)}
+      <span style={UNIT}>分</span>
+    </div>
+    {CO_LABOR_FIELDS.map(f=>(
+      <div key={f.key} style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+        <span style={{...LBL,minWidth:150}}>{f.label}</span>
+        {numIn(labor[f.key]===undefined?null:Math.floor(labor[f.key]/60),v=>setLabor(f.key,v===null?null:v*60),f.max)}
+        <span style={UNIT}>h</span>
+      </div>
+    ))}
+    <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+      <span style={{...LBL,minWidth:150}}>年の区切り</span>
+      <select value={labor.fiscalYearStartMonth||""} onChange={e=>setLabor("fiscalYearStartMonth",e.target.value?parseInt(e.target.value):null)}
+        style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+        <option value="">{blankLabel}</option>
+        <option value={1}>1月（暦年）</option><option value={4}>4月（年度）</option><option value={7}>7月</option><option value={10}>10月</option>
+      </select>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+      <span style={{...LBL,minWidth:150}}>年間所定労働時間</span>
+      <HoursDecimalInput min={labor.annualScheduledMin} onCommit={v=>setLabor("annualScheduledMin",v)} placeholder={placeholder}/>
+      <span style={UNIT}>h（0＝使わない）</span>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+      <span style={{...LBL,minWidth:150}}>1時間当たり賃金の分母</span>
+      <HoursDecimalInput min={labor.rateDenominatorMin} onCommit={v=>setLabor("rateDenominatorMin",v)} placeholder={placeholder}/>
+      <span style={UNIT}>h（0＝年間所定÷12 を0.1h未満切り捨て）</span>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+      <span style={{...LBL,minWidth:150}}>週の起算</span>
+      <select value={labor.weekStartDow===undefined||labor.weekStartDow===null?"":labor.weekStartDow} onChange={e=>setLabor("weekStartDow",e.target.value===""?null:parseInt(e.target.value))}
+        style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+        <option value="">{blankLabel}</option>
+        {WEEK_START_OPTIONS.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+      </select>
+    </div>
+  </div>);
+}
+function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
+  const[draft,setDraft]=useState(null);
+  const[loadErr,setLoadErr]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const[dirty,setDirty]=useState(false);
+  useEffect(()=>{
+    if(!firebaseDB||!companyId){setDraft({});return;}
+    let cancelled=false;
+    setDraft(null);setLoadErr(false);setDirty(false);
+    firebaseDB.ref(`companies/${companyId}/pub/config/settings`).once("value")
+      .then(sn=>{if(!cancelled)setDraft(sn.val()||{});})
+      .catch(()=>{if(!cancelled)setLoadErr(true);});
+    return()=>{cancelled=true;};
+  },[companyId]);
+  if(loadErr)return(<AC title="企業の共通設定"><div style={{fontSize:12,color:"#FF4757"}}>✕ 企業の共通設定を読み込めませんでした。再読み込みしてください。</div></AC>);
+  if(!draft)return(<AC title="企業の共通設定"><div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div></AC>);
+  const labor=draft.laborSettings||{};
+  const stl=draft.staffTypeLimits||{};
+  const upd=next=>{setDraft(next);setDirty(true);};
+  const setLabor=(k,v)=>{const l={...labor};if(v===null||v===undefined)delete l[k];else l[k]=v;upd({...draft,laborSettings:l});};
+  const setLim=(id,k,v)=>{
+    const e={...(stl[id]||{})};
+    if(v===null||v===undefined||v===""||(k!=="laborSystem"&&k!=="name"&&!(v>0)))delete e[k];else e[k]=v;
+    upd({...draft,staffTypeLimits:{...stl,[id]:e}});
+  };
+  const numIn=(val,onCh,max,w=58)=>(<input type="number" min={0} max={max} value={val===undefined||val===null?"":val} placeholder="店舗"
+    onChange={e=>{const t=e.target.value;if(t===""){onCh(null);return;}onCh(Math.max(0,Math.min(max,parseInt(t)||0)));}}
+    style={{...AI,width:w,textAlign:"center",padding:"5px 6px"}}/>);
+  const coAttrIds=Object.keys(stl).filter(isCompanyAttrId);
+  // 「その他」は企業の属性設定に出さない（2026-09-27 ユーザー指示）。店舗側の「その他」は従来どおり
+  const attrRows=[...BUILTIN_TYPES.filter(id=>id!=="other").map(id=>[id,STAFF_TYPE_LABELS[id]]),...coAttrIds.map(id=>[id,null])];
+  const addAttr=()=>upd({...draft,staffTypeLimits:{...stl,[genCompanyAttrId()]:{name:""}}});
+  const delAttr=id=>{
+    if(!window.confirm("この属性を削除しますか？\n各店舗でこの属性にしていたスタッフは「属性未設定」の扱いになります。"))return;
+    const n={...stl};delete n[id];upd({...draft,staffTypeLimits:n});
+  };
+  const save=async()=>{
+    if(!onSaveCompanyConfig)return;
+    if(coAttrIds.some(id=>!((stl[id]||{}).name||"").trim())){tt("✕ 名前の無い属性があります。名前を入れるか削除してください");return;}
+    setBusy(true);
+    const r=await onSaveCompanyConfig({settings:draft});
+    setBusy(false);
+    if(r&&r.error){tt("✕ "+r.error);return;}
+    setDirty(false);
+    const f=(r&&r.failed)||[];
+    tt(f.length?`△ ${(r.synced||[]).length}件に反映し、${f.length}件は失敗しました。もう一度保存してください`:`✓ 連携店舗 ${(r&&r.synced||[]).length} 件に反映しました`);
+  };
+  const LBL={fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"};
+  const UNIT={fontSize:11,color:"var(--c-text4)"};
+  return(<AC title="企業の共通設定">
+    <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+      連携している全店舗の設定タブに、ここで入れた値が優先して適用されます。空欄の項目は各店舗が自分で設定できます。
+    </div>
+    <AL>労務判定</AL>
+    <CoLaborFields labor={labor} setLabor={setLabor} placeholder="店舗" blankLabel="店舗で設定"/>
+    <AL>属性別の勤務時間制限</AL>
+    {attrRows.map(([id,label])=>{
+      const e=stl[id]||{};
+      const isCo=isCompanyAttrId(id);
+      return(<div key={id} data-co-attr={id} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+          {isCo
+            ?<input value={e.name||""} maxLength={20} placeholder="属性名を入力" onChange={ev=>setLim(id,"name",ev.target.value)} style={{...AI,flex:1,fontWeight:700,padding:"4px 8px"}}/>
+            :<div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",flex:1}}>{label}</div>}
+          {isCo&&<button onClick={()=>delAttr(id)} style={{...AD,padding:"4px 10px",fontSize:12}}>削除</button>}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+          <span style={LBL}>労働時間制</span>
+          <select value={LABOR_SYSTEMS.indexOf(e.laborSystem)>=0?e.laborSystem:""} onChange={ev=>setLim(id,"laborSystem",ev.target.value||null)}
+            style={{...AI,width:"auto",flex:"1 1 220px",minWidth:180,padding:"5px 8px",cursor:"pointer"}}>
+            <option value="">店舗で設定</option>
+            {LABOR_SYSTEMS.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
+          </select>
+        </div>
+        {[["上限",false],["目安",true]].map(([rowLbl,isMin])=>(
+          <div key={rowLbl} style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:isMin?0:6}}>
+            <span style={{fontSize:11,fontWeight:700,color:isMin?"#2563EB":"#FF4757",minWidth:26}}>{rowLbl}</span>
+            {STAFF_LIMIT_WINDOWS.map(w=>{const k=isMin?w.minKey:w.key;return(<React.Fragment key={k}>
+              <div style={{display:"flex",alignItems:"center",gap:4}}>
+                <span style={LBL}>{w.label}</span>
+                {numIn(e[k]>0?e[k]:null,v=>setLim(id,k,v),w.max,52)}
+                <span style={UNIT}>h</span>
+              </div>
+              {/* 1ヶ月の残業（上限・目安の両方に足す。上限の行にだけ入力欄を置く） */}
+              {!isMin&&w.otKey&&<div style={{display:"flex",alignItems:"center",gap:4}}>
+                <span style={LBL}>＋残業</span>
+                {numIn(e[w.otKey]>0?e[w.otKey]:null,v=>setLim(id,w.otKey,v),w.otMax,52)}
+                <span style={UNIT}>h</span>
+              </div>}
+            </React.Fragment>);})}
+          </div>
+        ))}
+      </div>);
+    })}
+    <button onClick={addAttr} style={{width:"100%",padding:"8px",background:"transparent",border:"1px dashed var(--c-border2)",borderRadius:8,color:"var(--c-text3)",fontSize:12,cursor:"pointer",marginBottom:12}}>＋ 企業の属性を追加</button>
+    <button disabled={busy||!dirty} onClick={save} style={{...AB,width:"100%",opacity:busy||!dirty?0.5:1}}>{busy?"保存中...":"企業の共通設定を保存"}</button>
+  </AC>);
+}
+
+// ============================================================
+// シフトの提出状況と提出期限（2026-09-27 企業連携の拡張）
+// 対象店舗は companies/{id}/pub/shops（企業に連携した店舗）で、allLinkedShops ではない
+// （あちらは企業に入れていない自分の店舗も含む）。期間は店舗ごとにIDが違うので、開始日_終了日で
+// 対応づけ、「2026年10月前半」のような選択肢にする（企業内は同じ作成期間で運用する前提）。
+// 提出期限は企業が期間ごとに日付を直接入れる（全店舗共通の1つだけ。店舗別は 2026-09-27 のユーザー指示で廃止）。
+// 期間ごとの日付を入れていない期間には「毎月の固定締切」（例: 毎月10日・25日）が効く。優先は 日付指定 ＞ 毎月の固定。
+// 読めなかった店舗は「読み込み失敗」と出し、提出済みにも未提出にも数えない（丸めない）。
+// ============================================================
+// ============================================================
+// 企業内登録スタッフ（2026-09-28）。企業連携タブのカードから全画面の一覧を開く。人数が多いので
+// 管理者画面の中身を丸ごと差し替えて出す（AdminView の fullPage）。ブラウザの新しいタブは使わない——
+// 実ログインは永続化しない設計なので、新しいタブでは未ログインになり companies/{id}/pub を読めない。
+// 載せるのは店舗に依存しない情報だけ（従業員番号・属性・所属店舗・有給）。計算は buildCompanyStaffRows（app-utils.js）。
+// ============================================================
+// 法人（entity）（2026-09-30・労務給与_複数法人_実装計画.md §3.1・P1）
+// 企業の下に法人を置き、店舗は必ず1法人に属す。正本は companies/{id}/pub の entities / shopEntities /
+// defaultEntityId / shopKinds（書くのは CF だけ）。法人の設定は企業の共通設定より優先して写しに焼かれる。
+// 法人が1つも無い企業（P1 より前に作った企業）は、このカードを開いたときに CF ensureCompanyEntities で
+// 企業名と同名の法人を1つ作り、全店舗をそこへ割り当てる（片方向の移行・見た目は変わらない）。
+// ============================================================
+// 企業の構造（法人・店舗の割当・本部の種別）を読む。読めなかった項目は null（呼び出し側は「法人なし」として扱う）
+async function readCompanyStructure(companyId){
+  const keys=["entities","shopEntities","defaultEntityId","shopKinds"];
+  const vals=await Promise.all(keys.map(k=>firebaseDB.ref(`companies/${companyId}/pub/${k}`).once("value").then(x=>x.val()).catch(()=>null)));
+  const out={};keys.forEach((k,i)=>{out[k]=vals[i];});
+  return out;
+}
+function CompanyEntityCard({companyId,shopNames={},onCompanyCall,tt,onChanged}){
+  const[st,setSt]=useState(null); // {pub, shopIds, names}
+  const[loadErr,setLoadErr]=useState(false);
+  const[tick,setTick]=useState(0);
+  const[busy,setBusy]=useState(false);
+  const[newName,setNewName]=useState("");
+  const[nameDraft,setNameDraft]=useState({}); // {entityId: 入力中の名前}
+  const[openCfg,setOpenCfg]=useState(null);   // 設定を開いている法人ID
+  const[cfgDraft,setCfgDraft]=useState(null); // その法人の laborSettings の下書き
+  const[wageDraft,setWageDraft]=useState([]); // その法人の最低賃金の履歴 [{from,yen}]（P6a・賃金設定ページの最賃比較に使う）
+  const triedEnsureRef=useRef(false);
+  useEffect(()=>{
+    if(!firebaseDB||!companyId){setSt({pub:{},shopIds:[],names:{}});return;}
+    let cancelled=false;
+    setLoadErr(false);
+    Promise.all([readCompanyStructure(companyId),firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value")]).then(async([pub,shS])=>{
+      const shopIds=Object.keys(shS.val()||{});
+      // 法人の無い企業は1回だけ移行を頼む（CF が法人を作り、全店舗を割り当てて写しを作り直す）
+      if(companyEntityList(pub).length===0&&!triedEnsureRef.current&&onCompanyCall){
+        triedEnsureRef.current=true;
+        const r=await onCompanyCall("ensureCompanyEntities",{});
+        if(cancelled)return;
+        if(r&&r.error){tt("✕ 法人を準備できませんでした: "+r.error);}
+        else{setTick(t=>t+1);onChanged&&onChanged();return;}
+      }
+      const names={};
+      await Promise.all(shopIds.map(async sid=>{
+        const nS=await firebaseDB.ref(`global/shops/${sid}/name`).once("value").catch(()=>null);
+        names[sid]=(nS&&nS.val())||shopNames[sid]||sid;
+      }));
+      if(!cancelled)setSt({pub,shopIds,names});
+    }).catch(()=>{if(!cancelled)setLoadErr(true);});
+    return()=>{cancelled=true;};
+  },[companyId,tick]);
+  const call=async(name,payload,okMsg)=>{
+    if(!onCompanyCall)return false;
+    setBusy(true);
+    const r=await onCompanyCall(name,payload);
+    setBusy(false);
+    if(r&&r.error){tt("✕ "+r.error);return false;}
+    const f=(r&&r.failed)||[];
+    tt(f.length?`△ ${okMsg}（${f.length}店舗への反映に失敗しました。もう一度保存してください）`:"✓ "+okMsg);
+    setTick(t=>t+1);onChanged&&onChanged();
+    return true;
+  };
+  if(loadErr)return(<AC title="法人"><div style={{fontSize:12,color:"#FF4757"}}>✕ 法人を読み込めませんでした。<button onClick={()=>setTick(t=>t+1)} style={{...AGray,marginLeft:8,padding:"4px 10px",fontSize:12}}>再読み込み</button></div></AC>);
+  if(!st)return(<AC title="法人"><div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div></AC>);
+  const ents=companyEntityList(st.pub);
+  const entOf=sid=>companyEntityIdOfShop(st.pub,sid);
+  const kindOf=sid=>companyShopKindOf(st.pub,sid);
+  const TD={borderBottom:"1px solid var(--c-border)",padding:"8px 6px",fontSize:13,verticalAlign:"middle"};
+  const openConfig=e=>{
+    if(openCfg===e.id){setOpenCfg(null);setCfgDraft(null);return;}
+    const cur=((((st.pub.entities||{})[e.id]||{}).settings)||{});
+    setOpenCfg(e.id);setCfgDraft({...(cur.laborSettings||{})});
+    setWageDraft(((cur.wageSettings&&sanitizeWageSettings(cur.wageSettings).minWage)||[]).map(x=>({from:x.from,yen:String(x.yen)})));
+  };
+  const setLabor=(k,v)=>setCfgDraft(d=>{const n={...(d||{})};if(v===null||v===undefined)delete n[k];else n[k]=v;return n;});
+  const saveConfig=async eid=>{
+    // 法人の設定は丸ごと置き換える。属性別の制限は画面から触らないので、保存済みの値をそのまま送り直す
+    const cur=((((st.pub.entities||{})[eid]||{}).settings)||{});
+    const wage=sanitizeWageSettings({minWage:wageDraft.map(x=>({from:x.from,yen:Number(x.yen)}))});
+    if(wageDraft.some(x=>x.from||x.yen)&&(wage.minWage||[]).length!==wageDraft.filter(x=>x.from||x.yen).length){tt("▲ 最低賃金は適用開始日と時間額（1〜100,000円の整数）を両方入れてください。同じ日付は1つだけです");return;}
+    const settings={...(cur.staffTypeLimits?{staffTypeLimits:cur.staffTypeLimits}:{}),laborSettings:cfgDraft||{},...(wage.minWage?{wageSettings:wage}:{})};
+    if(await call("saveEntityConfig",{entityId:eid,settings},"法人の設定を保存しました")){setOpenCfg(null);setCfgDraft(null);}
+  };
+  return(<AC title="法人">
+    <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+      連携店舗を法人（雇用主）ごとに分けて管理します。店舗は必ずどれか1つの法人に属します。法人の設定は、企業の共通設定より優先してその法人の店舗に適用されます。
+    </div>
+    {ents.length===0&&<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:10}}>法人がまだありません。</div>}
+    {ents.map(e=>{
+      const draft=nameDraft[e.id];
+      const nm=draft!==undefined?draft:e.name;
+      const nShops=st.shopIds.filter(sid=>entOf(sid)===e.id).length;
+      return(<div key={e.id} data-co-entity={e.id} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+          <input value={nm} maxLength={100} onChange={ev=>setNameDraft(d=>({...d,[e.id]:ev.target.value}))} style={{...AI,flex:"1 1 180px",fontWeight:700,padding:"5px 8px"}}/>
+          {draft!==undefined&&draft.trim()!==e.name&&<button disabled={busy||!draft.trim()} onClick={async()=>{if(await call("renameEntity",{entityId:e.id,name:draft.trim()},"法人名を変更しました"))setNameDraft(d=>{const n={...d};delete n[e.id];return n;});}} style={{...AGray,padding:"5px 10px",fontSize:12}}>名前を保存</button>}
+          <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{nShops}店舗{e.isDefault?"・既定":""}</span>
+          <button onClick={()=>openConfig(e)} style={{...AGray,padding:"5px 10px",fontSize:12}}>{openCfg===e.id?"閉じる":"法人の設定"}</button>
+        </div>
+        {openCfg===e.id&&cfgDraft&&<div style={{marginTop:10}}>
+          <AL>労務判定（空欄は企業の共通設定の値）</AL>
+          <CoLaborFields labor={cfgDraft} setLabor={setLabor} placeholder="企業" blankLabel="企業の共通設定"/>
+          <AL>最低賃金（適用開始日と時間額）</AL>
+          <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>スタッフの賃金設定ページで、時給（月給は基本給の時給換算）と比べます。改定のたびに行を足してください。</div>
+          {wageDraft.map((w,i)=>(<div key={i} data-co-min-wage={i} style={{display:"flex",gap:6,alignItems:"center",marginBottom:6}}>
+            <input type="date" value={w.from} onChange={ev=>setWageDraft(a=>a.map((x,j)=>j===i?{...x,from:ev.target.value}:x))} style={{...AI,width:"auto",padding:"5px 8px"}}/>
+            <input inputMode="numeric" value={w.yen} placeholder="円" aria-label="最低賃金（円）" onChange={ev=>setWageDraft(a=>a.map((x,j)=>j===i?{...x,yen:ev.target.value.replace(/\D/g,"")}:x))} style={{...AI,width:100,padding:"5px 8px",textAlign:"right"}}/>
+            <span style={{fontSize:12,color:"var(--c-text3)"}}>円</span>
+            <button onClick={()=>setWageDraft(a=>a.filter((_,j)=>j!==i))} style={{...AD,marginLeft:0}}>削除</button>
+          </div>))}
+          <button onClick={()=>setWageDraft(a=>[...a,{from:"",yen:""}])} style={{...AGray,fontSize:12,padding:"6px 10px",marginBottom:12}}>＋ 最低賃金を追加</button>
+          <button disabled={busy} onClick={()=>saveConfig(e.id)} style={{...AB,width:"100%",opacity:busy?0.5:1}}>{busy?"保存中...":"この法人の設定を保存"}</button>
+        </div>}
+      </div>);
+    })}
+    <div style={{display:"flex",gap:8,margin:"4px 0 16px"}}>
+      <input value={newName} onChange={e=>setNewName(e.target.value)} maxLength={100} placeholder="法人名（例：株式会社〇〇）" style={{...AI,flex:1}}/>
+      <button disabled={busy||!newName.trim()} onClick={async()=>{if(await call("createEntity",{name:newName.trim()},"法人を追加しました"))setNewName("");}} style={{...AB,whiteSpace:"nowrap",opacity:busy||!newName.trim()?0.5:1}}>＋ 法人を追加</button>
+    </div>
+    <AL>店舗の法人と種別</AL>
+    {st.shopIds.length===0?<div style={{fontSize:12,color:"var(--c-text4)"}}>連携店舗がありません。</div>:(
+      <div style={{overflowX:"auto"}}>
+        <table style={{borderCollapse:"collapse",width:"100%",minWidth:320}}>
+          <thead><tr>{["店舗","法人","種別"].map(h=><th key={h} style={{...TD,fontSize:11,color:"var(--c-text3)",textAlign:"left",fontWeight:700}}>{h}</th>)}</tr></thead>
+          <tbody>{st.shopIds.slice().sort((a,b)=>String(st.names[a]).localeCompare(String(st.names[b]),"ja")).map(sid=>(
+            <tr key={sid} data-co-shop-entity={sid}>
+              <td style={{...TD,fontWeight:600}}>{st.names[sid]}</td>
+              <td style={TD}>
+                <select disabled={busy||ents.length===0} value={entOf(sid)||""} onChange={ev=>{if(ev.target.value)call("assignShopEntity",{shopId:sid,entityId:ev.target.value},`「${st.names[sid]}」の法人を変更しました`);}} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+                  {!entOf(sid)&&<option value="">未設定</option>}
+                  {ents.map(e=><option key={e.id} value={e.id}>{e.name||"（名前なし）"}</option>)}
+                </select>
+              </td>
+              <td style={TD}>
+                <select disabled={busy} value={kindOf(sid)} onChange={ev=>call("setShopKind",{shopId:sid,kind:ev.target.value},ev.target.value==="hq"?`「${st.names[sid]}」を本部にしました`:`「${st.names[sid]}」を店舗に戻しました`)} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+                  <option value="shop">店舗</option>
+                  <option value="hq">本部</option>
+                </select>
+              </td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    )}
+    <div style={{fontSize:11,color:"var(--c-text3)",marginTop:8,lineHeight:1.6}}>本部にした店舗では、期間管理タブにスタッフ提出URLを出しません（ボタンで表示はできます）。企業内登録スタッフでは「本部」の見出しで分かれます。</div>
+  </AC>);
+}
+// 法人で絞る選択肢（法人が2つ以上のときだけ出す）
+function EntityFilter({ents,value,onChange}){
+  if(!ents||ents.length<2)return null;
+  return(<select data-co-entity-filter="1" value={value} onChange={e=>onChange(e.target.value)} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+    <option value="">すべての法人</option>
+    {ents.map(e=><option key={e.id} value={e.id}>{e.name||"（名前なし）"}</option>)}
+  </select>);
+}
+function CompanyStaffCard({onOpen}){
+  return(<AC title="企業内登録スタッフ">
+    <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>企業に連携している全店舗の登録スタッフを、従業員番号・属性・所属店舗・有給日数の一覧で確認できます。</div>
+    <button onClick={()=>onOpen&&onOpen()} style={{...AGray,width:"100%"}}>一覧を開く</button>
+  </AC>);
+}
+function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompanyCall}){
+  const[data,setData]=useState(null); // {rows, failed:[店舗名], ents, shops:[{id,name}], coAttrs:{属性ID:名前}, people}
+  // 人物ID（P1b）: 一覧を開いたとき、まだどの人物にもつながっていない登録があれば CF ensureCompanyPeople に
+  // 人物を作らせる（初回は全員分・既存の推定と同じまとまり）。1回開くごとに1回だけ頼む
+  const ensuredRef=useRef(false);
+  const[msg,setMsg]=useState(null);       // {ok:bool, text}
+  const[busy,setBusy]=useState(false);
+  const[editRow,setEditRow]=useState(null);
+  const[picked,setPicked]=useState([]);   // 統合のために選んだ personId（最大2）
+  const[mergeOpen,setMergeOpen]=useState(false);
+  const callPeople=async(name,payload,okText)=>{
+    if(!onCompanyCall){setMsg({ok:false,text:"企業アカウントでログインしてください"});return null;}
+    setBusy(true);
+    const r=await onCompanyCall(name,payload);
+    setBusy(false);
+    if(r&&r.error){setMsg({ok:false,text:"✕ "+r.error});return null;}
+    const f=(r&&r.failed)||[];
+    setMsg(f.length?{ok:false,text:`△ ${okText}（${f.length}店舗への反映に失敗しました。もう一度実行してください）`}:{ok:true,text:"✓ "+okText});
+    setReloadTick(t=>t+1);
+    return r||{};
+  };
+  const[loadErr,setLoadErr]=useState(false);
+  const[reloadTick,setReloadTick]=useState(0);
+  const[mode,setMode]=useState("number");
+  const[query,setQuery]=useState("");
+  const[entityFilter,setEntityFilter]=useState("");
+  // 賃金列（P6a）。パスコードは企業のもの（companies/{id}/private/payCode・企業uidと作成者だけが読める）。
+  // 賃金は所属店舗の shops/{sid}/private/pay（owners だけ）を、解除したときに初めて読みに行く。
+  const payOn=featureEnabled("pay",{plan});
+  const[coCode,setCoCode]=useState(undefined); // undefined=読み込み中 / null=未設定（0000）
+  const[wages,setWages]=useState(null);         // {shopId: {名前: レコード} | null(読めない)}
+  useEffect(()=>{
+    if(!payOn||!firebaseDB||!companyId){setCoCode(null);return;}
+    let c=false;
+    firebaseDB.ref(`companies/${companyId}/private/payCode`).once("value").then(x=>{if(!c)setCoCode(x.val()||null);}).catch(()=>{if(!c)setCoCode(null);});
+    return()=>{c=true;};
+  },[companyId]);
+  const wageUnlocked=payOn&&coCode!==undefined&&pay.unlockedFor(coCode);
+  useEffect(()=>{
+    if(!wageUnlocked||!data||wages)return;
+    const ids=[...new Set(data.rows.map(r=>r.payShopId).filter(Boolean))];
+    let c=false;
+    Promise.all(ids.map(sid=>firebaseDB.ref(`shops/${sid}/private/pay`).once("value").then(x=>[sid,x.val()||{}]).catch(()=>[sid,null])))
+      .then(ps=>{if(!c)setWages(Object.fromEntries(ps));});
+    return()=>{c=true;};
+  },[wageUnlocked,data,wages]);
+  const wageCell=r=>{
+    if(!wageUnlocked)return<span style={{color:"var(--c-text3)",letterSpacing:2}}>••••</span>;
+    if(!wages)return"…";
+    if(!r.payShopId)return<span style={{color:"var(--c-text4)"}}>—</span>;
+    const m=wages[r.payShopId];
+    if(m===null)return<span title="この店舗の賃金を読めませんでした" style={{color:"var(--c-text4)"}}>読めません</span>;
+    const v=m[r.payName];
+    if(!v)return<span style={{color:"var(--c-text4)"}}>—</span>;
+    const n=normalizePayVersion(v);
+    return`${PAY_TYPE_LABELS[n.payType]} ${maskYen(n.base,true)}`;
+  };
+  useEffect(()=>{
+    if(!firebaseDB||!companyId){setData({rows:[],failed:[],ents:[]});return;}
+    let cancelled=false;
+    setData(null);setLoadErr(false);
+    Promise.all([
+      firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value"),
+      firebaseDB.ref(`companies/${companyId}/pub/config/settings`).once("value").catch(()=>null),
+      readCompanyStructure(companyId),
+      firebaseDB.ref(`companies/${companyId}/pub/people`).once("value").then(x=>x.val()||{}).catch(()=>null),
+    ]).then(async([shS,csS,structure,people])=>{
+      const ids=Object.keys(shS.val()||{});
+      const failed=[];
+      const shops=(await Promise.all(ids.map(async sid=>{
+        const nS=await firebaseDB.ref(`global/shops/${sid}/name`).once("value").catch(()=>null);
+        const name=(nS&&nS.val())||sid;
+        try{
+          // subs は読まない（有給の残数は期間の凍結値 laborTotals だけで数える）
+          const[st,se,pe]=await Promise.all(["staff","settings","periods"].map(p=>firebaseDB.ref(`shops/${sid}/${p}`).once("value").then(x=>x.val())));
+          // 写しの settings（企業共通 → 法人 を重ねた値）。無ければ企業の共通設定で代える（2026-09-30・P1）
+          const coS=await firebaseDB.ref(`shops/${sid}/company/settings`).once("value").catch(()=>null);
+          return{id:sid,name,staff:st||[],settings:se||{},periods:pe||{},coSettings:(coS&&coS.val())||null,
+            entityId:companyEntityIdOfShop(structure,sid)||"",kind:companyShopKindOf(structure,sid)};
+        }catch{failed.push(name);return null;}
+      }))).filter(Boolean);
+      if(cancelled)return;
+      const cs=(csS&&csS.val())||null;
+      const rows=buildCompanyStaffRows(shops,cs,fd(new Date()),people);
+      const coAttrs={};Object.entries((cs&&cs.staffTypeLimits)||{}).forEach(([id,v])=>{if(isCompanyAttrId(id))coAttrs[id]=(v&&v.name)||id;});
+      setData({rows,failed,ents:companyEntityList(structure),shops:shops.map(x=>({id:x.id,name:x.name})),coAttrs,people});
+      // 未リンクの登録があれば人物を作らせる（読めない店舗があるときは頼まない＝その店舗の登録を別人物として作らない）
+      if(onCompanyCall&&people&&!failed.length&&rows.some(r=>!r.personId)&&!ensuredRef.current){
+        ensuredRef.current=true;
+        const r=await onCompanyCall("ensureCompanyPeople",{});
+        if(!cancelled&&r&&!r.error&&r.changed)setReloadTick(t=>t+1);
+      }
+    }).catch(()=>{if(!cancelled)setLoadErr(true);});
+    setWages(null);
+    return()=>{cancelled=true;};
+  },[companyId,reloadTick]);
+  // 法人（2つ以上のときだけ見出し・絞り込み）→ 本部かどうか → 並び順（番号順／店舗別）。
+  // 本部の行は各法人の最後に「本部」の見出しでまとめる（2026-09-30・P1）
+  const ents=(data&&data.ents)||[];
+  const entIdx={};ents.forEach((e,i)=>{entIdx[e.id]=i;});
+  const shown=useMemo(()=>{
+    if(!data)return[];
+    return filterCompanyStaffRows(data.rows,query).filter(r=>!entityFilter||r.entityId===entityFilter).slice().sort((a,b)=>{
+      const ea=entIdx[a.entityId]??99,eb=entIdx[b.entityId]??99;if(ea!==eb)return ea-eb;
+      if(!!a.isHq!==!!b.isHq)return a.isHq?1:-1;
+      return compareCompanyStaffRows(a,b,mode);
+    });
+  },[data,query,mode,entityFilter]);
+  const multiEnt=ents.length>=2;
+  // 同じ番号が別の法人でも使われている行（番号は法人内で一意なので通常は起きない。決定 #13）
+  const numEnts=useMemo(()=>{
+    const m={};(data?data.rows:[]).forEach(r=>{const n=String(r.number||"");if(!n)return;(m[n]=m[n]||new Set()).add(r.entityId||"");});
+    return m;
+  },[data]);
+  const otherEntNames=r=>{
+    const set=numEnts[String(r.number||"")];
+    if(!set||set.size<2)return[];
+    return[...set].filter(e=>e!==(r.entityId||"")).map(e=>(ents[entIdx[e]]||{}).name||"法人未設定");
+  };
+  const togglePick=pid=>setPicked(p=>p.includes(pid)?p.filter(x=>x!==pid):[...p.slice(-1),pid]);
+  const pickedRows=picked.map(pid=>(data?data.rows:[]).find(r=>r.personId===pid)).filter(Boolean);
+  const sectionOf=r=>{
+    const en=multiEnt&&!entityFilter?((ents[entIdx[r.entityId]]||{}).name||"法人未設定"):"";
+    return r.isHq?(en?en+"・本部":"本部"):en;
+  };
+  const TH={padding:"8px 10px",textAlign:"left",fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input)",borderBottom:"1px solid var(--c-border)",whiteSpace:"nowrap"};
+  const TD={padding:"8px 10px",fontSize:13,color:"var(--c-text)",borderBottom:"1px solid var(--c-border)",whiteSpace:"nowrap"};
+  const modeBtn=(id,label)=><button key={id} onClick={()=>setMode(id)} style={{padding:"7px 12px",borderRadius:8,fontSize:13,fontWeight:700,cursor:"pointer",background:mode===id?"var(--c-accent)":"var(--c-input)",color:mode===id?"#fff":"var(--c-text2)",border:`1px solid ${mode===id?"var(--c-accent)":"var(--c-border)"}`}}>{label}</button>;
+  const paidCell=r=>{
+    if(r.paidGranted==null)return"—";
+    const miss=r.paidMissing&&r.paidMissing.length>0;
+    const remain=r.paidRemain==null?"—":(miss?"＋":"")+r.paidRemain;
+    return<span title={miss?`凍結値の無い期間があるため途中の値です: ${r.paidMissing.join("・")}`:""}>付与 {r.paidGranted}／残 <b style={{color:miss?"var(--c-text3)":"var(--c-text)"}}>{remain}</b></span>;
+  };
+  let lastShop=null,lastSection="";
+  return(<div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
+    <div style={{background:"var(--c-card)",borderBottom:"1px solid var(--c-border)",padding:"12px 16px"}}>
+      <div style={{maxWidth:900,margin:"0 auto",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={onBack} style={{...AGray,whiteSpace:"nowrap"}}>← 戻る</button>
+        <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>企業内登録スタッフ</div>
+      </div>
+    </div>
+    <div style={{maxWidth:900,margin:"0 auto",padding:"16px 14px 60px"}}>
+      <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="従業員番号・名前で検索" style={{...AI,boxSizing:"border-box",marginBottom:10}}/>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10}}>
+        {/* 並びは「従業員番号順」「店舗別」「パスコード」の順（決定12）。パスコードは企業のもの */}
+        {modeBtn("number","従業員番号順")}{modeBtn("shop","店舗別")}
+        {payOn&&coCode!==undefined&&<PayCodeBox pay={pay} rec={coCode}/>}
+        <EntityFilter ents={ents} value={entityFilter} onChange={setEntityFilter}/>
+        <span style={{fontSize:12,color:"var(--c-text3)",marginLeft:"auto"}}>{data?`${shown.length}名`:""}</span>
+        <button onClick={()=>setReloadTick(t=>t+1)} style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:12,cursor:"pointer"}}>再読み込み</button>
+      </div>
+      {msg&&<div data-co-person-msg="1" style={{fontSize:13,color:msg.ok?"var(--c-text2)":"#B45309",marginBottom:10}}>{msg.text}</div>}
+      {pickedRows.length>0&&<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10,padding:"8px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
+        <span style={{fontSize:13,color:"var(--c-text2)"}}>{pickedRows.map(r=>r.name).join("・")}を選択中</span>
+        <button disabled={busy||pickedRows.length!==2} onClick={()=>setMergeOpen(true)} style={{...AB,padding:"6px 12px",fontSize:13,opacity:busy||pickedRows.length!==2?0.5:1}}>同一人物として統合</button>
+        <button onClick={()=>setPicked([])} style={{...AGray,padding:"6px 12px",fontSize:13}}>選択を解除</button>
+      </div>}
+      {loadErr&&<div style={{fontSize:13,color:"#DC2626",marginBottom:10}}>読み込めませんでした。再読み込みしてください。</div>}
+      {data&&data.failed.length>0&&<div style={{fontSize:12,color:"#B45309",marginBottom:10}}>{data.failed.join("・")}は読み込めませんでした（一覧に含まれていません）。</div>}
+      {!data&&!loadErr&&<div style={{fontSize:13,color:"var(--c-text3)"}}>読み込み中...</div>}
+      {data&&<div style={{overflowX:"auto",border:"1px solid var(--c-border)",borderRadius:8,background:"var(--c-card)"}}>
+        <table style={{borderCollapse:"collapse",width:"100%",minWidth:560}}>
+          <thead><tr>{["従業員番号","名前","属性","所属店舗","有給（日）",...(payOn?["賃金"]:[]),""].map(h=><th key={h||"edit"} style={TH}>{h}</th>)}</tr></thead>
+          <tbody>
+            {shown.length===0&&<tr><td colSpan={payOn?7:6} style={{...TD,textAlign:"center",color:"var(--c-text4)",padding:20}}>該当するスタッフはいません</td></tr>}
+            {shown.map(r=>{
+              const shopName=r.homeShopName||r.shopName;
+              const sec=sectionOf(r);
+              const secHead=sec!==lastSection&&!!sec;if(sec!==lastSection){lastSection=sec;lastShop=null;}
+              const head=mode==="shop"&&shopName!==lastShop;lastShop=shopName;
+              const homes=(r.homeShopNames||[r.homeShopName]).map(n=>n||"連携していない店舗");
+              return(<React.Fragment key={r.key||r.shopId+"|"+r.name}>
+                {secHead&&<tr data-co-section={sec}><td colSpan={payOn?7:6} style={{...TD,fontSize:13,fontWeight:700,color:"var(--c-text)",background:"var(--c-input)"}}>{sec}</td></tr>}
+                {head&&<tr><td colSpan={payOn?7:6} style={{...TD,fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input2)"}}>{shopName}</td></tr>}
+                <tr data-co-person={r.personId||""}>
+                  <td style={TD}>
+                    {/* 統合のための選択（2人まで）。人物IDの無い行（準備中）は選べない */}
+                    <input type="checkbox" aria-label={`${r.name}を選択`} disabled={!r.personId} checked={!!r.personId&&picked.includes(r.personId)} onChange={()=>r.personId&&togglePick(r.personId)} style={{marginRight:8,verticalAlign:"middle",width:16,height:16}}/>
+                    {r.number||<span style={{color:"var(--c-text4)"}}>—</span>}
+                    {otherEntNames(r).length>0&&<div style={{fontSize:11,color:"#B45309",marginTop:2,whiteSpace:"normal"}}>番号 {r.number} は{otherEntNames(r).join("・")}でも使われています</div>}
+                  </td>
+                  <td style={TD}>{r.name}{r.hidden&&<span style={{marginLeft:6,fontSize:11,color:"var(--c-text3)"}}>非表示中</span>}
+                    {r.conflictNames&&r.conflictNames.length>0&&<div title="同じ従業員番号で名前の違う登録があります" style={{fontSize:11,color:"#B45309",marginTop:2}}>別の登録名: {r.conflictNames.join("・")}</div>}</td>
+                  <td style={TD}>{r.attrLabel||<span style={{color:"var(--c-text4)"}}>未設定</span>}</td>
+                  <td style={{...TD,whiteSpace:"normal"}}>{homes.map((n,i)=><span key={i} style={{whiteSpace:"nowrap",color:n==="連携していない店舗"?"var(--c-text4)":undefined}}>{i>0?"・":""}{n}</span>)}</td>
+                  <td style={TD}>{paidCell(r)}</td>
+                  {payOn&&<td style={TD} data-co-wage={r.name}>{wageCell(r)}</td>}
+                  <td style={{...TD,textAlign:"right"}}><button disabled={!r.personId||busy} title={r.personId?"":"人物IDを準備中です"} onClick={()=>setEditRow(r)} style={{...AGray,padding:"5px 10px",fontSize:12,opacity:r.personId?1:0.5}}>編集</button></td>
+                </tr>
+              </React.Fragment>);
+            })}
+          </tbody>
+        </table>
+      </div>}
+    </div>
+    {editRow&&data&&<CompanyPersonEditModal row={editRow} data={data} busy={busy} onClose={()=>setEditRow(null)}
+      onCall={async(name,payload,okText)=>{const r=await callPeople(name,{personId:editRow.personId,...payload},okText);if(r)setEditRow(null);return r;}}/>}
+    {mergeOpen&&pickedRows.length===2&&<CompanyPersonMergeModal rows={pickedRows} ents={ents} busy={busy} onClose={()=>setMergeOpen(false)}
+      onMerge={async(keep,drop)=>{const r=await callPeople("mergePeople",{keepPersonId:keep,dropPersonId:drop},"同一人物として統合しました");if(r){setMergeOpen(false);setPicked([]);}}}/>}
+  </div>);
+}
+// 企業内登録スタッフの「編集」（P1b・§3.8）。すべて CF 経由（店舗のデータを丸ごと読み込んで書き戻さない）。
+// 名前の変更は店舗の登録名を変える（StaffTab の改名と同じ結果）。番号・法人・属性・所属店舗は保存時にまとめて送る。
+// 属性と所属店舗は、この人がつながっている全店舗の設定に同じ値を書く（変えないときは「変更しない」のまま）。
+function CompanyPersonEditModal({row,data,busy,onClose,onCall}){
+  const links=row.links||[];
+  const[newName,setNewName]=useState(row.name);
+  const[renameShops,setRenameShops]=useState(links.map(l=>l.shopId));
+  const[number,setNumber]=useState(row.number||"");
+  const[entityId,setEntityId]=useState(row.entityId||"");
+  const[attr,setAttr]=useState("");
+  const[home,setHome]=useState("");
+  const ents=data.ents||[];
+  const attrOpts=[...BUILTIN_TYPES.map(id=>[id,STAFF_TYPE_LABELS[id]]),...Object.entries(data.coAttrs||{})];
+  const numberDigits=/^\d{1,20}$/.test(String(row.number||"").trim());
+  const save=()=>{
+    const payload={};
+    if(number.trim()!==String(row.number||""))payload.number=number.trim();
+    if(entityId&&entityId!==(row.entityId||""))payload.entityId=entityId;
+    if(attr)payload.attrs=Object.fromEntries(links.map(l=>[l.shopId,attr]));
+    if(home)payload.homeShops=Object.fromEntries(links.map(l=>[l.shopId,home]));
+    if(!Object.keys(payload).length){onClose();return;}
+    onCall("companyUpdateStaff",payload,"保存しました");
+  };
+  const SEC={borderTop:"1px solid var(--c-border)",paddingTop:12,marginTop:12};
+  return(<div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div data-co-person-modal={row.personId} onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:18,width:"100%",maxWidth:480,maxHeight:"90vh",overflowY:"auto",boxSizing:"border-box"}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+        <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)",flex:1}}>{row.name}</div>
+        <button onClick={onClose} style={{...AGray,padding:"5px 10px",fontSize:12}}>閉じる</button>
+      </div>
+      <div style={{fontSize:11,color:"var(--c-text3)"}}>人物ID: <span data-co-person-id="1">{row.personId}</span></div>
+
+      <div style={SEC}>
+        <AL>名前の変更</AL>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>店舗の登録名を変えます（店舗のスタッフタブで変えるのと同じです。提出・設定・確定済みの期間・賃金も新しい名前に移ります）。</div>
+        <input value={newName} onChange={e=>setNewName(e.target.value)} aria-label="新しい名前" style={{...AI,boxSizing:"border-box",marginBottom:6}}/>
+        {links.map(l=>(<label key={l.shopId} style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:"var(--c-text2)",marginBottom:4}}>
+          <input type="checkbox" checked={renameShops.includes(l.shopId)} onChange={()=>setRenameShops(a=>a.includes(l.shopId)?a.filter(x=>x!==l.shopId):[...a,l.shopId])} style={{width:16,height:16}}/>
+          {l.shopName}（いまの登録名: {l.name}）
+        </label>))}
+        <button disabled={busy||!newName.trim()||!renameShops.length||renameShops.every(sid=>(links.find(l=>l.shopId===sid)||{}).name===newName.trim())}
+          onClick={()=>onCall("companyRenameStaff",{shopIds:renameShops,newName:newName.trim()},"名前を変更しました")}
+          style={{...AB,width:"100%",marginTop:6,opacity:busy?0.5:1}}>名前を変更</button>
+      </div>
+
+      <div style={SEC}>
+        <AL>従業員番号・法人・属性・所属店舗</AL>
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:4}}>従業員番号（法人の中で重複できません）</div>
+        <input value={number} onChange={e=>setNumber(e.target.value)} aria-label="従業員番号" style={{...AI,boxSizing:"border-box",marginBottom:8}}/>
+        {ents.length>0&&<><div style={{fontSize:12,color:"var(--c-text3)",marginBottom:4}}>法人</div>
+          <select value={entityId} onChange={e=>setEntityId(e.target.value)} aria-label="法人" style={{...AI,marginBottom:8,cursor:"pointer"}}>
+            {!entityId&&<option value="">未設定</option>}
+            {ents.map(e=><option key={e.id} value={e.id}>{e.name||"（名前なし）"}</option>)}
+          </select></>}
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:4}}>属性（いま: {row.attrLabel||"未設定"}）</div>
+        <select value={attr} onChange={e=>setAttr(e.target.value)} aria-label="属性" style={{...AI,marginBottom:8,cursor:"pointer"}}>
+          <option value="">変更しない</option>
+          {attrOpts.map(([id,nm])=><option key={id} value={id}>{nm}</option>)}
+        </select>
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:4}}>所属店舗（いま: {(row.homeShopNames||[row.homeShopName]).filter(Boolean).join("・")||"—"}）</div>
+        <select value={home} onChange={e=>setHome(e.target.value)} aria-label="所属店舗" style={{...AI,marginBottom:8,cursor:"pointer"}}>
+          <option value="">変更しない</option>
+          {(data.shops||[]).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}
+        </select>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>属性と所属店舗は、この人が登録されている全店舗（{links.map(l=>l.shopName).join("・")}）の設定に書きます。</div>
+        <button disabled={busy} onClick={save} style={{...AB,width:"100%",opacity:busy?0.5:1}}>保存</button>
+      </div>
+
+      {links.length>1&&<div style={SEC}>
+        <AL>統合の解除</AL>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>別の人を同じ人物にまとめてしまったときに、店舗の登録を別の人物として切り出します。店舗のデータは変わりません。</div>
+        {links.map(l=>(<div key={l.shopId} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <span style={{flex:1,fontSize:13,color:"var(--c-text2)"}}>{l.shopName}: {l.name}</span>
+          <button disabled={busy} onClick={()=>onCall("splitPerson",{shopId:l.shopId},`${l.shopName}の${l.name}を別の人物にしました`)} style={{...AGray,padding:"5px 10px",fontSize:12}}>切り出す</button>
+        </div>))}
+      </div>}
+
+      {numberDigits&&String(row.number).trim()!==row.personId&&<div style={SEC}>
+        <AL>人物ID</AL>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>人物IDは作成後に自動では変わりません。従業員番号（{row.number}）に揃えるときだけ押してください。</div>
+        <button disabled={busy} onClick={()=>onCall("reassignPersonId",{},"人物IDを従業員番号に振り直しました")} style={{...AGray,width:"100%"}}>ID を番号に振り直す</button>
+      </div>}
+    </div>
+  </div>);
+}
+// 統合: 2人のうち、番号・法人・所属店舗を残す方を選ぶ（店舗側のデータは動かさない）
+function CompanyPersonMergeModal({rows,ents,busy,onClose,onMerge}){
+  const[keep,setKeep]=useState(rows[0].personId);
+  const entName=id=>((ents||[]).find(e=>e.id===id)||{}).name||"";
+  const drop=rows.find(r=>r.personId!==keep).personId;
+  return(<div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+    <div data-co-merge-modal="1" onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:18,width:"100%",maxWidth:440,boxSizing:"border-box"}}>
+      <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>同一人物として統合</div>
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>番号・法人・所属店舗を残す方を選んでください。店舗の登録名とデータはそのままで、一覧で1人にまとまります。誤って統合したときは「編集」から解除できます。</div>
+      {rows.map(r=>(<label key={r.personId} style={{display:"flex",gap:8,alignItems:"flex-start",padding:"8px 10px",marginBottom:6,border:`1px solid ${keep===r.personId?"var(--c-accent)":"var(--c-border)"}`,borderRadius:8,cursor:"pointer"}}>
+        <input type="radio" name="co-merge-keep" checked={keep===r.personId} onChange={()=>setKeep(r.personId)} style={{marginTop:3}}/>
+        <span style={{fontSize:13,color:"var(--c-text)"}}><b>{r.name}</b><br/>
+          <span style={{color:"var(--c-text3)"}}>番号 {r.number||"なし"}{entName(r.entityId)?`・${entName(r.entityId)}`:""}・所属 {(r.homeShopNames||[r.homeShopName]).filter(Boolean).join("・")||"—"}</span></span>
+      </label>))}
+      <div style={{display:"flex",gap:8,marginTop:10}}>
+        <button onClick={onClose} style={{...AGray,flex:1}}>やめる</button>
+        <button disabled={busy} onClick={()=>onMerge(keep,drop)} style={{...AB,flex:1,opacity:busy?0.5:1}}>統合する</button>
+      </div>
+    </div>
+  </div>);
+}
+
+function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,renderDownload,structureTick=0}){
+  const[state,setState]=useState(null); // {shopIds,names,periods:{sid:Period[]|null},deadlines,monthly,structure}
+  // 法人で絞る（2026-09-30・P1）。"" はすべての法人。法人が2つ以上のときだけ選択肢が出る
+  const[entityFilter,setEntityFilter]=useState("");
+  const[loadErr,setLoadErr]=useState(false);
+  const[rangeKey,setRangeKey]=useState("");
+  const[dlAll,setDlAll]=useState("");
+  const[dlDirty,setDlDirty]=useState(false);
+  const[monthly,setMonthly]=useState([]);
+  const[monthlyDirty,setMonthlyDirty]=useState(false);
+  // ユーザーがセレクトで期間を選んだか。選んでいなければ、読み込みのたびに最新の期間へ合わせる
+  const userPickedRef=useRef(false);
+  const[busy,setBusy]=useState(false);
+  const[reloadTick,setReloadTick]=useState(0);
+  useEffect(()=>{
+    if(!firebaseDB||!companyId){setState({shopIds:[],names:{},periods:{},deadlines:{},monthly:[],structure:{}});return;}
+    let cancelled=false;
+    setLoadErr(false);
+    Promise.all([
+      firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value"),
+      firebaseDB.ref(`companies/${companyId}/pub/config/deadlines`).once("value"),
+      firebaseDB.ref(`companies/${companyId}/pub/config/monthlyDeadlineDays`).once("value"),
+      readCompanyStructure(companyId),
+    ]).then(async([shS,dlS,mdS,structure])=>{
+      const shopIds=Object.keys(shS.val()||{});
+      const names={},periods={};
+      await Promise.all(shopIds.map(async sid=>{
+        const[nS,pS]=await Promise.all([
+          firebaseDB.ref(`global/shops/${sid}/name`).once("value").catch(()=>null),
+          firebaseDB.ref(`shops/${sid}/periods`).once("value").catch(()=>null),
+        ]);
+        names[sid]=(nS&&nS.val())||shopNames[sid]||sid;
+        // 配列はオブジェクトで返るので Object.values → id 持ちに絞る（CLAUDE.md の読み取り規則）
+        periods[sid]=pS?Object.values(pS.val()||{}).filter(x=>x&&x.id).sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate))):null;
+      }));
+      if(cancelled)return;
+      setState({shopIds,names,periods,deadlines:dlS.val()||{},monthly:sanitizeMonthlyDeadlineDays(mdS.val()),structure:structure||{}});
+    }).catch(()=>{if(!cancelled)setLoadErr(true);});
+    return()=>{cancelled=true;};
+  },[companyId,reloadTick,structureTick]);
+  const ents=useMemo(()=>state?companyEntityList(state.structure):[],[state]);
+  // 選んでいた法人が消えたら「すべて」に戻す
+  useEffect(()=>{if(entityFilter&&!ents.some(e=>e.id===entityFilter))setEntityFilter("");},[ents,entityFilter]);
+  const inFilter=sid=>!entityFilter||(state&&companyEntityIdOfShop(state.structure,sid))===entityFilter;
+  // 期間の選択肢は法人ごとに分ける（法人ごとに期間の切り方が違ってよい・計画書 §3.1）
+  const ranges=useMemo(()=>{
+    if(!state)return[];
+    const ok={};Object.keys(state.periods).forEach(sid=>{if(state.periods[sid]&&inFilter(sid))ok[sid]=state.periods[sid];});
+    return collectPeriodRanges(ok);
+  },[state,entityFilter]);
+  // 既定の期間: 連携店舗のどれか1店舗でも作っている最新の期間（2026-09-27 ユーザー指示。以前は
+  // 「今日を含む期間」で、次の期間を作り始めても表示が前の期間のままだった）。
+  // ユーザーが選び直した期間は、期限の保存などの再読み込みで戻さない（無くなったときだけ最新へ）。
+  useEffect(()=>{
+    if(!ranges.length){setRangeKey("");return;}
+    if(userPickedRef.current&&ranges.some(x=>x.key===rangeKey))return;
+    setRangeKey(ranges[0].key);
+  },[ranges]); // rangeKey は依存に入れない（選んだ直後に最新へ戻さないため）
+  // 期間を切り替えたら、その期間の期限を入力欄へ読み込む（未保存の入力は捨てる）
+  useEffect(()=>{
+    const e=(state&&state.deadlines&&state.deadlines[rangeKey])||{};
+    setDlAll(e.all||"");setDlDirty(false);
+  },[rangeKey,state]);
+  // 保存済みの毎月の固定締切を編集欄へ読み込む（再読み込みのたび。未保存の編集は捨てる）
+  useEffect(()=>{setMonthly((state&&state.monthly)||[]);setMonthlyDirty(false);},[state]);
+  if(loadErr)return(<AC title="シフトの提出状況"><div style={{fontSize:12,color:"#FF4757"}}>✕ 提出状況を読み込めませんでした。<button onClick={()=>setReloadTick(t=>t+1)} style={{...AGray,marginLeft:8,padding:"4px 10px",fontSize:12}}>再読み込み</button></div></AC>);
+  if(!state)return(<AC title="シフトの提出状況"><div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div></AC>);
+  const savedDlDate=((state.deadlines||{})[rangeKey]||{}).all;
+  const curRange=ranges.find(x=>x.key===rangeKey);
+  const effOf=(dateStr,days)=>isValidDateStr(dateStr)?{date:dateStr,source:"date"}:(curRange?(d=>d?{date:d,source:"monthly"}:null)(monthlyDeadlineFor(days,curRange.startDate)):null);
+  const savedEff=effOf(savedDlDate,state.monthly);
+  const draftEff=effOf(dlAll,monthly);
+  // 日付指定が無い期間は、毎月の固定締切から出した日付を入力欄の初期値にする（2026-09-27 ユーザー指示）。
+  // 書き換えて保存すると、その期間だけの日付指定になる。書き換えずに保存しても日付指定にはしない
+  // （毎月の締切を後から変えたときに追随させるため）。
+  const monthlyInitial=!dlAll&&draftEff&&draftEff.source==="monthly"?draftEff.date:"";
+  const entIdx={};ents.forEach((e,i)=>{entIdx[e.id]=i;});
+  const entName={};ents.forEach(e=>{entName[e.id]=e.name;});
+  const eOf=sid=>companyEntityIdOfShop(state.structure,sid);
+  const rows=state.shopIds.filter(inFilter).map(sid=>{
+    const ps=state.periods[sid];
+    if(ps===null)return{sid,name:state.names[sid],status:"failed"};
+    const p=findShopPeriodByRange(ps,rangeKey);
+    if(!p)return{sid,name:state.names[sid],status:"none"};
+    const sub=p.submission&&p.submission.at?p.submission:null;
+    // 期限切れの判定は保存済みの値で行う（入力中の未保存の値では赤くしない）。日付指定が無ければ毎月の固定締切
+    return{sid,name:state.names[sid],period:p,status:sub?"submitted":"pending",submission:sub,deadline:savedEff?savedEff.date:null};
+  }).map(x=>({...x,entityId:eOf(x.sid),isHq:companyShopKindOf(state.structure,x.sid)==="hq"}))
+    // 法人の順（既定の法人が先頭）→ 店舗名。一括PDFもこの順で出るので、法人ごとにまとまる
+    .sort((a,b)=>{const ea=entIdx[a.entityId]??99,eb=entIdx[b.entityId]??99;if(ea!==eb)return ea-eb;return String(a.name).localeCompare(String(b.name),"ja");});
+  // すべての法人を表示していて法人が2つ以上なら、法人の見出し行で分ける
+  const showEntityHeads=!entityFilter&&ents.length>=2;
+  const nSub=rows.filter(x=>x.status==="submitted").length;
+  const nPend=rows.filter(x=>x.status==="pending").length;
+  const today=fd(new Date());
+  const fmtAt=iso=>{const d=new Date(iso);return isNaN(d)?"":`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
+  // 日は人が選ぶ（2026-09-27 ユーザー指示「初期値は人間が決める」）。「＋ 追加」は未選択(null)の欄を足すだけで、
+  // 未選択が残っている間は保存できない（黙って捨てて保存しない）。
+  const monthlyUnchosen=monthly.some(d=>d===null);
+  // 保存ボタンは「提出期限を保存」1つだけ（2026-09-27 ユーザー指示）。毎月の締切と期間ごとの日付のうち、
+  // 変えたほうだけを1回の呼び出しで送る（変えていないほうを送ると、他の端末の保存を古い値で上書きする）。
+  const saveDirty=dlDirty||monthlyDirty;
+  const saveDeadlines=async()=>{
+    if(!onSaveCompanyConfig||!saveDirty||monthlyUnchosen)return;
+    const patch={};
+    if(dlDirty&&rangeKey){
+      // 期間の期限はまるごと置き換わる＝以前の店舗別の日付もここで消える
+      const entry={};if(isValidDateStr(dlAll))entry.all=dlAll;
+      patch.deadlines={[rangeKey]:Object.keys(entry).length?entry:null};
+    }
+    if(monthlyDirty)patch.monthlyDeadlineDays=sanitizeMonthlyDeadlineDays(monthly);
+    if(!Object.keys(patch).length)return;
+    setBusy(true);
+    const r=await onSaveCompanyConfig(patch);
+    setBusy(false);
+    if(r&&r.error){tt("✕ "+r.error);return;}
+    tt("✓ 提出期限を保存しました");
+    setReloadTick(t=>t+1);
+  };
+  const saveBtn=(<button disabled={busy||!saveDirty||monthlyUnchosen} onClick={saveDeadlines} style={{...AB,width:"100%",marginTop:12,opacity:busy||!saveDirty||monthlyUnchosen?0.5:1}}>{busy?"保存中...":"提出期限を保存"}</button>);
+  const fmtMDW=ds=>{const d=pd(ds);return isNaN(d)?ds:`${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;};
+  const DAY_OPTS=Array.from({length:31},(_,i)=>i+1);
+  const monthlyEditor=(<div data-co-monthly="1" style={{marginBottom:14,paddingBottom:12,borderBottom:"1px solid var(--c-border)"}}>
+    <div style={{fontSize:12,fontWeight:700,color:"var(--c-text2)",marginBottom:6}}>毎月の提出締切</div>
+    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+      {monthly.length===0&&<span style={{fontSize:12,color:"var(--c-text4)"}}>未設定</span>}
+      {monthly.map((d,i)=>(<span key={i} style={{display:"inline-flex",alignItems:"center",gap:4}}>
+        <span style={{fontSize:12,color:"var(--c-text3)"}}>毎月</span>
+        <select data-co-monthly-day={i} value={d===null?"":d} onChange={e=>{const v=e.target.value===""?null:Number(e.target.value);setMonthly(ms=>ms.map((x,j)=>j===i?v:x));setMonthlyDirty(true);}} style={{...AI,width:"auto",padding:"4px 6px",cursor:"pointer"}}>
+          {d===null&&<option value="">日を選択</option>}
+          {DAY_OPTS.map(n=><option key={n} value={n}>{monthlyDeadlineDayLabel(n)}</option>)}
+        </select>
+        <button onClick={()=>{setMonthly(ms=>ms.filter((_,j)=>j!==i));setMonthlyDirty(true);}} style={{...AGray,padding:"4px 8px",fontSize:12}}>削除</button>
+      </span>))}
+      {monthly.length<MONTHLY_DEADLINE_MAX&&<button data-co-monthly-add="1" onClick={()=>{setMonthly(ms=>[...ms,null]);setMonthlyDirty(true);}} style={{...AGray,padding:"4px 10px",fontSize:12}}>＋ 追加</button>}
+    </div>
+    <div style={{fontSize:11,color:"var(--c-text3)",lineHeight:1.6,marginBottom:monthlyUnchosen?6:0}}>各期間の開始日より前で、いちばん近い締切日がその期間の提出期限になります。下で期間ごとに日付を指定した場合はそちらが優先されます。29〜31日は短い月では月末になります。</div>
+    {monthlyUnchosen&&<div style={{fontSize:11,color:"#FF4757"}}>日を選んでいない締切があります。選ぶか削除してから保存してください。</div>}
+  </div>);
+  const TD={borderBottom:"1px solid var(--c-border)",padding:"8px 6px",fontSize:13,verticalAlign:"middle"};
+  const dateIn=(v,onCh)=>(<input type="date" value={v||""} onChange={e=>{onCh(e.target.value);setDlDirty(true);}} style={{...AI,width:"auto",padding:"4px 6px"}}/>);
+  const cur=curRange;
+  return(<AC title="シフトの提出状況">
+    {monthlyEditor}
+    {ranges.length===0?<><div style={{fontSize:12,color:"var(--c-text4)"}}>連携店舗に期間がありません。</div>{saveBtn}</>:(<>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:12}}>
+        <select value={rangeKey} onChange={e=>{userPickedRef.current=true;setRangeKey(e.target.value);}} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+          {ranges.map(x=><option key={x.key} value={x.key}>{x.label}</option>)}
+        </select>
+        <EntityFilter ents={ents} value={entityFilter} onChange={v=>{userPickedRef.current=false;setEntityFilter(v);}}/>
+        <button onClick={()=>setReloadTick(t=>t+1)} style={{...AGray,padding:"6px 12px",fontSize:12}}>更新</button>
+      </div>
+      <div data-co-summary="1" style={{fontSize:13,color:"var(--c-text)",marginBottom:10}}>提出済み {nSub} ／ 未提出 {nPend}</div>
+      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
+        <span style={{fontSize:12,color:"var(--c-text3)"}}>この期間の提出期限（日付指定）</span>
+        {dateIn(dlAll||monthlyInitial,setDlAll)}
+        {monthlyInitial&&<span style={{fontSize:11,color:"var(--c-text3)"}}>毎月の提出締切から</span>}
+        {dlAll&&<button onClick={()=>{setDlAll("");setDlDirty(true);}} style={{...AGray,padding:"4px 8px",fontSize:12}}>日付指定を外す</button>}
+      </div>
+      <div data-co-effective="1" style={{fontSize:12,color:"var(--c-text2)",marginBottom:10}}>
+        {draftEff?`適用される期限: ${fmtMDW(draftEff.date)}（${draftEff.source==="date"?"日付指定":"毎月の提出締切"}）`:"適用される期限: 未設定"}
+      </div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{borderCollapse:"collapse",width:"100%",minWidth:320}}>
+          <thead><tr>{["店舗","期間","状況"].map(h=><th key={h} style={{...TD,fontSize:11,color:"var(--c-text3)",textAlign:"left",fontWeight:700}}>{h}</th>)}</tr></thead>
+          <tbody>{rows.map((x,i)=>(<React.Fragment key={x.sid}>
+            {showEntityHeads&&(i===0||rows[i-1].entityId!==x.entityId)&&<tr data-co-entity-head={x.entityId||""}><td colSpan={3} style={{...TD,fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input2)"}}>{entName[x.entityId]||"法人未設定"}</td></tr>}
+            <tr data-co-row={x.sid}>
+              <td style={{...TD,fontWeight:600}}>{x.name}{x.isHq&&<span style={{marginLeft:6,fontSize:11,fontWeight:400,color:"var(--c-text3)"}}>本部</span>}</td>
+              <td style={{...TD,color:"var(--c-text2)"}}>{x.status==="failed"?"—":x.status==="none"?"該当期間なし":(x.period.label||cur&&cur.label)}</td>
+              <td data-co-status={x.status} style={{...TD,whiteSpace:"nowrap",color:x.status==="pending"&&x.deadline&&today>x.deadline?"#FF4757":"var(--c-text)"}}>
+                {x.status==="submitted"?`提出済み ${fmtAt(x.submission.at)}`:x.status==="pending"?"未提出":x.status==="none"?"—":"読み込み失敗"}
+              </td>
+            </tr>
+          </React.Fragment>))}</tbody>
+        </table>
+      </div>
+      {saveBtn}
+      {renderDownload&&renderDownload({rangeKey,range:cur,rows})}
+    </>)}
+  </AC>);
+}
+
+// ============================================================
+// 連携店舗のシフト一括PDF（2026-09-27 企業連携の拡張）
+// 対象は提出状況表で「提出済み」かつ対応する期間を持つ店舗だけ。店舗ごとに ShiftEditTab を画面外
+// （display:none）へ1店舗ずつマウントし、既存の PDF 出力（exportPdf）に書き出しジョブを渡して
+// 1つの jsPDF に追記する＝店舗単体の PDF と同じ経路・同じ計算で出る（計算を二重に持たない）。
+// 非表示マウントでは書き込みを塞ぐ: savePeriods=null・ownerReadOnly=true（写し・労務合計を書かない）、
+// onSave は何もしない、allLinkedShops=[]（他店舗の提出を読みに行かない）。
+// 読めなかった店舗は飛ばして、最後のトーストで名前を出す（成功に丸めない）。
+// ============================================================
+function CompanyBulkPdf({range,rows,companyName,tt}){
+  const targets=rows.filter(x=>x.status==="submitted"&&x.period);
+  const[job,setJob]=useState(null);
+  const[progress,setProgress]=useState("");
+  const runRef=useRef(0);
+  const pendingRef=useRef(null);
+  // タブを離れたら進行中の一括出力を止める（待っている Promise を解放する）
+  useEffect(()=>()=>{runRef.current++;if(pendingRef.current)pendingRef.current(new Error("cancelled"));},[]);
+  const loadShop=async(sid,period)=>{
+    const ref=p=>firebaseDB.ref(p).once("value");
+    const[stS,seS,coS,pS]=await Promise.all([ref(`shops/${sid}/staff`),ref(`shops/${sid}/settings`),ref(`shops/${sid}/company/settings`),ref(`shops/${sid}/periods`)]);
+    const periods=Object.values(pS.val()||{}).filter(x=>x&&x.id).sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate)));
+    // 連勤・週の跨ぎを店舗単体の出力と揃えるため、直前の期間の提出も読む
+    const prev=periods.find(p=>String(p.startDate)<String(period.startDate));
+    const q=pid=>firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(pid).once("value");
+    const subSnaps=await Promise.all([q(period.id),...(prev?[q(prev.id)]:[])]);
+    const subs=[];subSnaps.forEach(sn=>Object.values(sn.val()||{}).forEach(x=>{if(x&&x.id)subs.push(x);}));
+    const staffList=Object.values(stS.val()||{}).filter(n=>typeof n==="string");
+    const settings=applyCompanySettings(seS.val()||makeSettings(sid),coS.val()||{});
+    return{staffList,settings,periods,subs,periodId:period.id};
+  };
+  const start=async(mode)=>{
+    if(!targets.length||job)return;
+    if(!firebaseDB){tt("✕ Firebase未初期化");return;}
+    if(typeof window.html2canvas==="undefined"||typeof window.jspdf==="undefined"){tt("▲ PDFライブラリ未読込み");return;}
+    const runId=++runRef.current;
+    const{jsPDF}=window.jspdf;
+    const pdf=new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+    const skipped=[];let first=true;let done=0;
+    for(let i=0;i<targets.length;i++){
+      if(runRef.current!==runId)return;
+      const t=targets[i];
+      setProgress(`${i+1} / ${targets.length} 店舗を処理中…`);
+      let data;
+      try{data=await loadShop(t.sid,t.period);}catch{skipped.push(t.name);continue;}
+      if(runRef.current!==runId)return;
+      const key=`${runId}_${t.sid}`;
+      const err=await new Promise(res=>{
+        pendingRef.current=res;
+        setJob({key,sid:t.sid,shopName:t.name,data,exportJob:{key,mode,pdf,first,onDone:res}});
+      });
+      pendingRef.current=null;
+      setJob(null);
+      if(runRef.current!==runId)return;
+      if(err){skipped.push(t.name);continue;}
+      first=false;done++;
+    }
+    setProgress("");
+    const miss=skipped.length?`（${skipped.join("・")} は取得に失敗したため含まれていません）`:"";
+    if(done===0){tt("✕ PDFを作れませんでした"+miss);return;}
+    const san=v=>String(v||"").replace(/[\\/:*?"<>|]/g,"");
+    const fname=`${san(companyName||"企業")}_${range.startDate}〜${range.endDate}_${mode==="shift"?"シフト":"全データ"}.pdf`;
+    pdf.save(fname);
+    ph("company_pdf_exported",{mode,shops:done});
+    tt(`✓ ${fname} をダウンロードしました${miss}`);
+  };
+  const busy=!!job||!!progress;
+  const B=(mode,label)=>(<button disabled={busy||targets.length===0} onClick={()=>start(mode)}
+    style={{flex:1,padding:"10px 6px",background:mode==="shift"?"#C0392B":"var(--c-card)",border:mode==="shift"?"none":"1px solid var(--c-border2)",borderRadius:8,
+      color:mode==="shift"?"white":"var(--c-text)",fontSize:13,fontWeight:700,cursor:busy||targets.length===0?"default":"pointer",opacity:busy||targets.length===0?0.5:1}}>
+    {label}（{targets.length}店舗）</button>);
+  return(<div style={{marginTop:16,paddingTop:14,borderTop:"1px solid var(--c-border)"}}>
+    <AL>一括ダウンロード（提出済みの店舗のみ）</AL>
+    <div style={{display:"flex",gap:8}}>{B("shift","シフトのみPDF")}{B("all","全データPDF")}</div>
+    {progress&&<div data-co-progress="1" style={{fontSize:12,color:"var(--c-text3)",marginTop:8}}>{progress}</div>}
+    {job&&<div style={{display:"none"}} aria-hidden="true">
+      <ShiftEditTab key={job.key} subs={job.data.subs} periods={job.data.periods} staffList={job.data.staffList}
+        onSave={()=>{}} tt={()=>{}} settings={job.data.settings} plan="premium" shopId={job.sid} shopName={job.shopName}
+        onUpgrade={()=>{}} allLinkedShops={[]} savePeriods={null} ownerReadOnly={true} pastSubsLoaded={true}
+        initialPeriodId={job.data.periodId} exportJob={job.exportJob}/>
+    </div>}
+  </div>);
+}
+
+// ============================================================
+// 企業アカウントでログイン（2026-09-27 ユーザー指示）
+// 企業コード（ID）とパスワードだけでログインできる。メール/Google のアカウントが要るのは企業アカウントの
+// 作成時だけで、作成後はこの2つを共有すれば誰でも企業の連携店舗を管理できる。
+// ログイン画面（未連携の端末）と同じ companyLoginAndEnter（app-main.js）を呼ぶ。
+// ============================================================
+function CompanyLoginCard({onCompanyLogin,tt}){
+  const[code,setCode]=useState("");
+  const[pw,setPw]=useState("");
+  const[show,setShow]=useState(false);
+  const[busy,setBusy]=useState(false);
+  const[err,setErr]=useState("");
+  const submit=async()=>{
+    if(busy||!onCompanyLogin)return;
+    setErr("");
+    if(!code.trim()||!pw){setErr("企業コードとパスワードを入力してください");return;}
+    setBusy(true);
+    const r=await onCompanyLogin(code.trim(),pw);
+    setBusy(false);
+    if(r&&r.error){setErr(r.error);return;}
+    setCode("");setPw("");setShow(false);
+    tt("✓ 企業アカウントでログインしました");
+  };
+  return(<AC title="企業アカウントでログイン">
+    <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>作成済みの企業アカウントには、企業コードとパスワードだけでログインできます（メールアドレスは不要）。</div>
+    <AL>企業コード</AL>
+    <input value={code} onChange={e=>setCode(e.target.value)} maxLength={16} placeholder="企業コード" autoComplete="username" style={{...AI,marginBottom:10,letterSpacing:"0.05em"}}/>
+    <AL>パスワード</AL>
+    <input type={show?"text":"password"} value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")submit();}} maxLength={128} placeholder="パスワード" autoComplete="current-password" style={{...AI,marginBottom:8}}/>
+    <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"var(--c-text3)",marginBottom:10,cursor:"pointer",width:"fit-content"}}>
+      <input type="checkbox" checked={show} onChange={e=>setShow(e.target.checked)} style={{width:18,height:18,cursor:"pointer"}}/>パスワードを表示
+    </label>
+    {err&&<div data-co-login-err="1" style={{color:"#FF4757",fontSize:12,marginBottom:8}}>{err}</div>}
+    <button disabled={busy} onClick={submit} style={{...AB,width:"100%",opacity:busy?0.6:1}}>{busy?"ログイン中...":"企業アカウントでログイン"}</button>
+  </AC>);
+}
+
+function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompanyConfig,onOpenCompanyStaff,
+                     shops=[],allLinkedShops=[],onSwitchToShop,onUnlinkShop,
+                     companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin,onCompanyCall}){
+  // 企業アカウントUI（SetTabから移動）
+  const[coName,setCoName]=useState("");
+  const[coPw,setCoPw]=useState("");
+  const[coBusy,setCoBusy]=useState(false);
+  const[coErr,setCoErr]=useState("");
+  const[coCreated,setCoCreated]=useState(null); // 作成直後に表示する {code}
+  const[coPwEdit,setCoPwEdit]=useState(false);
+  // 賃金の閲覧パスコード（P6a）。企業のコードは CF setCompanyPayCode が連携全店舗へ同期する（作成者・企業セッションの両方が変更可）
+  const[coPayCodeModal,setCoPayCodeModal]=useState(false);
+  const[coNewPw,setCoNewPw]=useState("");
+  // パスワードは2回入力して一致したときだけ採用し、「パスワードを表示」で伏せ字を外せる（2026-09-27 ユーザー指示）。
+  // 変更は現在のパスワードを先に入れる（CF の changeCompanyPassword でも照合する）。
+  const[coPw2,setCoPw2]=useState("");
+  const[coCurPw,setCoCurPw]=useState("");
+  const[coNewPw2,setCoNewPw2]=useState("");
+  const[coShowPw,setCoShowPw]=useState(false);
+  const pwType=coShowPw?"text":"password";
+  const showPwBox=(<label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"var(--c-text3)",marginBottom:10,cursor:"pointer",width:"fit-content"}}>
+    <input type="checkbox" checked={coShowPw} onChange={e=>setCoShowPw(e.target.checked)} style={{width:18,height:18,cursor:"pointer"}}/>パスワードを表示
+  </label>);
+  const resetPwEdit=()=>{setCoPwEdit(false);setCoCurPw("");setCoNewPw("");setCoNewPw2("");setCoShowPw(false);};
+  const[coAddCode,setCoAddCode]=useState("");
+  const[coAddOpen,setCoAddOpen]=useState(false);
+  // 店舗一覧トグル・略称（スタッフの勤務先店舗は 2026-09-27 に廃止。スタッフタブの「所属店舗」へ移した）
+  const[expanded,setExpanded]=useState({});   // {shopId:true}
+  const[shopMeta,setShopMeta]=useState({});   // {shopId:{abbrs:[],loaded:true}}
+  const[abbrInput,setAbbrInput]=useState({}); // {shopId:"入力中の略称"}
+  const[allAbbrs,setAllAbbrs]=useState({});   // {shopId:[略称]} 重複チェック専用（未展開店舗ぶんも先読み）
+  const listShops=allLinkedShops.length>0?allLinkedShops:shops;
+  // 法人の割当・種別を変えたら提出状況（法人で絞る・見出し）を読み直す
+  const[structureTick,setStructureTick]=useState(0);
+
+  const loadShopMeta=(sid)=>{
+    if(!firebaseDB)return;
+    firebaseDB.ref(`shops/${sid}/settings/shopAbbrs`).once("value").then(aS=>{
+      const abbrs=Object.values(aS.val()||{}).filter(v=>typeof v==="string");
+      setShopMeta(m=>({...m,[sid]:{abbrs,loaded:true}}));
+    }).catch(()=>{
+      setShopMeta(m=>({...m,[sid]:{abbrs:[],loaded:true}}));
+      tt("✕ 店舗データの読み込みに失敗しました");
+    });
+  };
+  const toggleExpand=(sid)=>{
+    setExpanded(e=>({...e,[sid]:!e[sid]}));
+    if(!shopMeta[sid])loadShopMeta(sid);
+  };
+  // 表示中店舗はライブなsettingsを使い、他店舗は読み込んだメタを使う
+  const metaFor=(sid)=>sid===shopId
+    ?{abbrs:settings.shopAbbrs||[],loaded:true}
+    :(shopMeta[sid]||null);
+  // 略称の保存: 表示中店舗はsaveSettings経由（localStorage二重書き維持）、他店舗はFirebaseへupdateマージ
+  const saveMetaField=(sid,field,value)=>{
+    const stateKey="abbrs";
+    if(sid===shopId){onSave({...settings,[field]:value});setShopMeta(m=>m[sid]?{...m,[sid]:{...m[sid],[stateKey]:value}}:m);return;}
+    setShopMeta(m=>({...m,[sid]:{...(m[sid]||{abbrs:[],loaded:true}),[stateKey]:value}}));
+    if(field==="shopAbbrs")setAllAbbrs(a=>({...a,[sid]:value}));
+    if(!firebaseDB)return;
+    fbUpd(`shops/${sid}/settings`,{[field]:value})
+      .catch(()=>{tt("✕ 保存できませんでした（この店舗の管理者権限がありません）");loadShopMeta(sid);});
+  };
+  // 略称の重複チェックは全連携店舗を見る必要があるが、shopMeta はカードを展開した店舗しか読まない。
+  // 未展開店舗ぶんを先読みしておかないと衝突を検出できず、同じ略称が2店舗に登録される。そうなると
+  // シフト作成タブの abbrToShop（先勝ちマップ）がヘルプ先を別店舗に解決し、レジェンドの店舗名が入れ替わる。
+  useEffect(()=>{
+    if(!firebaseDB)return;
+    let cancelled=false;
+    Promise.all(listShops.filter(s=>s&&s.id).map(s=>
+      firebaseDB.ref(`shops/${s.id}/settings/shopAbbrs`).once("value")
+        .then(sn=>[s.id,Object.values(sn.val()||{}).filter(v=>typeof v==="string")])
+        .catch(()=>[s.id,[]])
+    )).then(entries=>{if(!cancelled)setAllAbbrs(Object.fromEntries(entries));});
+    return()=>{cancelled=true;};
+  },[listShops]);
+  // 略称の参照元: 表示中・展開済み店舗はライブなmeta、未展開店舗は先読みした allAbbrs
+  const abbrsOf=(sid)=>{const m=metaFor(sid);return m?(m.abbrs||[]):(allAbbrs[sid]||[]);};
+  const addAbbr=(sid)=>{
+    const v=(abbrInput[sid]||"").trim();
+    if(!v)return;
+    if(v.length>4){tt("✕ 略称は4文字以内にしてください");return;}
+    // 予約語の判定は app-utils.js の isReservedShopAbbr に一本化する（CELL_COMMANDSレジストリ駆動）。
+    // **ここに判定式を書き写さないこと**——以前この場所に完全一致の式を直書きしていたため、
+    // extractNote が部分一致で取り除く「締」を **含む** 略称（例「西締」）が登録できていた
+    // （バグチェック#133。登録はできるのにセルでは note="西" に化けて解決されない）。
+    // 先頭文字は extractNote のパース境界（^([\d.:]+) が時刻部として貪欲に食う）と一致させる。
+    // 「2号」のような先頭が数字の略称を許すと、セルに「9 2号」の意で「92号」と入力したとき
+    // numeric="92"（parseTimeが弾いて時刻消失）・note="号" となり、abbrToShopの完全一致lookupが
+    // 必ず外れる＝ヘルプ判定も店舗間重複判定も無言で効かなくなる。「92号」を 9+「2号」と
+    // 92+「号」のどちらに解釈するかは原理的に決められないため、パーサ側では直せない。
+    if(isReservedShopAbbr(v)){tt("✕ h・k・x・/・ko・yu・ke・「締」を含む・数字や記号（. :）で始まる略称は使用できません");return;}
+    const cur=(metaFor(sid)||{}).abbrs||[];
+    if(cur.includes(v)){tt("✕ 既に登録済みの略称です");return;}
+    const conflict=listShops.find(s=>s&&s.id!==sid&&abbrsOf(s.id).includes(v));
+    if(conflict){tt(`✕ 「${v}」は「${conflict.name}」で使用中です`);return;}
+    saveMetaField(sid,"shopAbbrs",[...cur,v]);
+    setAbbrInput(i=>({...i,[sid]:""}));
+  };
+  const removeAbbr=(sid,abbr)=>{
+    const cur=(metaFor(sid)||{}).abbrs||[];
+    saveMetaField(sid,"shopAbbrs",cur.filter(a=>a!==abbr));
+  };
+
+  const shopCard=(shop)=>{
+    const isCurrent=shop.id===shopId;
+    const open=!!expanded[shop.id];
+    const meta=metaFor(shop.id);
+    const canUnlink=listShops.length>1;
+    return(
+      <div key={shop.id} style={{background:"var(--c-input)",borderRadius:8,border:`1px solid ${isCurrent?"rgba(248,112,54,.4)":"var(--c-border2)"}`,marginBottom:8,overflow:"hidden"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 12px",cursor:"pointer"}} onClick={()=>toggleExpand(shop.id)}>
+          <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+            <span style={{fontSize:11,color:"var(--c-text3)",transform:open?"rotate(90deg)":"none",transition:"transform .15s",flexShrink:0}}>▶</span>
+            {isCurrent&&<span style={{fontSize:10,background:"var(--c-accent)",color:"white",padding:"2px 6px",borderRadius:4,fontWeight:700,flexShrink:0}}>表示中</span>}
+            <span style={{fontSize:13,color:"var(--c-text)",fontWeight:isCurrent?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{shop.name}</span>
+            {meta&&meta.abbrs.length>0&&<span style={{fontSize:11,color:"var(--c-text3)",flexShrink:0}}>（{meta.abbrs.join("・")}）</span>}
+          </div>
+          <div style={{display:"flex",gap:6,flexShrink:0}} onClick={e=>e.stopPropagation()}>
+            {!isCurrent&&onSwitchToShop&&(
+              <button onClick={()=>{onSwitchToShop(shop.id);tt(`✓ 「${shop.name}」に切り替えました`);}}
+                style={{padding:"5px 10px",background:"rgba(248,112,54,.1)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"var(--c-accent)",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                ログイン
+              </button>
+            )}
+            {canUnlink&&<button onClick={async()=>{
+              // companyInfo の有無で分岐しない。企業情報の復元は非同期なので押した時点で null でも
+              // 企業側の登録は残っていることがあり、片方だけ消すとリロードで一覧へ戻る。
+              // App 側の1つの実装（unlinkShopFromAuth）が accounts と companies の両方を消す。
+              if(!window.confirm(`「${shop.name}」の連携を解除しますか？\nシフトデータは削除されません。戻すには店舗コード（設定タブ）が必要です。`))return;
+              const unlink=onUnlinkStoreFromCompany||onUnlinkShop;
+              if(!unlink)return;
+              const r=await unlink(shop.id);
+              tt(r&&r.error?("✕ "+r.error):`✓ 「${shop.name}」の連携を解除しました`);
+            }}
+              style={{padding:"5px 10px",background:"var(--c-bg)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text3)",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+              解除
+            </button>}
+          </div>
+        </div>
+        {open&&(
+          <div style={{borderTop:"1px solid var(--c-border2)",padding:"12px"}}>
+            {!meta?<div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div>:(<>
+              {/* 店舗略称 */}
+              <AL>店舗略称（シフト作成タブでヘルプ入力に使用・複数登録可）</AL>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+                {meta.abbrs.map(a=>(
+                  <span key={a} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 8px",background:"rgba(96,165,250,.12)",border:"1px solid rgba(96,165,250,.4)",borderRadius:8,fontSize:13,fontWeight:600,color:"var(--c-text)"}}>
+                    {a}
+                    <button onClick={()=>removeAbbr(shop.id,a)} style={{background:"none",border:"none",color:"var(--c-text3)",cursor:"pointer",fontSize:12,padding:0,lineHeight:1}}>✕</button>
+                  </span>
+                ))}
+                {meta.abbrs.length===0&&<span style={{fontSize:12,color:"var(--c-text4)"}}>未登録</span>}
+              </div>
+              <div style={{display:"flex",gap:6,marginBottom:14}}>
+                <input value={abbrInput[shop.id]||""} onChange={e=>setAbbrInput(i=>({...i,[shop.id]:e.target.value}))}
+                  onKeyDown={e=>{if(e.key==="Enter")addAbbr(shop.id);}}
+                  placeholder="例：三（4文字以内）" maxLength={4}
+                  style={{...AI,flex:1,maxWidth:200}}/>
+                <button onClick={()=>addAbbr(shop.id)} style={{...AB,padding:"8px 14px",fontSize:13,whiteSpace:"nowrap"}}>追加</button>
+              </div>
+            </>)}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return(<div>
+    <AT>企業連携</AT>
+    {!companyInfo&&onCompanyLogin&&<CompanyLoginCard onCompanyLogin={onCompanyLogin} tt={tt}/>}
+    {!authUser?(
+      <AC title="企業アカウントを作成するには">
+        <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.7}}>
+          企業アカウントを<b>新しく作成する</b>ときだけ、「設定」タブの<b>アカウント連携</b>からGoogleまたはメールアドレスでアカウントを登録してください。作成済みの企業には、上の企業コードとパスワードでログインできます。
+        </div>
+      </AC>
+    ):(<>
+    {/* カードの並び（2026-09-28 ユーザー指示）: シフト提出状況 → 企業内登録スタッフ → 企業アカウント → 連携店舗 → 企業の共通設定 */}
+    {companyInfo&&plan==="premium"&&<CompanySubmissionsCard structureTick={structureTick} companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}
+      renderDownload={({range,rows})=>range?<CompanyBulkPdf key={range.key} range={range} rows={rows} companyName={companyInfo.name} tt={tt}/>:null}/>}
+    {companyInfo&&plan==="premium"&&<CompanyStaffCard onOpen={onOpenCompanyStaff}/>}
+    <AC title="企業アカウント">
+      {companyInfo?(
+        <div>
+          <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+            企業名・企業コード・パスワードを管理します。企業コードとパスワードを共有すると、他のスタッフが同じ企業アカウントにログインできます。
+          </div>
+          {/* 企業名（編集可） */}
+          <AL>企業名</AL>
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <input value={coName!==""?coName:companyInfo.name} onChange={e=>setCoName(e.target.value)} maxLength={100} style={{...AI,flex:1}}/>
+            <button disabled={coBusy} onClick={async()=>{
+              const nm=(coName!==""?coName:companyInfo.name).trim(); if(!nm||!onRenameCompany)return;
+              setCoBusy(true); const r=await onRenameCompany(nm); setCoBusy(false);
+              if(r&&r.error)tt("✕ "+r.error); else {tt("✓ 企業名を変更しました");setCoName("");}
+            }} style={{...AGray,whiteSpace:"nowrap"}}>保存</button>
+          </div>
+          {/* 企業コード（コピー） */}
+          <AL>企業コード（ログインID）</AL>
+          <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,padding:"10px 14px",marginBottom:12}}>
+            <span style={{flex:1,fontFamily:"monospace",fontSize:15,color:"var(--c-accent)",letterSpacing:"0.1em",fontWeight:700}}>{companyInfo.code}</span>
+            <button onClick={()=>{
+              const v=companyInfo.code;const copy=()=>{const el=document.createElement("textarea");el.value=v;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 企業コードをコピーしました");};
+              if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(v).then(()=>tt("✓ 企業コードをコピーしました")).catch(copy);}else copy();
+            }} style={{padding:"6px 12px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>コピー</button>
+          </div>
+          {/* パスワード変更 */}
+          {coPwEdit?(
+            <div style={{marginBottom:4}}>
+              <AL>現在のパスワード</AL>
+              <input type={pwType} value={coCurPw} onChange={e=>setCoCurPw(e.target.value)} maxLength={128} placeholder="現在のパスワード" autoComplete="current-password" style={{...AI,marginBottom:10}}/>
+              <AL>新しいパスワード（6文字以上）</AL>
+              <input type={pwType} value={coNewPw} onChange={e=>setCoNewPw(e.target.value)} maxLength={128} placeholder="新しいパスワード" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
+              <input type={pwType} value={coNewPw2} onChange={e=>setCoNewPw2(e.target.value)} maxLength={128} placeholder="新しいパスワード（確認）" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
+              {showPwBox}
+              <div style={{display:"flex",gap:8}}>
+                <button disabled={coBusy} onClick={async()=>{
+                  if(!coCurPw){tt("✕ 現在のパスワードを入力してください");return;}
+                  if(coNewPw.length<6){tt("✕ 新しいパスワードは6文字以上にしてください");return;}
+                  if(coNewPw!==coNewPw2){tt("✕ 新しいパスワードが一致しません");return;}
+                  if(coNewPw===coCurPw){tt("✕ 現在と同じパスワードです");return;}
+                  setCoBusy(true); const r=await onChangeCompanyPassword(coCurPw,coNewPw); setCoBusy(false);
+                  if(r&&r.error)tt("✕ "+r.error); else {tt("✓ パスワードを変更しました");resetPwEdit();}
+                }} style={{...AB,flex:1,whiteSpace:"nowrap"}}>{coBusy?"変更中...":"変更"}</button>
+                <button onClick={resetPwEdit} style={{...AGray,whiteSpace:"nowrap"}}>取消</button>
+              </div>
+            </div>
+          ):isCompanySessionUid(authUser&&authUser.uid)?(
+            <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6}}>パスワードは、企業の作成者のアカウント（メール／Google）でログインしたときだけ変更できます。</div>
+          ):(
+            <button onClick={()=>setCoPwEdit(true)} style={{...AGray,width:"100%"}}>パスワードを変更する</button>
+          )}
+          {featureEnabled("pay",{plan})&&<>
+            <div style={{marginTop:16}}><AL>賃金の閲覧パスコード（4桁）</AL></div>
+            <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8,lineHeight:1.6}}>連携しているすべての店舗で、この番号を入れるまで賃金が伏せられます。未設定の間は 0000 です。</div>
+            <button data-co-pay-code="1" onClick={()=>setCoPayCodeModal(true)} style={{...AGray,width:"100%"}}>賃金の閲覧パスコードを変更する</button>
+            {coPayCodeModal&&<PayCodeChangeModal tt={tt} onClose={()=>setCoPayCodeModal(false)}
+              onSubmit={async(cur,next)=>{
+                const r=onCompanyCall?await onCompanyCall("setCompanyPayCode",{currentCode:cur,newCode:next}):{error:"企業アカウントがありません"};
+                if(r&&r.error)return r;
+                return (r&&r.failed&&r.failed.length)?{error:`${r.failed.length}店舗への反映に失敗しました。もう一度変更してください`}:{};
+              }}/>}
+          </>}
+        </div>
+      ):(
+        authUser.isAnonymous?(
+          <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6}}>企業アカウントの作成にはメールまたはGoogleでのログインが必要です。「設定」タブのアカウント連携から登録してください。作成済みの企業には、上の企業コードとパスワードでログインできます。</div>
+        ):(
+          <div>
+            <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+              企業アカウントを作成すると、現在の店舗をまとめて管理でき、企業コード＋パスワードで他のスタッフもログインできます。
+            </div>
+            <AL>企業名</AL>
+            <input value={coName} onChange={e=>setCoName(e.target.value)} maxLength={100} placeholder="例）〇〇フーズ" style={{...AI,marginBottom:10}}/>
+            <AL>ログイン用パスワード（6文字以上）</AL>
+            <input type={pwType} value={coPw} onChange={e=>setCoPw(e.target.value)} maxLength={128} placeholder="パスワード（6文字以上）" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
+            <input type={pwType} value={coPw2} onChange={e=>setCoPw2(e.target.value)} maxLength={128} placeholder="パスワード（確認）" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
+            {showPwBox}
+            {coErr&&<div style={{color:"#FF4757",fontSize:12,marginBottom:8}}>{coErr}</div>}
+            {coCreated?(
+              <div style={{background:"rgba(34,197,94,.1)",border:"1px solid rgba(34,197,94,.3)",borderRadius:8,padding:"12px 14px"}}>
+                <div style={{fontSize:12,color:"var(--c-text2)",marginBottom:6}}>企業アカウントを作成しました。企業コード：</div>
+                <div style={{fontFamily:"monospace",fontSize:16,color:"#10B981",fontWeight:700,letterSpacing:"0.1em"}}>{coCreated.code}</div>
+              </div>
+            ):(
+              <button disabled={coBusy} onClick={async()=>{
+                setCoErr("");
+                if(!coName.trim()){setCoErr("企業名を入力してください");return;}
+                if(coPw.length<6){setCoErr("パスワードは6文字以上にしてください");return;}
+                if(coPw!==coPw2){setCoErr("パスワードが一致しません");return;}
+                setCoBusy(true); const r=await onCreateCompany(coName.trim(),coPw); setCoBusy(false);
+                if(r&&r.error)setCoErr(r.error); else {setCoCreated({code:r.code});setCoName("");setCoPw("");setCoPw2("");setCoShowPw(false);
+                  tt(r&&r.skipped>0?`✓ 作成しました（管理者未登録の${r.skipped}店舗は連携していません。その店舗の管理コードで追加してください）`:"✓ 企業アカウントを作成しました");}
+              }} style={{...AB,width:"100%"}}>{coBusy?"作成中...":"企業アカウントを作成する"}</button>
+            )}
+          </div>
+        )
+      )}
+    </AC>
+    {listShops.length>0&&<AC title="連携店舗">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+        {companyInfo?"この企業アカウントに紐付いている店舗の一覧です。管理コードで追加・不要な店舗は連携解除できます（追加する店舗の設定タブに表示されている「管理コード」が必要です）。":"このアカウントに紐付いている全店舗の一覧です。不要な店舗は連携を解除できます。"}
+        店舗名をタップすると略称を設定できます。
+      </div>
+      {companyInfo&&(
+        coAddOpen?(
+          <div style={{display:"flex",gap:8,marginBottom:12}}>
+            <input value={coAddCode} onChange={e=>setCoAddCode(e.target.value)} maxLength={100} placeholder="管理コードを貼り付け" style={{...AI,flex:1}}/>
+            <button disabled={coBusy} onClick={async()=>{
+              if(!coAddCode.trim()||!onLinkStoreToCompany)return;
+              setCoBusy(true); const r=await onLinkStoreToCompany(coAddCode.trim()); setCoBusy(false);
+              if(r&&r.error)tt("✕ "+r.error); else {tt(`✓ 「${r.name||"店舗"}」を追加しました`);setCoAddCode("");setCoAddOpen(false);}
+            }} style={{...AB,whiteSpace:"nowrap"}}>追加</button>
+            <button onClick={()=>{setCoAddOpen(false);setCoAddCode("");}} style={{...AGray,whiteSpace:"nowrap"}}>取消</button>
+          </div>
+        ):(
+          <button onClick={()=>setCoAddOpen(true)} style={{width:"100%",padding:"10px",background:"rgba(248,112,54,.12)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,color:"var(--c-accent)",fontSize:13,fontWeight:700,cursor:"pointer",marginBottom:12}}>＋ 管理コードで追加</button>
+        )
+      )}
+      <div>{listShops.map(shopCard)}</div>
+    </AC>}
+    {companyInfo&&plan==="premium"&&<CompanyEntityCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onCompanyCall={onCompanyCall} tt={tt} onChanged={()=>setStructureTick(t=>t+1)}/>}
+    {companyInfo&&plan==="premium"&&<CompanyConfigCard companyId={companyInfo.companyId} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}/>}
+    <AC title="シフト作成タブでのヘルプ入力">
+      <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.8}}>
+        店舗略称を登録すると、シフト作成タブのセルで「時間＋略称」（例: <b>9三</b>）と入力することで他店舗ヘルプとして扱われます。<br/>
+        ・<b>出勤セルのみ</b>に略称 → その店舗のランチ帯（〜17時）のみヘルプ<br/>
+        ・<b>退勤セルのみ</b>に略称 → その店舗のディナー帯（17時〜）のみヘルプ<br/>
+        ・<b>両方のセル</b>に略称 → 出勤から退勤まで終日ヘルプ<br/>
+        ヘルプ帯は自店舗の時間帯別出勤人数から除外されます。<br/>スタッフタブの編集で所属店舗を他店舗にすると、その人はこの店舗のシフトでヘルプとして扱われ、所属店舗と時間が重複するとシフト作成タブにエラーが表示されます。
+      </div>
+    </AC>
+    </>)}
+  </div>);
+}
+
+function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
+                 authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
+                 onSignInAndLinkGoogle,onSignInAndLinkEmail,adminCode=null,ownerReadOnly=false,companyLink=null}){
+  const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
+  // 企業が決めている項目（2026-09-27 企業連携の拡張）。入力欄を出さず値と「企業設定」を出す。
+  // settings は App で企業設定を重ねた値。保存は App の saveSettings が剥がすが、この2枚のカードは
+  // 自分でも剥がしてから渡す（ハーネスなど App を通らない経路でも企業の値を店舗へ書かない二重防御）。
+  const coSettings=companyLink?(companyLink.settings||{}):null;
+  const coKeys=companyControlledKeys(coSettings);
+  const coLabor=k=>coKeys.labor.has(k);
+  // 企業が作った属性（co_）は全項目が企業のもの＝店舗では1つも変えられない（空欄の項目も入力欄を出さず「—」）。
+  // 入力欄を出すと、編集しても保存時に剥がされて黙って元に戻る（2026-09-27 ユーザー報告）。
+  const coLim=(type,k)=>isCompanyAttrId(type)||!!(coKeys.limits[type]&&coKeys.limits[type].has(k));
+  const onSaveOwn=v=>onSave(coSettings?stripCompanySettings(v,coSettings):v);
+  const coTag=<span style={{fontSize:10,color:"var(--c-text3)",whiteSpace:"nowrap"}}>企業設定</span>;
+  const coVal=(text,minW=52)=>(<span data-company-fixed="1" style={{display:"inline-flex",alignItems:"baseline",gap:4}}><span style={{fontSize:13,color:"var(--c-text)",minWidth:minW,textAlign:"center"}}>{text}</span>{coTag}</span>);
+  const coNote=companyLink&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>「企業設定」の項目は企業アカウント（{companyLink.name||"企業"}{companyLink.entityName&&companyLink.entityName!==companyLink.name?`・${companyLink.entityName}`:""}）が決めているため、この店舗では変更できません。変更は企業連携タブから行います。</div>;
+  const[emailLinkStep,setEmailLinkStep]=useState(0); // 0=非表示 1=メール入力 2=コード入力
+  const[emailInput,setEmailInput]=useState("");
+  const[codeInput,setCodeInput]=useState("");
+  const[pendingNewType,setPendingNewType]=useState(null); // null | {name:""}
+  const[newPosInput,setNewPosInput]=useState({kitchen:"",hall:""}); // ポジション名追加の入力欄
+  const[reqDayType,setReqDayType]=useState("weekday"); // 必要ポジション設定: 表示中の曜日区分
+  const[reqMeal,setReqMeal]=useState("lunch"); // 必要ポジション設定: 表示中のランチ/ディナー
+  const[linkLoading,setLinkLoading]=useState(false);
+  const[linkError,setLinkError]=useState("");
+  // Cookie認証ユーザー向けアカウント登録/連携
+  const[acctEmailMode,setAcctEmailMode]=useState(null); // null | "login" | "register"
+  const[acctEmail,setAcctEmail]=useState("");
+  const[acctPw,setAcctPw]=useState("");
+  const[acctPw2,setAcctPw2]=useState("");
+  const[acctLoading,setAcctLoading]=useState(false);
+  const[acctError,setAcctError]=useState("");
+  const changeTheme=pref=>{
+    ls(THEME_KEY,pref);
+    setThemePref(pref);
+    applyTheme(pref);
+    tt(pref==="light"?"ライトモード":(pref==="dark"?"ダークモード":"↺ システム設定に合わせる"));
+  };
+  const linkedIds=(authUser?.providerData||[]).map(p=>p.providerId);
+  const handleLinkProvider=async(type)=>{
+    setLinkLoading(true);setLinkError("");
+    const r=await onLinkProvider(type);
+    setLinkLoading(false);
+    if(r?.error)setLinkError(r.error);
+    else if(!r?.error&&r?.error!==undefined){}
+    else tt("✓ 連携しました");
+  };
+  const handleSendOtp=async()=>{
+    if(!emailInput.trim()){setLinkError("メールアドレスを入力してください");return;}
+    setLinkLoading(true);setLinkError("");
+    const r=await onSendEmailOtp(emailInput.trim());
+    setLinkLoading(false);
+    if(r?.error){setLinkError(r.error);}
+    else{setEmailLinkStep(2);}
+  };
+  const handleVerifyOtp=async()=>{
+    if(!codeInput.trim()){setLinkError("確認コードを入力してください");return;}
+    setLinkLoading(true);setLinkError("");
+    const r=await onVerifyAndLinkEmail(codeInput.trim(),emailInput.trim());
+    setLinkLoading(false);
+    if(r?.error){setLinkError(r.error);}
+    else{setEmailLinkStep(0);setEmailInput("");setCodeInput("");tt("✓ メールアドレスを連携しました");}
+  };
+  const handleUnlink=async(pid)=>{
+    setLinkLoading(true);setLinkError("");
+    const r=await onUnlinkProvider(pid);
+    setLinkLoading(false);
+    if(r?.error)setLinkError(r.error);
+    else tt("✓ 連携を解除しました");
+  };
+
+  const providerRow=(pid,icon,label)=>{
+    const linked=linkedIds.includes(pid);
+    const info=linked?(authUser.providerData.find(p=>p.providerId===pid)?.email||""):null;
+    const isEmail=pid==="password";
+    const canUnlink=linkedIds.length>1;
+    return(
+      <div key={pid} style={{display:"flex",alignItems:"center",gap:10,padding:"12px 0",borderBottom:"1px solid var(--c-border2)"}}>
+        <div style={{width:32,height:32,borderRadius:8,background:"var(--c-input)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}}>{icon}</div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:14,fontWeight:600,color:"var(--c-text)"}}>{label}</div>
+          {linked&&info&&<div style={{fontSize:11,color:"var(--c-text3)",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{info}</div>}
+        </div>
+        {linked
+          ?<span style={{fontSize:11,fontWeight:600,color:"#10B981",background:"rgba(34,197,94,.12)",padding:"3px 10px",borderRadius:12,whiteSpace:"nowrap",flexShrink:0}}>連携済み</span>
+          :<span style={{fontSize:11,color:"var(--c-text4)",flexShrink:0}}>未連携</span>
+        }
+        {linked&&canUnlink&&(
+          <button disabled={linkLoading} onClick={()=>handleUnlink(pid)}
+            style={{...AD,fontSize:11,padding:"5px 10px",flexShrink:0,opacity:linkLoading?.5:1}}>解除</button>
+        )}
+        {!linked&&!isEmail&&(
+          <button disabled={linkLoading} onClick={()=>handleLinkProvider(pid==="google.com"?"google":"apple")}
+            style={{...AB,fontSize:12,padding:"7px 14px",flexShrink:0,opacity:linkLoading?.5:1}}>連携する</button>
+        )}
+        {!linked&&isEmail&&emailLinkStep===0&&(
+          <button disabled={linkLoading} onClick={()=>{setEmailLinkStep(1);setLinkError("");}}
+            style={{...AB,fontSize:12,padding:"7px 14px",flexShrink:0}}>連携する</button>
+        )}
+      </div>
+    );
+  };
+
+  return(<div>
+    <AT>システム設定</AT>
+    {shopId&&<AC title="店舗管理コード">
+      {ownerReadOnly?(
+        <div style={{fontSize:12,color:"#B45309",lineHeight:1.6}}>この端末は管理者登録されていないため、正しい管理コードを表示できません。既に管理者登録済みの端末（設定変更ができる端末）でこのコードを確認してください。</div>
+      ):(<>
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>このコードを別の端末で入力すると、同じ店舗を管理者として操作できるようになります。<b>スタッフには共有しないでください。</b></div>
+      <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,padding:"10px 14px"}}>
+        <span style={{flex:1,fontFamily:"monospace",fontSize:13,color:"var(--c-text)",letterSpacing:"0.05em",wordBreak:"break-all"}}>{adminCode||shopId}</span>
+        <button onClick={()=>{
+          const codeVal=adminCode||shopId;
+          const copy=()=>{const el=document.createElement("textarea");el.value=codeVal;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 管理コードをコピーしました");};
+          if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(codeVal).then(()=>tt("✓ 管理コードをコピーしました")).catch(copy);}else{copy();}
+        }} style={{padding:"6px 12px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>コピー</button>
+      </div>
+      <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>別端末への共有は「店舗名ボタン → コードで追加」から行えます</div>
+      </>)}
+    </AC>}
+
+    {plan==="premium"&&(()=>{
+      const tls=settings.staffTypeLimits||{};
+      const saveAllLimits=(newTls)=>onSaveOwn({...settings,staffTypeLimits:newTls});
+      const saveLim=(type,key,val)=>saveAllLimits({...tls,[type]:{...tls[type],[key]:val}});
+      const confirmAddType=()=>{if(!pendingNewType)return;const nm=pendingNewType.name.trim();if(!nm){setPendingNewType(null);return;}const id="custom_"+genSecureId(8);saveAllLimits({...tls,[id]:{name:nm,daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0}});setPendingNewType(null);};
+      const deleteType=(id)=>{const n={...tls};delete n[id];const attrs={...(settings.staffAttributes||{})};Object.keys(attrs).forEach(k=>{if(attrs[k]===id)delete attrs[k];});onSave({...settings,staffTypeLimits:n,staffAttributes:attrs});};
+      const renameType=(id,name)=>saveAllLimits({...tls,[id]:{...tls[id],name}});
+      // builtinで未登録のものはデフォルト値で補完（社員・パート・アルバイトのみ）
+      const tlsMerged={...tls};ATTR_PINNED_ORDER.forEach(k=>{if(!tlsMerged[k])tlsMerged[k]={name:STAFF_TYPE_LABELS[k],daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0};});
+      // 表示名(displayNameと同ルール)。組み込みは STAFF_TYPE_LABELS が正本＝保存された旧既定名（"バイト"）を読まない
+      const typeName=(id,raw)=>(BUILTIN_TYPES.includes(id)?STAFF_TYPE_LABELS[id]:"")||(raw&&typeof raw==="object"?raw.name:raw)||id;
+      // 並びは sortAttrEntries が正本（スタッフタブの属性プルダウンと同じ順）。ここで getAttrOptions を
+      // 使わないのは、名前が空のカスタム属性まで落ちて**入力欄ごと消える**ため（付け直せなくなる）。
+      const typeEntries=sortAttrEntries(Object.entries(tlsMerged).map(([id,raw])=>[id,typeName(id,raw)])).map(([id])=>[id,tlsMerged[id]]);
+      return(<AC title="スタッフ属性別 勤務時間制限">
+        {coNote}
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は未設定。上限を超えたスタッフは提出一覧と集計表で赤くハイライトされます。目安は判定に使いません（集計表に行として出るだけです）。1ヶ月の上限・目安は31日の月の値として入れ、労務設定と同じ式で月の日数に日割りしたうえで「残業」を足した値になります。</div>
+        {typeEntries.map(([type,limRaw])=>{
+          const lim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeof limRaw==="object"?limRaw:{name:limRaw})};
+          const isBuiltin=BUILTIN_TYPES.includes(type);
+          // 企業が作った属性は名前も削除も企業の領分（店舗では名前を固定表示し削除ボタンを出さない）
+          const isCo=isCompanyAttrId(type);
+          const displayName=typeName(type,lim);
+          return(<div key={type} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+              {isBuiltin||isCo
+                ?<div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",flex:1}}>{displayName}{isCo&&<span style={{marginLeft:6,fontWeight:400}}>{coTag}</span>}</div>
+                :<input value={lim.name||""} placeholder="属性名を入力" onChange={e=>renameType(type,e.target.value)}
+                    style={{...AI,flex:1,fontSize:16,fontWeight:700,padding:"4px 8px"}}/>
+              }
+              {!isBuiltin&&!isCo&&<button onClick={()=>deleteType(type)} style={{padding:"4px 10px",background:"rgba(229,57,53,.1)",border:"1px solid rgba(229,57,53,.3)",borderRadius:4,color:"#e53935",fontSize:12,cursor:"pointer"}}>削除</button>}
+            </div>
+            {/* 労働時間制（項目1）。組み込み属性は既定（社員=変形・バイト=通常・派遣/その他=対象外）が
+                入った状態で表示されるので、既存店舗が「区分が空欄」にならない。 */}
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+              <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>労働時間制</span>
+              {coLim(type,"laborSystem")
+                ?coVal(LABOR_SYSTEM_LABELS[lim.laborSystem]||lim.laborSystem||"—",0)
+                :<select value={LABOR_SYSTEMS.indexOf(lim.laborSystem)>=0?lim.laborSystem:(DEFAULT_LABOR_SYSTEM_BY_ATTR[type]||"")}
+                onChange={e=>saveLim(type,"laborSystem",e.target.value)}
+                style={{...AI,width:"auto",flex:"1 1 220px",minWidth:180,padding:"5px 8px",cursor:"pointer"}}>
+                {LABOR_SYSTEMS.indexOf(lim.laborSystem)<0&&!DEFAULT_LABOR_SYSTEM_BY_ATTR[type]&&<option value="">未設定</option>}
+                {LABOR_SYSTEMS.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
+              </select>}
+            </div>
+            {/* 上限と目安を同じ窓で対にして入力する（窓の一覧は app-utils.js の STAFF_LIMIT_WINDOWS）。
+                どちらも0＝未設定。目安は判定しない（2026-09-28）。1ヶ月の窓だけ「残業」欄を上限の行に持つ。 */}
+            {[["上限",false],["目安",true]].map(([rowLbl,isMin])=>(
+              <div key={rowLbl} style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:isMin?0:6}}>
+                <span style={{fontSize:11,fontWeight:700,color:isMin?"#2563EB":"#FF4757",minWidth:26,whiteSpace:"nowrap"}}>{rowLbl}</span>
+                {STAFF_LIMIT_WINDOWS.map(w=>{const k=isMin?w.minKey:w.key;return(<React.Fragment key={k}>
+                  <div style={{display:"flex",alignItems:"center",gap:4}}>
+                    <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{w.label}</span>
+                    {coLim(type,k)?coVal(lim[k]||"—"):<input type="number" min={0} max={w.max} value={lim[k]||""} placeholder="0"
+                      onChange={e=>{const v=Math.max(0,Math.min(w.max,parseInt(e.target.value)||0));saveLim(type,k,v);}}
+                      style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
+                    <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+                  </div>
+                  {!isMin&&w.otKey&&<div style={{display:"flex",alignItems:"center",gap:4}}>
+                    <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>＋残業</span>
+                    {coLim(type,w.otKey)?coVal(lim[w.otKey]||"—"):<input type="number" min={0} max={w.otMax} value={lim[w.otKey]||""} placeholder="0"
+                      onChange={e=>{const v=Math.max(0,Math.min(w.otMax,parseInt(e.target.value)||0));saveLim(type,w.otKey,v);}}
+                      style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
+                    <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+                  </div>}
+                </React.Fragment>);})}
+                <div style={{display:"flex",alignItems:"center",gap:4,paddingLeft:4,borderLeft:"1px solid var(--c-border)"}}>
+                  <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>任意</span>
+                  {isMin
+                    ?<span style={{fontSize:11,color:"var(--c-text4)",minWidth:52,textAlign:"center"}}>{lim.customDays||"—"}日で</span>
+                    :coLim(type,"customDays")?coVal(lim.customDays||"—"):<input type="number" min={0} max={365} value={lim.customDays||""} placeholder="日数"
+                      onChange={e=>{const v=Math.max(0,Math.min(365,parseInt(e.target.value)||0));saveLim(type,"customDays",v);}}
+                      style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
+                  {!isMin&&<span style={{fontSize:11,color:"var(--c-text4)"}}>日で</span>}
+                  {coLim(type,isMin?"customHoursMin":"customHours")?coVal((isMin?lim.customHoursMin:lim.customHours)||"—"):<input type="number" min={0} max={744} value={(isMin?lim.customHoursMin:lim.customHours)||""} placeholder="時間"
+                    onChange={e=>{const v=Math.max(0,Math.min(744,parseInt(e.target.value)||0));saveLim(type,isMin?"customHoursMin":"customHours",v);}}
+                    style={{...AI,width:52,textAlign:"center",padding:"5px 6px"}}/>}
+                  <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+                </div>
+              </div>
+            ))}
+          </div>);
+        })}
+        {pendingNewType&&<div style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-accent)",borderRadius:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+            <input autoFocus value={pendingNewType.name} placeholder="属性名を入力"
+              onChange={e=>setPendingNewType({name:e.target.value})}
+              onKeyDown={e=>{if(e.key==="Enter")confirmAddType();if(e.key==="Escape")setPendingNewType(null);}}
+              style={{...AI,flex:1,fontSize:16,fontWeight:700,padding:"4px 8px"}}/>
+            <button onClick={confirmAddType} style={{padding:"4px 10px",background:"rgba(248,112,54,.15)",border:"1px solid var(--c-accent)",borderRadius:4,color:"var(--c-accent)",fontSize:12,cursor:"pointer"}}>追加</button>
+            <button onClick={()=>setPendingNewType(null)} style={{padding:"4px 10px",background:"transparent",border:"1px solid var(--c-border)",borderRadius:4,color:"var(--c-text3)",fontSize:12,cursor:"pointer"}}>ｷｬﾝｾﾙ</button>
+          </div>
+          <div style={{fontSize:11,color:"var(--c-text4)"}}>保存後に制限値を設定できます</div>
+        </div>}
+        {!pendingNewType&&<button onClick={()=>setPendingNewType({name:""})} style={{width:"100%",padding:"8px",background:"transparent",border:"1px dashed var(--c-border2)",borderRadius:8,color:"var(--c-text3)",fontSize:12,cursor:"pointer",marginTop:4}}>＋ 属性を追加</button>}
+      </AC>);
+    })()}
+
+    {plan==="premium"&&(()=>{
+      // 労務判定の枠（項目2＋3）。**31日の月の総枠だけを手入力**し、そこから週の法定労働時間 W を
+      // 30分単位に丸めて逆算して、各月を FLOOR(W × 暦日数 ÷ 7 × 60, 1) ÷ 60 で出す（判断2）。
+      // 週44時間の特例措置対象事業場は別トグルを作らず、31日の総枠に 194:51 を入れれば W=44h になる。
+      const ls=laborSettingsOf(settings);
+      const saveLabor=(k,v)=>onSaveOwn({...settings,laborSettings:{...ls,[k]:v}});
+      const W=weeklyLegalMinFromBase31(ls.monthlyBase31Min);
+      const wLabel=W%60===0?`${W/60}時間`:`${Math.floor(W/60)}時間${W%60}分`;
+      const b31h=Math.floor(ls.monthlyBase31Min/60),b31m=ls.monthlyBase31Min%60;
+      // 各暦日数の代表月で laborMonthFrame を引く（年間所定の年按分はその暦年の日数を使うので、29日はうるう年の2月）
+      const rows=[[31,"2027-01"],[30,"2027-04"],[29,"2028-02"],[28,"2027-02"]].map(([d,ym])=>{
+        const f=laborMonthFrame(settings,ym);
+        return{d,base:f.baseMin,sched:f.scheduledCapMin,guide:f.guideMin,cap:f.capMin};
+      });
+      const hasAnnual=ls.annualScheduledMin>0;
+      const denomAuto=rateDenominatorMinOf({...ls,rateDenominatorMin:0});
+      const TD={border:"1px solid var(--c-border)",padding:"4px 8px",textAlign:"right",fontSize:12,whiteSpace:"nowrap"};
+      return(<AC title="労務判定（1か月単位の変形労働時間制）">
+        {coNote}
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>労働時間制を「1か月単位の変形労働時間制」にした属性のスタッフに適用します。「通常の労働時間制」の月の上限は上の「スタッフ属性別 勤務時間制限」の設定値をそのまま使います（こちらは法定・協定ではなく店舗の設定値による判定です）。</div>
+        <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap",marginBottom:6}}>
+          <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap",minWidth:110}}>31日の月の総枠</span>
+          {coLabor("monthlyBase31Min")?coVal(`${b31h}時間${b31m}分`,0):<>
+          <input type="number" min={0} max={744} value={b31h} placeholder="0"
+            onChange={e=>{const h=Math.max(0,Math.min(744,parseInt(e.target.value)||0));saveLabor("monthlyBase31Min",h*60+b31m);}}
+            style={{...AI,width:64,textAlign:"center",padding:"5px 6px"}}/>
+          <span style={{fontSize:11,color:"var(--c-text4)"}}>時間</span>
+          <input type="number" min={0} max={59} value={b31m} placeholder="0"
+            onChange={e=>{const m=Math.max(0,Math.min(59,parseInt(e.target.value)||0));saveLabor("monthlyBase31Min",b31h*60+m);}}
+            style={{...AI,width:64,textAlign:"center",padding:"5px 6px"}}/>
+          <span style={{fontSize:11,color:"var(--c-text4)"}}>分</span></>}
+        </div>
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12}}>この値から週の法定労働時間を <strong style={{color:"var(--c-accent)"}}>{wLabel}</strong> と判定しました。</div>
+        <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:12}}>
+          <div style={{display:"flex",alignItems:"center",gap:4}}>
+            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>固定残業</span>
+            {coLabor("fixedOvertimeMin")?coVal(Math.floor(ls.fixedOvertimeMin/60)):<input type="number" min={0} max={200} value={Math.floor(ls.fixedOvertimeMin/60)||""} placeholder="0"
+              onChange={e=>{const h=Math.max(0,Math.min(200,parseInt(e.target.value)||0));saveLabor("fixedOvertimeMin",h*60);}}
+              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
+            <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:4}}>
+            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>余裕</span>
+            {coLabor("marginMin")?coVal(Math.floor(ls.marginMin/60)):<input type="number" min={0} max={200} value={Math.floor(ls.marginMin/60)||""} placeholder="0"
+              onChange={e=>{const h=Math.max(0,Math.min(200,parseInt(e.target.value)||0));saveLabor("marginMin",h*60);}}
+              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
+            <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+          </div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:12}}>
+          <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap",minWidth:150}}>年間所定労働時間</span>
+            {coLabor("annualScheduledMin")?coVal(hasAnnual?`${minToH1(ls.annualScheduledMin)}h`:"使わない",0):<>
+            <HoursDecimalInput min={ls.annualScheduledMin} zeroBlank onCommit={v=>saveLabor("annualScheduledMin",v||0)} placeholder="未設定"/>
+            <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span></>}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap",minWidth:150}}>1時間当たり賃金の分母</span>
+            {coLabor("rateDenominatorMin")?coVal(ls.rateDenominatorMin>0?`${minToH1(ls.rateDenominatorMin)}h`:`自動 ${minToH1(denomAuto)}h`,0):<>
+            <HoursDecimalInput min={ls.rateDenominatorMin} zeroBlank onCommit={v=>saveLabor("rateDenominatorMin",v||0)} placeholder={`自動 ${minToH1(denomAuto)}`}/>
+            <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span></>}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap",minWidth:150}}>週の起算</span>
+            {coLabor("weekStartDow")?coVal(((WEEK_START_OPTIONS.find(([v])=>v===ls.weekStartDow))||[])[1]||"",0):
+            <select value={ls.weekStartDow} onChange={e=>saveLabor("weekStartDow",parseInt(e.target.value))}
+              style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+              {WEEK_START_OPTIONS.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+            </select>}
+          </div>
+          <div style={{fontSize:11,color:"var(--c-text4)"}}>年間所定を入れると、各月の所定上限（年間所定 × 暦日数 ÷ その年の日数）を出し、目安をそこから引きます。分母を空欄にすると年間所定 ÷ 12 を0.1時間未満切り捨てで使い、年間所定も無ければ173.3時間です。</div>
+        </div>
+        <div style={{overflowX:"auto"}}>
+          <table style={{borderCollapse:"collapse",minWidth:"max-content"}}>
+            <thead><tr>
+              {["暦日数","総枠（所定）",...(hasAnnual?["所定上限"]:[]),"目安","上限"].map(h=><th key={h} style={{...TD,textAlign:"center",background:"var(--c-input)",fontWeight:700,color:"var(--c-text3)"}}>{h}</th>)}
+            </tr></thead>
+            <tbody>{rows.map(r=>(<tr key={r.d}>
+              <td style={{...TD,textAlign:"center",color:"var(--c-text3)"}}>{r.d}日</td>
+              <td style={{...TD,color:"var(--c-text)"}}>{fmtMin(r.base)}</td>
+              {hasAnnual&&<td style={{...TD,color:"var(--c-text)"}}>{fmtMin(r.sched)}</td>}
+              <td style={{...TD,color:"var(--c-text)"}}>{fmtMin(r.guide)}</td>
+              <td style={{...TD,color:"var(--c-text)"}}>{fmtMin(r.cap)}</td>
+            </tr>))}</tbody>
+          </table>
+        </div>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>目安 = {hasAnnual?"所定上限":"総枠"} + 固定残業 − 余裕（時間未満を切り捨て）／上限 = 総枠 + 固定残業。{hasAnnual?"29日はうるう年の2月の値です。":""}月の残業予定は「月実働 − 総枠」で、日別にはその日までの累計実働の比で配分します。</div>
+
+        <div style={{marginTop:16,paddingTop:14,borderTop:"1px solid var(--c-border)"}}>
+          <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>36協定</div>
+          <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:4}}>
+              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1日の延長上限</span>
+              {coLabor("agreementDailyOtMin")?coVal(Math.floor(ls.agreementDailyOtMin/60)):<input type="number" min={0} max={16} value={Math.floor(ls.agreementDailyOtMin/60)||""} placeholder="0"
+                onChange={e=>{const h=Math.max(0,Math.min(16,parseInt(e.target.value)||0));saveLabor("agreementDailyOtMin",h*60);}}
+                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
+              <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:4}}>
+              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1か月の延長上限</span>
+              {coLabor("agreementMonthlyOtMin")?coVal(Math.floor(ls.agreementMonthlyOtMin/60)):<input type="number" min={0} max={200} value={Math.floor(ls.agreementMonthlyOtMin/60)||""} placeholder="0"
+                onChange={e=>{const h=Math.max(0,Math.min(200,parseInt(e.target.value)||0));saveLabor("agreementMonthlyOtMin",h*60);}}
+                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
+              <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:4}}>
+              <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>1年の延長上限</span>
+              {coLabor("agreementAnnualOtMin")?coVal(Math.floor(ls.agreementAnnualOtMin/60)):<input type="number" min={0} max={999} value={Math.floor(ls.agreementAnnualOtMin/60)||""} placeholder="0"
+                onChange={e=>{const h=Math.max(0,Math.min(999,parseInt(e.target.value)||0));saveLabor("agreementAnnualOtMin",h*60);}}
+                style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>}
+              <span style={{fontSize:11,color:"var(--c-text4)"}}>h</span>
+            </div>
+          </div>
+          <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6}}>1日の延長上限を0にすると「残業を前提にしない運用」とみなし、目安＝総枠になります。</div>
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:10}}>
+            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>年の区切り</span>
+            {coLabor("fiscalYearStartMonth")?coVal(`${fiscalYearStartMonthOf(settings)}月`,0):<select value={fiscalYearStartMonthOf(settings)} onChange={e=>saveLabor("fiscalYearStartMonth",parseInt(e.target.value)||4)}
+              style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+              <option value={1}>1月（暦年）</option>
+              <option value={4}>4月（年度）</option>
+              <option value={7}>7月</option>
+              <option value={10}>10月</option>
+            </select>}
+            <span style={{fontSize:11,color:"var(--c-text4)"}}>有給の残数と年間の累計勤務時間の区切りに使います</span>
+          </div>
+          {/* 法定の上限一覧。判定する・しないを取り違えないよう AGREEMENT_LEGAL_ITEMS から自動生成する */}
+          <div style={{background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,padding:"8px 10px"}}>
+            <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>法定の上限と、本機能が判定する範囲</div>
+            {AGREEMENT_LEGAL_ITEMS.map(it=>(
+              <div key={it.key} style={{display:"flex",gap:6,alignItems:"flex-start",marginTop:4}}>
+                <span style={{fontSize:11,fontWeight:700,whiteSpace:"nowrap",color:it.judged?"#10B981":"var(--c-text4)"}}>{it.judged?"判定":"未判定"}</span>
+                <span style={{fontSize:11,color:it.judged?"var(--c-text2)":"var(--c-text4)"}}>
+                  {it.label}{it.judged?"":"（本機能では判定しません）"}
+                  {it.note&&<span style={{display:"block",color:"var(--c-text4)"}}>{it.note}</span>}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </AC>);
+    })()}
+
+    {plan==="premium"&&(()=>{
+      const mode=breakModeOf(settings);
+      const L=breakLengthOf(settings);
+      const saveMode=m=>onSave({...settings,breakMode:m});
+      const saveLen=(k,v)=>onSave({...settings,breakLength:{...L,[k]:v}});
+      return(<AC title="休憩の決め方">
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>勤務時間から差し引く休憩の決め方を選びます。変更しなければ従来どおり「時間帯方式」で、候補タブで登録した休憩帯と勤務が重なった分だけを引きます。</div>
+        {BREAK_MODES.map(m=>(
+          <label key={m} style={{display:"flex",gap:8,alignItems:"flex-start",marginBottom:8,cursor:"pointer"}}>
+            <input type="radio" name="breakmode" checked={mode===m} onChange={()=>saveMode(m)} style={{marginTop:3,width:18,height:18,flexShrink:0}}/>
+            <span style={{fontSize:13,color:"var(--c-text)"}}>{BREAK_MODE_LABELS[m]}</span>
+          </label>
+        ))}
+        {mode==="length"&&<div style={{marginTop:6,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
+          <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:8}}>引いたあとの実働がその段を超える範囲で、いちばん長い段を使います（労基法34条の「労働時間」は実働のため）。</div>
+          <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+            {[["over8Min","実働8時間超"],["over6Min","実働6時間超"]].map(([k,lbl])=>(
+              <div key={k} style={{display:"flex",alignItems:"center",gap:4}}>
+                <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{lbl}</span>
+                <input type="number" min={0} max={240} step={5} value={L[k]}
+                  onChange={e=>saveLen(k,Math.max(0,Math.min(240,parseInt(e.target.value)||0)))}
+                  style={{...AI,width:64,textAlign:"center",padding:"5px 6px"}}/>
+                <span style={{fontSize:11,color:"var(--c-text4)"}}>分</span>
+              </div>
+            ))}
+          </div>
+        </div>}
+        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:10}}>どちらの方式でも「実働6時間超なのに休憩が足りない日」はシフト作成タブの労務判定に出ます。日ごとの例外は提出一覧の詳細から変更できます。</div>
+      </AC>);
+    })()}
+
+    {/* 有給の付与日数・退勤延長設定は 2026-09-26 にスタッフタブへ移した
+        （有給日数＝行のボタン、退勤延長＝「編集」で開くモーダル）。設定タブには置かない。 */}
+
+    {plan==="premium"&&<AC title="ポジション設定">
+      <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>キッチン・ホールそれぞれのポジション名を登録します。下の「必要ポジション設定」・スタッフ一覧タブのポジション選択で使用します。</div>
+      <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+        {[["kitchen","キッチン"],["hall","ホール"]].map(([sec,label])=>{
+          const list=(settings.positions&&settings.positions[sec])||[];
+          const addPos=()=>{
+            const v=(newPosInput[sec]||"").trim();
+            if(!v)return;
+            if(list.includes(v)){tt("▲ 既に登録されているポジションです");return;}
+            // 同名を別セクションにも登録できると、名前をキーにする staffPositions / requiredPositions で
+            // どちらのポジションを指すのか決められない（バグチェック#46）。登録の入口で弾く。
+            const otherSec=sec==="kitchen"?"hall":"kitchen";
+            const otherList=((settings.positions||{})[otherSec])||[];
+            if(otherList.includes(v)){tt(`▲ 「${v}」は${otherSec==="kitchen"?"キッチン":"ホール"}に登録済みです（同じ名前は使えません）`);return;}
+            onSave({...settings,positions:{...(settings.positions||{}),[sec]:[...list,v]}});
+            setNewPosInput({...newPosInput,[sec]:""});
+          };
+          const delPos=p=>{
+            // 削除時は必要ポジション設定・スタッフのポジションからも同名を除去する（属性削除と同じカスケード方針）。
+            // ただしキッチン/ホールには同名ポジションを登録できる（追加時の重複チェックはセクション内のみ）ため、
+            // 反対側に同名が残る場合は、そちらの必要ポジション枠・"全て"枠・スタッフのポジション
+            // （セクション非依存）まで巻き添えで消さない。消すと有効な設定が黙って失われる。
+            const newPositions={...(settings.positions||{}),[sec]:list.filter(x=>x!==p)};
+            const other=sec==="kitchen"?"hall":"kitchen";
+            const stillExists=((newPositions[other])||[]).includes(p);
+            const cut=(arr,drop)=>drop?((arr||[]).filter(x=>x!==p)):((arr||[]).slice());
+            const rp=settings.requiredPositions||{};
+            const newRP={};
+            Object.keys(rp).forEach(dt=>{
+              const cur=rp[dt]||{};
+              const cutMeal=m=>({
+                kitchen:cut(cur[m]&&cur[m].kitchen,sec==="kitchen"||!stillExists),
+                hall:cut(cur[m]&&cur[m].hall,sec==="hall"||!stillExists),
+                all:cut(cur[m]&&cur[m].all,!stillExists),
+              });
+              newRP[dt]={lunch:cutMeal("lunch"),dinner:cutMeal("dinner")};
+            });
+            const sp=settings.staffPositions||{};
+            const newSP={};
+            Object.keys(sp).forEach(name=>{
+              newSP[name]={lunch:cut(sp[name]&&sp[name].lunch,!stillExists),dinner:cut(sp[name]&&sp[name].dinner,!stillExists)};
+            });
+            // この × ボタンは 13.2x14px（Apple HIG の最小タップ領域 44x44 の約1割の面積）で誤タップしやすいのに、
+            // 上のカスケードで必要ポジション設定（全日付区分×ランチ/ディナー×3セクション）とスタッフの
+            // ポジション（全スタッフ）から同名を巻き添えで消す。期間削除・提出削除・店舗削除と同じく確認を挟み、
+            // かつ何件が道連れになるかを提示する（バグチェック#74）。
+            const cntRP=o=>Object.values(o||{}).reduce((n,dt)=>n+Object.values(dt||{}).reduce((m,meal)=>m+Object.values(meal||{}).reduce((k,arr)=>k+(Array.isArray(arr)?arr.length:0),0),0),0);
+            const cntSP=o=>Object.values(o||{}).reduce((n,st)=>n+Object.values(st||{}).reduce((m,arr)=>m+(Array.isArray(arr)?arr.length:0),0),0);
+            const lostRP=cntRP(rp)-cntRP(newRP), lostSP=cntSP(sp)-cntSP(newSP);
+            const also=[lostRP>0?`必要ポジション設定の枠 ${lostRP}件`:"",lostSP>0?`スタッフのポジション ${lostSP}件`:""].filter(Boolean).join("・");
+            if(!confirm(`ポジション「${p}」を削除しますか？${also?`\n${also}も一緒に削除されます。`:""}`))return;
+            onSave({...settings,positions:newPositions,requiredPositions:newRP,staffPositions:newSP});
+          };
+          return(
+            <div key={sec} style={{flex:"1 1 220px",minWidth:220}}>
+              <div style={{fontSize:12,fontWeight:700,color:"var(--c-text2)",marginBottom:6}}>{label}</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
+                {list.length===0&&<div style={{fontSize:12,color:"var(--c-text4)"}}>未登録</div>}
+                {list.map(p=>(
+                  <div key={p} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(248,112,54,.1)",border:"1px solid rgba(248,112,54,.25)",borderRadius:12,padding:"3px 10px 3px 12px",fontSize:13,color:"#c45b1a",fontWeight:600}}>
+                    {p}<button onClick={()=>delPos(p)} style={{background:"none",border:"none",color:"var(--c-accent)",cursor:"pointer",padding:"0 0 0 4px",fontSize:14,lineHeight:1}}>×</button>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"flex",gap:6}}>
+                <input value={newPosInput[sec]||""} onChange={e=>setNewPosInput({...newPosInput,[sec]:e.target.value})} onKeyDown={e=>e.key==="Enter"&&addPos()} placeholder="ポジション名" maxLength={20} style={{...AI,flex:1,padding:"6px 10px",fontSize:16}}/>
+                <button onClick={addPos} style={{...AB,padding:"6px 12px",fontSize:12}}>＋</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </AC>}
+
+    {plan==="premium"&&<AC title="必要ポジション設定">
+      <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>曜日区分・ランチ/ディナーごとに必要なポジションをタグで追加します。同じポジションを複数回追加すると、その人数分が必要になります（シフト作成タブで不足を判定）。</div>
+      <div style={{display:"flex",gap:6,marginBottom:8,flexWrap:"wrap"}}>
+        {/* 旧4区分の「祝日」枠は requiredPositionsFor が祝日区分に流用するので、休憩設定と同じく見える場所に出して消せるようにする */}
+        {[...POSITION_DAY_TYPES,...(hasAnyRequiredPosition({hol:(settings.requiredPositions||{}).hol})?[["hol","祝日（旧設定・自動適用中）"]]:[])].map(([id,label])=>(
+          <button key={id} onClick={()=>setReqDayType(id)} style={{padding:"6px 12px",background:reqDayType===id?"var(--c-accent)":"var(--c-input)",border:`1px solid ${reqDayType===id?"var(--c-accent)":"var(--c-border2)"}`,borderRadius:8,color:reqDayType===id?"white":"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{label}</button>
+        ))}
+      </div>
+      <div style={{display:"flex",gap:6,marginBottom:14}}>
+        {[["lunch","ランチ"],["dinner","ディナー"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setReqMeal(id)} style={{padding:"6px 12px",background:reqMeal===id?"var(--c-accent)":"var(--c-input)",border:`1px solid ${reqMeal===id?"var(--c-accent)":"var(--c-border2)"}`,borderRadius:8,color:reqMeal===id?"#fff":"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer"}}>{label}</button>
+        ))}
+      </div>
+      {(()=>{
+        const rp=settings.requiredPositions||{};
+        const cur=(rp[reqDayType]&&rp[reqDayType][reqMeal])||{kitchen:[],hall:[],all:[]};
+        const setCur=(sec,arr)=>{
+          const nextDT={...(rp[reqDayType]||{lunch:{kitchen:[],hall:[],all:[]},dinner:{kitchen:[],hall:[],all:[]}})};
+          nextDT[reqMeal]={...(nextDT[reqMeal]||{kitchen:[],hall:[],all:[]}),[sec]:arr};
+          onSave({...settings,requiredPositions:{...rp,[reqDayType]:nextDT}});
+        };
+        return(
+          <div style={{display:"flex",gap:16,flexWrap:"wrap"}}>
+            {[["kitchen","キッチン"],["hall","ホール"],["all","全て"]].map(([sec,label])=>{
+              // "全て"は kitchen+hall 両方のポジションを選択可。他はそれぞれのセクションのみ。
+              // 同名ポジションが両セクションに登録されていると合算リストで重複するため new Set で排除する。
+              const options=sec==="all"
+                ?[...new Set([...((settings.positions&&settings.positions.kitchen)||[]),...((settings.positions&&settings.positions.hall)||[])])]
+                :(settings.positions&&settings.positions[sec])||[];
+              const slots=cur[sec]||[];
+              return(
+                <div key={sec} style={{flex:"1 1 220px",minWidth:220}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"var(--c-text2)",marginBottom:6}}>
+                    {label}
+                    {sec==="all"&&<span style={{fontSize:10,fontWeight:400,color:"var(--c-text4)",marginLeft:4}}>（キッチン+ホール合算）</span>}
+                  </div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8,minHeight:32,alignContent:"flex-start"}}>
+                    {slots.length===0&&<div style={{fontSize:12,color:"var(--c-text4)",alignSelf:"center"}}>未設定</div>}
+                    {slots.map((p,i)=>(
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:4,background:"rgba(239,68,68,.1)",border:"1px solid rgba(239,68,68,.3)",borderRadius:12,padding:"3px 10px 3px 12px",fontSize:13,color:"#DC2626",fontWeight:600}}>
+                        {p}<button onClick={()=>setCur(sec,slots.filter((_,ci)=>ci!==i))} style={{background:"none",border:"none",color:"#DC2626",cursor:"pointer",padding:"0 0 0 4px",fontSize:14,lineHeight:1}}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                  {options.length===0
+                    ?<div style={{fontSize:11,color:"var(--c-text4)"}}>{sec==="all"?"先に上の「ポジション設定」でポジションを登録してください":`先に上の「ポジション設定」で${label}のポジションを登録してください`}</div>
+                    :<div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                      {options.map(p=>(
+                        <button key={p} onClick={()=>setCur(sec,[...slots,p])} style={{padding:"5px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:12,fontSize:13,color:"var(--c-text2)",cursor:"pointer",fontWeight:600}}>＋ {p}</button>
+                      ))}
+                    </div>
+                  }
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
+    </AC>}
+
+    {(plan==="pro"||plan==="premium")&&<AC title="Excel書き出し設定">
+      <AL>書き出し時の店舗名（空欄 = 登録名をそのまま使用）</AL>
+      <div style={{display:"flex",gap:8,marginBottom:4}}>
+        <input value={settings.xlShopName||""} onChange={e=>onSave({...settings,xlShopName:e.target.value})} placeholder="例：〇〇カフェ 渋谷店" maxLength={100} style={{...AI,flex:1}}/>
+        {(settings.xlShopName||"")&&<button onClick={()=>onSave({...settings,xlShopName:""})} style={{...AGray,padding:"10px 12px",fontSize:12}}>クリア</button>}
+      </div>
+      <div style={{fontSize:11,color:"var(--c-text4)",marginTop:4}}>設定した名前はExcel出力時のファイル名・シート内店舗名に反映されます</div>
+    </AC>}
+
+    {(plan==="pro"||plan==="premium")&&<AC title="期間の単位（プリセット）">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10}}>期間を新規作成するときのプリセット選択肢を切り替えます。</div>
+      <div style={{display:"flex",gap:8}}>
+        {[["2week","2週間（前半／後半）"],["1month","1ヶ月"]].map(([val,label])=>{
+          const sel=(settings.periodUnit||"2week")===val;
+          return(<button key={val} onClick={()=>onSave({...settings,periodUnit:val})}
+            style={{flex:1,padding:"10px 8px",borderRadius:8,border:`2px solid ${sel?"var(--c-accent)":"var(--c-border)"}`,
+              background:sel?"rgba(248,112,54,.1)":"var(--c-input)",color:sel?"var(--c-accent)":"var(--c-text2)",
+              fontSize:13,fontWeight:sel?700:500,cursor:"pointer"}}>
+            {label}
+          </button>);
+        })}
+      </div>
+    </AC>}
+
+    <AC title="テーマ設定">
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        {[["auto","↺ 自動（システム設定）",null],["light","ライト","light"],["dark","ダーク","dark"]].map(([key,label,val])=>{
+          const sel=themePref===val;
+          return(<button key={key} onClick={()=>changeTheme(val)}
+            style={{flex:1,padding:"10px 8px",borderRadius:8,border:`1px solid ${sel?"var(--c-accent)":"var(--c-border2)"}`,
+              background:sel?"var(--c-accent)":"var(--c-input)",color:sel?"#fff":"var(--c-text2)",
+              fontSize:13,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>
+            {label}
+          </button>);
+        })}
+      </div>
+    </AC>
+
+    {!authUser&&shopId&&<AC title="アカウント連携">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:14,lineHeight:1.6}}>
+        アカウントを登録すると、端末やブラウザが変わっても同じ店舗にアクセスできます。
+      </div>
+      {acctLoading
+        ?<div style={{textAlign:"center",color:"var(--c-text3)",padding:"12px 0",fontSize:14}}>認証中...</div>
+        :acctEmailMode
+          ?<div>
+            <div style={{display:"flex",alignItems:"center",marginBottom:14}}>
+              <button onClick={()=>{setAcctEmailMode(null);setAcctError("");setAcctEmail("");setAcctPw("");setAcctPw2("");}}
+                style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:13,cursor:"pointer",padding:"0 8px 0 0"}}>← 戻る</button>
+              <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>{acctEmailMode==="login"?"メールでログイン":"新規アカウント登録"}</div>
+            </div>
+            <input type="email" value={acctEmail} onChange={e=>setAcctEmail(e.target.value)}
+              placeholder="メールアドレス" maxLength={254}
+              style={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:8,boxSizing:"border-box"}}/>
+            <input type="password" value={acctPw} onChange={e=>setAcctPw(e.target.value)}
+              onKeyDown={async e=>{if(e.key==="Enter"&&acctEmailMode==="login"){setAcctLoading(true);setAcctError("");const r=await onSignInAndLinkEmail(acctEmail,acctPw,false);setAcctLoading(false);if(r?.error)setAcctError(r.error);else{setAcctEmailMode(null);tt("✓ アカウントを連携しました");}}}}
+              placeholder="パスワード（6文字以上）" maxLength={128}
+              style={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:acctEmailMode==="register"?8:12,boxSizing:"border-box"}}/>
+            {acctEmailMode==="register"&&<input type="password" value={acctPw2} onChange={e=>setAcctPw2(e.target.value)}
+              placeholder="パスワード（確認）" maxLength={128}
+              style={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:12,boxSizing:"border-box"}}/>}
+            {acctError&&<div style={{fontSize:12,color:"#FF4757",marginBottom:10,background:"rgba(239,68,68,.08)",padding:"8px 10px",borderRadius:8}}>{acctError}</div>}
+            <button disabled={acctLoading} onClick={async()=>{
+              if(acctEmailMode==="register"&&acctPw!==acctPw2){setAcctError("パスワードが一致しません");return;}
+              setAcctLoading(true);setAcctError("");
+              const r=await onSignInAndLinkEmail(acctEmail,acctPw,acctEmailMode==="register");
+              setAcctLoading(false);
+              if(r?.error)setAcctError(r.error);
+              else{setAcctEmailMode(null);tt("✓ アカウントを連携しました");}
+            }} style={{width:"100%",padding:"11px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:8,opacity:acctLoading?.5:1}}>
+              {acctEmailMode==="login"?"ログイン":"アカウント作成"}
+            </button>
+            {acctEmailMode==="login"
+              ?<div style={{textAlign:"center",fontSize:12,color:"var(--c-text4)"}}>アカウントがない場合は<button onClick={()=>{setAcctEmailMode("register");setAcctError("");}} style={{background:"none",border:"none",color:"var(--c-accent)",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>新規登録</button></div>
+              :<div style={{textAlign:"center",fontSize:12,color:"var(--c-text4)"}}>既にアカウントがある場合は<button onClick={()=>{setAcctEmailMode("login");setAcctError("");}} style={{background:"none",border:"none",color:"var(--c-accent)",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>ログイン</button></div>
+            }
+          </div>
+          :<div style={{display:"flex",flexDirection:"column",gap:8}}>
+            <button onClick={async()=>{setAcctLoading(true);setAcctError("");const r=await onSignInAndLinkGoogle();setAcctLoading(false);if(r?.error)setAcctError(r.error);else tt("✓ アカウントを連携しました");}}
+              style={{width:"100%",padding:"12px",background:"white",border:"1px solid var(--c-border)",borderRadius:8,color:"#1A1A2E",fontSize:14,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+              <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+              Googleで登録/ログイン
+            </button>
+            <button onClick={()=>{setAcctEmailMode("login");setAcctError("");}}
+              style={{width:"100%",padding:"12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text2)",fontSize:14,fontWeight:700,cursor:"pointer"}}>
+              メールアドレスで続ける
+            </button>
+            {acctError&&<div style={{fontSize:12,color:"#FF4757",background:"rgba(239,68,68,.08)",padding:"8px 10px",borderRadius:8}}>{acctError}</div>}
+          </div>
+      }
+    </AC>}
+
+    {authUser&&<AC title="アカウント連携">
+      <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
+        複数のログイン方法を連携しておくと、端末やブラウザが変わっても同じアカウントにアクセスできます。
+      </div>
+      {providerRow("google.com","G","Googleアカウント")}
+      {providerRow("password","✉","メールアドレス")}
+      {emailLinkStep===1&&(
+        <div style={{marginTop:14,padding:14,background:"var(--c-input)",borderRadius:8,border:"1px solid var(--c-border2)"}}>
+          <AL>メールアドレス</AL>
+          <div style={{display:"flex",gap:8}}>
+            <input type="email" value={emailInput} onChange={e=>setEmailInput(e.target.value)}
+              placeholder="example@example.com" style={{...AI,flex:1,fontSize:16}}
+              onKeyDown={e=>{if(e.key==="Enter")handleSendOtp();}}/>
+            <button onClick={handleSendOtp} disabled={linkLoading}
+              style={{...AB,padding:"10px 14px",fontSize:13,whiteSpace:"nowrap",opacity:linkLoading?.5:1}}>
+              {linkLoading?"送信中...":"確認コードを送信"}
+            </button>
+          </div>
+          <button onClick={()=>{setEmailLinkStep(0);setLinkError("");}}
+            style={{...AGray,marginTop:8,padding:"6px 12px",fontSize:12}}>キャンセル</button>
+        </div>
+      )}
+      {emailLinkStep===2&&(
+        <div style={{marginTop:14,padding:14,background:"var(--c-input)",borderRadius:8,border:"1px solid var(--c-border2)"}}>
+          <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>
+            <strong>{emailInput}</strong> に確認コードを送信しました。<br/>メールに記載された6桁のコードを入力してください。
+          </div>
+          <AL>確認コード（6桁）</AL>
+          <div style={{display:"flex",gap:8}}>
+            <input type="text" inputMode="numeric" value={codeInput} onChange={e=>setCodeInput(e.target.value.replace(/\D/g,"").slice(0,6))}
+              placeholder="123456" maxLength={6} style={{...AI,flex:1,letterSpacing:"0.2em",fontSize:18,fontWeight:700}}
+              onKeyDown={e=>{if(e.key==="Enter")handleVerifyOtp();}}/>
+            <button onClick={handleVerifyOtp} disabled={linkLoading||codeInput.length<6}
+              style={{...AB,padding:"10px 14px",fontSize:13,whiteSpace:"nowrap",opacity:(linkLoading||codeInput.length<6)?.5:1}}>
+              {linkLoading?"確認中...":"確認して連携"}
+            </button>
+          </div>
+          <button onClick={()=>{setEmailLinkStep(1);setCodeInput("");setLinkError("");}}
+            style={{...AGray,marginTop:8,padding:"6px 12px",fontSize:12}}>← 戻る</button>
+        </div>
+      )}
+      {linkError&&<div style={{marginTop:10,fontSize:12,color:"#FF4757"}}>{linkError}</div>}
+    </AC>}
+
+    <div style={{textAlign:"center",padding:"8px 0 4px",display:"flex",justifyContent:"center",gap:20}}>
+      <a href="/terms.html" target="_blank" style={{fontSize:12,color:"var(--c-text4)",textDecoration:"none"}}>利用規約</a>
+      <a href="/privacy.html" target="_blank" style={{fontSize:12,color:"var(--c-text4)",textDecoration:"none"}}>プライバシーポリシー</a>
+    </div>
+
+  </div>);
+}
