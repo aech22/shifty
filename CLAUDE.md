@@ -211,6 +211,24 @@ breakModeOf / breakLengthOf / shiftBindingMin / isBreakShort
                            // **長さ方式のしきい値は実働で見る**——S-3 の本文は「拘束>8h→1.0h」だが
                            // 同じ節の表（拘束8.5h→控除0.75h・実働7.75h）は実働基準でしか再現できない。
                            // 労基法34条の「労働時間」も実働なので表を採った
+breakLengthRuleOf / idleBreakOf / breakMinutesOf / breakDecisionOf
+                           // 店舗別ルール（2026-09-30・P3.5a）。getBreaksFor の優先順は **日別上書き ＞ 中休み ＞ 長さ ＞ 時間帯**。
+                           // 長さ方式は breakLength.basis（"work"=実働・既定／"binding"=拘束）と tiers（[{overMin,breakMin,inclusive}]）で段を決め、
+                           // tiers が無ければ従来の2段（実働8h超／6h超・しきい値は法定の定数）。中休み idleBreak は
+                           // 出勤≦startBy かつ 退勤≧endAfter の日に min 分（days: all/weekday/none）。時刻・分はすべて店舗の設定で
+                           // **コードに依頼文の値は無い**。breakDecisionOf は詳細モーダルの「自動（灰）／手動（太字）」と「自動に戻す」の値。
+                           // isBreakShort（休憩不足）は法定の基準のまま変えていない。idleBreak は PERIOD_SNAPSHOT_SETTING_KEYS に入れた
+overtimePlanOf / otProrateOf / staffOtProrateOf / dailyOverMinB / dailyOverThresholdOf
+                           // 残業予定の日割り（P3.5b）。A制の月の残業予定と日別の按分は overtimePlanOf 1本（画面の表と年の36協定の
+                           // liveMonthOtFor が同じ関数を通る）。属性の staffTypeLimits[属性].otProrate={window:"month"|"halfMonth",fixedMin?}
+                           // で固定枠を窓（月／半月＝1〜15日・16日〜）ごとに配る（窓の実働が固定枠未満なら実働まで）。未設定・固定枠なしは従来と同じ。
+                           // otProrate は COMPANY_LIMIT_KEYS に入る（企業共通・法人でも決められる）。CF の sanitizeOtProrate と一致をテストで照合。
+                           // B制は laborSettings.showDailyOverB=1 の店舗だけ、日ごとのしきい値超の合計を「残業予定」の行に出す
+externalOverThresholdOf    // 判定対象外（区分 none）の長時間の日の色（P3.5c）。highlightExternalOver8h=1 のときのしきい値（オフなら0）。
+                           // LABOR_DAY_FIX_KEYS の externalOver は**要修正でも労務判定の表でもない**（色だけ）
+headcountAtOf / countPresentAt / headcountLabelOf
+                           // PDF の曜日の下の「昼n 夜n」（P3.5d・settings.headcountAt）。数える区間はヒートマップの heatData
+                           // （応援・x の帯を外した後）で、帯に休暇のある人・0人の側・店休日は出さない。**PDF だけ**（画面・Excel は参照しないことをテストで固定）
 LEAVE_TYPES / leaveTypeOf / dayRestKindOf / weekRestStateOf
                            // 休暇種別（公休/有給/慶弔）と週の休み3状態（S-5）＝`休n`／`×休なし`／
                            // `＋休n`（7日揃わない週。2026-09-26 に「要確認」から変更）。**導入前の終日の
@@ -555,11 +573,18 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              staffAttributes?: {[name]: 属性ID},
              staffTypeLimits?: {[属性ID]: {name, laborSystem?: "A"|"B"|"none",
                  daily,weekly,biweekly,monthly,customDays,customHours,          // 上限（0=未設定）
-                 dailyMin,weeklyMin,biweeklyMin,monthlyMin,customHoursMin}},    // 下限（0=未設定）
+                 dailyMin,weeklyMin,biweeklyMin,monthlyMin,customHoursMin,     // 下限（0=未設定）
+                 otProrate?: {window: "month"|"halfMonth", fixedMin?}}},        // 残業予定の按分窓（P3.5b・既定は月）
              laborSettings?: {monthlyBase31Min, fixedOvertimeMin, marginMin,
                  agreementDailyOtMin, agreementMonthlyOtMin, agreementAnnualOtMin, fiscalYearStartMonth,
-                 annualScheduledMin, rateDenominatorMin, weekStartDow, weekSplitAtMonthEdge}, // 分単位・既定は読み手側フォールバック。後ろ4つは P2（0＝未設定・真偽値は0/1）
-             breakMode?: "band"|"length", breakLength?: {over8Min, over6Min},   // 休憩の決め方（既定 band＝従来）
+                 annualScheduledMin, rateDenominatorMin, weekStartDow, weekSplitAtMonthEdge, // 分単位・既定は読み手側フォールバック。この4つは P2（0＝未設定・真偽値は0/1）
+                 showDailyOverB, dailyOverThresholdMin,             // P3.5b: B制の日ごとのしきい値超を残業予定に出す（既定0＝オフ・しきい値は既定480）
+                 highlightExternalOver8h, externalOverThresholdMin}, // P3.5c: 判定対象外の長時間の日を塗る（既定0＝オフ・超える日だけ）
+             breakMode?: "band"|"length",                                       // 休憩の決め方（既定 band＝従来）
+             breakLength?: {over8Min, over6Min, basis?: "work"|"binding",       // basis・tiers は P3.5a（無ければ従来の2段）
+                 tiers?: {overMin, breakMin, inclusive}[]},
+             idleBreak?: {enabled, startBy: "HH:MM", endAfter: "HH:MM", min, days: "all"|"weekday"|"none"}, // 中休み（P3.5a・既定なし）
+             headcountAt?: {enabled, lunch: "HH:MM", dinner: "HH:MM"},          // PDF の昼・夜の人数（P3.5d・既定なし）
              paidLeaveGranted?: {[name]: 日数},                                  // 有給の付与日数（残数の基準）
              overtimeSettings?: {byStaff: {[name]: {lunch,dinner}}}, staffNumbers?: {[name]: string},
              xlShopName?: string, staffColors?: {[name]: "red"|"black"},
@@ -1106,7 +1131,9 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   （2026-09-26 ユーザー指定）。**4h未満と休憩不足は要修正だが塗らない**——該当日が多くなりやすく、
   塗ると直すべき日が埋もれる（休憩を1件も設定していない店舗では実働6h超の日がすべて休憩不足に当たる）。
   8h超と週40h超はそもそも要修正ではない。週・月に帰属する判定（月の残業・目安・年の36協定）は
-  日を特定できない。**つまりパネルに名前が出ていてもセルが塗られないことが普通にある**——
+  日を特定できない。**2026-09-30（P3.5c）に3つ目として `externalOver`**（判定対象外の人の実働が店舗設定の
+  しきい値を超える日・トグルがオンの店舗だけ）を足した。こちらは要修正ではなく表・総括にも載らない目印。
+  **つまりパネルに名前が出ていてもセルが塗られないことが普通にある**——
   パネルが判定の全量で、色はその一部にすぎない。理由はセルの `title` に出る。
   `laborDayFindingsFor` と `laborFindingsFor` の件数が一致することを `tests/core.test.js` が照合する。
 - **パネルの判定は該当日をラベルの後ろに出す**（2026-09-26 ユーザー指示・リリース後の追加）。

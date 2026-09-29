@@ -38,15 +38,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🟡 労務・給与と複数法人 P3.5: 店舗別ルール4件（中休み＋長さ方式しきい値／B制の日残業・按分窓／外部8h超の赤／PDFの昼夜人数）
-
-**目的**: `労務給与_複数法人_実装計画.md`（リポジトリ直下・v9）§6 P3.5 の「目的」。
-**受け入れ条件**: 同 §6 P3.5 の受け入れ条件が正本（ここへ書き写さない）。共通の検証手段は §6 冒頭。
-**影響範囲**: 同 §6 P3.5 の影響範囲。
-**備考**: 実装順は計画書 §0 の表。2026-09-30 ユーザー指示で P0〜P7 を順に develop へ実装し、本番反映は全フェーズ完了後に1回だけ確認する（途中で main・本番ルール・本番CFに触れない）。P8（NITOへの適用）は対象外。
-
----
-
 ## 🟡 労務・給与と複数法人 P3.6: ヘルプ先勤務の所属店舗への合算
 
 **目的**: `労務給与_複数法人_実装計画.md`（リポジトリ直下・v9）§6 P3.6 の「目的」。
@@ -162,6 +153,21 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 - [ ] 反映後、本番で11月分を1店舗だけ確定し、`laborMonths/2026-11` が書かれることと、スタッフURLからの再提出が拒否されることを確かめる
 - [ ] 10月分（手運用）の所定を、10月の期間を選んで「人×月の所定」欄から遡って登録する（運用。コードの作業ではない）
 **影響範囲**: database.rules.json・functions/index.js・functions/company-config.js（コード変更は済み）
+
+---
+
+## 🟡 労務・給与と複数法人: 店舗別ルール4件（P3.5）の CF 本番反映（全フェーズ完了後に1回）
+
+**目的**: P3.5（2026-09-30・develop `f97cb72`〜`a921796`）は本番に未反映。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
+**反映が要るもの**:
+- [ ] ルール: **変更なし**（新しい設定はすべて既存の `settings` の中・`laborSettings` の中・`staffTypeLimits` の中に入る）
+- [ ] CF: `functions/company-config.js` の `sanitizeCompanySettings`（`laborSettings` の新キー4つ `showDailyOverB`・`dailyOverThresholdMin`・
+      `highlightExternalOver8h`・`externalOverThresholdMin` と、属性の `otProrate`）。`saveCompanyConfig`・`saveEntityConfig` と写しを作る全関数に効く。
+      **CF より先にクライアントを出すと、企業の共通設定・法人設定で「残業予定の配り方」を保存しても旧 CF の sanitize で捨てられる**
+      （店舗の設定タブで入れた値は CF を通らないので効く）。P1・P1b・P3・P6a の CF と同じ1回のデプロイでよい
+- [ ] データ移行: なし（設定が無い店舗は従来と同じ計算）
+- [ ] 設定の投入（中休み・しきい値・B制トグル・外部の色・昼夜人数・特定技能の按分窓）は P8-7 の運用手順で行う（コードの作業ではない）
+**影響範囲**: functions/company-config.js（コード変更は済み）
 
 ---
 
@@ -1683,6 +1689,22 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 🟡 労務・給与と複数法人 P3.5: 店舗別ルール4件（2026-09-30 develop 完了・`f97cb72`〜`a921796`／ルール変更なし・CF は本番未反映）
+
+**目的**: `労務給与_複数法人_実装計画.md` §3.9・§6 P3.5。依頼文の数値はコードに書かず、すべて店舗（または属性）の設定・既定オフで入れる。
+- [x] P3.5a 中休み（`settings.idleBreak`）と長さ方式のしきい値（`breakLength.basis`／`tiers`）。優先順は 上書き＞中休み＞長さ＞時間帯。
+      `basis:"binding", tiers:[{overMin:360,breakMin:60,inclusive:true}]` で 17-23=60分・10-17=60分・10-15:59=0分、中休み（平日）で 10-22=120分、
+      15-23 は長さ方式の60分、設定の無い店舗は 17-23=0分のまま（テストで固定）。休憩不足の判定は法定のまま。
+      提出一覧の詳細で自動＝灰（中休み／長さ／時間帯）・手動＝太字、「自動に戻す」で `adjustedBreak` を消す
+- [x] P3.5b B制の日ごとのしきい値超を「残業予定」に数値表示（`laborSettings.showDailyOverB`・`dailyOverThresholdMin`・既定オフ）。
+      属性の按分窓 `staffTypeLimits[属性].otProrate={window:"month"|"halfMonth",fixedMin?}`（半月15h・実働15h未満はその値の按分をテストで固定）。
+      企業共通・法人でも設定でき、CF の sanitize と一致を照合
+- [x] P3.5c 判定対象外（区分 none）の実働がしきい値を**超える**日のセル色（`highlightExternalOver8h`・`externalOverThresholdMin`・既定オフ）。
+      `LABOR_DAY_FIX_KEYS` に `externalOver`。判定表・総括には載せない。ちょうど閾値は塗らない（テスト）
+- [x] P3.5d PDF の曜日の下に「昼n 夜n」（`settings.headcountAt`・既定オフ）。応援・x の帯と休暇の帯を除外、0人の側と店休日は出さない。画面と Excel には出ない（テストと実ブラウザ）
+- [x] 4件共通: 設定の無い店舗は従来と同じ（既存テスト・回帰スクリプトすべて通過）／`app-*.js` の追加行に依頼文の時刻・値のリテラルなし（grep）／企業ID・店舗名・shopId の分岐なし
+- 検証: `npm test` 451件パス・`example-break-idle.js`・`example-labor-ot-window.js`・`example-labor-external-over.js`・`example-pdf-headcount.js`（いずれも allPass・変更前の配信物では非0で終わる）・既存回帰一式
 
 ### ✅ 🔴 労務・給与と複数法人 P3: 人×月の所定登録＋確定ロック＋交付記録（2026-09-30 develop 完了・`96458b6`〜／ルールは dev に反映・REST 実測済み・CF は本番未反映）
 
