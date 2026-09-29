@@ -191,8 +191,8 @@ breakModeOf / breakLengthOf / shiftBindingMin / isBreakShort
                            // 労基法34条の「労働時間」も実働なので表を採った
 LEAVE_TYPES / leaveTypeOf / dayRestKindOf / weekRestStateOf
                            // 休暇種別（公休/有給/慶弔）と週の休み3状態（S-5）＝`休n`／`×休なし`／
-                           // `＋休n`（7日揃わない週。2026-09-26 に「要確認」から変更）。**導入前の終日 y
-                           // （leaveType なし）は公休として扱う**（データ移行はしない）
+                           // `＋休n`（7日揃わない週。2026-09-26 に「要確認」から変更）。**導入前の終日の
+                           // 休み希望（旧 y。leaveType なし）は公休として扱う**（データ移行はしない）
 fiscalYearOf / fiscalYearStartMonthOf / yearLaborSummary / paidLeaveRemaining
                            // 年度（既定4月開始・設定で暦年にできる）の累計と有給残。累計は
                            // **period.laborTotals（凍結時点の値）を優先**するので過去参照が要らない
@@ -739,7 +739,12 @@ if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 1. `app-utils.js` の `CELL_COMMANDS`（セル内コマンド）/ `CELL_COLOR_LEGEND`（色・記号の意味）レジストリに**必ず登録**する
 2. タブ最下部の「操作方法」レジェンド（`GridLegend`・app-admin.js）はレジストリから自動生成されるため、個別編集は不要（登録するだけで説明が自動追記される）
 3. パーサ（`extractNote`・app-utils.js）もレジストリ駆動。`tests/core.test.js` の完全性テストが登録漏れ・実装との乖離を検出する
-4. 既存コマンド: `h`/`k`/`x`（サフィックス）、`y`/`休`（休み希望・`adminRest`フィールドに保存・トグル式）、`締`（kind:"fixed"・店舗限定の追加出勤コマンド。詳細は下記5参照）。店舗略称バリデーション（CompanyTab）の予約語も忘れずに更新する
+4. 既存コマンド: `h`/`k`/`x`（サフィックス）、`/`・全角`／`（休み希望・`adminRest`フィールドに保存・トグル式）、`ko`/`yu`/`ke`（休暇種別）、`締`（kind:"fixed"・店舗限定の追加出勤コマンド。詳細は下記5参照）。店舗略称バリデーション（CompanyTab）の予約語は `isReservedShopAbbr` がレジストリから自動で決める（`/`・`／` も略称に登録できない）
+   - **休み希望は 2026-09-30 に `y` から `/` へ変えた**（`労務給与_複数法人_実装計画.md` §3.9・P0・決定 #16）。
+     **`y`・`ｙ`・`休` は別名に残さず、打っても休みにならない**（他のコマンド外の文字と同じくメモとして残る。
+     廃止の案内トーストは出さない）。**保存データの移行は無い**——休みコマンドは `applyEditToSubs` の中で
+     `adminRest`（と `ko`/`yu`/`ke` なら `leaveTypes`）に解決され、打った文字そのものは保存されないため。
+     `y` が予約語でなくなったので、店舗略称として `y`・`休` は登録できるようになった
 5. 店舗限定コマンドの例: `締`（鷄えん東通り店専用・2026-07-12追加、2026-07-12に数字と組み合わせ可能な追加出勤方式へ拡張）。出勤・退勤どちらのセルにも、単独（例:「締」）でも数字と組み合わせ（例: 出勤セル`13`+退勤セル`17締`）でも入力でき、主シフトとは別に23:00〜25:00(翌1:00)を**追加出勤**(`shift.extraStart`/`extraEnd`)として計上する（1日に2出勤が成立する）。判定は`applyEditToSubs`内で`extractNote`が返す`hasFixed`（セル値に締めキーを含むか）と`fixedShiftEnabled`をblurごとに再評価しON/OFFする（`applyFixedShiftToSubs`という専用関数は廃止済み）。**`fixedShiftCommandFor`（app-utils.js）は 2026-07-12 の`2a68ea6`で呼び出しが無くなり、現在はテストからしか呼ばれない**——その完全一致規則（「9締」はnull）は現行の併用可能な挙動と逆なので、判定の根拠として読まないこと（バグチェック#124）。`calcNetWorkMinutes`/`shiftBandInfo`（app-utils.js）は`extraStart`/`extraEnd`を主シフトと合算する形で対応済み。ヒートマップ（`heatData`/`heatHours`）・休みカウント（`restCounts`等）・`isWorkDay`もextra期間を考慮する。店舗の識別は店舗名の部分一致（`isFixedShiftEligibleShop`）で行っており、店舗名変更で無効化されうる点に注意
 
 ---
@@ -877,8 +882,8 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 
 - **`yu`／`ke` は打ち込んだ帯だけ**（出勤セル=ランチ・退勤セル=ディナー）。有給は半日単位で
   取れるため。`ko`（公休）だけは終日。種別は `shift.leaveTypes={start,end}` に**帯ごと**持つ。
-- **`y` は種別を書かない。** 終日でも従来どおり斜線のままで文字を出さない。ただし
-  **数え方は公休のまま**——`leaveTypeOf` は終日 y とスタッフ提出の休みを公休として扱い、
+- **休み希望の `/`（2026-09-30 までは `y`）は種別を書かない。** 終日でも従来どおり斜線のままで文字を出さない。ただし
+  **数え方は公休のまま**——`leaveTypeOf` は終日の休み希望とスタッフ提出の休みを公休として扱い、
   週の休みに数える。**見せ方（`leaveCellTextOf`）と数え方（`leaveTypeOf`）は別の関数で答える。**
 - **種別名を出すセルには斜線を引かない**（文字と重なって読めなくなる）。
 - 有給・慶弔の日数は**半日＝0.5**で数える（`leaveHalfDaysOf`）。公休は日単位で、無記入の日も含む。
