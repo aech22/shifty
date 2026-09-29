@@ -238,9 +238,14 @@ node .claude/skills/shifty-e2e-verify/scripts/example-staff-attr-period.js # 属
 
 ```bash
 S=<scratchpad>/prefix-<SHA>; mkdir -p $S
-cp app-utils.js app-core.js app-staff.js $S/ && git show <修正前SHA>:app-admin.js > $S/app-admin.js
+cp app-utils.js app-core.js app-staff.js app-company.js $S/ && git show <修正前SHA>:app-admin.js > $S/app-admin.js
 SHIFTY_ROOT=$S node .claude/skills/shifty-e2e-verify/scripts/example-shift-edit-tab.js   # EXIT=1 になるのが正しい
 ```
+
+**2026-09-30 に app-admin.js から app-company.js（企業連携タブ一式・SetTab・賃金マスタ）を切り出した**ので、
+ハーネスは両方を読む。修正が app-company.js 側なら `git show <修正前SHA>:app-company.js` を置く。
+分割より前（`8d271c8` より前）の SHA を基準にするときは、app-company.js が存在せず app-admin.js が
+全部を持っているので、`$S/app-company.js` は空ファイル（`: > $S/app-company.js`）にする。
 
 2026-08-24 実測: 修正後 `EXIT=0`、修正前（`62cbee8` の app-admin.js）`EXIT=1`（`step4_noLeak:false` ＝ 消えた期間の 2026-07-02 が期間Bのsubに現れる）。**この差が出ないテストは、何も検証していない。**
 
@@ -257,7 +262,7 @@ SHIFTY_ROOT=$S node .claude/skills/shifty-e2e-verify/scripts/example-shift-edit-
 
 ```bash
 S=/tmp/pre-$$; mkdir -p $S
-for f in app-utils.js app-core.js app-staff.js app-admin.js; do git show <修正前SHA>:$f > $S/$f; done
+for f in app-utils.js app-core.js app-staff.js app-admin.js app-company.js; do git show <修正前SHA>:$f > $S/$f; done
 grep -c staffHidden $S/app-utils.js    # 0 でなければ基準SHAが間違っている
 ```
 
@@ -297,6 +302,10 @@ await h.page.reload({ waitUntil: "networkidle" });          // ← DBと認証�
 - **`cfHandlers` に書く後始末は本物のCFの写し**なので、CF 側の挙動そのものはここでは検証されない。CF は `shifty-cf-verify` のハーネスで**本物のコードを実行して**確かめる（2つを混同すると「CFも検証した」と誤って報告する）。
 - **セキュリティルールは一切評価しない**（1.6節と同じ）。許可・拒否の確認には使えない。
 - **`SHIFTY_ROOT` に修正前の版を渡して落ちることを必ず見る**。`git show <sha>:app-*.js` を一時ディレクトリへ書き出せばよい（配信物5本だけで足りる）。
+
+**本物の index.html をこのスタブで丸ごと起動する例**が `scripts/example-index-html-load.js`（2026-09-30）。
+ハーネスは読み込むファイルを自前で並べるので、index.html の `<script>` の並び・`?v=` の食い違いは素通りする。
+index.html を触ったとき・app-*.js を分割したときはこれも回す（Firebase の CDN 5本だけをスタブに差し替え、残りは本物）。
 
 ### 1.7 アプリ全体は起動したいがdevを汚したくない（書き込みの発行を数える）
 
@@ -575,6 +584,7 @@ document.body.appendChild = function(node){
 ```bash
 curl -s "https://shiftyshifty.app/app-admin.js" -o /tmp/prod.js
 git show origin/main:app-admin.js > /tmp/main.js && diff -q /tmp/prod.js /tmp/main.js
+# 企業連携タブ・設定タブ・賃金マスタの症状なら app-company.js（2026-09-30 分割）も同じ手順で比べる
 ```
 
 一致していれば「配信漏れ」は除外でき、localhost検証＝本番コードの検証になる（DEV_MODEはホスト名判定なので同一ファイルで成立）。GitHub Pagesは `max-age=600` だが、**デプロイ前から開きっぱなしのタブは再読み込みまで旧JSのまま動く**——修正済みの症状が報告されたら、まずタブの再読み込みを依頼する価値がある。

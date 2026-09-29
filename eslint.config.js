@@ -3,10 +3,12 @@
 // app-*.js は CDN UMD + Babel Standalone のビルドレス構成（import/export なし・グローバルスクリプト）。
 // このファイルは CI の静的検査専用であり、配信物（app-*.js / index.html）のランタイムには一切影響しない。
 //
-// M-1 でファイルを5分割（app-utils / app-core / app-staff / app-admin / app-main）した。
+// M-1 でファイルを5分割（app-utils / app-core / app-staff / app-admin / app-main）し、2026-09-30 に
+// app-admin.js が Babel Standalone の 500KB 上限を超えたため app-company.js（企業連携・設定・賃金マスタ）を
+// 切り出して6分割になった。
 // 各ファイルは独立して lint されるため、ファイルをまたいで参照される共有識別子
-// （utils/core の関数・定数、staff/admin のコンポーネント）を sharedGlobals に列挙し
-// no-undef の誤検知を防ぐ。読み込み順（utils→core→staff→admin→main）で全ファイルは同一グローバルスコープを共有する。
+// （utils/core の関数・定数、staff/admin/company のコンポーネント）を sharedGlobals に列挙し
+// no-undef の誤検知を防ぐ。読み込み順（utils→core→staff→admin→company→main）で全ファイルは同一グローバルスコープを共有する。
 
 const babelParser = require("@babel/eslint-parser");
 const reactPlugin = require("eslint-plugin-react");
@@ -353,6 +355,9 @@ const sharedGlobals = {
   PayCodeBox: "writable",
   PayCodeChangeModal: "writable",
   StaffPayPage: "writable",
+  // app-company.js（2026-09-30 分割）で定義し AdminView（app-admin.js）が描画するタブ・ページ
+  CompanyTab: "writable",
+  CompanyStaffDirectory: "writable",
   findStaffByNumber: "writable",
   mergeStaffMatches: "writable",
   prorateMonthlyHours: "writable",
@@ -373,7 +378,7 @@ const sharedGlobals = {
 
 module.exports = [
   {
-    files: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-main.js"],
+    files: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-company.js", "app-main.js"],
     languageOptions: {
       // app-*.js は import/export を使わないグローバルスクリプト
       sourceType: "script",

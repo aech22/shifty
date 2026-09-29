@@ -58,7 +58,7 @@ async function open(plan, linked, o = {}) {
   return openHarness({
     root: ROOT, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport: o.viewport || { width: 1200, height: 900 },
     extraHead: THEME + makeStub({ seed: seed(plan, linked), uid: UID, view: "admin", tab: o.tab || "staff", cfHandlers }),
-    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
+    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
   });
 }
 const BOX = "[data-pay-code-box] input[type=password]";

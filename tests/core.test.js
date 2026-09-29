@@ -1505,14 +1505,26 @@ test("ADMIN_SHIFT_FIELDS: 管理者が日ごとに書き込む全フィールド
 // app-admin.js を AST で読み、シフト日オブジェクト（sub.shifts[日付]）へ実際に書かれるキーを
 // 列挙して一覧と突き合わせる。文字列マスクではなく @babel/core の parseSync を使う
 // （JSX・テンプレートリテラルを含むファイルを正規表現で読むと誤検出・見落としが出るため）。
-function collectShiftDayWrites() {
+// ===== 管理者画面の実装を読む検査の共通の読み口（2026-09-30 分割）=====
+// app-admin.js が Babel Standalone の 500KB 上限を超えたため、企業連携タブ一式・SetTab・賃金マスタを
+// app-company.js へそのまま移した。管理者画面の実装を読む検査（ドリフト検出など）は、移った関数も
+// 移る前と同じに見る必要があるので、2ファイルを読み込み順（admin→company）で連結した1本として読む。
+// どちらも import/export の無いグローバルスクリプトなので、連結しても1つのスクリプトとして構文が成り立つ。
+// 差し替え口: SHIFTY_ADMIN_SRC（app-admin.js の写し）・SHIFTY_COMPANY_SRC（app-company.js の写し）。
+// 走査の検出力を対照で確かめるときに使う（配信物は編集すると自動コミットされるため写しで採る）。
+function _readAdminSurface() {
   const fs = require("node:fs");
   const path = require("node:path");
+  const admin = process.env.SHIFTY_ADMIN_SRC || path.join(__dirname, "..", "app-admin.js");
+  const company = process.env.SHIFTY_COMPANY_SRC || path.join(__dirname, "..", "app-company.js");
+  return fs.readFileSync(admin, "utf8") + "\n" + fs.readFileSync(company, "utf8");
+}
+
+function collectShiftDayWrites() {
   const babel = require("@babel/core"); // devDependencies に宣言済み（@babel/parser は推移的依存なので直接requireしない）
-  // 既定は配信物そのもの。SHIFTY_ADMIN_SRC は**この走査が本当に検出できるかを確かめる**ための
-  // 差し替え口（app-admin.js は編集すると自動コミット＆pushされるため、対照は写しで採る）。
-  const file = process.env.SHIFTY_ADMIN_SRC || path.join(__dirname, "..", "app-admin.js");
-  const src = fs.readFileSync(file, "utf8");
+  // 既定は配信物そのもの（app-admin.js＋app-company.js）。SHIFTY_ADMIN_SRC／SHIFTY_COMPANY_SRC は
+  // **この走査が本当に検出できるかを確かめる**ための差し替え口（_readAdminSurface）。
+  const src = _readAdminSurface();
   const ast = babel.parseSync(src, {
     configFile: false, babelrc: false, sourceType: "script",
     parserOpts: { plugins: ["jsx"], errorRecovery: true },
@@ -2022,8 +2034,9 @@ function _parseAppFile(relPath, envVar) {
   const fs = require("node:fs");
   const path = require("node:path");
   const babel = require("@babel/core"); // devDependencies に宣言済み
-  const file = (envVar && process.env[envVar]) || path.join(__dirname, "..", relPath);
-  const src = fs.readFileSync(file, "utf8");
+  // app-admin.js は切り出した app-company.js と連結して読む（_readAdminSurface。2026-09-30 分割）
+  const src = relPath === "app-admin.js" ? _readAdminSurface()
+    : fs.readFileSync((envVar && process.env[envVar]) || path.join(__dirname, "..", relPath), "utf8");
   const ast = babel.parseSync(src, {
     configFile: false, babelrc: false, sourceType: "script",
     parserOpts: { plugins: ["jsx"], errorRecovery: true },
@@ -2650,8 +2663,7 @@ test("staffHidden: 写しに凍結しない（範囲が唯一の正本。終了�
 test("staffHidden: プランの人数制限には数える（2026-09-06 ユーザー決定）", () => {
   // 非表示にしても登録は残るので上限判定の母数から外さない。StaffTab の上限判定は
   // staffList.filter(n=>!isSpacer(n)).length で、staffHidden を一切参照しないことを固定する。
-  const fs = require("node:fs");
-  const src = fs.readFileSync(require("node:path").join(__dirname, "..", "app-admin.js"), "utf8");
+  const src = _readAdminSurface();
   const limitLines = src.split("\n").filter(l => l.includes("PLAN_LIMITS[plan]") || (l.includes(">=lim") && l.includes("isSpacer")));
   assert.ok(limitLines.length > 0, "上限判定の行が見つからない（実装が変わったらこのテストを見直すこと）");
   assert.ok(limitLines.every(l => !l.includes("staffHidden")),
@@ -2815,8 +2827,7 @@ test("isHoliday: 2029年の移動祝日9件（テーブル切れの回帰）", (
 // 直上のコメントは「休み希望マークが付いたセルは勤務ではないので重複エラーにしない」と
 // 理由つきで**否定**しており、その理由自体は正しいぶん、片側セルまで落ちることが読み取れなかった。
 test("dupErrors: 他店舗側の出退勤も effShiftRangeMin（自店舗側と同じ規則）で解決する", () => {
-  const fs = require("node:fs");
-  const src = fs.readFileSync(require("node:path").join(__dirname, "..", "app-admin.js"), "utf8");
+  const src = _readAdminSurface();
   const i = src.indexOf("companyData[osid].workMap.get");
   assert.ok(i > 0, "dupErrors の他店舗ルックアップが見つからない（このテストの前提が崩れている）");
   const block = src.slice(i, i + 1200);
@@ -3288,10 +3299,9 @@ test("凍結: laborSettings が PERIOD_SNAPSHOT_SETTING_KEYS に登録され、�
 });
 
 test("項目12 ドリフト検出: applyEditToSubs と saveAdj が同じ isTimeOrderInvalid を通る", () => {
-  const fs = require("node:fs"), path = require("node:path");
-  // 既定は配信物そのもの。SHIFTY_ADMIN_SRC はこの走査が本当に検出できるかを確かめる差し替え口。
-  const file = process.env.SHIFTY_ADMIN_SRC || path.join(__dirname, "..", "app-admin.js");
-  const raw = fs.readFileSync(file, "utf8");
+  // 既定は配信物そのもの（app-admin.js＋app-company.js）。SHIFTY_ADMIN_SRC／SHIFTY_COMPANY_SRC は
+  // この走査が本当に検出できるかを確かめる差し替え口（_readAdminSurface）。
+  const raw = _readAdminSurface();
   // **コメントを先に落とす。** 落とさないと「同じ isTimeOrderInvalid を通す」と書いた説明コメントだけで
   // 走査が通り、呼び出しを外しても検出できない（対照で実測した偽陰性）。
   // 落とすのは行まるごとのコメントと、引用符・スラッシュを1つも含まない行の末尾コメントだけ
@@ -3972,10 +3982,7 @@ test("LABOR_DAY_FIX_KEYS: 全キーに title 用のラベルがあり、セル�
 // 現状そうなっているのは「書き出しが画面とは別の色付けを持っている」からで、
 // 誰かが揃えようとして参照を足すと黙って配布物に出る。ここで参照が無いことを固定する。
 test("Excel・PDF の書き出しは労務の要修正の色を参照しない", () => {
-  const fs = require("fs");
-  const path = require("path");
-  const file = process.env.SHIFTY_ADMIN_SRC || path.join(__dirname, "..", "app-admin.js");
-  const src = fs.readFileSync(file, "utf8");
+  const src = _readAdminSurface(); // app-admin.js＋app-company.js（2026-09-30 分割）
   // 行コメントを落とす（説明文の中の「画面（cellBgFor）」を参照と読み違えないため）
   const strip = t => t.split("\n").map(l => {
     const i = l.indexOf("//");
@@ -4676,7 +4683,7 @@ test("P6a 改名・削除の後始末: private/pay が追随する（STAFF_KEYED
 });
 test("P6a ドリフト検出: 改名と削除の入口が private/pay の後始末を通る", () => {
   const fs = require("node:fs");
-  const admin = fs.readFileSync(require("node:path").join(__dirname, "..", "app-admin.js"), "utf8");
+  const admin = _readAdminSurface(); // app-admin.js＋app-company.js（2026-09-30 分割）
   // 改名（AdminView の onRenameStaff）は renameStaffInSettings と同じ場所で pay も移す
   const ren = admin.slice(admin.indexOf("onRenameStaff={(oldName,newName)=>{"));
   const renBody = ren.slice(0, ren.indexOf("tt(`✓ ${oldName} → ${newName} に変更しました`)"));

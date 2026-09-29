@@ -67,7 +67,7 @@ async function open(seed, tab, viewport) {
   return openHarness({
     root: ROOT, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport: viewport || { width: 1200, height: 900 },
     extraHead: THEME + makeStub({ seed, uid: UID, view: "admin", tab, cfHandlers }),
-    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
+    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
   });
 }
 const waitText = (h, t, ms = 15000) => h.page.waitForFunction(x => document.body.innerText.includes(x), t, { timeout: ms });

@@ -46,7 +46,7 @@ async function open(plan, viewport) {
   return openHarness({
     root: ROOT, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport: viewport || { width: 1200, height: 900 },
     extraHead: THEME + makeStub({ seed: seed(plan), uid: UID, view: "admin", tab: "company" }),
-    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
+    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
   });
 }
 
