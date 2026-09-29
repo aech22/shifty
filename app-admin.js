@@ -1536,7 +1536,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // 読めない期間だけ凍結時に残した laborTotals で埋める＝過去参照を押さなくても出る。
       const yr=fy==null?null:yearLaborSummary(periods,name,fy,fyStart,liveTotalFor(name),true);
       // その日に帰属する要修正（セル色で該当日を示す。dates と同じ並び）
-      const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins,dayOtH:periodOtH,agreementDailyOtH:agDay});
+      const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins,dayOtH:periodOtH,agreementDailyOtH:agDay,
+        externalOverMin:externalOverThresholdOf(ls)});
       out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,otWindow:otPlan&&otPlan.fixed?otPlan.window:null,dayOverB,
         monthCovered:laborMonthCovered,yearOt,findings,guide,overall,weekNoRest,dayFindings,
         periodLeave:{paid:paidD,publicOff:pubD,ceremony:ceD},year:yr,

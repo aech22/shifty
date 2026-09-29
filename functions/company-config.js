@@ -11,9 +11,9 @@ function isValidShopId(shopId) {
 const COMPANY_LABOR_KEYS = ["monthlyBase31Min", "fixedOvertimeMin", "marginMin", "agreementDailyOtMin",
   "agreementMonthlyOtMin", "agreementAnnualOtMin", "fiscalYearStartMonth",
   "annualScheduledMin", "rateDenominatorMin", "weekStartDow", "weekSplitAtMonthEdge",
-  "showDailyOverB", "dailyOverThresholdMin"];
+  "showDailyOverB", "dailyOverThresholdMin", "highlightExternalOver8h", "externalOverThresholdMin"];
 // 範囲の決まっているキー（クライアントの LABOR_SETTING_RANGES と同じ。tests/core.test.js が照合する）
-const COMPANY_LABOR_RANGES = { fiscalYearStartMonth: [1, 12], weekStartDow: [0, 6], weekSplitAtMonthEdge: [0, 1], showDailyOverB: [0, 1] };
+const COMPANY_LABOR_RANGES = { fiscalYearStartMonth: [1, 12], weekStartDow: [0, 6], weekSplitAtMonthEdge: [0, 1], showDailyOverB: [0, 1], highlightExternalOver8h: [0, 1] };
 const COMPANY_LIMIT_NUM_KEYS = ["customDays", "customHours", "customHoursMin", "daily", "dailyMin", "weekly",
   "weeklyMin", "biweekly", "biweeklyMin", "monthly", "monthlyMin", "monthlyOt"];
 const COMPANY_LABOR_SYSTEMS = ["A", "B", "none"];

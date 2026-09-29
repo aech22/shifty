@@ -245,6 +245,7 @@ const sharedGlobals = {
   breakLengthOf: "writable",
   dailyOverThresholdOf: "writable",
   dailyOverMinB: "writable",
+  externalOverThresholdOf: "writable",
   OT_PRORATE_WINDOWS: "writable",
   OT_PRORATE_WINDOW_LABELS: "writable",
   OT_PRORATE_FIXED_MAX_MIN: "writable",
