@@ -2660,8 +2660,55 @@ function compareCompanyStaffRows(a,b,mode){
 // （ヘルプ先で取った分は足さない＝所属店舗のシフト作成タブの「有給残」と同じ答え）。
 // 残日数は yearLaborSummary（凍結値 laborTotals だけ・subs は読まない）と paidLeaveRemaining をそのまま使う。
 // 凍結値の無い期間は paidMissing に期間ラベルで返し、画面は残日数の前に「＋」を付ける。
+// people（companies/{id}/pub/people・P1b）を渡すと保存済みの人物で束ね、行に personId・links を載せる（推定は未リンクの登録だけ）。
+// 企業内の同一人物の推定（2026-09-30・P1b で buildCompanyStaffRows から切り出し）。
+// regs: [{shopId, name, entityId, number, homeShopId}]。① 同じ法人で数字だけの同じ従業員番号
+// ② ヘルプ先の登録（所属店舗側に同名がいる）を同じ人とみなす。戻り値は添字の配列の配列。
+// **functions/company-config.js の groupStaffRegsCF と同じ規則**（CF が人物を自動生成するときに使う。tests が照合する）
+function groupStaffRegs(regs){
+  const list=regs||[];
+  const parent=list.map((_,i)=>i);
+  const find=i=>{while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;};
+  const union=(a,b)=>{const ra=find(a),rb=find(b);if(ra!==rb)parent[Math.max(ra,rb)]=Math.min(ra,rb);};
+  const byNumber=new Map(),byShopName=new Map();
+  list.forEach((r,i)=>{
+    byShopName.set(r.shopId+"\u0000"+r.name,i);
+    const num=String(r.number==null?"":r.number).trim();
+    if(!/^\d+$/.test(num))return;
+    const nk=(r.entityId||"")+"\u0000"+num;
+    if(byNumber.has(nk))union(byNumber.get(nk),i);else byNumber.set(nk,i);
+  });
+  list.forEach((r,i)=>{
+    const home=r.homeShopId||r.shopId;
+    if(home===r.shopId)return;
+    const j=byShopName.get(home+"\u0000"+r.name);
+    if(j!=null)union(i,j);
+  });
+  const groups=new Map();
+  list.forEach((_,i)=>{const k=find(i);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(i);});
+  return[...groups.values()];
+}
+// 人物ID（companies/{id}/pub/people・P1b）で束ねる。people が null（読めない・まだ無い）なら推定だけ。
+// 保存済みの人物が正で、どの人物の links にも無い登録（未リンク）だけを推定でまとめる（personId は null）。
+// 戻り値: [{idx:[regsの添字], personId}]
+const PERSON_ID_RE=/^(\d{1,20}|p_[A-Za-z0-9]{8})$/;
+function groupStaffRegsWithPeople(regs,people){
+  const list=regs||[];
+  if(!people||typeof people!=="object")return groupStaffRegs(list).map(idx=>({idx,personId:null}));
+  const at=new Map();list.forEach((r,i)=>at.set(r.shopId+"\u0000"+r.name,i));
+  const used=new Set();const out=[];
+  Object.keys(people).filter(id=>PERSON_ID_RE.test(id)&&people[id]&&typeof people[id]==="object").forEach(id=>{
+    const l=people[id].links&&typeof people[id].links==="object"?people[id].links:{};
+    const idx=[];
+    Object.keys(l).forEach(sid=>{const i=at.get(sid+"\u0000"+l[sid]);if(i!=null&&!used.has(i)){used.add(i);idx.push(i);}});
+    if(idx.length)out.push({idx:idx.sort((a,b)=>a-b),personId:id});
+  });
+  const rest=list.map((_,i)=>i).filter(i=>!used.has(i));
+  groupStaffRegs(rest.map(i=>list[i])).forEach(g=>out.push({idx:g.map(j=>rest[j]),personId:null}));
+  return out;
+}
 function _staffNameLen(n){return String(n||"").replace(/[\s\u3000]/g,"").length;}
-function buildCompanyStaffRows(shops,companySettings,today){
+function buildCompanyStaffRows(shops,companySettings,today,people){
   const list=(shops||[]).filter(s=>s&&s.id);
   const byId={};
   list.forEach(s=>{
@@ -2671,35 +2718,20 @@ function buildCompanyStaffRows(shops,companySettings,today){
     const periods=Object.values(s.periods||{}).filter(p=>p&&p.id);
     byId[s.id]={id:s.id,name:s.name||s.id,eff,staff,staffSet:new Set(staff),periods,entityId:typeof s.entityId==="string"?s.entityId:"",kind:s.kind==="hq"?"hq":"shop"};
   });
-  // 登録（店舗×名前）を並べ、同じ人どうしを union-find でつなぐ
+  // 登録（店舗×名前）を並べ、同じ人どうしをまとめる（保存済みの人物 people が正・無ければ推定）
   const regs=[];
   list.forEach(s=>{
     const sh=byId[s.id];const eff=sh.eff;
     sh.staff.forEach(name=>{
       const h=((eff.staffHomeShop||{})[name]);
       const num=((eff.staffNumbers||{})[name]);
-      regs.push({shop:sh,name,homeShopId:typeof h==="string"&&h?h:sh.id,number:String(num==null?"":num).trim()});
+      regs.push({shop:sh,shopId:sh.id,name,entityId:sh.entityId,homeShopId:typeof h==="string"&&h?h:sh.id,number:String(num==null?"":num).trim()});
     });
   });
-  const parent=regs.map((_,i)=>i);
-  const find=i=>{while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;};
-  const union=(a,b)=>{const ra=find(a),rb=find(b);if(ra!==rb)parent[Math.max(ra,rb)]=Math.min(ra,rb);};
-  const byNumber=new Map(),byShopName=new Map();
-  regs.forEach((r,i)=>{
-    byShopName.set(r.shop.id+"\u0000"+r.name,i);
-    if(!/^\d+$/.test(r.number))return;
-    const nk=r.shop.entityId+"\u0000"+r.number;
-    if(byNumber.has(nk))union(byNumber.get(nk),i);else byNumber.set(nk,i);
-  });
-  regs.forEach((r,i)=>{
-    if(r.homeShopId===r.shop.id)return;
-    const j=byShopName.get(r.homeShopId+"\u0000"+r.name);
-    if(j!=null)union(i,j);
-  });
   const groups=new Map();
-  regs.forEach((r,i)=>{const k=find(i);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(r);});
+  groupStaffRegsWithPeople(regs,people).forEach(g=>{groups.set(groups.size,{rs:g.idx.map(i=>regs[i]),personId:g.personId});});
   const rows=[];
-  groups.forEach(rs=>{
+  groups.forEach(({rs,personId})=>{
     // 代表: 所属店舗に登録されている方 → 有給の付与がある方 → 店舗の並び順
     const atHome=rs.filter(r=>r.homeShopId===r.shop.id);
     const pool=atHome.length?atHome:rs;
@@ -2725,8 +2757,12 @@ function buildCompanyStaffRows(shops,companySettings,today){
     const yr=fy==null?null:yearLaborSummary(home.periods,base.name,fy,fyStart,null);
     const g=Number(((heff.paidLeaveGranted||{})[base.name]));
     const labelOf={};home.periods.forEach(p=>{labelOf[p.id]=p.label||p.startDate||p.id;});
-    rows.push({key:base.shop.id+"|"+base.name,shopId:base.shop.id,shopName:base.shop.name,name,otherNames,conflictNames,
-      entityId:base.shop.entityId||null,isHq:home.kind==="hq",
+    const person=personId&&people?people[personId]:null;
+    rows.push({key:personId?"p|"+personId:base.shop.id+"|"+base.name,personId:personId||null,shopId:base.shop.id,shopName:base.shop.name,name,otherNames,conflictNames,
+      // 人物の法人（企業スタッフ一覧の「編集」で変えられる・P1b）。人物に無ければ代表の登録の店舗の法人
+      entityId:(person&&typeof person.entityId==="string"&&person.entityId)||base.shop.entityId||null,isHq:home.kind==="hq",
+      // この人の登録（店舗×名前）。編集モーダルの改名・統合解除が使う
+      links:ordered.map(r=>({shopId:r.shop.id,shopName:r.shop.name,name:r.name,number:r.number})),
       // 賃金の置き場（所属店舗に登録されている名前・§3.7）。所属店舗側に登録が無ければ null（賃金列は「—」）
       payShopId:base.homeShopId===base.shop.id?base.shop.id:null,payName:base.homeShopId===base.shop.id?base.name:null,
       number,attrId,attrLabel,homeShopId:base.homeShopId,homeShopName:homeShopNames.find(n=>n)||null,homeShopIds,homeShopNames,
@@ -2769,5 +2805,5 @@ function fullViewFontOf(rowFont,colW){
 
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,buildCompanyStaffRows,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,GATED_FEATURES,featureEnabled,DEFAULT_RATE_DENOMINATOR_MIN,rateDenominatorMinOf,PAY_TYPES,PAY_TYPE_LABELS,isPayTypeFixed,defaultPayTypeOf,payRateBaseYen,hourlyRateOf,fixedOtAmountOf,MIN_WAGE_MAX_ENTRIES,sanitizeWageSettings,minWageOn,minWageCheck,normalizePayVersion,withFixedOtAmount,applyPayRevision,payVersionOn,STAFF_KEYED_PRIVATE_NODES,renameStaffInPay,dropStaffFromPay,maskYen,sha256HexOfBytes,PAY_CODE_DEFAULT,PAY_CODE_RE,isValidPayCode,payCodeHash,isPayCodeRecord,verifyPayCode,payCodeIdentity,PAY_CODE_MAX_FAILS,PAY_CODE_LOCK_MS,PAY_UNLOCK_IDLE_MS,nextPayCodeLockout,payCodeWaitSec,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf};
+  module.exports={HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,groupStaffRegs,groupStaffRegsWithPeople,PERSON_ID_RE,buildCompanyStaffRows,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,GATED_FEATURES,featureEnabled,DEFAULT_RATE_DENOMINATOR_MIN,rateDenominatorMinOf,PAY_TYPES,PAY_TYPE_LABELS,isPayTypeFixed,defaultPayTypeOf,payRateBaseYen,hourlyRateOf,fixedOtAmountOf,MIN_WAGE_MAX_ENTRIES,sanitizeWageSettings,minWageOn,minWageCheck,normalizePayVersion,withFixedOtAmount,applyPayRevision,payVersionOn,STAFF_KEYED_PRIVATE_NODES,renameStaffInPay,dropStaffFromPay,maskYen,sha256HexOfBytes,PAY_CODE_DEFAULT,PAY_CODE_RE,isValidPayCode,payCodeHash,isPayCodeRecord,verifyPayCode,payCodeIdentity,PAY_CODE_MAX_FAILS,PAY_CODE_LOCK_MS,PAY_UNLOCK_IDLE_MS,nextPayCodeLockout,payCodeWaitSec,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf};
 }
