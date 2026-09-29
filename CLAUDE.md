@@ -266,6 +266,19 @@ sanitizeWageSettings / minWageOn / MIN_WAGE_MAX_ENTRIES
 PAY_TYPES / isPayTypeFixed / defaultPayTypeOf / normalizePayVersion / withFixedOtAmount / applyPayRevision / payVersionOn
                            // 賃金の1版の形。社員（employee）は月給固定（決定17）、企業属性は月給・それ以外は時給が既定。
                            // **改定は版を足す**: 適用開始日を変えた保存は前の版を history へ積み、同じ日のままの保存はその版の訂正
+isPeriodConfirmed / isPeriodDelivered / periodStateOf / canConfirmPeriod / periodHistoryList / withPeriodHistory / genPeriodHistoryKey
+planPeriodConfirmation / planPeriodUnconfirm / planPeriodDelivery / planLaborMonthManual / aggregateScheduledMonth / isMonthFullyConfirmed
+                           // 確定・交付と人×月の所定（2026-09-30・P3）。状態は 未提出→提出済み→確定済み→交付済み（periodStateOf）。
+                           // 確定は写しを**確定の瞬間に**書き（終了済みで写しがあればそれを残す）、lockedAt を消し、履歴を1件足し、
+                           // その月の所定を aggregateScheduledMonth（laborDayMin と同じ calcNetWorkMinutes 経路）で集計して laborMonths へ書く。
+                           // **月が凍結（frozenAt）されるのは、月の全日が期間に入りその月の期間がすべて確定したとき**（半月運用は後半の確定で凍結）。
+                           // 手修正した記録（確定値≠auto）は確定し直しても上書きしない。解除は確定・交付を外し、その月の凍結を解く（写しは残す）。
+                           // 確定できるのは canConfirmPeriod＝企業に連携した店舗は企業セッション（App の companyInfo の企業が連携先と一致）だけ、
+                           // 単独店舗はオーナー（UI だけの制限）。入口はシフト作成タブと提出状況表の2つで、どちらも planPeriodConfirmation を通る
+STAFF_KEYED_MONTH_NODES / renameStaffInLaborMonths / dropStaffFromLaborMonths / yearScheduledAverage / fillFixedPattern / isClosedDateOf
+                           // 月キー付きの名前ノード（いまは laborMonths だけ）。改名は lm.rename、削除は lm.drop（pay と同じ2つの入口）。
+                           // CF の companyRenameStaff も renameStaffLaborMonthsPatch で移す（tests が一致を照合）。
+                           // fillFixedPattern は本部店舗の固定勤務パターン（土日祝・閉店日を除き、**何も入っていない日だけ**に入れる）
 STAFF_KEYED_PRIVATE_NODES / renameStaffInPay / dropStaffFromPay
                            // 名前キーの private ノード（いまは pay だけ）。STAFF_KEYED_SETTING_MAPS とは別リスト（settings 配下ではないため）。
                            // 改名（AdminView の onRenameStaff）と削除（settingsWithoutStaff を呼ぶ2か所）が必ず pay.rename / pay.drop を通る
@@ -425,6 +438,9 @@ Firebase Realtime Database
 │       ├── lastActivity ← ISO文字列（CFの1年未更新アーカイブ判定に使用）
 │       ├── subs/      ← 提出データ {subId: subObj}（書き込みは.validateで形状検証・auth必須）
 │       ├── owners/    ← {uid: adminKey} 管理者登録（自uid追加はadminKey照合が必要・読みはオーナーのみ）
+│       ├── laborMonths/{YYYY-MM}/{名前} ← 人×月の所定 {days, min, auto:{days,min}, frozenAt?, frozenBy?}（2026-09-30・P3）。
+│       │                 **読み書きともオーナーのみ**（所定は個人の労働条件）。確定で自動集計・凍結、確定前は手修正（10月分の遡り登録も）。
+│       │                 名前キー＝改名・削除の後始末は STAFF_KEYED_MONTH_NODES
 │       ├── company    ← 企業設定の写し（2026-09-27）{id, name, entityId?, entityName?, kind, settings, deadlines:{期間キー:日付}, shops:{shopId:店舗名}, syncedAt}。
 │       │                 settings は「企業共通 → 法人」を CF が重ねた値。entityId/entityName/kind は 2026-09-30（P1）から
 │       │                 **CF（syncCompanyMirror）だけが書く**（.write:false）・読みは auth != null。
@@ -476,7 +492,7 @@ Firebase Realtime Database
 **セキュリティモデル（2026-07-07改修・フェーズB）**: 「Anonymous Auth必須 + オーナー権限分離（管理キー方式）」。
 - 全クライアントは起動時に `signInAnonymously()`（LOCAL永続化・端末ごとにuid安定）。**全ルールが `auth != null` 必須**のため未認証RESTは全拒否。実ログイン（Google/メール）は従来通り永続化しない（サインイン直前にNONEへ切替）。
 - 管理系パス（settings/periods/staff/templates/tokens/global/shops）の書き込みは `shops/{shopId}/owners/{auth.uid}` 登録者のみ。owners への自己登録は `private/adminKey` との値照合が必要で、adminKeyは管理者端末のlocalStorage（`ots_adminKeys_v1`）にのみ保存される。**スタッフURLから得られるshopIdだけでは管理操作できない**。
-- スタッフは subs の読み書きと settings/periods/staff の読みのみ（従来機能を維持）。**subs の書き込み・削除は認証済みなら誰でも通る**（`.write: auth != null && $shopId !== 'demo-toriMatsu-v1'`）。提出を触れるのを本人だけに絞っているのは **UI（app-staff.js の `canTouch`）だけ**で、ルールは名乗った名前を検証できない——2026-08-31 決定1で承知のうえ引き受けたトレードオフなので、**再検出しても「バグ」として直さない**。
+- スタッフは subs の読み書きと settings/periods/staff の読みのみ（従来機能を維持）。**subs の書き込み・削除は認証済みなら誰でも通る**（`.write: auth != null && $shopId !== 'demo-toriMatsu-v1'`）。**ただし 2026-09-30（P3）から、その sub の期間（書き込み後の periodId と、削除・変更前の periodId の両方）に `confirmation` があるときはオーナーだけが書ける**（スタッフの再提出を確定でルールごと止める）。提出を触れるのを本人だけに絞っているのは **UI（app-staff.js の `canTouch`）だけ**で、ルールは名乗った名前を検証できない——2026-08-31 決定1で承知のうえ引き受けたトレードオフなので、**再検出しても「バグ」として直さない**。
 - **移行猶予は 2026-07-28 に終了済み**（`dbdd9d9`）。未claim店舗への「誰でも書き込み可」ブランチは撤去され、管理系パスは owner uid 一致が必須。**ルールファイルは `database.rules.json` の1本だけ**（同内容の残骸だった `database.rules.tightened.json` は 2026-09-05 に削除済み。以後この二重管理は無い）。
 - Cloud Functions（createCheckoutSession/createPortalSession）はIDトークン検証+オーナー照合。App CheckはSDK読込済み・サイトキー未設定でスキップ中（BACKLOG参照）。
 
@@ -516,7 +532,11 @@ Period = { id: string, urlToken: string, shopId: string, label: string,
            keepStaff?: {name: string, index: number}[],           // 削除しても列を残す人
            keepAttrs?: {[name: string]: 属性ID},                  // その期間に効かせる旧属性
            laborTotals?: {[name]: {workMin,paid,publicOff,ceremony}},  // 凍結時点の労務の合計（年度の累計用）
-           submission?: {at: string, byUid: string} }                 // 企業への完成シフトの提出（2026-09-27。無ければ未提出）
+           submission?: {at: string, byUid: string},                  // 企業への完成シフトの提出（2026-09-27。無ければ未提出）
+           confirmation?: {at: string, byUid: string, note?: string},  // 確定（2026-09-30・P3）。セルの編集とスタッフの再提出を止める。旧 lockedAt はここへ統合（確定で消す）
+           delivery?: {at: string, byUid: string, method?: string},    // 本人への交付の記録（確定済みのときだけ。公開機能ではない）
+           history?: {[key: string]: {kind: "submit"|"resubmit"|"confirm"|"unconfirm"|"deliver", at, byUid, note?, method?}} }
+                                                                       // 上書きしない履歴。diffPeriodsForFlatWrite が記録1件ずつ書く
 
 // 提出
 Sub = { id: string, periodId: string, staffName: string, shopId: string,
@@ -618,6 +638,22 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
   オーナー200・形の不正401・企業の payCode 401）を実測済み
 - 検証: `tests/core.test.js`（数値・CF との一致・ドリフト検出）と `example-staff-pay.js`（スタブ・34項目・375px 含む）
 
+### 人×月の所定・確定ロック・交付（2026-09-30・P3・develop のみ・ルールは dev へのデプロイ待ち・CF は本番未反映）
+
+`労務給与_複数法人_実装計画.md` §3.4・§3.5・P3（決定 #1・#10・#18・#21）。
+- **確定の意味が変わった**: 以前の「この期間を確定」（終了後だけ・写しでマスタ固定・セルは編集可・`lockedAt` は誰も読まない）を
+  「確定」（終了前から可・**セルもロック**・スタッフの再提出をルールで拒否）に置き換えた。`resolvePeriodMaster` は
+  「(終了済み or 確定済み) かつ写しあり」で locked。シフト作成タブの写しの最新化は確定済みの期間で止まる（laborTotals は終了まで書く）
+- 解除は理由を `window.prompt` で取り履歴に残す。**写しは消さない**（以前の「確定を解除＝写しを消して現在値に戻す」は無くなった）
+- 労務判定表（全データPDFにも載る）に「月所定/上限」（所定上限＝年間所定の年按分・未設定なら総枠との差）と
+  「年平均所定/分母」（年度の開始月〜この月。laborMonths → この月はシフトから集計 → 実データ → 凍結値の順で埋める）を追加
+- 所定の手修正欄はシフト作成タブの労務判定表の下（「人×月の所定」を開く）。凍結済みの月は変更できない
+- 本部店舗（写しの `kind:"hq"`）のシフト作成タブに「固定勤務パターン」（既定 9:00〜18:00・休憩60分＝`adjustedBreak`）
+- 企業連携タブの提出状況表に「確定」「交付」列と「履歴」。店舗の staff・settings・company/settings・periods・laborMonths とその月の subs を読み、
+  シフト作成タブと同じ `planPeriodConfirmation` で書く（期間は差分 update）。企業の作成者がその店舗の owners に居ないと書き込みは拒否される
+- ルール: `laborMonths` は新ノード（オーナーのみ）＝本番はルールが先。subs の確定条件は既存パスの締め付け＝CLAUDE.md の順（クライアント先）
+- 検証: `tests/core.test.js`（計画・凍結条件・履歴の差分・改名の CF 一致・ルールと入口のドリフト検出）と `example-labor-confirm.js`（28項目）
+
 ### 人物ID と企業スタッフ一覧の編集（2026-09-30・P1b・develop のみ・CF は本番未反映・ルールの変更なし）
 
 `労務給与_複数法人_実装計画.md` §3.8・P1b（決定 #13）。企業レベルに personId を上乗せし、店舗側の名前キーは変えない。
@@ -635,7 +671,7 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
   settings・subs・periods・pay は**差分 update**（全体 set() しない）。規則は `functions/company-config.js` の
   `renameStaffSettingsPatch / renameStaffPeriodsPatch / renameStaffPayPatch / renameStaffSubsPatch / validateStaffRename` で、
   **クライアントの renameStaffInSettings / renameStaffInPeriods / renameStaffInPay を当てた結果と一致することをテストが照合する**。
-  **P3・P4 で足す `laborMonths`・`actuals` も名前キーなので、その担当が companyRenameStaff（と STAFF_KEYED_*_CF）へ移し替えを足す**
+  laborMonths（P3）は `renameStaffLaborMonthsPatch` で移している。**P4 で足す `actuals` も名前キーなので、その担当が companyRenameStaff（と STAFF_KEYED_*_CF）へ移し替えを足す**
 - 統合・統合解除は企業側の束ね方（people）だけを変え、店舗のデータは動かさない。統合は同じ店舗に別の登録名があると拒否（1店舗1名前）
 - 属性・所属店舗の変更は、つながっている全店舗の settings に同じ値を書く（StaffTab の「どの期間まで旧属性のままか」の確認は出さない）
 - 検証: `tests/core.test.js`（規則・CF とクライアントの一致・ドリフト検出）と `example-company-people.js`（スタブ・26項目・375px 含む。
