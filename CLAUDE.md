@@ -1013,9 +1013,9 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-09-29 自動実行 #154）
+## Shifty バグチェックレポート（2026-09-29 自動実行 #155）
 
-> 着手時の HEAD は `a774fdf`。#153 以降の配信コードの変更は3件（スタッフタブの行の折り返し・企業内登録スタッフの番号統合・全データPDFの労務表と年計の実データ化）で、いずれも本番へリリース済み。
+> 着手時の HEAD は `f09e4fa`。#154 以降のコミットは CLAUDE.md だけで、配信コードに変更は無い。
 
 ### 修正済み
 
@@ -1028,11 +1028,10 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 
 ### 異常なし
 
-- `npm test` **382件パス**・`npx eslint app-*.js` **0 errors / 101 warnings**（#153 と同数）。
+- `npm test` **382件パス**・`npx eslint app-*.js` **0 errors / 101 warnings**（#154 と同数）。
 - `DEV_MODE` は式のまま。フォーム部品88件で `fontSize` 16未満は0件。未定義のCSS変数・`subs` の全体 set()・`.delete()` はいずれも0件。
-- PDF の書き出し前の読み込み待ちは、同期的に登録される購読まで含めて待っている（`loadPastSubs`）。
-- 回帰スクリプト4本（pdf-labor・company-staff-directory・shift-edit-tab・staff-hidden）がすべて allPass。
-- 配信版数は `20260929-1d474a0` で6箇所一致。以降のコミットは docs だけ。
+- 配信版数は `20260929-1d474a0` で6箇所一致。
+- 配信コードが変わっていないため、回帰スクリプトは回していない。
 - **Firebase・Stripe・本番データには一切アクセスしていない。**
 <!-- BUG_CHECK_LATEST_END -->
 
