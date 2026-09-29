@@ -5848,3 +5848,196 @@ test("P4 CSV取込: 列の位置・見出し・別名・期間の外・知らな
   const r2 = u.planActualsImport({ text: "田中,11/2,11:00,18:00", mapping: { hasHeader: false, name: 1, date: 2, start: 3, end: 4, breakMin: 0 }, period, staffList: ["田中"], subs, settings, actuals: {} });
   assert.deepStrictEqual(r2.patch, { "p1/田中/2026-11-02": { start: "11:00", end: "18:00" } }, "列の位置を入れ替えられる");
 });
+
+// ===== P5 割増の計算（労務給与_複数法人_実装計画.md §4.1〜§4.4・§6 P5・決定 #3・#4・#5）=====
+// 期待値はすべて手計算（式と途中の値をコメントに書いた）。実装の出力から逆生成していない。
+// 日付の並びを作る: [開始日, 日数, (i,date)=>日の値]
+const p5Add = (s, n) => { const d = new Date(s + "T00:00:00"); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+const p5Days = (start, n, f) => Array.from({ length: n }, (_, i) => { const d = p5Add(start, i); return { date: d, ...f(i, d) }; });
+const p5Rest = { workMin: 0, scheduledMin: 0, nightMin: 0, rest: true };
+test("P5 深夜: 締 23:00〜25:00 は全部深夜・休憩が深夜帯にかかる分は引く（帯は重なり、位置の無い休憩は拘束比で按分）", () => {
+  const S = { candidates: [], breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] }, staffAttributes: {} };
+  // 締: 主シフト 13:00-17:00（休憩12-13は出勤が休憩開始以降なので当たらない）＋締 23:00-25:00
+  //  深夜 = [23:00,25:00]∩[22:00,29:00] = 120分。主シフトは深夜なし
+  const sub = { shifts: { "2026-11-04": { status: "work", start: "13:00", end: "17:00", extraStart: "23:00", extraEnd: "25:00" } } };
+  const d = u.resolveActualDay(sub, null, "2026-11-04", S, "田中");
+  assert.strictEqual(d.workMin, 360);
+  assert.strictEqual(u.nightMinutesOf(d), 120);
+  // 時間帯方式の休憩が深夜帯にある: 17:00-26:00・休憩 22:00-22:30（勤務が休憩を完全に含む）
+  //  深夜の拘束 = [22:00,26:00] = 240分、休憩のうち深夜 = 30分 → 210分
+  const Sb = { ...S, breakTimes: { weekday: [{ start: "22:00", end: "22:30" }] } };
+  const sb = { shifts: { "2026-11-02": { status: "work", start: "17:00", end: "26:00" } } };
+  const db = u.resolveActualDay(sb, null, "2026-11-02", Sb, "田中");
+  assert.strictEqual(db.workMin, 510);
+  assert.deepStrictEqual(db.breakBands, [{ startMin: 1320, endMin: 1350 }]);
+  assert.strictEqual(u.nightMinutesOf(db), 210);
+  // 長さ方式（休憩の位置が無い）: 17:00-27:00 拘束600分。実働基準で 600-60=540>480 → 休憩60分
+  //  深夜の拘束 = [22:00,27:00] = 300分 → 引く分 = floor(60×300/600) = 30 → 270分
+  const Sl = { ...S, breakMode: "length" };
+  const sl = { shifts: { "2026-11-02": { status: "work", start: "17:00", end: "27:00" } } };
+  const dl = u.resolveActualDay(sl, null, "2026-11-02", Sl, "田中");
+  assert.strictEqual(dl.breakMin, 60);
+  assert.strictEqual(dl.breakBands, null, "長さ方式は休憩の位置を持たない");
+  assert.strictEqual(u.nightMinutesOf(dl), 270);
+  // 実績で休憩の分だけを入れた日も按分: 17:00-26:00 拘束540分・休憩50分 → 深夜240 − floor(50×240/540=22.2)=22 → 218
+  const da = u.resolveActualDay(sb, { breakMin: 50 }, "2026-11-02", Sb, "田中");
+  assert.strictEqual(da.workMin, 490);
+  assert.strictEqual(da.breakBands, null);
+  assert.strictEqual(u.nightMinutesOf(da), 218);
+  // 早朝: 4:00-9:00 → [4:00,5:00] の60分。29:00-30:00（翌5:00〜6:00）は深夜ではない
+  assert.strictEqual(u.nightMinutesOf({ segments: [{ startMin: 240, endMin: 540 }], breakMin: 0 }), 60);
+  assert.strictEqual(u.nightOverlapMin(1740, 1800), 0);
+  assert.strictEqual(u.nightMinutesOf(u.resolveActualDay(sb, { absent: true }, "2026-11-02", Sb, "田中")), 0, "欠勤の日は0");
+});
+test("P5 A制: 12h 勤務の日と所定4hの日（①日・②週・所定は max(所定,8h)／max(Σ週所定,40h)）", () => {
+  // 2026-11-02(月) 1日だけ 実働720・所定480。ほかの日は休み。
+  //  ① = 720 − max(480,480) = 240。週(11/2〜8) Σ(実働−①) = 480 ≦ max(480,2400) → ②=0。③: 480 − 総枠 < 0 → 0
+  const nov = p5Days("2026-11-01", 30, (i, d) => d === "2026-11-02" ? { workMin: 720, scheduledMin: 480, nightMin: 0, rest: false } : p5Rest);
+  const frame = u.laborMonthFrame({}, "2026-11").baseMin;
+  assert.strictEqual(frame, 10285, "30日の総枠 = floor(2400×30/7)");
+  let b = u.premiumBreakdownOf({ system: "A", days: nov, ym: "2026-11", monthFrameMin: frame });
+  assert.deepStrictEqual({ d: b.dayOverMin, w: b.weekOverMin, m: b.monthOverMin, ot: b.otMin }, { d: 240, w: 0, m: 0, ot: 240 });
+  // 変形の所定10hの日: ① = 720 − max(600,480) = 120
+  const nov10 = nov.map(x => x.date === "2026-11-02" ? { ...x, scheduledMin: 600 } : x);
+  assert.strictEqual(u.premiumBreakdownOf({ system: "A", days: nov10, ym: "2026-11", monthFrameMin: frame }).dayOverMin, 120);
+  // 所定4hの日を含む週（11/2〜8）: 所定 月240・火〜金480・土0・日0（休み）／実績 月600・火〜金480・土300
+  //  ① 月 = 600 − max(240,480) = 120、土 = 300 − max(0,480) → 0
+  //  ② Σ(実働−①) = 480+1920+300 = 2700、Σ所定 = 2160 → max(2160,2400)=2400 → ② = 300（週の最後の日 11/8 に載る）
+  const sched = { "2026-11-02": 240, "2026-11-03": 480, "2026-11-04": 480, "2026-11-05": 480, "2026-11-06": 480 };
+  const act = { "2026-11-02": 600, "2026-11-03": 480, "2026-11-04": 480, "2026-11-05": 480, "2026-11-06": 480, "2026-11-07": 300 };
+  const wk = p5Days("2026-11-01", 30, (i, d) => act[d] ? { workMin: act[d], scheduledMin: sched[d] || 0, nightMin: 0, rest: false } : p5Rest);
+  b = u.premiumBreakdownOf({ system: "A", days: wk, ym: "2026-11", monthFrameMin: frame });
+  assert.deepStrictEqual({ d: b.dayOverMin, w: b.weekOverMin, m: b.monthOverMin, ot: b.otMin }, { d: 120, w: 300, m: 0, ot: 420 });
+  assert.deepStrictEqual(b.dayOt, { "2026-11-02": 120 });
+  assert.strictEqual(b.perDay["2026-11-08"], 300);
+  // 実績が月360（所定240）なら ① = max(0,360−480) = 0（所定が8h未満でも日の時間外は8hを超えてから）
+  const wk2 = wk.map(x => x.date === "2026-11-02" ? { ...x, workMin: 360 } : x);
+  assert.strictEqual(u.premiumBreakdownOf({ system: "A", days: wk2, ym: "2026-11", monthFrameMin: frame }).dayOverMin, 0);
+});
+test("P5 A制: ③月の総枠超と月60h超（法定休日労働は60hに含めない）", () => {
+  // 11月の平日20日（11/2〜27の月〜金）を実働480・所定480。総枠を3000分として渡す。
+  //  ① 0、② 各週 Σ2400 − max(2400,2400) = 0、③ = 9600 − 3000 = 6600 → 60h超 = 6600 − 3600 = 3000
+  const wd = d => { const w = new Date(d + "T00:00:00").getDay(); return w >= 1 && w <= 5 && d <= "2026-11-27" && d >= "2026-11-02"; };
+  const days = p5Days("2026-11-01", 30, (i, d) => wd(d) ? { workMin: 480, scheduledMin: 480, nightMin: 0, rest: false } : p5Rest);
+  const b = u.premiumBreakdownOf({ system: "A", days, ym: "2026-11", monthFrameMin: 3000 });
+  assert.deepStrictEqual({ d: b.dayOverMin, w: b.weekOverMin, m: b.monthOverMin, ot: b.otMin, o60: b.over60Min }, { d: 0, w: 0, m: 6600, ot: 6600, o60: 3000 });
+  assert.strictEqual(b.perDay["2026-11-30"], 6600, "③は月の最終日に載せる");
+  assert.strictEqual(b.legalHolidayMin, 0);
+});
+test("P5 法定休日: 休日ゼロの週の最後の勤務日（①②③に含めない・深夜は別に持つ）／実績の指定が優先／7日揃わない週は判定しない", () => {
+  // 11/9(月)〜15(日) を毎日 実働480・所定480。休日が1日も無い → 最後の勤務日 11/15 が法定休日労働（480分）。
+  // 11/15 は深夜60分つき → 法定休日の深夜 60。ほかの週は休み（前の週 11/2〜8 は 11/1 を含むが 11/1 は休み）
+  const allWeek = d => d >= "2026-11-09" && d <= "2026-11-15";
+  const mk = over => p5Days("2026-10-26", 36, (i, d) => allWeek(d) ? { workMin: 480, scheduledMin: 480, nightMin: d === "2026-11-15" ? 60 : 0, rest: false, ...(over[d] || {}) } : p5Rest);
+  let b = u.premiumBreakdownOf({ system: "B", days: mk({}), ym: "2026-11", monthFrameMin: 0 });
+  assert.deepStrictEqual(b.legalHolidayDates, ["2026-11-15"]);
+  assert.deepStrictEqual({ lh: b.legalHolidayMin, lhn: b.legalHolidayNightMin, night: b.nightMin }, { lh: 480, lhn: 60, night: 60 });
+  // B制の週: 法定休日を除いた6日 Σ2880 − 2400 = 480（②）。①は0
+  assert.deepStrictEqual({ d: b.dayOverMin, w: b.weekOverMin, ot: b.otMin }, { d: 0, w: 480, ot: 480 });
+  // A制: Σ(実働−①) = 2880、Σ所定 = 2880（法定休日の日は所定からも外す）→ ② = 2880 − max(2880,2400) = 0
+  const a = u.premiumBreakdownOf({ system: "A", days: mk({}), ym: "2026-11", monthFrameMin: 10285 });
+  assert.deepStrictEqual({ w: a.weekOverMin, ot: a.otMin, lh: a.legalHolidayMin }, { w: 0, ot: 0, lh: 480 });
+  // 実績で 11/11 を法定休日に指定 → その日だけ（自動判定しない）。B制の週は 11/15 を含む6日で ② = 480
+  b = u.premiumBreakdownOf({ system: "B", days: mk({ "2026-11-11": { manualLegal: true } }), ym: "2026-11" });
+  assert.deepStrictEqual(b.legalHolidayDates, ["2026-11-11"]);
+  assert.deepStrictEqual(b.legalHolidayManual, ["2026-11-11"]);
+  // 休日が1日ある週は法定休日なし
+  b = u.premiumBreakdownOf({ system: "B", days: mk({ "2026-11-12": { workMin: 0, scheduledMin: 0, rest: true } }), ym: "2026-11" });
+  assert.deepStrictEqual(b.legalHolidayDates, []);
+  assert.strictEqual(b.weekOverMin, 480, "休日を除く6日×480 = 2880 − 2400 → ②480（法定休日が無いので全日を週に数える）");
+  // 有給・欠勤の日（働いていないが休日ではない）は休日に数えない → 最後の勤務日 11/15 が法定休日
+  b = u.premiumBreakdownOf({ system: "B", days: mk({ "2026-11-12": { workMin: 0, scheduledMin: 480, rest: false } }), ym: "2026-11" });
+  assert.deepStrictEqual(b.legalHolidayDates, ["2026-11-15"]);
+  // データの無い日がある週は判定しない
+  b = u.premiumBreakdownOf({ system: "B", days: mk({ "2026-11-12": { rest: null } }), ym: "2026-11" });
+  assert.deepStrictEqual(b.legalHolidayDates, []);
+  assert.ok(b.undeterminedWeeks.includes("2026-11-09"));
+  // 60h超に法定休日労働を含めない: 上の③の例に法定休日480分を足しても 60h超は変わらない
+  assert.strictEqual(u.legalHolidayDatesOf({ days: mk({}) }).auto[0], "2026-11-15");
+});
+test("P5 月をまたぐ週: 既定はその月の日だけで切る（weekSplitAtMonthEdge=1）／0は週の開始日の月に7日まるごと", () => {
+  // 週 9/28(月)〜10/4(日): 9/28〜10/3 を実働600（10h）、10/4 は休み。10/5〜31 と 9/1〜27 は休み。B制。
+  const work = d => d >= "2026-09-28" && d <= "2026-10-03";
+  const days = p5Days("2026-09-01", 61, (i, d) => work(d) ? { workMin: 600, scheduledMin: 480, nightMin: 0, rest: false } : p5Rest);
+  // 10月・切る: 10/1〜3 の① = 120×3 = 360。週(10/1〜4) Σ(実働−①) = 1440 ≦ 2400 → ②0
+  let b = u.premiumBreakdownOf({ system: "B", days, ym: "2026-10", splitAtMonthEdge: 1 });
+  assert.deepStrictEqual({ d: b.dayOverMin, w: b.weekOverMin, ot: b.otMin }, { d: 360, w: 0, ot: 360 });
+  // 9月・切る: 9/28〜30 の① = 360、週(9/28〜30) Σ1440 → ②0
+  b = u.premiumBreakdownOf({ system: "B", days, ym: "2026-09", splitAtMonthEdge: 1 });
+  assert.deepStrictEqual({ d: b.dayOverMin, w: b.weekOverMin }, { d: 360, w: 0 });
+  // 9月・切らない（行政解釈）: 週 9/28〜10/4 は9月の分。Σ(実働−①) = 480×6 = 2880 → ② = 480（9月の最後の日 9/30 に載る）
+  b = u.premiumBreakdownOf({ system: "B", days, ym: "2026-09", splitAtMonthEdge: 0 });
+  assert.deepStrictEqual({ d: b.dayOverMin, w: b.weekOverMin, ot: b.otMin }, { d: 360, w: 480, ot: 840 });
+  assert.strictEqual(b.perDay["2026-09-30"], 120 + 480);
+  // 10月・切らない: その週は9月の分なので②は出ない（①は日なので10月の日の分）
+  b = u.premiumBreakdownOf({ system: "B", days, ym: "2026-10", splitAtMonthEdge: 0 });
+  assert.deepStrictEqual({ d: b.dayOverMin, w: b.weekOverMin }, { d: 360, w: 0 });
+  // 既存の B制の週40h超（労務判定の weekOver40）は今までどおり月で切らない＝同じ週で 480 のまま（P2 の約束）
+  assert.strictEqual(u.weeklyOverMinB([600, 600, 600, 600, 600, 600, 0]), 480);
+  // 週の起算: 日曜起算なら 10/4(日) の週は 10/4〜10
+  assert.strictEqual(u.premiumWeekStartOf("2026-10-04", 0), "2026-10-04");
+  assert.strictEqual(u.premiumWeekStartOf("2026-10-04", 1), "2026-09-28");
+});
+test("P5 36協定: B制に月45h・単月100h、100h と複数月平均80h は法定休日労働を含める", () => {
+  const base = { laborSystem: "B", dayMins: [], agreementMonthlyOtH: 45, monthReady: true };
+  const K = o => u.laborFindingsFor({ ...base, ...o }).map(f => f.key);
+  assert.ok(K({ monthOtH: 46 }).includes("monthOtOverAgreement"));
+  assert.ok(!K({ monthOtH: 45 }).includes("monthOtOverAgreement"), "ちょうど45hは超えていない");
+  assert.ok(!K({ monthOtH: 46, monthReady: false }).includes("monthOtOverAgreement"), "月が埋まるまで出さない");
+  assert.ok(K({ monthOtH: 90, monthAgreementH: 100 }).includes("monthOt100"), "時間外90h＋法定休日10h = 100h");
+  assert.strictEqual(u.overallVerdictOf({ laborSystem: "B", findings: u.laborFindingsFor({ ...base, monthOtH: 46 }) }).key, "fix");
+  // A制の単月100h も同じ（以前は残業予定だけ＝休日労働を足していなかった）
+  const A = o => u.laborFindingsFor({ laborSystem: "A", dayMins: [], monthReady: true, ...o }).map(f => f.key);
+  assert.ok(!A({ monthOtH: 90 }).includes("monthOt100"));
+  assert.ok(A({ monthOtH: 90, monthAgreementH: 101 }).includes("monthOt100"));
+  // premiumAgreementH = (時間外 + 法定休日労働)/60 を2桁
+  assert.strictEqual(u.premiumAgreementH({ otMin: 5400, legalHolidayMin: 610 }), 100.17);
+  // 複数月平均80h: 時間外70h×2 では出ないが、法定休日15hずつを足すと 85h 平均で出る
+  const M = arr => arr.map(([h, ag]) => ({ h, ag }));
+  assert.ok(!u.agreementYearFindings(M([[70, 70], [70, 70]]), 360).some(f => f.key === "avgOver80"));
+  assert.ok(u.agreementYearFindings(M([[70, 85], [70, 85]]), 360).some(f => f.key === "avgOver80"));
+  // 年360h・年720h・月45h超の回数は時間外だけ（ag を使わない）
+  assert.ok(!u.agreementYearFindings(M([[40, 50], [40, 50]]), 360).some(f => f.key === "over45Count"));
+  // yearOvertimeMonths は凍結値 monthAgH、live の {h,ag} を読む。monthAgH の無い凍結値は h で代える
+  const periods = [
+    { id: "a", startDate: "2026-04-01", laborTotals: { 田中: { monthOtH: 10, monthAgH: 18 } } },
+    { id: "b", startDate: "2026-05-01", laborTotals: { 田中: { monthOtH: 12 } } },
+    { id: "c", startDate: "2026-06-01" }];
+  const yo = u.yearOvertimeMonths(periods, "田中", 2026, 4, ym => ym === "2026-06" ? { h: 5, ag: 9 } : null);
+  assert.deepStrictEqual(yo.scoped.map(v => [v.h, v.ag]), [[10, 18], [12, 12], [5, 9]]);
+  // B制の月の時間外を laborTotals に持つ
+  assert.deepStrictEqual(u.compactLaborTotal({ workMin: 600, monthOtH: 3.5, monthAgH: 11.5 }), { workMin: 600, monthOtH: 3.5, monthAgH: 11.5 });
+  assert.strictEqual(u.laborTotalsEqual({ a: { monthAgH: 1 } }, { a: { monthAgH: 2 } }), false);
+  // 設定画面の説明文も「足していない」ではなくなった
+  assert.ok(!u.AGREEMENT_LEGAL_ITEMS.some(i => /足していません/.test(i.note)));
+});
+test("P5 労務確認パネル: 割増の該当日（期間の日だけ）・総括は変えない", () => {
+  const b = { dayOt: { "2026-11-02": 120, "2026-11-20": 60 }, weekOt: [{ weekStart: "2026-11-02", dates: ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06", "2026-11-07", "2026-11-08"], min: 300, lastDate: "2026-11-08" }],
+    nightDates: ["2026-11-04"], legalHolidayDates: ["2026-11-15"], over60Min: 90 };
+  const dates = u.gd("2026-11-01", "2026-11-15");
+  const f = u.premiumFindingsFor(b, { system: "A", dates });
+  assert.deepStrictEqual(f.map(x => x.label), ["日の時間外1日（2）", "週の時間外（2〜8）", "深夜1日（4）", "法定休日労働1日（15）", "月60h超 1:30"]);
+  assert.deepStrictEqual(u.premiumFindingsFor(b, { system: "none", dates }), []);
+  assert.ok(f.every(x => u.PREMIUM_FINDING_KEYS.includes(x.key)));
+  // 要修正に入らない（OK のまま）
+  assert.strictEqual(u.overallVerdictOf({ laborSystem: "A", findings: f, guideKey: "ok" }).key, "ok");
+});
+test("P5 他店の実績（P3.6 の申し送り）: 行き先の店のオーナーで読めたときだけ実績で解決し、読めず確定済みの期間なら印を付ける", () => {
+  const sh = { status: "work", start: "17:00", end: "23:00" };
+  const mkShop = (over) => u.otherShopDataOf({ name: "三宮", settings: {}, staff: ["田中"],
+    subs: { s: { staffName: "田中", shifts: { "2026-11-04": sh } } },
+    periods: { p9: { id: "p9", startDate: "2026-11-01", endDate: "2026-11-15", confirmation: { at: "2026-11-16T00:00:00Z" } } }, ...over });
+  const regs = [{ shopId: "S2", name: "田中" }];
+  // 読めた（オーナー）: 実績 退勤 25:00 → 実働 480・深夜 [22:00,25:00] = 180
+  let r = u.helperActualDaysOn({ regs, otherShops: { S2: mkShop({ actuals: { p9: { 田中: { "2026-11-04": { end: "25:00" } } } } }) }, date: "2026-11-04" });
+  assert.strictEqual(r.length, 1);
+  assert.deepStrictEqual({ w: r[0].day.workMin, n: u.nightMinutesOf(r[0].day), un: r[0].actualUnread }, { w: 480, n: 180, un: false });
+  // 読めない（店長のセッション）: 確定シフトで解決（360・深夜60）し、確定済みの期間なので actualUnread
+  r = u.helperActualDaysOn({ regs, otherShops: { S2: mkShop({ actualsUnread: true }) }, date: "2026-11-04" });
+  assert.deepStrictEqual({ w: r[0].day.workMin, n: u.nightMinutesOf(r[0].day), un: r[0].actualUnread }, { w: 360, n: 60, un: true });
+  // 未確定の期間なら実績の入口が無いので印を付けない
+  const unconf = mkShop({ actualsUnread: true, periods: { p9: { id: "p9", startDate: "2026-11-01", endDate: "2026-11-15" } } });
+  assert.strictEqual(u.helperActualDaysOn({ regs, otherShops: { S2: unconf }, date: "2026-11-04" })[0].actualUnread, false);
+  // 自店の勤務と時間が重なる他店の勤務は足さない（helperWorkOn と同じ）
+  assert.strictEqual(u.helperActualDaysOn({ regs, otherShops: { S2: mkShop({ actuals: {} }) }, date: "2026-11-04", ownRange: { startMin: 1000, endMin: 1100 } }).length, 0);
+});
