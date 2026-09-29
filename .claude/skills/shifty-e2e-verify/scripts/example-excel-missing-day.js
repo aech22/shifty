@@ -39,7 +39,7 @@ const DATES = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-
       shifts: {
         [dates[0]]: mk("09:00", "18:00"),
         [dates[1]]: { status: "holiday" },                                    // 本人提出の休み → 斜線のまま
-        [dates[2]]: { status: "work", adminRest: { start: true, end: true } }, // 管理者の y → 斜線のまま
+        [dates[2]]: { status: "work", adminRest: { start: true, end: true } }, // 管理者の /（休み希望） → 斜線のまま
         // dates[3] / dates[4] は期間の延長で増えた日＝エントリ無し → 空白であるべき
       }, comment: "", submittedAt: "2026-09-01T00:00:00Z",
     }, {

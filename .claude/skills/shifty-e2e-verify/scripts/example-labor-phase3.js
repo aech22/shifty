@@ -70,7 +70,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
       return i?{v:i.value,img:(getComputedStyle(i).backgroundImage||"").replace(/\s/g,"")}:null;};
     return{labor:tbl("労務判定（2026年10月）"),weekRest:tbl("週の休み"),
       panel:panel?panel.innerText.replace(/\s+/g," "):null,
-      c14s:cell("2026-10-14","start"),c14e:cell("2026-10-14","end"),cY:cell("2026-10-15","start")};
+      c14s:cell("2026-10-14","start"),c14e:cell("2026-10-14","end"),cY:cell("2026-10-15","start"),
+      cYe:cell("2026-10-15","end"),cOld:cell("2026-10-16","start")};
   });
   const before=await read();
   // 10/14 に yu（終日の有給）を入れる
@@ -81,18 +82,29 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
     i.blur();i.dispatchEvent(new Event("focusout",{bubbles:true}));
   });
   await h.page.waitForTimeout(800);
-  // 10/15 は y を出勤・退勤の両方に入れて終日の休み希望にする（斜線のまま・文字なし）
-  for(const f of ["start","end"]){
-    await h.evaluate(fl=>{
-      const i=document.querySelector(`input[data-sc="2026-10-15|${fl}"][data-scn="田中"]`);
+  // 10/15 は休み希望を出勤（半角 /）・退勤（全角 ／）の両方に入れて終日にする（斜線のまま・文字なし）。
+  // 休み希望は 2026-09-30 に y から / へ変えた（計画書 §3.9・P0）。
+  // 10/16 の出勤には廃止した y を打つ＝休みにならずメモとして残る（斜線も adminRest も付かない）
+  for(const [d,f,v] of [["2026-10-15","start","/"],["2026-10-15","end","／"],["2026-10-16","start","y"]]){
+    await h.evaluate(([dd,fl,vv])=>{
+      const i=document.querySelector(`input[data-sc="${dd}|${fl}"][data-scn="田中"]`);
       const st=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,"value").set;
-      i.focus();st.call(i,"y");i.dispatchEvent(new Event("input",{bubbles:true}));
+      i.focus();st.call(i,vv);i.dispatchEvent(new Event("input",{bubbles:true}));
       i.blur();i.dispatchEvent(new Event("focusout",{bubbles:true}));
-    },f);
+    },[d,f,v]);
     await h.page.waitForTimeout(600);
   }
   const after=await read();
   after.saved=await h.evaluate(()=>((window.__subs[0].shifts||{})["2026-10-14"]||null));
+  after.saved15=await h.evaluate(()=>((window.__subs[0].shifts||{})["2026-10-15"]||null));
+  after.saved16=await h.evaluate(()=>((window.__subs[0].shifts||{})["2026-10-16"]||null));
+  // 操作方法レジェンドを開き、セル内コマンドのチップを読む（レジストリから自動生成される）
+  await h.evaluate(()=>{const b=[...document.querySelectorAll("button")].find(x=>(x.innerText||"").includes("操作方法（セル入力コマンド"));if(b)b.click();});
+  await h.page.waitForTimeout(300);
+  after.legend=await h.evaluate(()=>{
+    const rows=[...document.querySelectorAll("code")].map(c=>{const r=c.closest("div")&&c.closest("div").parentElement;
+      return{chip:c.innerText.trim(),desc:r?(r.innerText||"").replace(/\s+/g," "):""};});
+    return rows;});
   after.errors=h.errors.slice();
   await h.close();
   return{before,after};
@@ -241,8 +253,18 @@ const cellOf=(t,row,i=0)=>((t&&t[row])||[])[i];
     yu_no_color:!!s.after.c14s&&!s.after.c14s.img.includes("rgb(220,235,251)"),
     // 種別名を出すセルには斜線も引かない（文字と重なって読めなくなるため）
     yu_no_hatch:!!s.after.c14s&&!/svg/.test(s.after.c14s.img||""),
-    // y は文字を出さず斜線のまま（2026-09-26 ユーザー指示）。数え方は公休のまま
+    // 休み希望（/）は文字を出さず斜線のまま（2026-09-26 ユーザー指示）。数え方は公休のまま
     y_hatch_no_text:!!s.after.cY&&s.after.cY.v===""&&/svg/.test(s.after.cY.img||""),
+    // 全角 ／ でも同じく休み希望になる（退勤セル）。両帯に adminRest が立ち、種別は書かない
+    slash_fullwidth_hatch:!!s.after.cYe&&s.after.cYe.v===""&&/svg/.test(s.after.cYe.img||""),
+    slash_saved_both:!!s.after.saved15&&!!s.after.saved15.adminRest&&s.after.saved15.adminRest.start===true
+      &&s.after.saved15.adminRest.end===true&&!s.after.saved15.leaveTypes&&!s.after.saved15.leaveType,
+    // 廃止した y は休みにならない: 斜線なし・adminRest なし・メモとして文字が残る
+    // 操作方法レジェンドの休み希望のチップが「/」で、廃止した y のチップは無い
+    legend_slash:Array.isArray(s.after.legend)&&s.after.legend.some(r=>r.chip==="/"&&/休み希望/.test(r.desc))
+      &&!s.after.legend.some(r=>r.chip==="y"),
+    old_y_not_rest:!!s.after.cOld&&s.after.cOld.v==="y"&&!/svg/.test(s.after.cOld.img||"")
+      &&!(s.after.saved16&&s.after.saved16.adminRest),
     yu_counted:/有0\.5\//.test(cellOf(s.after.labor,"休暇")||""),
     paid_remaining:cellOf(s.after.labor,"有給残")==="9.5日",
     year_total:cellOf(s.before.labor,"2026年度計")==="100:00",
