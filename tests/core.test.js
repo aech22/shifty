@@ -4674,6 +4674,22 @@ test("P6a 改名・削除の後始末: private/pay が追随する（STAFF_KEYED
   assert.strictEqual(u.dropStaffFromPay(m, ["佐藤"]), null);
   assert.strictEqual(u.dropStaffFromPay(null, ["田中"]), null);
 });
+test("P6a ドリフト検出: 改名と削除の入口が private/pay の後始末を通る", () => {
+  const fs = require("node:fs");
+  const admin = fs.readFileSync(require("node:path").join(__dirname, "..", "app-admin.js"), "utf8");
+  // 改名（AdminView の onRenameStaff）は renameStaffInSettings と同じ場所で pay も移す
+  const ren = admin.slice(admin.indexOf("onRenameStaff={(oldName,newName)=>{"));
+  const renBody = ren.slice(0, ren.indexOf("tt(`✓ ${oldName} → ${newName} に変更しました`)"));
+  assert.ok(/renameStaffInSettings\(/.test(renBody) && /pay\.rename\(/.test(renBody), "改名で private/pay を移していない");
+  // 削除の後始末（settingsWithoutStaff を呼ぶ場所すべて）の直後で pay も落とす
+  const sites = [];
+  let i = -1;
+  while ((i = admin.indexOf("=settingsWithoutStaff(", i + 1)) >= 0) sites.push(i);
+  assert.ok(sites.length >= 2, `settingsWithoutStaff の呼び出しが ${sites.length} か所しか見つからない`);
+  sites.forEach(at => assert.ok(admin.slice(at, at + 400).includes("pay.drop("), `settingsWithoutStaff の呼び出し（${admin.slice(0, at).split("\n").length}行目）の近くに pay.drop が無い`));
+  const main = fs.readFileSync(require("node:path").join(__dirname, "..", "app-main.js"), "utf8");
+  assert.ok(/renameStaffInPay\(/.test(main) && /dropStaffFromPay\(/.test(main), "app-main.js が改名・削除の差分関数を使っていない");
+});
 test("P6a パスコード: SHA-256(salt+code) がクライアントと CF で一致し、未設定は 0000 を受け付ける", async () => {
   for (const [salt, code] of [["ab", "1234"], ["", "0000"], ["0123456789abcdef0123456789abcdef", "9876"]]) {
     assert.strictEqual(await u.payCodeHash(salt, code), cfc.payCodeHashCF(salt, code));
@@ -4693,6 +4709,11 @@ test("P6a パスコード: SHA-256(salt+code) がクライアントと CF で一
   ["", "123", "12345", "１２３４", "12a4", 1234, null].forEach(c => assert.strictEqual(cfc.isValidPayCodeCF(c), u.isValidPayCode(c), String(c)));
   assert.strictEqual(u.payCodeIdentity(rec), rec.hash);
   assert.strictEqual(u.payCodeIdentity(null), "default");
+});
+test("P6a sha256HexOfBytes: crypto.subtle が無い環境の予備実装が Node の SHA-256 と一致する", () => {
+  const crypto = require("node:crypto");
+  const inputs = ["", "abc", "0000", "s1" + "4321", "あいう漢字", "x".repeat(55), "y".repeat(56), "z".repeat(64), "w".repeat(1000)];
+  inputs.forEach(str => assert.strictEqual(u.sha256HexOfBytes(new TextEncoder().encode(str)), crypto.createHash("sha256").update(str, "utf8").digest("hex"), JSON.stringify(str.slice(0, 10))));
 });
 test("P6a パスコード: 5回失敗で60秒待たせ、成功で数え直す", () => {
   let st = { fails: 0, lockedUntil: 0 };
