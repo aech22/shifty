@@ -6041,3 +6041,35 @@ test("P5 他店の実績（P3.6 の申し送り）: 行き先の店のオーナ�
   // 自店の勤務と時間が重なる他店の勤務は足さない（helperWorkOn と同じ）
   assert.strictEqual(u.helperActualDaysOn({ regs, otherShops: { S2: mkShop({ actuals: {} }) }, date: "2026-11-04", ownRange: { startMin: 1000, endMin: 1100 } }).length, 0);
 });
+test("P5 画面の入口: premiumDayInput（休日の数え方）・premiumMonthDates（前後の週）・premiumMonthOf・premiumRowCell（＋と前提の注記）", () => {
+  // 休日: 空欄・公休は休日、実績で働いた日・欠勤は休日にしない、データの無い日は null
+  const own = w => ({ workMin: w, scheduledWorkMin: 0, segments: [], breakMin: 0 });
+  assert.strictEqual(u.premiumDayInput({ date: "2026-11-01", own: own(0), kind: "rest" }).rest, true);
+  assert.strictEqual(u.premiumDayInput({ date: "2026-11-01", own: own(300), kind: "rest" }).rest, false, "予定の休みに働いた");
+  assert.strictEqual(u.premiumDayInput({ date: "2026-11-01", own: { ...own(0), absent: true }, kind: "work" }).rest, false, "欠勤");
+  assert.strictEqual(u.premiumDayInput({ date: "2026-11-01", own: own(0), kind: "leave" }).rest, false, "有給");
+  assert.strictEqual(u.premiumDayInput({ date: "2026-11-01", own: own(0), kind: "rest", hasData: false }).rest, null);
+  // 他店の勤務を足す（実働・所定・深夜）。行き先の実績を読めない日は unread
+  const hd = { workMin: 360, scheduledWorkMin: 360, segments: [{ startMin: 1020, endMin: 1380 }], breakMin: 0 };
+  const x = u.premiumDayInput({ date: "2026-11-04", own: own(0), kind: "work", helpers: [{ day: hd, actualUnread: true }] });
+  assert.deepStrictEqual({ w: x.workMin, s: x.scheduledMin, n: x.nightMin, r: x.rest, un: x.unread }, { w: 360, s: 360, n: 60, r: false, un: true });
+  // 11月（1日が日曜）: 月曜起算で 10/26〜12/6 の6週42日
+  const md = u.premiumMonthDates("2026-11", 1);
+  assert.deepStrictEqual([md[0], md[md.length - 1], md.length], ["2026-10-26", "2026-12-06", 42]);
+  // premiumMonthOf は settings の労務設定（週の起算・月で切る・総枠）で premiumBreakdownOf を通す
+  const pm = u.premiumMonthOf({ ym: "2026-11", system: "B", settings: {}, dayOf: d => ({ date: d, workMin: d === "2026-11-02" ? 600 : 0, scheduledMin: 0, nightMin: 0, rest: d !== "2026-11-02" }) });
+  assert.deepStrictEqual({ ot: pm.otMin, h: pm.otH, ag: pm.agH, un: pm.unread }, { ot: 120, h: 2, ag: 2, un: false });
+  // セル: 月が埋まっていない → 「＋」と淡色、実績を読めない端末 → 注記
+  const l = { sys: "A", monthCovered: true, prem: { otMin: 240, dayOverMin: 240, weekOverMin: 0, monthOverMin: 0, nightMin: 0, nightDates: [], legalHolidayMin: 480,
+    legalHolidayDates: ["2026-11-15"], legalHolidayManual: [], legalHolidayNightMin: 0, over60Min: 0, unread: false } };
+  const c = u.premiumRowCell("ot", l, { actualsReadable: true });
+  assert.deepStrictEqual({ v: c.label, t: /①日 4:00／②週 0:00／③月 0:00/.test(c.title) && /実績（入力の無い日は確定シフト）で計算/.test(c.title) }, { v: "4:00", t: true });
+  assert.strictEqual(u.premiumRowCell("ot", { ...l, monthCovered: false }, { pendingReason: "途中" }).label, "＋4:00");
+  assert.ok(/確定シフトで計算/.test(u.premiumRowCell("legal", l, {}).title));
+  assert.strictEqual(u.premiumRowCell("legal", l, {}).label, "8:00");
+  assert.strictEqual(u.premiumRowCell("night", l, {}).label, undefined, "0 は空欄");
+  const un = u.premiumRowCell("legal", { ...l, prem: { ...l.prem, unread: true } }, {});
+  assert.ok(un.label === "＋8:00" && /他店の実績を読み込めていません/.test(un.title));
+  // B制の残業予定: この期間の①＋②（分）を時間で
+  assert.strictEqual(u.premiumRowCell("bPlan", { ...l, sys: "B", periodOtB: 840, monthOtB: 14 }, { monthLabel: "2026年11" }).label, "14h");
+});
