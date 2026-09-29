@@ -75,7 +75,7 @@ developブランチ・mainブランチのどちらにチェックアウトして
 ├── app-staff.js        ← ShiftyIcon, StaffView, StaffHdr, CellEditPanel, SmModal（babel）
 ├── app-admin.js        ← AdminView・期間/スタッフ/候補/提出一覧/マイページの各タブ, expXl, UpgradeModal, AC/AL/AT/CL（babel）
 ├── app-shift.js        ← シフト作成タブ一式（ShiftEditTab・実績の ActualsGrid/ActualsCsvDialog・HeatTable/SummaryTable/GridLegend・LEGEND_COLORS/FIXED_KEY 等）（babel）
-├── app-company.js      ← 企業連携タブ一式（CompanyTab と部品・企業の一括PDF）・設定タブ（SetTab）・賃金マスタ（StaffPayPage・PayCodeBox）（babel）
+├── app-company.js      ← 企業連携タブ一式（CompanyTab と部品・企業の一括PDF）・設定タブ（SetTab）・賃金マスタ（StaffPayPage・PayCodeBox）・月次賃金（PayrollPage）（babel）
 ├── app-main.js         ← App() 本体 + ReactDOM マウント（babel）
 ├── tests/
 │   └── core.test.js    ← app-utils.js の Node ユニットテスト（node --test）。管理者画面の実装を読むドリフト検出は
@@ -299,6 +299,10 @@ sanitizeWageSettings / minWageOn / MIN_WAGE_MAX_ENTRIES
                            // 法人設定 wageSettings.minWage=[{from,yen}]（最低賃金の履歴）。CF 側の同じ規則は functions/company-config.js
                            // （tests/core.test.js が照合）。**店舗の settings には入らない**（applyCompanySettings は労務と属性だけを重ねる）。
                            // 画面は companyLink.settings.wageSettings を直接読む。その日に効く最賃が無ければ比較を出さない
+PREMIUM_RATE_KEYS / LEGAL_PREMIUM_RATES / PREMIUM_RATE_MAX / premiumRatesOf / ROUNDING_RULES / roundingRuleOf / roundYenFrac / DEDUCTION_ROUNDING
+wageOf / deductionOf / monthlyPayBreakdown / PAYROLL_COLUMNS / payrollRowValues / payrollCellText / payrollCsvOf
+                           // 月次の賃金計算（2026-09-30・P6b・§4.5）。詳細は「月次賃金（P6b）」の節。wageSettings に割増率（法定より下げられない）と
+                           // 端数規則（既定 ceil）を足した（sanitizeWageSettings・CF と同じ規則）。額は単価を分数のまま整数で割り項目ごとに丸める
 PAY_TYPES / isPayTypeFixed / defaultPayTypeOf / normalizePayVersion / withFixedOtAmount / applyPayRevision / payVersionOn
                            // 賃金の1版の形。社員（employee）は月給固定（決定17）、企業属性は月給・それ以外は時給が既定。
                            // **改定は版を足す**: 適用開始日を変えた保存は前の版を history へ積み、同じ日のままの保存はその版の訂正
@@ -462,6 +466,7 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `CompanyPersonEditModal / CompanyPersonMergeModal` | app-company.js | 企業内登録スタッフの編集（2026-09-30・P1b）。名前の変更（店舗ごとにチェック・CF `companyRenameStaff`）・番号/法人/属性/所属店舗（`companyUpdateStaff`・属性と所属店舗はつながっている全店舗に同じ値）・統合の解除（店舗ごとに「切り出す」＝`splitPerson`）・「ID を番号に振り直す」（`reassignPersonId`・番号が数字だけで ID と違うときだけ）。統合は残す方（番号・法人・所属）を選ぶ（`mergePeople`）。結果は一覧の上に出す（全画面なので AdminView のトーストは出ない） |
 | `StaffPayPage` | app-company.js | 賃金設定ページ（2026-09-30・P6a・Premium・オーナー）。スタッフタブ → 編集 → 「賃金設定を開く →」で AdminView の `fullPage={kind:"staffPay",name}` が管理者画面を差し替える（`CompanyStaffDirectory` と同じ方式）。「← 戻る」で編集モーダルを開き直す（`returnEdit` → StaffTab の `initialEditKey`）。**所属店舗のスタッフだけ**編集でき、ヘルプの人は編集モーダルで「賃金は所属店舗（◯◯）で設定します」。保存先は `shops/{sid}/private/pay/{名前}`（`applyPayRevision` を通す） |
 | `PayCodeBox / PayCodeChangeModal / PAY_OFF` | app-company.js | 賃金の閲覧パスコード（P6a）。ボックスはスタッフタブの「スタッフ登録」の横・`StaffPayPage` の上部・企業内登録スタッフの上部（従業員番号順・店舗別の次）。解除前は金額を「••••」にして編集させない（時間と最賃の可否は伏せない）。`PAY_OFF` は pay を持たない呼び出し元の既定値 |
+| `PayrollPage` | app-company.js | 月次賃金（2026-09-30・P6b・Premium・オーナー）。AdminView の `fullPage={kind:"payroll",shopId?,shopName?}`。入口はスタッフタブの「スタッフ登録」の横の「月次賃金 →」（自店・`pay.enabled`）と企業連携タブの法人カードの「月次賃金: 店舗 →」（法人 → 店舗）。対象店舗の ShiftEditTab を画面外へマウントし `exportJob.kind="payroll"` で時間を受け取る。人×項目の表と CSV（パスコード解除後だけ） |
 | `SetTab` | app-company.js | 設定（管理コード・属性別制限・退勤延長・Excel・期間単位・テーマ・アカウント連携） |
 | `MyPageTab` | app-admin.js | マイページ（プラン確認・アップグレード・利用規約） |
 | `TermsModal` | app-admin.js | 利用規約全文モーダル（`TERMS_TEXT` 定数を表示） |
@@ -651,7 +656,10 @@ Person = { displayName: string, entityId?: string, number?: string, links: {[sho
 
 // 企業設定の写し（shops/{shopId}/company・2026-09-27）
 CompanyLink = { id: string, name: string, entityId?: string, entityName?: string, kind?: "shop"|"hq",   // 法人と本部（2026-09-30・P1）
-                settings: {laborSettings?, staffTypeLimits?, wageSettings?: {minWage?: {from, yen}[]}}, deadlines: {[期間キー]: "YYYY-MM-DD"},
+                settings: {laborSettings?, staffTypeLimits?, wageSettings?: {minWage?: {from, yen}[],
+                  premiumRates?: {ot?, over60?, night?, holiday?},   // 割増率（%）。法定より上の値だけ持つ（P6b）
+                  roundingRule?: "round"|"floor"}},                  // 金額の端数。無ければ円未満切上げ（P6b）
+                deadlines: {[期間キー]: "YYYY-MM-DD"},
                 monthlyDeadlineDays?: number[],   // 毎月の固定締切（日付指定の無い期間に効く・2026-09-27）
                 shops: {[shopId]: 店舗名},
                 people?: {[personId]: {[shopId]: 登録名}},   // 連携店舗ぶんの人物（P3.6・CF の mirrorPeopleOf）
@@ -786,8 +794,9 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
   人物を変える CF（ensureCompanyPeople・mergePeople・splitPerson・reassignPersonId・companyRenameStaff）は `syncPeopleMirror` で写しを作り直す
 - **合算するのは予定（subs）だけ**。他店の `laborMonths`・`actuals`・`private/pay` はオーナーしか読めず、店長のセッションは自分の店舗の
   オーナーでしかない。**実績の他店合算は、そのセッションが行き先の店のオーナーであるときだけ行う**（P5 で実装。企業コードのログインは全連携店舗の
-  オーナーなので読める）。読めないときは同じく「＋」と「他店の実績を読み込めていません」を出す（割増の行だけ。予定の合算は従来どおり）。賃金（P6b）の合算は企業コードのログインで開いた
-  月次賃金ページに限る（計画書 §3.9 の「読み取り権限の制約」）
+  オーナーなので読める）。読めないときは同じく「＋」と「他店の実績を読み込めていません」を出す（割増の行だけ。予定の合算は従来どおり）。月次賃金ページ（P6b）も
+  同じ ShiftEditTab の計算を通すので同じ規則になる: 他店の予定はどのセッションでも足し、他店の実績は行き先の店のオーナー（企業コードのログインなら全店）
+  のときだけ使い、読めなければ行に「＋他店の勤務・実績を読み込めていない途中の値」と出す（計画書 §3.9 の「読み取り権限の制約」）
 - 検証: `tests/core.test.js`（同一人物・所属と行き先・行き先の休憩と写し・期間の切り方が違う2店舗・laborMonths の凍結値・写しの people・
   重複候補・入口のドリフト）と `example-helper-aggregate.js`（店長のセッション・14項目）・`example-company-dup-candidates.js`（統合で写しが作り直される）。
   どちらも P3.6 より前の配信物に向けると落ちる
@@ -844,6 +853,32 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
   （上の「app-shift.js の切り出し」。app-admin.js 198,981 字・app-shift.js 201,775 字）
 - 検証: `tests/core.test.js`（手計算の期待値: 締23〜25時の深夜・帯と按分の休憩・12h勤務・所定4hの日・③と60h超・休日ゼロ週・
   月をまたぐ週・36協定の休日労働込み・他店の実績）と `example-labor-premium.js`（18項目・WebKit の iPhone 13 でも通る。P5 より前の配信物では16項目が落ちる）
+
+### 月次賃金（2026-09-30・P6b・develop のみ・ルールの変更なし・CF は本番未反映）
+
+`労務給与_複数法人_実装計画.md` §4.5・P6b（決定 #2・#6・#12・#17）。出すのは割増賃金と欠勤控除の内訳まで（社会保険・税・支給総額は対象外）。
+- **時間は労務判定表と同じ計算**: `PayrollPage` が対象店舗の staff・settings（企業設定を重ねる）・写し・periods・年度の始め〜月末の期間と月初の週にかかる
+  直前の期間の subs・その月の前後の週にかかる期間の actuals・laborMonths・private（pay と payCode）を1回読み、ShiftEditTab を画面外へマウントする。
+  ShiftEditTab は `exportJob.kind==="payroll"` のとき PDF を作らず `payrollReportRef` の値（`laborByStaff[名前].prem`＝割増の内訳・月所定＝laborMonths の
+  登録値か月実働・年平均所定＝`schedAvgByStaff`）を返す。割増の内訳は P6b で月の実労働（`workMin`・法定休日の日を含む）・所定・不就労（`absentMin`）の合計も持つ。
+  非表示マウントは一括PDFと同じく書き込まない（savePeriods=null・ownerReadOnly・laborMonths は読むだけ）
+- **式（§4.5）**: 単価は月給者 (基本給＋割増の基礎に入る手当) ÷ 分母、時給者は時給。月給者は基本給を動かさず、時間外は固定残業の時間を充当した残り
+  × (1＋時間外率)、法定休日は × (1＋休日率)。時給者は時給 × 実労働に時間外・法定休日は率の分だけを足す（固定残業・固定深夜・欠勤控除を持たない）。
+  60h超 × 追加率、深夜 × 深夜率 − 固定深夜手当の充当（**固定深夜の充当規則は計画書 §8「残る確認」の未決事項で、計画どおり深夜割増から額を引いて実装した**。
+  額が0で時間だけあるときはその時間分の深夜割増を上限にする）。欠勤控除は (基本給＋控除から除かない手当) ÷ 分母 × 不就労
+- **端数**: 項目ごとに `roundingRule`（既定 円未満切上げ）。**欠勤控除だけは逆向き**（切上げなら切捨て）——控除を切り上げると賃金の全額払いを割るため
+  （計画書は「項目ごとに roundingRule」としか書いていない。この向きは実装で置いた前提）
+- **版は月初時点**（`payVersionOn(pay, 月の1日)`）。月の途中の改定は注記だけで日割りしない（日割りは BACKLOG）。月初に版が無く月末にあれば（月の途中の入社）その版を使い注記
+- **警告**: 年平均所定 > 分母（月給者だけ・特定技能の最賃割れ防止）・最賃割れ（月初時点の最賃）・賃金未設定
+- **割増率と端数規則は法人の設定**（企業連携タブの法人カード「法人の設定」。賃金設定ページ（P6a）の割増率の表示もこの値になる）。`wageSettings.premiumRates`（法定より下げられない・法定と同じなら持たない）と
+  `roundingRule`（既定の ceil は持たない）。**CF の sanitize（`saveEntityConfig`・`saveCompanyConfig`）を通すので、CF を本番へ出すまで本番では保存されても落ちる**
+- **伏字**: 金額は閲覧パスコード（対象店舗の `private/payCode`、企業連携店舗は企業のコード）を解除するまで「••••」。時間は伏せない。CSV は解除するまで押せない。
+  列の定義は `PAYROLL_COLUMNS` 1本（画面の表と CSV が共有・`kind` が "yen" の列だけ伏せる）
+- **PDF・Excel には出さない**: `buildShiftTableHtml`・`exportPdf`・`expXl` が月次賃金の関数・賃金マスタを参照しないことを `tests/core.test.js` が固定する
+- 自店以外（企業連携タブから開いた店舗）は、そのセッションが店舗のオーナーでないと private を読めず「この店舗の賃金を読み込めませんでした」を出す。
+  対象店舗が Premium でなければ使えない（`accounts/{sid}/plan` を読んで `featureEnabled`）
+- 検証: `tests/core.test.js`（手計算の額・端数・版の選択・警告・CF と同じ sanitize・CSV・書き出しのドリフト）と `example-payroll.js`（17項目・375px。
+  P6b より前の配信物では16項目が落ちる。Pro でボタンが出ないことだけは元から通る）
 
 ### 企業連携の拡張（2026-09-27・本番反映済み: クライアント 2282f11／ルール／Cloud Functions）
 
