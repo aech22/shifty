@@ -1701,7 +1701,7 @@ Vite + TS へのフル移行は不要。
       属性の按分窓 `staffTypeLimits[属性].otProrate={window:"month"|"halfMonth",fixedMin?}`（半月15h・実働15h未満はその値の按分をテストで固定）。
       企業共通・法人でも設定でき、CF の sanitize と一致を照合
 - [x] P3.5c 判定対象外（区分 none）の実働がしきい値を**超える**日のセル色（`highlightExternalOver8h`・`externalOverThresholdMin`・既定オフ）。
-      `LABOR_DAY_FIX_KEYS` に `externalOver`。判定表・総括には載せない。ちょうど閾値は塗らない（テスト）
+      `LABOR_DAY_FIX_KEYS` に `externalOver`。色は専用の赤（`CELL_COLOR_LEGEND` の `externalOver`）。判定表・総括には載せない。ちょうど閾値は塗らない（テスト）
 - [x] P3.5d PDF の曜日の下に「昼n 夜n」（`settings.headcountAt`・既定オフ）。応援・x の帯と休暇の帯を除外、0人の側と店休日は出さない。画面と Excel には出ない（テストと実ブラウザ）
 - [x] 4件共通: 設定の無い店舗は従来と同じ（既存テスト・回帰スクリプトすべて通過）／`app-*.js` の追加行に依頼文の時刻・値のリテラルなし（grep）／企業ID・店舗名・shopId の分岐なし
 - 検証: `npm test` 451件パス・`example-break-idle.js`・`example-labor-ot-window.js`・`example-labor-external-over.js`・`example-pdf-headcount.js`（いずれも allPass・変更前の配信物では非0で終わる）・既存回帰一式

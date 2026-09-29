@@ -5439,6 +5439,14 @@ test("P3.5c 外部の長時間の日: トグル既定オフ・しきい値ちょ
   assert.ok(!u.OVERALL_FIX_KEYS.includes("externalOver"));
   assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "none", dayMins: [900], externalOverMin: th }), []);
   assert.strictEqual(u.overallVerdictOf({ laborSystem: "none", findings: [] }).key, "none");
+  // セル色は専用の赤（CELL_COLOR_LEGEND の externalOver）。労務の要修正（紫）・店舗間重複（dup の赤）とは別の色
+  const col = k => (u.CELL_COLOR_LEGEND.find(c => c.key === k) || {}).color;
+  assert.ok(col("externalOver"), "externalOver の色がレジェンドに登録されている");
+  assert.notStrictEqual(col("externalOver"), col("laborErr"));
+  assert.notStrictEqual(col("externalOver"), col("dup"));
+  assert.ok(/^rgba\((1[5-9]\d|2[0-5]\d),\s*\d{1,2},\s*\d{1,2},/.test(col("externalOver")), "赤系（R が高く G・B が低い）");
+  const src = _readAdminSurface();
+  assert.ok(/includes\("externalOver"\)\?LEGEND_COLORS\.externalOver:LEGEND_COLORS\.laborErr/.test(src), "セルの色付けが externalOver のキーで分かれている");
   // CF の書き写しと一致（キー一覧・範囲は上の company-config のドリフト検出が照合する）
   assert.ok(cfc.COMPANY_LABOR_KEYS.includes("highlightExternalOver8h") && cfc.COMPANY_LABOR_KEYS.includes("externalOverThresholdMin"));
   assert.deepStrictEqual(cfc.COMPANY_LABOR_RANGES.highlightExternalOver8h, u.LABOR_SETTING_RANGES.highlightExternalOver8h);

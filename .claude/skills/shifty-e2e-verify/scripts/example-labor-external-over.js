@@ -12,7 +12,8 @@ const ROOT = process.env.SHIFTY_ROOT || undefined;
 const EXTRA_HEAD = `<style>:root{--c-bg:#F0F2F5;--c-card:#FFFFFF;--c-input:#F3F4F6;--c-input2:#F0F2F5;` +
   `--c-border:#E5E7EB;--c-border2:#D1D5DB;--c-text:#1A1A2E;--c-text2:#374151;--c-text3:#6B7280;` +
   `--c-text4:#9CA3AF;--c-shadow:rgba(0,0,0,.06);--c-accent:#f87036;--c-danger:#DC2626;}</style>`;
-const LABOR_CELL_BG = "rgba(139,92,246,0.28)"; // CELL_COLOR_LEGEND の laborErr と同じ値
+const EXT_CELL_BG = "rgba(185,28,28,0.45)";   // CELL_COLOR_LEGEND の externalOver（外部の長時間・赤）と同じ値
+const LABOR_CELL_BG = "rgba(139,92,246,0.28)"; // laborErr（紫）。外部の長時間の日には使わない
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const P = { id: "p1", urlToken: "t1", shopId: "S1", label: "9月後半", startDate: "2026-09-16", endDate: "2026-09-30", deadlineDate: "", createdAt: "2026-09-01T00:00:00.000Z" };
 // 山田＝派遣（判定対象外）。16日 8:00ちょうど／17日 8:01／18日 10:00。休憩帯なし。
@@ -34,16 +35,21 @@ function Harness(){const [subs,setSubs]=React.useState(SUBS);
     savePeriods={()=>{}} ownerReadOnly={false}/>;}
 ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);` });
   await sleep(700);
-  const m = await h.evaluate(bg => {
+  // 操作方法レジェンドは既定で閉じているので開いてから読む（色の意味が「外部の長時間」として載ること）
+  await h.evaluate(() => { const b = [...document.querySelectorAll("button")].find(x => (x.textContent || "").includes("操作方法（セル入力コマンド")); if (b) b.click(); });
+  await sleep(300);
+  const m = await h.evaluate(([bg, lbg]) => {
     const cells = [...document.querySelectorAll("input[data-sc]")].map(i => ({ sc: i.getAttribute("data-sc"),
       img: (getComputedStyle(i).backgroundImage || "").replace(/\s/g, ""), title: i.title || "" }));
     const panel = [...document.querySelectorAll("div")].find(x => (x.innerText || "").startsWith("⚠ 労務の確認が必要です"));
     const w = [...document.querySelectorAll("div")].find(d => (d.innerText || "").startsWith("労務判定（"));
     const verdict = w ? ([...w.querySelectorAll("tbody tr")].map(tr => [...tr.querySelectorAll("td")].map(td => td.innerText.trim()))
       .find(r => r[0] === "総括") || []).slice(1) : null;
-    return { painted: cells.filter(c => c.img.includes(bg)).map(c => c.sc).sort(),
+    return { purple: cells.filter(c => c.img.includes(lbg)).map(c => c.sc),
+      legendHas: document.body.innerText.includes("外部の長時間"),
+      painted: cells.filter(c => c.img.includes(bg)).map(c => c.sc).sort(),
       titles: cells.filter(c => c.img.includes(bg)).map(c => c.title), panel: panel ? panel.innerText : null, verdict };
-  }, LABOR_CELL_BG);
+  }, [EXT_CELL_BG, LABOR_CELL_BG]);
   m.errors = h.errors.slice();
   await h.close();
   return m;
@@ -77,7 +83,9 @@ async function setTab() {
   const v = {
     paintedOnlyOverDays: on.painted.join(",") === ["2026-09-17|end", "2026-09-17|start", "2026-09-18|end", "2026-09-18|start"].join(","),
     exactNotPainted: !on.painted.some(s => s.startsWith("2026-09-16")),
-    titleExplains: on.titles.length > 0 && on.titles.every(t => /判定対象外（応援・外部）の長時間の日/.test(t)),
+    titleExplains: on.titles.length > 0 && on.titles.every(t => /^外部の長時間: 判定対象外（応援・外部）の長時間の日/.test(t)),
+    notPurple: on.purple.length === 0 && off.purple.length === 0,
+    legendHasExternal: on.legendHas === true,
     notInPanelOrVerdict: (!on.panel || !/長時間/.test(on.panel)) && Array.isArray(on.verdict) && on.verdict.every(x => x === ""),
     offPaintsNothing: off.painted.length === 0,
     setOffByDefault: st.offByDefault === true,
