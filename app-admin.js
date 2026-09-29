@@ -6,7 +6,9 @@
 // ============================================================
 // 管理者画面
 // ============================================================
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin,onCompanyCall,pay:payProp=null}){
+// 人×月の所定（shops/{sid}/laborMonths・P3）を持たないとき（オーナーでない端末・一括PDFの非表示マウント）の既定
+const LABOR_MONTHS_OFF={enabled:false,loaded:false,map:{},save:()=>Promise.resolve(),rename:()=>{},drop:()=>{}};
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin,onCompanyCall,pay:payProp=null,laborMonths:lmProp=null}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   // 管理者画面の中身を丸ごと差し替える全画面ビュー。null＝通常のタブ表示。
   // {kind:"companyStaff"}＝企業内登録スタッフ（2026-09-28）／{kind:"staffPay",name}＝賃金設定（2026-09-30・P6a）
@@ -14,6 +16,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
   // 賃金設定ページから戻ったときに開き直す編集モーダルのスタッフ名（StaffTab は全画面の間アンマウントされるため）
   const[returnEdit,setReturnEdit]=useState(null);
   const pay=payProp||PAY_OFF;
+  const lm=lmProp||LABOR_MONTHS_OFF;
   // 所属店舗の選択肢。企業の写しが持つ連携店舗の一覧を優先し、この端末が知っている店舗（allLinkedShops）で補う。
   // 企業の作成者でも企業ログインでもない端末（Cookie・管理コードで追加した端末）は allLinkedShops を持たないため。
   const homeShopChoices=(()=>{
@@ -226,7 +229,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         </div>}
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} isHqShop={isHqShop}/>}
         {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name||""} linkedShops={homeShopChoices} companyShops={Object.entries((companyLink&&companyLink.shops)||{}).filter(([id])=>id&&id!==currentShopId).map(([id,nm])=>({id,name:nm||id}))}
-          pay={pay} companyLinked={!!companyLink} onOpenPay={n=>setFullPage({kind:"staffPay",name:n})} initialEditKey={returnEdit} onInitialEditConsumed={()=>setReturnEdit(null)} onRenameStaff={(oldName,newName)=>{
+          pay={pay} laborMonths={lm} companyLinked={!!companyLink} onOpenPay={n=>setFullPage({kind:"staffPay",name:n})} initialEditKey={returnEdit} onInitialEditConsumed={()=>setReturnEdit(null)} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
@@ -236,6 +239,8 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           saveSettings(renameStaffInSettings(settings,oldName,newName));
           // 賃金（shops/{sid}/private/pay/{名前}）も名前がキーなので移す（STAFF_KEYED_PRIVATE_NODES・P6a）
           pay.rename(oldName,newName);
+          // 人×月の所定（shops/{sid}/laborMonths/{月}/{名前}）も名前がキーなので移す（STAFF_KEYED_MONTH_NODES・P3）
+          lm.rename(oldName,newName);
           // 確定済み期間の写し（period.snapshot）も同時に改名する。上で sub.staffName を全期間ぶん
           // 書き換えるため、写しだけ旧名で残るとシフト作成タブ・Excel・PDF がその人のsubを引けなくなる。
           if(savePeriods){
@@ -246,7 +251,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         }}/>}
         {tab==="candidates"&&<CandTab settings={settings} onSave={saveSettings} tt={tt} plan={plan} periods={periods}/>}
         {tab==="submissions"&&<SubsTab key={currentShopId} subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} onSaveSettings={saveSettings} plan={plan} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded}/>}
-        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
+        {tab==="edit"&&<ShiftEditTab subs={subs} periods={periods} staffList={staffList} onSave={saveSubs} tt={tt} settings={settings} plan={plan} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} onUpgrade={setUpgradeReason} allLinkedShops={allLinkedShops} onLoadPastSubs={onLoadPastSubs} pastSubsLoaded={pastSubsLoaded} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} companyLink={companyLink} companyInfo={companyInfo} laborMonths={lm}/>}
         {tab==="company"&&<CompanyTab settings={settings} onSave={saveSettings} tt={tt} shopId={currentShopId} staffList={staffList} authUser={authUser} shops={shops} allLinkedShops={allLinkedShops} onSwitchToShop={onSwitchToShop} onUnlinkShop={onUnlinkShop} companyInfo={companyInfo} onCreateCompany={onCreateCompany} onChangeCompanyPassword={onChangeCompanyPassword} onRenameCompany={onRenameCompany} onLinkStoreToCompany={onLinkStoreToCompany} onUnlinkStoreFromCompany={onUnlinkStoreFromCompany} plan={plan} onSaveCompanyConfig={onSaveCompanyConfig} onCompanyLogin={onCompanyLogin} onCompanyCall={onCompanyCall} onOpenCompanyStaff={()=>setFullPage({kind:"companyStaff"})}/>}
         {tab==="mypage"&&!hideMypage&&<MyPageTab plan={plan} planExpiry={planExpiry} billingSchedule={billingSchedule} staffList={staffList} periods={periods} shopId={currentShopId} tt={tt} onUpgrade={setUpgradeReason}/>}
         {tab==="settings"&&<SetTab settings={settings} onSave={saveSettings} subs={subs} saveSubs={saveSubs} tt={tt} syncStatus={syncStatus} plan={plan} shopId={currentShopId} authUser={authUser} onLinkProvider={onLinkProvider} onSendEmailOtp={onSendEmailOtp} onVerifyAndLinkEmail={onVerifyAndLinkEmail} onUnlinkProvider={onUnlinkProvider} onSignInAndLinkGoogle={onSignInAndLinkGoogle} onSignInAndLinkEmail={onSignInAndLinkEmail} adminCode={adminCode} ownerReadOnly={ownerReadOnly} companyLink={companyLink}/>}
@@ -422,7 +427,7 @@ function GridLegend({abbrToShop,shopName}){
 // staffList/settings を props 名のまま受けないのは、このタブだけが「選択中の期間が終了済みなら
 // その期間の写し(period.snapshot)を使う」＝他タブと違う値で動くため。以降の本文が参照する
 // staffList/settings は解決後の値で、写しの更新にだけ生の staffListProp/settingsProp を使う。
-function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:settingsProp,plan,shopId,shopName,onUpgrade,allLinkedShops=[],onLoadPastSubs,pastSubsLoaded=false,savePeriods,ownerReadOnly=false,companyLink=null,initialPeriodId="",exportJob=null}){
+function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:settingsProp,plan,shopId,shopName,onUpgrade,allLinkedShops=[],onLoadPastSubs,pastSubsLoaded=false,savePeriods,ownerReadOnly=false,companyLink=null,companyInfo=null,laborMonths:lm=LABOR_MONTHS_OFF,initialPeriodId="",exportJob=null}){
   // 直近3ヶ月より古い期間があり、まだ過去分未読なら「過去参照」ボタンを出す（古い期間のシフトを見るため）
   const hasOlderPeriods=periods.some(p=>p&&p.startDate&&p.startDate<subsWindowCutoff());
   const firstPid=(periods[0]||{}).id||"";
@@ -585,7 +590,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 判定され、**メモ化が1度も効かない**＝打鍵ごとにヒートマップ・ポジション不足の二部マッチング・
   // 休みカウント・連勤カウントを全部やり直す（実測: 4打鍵＝4レンダーで6つとも4回再計算）。
   const staffList=useMemo(()=>visibleStaffList(rosterStaffList,settings,period),[rosterStaffList,settings,period]);
-  const periodLocked=periodMaster.locked;
+  // 確定（period.confirmation・P3）した期間は**セルも編集できない**（以前の「確定」は写しでマスタを固定するだけで
+  // セルは編集できた）。スタッフの再提出はルール（database.rules.json の subs）が止める。
+  const periodConfirmed=isPeriodConfirmed(period);
+  const canEditCells=isPremium&&!periodConfirmed;
+  // 最新の subs（確定の集計は、未確定のセルを flush した後の値で行う）
+  const subsRef=useRef(subs);subsRef.current=subs;
   // 期間が生きている間はシフト作成タブを開くたびに写しを最新化し、最終日を超えたら更新を止める＝そこで凍結。
   // 「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、最終日を過ぎてから初めてアプリを
   // 開くまでの間に行われたスタッフ削除を取りこぼす（写しはアプリが動いている瞬間しか撮れないため）。
@@ -711,7 +721,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     return leaveCellTextOf(_getSub(name)?.shifts?.[date],field);
   };
   const getVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];const lv=leaveCellText(name,date,field);if(lv)return lv;const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);const fx=getStoredFixed(name,date,field)?FIXED_KEY:"";if(t)return t+n+fx;return(n+fx)||"";};
-  const handleChange=(name,date,field,value)=>{setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
+  const handleChange=(name,date,field,value)=>{if(periodConfirmed)return;setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
   // 店舗限定固定シフトコマンド（「締」等）が有効な店舗かどうか
   const fixedShiftEnabled=useMemo(()=>isFixedShiftEligibleShop(shopName),[shopName]);
   // 1セル分の編集をnewSubs配列に適用する（handleBlur・保存ボタン一括保存の共通ロジック）。
@@ -889,7 +899,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     tt(TIME_ORDER_ERROR_HINT);
   });
   const handleBlur=(name,date,field,rawValue)=>{
-    if(!isPremium)return;
+    if(!isPremium||periodConfirmed)return;
     const ekey=`${name}|${date}|${field}`;
     // セルに出している休暇の種別名をそのまま blur しても何もしない（メモとして保存しない）。
     // 種別を外すときは同じコマンド（ko/yu/ke）をもう一度入れるか、時間を入力して出勤に戻す。
@@ -937,7 +947,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // silent=true は提出ボタンから呼ぶ（保存と同じ処理を黙って済ませてから提出を記録する）。
   // localEdits は blur 後も表示用に残るので「未保存があれば提出させない」とは判定できない。
   const flushEdits=(silent)=>{
-    if(!isPremium)return 0;
+    if(!isPremium||periodConfirmed)return 0;
     // フォーカス中セルがあれば先にblurさせ、その場のonBlurで確定させてから一括処理する
     if(document.activeElement&&document.activeElement.tagName==="INPUT")document.activeElement.blur();
     const entries=Object.entries(localEdits);
@@ -1550,7 +1560,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(isPeriodEnded(period,todayStr))return;
     const nextSnap=buildPeriodSnapshot(staffListProp,settingsProp);
     const nextTotals=laborTotalsRef.current||{};
-    const snapSame=periodSnapshotEqual(period.snapshot,nextSnap);
+    // **確定済みの期間は写しを最新化しない**（P3）。確定の瞬間に書いた写しがその期間のマスタで、ここで上書きすると
+    // 確定後のスタッフ・属性・退勤延長の変更が流れ込み、確定の意味がなくなる。労務の合計は従来どおり終了まで書く。
+    const snapSame=isPeriodConfirmed(period)||periodSnapshotEqual(period.snapshot,nextSnap);
     const totalsSame=!Object.keys(nextTotals).length||laborTotalsEqual(period.laborTotals,nextTotals);
     if(snapSame&&totalsSame)return;
     savePeriods(periods.map(p=>{
@@ -1953,7 +1965,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   };
   // トリプルクリック/トリプルタップ: そのシフトのchangedフラグをトグル（Firebase永続化）
   const toggleChanged=(name,date)=>{
-    if(!isPremium)return;
+    if(!isPremium||periodConfirmed)return;
     const sub=_getSub(name);const sd0=sub?.shifts?.[date];
     if(!sub||!sd0)return;
     // handleBlur同様、直前state(prevSubs)基準で計算する関数型更新にしてある
@@ -2238,6 +2250,51 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           :st.label};
     }};
   });
+  // ===== 人×月の所定（2026-09-30・P3・§3.4）=====
+  // 月の所定は laborMonths の確定値（手修正後）を優先し、無い月はシフトから集計した月実働で埋める。
+  const lmYm=period?period.startDate.slice(0,7):"";
+  const schedCapOf=()=>laborFrame?(laborFrame.scheduledCapMin>0?{min:laborFrame.scheduledCapMin,name:"所定上限"}:{min:laborFrame.baseMin,name:"総枠"}):null;
+  // 年平均所定（年度の開始月〜この月）。確定値 → この月はシフトから集計 → 他の月は期間の実データ → 凍結値の順で埋める
+  const schedAvgOf=name=>{
+    if(fy==null||!lmYm)return null;
+    const months=fiscalYearMonths(fy,fyStart).filter(m=>m<=lmYm);
+    return yearScheduledAverage(months,ym=>{
+      const rec=laborMonthOf(lm.map,ym,name);
+      if(rec)return Number(rec.min)||0;
+      if(ym===lmYm){const l=laborByStaff[name];return l&&l.monthCovered?l.monthWorkMin:null;}
+      const ps=periods.filter(p=>p&&p.startDate&&p.startDate.slice(0,7)===ym);
+      if(!ps.length)return undefined;
+      let sum=0;
+      for(const pp of ps){
+        const live=liveTotalFor(name)(pp);
+        if(live){sum+=live.workMin;continue;}
+        if(pp.laborTotals&&typeof pp.laborTotals==="object"){const t=pp.laborTotals[name];sum+=(t&&Number(t.workMin))||0;continue;}
+        return null;
+      }
+      return sum;
+    });
+  };
+  // 描画のたびに過去の期間を数え直さないよう、スタッフごとにまとめて1回だけ出す
+  const schedAvgByStaff=useMemo(()=>{
+    const o={};if(!isPremium)return o;
+    realStaff.forEach(n=>{o[n]=schedAvgOf(n);});
+    return o;
+  },[isPremium,realStaff,fy,fyStart,lmYm,lm.map,laborByStaff,periods,liveTotalFor]);
+  // 人×月の所定の手修正欄（確定前のみ。前の月を遡って登録するときは、その月の期間を選んで入力する）
+  const[lmOpen,setLmOpen]=useState(false);
+  const[lmDraft,setLmDraft]=useState({});
+  useEffect(()=>{setLmDraft({});},[lmYm,shopId]);
+  const lmAuto=useMemo(()=>(isPremium&&lmOpen&&lmYm)?aggregateScheduledMonth({subs,names:realStaff,settings,ym:lmYm}):{},[isPremium,lmOpen,lmYm,subs,realStaff,settings]);
+  const saveLmRow=name=>{
+    const rec=laborMonthOf(lm.map,lmYm,name);const a=lmAuto[name]||{days:0,min:0};
+    const d=lmDraft[name]||{};
+    const days=d.days!==undefined?Number(d.days):(rec?Number(rec.days)||0:a.days);
+    const min=d.time!==undefined?parseHoursMinutes(d.time):(rec?Number(rec.min)||0:a.min);
+    if(min==null){tt("▲ 所定時間は 176:39 のように入力してください");return;}
+    const r=planLaborMonthManual({laborMonths:lm.map,ym:lmYm,name,days,min,auto:a});
+    if(r.error){tt("▲ "+r.error);return;}
+    lm.save(r.patch).then(()=>{setLmDraft(x=>{const n={...x};delete n[name];return n;});tt(`✓ ${name} の所定を登録しました`);}).catch(()=>{});
+  };
   const laborRows=[
     {id:"labor_month",label:"月実働",getText:name=>{const l=laborByStaff[name];
       if(!l||l.sys==="none"||!(l.monthWorkMin>0))return{};
@@ -2248,6 +2305,26 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const t=fmtMin(l.monthWorkMin);
       return l.monthCovered?{label:t,title:`月の実働 ${t}`}
         :{label:`＋${t}`,color:"var(--c-text3)",title:`データのある日だけの合計 ${t}／${laborPendingReason}`};}},
+    {id:"labor_sched",label:"月所定/上限",getText:name=>{const l=laborByStaff[name];const cap=schedCapOf();
+      if(!l||l.sys==="none"||!cap)return{};
+      const rec=laborMonthOf(lm.map,lmYm,name);
+      const min=rec?(Number(rec.min)||0):l.monthWorkMin;
+      if(!rec&&!(min>0))return{};
+      const partial=!rec&&!l.monthCovered;
+      const diff=min-cap.min;
+      const over=l.sys==="A"&&diff>0&&!partial;
+      return{label:`${partial?"＋":""}${fmtMin(min)} ${fmtSignedMin(diff)}`,color:partial?"var(--c-text3)":over?"#e53935":"var(--c-text2)",bold:over,
+        title:`月所定 ${fmtMin(min)}${rec?(isLaborMonthFrozen(rec)?"（確定済み）":"（登録値）"):"（未確定・シフトから集計）"}`
+          +`${rec?`・所定日数 ${rec.days}日`:""}／${cap.name} ${fmtMin(cap.min)}（差 ${fmtSignedMin(diff)}）${partial?"／"+laborPendingReason:""}`};}},
+    {id:"labor_sched_avg",label:"年平均所定/分母",getText:name=>{const l=laborByStaff[name];
+      if(!l||l.sys==="none")return{};
+      const av=schedAvgByStaff[name];
+      if(!av||av.avgMin==null)return{};
+      const den=rateDenominatorMinOf(laborSettingsOf(settings));
+      const diff=av.avgMin-den;const miss=av.missing.length;
+      return{label:`${miss?"＋":""}${fmtMin(av.avgMin)} ${fmtSignedMin(diff)}`,color:miss?"var(--c-text3)":"var(--c-text2)",
+        title:`${fiscalYearLabel(fy,fyStart)}の月平均所定 ${fmtMin(av.avgMin)}（${av.count}か月）／分母 ${fmtMin(den)}（差 ${fmtSignedMin(diff)}）`
+          +(miss?`／読み込めていない月 ${av.missing.join("・")}（「3ヶ月より前の提出データも読み込む」で正確になります）`:"")};}},
     {id:"labor_guide",label:"目安",getText:name=>{const l=laborByStaff[name];if(!l||l.sys!=="A")return{};return{label:l.guide.label,color:l.guide.color,title:l.guide.title||l.guide.label};}},
     {id:"labor_ot",label:"残業予定",getText:name=>{const l=laborByStaff[name];
       if(!l||l.sys!=="A")return{};
@@ -2476,15 +2553,75 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const coDeadline=coDeadlineInfo?coDeadlineInfo.date:null;
   const coDeadlineOver=!!(coDeadline&&!submission&&todayStr>coDeadline);
   const coDaysLeft=coDeadline?Math.round((pd(coDeadline)-pd(todayStr))/86400000):null;
-  const canSubmit=!!companyLink&&isPremium&&!!period&&!ownerReadOnly&&!!savePeriods;
+  // 確定した期間は提出し直せない（確定の解除は本部が行う）
+  const canSubmit=!!companyLink&&isPremium&&!!period&&!ownerReadOnly&&!!savePeriods&&!periodConfirmed;
   const fmtMD=ds=>{const d=pd(ds);return isNaN(d)?ds:`${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;};
   const fmtAt=iso=>{const d=new Date(iso);return isNaN(d)?"":`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
+  const curUid=()=>(typeof firebaseAuth!=="undefined"&&firebaseAuth&&firebaseAuth.currentUser&&firebaseAuth.currentUser.uid)||"";
   const submitShift=()=>{
     if(!canSubmit)return;
     flushEdits(true);
-    const by=(typeof firebaseAuth!=="undefined"&&firebaseAuth&&firebaseAuth.currentUser&&firebaseAuth.currentUser.uid)||"";
-    savePeriods(periods.map(p=>p.id===period.id?{...p,submission:{at:new Date().toISOString(),byUid:by}}:p));
+    const by=curUid();
+    const at=new Date().toISOString();
+    // 提出・再提出は履歴（period.history）にも1件ずつ残す（submission は最新の1件で上書きされるため）
+    savePeriods(periods.map(p=>p.id===period.id?withPeriodHistory({...p,submission:{at,byUid:by}},genPeriodHistoryKey(Date.parse(at)),periodHistoryEntry(submission?"resubmit":"submit",{at,byUid:by})):p));
     tt(submission?"✓ 企業にシフトを再提出しました":"✓ 企業にシフトを提出しました");
+  };
+  // ===== 本部店舗の固定勤務パターン（2026-09-30・P3・§3.1）=====
+  const isHqPeriodFill=!!(companyLink&&companyLink.kind==="hq")&&!!period&&canEditCells&&!ownerReadOnly;
+  const[hqFill,setHqFill]=useState({start:"9:00",end:"18:00",brk:"60"});
+  const applyHqFill=()=>{
+    if(!isHqPeriodFill)return;
+    const st=parseTime(hqFill.start),en=parseTime(hqFill.end),brk=Number(hqFill.brk);
+    if(!st||!en||st>=en){tt("▲ 出勤と退勤の時刻を確かめてください（退勤は出勤より後）");return;}
+    if(!Number.isInteger(brk)||brk<0||brk>480){tt("▲ 休憩は0〜480分の整数で入れてください");return;}
+    const preview=fillFixedPattern({subs,periodId:period.id,shopId,names:realStaff,dates,start:st,end:en,breakMin:brk,settings});
+    if(!preview.filled){tt("入れる日がありません（土日祝・閉店日・入力済みの日は除外しています）");return;}
+    if(!confirm(`${realStaff.length}名の空いている日（${preview.filled}件）に ${st}〜${en}・休憩${brk}分を入れますか？\n土日祝と閉店日は除外し、入力済みの日は変えません。`))return;
+    flushEdits(true);
+    const pid=period.id;
+    onSave(prevSubs=>fillFixedPattern({subs:prevSubs,periodId:pid,shopId,names:realStaff,dates,start:st,end:en,breakMin:brk,settings}).subs);
+    tt(`✓ ${preview.filled}件に固定勤務パターンを入れました`);
+  };
+  // ===== 確定・解除・交付（2026-09-30・P3・計画書 §3.5）=====
+  // 確定できるのは企業セッション（企業コードのログインと企業の作成者本人）だけ。企業に連携していない店舗はオーナー。
+  const canConfirm=!!period&&!!savePeriods&&canConfirmPeriod({companyLinkId:companyLink&&companyLink.id,sessionCompanyId:companyInfo&&companyInfo.companyId,ownerReadOnly});
+  const periodDelivered=isPeriodDelivered(period);
+  const confirmPeriod=()=>{
+    if(!canConfirm||periodConfirmed)return;
+    if(lm.enabled&&!lm.loaded){tt("所定を読み込み中です。少し待ってからもう一度押してください");return;}
+    if(!confirm("この期間を確定しますか？\n確定すると、この期間のシフトは編集できなくなり、スタッフの再提出もできなくなります。スタッフ一覧・属性・退勤延長などもこの時点の内容で固定し、人×月の所定（所定日数・所定時間）を集計して記録します。\n変更が必要になったら、理由を添えて確定を解除できます。"))return;
+    // 未確定のセルを保存してから、その反映後の提出データで所定を集計する（onSave の反映は次の描画）
+    flushEdits(true);
+    const pid=period.id;
+    setTimeout(()=>{
+      const cur=periods.find(p=>p&&p.id===pid);
+      const r=planPeriodConfirmation({period:cur,periods,subs:subsRef.current,staffList:staffListProp,settings:settingsProp,laborMonths:lm.map,todayStr,uid:curUid()});
+      if(r.error){tt("✕ "+r.error);return;}
+      savePeriods(periods.map(p=>p&&p.id===pid?r.period:p));
+      lm.save(r.laborMonthsPatch).catch(()=>{});
+      setLocalEdits({});
+      tt("✓ この期間を確定しました（所定を記録しました）");
+    },0);
+  };
+  const unconfirmPeriod=()=>{
+    if(!canConfirm||!periodConfirmed)return;
+    const note=window.prompt("確定を解除する理由を入力してください（履歴に残ります）","");
+    if(note===null)return;
+    if(!note.trim()){tt("理由を入力してください");return;}
+    const r=planPeriodUnconfirm({period,laborMonths:lm.map,uid:curUid(),note:note.trim()});
+    if(r.error){tt("✕ "+r.error);return;}
+    savePeriods(periods.map(p=>p&&p.id===period.id?r.period:p));
+    lm.save(r.laborMonthsPatch).catch(()=>{});
+    tt("✓ 確定を解除しました");
+  };
+  const deliverPeriod=()=>{
+    if(!canConfirm||!periodConfirmed||periodDelivered)return;
+    if(!confirm("この期間のシフトを本人へ交付したことを記録しますか？"))return;
+    const r=planPeriodDelivery({period,uid:curUid()});
+    if(r.error){tt("✕ "+r.error);return;}
+    savePeriods(periods.map(p=>p&&p.id===period.id?r.period:p));
+    tt("✓ 交付を記録しました");
   };
 
   return(
@@ -2496,18 +2633,20 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           style={{fontSize:16,padding:"4px 8px",border:BD,borderRadius:4,background:"var(--c-input)",color:"var(--c-text)"}}>
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
         </select>
-        {/* 確定バッジと解除/確定ボタン。確定中でもセルの編集は従来どおりできる（凍結するのはマスタ側だけ）。
-            解除すると写しを消す＝現在値に戻る。終了済みで写しが無い期間には「確定する」を出し、
-            一度解除した期間や、この機能より前に終わった期間を後から固定できるようにする（一方通行にしない）。 */}
-        {period&&isPeriodEnded(period,todayStr)&&!ownerReadOnly&&savePeriods&&(periodLocked
+        {/* 確定バッジと確定/解除/交付ボタン（P3）。確定するとセルもロックする（以前の確定は写しでマスタを固定するだけだった）。
+            確定できるのは企業セッションだけ（単独店舗はオーナー）。終了前でも確定できる（前月末に確定するため）。 */}
+        {period&&periodConfirmed&&<span data-period-state={periodDelivered?"delivered":"confirmed"}
+          title={`確定 ${fmtAt(period.confirmation.at)}${periodDelivered?`／交付 ${fmtAt(period.delivery.at)}`:""}。この期間のシフトは編集できません（スタッフの再提出もできません）。スタッフ・属性・退勤延長などは確定時点の内容で固定しています`}
+          style={{padding:"3px 8px",background:"rgba(248,112,54,.15)",border:"1px solid rgba(248,112,54,.45)",borderRadius:4,color:"var(--c-accent)",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>{periodDelivered?"確定・交付済み":"確定済み（編集不可）"}</span>}
+        {period&&canConfirm&&(periodConfirmed
           ?<React.Fragment>
-            <span title="この期間はスタッフ・属性・退勤延長などを終了時点の内容で固定しています（シフトの編集は可能）"
-              style={{padding:"3px 8px",background:"rgba(248,112,54,.15)",border:"1px solid rgba(248,112,54,.45)",borderRadius:4,color:"var(--c-accent)",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>確定済み</span>
-            <button onClick={()=>{if(!confirm("この期間の確定を解除しますか？\n解除すると、スタッフ一覧・属性・ポジション・退勤延長などが現在の設定に従うようになります。"))return;savePeriods(periods.map(p=>{if(!p||p.id!==period.id)return p;const n={...p};delete n.snapshot;delete n.lockedAt;return n;}));tt("✓ 確定を解除しました");}}
+            {!periodDelivered&&<button data-period-deliver="1" onClick={deliverPeriod}
+              style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>交付を記録</button>}
+            <button data-period-unconfirm="1" onClick={unconfirmPeriod}
               style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>確定を解除</button>
           </React.Fragment>
-          :<button onClick={()=>{if(!confirm("この期間を現在の設定内容で確定しますか？\n以後、スタッフの追加・削除や属性・退勤延長の変更はこの期間に反映されなくなります（シフトの編集は可能）。"))return;savePeriods(periods.map(p=>(p&&p.id===period.id)?{...p,snapshot:buildPeriodSnapshot(staffListProp,settingsProp),lockedAt:new Date().toISOString()}:p));tt("✓ この期間を確定しました");}}
-              style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>この期間を確定</button>
+          :<button data-period-confirm="1" onClick={confirmPeriod}
+              style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>確定</button>
         )}
         {!showLaborTable&&pastSubsBtn}
         {/* 入力例の案内は 2026-09-23 のユーザー指示で削除（操作方法はタブ最下部のレジェンドにある）。
@@ -2556,7 +2695,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           style={{padding:"6px 14px",background:"#C0392B",border:"none",borderRadius:8,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           PDF出力
         </button>}
-        {isPremium&&<button onClick={handleSaveAll}
+        {canEditCells&&<button onClick={handleSaveAll}
           style={{padding:"6px 14px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           保存
         </button>}
@@ -2583,6 +2722,21 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           <span data-co-deadline-state="1" style={{fontSize:14,fontWeight:700}}>
             {submission?"提出済み":coDeadlineOver?"期限を過ぎています":coDaysLeft===0?"今日まで":`あと${coDaysLeft}日`}
           </span>
+        </div>
+      )}
+
+      {/* 本部店舗（kind:"hq"）の固定勤務パターン（P3・§3.1）。閉店日と土日祝を除き、まだ何も入っていない日だけに入れる */}
+      {isHqPeriodFill&&(
+        <div data-hq-fill="1" style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10,padding:"8px 12px",border:"1px solid var(--c-border2)",borderRadius:8,fontSize:12,color:"var(--c-text2)",...NORMAL_W}}>
+          <span style={{fontWeight:700}}>固定勤務パターン</span>
+          <input data-hq-fill-start="1" value={hqFill.start} onChange={e=>setHqFill(f=>({...f,start:e.target.value}))} placeholder="9:00" style={{...AI,width:72,padding:"4px 6px"}}/>
+          <span>〜</span>
+          <input data-hq-fill-end="1" value={hqFill.end} onChange={e=>setHqFill(f=>({...f,end:e.target.value}))} placeholder="18:00" style={{...AI,width:72,padding:"4px 6px"}}/>
+          <span>休憩</span>
+          <input data-hq-fill-break="1" type="number" inputMode="numeric" min={0} max={480} value={hqFill.brk} onChange={e=>setHqFill(f=>({...f,brk:e.target.value}))} style={{...AI,width:72,padding:"4px 6px"}}/>
+          <span>分</span>
+          <button data-hq-fill-btn="1" onClick={applyHqFill} style={{...AGray,padding:"5px 10px",fontSize:12}}>全日に投入</button>
+          <span style={{fontSize:11,color:"var(--c-text3)"}}>土日祝と閉店日は除外し、まだ何も入っていない日だけに入れます</span>
         </div>
       )}
 
@@ -2690,18 +2844,18 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                         <td key={name} style={{padding:0,boxSizing:BOXS,borderLeft:BD,borderBottom:"none",textAlign:"center",background:rbS(name),width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
                             title={laborErrTitle(name,date)||undefined}
-                            readOnly={!isPremium}
+                            readOnly={!canEditCells}
                             data-sc={`${date}|start`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"start",e.target.value)}
-                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(e.detail===3)onCellTripleClick(name,date);}}
-                            onTouchEnd={()=>{if(!isPremium)return;onCellTripleTap(name,date);}}
+                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(canEditCells&&e.detail===3)onCellTripleClick(name,date);}}
+                            onTouchEnd={()=>{if(!canEditCells)return;onCellTripleTap(name,date);}}
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|start`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);setFocusKey(null);}}
                             // 日本語IME変換確定のEnter(isComposing/keyCode229)はセル確定・フォーカス移動として扱わない。
                             // 除外しないと変換確定のEnterで即座に次セルへ移動し、IMEの確定処理がそのまま次セルに入って
                             // 手打ちしていないセルにも同じ文字（例:「締」）が入ってしまう
                             onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"start",e.target.value);if(e.ctrlKey||e.metaKey){const pdi=dates.indexOf(date)-1;if(pdi>=0)document.querySelector(`[data-sc="${dates[pdi]}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"start"),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"start"),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:canEditCells?"text":(isPremium?"default":"pointer")}}/>
                         </td>
                       ),spacerCell)}
                       {/* 右端の日付（全表示のみ）。左端と同じ rowSpan=2 で出勤行に置く */}
@@ -2712,15 +2866,15 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                         <td key={name} style={{padding:0,boxSizing:BOXS,borderLeft:BD,borderBottom:BD,textAlign:"center",background:rbE(name),width:colW,minWidth:colW,maxWidth:colW}}>
                           <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
                             title={laborErrTitle(name,date)||undefined}
-                            readOnly={!isPremium}
+                            readOnly={!canEditCells}
                             data-sc={`${date}|end`} data-scn={name}
                             onChange={e=>isPremium&&handleChange(name,date,"end",e.target.value)}
-                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(e.detail===3)onCellTripleClick(name,date);}}
-                            onTouchEnd={()=>{if(!isPremium)return;onCellTripleTap(name,date);}}
+                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(canEditCells&&e.detail===3)onCellTripleClick(name,date);}}
+                            onTouchEnd={()=>{if(!canEditCells)return;onCellTripleTap(name,date);}}
                             onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
                             onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
                             onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"end"),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:isPremium?"text":"pointer"}}/>
+                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"end"),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:canEditCells?"text":(isPremium?"default":"pointer")}}/>
                         </td>
                       ),spacerCell)}
                     </tr>
@@ -2845,6 +2999,36 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             VTH={VTH}
             rows={laborRows}
           />}
+
+          {/* 人×月の所定（P3・§3.4）。確定で自動集計して凍結する。確定前はここで手修正できる（10月分の遡り登録もここ） */}
+          {isPremium&&lm.enabled&&period&&(
+            <div data-lm-card="1" style={{border:"1px solid var(--c-border2)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
+              <button data-lm-toggle="1" onClick={()=>setLmOpen(v=>!v)} style={{background:"none",border:"none",padding:0,cursor:"pointer",fontSize:12,fontWeight:700,color:"var(--c-text2)"}}>
+                {lmOpen?"▾":"▸"} 人×月の所定（{lmYm.replace("-","年")}月）
+              </button>
+              {lmOpen&&<div style={{marginTop:8}}>
+                <div style={{fontSize:11,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8}}>期間を確定すると、シフトから所定日数・所定時間を集計して記録します。確定前はここで直せます（前の月を遡って登録するときは、その月の期間を選んでから入力します）。月のすべての期間が確定すると変更できなくなります。</div>
+                {!lm.loaded?<div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div>:
+                <div style={{overflowX:"auto"}}><table style={{borderCollapse:"collapse",fontSize:12}}>
+                  <thead><tr>{["名前","シフトから集計","所定日数","所定時間","状態",""].map(h=><th key={h} style={{textAlign:"left",padding:"4px 6px",borderBottom:BD,color:"var(--c-text3)",fontWeight:700,whiteSpace:"nowrap"}}>{h}</th>)}</tr></thead>
+                  <tbody>{realStaff.map(name=>{
+                    const rec=laborMonthOf(lm.map,lmYm,name);const a=lmAuto[name]||{days:0,min:0};
+                    const frozen=isLaborMonthFrozen(rec);const d=lmDraft[name]||{};
+                    const dv=d.days!==undefined?d.days:String(rec?rec.days:a.days);
+                    const tv=d.time!==undefined?d.time:fmtMin(rec?Number(rec.min)||0:a.min);
+                    return(<tr key={name} data-lm-row={name}>
+                      <td style={{padding:"4px 6px",borderBottom:BD,whiteSpace:"nowrap",fontWeight:600}}>{name}</td>
+                      <td style={{padding:"4px 6px",borderBottom:BD,whiteSpace:"nowrap",color:"var(--c-text3)"}}>{a.days}日・{fmtMin(a.min)}</td>
+                      <td style={{padding:"4px 6px",borderBottom:BD}}><input data-lm-days={name} disabled={frozen} type="number" inputMode="numeric" min={0} max={31} value={dv} onChange={e=>setLmDraft(x=>({...x,[name]:{...(x[name]||{}),days:e.target.value}}))} style={{...AI,width:64,padding:"3px 6px"}}/></td>
+                      <td style={{padding:"4px 6px",borderBottom:BD}}><input data-lm-time={name} disabled={frozen} value={tv} onChange={e=>setLmDraft(x=>({...x,[name]:{...(x[name]||{}),time:e.target.value}}))} style={{...AI,width:84,padding:"3px 6px"}}/></td>
+                      <td data-lm-state={frozen?"frozen":rec?"saved":"none"} style={{padding:"4px 6px",borderBottom:BD,whiteSpace:"nowrap",color:"var(--c-text3)"}}>{frozen?"確定済み":rec?(isLaborMonthEdited(rec)?"手修正":"記録済み"):"未登録"}</td>
+                      <td style={{padding:"4px 6px",borderBottom:BD}}>{!frozen&&!ownerReadOnly&&<button data-lm-save={name} onClick={()=>saveLmRow(name)} style={{...AGray,padding:"3px 10px",fontSize:12}}>登録</button>}</td>
+                    </tr>);
+                  })}</tbody>
+                </table></div>}
+              </div>}
+            </div>
+          )}
 
           {/* 労務判定（S-4）。判定対象外の属性（応援・外部）は労働時間の判定・集計から外れる。
               **労務判定の表のすぐ下に置く**（2026-09-26 ユーザー指示）。総括が「要修正」の人を
@@ -3398,7 +3582,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
 
 // ===== スタッフ登録タブ =====
 function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods,ownerReadOnly=false,shopId="",shopName="",linkedShops=[],companyShops=[],
-  pay=PAY_OFF,companyLinked=false,onOpenPay,initialEditKey=null,onInitialEditConsumed}){
+  pay=PAY_OFF,laborMonths:lm=LABOR_MONTHS_OFF,companyLinked=false,onOpenPay,initialEditKey=null,onInitialEditConsumed}){
   const[newName,setNewName]=useState("");
   // 削除確認ポップアップ。対象は index ではなく「スタッフ名」で持つ（下のコメントと同じ理由）。
   const[delTarget,setDelTarget]=useState(null);
@@ -3775,7 +3959,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     if(ns)onSaveSettings(ns);
     // 賃金も同じタイミングで消す（private/pay・P6a）。購読が届く前は何も消さず、届いたら（pay.map の変化で）もう一度通る
     pay.drop(expiredRetained.map(r=>r.name));
-  },[expiredRetained,ownerReadOnly,settings,pay.map]);
+    lm.drop(expiredRetained.map(r=>r.name)); // 人×月の所定（laborMonths・P3）も同じ
+  },[expiredRetained,ownerReadOnly,settings,pay.map,lm.map]);
   // スタッフ一覧に描く行の並び。実スタッフは staffList の index をそのまま持たせる
   // （ドラッグ・編集・削除は従来どおり staffList の index で動くため、意味を一切変えない）。
   // **並びはシフト作成グリッドと同じ関数（mergeKeepStaff）に決めさせる**。ここで独自に
@@ -3884,6 +4069,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
       const ns=settingsWithoutStaff([n]);
       if(ns)onSaveSettings(ns);
       pay.drop([n]); // 賃金（private/pay・P6a）も同じ条件で消す
+      lm.drop([n]); // 人×月の所定（laborMonths・P3）も同じ条件で消す
     }
     setDelTarget(null);
     const kept=keepIds.size;

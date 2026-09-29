@@ -150,6 +150,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
 
   const submit=async()=>{
     if(submittingRef.current)return; // 連打・二重発火防止（stateの反映を待たず同期チェック）
+    // 本部が確定した期間は提出・修正できない（ルールでも拒否される。P3）
+    if(isPeriodConfirmed(ap)){tt_("▲ この期間のシフトは確定済みのため、提出・修正できません");return;}
     submittingRef.current=true;
     // 出勤>退勤バリデーション（HH:MMゼロ埋め文字列なので文字列比較でよい。25:00〜27:00形式も正しく比較される）
     const badDate=dates.find(d=>sd[d]?.status==="work"&&sd[d].start&&sd[d].end&&sd[d].start>=sd[d].end);
@@ -293,6 +295,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
       {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"14px 12px 120px"}}>
+        {isPeriodConfirmed(ap)&&<div data-staff-confirmed="1" style={{background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:"var(--c-text2)"}}>この期間のシフトは確定済みです（提出・修正はできません）</div>}
         {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`▲ 締切日（${ap.deadlineDate.replace(/-/g,"/")}）を過ぎています（提出・修正は可能です）`:`締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
 
         {/* 名前カード */}
@@ -441,7 +444,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
       <div style={{position:"fixed",bottom:0,left:0,right:0,background:"var(--c-bg)",backdropFilter:"blur(10px)",padding:"10px 14px 16px",boxShadow:"0 -4px 20px rgba(0,0,0,.08)",zIndex:40}}>
         <div style={{maxWidth:560,margin:"0 auto",display:"flex",gap:8}}>
           <button onClick={reset} style={{padding:"13px 14px",background:"var(--c-card)",border:"2px solid var(--c-border)",borderRadius:8,color:"var(--c-text3)",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>↺ リセット</button>
-          <button onClick={()=>{if(!name.trim()){tt_("▲ 名前を入力してください");return;}setConf(true);}}
+          <button onClick={()=>{if(isPeriodConfirmed(ap)){tt_("▲ この期間のシフトは確定済みのため、提出・修正できません");return;}if(!name.trim()){tt_("▲ 名前を入力してください");return;}setConf(true);}}
             style={{flex:1,padding:13,background:"var(--c-accent)",color:"white",border:"none",borderRadius:8,fontSize:16,fontWeight:700,boxShadow:"0 4px 16px rgba(248,112,54,.35)",cursor:"pointer"}}>
             シフトを提出する
           </button>

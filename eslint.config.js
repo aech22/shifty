@@ -338,6 +338,7 @@ const sharedGlobals = {
   yearScheduledAverage: "writable",
   isClosedDateOf: "writable",
   fillFixedPattern: "writable",
+  LABOR_MONTHS_OFF: "writable",
   staffNumberSortKey: "writable",
   compareCompanyStaffRows: "writable",
   buildCompanyStaffRows: "writable",
