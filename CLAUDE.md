@@ -18,7 +18,7 @@ Free / Pro / Premium の 3 段階プラン制。Stripe サブスク（Pro 500円
 
 1. **着手前にタスクを定型化する**: フリーフォームの依頼（「〜を直して」「〜を追加して」）は、実装前に「**目的**（なぜ必要か）/ **受け入れ条件**（チェックリスト）/ **影響範囲**（ファイル・コンポーネント）」の3点に変換して提示してから着手する。typo修正などの自明な1行修正は省略してよい。
 2. **該当スキルを必ず経由する**: バグ調査・修正 → `/bug-check`、BACKLOG実装 → `/shifty-feature`、本番リリース → `/release-to-main`。スキル内のPHASE・チェックリストを省略しない。
-3. **修正前に全呼び出し元を洗い出す**: 5ファイル分割のため定義と呼び出しが別ファイルにあるのが普通。`grep -n "関数名" app-*.js` で全ファイル横断で確認してから編集する。
+3. **修正前に全呼び出し元を洗い出す**: 6ファイル分割のため定義と呼び出しが別ファイルにあるのが普通。`grep -n "関数名" app-*.js` で全ファイル横断で確認してから編集する。
 4. **コミット前の検証は固定**: `npm test` と `npx eslint app-*.js` を必ず実行し、結果を省略せず報告する。失敗したら失敗のまま報告する（成功したことにしない）。
 5. **受け入れ条件を1つずつ照合してから完了報告する**: 未検証の項目は「未検証」と明記する。
 
@@ -65,7 +65,7 @@ developブランチ・mainブランチのどちらにチェックアウトして
 
 ---
 
-## ファイル構成（2026-07-06 に app.js を5ファイルに分割）
+## ファイル構成（2026-07-06 に app.js を5ファイルに分割・2026-09-30 に app-company.js を切り出して6ファイル）
 
 ```
 /
@@ -73,10 +73,12 @@ developブランチ・mainブランチのどちらにチェックアウトして
 ├── app-utils.js        ← 純粋関数・定数（ブラウザAPI非依存 = Nodeでテスト可能・プレーンscript）
 ├── app-core.js         ← DEV_MODE・Firebase設定・Cookie/テーマ/localStorage・スタイル定数（プレーンscript）
 ├── app-staff.js        ← ShiftyIcon, StaffView, StaffHdr, CellEditPanel, SmModal（babel）
-├── app-admin.js        ← AdminView と全タブ, expXl, UpgradeModal, AC/AL/AT/CL（babel）
+├── app-admin.js        ← AdminView・シフト作成/期間/スタッフ/候補/提出一覧/マイページの各タブ, expXl, UpgradeModal, AC/AL/AT/CL（babel）
+├── app-company.js      ← 企業連携タブ一式（CompanyTab と部品・企業の一括PDF）・設定タブ（SetTab）・賃金マスタ（StaffPayPage・PayCodeBox）（babel）
 ├── app-main.js         ← App() 本体 + ReactDOM マウント（babel）
 ├── tests/
-│   └── core.test.js    ← app-utils.js の Node ユニットテスト（node --test）
+│   └── core.test.js    ← app-utils.js の Node ユニットテスト（node --test）。管理者画面の実装を読むドリフト検出は
+│                          app-admin.js＋app-company.js を連結して読む（`_readAdminSurface`）
 ├── functions/
 │   └── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗/期間の自動削除・企業アカウント）
 ├── RULES.md            ← やってはいけないこと（必読）
@@ -94,7 +96,18 @@ developブランチ・mainブランチのどちらにチェックアウトして
 └── scripts/            ← 運用スクリプト（stripe-setup / seed_shops / list_shops / copy-prod-to-dev / obsidian-sync 等。service-account-*.jsonはgitignore済み）
 ```
 
-**分割の仕組み**: Babel Standalone は複数の `<script type="text/babel">` を同一グローバルスコープで順に実行するため、`import`/`export` なしでファイル間参照が成立する（実証済み）。**index.html の読み込み順（utils→core→staff→admin→main）を変えてはいけない**。新しいコンポーネント・関数は所属に応じたファイルへ追加する。
+**分割の仕組み**: Babel Standalone は複数の `<script type="text/babel">` を同一グローバルスコープで順に実行するため、`import`/`export` なしでファイル間参照が成立する（実証済み）。**index.html の読み込み順（utils→core→staff→admin→company→main）を変えてはいけない**。新しいコンポーネント・関数は所属に応じたファイルへ追加する。
+
+**app-company.js の切り出し（2026-09-30）**: app-admin.js が 50.8 万字になり、Babel Standalone が変換時に
+「[BABEL] Note: The code generator has deoptimised the styling of … as it exceeds the max of 500KB.」を console.error で
+出していた（本番の利用者のコンソールにも出る）。企業連携タブ一式・SetTab・賃金マスタを**中身を変えずに**移し、
+app-admin.js 356,698 字・app-company.js 152,520 字になった（移動は `8d271c8`・参照の追随は `5bdc591`。元の行 4383-4588 と 5239-7201 がバイト一致で移っている）。
+AdminView（app-admin.js）が app-company.js のコンポーネントを描けるのは、描画が app-main.js の ReactDOM マウント時＝
+全ファイルの実行後だから。**逆に app-admin.js のトップレベル即時実行コード（const の初期化式など）から app-company.js の識別子を
+参照してはいけない**（その時点ではまだ未定義）。どのファイルも **40万字を超えたら次の分割を考える**（500,000 字で上の Note が出る）。
+回帰スクリプトのハーネス（`mount-component.js`）の既定の読み込みにも app-company.js が入っている。
+**Stop フックの自動コミット（`.claude/settings.json`）は5ファイルを名指ししており app-company.js を含まない**——
+app-company.js の変更は自分でコミットすること。
 
 ## ソースファイルの内容
 
@@ -377,13 +390,13 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `StaffTab` | app-admin.js | スタッフ登録・並べ替え・別名設定 |
 | `CandTab` | app-admin.js | 候補時間・休業日・休憩管理 |
 | `SubsTab` | app-admin.js | 提出一覧・セル編集・変更履歴 |
-| `CompanyTab` | app-admin.js | 企業連携。カードの並びは シフトの提出状況 → 企業内登録スタッフ → 企業アカウント → 連携店舗 → 法人 → 企業の共通設定（2026-09-28・法人は 2026-09-30） |
-| `CompanyEntityCard / EntityFilter / CoLaborFields` | app-admin.js | 法人（2026-09-30・P1）。法人の追加・改名・法人の労務設定・店舗の法人と種別（店舗／本部）を CF（App の `callCompanyCF`）で書く。法人の無い企業ではカードが `ensureCompanyEntities` を1回呼んで移行する。`EntityFilter` は法人が2つ以上のときだけ出る絞り込み（提出状況・企業内登録スタッフ）。`CoLaborFields` は企業の共通設定と法人の設定が共有する労務判定の入力欄 |
-| `CompanyStaffCard / CompanyStaffDirectory` | app-admin.js | 企業内登録スタッフ（2026-09-28・Premium）。カードの「一覧を開く」で AdminView の `fullPage` が管理者画面の中身を差し替える（新しいブラウザタブは使わない＝実ログインは永続化しないため）。従業員番号順（既定）／店舗別・番号と名前で検索。載せるのは店舗依存でない情報（番号・属性・所属店舗・有給の付与と残）だけ。計算は `buildCompanyStaffRows`（有給は所属店舗の `laborTotals` だけ・subs は読まない・凍結値の無い期間があれば残に「＋」）。**数字だけの同じ従業員番号は1行にまとめ**（2026-09-29）、名前は空白を除いて最も長い表記＝フルネームに寄せ、所属店舗は全部並べる。フルネームに含まれない別の名前（番号が同じなのに名前が食い違う）は「別の登録名」として残す。店舗タブの「呼び出す」（`mergeStaffMatches`）は名前でまとめるので、こちらの規則とは別。上部の並びは「従業員番号順」「店舗別」「パスコード」（2026-09-30・P6a）で、「賃金」列は企業のパスコードで解除するまで「••••」。**行は人物ID（P1b）で束ね**、開いたときに未リンクの登録があれば CF `ensureCompanyPeople` を1回呼ぶ。行の右端に「編集」、番号の前のチェックで2人を選んで「同一人物として統合」。別法人と番号が重なる行には「番号 X は◯◯法人でも使われています」 |
-| `CompanyPersonEditModal / CompanyPersonMergeModal` | app-admin.js | 企業内登録スタッフの編集（2026-09-30・P1b）。名前の変更（店舗ごとにチェック・CF `companyRenameStaff`）・番号/法人/属性/所属店舗（`companyUpdateStaff`・属性と所属店舗はつながっている全店舗に同じ値）・統合の解除（店舗ごとに「切り出す」＝`splitPerson`）・「ID を番号に振り直す」（`reassignPersonId`・番号が数字だけで ID と違うときだけ）。統合は残す方（番号・法人・所属）を選ぶ（`mergePeople`）。結果は一覧の上に出す（全画面なので AdminView のトーストは出ない） |
-| `StaffPayPage` | app-admin.js | 賃金設定ページ（2026-09-30・P6a・Premium・オーナー）。スタッフタブ → 編集 → 「賃金設定を開く →」で AdminView の `fullPage={kind:"staffPay",name}` が管理者画面を差し替える（`CompanyStaffDirectory` と同じ方式）。「← 戻る」で編集モーダルを開き直す（`returnEdit` → StaffTab の `initialEditKey`）。**所属店舗のスタッフだけ**編集でき、ヘルプの人は編集モーダルで「賃金は所属店舗（◯◯）で設定します」。保存先は `shops/{sid}/private/pay/{名前}`（`applyPayRevision` を通す） |
-| `PayCodeBox / PayCodeChangeModal / PAY_OFF` | app-admin.js | 賃金の閲覧パスコード（P6a）。ボックスはスタッフタブの「スタッフ登録」の横・`StaffPayPage` の上部・企業内登録スタッフの上部（従業員番号順・店舗別の次）。解除前は金額を「••••」にして編集させない（時間と最賃の可否は伏せない）。`PAY_OFF` は pay を持たない呼び出し元の既定値 |
-| `SetTab` | app-admin.js | 設定（管理コード・属性別制限・退勤延長・Excel・期間単位・テーマ・アカウント連携） |
+| `CompanyTab` | app-company.js | 企業連携。カードの並びは シフトの提出状況 → 企業内登録スタッフ → 企業アカウント → 連携店舗 → 法人 → 企業の共通設定（2026-09-28・法人は 2026-09-30） |
+| `CompanyEntityCard / EntityFilter / CoLaborFields` | app-company.js | 法人（2026-09-30・P1）。法人の追加・改名・法人の労務設定・店舗の法人と種別（店舗／本部）を CF（App の `callCompanyCF`）で書く。法人の無い企業ではカードが `ensureCompanyEntities` を1回呼んで移行する。`EntityFilter` は法人が2つ以上のときだけ出る絞り込み（提出状況・企業内登録スタッフ）。`CoLaborFields` は企業の共通設定と法人の設定が共有する労務判定の入力欄 |
+| `CompanyStaffCard / CompanyStaffDirectory` | app-company.js | 企業内登録スタッフ（2026-09-28・Premium）。カードの「一覧を開く」で AdminView の `fullPage` が管理者画面の中身を差し替える（新しいブラウザタブは使わない＝実ログインは永続化しないため）。従業員番号順（既定）／店舗別・番号と名前で検索。載せるのは店舗依存でない情報（番号・属性・所属店舗・有給の付与と残）だけ。計算は `buildCompanyStaffRows`（有給は所属店舗の `laborTotals` だけ・subs は読まない・凍結値の無い期間があれば残に「＋」）。**数字だけの同じ従業員番号は1行にまとめ**（2026-09-29）、名前は空白を除いて最も長い表記＝フルネームに寄せ、所属店舗は全部並べる。フルネームに含まれない別の名前（番号が同じなのに名前が食い違う）は「別の登録名」として残す。店舗タブの「呼び出す」（`mergeStaffMatches`）は名前でまとめるので、こちらの規則とは別。上部の並びは「従業員番号順」「店舗別」「パスコード」（2026-09-30・P6a）で、「賃金」列は企業のパスコードで解除するまで「••••」。**行は人物ID（P1b）で束ね**、開いたときに未リンクの登録があれば CF `ensureCompanyPeople` を1回呼ぶ。行の右端に「編集」、番号の前のチェックで2人を選んで「同一人物として統合」。別法人と番号が重なる行には「番号 X は◯◯法人でも使われています」 |
+| `CompanyPersonEditModal / CompanyPersonMergeModal` | app-company.js | 企業内登録スタッフの編集（2026-09-30・P1b）。名前の変更（店舗ごとにチェック・CF `companyRenameStaff`）・番号/法人/属性/所属店舗（`companyUpdateStaff`・属性と所属店舗はつながっている全店舗に同じ値）・統合の解除（店舗ごとに「切り出す」＝`splitPerson`）・「ID を番号に振り直す」（`reassignPersonId`・番号が数字だけで ID と違うときだけ）。統合は残す方（番号・法人・所属）を選ぶ（`mergePeople`）。結果は一覧の上に出す（全画面なので AdminView のトーストは出ない） |
+| `StaffPayPage` | app-company.js | 賃金設定ページ（2026-09-30・P6a・Premium・オーナー）。スタッフタブ → 編集 → 「賃金設定を開く →」で AdminView の `fullPage={kind:"staffPay",name}` が管理者画面を差し替える（`CompanyStaffDirectory` と同じ方式）。「← 戻る」で編集モーダルを開き直す（`returnEdit` → StaffTab の `initialEditKey`）。**所属店舗のスタッフだけ**編集でき、ヘルプの人は編集モーダルで「賃金は所属店舗（◯◯）で設定します」。保存先は `shops/{sid}/private/pay/{名前}`（`applyPayRevision` を通す） |
+| `PayCodeBox / PayCodeChangeModal / PAY_OFF` | app-company.js | 賃金の閲覧パスコード（P6a）。ボックスはスタッフタブの「スタッフ登録」の横・`StaffPayPage` の上部・企業内登録スタッフの上部（従業員番号順・店舗別の次）。解除前は金額を「••••」にして編集させない（時間と最賃の可否は伏せない）。`PAY_OFF` は pay を持たない呼び出し元の既定値 |
+| `SetTab` | app-company.js | 設定（管理コード・属性別制限・退勤延長・Excel・期間単位・テーマ・アカウント連携） |
 | `MyPageTab` | app-admin.js | マイページ（プラン確認・アップグレード・利用規約） |
 | `TermsModal` | app-admin.js | 利用規約全文モーダル（`TERMS_TEXT` 定数を表示） |
 | `UpgradeModal` | app-admin.js | アップグレード促進モーダル（Stripe Checkout 呼び出し） |
@@ -766,7 +779,7 @@ npx eslint app-*.js  # 0 errors を維持（CIでも実行）
 ### React・スタイル制約
 
 - **ビルド不要**: Babel Standalone がブラウザでトランスパイル。`import`/`export` は使えない
-- **ファイル分割の制約**: index.html の読み込み順（utils→core→staff→admin→main）を変えない。全ファイルがグローバルスコープを共有する
+- **ファイル分割の制約**: index.html の読み込み順（utils→core→staff→admin→company→main）を変えない。全ファイルがグローバルスコープを共有する
 - **スタイルは inline style のみ**: 外部 CSS ファイル・CSS モジュール追加禁止
 - **`input`/`select`/`textarea` の `fontSize` は 16px 以上**: iOS Safari ズーム防止（2026-07-06に全箇所解消済み。新規追加時に守ること）
 - **CDNスクリプトはSRI付き**: バージョン変更時は integrity ハッシュの再計算が必要（`curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`）
@@ -1087,11 +1100,10 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 
 ## 既知の技術負債
 
-- **app-admin.js が Babel Standalone の 500,000 文字を超えた（2026-09-30・P1b で 491,126 → 503,713 文字）**。超えると Babel が
-  「[BABEL] Note: The code generator has deoptimised the styling of … as it exceeds the max of 500KB.」を **console.error** で出す。
-  変換結果の動作は変わらない（整形を省くだけ）が、本番の利用者のコンソールにも赤い1行が出る。E2E ハーネス（`mount-component.js`）は
-  この1文だけを数えないようにした。**直すには app-admin.js の分割が要る**（例: 企業連携タブ一式を別ファイルへ。index.html の読み込み順に
-  1本足す＝アーキテクチャの変更なのでユーザー判断）。P2 以降も app-admin.js は増える見込み
+- ~~**app-admin.js が Babel Standalone の 500,000 文字を超えた（2026-09-30・P1b で 491,126 → 503,713 文字）**~~ →
+  **同日 app-company.js を切り出して解消**（上の「app-company.js の切り出し」）。超えていた間は Babel が
+  「[BABEL] Note: … exceeds the max of 500KB.」を console.error で出し、E2E ハーネスはこの1文だけを数えないようにしていたが、
+  分割後に除外を外した（いまは console.error をすべて数える）。分割前の app-admin.js で回すとハーネスは EXIT=1 になる（実測）
 - iOS Safari ズーム問題（input の fontSize<16）は **2026-09-01 にようやく全箇所解消**（バグチェック#103・`bc7bf2e`）。
   一括是正 `b7c084d`（2026-07-08）が見たのは app-staff.js と app-admin.js だけで、**その2日前の5分割（`f02cc80`）で
   生まれたばかりの app-main.js を一度も開いていない**。そのままここに「全箇所解消済み」と
@@ -1099,6 +1111,8 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   ——フォーム部品はUIを足すたびに増えるので、書いた数はコード変更なしに黙って偽になる（実際 56→57→58 と
   ずれた）。見るのは**16未満が0件**であることだけで、判定は毎回この走査で採る
   （2026-09-10 実測: フォーム部品58件・違反0件）。
+  **走査するファイルに app-company.js を必ず入れる**（2026-09-30 分割）。実測: 6ファイルで117件・違反0件、
+  app-company.js を抜いた旧5ファイルの一覧だと43件＝**設定タブ・企業連携タブの74件を黙って数え落とす**。
 
   **走査が数えない例外が1件ある（2026-09-23〜）**: シフト作成タブの「全表示」のセル
   （app-admin.js の `AI2` の `fullView` 分岐）は、行高から font を算出するので1ヶ月期間では
@@ -1114,7 +1128,7 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   ```bash
   node -e '
   const fs=require("fs");let total=0;const bad=[];
-  for(const f of ["app-utils.js","app-core.js","app-staff.js","app-admin.js","app-main.js"]){
+  for(const f of ["app-utils.js","app-core.js","app-staff.js","app-admin.js","app-company.js","app-main.js"]){
     const s=fs.readFileSync(f,"utf8");const re=/<(input|select|textarea)[\s\/>]/g;let m;
     while((m=re.exec(s))){
       total++;let d=0,end=-1;

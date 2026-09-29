@@ -1678,6 +1678,37 @@ Vite + TS へのフル移行は不要。
 
 ## 完了済みタスク
 
+### ✅ 🔴 app-admin.js の分割（Babel の 500KB 上限超過の解消）（2026-09-30 develop 完了・`8d271c8` `5bdc591`／ルール・CF の変更なし）
+
+**目的**: app-admin.js が 50.8 万字（508,479 字）になり、Babel Standalone が変換時に
+「[BABEL] Note: … exceeds the max of 500KB.」を console.error で出していた（本番の利用者のコンソールにも出る）。
+P1b で E2E ハーネスがこの1文だけを無視するようにしていた。ユーザー承認の方針（企業連携まわりを新ファイルへ移し、
+index.html で app-admin.js と app-main.js の間に読み込む）で解消する。
+
+- [x] 新ファイル `app-company.js` に、賃金マスタ（PAY_OFF・PayCodeBox・PayCodeChangeModal・StaffPayPage）と企業連携タブ一式
+      （CoLaborFields・HoursDecimalInput・CompanyConfigCard・CompanyEntityCard・EntityFilter・CompanyStaffCard／CompanyStaffDirectory・
+      CompanyPersonEditModal／MergeModal・CompanySubmissionsCard・CompanyBulkPdf・CompanyLoginCard・CompanyTab）を**そのまま**移した。
+      **それだけでは app-admin.js が 406,628 字で 40 万字を超えたので、直後に続く SetTab も移した**（企業設定の固定表示と
+      HoursDecimalInput・minToH1 を使う）。結果 app-admin.js 356,698 字・app-company.js 152,520 字
+- [x] 移動のコミット（`8d271c8`）は移動だけ。元の行 4383-4588 と 5239-7201 が app-company.js に同じバイト列で現れ、
+      「元ファイル − 2塊（各塊の後ろの空行を含む）」が新しい app-admin.js とバイト一致（`git diff --stat`: app-admin.js −2171 行・app-company.js +2182 行。差は先頭の見出しコメントと塊の間の空行の分）
+- [x] index.html: app-admin.js の直後・app-main.js の直前に app-company.js（同じ版数）。?v= は6箇所・読み込み順は utils→core→staff→admin→company→main
+- [x] package.json の lint・eslint.config.js（files・sharedGlobals に CompanyTab／CompanyStaffDirectory・説明コメント）。lint 0 errors / 110 warnings（分割前と同数・警告の中身も同一）
+- [x] tests/core.test.js: 管理者画面の実装を読む検査7本を app-admin.js＋app-company.js を連結して読む `_readAdminSurface` に通した。
+      反証: app-company.js の写しに違反（別名の自前展開・スタッフ設定マップの直書き）を注入すると新しいテストは2件落ち、分割前のテストは0件（素通り）
+- [x] mount-component.js の既定の読み込みと回帰スクリプト10本に app-company.js を足し、500KB Note の除外を外した。
+      回帰39本すべて EXIT=0・console.error 0件。反証: 分割前の app-admin.js に向けると example-shift-edit-tab.js が EXIT=1（Note を数える）
+- [x] 本物の index.html をスタブ Firebase で丸ごと起動する `example-index-html-load.js` を追加（読み込み順・版数・40万字以下・
+      ログイン画面・企業連携／スタッフ／設定タブ・console.error 0件）。EXIT=0。反証: app-company.js の行を抜いた index.html では
+      `ReferenceError: CompanyTab is not defined` で EXIT=1。あわせて実物の Firebase SDK（dev）で index.html をそのまま開き、ログイン画面まで console.error 0件
+- [x] CLAUDE.md（ファイル構成・分割の仕組み・読み込み順・コンポーネント一覧のファイル列・既知の技術負債・fontSize 走査の一覧）、
+      shifty-e2e-verify の SKILL.md、`~/.claude/commands/bug-check.md`（6分割・2-F の期待値・?v= の箇所数・eslint の対象）を追随。
+      RULES.md には読み込み順の記述が無く変更なし。release-to-main.md は ?v= の箇所数を書いておらず `app-*.js` の glob なので変更なし
+
+**申し送り**: `.claude/settings.json` の Stop フック（Auto-commit）は5ファイルを名指ししていて app-company.js を含まない
+（設定の変更はこのタスクの範囲外なので触っていない）。app-company.js の変更は自動ではコミットされない。
+**本番反映で要るもの**: 次のリリースで `?v=` のバンプ（app-company.js が新しく配信物に加わる）。ルール・CF・データ移行は無し。
+
 ### ✅ 労務・給与と複数法人 P2: 年間所定労働時間と月の所定上限（2026-09-30 develop 完了・`f02b4bb` `7a98b11` `ea6560a` `51288a4`／ルールの変更なし・CF は本番未反映）
 
 計画書 `労務給与_複数法人_実装計画.md` §3.3・§6 P2（決定 #2・#3）。
