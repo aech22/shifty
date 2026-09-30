@@ -80,6 +80,7 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 （`example-company-people.js`）でしか確かめていない。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
 **反映が要るもの**:
 - [ ] CF: 新規6本（`ensureCompanyPeople`・`mergePeople`・`splitPerson`・`reassignPersonId`・`companyRenameStaff`・`companyUpdateStaff`）
+- [ ] CF: 「統合しない」（2026-09-30）の `markPeopleDistinct` と、distinct の後始末を足した `mergePeople`・`splitPerson`・`reassignPersonId`。**CF より先にクライアントを出すと**、重複候補の「統合しない」と編集モーダルの「取り消す」が「関数が無い」で失敗する（候補の表示・統合は従来どおり動く）
 - [ ] ルール: **変更なし**（`companies/$id/pub/people` は既存の pub のルールで読みが企業uidと作成者・書きは `companies/$id/.write:false`＝CF 専用）
 - [ ] 順序: CF を先に出してからクライアント。**クライアントだけ先に出ると**、企業内登録スタッフを開いたときの `ensureCompanyPeople` が失敗し、
       行に人物IDが付かないので「編集」と統合のチェックが押せないまま（一覧の表示は従来どおりで壊れない）

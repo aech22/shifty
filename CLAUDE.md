@@ -469,7 +469,7 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `SubsTab` | app-admin.js | 提出一覧・セル編集・変更履歴 |
 | `CompanyTab` | app-company.js | 企業連携。カードの並びは シフトの提出状況 → 企業内登録スタッフ → 企業横断ダッシュボード → 企業アカウント → 連携店舗 → 法人 → 企業の共通設定（2026-09-28・法人とダッシュボードは 2026-09-30） |
 | `CompanyEntityCard / EntityFilter / CoLaborFields` | app-company.js | 法人（2026-09-30・P1）。法人の追加・改名・法人の労務設定・店舗の法人と種別（店舗／本部）を CF（App の `callCompanyCF`）で書く。法人の無い企業ではカードが `ensureCompanyEntities` を1回呼んで移行する。`EntityFilter` は法人が2つ以上のときだけ出る絞り込み（提出状況・企業内登録スタッフ）。`CoLaborFields` は企業の共通設定と法人の設定が共有する労務判定の入力欄 |
-| `CompanyStaffCard / CompanyStaffDirectory` | app-company.js | 企業内登録スタッフ（2026-09-28・Premium）。カードの「一覧を開く」で AdminView の `fullPage` が管理者画面の中身を差し替える（新しいブラウザタブは使わない＝実ログインは永続化しないため）。従業員番号順（既定）／店舗別・番号と名前で検索。載せるのは店舗依存でない情報（番号・属性・所属店舗・有給の付与と残）だけ。計算は `buildCompanyStaffRows`（有給は所属店舗の `laborTotals` だけ・subs は読まない・凍結値の無い期間があれば残に「＋」）。**数字だけの同じ従業員番号は1行にまとめ**（2026-09-29）、名前は空白を除いて最も長い表記＝フルネームに寄せ、所属店舗は全部並べる。フルネームに含まれない別の名前（番号が同じなのに名前が食い違う）は「別の登録名」として残す。店舗タブの「呼び出す」（`mergeStaffMatches`）は名前でまとめるので、こちらの規則とは別。上部の並びは「従業員番号順」「店舗別」「パスコード」（2026-09-30・P6a）で、「賃金」列は企業のパスコードで解除するまで「••••」。**行は人物ID（P1b）で束ね**、開いたときに未リンクの登録があれば CF `ensureCompanyPeople` を1回呼ぶ。行の右端に「編集」、番号の前のチェックで2人を選んで「同一人物として統合」。別法人と番号が重なる行には「番号 X は◯◯法人でも使われています」。**先頭に「重複候補」**（同じ名前が2店舗以上にあって人物が別・`duplicatePersonCandidates`・P3.6）を出し「統合する」で統合モーダルを開く。2店舗以上に登録があって所属店舗が明示されていない行と候補の側に「所属店舗を設定してください」（ヘルプ先の勤務の合算先が決まらないため） |
+| `CompanyStaffCard / CompanyStaffDirectory` | app-company.js | 企業内登録スタッフ（2026-09-28・Premium）。カードの「一覧を開く」で AdminView の `fullPage` が管理者画面の中身を差し替える（新しいブラウザタブは使わない＝実ログインは永続化しないため）。従業員番号順（既定）／店舗別・番号と名前で検索。載せるのは店舗依存でない情報（番号・属性・所属店舗・有給の付与と残）だけ。計算は `buildCompanyStaffRows`（有給は所属店舗の `laborTotals` だけ・subs は読まない・凍結値の無い期間があれば残に「＋」）。**数字だけの同じ従業員番号は1行にまとめ**（2026-09-29）、名前は空白を除いて最も長い表記＝フルネームに寄せ、所属店舗は全部並べる。フルネームに含まれない別の名前（番号が同じなのに名前が食い違う）は「別の登録名」として残す。店舗タブの「呼び出す」（`mergeStaffMatches`）は名前でまとめるので、こちらの規則とは別。上部の並びは「従業員番号順」「店舗別」「パスコード」（2026-09-30・P6a）で、「賃金」列は企業のパスコードで解除するまで「••••」。**行は人物ID（P1b）で束ね**、開いたときに未リンクの登録があれば CF `ensureCompanyPeople` を1回呼ぶ。「編集」は**名前の右**（2026-09-30 に右端の列から移した。右端だと 375px で表を横スクロールしないと見えなかった）、番号の前のチェックで2人を選んで「同一人物として統合」。別法人と番号が重なる行には「番号 X は◯◯法人でも使われています」。**先頭に「重複候補」**（同じ名前が2店舗以上にあって人物が別・`duplicatePersonCandidates`・P3.6）を出し「統合する」で統合モーダルを開く。同名の別人（外国人スタッフの略称・スポットワークの登録名など）は「統合しない」で別人と記録し、候補に出さない（取り消しは「編集」の「統合しない相手」）。2店舗以上に登録があって所属店舗が明示されていない行と候補の側に「所属店舗を設定してください」（ヘルプ先の勤務の合算先が決まらないため） |
 | `CompanyPersonEditModal / CompanyPersonMergeModal` | app-company.js | 企業内登録スタッフの編集（2026-09-30・P1b）。名前の変更（店舗ごとにチェック・CF `companyRenameStaff`）・番号/法人/属性/所属店舗（`companyUpdateStaff`・属性と所属店舗はつながっている全店舗に同じ値）・統合の解除（店舗ごとに「切り出す」＝`splitPerson`）・「ID を番号に振り直す」（`reassignPersonId`・番号が数字だけで ID と違うときだけ）。統合は残す方（番号・法人・所属）を選ぶ（`mergePeople`）。結果は一覧の上に出す（全画面なので AdminView のトーストは出ない） |
 | `StaffPayPage` | app-company.js | 賃金設定ページ（2026-09-30・P6a・Premium・オーナー）。スタッフタブ → 編集 → 「賃金設定を開く →」で AdminView の `fullPage={kind:"staffPay",name}` が管理者画面を差し替える（`CompanyStaffDirectory` と同じ方式）。「← 戻る」で編集モーダルを開き直す（`returnEdit` → StaffTab の `initialEditKey`）。**所属店舗のスタッフだけ**編集でき、ヘルプの人は編集モーダルで「賃金は所属店舗（◯◯）で設定します」。保存先は `shops/{sid}/private/pay/{名前}`（`applyPayRevision` を通す） |
 | `PayCodeBox / PayCodeChangeModal / PAY_OFF` | app-company.js | 賃金の閲覧パスコード（P6a）。ボックスはスタッフタブの「スタッフ登録」の横・`StaffPayPage` の上部・企業内登録スタッフの上部（従業員番号順・店舗別の次）。解除前は金額を「••••」にして編集させない（時間と最賃の可否は伏せない）。`PAY_OFF` は pay を持たない呼び出し元の既定値 |
@@ -546,7 +546,8 @@ Firebase Realtime Database
 │       │   ├── shopKinds/{shopId}    ← "hq"＝本部店舗（無ければ通常の店舗）。**正本はここ**。global/shops/{sid}/kind にも
 │       │   │                            写すが、クライアントの saveShops が店舗オブジェクトを丸ごと set() するので消えうる
 │       │   ├── people/{personId} ← 人物（2026-09-30・P1b・CF だけが書く・読みは pub のルールのまま＝企業uidと作成者）
-│       │   │                          {displayName, entityId?, number?, links:{shopId: 登録名}, createdAt, updatedAt, mergedFrom?:{personId: 日時}}。
+│       │   │                          {displayName, entityId?, number?, links:{shopId: 登録名}, createdAt, updatedAt, mergedFrom?:{personId: 日時},
+│       │   │                           distinct?:{personId: 日時}（「統合しない」と記録した相手・両方向・2026-09-30）}。
 │       │   │                          personId は数字だけの従業員番号（1〜20桁）か p_+英数字8桁。**作成後は変えない**（振り直しは明示操作だけ）
 │       │   └── config   ← 企業の共通設定の正本（2026-09-27・CF saveCompanyConfig だけが書く）
 │       │                   {settings:{laborSettings?, staffTypeLimits?}, deadlines:{期間キー:{all?, shops?:{shopId:日付}}},
@@ -660,7 +661,8 @@ Pay = { payType: "monthly"|"hourly", base: number,            // 月給は基本
 
 // 企業の人物（companies/{id}/pub/people/{personId}・2026-09-30・P1b）。店舗側の名前キーは変えない（企業レベルの上乗せ）
 Person = { displayName: string, entityId?: string, number?: string, links: {[shopId]: 登録名},   // 1店舗1名前
-           createdAt: string, updatedAt: string, mergedFrom?: {[personId]: string} }
+           createdAt: string, updatedAt: string, mergedFrom?: {[personId]: string},
+           distinct?: {[personId]: string} }   // 「統合しない」と記録した相手（両方向に書く・値は記録した時刻）
 
 // 企業設定の写し（shops/{shopId}/company・2026-09-27）
 CompanyLink = { id: string, name: string, entityId?: string, entityName?: string, kind?: "shop"|"hq",   // 法人と本部（2026-09-30・P1）
@@ -765,9 +767,18 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
   **クライアントの renameStaffInSettings / renameStaffInPeriods / renameStaffInPay を当てた結果と一致することをテストが照合する**。
   laborMonths（P3）は `renameStaffLaborMonthsPatch`、actuals（P4）は `renameStaffActualsPatch` で移している（`STAFF_KEYED_PERIOD_NODES_CF`）
 - 統合・統合解除は企業側の束ね方（people）だけを変え、店舗のデータは動かさない。統合は同じ店舗に別の登録名があると拒否（1店舗1名前）
+- **「統合しない」（2026-09-30）**: 重複候補の組を別人と記録する。置き場は `people/{personId}/distinct/{相手のpersonId}=ISO時刻` で、
+  **両方向に書く**（CF `markPeopleDistinct`・`planMarkDistinct` が全ペア＝3人組なら3ペア6キー）。読む側（`isDistinctPair`・
+  `duplicatePersonCandidates`）は**どちらか一方向でも記録があれば別人**とみなし、組の**全ペア**が記録済みなら候補に出さない
+  （1ペアでも未記録なら組ごと出す）。行には `buildCompanyStaffRows` が `distinct:[相手のpersonId…]` を載せる（people を別に渡さない）。
+  **統合（`planMergePeople`）は記録を消す**（keep/drop 間の記録は明示の統合なので消し、drop の記録は keep へ引き継ぎ、drop を指す
+  第三者の記録は keep へ付け替える）。**切り出し（`planSplitPerson`）は自動で記録する**（別人と決めた操作なので、直後に候補へ戻らない）。
+  ID の振り直し（`planReassignPersonId`）も他人の記録を新しい ID へ付け替える。取り消しは各人の「編集」モーダルの「統合しない相手」
+  （`planUnmarkDistinct`・両方向を消す。相手が消えた人物でも ID だけ出して消せる）。links は変わらないので写しは作り直さない。
+  写し（`mirrorPeopleOf`）と同期（`planPeopleSync`）は distinct を見ない。回帰は `example-company-dup-candidates.js` の F〜I
 - 属性・所属店舗の変更は、つながっている全店舗の settings に同じ値を書く（StaffTab の「どの期間まで旧属性のままか」の確認は出さない）
-- 検証: `tests/core.test.js`（規則・CF とクライアントの一致・ドリフト検出）と `example-company-people.js`（スタブ・26項目・375px 含む。
-  HEAD の配信物に向けると25項目が落ちる＝素通りしない）
+- 検証: `tests/core.test.js`（規則・CF とクライアントの一致・ドリフト検出）と `example-company-people.js`（スタブ・28項目・375px 含む。
+  P1b 前の配信物に向けると25項目が落ちる＝素通りしない。375px の全行の「編集」が表の枠の内側にあることも測る＝移す前の配信物では x=527〜573 で落ちる）
 
 ### ヘルプ先勤務の所属店舗への合算（2026-09-30・P3.6・develop のみ・CF は本番未反映・ルールの変更なし）
 
@@ -969,7 +980,7 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
 | `linkStoreToCompany` | Callable `linkStoreToCompany` | 店舗コード（shopId / shopId.adminKey）で店舗を企業に連携 |
 | `saveCompanyConfig` | Callable `saveCompanyConfig` | 企業の共通設定（settings は丸ごと置換）と提出期限（期間ごとの差分）を保存し、連携全店舗の `shops/{sid}/company` を作り直す（2026-09-27）。検証は `functions/company-config.js`（純粋関数・テストで照合） |
 | `ensureCompanyEntities / createEntity / renameEntity / assignShopEntity / saveEntityConfig / setShopKind` | Callable | 法人の管理（2026-09-30・P1・**本番未デプロイ**）。権限は `assertCompanyMember`。保存後に写しを作り直す。規則は `functions/company-config.js` |
-| `ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId / companyRenameStaff / companyUpdateStaff` | Callable | 人物ID と企業スタッフ一覧の編集（2026-09-30・P1b・**本番未デプロイ**）。権限は `assertCompanyMember`。人物（`companies/{id}/pub/people`）を作るのは `ensureCompanyPeople` だけ。改名は店舗のデータを差分 update で移す（上の「人物ID と企業スタッフ一覧の編集」）。規則は `functions/company-config.js` |
+| `ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId / companyRenameStaff / companyUpdateStaff / markPeopleDistinct` | Callable | 人物ID と企業スタッフ一覧の編集（2026-09-30・P1b・**本番未デプロイ**）。`markPeopleDistinct` は「統合しない」（`{personIds:[…], distinct:true}` で全ペアを両方向に記録、`{personIds:[a,b], distinct:false}` で取り消し。写しは作り直さない）。権限は `assertCompanyMember`。人物（`companies/{id}/pub/people`）を作るのは `ensureCompanyPeople` だけ。改名は店舗のデータを差分 update で移す（上の「人物ID と企業スタッフ一覧の編集」）。規則は `functions/company-config.js` |
 | `setCompanyPayCode` | Callable | 企業の賃金閲覧パスコードの変更（2026-09-30・P6a・**本番未デプロイ**）。現在の番号を照合（未設定なら 0000）し、`companies/{id}/private/payCode` と連携全店舗の `shops/{sid}/private/payCode` に同じハッシュを書く。作成者と企業セッションの両方が可（`assertCompanyMember`）。`syncCompanyMirror` も写しを作り直すたびに企業のパスコードを同期する（後から連携した店舗に届く） |
 | `claimCompanyShop` | Callable `claimCompanyShop` | 連携済み店舗のオーナーに**呼び出し元のuid**を登録（企業連携タブの「ログイン」で管理コードの再入力を無くす。付与は `companies/{id}/grants/{shopId}/{uid}` に記録し、解除時に回収する） |
 | `unlinkStoreFromCompany` | Callable `unlinkStoreFromCompany` | 店舗の企業連携を解除（企業uid＋`grants` の付与uidを owners から外す） |
