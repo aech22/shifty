@@ -67,7 +67,7 @@ async function open(plan, viewport) {
     await h.clickExact("店舗別"); await h.page.waitForTimeout(200);
     R.shopRows = await h.evaluate(tableRows);
     await h.clickExact("従業員番号順");
-    const search = async q => { await h.setInput('input[placeholder="従業員番号・名前で検索"]', q); await h.page.waitForTimeout(150); return h.evaluate(() => [...document.querySelectorAll("table tbody tr")].map(tr => tr.querySelectorAll("td")[1]?.innerText.trim())); };
+    const search = async q => { await h.setInput('input[placeholder="従業員番号・名前で検索"]', q); await h.page.waitForTimeout(150); return h.evaluate(() => [...document.querySelectorAll("table tbody tr")].map(tr => (tr.querySelectorAll("td")[1]?.innerText.trim() || "").split("\n")[0])); };
     R.q12 = await search("12"); R.qYama = await search("山"); R.qMori = await search("森"); await search("");
     R.searchFont = await h.evaluate(() => parseFloat(getComputedStyle(document.querySelector('input[placeholder="従業員番号・名前で検索"]')).fontSize));
     R.reads = await h.evaluate(() => (window.__reads || []).filter(p => /\/subs/.test(p)));
@@ -96,21 +96,24 @@ async function open(plan, viewport) {
   } catch (e) { R.exceptionMobile = e.message; }
   await h.close();
 
-  // 列は 従業員番号・名前・属性・所属店舗・有給・賃金・編集 の7つ（賃金は P6a、編集は P1b・2026-09-30。パスコードを入れるまで「••••」）
-  const names = rows => rows.filter(r => r.length === 7).map(r => r[1].replace(/非表示中$/, ""));
+  // 列は 従業員番号・名前・属性・所属店舗・有給・賃金 の6つ（賃金は P6a。パスコードを入れるまで「••••」）。
+  // 「編集」（P1b）は 2026-09-30 に右端の列から名前の列へ移した（375px で横スクロールしないと見えなかった）＝名前セルは「名前\n編集」
+  const nm = r => (r[1] || "").split("\n")[0];
+  const names = rows => rows.filter(r => r.length === 6).map(r => nm(r).replace(/非表示中$/, ""));
   const v = {
     cardOrder: JSON.stringify(R.order) === JSON.stringify(TITLES),
     opensFullPage: R.tabBarGone === true,
     numberOrder: !!R.numberRows && JSON.stringify(names(R.numberRows)) === JSON.stringify(["佐藤", "小林", "山田", "田中", "森 花子", "鈴木", "中村", "伊藤", "高橋", "渡辺"]),
     helpDeduped: !!R.numberRows && names(R.numberRows).filter(n => n === "田中").length === 1,
-    helpOnlyRowKept: !!R.numberRows && (R.numberRows.find(r => r[1] === "小林") || [])[3] === "A店",
-    paidWithPlus: !!R.numberRows && (R.numberRows.find(r => r[1] === "田中") || [])[4] === "付与 20／残 ＋18.5",
-    paidNoPlus: !!R.numberRows && (R.numberRows.find(r => r[1] === "山田") || [])[4] === "付与 10／残 8",
-    paidUnset: !!R.numberRows && (R.numberRows.find(r => r[1] === "佐藤") || [])[4] === "—",
+    helpOnlyRowKept: !!R.numberRows && (R.numberRows.find(r => nm(r) === "小林") || [])[3] === "A店",
+    paidWithPlus: !!R.numberRows && (R.numberRows.find(r => nm(r) === "田中") || [])[4] === "付与 20／残 ＋18.5",
+    paidNoPlus: !!R.numberRows && (R.numberRows.find(r => nm(r) === "山田") || [])[4] === "付与 10／残 8",
+    paidUnset: !!R.numberRows && (R.numberRows.find(r => nm(r) === "佐藤") || [])[4] === "—",
     count: R.count === "10名",
     // 2店舗に登録があって所属店舗が明示されていない人には「所属店舗を設定してください」が付く（P3.6・ヘルプ先の合算先が決まらないため）
-    numberMerged: !!R.numberRows && JSON.stringify(R.numberRows.find(r => r[0] === "40")) === JSON.stringify(["40", "森 花子", "未設定", "A店・B店\n所属店舗を設定してください", "—", "••••", "編集"]),
-    wageMasked: !!R.numberRows && R.numberRows.filter(r => r.length === 7).every(r => r[5] === "••••"),
+    numberMerged: !!R.numberRows && JSON.stringify(R.numberRows.find(r => r[0] === "40")) === JSON.stringify(["40", "森 花子\n編集", "未設定", "A店・B店\n所属店舗を設定してください", "—", "••••"]),
+    editInNameCell: !!R.numberRows && R.numberRows.filter(r => r.length === 6).length === 10 && R.numberRows.filter(r => r.length === 6).every(r => /\n編集$/.test(r[1])),
+    wageMasked: !!R.numberRows && R.numberRows.filter(r => r.length === 6).every(r => r[5] === "••••"),
     shopGroups: !!R.shopRows && JSON.stringify(R.shopRows.filter(r => r.length === 1).map(r => r[0])) === JSON.stringify(["A店", "B店", "C店"])
       && JSON.stringify(names(R.shopRows)) === JSON.stringify(["佐藤", "小林", "田中", "森 花子", "鈴木", "山田", "高橋", "中村", "伊藤", "渡辺"]),
     search: JSON.stringify(R.q12) === JSON.stringify(["田中"]) && JSON.stringify(R.qYama) === JSON.stringify(["山田"]) && JSON.stringify(R.qMori) === JSON.stringify(["森 花子"]),

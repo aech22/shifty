@@ -13,6 +13,7 @@
 //  E. 2行を選んで統合 → 1行に。店舗のデータは変わらない。「切り出す」で元の2行に戻り、再読み込みしても再びまとまらない
 //  F. 番号を数字に変えてから「ID を番号に振り直す」で人物IDが番号になる
 //  G. 375px で編集モーダルがページを横に広げない・入力欄は16px以上・コンソールエラー0件
+//     あわせて 375px で全行の「編集」ボタンが表を横スクロールせずに見える（右端 ≤ 375 かつ表の枠の内側）
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-company-people.js → allPass=true / EXIT=0
 "use strict";
@@ -192,6 +193,15 @@ const settle = h => h.page.waitForTimeout(700);
   h = await open(handlers, { width: 375, height: 812 });
   try {
     await openList(h);
+    // 行の「編集」が表を横スクロールしなくても見える（2026-09-30 に右端の列から名前の列へ移した。以前は x=527〜573）
+    R.mobileEdit = await h.evaluate(() => {
+      const trs = [...document.querySelectorAll("tr[data-co-person]")];
+      const box = document.querySelector("table") && document.querySelector("table").parentElement;
+      const br = box.getBoundingClientRect();
+      const btns = trs.map(tr => [...tr.querySelectorAll("button")].find(x => x.innerText.trim() === "編集")).filter(Boolean);
+      return { rows: trs.length, buttons: btns.length, scrollLeft: box.scrollLeft, boxLeft: br.left, boxRight: br.right, boxInner: box.clientWidth, tableWidth: box.scrollWidth,
+        rects: btns.map(b => { const r = b.getBoundingClientRect(); return { left: Math.round(r.left), right: Math.round(r.right) }; }) };
+    });
     await clickEdit(h, "田中 太郎"); await h.page.waitForTimeout(400);
     R.mobile = await h.evaluate(() => { const m = document.querySelector("[data-co-person-modal]"); const r = m.getBoundingClientRect(); return { page: document.documentElement.scrollWidth, vw: innerWidth, left: r.left, right: r.right }; });
   } catch (e) { R.exceptionMobile = e.message; }
@@ -226,6 +236,8 @@ const settle = h => h.page.waitForTimeout(700);
     split: R.splitClick === true && R.afterSplitRows === R.merged.rows + 1,
     reassigned: R.reassignClick === true && JSON.stringify(R.reassigned) === JSON.stringify({ S1: "鈴木" }) && R.num77 === "77",
     splitStaysAfterReload: R.reloadRows === R.afterSplitRows && R.takahashiSeparate === true,
+    mobileEditVisible: !!R.mobileEdit && R.mobileEdit.rows > 0 && R.mobileEdit.buttons === R.mobileEdit.rows && R.mobileEdit.scrollLeft === 0
+      && R.mobileEdit.rects.every(r => r.right <= 375 && r.right <= R.mobileEdit.boxRight && r.left >= R.mobileEdit.boxLeft),
     mobileFits: !!R.mobile && R.mobile.page <= R.mobile.vw && R.mobile.left >= 0 && R.mobile.right <= R.mobile.vw,
     noErrors: [R.errors, R.errorsBase, R.errorsMobile].every(e => Array.isArray(e) && e.length === 0) && !R.exception && !R.exceptionBase && !R.exceptionMobile,
   };
