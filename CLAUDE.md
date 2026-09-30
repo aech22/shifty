@@ -75,7 +75,7 @@ developブランチ・mainブランチのどちらにチェックアウトして
 ├── app-staff.js        ← ShiftyIcon, StaffView, StaffHdr, CellEditPanel, SmModal（babel）
 ├── app-admin.js        ← AdminView・期間/スタッフ/候補/提出一覧/マイページの各タブ, expXl, UpgradeModal, AC/AL/AT/CL（babel）
 ├── app-shift.js        ← シフト作成タブ一式（ShiftEditTab・実績の ActualsGrid/ActualsCsvDialog・HeatTable/SummaryTable/GridLegend・LEGEND_COLORS/FIXED_KEY 等）（babel）
-├── app-company.js      ← 企業連携タブ一式（CompanyTab と部品・企業の一括PDF）・設定タブ（SetTab）・賃金マスタ（StaffPayPage・PayCodeBox）・月次賃金（PayrollPage）（babel）
+├── app-company.js      ← 企業連携タブ一式（CompanyTab と部品・企業の一括PDF・企業横断ダッシュボード）・設定タブ（SetTab）・賃金マスタ（StaffPayPage・PayCodeBox）・月次賃金（PayrollPage）（babel）
 ├── app-main.js         ← App() 本体 + ReactDOM マウント（babel）
 ├── tests/
 │   └── core.test.js    ← app-utils.js の Node ユニットテスト（node --test）。管理者画面の実装を読むドリフト検出は
@@ -303,6 +303,13 @@ PREMIUM_RATE_KEYS / LEGAL_PREMIUM_RATES / PREMIUM_RATE_MAX / premiumRatesOf / RO
 wageOf / deductionOf / monthlyPayBreakdown / PAYROLL_COLUMNS / payrollRowValues / payrollCellText / payrollCsvOf
                            // 月次の賃金計算（2026-09-30・P6b・§4.5）。詳細は「月次賃金（P6b）」の節。wageSettings に割増率（法定より下げられない）と
                            // 端数規則（既定 ceil）を足した（sanitizeWageSettings・CF と同じ規則）。額は単価を分数のまま整数で割り項目ごとに丸める
+laborReadPeriodIds         // 非表示マウント（一括PDF・企業横断ダッシュボード）が読む提出の期間＝年度の全期間とその前後の週・対象の前後の週（2026-09-30・P7）。
+                           // pastSubsLoaded=true で渡すので、読んでいない期間は実働0・全日公休として年の値に入る（「＋」も付かない）。詳細は「企業横断ダッシュボード」の節
+agreementYearStatus        // 36協定の年の合計・月45h超の回数・複数月平均の最大の窓（80h以下でも返す）。agreementYearFindings とダッシュボードの「残り」が共有する（P7）
+ANNUAL_REST_MIN_DAYS / annualRestStatusOf / monthPeriodProgressOf / monthProgressLabel
+dashboardPersonView / dashboardCountsOf / DASHBOARD_COLUMNS / dashboardRowValues / dashboardCellText / dashboardCsvOf
+                           // 企業横断ダッシュボード（2026-09-30・P7）。**新しい労務の式は持たない**——ShiftEditTab が返す値の差・残り・件数・CSV だけ。
+                           // 年間休日は公休日数を52日と比べ、ok／short（年度末まで数え終えた・残りの日を全部休んでも届かない）／pending（途中）。列は画面と CSV が共有し金額の列を持たない
 PAY_TYPES / isPayTypeFixed / defaultPayTypeOf / normalizePayVersion / withFixedOtAmount / applyPayRevision / payVersionOn
                            // 賃金の1版の形。社員（employee）は月給固定（決定17）、企業属性は月給・それ以外は時給が既定。
                            // **改定は版を足す**: 適用開始日を変えた保存は前の版を history へ積み、同じ日のままの保存はその版の訂正
@@ -460,13 +467,14 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `StaffTab` | app-admin.js | スタッフ登録・並べ替え・別名設定 |
 | `CandTab` | app-admin.js | 候補時間・休業日・休憩管理 |
 | `SubsTab` | app-admin.js | 提出一覧・セル編集・変更履歴 |
-| `CompanyTab` | app-company.js | 企業連携。カードの並びは シフトの提出状況 → 企業内登録スタッフ → 企業アカウント → 連携店舗 → 法人 → 企業の共通設定（2026-09-28・法人は 2026-09-30） |
+| `CompanyTab` | app-company.js | 企業連携。カードの並びは シフトの提出状況 → 企業内登録スタッフ → 企業横断ダッシュボード → 企業アカウント → 連携店舗 → 法人 → 企業の共通設定（2026-09-28・法人とダッシュボードは 2026-09-30） |
 | `CompanyEntityCard / EntityFilter / CoLaborFields` | app-company.js | 法人（2026-09-30・P1）。法人の追加・改名・法人の労務設定・店舗の法人と種別（店舗／本部）を CF（App の `callCompanyCF`）で書く。法人の無い企業ではカードが `ensureCompanyEntities` を1回呼んで移行する。`EntityFilter` は法人が2つ以上のときだけ出る絞り込み（提出状況・企業内登録スタッフ）。`CoLaborFields` は企業の共通設定と法人の設定が共有する労務判定の入力欄 |
 | `CompanyStaffCard / CompanyStaffDirectory` | app-company.js | 企業内登録スタッフ（2026-09-28・Premium）。カードの「一覧を開く」で AdminView の `fullPage` が管理者画面の中身を差し替える（新しいブラウザタブは使わない＝実ログインは永続化しないため）。従業員番号順（既定）／店舗別・番号と名前で検索。載せるのは店舗依存でない情報（番号・属性・所属店舗・有給の付与と残）だけ。計算は `buildCompanyStaffRows`（有給は所属店舗の `laborTotals` だけ・subs は読まない・凍結値の無い期間があれば残に「＋」）。**数字だけの同じ従業員番号は1行にまとめ**（2026-09-29）、名前は空白を除いて最も長い表記＝フルネームに寄せ、所属店舗は全部並べる。フルネームに含まれない別の名前（番号が同じなのに名前が食い違う）は「別の登録名」として残す。店舗タブの「呼び出す」（`mergeStaffMatches`）は名前でまとめるので、こちらの規則とは別。上部の並びは「従業員番号順」「店舗別」「パスコード」（2026-09-30・P6a）で、「賃金」列は企業のパスコードで解除するまで「••••」。**行は人物ID（P1b）で束ね**、開いたときに未リンクの登録があれば CF `ensureCompanyPeople` を1回呼ぶ。行の右端に「編集」、番号の前のチェックで2人を選んで「同一人物として統合」。別法人と番号が重なる行には「番号 X は◯◯法人でも使われています」。**先頭に「重複候補」**（同じ名前が2店舗以上にあって人物が別・`duplicatePersonCandidates`・P3.6）を出し「統合する」で統合モーダルを開く。2店舗以上に登録があって所属店舗が明示されていない行と候補の側に「所属店舗を設定してください」（ヘルプ先の勤務の合算先が決まらないため） |
 | `CompanyPersonEditModal / CompanyPersonMergeModal` | app-company.js | 企業内登録スタッフの編集（2026-09-30・P1b）。名前の変更（店舗ごとにチェック・CF `companyRenameStaff`）・番号/法人/属性/所属店舗（`companyUpdateStaff`・属性と所属店舗はつながっている全店舗に同じ値）・統合の解除（店舗ごとに「切り出す」＝`splitPerson`）・「ID を番号に振り直す」（`reassignPersonId`・番号が数字だけで ID と違うときだけ）。統合は残す方（番号・法人・所属）を選ぶ（`mergePeople`）。結果は一覧の上に出す（全画面なので AdminView のトーストは出ない） |
 | `StaffPayPage` | app-company.js | 賃金設定ページ（2026-09-30・P6a・Premium・オーナー）。スタッフタブ → 編集 → 「賃金設定を開く →」で AdminView の `fullPage={kind:"staffPay",name}` が管理者画面を差し替える（`CompanyStaffDirectory` と同じ方式）。「← 戻る」で編集モーダルを開き直す（`returnEdit` → StaffTab の `initialEditKey`）。**所属店舗のスタッフだけ**編集でき、ヘルプの人は編集モーダルで「賃金は所属店舗（◯◯）で設定します」。保存先は `shops/{sid}/private/pay/{名前}`（`applyPayRevision` を通す） |
 | `PayCodeBox / PayCodeChangeModal / PAY_OFF` | app-company.js | 賃金の閲覧パスコード（P6a）。ボックスはスタッフタブの「スタッフ登録」の横・`StaffPayPage` の上部・企業内登録スタッフの上部（従業員番号順・店舗別の次）。解除前は金額を「••••」にして編集させない（時間と最賃の可否は伏せない）。`PAY_OFF` は pay を持たない呼び出し元の既定値 |
 | `PayrollPage` | app-company.js | 月次賃金（2026-09-30・P6b・Premium・オーナー）。AdminView の `fullPage={kind:"payroll",shopId?,shopName?}`。入口はスタッフタブの「スタッフ登録」の横の「月次賃金 →」（自店・`pay.enabled`）と企業連携タブの法人カードの「月次賃金: 店舗 →」（法人 → 店舗）。対象店舗の ShiftEditTab を画面外へマウントし `exportJob.kind="payroll"` で時間を受け取る。人×項目の表と CSV（パスコード解除後だけ） |
+| `CompanyDashboardCard` | app-company.js | 企業横断ダッシュボード（2026-09-30・P7・Premium・企業セッション）。企業連携タブの「企業内登録スタッフ」の下。月と法人を選んで「集計する」→ 連携店舗ごとに ShiftEditTab を画面外へマウントし `exportJob.kind="dashboard"` で人ごとの当月と年の値を受け取る。法人→店舗（確定・交付の進捗と件数）→人（開閉）の表と CSV |
 | `SetTab` | app-company.js | 設定（管理コード・属性別制限・退勤延長・Excel・期間単位・テーマ・アカウント連携） |
 | `MyPageTab` | app-admin.js | マイページ（プラン確認・アップグレード・利用規約） |
 | `TermsModal` | app-admin.js | 利用規約全文モーダル（`TERMS_TEXT` 定数を表示） |
@@ -880,6 +888,26 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
 - 検証: `tests/core.test.js`（手計算の額・端数・版の選択・警告・CF と同じ sanitize・CSV・書き出しのドリフト）と `example-payroll.js`（17項目・375px。
   P6b より前の配信物では16項目が落ちる。Pro でボタンが出ないことだけは元から通る）
 
+### 企業横断ダッシュボード（2026-09-30・P7・develop のみ・ルールと CF の変更なし）
+
+`労務給与_複数法人_実装計画.md` §6 P7・§1 の要件5（年52日以上）と16（当月所定と総枠の差・年平均と分母の差）。本部が法人→店舗→人の当月と年をひと目で見る。
+- **置き場は企業連携タブの新カード `CompanyDashboardCard`**（Premium・企業セッション＝`companyInfo` がある端末）。月（既定は今月）と法人を選び「集計する」で
+  連携店舗（`companies/{id}/pub/shops`）を法人の順→店舗名の順に1店舗ずつ集計する。重いので開いただけでは集計しない
+- **時間はシフト作成タブの労務判定表と同じ計算**: 店舗ごとに ShiftEditTab を画面外へマウントし `exportJob.kind="dashboard"` で `dashboardReportRef` の値を受け取る
+  （月次賃金・一括PDFと同じ形）。返すのは「月所定/上限」「年平均所定/分母」の行と同じ値、laborByStaff の月の残業予定（B制は割増の①＋②）、
+  `yearOvertimeMonths`・`yearLaborSummary` の年の値。**新しい労務の式は作っていない**（並べ方だけ app-utils.js の dashboard* 関数）
+- **年の値は年度の始め〜選んだ月まで**（その月より後に作ってある期間は入れない。空欄＝公休なので、先の空の期間を入れると年間休日が水増しされる）
+- **非表示マウントは書き込まない**（savePeriods=null・ownerReadOnly・onSave は何もしない・allLinkedShops=[]）。提出は `laborReadPeriodIds` で年度の全期間を読む。
+  所定（laborMonths）・実績（actuals）は読めなければ所定はシフトから集計・実績は確定シフトで数え、店舗の行に注記。1店舗60秒で打ち切り「集計に失敗しました」
+- **36協定の残り**: 月（協定の月の上限 − 月の残業予定）・年（協定の年の上限 − 年の合計）・年720h・複数月平均80h（いちばん高い窓）・月45h超の回数。
+  年の3つは `agreementYearStatus`（`agreementYearFindings` と同じ値）。月の超過は月が埋まっているときだけ赤（労務判定表の monthReady と同じ）
+- **年間休日**は公休（空欄を含む）の日数。52日以上＝ok、年度末まで数え終えた／残りの日を全部休んでも届かない＝不足（赤）、それ以外＝途中（「＋」と淡色）
+- **確定・交付の進捗**はその月にかかる期間を `periodStateOf` で数える（店舗の見出し行と法人の見出し行）
+- **賃金（金額）は出さない**（月次賃金ページの領分）。`tests/core.test.js` が、ダッシュボードが private/pay・月次賃金の関数を参照せず書き込みを持たないことを固定する
+- 検証: `tests/core.test.js`（手計算の差・残り・年間休日・進捗・CSV・入口のドリフト）と `example-company-dashboard.js`（16項目・375px 含む。P7 より前の配信物では15項目が落ちる）
+- **読みの負荷**: 1店舗の集計で ShiftEditTab が連携店舗（同じ法人）のデータも読む（ヘルプ先勤務の合算・P3.6）ので、店舗数の2乗で読みが増える。
+  13店舗なら一括PDFと同程度。店舗が大きく増えたらキャッシュを検討する
+
 ### 企業連携の拡張（2026-09-27・本番反映済み: クライアント 2282f11／ルール／Cloud Functions）
 
 計画書（Fable 作成・Fable レビュー済み）の P0〜P5。ユーザー決定: 所属一致で同一人物を判定・略称入力は残す（D4）／
@@ -904,7 +932,10 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
   （`flushEdits(true)`）を黙って済ませてから記録する——`localEdits` は blur 後も表示用に残るので「未保存なら提出不可」とは判定できない
 - **一括PDF**: 企業連携タブが対象店舗ごとに `ShiftEditTab` を画面外へ1店舗ずつマウントし、`exportJob` で既存の `exportPdf` を
   呼ばせて1つの jsPDF に追記する（計算を二重に持たない）。**非表示マウントでは `savePeriods={null}`・`ownerReadOnly={true}`・
-  `allLinkedShops={[]}` を必ず渡す**（渡さないと写し・労務合計を他店舗の期間へ書く／他店舗の提出を読みに行く）
+  `allLinkedShops={[]}` を必ず渡す**（渡さないと写し・労務合計を他店舗の期間へ書く／他店舗の提出を読みに行く）。
+  **提出は `laborReadPeriodIds`（年度の全期間と前後の週）を読む**（2026-09-30 修正）。以前は対象と直前の期間しか読まず、`pastSubsLoaded={true}` のため
+  読んでいない期間が実働0・全日公休として年計・年平均所定に入っていた（実測: 4〜10月に月10時間で、一括PDFの年度計 20:00・店舗単体は 70:00。
+  `example-company-bulk-pdf-year.js`）
 - **企業機能の対象店舗は `companies/{id}/pub/shops`**（`allLinkedShops` ではない。あちらは企業に入れていない自分の店舗も含む）
 - **dev では企業機能を実機で確かめられない**: dev（Spark）に CF をデプロイできず写しが作られないため。検証は
   `.claude/skills/shifty-e2e-verify/scripts/example-company-{settings,submit,bulk-pdf}.js`・`example-home-shop-dup.js`・
