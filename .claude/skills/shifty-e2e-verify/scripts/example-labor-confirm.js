@@ -41,10 +41,10 @@ const applyFlat=(obj,patch)=>{const o=JSON.parse(JSON.stringify(obj||{}));Object
   if(patch[k]===null)delete n[ks[ks.length-1]];else n[ks[ks.length-1]]=JSON.parse(JSON.stringify(patch[k]));});return o;};
 window.__writes=[];window.__lmPatches=[];window.__toasts=[];
 `;
-const HARNESS = (link, info) => `
+const HARNESS = (link, info, plan = "premium", p1 = "P1") => `
 ${COMMON}
 function Harness(){
-  const [periods,setPeriods]=React.useState([P1]);
+  const [periods,setPeriods]=React.useState([${p1}]);
   const [subs,setSubs]=React.useState(SUBS);
   const [staff,setStaff]=React.useState(["田中","佐藤"]);
   const [lm,setLm]=React.useState({});
@@ -55,7 +55,7 @@ function Harness(){
   const lmObj={enabled:true,loaded:true,map:lm,rename(){},drop(){},
     save:p=>{window.__lmPatches.push(p);setLm(m=>applyFlat(m,p));return Promise.resolve();}};
   return <ShiftEditTab subs={subs} periods={periods} staffList={staff} onSave={onSave} tt={m=>{window.__toast=m;window.__toasts.push(m);}}
-    settings={SETTINGS} plan="premium" shopId="S1" shopName="A店" onUpgrade={()=>{}} allLinkedShops={[]}
+    settings={SETTINGS} plan="${plan}" shopId="S1" shopName="A店" onUpgrade={()=>{}} allLinkedShops={[]}
     savePeriods={savePeriods} ownerReadOnly={false} pastSubsLoaded={true} companyLink={${link}} companyInfo={info} laborMonths={lmObj}/>;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`;
@@ -139,6 +139,24 @@ async function partStandalone() {
   const h = await openHarness({ root: ROOT, extraHead: THEME, waitFor: "select", jsx: HARNESS("null", "null") });
   await h.page.waitForTimeout(300);
   const R = { confirmBtn: await h.evaluate(`!!document.querySelector("[data-period-confirm]")`), errors: h.errors.slice() };
+  await h.close();
+  return R;
+}
+
+// 確定は Premium だけ（2026-09-30 バグチェック#156）。Pro の単独店舗では確定ボタンを出さず、
+// 確定済みの期間（降格した店舗）では解除は残す
+async function partProPlan() {
+  const P1C = `({...P1,confirmation:{at:"2026-11-20T00:00:00.000Z",byUid:"U1"}})`;
+  const R = {};
+  let h = await openHarness({ root: ROOT, extraHead: THEME, waitFor: "select", jsx: HARNESS("null", "null", "pro") });
+  await h.page.waitForTimeout(300);
+  R.confirmBtn = await h.evaluate(`!!document.querySelector("[data-period-confirm]")`);
+  R.errors = h.errors.slice();
+  await h.close();
+  h = await openHarness({ root: ROOT, extraHead: THEME, waitFor: "select", jsx: HARNESS("null", "null", "pro", P1C) });
+  await h.page.waitForTimeout(300);
+  R.unconfirmBtnWhenConfirmed = await h.evaluate(`!!document.querySelector("[data-period-unconfirm]")`);
+  R.errors = R.errors.concat(h.errors);
   await h.close();
   return R;
 }
@@ -228,6 +246,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<StaffView periods={
 (async () => {
   const A = await partA();
   const S = await partStandalone();
+  const PP = await partProPlan();
   const Q = await partHq();
   const B = await partCompany();
   const D = await partStaff();
@@ -254,6 +273,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<StaffView periods={
     A_pdfRows: typeof A.pdfText === "string" && A.pdfText.includes("月所定/上限") && A.pdfText.includes("年平均所定/分母"),
     A_noConfirmWithoutSession: A.noSessionConfirmBtn === false,
     S_standaloneConfirm: S.confirmBtn === true,
+    PP_noConfirmOnPro: PP.confirmBtn === false,
+    PP_unconfirmKeptOnPro: PP.unconfirmBtnWhenConfirmed === true,
     Q_hqPanel: Q.panel === true,
     Q_hqFill: !!(Q.toast === "✓ 36件に固定勤務パターンを入れました" && Q.tanaka && Q.tanaka.n === 19 && Q.tanaka.d1102.start === "10:00" && !Q.tanaka.d1103
       && Q.tanaka.d1105 && Q.tanaka.d1105.adjustedStart === "09:00" && Q.tanaka.d1105.adjustedEnd === "18:00" && Q.tanaka.d1105.adjustedBreak === 60
@@ -265,9 +286,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(<StaffView periods={
     B_unconfirm: !!(B.afterUnconfirm && B.afterUnconfirm.confirmation == null && B.afterUnconfirm.delivery == null && B.afterUnconfirm.lm && !B.afterUnconfirm.lm.frozenAt && B.afterUnconfirm.histCount === 3),
     D_staffBanner: D.banner === "この期間のシフトは確定済みです（提出・修正はできません）",
     D_staffBlocked: D.subCalls === 0 && D.confirmModal === false && D.toastShown === true,
-    noErrors: [A, S, Q, B, D].every(x => x.errors.length === 0 && !x.exception),
+    noErrors: [A, S, PP, Q, B, D].every(x => x.errors.length === 0 && !x.exception),
   };
   v.allPass = Object.values(v).every(Boolean);
-  console.log(JSON.stringify({ A, S, Q, B, D, verdict: v }, null, 2));
+  console.log(JSON.stringify({ A, S, PP, Q, B, D, verdict: v }, null, 2));
   process.exit(v.allPass ? 0 : 1);
 })().catch(e => { console.error(e); process.exit(2); });
