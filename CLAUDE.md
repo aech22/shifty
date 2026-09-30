@@ -1456,29 +1456,31 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-09-30 自動実行 #156）
+## Shifty バグチェックレポート（2026-09-30 自動実行 #157）
 
-> 着手時の HEAD は `7847558`。#155（`f09e4fa`）以降に P1〜P7（法人・人物ID・確定・実績・割増・賃金・ダッシュボード）の約9,500行が入った。CF・ルール／純粋関数／UI の3領域に分けてレビューした。
+> 着手時の HEAD は `9243cc5`。#156（`bba1fc3`）以降の変更は「統合しない」（`markPeopleDistinct`・`distinct` の記録）と、企業内登録スタッフのボタン名・「編集」の位置・一覧の幅 1280 だけ。この差分を中心に見た。
 
 ### 修正済み
 
-- **[🟡] Free/Pro の単独店舗でもシフト作成タブの「確定」ボタンが押せた**（app-shift.js の `canConfirm`・`dfec1fc`）。確定はスタッフの再提出をルールで止めるので、誤操作で提出が止まる。新しく確定するのを `featureEnabled("confirm")` で Premium に絞った。解除・交付は絞っていない（降格した店舗が確定済みの期間を戻せなくなるため）。回帰は `example-labor-confirm.js` に Pro の2ケースを追加（`55adc74`）。
-- **[🟡] CF `splitPerson` が、その人物につながっていない店舗を拒否しなかった**（functions/company-config.js の `planSplitPerson`・`c503f41`）。`undefined` どうしの一致でガードを素通りし、`undefined` 入りの patch が `update()` で例外になっていた。テストを1件足し、修正前の実装では落ちることを確認した。**CF は本番未デプロイ**（P1b と一緒に出る）。
+なし。
 
 ### 要確認（未修正）
 
-- **[🟢] 日別の休憩上書き（adjustedBreak）が、実績で短くした時刻にもそのまま当たる**（`resolveActualDay`）。30分指定の日に退勤を 09:15 にすると実働0分・休憩15分になる。仕様の優先順どおりの挙動で、実績の休憩欄で直せる → BACKLOG化済み。
-- **[🟢] 企業連携タブの提出状況表からの確定は、対象店舗のプランを見ない**。企業セッション専用の入口なので今回は触っていない。
-- **[🟢] 配信版数**: このチェックの最中に並行セッションが `20260930-c503f41`（`7561cbf`）へ上げ、今回の2件の修正を含めてリリースの準備に入った。CF の `splitPerson` の修正は CF のデプロイで初めて効く。
+- **[🟢] 日別の休憩上書き（adjustedBreak）が、実績で短くした時刻にもそのまま当たる**（`resolveActualDay`）→ BACKLOG化済み（#156 から継続）。
+- **[🟢] 企業連携タブの提出状況表からの確定は、対象店舗のプランを見ない**（#156 から継続）。
 - **[🟢] 他店舗略称＋「締」は追加出勤を数える／呼び出し候補を選ぶ前の番号欄の書き換え**（#152 から継続）。
 
 ### 異常なし
 
-- `npm test` **493件パス**・`npx eslint app-*.js` **0 errors / 115 warnings**。
-- `DEV_MODE` は式のまま。フォーム部品155件で `fontSize` 16未満は0件。未定義のCSS変数・`subs`/`periods` の全体 set()・functions/ の `.delete()` はいずれも0件。
-- 回帰スクリプト10本（index-html-load・shift-edit-tab・company-dashboard・payroll・actuals・labor-confirm・labor-premium・staff-pay・helper-aggregate・company-people）はすべて allPass。
-- CF の新 Callable はすべて ID 検証と `assertCompanyMember` を書き込みより前に通している。ルールの新ノードはオーナー限定で仕様どおり。
+- `distinct` の後始末を確かめた。統合は keep と drop の間の記録を消し、drop の記録を keep へ引き継ぎ、drop を指す第三者の記録を keep へ付け替える。切り出しは両方向に記録し、振り直しは他人の記録を新しい ID へ付け替える。どれも同じ update の中でパスが親子に重ならない。
+- 人物を書く既存の経路（`planPeopleSync`・改名・`companyUpdateStaff`）は、既存の人物をパス単位で更新する。丸ごと書くのは新規作成だけなので、既存の `distinct` は消えない。
+- `markPeopleDistinct` は ID の形を検証してから `assertCompanyMember` を通し、そのあと書き込む。クライアントの呼べる CF の一覧にも追加されている。
+- `npm test` **498件パス**・`npx eslint app-*.js` **0 errors / 115 warnings**。回帰5本（company-dup-candidates・company-staff-directory・company-people・index-html-load・shift-edit-tab）はすべて allPass。
+- `DEV_MODE` は式のまま。読み込み順は7ファイルとも正しい。配信版数は8箇所とも `20260930-93b417f` で、以降に app-*.js の変更は無い。最大のファイルは app-company.js の 207,679 字。フォーム部品155件で `fontSize` 16未満は0件。未定義の CSS 変数・`subs` の全体 set()・functions/ の `.delete()` は0件。
 - **Firebase・Stripe・本番データには一切アクセスしていない。**
+
+**申し送り**: スケジュールタスクの PHASE 2〜4 の grep はいまも削除済みの `app.js` を対象にしている（13回目）。今回も app-*.js に読み替えた。この環境には `timeout` コマンドが無いので、回帰スクリプトは素の `node` で回すこと。
+
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
