@@ -12,6 +12,8 @@
 //  D. 属性・所属店舗の変更は、つながっている店舗の settings に書かれる
 //  E. 2行を選んで統合 → 1行に。店舗のデータは変わらない。「切り出す」で元の2行に戻り、再読み込みしても再びまとまらない
 //  F. 番号を数字に変えてから「ID を番号に振り直す」で人物IDが番号になる
+//  C'. 拒否（既にいる名前への改名）の「✕ 理由」がモーダルの中に見える（rejectShownInModal・2026-10-01）
+//  C''. 2店舗にチェックが入ったまま片方が既に新しい名前 → その店舗は送らず、違う店舗だけ改名される（renameSkipsSameName・2026-10-01）
 //  G. 375px で編集モーダルがページを横に広げない・入力欄は16px以上・コンソールエラー0件
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-company-people.js → allPass=true / EXIT=0
@@ -130,8 +132,24 @@ const settle = h => h.page.waitForTimeout(700);
     await h.evaluate(() => { const l = [...document.querySelectorAll("[data-co-person-modal] label")].find(x => x.innerText.includes("B店")); l.querySelector("input").click(); });
     await modalClick(h, "名前を変更"); await settle(h);
     R.dupMsg = await msg(h);
+    // (b) 拒否はモーダルの中に出る（一覧の帯はモーダルの覆いの下で見えない・2026-10-01）
+    R.dupInModal = await h.evaluate(() => { const m = document.querySelector("[data-co-person-modal]"); const e = m && m.querySelector("[data-co-person-modal-msg]");
+      if (!e) return null; const r = e.getBoundingClientRect(); return { text: e.innerText, visible: r.width > 0 && r.height > 0 && r.top >= 0 && r.bottom <= innerHeight }; });
     R.dupStaff = await h.evaluate(() => window.__db("shops/S1/staff"));
     await modalClick(h, "閉じる"); await h.page.waitForTimeout(200);
+    // (a) 2店舗にチェックが入ったまま、片方（B店）が既に新しい名前 → 違う店舗（A店）だけ改名され、B店は変わらない。
+    // 以前は B店も送り、CF の「名前が変わっていません」で呼び出し全体が拒否されていた（本番で実測・2026-10-01）
+    await clickEdit(h, "田中 一郎"); await h.page.waitForTimeout(300);
+    R.sameOpenMsg = await h.evaluate(() => !!document.querySelector("[data-co-person-modal] [data-co-person-modal-msg]"));
+    await h.setInput('[data-co-person-modal] input[aria-label="新しい名前"]', "田中 太郎");
+    await h.page.waitForTimeout(100);
+    R.sameChecked = await h.evaluate(() => [...document.querySelectorAll("[data-co-person-modal] label")].filter(l => /A店|B店/.test(l.innerText)).map(l => ({ t: l.innerText.replace(/\s+/g, " "), c: l.querySelector("input").checked, note: !!l.querySelector("[data-co-rename-same]") })));
+    const cfBefore = await h.evaluate(() => window.__cf.filter(c => c.name === "companyRenameStaff").length);
+    R.sameClick = await modalClick(h, "名前を変更"); await settle(h);
+    R.sameMsg = await msg(h);
+    R.sameAfter = await h.evaluate(n => ({ staff1: window.__db("shops/S1/staff"), staff2: window.__db("shops/S2/staff"), links: window.__db("companies/C1/pub/people/12/links"),
+      modalOpen: !!document.querySelector("[data-co-person-modal]"), sent: window.__cf.filter(c => c.name === "companyRenameStaff").slice(n).map(c => c.payload.shopIds) }), cfBefore);
+    if (R.sameAfter.modalOpen) { await modalClick(h, "閉じる"); await h.page.waitForTimeout(200); }
     // 番号の重なり（鈴木に佐藤と同じ番号3・同じ甲法人）は拒否
     await clickEdit(h, "鈴木"); await h.page.waitForTimeout(300);
     await h.setInput('[data-co-person-modal] input[aria-label="従業員番号"]', "3");
@@ -219,6 +237,13 @@ const settle = h => h.page.waitForTimeout(700);
     renameOnlyChosenShop: Array.isArray(R.cfRename) && R.cfRename.length === 1 && JSON.stringify(R.cfRename[0].shopIds) === JSON.stringify(["S1"]),
     renameMsg: /名前を変更しました/.test(R.renameMsg || "") && JSON.stringify(R.rowAfterRename) === JSON.stringify(["田中 一郎"]),
     dupRejected: /既に登録されている名前です/.test(R.dupMsg || "") && JSON.stringify(R.dupStaff) === JSON.stringify(["田中 一郎", "佐藤", "鈴木"]),
+    rejectShownInModal: !!R.dupInModal && /^✕/.test(R.dupInModal.text) && /既に登録されている名前です/.test(R.dupInModal.text) && R.dupInModal.visible === true,
+    renameSkipsSameName: R.sameOpenMsg === false && Array.isArray(R.sameChecked) && R.sameChecked.length === 2 && R.sameChecked.every(x => x.c)
+      && R.sameChecked.filter(x => x.note).length === 1 && /B店/.test((R.sameChecked.find(x => x.note) || {}).t || "")
+      && R.sameClick === true && /名前を変更しました/.test(R.sameMsg || "") && !!R.sameAfter && R.sameAfter.modalOpen === false
+      && JSON.stringify(R.sameAfter.sent) === JSON.stringify([["S1"]])
+      && JSON.stringify(R.sameAfter.staff1) === JSON.stringify(["田中 太郎", "佐藤", "鈴木"]) && JSON.stringify(R.sameAfter.staff2) === JSON.stringify(["田中 太郎", "高橋"])
+      && JSON.stringify(R.sameAfter.links) === JSON.stringify({ S1: "田中 太郎", S2: "田中 太郎" }),
     numberConflictRejected: /従業員番号 3 はこの法人で既に使われています/.test(R.numMsg || "") && R.numAfter === "A7",
     attrHome: !!R.attrHome && R.attrHome.a === "parttime" && R.attrHome.home === "S1",
     merged: R.mergedDelta === 1 && JSON.stringify((R.merged || {}).links) === JSON.stringify({ S1: "鈴木", S2: "高橋" }) && R.merged.number === "A7",

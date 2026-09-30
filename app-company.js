@@ -776,6 +776,8 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
   const[editRow,setEditRow]=useState(null);
   const[picked,setPicked]=useState([]);   // 統合のために選んだ personId（最大2）
   const[mergeOpen,setMergeOpen]=useState(false);
+  // 編集・統合のモーダルは結果をモーダルの中にも出す（覆いの下の一覧の帯は見えない）。開いた瞬間に前の操作の結果を出さないよう消す
+  useEffect(()=>{if(editRow||mergeOpen)setMsg(null);},[editRow,mergeOpen]);
   const callPeople=async(name,payload,okText)=>{
     if(!onCompanyCall){setMsg({ok:false,text:"企業アカウントでログインしてください"});return null;}
     setBusy(true);
@@ -985,16 +987,23 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
         </table>
       </div>}
     </div>
-    {editRow&&data&&<CompanyPersonEditModal row={editRow} data={data} busy={busy} onClose={()=>setEditRow(null)}
+    {editRow&&data&&<CompanyPersonEditModal row={editRow} data={data} busy={busy} msg={msg} onClose={()=>setEditRow(null)}
       onCall={async(name,payload,okText)=>{const r=await callPeople(name,{personId:editRow.personId,...payload},okText);if(r)setEditRow(null);return r;}}/>}
-    {mergeOpen&&pickedRows.length===2&&<CompanyPersonMergeModal rows={pickedRows} ents={ents} busy={busy} onClose={()=>setMergeOpen(false)}
+    {mergeOpen&&pickedRows.length===2&&<CompanyPersonMergeModal rows={pickedRows} ents={ents} busy={busy} msg={msg} onClose={()=>setMergeOpen(false)}
       onMerge={async(keep,drop)=>{const r=await callPeople("mergePeople",{keepPersonId:keep,dropPersonId:drop},"同一人物として統合しました");if(r){setMergeOpen(false);setPicked([]);}}}/>}
   </div>);
 }
 // 企業内登録スタッフの「編集」（P1b・§3.8）。すべて CF 経由（店舗のデータを丸ごと読み込んで書き戻さない）。
 // 名前の変更は店舗の登録名を変える（StaffTab の改名と同じ結果）。番号・法人・属性・所属店舗は保存時にまとめて送る。
 // 属性と所属店舗は、この人がつながっている全店舗の設定に同じ値を書く（変えないときは「変更しない」のまま）。
-function CompanyPersonEditModal({row,data,busy,onClose,onCall}){
+// 編集・統合モーダルの中の結果（成功はモーダルが閉じるので、ここに残るのは主に拒否の「✕ 理由」）。
+// 一覧の帯（data-co-person-msg）は覆いの下に隠れるので、モーダルの中に同じ内容を出す。スクロールしても見えるよう上端に貼り付ける
+function CompanyModalMsg({msg}){
+  if(!msg)return null;
+  return<div data-co-person-modal-msg="1" role="status" style={{position:"sticky",top:-18,zIndex:1,margin:"8px 0",padding:"8px 10px",borderRadius:8,fontSize:13,lineHeight:1.5,
+    background:msg.ok?"var(--c-input)":"#FEF3C7",color:msg.ok?"var(--c-text2)":"#B45309",border:`1px solid ${msg.ok?"var(--c-border)":"#F59E0B"}`}}>{msg.text}</div>;
+}
+function CompanyPersonEditModal({row,data,busy,msg,onClose,onCall}){
   const links=row.links||[];
   const[newName,setNewName]=useState(row.name);
   const[renameShops,setRenameShops]=useState(links.map(l=>l.shopId));
@@ -1005,6 +1014,10 @@ function CompanyPersonEditModal({row,data,busy,onClose,onCall}){
   const ents=data.ents||[];
   const attrOpts=[...BUILTIN_TYPES.map(id=>[id,STAFF_TYPE_LABELS[id]]),...Object.entries(data.coAttrs||{})];
   const numberDigits=/^\d{1,20}$/.test(String(row.number||"").trim());
+  // 名前の変更は、いまの登録名が新しい名前と同じ店舗を送らない（CF は1店舗でも「名前が変わっていません」なら全体を拒否する）
+  const nn=newName.trim();
+  const sameName=sid=>(links.find(l=>l.shopId===sid)||{}).name===nn;
+  const renameTargets=renameShops.filter(sid=>!sameName(sid));
   const save=()=>{
     const payload={};
     if(number.trim()!==String(row.number||""))payload.number=number.trim();
@@ -1022,6 +1035,7 @@ function CompanyPersonEditModal({row,data,busy,onClose,onCall}){
         <button onClick={onClose} style={{...AGray,padding:"5px 10px",fontSize:12}}>閉じる</button>
       </div>
       <div style={{fontSize:11,color:"var(--c-text3)"}}>人物ID: <span data-co-person-id="1">{row.personId}</span></div>
+      <CompanyModalMsg msg={msg}/>
 
       <div style={SEC}>
         <AL>名前の変更</AL>
@@ -1030,9 +1044,10 @@ function CompanyPersonEditModal({row,data,busy,onClose,onCall}){
         {links.map(l=>(<label key={l.shopId} style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:"var(--c-text2)",marginBottom:4}}>
           <input type="checkbox" checked={renameShops.includes(l.shopId)} onChange={()=>setRenameShops(a=>a.includes(l.shopId)?a.filter(x=>x!==l.shopId):[...a,l.shopId])} style={{width:16,height:16}}/>
           {l.shopName}（いまの登録名: {l.name}）
+          {nn&&l.name===nn&&renameShops.includes(l.shopId)&&<span data-co-rename-same="1" style={{fontSize:11,color:"var(--c-text4)"}}>既にこの名前です（変更しません）</span>}
         </label>))}
-        <button disabled={busy||!newName.trim()||!renameShops.length||renameShops.every(sid=>(links.find(l=>l.shopId===sid)||{}).name===newName.trim())}
-          onClick={()=>onCall("companyRenameStaff",{shopIds:renameShops,newName:newName.trim()},"名前を変更しました")}
+        <button disabled={busy||!nn||!renameTargets.length}
+          onClick={()=>onCall("companyRenameStaff",{shopIds:renameTargets,newName:nn},"名前を変更しました")}
           style={{...AB,width:"100%",marginTop:6,opacity:busy?0.5:1}}>名前を変更</button>
       </div>
 
@@ -1090,13 +1105,14 @@ function CompanyPersonEditModal({row,data,busy,onClose,onCall}){
   </div>);
 }
 // 統合: 2人のうち、番号・法人・所属店舗を残す方を選ぶ（店舗側のデータは動かさない）
-function CompanyPersonMergeModal({rows,ents,busy,onClose,onMerge}){
+function CompanyPersonMergeModal({rows,ents,busy,msg,onClose,onMerge}){
   const[keep,setKeep]=useState(rows[0].personId);
   const entName=id=>((ents||[]).find(e=>e.id===id)||{}).name||"";
   const drop=rows.find(r=>r.personId!==keep).personId;
   return(<div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
     <div data-co-merge-modal="1" onClick={e=>e.stopPropagation()} style={{background:"var(--c-card)",borderRadius:12,padding:18,width:"100%",maxWidth:440,boxSizing:"border-box"}}>
       <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>同一人物として統合</div>
+      <CompanyModalMsg msg={msg}/>
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>番号・法人・所属店舗を残す方を選んでください。店舗の登録名とデータはそのままで、一覧で1人にまとまります。誤って統合したときは「編集」から解除できます。</div>
       {rows.map(r=>(<label key={r.personId} style={{display:"flex",gap:8,alignItems:"flex-start",padding:"8px 10px",marginBottom:6,border:`1px solid ${keep===r.personId?"var(--c-accent)":"var(--c-border)"}`,borderRadius:8,cursor:"pointer"}}>
         <input type="radio" name="co-merge-keep" checked={keep===r.personId} onChange={()=>setKeep(r.personId)} style={{marginTop:3}}/>
