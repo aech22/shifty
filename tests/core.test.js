@@ -5021,6 +5021,10 @@ test("P1b 統合・統合解除: 企業側の束ね方だけを変え、解除�
   assert.strictEqual(people.p_splitaaa.number, undefined);
   assert.strictEqual(cfp.planPeopleSync(people, p1bRegs(P1B_SHOPS), () => "p_x", "T4").patch, null, "推定では同じ人でも、解除した登録は再びまとめない");
   assert.ok(cfp.planSplitPerson(people, "12", { shopId: "A1", name: "田中" }, () => "p_x", "T").error, "登録が1つだけなら切り出せない");
+  // その人物につながっていない店舗（CF は links[shopId] を名前にするので undefined になる）は拒否する。
+  // 以前は undefined どうしの一致でガードを素通りし、undefined 入りの patch を返していた（バグチェック#156）
+  const two = { P: { displayName: "田中", links: { A1: "田中", C1: "田中" } } };
+  assert.strictEqual(cfp.planSplitPerson(two, "P", { shopId: "B1", name: two.P.links.B1 }, () => "p_x", "T").error, "この人物につながっていない登録です");
 });
 test("P1b 従業員番号は法人内で一意（保存時の衝突検出）・ID の振り直しは明示操作", () => {
   const people = p1bApply({}, p1bInit().patch);

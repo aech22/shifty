@@ -538,7 +538,9 @@ function planSplitPerson(people, personId, reg, genAuto, nowIso) {
   const p = _personObj(P[personId]);
   if (!p) return { error: "人物が見つかりません" };
   const l = _linksOf(p);
-  if (!reg || l[reg.shopId] !== reg.name) return { error: "この人物につながっていない登録です" };
+  // 名前が文字列であることも見る。つながっていない店舗だと l[shopId] と reg.name が両方 undefined で一致してしまい、
+  // undefined 入りの patch が update() で例外になる（バグチェック#156）
+  if (!reg || typeof reg.name !== "string" || l[reg.shopId] !== reg.name) return { error: "この人物につながっていない登録です" };
   if (Object.keys(l).length < 2) return { error: "登録が1つだけの人物は切り出せません" };
   let num = String(reg.number || "").trim();
   if (num && num === String(p.number || "").trim() && (reg.entityId || "") === (p.entityId || "")) num = "";
