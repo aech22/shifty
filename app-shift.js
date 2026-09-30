@@ -2797,9 +2797,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // ===== 確定・解除・交付（2026-09-30・P3・計画書 §3.5）=====
   // 確定できるのは企業セッション（企業コードのログインと企業の作成者本人）だけ。企業に連携していない店舗はオーナー。
   const canConfirm=!!period&&!!savePeriods&&canConfirmPeriod({companyLinkId:companyLink&&companyLink.id,sessionCompanyId:companyInfo&&companyInfo.companyId,ownerReadOnly});
+  // 新しく確定するのは Premium だけ（GATED_FEATURES の confirm）。確定はスタッフの再提出をルールで止めるので、
+  // Free/Pro の店舗が押せると提出が止まる。解除・交付は絞らない（降格した店舗が確定済みの期間を戻せなくなるため）
+  const canStartConfirm=canConfirm&&featureEnabled("confirm",{plan,companyLink});
   const periodDelivered=isPeriodDelivered(period);
   const confirmPeriod=()=>{
-    if(!canConfirm||periodConfirmed)return;
+    if(!canStartConfirm||periodConfirmed)return;
     if(lm.enabled&&!lm.loaded){tt("所定を読み込み中です。少し待ってからもう一度押してください");return;}
     if(!confirm("この期間を確定しますか？\n確定すると、この期間のシフトは編集できなくなり、スタッフの再提出もできなくなります。スタッフ一覧・属性・退勤延長などもこの時点の内容で固定し、人×月の所定（所定日数・所定時間）を集計して記録します。\n変更が必要になったら、理由を添えて確定を解除できます。"))return;
     // 未確定のセルを保存してから、その反映後の提出データで所定を集計する（onSave の反映は次の描画）
@@ -2860,7 +2863,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             <button data-period-unconfirm="1" onClick={unconfirmPeriod}
               style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>確定を解除</button>
           </React.Fragment>
-          :<button data-period-confirm="1" onClick={confirmPeriod}
+          :canStartConfirm&&<button data-period-confirm="1" onClick={confirmPeriod}
               style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>確定</button>
         )}
         {canActuals&&<button data-actual-toggle={actualMode?"on":"off"} onClick={()=>setActualMode(v=>!v)}
