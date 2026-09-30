@@ -907,12 +907,13 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
   let lastShop=null,lastSection="";
   return(<div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
     <div style={{background:"var(--c-card)",borderBottom:"1px solid var(--c-border)",padding:"12px 16px"}}>
-      <div style={{maxWidth:900,margin:"0 auto",display:"flex",alignItems:"center",gap:12}}>
+      {/* 幅はヘッダーと本文で同じ値にする。900 だと PC でも長いフルネーム・別の登録名・賃金列で表が横スクロールした（2026-09-30 に 1280 へ） */}
+      <div style={{maxWidth:1280,margin:"0 auto",display:"flex",alignItems:"center",gap:12}}>
         <button onClick={onBack} style={{...AGray,whiteSpace:"nowrap"}}>← 戻る</button>
         <div style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>企業内登録スタッフ</div>
       </div>
     </div>
-    <div style={{maxWidth:900,margin:"0 auto",padding:"16px 14px 60px"}}>
+    <div style={{maxWidth:1280,margin:"0 auto",padding:"16px 14px 60px"}}>
       <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="従業員番号・名前で検索" style={{...AI,boxSizing:"border-box",marginBottom:10}}/>
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10}}>
         {/* 並びは「従業員番号順」「店舗別」「パスコード」の順（決定12）。パスコードは企業のもの */}
@@ -949,9 +950,9 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
       {!data&&!loadErr&&<div style={{fontSize:13,color:"var(--c-text3)"}}>読み込み中...</div>}
       {data&&<div style={{overflowX:"auto",border:"1px solid var(--c-border)",borderRadius:8,background:"var(--c-card)"}}>
         <table style={{borderCollapse:"collapse",width:"100%",minWidth:560}}>
-          <thead><tr>{["従業員番号","名前","属性","所属店舗","有給（日）",...(payOn?["賃金"]:[])].map(h=><th key={h} style={TH}>{h}</th>)}</tr></thead>
+          <thead><tr>{["従業員番号","名前","属性","所属店舗","有給（日）",...(payOn?["賃金"]:[]),""].map(h=><th key={h||"edit"} style={TH}>{h}</th>)}</tr></thead>
           <tbody>
-            {shown.length===0&&<tr><td colSpan={payOn?6:5} style={{...TD,textAlign:"center",color:"var(--c-text4)",padding:20}}>該当するスタッフはいません</td></tr>}
+            {shown.length===0&&<tr><td colSpan={payOn?7:6} style={{...TD,textAlign:"center",color:"var(--c-text4)",padding:20}}>該当するスタッフはいません</td></tr>}
             {shown.map(r=>{
               const shopName=r.homeShopName||r.shopName;
               const sec=sectionOf(r);
@@ -959,8 +960,8 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
               const head=mode==="shop"&&shopName!==lastShop;lastShop=shopName;
               const homes=(r.homeShopNames||[r.homeShopName]).map(n=>n||"連携していない店舗");
               return(<React.Fragment key={r.key||r.shopId+"|"+r.name}>
-                {secHead&&<tr data-co-section={sec}><td colSpan={payOn?6:5} style={{...TD,fontSize:13,fontWeight:700,color:"var(--c-text)",background:"var(--c-input)"}}>{sec}</td></tr>}
-                {head&&<tr><td colSpan={payOn?6:5} style={{...TD,fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input2)"}}>{shopName}</td></tr>}
+                {secHead&&<tr data-co-section={sec}><td colSpan={payOn?7:6} style={{...TD,fontSize:13,fontWeight:700,color:"var(--c-text)",background:"var(--c-input)"}}>{sec}</td></tr>}
+                {head&&<tr><td colSpan={payOn?7:6} style={{...TD,fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input2)"}}>{shopName}</td></tr>}
                 <tr data-co-person={r.personId||""}>
                   <td style={TD}>
                     {/* 統合のための選択（2人まで）。人物IDの無い行（準備中）は選べない */}
@@ -968,13 +969,7 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
                     {r.number||<span style={{color:"var(--c-text4)"}}>—</span>}
                     {otherEntNames(r).length>0&&<div style={{fontSize:11,color:"#B45309",marginTop:2,whiteSpace:"normal"}}>番号 {r.number} は{otherEntNames(r).join("・")}でも使われています</div>}
                   </td>
-                  <td style={TD}>
-                    {/* 「編集」は名前の右に置く（右端の列だと 375px で表を横スクロールしないと見えなかった）。
-                        名前と「非表示中」は1つの span にまとめる＝セルの innerText の1行目は名前のまま（回帰が名前で行を探す） */}
-                    <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <span>{r.name}{r.hidden&&<span style={{marginLeft:6,fontSize:11,color:"var(--c-text3)"}}>非表示中</span>}</span>
-                      <button data-co-person-edit="1" disabled={!r.personId||busy} title={r.personId?"":"人物IDを準備中です"} onClick={()=>setEditRow(r)} style={{...AGray,padding:"4px 10px",fontSize:12,flexShrink:0,opacity:r.personId?1:0.5}}>編集</button>
-                    </div>
+                  <td style={TD}>{r.name}{r.hidden&&<span style={{marginLeft:6,fontSize:11,color:"var(--c-text3)"}}>非表示中</span>}
                     {r.conflictNames&&r.conflictNames.length>0&&<div title="同じ従業員番号で名前の違う登録があります" style={{fontSize:11,color:"#B45309",marginTop:2}}>別の登録名: {r.conflictNames.join("・")}</div>}</td>
                   <td style={TD}>{r.attrLabel||<span style={{color:"var(--c-text4)"}}>未設定</span>}</td>
                   <td style={{...TD,whiteSpace:"normal"}}>{homes.map((n,i)=><span key={i} style={{whiteSpace:"nowrap",color:n==="連携していない店舗"?"var(--c-text4)":undefined}}>{i>0?"・":""}{n}</span>)}
@@ -982,6 +977,7 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
                     {(r.links||[]).length>=2&&!r.homeExplicit&&<div data-co-home-hint="1" style={{fontSize:11,color:"#B45309",marginTop:2}}>所属店舗を設定してください</div>}</td>
                   <td style={TD}>{paidCell(r)}</td>
                   {payOn&&<td style={TD} data-co-wage={r.name}>{wageCell(r)}</td>}
+                  <td style={{...TD,textAlign:"right"}}><button data-co-person-edit="1" disabled={!r.personId||busy} title={r.personId?"":"人物IDを準備中です"} onClick={()=>setEditRow(r)} style={{...AGray,padding:"5px 10px",fontSize:12,opacity:r.personId?1:0.5}}>編集</button></td>
                 </tr>
               </React.Fragment>);
             })}
