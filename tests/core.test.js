@@ -6348,3 +6348,19 @@ test("P7 dashboardCsvOf: 見出しと人の行・店舗の注記の行（金額�
   assert.ok(!/円|賃金|時給|基本給/.test(lines[0]));
 });
 
+test("P7 ダッシュボードは労務判定表と同じ値を返し、賃金を読まない・書き込まない（ドリフト検出）", () => {
+  const src = _readAdminSurface();
+  const bodyOf = (marker, endMarker) => { const i = src.indexOf(marker); assert.ok(i >= 0, marker); const j = src.indexOf(endMarker, i + marker.length); return src.slice(i, j < 0 ? undefined : j); };
+  // ShiftEditTab の書き出しジョブ: 労務判定表と同じ入力（laborByStaff・schedAvgByStaff・laborMonthOf・schedCapOf・yearOvertimeMonths・yearLaborSummary）
+  const rep = bodyOf("dashboardReportRef.current=()=>{", "// 人×月の所定の手修正欄");
+  for (const id of ["laborByStaff[name]", "schedAvgByStaff[name]", "laborMonthOf(lm.map", "schedCapOf()", "yearOvertimeMonths(", "yearLaborSummary(", "liveMonthOtFor(name)", "liveTotalFor(name)"])
+    assert.ok(rep.includes(id), `ダッシュボードの値が ${id} を通っていない`);
+  assert.ok(src.includes('exportJob.kind==="dashboard"'));
+  // カード: 年度の全期間を読み、非表示マウントは書き込まない。賃金（private/pay・月次賃金の関数）を参照しない
+  const card = bodyOf("async function loadShopForDashboard(", "// 企業アカウントでログイン");
+  assert.ok(card.includes("laborReadPeriodIds(") && card.includes("pastSubsLoaded={true}") && card.includes("savePeriods={null}") && card.includes("ownerReadOnly={true}") && card.includes("allLinkedShops={[]}"));
+  for (const id of ["private/pay", "private`", "payMap", "monthlyPayBreakdown", "wageOf(", "payrollCsvOf", "PAYROLL_COLUMNS", "/private"])
+    assert.ok(!card.includes(id), `ダッシュボードが ${id} を参照している`);
+  for (const id of ["fbUpd(", "fbSet(", ".set(", ".update(", "savePeriods("])
+    assert.ok(!card.includes(id), `ダッシュボードが書き込み ${id} を持っている`);
+});

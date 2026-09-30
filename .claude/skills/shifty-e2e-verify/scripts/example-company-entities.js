@@ -87,7 +87,8 @@ const waitText = (h, t, ms = 15000) => h.page.waitForFunction(x => document.body
       return { ents: Object.values(pub.entities || {}).map(e => e.name), def: pub.defaultEntityId, se: pub.shopEntities,
         mEnt: m.map(x => x.entityId), mName: m.map(x => x.entityName), mSettings: m.map(x => JSON.stringify(x.settings)), mKind: m.map(x => x.kind) };
     });
-    R.filterA = await h.evaluate(() => document.querySelectorAll("[data-co-entity-filter]").length);
+    // 提出状況表の法人フィルタだけを数える（企業横断ダッシュボード・P7 も同じ部品を持つ）
+    R.filterA = await h.evaluate(() => [...document.querySelectorAll("[data-co-entity-filter]")].filter(e => !e.closest("[data-co-dashboard]")).length);
 
     // 法人を追加
     await h.setInput('input[placeholder="法人名（例：株式会社〇〇）"]', "乙法人");
@@ -116,7 +117,8 @@ const waitText = (h, t, ms = 15000) => h.page.waitForFunction(x => document.body
     // 提出状況: 絞り込みと見出し
     R.subsHeads = await h.evaluate(() => [...document.querySelectorAll("[data-co-entity-head]")].map(x => x.innerText.trim()));
     R.subsRows = await h.evaluate(() => [...document.querySelectorAll("[data-co-row]")].map(x => x.getAttribute("data-co-row")));
-    R.filterB = await h.evaluate(() => document.querySelectorAll("[data-co-entity-filter]").length);
+    // 提出状況表の法人フィルタだけを数える（企業横断ダッシュボード・P7 も同じ部品を持つ）
+    R.filterB = await h.evaluate(() => [...document.querySelectorAll("[data-co-entity-filter]")].filter(e => !e.closest("[data-co-dashboard]")).length);
     await h.page.selectOption("[data-co-entity-filter]", e2);
     await h.page.waitForTimeout(300);
     R.subsFiltered = await h.evaluate(() => [...document.querySelectorAll("[data-co-row]")].map(x => x.getAttribute("data-co-row")));

@@ -4,7 +4,7 @@
 //   1. 賃金マスタ・閲覧パスコード（PAY_OFF / PayCodeBox / PayCodeChangeModal / StaffPayPage）
 //   2. 企業連携タブ一式（CoLaborFields・CompanyConfigCard・CompanyEntityCard・EntityFilter・
 //      CompanyStaffCard / CompanyStaffDirectory・人物の編集と統合・CompanySubmissionsCard・
-//      CompanyBulkPdf・CompanyLoginCard・CompanyTab）と、それに続く設定タブ（SetTab）
+//      CompanyBulkPdf・CompanyDashboardCard・CompanyLoginCard・CompanyTab）と、それに続く設定タブ（SetTab）
 // index.html で app-admin.js の直後・app-main.js の直前に読み込む。全ファイルが同じ
 // グローバルスコープを共有し、描画は app-main.js の ReactDOM マウント時なので、
 // AdminView（app-admin.js）からここのコンポーネントを参照できる。
@@ -1446,6 +1446,249 @@ function CompanyBulkPdf({range,rows,companyName,tt}){
 }
 
 // ============================================================
+// 企業横断ダッシュボード（2026-09-30・労務給与_複数法人_実装計画.md §6 P7・§1 の要件5・16）
+// 本部（企業セッション）が法人→店舗→人の当月と年をひと目で見る: 月所定と所定上限・年平均所定と分母・36協定の残り
+// （月・年・年720h・複数月平均80h・月45h超の回数）・確定と交付の進捗・年間休日（52日以上）。CSV で出せる。
+// **時間はシフト作成タブの労務判定表と同じ計算**: 店舗ごとに ShiftEditTab を画面外へ1店舗ずつマウントし、書き出しジョブ
+// （exportJob.kind="dashboard"）で人ごとの値を返させる（一括PDF・月次賃金と同じ形＝計算を二重に持たない）。
+// 非表示マウントは書き込まない（savePeriods=null・ownerReadOnly・onSave は何もしない・laborMonths は読むだけ）。
+// 提出は laborReadPeriodIds（年度の全期間と前後の週）を読む＝pastSubsLoaded=true でも年の値が欠けない。
+// **賃金（金額）は出さない**（月次賃金ページの領分）。読めない店舗・途中の月は「＋」と淡色（労務判定表と同じ流儀）。
+// ============================================================
+const DASHBOARD_JOB_TIMEOUT_MS=60000;
+async function loadShopForDashboard(sid,ym){
+  const ref=p=>firebaseDB.ref(p).once("value").then(x=>x.val());
+  const[staff,settingsRaw,coLink,periodsRaw]=await Promise.all([ref(`shops/${sid}/staff`),ref(`shops/${sid}/settings`),
+    ref(`shops/${sid}/company`).catch(()=>null),ref(`shops/${sid}/periods`)]);
+  const settings=applyCompanySettings(settingsRaw||makeSettings(sid),(coLink&&coLink.settings)||{});
+  const periods=Object.values(periodsRaw||{}).filter(x=>x&&x.id&&isValidDateStr(x.startDate)&&isValidDateStr(x.endDate))
+    .sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate)));
+  const progress=monthPeriodProgressOf(periods,ym);
+  const n=daysInMonthOf(ym);const first=`${ym}-01`,last=`${ym}-${String(n).padStart(2,"0")}`;
+  const inMonth=periods.filter(p=>p.startDate<=last&&p.endDate>=first);
+  if(!inMonth.length)return{none:true,progress};
+  const target=inMonth.find(p=>p.startDate.slice(0,7)===ym)||inMonth[inMonth.length-1];
+  const pids=laborReadPeriodIds(periods,settings,first,last);
+  if(!pids.includes(target.id))pids.push(target.id);
+  const q=pid=>firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(pid).once("value");
+  const subSnaps=await Promise.all(pids.map(q));
+  const subs=[];subSnaps.forEach(sn=>Object.values(sn.val()||{}).forEach(x=>{if(x&&x.id)subs.push(x);}));
+  // 所定・実績はオーナーしか読めない。読めなければ所定は未確定（シフトから集計）・実績は確定シフトで数え、店舗の行に注記を出す
+  const lm=await ref(`shops/${sid}/laborMonths`).then(v=>({ok:true,v:v||{}}),()=>({ok:false,v:{}}));
+  const acts=await Promise.all(pids.map(pid=>ref(`shops/${sid}/actuals/${pid}`).then(v=>[pid,v||{}],()=>null)));
+  const actualsReadable=acts.every(Boolean);
+  return{staffList:Object.values(staff||{}).filter(x=>typeof x==="string"),settings,periods,subs,companyLink:coLink||null,
+    laborMonths:lm.v,laborMonthsReadable:lm.ok,actuals:actualsReadable?Object.fromEntries(acts):{},actualsReadable,
+    periodId:target.id,progress};
+}
+function CompanyDashboardCard({companyId,companyName,shopNames={},tt,structureTick=0}){
+  const[ym,setYm]=useState(()=>fd(new Date()).slice(0,7));
+  const[entityFilter,setEntityFilter]=useState("");
+  const[base,setBase]=useState(null); // {shopIds,names,structure} | {error}
+  const[result,setResult]=useState(null); // {ym, shops:[{sid,name,entityId,isHq,status,progress,report,notes[]}]}
+  const[job,setJob]=useState(null);
+  const[progress,setProgress]=useState("");
+  const[open,setOpen]=useState({});
+  const runRef=useRef(0);
+  const pendingRef=useRef(null);
+  useEffect(()=>()=>{runRef.current++;if(pendingRef.current)pendingRef.current({error:"cancelled"});},[]);
+  useEffect(()=>{
+    if(!firebaseDB||!companyId){setBase({shopIds:[],names:{},structure:{}});return;}
+    let cancelled=false;
+    Promise.all([firebaseDB.ref(`companies/${companyId}/pub/shops`).once("value"),readCompanyStructure(companyId)]).then(async([shS,structure])=>{
+      const shopIds=Object.keys(shS.val()||{});
+      const names={};
+      await Promise.all(shopIds.map(async sid=>{
+        const nS=await firebaseDB.ref(`global/shops/${sid}/name`).once("value").catch(()=>null);
+        names[sid]=(nS&&nS.val())||shopNames[sid]||sid;
+      }));
+      if(!cancelled)setBase({shopIds,names,structure:structure||{}});
+    }).catch(()=>{if(!cancelled)setBase({error:true});});
+    return()=>{cancelled=true;};
+  },[companyId,structureTick]);
+  const ents=useMemo(()=>base&&!base.error?companyEntityList(base.structure):[],[base]);
+  useEffect(()=>{if(entityFilter&&!ents.some(e=>e.id===entityFilter))setEntityFilter("");},[ents,entityFilter]);
+  const entIdx={};ents.forEach((e,i)=>{entIdx[e.id]=i;});
+  const entName={};ents.forEach(e=>{entName[e.id]=e.name;});
+  const targets=base&&!base.error?base.shopIds.map(sid=>({sid,name:base.names[sid],entityId:companyEntityIdOfShop(base.structure,sid),
+    isHq:companyShopKindOf(base.structure,sid)==="hq"})).filter(x=>!entityFilter||x.entityId===entityFilter)
+    .sort((a,b)=>{const ea=entIdx[a.entityId]??99,eb=entIdx[b.entityId]??99;if(ea!==eb)return ea-eb;return String(a.name).localeCompare(String(b.name),"ja");}):[];
+  const busy=!!progress;
+  const run=async()=>{
+    if(busy||!targets.length||!/^\d{4}-\d{2}$/.test(ym))return;
+    const runId=++runRef.current;
+    const shops=[];
+    setResult(null);setOpen({});
+    for(let i=0;i<targets.length;i++){
+      if(runRef.current!==runId)return;
+      const t=targets[i];
+      setProgress(`${i+1} / ${targets.length} 店舗を集計中…`);
+      let data;
+      try{data=await loadShopForDashboard(t.sid,ym);}catch{shops.push({...t,status:"failed",notes:["読み込みに失敗しました"]});continue;}
+      if(runRef.current!==runId)return;
+      if(data.none){shops.push({...t,status:"none",progress:data.progress,notes:["この月にかかる期間がありません"]});continue;}
+      const key=`${runId}_${t.sid}`;
+      const out=await new Promise(res=>{
+        const timer=setTimeout(()=>res({error:"timeout"}),DASHBOARD_JOB_TIMEOUT_MS);
+        const done=v=>{clearTimeout(timer);res(v);};
+        pendingRef.current=done;
+        setJob({key,sid:t.sid,shopName:t.name,data,exportJob:{key,kind:"dashboard",onDone:(err,rep)=>done(err?{error:err}:{rep})}});
+      });
+      pendingRef.current=null;
+      setJob(null);
+      if(runRef.current!==runId)return;
+      if(out.error||!out.rep){shops.push({...t,status:"failed",progress:data.progress,notes:["集計に失敗しました"]});continue;}
+      const notes=[];
+      if(out.rep.ym!==ym)notes.push(`この月に始まる期間が無いため ${out.rep.ym} の期間で集計しています`);
+      if(!data.laborMonthsReadable)notes.push("＋所定を読み込めませんでした（シフトから集計した値。この店舗の管理者として登録されていません）");
+      if(!data.actualsReadable)notes.push("実績を読み込めないため確定シフトで数えています");
+      shops.push({...t,status:"ok",progress:data.progress,report:out.rep,notes});
+    }
+    setProgress("");
+    setResult({ym,shops});
+    const failed=shops.filter(s=>s.status==="failed").map(s=>s.name);
+    tt&&tt(failed.length?`△ ${shops.length-failed.length}店舗を集計しました（${failed.join("・")} は失敗）`:`✓ ${shops.length}店舗を集計しました`);
+  };
+  // 表示用の行（店舗ごとに人の値を並べ直す）
+  const shopRows=(result?result.shops:[]).map(s=>{
+    const views=s.report?s.report.rows.map(r=>dashboardPersonView(r,s.report)):[];
+    return{...s,views,counts:dashboardCountsOf(views),progressLabel:s.progress?monthProgressLabel(s.progress):""};
+  });
+  const entityGroups=[];
+  shopRows.forEach(s=>{
+    const g=entityGroups[entityGroups.length-1];
+    if(g&&g.entityId===s.entityId)g.shops.push(s);else entityGroups.push({entityId:s.entityId,shops:[s]});
+  });
+  const sumOf=list=>{
+    const c={people:0,schedOver:0,avgOver:0,agOver:0,restShort:0},p={total:0,confirmed:0,delivered:0};
+    list.forEach(s=>{Object.keys(c).forEach(k=>{c[k]+=s.counts[k];});if(s.progress){p.total+=s.progress.total;p.confirmed+=s.progress.confirmed;p.delivered+=s.progress.delivered;}});
+    return{c,p};
+  };
+  const countsText=c=>`対象 ${c.people}人・所定超過 ${c.schedOver}・年平均超過 ${c.avgOver}・36協定 ${c.agOver}・休日不足 ${c.restShort}`;
+  const downloadCsv=()=>{
+    if(!result)return;
+    const rows=[];
+    shopRows.forEach(s=>{
+      const common={entity:entName[s.entityId]||"",shop:s.name,progress:s.progressLabel};
+      if(!s.views.length){rows.push({...common,shopNote:(s.notes||[]).join("／")||"対象の人がいません"});return;}
+      s.views.forEach(v=>rows.push({...common,view:v}));
+    });
+    const text=dashboardCsvOf(rows);
+    const blob=new Blob(["﻿"+text],{type:"text/csv;charset=utf-8"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download=`${String(companyName||"企業").replace(/[\\/:*?"<>|]/g,"")}_${result.ym}_企業横断ダッシュボード.csv`;
+    document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},0);
+    ph("company_dashboard_csv_exported",{shops:shopRows.length});tt&&tt("✓ CSV をダウンロードしました");
+  };
+  const cols=DASHBOARD_COLUMNS.filter(c=>c.screen!==false);
+  const groups=[];cols.forEach(c=>{const g=groups[groups.length-1];if(g&&g.name===(c.group||""))g.span++;else groups.push({name:c.group||"",span:1});});
+  const TH={borderBottom:"1px solid var(--c-border2)",padding:"4px 6px",fontSize:11,color:"var(--c-text3)",fontWeight:700,whiteSpace:"nowrap",textAlign:"right"};
+  const TD={borderBottom:"1px solid var(--c-border)",padding:"5px 6px",fontSize:12,whiteSpace:"nowrap",textAlign:"right",verticalAlign:"top"};
+  // 法人・店舗の見出し行は表の横スクロールに付いていかず左に留まる（狭い画面でも件数と進捗が読める）
+  const HEAD_BOX={position:"sticky",left:6,maxWidth:"min(820px, calc(100vw - 90px))"};
+  // セルの状態（途中の値＝「＋」と淡色／超過・不足＝赤）。労務判定表と同じ流儀
+  const metaOf=(key,v)=>{
+    switch(key){
+      case"schedMin":case"capMin":return{partial:v.schedPartial};
+      case"schedDiffMin":return{partial:v.schedPartial,bad:v.schedOver};
+      case"avgMin":case"denomMin":return{partial:Number(v.avgMissing)>0};
+      case"avgDiffMin":return{partial:Number(v.avgMissing)>0,bad:v.avgOver};
+      case"monthOtH":return{partial:v.monthPartial||v.helperUnread||v.unread};
+      case"monthLeftH":return{partial:v.monthPartial||v.helperUnread||v.unread,bad:v.monthLeftH!=null&&v.monthLeftH<0&&!v.monthPartial};
+      case"yearOtH":case"worstAvgH":return{partial:v.yearPartial};
+      case"yearLeftH":return{partial:v.yearPartial,bad:v.yearLeftH!=null&&v.yearLeftH<0};
+      case"year720LeftH":return{partial:v.yearPartial,bad:v.year720LeftH<0};
+      case"avg80LeftH":return{partial:v.yearPartial,bad:v.avg80LeftH!=null&&v.avg80LeftH<0};
+      case"n45":return{partial:v.yearPartial,bad:v.n45Left<0};
+      case"restDays":case"restNeed":return{partial:Number(v.restMissing)>0||(v.rest&&v.rest.key==="pending"),bad:v.restShort};
+      default:return{};
+    }
+  };
+  const personRow=(s,v)=>{
+    const val=dashboardRowValues({view:v});
+    if(v.dest||v.skip)return(<tr key={s.sid+"|"+v.name} data-dash-person={v.name} data-dash-shop-of={s.sid}>
+      <td style={{...TD,textAlign:"left",fontWeight:600,paddingLeft:22}}>{v.name}</td><td style={{...TD,textAlign:"left"}}>{val.sys}</td>
+      <td colSpan={cols.length-2} style={{...TD,textAlign:"left",color:"var(--c-text3)"}}>{val.notes}</td></tr>);
+    return(<tr key={s.sid+"|"+v.name} data-dash-person={v.name} data-dash-shop-of={s.sid}>{cols.map(c=>{
+      if(c.key==="name")return<td key={c.key} style={{...TD,textAlign:"left",fontWeight:600,paddingLeft:22}}>{v.name}</td>;
+      if(c.key==="notes")return<td key={c.key} style={{...TD,textAlign:"left",whiteSpace:"normal",minWidth:220,color:"var(--c-text3)",fontSize:11}}>{val.notes}</td>;
+      if(c.kind==="text")return<td key={c.key} style={{...TD,textAlign:"left"}}>{dashboardCellText(c,val)}</td>;
+      const t=dashboardCellText(c,val);
+      const m=metaOf(c.key,v);
+      return<td key={c.key} data-col={c.key} data-bad={m.bad?"1":undefined} data-partial={m.partial&&t?"1":undefined}
+        style={{...TD,color:m.bad?"#e53935":m.partial?"var(--c-text3)":"var(--c-text)",fontWeight:m.bad?700:400}}>{m.partial&&t?"＋":""}{t}</td>;
+    })}</tr>);
+  };
+  const title="企業横断ダッシュボード";
+  if(!base)return(<AC title={title}><div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div></AC>);
+  if(base.error)return(<AC title={title}><div style={{fontSize:12,color:"#FF4757"}}>✕ 連携店舗を読み込めませんでした。再読み込みしてください。</div></AC>);
+  const showEntityHeads=ents.length>=2;
+  return(<AC title={title}>
+    <div data-co-dashboard="1">
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10}}>
+        <input type="month" value={ym} aria-label="集計する月" onChange={e=>{if(/^\d{4}-\d{2}$/.test(e.target.value)){setYm(e.target.value);setResult(null);}}}
+          disabled={busy} style={{...AI,width:"auto",padding:"7px 10px"}}/>
+        <EntityFilter ents={ents} value={entityFilter} onChange={v=>{setEntityFilter(v);setResult(null);}}/>
+        <button data-co-dashboard-run="1" disabled={busy||!targets.length} onClick={run}
+          style={{...AB,width:"auto",padding:"8px 14px",opacity:busy||!targets.length?0.5:1}}>{busy?"集計中...":"集計する"}</button>
+        <button data-co-dashboard-csv="1" disabled={busy||!result} onClick={downloadCsv}
+          style={{...AGray,padding:"7px 12px",fontSize:12,opacity:busy||!result?0.5:1}}>CSV を出力</button>
+      </div>
+      <div style={{fontSize:11,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>
+        連携店舗ごとにシフト作成タブの労務判定表と同じ計算で集計します（{targets.length}店舗）。年の値は年度の始めからこの月までです。
+        「＋」と薄い文字は途中の値（月の日がまだ埋まっていない・読み込めていない期間や他店がある）、赤は超過・不足です。
+        年間休日は公休（空欄を含む）の日数で、52日以上を確認します。賃金はここには出しません（月次賃金ページ）。
+      </div>
+      {progress&&<div data-co-dashboard-progress="1" style={{fontSize:12,color:"var(--c-text3)",marginBottom:8}}>{progress}</div>}
+      {result&&<div style={{overflowX:"auto",border:"1px solid var(--c-border)",borderRadius:8}}>
+        <table data-co-dashboard-table="1" style={{borderCollapse:"collapse",width:"100%"}}>
+          <thead>
+            <tr>{groups.map((g,i)=><th key={i} colSpan={g.span} style={{...TH,textAlign:"center",borderBottom:g.name?"1px solid var(--c-border)":"none"}}>{g.name}</th>)}</tr>
+            <tr>{cols.map(c=><th key={c.key} style={{...TH,textAlign:c.kind==="text"?"left":"right"}}>{c.label}</th>)}</tr>
+          </thead>
+          <tbody>{entityGroups.map(g=>{
+            const es=sumOf(g.shops);
+            return(<React.Fragment key={g.entityId||"none"}>
+              {showEntityHeads&&<tr data-dash-entity={g.entityId||""}><td colSpan={cols.length} style={{...TD,textAlign:"left",fontSize:12,fontWeight:700,color:"var(--c-text2)",background:"var(--c-input2)",whiteSpace:"normal"}}>
+                <div style={HEAD_BOX}>{entName[g.entityId]||"法人未設定"}<span style={{fontWeight:400,marginLeft:10}}>店舗 {g.shops.length}・{countsText(es.c)}・確定 {es.p.confirmed}/{es.p.total}・交付 {es.p.delivered}/{es.p.total}</span></div></td></tr>}
+              {g.shops.map(s=>{
+                const isOpen=!!open[s.sid];
+                const bad=s.counts.schedOver+s.counts.avgOver+s.counts.agOver+s.counts.restShort>0;
+                return(<React.Fragment key={s.sid}>
+                  <tr data-dash-shop={s.sid} data-dash-status={s.status}>
+                    <td colSpan={cols.length} style={{...TD,textAlign:"left",whiteSpace:"normal"}}><div style={HEAD_BOX}>
+                      <button data-dash-toggle={s.sid} disabled={!s.views.length} onClick={()=>setOpen(o=>({...o,[s.sid]:!o[s.sid]}))}
+                        style={{background:"none",border:"none",padding:0,cursor:s.views.length?"pointer":"default",fontSize:13,fontWeight:700,color:"var(--c-text)"}}>
+                        {s.views.length?(isOpen?"▾ ":"▸ "):""}{s.name}</button>
+                      {s.isHq&&<span style={{marginLeft:6,fontSize:11,color:"var(--c-text3)"}}>本部</span>}
+                      {s.progressLabel&&<span data-dash-progress={s.sid} title={(s.progress&&s.progress.labels||[]).join("\n")} style={{marginLeft:10,fontSize:12,color:"var(--c-text2)"}}>{s.progressLabel}</span>}
+                      {s.status==="ok"&&<span data-dash-counts={s.sid} style={{marginLeft:10,fontSize:12,color:bad?"#e53935":"var(--c-text2)"}}>{countsText(s.counts)}</span>}
+                      {(s.notes||[]).length>0&&<div style={{fontSize:11,color:s.status==="failed"?"#e53935":"var(--c-text3)",marginTop:2}}>{s.notes.join("／")}</div>}
+                    </div></td>
+                  </tr>
+                  {isOpen&&s.views.map(v=>personRow(s,v))}
+                </React.Fragment>);
+              })}
+            </React.Fragment>);
+          })}</tbody>
+        </table>
+      </div>}
+      {result&&shopRows.some(s=>s.views.length)&&<button onClick={()=>{const all=shopRows.every(s=>!s.views.length||open[s.sid]);setOpen(all?{}:Object.fromEntries(shopRows.map(s=>[s.sid,true])));}}
+        style={{...AGray,marginTop:8,padding:"5px 10px",fontSize:12}}>{shopRows.every(s=>!s.views.length||open[s.sid])?"すべて閉じる":"すべての人を表示"}</button>}
+    </div>
+    {job&&<div style={{display:"none"}} aria-hidden="true">
+      <ShiftEditTab key={job.key} subs={job.data.subs} periods={job.data.periods} staffList={job.data.staffList}
+        onSave={()=>{}} tt={()=>{}} settings={job.data.settings} plan="premium" shopId={job.sid} shopName={job.shopName}
+        onUpgrade={()=>{}} allLinkedShops={[]} savePeriods={null} ownerReadOnly={true} pastSubsLoaded={true}
+        initialPeriodId={job.data.periodId} exportJob={job.exportJob}
+        laborMonths={{...LABOR_MONTHS_OFF,loaded:true,map:job.data.laborMonths||{}}}
+        actuals={{...ACTUALS_OFF,enabled:!!job.data.actualsReadable,loaded:true,map:job.data.actuals||{}}}
+        companyLink={job.data.companyLink||null}/>
+    </div>}
+  </AC>);
+}
+
+// ============================================================
 // 企業アカウントでログイン（2026-09-27 ユーザー指示）
 // 企業コード（ID）とパスワードだけでログインできる。メール/Google のアカウントが要るのは企業アカウントの
 // 作成時だけで、作成後はこの2つを共有すれば誰でも企業の連携店舗を管理できる。
@@ -1664,6 +1907,8 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
     {companyInfo&&plan==="premium"&&<CompanySubmissionsCard structureTick={structureTick} companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}
       renderDownload={({range,rows})=>range?<CompanyBulkPdf key={range.key} range={range} rows={rows} companyName={companyInfo.name} tt={tt}/>:null}/>}
     {companyInfo&&plan==="premium"&&<CompanyStaffCard onOpen={onOpenCompanyStaff}/>}
+    {companyInfo&&plan==="premium"&&<CompanyDashboardCard structureTick={structureTick} companyId={companyInfo.companyId} companyName={companyInfo.name}
+      shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} tt={tt}/>}
     <AC title="企業アカウント">
       {companyInfo?(
         <div>

@@ -2413,6 +2413,47 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           partial:!l.monthCovered,unread:!!b.unread,helperUnread:!!l.helperUnread};
       })};
   };
+  // 企業横断ダッシュボード（P7）へ渡す人ごとの当月と年の値。**労務判定表と同じ値**（月所定/上限・年平均所定/分母の行、
+  // laborByStaff の月の残業予定（B制は①＋②）、yearOvertimeMonths・yearLaborSummary）を並べ直すだけで、式は持たない。
+  // 年の値は**年度の始め〜選んだ月まで**（その月より後に作ってある期間は入れない＝空の先の期間を公休・残業0として数えない）。
+  const dashboardReportRef=useRef(null);
+  dashboardReportRef.current=()=>{
+    const ls=laborSettingsOf(settings);
+    const attrOpts=getAttrOptions(settings);
+    const cap=schedCapOf();
+    const monthLast=laborMonthDays[laborMonthDays.length-1]||"";
+    const upto=periods.filter(p=>p&&p.startDate&&p.startDate<=monthLast);
+    const fyMonths=fy==null?[]:fiscalYearMonths(fy,fyStart);
+    const fyEndYm=fyMonths[fyMonths.length-1]||"";
+    const fyEnd=fyEndYm?`${fyEndYm}-${String(daysInMonthOf(fyEndYm)).padStart(2,"0")}`:"";
+    const remainDays=monthLast&&fyEnd&&fyEnd>monthLast?Math.round((pd(fyEnd)-pd(monthLast))/86400000):0;
+    return{ym:lmYm,fyLabel:fy==null?"":fiscalYearLabel(fy,fyStart),capMin:cap?cap.min:0,capName:cap?cap.name:"",
+      denomMin:rateDenominatorMinOf(ls),agMonthH:ls.agreementMonthlyOtMin/60,agYearH:ls.agreementAnnualOtMin/60,
+      restRemainDays:remainDays,restFinal:!!(fyEndYm&&lmYm===fyEndYm&&laborMonthCovered),
+      monthCovered:laborMonthCovered,pendingReason:laborPendingReason,actualsReadable:!!act.enabled,
+      rows:realStaff.map(name=>{
+        const attrId=(settings.staffAttributes||{})[name]||"";
+        const base={name,number:(settings.staffNumbers||{})[name]||"",
+          attr:((attrOpts.find(([v])=>v===attrId))||[])[1]||STAFF_TYPE_LABELS[attrId]||attrId,
+          sys:laborSystemForStaff(settings,name)};
+        const l=laborByStaff[name];
+        if(!l)return{...base,skip:"noData"};
+        if(l.dest)return{...base,dest:true,homeName:l.homeName||""};
+        if(l.sys==="none")return{...base,skip:"none"};
+        const rec=laborMonthOf(lm.map,lmYm,name);
+        const av=schedAvgByStaff[name]||null;
+        const yo=fy==null?null:yearOvertimeMonths(upto,name,fy,fyStart,liveMonthOtFor(name));
+        const yr=fy==null?null:yearLaborSummary(upto,name,fy,fyStart,liveTotalFor(name),true);
+        return{...base,
+          schedMin:rec?(Number(rec.min)||0):l.monthWorkMin,
+          schedSource:rec?(isLaborMonthFrozen(rec)?"frozen":"registered"):"auto",schedPartial:!rec&&!l.monthCovered,
+          avgMin:av&&av.avgMin!=null?av.avgMin:null,avgMissing:av?av.missing.length:0,
+          monthOtH:l.sys==="B"?l.monthOtB:l.monthOtH,monthPartial:!l.monthCovered,
+          yearMonths:yo?yo.scoped.map(v=>({ym:v.ym,h:v.h,ag:v.ag})):[],yearMissing:yo?yo.missingMonths:[],
+          restDays:yr?yr.publicOff:null,restMissing:yr?yr.missingPeriodIds.length:0,
+          helperUnread:!!l.helperUnread,unread:!!(l.prem&&l.prem.unread)};
+      })};
+  };
   // 人×月の所定の手修正欄（確定前のみ。前の月を遡って登録するときは、その月の期間を選んで入力する）
   const[lmOpen,setLmOpen]=useState(false);
   const[lmDraft,setLmDraft]=useState({});
@@ -2690,6 +2731,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // 月次賃金ページ（P6b）: PDF は作らず、月の時間だけを返す
       if(exportJob.kind==="payroll"){
         let rep=null;try{rep=payrollReportRef.current();}catch(e){exportJob.onDone(e);return;}
+        exportJob.onDone(null,rep);return;
+      }
+      // 企業横断ダッシュボード（P7）: PDF は作らず、人ごとの当月と年の値だけを返す
+      if(exportJob.kind==="dashboard"){
+        let rep=null;try{rep=dashboardReportRef.current();}catch(e){exportJob.onDone(e);return;}
         exportJob.onDone(null,rep);return;
       }
       exportPdf(exportJob.mode,"all",{pdf:exportJob.pdf,first:exportJob.first,save:false})
