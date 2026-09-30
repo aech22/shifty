@@ -6265,3 +6265,86 @@ test("一括PDFの読み込みは laborReadPeriodIds を通す（直前の期間
   const body = src.slice(i, src.indexOf("\nfunction ", i + 10));
   assert.ok(body.includes("laborReadPeriodIds(") && body.includes("pastSubsLoaded={true}"));
 });
+
+// ===== 企業横断ダッシュボード（2026-09-30・P7）=====
+test("P7 agreementYearStatus: 判定（agreementYearFindings）と同じ合計・45h超の回数・複数月平均の最大（80h以下でも返す）", () => {
+  const M = arr => arr.map(([h, ag], i) => ({ ym: `2026-${String(4 + i).padStart(2, "0")}`, h, ag }));
+  const st = u.agreementYearStatus(M([[40, 40], [50, 90], [30, 80]]));
+  assert.strictEqual(st.totalH, 120);
+  assert.strictEqual(st.n45, 1);
+  assert.deepStrictEqual(st.worstAvg, { w: 2, avg: 85 }); // 窓 [90,80]
+  assert.deepStrictEqual(u.agreementYearFindings(M([[40, 40], [50, 90], [30, 80]]), 360).map(f => f.key), ["avgOver80"]);
+  // 80h 以下でも最大の窓を返す（ダッシュボードの「80hの残り」）が、判定は出さない
+  const low = u.agreementYearStatus(M([[10, 10], [20, 30]]));
+  assert.deepStrictEqual(low.worstAvg, { w: 2, avg: 20 });
+  assert.deepStrictEqual(u.agreementYearFindings(M([[10, 10], [20, 30]]), 360), []);
+  assert.strictEqual(u.agreementYearStatus([]).worstAvg, null);
+  assert.strictEqual(u.agreementYearStatus(M([[50, 50]])).worstAvg, null); // 窓は2か月から
+});
+
+test("P7 annualRestStatusOf: 52日以上＝ok／残りの日で届かない・年度の最後＝short／それ以外と読めていない期間があるときは pending", () => {
+  assert.strictEqual(u.ANNUAL_REST_MIN_DAYS, 52);
+  assert.deepStrictEqual(u.annualRestStatusOf({ restDays: 52, remainDays: 0, final: true }), { key: "ok", days: 52, need: 0 });
+  assert.strictEqual(u.annualRestStatusOf({ restDays: 20, remainDays: 200 }).key, "pending");
+  assert.strictEqual(u.annualRestStatusOf({ restDays: 20, remainDays: 31 }).key, "short");   // 残り31日で32日は無理
+  assert.strictEqual(u.annualRestStatusOf({ restDays: 50, remainDays: 0, final: true }).key, "short");
+  assert.strictEqual(u.annualRestStatusOf({ restDays: 50, remainDays: 0, final: true, missing: 1 }).key, "pending");
+  assert.strictEqual(u.annualRestStatusOf({ restDays: 20, remainDays: 31 }).need, 32);
+});
+
+test("P7 monthPeriodProgressOf: その月にかかる期間の確定・交付の数（periodStateOf の数え上げ）", () => {
+  const at = "2026-10-01T00:00:00.000Z";
+  const ps = [
+    { id: "a", label: "10月前半", startDate: "2026-10-01", endDate: "2026-10-15", submission: { at }, confirmation: { at }, delivery: { at } },
+    { id: "b", label: "10月後半", startDate: "2026-10-16", endDate: "2026-10-31", submission: { at } },
+    { id: "c", label: "9月後半", startDate: "2026-09-16", endDate: "2026-09-30", confirmation: { at } },
+  ];
+  const pg = u.monthPeriodProgressOf(ps, "2026-10");
+  assert.deepStrictEqual({ t: pg.total, s: pg.submitted, c: pg.confirmed, d: pg.delivered }, { t: 2, s: 2, c: 1, d: 1 });
+  assert.deepStrictEqual(pg.labels, ["10月前半: 交付済み", "10月後半: 提出済み"]);
+  assert.strictEqual(u.monthProgressLabel(pg), "確定 1/2・交付 1/2");
+  assert.strictEqual(u.monthProgressLabel(u.monthPeriodProgressOf(ps, "2026-12")), "期間なし");
+});
+
+test("P7 dashboardPersonView: 所定と上限の差・年平均と分母の差・36協定の残り・年間休日（手計算）", () => {
+  const ctx = { capMin: 10599, capName: "所定上限", denomMin: 10398, agMonthH: 45, agYearH: 360, restRemainDays: 200, restFinal: false };
+  const r = { name: "田中", number: "12", sys: "A", schedMin: 11000, schedSource: "frozen", schedPartial: false, avgMin: 10500, avgMissing: 0,
+    monthOtH: 50, monthPartial: false, yearMonths: [{ ym: "2026-04", h: 40, ag: 40 }, { ym: "2026-05", h: 50, ag: 90 }, { ym: "2026-06", h: 30, ag: 80 }],
+    yearMissing: [], restDays: 20, restMissing: 0 };
+  const v = u.dashboardPersonView(r, ctx);
+  assert.deepStrictEqual({ d: v.schedDiffMin, o: v.schedOver, ad: v.avgDiffMin, ao: v.avgOver }, { d: 401, o: true, ad: 102, ao: true });
+  assert.deepStrictEqual({ m: v.monthLeftH, y: v.yearOtH, yl: v.yearLeftH, y7: v.year720LeftH, wa: v.worstAvgH, w: v.worstAvgW, a8: v.avg80LeftH, n: v.n45, nl: v.n45Left },
+    { m: -5, y: 120, yl: 240, y7: 600, wa: 85, w: 2, a8: -5, n: 1, nl: 5 });
+  assert.strictEqual(v.agOver, true);
+  assert.deepStrictEqual(v.rest, { key: "pending", days: 20, need: 32 });
+  const val = u.dashboardRowValues({ view: v, entity: "法人A", shop: "A店", progress: "確定 1/1・交付 0/1" });
+  const txt = k => u.dashboardCellText(u.DASHBOARD_COLUMNS.find(c => c.key === k), val);
+  assert.deepStrictEqual(["schedMin", "capMin", "schedDiffMin", "avgDiffMin", "monthLeftH", "yearLeftH", "worstAvgH", "avg80LeftH", "n45", "restDays", "restNeed", "sys"].map(txt),
+    ["183:20", "176:39", "+6:41", "+1:42", "−5:00", "+240:00", "85:00", "−5:00", "1回", "20日", "32日", "変形"]);
+  assert.ok(/年間休日はあと32日（年度の途中）/.test(val.notes) && /複数月平均の最大は2か月/.test(val.notes));
+  // 月が埋まっていない（途中）なら、月の残業の超過・月所定の超過は出さない（労務判定表の monthReady・labor_sched と同じ）
+  const p = u.dashboardPersonView({ ...r, schedPartial: true, monthPartial: true, schedSource: "auto", yearMonths: [], avgMin: 100 }, ctx);
+  assert.deepStrictEqual({ so: p.schedOver, ag: p.agOver, ao: p.avgOver }, { so: false, ag: false, ao: false });
+  assert.ok(/＋月の日がデータで埋まっていない途中の値/.test(u.dashboardRowValues({ view: p }).notes));
+  // B制は所定の超過を出さない（A制の枠）。行き先・判定対象外は注記だけ
+  assert.strictEqual(u.dashboardPersonView({ ...r, sys: "B" }, ctx).schedOver, false);
+  assert.strictEqual(u.dashboardRowValues({ view: u.dashboardPersonView({ name: "佐藤", sys: "B", dest: true, homeName: "B店" }, ctx) }).notes, "所属店舗（B店）で集計します");
+  assert.strictEqual(u.dashboardRowValues({ view: u.dashboardPersonView({ name: "外部", sys: "none", skip: "none" }, ctx) }).notes, "判定対象外");
+  assert.deepStrictEqual(u.dashboardCountsOf([v, p, u.dashboardPersonView({ name: "佐藤", dest: true }, ctx)]),
+    { people: 2, schedOver: 1, avgOver: 1, agOver: 1, restShort: 0 });
+});
+
+test("P7 dashboardCsvOf: 見出しと人の行・店舗の注記の行（金額の列は無い）", () => {
+  const ctx = { capMin: 10599, denomMin: 10398, agMonthH: 45, agYearH: 360, restRemainDays: 0, restFinal: true };
+  const v = u.dashboardPersonView({ name: "田中", number: "12", sys: "A", schedMin: 10000, schedPartial: false, avgMin: 10000, avgMissing: 0,
+    monthOtH: 10, yearMonths: [{ ym: "2027-03", h: 10, ag: 10 }], yearMissing: [], restDays: 60, restMissing: 0 }, ctx);
+  const csv = u.dashboardCsvOf([{ view: v, entity: "法人A", shop: "A店", progress: "確定 1/1・交付 1/1" }, { entity: "法人A", shop: "B店", progress: "期間なし", shopNote: "この月にかかる期間がありません" }]);
+  const lines = csv.split("\r\n");
+  assert.strictEqual(lines.length, 4);
+  assert.ok(lines[0].startsWith('"法人","店舗","確定・交付","従業員番号","名前","区分","月所定（時:分）"'));
+  assert.ok(lines[1].startsWith('"法人A","A店","確定 1/1・交付 1/1","12","田中","変形","166:40","176:39","−9:59"'));
+  assert.ok(lines[1].includes('"60日","0日"') && lines[1].endsWith('"年間休日52日以上"'));
+  assert.ok(lines[2].startsWith('"法人A","B店","期間なし","",""') && lines[2].endsWith('"この月にかかる期間がありません"'));
+  assert.ok(!/円|賃金|時給|基本給/.test(lines[0]));
+});
+

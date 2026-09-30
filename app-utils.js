@@ -757,26 +757,34 @@ function yearOvertimeMonths(periods,name,fy,startMonth,live){
 }
 // 36協定の年単位の判定（判断4・案b）。months は yearOvertimeMonths の scoped（連続した月）。
 // **シフトを組んである月までしか見ない**——未作成の月を0として平均に混ぜると実態より低く出る。
-function agreementYearFindings(months,annualLimitH){
+// 年単位の値（年の残業の合計・月45h超の回数・複数月平均がいちばん高い窓）。判定（agreementYearFindings）と
+// 企業横断ダッシュボードの「残り」（P7）が**同じ値**を使う（判定と残りの計算を二重に持たない）。
+// worstAvg は連続する2〜6ヶ月の平均の最大（同じ値なら短い窓・前の窓）。窓が1つも無ければ null。
+function agreementYearStatus(months){
   const vals=(months||[]).map(v=>Math.max(0,Number(v&&v.h)||0));
-  const out=[];
-  if(!vals.length)return out;
   const total=excelRound(vals.reduce((a,b)=>a+b,0),2);
-  const lim=Number(annualLimitH)||0;
-  if(lim>0&&total>lim)out.push({key:"yearOtOverAgreement",label:`年${excelRound(lim,2)}h超`});
-  if(total>AGREEMENT_ANNUAL_CAP_H)out.push({key:"yearOt720",label:`年${AGREEMENT_ANNUAL_CAP_H}h超`});
   const n45=vals.filter(h=>h>AGREEMENT_OVER45_H).length;
-  if(n45>AGREEMENT_OVER45_COUNT_LIMIT)out.push({key:"over45Count",label:`月${AGREEMENT_OVER45_H}h超が年${n45}回`});
   // 複数月平均80hは時間外＋法定休日労働（ag）で比べる（P5・§4.4）。ag を持たない値は h で代える
   const ags=(months||[]).map(v=>{const a=Number(v&&v.ag);return Math.max(0,Number.isFinite(a)?a:(Number(v&&v.h)||0));});
   let worst=null;
   AGREEMENT_AVG_MONTHS.forEach(w=>{
     for(let i=0;i+w<=ags.length;i++){
       const avg=ags.slice(i,i+w).reduce((a,b)=>a+b,0)/w;
-      if(avg>AGREEMENT_AVG_CAP_H&&(!worst||avg>worst.avg))worst={w,avg};
+      if(!worst||avg>worst.avg)worst={w,avg};
     }
   });
-  if(worst)out.push({key:"avgOver80",label:`複数月平均${AGREEMENT_AVG_CAP_H}h超(${worst.w}ヶ月)`});
+  return{months:vals.length,totalH:total,n45,worstAvg:worst};
+}
+function agreementYearFindings(months,annualLimitH){
+  const out=[];
+  const st=agreementYearStatus(months);
+  if(!st.months)return out;
+  const total=st.totalH;
+  const lim=Number(annualLimitH)||0;
+  if(lim>0&&total>lim)out.push({key:"yearOtOverAgreement",label:`年${excelRound(lim,2)}h超`});
+  if(total>AGREEMENT_ANNUAL_CAP_H)out.push({key:"yearOt720",label:`年${AGREEMENT_ANNUAL_CAP_H}h超`});
+  if(st.n45>AGREEMENT_OVER45_COUNT_LIMIT)out.push({key:"over45Count",label:`月${AGREEMENT_OVER45_H}h超が年${st.n45}回`});
+  if(st.worstAvg&&st.worstAvg.avg>AGREEMENT_AVG_CAP_H)out.push({key:"avgOver80",label:`複数月平均${AGREEMENT_AVG_CAP_H}h超(${st.worstAvg.w}ヶ月)`});
   return out;
 }
 // 「n日」と数える判定の該当日を、ラベルの後ろに `（17・22）` の形で足す（2026-09-26 ユーザー指示）。
@@ -4317,7 +4325,161 @@ function laborReadPeriodIds(periods,settings,first,last){
   return(periods||[]).filter(p=>p&&p.id&&isValidDateStr(p.startDate)&&isValidDateStr(p.endDate)&&p.startDate<=to&&p.endDate>=from).map(p=>p.id);
 }
 
+// ===== 企業横断ダッシュボード（2026-09-30・労務給与_複数法人_実装計画.md §6 P7・§1 の要件5・16）=====
+// 本部が法人→店舗→人の当月と年をひと目で見る。**時間の計算はシフト作成タブの労務判定表と同じ**（ShiftEditTab を画面外へ
+// マウントし、書き出しジョブ exportJob.kind="dashboard" で人ごとの値を返させる＝月次賃金・一括PDFと同じ形）。
+// ここに置くのはその値の並べ方（差・残り・件数・CSV）だけで、新しい労務の式は作らない。賃金（金額）は出さない。
+const ANNUAL_REST_MIN_DAYS=52; // 年間休日の下限（週1日以上の休日を1年＝52週続けた日数・§1 の要件5）
+// 年間休日の状態。restDays は年度の始め〜選んだ月の公休日数（yearLaborSummary の publicOff＝空欄も公休）。
+// ok＝52日以上 ／ short＝足りない（年度の最後の月まで数え終えた、または残りの日を全部休んでも届かない）／
+// pending＝まだ年度の途中で届きうる（読めていない期間があるときも途中として扱う）
+function annualRestStatusOf(o){
+  const x=o||{};
+  const days=Math.max(0,Number(x.restDays)||0);
+  const need=Math.max(0,ANNUAL_REST_MIN_DAYS-days);
+  if(need===0)return{key:"ok",days,need};
+  if(Number(x.missing)>0)return{key:"pending",days,need};
+  if(x.final||need>Math.max(0,Number(x.remainDays)||0))return{key:"short",days,need};
+  return{key:"pending",days,need};
+}
+// その月にかかる期間の確定・交付の進捗（periodStateOf の数え上げ）。submitted は提出以上（確定・交付を含む）
+function monthPeriodProgressOf(periods,ym){
+  const n=daysInMonthOf(ym);
+  const out={total:0,submitted:0,confirmed:0,delivered:0,labels:[]};
+  if(!n)return out;
+  const first=`${ym}-01`,last=`${ym}-${String(n).padStart(2,"0")}`;
+  (periods||[]).filter(p=>p&&p.id&&isValidDateStr(p.startDate)&&isValidDateStr(p.endDate)&&p.startDate<=last&&p.endDate>=first)
+    .slice().sort((a,b)=>String(a.startDate).localeCompare(String(b.startDate))).forEach(p=>{
+      const st=periodStateOf(p);
+      out.total++;
+      if(st!=="pending")out.submitted++;
+      if(st==="confirmed"||st==="delivered")out.confirmed++;
+      if(st==="delivered")out.delivered++;
+      out.labels.push(`${p.label||p.startDate}: ${PERIOD_STATE_LABELS[st]}`);
+    });
+  return out;
+}
+function monthProgressLabel(pg){
+  if(!pg||!pg.total)return"期間なし";
+  return`確定 ${pg.confirmed}/${pg.total}・交付 ${pg.delivered}/${pg.total}`;
+}
+// ShiftEditTab の書き出しジョブ（kind="dashboard"）が返す1人ぶん（r）と月の前提（ctx）から、表と CSV の値を作る。
+// r: {name, number, attr, sys, skip?, dest?, homeName, schedMin, schedSource, schedPartial, avgMin, avgMissing,
+//     monthOtH, monthPartial, yearMonths:[{ym,h,ag}], yearMissing:[ym], restDays, restMissing, helperUnread, unread}
+// ctx: {capMin, capName, denomMin, agMonthH, agYearH, restRemainDays, restFinal}
+// 判定の向きは労務判定表と同じ: 月所定の超過は A制で月が埋まっているとき（labor_sched 行）・月の残業の超過は月が埋まっているとき
+// （laborFindingsFor の monthReady）・年の4項目は agreementYearFindings と同じ比較（残り＜0＝超過）。
+function dashboardPersonView(r,ctx){
+  const x=r||{},c=ctx||{};
+  const v={...x};
+  if(x.skip||x.dest)return v;
+  const cap=Number(c.capMin)||0,den=Number(c.denomMin)||0;
+  v.capMin=cap>0?cap:null;v.capName=c.capName||"";
+  v.schedDiffMin=cap>0&&x.schedMin!=null?Math.round(Number(x.schedMin)-cap):null;
+  v.schedOver=x.sys==="A"&&v.schedDiffMin>0&&!x.schedPartial;
+  v.denomMin=den>0?den:null;
+  v.avgDiffMin=x.avgMin!=null&&den>0?Math.round(Number(x.avgMin)-den):null;
+  v.avgOver=v.avgDiffMin>0&&!(Number(x.avgMissing)>0);
+  const st=agreementYearStatus(x.yearMonths||[]);
+  const mH=Number(c.agMonthH)||0,yH=Number(c.agYearH)||0;
+  v.monthOtH=Math.max(0,Number(x.monthOtH)||0);
+  v.monthLeftH=mH>0?excelRound(mH-v.monthOtH,2):null;
+  v.yearOtH=st.totalH;
+  v.yearLeftH=yH>0?excelRound(yH-st.totalH,2):null;
+  v.year720LeftH=excelRound(AGREEMENT_ANNUAL_CAP_H-st.totalH,2);
+  v.worstAvgH=st.worstAvg?excelRound(st.worstAvg.avg,2):null;
+  v.worstAvgW=st.worstAvg?st.worstAvg.w:null;
+  v.avg80LeftH=st.worstAvg?excelRound(AGREEMENT_AVG_CAP_H-st.worstAvg.avg,2):null;
+  v.n45=st.n45;v.n45Left=AGREEMENT_OVER45_COUNT_LIMIT-st.n45;
+  v.yearPartial=(x.yearMissing||[]).length>0;
+  v.agOver=(v.monthLeftH!=null&&v.monthLeftH<0&&!x.monthPartial)||(v.yearLeftH!=null&&v.yearLeftH<0)
+    ||v.year720LeftH<0||(v.avg80LeftH!=null&&v.avg80LeftH<0)||v.n45Left<0;
+  v.rest=x.restDays==null?null:annualRestStatusOf({restDays:x.restDays,missing:x.restMissing,remainDays:c.restRemainDays,final:c.restFinal});
+  v.restShort=!!(v.rest&&v.rest.key==="short");
+  return v;
+}
+// 店舗・法人の見出し行に出す件数（判定対象の人数と、それぞれの超過・不足の人数）
+function dashboardCountsOf(views){
+  const o={people:0,schedOver:0,avgOver:0,agOver:0,restShort:0};
+  (views||[]).forEach(v=>{
+    if(!v||v.skip||v.dest)return;
+    o.people++;
+    if(v.schedOver)o.schedOver++;
+    if(v.avgOver)o.avgOver++;
+    if(v.agOver)o.agOver++;
+    if(v.restShort)o.restShort++;
+  });
+  return o;
+}
+// 表と CSV が共有する列。kind: "text" | "min"（分・H:MM）| "signedMin"（分・±H:MM）| "hours"（時間・H:MM）|
+// "signedHours"（時間・±H:MM）| "count" | "days"。group は画面の見出しの上の段、csv は CSV の見出し（無ければ label）。
+// screen:false の列は画面では見出し行（法人・店舗）に出すので表の列にしない
+const DASHBOARD_COLUMNS=[
+  {key:"entity",label:"法人",kind:"text",screen:false},{key:"shop",label:"店舗",kind:"text",screen:false},
+  {key:"progress",label:"確定・交付",kind:"text",screen:false},
+  {key:"number",label:"従業員番号",kind:"text",screen:false},{key:"name",label:"名前",kind:"text"},
+  {key:"sys",label:"区分",kind:"text"},
+  {key:"schedMin",label:"月所定",csv:"月所定",kind:"min",group:"所定"},{key:"capMin",label:"上限",csv:"所定上限",kind:"min",group:"所定"},
+  {key:"schedDiffMin",label:"差",csv:"月所定と上限の差",kind:"signedMin",group:"所定"},
+  {key:"avgMin",label:"年平均",csv:"年平均所定",kind:"min",group:"年平均所定"},{key:"denomMin",label:"分母",csv:"分母",kind:"min",group:"年平均所定"},
+  {key:"avgDiffMin",label:"差",csv:"年平均所定と分母の差",kind:"signedMin",group:"年平均所定"},
+  {key:"monthOtH",label:"月の残業",csv:"月の残業",kind:"hours",group:"36協定"},{key:"monthLeftH",label:"月の残り",csv:"36協定 月の残り",kind:"signedHours",group:"36協定"},
+  {key:"yearOtH",label:"年の残業",csv:"年の残業",kind:"hours",group:"36協定"},{key:"yearLeftH",label:"年の残り",csv:"36協定 年の残り",kind:"signedHours",group:"36協定"},
+  {key:"year720LeftH",label:"720hの残り",csv:"年720時間の残り",kind:"signedHours",group:"36協定"},
+  {key:"worstAvgH",label:"複数月平均",csv:"複数月平均の最大",kind:"hours",group:"36協定"},{key:"avg80LeftH",label:"80hの残り",csv:"複数月平均80時間の残り",kind:"signedHours",group:"36協定"},
+  {key:"n45",label:"45h超",csv:"月45時間超の回数",kind:"count",group:"36協定"},
+  {key:"restDays",label:"年間休日",csv:"年間休日",kind:"days",group:"休日"},{key:"restNeed",label:"52日まで",csv:"52日までの残り",kind:"days",group:"休日"},
+  {key:"notes",label:"注記",kind:"text"},
+];
+const DASHBOARD_SYS_LABELS={A:"変形",B:"通常",none:"対象外"};
+// 1行の値（数値のまま）と注記。row = {view: dashboardPersonView の戻り値, entity, shop, progress, shopNote?}
+function dashboardRowValues(row){
+  const r=row||{},v=r.view||{};
+  const val={entity:r.entity||"",shop:r.shop||"",progress:r.progress||"",number:v.number||"",name:v.name||"",
+    sys:DASHBOARD_SYS_LABELS[v.sys]||""};
+  // 店舗ごと集計できなかった行（期間が無い・読み込みに失敗）は店舗の注記だけを出す
+  if(r.shopNote!=null){val.notes=String(r.shopNote);return val;}
+  const notes=[];
+  if(v.dest){notes.push(`所属店舗（${v.homeName||"別の店舗"}）で集計します`);val.notes=notes.join("／");return val;}
+  if(v.skip){notes.push(v.skip==="none"?"判定対象外":"データがありません");val.notes=notes.join("／");return val;}
+  Object.assign(val,{schedMin:v.schedMin,capMin:v.capMin,schedDiffMin:v.schedDiffMin,avgMin:v.avgMin,denomMin:v.denomMin,avgDiffMin:v.avgDiffMin,
+    monthOtH:v.monthOtH,monthLeftH:v.monthLeftH,yearOtH:v.yearOtH,yearLeftH:v.yearLeftH,year720LeftH:v.year720LeftH,
+    worstAvgH:v.worstAvgH,avg80LeftH:v.avg80LeftH,n45:v.n45,restDays:v.rest?v.rest.days:null,restNeed:v.rest?v.rest.need:null});
+  if(v.monthPartial)notes.push("＋月の日がデータで埋まっていない途中の値");
+  if(v.helperUnread||v.unread)notes.push("＋他店の勤務・実績を読み込めていない途中の値");
+  if(v.schedSource==="auto")notes.push("所定は未確定（シフトから集計）");
+  if(Number(v.avgMissing)>0)notes.push(`＋年平均所定に読み込めていない月が${v.avgMissing}か月`);
+  if(v.yearPartial)notes.push(`＋年の残業に読み込めていない月（${(v.yearMissing||[]).join("・")}）`);
+  if(Number(v.restMissing)>0)notes.push(`＋年間休日に読み込めていない期間が${v.restMissing}件`);
+  if(v.worstAvgW)notes.push(`複数月平均の最大は${v.worstAvgW}か月`);
+  if(v.rest)notes.push(v.rest.key==="ok"?"年間休日52日以上":v.rest.key==="short"?`年間休日が${v.rest.need}日足りません`:`年間休日はあと${v.rest.need}日（年度の途中）`);
+  val.notes=notes.join("／");
+  return val;
+}
+const _dashHM=h=>Math.round((Number(h)||0)*60);
+function dashboardCellText(col,val){
+  const v=val[col.key];
+  if(v==null||v==="")return"";
+  switch(col.kind){
+    case"min":return fmtMin(Math.max(0,Math.round(Number(v)||0)));
+    case"signedMin":return fmtSignedMin(v);
+    case"hours":return fmtMin(Math.max(0,_dashHM(v)));
+    case"signedHours":return fmtSignedMin(_dashHM(v));
+    case"count":return`${v}回`;
+    case"days":return`${v}日`;
+    default:return String(v);
+  }
+}
+// CSV（BOM は呼び出し側）。改行 CRLF・全セルを "" で囲む（月次賃金の CSV と同じ形）
+function dashboardCsvOf(rows){
+  const q=s=>`"${String(s).replace(/"/g,'""')}"`;
+  const unit=c=>c.kind==="min"||c.kind==="signedMin"||c.kind==="hours"||c.kind==="signedHours"?"（時:分）":c.kind==="days"?"（日）":c.kind==="count"?"（回）":"";
+  const head=DASHBOARD_COLUMNS.map(c=>q(`${c.csv||c.label}${unit(c)}`)).join(",");
+  const body=(rows||[]).map(r=>{const val=dashboardRowValues(r);return DASHBOARD_COLUMNS.map(c=>q(dashboardCellText(c,val))).join(",");});
+  return[head,...body].join("\r\n")+"\r\n";
+}
+
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={premiumMonthOf,premiumDayInput,premiumMonthDates,premiumRowCell,NIGHT_WINDOWS_MIN,OVER60_THRESHOLD_MIN,nightOverlapMin,nightMinutesOf,premiumWeekStartOf,legalHolidayDatesOf,premiumBreakdownOf,premiumAgreementH,PREMIUM_FINDING_KEYS,premiumFindingsFor,breakBandsOf,helperActualDaysOn,HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,yearDaysOf,monthlyScheduledCapMin,LABOR_SETTING_RANGES,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,dailyOverThresholdOf,dailyOverMinB,externalOverThresholdOf,OT_PRORATE_WINDOWS,OT_PRORATE_WINDOW_LABELS,OT_PRORATE_FIXED_MAX_MIN,HALF_MONTH_LAST_DAY,otProrateOf,staffOtProrateOf,overtimePlanOf,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,BREAK_LENGTH_BASES,BREAK_LENGTH_BASIS_LABELS,BREAK_LENGTH_TIERS_MAX,breakLengthRuleOf,IDLE_BREAK_DAYS,IDLE_BREAK_DAY_LABELS,idleBreakOf,breakMinutesOf,breakDecisionOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,personIndexOfMirror,samePersonRegistrations,personHomeShopOf,helperPersonOf,helperShopSettingsOn,helperWorkOn,otherShopDataOf,helperShopsOf,helperScheduleContext,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,headcountAtOf,countPresentAt,headcountLabelOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,groupStaffRegs,groupStaffRegsWithPeople,PERSON_ID_RE,buildCompanyStaffRows,duplicatePersonCandidates,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,GATED_FEATURES,featureEnabled,DEFAULT_RATE_DENOMINATOR_MIN,rateDenominatorMinOf,PAY_TYPES,PAY_TYPE_LABELS,isPayTypeFixed,defaultPayTypeOf,payRateBaseYen,hourlyRateOf,fixedOtAmountOf,MIN_WAGE_MAX_ENTRIES,sanitizeWageSettings,minWageOn,minWageCheck,normalizePayVersion,withFixedOtAmount,applyPayRevision,payVersionOn,STAFF_KEYED_PRIVATE_NODES,renameStaffInPay,dropStaffFromPay,maskYen,PREMIUM_RATE_KEYS,LEGAL_PREMIUM_RATES,PREMIUM_RATE_LABELS,PREMIUM_RATE_MAX,ROUNDING_RULES,ROUNDING_RULE_LABELS,premiumRatesOf,roundingRuleOf,roundYenFrac,DEDUCTION_ROUNDING,wageOf,deductionOf,monthlyPayBreakdown,PAYROLL_COLUMNS,payrollRowValues,payrollCellText,payrollCsvOf,sha256HexOfBytes,PAY_CODE_DEFAULT,PAY_CODE_RE,isValidPayCode,payCodeHash,isPayCodeRecord,verifyPayCode,payCodeIdentity,PAY_CODE_MAX_FAILS,PAY_CODE_LOCK_MS,PAY_UNLOCK_IDLE_MS,nextPayCodeLockout,payCodeWaitSec,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf,isPeriodConfirmed,isPeriodDelivered,PERIOD_STATES,PERIOD_STATE_LABELS,periodStateOf,canConfirmPeriod,PERIOD_HISTORY_KINDS,PERIOD_HISTORY_LABELS,genPeriodHistoryKey,periodHistoryEntry,withPeriodHistory,periodHistoryList,monthsOfPeriod,monthDatesOf,aggregateScheduledMonth,isMonthFullyConfirmed,laborMonthOf,isLaborMonthFrozen,isLaborMonthEdited,planPeriodConfirmation,planPeriodUnconfirm,planPeriodDelivery,LABOR_MONTH_MAX_MIN,planLaborMonthManual,parseHoursMinutes,fmtSignedMin,STAFF_KEYED_MONTH_NODES,renameStaffInLaborMonths,dropStaffFromLaborMonths,yearScheduledAverage,isClosedDateOf,fillFixedPattern,ACTUAL_FIELDS,ACTUAL_NOTE_MAX,ACTUAL_MIN_MAX,minToClock,parseClockInput,parseMinutesInput,scheduledDay,resolveActualDay,planActualEdit,actualOf,STAFF_KEYED_PERIOD_NODES,renameStaffInActuals,dropStaffFromActuals,ACTUALS_CSV_FIELDS,ACTUALS_CSV_FIELD_LABELS,DEFAULT_ACTUALS_CSV_MAPPING,actualsCsvMappingOf,parseCsvRows,parseCsvDate,planActualsImport,laborReadPeriodIds};
+  module.exports={premiumMonthOf,premiumDayInput,premiumMonthDates,premiumRowCell,NIGHT_WINDOWS_MIN,OVER60_THRESHOLD_MIN,nightOverlapMin,nightMinutesOf,premiumWeekStartOf,legalHolidayDatesOf,premiumBreakdownOf,premiumAgreementH,PREMIUM_FINDING_KEYS,premiumFindingsFor,breakBandsOf,helperActualDaysOn,HOLIDAY_DROP_SHIFT_FIELDS,validatePeriodDates,oneSidedFillBounds,effShiftRangeMin,PERIOD_SNAPSHOT_SETTING_KEYS,isPeriodEnded,buildPeriodSnapshot,periodSnapshotEqual,resolvePeriodMaster,mergeKeepStaff,keepAttrsOf,applyKeepAttrs,attrIdExists,BUILTIN_TYPES,isUnregisteredSubName,visibleStaffList,staffHiddenRanges,isStaffHiddenInPeriod,isStaffHiddenNow,hideStaffFrom,showStaffFrom,moveStaffHiddenBoundaries,PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS,STAFF_KEYED_SETTING_MAPS,renameStaffInSettings,renameStaffInPeriods,retainedPeriodIds,defaultKeepCount,PLAN_RANK_UI,PLAN_LABELS,fd,pd,gd,idp,sc,isHoliday,isWeekendOrHoliday,calcNetWorkMinutes,effShiftStart,effShiftEnd,getBreakList,shiftBandInfo,ADMIN_SHIFT_FIELDS,carryAdminShiftFields,HEAT_BAND_SPLIT_MIN,resolveBandValues,noteToHeatSection,heatSectionEntries,getBreaksFor,getOT,fmtMin,genToken,genSecureId,isSpacer,firebaseKeyForbiddenChars,cookieSafeKey,resolveAlias,aliasOwnerOf,resolveSubByAlias,buildSuggestList,STAFF_TYPE_LABELS,ATTR_PINNED_ORDER,sortAttrEntries,getAttrOptions,TO,TO_START,JH_DATES,CELL_COMMANDS,CELL_COLOR_LEGEND,isRestCommand,isReservedShopAbbr,extractNote,fixedShiftCommandFor,isFixedShiftEligibleShop,SUBS_WINDOW_MONTHS,subsWindowCutoff,recentPeriodIds,dateCandidateDisplayCutoff,subLastActionTime,deadlineGatePassed,subHasRealUpdate,sanitizeForSet,sanitizeForUpdate,diffSubForFlatWrite,applyFlatSubWrite,diffPeriodsForFlatWrite,dayTypeOf,matchPositionSlots,POSITION_DAY_TYPES,weekdayKeyToPositionDayType,candListsEqual,matchingPositionDayTypes,positionDayTypeFor,hasAnyRequiredPosition,requiredPositionsFor,isSpecialRedDate,LEGAL_DAILY_HOURS,LEGAL_WEEKLY_HOURS,LEGAL_DAILY_MIN,LEGAL_WEEKLY_MIN,LABOR_LONG_DAY_MIN,LABOR_SHORT_DAY_MIN,LABOR_SYSTEMS,LABOR_SYSTEM_LABELS,DEFAULT_LABOR_SYSTEM_BY_ATTR,laborSystemOf,laborSystemForStaff,DEFAULT_LABOR_SETTINGS,laborSettingsOf,weeklyLegalMinFromBase31,monthlyBaseMin,monthlyGuideMin,monthlyCapMin,daysInMonthOf,yearDaysOf,monthlyScheduledCapMin,LABOR_SETTING_RANGES,laborMonthFrame,weeklyOverMinB,weeklyOverTotalMinB,TIME_ORDER_ERROR_HINT,isTimeOrderInvalid,LABOR_FINDING_DATES_MAX,laborFindingDatesLabel,laborWeekDatesLabel,laborFindingsFor,laborFindingLabels,LABOR_DAY_FIX_KEYS,LABOR_DAY_ERR_LABELS,laborDayFindingsFor,excelRound,excelRoundUp,excelRoundDown,monthlyOvertimeH,prorateOvertimeH,dailyOverThresholdOf,dailyOverMinB,externalOverThresholdOf,OT_PRORATE_WINDOWS,OT_PRORATE_WINDOW_LABELS,OT_PRORATE_FIXED_MAX_MIN,HALF_MONTH_LAST_DAY,otProrateOf,staffOtProrateOf,overtimePlanOf,guideStatusOf,AGREEMENT_SINGLE_MONTH_CAP_H,AGREEMENT_LEGAL_ITEMS,overallVerdictOf,OVERALL_FIX_KEYS,BREAK_MODES,BREAK_MODE_LABELS,DEFAULT_BREAK_LENGTH,breakModeOf,breakLengthOf,BREAK_LENGTH_BASES,BREAK_LENGTH_BASIS_LABELS,BREAK_LENGTH_TIERS_MAX,breakLengthRuleOf,IDLE_BREAK_DAYS,IDLE_BREAK_DAY_LABELS,idleBreakOf,breakMinutesOf,breakDecisionOf,shiftBindingMin,isBreakShort,BREAK_SHORT_TARGET_MIN,LEAVE_TYPES,LEAVE_TYPE_LABELS,LEAVE_TYPE_CELL_TEXT,leaveCellTextOf,leaveFieldsOf,leaveHalfDaysOf,leaveTypeOf,dayRestKindOf,weekRestStateOf,restCommandOf,DEFAULT_FISCAL_YEAR_START_MONTH,fiscalYearStartMonthOf,fiscalYearOf,fiscalYearLabel,compactLaborTotal,laborTotalsEqual,yearLaborSummary,paidLeaveRemaining,STAFF_LIMIT_WINDOWS,STAFF_LIMIT_DEFAULTS,staffLimitOf,limitStateOf,hasAnyStaffLimit,AGREEMENT_ANNUAL_CAP_H,AGREEMENT_AVG_CAP_H,AGREEMENT_OVER45_H,AGREEMENT_OVER45_COUNT_LIMIT,AGREEMENT_AVG_MONTHS,fiscalYearMonths,yearOvertimeMonths,agreementYearStatus,agreementYearFindings,COMPANY_LABOR_KEYS,COMPANY_LIMIT_KEYS,COMPANY_ATTR_ID_RE,isCompanyAttrId,genCompanyAttrId,applyCompanySettings,stripCompanySettings,companyControlledKeys,periodRangeKey,periodRangeLabel,collectPeriodRanges,findShopPeriodByRange,isValidDateStr,companyDeadlineFor,shopDeadlineFromLink,MONTHLY_DEADLINE_MAX,sanitizeMonthlyDeadlineDays,monthlyDeadlineDayLabel,monthlyDeadlineFor,shopDeadlineInfoFromLink,homeShopOf,isHelperAt,dupTargetShopsFor,personIndexOfMirror,samePersonRegistrations,personHomeShopOf,helperPersonOf,helperShopSettingsOn,helperWorkOn,otherShopDataOf,helperShopsOf,helperScheduleContext,COMPANY_SESSION_UID_PREFIX,isCompanySessionUid,excludedBandsOf,headcountAtOf,countPresentAt,headcountLabelOf,prorateMonthlyHours,attrMonthFrameOf,attrMonthFrame,findStaffByNumber,mergeStaffMatches,staffNumberSortKey,compareCompanyStaffRows,groupStaffRegs,groupStaffRegsWithPeople,PERSON_ID_RE,buildCompanyStaffRows,duplicatePersonCandidates,filterCompanyStaffRows,COMPANY_ENTITY_ID_RE,COMPANY_SHOP_KINDS,companyEntityIdOfShop,companyShopKindOf,companyEntityList,GATED_FEATURES,featureEnabled,DEFAULT_RATE_DENOMINATOR_MIN,rateDenominatorMinOf,PAY_TYPES,PAY_TYPE_LABELS,isPayTypeFixed,defaultPayTypeOf,payRateBaseYen,hourlyRateOf,fixedOtAmountOf,MIN_WAGE_MAX_ENTRIES,sanitizeWageSettings,minWageOn,minWageCheck,normalizePayVersion,withFixedOtAmount,applyPayRevision,payVersionOn,STAFF_KEYED_PRIVATE_NODES,renameStaffInPay,dropStaffFromPay,maskYen,PREMIUM_RATE_KEYS,LEGAL_PREMIUM_RATES,PREMIUM_RATE_LABELS,PREMIUM_RATE_MAX,ROUNDING_RULES,ROUNDING_RULE_LABELS,premiumRatesOf,roundingRuleOf,roundYenFrac,DEDUCTION_ROUNDING,wageOf,deductionOf,monthlyPayBreakdown,PAYROLL_COLUMNS,payrollRowValues,payrollCellText,payrollCsvOf,sha256HexOfBytes,PAY_CODE_DEFAULT,PAY_CODE_RE,isValidPayCode,payCodeHash,isPayCodeRecord,verifyPayCode,payCodeIdentity,PAY_CODE_MAX_FAILS,PAY_CODE_LOCK_MS,PAY_UNLOCK_IDLE_MS,nextPayCodeLockout,payCodeWaitSec,FV_COL_NATURAL,FV_COL_MAX,fullViewColW,fullViewFontOf,isPeriodConfirmed,isPeriodDelivered,PERIOD_STATES,PERIOD_STATE_LABELS,periodStateOf,canConfirmPeriod,PERIOD_HISTORY_KINDS,PERIOD_HISTORY_LABELS,genPeriodHistoryKey,periodHistoryEntry,withPeriodHistory,periodHistoryList,monthsOfPeriod,monthDatesOf,aggregateScheduledMonth,isMonthFullyConfirmed,laborMonthOf,isLaborMonthFrozen,isLaborMonthEdited,planPeriodConfirmation,planPeriodUnconfirm,planPeriodDelivery,LABOR_MONTH_MAX_MIN,planLaborMonthManual,parseHoursMinutes,fmtSignedMin,STAFF_KEYED_MONTH_NODES,renameStaffInLaborMonths,dropStaffFromLaborMonths,yearScheduledAverage,isClosedDateOf,fillFixedPattern,ACTUAL_FIELDS,ACTUAL_NOTE_MAX,ACTUAL_MIN_MAX,minToClock,parseClockInput,parseMinutesInput,scheduledDay,resolveActualDay,planActualEdit,actualOf,STAFF_KEYED_PERIOD_NODES,renameStaffInActuals,dropStaffFromActuals,ACTUALS_CSV_FIELDS,ACTUALS_CSV_FIELD_LABELS,DEFAULT_ACTUALS_CSV_MAPPING,actualsCsvMappingOf,parseCsvRows,parseCsvDate,planActualsImport,laborReadPeriodIds,ANNUAL_REST_MIN_DAYS,annualRestStatusOf,monthPeriodProgressOf,monthProgressLabel,dashboardPersonView,dashboardCountsOf,DASHBOARD_COLUMNS,DASHBOARD_SYS_LABELS,dashboardRowValues,dashboardCellText,dashboardCsvOf};
 }
