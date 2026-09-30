@@ -5026,6 +5026,87 @@ test("P1b 統合・統合解除: 企業側の束ね方だけを変え、解除�
   const two = { P: { displayName: "田中", links: { A1: "田中", C1: "田中" } } };
   assert.strictEqual(cfp.planSplitPerson(two, "P", { shopId: "B1", name: two.P.links.B1 }, () => "p_x", "T").error, "この人物につながっていない登録です");
 });
+// ===== 「統合しない」（別人として記録・2026-09-30）=====
+// 記録は people/{id}/distinct/{相手}=ISO時刻。両方向に書く。期待値は指示書の規則からの手書き（実装の出力から逆生成していない）
+const DIS_P = () => ({
+  p_aaaaaaaa: { displayName: "タオ", links: { S1: "タオ" } },
+  p_bbbbbbbb: { displayName: "タオ", links: { S2: "タオ" } },
+  "12": { displayName: "タオ", links: { S3: "タオ" } },
+});
+test("統合しない: planMarkDistinct は全ペアを両方向に書く（2人は2キー・3人は3ペア6キー）・不正は error", () => {
+  const two = cfp.planMarkDistinct(DIS_P(), ["p_aaaaaaaa", "p_bbbbbbbb"], "T1");
+  assert.deepStrictEqual(two.patch, { "p_aaaaaaaa/distinct/p_bbbbbbbb": "T1", "p_bbbbbbbb/distinct/p_aaaaaaaa": "T1" });
+  const three = cfp.planMarkDistinct(DIS_P(), ["p_aaaaaaaa", "p_bbbbbbbb", "12"], "T1");
+  assert.deepStrictEqual(three.patch, {
+    "p_aaaaaaaa/distinct/p_bbbbbbbb": "T1", "p_bbbbbbbb/distinct/p_aaaaaaaa": "T1",
+    "p_aaaaaaaa/distinct/12": "T1", "12/distinct/p_aaaaaaaa": "T1",
+    "p_bbbbbbbb/distinct/12": "T1", "12/distinct/p_bbbbbbbb": "T1",
+  });
+  const people = p1bApply(DIS_P(), three.patch);
+  assert.ok(cfp.isDistinctPair(people, "12", "p_aaaaaaaa") && cfp.isDistinctPair(people, "p_bbbbbbbb", "12"));
+  assert.ok(cfp.planMarkDistinct(DIS_P(), ["p_aaaaaaaa"], "T").error, "1人だけ");
+  assert.ok(cfp.planMarkDistinct(DIS_P(), ["p_aaaaaaaa", "p_aaaaaaaa"], "T").error, "同一人物");
+  assert.ok(cfp.planMarkDistinct(DIS_P(), ["p_aaaaaaaa", "bad/id"], "T").error, "不正なID");
+  assert.ok(cfp.planMarkDistinct(DIS_P(), ["p_aaaaaaaa", "99"], "T").error, "存在しない人物");
+  assert.ok(cfp.planMarkDistinct(DIS_P(), "p_aaaaaaaa", "T").error, "配列でない");
+});
+test("統合しない: planUnmarkDistinct は両方向を null にし、isDistinctPair は一方向の記録でも true", () => {
+  const one = { ...DIS_P(), p_aaaaaaaa: { ...DIS_P().p_aaaaaaaa, distinct: { p_bbbbbbbb: "T1" } } };
+  assert.strictEqual(cfp.isDistinctPair(one, "p_aaaaaaaa", "p_bbbbbbbb"), true);
+  assert.strictEqual(cfp.isDistinctPair(one, "p_bbbbbbbb", "p_aaaaaaaa"), true, "逆向きから見ても記録あり");
+  assert.strictEqual(cfp.isDistinctPair(one, "p_aaaaaaaa", "12"), false);
+  assert.strictEqual(cfp.isDistinctPair(one, "p_aaaaaaaa", "p_aaaaaaaa"), false);
+  const r = cfp.planUnmarkDistinct(one, "p_aaaaaaaa", "p_bbbbbbbb");
+  assert.deepStrictEqual(r.patch, { "p_aaaaaaaa/distinct/p_bbbbbbbb": null, "p_bbbbbbbb/distinct/p_aaaaaaaa": null });
+  assert.strictEqual(cfp.isDistinctPair(p1bApply(one, r.patch), "p_aaaaaaaa", "p_bbbbbbbb"), false);
+  // 相手が消えた人物でも記録を消せる
+  const gone = { p_aaaaaaaa: { links: { S1: "タオ" }, distinct: { p_zzzzzzzz: "T1" } } };
+  assert.deepStrictEqual(p1bApply(gone, cfp.planUnmarkDistinct(gone, "p_aaaaaaaa", "p_zzzzzzzz").patch), { p_aaaaaaaa: { links: { S1: "タオ" } } });
+  assert.ok(cfp.planUnmarkDistinct(one, "p_aaaaaaaa", "p_aaaaaaaa").error);
+  assert.ok(cfp.planUnmarkDistinct(one, "99", "p_aaaaaaaa").error, "起点の人物が無い");
+});
+test("統合しない: 統合は keep/drop 間の記録を消し、drop の記録を keep へ引き継ぎ、drop を指す第三者を keep へ付け替える", () => {
+  const P = {
+    p_keepkeep: { displayName: "リン", links: { S1: "リン" }, distinct: { p_dropdrop: "T0" } },
+    p_dropdrop: { displayName: "リン", links: { S2: "リン" }, distinct: { p_keepkeep: "T0", p_thirdabc: "T0", p_fourthab: "T0" } },
+    p_thirdabc: { displayName: "リン", links: { S3: "リン" }, distinct: { p_dropdrop: "T0" } },
+    p_fourthab: { displayName: "リン", links: { S4: "リン" } }, // 一方向だけ（drop 側だけが記録）
+  };
+  const m = cfp.planMergePeople(P, "p_keepkeep", "p_dropdrop", "T9");
+  assert.strictEqual(m.patch["p_keepkeep/distinct/p_dropdrop"], null, "keep/drop 間の記録を消す");
+  assert.strictEqual(m.patch["p_keepkeep/distinct/p_thirdabc"], "T0", "drop の記録を引き継ぐ（時刻もそのまま）");
+  assert.strictEqual(m.patch["p_keepkeep/distinct/p_fourthab"], "T0");
+  assert.strictEqual(m.patch["p_thirdabc/distinct/p_dropdrop"], null, "第三者の drop への記録を外す");
+  assert.strictEqual(m.patch["p_thirdabc/distinct/p_keepkeep"], "T9", "第三者は keep を指す");
+  assert.strictEqual(m.patch["p_fourthab/distinct/p_dropdrop"], undefined, "drop を指していない人は触らない");
+  const after = p1bApply(P, m.patch);
+  assert.strictEqual(after.p_dropdrop, undefined);
+  assert.deepStrictEqual(after.p_keepkeep.distinct, { p_thirdabc: "T0", p_fourthab: "T0" });
+  assert.deepStrictEqual(after.p_thirdabc.distinct, { p_keepkeep: "T9" });
+  assert.ok(cfp.isDistinctPair(after, "p_keepkeep", "p_fourthab"));
+  // 記録の無い統合では distinct のキーを1つも足さない（従来の patch と同じ）
+  const plain = cfp.planMergePeople(DIS_P(), "p_aaaaaaaa", "p_bbbbbbbb", "T9");
+  assert.deepStrictEqual(Object.keys(plain.patch).filter(k => k.includes("/distinct/")), []);
+  // パスが重ならない（Firebase の multi-path update は祖先・子孫の重なりを拒否する）
+  const keys = Object.keys(m.patch);
+  keys.forEach(a => keys.forEach(b => assert.ok(a === b || !b.startsWith(a + "/"), a + " と " + b + " が重なる")));
+});
+test("統合しない: 切り出しは元の人物と両方向に記録し、ID の振り直しは他人の記録を新しい ID へ付け替える", () => {
+  const P = { "12": { displayName: "タム", number: "12", entityId: "E1", links: { S1: "タム", S2: "タム" } }, p_otherabc: { links: { S3: "タム" }, distinct: { p_movemove: "T0" } },
+    p_movemove: { displayName: "タム", number: "77", links: { S4: "タム" }, distinct: { p_otherabc: "T0" } } };
+  const sp = cfp.planSplitPerson(P, "12", { shopId: "S2", name: "タム", entityId: "E1", number: "12" }, () => "p_splitaaa", "T3");
+  assert.deepStrictEqual(sp.patch.p_splitaaa.distinct, { "12": "T3" });
+  assert.strictEqual(sp.patch["12/distinct/p_splitaaa"], "T3");
+  const keys = Object.keys(sp.patch);
+  keys.forEach(a => keys.forEach(b => assert.ok(a === b || !b.startsWith(a + "/"), a + " と " + b + " が重なる")));
+  assert.ok(cfp.isDistinctPair(p1bApply(P, sp.patch), "12", "p_splitaaa"));
+  const re = cfp.planReassignPersonId(P, "p_movemove");
+  assert.strictEqual(re.newId, "77");
+  assert.strictEqual(re.patch["p_otherabc/distinct/p_movemove"], null);
+  assert.strictEqual(re.patch["p_otherabc/distinct/77"], "T0");
+  const after = p1bApply(P, re.patch);
+  assert.ok(cfp.isDistinctPair(after, "p_otherabc", "77") && !after.p_otherabc.distinct.p_movemove);
+});
 test("P1b 従業員番号は法人内で一意（保存時の衝突検出）・ID の振り直しは明示操作", () => {
   const people = p1bApply({}, p1bInit().patch);
   const regs = p1bRegs(P1B_SHOPS);

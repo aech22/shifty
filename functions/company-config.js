@@ -523,13 +523,30 @@ function planMergePeople(people, keepId, dropId, nowIso) {
     if (merged[sid] !== undefined && merged[sid] !== ld[sid]) return { error: "同じ店舗に別の登録名があるため統合できません" };
     merged[sid] = ld[sid];
   }
-  return { patch: {
+  const patch = {
     [`${keepId}/links`]: merged,
     [`${keepId}/displayName`]: personDisplayName(Object.values(merged)),
     [`${keepId}/mergedFrom/${dropId}`]: nowIso,
     [`${keepId}/updatedAt`]: nowIso,
     [dropId]: null,
-  } };
+  };
+  // 「統合しない」の記録（distinct）の後始末。明示の統合なので keep と drop の間の記録は消す。
+  // drop が別人と記録していた相手は keep に引き継ぎ、drop を指している他の人物の記録は keep へ付け替える
+  // （付け替えないと消えた drop を指したまま残り、keep との組が重複候補に戻る）
+  if (_distinctOf(k)[dropId] !== undefined) patch[`${keepId}/distinct/${dropId}`] = null;
+  const dd = _distinctOf(d);
+  for (const x of Object.keys(dd)) {
+    if (x === keepId || x === dropId || !isValidPersonId(x)) continue;
+    patch[`${keepId}/distinct/${x}`] = dd[x];
+  }
+  for (const x of Object.keys(P)) {
+    if (x === keepId || x === dropId || !isValidPersonId(x)) continue;
+    if (_distinctOf(P[x])[dropId] === undefined) continue;
+    patch[`${x}/distinct/${dropId}`] = null;
+    patch[`${x}/distinct/${keepId}`] = nowIso;
+    if (patch[`${keepId}/distinct/${x}`] === undefined) patch[`${keepId}/distinct/${x}`] = nowIso;
+  }
+  return { patch };
 }
 // 統合解除: personId から shopId の登録を切り出して新しい人物にする。reg はその登録（{shopId,name,entityId,number}）。
 // 新しい人物の番号は店舗の番号。ただし元の人物と同じ法人で同じ番号なら持たせない（番号は法人内で一意）。
@@ -546,13 +563,16 @@ function planSplitPerson(people, personId, reg, genAuto, nowIso) {
   if (num && num === String(p.number || "").trim() && (reg.entityId || "") === (p.entityId || "")) num = "";
   const id = personIdFor(num, new Set(Object.keys(P)), genAuto);
   const rest = { ...l }; delete rest[reg.shopId];
-  const rec = { displayName: reg.name, links: { [reg.shopId]: reg.name }, createdAt: nowIso, updatedAt: nowIso };
+  // 切り出し＝別人と決めた操作なので、元の人物と両方向で「統合しない」に記録する（直後に重複候補へ戻らないように）。
+  // 新しい人物の側は rec の中に持たせる（[id] と `${id}/distinct/…` を同じ update に入れるとパスが重なって拒否される）
+  const rec = { displayName: reg.name, links: { [reg.shopId]: reg.name }, distinct: { [personId]: nowIso }, createdAt: nowIso, updatedAt: nowIso };
   if (reg.entityId) rec.entityId = reg.entityId;
   if (num) rec.number = num;
   return { newId: id, patch: {
     [id]: rec,
     [`${personId}/links/${reg.shopId}`]: null,
     [`${personId}/displayName`]: personDisplayName(Object.values(rest)),
+    [`${personId}/distinct/${id}`]: nowIso,
     [`${personId}/updatedAt`]: nowIso,
   } };
 }
@@ -566,7 +586,55 @@ function planReassignPersonId(people, personId) {
   if (!/^\d{1,20}$/.test(n)) return { error: "従業員番号が数字だけのときに振り直せます" };
   if (n === personId) return { error: "既に番号と同じIDです" };
   if (P[n]) return { error: `ID ${n} は既に別の人物が使っています` };
-  return { newId: n, patch: { [n]: { ...p, updatedAt: p.updatedAt }, [personId]: null } };
+  const patch = { [n]: { ...p, updatedAt: p.updatedAt }, [personId]: null };
+  // 「統合しない」の記録（distinct）は人物IDを指すので、この人を指している他の人物の記録を新しい ID へ付け替える
+  for (const x of Object.keys(P)) {
+    if (x === personId || !isValidPersonId(x)) continue;
+    const dx = _distinctOf(P[x]);
+    if (dx[personId] === undefined) continue;
+    patch[`${x}/distinct/${personId}`] = null;
+    patch[`${x}/distinct/${n}`] = dx[personId];
+  }
+  return { newId: n, patch };
+}
+
+// ---- 「統合しない」（別人として記録・2026-09-30）。companies/{id}/pub/people/{personId}/distinct/{相手のpersonId} = ISO時刻。
+// 両方向に書く（読む側はどちらか一方向でも記録があれば別人とみなす）。重複候補（app-utils.js の duplicatePersonCandidates）は
+// 組の全ペアが記録済みなら出さない。統合（planMergePeople）はこの記録を消し、切り出し（planSplitPerson）は自動で記録する。
+function _distinctOf(p) {
+  const o = _personObj(p) && _personObj(p.distinct);
+  return o || {};
+}
+// どちらか一方向でも記録があれば true
+function isDistinctPair(people, a, b) {
+  const P = _personObj(people) || {};
+  if (!a || !b || a === b) return false;
+  return _distinctOf(P[a])[b] !== undefined || _distinctOf(P[b])[a] !== undefined;
+}
+// 2人以上を互いに別人と記録する。全ペアを両方向で書く（3人組は3ペア＝6キー）。戻り値 {patch} か {error}
+function planMarkDistinct(people, personIds, nowIso) {
+  const P = _personObj(people) || {};
+  const ids = Array.isArray(personIds) ? personIds : [];
+  if (ids.length < 2) return { error: "別の人として記録する2人以上を選んでください" };
+  if (!ids.every(isValidPersonId)) return { error: "人物IDが無効です" };
+  if (new Set(ids).size !== ids.length) return { error: "同じ人物が含まれています" };
+  if (!ids.every(id => _personObj(P[id]))) return { error: "人物が見つかりません" };
+  const patch = {};
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      patch[`${ids[i]}/distinct/${ids[j]}`] = nowIso;
+      patch[`${ids[j]}/distinct/${ids[i]}`] = nowIso;
+    }
+  }
+  return { patch };
+}
+// 記録の取り消し（両方向を消す）。a は存在する人物。b は消えた人物でもよい（記録だけが残っている場合に消せるように）
+function planUnmarkDistinct(people, a, b) {
+  const P = _personObj(people) || {};
+  if (!isValidPersonId(a) || !isValidPersonId(b) || a === b) return { error: "人物IDが無効です" };
+  if (!_personObj(P[a])) return { error: "人物が見つかりません" };
+  // 相手が消えた人物でも逆向きの null を入れてよい（存在しないパスへの null は何もしない）
+  return { patch: { [`${a}/distinct/${b}`]: null, [`${b}/distinct/${a}`]: null } };
 }
 
 // ---- 改名の後始末（CF companyRenameStaff）。app-utils.js の renameStaffInSettings / renameStaffInPeriods /
@@ -719,6 +787,7 @@ function renameStaffSubsPatch(subs, oldName, newName) {
 
 module.exports = { PERSON_ID_RE, isValidPersonId, PERSON_AUTO_ID_CHARS, genPersonAutoId, personIdFor, STAFF_NUMBER_MAX, sanitizeStaffNumber,
   groupStaffRegsCF, personDisplayName, planPeopleSync, staffNumberConflict, planMergePeople, planSplitPerson, planReassignPersonId,
+  isDistinctPair, planMarkDistinct, planUnmarkDistinct,
   STAFF_KEYED_SETTING_MAPS_CF, STAFF_KEYED_PRIVATE_NODES_CF, STAFF_KEYED_MONTH_NODES_CF, STAFF_KEYED_PERIOD_NODES_CF, validateStaffRename, renameStaffListCF, renameStaffSettingsPatch,
   renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffLaborMonthsPatch, renameStaffActualsPatch, renameStaffSubsPatch,
   MIN_WAGE_MAX_ENTRIES, PREMIUM_RATE_KEYS_CF, LEGAL_PREMIUM_RATES_CF, PREMIUM_RATE_MAX_CF, ROUNDING_RULES_CF, sanitizeWageSettings, PAY_CODE_DEFAULT, isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,

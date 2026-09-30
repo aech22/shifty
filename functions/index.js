@@ -1126,7 +1126,7 @@ const { sanitizeCompanySettings, sanitizeCompanyDeadlines, sanitizeMonthlyDeadli
   isValidEntityId, sanitizeEntityName, planEntityMigration, buildShopMirror, otherCompanyLinksOf, SHOP_KINDS,
   isValidPayCodeCF, payCodeHashCF, isPayCodeRecordCF, verifyPayCodeCF,
   isValidPersonId, genPersonAutoId, sanitizeStaffNumber, entityIdOfShop, planPeopleSync, staffNumberConflict,
-  planMergePeople, planSplitPerson, planReassignPersonId, validateStaffRename, renameStaffListCF,
+  planMergePeople, planSplitPerson, planReassignPersonId, planMarkDistinct, planUnmarkDistinct, validateStaffRename, renameStaffListCF,
   renameStaffSettingsPatch, renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffLaborMonthsPatch, renameStaffActualsPatch, renameStaffSubsPatch,
   COMPANY_BUILTIN_ATTRS, COMPANY_ATTR_ID_RE } = require("./company-config");
 // 法人レイヤーの片方向移行（2026-09-30・P1）。法人が無い企業には企業名と同名の法人を1つ作り、
@@ -1700,6 +1700,25 @@ exports.mergePeople = functions
     await db.ref(`companies/${companyId}/pub/people`).update(r.patch);
     await syncPeopleMirror(companyId);
     return { ok: true, personId: keepId };
+  });
+
+// 「統合しない」: 同じ名前の別人（外国人スタッフの略称・スポットワークの登録名など）を別の人として記録する。
+// distinct:true で personIds（2人以上）の全ペアを両方向に記録、distinct:false で personIds:[a,b] の記録を取り消す。
+// 記録は companies/{id}/pub/people/{personId}/distinct/{相手}。links は変わらないので写しは作り直さない
+exports.markPeopleDistinct = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const companyId = readEntityArgs(data);
+    const ids = Array.isArray(data && data.personIds) ? data.personIds : [];
+    if (ids.length < 2 || !ids.every(isValidPersonId)) throw new functions.https.HttpsError("invalid-argument", "人物IDが無効です");
+    const mark = !(data && data.distinct === false);
+    if (!mark && ids.length !== 2) throw new functions.https.HttpsError("invalid-argument", "取り消す2人を選んでください");
+    await assertCompanyMember(context, companyId);
+    const pub = await readPub(companyId);
+    const r = mark ? planMarkDistinct(pub.people || {}, ids, new Date().toISOString()) : planUnmarkDistinct(pub.people || {}, ids[0], ids[1]);
+    if (r.error) throw new functions.https.HttpsError("failed-precondition", r.error);
+    await db.ref(`companies/${companyId}/pub/people`).update(r.patch);
+    return { ok: true };
   });
 
 // 統合解除: 人物から1店舗の登録を切り出して別の人物にする
