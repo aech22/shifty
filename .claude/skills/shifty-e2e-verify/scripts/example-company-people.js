@@ -154,7 +154,7 @@ const settle = h => h.page.waitForTimeout(700);
     R.mergeBtn = await h.clickExact("同一人物として統合");
     await h.page.waitForTimeout(300);
     await h.evaluate(() => { const l = [...document.querySelectorAll("[data-co-merge-modal] label")].find(x => x.innerText.includes("鈴木")); l.querySelector("input").click(); });
-    await modalClick(h, "統合する"); await settle(h);
+    await modalClick(h, "統合"); await settle(h);
     R.merged = await h.evaluate(() => {
       const ppl = window.__db("companies/C1/pub/people") || {};
       const p = Object.keys(ppl).find(id => (ppl[id].links || {}).S1 === "鈴木");

@@ -6,12 +6,12 @@
 //
 //  A. 重複候補に「田中（A店 ／ B店）」が出る。同じ店舗の中だけの名前・1人だけの名前（佐藤）は出ない
 //  B. 所属店舗が明示されていない側に「所属店舗を設定してください」
-//  C. 候補の「統合する」→ 統合モーダル → 統合で1人にまとまり、候補が消える。まとまった行に所属店舗の注記が残る（両方未設定）
+//  C. 候補の「統合」→ 統合モーダル → 統合で1人にまとまり、候補が消える。まとまった行に所属店舗の注記が残る（両方未設定）
 //  D. 写し shops/S1/company.people と shops/S2/company.people が同じ人物に A・B の両方の登録名を持つ（店長のセッションが読む）
 //  E. コンソールエラー0件
 // 「統合しない」（2026-09-30）は別の seed（2人組「リン」＝S1・S2、3人組「タオ」＝S1・S2・S3）の2回目のハーネスで測る:
 //  F. リンの「統合しない」→ 候補から消える・行数は変わらない・people/{a}/distinct/{b} と逆向きの両方が入る
-//  G. リンの「編集」→「統合しない相手」に相手の名前が出る →「取り消す」→ 記録が消えて候補に戻る
+//  G. リンの「編集」→「統合しない相手」に相手の名前が出る →「取消」→ 記録が消えて候補に戻る
 //  H. タオ（3人組）の「統合しない」→ 3ペア（6キー）が記録され候補から消える
 //  I. 2回目のハーネスもコンソールエラー0件
 //
@@ -92,11 +92,11 @@ const SCRIPTS = ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", 
       homeHint: !!document.querySelector("[data-co-dup-home-hint]"),
       rows: document.querySelectorAll("tr[data-co-person]").length,
     }));
-    // 候補の「統合する」→ モーダルの「統合する」
-    await h.evaluate(() => { const b = [...document.querySelectorAll("[data-co-dup-cand] button")].find(x => x.innerText.trim() === "統合する"); b && b.click(); });
+    // 候補の「統合」→ モーダルの「統合」
+    await h.evaluate(() => { const b = [...document.querySelectorAll("[data-co-dup-cand] button")].find(x => x.innerText.trim() === "統合"); b && b.click(); });
     await sleep(300);
     R.modal = await h.evaluate(() => !!document.querySelector("[data-co-merge-modal]"));
-    await h.evaluate(() => { const m = document.querySelector("[data-co-merge-modal]"); const b = m && [...m.querySelectorAll("button")].find(x => x.innerText.trim() === "統合する"); b && b.click(); });
+    await h.evaluate(() => { const m = document.querySelector("[data-co-merge-modal]"); const b = m && [...m.querySelectorAll("button")].find(x => x.innerText.trim() === "統合"); b && b.click(); });
     await h.page.waitForFunction(() => !document.querySelector("[data-co-merge-modal]"), { timeout: 5000 }).catch(() => {});
     await sleep(1200);
     R.after = await h.evaluate(() => ({
@@ -136,12 +136,13 @@ const SCRIPTS = ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", 
     await sleep(1200);
     R.f1 = { cands: await candNames(), rows: await rowCount(), msg: await h2.evaluate(() => (document.querySelector("[data-co-person-msg]") || {}).innerText || ""),
       d1: await distinctOf("p_RIN1AAAA"), d2: await distinctOf("p_RIN2BBBB") };
-    // G. リン（A店）の「編集」→「統合しない相手」→「取り消す」
+    // G. リン（A店）の「編集」→「統合しない相手」→「取消」
     R.gEdit = await h2.evaluate(() => { const tr = document.querySelector('tr[data-co-person="p_RIN1AAAA"]'); const b = tr && [...tr.querySelectorAll("button")].find(x => x.innerText.trim() === "編集"); if (!b) return false; b.click(); return true; });
     await sleep(400);
     R.g0 = await h2.evaluate(() => {
       const m = document.querySelector("[data-co-person-modal]"); const sec = m && m.querySelector("[data-co-distinct-list]");
-      return { modal: !!m, section: !!sec, peers: sec ? [...sec.querySelectorAll("[data-co-distinct-peer]")].map(e => ({ id: e.getAttribute("data-co-distinct-peer"), text: e.innerText.replace(/\s+/g, " ") })) : [] };
+      const u = sec && sec.querySelector("[data-co-distinct-undo]");
+      return { modal: !!m, section: !!sec, undoText: u ? u.innerText.trim() : "", peers: sec ? [...sec.querySelectorAll("[data-co-distinct-peer]")].map(e => ({ id: e.getAttribute("data-co-distinct-peer"), text: e.innerText.replace(/\s+/g, " ") })) : [] };
     });
     R.gUndo = await h2.evaluate(() => { const b = document.querySelector("[data-co-person-modal] [data-co-distinct-undo]"); if (!b) return false; b.click(); return true; });
     await sleep(1200);
@@ -173,7 +174,7 @@ const SCRIPTS = ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", 
     F_before: Array.isArray(f0.cands) && f0.cands.includes("リン") && f0.cands.includes("タオ") && /統合する2人を一覧で選んでください/.test(f0.taoText || "") && /統合しない/.test(f0.taoText || ""),
     F_markDistinct: R.fClicked === true && Array.isArray(f1.cands) && !f1.cands.includes("リン") && f1.cands.includes("タオ") && f1.rows === f0.rows
       && has(f1.d1, "p_RIN2BBBB") && has(f1.d2, "p_RIN1AAAA") && /別の人として記録しました/.test(f1.msg || ""),
-    G_listedInEdit: R.gEdit === true && g0.modal === true && g0.section === true && Array.isArray(g0.peers) && g0.peers.length === 1
+    G_listedInEdit: R.gEdit === true && g0.modal === true && g0.section === true && g0.undoText === "取消" && Array.isArray(g0.peers) && g0.peers.length === 1
       && g0.peers[0].id === "p_RIN2BBBB" && /リン/.test(g0.peers[0].text) && /B店/.test(g0.peers[0].text),
     G_undo: R.gUndo === true && Array.isArray(g1.cands) && g1.cands.includes("リン") && g1.d1 === null && g1.d2 === null && /取り消しました/.test(g1.msg || ""),
     H_threeDistinct: R.hClicked === true && Array.isArray(h1.cands) && !h1.cands.includes("タオ") && h1.rows === f0.rows
