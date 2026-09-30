@@ -6238,3 +6238,30 @@ test("P6b 賃金は PDF・Excel に出ない（書き出しが月次賃金の関
   const pg = bodyOf("function PayrollPage(");
   assert.ok(pg.includes("payrollCsvOf(") && !/jspdf|jsPDF|ExcelJS|exportPdf|expXl/.test(pg));
 });
+
+// ===== 非表示マウントが読む提出の範囲（2026-09-30・P7 の前に実測して修正）=====
+test("laborReadPeriodIds: 年度の全期間と前後の週にかかる期間を返す（一括PDF・ダッシュボードの年の値）", () => {
+  const P = (id, s, e) => ({ id, startDate: s, endDate: e });
+  const periods = [
+    P("mar2", "2026-03-16", "2026-03-31"), // 年度の外だが4/1の週（前の週）にかかる
+    P("mar1", "2026-03-01", "2026-03-15"), // 年度の外・週にもかからない
+    P("apr", "2026-04-01", "2026-04-30"), P("sep", "2026-09-01", "2026-09-30"), P("oct", "2026-10-01", "2026-10-31"),
+    P("nov", "2026-11-01", "2026-11-30"), // 年度内の後の期間（年計に入るので読む）
+    P("mar27", "2027-03-01", "2027-03-31"), P("apr27", "2027-04-01", "2027-04-30"), // 翌年度（最初の週は年度末の月をまたぐ週にかかる）
+    P("may27", "2027-05-01", "2027-05-31"), // 翌年度・週にもかからない
+    { id: "bad", startDate: "", endDate: "2026-10-01" },
+  ];
+  const st = { laborSettings: { fiscalYearStartMonth: 4 } };
+  assert.deepStrictEqual(u.laborReadPeriodIds(periods, st, "2026-10-01", "2026-10-31").sort(),
+    ["apr", "apr27", "mar2", "mar27", "nov", "oct", "sep"]);
+  // 暦年（1月開始）なら 2026-03 の期間も同じ年
+  assert.ok(u.laborReadPeriodIds(periods, { laborSettings: { fiscalYearStartMonth: 1 } }, "2026-10-01", "2026-10-31").includes("mar1"));
+  assert.deepStrictEqual(u.laborReadPeriodIds(periods, st, "", "2026-10-31"), []);
+});
+
+test("一括PDFの読み込みは laborReadPeriodIds を通す（直前の期間だけを読む形に戻さない）", () => {
+  const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-company.js"), "utf8");
+  const i = src.indexOf("function CompanyBulkPdf(");
+  const body = src.slice(i, src.indexOf("\nfunction ", i + 10));
+  assert.ok(body.includes("laborReadPeriodIds(") && body.includes("pastSubsLoaded={true}"));
+});

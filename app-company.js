@@ -1376,14 +1376,17 @@ function CompanyBulkPdf({range,rows,companyName,tt}){
     // 写しは丸ごと読む（settings に加え、ヘルプ先勤務の合算（P3.6）が使う連携店舗・人物・法人）
     const[stS,seS,coS,pS]=await Promise.all([ref(`shops/${sid}/staff`),ref(`shops/${sid}/settings`),ref(`shops/${sid}/company`),ref(`shops/${sid}/periods`)]);
     const periods=Object.values(pS.val()||{}).filter(x=>x&&x.id).sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate)));
-    // 連勤・週の跨ぎを店舗単体の出力と揃えるため、直前の期間の提出も読む
-    const prev=periods.find(p=>String(p.startDate)<String(period.startDate));
-    const q=pid=>firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(pid).once("value");
-    const subSnaps=await Promise.all([q(period.id),...(prev?[q(prev.id)]:[])]);
-    const subs=[];subSnaps.forEach(sn=>Object.values(sn.val()||{}).forEach(x=>{if(x&&x.id)subs.push(x);}));
     const staffList=Object.values(stS.val()||{}).filter(n=>typeof n==="string");
     const coLink=coS.val()||null;
     const settings=applyCompanySettings(seS.val()||makeSettings(sid),(coLink&&coLink.settings)||{});
+    // 非表示マウントは pastSubsLoaded=true で渡すので、年度の全期間と前後の週にかかる期間の提出を読む
+    // （以前は対象と直前の期間だけで、読んでいない期間が実働0・全日公休として年計・年平均所定に入っていた。
+    // 店舗単体の「全データ」は書き出す前に過去の提出を読むので、一括PDFだけ年の値が小さく出ていた）
+    const pids=laborReadPeriodIds(periods,settings,period.startDate,period.endDate);
+    if(!pids.includes(period.id))pids.push(period.id);
+    const q=pid=>firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(pid).once("value");
+    const subSnaps=await Promise.all(pids.map(q));
+    const subs=[];subSnaps.forEach(sn=>Object.values(sn.val()||{}).forEach(x=>{if(x&&x.id)subs.push(x);}));
     // 人×月の所定（P3）。企業セッションは連携店舗のオーナーなので読めるが、読めなければ無しで出す（シフトから集計した値になる）
     const lmS=await firebaseDB.ref(`shops/${sid}/laborMonths`).once("value").catch(()=>null);
     return{staffList,settings,periods,subs,periodId:period.id,laborMonths:(lmS&&lmS.val())||{},companyLink:coLink};

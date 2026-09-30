@@ -409,6 +409,7 @@ const sharedGlobals = {
   parseCsvRows: "writable",
   parseCsvDate: "writable",
   planActualsImport: "writable",
+  laborReadPeriodIds: "writable",
   ACTUALS_OFF: "writable",
   staffNumberSortKey: "writable",
   compareCompanyStaffRows: "writable",
