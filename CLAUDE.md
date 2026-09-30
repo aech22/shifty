@@ -1445,25 +1445,28 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-09-29 自動実行 #155）
+## Shifty バグチェックレポート（2026-09-30 自動実行 #156）
 
-> 着手時の HEAD は `f09e4fa`。#154 以降のコミットは CLAUDE.md だけで、配信コードに変更は無い。
+> 着手時の HEAD は `7847558`。#155（`f09e4fa`）以降に P1〜P7（法人・人物ID・確定・実績・割増・賃金・ダッシュボード）の約9,500行が入った。CF・ルール／純粋関数／UI の3領域に分けてレビューした。
 
 ### 修正済み
 
-なし（修正が必要な問題は見つからなかった）。
+- **[🟡] Free/Pro の単独店舗でもシフト作成タブの「確定」ボタンが押せた**（app-shift.js の `canConfirm`・`dfec1fc`）。確定はスタッフの再提出をルールで止めるので、誤操作で提出が止まる。新しく確定するのを `featureEnabled("confirm")` で Premium に絞った。解除・交付は絞っていない（降格した店舗が確定済みの期間を戻せなくなるため）。回帰は `example-labor-confirm.js` に Pro の2ケースを追加（`55adc74`）。
+- **[🟡] CF `splitPerson` が、その人物につながっていない店舗を拒否しなかった**（functions/company-config.js の `planSplitPerson`・`c503f41`）。`undefined` どうしの一致でガードを素通りし、`undefined` 入りの patch が `update()` で例外になっていた。テストを1件足し、修正前の実装では落ちることを確認した。**CF は本番未デプロイ**（P1b と一緒に出る）。
 
 ### 要確認（未修正）
 
-- **[🟢] 他店舗略称＋「締」は追加出勤を数える**。修正前からの挙動で、x とそろえるかは仕様判断（#152 から継続）。
-- **[🟢] 呼び出し候補を選ぶ前に番号欄を書き換えると、書き換えた番号で登録される**（StaffTab の registerLookup・#152 から継続）。
+- **[🟢] 日別の休憩上書き（adjustedBreak）が、実績で短くした時刻にもそのまま当たる**（`resolveActualDay`）。30分指定の日に退勤を 09:15 にすると実働0分・休憩15分になる。仕様の優先順どおりの挙動で、実績の休憩欄で直せる → BACKLOG化済み。
+- **[🟢] 企業連携タブの提出状況表からの確定は、対象店舗のプランを見ない**。企業セッション専用の入口なので今回は触っていない。
+- **[🟢] 配信版数 `20260929-1d474a0` 以降に app-*.js が変わっている**。次のリリースで `?v=` のバンプが要る（`/release-to-main` の標準工程）。
+- **[🟢] 他店舗略称＋「締」は追加出勤を数える／呼び出し候補を選ぶ前の番号欄の書き換え**（#152 から継続）。
 
 ### 異常なし
 
-- `npm test` **382件パス**・`npx eslint app-*.js` **0 errors / 101 warnings**（#154 と同数）。
-- `DEV_MODE` は式のまま。フォーム部品88件で `fontSize` 16未満は0件。未定義のCSS変数・`subs` の全体 set()・`.delete()` はいずれも0件。
-- 配信版数は `20260929-1d474a0` で6箇所一致。
-- 配信コードが変わっていないため、回帰スクリプトは回していない。
+- `npm test` **493件パス**・`npx eslint app-*.js` **0 errors / 115 warnings**。
+- `DEV_MODE` は式のまま。フォーム部品155件で `fontSize` 16未満は0件。未定義のCSS変数・`subs`/`periods` の全体 set()・functions/ の `.delete()` はいずれも0件。
+- 回帰スクリプト10本（index-html-load・shift-edit-tab・company-dashboard・payroll・actuals・labor-confirm・labor-premium・staff-pay・helper-aggregate・company-people）はすべて allPass。
+- CF の新 Callable はすべて ID 検証と `assertCompanyMember` を書き込みより前に通している。ルールの新ノードはオーナー限定で仕様どおり。
 - **Firebase・Stripe・本番データには一切アクセスしていない。**
 <!-- BUG_CHECK_LATEST_END -->
 
@@ -1511,6 +1514,154 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟢 実績で出勤・退勤を変えた日に、確定シフトの日別休憩上書き（adjustedBreak）をそのまま当てるか
+
+**目的**: `resolveActualDay`（app-utils.js）は実績の時刻で `getBreaksFor` を通し直すが、確定シフトの `adjustedBreak` は残すので、
+日別上書きが最優先で当たる。実測: 9:00〜18:00・休憩30分指定の日に実績の退勤を 09:15 にすると、実働0分・休憩15分になる
+（10:00 なら実働30分・休憩30分、上書きが無ければ実働15分）。仕様の文言（「日別上書き＞中休み＞長さ＞時間帯」「breakMin が無ければ判定し直す」）
+どおりの挙動で、実績の休憩欄に分を入れれば直せる。
+**受け入れ条件**:
+- [ ] 実績の時刻が確定シフトと違う日に `adjustedBreak` を当て続けるか、落として判定し直すかを決める（**ユーザー判断**）
+- [ ] 決めた向きを実装し、割増（P5）・月次賃金（P6b）の値が変わる例をテストで固定する
+**影響範囲**: app-utils.js（`resolveActualDay`）、tests/core.test.js
+**備考**: バグチェック#156（2026-09-30）で検出・条件B（仕様判断）に該当。起きるのは休憩を日別に指定した日を実績で大きく短くしたときだけ。
+
+---
+
+## 🟡 労務・給与と複数法人: 法人レイヤー（P1）の Cloud Functions の本番反映と実データ確認（全フェーズ完了後に1回）
+
+**目的**: P1（2026-09-30・develop `6074b26`〜）の CF は **本番に未デプロイ**。dev は Spark で CF をデプロイできないため、
+CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋関数）とスタブ Firebase の実ブラウザ回帰
+（`example-company-entities.js`）でしか確かめていない。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
+**反映が要るもの**:
+- [ ] CF: 新規6本（`ensureCompanyEntities`・`createEntity`・`renameEntity`・`assignShopEntity`・`saveEntityConfig`・`setShopKind`）と
+      既存の更新（`syncCompanyMirror` を使う全関数・`createCompany`・`linkStoreToCompany`・`unlinkStoreFromCompany`）
+- [ ] ルール: **変更なし**（新ノードはすべて `companies/$id/pub` 配下＝既存ルールで CF 専用・企業 uid と作成者だけ読める。dev の REST で19項目実測済み）
+- [ ] 順序: CF を先に出してからクライアント。**クライアントだけ先に出ると**、法人カードの `ensureCompanyEntities` が存在しない CF を呼んで
+      「法人を準備できませんでした」のトーストが出る（他の機能は壊れない。法人の無い企業は従来どおり1法人扱いで表示される）
+- [ ] 反映後、既存企業で企業連携タブを1回開き、`companies/{id}/pub/entities` ができて全店舗が割り当たり、写し `shops/{sid}/company` に
+      `entityId`・`entityName`・`kind` が入ることを `shifty-prod-data-probe`（読み取り専用）で確認する
+- [ ] 別の企業に連携中の店舗を `linkStoreToCompany` で追加すると拒否されることを本番で1回確かめる（dev では CF が動かず未検証）
+- [ ] P2（`f02b4bb`）: `sanitizeCompanySettings` が労務設定の新キー4つ（年間所定・分母・週の起算・月をまたぐ週）を通すようになった。
+      同じデプロイに含めれば足りる（`saveCompanyConfig`・`saveEntityConfig`）。反映後、企業の共通設定に年間所定 2080h を入れて保存し、
+      写しの `settings.laborSettings.annualScheduledMin=124800` と店舗の設定タブの所定上限の列（31日 176:39）を確かめる
+**影響範囲**: functions/index.js・functions/company-config.js（コード変更は済み）
+
+---
+
+## 🟡 労務・給与と複数法人: 人物ID（P1b）の Cloud Functions の本番反映と実データ確認（全フェーズ完了後に1回）
+
+**目的**: P1b（2026-09-30・develop `a52a405`〜）の CF は **本番に未デプロイ**。dev は Spark で CF をデプロイできないため、
+中身は `tests/core.test.js`（`functions/company-config.js` の純粋関数とクライアントとの一致）とスタブ Firebase の実ブラウザ回帰
+（`example-company-people.js`）でしか確かめていない。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
+**反映が要るもの**:
+- [ ] CF: 新規6本（`ensureCompanyPeople`・`mergePeople`・`splitPerson`・`reassignPersonId`・`companyRenameStaff`・`companyUpdateStaff`）
+- [ ] ルール: **変更なし**（`companies/$id/pub/people` は既存の pub のルールで読みが企業uidと作成者・書きは `companies/$id/.write:false`＝CF 専用）
+- [ ] 順序: CF を先に出してからクライアント。**クライアントだけ先に出ると**、企業内登録スタッフを開いたときの `ensureCompanyPeople` が失敗し、
+      行に人物IDが付かないので「編集」と統合のチェックが押せないまま（一覧の表示は従来どおりで壊れない）
+- [ ] 反映後、企業内登録スタッフを1回開いて `companies/{id}/pub/people` ができ、行数と並びが反映前と同じことを `shifty-prod-data-probe`（読み取り専用）で確認する
+- [ ] 本番で1人の改名を企業の一覧から通し、店舗の staff・全 subs・settings・periods・private/pay が移ったことを同じく読み取りで確認する
+      （Admin SDK での `staff` のトランザクションと subs 全件の読みは実データでしか確かめられない）
+**影響範囲**: functions/index.js・functions/company-config.js（コード変更は済み）
+
+---
+
+## 🟡 労務・給与と複数法人: ヘルプ先勤務の合算（P3.6）の Cloud Functions の本番反映と実データ確認（全フェーズ完了後に1回）
+
+**目的**: P3.6（2026-09-30・develop `a892d85`〜）は写し `shops/{sid}/company` に `people`・`shopEntities` を焼くよう CF を変えた。**本番に未デプロイ**。
+中身は `tests/core.test.js`（`buildShopMirror`・`mirrorPeopleOf`）とスタブの実ブラウザ回帰（`example-helper-aggregate.js`・`example-company-dup-candidates.js`）でしか確かめていない。
+**反映が要るもの**:
+- [ ] CF: `syncCompanyMirror` を使う全関数（写しの形が変わる）と、人物を変える5本（`ensureCompanyPeople`・`mergePeople`・`splitPerson`・`reassignPersonId`・`companyRenameStaff`）の `syncPeopleMirror`。
+      P1b の CF と同じデプロイで出せば足りる
+- [ ] ルール: **変更なし**（写しは既存ルールで CF 専用・読みは `auth != null`。他店の subs・staff・settings・periods も既存ルールで `auth != null` で読める）
+- [ ] 順序: CF を先に出してからクライアント。**クライアントだけ先に出ると**、写しに `people` が無いので同一人物は後方互換の規則（所属店舗の一致）だけで判定され、
+      人物で束ねた（登録名が違う・所属店舗が未設定の）登録は合算されない（壊れはしない＝以前と同じ表示に倒れる）
+- [ ] 反映後、企業内登録スタッフを1回開き（または人物を1つ統合し）、写し `shops/{sid}/company.people` ができたことを `shifty-prod-data-probe`（読み取り専用）で確かめる
+- [ ] 本番で、所属店舗が明示されていて他店にもシフトがある人を1人選び、所属店舗のシフト作成タブで読み取り専用セル・月実働の合算を目で確かめる
+      （行き先の店の設定で引いた実働が、その店のシフト作成タブの値と一致すること）
+**影響範囲**: functions/index.js・functions/company-config.js（コード変更は済み）
+
+---
+
+## 🟡 労務・給与と複数法人: 実績（P4）のルール・CF の本番反映と実データ確認（全フェーズ完了後に1回）
+
+**目的**: P4（2026-09-30・develop `7520a55`〜`564ae08`）は新ノード `shops/{sid}/actuals` を足した。ルールは dev にだけ反映する（反映と REST 実測は
+`probe-rules-actuals.js`）。CF の変更（`companyRenameStaff` が actuals を移す・`purgeOldPeriods` が actuals/{期間ID} を消す）は本番に未デプロイ。
+**反映が要るもの**:
+- [ ] ルール: `actuals`（読み書きともオーナー・形の検証）。**新ノードなので本番はルールが先**（計画書 §6 冒頭。ルールが無いと実績の保存が拒否される）
+- [ ] CF: `companyRenameStaff`・`purgeOldPeriods`（P1b・P3.6 と同じデプロイで出せば足りる）。**クライアントだけ先に出ても壊れない**
+      （企業の一覧からの改名で actuals だけ旧名のまま残る。店舗のスタッフタブからの改名はクライアントが移す）
+- [ ] 反映後、本番の確定済みの期間で「実績」を1件入れて消し、`shops/{sid}/actuals` に差分だけが書かれ、消すとノードが無くなることを `shifty-prod-data-probe`（読み取り専用）で確かめる
+- [ ] 打刻機の CSV 形式が分かったら、`DEFAULT_ACTUALS_CSV_MAPPING` と文字コードの既定を合わせる（計画書 §8「残る確認」）
+**影響範囲**: database.rules.json・functions/index.js・functions/company-config.js（コード変更は済み）
+
+---
+
+## 🟡 労務・給与と複数法人: 賃金マスタ（P6a）のルール・CF の本番反映と実データ確認（全フェーズ完了後に1回）
+
+**目的**: P6a（2026-09-30・develop `65f7a49`〜`374e914`）はルールを dev にだけ反映し、CF は本番に未デプロイ。
+ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
+**反映が要るもの**:
+- [ ] ルール: 新ノード（`shops/*/private/pay`・`shops/*/private/payCode` の書き込み＝オーナー、`companies/*/private/payCode` の読み＝企業uidと作成者）。
+      **新ノードなのでルールが先**（計画書 §6 冒頭。CLAUDE.md の「クライアント先」と逆になるので、リリース直前にユーザーへ理由を示して承認を取る）。
+      ルールより先にクライアントを出すと、賃金の保存と店舗のパスコード変更が拒否される（トーストが出るだけで他は壊れない）
+- [ ] CF: 新規 `setCompanyPayCode`、`syncCompanyMirror` のパスコード同期、`sanitizeCompanySettings`・`mergeEntitySettings` の `wageSettings`
+      （`saveEntityConfig`・`saveCompanyConfig` とその写しを作る全関数に効く）。CF より先にクライアントを出すと、法人の最低賃金を保存しても
+      旧 CF の sanitize で捨てられ最賃比較が出ない／企業のパスコード変更が「関数が無い」で失敗する（賃金の入力そのものは動く）
+- [ ] 反映後、本番で企業アカウントの「賃金の閲覧パスコードを変更する」を1回通し、連携全店舗の `private/payCode` に同じ値が入ることを
+      `shifty-prod-data-probe`（読み取り専用）で確認する（dev は Spark で CF が動かず未検証）
+- [ ] 反映後、`node .claude/skills/shifty-e2e-verify/scripts/probe-rules-pay.js` と同じ20項目を本番ではなく dev で再実行して ALL_OK を確かめる
+      （本番のルールは REST で叩かない。dev と同じファイルを出すことで担保する）
+**影響範囲**: database.rules.json・functions/index.js・functions/company-config.js（コード変更は済み）
+
+---
+
+## 🟡 労務・給与と複数法人: 月次賃金（P6b）の CF 本番反映と実データ確認（全フェーズ完了後に1回）
+
+**目的**: P6b（2026-09-30・develop `8d0cff1`〜）は法人の賃金設定に割増率（`premiumRates`）と端数規則（`roundingRule`）を足し、
+CF の `sanitizeWageSettings`（functions/company-config.js）を同じ規則に広げた。**本番に未デプロイ**。ルール・データ移行は無し。
+**反映が要るもの**:
+- [ ] CF: `sanitizeCompanySettings` を通る `saveEntityConfig`・`saveCompanyConfig`（P6a の CF と同じデプロイで出せば足りる）。
+      CF より先にクライアントを出すと、法人の設定で割増率・端数を入れて保存しても旧 CF の sanitize で捨てられ、月次賃金は法定率・切上げで計算される
+      （月次賃金ページ自体は動く）
+- [ ] 反映後、本番の法人の設定で割増率を1つ入れて保存し、写し `shops/{sid}/company/settings/wageSettings/premiumRates` に入ることを
+      `shifty-prod-data-probe`（読み取り専用）で確かめる
+- [ ] 実データで1か月分の月次賃金を給与ソフト（または手計算）と突き合わせる（ユーザーの領分。Shifty の計算値を正解として代用しない）
+- [ ] 計画書 §8「残る確認」の固定深夜手当の充当規則（深夜割増から額を引く、で実装）が運用と合っているかをユーザーに確かめる
+**影響範囲**: functions/company-config.js（コード変更は済み）
+
+---
+
+## 🟡 労務・給与と複数法人: 所定・確定ロック（P3）のルール・CF の本番反映と実データ確認（全フェーズ完了後に1回）
+
+**目的**: P3（2026-09-30・develop `96458b6`〜）は本番に未反映。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
+**反映が要るもの**:
+- [ ] ルール（2つ・性質が違う）: ①新ノード `shops/*/laborMonths`（読み書きともオーナー）＝**ルールが先**（無いとクライアントの所定の保存・購読が拒否される）。
+      ②既存パスの締め付け `shops/*/subs/$subId/.write`（期間に `confirmation` があるときはオーナーだけ）＝CLAUDE.md の順（**クライアントが先**）。
+      同じファイルなので1回で出すなら、リリース直前にユーザーへ「①のためにルールを先に出す。②は旧クライアントが confirmation を書かないので先に出しても壊れない」を示して承認を取る
+- [ ] CF: `companyRenameStaff`（laborMonths の移し替え）。P1・P1b・P6a の CF と同じ1回のデプロイでよい
+- [ ] データ移行: なし（旧 `lockedAt` は読まない。確定で消える。旧「確定済み」の期間は未確定として表示され、必要なら「確定」を押し直す）
+- [ ] 反映後、本番で11月分を1店舗だけ確定し、`laborMonths/2026-11` が書かれることと、スタッフURLからの再提出が拒否されることを確かめる
+- [ ] 10月分（手運用）の所定を、10月の期間を選んで「人×月の所定」欄から遡って登録する（運用。コードの作業ではない）
+**影響範囲**: database.rules.json・functions/index.js・functions/company-config.js（コード変更は済み）
+
+---
+
+## 🟡 労務・給与と複数法人: 店舗別ルール4件（P3.5）の CF 本番反映（全フェーズ完了後に1回）
+
+**目的**: P3.5（2026-09-30・develop `f97cb72`〜`a921796`）は本番に未反映。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
+**反映が要るもの**:
+- [ ] ルール: **変更なし**（新しい設定はすべて既存の `settings` の中・`laborSettings` の中・`staffTypeLimits` の中に入る）
+- [ ] CF: `functions/company-config.js` の `sanitizeCompanySettings`（`laborSettings` の新キー4つ `showDailyOverB`・`dailyOverThresholdMin`・
+      `highlightExternalOver8h`・`externalOverThresholdMin` と、属性の `otProrate`）。`saveCompanyConfig`・`saveEntityConfig` と写しを作る全関数に効く。
+      **CF より先にクライアントを出すと、企業の共通設定・法人設定で「残業予定の配り方」を保存しても旧 CF の sanitize で捨てられる**
+      （店舗の設定タブで入れた値は CF を通らないので効く）。P1・P1b・P3・P6a の CF と同じ1回のデプロイでよい
+- [ ] データ移行: なし（設定が無い店舗は従来と同じ計算）
+- [ ] 設定の投入（中休み・しきい値・B制トグル・外部の色・昼夜人数・特定技能の按分窓）は P8-7 の運用手順で行う（コードの作業ではない）
+**影響範囲**: functions/company-config.js（コード変更は済み）
+
+---
+
 ## 🟡 企業連携の拡張（2026-09-27 実装・本番反映済み）の実データ確認
 
 **目的**: 企業連携の拡張（一括PDF・企業の共通設定・提出期限・提出ボタン・所属店舗）は 2026-09-27 に本番へ反映した
@@ -1524,7 +1675,7 @@ CF 本体の動作は本番の実データでは未検証（dev＝Spark には C
 - [ ] 反映後、企業の作成者のセッションで「企業の共通設定を保存」を1回押し、各連携店舗の `shops/{sid}/company` が書かれることを
       `shifty-prod-data-probe`（読み取り専用）で確認する
 - [ ] 本番の店舗で「提出」「提出状況表」「一括PDF（シフトのみ・全データ）」を1回ずつ通す
-- [ ] **`changeCompanyPassword` の作成者限定（`e696d1f`・2026-09-28）を CF へ反映する**。コミット時点で CF は未デプロイ
+- [x] **`changeCompanyPassword` の作成者限定（`e696d1f`・2026-09-28）を CF へ反映する** → **2026-09-29 に本番へデプロイ済み**（18関数すべて更新成功・未認証呼び出しが UNAUTHENTICATED を返すことを確認。反映前に cf-harness で企業コードのセッション拒否・作成者の変更可を実行検証）。コミット時点で CF は未デプロイ
       （計画どおり別ステップ）。反映するまで、UI はボタンを隠すが企業コードのセッションから CF を直接呼べば変更が通る。
       バグチェック#152（2026-09-28）で申し送り・条件A（本番デプロイ）に該当
 
@@ -3029,6 +3180,275 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 🟡 労務・給与と複数法人 P7: 企業横断ダッシュボード（2026-09-30 develop 完了・`eca6959`〜`2c3bffb`／ルールと CF の変更なし）
+
+**目的**: `労務給与_複数法人_実装計画.md` §6 P7・§1 の要件5・16。詳細は CLAUDE.md の「企業横断ダッシュボード（P7）」の節。
+- [x] 企業連携タブの新カード `CompanyDashboardCard`（Premium・企業セッション）。法人→店舗→人の表（`example-company-dashboard.js`）
+- [x] 当月の所定 vs 所定上限（未設定なら総枠）と差、年平均所定 vs 分母と差（労務判定表の「月所定/上限」「年平均所定/分母」と同じ値）
+- [x] 36協定の残り: 月・協定の年・年720h・複数月平均80h（いちばん高い窓）・月45h超の回数（`agreementYearStatus`＝判定と同じ値）
+- [x] 確定・交付の進捗（その月にかかる期間を `periodStateOf` で数える。店舗と法人の見出し行）
+- [x] 年間休日（公休＝空欄を含む）と 52日以上の判定（ok／不足／途中）
+- [x] CSV（BOM付き UTF-8・画面と同じ列の定義・金額の列なし）
+- [x] 集計は既存関数の合成（新しい労務の式なし）。店舗ごとの値は ShiftEditTab の非表示マウントと `exportJob.kind="dashboard"`。賃金は出さない（`tests/core.test.js` が固定）
+- [x] 読めない店舗・途中の月は「＋」と淡色、超過・不足は赤（労務判定表と同じ流儀）
+- [x] **一括PDFの年の値の不具合を実測して修正**（`eca6959`・別コミット）: 非表示マウントは `pastSubsLoaded=true` なのに提出を対象と直前の期間しか読んでおらず、
+      読んでいない期間が実働0・全日公休として年計・年平均所定に入っていた。4〜10月に月10時間のデータで、修正前は一括PDFの年度計 20:00・年平均所定 2:51、
+      店舗単体の全データは 70:00・10:00。修正後は一括PDFも 70:00・10:00（`example-company-bulk-pdf-year.js`）。読む範囲は `laborReadPeriodIds` に切り出してダッシュボードも使う
+- 検証: `npm test` 493件パス・`npx eslint app-*.js` 0 errors（warnings 115＝P6b の 114＋新しいカードの未使用判定1。既存のカードと同じ扱い）。
+  `example-company-dashboard.js` 16項目パス（P7 より前の配信物では15項目が落ちる。Pro でカードが出ないことだけは元から通る）。既存の回帰19本も通過（`example-company-entities.js` は法人フィルタの数を
+  提出状況表の分だけ数えるように直した）。フォーム部品155件で fontSize 16 未満は0件
+- 前提として置いたこと: ①年の値は年度の始め〜選んだ月まで（先に作ってある空の期間を公休として数えない）。②年間休日の「不足」は、年度末まで数え終えたか、
+  残りの日を全部休んでも52日に届かないとき。それ以外は途中。③36協定の年の3項目は月が埋まっていなくても超えていれば赤（途中の値が既に超えている＝確定的に超過）
+- 申し送り: 本番反映で要るものは無い（ルール・CF・データ移行なし。クライアントの配信だけ）。月次賃金ページ（P6b）も提出を月末までしか読まず、
+  月末をまたぐ週の法定休日の判定が次の期間の空欄を休日とみなす可能性がある（コードを読んだだけ・未実測・P7 の範囲外なので直していない）
+
+### ✅ 🟡 労務・給与と複数法人 P6b: 賃金計算と出力（2026-09-30 develop 完了・`8d0cff1`〜／ルールの変更なし・CF は本番未反映）
+
+**目的**: `労務給与_複数法人_実装計画.md` §4.5・§6 P6b・決定 #2・#6・#12・#17。詳細は CLAUDE.md の「月次賃金（P6b）」の節。
+- [x] 月次内訳（人×項目: 所定／実労働／時間外①②③／60h超／深夜／法定休日／欠勤・遅刻早退／各割増額／固定残業の充当／固定深夜の充当／欠勤控除）と CSV。
+      新規ページ `PayrollPage`（`fullPage` kind "payroll"・Premium・オーナー）。入口はスタッフタブの「月次賃金 →」と企業連携タブの法人カード（法人 → 店舗）
+- [x] PDF・Excel には出ない（`tests/core.test.js` が `buildShiftTableHtml`・`exportPdf`・`expXl` の本体を走査。月次賃金の関数を注入した写しでは落ちる）
+- [x] 時給者は 時給 × 実労働 ＋ 割増、月給者は基本給を動かさず割増と控除だけ（テストの手計算・`example-payroll.js`）
+- [x] 「年平均所定 > 分母」の警告（月給者・テストと実ブラウザ）
+- [x] 適用開始日で版を選ぶ（月初時点の版・月の途中の改定は注記だけで日割りしない・テスト）
+- [x] 金額は閲覧パスコード解除まで「••••」（時間は伏せない）・CSV は解除まで押せない（`example-payroll.js`）
+- [x] 法人設定 `wageSettings` に `premiumRates`（法定値既定・上乗せだけ）と `roundingRule`（既定 円未満切上げ）。CF の sanitize と一致をテストで照合
+- [x] `サブスク_プラン設計書.md` の Premium に「賃金計算」を追記（決定 #6）
+- [x] 賃金設定ページ（P6a）の割増率の表示を、法定の固定文言から法人の設定の率に変えた（§3.7「法人設定の率を表示」）
+- 検証: `npm test` 485件パス・`npx eslint app-*.js` 0 errors（warnings 114＝P5 の 113＋新しいページの未使用判定1。既存のコンポーネントと同じ扱い）。
+  `example-payroll.js` 17項目パス（P6b より前の配信物では16項目が落ちる。Pro でボタンが出ないことだけは元から通る）。既存の回帰13本（staff-pay は「月次賃金 →」を包んだ配置に合わせて1項目を直した）も通過。
+  フォーム部品154件で fontSize 16 未満は0件
+- 前提として置いたこと: ①固定深夜手当は深夜割増から**額**を引く（計画書 §8「残る確認」の未決事項。額が0で時間だけあればその時間分の深夜割増を上限）。
+  ②欠勤控除の端数は支払いと逆向き（切上げなら切捨て。計画書は「項目ごとに roundingRule」としか書いていない）。
+  ③時給者の時間外・法定休日は率の分だけ（時給 × 実労働が 1.0 倍分を含むため）。④労働時間制が判定対象外（none）の人は時間を出さず「計算しません」
+- 申し送り: 月の途中の改定の日割りは未実装（計画どおり BACKLOG 相当）。割増率・端数は CF を本番へ出すまで本番では保存されない（上の🟡）
+
+### ✅ 🔴 app-admin.js の2回目の分割（40万字の上限の手前・シフト作成タブ一式を app-shift.js へ）（2026-09-30 develop 完了・`a5d9c3c` `018ceeb`／ルール・CF の変更なし）
+
+**目的**: P3〜P5 の追加で app-admin.js が 399,977 字になり、回帰 `example-index-html-load.js` の上限（40万字・Babel Standalone の
+500KB 上限の手前）まで残り 23 字だった。P6b・P7 の追加を受けられるよう、挙動を1バイトも変えずに2回目の分割をする
+（ユーザー指示「必要があれば分割して」2026-09-30）。
+
+- [x] 新ファイル `app-shift.js` に、シフト作成タブ一式（app-admin.js の 271〜3463 行＝LEGEND_COLORS・FIXED_ENTRY・FIXED_KEY・HDASH_IMG・
+      HeatTable・SummaryTable・GridLegend・ACT_DIFF_BG・ActualsGrid・ActualsCsvDialog・ShiftEditTab）を**そのまま**移した。
+      選んだ理由: 範囲の外から参照される名前が ShiftEditTab（AdminView の描画・app-company.js の一括PDF）と FIXED_KEY（expXl の関数本体）の
+      2つだけで、どちらも実行時の参照。読み込み時の依存は app-utils.js の定数だけ（AST で確認）。
+      結果 app-admin.js 198,981 字・app-shift.js 201,775 字（app-company.js 175,052 字は変わらず）
+- [x] 移動のコミット（`a5d9c3c`）は移動だけ。`git diff --numstat`: app-admin.js は追加0行・削除3,194行（移したブロック3,193行＋直後の空行1行）で、
+      削除行はブロック＋空行と完全一致。ブロックの sha256 先頭16桁 `b8258275242617e3` が app-shift.js の本文（見出しコメントを除く）と一致
+- [x] index.html: app-admin.js の直後・app-company.js の前に app-shift.js（同じ版数）。?v= は7箇所・読み込み順は utils→core→staff→admin→shift→company→main
+- [x] package.json の lint・eslint.config.js（files・sharedGlobals に FIXED_KEY・説明コメント）。lint 0 errors / 113 warnings（分割前と同数・
+      警告の ruleId と文言の集合も一致。app-admin.js の30件が admin 21＋shift 9 に分かれた）
+- [x] tests/core.test.js: `_readAdminSurface` を admin→shift→company の3本の連結にし、差し替え口 `SHIFTY_SHIFT_SRC` を足した。476件パス。
+      読み口を直す前は12件が落ちた（移した範囲を検査しているテストが素通りにならない）。反証: app-shift.js の写しで isTimeOrderInvalid を
+      別名に置き換えると項目12が、シフト日に新フィールドを書かせると ADMIN_SHIFT_FIELDS が、それぞれ1件落ちる
+- [x] mount-component.js の既定の読み込みと、自前で並べる回帰スクリプト12本に app-shift.js を足した。回帰49本すべて EXIT=0
+      （出力に console.error・Babel の 500KB 警告なし）
+- [x] `example-index-html-load.js` を7ファイルに合わせ、期間を1つ持たせてシフト作成タブ（app-shift.js）が描けることを確かめる項目を足した。EXIT=0。
+      反証: app-shift.js の行を抜いた index.html では `ReferenceError: ShiftEditTab is not defined` で EXIT=1。
+      あわせて実物の Firebase SDK（dev）で index.html をそのまま開き、7ファイルを読み込んでログイン画面まで console.error 0件
+- [x] CLAUDE.md（ファイル構成・分割の仕組み・読み込み順・コンポーネント一覧のファイル列・P5 の文字数の申し送り・既知の技術負債・
+      fontSize 走査の一覧＝7ファイルで151件・違反0件、app-shift.js を抜くと21件を数え落とす）、RULES.md（全表示セルの例外の場所）、
+      shifty-e2e-verify の SKILL.md、`~/.claude/commands/bug-check.md` を追随
+
+**申し送り**: `.claude/settings.json` の Stop フック（Auto-commit）は5ファイルを名指ししていて app-shift.js も含まない
+（フックの対象を増やすかはユーザー判断待ちなので触っていない）。app-shift.js の変更は自分でコミットすること。
+**本番反映で要るもの**: 次のリリースで `?v=` のバンプ（app-shift.js が新しく配信物に加わる）。ルール・CF・データ移行は無し。
+
+### ✅ 🟡 労務・給与と複数法人 P5: 割増の計算（2026-09-30 develop 完了・`d88e1cc`〜`8ea5b27`／ルールと CF の変更なし）
+
+**目的**: `労務給与_複数法人_実装計画.md` §4.1〜§4.4・§6 P5・決定 #3・#4・#5。詳細は CLAUDE.md の「割増の計算（P5）」の節。
+- [x] 手計算の期待値のテスト（月またぎの週・12h 勤務・所定4hの日・休日ゼロ週・深夜 23:00〜25:00 の締）を `tests/core.test.js` に追加
+- [x] B制に残業予定の行（トグルがオフでも①＋②）と月45h・年360h（年の4項目）の判定が出る（テスト・`example-labor-premium.js`）
+- [x] 36協定の単月100h・複数月平均80h が法定休日労働を含める（`monthAgreementH`・`laborTotals.monthAgH`・テスト）
+- [x] 労務確認パネルに該当日（`日の時間外n日（…）`・`週の時間外（…）`・`深夜n日`・`法定休日労働n日`・`月60h超`）。全データPDFにも載る
+- 他店の実績は行き先の店の actuals を読めたときだけ合算し、読めない確定済みの期間があれば「＋」と注記（P3.6 の申し送り）
+- 検証: `npm test` 476件パス・`npx eslint app-*.js` 0 errors（warnings 113＝P4 と同数）。`example-labor-premium.js` 18項目パス（WebKit の iPhone 13 でも通る。
+  P5 より前の配信物では16項目が落ちる）。既存の回帰は3本を P5 に合わせて直し（ot-window の B制の行・phase2 の設定タブの注記・pdf-headcount の検出）、49本すべて通過
+- 申し送り: app-admin.js は 399,977 字で 40万字の上限まで 23 字しかない。P6b・P7 で app-admin.js に足す前に分割が要る
+
+### ✅ 🟡 労務・給与と複数法人 P4: 実績レイヤー（2026-09-30 develop 完了・`7520a55`〜`564ae08`／ルールは dev のみ反映済み・CF は本番未反映）
+
+**目的**: `労務給与_複数法人_実装計画.md` §3.6・§4.1・§6 P4・決定 #8。詳細は CLAUDE.md の「実績」の節。
+- [x] 確定済みの期間で「実績」切替が出て、差分のある日だけ `actuals` に保存される（`example-actuals.js`・未確定の期間とオーナーでない端末には出ない）
+- [x] `resolveActualDay` が未入力日は確定値を返す（テスト。`aggregateScheduledMonth` の月の所定とも一致）
+- [x] 欠勤・遅刻早退・法定休日フラグ（とメモ・休憩）が入力できる（詳細欄・`example-actuals.js`）
+- [x] CSV 取込（日付・名前・出勤・退勤・休憩）で同じノードに書ける。名前は `resolveAlias`、列の位置は `settings.actualsCsv`（テスト・実ブラウザ）
+- [x] ルールの REST 実測: 2026-09-30 に dev へ反映し `probe-rules-actuals.js` で22項目（非オーナーの読み・書き・差分 update・削除401・オーナー200・形の不正9種401・後始末）すべて期待どおり。既存の `probe-rules-confirm.js`（33項目）・`probe-rules-pay.js`（21項目）も再実行して非回帰
+- 検証: `npm test` 467件パス・`npx eslint app-*.js` 0 errors（warnings 113＝既存111＋新しいコンポーネント2つの未使用判定。既存のコンポーネントと同じ扱い）。
+  `example-actuals.js` 21項目パス（P4 より前の配信物では起動できず非0）。既存の回帰43本と関連5本もすべて通過。
+
+### ✅ 🟡 労務・給与と複数法人 P3.6: ヘルプ先勤務の所属店舗への合算（2026-09-30 develop 完了・`a892d85`〜`bc60037`／ルール変更なし・CF は本番未反映）
+
+**目的**: `労務給与_複数法人_実装計画.md` §3.9「ヘルプ先勤務の所属店舗への合算」・§6 P3.6・決定 #15。詳細は CLAUDE.md の「ヘルプ先勤務の所属店舗への合算」の節。
+- [x] 所属店舗のシフト作成タブに他店勤務日が読み取り専用セル（出勤セル「→三17」・退勤セル「23」）で出て、月実働・週計・月計・週の休み・残業予定・労務判定表・PDF が合算後（`example-helper-aggregate.js`）
+- [x] 行き先の店の `laborTotals` に入らず、総括が「所属店舗で判定」（同上）
+- [x] 読めない他店があれば月実働・総括に「＋」と注記（`helperPersonOf` の unread・テスト。実ブラウザでは読み込み失敗を作れないので未検証）
+- [x] `laborTotals`（実ブラウザ・他店を読み終えるまで書かない）／`laborMonths`（テスト・シフト作成タブと企業の確定の両方が `helperScheduleContext` を通す）の凍結値が合算後
+- [x] 期間の切り方が違う2店舗（1か月と半月×2）でも日付で拾う（テスト・実ブラウザ）
+- [x] 略称サフィックスを使わず2店舗で組んだ同一人物（写しの people で束なる）が合算され、同姓同名で personId が別の2人は合算されない（テスト・実ブラウザ）
+- [x] 企業内登録スタッフに「重複候補」が出て、その場で統合でき、統合で写しの people が作り直される（`example-company-dup-candidates.js`）
+- [x] 店長のセッション（企業コードのログインではない）で写し `shops/{sid}/company.people` から同一人物を引いて合算される（`example-helper-aggregate.js` は uid が企業uidでなく allLinkedShops も空）
+- 検証: `npm test` 459件パス・`npx eslint app-*.js` 0 errors・上の2本は P3.6 より前の配信物で非0。既存の回帰（重複判定・企業・労務・PDF の22本）はすべて通過。
+  `example-company-staff-directory.js` は所属店舗の注記を期待値に足した
+- 置いた前提: 所属店舗は「同じ人の登録の staffHomeShop に明示された値が1つに決まる」ときだけ決まる（両方未設定は合算しない）。
+  休みカウント表（1日休・半日休）と最大連勤は合算していない（計画の対象外）
+
+### ✅ 🟡 労務・給与と複数法人 P3.5: 店舗別ルール4件（2026-09-30 develop 完了・`f97cb72`〜`a921796`／ルール変更なし・CF は本番未反映）
+
+**目的**: `労務給与_複数法人_実装計画.md` §3.9・§6 P3.5。依頼文の数値はコードに書かず、すべて店舗（または属性）の設定・既定オフで入れる。
+- [x] P3.5a 中休み（`settings.idleBreak`）と長さ方式のしきい値（`breakLength.basis`／`tiers`）。優先順は 上書き＞中休み＞長さ＞時間帯。
+      `basis:"binding", tiers:[{overMin:360,breakMin:60,inclusive:true}]` で 17-23=60分・10-17=60分・10-15:59=0分、中休み（平日）で 10-22=120分、
+      15-23 は長さ方式の60分、設定の無い店舗は 17-23=0分のまま（テストで固定）。休憩不足の判定は法定のまま。
+      提出一覧の詳細で自動＝灰（中休み／長さ／時間帯）・手動＝太字、「自動に戻す」で `adjustedBreak` を消す
+- [x] P3.5b B制の日ごとのしきい値超を「残業予定」に数値表示（`laborSettings.showDailyOverB`・`dailyOverThresholdMin`・既定オフ）。
+      属性の按分窓 `staffTypeLimits[属性].otProrate={window:"month"|"halfMonth",fixedMin?}`（半月15h・実働15h未満はその値の按分をテストで固定）。
+      企業共通・法人でも設定でき、CF の sanitize と一致を照合
+- [x] P3.5c 判定対象外（区分 none）の実働がしきい値を**超える**日のセル色（`highlightExternalOver8h`・`externalOverThresholdMin`・既定オフ）。
+      `LABOR_DAY_FIX_KEYS` に `externalOver`。色は専用の赤（`CELL_COLOR_LEGEND` の `externalOver`）。判定表・総括には載せない。ちょうど閾値は塗らない（テスト）
+- [x] P3.5d PDF の曜日の下に「昼n 夜n」（`settings.headcountAt`・既定オフ）。応援・x の帯と休暇の帯を除外、0人の側と店休日は出さない。画面と Excel には出ない（テストと実ブラウザ）
+- [x] 4件共通: 設定の無い店舗は従来と同じ（既存テスト・回帰スクリプトすべて通過）／`app-*.js` の追加行に依頼文の時刻・値のリテラルなし（grep）／企業ID・店舗名・shopId の分岐なし
+- 検証: `npm test` 451件パス・`example-break-idle.js`・`example-labor-ot-window.js`・`example-labor-external-over.js`・`example-pdf-headcount.js`（いずれも allPass・変更前の配信物では非0で終わる）・既存回帰一式
+
+### ✅ 🔴 労務・給与と複数法人 P3: 人×月の所定登録＋確定ロック＋交付記録（2026-09-30 develop 完了・`96458b6`〜／ルールは dev に反映・REST 実測済み・CF は本番未反映）
+
+**目的**: `労務給与_複数法人_実装計画.md` §6 P3。確定した勤務表から人×月の所定を凍結し、確定・解除・交付を記録する。
+- [x] 「確定」で `laborMonths/{YYYY-MM}/{名前}` に所定日数・所定時間を自動集計（1か月期間は確定と同時に凍結・半月運用は後半の確定で凍結）。確定前は手修正できる（10月分の遡り登録も同じ欄）
+- [x] 確定後はシフト作成タブが編集不可（セル readOnly・保存/提出ボタンなし）。スタッフの再提出はルールで拒否（dev へ 46ba8dc のルールを反映し、`probe-rules-confirm.js` の32項目が ALL_OK＝匿名uidは未確定へ提出200・確定済みへの提出/付け替え/修正/削除401・オーナーは200・laborMonths は非オーナー401。P6a の `probe-rules-pay.js` も ALL_OK）
+- [x] 確定・解除（理由つき）・交付・提出・再提出が `period.history` に残り（記録1件ずつのパスで書く）、提出状況表に「確定」「交付」列と履歴が出る
+- [x] 労務判定表に「月所定/上限（差）」「年平均所定/分母（差）」（1か月の期間を実測。半月は月の全日で集計する既存の月実働と同じ経路）
+- [x] 改名で `laborMonths` のキーが移る（クライアント・CF とも。テストで一致を照合）
+- [x] 全データPDFに2行が載る（`example-labor-confirm.js` で PDF のテキストを実測）
+- [x] 本部店舗の「固定勤務パターンを全日に投入」（土日祝・閉店日を除き、空いている日だけ）
+- 検証: `npm test`（P3 のテスト14件を含む）・`example-labor-confirm.js`（28項目 allPass）・既存回帰スクリプト一式
+
+### ✅ 🔴 app-admin.js の分割（Babel の 500KB 上限超過の解消）（2026-09-30 develop 完了・`8d271c8` `5bdc591`／ルール・CF の変更なし）
+
+**目的**: app-admin.js が 50.8 万字（508,479 字）になり、Babel Standalone が変換時に
+「[BABEL] Note: … exceeds the max of 500KB.」を console.error で出していた（本番の利用者のコンソールにも出る）。
+P1b で E2E ハーネスがこの1文だけを無視するようにしていた。ユーザー承認の方針（企業連携まわりを新ファイルへ移し、
+index.html で app-admin.js と app-main.js の間に読み込む）で解消する。
+
+- [x] 新ファイル `app-company.js` に、賃金マスタ（PAY_OFF・PayCodeBox・PayCodeChangeModal・StaffPayPage）と企業連携タブ一式
+      （CoLaborFields・HoursDecimalInput・CompanyConfigCard・CompanyEntityCard・EntityFilter・CompanyStaffCard／CompanyStaffDirectory・
+      CompanyPersonEditModal／MergeModal・CompanySubmissionsCard・CompanyBulkPdf・CompanyLoginCard・CompanyTab）を**そのまま**移した。
+      **それだけでは app-admin.js が 406,628 字で 40 万字を超えたので、直後に続く SetTab も移した**（企業設定の固定表示と
+      HoursDecimalInput・minToH1 を使う）。結果 app-admin.js 356,698 字・app-company.js 152,520 字
+- [x] 移動のコミット（`8d271c8`）は移動だけ。元の行 4383-4588 と 5239-7201 が app-company.js に同じバイト列で現れ、
+      「元ファイル − 2塊（各塊の後ろの空行を含む）」が新しい app-admin.js とバイト一致（`git diff --stat`: app-admin.js −2171 行・app-company.js +2182 行。差は先頭の見出しコメントと塊の間の空行の分）
+- [x] index.html: app-admin.js の直後・app-main.js の直前に app-company.js（同じ版数）。?v= は6箇所・読み込み順は utils→core→staff→admin→company→main
+- [x] package.json の lint・eslint.config.js（files・sharedGlobals に CompanyTab／CompanyStaffDirectory・説明コメント）。lint 0 errors / 110 warnings（分割前と同数・警告の中身も同一）
+- [x] tests/core.test.js: 管理者画面の実装を読む検査7本を app-admin.js＋app-company.js を連結して読む `_readAdminSurface` に通した。
+      反証: app-company.js の写しに違反（別名の自前展開・スタッフ設定マップの直書き）を注入すると新しいテストは2件落ち、分割前のテストは0件（素通り）
+- [x] mount-component.js の既定の読み込みと回帰スクリプト10本に app-company.js を足し、500KB Note の除外を外した。
+      回帰39本すべて EXIT=0・console.error 0件。反証: 分割前の app-admin.js に向けると example-shift-edit-tab.js が EXIT=1（Note を数える）
+- [x] 本物の index.html をスタブ Firebase で丸ごと起動する `example-index-html-load.js` を追加（読み込み順・版数・40万字以下・
+      ログイン画面・企業連携／スタッフ／設定タブ・console.error 0件）。EXIT=0。反証: app-company.js の行を抜いた index.html では
+      `ReferenceError: CompanyTab is not defined` で EXIT=1。あわせて実物の Firebase SDK（dev）で index.html をそのまま開き、ログイン画面まで console.error 0件
+- [x] CLAUDE.md（ファイル構成・分割の仕組み・読み込み順・コンポーネント一覧のファイル列・既知の技術負債・fontSize 走査の一覧）、
+      shifty-e2e-verify の SKILL.md、`~/.claude/commands/bug-check.md`（6分割・2-F の期待値・?v= の箇所数・eslint の対象）を追随。
+      RULES.md には読み込み順の記述が無く変更なし。release-to-main.md は ?v= の箇所数を書いておらず `app-*.js` の glob なので変更なし
+
+**申し送り**: `.claude/settings.json` の Stop フック（Auto-commit）は5ファイルを名指ししていて app-company.js を含まない
+（設定の変更はこのタスクの範囲外なので触っていない）。app-company.js の変更は自動ではコミットされない。
+**本番反映で要るもの**: 次のリリースで `?v=` のバンプ（app-company.js が新しく配信物に加わる）。ルール・CF・データ移行は無し。
+
+### ✅ 労務・給与と複数法人 P2: 年間所定労働時間と月の所定上限（2026-09-30 develop 完了・`f02b4bb` `7a98b11` `ea6560a` `51288a4`／ルールの変更なし・CF は本番未反映）
+
+計画書 `労務給与_複数法人_実装計画.md` §3.3・§6 P2（決定 #2・#3）。
+
+- [x] `laborMonthFrame` が `scheduledCapMin` を返し、2,080h で 31/30/28日・うるう年2月 = 176:39／170:57／159:33／164:48（テスト・実ブラウザの表）
+- [x] 目安が「所定上限 + 固定残業 − 余裕」になる（31日 199h／30日 193h／2月 182h）。未設定なら従来値（テスト・実ブラウザ）
+- [x] 設定カード（店舗の設定タブ・企業の共通設定・法人の設定）に「年間所定労働時間」「1時間当たり賃金の分母」「週の起算」が入り、
+      企業共通→法人の順で写しに焼かれる（`buildShopMirror` のテスト）。企業・法人が決めていれば店舗では固定表示になり、店舗の保存から剥がされる（実ブラウザ）
+- [x] 既存テスト（S-1）が壊れない。未設定時に総枠・目安・上限が完全に同じ値であることを4か月×4通りの未設定で照合
+- [x] `rateDenominatorMinOf` を「分母が0なら年間所定÷12 を0.1h単位で切り捨て、年間所定も無ければ 10398」に変更（2,080h → 10398）
+
+回帰: `example-labor-annual.js`（25項目。反証: P2 前の配信物 `c51c3de` では21項目が落ちる）。既存の12本（company-settings・company-entities・
+labor-phase1〜3・labor-limits・staff-pay・attr-order・labor-partial-month・pdf-labor・company-people・company-staff-directory）も EXIT=0。
+
+置いた前提: 1日の延長上限が0（残業を前提にしない運用）のときの目安は、従来の「目安＝総枠」を「目安＝所定上限」に読み替えた
+（年間所定を設定したときは総枠の役割を所定上限が担うため）。労務判定の「所定未満」（`guideStatusOf`）は総枠との比較のまま変えていない。
+`weekSplitAtMonthEdge` の UI は計画どおり作っていない（BACKLOG 相当・P5 で関数の引数として使う）。
+
+**本番反映で要るもの**: CF の `saveCompanyConfig`・法人設定の保存（`sanitizeCompanySettings` が新キー4つを通すようになった）の本番デプロイ。
+デプロイ前は企業・法人の画面で入れた年間所定・分母・週の起算が CF に捨てられる（店舗の設定タブでは効く）。データ移行は不要。
+
+### ✅ 労務・給与と複数法人 P1b: 人物ID と企業スタッフ一覧の編集（2026-09-30 develop 完了・`a52a405` `6501627` `4a9c6b3` `ea385e4`／CF は本番未反映・ルールの変更なし）
+
+計画書 `労務給与_複数法人_実装計画.md` §3.8・§6 P1b（決定 #13）。企業レベルに `companies/{id}/pub/people/{personId}` を上乗せし、店舗側の名前キーは変えない。
+
+- [x] 初回に `people` が既存の推定から自動生成され、一覧の見た目が変わらない（テスト: 人物で束ねた行と推定だけの行が personId・links 以外で一致／
+      実ブラウザ: 人物を作らせない対照と行が一致）。作るのは CF `ensureCompanyPeople`（計画書の `upsertPerson` にあたる）で、一覧を開いたときに1回呼ぶ
+- [x] 「編集」から名前変更。店舗の `staff / subs（全件・3ヶ月の窓の外も） / settings / periods（snapshot・keepStaff・keepAttrs・laborTotals） / private/pay / people.links`
+      が移る。CF の差分パッチを当てた結果がクライアントの `renameStaffInSettings / renameStaffInPeriods / renameStaffInPay` と一致することをテストで照合。
+      `laborMonths / actuals` は未実装なので、足す担当（P3・P4）が `companyRenameStaff` に足す旨を関数のコメントと CLAUDE.md に残した
+- [x] 2行を選んで統合・誤統合の解除。統合は店舗のデータを動かさない（実ブラウザで店舗の staff・番号が変わらないことを確認）。解除した登録は同期で再びまとまらない
+- [x] personId は数字だけの番号ならその番号・それ以外は `p_`＋英数字8桁。別法人で番号が衝突した側だけ自動採番（テスト・実ブラウザ）。作成後は不変で、
+      振り直しは「ID を番号に振り直す」だけ（`reassignPersonId`）
+- [x] 従業員番号は法人内で一意（保存時に拒否。テストと実ブラウザ）
+- [x] 一覧上部が「従業員番号順」「店舗別」「パスコード」の並び（P6a で実装済みのまま）
+
+計画と変えた点: CF 名の `upsertPerson` は `ensureCompanyPeople` とした（人物を作る入口を1本にし、`ensureCompanyEntities` と同じ形にそろえた）。
+属性・所属店舗の変更は、つながっている全店舗に同じ値を書く（StaffTab の「どの期間まで旧属性のままか」の確認は出さない）。
+写し `shops/{sid}/company.people` への焼き込みは P3.6 の担当として今回は行っていない。
+
+### ✅ 労務・給与と複数法人 P6a: 賃金マスタ・閲覧パスコード（2026-09-30 develop 完了・`65f7a49`〜`374e914`／ルールは dev のみ・CF は本番未反映）
+
+計画書 `労務給与_複数法人_実装計画.md` §3.7・§6 P6a（決定 #6・#12・#17）。人ごとの時給・月給・手当を
+`shops/{所属店舗}/private/pay/{名前}`（owners だけが読み書き）に持ち、4桁の閲覧パスコードで画面を伏せる。
+
+- [x] スタッフタブ → 編集 → 「賃金設定を開く →」（Premium・オーナー・所属店舗のみ）で `StaffPayPage` が全画面で開き、「← 戻る」で編集モーダルに戻る
+- [x] 月給／時給・諸手当（2つの除外フラグ）・固定残業（自動↔手修正）・固定深夜・通勤手当（日額／月額）・適用開始日が保存される
+- [x] 社員は給与形態の切替と時給欄が無く `payType:"monthly"`。既定はパート・アルバイト=時給／企業属性=月給（テストと実ブラウザ）
+- [x] 固定残業の自動計算 213,500÷173.3×1.25×30 = 46,199（テストと実ブラウザ）
+- [x] 時給換算と最賃比較（時給 1,230 円 vs 最賃 1,231 円で赤・1,231 円で緑）。最賃は法人設定 `wageSettings.minWage`（P6a で P1 の法人設定に追加）
+- [x] `private/pay` がオーナー以外から読めない・書けない（dev REST 20項目）。ヘルプ先では「賃金は所属店舗（◯◯）で設定します」
+- [x] 改名・削除で `private/pay` が追随（`STAFF_KEYED_PRIVATE_NODES`・ドリフト検出テスト。わざと外した写しで落ちることを確認）
+- [x] 改定は版を足す（適用開始日を変えた保存で `history` に積む）。過去の版は読み取り専用で折りたたみ表示
+- [x] パスコード: 「スタッフ登録」の横の4桁ボックス・未設定は 0000・解除前は「••••」で編集不可・🔒／リロード／10分無操作で伏せ直す・5回失敗で60秒待ち（リロードでも待ちは続く）
+- [x] 企業内登録スタッフの上部が「従業員番号順」「店舗別」「パスコード」、解除で「賃金」列。企業のパスコードは CF で全連携店舗へ同期（スタブで確認・CF 本体は本番未検証）
+- [x] ハッシュは `auth != null` で読める場所に無い（`private` 配下と企業uid・作成者だけが読める `companies/*/private/payCode`。dev REST で非オーナー 401）
+
+計画と変えた点: 解除状態は sessionStorage（`SS_PAY_UNLOCK`）ではなく App のメモリに持つ（リロードで伏せ直すため。失敗回数だけ sessionStorage）。
+`crypto.subtle` の無い http の環境向けに SHA-256 の予備実装を足した（E2E ハーネスで実際に照合が通らなかった）。
+残り: 割増率（`premiumRates`）・端数規則（`roundingRule`）の法人設定は P6b で足す（この画面は法定の率を表示するだけ）。
+
+### ✅ 労務・給与と複数法人 P1: 法人レイヤー（2026-09-30 develop 完了・`6074b26` `d7feafa` `dc0ff72` `9d2a77b`／CF は本番未反映）
+
+計画書 `労務給与_複数法人_実装計画.md` §3.1・§6 P1（決定 #7・#11）。企業の下に法人を置き、店舗は必ず1法人に属す。
+正本は `companies/{id}/pub/{entities, shopEntities, defaultEntityId, shopKinds}`（CF 専用）。店舗は写しの
+`entityId`・`entityName`・`kind` と、企業共通 → 法人 を重ねた `settings` を読む（クライアントの `applyCompanySettings` 系は無変更）。
+
+- 移行: `syncCompanyMirror` が毎回 `planEntityMigration` を通し、法人の無い企業に企業名と同名の法人を作って全店舗を割り当てる。
+  企業連携タブの法人カードが法人の無い企業で `ensureCompanyEntities` を1回呼ぶ。**既存の `pub/config.settings` は法人へ写さない**
+  （計画書 §3.1 の「defaultEntity.settings に写す」とは違う。写すと企業の共通設定を後で変えても既定の法人の店舗に効かなくなるため、
+  企業共通の層のまま残し、既定の法人は設定を持たない。写しの settings は移行前後で同じ＝テストと実ブラウザで確認）
+- 本部店舗 `kind:"hq"` の正本は `pub/shopKinds`（CF `setShopKind`）。`global/shops/{sid}/kind` にも写すが、オーナーなら書け、
+  クライアントの `saveShops` が店舗オブジェクトを丸ごと `set()` するので消えうる＝正本にしない（dev REST でオーナー PUT 200 を実測）
+- 法人の設定の画面は労務設定だけ。属性別の制限の法人上書きは CF と重ね合わせは対応済みだが、入力欄は作っていない
+- 法人の削除は作っていない（再着手条件: 法人を間違えて作った運用が出たとき。削除時は店舗を既定の法人へ戻す）
+- 検証: `npm test` 390件・`example-company-entities.js` 25項目（375px 含む）・既存の回帰スクリプト35本すべて EXIT=0・dev REST 19項目
+
+
+### ✅ 労務・給与と複数法人 P0: 休みコマンドを「/」に（2026-09-30 完了・`a77134a`）
+
+計画書 `労務給与_複数法人_実装計画.md` §3.9・§6 P0（決定 #16）。`CELL_COMMANDS` の休み希望を
+`key:"/"`・`aliases:["／"]` にし、`y`・`ｙ`・`休` は別名に残さず廃止した（打つとメモとして残る。案内トーストなし）。
+`CELL_COLOR_LEGEND` の rest の説明と店舗略称の予約語エラー文も追随。
+
+- [x] 半角 `/` と全角 `／` で休み扱い（テスト・`example-labor-phase3.js` で斜線と adminRest を実測）
+- [x] `y`・`ｙ`・`休` では休みにならない（テスト・実ブラウザで `y` がメモになり斜線も adminRest も付かないことを実測）
+- [x] 操作方法レジェンドの表記が `/`（テスト・実ブラウザでチップ `/` があり `y` が無いことを実測）
+- [x] 他店舗略称に `/`・`／` を登録できない（`isReservedShopAbbr` のテスト）
+- [x] CLAUDE.md・E2E スキルの記述が追随
+
+`npm test` 383件パス・`npx eslint app-*.js` 0 errors 101 warnings。**保存データの移行は無い**
+（休みは `adminRest`／`leaveTypes` に解決され、打った文字は保存されない）。
+**リリース前の確認が1つ残る**: 本番の `shopAbbrs` に `/`・`／` を含む店舗が無いこと（計画書 §3.9。本番データは読んでいない）。
+
+---
 
 ### ✅ Stripe秘密鍵の一部がログに出続けていた（2026-09-05 完了・受け入れ条件3/3）
 
