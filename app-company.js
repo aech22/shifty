@@ -930,14 +930,18 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
       </div>}
       {dupCands.length>0&&<div data-co-dup-cands="1" style={{marginBottom:12,padding:"10px 12px",background:"rgba(245,158,11,.08)",border:"1px solid rgba(245,158,11,.35)",borderRadius:8}}>
         <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:4}}>重複候補（{dupCands.length}件）</div>
-        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8,lineHeight:1.6}}>同じ名前が2つ以上の店舗に別の人として登録されています。同じ人なら統合すると、ヘルプ先での勤務が所属店舗の労務集計に合算されます。同姓同名の別人ならそのままにしてください。</div>
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8,lineHeight:1.6}}>同じ名前が2つ以上の店舗に別の人として登録されています。同じ人なら「統合する」を押すと、ヘルプ先での勤務が所属店舗の労務集計に合算されます。同姓同名の別人（外国人スタッフの略称など）なら「統合しない」を押してください。統合しないと記録した組は候補に出なくなります（取り消しは「編集」から）。</div>
         {dupCands.map(g=>(<div key={g.rows.map(r=>r.personId).join("|")} data-co-dup-cand={g.name} style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",padding:"6px 0",borderTop:"1px solid rgba(245,158,11,.25)"}}>
           <span style={{fontSize:13,fontWeight:700,color:"var(--c-text)"}}>{g.name}</span>
           <span style={{fontSize:12,color:"var(--c-text2)"}}>{g.rows.map(r=>`${(r.links||[]).map(l=>shopNameOf(l.shopId)).join("・")}${r.number?`（${r.number}）`:""}`).join(" ／ ")}</span>
           {g.rows.some(r=>!r.homeExplicit)&&<span data-co-dup-home-hint="1" style={{fontSize:11,color:"#B45309"}}>所属店舗を設定してください（{g.rows.filter(r=>!r.homeExplicit).map(r=>(r.links||[]).map(l=>shopNameOf(l.shopId)).join("・")).join(" ／ ")}の{g.name}）</span>}
-          {g.rows.length===2
-            ?<button disabled={busy} onClick={()=>{setPicked(g.rows.map(r=>r.personId));setMergeOpen(true);}} style={{...AB,padding:"5px 12px",fontSize:12,marginLeft:"auto",opacity:busy?0.5:1}}>統合する</button>
-            :<span style={{fontSize:11,color:"var(--c-text3)",marginLeft:"auto"}}>統合する2人を一覧で選んでください</span>}
+          <span style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginLeft:"auto"}}>
+            {g.rows.length===2
+              ?<button disabled={busy} onClick={()=>{setPicked(g.rows.map(r=>r.personId));setMergeOpen(true);}} style={{...AB,padding:"5px 12px",fontSize:12,opacity:busy?0.5:1}}>統合する</button>
+              :<span style={{fontSize:11,color:"var(--c-text3)"}}>統合する2人を一覧で選んでください</span>}
+            {/* 別人と記録する（組の全員の全ペア・両方向）。記録した組は候補に出なくなる。取り消しは各人の「編集」から */}
+            <button data-co-distinct="1" disabled={busy} onClick={()=>callPeople("markPeopleDistinct",{personIds:g.rows.map(r=>r.personId),distinct:true},"別の人として記録しました（重複候補に出なくなります）")} style={{...AGray,padding:"5px 12px",fontSize:12,opacity:busy?0.5:1}}>統合しない</button>
+          </span>
         </div>))}
       </div>}
       {loadErr&&<div style={{fontSize:13,color:"#DC2626",marginBottom:10}}>読み込めませんでした。再読み込みしてください。</div>}
@@ -1061,6 +1065,19 @@ function CompanyPersonEditModal({row,data,busy,onClose,onCall}){
           <span style={{flex:1,fontSize:13,color:"var(--c-text2)"}}>{l.shopName}: {l.name}</span>
           <button disabled={busy} onClick={()=>onCall("splitPerson",{shopId:l.shopId},`${l.shopName}の${l.name}を別の人物にしました`)} style={{...AGray,padding:"5px 10px",fontSize:12}}>切り出す</button>
         </div>))}
+      </div>}
+
+      {(row.distinct||[]).length>0&&<div style={SEC} data-co-distinct-list="1">
+        <AL>統合しない相手</AL>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>同じ名前の別人として記録した相手です。この相手とは重複候補に出ません。同じ人だったときは取り消してから統合してください。</div>
+        {row.distinct.map(pid=>{
+          const o=(data.rows||[]).find(r=>r.personId===pid);
+          const label=o?`${o.name}（${(o.links||[]).map(l=>l.shopName).join("・")}）`:`人物ID ${pid}（見つかりません）`;
+          return(<div key={pid} data-co-distinct-peer={pid} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+            <span style={{flex:1,fontSize:13,color:"var(--c-text2)"}}>{label}</span>
+            <button data-co-distinct-undo="1" disabled={busy} onClick={()=>onCall("markPeopleDistinct",{personIds:[row.personId,pid],distinct:false},"別の人としての記録を取り消しました")} style={{...AGray,padding:"5px 10px",fontSize:12}}>取り消す</button>
+          </div>);
+        })}
       </div>}
 
       {numberDigits&&String(row.number).trim()!==row.personId&&<div style={SEC}>

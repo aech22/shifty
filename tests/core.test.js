@@ -5137,7 +5137,7 @@ test("P1b ドリフト検出: companyRenameStaff が名前キーの後始末を�
   u.STAFF_KEYED_PRIVATE_NODES.forEach(n => assert.ok(body.includes("private/" + n), "private/" + n + " を移していない"));
   assert.ok(!/\.ref\(`shops\/\$\{sid\}\/(periods|subs|settings)`\)\.set\(/.test(body), "periods・subs・settings を全体 set() しない");
   const main = fs.readFileSync(require("node:path").join(__dirname, "..", "app-main.js"), "utf8");
-  ["ensureCompanyPeople", "mergePeople", "splitPerson", "reassignPersonId", "companyRenameStaff", "companyUpdateStaff"]
+  ["ensureCompanyPeople", "mergePeople", "splitPerson", "reassignPersonId", "companyRenameStaff", "companyUpdateStaff", "markPeopleDistinct"]
     .forEach(n => { assert.ok(idx.includes("exports." + n + " "), n + " が CF に無い"); assert.ok(new RegExp('COMPANY_ENTITY_CFS=\\[[^\\]]*"' + n + '"').test(main), n + " を callCompanyCF が通さない"); });
 });
 
@@ -5717,6 +5717,33 @@ test("P3.6 重複候補: 同じ名前が2店舗以上にあって人物が別の
   ], null, "2026-10-01", null);
   const byName = Object.fromEntries(rs.map(r => [r.name, r.homeExplicit]));
   assert.deepStrictEqual(byName, { "田中": true, "佐藤": false });
+});
+
+test("統合しない: 重複候補は組の全ペアが distinct（一方向でも可）なら出さず、1ペアでも未記録なら組ごと出す", () => {
+  const row = (pid, shop, distinct) => ({ personId: pid, name: "タオ", links: [{ shopId: shop, name: "タオ" }], distinct: distinct || [] });
+  // 2人組: 一方向だけの記録でも記録済み扱い
+  assert.deepStrictEqual(u.duplicatePersonCandidates([row("1", "A", ["2"]), row("2", "B")]), [], "一方向だけの記録で消える");
+  assert.deepStrictEqual(u.duplicatePersonCandidates([row("1", "A"), row("2", "B", ["1"])]), [], "逆向きだけでも消える");
+  assert.strictEqual(u.duplicatePersonCandidates([row("1", "A"), row("2", "B")]).length, 1, "記録が無ければ出る");
+  assert.strictEqual(u.duplicatePersonCandidates([row("1", "A", ["9"]), row("2", "B")]).length, 1, "関係の無い相手との記録では消えない");
+  // 3人組: 3ペア全部で消える。2ペアだけなら組ごと（行は3つとも）出る
+  const all3 = [row("1", "A", ["2", "3"]), row("2", "B", ["1", "3"]), row("3", "C", ["1", "2"])];
+  assert.deepStrictEqual(u.duplicatePersonCandidates(all3), []);
+  const two3 = [row("1", "A", ["2", "3"]), row("2", "B", ["1"]), row("3", "C", ["1"])];
+  const c = u.duplicatePersonCandidates(two3);
+  assert.deepStrictEqual(c.map(g => g.rows.map(r => r.personId)), [["1", "2", "3"]], "2と3の間が未記録なので行は全部出る");
+  // distinct を持たない行（人物の無い時期の行）は従来どおり
+  assert.strictEqual(u.duplicatePersonCandidates([{ personId: "1", links: [{ shopId: "A", name: "タオ" }] }, { personId: "2", links: [{ shopId: "B", name: "タオ" }] }]).length, 1);
+  // buildCompanyStaffRows が people の distinct を行に載せる（無ければ []）
+  const shops = [{ id: "A", name: "A店", staff: ["タオ"], settings: {} }, { id: "B", name: "B店", staff: ["タオ"], settings: {} }];
+  const people = { p_aaaaaaaa: { links: { A: "タオ" }, distinct: { p_bbbbbbbb: "T" } }, p_bbbbbbbb: { links: { B: "タオ" } } };
+  const rs = u.buildCompanyStaffRows(shops, null, "2026-10-01", people);
+  const by = Object.fromEntries(rs.map(r => [r.personId, r.distinct]));
+  assert.deepStrictEqual(by, { p_aaaaaaaa: ["p_bbbbbbbb"], p_bbbbbbbb: [] });
+  assert.deepStrictEqual(u.duplicatePersonCandidates(rs), [], "people の一方向の記録で候補から消える");
+  assert.ok(u.buildCompanyStaffRows(shops, null, "2026-10-01").every(r => Array.isArray(r.distinct) && r.distinct.length === 0), "people が無ければ []");
+  // CF の isDistinctPair と同じ判定（一方向でも記録済み）
+  assert.strictEqual(cfp.isDistinctPair(people, "p_bbbbbbbb", "p_aaaaaaaa"), true);
 });
 
 test("P3.6 入口の固定: 確定の2つの入口がヘルプ先の合算を渡し、労務の日次の入口が他店の勤務を足す", () => {

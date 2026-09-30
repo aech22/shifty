@@ -1086,7 +1086,7 @@ function App(){
   // 呼べる CF をここで限り、companyId はこちらで足す。戻り値は CF の data か {error}。
   const COMPANY_ENTITY_CFS=["ensureCompanyEntities","createEntity","renameEntity","assignShopEntity","saveEntityConfig","setShopKind","setCompanyPayCode",
     // 人物ID と企業スタッフ一覧の編集（P1b）
-    "ensureCompanyPeople","mergePeople","splitPerson","reassignPersonId","companyRenameStaff","companyUpdateStaff"];
+    "ensureCompanyPeople","mergePeople","splitPerson","reassignPersonId","companyRenameStaff","companyUpdateStaff","markPeopleDistinct"];
   const callCompanyCF=async(name,payload)=>{
     if(!companyInfo) return {error:"企業アカウントがありません"};
     if(!COMPANY_ENTITY_CFS.includes(name)) return {error:"この操作はできません"};

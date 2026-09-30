@@ -31,8 +31,8 @@ const CFC_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "fu
  * @param {string} [o.view]      起動時の画面（既定 "admin"）
  * @param {string} [o.tab]       起動時の管理者タブ（既定 "periods"）
  * @param {object} [o.cfHandlers] Callable名 → "ok" | "reject:メッセージ" | "unlink" | "link" | "companyConfig" | "companyLogin:<companyId>" | "entity" | "people" | "payCode"（本物のCFと同じ後始末）
- *                                "people" は人物の6本（P1b: ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId /
- *                                companyRenameStaff / companyUpdateStaff）。規則は functions/company-config.js をそのまま使う。
+ *                                "people" は人物の7本（P1b: ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId /
+ *                                companyRenameStaff / companyUpdateStaff、統合しない: markPeopleDistinct）。規則は functions/company-config.js をそのまま使う。
  *                                "payCode" は setCompanyPayCode（P6a）。現在の番号を照合して企業と連携全店舗の private/payCode を書く。
  *                                "entity" は法人の6本（ensureCompanyEntities / createEntity / renameEntity / assignShopEntity /
  *                                saveEntityConfig / setShopKind）。移行と写しの組み立ては **functions/company-config.js をそのまま読み込んで**
@@ -294,6 +294,14 @@ function makeStub(o) {
           var mr=CFC.planMergePeople(people,payload.keepPersonId,payload.dropPersonId,now);
           if(mr.error) return err(mr.error);
           applyP(qb+"/people",mr.patch); resync(); notify();
+          return Promise.resolve({data:{ok:true}});
+        }
+        // 「統合しない」（2026-09-30）。distinct:true で全ペアを両方向に記録、false で2人の記録を取り消す（写しは作り直さない）
+        if(name==="markPeopleDistinct"){
+          var ids=Array.isArray(payload.personIds)?payload.personIds:[];
+          var dr=payload.distinct===false?CFC.planUnmarkDistinct(people,ids[0],ids[1]):CFC.planMarkDistinct(people,ids,now);
+          if(dr.error) return err(dr.error);
+          applyP(qb+"/people",dr.patch); notify();
           return Promise.resolve({data:{ok:true}});
         }
         if(!per) return err("人物が見つかりません");

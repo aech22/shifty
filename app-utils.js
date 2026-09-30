@@ -3651,6 +3651,8 @@ function buildCompanyStaffRows(shops,companySettings,today,people){
       entityId:(person&&typeof person.entityId==="string"&&person.entityId)||base.shop.entityId||null,isHq:home.kind==="hq",
       // この人の登録（店舗×名前）。編集モーダルの改名・統合解除が使う
       links:ordered.map(r=>({shopId:r.shop.id,shopName:r.shop.name,name:r.name,number:r.number})),
+      // 「統合しない」と記録した相手の人物ID（people/{personId}/distinct のキー）。重複候補と編集モーダルが使う
+      distinct:person&&person.distinct&&typeof person.distinct==="object"?Object.keys(person.distinct):[],
       // 賃金の置き場（所属店舗に登録されている名前・§3.7）。所属店舗側に登録が無ければ null（賃金列は「—」）
       payShopId:base.homeShopId===base.shop.id?base.shop.id:null,payName:base.homeShopId===base.shop.id?base.name:null,
       number,attrId,attrLabel,homeShopId:base.homeShopId,homeShopName:homeShopNames.find(n=>n)||null,homeShopIds,homeShopNames,
@@ -3667,6 +3669,8 @@ function buildCompanyStaffRows(shops,companySettings,today,people){
 // 重複候補（P3.6）: 同じ名前（空白を除いて一致）の登録が2店舗以上にあるのに人物（personId）が別の行の組。
 // ヘルプ先の勤務の合算は人物（people.links）で束ねるので、別人物のままだと所属店舗に合算されない。
 // 一覧の先頭に出し、その場で統合できるようにする（同姓同名の別人もここに出るので、統合するかは人が決める）。
+// 「統合しない」と記録した組（行の distinct。どちらか一方向でも記録があれば別人）は、組の全ペアが記録済みなら出さない。
+// 1ペアでも未記録なら組ごと出す（3人組で2人だけ別人と決めた場合も、残りの判断が要るので行は全部出す）。
 // 戻り値: [{name, rows:[行…]（人物IDの昇順）, shopIds:[その名前で登録のある店舗]}]
 function duplicatePersonCandidates(rows){
   const norm=n=>String(n==null?"":n).replace(/[\s\u3000]/g,"");
@@ -3685,6 +3689,10 @@ function duplicatePersonCandidates(rows){
     const rs=[...g.rows.values()].sort((a,b)=>String(a.personId).localeCompare(String(b.personId)));
     const key=rs.map(r=>r.personId).join("|");
     if(seen.has(key))return;seen.add(key);
+    const dis=(a,b)=>(a.distinct||[]).includes(b.personId)||(b.distinct||[]).includes(a.personId);
+    let all=true;
+    for(let i=0;i<rs.length&&all;i++)for(let j=i+1;j<rs.length;j++)if(!dis(rs[i],rs[j])){all=false;break;}
+    if(all)return;
     out.push({name:g.name,rows:rs,shopIds:[...g.shops]});
   });
   return out;
