@@ -520,7 +520,7 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
     // 労務判定はこのカードでは扱わない（法人の設定へ統合・2026-10-01）。settings は CF で丸ごと置き換わるので、
     // 法人への移行がまだ済んでいない企業の laborSettings を消さないよう、保存の直前に読み直した値だけを送り直す
     // （読み込み時の下書きの値は送らない＝移行が済んでいれば何も送らず、済んでいなければそのまま残る）
-    const fresh=await firebaseDB.ref(`companies/${companyId}/pub/config/settings/laborSettings`).once("value").then(x=>x.val()).catch(()=>undefined);
+    const fresh=firebaseDB?await firebaseDB.ref(`companies/${companyId}/pub/config/settings/laborSettings`).once("value").then(x=>x.val()).catch(()=>undefined):null;
     if(fresh===undefined){setBusy(false);tt("✕ 企業の共通設定を読み直せませんでした。もう一度保存してください");return;}
     const next={...draft};delete next.laborSettings;
     if(fresh&&typeof fresh==="object"&&Object.keys(fresh).length)next.laborSettings=fresh;
