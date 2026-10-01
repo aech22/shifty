@@ -2,9 +2,10 @@
 //
 // A. 設定タブ単体: 企業が決めた項目は入力欄ではなく値＋「企業設定」になり、店舗が別の項目を
 //    保存しても企業の値が店舗設定に書かれない（SetTab 自身の剥がし）。
-// B. アプリ全体（stub-firebase.js）: 企業連携タブの「企業の共通設定」で固定残業20hを保存すると
-//    saveCompanyConfig が1回だけ呼ばれ、店舗の写し（shops/S1/company）経由で設定タブが「企業設定」表示に
-//    変わる。その後に設定タブで余裕を変えても、shops/S1/settings に企業の値（fixedOvertimeMin）が書かれない
+// B. アプリ全体（stub-firebase.js）: 企業連携タブの「法人」カードの「法人の設定」で固定残業20hを保存すると
+//    （2026-10-01 に労務判定は企業の共通設定から法人の設定へ統合した。企業の共通設定には労務判定の欄が無い）
+//    saveEntityConfig が呼ばれ、店舗の写し（shops/S1/company）経由で設定タブが「企業設定」表示に
+//    変わる。企業の共通設定の保存（saveCompanyConfig・1回）は laborSettings を送らない。その後に設定タブで余裕を変えても、shops/S1/settings に企業の値（fixedOvertimeMin）が書かれない
 //    （App の saveSettings の剥がし）。
 //    あわせて企業の属性ブロック（先頭＝社員）の「＋残業」に 20 を入れると payload の staffTypeLimits に monthlyOt が入り、
 //    設定タブのその欄が「企業設定」表示になる（2026-09-28・1ヶ月の残業）
@@ -94,7 +95,7 @@ async function partB() {
   };
   const h = await openHarness({
     root: ROOT, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport: { width: 1400, height: 950 },
-    extraHead: THEME + makeStub({ seed, uid: UID, view: "admin", tab: "company", cfHandlers: { saveCompanyConfig: "companyConfig" } }),
+    extraHead: THEME + makeStub({ seed, uid: UID, view: "admin", tab: "company", cfHandlers: { saveCompanyConfig: "companyConfig", ...Object.fromEntries(["ensureCompanyEntities", "createEntity", "renameEntity", "assignShopEntity", "saveEntityConfig", "setShopKind"].map(n => [n, "entity"])) } }),
     scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
   });
   const R = {};
@@ -102,13 +103,23 @@ async function partB() {
     await h.page.waitForFunction(() => document.body.innerText.includes("企業の共通設定を保存"), { timeout: 15000 });
     R.cardShown = true;
     R.configRows = await h.evaluate(() => [...document.querySelectorAll("[data-co-attr]")].map(e => e.getAttribute("data-co-attr")));
-    R.setFixed = await h.evaluate(setNumberByLabel("企業の共通設定", "固定残業", 20));
+    // 企業の共通設定には労務判定の欄が無い（2026-10-01）
+    R.noLaborInCompanyCard = await h.evaluate(setNumberByLabel("企業の共通設定", "固定残業", 20));
+    // 法人の設定で固定残業 20h（法人の無い企業なので、法人カードが ensureCompanyEntities で既定の法人を作る）
+    await h.page.waitForSelector("[data-co-entity]", { timeout: 10000 });
+    await h.page.click('[data-co-entity] button:has-text("法人の設定")');
+    await h.page.waitForSelector("[data-co-entity] input[type=number]", { timeout: 5000 });
+    R.entityLaborLabel = await h.evaluate(() => document.body.innerText.includes("労務判定（空欄は店舗の設定）"));
+    R.setFixed = await h.evaluate(setNumberByLabel("労務判定（空欄は店舗の設定）", "固定残業", 20));
+    await h.page.click('[data-co-entity] button:has-text("この法人の設定を保存")');
+    await h.page.waitForTimeout(900);
     R.setOt = await h.evaluate(setNumberByLabel("企業の共通設定", "＋残業", 20));
     await h.page.waitForTimeout(200);
     R.clickSave = await h.clickByText("企業の共通設定を保存");
     await h.page.waitForTimeout(900);
     // 法人カード（2026-09-30・P1）が移行の ensureCompanyEntities を呼ぶので、ここで測る saveCompanyConfig だけを数える
-    R.cf = await h.evaluate(() => window.__cf.filter(c => c.name !== "ensureCompanyEntities").map(c => ({ name: c.name, lab: c.payload && c.payload.settings && c.payload.settings.laborSettings, stl: c.payload && c.payload.settings && c.payload.settings.staffTypeLimits })));
+    R.cf = await h.evaluate(() => window.__cf.filter(c => c.name === "saveCompanyConfig").map(c => ({ name: c.name, lab: c.payload && c.payload.settings && c.payload.settings.laborSettings, stl: c.payload && c.payload.settings && c.payload.settings.staffTypeLimits })));
+    R.entityCf = await h.evaluate(() => window.__cf.filter(c => c.name === "saveEntityConfig").map(c => (c.payload.settings || {}).laborSettings));
     R.mirror = await h.evaluate(() => window.__db("shops/S1/company/settings"));
     R.toast = await h.evaluate(() => document.body.innerText.includes("連携店舗 2 件に反映しました"));
     await h.clickByText("設定");
@@ -140,7 +151,10 @@ async function partB() {
     A_saveExcludesCompanyKeys: !!(A.saved && A.saved.laborSettings && !("fixedOvertimeMin" in A.saved.laborSettings)
       && A.saved.laborSettings.marginMin === 300 && !("weekly" in ((A.saved.staffTypeLimits || {}).parttime || {}))),
     B_cardShown: B.cardShown === true,
-    B_cfCalledOnce: !!(B.cf && B.cf.length === 1 && B.cf[0].name === "saveCompanyConfig" && B.cf[0].lab && B.cf[0].lab.fixedOvertimeMin === 1200),
+    B_noLaborInCompanyCard: B.noLaborInCompanyCard === "no-card" || B.noLaborInCompanyCard === "no-label",
+    B_entityLaborLabel: B.entityLaborLabel === true && B.setFixed === "ok",
+    B_entitySaved: !!(B.entityCf && B.entityCf.length === 1 && B.entityCf[0] && B.entityCf[0].fixedOvertimeMin === 1200),
+    B_cfCalledOnce: !!(B.cf && B.cf.length === 1 && B.cf[0].name === "saveCompanyConfig" && B.cf[0].lab === undefined),
     B_mirrorWritten: !!(B.mirror && B.mirror.laborSettings && B.mirror.laborSettings.fixedOvertimeMin === 1200),
     B_toast: B.toast === true,
     B_otSent: !!(B.setOt === "ok" && B.cf && B.cf[0] && B.cf[0].stl && Object.values(B.cf[0].stl).some(e => e && e.monthlyOt === 20)),

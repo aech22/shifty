@@ -210,19 +210,15 @@ function makeStub(o) {
       if(h==="companyConfig"){
         // 本物の saveCompanyConfig（functions/index.js）と同じ後始末: 正本を保存し、連携全店舗の
         // shops/{sid}/company を作り直す。検証（sanitize）はしない＝CF側の検証は tests/core.test.js が見る。
+        // 写しは本物と同じ buildShopMirror で組む（2026-10-01。以前は企業の settings をそのまま写しにしていて、
+        // 法人の設定が重ならなかった＝法人がある企業で本物と食い違っていた）
         var cid=payload.companyId, base="companies/"+cid+"/pub";
         if(payload.settings!==undefined) setPath(base+"/config/settings",payload.settings);
         if(payload.deadlines!==undefined) Object.keys(payload.deadlines||{}).forEach(function(rk){ setPath(base+"/config/deadlines/"+rk,payload.deadlines[rk]); });
         if(payload.monthlyDeadlineDays!==undefined) setPath(base+"/config/monthlyDeadlineDays",(payload.monthlyDeadlineDays||[]).length?payload.monthlyDeadlineDays:null);
-        var pub=getPath(base)||{}, cfg=pub.config||{}, linked=Object.keys(pub.shops||{}), names={};
+        var pub=getPath(base)||{}, linked=Object.keys(pub.shops||{}), names={};
         linked.forEach(function(sid){ names[sid]=((getPath("global/shops/"+sid)||{}).name)||""; });
-        linked.forEach(function(sid){
-          var dl={}, all=cfg.deadlines||{};
-          Object.keys(all).forEach(function(rk){ var e=all[rk]||{}; var v=(e.shops&&e.shops[sid])||e.all; if(v) dl[rk]=v; });
-          var co={id:cid,name:pub.name||"",settings:cfg.settings||{},deadlines:dl,shops:names,syncedAt:"stub"};
-          if(cfg.monthlyDeadlineDays&&cfg.monthlyDeadlineDays.length) co.monthlyDeadlineDays=cfg.monthlyDeadlineDays;
-          setPath("shops/"+sid+"/company",co);
-        });
+        linked.forEach(function(sid){ setPath("shops/"+sid+"/company",CFC.buildShopMirror(cid,pub,sid,names,"stub")); });
         notify();
         return Promise.resolve({data:{ok:true,synced:linked,failed:[]}});
       }

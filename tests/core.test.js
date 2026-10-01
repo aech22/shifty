@@ -6476,3 +6476,64 @@ test("P7 ダッシュボードは労務判定表と同じ値を返し、賃金�
   for (const id of ["fbUpd(", "fbSet(", ".set(", ".update(", "savePeriods("])
     assert.ok(!card.includes(id), `ダッシュボードが書き込み ${id} を持っている`);
 });
+
+// ===== 労務判定の法人への統合（2026-10-01）=====
+test("planLaborToEntities: 企業の労務設定を全法人へ移しても写し（buildShopMirror）は1つも変わらない", () => {
+  const cc = require("../functions/company-config.js");
+  // 本番の NITO と同じ形: 企業に7項目、法人2つはどちらも laborSettings を持たない
+  const coLabor = { agreementAnnualOtMin: 21600, agreementDailyOtMin: 180, agreementMonthlyOtMin: 2700, fiscalYearStartMonth: 1, fixedOvertimeMin: 1800, marginMin: 420, monthlyBase31Min: 10628 };
+  const coSettings = { laborSettings: coLabor, staffTypeLimits: { co_Hzxk84Qv: { name: "特定技能", laborSystem: "A", monthly: 222, monthlyMin: 207 } } };
+  const pubBefore = {
+    name: "NITO", shops: { S1: true, S2: true, S3: true }, defaultEntityId: "E1",
+    entities: { E1: { name: "ニトエンターテイメント" }, E2: { name: "ニトエンタープライズ", settings: { wageSettings: { minWage: [{ from: "2026-10-01", yen: 1177 }] } } } },
+    shopEntities: { S1: "E1", S2: "E2" }, config: { settings: coSettings },
+  };
+  const plan = u.planLaborToEntities(coSettings, pubBefore);
+  assert.ok(plan, "移す計画が返る");
+  assert.deepStrictEqual(Object.keys(plan.entities).sort(), ["E1", "E2"]);
+  assert.deepStrictEqual(plan.entities.E1.laborSettings, coLabor);
+  assert.deepStrictEqual(plan.entities.E2.wageSettings, { minWage: [{ from: "2026-10-01", yen: 1177 }] }, "法人の他の設定は送り直す");
+  assert.strictEqual(plan.company.laborSettings, undefined, "企業側から laborSettings を外す");
+  assert.deepStrictEqual(plan.company.staffTypeLimits, coSettings.staffTypeLimits, "属性別の制限は企業に残す");
+  // CF（saveEntityConfig / saveCompanyConfig）が保存する形に通してから写しを作る
+  const ents = JSON.parse(JSON.stringify(pubBefore.entities));
+  for (const id of Object.keys(plan.entities)) ents[id].settings = cc.sanitizeCompanySettings(plan.entities[id]);
+  const pubAfter = { ...pubBefore, entities: ents, config: { settings: cc.sanitizeCompanySettings(plan.company) } };
+  assert.strictEqual(pubAfter.config.settings.laborSettings, undefined);
+  for (const sid of ["S1", "S2", "S3"]) {
+    const a = cc.buildShopMirror("C1", pubBefore, sid, {}, "T"), b = cc.buildShopMirror("C1", pubAfter, sid, {}, "T");
+    assert.deepStrictEqual(b, a, `${sid} の写しが移行の前後で変わらない`);
+    assert.deepStrictEqual(b.settings.laborSettings, coLabor);
+  }
+  // 2回目は移すものが無い（冪等）
+  assert.strictEqual(u.planLaborToEntities(pubAfter.config.settings, pubAfter), null);
+});
+test("planLaborToEntities: 法人が持つ値は法人が勝つ（写しの重ね合わせと同じ）", () => {
+  const cc = require("../functions/company-config.js");
+  const coSettings = { laborSettings: { marginMin: 420, fixedOvertimeMin: 1800 } };
+  const pub = { shops: { S1: true }, defaultEntityId: "E1", entities: { E1: { name: "A", settings: { laborSettings: { marginMin: 60 } } } }, config: { settings: coSettings } };
+  const plan = u.planLaborToEntities(coSettings, pub);
+  assert.deepStrictEqual(plan.entities.E1.laborSettings, { marginMin: 60, fixedOvertimeMin: 1800 });
+  const after = { ...pub, entities: { E1: { name: "A", settings: cc.sanitizeCompanySettings(plan.entities.E1) } }, config: { settings: cc.sanitizeCompanySettings(plan.company) } };
+  assert.deepStrictEqual(cc.buildShopMirror("C1", after, "S1", {}, "T"), cc.buildShopMirror("C1", pub, "S1", {}, "T"));
+});
+test("planLaborToEntities: 移すものが無い・法人が無い・どの法人にも属さない店舗があるときは null", () => {
+  const lab = { laborSettings: { marginMin: 420 } };
+  assert.strictEqual(u.planLaborToEntities({}, { shops: { S1: true }, defaultEntityId: "E1", entities: { E1: { name: "A" } } }), null);
+  assert.strictEqual(u.planLaborToEntities({ laborSettings: {} }, { shops: { S1: true }, defaultEntityId: "E1", entities: { E1: { name: "A" } } }), null);
+  assert.strictEqual(u.planLaborToEntities(lab, { shops: { S1: true } }), null, "法人の無い企業（移行前）");
+  // 既定の法人が無く、割当の無い店舗がある＝その店舗は移行で労務設定を失うので移さない
+  assert.strictEqual(u.planLaborToEntities(lab, { shops: { S1: true, S2: true }, entities: { E1: { name: "A" } }, shopEntities: { S1: "E1" } }), null);
+  assert.ok(u.planLaborToEntities(lab, { shops: { S1: true }, entities: { E1: { name: "A" } }, shopEntities: { S1: "E1" } }));
+});
+test("企業の共通設定カードは労務判定の欄を持たず、法人の設定だけが持つ（2026-10-01 の統合）", () => {
+  const src = _readAdminSurface();
+  const cfg = src.slice(src.indexOf("function CompanyConfigCard("), src.indexOf("function CompanyEntityCard("));
+  assert.ok(cfg.length > 1000);
+  assert.ok(!cfg.includes("<CoLaborFields"), "企業の共通設定に労務判定の欄が残っている");
+  assert.ok(!cfg.includes("<AL>労務判定</AL>"));
+  const ent = src.slice(src.indexOf("function CompanyEntityCard("), src.indexOf("function EntityFilter("));
+  assert.ok(ent.includes("<CoLaborFields"), "法人の設定に労務判定の欄が無い");
+  assert.ok(ent.includes("労務判定（空欄は店舗の設定）"));
+  assert.ok(ent.includes("planLaborToEntities("), "法人カードが移行の計画を通していない");
+});

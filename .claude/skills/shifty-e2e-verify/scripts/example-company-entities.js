@@ -16,6 +16,10 @@
 //     - 企業内登録スタッフで別法人の同じ従業員番号は別行、本部の所属は「本部」の見出し
 //  C. 法人の設定が効いている店舗の設定タブで、その項目が「企業設定」の固定表示になる
 //  D. 本部店舗の期間管理タブでスタッフ提出URLが出ず、「URLを表示」で出せる
+//  F. 労務判定の法人への統合（2026-10-01）: 企業の共通設定に laborSettings がある企業で企業連携タブを開くと、
+//     法人カードが各法人へ saveEntityConfig（企業の値＋法人の値・法人が勝つ）を送ってから saveCompanyConfig で
+//     企業側の laborSettings を外す。属性別の制限は企業に残り、全店舗の写しの settings は移行の前後で同じ。
+//     企業の共通設定カードに労務判定の欄が無く、法人の設定の見出しは「労務判定（空欄は店舗の設定）」
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-company-entities.js → allPass=true / EXIT=0
 "use strict";
@@ -29,7 +33,7 @@ const THEME = `<style>:root{--c-bg:#F0F2F5;--c-card:#FFFFFF;--c-input:#F3F4F6;--
   `--c-text4:#9CA3AF;--c-shadow:rgba(0,0,0,.06);--c-accent:#f87036;--c-danger:#DC2626;}</style>`;
 const UID = "U1", CID = "C1";
 const ENTITY_CFS = ["ensureCompanyEntities", "createEntity", "renameEntity", "assignShopEntity", "saveEntityConfig", "setShopKind"];
-const cfHandlers = Object.fromEntries(ENTITY_CFS.map(n => [n, "entity"]));
+const cfHandlers = { ...Object.fromEntries(ENTITY_CFS.map(n => [n, "entity"])), saveCompanyConfig: "companyConfig" };
 const per = (id, sid, start, end) => ({ id, urlToken: "tok" + id, shopId: sid, label: id, startDate: start, endDate: end, deadlineDate: "", createdAt: "2026-09-01T00:00:00.000Z" });
 const shop = (sid, staff, settings, periods) => ({ owners: { [UID]: "K" + sid }, private: { adminKey: "K" + sid }, staff, settings: { shopId: sid, candidates: [], ...settings }, periods });
 const coSettings = { staffTypeLimits: { parttime: { weekly: 30 } } };
@@ -165,6 +169,36 @@ const waitText = (h, t, ms = 15000) => h.page.waitForFunction(x => document.body
   } catch (e) { R.exceptionD2 = e.message; }
   R.errorsD2 = h.errors.slice(); await h.close();
 
+  // ===== F: 労務判定の法人への統合（2026-10-01）=====
+  const coLabor = { fixedOvertimeMin: 1200, marginMin: 420, agreementMonthlyOtMin: 2700 };
+  const migSeed = () => {
+    const s = entitySeed("S1");
+    const pub = s.companies[CID].pub;
+    pub.config = { settings: { ...coSettings, laborSettings: coLabor } };
+    const names = { S1: "A店", S2: "B店", S3: "事務所" };
+    ["S1", "S2", "S3"].forEach(sid => { s.shops[sid].company = cfc.buildShopMirror(CID, pub, sid, names, "seed"); });
+    return s;
+  };
+  const fSeed = migSeed();
+  R.migBeforeMirror = ["S1", "S2", "S3"].map(sid => JSON.stringify(fSeed.shops[sid].company.settings));
+  h = await open(fSeed, "company");
+  try {
+    await waitText(h, "労務判定の設定を法人へ移しました（2法人）");
+    await h.page.waitForTimeout(600);
+    R.mig = await h.evaluate(() => {
+      const calls = window.__cf.map(c => c.name).filter(n => n === "saveEntityConfig" || n === "saveCompanyConfig");
+      const pub = window.__db("companies/C1/pub");
+      return { calls, coSettings: pub.config.settings, e1: (pub.entities.E1.settings || {}).laborSettings, e2: (pub.entities.E2.settings || {}).laborSettings,
+        mirrors: ["S1", "S2", "S3"].map(s => JSON.stringify(window.__db("shops/" + s + "/company").settings)),
+        // 「企業の共通設定を保存」ボタンを含む最小のカードに労務判定の欄が無い
+        noLaborInCoCard: (() => { const b = [...document.querySelectorAll("button")].find(x => x.innerText.trim() === "企業の共通設定を保存"); let c = b; while (c && !(c.innerText || "").trim().startsWith("企業の共通設定")) c = c.parentElement; return !!c && !c.innerText.includes("31日の月の総枠") && !c.innerText.includes("固定残業"); })() };
+    });
+    await h.page.click('[data-co-entity="E1"] button:has-text("法人の設定")');
+    await h.page.waitForTimeout(300);
+    R.migLabel = await h.evaluate(() => document.body.innerText.includes("労務判定（空欄は店舗の設定）") && !document.body.innerText.includes("空欄は企業の共通設定の値"));
+  } catch (e) { R.exceptionF = e.message; }
+  R.errorsF = h.errors.slice(); await h.close();
+
   // ===== E: 375px 幅で法人カードがページを横に動かさず、入力欄は 16px 以上 =====
   h = await open(entitySeed("S1"), "company", { width: 375, height: 812 });
   try {
@@ -197,13 +231,19 @@ const waitText = (h, t, ms = 15000) => h.page.waitForFunction(x => document.body
     dirSections: JSON.stringify(R.dirSections) === JSON.stringify(["テスト企業", "テスト企業・本部", "乙法人"]),
     dirFilter: R.dirFilter === 1,
     settingsNoteShowsEntity: R.setNote === true,
+    laborMovedToEntities: !!R.mig && JSON.stringify(R.mig.calls) === JSON.stringify(["saveEntityConfig", "saveEntityConfig", "saveCompanyConfig"])
+      && R.mig.coSettings && R.mig.coSettings.laborSettings === undefined && JSON.stringify(R.mig.coSettings.staffTypeLimits) === JSON.stringify(coSettings.staffTypeLimits)
+      && JSON.stringify(R.mig.e1) === JSON.stringify({ fixedOvertimeMin: 1200, marginMin: 420, agreementMonthlyOtMin: 2700 })
+      && R.mig.e2 && R.mig.e2.fixedOvertimeMin === 2700 && R.mig.e2.marginMin === 420,
+    laborMirrorUnchanged: !!R.mig && JSON.stringify(R.mig.mirrors) === JSON.stringify(R.migBeforeMirror),
+    laborNotInCompanyCard: !!R.mig && R.mig.noLaborInCoCard === true && R.migLabel === true,
     settingsFixedDisplay: R.coTags >= 1,
     hqUrlHidden: !!R.hqHidden && R.hqHidden.hidden >= 1 && R.hqHidden.url === false,
     hqUrlShowable: !!R.hqShown && R.hqShown.hidden === 0 && R.hqShown.url === true,
     shopUrlUnchanged: !!R.shopUrl && R.shopUrl.hidden === 0 && R.shopUrl.url === true,
     mobileNoPageScroll: !!R.mobile && R.mobile.page <= R.mobile.vw,
     mobileFont16: !!R.mobile && R.mobile.minFont >= 16,
-    noErrors: [R.errorsAB, R.errorsC, R.errorsD, R.errorsD2, R.errorsE].every(e => e && e.length === 0) && !R.exceptionAB && !R.exceptionC && !R.exceptionD && !R.exceptionD2 && !R.exceptionE,
+    noErrors: [R.errorsAB, R.errorsC, R.errorsD, R.errorsD2, R.errorsE, R.errorsF].every(e => e && e.length === 0) && !R.exceptionAB && !R.exceptionC && !R.exceptionD && !R.exceptionD2 && !R.exceptionE && !R.exceptionF,
   };
   v.allPass = Object.values(v).every(Boolean);
   console.log(JSON.stringify({ R, verdict: v }, null, 2));
