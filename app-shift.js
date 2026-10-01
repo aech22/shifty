@@ -1387,6 +1387,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // ＝同じ日について労務判定と集計表が違う数字を出すことがない。
   // 他店での勤務（P3.6・所属店舗の人だけ）を足した値。月計・週計・労務判定・laborTotals・laborMonths が同じ入口を通る
   const laborDayMin=(name,ds)=>{const sh=_getWorkShift(name,ds);return(sh?calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh),settings):0)+helperMinOn(name,ds);};
+  // 入力の確認（F6）が要るこの期間の日。片側だけの日と読めない文字だけのセルの日（inputCheckOfShift）。要修正ではない
+  const inputCheckDatesOf=name=>dates.filter(d=>{const r=inputCheckOfShift(_getAnyShift(name,d),abbrToShop);return r.oneSided||r.memoOnly;});
   // 月の枠と、その月の全日。**按分・目安・上限の単位は暦月**だが Shifty の期間は半月のことがあるので、
   // 「選択中の期間の startDate と同じ年月の全日」を月として集計する。
   const laborFrame=useMemo(()=>period?laborMonthFrame(settings,period.startDate):null,[settings,period]);
@@ -1536,7 +1538,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // 凍結値（laborTotals）にも入れない（同じ時間を2店舗で数えない。有給残と同じ「所属店舗に1本化」）
       const hi=helperInfo[name];
       if(hi&&hi.role==="dest"){
-        out[name]={dest:true,homeName:hi.homeName,sys:"none",monthWorkMin:0,findings:[],dayFindings:[],guide:{key:"none",label:"",color:null},
+        // 入力の確認（F6）はこの店舗のセルの話なので、所属店舗で判定する人にも出す（総括は「所属店舗で判定」のまま）
+        out[name]={dest:true,homeName:hi.homeName,sys:"none",monthWorkMin:0,findings:laborFindingsFor({laborSystem:"none",inputCheckDates:inputCheckDatesOf(name)}),dayFindings:[],guide:{key:"none",label:"",color:null},
           overall:{key:"dest",label:"所属店舗で判定"},monthCovered:laborMonthCovered,paidRemain:null,year:null};
         return;
       }
@@ -1577,6 +1580,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const monthOtB=sys==="B"&&prem?prem.otH:0,monthAgH=prem?prem.agH:0;
       const findings=laborFindingsFor({laborSystem:sys,dayMins,dayDates:dates,weekDayMins:weekMins,weekDates:weeks,
         timeErrorDates:teDates,breakShortDates:bsDates,skilledWeekDates,
+        inputCheckDates:inputCheckDatesOf(name),staffNumberMissing:isStaffNumberMissing(settings,name),
         monthOtH:sys==="B"?monthOtB:monthOtH,monthAgreementH:monthAgH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthCovered});
       // 36協定の年単位4項目（年360h・年720h・月45h超が年6回・複数月平均80h）。
       // 月の値は「その月の最後の期間」に残した凍結値を優先するので、過去参照を押さなくても効く。
@@ -1635,7 +1639,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     });
     laborTotalsRef.current=totals;
     return out;
-  },[isPremium,period,laborFrame,laborMonthDays,laborMonthCovered,laborIsLastOfMonth,laborPendingReason,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart,liveMonthOtFor,liveTotalFor,helperInfo,helperCache,premiumDayCache]);
+  },[isPremium,period,laborFrame,laborMonthDays,laborMonthCovered,laborIsLastOfMonth,laborPendingReason,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart,liveMonthOtFor,liveTotalFor,helperInfo,helperCache,premiumDayCache,abbrToShop]);
 
   // 期間が生きている間はシフト作成タブを開くたびに写しと労務の合計を最新化し、最終日を超えたら
   // 更新を止める＝そこで凍結。「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、
