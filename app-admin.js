@@ -2094,7 +2094,11 @@ function CandTab({settings,onSave,tt,plan="free",periods=[]}){
         // この保存が失われるだけでなく、settings stateに残ったundefinedのせいで以降の設定保存も全て失敗する
         const toggleTag=(dt,i,tagId)=>{const bt={...(settings.breakTimes||{})};bt[dt]=[...(bt[dt]||[])];const cur=bt[dt][i]||{};const tags=[...(cur.tags||[])];const p=tags.indexOf(tagId);if(p>=0)tags.splice(p,1);else tags.push(tagId);const nb={...cur};if(tags.length)nb.tags=tags;else delete nb.tags;bt[dt][i]=nb;onSave({...settings,breakTimes:bt});};
         return(<AC title="休憩時間設定">
-        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>設定した休憩時間は出勤〜退勤から自動的に差し引かれ、純勤務時間として表示されます。</div>
+        {breakModeOf(settings)==="length"
+          ?<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>この店舗は休憩の決め方が「長さ方式」なので、勤務時間から引く休憩は設定タブの長さ方式の分です。ここで登録した休憩は、全属性の休憩（タグなし）だけをヒートマップで人数を外す時間帯に使います。</div>
+          :<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>設定した休憩時間は出勤〜退勤から自動的に差し引かれ、純勤務時間として表示されます。</div>}
+        {(()=>{const t=lengthBandMismatchText(lengthBandMismatchOf(settings));return t
+          ?<div data-break-mismatch style={{marginBottom:10,padding:"8px 10px",borderRadius:8,fontSize:12,lineHeight:1.6,background:"#FEF3C7",color:"#92400E",border:"1px solid #F59E0B"}}>{t}</div>:null;})()}
         {/* 適用条件の正本は getBreaksFor（app-utils.js）。2026-08-25〜08-31 の決定3で「重なる日」から
             「丸ごと含む日」へ絞り、片側セルを対象外にしたが、この注記だけが 2026-07-10 の旧仕様のまま
             6週間残っていた（バグチェック#114）。条件を変えるときはこの文も同じコミットで直す。 */}

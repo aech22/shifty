@@ -146,6 +146,8 @@ const sharedGlobals = {
   getBreakList: "writable",
   getBreaksFor: "writable",
   heatBreaksFor: "writable",
+  lengthBandMismatchOf: "writable",
+  lengthBandMismatchText: "writable",
   validatePeriodDates: "writable",
   oneSidedFillBounds: "writable",
   effShiftRangeMin: "writable",

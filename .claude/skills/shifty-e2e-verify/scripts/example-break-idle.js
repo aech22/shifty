@@ -2,6 +2,8 @@
 // app-main.js を読み込まないので Firebase へは1バイトも出ない（SKILL.md 1.6節）。
 //   1. 設定タブ: 長さ方式の「段の判定」（実働／拘束）と「段を自分で決める」が settings に入る。中休みの設定欄が無い
 //   2. 提出一覧の詳細: 店舗データに idleBreak が残っていても長さ方式で計算する。自動＝灰（長さ）・手動＝太字、「自動に戻す」で adjustedBreak が消える
+//   3. 確認表示（2026-10-02）: 長さ方式の休憩（60分）と候補タブの全属性の休憩（15:00〜17:00＝120分）が違うと、設定タブの休憩の決め方と
+//      候補タブの休憩時間設定の両方に [data-break-mismatch] が出る。一致させる（15:00〜16:00）と消える。時間帯方式・タグ付きだけの休憩には出ない
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-break-idle.js → allPass=true / EXIT=0
 // 反証: SHIFTY_ROOT=<中休みの削除より前の配信物> node ... → EXIT=1（中休みの UI があり、通し勤務が120分になる）
 "use strict";
@@ -50,6 +52,42 @@ async function setTab() {
   return m;
 }
 
+async function mismatch() {
+  const b15 = [{ start: "15:00", end: "17:00" }];
+  const h = await openHarness({ root: ROOT, extraHead: EXTRA_HEAD, waitFor: "#root > *", jsx: `
+    function Harness(){
+      const [settings,setSettings]=React.useState({shopId:"s1",candidates:[],staffAttributes:{},breakMode:"length",
+        breakLength:{basis:"binding",tiers:[{overMin:360,breakMin:60,inclusive:true}]},
+        breakTimes:{weekday:${JSON.stringify(b15)},sat:${JSON.stringify(b15)},sun:[],holSat:[],holSun:[]},
+        staffTypeLimits:{employee:{name:"社員"},parttime:{name:"バイト"}}});
+      window.__set=setSettings;
+      const [tab,setTab]=React.useState("set");window.__tab=setTab;
+      return tab==="set"
+        ?<SetTab settings={settings} onSave={s=>setSettings(s)} subs={[]} saveSubs={()=>{}} tt={()=>{}} syncStatus="online" plan="premium" shopId="s1"/>
+        :<CandTab settings={settings} onSave={s=>setSettings(s)} tt={()=>{}} plan="premium" periods={[]}/>;
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);` });
+  const txt = () => h.evaluate(() => [...document.querySelectorAll("[data-break-mismatch]")].map(e => e.innerText.trim()));
+  const m = {};
+  await sleep(400);
+  m.setTab = await txt();
+  await h.evaluate(() => window.__tab("cand")); await sleep(300);
+  await h.evaluate(() => { const b = [...document.querySelectorAll("button")].find(x => x.innerText.trim() === "休憩"); b.click(); }); await sleep(300);
+  m.candTab = await txt();
+  m.candNote = await h.evaluate(() => /全属性の休憩（タグなし）だけをヒートマップ/.test(document.body.innerText));
+  // 一致させる（平日・土曜とも 15:00〜16:00＝60分）と消える
+  await h.evaluate(() => window.__set(s => ({ ...s, breakTimes: { ...s.breakTimes, weekday: [{ start: "15:00", end: "16:00" }], sat: [{ start: "15:00", end: "16:00" }] } }))); await sleep(300);
+  m.candAfterMatch = await txt();
+  // タグ付きだけ・時間帯方式には出ない
+  await h.evaluate(() => window.__set(s => ({ ...s, breakTimes: { ...s.breakTimes, weekday: [{ start: "15:00", end: "17:00", tags: ["parttime"] }], sat: [] } }))); await sleep(300);
+  m.candTaggedOnly = await txt();
+  await h.evaluate(() => window.__set(s => ({ ...s, breakMode: "band", breakTimes: { ...s.breakTimes, weekday: [{ start: "15:00", end: "17:00" }] } }))); await sleep(300);
+  m.candBand = await txt();
+  m.errors = h.errors.slice();
+  await h.close();
+  return m;
+}
+
 async function detail() {
   const h = await openHarness({ root: ROOT, extraHead: EXTRA_HEAD, waitFor: "table", jsx: `
     function Harness(){
@@ -87,6 +125,8 @@ async function detail() {
 (async () => {
   const a = await setTab();
   const b = await detail();
+  const c = await mismatch();
+  const MSG = "長さ方式の休憩（60分）と候補タブの休憩（平日・土曜 15:00〜17:00＝120分）が違います。";
   const v = {
     lengthBoxShown: a.lengthBox && a.defaultTwoTier,
     tierSaved: !!(a.breakLength && a.breakLength.basis === "binding" && Array.isArray(a.breakLength.tiers)
@@ -106,9 +146,12 @@ async function detail() {
     totalBefore: b.total === "27:30",
     revertCleared: b.day05 && !("adjustedBreak" in b.day05) && b.after[2] && b.after[2].src === "length",
     totalAfterRevert: b.totalAfter === "27:00",
-    noErrors: a.errors.length === 0 && b.errors.length === 0,
+    mismatchShown: c.setTab.length === 1 && c.setTab[0].startsWith(MSG) && c.candTab.length === 1 && c.candTab[0] === c.setTab[0] && c.candNote === true,
+    mismatchClearsWhenMatched: c.candAfterMatch.length === 0,
+    mismatchIgnoresTaggedAndBand: c.candTaggedOnly.length === 0 && c.candBand.length === 0,
+    noErrors: a.errors.length === 0 && b.errors.length === 0 && c.errors.length === 0,
   };
   v.allPass = Object.values(v).every(Boolean);
-  console.log(JSON.stringify({ setTab: a, detail: b, verdict: v }, null, 2));
+  console.log(JSON.stringify({ setTab: a, detail: b, mismatch: c, verdict: v }, null, 2));
   process.exit(v.allPass ? 0 : 1);
 })().catch(e => { console.error(e); process.exit(2); });

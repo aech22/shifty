@@ -2608,6 +2608,9 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             style={{width:"100%",padding:"6px",background:"transparent",border:"1px dashed var(--c-border2)",borderRadius:8,color:"var(--c-text3)",fontSize:12,cursor:"pointer",marginTop:4}}>
             ＋ 段を自分で決める{rule.custom?"（段を追加）":"（上の2段の代わりに使います）"}</button>}
         </div>}
+        {mode==="length"&&(()=>{const t=lengthBandMismatchText(lengthBandMismatchOf(settings));return t
+          ?<div data-break-mismatch style={{marginTop:8,padding:"8px 10px",borderRadius:8,fontSize:12,lineHeight:1.6,background:"#FEF3C7",color:"#92400E",border:"1px solid #F59E0B"}}>{t}</div>:null;})()}
+        {mode==="length"&&<div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>長さ方式では、候補タブの休憩は全属性の休憩（タグなし）だけをヒートマップに使います。勤務時間には使いません。</div>}
         <div style={{fontSize:11,color:"var(--c-text4)",marginTop:10}}>どの方式でも「実働6時間超なのに休憩が足りない日」はシフト作成タブの労務判定に出ます。日ごとの例外は提出一覧の詳細から変更できます。</div>
       </AC>);
     })()}

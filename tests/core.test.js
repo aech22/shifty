@@ -3658,10 +3658,12 @@ test("ヒートマップの休憩（2026-10-02）: 長さ方式は勤務時間�
   assert.deepStrictEqual(pos(u.heatBreaksFor(len, WD, "田中", w("17:00", "23:00"))), [], "休憩帯を含まない勤務は外さない（長さ方式の60分はヒートマップに出さない）");
   assert.deepStrictEqual(pos(u.heatBreaksFor(len, WD, "田中", w("10:00", "17:00"))), [], "退勤＝休憩の終わりは時間帯方式と同じく当てない");
   assert.deepStrictEqual(pos(u.heatBreaksFor(len, WD, "田中", w("10:00", "23:00", { adjustedBreak: 30 }))), ["15:00-17:00"], "日別の上書き（分だけ）でもヒートマップは休憩帯");
-  // 属性タグは時間帯方式と同じ（社員だけの休憩帯）
-  const tag = { ...BT([{ start: "15:00", end: "17:00", tags: ["employee"] }]), breakMode: "length", breakLength: BIND6, staffAttributes: { "田中": "employee" } };
-  assert.deepStrictEqual(pos(u.heatBreaksFor(tag, WD, "田中", w("10:00", "23:00"))), ["15:00-17:00"]);
-  assert.deepStrictEqual(pos(u.heatBreaksFor(tag, WD, "佐藤", w("10:00", "23:00"))), [], "タグに当たらない人は外さない");
+  // 長さ方式は全属性の休憩（タグなし）だけを使う（2026-10-02）。タグ付きの休憩帯はタグの属性の人にも使わない
+  const tag = { ...BT([{ start: "15:00", end: "17:00", tags: ["employee"] }, { start: "20:00", end: "21:00" }]), breakMode: "length", breakLength: BIND6, staffAttributes: { "田中": "employee" } };
+  assert.deepStrictEqual(pos(u.heatBreaksFor(tag, WD, "田中", w("10:00", "23:00"))), ["20:00-21:00"], "社員でもタグ付きの 15-17 は使わず、全属性の 20-21 だけ");
+  assert.deepStrictEqual(pos(u.heatBreaksFor(tag, WD, "佐藤", w("10:00", "23:00"))), ["20:00-21:00"]);
+  const tagOnly = { ...BT([{ start: "15:00", end: "17:00", tags: ["parttime"] }]), breakMode: "length", breakLength: BIND6 };
+  assert.deepStrictEqual(pos(u.heatBreaksFor(tagOnly, WD, "佐藤", w("10:00", "23:00"))), [], "タグ付きだけの区分はヒートマップで何も外さない");
   // 時間帯方式は従来どおり getBreaksFor と同じ
   const band = BT([{ start: "15:00", end: "17:00" }]);
   [w("10:00", "23:00"), w("10:00", "23:00", { adjustedBreak: 30 }), w("17:00", "23:00")].forEach(sh =>
@@ -3671,6 +3673,28 @@ test("ヒートマップの休憩（2026-10-02）: 長さ方式は勤務時間�
   const i = src.indexOf("const heatData=useMemo(");
   const body = src.slice(i, src.indexOf("perDate[date]=arr;", i));
   assert.ok(i > 0 && /heatBreaksFor\(settings,date,name,hsh\)/.test(body) && !/getBreaksFor\(/.test(body), "heatData が heatBreaksFor 以外で休憩を引いている");
+});
+test("長さ方式の休憩と候補タブの休憩の食い違い（2026-10-02）: 全属性の休憩帯の合計といちばん長い段の分を日区分ごとに比べる", () => {
+  const T2 = { basis: "binding", tiers: [{ overMin: 480, breakMin: 60, inclusive: true }, { overMin: 360, breakMin: 60, inclusive: true }] };
+  const b15 = [{ start: "15:00", end: "17:00" }];
+  const nito = { breakTimes: { weekday: b15, sat: b15, sun: b15, holSat: b15, holSun: b15 }, breakMode: "length", breakLength: T2 };
+  const m = u.lengthBandMismatchOf(nito);
+  assert.deepStrictEqual(m.map(x => [x.dayType, x.bandMin, x.lengthMin]), [["weekday", 120, 60], ["sat", 120, 60], ["sun", 120, 60], ["holSat", 120, 60], ["holSun", 120, 60]]);
+  assert.strictEqual(u.lengthBandMismatchText(m), "長さ方式の休憩（60分）と候補タブの休憩（平日・土曜・日曜・祝日（連休中・単日）・祝日（最終日） 15:00〜17:00＝120分）が違います。勤務時間と休憩は長さ方式の60分で計算し、候補タブの休憩はヒートマップで人数を外す時間帯にだけ使います。");
+  // 合計が同じなら出さない（2つの帯の合計でもよい）
+  assert.deepStrictEqual(u.lengthBandMismatchOf({ ...nito, ...BT([{ start: "15:00", end: "15:30" }, { start: "16:00", end: "16:30" }]) }), []);
+  // いちばん長い段の分と比べる（既定の2段は 8h超60分・6h超45分 → 60分）
+  assert.deepStrictEqual(u.lengthBandMismatchOf({ ...BT([{ start: "15:00", end: "16:00" }]), breakMode: "length" }), []);
+  assert.strictEqual(u.lengthBandMismatchOf({ ...BT([{ start: "15:00", end: "15:45" }]), breakMode: "length" })[0].lengthMin, 60);
+  // タグ付きの休憩帯は比べない・全属性の帯が無い区分は出さない
+  assert.deepStrictEqual(u.lengthBandMismatchOf({ ...BT([{ start: "15:00", end: "17:00", tags: ["parttime"] }]), breakMode: "length", breakLength: T2 }), []);
+  assert.deepStrictEqual(u.lengthBandMismatchOf({ ...BT([]), breakMode: "length", breakLength: T2 }), []);
+  // 時間帯方式の店舗には出さない
+  assert.deepStrictEqual(u.lengthBandMismatchOf(BT([{ start: "15:00", end: "17:00" }])), []);
+  assert.strictEqual(u.lengthBandMismatchText([]), "");
+  // 画面の2か所（設定タブの休憩の決め方・候補タブの休憩時間設定）が同じ関数を通す（ドリフト検出）
+  const fs = require("node:fs"), path = require("node:path");
+  ["app-company.js", "app-admin.js"].forEach(f => assert.ok(/lengthBandMismatchText\(lengthBandMismatchOf\(settings\)\)/.test(fs.readFileSync(path.join(__dirname, "..", f), "utf8")), `${f} に確認表示が無い`));
 });
 test("P3.5a 休憩不足の判定（isBreakShort）は法定の基準のまま", () => {
   // 設定で段を短くしても、法定（実働6h超で45分）を下回れば不足になる
