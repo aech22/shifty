@@ -1456,9 +1456,9 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-10-01 自動実行 #158）
+## Shifty バグチェックレポート（2026-10-01 自動実行 #159）
 
-> 着手時の HEAD は `1b556a6`。#157（`94da5f6`）以降の変更は、企業内登録スタッフの編集モーダルの2点（名前の変更で既に同じ名前の店舗を送らない・拒否理由をモーダルの中に出す `CompanyModalMsg`）と版数の更新だけ。この差分を中心に見た。
+> 着手時の HEAD は `50506d6`。#158 以降の変更は docs のコミット1件だけで、app-*.js・functions/・database.rules.json・index.html に差分は無い。
 
 ### 修正済み
 
@@ -1466,20 +1466,16 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 
 ### 要確認（未修正）
 
-- **[🟢] モーダルを開いた瞬間に、前の操作の結果が1フレームだけ見えうる**（app-company.js の `CompanyStaffDirectory`）。前の結果は `useEffect` で消しているため、開いた直後の最初の描画には前の `msg` が残る。見た目だけの問題で、データには影響しない。
-- **[🟢] 日別の休憩上書き（adjustedBreak）が、実績で短くした時刻にもそのまま当たる**（`resolveActualDay`）→ BACKLOG化済み（#156 から継続）。
-- **[🟢] 企業連携タブの提出状況表からの確定は、対象店舗のプランを見ない**（#156 から継続）。
-- **[🟢] 他店舗略称＋「締」は追加出勤を数える／呼び出し候補を選ぶ前の番号欄の書き換え**（#152 から継続）。
+- **[🟢] #158 から継続の4件**（モーダルを開いた瞬間に前の結果が1フレーム見えうる／実績で時刻を変えた日の adjustedBreak＝BACKLOG化済み／企業の提出状況表からの確定がプランを見ない／他店舗略称＋「締」・番号欄の書き換え）。いずれもコード変更が無いので状態は同じ。
+- **[🟢] `.cursorrules` に作業ツリーの未コミット変更（+481行）がある。** 本ループの作業ではないので触っていない。
 
 ### 異常なし
 
-- 名前の変更で送る店舗は、チェックした店舗から「いまの登録名が新しい名前と同じ店舗」を除いた集合になっている。送る店舗が無ければボタンは押せない。結果の `msg` は一覧の帯とモーダルで共有され、成功時はモーダルが閉じて一覧の帯にだけ残る。
-- `npm test` **498件パス**・`npx eslint app-*.js` **0 errors / 116 warnings**。増えた1件は新しい `CompanyModalMsg` の未使用判定で、既存のモーダルと同じ誤検出。
-- 回帰4本（company-people・company-dup-candidates・company-staff-directory・index-html-load）はすべて allPass。
+- `npm test` **498件パス**・`npx eslint app-*.js` **0 errors / 116 warnings**（#158 と同数）。
 - `DEV_MODE` は式のまま。配信版数は8箇所とも `20261001-60ec7d7` で、以降に app-*.js の変更は無い。フォーム部品155件で `fontSize` 16未満は0件。未定義の CSS 変数・`subs`/`periods` の全体 set()・functions/ の `.delete()` は0件。
 - **Firebase・Stripe・本番データには一切アクセスしていない。**
 
-**申し送り**: スケジュールタスクの PHASE 2〜4 の grep はいまも削除済みの `app.js` を対象にしている（14回目）。今回も app-*.js に読み替えた。
+**申し送り**: スケジュールタスクの PHASE 2〜4 の grep はいまも削除済みの `app.js` を対象にしている（15回目）。今回も app-*.js に読み替えた。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
