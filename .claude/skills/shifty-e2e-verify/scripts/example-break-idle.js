@@ -1,9 +1,9 @@
-// P3.5a（休憩の中休み方式＋長さ方式のしきい値設定）の実ブラウザ回帰テスト。
+// P3.5a（長さ方式のしきい値設定）と中休みの削除（2026-10-02）の実ブラウザ回帰テスト。ファイル名は P3.5a のときのまま。
 // app-main.js を読み込まないので Firebase へは1バイトも出ない（SKILL.md 1.6節）。
-//   1. 設定タブ: 長さ方式の「段の判定」（実働／拘束）と「段を自分で決める」、中休みの設定が settings に入る
-//   2. 提出一覧の詳細: 自動＝灰（中休み／長さ）・手動＝太字、「自動に戻す」で adjustedBreak が消える
+//   1. 設定タブ: 長さ方式の「段の判定」（実働／拘束）と「段を自分で決める」が settings に入る。中休みの設定欄が無い
+//   2. 提出一覧の詳細: 店舗データに idleBreak が残っていても長さ方式で計算する。自動＝灰（長さ）・手動＝太字、「自動に戻す」で adjustedBreak が消える
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-break-idle.js → allPass=true / EXIT=0
-// 反証: SHIFTY_ROOT=<P3.5a より前の配信物> node ... → EXIT=1（中休みの UI が無い）
+// 反証: SHIFTY_ROOT=<中休みの削除より前の配信物> node ... → EXIT=1（中休みの UI があり、通し勤務が120分になる）
 "use strict";
 const path = require("node:path");
 const { openHarness } = require(path.join(__dirname, "mount-component.js"));
@@ -42,15 +42,9 @@ async function setTab() {
   await setVal(h, "[data-break-tier='0'] input", 60, 2); await sleep(200);
   m.breakLength = await h.evaluate(() => window.__settings.breakLength);
   m.twoTierHidden = await h.evaluate(() => !/実働8時間超/.test(document.querySelector("[data-break-length]").innerText));
-  // 中休み
-  await h.evaluate(() => document.querySelector("[data-idle-break] input[type=checkbox]").click()); await sleep(250);
-  m.idleWarnBeforeValues = await h.evaluate(() => /時刻と分を入れるまで/.test(document.querySelector("[data-idle-break]").innerText));
-  await setVal(h, "[data-idle='startBy']", "14:30"); await sleep(200);
-  await setVal(h, "[data-idle='endAfter']", "17:00"); await sleep(200);
-  await setVal(h, "[data-idle-break] input[type=number]", 120); await sleep(200);
-  await setVal(h, "[data-idle='days']", "weekday"); await sleep(200);
-  m.idleBreak = await h.evaluate(() => window.__settings.idleBreak);
-  m.fontsizes = await h.evaluate(() => [...document.querySelectorAll("[data-idle-break] input[type=number],[data-idle-break] select,[data-break-length] input,[data-break-length] select")].map(e => parseFloat(getComputedStyle(e).fontSize)));
+  // 中休みの設定欄は無い（2026-10-02 に機能ごと削除）
+  m.idleUi = await h.evaluate(() => !!document.querySelector("[data-idle-break],[data-idle]") || /中休み/.test(document.body.innerText));
+  m.fontsizes = await h.evaluate(() => [...document.querySelectorAll("[data-break-length] input,[data-break-length] select")].map(e => parseFloat(getComputedStyle(e).fontSize)));
   m.errors = h.errors.slice();
   await h.close();
   return m;
@@ -99,20 +93,19 @@ async function detail() {
       && a.breakLength.tiers.length === 1 && a.breakLength.tiers[0].overMin === 360
       && a.breakLength.tiers[0].breakMin === 60 && a.breakLength.tiers[0].inclusive === true),
     twoTierReplaced: a.twoTierHidden,
-    idleWarned: a.idleWarnBeforeValues,
-    idleSaved: !!(a.idleBreak && a.idleBreak.enabled === true && a.idleBreak.startBy === "14:30"
-      && a.idleBreak.endAfter === "17:00" && a.idleBreak.min === 120 && a.idleBreak.days === "weekday"),
+    noIdleUi: a.idleUi === false,
     font16: a.fontsizes.length > 0 && a.fontsizes.every(f => f >= 16),
-    // 10/1 中休み120（自動・灰）/ 10/2 長さ60（自動）/ 10/5 手動30（太字・自動120を併記）
-    autoIdle: b.before[0] && b.before[0].src === "idle" && /自動 120分（中休み）/.test(b.before[0].text),
+    // 店舗データに idleBreak（14:30以前・17:00以降・120分）が残っていても読まない:
+    // 10/1 長さ60（以前は中休み120）/ 10/2 長さ60 / 10/5 手動30（太字・自動60を併記）
+    idleIgnored: b.before[0] && b.before[0].src === "length" && /自動 60分（長さ）/.test(b.before[0].text) && !/中休み/.test(b.before.map(x => x.text).join(" ")),
     autoLength: b.before[1] && b.before[1].src === "length" && /自動 60分（長さ）/.test(b.before[1].text),
     manualBold: b.before[2] && b.before[2].src === "manual" && /手動 30分/.test(b.before[2].text)
-      && /自動 120分/.test(b.before[2].text) && Number(b.before[2].bold) >= 700,
+      && /自動 60分/.test(b.before[2].text) && Number(b.before[2].bold) >= 700,
     autoNotBold: b.before[0] && Number(b.before[0].bold) < 700,
-    // 合計: 10/1 12h−120=10:00, 10/2 6h−60=5:00, 10/5 12h−30=11:30 → 26:30
-    totalBefore: b.total === "26:30",
-    revertCleared: b.day05 && !("adjustedBreak" in b.day05) && b.after[2] && b.after[2].src === "idle",
-    totalAfterRevert: b.totalAfter === "25:00",
+    // 合計: 10/1 12h−60=11:00, 10/2 6h−60=5:00, 10/5 12h−30=11:30 → 27:30。自動に戻すと 10/5 も 11:00 → 27:00
+    totalBefore: b.total === "27:30",
+    revertCleared: b.day05 && !("adjustedBreak" in b.day05) && b.after[2] && b.after[2].src === "length",
+    totalAfterRevert: b.totalAfter === "27:00",
     noErrors: a.errors.length === 0 && b.errors.length === 0,
   };
   v.allPass = Object.values(v).every(Boolean);

@@ -3591,8 +3591,8 @@ test("項目8 設定キーの無い既存店舗は時間帯方式＝現行挙動
     { status: "work", start: "09:00", end: "20:00" })[0].synthetic, "時間帯方式は実在の帯");
 });
 
-// ===== P3.5a 休憩の中休み方式＋長さ方式のしきい値設定（労務給与_複数法人_実装計画.md §3.9-1・§6 P3.5a）=====
-// 期待値は計画書 §6 P3.5a のテスト欄からの転記。設定値（14:30 等）は店舗設定の例で、コードには無い。
+// ===== P3.5a 長さ方式のしきい値設定（労務給与_複数法人_実装計画.md §3.9-1・§6 P3.5a）=====
+// 期待値は計画書 §6 P3.5a のテスト欄からの転記。中休み（idleBreak）は 2026-10-02 のユーザー指示で機能ごと削除した。
 const brkMin = (st, sh, d = WD) => u.breakMinutesOf(u.getBreaksFor(st, d, "田中", { status: "work", ...sh }));
 const BIND6 = { basis: "binding", tiers: [{ overMin: 360, breakMin: 60, inclusive: true }] };
 const IDLE = { enabled: true, startBy: "14:30", endAfter: "17:00", min: 120, days: "weekday" };
@@ -3616,37 +3616,35 @@ test("P3.5a 設定の無い店舗は従来どおり（17-23 は0分・over6Min �
   assert.deepStrictEqual(u.breakLengthRuleOf({}).tiers.map(t => [t.overMin, t.breakMin, t.inclusive]),
     [[u.LEGAL_DAILY_MIN, 60, false], [u.BREAK_SHORT_TARGET_MIN, 45, false]]);
   assert.strictEqual(u.breakLengthRuleOf({}).basis, "work");
-  // 時間帯方式の店舗も中休みを持たなければ変わらない
   assert.strictEqual(brkMin(BT([{ start: "12:00", end: "13:00" }]), { start: "10:00", end: "22:00" }), 60);
 });
-test("P3.5a 中休み: 優先順は 上書き ＞ 中休み ＞ 長さ ＞ 時間帯", () => {
-  const st = { ...BT([{ start: "12:00", end: "13:00" }]), breakMode: "length", breakLength: BIND6, idleBreak: IDLE };
-  assert.strictEqual(brkMin(st, { start: "10:00", end: "22:00" }), 120, "10-22 平日は中休み120分");
-  assert.strictEqual(brkMin(st, { start: "15:00", end: "23:00" }), 60, "15-23 は中休みに当たらず長さ方式の60分");
-  assert.strictEqual(brkMin(st, { start: "10:00", end: "16:59" }), 60, "退勤が endAfter より前は中休みに当たらない");
-  assert.strictEqual(brkMin(st, { start: "14:30", end: "17:00" }), 120, "境界ちょうど（出勤=startBy・退勤=endAfter）も当たる");
-  assert.strictEqual(brkMin(st, { start: "14:45", end: "22:00" }), 60, "出勤が startBy より後は当たらない");
-  assert.strictEqual(brkMin(st, { start: "10:00", end: "22:00", adjustedBreak: 30 }), 30, "日別の上書きが最優先");
-  assert.strictEqual(brkMin(st, { start: "10:00", end: "22:00" }, "2026-10-03"), 60, "土曜は平日のみの中休みに当たらない");
-  assert.strictEqual(brkMin({ ...st, idleBreak: { ...IDLE, days: "all" } }, { start: "10:00", end: "22:00" }, "2026-10-03"), 120, "毎日なら土曜も当たる");
-  assert.strictEqual(brkMin({ ...st, idleBreak: { ...IDLE, days: "none" } }, { start: "10:00", end: "22:00" }), 60, "どの日にも付けない");
-  assert.strictEqual(brkMin({ ...st, idleBreak: { ...IDLE, enabled: false } }, { start: "10:00", end: "22:00" }), 60, "無効なら長さ方式");
-  // 時間帯方式の店舗でも中休みが帯より先に効く
-  const band = { ...BT([{ start: "12:00", end: "13:00" }]), idleBreak: IDLE };
-  assert.strictEqual(brkMin(band, { start: "10:00", end: "22:00" }), 120);
-  // 片側セルには付けない（他の方式と同じ）
-  assert.deepStrictEqual(u.getBreaksFor(band, WD, "田中", { status: "work", start: "10:00" }), []);
-  // 合成の帯（ヒートマップは時刻として読まない）
-  assert.strictEqual(u.getBreaksFor(band, WD, "田中", { status: "work", start: "10:00", end: "22:00" })[0].synthetic, true);
-});
-test("P3.5a 休憩の出どころ（自動＝中休み／長さ／時間帯・手動＝上書き）と「自動に戻す」の値", () => {
-  const st = { ...BT([]), breakMode: "length", breakLength: BIND6, idleBreak: IDLE };
-  const d = sh => u.breakDecisionOf(st, WD, "田中", { status: "work", ...sh });
-  assert.deepStrictEqual(d({ start: "10:00", end: "22:00" }), { source: "idle", min: 120, autoMin: 120, autoSource: "idle" });
-  assert.deepStrictEqual(d({ start: "15:00", end: "23:00" }), { source: "length", min: 60, autoMin: 60, autoSource: "length" });
-  assert.deepStrictEqual(d({ start: "10:00", end: "22:00", adjustedBreak: 45 }), { source: "manual", min: 45, autoMin: 120, autoSource: "idle" });
+test("中休みの削除（2026-10-02）: 店舗データに idleBreak が残っていても読まず、優先順は 上書き ＞ 長さ ＞ 時間帯", () => {
+  // 本番の NITO 店舗の値（14:30以前出勤・17:00以降退勤・120分）を残したまま計算する
+  const left = { enabled: true, startBy: "14:30", endAfter: "17:00", min: 120, days: "all" };
+  const len = { ...BT([{ start: "15:00", end: "17:00" }]), breakMode: "length", breakLength: BIND6, idleBreak: left };
+  assert.strictEqual(brkMin(len, { start: "10:00", end: "22:00" }), 60, "長さ方式の通し勤務は長さ方式の60分（以前は中休み120分）");
+  assert.strictEqual(brkMin(len, { start: "10:00", end: "17:00" }), 60, "10-17 も60分");
+  assert.strictEqual(brkMin(len, { start: "10:00", end: "22:00", adjustedBreak: 30 }), 30, "日別の上書きが最優先");
+  const band = { ...BT([{ start: "15:00", end: "17:00" }]), idleBreak: left };
+  assert.strictEqual(brkMin(band, { start: "10:00", end: "23:00" }), 120, "時間帯方式は休憩帯 15-17 をまたぐ日に120分");
+  assert.strictEqual(brkMin(band, { start: "10:00", end: "17:00" }), 0, "休憩の後に勤務が無い日（退勤＝休憩の終わり）は当たらない");
+  assert.strictEqual(brkMin(band, { start: "17:00", end: "23:00" }), 0, "休憩の前に勤務が無い日も当たらない");
+  assert.ok(!u.getBreaksFor(band, WD, "田中", { status: "work", start: "10:00", end: "23:00" }).some(b => b.synthetic), "時間帯方式は位置つきの帯（合成の帯ではない）");
+  // 出どころに中休みは無い
+  const d = sh => u.breakDecisionOf(len, WD, "田中", { status: "work", ...sh });
+  assert.deepStrictEqual(d({ start: "10:00", end: "22:00" }), { source: "length", min: 60, autoMin: 60, autoSource: "length" });
+  assert.deepStrictEqual(d({ start: "10:00", end: "22:00", adjustedBreak: 45 }), { source: "manual", min: 45, autoMin: 60, autoSource: "length" });
   assert.strictEqual(d({ start: "10:00", end: "22:00", adjustedBreak: 0 }).source, "manual", "0 も手動（休憩なし）");
   assert.strictEqual(u.breakDecisionOf(BT([]), WD, "田中", { status: "work", start: "10:00", end: "15:00" }).source, "band");
+  // 関数・写しのキー・画面からも消えている（ドリフト検出）
+  assert.strictEqual(u.idleBreakOf, undefined);
+  assert.strictEqual(u.IDLE_BREAK_DAYS, undefined);
+  assert.ok(!u.PERIOD_SNAPSHOT_SETTING_KEYS.includes("idleBreak"), "写しに中休みを焼かない");
+  const fs = require("node:fs"), path = require("node:path");
+  ["app-utils.js", "app-admin.js", "app-company.js", "app-shift.js", "app-main.js", "app-staff.js", "app-core.js"].forEach(f => {
+    const src = fs.readFileSync(path.join(__dirname, "..", f), "utf8");
+    assert.ok(!/idleBreakOf|_idleBreakMin|IDLE_BREAK|data-idle/.test(src), `${f} に中休みの参照が残っている`);
+  });
 });
 test("P3.5a 休憩不足の判定（isBreakShort）は法定の基準のまま", () => {
   // 設定で段を短くしても、法定（実働6h超で45分）を下回れば不足になる
@@ -3654,7 +3652,6 @@ test("P3.5a 休憩不足の判定（isBreakShort）は法定の基準のまま",
   assert.strictEqual(u.isBreakShort({ status: "work", start: "10:00", end: "17:30" }, st, WD, "田中"), true);
   const ok = { ...st, breakLength: BIND6 };
   assert.strictEqual(u.isBreakShort({ status: "work", start: "10:00", end: "17:30" }, ok, WD, "田中"), false);
-  assert.ok(u.PERIOD_SNAPSHOT_SETTING_KEYS.includes("idleBreak"), "確定済み期間は写しの中休みで計算する");
 });
 
 test("項目9 休暇種別: yu=有給・ke=慶弔 がコマンドとして登録され、略称に使えない", () => {

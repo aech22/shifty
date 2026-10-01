@@ -2407,9 +2407,9 @@ if(typeLim.customDays&&typeLim.customHours){customVio=_windowStates(typeLim.cust
                   saveAdj は "" を削除・0 を値として扱う（0 が falsy で消えないようにしてある）。 */}
               {isPremium&&<td style={{padding:"9px 12px",borderBottom:"1px solid var(--c-border)"}}>
                 {iw?<div>
-                  {/* 自動＝灰色（中休み・長さ方式・時間帯方式のどれで決まったか）／手動＝太字。「自動に戻す」は上書きを消す（P3.5a） */}
+                  {/* 自動＝灰色（長さ方式・時間帯方式のどちらで決まったか）／手動＝太字。「自動に戻す」は上書きを消す（P3.5a） */}
                   {(()=>{const bd=breakDecisionOf(detAttrSettings,ds,det.staffName,s);const fm=m=>m>0?`${m}分`:"なし";
-                    const SRC={idle:"中休み",length:"長さ",band:"時間帯"};
+                    const SRC={length:"長さ",band:"時間帯"};
                     if(bd.source==="manual")return(<div data-break-src="manual" style={{fontSize:11}}>
                       <span style={{fontWeight:700,color:"var(--c-text)"}}>手動 {fm(bd.min)}</span>
                       <span style={{color:"var(--c-text4)",marginLeft:4}}>（自動 {fm(bd.autoMin)}）</span>

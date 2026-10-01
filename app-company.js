@@ -2554,9 +2554,6 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       const saveLen=(k,v)=>saveLenAll({...rawLen,...L,[k]:v});
       const saveTiers=list=>{const n={...rawLen};if(list&&list.length)n.tiers=list;else delete n.tiers;saveLenAll(n);};
       const setTier=(i,patch)=>saveTiers(rawTiers.map((t,j)=>j===i?{overMin:0,breakMin:0,inclusive:false,...t,...patch}:t));
-      const ib=idleBreakOf(settings);
-      const saveIdle=patch=>onSave({...settings,idleBreak:{...ib,...patch}});
-      const TOPT=["",...TO];
       const numIn=(val,onCh,max,w=60)=>(<input type="number" min={0} max={max} value={val} placeholder="0"
         onChange={e=>onCh(Math.max(0,Math.min(max,parseInt(e.target.value)||0)))}
         style={{...AI,width:w,textAlign:"center",padding:"5px 6px"}}/>);
@@ -2610,35 +2607,6 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             style={{width:"100%",padding:"6px",background:"transparent",border:"1px dashed var(--c-border2)",borderRadius:8,color:"var(--c-text3)",fontSize:12,cursor:"pointer",marginTop:4}}>
             ＋ 段を自分で決める{rule.custom?"（段を追加）":"（上の2段の代わりに使います）"}</button>}
         </div>}
-        <div data-idle-break style={{...SUB,marginTop:12}}>
-          <label style={{display:"flex",gap:8,alignItems:"center",cursor:"pointer",marginBottom:ib.enabled?8:0}}>
-            <input type="checkbox" checked={ib.enabled} onChange={e=>saveIdle({enabled:e.target.checked})} style={{width:18,height:18}}/>
-            <span style={{fontSize:13,fontWeight:700,color:"var(--c-text)"}}>中休み（通し勤務の日に決まった分を引く）</span>
-          </label>
-          {ib.enabled&&<>
-            <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center",marginBottom:6}}>
-              <span style={LB}>出勤が</span>
-              <select data-idle="startBy" value={ib.startBy} onChange={e=>saveIdle({startBy:e.target.value})} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
-                {TOPT.map(t=><option key={t||"none"} value={t}>{t||"未設定"}</option>)}
-              </select>
-              <span style={LB}>以前、かつ退勤が</span>
-              <select data-idle="endAfter" value={ib.endAfter} onChange={e=>saveIdle({endAfter:e.target.value})} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
-                {TOPT.map(t=><option key={t||"none"} value={t}>{t||"未設定"}</option>)}
-              </select>
-              <span style={LB}>以降の日</span>
-            </div>
-            <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-              <span style={LB}>休憩</span>
-              {numIn(ib.min||"",v=>saveIdle({min:v}),480,64)}<span style={UN}>分</span>
-              <span style={LB}>対象日</span>
-              <select data-idle="days" value={ib.days} onChange={e=>saveIdle({days:e.target.value})} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
-                {IDLE_BREAK_DAYS.map(d=><option key={d} value={d}>{IDLE_BREAK_DAY_LABELS[d]}</option>)}
-              </select>
-            </div>
-            {(!ib.startBy||!ib.endAfter||!(ib.min>0))&&<div style={{fontSize:11,color:"#B8860B",marginTop:6}}>時刻と分を入れるまで中休みは効きません。</div>}
-          </>}
-          <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>当たる日は上の方式より中休みが優先します（日ごとの上書きがあればそちらが最優先）。</div>
-        </div>
         <div style={{fontSize:11,color:"var(--c-text4)",marginTop:10}}>どの方式でも「実働6時間超なのに休憩が足りない日」はシフト作成タブの労務判定に出ます。日ごとの例外は提出一覧の詳細から変更できます。</div>
       </AC>);
     })()}
