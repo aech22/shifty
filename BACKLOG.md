@@ -54,6 +54,10 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ## 🟡 労務・給与と複数法人: 法人レイヤー（P1）の Cloud Functions の本番反映と実データ確認（全フェーズ完了後に1回）
 
+> **✅ 2026-10-01 確認: ルール・Cloud Functions の本番反映は済んでいる。** 主セッションが本番（ontheshift）のセキュリティルールを
+> ローカルの `database.rules.json` とバイト照合して完全一致（8437 bytes）、`firebase functions:list` で32関数の稼働を確認した。
+> 下のチェックのうち「ルール」「CF」の反映と順序の項目は完了扱いで、**残りは実データでの確認だけ**（未チェックのまま残す）。
+
 **目的**: P1（2026-09-30・develop `6074b26`〜）の CF は **本番に未デプロイ**。dev は Spark で CF をデプロイできないため、
 CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋関数）とスタブ Firebase の実ブラウザ回帰
 （`example-company-entities.js`）でしか確かめていない。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
@@ -75,6 +79,10 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 
 ## 🟡 労務・給与と複数法人: 人物ID（P1b）の Cloud Functions の本番反映と実データ確認（全フェーズ完了後に1回）
 
+> **✅ 2026-10-01 確認: ルール・Cloud Functions の本番反映は済んでいる。** 主セッションが本番（ontheshift）のセキュリティルールを
+> ローカルの `database.rules.json` とバイト照合して完全一致（8437 bytes）、`firebase functions:list` で32関数の稼働を確認した。
+> 下のチェックのうち「ルール」「CF」の反映と順序の項目は完了扱いで、**残りは実データでの確認だけ**（未チェックのまま残す）。
+
 **目的**: P1b（2026-09-30・develop `a52a405`〜）の CF は **本番に未デプロイ**。dev は Spark で CF をデプロイできないため、
 中身は `tests/core.test.js`（`functions/company-config.js` の純粋関数とクライアントとの一致）とスタブ Firebase の実ブラウザ回帰
 （`example-company-people.js`）でしか確かめていない。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
@@ -93,6 +101,10 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 
 ## 🟡 労務・給与と複数法人: ヘルプ先勤務の合算（P3.6）の Cloud Functions の本番反映と実データ確認（全フェーズ完了後に1回）
 
+> **✅ 2026-10-01 確認: ルール・Cloud Functions の本番反映は済んでいる。** 主セッションが本番（ontheshift）のセキュリティルールを
+> ローカルの `database.rules.json` とバイト照合して完全一致（8437 bytes）、`firebase functions:list` で32関数の稼働を確認した。
+> 下のチェックのうち「ルール」「CF」の反映と順序の項目は完了扱いで、**残りは実データでの確認だけ**（未チェックのまま残す）。
+
 **目的**: P3.6（2026-09-30・develop `a892d85`〜）は写し `shops/{sid}/company` に `people`・`shopEntities` を焼くよう CF を変えた。**本番に未デプロイ**。
 中身は `tests/core.test.js`（`buildShopMirror`・`mirrorPeopleOf`）とスタブの実ブラウザ回帰（`example-helper-aggregate.js`・`example-company-dup-candidates.js`）でしか確かめていない。
 **反映が要るもの**:
@@ -110,6 +122,10 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 
 ## 🟡 労務・給与と複数法人: 実績（P4）のルール・CF の本番反映と実データ確認（全フェーズ完了後に1回）
 
+> **✅ 2026-10-01 確認: ルール・Cloud Functions の本番反映は済んでいる。** 主セッションが本番（ontheshift）のセキュリティルールを
+> ローカルの `database.rules.json` とバイト照合して完全一致（8437 bytes）、`firebase functions:list` で32関数の稼働を確認した。
+> 下のチェックのうち「ルール」「CF」の反映と順序の項目は完了扱いで、**残りは実データでの確認だけ**（未チェックのまま残す）。
+
 **目的**: P4（2026-09-30・develop `7520a55`〜`564ae08`）は新ノード `shops/{sid}/actuals` を足した。ルールは dev にだけ反映する（反映と REST 実測は
 `probe-rules-actuals.js`）。CF の変更（`companyRenameStaff` が actuals を移す・`purgeOldPeriods` が actuals/{期間ID} を消す）は本番に未デプロイ。
 **反映が要るもの**:
@@ -123,6 +139,10 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 ---
 
 ## 🟡 労務・給与と複数法人: 賃金マスタ（P6a）のルール・CF の本番反映と実データ確認（全フェーズ完了後に1回）
+
+> **✅ 2026-10-01 確認: ルール・Cloud Functions の本番反映は済んでいる。** 主セッションが本番（ontheshift）のセキュリティルールを
+> ローカルの `database.rules.json` とバイト照合して完全一致（8437 bytes）、`firebase functions:list` で32関数の稼働を確認した。
+> 下のチェックのうち「ルール」「CF」の反映と順序の項目は完了扱いで、**残りは実データでの確認だけ**（未チェックのまま残す）。
 
 **目的**: P6a（2026-09-30・develop `65f7a49`〜`374e914`）はルールを dev にだけ反映し、CF は本番に未デプロイ。
 ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
@@ -143,6 +163,10 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 
 ## 🟡 労務・給与と複数法人: 月次賃金（P6b）の CF 本番反映と実データ確認（全フェーズ完了後に1回）
 
+> **✅ 2026-10-01 確認: ルール・Cloud Functions の本番反映は済んでいる。** 主セッションが本番（ontheshift）のセキュリティルールを
+> ローカルの `database.rules.json` とバイト照合して完全一致（8437 bytes）、`firebase functions:list` で32関数の稼働を確認した。
+> 下のチェックのうち「ルール」「CF」の反映と順序の項目は完了扱いで、**残りは実データでの確認だけ**（未チェックのまま残す）。
+
 **目的**: P6b（2026-09-30・develop `8d0cff1`〜）は法人の賃金設定に割増率（`premiumRates`）と端数規則（`roundingRule`）を足し、
 CF の `sanitizeWageSettings`（functions/company-config.js）を同じ規則に広げた。**本番に未デプロイ**。ルール・データ移行は無し。
 **反映が要るもの**:
@@ -159,6 +183,10 @@ CF の `sanitizeWageSettings`（functions/company-config.js）を同じ規則に
 
 ## 🟡 労務・給与と複数法人: 所定・確定ロック（P3）のルール・CF の本番反映と実データ確認（全フェーズ完了後に1回）
 
+> **✅ 2026-10-01 確認: ルール・Cloud Functions の本番反映は済んでいる。** 主セッションが本番（ontheshift）のセキュリティルールを
+> ローカルの `database.rules.json` とバイト照合して完全一致（8437 bytes）、`firebase functions:list` で32関数の稼働を確認した。
+> 下のチェックのうち「ルール」「CF」の反映と順序の項目は完了扱いで、**残りは実データでの確認だけ**（未チェックのまま残す）。
+
 **目的**: P3（2026-09-30・develop `96458b6`〜）は本番に未反映。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
 **反映が要るもの**:
 - [ ] ルール（2つ・性質が違う）: ①新ノード `shops/*/laborMonths`（読み書きともオーナー）＝**ルールが先**（無いとクライアントの所定の保存・購読が拒否される）。
@@ -173,6 +201,10 @@ CF の `sanitizeWageSettings`（functions/company-config.js）を同じ規則に
 ---
 
 ## 🟡 労務・給与と複数法人: 店舗別ルール4件（P3.5）の CF 本番反映（全フェーズ完了後に1回）
+
+> **✅ 2026-10-01 確認: ルール・Cloud Functions の本番反映は済んでいる。** 主セッションが本番（ontheshift）のセキュリティルールを
+> ローカルの `database.rules.json` とバイト照合して完全一致（8437 bytes）、`firebase functions:list` で32関数の稼働を確認した。
+> 下のチェックのうち「ルール」「CF」の反映と順序の項目は完了扱いで、**残りは実データでの確認だけ**（未チェックのまま残す）。
 
 **目的**: P3.5（2026-09-30・develop `f97cb72`〜`a921796`）は本番に未反映。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
 **反映が要るもの**:
@@ -1705,6 +1737,16 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 管理者からの変更依頼4件（2026-10-01・同日本番リリース）
+
+- **賃金パスコードの注意文の削除**: 「初期パスコードのままです。変更してください」を出さない（`PayCodeBox`）
+- **企業内登録スタッフでもパスコードを変更できる**: 上部の箱に「変更」（現在の番号 → 新しい番号2回・CF `setCompanyPayCode`）。
+  ユーザーの「企業連携タブのパスコードは入力のみで変更できない」は、この箱のことと判断した（企業アカウントのカードには元から変更ボタンがある）
+- **労務判定を法人の設定に統合**（ユーザー決定）: 企業の共通設定から労務判定の欄を外し、既存の企業の値は法人カードの読み込みで1回だけ
+  各法人へ移す（`planLaborToEntities`・写しは前後で同じ）。属性別の勤務時間制限は企業の共通設定に残す
+- **特定技能の週の公休**: 属性名に「特定技能」を含む人は週1回の公休、月をまたぐ週は月末側・月初側に各1回。違反は労務の確認と週の休み表（赤）に出る
+- 置いた前提は CLAUDE.md の「法人レイヤー」「特定技能の週の公休」の節。再着手条件: 特定技能の判定を属性名ではなく明示のフラグにしたくなったとき（`isSkilledWorkerAttr` だけを直す）
 
 ### ✅ 🟡 労務・給与と複数法人 P7: 企業横断ダッシュボード（2026-09-30 develop 完了・`eca6959`〜`2c3bffb`／ルールと CF の変更なし）
 

@@ -248,6 +248,8 @@ LEAVE_TYPES / leaveTypeOf / dayRestKindOf / weekRestStateOf
                            // 休暇種別（公休/有給/慶弔）と週の休み3状態（S-5）＝`休n`／`×休なし`／
                            // `＋休n`（7日揃わない週。2026-09-26 に「要確認」から変更）。**導入前の終日の
                            // 休み希望（旧 y。leaveType なし）は公休として扱う**（データ移行はしない）
+SKILLED_WORKER_ATTR_KEYWORD / isSkilledWorkerAttr / skilledWeekRestStateOf / isSkilledWeekRestShort / skilledWeekSidesLabel
+                           // 特定技能の週の公休（2026-10-01）。詳細は「特定技能の週の公休」の節。対象の判定は isSkilledWorkerAttr 1本
 fiscalYearOf / fiscalYearStartMonthOf / yearLaborSummary / paidLeaveRemaining
                            // 年度（既定4月開始・設定で暦年にできる）の累計と有給残。累計は
                            // **period.laborTotals（凍結時点の値）を優先**するので過去参照が要らない
@@ -275,7 +277,8 @@ homeShopOf / isHelperAt / dupTargetShopsFor
 personIndexOfMirror / samePersonRegistrations / personHomeShopOf / helperPersonOf / helperShopSettingsOn / helperWorkOn
 otherShopDataOf / helperShopsOf / helperScheduleContext / duplicatePersonCandidates
                            // ヘルプ先勤務の所属店舗への合算（2026-09-30・P3.6）。詳細は「企業アカウント」の P3.6 の節
-COMPANY_ENTITY_ID_RE / COMPANY_SHOP_KINDS / companyEntityIdOfShop / companyShopKindOf / companyEntityList
+COMPANY_ENTITY_ID_RE / COMPANY_SHOP_KINDS / companyEntityIdOfShop / companyShopKindOf / companyEntityList / planLaborToEntities
+                           // planLaborToEntities（2026-10-01）は労務判定を企業の共通設定から法人の設定へ移す計画（「法人レイヤー」の節）
                            // 法人レイヤー（2026-09-30・P1）。店舗の法人（割当が無い・消えた法人を指すなら既定の法人）と本部の種別。
                            // CF 側の entityIdOfShop / shopKindOf（functions/company-config.js）と同じ規則で、tests/core.test.js が照合する。
                            // buildCompanyStaffRows は店舗に entityId・kind・coSettings（写しの settings）を持たせると、
@@ -468,11 +471,11 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `CandTab` | app-admin.js | 候補時間・休業日・休憩管理 |
 | `SubsTab` | app-admin.js | 提出一覧・セル編集・変更履歴 |
 | `CompanyTab` | app-company.js | 企業連携。カードの並びは シフトの提出状況 → 企業内登録スタッフ → 企業横断ダッシュボード → 企業アカウント → 連携店舗 → 法人 → 企業の共通設定（2026-09-28・法人とダッシュボードは 2026-09-30） |
-| `CompanyEntityCard / EntityFilter / CoLaborFields` | app-company.js | 法人（2026-09-30・P1）。法人の追加・改名・法人の労務設定・店舗の法人と種別（店舗／本部）を CF（App の `callCompanyCF`）で書く。法人の無い企業ではカードが `ensureCompanyEntities` を1回呼んで移行する。`EntityFilter` は法人が2つ以上のときだけ出る絞り込み（提出状況・企業内登録スタッフ）。`CoLaborFields` は企業の共通設定と法人の設定が共有する労務判定の入力欄 |
+| `CompanyEntityCard / EntityFilter / CoLaborFields` | app-company.js | 法人（2026-09-30・P1）。法人の追加・改名・法人の労務設定・店舗の法人と種別（店舗／本部）を CF（App の `callCompanyCF`）で書く。法人の無い企業ではカードが `ensureCompanyEntities` を1回呼んで移行する。`EntityFilter` は法人が2つ以上のときだけ出る絞り込み（提出状況・企業内登録スタッフ）。`CoLaborFields` は法人の設定の労務判定の入力欄（2026-10-01 に企業の共通設定からは外した。空欄＝店舗の設定） |
 | `CompanyStaffCard / CompanyStaffDirectory` | app-company.js | 企業内登録スタッフ（2026-09-28・Premium）。カードの「一覧を開く」で AdminView の `fullPage` が管理者画面の中身を差し替える（新しいブラウザタブは使わない＝実ログインは永続化しないため）。従業員番号順（既定）／店舗別・番号と名前で検索。載せるのは店舗依存でない情報（番号・属性・所属店舗・有給の付与と残）だけ。計算は `buildCompanyStaffRows`（有給は所属店舗の `laborTotals` だけ・subs は読まない・凍結値の無い期間があれば残に「＋」）。**数字だけの同じ従業員番号は1行にまとめ**（2026-09-29）、名前は空白を除いて最も長い表記＝フルネームに寄せ、所属店舗は全部並べる。フルネームに含まれない別の名前（番号が同じなのに名前が食い違う）は「別の登録名」として残す。店舗タブの「呼び出す」（`mergeStaffMatches`）は名前でまとめるので、こちらの規則とは別。上部の並びは「従業員番号順」「店舗別」「パスコード」（2026-09-30・P6a）で、「賃金」列は企業のパスコードで解除するまで「••••」。**行は人物ID（P1b）で束ね**、開いたときに未リンクの登録があれば CF `ensureCompanyPeople` を1回呼ぶ。「編集」は右端の列（2026-09-30 に一度名前の右へ移したが、ユーザー指示で右端へ戻した。375px では表の枠の中で横スクロールする＝承知のうえ）。PC で表が横スクロールしないよう、一覧の外枠は `maxWidth:1280`（ヘッダーと本文の2か所を同じ値。900 だと長いフルネーム・別の登録名・賃金列で横スクロールした・回帰 `pcNoScroll`）。番号の前のチェックで2人を選んで「同一人物として統合」。別法人と番号が重なる行には「番号 X は◯◯法人でも使われています」。**先頭に「重複候補」**（同じ名前が2店舗以上にあって人物が別・`duplicatePersonCandidates`・P3.6）を出し「統合」で統合モーダルを開く。同名の別人（外国人スタッフの略称・スポットワークの登録名など）は「統合しない」で別人と記録し、候補に出さない（取消は「編集」の「統合しない相手」の「取消」）。2店舗以上に登録があって所属店舗が明示されていない行と候補の側に「所属店舗を設定してください」（ヘルプ先の勤務の合算先が決まらないため） |
 | `CompanyPersonEditModal / CompanyPersonMergeModal` | app-company.js | 企業内登録スタッフの編集（2026-09-30・P1b）。名前の変更（店舗ごとにチェック・CF `companyRenameStaff`。**いまの登録名が新しい名前と同じ店舗は送らない**＝CF は1店舗でも「名前が変わっていません」なら全体を拒否するため・2026-10-01 に本番で実害）・番号/法人/属性/所属店舗（`companyUpdateStaff`・属性と所属店舗はつながっている全店舗に同じ値）・統合の解除（店舗ごとに「切り出す」＝`splitPerson`）・「ID を番号に振り直す」（`reassignPersonId`・番号が数字だけで ID と違うときだけ）。統合は残す方（番号・法人・所属）を選ぶ（`mergePeople`）。編集・統合モーダルの結果（拒否の「✕ 理由」）は**モーダルの中**に出す（`CompanyModalMsg`。一覧の帯はモーダルの覆いの下で見えない）。結果は一覧の上に出す（全画面なので AdminView のトーストは出ない） |
 | `StaffPayPage` | app-company.js | 賃金設定ページ（2026-09-30・P6a・Premium・オーナー）。スタッフタブ → 編集 → 「賃金設定を開く →」で AdminView の `fullPage={kind:"staffPay",name}` が管理者画面を差し替える（`CompanyStaffDirectory` と同じ方式）。「← 戻る」で編集モーダルを開き直す（`returnEdit` → StaffTab の `initialEditKey`）。**所属店舗のスタッフだけ**編集でき、ヘルプの人は編集モーダルで「賃金は所属店舗（◯◯）で設定します」。保存先は `shops/{sid}/private/pay/{名前}`（`applyPayRevision` を通す） |
-| `PayCodeBox / PayCodeChangeModal / PAY_OFF` | app-company.js | 賃金の閲覧パスコード（P6a）。ボックスはスタッフタブの「スタッフ登録」の横・`StaffPayPage` の上部・企業内登録スタッフの上部（従業員番号順・店舗別の次）。解除前は金額を「••••」にして編集させない（時間と最賃の可否は伏せない）。`PAY_OFF` は pay を持たない呼び出し元の既定値 |
+| `PayCodeBox / PayCodeChangeModal / PAY_OFF` | app-company.js | 賃金の閲覧パスコード（P6a）。ボックスはスタッフタブの「スタッフ登録」の横・`StaffPayPage` の上部・企業内登録スタッフの上部（従業員番号順・店舗別の次）。「初期パスコードのままです」の注意は 2026-10-01 のユーザー指示で出さない。変更は「現在の番号 → 新しい番号を2回」で、失敗の理由はモーダルの中にも出す（全画面の企業内登録スタッフではトーストが見えないため）。企業内登録スタッフの箱にも「変更」がある（2026-10-01・企業アカウントのカードと同じ `companyPayCodeSubmit` で CF `setCompanyPayCode` を呼ぶ）。解除前は金額を「••••」にして編集させない（時間と最賃の可否は伏せない）。`PAY_OFF` は pay を持たない呼び出し元の既定値 |
 | `PayrollPage` | app-company.js | 月次賃金（2026-09-30・P6b・Premium・オーナー）。AdminView の `fullPage={kind:"payroll",shopId?,shopName?}`。入口はスタッフタブの「スタッフ登録」の横の「月次賃金 →」（自店・`pay.enabled`）と企業連携タブの法人カードの「月次賃金: 店舗 →」（法人 → 店舗）。対象店舗の ShiftEditTab を画面外へマウントし `exportJob.kind="payroll"` で時間を受け取る。人×項目の表と CSV（パスコード解除後だけ） |
 | `CompanyDashboardCard` | app-company.js | 企業横断ダッシュボード（2026-09-30・P7・Premium・企業セッション）。企業連携タブの「企業内登録スタッフ」の下。月と法人を選んで「集計する」→ 連携店舗ごとに ShiftEditTab を画面外へマウントし `exportJob.kind="dashboard"` で人ごとの当月と年の値を受け取る。法人→店舗（確定・交付の進捗と件数）→人（開閉）の表と CSV |
 | `SetTab` | app-company.js | 設定（管理コード・属性別制限・退勤延長・Excel・期間単位・テーマ・アカウント連携） |
@@ -709,6 +712,14 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
   法人が決めた項目も写しにキーがあるので、設定タブでは「企業設定」の固定表示になる
 - **移行は片方向**: `syncCompanyMirror` が毎回 `planEntityMigration` を通す（法人が無ければ企業名と同名の法人を作り、割当の無い店舗を既定へ）。
   **既存の `pub/config.settings` は法人へ写さない**（企業共通の層のまま。既定の法人は設定を持たないので写しの settings は移行前後で同じ）
+- **労務判定は法人の設定だけで決める（2026-10-01 ユーザー決定）**。企業の共通設定と法人の設定で同じ労務判定の欄が重複していたので
+  企業の共通設定から外し、企業の共通設定は属性別の勤務時間制限だけになった（法人の設定の労務判定は空欄＝店舗の設定）。
+  既存の企業の `pub/config.settings.laborSettings` は、法人カードの読み込みで1回だけ各法人へ移す（`planLaborToEntities`）:
+  各法人に「企業の値＋法人の値（法人が勝つ）」を `saveEntityConfig` で保存し、全法人が通ってから `saveCompanyConfig` で企業側の
+  laborSettings を外す。重ね合わせ（`mergeEntitySettings`）はキー単位なので写しの値は前後で変わらない（テストで照合）。
+  どの法人にも属さない連携店舗がある・法人が無いときは移さない。失敗したら企業側は消さない（次に開くとやり直す）。
+  企業の共通設定カードの保存は、保存直前に読み直した企業の laborSettings だけを送り直す（移行前の値を消さないため。CF は settings を丸ごと置き換える）。
+  CF・ルールの変更は無い（既存の `saveEntityConfig`・`saveCompanyConfig` だけで行う）
 - `linkStoreToCompany` は別の企業に連携中の店舗を拒否し、`createCompany` はスキップする（`otherCompanyLinksOf`＋相手企業の pub/shops で確認）
 - 本部店舗（`kind:"hq"`）は期間管理タブでスタッフ提出URLを隠し（ボタンで表示可）、企業内登録スタッフで「本部」の見出しに分かれる
 - 検証は `tests/core.test.js`（CF の規則）と `example-company-entities.js`（スタブが company-config.js をそのまま読み込む）。ルールの変更は無い
@@ -722,7 +733,7 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
   またいで残るので、「リロードで伏せ直す」という受け入れ条件と食い違う。値は「どのパスコードで解除したか」（`payCodeIdentity`）で、
   企業連携店舗どうし（同じコード）では解除を持ち越し、別のコードの店舗へ移ると伏せ直す。🔒・リロード・10分無操作で伏せ直す。
   **失敗回数のロック（5回で60秒）だけは sessionStorage（`ss_payCodeLock`）**——メモリだとリロードで待ち時間を回避できるため
-- 企業連携店舗のパスコードは企業のものに統一（CF `setCompanyPayCode`・企業アカウントのカードから変更）。スタッフタブの「変更」は案内だけ。
+- 企業連携店舗のパスコードは企業のものに統一（CF `setCompanyPayCode`・企業アカウントのカードか企業内登録スタッフの上部の「変更」から変更）。スタッフタブの「変更」は案内だけ。
   連携していない店舗はクライアントが `private/payCode` を直接書く（オーナーのルール）
 - 最賃比較は法人設定 `wageSettings.minWage`（P1 の法人設定に P6a で追加。法人カードの「法人の設定」で入力）。登録が無ければ比較を出さない
 - 企業内登録スタッフの「賃金」列は解除後にだけ各所属店舗の `private/pay` を読む（企業のパスコードで解除。店舗の owners に入っている uid だけが読める）
@@ -1332,6 +1343,22 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   属性の変更はモーダルの中から開くので、同じ値だと DOM 順で下に潜って操作できない。
 
 シフト作成タブの表の並びは **週の休み → 労務判定** の順（同日ユーザー指示）。
+
+## 特定技能の週の公休（2026-10-01 ユーザー指示）
+
+特定技能の人は週1回の公休が要り、**週の途中で月をまたぐときは月末側と月初側に各1回（計2回）**要る。
+違反は「⚠ 労務の確認が必要です」に `特定技能の週の公休不足（28〜4）` と出し（総括は要修正）、週の休み表のセルを赤・太字にする。
+
+- **対象**: 属性の表示名に「特定技能」を含む人（`isSkilledWorkerAttr`。企業属性 `co_*` と店舗の独自属性の両方。
+  判定対象外＝laborSystem `none` の人は除く）。**判定の入口はこの1本だけ**——将来、属性に明示のフラグを持たせるときはここを直す。
+  設定タブと企業の共通設定の属性の説明に1行出している（新しい入力欄は無い）
+- **週と公休の数え方は既存の週の休みと同じ**（月曜起算・月で切らない `weeks`、公休＝`dayRestKindOf` の `rest`＝空欄・休み希望・提出の休み・`ko`。
+  有給・慶弔は数えない）。`skilledWeekRestStateOf` が週の7日を年月で分け、月ごとに公休1日以上を求める
+- **データの無い日（nodata）を含む月の側は判定しない**（既存の `＋休n` と同じ扱い）。揃っている側で公休0なら、もう一方が未作成でも違反
+- 表示: またがない週の違反は従来どおり `×休なし`、またぐ週の違反は `×休n`（n は週の公休の合計）。title に `9月側 0日・10月側 1日`。
+  全データPDFは画面と同じ行定義（`weekRestRows`・`laborRows`）なので自動で載る
+- `LABOR_DAY_FIX_KEYS` には入れない（セル色は塗らない）。`OVERALL_FIX_KEYS` には入れる
+- 回帰: `example-skilled-week-rest.js`（画面・PDF・両側に公休がある対照・非特定技能の対照）
 
 ## シフト作成タブの労務の見せ方（2026-09-26 ユーザー指示・リリース後の追加）
 
