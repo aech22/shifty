@@ -22,7 +22,6 @@ const PAY_OFF={enabled:false,loaded:false,map:{},codeRec:null,unlockedFor:()=>fa
 function PayCodeBox({pay,rec,onOpenChange}){
   const[v,setV]=useState("");
   const[msg,setMsg]=useState("");
-  const r=rec===undefined?pay.codeRec:rec;
   const unlocked=pay.unlockedFor(rec);
   const submit=async code=>{
     const res=await pay.unlock(code,rec);
@@ -30,7 +29,6 @@ function PayCodeBox({pay,rec,onOpenChange}){
     if(res.ok){setMsg("");return;}
     setMsg(res.wait?`${res.wait}秒待ってからもう一度入力してください`:`パスコードが違います（あと${res.left}回で60秒待ちになります）`);
   };
-  const isDefault=!isPayCodeRecord(r)||(unlocked&&pay.unlockedDefault);
   return(<div data-pay-code-box="1" style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
     <div style={{display:"flex",alignItems:"center",gap:6}}>
       {unlocked
@@ -42,20 +40,22 @@ function PayCodeBox({pay,rec,onOpenChange}){
       {onOpenChange&&<button onClick={onOpenChange} style={{...AGray,padding:"6px 10px",fontSize:12,whiteSpace:"nowrap"}}>変更</button>}
     </div>
     {msg&&<div style={{fontSize:11,color:"#DC2626"}}>{msg}</div>}
-    {isDefault&&<div style={{fontSize:11,color:"#B45309"}}>初期パスコードのままです。変更してください</div>}
   </div>);
 }
 // パスコードの変更（現在の番号と新しい番号）。onSubmit(cur,next) は {error?} を返す。note があればフォームの代わりに案内だけ出す
 function PayCodeChangeModal({onSubmit,onClose,note,tt}){
   const[cur,setCur]=useState("");const[nx,setNx]=useState("");const[nx2,setNx2]=useState("");const[busy,setBusy]=useState(false);
+  // 失敗はモーダルの中にも出す（企業内登録スタッフは全画面で、トーストや一覧の帯は覆いの下に隠れる）
+  const[err,setErr]=useState("");
+  const fail=t=>{setErr(t);tt&&tt("✕ "+t);};
   const digits=s=>s.replace(/\D/g,"").slice(0,4);
   const inp=(val,set,ph)=><input type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={val} placeholder={ph} onChange={e=>set(digits(e.target.value))} style={{...AI,marginBottom:8,textAlign:"center",letterSpacing:4}}/>;
   const go=async()=>{
-    if(!isValidPayCode(cur)||!isValidPayCode(nx)){tt("✕ パスコードは4桁の数字で入力してください");return;}
-    if(nx!==nx2){tt("✕ 新しいパスコードが一致しません");return;}
-    setBusy(true);const r=await onSubmit(cur,nx);setBusy(false);
-    if(r&&r.error){tt("✕ "+r.error);return;}
-    tt("✓ 賃金の閲覧パスコードを変更しました");onClose();
+    if(!isValidPayCode(cur)||!isValidPayCode(nx)){fail("パスコードは4桁の数字で入力してください");return;}
+    if(nx!==nx2){fail("新しいパスコードが一致しません");return;}
+    setErr("");setBusy(true);const r=await onSubmit(cur,nx);setBusy(false);
+    if(r&&r.error){fail(r.error);return;}
+    tt&&tt("✓ 賃金の閲覧パスコードを変更しました");onClose();
   };
   return(<div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999,padding:16}}>
     <div onClick={e=>e.stopPropagation()} data-pay-code-modal="1" style={{background:"var(--c-card)",borderRadius:12,padding:20,width:"100%",maxWidth:360,boxShadow:"0 8px 32px var(--c-shadow)"}}>
@@ -63,12 +63,20 @@ function PayCodeChangeModal({onSubmit,onClose,note,tt}){
       {note?<div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6,marginBottom:12}}>{note}</div>:<>
         <AL>現在のパスコード（未設定なら 0000）</AL>{inp(cur,setCur,"現在")}
         <AL>新しいパスコード（4桁の数字）</AL>{inp(nx,setNx,"新しい番号")}{inp(nx2,setNx2,"新しい番号（確認）")}
+        {err&&<div data-pay-code-err="1" style={{fontSize:12,color:"#DC2626",marginBottom:8}}>✕ {err}</div>}
         <button disabled={busy} onClick={go} style={{...AB,width:"100%",marginBottom:8,opacity:busy?0.6:1}}>{busy?"変更中...":"変更する"}</button>
       </>}
       <button onClick={onClose} style={{...AGray,width:"100%"}}>閉じる</button>
     </div>
   </div>);
 }
+// 企業のパスコードの変更（CF setCompanyPayCode が連携全店舗へ同期する）。入口は企業アカウントのカードと企業内登録スタッフの上部の2つで、
+// どちらもこの関数を PayCodeChangeModal の onSubmit に渡す（現在の番号の照合は CF がする）
+const companyPayCodeSubmit=onCompanyCall=>async(cur,next)=>{
+  const r=onCompanyCall?await onCompanyCall("setCompanyPayCode",{currentCode:cur,newCode:next}):{error:"企業アカウントがありません"};
+  if(r&&r.error)return r;
+  return (r&&r.failed&&r.failed.length)?{error:`${r.failed.length}店舗への反映に失敗しました。もう一度変更してください`}:{};
+};
 // 賃金設定ページ（スタッフタブ → 編集 → 「賃金設定を開く →」）。管理者画面を丸ごと差し替えて出す（AdminView の fullPage）。
 // 置き場は shops/{この店舗}/private/pay/{名前}。所属店舗でだけ編集できる（ヘルプ先では案内だけ）。
 function StaffPayPage({name,settings,shopId,shopName,homeShopName,companyLink,pay,tt,onBack}){
@@ -799,12 +807,15 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
   const payOn=featureEnabled("pay",{plan});
   const[coCode,setCoCode]=useState(undefined); // undefined=読み込み中 / null=未設定（0000）
   const[wages,setWages]=useState(null);         // {shopId: {名前: レコード} | null(読めない)}
+  // パスコードの変更（上部の箱の「変更」）。変えたら企業のパスコードを読み直す
+  const[coCodeModal,setCoCodeModal]=useState(false);
+  const[coCodeTick,setCoCodeTick]=useState(0);
   useEffect(()=>{
     if(!payOn||!firebaseDB||!companyId){setCoCode(null);return;}
     let c=false;
     firebaseDB.ref(`companies/${companyId}/private/payCode`).once("value").then(x=>{if(!c)setCoCode(x.val()||null);}).catch(()=>{if(!c)setCoCode(null);});
     return()=>{c=true;};
-  },[companyId]);
+  },[companyId,coCodeTick]);
   const wageUnlocked=payOn&&coCode!==undefined&&pay.unlockedFor(coCode);
   useEffect(()=>{
     if(!wageUnlocked||!data||wages)return;
@@ -920,7 +931,7 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10}}>
         {/* 並びは「従業員番号順」「店舗別」「パスコード」の順（決定12）。パスコードは企業のもの */}
         {modeBtn("number","従業員番号順")}{modeBtn("shop","店舗別")}
-        {payOn&&coCode!==undefined&&<PayCodeBox pay={pay} rec={coCode}/>}
+        {payOn&&coCode!==undefined&&<PayCodeBox pay={pay} rec={coCode} onOpenChange={onCompanyCall?()=>setCoCodeModal(true):undefined}/>}
         <EntityFilter ents={ents} value={entityFilter} onChange={setEntityFilter}/>
         <span style={{fontSize:12,color:"var(--c-text3)",marginLeft:"auto"}}>{data?`${shown.length}名`:""}</span>
         <button onClick={()=>setReloadTick(t=>t+1)} style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:12,cursor:"pointer"}}>再読み込み</button>
@@ -991,6 +1002,8 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
       onCall={async(name,payload,okText)=>{const r=await callPeople(name,{personId:editRow.personId,...payload},okText);if(r)setEditRow(null);return r;}}/>}
     {mergeOpen&&pickedRows.length===2&&<CompanyPersonMergeModal rows={pickedRows} ents={ents} busy={busy} msg={msg} onClose={()=>setMergeOpen(false)}
       onMerge={async(keep,drop)=>{const r=await callPeople("mergePeople",{keepPersonId:keep,dropPersonId:drop},"同一人物として統合しました");if(r){setMergeOpen(false);setPicked([]);}}}/>}
+    {coCodeModal&&<PayCodeChangeModal tt={t=>setMsg({ok:t.startsWith("✓"),text:t})} onClose={()=>setCoCodeModal(false)}
+      onSubmit={async(cur,next)=>{const r=await companyPayCodeSubmit(onCompanyCall)(cur,next);if(!(r&&r.error))setCoCodeTick(t=>t+1);return r;}}/>}
   </div>);
 }
 // 企業内登録スタッフの「編集」（P1b・§3.8）。すべて CF 経由（店舗のデータを丸ごと読み込んで書き戻さない）。
@@ -1998,12 +2011,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
             <div style={{marginTop:16}}><AL>賃金の閲覧パスコード（4桁）</AL></div>
             <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:8,lineHeight:1.6}}>連携しているすべての店舗で、この番号を入れるまで賃金が伏せられます。未設定の間は 0000 です。</div>
             <button data-co-pay-code="1" onClick={()=>setCoPayCodeModal(true)} style={{...AGray,width:"100%"}}>賃金の閲覧パスコードを変更する</button>
-            {coPayCodeModal&&<PayCodeChangeModal tt={tt} onClose={()=>setCoPayCodeModal(false)}
-              onSubmit={async(cur,next)=>{
-                const r=onCompanyCall?await onCompanyCall("setCompanyPayCode",{currentCode:cur,newCode:next}):{error:"企業アカウントがありません"};
-                if(r&&r.error)return r;
-                return (r&&r.failed&&r.failed.length)?{error:`${r.failed.length}店舗への反映に失敗しました。もう一度変更してください`}:{};
-              }}/>}
+            {coPayCodeModal&&<PayCodeChangeModal tt={tt} onClose={()=>setCoPayCodeModal(false)} onSubmit={companyPayCodeSubmit(onCompanyCall)}/>}
           </>}
         </div>
       ):(

@@ -1300,7 +1300,7 @@ function App(){
   };
   // 店舗のパスコードの変更（企業に連携していない店舗だけ。連携店舗は企業連携タブ＝CF setCompanyPayCode）
   const changeShopPayCode=async(cur,next)=>{
-    if(companyLinkRef.current)return{error:"企業に連携している店舗のパスコードは、企業連携タブの「企業アカウント」で変更します"};
+    if(companyLinkRef.current)return{error:"企業に連携している店舗のパスコードは、企業連携タブの「企業アカウント」か「企業内登録スタッフ」の上部の「変更」で変更します"};
     if(!isValidPayCode(next))return{error:"新しいパスコードは4桁の数字にしてください"};
     const r=await checkPayCode(cur,payCodeRec);
     if(!r.ok)return{error:r.wait?`${r.wait}秒待ってからもう一度入力してください`:"現在のパスコードが正しくありません"};

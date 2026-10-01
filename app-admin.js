@@ -1511,7 +1511,7 @@ const dragIdxRef=useRef(null);
         </div>}
       </div>
       {payCodeModal&&<PayCodeChangeModal tt={tt} onClose={()=>setPayCodeModal(false)} onSubmit={pay.changeCode}
-        note={companyLinked?"企業に連携している店舗は、企業のパスコードに統一されています。企業連携タブの「企業アカウント」で変更してください。":null}/>}
+        note={companyLinked?"企業に連携している店舗は、企業のパスコードに統一されています。企業連携タブの「企業アカウント」か、「企業内登録スタッフ」の一覧の上部にある「変更」で変更してください。":null}/>}
       <AC title="スタッフ一覧">
         {!isPro&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:8,padding:"7px 10px"}}>
           {`Freeプラン：最大${lim}名まで登録可能（${staffList.filter(n=>!isSpacer(n)).length}/${lim}名）`}
