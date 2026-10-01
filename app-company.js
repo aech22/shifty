@@ -901,16 +901,20 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
     setWages(null);
     return()=>{cancelled=true;};
   },[companyId,reloadTick]);
-  // 法人（2つ以上のときだけ見出し・絞り込み）→ 本部かどうか → 並び順（番号順／店舗別）。
+  // 並びは3つ（2026-10-02 ユーザー指示）: 「従業員番号順」は法人に関係なく番号だけで並べる（見出しなし）。
+  // 「法人別」（法人が2つ以上のときだけ）は法人 → 本部かどうか → 番号。「店舗別」は法人 → 本部かどうか → 店舗 → 番号。
   // 本部の行は各法人の最後に「本部」の見出しでまとめる（2026-09-30・P1）
   const ents=(data&&data.ents)||[];
   const entIdx={};ents.forEach((e,i)=>{entIdx[e.id]=i;});
   const shown=useMemo(()=>{
     if(!data)return[];
+    const grouped=mode!=="number";
     return filterCompanyStaffRows(data.rows,query).filter(r=>!entityFilter||r.entityId===entityFilter).slice().sort((a,b)=>{
-      const ea=entIdx[a.entityId]??99,eb=entIdx[b.entityId]??99;if(ea!==eb)return ea-eb;
-      if(!!a.isHq!==!!b.isHq)return a.isHq?1:-1;
-      return compareCompanyStaffRows(a,b,mode);
+      if(grouped){
+        const ea=entIdx[a.entityId]??99,eb=entIdx[b.entityId]??99;if(ea!==eb)return ea-eb;
+        if(!!a.isHq!==!!b.isHq)return a.isHq?1:-1;
+      }
+      return compareCompanyStaffRows(a,b,mode==="shop"?"shop":"number");
     });
   },[data,query,mode,entityFilter]);
   const multiEnt=ents.length>=2;
@@ -931,6 +935,7 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
   const shopNameOf=id=>((data&&data.shops)||[]).find(x=>x.id===id)?.name||id;
   const pickedRows=picked.map(pid=>(data?data.rows:[]).find(r=>r.personId===pid)).filter(Boolean);
   const sectionOf=r=>{
+    if(mode==="number")return"";
     const en=multiEnt&&!entityFilter?((ents[entIdx[r.entityId]]||{}).name||"法人未設定"):"";
     return r.isHq?(en?en+"・本部":"本部"):en;
   };
@@ -955,8 +960,8 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
     <div style={{maxWidth:1280,margin:"0 auto",padding:"16px 14px 60px"}}>
       <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="従業員番号・名前で検索" style={{...AI,boxSizing:"border-box",marginBottom:10}}/>
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:10}}>
-        {/* 並びは「従業員番号順」「店舗別」「パスコード」の順（決定12）。パスコードは企業のもの */}
-        {modeBtn("number","従業員番号順")}{modeBtn("shop","店舗別")}
+        {/* 並びは「従業員番号順」「法人別」「店舗別」「パスコード」の順（決定12・法人別は 2026-10-02）。パスコードは企業のもの */}
+        {modeBtn("number","従業員番号順")}{multiEnt&&modeBtn("entity","法人別")}{modeBtn("shop","店舗別")}
         {payOn&&coCode!==undefined&&<PayCodeBox pay={pay} rec={coCode} onOpenChange={onCompanyCall?()=>setCoCodeModal(true):undefined}/>}
         <EntityFilter ents={ents} value={entityFilter} onChange={setEntityFilter}/>
         <span style={{fontSize:12,color:"var(--c-text3)",marginLeft:"auto"}}>{data?`${shown.length}名`:""}</span>

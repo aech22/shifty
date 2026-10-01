@@ -13,7 +13,8 @@
 //     - 種別を「本部」にすると pub/shopKinds と写しの kind が hq になる
 //     - 法人の設定（固定残業）はその法人の店舗の写しにだけ焼かれる
 //     - 提出状況に法人の絞り込みと法人の見出しが出て、絞ると他法人の店舗が消える
-//     - 企業内登録スタッフで別法人の同じ従業員番号は別行、本部の所属は「本部」の見出し
+//     - 企業内登録スタッフで別法人の同じ従業員番号は別行。既定の「従業員番号順」は法人に関係なく番号だけで並び見出しが無い。
+//       「法人別」（法人が2つ以上のときだけ出る）で法人の見出しと、本部の所属は「本部」の見出しが出る（2026-10-02）
 //  C. 法人の設定が効いている店舗の設定タブで、その項目が「企業設定」の固定表示になる
 //  D. 本部店舗の期間管理タブでスタッフ提出URLが出ず、「URLを表示」で出せる
 //  F. 労務判定の法人への統合（2026-10-01）: 企業の共通設定に laborSettings がある企業で企業連携タブを開くと、
@@ -134,7 +135,13 @@ const waitText = (h, t, ms = 15000) => h.page.waitForFunction(x => document.body
     await h.clickExact("一覧を開く");
     await h.page.waitForFunction(() => !!document.querySelector("table tbody tr td") && !document.body.innerText.includes("読み込み中..."), { timeout: 10000 });
     await h.page.waitForTimeout(300);
+    const nums = () => h.evaluate(() => [...document.querySelectorAll("tr[data-co-person]")].map(tr => tr.querySelector("td").innerText.trim().split("\n")[0]));
+    R.dirModes = await h.evaluate(() => [...document.querySelectorAll("button")].map(b => b.innerText.trim()).filter(t => ["従業員番号順", "法人別", "店舗別"].includes(t)));
+    R.dirSectionsNumber = await h.evaluate(() => [...document.querySelectorAll("[data-co-section]")].map(x => x.getAttribute("data-co-section")));
+    R.dirNumsNumber = await nums();
+    await h.clickExact("法人別"); await h.page.waitForTimeout(300);
     R.dirSections = await h.evaluate(() => [...document.querySelectorAll("[data-co-section]")].map(x => x.getAttribute("data-co-section")));
+    R.dirNumsEntity = await nums();
     // セルの1行目だけを読む（番号のセルには別法人との重なりの注記が2行目に付く・P1b）
     R.dir12 = await h.evaluate(() => [...document.querySelectorAll("table tbody tr")].map(tr => [...tr.querySelectorAll("td")].map(td => td.innerText.trim().split("\n")[0])).filter(r => r[0] === "12").map(r => r[1]));
     R.dirFilter = await h.evaluate(() => document.querySelectorAll("[data-co-entity-filter]").length);
@@ -229,6 +236,12 @@ const waitText = (h, t, ms = 15000) => h.page.waitForFunction(x => document.body
     subsHqBadge: /本部/.test(R.subsHqBadge || ""),
     dirSameNumberOtherEntity: JSON.stringify((R.dir12 || []).slice().sort()) === JSON.stringify(["田中", "田中 次郎"]),
     dirSections: JSON.stringify(R.dirSections) === JSON.stringify(["テスト企業", "テスト企業・本部", "乙法人"]),
+    dirModes: JSON.stringify(R.dirModes) === JSON.stringify(["従業員番号順", "法人別", "店舗別"]),
+    // 従業員番号順は見出しが無く、番号の並びが法人をまたいで単調（＝法人別と同じ行の集合を番号だけで並べ直したもの）
+    dirNumberIgnoresEntity: Array.isArray(R.dirSectionsNumber) && R.dirSectionsNumber.length === 0 && Array.isArray(R.dirNumsNumber) && Array.isArray(R.dirNumsEntity)
+      && R.dirNumsNumber.length === R.dirNumsEntity.length && JSON.stringify([...R.dirNumsNumber].sort()) === JSON.stringify([...R.dirNumsEntity].sort())
+      && JSON.stringify(R.dirNumsNumber) !== JSON.stringify(R.dirNumsEntity)
+      && R.dirNumsNumber.indexOf("12") >= 0 && R.dirNumsNumber[R.dirNumsNumber.indexOf("12") + 1] === "12",
     dirFilter: R.dirFilter === 1,
     settingsNoteShowsEntity: R.setNote === true,
     laborMovedToEntities: !!R.mig && JSON.stringify(R.mig.calls) === JSON.stringify(["saveEntityConfig", "saveEntityConfig", "saveCompanyConfig"])
