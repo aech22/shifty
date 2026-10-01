@@ -74,7 +74,7 @@ async function mismatch() {
   await h.evaluate(() => window.__tab("cand")); await sleep(300);
   await h.evaluate(() => { const b = [...document.querySelectorAll("button")].find(x => x.innerText.trim() === "休憩"); b.click(); }); await sleep(300);
   m.candTab = await txt();
-  m.candNote = await h.evaluate(() => /全属性の休憩（タグなし）だけをヒートマップ/.test(document.body.innerText));
+  m.candNote = await h.evaluate(() => /全属性の休憩（タグなし）は、ヒートマップで人数を外す時間帯にだけ使います/.test(document.body.innerText));
   // 一致させる（平日・土曜とも 15:00〜16:00＝60分）と消える
   await h.evaluate(() => window.__set(s => ({ ...s, breakTimes: { ...s.breakTimes, weekday: [{ start: "15:00", end: "16:00" }], sat: [{ start: "15:00", end: "16:00" }] } }))); await sleep(300);
   m.candAfterMatch = await txt();
@@ -126,7 +126,7 @@ async function detail() {
   const a = await setTab();
   const b = await detail();
   const c = await mismatch();
-  const MSG = "長さ方式の休憩（60分）と候補タブの休憩（平日・土曜 15:00〜17:00＝120分）が違います。";
+  const MSG = "長さ方式の休憩（60分）と候補タブの全属性の休憩（平日・土曜 15:00〜17:00＝120分）が違います。";
   const v = {
     lengthBoxShown: a.lengthBox && a.defaultTwoTier,
     tierSaved: !!(a.breakLength && a.breakLength.basis === "binding" && Array.isArray(a.breakLength.tiers)

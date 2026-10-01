@@ -408,7 +408,11 @@ function getBreaksFor(settings,dateStr,staffName,shift){
   // 中休み（settings.idleBreak・P3.5a）は 2026-10-02 のユーザー指示で機能ごと削除した（休憩は前後に勤務がある時間帯に
   // だけ当たる＝時間帯方式の休憩帯で表せる、という決定）。店舗データに idleBreak が残っていても読まない。
   // ② 長さ方式: 拘束の長さだけで控除を決める（S-3）。片側セルは時間帯方式と同じく非適用。
+  //    ただし候補タブにその人の属性の休憩（属性あり）があり、勤務がそれを丸ごと含む日はそちらを優先する（2026-10-02 ユーザー指示）。
+  //    属性ありの休憩が当たらない日（含まない・その日区分に無い）は長さ方式。全属性の休憩（タグなし）は勤務時間に使わない。
   if(breakModeOf(settings)==="length"){
+    const tagged=_lengthTaggedBreaks(settings,dateStr,staffName,shift);
+    if(tagged.length)return tagged;
     if(!effShiftStart(shift)||!effShiftEnd(shift))return[];
     const r=effShiftRangeMin(shift,settings);
     if(!r)return[];
@@ -446,17 +450,27 @@ function getBreaksFor(settings,dateStr,staffName,shift){
 // ヒートマップが人数から外す休憩（2026-10-02 ユーザー指示）。**勤務時間・休憩の分は getBreaksFor のまま**で、ここは時間帯の位置だけ。
 // 長さ方式は休憩の時間帯が決まらない（getBreaksFor は勤務の先頭に置いた合成の帯を返す）ので、ヒートマップには候補タブの
 // 休憩帯を時間帯方式と同じ規則（属性タグ・勤務が休憩を丸ごと含む日だけ）で当てる。日別の上書き（分だけ）も位置を持たないので同じ。
-// 長さ方式で使うのは**全属性の休憩（タグなし）だけ**（2026-10-02 ユーザー指示）。タグ付きの休憩帯はヒートマップにも使わない。
+// 長さ方式で全属性の休憩（タグなし）を使うのはヒートマップだけ（2026-10-02 ユーザー指示）。
 // 時間帯方式の店舗は getBreaksFor と同じ（従来どおり）。
-function _untaggedBreakTimes(settings){
+// 属性ありの休憩が当たる人（_lengthTaggedBreaks）はその休憩帯で外す（勤務時間と同じ帯・2026-10-02 ユーザー指示）。
+function _filterBreakTimes(settings,keep){
   const bt=(settings&&settings.breakTimes)||{};const out={};
-  Object.keys(bt).forEach(k=>{const l=Array.isArray(bt[k])?bt[k]:Object.values(bt[k]||{});out[k]=l.filter(b=>b&&!(b.tags&&b.tags.length));});
+  Object.keys(bt).forEach(k=>{const l=Array.isArray(bt[k])?bt[k]:Object.values(bt[k]||{});out[k]=l.filter(b=>b&&keep(b));});
   return out;
+}
+function _untaggedBreakTimes(settings){return _filterBreakTimes(settings,b=>!(b.tags&&b.tags.length));}
+// 長さ方式の店舗で、その人の属性の休憩（属性あり）のうち勤務が丸ごと含むもの。時間帯方式と同じ規則（getBreaksFor ③）で選ぶ
+function _lengthTaggedBreaks(settings,dateStr,staffName,shift){
+  const attr=((settings&&settings.staffAttributes)||{})[staffName]||"parttime";
+  const bt=_filterBreakTimes(settings,b=>Array.isArray(b.tags)&&b.tags.includes(attr));
+  return getBreaksFor({...settings,breakMode:"band",breakTimes:bt},dateStr,staffName,shift);
 }
 function heatBreaksFor(settings,dateStr,staffName,shift){
   if(breakModeOf(settings)!=="length")return getBreaksFor(settings,dateStr,staffName,shift);
   if(!shift)return[];
   const sh={...shift};delete sh.adjustedBreak;
+  const tagged=_lengthTaggedBreaks(settings,dateStr,staffName,sh);
+  if(tagged.length)return tagged;
   return getBreaksFor({...settings,breakMode:"band",breakTimes:_untaggedBreakTimes(settings)},dateStr,staffName,sh);
 }
 // 長さ方式の休憩と候補タブの休憩（全属性＝タグなし）の食い違い（2026-10-02 ユーザー指示の確認表示）。
@@ -481,7 +495,7 @@ function lengthBandMismatchText(list){
   // 休憩帯が同じ日区分は1つにまとめる（「平日・土曜・日曜 15:00〜17:00＝120分」）
   const g=[];list.forEach(x=>{const k=x.bands.join("・");const f=g.find(y=>y.k===k);if(f)f.labels.push(x.label);else g.push({k,labels:[x.label],min:x.bandMin});});
   const parts=g.map(y=>`${y.labels.join("・")} ${y.k}＝${y.min}分`).join("、");
-  return`長さ方式の休憩（${list[0].lengthMin}分）と候補タブの休憩（${parts}）が違います。勤務時間と休憩は長さ方式の${list[0].lengthMin}分で計算し、候補タブの休憩はヒートマップで人数を外す時間帯にだけ使います。`;
+  return`長さ方式の休憩（${list[0].lengthMin}分）と候補タブの全属性の休憩（${parts}）が違います。勤務時間と休憩は長さ方式の${list[0].lengthMin}分で計算し（属性ありの休憩が当たる日はその休憩）、全属性の休憩はヒートマップで人数を外す時間帯にだけ使います。`;
 }
 // 退勤延長: shiftの実効終了時刻で ランチ(≤17:00)/ディナー(>17:00) を判定して延長分を返す。
 // 判定には calcNetWorkMinutes / shiftBandInfo と同じ effShiftRangeMin の実効レンジを使う
@@ -1510,7 +1524,8 @@ function breakDecisionOf(settings,dateStr,staffName,shift){
   if(!shift||shift.status!=="work")return{source:null,min:0,autoMin:0};
   const auto={...shift};delete auto.adjustedBreak;
   const autoMin=breakMinutesOf(getBreaksFor(settings,dateStr,staffName,auto));
-  const autoSource=breakModeOf(settings)==="length"?"length":"band";
+  // 長さ方式でも属性ありの休憩が当たる日は時間帯（getBreaksFor ② と同じ判定）
+  const autoSource=breakModeOf(settings)==="length"&&!_lengthTaggedBreaks(settings,dateStr,staffName,auto).length?"length":"band";
   const adj=Number(shift.adjustedBreak);
   // 判定は getBreaksFor の①と同じ式（食い違うと「手動」と出ているのに自動の値で計算される）
   if(Number.isFinite(adj)&&adj>=0)

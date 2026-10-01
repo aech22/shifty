@@ -2095,7 +2095,7 @@ function CandTab({settings,onSave,tt,plan="free",periods=[]}){
         const toggleTag=(dt,i,tagId)=>{const bt={...(settings.breakTimes||{})};bt[dt]=[...(bt[dt]||[])];const cur=bt[dt][i]||{};const tags=[...(cur.tags||[])];const p=tags.indexOf(tagId);if(p>=0)tags.splice(p,1);else tags.push(tagId);const nb={...cur};if(tags.length)nb.tags=tags;else delete nb.tags;bt[dt][i]=nb;onSave({...settings,breakTimes:bt});};
         return(<AC title="休憩時間設定">
         {breakModeOf(settings)==="length"
-          ?<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>この店舗は休憩の決め方が「長さ方式」なので、勤務時間から引く休憩は設定タブの長さ方式の分です。ここで登録した休憩は、全属性の休憩（タグなし）だけをヒートマップで人数を外す時間帯に使います。</div>
+          ?<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>この店舗は休憩の決め方が「長さ方式」なので、勤務時間から引く休憩は設定タブの長さ方式の分です。ただし属性ありの休憩は、その属性の人の勤務が丸ごと含む日に長さ方式より優先して引きます。全属性の休憩（タグなし）は、ヒートマップで人数を外す時間帯にだけ使います。</div>
           :<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>設定した休憩時間は出勤〜退勤から自動的に差し引かれ、純勤務時間として表示されます。</div>}
         {(()=>{const t=lengthBandMismatchText(lengthBandMismatchOf(settings));return t
           ?<div data-break-mismatch style={{marginBottom:10,padding:"8px 10px",borderRadius:8,fontSize:12,lineHeight:1.6,background:"#FEF3C7",color:"#92400E",border:"1px solid #F59E0B"}}>{t}</div>:null;})()}
