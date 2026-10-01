@@ -1439,21 +1439,23 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
   // 週の休み（S-5・判断8）。月曜起算で、前の期間を跨いで数える（weeks が既に跨いでいる）。
   // 公休と**無記入**だけを休みに数え、有給・慶弔は数えない（出勤日に取る休暇のため）。
+  // 特定技能の人（属性名に「特定技能」）は、月をまたぐ週は月末側と月初側に各1回の公休が要る（2026-10-01・skilledWeekRestStateOf）
   const weekRestByStaff=useMemo(()=>{
     const out={};
     if(!isPremium)return out;
     realStaff.forEach(name=>{
+      const skilled=isSkilledWorkerAttr(settings,name);
       out[name]=weeks.map(monStr=>{
-        const kinds=[];
+        const kinds=[],wds=[];
         for(let i=0;i<7;i++){
           const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);
-          kinds.push(dayKindWithHelper(name,ds,laborDayHasData(ds)));
+          kinds.push(dayKindWithHelper(name,ds,laborDayHasData(ds)));wds.push(ds);
         }
-        return weekRestStateOf(kinds);
+        return skilled?{...skilledWeekRestStateOf(kinds,wds),skilled:true}:weekRestStateOf(kinds);
       });
     });
     return out;
-  },[isPremium,realStaff,weeks,subs,heatEdits,laborDayHasData,selPid,helperCache]);
+  },[isPremium,realStaff,weeks,subs,heatEdits,laborDayHasData,selPid,helperCache,settings]);
 
   // 年度の区切り（既定4月。設定で暦年にできる）。
   const fyStart=useMemo(()=>fiscalYearStartMonthOf(settings),[settings]);
@@ -1569,10 +1571,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // 他店での勤務の休憩不足は行き先の店の設定で判定した結果（P3.6・helperWorkOn）
       const bsDates=dates.filter(d=>{const sh=_getWorkShift(name,d);return(!!sh&&isBreakShort(sh,settings,d,name))||helperEntriesOn(name,d).some(e=>e.breakShort);});
       const weekNoRest=(weekRestByStaff[name]||[]).some(w=>w&&w.key==="none");
+      // 特定技能の週の公休不足（2026-10-01）。該当週を「労務の確認が必要です」に出す（総括は要修正）
+      const skilledWeekDates=weeks.filter((w,i)=>{const st=(weekRestByStaff[name]||[])[i];return!!st&&st.skilled&&isSkilledWeekRestShort(st);});
       const prem=(sys==="A"||sys==="B")?premiumForMonth(name,laborMonthDays[0].slice(0,7),sys):null;
       const monthOtB=sys==="B"&&prem?prem.otH:0,monthAgH=prem?prem.agH:0;
       const findings=laborFindingsFor({laborSystem:sys,dayMins,dayDates:dates,weekDayMins:weekMins,weekDates:weeks,
-        timeErrorDates:teDates,breakShortDates:bsDates,
+        timeErrorDates:teDates,breakShortDates:bsDates,skilledWeekDates,
         monthOtH:sys==="B"?monthOtB:monthOtH,monthAgreementH:monthAgH,dayOtH:periodOtH,agreementDailyOtH:agDay,agreementMonthlyOtH:agMonth,fixedOtH:fixOt,monthReady:laborMonthCovered});
       // 36協定の年単位4項目（年360h・年720h・月45h超が年6回・複数月平均80h）。
       // 月の値は「その月の最後の期間」に残した凍結値を優先するので、過去参照を押さなくても効く。
@@ -2349,11 +2353,14 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     return{id:"wr_"+monStr,label:`${m.getDate()}〜${sun.getDate()}日`,getText:name=>{
       const st=(weekRestByStaff[name]||[])[wi];
       if(!st||st.key==="skip")return{};
-      return{label:st.label,bold:st.key==="none",
-        color:st.key==="none"?"#e53935":st.key==="partial"?"var(--c-text3)":"var(--c-text2)",
-        title:st.key==="partial"
+      const bad=st.key==="none"||st.key==="skilledNone";
+      // 特定技能（2026-10-01）: 月をまたぐ週は月末側と月初側に各1回の公休が要る。内訳を title に出す
+      const sk=st.skilled?`特定技能: 週1回の公休が必要です。月をまたぐ週は月末側と月初側に各1回の公休が必要です${st.crossMonth?`（${skilledWeekSidesLabel(st)}）`:""}`:"";
+      return{label:st.label,bold:bad,
+        color:bad?"#e53935":st.key==="partial"?"var(--c-text3)":"var(--c-text2)",
+        title:[st.key==="partial"
           ?`データのある日だけで数えた休み${st.count}日（残り${st.missing}日はまだデータがありません。週1休の判定は7日揃ってから出ます）`
-          :st.label};
+          :st.label,sk].filter(Boolean).join("／")};
     }};
   });
   // ===== 人×月の所定（2026-09-30・P3・§3.4）=====

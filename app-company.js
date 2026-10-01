@@ -538,6 +538,7 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
       連携している全店舗の設定タブに、ここで入れた属性別の勤務時間制限が優先して適用されます。空欄の項目は各店舗が自分で設定できます。労務判定（31日の月の総枠・36協定など）は上の「法人」のカードの「法人の設定」で法人ごとに決めます。
     </div>
     <AL>属性別の勤務時間制限</AL>
+    <div data-skilled-note="1" style={{fontSize:11,color:"var(--c-text4)",marginBottom:8,lineHeight:1.5}}>属性名に「{SKILLED_WORKER_ATTR_KEYWORD}」を含む属性のスタッフは、週1回の公休（月をまたぐ週は月末側と月初側に各1回）があるかを判定します。</div>
     {attrRows.map(([id,label])=>{
       const e=stl[id]||{};
       const isCo=isCompanyAttrId(id);
@@ -2251,6 +2252,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       return(<AC title="スタッフ属性別 勤務時間制限">
         {coNote}
         <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>0は未設定。上限を超えたスタッフは提出一覧と集計表で赤くハイライトされます。目安は判定に使いません（集計表に行として出るだけです）。1ヶ月の上限・目安は31日の月の値として入れ、労務設定と同じ式で月の日数に日割りしたうえで「残業」を足した値になります。</div>
+        <div data-skilled-note="1" style={{fontSize:12,color:"var(--c-text4)",marginBottom:12}}>属性名に「{SKILLED_WORKER_ATTR_KEYWORD}」を含む属性のスタッフは、週1回の公休（月をまたぐ週は月末側と月初側に各1回）があるかを判定します。</div>
         {typeEntries.map(([type,limRaw])=>{
           const lim={daily:0,weekly:0,biweekly:0,monthly:0,customDays:0,customHours:0,...(typeof limRaw==="object"?limRaw:{name:limRaw})};
           const isBuiltin=BUILTIN_TYPES.includes(type);

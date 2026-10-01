@@ -6537,3 +6537,75 @@ test("企業の共通設定カードは労務判定の欄を持たず、法人�
   assert.ok(ent.includes("労務判定（空欄は店舗の設定）"));
   assert.ok(ent.includes("planLaborToEntities("), "法人カードが移行の計画を通していない");
 });
+
+// ===== 特定技能の週の公休（2026-10-01）=====
+const _wk = (start) => { const out = []; const d = new Date(start + "T00:00:00"); for (let i = 0; i < 7; i++) { const x = new Date(d); x.setDate(d.getDate() + i); out.push(u.fd(x)); } return out; };
+test("skilledWeekRestStateOf: 月をまたがない週は従来の週1休（公休0で違反・1でOK）", () => {
+  const ds = _wk("2026-09-14");
+  const w = ["work", "work", "work", "work", "work", "work", "work"];
+  const st0 = u.skilledWeekRestStateOf(w, ds);
+  assert.strictEqual(st0.key, "none"); assert.strictEqual(st0.label, "×休なし"); assert.ok(u.isSkilledWeekRestShort(st0));
+  const st1 = u.skilledWeekRestStateOf(["work", "work", "rest", "work", "work", "work", "work"], ds);
+  assert.strictEqual(st1.key, "ok"); assert.strictEqual(st1.label, "休1"); assert.ok(!u.isSkilledWeekRestShort(st1));
+});
+test("skilledWeekRestStateOf: 9/28〜10/4 は9月側・10月側に各1回の公休が要る", () => {
+  const ds = _wk("2026-09-28");
+  assert.deepStrictEqual(ds.map(d => d.slice(5)), ["09-28", "09-29", "09-30", "10-01", "10-02", "10-03", "10-04"]);
+  // 9月側に公休0・10月側に1 → 違反（従来の週1休なら休1でOK）
+  const k = ["work", "work", "work", "work", "rest", "work", "work"];
+  assert.strictEqual(u.weekRestStateOf(k).key, "ok", "従来の週1休では OK");
+  const st = u.skilledWeekRestStateOf(k, ds);
+  assert.strictEqual(st.key, "skilledNone"); assert.strictEqual(st.label, "×休1"); assert.ok(u.isSkilledWeekRestShort(st));
+  assert.strictEqual(u.skilledWeekSidesLabel(st), "9月側 0日・10月側 1日");
+  // 両側1 → OK
+  const ok = u.skilledWeekRestStateOf(["work", "rest", "work", "work", "rest", "work", "work"], ds);
+  assert.strictEqual(ok.key, "ok"); assert.strictEqual(ok.label, "休2");
+  assert.strictEqual(u.skilledWeekSidesLabel(ok), "9月側 1日・10月側 1日");
+  // 有給は公休に数えない（既存の週の休みと同じ）
+  assert.strictEqual(u.skilledWeekRestStateOf(["work", "leave", "work", "work", "rest", "work", "work"], ds).key, "skilledNone");
+});
+test("skilledWeekRestStateOf: データの無い日を含む側は判定しない（partial）", () => {
+  const ds = _wk("2026-09-28");
+  // 10月側がまだ無い（次の期間が未作成）・9月側に公休1 → 判定できる側は満たしている → partial
+  const p = u.skilledWeekRestStateOf(["work", "rest", "work", "nodata", "nodata", "nodata", "nodata"], ds);
+  assert.strictEqual(p.key, "partial"); assert.strictEqual(p.label, "＋休1"); assert.ok(!u.isSkilledWeekRestShort(p));
+  assert.strictEqual(u.skilledWeekSidesLabel(p), "9月側 1日・10月側 ＋0日");
+  // 9月側が揃っていて公休0なら、10月側が無くても違反
+  const v = u.skilledWeekRestStateOf(["work", "work", "work", "nodata", "nodata", "nodata", "nodata"], ds);
+  assert.strictEqual(v.key, "skilledNone");
+  // 9月側に nodata があり公休0 → 判定しない
+  assert.strictEqual(u.skilledWeekRestStateOf(["nodata", "work", "work", "work", "rest", "work", "work"], ds).key, "partial");
+});
+test("isSkilledWorkerAttr: 属性名に「特定技能」を含む人だけ（企業属性・店舗属性とも）。判定対象外は除く", () => {
+  const settings = {
+    staffAttributes: { "グエン": "co_Hzxk84Qv", "リン": "custom_t1", "田中": "employee", "佐藤": "parttime", "応援": "custom_t2", "無し": undefined },
+    staffTypeLimits: { co_Hzxk84Qv: { name: "特定技能", laborSystem: "A" }, custom_t1: { name: "特定技能1", laborSystem: "A" }, custom_t2: { name: "特定技能（応援）", laborSystem: "none" } },
+  };
+  assert.strictEqual(u.isSkilledWorkerAttr(settings, "グエン"), true);
+  assert.strictEqual(u.isSkilledWorkerAttr(settings, "リン"), true);
+  assert.strictEqual(u.isSkilledWorkerAttr(settings, "田中"), false);
+  assert.strictEqual(u.isSkilledWorkerAttr(settings, "佐藤"), false);
+  assert.strictEqual(u.isSkilledWorkerAttr(settings, "応援"), false, "判定対象外は除く");
+  assert.strictEqual(u.isSkilledWorkerAttr(settings, "無し"), false);
+  assert.strictEqual(u.isSkilledWorkerAttr({}, "誰か"), false);
+});
+test("laborFindingsFor: 特定技能の週の公休不足が該当週つきで出て、総括は要修正（A制・B制とも・判定対象外は出さない）", () => {
+  const fa = u.laborFindingsFor({ laborSystem: "A", skilledWeekDates: ["2026-09-28"] });
+  const f = fa.find(x => x.key === "skilledWeekRest");
+  assert.ok(f); assert.strictEqual(f.label, "特定技能の週の公休不足（28〜4）");
+  assert.ok(u.OVERALL_FIX_KEYS.includes("skilledWeekRest"));
+  assert.strictEqual(u.overallVerdictOf({ laborSystem: "A", findings: fa }).key, "fix");
+  const fb = u.laborFindingsFor({ laborSystem: "B", skilledWeekDates: ["2026-09-14", "2026-09-28"] });
+  assert.strictEqual(fb.find(x => x.key === "skilledWeekRest").label, "特定技能の週の公休不足（14〜20・28〜4）");
+  assert.strictEqual(u.overallVerdictOf({ laborSystem: "B", findings: fb }).key, "fix");
+  assert.ok(!u.laborFindingsFor({ laborSystem: "none", skilledWeekDates: ["2026-09-28"] }).some(x => x.key === "skilledWeekRest"));
+  assert.ok(!u.laborFindingsFor({ laborSystem: "A" }).some(x => x.key === "skilledWeekRest"), "渡さなければ出ない");
+  assert.ok(!u.LABOR_DAY_FIX_KEYS.includes("skilledWeekRest"), "セル色は塗らない");
+});
+test("特定技能の週の公休はシフト作成タブの週の休みと労務判定の両方が同じ判定を通す（ドリフト検出）", () => {
+  const src = _readAdminSurface();
+  assert.ok(src.includes("skilledWeekRestStateOf(kinds,wds)"), "週の休みが特定技能の判定を通していない");
+  assert.ok(src.includes("isSkilledWorkerAttr(settings,name)"));
+  assert.ok(/skilledWeekDates=weeks\.filter\([^\n]{0,200}?weekRestByStaff[^\n]{0,120}?isSkilledWeekRestShort\(st\)/.test(src), "労務判定が週の休みと同じ状態から該当週を作っていない");
+  assert.ok(src.includes("skilledWeekDates,"), "laborFindingsFor に該当週を渡していない");
+});
