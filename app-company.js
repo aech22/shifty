@@ -427,8 +427,8 @@ function OtProrateField({value,onChange,blankLabel,fixedText}){
 const fmtOtProrate=v=>{const p=otProrateOf(v);return p?`${OT_PRORATE_WINDOW_LABELS[p.window]}${p.fixedMin?` 固定${minToH1(p.fixedMin)}h`:""}`:"—";};
 const WEEK_START_OPTIONS=[[1,"月曜"],[2,"火曜"],[3,"水曜"],[4,"木曜"],[5,"金曜"],[6,"土曜"],[0,"日曜"]];
 const minToH1=m=>String(Math.round((Number(m)||0)/6)/10);
-// 労務判定の入力欄（企業の共通設定と法人の設定で共有・2026-09-30 に CompanyConfigCard から切り出し）。
-// 空欄＝上の層（企業の共通設定なら店舗、法人なら企業の共通設定）の値を使う。
+// 労務判定の入力欄（法人の設定。2026-09-30 に CompanyConfigCard から切り出し、2026-10-01 に企業の共通設定からは外した）。
+// 空欄＝店舗の設定タブの値を使う。
 function CoLaborFields({labor,setLabor,placeholder,blankLabel}){
   const LBL={fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"};
   const UNIT={fontSize:11,color:"var(--c-text4)"};
@@ -495,10 +495,8 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
   },[companyId]);
   if(loadErr)return(<AC title="企業の共通設定"><div style={{fontSize:12,color:"#FF4757"}}>✕ 企業の共通設定を読み込めませんでした。再読み込みしてください。</div></AC>);
   if(!draft)return(<AC title="企業の共通設定"><div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div></AC>);
-  const labor=draft.laborSettings||{};
   const stl=draft.staffTypeLimits||{};
   const upd=next=>{setDraft(next);setDirty(true);};
-  const setLabor=(k,v)=>{const l={...labor};if(v===null||v===undefined)delete l[k];else l[k]=v;upd({...draft,laborSettings:l});};
   const setLim=(id,k,v)=>{
     const e={...(stl[id]||{})};
     if(v===null||v===undefined||v===""||(k!=="laborSystem"&&k!=="name"&&k!=="otProrate"&&!(v>0)))delete e[k];else e[k]=v;
@@ -519,7 +517,14 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
     if(!onSaveCompanyConfig)return;
     if(coAttrIds.some(id=>!((stl[id]||{}).name||"").trim())){tt("✕ 名前の無い属性があります。名前を入れるか削除してください");return;}
     setBusy(true);
-    const r=await onSaveCompanyConfig({settings:draft});
+    // 労務判定はこのカードでは扱わない（法人の設定へ統合・2026-10-01）。settings は CF で丸ごと置き換わるので、
+    // 法人への移行がまだ済んでいない企業の laborSettings を消さないよう、保存の直前に読み直した値だけを送り直す
+    // （読み込み時の下書きの値は送らない＝移行が済んでいれば何も送らず、済んでいなければそのまま残る）
+    const fresh=await firebaseDB.ref(`companies/${companyId}/pub/config/settings/laborSettings`).once("value").then(x=>x.val()).catch(()=>undefined);
+    if(fresh===undefined){setBusy(false);tt("✕ 企業の共通設定を読み直せませんでした。もう一度保存してください");return;}
+    const next={...draft};delete next.laborSettings;
+    if(fresh&&typeof fresh==="object"&&Object.keys(fresh).length)next.laborSettings=fresh;
+    const r=await onSaveCompanyConfig({settings:next});
     setBusy(false);
     if(r&&r.error){tt("✕ "+r.error);return;}
     setDirty(false);
@@ -530,10 +535,8 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
   const UNIT={fontSize:11,color:"var(--c-text4)"};
   return(<AC title="企業の共通設定">
     <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
-      連携している全店舗の設定タブに、ここで入れた値が優先して適用されます。空欄の項目は各店舗が自分で設定できます。
+      連携している全店舗の設定タブに、ここで入れた属性別の勤務時間制限が優先して適用されます。空欄の項目は各店舗が自分で設定できます。労務判定（31日の月の総枠・36協定など）は上の「法人」のカードの「法人の設定」で法人ごとに決めます。
     </div>
-    <AL>労務判定</AL>
-    <CoLaborFields labor={labor} setLabor={setLabor} placeholder="店舗" blankLabel="店舗で設定"/>
     <AL>属性別の勤務時間制限</AL>
     {attrRows.map(([id,label])=>{
       const e=stl[id]||{};
@@ -607,7 +610,7 @@ async function readCompanyStructure(companyId){
   const out={};keys.forEach((k,i)=>{out[k]=vals[i];});
   return out;
 }
-function CompanyEntityCard({companyId,shopNames={},onCompanyCall,tt,onChanged,onOpenPayroll}){
+function CompanyEntityCard({companyId,shopNames={},onCompanyCall,onSaveCompanyConfig,tt,onChanged,onOpenPayroll}){
   const[st,setSt]=useState(null); // {pub, shopIds, names}
   const[loadErr,setLoadErr]=useState(false);
   const[tick,setTick]=useState(0);
@@ -620,6 +623,7 @@ function CompanyEntityCard({companyId,shopNames={},onCompanyCall,tt,onChanged,on
   const[rateDraft,setRateDraft]=useState({}); // 割増率の上乗せ {ot,over60,night,holiday: 入力中の文字列}（P6b・空欄＝法定値）
   const[roundDraft,setRoundDraft]=useState("ceil"); // 金額の端数規則（P6b）
   const triedEnsureRef=useRef(false);
+  const triedMigrateRef=useRef(false);
   useEffect(()=>{
     if(!firebaseDB||!companyId){setSt({pub:{},shopIds:[],names:{}});return;}
     let cancelled=false;
@@ -633,6 +637,27 @@ function CompanyEntityCard({companyId,shopNames={},onCompanyCall,tt,onChanged,on
         if(cancelled)return;
         if(r&&r.error){tt("✕ 法人を準備できませんでした: "+r.error);}
         else{setTick(t=>t+1);onChanged&&onChanged();return;}
+      }
+      // 労務判定を企業の共通設定から法人の設定へ移す（2026-10-01・1回だけ）。各法人に「企業の値＋法人の値（法人が勝つ）」を
+      // 保存し、全法人が通ってから企業側の laborSettings を外す。写しは移行の前後で同じ（planLaborToEntities）。
+      // 失敗したら企業側は消さない（重ね合わせの結果は同じなので、次に開いたときにやり直せる）
+      if(!triedMigrateRef.current&&onCompanyCall&&onSaveCompanyConfig&&companyEntityList(pub).length>0){
+        triedMigrateRef.current=true;
+        const cs=await firebaseDB.ref(`companies/${companyId}/pub/config/settings`).once("value").then(x=>x.val()).catch(()=>null);
+        const plan=planLaborToEntities(cs,{...pub,shops:shS.val()||{}});
+        if(plan){
+          const ids=Object.keys(plan.entities);
+          let ok=true;
+          for(const eid of ids){
+            const r=await onCompanyCall("saveEntityConfig",{entityId:eid,settings:plan.entities[eid]});
+            if(r&&r.error){ok=false;break;}
+          }
+          if(cancelled)return;
+          const r2=ok?await onSaveCompanyConfig({settings:plan.company}):null;
+          if(cancelled)return;
+          if(ok&&!(r2&&r2.error)){tt(`✓ 労務判定の設定を法人へ移しました（${ids.length}法人）`);setTick(t=>t+1);onChanged&&onChanged();return;}
+          tt("✕ 労務判定の設定を法人へ移せませんでした（企業の値はそのまま効いています）。もう一度開くとやり直します");
+        }
       }
       const names={};
       await Promise.all(shopIds.map(async sid=>{
@@ -683,7 +708,7 @@ function CompanyEntityCard({companyId,shopNames={},onCompanyCall,tt,onChanged,on
   };
   return(<AC title="法人">
     <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:12,lineHeight:1.6}}>
-      連携店舗を法人（雇用主）ごとに分けて管理します。店舗は必ずどれか1つの法人に属します。法人の設定は、企業の共通設定より優先してその法人の店舗に適用されます。
+      連携店舗を法人（雇用主）ごとに分けて管理します。店舗は必ずどれか1つの法人に属します。労務判定（31日の月の総枠・36協定など）は「法人の設定」で法人ごとに決め、その法人の店舗の設定タブに優先して適用されます。
     </div>
     {ents.length===0&&<div style={{fontSize:12,color:"var(--c-text4)",marginBottom:10}}>法人がまだありません。</div>}
     {ents.map(e=>{
@@ -703,8 +728,8 @@ function CompanyEntityCard({companyId,shopNames={},onCompanyCall,tt,onChanged,on
             <button key={sid} data-co-payroll-btn={sid} onClick={()=>onOpenPayroll(sid,st.names[sid])} style={{...AGray,padding:"4px 10px",fontSize:12}}>{st.names[sid]} →</button>))}
         </div>}
         {openCfg===e.id&&cfgDraft&&<div style={{marginTop:10}}>
-          <AL>労務判定（空欄は企業の共通設定の値）</AL>
-          <CoLaborFields labor={cfgDraft} setLabor={setLabor} placeholder="企業" blankLabel="企業の共通設定"/>
+          <AL>労務判定（空欄は店舗の設定）</AL>
+          <CoLaborFields labor={cfgDraft} setLabor={setLabor} placeholder="店舗" blankLabel="店舗で設定"/>
           <AL>最低賃金（適用開始日と時間額）</AL>
           <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>スタッフの賃金設定ページで、時給（月給は基本給の時給換算）と比べます。改定のたびに行を足してください。</div>
           {wageDraft.map((w,i)=>(<div key={i} data-co-min-wage={i} style={{display:"flex",gap:6,alignItems:"center",marginBottom:6}}>
@@ -2071,7 +2096,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
       )}
       <div>{listShops.map(shopCard)}</div>
     </AC>}
-    {companyInfo&&plan==="premium"&&<CompanyEntityCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onCompanyCall={onCompanyCall} tt={tt} onChanged={()=>setStructureTick(t=>t+1)} onOpenPayroll={onOpenPayroll}/>}
+    {companyInfo&&plan==="premium"&&<CompanyEntityCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onCompanyCall={onCompanyCall} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt} onChanged={()=>setStructureTick(t=>t+1)} onOpenPayroll={onOpenPayroll}/>}
     {companyInfo&&plan==="premium"&&<CompanyConfigCard companyId={companyInfo.companyId} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}/>}
     <AC title="シフト作成タブでのヘルプ入力">
       <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.8}}>
