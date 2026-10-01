@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>シフトひな型（2026-10版）の取り込みと機能差分 実装計画</title>
+<style>
+  :root{
+    --ink:#1c1917; --ink2:#57534e; --ink3:#78716c;
+    --bg:#fafaf9; --paper:#ffffff; --line:#e7e5e4; --line2:#d6d3d1;
+    --accent:#c2410c;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif;
+    font-size:15px; line-height:1.75;}
+  .wrap{max-width:960px; margin:0 auto; padding:48px 24px 96px;}
+  header{margin-bottom:40px; border-bottom:1px solid var(--line2); padding-bottom:28px;}
+  h1{font-size:26px; line-height:1.4; margin:0 0 6px; font-weight:700;}
+  .sub{color:var(--ink2); font-size:14px; margin:0;}
+  h2{font-size:20px; font-weight:700; margin:64px 0 8px; padding-top:24px; border-top:2px solid var(--ink);}
+  h2 .role{display:block; font-size:13px; font-weight:600; color:var(--accent); letter-spacing:.02em;}
+  h3{font-size:16px; font-weight:700; margin:36px 0 10px;}
+  h4{font-size:14.5px; font-weight:700; margin:24px 0 6px;}
+  p{margin:8px 0;}
+  ul,ol{margin:8px 0; padding-left:1.6em;}
+  li{margin:4px 0;}
+  code{font-family:"SF Mono",Menlo,Consolas,monospace; font-size:.88em; background:#f1efee; padding:1px 5px; border-radius:3px;}
+  pre{background:#f1efee; padding:12px 14px; border-radius:4px; overflow-x:auto; font-size:13px; line-height:1.6;}
+  table{border-collapse:collapse; width:100%; margin:12px 0; font-size:14px;}
+  th,td{border:1px solid var(--line2); padding:7px 10px; text-align:left; vertical-align:top;}
+  th{background:#f5f5f4; font-weight:600;}
+  .dec table td:first-child{width:4.5em; font-weight:600; color:var(--ink2); background:#f5f5f4;}
+  .dec table tr.rec td:first-child{color:var(--accent);}
+  .note{color:var(--ink3); font-size:13.5px;}
+  .box{border:1px solid var(--line2); background:var(--paper); padding:16px 20px; margin:16px 0;}
+  .box p:first-child{margin-top:0;} .box p:last-child{margin-bottom:0;}
+  .chk{list-style:none; padding-left:0;}
+  .chk li{padding-left:1.7em; position:relative; margin:6px 0;}
+  .chk li::before{content:"□"; position:absolute; left:0; color:var(--ink3);}
+  .toc{font-size:14px; color:var(--ink2);}
+  .toc a{color:var(--accent); text-decoration:none;}
+  hr{border:none; border-top:1px solid var(--line); margin:32px 0;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>シフトひな型（2026-10-01版）の取り込みと機能差分 実装計画</h1>
+  <p class="sub">10月前半更新分として届いた xlsm 13本と使い方 PDF を読み、前回（2026-09-26）の取り込み結果＝本番 Firebase との差分、および ① 実装後の Shifty とひな型の機能差分をまとめ、取り込みと機能追加の計画にする。作成 2026-10-01・作成者 Fable 5.1（調査は Opus のサブエージェントが読み取り専用で実施。Firebase・リポジトリへの書き込みは無い）。</p>
+</header>
+
+<div class="box">
+  <p><strong>最初に知っておくべき事実（調査で確定）</strong></p>
+  <ul>
+    <li><strong>ひな型の版が変わった。</strong> 13本のうち12本は新しい版（改訂履歴 09-24〜10-01）。「休憩の設定」シートが増え、休憩欄は数式で自動計算される。今の取り込みスクリプトは値を読むので、そのまま使うと<strong>全出勤日に日別の休憩上書き（adjustedBreak）が書かれる</strong>。</li>
+    <li><strong>魚えんの「変更後.xlsm」は古いひな型</strong>（山田龍太さんが 09-30 12:30Z に保存）。無印の方が新ひな型で、作成者が openpyxl（スクリプト生成・10-01 10:46Z）。変更後にある修正6件が新版に入っていない。</li>
+    <li><strong>鶏えん2店舗は本番で実運用中。</strong> スタッフの提出・管理者調整・企業への提出記録（09-26）がある。xlsm で上書きするとスタッフの休み希望が消える。</li>
+    <li><strong>本番のルールと Cloud Functions は P7 まで反映済み</strong>（2026-10-01 に主セッションがバイト照合・32関数を確認）。BACKLOG の「未反映」記述は古い。この計画で前提にする Shifty の機能（P3.5a の休憩規則・P3.5b の按分窓・P2 の年間所定）はすべて本番で使える。</li>
+    <li><strong>① の4件</strong>（パスコードの文言削除・企業連携タブからのパスコード変更・労務判定の法人への統合・特定技能の週の公休判定）は、この計画と同じ日に Opus が実装し本番へ出す。本書はそれが済んだ状態を起点にする。</li>
+  </ul>
+</div>
+
+<p class="toc">
+  <a href="#p1">第1部 要レビュー（判断一覧）</a> ／
+  <a href="#p2">第2部 必須項目（取り込みの差分更新）</a> ／
+  <a href="#p3">第3部 必須項目（ひな型との機能差分）</a> ／
+  <a href="#p4">第4部 信頼して任せる</a>
+</p>
+
+<!-- ============================================================ -->
+<h2 id="p1"><span class="role">第1部</span>要レビュー — ユーザーの判断で成果物が変わるもの</h2>
+<p>推奨を1つずつ付けた。推奨のままなら「全部推奨で」と返すだけで着手できる。番号は第2部・第3部の受け入れ条件から参照する。</p>
+<div class="box">
+  <p><strong>実行者への約束（Opus の実行エージェントが字義通りに読む前提）</strong></p>
+  <ul>
+    <li>D1〜D12 に回答が無い項目は<strong>推奨どおりに進めてよい</strong>。ただし<strong>本番 Firebase への書き込み（第2部 A8・第3部 F1・F2）は、何をどのパスに書くかの一覧を提示してユーザーの承認を得るまで行わない</strong>（RULES.md）。承認が得られないときは、ドライランの一覧とコード変更を仕上げて「未書き込み」と明記して終える。</li>
+    <li>一部が実行不能（権限・環境・ファイルが読めない）でも残りは全部仕上げ、やらなかった部分と理由を報告に書く。範囲を縮めるのはユーザーの判断。</li>
+    <li>同一アプローチで2回失敗したら3回目は繰り返さず、別の方法か現状報告に切り替える。</li>
+    <li>成果物は「取り込みの差分更新」「機能差分の実装」「取り込めなかったものの一覧（A9）」の3つ。ひな型の規則を解釈し直しても、この3つを納める。</li>
+    <li><strong>実行順序</strong>: (1) 第3部のコード変更 F4・F6・F7 → テスト・回帰 → <code>/release-to-main</code>。(2) 第3部の設定投入 F1・F2（承認後）。(3) 第2部の取り込み（承認後）。(2) を (3) の前に置くのは、D4 で休憩を店の規則に任せるため。(1) と (2)(3) は独立しているので、(1) が止まっても (2)(3) は進めてよい。</li>
+  </ul>
+</div>
+
+<div class="dec">
+<h3>D1. 取り込みは「上書き」ではなく「差分の追加だけ」にする</h3>
+<table>
+<tr class="rec"><td>推奨</td><td><strong>本番を正とし、xlsm にあって本番に無いものだけを足す。</strong> 本番にだけあるもの（スタッフの提出・管理者の調整・手で足した勤務）は消さない。時刻が食い違うセルは一覧で報告し、置き換えはしない。</td></tr>
+<tr><td>理由</td><td>9/26 に投入した sub は全店で手が入っていない（updatedAt なし）が、鶏えん2店舗はスタッフの提出で運用中。現行スクリプトの「期間があればスキップ」では5店舗（京天・梅京・文天・炭イ・魚初）の前半160＋78＋152＋101＋95件がいつまでも入らない。</td></tr>
+<tr><td>別案</td><td>xlsm で丸ごと置き換える（鶏えんの提出が消える）／何も取り込まず手入力に任せる。</td></tr>
+</table>
+
+<h3>D2. 鶏えん2店舗（東通り・3ビル）は今回の取り込みから外す</h3>
+<table>
+<tr class="rec"><td>推奨</td><td><strong>外す。</strong> 差分（時刻違い29件・本番だけの出勤19件・xlsm だけ22件）は一覧を出し、店長の判断で手入力する。</td></tr>
+<tr><td>理由</td><td>本番は企業属性（特定技能・外国人派遣28/40）と派遣元1文字の番号で運用しており、xlsm の区分・「派遣」とは体系が違う（番号24名・属性28名が食い違う）。shop-map.json も confirmed:false のまま。機械的に足すと体系が混ざる。</td></tr>
+<tr><td>別案</td><td>xlsm だけにある勤務（徳田 恵太の炭イ応援10件など22件）だけを足す。ユーザーが指示すれば D1 の規則で対応できる。</td></tr>
+</table>
+
+<h3>D3. 魚えんはどちらのファイルを正とするか</h3>
+<table>
+<tr class="rec"><td>推奨</td><td><strong>名簿は新版（19名）、シフトは変更後の修正6件を優先して重ねる。</strong> 具体的には新版を基に、栗本律 10/5・10/12 の退勤延長、川渕愛梨 10/8 の追加、梅本翔平 10/6・山田龍太 10/8・前川佐登志 10/10 の削除を適用する。</td></tr>
+<tr><td>理由</td><td>変更後は日付が古い（09-30）のに新版に無い修正を持つ。新版は旧データを新ひな型へ機械的に移したものに見える（作成者 openpyxl）。店長の手が入った方を勤務の正とし、名簿は新しい方を取る。</td></tr>
+<tr><td>別案</td><td>新版だけを正とする（6件の修正を捨てる）／店長に確認して1本に直してもらう（確実だが待ち時間が出る）。</td></tr>
+</table>
+
+<h3>D4. 休憩は「手入力のセルだけ」を取り込み、店の規則は Shifty の設定で再現する</h3>
+<table>
+<tr class="rec"><td>推奨</td><td><strong>数式でないセル（黒太字＝手入力）だけを adjustedBreak に入れる。</strong> 店の規則（拘束8h以上1h・6h以上1h・中休み）は各店舗の breakMode=length（basis=binding・inclusive）と idleBreak に投入する（第3部 F1）。</td></tr>
+<tr><td>理由</td><td>全日を上書きで入れると、提出一覧の「手動（太字）」が全員全日に付き、店が規則を変えても古い値が残る。手入力の実数は京天4・ビア1・文天5・文心10・炭三4 だけ。</td></tr>
+<tr><td>別案</td><td>全日の休憩を adjustedBreak で入れる（確実に Excel と一致するが、以後の変更が効かない）。</td></tr>
+</table>
+
+<h3>D5. 名前の表記ゆれは本番の名前に寄せ、本番の名前は変えない</h3>
+<table>
+<tr class="rec"><td>推奨</td><td><strong>従業員番号（数字）→ 空白と全角半角を正規化した名前 の順で本番の登録に対応づけ、本番の名前をキーに書く。</strong> xlsm だけの表記（空白なし37名・来/來・座/坐・２/2・文心のフルネーム）で改名はしない。対応づかない名前だけを新規スタッフとして足す。</td></tr>
+<tr><td>理由</td><td>名前は sub・settings の8マップ・写し・pay・laborMonths のキー。改名は入口が2つ（StaffTab・CF companyRenameStaff）あり、取り込みで黙って動かすと提出 URL と Cookie の紐付けが切れる。</td></tr>
+<tr><td>別案</td><td>xlsm の表記へ改名する（CF companyRenameStaff を人数分呼ぶ。可能だが今回の目的に不要）。</td></tr>
+</table>
+
+<h3>D6. 本番だけ・xlsm だけのスタッフと、ビアのマリカ7日分</h3>
+<table>
+<tr class="rec"><td>推奨</td><td><strong>本番だけの人は残す。xlsm だけの人は、本番の keepStaff に「削除済み」の記録がある人（ビア5名・鶏三の池本明央・鶏東の浅野 健斗）を足さず、それ以外（京天のニュー・魚初の応援2名・文心の白根 ほか）は足す。マリカの7日分は残す。</strong></td></tr>
+<tr><td>理由</td><td>keepStaff は管理者が意図して削除した記録。マリカは京天の xlsm では同じ日に京天勤務やビア・魚初への応援になっており、どちらが正か xlsm からは決まらない。消す側に倒さない。</td></tr>
+<tr><td>別案</td><td>xlsm に無い勤務（マリカ7日）を消す／削除済みの人も足す。</td></tr>
+</table>
+
+<h3>D7. 文心（文蔵東心斎橋）に10月の期間を作り、前半・後半を入れる</h3>
+<table>
+<tr class="rec"><td>推奨</td><td><strong>10月前半・後半の期間を作って取り込む。</strong> 本番は9月後半（sub 5）までしか無く、xlsm は唯一後半まで埋まっている（46件）。名前は番号で突き合わせる（9011・511・5・1122・1131 が一致）。後藤の属性は本番（社員）のまま。</td></tr>
+<tr><td>理由</td><td>期間が無いとスタッフ URL が開けない。番号が一致するので対応づけに迷いが無い。</td></tr>
+<tr><td>別案</td><td>前半だけ作る。</td></tr>
+</table>
+
+<h3>D8. 後半（16〜31日）の期間は全店に作る</h3>
+<table>
+<tr class="rec"><td>推奨</td><td><strong>後半の期間を無い店舗すべてに作る（sub は入れない）。</strong> 既にあるのはビア（10-01 作成）と鶏えん2店舗。</td></tr>
+<tr><td>理由</td><td>企業の毎月の固定締切は10日・25日。後半の提出を受けるには期間が先に要る。xlsm の後半が空なのは、まだ埋める時期でないため（ひな型の運用は15日までに本人へ）。</td></tr>
+<tr><td>別案</td><td>店長が作るのを待つ。</td></tr>
+</table>
+
+<h3>D9. 応援の店コードを Shifty の略称に足す</h3>
+<table>
+<tr class="rec"><td>推奨</td><td><strong>Excel の2文字店コード（京天・梅京・小四・小難・ビア・文天・文心・炭イ・炭三・魚初・鶏三・鶏東）を各店の shopAbbrs に追加する。</strong> 既存の略称は残す。新コード「鶏バ」（鶏えん バルチカ03店(仮)）は店舗が無いので登録しない。</td></tr>
+<tr><td>理由</td><td>いま本番の略称と一致するのはビアと鶏三だけ。合わないと応援は「メモ文字」として残り、店舗間の重複判定・ヒートマップ除外・P3.6 の合算が効かない。文天の xlsm は「鶏三17.5」のように15分でない時刻も含むが、TO は15分刻みなので 17:30 で入る。</td></tr>
+<tr><td>別案</td><td>取り込みの変換表だけで吸収する（画面で打つ略称と一致しないままになる）。</td></tr>
+</table>
+
+<h3>D10. 所定・上限の基準をひな型（年2,080h）に揃えるか</h3>
+<table>
+<tr class="rec"><td>推奨</td><td><strong>法人の労務判定に年間所定 2,080h を入れる（運用）。あわせて Shifty 側で、年間所定があるときは「所定未満」の比較と上限（capMin）を所定（176:39）基準にする（第3部 F4・コード変更）。</strong></td></tr>
+<tr><td>理由</td><td>ひな型は 所定176:39・目安199・上限206（＝所定＋固定残業の切り捨て）。Shifty の P2 は目安だけを所定基準に変え、上限と「所定未満」は総枠（177:08・上限207:08）のまま。同じシフトで Shifty は上限を 1h08 甘く判定する。</td></tr>
+<tr><td>別案</td><td>運用（年間所定の投入）だけ行い、上限は総枠基準のままにする（1時間強の差を承知で残す）。</td></tr>
+</table>
+
+<h3>D11. 「入力の問題」の警告を Shifty に足すか</h3>
+<table>
+<tr class="rec"><td>推奨</td><td><strong>足す（第3部 F6）。</strong> 片側だけの日・読めない文字（例「事務11」）を労務の確認パネルに「入力の確認」として出す。要修正にはしない。</td></tr>
+<tr><td>理由</td><td>Shifty は片側セルを候補時間で補完し、読めない文字はメモとして保存する＝黙って通る。ひな型は約30件を「入力の問題」として要修正にしている。店長が同じ基準で見られるようにする。</td></tr>
+<tr><td>別案</td><td>補完とメモの設計を信じて警告を足さない。</td></tr>
+</table>
+
+<h3>D12. 人数チェック（確認時刻・担当別）を実装するか</h3>
+<table>
+<tr class="rec"><td>推奨</td><td><strong>今回は実装しない（BACKLOG に理由と再着手条件を書く）。</strong> 再着手条件は、担当（ホール・キッチン・両方）と必要人数が3店舗以上で運用に使われたとき。</td></tr>
+<tr><td>理由</td><td>xlsm の担当欄は3店舗（計7名）、必要人数は2店舗にしか入っておらず、ひな型でも大半の店で動いていない。Shifty には既に必要ポジション（matchPositionSlots）と PDF の昼夜人数（headcountAt）がある。</td></tr>
+<tr><td>別案</td><td>headcountAt を画面にも出す（小さい）／ひな型と同じ確認時刻方式の「不足・多い」を作る（大きい）。</td></tr>
+</table>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="p2"><span class="role">第2部</span>必須項目 — 取り込みの差分更新（shifty-shift-import の改修）</h2>
+
+<h3>目的</h3>
+<p>新ひな型の xlsm を読み、本番を壊さずに「足りないものだけ」を入れる。手順は shifty-shift-import スキルに残し、来月以降も同じ手で回せるようにする。コードを変えるのはスキルのスクリプト（<code>~/.claude/skills/shifty-shift-import/scripts/</code>）だけで、Shifty 本体のコードは第3部で扱う。</p>
+
+<h3>受け入れ条件</h3>
+<ul class="chk">
+<li><strong>A1 新ひな型の検出。</strong> <code>extract_xlsm.py</code> が「休憩の設定」シートの有無で版を判定し、新版では休憩欄を <code>data_only=False</code> で読み直して<strong>数式のセルは brk_h を null</strong>、手入力のセルだけ値にする（D4）。旧版（魚えん 変更後）は従来どおり値を読む。版と手入力件数を出力に書く。</li>
+<li><strong>A2 店の休憩規則の抽出。</strong> 「休憩の設定」シートの 8h/6h の段・中休み（全日／平日のみ／なし・出勤≦／退勤≧・時間）を店舗ごとに JSON に出す。第3部 F1 の設定投入の入力になる。</li>
+<li><strong>A3 本番との差分計算。</strong> 新スクリプト <code>diff_against_prod.js</code>（読み取り専用・Admin SDK の once だけ）が、店舗ごとに ①名簿の対応表（番号一致→正規化名一致→未対応）②番号・属性・所属店舗の差 ③人×日のセル差分（xlsm だけ／本番だけ／時刻違い／メモ違い／休憩違い）を出す。D5 の対応規則をここに固定し、<code>build_payload.py</code> はこの対応表で本番の名前をキーにする。</li>
+<li><strong>A4 ペイロードは「追加」だけ。</strong> <code>build_payload.py --mode=add</code> が、xlsm だけにあるセル・未対応の新規スタッフ・無い期間だけをペイロードにし、本番にあるセルには触れない（D1）。鶏えん2店舗は <code>--skip</code> で外せる（D2）。魚えんは <code>--overlay=変更後.xlsm</code> で修正6件を重ねられる（D3）。keepStaff に載っている人は足さない（D6）。</li>
+<li><strong>A5 期間の作成。</strong> 文心の10月前半・後半と、他店の後半を作る（D7・D8）。ID・urlToken・tokens 逆引きは <code>import_to_firebase.js</code> の既存の形。企業の提出期限（期間キー）は CF の毎月の固定締切に任せ、ここでは書かない。</li>
+<li><strong>A6 休憩の取り込み。</strong> 手入力の休憩だけ adjustedBreak（分）に入れる。自動計算の休憩は入れない（D4）。</li>
+<li><strong>A7 応援の略称。</strong> 店コードを shopAbbrs に追加するペイロードを別ファイルで出す（D9・settings への追記なので差分 update）。重複チェック（他店と同じ略称・予約語 h/k/x・/）は <code>isReservedShopAbbr</code> を本体から読む。</li>
+<li><strong>A8 ドライラン → 承認 → 書き込み。</strong> 何をどのパスに書くかの一覧（店舗・パス・件数）を出して止まり、ユーザーの承認後に <code>--write</code>。コレクションの全体 set は一度もしない（CLAUDE.md の periods・subs の規則）。</li>
+<li><strong>A9 報告。</strong> 取り込めなかったもの（時刻違いの一覧・本番だけのスタッフ・鶏えんの差分一覧・片側だけの日・「事務11」）を店舗ごとに列挙する。</li>
+<li><strong>A10 スキル文書。</strong> SKILL.md に「新ひな型」「差分モード」「鶏えんの扱い」「魚えんの2本」を追記し、shop-map.json の confirmed と「鶏バ」の注記を更新する。</li>
+</ul>
+
+<h3>影響範囲</h3>
+<ul>
+<li>触る: <code>~/.claude/skills/shifty-shift-import/</code>（SKILL.md・references/xlsm-format.md・shop-map.json・scripts/extract_xlsm.py・build_payload.py・validate_payload.js・import_to_firebase.js・新規 diff_against_prod.js）。</li>
+<li>触らない: Shifty 本体の app-*.js・functions/・database.rules.json。本番 Firebase は承認後の <code>--write</code> だけ。</li>
+<li>書き込み先（承認後）: <code>shops/{sid}/staff</code>（追加分）・<code>settings/staffNumbers・staffAttributes・shopAbbrs</code>（追加キーだけ差分 update）・<code>periods/{新規ID}</code>・<code>tokens/{token}</code>・<code>subs/{subId}</code>（新規または既存 sub の shifts/{日付} の差分）。</li>
+</ul>
+
+<h3>検証手順</h3>
+<ol>
+<li>A1〜A2: 13本で抽出し、手入力の件数が調査値（京天4・ビア1・文天5・文心10・炭三4・他0）と一致すること。魚えん 変更後は旧版と判定されること。</li>
+<li>A3: 小四・小難で「セル差分0件（休憩を除く）」、炭三で「xlsm だけ4件（山口海人）」、ビアで「本番だけ7件（マリカ）」が出ること（調査の実測値と一致）。</li>
+<li>A4: <code>--mode=add</code> のペイロードに、本番に既にあるセルが1件も含まれないこと（validate_payload.js に検査を足す）。</li>
+<li>A8: ドライランの一覧をユーザーに提示して承認を得る。書き込み後に <code>shifty-prod-data-probe</code> で店舗ごとの期間と sub 件数を読み、ペイロードの件数と一致すること。</li>
+<li>取り込み後、本番の管理画面（企業の作成者のセッション）で京天の10月前半を開き、xlsm の1人1日（例: 勝見敏春 10/1）が一致すること。</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="p3"><span class="role">第3部</span>必須項目 — ① 実装後の Shifty とひな型の機能差分</h2>
+
+<h3>差分の全体表</h3>
+<p>ひな型（2026-10-01版）が持つ機能を、① 実装後の Shifty と突き合わせた。「設定」は Shifty のコード変更なしで運用の投入だけ要るもの、「コード」は実装が要るもの、「同等」は既にあるもの、「見送り」は第1部で見送りを推奨したもの。</p>
+<table>
+<tr><th>ひな型の機能</th><th>ひな型の規則</th><th>Shifty（① 後）</th><th>区分</th></tr>
+<tr><td>店の休憩（2段）</td><td>拘束時間で判定・「以上」・8h→1h・6h→1h（全店同じ）</td><td>P3.5a の breakLength basis=binding・tiers inclusive で表せる。本番は全店が 15〜17時の時間帯方式のまま</td><td>設定（F1）</td></tr>
+<tr><td>中休み</td><td>出勤≦14.5 かつ 退勤≧17 → 2h（店で値が違う・平日のみ／全日）</td><td>P3.5a の idleBreak で同じ形</td><td>設定（F1）</td></tr>
+<tr><td>人ごとの休憩（個別設定）</td><td>前半シート60〜63行。12本とも空欄</td><td>無い。日別の上書き（adjustedBreak）だけ</td><td>見送り（空欄のため。BACKLOG に記す）</td></tr>
+<tr><td>手入力の休憩</td><td>黒太字＝自動に優先。「休憩を自動に」で戻す</td><td>adjustedBreak と「自動に戻す」（breakDecisionOf）</td><td>同等</td></tr>
+<tr><td>所定・目安・上限</td><td>年2,080h→176:39／199／206（所定＋固定残業の切り捨て）</td><td>年間所定が未設定（総枠177:08）。設定すると目安は所定基準になるが、上限と「所定未満」は総枠基準のまま</td><td>設定＋コード（F4・D10）</td></tr>
+<tr><td>残業予定（A）</td><td>月の残業予定を累積比例で日割り</td><td>同じ式（prorateOvertimeH）</td><td>同等</td></tr>
+<tr><td>残業予定（特定技能）</td><td>番号9001以上は半月ごと min(15h, 半月の実働) を按分</td><td>属性の otProrate={window:"halfMonth",fixedMin:900}。判定は番号ではなく属性</td><td>設定（F2）</td></tr>
+<tr><td>残業予定（B）</td><td>max(0, 実働−8)</td><td>showDailyOverB をオンにすると同じ行が出る（既定オフ）</td><td>設定（F2）</td></tr>
+<tr><td>休憩不足</td><td>実働>6 で休憩<0.75、>8 で <1</td><td>isBreakShort（法定・同じ値）</td><td>同等</td></tr>
+<tr><td>週の休み</td><td>月曜始まり・月の中で7日揃わないと要確認</td><td>月をまたいでも7日で数える（＋休n）。① で特定技能の月末・月初各1回を追加</td><td>同等以上</td></tr>
+<tr><td>12h超・4h未満</td><td>A の日を赤</td><td>12h超は紫で塗る。4h未満はパネルだけ（塗らない・2026-09-26 決定）</td><td>同等（決定済み）</td></tr>
+<tr><td>外部の8h超</td><td>赤</td><td>highlightExternalOver8h（既定オフ）</td><td>設定（F2）</td></tr>
+<tr><td>B の 8+Q3 超・週40h超</td><td>要修正／残業あり</td><td>dayOverAgreementB・weekOver40 で同じ</td><td>同等</td></tr>
+<tr><td>区分・番号の不備</td><td>A/B で番号空欄か「派遣」→要修正・番号空欄は赤</td><td>番号は任意。警告なし</td><td>コード（F6 に含める・軽い警告）</td></tr>
+<tr><td>入力の問題</td><td>片側だけ・読めない文字・1未満の時刻→要修正</td><td>片側は補完、文字はメモ。警告なし</td><td>コード（F6・D11）</td></tr>
+<tr><td>前半の見込み判定</td><td>後半が空の間は 前半実働×月の日数÷15 で所定・上限を見込む</td><td>途中は「＋」付きの実数。見込みは出さない（2026-09-26 決定）</td><td>見送り（決定済み。理由を F7 に残す）</td></tr>
+<tr><td>応援の店コード</td><td>店コード＋時刻（例 小難11）。鶏バが新設</td><td>略称サフィックス（9三）。本番の略称がビア・鶏三以外一致しない</td><td>設定（D9・第2部 A7）</td></tr>
+<tr><td>休みの種類</td><td>公休（灰）・有給（薄青）・慶事（桃）</td><td>ko／yu／ke。色は使わず種別名をセルに出す（決定済み）</td><td>同等</td></tr>
+<tr><td>店休日</td><td>毎週の曜日＋その月の日。表がグレーになり人数警告が止まる</td><td>候補時間の休業日（closed）。曜日別候補でも表せる</td><td>同等（文心の土日・12日は第2部で投入）</td></tr>
+<tr><td>祝日一覧</td><td>2026-10〜2027-11（本部が更新）</td><td>JH_DATES 2025〜2029</td><td>同等</td></tr>
+<tr><td>昼夜の人数・不足／多い</td><td>確認時刻（12・19時）・担当別・平日と土日祝</td><td>必要ポジション（枠方式）と PDF の昼夜人数（headcountAt）</td><td>見送り（D12）</td></tr>
+<tr><td>印刷・PDF・バックアップ</td><td>マクロ。A4横・約13人／枚</td><td>PDF 出力あり。バックアップは Firebase の性質上不要</td><td>同等</td></tr>
+<tr><td>運用（締切）</td><td>前半は前月末・後半は15日までに本人へ</td><td>企業の毎月の固定締切 10日・25日</td><td>運用の確認のみ</td></tr>
+</table>
+
+<h3>目的</h3>
+<p>上の「設定」をひな型の値で本番に投入し、「コード」3件（F4・F6・F7）を実装して、店長がひな型と Shifty のどちらを見ても同じ判定になる状態にする。</p>
+
+<h3>受け入れ条件</h3>
+<h4>F1 休憩規則の投入（設定・運用）</h4>
+<ul class="chk">
+<li>11店舗（ビアは企業外なので店舗の設定タブで個別に）の breakMode を length にし、breakLength を basis=binding・tiers=[{overMin:480,breakMin:60,inclusive:true},{overMin:360,breakMin:60,inclusive:true}] にする。</li>
+<li>idleBreak を店ごとの表（京天・梅京・文天: 全日 14:30／17:00→120分、小難: 全日 12:00／17:00→120分、文心: 全日 14:30／17:00→165分、小四・炭三・鶏三: 平日のみ 14:30／17:00→120分、ビア・炭イ・魚初・鶏東: なし）で入れる。</li>
+<li>投入前に、小四の 10/3 の1人（xlsm の自動休憩が1h の日）で Shifty の getBreaksFor が同じ60分を返すことをユニットテスト（既存の P3.5a テストに値を足す）で確かめる。</li>
+<li>既存の breakTimes（15〜17時）は残すか消すかをユーザーに確認する（length 方式では読まれないので残しても結果は変わらない）。</li>
+</ul>
+<h4>F2 残業と目印の設定（設定・運用）</h4>
+<ul class="chk">
+<li>企業の共通設定の属性「特定技能」（co_Hzxk84Qv）に otProrate={window:"halfMonth",fixedMin:900}（15h）を入れる。</li>
+<li>B 制の店舗で showDailyOverB=1、判定対象外の目印 highlightExternalOver8h=1・externalOverThresholdMin=480 を店舗の設定タブで入れる（ひな型の「外部の8h超は赤」に対応）。</li>
+<li>法人の労務判定に annualScheduledMin=124800（2,080h）を入れる（① で労務判定は法人側に統合済み）。</li>
+</ul>
+<h4>F4 上限と「所定未満」を所定基準にする（コード）</h4>
+<ul class="chk">
+<li><code>laborMonthFrame</code> に、年間所定があるとき capMin を <code>FLOOR(所定上限＋固定残業)</code>（時間の切り捨て＝206h）にする分岐を足す。無いときは従来の総枠＋固定残業のまま（1バイトも変わらない）。</li>
+<li><code>guideStatusOf</code> の「所定未満」の比較を、年間所定があるときは所定上限（176:39）と比べる。無いときは総枠。</li>
+<li>テスト: 2,080h・10月（31日）で 所定176:39・目安199・上限206 を手計算の期待値として固定（ひな型の値）。未設定の既存テストが変わらないこと。</li>
+<li>CLAUDE.md の P2 の節「上限（capMin）は変えない」を実態に直す。</li>
+</ul>
+<h4>F6 入力の確認（コード・要修正ではない）</h4>
+<ul class="chk">
+<li><code>laborFindingsFor</code> に要修正でない finding（例 key <code>inputCheck</code>）を足し、①出勤・退勤の片側だけの日（補完が効いた日）②時刻でもコマンドでもない文字だけの日（メモだけ・例「事務11」）③A/B の人で従業員番号が空か「派遣」 を「入力の確認n日（…）」で出す。OVERALL_FIX_KEYS・LABOR_DAY_FIX_KEYS には入れない。</li>
+<li>判定対象外（none）の人にも①②は出す（時刻の入力ミスと同じ扱い）。</li>
+<li>テスト: 片側だけ・メモだけ・番号空欄の3ケースと、要修正に影響しないこと（overallVerdictOf が ok のまま）を固定。実ブラウザ回帰でパネルの文言を実測。</li>
+</ul>
+<h4>F7 見送りの記録（文書）</h4>
+<ul class="chk">
+<li>BACKLOG に「前半の見込み判定」「人ごとの休憩の個別設定」「確認時刻方式の人数チェック」を見送りとして、理由と再着手条件（見込み: ユーザーが「＋」の実数より見込みを求めたとき／個別休憩: xlsm の60〜63行に値が入り始めたとき／人数: 担当と必要人数が3店舗以上で運用されたとき）を書く。</li>
+</ul>
+
+<h3>影響範囲</h3>
+<ul>
+<li>コード: <code>app-utils.js</code>（laborMonthFrame・guideStatusOf・laborFindingsFor・module.exports）、<code>app-shift.js</code>（F6 の入力を渡す呼び出し元・片側補完の日とメモだけの日の判定）、<code>tests/core.test.js</code>、回帰スクリプト、CLAUDE.md・BACKLOG.md。</li>
+<li>触らない: functions/（CF の sanitize は既存キーだけを使う）、database.rules.json、index.html（版数バンプはリリース手順の中だけ）、app-staff.js・app-company.js・app-admin.js。</li>
+<li>設定の投入（F1・F2）は本番 Firebase の settings・企業設定への書き込み。画面（設定タブ・企業連携タブ）から行うか、承認後のスクリプトで差分 update する。どちらも承認が要る。</li>
+</ul>
+
+<h3>検証手順</h3>
+<ol>
+<li><code>npm test</code>・<code>npx eslint app-*.js</code>（0 errors）。</li>
+<li>F4: 設定タブの労務判定の表で 10月の 所定176:39・目安199・上限206 を実ブラウザで実測。年間所定を消すと 177:08・199（既存）・207:08 に戻ること。</li>
+<li>F6: 梅京の松南恭介（退勤だけ23時×3・出勤だけ11時×1）を dev の標準テスト店舗に再現し、「入力の確認4日（…）」が出て総括が変わらないこと。</li>
+<li>F1・F2 投入後、小四の1人の月の休憩合計と残業予定が、xlsm の計算ブロック（実働・残業予定）と一致することを3日ぶん手で突き合わせる（検証手順5「Excel と Shifty の全数値突き合わせ」の最小版。全数の突き合わせはユーザーの領分）。</li>
+<li>リリースは <code>/release-to-main</code>。CF・ルールのデプロイは不要（キーの追加が無い）。</li>
+</ol>
+
+<!-- ============================================================ -->
+<h2 id="p4"><span class="role">第4部</span>信頼して任せる — 定型・機械的な作業</h2>
+<ul>
+<li>第2部のスクリプトの引数処理・JSON の出力形式・ログの文言。</li>
+<li>shop-map.json の confirmed:false（鶏えん2店舗）を、D2 の判断に合わせて「本番で実運用中・取り込み対象外」の注記に書き換える。</li>
+<li>調査の中間ファイル（raw_1001.json・prod_dump.json・cmp.json・pdf/p01〜06.png）をスキルの <code>references/samples/2026-10/</code> に写しとして残す（本番の名前を含むので git には入れない。スキルのディレクトリは追跡外）。</li>
+<li>CLAUDE.md の関数一覧に F4・F6 の変更点を追記、BACKLOG の見送り3件（F7）。</li>
+<li>取り込み後の Obsidian への記録（Projects/Shifty の取り込み台帳に 2026-10-01 の行を足す）。</li>
+</ul>
+
+<hr>
+<p class="note">出典: 調査結果は <code>② 調査結果.md</code>（スクラッチパッド）、ひな型の規則は使い方 PDF（p1〜p6）と京月梅田店の前半シートの数式、本番の値は 2026-10-01 の読み取り。この計画書は実装に進まず提出で終える（ユーザー指示「実装計画にとどめて」）。</p>
+
+</div>
+</body>
+</html>
