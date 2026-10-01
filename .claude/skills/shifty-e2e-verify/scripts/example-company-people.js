@@ -14,6 +14,8 @@
 //  F. 番号を数字に変えてから「ID を番号に振り直す」で人物IDが番号になる
 //  C'. 拒否（既にいる名前への改名）の「✕ 理由」がモーダルの中に見える（rejectShownInModal・2026-10-01）
 //  C''. 2店舗にチェックが入ったまま片方が既に新しい名前 → その店舗は送らず、違う店舗だけ改名される（renameSkipsSameName・2026-10-01）
+//  H. 保存ボタンは1つ（2026-10-02）: 「名前を変更」ボタンが無い。番号と名前を一緒に変えて「保存」→ companyUpdateStaff → companyRenameStaff の順に送られ、
+//     番号は新しい名前の登録に付く。番号が拒否されたら名前は送らず、理由はモーダルの中に出てモーダルは開いたまま
 //  G. 375px で編集モーダルがページを横に広げない・入力欄は16px以上・コンソールエラー0件
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-company-people.js → allPass=true / EXIT=0
@@ -109,11 +111,12 @@ const settle = h => h.page.waitForTimeout(700);
     R.editTanaka = await clickEdit(h, "田中 太郎");
     await h.page.waitForTimeout(300);
     R.modalId = await h.evaluate(() => (document.querySelector("[data-co-person-id]") || {}).innerText);
+    R.modalButtons = await h.evaluate(() => [...document.querySelectorAll("[data-co-person-modal] button")].map(b => b.innerText.trim()));
     R.modalFonts = await h.evaluate(() => [...document.querySelectorAll("[data-co-person-modal] input:not([type=checkbox]):not([type=radio]),[data-co-person-modal] select")].map(e => parseFloat(getComputedStyle(e).fontSize)));
     await h.setInput('[data-co-person-modal] input[aria-label="新しい名前"]', "田中 一郎");
     // B店のチェックを外す（A店だけ改名）
     await h.evaluate(() => { const l = [...document.querySelectorAll("[data-co-person-modal] label")].find(x => x.innerText.includes("B店")); l.querySelector("input").click(); });
-    R.renameClick = await modalClick(h, "名前を変更");
+    R.renameClick = await modalClick(h, "保存");
     await settle(h);
     R.renameMsg = await msg(h);
     R.afterRename = await h.evaluate(() => ({
@@ -130,7 +133,7 @@ const settle = h => h.page.waitForTimeout(700);
     await clickEdit(h, "田中 一郎"); await h.page.waitForTimeout(300);
     await h.setInput('[data-co-person-modal] input[aria-label="新しい名前"]', "佐藤");
     await h.evaluate(() => { const l = [...document.querySelectorAll("[data-co-person-modal] label")].find(x => x.innerText.includes("B店")); l.querySelector("input").click(); });
-    await modalClick(h, "名前を変更"); await settle(h);
+    await modalClick(h, "保存"); await settle(h);
     R.dupMsg = await msg(h);
     // (b) 拒否はモーダルの中に出る（一覧の帯はモーダルの覆いの下で見えない・2026-10-01）
     R.dupInModal = await h.evaluate(() => { const m = document.querySelector("[data-co-person-modal]"); const e = m && m.querySelector("[data-co-person-modal-msg]");
@@ -145,7 +148,7 @@ const settle = h => h.page.waitForTimeout(700);
     await h.page.waitForTimeout(100);
     R.sameChecked = await h.evaluate(() => [...document.querySelectorAll("[data-co-person-modal] label")].filter(l => /A店|B店/.test(l.innerText)).map(l => ({ t: l.innerText.replace(/\s+/g, " "), c: l.querySelector("input").checked, note: !!l.querySelector("[data-co-rename-same]") })));
     const cfBefore = await h.evaluate(() => window.__cf.filter(c => c.name === "companyRenameStaff").length);
-    R.sameClick = await modalClick(h, "名前を変更"); await settle(h);
+    R.sameClick = await modalClick(h, "保存"); await settle(h);
     R.sameMsg = await msg(h);
     R.sameAfter = await h.evaluate(n => ({ staff1: window.__db("shops/S1/staff"), staff2: window.__db("shops/S2/staff"), links: window.__db("companies/C1/pub/people/12/links"),
       modalOpen: !!document.querySelector("[data-co-person-modal]"), sent: window.__cf.filter(c => c.name === "companyRenameStaff").slice(n).map(c => c.payload.shopIds) }), cfBefore);
@@ -197,6 +200,25 @@ const settle = h => h.page.waitForTimeout(700);
     await settle(h);
     R.reassigned = await h.evaluate(() => { const p = window.__db("companies/C1/pub/people/77"); return p ? p.links : null; });
     R.num77 = await h.evaluate(() => window.__db("shops/S1/settings/staffNumbers/鈴木"));
+
+    // H. 番号（77→78）と名前（鈴木→鈴木 花子）を一緒に変えて「保存」1回
+    await clickEdit(h, "鈴木"); await h.page.waitForTimeout(300);
+    const cfN = await h.evaluate(() => window.__cf.length);
+    await h.setInput('[data-co-person-modal] input[aria-label="従業員番号"]', "78");
+    await h.setInput('[data-co-person-modal] input[aria-label="新しい名前"]', "鈴木 花子");
+    R.bothClick = await modalClick(h, "保存"); await settle(h); await settle(h);
+    R.both = await h.evaluate(n => ({ order: window.__cf.slice(n).map(c => c.name), staff1: window.__db("shops/S1/staff"),
+      num: window.__db("shops/S1/settings/staffNumbers"), modalOpen: !!document.querySelector("[data-co-person-modal]"),
+      msg: (document.querySelector("[data-co-person-msg]") || {}).innerText || "" }), cfN);
+    // H2. 番号の重なり（3＝佐藤）と名前（鈴木 次郎）→ 番号で拒否され、名前は送らない
+    await clickEdit(h, "鈴木 花子"); await h.page.waitForTimeout(300);
+    const cfN2 = await h.evaluate(() => window.__cf.length);
+    await h.setInput('[data-co-person-modal] input[aria-label="従業員番号"]', "3");
+    await h.setInput('[data-co-person-modal] input[aria-label="新しい名前"]', "鈴木 次郎");
+    await modalClick(h, "保存"); await settle(h); await settle(h);
+    R.bothRej = await h.evaluate(n => { const m = document.querySelector("[data-co-person-modal]"); const e = m && m.querySelector("[data-co-person-modal-msg]");
+      return { sent: window.__cf.slice(n).map(c => c.name), staff1: window.__db("shops/S1/staff"), modalOpen: !!m, inModal: e ? e.innerText : null }; }, cfN2);
+    await modalClick(h, "閉じる"); await h.page.waitForTimeout(300);
 
     // 再読み込みしても、解除した高橋は鈴木にまとまらない（ensure が再び束ねない）
     await h.page.reload();
@@ -252,6 +274,12 @@ const settle = h => h.page.waitForTimeout(700);
     reassigned: R.reassignClick === true && JSON.stringify(R.reassigned) === JSON.stringify({ S1: "鈴木" }) && R.num77 === "77",
     splitStaysAfterReload: R.reloadRows === R.afterSplitRows && R.takahashiSeparate === true,
     mobileFits: !!R.mobile && R.mobile.page <= R.mobile.vw && R.mobile.left >= 0 && R.mobile.right <= R.mobile.vw,
+    noRenameButton: Array.isArray(R.modalButtons) && !R.modalButtons.includes("名前を変更") && R.modalButtons.filter(t => t === "保存").length === 1,
+    saveBothInOrder: R.bothClick === true && !!R.both && JSON.stringify(R.both.order) === JSON.stringify(["companyUpdateStaff", "companyRenameStaff"])
+      && R.both.staff1.includes("鈴木 花子") && !R.both.staff1.includes("鈴木") && (R.both.num || {})["鈴木 花子"] === "78" && !(R.both.num || {})["鈴木"]
+      && R.both.modalOpen === false && /保存し、名前を変更しました/.test(R.both.msg),
+    saveBothRejectStops: !!R.bothRej && JSON.stringify(R.bothRej.sent) === JSON.stringify(["companyUpdateStaff"]) && R.bothRej.staff1.includes("鈴木 花子")
+      && R.bothRej.modalOpen === true && /従業員番号 3 はこの法人で既に使われています/.test(R.bothRej.inModal || ""),
     noErrors: [R.errors, R.errorsBase, R.errorsMobile].every(e => Array.isArray(e) && e.length === 0) && !R.exception && !R.exceptionBase && !R.exceptionMobile,
   };
   v.allPass = Object.values(v).every(Boolean);

@@ -812,7 +812,7 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
   const[mergeOpen,setMergeOpen]=useState(false);
   // 編集・統合のモーダルは結果をモーダルの中にも出す（覆いの下の一覧の帯は見えない）。開いた瞬間に前の操作の結果を出さないよう消す
   useEffect(()=>{if(editRow||mergeOpen)setMsg(null);},[editRow,mergeOpen]);
-  const callPeople=async(name,payload,okText)=>{
+  const callPeople=async(name,payload,okText,opt)=>{
     if(!onCompanyCall){setMsg({ok:false,text:"企業アカウントでログインしてください"});return null;}
     setBusy(true);
     const r=await onCompanyCall(name,payload);
@@ -820,12 +820,14 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
     if(r&&r.error){setMsg({ok:false,text:"✕ "+r.error});return null;}
     const f=(r&&r.failed)||[];
     setMsg(f.length?{ok:false,text:`△ ${okText}（${f.length}店舗への反映に失敗しました。もう一度実行してください）`}:{ok:true,text:"✓ "+okText});
-    setReloadTick(t=>t+1);
+    // keepOpen は編集モーダルの保存の途中の呼び出し。読み直すと data が null になりモーダルが外れるので、閉じるときにまとめて読み直す
+    if(opt&&opt.keepOpen)editDirtyRef.current=true;else setReloadTick(t=>t+1);
     return r||{};
   };
   const[loadErr,setLoadErr]=useState(false);
   const[reloadTick,setReloadTick]=useState(0);
   const[mode,setMode]=useState("number");
+  const editDirtyRef=useRef(false);
   const[query,setQuery]=useState("");
   const[entityFilter,setEntityFilter]=useState("");
   // 賃金列（P6a）。パスコードは企業のもの（companies/{id}/private/payCode・企業uidと作成者だけが読める）。
@@ -1029,8 +1031,10 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
         </table>
       </div>}
     </div>
-    {editRow&&data&&<CompanyPersonEditModal row={editRow} data={data} busy={busy} msg={msg} onClose={()=>setEditRow(null)}
-      onCall={async(name,payload,okText)=>{const r=await callPeople(name,{personId:editRow.personId,...payload},okText);if(r)setEditRow(null);return r;}}/>}
+    {editRow&&data&&<CompanyPersonEditModal row={editRow} data={data} busy={busy} msg={msg}
+      onClose={()=>{setEditRow(null);if(editDirtyRef.current){editDirtyRef.current=false;setReloadTick(t=>t+1);}}}
+      onCall={async(name,payload,okText,opt)=>{const r=await callPeople(name,{personId:editRow.personId,...payload},okText,opt);
+        if(r&&!(opt&&opt.keepOpen)){editDirtyRef.current=false;setEditRow(null);}return r;}}/>}
     {mergeOpen&&pickedRows.length===2&&<CompanyPersonMergeModal rows={pickedRows} ents={ents} busy={busy} msg={msg} onClose={()=>setMergeOpen(false)}
       onMerge={async(keep,drop)=>{const r=await callPeople("mergePeople",{keepPersonId:keep,dropPersonId:drop},"同一人物として統合しました");if(r){setMergeOpen(false);setPicked([]);}}}/>}
     {coCodeModal&&<PayCodeChangeModal tt={t=>setMsg({ok:t.startsWith("✓"),text:t})} onClose={()=>setCoCodeModal(false)}
@@ -1038,7 +1042,10 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
   </div>);
 }
 // 企業内登録スタッフの「編集」（P1b・§3.8）。すべて CF 経由（店舗のデータを丸ごと読み込んで書き戻さない）。
-// 名前の変更は店舗の登録名を変える（StaffTab の改名と同じ結果）。番号・法人・属性・所属店舗は保存時にまとめて送る。
+// 名前の変更は店舗の登録名を変える（StaffTab の改名と同じ結果）。保存ボタンは1つ（2026-10-02 ユーザー指示で「名前を変更」を外した）。
+// 保存は ① 番号・法人・属性・所属店舗（companyUpdateStaff）→ ② 名前（companyRenameStaff）の順に送る。①は同じ値で送り直しても
+// 結果が変わらず、②は一度通ると「名前が変わっていません」で拒否されるので、①が拒否されたら何も変えずに止まり、②だけ失敗したら
+// 押し直しで①を送り直しても害が無い。①の後は一覧を読み直さない（読み直すとモーダルが外れる）。閉じるときに読み直す。
 // 属性と所属店舗は、この人がつながっている全店舗の設定に同じ値を書く（変えないときは「変更しない」のまま）。
 // 編集・統合モーダルの中の結果（成功はモーダルが閉じるので、ここに残るのは主に拒否の「✕ 理由」）。
 // 一覧の帯（data-co-person-msg）は覆いの下に隠れるので、モーダルの中に同じ内容を出す。スクロールしても見えるよう上端に貼り付ける
@@ -1062,14 +1069,20 @@ function CompanyPersonEditModal({row,data,busy,msg,onClose,onCall}){
   const nn=newName.trim();
   const sameName=sid=>(links.find(l=>l.shopId===sid)||{}).name===nn;
   const renameTargets=renameShops.filter(sid=>!sameName(sid));
-  const save=()=>{
+  const doRename=!!nn&&renameTargets.length>0;
+  const save=async()=>{
     const payload={};
     if(number.trim()!==String(row.number||""))payload.number=number.trim();
     if(entityId&&entityId!==(row.entityId||""))payload.entityId=entityId;
     if(attr)payload.attrs=Object.fromEntries(links.map(l=>[l.shopId,attr]));
     if(home)payload.homeShops=Object.fromEntries(links.map(l=>[l.shopId,home]));
-    if(!Object.keys(payload).length){onClose();return;}
-    onCall("companyUpdateStaff",payload,"保存しました");
+    const hasUpdate=Object.keys(payload).length>0;
+    if(!hasUpdate&&!doRename){onClose();return;}
+    if(hasUpdate){
+      const r=await onCall("companyUpdateStaff",payload,doRename?"番号などを保存しました（名前の変更を続けています）":"保存しました",{keepOpen:doRename});
+      if(!r)return;
+    }
+    if(doRename)await onCall("companyRenameStaff",{shopIds:renameTargets,newName:nn},hasUpdate?"保存し、名前を変更しました":"名前を変更しました");
   };
   const SEC={borderTop:"1px solid var(--c-border)",paddingTop:12,marginTop:12};
   return(<div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -1082,17 +1095,15 @@ function CompanyPersonEditModal({row,data,busy,msg,onClose,onCall}){
       <CompanyModalMsg msg={msg}/>
 
       <div style={SEC}>
-        <AL>名前の変更</AL>
-        <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>店舗の登録名を変えます（店舗のスタッフタブで変えるのと同じです。提出・設定・確定済みの期間・賃金も新しい名前に移ります）。</div>
+        <AL>名前</AL>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>変えると、チェックした店舗の登録名が下の「保存」で変わります（店舗のスタッフタブで変えるのと同じです。提出・設定・確定済みの期間・賃金も新しい名前に移ります）。</div>
         <input value={newName} onChange={e=>setNewName(e.target.value)} aria-label="新しい名前" style={{...AI,boxSizing:"border-box",marginBottom:6}}/>
         {links.map(l=>(<label key={l.shopId} style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:"var(--c-text2)",marginBottom:4}}>
           <input type="checkbox" checked={renameShops.includes(l.shopId)} onChange={()=>setRenameShops(a=>a.includes(l.shopId)?a.filter(x=>x!==l.shopId):[...a,l.shopId])} style={{width:16,height:16}}/>
           {l.shopName}（いまの登録名: {l.name}）
           {nn&&l.name===nn&&renameShops.includes(l.shopId)&&<span data-co-rename-same="1" style={{fontSize:11,color:"var(--c-text4)"}}>既にこの名前です（変更しません）</span>}
         </label>))}
-        <button disabled={busy||!nn||!renameTargets.length}
-          onClick={()=>onCall("companyRenameStaff",{shopIds:renameTargets,newName:nn},"名前を変更しました")}
-          style={{...AB,width:"100%",marginTop:6,opacity:busy?0.5:1}}>名前を変更</button>
+        {!nn&&<div style={{fontSize:11,color:"#B45309",marginTop:4}}>名前が空欄のときは名前を変えません。</div>}
       </div>
 
       <div style={SEC}>
@@ -1115,7 +1126,7 @@ function CompanyPersonEditModal({row,data,busy,msg,onClose,onCall}){
           {(data.shops||[]).map(x=><option key={x.id} value={x.id}>{x.name}</option>)}
         </select>
         <div style={{fontSize:11,color:"var(--c-text4)",marginBottom:6,lineHeight:1.5}}>属性と所属店舗は、この人が登録されている全店舗（{links.map(l=>l.shopName).join("・")}）の設定に書きます。</div>
-        <button disabled={busy} onClick={save} style={{...AB,width:"100%",opacity:busy?0.5:1}}>保存</button>
+        <button data-co-person-save="1" disabled={busy} onClick={save} style={{...AB,width:"100%",opacity:busy?0.5:1}}>保存</button>
       </div>
 
       {links.length>1&&<div style={SEC}>
