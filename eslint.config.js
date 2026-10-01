@@ -227,6 +227,8 @@ const sharedGlobals = {
   weeklyOverTotalMinB: "writable",
   TIME_ORDER_ERROR_HINT: "writable",
   isTimeOrderInvalid: "writable",
+  inputCheckOfShift: "writable",
+  isStaffNumberMissing: "writable",
   LABOR_DAY_FIX_KEYS:"readonly", LABOR_DAY_ERR_LABELS:"readonly", laborDayFindingsFor:"readonly",
         laborFindingLabels: "writable",
   excelRound: "writable",

@@ -6653,3 +6653,80 @@ test("特定技能の週の公休はシフト作成タブの週の休みと労�
   assert.ok(/skilledWeekDates=weeks\.filter\([^\n]{0,200}?weekRestByStaff[^\n]{0,120}?isSkilledWeekRestShort\(st\)/.test(src), "労務判定が週の休みと同じ状態から該当週を作っていない");
   assert.ok(src.includes("skilledWeekDates,"), "laborFindingsFor に該当週を渡していない");
 });
+
+// ===== F6 入力の確認（シフトひな型2026-10版_取り込みと差分_実装計画.html 第3部 F6・D11）=====
+// ひな型が「入力の問題」として要修正にしていた日（片側だけ・読めない文字・番号の不備）を、Shifty では
+// 「入力の確認」として労務の確認パネルに並べる。**要修正ではない**（総括を変えない）。
+test("F6 inputCheckOfShift: 片側だけの日（補完が効く日）を oneSided、時刻もコマンドも無い文字だけのセルを memoOnly にする", () => {
+  const ic = (sh, ab) => u.inputCheckOfShift(sh, ab);
+  // ① 片側だけ（グリッドの入力の形: 管理者調整値は adjustedXxx、空欄の上書きは ""）
+  assert.deepStrictEqual(ic({ status: "work", adjustedEnd: "23:00" }), { oneSided: true, memoOnly: false }, "退勤だけ");
+  assert.deepStrictEqual(ic({ status: "work", adjustedStart: "11:00" }), { oneSided: true, memoOnly: false }, "出勤だけ");
+  assert.deepStrictEqual(ic({ status: "work", start: "09:00", adjustedEnd: "" }), { oneSided: true, memoOnly: false }, "提出の退勤を空欄で上書き");
+  assert.deepStrictEqual(ic({ status: "work", adjustedStart: "09:00", adjustedEnd: "18:00" }), { oneSided: false, memoOnly: false }, "両側あり");
+  assert.deepStrictEqual(ic({ status: "work", adjustedStart: "18:00", adjustedEnd: "09:00" }), { oneSided: false, memoOnly: false }, "退勤≦出勤は timeError の領分");
+  // 空いている側が意図した空欄（休み希望・半日の休暇・締め）なら出さない
+  assert.strictEqual(ic({ status: "work", adjustedStart: "11:00", adminRest: { end: true } }).oneSided, false, "退勤側が休み希望");
+  assert.strictEqual(ic({ status: "work", adjustedStart: "11:00", adminRest: { end: true }, leaveTypes: { end: "paid" } }).oneSided, false, "退勤側が半日の有給");
+  assert.strictEqual(ic({ status: "work", adjustedStart: "17:00", adjustedEndFixed: true, extraStart: "23:00", extraEnd: "25:00" }).oneSided, false, "退勤側が締め");
+  // 応援の指定（x・店舗略称）は出勤セルだけ＝ランチ帯の応援、の設計どおりの入力なので出さない
+  const AB = { "三": { id: "S3", name: "三ビル" } };
+  assert.strictEqual(ic({ status: "work", adjustedStart: "09:00", adjustedStartNote: "三" }, AB).oneSided, false, "略称つきの応援");
+  assert.strictEqual(ic({ status: "work", adjustedStart: "09:00", adjustedStartNote: "x" }).oneSided, false, "x の応援");
+  assert.strictEqual(ic({ status: "work", adjustedStart: "09:00", adjustedStartNote: "k" }).oneSided, true, "h/k は帯の担当で応援ではない");
+  assert.strictEqual(ic({ status: "holiday", start: "09:00" }).oneSided, false, "出勤でない日");
+  // ② 読めない文字だけ（extractNote("事務11") は時刻を取れず note に全体が残る）
+  assert.deepStrictEqual(u.extractNote("事務11"), { numeric: "", note: "事務11", rest: false, hasFixed: false });
+  assert.deepStrictEqual(ic({ status: "work", adjustedStart: "", adjustedStartNote: "事務11" }), { oneSided: false, memoOnly: true });
+  assert.deepStrictEqual(ic({ status: "work", adjustedStart: "", adjustedStartNote: "事務11", adjustedEnd: "17:00" }), { oneSided: true, memoOnly: true }, "片側だけかつメモ");
+  assert.strictEqual(ic({ status: "work", adjustedStart: "09:00", adjustedStartNote: "研修", adjustedEnd: "18:00" }).memoOnly, false, "時刻つきのメモは対象外");
+  assert.strictEqual(ic({ status: "work", adjustedStart: "", adjustedStartNote: "x" }).memoOnly, false, "h/k/x 単独は x に正規化されコマンド");
+  assert.strictEqual(ic({ status: "work", adjustedStart: "", adjustedStartNote: "三" }, AB).memoOnly, false, "店舗略称だけ");
+  assert.strictEqual(ic({ status: "work", adjustedStart: "", adjustedStartNote: "三" }).memoOnly, true, "略称が企業に無ければ読めない文字");
+  assert.strictEqual(ic({ status: "work", adminRest: { start: true }, adjustedStartNote: "事務11" }).memoOnly, false, "休み希望のセルはメモを読まない");
+  assert.deepStrictEqual(ic(null), { oneSided: false, memoOnly: false });
+  assert.deepStrictEqual(ic(undefined, AB), { oneSided: false, memoOnly: false });
+});
+test("F6 isStaffNumberMissing: 空欄・空白だけ・「派遣」を未設定とみなす", () => {
+  const st = { staffNumbers: { 田中: "012", 佐藤: " ", 鈴木: "派遣", 高橋: "派遣元A1" } };
+  assert.strictEqual(u.isStaffNumberMissing(st, "田中"), false);
+  assert.strictEqual(u.isStaffNumberMissing(st, "佐藤"), true);
+  assert.strictEqual(u.isStaffNumberMissing(st, "鈴木"), true);
+  assert.strictEqual(u.isStaffNumberMissing(st, "高橋"), false, "派遣元の番号は設定済み");
+  assert.strictEqual(u.isStaffNumberMissing(st, "未登録"), true);
+  assert.strictEqual(u.isStaffNumberMissing({}, "田中"), true);
+  assert.strictEqual(u.isStaffNumberMissing(null, "田中"), true);
+});
+test("F6 laborFindingsFor: 入力の確認n日（…）と従業員番号が未設定を出し、総括は変えない", () => {
+  const dates = ["2026-10-03", "2026-10-07", "2026-10-09", "2026-10-12"];
+  const base = { laborSystem: "A", dayMins: [480, 480], monthReady: true };
+  const f = u.laborFindingsFor({ ...base, inputCheckDates: dates, staffNumberMissing: true });
+  assert.deepStrictEqual(f.map(x => x.key), ["inputCheck", "inputCheckNumber"]);
+  assert.strictEqual(f[0].label, "入力の確認4日（3・7・9・12）");
+  assert.strictEqual(f[1].label, "従業員番号が未設定");
+  // 重複・並びの乱れは日付で整える
+  assert.strictEqual(u.laborFindingsFor({ ...base, inputCheckDates: ["2026-10-09", "2026-10-03", "2026-10-09"] })[0].label, "入力の確認2日（3・9）");
+  // 判定対象外（none）にも①②は出すが、番号は出さない
+  const none = u.laborFindingsFor({ laborSystem: "none", inputCheckDates: dates, staffNumberMissing: true });
+  assert.deepStrictEqual(none.map(x => x.key), ["inputCheck"]);
+  // B制にも番号は出す。区分が空欄（null）の人は区分の指摘だけで番号は出さない
+  assert.ok(u.laborFindingsFor({ laborSystem: "B", staffNumberMissing: true }).some(x => x.key === "inputCheckNumber"));
+  assert.ok(!u.laborFindingsFor({ laborSystem: null, staffNumberMissing: true }).some(x => x.key === "inputCheckNumber"));
+  // 何も渡さなければ従来と同じ
+  assert.deepStrictEqual(u.laborFindingsFor(base), []);
+  // 要修正ではない＝総括を変えない（A・B・none とも）
+  assert.ok(!u.OVERALL_FIX_KEYS.includes("inputCheck") && !u.OVERALL_FIX_KEYS.includes("inputCheckNumber"));
+  assert.ok(!u.LABOR_DAY_FIX_KEYS.includes("inputCheck") && !u.LABOR_DAY_FIX_KEYS.includes("inputCheckNumber"));
+  assert.deepStrictEqual(u.overallVerdictOf({ laborSystem: "A", findings: f, guideKey: "ok", monthReady: true }), { key: "ok", label: "OK" });
+  assert.deepStrictEqual(u.overallVerdictOf({ laborSystem: "A", findings: f, guideKey: "ok", monthReady: false }), { key: "ok_partial", label: "＋OK" });
+  assert.deepStrictEqual(u.overallVerdictOf({ laborSystem: "B", findings: u.laborFindingsFor({ laborSystem: "B", inputCheckDates: dates, staffNumberMissing: true }), monthReady: true }), { key: "ok", label: "OK" });
+  assert.deepStrictEqual(u.overallVerdictOf({ laborSystem: "none", findings: none }), { key: "none", label: "" });
+  // 日ごとの色（laborDayFindingsFor）は入力の確認を返さない
+  assert.deepStrictEqual(u.laborDayFindingsFor({ laborSystem: "A", dayMins: [480, 480] }), [[], []]);
+});
+test("F6 ドリフト検出: シフト作成タブの労務判定は入力の確認と従業員番号を laborFindingsFor へ渡す", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const src = fs.readFileSync(path.join(__dirname, "..", "app-shift.js"), "utf8");
+  assert.ok(/inputCheckDatesOf=name=>dates\.filter\(d=>\{const r=inputCheckOfShift\(_getAnyShift\(name,d\),abbrToShop\);return r\.oneSided\|\|r\.memoOnly;\}\)/.test(src), "inputCheckOfShift を日ごとに通す");
+  assert.ok(/inputCheckDates:inputCheckDatesOf\(name\),staffNumberMissing:isStaffNumberMissing\(settings,name\)/.test(src), "laborFindingsFor に渡す");
+});

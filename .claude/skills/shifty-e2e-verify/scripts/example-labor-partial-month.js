@@ -24,6 +24,8 @@ const SUBS=[{id:"s1",periodId:"pa",staffName:"田中",shopId:"S1",comment:"",sub
 const SETTINGS={shopId:"S1",candidates:[{start:"09:00",end:"23:00"}],weekdayCandidates:{},dateCandidates:{},
   breakTimes:{weekday:[{start:"12:00",end:"13:00"}],sat:[{start:"12:00",end:"13:00"}],sun:[{start:"12:00",end:"13:00"}],holSat:[{start:"12:00",end:"13:00"}],holSun:[{start:"12:00",end:"13:00"}]},
   staffAttributes:{田中:"employee"},staffTypeLimits:{employee:{name:"社員"}},periodUnit:"2week",
+  // 従業員番号を入れておく（2026-10-01 F6 から、A/B で番号が無いと「従業員番号が未設定」がパネルに出る＝この回帰の意図と別の話）
+  staffNumbers:{田中:"001"},
   staffColors:{},staffAliases:{},positions:{kitchen:[],hall:[]},requiredPositions:{},staffPositions:{}};
 function Harness(){
   const [subs,setSubs]=React.useState(SUBS);

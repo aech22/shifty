@@ -200,6 +200,14 @@ isTimeOrderInvalid / TIME_ORDER_ERROR_HINT
                            // 片側セルは補完の領分。`effShiftRangeMin` は「退勤≦出勤」と「片側だけ」の
                            // 両方を null にして区別できないので専用に持つ。入口2つ（applyEditToSubs・
                            // saveAdj）の両方がこれを通る（tests/core.test.js のドリフト検出が守る）
+inputCheckOfShift / isStaffNumberMissing
+                           // 入力の確認（2026-10-01・ひな型2026-10版との差分 F6）。ひな型が「入力の問題」として要修正にしていた日を、
+                           // Shifty は補完（片側だけ）とメモ（読めない文字）で黙って通していたので、労務の確認パネルに並べる。
+                           // inputCheckOfShift(shift, abbrToShop) → {oneSided, memoOnly}。oneSided＝出勤だけ／退勤だけの日（空いている側が
+                           // 休み希望・半日の休暇・締めの日と、入っている側が応援の指定＝x・店舗略称の日は除く）。memoOnly＝時刻が無く
+                           // コマンドでも店舗略称でもない文字だけのセル（例「事務11」。h/k/x 単独・休み・休暇・締め・略称は除く）。
+                           // isStaffNumberMissing＝settings.staffNumbers が空か「派遣」。シフト作成タブの laborByStaff が期間の日ごとに通し、
+                           // 所属店舗で判定する人（P3.6 の dest）にも①②を出す（この店舗のセルの話なので）
 laborFindingDatesLabel / laborWeekDatesLabel / LABOR_FINDING_DATES_MAX
                            // 労務判定の該当日を `（17・22）`、該当週を `（5〜11）` の形でラベルの後ろに足す
                            // （2026-09-26 ユーザー指示）。**日だけを出し月は出さない**——日次の判定は
@@ -213,6 +221,9 @@ laborFindingsFor / laborFindingLabels / overallVerdictOf
                            // 日次・月次の労務判定（S-4）と総括判定（S-6）。引数はオプションオブジェクト。
                            // laborSystem==="none" は労働時間の判定・集計から外す（休憩不足も出さない）が、
                            // **「時刻の入力ミス」だけは区分によらず出す**——労務ではなく入力データの誤りのため。
+                           // 「入力の確認n日（…）」（key inputCheck・inputCheckDates）も同じく区分によらず出し、「従業員番号が未設定」
+                           // （key inputCheckNumber・staffNumberMissing）は A/B の人だけ（2026-10-01・F6）。**どちらも要修正ではない**
+                           // （OVERALL_FIX_KEYS・LABOR_DAY_FIX_KEYS に入れない＝総括もセル色も変えない。テストで固定）。
                            // 戻り値は {key,label}。総括判定が key で引くので文字列だけを返す形にしない
 excelRound / excelRoundUp / excelRoundDown
                            // Excel の丸め。**Math.round を直接使わない**（負の値で挙動が違う）。
