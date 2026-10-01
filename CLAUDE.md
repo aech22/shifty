@@ -243,13 +243,12 @@ breakModeOf / breakLengthOf / shiftBindingMin / isBreakShort
                            // **長さ方式のしきい値は実働で見る**——S-3 の本文は「拘束>8h→1.0h」だが
                            // 同じ節の表（拘束8.5h→控除0.75h・実働7.75h）は実働基準でしか再現できない。
                            // 労基法34条の「労働時間」も実働なので表を採った
-breakLengthRuleOf / idleBreakOf / breakMinutesOf / breakDecisionOf
-                           // 店舗別ルール（2026-09-30・P3.5a）。getBreaksFor の優先順は **日別上書き ＞ 中休み ＞ 長さ ＞ 時間帯**。
+breakLengthRuleOf / breakMinutesOf / breakDecisionOf
+                           // 店舗別ルール（2026-09-30・P3.5a）。getBreaksFor の優先順は **日別上書き ＞ 長さ ＞ 時間帯**（中休み idleBreak は 2026-10-02 のユーザー指示で機能ごと削除。休憩は前後に勤務がある時間帯にだけ当たる＝時間帯方式の休憩帯で表す。店舗データに残る idleBreak は読まない）。
                            // 長さ方式は breakLength.basis（"work"=実働・既定／"binding"=拘束）と tiers（[{overMin,breakMin,inclusive}]）で段を決め、
-                           // tiers が無ければ従来の2段（実働8h超／6h超・しきい値は法定の定数）。中休み idleBreak は
-                           // 出勤≦startBy かつ 退勤≧endAfter の日に min 分（days: all/weekday/none）。時刻・分はすべて店舗の設定で
-                           // **コードに依頼文の値は無い**。breakDecisionOf は詳細モーダルの「自動（灰）／手動（太字）」と「自動に戻す」の値。
-                           // isBreakShort（休憩不足）は法定の基準のまま変えていない。idleBreak は PERIOD_SNAPSHOT_SETTING_KEYS に入れた
+                           // tiers が無ければ従来の2段（実働8h超／6h超・しきい値は法定の定数）。
+                           // 段の時間と分はすべて店舗の設定で**コードに依頼文の値は無い**。breakDecisionOf は詳細モーダルの「自動（灰）／手動（太字）」と「自動に戻す」の値。
+                           // isBreakShort（休憩不足）は法定の基準のまま変えていない
 overtimePlanOf / otProrateOf / staffOtProrateOf / dailyOverMinB / dailyOverThresholdOf
                            // 残業予定の日割り（P3.5b）。A制の月の残業予定と日別の按分は overtimePlanOf 1本（画面の表と年の36協定の
                            // liveMonthOtFor が同じ関数を通る）。属性の staffTypeLimits[属性].otProrate={window:"month"|"halfMonth",fixedMin?}
@@ -661,7 +660,6 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              breakMode?: "band"|"length",                                       // 休憩の決め方（既定 band＝従来）
              breakLength?: {over8Min, over6Min, basis?: "work"|"binding",       // basis・tiers は P3.5a（無ければ従来の2段）
                  tiers?: {overMin, breakMin, inclusive}[]},
-             idleBreak?: {enabled, startBy: "HH:MM", endAfter: "HH:MM", min, days: "all"|"weekday"|"none"}, // 中休み（P3.5a・既定なし）
              headcountAt?: {enabled, lunch: "HH:MM", dinner: "HH:MM"},          // PDF の昼・夜の人数（P3.5d・既定なし）
              paidLeaveGranted?: {[name]: 日数},                                  // 有給の付与日数（残数の基準）
              overtimeSettings?: {byStaff: {[name]: {lunch,dinner}}}, staffNumbers?: {[name]: string},
@@ -882,7 +880,7 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
   その日だけ（自動判定しない）。休日は週の休みと同じ数え方（公休・空欄）で、有給・慶弔・欠勤・実績で働いた日は休日にしない。
   **7日のどれかのデータが無い週は判定しない**。法定休日労働は①②③と60h超に含めず、深夜と重なった分は `legalHolidayNightMin` に別に持つ
 - **深夜（決定 #4）**: 0:00〜5:00 と 22:00〜29:00。休憩は、時間帯方式の帯（`breakBands`＝`resolveActualDay`/`scheduledDay` が返す位置）なら
-  深夜帯との重なりを引き、位置の無い休憩（長さ方式・中休み・日別の上書き・実績で分だけ入れた休憩＝`breakBands:null`）は
+  深夜帯との重なりを引き、位置の無い休憩（長さ方式・日別の上書き・実績で分だけ入れた休憩＝`breakBands:null`）は
   **拘束に占める深夜帯の比率で按分**（引く分は1分未満切り捨て）。締の追加出勤には休憩が無い
 - **60h超**: 月の時間外（法定休日を除く）が 3,600 分を超えた分
 - **36協定**: B制にも月45h・単月100h・年の4項目を当てる（総括の要修正も A制と同じ）。**単月100h と複数月平均80h は時間外＋法定休日労働**
@@ -1571,7 +1569,7 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 **目的**: `resolveActualDay`（app-utils.js）は実績の時刻で `getBreaksFor` を通し直すが、確定シフトの `adjustedBreak` は残すので、
 日別上書きが最優先で当たる。実測: 9:00〜18:00・休憩30分指定の日に実績の退勤を 09:15 にすると、実働0分・休憩15分になる
-（10:00 なら実働30分・休憩30分、上書きが無ければ実働15分）。仕様の文言（「日別上書き＞中休み＞長さ＞時間帯」「breakMin が無ければ判定し直す」）
+（10:00 なら実働30分・休憩30分、上書きが無ければ実働15分）。仕様の文言（「日別上書き＞長さ＞時間帯」（当時は中休みを含む）「breakMin が無ければ判定し直す」）
 どおりの挙動で、実績の休憩欄に分を入れれば直せる。
 **受け入れ条件**:
 - [ ] 実績の時刻が確定シフトと違う日に `adjustedBreak` を当て続けるか、落として判定し直すかを決める（**ユーザー判断**）
@@ -1710,7 +1708,7 @@ CF の `sanitizeWageSettings`（functions/company-config.js）を同じ規則に
       **CF より先にクライアントを出すと、企業の共通設定・法人設定で「残業予定の配り方」を保存しても旧 CF の sanitize で捨てられる**
       （店舗の設定タブで入れた値は CF を通らないので効く）。P1・P1b・P3・P6a の CF と同じ1回のデプロイでよい
 - [ ] データ移行: なし（設定が無い店舗は従来と同じ計算）
-- [ ] 設定の投入（中休み・しきい値・B制トグル・外部の色・昼夜人数・特定技能の按分窓）は P8-7 の運用手順で行う（コードの作業ではない）
+- [ ] 設定の投入（しきい値・B制トグル・外部の色・昼夜人数・特定技能の按分窓。中休みは 2026-10-02 に機能ごと削除）は P8-7 の運用手順で行う（コードの作業ではない）
 **影響範囲**: functions/company-config.js（コード変更は済み）
 
 ---
@@ -3351,7 +3349,7 @@ Vite + TS へのフル移行は不要。
 ### ✅ 🟡 労務・給与と複数法人 P3.5: 店舗別ルール4件（2026-09-30 develop 完了・`f97cb72`〜`a921796`／ルール変更なし・CF は本番未反映）
 
 **目的**: `労務給与_複数法人_実装計画.md` §3.9・§6 P3.5。依頼文の数値はコードに書かず、すべて店舗（または属性）の設定・既定オフで入れる。
-- [x] P3.5a 中休み（`settings.idleBreak`）と長さ方式のしきい値（`breakLength.basis`／`tiers`）。優先順は 上書き＞中休み＞長さ＞時間帯。
+- [x] P3.5a 中休み（`settings.idleBreak`・**2026-10-02 に機能ごと削除**）と長さ方式のしきい値（`breakLength.basis`／`tiers`）。優先順は 上書き＞中休み＞長さ＞時間帯。
       `basis:"binding", tiers:[{overMin:360,breakMin:60,inclusive:true}]` で 17-23=60分・10-17=60分・10-15:59=0分、中休み（平日）で 10-22=120分、
       15-23 は長さ方式の60分、設定の無い店舗は 17-23=0分のまま（テストで固定）。休憩不足の判定は法定のまま。
       提出一覧の詳細で自動＝灰（中休み／長さ／時間帯）・手動＝太字、「自動に戻す」で `adjustedBreak` を消す
