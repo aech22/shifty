@@ -1589,7 +1589,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // 「要確認」に倒していた）。暦月の枠に対する途中の値なので `＋` と淡色で示し、
       // **総括には入れない**（overallVerdictOf の monthReady が key を捨てる）。
       const guideRaw=sys!=="A"?{key:"none",label:"",color:null}
-        :guideStatusOf(monthWorkMin,laborFrame.baseMin,ls.fixedOvertimeMin,laborFrame.guideMin);
+        :guideStatusOf(monthWorkMin,laborFrame.baseMin,ls.fixedOvertimeMin,laborFrame.guideMin,laborFrame.scheduledCapMin);
       const guide=(sys==="A"&&!laborMonthCovered&&guideRaw.label)
         ?{...guideRaw,label:`＋${guideRaw.label}`,color:"var(--c-text3)",
           title:`${guideRaw.label}（データのある日だけで計算した途中の値）／${laborPendingReason}`}

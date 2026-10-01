@@ -2423,7 +2423,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             </tr>))}</tbody>
           </table>
         </div>
-        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>目安 = {hasAnnual?"所定上限":"総枠"} + 固定残業 − 余裕（時間未満を切り捨て）／上限 = 総枠 + 固定残業。{hasAnnual?"29日はうるう年の2月の値です。":""}月の残業予定は「月実働 − 総枠」で、日別にはその日までの累計実働の比で配分します。</div>
+        <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>目安 = {hasAnnual?"所定上限":"総枠"} + 固定残業 − 余裕（時間未満を切り捨て）／上限 = {hasAnnual?"所定上限 + 固定残業（時間未満を切り捨て）":"総枠 + 固定残業"}。{hasAnnual?"29日はうるう年の2月の値です。":""}月の残業予定は「月実働 − 総枠」で、日別にはその日までの累計実働の比で配分します。</div>
 
         {/* 通常の労働時間制（B制）の日ごとのしきい値超を数値で出す（店舗トグル・既定オフ・P3.5b）。
             判定（8h超・週40h超）は法定のまま変えず、シフト作成タブの「残業予定」の行に数値を足すだけ。 */}

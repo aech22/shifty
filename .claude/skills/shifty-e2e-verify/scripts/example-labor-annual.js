@@ -3,9 +3,10 @@
 //
 // A. 店舗の設定タブ（企業なし）: 未設定では表に「所定上限」列が無く目安 31日=200:00（S-1 のまま）。
 //    年間所定に 2080 を入れて確定すると laborSettings.annualScheduledMin=124800 で保存され、表に所定上限
-//    31/30/28日 = 176:39／170:57／159:33、目安 199:00／193:00／182:00 が出る（上限 207:08 は変わらない）。
+//    31/30/28日 = 176:39／170:57／159:33、目安 199:00／193:00／182:00 が出る。上限は 2026-10-01（F4）から
+//    ROUNDDOWN(所定上限 + 固定残業) ＝ 31/30/29/28日 206:00／200:00／194:00／189:00（以前は総枠基準の 207:08 のままだった）。
 //    分母は空欄のとき「自動 173.3」、173.3 を入れると 10398 分。週の起算を日曜にすると weekStartDow=0。
-//    年間所定を空欄に戻すと 0 で保存され、所定上限列が消え目安が 200:00 に戻る。
+//    年間所定を空欄に戻すと 0 で保存され、所定上限列が消え目安が 200:00・上限が 207:08 に戻る。
 //    入力途中の「2080.」は確定前に消えない（小数1桁の入力を打てる）。
 // B. 企業が年間所定と週の起算を決めている店舗: その2項目は「企業設定」の固定表示になり、分母は入力できる。
 //    表に所定上限列が出る。余裕を変えて保存しても、企業の値（annualScheduledMin・weekStartDow）は店舗に書かれない。
@@ -161,17 +162,17 @@ async function partC() {
     A_annualSaved: !!(A.labor1 && A.labor1.annualScheduledMin === 124800),
     A_schedCol: JSON.stringify(col(A.after, "所定上限")) === JSON.stringify(["176:39", "170:57", "164:48", "159:33"]),
     A_guideFromSched: col(A.after, "目安")[0] === "199:00" && col(A.after, "目安")[1] === "193:00" && col(A.after, "目安")[3] === "182:00",
-    A_capUnchanged: col(A.after, "上限")[0] === "207:08" && col(A.after, "総枠（所定）")[0] === "177:08",
+    A_capFromSched: JSON.stringify(col(A.after, "上限")) === JSON.stringify(["206:00", "200:00", "194:00", "189:00"]) && col(A.after, "総枠（所定）")[0] === "177:08",
     A_annualShown: A.annualShown === "2080",
     A_denomAutoPlaceholder: A.denomPlaceholder === "自動 173.3",
     A_denomSaved: !!(A.labor2 && A.labor2.rateDenominatorMin === 10398 && A.denomShown === "173.3"),
     A_weekSaved: !!(A.selWeek === "ok" && A.labor3 && A.labor3.weekStartDow === 0),
     A_clearedToZero: !!(A.labor4 && A.labor4.annualScheduledMin === 0),
-    A_clearedTable: !!(A.cleared && !("所定上限" in A.cleared) && col(A.cleared, "目安")[0] === "200:00"),
+    A_clearedTable: !!(A.cleared && !("所定上限" in A.cleared) && col(A.cleared, "目安")[0] === "200:00" && col(A.cleared, "上限")[0] === "207:08"),
     B_annualFixed: B.annualFixed === "2080h 企業設定",
     B_weekFixed: B.weekFixed === "日曜 企業設定",
     B_denomEditable: !!(B.denomField && B.denomField.tag === "INPUT" && B.denomField.placeholder === "自動 173.3"),
-    B_schedColShown: col(B.table, "所定上限")[0] === "176:39" && col(B.table, "目安")[0] === "199:00",
+    B_schedColShown: col(B.table, "所定上限")[0] === "176:39" && col(B.table, "目安")[0] === "199:00" && col(B.table, "上限")[0] === "206:00",
     B_companyKeysNotStored: !!(B.setMargin === "ok" && B.saved && !("annualScheduledMin" in B.saved) && !("weekStartDow" in B.saved) && B.saved.marginMin === 300),
     C_initialDenom: C.initialDenom === "175" && C.initialAnnualPh === "店舗",
     C_annual: !!(C.l1 && C.l1.annualScheduledMin === 124800),

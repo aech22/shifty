@@ -1937,6 +1937,7 @@ labor-phase1〜3・labor-limits・staff-pay・attr-order・labor-partial-month�
 
 置いた前提: 1日の延長上限が0（残業を前提にしない運用）のときの目安は、従来の「目安＝総枠」を「目安＝所定上限」に読み替えた
 （年間所定を設定したときは総枠の役割を所定上限が担うため）。労務判定の「所定未満」（`guideStatusOf`）は総枠との比較のまま変えていない。
+**2026-10-01 追記（F4）**: ひな型2026-10版に合わせ、年間所定を設定したときは「所定未満」を所定上限と、上限（`capMin`）を ROUNDDOWN(所定上限＋固定残業)＝206h と比べるように変えた（`monthlyCapMinFor`）。
 `weekSplitAtMonthEdge` の UI は計画どおり作っていない（BACKLOG 相当・P5 で関数の引数として使う）。
 
 **本番反映で要るもの**: CF の `saveCompanyConfig`・法人設定の保存（`sanitizeCompanySettings` が新キー4つを通すようになった）の本番デプロイ。

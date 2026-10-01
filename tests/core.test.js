@@ -5153,14 +5153,58 @@ test("P2 所定上限: 2,080h で 31/30/28日・うるう年2月 = 176:39／170:
   assert.strictEqual(u.yearDaysOf(2100), 365);
   assert.strictEqual(u.yearDaysOf(2000), 366);
 });
-test("P2 目安: 年間所定を設定すると所定上限 + 固定残業 − 余裕（31日 199h／30日 193h／2月 182h）。上限は変えない", () => {
+test("P2 目安: 年間所定を設定すると所定上限 + 固定残業 − 余裕（31日 199h／30日 193h／2月 182h）。総枠は変えない", () => {
   const ls = { laborSettings: { annualScheduledMin: HM(2080, 0) } };
   assert.strictEqual(u.laborMonthFrame(ls, "2026-10").guideMin, HM(199, 0));
   assert.strictEqual(u.laborMonthFrame(ls, "2026-11").guideMin, HM(193, 0));
   assert.strictEqual(u.laborMonthFrame(ls, "2027-02").guideMin, HM(182, 0));
-  // 上限（総枠 + 固定残業）と総枠は年間所定に関係なく従来どおり
-  assert.strictEqual(u.laborMonthFrame(ls, "2026-10").capMin, HM(207, 8));
+  // 総枠（残業予定の基準）は年間所定に関係なく従来どおり。上限は F4（2026-10-01）から所定上限基準（下のテスト）
   assert.strictEqual(u.laborMonthFrame(ls, "2026-10").baseMin, HM(177, 8));
+});
+// ===== F4 上限と「所定未満」を所定基準にする（シフトひな型2026-10版_取り込みと差分_実装計画.html 第3部 F4・D10）=====
+// 期待値はひな型（2026-10-01版）の値: 年2,080h・31日で 所定176:39／目安199／上限206（= ROUNDDOWN(所定 + 固定残業30h)）。
+// 30日・28日の上限は同じ式の手計算（170:57+30h=200:57→200:00、159:33+30h=189:33→189:00）。実装の出力から逆生成していない。
+test("F4 上限: 年間所定 2,080h・2026年10月で 所定176:39・目安199・上限206（ひな型の値）", () => {
+  const ls = { laborSettings: { annualScheduledMin: HM(2080, 0) } };
+  const f = u.laborMonthFrame(ls, "2026-10");
+  assert.strictEqual(f.scheduledCapMin, 10599, "所定 176:39");
+  assert.strictEqual(f.guideMin, HM(199, 0), "目安 199h");
+  assert.strictEqual(f.capMin, HM(206, 0), "上限 206h（176:39+30h=206:39 の時間未満切り捨て）");
+  assert.strictEqual(u.laborMonthFrame(ls, "2026-11").capMin, HM(200, 0), "30日");
+  assert.strictEqual(u.laborMonthFrame(ls, "2027-02").capMin, HM(189, 0), "28日");
+  // 固定残業を変えても同じ式（0 なら所定上限の時間未満切り捨て）
+  assert.strictEqual(u.laborMonthFrame({ laborSettings: { annualScheduledMin: HM(2080, 0), fixedOvertimeMin: 0 } }, "2026-10").capMin, HM(176, 0));
+  assert.strictEqual(u.monthlyCapMinFor(HM(177, 8), 10599, HM(30, 0)), HM(206, 0));
+  assert.strictEqual(u.monthlyCapMinFor(HM(177, 8), 0, HM(30, 0)), HM(207, 8), "所定上限0なら総枠＋固定残業");
+});
+test("F4 上限: 年間所定が無い・0 なら capMin は 総枠 + 固定残業 のまま（207:08）", () => {
+  [{}, { laborSettings: { annualScheduledMin: 0 } }, null].forEach(s => {
+    assert.strictEqual(u.laborMonthFrame(s, "2026-10").capMin, HM(207, 8));
+    assert.strictEqual(u.laborMonthFrame(s, "2026-10").capMin, u.monthlyCapMin(u.laborMonthFrame(s, "2026-10").baseMin, HM(30, 0)));
+  });
+});
+test("F4 目安の確認: 年間所定があるとき「所定未満」は所定上限 176:39、「みなし超」は上限 206h と比べる", () => {
+  const base = u.monthlyBaseMin(HM(40, 0), 31), fix = HM(30, 0), guide = HM(199, 0), sched = 10599;
+  const g = w => u.guideStatusOf(w, base, fix, guide, sched);
+  // 176:00 < 176:39 → 所定未満 あと ROUNDUP(0.65,2)=0.65h
+  assert.deepStrictEqual({ k: g(HM(176, 0)).key, l: g(HM(176, 0)).label }, { k: "under_base", l: "所定未満 あと0.65h" });
+  // 177:00 は総枠 177:08 未満だが所定 176:39 以上 → 目安未満（以前の基準なら所定未満だった）
+  assert.deepStrictEqual({ k: g(HM(177, 0)).key, l: g(HM(177, 0)).label }, { k: "under_guide", l: "目安未満 あと22h" });
+  assert.strictEqual(u.guideStatusOf(HM(177, 0), base, fix, guide).key, "under_base", "所定上限を渡さなければ従来の総枠比較");
+  // 206:30 は上限 206h 超 → みなし超 0.5h（以前の上限 207:08 なら OK だった）
+  assert.deepStrictEqual({ k: g(HM(206, 30)).key, l: g(HM(206, 30)).label }, { k: "over", l: "みなし超 0.5h" });
+  assert.strictEqual(u.guideStatusOf(HM(206, 30), base, fix, guide).key, "ok", "所定上限を渡さなければ従来の上限 207:08");
+  // 205:00 → OK 上限まで1h
+  assert.deepStrictEqual({ k: g(HM(205, 0)).key, l: g(HM(205, 0)).label }, { k: "ok", l: "OK 上限まで1h" });
+  assert.strictEqual(g(0).key, "none");
+  // 0 を渡すと省略と同じ
+  [HM(170, 0), HM(190, 0), HM(205, 0), HM(210, 0)].forEach(w =>
+    assert.deepStrictEqual(u.guideStatusOf(w, base, fix, guide, 0), u.guideStatusOf(w, base, fix, guide)));
+});
+test("F4 ドリフト検出: シフト作成タブの目安は laborMonthFrame の所定上限を guideStatusOf に渡す", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const src = fs.readFileSync(path.join(__dirname, "..", "app-shift.js"), "utf8");
+  assert.ok(/guideStatusOf\(monthWorkMin,laborFrame\.baseMin,ls\.fixedOvertimeMin,laborFrame\.guideMin,laborFrame\.scheduledCapMin\)/.test(src));
 });
 test("P2 未設定: 年間所定が無い・0 なら所定上限は0、目安・総枠・上限は S-1 と完全に同じ値", () => {
   [{}, { laborSettings: { annualScheduledMin: 0 } }, { laborSettings: { annualScheduledMin: "x" } }, null].forEach(s => {

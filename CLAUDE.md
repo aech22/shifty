@@ -188,7 +188,11 @@ weeklyLegalMinFromBase31 / monthlyBaseMin / monthlyGuideMin / monthlyCapMin / la
 yearDaysOf / monthlyScheduledCapMin     // 年間所定労働時間（P2・2026-09-30）。laborMonthFrame が返す scheduledCapMin（月の所定上限）＝
                            // FLOOR(年間所定 × 暦日数 ÷ その暦年の日数)。2,080h で 31/30/28日・うるう年2月 = 176:39／170:57／159:33／164:48。
                            // **年間所定を設定すると目安（guideMin）は総枠ではなく所定上限から引く**（31日 199h／30日 193h／2月 182h）。
-                           // 未設定（0）なら scheduledCapMin=0 で目安も従来どおり総枠から＝S-1 と1分も変わらない。上限（capMin）は変えない。
+                           // 未設定（0）なら scheduledCapMin=0 で目安も従来どおり総枠から＝S-1 と1分も変わらない。
+monthlyCapMinFor           // 月の上限の入口（2026-10-01・ひな型2026-10版との差分 F4）。**年間所定を設定すると上限も所定基準**＝
+                           // ROUNDDOWN(所定上限 + 固定残業)（時間未満を切り捨て・ひな型の式）。2,080h で 31/30/29/28日 = 206:00／200:00／194:00／189:00。
+                           // 未設定なら従来の monthlyCapMin（総枠 + 固定残業・切り捨てなし＝207:08）と1分も変わらない。
+                           // laborMonthFrame の capMin と guideStatusOf の「みなし超」が同じこの関数を通る。総枠（baseMin）は残業予定の基準のまま変えない
                            // weekStartDow・weekSplitAtMonthEdge は**割増の計算（P5）だけ**に効く。既存の週の休み・B制の週40h超は変えていない
 weeklyOverMinB / weeklyOverTotalMinB    // B制の週40h超。各日の実働を1日8hで切ってから週で足し40h超だけ取る
 isTimeOrderInvalid / TIME_ORDER_ERROR_HINT
@@ -215,7 +219,10 @@ excelRound / excelRoundUp / excelRoundDown
                            // 桁をずらしたあと toPrecision(15) で丸め直し、1.005*100 の取りこぼしも消す
 monthlyOvertimeH / prorateOvertimeH     // 月の残業予定と日別の按分（S-2）。**累積の差分**で配るので
                            // 日別の和が月の残業予定と完全に一致する（毎日「実働×比率」を丸めるとずれる）
-guideStatusOf              // 目安の4段階（S-6）。みなし超／所定未満／目安未満／OK 上限まで
+guideStatusOf              // 目安の4段階（S-6）。みなし超／所定未満／目安未満／OK 上限まで。第5引数に laborMonthFrame の scheduledCapMin を渡すと
+                           // （2026-10-01・F4）**「所定未満」は所定上限（176:39）と、「みなし超」は monthlyCapMinFor の上限（206h）と比べる**。
+                           // その分岐は差を分のまま取ってから時間に直す（176.65h−176h を浮動小数で引くと ROUNDUP が 0.65 を 0.66 にする）。
+                           // 0・省略なら従来どおり総枠（177:08）と 総枠＋固定残業 で比べる。呼び出し元はシフト作成タブ1か所（ドリフト検出テストあり）
 AGREEMENT_LEGAL_ITEMS / AGREEMENT_SINGLE_MONTH_CAP_H
                            // 36協定の法定上限の一覧（判定する・しないを含む）。設定画面のチェックリストは
                            // これを自動生成する。単月100h未満と複数月平均80hは**時間外＋法定休日労働**で比べる（2026-09-30・P5。
