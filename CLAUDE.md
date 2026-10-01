@@ -243,12 +243,14 @@ breakModeOf / breakLengthOf / shiftBindingMin / isBreakShort
                            // **長さ方式のしきい値は実働で見る**——S-3 の本文は「拘束>8h→1.0h」だが
                            // 同じ節の表（拘束8.5h→控除0.75h・実働7.75h）は実働基準でしか再現できない。
                            // 労基法34条の「労働時間」も実働なので表を採った
-breakLengthRuleOf / breakMinutesOf / breakDecisionOf / heatBreaksFor
+breakLengthRuleOf / breakMinutesOf / breakDecisionOf / heatBreaksFor / lengthBandMismatchOf / lengthBandMismatchText
                            // 店舗別ルール（2026-09-30・P3.5a）。getBreaksFor の優先順は **日別上書き ＞ 長さ ＞ 時間帯**（中休み idleBreak は 2026-10-02 のユーザー指示で機能ごと削除。休憩は前後に勤務がある時間帯にだけ当たる＝時間帯方式の休憩帯で表す。店舗データに残る idleBreak は読まない）。
                            // 長さ方式は breakLength.basis（"work"=実働・既定／"binding"=拘束）と tiers（[{overMin,breakMin,inclusive}]）で段を決め、
                            // tiers が無ければ従来の2段（実働8h超／6h超・しきい値は法定の定数）。
                            // heatBreaksFor はヒートマップが人数から外す休憩の位置（2026-10-02 ユーザー指示）。長さ方式は休憩の時間帯が決まらないので
-                           // 候補タブの休憩帯を時間帯方式と同じ規則で当てる（勤務時間・休憩の分は getBreaksFor＝長さ方式のまま）。時間帯方式は getBreaksFor と同じ。
+                           // 候補タブの**全属性（タグなし）の**休憩帯だけを時間帯方式と同じ規則で当てる（勤務時間・休憩の分は getBreaksFor＝長さ方式のまま）。時間帯方式は getBreaksFor と同じ。
+                           // lengthBandMismatchOf は長さ方式の休憩（いちばん長い段の分）と候補タブの全属性の休憩帯の合計を日区分ごとに比べ、
+                           // 違えば設定タブの休憩の決め方と候補タブの休憩時間設定に確認表示（[data-break-mismatch]・文言は lengthBandMismatchText）を出す（2026-10-02）。
                            // 段の時間と分はすべて店舗の設定で**コードに依頼文の値は無い**。breakDecisionOf は詳細モーダルの「自動（灰）／手動（太字）」と「自動に戻す」の値。
                            // isBreakShort（休憩不足）は法定の基準のまま変えていない
 overtimePlanOf / otProrateOf / staffOtProrateOf / dailyOverMinB / dailyOverThresholdOf
