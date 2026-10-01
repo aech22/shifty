@@ -492,10 +492,12 @@ function planPeopleSync(people, regs, genAuto, nowIso) {
   return { patch: Object.keys(patch).length ? patch : null, created };
 }
 // その法人でその番号を既に使っている人物（自分以外）。保存済みの人物の番号と、店舗の登録の番号
-// （regs・自分につながっていない登録）の両方を見る。見つかれば {personId?, shopId?, name?}、無ければ null
+// （regs・自分につながっていない登録）の両方を見る。見つかれば {personId?, shopId?, name?}、無ければ null。
+// **数字だけの番号だけを判定する**（2026-10-02 ユーザー指示）。「派遣」「外部」「スポット」のような文字の番号は
+// 区分の印として多くの人に付くので重複にしない（同一人物の推定 groupStaffRegs も数字だけの番号でしかまとめない）
 function staffNumberConflict(people, regs, entityId, number, selfPersonId) {
   const n = String(number == null ? "" : number).trim();
-  if (!n) return null;
+  if (!/^\d{1,20}$/.test(n)) return null;
   const e = entityId || "";
   const P = _personObj(people) || {};
   for (const id of Object.keys(P)) {
@@ -560,7 +562,8 @@ function planSplitPerson(people, personId, reg, genAuto, nowIso) {
   if (!reg || typeof reg.name !== "string" || l[reg.shopId] !== reg.name) return { error: "この人物につながっていない登録です" };
   if (Object.keys(l).length < 2) return { error: "登録が1つだけの人物は切り出せません" };
   let num = String(reg.number || "").trim();
-  if (num && num === String(p.number || "").trim() && (reg.entityId || "") === (p.entityId || "")) num = "";
+  // 同じ法人で同じ数字の番号は重複になるので新しい人物には付けない。文字の番号は重複にしない（staffNumberConflict）のでそのまま残す
+  if (/^\d{1,20}$/.test(num) && num === String(p.number || "").trim() && (reg.entityId || "") === (p.entityId || "")) num = "";
   const id = personIdFor(num, new Set(Object.keys(P)), genAuto);
   const rest = { ...l }; delete rest[reg.shopId];
   // 切り出し＝別人と決めた操作なので、元の人物と両方向で「統合しない」に記録する（直後に重複候補へ戻らないように）。

@@ -920,13 +920,14 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
     });
   },[data,query,mode,entityFilter]);
   const multiEnt=ents.length>=2;
-  // 同じ番号が別の法人でも使われている行（番号は法人内で一意なので通常は起きない。決定 #13）
+  // 同じ番号が別の法人でも使われている行（番号は法人内で一意なので通常は起きない。決定 #13）。
+  // 数字だけの番号だけを見る（「派遣」などの文字の番号は重複にしない・2026-10-02 ユーザー指示。CF の staffNumberConflict と同じ）
   const numEnts=useMemo(()=>{
-    const m={};(data?data.rows:[]).forEach(r=>{const n=String(r.number||"");if(!n)return;(m[n]=m[n]||new Set()).add(r.entityId||"");});
+    const m={};(data?data.rows:[]).forEach(r=>{const n=String(r.number||"").trim();if(!/^\d{1,20}$/.test(n))return;(m[n]=m[n]||new Set()).add(r.entityId||"");});
     return m;
   },[data]);
   const otherEntNames=r=>{
-    const set=numEnts[String(r.number||"")];
+    const set=numEnts[String(r.number||"").trim()];
     if(!set||set.size<2)return[];
     return[...set].filter(e=>e!==(r.entityId||"")).map(e=>(ents[entIdx[e]]||{}).name||"法人未設定");
   };
@@ -1108,7 +1109,7 @@ function CompanyPersonEditModal({row,data,busy,msg,onClose,onCall}){
 
       <div style={SEC}>
         <AL>従業員番号・法人・属性・所属店舗</AL>
-        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:4}}>従業員番号（法人の中で重複できません）</div>
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:4}}>従業員番号（数字だけの番号は法人の中で重複できません）</div>
         <input value={number} onChange={e=>setNumber(e.target.value)} aria-label="従業員番号" style={{...AI,boxSizing:"border-box",marginBottom:8}}/>
         {ents.length>0&&<><div style={{fontSize:12,color:"var(--c-text3)",marginBottom:4}}>法人</div>
           <select value={entityId} onChange={e=>setEntityId(e.target.value)} aria-label="法人" style={{...AI,marginBottom:8,cursor:"pointer"}}>

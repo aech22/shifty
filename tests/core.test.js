@@ -5042,6 +5042,10 @@ test("P1b 統合・統合解除: 企業側の束ね方だけを変え、解除�
   assert.deepStrictEqual(people["12"].links, { A1: "田中" });
   assert.strictEqual(people["12"].displayName, "田中");
   assert.strictEqual(people.p_splitaaa.number, undefined);
+  // 文字の番号は重複にしないので、切り出した人物にもそのまま残る（2026-10-02）
+  const hk = { H: { displayName: "コ", entityId: "E1", number: "派遣", links: { A1: "コ", B1: "コ" } } };
+  const sp2 = cfp.planSplitPerson(hk, "H", { shopId: "B1", name: "コ", entityId: "E1", number: "派遣" }, () => "p_splitbbb", "T3");
+  assert.strictEqual(sp2.patch.p_splitbbb.number, "派遣");
   assert.strictEqual(cfp.planPeopleSync(people, p1bRegs(P1B_SHOPS), () => "p_x", "T4").patch, null, "推定では同じ人でも、解除した登録は再びまとめない");
   assert.ok(cfp.planSplitPerson(people, "12", { shopId: "A1", name: "田中" }, () => "p_x", "T").error, "登録が1つだけなら切り出せない");
   // その人物につながっていない店舗（CF は links[shopId] を名前にするので undefined になる）は拒否する。
@@ -5141,6 +5145,12 @@ test("P1b 従業員番号は法人内で一意（保存時の衝突検出）・I
   // 人物に番号が無くても、店舗の登録にその番号があれば衝突（未リンクの登録も見る）
   const regs2 = [...regs, { shopId: "A1", name: "新人", entityId: "E1", number: "99", homeShopId: "A1" }];
   assert.deepStrictEqual(cfp.staffNumberConflict(people, regs2, "E1", "99", suz), { shopId: "A1", name: "新人" });
+  // 数字だけでない番号は重複の判定から外す（2026-10-02 ユーザー指示。「派遣」「外部」などは区分の印として多くの人に付く）
+  const regs3 = [...regs, { shopId: "A1", name: "派遣A", entityId: "E1", number: "派遣", homeShopId: "A1" }, { shopId: "A1", name: "鈴木", entityId: "E1", number: "A7", homeShopId: "A1" }];
+  const p3 = { ...people, p_hakenaaa: { displayName: "派遣B", entityId: "E1", number: "派遣", links: { A1: "派遣B" } } };
+  assert.strictEqual(cfp.staffNumberConflict(p3, regs3, "E1", "派遣", suz), null, "人物にも店舗の登録にも同じ文字の番号があっても重複にしない");
+  assert.strictEqual(cfp.staffNumberConflict(p3, regs3, "E1", "A7", "12"), null, "数字と文字の混ざった番号も判定しない");
+  assert.strictEqual(cfp.staffNumberConflict(p3, regs3, "E1", " 12 ", suz) && true, true, "前後の空白を除いた数字は判定する");
   const jiro = Object.keys(people).find(id => people[id].links.C1 === "田中 次郎");
   assert.ok(cfp.planReassignPersonId(people, jiro).error, "番号の ID が別の人物に使われていれば振り直せない");
   const p2 = { ...people, [jiro]: { ...people[jiro], number: "77" } };
