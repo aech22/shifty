@@ -3,6 +3,8 @@
 //   PDF: 曜日の下に「昼n 夜n」。x（応援・カウント外）の帯を除外・0人の側は出さない・店休日は曜日だけ
 //   画面（シフト作成タブ）と Excel には出ない
 //   設定オフ（既定）の店舗は PDF にも出ない
+//   キッチンとホールを分けている店舗（スタッフ一覧に区切りがある）は、左の曜日列にキッチン「K昼n 夜n」、右の曜日列に
+//   ホール「H昼n 夜n」（2026-10-02 ユーザー指示）。分けていない店舗は従来どおり左右とも合計
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-pdf-headcount.js → allPass=true / EXIT=0
 // 反証: SHIFTY_ROOT=<P3.5d より前の配信物> node ... → EXIT≠0
 "use strict";
@@ -30,7 +32,7 @@ const SUBS = [
 ];
 const STAFF = ["田中", "佐藤", "高橋", "鈴木", "渡辺"];
 
-async function run(enabled) {
+async function run(enabled, staff) {
   const SETTINGS = { shopId: "S1", candidates: [{ start: "10:00", end: "23:00" }], weekdayCandidates: {},
     dateCandidates: { "2026-10-03": [{ closed: true }] }, breakTimes: { weekday: [], sat: [], sun: [], holSat: [], holSun: [] },
     headcountAt: enabled ? { enabled: true, lunch: "12:00", dinner: "19:00" } : {},
@@ -38,7 +40,7 @@ async function run(enabled) {
   const h = await openHarness({ root: ROOT, extraHead: EXTRA_HEAD, waitFor: "[data-scn]", jsx: `
 const P=${JSON.stringify(P)};const SUBS=${JSON.stringify(SUBS)};const SETTINGS=${JSON.stringify(SETTINGS)};
 function Harness(){const [subs,setSubs]=React.useState(SUBS);
-  return <ShiftEditTab subs={subs} periods={[P]} staffList={${JSON.stringify(STAFF)}} onSave={v=>setSubs(p=>typeof v==="function"?v(p):v)} tt={()=>{}}
+  return <ShiftEditTab subs={subs} periods={[P]} staffList={${JSON.stringify(staff || STAFF)}} onSave={v=>setSubs(p=>typeof v==="function"?v(p):v)} tt={()=>{}}
     settings={SETTINGS} plan="premium" shopId="S1" shopName="テスト店" onUpgrade={()=>{}} allLinkedShops={[]}
     onLoadPastSubs={()=>{}} pastSubsLoaded={true} savePeriods={()=>{}} ownerReadOnly={false}/>;}
 ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);` });
@@ -67,7 +69,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);` });
   m.pdf = await h.evaluate(() => {
     const html = (window.__pdf ? window.__pdf.blocks : []).join("");
     const d = document.createElement("div"); d.innerHTML = html;
-    return { blocks: (window.__pdf || { blocks: [] }).blocks.length, hc: [...d.querySelectorAll("[data-headcount]")].map(td => td.getAttribute("data-headcount")) };
+    return { blocks: (window.__pdf || { blocks: [] }).blocks.length, hc: [...d.querySelectorAll("[data-headcount]")].map(td => td.getAttribute("data-headcount")),
+      // 行ごとの曜日セル（左・右）。人数の無い側は data-headcount が付かないので、曜日の列の位置で読む
+      rows: [...d.querySelectorAll("tbody tr")].map(tr => [...tr.children].filter((td, i, a) => i === 1 || i === a.length - 2).map(td => td.getAttribute("data-headcount") || "")) };
   });
   m.errors = h.errors.slice();
   await h.close();
@@ -100,6 +104,10 @@ async function setTab() {
 (async () => {
   const on = await run(true);
   const off = await run(false);
+  // 田中・佐藤＝キッチン｜高橋・鈴木・渡辺＝ホール。10/1 12:00 キッチン2（田中・佐藤）ホール0（高橋は x）／19:00 キッチン1（佐藤）ホール2（高橋・鈴木）
+  // 10/2 12:00 キッチン1（田中）／19:00 ホール1（鈴木）。10/3 は店休日
+  const split = await run(true, ["田中", "佐藤", "__spacer__1", "高橋", "鈴木", "渡辺"]);
+  const splitDays = [...new Set(split.pdf.rows.filter(r => r.some(Boolean)).map(r => r.join("/")))];
   const st = await setTab();
   // PDF の曜日セルは左右2列 × 上下2段なので、1日につき4セルに同じ data-headcount が付く
   const uniq = [...new Set(on.pdf.hc)];
@@ -113,9 +121,11 @@ async function setTab() {
     setOffByDefault: st.offByDefault === true,
     setSaved: !!(st.saved && st.saved.enabled === true && st.saved.lunch === "12:00" && st.saved.dinner === "19:00"),
     font16: st.fontsizes.length === 2 && st.fontsizes.every(f => f >= 16),
-    noErrors: on.errors.length === 0 && off.errors.length === 0 && st.errors.length === 0,
+    splitLeftKitchenRightHall: JSON.stringify(splitDays) === JSON.stringify(["K昼2 夜1/H夜2", "K昼1/H夜1"]),
+    splitCellsPerDay: split.pdf.hc.filter(x => x === "K昼2 夜1").length === 2 && split.pdf.hc.filter(x => x === "H夜2").length === 2,
+    noErrors: on.errors.length === 0 && off.errors.length === 0 && st.errors.length === 0 && split.errors.length === 0,
   };
   v.allPass = Object.values(v).every(Boolean);
-  console.log(JSON.stringify({ on, off, setTab: st, verdict: v }, null, 2));
+  console.log(JSON.stringify({ on, off, split: { hc: split.pdf.hc, days: splitDays, errors: split.errors }, setTab: st, verdict: v }, null, 2));
   process.exit(v.allPass ? 0 : 1);
 })().catch(e => { console.error(e); process.exit(2); });

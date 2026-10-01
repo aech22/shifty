@@ -5605,6 +5605,24 @@ test("P3.5d 昼・夜の人数: 既定オフ・出勤≦確認時刻＜退勤・
   assert.strictEqual(u.headcountLabelOf({ lunch: 0, dinner: 0 }, false), "");
   assert.strictEqual(u.headcountLabelOf({ lunch: 3, dinner: 7 }, true), "", "店休日は曜日だけ");
 });
+test("昼・夜の人数をキッチンとホールで分ける（2026-10-02）: 区分ごとに数え、K/H の印を付ける", () => {
+  const E = [
+    { name: "A", stM: 600, enM: 1380, section: "kit" },   // 10:00-23:00 キッチン
+    { name: "B", stM: 660, enM: 1020, section: "hall" },  // 11:00-17:00 ホール（17:00 でキッチンへ）
+    { name: "B", stM: 1020, enM: 1380, section: "kit" },  // 同じ人の後半はキッチン（17:00 で区分が変わる）
+    { name: "C", stM: 1080, enM: 1380, section: "hall" }, // 18:00-23:00 ホール
+    { name: "D", stM: 600, enM: 1380, section: "hall", leave: { lunch: true, dinner: false } }, // 昼に有給
+  ];
+  assert.strictEqual(u.countPresentAt(E, 720, "kit"), 1, "12:00 のキッチンは A");
+  assert.strictEqual(u.countPresentAt(E, 720, "hall"), 1, "12:00 のホールは B（D は休暇）");
+  assert.strictEqual(u.countPresentAt(E, 1140, "kit"), 2, "19:00 のキッチンは A・B");
+  assert.strictEqual(u.countPresentAt(E, 1140, "hall"), 2, "19:00 のホールは C・D");
+  assert.strictEqual(u.countPresentAt(E, 1140), 4, "区分を渡さなければ従来どおり合計（B は1人）");
+  assert.strictEqual(u.headcountLabelOf({ lunch: 1, dinner: 2 }, false, "K"), "K昼1 夜2");
+  assert.strictEqual(u.headcountLabelOf({ lunch: 0, dinner: 2 }, false, "H"), "H夜2");
+  assert.strictEqual(u.headcountLabelOf({ lunch: 0, dinner: 0 }, false, "H"), "", "両側0人なら印も出さない");
+  assert.strictEqual(u.headcountLabelOf({ lunch: 3, dinner: 7 }, false), "昼3 夜7", "印なしは従来の文言");
+});
 test("P3.5d 昼・夜の人数は PDF だけに出る（画面のグリッドと Excel は参照しない）", () => {
   const src = _readAdminSurface();
   const x0 = src.indexOf("function expXl(");

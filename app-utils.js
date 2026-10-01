@@ -310,24 +310,29 @@ function headcountAtOf(settings){
 // 他店舗への応援・x の帯は呼び出し側が excludedBandsOf で外してから渡す＝ヒートマップと同じ区間）。
 // 数え方: 出勤≦確認時刻＜退勤。同じ人は1人（締の追加出勤などで区間が2つあっても）。
 // その帯（確認時刻が HEAT_BAND_SPLIT_MIN より前＝ランチ／以降＝ディナー）に休暇（公休・有給・慶弔）がある人は数えない。
-function countPresentAt(entries,atMin){
+// section（"kit"|"hall"）を渡すとその区分の区間だけを数える（2026-10-02 ユーザー指示でキッチンとホールを分けた）。
+// 区分は heatSectionEntries が付けたもの＝ヒートマップと同じ（h/k の印・17:00 で区分が変わる人は区間が分かれている）。
+function countPresentAt(entries,atMin,section){
   if(!(Number.isFinite(atMin)))return 0;
   const band=atMin<HEAT_BAND_SPLIT_MIN?"lunch":"dinner";
   const seen=new Set();
   (entries||[]).forEach(e=>{
     if(!e||seen.has(e.name))return;
+    if(section&&e.section!==section)return;
     if(e.leave&&e.leave[band])return;
     if(e.stM<=atMin&&atMin<e.enM)seen.add(e.name);
   });
   return seen.size;
 }
 // 日付ヘッダの文言の後ろ半分（「昼3 夜7」）。0人の側は出さない。店休日は何も付けない（曜日だけ）。
-function headcountLabelOf(counts,closed){
+// prefix はキッチンとホールを分ける店舗の区分の印（"K"＝キッチン・"H"＝ホール。h/k の入力コマンドと同じ字）。
+// 両側とも0人なら印も付けない（空文字）。
+function headcountLabelOf(counts,closed,prefix){
   if(closed||!counts)return"";
   const parts=[];
   if(counts.lunch>0)parts.push(`昼${counts.lunch}`);
   if(counts.dinner>0)parts.push(`夜${counts.dinner}`);
-  return parts.join(" ");
+  return parts.length?(prefix||"")+parts.join(" "):"";
 }
 // h/kサフィックス→ヒートマップのセクション（"hall"/"kit"）。未登録・空はnull（＝所属のデフォルトに従う）
 function noteToHeatSection(note){

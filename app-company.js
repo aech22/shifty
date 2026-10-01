@@ -2790,7 +2790,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             <span style={{fontSize:13,color:"var(--c-text)"}}>PDF の曜日の下に、その時刻に出勤している人数を出す</span>
           </label>
           {hc.enabled&&<div style={{display:"flex",gap:14,flexWrap:"wrap"}}>{sel("lunch","昼の確認時刻")}{sel("dinner","夜の確認時刻")}</div>}
-          <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>出勤がその時刻以前で、退勤がその時刻より後の人を数えます。他店舗への応援と、その時間帯に休暇（公休・有給・慶弔）の人は数えません。0人の側と店休日は出しません。画面と Excel には出ません。</div>
+          <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>出勤がその時刻以前で、退勤がその時刻より後の人を数えます。他店舗への応援と、その時間帯に休暇（公休・有給・慶弔）の人は数えません。0人の側と店休日は出しません。キッチンとホールを分けている店舗では、左の曜日の列にキッチン（K）、右の曜日の列にホール（H）の人数を出します。画面と Excel には出ません。</div>
         </div>
       </AC>);
     })()}
