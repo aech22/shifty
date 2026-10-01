@@ -325,14 +325,12 @@ function countPresentAt(entries,atMin,section){
   return seen.size;
 }
 // 日付ヘッダの文言の後ろ半分（「昼3 夜7」）。0人の側は出さない。店休日は何も付けない（曜日だけ）。
-// prefix はキッチンとホールを分ける店舗の区分の印（"K"＝キッチン・"H"＝ホール。h/k の入力コマンドと同じ字）。
-// 両側とも0人なら印も付けない（空文字）。
-function headcountLabelOf(counts,closed,prefix){
+function headcountLabelOf(counts,closed){
   if(closed||!counts)return"";
   const parts=[];
   if(counts.lunch>0)parts.push(`昼${counts.lunch}`);
   if(counts.dinner>0)parts.push(`夜${counts.dinner}`);
-  return parts.length?(prefix||"")+parts.join(" "):"";
+  return parts.join(" ");
 }
 // h/kサフィックス→ヒートマップのセクション（"hall"/"kit"）。未登録・空はnull（＝所属のデフォルトに従う）
 function noteToHeatSection(note){

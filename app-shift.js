@@ -2233,8 +2233,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // 日付ヘッダの「昼・夜の人数」（settings.headcountAt・P3.5d）。**PDF だけ**に出す（画面・Excel には出さない）。
     // 数える区間はヒートマップと同じ heatData（片側セルの補完・退勤延長・応援と x の帯を外した後）。
     // 帯に休暇（公休・有給・慶弔）がある人は数えない。店休日は曜日だけ。0人の側は出さない（headcountLabelOf）。
-    // キッチンとホールを分けている店舗（hasSplit）は区分ごとに数え、キッチンのヒートマップ側（左）の曜日列に「K昼3 夜7」、
-    // ホール側（右）の曜日列に「H昼2 夜4」を出す（2026-10-02 ユーザー指示）。分けていない店舗は従来どおり左右とも合計。
+    // キッチンとホールを分けている店舗（hasSplit）は区分ごとに数え、キッチンのヒートマップ側（左）の曜日列にキッチンの人数、
+    // ホール側（右）の曜日列にホールの人数を出す（2026-10-02 ユーザー指示。区分の印は付けない＝位置で分かる）。
+    // 分けていない店舗は従来どおり左右とも合計。
     const hcCfg=headcountAtOf(settings);
     const pdfHeadcount=(ds,section)=>{
       if(!hcCfg.enabled||(!hcCfg.lunch&&!hcCfg.dinner))return"";
@@ -2243,7 +2244,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         return{name:e.name,stM:e.stM,enM:e.enM,section:e.section,leave:{lunch:!!lv.start,dinner:!!lv.end}};});
       const sec=hasSplit?section:undefined;
       return headcountLabelOf({lunch:hcCfg.lunch?countPresentAt(entries,timeToMin(hcCfg.lunch),sec):0,
-        dinner:hcCfg.dinner?countPresentAt(entries,timeToMin(hcCfg.dinner),sec):0},false,sec?(sec==="hall"?"H":"K"):"");
+        dinner:hcCfg.dinner?countPresentAt(entries,timeToMin(hcCfg.dinner),sec):0},false);
     };
     // 曜日セル。人数があるときは上段に曜日・下段に人数（html2canvas は rowspan を描けないので2セルで結合風にする）
     const wdTd=(wd,hc,top)=>hc

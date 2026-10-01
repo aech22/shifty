@@ -3,8 +3,8 @@
 //   PDF: 曜日の下に「昼n 夜n」。x（応援・カウント外）の帯を除外・0人の側は出さない・店休日は曜日だけ
 //   画面（シフト作成タブ）と Excel には出ない
 //   設定オフ（既定）の店舗は PDF にも出ない
-//   キッチンとホールを分けている店舗（スタッフ一覧に区切りがある）は、左の曜日列にキッチン「K昼n 夜n」、右の曜日列に
-//   ホール「H昼n 夜n」（2026-10-02 ユーザー指示）。分けていない店舗は従来どおり左右とも合計
+//   キッチンとホールを分けている店舗（スタッフ一覧に区切りがある）は、左の曜日列にキッチン「昼n 夜n」、右の曜日列に
+//   ホール「昼n 夜n」（2026-10-02 ユーザー指示・K/H の印は付けない）。分けていない店舗は従来どおり左右とも合計
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-pdf-headcount.js → allPass=true / EXIT=0
 // 反証: SHIFTY_ROOT=<P3.5d より前の配信物> node ... → EXIT≠0
 "use strict";
@@ -121,8 +121,8 @@ async function setTab() {
     setOffByDefault: st.offByDefault === true,
     setSaved: !!(st.saved && st.saved.enabled === true && st.saved.lunch === "12:00" && st.saved.dinner === "19:00"),
     font16: st.fontsizes.length === 2 && st.fontsizes.every(f => f >= 16),
-    splitLeftKitchenRightHall: JSON.stringify(splitDays) === JSON.stringify(["K昼2 夜1/H夜2", "K昼1/H夜1"]),
-    splitCellsPerDay: split.pdf.hc.filter(x => x === "K昼2 夜1").length === 2 && split.pdf.hc.filter(x => x === "H夜2").length === 2,
+    splitLeftKitchenRightHall: JSON.stringify(splitDays) === JSON.stringify(["昼2 夜1/夜2", "昼1/夜1"]),
+    splitCellsPerDay: split.pdf.hc.filter(x => x === "昼2 夜1").length === 2 && split.pdf.hc.filter(x => x === "夜2").length === 2 && !split.pdf.hc.some(x => /[KH]/.test(x)),
     noErrors: on.errors.length === 0 && off.errors.length === 0 && st.errors.length === 0 && split.errors.length === 0,
   };
   v.allPass = Object.values(v).every(Boolean);
