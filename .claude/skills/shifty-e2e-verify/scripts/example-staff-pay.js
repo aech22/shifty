@@ -3,7 +3,7 @@
 // ルール（private/pay がオーナー以外から読めない等）はスタブでは評価されないので、probe-rules-pay.js（dev の REST）で測る。
 //
 //  A. 企業連携店舗（Premium・オーナー）
-//     - スタッフタブの「スタッフ登録」の横に4桁のボックス。未設定なので「初期パスコードのままです」
+//     - スタッフタブの「スタッフ登録」の横に4桁のボックス。「初期パスコードのままです」の注意は出さない（2026-10-01 ユーザー指示で削除）
 //     - 編集モーダルに「賃金設定を開く →」。ヘルプ（所属が別店舗）の人は「賃金は所属店舗（B店）で設定します」
 //     - 開くと全画面（タブバーが消える）。解除前は金額が「••••」で保存できない。0000 で解除
 //     - パート・アルバイトは時給が既定。時給 1,230 円・適用開始 2026-10-01 で最賃 1,231 円と比べて赤、1,231 円で緑
@@ -17,6 +17,8 @@
 //     - 企業アカウントの「賃金の閲覧パスコードを変更する」で setCompanyPayCode が企業と全店舗に同じハッシュを書く
 //     - 法人の設定で最低賃金を足すと写しの settings.wageSettings に入る
 //     - 企業内登録スタッフの上部が「従業員番号順」「店舗別」「パスコード」の順で、解除すると賃金列に「時給 1,231円」
+//     - 企業内登録スタッフの上部の箱にも「変更」（2026-10-01）。現在の番号→新しい番号2回。現在の番号の誤り・確認の不一致は
+//       モーダルの中に理由が出て閉じない。正しく入れると setCompanyPayCode が {currentCode,newCode} で呼ばれ、賃金が伏せ直り、新しい番号で解除できる
 //     - 5回間違えると60秒待ち
 //  B. 企業に連携していない店舗: 「変更」で 0000 → 1234 に変えると private/payCode にハッシュが入り、0000 では解除できない
 //  C. Pro: ボックスもボタンも出ない
@@ -78,7 +80,7 @@ const payInputs = h => h.evaluate(() => [...document.querySelectorAll("[data-sta
       const box = document.querySelector("[data-pay-code-box]");
       return [box.parentElement, box.parentElement.parentElement].some(p => [...p.children].some(c => c.innerText.trim() === "スタッフ登録"));
     });
-    R.defaultHint = (await text(h)).includes("初期パスコードのままです");
+    R.noDefaultHint = !(await text(h)).includes("初期パスコードのままです");
     R.boxFont = await h.evaluate(s => parseFloat(getComputedStyle(document.querySelector(s)).fontSize), BOX);
     // ヘルプの人は案内だけ
     await openEdit(h, "小林");
@@ -218,6 +220,24 @@ const payInputs = h => h.evaluate(() => [...document.querySelectorAll("[data-sta
     await typeCode(h, "2468");
     await h.page.waitForTimeout(400);
     R.dirWage = await h.evaluate(() => ({ t: (document.querySelector('[data-co-wage="田中 太郎"]') || {}).innerText, k: (document.querySelector('[data-co-wage="特定"]') || {}).innerText, helper: (document.querySelector('[data-co-wage="小林"]') || {}).innerText }));
+    // 企業内登録スタッフの上部の「変更」（2026-10-01）
+    const fill3 = async vals => h.page.$$eval("[data-pay-code-modal] input", (els, vs) => els.forEach((el, i) => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, vs[i]); el.dispatchEvent(new Event("input", { bubbles: true })); }), vals);
+    R.dirChangeBtn = await h.evaluate(() => { const b = [...document.querySelectorAll("[data-pay-code-box] button")].find(x => x.innerText.trim() === "変更"); if (!b) return false; b.click(); return true; });
+    await h.page.waitForTimeout(200);
+    R.dirModalFields = await h.evaluate(() => [...document.querySelectorAll("[data-pay-code-modal] input")].map(i => i.placeholder));
+    const cfBefore = await h.evaluate(() => (window.__cf || []).filter(c => c.name === "setCompanyPayCode").length);
+    await fill3(["1111", "1357", "1357"]); await h.clickExact("変更する"); await h.page.waitForTimeout(500);
+    R.dirWrongCur = await h.evaluate(() => ({ open: !!document.querySelector("[data-pay-code-modal]"), err: (document.querySelector("[data-pay-code-err]") || {}).innerText || "" }));
+    await fill3(["2468", "1357", "9999"]); await h.clickExact("変更する"); await h.page.waitForTimeout(300);
+    R.dirMismatch = await h.evaluate(() => ({ open: !!document.querySelector("[data-pay-code-modal]"), err: (document.querySelector("[data-pay-code-err]") || {}).innerText || "" }));
+    R.dirMismatchNoCall = (await h.evaluate(() => (window.__cf || []).filter(c => c.name === "setCompanyPayCode").length)) === cfBefore + 1;
+    const hashBefore = await h.evaluate(() => (window.__db("companies/C1/private/payCode") || {}).hash);
+    await fill3(["2468", "1357", "1357"]); await h.clickExact("変更する"); await h.page.waitForTimeout(700);
+    R.dirChangeCf = await h.evaluate(() => (window.__cf || []).filter(c => c.name === "setCompanyPayCode").slice(-1).map(c => ({ cur: c.payload.currentCode, next: c.payload.newCode }))[0]);
+    R.dirChanged = await h.evaluate(hb => { const c = window.__db("companies/C1/private/payCode"), a = window.__db("shops/S1/private/payCode"); return { closed: !document.querySelector("[data-pay-code-modal]"), newHash: !!c && c.hash !== hb, synced: !!c && !!a && c.hash === a.hash, msg: (document.querySelector("[data-co-person-msg]") || {}).innerText || "" }; }, hashBefore);
+    R.dirRelocked = (await h.evaluate(() => (document.querySelector('[data-co-wage="田中 太郎"]') || {}).innerText)) === "••••";
+    await typeCode(h, "1357"); await h.page.waitForTimeout(400);
+    R.dirNewCodeUnlocks = (await h.evaluate(() => (document.querySelector('[data-co-wage="田中 太郎"]') || {}).innerText)) === "時給 1,300円";
   } catch (e) { R.exception = e.stack || e.message; }
   R.errors = h.errors.slice(); await h.close();
 
@@ -266,7 +286,7 @@ const payInputs = h => h.evaluate(() => [...document.querySelectorAll("[data-sta
 
   const v = {
     boxNextToHeading: R.boxNextToHeading === true,
-    defaultHint: R.defaultHint === true,
+    noDefaultHint: R.noDefaultHint === true,
     boxFont16: R.boxFont >= 16,
     helperNote: /賃金は所属店舗（B店）で設定します/.test(R.helperNote || "") && R.helperNoButton === true,
     opensFullPage: R.openBtn === "ok" && R.fullPage === true,
@@ -288,7 +308,7 @@ const payInputs = h => h.evaluate(() => [...document.querySelectorAll("[data-sta
     relockButton: R.relockedByButton === true && R.reunlocked === true,
     relockIdle: R.relockedByIdle === true,
     relockReload: R.relockedByReload === true,
-    linkedChangeNote: /企業連携タブの「企業アカウント」で変更/.test(R.linkedChangeNote || ""),
+    linkedChangeNote: /企業連携タブの「企業アカウント」か、「企業内登録スタッフ」の一覧の上部にある「変更」で変更/.test(R.linkedChangeNote || ""),
     renameFollows: !!R.renamed && R.renamed.old === null && R.renamed.next === true,
     deleteFollows: R.dropped === null,
     lockoutAfter5: /60秒待って|秒待ってから/.test(R.lockout || "") && R.lockoutHolds === true && R.lockoutSurvivesReload === true,
@@ -297,6 +317,12 @@ const payInputs = h => h.evaluate(() => [...document.querySelectorAll("[data-sta
     dirOrder: JSON.stringify(R.dirOrder) === JSON.stringify(["従業員番号順", "店舗別", "パスコード"]),
     dirWageColumn: Array.isArray(R.dirHeaders) && JSON.stringify(R.dirHeaders.slice(-2)) === JSON.stringify(["賃金", ""]) /* 最後は「編集」の列（P1b・見出しなし） */ && R.dirMasked === "••••" && R.dirOldCodeRejected === true
       && !!R.dirWage && R.dirWage.t === "時給 1,300円" && R.dirWage.k === "月給 213,500円" && R.dirWage.helper === "—",
+    dirChangeButton: R.dirChangeBtn === true && JSON.stringify(R.dirModalFields) === JSON.stringify(["現在", "新しい番号", "新しい番号（確認）"])
+      && !!R.dirWrongCur && R.dirWrongCur.open && /現在のパスコードが正しくありません/.test(R.dirWrongCur.err)
+      && !!R.dirMismatch && R.dirMismatch.open && /新しいパスコードが一致しません/.test(R.dirMismatch.err) && R.dirMismatchNoCall === true
+      && !!R.dirChangeCf && R.dirChangeCf.cur === "2468" && R.dirChangeCf.next === "1357"
+      && !!R.dirChanged && R.dirChanged.closed && R.dirChanged.newHash && R.dirChanged.synced && /変更しました/.test(R.dirChanged.msg)
+      && R.dirRelocked === true && R.dirNewCodeUnlocks === true,
     shopOwnCode: !!R.shopCode && R.shopCode.hashLen === 64 && R.shopCode.salt && R.shopCodeNotInSettings === true && R.shopOldRejected === true && R.shopNewAccepted === true && R.noDefaultHintAfterChange === true,
     hiddenOnPro: R.proNoBox === true && R.proNoButton === true,
     mobileNoPageScroll: !!R.mobile && R.mobile.page <= R.mobile.vw && R.mobileFonts === 0,
