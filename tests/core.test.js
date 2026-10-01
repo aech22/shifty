@@ -3646,6 +3646,32 @@ test("中休みの削除（2026-10-02）: 店舗データに idleBreak が残っ
     assert.ok(!/idleBreakOf|_idleBreakMin|IDLE_BREAK|data-idle/.test(src), `${f} に中休みの参照が残っている`);
   });
 });
+test("ヒートマップの休憩（2026-10-02）: 長さ方式は勤務時間を長さ方式で引き、ヒートマップだけ候補タブの休憩帯で外す", () => {
+  const len = { ...BT([{ start: "15:00", end: "17:00" }]), breakMode: "length", breakLength: BIND6 };
+  const w = (a, b, x) => ({ status: "work", start: a, end: b, ...(x || {}) });
+  const pos = l => l.map(b => `${b.start}-${b.end}${b.synthetic ? "*" : ""}`);
+  // 勤務時間・休憩の分は長さ方式のまま（10-23 拘束13h → 60分・実働12h）
+  assert.strictEqual(brkMin(len, { start: "10:00", end: "23:00" }), 60);
+  assert.strictEqual(u.calcNetWorkMinutes(w("10:00", "23:00"), u.getBreaksFor(len, WD, "田中", w("10:00", "23:00")), 0, len), 720);
+  // ヒートマップは候補タブの 15-17（以前は勤務の先頭 10-11 の合成の帯を外していた）
+  assert.deepStrictEqual(pos(u.heatBreaksFor(len, WD, "田中", w("10:00", "23:00"))), ["15:00-17:00"]);
+  assert.deepStrictEqual(pos(u.heatBreaksFor(len, WD, "田中", w("17:00", "23:00"))), [], "休憩帯を含まない勤務は外さない（長さ方式の60分はヒートマップに出さない）");
+  assert.deepStrictEqual(pos(u.heatBreaksFor(len, WD, "田中", w("10:00", "17:00"))), [], "退勤＝休憩の終わりは時間帯方式と同じく当てない");
+  assert.deepStrictEqual(pos(u.heatBreaksFor(len, WD, "田中", w("10:00", "23:00", { adjustedBreak: 30 }))), ["15:00-17:00"], "日別の上書き（分だけ）でもヒートマップは休憩帯");
+  // 属性タグは時間帯方式と同じ（社員だけの休憩帯）
+  const tag = { ...BT([{ start: "15:00", end: "17:00", tags: ["employee"] }]), breakMode: "length", breakLength: BIND6, staffAttributes: { "田中": "employee" } };
+  assert.deepStrictEqual(pos(u.heatBreaksFor(tag, WD, "田中", w("10:00", "23:00"))), ["15:00-17:00"]);
+  assert.deepStrictEqual(pos(u.heatBreaksFor(tag, WD, "佐藤", w("10:00", "23:00"))), [], "タグに当たらない人は外さない");
+  // 時間帯方式は従来どおり getBreaksFor と同じ
+  const band = BT([{ start: "15:00", end: "17:00" }]);
+  [w("10:00", "23:00"), w("10:00", "23:00", { adjustedBreak: 30 }), w("17:00", "23:00")].forEach(sh =>
+    assert.deepStrictEqual(u.heatBreaksFor(band, WD, "田中", sh), u.getBreaksFor(band, WD, "田中", sh)));
+  // シフト作成タブのヒートマップは heatBreaksFor を通す（ドリフト検出）
+  const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-shift.js"), "utf8");
+  const i = src.indexOf("const heatData=useMemo(");
+  const body = src.slice(i, src.indexOf("perDate[date]=arr;", i));
+  assert.ok(i > 0 && /heatBreaksFor\(settings,date,name,hsh\)/.test(body) && !/getBreaksFor\(/.test(body), "heatData が heatBreaksFor 以外で休憩を引いている");
+});
 test("P3.5a 休憩不足の判定（isBreakShort）は法定の基準のまま", () => {
   // 設定で段を短くしても、法定（実働6h超で45分）を下回れば不足になる
   const st = { ...BT([]), breakMode: "length", breakLength: { basis: "binding", tiers: [{ overMin: 360, breakMin: 30, inclusive: true }] } };

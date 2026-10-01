@@ -1112,9 +1112,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                 if(pStM>=pEnM)ok=false;
               }
               if(ok){
-                // 休憩区間（時間帯セルを完全に覆う場合にカウント除外するため保持）
+                // 休憩区間（時間帯セルを完全に覆う場合にカウント除外するため保持）。長さ方式でも候補タブの休憩帯で外す（heatBreaksFor）
                 const breaks=hsh
-                  ?getBreaksFor(settings,date,name,hsh).map(br=>({bs:timeToMin(br.start),be:timeToMin(br.end)})).filter(b=>b.bs!==null&&b.be!==null)
+                  ?heatBreaksFor(settings,date,name,hsh).map(br=>({bs:timeToMin(br.start),be:timeToMin(br.end)})).filter(b=>b.bs!==null&&b.be!==null)
                   :[];
                 // startセルのnote→ランチ帯section、endセルのnote→ディナー帯section（heatSectionEntries）。
                 // 帯を跨ぎ かつ 両帯のsectionが異なるときだけ17:00固定で2件に分割される。

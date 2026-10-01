@@ -145,6 +145,7 @@ const sharedGlobals = {
   getAttrOptions: "writable",
   getBreakList: "writable",
   getBreaksFor: "writable",
+  heatBreaksFor: "writable",
   validatePeriodDates: "writable",
   oneSidedFillBounds: "writable",
   effShiftRangeMin: "writable",
