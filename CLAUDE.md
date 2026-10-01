@@ -1456,9 +1456,9 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-09-30 自動実行 #157）
+## Shifty バグチェックレポート（2026-10-01 自動実行 #158）
 
-> 着手時の HEAD は `9243cc5`。#156（`bba1fc3`）以降の変更は「統合しない」（`markPeopleDistinct`・`distinct` の記録）と、企業内登録スタッフのボタン名・「編集」の位置・一覧の幅 1280 だけ。この差分を中心に見た。
+> 着手時の HEAD は `1b556a6`。#157（`94da5f6`）以降の変更は、企業内登録スタッフの編集モーダルの2点（名前の変更で既に同じ名前の店舗を送らない・拒否理由をモーダルの中に出す `CompanyModalMsg`）と版数の更新だけ。この差分を中心に見た。
 
 ### 修正済み
 
@@ -1466,21 +1466,20 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 
 ### 要確認（未修正）
 
+- **[🟢] モーダルを開いた瞬間に、前の操作の結果が1フレームだけ見えうる**（app-company.js の `CompanyStaffDirectory`）。前の結果は `useEffect` で消しているため、開いた直後の最初の描画には前の `msg` が残る。見た目だけの問題で、データには影響しない。
 - **[🟢] 日別の休憩上書き（adjustedBreak）が、実績で短くした時刻にもそのまま当たる**（`resolveActualDay`）→ BACKLOG化済み（#156 から継続）。
 - **[🟢] 企業連携タブの提出状況表からの確定は、対象店舗のプランを見ない**（#156 から継続）。
 - **[🟢] 他店舗略称＋「締」は追加出勤を数える／呼び出し候補を選ぶ前の番号欄の書き換え**（#152 から継続）。
 
 ### 異常なし
 
-- `distinct` の後始末を確かめた。統合は keep と drop の間の記録を消し、drop の記録を keep へ引き継ぎ、drop を指す第三者の記録を keep へ付け替える。切り出しは両方向に記録し、振り直しは他人の記録を新しい ID へ付け替える。どれも同じ update の中でパスが親子に重ならない。
-- 人物を書く既存の経路（`planPeopleSync`・改名・`companyUpdateStaff`）は、既存の人物をパス単位で更新する。丸ごと書くのは新規作成だけなので、既存の `distinct` は消えない。
-- `markPeopleDistinct` は ID の形を検証してから `assertCompanyMember` を通し、そのあと書き込む。クライアントの呼べる CF の一覧にも追加されている。
-- `npm test` **498件パス**・`npx eslint app-*.js` **0 errors / 115 warnings**。回帰5本（company-dup-candidates・company-staff-directory・company-people・index-html-load・shift-edit-tab）はすべて allPass。
-- `DEV_MODE` は式のまま。読み込み順は7ファイルとも正しい。配信版数は8箇所とも `20260930-93b417f` で、以降に app-*.js の変更は無い。最大のファイルは app-company.js の 207,679 字。フォーム部品155件で `fontSize` 16未満は0件。未定義の CSS 変数・`subs` の全体 set()・functions/ の `.delete()` は0件。
+- 名前の変更で送る店舗は、チェックした店舗から「いまの登録名が新しい名前と同じ店舗」を除いた集合になっている。送る店舗が無ければボタンは押せない。結果の `msg` は一覧の帯とモーダルで共有され、成功時はモーダルが閉じて一覧の帯にだけ残る。
+- `npm test` **498件パス**・`npx eslint app-*.js` **0 errors / 116 warnings**。増えた1件は新しい `CompanyModalMsg` の未使用判定で、既存のモーダルと同じ誤検出。
+- 回帰4本（company-people・company-dup-candidates・company-staff-directory・index-html-load）はすべて allPass。
+- `DEV_MODE` は式のまま。配信版数は8箇所とも `20261001-60ec7d7` で、以降に app-*.js の変更は無い。フォーム部品155件で `fontSize` 16未満は0件。未定義の CSS 変数・`subs`/`periods` の全体 set()・functions/ の `.delete()` は0件。
 - **Firebase・Stripe・本番データには一切アクセスしていない。**
 
-**申し送り**: スケジュールタスクの PHASE 2〜4 の grep はいまも削除済みの `app.js` を対象にしている（13回目）。今回も app-*.js に読み替えた。この環境には `timeout` コマンドが無いので、回帰スクリプトは素の `node` で回すこと。
-
+**申し送り**: スケジュールタスクの PHASE 2〜4 の grep はいまも削除済みの `app.js` を対象にしている（14回目）。今回も app-*.js に読み替えた。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
