@@ -1616,8 +1616,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // 読めない期間だけ凍結時に残した laborTotals で埋める＝過去参照を押さなくても出る。
       const yr=fy==null?null:yearLaborSummary(periods,name,fy,fyStart,liveTotalFor(name),true);
       // その日に帰属する要修正（セル色で該当日を示す。dates と同じ並び）
-      const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins,dayOtH:periodOtH,agreementDailyOtH:agDay,
-        externalOverMin:externalOverThresholdOf(ls)});
+      const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins,dayOtH:periodOtH,agreementDailyOtH:agDay});
       out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,otWindow:otPlan&&otPlan.fixed?otPlan.window:null,dayOverB,
         prem,monthOtB,periodOtB,
         monthCovered:laborMonthCovered,yearOt,findings,guide,overall,weekNoRest,dayFindings,
@@ -1698,7 +1697,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const laborErrTitle=(name,date)=>{
     const keys=laborDayErrors[`${name}|${date}`];
     if(!keys||!keys.length)return"";
-    return(keys.includes("externalOver")?"外部の長時間: ":"労務の要修正: ")+keys.map(k=>LABOR_DAY_ERR_LABELS[k]||k).join("・");
+    return"労務の要修正: "+keys.map(k=>LABOR_DAY_ERR_LABELS[k]||k).join("・");
   };
 
   // "h"なし勤務時間フォーマット
@@ -2003,8 +2002,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // 労務の要修正のうち**色で示すと決めた日**（12h超・1日の残業が上限超）。
     // 一覧は app-utils.js の LABOR_DAY_FIX_KEYS が正本で、4h未満・休憩不足は
     // パネルには出るが色は付けない（2026-09-26 ユーザー指定）。
-    // 判定対象外の長時間（externalOver・P3.5c）は赤の専用色。区分 none の人にだけ付くので他のキーとは同じ日に重ならない
-    {const lk=laborDayErrors[`${name}|${date}`];if(lk)return lk.includes("externalOver")?LEGEND_COLORS.externalOver:LEGEND_COLORS.laborErr;}
+    if(laborDayErrors[`${name}|${date}`])return LEGEND_COLORS.laborErr;
     // 休み希望(/)・休暇セルは通常背景+斜線（noteの黄色も休暇の色も付けない）。
     // 休暇は色ではなく**セルに種別名を出して**見せる（2026-09-26 ユーザー指示・getVal 参照）。
     if(fieldRest(name,date,field))return rb;
@@ -2045,7 +2043,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // **時刻の入力ミス（timeErr）には割り込ませない**——入力そのものの誤りで、直さない限り
     // その日の実働は0のまま集計にも出ない。不足に上書きさせると、ポジションが足りない日は
     // 両方のセルが黄色になって**セル側の手がかりが消える**（2026-09-26 に dev 実機で実測）。
-    if(!editing&&col!==LEGEND_COLORS.changed&&col!==LEGEND_COLORS.timeErr&&col!==LEGEND_COLORS.laborErr&&col!==LEGEND_COLORS.externalOver&&cellPosErr(name,date,field==="start"?"lunch":"dinner"))col=LEGEND_COLORS.posErr;
+    if(!editing&&col!==LEGEND_COLORS.changed&&col!==LEGEND_COLORS.timeErr&&col!==LEGEND_COLORS.laborErr&&cellPosErr(name,date,field==="start"?"lunch":"dinner"))col=LEGEND_COLORS.posErr;
     const layers=[];
     // 休暇の種別名を出すセルには斜線を引かない（文字と重なって読めなくなる・2026-09-26 ユーザー指示）。
     // スタッフ提出の休み（種別名を出さない）は従来どおり斜線のまま。

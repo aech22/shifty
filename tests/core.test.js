@@ -5628,38 +5628,26 @@ test("P3.5b 按分窓は企業共通（法人上書き可）で効き、CF の�
   assert.deepStrictEqual(merged.staffTypeLimits.parttime.otProrate, { window: "month" });
 });
 
-// ===== P3.5c 判定対象外（区分 none）の長時間の日に色を付ける（§3.9-3・§6 P3.5c）=====
-test("P3.5c 外部の長時間の日: トグル既定オフ・しきい値ちょうどは塗らない・表と総括には載せない", () => {
-  const ls0 = u.laborSettingsOf({});
-  assert.strictEqual(ls0.highlightExternalOver8h, 0, "既定はオフ");
-  assert.strictEqual(u.externalOverThresholdOf(ls0), 0, "オフならしきい値0＝塗らない");
-  const ls = u.laborSettingsOf({ laborSettings: { highlightExternalOver8h: 1 } });
-  assert.strictEqual(u.externalOverThresholdOf(ls), u.LEGAL_DAILY_MIN, "既定のしきい値は法定8h");
-  const th = u.externalOverThresholdOf(ls);
-  const d = u.laborDayFindingsFor({ laborSystem: "none", dayMins: [th, th + 1, 0, 900], externalOverMin: th });
-  assert.deepStrictEqual(d, [[], ["externalOver"], [], ["externalOver"]], "ちょうど閾値は塗らない・超えた日だけ");
-  assert.deepStrictEqual(u.laborDayFindingsFor({ laborSystem: "none", dayMins: [900] }), [[]], "トグルオフ（0）なら塗らない");
-  // 対象は区分 none だけ（A・B の人の長い日には付けない）
-  assert.deepStrictEqual(u.laborDayFindingsFor({ laborSystem: "B", dayMins: [900], externalOverMin: th }), [[]]);
-  assert.ok(!u.laborDayFindingsFor({ laborSystem: "A", dayMins: [600], externalOverMin: th })[0].includes("externalOver"));
-  // しきい値は設定値
-  assert.strictEqual(u.externalOverThresholdOf(u.laborSettingsOf({ laborSettings: { highlightExternalOver8h: 1, externalOverThresholdMin: 600 } })), 600);
-  // 判定表（laborFindingsFor）と総括（OVERALL_FIX_KEYS）には載せない
-  assert.ok(u.LABOR_DAY_FIX_KEYS.includes("externalOver") && u.LABOR_DAY_ERR_LABELS.externalOver);
-  assert.ok(!u.OVERALL_FIX_KEYS.includes("externalOver"));
-  assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "none", dayMins: [900], externalOverMin: th }), []);
-  assert.strictEqual(u.overallVerdictOf({ laborSystem: "none", findings: [] }).key, "none");
-  // セル色は専用の赤（CELL_COLOR_LEGEND の externalOver）。労務の要修正（紫）・店舗間重複（dup の赤）とは別の色
-  const col = k => (u.CELL_COLOR_LEGEND.find(c => c.key === k) || {}).color;
-  assert.ok(col("externalOver"), "externalOver の色がレジェンドに登録されている");
-  assert.notStrictEqual(col("externalOver"), col("laborErr"));
-  assert.notStrictEqual(col("externalOver"), col("dup"));
-  assert.ok(/^rgba\((1[5-9]\d|2[0-5]\d),\s*\d{1,2},\s*\d{1,2},/.test(col("externalOver")), "赤系（R が高く G・B が低い）");
+// ===== P3.5c の削除（2026-10-03 ユーザー指示）=====
+// 判定対象外の人の長時間の日をセル色で示す店舗トグル（P3.5c）は、完成したシフトにも色が残り直す必要のない目印が増えるため機能ごと消した。
+// 本番の店舗には保存済みの値（highlightExternalOver8h:1・externalOverThresholdMin:480）が残るが、データ移行はしない。
+// 読み手（laborSettingsOf）が既定値の無いキーを黙って捨てるので無害であることをここで固定する。
+test("P3.5c の削除: セル色・日のキー・労務設定・CF のキーから消え、保存済みの値は黙って捨てられる", () => {
+  const gone = ["external" + "Over", "highlight" + "ExternalOver8h", "external" + "OverThresholdMin", "external" + "OverThresholdOf"];
+  assert.ok(!u.CELL_COLOR_LEGEND.some(c => c.key === gone[0]), "セル色のレジェンドに無い");
+  assert.ok(!u.LABOR_DAY_FIX_KEYS.includes(gone[0]) && !(gone[0] in u.LABOR_DAY_ERR_LABELS), "色を塗る日のキーに無い");
+  assert.strictEqual(u[gone[3]], undefined, "しきい値の関数は無い");
+  const ls = u.laborSettingsOf({ laborSettings: { [gone[1]]: 1, [gone[2]]: 480, showDailyOverB: 1 } });
+  assert.ok(!(gone[1] in ls) && !(gone[2] in ls), "保存済みの値は読み手で捨てられる");
+  assert.strictEqual(ls.showDailyOverB, 1, "他のキーは従来どおり読む");
+  assert.ok(!(gone[1] in u.DEFAULT_LABOR_SETTINGS) && !(gone[1] in u.LABOR_SETTING_RANGES));
+  assert.ok(!cfc.COMPANY_LABOR_KEYS.includes(gone[1]) && !cfc.COMPANY_LABOR_KEYS.includes(gone[2]), "CF のキーにも無い");
+  assert.ok(!(gone[1] in cfc.COMPANY_LABOR_RANGES));
+  // 判定対象外の人の長い日にも、日のキーは何も付かない（以前は店舗トグルで付いた）
+  assert.deepStrictEqual(u.laborDayFindingsFor({ laborSystem: "none", dayMins: [900] }), [[]]);
+  // 管理者画面の実装にも残っていない（設定タブのトグル・セル色の分岐・title）
   const src = _readAdminSurface();
-  assert.ok(/includes\("externalOver"\)\?LEGEND_COLORS\.externalOver:LEGEND_COLORS\.laborErr/.test(src), "セルの色付けが externalOver のキーで分かれている");
-  // CF の書き写しと一致（キー一覧・範囲は上の company-config のドリフト検出が照合する）
-  assert.ok(cfc.COMPANY_LABOR_KEYS.includes("highlightExternalOver8h") && cfc.COMPANY_LABOR_KEYS.includes("externalOverThresholdMin"));
-  assert.deepStrictEqual(cfc.COMPANY_LABOR_RANGES.highlightExternalOver8h, u.LABOR_SETTING_RANGES.highlightExternalOver8h);
+  assert.ok(!src.includes(gone[0]) && !src.includes("外部の" + "長時間"), "管理者画面の実装に参照が無い");
 });
 
 // ===== P3.5d PDF の昼・夜の人数（§3.9-4・§6 P3.5d）=====

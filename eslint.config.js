@@ -251,7 +251,6 @@ const sharedGlobals = {
   breakLengthOf: "writable",
   dailyOverThresholdOf: "writable",
   dailyOverMinB: "writable",
-  externalOverThresholdOf: "writable",
   headcountAtOf: "writable",
   countPresentAt: "writable",
   headcountLabelOf: "writable",

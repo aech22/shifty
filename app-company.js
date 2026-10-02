@@ -2469,29 +2469,6 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
           <div style={{fontSize:11,color:"var(--c-text4)"}}>「通常の労働時間制」の属性の人が対象です。週40時間超は従来どおり労務判定の欄に出ます。</div>
         </div>
 
-        {/* 判定対象外（応援・外部）の長時間の日を色で示す（店舗トグル・既定オフ・P3.5c）。労務判定の表・総括には載せない。 */}
-        <div data-external-over style={{marginTop:16,paddingTop:14,borderTop:"1px solid var(--c-border)"}}>
-          <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>判定対象外（応援・外部）の長時間の日</div>
-          {coLabor("highlightExternalOver8h")?coVal(ls.highlightExternalOver8h===1?"色を付ける":"色を付けない",0):
-          <label style={{display:"flex",gap:8,alignItems:"center",cursor:"pointer",marginBottom:6}}>
-            <input type="checkbox" checked={ls.highlightExternalOver8h===1} onChange={e=>saveLabor("highlightExternalOver8h",e.target.checked?1:0)} style={{width:18,height:18}}/>
-            <span style={{fontSize:13,color:"var(--c-text)"}}>実働がしきい値を超える日のセルに色を付ける</span>
-          </label>}
-          {ls.highlightExternalOver8h===1&&(()=>{const th=externalOverThresholdOf(ls);return(<div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap",marginBottom:4}}>
-            <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>しきい値</span>
-            {coLabor("externalOverThresholdMin")?coVal(fmtMin(th),0):<>
-            <input type="number" min={0} max={24} value={Math.floor(th/60)} placeholder="0"
-              onChange={e=>{const h=Math.max(0,Math.min(24,parseInt(e.target.value)||0));saveLabor("externalOverThresholdMin",h*60+th%60);}}
-              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
-            <span style={{fontSize:11,color:"var(--c-text4)"}}>時間</span>
-            <input type="number" min={0} max={59} value={th%60} placeholder="0"
-              onChange={e=>{const m=Math.max(0,Math.min(59,parseInt(e.target.value)||0));saveLabor("externalOverThresholdMin",Math.floor(th/60)*60+m);}}
-              style={{...AI,width:56,textAlign:"center",padding:"5px 6px"}}/>
-            <span style={{fontSize:11,color:"var(--c-text4)"}}>分</span></>}
-          </div>);})()}
-          <div style={{fontSize:11,color:"var(--c-text4)"}}>労働時間制を「判定対象外」にした属性の人が対象です。派遣元の36協定に配慮するための目印で、労務判定の表と総括には出ません。しきい値ちょうどの日は色を付けません。</div>
-        </div>
-
         <div style={{marginTop:16,paddingTop:14,borderTop:"1px solid var(--c-border)"}}>
           <div style={{fontSize:13,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>36協定</div>
           <div style={{display:"flex",gap:14,flexWrap:"wrap",marginBottom:10}}>
