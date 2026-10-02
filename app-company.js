@@ -262,11 +262,12 @@ function PayrollPage({shopId,shopName,pay=PAY_OFF,tt,onBack}){
       const inMonth=periods.filter(p=>p.startDate<=last&&p.endDate>=first);
       if(!inMonth.length)return{error:"この月にかかる期間がありません"};
       const target=inMonth.find(p=>p.startDate.slice(0,7)===ym)||inMonth[0];
-      // 提出は年度の始め（年平均所定）〜月末の期間と、月初の週（法定休日の判定）にかかる直前の期間を読む
+      // 提出は年度の始め（年平均所定）〜月末の期間と、月初・月末の週（法定休日の判定）にかかる前後の期間を読む。
+      // 月末の週の翌月側を読まないと、その日が空欄＝公休に見え、翌月側が有給・慶弔だけの週で当月の法定休日労働が消える
       const fyStart=fiscalYearStartMonthOf(settings);
       const fyFirst=`${fiscalYearMonths(fiscalYearOf(first,fyStart),fyStart)[0]}-01`;
       const from=fyFirst<addDays(first,-7)?fyFirst:addDays(first,-7);
-      const subPids=periods.filter(p=>p.startDate<=last&&p.endDate>=from).map(p=>p.id);
+      const subPids=periods.filter(p=>p.startDate<=addDays(last,7)&&p.endDate>=from).map(p=>p.id);
       const actPids=periods.filter(p=>p.startDate<=addDays(last,7)&&p.endDate>=addDays(first,-7)).map(p=>p.id);
       const q=pid=>firebaseDB.ref(`shops/${shopId}/subs`).orderByChild("periodId").equalTo(pid).once("value");
       const[subSnaps,actList]=await Promise.all([Promise.all(subPids.map(q)),
