@@ -168,13 +168,17 @@ keepAttrsOf(period) / applyKeepAttrs(settings,period)
                            // 改名では renameStaffInPeriods がキーを移す（移さないと過去期間の指定が引けずエラーが戻る）。
 PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS // 上の例外＝**意図的に凍結しない**マップ（現在は staffHidden だけ）。値そのものが期間の範囲を持つので写しに焼くと同じ問いへの答えが2つできる。凍結対象外のキーは resolvePeriodMaster が現在値のまま残すため、終了した期間もその startDate で評価される
 LEGAL_DAILY_MIN / LEGAL_WEEKLY_MIN     // 労基法32条の法定基準（480分・2400分）。B制の 8h超n日(残業)・週40h超(残業) に使う
-LABOR_SYSTEMS / laborSystemOf / laborSystemForStaff
-                           // 労働時間制（A=1か月単位の変形／B=通常／none=判定対象外）。**属性単位**で持ち
+LABOR_SYSTEMS / laborSystemOf / laborSystemForStaff / laborSystemRawOf / laborSystemRawForStaff
+                           // 労働時間制（A=1か月単位の変形／B=通常／none=応援・外部）。**属性単位**で持ち
                            // `staffTypeLimits[属性ID].laborSystem` に入る（2026-09-26・労務判定 第1弾）。
                            // 既定は 社員=A・バイト=B・派遣/その他=none（DEFAULT_LABOR_SYSTEM_BY_ATTR）。
                            // **null を返したら「区分が空欄か誤り」**＝staffTypeLimits に無い属性か、
                            // custom属性で laborSystem が未設定。組み込みIDは既定が必ず答えるので null にならない
                            // （既存店舗の employee/parttime が一斉に警告になるのを防ぐ）
+                           // **応援・外部（保存値 none）は 2026-10-03 から B と同じ判定**（ユーザー指示。以前は「判定対象外」で
+                           // 判定・集計から外していた）。laborSystemOf / laborSystemForStaff は none を B に読み替えて**none を返さない**。
+                           // 保存値は laborSystemRaw* が返し、使うのは isStaffNumberMissing（応援・外部には番号の未設定を出さない）だけ。
+                           // 保存値 none・LABOR_SYSTEMS・既定・CF の COMPANY_LABOR_SYSTEMS は変えていない（データ移行なし）
 laborSettingsOf / DEFAULT_LABOR_SETTINGS / LABOR_SETTING_RANGES // 労務設定の読み手側フォールバック。**makeSettings は変更していない**。
                            // **DEFAULT_LABOR_SETTINGS に載っていないキーは黙って捨てる**ので、新キーは必ずここに既定値で足す
                            // （COMPANY_LABOR_KEYS は自動で追随、functions/company-config.js の COMPANY_LABOR_KEYS は手で足す＝テストが照合）。
@@ -206,7 +210,8 @@ inputCheckOfShift / isStaffNumberMissing
                            // inputCheckOfShift(shift, abbrToShop) → {oneSided, memoOnly}。oneSided＝出勤だけ／退勤だけの日（空いている側が
                            // 休み希望・半日の休暇・締めの日と、入っている側が応援の指定＝x・店舗略称の日は除く）。memoOnly＝時刻が無く
                            // コマンドでも店舗略称でもない文字だけのセル（例「事務11」。h/k/x 単独・休み・休暇・締め・略称は除く）。
-                           // isStaffNumberMissing＝settings.staffNumbers が空か「派遣」。シフト作成タブの laborByStaff が期間の日ごとに通し、
+                           // isStaffNumberMissing＝settings.staffNumbers が空か「派遣」（労働時間制の保存値が none＝応援・外部の人は常に false・2026-10-03）。
+                           // シフト作成タブの laborByStaff が期間の日ごとに通し、
                            // 所属店舗で判定する人（P3.6 の dest）にも①②を出す（この店舗のセルの話なので）
 laborFindingDatesLabel / laborWeekDatesLabel / LABOR_FINDING_DATES_MAX
                            // 労務判定の該当日を `（17・22）`、該当週を `（5〜11）` の形でラベルの後ろに足す
@@ -219,7 +224,8 @@ laborFindingDatesLabel / laborWeekDatesLabel / LABOR_FINDING_DATES_MAX
                            // 店舗では実働6h超の日がすべて該当するので、全部並べると直すべき日が埋もれる
 laborFindingsFor / laborFindingLabels / overallVerdictOf
                            // 日次・月次の労務判定（S-4）と総括判定（S-6）。引数はオプションオブジェクト。
-                           // laborSystem==="none" は労働時間の判定・集計から外す（休憩不足も出さない）が、
+                           // laborSystem==="none" は**内部値**で、行き先の店で「所属店舗で判定」する人（P3.6 の dest）を
+                           // 労働時間の判定・集計から外す（休憩不足も出さない）。属性の応援・外部は B に読み替え済みでここには来ない。ただし
                            // **「時刻の入力ミス」だけは区分によらず出す**——労務ではなく入力データの誤りのため。
                            // 「入力の確認n日（…）」（key inputCheck・inputCheckDates）も同じく区分によらず出し、「従業員番号が未設定」
                            // （key inputCheckNumber・staffNumberMissing）は A/B の人だけ（2026-10-01・F6）。**どちらも要修正ではない**
@@ -260,8 +266,6 @@ overtimePlanOf / otProrateOf / staffOtProrateOf / dailyOverMinB / dailyOverThres
                            // otProrate は COMPANY_LIMIT_KEYS に入る（企業共通・法人でも決められる）。CF の sanitizeOtProrate と一致をテストで照合。
                            // B制は laborSettings.showDailyOverB=1 の店舗だけ、日ごとのしきい値超の合計を「残業予定」の行に出す
                            // （オフの店舗の B制の残業予定は 2026-09-30 の P5 から割増の①＋②を出す）
-externalOverThresholdOf    // 判定対象外（区分 none）の長時間の日の色（P3.5c）。highlightExternalOver8h=1 のときのしきい値（オフなら0）。
-                           // LABOR_DAY_FIX_KEYS の externalOver は**要修正でも労務判定の表でもない**（色だけ）
 headcountAtOf / countPresentAt / headcountLabelOf
                            // PDF の曜日の下の「昼n 夜n」（P3.5d・settings.headcountAt）。数える区間はヒートマップの heatData
                            // （応援・x の帯を外した後）で、帯に休暇のある人・0人の側・店休日は出さない。**PDF だけ**（画面・Excel は参照しないことをテストで固定）
@@ -659,8 +663,8 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              laborSettings?: {monthlyBase31Min, fixedOvertimeMin, marginMin,
                  agreementDailyOtMin, agreementMonthlyOtMin, agreementAnnualOtMin, fiscalYearStartMonth,
                  annualScheduledMin, rateDenominatorMin, weekStartDow, weekSplitAtMonthEdge, // 分単位・既定は読み手側フォールバック。この4つは P2（0＝未設定・真偽値は0/1）
-                 showDailyOverB, dailyOverThresholdMin,             // P3.5b: B制の日ごとのしきい値超を残業予定に出す（既定0＝オフ・しきい値は既定480）
-                 highlightExternalOver8h, externalOverThresholdMin}, // P3.5c: 判定対象外の長時間の日を塗る（既定0＝オフ・超える日だけ）
+                 showDailyOverB, dailyOverThresholdMin},            // P3.5b: B制の日ごとのしきい値超を残業予定に出す（既定0＝オフ・しきい値は既定480）
+                                                                    // P3.5c の2キー（判定対象外の長時間の日の色）は 2026-10-03 に削除。保存済みの値は laborSettingsOf が捨てる
              breakMode?: "band"|"length",                                       // 休憩の決め方（既定 band＝従来）
              breakLength?: {over8Min, over6Min, basis?: "work"|"binding",       // basis・tiers は P3.5a（無ければ従来の2段）
                  tiers?: {overMin, breakMin, inclusive}[]},
@@ -1372,7 +1376,8 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 違反は「⚠ 労務の確認が必要です」に `特定技能の週の公休不足（28〜4）` と出し（総括は要修正）、週の休み表のセルを赤・太字にする。
 
 - **対象**: 属性の表示名に「特定技能」を含む人（`isSkilledWorkerAttr`。企業属性 `co_*` と店舗の独自属性の両方。
-  判定対象外＝laborSystem `none` の人は除く）。**判定の入口はこの1本だけ**——将来、属性に明示のフラグを持たせるときはここを直す。
+  労働時間制が応援・外部の属性も含む＝2026-10-03 に B と同じ判定にしたため。以前は除いていた）。
+  **判定の入口はこの1本だけ**——将来、属性に明示のフラグを持たせるときはここを直す。
   設定タブと企業の共通設定の属性の説明に1行出している（新しい入力欄は無い）
 - **週と公休の数え方は既存の週の休みと同じ**（月曜起算・月で切らない `weeks`、公休＝`dayRestKindOf` の `rest`＝空欄・休み希望・提出の休み・`ko`。
   有給・慶弔は数えない）。`skilledWeekRestStateOf` が週の7日を年月で分け、月ごとに公休1日以上を求める
@@ -1400,9 +1405,9 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   （2026-09-26 ユーザー指定）。**4h未満と休憩不足は要修正だが塗らない**——該当日が多くなりやすく、
   塗ると直すべき日が埋もれる（休憩を1件も設定していない店舗では実働6h超の日がすべて休憩不足に当たる）。
   8h超と週40h超はそもそも要修正ではない。週・月に帰属する判定（月の残業・目安・年の36協定）は
-  日を特定できない。**2026-09-30（P3.5c）に3つ目として `externalOver`**（判定対象外の人の実働が店舗設定の
-  しきい値を超える日・トグルがオンの店舗だけ）を足した。こちらは要修正ではなく表・総括にも載らない目印で、
-  **色は laborErr（紫）ではなく専用の赤**（`CELL_COLOR_LEGEND` の `externalOver`・店舗間重複の赤より濃い）。
+  日を特定できない。2026-09-30（P3.5c）に足した3つ目（判定対象外の人の長時間の日を専用の赤で塗る店舗トグル）は、
+  **2026-10-03 のユーザー指示で機能ごと削除した**（完成したシフトにも色が残り、直す必要のない目印が増えるため）。
+  本番の店舗に残る `laborSettings` の保存値はデータ移行せず、`laborSettingsOf` が既定値の無いキーとして捨てる（テストで固定）。
   **つまりパネルに名前が出ていてもセルが塗られないことが普通にある**——
   パネルが判定の全量で、色はその一部にすぎない。理由はセルの `title` に出る。
   `laborDayFindingsFor` と `laborFindingsFor` の件数が一致することを `tests/core.test.js` が照合する。
@@ -1425,7 +1430,8 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   理由を読む並びにしている（ポジション不足の一覧はグリッドの直下のまま）。
 - **労働時間制の選択肢は雇用形態つき**（`LABOR_SYSTEM_LABELS`）。
   `1か月単位の変形労働時間制（正社員・契約社員・特定技能）` ／ `通常の労働時間制（パート・アルバイト）` ／
-  `判定対象外（応援・外部）`。**括弧の中は選ぶときの手がかりで、判定には使わない**
+  `応援・外部`（2026-10-03 に「判定対象外（応援・外部）」から改名。**判定は通常の労働時間制と同じ**・保存値は none のまま）。
+  **括弧の中は選ぶときの手がかりで、判定には使わない**
   （判定は属性ごとの `laborSystem`）。回帰スクリプトが select を探すときは
   **文言ではなく `option.value` で見分けること**——ここを文言で見ていた
   `example-labor-phase1.js` はこの変更で落ちた。

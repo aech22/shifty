@@ -217,6 +217,10 @@ CF の `sanitizeWageSettings`（functions/company-config.js）を同じ規則に
 - [ ] データ移行: なし（設定が無い店舗は従来と同じ計算）
 - [ ] 設定の投入（しきい値・B制トグル・外部の色・昼夜人数・特定技能の按分窓。中休みは 2026-10-02 に機能ごと削除）は P8-7 の運用手順で行う（コードの作業ではない）
 **影響範囲**: functions/company-config.js（コード変更は済み）
+- **2026-10-03 追記**: P3.5c（判定対象外の人の長時間の日のセル色）はユーザー指示で機能ごと削除した（develop `b7a76b6`）。
+  CF の `COMPANY_LABOR_KEYS`・`COMPANY_LABOR_RANGES` からも `highlightExternalOver8h`・`externalOverThresholdMin` を外したので、
+  **次の CF デプロイからは企業・法人の設定でこの2キーを保存しても捨てられる**（クライアントにも入力欄は無い）。
+  本番10店舗の `settings.laborSettings` に残る保存値はデータ移行しない（`laborSettingsOf` が読み捨てる）。上の「外部の色」の投入は不要になった
 
 ---
 
@@ -1758,6 +1762,21 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 「外部の長時間」の削除と「応援・外部」を通常の労働時間制と同じ判定に（2026-10-03・develop のみ・未リリース）
+
+ユーザー指示（2026-10-03）の2件。リリース（main・CF デプロイ・`?v=` のバンプ）は別途ユーザーの指示を待つ。
+- **外部の長時間（P3.5c）の削除**（`b7a76b6`）: 設定タブのトグルとしきい値・セル色・title・操作方法レジェンド・`LABOR_DAY_FIX_KEYS` のキー・
+  労務設定の既定値と範囲・CF の `COMPANY_LABOR_KEYS`/`COMPANY_LABOR_RANGES` を消した。完成したシフトにも色が残り、直す必要のない目印が増えるため。
+  本番10店舗に残る保存値（`highlightExternalOver8h:1`・`externalOverThresholdMin:480`）はデータ移行せず、`laborSettingsOf` が捨てることをテストで固定した
+- **応援・外部を B と同じ判定に**（`dd2cf4d`）: 選択肢を「判定対象外（応援・外部）」から「応援・外部」に改名し、`laborSystemOf` が保存値 none を B に読み替える。
+  保存値・`LABOR_SYSTEMS`・既定（派遣/その他＝none）・CF は変えていない（データ移行なし）。従業員番号の未設定だけは応援・外部の人に出さない
+  （保存値を見る `laborSystemRawOf` を新設）。内部値 none は行き先の店で「所属店舗で判定」する人（P3.6）の値として残した
+- 検証: `npm test` 522件パス・`npx eslint app-*.js` 0 errors / 116 warnings（着手前と同数）。新しい回帰 `example-labor-external-as-b.js` は
+  応援・外部の人と parttime の人の労務判定表の列・パネルの行が一致すること、設定タブにトグルが無いこと、レジェンドに「外部の長時間」が無いこと、
+  保存済みの値があってもセルが塗られないことを確かめる（14項目。変更前の配信物では9項目が落ちる）
+- **残り**: 削除済み機能の回帰 `example-labor-external-over.js` は、`git rm` が Bash フックの不可逆ゲートに止められたため**リポジトリに残っている**
+  （いま回すと設定タブのトグルが無いので EXIT=2）。ユーザーの承認を得てから削除する
 
 ### ✅ 管理者からの変更依頼4件（2026-10-01・同日本番リリース）
 
