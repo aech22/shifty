@@ -1209,7 +1209,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 判定は dupErrors と同じ入口（getEffHHMM＝blur確定値）から引くので、保存前の編集も反映される。
   // **両側とも入力されている日だけ**が対象（片側セルは補完の領分で入力ミスではない）。
   // 区分（laborSystem）で絞らない——これは労務の判定ではなく入力データそのものの誤りで、
-  // 判定対象外の属性（応援・外部）のスタッフでも直す必要があるため。
+  // 所属店舗で判定する人（行き先の店・内部値 none）でも、この店舗のセルとして直す必要があるため。
   const timeErrors=useMemo(()=>{
     const errs={};
     realStaff.forEach(name=>{
@@ -2416,7 +2416,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         const l=laborByStaff[name];
         if(!l)return{...base,skip:"noData"};
         if(l.dest)return{...base,dest:true,homeName:l.homeName||""};
-        if(!l.prem)return{...base,skip:"none"};
+        // prem が無いのは区分が空欄か誤り（laborSystemForStaff が null）の人だけ（応援・外部は B と同じ判定・2026-10-03）
+        if(!l.prem)return{...base,skip:"badSystem"};
         const b=l.prem;const rec=laborMonthOf(lm.map,lmYm,name);const av=schedAvgByStaff[name]||null;
         return{...base,
           times:{scheduledMin:rec?(Number(rec.min)||0):l.monthWorkMin,workMin:b.workMin,dayOverMin:b.dayOverMin,weekOverMin:b.weekOverMin,
@@ -2452,7 +2453,6 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         const l=laborByStaff[name];
         if(!l)return{...base,skip:"noData"};
         if(l.dest)return{...base,dest:true,homeName:l.homeName||""};
-        if(l.sys==="none")return{...base,skip:"none"};
         const rec=laborMonthOf(lm.map,lmYm,name);
         const av=schedAvgByStaff[name]||null;
         const yo=fy==null?null:yearOvertimeMonths(upto,name,fy,fyStart,liveMonthOtFor(name));
@@ -3220,7 +3220,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             rows={weekRestRows}
           />}
 
-          {/* === 労務（A制の目安・総括判定）。判定対象外の属性は空欄になる === */}
+          {/* === 労務（A制の目安・総括判定）。所属店舗で判定する人（行き先の店）は空欄になる === */}
           {showLaborTable&&<SummaryTable
             title={`労務判定（${period?period.startDate.slice(0,7).replace("-","年")+"月":""}）`}
             titleRight={pastSubsBtn}
@@ -3269,7 +3269,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             </div>
           )}
 
-          {/* 労務判定（S-4）。判定対象外の属性（応援・外部）は労働時間の判定・集計から外れる。
+          {/* 労務判定（S-4）。所属店舗で判定する人（行き先の店・P3.6）は労働時間の判定・集計から外れる。
+              応援・外部の属性は B と同じ判定（2026-10-03）。
               **労務判定の表のすぐ下に置く**（2026-09-26 ユーザー指示）。総括が「要修正」の人を
               表で見つけ、そのまま下の一覧で理由を読む並びにしている */}
           {laborFindings.length>0&&(

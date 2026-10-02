@@ -83,7 +83,8 @@ function StaffPayPage({name,settings,shopId,shopName,homeShopName,companyLink,pa
   const attrId=(settings.staffAttributes||{})[name]||"parttime";
   const attrLabel=((getAttrOptions(settings).find(([v])=>v===attrId))||[])[1]||STAFF_TYPE_LABELS[attrId]||attrId;
   const sys=laborSystemForStaff(settings,name);
-  const sysLabel=sys==="A"?"A（1か月単位の変形労働時間制）":sys==="B"?"B（通常の労働時間制）":sys==="none"?"判定対象外":"未設定";
+  // 応援・外部（保存値 none）の人は判定が B と同じなので B と出る（2026-10-03）
+  const sysLabel=sys==="A"?"A（1か月単位の変形労働時間制）":sys==="B"?"B（通常の労働時間制）":"未設定";
   const number=(settings.staffNumbers||{})[name]||"";
   const coSet=(companyLink&&companyLink.settings)||{};
   const denom=rateDenominatorMinOf({...(settings.laborSettings||{}),...(coSet.laborSettings||{})});
@@ -284,9 +285,9 @@ function PayrollPage({shopId,shopName,pay=PAY_OFF,tt,onBack}){
     onDone:(err,rep)=>{if(runRef.current!==Number(String(jobKey).split("_")[0]))return;setReport(err?{error:"計算に失敗しました"}:rep);}}:null,[jobKey]);
   const unlocked=!!(data&&!data.error&&pay.unlockedFor(data.codeRec));
   const rows=(report&&!report.error?report.rows:[]).map(r=>{
-    const sysLabel=r.sys==="A"?"A":r.sys==="B"?"B":"対象外";
+    const sysLabel=r.sys==="A"?"A":r.sys==="B"?"B":"未設定";
     if(r.dest)return{...r,sysLabel,note:`所属店舗（${r.homeName||"別の店舗"}）で計算します`};
-    if(r.skip)return{...r,sysLabel,note:r.skip==="none"?"労働時間制が判定対象外のため計算しません":"データがありません"};
+    if(r.skip)return{...r,sysLabel,note:r.skip==="badSystem"?"労働時間制が未設定のため計算しません":"データがありません"};
     const notes=[];
     if(r.partial)notes.push("＋月の日がデータで埋まっていない途中の値");
     if(r.unread||r.helperUnread)notes.push("＋他店の勤務・実績を読み込めていない途中の値");
@@ -2288,7 +2289,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
               }
               {!isBuiltin&&!isCo&&<button onClick={()=>deleteType(type)} style={{padding:"4px 10px",background:"rgba(229,57,53,.1)",border:"1px solid rgba(229,57,53,.3)",borderRadius:4,color:"#e53935",fontSize:12,cursor:"pointer"}}>削除</button>}
             </div>
-            {/* 労働時間制（項目1）。組み込み属性は既定（社員=変形・バイト=通常・派遣/その他=対象外）が
+            {/* 労働時間制（項目1）。組み込み属性は既定（社員=変形・バイト=通常・派遣/その他=応援・外部＝判定は通常と同じ）が
                 入った状態で表示されるので、既存店舗が「区分が空欄」にならない。 */}
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
               <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>労働時間制</span>

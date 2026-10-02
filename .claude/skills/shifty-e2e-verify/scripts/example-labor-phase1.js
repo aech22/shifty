@@ -81,10 +81,11 @@ async function setTab(plan) {
 
 // ---- 2. ShiftEditTab: 時刻の入力ミスと労務判定パネル ---------------------------
 async function shiftEditTab() {
-  // 田中=社員(A制・既定) / 鈴木=バイト(B制・既定) / 佐藤=契約(custom・laborSystem未設定) / 平=派遣(対象外)
+  // 田中=社員(A制・既定) / 鈴木=バイト(B制・既定) / 佐藤=契約(custom・laborSystem未設定) / 平=派遣(応援・外部＝B と同じ判定)
   // 田中 10/1 は 09:00-22:00（13時間＝12h超）、10/2 は 10:00-12:00（2時間＝4h未満）。
   // 鈴木 10/1 は 22:00→02:00 の入力ミス。
-  // 平 10/1 は 09:00-23:00（14時間）＝対象外なので 12h超/8h超 のどれも出ない。
+  // 平 10/1 は 09:00-23:00（14時間）。2026-10-03 から応援・外部は B と同じ判定なので 8h超・1日の残業が上限超・休憩不足が出る。
+  // 番号は持たないが、応援・外部の人には「従業員番号が未設定」を出さない。
   const h = await openHarness({
     root: ROOT, extraHead: EXTRA_HEAD, waitFor: "select",
     jsx: `
@@ -172,8 +173,10 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
     labor_panel_a: !!se.laborPanel && /田中：12h超1日（1）、4h未満1日（2）、休憩不足1日（1）/.test(se.laborPanel),
     labor_panel_b: !!se.laborPanel && /鈴木：時刻の入力ミス1日（1）/.test(se.laborPanel),
     labor_panel_badsystem: !!se.laborPanel && /佐藤：休憩不足1日（1）、区分が空欄か誤り/.test(se.laborPanel),
-    // 項目1: 対象外（派遣）は労務判定に出ない
-    labor_panel_excludes_none: !!se.laborPanel && !/平/.test(se.laborPanel),
+    // 項目1（2026-10-03 改定）: 応援・外部（派遣）は B と同じ判定が出る。従業員番号の未設定だけは出さない
+    labor_panel_none_as_b: !!se.laborPanel && /平：[^\n]*8h超1日\(残業\)（1）/.test(se.laborPanel)
+      && /平：[^\n]*1日の残業が上限超1日（1）/.test(se.laborPanel) && /平：[^\n]*休憩不足1日（1）/.test(se.laborPanel)
+      && !/平：[^\n]*従業員番号が未設定/.test(se.laborPanel),
     no_console_errors: se.errors.length === 0,
   };
   const allPass = Object.values(pass).every(Boolean);

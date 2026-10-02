@@ -3,7 +3,7 @@
 //      パネルには出るが塗らないと決めたもの（4h未満・休憩不足）は塗らない
 //   ② 労務の確認パネルを労務判定表の下に置く
 //   ③ シフト表の空欄は公休として数える（全日が空欄の週も 休7）
-//   ④ 労働時間制の選択肢に雇用形態の括弧を出す
+//   ④ 労働時間制の選択肢に雇用形態の括弧を出す（3つ目は 2026-10-03 に「応援・外部」へ改名・判定は通常と同じ）
 // app-main.js を読み込まないので Firebase へは1バイトも出ない（SKILL.md 1.6節）。
 //
 // 実行:   node .claude/skills/shifty-e2e-verify/scripts/example-labor-cell-color.js  → allPass=true / EXIT=0
@@ -151,7 +151,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
     blank_week_is_rest7: (rowOf(se.weekRows, "21〜27日") || []).join(",") === "休7,休7,休7",
     // ④ 括弧つきの文言
     system_labels: st.opts.join(" / ") ===
-      "1か月単位の変形労働時間制（正社員・契約社員・特定技能） / 通常の労働時間制（パート・アルバイト） / 判定対象外（応援・外部）",
+      "1か月単位の変形労働時間制（正社員・契約社員・特定技能） / 通常の労働時間制（パート・アルバイト） / 応援・外部",
     no_console_errors: se.errors.length === 0 && st.errors.length === 0,
   };
   const allPass = Object.values(pass).every(Boolean);

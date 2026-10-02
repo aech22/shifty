@@ -3183,11 +3183,14 @@ test("S-5 B制の週40h超: 1日8hで切ってから週で足し、40h超のぶ�
   assert.strictEqual(u.weeklyOverTotalMinB([[480, 480, 480]]), 0);
 });
 
-test("項目1 laborSystemOf: 組み込み属性の既定は 社員=A・バイト=B・派遣/その他=対象外", () => {
+test("項目1 laborSystemOf: 組み込み属性の既定は 社員=A・バイト=B・派遣/その他=応援・外部（判定は B と同じ）", () => {
   assert.strictEqual(u.laborSystemOf({}, "employee"), "A");
   assert.strictEqual(u.laborSystemOf({}, "parttime"), "B");
-  assert.strictEqual(u.laborSystemOf({}, "dispatch"), "none");
-  assert.strictEqual(u.laborSystemOf({}, "other"), "none");
+  // 2026-10-03: 応援・外部（保存値 none）は判定上 B に読み替える。保存値は laborSystemRawOf が返す
+  assert.strictEqual(u.laborSystemOf({}, "dispatch"), "B");
+  assert.strictEqual(u.laborSystemOf({}, "other"), "B");
+  assert.strictEqual(u.laborSystemRawOf({}, "dispatch"), "none");
+  assert.strictEqual(u.laborSystemRawOf({}, "other"), "none");
   // 属性が未割当のスタッフは既存フォールバックで parttime＝B制（安全側）
   assert.strictEqual(u.laborSystemForStaff({}, "田中"), "B");
 });
@@ -3240,7 +3243,9 @@ test("S-4 時刻の入力ミス: 区分によらず件数つきで出る", () =>
   assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: null, timeErrorCount: 1 }), ["時刻の入力ミス1日", "区分が空欄か誤り"]);
 });
 
-test("項目1: 判定対象外（応援・外部）のスタッフは労働時間の判定から除外される", () => {
+// 内部値 none は、行き先の店で「所属店舗で判定」する人（P3.6）を判定から外すために ShiftEditTab が入れる値。
+// 属性の「応援・外部」は 2026-10-03 から laborSystemOf が B に読み替えるのでここには来ない（下の「応援・外部は B と同じ判定」）
+test("項目1: 内部値 none（所属店舗で判定する人）は労働時間の判定から除外される", () => {
   // 13h・3h・9h が並んでも A制/B制 のどの判定も出ない（週40h超も出ない）
   const mins = [HM(13, 0), HM(3, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0)];
   const weeks = [[HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), 0]];
@@ -3450,11 +3455,11 @@ test("S-6 総括判定: 上から順に 要修正／目安未満／残業あり�
   for (const o of [{ timeErrorCount: 1 }, { breakShortCount: 1 }]) {
     assert.strictEqual(v({ laborSystem: "B", findings: F({ laborSystem: "B", ...o }), guideKey: "none" }), "要修正");
   }
-  // 判定対象外は休憩不足も出さない（労務の判定のため）。時刻の入力ミスだけは区分によらず出る
+  // 内部値 none は休憩不足も出さない（労務の判定のため）。時刻の入力ミスだけは区分によらず出る
   assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "none", breakShortCount: 2, timeErrorCount: 1 }),
     ["時刻の入力ミス1日"]);
   assert.strictEqual(v({ laborSystem: null, findings: F({ laborSystem: null }), guideKey: "none" }), "要修正", "区分が空欄");
-  // 判定対象外は空欄
+  // 内部値 none（所属店舗で判定する人）は空欄
   assert.strictEqual(v({ laborSystem: "none", findings: [], guideKey: "none" }), "");
   // 月が埋まっていない A制は「＋OK」（Shifty固有・S-6 の4値の外。2026-09-26 に「要確認」から変更）
   assert.strictEqual(v({ laborSystem: "A", findings: [], guideKey: "none", monthReady: false }), "＋OK");
@@ -3565,7 +3570,7 @@ test("労務判定: 日に帰属する項目すべてに該当日を出す（月
   assert.ok(lbl.startsWith(`休憩不足${many.length}日（1・2・`), lbl);
   assert.ok(lbl.endsWith(" ほか3日）"), lbl);
   assert.strictEqual((lbl.match(/・/g) || []).length, u.LABOR_FINDING_DATES_MAX - 1, "並べる日付は上限まで");
-  // 判定対象外は日付を渡しても休憩不足そのものを出さない（区分の規則が先）
+  // 内部値 none は日付を渡しても休憩不足そのものを出さない（区分の規則が先）
   assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "none", breakShortDates: ["2026-09-17"] }), []);
 });
 
@@ -5628,6 +5633,60 @@ test("P3.5b 按分窓は企業共通（法人上書き可）で効き、CF の�
   assert.deepStrictEqual(merged.staffTypeLimits.parttime.otProrate, { window: "month" });
 });
 
+// ===== 応援・外部を B と同じ判定に（2026-10-03 ユーザー指示）=====
+test("応援・外部: 属性の laborSystem:\"none\" は判定上 B・保存値は none・ラベルは「応援・外部」", () => {
+  const st = { staffAttributes: { "外部さん": "custom_ext", "バイト": "parttime", "派遣さん": "dispatch" },
+    staffTypeLimits: { custom_ext: { name: "応援", laborSystem: "none" } } };
+  // ① 判定用の読み手は B を返す（明示の none も組み込み dispatch の既定も）
+  assert.strictEqual(u.laborSystemForStaff(st, "外部さん"), "B");
+  assert.strictEqual(u.laborSystemForStaff(st, "派遣さん"), "B");
+  assert.ok(u.LABOR_SYSTEMS.every(x => u.laborSystemOf({ staffTypeLimits: { c: { laborSystem: x } } }, "c") !== "none"), "判定用の読み手は none を返さない");
+  // ② 保存値の関数は none を返す（設定の select・従業員番号の未設定の判定が使う）
+  assert.strictEqual(u.laborSystemRawForStaff(st, "外部さん"), "none");
+  assert.strictEqual(u.laborSystemRawForStaff(st, "派遣さん"), "none");
+  assert.strictEqual(u.laborSystemRawForStaff(st, "バイト"), "B");
+  // ③ ラベル（保存値・選択肢は変えない）
+  assert.strictEqual(u.LABOR_SYSTEM_LABELS.none, "応援・外部");
+  assert.deepStrictEqual(u.LABOR_SYSTEMS, ["A", "B", "none"]);
+  assert.ok(!Object.values(u.LABOR_SYSTEM_LABELS).some(l => l.includes("判定対象外")));
+  // 従業員番号の未設定は応援・外部の人には出さない（番号を持たないため）。B の人には従来どおり出る
+  assert.strictEqual(u.isStaffNumberMissing(st, "外部さん"), false);
+  assert.strictEqual(u.isStaffNumberMissing(st, "派遣さん"), false);
+  assert.strictEqual(u.isStaffNumberMissing(st, "バイト"), true);
+});
+test("応援・外部: 同じ勤務データなら parttime の人と laborFindingsFor・総括が一致する（従業員番号の未設定を除く）", () => {
+  const st = { staffAttributes: { "外部さん": "custom_ext", "バイト": "parttime" },
+    staffTypeLimits: { custom_ext: { name: "応援", laborSystem: "none" } }, staffNumbers: { "バイト": "12" } };
+  const mins = [HM(13, 0), HM(3, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0)];
+  const dates = ["2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-19"];
+  const weeks = [[HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), HM(9, 0), 0]];
+  const run = name => {
+    const sys = u.laborSystemForStaff(st, name);
+    const f = u.laborFindingsFor({ laborSystem: sys, dayMins: mins, dayDates: dates, weekDayMins: weeks, weekDates: ["2026-09-14"],
+      breakShortDates: ["2026-09-16"], skilledWeekDates: [], inputCheckDates: [], staffNumberMissing: u.isStaffNumberMissing(st, name),
+      monthOtH: 50, monthAgreementH: 50, agreementDailyOtH: 3, agreementMonthlyOtH: 45, monthReady: true });
+    return { sys, f, overall: u.overallVerdictOf({ laborSystem: sys, findings: f, guideKey: "none", monthReady: true }),
+      day: u.laborDayFindingsFor({ laborSystem: sys, dayMins: mins, agreementDailyOtH: 3 }) };
+  };
+  const ext = run("外部さん"), pt = run("バイト");
+  assert.ok(ext.f.length > 0, "判定が出る＝素通りしない");
+  assert.deepStrictEqual(ext, pt);
+  assert.strictEqual(ext.overall.key, "fix");
+  // 番号を持たない場合: バイトには「従業員番号が未設定」が出て、応援・外部には出ない
+  const st2 = { ...st, staffNumbers: {} };
+  assert.ok(u.laborFindingsFor({ laborSystem: "B", staffNumberMissing: u.isStaffNumberMissing(st2, "バイト") }).some(x => x.key === "inputCheckNumber"));
+  assert.ok(!u.laborFindingsFor({ laborSystem: u.laborSystemForStaff(st2, "外部さん"), staffNumberMissing: u.isStaffNumberMissing(st2, "外部さん") }).some(x => x.key === "inputCheckNumber"));
+});
+test("応援・外部: 画面に「判定対象外」の文言と内部値 none 以外の none の分岐が残っていない", () => {
+  const src = _readAdminSurface();
+  // 管理者画面のコード（コメントを除く文字列）に「判定対象外」が出ない
+  const strs = src.match(/"[^"\n]*"|`[^`]*`/g) || [];
+  assert.ok(!strs.some(x => x.includes("判定対象外")), "画面の文言に「判定対象外」が残っている");
+  // 行き先（所属店舗で判定）の人だけが sys:"none" を持つ
+  assert.strictEqual((src.match(/sys:"none"/g) || []).length, 1);
+  assert.ok(/role==="dest"[\s\S]{0,400}sys:"none"/.test(src), "sys:\"none\" は dest の分岐の中だけ");
+});
+
 // ===== P3.5c の削除（2026-10-03 ユーザー指示）=====
 // 判定対象外の人の長時間の日をセル色で示す店舗トグル（P3.5c）は、完成したシフトにも色が残り直す必要のない目印が増えるため機能ごと消した。
 // 本番の店舗には保存済みの値（highlightExternalOver8h:1・externalOverThresholdMin:480）が残るが、データ移行はしない。
@@ -6560,10 +6619,11 @@ test("P7 dashboardPersonView: 所定と上限の差・年平均と分母の差�
   const p = u.dashboardPersonView({ ...r, schedPartial: true, monthPartial: true, schedSource: "auto", yearMonths: [], avgMin: 100 }, ctx);
   assert.deepStrictEqual({ so: p.schedOver, ag: p.agOver, ao: p.avgOver }, { so: false, ag: false, ao: false });
   assert.ok(/＋月の日がデータで埋まっていない途中の値/.test(u.dashboardRowValues({ view: p }).notes));
-  // B制は所定の超過を出さない（A制の枠）。行き先・判定対象外は注記だけ
+  // B制は所定の超過を出さない（A制の枠）。行き先・データの無い人は注記だけ（応援・外部は B と同じ行になる・2026-10-03）
   assert.strictEqual(u.dashboardPersonView({ ...r, sys: "B" }, ctx).schedOver, false);
   assert.strictEqual(u.dashboardRowValues({ view: u.dashboardPersonView({ name: "佐藤", sys: "B", dest: true, homeName: "B店" }, ctx) }).notes, "所属店舗（B店）で集計します");
-  assert.strictEqual(u.dashboardRowValues({ view: u.dashboardPersonView({ name: "外部", sys: "none", skip: "none" }, ctx) }).notes, "判定対象外");
+  assert.strictEqual(u.dashboardRowValues({ view: u.dashboardPersonView({ name: "外部", sys: "B", skip: "noData" }, ctx) }).notes, "データがありません");
+  assert.strictEqual(u.dashboardRowValues({ view: u.dashboardPersonView({ name: "外部", sys: "B", skip: "noData" }, ctx) }).sys, "通常");
   assert.deepStrictEqual(u.dashboardCountsOf([v, p, u.dashboardPersonView({ name: "佐藤", dest: true }, ctx)]),
     { people: 2, schedOver: 1, avgOver: 1, agOver: 1, restShort: 0 });
 });
@@ -6698,7 +6758,7 @@ test("skilledWeekRestStateOf: データの無い日を含む側は判定しな�
   // 9月側に nodata があり公休0 → 判定しない
   assert.strictEqual(u.skilledWeekRestStateOf(["nodata", "work", "work", "work", "rest", "work", "work"], ds).key, "partial");
 });
-test("isSkilledWorkerAttr: 属性名に「特定技能」を含む人だけ（企業属性・店舗属性とも）。判定対象外は除く", () => {
+test("isSkilledWorkerAttr: 属性名に「特定技能」を含む人だけ（企業属性・店舗属性とも）。応援・外部の属性も対象（B と同じ判定）", () => {
   const settings = {
     staffAttributes: { "グエン": "co_Hzxk84Qv", "リン": "custom_t1", "田中": "employee", "佐藤": "parttime", "応援": "custom_t2", "無し": undefined },
     staffTypeLimits: { co_Hzxk84Qv: { name: "特定技能", laborSystem: "A" }, custom_t1: { name: "特定技能1", laborSystem: "A" }, custom_t2: { name: "特定技能（応援）", laborSystem: "none" } },
@@ -6707,11 +6767,12 @@ test("isSkilledWorkerAttr: 属性名に「特定技能」を含む人だけ（�
   assert.strictEqual(u.isSkilledWorkerAttr(settings, "リン"), true);
   assert.strictEqual(u.isSkilledWorkerAttr(settings, "田中"), false);
   assert.strictEqual(u.isSkilledWorkerAttr(settings, "佐藤"), false);
-  assert.strictEqual(u.isSkilledWorkerAttr(settings, "応援"), false, "判定対象外は除く");
+  // 2026-10-03: 応援・外部は B と同じ判定にしたので、名前に「特定技能」を含めば対象（以前は判定対象外として除いた）
+  assert.strictEqual(u.isSkilledWorkerAttr(settings, "応援"), true, "応援・外部でも名前に特定技能を含めば対象");
   assert.strictEqual(u.isSkilledWorkerAttr(settings, "無し"), false);
   assert.strictEqual(u.isSkilledWorkerAttr({}, "誰か"), false);
 });
-test("laborFindingsFor: 特定技能の週の公休不足が該当週つきで出て、総括は要修正（A制・B制とも・判定対象外は出さない）", () => {
+test("laborFindingsFor: 特定技能の週の公休不足が該当週つきで出て、総括は要修正（A制・B制とも・内部値 none は出さない）", () => {
   const fa = u.laborFindingsFor({ laborSystem: "A", skilledWeekDates: ["2026-09-28"] });
   const f = fa.find(x => x.key === "skilledWeekRest");
   assert.ok(f); assert.strictEqual(f.label, "特定技能の週の公休不足（28〜4）");
@@ -6784,7 +6845,7 @@ test("F6 laborFindingsFor: 入力の確認n日（…）と従業員番号が未�
   assert.strictEqual(f[1].label, "従業員番号が未設定");
   // 重複・並びの乱れは日付で整える
   assert.strictEqual(u.laborFindingsFor({ ...base, inputCheckDates: ["2026-10-09", "2026-10-03", "2026-10-09"] })[0].label, "入力の確認2日（3・9）");
-  // 判定対象外（none）にも①②は出すが、番号は出さない
+  // 内部値 none（所属店舗で判定する人）にも①②は出すが、番号は出さない
   const none = u.laborFindingsFor({ laborSystem: "none", inputCheckDates: dates, staffNumberMissing: true });
   assert.deepStrictEqual(none.map(x => x.key), ["inputCheck"]);
   // B制にも番号は出す。区分が空欄（null）の人は区分の指摘だけで番号は出さない
