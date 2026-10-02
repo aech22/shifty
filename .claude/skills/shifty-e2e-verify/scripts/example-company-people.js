@@ -15,7 +15,8 @@
 //  C'. 拒否（既にいる名前への改名）の「✕ 理由」がモーダルの中に見える（rejectShownInModal・2026-10-01）
 //  C''. 2店舗にチェックが入ったまま片方が既に新しい名前 → その店舗は送らず、違う店舗だけ改名される（renameSkipsSameName・2026-10-01）
 //  H. 保存ボタンは1つ（2026-10-02）: 「名前を変更」ボタンが無い。番号と名前を一緒に変えて「保存」→ companyUpdateStaff → companyRenameStaff の順に送られ、
-//     番号は新しい名前の登録に付く。番号が拒否されたら名前は送らず、理由はモーダルの中に出てモーダルは開いたまま
+//     番号は新しい名前の登録に付く。番号が拒否されたら名前は送らず、理由はモーダルの中に出てモーダルは開いたまま。
+//     番号の保存が一部の店舗で失敗（failed）したときも名前は送らず、「n店舗への反映に失敗」がモーダルの中に残る（savePartialFailStops・2026-10-02）
 //  G. 375px で編集モーダルがページを横に広げない・入力欄は16px以上・コンソールエラー0件
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-company-people.js → allPass=true / EXIT=0
@@ -219,6 +220,17 @@ const settle = h => h.page.waitForTimeout(700);
     R.bothRej = await h.evaluate(n => { const m = document.querySelector("[data-co-person-modal]"); const e = m && m.querySelector("[data-co-person-modal-msg]");
       return { sent: window.__cf.slice(n).map(c => c.name), staff1: window.__db("shops/S1/staff"), modalOpen: !!m, inModal: e ? e.innerText : null }; }, cfN2);
     await modalClick(h, "閉じる"); await h.page.waitForTimeout(300);
+    // H3. 番号の保存が一部の店舗で失敗（failed）→ 名前は送らず、失敗がモーダルの中に残る（バグチェック#160）。
+    //     スタブは failed を返せないので、companyUpdateStaff の戻り値だけ差し替える（次の reload で元に戻る）
+    await h.evaluate(() => { const o = firebaseFunctions.httpsCallable; firebaseFunctions.httpsCallable = name => payload => o(name)(payload).then(r => name === "companyUpdateStaff" ? { data: { ...r.data, ok: false, failed: ["S1"] } } : r); });
+    await clickEdit(h, "鈴木 花子"); await h.page.waitForTimeout(300);
+    const cfN3 = await h.evaluate(() => window.__cf.length);
+    await h.setInput('[data-co-person-modal] input[aria-label="従業員番号"]', "79");
+    await h.setInput('[data-co-person-modal] input[aria-label="新しい名前"]', "鈴木 三郎");
+    await modalClick(h, "保存"); await settle(h); await settle(h);
+    R.partial = await h.evaluate(n => { const m = document.querySelector("[data-co-person-modal]"); const e = m && m.querySelector("[data-co-person-modal-msg]");
+      return { sent: window.__cf.slice(n).map(c => c.name), staff1: window.__db("shops/S1/staff"), modalOpen: !!m, inModal: e ? e.innerText : null }; }, cfN3);
+    await modalClick(h, "閉じる"); await h.page.waitForTimeout(300);
 
     // 再読み込みしても、解除した高橋は鈴木にまとまらない（ensure が再び束ねない）
     await h.page.reload();
@@ -280,6 +292,8 @@ const settle = h => h.page.waitForTimeout(700);
       && R.both.modalOpen === false && /保存し、名前を変更しました/.test(R.both.msg),
     saveBothRejectStops: !!R.bothRej && JSON.stringify(R.bothRej.sent) === JSON.stringify(["companyUpdateStaff"]) && R.bothRej.staff1.includes("鈴木 花子")
       && R.bothRej.modalOpen === true && /従業員番号 3 はこの法人で既に使われています/.test(R.bothRej.inModal || ""),
+    savePartialFailStops: !!R.partial && JSON.stringify(R.partial.sent) === JSON.stringify(["companyUpdateStaff"]) && R.partial.staff1.includes("鈴木 花子")
+      && R.partial.modalOpen === true && /1店舗への反映に失敗しました/.test(R.partial.inModal || ""),
     noErrors: [R.errors, R.errorsBase, R.errorsMobile].every(e => Array.isArray(e) && e.length === 0) && !R.exception && !R.exceptionBase && !R.exceptionMobile,
   };
   v.allPass = Object.values(v).every(Boolean);

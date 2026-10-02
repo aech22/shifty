@@ -1046,7 +1046,7 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
 // 名前の変更は店舗の登録名を変える（StaffTab の改名と同じ結果）。保存ボタンは1つ（2026-10-02 ユーザー指示で「名前を変更」を外した）。
 // 保存は ① 番号・法人・属性・所属店舗（companyUpdateStaff）→ ② 名前（companyRenameStaff）の順に送る。①は同じ値で送り直しても
 // 結果が変わらず、②は一度通ると「名前が変わっていません」で拒否されるので、①が拒否されたら何も変えずに止まり、②だけ失敗したら
-// 押し直しで①を送り直しても害が無い。①の後は一覧を読み直さない（読み直すとモーダルが外れる）。閉じるときに読み直す。
+// 押し直しで①を送り直しても害が無い。①が一部の店舗で失敗（failed）したときも②へ進まず、失敗をモーダルに残す。①の後は一覧を読み直さない（読み直すとモーダルが外れる）。閉じるときに読み直す。
 // 属性と所属店舗は、この人がつながっている全店舗の設定に同じ値を書く（変えないときは「変更しない」のまま）。
 // 編集・統合モーダルの中の結果（成功はモーダルが閉じるので、ここに残るのは主に拒否の「✕ 理由」）。
 // 一覧の帯（data-co-person-msg）は覆いの下に隠れるので、モーダルの中に同じ内容を出す。スクロールしても見えるよう上端に貼り付ける
@@ -1080,8 +1080,10 @@ function CompanyPersonEditModal({row,data,busy,msg,onClose,onCall}){
     const hasUpdate=Object.keys(payload).length>0;
     if(!hasUpdate&&!doRename){onClose();return;}
     if(hasUpdate){
-      const r=await onCall("companyUpdateStaff",payload,doRename?"番号などを保存しました（名前の変更を続けています）":"保存しました",{keepOpen:doRename});
-      if(!r)return;
+      const r=await onCall("companyUpdateStaff",payload,doRename?"番号などを保存しました。名前はまだ変えていません":"保存しました",{keepOpen:doRename});
+      // ①が一部の店舗で失敗したら②へ進まない（進むと②の成功表示が「n店舗への反映に失敗」を上書きし、モーダルも閉じて失敗が見えなくなる）。
+      // モーダルは開いたままなので、押し直せば①を送り直してから②へ進む
+      if(!r||(r.failed&&r.failed.length))return;
     }
     if(doRename)await onCall("companyRenameStaff",{shopIds:renameTargets,newName:nn},hasUpdate?"保存し、名前を変更しました":"名前を変更しました");
   };
