@@ -722,7 +722,7 @@ function CompanyEntityCard({companyId,shopNames={},onCompanyCall,onSaveCompanyCo
       return(<div key={e.id} data-co-entity={e.id} style={{marginBottom:8,padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8}}>
         <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
           <input value={nm} maxLength={100} onChange={ev=>setNameDraft(d=>({...d,[e.id]:ev.target.value}))} style={{...AI,flex:"1 1 180px",fontWeight:700,padding:"5px 8px"}}/>
-          {draft!==undefined&&draft.trim()!==e.name&&<button disabled={busy||!draft.trim()} onClick={async()=>{if(await call("renameEntity",{entityId:e.id,name:draft.trim()},"法人名を変更しました"))setNameDraft(d=>{const n={...d};delete n[e.id];return n;});}} style={{...AGray,padding:"5px 10px",fontSize:12}}>名前を保存</button>}
+          {draft!==undefined&&draft.trim()!==e.name&&<button data-co-entity-rename={e.id} disabled={busy||!draft.trim()} onClick={async()=>{if(await call("renameEntity",{entityId:e.id,name:draft.trim()},"法人名を変更しました"))setNameDraft(d=>{const n={...d};delete n[e.id];return n;});}} style={{...AGray,padding:"5px 10px",fontSize:12}}>保存</button>}
           <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{nShops}店舗{e.isDefault?"・既定":""}</span>
           <button onClick={()=>openConfig(e)} style={{...AGray,padding:"5px 10px",fontSize:12}}>{openCfg===e.id?"閉じる":"法人の設定"}</button>
         </div>
