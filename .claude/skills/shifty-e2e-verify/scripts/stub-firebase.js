@@ -115,9 +115,18 @@ function makeStub(o) {
     });
     return any?out:null;
   }
+  // 実 Firebase と同じく、value イベントは**その listener が見ているデータが変わったときだけ**届ける（2026-10-04）。
+  // 以前はどこへの書き込みでも全 listener を呼んでいたため、同じ値の書き込み（App の tokens の補完など）が
+  // periods の listener を呼び直し、subs の配列が作り直され続ける描画のループになっていた（S3 の計算待ちが終わらない）
   function notify(){
     listeners.slice().forEach(function(e){
-      setTimeout(function(){ e.cb(snap(applyQuery(getPath(e.path),e.query))); },0);
+      setTimeout(function(){
+        if(listeners.indexOf(e)<0) return;
+        var v=applyQuery(getPath(e.path),e.query);
+        var j=JSON.stringify(v===undefined?null:v);
+        if(e.last===j) return;
+        e.last=j; e.cb(snap(v));
+      },0);
     });
   }
   function refFor(p,q){
@@ -137,8 +146,9 @@ function makeStub(o) {
       },
       on:function(ev,cb){
         if(p===".info/connected"){ setTimeout(function(){ cb(snap(true)); },0); return cb; }
-        listeners.push({path:p,cb:cb,query:q});
-        setTimeout(function(){ cb(snap(applyQuery(getPath(p),q))); },0);
+        var ent={path:p,cb:cb,query:q,last:undefined};
+        listeners.push(ent);
+        setTimeout(function(){ if(listeners.indexOf(ent)<0) return; var v=applyQuery(getPath(p),q); ent.last=JSON.stringify(v===undefined?null:v); cb(snap(v)); },0);
         return cb;
       },
       off:function(){ for(var i=listeners.length-1;i>=0;i--) if(listeners[i].path===p) listeners.splice(i,1); },

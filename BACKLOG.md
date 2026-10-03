@@ -38,21 +38,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🔴 S3. シフト作成タブの高速化 第3段: 確定後の計算を後回しにする
-
-**目的**: 確定（カーソルが外れる・Enter）のたびに労務判定・合計・ヒートマップを全員分計算し終えるまで画面が止まる。値の表示とカーソル移動を先に出し、重い計算は `useDeferredValue` で後から行う（計画書 S3）。
-**受け入れ条件**:
-- [ ] Enter で次のセルへ移ったあと、再計算の完了を待たずに次の入力ができる
-- [ ] 5セル続けて入力したとき、労務判定の再計算が入力の回数より少ない
-- [ ] 再計算が終わった後の表示（労務の色・警告・合計・ヒートマップ）と保存される内容が、変更前と一致する
-- [ ] 再計算が終わるまでの間、合計や警告の欄が「計算中」と分かる表示になる
-- [ ] PDF・Excel の書き出しと確定ボタンは、入力中の値の確定と再計算の完了を待ってから動く
-- [ ] 労務合計の保存（`period.laborTotals` を書く effect）は、再計算が済んだ値でだけ書く
-**影響範囲**: app-shift.js（重い `useMemo` の依存、書き出しと確定の入口、合計欄の表示）、`perf-shift-edit-tab.js`
-**備考**: 保存（Firebase への書き込み）は今までどおり確定の時点。非表示マウント（一括PDF・月次賃金・ダッシュボード）が古い計算結果を返さないこと。
-
----
-
 ## 🟢 実績で出勤・退勤を変えた日に、確定シフトの日別休憩上書き（adjustedBreak）をそのまま当てるか
 
 **目的**: `resolveActualDay`（app-utils.js）は実績の時刻で `getBreaksFor` を通し直すが、確定シフトの `adjustedBreak` は残すので、
@@ -1777,6 +1762,60 @@ Vite + TS へのフル移行は不要。
 
 ## 完了済みタスク
 
+### ✅ 🔴 S3. シフト作成タブの高速化 第3段: 確定後の計算を後回しにする（2026-10-04 develop 完了）
+
+計画書 `Shifty_実装計画_2026-10.md` S3。重い計算（労務判定 `laborCalc`・週の休み・ヒートマップ・重複/ポジション/時刻の判定・休み/連勤カウント・
+期間別/週間勤務時間・人×月の所定の自動集計）の依存を、subs と heatEdits の後回しの値（`subsCalc`・`heatEditsCalc`）に替えた。
+確定の同期描画では依存が変わらないので前の結果を返し、セルの値とカーソル移動だけが先に出る。ヘルプ先の勤務のキャッシュは表示用（`helperCache`）と
+計算用（`helperCacheCalc`）に分け、期間別・週間の合計は `totalsCache`（鍵は後回しの subs）を通す。
+
+**計画から変えた点（実験で決めた）**: `useDeferredValue` だけの版を先に作って測ったところ、確定の同期描画は縮んだ（6倍で 420ms → 88ms）が、
+5セル続けて入力すると重い計算が確定ごとに5回走り（入力回数より少なくならない）、計画の方針「続けて数セル入力した場合は再計算を1回にまとめる」を満たさなかった。
+そこで**確定とセルへの打鍵が `CALC_IDLE_MS`（300ms）止まってから計算の入力（`calcIn`）を進め、それを `useDeferredValue` に通す**形にした（打鍵で待ちを延ばす）。
+代わりに労務の色・警告・合計は、入力が止まってから 300ms＋計算の時間だけ遅れて変わる（下の表の settled）。
+
+- [x] Enter で次のセルへ移ったあと、再計算の完了を待たずに次の入力ができる: 確定の同期描画（次のセルにフォーカス・確定したセルに値）は 6倍で 446ms → 89ms、
+      その間の laborFindingsFor は0回。確定の 60ms 後に打った1文字が待たされる時間は 6倍で 402ms → 38ms（`keyAfterCommit`）
+- [x] 5セル続けて入力したとき、労務判定の再計算（laborFindingsFor ÷ 30人）が 5回 → 1回（1倍・6倍とも。`burstFewerRecomputes`）
+- [x] 再計算が終わった後の表示と保存される内容が変更前と一致: `perf-shift-edit-tab.js` の指紋（タブ全体の文字・全セルの値と背景色・subs）が `51fbba7` と同じ。
+      `example-shift-calc-deferred.js` の出力（laborTotals・Excel の値・PDF のシフト表・確定の結果・非表示マウントの報告）も変更前と同じ
+- [x] 再計算が終わるまで「計算中」: 期間別・週間勤務時間・週の休み・労務判定の見出し、時間帯別出勤人数、4つの警告パネルに `CalcPendingNote`（`data-calc-pending`）を出し、表を薄くする（休みカウント表は見出しが無いので薄くするだけ）。
+      確定の直後に出て、済むと消えることを perf と `example-shift-calc-deferred.js` で確認
+- [x] PDF・Excel・確定は入力中の値の確定と再計算の完了を待つ: ボタンは job を積み、`calcPending` でない描画の useEffect が実行する。
+      `example-shift-calc-deferred.js` で、入力中のセルを残したまま押しても expXl・jsPDF・確定の savePeriods が「計算中」の消えた後に呼ばれ、そのセルの値が入る。
+      待ちを外した写しでは3項目とも落ちる
+- [x] 労務合計の保存（period.laborTotals）は済んだ値でだけ書く: memo の結果 `laborCalc.totals` を `calcPending` でない描画で書く（描画中に ref へ書かない）。
+      「計算中」の間の書き込みは0件（ただしこの項目はガードを外しても依存の作りで結果的に守られるので、対照では区別できない）
+- 非表示マウント（一括PDF・月次賃金・ダッシュボード）の exportJob も `calcPending` を待つ。マウント直後に subs が変わっても報告は変わった後の値（`example-shift-calc-deferred.js` の e）
+
+| 操作 | CPU | 変更前（51fbba7） | S2 後 | useDeferredValue だけ（不採用） | S3 後 |
+|---|---|---|---|---|---|
+| 確定→次のセルに値とフォーカス（同期描画） | 1倍 | 72.5ms | 70.4ms | 15.3ms | 16.4ms |
+| 確定→重い計算まで済む | 1倍 | 82.4ms | 80.3ms | 104.8ms | 440.8ms（うち待ち300ms） |
+| 確定の60ms後の打鍵が待たされる時間 | 1倍 | 13.3ms | 12.0ms | 19.8ms | 2.4ms |
+| 5セル連続入力の再計算回数 | 1倍 | 5 | 5 | 5 | 1 |
+| 確定→次のセルに値とフォーカス（同期描画） | 6倍 | 446.4ms | 420.0ms | 87.9ms | 89.2ms |
+| 確定→重い計算まで済む | 6倍 | 517.3ms | 492.5ms | 660.0ms | 973.4ms（うち待ち300ms） |
+| 確定の60ms後の打鍵が待たされる時間 | 6倍 | 402.2ms | 375.6ms | 32.5ms | 38.0ms |
+| 5セル連続入力の再計算回数 | 6倍 | 5 | 5 | 5 | 1 |
+| 5セル連続入力にかかった時間（打ち終わるまで） | 6倍 | 3,855ms | 2,861ms | 2,487ms | 1,120ms |
+
+- 計測は `perf-shift-edit-tab.js`（30人×31日・各5回の中央値）。harness の periods を固定の配列にした（アプリは App の state を渡すので参照が安定している。
+  描画のたびに配列を作ると periods を依存に持つ重い計算が確定の同期描画でも走り、実アプリと違う計測になっていた）。上の表はすべて固定後の同じ harness の値
+- 回帰: `example-*.js` 60本（新規 `example-shift-calc-deferred.js` を含む）がすべて EXIT=0。WebKit iPhone 13 で `example-shift-cell-behaviors.js`・`example-shift-calc-deferred.js`・
+  `example-shift-edit-tab.js`、WebKit デスクトップで `example-helper-aggregate.js` も EXIT=0
+- 途中で見つけて直したもの: (1) 計算中に積んだ PDF の job が `pastSubsLoaded` を待ってしまい、過去の提出を読んでいない画面では書き出されなかった（`needPast` で分けた・
+  `example-company-bulk-pdf*.js` が検出）。(2) スタブ Firebase（`stub-firebase.js`）がどこへの書き込みでも全 listener を呼んでいたため、App の tokens の補完
+  （periods が変わるたびに全期間の `tokens/{urlToken}` を同じ値で set する）が periods の listener を呼び直し、subs の配列が作り直され続ける描画のループになっていた
+  （3秒で約2,000回。S2 の時点でもループしていたが、PDF が計算を待たなかったので表に出なかった）。実 Firebase と同じく、見ているデータが変わったときだけ届けるように直した
+- 検証: `npm test` 530件パス（P3.6 のドリフト検出を getWeekMinRaw・getPeriodMinRaw の形に直した）・`npx eslint app-*.js` 0 errors / 119 warnings（118＋新しい `CalcPendingNote` の no-unused-vars）
+- 変わった動作: 確定ボタンの所定の集計は setTimeout(0) ではなく計算が済んだ描画で行う（押した時点の periods ではなく最新の periods を使う）。
+  プランが Premium でない描画では労務の合計を書かない（以前はその前に計算した値が ref に残っていれば書きえた）
+- コードは Stop フックの自動コミット `3c45a97`・`ea26e73` に入った。テスト・スクリプト・スタブ・BACKLOG・CLAUDE.md は別のコミット
+- **残る重い処理（S4〜S6 の判断材料）**: 確定の同期描画に残るのは全セルの props の組み立て（`resolveSubByAlias` 約19,000回・1倍 16ms・6倍 89ms）。
+  後回しの描画は1回あたり `calcNetWorkMinutes` 約10,000回・`resolveSubByAlias` 約80,000回・laborFindingsFor 30回（6倍で約600ms・この間に打った文字は待たされる）。
+  打鍵とセル選択はセル1つの描画だけ（1倍 0.3ms）
+
 ### ✅ 🔴 S2. シフト作成タブの高速化 第2段: 入力と選択では計算しない（セルの分離）（2026-10-04 develop 完了）
 
 計画書 `Shifty_実装計画_2026-10.md` S2。グリッドのセルをモジュール直下の `ShiftCell`（`React.memo`）に、ツールチップを `CellTip` に分けた。
@@ -1808,6 +1847,7 @@ flushEdits が blur の直後に読めるよう `localEditsRef` にも置く・�
 | 確定して次のセルへ | 6倍 | 524.2ms | 493.0ms | — | — | — |
 
 - 確定は変わらない（S3 の対象）。6倍の選択・入力に残る約70ms は計測の setTimeout(0) の待ちを含む（1倍では 0.3ms）
+- この表の数値は計測 harness の periods を固定する前のもの（S3 で固定した。固定後の同じ harness の値は S3 の表）
 - 検証: `npm test` 530件パス（P3 のドリフト検出の readOnly の項を ShiftCell の形に直した。意図＝確定とヘルプ先だけの日で両方のセルがロックされる、は同じ）・
   `npx eslint app-*.js` 0 errors / 118 warnings（116＋2。新しい ShiftCell・CellTip が既存の HeatTable 等と同じ no-unused-vars を出す）
 - コードは Stop フックの自動コミット `d534246`（Auto-commit: app-*.js changes）に入った（フックが app-shift.js も対象にするようになっている）。

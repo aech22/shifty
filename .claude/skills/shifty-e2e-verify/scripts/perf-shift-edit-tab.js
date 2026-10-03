@@ -64,6 +64,9 @@ const SETTINGS={candidates:[{start:"09:00",end:"18:00"},{start:"17:00",end:"23:0
   staffAttributes:Object.fromEntries(NAMES.map((n,i)=>[n,i%3===0?"employee":"parttime"])),
   staffNumbers:Object.fromEntries(NAMES.map((n,i)=>[n,String(100+i)]))};
 const STAFF=[...NAMES];
+// periods はアプリ（App の state）と同じく参照を固定する。描画のたびに配列を作ると、periods を依存に持つ重い計算が
+// 確定の同期描画でも走ってしまい、実アプリと違う計測になる
+const PERIODS=[P_OCT,P_SEP];
 // ShiftEditTab の描画回数を数える（中身はそのまま呼ぶ＝フックは CountedShiftEditTab のものとして動く）
 const SET=ShiftEditTab;
 function CountedShiftEditTab(p){window.__pr=(window.__pr||0)+1;return SET(p);}
@@ -71,7 +74,7 @@ function Harness(){
   const [subs,setSubs]=React.useState(SUBS0);
   const onSave=v=>setSubs(prev=>{const next=(typeof v==="function")?v(prev):v;window.__subs=next;return next;});
   return <CountedShiftEditTab
-    subs={subs} periods={[P_OCT,P_SEP]} staffList={STAFF}
+    subs={subs} periods={PERIODS} staffList={STAFF}
     onSave={onSave} tt={m=>{window.__toast=m;}}
     settings={SETTINGS}
     plan="premium" shopId="S1" shopName="計測店" onUpgrade={()=>{}} allLinkedShops={[]}

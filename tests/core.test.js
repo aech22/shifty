@@ -5952,8 +5952,10 @@ test("P3.6 入口の固定: 確定の2つの入口がヘルプ先の合算を渡
   calls.forEach(c => assert.ok(/extraDayMin:/.test(c) && /excludeNames:/.test(c), "確定で他店の勤務を渡していない: " + c.slice(0, 80)));
   assert.ok((admin.match(/helperScheduleContext\(/g) || []).length >= 2, "シフト作成タブと企業の確定が同じ helperScheduleContext を通る");
   assert.ok(/const laborDayMin=\(name,ds\)=>\{[^\n]*helperMinOn\(name,ds\)/.test(admin), "laborDayMin に他店の勤務が入っていない");
-  assert.ok(/const getWeekMin=[\s\S]{0,400}helperMinOn\(name,ds\)/.test(admin), "週計に他店の勤務が入っていない");
-  assert.ok(/const getPeriodMin=[\s\S]{0,600}helperMinOn\(name,d\)/.test(admin), "期間別勤務時間（月計）に他店の勤務が入っていない");
+  // S3（2026-10-04）で週計・期間別の合計は後回しの値のキャッシュ（totalsCache）を通すようになった。中身は *Raw が数える
+  assert.ok(/const getWeekMinRaw=[\s\S]{0,400}helperMinOn\(name,ds\)/.test(admin), "週計に他店の勤務が入っていない");
+  assert.ok(/const getPeriodMinRaw=[\s\S]{0,600}helperMinOn\(name,d\)/.test(admin), "期間別勤務時間（月計）に他店の勤務が入っていない");
+  assert.ok(/const getWeekMin=[\s\S]{0,200}getWeekMinRaw\(monStr,name\)/.test(admin) && /const getPeriodMin=[\s\S]{0,200}getPeriodMinRaw\(pid,name\)/.test(admin));
   // 他店の読み込みは一本化した otherShopDataOf を通る（企業の確定と同じ形）
   assert.ok((admin.match(/otherShopDataOf\(/g) || []).length >= 2);
   // CF: 人物を変える CF は写しを作り直す（写しの people を店長のセッションが読む）
