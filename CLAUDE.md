@@ -168,17 +168,19 @@ keepAttrsOf(period) / applyKeepAttrs(settings,period)
                            // 改名では renameStaffInPeriods がキーを移す（移さないと過去期間の指定が引けずエラーが戻る）。
 PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS // 上の例外＝**意図的に凍結しない**マップ（現在は staffHidden だけ）。値そのものが期間の範囲を持つので写しに焼くと同じ問いへの答えが2つできる。凍結対象外のキーは resolvePeriodMaster が現在値のまま残すため、終了した期間もその startDate で評価される
 LEGAL_DAILY_MIN / LEGAL_WEEKLY_MIN     // 労基法32条の法定基準（480分・2400分）。B制の 8h超n日(残業)・週40h超(残業) に使う
-LABOR_SYSTEMS / laborSystemOf / laborSystemForStaff / laborSystemRawOf / laborSystemRawForStaff
-                           // 労働時間制（A=1か月単位の変形／B=通常／none=応援・外部）。**属性単位**で持ち
+LABOR_SYSTEMS / LABOR_SYSTEM_CHOICES / laborSystemChoiceOf / laborSystemOf / laborSystemForStaff / laborSystemRawOf / laborSystemRawForStaff
+                           // 労働時間制（A=1か月単位の変形／B=通常／none=旧「判定対象外」の保存値）。**属性単位**で持ち
                            // `staffTypeLimits[属性ID].laborSystem` に入る（2026-09-26・労務判定 第1弾）。
-                           // 既定は 社員=A・バイト=B・派遣/その他=none（DEFAULT_LABOR_SYSTEM_BY_ATTR）。
+                           // 既定は 社員=A・パート・アルバイト=B・応援・外部（dispatch）/その他=none（DEFAULT_LABOR_SYSTEM_BY_ATTR）。
                            // **null を返したら「区分が空欄か誤り」**＝staffTypeLimits に無い属性か、
                            // custom属性で laborSystem が未設定。組み込みIDは既定が必ず答えるので null にならない
                            // （既存店舗の employee/parttime が一斉に警告になるのを防ぐ）
-                           // **応援・外部（保存値 none）は 2026-10-03 から B と同じ判定**（ユーザー指示。以前は「判定対象外」で
+                           // **保存値 none は 2026-10-03 から B と同じ判定**（ユーザー指示。以前は「判定対象外（応援・外部）」で
                            // 判定・集計から外していた）。laborSystemOf / laborSystemForStaff は none を B に読み替えて**none を返さない**。
-                           // 保存値は laborSystemRaw* が返し、使うのは isStaffNumberMissing（応援・外部には番号の未設定を出さない）だけ。
-                           // 保存値 none・LABOR_SYSTEMS・既定・CF の COMPANY_LABOR_SYSTEMS は変えていない（データ移行なし）
+                           // 保存値は laborSystemRaw* が返し、使うのは isStaffNumberMissing（none の人には番号の未設定を出さない）だけ。
+                           // **選択肢は LABOR_SYSTEM_CHOICES（A・B）だけ**（同日の追加指示）。none は UI から新たに書けず、
+                           // 保存値・既定が none の属性は laborSystemChoiceOf が B を選んだ状態で出す（設定タブ・企業の共通設定・企業設定の固定表示）。
+                           // LABOR_SYSTEMS・既定・CF の COMPANY_LABOR_SYSTEMS は none を受け付けたまま（データ移行なし・旧クライアントとの互換）
 laborSettingsOf / DEFAULT_LABOR_SETTINGS / LABOR_SETTING_RANGES // 労務設定の読み手側フォールバック。**makeSettings は変更していない**。
                            // **DEFAULT_LABOR_SETTINGS に載っていないキーは黙って捨てる**ので、新キーは必ずここに既定値で足す
                            // （COMPANY_LABOR_KEYS は自動で追随、functions/company-config.js の COMPANY_LABOR_KEYS は手で足す＝テストが照合）。
@@ -210,7 +212,7 @@ inputCheckOfShift / isStaffNumberMissing
                            // inputCheckOfShift(shift, abbrToShop) → {oneSided, memoOnly}。oneSided＝出勤だけ／退勤だけの日（空いている側が
                            // 休み希望・半日の休暇・締めの日と、入っている側が応援の指定＝x・店舗略称の日は除く）。memoOnly＝時刻が無く
                            // コマンドでも店舗略称でもない文字だけのセル（例「事務11」。h/k/x 単独・休み・休暇・締め・略称は除く）。
-                           // isStaffNumberMissing＝settings.staffNumbers が空か「派遣」（労働時間制の保存値が none＝応援・外部の人は常に false・2026-10-03）。
+                           // isStaffNumberMissing＝settings.staffNumbers が空か「派遣」（番号欄の文字の話・属性名とは別）。労働時間制の保存値が none の人は常に false（2026-10-03）。
                            // シフト作成タブの laborByStaff が期間の日ごとに通し、
                            // 所属店舗で判定する人（P3.6 の dest）にも①②を出す（この店舗のセルの話なので）
 laborFindingDatesLabel / laborWeekDatesLabel / LABOR_FINDING_DATES_MAX
@@ -225,7 +227,7 @@ laborFindingDatesLabel / laborWeekDatesLabel / LABOR_FINDING_DATES_MAX
 laborFindingsFor / laborFindingLabels / overallVerdictOf
                            // 日次・月次の労務判定（S-4）と総括判定（S-6）。引数はオプションオブジェクト。
                            // laborSystem==="none" は**内部値**で、行き先の店で「所属店舗で判定」する人（P3.6 の dest）を
-                           // 労働時間の判定・集計から外す（休憩不足も出さない）。属性の応援・外部は B に読み替え済みでここには来ない。ただし
+                           // 労働時間の判定・集計から外す（休憩不足も出さない）。属性の保存値 none は B に読み替え済みでここには来ない。ただし
                            // **「時刻の入力ミス」だけは区分によらず出す**——労務ではなく入力データの誤りのため。
                            // 「入力の確認n日（…）」（key inputCheck・inputCheckDates）も同じく区分によらず出し、「従業員番号が未設定」
                            // （key inputCheckNumber・staffNumberMissing）は A/B の人だけ（2026-10-01・F6）。**どちらも要修正ではない**
@@ -1328,7 +1330,7 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 スタッフタブの属性プルダウン（`getAttrOptions` 経由）と設定タブの属性別勤務時間設定の**両方がここを通る**
 ——並べ替えを画面ごとに書くと、片方だけ直したときに並びが食い違う。かなが漢字より先に来るのは
 照合順の結果で、漢字は読み仮名を持たないため許容する。旧 `makeSettings` が入れていた `dispatch`／`other` は
-固定の外なので50音順の側に入る（「その他」＜「派遣」）。
+固定の外なので50音順の側に入る（「その他」＜「応援・外部」。「応援」は漢字始まりなのでかなの後）。
 
 **設定タブは `getAttrOptions` を使わず、自分で `[ID, 表示名]` を組んで `sortAttrEntries` に渡す。**
 `getAttrOptions` は名前が空の属性を落とすので、通すと**名前を消した直後のカスタム属性の入力欄ごと消えて
@@ -1339,6 +1341,8 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 そこに入っているのは `makeSettings` が書いた当時の既定名だけ。読むと `parttime` の
 **「バイト」→「パート・アルバイト」の改称（同日指示）が既存店舗に届かない**——
 本番データを書き換えずに改称を効かせるためにこの形を採った。
+**2026-10-03 に同じ形で `dispatch` を「派遣」→「応援・外部」に改称した**（ユーザー指示。ID と保存データは変えない）。
+従業員番号の「派遣」（`isStaffNumberMissing` が未設定とみなす番号欄の文字）は属性名とは別の話なので変えていない。
 
 ## 休暇の見せ方（2026-09-26 ユーザー指示）
 
@@ -1376,7 +1380,7 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 違反は「⚠ 労務の確認が必要です」に `特定技能の週の公休不足（28〜4）` と出し（総括は要修正）、週の休み表のセルを赤・太字にする。
 
 - **対象**: 属性の表示名に「特定技能」を含む人（`isSkilledWorkerAttr`。企業属性 `co_*` と店舗の独自属性の両方。
-  労働時間制が応援・外部の属性も含む＝2026-10-03 に B と同じ判定にしたため。以前は除いていた）。
+  労働時間制の保存値が none の属性も含む＝2026-10-03 に B と同じ判定にしたため。以前は除いていた）。
   **判定の入口はこの1本だけ**——将来、属性に明示のフラグを持たせるときはここを直す。
   設定タブと企業の共通設定の属性の説明に1行出している（新しい入力欄は無い）
 - **週と公休の数え方は既存の週の休みと同じ**（月曜起算・月で切らない `weeks`、公休＝`dayRestKindOf` の `rest`＝空欄・休み希望・提出の休み・`ko`。
@@ -1428,9 +1432,11 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   参照が無いことをテストで固定してある。
 - **労務の確認パネルは労務判定表のすぐ下**。総括が「要修正」の人を表で見つけ、そのまま下の一覧で
   理由を読む並びにしている（ポジション不足の一覧はグリッドの直下のまま）。
-- **労働時間制の選択肢は雇用形態つき**（`LABOR_SYSTEM_LABELS`）。
-  `1か月単位の変形労働時間制（正社員・契約社員・特定技能）` ／ `通常の労働時間制（パート・アルバイト）` ／
-  `応援・外部`（2026-10-03 に「判定対象外（応援・外部）」から改名。**判定は通常の労働時間制と同じ**・保存値は none のまま）。
+- **労働時間制の選択肢は雇用形態つきの2つだけ**（`LABOR_SYSTEM_CHOICES`・`LABOR_SYSTEM_LABELS`）。
+  `1か月単位の変形労働時間制（正社員・契約社員・特定技能）` ／ `通常の労働時間制（パート・アルバイト）`。
+  3つ目の `判定対象外（応援・外部）`（保存値 none）は 2026-10-03 に判定を B と同じにし、同日の追加指示で**選択肢から外した**
+  （一度は選択肢を「応援・外部」に改名したが、ユーザーの言う「応援・外部」は組み込み属性 `dispatch` のことだったので、
+  属性名のほうを「応援・外部」にし、同じ名前の労働時間制が並ばないよう選択肢を消した）。保存値・既定が none の属性は B が選ばれた状態で出る。
   **括弧の中は選ぶときの手がかりで、判定には使わない**
   （判定は属性ごとの `laborSystem`）。回帰スクリプトが select を探すときは
   **文言ではなく `option.value` で見分けること**——ここを文言で見ていた
