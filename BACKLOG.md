@@ -38,6 +38,21 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🔴 S3. シフト作成タブの高速化 第3段: 確定後の計算を後回しにする
+
+**目的**: 確定（カーソルが外れる・Enter）のたびに労務判定・合計・ヒートマップを全員分計算し終えるまで画面が止まる。値の表示とカーソル移動を先に出し、重い計算は `useDeferredValue` で後から行う（計画書 S3）。
+**受け入れ条件**:
+- [ ] Enter で次のセルへ移ったあと、再計算の完了を待たずに次の入力ができる
+- [ ] 5セル続けて入力したとき、労務判定の再計算が入力の回数より少ない
+- [ ] 再計算が終わった後の表示（労務の色・警告・合計・ヒートマップ）と保存される内容が、変更前と一致する
+- [ ] 再計算が終わるまでの間、合計や警告の欄が「計算中」と分かる表示になる
+- [ ] PDF・Excel の書き出しと確定ボタンは、入力中の値の確定と再計算の完了を待ってから動く
+- [ ] 労務合計の保存（`period.laborTotals` を書く effect）は、再計算が済んだ値でだけ書く
+**影響範囲**: app-shift.js（重い `useMemo` の依存、書き出しと確定の入口、合計欄の表示）、`perf-shift-edit-tab.js`
+**備考**: 保存（Firebase への書き込み）は今までどおり確定の時点。非表示マウント（一括PDF・月次賃金・ダッシュボード）が古い計算結果を返さないこと。
+
+---
+
 ## 🟢 実績で出勤・退勤を変えた日に、確定シフトの日別休憩上書き（adjustedBreak）をそのまま当てるか
 
 **目的**: `resolveActualDay`（app-utils.js）は実績の時刻で `getBreaksFor` を通し直すが、確定シフトの `adjustedBreak` は残すので、
@@ -1761,6 +1776,42 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 🔴 S2. シフト作成タブの高速化 第2段: 入力と選択では計算しない（セルの分離）（2026-10-04 develop 完了）
+
+計画書 `Shifty_実装計画_2026-10.md` S2。グリッドのセルをモジュール直下の `ShiftCell`（`React.memo`）に、ツールチップを `CellTip` に分けた。
+入力中の文字とフォーカスの状態はセルの中に持ち、親（ShiftEditTab）へは確定（blur・Enter）のときだけ `api.commit`（= handleBlur）で伝える。
+親の `focusKey`・`cellTip` の state は無くなり、`localEdits` は確定済みのセルの表示用バッファだけになった（入力中の文字は `draftRef`、
+flushEdits が blur の直後に読めるよう `localEditsRef` にも置く・更新は `updLocalEdits`）。セルの props はプリミティブと、親が1回だけ作る
+`cellApi`（中身は `cellApiRef` 経由で最後にコミットした描画の関数）と、`useMemo` で固定した `AI2` だけ。フォーカス中の見え方
+（色を付けない・文字色は既定・混在の日は自店の値＝`editVal`）はセルが作る。店舗切替・期間切替・選択中の期間の消失は `discardEdits` が
+`cellResetKey` を進めてセルの入力中の文字も捨てる。PDF・Excel の解決は `editsNow()`（確定済み＋入力中）を読む。
+
+- [x] 1文字入力とセル選択で描き直されるのが、そのセル（とツールチップ）だけ: `perf-shift-edit-tab.js` で ShiftEditTab の描画0回・
+      ShiftCell の描画1回（操作したセルだけ）・CellTip 1回（1倍・6倍とも。`focusNoParentRender`・`keyNoParentRender`・`onlyTargetCellRerenders`）
+- [x] 変わらない動作: 新しい回帰 `example-shift-cell-behaviors.js`（Enter・Ctrl/Cmd+Enter の移動、IME 変換中の Enter と keyCode 229、
+      「/」の切り替え（Enter の二重 blur でも1回）、ツールチップ、入力中に「保存」を押したときの件数（どちらも「6件」）と保存内容、
+      店舗切替・期間切替で入力中の文字を捨てる、確定済み期間の readOnly、トリプルクリックの変更マーク、Premium 以外の誘導）が
+      変更前（`51fbba7`）と変更後で同じ結果（Chromium と WebKit iPhone 13 の両方）。わざと IME の判定と resetKey を外した写しでは3項目が落ちる
+- [x] 既存の E2E: `example-*.js` 59本（新規1本を含む）がすべて EXIT=0。`example-helper-aggregate.js` は WebKit（デスクトップ）でも EXIT=0。
+      WebKit を iPhone 13 で回すと `c_colWidthUnchangedFull` だけ落ちるが、変更前も同じく落ちる（安定値が Chromium デスクトップの寸法のため）
+- 表示と保存の一致: 同じ合成データ・同じ操作列で、マウント直後と全操作の後のタブ全体の文字・全セルの値と背景色（斜線を含む）・onSave に渡った subs の
+  指紋が変更前と一致（`a40ab3a6…`/`88be3bcf…`、操作後 `c59330b1…`/`f5f60932…`、subs `fe3fc854…`）
+
+| 操作 | CPU | 変更前（51fbba7） | S2 後 | ShiftEditTab の描画（前→後） | calcNetWorkMinutes（前→後） | resolveSubByAlias（前→後） |
+|---|---|---|---|---|---|---|
+| セルを選ぶ | 1倍 | 39.6ms | 13.3ms | 1 → 0 | 2,773 → 0 | 20,968 → 1 |
+| 1文字入力 | 1倍 | 34.2ms | 0.3ms | 1 → 0 | 2,773 → 0 | 20,964 → 0 |
+| 確定して次のセルへ | 1倍 | 81.7ms | 79.5ms | — | — | — |
+| セルを選ぶ | 6倍 | 219.0ms | 70.4ms | 1 → 0 | 2,785 → 0 | 20,830 → 1 |
+| 1文字入力 | 6倍 | 220.3ms | 66.6ms | 1 → 0 | 2,785 → 0 | 20,826 → 0 |
+| 確定して次のセルへ | 6倍 | 524.2ms | 493.0ms | — | — | — |
+
+- 確定は変わらない（S3 の対象）。6倍の選択・入力に残る約70ms は計測の setTimeout(0) の待ちを含む（1倍では 0.3ms）
+- 検証: `npm test` 530件パス（P3 のドリフト検出の readOnly の項を ShiftCell の形に直した。意図＝確定とヘルプ先だけの日で両方のセルがロックされる、は同じ）・
+  `npx eslint app-*.js` 0 errors / 118 warnings（116＋2。新しい ShiftCell・CellTip が既存の HeatTable 等と同じ no-unused-vars を出す）
+- コードは Stop フックの自動コミット `d534246`（Auto-commit: app-*.js changes）に入った（フックが app-shift.js も対象にするようになっている）。
+  テスト・計測スクリプト・BACKLOG は別のコミット
 
 ### ✅ 🟡 H2. シフト作成タブ: ヘルプ勤務の表示変更（2026-10-04 develop 完了／ルール・CF・データ移行なし）
 

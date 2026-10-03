@@ -5557,7 +5557,11 @@ test("P3 ドリフト検出: ルール（laborMonths はオーナーのみ・確
   assert.ok(/renameStaffInLaborMonths\(/.test(main) && /dropStaffFromLaborMonths\(/.test(main));
   // セルのロック: グリッドの2つの input は確定で readOnly になり、写しの最新化は確定済みで止まる
   // （P3.6 で他店での勤務を出すセルも読み取り専用に足した。H2 でヘルプ先だけの日に絞った＝isHelperOnly。確定のロックはそのまま両方の input に掛かる）
-  assert.strictEqual((admin.match(/readOnly=\{!canEditCells(\|\|isHelperOnly\(name,date\))?\}/g) || []).length, 2);
+  // S2（2026-10-04）でセルを部品（ShiftCell）に分けた: readOnly は cellPropsOf が1か所で決め、グリッドは出勤・退勤の
+  // 2つのセルをどちらも cellPropsOf を通して描く（ShiftCell は受け取った readOnly をそのまま input に付ける）
+  assert.ok(/readOnly:!canEditCells\|\|hDay,/.test(admin) && /const hDay=isHelperOnly\(name,date\);/.test(admin), "セルのロックが確定（canEditCells）とヘルプ先だけの日で決まっていない");
+  assert.strictEqual((admin.match(/<ShiftCell \{\.\.\.cellPropsOf\(name,date,"(start|end)",di\)\}\/>/g) || []).length, 2);
+  assert.ok(/const ShiftCell=React\.memo\(function ShiftCell\(/.test(admin) && /readOnly=\{readOnly\}/.test(admin));
   assert.ok(!/readOnly=\{!isPremium\}/.test(admin));
   assert.ok(/const snapSame=isPeriodConfirmed\(period\)\|\|periodSnapshotEqual\(/.test(admin));
   // 確定はシフト作成タブと提出状況表の2つの入口で、どちらも同じ planPeriodConfirmation を通る

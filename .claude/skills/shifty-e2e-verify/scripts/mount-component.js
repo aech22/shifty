@@ -59,7 +59,7 @@ const MIME = {
   ".png": "image/png",
 };
 
-function buildHtml(scripts, jsx, extraHead) {
+function buildHtml(scripts, jsx, extraHead, afterReact) {
   const tags = scripts.map(s =>
     s.babel
       ? `<script type="text/babel" src="${s.src}" data-presets="react"></script>`
@@ -69,6 +69,7 @@ function buildHtml(scripts, jsx, extraHead) {
 ${extraHead || ""}</head><body>
 <div id="root"></div>
 ${CDN.map(u => `<script src="${u}"></script>`).join("\n")}
+${afterReact ? `<script>\n${afterReact}\n</script>` : ""}
 ${tags}
 <script type="text/babel" data-presets="react">
 ${jsx}
@@ -93,6 +94,8 @@ ${jsx}
  *                              worktree隔離（0.5節）や「修正前の版で落ちることの確認」に使う。
  * @param {boolean}[o.headed]   デバッグ時に true。
  * @param {number} [o.timeout]  マウント待ちのミリ秒（既定 20000）。
+ * @param {string} [o.afterReact] React・ReactDOM の読み込み直後、アプリのファイルより前に実行する素の JS
+ *                              （計測用に React.memo を包む等。perf-shift-edit-tab.js が使う）。
  */
 async function openHarness(o) {
   if (!o || typeof o.jsx !== "string") throw new Error("openHarness: jsx（Harnessを定義して描画するソース）は必須です");
@@ -126,7 +129,7 @@ async function openHarness(o) {
   // 同日 app-admin.js から app-company.js を切り出して上限を下回ったので除外を外した（再び出たらファイルを分けること）。
   page.on("console", m => { if (m.type() === "error") errors.push("console: " + m.text()); });
 
-  const html = buildHtml(scripts, o.jsx, o.extraHead);
+  const html = buildHtml(scripts, o.jsx, o.extraHead, o.afterReact);
 
   await page.route("**/*", route => {
     const u = new URL(route.request().url());
