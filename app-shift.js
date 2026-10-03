@@ -25,6 +25,14 @@ const FIXED_KEY=FIXED_ENTRY?FIXED_ENTRY.key:"";
 // viewBox を付けると両エンジンとも同じ太さになる（同条件で 2.09px / 2.09px）。
 const HDASH_IMG=`url("data:image/svg+xml;charset=utf-8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' preserveAspectRatio='none'><line x1='10' y1='0' x2='0' y2='10' stroke='#999' stroke-width='1' vector-effect='non-scaling-stroke'/></svg>")}")`;
 
+// 確定とセルへの打鍵がこの時間止まったら、後回しにしていた重い計算（労務判定・合計・ヒートマップ）を始める（S3）
+const CALC_IDLE_MS=300;
+// 後回しの計算（S3）の途中であることを示す控えめな表示。見出しの横に置く文字と、表を薄くする style
+const CALC_PENDING_DIM={opacity:0.55};
+function CalcPendingNote(){
+  return <span data-calc-pending="1" style={{fontSize:11,fontWeight:400,color:"var(--c-text3)"}}>計算中</span>;
+}
+
 // 時間帯別出勤人数（ヒートマップ）。ShiftEditTab の外（モジュールスコープ）で定義しコンポーネント型を固定する。
 // ShiftEditTab内で定義すると親の再レンダー（セル選択等）のたびに新しい関数=新しい型になり、
 // Reactが毎回このサブツリーをアンマウント→再マウントしてスクロール位置がリセットされてしまうため。
@@ -33,18 +41,19 @@ const HDASH_IMG=`url("data:image/svg+xml;charset=utf-8,${encodeURIComponent("<sv
 // 立てるかどうかは呼び出し側が幅だけで決める（heatFitsIn）。px を計算せず table-layout:fixed に
 // 割らせるので、横パネル（幅が containerLeft 依存）でもグリッド下（flex:1）でも同じ1本で効く。
 // 渡さなければ従来どおり1列22pxの最小幅で、入りきらない分は横スクロールになる。
-function HeatTable({label,section,maxC,rowH,theadH,sectionLabel,dates,heatHours,countHeat,hBg,scrollRef,onScroll,maxH,fitHours,fixedW}){
+// pending（S3）: 後回しの計算の途中。表を薄くし、日付列の見出しを「計算中」にする（見出しの高さを変えないため文字だけ替える）
+function HeatTable({label,section,maxC,rowH,theadH,sectionLabel,dates,heatHours,countHeat,hBg,scrollRef,onScroll,maxH,fitHours,fixedW,pending=false}){
   const BD="1px solid var(--c-border)",BD2="1px solid var(--c-border2)",CRD="var(--c-card)";
   const fmtDL=date=>{const d=pd(date);return`${d.getDate()}(${WD[d.getDay()]})`;};
   // maxH指定時（サイドパネル）: グリッドと同じ高さの縦スクロール領域にし、ヘッダーをsticky固定して日付行の位置を揃える
   return(
-    <div ref={scrollRef} onScroll={onScroll} style={{overflowX:fitHours?"hidden":"auto",...(maxH?{overflowY:"auto",maxHeight:maxH}:{}),border:BD,borderRadius:8,...(fixedW?{flex:"0 0 auto",width:fixedW,minWidth:fixedW,maxWidth:fixedW}:{flex:rowH?undefined:1,minWidth:rowH?undefined:200})}}>
+    <div ref={scrollRef} onScroll={onScroll} style={{overflowX:fitHours?"hidden":"auto",...(maxH?{overflowY:"auto",maxHeight:maxH}:{}),border:BD,borderRadius:8,...(fixedW?{flex:"0 0 auto",width:fixedW,minWidth:fixedW,maxWidth:fixedW}:{flex:rowH?undefined:1,minWidth:rowH?undefined:200}),...(pending?CALC_PENDING_DIM:{})}}>
       {label&&<div style={{fontSize:12,fontWeight:700,padding:"4px 8px",borderBottom:BD,color:"var(--c-text2)"}}>{label}</div>}
       <table style={{borderCollapse:"collapse",minWidth:fitHours?"unset":"max-content",width:fitHours?"100%":undefined,tableLayout:fitHours?"fixed":undefined}}>
         <thead><tr style={theadH?{height:theadH}:{}}>
           <th style={{position:"sticky",left:0,...(maxH?{top:0,zIndex:3}:{zIndex:2}),background:CRD,padding:"3px 6px",fontSize:10,fontWeight:600,borderBottom:BD2,minWidth:52,...(fitHours?{width:52,maxWidth:52,boxSizing:"border-box"}:{}),whiteSpace:"nowrap",verticalAlign:"bottom"}}>
             {sectionLabel&&<div style={{fontSize:10,fontWeight:700,color:"var(--c-text2)",marginBottom:4}}>{sectionLabel}</div>}
-            日付
+            {pending?<span data-calc-pending="1">計算中</span>:"日付"}
           </th>
           {heatHours.map(hr=><th key={hr} style={{minWidth:fitHours?0:22,boxSizing:fitHours?"border-box":undefined,padding:fitHours?"2px 0":"2px 1px",fontSize:fitHours?9:10,textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,fontWeight:500,verticalAlign:"bottom",...(maxH?{position:"sticky",top:0,zIndex:2}:{})}}>{hr}</th>)}
         </tr></thead>
@@ -70,7 +79,8 @@ function HeatTable({label,section,maxC,rowH,theadH,sectionLabel,dates,heatHours,
 // こちらも [ラベル][スタッフ×n][空] に揃えないとスタッフ列が横にずれる。
 // **休みカウント表はスタッフ名のヘッダを持たず列位置だけで誰の数字かを示している**ので、
 // ずれると読めなくなる。ラベルは45pxに入りきらないので省略記号＋title で全文を残す。
-function SummaryTable({title,titleRight=null,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols,spacerTh,spacerCell,colW,VTH,labelW=45,fullView=false,tableW=null}){
+// pending（S3）: 後回しの計算の途中。見出しの横に「計算中」を出し、表を薄くする（数字は1つ前の確定の値）
+function SummaryTable({title,titleRight=null,rowLabel,rows,scrollRef,onScroll,fitAll,mapGridCols,spacerTh,spacerCell,colW,VTH,labelW=45,fullView=false,tableW=null,pending=false}){
   const BD="1px solid var(--c-border)",BD2="1px solid var(--c-border2)",CRD="var(--c-card)";
   const fmtH4=min=>{if(!min)return"";const h=Math.floor(min/60);const m=min%60;if(h>=100)return String(h);return m===0?String(h):`${h}:${String(m).padStart(2,"0")}`;};
   return(
@@ -78,9 +88,9 @@ function SummaryTable({title,titleRight=null,rowLabel,rows,scrollRef,onScroll,fi
       {/* titleRight は見出しの右隣に置くボタン用のスロット（労務判定の「過去データ読込」）。
           渡されないときは従来どおり見出しだけを描く。 */}
       <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-        <span>{title}</span>{titleRight}
+        <span>{title}</span>{pending&&<CalcPendingNote/>}{titleRight}
       </div>
-      <div ref={scrollRef} onScroll={onScroll} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,...(fullView?{width:"fit-content",marginLeft:"auto",marginRight:"auto"}:{})}}>
+      <div ref={scrollRef} onScroll={onScroll} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,...(fullView?{width:"fit-content",marginLeft:"auto",marginRight:"auto"}:{}),...(pending?CALC_PENDING_DIM:{})}}>
         <table style={{borderCollapse:"collapse",width:fullView&&tableW?tableW:(fitAll?"100%":"unset"),minWidth:fitAll?"unset":"max-content"}}>
           <thead><tr>
             <th title={rowLabel} style={{boxSizing:"border-box",...(fullView?{}:{position:"sticky",left:0,zIndex:2}),background:CRD,padding:0,fontSize:11,fontWeight:600,borderBottom:BD2,width:labelW,minWidth:labelW,maxWidth:labelW}}><div style={{width:labelW,padding:"2px 2px",boxSizing:"border-box",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{rowLabel}</div></th>
@@ -501,6 +511,32 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 確定済み＋入力中の値（入力中のセルが無ければ localEdits と同じ参照）
   const editsNow=()=>{const d=draftRef.current;const le=localEditsRef.current;return d&&d.key?{...le,[d.key]:d.value}:le;};
   const[heatEdits,setHeatEdits]=useState({}); // blur確定値のみ（集計・ヒートマップ用）
+  // ===== 確定後の重い計算を後回しにする（S3・2026-10-04）=====
+  // 労務判定・週の休み・ヒートマップ・合計・重複/ポジション/時刻の判定は、subs と heatEdits の**後回しにした値**
+  // （useDeferredValue）を依存に持つ。確定するとまず今の値でセルの表示とカーソル移動だけを描き（このとき重い useMemo は
+  // 依存が変わらないので前の結果を返す）、重い計算は React が手の空いたときに後回しの値で描き直す。
+  // **重い useMemo の依存に subs / heatEdits / それらから毎回作る値を直接入れない**（入れると確定の描画で計算が走る）。
+  // 計算の中身は今の値を読む関数のままでよい（後回しの描画では今の値＝後回しの値になる）。
+  // calcPending の間は「計算中」を出し、外へ書くもの（laborTotals・PDF・Excel・確定・非表示マウントの報告）は待たせる。
+  // **続けて入力している間は計算の入力を進めない**: 確定とセルへの打鍵が CALC_IDLE_MS 止まってから calcIn を進め、
+  // それを useDeferredValue に通す。useDeferredValue だけだと確定のたびに重い計算が1回ずつ走り（5セルで5回）、
+  // 遅い端末では計算中に打った次の文字が待たされる（2026-10-04 の計測）
+  const[calcIn,setCalcIn]=useState(()=>({subs,heatEdits}));
+  const calcLatestRef=useRef(null);calcLatestRef.current={subs,heatEdits};
+  const calcTimerRef=useRef(null);
+  const scheduleCalc=useCallback(()=>{
+    clearTimeout(calcTimerRef.current);
+    calcTimerRef.current=setTimeout(()=>{
+      calcTimerRef.current=null;
+      const l=calcLatestRef.current;
+      setCalcIn(cur=>(cur.subs===l.subs&&cur.heatEdits===l.heatEdits)?cur:{subs:l.subs,heatEdits:l.heatEdits});
+    },CALC_IDLE_MS);
+  },[]);
+  useEffect(()=>{if(calcIn.subs!==subs||calcIn.heatEdits!==heatEdits)scheduleCalc();},[subs,heatEdits]);
+  useEffect(()=>()=>clearTimeout(calcTimerRef.current),[]);
+  const subsCalc=React.useDeferredValue(calcIn.subs);
+  const heatEditsCalc=React.useDeferredValue(calcIn.heatEdits);
+  const calcPending=subsCalc!==subs||heatEditsCalc!==heatEdits;
   // セルの入力中の文字を捨てる合図（ShiftCell が resetKey の変化で draft とフォーカス表示を消す）
   const[cellResetKey,setCellResetKey]=useState(0);
   // localEdits/heatEdits とセルの入力中の文字をまとめて捨てる（店舗切替・期間切替・選択中の期間の消失）
@@ -661,7 +697,6 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // useEffect が写しとまとめて1回で行う——**別々の effect にすると互いを上書きする**。
   // どちらも自分のレンダーの periods を map するので、同じコミットで2つ走ると後勝ちで片方が消え、
   // 次のレンダーで消えた側が書き直す＝毎回2回書く（2026-09-26 にハーネスで実測した）。
-  const laborTotalsRef=useRef(null);
   // dates / realStaff も同じ理由で参照を安定させる（上の staffList のコメント参照）。
   const dates=useMemo(()=>period?gd(period.startDate,period.endDate):[],[period]);
   const realStaff=useMemo(()=>staffList.filter(n=>!isSpacer(n)),[staffList]);
@@ -785,16 +820,19 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const _getAnyShift=(name,date)=>resolveSubByAlias(n=>anyShiftByStaffDate.get(n+"|"+date),name,staffAliases);
   // 所属店舗から見た、その日の他店での勤務（P3.6）。所属店舗（role "home"）の人だけ。行き先の店の設定で引いた実働を
   // そのまま使い、自店の勤務と時間が重なる他店の勤務は足さない（helperWorkOn）。名前×日付で1回だけ数える。
+  // キャッシュは表示用（helperCache・今の subs）と計算用（helperCacheCalc・後回しの subs・S3）の2つ。
+  // 重い計算は計算用だけを使う（表示用を依存に入れると確定の描画で重い計算が走る）
   const helperCache=useMemo(()=>({days:new Map(),settings:new Map()}),[helperInfo,helperShops,subs,settings,todayStr]);
-  const helperEntriesOn=(name,d)=>{
+  const helperCacheCalc=useMemo(()=>({days:new Map(),settings:new Map()}),[helperInfo,helperShops,subsCalc,settings,todayStr]);
+  const helperEntriesOn=(name,d,cache=helperCacheCalc)=>{
     const hi=helperInfo[name];
     if(!hi||hi.role!=="home")return[];
     const k=name+"|"+d;
-    if(helperCache.days.has(k))return helperCache.days.get(k);
+    if(cache.days.has(k))return cache.days.get(k);
     const own=_getWorkShift(name,d);
     const v=helperWorkOn({regs:hi.regs,otherShops:helperShops,date:d,todayStr,companySettings:companyLink?(companyLink.settings||null):null,
-      ownRange:own?effShiftRangeMin(own,settings):null,cache:helperCache.settings});
-    helperCache.days.set(k,v);
+      ownRange:own?effShiftRangeMin(own,settings):null,cache:cache.settings});
+    cache.days.set(k,v);
     return v;
   };
   const helperMinOn=(name,d)=>helperEntriesOn(name,d).reduce((a,e)=>a+e.min,0);
@@ -827,7 +865,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const hi=helperInfo[name];
     if(!hi||hi.role!=="home")return null;
     if(leaveCellText(name,date,"start")||leaveCellText(name,date,"end"))return null;
-    const es=helperEntriesOn(name,date);
+    const es=helperEntriesOn(name,date,helperCache);
     if(!es.length)return null;
     const own=_getWorkShift(name,date);
     return helperCellDisplay({entries:es,ownRange:own?effShiftRangeMin(own,settings):null,
@@ -1247,7 +1285,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       perDate[date]=arr;
     });
     return perDate;
-  },[subs,heatEdits,settings,selPid,staffList,periods,companyData,fixedShiftEnabled]);
+  },[subsCalc,heatEditsCalc,settings,selPid,staffList,periods,companyData,fixedShiftEnabled]);
   // 店舗間シフト重複エラー: 同じ人が他店舗と時間重複していないか（blur確定値ベース）。
   // 見に行く他店舗は所属店舗の一致で決める（dupTargetShopsFor・2026-09-27）。旧データの
   // staffWorkplaces（企業連携タブの「勤務先店舗」・UIは廃止）はその関数の中で1リリースだけ併用する。
@@ -1301,7 +1339,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       });
     });
     return errs;
-  },[companyData,heatEdits,subs,settings,selPid,staffList,periods,shopId]);
+  },[companyData,heatEditsCalc,subsCalc,settings,selPid,staffList,periods,shopId]);
   // 時刻の入力ミス（項目12・案C）: 退勤≦出勤 のセル。保存は通し、色とエラーパネルで知らせる。
   // 判定は dupErrors と同じ入口（getEffHHMM＝blur確定値）から引くので、保存前の編集も反映される。
   // **両側とも入力されている日だけ**が対象（片側セルは補完の領分で入力ミスではない）。
@@ -1317,7 +1355,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       });
     });
     return errs;
-  },[realStaff,dates,heatEdits,subs,selPid]);
+  },[realStaff,dates,heatEditsCalc,subsCalc,selPid]);
   // ポジション不足エラー: 日付×ランチ/ディナー×キッチン/ホールで、必要ポジション(settings.requiredPositions)に対する
   // 出勤スタッフの保有ポジション(settings.staffPositions)を最大二部マッチング(matchPositionSlots)し、埋まらない枠を不足として集計する。
   // section判定はheatDataと同じ入口(bandSectionsOf)を使い、ランチ帯/ディナー帯で別々に振り分ける
@@ -1377,7 +1415,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(hasErr)result[date]=dayResult;
     });
     return result;
-  },[isPremium,subs,heatEdits,settings,selPid,staffList,periods,companyData]);
+  },[isPremium,subsCalc,heatEditsCalc,settings,selPid,staffList,periods,companyData]);
   // スタッフの帯別所属(キッチン/ホール)判定。positionErrors算出時のsection規則(bandSectionsOf)と同一の入口を使う。
   // 分割なし店舗(hallStaff.length===0)は全員kitchenに集約されるため、キッチン不足＝全スタッフのセルが対象＝従来の「全セル赤」動作になる。
   const staffSectionOn=(name,date,meal)=>{
@@ -1464,7 +1502,14 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const perD=pd(period.startDate);
     return[...periods].filter(p=>{const d=pd(p.startDate);return d.getFullYear()===perD.getFullYear()&&d.getMonth()===perD.getMonth();}).sort((a,b)=>a.startDate.localeCompare(b.startDate));
   },[period,periods]);
+  // 期間別・週間勤務時間の合計は後回しの値で数え、描画のたびには数え直さない（S3。キャッシュの鍵が後回しの subs）
+  const totalsCache=useMemo(()=>new Map(),[subsCalc,settings,periods,helperCacheCalc,staffAliases]);
   const getPeriodMin=(pid,name)=>{
+    const ck="p|"+pid+"|"+name;
+    if(totalsCache.has(ck))return totalsCache.get(ck);
+    const v=getPeriodMinRaw(pid,name);totalsCache.set(ck,v);return v;
+  };
+  const getPeriodMinRaw=(pid,name)=>{
     const p=periods.find(pp=>pp.id===pid);if(!p)return 0;
     const sub=_getSubForPeriod(pid,name); // 日ループの外で1回だけ引く。別名提出者も解決する
     // 他店での勤務（P3.6）は自店の提出が無い期間でも足す
@@ -1480,6 +1525,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     return[...wkSet].sort();
   },[period,prevPeriod]);
   const getWeekMin=(monStr,name)=>{
+    const ck="w|"+monStr+"|"+name;
+    if(totalsCache.has(ck))return totalsCache.get(ck);
+    const v=getWeekMinRaw(monStr,name);totalsCache.set(ck,v);return v;
+  };
+  const getWeekMinRaw=(monStr,name)=>{
     let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sh=_getWorkShift(name,ds);if(sh)tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh),settings);tot+=helperMinOn(name,ds);}
     return tot;
   };
@@ -1559,7 +1609,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       });
     });
     return out;
-  },[isPremium,realStaff,weeks,subs,heatEdits,laborDayHasData,selPid,helperCache,settings]);
+  },[isPremium,realStaff,weeks,subsCalc,heatEditsCalc,laborDayHasData,selPid,helperCacheCalc,settings]);
 
   // 年度の区切り（既定4月。設定で暦年にできる）。
   const fyStart=useMemo(()=>fiscalYearStartMonthOf(settings),[settings]);
@@ -1592,10 +1642,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(!hd.paid&&!hd.ceremony&&kinds[i]==="rest")publicOff++;
     });
     return{workMin,paid,publicOff,ceremony};
-  },[settings,subs,pastSubsLoaded,staffAliases,anyShiftByStaffDate,workShiftByStaffDate,periodSettingsCache,period,helperCache]);
+  },[settings,subsCalc,pastSubsLoaded,staffAliases,periodSettingsCache,period,helperCacheCalc]);
 
   // 割増（P5）: 自店の実績（無ければ確定シフト）＋他店の勤務
-  const premiumDayCache=useMemo(()=>new Map(),[settings,subs,act.map,helperCache,periods,pastSubsLoaded]);
+  const premiumDayCache=useMemo(()=>new Map(),[settings,subsCalc,act.map,helperCacheCalc,periods,pastSubsLoaded]);
   const premiumDayOf=(name,d)=>{
     const k=name+"|"+d;
     if(premiumDayCache.has(k))return premiumDayCache.get(k);
@@ -1605,7 +1655,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const v=premiumDayInput({date:d,hasData:laborDayHasData(d),kind:dayKindWithHelper(name,d,laborDayHasData(d)),
       own:resolveActualDay({shifts:sh?{[d]:sh}:{}},pp&&act.enabled?actualOf(act.map,pp.id,name,d):null,d,settings,name),
       helpers:hi&&hi.role==="home"?helperActualDaysOn({regs:hi.regs,otherShops:helperShops,date:d,todayStr,
-        companySettings:companyLink?(companyLink.settings||null):null,ownRange:sh?effShiftRangeMin(sh,settings):null,cache:helperCache.settings}):[]});
+        companySettings:companyLink?(companyLink.settings||null):null,ownRange:sh?effShiftRangeMin(sh,settings):null,cache:helperCacheCalc.settings}):[]});
     premiumDayCache.set(k,v);
     return v;
   };
@@ -1624,13 +1674,15 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // 按分窓（属性の otProrate・P3.5b）を画面と同じ overtimePlanOf で通す（年の36協定と画面の月の残業予定を揃える）
     return{h:overtimePlanOf({dates:days,dayMins:days.map(d=>laborDayMin(name,d)),baseMin:laborMonthFrame(settings,ym).baseMin,
       prorate:staffOtProrateOf(settings,name)}).monthOtH,ag:pb.agH};
-  },[settings,subs,laborDayHasData,staffAliases,workShiftByStaffDate,helperCache,premiumDayCache]);
+  },[settings,subsCalc,laborDayHasData,staffAliases,helperCacheCalc,premiumDayCache]);
 
   // スタッフ1人ぶんの労務の集計。日次の件数は**選択中の期間の日**、月単位の判定は**暦月**で数える
   // （利用者が今そこで直せる範囲＝期間、法令・協定の単位＝月）。
-  const laborByStaff=useMemo(()=>{
+  // 合計（totals）は useMemo の結果として返す（S3）。後回しの描画は途中で捨てられることがあるので、描画中に ref へ書くと
+  // 画面に出ていない計算の値を laborTotals の保存が拾いうる
+  const laborCalc=useMemo(()=>{
     const out={},totals={};
-    if(!isPremium||!period||!laborFrame)return out;
+    if(!isPremium||!period||!laborFrame)return{out,totals:null};
     const ls=laborSettingsOf(settings);
     const agDay=ls.agreementDailyOtMin/60, agMonth=ls.agreementMonthlyOtMin/60, fixOt=ls.fixedOvertimeMin/60;
     const agYear=ls.agreementAnnualOtMin/60;
@@ -1738,9 +1790,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         monthOtH:lastOk?(sys==="B"?monthOtB:monthOtH):0,monthAgH:lastOk?monthAgH:0});
       if(c)totals[name]=c;
     });
-    laborTotalsRef.current=totals;
-    return out;
-  },[isPremium,period,laborFrame,laborMonthDays,laborMonthCovered,laborIsLastOfMonth,laborPendingReason,realStaff,dates,weeks,settings,heatEdits,subs,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart,liveMonthOtFor,liveTotalFor,helperInfo,helperCache,premiumDayCache,abbrToShop]);
+    return{out,totals};
+  },[isPremium,period,laborFrame,laborMonthDays,laborMonthCovered,laborIsLastOfMonth,laborPendingReason,realStaff,dates,weeks,settings,heatEditsCalc,subsCalc,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart,liveMonthOtFor,liveTotalFor,helperInfo,helperCacheCalc,premiumDayCache,abbrToShop]);
+  const laborByStaff=laborCalc.out;
 
   // 期間が生きている間はシフト作成タブを開くたびに写しと労務の合計を最新化し、最終日を超えたら
   // 更新を止める＝そこで凍結。「確定の瞬間に撮る」ではなく「確定まで撮り続ける」形にしないと、
@@ -1751,9 +1803,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   useEffect(()=>{
     if(ownerReadOnly||!savePeriods||!period)return;
     if(isPeriodEnded(period,todayStr))return;
+    // 後回しの計算が済むまで書かない（S3。確定の直後の描画の合計は1つ前の subs の値）
+    if(calcPending)return;
     const nextSnap=buildPeriodSnapshot(staffListProp,settingsProp);
     // 他店舗の読み込みが終わるまでは労務の合計を書かない（ヘルプ先勤務の合算・P3.6 が入る前の値で凍結しない）
-    const nextTotals=companyDataReady?(laborTotalsRef.current||{}):{};
+    const nextTotals=companyDataReady?(laborCalc.totals||{}):{};
     // **確定済みの期間は写しを最新化しない**（P3）。確定の瞬間に書いた写しがその期間のマスタで、ここで上書きすると
     // 確定後のスタッフ・属性・退勤延長の変更が流れ込み、確定の意味がなくなる。労務の合計は従来どおり終了まで書く。
     const snapSame=isPeriodConfirmed(period)||periodSnapshotEqual(period.snapshot,nextSnap);
@@ -1766,7 +1820,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(!totalsSame)n.laborTotals=nextTotals;
       return n;
     }));
-  },[period,staffListProp,settingsProp,periods,ownerReadOnly,todayStr,savePeriods,laborByStaff,companyDataReady]);
+  },[period,staffListProp,settingsProp,periods,ownerReadOnly,todayStr,savePeriods,laborCalc,companyDataReady,calcPending]);
 
   const laborFindings=useMemo(()=>{
     if(!isPremium)return[];
@@ -2070,7 +2124,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       rest[name]=count;full[name]=fd;half[name]=hd;
     });
     return {restCounts:rest,fullDayCounts:full,halfDayCounts:half};
-  },[realStaff,dates,subs,heatEdits,selPid,fixedShiftEnabled]);
+  },[realStaff,dates,subsCalc,heatEditsCalc,selPid,fixedShiftEnabled]);
   // 連勤カウント: 期間内の最大連続出勤日数（0.5出勤も出勤扱い）
   const consecCounts=React.useMemo(()=>{
     const result={};
@@ -2082,7 +2136,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       result[name]=maxC;
     });
     return result;
-  },[realStaff,dates,subs,heatEdits,selPid,fixedShiftEnabled]);
+  },[realStaff,dates,subsCalc,heatEditsCalc,selPid,fixedShiftEnabled]);
   const kitMax=Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("kit",date,hr))));
   const hallMax=hallStaff.length>0?Math.max(1,...dates.flatMap(date=>heatHours.map(hr=>countHeat("hall",date,hr)))):1;
   const hBg=(n,mx)=>n===0?"transparent":`rgba(248,112,54,${0.15+(n/mx)*0.75})`;
@@ -2233,7 +2287,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     tip:(n,d,f,r)=>cellApiRef.current.tip(n,d,f,r),
     hideTip:()=>{const set=tipSetRef.current;if(set)set(null);},
     // 入力中の文字。value=null は「このセルの入力を終えた」（別のセルの入力中の文字は消さない）
-    draft:(key,value)=>{if(value==null){if(draftRef.current&&draftRef.current.key===key)draftRef.current=null;}else draftRef.current={key,value};},
+    draft:(key,value)=>{if(value==null){if(draftRef.current&&draftRef.current.key===key)draftRef.current=null;}else{draftRef.current={key,value};if(calcTimerRef.current)scheduleCalc();}},
   }),[]);
   // セル1つぶんの props（すべてフォーカスしていないときの見え方）。値はプリミティブだけ
   const cellCursor=canEditCells?"text":(isPremium?"default":"pointer");
@@ -2646,8 +2700,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const[lmDraft,setLmDraft]=useState({});
   useEffect(()=>{setLmDraft({});},[lmYm,shopId]);
   // 自動集計も他店での勤務（P3.6）を足した値。行き先の店で所属店舗で判定する人は数えない
-  const lmAuto=useMemo(()=>(isPremium&&lmOpen&&lmYm)?aggregateScheduledMonth({subs,names:realStaff,settings,ym:lmYm,
-    extraDayMin:helperMinOn,excludeNames:Object.keys(helperInfo).filter(n=>helperInfo[n].role==="dest")}):{},[isPremium,lmOpen,lmYm,subs,realStaff,settings,helperInfo,helperCache]);
+  const lmAuto=useMemo(()=>(isPremium&&lmOpen&&lmYm)?aggregateScheduledMonth({subs:subsCalc,names:realStaff,settings,ym:lmYm,
+    extraDayMin:helperMinOn,excludeNames:Object.keys(helperInfo).filter(n=>helperInfo[n].role==="dest")}):{},[isPremium,lmOpen,lmYm,subsCalc,realStaff,settings,helperInfo,helperCacheCalc]);
   const saveLmRow=name=>{
     const rec=laborMonthOf(lm.map,lmYm,name);const a=lmAuto[name]||{days:0,min:0};
     const d=lmDraft[name]||{};
@@ -2895,23 +2949,59 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // 全データPDFの年計を**実データ**で出すため、書き出す前に3ヶ月より前の提出も読み込む
   // （2026-09-29 ユーザー指示）。読み込みは非同期で、ここの exportPdf は古い描画の値を閉じ込めているので、
   // 届いたあとの描画で下の useEffect から書き出す（年計が「＋」付きの途中値のまま印刷されない）。
+  // Excel 出力（期間タブの expXl と同じ関数を、このタブの凍結名簿・調整値で呼ぶ）。後回しの計算（S3）の途中に押されたら
+  // 済んだ描画で下の useEffect から書き出す
+  const exportExcel=()=>{
+    const LE=editsNow(); // 確定済み＋入力中のセル（S2）
+    const adjResolver=(name,date,field)=>{
+      // ヘルプの合成表示（H2）。画面・PDF と同じ helperCellDisplay の文字を helperText で返し、expXl が黄色で書く。
+      // helperDay（その日にヘルプ先の勤務がある）なら休みの斜線を引かない
+      const hd=helperDisp(name,date);
+      if(hd&&hd[field].helper)return{time:"",note:"",fixed:false,helperText:hd[field].text,helperDay:true};
+      const helperDay=!!hd;
+      if(fieldRest(name,date,field))return{time:"",note:"",fixed:false,rest:!helperDay,helperDay}; // 休み希望(/)はExcelで斜線描画
+      const key=`${name}|${date}|${field}`;
+      let time="",fixed=false;
+      if(key in LE){const{numeric,hasFixed}=extractNote(LE[key]);time=parseTime(numeric)||"";fixed=fixedShiftEnabled&&hasFixed;}
+      else{time=getStoredTime(name,date,field);fixed=getStoredFixed(name,date,field);}
+      let note="";
+      if(key in LE){note=extractNote(LE[key]).note||"";}
+      else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=sh?.[adjNk]??sh?.[origNk]??"";}
+      // 「締」（追加出勤）はnoteとは独立に永続化されるためfixedで別枠に返す（pdfResolveと同じ組み立て）。
+      // ここで返さないとExcelでだけ締めが脱落する（バグチェック#52）
+      return{time,note,fixed,helperDay};
+    };
+    // 店舗名は settings.xlShopName（設定タブ「Excel書き出し設定」）を優先する。期間タブのExcel（PeriodsTab の expXl 呼び出し）は
+    // 既にそうしており、設定の説明文も「Excel出力時のファイル名・シート内店舗名に反映されます」と
+    // 約束している。ここだけ登録名を使うと、実際に配る側のシートにだけ設定が効かない。
+    // xlShopName は凍結対象キーではないため、確定済み期間でも現在値が入る（期間タブ側と同じ）。
+    expXl(period,subs,rosterStaffList,tt,settings.xlShopName||shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings},adjResolver);
+  };
+  const[xlPending,setXlPending]=useState(false);
+  useEffect(()=>{
+    if(!xlPending||calcPending)return;
+    setXlPending(false);
+    exportExcel();
+  },[xlPending,calcPending]);
   const[pdfPending,setPdfPending]=useState(null);
   const startPdf=(mode,dept="all")=>{
+    // 後回しの計算（S3）が済んでいなければ、済んだ描画で下の useEffect から書き出す（古い労務判定・合計で印刷しない）
+    if(calcPending&&!(mode==="all"&&isPremium&&onLoadPastSubs&&!pastSubsLoaded&&hasOlderPeriods)){setPdfBusy(true);setPdfPending({mode,dept});return;}
     if(!(mode==="all"&&isPremium&&onLoadPastSubs&&!pastSubsLoaded&&hasOlderPeriods)){exportPdf(mode,dept);return;}
     setPdfBusy(true);
     const go=()=>setPdfPending({mode,dept});
     Promise.resolve(onLoadPastSubs()).then(go,go);
   };
   useEffect(()=>{
-    if(!pdfPending||!pastSubsLoaded)return;
+    if(!pdfPending||!pastSubsLoaded||calcPending)return;
     const job=pdfPending;setPdfPending(null);
     exportPdf(job.mode,job.dept);
-  },[pdfPending,pastSubsLoaded]);
+  },[pdfPending,pastSubsLoaded,calcPending]);
   // 企業連携タブの一括PDF（非表示マウント）から渡される書き出しジョブ。描画と集計が落ち着いてから1回だけ実行し、
   // 結果を onDone(null | Error) で返す。キーで重複実行を防ぐ（再レンダーで二重に書き出さない）。
   const exportJobDoneRef=useRef(null);
   useEffect(()=>{
-    if(!exportJob||!period||!companyDataReady||exportJobDoneRef.current===exportJob.key)return;
+    if(!exportJob||!period||!companyDataReady||calcPending||exportJobDoneRef.current===exportJob.key)return;
     const t=setTimeout(()=>{
       if(exportJobDoneRef.current===exportJob.key)return;
       exportJobDoneRef.current=exportJob.key;
@@ -2929,7 +3019,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         .then(()=>exportJob.onDone(null),e=>exportJob.onDone(e||new Error("PDF生成失敗")));
     },300);
     return()=>clearTimeout(t);
-  },[exportJob,period,companyDataReady]);
+  },[exportJob,period,companyDataReady,calcPending]);
 
   // 「過去データ読込」は労務判定の見出しの右に置く（2026-09-26 ユーザー指示）。年計・有給残が
   // 購読窓の外の期間を読めていないときに押すボタンなので、その表のそばに置く。
@@ -2992,10 +3082,17 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(!canStartConfirm||periodConfirmed)return;
     if(lm.enabled&&!lm.loaded){tt("所定を読み込み中です。少し待ってからもう一度押してください");return;}
     if(!confirm("この期間を確定しますか？\n確定すると、この期間のシフトは編集できなくなり、スタッフの再提出もできなくなります。スタッフ一覧・属性・退勤延長などもこの時点の内容で固定し、人×月の所定（所定日数・所定時間）を集計して記録します。\n変更が必要になったら、理由を添えて確定を解除できます。"))return;
-    // 未確定のセルを保存してから、その反映後の提出データで所定を集計する（onSave の反映は次の描画）
+    // 未確定のセルを保存してから、その反映後の提出データで所定を集計する（onSave の反映は次の描画）。
+    // 後回しの計算（S3）が済んだ描画で下の useEffect が行う（以前は setTimeout(0) で次の描画を待っていた）
     flushEdits(true);
-    const pid=period.id;
-    setTimeout(()=>{
+    setConfirmJob({pid:period.id});
+  };
+  const[confirmJob,setConfirmJob]=useState(null);
+  useEffect(()=>{
+    if(!confirmJob||calcPending)return;
+    const pid=confirmJob.pid;
+    setConfirmJob(null);
+    {
       const cur=periods.find(p=>p&&p.id===pid);
       // 所属店舗の所定は他店での勤務を足した値、行き先の店では所属店舗で判定する人を数えない（P3.6）。
       // 企業の確定（企業連携タブ）と同じ helperScheduleContext を通す
@@ -3007,8 +3104,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       lm.save(r.laborMonthsPatch).catch(()=>{});
       updLocalEdits(()=>({}));
       tt("✓ この期間を確定しました（所定を記録しました）");
-    },0);
-  };
+    }
+  },[confirmJob,calcPending]);
   const unconfirmPeriod=()=>{
     if(!canConfirm||!periodConfirmed)return;
     const note=window.prompt("確定を解除する理由を入力してください（履歴に残ります）","");
@@ -3077,32 +3174,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             以前は親の flexWrap がボタン単位で折り返すため、幅が足りない行末で「保存」だけが
             次の行に落ちて PDF出力 から離れていた。グループごと次の行へ送れば並びは崩れない。 */}
         {(period||isPremium)&&<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"nowrap"}}>
-        {period&&<button onClick={()=>{
-          const LE=editsNow(); // 確定済み＋入力中のセル（S2）
-          const adjResolver=(name,date,field)=>{
-            // ヘルプの合成表示（H2）。画面・PDF と同じ helperCellDisplay の文字を helperText で返し、expXl が黄色で書く。
-            // helperDay（その日にヘルプ先の勤務がある）なら休みの斜線を引かない
-            const hd=helperDisp(name,date);
-            if(hd&&hd[field].helper)return{time:"",note:"",fixed:false,helperText:hd[field].text,helperDay:true};
-            const helperDay=!!hd;
-            if(fieldRest(name,date,field))return{time:"",note:"",fixed:false,rest:!helperDay,helperDay}; // 休み希望(/)はExcelで斜線描画
-            const key=`${name}|${date}|${field}`;
-            let time="",fixed=false;
-            if(key in LE){const{numeric,hasFixed}=extractNote(LE[key]);time=parseTime(numeric)||"";fixed=fixedShiftEnabled&&hasFixed;}
-            else{time=getStoredTime(name,date,field);fixed=getStoredFixed(name,date,field);}
-            let note="";
-            if(key in LE){note=extractNote(LE[key]).note||"";}
-            else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=sh?.[adjNk]??sh?.[origNk]??"";}
-            // 「締」（追加出勤）はnoteとは独立に永続化されるためfixedで別枠に返す（pdfResolveと同じ組み立て）。
-            // ここで返さないとExcelでだけ締めが脱落する（バグチェック#52）
-            return{time,note,fixed,helperDay};
-          };
-          // 店舗名は settings.xlShopName（設定タブ「Excel書き出し設定」）を優先する。期間タブのExcel（PeriodsTab の expXl 呼び出し）は
-          // 既にそうしており、設定の説明文も「Excel出力時のファイル名・シート内店舗名に反映されます」と
-          // 約束している。ここだけ登録名を使うと、実際に配る側のシートにだけ設定が効かない。
-          // xlShopName は凍結対象キーではないため、確定済み期間でも現在値が入る（期間タブ側と同じ）。
-          expXl(period,subs,rosterStaffList,tt,settings.xlShopName||shopName||"店舗",{staffColors:settings.staffColors||{},staffAliases:settings.staffAliases||{},staffNumbers:settings.staffNumbers||{},settings},adjResolver);
-        }}
+        {period&&<button onClick={()=>{if(calcPending){setXlPending(true);return;}exportExcel();}}
           style={{padding:"6px 14px",background:"#1D6F42",border:"none",borderRadius:8,color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
           Excel出力
         </button>}
@@ -3158,7 +3230,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       {/* 店舗間シフト重複エラー一覧 */}
       {Object.keys(dupErrors).length>0&&(
         <div style={{background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
-          <div style={{fontSize:12,fontWeight:700,color:"#FF4757",marginBottom:4}}>⚠ 出勤がだぶついています（他店舗と時間重複）</div>
+          <div style={{fontSize:12,fontWeight:700,color:"#FF4757",marginBottom:4,display:"flex",alignItems:"center",gap:8}}><span>⚠ 出勤がだぶついています（他店舗と時間重複）</span>{calcPending&&<CalcPendingNote/>}</div>
           <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
             {Object.entries(dupErrors).map(([k,shopNm])=>{
               const i=k.indexOf("|");const nm=k.slice(0,i);const d=k.slice(i+1);
@@ -3171,7 +3243,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       {/* 時刻の入力ミス（項目12・案C）: 保存は通し、ここと セル色で知らせる */}
       {Object.keys(timeErrors).length>0&&(
         <div style={{background:"rgba(190,24,93,.08)",border:"1px solid rgba(190,24,93,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
-          <div style={{fontSize:12,fontWeight:700,color:"#BE185D",marginBottom:4}}>⚠ 時刻の入力ミス（退勤が出勤より前）</div>
+          <div style={{fontSize:12,fontWeight:700,color:"#BE185D",marginBottom:4,display:"flex",alignItems:"center",gap:8}}><span>⚠ 時刻の入力ミス（退勤が出勤より前）</span>{calcPending&&<CalcPendingNote/>}</div>
           <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
             {Object.keys(timeErrors).map(k=>{const i=k.indexOf("|");return`${k.slice(0,i)} ${fmtDL(k.slice(i+1))}`;}).join("、")}
           </div>
@@ -3221,7 +3293,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
           {/* === 左パネル: キッチン熱マップ（通常表示+split時、またはキッチン絞り込み時） === */}
           {kitShownAsPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
-            <HeatTable label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="キッチン" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} scrollRef={kitHeatRef} onScroll={e=>syncScrollV(e.currentTarget)} maxH="70vh" fitHours={fitHeatHoursPanel}/>
+            <HeatTable pending={calcPending} label="" section="kit" maxC={kitMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="キッチン" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} scrollRef={kitHeatRef} onScroll={e=>syncScrollV(e.currentTarget)} maxH="70vh" fitHours={fitHeatHoursPanel}/>
           </div>}
 
           {/* === 中央: グリッド + 集計 === */}
@@ -3281,7 +3353,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           {/* ポジション不足エラー一覧: 通常/ホール絞り込み時はホール→キッチンの順、キッチン絞り込み時は逆順 */}
           {(positionErrorEntries.kitchen.length>0||positionErrorEntries.hall.length>0||positionErrorEntries.all.length>0)&&(
             <div style={{background:"rgba(239,68,68,.08)",border:"1px solid rgba(239,68,68,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
-              <div style={{fontSize:12,fontWeight:700,color:"#DC2626",marginBottom:4}}>⚠ ポジションが不足しています</div>
+              <div style={{fontSize:12,fontWeight:700,color:"#DC2626",marginBottom:4,display:"flex",alignItems:"center",gap:8}}><span>⚠ ポジションが不足しています</span>{calcPending&&<CalcPendingNote/>}</div>
               <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
                 {(deptFilter==="kit"?[...positionErrorEntries.kitchen,...positionErrorEntries.hall,...positionErrorEntries.all]:[...positionErrorEntries.hall,...positionErrorEntries.kitchen,...positionErrorEntries.all])
                   .map(e=>`${pd(e.date).getDate()}日${e.meal==="lunch"?"ランチ":"ディナー"}${e.posName} -${e.short}`)
@@ -3291,7 +3363,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           )}
 
           {/* === 休みカウント / 連勤カウント === */}
-          <div ref={restScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16,...fvCenter}}>
+          <div ref={restScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} style={{overflowX:fitAll?"hidden":"auto",border:BD,borderRadius:8,marginBottom:16,...fvCenter,...(calcPending?CALC_PENDING_DIM:{})}}>
             <table style={{borderCollapse:"collapse",width:fullView?fvTableW:(fitAll?"100%":"unset"),minWidth:fitAll?"unset":"max-content"}}>
               {/* ラベル列はグリッドの日付列と同じ45pxなので、省略記号で消えないよう
                   短い見出しに差し替える（title属性に元の見出しを残す）。全表示では右端にも同幅の空列を足して
@@ -3320,21 +3392,22 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
           {/* ===時間帯別出勤人数 (サイドパネル非表示分・絞り込み時の相手側は常にここに表示) === */}
           {(kitBelow||hallBelow)&&<div style={{marginBottom:16,...NORMAL_W}}>
-            <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)"}}>時間帯別出勤人数</div>
+            <div style={{fontSize:13,fontWeight:600,marginBottom:6,color:"var(--c-text2)",display:"flex",alignItems:"center",gap:8}}><span>時間帯別出勤人数</span>{calcPending&&<CalcPendingNote/>}</div>
             {/* flexWrap は必須: 子は minWidth:200 で縮まないため、幅が 410px(200*2+gap) を
                 下回るモバイルでは折り返さないと横並びのまま親をはみ出し、ページ全体が横スクロールする
                 （デスクトップ幅では2つとも収まるので折り返さず見た目は不変。実測: バグチェック#73） */}
             <div style={{display:"flex",flexDirection:"row",flexWrap:"wrap",gap:10,justifyContent:"center"}}>
-              {kitBelow&&<HeatTable label={hasSplit?"キッチン":""} section="kit" maxC={kitMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} fitHours={fitHeatHoursBelow} fixedW={heatBelowW}/>}
-              {hallBelow&&<HeatTable label="ホール" section="hall" maxC={hallMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} fitHours={fitHeatHoursBelow} fixedW={heatBelowW}/>}
+              {kitBelow&&<HeatTable pending={calcPending} label={hasSplit?"キッチン":""} section="kit" maxC={kitMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} fitHours={fitHeatHoursBelow} fixedW={heatBelowW}/>}
+              {hallBelow&&<HeatTable pending={calcPending} label="ホール" section="hall" maxC={hallMax} dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} fitHours={fitHeatHoursBelow} fixedW={heatBelowW}/>}
             </div>
           </div>}
 
           {/* ===期間別勤務時間（前半/後半/月計を常に3行）=== */}
-          <SummaryTable title="期間別勤務時間" rowLabel="期間" scrollRef={periodScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} rows={periodRows} fitAll={fitAll} mapGridCols={mapGridCols} spacerTh={spacerTh} spacerCell={spacerCell} colW={colW} VTH={VTH} labelW={DATE_COL_W} fullView={fullView} tableW={fvTableW}/>
+          <SummaryTable pending={calcPending} title="期間別勤務時間" rowLabel="期間" scrollRef={periodScrollRef} onScroll={e=>syncScrollH(e.currentTarget)} rows={periodRows} fitAll={fitAll} mapGridCols={mapGridCols} spacerTh={spacerTh} spacerCell={spacerCell} colW={colW} VTH={VTH} labelW={DATE_COL_W} fullView={fullView} tableW={fvTableW}/>
 
           {/* ===週間勤務時間=== */}
           {weeks.length>0&&<SummaryTable
+            pending={calcPending}
             title="週間勤務時間（前期間含む）"
             rowLabel="週"
             scrollRef={weekScrollRef}
@@ -3359,6 +3432,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
           {/* === 週の休み（S-5）。公休と無記入だけを数え、有給・慶弔は数えない === */}
           {isPremium&&weeks.length>0&&<SummaryTable
+            pending={calcPending}
             title="週の休み（前期間含む）"
             rowLabel="週"
             scrollRef={weekRestScrollRef}
@@ -3377,6 +3451,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
           {/* === 労務（A制の目安・総括判定）。所属店舗で判定する人（行き先の店）は空欄になる === */}
           {showLaborTable&&<SummaryTable
+            pending={calcPending}
             title={`労務判定（${period?period.startDate.slice(0,7).replace("-","年")+"月":""}）`}
             titleRight={pastSubsBtn}
             rowLabel="労務"
@@ -3430,7 +3505,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
               表で見つけ、そのまま下の一覧で理由を読む並びにしている */}
           {laborFindings.length>0&&(
             <div style={{background:"rgba(248,112,54,.07)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
-              <div style={{fontSize:12,fontWeight:700,color:"var(--c-accent)",marginBottom:4}}>⚠ 労務の確認が必要です</div>
+              <div style={{fontSize:12,fontWeight:700,color:"var(--c-accent)",marginBottom:4,display:"flex",alignItems:"center",gap:8}}><span>⚠ 労務の確認が必要です</span>{calcPending&&<CalcPendingNote/>}</div>
               <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
                 {laborFindings.map(({name,findings})=>(
                   <div key={name}>{name}：{findings.join("、")}</div>
@@ -3446,7 +3521,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
           {/* === 右パネル: ホール熱マップ（通常表示+split時、またはホール絞り込み時） === */}
           {hallShownAsPanel&&<div style={{width:panelW,flexShrink:0,overflowX:"auto"}}>
-            <HeatTable label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="ホール" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} scrollRef={hallHeatRef} onScroll={e=>syncScrollV(e.currentTarget)} maxH="70vh" fitHours={fitHeatHoursPanel}/>
+            <HeatTable pending={calcPending} label="" section="hall" maxC={hallMax} rowH={heatRowH} theadH={measuredTheadH} sectionLabel="ホール" dates={dates} heatHours={heatHours} countHeat={countHeat} hBg={hBg} scrollRef={hallHeatRef} onScroll={e=>syncScrollV(e.currentTarget)} maxH="70vh" fitHours={fitHeatHoursPanel}/>
           </div>}
 
         </div>
