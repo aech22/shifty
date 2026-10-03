@@ -553,10 +553,11 @@ function CompanyConfigCard({companyId,onSaveCompanyConfig,tt}){
         </div>
         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
           <span style={LBL}>労働時間制</span>
-          <select value={LABOR_SYSTEMS.indexOf(e.laborSystem)>=0?e.laborSystem:""} onChange={ev=>setLim(id,"laborSystem",ev.target.value||null)}
+          {/* 選択肢は A・B だけ（2026-10-03）。保存値 none（旧「判定対象外」）は B が選ばれた状態で出す（判定も B と同じ） */}
+          <select value={laborSystemChoiceOf(e.laborSystem)} onChange={ev=>setLim(id,"laborSystem",ev.target.value||null)}
             style={{...AI,width:"auto",flex:"1 1 220px",minWidth:180,padding:"5px 8px",cursor:"pointer"}}>
             <option value="">店舗で設定</option>
-            {LABOR_SYSTEMS.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
+            {LABOR_SYSTEM_CHOICES.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
           </select>
         </div>
         <OtProrateField value={e.otProrate} blankLabel="店舗で設定" onChange={v=>setLim(id,"otProrate",v)}/>
@@ -2289,17 +2290,18 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
               }
               {!isBuiltin&&!isCo&&<button onClick={()=>deleteType(type)} style={{padding:"4px 10px",background:"rgba(229,57,53,.1)",border:"1px solid rgba(229,57,53,.3)",borderRadius:4,color:"#e53935",fontSize:12,cursor:"pointer"}}>削除</button>}
             </div>
-            {/* 労働時間制（項目1）。組み込み属性は既定（社員=変形・バイト=通常・派遣/その他=応援・外部＝判定は通常と同じ）が
-                入った状態で表示されるので、既存店舗が「区分が空欄」にならない。 */}
+            {/* 労働時間制（項目1）。組み込み属性は既定（社員=変形・パート・アルバイト=通常・応援・外部/その他=保存値 none＝判定は通常と同じ）が
+                入った状態で表示されるので、既存店舗が「区分が空欄」にならない。選択肢は A・B だけで（2026-10-03）、
+                保存値・既定が none の属性は B が選ばれた状態で出る（laborSystemChoiceOf）。 */}
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8,flexWrap:"wrap"}}>
               <span style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>労働時間制</span>
               {coLim(type,"laborSystem")
-                ?coVal(LABOR_SYSTEM_LABELS[lim.laborSystem]||lim.laborSystem||"—",0)
-                :<select value={LABOR_SYSTEMS.indexOf(lim.laborSystem)>=0?lim.laborSystem:(DEFAULT_LABOR_SYSTEM_BY_ATTR[type]||"")}
+                ?coVal(LABOR_SYSTEM_LABELS[laborSystemChoiceOf(lim.laborSystem)]||lim.laborSystem||"—",0)
+                :<select value={laborSystemChoiceOf(lim.laborSystem)||laborSystemChoiceOf(DEFAULT_LABOR_SYSTEM_BY_ATTR[type])}
                 onChange={e=>saveLim(type,"laborSystem",e.target.value)}
                 style={{...AI,width:"auto",flex:"1 1 220px",minWidth:180,padding:"5px 8px",cursor:"pointer"}}>
-                {LABOR_SYSTEMS.indexOf(lim.laborSystem)<0&&!DEFAULT_LABOR_SYSTEM_BY_ATTR[type]&&<option value="">未設定</option>}
-                {LABOR_SYSTEMS.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
+                {!laborSystemChoiceOf(lim.laborSystem)&&!DEFAULT_LABOR_SYSTEM_BY_ATTR[type]&&<option value="">未設定</option>}
+                {LABOR_SYSTEM_CHOICES.map(v=><option key={v} value={v}>{LABOR_SYSTEM_LABELS[v]}</option>)}
               </select>}
             </div>
             <OtProrateField value={lim.otProrate} blankLabel={OT_PRORATE_WINDOW_LABELS.month+"（既定）"}

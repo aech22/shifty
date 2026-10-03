@@ -211,6 +211,8 @@ const sharedGlobals = {
   LABOR_SHORT_DAY_MIN: "writable",
   LABOR_SYSTEMS: "writable",
   LABOR_SYSTEM_LABELS: "writable",
+  LABOR_SYSTEM_CHOICES: "writable",
+  laborSystemChoiceOf: "writable",
   DEFAULT_LABOR_SYSTEM_BY_ATTR: "writable",
   laborSystemOf: "writable",
   laborSystemForStaff: "writable",

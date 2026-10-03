@@ -2861,9 +2861,10 @@ test("getAttrOptions: 名前を持たない組み込み属性（2026-06-16〜06-
   // 設定タブの制限一覧は STAFF_TYPE_LABELS で補うので、休憩タグの選択肢だけ落ちると食い違う（バグチェック#121）。
   const legacy = { staffTypeLimits: { employee: { daily: 0, weekly: 0 }, parttime: { daily: 0, weekly: 0 },
     dispatch: { daily: 0, weekly: 0 }, other: { daily: 0, weekly: 0 } } };
-  // 固定は 社員 → パート・アルバイト の2つだけ。派遣／その他は固定の外なので50音順に入る（その他 < 派遣）
+  // 固定は 社員 → パート・アルバイト の2つだけ。応援・外部（dispatch）／その他は固定の外なので50音順に入る
+  // （2026-10-03 に dispatch を「派遣」から「応援・外部」へ改称した。「応援」は漢字始まりなので照合順でかなの「その他」の後）
   assert.deepStrictEqual(u.getAttrOptions(legacy),
-    [["employee", "社員"], ["parttime", "パート・アルバイト"], ["other", "その他"], ["dispatch", "派遣"]]);
+    [["employee", "社員"], ["parttime", "パート・アルバイト"], ["other", "その他"], ["dispatch", "応援・外部"]]);
   // 名前の無いカスタム属性は従来どおり出さない（ID をそのまま見せないため）
   assert.deepStrictEqual(u.getAttrOptions({ staffTypeLimits: { custom_x: { daily: 0 } } }),
     [["employee", "社員"], ["parttime", "パート・アルバイト"]]);
@@ -5634,7 +5635,7 @@ test("P3.5b 按分窓は企業共通（法人上書き可）で効き、CF の�
 });
 
 // ===== 応援・外部を B と同じ判定に（2026-10-03 ユーザー指示）=====
-test("応援・外部: 属性の laborSystem:\"none\" は判定上 B・保存値は none・ラベルは「応援・外部」", () => {
+test("応援・外部: 属性の laborSystem:\"none\" は判定上 B・保存値は none・選択肢は A・B だけ・dispatch の名前は「応援・外部」", () => {
   const st = { staffAttributes: { "外部さん": "custom_ext", "バイト": "parttime", "派遣さん": "dispatch" },
     staffTypeLimits: { custom_ext: { name: "応援", laborSystem: "none" } } };
   // ① 判定用の読み手は B を返す（明示の none も組み込み dispatch の既定も）
@@ -5645,10 +5646,21 @@ test("応援・外部: 属性の laborSystem:\"none\" は判定上 B・保存値
   assert.strictEqual(u.laborSystemRawForStaff(st, "外部さん"), "none");
   assert.strictEqual(u.laborSystemRawForStaff(st, "派遣さん"), "none");
   assert.strictEqual(u.laborSystemRawForStaff(st, "バイト"), "B");
-  // ③ ラベル（保存値・選択肢は変えない）
-  assert.strictEqual(u.LABOR_SYSTEM_LABELS.none, "応援・外部");
+  // ③ 保存値の検証は none を受け付けたまま（データ移行なし）。選択肢は A・B だけで、none は B を選んだ状態で出す
+  //    （2026-10-03 の追加指示。属性 dispatch の名前「応援・外部」と同じ名前の労働時間制を並べない）
   assert.deepStrictEqual(u.LABOR_SYSTEMS, ["A", "B", "none"]);
-  assert.ok(!Object.values(u.LABOR_SYSTEM_LABELS).some(l => l.includes("判定対象外")));
+  assert.deepStrictEqual(u.LABOR_SYSTEM_CHOICES, ["A", "B"]);
+  assert.deepStrictEqual(Object.keys(u.LABOR_SYSTEM_LABELS).sort(), ["A", "B"], "ラベルは選択肢の2つだけ（参照の無い none を残さない）");
+  assert.ok(!Object.values(u.LABOR_SYSTEM_LABELS).some(l => l.includes("判定対象外") || l.includes("応援・外部")));
+  assert.strictEqual(u.laborSystemChoiceOf("none"), "B");
+  assert.strictEqual(u.laborSystemChoiceOf("A"), "A");
+  assert.strictEqual(u.laborSystemChoiceOf("B"), "B");
+  assert.strictEqual(u.laborSystemChoiceOf(undefined), "");
+  assert.strictEqual(u.laborSystemChoiceOf("X"), "");
+  // 組み込み属性 dispatch の表示名は「応援・外部」（ID・保存データは変えない）
+  assert.strictEqual(u.STAFF_TYPE_LABELS.dispatch, "応援・外部");
+  assert.ok(u.getAttrOptions({ staffTypeLimits: { dispatch: { name: "派遣" } } }).some(([id, nm]) => id === "dispatch" && nm === "応援・外部"),
+    "保存値の旧名（派遣）は読まない");
   // 従業員番号の未設定は応援・外部の人には出さない（番号を持たないため）。B の人には従来どおり出る
   assert.strictEqual(u.isStaffNumberMissing(st, "外部さん"), false);
   assert.strictEqual(u.isStaffNumberMissing(st, "派遣さん"), false);

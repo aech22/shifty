@@ -33,7 +33,7 @@ async function setTab(plan) {
     const txt = document.body.innerText;
     const card = [...document.querySelectorAll("div")].find(d => (d.innerText || "").startsWith("労務判定（1か月単位の変形労働時間制）"));
     const rows = card ? [...card.querySelectorAll("tbody tr")].map(tr => [...tr.querySelectorAll("td")].map(td => td.innerText.trim())) : [];
-    const sels = [...document.querySelectorAll("select")].filter(s => [...s.options].some(o => o.value === "none"));
+    const sels = [...document.querySelectorAll("select")].filter(s => [...s.options].some(o => o.value === "A") && [...s.options].some(o => o.value === "B"));
     return {
       hasCard: !!card,
       wLine: (txt.match(/この値から週の法定労働時間を\s*(\S+)\s*と判定しました/) || [])[1] || null,
@@ -48,7 +48,7 @@ async function setTab(plan) {
 
   // 属性セレクトを変える → settings.staffTypeLimits[*].laborSystem に入る
   await h.evaluate(() => {
-    const sels = [...document.querySelectorAll("select")].filter(s => [...s.options].some(o => o.value === "none"));
+    const sels = [...document.querySelectorAll("select")].filter(s => [...s.options].some(o => o.value === "A") && [...s.options].some(o => o.value === "B"));
     const set = (el, v) => {
       Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set.call(el, v);
       el.dispatchEvent(new Event("change", { bubbles: true }));
@@ -81,7 +81,7 @@ async function setTab(plan) {
 
 // ---- 2. ShiftEditTab: 時刻の入力ミスと労務判定パネル ---------------------------
 async function shiftEditTab() {
-  // 田中=社員(A制・既定) / 鈴木=バイト(B制・既定) / 佐藤=契約(custom・laborSystem未設定) / 平=派遣(応援・外部＝B と同じ判定)
+  // 田中=社員(A制・既定) / 鈴木=バイト(B制・既定) / 佐藤=契約(custom・laborSystem未設定) / 平=組み込み dispatch（表示名「応援・外部」・既定の保存値 none＝B と同じ判定）
   // 田中 10/1 は 09:00-22:00（13時間＝12h超）、10/2 は 10:00-12:00（2時間＝4h未満）。
   // 鈴木 10/1 は 22:00→02:00 の入力ミス。
   // 平 10/1 は 09:00-23:00（14時間）。2026-10-03 から応援・外部は B と同じ判定なので 8h超・1日の残業が上限超・休憩不足が出る。
@@ -151,7 +151,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
     // 社員/パート・アルバイト/契約（2026-09-26 以降の並び＝組み込み2つを固定してから50音順）
     labor_select_defaults: st.before.laborSelects.map(s => s.value).join(",") === "A,B,"
       || st.before.laborSelects.map(s => s.value).sort().join(",") === ",A,B",
-    labor_select_options: st.before.laborSelects.every(s => s.options.join(",").endsWith("A,B,none")),
+    // 選択肢は A・B だけ（2026-10-03 に none＝旧「判定対象外」を外した）。未設定の属性だけ先頭に "" がある
+    labor_select_options: st.before.laborSelects.every(s => /^(,)?A,B$/.test(s.options.join(","))),
     labor_select_saved: st.savedLabor.custom_x1 === "A",
     labor_select_fontsize16: st.before.selectFontSizes.every(f => parseFloat(f) >= 16),
     // 項目2＋3: 導出表示と S-1 の4行
@@ -173,7 +174,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
     labor_panel_a: !!se.laborPanel && /田中：12h超1日（1）、4h未満1日（2）、休憩不足1日（1）/.test(se.laborPanel),
     labor_panel_b: !!se.laborPanel && /鈴木：時刻の入力ミス1日（1）/.test(se.laborPanel),
     labor_panel_badsystem: !!se.laborPanel && /佐藤：休憩不足1日（1）、区分が空欄か誤り/.test(se.laborPanel),
-    // 項目1（2026-10-03 改定）: 応援・外部（派遣）は B と同じ判定が出る。従業員番号の未設定だけは出さない
+    // 項目1（2026-10-03 改定）: 応援・外部（dispatch）は B と同じ判定が出る。従業員番号の未設定だけは出さない
     labor_panel_none_as_b: !!se.laborPanel && /平：[^\n]*8h超1日\(残業\)（1）/.test(se.laborPanel)
       && /平：[^\n]*1日の残業が上限超1日（1）/.test(se.laborPanel) && /平：[^\n]*休憩不足1日（1）/.test(se.laborPanel)
       && !/平：[^\n]*従業員番号が未設定/.test(se.laborPanel),
