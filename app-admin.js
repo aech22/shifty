@@ -570,6 +570,10 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   // 配置
   const aV={horizontal:"center",vertical:"distributed",textRotation:255,wrapText:false};
   const aH={horizontal:"center",vertical:"middle"};
+  // スタッフ名セル専用（K2・2026-10-04）。ExcelJS 4.4.0 は数値の textRotation:255 を書き出し時に捨てるので
+  // aV では縦書きにならない。"vertical" なら textRotation="255" として出力される（実測）。aV は SC の既定値で
+  // 他のセルにも効くため変えない
+  const aName={horizontal:"center",vertical:"middle",textRotation:"vertical"};
 
   // 塗り
   const fSat  ={type:"pattern",pattern:"solid",fgColor:{argb:R("DDEEFF")},bgColor:{argb:"FFFFFFFF"}};
@@ -636,9 +640,9 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
       {top:M,left:isFirst?T:undefined,right:T,bottom:T},
       {bold:false,size:8,color:{argb:"FF000000"}});
     // スタッフ名行: 縦書き
-    SC(2,C_STAFF+i,nm,aV,fNone,
+    SC(2,C_STAFF+i,nm,aName,fNone,
       {top:T,bottom:M,left:isFirst?T:undefined,right:T},
-      {bold:true,size:14,color:{argb:staffColorArgb}});
+      {bold:true,size:9,color:{argb:staffColorArgb}});
   });
   // Row1右端(曜日:店舗名): 従業員コード行のため横結合・空欄
   SC(1,C_WD_R,null,aH,fNone,{top:M,bottom:T,left:M,right:T},{bold:false,size:8});
