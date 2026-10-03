@@ -167,7 +167,8 @@ const payInputs = h => h.evaluate(() => [...document.querySelectorAll("[data-sta
     await openEdit(h, "田中");
     await h.evaluate(() => { const el = [...document.querySelectorAll('input[maxlength="50"]')].find(i => i.value === "田中");
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, "田中 太郎"); el.dispatchEvent(new Event("input", { bubbles: true })); });
-    await h.clickExact("名前を保存"); await h.page.waitForTimeout(400);
+    R.saveBtnCount = await h.evaluate(() => [...document.querySelectorAll("button")].filter(b => (b.innerText || "").trim() === "保存").length);
+    R.saveClick = await h.clickExact("保存"); await h.page.waitForTimeout(400);
     R.renamed = await h.evaluate(() => ({ old: window.__db("shops/S1/private/pay/田中"), next: !!window.__db("shops/S1/private/pay/田中 太郎") }));
     // 削除（期間が無い＝どの期間にも残さない）で消える
     await h.clickExact("削除", { rowText: "佐藤" }); await h.page.waitForTimeout(200);
@@ -310,6 +311,8 @@ const payInputs = h => h.evaluate(() => [...document.querySelectorAll("[data-sta
     relockReload: R.relockedByReload === true,
     linkedChangeNote: /企業連携タブの「企業アカウント」か、「企業内登録スタッフ」の一覧の上部にある「変更」で変更/.test(R.linkedChangeNote || ""),
     renameFollows: !!R.renamed && R.renamed.old === null && R.renamed.next === true,
+    // K1（2026-10-04）: 編集モーダルの保存ボタンは「保存」1つだけで、それを押して改名が通る
+    editSaveIsOnly: R.saveBtnCount === 1 && R.saveClick === "ok",
     deleteFollows: R.dropped === null,
     lockoutAfter5: /60秒待って|秒待ってから/.test(R.lockout || "") && R.lockoutHolds === true && R.lockoutSurvivesReload === true,
     entityMinWage: JSON.stringify(R.mirrorWage) === JSON.stringify([{ from: "2025-10-01", yen: 1177 }, { from: "2026-10-01", yen: 1231 }, { from: "2027-10-01", yen: 1300 }]) && R.minWageRows === 2,

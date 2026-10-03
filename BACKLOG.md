@@ -39,18 +39,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 ---
 
 
-## 🟢 K1. スタッフタブ: スタッフ編集モーダルの保存ボタンを「保存」に
-
-**目的**: 企業内登録スタッフの編集（2026-10-02 に保存ボタン1つへ整理済み）と表記を揃える。計画書 `Shifty_実装計画_2026-10.md` の K1。
-**受け入れ条件**:
-- [ ] スタッフ編集モーダルのボタンが「保存」と表示される
-- [ ] 押したときの動作（`confirmEdit`）は変わらない
-- [ ] E2E スクリプトの `clickExact("名前を保存")` を「保存」に直す（`example-staff-pay.js`）
-**影響範囲**: app-admin.js（1行）、`.claude/skills/shifty-e2e-verify/scripts/example-staff-pay.js`
-**備考**: app-company.js の「名前を保存」は法人名の変更ボタンで対象外。
-
----
-
 ## 🟢 K2. Excel 書き出し: 名前行を 9pt・縦書き・左右中央・上下中央に
 
 **目的**: 書き出した Excel の名前行を手直しなしで整える。計画書 `Shifty_実装計画_2026-10.md` の K2。
@@ -1801,6 +1789,16 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ K1. スタッフ編集モーダルと法人名変更の保存ボタンを「保存」に（2026-10-04 develop 完了）
+
+計画書 `Shifty_実装計画_2026-10.md` の K1。途中で範囲を1点広げた（コーディネーター経由のユーザー指示）: 企業連携タブの法人名の変更ボタン（app-company.js）も「保存」にした。
+
+- [x] スタッフ編集モーダルのボタンが「保存」（app-admin.js の1行）。`example-staff-pay.js` で、モーダルを開いた状態で文字が「保存」と完全一致するボタンが1つだけで、それを押すと改名が通り private/pay のキーが移ることを確認（`editSaveIsOnly`・`renameFollows`）
+- [x] 動作（`confirmEdit`）は変えていない（差分はラベルの文字だけ）
+- [x] `example-staff-pay.js` の `clickExact("名前を保存")` を「保存」に直した。EXIT=0（変更前の配信物では EXIT=1・`editSaveIsOnly`/`renameFollows` が false）
+- [x] 追加: 法人名の変更ボタンを「保存」にし、一意に押せるよう `data-co-entity-rename={法人ID}` を付けた（動作の renameEntity は変えていない）。これを押す E2E は元々無かったので `example-company-entities.js` に往復の改名（乙法人→丙法人→乙法人）を足した。EXIT=0（変更前の配信物では EXIT=1・`entityRenameSaveLabel` が false）
+- 検証: `npm test` 522件パス・`npx eslint app-*.js` 0 errors / 116 warnings（基準と同数）
 
 ### ✅ 「外部の長時間」の削除と「応援・外部」を通常の労働時間制と同じ判定に（2026-10-03・develop のみ・未リリース）
 

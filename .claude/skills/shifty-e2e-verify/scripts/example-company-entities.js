@@ -101,6 +101,18 @@ const waitText = (h, t, ms = 15000) => h.page.waitForFunction(x => document.body
     await h.page.waitForFunction(() => document.querySelectorAll("[data-co-entity]").length === 2, { timeout: 10000 });
     const e2 = await h.evaluate(() => Object.entries(window.__db("companies/C1/pub/entities")).find(([, v]) => v.name === "乙法人")[0]);
     R.created = !!e2;
+    // K1（2026-10-04）: 法人名の変更ボタンは「保存」。名前を変えると出て、押すと renameEntity が通る。
+    // 同じ画面に「保存」が他にもありうるので data-co-entity-rename で押す（戻すまで往復して2回押す）
+    const renameTo = async (id, name) => {
+      await h.setInput(`[data-co-entity="${id}"] input:not([type])`, name);
+      const lbl = await h.evaluate(id => { const b = document.querySelector(`[data-co-entity-rename="${id}"]`); return b ? b.innerText.trim() : null; }, id);
+      await h.page.click(`[data-co-entity-rename="${id}"]`);
+      await h.page.waitForFunction(([id, name]) => (window.__db("companies/C1/pub/entities/" + id) || {}).name === name, [id, name], { timeout: 10000 });
+      return lbl;
+    };
+    R.renameLabel = await renameTo(e2, "丙法人");
+    R.renameBackLabel = await renameTo(e2, "乙法人");
+    R.renameBtnGone = await h.evaluate(id => !document.querySelector(`[data-co-entity-rename="${id}"]`), e2);
     // B店を乙法人へ
     await h.page.selectOption('[data-co-shop-entity="S2"] td:nth-child(2) select', e2);
     await h.page.waitForFunction(id => (window.__db("shops/S2/company") || {}).entityId === id, e2, { timeout: 10000 });
@@ -226,6 +238,7 @@ const waitText = (h, t, ms = 15000) => h.page.waitForFunction(x => document.body
     mirrorSettingsUnchanged: (a.mSettings || []).every(x => x === legacySettings),
     noFilterWithOneEntity: R.filterA === 0,
     entityCreated: R.created === true,
+    entityRenameSaveLabel: R.renameLabel === "保存" && R.renameBackLabel === "保存" && R.renameBtnGone === true,
     shopAssigned: !!R.assigned && R.assigned.name === "乙法人" && R.assigned.s1 === "テスト企業",
     hqKind: !!R.hq && R.hq.pub === "hq" && R.hq.global === "hq" && R.hq.s1 === "shop",
     entitySettingsBakedOnlyToItsShops: !!R.entityCfg && R.entityCfg.s2.laborSettings.fixedOvertimeMin === 2700 && JSON.stringify(R.entityCfg.s2.staffTypeLimits) === JSON.stringify(coSettings.staffTypeLimits)
