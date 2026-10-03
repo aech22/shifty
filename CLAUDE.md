@@ -107,8 +107,11 @@ AdminView（app-admin.js）が app-company.js のコンポーネントを描け�
 全ファイルの実行後だから。**逆に app-admin.js のトップレベル即時実行コード（const の初期化式など）から app-company.js の識別子を
 参照してはいけない**（その時点ではまだ未定義）。どのファイルも **40万字を超えたら次の分割を考える**（500,000 字で上の Note が出る）。
 回帰スクリプトのハーネス（`mount-component.js`）の既定の読み込みにも app-company.js が入っている。
-**Stop フックの自動コミット（`.claude/settings.json`）は5ファイルを名指ししており app-company.js を含まない**——
-app-company.js の変更は自分でコミットすること。
+**Stop フックの自動コミット（`.claude/settings.json`）は app-*.js の7ファイルすべて（utils・core・staff・admin・shift・company・main）を
+名指ししている**（2026-10-04 にフックの中身を読んで確認。`d534246`・`3c45a97`・`ea26e73` で app-shift.js が自動コミットされた実績もある）。
+main 以外のブランチで `DEV_MODE` が式のままのとき、ターンが終わるたびに7ファイルの変更を `Auto-commit: app-*.js changes` として
+コミットし push する。テスト・回帰スクリプト・文書は対象外なので、それらは自分で別のコミットにすること。
+`.claude/settings.json` は `.gitignore`（`.claude/*`）でリポジトリに入っていない端末ローカルの設定なので、対象を確かめるときはファイルを直接読む。
 
 **app-shift.js の切り出し（2026-09-30・2回目の分割）**: P3〜P5 の追加で app-admin.js が再び 399,977 字になり、
 上の40万字の上限（`example-index-html-load`）まで残り23字になった。シフト作成タブ一式（app-admin.js の 271〜3463 行＝
@@ -120,7 +123,7 @@ FIXED_KEY（app-admin.js の expXl の関数本体）の2つだけで、どち�
 app-utils.js の定数（CELL_COLOR_LEGEND・CELL_COMMANDS）だけなので、admin の直後に置いて問題ない。
 **シフト作成タブ（グリッド・ヒートマップ・集計表・実績・PDF）を直すときの編集先は app-shift.js**。
 Excel（expXl）・提出一覧・スタッフタブは app-admin.js に残っている。app-shift.js も Stop フックの自動コミットの
-対象外なので、変更は自分でコミットすること（フックの対象を増やすかはユーザー判断待ち）。
+対象に入っている（上の段落）。
 
 ## ソースファイルの内容
 
