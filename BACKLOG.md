@@ -39,20 +39,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 ---
 
 
-## 🟢 K2. Excel 書き出し: 名前行を 9pt・縦書き・左右中央・上下中央に
-
-**目的**: 書き出した Excel の名前行を手直しなしで整える。計画書 `Shifty_実装計画_2026-10.md` の K2。
-**受け入れ条件**:
-- [ ] 書き出した xlsx の名前セルが、フォント 9、方向＝縦書き、横＝中央、縦＝中央になっている
-- [ ] 名前の色（`staffColors`）と太字は現状のまま
-- [ ] 名前セル以外（期間ラベル・曜日・店舗名・時刻セル）の見た目は変わらない
-- [ ] 期間タブとシフト作成タブのどちらの書き出しでも同じ結果になる
-- [ ] `example-excel-missing-day.js` に、名前セルの `alignment` と `font.size` の確認を足す
-**影響範囲**: app-admin.js `expXl`、E2E スクリプト1本
-**備考**: `aV` は `SC` の既定値で他のセルにも使うので変えない。名前セル専用の整列を新設する。ExcelJS 4.4.0 での `textRotation` の扱いは実験で確かめてから実装する。
-
----
-
 ## 🟡 S1. シフト作成タブの高速化 第1段（依存の安定化）と計測
 
 **目的**: 1文字入力・セル選択のたびに `weeks` が新しい配列になり、労務判定が全員分やり直される状態を止める。計画書 `Shifty_実装計画_2026-10.md` の S.0・S1。
@@ -1789,6 +1775,19 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ K2. Excel 書き出しの名前行を 9pt・縦書き・左右中央・上下中央に（2026-10-04 develop 完了・コードは自動コミット `0f6c78b`）
+
+計画書 `Shifty_実装計画_2026-10.md` の K2。`expXl`（app-admin.js）に名前セル専用の整列 `aName={horizontal:"center",vertical:"middle",textRotation:"vertical"}` を足し、名前セルのフォントを 14 → 9 にした。`aV` は変えていない。
+
+- **ExcelJS 4.4.0 の実験**（CDN の 4.4.0 をヘッドレス Chromium で読み、書き出した xlsx の styles.xml を展開して確認）: `textRotation:255` は `<alignment horizontal="center" vertical="distributed"/>` と出力され**回転が捨てられる**。`textRotation:"vertical"` は `textRotation="255"` として出力され、読み直すと `"vertical"`。変更前の配信物（`b014efa`）で書き出した名前セルにも回転は無かった＝これまで Excel で手直しが必要だった理由はこれ
+- [x] 名前セルがフォント 9・方向＝縦書き・横＝中央・縦＝中央（`example-excel-missing-day.js` の `g_名前行は9pt縦書き中央`）
+- [x] 太字と色は現状のまま（staffColors の赤の人は FFFF0000、他は FF000000・太字）
+- [x] 名前セル以外（期間ラベル・左右の曜日・店舗名・従業員番号・日付・曜日・時刻の上下）の書式が変更前と一致（変更前の配信物で書き出した値を期待値に固定・`i_名前セル以外は変わらない`）
+- [x] 期間タブ（resolver なし）とシフト作成タブ（resolver あり）の両方の入口で同じ（`h_2つの入口で名前行が同じ`）
+- [x] `example-excel-missing-day.js` に名前セルの alignment と font.size の確認を足した。EXIT=0。変更前の配信物では `g`・`i` が false で EXIT=1
+- 検証: `npm test` 522件パス・`npx eslint app-*.js` 0 errors / 116 warnings。Excel を読む他の回帰 `example-staff-hidden.js`・`example-pdf-headcount.js` も EXIT=0
+- 残る注意（計画書の備考どおり）: 行の高さは 78 のまま。9pt の縦書きで収まるのは目安7文字前後で、長い名前は切れうる（実際の Excel での見え方は未検証）
 
 ### ✅ K1. スタッフ編集モーダルと法人名変更の保存ボタンを「保存」に（2026-10-04 develop 完了）
 

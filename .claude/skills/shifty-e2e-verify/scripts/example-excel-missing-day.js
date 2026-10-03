@@ -21,6 +21,8 @@
 const path = require("node:path");
 const { openHarness } = require(path.join(__dirname, "mount-component.js"));
 
+// K2 の前（b014efa）に書き出した名前セル以外の書式。名前セル以外が変わっていないことの基準
+const OTHERS_BEFORE_K2 = {"periodLabel":{"al":{"horizontal":"center","vertical":"distributed"},"font":{"size":14,"bold":true,"color":null}},"wdHead":{"al":{"horizontal":"center","vertical":"distributed"},"font":{"size":14,"bold":true,"color":null}},"wdRight":{"al":{"horizontal":"center","vertical":"distributed"},"font":{"size":14,"bold":true,"color":null}},"shopName":{"al":{"horizontal":"center","vertical":"distributed"},"font":{"size":14,"bold":true,"color":null}},"number":{"al":{"horizontal":"center","vertical":"middle"},"font":{"size":8,"bold":false,"color":"FF000000"}},"day":{"al":{"horizontal":"center","vertical":"middle"},"font":{"size":12,"bold":false,"color":"FF000000"}},"weekday":{"al":{"horizontal":"center","vertical":"middle"},"font":{"size":12,"bold":false,"color":"FF000000"}},"timeTop":{"al":{"horizontal":"center","vertical":"middle"},"font":{"size":12,"bold":false,"color":null}},"timeBottom":{"al":{"horizontal":"center","vertical":"middle"},"font":{"size":12,"bold":false,"color":null}}};
 const DATES = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05"];
 
 (async () => {
@@ -71,7 +73,7 @@ const DATES = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-
       HTMLAnchorElement.prototype.click = function () {};
       try {
         expXl(period, subs, staffList, () => {}, "検証店舗",
-          { settings, staffAliases: {}, staffColors: {}, staffNumbers: {} },
+          { settings, staffAliases: {}, staffColors: { 田中: "red" }, staffNumbers: { 田中: "12" } },
           useResolver ? resolver : null);
         await new Promise(r => setTimeout(r, 1500));   // writeBuffer() は非同期
       } finally { URL.createObjectURL = oC; HTMLAnchorElement.prototype.click = oK; }
@@ -93,7 +95,18 @@ const DATES = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-
           return (diag(cT) || diag(cB)) ? "斜線" : (v === "/" ? "空白" : v);
         });
       }
-      return r;
+      // K2（2026-10-04）: 名前行の書式と、名前セル以外の書式（変わっていないことの照合用）
+      const st = c => ({ al: c.alignment || null, font: c.font ? { size: c.font.size, bold: !!c.font.bold, color: c.font.color ? c.font.color.argb : null } : null });
+      const ci = nm => head.indexOf(nm) + 1;
+      const nameStyle = Object.fromEntries(["田中", "佐藤", "鈴木"].map(nm => [nm, st(ws.getRow(2).getCell(ci(nm)))]));
+      const last = head.length;   // 右端＝店舗名・その左＝曜日
+      const others = {
+        periodLabel: st(ws.getRow(2).getCell(1)), wdHead: st(ws.getRow(2).getCell(2)),
+        wdRight: st(ws.getRow(2).getCell(last - 1)), shopName: st(ws.getRow(2).getCell(last)),
+        number: st(ws.getRow(1).getCell(ci("田中"))), day: st(ws.getRow(3).getCell(1)), weekday: st(ws.getRow(3).getCell(2)),
+        timeTop: st(ws.getRow(3).getCell(ci("田中"))), timeBottom: st(ws.getRow(4).getCell(ci("田中"))),
+      };
+      return { r, nameStyle, others };
     };
     return { noResolver: await run(false), withResolver: await run(true) };
   }, DATES);
@@ -101,13 +114,22 @@ const DATES = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-
   const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   const verdict = {
     // 期間管理タブの入口（resolverなし）
-    a_田中_提出済みの休みと管理者yは斜線のまま: eq(out.noResolver.田中.slice(0, 3), ["9/18", "斜線", "斜線"]),
-    b_田中_延長で増えた日は空白: eq(out.noResolver.田中.slice(3), ["空白", "空白"]),
-    c_佐藤_グリッド作成subの未入力日は空白: eq(out.noResolver.佐藤, ["空白", "10/19", "空白", "空白", "空白"]),
-    d_鈴木_sub無しは従来どおり空白: eq(out.noResolver.鈴木, ["空白", "空白", "空白", "空白", "空白"]),
+    a_田中_提出済みの休みと管理者yは斜線のまま: eq(out.noResolver.r.田中.slice(0, 3), ["9/18", "斜線", "斜線"]),
+    b_田中_延長で増えた日は空白: eq(out.noResolver.r.田中.slice(3), ["空白", "空白"]),
+    c_佐藤_グリッド作成subの未入力日は空白: eq(out.noResolver.r.佐藤, ["空白", "10/19", "空白", "空白", "空白"]),
+    d_鈴木_sub無しは従来どおり空白: eq(out.noResolver.r.鈴木, ["空白", "空白", "空白", "空白", "空白"]),
     // シフト作成タブの入口（resolverあり）
-    e_resolver側も同じ: eq(out.withResolver.田中, ["9/18", "斜線", "斜線", "空白", "空白"]),
-    f_未保存の編集は従来どおり出る: out.withResolver.佐藤[4] === "13/",
+    e_resolver側も同じ: eq(out.withResolver.r.田中, ["9/18", "斜線", "斜線", "空白", "空白"]),
+    f_未保存の編集は従来どおり出る: out.withResolver.r.佐藤[4] === "13/",
+    // K2: 名前セルは 9pt・縦書き・左右中央・上下中央。太字と色（田中=赤・他=黒）は従来どおり。2つの入口で同じ
+    g_名前行は9pt縦書き中央: ["noResolver", "withResolver"].every(k => ["田中", "佐藤", "鈴木"].every(nm => {
+      const x = out[k].nameStyle[nm];
+      return x.al && x.al.horizontal === "center" && x.al.vertical === "middle" && x.al.textRotation === "vertical"
+        && x.font.size === 9 && x.font.bold === true && x.font.color === (nm === "田中" ? "FFFF0000" : "FF000000");
+    })),
+    h_2つの入口で名前行が同じ: eq(out.noResolver.nameStyle, out.withResolver.nameStyle),
+    // 名前セル以外の書式は K2 の前と同じ（期待値は K2 より前の配信物 b014efa で書き出した値）
+    i_名前セル以外は変わらない: eq(out.noResolver.others, OTHERS_BEFORE_K2) && eq(out.withResolver.others, OTHERS_BEFORE_K2),
   };
   verdict.allPass = Object.values(verdict).every(Boolean);
 
