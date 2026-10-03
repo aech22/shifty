@@ -1517,9 +1517,9 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-10-03 自動実行 #162）
+## Shifty バグチェックレポート（2026-10-03 自動実行 #163）
 
-> 着手時の HEAD は `8a6c5c9`。#161 以降のコード変更は2件。`4f5d200`（シフト作成タブの「外部の長時間」＝P3.5c のセル色を機能ごと削除）と `e582b0c`（労働時間制「応援・外部」＝保存値 none を判定対象外にせず、通常の労働時間制 B と同じ判定にする）。どちらも 2026-10-03 のユーザー指示による変更で、app-utils.js・app-shift.js・app-company.js・functions/company-config.js・tests・回帰スクリプトが対象。database.rules.json・functions/index.js・index.html に差分は無い。
+> 着手時の HEAD は `f053304`。#162 以降のコード変更は1件。`3a34438`（組み込み属性 dispatch の表示名を「派遣」から「応援・外部」に改称し、労働時間制の選択肢から none を外す）。2026-10-03 のユーザー指示による変更で、対象は app-utils.js・app-company.js・eslint.config.js・tests・回帰スクリプト。`f053304` は削除済み機能の回帰スクリプト `example-labor-external-over.js` をリポジトリから外しただけ。database.rules.json・functions/・index.html・app-shift.js・app-admin.js・app-main.js・app-staff.js・app-core.js に差分は無い。
 
 ### 修正済み
 
@@ -1527,27 +1527,26 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 
 ### 要確認（未修正）
 
-- **[🟢] 削除済み機能の回帰スクリプト `example-labor-external-over.js` がリポジトリに残っていて、回すと EXIT=2 で落ちる**（`.claude/skills/shifty-e2e-verify/scripts/`）。
-  設定タブの「外部の長時間」トグルを探して `null.click` になる（機能が消えたので当然の失敗）。`4f5d200` の作業記録（BACKLOG「外部の長時間」の削除の「残り」）に「削除が Bash フックの不可逆ゲートに止められたため残っている。ユーザーの承認を得てから削除する」と記載済みなので、本ループでも削除していない。**削除までは回帰を一括で回すとこの1本だけ落ちる**ことを承知しておく。置き換えの回帰は `example-labor-external-as-b.js`（EXIT=0 を実測）。→ BACKLOG に記載済み（ユーザー承認待ち）
 - **[🟢] #158 から継続の4件**（モーダルを開いた瞬間に前の結果が1フレーム見えうる／実績で時刻を変えた日の adjustedBreak＝BACKLOG化済み／企業の提出状況表からの確定がプランを見ない／他店舗略称＋「締」・番号欄の書き換え）。状態は同じ。
-- **[🟢] 従業員番号を使っていない店舗では、A制・B制の全員に「従業員番号が未設定」が労務の確認パネルに出る**（F6③）。`e582b0c` で応援・外部（保存値 none）の人だけは出なくなった（`isStaffNumberMissing` が保存値を見る）。A制・B制の人は従来どおり出る＝計画どおりの仕様なので変更していない。
+- **[🟢] 従業員番号を使っていない店舗では、A制・B制の全員に「従業員番号が未設定」が労務の確認パネルに出る**（F6③）。計画どおりの仕様なので変更していない。
 - **[🟢] 月次賃金は、翌月の期間がまだ無い月末の週の法定休日を判定しない**（#161 と同じ・既存の仕様）。
-- **[🟢] `.cursorrules` に作業ツリーの未コミット変更（+547行・#161 の +481行から増えている）がある。** 本ループの作業ではないので触っていない。
+- **[🟢] `.cursorrules` に作業ツリーの未コミット変更（+547行・#162 と同数）がある。** 本ループの作業ではないので触っていない。
+
+#162 の「削除済み機能の回帰スクリプトが残っている」は `f053304` で解消した（ファイルが無いことを確認）。
 
 ### 異常なし
 
-- **`e582b0c`（none → B の読み替え）の影響範囲を全ファイルで追った。** 判定に使う `laborSystemForStaff` の呼び出しは app-shift.js の5箇所（laborByStaff・年の36協定・労務確認パネル・月次賃金と企業横断ダッシュボードのレポート行）と app-company.js の賃金設定ページ1箇所で、すべて B に読み替えた値を受け取る。保存値を表示する側（設定タブの労働時間制の select と企業設定の固定表示）は `lim.laborSystem` を直接読むので「応援・外部」のまま出る。内部値 `"none"` を比べている箇所（app-shift.js の `l.sys==="none"` 4箇所・`laborFindingsFor`・`overallVerdictOf`・`premiumFindingsFor`）は、いずれも laborByStaff が行き先の店の人（P3.6 の dest）に入れる値だけを指す。企業横断ダッシュボードの区分列は `DASHBOARD_SYS_LABELS[v.sys]||""` なので、dest の行は空欄になり「none」の文字は出ない。月次賃金の `skip` は `"badSystem"`（区分が空欄）だけになり、注記の文言も追随している。
-- **`4f5d200`（P3.5c の削除）の取り残しを全ファイルで探した。** `highlightExternalOver8h`・`externalOverThresholdMin`・`externalOver` の参照は app-*.js・functions/・database.rules.json に0件（残るのは tests のコメントと、上の削除待ちの回帰スクリプトだけ）。`laborSettingsOf` が保存済みの2キーを捨てることはテストで固定されている。
-- `npm test` **522件パス**・`npx eslint app-*.js` **0 errors / 116 warnings**（#161 と同数）・`node --check` で functions/index.js と company-config.js は通過。
-- 実ブラウザ回帰7本（labor-external-as-b・labor-cell-color・labor-phase1・index-html-load・payroll・company-dashboard・break-idle）はすべて EXIT=0・allPass。
-- `DEV_MODE` は式のまま。読み込み順は7ファイルとも正しい。Babel を通る最大のファイルは app-company.js の 209,182 字（上限 500,000 字）。フォーム部品148件で `fontSize` 16未満は0件。未定義の CSS 変数・`subs`/`periods` の全体 set()・`global/shops` と `accounts` の全件読み・functions/ の `.delete()`・ルールの `.read: true` は0件。SRI 付き CDN は11本。
+- **`3a34438` の影響範囲を全ファイルで追った。** `LABOR_SYSTEM_LABELS` から none のラベルが消えたが、このオブジェクトを引く箇所は app-company.js の3箇所（企業の共通設定の select・設定タブの select・企業設定の固定表示）だけで、いずれも `LABOR_SYSTEM_CHOICES`（A・B）か `laborSystemChoiceOf`（none を B に寄せる）を通した値で引く。none をそのまま引いて undefined が画面に出る経路は無い。保存値の検証（`LABOR_SYSTEMS`・`_coLimitSet`・CF の `COMPANY_LABOR_SYSTEMS`）は3値のままで、本番に残る none は捨てられない。
+- **設定タブの select の初期値を場合分けで確かめた。** 保存値なしの dispatch／other は既定 none から B が選ばれた状態、保存値なしの独自属性は「未設定」、保存値 none は B。表示が B のまま何も選び直さなければ保存値は書き換わらない。
+- **「派遣」の文字列に依存する判定は属性名の側に無い。** app-*.js と functions/ で「派遣」が残るのは従業員番号欄の文字の話（`isStaffNumberMissing`・番号の重複判定のコメント）だけで、今回の改称の対象外。
+- `npm test` **522件パス**・`npx eslint app-*.js` **0 errors / 116 warnings**（#162 と同数）・`node --check` で functions/index.js と company-config.js は通過。
+- 実ブラウザ回帰7本（labor-external-as-b・labor-phase1・labor-cell-color・attr-order・company-settings・index-html-load・staff-pay）はすべて EXIT=0。
+- `DEV_MODE` は式のまま。読み込み順は7ファイルとも正しい。Babel を通る最大のファイルは app-company.js の 209,379 字（上限 500,000 字）。フォーム部品148件で `fontSize` 16未満は0件。未定義の CSS 変数・`subs`/`periods` の全体 set()・`global/shops` と `accounts` の全件読み・functions/ の `.delete()`・ルールの `.read: true` は0件。SRI 付き CDN は11本。
 - **Firebase・Stripe・本番データには一切アクセスしていない。**
 
 **申し送り**:
-- 配信版数は8箇所とも `20261002-1bd2e44` のまま。その後 `3f68a19`・`7a70ca5`・`4f5d200`・`e582b0c` で app-utils.js・app-shift.js・app-company.js が変わっているので、次のリリースで `?v=` と `build:` のバンプが要る（`/release-to-main` の標準工程）。
-- 本番の店舗に残る `laborSettings.highlightExternalOver8h`・`externalOverThresholdMin` と、属性の `laborSystem:"none"` はデータ移行なしのまま（読む側が捨てる・読み替える）。移行は不要だが、本番データの調査で見かけても壊れたデータではない。
-- スケジュールタスクの PHASE 2〜4 の grep はいまも削除済みの `app.js` を対象にしている（18回目）。今回も app-*.js に読み替えた。macOS には `timeout` コマンドが無いので、回帰スクリプトを一括で回すときは付けない（付けると全部 EXIT=127 になる）。
-
+- 配信版数は本ループの実行中に別セッションのリリース（`45d59f1`）で `20261003-f053304` へ上がった（index.html 7箇所＋app-core.js の `build:`）。`f053304` は `3a34438` を含むので、app-*.js の変更はすべて版数に追随している。`DEV_MODE` は式のまま。
+- スケジュールタスクの PHASE 2〜4 の grep はいまも削除済みの `app.js` を対象にしている（19回目）。今回も app-*.js に読み替えた。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
