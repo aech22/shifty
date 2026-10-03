@@ -1677,7 +1677,7 @@ const dragIdxRef=useRef(null);
             {sec("名前",<>
               <div style={{display:"flex",gap:8}}>
                 <input value={editName} onChange={e=>setEditName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmEdit(n);if(e.key==="Escape")cancelEdit();}} maxLength={50} style={{...AI,flex:1,padding:"8px 10px"}}/>
-                <button onClick={()=>confirmEdit(n)} style={{...AB,padding:"8px 14px",fontSize:13,whiteSpace:"nowrap"}}>名前を保存</button>
+                <button onClick={()=>confirmEdit(n)} style={{...AB,padding:"8px 14px",fontSize:13,whiteSpace:"nowrap"}}>保存</button>
               </div>
               <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>改名すると設定・過去の期間の記録も一緒に移ります。</div>
             </>)}
