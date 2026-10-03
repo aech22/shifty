@@ -1105,6 +1105,8 @@ npx eslint app-*.js  # 0 errors を維持（CIでも実行）
 - **CDNスクリプトはSRI付き**: バージョン変更時は integrity ハッシュの再計算が必要（`curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`）
 - **スタイル定数**: `AI`（input）/ `AB`（primary button）/ `AD`（delete）/ `AGray`（secondary）が app-core.js に定義済み
 - **console.log は `dlog()` を使う**（DEV_MODE時のみ出力。warn/errorはそのまま）
+- **シフト作成タブ（ShiftEditTab）の重い計算の依存を、描画のたびに新しくなる値にしない**（S1・2026-10-04）。`weeks`・`sameMoPeriods` は `useMemo`、`staffAliases` の既定値はモジュール直下の凍結した `NO_STAFF_ALIASES`（`||{}` と書くと毎回新しいオブジェクトになる）。どれも `weekRestByStaff`・`laborByStaff`・`liveTotalFor`・`liveMonthOtFor` の依存に入っていて、1つでも毎回変わると**セルの選択と1文字入力のたびに労務判定・割増・36協定の年の集計が全員分やり直される**（30人×31日で `laborFindingsFor` が30回）。依存に値を足すときは、その値が入力・フォーカスで変わらないことを確かめる。測り方は `.claude/skills/shifty-e2e-verify/scripts/perf-shift-edit-tab.js`（選択と入力で `laborFindingsFor` が0回でないと EXIT=1）
+- **Excel の名前行（2行目のスタッフ名）は 9pt・太字・縦書き・左右中央・上下中央**（K2・2026-10-04）。`expXl` の名前セル専用の整列 `aName`（`textRotation:"vertical"`）を使う。**ExcelJS 4.4.0 は数値の `textRotation:255` を書き出し時に捨てる**（実測。`"vertical"` なら `textRotation="255"` が出力される）ので、`aV`（期間ラベル・曜日・店舗名が使う既定値）は縦書きになっていない。`aV` を直すと他のセルの見た目まで変わるので名前セルだけ別にしてある。行の高さは 78 のままで、9pt の縦書きで収まるのは目安7文字前後。回帰は `example-excel-missing-day.js`（名前セル以外の書式が K2 の前と同じことも測る）
 
 ### CSS カスタムプロパティ（テーマ）
 
