@@ -415,6 +415,73 @@ function ActualsCsvDialog({period,staff,subs,settings,act,tt,onClose}){
   );
 }
 
+// ===== シフト作成グリッドのセル（S2・2026-10-04）=====
+// 選択と1文字入力では**このセルだけ**を描き直す。入力中の文字（draft）とフォーカスの状態はセルの中に持ち、
+// 親（ShiftEditTab）へは確定（blur・Enter）のときだけ api.commit で伝える。入力中の値は api.draft で親の ref にも置き、
+// flushEdits・PDF・Excel から見えるようにする。
+// **props はプリミティブか安定した参照だけにする**（memo が効かなくなる）。関数は親の api（useMemo([]) で1回だけ
+// 作った転送役）だけを渡し、毎回作るクロージャ・style オブジェクトは渡さない。base は親が useMemo で固定した AI2。
+// 親が渡す値はすべて「フォーカスしていないとき」の見え方（idleVal・col・color・hFont）。フォーカス中の見え方は
+// 以前 focusKey で切り替えていたものをここで作る: 背景色は付けない（斜線だけ残す）・文字色は既定・
+// 混在の日（自店＋ヘルプ）の合成表示は自店の値（editVal）に切り替える（ヘルプ先だけの日＝hKeep は合成表示のまま）。
+const cellBgStyleOf=(col,dash)=>{
+  const layers=[];
+  if(dash)layers.push(HDASH_IMG);
+  if(col)layers.push(`linear-gradient(${col},${col})`);
+  // 色が付くセルだけ不透明ベースを敷く＝下の曜日色・不足色を完全に隠す（fill 方式・ShiftEditTab の cellBgCol のコメント）
+  const st={backgroundColor:col?"var(--c-card)":"transparent"};
+  if(layers.length){st.backgroundImage=layers.join(",");st.backgroundRepeat="no-repeat";st.backgroundSize="100% 100%";}
+  return st;
+};
+const ShiftCell=React.memo(function ShiftCell({name,date,field,idleVal,editVal,col,dash,color,hFont,hLh,hKeep,hDay,title,readOnly,isPremium,canEdit,locked,base,cursor,prevDate,nextDate,resetKey,api}){
+  const[focused,setFocused]=useState(false);
+  const[draft,setDraft]=useState(null);
+  // 店舗の切り替え・選択中の期間の消失（親の discardEdits）で入力中の文字を捨てる。初回は何もしない
+  const resetSeen=useRef(resetKey);
+  useEffect(()=>{if(resetSeen.current===resetKey)return;resetSeen.current=resetKey;setDraft(null);setFocused(false);},[resetKey]);
+  const key=`${name}|${date}|${field}`;
+  const value=draft!=null?draft:(focused&&editVal!==undefined?editVal:idleVal);
+  const showHelper=hFont!=null&&(!focused||hKeep);
+  const style=useMemo(()=>{
+    const st={...base,background:undefined,...cellBgStyleOf(focused?null:col,dash),color:(focused?undefined:color)||base.color,opacity:isPremium?1:0.55,cursor};
+    if(showHelper){st.fontSize=hFont;st.whiteSpace="nowrap";st.overflow="hidden";if(hLh)st.lineHeight=hLh;if(hDay)st.cursor="default";}
+    return st;
+  },[base,focused,col,dash,color,isPremium,cursor,showHelper,hFont,hLh,hDay]);
+  return(
+    <input type="text" inputMode="text" value={value} placeholder="--"
+      title={title}
+      data-helper={showHelper?"1":undefined}
+      readOnly={readOnly}
+      data-sc={`${date}|${field}`} data-scn={name}
+      onChange={e=>{if(!isPremium||locked)return;const v=e.target.value;setDraft(v);api.draft(key,v);}}
+      onClick={e=>{if(!isPremium){api.upgrade();return;}if(canEdit&&e.detail===3&&!hDay)api.triple(name,date);}}
+      onTouchEnd={()=>{if(!canEdit||hDay)return;api.tripleTap(name,date);}}
+      onFocus={e=>{if(!isPremium){e.target.blur();api.upgrade();return;}setFocused(true);api.tip(name,date,field,e.target.getBoundingClientRect());}}
+      onBlur={e=>{api.commit(name,date,field,e.target.value);api.hideTip();setFocused(false);setDraft(null);api.draft(key,null);}}
+      // 日本語IME変換確定のEnter(isComposing/keyCode229)はセル確定・フォーカス移動として扱わない。
+      // 除外しないと変換確定のEnterで即座に次セルへ移動し、IMEの確定処理がそのまま次セルに入って
+      // 手打ちしていないセルにも同じ文字（例:「締」）が入ってしまう
+      onKeyDown={e=>{
+        if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;
+        e.preventDefault();
+        api.commit(name,date,field,e.target.value);
+        // 出勤→同じ日の退勤→次の日の出勤の順に進む。Ctrl/Cmd+Enter は逆向き
+        const back=e.ctrlKey||e.metaKey;
+        const to=field==="start"?(back?(prevDate?`${prevDate}|end`:""):`${date}|end`):(back?`${date}|start`:(nextDate?`${nextDate}|start`:""));
+        if(to)document.querySelector(`[data-sc="${to}"][data-scn="${CSS.escape(name)}"]`)?.focus();
+      }}
+      style={style}/>
+  );
+});
+// セルを選んだときの「提出値」ツールチップ。表全体を描き直さないよう、自分の state だけで出し入れする
+// （親はセルの api.tip / api.hideTip から setRef.current を呼ぶだけ）
+const CellTip=React.memo(function CellTip({setRef}){
+  const[tip,setTip]=useState(null);
+  React.useLayoutEffect(()=>{setRef.current=setTip;return()=>{if(setRef.current===setTip)setRef.current=null;};},[setRef]);
+  if(!tip)return null;
+  return <div style={{position:"fixed",left:tip.x,top:tip.y-26,transform:"translateX(-50%)",background:"rgba(30,30,30,0.82)",color:"#fff",fontSize:11,fontWeight:600,padding:"2px 7px",borderRadius:8,pointerEvents:"none",zIndex:9999,whiteSpace:"nowrap",backdropFilter:"blur(4px)"}}>{tip.value}</div>;
+});
+
 // staffList/settings を props 名のまま受けないのは、このタブだけが「選択中の期間が終了済みなら
 // その期間の写し(period.snapshot)を使う」＝他タブと違う値で動くため。以降の本文が参照する
 // staffList/settings は解決後の値で、写しの更新にだけ生の staffListProp/settingsProp を使う。
@@ -424,10 +491,20 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const firstPid=(periods[0]||{}).id||"";
   // initialPeriodId は企業連携タブの一括PDF（非表示マウント）が対象期間を指定するために使う
   const[selPid,setSelPid]=useState(initialPeriodId||firstPid);
+  // localEdits は**確定した**セルの表示用バッファ（blur 後も保存の反映まで残す）。入力中の文字はセル（ShiftCell）の
+  // 中にあり、ここには確定のときだけ入る（S2）。flushEdits が blur の直後に同期的に読めるよう ref にも同じ値を置く
+  // （更新は必ず updLocalEdits を通す）。入力中の文字は draftRef（{key,value}）にセルが置く。
   const[localEdits,setLocalEdits]=useState({});
+  const localEditsRef=useRef(localEdits);
+  const updLocalEdits=fn=>{const next=fn(localEditsRef.current);if(next===localEditsRef.current)return;localEditsRef.current=next;setLocalEdits(next);};
+  const draftRef=useRef(null);
+  // 確定済み＋入力中の値（入力中のセルが無ければ localEdits と同じ参照）
+  const editsNow=()=>{const d=draftRef.current;const le=localEditsRef.current;return d&&d.key?{...le,[d.key]:d.value}:le;};
   const[heatEdits,setHeatEdits]=useState({}); // blur確定値のみ（集計・ヒートマップ用）
-  const[focusKey,setFocusKey]=useState(null); // フォーカス中セルkey（黄色ハイライト抑制用）
-  const[cellTip,setCellTip]=useState(null); // {x,y,value}
+  // セルの入力中の文字を捨てる合図（ShiftCell が resetKey の変化で draft とフォーカス表示を消す）
+  const[cellResetKey,setCellResetKey]=useState(0);
+  // localEdits/heatEdits とセルの入力中の文字をまとめて捨てる（店舗切替・期間切替・選択中の期間の消失）
+  const discardEdits=()=>{updLocalEdits(()=>({}));setHeatEdits({});draftRef.current=null;setCellResetKey(k=>k+1);};
   const[fitAll,setFitAll]=useState(false);
   const[deptFilter,setDeptFilter]=useState("all"); // "all"|"kit"|"hall" — キッチン/ホール絞り込み表示
   const[pdfModal,setPdfModal]=useState(false);
@@ -464,7 +541,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // localEdits/heatEditsはスタッフ名をキーに持つバッファのため、リセットしないと前の店舗で入力中/確定済みの
   // 値が新しい店舗のグリッドに残存表示され、保存操作(handleBlur/handleSaveAll)で同名スタッフ（複数店舗在籍者）
   // の別店舗データへ誤って書き込まれる。shopId変更時に必ずクリアする。
-  useEffect(()=>{setLocalEdits({});setHeatEdits({});setFocusKey(null);},[shopId]);
+  useEffect(()=>{discardEdits();},[shopId]);
 
   // 企業連携の他店舗データ（略称・提出シフト）。ヘルプ判定・重複チェックに使用
   const[companyData,setCompanyData]=useState({}); // {shopId:{name,abbrs:[],workMap:Map(name|date→shift)}}
@@ -528,7 +605,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   useEffect(()=>{
     if(periods.length>0&&!periods.find(p=>p.id===selPid)){
       setSelPid(periods[0].id);
-      setLocalEdits({});setHeatEdits({});setFocusKey(null);
+      discardEdits();
     }
   },[periods]);
 
@@ -757,16 +834,16 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       ownText:{start:ownVal(name,date,"start"),end:ownVal(name,date,"end")}});
   };
   const isHelperOnly=(name,date)=>{const hd=helperDisp(name,date);return!!(hd&&hd.helperOnly);};
-  // いまセルに合成表示（時刻＋略称）を出しているならその文字列、出していなければ ""。
-  // 混在の日の略称の付くセルは、フォーカス中だけ自店の値（getVal の下の経路）に切り替える。
+  // フォーカスしていないときにセルに合成表示（時刻＋略称）を出すならその文字列、出さないなら ""。
+  // 混在の日の略称の付くセルは、フォーカス中だけ自店の値（ownEditVal）に切り替える＝切り替えはセル（ShiftCell）が行う（S2）。
   const helperShownText=(name,date,field)=>{
     const hd=helperDisp(name,date);
     if(!hd||!hd[field].helper)return"";
-    if(!hd.helperOnly&&focusKey===`${name}|${date}|${field}`)return"";
     return hd[field].text;
   };
-  const getVal=(name,date,field)=>{const hx=helperShownText(name,date,field);if(hx)return hx;const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];return ownVal(name,date,field);};
-  const handleChange=(name,date,field,value)=>{if(periodConfirmed)return;setLocalEdits(prev=>({...prev,[`${name}|${date}|${field}`]:value}));};
+  // セルの自店の値（確定済みの編集＞保存値）。フォーカスしていないセルは合成表示があればそちらを出す（getVal）
+  const ownEditVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in localEdits)return localEdits[key];return ownVal(name,date,field);};
+  const getVal=(name,date,field)=>{const hx=helperShownText(name,date,field);if(hx)return hx;return ownEditVal(name,date,field);};
   // 店舗限定固定シフトコマンド（「締」等）が有効な店舗かどうか
   const fixedShiftEnabled=useMemo(()=>isFixedShiftEligibleShop(shopName),[shopName]);
   // 1セル分の編集をnewSubs配列に適用する（handleBlur・保存ボタン一括保存の共通ロジック）。
@@ -952,7 +1029,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // セルを空欄にする blur が丸ごと捨てられ、消したはずの文字が保存値から復活する（本番報告）。
     const leaveShown=leaveCellText(name,date,field);
     if(leaveShown&&leaveShown===String(rawValue==null?"":rawValue).trim()){
-      setLocalEdits(prev=>{if(!(ekey in prev))return prev;const n={...prev};delete n[ekey];return n;});
+      updLocalEdits(prev=>{if(!(ekey in prev))return prev;const n={...prev};delete n[ekey];return n;});
       return;
     }
     // ヘルプの合成表示（時刻＋略称・H2）のまま blur しても保存しない。**合成表示が出ているセルだけが対象**
@@ -960,7 +1037,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // フォーカス中は自店の値に切り替わっているので、通常の blur は自店の値を保存する
     const hdB=helperDisp(name,date);
     if(hdB&&hdB[field].helper&&hdB[field].text===String(rawValue==null?"":rawValue).trim()){
-      setLocalEdits(prev=>{if(!(ekey in prev))return prev;const n={...prev};delete n[ekey];return n;});
+      updLocalEdits(prev=>{if(!(ekey in prev))return prev;const n={...prev};delete n[ekey];return n;});
       return;
     }
     const{numeric,note,rest,hasFixed}=extractNote(rawValue);
@@ -969,7 +1046,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(restAppliedRef.current.key===ekey&&now-restAppliedRef.current.t<400)return;
       restAppliedRef.current={key:ekey,t:now};
       // 表示は保存値由来に任せる（トグルON=空欄+斜線 / OFF=提出値が復元されて再表示）ため編集値ごと消す
-      setLocalEdits(prev=>{const n={...prev};delete n[ekey];return n;});
+      updLocalEdits(prev=>{const n={...prev};delete n[ekey];return n;});
       setHeatEdits(prev=>{const n={...prev};delete n[ekey];return n;});
       onSave(prevSubs=>{
         const newSubs=[...prevSubs];
@@ -983,7 +1060,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // 数値なし(締めコマンド単独・締め+他コマンドの組み合わせ含む)の場合、通常なら空欄表示になってしまう
     // 箇所を締め自体の表示として残す
     const display=parsed?(toDecimal(parsed)+note+fx):((note+fx)||"");
-    setLocalEdits(prev=>({...prev,[ekey]:display}));
+    updLocalEdits(prev=>({...prev,[ekey]:display}));
     setHeatEdits(prev=>({...prev,[ekey]:display})); // blur確定値を集計/ヒートマップ用に反映
     // 直前state(prevSubs)基準の関数型更新。Enterキーでの高速な連続blur等、再レンダーを挟まず
     // 複数セルが立て続けに確定するケースでも、propsのsubs（古いスナップショットの可能性がある）
@@ -1001,9 +1078,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // localEdits は blur 後も表示用に残るので「未保存があれば提出させない」とは判定できない。
   const flushEdits=(silent)=>{
     if(!isPremium||periodConfirmed)return 0;
+    // 対象は「確定済みの編集＋入力中のセルの文字」（S2 で入力中の文字は localEdits に入らなくなったので、
+    // 以前の localEdits と同じ中身になるよう blur の前に合わせて取る。blur で確定した分は直前の onBlur が書く）
+    const pending=editsNow();
     // フォーカス中セルがあれば先にblurさせ、その場のonBlurで確定させてから一括処理する
     if(document.activeElement&&document.activeElement.tagName==="INPUT")document.activeElement.blur();
-    const entries=Object.entries(localEdits);
+    const entries=Object.entries(pending);
     if(entries.length===0){if(!silent)tt("変更はありません");return 0;}
     onSave(prevSubs=>{
       const newSubs=[...prevSubs];
@@ -1017,7 +1097,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       });
       return newSubs;
     });
-    setHeatEdits(prev=>({...prev,...localEdits}));
+    setHeatEdits(prev=>({...prev,...pending}));
     if(!silent)tt(`✓ ${entries.length}件のシフトを保存しました`);
     return entries.length;
   };
@@ -1916,7 +1996,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // fontSize が16pxを下回るのは全表示のセルだけ。RULES.md の16px規約に対する**明示的な例外**で、
   // 2026-09-23 にユーザーが「全表示の際、フォントの縮小はok」と決めた（編集は維持する）。
   // iOS/iPadOSでは全表示のセルをタップするとフォーカス時に自動ズームが起きる。
-  const AI2=fullView
+  // **参照を固定する**（S2）: セル部品（ShiftCell）が base として受け取り、memo の比較に使う。毎回作ると全セルが描き直される
+  const AI2=useMemo(()=>fullView
     ?{width:fvEdge?"calc(100% - 6px)":"100%",height:fvInnerH,display:"block",margin:fvEdge?"2px 3px":0,
       fontSize:fvFont,lineHeight:fvInnerH+"px",border:fvEdge?BD:"none",borderRadius:fvEdge?3:0,padding:0,
       // fill は透明にして td（土日祝の行色・ポジション不足の黄色）をセル全面に透かす
@@ -1928,7 +2009,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     // 縦線が2pxに見える（帯が無くなり両者が接するため）。セルの区切りは td 側の罫線が担う。
     // 縦の padding 4px は、td の padding と input の余白を合わせて**行の高さを従来どおり**に保つため
     // （帯を外しただけで行が詰まると、行ストライドが 52px→44px になりグリッド全体の高さが変わる）。
-    :{width:"100%",display:"block",fontSize:16,border:"none",borderRadius:0,padding:"4px 1px",background:"transparent",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"};
+    :{width:"100%",display:"block",fontSize:16,border:"none",borderRadius:0,padding:"4px 1px",background:"transparent",color:"var(--c-text)",textAlign:"center",boxSizing:"border-box"},
+  [fullView,fvEdge,fvInnerH,fvFont,BD]);
   // 斜線画像 HDASH_IMG はモジュールスコープ（GridLegend・cellBgStyleと共用）
   // 全表示では日付列を左右両端に置くため sticky を外す（全体が見えるので固定する意味が無い）。
   // 休みカウント表・集計表のラベル列も同じ SD を使うので、幅を変えると3表の列位置が一緒に揃う。
@@ -2014,11 +2096,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(sh.adminRest&&sh.adminRest[field])return true; // 管理者入力の休み希望(/)
     return sh.status==="holiday"; // スタッフ提出の1日休み希望
   };
-  // セルの色: 緑(スタッフ変更) > 赤(店舗間重複) > 黄(サフィックスnote・他店舗ヘルプ含む) > 行背景。フォーカス中セルは通常背景。
+  // セルの色: 緑(スタッフ変更) > 赤(店舗間重複) > 黄(サフィックスnote・他店舗ヘルプ含む) > 行背景。
+  // フォーカス中セルは通常背景（色を付けない）＝セル（ShiftCell）が自分で外す（S2）。ここはフォーカスしていないときの色
   const cellBgFor=(name,date,field,rb)=>{
     const key=`${name}|${date}|${field}`;
     if(_getSub(name)?.shifts?.[date]?.changed===true)return LEGEND_COLORS.changed;
-    if(focusKey===key)return rb; // 編集中は通常背景
     if(timeErrors[`${name}|${date}`])return LEGEND_COLORS.timeErr;
     if(dupErrors[`${name}|${date}`])return LEGEND_COLORS.dup;
     // 労務の要修正のうち**色で示すと決めた日**（12h超・1日の残業が上限超）。
@@ -2040,7 +2122,6 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const cellTextColor=(name,date,field)=>{
     const key=`${name}|${date}|${field}`;
     if(_getSub(name)?.shifts?.[date]?.changed===true)return undefined;
-    if(focusKey===key)return undefined;
     if(helperShownText(name,date,field))return"#333";
     if(fieldRest(name,date,field))return undefined;
     let note="";
@@ -2076,29 +2157,24 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // border-box に揃えてその帯が 7px→3px に細くなったため、全表示と同じ fill に統一した。
   // 休み希望の斜線(HDASH_IMG)も backgroundImage を使うため、両方付くときは斜線を前面にカンマ合成する。
   // 優先順位: 変更 > 不足 > 企業間他店舗被り > ヘルプ(メモ) > 曜日（2026-09-23 ユーザー指示）。
+  // セルに塗る1色（無ければ null）と斜線の有無を返す。style への組み立ては cellBgStyleOf（モジュール直下・ShiftCell と共用）。
+  // フォーカス中は色を付けない（斜線だけ残す）＝ShiftCell が col を null にして組み立てる
   const BG_NONE="__bg_none__";
-  const cellBgStyle=(name,date,field)=>{
-    const key=`${name}|${date}|${field}`;
-    const editing=focusKey===key;
-    let col=editing?null:cellBgFor(name,date,field,BG_NONE);
+  const cellBgCol=(name,date,field)=>{
+    let col=cellBgFor(name,date,field,BG_NONE);
     if(col===BG_NONE)col=null;
     // 不足は changed の次・dup より前に割り込ませる（cellBgFor は td 側の不足色を知らないため）。
     // **時刻の入力ミス（timeErr）には割り込ませない**——入力そのものの誤りで、直さない限り
     // その日の実働は0のまま集計にも出ない。不足に上書きさせると、ポジションが足りない日は
     // 両方のセルが黄色になって**セル側の手がかりが消える**（2026-09-26 に dev 実機で実測）。
-    if(!editing&&col!==LEGEND_COLORS.changed&&col!==LEGEND_COLORS.timeErr&&col!==LEGEND_COLORS.laborErr&&cellPosErr(name,date,field==="start"?"lunch":"dinner"))col=LEGEND_COLORS.posErr;
-    const layers=[];
-    // 休暇の種別名を出すセルには斜線を引かない（文字と重なって読めなくなる・2026-09-26 ユーザー指示）。
-    // スタッフ提出の休み（種別名を出さない）は従来どおり斜線のまま。
-    // ヘルプ先の勤務がある日は斜線を引かない（H2。PDF・Excel も同じ）
-    if(holidayCellDash(name,date,field)&&!leaveCellText(name,date,field)&&!helperDisp(name,date))layers.push(HDASH_IMG);
-    if(col)layers.push(`linear-gradient(${col},${col})`);
-    // 色が付くセルだけ不透明ベースを敷く＝下の曜日色・不足色を完全に隠す。
-    // 色が無いセルは透明のままにして、tr の曜日色をそのまま1色で見せる。
-    const st={backgroundColor:col?CRD:"transparent"};
-    if(layers.length){st.backgroundImage=layers.join(",");st.backgroundRepeat="no-repeat";st.backgroundSize="100% 100%";}
-    return st;
+    if(col!==LEGEND_COLORS.changed&&col!==LEGEND_COLORS.timeErr&&col!==LEGEND_COLORS.laborErr&&cellPosErr(name,date,field==="start"?"lunch":"dinner"))col=LEGEND_COLORS.posErr;
+    return col;
   };
+  // 休暇の種別名を出すセルには斜線を引かない（文字と重なって読めなくなる・2026-09-26 ユーザー指示）。
+  // スタッフ提出の休み（種別名を出さない）は従来どおり斜線のまま。
+  // ヘルプ先の勤務がある日は斜線を引かない（H2。PDF・Excel も同じ）
+  // 色が付くセルだけ不透明ベースを敷き、色が無いセルは透明のままにして tr の曜日色をそのまま1色で見せる（cellBgStyleOf）
+  const cellDash=(name,date,field)=>holidayCellDash(name,date,field)&&!leaveCellText(name,date,field)&&!helperDisp(name,date);
   // トリプルクリック/トリプルタップ: そのシフトのchangedフラグをトグル（Firebase永続化）
   const toggleChanged=(name,date)=>{
     if(!isPremium||periodConfirmed)return;
@@ -2129,6 +2205,51 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const times=(prev.key===k&&prev.times.length>0&&now-prev.times[prev.times.length-1]<350)?[...prev.times,now]:[now];
     if(times.length>=3){toggleChanged(name,date);tapToggledRef.current={key:k,t:now};lastTapRef.current={key:null,times:[]};}
     else{lastTapRef.current={key:k,times};}
+  };
+  // ===== セル（ShiftCell）から親へ伝える入口（S2）=====
+  // セルへ渡す api は**最初の1回だけ作る**（useMemo([])）。中身は最後にコミットした描画の関数を cellApiRef から呼ぶ
+  // （描画のたびに新しい関数を渡すと memo が効かず、選択・入力のたびに全セルが描き直される）。
+  const cellApiRef=useRef(null);
+  const tipSetRef=useRef(null);
+  React.useLayoutEffect(()=>{
+    cellApiRef.current={
+      commit:handleBlur,
+      upgrade:()=>{onUpgrade&&onUpgrade({type:"edit",plan});},
+      triple:onCellTripleClick,
+      tripleTap:onCellTripleTap,
+      // ツールチップはスタッフが提出した値（管理者の調整前）
+      tip:(name,date,field,r)=>{
+        const sh=_getSub(name)?.shifts?.[date];
+        const v=toDecimal((field==="start"?sh?.start:sh?.end)||"");const n=(field==="start"?sh?.startNote:sh?.endNote)||"";
+        const set=tipSetRef.current;if(set)set({x:r.left+r.width/2,y:r.top,value:v?(v+n):"—"});
+      },
+    };
+  });
+  const cellApi=useMemo(()=>({
+    commit:(n,d,f,v)=>cellApiRef.current.commit(n,d,f,v),
+    upgrade:()=>cellApiRef.current.upgrade(),
+    triple:(n,d)=>cellApiRef.current.triple(n,d),
+    tripleTap:(n,d)=>cellApiRef.current.tripleTap(n,d),
+    tip:(n,d,f,r)=>cellApiRef.current.tip(n,d,f,r),
+    hideTip:()=>{const set=tipSetRef.current;if(set)set(null);},
+    // 入力中の文字。value=null は「このセルの入力を終えた」（別のセルの入力中の文字は消さない）
+    draft:(key,value)=>{if(value==null){if(draftRef.current&&draftRef.current.key===key)draftRef.current=null;}else draftRef.current={key,value};},
+  }),[]);
+  // セル1つぶんの props（すべてフォーカスしていないときの見え方）。値はプリミティブだけ
+  const cellCursor=canEditCells?"text":(isPremium?"default":"pointer");
+  const cellPropsOf=(name,date,field,di)=>{
+    const hx=helperShownText(name,date,field);
+    const hDay=isHelperOnly(name,date);
+    const hs=hx?helperCellStyle(name,date,field):null;
+    return{name,date,field,
+      idleVal:getVal(name,date,field),
+      // 混在の日の合成表示のセルだけ、フォーカス中は自店の値に切り替える（ヘルプ先だけの日は readOnly で合成表示のまま）
+      editVal:hx&&!hDay?ownEditVal(name,date,field):undefined,
+      col:cellBgCol(name,date,field),dash:cellDash(name,date,field),color:cellTextColor(name,date,field),
+      hFont:hs?hs.fontSize:null,hLh:hs&&hs.lineHeight?hs.lineHeight:null,hKeep:!!hx&&hDay,hDay,
+      title:laborErrTitle(name,date)||helperDisp(name,date)?.title||undefined,
+      readOnly:!canEditCells||hDay,isPremium,canEdit:canEditCells,locked:periodConfirmed,base:AI2,cursor:cellCursor,
+      prevDate:di>0?dates[di-1]:"",nextDate:di<dates.length-1?dates[di+1]:"",resetKey:cellResetKey,api:cellApi};
   };
 
   // グリッドの実際の行高・thead高を測定してサイドパネルと同期
@@ -2210,7 +2331,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(fieldRest(name,date,field))return{disp:"",note:""}; // 休み希望(/)フィールドは空欄（斜線は呼び出し元で描画）
     const key=`${name}|${date}|${field}`;
     let time="",note="",fixed=false;
-    if(key in localEdits){const{numeric,note:nt,hasFixed}=extractNote(localEdits[key]);time=parseTime(numeric)||"";note=nt||"";fixed=fixedShiftEnabled&&hasFixed;}
+    const LE=editsNow(); // 確定済み＋入力中のセル（S2。入力中の文字は localEdits に入らない）
+    if(key in LE){const{numeric,note:nt,hasFixed}=extractNote(LE[key]);time=parseTime(numeric)||"";note=nt||"";fixed=fixedShiftEnabled&&hasFixed;}
     else{time=getStoredTime(name,date,field);const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";fixed=getStoredFixed(name,date,field);}
     const dec=time?toDecimal(time):"";
     const fx=fixed?FIXED_KEY:"";
@@ -2221,7 +2343,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     return{disp:(dec||fx||note)?(dec+note+fx):"",note};
   };
   // 提出があるか（休みか未提出かの判定用）
-  const pdfHasSub=(name,date)=>{const sh=_getSub(name)?.shifts?.[date];const key1=`${name}|${date}|start`,key2=`${name}|${date}|end`;const edited=(key1 in localEdits)||(key2 in localEdits);return!!sh||edited;};
+  const pdfHasSub=(name,date)=>{const sh=_getSub(name)?.shifts?.[date];const key1=`${name}|${date}|start`,key2=`${name}|${date}|end`;const LE=editsNow();const edited=(key1 in LE)||(key2 in LE);return!!sh||edited;};
   // Excel出力と同じ列構成（staffList＋未提出の未登録名）。dept="kit"/"hall"の場合はgridStaffと同じ規則（h/kサフィックスのヘルプ要員を含む）で絞り込む
   const buildPdfCols=(dept="all")=>{
     if(dept==="kit")return realStaff.filter(n=>!hallStaff.includes(n)||kitExtraSet.has(n));
@@ -2883,7 +3005,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(r.error){tt("✕ "+r.error);return;}
       savePeriods(periods.map(p=>p&&p.id===pid?r.period:p));
       lm.save(r.laborMonthsPatch).catch(()=>{});
-      setLocalEdits({});
+      updLocalEdits(()=>({}));
       tt("✓ この期間を確定しました（所定を記録しました）");
     },0);
   };
@@ -2909,10 +3031,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
   return(
     <div ref={outerRef} style={{padding:"12px 8px"}}>
-      {cellTip&&<div style={{position:"fixed",left:cellTip.x,top:cellTip.y-26,transform:"translateX(-50%)",background:"rgba(30,30,30,0.82)",color:"#fff",fontSize:11,fontWeight:600,padding:"2px 7px",borderRadius:8,pointerEvents:"none",zIndex:9999,whiteSpace:"nowrap",backdropFilter:"blur(4px)"}}>{cellTip.value}</div>}
+      <CellTip setRef={tipSetRef}/>
       <div style={{marginBottom:10,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         <span style={{fontWeight:700,fontSize:15}}>シフト作成</span>
-        <select value={selPid} onChange={e=>{setSelPid(e.target.value);setLocalEdits({});setHeatEdits({});setFocusKey(null);setActualMode(false);}}
+        <select value={selPid} onChange={e=>{setSelPid(e.target.value);discardEdits();setActualMode(false);}}
           style={{fontSize:16,padding:"4px 8px",border:BD,borderRadius:4,background:"var(--c-input)",color:"var(--c-text)"}}>
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
         </select>
@@ -2956,6 +3078,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             次の行に落ちて PDF出力 から離れていた。グループごと次の行へ送れば並びは崩れない。 */}
         {(period||isPremium)&&<div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"nowrap"}}>
         {period&&<button onClick={()=>{
+          const LE=editsNow(); // 確定済み＋入力中のセル（S2）
           const adjResolver=(name,date,field)=>{
             // ヘルプの合成表示（H2）。画面・PDF と同じ helperCellDisplay の文字を helperText で返し、expXl が黄色で書く。
             // helperDay（その日にヘルプ先の勤務がある）なら休みの斜線を引かない
@@ -2965,10 +3088,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
             if(fieldRest(name,date,field))return{time:"",note:"",fixed:false,rest:!helperDay,helperDay}; // 休み希望(/)はExcelで斜線描画
             const key=`${name}|${date}|${field}`;
             let time="",fixed=false;
-            if(key in localEdits){const{numeric,hasFixed}=extractNote(localEdits[key]);time=parseTime(numeric)||"";fixed=fixedShiftEnabled&&hasFixed;}
+            if(key in LE){const{numeric,hasFixed}=extractNote(LE[key]);time=parseTime(numeric)||"";fixed=fixedShiftEnabled&&hasFixed;}
             else{time=getStoredTime(name,date,field);fixed=getStoredFixed(name,date,field);}
             let note="";
-            if(key in localEdits){note=extractNote(localEdits[key]).note||"";}
+            if(key in LE){note=extractNote(LE[key]).note||"";}
             else{const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=sh?.[adjNk]??sh?.[origNk]??"";}
             // 「締」（追加出勤）はnoteとは独立に永続化されるためfixedで別枠に返す（pdfResolveと同じ組み立て）。
             // ここで返さないとExcelでだけ締めが脱落する（バグチェック#52）
@@ -3121,7 +3244,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                 </tr>
               </thead>
               <tbody ref={gridBodyRef}>
-                {dates.map(date=>{
+                {dates.map((date,di)=>{
                   const d=pd(date);const day=d.getDay();
                   const isHol=isHoliday(date);const isSun=day===0;const isSat=day===6;
                   const isSpecRed=isSpecialRedDate(date,settings);
@@ -3136,21 +3259,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                       <td rowSpan={2} style={{...SD,color:dc,verticalAlign:"middle",borderBottom:BD,background:CRD}}>{fmtDL(date)}</td>
                       {mapGridCols(name=>(
                         <td key={name} style={{padding:0,boxSizing:BOXS,borderLeft:BD,borderBottom:"none",textAlign:"center",background:rbS(name),width:colW,minWidth:colW,maxWidth:colW}}>
-                          <input type="text" inputMode="text" value={getVal(name,date,"start")} placeholder="--"
-                            title={laborErrTitle(name,date)||helperDisp(name,date)?.title||undefined}
-                            data-helper={helperShownText(name,date,"start")?"1":undefined}
-                            readOnly={!canEditCells||isHelperOnly(name,date)}
-                            data-sc={`${date}|start`} data-scn={name}
-                            onChange={e=>isPremium&&handleChange(name,date,"start",e.target.value)}
-                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(canEditCells&&e.detail===3&&!isHelperOnly(name,date))onCellTripleClick(name,date);}}
-                            onTouchEnd={()=>{if(!canEditCells||isHelperOnly(name,date))return;onCellTripleTap(name,date);}}
-                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|start`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.start||"");const n=sh?.startNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
-                            onBlur={e=>{handleBlur(name,date,"start",e.target.value);setCellTip(null);setFocusKey(null);}}
-                            // 日本語IME変換確定のEnter(isComposing/keyCode229)はセル確定・フォーカス移動として扱わない。
-                            // 除外しないと変換確定のEnterで即座に次セルへ移動し、IMEの確定処理がそのまま次セルに入って
-                            // 手打ちしていないセルにも同じ文字（例:「締」）が入ってしまう
-                            onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"start",e.target.value);if(e.ctrlKey||e.metaKey){const pdi=dates.indexOf(date)-1;if(pdi>=0)document.querySelector(`[data-sc="${dates[pdi]}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{document.querySelector(`[data-sc="${date}|end"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"start"),color:cellTextColor(name,date,"start")||AI2.color,opacity:isPremium?1:0.55,cursor:canEditCells?"text":(isPremium?"default":"pointer"),...helperCellStyle(name,date,"start")}}/>
+                          <ShiftCell {...cellPropsOf(name,date,"start",di)}/>
                         </td>
                       ),spacerCell)}
                       {/* 右端の日付（全表示のみ）。左端と同じ rowSpan=2 で出勤行に置く */}
@@ -3159,18 +3268,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                     <tr key={date+"-e"} style={{background:baseRb}}>
                       {mapGridCols(name=>(
                         <td key={name} style={{padding:0,boxSizing:BOXS,borderLeft:BD,borderBottom:BD,textAlign:"center",background:rbE(name),width:colW,minWidth:colW,maxWidth:colW}}>
-                          <input type="text" inputMode="text" value={getVal(name,date,"end")} placeholder="--"
-                            title={laborErrTitle(name,date)||helperDisp(name,date)?.title||undefined}
-                            data-helper={helperShownText(name,date,"end")?"1":undefined}
-                            readOnly={!canEditCells||isHelperOnly(name,date)}
-                            data-sc={`${date}|end`} data-scn={name}
-                            onChange={e=>isPremium&&handleChange(name,date,"end",e.target.value)}
-                            onClick={e=>{if(!isPremium){onUpgrade&&onUpgrade({type:"edit",plan});return;}if(canEditCells&&e.detail===3&&!isHelperOnly(name,date))onCellTripleClick(name,date);}}
-                            onTouchEnd={()=>{if(!canEditCells||isHelperOnly(name,date))return;onCellTripleTap(name,date);}}
-                            onFocus={e=>{if(!isPremium){e.target.blur();onUpgrade&&onUpgrade({type:"edit",plan});return;}setFocusKey(`${name}|${date}|end`);const sh=_getSub(name)?.shifts?.[date];const v=toDecimal(sh?.end||"");const n=sh?.endNote||"";const s=v?(v+n):"—";const r=e.target.getBoundingClientRect();setCellTip({x:r.left+r.width/2,y:r.top,value:s});}}
-                            onBlur={e=>{handleBlur(name,date,"end",e.target.value);setCellTip(null);setFocusKey(null);}}
-                            onKeyDown={e=>{if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;e.preventDefault();handleBlur(name,date,"end",e.target.value);if(e.ctrlKey||e.metaKey){document.querySelector(`[data-sc="${date}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}else{const ndi=dates.indexOf(date)+1;if(ndi<dates.length)document.querySelector(`[data-sc="${dates[ndi]}|start"][data-scn="${CSS.escape(name)}"]`)?.focus();}}}
-                            style={{...AI2,background:undefined,...cellBgStyle(name,date,"end"),color:cellTextColor(name,date,"end")||AI2.color,opacity:isPremium?1:0.55,cursor:canEditCells?"text":(isPremium?"default":"pointer"),...helperCellStyle(name,date,"end")}}/>
+                          <ShiftCell {...cellPropsOf(name,date,"end",di)}/>
                         </td>
                       ),spacerCell)}
                     </tr>
