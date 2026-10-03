@@ -1850,6 +1850,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
   const[expanded,setExpanded]=useState({});   // {shopId:true}
   const[shopMeta,setShopMeta]=useState({});   // {shopId:{abbrs:[],loaded:true}}
   const[abbrInput,setAbbrInput]=useState({}); // {shopId:"入力中の略称"}
+  const[abbr2Input,setAbbr2Input]=useState({}); // {shopId:{top,bottom}} 2セル表示用の入力中の値（H1）
   const[allAbbrs,setAllAbbrs]=useState({});   // {shopId:[略称]} 重複チェック専用（未展開店舗ぶんも先読み）
   const listShops=allLinkedShops.length>0?allLinkedShops:shops;
   // 法人の割当・種別を変えたら提出状況（法人で絞る・見出し）を読み直す
@@ -1857,11 +1858,11 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
 
   const loadShopMeta=(sid)=>{
     if(!firebaseDB)return;
-    firebaseDB.ref(`shops/${sid}/settings/shopAbbrs`).once("value").then(aS=>{
+    Promise.all([firebaseDB.ref(`shops/${sid}/settings/shopAbbrs`).once("value"),firebaseDB.ref(`shops/${sid}/settings/shopAbbr2`).once("value")]).then(([aS,a2S])=>{
       const abbrs=Object.values(aS.val()||{}).filter(v=>typeof v==="string");
-      setShopMeta(m=>({...m,[sid]:{abbrs,loaded:true}}));
+      setShopMeta(m=>({...m,[sid]:{abbrs,abbr2:shopAbbr2Of({shopAbbr2:a2S.val()}),loaded:true}}));
     }).catch(()=>{
-      setShopMeta(m=>({...m,[sid]:{abbrs:[],loaded:true}}));
+      setShopMeta(m=>({...m,[sid]:{abbrs:[],abbr2:null,loaded:true}}));
       tt("✕ 店舗データの読み込みに失敗しました");
     });
   };
@@ -1871,13 +1872,13 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
   };
   // 表示中店舗はライブなsettingsを使い、他店舗は読み込んだメタを使う
   const metaFor=(sid)=>sid===shopId
-    ?{abbrs:settings.shopAbbrs||[],loaded:true}
+    ?{abbrs:settings.shopAbbrs||[],abbr2:shopAbbr2Of(settings),loaded:true}
     :(shopMeta[sid]||null);
   // 略称の保存: 表示中店舗はsaveSettings経由（localStorage二重書き維持）、他店舗はFirebaseへupdateマージ
   const saveMetaField=(sid,field,value)=>{
-    const stateKey="abbrs";
+    const stateKey=field==="shopAbbr2"?"abbr2":"abbrs";
     if(sid===shopId){onSave({...settings,[field]:value});setShopMeta(m=>m[sid]?{...m,[sid]:{...m[sid],[stateKey]:value}}:m);return;}
-    setShopMeta(m=>({...m,[sid]:{...(m[sid]||{abbrs:[],loaded:true}),[stateKey]:value}}));
+    setShopMeta(m=>({...m,[sid]:{...(m[sid]||{abbrs:[],abbr2:null,loaded:true}),[stateKey]:value}}));
     if(field==="shopAbbrs")setAllAbbrs(a=>({...a,[sid]:value}));
     if(!firebaseDB)return;
     fbUpd(`shops/${sid}/settings`,{[field]:value})
@@ -1923,6 +1924,22 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
     const cur=(metaFor(sid)||{}).abbrs||[];
     saveMetaField(sid,"shopAbbrs",cur.filter(a=>a!==abbr));
   };
+  // 2セル表示用（H1）。表示専用なので店舗間の重複チェックはしない（abbrToShop に入らない）。削除は null を書く
+  const saveAbbr2=(sid)=>{
+    const cur=(metaFor(sid)||{}).abbr2||null;
+    const inp=abbr2Input[sid]||{};
+    const top=(inp.top!==undefined?inp.top:(cur?cur.top:"")).trim();
+    const bottom=(inp.bottom!==undefined?inp.bottom:(cur?cur.bottom:"")).trim();
+    const err=shopAbbr2Error(top,bottom);
+    if(err){tt("✕ "+err);return;}
+    saveMetaField(sid,"shopAbbr2",{top,bottom});
+    setAbbr2Input(i=>{const n={...i};delete n[sid];return n;});
+    tt("✓ 2セル表示用の略称を保存しました");
+  };
+  const removeAbbr2=(sid)=>{
+    saveMetaField(sid,"shopAbbr2",null);
+    setAbbr2Input(i=>{const n={...i};delete n[sid];return n;});
+  };
 
   const shopCard=(shop)=>{
     const isCurrent=shop.id===shopId;
@@ -1964,7 +1981,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
           <div style={{borderTop:"1px solid var(--c-border2)",padding:"12px"}}>
             {!meta?<div style={{fontSize:12,color:"var(--c-text3)"}}>読み込み中...</div>:(<>
               {/* 店舗略称 */}
-              <AL>店舗略称（シフト作成タブでヘルプ入力に使用・複数登録可）</AL>
+              <AL>店舗略称（シフト作成タブでヘルプ入力に使用・複数登録可。先頭が1セル表示用）</AL>
               <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:8}}>
                 {meta.abbrs.map(a=>(
                   <span key={a} style={{display:"inline-flex",alignItems:"center",gap:5,padding:"4px 8px",background:"rgba(96,165,250,.12)",border:"1px solid rgba(96,165,250,.4)",borderRadius:8,fontSize:13,fontWeight:600,color:"var(--c-text)"}}>
@@ -1981,6 +1998,29 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
                   style={{...AI,flex:1,maxWidth:200}}/>
                 <button onClick={()=>addAbbr(shop.id)} style={{...AB,padding:"8px 14px",fontSize:13,whiteSpace:"nowrap"}}>追加</button>
               </div>
+              {/* 2セル表示用（H1）。ヘルプ先だけの日に出勤セル・退勤セルへ分けて出す。手入力のヘルプコマンドには使わない */}
+              <AL>2セル表示用（ヘルプ先だけの日に出勤・退勤のセルへ分けて表示・各{SHOP_ABBR2_MAX_LEN}文字まで）</AL>
+              <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:6,lineHeight:1.6}}>
+                1セル表示用は上の略称の先頭（{meta.abbrs[0]||"未登録"}）です。2セル表示用が未登録なら、出勤セルに1セル表示用の略称、退勤セルは時刻だけを出します。
+              </div>
+              {(()=>{
+                const cur=meta.abbr2||null;
+                const inp=abbr2Input[shop.id]||{};
+                const top=inp.top!==undefined?inp.top:(cur?cur.top:"");
+                const bottom=inp.bottom!==undefined?inp.bottom:(cur?cur.bottom:"");
+                const setPart=(k,v)=>setAbbr2Input(i=>({...i,[shop.id]:{...(i[shop.id]||{}),[k]:v}}));
+                return(<div data-abbr2-card={shop.id} style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:12,color:"var(--c-text2)"}}>上</span>
+                  <input data-abbr2="top" value={top} onChange={e=>setPart("top",e.target.value)} onKeyDown={e=>{if(e.key==="Enter")saveAbbr2(shop.id);}}
+                    placeholder="例：鶏" maxLength={SHOP_ABBR2_MAX_LEN} style={{...AI,width:64,minWidth:0,textAlign:"center"}}/>
+                  <span style={{fontSize:12,color:"var(--c-text2)"}}>下</span>
+                  <input data-abbr2="bottom" value={bottom} onChange={e=>setPart("bottom",e.target.value)} onKeyDown={e=>{if(e.key==="Enter")saveAbbr2(shop.id);}}
+                    placeholder="例：三" maxLength={SHOP_ABBR2_MAX_LEN} style={{...AI,width:64,minWidth:0,textAlign:"center"}}/>
+                  <button onClick={()=>saveAbbr2(shop.id)} style={{...AB,padding:"8px 14px",fontSize:13,whiteSpace:"nowrap"}}>{cur?"変更":"登録"}</button>
+                  {cur&&<button onClick={()=>removeAbbr2(shop.id)} style={{...AGray,padding:"8px 12px",fontSize:13,whiteSpace:"nowrap"}}>削除</button>}
+                  <span data-abbr2-current={shop.id} style={{fontSize:12,color:"var(--c-text3)"}}>{cur?`登録中：上「${cur.top}」・下「${cur.bottom}」`:"未登録"}</span>
+                </div>);
+              })()}
             </>)}
           </div>
         )}

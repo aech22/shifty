@@ -38,6 +38,27 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟡 H2. シフト作成タブ: ヘルプ勤務の表示変更（画面・PDF・Excel）
+
+**目的**: 所属店舗のシフト表に出す他店でのヘルプ勤務を、「→三17」の灰色斜体（自店が空欄の日だけ）から、時刻＋略称・黄色・斜線なしの表示に変え、自店と混在する半日ヘルプの日にも出す（`Shifty_実装計画_2026-10.md` H2）。
+**受け入れ条件**:
+- [ ] 計画書の表の4通り（ヘルプ先のみ／昼ヘルプ＋夜自店／昼自店＋夜ヘルプ／自店のみ）が、画面・PDF・Excel で同じ文字と黄色になる
+- [ ] 「→」・斜体・灰色が、画面と PDF から無くなる
+- [ ] ヘルプ先の勤務がある日は、画面・PDF・Excel で休みの斜線が出ない
+- [ ] 半日ヘルプの日、黄色になるのはヘルプ側のセルだけ
+- [ ] 混在の日、略称の付くセルをフォーカスすると自店の値を編集でき、保存されるのは自店の値だけ
+- [ ] 自店の勤務と時間が重なるヘルプ先の勤務は、今と同じく表示しない（`helperWorkOn` の重複除外）
+- [ ] 労務の合計・ヒートマップ・重複チェックの結果は変更前と同じ
+- [ ] 色の凡例（`CELL_COLOR_LEGEND`）の説明に、自動記入のヘルプを含める
+- [ ] `helperCellDisplay` の単体テスト（4通り、2店舗ヘルプ、2セル用未登録、略称未登録）
+- [ ] E2E `example-helper-aggregate.js` を新しい表示に直す
+- [ ] 列幅（通常表示39px・全表示の fullViewColW）は1pxも変えない。収まらない文字はそのセルの文字サイズだけを縮める（2026-10-04 ユーザー指示。計画書の「その人の列だけ広げる」は不採用）
+- [ ] CLAUDE.md と 労務給与_複数法人_実装計画.md §3.9 の記述を更新する
+**影響範囲**: app-utils.js、app-shift.js（`helperCellText`・`getVal`・`cellBgFor`・`cellBgStyle`・`buildShiftTableHtml`・`adjResolver`・セルの style）、app-admin.js（`expXl`）、tests、E2E、CLAUDE.md
+**備考**: 2026-10-04 登録。H1 に依存。S2（セルの部品化）より先に行う。
+
+---
+
 
 ## 🟢 実績で出勤・退勤を変えた日に、確定シフトの日別休憩上書き（adjustedBreak）をそのまま当てるか
 
@@ -1762,6 +1783,21 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 🟡 H1. 企業連携タブ: 店舗略称の2パターン（2026-10-04 develop 完了／ルール・CF の変更なし）
+
+`Shifty_実装計画_2026-10.md` H1。ヘルプ勤務の表示で使う略称を「1セル表示用」（既存の `settings.shopAbbrs` の先頭）と
+「2セル表示用」（新キー `settings.shopAbbr2={top,bottom}`）に分けた。
+- [x] 店舗ごとに2セル用（上・下）を登録・変更・削除できる。企業連携タブの店舗カードに欄を足し、1セル用は既存の略称の先頭である旨を表示（`example-shop-abbr2.js`）
+- [x] 2セル用も `isReservedShopAbbr` を通し、各2文字まで・上下の両方が必須（`shopAbbr2Error`。テストと実ブラウザで h・数字始まり・3文字・片方だけを拒否）
+- [x] 他店舗の保存は `shops/{sid}/settings` への update（`fbUpd`）。削除は `shopAbbr2:null` の update。表示中の店舗は saveSettings（実ブラウザで書き込みの種類とパスを記録して確認・set は0件）
+- [x] `makeSettings` に `shopAbbr2:null`、`otherShopDataOf` が `abbr2` を読み（`shopAbbr2Of`）、`helperWorkOn` の勤務に `abbr2` を載せる
+- [x] 2セル用は `abbrs`（`abbrToShop` の元）に入らない・`PERIOD_SNAPSHOT_SETTING_KEYS` に無い（テスト）
+- [x] 375px で店舗カードの中にはみ出す要素が無く、入力欄はカードの内側・16px
+- 「2セル用が未登録なら上セルに1セル用・下セルは時刻のみ」は表示の規則なので H2 で実装・検証する
+- 検証: `npm test` 525件パス・`npx eslint app-*.js` 0 errors / 116 warnings（変更前と同数）。`example-shop-abbr2.js` 19項目パス（H1 より前の配信物では入力欄が無く EXIT=2）。
+  企業連携系の回帰（unlink・entities・settings・login-tab・home-shop-dup・index-html-load）も EXIT=0
+- スコープ外で見つけたもの: 375px では「企業アカウントを作成」フォームの入力欄3つ（`width:100%` に padding が足される）がページを1〜2px 横に広げる。H1 より前（`978277e`）から同じで、今回は触っていない
 
 ### ✅ S1. シフト作成タブの高速化 第1段（依存の安定化）と計測（2026-10-04 develop 完了）
 

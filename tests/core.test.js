@@ -6881,3 +6881,42 @@ test("F6 ドリフト検出: シフト作成タブの労務判定は入力の確
   assert.ok(/inputCheckDatesOf=name=>dates\.filter\(d=>\{const r=inputCheckOfShift\(_getAnyShift\(name,d\),abbrToShop\);return r\.oneSided\|\|r\.memoOnly;\}\)/.test(src), "inputCheckOfShift を日ごとに通す");
   assert.ok(/inputCheckDates:inputCheckDatesOf\(name\),staffNumberMissing:isStaffNumberMissing\(settings,name\)/.test(src), "laborFindingsFor に渡す");
 });
+
+// ===== H1（2026-10-04）: 店舗略称の2パターン =====
+test("H1 shopAbbr2Of: 上下が両方揃ったときだけ有効。片方・形の違う値・未設定は未登録（null）", () => {
+  assert.deepStrictEqual(u.shopAbbr2Of({ shopAbbr2: { top: "鶏", bottom: "三" } }), { top: "鶏", bottom: "三" });
+  assert.deepStrictEqual(u.shopAbbr2Of({ shopAbbr2: { top: " 鶏 ", bottom: "三" } }), { top: "鶏", bottom: "三" });
+  assert.strictEqual(u.shopAbbr2Of({ shopAbbr2: { top: "鶏", bottom: "" } }), null);
+  assert.strictEqual(u.shopAbbr2Of({ shopAbbr2: { top: "鶏" } }), null);
+  assert.strictEqual(u.shopAbbr2Of({ shopAbbr2: null }), null);
+  assert.strictEqual(u.shopAbbr2Of({ shopAbbr2: "鶏三" }), null);
+  assert.strictEqual(u.shopAbbr2Of({}), null);
+  assert.strictEqual(u.shopAbbr2Of(null), null);
+});
+
+test("H1 shopAbbr2Error: 両方必須・各2文字まで・予約語は1セル用と同じ isReservedShopAbbr で弾く", () => {
+  assert.strictEqual(u.SHOP_ABBR2_MAX_LEN, 2);
+  assert.strictEqual(u.shopAbbr2Error("鶏", "三"), null);
+  assert.strictEqual(u.shopAbbr2Error("鶏え", "三ビ"), null);
+  assert.match(u.shopAbbr2Error("鶏", ""), /両方/);
+  assert.match(u.shopAbbr2Error("", "三"), /両方/);
+  assert.match(u.shopAbbr2Error("鶏えん", "三"), /2文字以内/);
+  for (const bad of ["h", "k", "x", "/", "ko", "締", "1", ".a"]) {
+    assert.match(u.shopAbbr2Error(bad, "三"), /使用できません/, `上「${bad}」`);
+    assert.match(u.shopAbbr2Error("鶏", bad), /使用できません/, `下「${bad}」`);
+  }
+});
+
+test("H1 otherShopDataOf・helperWorkOn: 2セル用を読んで勤務に載せる。手入力コマンドの abbrs には入れない・写しのキーにも無い", () => {
+  const B = { ..._shop36("B店", { staff: ["田中"], settings: { shopAbbrs: ["鶏三"], shopAbbr2: { top: "鶏", bottom: "三" } },
+    subs: { s1: { id: "s1", staffName: "田中", periodId: "pb", shifts: { "2026-10-05": _w36("11:00", "15:00") } } } }), entityId: null };
+  assert.deepStrictEqual(B.abbrs, ["鶏三"], "abbrs（abbrToShop の元）は1セル用だけ");
+  assert.deepStrictEqual(B.abbr2, { top: "鶏", bottom: "三" });
+  const e = u.helperWorkOn({ regs: [{ shopId: "B", name: "田中" }], otherShops: { B }, date: "2026-10-05" });
+  assert.deepStrictEqual([e[0].abbr, e[0].abbr2], ["鶏三", { top: "鶏", bottom: "三" }]);
+  const C = { ..._shop36("C店", { staff: ["田中"], settings: {},
+    subs: { s1: { id: "s1", staffName: "田中", periodId: "pc", shifts: { "2026-10-05": _w36("11:00", "15:00") } } } }), entityId: null };
+  assert.strictEqual(C.abbr2, null);
+  assert.strictEqual(u.helperWorkOn({ regs: [{ shopId: "C", name: "田中" }], otherShops: { C }, date: "2026-10-05" })[0].abbr2, null);
+  assert.ok(!u.PERIOD_SNAPSHOT_SETTING_KEYS.includes("shopAbbr2") && !u.PERIOD_SNAPSHOT_SETTING_KEYS.includes("shopAbbrs"));
+});
