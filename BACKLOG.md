@@ -39,19 +39,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 ---
 
 
-## 🟡 S1. シフト作成タブの高速化 第1段（依存の安定化）と計測
-
-**目的**: 1文字入力・セル選択のたびに `weeks` が新しい配列になり、労務判定が全員分やり直される状態を止める。計画書 `Shifty_実装計画_2026-10.md` の S.0・S1。
-**受け入れ条件**:
-- [ ] 1文字入力とフォーカスで `laborFindingsFor` が0回になる
-- [ ] 労務の表示（判定・色・合計）が変更前と一致する（既存テストが通る）
-- [ ] 変更前後の計測値を BACKLOG に記録する
-- [ ] 実機（普段使っている端末）で体感を確認する（ユーザーの領分）
-**影響範囲**: app-shift.js（`weeks`・`sameMoPeriods`・`staffAliases` の既定値）、計測スクリプト1本（`.claude/skills/shifty-e2e-verify/scripts/`）
-**備考**: S2・S3 は S1 の結果にかかわらず実施する（計画書の方針）。
-
----
-
 ## 🟢 実績で出勤・退勤を変えた日に、確定シフトの日別休憩上書き（adjustedBreak）をそのまま当てるか
 
 **目的**: `resolveActualDay`（app-utils.js）は実績の時刻で `getBreaksFor` を通し直すが、確定シフトの `adjustedBreak` は残すので、
@@ -1775,6 +1762,28 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ S1. シフト作成タブの高速化 第1段（依存の安定化）と計測（2026-10-04 develop 完了）
+
+計画書 `Shifty_実装計画_2026-10.md` の S.0・S1。app-shift.js の3か所だけを変えた: `weeks` と `sameMoPeriods` を `useMemo`（依存はそれぞれ `[period,prevPeriod]`・`[period,periods]`＝計算が読む値のすべて）、`staffAliases` の既定値をモジュール直下の凍結した空オブジェクト `NO_STAFF_ALIASES` にした。`ShiftEditTab` の最上位に早期 return は無く（最初の return は描画）、新しい useMemo は直下の既存の useMemo（`laborFrame`）と同じ並びにある。
+
+計測は新しいスクリプト `.claude/skills/shifty-e2e-verify/scripts/perf-shift-edit-tab.js`（30人×31日＋前の期間・ヘッドレス Chromium・Firebase なし・各5回の中央値。CPU 6倍は CDP の `Emulation.setCPUThrottlingRate`）。変更前は同じスクリプトを変更前の作業ツリーで流した。計測用に関数を包んでいるので絶対値は大きめに出る。比率として読む。
+
+| 操作 | CPU | 変更前 | 変更後 | laborFindingsFor（前→後） | calcNetWorkMinutes（前→後） | resolveSubByAlias（前→後） |
+|---|---|---|---|---|---|---|
+| セルを選ぶ | 1倍 | 75.9ms | 43.7ms | 30 → 0 | 9,684 → 2,770 | 40,380 → 20,990 |
+| 1文字入力 | 1倍 | 65.3ms | 33.7ms | 30 → 0 | 9,684 → 2,770 | 40,376 → 20,986 |
+| 確定して次のセルへ | 1倍 | 69.8ms | 70.7ms | 30 → 30 | 11,058 → 11,058 | 61,089 → 61,089 |
+| セルを選ぶ | 6倍 | 423.5ms | 225.7ms | 30 → 0 | 9,694 → 2,773 | 40,328 → 20,938 |
+| 1文字入力 | 6倍 | 433.8ms | 225.9ms | 30 → 0 | 9,694 → 2,773 | 40,324 → 20,934 |
+| 確定して次のセルへ | 6倍 | 534.8ms | 548.9ms | 30 → 30 | 11,080 → 11,080 | 60,967 → 60,967 |
+
+- [x] 1文字入力とフォーカスで `laborFindingsFor` が0回（上表・スクリプトの `focusNoLabor`/`keyNoLabor`）
+- [x] 労務の表示が変更前と一致: 同じ合成データで、マウント直後と編集の後の両方について、タブ全体の文字と全1,860セルの値・背景色の指紋（sha256）が変更前と同じ（`a40ab3a6…`/`a43937b4…`、編集後 `3ebf7db1…`/`b74f481b…`）。`npm test` 522件パス。ShiftEditTab を使う回帰22本（labor-phase1〜3・cell-color・partial-month・premium・annual・confirm・pdf-labor・skilled-week-rest・fitall-geometry・fullview-cell-colors・helper-aggregate・input-check・limits・ot-window・payroll・company-dashboard・cell-clear・toolbar-save-button・actuals・shift-edit-tab）はすべて EXIT=0
+- [x] 変更前後の計測値をここに記録した（上表）
+- [ ] 実機（普段使っている端末）で体感を確認する: **未検証**（ユーザーの領分）
+- 検証: `npm test` 522件パス・`npx eslint app-*.js` 0 errors / 116 warnings（基準と同数）
+- 分かったこと: 確定（blur）は今も30人分を計算し、時間も変わらない（計画書どおり S2・S3 の対象）。選択・入力に残る約2,770回の `calcNetWorkMinutes` と約2万回の `resolveSubByAlias` は、メモ化されていない描画中の集計（週・期間の合計・ヒートマップ等＝計画書 S4 の対象）とセルごとの `_getSub` から来る
 
 ### ✅ K2. Excel 書き出しの名前行を 9pt・縦書き・左右中央・上下中央に（2026-10-04 develop 完了・コードは自動コミット `0f6c78b`）
 

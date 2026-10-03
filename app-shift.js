@@ -179,6 +179,10 @@ function GridLegend({abbrToShop,shopName}){
 // 出勤・退勤はセルで直接直し、休憩・欠勤・遅刻早退・法定休日・メモはセルを選ぶと出る欄で入れる。
 // 確定ロック中でも書ける（actuals は subs と別ノードで、ルールもオーナーだけ）。
 const ACT_DIFF_BG="rgba(248,112,54,.14)";
+// 別名の無い店舗の staffAliases の既定値（S1・2026-10-04）。`||{}` を描画のたびに書くと毎回新しいオブジェクトになり、
+// これを依存に持つ useCallback / useMemo（liveTotalFor・liveMonthOtFor → 労務判定）が1文字ごとに作り直される。
+// 読むだけの値なので凍結して共有する
+const NO_STAFF_ALIASES=Object.freeze({});
 function ActualsGrid({period,dates,staff,subOf,settings,act,tt,subs}){
   const pid=period.id;
   const[edits,setEdits]=useState({});   // "名前|日付|start|end" → 入力中の文字列（blur で確定）
@@ -695,7 +699,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   },[subs]);
   // 別名解決は app-utils.js の resolveSubByAlias に一本化する（完全一致を必ず優先）。
   // Excel出力（expXl）も同じ関数を通す＝画面とExcelが別のsubを見ることが構造的に起きない（バグチェック#105）
-  const staffAliases=settings?.staffAliases||{};
+  const staffAliases=settings?.staffAliases||NO_STAFF_ALIASES;
   // pidを外から指定できる版（期間別勤務時間は前半/後半/月計で selPid 以外の期間も参照するため）
   const _getSubForPeriod=(pid,name)=>resolveSubByAlias(n=>subsByKey.get(pid+"|"+n),name,staffAliases);
   const _getSub=(name)=>_getSubForPeriod(selPid,name);
@@ -1360,8 +1364,13 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   })();
 
   // 期間別勤務時間: 同月の全期間を両方表示
-  const perD=period?pd(period.startDate):null;
-  const sameMoPeriods=period?[...periods].filter(p=>{const d=pd(p.startDate);return d.getFullYear()===perD.getFullYear()&&d.getMonth()===perD.getMonth();}).sort((a,b)=>a.startDate.localeCompare(b.startDate)):[];
+  // weeks・sameMoPeriods はメモ化する（S1・2026-10-04）。描画のたびに新しい配列にすると、weeks を依存に持つ
+  // weekRestByStaff → laborByStaff（労務判定・割増・36協定の年の集計）が1文字入力・セル選択のたびに全員分やり直される
+  const sameMoPeriods=useMemo(()=>{
+    if(!period)return[];
+    const perD=pd(period.startDate);
+    return[...periods].filter(p=>{const d=pd(p.startDate);return d.getFullYear()===perD.getFullYear()&&d.getMonth()===perD.getMonth();}).sort((a,b)=>a.startDate.localeCompare(b.startDate));
+  },[period,periods]);
   const getPeriodMin=(pid,name)=>{
     const p=periods.find(pp=>pp.id===pid);if(!p)return 0;
     const sub=_getSubForPeriod(pid,name); // 日ループの外で1回だけ引く。別名提出者も解決する
@@ -1371,12 +1380,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
 
   // 週間勤務時間（前の期間を跨ぐ）
   const prevPeriod=period?([...periods].sort((a,b)=>new Date(b.startDate)-new Date(a.startDate)).find(p=>new Date(p.endDate)<new Date(period.startDate))||null):null;
-  const weeks=(()=>{
+  const weeks=useMemo(()=>{
     if(!period)return[];
     const allD=[...(prevPeriod?gd(prevPeriod.startDate,prevPeriod.endDate):[]),...gd(period.startDate,period.endDate)];
     const wkSet=new Set();allD.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet.add(fd(mon));});
     return[...wkSet].sort();
-  })();
+  },[period,prevPeriod]);
   const getWeekMin=(monStr,name)=>{
     let tot=0;for(let i=0;i<7;i++){const dd=new Date(pd(monStr));dd.setDate(pd(monStr).getDate()+i);const ds=fd(dd);const sh=_getWorkShift(name,ds);if(sh)tot+=calcNetWorkMinutes(sh,getBreaksFor(settings,ds,name,sh),getOT(name,settings,sh),settings);tot+=helperMinOn(name,ds);}
     return tot;
