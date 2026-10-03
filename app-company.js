@@ -414,8 +414,9 @@ function OtProrateField({value,onChange,blankLabel,fixedText}){
   return(<div data-ot-prorate style={{marginBottom:8}}>
     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
       <span style={LBL}>残業予定の配り方</span>
+      {/* 選択肢「半月ごと（1〜15日・16日〜月末）」の長さで 320px 幅のページを広げていた（2026-10-04 実測 27px）ので親の幅で止める */}
       <select value={win} onChange={e=>{const w=e.target.value;onChange(w?{window:w,...(p&&p.fixedMin?{fixedMin:p.fixedMin}:{})}:null);}}
-        style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+        style={{...AI,width:"auto",maxWidth:"100%",padding:"5px 8px",cursor:"pointer"}}>
         <option value="">{blankLabel}</option>
         {OT_PRORATE_WINDOWS.map(w=><option key={w} value={w}>{OT_PRORATE_WINDOW_LABELS[w]}</option>)}
       </select>
@@ -792,7 +793,7 @@ function CompanyEntityCard({companyId,shopNames={},onCompanyCall,onSaveCompanyCo
 // 法人で絞る選択肢（法人が2つ以上のときだけ出す）
 function EntityFilter({ents,value,onChange}){
   if(!ents||ents.length<2)return null;
-  return(<select data-co-entity-filter="1" value={value} onChange={e=>onChange(e.target.value)} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
+  return(<select data-co-entity-filter="1" value={value} onChange={e=>onChange(e.target.value)} style={{...AI,width:"auto",maxWidth:"100%",padding:"5px 8px",cursor:"pointer"}}>
     <option value="">すべての法人</option>
     {ents.map(e=><option key={e.id} value={e.id}>{e.name||"（名前なし）"}</option>)}
   </select>);
