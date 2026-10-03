@@ -303,6 +303,12 @@ sanitizeMonthlyDeadlineDays / monthlyDeadlineFor / shopDeadlineInfoFromLink
 homeShopOf / isHelperAt / dupTargetShopsFor
 personIndexOfMirror / samePersonRegistrations / personHomeShopOf / helperPersonOf / helperShopSettingsOn / helperWorkOn
 otherShopDataOf / helperShopsOf / helperScheduleContext / duplicatePersonCandidates
+helperCellDisplay / helperCellFontPx / cellTextEm / HELPER_CELL_MIN_FONT_PX
+                           // ヘルプ勤務の表示（2026-10-04・H2）。画面・PDF・Excel が同じ helperCellDisplay を通す（「ヘルプ先勤務の所属店舗への合算」の節のグリッドの項）。
+                           // helperCellFontPx は列幅を変えずに合成表示を収めるフォントサイズ（下限 8px）
+shopAbbr2Of / shopAbbr2Error / SHOP_ABBR2_MAX_LEN
+                           // 2セル表示用の店舗略称（settings.shopAbbr2={top,bottom}・H1）。上下が両方揃ったときだけ有効・各2文字・予約語は isReservedShopAbbr。
+                           // **表示専用**で abbrToShop（手入力のヘルプコマンド）にも期間の写しにも入れない。otherShopDataOf が abbr2 として読み、helperWorkOn の勤務に載る
                            // ヘルプ先勤務の所属店舗への合算（2026-09-30・P3.6）。詳細は「企業アカウント」の P3.6 の節
 COMPANY_ENTITY_ID_RE / COMPANY_SHOP_KINDS / companyEntityIdOfShop / companyShopKindOf / companyEntityList / planLaborToEntities
                            // planLaborToEntities（2026-10-01）は労務判定を企業の共通設定から法人の設定へ移す計画（「法人レイヤー」の節）
@@ -676,6 +682,8 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              xlShopName?: string, staffColors?: {[name]: "red"|"black"},
              staffAliases?: {[registered]: string[]}, staffHidden?: {[name]: {from:string|null,to:string|null}[]}, periodUnit?: "2week"|"1month",
              staffHomeShop?: {[name]: shopId},    // 所属店舗（2026-09-27。無ければ自店所属。STAFF_KEYED_SETTING_MAPS 登録済み）
+             shopAbbrs?: string[],                // 店舗略称。手入力のヘルプコマンド（例「9三」）と、先頭がヘルプ表示の1セル用
+             shopAbbr2?: {top, bottom}|null,      // 2セル表示用の略称（2026-10-04・H1）。表示専用・各2文字・企業連携タブで登録
              actualsCsv?: {hasHeader, date, name, start, end, breakMin} }  // 実績の CSV 取込の列の位置（1始まり・0=使わない・P4）
 
 // 実績（shops/{shopId}/actuals/{期間ID}/{名前}/{日付}・2026-09-30・P4）。確定シフトと違う項目だけ。解決は resolveActualDay
@@ -839,8 +847,22 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
 - **合算する画面**: 所属店舗のシフト作成タブの `laborDayMin`（月実働・残業予定・労務判定・laborTotals・年計）・`getWeekMin`（週計）・
   `getPeriodMin`（期間別勤務時間の月計）・週の休み（`dayKindWithHelper`＝自店が空欄でも他店で働いた日は出勤日）・休暇の公休日数・休憩不足（行き先の判定）・PDF。
   **休みカウント表（1日休・半日休）と最大連勤は合算していない**（計画の対象外）
-- **グリッド**: 自店のその日が出勤・退勤とも空欄のとき、他店の勤務を**読み取り専用セル**で出す（出勤セル「→三17」・退勤セル「23」。
-  `data-helper`・灰色の斜体・title に店舗名と実働）。blur しても保存しない。PDF のシフト表も同じ
+- **グリッド**（2026-10-04・H2 で表示を変更）: 決まりは `helperCellDisplay`（app-utils.js）1本で、画面・PDF（`buildShiftTableHtml`）・
+  Excel（シフト作成タブの `adjResolver` → `expXl`）が同じ関数を通す。上セル＝その日の最初の勤務の開始、下セル＝最後の勤務の終了で、
+  その時刻がヘルプ先のものなら時刻の後ろに略称を付けて**特記ありと同じ黄色**（画面 `#FFF3B0`・PDF と Excel `#FFFF00`）。
+  ヘルプ先だけの日は2セル用の略称（`shopAbbr2` の上・下）を分けて出し（例「11鶏」「15三」）、2セル用が未登録なら上に1セル用（`shopAbbrs` の先頭）・
+  下は時刻だけ。自店と混在する日は1セル用（例 昼ヘルプ＋夜自店＝「11鶏三」「23」）。2店舗へ行く日は上下それぞれに該当店舗の1セル用。
+  「→」・斜体・灰色は付けない。**黄色は表示だけで subs に特記を書かない**（ヒートマップの除外・重複チェックは変わらない）。
+  ヘルプ先の勤務がある日は休みの斜線を描かない（画面 `cellBgStyle`・PDF・Excel の diagonal）。title は隠れる時刻も含めて全件（例
+  「鷄えん3ビル 11:00〜15:00（実働 4:00）／自店 17:00〜23:00」）。ヘルプ先だけの日は読み取り専用（編集は行き先の店）、混在の日は
+  略称の付くセルを選ぶと自店の値に切り替わって編集でき（保存されるのは自店の値だけ）、離れると合成表示に戻る。合成表示のまま blur しても保存しない
+  （`handleBlur`）。休暇ラベルのある日は休暇を優先してヘルプを出さない。自店の勤務と時間が重なるヘルプ先の勤務は今までどおり出さない（`helperWorkOn`）。
+  **列幅は変えない**（2026-10-04 ユーザー指示。計画書の「その人の列だけ広げる」は不採用）。収まらない合成表示は、そのセルの文字だけを
+  `helperCellFontPx` で縮める（1文字を半角英数 0.62em・記号 0.34em・全角 1em で見積もり、0.5px 刻み・下限 8px）。通常表示の列39pxで
+  「11鶏三」「23鶏三」は 10.5px、「17鶏」「15三」は 15.5px、全表示（列39px）の「11鶏三」は 11px、PDF（列30px）の「11鶏三」は 8px・「17鶏」は 11.5px。
+  縮めるのは合成表示を出している間だけで、混在の日にフォーカスして自店の値を編集する間は通常の 16px に戻る（iOS のズーム防止の規約どおり）。
+  縮めたセルは line-height を 16px のときと同じ 18px に固定して行の高さを保つ（指定しないと 26px→20px に詰まる）。Excel は該当セルだけ
+  `shrinkToFit`。15分刻みの時刻（例「11.25鶏三」）は下限 8px でも収まらず端が切れる。回帰は `example-helper-aggregate.js`（41項目・WebKit でも通る。計算が H2 前と同じことは `example-helper-aggregate.stable.json` と照合）
 - **laborMonths**: 確定の2つの入口（シフト作成タブ・企業の確定）がどちらも `helperScheduleContext` を通して `planPeriodConfirmation` の
   `extraDayMin`／`excludeNames` に渡す（`aggregateScheduledMonth` が他店の勤務を足し、行き先では所属店舗で判定する人を数えない）
 - **読めない他店**: 読み込みに失敗した店舗に登録がある人（people に載っていない人は、失敗した店舗が1つでもあれば）は月実働・総括に「＋」と
