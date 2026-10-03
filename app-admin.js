@@ -674,7 +674,11 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
   // メモ・「締」・時刻を入れていればグリッド(getVal)・PDF(pdfResolve)は表示する。スタッフ提出の
   // status だけで分岐すると Excel でだけ斜線に潰れて内容が落ちる（バグチェック#54）
   const hasAdminDisp=(nm,ds)=>
-    ["start","end"].some(f=>{const v=effResolver(nm,ds,f);return!!(v&&(v.time||v.note||v.fixed));});
+    ["start","end"].some(f=>{const v=effResolver(nm,ds,f);return!!(v&&(v.time||v.note||v.fixed||v.helperText));});
+  // その日に他店でのヘルプ勤務がある（シフト作成タブの adjResolver だけが返す・H2）。提出が無い人・休みの日でも
+  // 出勤の分岐で書き、休みの斜線は引かない。期間管理タブの Excel（resolver なし）は提出そのままなので常に false
+  const helperDayOf=(nm,ds)=>
+    ["start","end"].some(f=>{const v=effResolver(nm,ds,f);return!!(v&&v.helperDay);});
 
   // ===== データ行 (1日=2行) =====
   dates.forEach((ds,di)=>{
@@ -718,11 +722,11 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
           SC(rT,ci,null,aH,fill,{top:M,bottom:H,left:T,right:T});
           SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
         }
-      } else if(!sub){
+      } else if(!sub&&!helperDayOf(nm,ds)){
         // 未提出: 空白
         SC(rT,ci,null,aH,fill,{top:M,bottom:H,left:T,right:T});
         SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
-      } else if(isWork||hasAdminDisp(nm,ds)){
+      } else if(isWork||hasAdminDisp(nm,ds)||helperDayOf(nm,ds)){
         const fmtT=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return m===0?String(h):String(h+m/60);};
         // 調整済み値の解決は必ず effResolver を通す（呼び出し元が resolver を渡さない場合も既定の
         // 解決が入るので、2つの入口が同じ中身のExcelを出す。バグチェック#134）
@@ -733,19 +737,20 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
         const sFx=rv.st.fixed?FIXED_KEY:"", eFx=rv.en.fixed?FIXED_KEY:"";
         // サフィックスh/k/xがある場合は黄色塗り（締めは対象外＝PDFのセル背景判定と同じくnoteだけで決める）。
         // 変更マーク（緑）は画面（cellBgFor）・PDF（cbg）と同じく note より優先する。
-        const startFill=isChanged?fChg:(sNote?fYel:fill);
-        const endFill=isChanged?fChg:(eNote?fYel:fill);
+        // ヘルプの合成表示（helperText・H2）も特記ありと同じ黄色。列幅は変えず、収まらなければ Excel 側で縮小して表示する
+        const startFill=isChanged?fChg:((sNote||rv.st.helperText)?fYel:fill);
+        const endFill=isChanged?fChg:((eNote||rv.en.helperText)?fYel:fill);
         // 時刻が無くてもnote・締めがあれば表示する。従来は時刻の有無だけで判定していたため、
         // 単独「締」やメモのみのセルがグリッド・PDFには出るのにExcelでだけ空欄に落ちていた
         // （バグチェック#52）。グリッドのgetVal・PDFのpdfResolveと同じ真偽判定に揃える
-        const startDisp=(startT||sNote||sFx)?((fmtT(startT)||"")+sNote+sFx):null;
-        const endDisp=(endT||eNote||eFx)?((fmtT(endT)||"")+eNote+eFx):null;
+        const startDisp=rv.st.helperText||((startT||sNote||sFx)?((fmtT(startT)||"")+sNote+sFx):null);
+        const endDisp=rv.en.helperText||((endT||eNote||eFx)?((fmtT(endT)||"")+eNote+eFx):null);
         // 管理者入力の休み希望(/)はフィールド単位で斜線（どちらの入口から出しても同じ）
         const diagR={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
         const stB={top:M,bottom:H,left:T,right:T,...(rv.st.rest?{diagonal:diagR}:{})};
         const enB={top:H,bottom:botT,left:T,right:T,...(rv.en.rest?{diagonal:diagR}:{})};
-        SC(rT,ci,startDisp,aH,startFill,stB,{name:"Yu Gothic",bold:false,size:12});
-        SC(rB,ci,endDisp,aH,endFill,enB,{name:"Yu Gothic",bold:false,size:12});
+        SC(rT,ci,startDisp,rv.st.helperText?{...aH,shrinkToFit:true}:aH,startFill,stB,{name:"Yu Gothic",bold:false,size:12});
+        SC(rB,ci,endDisp,rv.en.helperText?{...aH,shrinkToFit:true}:aH,endFill,enB,{name:"Yu Gothic",bold:false,size:12});
       } else if(!sh){
         // その日のエントリ自体を持たない: 空白（未提出の列と同じ）。
         // 下の「休み」へ落とすと **提出していない日が休み希望として配布Excelに出る**。

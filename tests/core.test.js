@@ -5556,8 +5556,8 @@ test("P3 ドリフト検出: ルール（laborMonths はオーナーのみ・確
   const main = fs.readFileSync(require("node:path").join(__dirname, "..", "app-main.js"), "utf8");
   assert.ok(/renameStaffInLaborMonths\(/.test(main) && /dropStaffFromLaborMonths\(/.test(main));
   // セルのロック: グリッドの2つの input は確定で readOnly になり、写しの最新化は確定済みで止まる
-  // （P3.6 で他店での勤務を出すセルも読み取り専用に足した。確定のロックはそのまま両方の input に掛かる）
-  assert.strictEqual((admin.match(/readOnly=\{!canEditCells(\|\|isHelperCell\(name,date\))?\}/g) || []).length, 2);
+  // （P3.6 で他店での勤務を出すセルも読み取り専用に足した。H2 でヘルプ先だけの日に絞った＝isHelperOnly。確定のロックはそのまま両方の input に掛かる）
+  assert.strictEqual((admin.match(/readOnly=\{!canEditCells(\|\|isHelperOnly\(name,date\))?\}/g) || []).length, 2);
   assert.ok(!/readOnly=\{!isPremium\}/.test(admin));
   assert.ok(/const snapSame=isPeriodConfirmed\(period\)\|\|periodSnapshotEqual\(/.test(admin));
   // 確定はシフト作成タブと提出状況表の2つの入口で、どちらも同じ planPeriodConfirmation を通る
@@ -6919,4 +6919,65 @@ test("H1 otherShopDataOf・helperWorkOn: 2セル用を読んで勤務に載せ�
   assert.strictEqual(C.abbr2, null);
   assert.strictEqual(u.helperWorkOn({ regs: [{ shopId: "C", name: "田中" }], otherShops: { C }, date: "2026-10-05" })[0].abbr2, null);
   assert.ok(!u.PERIOD_SNAPSHOT_SETTING_KEYS.includes("shopAbbr2") && !u.PERIOD_SNAPSHOT_SETTING_KEYS.includes("shopAbbrs"));
+});
+
+// ===== H2（2026-10-04）: ヘルプ勤務の表示（helperCellDisplay）=====
+// 鷄えん東通り所属で鷄えん3ビルへヘルプ（1セル用「鶏三」・2セル用 上「鶏」下「三」）。計画書 H2 の表の4通り
+const _H2E = (start, end, o) => Object.assign({ shopId: "B", shopName: "鷄えん3ビル", abbr: "鶏三", abbr2: { top: "鶏", bottom: "三" }, start, end, min: 240 }, o || {});
+const _h2 = (entries, ownRange, ownText) => u.helperCellDisplay({ entries, ownRange: ownRange || null, ownText: ownText || { start: "", end: "" } });
+const _cells = d => d && [d.start.helper ? d.start.text : "(自店)", d.end.helper ? d.end.text : "(自店)"];
+test("H2 helperCellDisplay: 計画書の表の4通り（ヘルプ先のみ／昼ヘルプ＋夜自店／昼自店＋夜ヘルプ／自店のみ）", () => {
+  const only = _h2([_H2E("11:00", "15:00")]);
+  assert.deepStrictEqual(_cells(only), ["11鶏", "15三"]);
+  assert.strictEqual(only.helperOnly, true);
+  // 昼ヘルプ 11〜15、夜自店 17〜25 → 上「11鶏三」（黄）・下は自店
+  const lunch = _h2([_H2E("11:00", "15:00")], { startMin: 17 * 60, endMin: 25 * 60 }, { start: "17", end: "25" });
+  assert.deepStrictEqual(_cells(lunch), ["11鶏三", "(自店)"]);
+  assert.strictEqual(lunch.helperOnly, false);
+  // 昼自店 11〜15、夜ヘルプ 17〜23 → 上は自店・下「23鶏三」（黄）
+  const dinner = _h2([_H2E("17:00", "23:00")], { startMin: 11 * 60, endMin: 15 * 60 }, { start: "11", end: "15" });
+  assert.deepStrictEqual(_cells(dinner), ["(自店)", "23鶏三"]);
+  // 自店のみ（ヘルプ先の勤務なし）→ null（何も変えない・斜線もそのまま）
+  assert.strictEqual(_h2([], { startMin: 660, endMin: 1500 }, { start: "11", end: "25" }), null);
+  assert.strictEqual(u.helperCellDisplay(null), null);
+});
+test("H2 helperCellDisplay: 2セル用が未登録なら上に1セル用・下は時刻のみ（→ を付けない）。略称未登録なら店舗名の1文字目", () => {
+  assert.deepStrictEqual(_cells(_h2([_H2E("11:00", "15:00", { abbr2: null })])), ["11鶏三", "15"]);
+  assert.deepStrictEqual(_cells(_h2([_H2E("11:00", "15:00", { abbr2: { top: "鶏", bottom: "" } })])), ["11鶏三", "15"], "片方だけの2セル用は未登録");
+  assert.deepStrictEqual(_cells(_h2([_H2E("17:00", "23:00", { abbr: "", abbr2: null, shopName: "三ビル" })])), ["17三", "23"]);
+  // 混在の日の略称未登録
+  assert.deepStrictEqual(_cells(_h2([_H2E("17:00", "23:00", { abbr: "", abbr2: null, shopName: "三ビル" })], { startMin: 600, endMin: 900 }, { start: "10", end: "15" })), ["(自店)", "23三"]);
+  // 30分単位は toDecimal と同じ小数
+  assert.deepStrictEqual(_cells(_h2([_H2E("11:30", "15:30")])), ["11.5鶏", "15.5三"]);
+  for (const d of [_h2([_H2E("11:00", "15:00")]), _h2([_H2E("11:00", "15:00", { abbr2: null })])])
+    for (const f of ["start", "end"]) assert.ok(!d[f].text.includes("→"), "→ は付けない");
+});
+test("H2 helperCellDisplay: 2店舗へヘルプに行く日は上下それぞれに該当店舗の1セル用。ツールチップは全件を時刻順", () => {
+  const C = { shopId: "C", shopName: "鷄えん梅田", abbr: "梅", abbr2: { top: "鶏", bottom: "梅" }, min: 180 };
+  const two = _h2([_H2E("17:00", "22:00"), _H2E("10:00", "13:00", C)]);
+  assert.deepStrictEqual(_cells(two), ["10梅", "22鶏三"], "2店舗の日は2セル用を使わない");
+  assert.strictEqual(two.helperOnly, true);
+  assert.match(two.title, /^鷄えん梅田 10:00〜13:00（実働 3:00）／鷄えん3ビル 17:00〜22:00（実働 4:00）。/);
+  // 混在の日のツールチップに自店の時刻（隠れる時刻）も出す
+  const mix = _h2([_H2E("11:00", "15:00")], { startMin: 17 * 60, endMin: 25 * 60 }, { start: "17", end: "25" });
+  assert.match(mix.title, /^鷄えん3ビル 11:00〜15:00（実働 4:00）／自店 17:00〜25:00。/);
+  // 同じ店舗の勤務が2件でも1店舗扱い（2セル用を使う）
+  assert.deepStrictEqual(_cells(_h2([_H2E("10:00", "12:00"), _H2E("18:00", "21:00")])), ["10鶏", "21三"]);
+});
+test("H2 helperCellDisplay: 自店に時刻の無いメモだけの日は、自店のセルが空いている側だけヘルプを出す", () => {
+  const d = _h2([_H2E("17:00", "23:00")], null, { start: "研修", end: "" });
+  assert.deepStrictEqual(_cells(d), ["(自店)", "23鶏三"]);
+  assert.strictEqual(d.helperOnly, false);
+});
+test("H2 helperCellFontPx: 列幅を変えずに収まる大きさまで縮める（基準を超えない・下限で止める・0.5px刻み）", () => {
+  // 通常表示: 列39px − 罫線1 − padding2 − 余白1 = 35px
+  assert.strictEqual(u.helperCellFontPx("11", 35, 16), 16);
+  assert.strictEqual(u.helperCellFontPx("11鶏三", 35, 16), 10.5);
+  assert.strictEqual(u.helperCellFontPx("15三", 35, 16), 15.5);
+  assert.strictEqual(u.helperCellFontPx("11.5鶏三", 35, 16), 8, "下限 8px");
+  assert.strictEqual(u.helperCellFontPx("11.5鶏三", 30, 16, 6), 7, "下限を変えればその手前まで縮む");
+  assert.strictEqual(u.helperCellFontPx("x", 0, 16), 16);
+  // 全表示で基準が下限より小さいときは基準のまま（大きくしない）
+  assert.strictEqual(u.helperCellFontPx("11鶏三", 20, 6), 6);
+  for (const t of ["11鶏三", "23鶏三", "11.5鶏", "15三"]) assert.ok(u.helperCellFontPx(t, 35, 16) * u.cellTextEm(t) <= 35 || u.helperCellFontPx(t, 35, 16) === u.HELPER_CELL_MIN_FONT_PX);
 });
