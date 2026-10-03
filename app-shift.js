@@ -2986,14 +2986,15 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const[pdfPending,setPdfPending]=useState(null);
   const startPdf=(mode,dept="all")=>{
     // 後回しの計算（S3）が済んでいなければ、済んだ描画で下の useEffect から書き出す（古い労務判定・合計で印刷しない）
-    if(calcPending&&!(mode==="all"&&isPremium&&onLoadPastSubs&&!pastSubsLoaded&&hasOlderPeriods)){setPdfBusy(true);setPdfPending({mode,dept});return;}
+    if(calcPending&&!(mode==="all"&&isPremium&&onLoadPastSubs&&!pastSubsLoaded&&hasOlderPeriods)){setPdfBusy(true);setPdfPending({mode,dept,needPast:false});return;}
     if(!(mode==="all"&&isPremium&&onLoadPastSubs&&!pastSubsLoaded&&hasOlderPeriods)){exportPdf(mode,dept);return;}
     setPdfBusy(true);
-    const go=()=>setPdfPending({mode,dept});
+    const go=()=>setPdfPending({mode,dept,needPast:true});
     Promise.resolve(onLoadPastSubs()).then(go,go);
   };
   useEffect(()=>{
-    if(!pdfPending||!pastSubsLoaded||calcPending)return;
+    // 過去の提出を待つ job（needPast）だけが pastSubsLoaded を待つ。計算中で積んだ job は計算が済めば書き出す
+    if(!pdfPending||(pdfPending.needPast&&!pastSubsLoaded)||calcPending)return;
     const job=pdfPending;setPdfPending(null);
     exportPdf(job.mode,job.dept);
   },[pdfPending,pastSubsLoaded,calcPending]);
