@@ -161,6 +161,7 @@ const sharedGlobals = {
   myAllShiftPeriodOptions: "writable",
   myAllShiftChoices: "writable",
   myAllShiftSelection: "writable",
+  MY_ICS_APP_GUIDE: "writable",
   myLatestPeriodOf: "writable",
   // app-my.js で定義し app-admin.js・app-staff.js・app-main.js が使う個別URLの部品
   MyPageView: "writable",

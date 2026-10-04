@@ -778,6 +778,19 @@ test(".ics の渡し方と Google カレンダーのリンク（2026-10-04）", 
   assert.strictEqual(m.myIcsPlatformOf(undefined, undefined), "desktop");
   for (const k of ["ios", "android", "desktop"]) assert.ok(typeof m.MY_ICS_HINTS[k] === "string" && m.MY_ICS_HINTS[k].length > 10);
   assert.ok(m.MY_ICS_HINTS.android.includes("Google カレンダー") && m.MY_ICS_HINTS.desktop.includes("インポート"));
+  // TimeTree などの案内（2026-10-04）。TimeTree の公式ヘルプの事実だけ: .ics を直接取り込めない・端末のカレンダー経由・ホームカレンダーは自動更新・
+  // 共有カレンダーへのインポートは自動更新されず重複しうる。確かめていない他社アプリの名前は出さない
+  const G = m.MY_ICS_APP_GUIDE;
+  assert.ok(/TimeTree/.test(G.title) && /直接は取り込めません/.test(G.intro) && /端末のカレンダー/.test(G.intro));
+  for (const k of ["ios", "android", "desktop"]) assert.ok(Array.isArray(G.steps[k]) && G.steps[k].length === 3 && G.steps[k].every(t => typeof t === "string" && t.length > 10), k);
+  assert.ok(/フルアクセス/.test(G.steps.ios[1]) && /表示するフィルターを選択/.test(G.steps.ios[2]));
+  assert.ok(/インポート \/ エクスポート/.test(G.steps.android[0]) && /インポート \/ エクスポート/.test(G.steps.desktop[0]));
+  assert.ok(/自動で反映/.test(G.note) && /重複/.test(G.note));
+  const all = [G.title, G.intro, G.note, ...Object.values(G.steps).flat()].join("\n");
+  assert.ok(!/ジョルテ|Yahoo|Lifebear|Outlook|Samsung/.test(all), "確かめていないアプリの名前を出さない");
+  const myjs = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  assert.ok(/<MyMessage \{\.\.\.icsMsg\}\/>\s*<MyIcsAppGuide\/>/.test(myjs), "書き出しボタンのすぐ下に折りたたみで置く");
+  assert.ok(/<details data-my-ics-apps=/.test(myjs));
   const e = { kind: "published", date: "2026-10-31", shopId: "S1", shopName: "A店 & 梅田", startMin: 22 * 60, endMin: 26 * 60, breakMin: 30, memo: "秘密のメモ",
     segments: [{ startMin: 22 * 60, endMin: 26 * 60 }, { startMin: 26 * 60 + 30, endMin: 27 * 60, extra: true }] };
   const links = m.myGoogleCalendarLinks(e);

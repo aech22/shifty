@@ -754,6 +754,30 @@ const MY_ICS_HINTS={
   android:"ダウンロードしたファイルを開くとカレンダーアプリに追加できます。Google カレンダーのアプリは .ics を開けないので、日付の詳細の「Google カレンダーに追加」から1件ずつ追加してください。",
   desktop:"ダウンロードしたファイルを開くと、Outlook・Apple のカレンダー等に追加できます。Google カレンダーは、パソコンのブラウザで Google カレンダーの「設定 → インポート / エクスポート」からこのファイルを選びます。",
 };
+// TimeTree などのアプリで見るときの案内（2026-10-04・ユーザー指示「TimeTree 等のアプリにも対応して」）。
+// 事実は TimeTree の公式ヘルプ（support.timetreeapp.com の記事 360000629341「他のカレンダーを利用したい」・360000639682「他のカレンダーを表示したい」・
+// 360000639742「他のカレンダーを共有したい」・24881309862041「シフトボードがTimeTreeに反映されない」・11197101505433。2026-10-04 に読んだ）:
+//   ・TimeTree は .ics のファイルを直接は取り込めない（取り込み元は iPhone・Android の標準カレンダーと、そこに同期している Google カレンダー等だけ）
+//   ・標準カレンダーの予定は「ホームカレンダー」に表示でき、自動で更新される（カレンダーの権限＝iOS は「フルアクセス」・表示するフィルターでオン）
+//   ・共有カレンダーへの「外部カレンダーの予定をインポート」は自動では更新されず、内容が違う予定は別の予定として重複して入る
+// したがって効く経路は「.ics を端末のカレンダーに取り込む → TimeTree のホームカレンダーで表示」だけ。ほかのアプリ（ジョルテ・Yahoo!カレンダー等）は
+// 公式の情報を確かめられていないので名前を出さず、「端末のカレンダーの予定を表示できるアプリ」とだけ書く（確かめていない対応を「対応」と書かない）
+const MY_ICS_APP_GUIDE={
+  title:"TimeTree などのアプリで見るには",
+  intro:"TimeTree は .ics のファイルを直接は取り込めません。いったん端末のカレンダーに取り込むと、端末のカレンダーの予定を表示できるアプリ（TimeTree など）にも出ます。",
+  steps:{
+    ios:["上のボタンでこの月のシフトを書き出し、「すべてを追加」で iPhone のカレンダーに取り込む",
+      "iPhone の「設定」→「TimeTree」→「カレンダー」で「フルアクセス」を許可する",
+      "TimeTree の画面左下のカレンダー → 右上のアイコン →「表示するフィルターを選択」で、取り込んだカレンダー（iCloud など）をオンにする"],
+    android:["パソコンのブラウザで Google カレンダーの「設定 → インポート / エクスポート」からこのファイルを取り込む（スマホだけなら、日付の詳細の「Google カレンダーに追加」で1件ずつ）",
+      "端末の「設定」でその Google アカウントのカレンダーの同期をオンにし、「アプリ」→「TimeTree」→「権限」でカレンダーを許可する",
+      "TimeTree の画面左下のカレンダー → 右上のアイコン →「表示するフィルターを選択」で、そのカレンダーをオンにする"],
+    desktop:["このパソコンで Google カレンダーの「設定 → インポート / エクスポート」からこのファイルを取り込む",
+      "スマホの端末のカレンダーにその Google アカウントを追加して同期する（iPhone は「設定」→「カレンダー」→「アカウント」→「アカウントを追加」）",
+      "スマホの TimeTree にカレンダーの権限を許可し、「表示するフィルターを選択」でそのカレンダーをオンにする"],
+  },
+  note:"ホームカレンダーに表示する方法なら、端末のカレンダーの予定が変わると TimeTree にも自動で反映されます。共有カレンダーへの「外部カレンダーの予定をインポート」は自動では更新されず、時刻が変わった予定は別の予定として重複して入ります。",
+};
 // Google カレンダーに1件を追加するリンク（本人が押したときだけ開く）。送るのは勤務先名と時刻だけ（休憩・メモは送らない）。
 // 時刻は日本時間の現地表記＋ctz=Asia/Tokyo（24時超えは翌日の時刻）。締の追加出勤は1件ずつ別のリンク
 function myGoogleCalendarLinks(e){
@@ -1390,7 +1414,7 @@ if(typeof module!=="undefined"&&module.exports){
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
     MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_OPTIONS,MY_BREAK_OPTIONS,parseMyMinutesInput,
     MY_OVERNIGHT_HINT,validateMyShiftInput,buildMyShiftRecord,myShiftDuplicateOf,myOverrideOf,planMyOverride,myWorkplaceList,myNextWorkplaceColor,validateMyWorkplaceInput,buildMyWorkplacePatch,
-    buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth,myIcsPlatformOf,MY_ICS_HINTS,myGoogleCalendarLinks,
+    buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth,myIcsPlatformOf,MY_ICS_HINTS,MY_ICS_APP_GUIDE,myGoogleCalendarLinks,
     MY_PAY_END_DAY,MY_PAY_HOLIDAY_RULES,MY_PAY_HOLIDAY_RULE_LABELS,MY_PAY_WAGE_TYPES,MY_PAY_WAGE_TYPE_LABELS,MY_PAY_OFFSET_LABELS,MY_PAY_YEN_MAX,MY_PAY_GOAL_MAX,MY_PAY_DEFAULT,
     MY_MANUAL_NIGHT_PCT,MY_MANUAL_OVER8_PCT,MY_MANUAL_OVER8_MIN,myPayDayLabel,myPayOf,validateMyPayInput,buildMyPayRecord,myPayFormOf,parseMyGoalInput,myGoalOf,parseMyReceivedInput,
     myClampDay,myClosingMonthOf,myClosingRangeOf,myPayDateOf,myPayPlanOf,myPayMonthOfDate,myPeriodsInRange,myPayReadRange,myShiftyDayInfo,myMonthSettingsOf,

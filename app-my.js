@@ -828,6 +828,21 @@ function MyShiftEntryRow({e,changed,actions}){
   );
 }
 
+// TimeTree などのアプリで見るときの案内（折りたたみ。手順は端末ごと・事実の出どころは MY_ICS_APP_GUIDE の上の注記）
+function MyIcsAppGuide(){
+  const plat=myIcsPlatformOf(typeof navigator!=="undefined"?navigator.userAgent:"",typeof navigator!=="undefined"?navigator.maxTouchPoints:0);
+  const G=MY_ICS_APP_GUIDE;
+  return(
+    <details data-my-ics-apps={plat} style={{marginTop:10,fontSize:13,color:"var(--c-text2)",lineHeight:1.7}}>
+      <summary style={{cursor:"pointer",color:"var(--c-text2)",fontWeight:600,minHeight:32,display:"flex",alignItems:"center"}}>{G.title}</summary>
+      <div style={{padding:"6px 0 2px"}}>
+        <div style={{marginBottom:6}}>{G.intro}</div>
+        <ol data-my-ics-steps="1" style={{margin:"0 0 6px",paddingLeft:20}}>{G.steps[plat].map((t,i)=><li key={i} style={{marginBottom:4,overflowWrap:"anywhere"}}>{t}</li>)}</ol>
+        <div style={{color:"var(--c-text3)"}}>{G.note}</div>
+      </div>
+    </details>
+  );
+}
 function MyShiftTab({me,onGoSettings,personal}){
   const base=me&&me.base;
   const P=personal||{state:"ok",workplaces:{},shifts:{},overrides:{}};
@@ -1006,6 +1021,7 @@ function MyShiftTab({me,onGoSettings,personal}){
       {canEdit&&<div style={{padding:"0 4px 12px"}}>
         <button data-my-action="ics" onClick={downloadIcs} style={{...AGray,width:"100%"}}>この月のシフトをカレンダーに取り込む（.ics）</button>
         <MyMessage {...icsMsg}/>
+        <MyIcsAppGuide/>
       </div>}
 
       <section style={{...MY_SECTION,padding:"14px 16px"}} data-my-day={sel}>
