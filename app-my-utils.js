@@ -271,7 +271,10 @@ function fmtLinkCodeExpiry(ms){
 // module.exports）を引数で渡す。ブラウザでは省略してよい（同じ名前のグローバルを使う）
 function _myU(U){
   if(U)return U;
-  return{scheduledDay,resolveActualDay,resolvePeriodMaster,resolveSubByAlias,isStaffHiddenInPeriod,isPeriodPublished,isPeriodConfirmed,featureEnabled};
+  return{scheduledDay,resolveActualDay,resolvePeriodMaster,resolveSubByAlias,isStaffHiddenInPeriod,isPeriodPublished,isPeriodConfirmed,featureEnabled,
+    // 給料（E5）: 月次賃金ページ（P6b）・割増（P5）と同じ関数
+    premiumMonthOf,premiumDayInput,dayRestKindOf,laborSystemForStaff,laborSettingsOf,rateDenominatorMinOf,payVersionOn,wageOf,deductionOf,
+    premiumRatesOf,roundingRuleOf,roundYenFrac,nightMinutesOf,normalizePayVersion,isWeekendOrHoliday,OVER60_THRESHOLD_MIN};
 }
 // 勤務先の色（ドット）。E3 は既定色だけで、E4 で本人が選べるようにする。差し替え口は overrides（{shopId:"#rrggbb"}）。
 // 先頭はブランドのアクセント（#f87036）。2店舗目以降は落ち着いた色で、店舗の区別だけに使う（意味を持たない装飾にしない）
@@ -686,6 +689,383 @@ function buildMyIcs(entries,o){
 // .ics に入れる entry（表示中の月の公開済み・手入力）
 function myIcsEntriesForMonth(entries,ym){return(entries||[]).filter(e=>e&&(e.kind==="published"||e.kind==="manual")&&String(e.date).slice(0,7)===ym);}
 
+// ===== 給料（2026-10-04・第2部 E5・E6）=====
+// 計画書 E.2「給料」「設定」・E.4・E.5。金額は**目安**（月次賃金＝給与計算の元とは別物）。
+// データ（すべて users/{uid} の下・本人のみ）:
+//   workplaces/{id}.pay  本人の給料設定（勤務先ごと）{closingDay, payMonthOffset, payDay, holidayRule, wageType?, rate?, commute?, night?, over8?, updatedAt}
+//                         closingDay・payDay の 31 は「末日」（短い月は月末に寄せる）。wageType・rate は会社設定（getMyPay）があれば使わない
+//   goals                { monthly, updatedAt }  月間目標（円・支給月ごとの合計と比べる）
+//   actuals/{YYYY-MM}/{workplaceId}  振込額（円・本人の手入力）。YYYY-MM は**支給月**。店舗の shops/{sid}/actuals（打刻の実績）とは別物で、
+//                         コードでは「振込額」（received）と呼ぶ
+// Shifty の店舗の計算は既存の関数だけを使う（新しい労務の式を作らない）: resolveActualDay（本人の上書き込み）→ premiumDayInput →
+// premiumMonthOf（暦月の割増の時間・perDay）→ wageOf / deductionOf（月次賃金ページと同じ式・率・端数）。
+// 本人のセッションが読めるデータ（確定シフト＝subs・設定・写し）だけで数える。laborMonths・店舗の actuals・private/pay はオーナーしか
+// 読めないので使わない（打刻の実績・月所定の登録値が無い前提。月次賃金ページとの差になりうる＝画面と CLAUDE.md に書く）。
+const MY_PAY_END_DAY=31;
+const MY_PAY_HOLIDAY_RULES=["before","after","none"];
+const MY_PAY_HOLIDAY_RULE_LABELS={before:"前倒し",after:"後ろ倒し",none:"そのまま"};
+const MY_PAY_WAGE_TYPES=["hourly","daily"];
+const MY_PAY_WAGE_TYPE_LABELS={hourly:"時給",daily:"日給"};
+const MY_PAY_OFFSET_LABELS={0:"当月",1:"翌月",2:"翌々月"};
+const MY_PAY_YEN_MAX=1000000;
+const MY_PAY_GOAL_MAX=100000000;
+// 締日・給料日が未設定の勤務先の振り分け（月末締め・翌月25日・土日祝は前倒し）。画面に「未設定のため」と出す
+const MY_PAY_DEFAULT={closingDay:31,payMonthOffset:1,payDay:25,holidayRule:"before"};
+// 手入力の勤務先の簡易計算の割増率（%）
+const MY_MANUAL_NIGHT_PCT=25;
+const MY_MANUAL_OVER8_PCT=25;
+const MY_MANUAL_OVER8_MIN=8*60;
+function _myInt(v){const n=Number(v);return Number.isFinite(n)?Math.round(n):NaN;}
+function _myYenInput(v){
+  const s=toHalfWidthDigits(v).replace(/[,，円\s　]/g,"");
+  if(!s)return"";
+  if(!/^\d{1,9}$/.test(s))return null;
+  return +s;
+}
+function myPayDayLabel(d){return Number(d)>=MY_PAY_END_DAY?"末日":`${Number(d)}日`;}
+// 保存された給料設定の読み（壊れた記録は使わない＝null）
+function myPayOf(v){
+  const o=_myObj(v);
+  if(!o)return null;
+  const cd=_myInt(o.closingDay),pd0=_myInt(o.payDay),off=_myInt(o.payMonthOffset);
+  if(!(cd>=1&&cd<=31)||!(pd0>=1&&pd0<=31)||![0,1,2].includes(off)||!MY_PAY_HOLIDAY_RULES.includes(o.holidayRule))return null;
+  const cm=_myObj(o.commute)||{};
+  const ca=_myInt(cm.amount);
+  const rate=_myInt(o.rate);
+  return{closingDay:cd,payMonthOffset:off,payDay:pd0,holidayRule:o.holidayRule,
+    wageType:MY_PAY_WAGE_TYPES.includes(o.wageType)?o.wageType:"hourly",rate:rate>0?rate:0,
+    commute:{amount:ca>0?ca:0,per:cm.per==="day"?"day":"month"},night:o.night===true,over8:o.over8===true};
+}
+// 入力欄の値（文字列）の検証。ctx={kind:"shifty"|"manual", companyPay:boolean}。会社設定があるなら時給・交通費は入力しない
+function validateMyPayInput(o,ctx){
+  const x=o||{},c=ctx||{};
+  const cd=_myInt(x.closingDay),pd0=_myInt(x.payDay),off=_myInt(x.payMonthOffset);
+  if(!(cd>=1&&cd<=31))return"締日を選んでください";
+  if(![0,1,2].includes(off))return"給料日の月を選んでください";
+  if(!(pd0>=1&&pd0<=31))return"給料日を選んでください";
+  if(!MY_PAY_HOLIDAY_RULES.includes(x.holidayRule))return"土日祝の扱いを選んでください";
+  if(off===0&&pd0<=cd)return"当月払いのときは、給料日を締日より後の日にしてください";
+  if(c.companyPay)return null;
+  if(!MY_PAY_WAGE_TYPES.includes(x.wageType))return"時給か日給かを選んでください";
+  const r=_myYenInput(x.rate);
+  if(r===null||r===""||!(r>0)||r>MY_PAY_YEN_MAX)return`${MY_PAY_WAGE_TYPE_LABELS[x.wageType]}を円の数字で入力してください（1〜${MY_PAY_YEN_MAX.toLocaleString("ja-JP")}）`;
+  const ca=_myYenInput(x.commuteAmount);
+  if(ca===null||(ca!==""&&ca>MY_PAY_YEN_MAX))return"交通費は円の数字で入力してください";
+  if(!["day","month"].includes(x.commutePer))return"交通費の単位を選んでください";
+  return null;
+}
+// workplaces/{id}/pay に書く形（検証を通った入力から作る）。会社設定があるときも本人の時給は残す（会社設定が消えたときに使う）
+function buildMyPayRecord(o,ctx,nowIso){
+  const x=o||{},c=ctx||{};
+  const rec={closingDay:_myInt(x.closingDay),payMonthOffset:_myInt(x.payMonthOffset),payDay:_myInt(x.payDay),holidayRule:x.holidayRule,updatedAt:String(nowIso||"")};
+  const r=_myYenInput(x.rate),ca=_myYenInput(x.commuteAmount);
+  if(MY_PAY_WAGE_TYPES.includes(x.wageType)&&r>0){rec.wageType=x.wageType;rec.rate=r;}
+  if(ca>0&&["day","month"].includes(x.commutePer))rec.commute={amount:ca,per:x.commutePer};
+  if(c.kind==="manual"){rec.night=x.night===true;rec.over8=x.over8===true;}
+  return rec;
+}
+// 入力欄の初期値（保存値 → 文字列）
+function myPayFormOf(pay){
+  const p=myPayOf(pay);
+  const d=p||{...MY_PAY_DEFAULT,wageType:"hourly",rate:0,commute:{amount:0,per:"day"},night:false,over8:false};
+  return{closingDay:String(d.closingDay),payMonthOffset:String(d.payMonthOffset),payDay:String(d.payDay),holidayRule:d.holidayRule,
+    wageType:d.wageType,rate:d.rate>0?String(d.rate):"",commuteAmount:d.commute.amount>0?String(d.commute.amount):"",commutePer:d.commute.per,
+    night:!!d.night,over8:!!d.over8};
+}
+// 月間目標（goals）の検証と書く形。空なら null（目標を消す）
+function parseMyGoalInput(v){
+  const n=_myYenInput(v);
+  if(n==="")return{remove:true};
+  if(n===null||n>MY_PAY_GOAL_MAX)return{error:"目標は円の数字で入力してください"};
+  return{value:n};
+}
+function myGoalOf(v){const o=_myObj(v);const n=o?_myInt(o.monthly):NaN;return n>0?n:0;}
+// 振込額（actuals/{支給月}/{勤務先}）の入力。空なら削除
+function parseMyReceivedInput(v){
+  const n=_myYenInput(v);
+  if(n==="")return{remove:true};
+  if(n===null||n>MY_PAY_YEN_MAX*10)return{error:"振込額は円の数字で入力してください"};
+  return{value:n};
+}
+// ---- 締め期間と支給月 ----
+function _myDim(ym){const m=/^(\d{4})-(\d{2})$/.exec(String(ym||""));return m?new Date(Date.UTC(+m[1],+m[2],0)).getUTCDate():0;}
+// その月の「day 日」。31（末日）や短い月の 29・30 は月末に寄せる
+function myClampDay(ym,day){const n=_myDim(ym);return`${ym}-${String(Math.min(Math.max(1,_myInt(day)||1),n)).padStart(2,"0")}`;}
+// 勤務日 date が入る締め月（"YYYY-MM"＝その月の締日で締まる）
+function myClosingMonthOf(date,closingDay){
+  const ym=String(date).slice(0,7);
+  return date<=myClampDay(ym,closingDay)?ym:myShiftMonth(ym,1);
+}
+// 締め月 closingYm の締め期間（前の月の締日の翌日 〜 その月の締日）
+function myClosingRangeOf(closingYm,closingDay){
+  return{from:_myAddDays(myClampDay(myShiftMonth(closingYm,-1),closingDay),1),to:myClampDay(closingYm,closingDay)};
+}
+// 給料日（土日祝の扱いを当てたあと）。isOff(日付) は土日祝か（app-utils.js の isWeekendOrHoliday）
+function myPayDateOf(payYm,payDay,holidayRule,isOff){
+  let d=myClampDay(payYm,payDay);
+  if(holidayRule==="none"||typeof isOff!=="function")return d;
+  const step=holidayRule==="after"?1:-1;
+  for(let i=0;i<14&&isOff(d);i++)d=_myAddDays(d,step);
+  return d;
+}
+// 支給月 payYm に払われる分（締め月・締め期間・給料日）。pay は myPayOf の値（無ければ MY_PAY_DEFAULT）
+function myPayPlanOf(payYm,pay,isOff){
+  const p=pay||MY_PAY_DEFAULT;
+  const closingYm=myShiftMonth(payYm,-p.payMonthOffset);
+  const r=myClosingRangeOf(closingYm,p.closingDay);
+  return{payYm,closingYm,from:r.from,to:r.to,payDate:myPayDateOf(payYm,p.payDay,p.holidayRule,isOff),
+    monthEnd:p.closingDay>=_myDim(closingYm)&&r.from.slice(8)==="01"};
+}
+// 勤務日 date の支給月
+function myPayMonthOfDate(date,pay){const p=pay||MY_PAY_DEFAULT;return myShiftMonth(myClosingMonthOf(date,p.closingDay),p.payMonthOffset);}
+function _myMonthsBetween(from,to){
+  const out=[];let ym=String(from).slice(0,7);const last=String(to).slice(0,7);
+  for(let i=0;i<40&&ym<=last;i++){out.push(ym);ym=myShiftMonth(ym,1);}
+  return out;
+}
+// 期間が [from, to] に重なるもの（給料タブが読む提出の期間）
+function myPeriodsInRange(periods,from,to){return(periods||[]).filter(p=>p&&p.id&&myPeriodOverlaps(p,from,to));}
+// 給料タブで読む日の範囲: 支給月ごとの締め期間を含む暦月の全日と、その前後の週（法定休日・週40時間の判定）
+function myPayReadRange(plans){
+  const ps=(plans||[]).filter(Boolean);
+  if(!ps.length)return null;
+  const from=ps.reduce((a,p)=>p.from<a?p.from:a,ps[0].from),to=ps.reduce((a,p)=>p.to>a?p.to:a,ps[0].to);
+  return{from:_myAddDays(`${from.slice(0,7)}-01`,-7),to:_myAddDays(myClampDay(to.slice(0,7),31),7)};
+}
+// ---- Shifty の店舗の1日 ----
+// 店舗の期間ごとの日（給料の計算の元）。読めた期間（subsByPeriod にある期間）の日だけを返す。
+//   {date: {periodId, published, sub, ov, submitted}}  published=false の日（未公開・Premium でない・その期間に非表示）は計算に入れない
+// o={name, periods, subsByPeriod, settings, staff, todayStr, premium, overrides}
+function myShiftyDayInfo(o,U){
+  const u=_myU(U);const x=o||{};
+  const out={};
+  if(!x.name)return out;
+  const ovs=_myObj(x.overrides)||{};
+  (x.periods||[]).forEach(p=>{
+    if(!p||!p.id)return;
+    const list=x.subsByPeriod&&x.subsByPeriod[p.id];
+    if(!Array.isArray(list))return;
+    const st=u.resolvePeriodMaster(p,x.staff||[],x.settings||{},x.todayStr).settings||{};
+    const byName=new Map();
+    list.forEach(s=>{if(s&&s.staffName&&s.periodId===p.id&&!byName.has(s.staffName))byName.set(s.staffName,s);});
+    const sub=u.resolveSubByAlias(n=>byName.get(n),x.name,st.staffAliases||{});
+    const published=!!x.premium&&u.isPeriodPublished(p)&&!u.isStaffHiddenInPeriod(x.name,st,p);
+    _myDatesOf(p).forEach(date=>{
+      if(out[date])return;
+      const sh=sub&&sub.shifts?sub.shifts[date]:null;
+      out[date]={periodId:p.id,published,sub:sub||null,ov:published?myOverrideOf(ovs[date]):null,
+        submitted:!published&&!!(sh&&sh.status==="work"&&(sh.start||sh.end))};
+    });
+  });
+  return out;
+}
+// 暦月 ym の計算に使う店舗の設定。月次賃金ページと同じく「その月に始まる最も新しい期間（無ければ月にかかる最も新しい期間）」の設定
+// （確定・終了済みなら写し）。シフト作成タブの労務判定表もこの期間の設定で月を数える
+function myMonthSettingsOf(o,ym,U){
+  const u=_myU(U);const x=o||{};
+  const first=`${ym}-01`,last=myClampDay(ym,31);
+  const inMonth=(x.periods||[]).filter(p=>p&&p.id&&p.startDate&&p.endDate&&p.startDate<=last&&p.endDate>=first)
+    .sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate)));
+  const target=inMonth.find(p=>String(p.startDate).slice(0,7)===ym)||inMonth[0];
+  return target?(u.resolvePeriodMaster(target,x.staff||[],x.settings||{},x.todayStr).settings||{}):(x.settings||{});
+}
+// [from, to] の日ごとの時間（分）。暦月ごとに premiumMonthOf を通し、日ごとの時間外（perDay）と深夜・法定休日を取り出す。
+// 月60時間超はその月の時間外を日付の順に積んで 60h を超えた分（月の合計は premiumBreakdownOf の over60Min と一致）。
+// o={name, info: myShiftyDayInfo, monthSettingsOf(ym), from, to, todayStr}
+// 戻り値 {days:[{date,workMin,otMin,over60Min,nightMin,legalHolidayMin,absentMin,past}], systems:{ym:"A"|"B"|null}, undetermined, missingDays, submittedDays}
+function myShiftyPayTimes(o,U){
+  const u=_myU(U);const x=o||{};
+  const info=x.info||{};
+  const days=[],systems={};
+  let undetermined=0,missingDays=0,submittedDays=0;
+  _myMonthsBetween(x.from,x.to).forEach(ym=>{
+    const st=x.monthSettingsOf?x.monthSettingsOf(ym):{};
+    const sys=u.laborSystemForStaff(st,x.name);
+    systems[ym]=sys;
+    const cache=new Map();
+    const dayOf=d=>{
+      if(cache.has(d))return cache.get(d);
+      const it=info[d];let v;
+      if(!it||!it.published)v=u.premiumDayInput({date:d,hasData:false});
+      else{
+        const sh=it.sub&&it.sub.shifts?it.sub.shifts[d]:null;
+        const own=u.resolveActualDay(it.sub,it.ov?{start:it.ov.start,end:it.ov.end,breakMin:it.ov.breakMin}:null,d,st,x.name);
+        v=u.premiumDayInput({date:d,hasData:true,kind:u.dayRestKindOf(sh,true),own});
+      }
+      cache.set(d,v);return v;
+    };
+    const b=u.premiumMonthOf({ym,system:sys,settings:st,dayOf});
+    const legal=new Set(b.legalHolidayDates||[]);
+    const n=_myDim(ym);
+    let cum=0;
+    if((b.undeterminedWeeks||[]).length)undetermined+=b.undeterminedWeeks.length;
+    for(let i=1;i<=n;i++){
+      const d=`${ym}-${String(i).padStart(2,"0")}`;
+      const ot=Math.max(0,Number((b.perDay||{})[d])||0);
+      const before=cum;cum+=ot;
+      const th=u.OVER60_THRESHOLD_MIN;
+      const o60=Math.max(0,cum-th)-Math.max(0,before-th);
+      if(d<x.from||d>x.to)continue;
+      const v=dayOf(d);const it=info[d];
+      if(!it)missingDays++;
+      else if(!it.published&&it.submitted)submittedDays++;
+      days.push({date:d,workMin:Math.max(0,Number(v.workMin)||0),otMin:ot,over60Min:o60,nightMin:Math.max(0,Number(v.nightMin)||0),
+        legalHolidayMin:legal.has(d)?Math.max(0,Number(v.workMin)||0):0,absentMin:Math.max(0,Number(v.absentMin)||0),past:d<=String(x.todayStr||"")});
+    }
+  });
+  return{days,systems,undetermined,missingDays,submittedDays};
+}
+// 手入力の勤務先の日ごとの時間。entries は buildMyManualDays の戻り値（その勤務先の分）。同じ日の複数のシフトは足す
+function myManualPayTimes(entries,from,to,todayStr,U){
+  const u=_myU(U);
+  const by=new Map();
+  (entries||[]).forEach(e=>{
+    if(!e||e.date<from||e.date>to)return;
+    const cur=by.get(e.date)||{date:e.date,workMin:0,nightMin:0,otMin:0,over60Min:0,legalHolidayMin:0,absentMin:0,past:e.date<=String(todayStr||"")};
+    cur.workMin+=Math.max(0,Number(e.workMin)||0);
+    cur.nightMin+=u.nightMinutesOf({segments:e.segments||[],breakMin:e.breakMin,breakBands:null});
+    by.set(e.date,cur);
+  });
+  const days=[...by.values()].sort((a,b)=>a.date.localeCompare(b.date));
+  days.forEach(d=>{d.otMin=Math.max(0,d.workMin-MY_MANUAL_OVER8_MIN);});
+  return{days,systems:{},undetermined:0,missingDays:0,submittedDays:0};
+}
+function _mySumTimes(days,pred){
+  const t={workMin:0,otMin:0,over60Min:0,nightMin:0,legalHolidayMin:0,absentMin:0,workDays:0};
+  (days||[]).forEach(d=>{if(pred&&!pred(d))return;["workMin","otMin","over60Min","nightMin","legalHolidayMin","absentMin"].forEach(k=>{t[k]+=d[k]||0;});if(d.workMin>0)t.workDays++;});
+  return t;
+}
+// 賃金の出どころ。会社設定（getMyPay の pay＝賃金マスタの1人分・history 込み）が締め期間の初日に効いていればそれ、
+// 無ければ本人の設定（時給／日給）。どちらも無ければ none（時間だけ出す）
+function myWageSourceOf(o,U){
+  const u=_myU(U);const x=o||{};
+  if(x.companyPay&&typeof x.companyPay==="object"){
+    const v=u.payVersionOn(x.companyPay,x.from)||u.payVersionOn(x.companyPay,x.to);
+    if(v){
+      const notes=[];
+      if(v.effectiveFrom&&v.effectiveFrom>x.from)notes.push(`${v.effectiveFrom} からの会社設定の賃金です（日割りしていません）`);
+      return{source:"company",payType:v.payType,version:v,commute:v.commute||{amount:0,per:"month"},notes};
+    }
+  }
+  const own=x.own;
+  if(own&&own.rate>0){
+    if(own.wageType==="daily")return{source:"self",payType:"daily",rate:own.rate,commute:own.commute,notes:[]};
+    return{source:"self",payType:"hourly",version:u.normalizePayVersion({payType:"hourly",base:own.rate}),commute:own.commute,notes:[]};
+  }
+  return{source:"none",payType:null,commute:own?own.commute:{amount:0,per:"month"},notes:[]};
+}
+// 金額（1つの勤務先・1つの締め期間）。月次賃金ページと同じ wageOf / deductionOf を通す（率・端数・固定残業・固定深夜の充当も同じ）。
+// 確定分は今日までの日の時間で同じ式を通した額、見込みは合計との差（端数の合計がずれないように差で出す）。
+// 月給者は基本給・手当を締め期間が終わってから確定分に入れる（それまでは見込み）。基本給は締め期間で日割りしない（月次賃金と同じ）
+// o={kind:"shifty"|"manual", wage: myWageSourceOf, times:{days}, from, to, todayStr, denomMin, wageSettings, manualPay: myPayOf（手入力の割増のオン・オフ）}
+const MY_PAY_ITEM_KEYS=["base","ot","over60","night","holiday","allowances","commute","deduction"];
+function myPayAmounts(o,U){
+  const u=_myU(U);const x=o||{};
+  const days=(x.times&&x.times.days)||[];
+  const T=_mySumTimes(days),P=_mySumTimes(days,d=>d.past);
+  const w=x.wage||{source:"none"};
+  const ended=String(x.to)<=String(x.todayStr||"");
+  const zero=()=>({base:0,ot:0,over60:0,night:0,holiday:0,allowances:0,commute:0,deduction:0});
+  const items=zero(),conf=zero();
+  let detail=null;
+  if(w.source==="none")return{items:null,confirmed:null,projected:null,total:null,confirmedTotal:null,projectedTotal:null,minutes:T,minutesPast:P,detail};
+  if(w.payType==="daily"){
+    items.base=w.rate*T.workDays;conf.base=w.rate*P.workDays;
+  }else if(x.kind==="manual"){
+    const r=w.version.base,mp=x.manualPay||{};
+    const amt=(t,pct)=>u.roundYenFrac(r*pct*t,6000,"ceil");
+    [[items,T],[conf,P]].forEach(([it,t])=>{
+      it.base=u.roundYenFrac(r*t.workMin,60,"ceil");
+      it.night=mp.night?amt(t.nightMin,MY_MANUAL_NIGHT_PCT):0;
+      it.ot=mp.over8?amt(t.otMin,MY_MANUAL_OVER8_PCT):0;
+    });
+  }else{
+    const rates=u.premiumRatesOf(x.wageSettings||null),rule=u.roundingRuleOf(x.wageSettings||null);
+    const wT=u.wageOf({pay:w.version,times:T,denomMin:x.denomMin,rates,rule}),wP=u.wageOf({pay:w.version,times:P,denomMin:x.denomMin,rates,rule});
+    detail=wT;
+    const monthly=w.payType==="monthly";
+    items.base=wT.basePay;conf.base=monthly?(ended?wT.basePay:0):wP.basePay;
+    items.ot=wT.otPay;conf.ot=wP.otPay;items.over60=wT.over60Pay;conf.over60=wP.over60Pay;
+    items.night=wT.nightPay;conf.night=wP.nightPay;items.holiday=wT.holidayPay;conf.holiday=wP.holidayPay;
+    items.deduction=u.deductionOf({pay:w.version,absentMin:T.absentMin,denomMin:x.denomMin,rule});
+    conf.deduction=u.deductionOf({pay:w.version,absentMin:P.absentMin,denomMin:x.denomMin,rule});
+    if(monthly){
+      const al=(w.version.allowances||[]).reduce((s,a)=>s+(a&&Number(a.amount)>0?Math.round(Number(a.amount)):0),0);
+      items.allowances=al;conf.allowances=ended?al:0;
+    }
+  }
+  const cm=w.commute||{amount:0,per:"month"};
+  if(cm.amount>0){
+    if(cm.per==="day"){items.commute=cm.amount*T.workDays;conf.commute=cm.amount*P.workDays;}
+    else if(T.workDays>0||w.payType==="monthly"){items.commute=cm.amount;conf.commute=ended?cm.amount:0;}
+  }
+  // 確定分が合計を超えない（固定残業の充当などで部分の額が合計を上回ることがあるため）
+  MY_PAY_ITEM_KEYS.forEach(k=>{conf[k]=Math.min(conf[k],items[k]);});
+  const sum=it=>MY_PAY_ITEM_KEYS.reduce((s,k)=>s+(k==="deduction"?-it[k]:it[k]),0);
+  const projected={};MY_PAY_ITEM_KEYS.forEach(k=>{projected[k]=items[k]-conf[k];});
+  return{items,confirmed:conf,projected,total:sum(items),confirmedTotal:sum(conf),projectedTotal:sum(items)-sum(conf),minutes:T,minutesPast:P,detail};
+}
+// 1つの支給月の全勤務先。workplaces=[{id, kind, name, color, pay（myPayOf|null）, companyPay, companyNote, shifty:{name,info,monthSettingsOf,wageSettings}, manualEntries}]
+// 戻り値 {payYm, rows:[{id,kind,name,color,plan,wage,amounts,notes,estimate}], total, confirmedTotal, projectedTotal, workMin, hasAmount}
+function myPayMonthFor(o,U){
+  const u=_myU(U);const x=o||{};
+  const isOff=d=>u.isWeekendOrHoliday(d);
+  const rows=(x.workplaces||[]).map(wp=>{
+    const own=wp.pay||null;
+    const plan=myPayPlanOf(x.payYm,own,isOff);
+    const notes=[];
+    if(!own)notes.push("締日と給料日が未設定のため、月末締め・翌月25日払い（土日祝は前倒し）として振り分けています");
+    let times;
+    if(wp.kind==="manual")times=myManualPayTimes(wp.manualEntries,plan.from,plan.to,x.todayStr,u);
+    else times=myShiftyPayTimes({name:wp.shifty.name,info:wp.shifty.info,monthSettingsOf:wp.shifty.monthSettingsOf,from:plan.from,to:plan.to,todayStr:x.todayStr},u);
+    const wage=myWageSourceOf({companyPay:wp.kind==="shifty"?wp.companyPay:null,own,from:plan.from,to:plan.to},u);
+    notes.push(...wage.notes);
+    if(wp.companyNote)notes.push(wp.companyNote);
+    let denomMin=0;
+    if(wp.kind==="shifty"){
+      denomMin=u.rateDenominatorMinOf(u.laborSettingsOf(wp.shifty.monthSettingsOf(plan.to.slice(0,7))));
+      if(Object.values(times.systems).some(s=>s!=="A"&&s!=="B"))notes.push("お店の労働時間制が未設定のため、時間外の割増を含めていません");
+      if(times.submittedDays)notes.push(`未公開のシフト${times.submittedDays}日は含めていません`);
+      if(times.missingDays)notes.push(`お店のシフト期間が無い日${times.missingDays}日は勤務なしとして数えています`);
+      if(times.undetermined)notes.push("シフトの無い日を含む週は、法定休日の判定をしていません");
+    }
+    if(wage.payType==="daily"&&wp.kind==="shifty")notes.push("日給は割増を含めていません");
+    if(wage.source==="none")notes.push(wp.kind==="manual"?"時給（日給）が未設定のため、時間だけ表示しています":"時給（日給）が未設定のため、時間だけ表示しています");
+    const amounts=myPayAmounts({kind:wp.kind,wage,times,from:plan.from,to:plan.to,todayStr:x.todayStr,denomMin,
+      wageSettings:wp.kind==="shifty"?wp.shifty.wageSettings:null,manualPay:own},u);
+    return{id:wp.id,kind:wp.kind,name:wp.name,color:wp.color,plan,wage,amounts,notes,times,
+      estimate:!plan.monthEnd||(wp.kind==="shifty"&&wage.payType==="daily")};
+  });
+  const add=k=>rows.reduce((s,r)=>s+(r.amounts[k]!=null?r.amounts[k]:0),0);
+  return{payYm:x.payYm,rows,total:add("total"),confirmedTotal:add("confirmedTotal"),projectedTotal:add("projectedTotal"),
+    workMin:rows.reduce((s,r)=>s+r.amounts.minutes.workMin,0),hasAmount:rows.some(r=>r.amounts.total!=null)};
+}
+// 年（暦年）の支給月ごとの一覧と合計。received は users/{uid}/actuals（{支給月: {勤務先: 円}}）
+function myPayYearMonths(year){return Array.from({length:12},(_,i)=>`${year}-${String(i+1).padStart(2,"0")}`);}
+function myReceivedSum(received,payYm){return Object.values((_myObj(received)||{})[payYm]||{}).reduce((s,v)=>s+(Number(v)>0?Math.round(Number(v)):0),0);}
+function myPayYearSummary(months,received){
+  const rows=(months||[]).map(m=>({payYm:m.payYm,total:m.total,confirmedTotal:m.confirmedTotal,projectedTotal:m.projectedTotal,workMin:m.workMin,
+    received:myReceivedSum(received,m.payYm),hasReceived:Object.keys(((_myObj(received)||{})[m.payYm])||{}).length>0}));
+  return{rows,total:rows.reduce((s,r)=>s+r.total,0),received:rows.reduce((s,r)=>s+r.received,0),workMin:rows.reduce((s,r)=>s+r.workMin,0)};
+}
+// 給料タブの既定の支給月: 今日の勤務が払われる支給月のうち最も早いもの（勤務先ごとに設定が違うため）
+function myDefaultPayMonth(pays,todayStr){
+  const list=(pays||[]).filter(Boolean);
+  const ms=(list.length?list:[MY_PAY_DEFAULT]).map(p=>myPayMonthOfDate(todayStr,p));
+  return ms.sort()[0];
+}
+// 円の表示（3桁区切り）
+function fmtMyYen(v){if(v==null||!Number.isFinite(Number(v)))return"—";const n=Math.round(Number(v));return`${n<0?"−":""}${Math.abs(n).toLocaleString("ja-JP")}円`;}
+// 月間目標に対する進捗の弧（0〜1）。目標が無ければ null
+function myGoalProgress(amount,goal){return goal>0?Math.max(0,Math.min(1,(Number(amount)||0)/goal)):null;}
+// 会社設定（getMyPay）の戻り値の読み。CF が返す形（functions/my-pay.js）を確かめ、使えるものだけを残す
+function myCompanyPayOf(res){
+  const r=_myObj(res);
+  if(!r||r.error)return{state:"error",error:(r&&r.error)||"",pay:null};
+  const pay=_myObj(r.pay)&&["monthly","hourly"].includes(r.pay.payType)?r.pay:null;
+  return{state:"ok",pay,homeShopId:typeof r.homeShopId==="string"?r.homeShopId:"",homeShopName:typeof r.homeShopName==="string"?r.homeShopName:""};
+}
+
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
   module.exports={MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
@@ -693,5 +1073,10 @@ if(typeof module!=="undefined"&&module.exports){
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
     MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_OPTIONS,MY_BREAK_OPTIONS,parseMyMinutesInput,
     MY_OVERNIGHT_HINT,validateMyShiftInput,buildMyShiftRecord,myShiftDuplicateOf,myOverrideOf,planMyOverride,myWorkplaceList,myNextWorkplaceColor,validateMyWorkplaceInput,buildMyWorkplacePatch,
-    buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth};
+    buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth,
+    MY_PAY_END_DAY,MY_PAY_HOLIDAY_RULES,MY_PAY_HOLIDAY_RULE_LABELS,MY_PAY_WAGE_TYPES,MY_PAY_WAGE_TYPE_LABELS,MY_PAY_OFFSET_LABELS,MY_PAY_YEN_MAX,MY_PAY_GOAL_MAX,MY_PAY_DEFAULT,
+    MY_MANUAL_NIGHT_PCT,MY_MANUAL_OVER8_PCT,MY_MANUAL_OVER8_MIN,myPayDayLabel,myPayOf,validateMyPayInput,buildMyPayRecord,myPayFormOf,parseMyGoalInput,myGoalOf,parseMyReceivedInput,
+    myClampDay,myClosingMonthOf,myClosingRangeOf,myPayDateOf,myPayPlanOf,myPayMonthOfDate,myPeriodsInRange,myPayReadRange,myShiftyDayInfo,myMonthSettingsOf,
+    myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
+    fmtMyYen,myGoalProgress,myCompanyPayOf};
 }

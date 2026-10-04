@@ -469,13 +469,66 @@ async function readMyShiftShop(sid){
   const settings=applyCompanySettings(se.v||makeSettings(sid),coLink?(coLink.settings||{}):null);
   // プランは App と同じ規則（dev は ?plan= の上書きが効く）。読めなければ Free とみなす＝公開済みの表示は出さない側に倒す
   const plan=DEV_PLAN_OVERRIDE||(pl.ok&&["free","pro","premium"].includes(pl.v)?pl.v:"free");
-  return{ok:true,periods,settings,staff:st.v||[],plan};
+  // 賃金の法人設定（最低賃金・割増率・端数規則）。写しは auth != null で読める＝本人の給料の目安（E5）に月次賃金と同じ率・端数を使う
+  const wageSettings=coLink&&coLink.settings&&coLink.settings.wageSettings&&typeof coLink.settings.wageSettings==="object"?coLink.settings.wageSettings:null;
+  return{ok:true,periods,settings,staff:st.v||[],plan,wageSettings};
 }
 async function readMyPeriodSubs(sid,pid){
   try{
     const snap=await firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(pid).once("value");
     return Object.values(snap.val()||{}).filter(s=>s&&s.id&&s.periodId===pid);
   }catch(e){console.warn("マイシフト: 提出の読み込みに失敗:",e&&e.code);return null;}
+}
+
+// 紐付いた店舗（readMyLinks の ok の行）ごとの periods・settings・staff・プランと、pick(期間の一覧) が返す期間の subs を読む。
+// マイシフト（表示中の月と今日以降）と給料（締め期間を含む暦月と前後の週・E5）が共有する。読んだ期間は覚えておき、読み直さない。
+// pending は「読み込み中の店舗か、pick の期間で subs をまだ読んでいないものがある」
+function useMyShiftSources(uid,pick){
+  const[links,setLinks]=useState(undefined);   // undefined=読み込み中・null=読めない
+  const[shops,setShops]=useState({});         // {sid: {ok,periods,settings,staff,plan,wageSettings}}
+  const[subs,setSubs]=useState({});           // {"sid|pid": sub[] | null}
+  const loadingRef=useRef(new Set());
+  useEffect(()=>{
+    if(!uid)return;
+    let alive=true;
+    readMyLinks(uid).then(v=>{if(alive)setLinks(v);}).catch(()=>{if(alive)setLinks(null);});
+    return()=>{alive=false;};
+  },[uid]);
+  const okLinks=useMemo(()=>(Array.isArray(links)?links.filter(l=>l&&l.ok):[]),[links]);
+  const badLinks=Array.isArray(links)?links.filter(l=>l&&!l.ok):[];
+  useEffect(()=>{
+    let alive=true;
+    okLinks.forEach(l=>{
+      if(shops[l.shopId]||loadingRef.current.has("shop:"+l.shopId))return;
+      loadingRef.current.add("shop:"+l.shopId);
+      readMyShiftShop(l.shopId).then(v=>{if(alive)setShops(p=>({...p,[l.shopId]:v}));},()=>{if(alive)setShops(p=>({...p,[l.shopId]:{ok:false}}));});
+    });
+    return()=>{alive=false;};
+  },[okLinks,shops]);
+  useEffect(()=>{
+    okLinks.forEach(l=>{
+      const sh=shops[l.shopId];
+      if(!sh||!sh.ok)return;
+      pick(sh.periods).forEach(p=>{
+        const k=l.shopId+"|"+p.id;
+        if(k in subs||loadingRef.current.has(k))return;
+        loadingRef.current.add(k);
+        readMyPeriodSubs(l.shopId,p.id).then(v=>setSubs(prev=>({...prev,[k]:v})));
+      });
+    });
+  },[okLinks,shops,pick,subs]);
+  const pending=links===undefined||okLinks.some(l=>{
+    const sh=shops[l.shopId];
+    if(!sh)return true;
+    return sh.ok&&pick(sh.periods).some(p=>!((l.shopId+"|"+p.id) in subs));
+  });
+  return{links,okLinks,badLinks,shops,subs,pending};
+}
+// 店舗の読めた期間の subs（{期間ID: sub[]}）。subs が null（読めなかった）の期間は入れない
+function mySubsByPeriodOf(sid,sh,subs){
+  const out={};
+  ((sh&&sh.periods)||[]).forEach(p=>{const v=subs[sid+"|"+p.id];if(Array.isArray(v))out[p.id]=v;});
+  return out;
 }
 
 // ===== 本人のデータ（2026-10-04・第2部 E4）=====
@@ -722,43 +775,17 @@ function MyShiftTab({staffUser,onGoSettings,personal}){
   const todayStr=fd(new Date());
   const[ym,setYm]=useState(todayStr.slice(0,7));
   const[sel,setSel]=useState(todayStr);
-  const[links,setLinks]=useState(undefined);   // undefined=読み込み中・null=読めない
-  const[shops,setShops]=useState({});         // {sid: {ok,periods,settings,staff,plan}}
-  const[subs,setSubs]=useState({});           // {"sid|pid": sub[] | null}
   const[seen,setSeen]=useState(undefined);     // users/{uid}/seen（undefined=読み込み中・null=読めない）
-  const loadingRef=useRef(new Set());
   const baselineRef=useRef(new Set());
   useEffect(()=>{
     if(!uid)return;
     let alive=true;
-    readMyLinks(uid).then(v=>{if(alive)setLinks(v);}).catch(()=>{if(alive)setLinks(null);});
     _myRead(`users/${uid}/seen`).then(r=>{if(alive)setSeen(r.ok?(r.v||{}):null);});
     return()=>{alive=false;};
   },[uid]);
-  const okLinks=useMemo(()=>(Array.isArray(links)?links.filter(l=>l&&l.ok):[]),[links]);
-  const badLinks=Array.isArray(links)?links.filter(l=>l&&!l.ok):[];
-  useEffect(()=>{
-    let alive=true;
-    okLinks.forEach(l=>{
-      if(shops[l.shopId]||loadingRef.current.has("shop:"+l.shopId))return;
-      loadingRef.current.add("shop:"+l.shopId);
-      readMyShiftShop(l.shopId).then(v=>{if(alive)setShops(p=>({...p,[l.shopId]:v}));},()=>{if(alive)setShops(p=>({...p,[l.shopId]:{ok:false}}));});
-    });
-    return()=>{alive=false;};
-  },[okLinks,shops]);
   // 表示中の月と今日以降にかかる期間の subs だけを読む（読んだ期間は覚えておき、月を戻っても読み直さない）
-  useEffect(()=>{
-    okLinks.forEach(l=>{
-      const sh=shops[l.shopId];
-      if(!sh||!sh.ok)return;
-      myShiftPeriodsToRead(sh.periods,ym,todayStr).forEach(p=>{
-        const k=l.shopId+"|"+p.id;
-        if(k in subs||loadingRef.current.has(k))return;
-        loadingRef.current.add(k);
-        readMyPeriodSubs(l.shopId,p.id).then(v=>setSubs(prev=>({...prev,[k]:v})));
-      });
-    });
-  },[okLinks,shops,ym,todayStr,subs]);
+  const pick=useCallback(ps=>myShiftPeriodsToRead(ps,ym,todayStr),[ym,todayStr]);
+  const{links,okLinks,badLinks,shops,subs}=useMyShiftSources(uid,pick);
   const premium=myShiftPremiumOf(okLinks.map(l=>shops[l.shopId]&&shops[l.shopId].plan));
   // 勤務先の名前と色（E4）。Shifty の店舗は本人が付けた名前・色（無ければ店舗名と既定の色）、手入力の勤務先はその記録
   const wpList=useMemo(()=>myWorkplaceList(okLinks,P.workplaces),[okLinks,P.workplaces]);
@@ -769,8 +796,8 @@ function MyShiftTab({staffUser,onGoSettings,personal}){
       const sh=shops[l.shopId];
       if(!sh||!sh.ok)return;
       const w=wpList.find(x=>x.id===l.shopId)||{};
-      const subsByPeriod={};
-      sh.periods.forEach(p=>{const v=subs[l.shopId+"|"+p.id];if(Array.isArray(v)){subsByPeriod[p.id]=v;if(premium&&isPeriodPublished(p))keys.push(myShiftSeenKey(l.shopId,p.id));}});
+      const subsByPeriod=mySubsByPeriodOf(l.shopId,sh,subs);
+      sh.periods.forEach(p=>{if(subsByPeriod[p.id]&&premium&&isPeriodPublished(p))keys.push(myShiftSeenKey(l.shopId,p.id));});
       all.push(...buildMyShiftDays({shopId:l.shopId,shopName:w.name||l.shopName,color:w.color||myWorkplaceColor(l.shopId,0),name:l.name,periods:sh.periods,
         subsByPeriod,settings:sh.settings,staff:sh.staff,todayStr,premium,overrides:(P.overrides||{})[l.shopId]}));
     });
@@ -972,20 +999,118 @@ function MyColorPicker({value,onChange}){
     </div>
   );
 }
-function MyWorkplaceEditor({w,personal,isNew,list,onDone}){
+// ===== 給料設定（2026-10-04・第2部 E5）=====
+// 締日・給料日（当月／翌月・日・土日祝の扱い）・時給／日給・交通費。手入力の勤務先は深夜25%・1日8時間超25%のオン／オフ。
+// 保存は workplaces/{id}/pay（勤務先の名前・色と同じ update）。会社が賃金を登録していれば（E6・company.pay）時給と交通費は入力させない
+const MY_PAY_DAY_OPTIONS=(()=>{const a=[];for(let d=1;d<=MY_PAY_END_DAY;d++)a.push({value:String(d),label:myPayDayLabel(d)});return a;})();
+const MY_SELECT={...AI,minHeight:44};
+function MySelect({label,value,onChange,options,name,style}){
+  return(
+    <label style={{display:"block",marginBottom:14,minWidth:0,...(style||{})}}>
+      <span style={MY_LABEL}>{label}</span>
+      <select data-my-input={name} value={value} onChange={e=>onChange(e.target.value)} style={MY_SELECT}>
+        {options.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </label>
+  );
+}
+function MyCheck({label,checked,onChange,name}){
+  return(
+    <label style={{display:"flex",alignItems:"center",gap:10,minHeight:44,fontSize:15,color:"var(--c-text)",cursor:"pointer"}}>
+      <input type="checkbox" data-my-input={name} checked={checked} onChange={e=>onChange(e.target.checked)} style={{width:20,height:20,fontSize:16}}/>
+      {label}
+    </label>
+  );
+}
+// 会社が登録した賃金の固定表示（E6）。変更はできない
+function MyCompanyPayView({pay}){
+  if(!pay)return null;
+  const v=normalizePayVersion(pay);
+  const row=(k,val)=><div style={{display:"flex",justifyContent:"space-between",gap:12,padding:"4px 0",fontSize:14}}><span style={{color:"var(--c-text3)"}}>{k}</span><span style={{color:"var(--c-text)",fontVariantNumeric:"tabular-nums",textAlign:"right"}}>{val}</span></div>;
+  return(
+    <div data-my-company-pay={v.payType} style={{border:"1px solid var(--c-border2)",borderRadius:10,padding:"10px 12px",marginBottom:14}}>
+      <div style={{fontSize:12,fontWeight:700,color:"var(--c-text2)",marginBottom:4}}>会社設定（お店が登録した賃金・変更できません）</div>
+      {row(v.payType==="hourly"?"時給":"月給（基本給）",fmtMyYen(v.base))}
+      {v.payType==="monthly"&&(v.allowances||[]).map((a,i)=><React.Fragment key={i}>{row(a.name||"手当",fmtMyYen(a.amount))}</React.Fragment>)}
+      {v.payType==="monthly"&&v.fixedOt&&v.fixedOt.hours>0&&row("固定残業",`${v.fixedOt.hours}時間・${fmtMyYen(v.fixedOt.amount)}`)}
+      {row("交通費",v.commute&&v.commute.amount>0?`${fmtMyYen(v.commute.amount)}／${v.commute.per==="day"?"日":"月"}`:"なし")}
+      {v.effectiveFrom&&row("適用開始",v.effectiveFrom)}
+    </div>
+  );
+}
+function MyPayFields({kind,f,set,company}){
+  const cp=company&&company.pay;
+  return(
+    <div data-my-pay-fields={kind}>
+      <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)",gap:"0 12px"}}>
+        <MySelect label="締日" name="closingDay" value={f.closingDay} onChange={v=>set({closingDay:v})} options={MY_PAY_DAY_OPTIONS}/>
+        <MySelect label="給料日が土日祝なら" name="holidayRule" value={f.holidayRule} onChange={v=>set({holidayRule:v})}
+          options={MY_PAY_HOLIDAY_RULES.map(k=>({value:k,label:MY_PAY_HOLIDAY_RULE_LABELS[k]}))}/>
+        <MySelect label="給料日の月" name="payMonthOffset" value={f.payMonthOffset} onChange={v=>set({payMonthOffset:v})}
+          options={[0,1,2].map(k=>({value:String(k),label:MY_PAY_OFFSET_LABELS[k]}))}/>
+        <MySelect label="給料日" name="payDay" value={f.payDay} onChange={v=>set({payDay:v})} options={MY_PAY_DAY_OPTIONS}/>
+      </div>
+      {cp?<MyCompanyPayView pay={cp}/>:(
+        <>
+          <div style={{display:"grid",gridTemplateColumns:"minmax(0,2fr) minmax(0,3fr)",gap:"0 12px"}}>
+            <MySelect label="給与" name="wageType" value={f.wageType} onChange={v=>set({wageType:v})}
+              options={MY_PAY_WAGE_TYPES.map(k=>({value:k,label:MY_PAY_WAGE_TYPE_LABELS[k]}))}/>
+            <MyField label={`${MY_PAY_WAGE_TYPE_LABELS[f.wageType]||"時給"}（円）`} value={f.rate} inputMode="numeric" data-my-input="rate" placeholder="例 1200"
+              onChange={e=>set({rate:e.target.value})}/>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"minmax(0,3fr) minmax(0,2fr)",gap:"0 12px"}}>
+            <MyField label="交通費（円・任意）" value={f.commuteAmount} inputMode="numeric" data-my-input="commuteAmount" placeholder="例 500"
+              onChange={e=>set({commuteAmount:e.target.value})}/>
+            <MySelect label="交通費の単位" name="commutePer" value={f.commutePer} onChange={v=>set({commutePer:v})}
+              options={[{value:"day",label:"1日あたり"},{value:"month",label:"1か月あたり"}]}/>
+          </div>
+        </>
+      )}
+      {kind==="manual"&&(f.wageType==="hourly")&&<div style={{marginBottom:10}}>
+        <MyCheck label="深夜（22時〜5時）に25%を足す" name="night" checked={f.night} onChange={v=>set({night:v})}/>
+        <MyCheck label="1日8時間を超えた分に25%を足す" name="over8" checked={f.over8} onChange={v=>set({over8:v})}/>
+      </div>}
+      {kind==="shifty"&&!cp&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>
+        時間外・深夜・法定休日の割増は、お店の労働時間制と割増率で計算します（日給は割増を含めません）。
+      </div>}
+    </div>
+  );
+}
+// 一覧に出す給料設定の要約
+function myPaySummaryText(pay,company){
+  const p=myPayOf(pay);
+  const cp=company&&company.pay?normalizePayVersion(company.pay):null;
+  if(!p&&!cp)return"";
+  const parts=[];
+  if(p)parts.push(`${myPayDayLabel(p.closingDay)}締め・${MY_PAY_OFFSET_LABELS[p.payMonthOffset]}${myPayDayLabel(p.payDay)}払い`);
+  if(cp)parts.push(`会社設定 ${cp.payType==="hourly"?"時給":"月給"}${fmtMyYen(cp.base)}`);
+  else if(p&&p.rate>0)parts.push(`${MY_PAY_WAGE_TYPE_LABELS[p.wageType]}${fmtMyYen(p.rate)}`);
+  return parts.join("・");
+}
+function MyWorkplaceEditor({w,personal,isNew,list,onDone,company}){
   const[f,setF]=useState({name:w?(w.kind==="shifty"?(w.rec&&w.rec.name)||"":w.name):"",color:w?w.color:myNextWorkplaceColor(list)});
+  const hadPay=!!(w&&w.rec&&myPayOf(w.rec.pay));
+  const[payOpen,setPayOpen]=useState(hadPay);
+  const[pf,setPf]=useState(()=>myPayFormOf(w&&w.rec?w.rec.pay:null));
   const[err,setErr]=useState("");
   const[busy,setBusy]=useState(false);
   const kind=w?w.kind:"manual";
-  const save=async()=>{
+  const save=async(o)=>{
+    const removePay=!!(o&&o.removePay);
     const e=validateMyWorkplaceInput(f,kind);
     if(e){setErr(e);return;}
+    const ctx={kind,companyPay:!!(company&&company.pay)};
+    if(payOpen&&!removePay){const e2=validateMyPayInput(pf,ctx);if(e2){setErr(e2);return;}}
     setBusy(true);
     const id=w?w.id:personal.newWorkplaceId();
-    const r=await personal.saveWorkplace(id,buildMyWorkplacePatch(f,w||{kind:"manual"}));
+    const patch=buildMyWorkplacePatch(f,w||{kind:"manual"});
+    // Shifty の店舗の記録がまだ無くても、ルールが要る kind・shopId・color は上の patch に入っている
+    if(removePay)patch.pay=null;
+    else if(payOpen)patch.pay=buildMyPayRecord(pf,ctx,new Date().toISOString());
+    const r=await personal.saveWorkplace(id,patch);
     setBusy(false);
     if(r.error){setErr(r.error);return;}
-    onDone(isNew?"勤務先を追加しました":"保存しました");
+    onDone(removePay?"給料の設定を消しました":isNew?"勤務先を追加しました":"保存しました");
   };
   return(
     <div data-my-wp-editor={isNew?"new":w.id} style={{padding:"12px 0 4px"}}>
@@ -993,10 +1118,27 @@ function MyWorkplaceEditor({w,personal,isNew,list,onDone}){
         hint={kind==="shifty"?"空欄ならお店の名前で表示します":null} onChange={e=>{setF({...f,name:e.target.value});setErr("");}}/>
       <div style={MY_LABEL}>色</div>
       <MyColorPicker value={f.color} onChange={c=>{setF({...f,color:c});setErr("");}}/>
+      <div style={{borderTop:"1px solid var(--c-border)",paddingTop:12,marginTop:4}} data-my-pay-section={payOpen?"open":"closed"}>
+        <div style={{...MY_SECTION_TITLE,marginBottom:8}}>給料</div>
+        {company&&company.state==="error"&&<div data-my-company-pay-error="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>会社の賃金設定を確認できませんでした。本人の設定で計算します。</div>}
+        {company&&company.state==="ok"&&!company.pay&&company.homeShopId&&<div data-my-company-pay-home="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>
+          賃金は所属店舗{company.homeShopName?`（${company.homeShopName}）`:""}で設定されています。所属店舗とリンクすると、そちらで会社設定が出ます。このお店の分は本人の設定で計算します。
+        </div>}
+        {payOpen?(
+          <MyPayFields kind={kind} f={pf} set={v=>{setPf(p=>({...p,...v}));setErr("");}} company={company}/>
+        ):(
+          <div>
+            {company&&company.pay&&<MyCompanyPayView pay={company.pay}/>}
+            <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:8}}>締日と給料日を入れると、給料タブで支給月ごとの見込みが出ます。</div>
+            <button data-my-action="openPay" onClick={()=>{setPayOpen(true);setErr("");}} style={{...AGray,marginBottom:12}}>給料を設定する</button>
+          </div>
+        )}
+      </div>
       <MyMessage error={err}/>
       <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-        <button data-my-action="saveWorkplace" disabled={busy} onClick={save} style={{...AB,opacity:busy?.6:1}}>{busy?"保存中…":isNew?"追加":"保存"}</button>
+        <button data-my-action="saveWorkplace" disabled={busy} onClick={()=>save()} style={{...AB,opacity:busy?.6:1}}>{busy?"保存中…":isNew?"追加":"保存"}</button>
         <button data-my-action="cancelWorkplace" onClick={()=>onDone(null)} style={AGray}>やめる</button>
+        {hadPay&&<button data-my-action="removePay" disabled={busy} onClick={()=>save({removePay:true})} style={MY_LINK_BTN}>給料の設定を消す</button>}
       </div>
     </div>
   );
@@ -1015,6 +1157,8 @@ function MyWorkplacesSection({staffUser,personal}){
   },[uid]);
   const okLinks=lp&&Array.isArray(lp.links)?lp.links.filter(l=>l&&l.ok):[];
   const list=myWorkplaceList(okLinks,P.workplaces);
+  // 会社が登録した賃金（E6 が getMyPay で埋める。E5 では空＝本人の設定だけ）
+  const companyPays={};
   const premium=!!lp&&myShiftPremiumOf(lp.plans);
   const canEdit=premium&&P.state==="ok";
   const done=m=>{setEdit(null);setMsg(m?{ok:m}:{});};
@@ -1049,11 +1193,12 @@ function MyWorkplacesSection({staffUser,personal}){
             <div style={{flex:1,minWidth:0}}>
               <div data-my-wp-name="1" style={{fontSize:15,fontWeight:700,color:"var(--c-text)",overflowWrap:"anywhere"}}>{w.name}</div>
               <div style={{fontSize:12,color:"var(--c-text3)"}}>{kindLabel(w)}{w.kind==="shifty"&&w.linked&&w.name!==w.shopName?`（${w.shopName}）`:""}</div>
+              {(()=>{const t=myPaySummaryText(w.rec&&w.rec.pay,companyPays[w.id]);return t?<div data-my-wp-pay="1" style={{fontSize:12,color:"var(--c-text3)",overflowWrap:"anywhere"}}>{t}</div>:null;})()}
             </div>
             {canEdit&&edit!==w.id&&(w.kind==="manual"||w.linked)&&<button data-my-action="editWorkplace" onClick={()=>{setMsg({});setEdit(w.id);}} style={{...AGray,padding:"8px 12px",fontSize:13,whiteSpace:"nowrap"}}>編集</button>}
             {(w.kind==="manual"||!w.linked)&&P.state==="ok"&&edit!==w.id&&<button data-my-action="deleteWorkplace" disabled={busy===w.id} onClick={()=>remove(w)} style={{...AGray,padding:"8px 12px",fontSize:13,whiteSpace:"nowrap"}}>削除</button>}
           </div>
-          {edit===w.id&&<MyWorkplaceEditor w={w} personal={P} list={list} onDone={done}/>}
+          {edit===w.id&&<MyWorkplaceEditor w={w} personal={P} list={list} onDone={done} company={w.kind==="shifty"?companyPays[w.id]:null}/>}
         </div>
       ))}
       {edit==="new"&&<div style={{borderTop:"1px solid var(--c-border)"}}><MyWorkplaceEditor w={null} isNew personal={P} list={list} onDone={done}/></div>}
@@ -1066,8 +1211,288 @@ function MyWorkplacesSection({staffUser,personal}){
   );
 }
 
-function MyPayTab(){
-  return <MyEmptyState>勤務先の店舗とアカウントのリンクが済み、シフトが確定すると、ここに今月の給料の見込みが表示されます。</MyEmptyState>;
+// ===== 給料（2026-10-04・第2部 E5）=====
+// 支給月ごとの見込み（目安）。計算は app-my-utils.js の myPayMonthFor 以下（Shifty の店舗は月次賃金ページと同じ関数）。
+// 読むのは本人のセッションが読めるものだけ（紐付いた店舗の periods・settings・写し・本人に関係する期間の subs と、users/{uid} の下）。
+// 書くのは users/{uid}/goals（月間目標）と users/{uid}/actuals/{支給月}/{勤務先}（振込額）だけ（店舗のデータには書かない）
+function useMyPayExtras(uid){
+  const[d,setD]=useState({state:"loading",goal:0,received:{}});
+  useEffect(()=>{
+    if(!uid||!firebaseDB)return;
+    let alive=true;
+    Promise.all([_myRead(`users/${uid}/goals`),_myRead(`users/${uid}/actuals`)]).then(([g,a])=>{
+      if(!alive)return;
+      setD({state:g.ok&&a.ok?"ok":"error",goal:g.ok?myGoalOf(g.v):0,received:(a.ok&&a.v&&typeof a.v==="object")?a.v:{}});
+    });
+    return()=>{alive=false;};
+  },[uid]);
+  const write=async patch=>{
+    try{await fbUpd(`users/${uid}`,patch);return{ok:true};}
+    catch(e){console.warn("給料: 保存に失敗:",e&&e.code);return{error:myWriteError(e)};}
+  };
+  return{...d,
+    saveGoal:async v=>{
+      const r=parseMyGoalInput(v);
+      if(r.error)return r;
+      const res=await write({goals:r.remove?null:{monthly:r.value,updatedAt:new Date().toISOString()}});
+      if(res.ok)setD(p=>({...p,goal:r.remove?0:r.value}));
+      return res;
+    },
+    saveReceived:async(ym,wid,v)=>{
+      const r=parseMyReceivedInput(v);
+      if(r.error)return r;
+      const res=await write({[`actuals/${ym}/${wid}`]:r.remove?null:r.value});
+      if(res.ok)setD(p=>{
+        const rc={...p.received};const m={...(rc[ym]||{})};
+        if(r.remove)delete m[wid];else m[wid]=r.value;
+        if(Object.keys(m).length)rc[ym]=m;else delete rc[ym];
+        return{...p,received:rc};
+      });
+      return res;
+    }};
+}
+// 月間目標に対する進捗の弧（1つの弧。アクセント1色＋中立色の下地）
+function MyGoalRing({progress,size=112}){
+  const r=size/2-8,c=2*Math.PI*r;
+  const v=progress==null?0:progress;
+  return(
+    <svg data-my-goal-ring={progress==null?"none":Math.round(v*100)} width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img"
+      aria-label={progress==null?"目標は未設定":`目標の${Math.round(v*100)}%`} style={{flex:"0 0 auto"}}>
+      <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="var(--c-border)" strokeWidth="10"/>
+      {v>0&&<circle cx={size/2} cy={size/2} r={r} fill="none" stroke="var(--c-accent)" strokeWidth="10" strokeLinecap="butt"
+        strokeDasharray={`${c*v} ${c}`} transform={`rotate(-90 ${size/2} ${size/2})`}/>}
+      <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" style={{fontSize:20,fontWeight:700,fill:"var(--c-text)",fontVariantNumeric:"tabular-nums"}}>
+        {progress==null?"—":`${Math.round(v*100)}%`}
+      </text>
+    </svg>
+  );
+}
+const _myYmLabel=ym=>`${Number(String(ym).slice(0,4))}年${Number(String(ym).slice(5,7))}月`;
+const _myMd=ds=>{const d=pd(ds);return isNaN(d)?ds:`${d.getMonth()+1}/${d.getDate()}`;};
+const MY_PAY_ITEM_LABELS={base:"基本",ot:"時間外",over60:"月60時間超",night:"深夜",holiday:"法定休日",allowances:"手当",commute:"交通費",deduction:"欠勤・遅刻早退の控除"};
+function MyPayRowDetail({row}){
+  const a=row.amounts,t=a.minutes;
+  const mins={base:t.workMin,ot:t.otMin,over60:t.over60Min,night:t.nightMin,holiday:t.legalHolidayMin,deduction:t.absentMin};
+  const srcLabel=row.wage.source==="company"?"会社設定":row.wage.source==="self"?"本人の設定":"未設定";
+  const kindLabel=row.wage.payType==="monthly"?"月給":row.wage.payType==="daily"?"日給":row.wage.payType==="hourly"?"時給":"";
+  return(
+    <div data-my-pay-detail={row.id} style={{padding:"8px 0 4px",fontSize:13,color:"var(--c-text2)"}}>
+      <div style={{lineHeight:1.7}}>締め期間 {_myMd(row.plan.from)}〜{_myMd(row.plan.to)} ／ 給料日 {_myMd(row.plan.payDate)}</div>
+      <div style={{lineHeight:1.7,marginBottom:6}}>{srcLabel}{kindLabel?`（${kindLabel}${row.wage.payType==="daily"?` ${fmtMyYen(row.wage.rate)}`:row.wage.version?` ${fmtMyYen(row.wage.version.base)}`:""}）`:""}{row.wage.payType==="daily"?` ／ 出勤${t.workDays}日`:""}</div>
+      {a.items&&MY_PAY_ITEM_KEYS.filter(k=>a.items[k]>0||k==="base").map(k=>(
+        <div key={k} data-my-pay-item={k} style={{display:"flex",justifyContent:"space-between",gap:12,padding:"3px 0",borderTop:"1px solid var(--c-border)"}}>
+          <span>{MY_PAY_ITEM_LABELS[k]}{mins[k]>0&&row.wage.payType!=="daily"?<span style={{color:"var(--c-text3)"}}> {fmtMin(mins[k])}</span>:null}</span>
+          <span style={{fontVariantNumeric:"tabular-nums",color:"var(--c-text)"}}>{k==="deduction"?"−":""}{fmtMyYen(a.items[k])}</span>
+        </div>
+      ))}
+      {!a.items&&<div style={{color:"var(--c-text3)"}}>勤務時間 {fmtMin(t.workMin)}（時間外 {fmtMin(t.otMin)}・深夜 {fmtMin(t.nightMin)}）</div>}
+      {row.notes.length>0&&<ul data-my-pay-notes={row.id} style={{margin:"6px 0 0",paddingLeft:18,color:"var(--c-text3)",lineHeight:1.7}}>{row.notes.map((n,i)=><li key={i}>{n}</li>)}</ul>}
+    </div>
+  );
+}
+function MyReceivedInput({ym,wid,value,onSave,disabled}){
+  const[v,setV]=useState(value>0?String(value):"");
+  const[msg,setMsg]=useState({});
+  const[busy,setBusy]=useState(false);
+  useEffect(()=>{setV(value>0?String(value):"");setMsg({});},[ym,wid,value]);
+  const save=async()=>{setBusy(true);setMsg({});const r=await onSave(ym,wid,v);setBusy(false);setMsg(r.error?{error:r.error}:{ok:"保存しました"});};
+  return(
+    <div data-my-received={wid} style={{marginTop:8}}>
+      <div style={{display:"flex",gap:8,alignItems:"flex-end"}}>
+        <label style={{flex:1,minWidth:0}}>
+          <span style={MY_LABEL}>振込額（給与明細の手取り・任意）</span>
+          <input data-my-input="received" value={v} inputMode="numeric" disabled={disabled} onChange={e=>{setV(e.target.value);setMsg({});}} placeholder="例 98000" style={AI}/>
+        </label>
+        {!disabled&&<button data-my-action="saveReceived" disabled={busy} onClick={save} style={{...AGray,minHeight:44,whiteSpace:"nowrap"}}>保存</button>}
+      </div>
+      <MyMessage {...msg}/>
+    </div>
+  );
+}
+function MyPayTab({staffUser,personal,onGoSettings}){
+  const uid=staffUser&&staffUser.uid;
+  const P=personal||{state:"ok",workplaces:{},shifts:{},overrides:{}};
+  const todayStr=fd(new Date());
+  const X=useMyPayExtras(uid);
+  const[view,setView]=useState("month");     // month | year
+  const[payYm,setPayYm]=useState(null);
+  const[year,setYear]=useState(Number(todayStr.slice(0,4)));
+  const[open,setOpen]=useState({});
+  // 勤務先ごとの給料設定（Shifty の店舗・手入力の勤務先）。未設定の勤務先は MY_PAY_DEFAULT で振り分ける
+  const ownPays=useMemo(()=>Object.values(P.workplaces||{}).map(r=>r&&myPayOf(r.pay)),[P.workplaces]);
+  useEffect(()=>{if(payYm===null&&P.state!=="loading")setPayYm(myDefaultPayMonth(ownPays.filter(Boolean).length?ownPays:[MY_PAY_DEFAULT],todayStr));},[payYm,P.state,ownPays,todayStr]);
+  const ym=payYm||myDefaultPayMonth([MY_PAY_DEFAULT],todayStr);
+  // 読む日の範囲（表示中の支給月、年の表示なら12か月分）。全勤務先の設定と既定の振り分けの両方を含める
+  const range=useMemo(()=>{
+    const months=view==="year"?myPayYearMonths(year):[ym];
+    const pays=[...ownPays.filter(Boolean),MY_PAY_DEFAULT];
+    return myPayReadRange(months.flatMap(m=>pays.map(p=>myPayPlanOf(m,p,null))));
+  },[view,year,ym,ownPays]);
+  const pick=useCallback(ps=>range?myPeriodsInRange(ps,range.from,range.to):[],[range&&range.from,range&&range.to]);
+  const{links,okLinks,badLinks,shops,subs,pending}=useMyShiftSources(uid,pick);
+  const premium=myShiftPremiumOf(okLinks.map(l=>shops[l.shopId]&&shops[l.shopId].plan));
+  const wpList=useMemo(()=>myWorkplaceList(okLinks,P.workplaces),[okLinks,P.workplaces]);
+  // 会社が登録した賃金（E6 が getMyPay で埋める。E5 では空＝本人の設定だけ）
+  const companyPays={};
+  const workplaces=useMemo(()=>{
+    const manualDays=buildMyManualDays(wpList,P.shifts);
+    return wpList.filter(w=>w.kind==="manual"||w.linked).map(w=>{
+      const base={id:w.id,kind:w.kind,name:w.name,color:w.color,pay:myPayOf(w.rec&&w.rec.pay)};
+      if(w.kind==="manual")return{...base,manualEntries:manualDays.filter(e=>e.workplaceId===w.id)};
+      const l=okLinks.find(x=>x.shopId===w.id);const sh=shops[w.id];
+      if(!l||!sh||!sh.ok)return null;
+      const src={name:l.name,periods:sh.periods,subsByPeriod:mySubsByPeriodOf(w.id,sh,subs),settings:sh.settings,staff:sh.staff,todayStr,premium,
+        overrides:(P.overrides||{})[w.id]};
+      const info=myShiftyDayInfo(src);
+      const cache=new Map();
+      const monthSettingsOf=m=>{if(!cache.has(m))cache.set(m,myMonthSettingsOf(src,m));return cache.get(m);};
+      const cp=companyPays[w.id];
+      const companyNote=cp&&cp.state==="error"?"会社の賃金設定を確認できませんでした（本人の設定で計算しています）"
+        :cp&&cp.state==="ok"&&!cp.pay&&cp.homeShopId?`賃金は所属店舗${cp.homeShopName?`（${cp.homeShopName}）`:""}で設定されています（このお店の分は本人の設定で計算しています）`:"";
+      return{...base,companyPay:cp&&cp.state==="ok"?cp.pay:null,companyNote,shifty:{name:l.name,info,monthSettingsOf,wageSettings:sh.wageSettings||null}};
+    }).filter(Boolean);
+  },[wpList,okLinks,shops,subs,premium,todayStr,P.shifts,P.overrides,companyPays]);
+  const month=useMemo(()=>premium&&view==="month"?myPayMonthFor({payYm:ym,workplaces,todayStr}):null,[premium,view,ym,workplaces,todayStr]);
+  const yearRows=useMemo(()=>premium&&view==="year"?myPayYearSummary(myPayYearMonths(year).map(m=>myPayMonthFor({payYm:m,workplaces,todayStr})),X.received):null,
+    [premium,view,year,workplaces,todayStr,X.received]);
+  const loading=pending||P.state==="loading"||X.state==="loading";
+  const canEdit=premium&&X.state==="ok";
+  const navBtn={background:"none",border:"1px solid var(--c-border2)",borderRadius:8,minWidth:44,minHeight:40,fontSize:18,color:"var(--c-text2)",cursor:"pointer"};
+  const segBtn=a=>({flex:1,minHeight:40,background:a?"var(--c-card)":"none",border:"none",borderRadius:8,fontSize:14,fontWeight:a?700:600,
+    color:a?"var(--c-text)":"var(--c-text3)",boxShadow:a?"0 0 0 1px var(--c-border2)":"none",cursor:"pointer"});
+
+  if(links===null)return <MyEmptyState><MyMessage error="お店とのリンクを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/></MyEmptyState>;
+  if(Array.isArray(links)&&!okLinks.length)return(
+    <MyEmptyState>
+      <div data-my-pay-empty="nolink">給料の見込みは、Shifty を使っているお店とアカウントをリンクすると使えます（お店がプレミアムプランのとき）。</div>
+      {onGoSettings&&<button data-my-action="goLinks" onClick={onGoSettings} style={{...MY_LINK_BTN,display:"block",marginTop:8}}>設定でお店とリンクする</button>}
+    </MyEmptyState>
+  );
+  const anyEstimate=month&&month.rows.some(r=>r.estimate);
+  const progress=month?myGoalProgress(month.confirmedTotal,X.goal):null;
+  return(
+    <div data-my-pay="1" data-my-pay-view={view}>
+      {badLinks.length>0&&<div data-my-bad-links="1" style={{fontSize:13,color:"var(--c-danger)",lineHeight:1.7,marginBottom:12}}>
+        {badLinks.map(l=><div key={l.shopId}>{l.shopName}: {l.reason==="unread"?"状態を確認できませんでした":MY_LINK_INVALID_LABELS[l.reason]}</div>)}
+      </div>}
+      <div role="tablist" style={{display:"flex",gap:4,background:"var(--c-input)",borderRadius:10,padding:4,marginBottom:14}}>
+        {[["month","月"],["year","年"]].map(([k,l])=><button key={k} role="tab" aria-selected={view===k} data-my-pay-tab={k} onClick={()=>setView(k)} style={segBtn(view===k)}>{l}</button>)}
+      </div>
+      {!premium&&!loading&&<div data-my-pay-premium-note="1" style={{...MY_SECTION,fontSize:14,color:"var(--c-text2)",lineHeight:1.8}}>
+        給料の見込みは、プレミアムプランのお店とリンクしている間に使えます。入力した給料設定と振込額は残っていて、下で確認できます。
+      </div>}
+      {X.state==="error"&&<MyMessage error="月間目標と振込額を読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/>}
+
+      {view==="month"&&<>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <button data-my-pay-nav="prev" aria-label="前の支給月" onClick={()=>setPayYm(myShiftMonth(ym,-1))} style={navBtn}>‹</button>
+          <div data-my-pay-month={ym} style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{_myYmLabel(ym)}の支給</div>
+          <button data-my-pay-nav="next" aria-label="次の支給月" onClick={()=>setPayYm(myShiftMonth(ym,1))} style={navBtn}>›</button>
+        </div>
+        {premium&&<section style={{...MY_SECTION,padding:"16px"}} data-my-pay-summary={month&&month.hasAmount?"amount":"none"}>
+          {loading?<div style={{fontSize:14,color:"var(--c-text3)"}}>読み込み中…</div>:month&&(
+            <div style={{display:"flex",gap:16,alignItems:"center"}}>
+              <MyGoalRing progress={progress}/>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={MY_LABEL}>合計（目安）</div>
+                <div data-my-pay-total={month.total} style={{fontSize:24,fontWeight:700,color:"var(--c-text)",fontVariantNumeric:"tabular-nums",lineHeight:1.2}}>{month.hasAmount?fmtMyYen(month.total):"—"}</div>
+                <div style={{fontSize:13,color:"var(--c-text2)",marginTop:6,lineHeight:1.8,fontVariantNumeric:"tabular-nums"}}>
+                  <div data-my-pay-confirmed={month.confirmedTotal}>確定分（今日まで）{month.hasAmount?fmtMyYen(month.confirmedTotal):"—"}</div>
+                  <div data-my-pay-projected={month.projectedTotal}>これからの見込み {month.hasAmount?fmtMyYen(month.projectedTotal):"—"}</div>
+                  <div data-my-pay-workmin={month.workMin}>勤務時間 {fmtMin(month.workMin)||"0:00"}</div>
+                </div>
+              </div>
+            </div>
+          )}
+          {!loading&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginTop:10}}>
+            {X.goal>0?`月間目標 ${fmtMyYen(X.goal)} に対する確定分の割合です。`:<>月間目標を設定すると、確定分の進み具合が出ます。{onGoSettings&&<button data-my-action="goGoal" onClick={onGoSettings} style={{...MY_LINK_BTN,padding:"0 0 0 4px",fontSize:12}}>設定する</button>}</>}
+          </div>}
+        </section>}
+        {premium&&!loading&&month&&<div data-my-pay-estimate="1" style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,margin:"-6px 4px 12px"}}>
+          金額は公開されたシフトから計算した目安です。お店の給与計算（打刻の実績・所定の登録・社会保険や税）とは違うことがあります。グレー表示（未公開）のシフトは含めていません。
+          {anyEstimate&&" 締日が月末でない勤務先は、月60時間超などの月単位の割増が給与明細とずれることがあります。"}
+        </div>}
+        {(premium?(month&&!loading?month.rows:[]):wpList.filter(w=>w.kind==="manual"||w.linked).map(w=>({id:w.id,name:w.name,color:w.color,readonly:true}))).map(r=>(
+          <section key={r.id} data-my-pay-row={r.id} style={{...MY_SECTION,padding:"14px 16px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <span aria-hidden="true" style={{flex:"0 0 auto",width:10,height:10,borderRadius:5,background:r.color}}/>
+              <div style={{flex:1,minWidth:0,fontSize:15,fontWeight:700,color:"var(--c-text)",overflowWrap:"anywhere"}}>{r.name}</div>
+              {r.amounts&&<div data-my-pay-row-total={r.amounts.total==null?"none":r.amounts.total} style={{fontSize:16,fontWeight:700,color:"var(--c-text)",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{r.amounts.total==null?"—":fmtMyYen(r.amounts.total)}</div>}
+            </div>
+            {r.amounts&&<>
+              <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginTop:2,fontVariantNumeric:"tabular-nums"}}>
+                {_myMd(r.plan.from)}〜{_myMd(r.plan.to)}の勤務 ／ {_myMd(r.plan.payDate)}払い ／ {fmtMin(r.amounts.minutes.workMin)||"0:00"}
+                {r.amounts.total!=null&&` ／ 確定 ${fmtMyYen(r.amounts.confirmedTotal)}`}{r.estimate&&" ／ 目安"}
+              </div>
+              <button data-my-action="payDetail" aria-expanded={!!open[r.id]} onClick={()=>setOpen(o=>({...o,[r.id]:!o[r.id]}))} style={{...MY_LINK_BTN,padding:"6px 0"}}>{open[r.id]?"内訳を閉じる":"内訳"}</button>
+              {open[r.id]&&<MyPayRowDetail row={r}/>}
+            </>}
+            {X.state==="ok"&&<MyReceivedInput ym={ym} wid={r.id} value={((X.received||{})[ym]||{})[r.id]||0} onSave={X.saveReceived} disabled={!canEdit}/>}
+          </section>
+        ))}
+        {premium&&!loading&&month&&!month.rows.length&&<MyEmptyState>この支給月に計算できる勤務先がありません。</MyEmptyState>}
+      </>}
+
+      {view==="year"&&<>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <button data-my-pay-nav="prevYear" aria-label="前の年" onClick={()=>setYear(y=>y-1)} style={navBtn}>‹</button>
+          <div data-my-pay-year={year} style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{year}年の支給</div>
+          <button data-my-pay-nav="nextYear" aria-label="次の年" onClick={()=>setYear(y=>y+1)} style={navBtn}>›</button>
+        </div>
+        <section style={{...MY_SECTION,padding:"6px 16px"}} data-my-pay-yeartable="1">
+          {loading&&premium?<div style={{fontSize:14,color:"var(--c-text3)",padding:"10px 0"}}>読み込み中…</div>:(()=>{
+            const rows=yearRows?yearRows.rows:myPayYearMonths(year).map(m=>({payYm:m,total:null,workMin:null,received:myReceivedSum(X.received,m),hasReceived:!!(X.received||{})[m]}));
+            const cell={fontVariantNumeric:"tabular-nums",textAlign:"right",whiteSpace:"nowrap"};
+            return(<>
+              <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1.3fr) minmax(0,1.3fr)",gap:8,fontSize:12,color:"var(--c-text3)",padding:"8px 0"}}>
+                <span>支給月</span><span style={{textAlign:"right"}}>見込み（目安）</span><span style={{textAlign:"right"}}>振込額</span>
+              </div>
+              {rows.map(r=>(
+                <button key={r.payYm} data-my-pay-year-row={r.payYm} onClick={()=>{setPayYm(r.payYm);setView("month");}}
+                  style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1.3fr) minmax(0,1.3fr)",gap:8,width:"100%",background:"none",border:"none",
+                    borderTop:"1px solid var(--c-border)",padding:"10px 0",fontSize:14,color:"var(--c-text)",cursor:"pointer",textAlign:"left"}}>
+                  <span>{Number(r.payYm.slice(5))}月</span>
+                  <span style={cell} data-my-pay-year-total={r.total==null?"none":r.total}>{r.total==null||(!r.total&&!r.workMin)?"—":fmtMyYen(r.total)}</span>
+                  <span style={{...cell,color:r.hasReceived?"var(--c-text)":"var(--c-text4)"}}>{r.hasReceived?fmtMyYen(r.received):"—"}</span>
+                </button>
+              ))}
+              <div data-my-pay-year-sum="1" style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1.3fr) minmax(0,1.3fr)",gap:8,borderTop:"2px solid var(--c-border2)",padding:"10px 0",fontSize:15,fontWeight:700,color:"var(--c-text)"}}>
+                <span>年間</span>
+                <span style={cell} data-my-pay-year-sumtotal={yearRows?yearRows.total:"none"}>{yearRows?fmtMyYen(yearRows.total):"—"}</span>
+                <span style={cell} data-my-pay-year-sumreceived={yearRows?yearRows.received:myPayYearMonths(year).reduce((a,m)=>a+myReceivedSum(X.received,m),0)}>{fmtMyYen(yearRows?yearRows.received:myPayYearMonths(year).reduce((a,m)=>a+myReceivedSum(X.received,m),0))}</span>
+              </div>
+            </>);
+          })()}
+        </section>
+        {yearRows&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,padding:"0 4px"}}>勤務時間の合計 {fmtMin(yearRows.workMin)||"0:00"}。金額は目安です（月の表示と同じ計算）。</div>}
+      </>}
+    </div>
+  );
+}
+// 設定タブ → 月間目標（E5）。給料タブの円グラフの基準。Premium のお店とリンクしている間だけ変えられる
+function MyGoalSection({staffUser}){
+  const X=useMyPayExtras(staffUser.uid);
+  const[lp,setLp]=useState(undefined);
+  const[v,setV]=useState("");
+  const[msg,setMsg]=useState({});
+  const[busy,setBusy]=useState(false);
+  const touched=useRef(false);
+  useEffect(()=>{let alive=true;readMyLinksWithPlans(staffUser.uid).then(x=>{if(alive)setLp(x);},()=>{if(alive)setLp({links:null,plans:[]});});return()=>{alive=false;};},[staffUser.uid]);
+  useEffect(()=>{if(!touched.current)setV(X.goal>0?String(X.goal):"");},[X.goal]);
+  const premium=!!lp&&myShiftPremiumOf(lp.plans);
+  const save=async()=>{setBusy(true);setMsg({});const r=await X.saveGoal(v);setBusy(false);if(r.error){setMsg({error:r.error});return;}touched.current=false;setMsg({ok:"保存しました"});};
+  return(
+    <section style={MY_SECTION} data-my-section="goal">
+      <div style={MY_SECTION_TITLE}>月間目標</div>
+      <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>給料タブで、支給月ごとの確定分が目標の何%かを表示します。空欄にすると目標を消します。</div>
+      {X.state==="error"&&<MyMessage error="目標を読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/>}
+      <MyField label="1か月の目標（円）" value={v} inputMode="numeric" data-my-input="goal" placeholder="例 120000" disabled={!premium||X.state!=="ok"}
+        onChange={e=>{touched.current=true;setV(e.target.value);setMsg({});}}/>
+      <MyMessage {...msg}/>
+      {premium&&X.state==="ok"&&<button data-my-action="saveGoal" disabled={busy} onClick={save} style={{...AB,opacity:busy?.6:1}}>{busy?"保存中…":"保存"}</button>}
+      {lp!==undefined&&!premium&&<div data-my-goal-premium-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7}}>目標の変更は、プレミアムプランのお店とリンクしている間に使えます。</div>}
+    </section>
+  );
 }
 
 function MySettingsTab({staffUser,profile,profileState,initialError,onProfile,shopId,personal}){
@@ -1110,6 +1535,7 @@ function MySettingsTab({staffUser,profile,profileState,initialError,onProfile,sh
     <div>
       <MyLinksSection staffUser={staffUser} profile={profile} shopId={shopId}/>
       {personal&&<MyWorkplacesSection staffUser={staffUser} personal={personal}/>}
+      <MyGoalSection staffUser={staffUser}/>
       <section style={MY_SECTION} data-my-section="profile">
         <div style={MY_SECTION_TITLE}>アカウント</div>
         {profileState==="error"&&<MyMessage error="登録ネームを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/>}
@@ -1271,7 +1697,7 @@ function MyView({staffUser,onStaffUser,shopId,onClose}){
       <main style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 96px"}}>
         {profile.displayName&&<div style={{fontSize:13,color:"var(--c-text3)",marginBottom:4}} data-my-who="1">{profile.displayName} さん</div>}
         {tab==="shift"&&<MyShiftTab staffUser={staffUser} personal={personal} onGoSettings={()=>setTab("settings")}/>}
-        {tab==="pay"&&<MyPayTab/>}
+        {tab==="pay"&&<MyPayTab staffUser={staffUser} personal={personal} onGoSettings={()=>setTab("settings")}/>}
         {tab==="settings"&&<MySettingsTab staffUser={staffUser} profile={profile} profileState={profileState} initialError={saveError} shopId={shopId} personal={personal}
           onProfile={p=>{draftRef.current=null;setSaveError(null);setProfile(myProfileOf(p));setProfileState("ok");}}/>}
       </main>

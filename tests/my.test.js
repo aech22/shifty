@@ -495,7 +495,8 @@ test("E3 database.rules.json: users/$uid/seen はメールのある本人だけ�
 });
 test("E3/E4 マイシフトと勤務先の書き込みは users/{uid}/ の下だけ（店舗のデータに書かない）", () => {
   const src = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
-  const a = src.indexOf("async function readMyShiftShop"), b = src.indexOf("function MyPayTab(");
+  // 終わりは給料（E5）の部分の手前。給料の書き込みは E5 のテストが別に見る（意図して区切りを動かした）
+  const a = src.indexOf("async function readMyShiftShop"), b = src.indexOf("function useMyPayExtras(");
   assert.ok(a > 0 && b > a);
   const body = src.slice(a, b);
   const writes = [...body.matchAll(/\b(fbSet|fbUpd|\.set|\.update|\.remove)\(\s*`?([^,`)]*)/g)].map(x => x[1] + " " + x[2]);
@@ -678,7 +679,7 @@ test("E4 .ics: VTIMEZONE と TZID=Asia/Tokyo・24時超えは翌日・締の追�
   assert.strictEqual(m.icsFoldLine("a".repeat(75)), "a".repeat(75));
   assert.strictEqual(m.icsFoldLine("a".repeat(76)), "a".repeat(75) + "\r\n a");
 });
-test("E4 database.rules.json: workplaces・shifts・overrides はメールのある本人だけ書け、形を検証し未知のキーを拒否する。pay は E5 が足す", () => {
+test("E4 database.rules.json: workplaces・shifts・overrides はメールのある本人だけ書け、形を検証し未知のキーを拒否する。pay は E5 で足した", () => {
   const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "database.rules.json"), "utf8")).rules;
   const W = "auth != null && auth.uid === $uid && auth.token.email != null";
   const u = rules.users.$uid;
@@ -694,7 +695,7 @@ test("E4 database.rules.json: workplaces・shifts・overrides はメールのあ
   assert.match(wp.kind[".validate"], /'shifty'/);
   assert.match(wp.kind[".validate"], /'manual'/);
   assert.strictEqual(wp.$other[".validate"], false);
-  assert.strictEqual(wp.pay, undefined, "pay の形は E5 の担当が決めて足す");
+  assert.ok(wp.pay && wp.pay[".validate"], "pay の形は E5 で足した（形は E5 のテストが見る）");
   assert.match(sh[".validate"], /\^h_\[A-Za-z0-9\]\{10\}\$/);
   assert.match(sh[".validate"], /hasChildren\(\['workplaceId', ?'date', ?'start', ?'end', ?'breakMin'\]\)/);
   const clock = sh.start[".validate"];
@@ -719,3 +720,259 @@ test("E4 database.rules.json: workplaces・shifts・overrides はメールのあ
   assert.strictEqual(u[".read"], "auth != null && auth.uid === $uid");
   assert.strictEqual(u.profile[".write"], W);
 });
+
+// ===== E5: 給料（支給月の振り分け・計算・表示）=====
+// 期待値は手計算（実装の出力から逆生成しない）。曜日: 2026-10-25 日・2026-10-23 金・2026-10-26 月・2026-01-31 土・2026-02-02 月・2026-11-23 月（勤労感謝の日）
+test("E5 締め期間: 月末・20日・15日・30日、短い月とうるう年の2月、年またぎ", () => {
+  assert.deepStrictEqual(m.myClosingRangeOf("2026-02", 31), { from: "2026-02-01", to: "2026-02-28" });
+  assert.deepStrictEqual(m.myClosingRangeOf("2028-02", 31), { from: "2028-02-01", to: "2028-02-29" }, "うるう年");
+  assert.deepStrictEqual(m.myClosingRangeOf("2026-10", 20), { from: "2026-09-21", to: "2026-10-20" });
+  assert.deepStrictEqual(m.myClosingRangeOf("2027-01", 15), { from: "2026-12-16", to: "2027-01-15" }, "年またぎ");
+  // 30日締め: 2月は月末（28日）で締め、1/31 は2月の締めに入る。3/31 は4月の締め
+  assert.deepStrictEqual(m.myClosingRangeOf("2027-02", 30), { from: "2027-01-31", to: "2027-02-28" });
+  assert.deepStrictEqual(m.myClosingRangeOf("2027-03", 30), { from: "2027-03-01", to: "2027-03-30" });
+  assert.strictEqual(m.myClosingMonthOf("2026-10-20", 20), "2026-10");
+  assert.strictEqual(m.myClosingMonthOf("2026-10-21", 20), "2026-11");
+  assert.strictEqual(m.myClosingMonthOf("2026-12-20", 15), "2027-01");
+  assert.strictEqual(m.myClosingMonthOf("2027-03-31", 30), "2027-04");
+  assert.strictEqual(m.myClosingMonthOf("2028-02-29", 31), "2028-02");
+  // 支給月: 15日締め・翌月払いなら 12/20 の勤務は 2027年2月の支給
+  const p15 = m.myPayOf({ closingDay: 15, payMonthOffset: 1, payDay: 25, holidayRule: "before" });
+  assert.strictEqual(m.myPayMonthOfDate("2026-12-20", p15), "2027-02");
+  assert.strictEqual(m.myPayMonthOfDate("2026-12-15", p15), "2027-01");
+  assert.strictEqual(m.myPayMonthOfDate("2026-10-04", null), "2026-11", "未設定は月末締め・翌月払い");
+});
+
+test("E5 給料日: 土日祝の前倒し・後ろ倒し・そのまま。末日払い。祝日（勤労感謝の日）", () => {
+  const off = d => U.isWeekendOrHoliday(d);
+  assert.strictEqual(m.myPayDateOf("2026-10", 25, "before", off), "2026-10-23");
+  assert.strictEqual(m.myPayDateOf("2026-10", 25, "after", off), "2026-10-26");
+  assert.strictEqual(m.myPayDateOf("2026-10", 25, "none", off), "2026-10-25");
+  assert.strictEqual(m.myPayDateOf("2026-01", 31, "before", off), "2026-01-30", "末日（土）は前の金曜");
+  assert.strictEqual(m.myPayDateOf("2026-01", 31, "after", off), "2026-02-02", "後ろ倒しは翌月にかかってもよい");
+  assert.strictEqual(m.myPayDateOf("2026-02", 31, "none", off), "2026-02-28", "短い月の末日");
+  assert.strictEqual(m.myPayDateOf("2026-11", 23, "before", off), "2026-11-20", "祝日（月）→ 金曜");
+  assert.strictEqual(m.myPayDateOf("2026-11", 23, "after", off), "2026-11-24");
+  const plan = m.myPayPlanOf("2027-02", m.myPayOf({ closingDay: 15, payMonthOffset: 1, payDay: 25, holidayRule: "before" }), off);
+  assert.deepStrictEqual({ c: plan.closingYm, f: plan.from, t: plan.to, d: plan.payDate, e: plan.monthEnd },
+    { c: "2027-01", f: "2026-12-16", t: "2027-01-15", d: "2027-02-25", e: false });
+  assert.strictEqual(m.myPayPlanOf("2026-12", null, off).monthEnd, true, "月末締め");
+  assert.strictEqual(m.myPayPlanOf("2026-12", m.myPayOf({ closingDay: 30, payMonthOffset: 1, payDay: 25, holidayRule: "none" }), off).monthEnd, false,
+    "30日締めは30日の月でも月末締めではない（前の月の31日から）");
+});
+
+test("E5 給料設定の検証と保存の形（当月払いは締日より後・会社設定があれば時給を求めない・手入力だけ割増のオン／オフ）", () => {
+  const f = { closingDay: "31", payMonthOffset: "1", payDay: "25", holidayRule: "before", wageType: "hourly", rate: "１,２００", commuteAmount: "500", commutePer: "day", night: true, over8: false };
+  assert.strictEqual(m.validateMyPayInput(f, { kind: "shifty" }), null);
+  assert.match(m.validateMyPayInput({ ...f, payMonthOffset: "0", payDay: "20", closingDay: "20" }, { kind: "shifty" }), /締日より後/);
+  assert.match(m.validateMyPayInput({ ...f, rate: "" }, { kind: "shifty" }), /時給/);
+  assert.match(m.validateMyPayInput({ ...f, wageType: "daily", rate: "abc" }, { kind: "manual" }), /日給/);
+  assert.strictEqual(m.validateMyPayInput({ ...f, rate: "" }, { kind: "shifty", companyPay: true }), null, "会社設定があれば時給は要らない");
+  assert.match(m.validateMyPayInput({ ...f, commuteAmount: "x" }, { kind: "shifty" }), /交通費/);
+  const rec = m.buildMyPayRecord(f, { kind: "shifty" }, "2026-10-04T00:00:00.000Z");
+  assert.deepStrictEqual(rec, { closingDay: 31, payMonthOffset: 1, payDay: 25, holidayRule: "before", updatedAt: "2026-10-04T00:00:00.000Z",
+    wageType: "hourly", rate: 1200, commute: { amount: 500, per: "day" } }, "Shifty の店舗は night・over8 を持たない（割増はお店の労働時間制で計算）");
+  const recM = m.buildMyPayRecord({ ...f, commuteAmount: "" }, { kind: "manual" }, "t");
+  assert.strictEqual(recM.night, true); assert.strictEqual(recM.over8, false); assert.ok(!("commute" in recM), "交通費0は持たない");
+  assert.deepStrictEqual(m.myPayOf(rec).commute, { amount: 500, per: "day" });
+  assert.strictEqual(m.myPayOf({ closingDay: 0, payMonthOffset: 1, payDay: 25, holidayRule: "before" }), null, "壊れた記録は使わない");
+  assert.deepStrictEqual(m.myPayFormOf(rec).rate, "1200");
+  assert.deepStrictEqual(m.myPayFormOf(null).closingDay, "31", "未設定の初期値は月末締め");
+  assert.deepStrictEqual(m.parseMyGoalInput("120,000円"), { value: 120000 });
+  assert.deepStrictEqual(m.parseMyGoalInput(""), { remove: true });
+  assert.ok(m.parseMyGoalInput("12万").error);
+  assert.deepStrictEqual(m.parseMyReceivedInput("98000"), { value: 98000 });
+});
+
+// 1か月（2026年11月）・公開済み・B制（パート・アルバイト）・休憩の設定なし。前後の期間も公開済み（週の休みと法定休日の判定のため）
+const PUB = { at: "2026-10-01T00:00:00Z", byUid: "O" };
+const E5P = [{ id: "p0", startDate: "2026-10-16", endDate: "2026-10-31", published: PUB }, { id: "p1", startDate: "2026-11-01", endDate: "2026-11-30", published: PUB },
+  { id: "p2", startDate: "2026-12-01", endDate: "2026-12-15", published: PUB }];
+const E5Shifts = { "2026-11-02": { status: "work", start: "10:00", end: "20:00" }, "2026-11-20": { status: "work", start: "18:00", end: "26:00" } };
+const e5Subs = shifts => { const o = {}; E5P.forEach(p => { const s = {}; Object.keys(shifts).filter(d => d >= p.startDate && d <= p.endDate).forEach(d => { s[d] = shifts[d]; });
+  o[p.id] = [{ id: "s_" + p.id, periodId: p.id, staffName: "田中", shifts: s }]; }); return o; };
+const E5Settings = { staffAttributes: { "田中": "parttime" } };
+const e5Shifty = (o = {}) => {
+  const src = { name: "田中", periods: o.periods || E5P, subsByPeriod: o.subsByPeriod || e5Subs(o.shifts || E5Shifts), settings: o.settings || E5Settings, staff: ["田中"],
+    todayStr: o.todayStr || "2026-11-10", premium: o.premium !== false, overrides: o.overrides };
+  const info = m.myShiftyDayInfo(src, U);
+  return { name: "田中", info, monthSettingsOf: ym => m.myMonthSettingsOf(src, ym, U), wageSettings: o.wageSettings || null };
+};
+const e5Row = (pay, o = {}) => m.myPayMonthFor({ payYm: o.payYm || "2026-12", todayStr: o.todayStr || "2026-11-10",
+  workplaces: [{ id: "S1", kind: "shifty", name: "A店", pay: m.myPayOf(pay), companyPay: o.companyPay || null, shifty: e5Shifty(o) }] }, U).rows[0];
+const P31 = { closingDay: 31, payMonthOffset: 1, payDay: 25, holidayRule: "before", wageType: "hourly", rate: 1200, commute: { amount: 500, per: "day" } };
+
+test("E5 Shifty の店舗・時給（本人の設定）: 手計算の額。確定分は今日まで・見込みは差。交通費は日額×出勤日", () => {
+  // 11/2 10:00〜20:00＝600分（B制の①＝600−480＝120分）、11/20 18:00〜26:00＝480分（深夜 22:00〜26:00＝240分）。週40h は超えない
+  // 基本 1200×1080/60＝21,600 ／ 時間外（時給者は割増分だけ）1200×25%×120/60＝600 ／ 深夜 1200×25%×240/60＝1,200 ／ 交通費 500×2＝1,000 → 24,400
+  const r = e5Row(P31);
+  assert.deepStrictEqual(r.amounts.items, { base: 21600, ot: 600, over60: 0, night: 1200, holiday: 0, allowances: 0, commute: 1000, deduction: 0 });
+  assert.strictEqual(r.amounts.total, 24400);
+  // 今日 11/10: 確定は 11/2 だけ＝基本 12,000＋時間外 600＋交通費 500＝13,100、見込みは差 11,300
+  assert.strictEqual(r.amounts.confirmedTotal, 13100);
+  assert.strictEqual(r.amounts.projectedTotal, 11300);
+  assert.deepStrictEqual({ w: r.amounts.minutes.workMin, ot: r.amounts.minutes.otMin, n: r.amounts.minutes.nightMin, d: r.amounts.minutes.workDays }, { w: 1080, ot: 120, n: 240, d: 2 });
+  assert.strictEqual(r.estimate, false, "月末締めは目安の注記（月単位の割増のずれ）を出さない");
+  assert.strictEqual(r.plan.payDate, "2026-12-25");
+  assert.strictEqual(r.wage.source, "self");
+});
+
+test("E5 Shifty の店舗・月給（会社設定）: 基本給は動かさず割増だけ。締め期間が終わるまで基本給は見込み", () => {
+  // 単価＝(基本給200,000＋割増の基礎に入る手当5,000) ÷ 173.3h（10398分）。時間外 205000×125×120/(10398×100)＝2,957.30… → 切上げ 2,958
+  // 深夜 205000×25×240/(10398×100)＝1,182.92… → 1,183。基本給 200,000（日割りしない）・手当 5,000・交通費 月10,000 → 219,141
+  const company = { payType: "monthly", base: 200000, effectiveFrom: "2026-04-01", commute: { amount: 10000, per: "month" }, allowances: [{ name: "役職", amount: 5000 }] };
+  const r = e5Row({ ...P31, rate: 0 }, { companyPay: company });
+  assert.strictEqual(r.wage.source, "company");
+  assert.deepStrictEqual(r.amounts.items, { base: 200000, ot: 2958, over60: 0, night: 1183, holiday: 0, allowances: 5000, commute: 10000, deduction: 0 });
+  assert.strictEqual(r.amounts.total, 219141);
+  assert.strictEqual(r.amounts.confirmed.base, 0, "締め期間（〜11/30）が終わるまで基本給は確定分に入れない");
+  assert.strictEqual(r.amounts.confirmed.ot, 2958, "11/2 の時間外は今日までの分");
+  assert.strictEqual(r.amounts.confirmedTotal, 2958);
+  const after = e5Row({ ...P31, rate: 0 }, { companyPay: company, todayStr: "2026-12-01" });
+  assert.strictEqual(after.amounts.confirmedTotal, after.amounts.total, "締め期間が終われば全部確定");
+});
+
+test("E5 月末締めで月次賃金ページ（monthlyPayBreakdown）と同じ金額: 時給者・月給者。同じ入力＝確定シフトだけ・実績なし・ヘルプなし", () => {
+  // 月次賃金ページの時間は ShiftEditTab の laborByStaff の割増（premiumDayOf → premiumMonthOf）。その dayOf を同じ形で組む
+  const shifts = {};
+  for (let i = 26; i <= 31; i++) if (i % 2) shifts[`2026-10-${i}`] = { status: "work", start: "10:00", end: "15:00" };
+  for (let i = 2; i <= 30; i++) {
+    const d = `2026-11-${String(i).padStart(2, "0")}`, dow = new Date(d + "T00:00:00Z").getUTCDay();
+    if (i >= 9 && i <= 15) { shifts[d] = { status: "work", start: "10:00", end: "19:00" }; continue; }   // 休日の無い週＝最後の日が法定休日
+    if (dow === 0 || dow === 6) continue;
+    shifts[d] = i === 20 ? { status: "work", start: "18:00", end: "26:00" } : { status: "work", start: "10:00", end: "19:30", adjustedEnd: i === 24 ? "21:00" : undefined };
+  }
+  for (let i = 1; i <= 6; i++) shifts[`2026-12-0${i}`] = { status: "work", start: "10:00", end: "15:00" };
+  Object.values(shifts).forEach(x => { if (x.adjustedEnd === undefined) delete x.adjustedEnd; });
+  const settings = { staffAttributes: { "田中": "parttime" }, breakTimes: { weekday: [{ start: "12:00", end: "13:00" }] }, laborSettings: { annualScheduledMin: 2080 * 60 } };
+  const ym = "2026-11", st = U.resolvePeriodMaster(E5P[1], ["田中"], settings, "2026-11-20").settings;
+  const inP = d => E5P.some(p => p.startDate <= d && d <= p.endDate);
+  const dayOf = d => { const has = inP(d), s = shifts[d];
+    return U.premiumDayInput({ date: d, hasData: has, kind: U.dayRestKindOf(s, has), own: U.resolveActualDay({ shifts: s ? { [d]: s } : {} }, null, d, st, "田中") }); };
+  const b = U.premiumMonthOf({ ym, system: U.laborSystemForStaff(st, "田中"), settings: st, dayOf });
+  assert.ok(b.legalHolidayMin > 0 && b.otMin > 0 && b.nightMin > 0, "法定休日・時間外・深夜のすべてが出る入力");
+  const times = { workMin: b.workMin, dayOverMin: b.dayOverMin, weekOverMin: b.weekOverMin, monthOverMin: b.monthOverMin, otMin: b.otMin, over60Min: b.over60Min,
+    nightMin: b.nightMin, legalHolidayMin: b.legalHolidayMin, absentMin: b.absentMin, scheduledMin: 0 };
+  const denomMin = U.rateDenominatorMinOf(U.laborSettingsOf(st));
+  const wageSettings = { premiumRates: { ot: 30, night: 30 }, roundingRule: "round" };
+  [{ payType: "hourly", base: 1234, effectiveFrom: "2026-01-01" },
+   { payType: "monthly", base: 213500, effectiveFrom: "2026-01-01", fixedOt: { hours: 10, auto: true }, fixedNight: { hours: 1, amount: 0 }, allowances: [{ name: "役職", amount: 10000 }] }]
+    .forEach(pay => {
+      [null, wageSettings].forEach(ws => {
+        const c = U.monthlyPayBreakdown({ pay, ym, times, denomMin, wageSettings: ws });
+        const r = e5Row({ closingDay: 31, payMonthOffset: 1, payDay: 25, holidayRule: "before" }, { shifts, settings, todayStr: "2026-11-20", companyPay: pay, wageSettings: ws });
+        const it = r.amounts.items;
+        assert.deepStrictEqual([it.base, it.ot, it.over60, it.night, it.holiday, it.deduction],
+          [c.wage.basePay, c.wage.otPay, c.wage.over60Pay, c.wage.nightPay, c.wage.holidayPay, c.deduction], `${pay.payType} ${ws ? "率・端数あり" : "既定"}`);
+        assert.deepStrictEqual([r.amounts.minutes.workMin, r.amounts.minutes.otMin, r.amounts.minutes.nightMin, r.amounts.minutes.legalHolidayMin, r.amounts.minutes.over60Min],
+          [b.workMin, b.otMin, b.nightMin, b.legalHolidayMin, b.over60Min], "時間も一致");
+      });
+    });
+});
+
+test("E5 締日が月末でない（20日締め）: 暦月をまたぐ締め期間を日ごとの時間外で集め、目安の印を付ける。15日締めは前半だけ", () => {
+  const p20 = { ...P31, closingDay: 20 };
+  const r = e5Row(p20);   // 2026年12月支給 ＝ 10/21〜11/20 の勤務（11/2 と 11/20 の両方）
+  assert.deepStrictEqual({ f: r.plan.from, t: r.plan.to }, { f: "2026-10-21", t: "2026-11-20" });
+  assert.strictEqual(r.amounts.total, 24400, "この入力では暦月の計算と同じ額");
+  assert.strictEqual(r.estimate, true);
+  const r15 = e5Row({ ...P31, closingDay: 15 });   // 10/16〜11/15 ＝ 11/2 だけ: 12,000＋600＋500
+  assert.strictEqual(r15.amounts.total, 13100);
+  // 60時間超は日付の順に積んで超えた分（月の合計と一致）。1日4時間の時間外を20日＝80時間 → 60h超 20時間
+  const long = {}; for (let i = 2; i <= 21; i++) long[`2026-11-${String(i).padStart(2, "0")}`] = { status: "work", start: "08:00", end: "20:00" };
+  const t = m.myShiftyPayTimes({ name: "田中", info: e5Shifty({ shifts: long }).info, monthSettingsOf: () => E5Settings, from: "2026-11-01", to: "2026-11-30", todayStr: "2026-11-10" }, U);
+  const sum = k => t.days.reduce((a, d) => a + d[k], 0);
+  assert.strictEqual(sum("over60Min"), Math.max(0, sum("otMin") - 3600));
+  const half = m.myShiftyPayTimes({ name: "田中", info: e5Shifty({ shifts: long }).info, monthSettingsOf: () => E5Settings, from: "2026-11-16", to: "2026-11-30", todayStr: "2026-11-10" }, U);
+  assert.ok(half.days.reduce((a, d) => a + d.over60Min, 0) > 0, "月の後半の締め期間に60h超が載る");
+});
+
+test("E5 未公開（グレー）は含めない・Premium でないと計算しない・実績の上書きが入る", () => {
+  const unpub = E5P.map(p => p.id === "p1" ? { id: p.id, startDate: p.startDate, endDate: p.endDate } : p);
+  const r = e5Row(P31, { periods: unpub });
+  assert.strictEqual(r.amounts.total, 0, "公開されていない期間の勤務は数えない");
+  assert.ok(r.notes.some(n => /未公開のシフト2日/.test(n)), r.notes.join("／"));
+  const np = e5Row(P31, { premium: false });
+  assert.strictEqual(np.amounts.total, 0);
+  // 上書き: 11/2 を 10:00〜18:00 休憩0 → 480分・時間外0。基本 1200×960/60＝19,200 ＋ 深夜 1,200 ＋ 交通費 1,000
+  const ov = e5Row(P31, { overrides: { "2026-11-02": { start: "10:00", end: "18:00", breakMin: 0 } } });
+  assert.deepStrictEqual({ b: ov.amounts.items.base, ot: ov.amounts.items.ot, t: ov.amounts.total }, { b: 19200, ot: 0, t: 21400 });
+});
+
+test("E5 手入力の勤務先: 時給×時間・深夜25%（休憩は拘束の比率で按分）・8h超25%・日給×出勤日数。交通費の月額", () => {
+  const list = [{ id: "m_CAFE0001", kind: "manual", name: "カフェ", color: "#4f7d4a" }];
+  const shifts = { h_AAAAAAAAAA: { workplaceId: "m_CAFE0001", date: "2026-11-05", start: "13:00", end: "23:30", breakMin: 30 },
+    h_BBBBBBBBBB: { workplaceId: "m_CAFE0001", date: "2026-10-30", start: "10:00", end: "12:00", breakMin: 0 } };
+  const ent = m.buildMyManualDays(list, shifts);
+  const row = pay => m.myPayMonthFor({ payYm: "2026-12", todayStr: "2026-11-10", workplaces: [{ id: "m_CAFE0001", kind: "manual", name: "カフェ", pay: m.myPayOf(pay), manualEntries: ent }] }, U).rows[0];
+  // 11/5: 拘束630分・休憩30 → 実働600。深夜 22:00〜23:30＝90分から休憩の按分 floor(30×90/630)＝4 を引いて86分。8h超＝120分
+  // 基本 1000×600/60＝10,000 ／ 深夜 1000×25%×86/60＝358.3… → 359 ／ 8h超 1000×25%×120/60＝500 ／ 交通費 月額3,000 → 13,859
+  const r = row({ closingDay: 31, payMonthOffset: 1, payDay: 25, holidayRule: "before", wageType: "hourly", rate: 1000, night: true, over8: true, commute: { amount: 3000, per: "month" } });
+  assert.deepStrictEqual(r.amounts.items, { base: 10000, ot: 500, over60: 0, night: 359, holiday: 0, allowances: 0, commute: 3000, deduction: 0 });
+  assert.strictEqual(r.amounts.minutes.workMin, 600, "10/30 は11月の締め期間の外");
+  const off = row({ closingDay: 31, payMonthOffset: 1, payDay: 25, holidayRule: "before", wageType: "hourly", rate: 1000 });
+  assert.strictEqual(off.amounts.total, 10000, "割増はオフが既定");
+  const daily = row({ closingDay: 31, payMonthOffset: 1, payDay: 25, holidayRule: "before", wageType: "daily", rate: 8000 });
+  assert.strictEqual(daily.amounts.total, 8000);
+  const none = row({ closingDay: 31, payMonthOffset: 1, payDay: 25, holidayRule: "before" });
+  assert.strictEqual(none.amounts.total, null, "時給が無ければ金額は出さない");
+  assert.strictEqual(none.amounts.minutes.workMin, 600);
+});
+
+test("E5 年: 支給月ごとの一覧と合計・振込額。既定の支給月と読む範囲", () => {
+  const months = m.myPayYearMonths(2026).map(ym => m.myPayMonthFor({ payYm: ym, todayStr: "2026-11-10",
+    workplaces: [{ id: "S1", kind: "shifty", name: "A店", pay: m.myPayOf(P31), shifty: e5Shifty() }] }, U));
+  const y = m.myPayYearSummary(months, { "2026-12": { S1: 24000 }, "2026-05": { S1: 1000, m_X: 500 } });
+  assert.strictEqual(y.rows.length, 12);
+  assert.strictEqual(y.rows[11].total, 24400, "12月支給 ＝ 11月の勤務");
+  assert.strictEqual(y.total, 24400, "他の月は勤務なし");
+  assert.strictEqual(y.received, 25500);
+  assert.strictEqual(y.rows[4].received, 1500);
+  assert.strictEqual(m.myDefaultPayMonth([m.myPayOf(P31), m.myPayOf({ ...P31, closingDay: 20, payMonthOffset: 0, payDay: 25 })], "2026-10-04"), "2026-10",
+    "20日締め当月払いの方が早い");
+  const rng = m.myPayReadRange([m.myPayPlanOf("2026-12", m.myPayOf({ ...P31, closingDay: 20 }), null)]);
+  assert.deepStrictEqual(rng, { from: "2026-09-24", to: "2026-12-07" }, "締め期間を含む暦月の全日と前後1週");
+  assert.strictEqual(m.fmtMyYen(-1234), "−1,234円");
+  assert.strictEqual(m.myGoalProgress(50000, 200000), 0.25);
+  assert.strictEqual(m.myGoalProgress(300000, 200000), 1);
+  assert.strictEqual(m.myGoalProgress(1, 0), null);
+});
+
+test("E5 database.rules.json: pay・goals・actuals はメールのある本人だけ書け、形を検証する", () => {
+  const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "database.rules.json"), "utf8")).rules;
+  const W = "auth != null && auth.uid === $uid && auth.token.email != null";
+  const u = rules.users.$uid, pay = u.workplaces.$wid.pay;
+  assert.match(pay[".validate"], /hasChildren\(\['closingDay', ?'payMonthOffset', ?'payDay', ?'holidayRule'\]\)/);
+  assert.match(pay.closingDay[".validate"], />= 1 && newData\.val\(\) <= 31/);
+  assert.match(pay.payMonthOffset[".validate"], /=== 0 .*=== 1 .*=== 2/);
+  ["before", "after", "none"].forEach(k => assert.ok(pay.holidayRule[".validate"].includes(`'${k}'`)));
+  ["hourly", "daily"].forEach(k => assert.ok(pay.wageType[".validate"].includes(`'${k}'`)));
+  assert.strictEqual(pay.$other[".validate"], false);
+  assert.strictEqual(pay.commute.$other[".validate"], false);
+  assert.strictEqual(pay.night[".validate"], "newData.isBoolean()");
+  assert.strictEqual(u.goals[".write"], W);
+  assert.strictEqual(u.goals.$other[".validate"], false);
+  assert.strictEqual(u.actuals[".write"], undefined, "振込額の全体は書けない");
+  assert.strictEqual(u.actuals.$ym[".write"], W);
+  const ymRe = new RegExp(u.actuals.$ym.$wid[".validate"].match(/\$ym\.matches\(\/(.+?)\/\)/)[1]);
+  assert.ok(ymRe.test("2026-12") && !ymRe.test("2026-13") && !ymRe.test("2026-1"));
+  // クライアントが書く形がルールの必須キーを満たす
+  const rec = m.buildMyPayRecord(m.myPayFormOf(null), { kind: "shifty" }, "t");
+  ["closingDay", "payMonthOffset", "payDay", "holidayRule"].forEach(k => assert.ok(k in rec, k));
+  assert.ok(Object.keys(rec).every(k => k in pay), "未知のキーを書かない");
+  assert.ok(rec.closingDay >= 1 && rec.closingDay <= 31 && [0, 1, 2].includes(rec.payMonthOffset));
+});
+
+test("E5 給料タブと月間目標の書き込みは users/{uid} の goals と actuals だけ（店舗のデータに書かない）", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const a = src.indexOf("function useMyPayExtras("), b = src.indexOf("function MySettingsTab(");
+  assert.ok(a > 0 && b > a);
+  const body = src.slice(a, b);
+  const writes = [...body.matchAll(/\b(fbSet|fbUpd)\(\s*`?([^,`)]*)/g)].map(x => x[1] + " " + x[2]);
+  assert.deepStrictEqual(writes, ["fbUpd users/${uid}"]);
+  assert.ok(!/\.ref\([^)]*\)\.(set|update|remove|push|transaction)\(/.test(body), "ref() から直接書かない");
+  const keys = [...body.matchAll(/write\(\{\s*\[?`?([a-z]+)[/`:]/g)].map(x => x[1]);
+  assert.deepStrictEqual(keys.sort(), ["actuals", "goals"]);
+  assert.ok(!/ref\(`shops\//.test(body), "店舗のパスを直接読まない（読みは useMyShiftSources 経由）");
+});
+
