@@ -25,6 +25,8 @@ const path = require("node:path");
 const CFC_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "functions", "company-config.js"), "utf8");
 // functions/staff-link.js（従業員画面の紐付け・E2）も同じく埋め込む。cfHandlers の "staffLink" が本物の計画関数を通す
 const SLK_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "functions", "staff-link.js"), "utf8");
+// functions/my-pay.js（従業員画面の会社設定の賃金・E6）。cfHandlers の "myPay" が本物の判定関数を通す
+const MYP_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "functions", "my-pay.js"), "utf8");
 
 /**
  * @param {object} o
@@ -38,6 +40,8 @@ const SLK_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "fu
  *                                "staffLink" は従業員画面の紐付けの4本（E2: approveStaffLink / issueStaffLinkCode / redeemStaffLinkCode /
  *                                unlinkStaff）。判定と書く差分は functions/staff-link.js の plan* をそのまま使う（呼び出し元の uid とメールは
  *                                auth:"accounts" なら __authCur()、既定なら固定のユーザー）。読みの後のトランザクションは単純な削除で代える。
+ *                                "myPay" は getMyPay（E6）。呼び出し元の uid の staffLinks の名前で private/pay を読み、functions/my-pay.js の
+ *                                myPayLinkNameCF・planGetMyPay をそのまま通す（名前は payload から受け取らない＝本物と同じ）。
  *                                "payCode" は setCompanyPayCode（P6a）。現在の番号を照合して企業と連携全店舗の private/payCode を書く。
  *                                "entity" は法人の6本（ensureCompanyEntities / createEntity / renameEntity / assignShopEntity /
  *                                saveEntityConfig / setShopKind）。移行と写しの組み立ては **functions/company-config.js をそのまま読み込んで**
@@ -75,6 +79,8 @@ function makeStub(o) {
   var CFC=(function(){var module={exports:{}};var exports=module.exports;${CFC_SRC}
 ;return module.exports;})();
   var SLK=(function(){var module={exports:{}};var exports=module.exports;${SLK_SRC}
+;return module.exports;})();
+  var MYP=(function(){var module={exports:{}};var exports=module.exports;${MYP_SRC}
 ;return module.exports;})();
   var CF=${JSON.stringify(cfHandlers)};
   var DENY_READ=${JSON.stringify(denyRead.map(d => String(d).split("/").filter(Boolean).join("/")))};
@@ -513,6 +519,20 @@ function makeStub(o) {
           if(ur.error) return lfail(ur);
           lapply(ur.patch); return Promise.resolve({data:{ok:true}});
         }
+      }
+      if(h==="myPay"){
+        // 本物の getMyPay（functions/index.js・E6）と同じ順: 紐付けを確かめてから private/pay を読む。何も書かない
+        var mme=AUTH_MODE==="accounts"?window.__authCur():(signedIn?{uid:USER.uid,email:USER.email}:null);
+        if(!mme||!mme.uid) return Promise.reject(Object.assign(new Error("ログインが必要です"),{code:"functions/unauthenticated"}));
+        var msid=payload&&payload.shopId;
+        var mlk=MYP.myPayLinkNameCF({email:mme.email||null,staffLink:getPath("shops/"+msid+"/staffLinks/"+mme.uid)});
+        if(mlk.error) return Promise.reject(Object.assign(new Error(mlk.error.msg),{code:"functions/"+mlk.error.code}));
+        var mhs=getPath("shops/"+msid+"/settings/staffHomeShop/"+mlk.name);
+        var mhome=typeof mhs==="string"&&mhs&&mhs!==msid?mhs:"";
+        var mr=MYP.planGetMyPay({shopId:msid,name:mlk.name,staff:getPath("shops/"+msid+"/staff"),payRec:getPath("shops/"+msid+"/private/pay/"+mlk.name),
+          homeShopId:mhome,homeShopName:mhome?getPath("global/shops/"+mhome+"/name"):null});
+        if(mr.error) return Promise.reject(Object.assign(new Error(mr.error.msg),{code:"functions/"+mr.error.code}));
+        return Promise.resolve({data:mr.result});
       }
       if(h==="payCode"){
         // 本物の setCompanyPayCode（functions/index.js・P6a）と同じ後始末: 現在の番号を照合し（未設定なら 0000）、

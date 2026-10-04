@@ -499,7 +499,10 @@ test("E3/E4 マイシフトと勤務先の書き込みは users/{uid}/ の下だ
   const a = src.indexOf("async function readMyShiftShop"), b = src.indexOf("function useMyPayExtras(");
   assert.ok(a > 0 && b > a);
   const body = src.slice(a, b);
-  const writes = [...body.matchAll(/\b(fbSet|fbUpd|\.set|\.update|\.remove)\(\s*`?([^,`)]*)/g)].map(x => x[1] + " " + x[2]);
+  // DB への書き込みだけを数える（E6 の会社設定の結果を覚える Map の .set は書き込みではない）
+  const writes = [...body.matchAll(/\b(fbSet|fbUpd)\(\s*`?([^,`)]*)/g)].map(x => x[1] + " " + x[2]);
+  assert.ok(!/\.ref\([^)]*\)\.(set|update|remove)\(/.test(body), "ref() から直接書かない");
+  assert.deepStrictEqual([...body.matchAll(/(\w+)\.set\(/g)].map(x => x[1]).filter(n => n !== "_myCompanyPayCache"), [], "Map 以外の .set が無い");
   // E3 は seen だけ。E4 で本人のデータ（workplaces・shifts・overrides）を users/{uid} への差分 update で書く（意図して広げた）
   assert.deepStrictEqual(writes, ["fbUpd users/${uid}", "fbSet users/${uid}/seen/${sid}/${pid}"]);
   // users/{uid} への update の鍵は workplaces・shifts・overrides の3つだけ
@@ -976,3 +979,57 @@ test("E5 給料タブと月間目標の書き込みは users/{uid} の goals と
   assert.ok(!/ref\(`shops\//.test(body), "店舗のパスを直接読まない（読みは useMyShiftSources 経由）");
 });
 
+// ===== E6: 会社設定の賃金（getMyPay）=====
+const mp = require("../functions/my-pay.js");
+test("E6 CF の版の形は app-utils.js の normalizePayVersion と同じ（乱数の入力でも）", () => {
+  const vals = [undefined, null, "", "x", -5, 0, 1.4, 1234.6, 213500, "1200", true, [], {}];
+  const pick = a => a[Math.floor(Math.random() * a.length)];
+  for (let i = 0; i < 400; i++) {
+    const v = { payType: pick(["hourly", "monthly", "x", undefined]), base: pick(vals), effectiveFrom: pick(["2026-04-01", "2026-02-30", "", undefined, 5]),
+      commute: pick([undefined, { amount: pick(vals), per: pick(["day", "month", "x"]) }]),
+      allowances: pick([undefined, [{ name: pick(["役職", "", "あ".repeat(40)]), amount: pick(vals), excludeFromRate: pick([true, 0, "y"]) }, null], { a: { name: "x", amount: 3 } }]),
+      fixedOt: pick([undefined, { hours: pick(vals), auto: pick([true, false, undefined]), amount: pick(vals) }]), fixedNight: pick([undefined, { hours: pick(vals), amount: pick(vals) }]) };
+    assert.deepStrictEqual(mp.payVersionCF(v), U.normalizePayVersion(v), JSON.stringify(v));
+  }
+});
+test("E6 getMyPay の判定: 名前は staffLinks が正・メールのある認証だけ・スタッフ一覧に無い名前は拒否・ヘルプ先だけなら所属店舗", () => {
+  assert.strictEqual(mp.myPayLinkNameCF({ email: "", staffLink: { name: "田中" } }).error.code, "failed-precondition");
+  assert.strictEqual(mp.myPayLinkNameCF({ email: "a@b", staffLink: null }).error.code, "permission-denied");
+  assert.deepStrictEqual(mp.myPayLinkNameCF({ email: "a@b", staffLink: { name: "田中" } }), { name: "田中" });
+  const rec = { payType: "hourly", base: 1300, effectiveFrom: "2026-04-01", updatedAt: "t", history: [{ payType: "hourly", base: 1200, effectiveFrom: "2025-04-01", updatedAt: "u" }, { bad: 1 }] };
+  const ok = mp.planGetMyPay({ shopId: "S1", name: "田中", staff: ["田中"], payRec: rec });
+  assert.strictEqual(ok.result.pay.base, 1300);
+  assert.strictEqual(ok.result.pay.history.length, 1, "壊れた版は返さない");
+  assert.ok(!JSON.stringify(ok.result).includes("updatedAt"));
+  assert.strictEqual(mp.planGetMyPay({ shopId: "S1", name: "退職者", staff: ["田中"], payRec: rec }).error.code, "failed-precondition");
+  const help = mp.planGetMyPay({ shopId: "S1", name: "田中", staff: ["田中"], payRec: null, homeShopId: "S0", homeShopName: "本店" });
+  assert.deepStrictEqual(help.result, { ok: true, name: "田中", pay: null, homeShopId: "S0", homeShopName: "本店" });
+  assert.ok(!("homeShopId" in mp.planGetMyPay({ shopId: "S1", name: "田中", staff: ["田中"], payRec: null, homeShopId: "S1" }).result), "所属店舗が自店なら付けない");
+  // 返す版で月初時点の版が選べる（クライアントは payVersionOn を通す）
+  assert.strictEqual(U.payVersionOn(ok.result.pay, "2026-03-01").base, 1200);
+  assert.strictEqual(U.payVersionOn(ok.result.pay, "2026-04-01").base, 1300);
+});
+test("E6 クライアントの読み（myCompanyPayOf）と、会社設定の時給が本人の設定より優先されること", () => {
+  assert.deepStrictEqual(m.myCompanyPayOf({ error: "x" }).state, "error");
+  assert.strictEqual(m.myCompanyPayOf({ ok: true, pay: { payType: "weird" } }).pay, null);
+  assert.strictEqual(m.myCompanyPayOf({ ok: true, pay: null, homeShopId: "S0", homeShopName: "本店" }).homeShopName, "本店");
+  const cp = m.myCompanyPayOf({ ok: true, name: "田中", pay: mp.myPayRecordCF({ payType: "hourly", base: 1300, effectiveFrom: "2026-01-01", commute: { amount: 3000, per: "month" } }) });
+  // 時給1,300円・会社設定の交通費 月3,000（本人の 500円/日 は使わない）: 1300×1080/60＝23,400 ＋ 時間外 1300×25%×120/60＝650 ＋ 深夜 1300×25%×240/60＝1,300 ＋ 3,000
+  const r = e5Row(P31, { companyPay: cp.pay });
+  assert.strictEqual(r.wage.source, "company");
+  assert.deepStrictEqual(r.amounts.items, { base: 23400, ot: 650, over60: 0, night: 1300, holiday: 0, allowances: 0, commute: 3000, deduction: 0 });
+  const late = e5Row(P31, { companyPay: { ...cp.pay, effectiveFrom: "2026-11-15" } });
+  assert.strictEqual(late.wage.source, "company");
+  assert.ok(late.notes.some(n => /2026-11-15 からの会社設定/.test(n)), "月の途中から適用の注記（日割りしない＝月次賃金と同じ）");
+});
+test("E6 getMyPay は index.js で名前を呼び出し元から受け取らず、staffLinks の名前で private/pay を読む", () => {
+  const src = fs.readFileSync(path.join(ROOT, "functions", "index.js"), "utf8");
+  const a = src.indexOf("exports.getMyPay"), b = src.indexOf("\n  });", a);
+  assert.ok(a > 0 && b > a);
+  const body = src.slice(a, b);
+  assert.ok(!/data\s*&&\s*data\.(name|uid)|data\.name|data\.uid/.test(body), "name・uid を data から読まない");
+  assert.ok(/staffLinks\/\$\{uid\}/.test(body) && /private\/pay\/\$\{name\}/.test(body));
+  assert.ok(body.indexOf("myPayLinkNameCF") < body.indexOf("private/pay"), "紐付けを確かめてから賃金を読む");
+  assert.ok(!/\.(set|update|remove|push|transaction)\(/.test(body), "何も書かない");
+  assert.ok(/readLinkShopId\(data\)/.test(body), "shopId の形とデモ店舗を確かめる");
+});

@@ -999,6 +999,34 @@ function MyColorPicker({value,onChange}){
     </div>
   );
 }
+// ===== 会社設定の賃金（2026-10-04・第2部 E6）=====
+// CF getMyPay が、紐付いた店舗の賃金マスタ（shops/{sid}/private/pay/{登録名}）のうち本人の分だけを返す（名前は渡さない＝staffLinks が正）。
+// 会社設定があれば時給・月給・手当・交通費はそれを使い、本人の画面では変更できない。締日・給料日は賃金マスタに無いので本人が決める。
+// CF が使えない（未デプロイ・通信・dev は Spark で CF が無い）ときは本人の設定にフォールバックし、その旨を出す。
+// 結果は uid と店舗ごとに覚える（読み込みのたびに呼ばない）。失敗は覚えない（次に開いたときにやり直す）
+const _myCompanyPayCache=new Map();
+function readMyCompanyPay(uid,sid){
+  const k=uid+"|"+sid;
+  if(!_myCompanyPayCache.has(k)){
+    const pr=myCallCF("getMyPay",{shopId:sid}).then(myCompanyPayOf,()=>myCompanyPayOf({error:"failed"}));
+    _myCompanyPayCache.set(k,pr);
+    pr.then(v=>{if(v.state!=="ok")_myCompanyPayCache.delete(k);});
+  }
+  return _myCompanyPayCache.get(k);
+}
+// {shopId: {state:"ok"|"error", pay, homeShopId, homeShopName}}。読み込み中の店舗はキーが無い
+function useMyCompanyPays(uid,okLinks){
+  const[m,setM]=useState({});
+  const ids=(okLinks||[]).map(l=>l.shopId).join(",");
+  useEffect(()=>{
+    if(!uid||!ids)return;
+    let alive=true;
+    ids.split(",").forEach(sid=>{readMyCompanyPay(uid,sid).then(v=>{if(alive)setM(p=>p[sid]===v?p:{...p,[sid]:v});});});
+    return()=>{alive=false;};
+  },[uid,ids]);
+  return m;
+}
+
 // ===== 給料設定（2026-10-04・第2部 E5）=====
 // 締日・給料日（当月／翌月・日・土日祝の扱い）・時給／日給・交通費。手入力の勤務先は深夜25%・1日8時間超25%のオン／オフ。
 // 保存は workplaces/{id}/pay（勤務先の名前・色と同じ update）。会社が賃金を登録していれば（E6・company.pay）時給と交通費は入力させない
@@ -1157,8 +1185,8 @@ function MyWorkplacesSection({staffUser,personal}){
   },[uid]);
   const okLinks=lp&&Array.isArray(lp.links)?lp.links.filter(l=>l&&l.ok):[];
   const list=myWorkplaceList(okLinks,P.workplaces);
-  // 会社が登録した賃金（E6 が getMyPay で埋める。E5 では空＝本人の設定だけ）
-  const companyPays={};
+  // 会社が登録した賃金（E6・getMyPay）。勤務先の編集で「会社設定」として固定表示する
+  const companyPays=useMyCompanyPays(uid,okLinks);
   const premium=!!lp&&myShiftPremiumOf(lp.plans);
   const canEdit=premium&&P.state==="ok";
   const done=m=>{setEdit(null);setMsg(m?{ok:m}:{});};
@@ -1332,8 +1360,8 @@ function MyPayTab({staffUser,personal,onGoSettings}){
   const{links,okLinks,badLinks,shops,subs,pending}=useMyShiftSources(uid,pick);
   const premium=myShiftPremiumOf(okLinks.map(l=>shops[l.shopId]&&shops[l.shopId].plan));
   const wpList=useMemo(()=>myWorkplaceList(okLinks,P.workplaces),[okLinks,P.workplaces]);
-  // 会社が登録した賃金（E6 が getMyPay で埋める。E5 では空＝本人の設定だけ）
-  const companyPays={};
+  // 会社が登録した賃金（E6・getMyPay）。読み込み中の店舗は計算を待つ（本人の設定で一度出してから変わらないように）
+  const companyPays=useMyCompanyPays(uid,okLinks);
   const workplaces=useMemo(()=>{
     const manualDays=buildMyManualDays(wpList,P.shifts);
     return wpList.filter(w=>w.kind==="manual"||w.linked).map(w=>{
@@ -1355,7 +1383,7 @@ function MyPayTab({staffUser,personal,onGoSettings}){
   const month=useMemo(()=>premium&&view==="month"?myPayMonthFor({payYm:ym,workplaces,todayStr}):null,[premium,view,ym,workplaces,todayStr]);
   const yearRows=useMemo(()=>premium&&view==="year"?myPayYearSummary(myPayYearMonths(year).map(m=>myPayMonthFor({payYm:m,workplaces,todayStr})),X.received):null,
     [premium,view,year,workplaces,todayStr,X.received]);
-  const loading=pending||P.state==="loading"||X.state==="loading";
+  const loading=pending||P.state==="loading"||X.state==="loading"||okLinks.some(l=>!companyPays[l.shopId]);
   const canEdit=premium&&X.state==="ok";
   const navBtn={background:"none",border:"1px solid var(--c-border2)",borderRadius:8,minWidth:44,minHeight:40,fontSize:18,color:"var(--c-text2)",cursor:"pointer"};
   const segBtn=a=>({flex:1,minHeight:40,background:a?"var(--c-card)":"none",border:"none",borderRadius:8,fontSize:14,fontWeight:a?700:600,

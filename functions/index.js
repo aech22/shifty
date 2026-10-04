@@ -1151,6 +1151,8 @@ const { sanitizeCompanySettings, sanitizeCompanyDeadlines, sanitizeMonthlyDeadli
 const { normalizeLinkCodeCF, isValidLinkCodeCF, renameStaffLinksPatchCF, staffLinkPersonIdPatchCF, linkCodeWaitMsCF, nextLinkCodeAttemptsCF,
   linkCodeExpiredCF, genLinkCodeCF, planApproveStaffLink, planIssueStaffLinkCode, planRedeemStaffLinkCode, planUnlinkStaff,
   LINK_NAME_MAX } = require("./staff-link");
+// 従業員画面の会社設定の賃金（第2部 E6・getMyPay）の判定。tests/my.test.js が app-utils.js の normalizePayVersion との一致を照合する
+const { myPayLinkNameCF, planGetMyPay } = require("./my-pay");
 // 法人レイヤーの片方向移行（2026-09-30・P1）。法人が無い企業には企業名と同名の法人を1つ作り、
 // 割当の無い連携店舗をすべて既定の法人へ割り当てる。冪等なので、写しを作り直す前に毎回通してよい。
 async function ensureCompanyEntities(companyId) {
@@ -2055,4 +2057,28 @@ exports.unlinkStaff = functions
     throwPlanError(r);
     await db.ref().update(r.patch);
     return { ok: true };
+  });
+
+// 会社が登録した本人の賃金（第2部 E6）。呼び出し元 uid の shops/{sid}/staffLinks/{uid} の名前の private/pay/{名前} だけを返す。
+// 名前は呼び出し元から受け取らない（他人の賃金は指定できない）。紐付けが無い・名前がスタッフ一覧に無いなら拒否。
+// 閲覧パスコードは求めない（本人の分だけのため）。読むだけで何も書かない
+exports.getMyPay = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const uid = linkAuthUid(context);
+    if (!isSafeDbKey(uid)) throw new functions.https.HttpsError("invalid-argument", "アカウントが無効です");
+    const shopId = readLinkShopId(data);
+    const email = context.auth.token && context.auth.token.email;
+    const link = myPayLinkNameCF({ email, staffLink: await readVal(`shops/${shopId}/staffLinks/${uid}`) });
+    throwPlanError(link);
+    const name = link.name;
+    if (!isSafeDbKey(name)) throw new functions.https.HttpsError("failed-precondition", "リンクの名前が正しくありません");
+    const [staff, payRec, homeShopId] = await Promise.all([
+      readVal(`shops/${shopId}/staff`), readVal(`shops/${shopId}/private/pay/${name}`), readVal(`shops/${shopId}/settings/staffHomeShop/${name}`),
+    ]);
+    const home = typeof homeShopId === "string" && isValidShopId(homeShopId) && homeShopId !== shopId ? homeShopId : "";
+    const homeShopName = home ? await readVal(`global/shops/${home}/name`) : null;
+    const r = planGetMyPay({ shopId, name, staff, payRec, homeShopId: home, homeShopName });
+    throwPlanError(r);
+    return r.result;
   });
