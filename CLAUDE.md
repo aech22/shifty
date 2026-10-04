@@ -666,8 +666,8 @@ Firebase Realtime Database
   **明示ログアウトの印** `AUTH_LOGGED_OUT_LS`（`ots_authLoggedOut_v1`・localStorage）で行う: `doFullSignOut` が true にし、Phase1 は印のある端末で
   復元された実ユーザーを signOut して匿名に入り直す（`adminBranch`）。実ログインの成立（Google・メール・企業コード・店舗選択でのセッション再開）で false に戻す。
   `doLogout`（店舗セッションだけのログアウト）は印を立てない（`43166ab` で外した）＝リロードで実ユーザーが復元され店舗に戻る。
-  スタッフアカウント（従業員画面）にはこの印を当てない（「従業員画面」の節）。※app-core.js の `AUTH_LOGGED_OUT_LS` の上のコメントは
-  「doLogout/doFullSignOut で true にし」と書いているが、`43166ab` 以降 doLogout は立てない
+  スタッフアカウント（従業員画面）にはこの印を当てない（「従業員画面」の節）。app-core.js の `AUTH_LOGGED_OUT_LS` の上のコメントと app-main.js の Phase1 のコメントも
+  2026-10-04 に実装へ合わせた（立てるのは doFullSignOut だけ）
 - 管理系パス（settings/periods/staff/templates/tokens/global/shops）の書き込みは `shops/{shopId}/owners/{auth.uid}` 登録者のみ。owners への自己登録は `private/adminKey` との値照合が必要で、adminKeyは管理者端末のlocalStorage（`ots_adminKeys_v1`）にのみ保存される。**スタッフURLから得られるshopIdだけでは管理操作できない**。
 - スタッフは subs の読み書きと settings/periods/staff の読みのみ（従来機能を維持）。**subs の書き込み・削除は認証済みなら誰でも通る**（`.write: auth != null && $shopId !== 'demo-toriMatsu-v1'`）。**ただし 2026-09-30（P3）から、その sub の期間（書き込み後の periodId と、削除・変更前の periodId の両方）に `confirmation` があるときはオーナーだけが書ける**（スタッフの再提出を確定でルールごと止める）。提出を触れるのを本人だけに絞っているのは **UI（app-staff.js の `canTouch`）だけ**で、ルールは名乗った名前を検証できない——2026-08-31 決定1で承知のうえ引き受けたトレードオフなので、**再検出しても「バグ」として直さない**。
 - **移行猶予は 2026-07-28 に終了済み**（`dbdd9d9`）。未claim店舗への「誰でも書き込み可」ブランチは撤去され、管理系パスは owner uid 一致が必須。**ルールファイルは `database.rules.json` の1本だけ**（同内容の残骸だった `database.rules.tightened.json` は 2026-09-05 に削除済み。以後この二重管理は無い）。
@@ -1308,8 +1308,19 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
   「承認済みで、名前がいまのスタッフ一覧にある」ときだけ使う（missingName で止める）
 - **本人の画面**（`MyPageView`・下部タブ マイシフト／提出／給料／設定）: マイシフト・給料・勤務先・月間目標はアカウントと**同じ部品**を「本人」（subject）を替えて使う
   （`myAccountSubject(uid)`＝users/{uid}・`myPageSubject`＝staffPageData/{token}。base と links() と companyPay(sid)。tests が base の出どころを2か所に固定）。
-  マイシフトは「自分のシフト」「全員のシフト」を**横スクロール（scroll-snap）とタブで切り替え**（`MyShiftPager`。ピンチで拡大している間＝visualViewport.scale>1 は横スクロールを止める）
-- **全員のシフト表**（`MyAllShiftTable`・`buildMyStaffTable`）: 最新の期間（`myLatestPeriodOf`）が公開済み・その店舗が Premium のときだけ。中身は確定値（scheduledDay）、
+  マイシフトは「自分のシフト」「全員のシフト」を**横スクロール（scroll-snap）とタブで切り替え**（`MyShiftPager`。ピンチで拡大している間＝visualViewport.scale>1 は横スクロールを止める。
+  表示が1つのときはタブを出さない＝木の形は同じなので、後から「全員のシフト」が足されても「自分のシフト」は作り直されない）
+- **全員のシフトの期間の選び方（2026-10-04 改め・ユーザー指示）**: 未公開でも「まだ公開されていません」の案内を**出さない**。表の上の**期間のプルダウン**の選択肢は
+  **公開済みかつ startDate が直近3ヶ月**（管理者画面の subs 部分購読と同じ `subsWindowCutoff`）の期間を新しい順（`myAllShiftPeriodOptions`）、既定はその先頭＝
+  **その時点で公開済みの最新の期間**（最新の期間が未公開なら1つ前の公開済み）。店舗が Premium でなければ選択肢は空。**選択肢が1つも無ければ「全員のシフト」の切り替えごと出さない**
+  （プレミアムの案内文も出さない）。部品は `MyAllShiftPane`（期間の select と、店舗が2つ以上のときだけ店舗の select。どちらも `AI`＝16px）と `myAllShiftSelection`
+  （選んだ期間が選択肢から消えたら既定へ戻す）。個別URLの提出は App の購読（直近3ヶ月の期間ごとの部分購読＝選択肢と同じ窓）をそのまま使う。**「提出」タブの対象は従来どおり最新の期間**
+- **メールのアカウント（`#/me`）の全員のシフト（2026-10-04・ユーザー指示）**: `MyAccountShiftPager` が「自分のシフト」「全員のシフト」を同じ部品で出す。店舗は
+  **有効な紐付け（`readMyLinks` の ok＝承認済みで名前がいまのスタッフ一覧にある）の全店舗のうち、選べる期間がある店舗**（`myAllShiftChoices`・並びは readMyLinks の並び）。
+  既定の店舗は**募集URLの「マイシフト」から開いたときはその店舗**、それ以外は**公開済みの最新の期間の startDate が最も新しい店舗**（同じなら並びの先）。
+  読み込みは `useMyAllShiftSources`（店舗ごとに periods・settings・staff・company・plan、選んだ期間の subs だけを `orderByChild("periodId")` の部分読み・読んだ期間は覚える・書き込みなし）。
+  同時に開く「自分のシフト」と同じ店舗を2回読まないよう `readMyShiftShopShared`（読めたものだけ30秒）を共有する
+- **全員のシフト表**（`MyAllShiftTable`・`buildMyStaffTable`）: 選んだ期間が公開済み・その店舗が Premium のときだけ（それ以外の状態は何も描かない）。中身は確定値（scheduledDay）、
   並びはシフト作成タブと同じ（写し・visibleStaffList・空白列）、休暇の帯は種別名。労務・ヒートマップ・賃金・メモは出さない。**横幅に収める**（`myStaffTableLayout`。
   列の幅の合計＝表の幅－外枠2px。文字は14pxを上限に下限なし）。実測: 10人×16日 375px で 11.2px、30人×31日で 375px 3.3px・320px 2.6px（細部はピンチで拡大）
 - **提出**: 「提出」タブは最新の期間へ、承認された名前で固定（`StaffView` の `fixedName`。名前の入力欄なし・Cookie を読まない書かない）。提出の処理は募集URLと同じ
@@ -1320,8 +1331,12 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
   本人が入れた時給・交通費・締日・振込額・手入力のシフト）を REST で読める。暗証番号は画面上の鍵で、本人が入れた給料の設定は守らない。
   守るのは**会社が登録した賃金（private/pay）だけ**（CF が番号を照合してから返す・ハッシュはクライアントから読めない場所）。URL の漏えい時は管理者が取り消す。
   また subs は認証済みなら店舗全員分を読める（E.4 の既存の注意）ので、全員の表は「公開済みだけを画面に出す」絞り込みで、ルール上の保護ではない
-- 検証: tests/my.test.js（トークン・状態・承認と追随の差分・候補・全員の表と寸法・暗証番号の計画・CF との一致・ルールの形・入口と書き込み先のドリフト）、
-  `shifty-e2e-verify/scripts/example-my-page.js`（スタブ・P1〜P4・375px／320px・WebKit iPhone 13 でも allPass。73942db の配信物では最初の項目で止まる）、
+- **TimeTree などで見る案内**（2026-10-04）: マイシフトの .ics の書き出しの下に折りたたみ（`MyIcsAppGuide`・文言は `MY_ICS_APP_GUIDE`）。TimeTree の公式ヘルプで確かめた事実
+  （.ics を直接取り込めない・端末の標準カレンダーの予定をホームカレンダーに表示できる＝自動更新・共有カレンダーへのインポートは自動更新されず重複しうる）だけを書き、
+  端末（iOS・Android・PC）ごとの3手順を出す。確かめていない他社アプリの名前は出さない。.ics の中身と渡し方は変えていない
+- 検証: tests/my.test.js（トークン・状態・承認と追随の差分・候補・全員の表と寸法・期間と店舗の選び方・暗証番号の計画・CF との一致・ルールの形・入口と書き込み先のドリフト）、
+  `shifty-e2e-verify/scripts/example-my-page.js`（スタブ・P1〜P4・375px／320px・WebKit iPhone 13 でも allPass。73942db の配信物では最初の項目で止まる。
+  AL0・AL の期間のプルダウンは 89a455c の配信物で EXIT=2）、`example-my-shift.js` の AM（#/me の全員のシフト・89a455c で EXIT=1）、
   `shifty-cf-verify/scripts/example-my-page.js`（本物の index.js・30項目。73942db の index.js では28項目が落ちる）。**ルールと CF の実機（dev・本番）・iPhone の指のスワイプとピンチは未検証**
 
 ---

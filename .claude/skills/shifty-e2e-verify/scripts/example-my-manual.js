@@ -259,14 +259,16 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       R.D = { names: ics.names, type: ics.type, text: ics.text };
       // 書き出した後の案内は端末ごと（このハーネスはデスクトップの Chromium＝Google カレンダーの「インポート」を案内する）
       R.D.msg = await h.evaluate(() => { const b = document.querySelector('[data-my-action="ics"]'); const m = b && b.parentElement.querySelector("[data-my-msg]"); return m ? m.getAttribute("data-my-msg") + ":" + m.innerText : ""; });
-      V.D_icsHint = /^ok:3件のシフトを書き出しました。/.test(R.D.msg) && R.D.msg.includes("設定 → インポート / エクスポート");
+      // WebKit の iPhone（SHIFTY_DEVICE）で回すと iOS の案内になる（「すべてを追加」）。それ以外はデスクトップの案内
+      const IOS = !!process.env.SHIFTY_DEVICE && /iPhone|iPad/.test(process.env.SHIFTY_DEVICE);
+      V.D_icsHint = /^ok:3件のシフトを書き出しました。/.test(R.D.msg) && R.D.msg.includes(IOS ? "すべてを追加" : "設定 → インポート / エクスポート");
       // TimeTree などの案内（折りたたみ・2026-10-04）。閉じた状態で置き、開くとこの端末（デスクトップ）の3手順と、
       // ホームカレンダーは自動で反映・共有カレンダーへのインポートは重複しうる、の注記
       R.D.apps = await h.evaluate(() => { const d = document.querySelector("[data-my-ics-apps]"); if (!d) return null;
         const closed = !d.open; d.open = true;
         return { closed, plat: d.getAttribute("data-my-ics-apps"), steps: d.querySelectorAll("[data-my-ics-steps] li").length, text: d.innerText,
           right: Math.round(d.getBoundingClientRect().right), vw: window.innerWidth }; });
-      V.D_icsAppGuide = !!R.D.apps && R.D.apps.closed && R.D.apps.plat === "desktop" && R.D.apps.steps === 3 && /TimeTree/.test(R.D.apps.text) &&
+      V.D_icsAppGuide = !!R.D.apps && R.D.apps.closed && R.D.apps.plat === (IOS ? "ios" : "desktop") && R.D.apps.steps === 3 && /TimeTree/.test(R.D.apps.text) &&
         /直接は取り込めません/.test(R.D.apps.text) && /重複/.test(R.D.apps.text) && R.D.apps.right <= R.D.apps.vw;
       // Google カレンダーに1件ずつ追加するリンク（日付の詳細・公開済みと手入力・上書きの時刻・送るのは勤務先名と時刻だけ）
       R.D.gcal = v.gcal;
