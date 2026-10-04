@@ -1179,19 +1179,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     const bv=resolveBandValues(stM,enM,noteToHeatSection(getFieldNote(name,date,"start")),noteToHeatSection(getFieldNote(name,date,"end")),HEAT_BAND_SPLIT_MIN);
     return{lunch:bv.lunch||def,dinner:bv.dinner||def};
   };
-  // ヒートマップの休憩・退勤延長判定用: 実効start/endを反映した一時シフトオブジェクト。
-  // 片側セル（出勤だけ・退勤だけ）の日も返す。2026-08-31 の決定3で「片側セルの日にも
-  // 退勤延長は反映する（休憩は引かない）」と決めたため、ここで null を返すと延長まで落ちる。
-  // 片側であることは adjustedStart / adjustedEnd の片方が "" のまま残ることで保たれ、
-  // getBreaksFor（app-utils.js）はその日を空配列で返す＝休憩は付かない。
-  const getHeatShift=(name,date)=>{
-    const base=_getSub(name)?.shifts?.[date];
-    const st=getEffHHMM(name,date,"start"),en=getEffHHMM(name,date,"end");
-    if(!st&&!en)return null;
-    return{...(base||{}),status:"work",adjustedStart:st,adjustedEnd:en};
-  };
+  // ヒートマップの休憩・退勤延長判定用の一時シフト（片側セルの日も返す・2026-08-31 の決定3）は
+  // app-utils.js の heatStaffDayEntriesOf の中にある（従業員画面のシフト表と共有・2026-10-04）
   const timeToMin=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return h*60+m;};
-  const minToHHMM=m=>`${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`;
   // ヒートマップ補完用の境界（片側セルのみ入力時）: 候補タブ(candidates/weekdayCandidates/dateCandidates)の
   // 実際の候補時間帯から算出し、該当候補がなければ標準値（ランチ終わり15:00・ディナー始まり17:00）にフォールバック。
   // ランチ終わり = 17時以前(17時含む)に終わる候補のうち最も遅い退勤。ディナー始まり = 17時以降(17時含む)に始まる候補のうち最も早い出勤。
@@ -1214,73 +1204,13 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     dates.forEach(date=>{
       const arr=[];
       realStaff.forEach(name=>{
-        let stM=timeToMin(getEffHHMM(name,date,"start"));let enM=timeToMin(getEffHHMM(name,date,"end"));
-        // 「締」等の店舗限定固定シフトコマンド: start/endどちらかに付いていれば（h/k/x・略称等との
-        // 組み合わせ入力でも）、主シフトとは別の追加出勤(固定時間帯)としてカウントする
-        const fixedCmd=(getFieldFixed(name,date,"start")||getFieldFixed(name,date,"end"))?FIXED_ENTRY:null;
-        if(stM===null&&enM===null&&!fixedCmd)return;
-        // h/k・x・他店舗ヘルプ略称はフィールド別(getFieldNote)に判定し、
-        // startセル→ランチ帯・endセル→ディナー帯に適用する（heatSectionEntries / excludedBandsOf）。
-        {
-          if(stM!==null||enM!==null){
-            // 片側セルのみ入力: 出勤のみ→ランチ終わり(HEAT_LUNCH_END_MIN)まで、退勤のみ→ディナー始まり(HEAT_DINNER_START_MIN)から出勤扱い
-            let pStM=stM,pEnM=enM;
-            if(pEnM===null)pEnM=HEAT_LUNCH_END_MIN;
-            if(pStM===null)pStM=HEAT_DINNER_START_MIN;
-            if(pStM<pEnM){
-              const hsh=getHeatShift(name,date);
-              // 退勤延長分を末尾に加算してから境界判定（延長中の時間帯も出勤扱いにする）。
-              // ただしランチ帯（延長前の退勤が17:00以内）に収まるシフトは、延長でディナー帯に
-              // 跨いでディナー帯の出勤人数に混入しないよう17:00で頭打ちにする（ヒートマップ計上のみ・純勤務時間は別）。
-              // 延長のランチ/ディナー判定は補完後の退勤時刻で行う。getOT 自身も同じ規則で補完する
-              // ようになった（app-utils.js）が、ヒートマップが実際に使う pEnM を明示して渡し、
-              // 表示している時間帯と延長の帯判定が必ず同じ値を見るようにしておく。
-              if(hsh){const ot=getOT(name,settings,{...hsh,adjustedEnd:minToHHMM(pEnM)});if(ot>0){const wasLunch=pEnM<=HEAT_BAND_SPLIT_MIN;pEnM+=ot;if(wasLunch)pEnM=Math.min(pEnM,HEAT_BAND_SPLIT_MIN);}}
-              // x と他店舗ヘルプの帯は自店舗のカウントから除外。h/kと同じ帯規則（excludedBandsOf）で解決する。跨ぎシフトは
-              // 出勤側=ランチ帯・退勤側=ディナー帯、片帯のみのシフトは反対側セルの印も有効。
-              const hv=exBandsOf(name,date,pStM,pEnM);
-              let ok=true;
-              if(hv.lunch&&hv.dinner)ok=false;
-              else{
-                if(hv.lunch)pStM=Math.max(pStM,HEAT_BAND_SPLIT_MIN);
-                if(hv.dinner)pEnM=Math.min(pEnM,HEAT_BAND_SPLIT_MIN);
-                if(pStM>=pEnM)ok=false;
-              }
-              if(ok){
-                // 休憩区間（時間帯セルを完全に覆う場合にカウント除外するため保持）。長さ方式でも候補タブの休憩帯で外す（heatBreaksFor）
-                const breaks=hsh
-                  ?heatBreaksFor(settings,date,name,hsh).map(br=>({bs:timeToMin(br.start),be:timeToMin(br.end)})).filter(b=>b.bs!==null&&b.be!==null)
-                  :[];
-                // startセルのnote→ランチ帯section、endセルのnote→ディナー帯section（heatSectionEntries）。
-                // 帯を跨ぎ かつ 両帯のsectionが異なるときだけ17:00固定で2件に分割される。
-                heatSectionEntries({
-                  stM:pStM,enM:pEnM,
-                  startNote:getFieldNote(name,date,"start"),
-                  endNote:getFieldNote(name,date,"end"),
-                  defaultSec:hallStaff.includes(name)?"hall":"kit",
-                  splitEnabled:hallStaff.length>0,
-                }).forEach(e=>arr.push({...e,breaks,name}));
-              }
-            }
-          }
-          if(fixedCmd){
-            // 「締」の追加出勤(23:00〜25:00)はディナー帯のみのため退勤セルのnote優先（片帯シフトと同じ規則）
-            const exStM=timeToMin(fixedCmd.start),exEnM=timeToMin(fixedCmd.end);
-            // x（カウント外）は追加出勤にも同じ帯規則で当てる（片帯なので反対側セルの x も有効＝x があれば外れる）。
-            // af91045 で x を日単位の除外から帯判定へ移したとき、このブロックだけ判定から漏れて「22x締」の
-            // 23〜25時が数えられるようになった（修正前は外れていた）。他店舗略称＋締は従来から数えており変えていない
-            const exX=excludedBandsOf({stM:exStM,enM:exEnM,startNote:getFieldNote(name,date,"start"),endNote:getFieldNote(name,date,"end"),abbrToShop:{}});
-            if(exStM!==null&&exEnM!==null&&exStM<exEnM&&!exX.lunch&&!exX.dinner){
-              heatSectionEntries({
-                stM:exStM,enM:exEnM,
-                startNote:getFieldNote(name,date,"start"),
-                endNote:getFieldNote(name,date,"end"),
-                defaultSec:hallStaff.includes(name)?"hall":"kit",
-                splitEnabled:hallStaff.length>0,
-              }).forEach(e=>arr.push({...e,breaks:[],name}));
-            }
-          }
-        }
+        // 1人1日の区間は app-utils.js の heatStaffDayEntriesOf（従業員画面のシフト表の昼夜の人数と同じ関数・2026-10-04）。
+        // ここで解決するのは入力中の編集を含む実効値（getEffHHMM・getFieldNote・getFieldFixed）だけ
+        heatStaffDayEntriesOf({name,date,settings,start:getEffHHMM(name,date,"start"),end:getEffHHMM(name,date,"end"),
+          startNote:getFieldNote(name,date,"start"),endNote:getFieldNote(name,date,"end"),
+          fixed:getFieldFixed(name,date,"start")||getFieldFixed(name,date,"end"),base:_getSub(name)?.shifts?.[date],
+          lunchEnd:HEAT_LUNCH_END_MIN,dinnerStart:HEAT_DINNER_START_MIN,abbrToShop,isHall:hallStaff.includes(name),splitEnabled:hallStaff.length>0})
+          .forEach(e=>arr.push(e));
       });
       perDate[date]=arr;
     });
@@ -2387,7 +2317,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     let time="",note="",fixed=false;
     const LE=editsNow(); // 確定済み＋入力中のセル（S2。入力中の文字は localEdits に入らない）
     if(key in LE){const{numeric,note:nt,hasFixed}=extractNote(LE[key]);time=parseTime(numeric)||"";note=nt||"";fixed=fixedShiftEnabled&&hasFixed;}
-    else{time=getStoredTime(name,date,field);const sh=_getSub(name)?.shifts?.[date];const adjNk=field==="start"?"adjustedStartNote":"adjustedEndNote";const origNk=field==="start"?"startNote":"endNote";note=(sh?.[adjNk]??sh?.[origNk])||"";fixed=getStoredFixed(name,date,field);}
+    // 保存値だけのセルは従業員画面のシフト表と同じ関数（shiftSheetStoredText・app-utils.js）で解決する
+    else return shiftSheetStoredText(_getSub(name)?.shifts?.[date],field,fixedShiftEnabled);
     const dec=time?toDecimal(time):"";
     const fx=fixed?FIXED_KEY:"";
     // 「締」（東通り店専用・追加出勤）は画面のgetVal同様、note末尾にコマンド文字を付加して表示する。
@@ -2422,146 +2353,24 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   };
   // シフト表table（HTML文字列）。withHeat=trueで左右にヒートマップ列を統合し日付行に合わせて表示する
   const buildShiftTableHtml=(withHeat=false,staffCols=true,dept="all")=>{
-    const cols=buildPdfCols(dept);
-    // スタッフ35名以上: 部門仕切り用スペーサー列が常に空白のままだと、印刷時に日付を見失いやすいため日付を表示する
-    const showSpacerDate=cols.filter(n=>!isSpacer(n)).length>34;
-    const BDp="1px solid #888",BDp2="2px solid #555";
-    // スタッフ列のセルで文字に使える幅（th の width:30px − td の左右 padding 1px − 罫線・余白）。ヘルプの合成表示だけがこれで文字を縮める
-    const PDF_CELL_AVAIL=26;
-    // ヒートマップ列は行背景(土日祝の #DDEEFF/#FFEEEE)が透けて混色するのを防ぐため、半透明オレンジを
-    // 白地に合成した不透明RGBにする。n===0は白。印刷でも確実に効くよう透明・rgbaは使わない。
-    const heatBg=(n,max)=>{
-      if(!n)return"#fff";
-      const a=0.15+(n/max)*0.75;
-      const mix=c=>Math.round(c*a+255*(1-a));
-      return`rgb(${mix(248)},${mix(112)},${mix(54)})`;
-    };
-    // ヘッダーRow2の固定高さ: 縦書きスタッフ名(最大5文字)と単行のヒートマップ時刻見出しとで自然な高さが大きく異なるため、
-    // シフト表ページと時間帯別出勤人数ページを別紙で並べたときに日付行がずれないよう両ページで揃える
-    const R2H=64;
-    // 斜線: Excelのdiagonal(右上→左下の1本線)に合わせ、セル毎に1本だけ描画する非リピートSVGを使う
-    // style属性(二重引用符)内に埋め込むため、url()は単一引用符・SVG内の引用符は%27にエスケープする
-    const hatch=`url('data:image/svg+xml;charset=utf-8,${encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' preserveAspectRatio='none'><line x1='10' y1='0' x2='0' y2='10' stroke='#999' stroke-width='1'/></svg>").replace(/'/g,"%27")}') no-repeat center/100% 100%`;
+    // 表の組み立ては app-utils.js の shiftTableHtmlOf（従業員画面の「全員のシフト」と同じ関数・2026-10-04）。
+    // ここで解決するのは、入力中の編集（pdfResolve）・他店のヘルプ（helperDisp）・ヒートマップと昼夜の人数（heatData）だけ
     const showKit=withHeat&&heatHours.length>0;
-    const showHall=showKit&&hasSplit;
-    const kitLabel=hasSplit?"キッチン":"時間帯別出勤人数";
-    // キッチンとホールのヒートマップの間に1セル分の空白を挟み、2つの表を視覚的に分離する（区切り線は外枠と同じ太さ）
-    const heatGap=showHall?`<td style="border-left:${BDp2};border-right:${BDp2};background:#fff;width:20px;min-width:20px;"></td>`:"";
-    // 日付・曜日・ヒートマップはセル2個分: html2canvasがrowspanを描画できないため上下2セルで境界線を消して結合風にする
-    const mergeTd=(val,top)=>`<td style="border-left:${BDp2};border-right:${BDp2};border-top:${top?BDp2:"0"};border-bottom:${top?"0":BDp2};padding:1px 2px;text-align:center;font-weight:600;vertical-align:${top?"bottom":"top"};height:15px;">${top?val:""}</td>`;
-    const mergeHeat=(val,top,bg)=>`<td style="border-left:${BDp};border-right:${BDp};border-top:${top?BDp:"0"};border-bottom:${top?"0":BDp};padding:1px 2px;text-align:center;font-weight:${val?600:400};vertical-align:${top?"bottom":"top"};height:15px;background:${bg};">${top?(val||""):""}</td>`;
     // 日付ヘッダの「昼・夜の人数」（settings.headcountAt・P3.5d）。**PDF だけ**に出す（画面・Excel には出さない）。
     // 数える区間はヒートマップと同じ heatData（片側セルの補完・退勤延長・応援と x の帯を外した後）。
-    // 帯に休暇（公休・有給・慶弔）がある人は数えない。店休日は曜日だけ。0人の側は出さない（headcountLabelOf）。
     // キッチンとホールを分けている店舗（hasSplit）は区分ごとに数え、キッチンのヒートマップ側（左）の曜日列にキッチンの人数、
-    // ホール側（右）の曜日列にホールの人数を出す（2026-10-02 ユーザー指示。区分の印は付けない＝位置で分かる）。
-    // 分けていない店舗は従来どおり左右とも合計。
-    const hcCfg=headcountAtOf(settings);
-    const pdfHeadcount=(ds,section)=>{
-      if(!hcCfg.enabled||(!hcCfg.lunch&&!hcCfg.dinner))return"";
-      if(isClosedDateOf(settings,ds))return"";
-      const entries=(heatData[ds]||[]).map(e=>{const lv=leaveFieldsOf(_getSub(e.name)?.shifts?.[ds]);
-        return{name:e.name,stM:e.stM,enM:e.enM,section:e.section,leave:{lunch:!!lv.start,dinner:!!lv.end}};});
-      const sec=hasSplit?section:undefined;
-      return headcountLabelOf({lunch:hcCfg.lunch?countPresentAt(entries,timeToMin(hcCfg.lunch),sec):0,
-        dinner:hcCfg.dinner?countPresentAt(entries,timeToMin(hcCfg.dinner),sec):0},false);
-    };
-    // 曜日セル。人数があるときは上段に曜日・下段に人数（html2canvas は rowspan を描けないので2セルで結合風にする）
-    const wdTd=(wd,hc,top)=>hc
-      ?`<td data-headcount="${esc(hc)}" style="border-left:${BDp2};border-right:${BDp2};border-top:${top?BDp2:"0"};border-bottom:${top?"0":BDp2};padding:0 2px;text-align:center;font-weight:600;vertical-align:${top?"bottom":"top"};height:15px;white-space:nowrap;${top?"":"font-size:8px;"}">${top?esc(wd):esc(hc)}</td>`
-      :mergeTd(esc(wd),top);
-    let h='<table style="border-collapse:collapse;font-size:12px;">';
-    // ヘッダー2行
-    h+='<thead>';
-    // Row1: 従業員コード専用行（左右の端セルは結合・空欄。期間等は表示しない）。ヒートマップ列はセクション名を結合表示
-    h+='<tr>';
-    h+=`<th colspan="2" style="border:${BDp2};padding:1px;height:16px;"></th>`;
-    if(showKit)h+=`<th colspan="${heatHours.length}" style="border:${BDp2};padding:1px;height:16px;text-align:center;font-size:8px;font-weight:600;white-space:nowrap;">${esc(kitLabel)}</th>`;
-    if(staffCols)cols.forEach(nm=>{
-      if(isSpacer(nm)){h+=`<th style="border:${BDp};padding:1px;width:30px;height:16px;"></th>`;return;}
-      h+=`<th style="border:${BDp};padding:1px;width:30px;height:16px;text-align:center;font-size:9px;font-weight:600;">${esc(staffNums[nm]||"")}</th>`;
-    });
-    if(showHall)h+=heatGap+`<th colspan="${heatHours.length}" style="border:${BDp2};padding:1px;height:16px;text-align:center;font-size:8px;font-weight:600;white-space:nowrap;">ホール</th>`;
-    h+=`<th colspan="2" style="border:${BDp2};padding:1px;height:16px;"></th>`;
-    h+='</tr>';
-    // Row2: ヒートマップ時刻・期間（縦積み）・曜日・スタッフ名（縦積み）・曜日・店名（縦積み）・ヒートマップ時刻
-    h+='<tr>';
-    h+=`<th style="border:${BDp2};padding:3px 2px;width:36px;height:${R2H}px;text-align:center;font-weight:700;font-size:10px;line-height:1.2;vertical-align:middle;">${vtext(pdfPeriodLabel(period.label||""))}</th>`;
-    h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;height:${R2H}px;text-align:center;font-weight:700;">曜日</th>`;
-    if(showKit)heatHours.forEach(hr=>{h+=`<th style="border:${BDp};padding:1px;width:20px;height:${R2H}px;text-align:center;font-size:9px;font-weight:600;background:#f7f7f7;vertical-align:bottom;">${hr}</th>`;});
-    if(staffCols)cols.forEach(nm=>{
-      if(isSpacer(nm)){h+=`<th style="border:${BDp};height:${R2H}px;"></th>`;return;}
-      const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";
-      h+=`<th style="border:${BDp};padding:3px 1px;width:30px;height:${R2H}px;text-align:center;font-weight:700;font-size:${vfontSize(nm,10)}px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;
-    });
-    if(showHall){h+=heatGap;heatHours.forEach(hr=>{h+=`<th style="border:${BDp};padding:1px;width:20px;height:${R2H}px;text-align:center;font-size:9px;font-weight:600;background:#f7f7f7;vertical-align:bottom;">${hr}</th>`;});}
-    h+=`<th style="border:${BDp2};padding:2px 4px;width:28px;height:${R2H}px;text-align:center;font-weight:700;">曜日</th>`;
-    h+=`<th style="border:${BDp2};padding:3px 2px;width:40px;height:${R2H}px;text-align:center;font-weight:700;font-size:10px;line-height:1.2;vertical-align:middle;">${vtext(shopName||"店舗")}</th>`;
-    h+='</tr></thead><tbody>';
-    dates.forEach((ds,di)=>{
-      const d=pd(ds),dow=d.getDay(),day=d.getDate(),wd=WD[dow];
-      const hc=pdfHeadcount(ds,"kit"),hcR=pdfHeadcount(ds,"hall");
-      const isSat=dow===6,isSunHol=dow===0||isHoliday(ds);
-      const isSpecRed=isSpecialRedDate(ds,settings);
-      const rowBg=isSat?"#DDEEFF":(isSunHol||isSpecRed)?"#FFEEEE":"#fff";
-      // 上行=出勤 / 下行=退勤
-      ["start","end"].forEach((field,ri)=>{
-        const top=ri===0;
-        h+=`<tr style="background:${rowBg};">`;
-        h+=mergeTd(day,top);
-        h+=wdTd(wd,hc,top);
-        if(showKit)heatHours.forEach(hr=>{
-          const n=countHeat("kit",ds,hr);
-          const bg=heatBg(n,kitMax);
-          h+=mergeHeat(n||"",top,bg);
-        });
-        if(staffCols)cols.forEach(nm=>{
-          if(isSpacer(nm)){
-            // スペーサー列: 35名以上は作成表両端(日付列)と同じ結合風の太枠で日にち(月なし)を表示
-            h+=showSpacerDate?mergeTd(day,top):`<td style="border:${BDp};"></td>`;
-            return;
-          }
-          // 他店でのヘルプ勤務（H2）。画面と同じ helperCellDisplay の文字・黄色（#FFFF00）。列幅（30px）を広げないよう、
-          // 収まらない文字はそのセルだけ文字を縮める。変更マーク（緑）は画面と同じく黄色より優先。
-          // この日にヘルプ先の勤務があれば、合成表示でない側のセルも斜線を引かない（下の pdfHd 判定）
-          const pdfHd=helperDisp(nm,ds);
-          if(pdfHd&&pdfHd[field].helper){
-            const shH=_getSub(nm)?.shifts?.[ds];
-            const hbg=shH&&shH.changed===true?"#B7EBC6":"#FFFF00";
-            h+=`<td data-helper="1" style="border:${BDp};padding:1px;text-align:center;background:${hbg};height:15px;white-space:nowrap;overflow:hidden;font-size:${helperCellFontPx(pdfHd[field].text,PDF_CELL_AVAIL,12)}px;">${esc(pdfHd[field].text)}</td>`;return;
-          }
-          if(!pdfHasSub(nm,ds)){h+=`<td style="border:${BDp};"></td>`;return;}
-          const sh=_getSub(nm)?.shifts?.[ds];
-          const r=pdfResolve(nm,ds,field);
-          const otherHas=pdfResolve(nm,ds,field==="start"?"end":"start").disp;
-          // 変更マーク(緑)は画面(cellBgFor)が changed を最優先・無条件で塗るので、PDFも同じにする。
-          // 下の早期returnは「表示する時刻が無い」セルを先に返してしまうため、ここで先に決めておかないと
-          // 空白セル・休み希望セルの緑だけがPDFで落ちる（画面では斜線と緑が両方乗る）。
-          // background の一括指定は background-color を transparent に戻すので、必ず後ろに置くこと。
-          const chgBg=sh&&sh.changed===true?"background-color:#B7EBC6;":"";
-          // 管理者入力の休み希望(/)はフィールド単位で斜線（画面のholidayCellDashと同じ扱い）
-          if(!r.disp&&sh&&sh.adminRest&&sh.adminRest[field]&&!pdfHd){h+=`<td style="border:${BDp};background:${hatch};${chgBg}height:15px;"></td>`;return;}
-          if(!r.disp&&!otherHas){
-            // 休み提出のみ斜線（出勤で上書きされていればdispがあるためここに来ない）。ヘルプ先の勤務がある日は引かない（H2）
-            if(sh&&sh.status==="holiday"&&!pdfHd){h+=`<td style="border:${BDp};background:${hatch};${chgBg}height:15px;"></td>`;return;}
-            h+=`<td style="border:${BDp};${chgBg}height:15px;"></td>`;return;
-          }
-          // 背景: 緑(スタッフ変更) > 黄(サフィックスnote) — 画面と同じ優先順位
-          const cbg=sh&&sh.changed===true?"#B7EBC6":r.note?"#FFFF00":"transparent";
-          h+=`<td style="border:${BDp};padding:1px;text-align:center;background:${cbg};height:15px;white-space:nowrap;">${esc(r.disp)}</td>`;
-        });
-        if(showHall){h+=heatGap;heatHours.forEach(hr=>{
-          const n=countHeat("hall",ds,hr);
-          const bg=heatBg(n,hallMax);
-          h+=mergeHeat(n||"",top,bg);
-        });}
-        h+=wdTd(wd,hcR,top);
-        h+=mergeTd(day,top);
-        h+='</tr>';
-      });
-    });
-    h+='</tbody></table>';
-    return h;
+    // ホール側（右）の曜日列にホールの人数を出す（2026-10-02 ユーザー指示）。分けていない店舗は従来どおり左右とも合計。
+    const headcountOf=(ds,section)=>shiftSheetHeadcountOf({settings,date:ds,entries:heatData[ds]||[],shiftOf:n=>_getSub(n)?.shifts?.[ds],hasSplit,section});
+    return shiftTableHtmlOf({cols:buildPdfCols(dept),dates,periodLabel:pdfPeriodLabel(period.label||""),shopName,staffNums,staffColors:staffColorsPdf,settings,staffCols,
+      headcountOf,
+      heat:showKit?{hours:heatHours,kitLabel:hasSplit?"キッチン":"時間帯別出勤人数",showHall:hasSplit,count:countHeat,kitMax,hallMax}:null,
+      // 他店でのヘルプ勤務（H2）。画面と同じ helperCellDisplay の文字・黄色（#FFFF00）。この日にヘルプ先の勤務があれば、
+      // 合成表示でない側のセルも斜線を引かない（shiftSheetCellOf）
+      cellOf:(nm,ds,field)=>{
+        const pdfHd=helperDisp(nm,ds);
+        const sh=_getSub(nm)?.shifts?.[ds];
+        return shiftSheetCellOf({sh,field,hasSub:pdfHasSub(nm,ds),helper:pdfHd,r:pdfResolve(nm,ds,field),otherDisp:pdfResolve(nm,ds,field==="start"?"end":"start").disp});
+      }});
   };
   // 休み・連勤カウント統合table（名前ヘッダー1行＋値2行）
   const buildCountsTableHtml=(dept="all")=>{

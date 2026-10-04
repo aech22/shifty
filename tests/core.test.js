@@ -3674,10 +3674,15 @@ test("ヒートマップの休憩（2026-10-02）: 長さ方式は勤務時間�
   [w("10:00", "23:00"), w("10:00", "23:00", { adjustedBreak: 30 }), w("17:00", "23:00")].forEach(sh =>
     assert.deepStrictEqual(u.heatBreaksFor(band, WD, "田中", sh), u.getBreaksFor(band, WD, "田中", sh)));
   // シフト作成タブのヒートマップは heatBreaksFor を通す（ドリフト検出）
+  // 1人1日の区間は app-utils.js の heatStaffDayEntriesOf（従業員画面のシフト表の人数と共有・2026-10-04）
   const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-shift.js"), "utf8");
   const i = src.indexOf("const heatData=useMemo(");
   const body = src.slice(i, src.indexOf("perDate[date]=arr;", i));
-  assert.ok(i > 0 && /heatBreaksFor\(settings,date,name,hsh\)/.test(body) && !/getBreaksFor\(/.test(body), "heatData が heatBreaksFor 以外で休憩を引いている");
+  assert.ok(i > 0 && /heatStaffDayEntriesOf\(/.test(body) && !/getBreaksFor\(|heatBreaksFor\(/.test(body), "heatData が heatStaffDayEntriesOf を通っていない");
+  const usrc = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-utils.js"), "utf8");
+  const j = usrc.indexOf("function heatStaffDayEntriesOf(");
+  const hb = usrc.slice(j, usrc.indexOf("\n}\n", j));
+  assert.ok(j > 0 && /heatBreaksFor\(settings,date,name,hsh\)/.test(hb) && !/getBreaksFor\(/.test(hb), "heatStaffDayEntriesOf が heatBreaksFor 以外で休憩を引いている");
 });
 test("長さ方式でも属性ありの休憩が当たる日はそちらを優先する（2026-10-02）", () => {
   // 鷄えん東通りの土曜の形: パート 15-17・社員 17-18（属性あり）。段は拘束6h以上 → 60分
@@ -4153,14 +4158,19 @@ test("Excel・PDF の書き出しは労務の要修正の色を参照しない",
     }
     assert.fail(`${marker} の本体を切り出せなかった`);
   };
-  const targets = [["PDF", "const buildShiftTableHtml="], ["Excel", "function expXl("]];
-  for (const [label, marker] of targets) {
-    const body = bodyFrom(marker);
+  // PDF のシフト表は app-utils.js の shiftTableHtmlOf・shiftSheetCellOf で組み立てる（従業員画面の全員のシフトと共有・2026-10-04）。
+  // 呼び出し側（buildShiftTableHtml）と共有の本体を合わせて検査する
+  const usrc = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-utils.js"), "utf8");
+  const uBody = name => { const i = usrc.indexOf(`function ${name}(`); assert.ok(i > 0, `${name} が無い`); const rest = usrc.slice(i + 1); const e = rest.search(/\n(function |const |\/\/ =====)/); return strip(usrc.slice(i, i + 1 + (e > 0 ? e : rest.length))); };
+  const targets = [["PDF", "const buildShiftTableHtml=", ["shiftTableHtmlOf", "shiftSheetCellOf", "shiftSheetStoredText"]], ["Excel", "function expXl(", []]];
+  for (const [label, marker, shared] of targets) {
+    const body = bodyFrom(marker) + shared.map(uBody).join("\n");
     assert.ok(body.split("\n").length > 50, `${label}: 本体の切り出しが短すぎる（${body.split("\n").length}行）`);
-    for (const ident of ["laborDayErrors", "laborErrTitle", "LEGEND_COLORS.laborErr"]) {
+    for (const ident of ["laborDayErrors", "laborErrTitle", "LEGEND_COLORS.laborErr", "laborErr"]) {
       assert.ok(!body.includes(ident), `${label} の書き出しが ${ident} を参照している`);
     }
   }
+  assert.ok(bodyFrom("const buildShiftTableHtml=").includes("shiftTableHtmlOf("), "PDF のシフト表は shiftTableHtmlOf を通る");
 });
 
 // ===== 企業連携の拡張（2026-09-27）=====
