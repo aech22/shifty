@@ -190,6 +190,19 @@
           "number": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 8" },
           "updatedAt": { ".validate": "newData.isString() && newData.val().length <= 40" },
           "$other": { ".validate": false }
+        },
+        "seen": {
+          "$shopId": {
+            "$periodId": {
+              ".write": "auth != null && auth.uid === $uid && auth.token.email != null",
+              ".validate": "newData.hasChildren(['at'])",
+              "at": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "days": {
+                "$date": { ".validate": "$date.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) && newData.isString() && newData.val().length <= 40" }
+              },
+              "$other": { ".validate": false }
+            }
+          }
         }
       }
     },

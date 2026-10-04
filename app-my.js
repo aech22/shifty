@@ -9,7 +9,7 @@
 // 構成（E1 時点）:
 //   スタッフアカウントの印と認証操作（myRegister / myLogin / myLogout / myChangePassword / mySendReset / mySaveProfile）
 //   MyView … 入口。未ログインなら MyAuthScreen、ログイン済みなら下部タブ（マイシフト・給料・設定）
-//   MyShiftTab / MyPayTab … E1 では中身が無いことを伝える空の状態だけ（E3・E5 が埋める）
+//   MyShiftTab … 月のカレンダー・次のシフト・変更あり（E3）／MyPayTab … E1 では中身が無いことを伝える空の状態だけ（E5 が埋める）
 //   MySettingsTab … 勤務先のお店（E2: 紐付けの一覧・申請・個人リンクコード）とアカウント（登録ネーム・従業員番号・メール・パスワード・ログアウト）
 //   StaffLinkRequestsCard / StaffLinkEditSection … 管理者側（スタッフタブ）の申請の提案・未リンクの申請・コードの発行と解除（E2）
 //   readMyLinks(uid) … 本人の紐付けの一覧（E3 以降が「どの店舗のどの名前か」を得る入口）
@@ -455,9 +455,227 @@ function MyHeader({title,onClose}){
 function MyEmptyState({children}){
   return <div data-my-empty="1" style={{padding:"32px 4px",fontSize:14,lineHeight:1.9,color:"var(--c-text3)"}}>{children}</div>;
 }
-function MyShiftTab({onGoSettings}){
-  return <MyEmptyState>勤務先の店舗とアカウントのリンクが済むと、ここに提出した希望と確定したシフトが月のカレンダーで表示されます。
-    {onGoSettings&&<button data-my-action="goLinks" onClick={onGoSettings} style={{...MY_LINK_BTN,display:"block",marginTop:8}}>設定でお店とリンクする</button>}</MyEmptyState>;
+// ===== マイシフト（2026-10-04・第2部 E3）=====
+// 紐付いた店舗（readMyLinks の ok の行）ごとに periods・settings（企業設定を重ねる）・staff・プランと、表示する期間の subs を読む。
+// subs は期間ごとの部分読み（orderByChild("periodId").equalTo）で、**店舗の subs 全件は読まない**。画面に出すのは本人の分だけ
+// （ルール上は店舗全員分を読める＝画面の絞り込みで、ルールの保護ではない。計画書 E.4 の注意）。
+// 書くのは users/{uid}/seen だけ（店舗のデータには一切書かない）。計算は app-my-utils.js の buildMyShiftDays 以下
+async function readMyShiftShop(sid){
+  const[pe,se,st,co,pl]=await Promise.all([_myRead(`shops/${sid}/periods`),_myRead(`shops/${sid}/settings`),_myRead(`shops/${sid}/staff`),
+    _myRead(`shops/${sid}/company`),_myRead(`accounts/${sid}/plan`)]);
+  if(!pe.ok||!se.ok||!st.ok)return{ok:false};
+  const periods=Object.values(pe.v||{}).filter(p=>p&&p.id&&p.startDate&&p.endDate).sort((a,b)=>String(a.startDate).localeCompare(String(b.startDate)));
+  const coLink=co.ok&&co.v&&typeof co.v==="object"?co.v:null;
+  const settings=applyCompanySettings(se.v||makeSettings(sid),coLink?(coLink.settings||{}):null);
+  // プランは App と同じ規則（dev は ?plan= の上書きが効く）。読めなければ Free とみなす＝公開済みの表示は出さない側に倒す
+  const plan=DEV_PLAN_OVERRIDE||(pl.ok&&["free","pro","premium"].includes(pl.v)?pl.v:"free");
+  return{ok:true,periods,settings,staff:st.v||[],plan};
+}
+async function readMyPeriodSubs(sid,pid){
+  try{
+    const snap=await firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(pid).once("value");
+    return Object.values(snap.val()||{}).filter(s=>s&&s.id&&s.periodId===pid);
+  }catch(e){console.warn("マイシフト: 提出の読み込みに失敗:",e&&e.code);return null;}
+}
+const MY_KIND_LABEL={published:"公開",confirmed:"確定",submitted:"提出済み（未確定）"};
+function myEntryState(e){return e.kind==="submitted"?"submitted":e.confirmed?"confirmed":"published";}
+function myFmtDate(ds){const d=pd(ds);return isNaN(d)?ds:`${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;}
+
+function MyShiftEntryRow({e,changed}){
+  const grey=e.kind==="submitted";
+  const state=myEntryState(e);
+  return(
+    <div data-my-entry={state} data-my-entry-shop={e.shopId} data-my-entry-date={e.date} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 0",borderTop:"1px solid var(--c-border)"}}>
+      <span aria-hidden="true" style={{flex:"0 0 auto",width:10,height:10,borderRadius:5,marginTop:6,background:grey?"var(--c-text4)":e.color}}/>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
+          <span data-my-entry-time="1" style={{fontSize:17,fontWeight:700,color:grey?"var(--c-text3)":"var(--c-text)",fontVariantNumeric:"tabular-nums"}}>{fmtMyRange(e)||"時間未定"}</span>
+          <span style={{fontSize:12,fontWeight:700,color:grey?"var(--c-text3)":"var(--c-text2)"}}>{MY_KIND_LABEL[state]}</span>
+          {changed&&<span data-my-entry-changed="1" style={{fontSize:12,fontWeight:700,color:"var(--c-accent)"}}>変更あり</span>}
+        </div>
+        <div style={{fontSize:13,color:grey?"var(--c-text3)":"var(--c-text2)",lineHeight:1.6,overflowWrap:"anywhere"}}>
+          {e.shopName}
+          {!grey&&e.breakMin>0?` ／ 休憩${e.breakMin}分`:""}
+          {!grey&&(e.segments||[]).filter(g=>g.extra).map(g=>` ／ 追加 ${fmtMyClock(g.startMin)}〜${fmtMyClock(g.endMin)}`).join("")}
+        </div>
+        {!grey&&e.differs&&e.hope&&<div data-my-entry-hope="1" style={{fontSize:12,color:"var(--c-text3)"}}>希望 {fmtMyRange(e.hope)}</div>}
+      </div>
+    </div>
+  );
+}
+
+function MyShiftTab({staffUser,onGoSettings}){
+  const uid=staffUser&&staffUser.uid;
+  const todayStr=fd(new Date());
+  const[ym,setYm]=useState(todayStr.slice(0,7));
+  const[sel,setSel]=useState(todayStr);
+  const[links,setLinks]=useState(undefined);   // undefined=読み込み中・null=読めない
+  const[shops,setShops]=useState({});         // {sid: {ok,periods,settings,staff,plan}}
+  const[subs,setSubs]=useState({});           // {"sid|pid": sub[] | null}
+  const[seen,setSeen]=useState(undefined);     // users/{uid}/seen（undefined=読み込み中・null=読めない）
+  const loadingRef=useRef(new Set());
+  const baselineRef=useRef(new Set());
+  useEffect(()=>{
+    if(!uid)return;
+    let alive=true;
+    readMyLinks(uid).then(v=>{if(alive)setLinks(v);}).catch(()=>{if(alive)setLinks(null);});
+    _myRead(`users/${uid}/seen`).then(r=>{if(alive)setSeen(r.ok?(r.v||{}):null);});
+    return()=>{alive=false;};
+  },[uid]);
+  const okLinks=useMemo(()=>(Array.isArray(links)?links.filter(l=>l&&l.ok):[]),[links]);
+  const badLinks=Array.isArray(links)?links.filter(l=>l&&!l.ok):[];
+  useEffect(()=>{
+    let alive=true;
+    okLinks.forEach(l=>{
+      if(shops[l.shopId]||loadingRef.current.has("shop:"+l.shopId))return;
+      loadingRef.current.add("shop:"+l.shopId);
+      readMyShiftShop(l.shopId).then(v=>{if(alive)setShops(p=>({...p,[l.shopId]:v}));},()=>{if(alive)setShops(p=>({...p,[l.shopId]:{ok:false}}));});
+    });
+    return()=>{alive=false;};
+  },[okLinks,shops]);
+  // 表示中の月と今日以降にかかる期間の subs だけを読む（読んだ期間は覚えておき、月を戻っても読み直さない）
+  useEffect(()=>{
+    okLinks.forEach(l=>{
+      const sh=shops[l.shopId];
+      if(!sh||!sh.ok)return;
+      myShiftPeriodsToRead(sh.periods,ym,todayStr).forEach(p=>{
+        const k=l.shopId+"|"+p.id;
+        if(k in subs||loadingRef.current.has(k))return;
+        loadingRef.current.add(k);
+        readMyPeriodSubs(l.shopId,p.id).then(v=>setSubs(prev=>({...prev,[k]:v})));
+      });
+    });
+  },[okLinks,shops,ym,todayStr,subs]);
+  const premium=myShiftPremiumOf(okLinks.map(l=>shops[l.shopId]&&shops[l.shopId].plan));
+  const{entries,publishedKeys}=useMemo(()=>{
+    const all=[];const keys=[];
+    okLinks.forEach((l,i)=>{
+      const sh=shops[l.shopId];
+      if(!sh||!sh.ok)return;
+      const subsByPeriod={};
+      sh.periods.forEach(p=>{const v=subs[l.shopId+"|"+p.id];if(Array.isArray(v)){subsByPeriod[p.id]=v;if(premium&&isPeriodPublished(p))keys.push(myShiftSeenKey(l.shopId,p.id));}});
+      all.push(...buildMyShiftDays({shopId:l.shopId,shopName:l.shopName,color:myWorkplaceColor(l.shopId,i),name:l.name,periods:sh.periods,
+        subsByPeriod,settings:sh.settings,staff:sh.staff,todayStr,premium}));
+    });
+    all.sort((a,b)=>a.date.localeCompare(b.date)||String(a.shopId).localeCompare(String(b.shopId)));
+    return{entries:all,publishedKeys:keys};
+  },[okLinks,shops,subs,premium,todayStr]);
+  const fps=useMemo(()=>myPublishedFingerprints(entries,publishedKeys),[entries,publishedKeys]);
+  const seenOf=k=>{const[sid,pid]=k.split("|");return seen&&seen[sid]?seen[sid][pid]:undefined;};
+  // 初めて見る公開は「変更あり」にせず、今の内容を見たものとして記録する（前回の内容が無いと比べられないため）
+  const writeSeen=(keys,label)=>{
+    const now=new Date().toISOString();
+    const patch={};
+    keys.forEach(k=>{const[sid,pid]=k.split("|");patch[k]={sid,pid,rec:buildMySeenRecord(fps[k],now)};});
+    setSeen(prev=>{const next={...(prev||{})};Object.values(patch).forEach(({sid,pid,rec})=>{next[sid]={...(next[sid]||{}),[pid]:rec};});return next;});
+    Object.values(patch).forEach(({sid,pid,rec})=>{
+      fbSet(`users/${uid}/seen/${sid}/${pid}`,rec).catch(e=>console.warn(`マイシフト: ${label}の記録に失敗:`,e&&e.code));
+    });
+  };
+  useEffect(()=>{
+    if(!seen||!uid)return; // 読めない（null）間は書かない（既にある記録を上書きしないため）
+    const fresh=Object.keys(fps).filter(k=>seenOf(k)===undefined&&!baselineRef.current.has(k));
+    if(!fresh.length)return;
+    fresh.forEach(k=>baselineRef.current.add(k));
+    writeSeen(fresh,"初回の表示");
+  },[fps,seen,uid]);
+  const changed=useMemo(()=>{
+    const out=[];
+    Object.keys(fps).forEach(k=>{const d=myChangedDates(seenOf(k),fps[k]);if(d&&d.length)out.push({key:k,dates:d});});
+    return out;
+  },[fps,seen]);
+  const changedSet=new Set(changed.flatMap(c=>c.dates.map(d=>c.key+"|"+d)));
+  const isChanged=e=>e.kind==="published"&&changedSet.has(myShiftSeenKey(e.shopId,e.periodId)+"|"+e.date);
+  const byDate=useMemo(()=>{const m={};entries.forEach(e=>{(m[e.date]=m[e.date]||[]).push(e);});return m;},[entries]);
+  const next=nextMyShift(entries,todayStr);
+  const grid=myMonthGrid(ym);
+  const shopName=sid=>{const l=okLinks.find(x=>x.shopId===sid);return l?l.shopName:"";};
+  const loadingAny=links===undefined||okLinks.some(l=>!shops[l.shopId]);
+
+  if(links===null)return <MyEmptyState><MyMessage error="お店とのリンクを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/></MyEmptyState>;
+  if(Array.isArray(links)&&!okLinks.length)return(
+    <MyEmptyState>
+      {badLinks.length>0&&<div data-my-bad-links="1" style={{marginBottom:12}}>{badLinks.map(l=><div key={l.shopId} style={{color:"var(--c-danger)",fontSize:14}}>{l.shopName}: {l.reason==="unread"?"状態を確認できませんでした":MY_LINK_INVALID_LABELS[l.reason]}</div>)}</div>}
+      勤務先の店舗とアカウントのリンクが済むと、ここに提出した希望と公開されたシフトが月のカレンダーで表示されます。
+      {onGoSettings&&<button data-my-action="goLinks" onClick={onGoSettings} style={{...MY_LINK_BTN,display:"block",marginTop:8}}>設定でお店とリンクする</button>}
+    </MyEmptyState>
+  );
+  const selEntries=byDate[sel]||[];
+  const navBtn={background:"none",border:"1px solid var(--c-border2)",borderRadius:8,minWidth:44,minHeight:40,fontSize:18,color:"var(--c-text2)",cursor:"pointer"};
+  return(
+    <div data-my-shift="1">
+      {/* 次のシフト（今日以降で最も近い公開済みの出勤） */}
+      <section style={{...MY_SECTION,padding:"14px 16px"}} data-my-next={next?next.date:"none"}>
+        <div style={MY_LABEL}>次のシフト</div>
+        {next?(
+          <div>
+            <div style={{fontSize:20,fontWeight:700,color:"var(--c-text)",fontVariantNumeric:"tabular-nums"}}>{myFmtDate(next.date)} {fmtMyRange(next)}</div>
+            <div style={{fontSize:13,color:"var(--c-text2)",marginTop:2,overflowWrap:"anywhere"}}>{next.shopName} ／ {MY_KIND_LABEL[myEntryState(next)]}{isChanged(next)?" ／ 変更あり":""}</div>
+          </div>
+        ):(
+          <div style={{fontSize:14,color:"var(--c-text3)",lineHeight:1.7}}>{loadingAny?"読み込み中…":premium?"公開されている次のシフトはまだありません。":"お店がシフトを公開すると、ここに次の出勤が出ます。"}</div>
+        )}
+      </section>
+
+      {changed.length>0&&(
+        <section data-my-changed="1" style={{...MY_SECTION,padding:"14px 16px",borderColor:"var(--c-accent)"}}>
+          <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>公開後にシフトが変更されました</div>
+          {changed.map(c=>{const[sid]=c.key.split("|");return(
+            <div key={c.key} data-my-changed-key={c.key} style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.7,overflowWrap:"anywhere"}}>{shopName(sid)}: {c.dates.map(myFmtDate).join("・")}</div>
+          );})}
+          <button data-my-action="seenChanges" onClick={()=>writeSeen(changed.map(c=>c.key),"確認")} style={{...AGray,marginTop:10}}>確認した</button>
+        </section>
+      )}
+
+      {badLinks.length>0&&<div data-my-bad-links="1" style={{fontSize:13,color:"var(--c-danger)",lineHeight:1.7,marginBottom:12}}>
+        {badLinks.map(l=><div key={l.shopId}>{l.shopName}: {l.reason==="unread"?"状態を確認できませんでした":MY_LINK_INVALID_LABELS[l.reason]}</div>)}
+      </div>}
+      {!premium&&!loadingAny&&<div data-my-premium-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:12}}>
+        お店がプレミアムプランのとき、公開されたシフトが確定した時間で表示されます。いまは提出した希望だけを表示しています。
+      </div>}
+
+      <section style={{...MY_SECTION,padding:"12px 8px 8px"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 4px 10px"}}>
+          <button data-my-month-nav="prev" aria-label="前の月" onClick={()=>setYm(m=>myShiftMonth(m,-1))} style={navBtn}>‹</button>
+          <div data-my-month={ym} style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{Number(ym.slice(0,4))}年{Number(ym.slice(5,7))}月</div>
+          <button data-my-month-nav="next" aria-label="次の月" onClick={()=>setYm(m=>myShiftMonth(m,1))} style={navBtn}>›</button>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(0,1fr))",textAlign:"center",fontSize:12,color:"var(--c-text3)",paddingBottom:4}}>
+          {WD.map((w,i)=><div key={w} style={{color:i===0?"var(--c-danger)":"var(--c-text3)"}}>{w}</div>)}
+        </div>
+        {grid.map((w,wi)=>(
+          <div key={wi} style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(0,1fr))"}}>
+            {w.map(c=>{
+              const es=byDate[c.date]||[];
+              const isSel=c.date===sel;const isToday=c.date===todayStr;
+              const ch=es.some(isChanged);
+              return(
+                <button key={c.date} data-my-cal-day={c.date} data-my-cal-kinds={es.map(myEntryState).join(",")} aria-pressed={isSel}
+                  onClick={()=>setSel(c.date)}
+                  style={{minWidth:0,minHeight:52,padding:"4px 0",background:"none",border:"none",borderRadius:8,cursor:"pointer",
+                    boxShadow:isSel?"inset 0 0 0 2px var(--c-accent)":"none",opacity:c.inMonth?1:.4,display:"flex",flexDirection:"column",alignItems:"center",gap:3}}>
+                  <span style={{fontSize:14,fontWeight:isToday?800:500,color:"var(--c-text)",textDecoration:isToday?"underline":"none",fontVariantNumeric:"tabular-nums"}}>{Number(c.date.slice(8))}</span>
+                  <span style={{display:"flex",gap:3,justifyContent:"center",minHeight:6}}>
+                    {es.slice(0,3).map((e,i)=><span key={i} data-my-dot={myEntryState(e)} style={{width:6,height:6,borderRadius:3,background:e.kind==="submitted"?"var(--c-text4)":e.color}}/>)}
+                  </span>
+                  {ch&&<span data-my-cal-changed="1" style={{fontSize:9,fontWeight:700,color:"var(--c-accent)",lineHeight:1}}>変更</span>}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </section>
+
+      <section style={{...MY_SECTION,padding:"14px 16px"}} data-my-day={sel}>
+        <div style={{fontSize:15,fontWeight:700,color:"var(--c-text)"}}>{myFmtDate(sel)}</div>
+        {selEntries.length?selEntries.map((e,i)=><MyShiftEntryRow key={e.shopId+"|"+i} e={e} changed={isChanged(e)}/>)
+          :<div style={{fontSize:14,color:"var(--c-text3)",paddingTop:8}}>{loadingAny?"読み込み中…":"シフトはありません"}</div>}
+      </section>
+      {okLinks.length>1&&<div data-my-legend="1" style={{display:"flex",gap:14,flexWrap:"wrap",fontSize:12,color:"var(--c-text3)",padding:"0 4px"}}>
+        {okLinks.map((l,i)=><span key={l.shopId} style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:8,height:8,borderRadius:4,background:myWorkplaceColor(l.shopId,i)}}/>{l.shopName}</span>)}
+      </div>}
+    </div>
+  );
 }
 function MyPayTab(){
   return <MyEmptyState>勤務先の店舗とアカウントのリンクが済み、シフトが確定すると、ここに今月の給料の見込みが表示されます。</MyEmptyState>;
@@ -660,7 +878,7 @@ function MyView({staffUser,onStaffUser,shopId,onClose}){
       <MyHeader title={label} onClose={onClose}/>
       <main style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 96px"}}>
         {profile.displayName&&<div style={{fontSize:13,color:"var(--c-text3)",marginBottom:4}} data-my-who="1">{profile.displayName} さん</div>}
-        {tab==="shift"&&<MyShiftTab onGoSettings={()=>setTab("settings")}/>}
+        {tab==="shift"&&<MyShiftTab staffUser={staffUser} onGoSettings={()=>setTab("settings")}/>}
         {tab==="pay"&&<MyPayTab/>}
         {tab==="settings"&&<MySettingsTab staffUser={staffUser} profile={profile} profileState={profileState} initialError={saveError} shopId={shopId}
           onProfile={p=>{draftRef.current=null;setSaveError(null);setProfile(myProfileOf(p));setProfileState("ok");}}/>}

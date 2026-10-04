@@ -256,7 +256,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<StaffView periods={
     A_confirmBtn: !!(A.before && A.before.confirmBtn),
     A_schedRow: !!(A.before && A.before.sched && A.before.sched.text === "14:00 −156:57" && /所定上限 170:57/.test(A.before.sched.title)),
     A_avgRow: !!(A.before && A.before.avg && A.before.avg.text === "14:00 −159:18" && /分母 173:18/.test(A.before.avg.title)),
-    A_confirmWrites: !!(cw["p1/confirmation"] && cw["p1/confirmation"].at && A.periodAfterConfirm && JSON.stringify(A.periodAfterConfirm.snapStaff) === '["田中","佐藤"]' && A.periodAfterConfirm.lockedAt && histKeys.length === 1 && cw[histKeys[0]].kind === "confirm" && !("p1/lockedAt" in cw && cw["p1/lockedAt"] !== null)),
+    A_confirmWrites: !!(cw["p1/confirmation"] && cw["p1/confirmation"].at && A.periodAfterConfirm && JSON.stringify(A.periodAfterConfirm.snapStaff) === '["田中","佐藤"]' && A.periodAfterConfirm.lockedAt && // 確定は未公開なら同時に公開する（第2部 E3・2026-10-04）＝履歴は確定と公開の2件、published も同じ書き込みに入る
+      histKeys.length === 2 && JSON.stringify(histKeys.map(k => cw[k].kind).sort()) === '["confirm","publish"]' && cw["p1/published"] && cw["p1/published"].at === cw["p1/confirmation"].at && !("p1/lockedAt" in cw && cw["p1/lockedAt"] !== null)),
     A_lmFrozen: !!(A.lmPatch && A.lmPatch["2026-11/田中"] && A.lmPatch["2026-11/田中"].days === 2 && A.lmPatch["2026-11/田中"].min === 840 && A.lmPatch["2026-11/田中"].frozenAt
       && JSON.stringify(A.lmPatch["2026-11/田中"].auto) === JSON.stringify({ days: 2, min: 840 })),
     A_cellsLocked: !!(A.afterConfirm && A.afterConfirm.readOnly === true && A.afterConfirm.cellUnchanged === true && A.afterConfirm.saveBtn === false && A.afterConfirm.submitBtn === false),
@@ -283,7 +284,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<StaffView periods={
     B_confirm: !!(B.confirmation && B.confirmation.byUid === "U1" && B.snapshot && B.lm && B.lm.days === 2 && B.lm.min === 840 && B.lm.frozenAt && B.summary === "確定 1 ／ 交付 0"),
     B_deliver: !!(B.delivery && B.delivery.at),
     B_history: typeof B.history === "string" && /確定/.test(B.history) && /交付/.test(B.history),
-    B_unconfirm: !!(B.afterUnconfirm && B.afterUnconfirm.confirmation == null && B.afterUnconfirm.delivery == null && B.afterUnconfirm.lm && !B.afterUnconfirm.lm.frozenAt && B.afterUnconfirm.histCount === 3),
+    B_unconfirm: !!(B.afterUnconfirm && B.afterUnconfirm.confirmation == null && B.afterUnconfirm.delivery == null && B.afterUnconfirm.lm && !B.afterUnconfirm.lm.frozenAt && B.afterUnconfirm.histCount === 4),  // 確定・公開（確定と同時）・交付・解除（第2部 E3）
     D_staffBanner: D.banner === "この期間のシフトは確定済みです（提出・修正はできません）",
     D_staffBlocked: D.subCalls === 0 && D.confirmModal === false && D.toastShown === true,
     noErrors: [A, S, PP, Q, B, D].every(x => x.errors.length === 0 && !x.exception),

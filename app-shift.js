@@ -3082,7 +3082,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const confirmPeriod=()=>{
     if(!canStartConfirm||periodConfirmed)return;
     if(lm.enabled&&!lm.loaded){tt("所定を読み込み中です。少し待ってからもう一度押してください");return;}
-    if(!confirm("この期間を確定しますか？\n確定すると、この期間のシフトは編集できなくなり、スタッフの再提出もできなくなります。スタッフ一覧・属性・退勤延長などもこの時点の内容で固定し、人×月の所定（所定日数・所定時間）を集計して記録します。\n変更が必要になったら、理由を添えて確定を解除できます。"))return;
+    if(!confirm("この期間を確定しますか？\n確定すると、この期間のシフトは編集できなくなり、スタッフの再提出もできなくなります。スタッフ一覧・属性・退勤延長などもこの時点の内容で固定し、人×月の所定（所定日数・所定時間）を集計して記録します。\n変更が必要になったら、理由を添えて確定を解除できます。"+(MY_SCREEN_ENABLED&&!isPeriodPublished(period)?"\nまだ公開していないので、スタッフのマイシフトにも同時に公開します（確定を解除しても公開は続きます）。":"")))return;
     // 未確定のセルを保存してから、その反映後の提出データで所定を集計する（onSave の反映は次の描画）。
     // 後回しの計算（S3）が済んだ描画で下の useEffect が行う（以前は setTimeout(0) で次の描画を待っていた）
     flushEdits(true);
@@ -3126,6 +3126,30 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     savePeriods(periods.map(p=>p&&p.id===period.id?r.period:p));
     tt("✓ 交付を記録しました");
   };
+  // ===== 従業員画面への公開（2026-10-04・第2部 E3）=====
+  // 公開・取り下げは period.published を差分 update で書く（submission と同じ流儀）。確定は未公開なら同時に公開する（planPeriodConfirmation）。
+  // 出すのは従業員画面の入口が開いている環境（MY_SCREEN_ENABLED）で、この店舗が Premium（featureEnabled "myShift"）のオーナーの端末だけ。
+  // 非表示マウント（一括PDF・月次賃金・ダッシュボード）は savePeriods=null・ownerReadOnly=true・exportJob ありなので出ない
+  const periodPublished=isPeriodPublished(period);
+  const canPublish=MY_SCREEN_ENABLED&&!!period&&!!savePeriods&&!ownerReadOnly&&!exportJob&&featureEnabled("myShift",{plan,companyLink});
+  const publishPeriod=()=>{
+    if(!canPublish||periodPublished)return;
+    if(!confirm("この期間のシフトをスタッフのマイシフトに公開しますか？\n公開すると、マイシフトのアカウントを持つスタッフに、この期間の自分のシフトが確定した時間で表示されます。公開後に直したシフトはそのまま反映され、本人の画面に「変更あり」が付きます。"))return;
+    // 未確定のセルを保存してから記録する（提出ボタンと同じ）。公開は計算の結果を使わないので後回しの計算（S3）は待たない
+    flushEdits(true);
+    const r=planPeriodPublish({period,uid:curUid()});
+    if(r.error){tt("✕ "+r.error);return;}
+    savePeriods(periods.map(p=>p&&p.id===period.id?r.period:p));
+    tt("✓ この期間をマイシフトに公開しました");
+  };
+  const unpublishPeriod=()=>{
+    if(!canPublish||!periodPublished)return;
+    if(!confirm("この期間の公開を取り下げますか？\nスタッフのマイシフトでは、本人の提出（希望）の表示に戻ります。シフトの内容と確定には影響しません。"))return;
+    const r=planPeriodUnpublish({period,uid:curUid()});
+    if(r.error){tt("✕ "+r.error);return;}
+    savePeriods(periods.map(p=>p&&p.id===period.id?r.period:p));
+    tt("✓ 公開を取り下げました");
+  };
 
   return(
     <div ref={outerRef} style={{padding:"12px 8px"}}>
@@ -3150,6 +3174,16 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
           </React.Fragment>
           :canStartConfirm&&<button data-period-confirm="1" onClick={confirmPeriod}
               style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>確定</button>
+        )}
+        {canPublish&&(periodPublished
+          ?<React.Fragment>
+            <span data-period-published="1" title={`マイシフトに公開 ${fmtAt(period.published.at)}`}
+              style={{fontSize:11,color:"var(--c-text3)",whiteSpace:"nowrap"}}>公開中 {fmtAt(period.published.at)}</span>
+            <button data-period-unpublish="1" onClick={unpublishPeriod}
+              style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text2)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>公開を取り下げる</button>
+          </React.Fragment>
+          :<button data-period-publish="1" onClick={publishPeriod}
+              style={{padding:"5px 10px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>公開</button>
         )}
         {canActuals&&<button data-actual-toggle={actualMode?"on":"off"} onClick={()=>setActualMode(v=>!v)}
           style={{padding:"5px 10px",background:actualMode?"var(--c-border2)":"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:4,color:"var(--c-text)",fontSize:12,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>

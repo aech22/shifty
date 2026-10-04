@@ -391,3 +391,115 @@ test("E2 ルール: linkRequests は本人（メールのある認証）が書�
   ["staffLinkCodes", "staffLinkCodeIndex", "staffLinkCodeAttempts"].forEach(k => assert.deepStrictEqual(rules[k], { ".read": false, ".write": false }, k));
   assert.strictEqual(rules.users.$uid.links, undefined, "users/{uid}/links は書き込みルールを持たない（CF だけ）");
 });
+
+// ===== E3: マイシフト =====
+const U = require("../app-utils.js");
+const E3P = { id: "p1", startDate: "2026-10-16", endDate: "2026-10-31" };
+const E3Pub = { ...E3P, published: { at: "2026-10-10T00:00:00Z", byUid: "OWN" } };
+const E3Subs = [
+  { id: "s1", periodId: "p1", staffName: "田中", shifts: {
+    "2026-10-17": { status: "work", start: "10:00", end: "15:00" },
+    "2026-10-18": { status: "work", start: "17:00", end: "23:00", adjustedStart: "18:00" },
+    "2026-10-19": { status: "holiday" },
+    "2026-10-20": { status: "work", start: "10:00", end: "15:00", adminRest: { start: true, end: true } } } },
+  { id: "s2", periodId: "p1", staffName: "佐藤", shifts: { "2026-10-17": { status: "work", start: "9:00", end: "18:00" } } },
+];
+const e3Base = over => ({ shopId: "S1", shopName: "A店", color: "#f87036", name: "田中", periods: [E3P], subsByPeriod: { p1: E3Subs },
+  settings: { staffAliases: {} }, staff: ["田中", "佐藤"], todayStr: "2026-10-16", premium: true, ...over });
+
+test("E3 buildMyShiftDays: 未公開は本人の提出（希望）をグレーで出す。休みの日と他人の提出は出さない", () => {
+  const es = m.buildMyShiftDays(e3Base(), U);
+  assert.deepStrictEqual(es.map(e => [e.date, e.kind, m.fmtMyRange(e)]), [
+    ["2026-10-17", "submitted", "10:00〜15:00"], ["2026-10-18", "submitted", "17:00〜23:00"], ["2026-10-20", "submitted", "10:00〜15:00"]]);
+  assert.ok(es.every(e => e.shopId === "S1" && e.periodId === "p1" && e.confirmed === false));
+});
+test("E3 buildMyShiftDays: 公開済みは scheduledDay（調整値を反映）を黒で出し、出勤にならなかった日は出さない。提出と違えば希望を持つ", () => {
+  const es = m.buildMyShiftDays(e3Base({ periods: [E3Pub] }), U);
+  assert.deepStrictEqual(es.map(e => [e.date, e.kind, m.fmtMyRange(e), e.differs]), [
+    ["2026-10-17", "published", "10:00〜15:00", false], ["2026-10-18", "published", "18:00〜23:00", true]],
+    "管理者の休み（adminRest）にした 20日は出さない・18日は調整後の時刻");
+  assert.deepStrictEqual(es[1].hope, { startMin: 17 * 60, endMin: 23 * 60 });
+  assert.strictEqual(es[0].workMin, 300);
+  const conf = m.buildMyShiftDays(e3Base({ periods: [{ ...E3Pub, confirmation: { at: "t" } }] }), U);
+  assert.ok(conf.every(e => e.confirmed), "確定済みなら confirmed");
+});
+test("E3 buildMyShiftDays: Premium でないと公開済みでもグレー（提出）のまま。読めていない期間は出さない。別名で出した提出も拾う", () => {
+  assert.ok(m.buildMyShiftDays(e3Base({ periods: [E3Pub], premium: false }), U).every(e => e.kind === "submitted"));
+  assert.deepStrictEqual(m.buildMyShiftDays(e3Base({ subsByPeriod: {} }), U), []);
+  const aliasSubs = [{ ...E3Subs[0], staffName: "たなか" }];
+  const es = m.buildMyShiftDays(e3Base({ periods: [E3Pub], subsByPeriod: { p1: aliasSubs }, settings: { staffAliases: { "田中": ["たなか"] } } }), U);
+  assert.strictEqual(es.length, 2, "別名の提出");
+  assert.deepStrictEqual(m.buildMyShiftDays(e3Base({ name: "" }), U), []);
+});
+test("E3 buildMyShiftDays: 確定・終了済みの期間は写しの設定で数える（退勤延長は写しの値）。その期間に非表示の人は公開分を出さない", () => {
+  const snapP = { ...E3Pub, confirmation: { at: "t" }, snapshot: { staffList: ["田中"], settings: { overtimeSettings: { byStaff: { "田中": { lunch: 30, dinner: 0 } } } } } };
+  const es = m.buildMyShiftDays(e3Base({ periods: [snapP], settings: { staffAliases: {}, overtimeSettings: { byStaff: {} } } }), U);
+  assert.strictEqual(m.fmtMyRange(es[0]), "10:00〜15:30", "写しの退勤延長");
+  const hidden = m.buildMyShiftDays(e3Base({ periods: [E3Pub], settings: { staffAliases: {}, staffHidden: { "田中": true } } }), U);
+  assert.deepStrictEqual(hidden, []);
+});
+test("E3 変更あり: 指紋は本人の公開内容だけで作る。他人の変更では変わらず、自分の時刻・休憩の変更・日の追加と削除で変わる", () => {
+  const fp = subs => m.myPublishedFingerprints(m.buildMyShiftDays(e3Base({ periods: [E3Pub], subsByPeriod: { p1: subs } }), U), ["S1|p1"])["S1|p1"];
+  const before = fp(E3Subs);
+  const seen = m.buildMySeenRecord(before, "2026-10-11T00:00:00Z");
+  assert.deepStrictEqual(m.myChangedDates(seen, fp(E3Subs)), []);
+  const others = [E3Subs[0], { ...E3Subs[1], shifts: { "2026-10-17": { status: "work", start: "12:00", end: "20:00" } } }];
+  assert.deepStrictEqual(m.myChangedDates(seen, fp(others)), [], "他人の変更では付かない");
+  const mine = [{ ...E3Subs[0], shifts: { ...E3Subs[0].shifts, "2026-10-17": { status: "work", start: "10:00", end: "16:00" }, "2026-10-21": { status: "work", start: "10:00", end: "14:00" } } }];
+  assert.deepStrictEqual(m.myChangedDates(seen, fp([mine[0], E3Subs[1]])), ["2026-10-17", "2026-10-21"], "17日の時刻・21日の追加");
+  const gone = { ...E3Subs[0], shifts: { ...E3Subs[0].shifts, "2026-10-18": { status: "holiday" } } };
+  assert.deepStrictEqual(m.myChangedDates(seen, fp([gone, E3Subs[1]])), ["2026-10-18"], "出勤が無くなった日");
+  assert.strictEqual(m.myChangedDates(undefined, before), null, "前回の記録が無ければ比べない（初回）");
+  assert.deepStrictEqual(m.buildMySeenRecord({}, "t"), { at: "t" }, "出勤の無い公開は at だけ");
+  assert.notStrictEqual(m.myDayFingerprint({ startMin: 600, endMin: 900, breakMin: 0, segments: [] }), m.myDayFingerprint({ startMin: 600, endMin: 900, breakMin: 30, segments: [] }), "休憩の変更");
+  assert.notStrictEqual(m.myDayFingerprint({ startMin: 600, endMin: 900, breakMin: 0, segments: [] }),
+    m.myDayFingerprint({ startMin: 600, endMin: 900, breakMin: 0, segments: [{ startMin: 1380, endMin: 1500, extra: true }] }), "締の追加出勤");
+});
+test("E3 次のシフト・月のカレンダー・期間の読み込み範囲", () => {
+  const es = [{ date: "2026-10-15", kind: "published" }, { date: "2026-10-16", kind: "submitted" }, { date: "2026-10-18", kind: "published", shopId: "S1" }];
+  assert.strictEqual(m.nextMyShift(es, "2026-10-16").date, "2026-10-18", "今日以降の公開済みの出勤だけ（グレーは次のシフトにしない）");
+  assert.strictEqual(m.nextMyShift(es, "2026-10-19"), null);
+  const g = m.myMonthGrid("2026-10");
+  assert.strictEqual(g[0][0].date, "2026-09-27", "日曜はじまり");
+  assert.strictEqual(g.flat().filter(c => c.inMonth).length, 31);
+  assert.ok(g.every(w => w.length === 7));
+  assert.strictEqual(m.myMonthGrid("2026-02").length, 4, "2026年2月は1日が日曜・28日なのでちょうど4週");
+  assert.strictEqual(m.myMonthGrid("2026-08").length, 6, "2026年8月は1日が土曜なので6週");
+  assert.deepStrictEqual(m.myMonthGrid("x"), []);
+  assert.strictEqual(m.myShiftMonth("2026-01", -1), "2025-12");
+  assert.strictEqual(m.myShiftMonth("2026-12", 1), "2027-01");
+  const ps = [{ id: "a", startDate: "2026-08-01", endDate: "2026-08-15" }, { id: "b", startDate: "2026-09-16", endDate: "2026-10-03" }, { id: "c", startDate: "2026-11-01", endDate: "2026-11-15" }];
+  assert.deepStrictEqual(m.myShiftPeriodsToRead(ps, "2026-10", "2026-10-04").map(p => p.id), ["b", "c"], "表示中の月にかかる期間と今日以降の期間");
+  assert.deepStrictEqual(m.myShiftPeriodsToRead(ps, "2026-08", "2026-10-04").map(p => p.id), ["a", "c"]);
+});
+test("E3 プランと勤務先の色: いずれかの店舗が Premium なら公開済みを出す。色は既定の並びで、差し替え口で上書きできる", () => {
+  assert.strictEqual(m.myShiftPremiumOf(["free", "premium"], U), true);
+  assert.strictEqual(m.myShiftPremiumOf(["free", "pro", undefined], U), false);
+  assert.strictEqual(m.myShiftPremiumOf([], U), false);
+  assert.strictEqual(m.myWorkplaceColor("S1", 0), "#f87036");
+  assert.strictEqual(m.myWorkplaceColor("S2", 1), m.MY_WORKPLACE_COLORS[1]);
+  assert.strictEqual(m.myWorkplaceColor("S2", m.MY_WORKPLACE_COLORS.length), "#f87036", "一巡したら先頭へ");
+  assert.strictEqual(m.myWorkplaceColor("S2", 1, { S2: "#123456" }), "#123456");
+  assert.strictEqual(m.myWorkplaceColor("S2", 1, { S2: "red" }), m.MY_WORKPLACE_COLORS[1], "形の違う色は使わない");
+  assert.strictEqual(m.fmtMyClock(25 * 60 + 5), "25:05");
+  assert.strictEqual(m.fmtMyClock(null), "");
+});
+test("E3 database.rules.json: users/$uid/seen はメールのある本人だけ書け、at と日付キーの指紋だけを持つ", () => {
+  const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "database.rules.json"), "utf8")).rules;
+  const p = rules.users.$uid.seen.$shopId.$periodId;
+  assert.strictEqual(p[".write"], "auth != null && auth.uid === $uid && auth.token.email != null");
+  assert.ok(/hasChildren\(\['at'\]\)/.test(p[".validate"]));
+  assert.ok(/\$date\.matches/.test(p.days.$date[".validate"]));
+  assert.strictEqual(p.$other[".validate"], false);
+  assert.strictEqual(rules.users.$uid[".write"], undefined, "users/$uid 全体の書き込みは許さない");
+});
+test("E3 マイシフトの書き込みは users/{uid}/seen だけ（店舗のデータに書かない）", () => {
+  const src = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const a = src.indexOf("async function readMyShiftShop"), b = src.indexOf("function MyPayTab(");
+  assert.ok(a > 0 && b > a);
+  const body = src.slice(a, b);
+  const writes = [...body.matchAll(/\b(fbSet|fbUpd|\.set|\.update|\.remove)\(\s*`?([^,`)]*)/g)].map(x => x[1] + " " + x[2]);
+  assert.deepStrictEqual(writes, ["fbSet users/${uid}/seen/${sid}/${pid}"]);
+  assert.ok(/orderByChild\("periodId"\)\.equalTo\(pid\)/.test(body), "subs は期間ごとの部分読み");
+  assert.ok(!/ref\(`shops\/\$\{sid\}\/subs`\)\.once/.test(body), "店舗の subs 全件を読まない");
+});

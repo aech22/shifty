@@ -1328,7 +1328,7 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
   const periodAct=async(x,kind)=>{
     if(!firebaseDB||!x.period||actSid)return;
     let note="";
-    if(kind==="confirm"&&!confirm(`${x.name}の「${x.period.label||cur&&cur.label}」を確定しますか？\n確定すると、その期間のシフトは店舗で編集できなくなり、スタッフの再提出もできなくなります。人×月の所定を集計して記録します。`))return;
+    if(kind==="confirm"&&!confirm(`${x.name}の「${x.period.label||cur&&cur.label}」を確定しますか？\n確定すると、その期間のシフトは店舗で編集できなくなり、スタッフの再提出もできなくなります。人×月の所定を集計して記録します。${MY_SCREEN_ENABLED&&!isPeriodPublished(x.period)?"\nまだ公開していないので、スタッフのマイシフトにも同時に公開します。":""}`))return;
     if(kind==="unconfirm"){const v=window.prompt(`${x.name}の確定を解除する理由を入力してください（履歴に残ります）`,"");if(v===null)return;if(!v.trim()){tt("理由を入力してください");return;}note=v.trim();}
     if(kind==="deliver"&&!confirm(`${x.name}の「${x.period.label||cur&&cur.label}」を本人へ交付したことを記録しますか？`))return;
     setActSid(x.sid);

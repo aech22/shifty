@@ -5462,6 +5462,60 @@ test("P3 解除と交付: 解除は確定・交付を外して凍結を解き履
   assert.deepStrictEqual(d.period.delivery, { at: "2026-11-13T00:00:00Z", byUid: "u3", method: "LINE" });
   assert.deepStrictEqual(d.period.history.c, { kind: "deliver", at: "2026-11-13T00:00:00Z", byUid: "u3", method: "LINE" });
 });
+// ===== 第2部 E3: 従業員画面への公開 =====
+test("E3 公開: 公開・取り下げは published と履歴だけを差分で書く。二重の公開・未公開の取り下げは拒否", () => {
+  const r = u.planPeriodPublish({ period: p3Half1, uid: "OWN", nowIso: "2026-11-01T00:00:00Z", historyKey: "k1" });
+  assert.deepStrictEqual(r.period.published, { at: "2026-11-01T00:00:00Z", byUid: "OWN" });
+  assert.deepStrictEqual(r.period.history.k1, { kind: "publish", at: "2026-11-01T00:00:00Z", byUid: "OWN" });
+  assert.strictEqual(u.isPeriodPublished(r.period), true);
+  assert.strictEqual(u.isPeriodPublished(p3Half1), false);
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([p3Half1, p3Half2], [r.period, p3Half2]),
+    { "p1/published": { at: "2026-11-01T00:00:00Z", byUid: "OWN" }, "p1/history/k1": { kind: "publish", at: "2026-11-01T00:00:00Z", byUid: "OWN" } },
+    "期間まるごとではなく published と履歴1件だけ（他の期間に触らない）");
+  assert.ok(u.planPeriodPublish({ period: r.period }).error, "公開済みは二重に公開しない");
+  const un = u.planPeriodUnpublish({ period: r.period, uid: "OWN", nowIso: "2026-11-02T00:00:00Z", historyKey: "k2" });
+  assert.strictEqual(un.period.published, undefined);
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([r.period], [un.period]),
+    { "p1/published": null, "p1/history/k2": { kind: "unpublish", at: "2026-11-02T00:00:00Z", byUid: "OWN" } });
+  assert.ok(u.planPeriodUnpublish({ period: p3Half1 }).error, "公開していない期間は取り下げられない");
+  assert.ok(u.planPeriodPublish({ period: null }).error);
+});
+test("E3 公開: 確定は未公開なら同時に公開する。公開済みなら at を変えない。確定の解除では公開を外さない", () => {
+  const c = u.planPeriodConfirmation({ period: p3Half1, periods: [p3Half1], subs: p3Subs, staffList: ["田中"], settings: p3Settings,
+    laborMonths: {}, todayStr: "2026-11-10", uid: "company_C1", nowIso: "2026-11-10T09:00:00Z", historyKey: "h1", publishHistoryKey: "h1p" });
+  assert.deepStrictEqual(c.period.published, { at: "2026-11-10T09:00:00Z", byUid: "company_C1" });
+  assert.deepStrictEqual(c.period.history.h1p, { kind: "publish", at: "2026-11-10T09:00:00Z", byUid: "company_C1", method: "confirm" });
+  assert.deepStrictEqual(c.period.history.h1, { kind: "confirm", at: "2026-11-10T09:00:00Z", byUid: "company_C1" }, "確定の記録はそのまま");
+  const pub = { ...p3Half1, published: { at: "2026-11-01T00:00:00Z", byUid: "OWN" } };
+  const c2 = u.planPeriodConfirmation({ period: pub, periods: [pub], subs: p3Subs, staffList: ["田中"], settings: p3Settings,
+    laborMonths: {}, todayStr: "2026-11-10", uid: "company_C1", nowIso: "2026-11-10T09:00:00Z", historyKey: "h1" });
+  assert.deepStrictEqual(c2.period.published, { at: "2026-11-01T00:00:00Z", byUid: "OWN" }, "先に公開していればその記録を残す");
+  assert.deepStrictEqual(Object.keys(c2.period.history), ["h1"], "公開の履歴は足さない");
+  const un = u.planPeriodUnconfirm({ period: c.period, laborMonths: {}, uid: "company_C1", nowIso: "2026-11-11T00:00:00Z", historyKey: "h2", note: "直し" });
+  assert.deepStrictEqual(un.period.published, { at: "2026-11-10T09:00:00Z", byUid: "company_C1" }, "解除しても黒文字のまま");
+  assert.strictEqual(u.isPeriodConfirmed(un.period), false);
+});
+test("E3 履歴の種類: どの種類にも表示名があり、公開・取り下げが履歴の一覧に出る", () => {
+  u.PERIOD_HISTORY_KINDS.forEach(k => assert.ok(typeof u.PERIOD_HISTORY_LABELS[k] === "string" && u.PERIOD_HISTORY_LABELS[k], k));
+  assert.deepStrictEqual(Object.keys(u.PERIOD_HISTORY_LABELS).sort(), [...u.PERIOD_HISTORY_KINDS].sort(), "表示名だけの種類が無い");
+  const p = { history: { a: { kind: "publish", at: "1" }, b: { kind: "unpublish", at: "2" } } };
+  assert.deepStrictEqual(u.periodHistoryList(p).map(x => x.kind), ["publish", "unpublish"]);
+});
+test("E3 featureEnabled: myShift は Premium だけ", () => {
+  assert.ok(u.GATED_FEATURES.includes("myShift"));
+  assert.strictEqual(u.featureEnabled("myShift", { plan: "premium" }), true);
+  ["pro", "free", undefined].forEach(pl => assert.strictEqual(u.featureEnabled("myShift", { plan: pl }), false, String(pl)));
+});
+test("E3 公開ボタンの入口: 入口のゲート・Premium・オーナー・非表示マウント除外を通り、公開と取り下げは planPeriodPublish / planPeriodUnpublish を savePeriods で書く", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const shift = fs.readFileSync(process.env.SHIFTY_SHIFT_SRC || path.join(__dirname, "..", "app-shift.js"), "utf8");
+  const m = shift.match(/const canPublish=([^;]+);/);
+  assert.ok(m, "canPublish の定義");
+  ["MY_SCREEN_ENABLED", "savePeriods", "!ownerReadOnly", "!exportJob", 'featureEnabled("myShift"'].forEach(t => assert.ok(m[1].includes(t), t));
+  assert.ok(/planPeriodPublish\(\{period,uid:curUid\(\)\}\)[\s\S]{0,120}savePeriods\(periods\.map/.test(shift), "公開は savePeriods（差分 update）で書く");
+  assert.ok(/planPeriodUnpublish\(\{period,uid:curUid\(\)\}\)[\s\S]{0,120}savePeriods\(periods\.map/.test(shift), "取り下げも savePeriods");
+  assert.ok(!/fbSet\([^)]*periods/.test(shift), "periods を set しない");
+});
 test("P3 手修正（10月分の遡り登録を含む）: 凍結前だけ・値の範囲を検査する", () => {
   const r = u.planLaborMonthManual({ laborMonths: {}, ym: "2026-10", name: "田中", days: 22, min: HM(176, 30), auto: { days: 21, min: HM(170, 0) } });
   assert.deepStrictEqual(r.patch, { "2026-10/田中": { days: 22, min: HM(176, 30), auto: { days: 21, min: HM(170, 0) } } });

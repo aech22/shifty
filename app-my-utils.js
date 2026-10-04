@@ -265,8 +265,162 @@ function fmtLinkCodeExpiry(ms){
   return`${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+// ===== マイシフト（2026-10-04・第2部 E3）=====
+// app-utils.js の関数（scheduledDay・resolvePeriodMaster・resolveSubByAlias・isStaffHiddenInPeriod・isPeriodPublished・
+// isPeriodConfirmed・featureEnabled・pd・fd）を使う。Node のテストはこのファイルだけを require するので、U（app-utils.js の
+// module.exports）を引数で渡す。ブラウザでは省略してよい（同じ名前のグローバルを使う）
+function _myU(U){
+  if(U)return U;
+  return{scheduledDay,resolvePeriodMaster,resolveSubByAlias,isStaffHiddenInPeriod,isPeriodPublished,isPeriodConfirmed,featureEnabled};
+}
+// 勤務先の色（ドット）。E3 は既定色だけで、E4 で本人が選べるようにする。差し替え口は overrides（{shopId:"#rrggbb"}）。
+// 先頭はブランドのアクセント（#f87036）。2店舗目以降は落ち着いた色で、店舗の区別だけに使う（意味を持たない装飾にしない）
+const MY_WORKPLACE_COLORS=["#f87036","#2f6f9f","#4f7d4a","#8a5a9e","#a3742c","#6b6b6b"];
+function myWorkplaceColor(shopId,index,overrides){
+  const o=_myObj(overrides);
+  const c=o&&typeof o[shopId]==="string"&&/^#[0-9a-fA-F]{6}$/.test(o[shopId])?o[shopId]:null;
+  return c||MY_WORKPLACE_COLORS[((Number(index)||0)%MY_WORKPLACE_COLORS.length+MY_WORKPLACE_COLORS.length)%MY_WORKPLACE_COLORS.length];
+}
+// 公開済みの表示（黒文字）を使えるか。紐付いた店舗のいずれかが Premium なら使える（計画書 E.5）。plans は店舗ごとの plan の配列
+function myShiftPremiumOf(plans,U){
+  const u=_myU(U);
+  return(Array.isArray(plans)?plans:[]).some(p=>u.featureEnabled("myShift",{plan:p}));
+}
+const _myClockRe=/^(\d{1,2}):(\d{2})$/;
+function _myClock(t){const m=_myClockRe.exec(String(t==null?"":t));if(!m)return null;const h=+m[1],mi=+m[2];return mi<60&&h<=30?h*60+mi:null;}
+// 分 → "9:00"・"25:00"（シフト表と同じ24時超え表記）
+function fmtMyClock(min){
+  if(min==null||!Number.isFinite(Number(min)))return"";
+  const n=Math.max(0,Math.round(Number(min)));
+  return`${Math.floor(n/60)}:${String(n%60).padStart(2,"0")}`;
+}
+function fmtMyRange(e){
+  if(!e)return"";
+  const a=fmtMyClock(e.startMin),b=fmtMyClock(e.endMin);
+  return a||b?`${a}〜${b}`:"";
+}
+// 期間が [from, to]（"YYYY-MM-DD"）に重なるか
+function myPeriodOverlaps(p,from,to){return!!(p&&p.startDate&&p.endDate&&p.startDate<=to&&p.endDate>=from);}
+function _myDatesOf(p){
+  const out=[];
+  if(!p||!/^\d{4}-\d{2}-\d{2}$/.test(String(p.startDate))||!/^\d{4}-\d{2}-\d{2}$/.test(String(p.endDate))||p.endDate<p.startDate)return out;
+  const d=new Date(p.startDate+"T00:00:00Z");
+  for(let i=0;i<62;i++){const s=d.toISOString().slice(0,10);if(s>p.endDate)break;out.push(s);d.setUTCDate(d.getUTCDate()+1);}
+  return out;
+}
+// 1店舗ぶんのマイシフトの日（カレンダーの元データ）。読むだけで、店舗のデータには何も書かない。
+// o = {shopId, shopName, color, name（staffLinks の登録名）, periods, subsByPeriod:{periodId: sub[]}, settings（企業設定を重ねた店舗の設定）,
+//      staff（店舗のスタッフ一覧）, todayStr, premium}
+// 返り値は日ごとの entry の配列:
+//   {date, shopId, shopName, color, periodId, kind:"published"|"submitted", confirmed, startMin, endMin, breakMin, workMin, segments, hope, differs}
+// - 公開済みの期間（premium のときだけ）: 確定シフト＝scheduledDay（管理者の調整値・退勤延長・締の追加出勤を含む）。出勤にならなかった日は出さない。
+//   設定はその期間の設定（確定・終了済みなら写し＝resolvePeriodMaster）。その期間に非表示の人は出さない（シフト表に載らないため）
+// - 未公開の期間: 本人の提出（希望）のうち出勤の日だけ（kind "submitted"・グレーで描く）
+// subsByPeriod に無い期間（読めていない）は何も出さない
+function buildMyShiftDays(o,U){
+  const u=_myU(U);const x=o||{};
+  const name=x.name;if(!name)return[];
+  const out=[];
+  (x.periods||[]).forEach(p=>{
+    if(!p||!p.id)return;
+    const list=x.subsByPeriod&&x.subsByPeriod[p.id];
+    if(!Array.isArray(list))return;
+    const master=u.resolvePeriodMaster(p,x.staff||[],x.settings||{},x.todayStr);
+    const st=master.settings||{};
+    const byName=new Map();
+    list.forEach(s=>{if(s&&s.staffName&&s.periodId===p.id&&!byName.has(s.staffName))byName.set(s.staffName,s);});
+    const sub=u.resolveSubByAlias(n=>byName.get(n),name,st.staffAliases||{});
+    const published=!!x.premium&&u.isPeriodPublished(p);
+    const confirmed=u.isPeriodConfirmed(p);
+    if(published&&u.isStaffHiddenInPeriod(name,st,p))return;
+    const base={shopId:x.shopId,shopName:x.shopName||"",color:x.color||MY_WORKPLACE_COLORS[0],periodId:p.id};
+    _myDatesOf(p).forEach(date=>{
+      const sh=sub&&sub.shifts?sub.shifts[date]:null;
+      const hope=sh&&sh.status==="work"&&(sh.start||sh.end)?{startMin:_myClock(sh.start),endMin:_myClock(sh.end)}:null;
+      if(published){
+        const sd=u.scheduledDay(sub,date,st,name);
+        if(sd.isRest||!(sd.workMin>0))return;
+        const differs=!!hope&&(hope.startMin!==sd.startMin||hope.endMin!==sd.endMin);
+        out.push({...base,date,kind:"published",confirmed,startMin:sd.startMin,endMin:sd.endMin,breakMin:sd.breakMin,workMin:sd.workMin,
+          segments:sd.segments.map(g=>({startMin:g.startMin,endMin:g.endMin,extra:!!g.extra})),hope,differs});
+      }else if(hope){
+        out.push({...base,date,kind:"submitted",confirmed:false,startMin:hope.startMin,endMin:hope.endMin,breakMin:null,workMin:null,
+          segments:[],hope,differs:false});
+      }
+    });
+  });
+  return out.sort((a,b)=>a.date.localeCompare(b.date)||String(a.shopId).localeCompare(String(b.shopId)));
+}
+// 1日の公開内容の指紋（「変更あり」の判定）。時刻・休憩・締の追加出勤で作る。確定の有無は含めない（内容の変化だけを見る）
+function myDayFingerprint(e){
+  if(!e)return"";
+  const seg=(e.segments||[]).filter(g=>g.extra).map(g=>`+${g.startMin}-${g.endMin}`).join("");
+  return`${e.startMin==null?"":e.startMin}-${e.endMin==null?"":e.endMin}-${e.breakMin==null?"":e.breakMin}${seg}`;
+}
+// 公開済みの entry を「店舗|期間」ごとの {日付: 指紋} にまとめる。キーは myShiftSeenKey
+function myShiftSeenKey(shopId,periodId){return`${shopId}|${periodId}`;}
+function myPublishedFingerprints(entries,publishedKeys){
+  const out={};
+  (publishedKeys||[]).forEach(k=>{out[k]={};});
+  (entries||[]).forEach(e=>{
+    if(!e||e.kind!=="published")return;
+    const k=myShiftSeenKey(e.shopId,e.periodId);
+    (out[k]=out[k]||{})[e.date]=myDayFingerprint(e);
+  });
+  return out;
+}
+// 前回見た指紋（users/{uid}/seen/{shopId}/{periodId}.days）と今の指紋を比べ、変わった日付を返す。
+// seenRec が無い（初めて見る公開）なら null＝「変更あり」ではない（呼び出し側が今の内容を見たものとして記録する）
+function myChangedDates(seenRec,curDays){
+  const sr=_myObj(seenRec);
+  if(!sr)return null;
+  const a=_myObj(sr.days)||{},b=_myObj(curDays)||{};
+  const keys=new Set([...Object.keys(a),...Object.keys(b)]);
+  return[...keys].filter(d=>(a[d]||"")!==(b[d]||"")).sort();
+}
+// seen に書く形。days が空でも at は書く（Firebase は空のオブジェクトを保存しないので days を持たない形になる）
+function buildMySeenRecord(curDays,nowIso){
+  const rec={at:String(nowIso||"")};
+  const d=_myObj(curDays);
+  if(d&&Object.keys(d).length)rec.days={...d};
+  return rec;
+}
+// 今日以降で最も近い公開済みの出勤（同じ日なら店舗IDの順＝buildMyShiftDays の並び）
+function nextMyShift(entries,todayStr){
+  return(entries||[]).find(e=>e&&e.kind==="published"&&e.date>=String(todayStr||""))||null;
+}
+// 月のカレンダー（日曜はじまり）。週ごとに7つの {date, inMonth}。ym は "YYYY-MM"
+function myMonthGrid(ym){
+  const m=/^(\d{4})-(\d{2})$/.exec(String(ym||""));
+  if(!m)return[];
+  const y=+m[1],mo=+m[2];
+  const first=new Date(Date.UTC(y,mo-1,1));
+  const days=new Date(Date.UTC(y,mo,0)).getUTCDate();
+  const start=new Date(first);start.setUTCDate(1-first.getUTCDay());
+  const weeks=[];const cur=new Date(start);
+  const cells=Math.ceil((first.getUTCDay()+days)/7)*7;
+  for(let i=0;i<cells;i+=7){
+    const w=[];
+    for(let j=0;j<7;j++){const s=cur.toISOString().slice(0,10);w.push({date:s,inMonth:s.slice(0,7)===ym});cur.setUTCDate(cur.getUTCDate()+1);}
+    weeks.push(w);
+  }
+  return weeks;
+}
+function myShiftMonth(ym,delta){
+  const m=/^(\d{4})-(\d{2})$/.exec(String(ym||""));
+  if(!m)return"";
+  const d=new Date(Date.UTC(+m[1],+m[2]-1+(Number(delta)||0),1));
+  return d.toISOString().slice(0,7);
+}
+// マイシフトで読む期間: 表示中の月にかかる期間と、今日以降にかかる期間（「次のシフト」のため）
+function myShiftPeriodsToRead(periods,ym,todayStr){
+  const from=`${ym}-01`,to=`${ym}-31`;
+  return(periods||[]).filter(p=>p&&p.id&&(myPeriodOverlaps(p,from,to)||(p.endDate&&p.endDate>=String(todayStr||""))));
+}
+
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
   module.exports={MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
-    MY_LINK_METHOD_LABELS,MY_LINK_CODE_LEN,MY_LINK_CODE_TTL_MS,linkNumberKey,linkNameKey,normalizeLinkCode,isValidLinkCode,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,fmtLinkCodeExpiry};
+    MY_LINK_METHOD_LABELS,MY_LINK_CODE_LEN,MY_LINK_CODE_TTL_MS,linkNumberKey,linkNameKey,normalizeLinkCode,isValidLinkCode,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,fmtLinkCodeExpiry,
+    MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead};
 }
