@@ -461,6 +461,8 @@ async function requestPage(h, name, number) {
       await waitSel(h, '[data-my-section="pin"]');
       await click(h, '[data-my-action="editWorkplace"]'); await sleep(h, 400);
       PN.companyPay = await h.evaluate(() => { const e = document.querySelector("[data-my-company-pay]"); return e ? e.innerText : ""; });
+      // 個別URLの設定タブの勤務先にも、このお店での従業員番号（settings.staffNumbers の 田中＝012・2026-10-04）
+      PN.wpNumber = await h.evaluate(() => { const e = document.querySelector('[data-my-wp="S1"] [data-my-wp-number]'); return e ? e.innerText : ""; });
       PN.overflow = await overflowX(h);
       PN.fonts = await inputFonts(h);
       await click(h, '[data-my-tab="pay"]');
@@ -479,6 +481,7 @@ async function requestPage(h, name, number) {
       V.PN_noGoalStillShowsPay = !!PN.summary && PN.summary.goal === "none" && PN.summary.total != null && PN.summary.confirmed && PN.summary.projected && !PN.summary.ring;
       V.PN_hashOnly = !!PN.pinRec && /^[0-9a-f]{64}$/.test(PN.pinRec.hash) && !JSON.stringify({ ...PN.pinRec, salt: "" }).includes("1234") && PN.pinRec.hash !== "1234";
       V.PN_companyPayShown = /会社設定/.test(PN.companyPay) && /1,300円/.test(PN.companyPay);
+      V.PN_wpStaffNumber = PN.wpNumber === "従業員番号 012";
       V.PN_wrongRejected = PN.relocked && /残り4回/.test(PN.wrongMsg) && PN.stillLocked && PN.reopened;
       V.PN_layout = PN.overflow <= 0 && PN.fonts.every(f => f >= 16);
       V.PN_noErrors = PN.errors.length === 0;

@@ -1425,6 +1425,19 @@ test("給料タブの要約: 月間目標は任意（目標なしでも金額を
   assert.ok(!/premium&&X\.goal/.test(tab) && !/X\.goal>0&&month/.test(tab), "金額の表示は目標に左右されない");
   assert.ok(/<MyPayTab me=\{me\} personal=\{personal\} onGoSettings=\{\(\)=>setTab\("settings"\)\}\/>/.test(my), "個別URLの給料タブからも設定へ行ける");
 });
+test("勤務先の従業員番号: 店舗ごとに settings.staffNumbers[名前] を出す（無ければ出さない）・アカウントの番号は照合に使う旨の説明（2026-10-04）", () => {
+  assert.strictEqual(m.myStaffNumberOf({ staffNumbers: { 田中: " 001 " } }, "田中"), "001");
+  assert.strictEqual(m.myStaffNumberOf({ staffNumbers: { 田中: 12 } }, "田中"), "12");
+  assert.strictEqual(m.myStaffNumberOf({ staffNumbers: { 佐藤: "1" } }, "田中"), "");
+  assert.strictEqual(m.myStaffNumberOf({}, "田中"), "");
+  assert.strictEqual(m.myStaffNumberOf(null, "田中"), "");
+  assert.strictEqual(m.myStaffNumberOf({ staffNumbers: { 田中: { x: 1 } } }, "田中"), "");
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const sec = my.slice(my.indexOf("function useMyStaffNumbers("), my.indexOf("// ===== 給料（2026-10-04・第2部 E5）====="));
+  assert.ok(/readMyShiftShopShared\(l\.shopId\)/.test(sec) && /myStaffNumberOf\(v\.settings,l\.name\)/.test(sec), "番号は店舗の settings から、紐付いた名前で引く");
+  assert.ok(/data-my-wp-number=/.test(sec) && !/fbSet|fbUpd/.test(sec.slice(0, sec.indexOf("function MyWorkplacesSection("))), "読むだけ");
+  assert.ok(/hint=\{MY_PROFILE_NUMBER_HINT\}/.test(my) && /照合に使います/.test(m.MY_PROFILE_NUMBER_HINT));
+});
 // ===== 全員のシフトの期間と店舗の選び方（2026-10-04・ユーザー指示: 未公開の案内を出さない・期間をプルダウン・直近3ヶ月・#/me でも）=====
 test("全員のシフト: 期間の選択肢は公開済みかつ直近3ヶ月（subsWindowCutoff と同じ窓）を新しい順。Premium でなければ空", () => {
   const pub = { at: "2026-09-01T00:00:00.000Z", byUid: "O" };

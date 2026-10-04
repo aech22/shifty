@@ -1342,6 +1342,22 @@ function MyWorkplaceEditor({w,personal,isNew,list,onDone,company,payLocked=false
   );
 }
 // payLocked: 個別URLで暗証番号を入れていない間は給料の設定（時給・交通費・締日）を出さない（2026-10-04）
+// 紐付いた店舗ごとの、その人の従業員番号（{shopId: 番号}・無ければキーなし）。店舗の settings は readMyShiftShopShared で読む（書き込みなし）
+function useMyStaffNumbers(okLinks){
+  const[m,setM]=useState({});
+  const key=(okLinks||[]).map(l=>l.shopId+"|"+l.name).join(",");
+  useEffect(()=>{
+    let alive=true;
+    (okLinks||[]).forEach(l=>{
+      readMyShiftShopShared(l.shopId).then(v=>{
+        const n=v&&v.ok?myStaffNumberOf(v.settings,l.name):"";
+        if(alive)setM(p=>(p[l.shopId]||"")===n?p:{...p,[l.shopId]:n});
+      },()=>{});
+    });
+    return()=>{alive=false;};
+  },[key]);
+  return m;
+}
 function MyWorkplacesSection({me,personal,payLocked=false}){
   const P=personal;
   const[lp,setLp]=useState(undefined); // {links,plans}
@@ -1355,6 +1371,8 @@ function MyWorkplacesSection({me,personal,payLocked=false}){
   },[me.key]);
   const okLinks=lp&&Array.isArray(lp.links)?lp.links.filter(l=>l&&l.ok):[];
   const list=myWorkplaceList(okLinks,P.workplaces);
+  // その店舗での従業員番号（店舗ごとに違う・2026-10-04）。店舗の settings を読む（マイシフトと同じ読み込みを共有する）
+  const numbers=useMyStaffNumbers(okLinks);
   // 会社が登録した賃金（E6・getMyPay）。勤務先の編集で「会社設定」として固定表示する
   const companyPays=useMyCompanyPays(payLocked?null:me,okLinks);
   const premium=!!lp&&myShiftPremiumOf(lp.plans);
@@ -1389,7 +1407,9 @@ function MyWorkplacesSection({me,personal,payLocked=false}){
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0"}}>
             <span aria-hidden="true" data-my-wp-dot="1" style={{flex:"0 0 auto",width:12,height:12,borderRadius:6,background:w.color}}/>
             <div style={{flex:1,minWidth:0}}>
-              <div data-my-wp-name="1" style={{fontSize:15,fontWeight:700,color:"var(--c-text)",overflowWrap:"anywhere"}}>{w.name}</div>
+              <div data-my-wp-name="1" style={{fontSize:15,fontWeight:700,color:"var(--c-text)",overflowWrap:"anywhere"}}>{w.name}
+                {w.kind==="shifty"&&w.linked&&numbers[w.id]&&<span data-my-wp-number={numbers[w.id]} style={{fontSize:13,fontWeight:400,color:"var(--c-text2)",marginLeft:8,whiteSpace:"nowrap"}}>従業員番号 {numbers[w.id]}</span>}
+              </div>
               <div style={{fontSize:12,color:"var(--c-text3)"}}>{kindLabel(w)}{w.kind==="shifty"&&w.linked&&w.name!==w.shopName?`（${w.shopName}）`:""}</div>
               {!payLocked&&(()=>{const t=myPaySummaryText(w.rec&&w.rec.pay,companyPays[w.id]);return t?<div data-my-wp-pay="1" style={{fontSize:12,color:"var(--c-text3)",overflowWrap:"anywhere"}}>{t}</div>:null;})()}
             </div>
@@ -1745,7 +1765,7 @@ function MySettingsTab({staffUser,me,profile,profileState,initialError,onProfile
         {profileState==="error"&&<MyMessage error="登録ネームを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/>}
         <MyField label="登録ネーム" value={name} maxLength={MY_DISPLAY_NAME_MAX} autoComplete="name" data-my-input="displayName"
           onChange={e=>{touched.current=true;setName(e.target.value);}} hint="お店に登録されている名前と同じにしてください"/>
-        <MyField label="従業員番号（任意）" value={num} maxLength={MY_NUMBER_MAX} inputMode="numeric" data-my-input="number"
+        <MyField label="従業員番号（任意）" value={num} maxLength={MY_NUMBER_MAX} inputMode="numeric" data-my-input="number" hint={MY_PROFILE_NUMBER_HINT}
           onChange={e=>{touched.current=true;setNum(e.target.value);}}/>
         <MyMessage {...pMsg}/>
         <button data-my-action="saveProfile" disabled={busy==="profile"} onClick={saveProfile} style={{...AB,opacity:busy==="profile"?.6:1}}>{busy==="profile"?"保存中…":"保存"}</button>
@@ -1836,7 +1856,7 @@ function MyAuthScreen({shopId,onClose}){
             {mode==="reset"&&<div style={MY_SECTION_TITLE}>パスワードの再設定</div>}
             {mode==="register"&&<>
               <MyField label="登録ネーム" value={f.displayName} maxLength={MY_DISPLAY_NAME_MAX} autoComplete="name" data-my-input="displayName" onChange={e=>set("displayName",e.target.value)} hint="お店に登録されている名前と同じにしてください"/>
-              <MyField label="従業員番号（任意）" value={f.number} maxLength={MY_NUMBER_MAX} inputMode="numeric" data-my-input="number" onChange={e=>set("number",e.target.value)}/>
+              <MyField label="従業員番号（任意）" value={f.number} maxLength={MY_NUMBER_MAX} inputMode="numeric" data-my-input="number" hint={MY_PROFILE_NUMBER_HINT} onChange={e=>set("number",e.target.value)}/>
             </>}
             <MyField label="メールアドレス" type="email" autoComplete="email" value={f.email} data-my-input="email" onChange={e=>set("email",e.target.value)} onKeyDown={onKey}/>
             {mode!=="reset"&&<MyField label="パスワード" type="password" autoComplete={mode==="register"?"new-password":"current-password"} value={f.password} data-my-input="password"

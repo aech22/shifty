@@ -98,6 +98,8 @@ const sharedGlobals = {
   buildMyShiftRecord: "writable",
   myShiftDuplicateOf: "writable",
   planMyOverride: "writable",
+  myStaffNumberOf: "writable",
+  MY_PROFILE_NUMBER_HINT: "writable",
   myWorkplaceList: "writable",
   myNextWorkplaceColor: "writable",
   validateMyWorkplaceInput: "writable",

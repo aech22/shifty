@@ -43,12 +43,12 @@ const seed0 = () => ({
   global: { shops: { S1: { id: "S1", name: "A店" }, S2: { id: "S2", name: "B店" } } },
   shops: {
     S1: { owners: { OWN: "K1" }, private: { adminKey: "K1" }, staff: ["田中", "佐藤"],
-      settings: { shopId: "S1", candidates: [{ start: "10:00", end: "15:00" }] },
+      settings: { shopId: "S1", candidates: [{ start: "10:00", end: "15:00" }], staffNumbers: { "佐藤": "77" } },
       periods: { p1: per("p1", "S1", "t1", { published: { at: "2026-09-02T00:00:00.000Z", byUid: "OWN" } }) },
       subs: { s1: { id: "s1", periodId: "p1", shopId: "S1", staffName: "田中", submittedAt: "2026-09-02T00:00:00Z", shifts: { [TODAY]: { status: "work", start: "10:00", end: "15:00", adjustedEnd: "16:00" } } } },
       staffLinks: { T1: { name: "田中", method: "code", at: "2026-10-01T00:00:00.000Z" } } },
     S2: { owners: { OWN2: "K2" }, private: { adminKey: "K2" }, staff: ["田中 太郎"],
-      settings: { shopId: "S2", candidates: [{ start: "18:00", end: "22:00" }] },
+      settings: { shopId: "S2", candidates: [{ start: "18:00", end: "22:00" }], staffNumbers: { "田中 太郎": "0123" } },
       periods: { q1: per("q1", "S2", "t2") },
       subs: { u1: { id: "u1", periodId: "q1", shopId: "S2", staffName: "田中 太郎", submittedAt: "2026-09-02T00:00:00Z", shifts: { [TODAY]: { status: "work", start: "18:00", end: "22:00" } } } },
       staffLinks: { T1: { name: "田中 太郎", method: "code", at: "2026-10-01T00:00:00.000Z" } } },
@@ -119,6 +119,10 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       await waitSel(h, '[data-my-section="workplaces"] [data-my-wp]');
       await sleep(h, 300);
       const list0 = await h.evaluate(() => [...document.querySelectorAll("[data-my-wp]")].map(e => e.getAttribute("data-my-wp") + ":" + e.getAttribute("data-my-wp-kind")));
+      // 勤務先の名前の横に、その店舗でのその人の従業員番号（店舗ごとに違う・2026-10-04）。番号が無い店舗（S1 の田中）は出さない
+      await h.page.waitForFunction(() => !!document.querySelector('[data-my-wp="S2"] [data-my-wp-number]'), null, { timeout: 8000 }).catch(() => {});
+      const nums = await h.evaluate(() => [...document.querySelectorAll("[data-my-wp]")].map(e => { const n = e.querySelector("[data-my-wp-number]"); return e.getAttribute("data-my-wp") + ":" + (n ? n.innerText : ""); }));
+      const numHint = await h.evaluate(() => /照合に使います/.test(document.querySelector('[data-my-section]') ? document.body.innerText : ""));
       await click(h, '[data-my-action="addWorkplace"]');
       await waitSel(h, '[data-my-wp-editor="new"]');
       await fill(h, '[data-my-wp-editor="new"] [data-my-input="wpName"]', "カフェ");
@@ -139,6 +143,8 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       const list1 = await h.evaluate(() => [...document.querySelectorAll("[data-my-wp]")].map(e => e.getAttribute("data-my-wp") + ":" + e.querySelector("[data-my-wp-name]").innerText));
       R.A = { list0, wps, s1, list1, layoutA };
       V.A_listShifty = JSON.stringify(list0) === JSON.stringify(["S1:shifty", "S2:shifty"]);
+      R.A_nums = { nums, numHint };
+      V.A_staffNumberPerShop = JSON.stringify(nums) === JSON.stringify(["S1:", "S2:従業員番号 0123"]) && numHint;
       V.A_addManual = !!cafeId && wps[cafeId].kind === "manual" && wps[cafeId].name === "カフェ" && wps[cafeId].color === "#4f7d4a" && !("shopId" in wps[cafeId]);
       V.A_editShifty = s1.kind === "shifty" && s1.shopId === "S1" && s1.color === "#2f6f9f" && s1.name === "本店" && !!s1.pay && list1.includes("S1:本店") && list1.includes(`${cafeId}:カフェ`);
       V.A_layout375 = layoutA.overflow <= 0 && layoutA.fonts;

@@ -610,6 +610,15 @@ function planMyOverride(input,sched){
   if(t.startMin===s.startMin&&t.endMin===s.endMin&&t.breakMin===s.breakMin)return{remove:true};
   return{record:{start:t.start,end:t.end,breakMin:t.breakMin}};
 }
+// その店舗でのその人の従業員番号（settings.staffNumbers[名前]）。番号は店舗ごとに違うので、設定タブの勤務先の名前の横に店舗ごとに出す
+// （2026-10-04 ユーザー指示）。未登録・空・文字列でなければ ""（何も出さない）
+function myStaffNumberOf(settings,name){
+  const m=settings&&settings.staffNumbers&&typeof settings.staffNumbers==="object"?settings.staffNumbers:null;
+  const v=m&&name?m[name]:null;
+  return typeof v==="string"||typeof v==="number"?String(v).replace(_MY_TRIM_RE,""):"";
+}
+// アカウントの従業員番号（profile.number）の説明。1つしか持てないので、照合に使う番号であることと、お店ごとに違うときの入れ方を書く
+const MY_PROFILE_NUMBER_HINT="お店とのリンクの照合に使います。お店ごとに番号が違うときは、リンクを申請するお店の番号を入れてください。お店ごとの番号は勤務先の一覧に出ます";
 // 勤務先の一覧（設定タブとカレンダーが共有する）。links は readMyLinks の ok の行（並び順＝既定の色の順）、workplaces は users/{uid}/workplaces。
 // 返り値 [{id, kind, shopId, name, shopName, color, linked, rec}]。並びは Shifty の店舗（リンクの順）→ 手入力（名前の順）→ リンク解除済みの店舗
 function myWorkplaceList(links,workplaces){
@@ -1549,7 +1558,7 @@ if(typeof module!=="undefined"&&module.exports){
     MY_LINK_METHOD_LABELS,MY_LINK_CODE_LEN,MY_LINK_CODE_TTL_MS,linkNumberKey,linkNameKey,normalizeLinkCode,isValidLinkCode,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,MY_STAFF_LINK_OPS_MAX,staffLinkOpOf,staffLinksAsOf,planStaffLinkOp,enqueueStaffLinkOp,MY_STAFF_LINK_PENDING_MSG,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,fmtLinkCodeExpiry,
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
     MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_STEP_MIN,MY_TIME_OPTIONS,MY_BREAK_MAX_OPTION_MIN,MY_BREAK_OPTIONS,myTimeSelectOptions,myBreakSelectOptions,parseMyMinutesInput,
-    MY_OVERNIGHT_HINT,validateMyShiftInput,buildMyShiftRecord,myShiftDuplicateOf,myOverrideOf,planMyOverride,myWorkplaceList,myNextWorkplaceColor,validateMyWorkplaceInput,buildMyWorkplacePatch,
+    MY_OVERNIGHT_HINT,validateMyShiftInput,buildMyShiftRecord,myShiftDuplicateOf,myOverrideOf,planMyOverride,myStaffNumberOf,MY_PROFILE_NUMBER_HINT,myWorkplaceList,myNextWorkplaceColor,validateMyWorkplaceInput,buildMyWorkplacePatch,
     buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth,myIcsPlatformOf,MY_ICS_HINTS,MY_ICS_APP_GUIDE,myGoogleCalendarLinks,
     MY_IN_APP_BROWSERS,myInAppBrowserOf,myCalendarEnvOf,myCalendarPromptOf,MY_CAL_PROMPT_LS,myCalendarPromptKey,myCalendarPromptShown,MY_ICS_STANDALONE_NOTE,myExternalBrowserUrl,
     MY_PAY_END_DAY,MY_PAY_HOLIDAY_RULES,MY_PAY_HOLIDAY_RULE_LABELS,MY_PAY_WAGE_TYPES,MY_PAY_WAGE_TYPE_LABELS,MY_PAY_OFFSET_LABELS,MY_PAY_YEN_MAX,MY_PAY_GOAL_MAX,MY_PAY_DEFAULT,
