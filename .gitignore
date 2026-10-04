@@ -3,6 +3,10 @@
 # E2E検証ハーネス（scripts/ と SKILL.md）はリポジトリで保全する。
 # 失うと「コンポーネント1つだけを実ブラウザにマウントする」道具を書き直しになるため（BACKLOG参照）。
 # 鍵は .secrets.local に分離してあり、それだけは追跡しない。
+# クラウドセッションの SessionStart フック（Obsidian Vault の Knowledge を読ませる）は共有する。
+# 端末ローカルの設定（Stop フックの自動コミット等）は .claude/settings.local.json に置く。
+!.claude/settings.json
+!.claude/hooks/
 !.claude/skills/
 .claude/skills/*
 !.claude/skills/shifty-e2e-verify/
