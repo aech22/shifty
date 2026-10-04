@@ -313,6 +313,8 @@ function fmtLinkCodeExpiry(ms){
 function _myU(U){
   if(U)return U;
   return{scheduledDay,resolveActualDay,resolvePeriodMaster,resolveSubByAlias,isStaffHiddenInPeriod,isPeriodPublished,isPeriodConfirmed,featureEnabled,
+    // 全員のシフト表（個別URL・2026-10-04）
+    visibleStaffList,isSpacer,leaveCellTextOf,isHoliday,
     // 給料（E5）: 月次賃金ページ（P6b）・割増（P5）と同じ関数
     premiumMonthOf,premiumDayInput,dayRestKindOf,laborSystemForStaff,laborSettingsOf,rateDenominatorMinOf,payVersionOn,wageOf,deductionOf,
     premiumRatesOf,roundingRuleOf,roundYenFrac,nightMinutesOf,normalizePayVersion,isWeekendOrHoliday,OVER60_THRESHOLD_MIN};
@@ -1279,6 +1281,61 @@ function myLatestPeriodOf(periods){
   return best;
 }
 
+// ---- 最新期間の全員のシフト表（P3）----
+// 個別URLの「全員」の表示。**公開済みの期間だけ**（未公開は state:"unpublished"＝「まだ公開されていません」）。中身は管理者の調整後の確定値
+// （scheduledDay＝マイシフトの公開済みと同じ入口）。並びはシフト作成タブと同じ（写し＝resolvePeriodMaster・その期間に非表示の人は落とす
+// ＝visibleStaffList・空白列は残す）。休み・休暇は PDF のシフト表に近い（出勤の帯ごとに時刻、休暇の帯は種別名）。労務・ヒートマップ・賃金・メモは出さない。
+// o={period, staff, settings（企業設定を重ねた店舗の設定）, subs（その期間の提出）, todayStr, premium, me（本人の名前）}
+function myStaffTimeText(min){
+  if(min==null||!Number.isFinite(Number(min)))return"";
+  const n=Math.max(0,Math.round(Number(min))),h=Math.floor(n/60),mi=n%60;
+  return mi?`${h}:${String(mi).padStart(2,"0")}`:String(h);
+}
+function buildMyStaffTable(o,U){
+  const u=_myU(U);const x=o||{};const p=x.period;
+  if(!p||!p.id)return{state:"noPeriod"};
+  if(!x.premium)return{state:"premium",period:p};
+  if(!u.isPeriodPublished(p))return{state:"unpublished",period:p};
+  const master=u.resolvePeriodMaster(p,x.staff||[],x.settings||{},x.todayStr);
+  const st=master.settings||{};
+  const names=u.visibleStaffList(master.staffList||[],st,p);
+  const byName=new Map();
+  (Array.isArray(x.subs)?x.subs:[]).forEach(s=>{if(s&&s.periodId===p.id&&s.staffName&&!byName.has(s.staffName))byName.set(s.staffName,s);});
+  const cols=names.map(n=>u.isSpacer(n)?{spacer:true}:{name:n,me:!!x.me&&n===x.me});
+  const dates=_myDatesOf(p);
+  let maxChars=1;
+  const rows=dates.map(date=>({date,holiday:!!(u.isHoliday&&u.isHoliday(date)),cells:cols.map(c=>{
+    if(c.spacer)return null;
+    const sub=u.resolveSubByAlias(n=>byName.get(n),c.name,st.staffAliases||{});
+    const sh=sub&&sub.shifts?sub.shifts[date]:null;
+    const lvS=sh?u.leaveCellTextOf(sh,"start"):"",lvE=sh?u.leaveCellTextOf(sh,"end"):"";
+    const sd=u.scheduledDay(sub,date,st,c.name);
+    const work=!sd.isRest&&sd.workMin>0;
+    const main=(sd.segments||[]).find(g=>!g.extra);
+    const extra=(sd.segments||[]).find(g=>g.extra);
+    const top=lvS||(work&&main?myStaffTimeText(main.startMin):work&&extra?myStaffTimeText(extra.startMin):"");
+    const bottom=lvE||(work&&main?myStaffTimeText(main.endMin):work&&extra?myStaffTimeText(extra.endMin):"");
+    [top,bottom].forEach(t=>{if(t.length>maxChars)maxChars=t.length;});
+    if(!top&&!bottom)return null;
+    return{top,bottom,work,leave:!!(lvS||lvE),extra:!!(work&&main&&extra)};
+  })}));
+  return{state:"ok",period:p,confirmed:u.isPeriodConfirmed(p),publishedAt:p.published.at,cols,rows,maxChars};
+}
+// 全員の表を横幅いっぱいに収める寸法（横スクロールさせない。細部はピンチで拡大して見る）。
+// width＝表に使える幅（px）、cols＝buildMyStaffTable の cols、maxChars＝セルの最長の文字数。空白列は 0.4 列ぶん
+function myStaffTableLayout(o){
+  const x=o||{};
+  const width=Math.max(0,Number(x.width)||0);
+  const cols=Array.isArray(x.cols)?x.cols:[];
+  const units=cols.reduce((a,c)=>a+(c&&c.spacer?0.4:1),0)||1;
+  const dateW=Math.max(20,Math.min(34,Math.round(width*0.09)));
+  const colW=Math.max(0,(width-dateW)/units);
+  // 数字の幅はおよそ 0.6em。セルの左右の余白を 2px 取り、14px を上限にする（下限は設けない＝収めることを優先し、ピンチで拡大して読む）
+  const chars=Math.max(2,Number(x.maxChars)||2);
+  const fontPx=Math.max(1,Math.min(14,Math.floor(((colW-2)/(chars*0.62))*10)/10));
+  return{width,dateW,colW,spacerW:colW*0.4,fontPx,headFontPx:Math.max(1,Math.min(13,Math.floor(Math.min(colW*0.8,14)*10)/10)),rowH:Math.ceil(fontPx*1.2*2+2)};
+}
+
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
   module.exports={MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
@@ -1293,5 +1350,5 @@ if(typeof module!=="undefined"&&module.exports){
     myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
     MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,resolveMyPage,MY_PAGE_STATE_MESSAGES,
-    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myLatestPeriodOf};
+    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myLatestPeriodOf,myStaffTimeText,buildMyStaffTable,myStaffTableLayout};
 }

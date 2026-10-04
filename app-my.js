@@ -1954,6 +1954,115 @@ function StaffPageEditSection({links,name,tt}){
   );
 }
 
+// ---- 本人のカレンダーと全員のシフト表の切り替え（P3）----
+// 横スクロール（CSS scroll-snap）で2つの表示を切り替える。どちらを見ているかは上のタブで分かり、タブを押しても切り替わる
+// （スワイプに気づかない人・スクリーンリーダー用）。**ピンチで拡大している間は横スクロールを止める**（拡大した表を左右に動かそうとして
+// 隣の表示へ移ってしまわないように。visualViewport.scale で判定する）
+function useMyPinchZoomed(){
+  const[z,setZ]=useState(false);
+  useEffect(()=>{
+    const vv=typeof window!=="undefined"?window.visualViewport:null;
+    if(!vv)return;
+    const on=()=>setZ((vv.scale||1)>1.01);
+    on();
+    vv.addEventListener("resize",on);vv.addEventListener("scroll",on);
+    return()=>{vv.removeEventListener("resize",on);vv.removeEventListener("scroll",on);};
+  },[]);
+  return z;
+}
+function MyShiftPager({panes}){
+  const ref=useRef(null);
+  const[active,setActive]=useState(0);
+  const zoomed=useMyPinchZoomed();
+  const go=i=>{const el=ref.current;if(!el)return;el.scrollTo({left:i*el.clientWidth,behavior:"smooth"});setActive(i);};
+  const onScroll=()=>{const el=ref.current;if(!el||!el.clientWidth)return;const i=Math.round(el.scrollLeft/el.clientWidth);if(i!==active&&i>=0&&i<panes.length)setActive(i);};
+  return(
+    <div data-my-pager={panes[active]&&panes[active].key} data-my-pager-locked={zoomed?"1":"0"}>
+      <div role="tablist" aria-label="表示の切り替え" style={{display:"flex",gap:4,background:"var(--c-input)",borderRadius:10,padding:4,marginBottom:12}}>
+        {panes.map((p,i)=>{const a=i===active;return(
+          <button key={p.key} role="tab" aria-selected={a} aria-controls={`my-pane-${p.key}`} data-my-pager-tab={p.key} onClick={()=>go(i)}
+            style={{flex:1,minHeight:40,background:a?"var(--c-card)":"none",border:"none",borderRadius:8,fontSize:14,fontWeight:a?700:600,
+              color:a?"var(--c-text)":"var(--c-text3)",boxShadow:a?"0 0 0 1px var(--c-border2)":"none",cursor:"pointer"}}>{p.label}</button>
+        );})}
+      </div>
+      <div ref={ref} data-my-pager-track="1" onScroll={onScroll}
+        style={{display:"flex",alignItems:"flex-start",overflowX:zoomed?"hidden":"auto",overflowY:"visible",scrollSnapType:"x mandatory",
+          scrollbarWidth:"none",WebkitOverflowScrolling:"touch",overscrollBehaviorX:"contain"}}>
+        {panes.map((p,i)=>(
+          <section key={p.key} id={`my-pane-${p.key}`} role="tabpanel" aria-label={p.label} data-my-pane={p.key} aria-hidden={i!==active}
+            style={{flex:"0 0 100%",minWidth:0,scrollSnapAlign:"start",scrollSnapStop:"always",boxSizing:"border-box"}}>
+            {p.node}
+          </section>
+        ))}
+      </div>
+    </div>
+  );
+}
+// 最新期間の全員のシフト表（公開済みだけ）。横幅に収める（横スクロール 0）。文字の大きさは人数と日数から決まる
+function MyAllShiftTable({period,staff,settings,subs,plan,me}){
+  const ref=useRef(null);
+  const[width,setWidth]=useState(0);
+  useEffect(()=>{
+    const el=ref.current;if(!el)return;
+    const upd=()=>setWidth(el.clientWidth);
+    upd();
+    if(typeof ResizeObserver==="function"){const ro=new ResizeObserver(upd);ro.observe(el);return()=>ro.disconnect();}
+    window.addEventListener("resize",upd);return()=>window.removeEventListener("resize",upd);
+  },[]);
+  const todayStr=fd(new Date());
+  const t=useMemo(()=>buildMyStaffTable({period,staff,settings,subs,todayStr,premium:featureEnabled("myShift",{plan}),me}),[period,staff,settings,subs,todayStr,plan,me]);
+  // 列の幅の合計が表の幅を超えると table-layout:fixed は表を広げるので、表の外枠（左右 1px ずつ）を引いた幅で割る
+  const L=myStaffTableLayout({width:Math.max(0,width-2),cols:t.cols||[],maxChars:t.maxChars});
+  let body=null;
+  if(t.state==="noPeriod")body=<MyEmptyState>まだ期間がありません。</MyEmptyState>;
+  else if(t.state==="premium")body=<MyEmptyState><span data-my-all-state="premium">全員のシフト表は、お店がプレミアムプランのときに表示されます。</span></MyEmptyState>;
+  else if(t.state==="unpublished")body=<MyEmptyState><span data-my-all-state="unpublished">{t.period.label||"最新の期間"}のシフトは、まだ公開されていません。お店が公開すると、全員のシフト表がここに出ます。</span></MyEmptyState>;
+  else if(width>0){
+    const cell={overflow:"hidden",whiteSpace:"nowrap",textAlign:"center",padding:"0 1px",borderRight:"1px solid var(--c-border)",lineHeight:1.2};
+    const pd2=ds=>{const d=pd(ds);return{day:d.getDate(),wd:WD[d.getDay()],sun:d.getDay()===0,sat:d.getDay()===6};};
+    body=(
+      <div data-my-all-state="ok">
+        <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6,marginBottom:8}}>
+          {t.period.label} ／ {t.confirmed?"確定":"公開"}{(()=>{const d=new Date(t.publishedAt);return Number.isFinite(d.getTime())?`（${d.getMonth()+1}/${d.getDate()} 公開）`:"";})()}
+          <span style={{display:"block",fontSize:12,color:"var(--c-text3)"}}>細かいところは2本の指で拡大して見てください。</span>
+        </div>
+        {/* 罫線は separate＋border-box（collapse だと外枠の半分が幅の外に出て、横幅を 1px 超える） */}
+        <table data-my-all-table="1" data-my-all-font={L.fontPx} style={{tableLayout:"fixed",width:"100%",boxSizing:"border-box",borderCollapse:"separate",borderSpacing:0,fontSize:L.fontPx,fontVariantNumeric:"tabular-nums",
+          border:"1px solid var(--c-border2)",background:"var(--c-card)",color:"var(--c-text)"}}>
+          <colgroup>
+            <col style={{width:L.dateW}}/>
+            {t.cols.map((c,i)=><col key={i} style={{width:c.spacer?L.spacerW:L.colW}}/>)}
+          </colgroup>
+          <thead>
+            <tr>
+              <th style={{...cell,fontSize:Math.min(11,L.headFontPx+2),fontWeight:600,color:"var(--c-text3)",borderBottom:"1px solid var(--c-border2)"}}>日</th>
+              {t.cols.map((c,i)=>c.spacer?<th key={i} style={{borderBottom:"1px solid var(--c-border2)",background:"var(--c-input)"}}/>:(
+                <th key={i} data-my-all-col={c.name} data-my-all-me={c.me?"1":undefined} title={c.name}
+                  style={{...cell,verticalAlign:"top",padding:"2px 0",fontSize:L.headFontPx,fontWeight:c.me?800:600,borderBottom:"1px solid var(--c-border2)",
+                    background:c.me?"var(--c-input)":"none",writingMode:"vertical-rl",textOrientation:"upright",height:Math.ceil(L.headFontPx*Math.min(6,c.name.length)+6),letterSpacing:0}}>{c.name}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {t.rows.map(r=>{const d=pd2(r.date);const red=d.sun||r.holiday;return(
+              <tr key={r.date} data-my-all-row={r.date} style={{height:L.rowH}}>
+                <td style={{...cell,borderTop:"1px solid var(--c-border)",fontSize:Math.min(11,L.fontPx+2),color:red?"var(--c-danger)":"var(--c-text2)",fontWeight:600}}>{d.day}<br/><span style={{fontWeight:400}}>{d.wd}</span></td>
+                {r.cells.map((c,i)=>t.cols[i].spacer?<td key={i} style={{background:"var(--c-input)",borderTop:"1px solid var(--c-border)"}}/>:(
+                  <td key={i} data-my-all-cell={c?(c.work?"work":"leave"):"none"}
+                    style={{...cell,borderTop:"1px solid var(--c-border)",background:t.cols[i].me?"var(--c-input)":"none",color:c&&!c.work?"var(--c-text3)":"var(--c-text)",fontWeight:c&&c.work?600:400}}>
+                    {c?<>{c.top}<br/>{c.bottom}</>:null}
+                  </td>
+                ))}
+              </tr>
+            );})}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+  return <div ref={ref} data-my-all="1" style={{width:"100%",minWidth:0}}>{body}</div>;
+}
+
 // 個別URLの画面の状態（承認待ち・却下・取り消し・見つからない）
 function MyPageStatusScreen({state,shopName,token}){
   const url=isMyPageToken(token)?buildMyPageUrl(myPageBaseUrl(),token):"";
@@ -2024,7 +2133,10 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
       {syncStatus==="offline"&&<div style={{background:"var(--c-input)",color:"var(--c-text2)",fontSize:12,textAlign:"center",padding:"4px 8px"}}>オフライン（再接続中…）</div>}
       <main style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 96px"}}>
         <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:4}} data-my-who="1">{page.name} さん ／ {shopName}</div>
-        {tab==="shift"&&<MyShiftTab me={me} personal={personal}/>}
+        {tab==="shift"&&<MyShiftPager panes={[
+          {key:"mine",label:"自分のシフト",node:<MyShiftTab me={me} personal={personal}/>},
+          {key:"all",label:"全員のシフト",node:<MyAllShiftTable period={myLatestPeriodOf(periods)} staff={staffList} settings={settings} subs={subs} plan={plan} me={page.name}/>},
+        ]}/>}
         {tab==="settings"&&<MyPageSettingsTab me={me} personal={personal} page={page} shopName={shopName} token={token} payUnlocked={!!pay}/>}
       </main>
       <MyTabBar tab={tab} onTab={setTab} tabs={tabs}/>

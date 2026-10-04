@@ -8,12 +8,16 @@
 //  V（さらに別の端末）: 同じURLでそのスタッフの画面（本人のカレンダー）。uid は S・P と違う
 //  SB（P2・提出）: 佐藤の個別URLの「提出」タブ＝最新期間・名前は固定（入力欄なし）→ 通し → 提出 → subs に staffName 佐藤 の提出。
 //     田中（提出済み）は「提出完了」から修正して同じ提出（s1）を更新する。送信の帯は下部タブの上。確定済みの期間は提出できない（書き込みなし）
+//  AL（P3・全員の表）: 「自分のシフト」「全員のシフト」をタップと横スクロール（ホイール）で切り替え。未公開は「まだ公開されていません」。
+//     公開済みは確定値（調整後の時刻）で、空白列は残し・非表示の人は出さず・本人の列に印。10人×16日と30人×31日で 375px に収まる（横スクロール0）
+//     ことと文字サイズを実測。ピンチで拡大した状態（Chromium の page scale）では横スクロールを止める
 //  F（オーナー）: 2人目を佐藤として承認 → 改名（佐藤 → 佐藤 花子）で name が移る → 削除で revoked → 同じ名前で再登録しても revoked のまま
 //  X（オーナー）: 編集モーダルから田中の個別URLを取り消す → 開くと「使えなくなりました」
 //  R（閲覧専用の端末）と PROD（本番相当 MY_SCREEN_ENABLED=false）: 申請の一覧が出ない／募集URLに入口が無く #/m/ は個別URLとして開かない
 //  すべての場面で console.error・pageerror が 0 件
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-my-page.js → allPass=true / EXIT=0
+//       SHIFTY_ENGINE=webkit SHIFTY_DEVICE="iPhone 13" node ... でも通る（端末の画面サイズで開くので 375/320 の指定は 390 になる・ピンチの項目は除く）
 // 反証: SHIFTY_ROOT=<73942db の配信物> node ... → EXIT=1（入口が無い）
 "use strict";
 const fs = require("node:fs");
@@ -267,6 +271,94 @@ async function requestPage(h, name, number) {
       SB3.errors = h.errors.slice();
       R.SB3 = SB3;
       V.SB_confirmedBlocked = SB3.banner && !SB3.modal && SB3.same && SB3.errors.length === 0;
+    } finally { await h.browser.close(); }
+  }
+  // ---------------- AL: 全員の表と切り替え（P3）----------------
+  const pagerState = h => h.evaluate(() => { const p = document.querySelector("[data-my-pager]"); const t = document.querySelector("[data-my-pager-track]");
+    return { active: p && p.getAttribute("data-my-pager"), locked: p && p.getAttribute("data-my-pager-locked"), left: t ? Math.round(t.scrollLeft) : -1, w: t ? t.clientWidth : 0, ox: t ? getComputedStyle(t).overflowX : "" }; });
+  const tableInfo = h => h.evaluate(() => { const t = document.querySelector("[data-my-all-table]"); const box = document.querySelector('[data-my-pane="all"]');
+    if (!t) return null; const r = t.getBoundingClientRect(), b = box.getBoundingClientRect();
+    return { font: parseFloat(t.getAttribute("data-my-all-font")), cellFont: parseFloat(getComputedStyle(t.querySelector("td[data-my-all-cell]") || t).fontSize),
+      tableW: Math.round(r.width), paneW: Math.round(b.width), overTable: Math.round(r.right - b.right), cols: [...t.querySelectorAll("th[data-my-all-col]")].map(x => x.getAttribute("data-my-all-col")),
+      me: (t.querySelector("[data-my-all-me]") || {}).getAttribute ? t.querySelector("[data-my-all-me]").getAttribute("data-my-all-col") : null,
+      rows: t.querySelectorAll("[data-my-all-row]").length, spacers: t.querySelectorAll("thead th:not([data-my-all-col])").length - 1 }; });
+  {
+    const h = await openAnon({ hash: "#/m/" + T1, db: dump, wait: '[data-my-view="page"]' });
+    try {
+      const AL = {};
+      await waitSel(h, "[data-my-pager]");
+      AL.start = await pagerState(h);
+      await click(h, '[data-my-pager-tab="all"]'); await sleep(h, 700);
+      AL.afterTap = await pagerState(h);
+      AL.unpublished = await waitSel(h, '[data-my-all-state="unpublished"]', 5000);
+      // 横スクロール（スワイプ相当）で戻る
+      const box = await h.page.evaluate(() => { const r = document.querySelector("[data-my-pager-track]").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + 40 }; });
+      // Chromium はホイールの横スクロール（スワイプ相当）。モバイル WebKit はホイールを受け付けないので、スクロール位置を動かして
+      // scroll イベントの経路（どちらを見ているかの更新）だけを確かめる（指のスワイプそのものは実機で確かめる）
+      AL.swipeBy = "wheel";
+      try { await h.page.mouse.move(box.x, box.y); await h.page.mouse.wheel(-800, 0); }
+      catch (e) { AL.swipeBy = "scrollLeft"; await h.evaluate(() => { document.querySelector("[data-my-pager-track]").scrollLeft = 0; }); }
+      await sleep(h, 900);
+      AL.afterSwipe = await pagerState(h);
+      AL.overflow = await overflowX(h);
+      AL.errors = h.errors.slice();
+      R.AL = AL;
+      V.AL_tapSwitches = AL.start.active === "mine" && AL.afterTap.active === "all" && Math.abs(AL.afterTap.left - AL.afterTap.w) <= 2;
+      V.AL_swipeSwitches = AL.afterSwipe.active === "mine" && AL.afterSwipe.left <= 2;
+      V.AL_unpublished = AL.unpublished;
+      V.AL_noOverflow = AL.overflow <= 0 && AL.errors.length === 0;
+    } finally { await h.browser.close(); }
+  }
+  // 公開済みの表（10人×16日・30人×31日）
+  const bigSeed = (nStaff, nDays) => {
+    const d = seed0();
+    const names = Array.from({ length: nStaff }, (_, i) => i === 0 ? "田中" : `スタッフ${i + 1}`);
+    d.shops.S1.staff = [...names.slice(0, 3), "__spacer__1", ...names.slice(3), "退職者"];
+    d.shops.S1.settings.staffHidden = { "退職者": true };
+    const end = `${YM}-${pad(nDays)}`;
+    d.shops.S1.periods.p1 = { ...d.shops.S1.periods.p1, endDate: end, published: { at: "2026-10-03T09:00:00.000Z", byUid: OWN } };
+    const subs = {};
+    names.concat(["退職者"]).forEach((n, i) => {
+      const shifts = {};
+      for (let k = 1; k <= nDays; k++) {
+        const ds = `${YM}-${pad(k)}`;
+        shifts[ds] = (k + i) % 3 === 0 ? { status: "holiday" } : { status: "work", start: (k + i) % 2 ? "17:00" : "9:30", end: (k + i) % 2 ? "25:00" : "15:00", ...(n === "田中" && k === 1 ? { adjustedEnd: "16:00", start: "10:00" } : {}) };
+      }
+      if (n === "スタッフ2") shifts[`${YM}-02`] = { status: "holiday", leaveTypes: { start: "paid", end: "paid" } };
+      subs["x" + i] = { id: "x" + i, periodId: "p1", shopId: "S1", staffName: n, submittedAt: "2026-09-02T00:00:00Z", shifts };
+    });
+    d.shops.S1.subs = subs;
+    d.staffPageTokens = { [T1]: { shopId: "S1", at: "x" } };
+    d.shops.S1.staffPages = { [T1]: { status: "approved", name: "田中", displayName: "田中", requestedAt: "x", approvedAt: "2026-10-01T00:00:00.000Z" } };
+    return d;
+  };
+  for (const [nS, nD, vp, eng] of [[10, 16, PHONE], [30, 31, PHONE], [30, 31, { width: 320, height: 700 }]]) {
+    const h = await openAnon({ hash: "#/m/" + T1, db: bigSeed(nS, nD), wait: '[data-my-view="page"]', viewport: vp });
+    try {
+      const k = `${nS}x${nD}_${vp.width}`;
+      await click(h, '[data-my-pager-tab="all"]'); await sleep(h, 800);
+      await waitSel(h, "[data-my-all-table]");
+      const T = await tableInfo(h);
+      T.overflow = await overflowX(h);
+      T.day1 = await h.evaluate(d => { const r = document.querySelector(`[data-my-all-row="${d}"]`); return r ? [...r.querySelectorAll("td[data-my-all-cell]")].slice(0, 3).map(c => c.innerText.replace(/\n/g, "/")) : null; }, `${YM}-01`);
+      T.day2 = await h.evaluate(d => { const r = document.querySelector(`[data-my-all-row="${d}"]`); return r ? [...r.querySelectorAll("td[data-my-all-cell]")].slice(0, 3).map(c => c.innerText.replace(/\n/g, "/")) : null; }, `${YM}-02`);
+      // ピンチの再現は Chromium の CDP だけ（WebKit では実機で確かめる＝BACKLOG の本番反映タスク）
+      if (nS === 30 && vp.width === 375 && (process.env.SHIFTY_ENGINE || "chromium") === "chromium") {
+        // ピンチで拡大（Chromium の page scale factor＝visualViewport.scale）している間は横スクロールを止める
+        const cdp = await h.context.newCDPSession(h.page);
+        await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 }); await sleep(h, 500);
+        T.zoomed = await pagerState(h);
+        T.vvScale = await h.evaluate(() => window.visualViewport && window.visualViewport.scale);
+        await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 }); await sleep(h, 500);
+        T.unzoomed = await pagerState(h);
+      }
+      T.errors = h.errors.slice();
+      R["AL_" + k] = T;
+      V["AL_fits_" + k] = T.overflow <= 0 && T.overTable <= 0 && T.tableW <= T.paneW && T.rows === nD;
+      V["AL_columns_" + k] = T.cols.length === nS && !T.cols.includes("退職者") && T.spacers === 1 && T.me === "田中";
+      V["AL_values_" + k] = !!T.day1 && T.day1[0] === "10/16" && !!T.day2 && T.day2[1] === "有給/有給";
+      V["AL_noErrors_" + k] = T.errors.length === 0;
+      if (T.zoomed) V.AL_pinchLocks = T.vvScale > 1.5 && T.zoomed.locked === "1" && T.zoomed.ox === "hidden" && T.unzoomed.locked === "0" && T.unzoomed.ox === "auto";
     } finally { await h.browser.close(); }
   }
   // ---------------- F: 改名・削除・再登録の追随 ----------------
