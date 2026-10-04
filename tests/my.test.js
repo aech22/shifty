@@ -1348,3 +1348,84 @@ test("個別URL（P3）: 全員の表の寸法は横幅を超えない（列の�
   assert.ok(/role="tablist" aria-label="表示の切り替え"/.test(my), "タップでも切り替えられる");
   assert.ok(!/<input/.test(my.slice(my.indexOf("function MyAllShiftTable("), my.indexOf("function MyPageStatusScreen("))), "全員の表は入力欄を持たない（16px の規約に触れない）");
 });
+// ===== 個別URL（P4）: 給料の暗証番号（CF myPagePin）=====
+const mpg = require("../functions/my-page.js");
+const cc = require("../functions/company-config.js");
+test("個別URL（P4）: 暗証番号の入力（全角は半角・4桁・確認の一致）", () => {
+  assert.ok(m.isValidMyPagePin("1234") && m.isValidMyPagePin("１２３４") && m.isValidMyPagePin(" 0000 "));
+  ["123", "12345", "12a4", "", null].forEach(p => assert.strictEqual(m.isValidMyPagePin(p), false, String(p)));
+  assert.strictEqual(m.validateMyPagePinInput("1234", "１２３４"), null);
+  assert.ok(m.validateMyPagePinInput("1234", "1235"));
+  assert.ok(m.validateMyPagePinInput("12"));
+});
+test("個別URL（P4）: CF の判定（使える状態はクライアントの resolveMyPage と同じ規則）", () => {
+  const T = "A".repeat(24), staff = ["田中"];
+  const cases = [
+    [{ token: "x", tokenRec: { shopId: "S1" }, pageRec: { status: "approved", name: "田中" }, staff }, "invalid"],
+    [{ token: T, tokenRec: null, pageRec: null, staff }, "missing"],
+    [{ token: T, tokenRec: { shopId: "S1" }, pageRec: { status: "pending" }, staff }, "pending"],
+    [{ token: T, tokenRec: { shopId: "S1" }, pageRec: { status: "revoked", name: "田中" }, staff }, "revoked"],
+    [{ token: T, tokenRec: { shopId: "S1" }, pageRec: { status: "approved", name: "退職" }, staff }, "missingName"],
+    [{ token: T, tokenRec: { shopId: "S1" }, pageRec: { status: "approved", name: "田中" }, staff }, "ok"],
+  ];
+  cases.forEach(([o, st]) => {
+    const cf = mpg.myPageAccessCF(o), cl = m.resolveMyPage(o.token, o.tokenRec, o.pageRec, o.staff);
+    assert.strictEqual(cl.state, st, JSON.stringify(o));
+    assert.strictEqual(!cf.error, st === "ok", JSON.stringify(o));
+    if (!cf.error) assert.deepStrictEqual(cf, { shopId: "S1", name: "田中" });
+  });
+});
+test("個別URL（P4）: 暗証番号の計画（決める・照合・5回で15分・変更はいまの番号が要る・管理者のリセット）", () => {
+  const H = (salt, p) => cc.payCodeHashCF(salt, p);
+  const salt = "s".repeat(16), now = 1e12, page = { status: "approved", name: "田中" };
+  let r = mpg.planMyPagePin({ action: "status", pinRec: null, pageRec: page, now });
+  assert.deepStrictEqual(r.result, { ok: true, hasPin: false, waitSec: 0 });
+  assert.strictEqual(mpg.planMyPagePin({ action: "verify", pin: "1234", pinRec: null, pageRec: page, now }).error.code, "failed-precondition");
+  assert.strictEqual(mpg.planMyPagePin({ action: "set", pin: "123", salt, newHash: H(salt, "123"), pinRec: null, pageRec: page, now }).error.code, "invalid-argument");
+  r = mpg.planMyPagePin({ action: "set", pin: "1234", salt, newHash: H(salt, "1234"), pinRec: null, pageRec: page, now, nowIso: "2026-10-04T00:00:00.000Z" });
+  assert.ok(r.unlocked && r.pinPatch.hash === H(salt, "1234") && r.pinPatch.salt === salt && r.pinPatch.fails === 0);
+  let rec = r.pinPatch;
+  assert.ok(mpg.pinIsSetCF(rec, page));
+  r = mpg.planMyPagePin({ action: "verify", pin: "1234", pinHash: H(rec.salt, "1234"), pinRec: rec, pageRec: page, now });
+  assert.ok(r.unlocked && r.pinPatch === undefined, "成功で失敗の記録が無ければ書かない");
+  for (let i = 1; i <= 4; i++) {
+    r = mpg.planMyPagePin({ action: "verify", pin: "0000", pinHash: H(rec.salt, "0000"), pinRec: rec, pageRec: page, now });
+    assert.strictEqual(r.error.code, "permission-denied"); assert.strictEqual(r.pinPatch.fails, i); assert.ok(!r.unlocked);
+    rec = r.pinPatch;
+  }
+  r = mpg.planMyPagePin({ action: "verify", pin: "0000", pinHash: H(rec.salt, "0000"), pinRec: rec, pageRec: page, now });
+  assert.strictEqual(r.pinPatch.lockedUntil, now + mpg.PAGE_PIN_LOCK_MS_CF); assert.strictEqual(r.pinPatch.fails, 0);
+  rec = r.pinPatch;
+  assert.strictEqual(mpg.planMyPagePin({ action: "verify", pin: "1234", pinHash: H(rec.salt, "1234"), pinRec: rec, pageRec: page, now: now + 1000 }).error.code, "resource-exhausted", "止まっている間は正しい番号でも開かない");
+  assert.ok(mpg.planMyPagePin({ action: "status", pinRec: rec, pageRec: page, now }).result.waitSec > 800);
+  r = mpg.planMyPagePin({ action: "verify", pin: "1234", pinHash: H(rec.salt, "1234"), pinRec: rec, pageRec: page, now: now + mpg.PAGE_PIN_LOCK_MS_CF + 1 });
+  assert.ok(r.unlocked && r.pinPatch.lockedUntil === 0, "待ちが過ぎれば開き、記録を戻す");
+  rec = r.pinPatch;
+  assert.strictEqual(mpg.planMyPagePin({ action: "set", pin: "5678", salt, newHash: H(salt, "5678"), pinRec: rec, pageRec: page, now }).error.code, "permission-denied", "変更はいまの番号が要る");
+  r = mpg.planMyPagePin({ action: "set", pin: "5678", currentPin: "1234", currentHash: H(rec.salt, "1234"), salt: "t".repeat(16), newHash: H("t".repeat(16), "5678"), pinRec: rec, pageRec: page, now, nowIso: "2026-10-04T01:00:00.000Z" });
+  assert.ok(r.unlocked && r.pinPatch.hash === H("t".repeat(16), "5678"));
+  rec = r.pinPatch;
+  // 管理者のリセット（pinResetAt）より前に決めた番号は未設定として扱う
+  assert.ok(!mpg.pinIsSetCF(rec, { ...page, pinResetAt: "2026-10-05T00:00:00.000Z" }));
+  assert.ok(mpg.pinIsSetCF(rec, { ...page, pinResetAt: "2026-10-03T00:00:00.000Z" }));
+  assert.strictEqual(mpg.planMyPagePin({ action: "x", pinRec: rec, pageRec: page, now }).error.code, "invalid-argument");
+  // ハッシュはクライアント（app-utils.js の payCodeHash）と同じ SHA-256(salt+番号)
+  assert.strictEqual(cc.payCodeHashCF("abc", "1234"), require("node:crypto").createHash("sha256").update("abc1234").digest("hex"));
+});
+test("個別URL（P4）: CF myPagePin は名前を受け取らず、照合が通るまで賃金を読まない・回数はトランザクション・店舗のアーカイブで後始末", () => {
+  const src = fs.readFileSync(path.join(ROOT, "functions", "index.js"), "utf8");
+  const a = src.indexOf("exports.myPagePin"), b = src.indexOf("exports.getMyPay");
+  assert.ok(a > 0 && b > a);
+  const body = src.slice(a, b);
+  assert.ok(!/data\.name|data\.uid|data\.shopId/.test(body), "名前・uid・店舗を呼び出し元から受け取らない（URL から引く）");
+  assert.ok(body.indexOf("throwPlanError(acc)") < body.indexOf("private/pay"), "使える URL かを確かめてから");
+  assert.ok(body.indexOf("if (!r.unlocked) return r.result;") < body.indexOf("private/pay"), "照合が通るまで賃金を読まない");
+  assert.ok(/\.transaction\(cur => \{/.test(body), "試行回数はトランザクションで数える");
+  assert.ok(/readVal\(`staffPageTokens\/\$\{token\}`\)/.test(body) && /isDemoShop\(shopId\)/.test(body) && /isPageTokenCF\(token\)/.test(body));
+  const pu = src.slice(src.indexOf("exports.purgeInactiveShops"), src.indexOf("exports.purgeOldPeriods"));
+  ["staffPageTokens", "staffPageData", "staffPagePins"].forEach(k => assert.ok(pu.includes("await db.ref(`" + k + "/${t}`).remove()"), k));
+  // クライアントは staffPagePins に触らない（CF を呼ぶだけ）
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  assert.ok(!/staffPagePins/.test(my.replace(/\/\/[^\n]*/g, "")), "クライアントは暗証番号の置き場を読み書きしない");
+  assert.ok(/myCallCF\("myPagePin",\{token,action:"status"\}\)/.test(my));
+});

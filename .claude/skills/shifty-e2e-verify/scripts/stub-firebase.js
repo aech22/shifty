@@ -27,6 +27,8 @@ const CFC_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "fu
 const SLK_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "functions", "staff-link.js"), "utf8");
 // functions/my-pay.js（従業員画面の会社設定の賃金・E6）。cfHandlers の "myPay" が本物の判定関数を通す
 const MYP_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "functions", "my-pay.js"), "utf8");
+// functions/my-page.js（スタッフ個別URLの暗証番号・2026-10-04）。cfHandlers の "myPage" が本物の判定関数を通す
+const MYPG_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "functions", "my-page.js"), "utf8");
 
 /**
  * @param {object} o
@@ -42,6 +44,9 @@ const MYP_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "fu
  *                                auth:"accounts" なら __authCur()、既定なら固定のユーザー）。読みの後のトランザクションは単純な削除で代える。
  *                                "myPay" は getMyPay（E6）。呼び出し元の uid の staffLinks の名前で private/pay を読み、functions/my-pay.js の
  *                                myPayLinkNameCF・planGetMyPay をそのまま通す（名前は payload から受け取らない＝本物と同じ）。
+ *                                "myPage" は myPagePin（スタッフ個別URLの給料の暗証番号・2026-10-04）。functions/my-page.js の myPageAccessCF・
+ *                                planMyPagePin と my-pay.js の planGetMyPay をそのまま通す。ハッシュは app-utils.js の payCodeHash（index.js の
+ *                                payCodeHashCF と同じ値）。staffPagePins/{token} に書く（試行回数も）。トランザクションは単純な読み書きで代える。
  *                                "payCode" は setCompanyPayCode（P6a）。現在の番号を照合して企業と連携全店舗の private/payCode を書く。
  *                                "entity" は法人の6本（ensureCompanyEntities / createEntity / renameEntity / assignShopEntity /
  *                                saveEntityConfig / setShopKind）。移行と写しの組み立ては **functions/company-config.js をそのまま読み込んで**
@@ -85,6 +90,8 @@ function makeStub(o) {
   var SLK=(function(){var module={exports:{}};var exports=module.exports;${SLK_SRC}
 ;return module.exports;})();
   var MYP=(function(){var module={exports:{}};var exports=module.exports;${MYP_SRC}
+;return module.exports;})();
+  var MYPG=(function(){var module={exports:{}};var exports=module.exports;${MYPG_SRC}
 ;return module.exports;})();
   var CF=${JSON.stringify(cfHandlers)};
   var DENY_READ=${JSON.stringify(denyRead.map(d => String(d).split("/").filter(Boolean).join("/")))};
@@ -546,6 +553,34 @@ function makeStub(o) {
           homeShopId:mhome,homeShopName:mhome?getPath("global/shops/"+mhome+"/name"):null});
         if(mr.error) return Promise.reject(Object.assign(new Error(mr.error.msg),{code:"functions/"+mr.error.code}));
         return Promise.resolve({data:mr.result});
+      }
+      if(h==="myPage"){
+        // 本物の myPagePin（functions/index.js・2026-10-04）と同じ順: 個別URLの状態を確かめ、暗証番号を照合してから賃金を読む
+        var pfail=function(e){ return Promise.reject(Object.assign(new Error(e.msg),{code:"functions/"+e.code})); };
+        var ptk=payload&&payload.token, pact=payload&&payload.action;
+        if(!MYPG.isPageTokenCF(ptk)) return pfail({code:"invalid-argument",msg:"URLが正しくありません"});
+        if(["status","set","verify"].indexOf(pact)<0) return pfail({code:"invalid-argument",msg:"操作が正しくありません"});
+        var ptr=getPath("staffPageTokens/"+ptk), psid=ptr&&ptr.shopId;
+        if(!psid) return pfail({code:"not-found",msg:"このURLは見つかりませんでした"});
+        var prec=getPath("shops/"+psid+"/staffPages/"+ptk), pstaff=getPath("shops/"+psid+"/staff");
+        var pacc=MYPG.myPageAccessCF({token:ptk,tokenRec:ptr,pageRec:prec,staff:pstaff});
+        if(pacc.error) return pfail(pacc.error);
+        var ppin=typeof payload.pin==="string"?payload.pin:"", pcur=typeof payload.currentPin==="string"?payload.currentPin:"";
+        var prc=getPath("staffPagePins/"+ptk);
+        var psalt=pact==="set"?("stubsalt"+(++pushSeq)+"0123456789abcdef"):"";
+        var phx=function(sl,p){ return (typeof sl==="string"&&/^[0-9]{4}$/.test(p))?window.payCodeHash(sl,p):Promise.resolve(""); };
+        return Promise.all([phx(prc&&prc.salt,ppin),phx(prc&&prc.salt,pcur),phx(psalt,ppin)]).then(function(hs){
+          var pr=MYPG.planMyPagePin({action:pact,pin:ppin,currentPin:pcur,pinRec:prc,pageRec:prec,now:Date.now(),nowIso:new Date().toISOString(),salt:psalt,
+            pinHash:hs[0],currentHash:hs[1],newHash:hs[2]});
+          if(pr.pinPatch!==undefined) setPath("staffPagePins/"+ptk,pr.pinPatch);
+          if(pr.error) return pfail(pr.error);
+          if(!pr.unlocked) return {data:pr.result};
+          var pnm=pacc.name, phs=getPath("shops/"+psid+"/settings/staffHomeShop/"+pnm);
+          var phome=typeof phs==="string"&&phs&&phs!==psid?phs:"";
+          var pg=MYP.planGetMyPay({shopId:psid,name:pnm,staff:pstaff,payRec:getPath("shops/"+psid+"/private/pay/"+pnm),homeShopId:phome,homeShopName:phome?getPath("global/shops/"+phome+"/name"):null});
+          if(pg.error) return pfail(pg.error);
+          return {data:Object.assign({},pg.result,pr.result,{shopId:psid})};
+        });
       }
       if(h==="payCode"){
         // 本物の setCompanyPayCode（functions/index.js・P6a）と同じ後始末: 現在の番号を照合し（未設定なら 0000）、

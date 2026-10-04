@@ -1271,6 +1271,14 @@ function planStaffPageOp(pages,op){
   return Object.keys(out).length?out:null;
 }
 
+// 給料の暗証番号（P4）。4桁の数字（全角は半角に）。照合・保存は Cloud Functions（functions/my-page.js）だけが行う
+function normalizeMyPagePin(s){return toHalfWidthDigits(s).replace(/[\s　]/g,"");}
+function isValidMyPagePin(s){return /^[0-9]{4}$/.test(normalizeMyPagePin(s));}
+function validateMyPagePinInput(pin,pin2){
+  if(!isValidMyPagePin(pin))return"暗証番号は4桁の数字にしてください";
+  if(pin2!==undefined&&normalizeMyPagePin(pin)!==normalizeMyPagePin(pin2))return"確認の暗証番号が一致しません";
+  return null;
+}
 // 最新の期間（startDate が最も新しい期間。App の Phase3 の「periods[0]＝最新」・latestPeriod と同じ決め方）。個別URLの提出先と全員の表の期間
 function myLatestPeriodOf(periods){
   let best=null;
@@ -1350,5 +1358,5 @@ if(typeof module!=="undefined"&&module.exports){
     myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
     MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,resolveMyPage,MY_PAGE_STATE_MESSAGES,
-    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myLatestPeriodOf,myStaffTimeText,buildMyStaffTable,myStaffTableLayout};
+    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,myStaffTimeText,buildMyStaffTable,myStaffTableLayout};
 }

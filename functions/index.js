@@ -885,6 +885,14 @@ exports.purgeInactiveShops = functions
           await db.ref(`tokens/${period.urlToken}`).remove();
         }
       }
+      // スタッフ個別URL（2026-10-04）: 店舗の外にある逆引き・本人のデータ・暗証番号も消す（店舗が無いと二度と使われない孤児になる）。
+      // 申請の記録（staffPages）は店舗のデータごと archived/ に残る。本人のデータ（staffPageData）は退避しない（給料の目安などの個人の入力）
+      for (const t of Object.keys(shopData.staffPages || {})) {
+        if (!isPageTokenCF(t)) continue;
+        await db.ref(`staffPageTokens/${t}`).remove();
+        await db.ref(`staffPageData/${t}`).remove();
+        await db.ref(`staffPagePins/${t}`).remove();
+      }
 
       console.log(`アーカイブ: ${id} (${label}) lastActivity=${raw}`);
     }
@@ -2062,6 +2070,59 @@ exports.unlinkStaff = functions
 // 会社が登録した本人の賃金（第2部 E6）。呼び出し元 uid の shops/{sid}/staffLinks/{uid} の名前の private/pay/{名前} だけを返す。
 // 名前は呼び出し元から受け取らない（他人の賃金は指定できない）。紐付けが無い・名前がスタッフ一覧に無いなら拒否。
 // 閲覧パスコードは求めない（本人の分だけのため）。読むだけで何も書かない
+// ============================================================
+// スタッフ個別URL（2026-10-04・ユーザーの仕様変更）: 給料の暗証番号と、会社が登録した賃金（myPagePin）
+// ============================================================
+// 個別URL（#/m/<pageToken>）はログインが無い（pageToken を知っていることが権限）。給料の画面は4桁の暗証番号で開き、
+// 会社が登録した賃金（private/pay）は**ここで番号を照合してから**本人の分だけ返す（名前は呼び出し元から受け取らず staffPages の name が正）。
+// ハッシュと試行回数は staffPagePins/{pageToken}（ルールでクライアントから読み書きできない）。試行回数はトランザクションで数える
+// （並べて投げて回数の制限を抜けられないように）。判定は functions/my-page.js の純粋関数（tests/my.test.js が照合する）
+const { isPageTokenCF, myPageAccessCF, planMyPagePin } = require("./my-page");
+exports.myPagePin = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
+    const token = data && data.token;
+    if (!isPageTokenCF(token)) throw new functions.https.HttpsError("invalid-argument", "URLが正しくありません");
+    const action = data && data.action;
+    if (!["status", "set", "verify"].includes(action)) throw new functions.https.HttpsError("invalid-argument", "操作が正しくありません");
+    const tokenRec = await readVal(`staffPageTokens/${token}`);
+    const shopId = tokenRec && tokenRec.shopId;
+    if (!isValidShopId(shopId)) throw new functions.https.HttpsError("not-found", "このURLは見つかりませんでした");
+    if (isDemoShop(shopId)) throw new functions.https.HttpsError("permission-denied", "体験版の店舗では使えません");
+    const [pageRec, staff] = await Promise.all([readVal(`shops/${shopId}/staffPages/${token}`), readVal(`shops/${shopId}/staff`)]);
+    const acc = myPageAccessCF({ token, tokenRec, pageRec, staff });
+    throwPlanError(acc);
+    const pin = typeof (data && data.pin) === "string" ? data.pin : "";
+    const currentPin = typeof (data && data.currentPin) === "string" ? data.currentPin : "";
+    const hashOf = (salt, p) => (typeof salt === "string" && /^[0-9]{4}$/.test(p) ? payCodeHashCF(salt, p) : "");
+    const plan = cur => {
+      const salt = action === "set" ? crypto.randomBytes(16).toString("hex") : "";
+      const pr = cur && typeof cur === "object" ? cur : null;
+      return planMyPagePin({ action, pin, currentPin, pinRec: pr, pageRec, now: Date.now(), nowIso: new Date().toISOString(), salt,
+        pinHash: hashOf(pr && pr.salt, pin), currentHash: hashOf(pr && pr.salt, currentPin), newHash: hashOf(salt, pin) });
+    };
+    let r;
+    if (action === "status") r = plan(await readVal(`staffPagePins/${token}`));
+    else {
+      // 手元に値が無いと最初に null で呼ばれる（Admin SDK）。null のときは何も変えずに返し、サーバーの値と食い違えば取り直して呼び直される
+      await db.ref(`staffPagePins/${token}`).transaction(cur => {
+        r = plan(cur);
+        return r.pinPatch !== undefined ? r.pinPatch : cur;
+      });
+    }
+    throwPlanError(r);
+    if (!r.unlocked) return r.result;
+    const name = acc.name;
+    if (!isSafeDbKey(name)) throw new functions.https.HttpsError("failed-precondition", "名前が正しくありません");
+    const [payRec, homeShopId] = await Promise.all([readVal(`shops/${shopId}/private/pay/${name}`), readVal(`shops/${shopId}/settings/staffHomeShop/${name}`)]);
+    const home = typeof homeShopId === "string" && isValidShopId(homeShopId) && homeShopId !== shopId ? homeShopId : "";
+    const homeShopName = home ? await readVal(`global/shops/${home}/name`) : null;
+    const g = planGetMyPay({ shopId, name, staff, payRec, homeShopId: home, homeShopName });
+    throwPlanError(g);
+    return { ...g.result, ...r.result, shopId };
+  });
+
 exports.getMyPay = functions
   .region("asia-northeast1")
   .https.onCall(async (data, context) => {

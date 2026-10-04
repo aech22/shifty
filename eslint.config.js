@@ -154,6 +154,8 @@ const sharedGlobals = {
   planResetStaffPagePin: "writable",
   planStaffPageOp: "writable",
   isValidMyPagePin: "writable",
+  normalizeMyPagePin: "writable",
+  validateMyPagePinInput: "writable",
   buildMyStaffTable: "writable",
   myStaffTableLayout: "writable",
   myLatestPeriodOf: "writable",

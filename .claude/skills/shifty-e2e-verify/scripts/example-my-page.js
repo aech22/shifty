@@ -11,6 +11,9 @@
 //  AL（P3・全員の表）: 「自分のシフト」「全員のシフト」をタップと横スクロール（ホイール）で切り替え。未公開は「まだ公開されていません」。
 //     公開済みは確定値（調整後の時刻）で、空白列は残し・非表示の人は出さず・本人の列に印。10人×16日と30人×31日で 375px に収まる（横スクロール0）
 //     ことと文字サイズを実測。ピンチで拡大した状態（Chromium の page scale）では横スクロールを止める
+//  PN（P4・暗証番号）: 給料タブは暗証番号で開く（CF は stub の "myPage"＝functions/my-page.js の本物の判定）。初回に決める → 開く・会社設定の賃金が
+//     勤務先の編集に出る・番号は平文で保存しない。閉じる → 誤りで開かない（残り回数）→ 正しい番号で開く。別の端末でも番号を求める。5回の誤りで止まる。
+//     管理者のリセットの後は決め直し。CF が使えないときは開かない。閉じている間は設定タブに時給などを出さない
 //  F（オーナー）: 2人目を佐藤として承認 → 改名（佐藤 → 佐藤 花子）で name が移る → 削除で revoked → 同じ名前で再登録しても revoked のまま
 //  X（オーナー）: 編集モーダルから田中の個別URLを取り消す → 開くと「使えなくなりました」
 //  R（閲覧専用の端末）と PROD（本番相当 MY_SCREEN_ENABLED=false）: 申請の一覧が出ない／募集URLに入口が無く #/m/ は個別URLとして開かない
@@ -359,6 +362,100 @@ async function requestPage(h, name, number) {
       V["AL_values_" + k] = !!T.day1 && T.day1[0] === "10/16" && !!T.day2 && T.day2[1] === "有給/有給";
       V["AL_noErrors_" + k] = T.errors.length === 0;
       if (T.zoomed) V.AL_pinchLocks = T.vvScale > 1.5 && T.zoomed.locked === "1" && T.zoomed.ox === "hidden" && T.unzoomed.locked === "0" && T.unzoomed.ox === "auto";
+    } finally { await h.browser.close(); }
+  }
+  // ---------------- PN: 給料の暗証番号（P4）----------------
+  const PIN_CF = { myPagePin: "myPage" };
+  const gateOf = h => h.evaluate(() => { const g = document.querySelector("[data-my-pin-gate]"); return g ? g.getAttribute("data-my-pin-gate") : (document.querySelector("[data-my-pay-unlocked]") ? "unlocked" : null); });
+  const waitGate = (h, v) => h.page.waitForFunction(v => { const g = document.querySelector("[data-my-pin-gate]"); return v === "unlocked" ? !!document.querySelector("[data-my-pay-unlocked]") : g && g.getAttribute("data-my-pin-gate") === v; }, v, { timeout: 10000 }).then(() => true, () => false);
+  const typePin = async (h, pin, pin2) => {
+    await h.setInput('[data-my-input="pin"]', pin);
+    if (pin2 !== undefined) await h.setInput('[data-my-input="pin2"]', pin2);
+    await click(h, '[data-my-action="submitPin"]'); await sleep(h, 600);
+  };
+  dump.shops.S1.private = { ...(dump.shops.S1.private || {}), pay: { "田中": { payType: "hourly", base: 1300, effectiveFrom: "2026-04-01", commute: { amount: 3000, per: "month" } } } };
+  {
+    const h = await openAnon({ hash: "#/m/" + T1, db: dump, wait: '[data-my-view="page"]', cfHandlers: PIN_CF });
+    try {
+      const PN = {};
+      await click(h, '[data-my-tab="settings"]');
+      PN.lockedNote = await waitSel(h, "[data-my-pin-note]");
+      PN.noPayInSettings = await h.evaluate(() => !document.querySelector("[data-my-wp-pay]") && !/1,300円/.test(document.body.innerText));
+      await click(h, '[data-my-tab="pay"]');
+      PN.setGate = await waitGate(h, "set");
+      await typePin(h, "1234", "1235");
+      PN.mismatch = await h.evaluate(() => (document.querySelector('[data-my-msg="error"]') || {}).innerText || "");
+      await typePin(h, "１２３４", "1234");
+      PN.unlocked = await waitGate(h, "unlocked");
+      PN.payTab = await waitSel(h, "[data-my-pay]");
+      PN.pinRec = await db(h, `staffPagePins/${T1}`);
+      await click(h, '[data-my-tab="settings"]');
+      await waitSel(h, '[data-my-section="pin"]');
+      await click(h, '[data-my-action="editWorkplace"]'); await sleep(h, 400);
+      PN.companyPay = await h.evaluate(() => { const e = document.querySelector("[data-my-company-pay]"); return e ? e.innerText : ""; });
+      PN.overflow = await overflowX(h);
+      PN.fonts = await inputFonts(h);
+      await click(h, '[data-my-tab="pay"]');
+      await click(h, '[data-my-action="lockPay"]');
+      PN.relocked = await waitGate(h, "verify");
+      await typePin(h, "0000");
+      PN.wrongMsg = await h.evaluate(() => (document.querySelector('[data-my-msg="error"]') || {}).innerText || "");
+      PN.stillLocked = (await gateOf(h)) === "verify";
+      await typePin(h, "1234");
+      PN.reopened = await waitGate(h, "unlocked");
+      PN.errors = h.errors.slice();
+      dump = await h.evaluate(() => window.__dbDump());
+      R.PN = PN;
+      V.PN_lockedSettings = PN.lockedNote && PN.noPayInSettings;
+      V.PN_setAndOpen = PN.setGate && /一致しません/.test(PN.mismatch) && PN.unlocked && PN.payTab;
+      V.PN_hashOnly = !!PN.pinRec && /^[0-9a-f]{64}$/.test(PN.pinRec.hash) && !JSON.stringify({ ...PN.pinRec, salt: "" }).includes("1234") && PN.pinRec.hash !== "1234";
+      V.PN_companyPayShown = /会社設定/.test(PN.companyPay) && /1,300円/.test(PN.companyPay);
+      V.PN_wrongRejected = PN.relocked && /残り4回/.test(PN.wrongMsg) && PN.stillLocked && PN.reopened;
+      V.PN_layout = PN.overflow <= 0 && PN.fonts.every(f => f >= 16);
+      V.PN_noErrors = PN.errors.length === 0;
+    } finally { await h.browser.close(); }
+  }
+  {
+    const h = await openAnon({ hash: "#/m/" + T1, db: dump, wait: '[data-my-view="page"]', cfHandlers: PIN_CF });
+    try {
+      const PN2 = {};
+      await click(h, '[data-my-tab="pay"]');
+      PN2.otherDeviceAsks = await waitGate(h, "verify");
+      for (let i = 0; i < 5; i++) await typePin(h, "9999");
+      PN2.lockMsg = await h.evaluate(() => (document.querySelector('[data-my-msg="error"]') || {}).innerText || "");
+      await typePin(h, "1234");
+      PN2.lockedEvenCorrect = (await gateOf(h)) === "verify";
+      PN2.errors = h.errors.slice();
+      R.PN2 = PN2;
+      V.PN_otherDeviceAndLockout = PN2.otherDeviceAsks && /15分後/.test(PN2.lockMsg) && PN2.lockedEvenCorrect && PN2.errors.length === 0;
+    } finally { await h.browser.close(); }
+  }
+  {
+    const h = await openOwner({ db: dump });
+    try {
+      await waitText(h, "スタッフ一覧"); await sleep(h, 500);
+      await openEdit(h, "田中");
+      await click(h, '[data-staff-page-action="resetPin"]'); await sleep(h, 700);
+      R.PN3 = { resetAt: await db(h, `shops/S1/staffPages/${T1}/pinResetAt`), errors: h.errors.slice() };
+      dump = await h.evaluate(() => window.__dbDump());
+    } finally { await h.browser.close(); }
+    const h2 = await openAnon({ hash: "#/m/" + T1, db: dump, wait: '[data-my-view="page"]', cfHandlers: PIN_CF });
+    try {
+      await click(h2, '[data-my-tab="pay"]');
+      R.PN3.afterReset = await waitGate(h2, "set");
+      await typePin(h2, "2468", "2468");
+      R.PN3.reopened = await waitGate(h2, "unlocked");
+      R.PN3.errors2 = h2.errors.slice();
+      dump = await h2.evaluate(() => window.__dbDump());
+      V.PN_ownerReset = typeof R.PN3.resetAt === "string" && R.PN3.afterReset && R.PN3.reopened && R.PN3.errors.length === 0 && R.PN3.errors2.length === 0;
+    } finally { await h2.browser.close(); }
+  }
+  {
+    const h = await openAnon({ hash: "#/m/" + T1, db: dump, wait: '[data-my-view="page"]', cfHandlers: { myPagePin: "reject:関数がありません" } });
+    try {
+      await click(h, '[data-my-tab="pay"]');
+      R.PN4 = { gate: await waitGate(h, "error"), pay: await h.evaluate(() => !!document.querySelector("[data-my-pay]")), errors: h.errors.slice() };
+      V.PN_cfUnavailableStaysClosed = R.PN4.gate && !R.PN4.pay && R.PN4.errors.length === 0;
     } finally { await h.browser.close(); }
   }
   // ---------------- F: 改名・削除・再登録の追随 ----------------

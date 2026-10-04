@@ -2079,6 +2079,83 @@ function MyPageStatusScreen({state,shopName,token}){
     </div>
   );
 }
+// ---- 給料の暗証番号（P4）----
+// 照合・保存は Cloud Functions myPagePin だけ（ハッシュと試行回数は staffPagePins＝クライアントから読み書きできない）。
+// 開いた状態は MyPageView のメモリにだけ持つ（再読み込み・10分操作なしで伏せ直す）。CF が使えない（dev は Spark・未デプロイ）ときは開かない
+function myPinErrorText(r){return r&&r.error?String(r.error):"";}
+function MyPinField({label,value,onChange,name,onKeyDown}){
+  return <MyField label={label} type="password" inputMode="numeric" autoComplete="off" maxLength={4} value={value} data-my-input={name}
+    onChange={e=>onChange(e.target.value)} onKeyDown={onKeyDown}/>;
+}
+function MyPagePayGate({token,onUnlock}){
+  const[st,setSt]=useState(undefined); // undefined=確認中・{hasPin,waitSec}・{error}
+  const[f,setF]=useState({pin:"",pin2:""});
+  const[msg,setMsg]=useState({});
+  const[busy,setBusy]=useState(false);
+  const[seq,setSeq]=useState(0);
+  useEffect(()=>{
+    let alive=true;setSt(undefined);
+    myCallCF("myPagePin",{token,action:"status"}).then(r=>{if(alive)setSt(r&&r.ok?{hasPin:!!r.hasPin,waitSec:Number(r.waitSec)||0}:{error:myPinErrorText(r)||"failed"});});
+    return()=>{alive=false;};
+  },[token,seq]);
+  const submit=async()=>{
+    setMsg({});
+    const setting=st&&!st.hasPin;
+    const e=validateMyPagePinInput(f.pin,setting?f.pin2:undefined);
+    if(e){setMsg({error:e});return;}
+    setBusy(true);
+    const r=await myCallCF("myPagePin",{token,action:setting?"set":"verify",pin:normalizeMyPagePin(f.pin)});
+    setBusy(false);
+    if(!r||r.error||!r.ok){setMsg({error:myPinErrorText(r)||"開けませんでした。もう一度お試しください"});setF({pin:"",pin2:""});return;}
+    onUnlock(r);
+  };
+  const onKey=e=>{if(e.key==="Enter"&&!busy)submit();};
+  return(
+    <section style={MY_SECTION} data-my-pin-gate={st===undefined?"loading":st.error?"error":st.hasPin?"verify":"set"}>
+      <div style={MY_SECTION_TITLE}>給料は暗証番号で開きます</div>
+      {st===undefined&&<div style={{fontSize:14,color:"var(--c-text3)"}}>確認しています…</div>}
+      {st&&st.error&&<>
+        <MyMessage error="暗証番号を確認できませんでした（サーバー側の設定が未反映か、通信できません）。時間をおいてもう一度お試しください"/>
+        <button data-my-action="retryPin" onClick={()=>setSeq(x=>x+1)} style={AGray}>もう一度</button>
+      </>}
+      {st&&!st.error&&<>
+        <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:12}}>
+          {st.hasPin?"自分で決めた4桁の暗証番号を入れてください。忘れたときはお店の管理者にリセットしてもらえます。"
+            :"給料の見込みを見るための4桁の暗証番号を決めてください。このURLを知っている人に給料を見られないようにするためのものです。"}
+        </div>
+        <MyPinField label={st.hasPin?"暗証番号":"暗証番号（4桁の数字）"} name="pin" value={f.pin} onChange={v=>setF({...f,pin:v})} onKeyDown={onKey}/>
+        {!st.hasPin&&<MyPinField label="暗証番号（確認）" name="pin2" value={f.pin2} onChange={v=>setF({...f,pin2:v})} onKeyDown={onKey}/>}
+        <MyMessage {...msg}/>
+        <button data-my-action="submitPin" disabled={busy} onClick={submit} style={{...AB,width:"100%",opacity:busy?.6:1}}>{busy?"確認中…":st.hasPin?"開く":"決めて開く"}</button>
+      </>}
+    </section>
+  );
+}
+function MyPagePinChange({token}){
+  const[f,setF]=useState({cur:"",pin:"",pin2:""});
+  const[msg,setMsg]=useState({});
+  const[busy,setBusy]=useState(false);
+  const submit=async()=>{
+    setMsg({});
+    const e=(isValidMyPagePin(f.cur)?null:"いまの暗証番号を入れてください")||validateMyPagePinInput(f.pin,f.pin2);
+    if(e){setMsg({error:e});return;}
+    setBusy(true);
+    const r=await myCallCF("myPagePin",{token,action:"set",currentPin:normalizeMyPagePin(f.cur),pin:normalizeMyPagePin(f.pin)});
+    setBusy(false);
+    setF({cur:"",pin:"",pin2:""});
+    setMsg(r&&r.ok?{ok:"暗証番号を変更しました"}:{error:myPinErrorText(r)||"変更できませんでした"});
+  };
+  return(
+    <section style={MY_SECTION} data-my-section="pin">
+      <div style={MY_SECTION_TITLE}>給料の暗証番号</div>
+      <MyPinField label="いまの暗証番号" name="pinCur" value={f.cur} onChange={v=>setF({...f,cur:v})}/>
+      <MyPinField label="新しい暗証番号" name="pinNew" value={f.pin} onChange={v=>setF({...f,pin:v})}/>
+      <MyPinField label="新しい暗証番号（確認）" name="pinNew2" value={f.pin2} onChange={v=>setF({...f,pin2:v})}/>
+      <MyMessage {...msg}/>
+      <button data-my-action="changePin" disabled={busy} onClick={submit} style={{...AGray,opacity:busy?.6:1}}>{busy?"変更中…":"暗証番号を変更"}</button>
+    </section>
+  );
+}
 // 個別URLの設定タブ: このページ（名前・お店・URL）・勤務先・月間目標（暗証番号で給料を開いている間だけ）
 function MyPageSettingsTab({me,personal,page,shopName,token,payUnlocked}){
   return(
@@ -2090,6 +2167,8 @@ function MyPageSettingsTab({me,personal,page,shopName,token,payUnlocked}){
       </section>
       <MyWorkplacesSection me={me} personal={personal} payLocked={!payUnlocked}/>
       {payUnlocked&&<MyGoalSection me={me}/>}
+      {payUnlocked&&<MyPagePinChange token={token}/>}
+      {!payUnlocked&&<div data-my-pin-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,padding:"0 4px"}}>月間目標と暗証番号の変更は、給料タブで暗証番号を入れると表示されます。</div>}
     </div>
   );
 }
@@ -2108,11 +2187,21 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
   const me=useMemo(()=>page.state==="ok"?myPageSubject({token,shopId,shopName,name:page.name,approvedAt:page.approvedAt,pay}):null,
     [page.state,page.name,token,shopId,shopName,pay]);
   const personal=useMyPersonal(me&&me.base);
+  // 開いた給料は10分操作が無ければ伏せ直す（賃金閲覧パスコードと同じ PAY_UNLOCK_IDLE_MS）。URL の承認状態が変わったときも伏せる
+  useEffect(()=>{
+    if(!pay)return;
+    let t=setTimeout(()=>setPay(null),PAY_UNLOCK_IDLE_MS);
+    const bump=()=>{clearTimeout(t);t=setTimeout(()=>setPay(null),PAY_UNLOCK_IDLE_MS);};
+    window.addEventListener("pointerdown",bump);window.addEventListener("keydown",bump);
+    return()=>{clearTimeout(t);window.removeEventListener("pointerdown",bump);window.removeEventListener("keydown",bump);};
+  },[pay]);
+  useEffect(()=>{if(page.state!=="ok")setPay(null);},[page.state]);
+  const unlockPay=r=>setPay({key:String(Date.now()),byShop:{[shopId]:myCompanyPayOf(r)}});
   if(!boot)return <MyPageStatusScreen state="loading" token={token}/>;
   if(boot.state!=="shop")return <MyPageStatusScreen state={boot.state==="invalid"?"invalid":"missing"} token={token}/>;
   if(rec===undefined)return <MyPageStatusScreen state="loading" shopName={shopName} token={token}/>;
   if(page.state!=="ok")return <MyPageStatusScreen state={page.state} shopName={shopName} token={token}/>;
-  const tabs=MY_PAGE_TABS.filter(t=>t.key!=="pay");
+  const tabs=MY_PAGE_TABS;
   const label=(tabs.find(t=>t.key===tab)||tabs[0]).label;
   // 提出（P2）: 最新の期間へ、承認された名前で。募集URLと同じ StaffView・同じ提出の処理（App の staffOnSub）を通す。
   // 確定済みの期間は StaffView が止め、ルールも拒否する。StaffView は自前のヘッダー（お店・期間）と送信の帯を持つので、外側の枠は付けない
@@ -2137,6 +2226,12 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
           {key:"mine",label:"自分のシフト",node:<MyShiftTab me={me} personal={personal}/>},
           {key:"all",label:"全員のシフト",node:<MyAllShiftTable period={myLatestPeriodOf(periods)} staff={staffList} settings={settings} subs={subs} plan={plan} me={page.name}/>},
         ]}/>}
+        {tab==="pay"&&(pay?<div data-my-pay-unlocked="1">
+          <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
+            <button data-my-action="lockPay" onClick={()=>setPay(null)} style={{...AGray,padding:"6px 12px",fontSize:13}}>給料を閉じる</button>
+          </div>
+          <MyPayTab me={me} personal={personal}/>
+        </div>:<MyPagePayGate token={token} onUnlock={unlockPay}/>)}
         {tab==="settings"&&<MyPageSettingsTab me={me} personal={personal} page={page} shopName={shopName} token={token} payUnlocked={!!pay}/>}
       </main>
       <MyTabBar tab={tab} onTab={setTab} tabs={tabs}/>
