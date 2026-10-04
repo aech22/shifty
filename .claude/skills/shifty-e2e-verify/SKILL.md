@@ -337,6 +337,9 @@ localStorage 上のアカウント表で動く（`window.__authCur()`・`window.
 holdOn を使わないと「購読が届く前の操作」は作れない（example-my-link.js の H・H2 がこの形）。
 マイシフトと「公開」ボタン（E3）は `scripts/example-my-shift.js`。オーナーの端末（`tab:"edit"`・確定の解除の `prompt` は `page.on("dialog")` で答える）と
 スタッフの端末（`auth:"accounts"`・`#/me`）を `__dbDump()` でつなぎ、今日の日付で期間を作る（カレンダーは実行した日の月を出すため）。
+カレンダーへ取り込む前の確認（2026-10-04）は `scripts/example-my-cal-prompt.js`。UA・`maxTouchPoints`・`navigator.standalone` は
+`Navigator.prototype` の getter を extraHead の script で差し替える（Chromium と WebKit の両方で効く）。リンクの既定の動作は window の click で
+`defaultPrevented` を記録してから止め、`window.open` は記録する関数に差し替える。遷移のリクエストにハッシュは載らないので、移り先のハッシュは関数の値で見る。
 手入力の勤務先とシフト・実績の上書き・.ics（E4）は `scripts/example-my-manual.js`。**スタブは `window.confirm` を常に true に差し替える**ので
 （`page.on("dialog")` には何も来ない）、確認の文言は makeStub の後ろに置いた script で confirm を包んで記録する。.ics のダウンロードは
 `URL.createObjectURL` と `HTMLAnchorElement.prototype.click` を差し替えて Blob の中身とファイル名を捕まえる。

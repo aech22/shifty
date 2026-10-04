@@ -1334,6 +1334,17 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 - **TimeTree などで見る案内**（2026-10-04）: マイシフトの .ics の書き出しの下に折りたたみ（`MyIcsAppGuide`・文言は `MY_ICS_APP_GUIDE`）。TimeTree の公式ヘルプで確かめた事実
   （.ics を直接取り込めない・端末の標準カレンダーの予定をホームカレンダーに表示できる＝自動更新・共有カレンダーへのインポートは自動更新されず重複しうる）だけを書き、
   端末（iOS・Android・PC）ごとの3手順を出す。確かめていない他社アプリの名前は出さない。.ics の中身と渡し方は変えていない
+- **カレンダーへ取り込む前の確認**（2026-10-04・ユーザー指示「ホーム画面にブックマークを保存する必要がある、ないしはその他操作が必要ならその操作を促すポップアップ」）:
+  「この月のシフトをカレンダーに取り込む」と日付の詳細の「Google カレンダーに追加」を押したとき、**この端末・このブラウザで追加の操作が要るときだけ**モーダル（`MyCalendarPrompt`）を出す。
+  条件と文言は `myCalendarPromptOf`（app-my-utils.js）1本で、入力は UA・タッチ点・standalone。**ホーム画面への追加は取り込みに不要なので促さない**
+  （iOS 27 のシミュレーターで、Safari のタブとホーム画面から開いた状態＝navigator.standalone の両方で a[download]＋blob が「カレンダーに追加」の画面を出し、閉じると戻った。
+  UA は両方同じ）。ホーム画面から開いた iOS だけ、書き出した後の案内に「出ないときは Safari で開く」の1文を足す（古い iOS で効かない報告があり、UA の OS 表記は 18_7 固定で版を分けられない）。
+  出す環境: アプリの中のブラウザ（LINE・Instagram・Facebook・TikTok・Android の「; wv」・「Safari/」の無い iOS の UA）＝**必須**（「次から表示しない」を覚えていても出す・
+  Google カレンダーのリンクもここだけ確認を出す＝Google は埋め込みのブラウザからのログインを拒否する）、iOS の Safari 以外のブラウザ（CriOS 等）・Android の Chrome・PC の .ics＝**任意**
+  （localStorage `shifty_my_calPrompt_v1` に `{"ics:downloadThenOpen":true}` の形で覚える）。iOS の Safari は出さない。LINE は「Safariで開く／Chromeで開く」で今の URL に
+  `openExternalBrowser=1` を足して移る（`myExternalBrowserUrl`・ハッシュ #/m/… と #/me を保つ）。ほかのアプリは「URL をコピー」（コピーできなければ URL の欄）。
+  #/me ではログインし直しの1行を足す。誤判定しても「このまま書き出す／このまま開く」で先へ進める。確認で手順を見せたときは書き出した後の案内を重ねない。
+  **アプリの中のブラウザの実機は未検証**（シミュレーターに LINE 等が無い。BACKLOG の実機確認 ⑥）。回帰は `example-my-cal-prompt.js`（UA と standalone を差し替える）
 - 検証: tests/my.test.js（トークン・状態・承認と追随の差分・候補・全員の表と寸法・期間と店舗の選び方・暗証番号の計画・CF との一致・ルールの形・入口と書き込み先のドリフト）、
   `shifty-e2e-verify/scripts/example-my-page.js`（スタブ・P1〜P4・375px／320px・WebKit iPhone 13 でも allPass。73942db の配信物では最初の項目で止まる。
   AL0・AL の期間のプルダウンは 89a455c の配信物で EXIT=2）、`example-my-shift.js` の AM（#/me の全員のシフト・89a455c で EXIT=1）、
