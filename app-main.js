@@ -1710,6 +1710,45 @@ function App(){
   // 個別URLの提出先は常に最新の期間。期間が増えたら購読する期間（apid）も追随させる（subs の購読は apid を必ず含む）
   useEffect(()=>{ if(pageRoute!==null&&latestPeriod&&apid!==latestPeriod.id) setApid(latestPeriod.id); },[pageRoute,latestPeriod&&latestPeriod.id,apid]);
 
+  // ---- マイシフトを開いている間のアドレスバー（2026-10-04 ユーザー指示「マイシフトを開き、そのURLを開いたらシフト提出画面がでた」）----
+  // 募集URLの画面に重ねたマイシフトの間は、アドレスバーを「開き直すと同じ画面になる URL」にする（myOverlayHashOf）。
+  // この端末が知っている使える個別URLがあれば個別URLの画面を重ねて #/m/<pageToken>、メールのアカウントでログイン中なら #/me、
+  // どちらでもなければ URL を変えない。切り替えは pushState（同じ文書のまま＝提出画面の入力途中の希望は消えない）で、
+  // 閉じると history.back() で #/s/<token> に戻る。ブラウザの「戻る」でも閉じ、「進む」で開き直す
+  const[pageOverlay,setPageOverlay]=useState(null); // 重ねた個別URLの画面の pageToken（null＝重ねていない）
+  const overlayPushRef=useRef(null);  // いま pushState で切り替えているハッシュ（null＝切り替えていない）
+  const overlayLastRef=useRef(null);  // 最後に切り替えた重ね方 {hash, kind:"page"|"account", token}（「進む」で開き直す）
+  const pushOverlayHash=(h,kind,token)=>{
+    if(!h)return;
+    try{
+      if(!overlayPushRef.current)ssSave(SS_MY_BASE_HASH,location.hash);
+      if(location.hash!==h){
+        const url=location.pathname+location.search+h;
+        if(overlayPushRef.current)history.replaceState({shiftyOverlay:h},"",url);else history.pushState({shiftyOverlay:h},"",url);
+      }
+      overlayPushRef.current=h;overlayLastRef.current={hash:h,kind,token:token||null};
+    }catch(e){console.warn("URLを切り替えられませんでした:",e);}
+  };
+  // メールのアカウントでログインしている（ログインの再読み込みをまたいで開き直した・重ねた画面の中で登録した）なら #/me にする
+  useEffect(()=>{
+    if(!MY_SCREEN_ENABLED||!urlLocked||pageRoute!==null)return;
+    if(myOpen&&!pageOverlay&&staffUser&&!overlayPushRef.current)pushOverlayHash(myOverlayHashOf({account:true}),"account");
+  },[myOpen,pageOverlay,staffUser,urlLocked,pageRoute]);
+  useEffect(()=>{
+    if(!MY_SCREEN_ENABLED||!urlLocked||pageRoute!==null)return;
+    const onPop=()=>{
+      const h=location.hash,pushed=overlayPushRef.current,last=overlayLastRef.current;
+      if(pushed&&h!==pushed){
+        overlayPushRef.current=null;ssSave(SS_MY_OPEN,null);ssSave(SS_MY_BASE_HASH,null);setMyOpen(false);setPageOverlay(null);
+      }else if(!pushed&&last&&h===last.hash){
+        overlayPushRef.current=h;
+        if(last.kind==="page")setPageOverlay(last.token);else{ssSave(SS_MY_OPEN,"1");setMyOpen(true);}
+      }
+    };
+    window.addEventListener("popstate",onPop);
+    return()=>window.removeEventListener("popstate",onPop);
+  },[urlLocked,pageRoute]);
+
   // 初期化失敗画面（匿名認証失敗/ハング・スタッフURL解決失敗。アプリ内ブラウザの制限や無効URLで発生）
   // ローディング判定より先に出す（urlLocked時はapidが確定しないため、これがないと無限ローディングになる）
   // 店舗に入れた（ready && currentShopId確定）場合は表示しない＝遅延後の初期化成功で自動的に消える
