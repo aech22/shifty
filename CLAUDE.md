@@ -605,8 +605,14 @@ Firebase Realtime Database
 │       │                  **ルールは develop の database.rules.json にあるだけで、dev・本番とも未デプロイ**
 │       ├── links/{shopId} ← 本人の紐付けの索引（E2）{name, personId?, at}。**Cloud Functions だけが書く**（ルールに書き込みが無い）。
 │       │                  name は紐付けた時点の写しで、オーナーの端末の改名では書き換わらない——名前は shops/{sid}/staffLinks/{uid}.name を正とする
-│       └── seen/{shopId}/{periodId} ← マイシフトで最後に見た公開内容（E3）{at, days?:{日付: 指紋}}。書きは本人でメールのある認証だけ・
-│                          days のキーは日付・値は40字以内（ルール未デプロイ）。「変更あり」の判定に使う（myChangedDates）
+│       ├── seen/{shopId}/{periodId} ← マイシフトで最後に見た公開内容（E3）{at, days?:{日付: 指紋}}。書きは本人でメールのある認証だけ・
+│       │                  days のキーは日付・値は40字以内（ルール未デプロイ）。「変更あり」の判定に使う（myChangedDates）
+│       ├── workplaces/{id} ← 勤務先（E4）{kind:"shifty"|"manual", color, name?, shopId?}。Shifty の店舗は id＝shopId（name は本人の表示名・無ければ店舗名）、
+│       │                  手入力は id＝"m_"+英数字8桁（name 必須・shopId なし）。**書くのは update だけ**（E5 が同じレコードに pay を足す）。
+│       │                  紐付けが外れても残す（給料設定を消さない）。ルールは pay の子を持たない＝E5 が足す
+│       ├── shifts/{id}  ← 手入力の勤務先のシフト（E4）{workplaceId(m_…), date, start, end, breakMin, memo?}。id＝"h_"+英数字10桁。時刻は "HH:MM"（30:00 まで）
+│       └── overrides/{shopId}/{date} ← 公開済みの Shifty のシフトへの本人の実績（E4）{start, end, breakMin}。本人の画面と給料計算にだけ効く（店舗には送らない）。
+│                          workplaces・shifts・overrides の書きは本人でメールのある認証だけ・形の検証・未知のキーは拒否（ルール未デプロイ）
 ├── companies/
 │   └── {companyId}/     ← 企業アカウント（CompanyTab・企業コード＋パスワード方式。accounts/{uid}のcompanyLinkとは別系統）
 │       ├── pub          ← {name, ownerUid, shops:{shopId:true}}（連携店舗マップ）
@@ -745,6 +751,11 @@ LinkRequest = { displayName: string, number?: string, at: string }              
 StaffLink   = { name: string, personId?: string, method: "number"|"name"|"code", at: string }  // shops/{shopId}/staffLinks/{uid}
 UserLink    = { name: string, personId?: string, at: string }                           // users/{uid}/links/{shopId}
 StaffLinkCode = { shopId: string, name: string, expiry: number, issuedBy: string, createdAt: string }  // staffLinkCodes/{code}
+
+// 従業員画面の本人のデータ（2026-10-04・第2部 E4）。時刻は "HH:MM"（時は2桁・24時超え表記で 30:00 まで・退勤 > 出勤）
+MyWorkplace = { kind: "shifty"|"manual", color: "#rrggbb", name?: string, shopId?: string, pay?: 未定（E5） }  // users/{uid}/workplaces/{shopId | m_xxxxxxxx}
+MyShift     = { workplaceId: string, date: "YYYY-MM-DD", start: string, end: string, breakMin: number, memo?: string }  // users/{uid}/shifts/{h_xxxxxxxxxx}
+MyOverride  = { start: string, end: string, breakMin: number }                                // users/{uid}/overrides/{shopId}/{date}
 
 // 企業設定の写し（shops/{shopId}/company・2026-09-27）
 CompanyLink = { id: string, name: string, entityId?: string, entityName?: string, kind?: "shop"|"hq",   // 法人と本部（2026-09-30・P1）
@@ -1163,6 +1174,32 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 - 検証: tests/core.test.js（公開・取り下げ・確定で同時に公開・解除で残る・差分の形・履歴の表示名・ゲート・入口のドリフト）・tests/my.test.js（グレー／黒・
   写し・非表示・別名・指紋・他人の変更・次のシフト・カレンダー・プラン・色・seen のルールの形・書き込み先）と
   `shifty-e2e-verify/scripts/example-my-shift.js`（スタブ・41項目・375px。E3 前の配信物では17項目が落ちる）。**ルールの実機は未検証**
+
+### 手入力の勤務先とシフト・実績の上書き・.ics（2026-10-04・第2部 E4・develop のみ・ルール未デプロイ・CF なし）
+
+- **本人のデータは MyView が1回読む**（`useMyPersonal`・app-my.js）。`users/{uid}/workplaces`・`shifts`・`overrides` を読み、書いたら手元の状態を合わせる（購読しない）。
+  マイシフトと設定タブが同じものを使う。書き込みは `users/{uid}` への差分 update（`fbUpd`）だけで、店舗のデータには書かない（tests/my.test.js が書き込み先を固定）
+- **勤務先**（設定タブ・`MyWorkplacesSection`）: 一覧は `myWorkplaceList`（Shifty の店舗をリンクの順・手入力を名前の順・リンク解除済みの店舗）。
+  Shifty の店舗の記録は本人が名前か色を変えたときに作る（id＝shopId）。名前が店舗名と同じか空なら持たない。色は `MY_WORKPLACE_COLORS` の6色から選ぶ（自由入力なし）。
+  **紐付けが外れた店舗の記録は残し**「リンク解除済みのお店」として出す（本人が消すと実績の上書きも消える）。手入力の勤務先を消すと**そのシフトも一緒に消す**（確認文に件数）
+- **手入力のシフト**（マイシフトの日付の詳細・`MyManualShiftForm`）: 勤務先・日付・開始・終了・休憩・メモ。時刻は直接入力（`parseMyClockInput`: 9・930・1730・9:30・全角）と5分刻みの選択（0:00〜30:00）。
+  **終了が開始より前なら保存せず、24時超え表記を案内して「26:00 にする」ボタンを出す**（翌日扱いに自動で直さない＝シフト表と同じ表記にそろえる）。
+  同じ勤務先・同じ日・同じ時間のシフトは二重に入れない。手入力のシフトは手入力の勤務先にだけ入る（Shifty の店舗には入れない＝公開分と二重に数えないため）
+- **履歴から追加**: 追加の欄で、同じ勤務先の過去の時間帯（開始・終了・休憩が同じものはまとめ、新しい順に5件）をタップすると選んだ日にそのまま保存する（`myShiftHistoryCandidates`）
+- **実績の上書き**: 公開済みの Shifty のシフトに開始・終了・休憩を入れる（`MyOverrideForm`）。計算は店舗の実績と同じ `resolveActualDay`（退勤延長は足さない・締の追加出勤は残す）。
+  公開と同じ値で保存すると上書きを消す。表示は「実績」と「公開 …」の併記、「公開の時間に戻す」で消す。**「変更あり」の指紋は公開内容（`entry.sched`）で作る**ので上書きしても付かない。
+  Premium でないとき（グレー表示）は上書きを当てない（公開済みの表示が無いため）
+- **次のシフト**は公開済みと手入力の出勤（同じ日は開始の早い順・`myEntryOrder`）
+- **.ics**（`buildMyIcs`）: 表示中の月の公開済み（上書きがあれば上書きの時刻）と手入力のシフト。未公開は含めない。VTIMEZONE（Asia/Tokyo・+0900 の STANDARD 1つ）を同梱して
+  `DTSTART;TZID=Asia/Tokyo:…`。24時超えは翌日の時刻、締の追加出勤は別のイベント。UID は「勤務先と日付（手入力はシフトID）」から作るので書き出し直しても同じ。
+  RFC 5545 の75オクテットの折り返し（UTF-8 の文字の途中では切らない）・エスケープ（`\` `;` `,` 改行）・CRLF。iOS と Google カレンダーの実機での取り込みは未検証
+- **Premium**: 手入力・上書き・.ics・勤務先の追加と編集は `myShiftPremiumOf`（紐付いた店舗のいずれかが Premium）のときだけ。Premium でないときも入れたシフトは表示し、
+  **消すこと（手入力のシフトの削除・上書きを戻す・勤務先の削除）はできる**。本人のデータが読めないとき（ルール未反映）も追加と編集を止める
+- **給料計算（E5）への渡し口**: `myPayWorkDays(entries)`（app-my-utils.js）。マイシフトの entry から未公開を除き、`{date, kind:"shifty"|"manual", workplaceId, shopId, periodId, shiftId,
+  confirmed, source:"published"|"override"|"manual", startMin, endMin, breakMin, workMin, segments, actualDay}` にそろえる。`actualDay` は Shifty の日の `resolveActualDay` の戻り値
+  （上書き適用後・`premiumDayInput` の own にそのまま渡せる）
+- 検証: tests/my.test.js（時刻の入力・24時超え・休憩・ID・勤務先の一覧と update の中身・手入力と Shifty の並び・次のシフト・履歴・上書きと指紋・給料の1日・.ics・ルールの形・書き込み先）と
+  `shifty-e2e-verify/scripts/example-my-manual.js`（スタブ・375px。E4 前の配信物では最初の項目で止まる）。**ルールの実機は未検証**
 
 ---
 
