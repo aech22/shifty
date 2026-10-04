@@ -47,6 +47,8 @@ const MYPG_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "f
  *                                "myPage" は myPagePin（スタッフ個別URLの給料の暗証番号・2026-10-04）。functions/my-page.js の myPageAccessCF・
  *                                planMyPagePin と my-pay.js の planGetMyPay をそのまま通す。ハッシュは app-utils.js の payCodeHash（index.js の
  *                                payCodeHashCF と同じ値）。staffPagePins/{token} に書く（試行回数も）。トランザクションは単純な読み書きで代える。
+ *                                "pageEmail" は setPageEmail・recoverPageUrl（URLをなくしたとき用のメールアドレス・2026-10-04）。functions/my-page.js の
+ *                                planSetPageEmailCF・planRecoverPageUrlCF をそのまま通し、送ろうとしたメールを window.__mails に積む（回数の制限は省く＝CF の検証の領分）。
  *                                "payCode" は setCompanyPayCode（P6a）。現在の番号を照合して企業と連携全店舗の private/payCode を書く。
  *                                "entity" は法人の6本（ensureCompanyEntities / createEntity / renameEntity / assignShopEntity /
  *                                saveEntityConfig / setShopKind）。移行と写しの組み立ては **functions/company-config.js をそのまま読み込んで**
@@ -366,6 +368,7 @@ function makeStub(o) {
   }
 
   window.__cf=[];
+  window.__mails=[];
   function runUnlink(payload){
     // 本物の unlinkStoreFromCompany（functions/index.js）が残す後始末と同じ:
     // companies/{id}/pub/shops/{shopId} を消し、企業uid と grants に載ったuidを owners から外す。
@@ -618,6 +621,46 @@ function makeStub(o) {
           if(pg.error) return pfail(pg.error);
           return {data:Object.assign({},pg.result,pr.result,{shopId:psid})};
         });
+      }
+      if(h==="pageEmail"){
+        var efail=function(e){ return Promise.reject(Object.assign(new Error(e.msg),{code:"functions/"+e.code})); };
+        var ekey=function(em){ return window.payCodeHash(MYPG.PAGE_EMAIL_KEY_SALT_CF,MYPG.normalizePageEmailCF(em)); };
+        var ewrite=function(w){ Object.keys(w||{}).forEach(function(k){ setPath(k,w[k]); }); notify(); };
+        var EBASE="https://shiftyshifty.app";
+        if(name==="setPageEmail"){
+          var et=payload&&payload.token, eact=payload&&payload.action;
+          if(!MYPG.isPageTokenCF(et)) return efail({code:"invalid-argument",msg:"URLが正しくありません"});
+          var etr=getPath("staffPageTokens/"+et), esid=etr&&etr.shopId;
+          if(!esid) return efail({code:"not-found",msg:"このURLは見つかりませんでした"});
+          var epages=getPath("shops/"+esid+"/staffPages")||{}, estaff=getPath("shops/"+esid+"/staff");
+          var eacc=MYPG.myPageAccessCF({token:et,tokenRec:etr,pageRec:epages[et],staff:estaff});
+          if(eacc.error) return efail(eacc.error);
+          var eprev={};
+          Object.keys(epages).forEach(function(t){ var r=epages[t]; if(t!==et&&r&&r.status==="revoked"&&r.name===eacc.name&&getPath("staffPageEmails/"+t)) eprev[t]=getPath("staffPageEmails/"+t); });
+          var em=typeof payload.email==="string"?payload.email:"";
+          return (eact==="set"?ekey(em):Promise.resolve("")).then(function(k){
+            var er=MYPG.planSetPageEmailCF({action:eact,token:et,access:eacc,pages:epages,emailRec:getPath("staffPageEmails/"+et),prevEmailRecs:eprev,email:em,emailKey:k,
+              nowIso:new Date().toISOString(),base:EBASE,shopName:getPath("global/shops/"+esid+"/name")||""});
+            if(er.error) return efail(er.error);
+            ewrite(er.writes);
+            if(er.mail) window.__mails.push(er.mail);
+            return {data:er.result};
+          });
+        }
+        if(name==="recoverPageUrl"){
+          var rem=MYPG.normalizePageEmailCF(typeof (payload&&payload.email)==="string"?payload.email:"");
+          if(!MYPG.isPageEmailCF(rem)) return efail({code:"invalid-argument",msg:"メールアドレスの形が正しくありません"});
+          return ekey(rem).then(function(k){
+            var idx=getPath("staffPageEmailIndex/"+k)||{}, ts={}, ers={}, pbs={}, sbs={}, sns={};
+            Object.keys(idx).forEach(function(t){ var tr=getPath("staffPageTokens/"+t); if(tr&&tr.shopId){ ts[t]=tr.shopId; pbs[tr.shopId]=getPath("shops/"+tr.shopId+"/staffPages")||{};
+              sbs[tr.shopId]=getPath("shops/"+tr.shopId+"/staff"); sns[tr.shopId]=getPath("global/shops/"+tr.shopId+"/name")||""; } var e=getPath("staffPageEmails/"+t); if(e) ers[t]=e; });
+            var rr=MYPG.planRecoverPageUrlCF({email:rem,emailKey:k,index:idx,tokenShops:ts,pagesByShop:pbs,staffByShop:sbs,shopNames:sns,emailRecs:ers,base:EBASE});
+            if(rr.error) return efail(rr.error);
+            ewrite(rr.writes);
+            if(rr.mail) window.__mails.push(rr.mail);
+            return {data:rr.result};
+          });
+        }
       }
       if(h==="payCode"){
         // 本物の setCompanyPayCode（functions/index.js・P6a）と同じ後始末: 現在の番号を照合し（未設定なら 0000）、

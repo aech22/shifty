@@ -100,7 +100,7 @@ async function fillFinish(h, f) {
       V.S1_sendFirst = okLayout(L0) && S.noPasswordFirst && S.sent && S.sentText.includes("tanaka@example.com") && S.resendWait && okLayout(S.sentLayout) && S.editKeeps;
       V.S1_continueUrl = S.sends.length >= 1 && /\?elk=staff&elh=%23%2Fs%2Ft1$/.test(S.sends[0].url) && !S.sends[0].url.includes("tanaka") && S.pending && S.pending.email === "tanaka@example.com" && S.pending.kind === "staff";
       V.S2_finishSameBrowser = S.finish && S.addressShown === "tanaka@example.com" && S.noEmailInput && okLayout(S.finishLayout) && /一致しません/.test(S.mismatch);
-      V.S2_done = S.after.myView && /\/#\/s\/t1$/.test(S.after.url) && !/oobCode/.test(S.after.url) && cur && !cur.isAnonymous && cur.email === "tanaka@example.com" &&
+      V.S2_done = S.after.myView && /\/#\/me$/.test(S.after.url) /* マイシフトを開いている間は開き直せる URL（#/me）になる（d5822bc） */ && !/oobCode/.test(S.after.url) && cur && !cur.isAnonymous && cur.email === "tanaka@example.com" &&
         S.mark && S.mark.uid === cur.uid && S.profile && S.profile.displayName === "田中" && S.profile.number === "012" && S.user && S.user.password === "pass1234" && S.pendingCleared;
       V.S_noErrors = S.errors.length === 0;
     } finally { await h.browser.close(); }

@@ -2948,13 +2948,14 @@ function MyPageSettingsTab({me,personal,page,shopName,token,payUnlocked}){
       {payUnlocked&&<MyGoalSection me={me}/>}
       {payUnlocked&&<MyPagePinChange token={token}/>}
       {!payUnlocked&&<div data-my-pin-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,padding:"0 4px",marginBottom:16}}>月間目標と暗証番号の変更は、給料タブで暗証番号を入れると表示されます。</div>}
+      {/* 個別URLは設定の一番下に置く（2026-10-04 ユーザー指示）。メールの登録はその上 */}
+      <MyPageEmailBox token={token}/>
       <section style={MY_SECTION} data-my-section="page">
         <div style={MY_SECTION_TITLE}>あなたの個別URL</div>
         <div style={{fontSize:14,color:"var(--c-text2)",lineHeight:1.8,marginBottom:10}}>{shopName}の「{page.name}」さんのページです。</div>
         <MyPageUrlBox url={buildMyPageUrl(myPageBaseUrl(),token)} note={MY_PAGE_URL_NOTE}/>
         <div data-my-page-url-admin="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7}}>URLの変更はお店の管理者に依頼してください。</div>
       </section>
-      <MyPageEmailBox token={token}/>
     </div>
   );
 }
