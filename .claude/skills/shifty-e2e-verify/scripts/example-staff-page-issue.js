@@ -55,7 +55,7 @@ const pageState = h => h.evaluate(() => { const e = document.querySelector("[dat
       await openEdit(h, "佐藤");
       const I = {};
       I.none = await waitSel(h, '[data-staff-page="none"]', 5000);
-      I.order = await h.evaluate(() => { const t = document.body.innerText; const a = t.indexOf("スタッフ専用のURL"), b = t.indexOf("メールのアカウントとリンクする場合"); return a >= 0 && b > a; });
+      I.order = await h.evaluate(() => { const t = document.body.innerText; const a = t.indexOf("スタッフ専用のURL"); return a >= 0 && !t.includes("個人リンクコード") && !document.querySelector('[data-staff-link-action="issue"]'); });
       await click(h, '[data-staff-page-action="issue"]');
       I.approved = await waitSel(h, '[data-staff-page="approved"]', 8000);
       T1 = await h.evaluate(() => (document.querySelector('[data-staff-page="approved"]') || { getAttribute: () => null }).getAttribute("data-staff-page-token"));
