@@ -843,6 +843,61 @@ function MyIcsAppGuide(){
     </details>
   );
 }
+// ホーム画面から開いているか（iOS は navigator.standalone、ほかは display-mode）
+function myIsStandalone(){
+  try{return navigator.standalone===true||(typeof matchMedia==="function"&&matchMedia("(display-mode: standalone)").matches);}catch{return false;}
+}
+// カレンダーへ取り込む前の確認（文言と出す条件は app-my-utils.js の myCalendarPromptOf。ここは表示と操作だけ）
+function MyCalendarPrompt({action,prompt,onProceed,onClose}){
+  const panelRef=useRef(null);
+  const[skip,setSkip]=useState(false);
+  const[copy,setCopy]=useState("");
+  const href=typeof location!=="undefined"?location.href:"";
+  const remember=()=>{if(skip&&!prompt.required)ls(MY_CAL_PROMPT_LS,{...(lg(MY_CAL_PROMPT_LS,{})||{}),[myCalendarPromptKey(action,prompt)]:true});};
+  const close=()=>{remember();onClose();};
+  const closeRef=useRef(close);closeRef.current=close;
+  useEffect(()=>{
+    const prev=document.activeElement;
+    if(panelRef.current)panelRef.current.focus();
+    const onKey=ev=>{if(ev.key==="Escape"){ev.preventDefault();closeRef.current();}};
+    document.addEventListener("keydown",onKey);
+    return()=>{document.removeEventListener("keydown",onKey);try{if(prev&&prev.focus)prev.focus();}catch{/* 戻せないときは何もしない */}};
+  },[]);
+  const copyUrl=async()=>{
+    try{await navigator.clipboard.writeText(href);setCopy("ok");}catch{setCopy("manual");}
+  };
+  const proceedLabel=action==="gcal"?"このまま開く":prompt.required?"このまま書き出す":"書き出す";
+  const titleId="my-cal-prompt-title";
+  return(
+    <div data-my-cal-overlay="1" onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId} data-my-cal-prompt={prompt.kind} data-my-cal-prompt-action={action}
+        onClick={ev=>ev.stopPropagation()}
+        style={{background:"var(--c-card)",borderRadius:12,padding:"18px 16px",width:"100%",maxWidth:420,maxHeight:"calc(100vh - 32px)",overflowY:"auto",outline:"none",
+          boxShadow:"0 8px 24px var(--c-shadow)",color:"var(--c-text)",fontSize:14,lineHeight:1.7}}>
+        <div id={titleId} style={{fontSize:16,fontWeight:700,marginBottom:8,overflowWrap:"anywhere"}}>{prompt.title}</div>
+        {prompt.lead&&<div style={{color:"var(--c-text2)",marginBottom:8,overflowWrap:"anywhere"}}>{prompt.lead}</div>}
+        {prompt.steps.length>0&&<ol data-my-cal-steps="1" style={{margin:"0 0 10px",paddingLeft:20,color:"var(--c-text2)"}}>
+          {prompt.steps.map((t,i)=><li key={i} style={{marginBottom:4,overflowWrap:"anywhere"}}>{t}</li>)}
+        </ol>}
+        {copy==="ok"&&<div data-my-cal-copied="1" style={{fontSize:13,color:"var(--c-text2)",marginBottom:8}}>URL をコピーしました</div>}
+        {copy==="manual"&&<div style={{marginBottom:8}}>
+          <div style={{fontSize:13,color:"var(--c-text2)",marginBottom:4}}>コピーできませんでした。下の URL を長押ししてコピーしてください</div>
+          <input data-my-input="calUrl" readOnly value={href} onFocus={ev=>ev.target.select()} style={{...AI,fontSize:16}}/>
+        </div>}
+        <div style={{display:"flex",flexDirection:"column",gap:8,marginTop:6}}>
+          {prompt.openLabel&&<button data-my-action="calOpenExternal" onClick={()=>{const u=myExternalBrowserUrl(href);if(u)location.href=u;}} style={{...AB,minHeight:44}}>{prompt.openLabel}</button>}
+          {prompt.kind==="inApp"||prompt.kind==="iosOther"?<button data-my-action="calCopyUrl" onClick={copyUrl} style={{...AGray,minHeight:44}}>URL をコピー</button>:null}
+          <button data-my-action="calProceed" onClick={()=>{remember();onProceed();}} style={prompt.required?{...AGray,minHeight:44}:{...AB,minHeight:44}}>{proceedLabel}</button>
+          <button data-my-action="calClose" onClick={close} style={{...MY_LINK_BTN,minHeight:44,alignSelf:"center"}}>閉じる</button>
+        </div>
+        {!prompt.required&&<label style={{display:"flex",alignItems:"center",gap:8,marginTop:6,fontSize:13,color:"var(--c-text3)",cursor:"pointer",minHeight:44}}>
+          <input type="checkbox" data-my-input="calSkip" checked={skip} onChange={ev=>setSkip(ev.target.checked)} style={{width:18,height:18,fontSize:16}}/>
+          次から表示しない
+        </label>}
+      </div>
+    </div>
+  );
+}
 function MyShiftTab({me,onGoSettings,personal}){
   const base=me&&me.base;
   const P=personal||{state:"ok",workplaces:{},shifts:{},overrides:{}};
@@ -930,15 +985,33 @@ function MyShiftTab({me,onGoSettings,personal}){
     const r=await P.deleteShift(e.shiftId);
     setBusy("");setDayMsg(r.error?{error:r.error}:{ok:"シフトを削除しました"});
   };
-  const downloadIcs=()=>{
+  // カレンダーへ取り込む前に、この端末・ブラウザで追加の操作が要るときだけ確認を出す（myCalendarPromptOf）
+  const[calPrompt,setCalPrompt]=useState(null); // {action, prompt, run}
+  const calEnv=()=>myCalendarEnvOf({ua:navigator.userAgent,maxTouchPoints:navigator.maxTouchPoints,standalone:myIsStandalone()});
+  const withCalPrompt=(action,run)=>{
+    const p=myCalendarPromptOf(calEnv(),action,{needsLogin:/^#\/me(\/|$)/.test(location.hash)});
+    if(!myCalendarPromptShown(p,action,lg(MY_CAL_PROMPT_LS,{})||{})){run(false);return;}
+    setCalPrompt({action,prompt:p,run});
+  };
+  const writeIcs=prompted=>{
     const list=myIcsEntriesForMonth(entries,ym);
-    if(!list.length){setIcsMsg({error:"この月に取り込めるシフトがありません（公開済みと手入力のシフトだけが入ります）"});return;}
     const{text,count}=buildMyIcs(list,{nowIso:new Date().toISOString()});
     myDownloadIcs(text,`shifty-${ym}.ics`);
-    // 渡し方は全端末で同じ（a[download]＋blob。iOS 27 の Safari ではこれで「n件の予定 / すべて追加」の画面が直接出ることをシミュレーターで確認済み）。
-    // 端末ごとに変えるのは書き出した後の案内だけ（Google カレンダーはスマホのアプリで .ics を開けない等）
-    const plat=myIcsPlatformOf(navigator.userAgent,navigator.maxTouchPoints);
-    setIcsMsg({ok:`${count}件のシフトを書き出しました。${MY_ICS_HINTS[plat]}`});
+    // 渡し方は全端末で同じ（a[download]＋blob。iOS 27 の Safari ではこれで「n件の予定 / すべて追加」の画面が直接出ることをシミュレーターで確認済み。
+    // ホーム画面から開いた状態でも同じ画面が出る）。端末ごとに変えるのは書き出した後の案内だけ。確認を出したときは手順を見せたので案内を重ねない
+    const env=calEnv();
+    const tail=prompted?"":MY_ICS_HINTS[env.platform]+(env.platform==="ios"&&env.standalone?MY_ICS_STANDALONE_NOTE:"");
+    setIcsMsg({ok:`${count}件のシフトを書き出しました。${tail}`});
+  };
+  const downloadIcs=()=>{
+    if(!myIcsEntriesForMonth(entries,ym).length){setIcsMsg({error:"この月に取り込めるシフトがありません（公開済みと手入力のシフトだけが入ります）"});return;}
+    withCalPrompt("ics",writeIcs);
+  };
+  const openGcal=(ev,url)=>{
+    const p=myCalendarPromptOf(calEnv(),"gcal",{needsLogin:/^#\/me(\/|$)/.test(location.hash)});
+    if(!myCalendarPromptShown(p,"gcal",lg(MY_CAL_PROMPT_LS,{})||{}))return; // そのままリンクを開く
+    ev.preventDefault();
+    setCalPrompt({action:"gcal",prompt:p,run:()=>{window.open(url,"_blank","noopener,noreferrer");}});
   };
 
   if(links===null)return <MyEmptyState><MyMessage error="お店とのリンクを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/></MyEmptyState>;
@@ -1023,6 +1096,8 @@ function MyShiftTab({me,onGoSettings,personal}){
         <MyMessage {...icsMsg}/>
         <MyIcsAppGuide/>
       </div>}
+      {calPrompt&&<MyCalendarPrompt action={calPrompt.action} prompt={calPrompt.prompt}
+        onProceed={()=>{const r=calPrompt.run;setCalPrompt(null);r(true);}} onClose={()=>setCalPrompt(null)}/>}
 
       <section style={{...MY_SECTION,padding:"14px 16px"}} data-my-day={sel}>
         <div style={{fontSize:15,fontWeight:700,color:"var(--c-text)"}}>{myFmtDate(sel)}</div>
@@ -1036,7 +1111,7 @@ function MyShiftTab({me,onGoSettings,personal}){
             <div key={myEntryKey(e)+"|"+i}>
               <MyShiftEntryRow e={e} changed={isChanged(e)} actions={open?null:actions}/>
               {canEdit&&!open&&myGoogleCalendarLinks(e).map((g,j)=>(
-                <a key={j} data-my-gcal={e.date} href={g.url} target="_blank" rel="noopener noreferrer" style={{...MY_LINK_BTN,display:"inline-block",fontSize:13,color:"var(--c-text3)",padding:"2px 0 6px",marginRight:14}}>
+                <a key={j} data-my-gcal={e.date} href={g.url} target="_blank" rel="noopener noreferrer" onClick={ev=>openGcal(ev,g.url)} style={{...MY_LINK_BTN,display:"inline-block",fontSize:13,color:"var(--c-text3)",padding:"2px 0 6px",marginRight:14}}>
                   {g.extra?"Google カレンダーに追加（追加の勤務）":"Google カレンダーに追加"}
                 </a>
               ))}

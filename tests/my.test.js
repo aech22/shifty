@@ -1506,3 +1506,102 @@ test("個別URL（P4）: CF myPagePin は名前を受け取らず、照合が通
   assert.ok(!/staffPagePins/.test(my.replace(/\/\/[^\n]*/g, "")), "クライアントは暗証番号の置き場を読み書きしない");
   assert.ok(/myCallCF\("myPagePin",\{token,action:"status"\}\)/.test(my));
 });
+
+test("カレンダーへ取り込む前の確認（2026-10-04・端末とブラウザごと）", () => {
+  const UA = {
+    iosSafari: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Mobile/15E148 Safari/604.1",
+    // ホーム画面から開いた状態の UA は Safari のタブと同じ（iOS 27 のシミュレーターで実測）
+    iosStandalone: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Mobile/15E148 Safari/604.1",
+    ipad: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+    iosChrome: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/130.0.6723.90 Mobile/15E148 Safari/604.1",
+    iosLine: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Safari Line/14.16.0",
+    androidLine: "Mozilla/5.0 (Linux; Android 14; Pixel 8 Build/AP2A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/130.0.6723.86 Mobile Safari/537.36 Line/14.16.0/IAB",
+    iosInstagram: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 350.0.0.25.104 (iPhone15,2; iOS 18_7; ja_JP; ja; scale=3.00; 1179x2556; 642155385)",
+    androidInstagram: "Mozilla/5.0 (Linux; Android 14; Pixel 8; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/130.0.6723.86 Mobile Safari/537.36 Instagram 350.0.0.25.104 Android",
+    iosFacebook: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/FBIOS;FBAV/480.0.0.40.104;FBBV/650000000;FBDV/iPhone15,2;FBMD/iPhone;FBSN/iOS;FBSV/18.7;FBSS/3;FBID/phone;FBLC/ja_JP;FBOP/5]",
+    iosWebView: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
+    androidWebView: "Mozilla/5.0 (Linux; Android 10; K; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/125.0.0.0 Mobile Safari/537.36",
+    androidChrome: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36",
+    winChrome: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    macSafari: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15",
+    winEdge: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+    macFirefox: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:131.0) Gecko/20100101 Firefox/131.0",
+    linux: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+  };
+  const env = (k, o) => m.myCalendarEnvOf({ ua: UA[k], maxTouchPoints: /ipad|ios/i.test(k) ? 5 : 0, ...(o || {}) });
+  const p = (k, action, o, eo) => m.myCalendarPromptOf(env(k, eo), action, o);
+  // 判定の素
+  assert.deepStrictEqual(m.myInAppBrowserOf(UA.iosLine), { id: "line", name: "LINE" });
+  assert.deepStrictEqual(m.myInAppBrowserOf(UA.androidLine), { id: "line", name: "LINE" });
+  assert.strictEqual(m.myInAppBrowserOf(UA.iosInstagram).id, "instagram");
+  assert.strictEqual(m.myInAppBrowserOf(UA.androidInstagram).id, "instagram");
+  assert.strictEqual(m.myInAppBrowserOf(UA.iosFacebook).id, "facebook");
+  assert.strictEqual(m.myInAppBrowserOf(UA.iosWebView).id, "webview");
+  assert.strictEqual(m.myInAppBrowserOf(UA.androidWebView).id, "webview");
+  for (const k of ["iosSafari", "iosStandalone", "ipad", "iosChrome", "androidChrome", "winChrome", "macSafari", "winEdge", "macFirefox", "linux"]) {
+    assert.strictEqual(m.myInAppBrowserOf(UA[k]), null, k + " はアプリの中ではない");
+  }
+  assert.strictEqual(m.myInAppBrowserOf("Mozilla/5.0 (X11; Linux x86_64) Gecko Firefox/131.0"), null, "Linux を Line と取り違えない");
+  assert.strictEqual(m.myInAppBrowserOf(undefined), null);
+  assert.strictEqual(env("iosChrome").iosOther, true);
+  assert.strictEqual(env("iosSafari").iosOther, false);
+  // .ics: iOS の Safari はタブでもホーム画面から開いた状態でも出さない（シミュレーターで取り込みの画面がそのまま出た）
+  assert.strictEqual(p("iosSafari", "ics"), null);
+  assert.strictEqual(p("iosStandalone", "ics", {}, { standalone: true }), null, "ホーム画面への追加は取り込みに不要なので促さない");
+  assert.strictEqual(p("ipad", "ics"), null);
+  // iOS の Safari 以外のブラウザ: 任意（覚えられる）
+  const ic = p("iosChrome", "ics");
+  assert.ok(ic && ic.kind === "iosOther" && ic.required === false && /Safari/.test(ic.lead) && !ic.openLabel);
+  // アプリの中のブラウザ: 必須・LINE だけ外部ブラウザのボタン
+  const il = p("iosLine", "ics");
+  assert.ok(il.kind === "inApp" && il.required && il.openLabel === "Safariで開く" && /LINE/.test(il.title) && il.steps.length === 2);
+  const al = p("androidLine", "ics");
+  assert.ok(al.kind === "inApp" && al.required && al.openLabel === "Chromeで開く" && /Chrome/.test(al.lead));
+  for (const k of ["iosInstagram", "androidInstagram", "iosFacebook", "iosWebView", "androidWebView"]) {
+    const x = p(k, "ics");
+    assert.ok(x.kind === "inApp" && x.required && x.openLabel === null && /URL をコピー/.test(x.steps[0]), k);
+  }
+  assert.ok(p("iosWebView", "ics").title === "アプリの中で開いています");
+  // メールのアカウント（#/me）は開いたブラウザでログインし直す1行を足す（個別URLは足さない）
+  assert.strictEqual(p("iosLine", "ics", { needsLogin: true }).steps.length, 3);
+  assert.ok(/ログイン/.test(p("iosLine", "ics", { needsLogin: true }).steps[2]));
+  // Android の Chrome・PC: ダウンロード後に開く（任意）
+  const ac = p("androidChrome", "ics");
+  assert.ok(ac.kind === "downloadThenOpen" && !ac.required && ac.steps.length === 3 && /Google カレンダーのアプリは \.ics を開けません/.test(ac.steps[2]));
+  for (const k of ["winChrome", "macSafari", "winEdge", "macFirefox", "linux"]) {
+    const x = p(k, "ics");
+    assert.ok(x.kind === "downloadThenOpen" && !x.required && x.steps.length === 3 && /インポート \/ エクスポート/.test(x.steps[2]), k);
+  }
+  // Google カレンダーに追加: アプリの中のブラウザだけ（Google は埋め込みのブラウザからのログインを拒否する）
+  for (const k of ["iosSafari", "iosChrome", "androidChrome", "winChrome", "macSafari"]) assert.strictEqual(p(k, "gcal"), null, k);
+  assert.strictEqual(p("iosStandalone", "gcal", {}, { standalone: true }), null);
+  const gl = p("iosLine", "gcal");
+  assert.ok(gl.required && /Google にログイン/.test(gl.lead) && /Google カレンダーに追加/.test(gl.steps[1]));
+  // 「次から表示しない」: 任意のものだけ覚える。必須は覚えていても出す
+  assert.strictEqual(m.myCalendarPromptKey("ics", ac), "ics:downloadThenOpen");
+  assert.strictEqual(m.myCalendarPromptShown(ac, "ics", {}), true);
+  assert.strictEqual(m.myCalendarPromptShown(ac, "ics", { "ics:downloadThenOpen": true }), false);
+  assert.strictEqual(m.myCalendarPromptShown(il, "ics", { "ics:inApp": true }), true, "必須は覚えていても出す");
+  assert.strictEqual(m.myCalendarPromptShown(null, "ics", {}), false);
+  assert.strictEqual(m.myCalendarPromptShown(ac, "ics", null), true);
+  // 手順は3つまで・文言に絵文字を使わない
+  for (const k of Object.keys(UA)) for (const a of ["ics", "gcal"]) for (const nl of [false, true]) {
+    const x = p(k, a, { needsLogin: nl });
+    if (!x) continue;
+    assert.ok(x.steps.length <= 3, `${k} ${a} 手順は3つまで`);
+    assert.ok(![x.title, x.lead, ...x.steps].join("").match(/\p{Extended_Pictographic}/u), "絵文字なし");
+  }
+  // LINE の外部ブラウザで開く URL: ハッシュとほかのクエリを保つ・二重に付けない
+  assert.strictEqual(m.myExternalBrowserUrl("https://shiftyshifty.app/#/m/abcDEF123"), "https://shiftyshifty.app/?openExternalBrowser=1#/m/abcDEF123");
+  assert.strictEqual(m.myExternalBrowserUrl("https://shiftyshifty.app/?openExternalBrowser=1#/me"), "https://shiftyshifty.app/?openExternalBrowser=1#/me");
+  assert.strictEqual(m.myExternalBrowserUrl("https://shiftyshifty.app/?plan=premium#/m/x"), "https://shiftyshifty.app/?plan=premium&openExternalBrowser=1#/m/x");
+  assert.strictEqual(m.myExternalBrowserUrl("blob:https://x/1"), "");
+  assert.strictEqual(m.myExternalBrowserUrl("javascript:alert(1)"), "");
+  assert.strictEqual(m.myExternalBrowserUrl(""), "");
+  // ホーム画面から開いた iOS の書き出し後の1文（促すのではなく、出ないときの逃げ道）
+  assert.ok(/ホーム画面/.test(m.MY_ICS_STANDALONE_NOTE) && /Safari/.test(m.MY_ICS_STANDALONE_NOTE));
+  // 入口: .ics の書き出しと Google カレンダーのリンクの両方が確認を通る
+  const myjs = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  assert.ok(/withCalPrompt\("ics",writeIcs\)/.test(myjs), ".ics の書き出しは確認を通る");
+  assert.ok(/data-my-gcal=\{e\.date\}[^>]*onClick=\{ev=>openGcal\(ev,g\.url\)\}/.test(myjs), "Google カレンダーのリンクも確認を通る");
+});

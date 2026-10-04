@@ -790,6 +790,98 @@ function myGoogleCalendarLinks(e){
   });
 }
 
+// ===== カレンダーへ取り込む前の確認（2026-10-04・ユーザー指示「カレンダー同期の際、ホーム画面にブックマークを保存する必要がある、
+// ないしはその他操作が必要ならその操作を促すポップアップを表示する」）=====
+// 確かめた事実（2026-10-04）:
+//   ・iOS の Safari（タブ）: a[download]＋blob で「カレンダーに追加」の画面が直接出る（iOS 27 のシミュレーター）
+//   ・iOS のホーム画面に追加して開いた状態（navigator.standalone=true・ウェブアプリとして開く）: 同じ渡し方で同じ画面が出て、閉じるとアプリに戻る
+//     （iOS 27 のシミュレーター。UA は Safari のタブと同じ）。**ホーム画面への追加は取り込みに不要で、妨げにもならない**ので促さない。
+//     古い iOS ではホーム画面のアプリのダウンロードが効かない・閉じられない報告がある（WebKit Bugzilla 231892〔iOS 13〜15〕・275288〔iOS 17〕）ので、
+//     書き出した後の案内に「画面が出ないときは Safari で開く」を1文足すだけにする（UA の OS 表記は 18_7 に固定されていて版で分けられない）
+//   ・アプリの中のブラウザ（LINE・Instagram・Facebook・TikTok 等）: WKWebView は blob: の a[download] に対応しない（WebKit Bugzilla 216918）、
+//     ダウンロードはアプリ側の実装（iOS は WKDownload・Android は DownloadListener）が要る。Google は埋め込みのブラウザからの OAuth を
+//     2021-09-30 から拒否している（Google Developers Blog）。**実機では未確認**（シミュレーターに LINE 等が無い）ので「取り込めないことがある」と書く
+//   ・LINE は URL の openExternalBrowser=1 で外部ブラウザで開く（LINE Developers「LINE URL スキーム」の「外部ブラウザで開く」。
+//     LINE の中のブラウザで開いているページから、この印を付けた URL へ移ったときに外部ブラウザへ切り替わるかは未確認）
+//   ・Android の WebView は UA に「; wv」が入る（Android Developers Blog 2024-12「User-Agent reduction on Android WebView」）
+//   ・Android の Chrome・PC: ファイルはダウンロードされるだけで、開く操作が要る（Google カレンダーのアプリは .ics を開けない＝MY_ICS_HINTS と同じ）
+// 判定は UA だけ（X・Slack は印が無く判定できない＝アプリの中でも「なし」になる）。誤判定しても「このまま書き出す」で先へ進める
+const MY_IN_APP_BROWSERS=[
+  {id:"line",name:"LINE",re:/\bLine\/\d/},
+  {id:"instagram",name:"Instagram",re:/\bInstagram\b/},
+  {id:"facebook",name:"Facebook",re:/FBAN\/|FBAV\/|FB_IAB|FBIOS/},
+  {id:"tiktok",name:"TikTok",re:/musical_ly|BytedanceWebview|TikTok/},
+];
+function myInAppBrowserOf(ua){
+  const u=String(ua||"");
+  const hit=MY_IN_APP_BROWSERS.find(b=>b.re.test(u));
+  if(hit)return{id:hit.id,name:hit.name};
+  if(/Android/.test(u)&&/;\s*wv\)/.test(u))return{id:"webview",name:"アプリ"};
+  // iOS の Safari・ホーム画面のアプリ・Chrome（CriOS）等は UA に「Safari/」が入る。入らない iOS の UA はアプリの中のブラウザ（WKWebView の既定の UA）
+  if(/iPhone|iPad|iPod/.test(u)&&!/Safari\//.test(u))return{id:"webview",name:"アプリ"};
+  return null;
+}
+function myCalendarEnvOf(o){
+  const x=o||{};
+  const ua=String(x.ua||"");
+  const platform=myIcsPlatformOf(ua,x.maxTouchPoints);
+  const inApp=myInAppBrowserOf(ua);
+  // iOS の Safari 以外のブラウザ（Chrome＝CriOS・Firefox＝FxiOS・Edge＝EdgiOS・Opera＝OPiOS 等）
+  const iosOther=platform==="ios"&&!inApp&&/CriOS|FxiOS|EdgiOS|OPiOS|OPT\/|GSA\/|YaBrowser|DuckDuckGo/.test(ua);
+  return{platform,inApp,standalone:!!x.standalone,iosOther};
+}
+// action: "ics"（.ics の書き出し）| "gcal"（Google カレンダーに追加のリンク）。o.needsLogin: メールのアカウントの画面（#/me）
+// 戻り値: null（そのまま進める）| {kind, required, title, lead, steps[], openLabel?}
+//   required=true は「そのままでは取り込めないことが多い」環境。「次から表示しない」を覚えていても出す
+function myCalendarPromptOf(env,action,o){
+  const e=env||{};const x=o||{};
+  const browser=e.platform==="android"?"Chrome":e.platform==="ios"?"Safari":"ブラウザ";
+  const again=action==="gcal"?"開いたページで、日付の詳細の「Google カレンダーに追加」をもう一度押します":"開いたページで、もう一度「この月のシフトをカレンダーに取り込む」を押します";
+  const login=x.needsLogin?["メールのアカウントの画面は、開いたブラウザでもう一度ログインします"]:[];
+  if(e.inApp){
+    const line=e.inApp.id==="line";
+    return{kind:"inApp",required:true,
+      title:`${e.inApp.name}の中で開いています`,
+      lead:action==="gcal"?`アプリの中のブラウザでは Google にログインできないことがあります。${browser}で開いてから追加してください。`
+        :`アプリの中のブラウザでは、カレンダーのファイルを受け取れないことがあります。${browser}で開いてから取り込んでください。`,
+      steps:[line?`下の「${browser}で開く」を押します`:`画面の「…」などのメニューから、${browser}（ブラウザ）で開く項目を選びます。見つからないときは「URL をコピー」して${browser}に貼り付けます`,again,...login],
+      openLabel:line?`${browser}で開く`:null};
+  }
+  if(action!=="ics")return null;
+  if(e.platform==="ios"){
+    if(!e.iosOther)return null; // Safari（タブ・ホーム画面のアプリ）はそのまま取り込める
+    return{kind:"iosOther",required:false,title:"Safari で開くと、そのまま取り込めます",
+      lead:"iPhone の Safari では、押すとカレンダーに追加する画面がそのまま出ます。このブラウザでその画面が出ないときは、Safari でこのページを開いてもう一度押してください。",
+      steps:[],openLabel:null};
+  }
+  if(e.platform==="android")return{kind:"downloadThenOpen",required:false,title:"ダウンロードしたファイルを開いて追加します",lead:"",
+    steps:["「書き出す」を押すと、.ics のファイルがダウンロードされます",
+      "通知かダウンロードの一覧からファイルを開き、カレンダーのアプリを選びます",
+      "Google カレンダーのアプリは .ics を開けません。Google カレンダーだけのときは、日付の詳細の「Google カレンダーに追加」から1件ずつ追加します"],openLabel:null};
+  return{kind:"downloadThenOpen",required:false,title:"ダウンロードしたファイルを開いて追加します",lead:"",
+    steps:["「書き出す」を押すと、.ics のファイルがダウンロードされます",
+      "ファイルを開くと、Outlook や Apple のカレンダーなどに追加できます",
+      "Google カレンダーは、パソコンのブラウザで Google カレンダーの「設定 → インポート / エクスポート」からこのファイルを選びます"],openLabel:null};
+}
+// 「次から表示しない」の記録（端末の localStorage・{"ics:downloadThenOpen":true} の形）
+const MY_CAL_PROMPT_LS="shifty_my_calPrompt_v1";
+function myCalendarPromptKey(action,prompt){return`${action}:${prompt&&prompt.kind}`;}
+function myCalendarPromptShown(prompt,action,remembered){
+  if(!prompt)return false;
+  if(prompt.required)return true;
+  return!(remembered&&remembered[myCalendarPromptKey(action,prompt)]);
+}
+// ホーム画面から開いた iOS で書き出した後に足す1文（シミュレーターの iOS 27 では不要だったが、古い iOS の報告があるため）
+const MY_ICS_STANDALONE_NOTE="ホーム画面から開いていてその画面が出ないときは、Safari でこのページを開いてもう一度押してください。";
+// LINE の外部ブラウザで開く URL（今の URL に openExternalBrowser=1 を足す。ハッシュ（#/m/… ・#/me）とほかのクエリはそのまま）
+function myExternalBrowserUrl(href){
+  let u;
+  try{u=new URL(String(href||""));}catch{return"";}
+  if(!/^https?:$/.test(u.protocol))return"";
+  u.searchParams.set("openExternalBrowser","1");
+  return u.toString();
+}
+
 // ===== 給料（2026-10-04・第2部 E5・E6）=====
 // 計画書 E.2「給料」「設定」・E.4・E.5。金額は**目安**（月次賃金＝給与計算の元とは別物）。
 // データ（すべて users/{uid} の下・本人のみ）:
@@ -1415,6 +1507,7 @@ if(typeof module!=="undefined"&&module.exports){
     MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_OPTIONS,MY_BREAK_OPTIONS,parseMyMinutesInput,
     MY_OVERNIGHT_HINT,validateMyShiftInput,buildMyShiftRecord,myShiftDuplicateOf,myOverrideOf,planMyOverride,myWorkplaceList,myNextWorkplaceColor,validateMyWorkplaceInput,buildMyWorkplacePatch,
     buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth,myIcsPlatformOf,MY_ICS_HINTS,MY_ICS_APP_GUIDE,myGoogleCalendarLinks,
+    MY_IN_APP_BROWSERS,myInAppBrowserOf,myCalendarEnvOf,myCalendarPromptOf,MY_CAL_PROMPT_LS,myCalendarPromptKey,myCalendarPromptShown,MY_ICS_STANDALONE_NOTE,myExternalBrowserUrl,
     MY_PAY_END_DAY,MY_PAY_HOLIDAY_RULES,MY_PAY_HOLIDAY_RULE_LABELS,MY_PAY_WAGE_TYPES,MY_PAY_WAGE_TYPE_LABELS,MY_PAY_OFFSET_LABELS,MY_PAY_YEN_MAX,MY_PAY_GOAL_MAX,MY_PAY_DEFAULT,
     MY_MANUAL_NIGHT_PCT,MY_MANUAL_OVER8_PCT,MY_MANUAL_OVER8_MIN,myPayDayLabel,myPayOf,validateMyPayInput,buildMyPayRecord,myPayFormOf,parseMyGoalInput,myGoalOf,parseMyReceivedInput,
     myClampDay,myClosingMonthOf,myClosingRangeOf,myPayDateOf,myPayPlanOf,myPayMonthOfDate,myPeriodsInRange,myPayReadRange,myShiftyDayInfo,myMonthSettingsOf,

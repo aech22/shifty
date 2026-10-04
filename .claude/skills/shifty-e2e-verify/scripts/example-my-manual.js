@@ -255,13 +255,19 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       // D（.ics）はこの状態で書き出す（上書きの時刻が入る）
       await click(h, '[data-my-action="ics"]');
       await sleep(h, 300);
+      // PC・Android では書き出す前に確認が出る（2026-10-04・example-my-cal-prompt.js が詳しく見る）。iOS の Safari では出ない
+      const calPrompt = await h.evaluate(() => { const d = document.querySelector("[data-my-cal-prompt]"); return d ? { kind: d.getAttribute("data-my-cal-prompt"), text: d.innerText } : null; });
+      if (calPrompt) { await click(h, '[data-my-action="calProceed"]'); await sleep(h, 300); }
       const ics = await h.evaluate(async () => ({ names: window.__dl.slice(), text: window.__lastBlob ? await window.__lastBlob.text() : "", type: window.__lastBlob ? window.__lastBlob.type : "" }));
       R.D = { names: ics.names, type: ics.type, text: ics.text };
       // 書き出した後の案内は端末ごと（このハーネスはデスクトップの Chromium＝Google カレンダーの「インポート」を案内する）
       R.D.msg = await h.evaluate(() => { const b = document.querySelector('[data-my-action="ics"]'); const m = b && b.parentElement.querySelector("[data-my-msg]"); return m ? m.getAttribute("data-my-msg") + ":" + m.innerText : ""; });
       // WebKit の iPhone（SHIFTY_DEVICE）で回すと iOS の案内になる（「すべてを追加」）。それ以外はデスクトップの案内
       const IOS = !!process.env.SHIFTY_DEVICE && /iPhone|iPad/.test(process.env.SHIFTY_DEVICE);
-      V.D_icsHint = /^ok:3件のシフトを書き出しました。/.test(R.D.msg) && R.D.msg.includes(IOS ? "すべてを追加" : "設定 → インポート / エクスポート");
+      // PC では確認の手順に「インポート / エクスポート」があり、書き出した後の案内は重ねない
+      R.D.calPrompt = calPrompt;
+      V.D_icsHint = IOS ? (!calPrompt && /^ok:3件のシフトを書き出しました。/.test(R.D.msg) && R.D.msg.includes("すべてを追加"))
+        : (!!calPrompt && calPrompt.kind === "downloadThenOpen" && calPrompt.text.includes("設定 → インポート / エクスポート") && R.D.msg === "ok:3件のシフトを書き出しました。");
       // TimeTree などの案内（折りたたみ・2026-10-04）。閉じた状態で置き、開くとこの端末（デスクトップ）の3手順と、
       // ホームカレンダーは自動で反映・共有カレンダーへのインポートは重複しうる、の注記
       R.D.apps = await h.evaluate(() => { const d = document.querySelector("[data-my-ics-apps]"); if (!d) return null;

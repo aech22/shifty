@@ -106,6 +106,14 @@ const sharedGlobals = {
   myIcsPlatformOf: "writable",
   MY_ICS_HINTS: "writable",
   myGoogleCalendarLinks: "writable",
+  // カレンダーへ取り込む前の確認（2026-10-04）
+  myCalendarEnvOf: "writable",
+  myCalendarPromptOf: "writable",
+  MY_CAL_PROMPT_LS: "writable",
+  myCalendarPromptShown: "writable",
+  myCalendarPromptKey: "writable",
+  MY_ICS_STANDALONE_NOTE: "writable",
+  myExternalBrowserUrl: "writable",
   // 給料（第2部 E5・E6）: app-my-utils.js の純粋関数（app-my.js が使う）
   MY_PAY_END_DAY: "writable",
   myPayDayLabel: "writable",
