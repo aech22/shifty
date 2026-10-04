@@ -591,6 +591,11 @@ Firebase Realtime Database
 │                              ※ inviteCode / members は旧・招待コード方式のもので 2026-08-24 に削除済み（8384467）
 ├── email_otps/
 │   └── {uid}            ← {code, email, emailLink, expiry, attempts}（OTP・5回失敗で無効化）
+├── users/
+│   └── {uid}/           ← 従業員画面のスタッフアカウント（2026-10-04・第2部 E1）。**読みは本人だけ**（auth.uid === $uid）
+│       └── profile      ← {displayName, number?, updatedAt}。書きは本人で**メールのある認証**だけ（auth.token.email != null＝匿名のままの uid は不可）。
+│                          E2 以降は同じ users/{uid} の下に links・workplaces・shifts・overrides・actuals・goals・seen を足す（計画書 E.4）。
+│                          **ルールは develop の database.rules.json にあるだけで、dev・本番とも未デプロイ**
 ├── companies/
 │   └── {companyId}/     ← 企業アカウント（CompanyTab・企業コード＋パスワード方式。accounts/{uid}のcompanyLinkとは別系統）
 │       ├── pub          ← {name, ownerUid, shops:{shopId:true}}（連携店舗マップ）
@@ -1035,6 +1040,44 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
 - **取り消し方**: develop へは `feature/company-ext` を `--no-ff` の1マージで入れてある。`git revert -m 1 <そのマージ>` で全部戻る。
   データ面は追加だけ（`staffHomeShop`・`period.submission`・`shops/{sid}/company`・`companies/{id}/pub/config`）で、
   既存のデータ・`staffWorkplaces` は消していないので、コードを戻せば従来の挙動に戻る
+
+---
+
+## 従業員画面（マイシフト・給料）のアカウント（2026-10-04・第2部 E1・develop のみ・ルール未デプロイ）
+
+計画は `Shifty_実装計画_2026-10.md` 第2部（E.0〜E.7）。画面は app-my.js、純粋関数は app-my-utils.js（テストは tests/my.test.js）。
+**入口は開発環境だけ**: `MY_SCREEN_ENABLED = DEV_MODE`（app-core.js）。本番ではスタッフURLの「マイシフト」ボタンが出ず、`#/me` は
+従来どおり旧形式のスタッフURL（トークン "me"）として扱われる。**E0〜E6 が揃ったらこのゲートを外す**（BACKLOG）。
+
+- **アカウント＝匿名 uid にメール＋パスワードを連結**（`currentUser.linkWithCredential(EmailAuthProvider.credential(...))`）。uid が変わらないので
+  提出済みの `submitterUid` と一致したまま。別の端末では `signInWithEmailAndPassword` で同じ uid に入り、**成功したら再読み込みする**
+  （匿名 uid から替わるので、購読と App の状態を Phase1 から作り直す）。パスワードは8文字以上（`MY_PASSWORD_MIN`。管理者の登録は6文字のまま）
+- **スタッフアカウントは管理者の実ログインとして扱わない**: App は `staffUser`（{uid,email}）を別に持ち、`authUser` は null のまま。
+  したがって `accounts/{uid}/shops` を読まない・書かない、`doFullSignOut` も signOut しない。判定は Phase1 の `onAuthStateChanged` で、
+  ①localStorage の印 `ots_staffAccount_v1`（{uid}・登録とログインの成功で書き、ログアウトで消す）が一致すればスタッフ、
+  ②印が無いメール＋パスワードのユーザー（`mayBeStaffAccountUser`）だけ `users/{uid}/profile` を読み（3秒で打ち切り）、あればスタッフ、
+  ③それ以外は従来の分岐（`adminBranch`）。**スタッフアカウントには明示ログアウトの自動サインアウト（`AUTH_LOGGED_OUT_LS`）を当てない**
+  ——当てると、管理者がその端末でログアウトしたことがあるだけでスタッフアカウントが毎回消える。①②は `MY_SCREEN_ENABLED` のときだけ（本番は1バイトも変わらない）
+- **永続化**: 全クライアントが LOCAL（app-main.js の Phase1 と `_preRealSignIn`。※この節の上の「セキュリティモデル」の
+  「実ログインは永続化しない（NONE へ切替）」は**現行コードと違う**＝実際は LOCAL。従業員画面はこの現行の挙動に乗っている）。
+  連結した端末は匿名のときと同じ LOCAL のまま残り、別端末のログインも LOCAL で残る
+- **管理者の端末では作らせない・入らせない**（`myBlockReason`・`staffAccountBlockReason`）: owners は uid で判定するので、owners に載っている
+  匿名 uid を連結すると、そのアカウントでログインした**別の端末にも店舗の管理権限が付く**。判定は「管理キー（`ots_adminKeys_v1`）を1つでも持つ」か
+  「現在の店舗・Cookie の店舗・管理キーの店舗・キャッシュの店舗の `owners/{uid}` が読めて存在する」（読みはオーナーにしか許されない＝拒否は
+  オーナーでない、それ以外の失敗は確かめられない＝止める）。企業ログイン（company_）・管理者の実ログイン中・体験版も止める。
+  逆向きの防御として、`claimOwnership` はスタッフアカウントの uid を owners に登録しない（閲覧のみ）、ログイン画面の「店舗コードで参加」と
+  「新規作成」はスタッフアカウントの端末では止める（`MY_ADMIN_BLOCKED_MSG`）。**管理者のメールアカウント（accounts/{uid}/shops がある）で
+  マイシフトにログインしたら、サインアウトして理由を残し再読み込みする**
+- **ログイン試行の制限は名前空間 "staff"**（`_isLocked` 等は app-core.js の既存の仕組み）。管理者のメールログイン（"email"）のロックとは独立
+- **ログアウト**: 印を消して signOut → 再読み込み。Phase1 が匿名サインインし直すので、URL からの提出は従来どおり（uid は新しくなる）
+- **ルール**: `users/$uid` の読みは本人、`profile` の書きは本人かつ `auth.token.email != null`。`sign_in_provider` で判定しないのは、
+  **匿名から連結した uid のトークンは sign_in_provider が "anonymous" のまま残ることがある**ため（未検証。email クレームはユーザーの記録に従って
+  更新される）。連結の直後は `getIdToken(true)` で取り直してから書き、拒否されたら 1.5 秒待って1回だけ書き直す。**ルールが未デプロイの間、
+  dev の実機ではプロフィールの保存が拒否される**（画面は落ちず、設定タブに理由を出し、入力した値を残して保存し直せる）
+- **スタッフURLの画面から開いたマイシフトは重ねて表示する**（`data-my-overlay`）。提出画面を外すと入力途中の希望が消えるため。
+  ログインの再読み込みをまたいで開き直すのは sessionStorage の `ss_myOpen`
+- 検証: tests/my.test.js（入力の正規化・検証・エラー文言・端末の判定・ルールの形）と `example-my-account.js`（スタブの `auth:"accounts"`・
+  375px・6場面23項目。E1 より前の配信物では最初の項目で落ちる）。**実 Firebase の連結・トークン・ルールは未検証**（dev へのデプロイ待ち）
 
 ---
 
@@ -1504,6 +1547,7 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   **走査するファイルに app-company.js と app-shift.js を必ず入れる**（2026-09-30 分割）。実測: 6ファイルで117件・違反0件、
   app-company.js を抜いた旧5ファイルの一覧だと43件＝**設定タブ・企業連携タブの74件を黙って数え落とす**。
   2回目の分割後の実測: 7ファイルで151件・違反0件、app-shift.js を抜いた6ファイルの一覧だと130件＝**シフト作成タブの21件を数え落とす**。
+  2026-10-04（従業員画面 E1）の実測: 9ファイルで150件・違反0件（app-my.js は入力欄の部品 `MyField` の1件で、`AI`＝16px を使う）。
 
   **走査が数えない例外が1件ある（2026-09-23〜）**: シフト作成タブの「全表示」のセル
   （app-shift.js の `AI2` の `fullView` 分岐。2026-09-30 の分割までは app-admin.js）は、行高から font を算出するので1ヶ月期間では

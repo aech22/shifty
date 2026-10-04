@@ -308,6 +308,15 @@ await h.page.reload({ waitUntil: "networkidle" });          // ← DBと認証�
 - **セキュリティルールは一切評価しない**（1.6節と同じ）。許可・拒否の確認には使えない。
 - **`SHIFTY_ROOT` に修正前の版を渡して落ちることを必ず見る**。`git show <sha>:app-*.js` を一時ディレクトリへ書き出せばよい（配信物5本だけで足りる）。
 
+**認証を本物に近い形で動かす `auth:"accounts"`（2026-10-04・従業員画面 E1）**: 既定のスタブは「uid 固定の実ユーザー1人」だが、
+`makeStub({auth:"accounts", authSeed:{users:{メール:{uid,password}}, cur:null}})` にすると、匿名サインイン（呼ぶたびに新しい uid）・
+`linkWithCredential`（uid は変わらない）・メールでのログイン（誤りは `auth/invalid-credential`）・signOut・パスワードの変更と再設定が
+localStorage 上のアカウント表で動く（`window.__authCur()`・`window.__authDump()` で確かめる）。**別の端末**は、1台目の `__dbDump()` と
+`__authDump().users` を2台目の `seed`・`authSeed.users` に渡して新しいハーネスで開く。`users/` への書き込みはルールの条件（本人・メールのある認証）を
+真似て通すだけで、ルールそのものは評価しない。`denyWrite:["users"]` で「ルール未デプロイで拒否される」を再現できる。
+スタッフURLや `#/me` で開くときは `extraHead` の先頭に `<script>history.replaceState(null,"","/#/s/t1")</script>` を置く（parseUrl が読む前に）。
+雛形は `scripts/example-my-account.js`。
+
 **本物の index.html をこのスタブで丸ごと起動する例**が `scripts/example-index-html-load.js`（2026-09-30）。
 ハーネスは読み込むファイルを自前で並べるので、index.html の `<script>` の並び・`?v=` の食い違いは素通りする。
 index.html を触ったとき・app-*.js を分割したときはこれも回す（Firebase の CDN 5本だけをスタブに差し替え、残りは本物）。

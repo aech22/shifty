@@ -40,6 +40,16 @@ const CFC_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "fu
  * @param {boolean}[o.confirm]   window.confirm の戻り値（既定 true）
  * @param {string[]}[o.denyRead] once() を PERMISSION_DENIED で拒否するパス（前方一致）。ルールは評価しないので、
  *                                「オーナーでない店舗の actuals は読めない」のような拒否を再現するときに使う（P5）
+ * @param {string[]}[o.denyWrite] set/update/remove を PERMISSION_DENIED で拒否するパス（前方一致）。「ルールが未デプロイで
+ *                                users/{uid} に書けない」を再現するときに使う（従業員画面 E1）
+ * @param {string} [o.auth]      "accounts" にすると認証が本物に近い形になる（従業員画面 E1・2026-10-04）。既定は従来の
+ *                                「uid 固定の実ユーザー1人」。accounts では、匿名サインイン（呼ぶたびに新しい uid）・
+ *                                linkWithCredential（匿名の uid にメールを連結。uid は変わらない）・メールでのログイン・
+ *                                signOut・パスワードの変更と再設定が、localStorage 上のアカウント表で動く。
+ *                                ルールの代わりに **users/{uid} への書き込みは「その uid 本人で、メールのある認証」だけ**を通す
+ *                                （database.rules.json の users/$uid/profile と同じ条件を真似たもの。ルールそのものは評価しない）。
+ * @param {object} [o.authSeed]  accounts のときの初期状態 {users:{メール:{uid,password}}, cur:{uid,isAnonymous,email}|null}。
+ *                                別の端末を再現するときは、1台目の __authDump().users と __dbDump() を2台目の authSeed・seed に渡す
  */
 function makeStub(o) {
   const seed = o.seed || {};
@@ -49,6 +59,9 @@ function makeStub(o) {
   const cfHandlers = o.cfHandlers || {};
   const confirmValue = o.confirm === undefined ? true : !!o.confirm;
   const denyRead = Array.isArray(o.denyRead) ? o.denyRead : [];
+  const denyWrite = Array.isArray(o.denyWrite) ? o.denyWrite : [];
+  const authMode = o.auth || "simple";
+  const authSeed = o.authSeed || { users: {}, cur: null };
 
   return `<script>
 (function(){
@@ -58,6 +71,9 @@ function makeStub(o) {
 ;return module.exports;})();
   var CF=${JSON.stringify(cfHandlers)};
   var DENY_READ=${JSON.stringify(denyRead.map(d => String(d).split("/").filter(Boolean).join("/")))};
+  var DENY_WRITE=${JSON.stringify(denyWrite.map(d => String(d).split("/").filter(Boolean).join("/")))};
+  var AUTH_MODE=${JSON.stringify(authMode)};
+  var AUTH_SEED=${JSON.stringify(authSeed)};
   var root=null;
   try{ root=JSON.parse(localStorage.getItem(LS_DB)||"null"); }catch(e){}
   if(!root){ root=SEED; localStorage.setItem(LS_DB, JSON.stringify(root)); }
@@ -96,6 +112,17 @@ function makeStub(o) {
     prune(root); save();
   }
 
+  // 書き込みの拒否（denyWrite と、auth:"accounts" のときの users/{uid} の本人・メール認証の条件）
+  function writeDenied(p){
+    var np=norm(p).join("/");
+    var deny=function(){ var err=new Error("PERMISSION_DENIED: Permission denied"); err.code="PERMISSION_DENIED"; (window.__denied=window.__denied||[]).push(np); return err; };
+    if(DENY_WRITE.some(function(d){ return np===d||np.indexOf(d+"/")===0; })) return deny();
+    if(AUTH_MODE==="accounts"&&(np==="users"||np.indexOf("users/")===0)){
+      var segs=np.split("/"), cu=window.__authCur&&window.__authCur();
+      if(!cu||cu.isAnonymous||!cu.email||segs[1]!==cu.uid) return deny();
+    }
+    return null;
+  }
   var listeners=[], pushSeq=0;
   function snap(v,key){
     return {
@@ -152,9 +179,9 @@ function makeStub(o) {
         return cb;
       },
       off:function(){ for(var i=listeners.length-1;i>=0;i--) if(listeners[i].path===p) listeners.splice(i,1); },
-      set:function(v){ setPath(p,v); notify(); return Promise.resolve(); },
-      update:function(o){ Object.keys(o||{}).forEach(function(k){ setPath(p+"/"+k,o[k]); }); notify(); return Promise.resolve(); },
-      remove:function(){ setPath(p,null); notify(); return Promise.resolve(); },
+      set:function(v){ var d=writeDenied(p); if(d) return Promise.reject(d); setPath(p,v); notify(); return Promise.resolve(); },
+      update:function(o){ var d=writeDenied(p); if(d) return Promise.reject(d); Object.keys(o||{}).forEach(function(k){ setPath(p+"/"+k,o[k]); }); notify(); return Promise.resolve(); },
+      remove:function(){ var d=writeDenied(p); if(d) return Promise.reject(d); setPath(p,null); notify(); return Promise.resolve(); },
       push:function(v){
         var id="-Stub"+(++pushSeq);
         if(v!==undefined) setPath(p+"/"+id,v);
@@ -192,6 +219,81 @@ function makeStub(o) {
     sendPasswordResetEmail:function(){ return Promise.resolve(); },
   };
   Object.defineProperty(authObj,"currentUser",{get:function(){ return signedIn?USER:null; }});
+
+  // ===== auth:"accounts"（従業員画面 E1）=====
+  // localStorage にアカウント表と現在のユーザーを持つ。page.reload() をまたいで残る（DB と同じ）
+  if(AUTH_MODE==="accounts"){
+    var LS_ACC="__stub_facc";
+    var acc=null;
+    try{ acc=JSON.parse(localStorage.getItem(LS_ACC)||"null"); }catch(e){}
+    if(!acc){ acc={users:JSON.parse(JSON.stringify(AUTH_SEED.users||{})),cur:AUTH_SEED.cur||null,seq:0,resets:[]}; localStorage.setItem(LS_ACC,JSON.stringify(acc)); }
+    var saveAcc=function(){ localStorage.setItem(LS_ACC,JSON.stringify(acc)); };
+    var aerr=function(code){ var e=new Error("Firebase: Error ("+code+")."); e.code=code; return e; };
+    var EMAIL_RE=/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;  // テンプレート文字列の中なのでバックスラッシュは2つ
+    var userObj=null;
+    var mkUser=function(){
+      if(!acc.cur) return null;
+      var c=acc.cur;
+      if(!userObj||userObj.uid!==c.uid){
+        userObj={
+          getIdToken:function(){ window.__tokenRefreshes=(window.__tokenRefreshes||0)+1; return Promise.resolve("stub-id-token-"+acc.cur.uid); },
+          reload:function(){ return Promise.resolve(); },
+          linkWithCredential:function(cred){
+            if(!acc.cur||!acc.cur.isAnonymous) return Promise.reject(aerr("auth/provider-already-linked"));
+            if(!EMAIL_RE.test(cred.email||"")) return Promise.reject(aerr("auth/invalid-email"));
+            if(acc.users[cred.email]) return Promise.reject(aerr("auth/email-already-in-use"));
+            if(String(cred.password||"").length<6) return Promise.reject(aerr("auth/weak-password"));
+            acc.users[cred.email]={uid:acc.cur.uid,password:cred.password};
+            acc.cur={uid:acc.cur.uid,isAnonymous:false,email:cred.email}; saveAcc(); sync();
+            return Promise.resolve({user:userObj});
+          },
+          reauthenticateWithCredential:function(cred){
+            var u=acc.cur&&acc.users[acc.cur.email];
+            if(!u||u.password!==cred.password) return Promise.reject(aerr("auth/wrong-password"));
+            return Promise.resolve({user:userObj});
+          },
+          updatePassword:function(pw){
+            if(String(pw||"").length<6) return Promise.reject(aerr("auth/weak-password"));
+            acc.users[acc.cur.email].password=pw; saveAcc(); return Promise.resolve();
+          },
+        };
+      }
+      sync();
+      return userObj;
+    };
+    var sync=function(){
+      if(!userObj||!acc.cur) return;
+      userObj.uid=acc.cur.uid; userObj.isAnonymous=!!acc.cur.isAnonymous; userObj.email=acc.cur.email||null;
+      userObj.displayName=null; userObj.providerData=acc.cur.isAnonymous?[]:[{providerId:"password",email:acc.cur.email}];
+    };
+    window.__authCur=function(){ return acc.cur; };
+    window.__authDump=function(){ return JSON.parse(JSON.stringify(acc)); };
+    authObj={
+      setPersistence:function(){ return Promise.resolve(); },
+      onAuthStateChanged:function(cb){ setTimeout(function(){ cb(mkUser()); },0); return function(){}; },
+      signInAnonymously:function(){ acc.seq++; acc.cur={uid:"anon-"+acc.seq+"-"+Math.random().toString(36).slice(2,6),isAnonymous:true}; saveAcc(); return Promise.resolve({user:mkUser()}); },
+      signOut:function(){ acc.cur=null; saveAcc(); return Promise.resolve(); },
+      signInWithEmailAndPassword:function(email,pw){
+        if(!EMAIL_RE.test(email||"")) return Promise.reject(aerr("auth/invalid-email"));
+        var u=acc.users[email];
+        if(!u||u.password!==pw) return Promise.reject(aerr("auth/invalid-credential"));
+        acc.cur={uid:u.uid,isAnonymous:false,email:email}; saveAcc(); return Promise.resolve({user:mkUser()});
+      },
+      createUserWithEmailAndPassword:function(email,pw){
+        if(!EMAIL_RE.test(email||"")) return Promise.reject(aerr("auth/invalid-email"));
+        if(acc.users[email]) return Promise.reject(aerr("auth/email-already-in-use"));
+        acc.seq++; var nu="user-"+acc.seq; acc.users[email]={uid:nu,password:pw};
+        acc.cur={uid:nu,isAnonymous:false,email:email}; saveAcc(); return Promise.resolve({user:mkUser()});
+      },
+      sendPasswordResetEmail:function(email){
+        if(!EMAIL_RE.test(email||"")) return Promise.reject(aerr("auth/invalid-email"));
+        acc.resets.push(email); saveAcc(); return Promise.resolve();
+      },
+      signInWithPopup:function(){ return Promise.reject(aerr("auth/operation-not-allowed")); },
+      signInWithCustomToken:function(){ return Promise.reject(aerr("auth/operation-not-allowed")); },
+    };
+    Object.defineProperty(authObj,"currentUser",{get:function(){ return mkUser(); }});
+  }
 
   window.__cf=[];
   function runUnlink(payload){
@@ -400,7 +502,7 @@ function makeStub(o) {
   authFn.GoogleAuthProvider=function(){ this.providerId="google.com"; };
   authFn.GoogleAuthProvider.credential=function(){ return {}; };
   authFn.OAuthProvider=function(pid){ this.providerId=pid; this.addScope=function(){}; };
-  authFn.EmailAuthProvider={credential:function(){ return {}; }};
+  authFn.EmailAuthProvider={credential:function(email,password){ return {providerId:"password",email:email,password:password}; }};
 
   window.firebase={
     apps:[],

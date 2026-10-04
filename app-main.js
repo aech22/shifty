@@ -34,6 +34,15 @@ function App(){
   const currentShopIdRef=useRef(_hasUrlToken?null:ssGet(SS_SHOP,null));
   const[view,setView]=useState(()=>_hasUrlToken?"staff":ssGet(SS_VIEW,"staff"));
   const[authUser,setAuthUser]=useState(null); // Firebase Auth ユーザー（null=未ログイン）
+  // 従業員画面のスタッフアカウント（2026-10-04・第2部 E1）。{uid,email}|null。
+  // スタッフアカウントは管理者の実ログインとして扱わないので authUser には入れない（accounts/{uid}/shops を読まない・書かない）。
+  // 判定は Phase1（下）で、印は app-my.js の STAFF_ACCOUNT_LS。claimOwnership などの useCallback からは ref で読む
+  const[staffUser,setStaffUserState]=useState(null);
+  const staffUserRef=useRef(null);
+  const setStaffUser=useCallback(u=>{staffUserRef.current=u||null;setStaffUserState(u||null);},[]);
+  // 従業員画面を開いているか。#/me で直接開いたとき、またはスタッフURLの画面から開いてログインの再読み込みをまたいだとき
+  const myRoute=MY_SCREEN_ENABLED&&parseUrl()?.type==="me";
+  const[myOpen,setMyOpen]=useState(()=>MY_SCREEN_ENABLED&&(myRoute||(_hasUrlToken&&ssGet(SS_MY_OPEN,null)==="1")));
   const[authChecked,setAuthChecked]=useState(false); // Auth状態確認完了フラグ
   const[authLoading,setAuthLoading]=useState(false); // OAuth処理中
   const[authError,setAuthError]=useState(""); // ログインエラー
@@ -158,14 +167,14 @@ function App(){
       // 遅れて初期化が完了し店舗に入れた場合はエラー画面は自動で消える（renderの抑制条件）
       const authWatchdog=setTimeout(()=>setInitError(prev=>prev||"auth"),10000);
       firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e=>console.warn("setPersistence失敗:",e)).then(()=>{
-        const unsubAuth = firebaseAuth.onAuthStateChanged(user=>{
-          unsubAuth(); // 初回のみ
-          const proceed=(realUser)=>{
-            clearTimeout(authWatchdog);
-            setAuthUser(realUser);
-            setAuthChecked(true);
-            loadShops(realUser);
-          };
+        const proceed=(realUser)=>{
+          clearTimeout(authWatchdog);
+          setAuthUser(realUser);
+          setAuthChecked(true);
+          loadShops(realUser);
+        };
+        // 従来の分岐（管理者の実ログイン・匿名）。スタッフアカウントはここに入らない（下の onAuthStateChanged）
+        const adminBranch=user=>{
           if(user&&!user.isAnonymous&&lg(AUTH_LOGGED_OUT_LS,false)){
             // 明示的にログアウト済み: 実ユーザーセッションが残っていても自動復元しない
             firebaseAuth.signOut().catch(()=>{}).then(()=>
@@ -178,6 +187,25 @@ function App(){
           }else{
             proceed(null); // 匿名ユーザー復元済み
           }
+        };
+        const unsubAuth = firebaseAuth.onAuthStateChanged(user=>{
+          unsubAuth(); // 初回のみ
+          // スタッフアカウント（従業員画面・第2部 E1）は管理者の実ログインとして扱わない: authUser は null のまま
+          // 匿名と同じ経路（スタッフURL・Cookie）で起動する。明示ログアウトの自動サインアウト（adminBranch の AUTH_LOGGED_OUT_LS）も
+          // 当てない＝管理者がこの端末でログアウトしたことがあっても、スタッフアカウントは消えない。
+          // 印（localStorage）が無いメール＋パスワードのユーザーだけ users/{uid}/profile を読んで確かめる（読めなければ従来の経路）
+          const enterStaff=u=>{setStaffUser(staffUserOf(u));proceed(null);};
+          if(MY_SCREEN_ENABLED&&user&&!user.isAnonymous){
+            if(isStaffAccountUser(user)){ enterStaff(user); return; }
+            if(mayBeStaffAccountUser(user)){
+              readStaffProfile(user.uid).then(p=>{
+                if(p){ setStaffAccountMark(user.uid); enterStaff(user); }
+                else adminBranch(user);
+              });
+              return;
+            }
+          }
+          adminBranch(user);
         });
       });
     }else{
@@ -240,6 +268,11 @@ function App(){
         setView("admin");
         enterShop(shop);
       }).catch(e=>{ console.warn("デモ店舗の読み込み失敗:",e); toUnbound(); });
+      return;
+    }
+    // 従業員画面（#/me・第2部 E1）: 店舗を読まずに開く。管理者の経路（accounts/{uid}/shops）にも Cookie の店舗にも入らない
+    if(parsed&&parsed.type==="me"){
+      setReady(true);
       return;
     }
     // URLにtokenがある場合: tokens逆引きインデックスでshop/periodを特定
@@ -592,6 +625,10 @@ function App(){
     // 閲覧専用バナーではなくデモバナーを出したいので ownerReadOnly は立てない（UIは触れる）
     if(DEMO_MODE) return applyResult(true);
     if(!firebaseDB||!firebaseAuth?.currentUser||!shopId||shopId==="default")return applyResult(false);
+    // スタッフアカウント（従業員画面）の uid は owners に登録しない。登録すると、そのアカウントでログインした
+    // 別の端末にも店舗の管理権限が付く（owners は uid で判定する）。管理者の端末ではスタッフアカウントを作らせない（app-my.js）ので、
+    // ここに来るのはスタッフアカウントの端末で管理者画面を開いたときだけ＝閲覧のみに倒す
+    if(staffUserRef.current)return applyResult(false);
     const uid=firebaseAuth.currentUser.uid;
     let key=getAdminKeyLS(shopId);
     if(!key){
@@ -1555,10 +1592,14 @@ function App(){
     </div>
   );
 
+  // 従業員画面（第2部 E1）を #/me で直接開いたとき。店舗を読んでいないので、管理者の画面・ログイン画面には進まない
+  if(MY_SCREEN_ENABLED&&myRoute) return <MyView staffUser={staffUser} onStaffUser={setStaffUser} shopId={null} onClose={null}/>;
+
   // 引き継ぎコード（店舗コード / 管理コード shopId.adminKey）でログイン
   const applyInviteCode=()=>{
     const raw=inviteCode.trim();
     if(!raw){setInviteError("店舗コードを入力してください");return;}
+    if(staffUserRef.current){setInviteError(MY_ADMIN_BLOCKED_MSG);return;}
     if(!firebaseDB){setInviteError("Firebase未接続です");return;}
     const{shopId:code,adminKey}=parseShopCode(raw);
     // ref() は禁止文字（# $ [ ]）や空パスに対して「同期に」throwする。下の .catch は
@@ -1598,6 +1639,7 @@ function App(){
   const createNewShop=()=>{
     dlog("createNewShop: 実行開始");
     if(!firebaseDB){setInviteError("Firebase未接続");return;}
+    if(staffUserRef.current){setInviteError(MY_ADMIN_BLOCKED_MSG);return;}
     setInviteError("作成中...");
     const newShop=makeShop("新しい店舗");
     dlog("createNewShop: 新規店舗作成",newShop.id,newShop.name);
@@ -1796,6 +1838,11 @@ function App(){
         {paymentToast==="success"?"Proプランへのアップグレードが完了しました！":"決済がキャンセルされました"}
       </div>}
       {appToast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1000,background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:12,fontSize:14,fontWeight:500,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)",whiteSpace:"nowrap"}}>{appToast}</div>}
+      {/* 従業員画面（第2部 E1）をスタッフURLの画面から開いたとき。提出画面は下に残す（入力途中の希望を消さない）＝重ねて表示する */}
+      {MY_SCREEN_ENABLED&&myOpen&&urlLocked&&<div data-my-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
+        <MyView staffUser={staffUser} onStaffUser={setStaffUser} shopId={sid!=="default"?sid:null}
+          onClose={()=>{ssSave(SS_MY_OPEN,null);setMyOpen(false);}}/>
+      </div>}
       {/* 同期ステータスバー（接続中以外のみ表示） */}
       {syncStatus!=="online"&&<div style={{background:syncStatus==="offline"?"#F59E0B":"#6B7280",color:"white",fontSize:11,fontWeight:700,textAlign:"center",padding:"4px 8px"}}>
         {syncStatus==="offline"?"オフライン（再接続中...）":syncStatus==="no_config"?"Firebase未設定":"接続中..."}
@@ -1809,6 +1856,7 @@ function App(){
       {(urlLocked||view==="staff")
         ?<StaffView periods={periods} ap={ap} apid={apid} setApid={setApid} shopId={sid} settings={effectiveSettings} subs={subs} staffList={staffList} plan={plan}
             urlLocked={urlLocked}
+            onOpenMy={MY_SCREEN_ENABLED&&urlLocked&&!DEMO_MODE?()=>{ssSave(SS_MY_OPEN,"1");setMyOpen(true);}:null}
             onSub={sub=>{
               const currentSid=currentShopIdRef.current||sid;
               if(!firebaseDB)return Promise.reject(new Error("firebase未接続"));

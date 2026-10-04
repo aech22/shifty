@@ -15,7 +15,7 @@ function ShiftyIcon({size=32}){
 
 // スタッフ画面
 // ============================================================
-function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub,onDeleteSub,shopName,urlLocked=false,plan="free"}){
+function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub,onDeleteSub,shopName,urlLocked=false,plan="free",onOpenMy=null}){
   // Cookieからスタッフ名を復元
   const savedName=shopId&&apid?getCookie(ckStaffKey(shopId,apid))||"":"";
   const[name,setName]=useState(savedName);
@@ -269,7 +269,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
 
   if(done)return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
-      <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
+      <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName} onMy={onOpenMy}/>
       {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"50px 20px",textAlign:"center"}}>
         <div style={{fontSize:68,animation:"bI .5s"}}>✓</div>
@@ -292,7 +292,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
 
   return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
-      <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName}/>
+      <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName} onMy={onOpenMy}/>
       {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"14px 12px 120px"}}>
         {isPeriodConfirmed(ap)&&<div data-staff-confirmed="1" style={{background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:"var(--c-text2)"}}>この期間のシフトは確定済みです（提出・修正はできません）</div>}
@@ -473,7 +473,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
 }
 
 // ===== スタッフヘッダー =====
-function StaffHdr({ap,p0,pe,nd,subs,apid,onSm,shopName}){
+// onMy: 従業員画面（第2部 E1）を開く。App が MY_SCREEN_ENABLED（開発環境だけ）のときに渡す。無ければボタンを出さない
+function StaffHdr({ap,p0,pe,nd,subs,apid,onSm,shopName,onMy=null}){
   // source:"grid"はシフト作成タブの管理者入力用sub（実際の提出ではない）なのでバッジ件数から除外する
   const submitted=subs.filter(s=>s.periodId===apid&&s.source!=="grid");
   return(
@@ -491,6 +492,7 @@ function StaffHdr({ap,p0,pe,nd,subs,apid,onSm,shopName}){
             <div style={{fontSize:11,color:"rgba(255,255,255,.85)",marginTop:1}}>{p0} 〜 {pe}（{nd}日間）</div>
           </div>
         </div>
+        {onMy&&<button data-my-open="1" onClick={onMy} style={{flexShrink:0,background:"none",border:"1px solid rgba(255,255,255,.4)",borderRadius:12,padding:"7px 12px",color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>マイシフト</button>}
         <button onClick={onSm} style={{flexShrink:0,background:"rgba(255,255,255,.18)",border:"1px solid rgba(255,255,255,.4)",borderRadius:12,padding:"7px 14px",color:"white",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
           提出状況
           <span style={{background:submitted.length>0?"white":"rgba(255,255,255,.3)",color:submitted.length>0?"var(--c-accent)":"white",borderRadius:12,padding:"1px 8px",fontSize:12,fontWeight:800}}>{submitted.length}</span>

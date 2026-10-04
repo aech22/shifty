@@ -17,6 +17,39 @@ const reactPlugin = require("eslint-plugin-react");
 
 // app-*.js のトップレベル宣言（関数・定数・let）。分割ファイル間で相互参照されるため writable globals として登録する。
 const sharedGlobals = {
+  // 従業員画面（第2部・2026-10-04）: app-my-utils.js の純粋関数・定数（app-core.js の parseUrl と app-my.js が使う）
+  MY_TABS: "writable",
+  isMyRouteHash: "writable",
+  MY_DISPLAY_NAME_MAX: "writable",
+  MY_NUMBER_MAX: "writable",
+  MY_PASSWORD_MIN: "writable",
+  normalizeMyDisplayName: "writable",
+  normalizeMyNumber: "writable",
+  validateMyProfile: "writable",
+  buildMyProfileRecord: "writable",
+  myProfileOf: "writable",
+  validateMyEmail: "writable",
+  validateMyPassword: "writable",
+  isPermissionDeniedError: "writable",
+  myAuthErrorMessage: "writable",
+  isMyCredentialError: "writable",
+  MY_BLOCK_MESSAGES: "writable",
+  staffAccountBlockReason: "writable",
+  myOwnerCheckShopIds: "writable",
+  isStaffAccountMarked: "writable",
+  mayBeStaffAccountUser: "writable",
+  // app-core.js の公開ゲート（開発環境だけ従業員画面の入口を出す）
+  MY_SCREEN_ENABLED: "writable",
+  // app-my.js で定義し app-main.js が使う（MyView の描画と Phase1 のスタッフアカウント判定）
+  MyView: "writable",
+  SS_MY_OPEN: "writable",
+  MY_ADMIN_BLOCKED_MSG: "writable",
+  getStaffAccountMark: "writable",
+  setStaffAccountMark: "writable",
+  clearStaffAccountMark: "writable",
+  isStaffAccountUser: "writable",
+  staffUserOf: "writable",
+  readStaffProfile: "writable",
   // app-core.js の `const {useState,...}=React` で分割スコープ全体に展開される React フック
   useState: "readonly",
   useEffect: "readonly",

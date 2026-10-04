@@ -152,6 +152,19 @@
         }
       }
     },
+    "users": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "profile": {
+          ".write": "auth != null && auth.uid === $uid && auth.token.email != null",
+          ".validate": "newData.hasChildren(['displayName'])",
+          "displayName": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 50" },
+          "number": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 8" },
+          "updatedAt": { ".validate": "newData.isString() && newData.val().length <= 40" },
+          "$other": { ".validate": false }
+        }
+      }
+    },
     "companyCodes": { ".read": false, ".write": false }
   }
 }

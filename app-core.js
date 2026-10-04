@@ -24,6 +24,12 @@ const DEMO_SHOP_ID = DEV_MODE
   : "demo-toriMatsu-v1";          // 本番: devのとり松を複製したデモ店舗（owners空・adminKey設定済でclaim不可）
 const DEMO_MODE = !!DEMO_SHOP_ID && /^#\/demo\/?$/.test(location.hash);
 
+// ===== 従業員画面（マイシフト・給料）の公開ゲート（2026-10-04・第2部 E1）=====
+// 入口（スタッフURLの画面の「マイシフト」ボタンと #/me）は開発環境だけで出す。本番に未完成の入口を出さないため。
+// **E0〜E6 が揃ったらこのゲートを外す**（BACKLOG「従業員画面 E1」）。外すまでは本番の #/me は従来どおり
+// 旧形式のスタッフURL（トークン "me"）として扱われる＝何も変わらない。
+const MY_SCREEN_ENABLED = DEV_MODE;
+
 const FIREBASE_CONFIG_PROD = {
   apiKey:            "AIzaSyDdl1Li3QduufAFhBWcF4nmOlFcCsx8zlQ",
   authDomain:        "ontheshift.firebaseapp.com",
@@ -152,6 +158,8 @@ function parseUrl(){
   const h=window.location.hash;
   // デモURL: #/demo（下の「旧形式互換」より先に判定する。#/demo は #/ で始まるため）
   if(/^#\/demo\/?$/.test(h)) return{type:"demo"};
+  // 従業員画面: #/me（下の「旧形式互換」より先に判定する。#/me は #/ で始まるため）
+  if(MY_SCREEN_ENABLED&&isMyRouteHash(h)) return{type:"me"};
   // スタッフURL: #/s/<token>
   if(h.startsWith("#/s/")){
     const token=h.slice(4);
