@@ -52,7 +52,9 @@ async function open({ hash, seedDb, authSeed, denyWrite, ls, devMode = true, wai
     root = fs.mkdtempSync(path.join(os.tmpdir(), "shifty-my-prod-"));
     for (const s of SCRIPTS) fs.copyFileSync(path.join(ROOT, s.src), path.join(root, s.src));
     const core = fs.readFileSync(path.join(ROOT, "app-core.js"), "utf8");
-    const swapped = core.replace('const DEV_MODE = location.hostname !== "shiftyshifty.app";', "const DEV_MODE = false;");
+    const swapped = core.replace('const DEV_MODE = location.hostname !== "shiftyshifty.app";', "const DEV_MODE = false;")
+    // 2026-10-04 に本番公開（MY_SCREEN_ENABLED = true）。この場面は「止め口を false にすると一括で消える」ことを確かめる
+    .replace("const MY_SCREEN_ENABLED = true;", "const MY_SCREEN_ENABLED = false;");
     if (swapped === core) throw new Error("DEV_MODE の行が見つからない");
     fs.writeFileSync(path.join(root, "app-core.js"), swapped);
   }

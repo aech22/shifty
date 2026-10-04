@@ -24,11 +24,10 @@ const DEMO_SHOP_ID = DEV_MODE
   : "demo-toriMatsu-v1";          // 本番: devのとり松を複製したデモ店舗（owners空・adminKey設定済でclaim不可）
 const DEMO_MODE = !!DEMO_SHOP_ID && /^#\/demo\/?$/.test(location.hash);
 
-// ===== 従業員画面（マイシフト・給料）の公開ゲート（2026-10-04・第2部 E1）=====
-// 入口（スタッフURLの画面の「マイシフト」ボタンと #/me）は開発環境だけで出す。本番に未完成の入口を出さないため。
-// **E0〜E6 が揃ったらこのゲートを外す**（BACKLOG「従業員画面 E1」）。外すまでは本番の #/me は従来どおり
-// 旧形式のスタッフURL（トークン "me"）として扱われる＝何も変わらない。
-const MY_SCREEN_ENABLED = DEV_MODE;
+// ===== 従業員画面（マイシフト・給料・スタッフ個別URL・公開ボタン）の公開ゲート =====
+// 2026-10-04 にユーザー指示で本番にも公開した（以前は = DEV_MODE で開発環境だけ）。
+// 定数は残してある: false にすると入口・#/me・#/m/・公開ボタン・管理者側の承認 UI が一括で消える（緊急時の止め口）。
+const MY_SCREEN_ENABLED = true;
 
 const FIREBASE_CONFIG_PROD = {
   apiKey:            "AIzaSyDdl1Li3QduufAFhBWcF4nmOlFcCsx8zlQ",
