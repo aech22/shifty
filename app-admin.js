@@ -1811,9 +1811,9 @@ const dragIdxRef=useRef(null);
               </div>
             </>)}
 
-            {/* 主な導線はスタッフ専用のURL（2026-10-04）。個人リンクコードはメールのアカウントとリンクする場合だけ */}
+            {/* スタッフ専用のURLが導線。個人リンクコードの発行は 2026-10-05 に画面から外した。リンク済みの人にだけ解除を出す */}
             {sl.enabled&&sec("スタッフ専用のURL",<StaffPageEditSection links={sl} name={n} tt={tt}/>)}
-            {sl.enabled&&sec("メールのアカウントとリンクする場合",<StaffLinkEditSection links={sl} name={n} tt={tt}/>)}
+            {sl.enabled&&staffLinksByName(sl.map)[n]&&sec("メールのアカウントとのリンク",<StaffLinkEditSection links={sl} name={n} tt={tt}/>)}
 
             {pay.enabled&&(()=>{
               const hs=homeShopOf(settings,n,shopId);

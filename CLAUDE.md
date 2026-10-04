@@ -1635,6 +1635,19 @@ if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 
 ---
 
+### 従業員画面の 2026-10-05 時点の状態（本番公開済み・この節が最新。上の各節の「develop のみ」「未デプロイ」「DEV_MODE のときだけ」は当時の記述）
+
+- **本番公開**: `MY_SCREEN_ENABLED = true`（2026-10-04・`dff85c4`）。定数は止め口として残してあり、false にすると入口・`#/me`・`#/m/`・公開ボタン・管理者側の承認 UI が一括で消える。ルールと Cloud Functions（40本）は本番反映済み
+- **アカウント作成**: 匿名 uid への連結は、メールアドレスの列挙保護が有効なプロジェクト（本番・dev とも）では `auth/operation-not-allowed` で拒否される。確認メール（メールリンク）で登録し、方式が使えないときは従来の登録（`createUserWithEmailAndPassword`）へ自動で切り替える。**uid は匿名 uid を引き継がない**
+- **マイシフトのアドレス**: 募集URLの画面でマイシフトを開くと、アドレスバーが開き直せる URL（個別URLの人は `#/m/<token>`、アカウントの人は `#/me`）になる。閉じると `#/s/<token>` に戻る
+- **個別URL**: 設定タブの**一番下**に表示（コピー・共有だけ。変更は管理者）。メールアドレスの任意登録はその上。管理者がスタッフ編集モーダルで発行・再発行した URL が常に有効
+- **個人リンクコード**: 2026-10-05 に、管理者側の発行と本人側の入力欄を**画面から外した**（スタッフ専用の URL に一本化）。CF `issueStaffLinkCode`・`redeemStaffLinkCode` は残っているが画面からは呼ばない。リンク済みの人の編集モーダルには解除だけが出る
+- **ヘルプ勤務**: 所属店舗が公開済みなら、ヘルプ先の状態に関係なく、全員の表・本人のカレンダー・.ics に PDF どおり出す。給料は所属店舗の賃金で計算し（`myHelperDaysOf`）、内訳に「うち他店でのヘルプ」。ヘルプ先の日にも給料計算用の実績を入れられる（`users/{uid}/overrides/{ヘルプ先}/{日付}`）
+- **スタッフが入れた時刻**: 表示（カレンダー・次のシフト・.ics・全員の表）は常に公開内容。本人の実績は給料計算だけに効く
+- **URLをなくしたとき用のメールアドレス（任意）**: CF `setPageEmail`（登録・変更・削除・状態と控えの送信）・`recoverPageUrl`（送り直し。結果の文言は登録の有無に関係なく同じ）。置き場は CF 専用の `staffPageEmails`・`staffPageEmailIndex`・`staffPageEmailRate`（ルールで読み書き不可）。メールの URL は本番ドメイン固定で `?openExternalBrowser=1` が付く。回帰は `example-my-page-email.js`（画面）と cf-verify の `example-page-email.js`
+- **休暇の種別名**: 画面・PDF・全員の表・シフト作成タブからの Excel。期間タブの Excel は提出そのまま（斜線）
+- **メールの差出人**: Firebase Auth の確認メールは標準の差出人だと迷惑メールに入る（2026-10-05 にユーザーが確認）。`shiftyshifty.app` を差出人にするには Firebase コンソールのカスタムドメインの DNS レコード4件（SPF・firebase の TXT、DKIM の CNAME 2件）を Cloudflare に足して確認する（未実施）
+
 ## 労務判定（2026-09-26・3弾すべて実装済み）
 
 職場のシフトExcelひな型（1か月単位の変形労働時間制＋36協定）の判定を移植したもの。

@@ -168,15 +168,17 @@ const cands = (h, uid) => h.evaluate(u => { const el = document.querySelector(`[
       O.tanakaLinked = await h.evaluate(() => (document.querySelector('[data-staff-link="linked"]') || {}).innerText || "");
       await closeEdit(h);
       await openEdit(h, "佐藤");
+      // 2026-10-05: 個人リンクコードの発行は管理者画面から外した（スタッフ専用のURLに一本化）。CF は残っているので、
+      // 発行は CF を直接呼んで確かめ、画面には発行のボタンもコードも出ないことを確かめる
+      O.noIssueUi = await h.evaluate(() => !document.querySelector('[data-staff-link-action="issue"]') && !document.querySelector("[data-staff-link-code]") && !document.body.innerText.includes("個人リンクコード"));
       const t0 = Date.now();
-      await click(h, '[data-staff-link-action="issue"]');
-      await waitSel(h, "[data-staff-link-code]");
-      const c1 = await h.evaluate(() => document.querySelector("[data-staff-link-code]").getAttribute("data-staff-link-code"));
-      O.expiryText = await h.evaluate(() => document.querySelector("[data-staff-link-expiry]").innerText);
+      const issueCF = () => h.evaluate(() => firebase.app().functions("asia-northeast1").httpsCallable("issueStaffLinkCode")({ shopId: "S1", name: "佐藤" }).then(r => r.data, e => ({ error: String(e && e.message) })));
+      const i1 = await issueCF();
+      const c1 = i1 && i1.code;
+      O.expiryText = String(new Date(i1 && i1.expiry).getFullYear() + "/");
       const rec1 = await db(h, `staffLinkCodes/${c1}`);
-      await click(h, '[data-staff-link-action="issue"]');
-      await h.page.waitForFunction(c => { const e = document.querySelector("[data-staff-link-code]"); return e && e.getAttribute("data-staff-link-code") !== c; }, c1, { timeout: 8000 }).catch(() => {});
-      codeSato = await h.evaluate(() => document.querySelector("[data-staff-link-code]").getAttribute("data-staff-link-code"));
+      const i2 = await issueCF();
+      codeSato = i2 && i2.code;
       O.c1 = c1; O.c2 = codeSato;
       O.c1Gone = (await db(h, `staffLinkCodes/${c1}`)) === null;
       expirySato = rec1 && rec1.expiry;
@@ -222,6 +224,7 @@ const cands = (h, uid) => h.evaluate(u => { const el = document.querySelector(`[
       V.O_reject = O.reqZ1Gone && O.cardGone;
       V.O_editLinked = O.editTanaka === "ok" && /リンク済み/.test(O.tanakaLinked) && /従業員番号が一致/.test(O.tanakaLinked);
       V.O_issueCode = /^[A-HJ-NP-Z2-9]{8}$/.test(O.c1 || "") && O.expiryOk && O.c2 && O.c2 !== O.c1 && O.c1Gone;
+      V.O_noIssueUi = O.noIssueUi === true;
       V.O_renameFollows = O.renamed === "田中 一郎" && O.userT1NameAfterRename === "田中";
       V.O_deleteDrops = O.x1Dropped;
       V.O_addDropsStale = O.oldBefore && O.takahashiAdded && O.oldDropped;
@@ -279,11 +282,12 @@ const cands = (h, uid) => h.evaluate(u => { const el = document.querySelector(`[
       C.none = await waitText(h, "まだどのお店ともリンクしていません");
       C.urlHint = (await text(h)).includes("スタッフ用URLから開くと");
       C.noApply = !(await h.evaluate(() => !!document.querySelector("[data-my-link-apply]")));
-      await h.setInput('[data-my-input="linkCode"]', "expd-2345");
-      await click(h, '[data-my-action="redeem"]'); await sleep(h, 600);
-      C.expiredMsg = await myMsg(h);
-      await h.setInput('[data-my-input="linkCode"]', codeSato.toLowerCase().replace(/^(....)/, "$1-"));
-      await click(h, '[data-my-action="redeem"]');
+      // 本人側のコードの入力欄も外した。引き換えは CF を直接呼んで確かめる
+      C.noCodeUi = await h.evaluate(() => !document.querySelector('[data-my-input="linkCode"]') && !document.querySelector('[data-my-action="redeem"]'));
+      const redeemCF = code => h.evaluate(code => firebase.app().functions("asia-northeast1").httpsCallable("redeemStaffLinkCode")({ code }).then(r => r.data, e => ({ error: String(e && e.message) })), code);
+      C.expiredMsg = String(((await redeemCF("EXPD2345")) || {}).error || "");
+      await redeemCF(codeSato);
+      await h.page.reload(); await waitSel(h, '[data-my-tab="settings"]'); await click(h, '[data-my-tab="settings"]');
       C.linked = await waitSel(h, '[data-my-link="S1"][data-my-link-ok="1"]');
       C.row = await h.evaluate(() => (document.querySelector('[data-my-link="S1"]') || {}).innerText || "");
       C.msg = await myMsg(h);
@@ -300,6 +304,7 @@ const cands = (h, uid) => h.evaluate(u => { const el = document.querySelector(`[
       R.C = C;
       V.C_urlHintOnMe = C.none && C.urlHint && C.noApply;
       V.C_expiredRejected = /有効期限が切れています/.test(C.expiredMsg);
+      V.C_noCodeUi = C.noCodeUi === true;
       V.C_redeemNoApproval = C.linked && /A店/.test(C.row) && /登録名: 佐藤/.test(C.row) && !!C.link && C.link.method === "code" && C.codeGone;
       V.C_unlink = C.unlinked;
       V.C_layout = C.overflow <= 0 && C.fonts.every(f => f >= 16);

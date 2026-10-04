@@ -469,19 +469,11 @@ function StaffLinkRequestsCard({links,staffList,staffNumbers,mirrorPeople,shopId
   );
 }
 
-// 管理者側（スタッフの編集モーダルの中）: その人の紐付けの状態・解除・個人リンクコードの発行
+// 管理者側（スタッフの編集モーダルの中）: その人の紐付けの状態と解除
 function StaffLinkEditSection({links,name,tt}){
   const[busy,setBusy]=useState(false);
-  const[issued,setIssued]=useState(null); // {name,code,expiry}
   if(!links||!links.enabled)return null;
   const linked=staffLinksByName(links.map)[name];
-  const issue=async()=>{
-    setBusy(true);
-    const r=await links.call("issueStaffLinkCode",{name});
-    setBusy(false);
-    if(r.error){tt(`▲ ${r.error}`);return;}
-    setIssued({name,code:r.code,expiry:r.expiry});
-  };
   const unlink=async()=>{
     if(!window.confirm(`「${name}」さんとマイシフトのアカウントのリンクを解除しますか？`))return;
     setBusy(true);
@@ -501,18 +493,9 @@ function StaffLinkEditSection({links,name,tt}){
       </div>
     );
   }
-  const cur=issued&&issued.name===name?issued:null;
-  return(
-    <div data-staff-link="none">
-      <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:8}}>本人がメール＋パスワードのアカウント（マイシフト）を使う場合だけ必要です。本人がアカウントの設定でこのコードを入れると、承認なしでリンクされます。24時間有効・1回限りです。ふだんは上の「専用のURL」を送れば足ります。</div>
-      {cur&&<div data-staff-link-code={cur.code} style={{marginBottom:10}}>
-        <div style={{fontSize:24,fontWeight:700,letterSpacing:4,color:"var(--c-text)",fontVariantNumeric:"tabular-nums"}}>{cur.code}</div>
-        <div data-staff-link-expiry="1" style={{fontSize:12,color:"var(--c-text3)"}}>有効期限: {fmtLinkCodeExpiry(cur.expiry)}</div>
-      </div>}
-      <button data-staff-link-action="issue" disabled={busy} onClick={issue} style={{...AGray,opacity:busy?.6:1}}>{cur?"コードを発行し直す":"個人リンクコードを発行"}</button>
-      {cur&&<div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>発行し直すと、前のコードは使えなくなります。</div>}
-    </div>
-  );
+  // 個人リンクコードの発行は 2026-10-05 にユーザー指示で画面から外した（スタッフ専用のURLの発行に一本化）。
+  // CF（issueStaffLinkCode・redeemStaffLinkCode）は残してあるが、画面からは呼ばない
+  return null;
 }
 
 // 本人側（設定タブ）: 紐付いた店舗・申請・コードの入力
@@ -521,7 +504,6 @@ function MyLinksSection({staffUser,profile,shopId}){
   const[list,setList]=useState(undefined); // undefined=読み込み中・null=読めない
   const[req,setReq]=useState(undefined);   // 開いている店舗への自分の申請（null=無い）
   const[shopName,setShopName]=useState("");
-  const[code,setCode]=useState("");
   const[msg,setMsg]=useState({});
   const[busy,setBusy]=useState("");
   const[seq,setSeq]=useState(0);
@@ -549,16 +531,6 @@ function MyLinksSection({staffUser,profile,shopId}){
     try{await fbSet(`shops/${shopId}/linkRequests/${uid}`,null);setMsg({ok:"申請を取り消しました"});}
     catch{setMsg({error:"取り消せませんでした。もう一度お試しください"});}
     setBusy("");reload();
-  };
-  const redeem=async()=>{
-    setMsg({});
-    const c=normalizeLinkCode(code);
-    if(!isValidLinkCode(c)){setMsg({error:`コードは${MY_LINK_CODE_LEN}文字の英数字です`});return;}
-    setBusy("code");
-    const r=await myCallCF("redeemStaffLinkCode",{code:c});
-    setBusy("");
-    if(r.error){setMsg({error:r.error});return;}
-    setCode("");setMsg({ok:`「${r.name||""}」としてリンクしました`});reload();
   };
   const unlink=async sid=>{
     if(!window.confirm("このお店とのリンクを解除しますか？"))return;
@@ -603,11 +575,6 @@ function MyLinksSection({staffUser,profile,shopId}){
       </div>}
       {!shopId&&Array.isArray(list)&&list.length===0&&<div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.8,marginTop:4}}>お店から受け取ったスタッフ用URLから開くと、そのお店にリンクを申請できます。</div>}
 
-      <div style={{marginTop:18,paddingTop:14,borderTop:"1px solid var(--c-border)"}}>
-        <MyField label="個人リンクコード" value={code} maxLength={12} autoComplete="off" autoCapitalize="characters" data-my-input="linkCode"
-          onChange={e=>setCode(e.target.value)} hint="お店の管理者から受け取った8文字のコード。入れるとすぐにリンクされます（24時間有効）"/>
-        <button data-my-action="redeem" disabled={busy==="code"} onClick={redeem} style={{...AGray,opacity:busy==="code"?.6:1}}>{busy==="code"?"確認中…":"コードでリンク"}</button>
-      </div>
       <MyMessage {...msg}/>
     </section>
   );
