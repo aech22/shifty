@@ -482,6 +482,13 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 ```
 
 **tokens逆引きインデックス**: `tokens/{urlToken} = {shopId, periodId}`。期間の作成/削除時（savePeriods）に書き込み・削除され、既存期間は管理者セッションのlazy backfill（App内useEffect）が冪等に補完する。スタッフURLはこのインデックスで解決される。
+**補完はサーバーに同じ値がある token を書かない（2026-10-04）**。以前の補完は periods が変わるたびに（label だけでなく、
+シフト作成タブが自動で書く snapshot・laborTotals でも）全期間の tokens を同じ値で書き直していた。いまは app-main.js の
+`tokensSyncedRef`（店舗ごとに「確かめた token → shopId/periodId」）を見て、確かめていない token だけを1回 `once` で読み、
+無いか値が違うときだけ書く。savePeriods が書いた token・消した token もこの ref に記録する（新規期間を二重に書かない）。
+動くのは **claim が通った店舗（`ownerClaimedSid===sid`）だけ**で、オーナーでない端末からは拒否される書き込みを投げない。
+読めなかった token は次の periods の変化で読み直し、書き込みが拒否された token はそのセッションでは繰り返さない。
+回帰は `example-tokens-backfill.js`（修正前は書き込み45件・修正後6件）。
 
 **重要**: `startSubscriptions` は `useCallback` で定義してあるが、`useEffect([ready, sid])` に依存させてはいけない。React のバッチ処理で sid/ready の更新タイミングがズレて競合が発生する。Phase1内から直接呼ぶこと。
 

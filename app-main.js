@@ -1311,16 +1311,33 @@ function App(){
     return{};
   };
 
-  // tokens逆引きインデックスの補完（既存期間の自動移行・冪等）。管理者セッションのみ実行
+  // tokens逆引きインデックスの補完（既存期間の自動移行・冪等）。管理者セッション（claim が通った店舗）のみ実行。
+  // 以前は periods が変わるたびに（label だけでなく、シフト作成タブが自動で書く snapshot・laborTotals でも）
+  // 全期間の tokens を同じ値で書き直していた（2026-10-04 に修正）。いまは店舗ごとに「サーバーと同じ値だと
+  // 確かめた token」を覚えておき、確かめていない token だけを1回読んで、無いか値が違うときだけ書く。
+  // savePeriods が書いた token・消した token もここに記録する（新規期間の token を二重に書かないため）。
+  const tokensSyncedRef=useRef({}); // sid → {urlToken: "shopId/periodId"}（確認済み・書き込み済み・確認中）
   useEffect(()=>{
-    if(!firebaseDB||urlLocked||!ready)return;
+    if(!firebaseDB||DEMO_MODE||urlLocked||!ready)return;
     if(!sid||sid==="default")return;
+    // tokens はその店舗のオーナーしか書けない（ルール）。オーナーでない端末からは拒否される書き込みを投げない
+    if(ownerClaimedSid!==sid)return;
+    const synced=tokensSyncedRef.current[sid]||(tokensSyncedRef.current[sid]={});
     periods.forEach(p=>{
       if(!p||!p.urlToken||!p.id)return;
       if(p.shopId&&p.shopId!==sid)return; // 店舗切替直後の古いstate混入を防ぐ
-      fbSet(`tokens/${p.urlToken}`, {shopId:p.shopId||sid,periodId:p.id}).catch(()=>{});
+      const val={shopId:p.shopId||sid,periodId:p.id};
+      const sig=`${val.shopId}/${val.periodId}`;
+      if(synced[p.urlToken]===sig)return;
+      synced[p.urlToken]=sig; // 読み込み中に periods がまた変わっても重ねて読まない
+      firebaseDB.ref(`tokens/${p.urlToken}`).once("value").then(s=>{
+        const cur=s.val();
+        if(cur&&cur.shopId===val.shopId&&cur.periodId===val.periodId)return;
+        // 書き込みの拒否（別店舗の同じ token など）はこのセッションでは繰り返さない（次のセッションでもう1回試す）
+        fbSet(`tokens/${p.urlToken}`,val).catch(()=>{});
+      },()=>{ if(synced[p.urlToken]===sig) delete synced[p.urlToken]; }); // 読めなかったら次の periods の変化で読み直す
     });
-  },[periods,sid,ready,urlLocked]);
+  },[periods,sid,ready,urlLocked,ownerClaimedSid]);
 
   // ===================================================================
   // Phase3: URLなし時のapid初期化（セッション復元優先）
@@ -1399,7 +1416,7 @@ function App(){
     const deletedPeriods=periods.filter(p=>!v.find(np=>np.id===p.id));
     const deletedIds=deletedPeriods.map(p=>p.id);
     if(deletedIds.length>0&&firebaseDB&&!DEMO_MODE){
-      deletedPeriods.forEach(p=>{ if(p.urlToken) firebaseDB.ref(`tokens/${p.urlToken}`).remove().catch(()=>{}); });
+      deletedPeriods.forEach(p=>{ if(p.urlToken){ firebaseDB.ref(`tokens/${p.urlToken}`).remove().catch(()=>{}); const sy=tokensSyncedRef.current[sid]; if(sy) delete sy[p.urlToken]; } });
       // 実績（P4）は期間IDがキーなので期間と一緒に消す（オーナーだけが書ける。拒否されても期間の削除は止めない）
       deletedPeriods.forEach(p=>{ firebaseDB.ref(`shops/${sid}/actuals/${p.id}`).remove().catch(()=>{}); });
       const newSubs=subs.filter(s=>!deletedIds.includes(s.periodId));
@@ -1423,8 +1440,10 @@ function App(){
       const flat=diffPeriodsForFlatWrite(periods,v);
       if(Object.keys(flat).length>0) fbUpd(fbPath(sid,"periods"),flat).catch(e=>revertAdminWrite("periods",e));
       // 追加された期間のURLトークン逆引きを登録（スタッフURLのO(1)解決用）
+      // ここで書いた token は補完（tokensSyncedRef を見る useEffect）にも記録し、同じ値を二重に書かせない
       v.filter(p=>p&&p.urlToken&&!periods.find(op=>op.id===p.id)).forEach(p=>{
         fbSet(`tokens/${p.urlToken}`, {shopId:sid,periodId:p.id}).catch(()=>{});
+        (tokensSyncedRef.current[sid]||(tokensSyncedRef.current[sid]={}))[p.urlToken]=`${sid}/${p.id}`;
       });
     }
     touchLastActivity();
