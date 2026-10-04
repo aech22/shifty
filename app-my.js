@@ -2191,70 +2191,74 @@ function MyAllShiftPane({choices,subsFor,onNeed}){
       </div>
       {subs===undefined?<div data-my-all-loading="1" style={{fontSize:14,color:"var(--c-text3)",padding:"16px 4px"}}>読み込み中…</div>
         :subs===null?<MyMessage error="この期間のシフトを読み込めませんでした。時間をおいてもう一度開いてください"/>
-        :<MyAllShiftTable period={cur.period} staff={cur.shop.staff} settings={cur.shop.settings} subs={subs} plan={cur.shop.plan} me={cur.shop.name}/>}
+        :<MyAllShiftTable period={cur.period} staff={cur.shop.staff} settings={cur.shop.settings} subs={subs} plan={cur.shop.plan} me={cur.shop.name} shopId={sid} shopName={cur.shop.shopName}/>}
     </div>
   );
 }
-// 全員のシフト表（公開済みだけ）。横幅に収める（横スクロール 0）。文字の大きさは人数と日数から決まる
-function MyAllShiftTable({period,staff,settings,subs,plan,me}){
-  const ref=useRef(null);
+// 他店の略称（昼夜の人数で、他店へのヘルプの帯を数えないため。シフト作成タブの abbrToShop と同じ形）。
+// 企業の写し（shops/{sid}/company.shops）の他店の settings/shopAbbrs だけを読む（auth != null で読める・書き込みなし）。読めた結果は覚える
+const _myAbbrReads=new Map(); // sid → promise
+function readMyOtherShopAbbrs(sid){
+  if(_myAbbrReads.has(sid))return _myAbbrReads.get(sid);
+  const pr=_myRead(`shops/${sid}/company/shops`).then(async co=>{
+    const ids=co.ok&&co.v&&typeof co.v==="object"?Object.keys(co.v).filter(id=>id&&id!==sid):[];
+    const rows=await Promise.all(ids.map(id=>_myRead(`shops/${id}/settings/shopAbbrs`).then(r=>[id,co.v[id],r.ok?r.v:null])));
+    const m={};
+    rows.forEach(([id,name,ab])=>Object.values(ab&&typeof ab==="object"?ab:{}).forEach(a=>{if(typeof a==="string"&&a&&!m[a])m[a]={id,name:name||id};}));
+    return m;
+  }).catch(()=>{_myAbbrReads.delete(sid);return{};});
+  _myAbbrReads.set(sid,pr);
+  return pr;
+}
+// 全員のシフト表（公開済みだけ）。**PDF のシフト表と同じ HTML**（buildMyShiftSheet → app-utils.js の shiftTableHtmlOf）を、
+// 比率を保ったまま画面の横幅に合わせて縮める（transform: scale・横スクロール 0・細部はピンチで拡大）。
+// 色は PDF と同じ固定色（白地・黒文字）なので、ダーク表示でも紙と同じ見た目になる
+function MyAllShiftTable({period,staff,settings,subs,plan,me,shopId,shopName}){
+  const boxRef=useRef(null),sheetRef=useRef(null);
   const[width,setWidth]=useState(0);
+  const[nat,setNat]=useState(null); // 表の本来の大きさ {w,h}
+  const[abbrs,setAbbrs]=useState({});
   useEffect(()=>{
-    const el=ref.current;if(!el)return;
+    const el=boxRef.current;if(!el)return;
     const upd=()=>setWidth(el.clientWidth);
     upd();
     if(typeof ResizeObserver==="function"){const ro=new ResizeObserver(upd);ro.observe(el);return()=>ro.disconnect();}
     window.addEventListener("resize",upd);return()=>window.removeEventListener("resize",upd);
   },[]);
   const todayStr=fd(new Date());
-  const t=useMemo(()=>buildMyStaffTable({period,staff,settings,subs,todayStr,premium:featureEnabled("myShift",{plan}),me}),[period,staff,settings,subs,todayStr,plan,me]);
-  // 列の幅の合計が表の幅を超えると table-layout:fixed は表を広げるので、表の外枠（左右 1px ずつ）を引いた幅で割る
-  const L=myStaffTableLayout({width:Math.max(0,width-2),cols:t.cols||[],maxChars:t.maxChars});
+  const premium=featureEnabled("myShift",{plan});
+  const t=useMemo(()=>buildMyShiftSheet({period,staff,settings,subs,todayStr,premium,me,shopName,abbrToShop:abbrs}),[period,staff,settings,subs,todayStr,premium,me,shopName,abbrs]);
+  // 他店の略称は昼夜の人数を出す店舗のときだけ読む
+  useEffect(()=>{
+    if(!t.headcount||!shopId||!firebaseDB)return;
+    let alive=true;
+    readMyOtherShopAbbrs(shopId).then(m=>{if(alive&&Object.keys(m).length)setAbbrs(m);});
+    return()=>{alive=false;};
+  },[t.headcount,shopId]);
+  // transform は配置の大きさを変えないので、本来の大きさは表を描いたあと1回測れば足りる（文字の読み込みで変わったときだけ測り直す）
+  React.useLayoutEffect(()=>{
+    const el=sheetRef.current;
+    if(!el){setNat(null);return;}
+    const upd=()=>setNat(p=>{const w=el.offsetWidth,h=el.offsetHeight;return p&&p.w===w&&p.h===h?p:{w,h};});
+    upd();
+    if(typeof ResizeObserver==="function"){const ro=new ResizeObserver(upd);ro.observe(el);return()=>ro.disconnect();}
+  },[t.html]);
+  const sc=nat?myShiftSheetScale(width,nat.w):1;
   // 期間なし・Premium でない・未公開は何も出さない（選択肢を公開済みに絞った MyAllShiftPane からは来ない。案内文は出さない＝ユーザー指示）
-  let body=null;
-  if(t.state==="ok"&&width>0){
-    const cell={overflow:"hidden",whiteSpace:"nowrap",textAlign:"center",padding:"0 1px",borderRight:"1px solid var(--c-border)",lineHeight:1.2};
-    const pd2=ds=>{const d=pd(ds);return{day:d.getDate(),wd:WD[d.getDay()],sun:d.getDay()===0,sat:d.getDay()===6};};
-    body=(
-      <div data-my-all-state="ok">
+  return(
+    <div ref={boxRef} data-my-all="1" style={{width:"100%",minWidth:0}}>
+      {t.state==="ok"&&<div data-my-all-state="ok">
         <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6,marginBottom:8}}>
           {t.confirmed?"確定":"公開"}{(()=>{const d=new Date(t.publishedAt);return Number.isFinite(d.getTime())?`（${d.getMonth()+1}/${d.getDate()} 公開）`:"";})()}
         </div>
-        {/* 罫線は separate＋border-box（collapse だと外枠の半分が幅の外に出て、横幅を 1px 超える） */}
-        <table data-my-all-table="1" data-my-all-font={L.fontPx} style={{tableLayout:"fixed",width:"100%",boxSizing:"border-box",borderCollapse:"separate",borderSpacing:0,fontSize:L.fontPx,fontVariantNumeric:"tabular-nums",
-          border:"1px solid var(--c-border2)",background:"var(--c-card)",color:"var(--c-text)"}}>
-          <colgroup>
-            <col style={{width:L.dateW}}/>
-            {t.cols.map((c,i)=><col key={i} style={{width:c.spacer?L.spacerW:L.colW}}/>)}
-          </colgroup>
-          <thead>
-            <tr>
-              <th style={{...cell,fontSize:Math.min(11,L.headFontPx+2),fontWeight:600,color:"var(--c-text3)",borderBottom:"1px solid var(--c-border2)"}}>日</th>
-              {t.cols.map((c,i)=>c.spacer?<th key={i} style={{borderBottom:"1px solid var(--c-border2)",background:"var(--c-input)"}}/>:(
-                <th key={i} data-my-all-col={c.name} data-my-all-me={c.me?"1":undefined} title={c.name}
-                  style={{...cell,verticalAlign:"top",padding:"2px 0",fontSize:L.headFontPx,fontWeight:c.me?800:600,borderBottom:"1px solid var(--c-border2)",
-                    background:c.me?"var(--c-input)":"none",writingMode:"vertical-rl",textOrientation:"upright",height:Math.ceil(L.headFontPx*Math.min(6,c.name.length)+6),letterSpacing:0}}>{c.name}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {t.rows.map(r=>{const d=pd2(r.date);const red=d.sun||r.holiday;return(
-              <tr key={r.date} data-my-all-row={r.date} style={{height:L.rowH}}>
-                <td style={{...cell,borderTop:"1px solid var(--c-border)",fontSize:Math.min(11,L.fontPx+2),color:red?"var(--c-danger)":"var(--c-text2)",fontWeight:600}}>{d.day}<br/><span style={{fontWeight:400}}>{d.wd}</span></td>
-                {r.cells.map((c,i)=>t.cols[i].spacer?<td key={i} style={{background:"var(--c-input)",borderTop:"1px solid var(--c-border)"}}/>:(
-                  <td key={i} data-my-all-cell={c?(c.work?"work":"leave"):"none"}
-                    style={{...cell,borderTop:"1px solid var(--c-border)",background:t.cols[i].me?"var(--c-input)":"none",color:c&&!c.work?"var(--c-text3)":"var(--c-text)",fontWeight:c&&c.work?600:400}}>
-                    {c?<>{c.top}<br/>{c.bottom}</>:null}
-                  </td>
-                ))}
-              </tr>
-            );})}
-          </tbody>
-        </table>
-      </div>
-    );
-  }
-  return <div ref={ref} data-my-all="1" style={{width:"100%",minWidth:0}}>{body}</div>;
+        <div data-my-sheet-frame="1" style={{width:"100%",height:nat?Math.ceil(nat.h*sc):0,overflow:"hidden"}}>
+          <div ref={sheetRef} data-my-sheet="1" data-my-sheet-scale={Math.round(sc*1000)/1000}
+            style={{width:"max-content",transform:`scale(${sc})`,transformOrigin:"0 0",background:"#fff",color:"#000",visibility:nat?"visible":"hidden"}}
+            dangerouslySetInnerHTML={{__html:t.html}}/>
+        </div>
+      </div>}
+    </div>
+  );
 }
 
 // 個別URLの画面の状態（承認待ち・却下・取り消し・見つからない）

@@ -336,20 +336,20 @@ const rowOf = (v, shop) => v.rows.find(r => r.shop === shop) || {};
       return d;
     };
     const allInfo = h => h.evaluate(() => {
-      const ps = document.querySelector("[data-my-all-period]"), ss = document.querySelector("[data-my-all-shop]"), t = document.querySelector("[data-my-all-table]");
+      const ps = document.querySelector("[data-my-all-period]"), ss = document.querySelector("[data-my-all-shop]"), t = document.querySelector("[data-my-sheet] table");
       return { shop: ss ? ss.value : null, shops: ss ? [...ss.options].map(o => o.value) : [], period: ps ? ps.value : null, periods: ps ? [...ps.options].map(o => o.value) : [],
-        cols: t ? [...t.querySelectorAll("th[data-my-all-col]")].map(x => x.getAttribute("data-my-all-col")) : [], me: t && t.querySelector("[data-my-all-me]") ? t.querySelector("[data-my-all-me]").getAttribute("data-my-all-col") : null,
+        cols: t ? [...t.querySelectorAll("th[data-sheet-col]")].map(x => x.getAttribute("data-sheet-col")) : [], me: t && t.querySelector("[data-sheet-me]") ? t.querySelector("[data-sheet-me]").getAttribute("data-sheet-col") : null,
         fonts: [...document.querySelectorAll("[data-my-all-pane] select")].map(x => parseFloat(getComputedStyle(x).fontSize)),
         tabs: document.querySelectorAll("[data-my-pager-tab]").length, text: /まだ公開されていません/.test(document.body.innerText) };
     });
-    const openAll = async s => { await s.page.waitForSelector('[data-my-pager-tab="all"]', { timeout: 15000 }); await click(s, '[data-my-pager-tab="all"]'); await sleep(s, 600); await s.page.waitForSelector("[data-my-all-table]", { timeout: 15000 }); await sleep(s, 300); };
+    const openAll = async s => { await s.page.waitForSelector('[data-my-pager-tab="all"]', { timeout: 15000 }); await click(s, '[data-my-pager-tab="all"]'); await sleep(s, 600); await s.page.waitForSelector("[data-my-sheet] table", { timeout: 15000 }); await sleep(s, 300); };
     let s = await openStaff({ db: amSeed() });
     try {
       const A = {};
       await openAll(s);
       A.first = await allInfo(s);
       await s.page.selectOption("[data-my-all-shop]", "S1"); await sleep(s, 800);
-      await s.page.waitForSelector("[data-my-all-table]", { timeout: 15000 });
+      await s.page.waitForSelector("[data-my-sheet] table", { timeout: 15000 });
       A.s1 = await allInfo(s);
       A.overflow = await overflowX(s);
       await s.page.setViewportSize({ width: 320, height: 700 }); await sleep(s, 400);

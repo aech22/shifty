@@ -1312,54 +1312,83 @@ test("個別URL（P2）: 提出先は最新の期間・名前は承認された�
   assert.ok(/onSub=\{staffOnSub\}/.test(main) && /onSub=\{staffOnSub\} onDeleteSub=\{staffOnDeleteSub\}\/>;/.test(main), "募集URLと個別URLが同じ staffOnSub を通る");
   assert.ok(/useEffect\(\(\)=>\{ if\(pageRoute!==null&&latestPeriod&&apid!==latestPeriod\.id\) setApid\(latestPeriod\.id\); \}/.test(main), "最新の期間を購読する");
 });
-test("個別URL（P3）: 全員のシフト表は公開済みだけ・確定値・並びはシフト作成タブと同じ（写し・非表示・空白列）・休暇の帯は種別名", () => {
-  const p = { id: "p1", startDate: "2026-10-01", endDate: "2026-10-03", label: "10月" };
+// 全員のシフト表（2026-10-04 に PDF の「シフト表」と同じ仕様へ・ユーザー指示）。HTML から列・行・セルを読む
+function _sheetCells(html) {
+  const out = {};
+  for (const tr of html.split("<tr").slice(1)) {
+    const rm = /data-sheet-row="([^"]+)" data-sheet-field="(start|end)"/.exec(tr);
+    if (!rm) continue;
+    const tds = [...tr.matchAll(/<td data-sheet-cell="(\w+)"( data-helper="1")? style="([^"]*)">([^<]*)<\/td>/g)];
+    out[rm[1] + "|" + rm[2]] = tds.map(t => ({ kind: t[1], style: t[3], text: t[4] }));
+  }
+  return out;
+}
+const _sheetCols = html => [...html.matchAll(/data-sheet-col="([^"]+)"/g)].map(x => x[1]);
+test("全員のシフト表（PDF と同じ仕様）: 公開済みだけ・並びは写しと非表示を当てた名簿＋未登録の提出者・保存値の時刻（17.5 の表記）・メモ・休暇は斜線", () => {
+  const p = { id: "p1", startDate: "2026-10-01", endDate: "2026-10-03", label: "2026年10月" };
   const pub = { ...p, published: { at: "2026-10-01T00:00:00.000Z", byUid: "O" } };
-  const settings = { staffAliases: { 佐藤: ["さとう"] }, staffHidden: { 退職: true }, overtimeSettings: { byStaff: { 田中: { dinner: 30 } } } };
+  const settings = { staffAliases: { 佐藤: ["さとう"] }, staffHidden: { 退職: true }, overtimeSettings: { byStaff: { 田中: { dinner: 30 } } },
+    staffNumbers: { 田中: "001" }, staffColors: { 佐藤: "red" } };
   const subs = [
-    { id: "a", periodId: "p1", staffName: "田中", shifts: { "2026-10-01": { status: "work", start: "17:00", end: "23:00" }, "2026-10-02": { status: "work", start: "9:30", end: "15:00", adjustedStart: "10:00" } } },
-    { id: "b", periodId: "p1", staffName: "さとう", shifts: { "2026-10-01": { status: "holiday", leaveTypes: { start: "paid", end: "paid" } }, "2026-10-02": { status: "work", start: "11:00", end: "15:00", leaveTypes: { end: "ceremony" } } } },
+    { id: "a", periodId: "p1", staffName: "田中", shifts: { "2026-10-01": { status: "work", start: "17:30", end: "23:00", startNote: "h", changed: true }, "2026-10-02": { status: "work", start: "9:30", end: "15:00", adjustedStart: "10:00", adjustedEndNote: "研修" } } },
+    { id: "b", periodId: "p1", staffName: "さとう", shifts: { "2026-10-01": { status: "work", start: "10:00", end: "15:00", adminRest: { start: true, end: true }, leaveTypes: { start: "paid", end: "paid" } }, "2026-10-02": { status: "work", start: "11:00", end: "15:00", adminRest: { end: true }, leaveTypes: { end: "ceremony" } }, "2026-10-03": { status: "holiday" } } },
     { id: "c", periodId: "p1", staffName: "退職", shifts: { "2026-10-01": { status: "work", start: "10:00", end: "15:00" } } },
+    { id: "d", periodId: "p1", staffName: "飛び入り<b>", shifts: { "2026-10-03": { status: "work", start: "12:00", end: "14:00" } } },
     { id: "z", periodId: "p0", staffName: "田中", shifts: { "2026-10-03": { status: "work", start: "1:00", end: "2:00" } } },
   ];
   const staff = ["田中", "__spacer__1", "佐藤", "退職"];
-  assert.strictEqual(m.buildMyStaffTable({ period: null }, U).state, "noPeriod");
-  assert.strictEqual(m.buildMyStaffTable({ period: pub, staff, settings, subs, premium: false }, U).state, "premium");
-  assert.strictEqual(m.buildMyStaffTable({ period: p, staff, settings, subs, premium: true }, U).state, "unpublished", "未公開は出さない");
-  const t = m.buildMyStaffTable({ period: pub, staff, settings, subs, premium: true, me: "佐藤", todayStr: "2026-10-01" }, U);
+  assert.strictEqual(m.buildMyShiftSheet({ period: null }, U).state, "noPeriod");
+  assert.strictEqual(m.buildMyShiftSheet({ period: pub, staff, settings, subs, premium: false }, U).state, "premium");
+  assert.strictEqual(m.buildMyShiftSheet({ period: p, staff, settings, subs, premium: true }, U).state, "unpublished", "未公開は出さない");
+  const t = m.buildMyShiftSheet({ period: pub, staff, settings, subs, premium: true, me: "佐藤", todayStr: "2026-10-01", shopName: "駅前店" }, U);
   assert.strictEqual(t.state, "ok");
-  assert.deepStrictEqual(t.cols, [{ name: "田中", me: false }, { spacer: true }, { name: "佐藤", me: true }], "空白列は残し、非表示の人は落とす");
-  assert.deepStrictEqual(t.rows.map(r => r.date), ["2026-10-01", "2026-10-02", "2026-10-03"]);
-  // 田中: 退勤延長（ディナー30分）は確定値に入る。管理者の調整値（10:00）が出る。別の期間の提出は使わない
-  assert.deepStrictEqual(t.rows[0].cells[0], { top: "17", bottom: "23:30", work: true, leave: false, extra: false });
-  assert.strictEqual(t.rows[1].cells[0].top, "10");
-  assert.strictEqual(t.rows[2].cells[0], null);
-  assert.strictEqual(t.rows[0].cells[1], null, "空白列のセルは null");
-  // 佐藤（別名で提出）: 終日の有給・半日の慶弔は種別名（退勤の帯だけ）
-  assert.deepStrictEqual(t.rows[0].cells[2], { top: "有給", bottom: "有給", work: false, leave: true, extra: false });
-  assert.deepStrictEqual(t.rows[1].cells[2], { top: "11", bottom: "慶弔", work: true, leave: true, extra: false });
-  assert.strictEqual(t.maxChars, 5);
+  assert.deepStrictEqual(_sheetCols(t.html), ["田中", "佐藤", "飛び入り&lt;b&gt;"], "空白列は残し・非表示の人は落とし・未登録の提出者は末尾（PDF の buildPdfCols と同じ）。名前はエスケープする");
+  assert.ok(!t.html.includes("<b>"), "文字はすべてエスケープ（innerHTML で入れるため）");
+  assert.ok(/data-sheet-col="佐藤" data-sheet-me="1"/.test(t.html), "本人の列に印");
+  assert.ok(/color:#e53935/.test(t.html), "名前の色（staffColors）");
+  assert.ok(/>001<\/th>/.test(t.html), "従業員番号の行");
+  assert.ok(t.html.includes(">1<br>0<br>月<") && !t.html.includes("2<br>0<br>2<br>6"), "左上は年を除いた期間名を縦に（PDF と同じ）");
+  assert.ok(t.html.includes("駅<br>前<br>店"), "右上は店舗名を縦に");
+  const c = _sheetCells(t.html);
+  // 列: 田中・空白・佐藤・飛び入り（空白列は data-sheet-cell を持たないので3つ）
+  assert.deepStrictEqual(c["2026-10-01|start"].map(x => x.text), ["17.5h", "", ""]);
+  assert.ok(/#B7EBC6/.test(c["2026-10-01|start"][0].style), "変更マークは緑（メモの黄色より優先）");
+  assert.strictEqual(c["2026-10-01|end"][0].text, "23", "退勤延長は足さない（PDF は保存された時刻を出す）");
+  assert.deepStrictEqual(c["2026-10-02|start"].map(x => x.text), ["10", "11", ""], "管理者の調整値が出る");
+  assert.strictEqual(c["2026-10-02|end"][0].text, "15研修");
+  assert.ok(/#FFFF00/.test(c["2026-10-02|end"][0].style), "メモのあるセルは黄色");
+  assert.deepStrictEqual(c["2026-10-01|start"].map(x => x.kind), ["text", "hatch", "none"], "終日の有給は斜線（PDF は種別名を出さない）");
+  assert.strictEqual(c["2026-10-02|end"][1].kind, "hatch", "半日の慶弔は退勤の帯だけ斜線");
+  assert.deepStrictEqual(c["2026-10-03|start"].map(x => x.kind), ["none", "hatch", "text"], "休みの提出は斜線・別の期間の提出は使わない");
+  assert.ok(!/data-headcount/.test(t.html), "昼夜の人数は設定した店舗だけ");
   // 確定・終了済みの期間は写しの並びと設定（写しに居ない人は出さない）
   const snap = { ...pub, confirmation: { at: "t", byUid: "O" }, snapshot: { staffList: ["佐藤"], settings: { staffAliases: { 佐藤: ["さとう"] } } } };
-  assert.deepStrictEqual(m.buildMyStaffTable({ period: snap, staff, settings, subs, premium: true, todayStr: "2026-10-01" }, U).cols.map(c => c.name), ["佐藤"]);
-  assert.strictEqual(m.myStaffTimeText(570), "9:30");
-  assert.strictEqual(m.myStaffTimeText(1500), "25");
+  assert.deepStrictEqual(_sheetCols(m.buildMyShiftSheet({ period: snap, staff, settings, subs, premium: true, todayStr: "2026-10-01" }, U).html), ["佐藤", ...["田中", "退職", "飛び入り&lt;b&gt;"].sort((a, b) => a.localeCompare(b, "ja"))],
+    "写しに居ない人の提出は未登録の名前として末尾に出る（PDF と同じ）");
+  // 昼夜の人数（headcountAt）はヒートマップと同じ区間で数える。休暇の帯の人は数えない
+  const hc = m.buildMyShiftSheet({ period: pub, staff, settings: { ...settings, headcountAt: { enabled: true, lunch: "12:00", dinner: "19:00" } }, subs, premium: true, todayStr: "2026-10-01" }, U);
+  assert.deepStrictEqual([...hc.html.matchAll(/data-headcount="([^"]*)"/g)].map(x => x[1]).slice(0, 2), ["夜1", "夜1"], "10/1 は田中（17:30〜）だけ。有給の佐藤は数えない");
+  assert.strictEqual(hc.headcount, true);
 });
-test("個別URL（P3）: 全員の表の寸法は横幅を超えない（列の幅の合計＝幅）。文字は14pxを上限に、収めることを優先", () => {
-  const colsOf = (n, sp) => [...Array.from({ length: n }, (_, i) => ({ name: "n" + i })), ...Array.from({ length: sp }, () => ({ spacer: true }))];
-  [[341, 10, 0, 4], [341, 30, 1, 4], [286, 30, 2, 5], [1000, 3, 0, 2], [0, 5, 0, 4]].forEach(([w, n, sp, ch]) => {
-    const L = m.myStaffTableLayout({ width: w, cols: colsOf(n, sp), maxChars: ch });
-    const sum = L.dateW + n * L.colW + sp * L.spacerW;
-    assert.ok(sum <= Math.max(w, L.dateW) + 1e-6, `${w}/${n}: ${sum}`);
-    assert.ok(L.fontPx <= 14 && L.fontPx > 0);
-    if (w > 0) assert.ok(L.fontPx * ch * 0.62 <= L.colW - 2 + 0.2 || L.fontPx === 1, "文字がセルに収まる");
-  });
-  const a = m.myStaffTableLayout({ width: 341, cols: colsOf(10, 0), maxChars: 4 }), b = m.myStaffTableLayout({ width: 341, cols: colsOf(30, 1), maxChars: 4 });
-  assert.ok(a.fontPx > b.fontPx, "人数が多いほど小さい");
+test("全員のシフト表: PDF と同じ関数を通る（ドリフト検出）・倍率は横幅に合わせて比率を保つ（2倍まで）", () => {
+  const mu = fs.readFileSync(path.join(ROOT, "app-my-utils.js"), "utf8");
+  const b = mu.slice(mu.indexOf("function buildMyShiftSheet("), mu.indexOf("const MY_SHEET_MAX_SCALE"));
+  ["u.shiftTableHtmlOf(", "u.shiftSheetCellOf(", "u.shiftSheetStoredText(", "u.shiftSheetHeadcountOf(", "u.heatStaffDayEntriesOf(", "u.isUnregisteredSubName(", "u.visibleStaffList(", "u.resolvePeriodMaster("]
+    .forEach(k => assert.ok(b.includes(k), `buildMyShiftSheet が ${k} を通っていない`));
+  const sh = fs.readFileSync(path.join(ROOT, "app-shift.js"), "utf8");
+  const pdf = sh.slice(sh.indexOf("const buildShiftTableHtml="), sh.indexOf("// 休み・連勤カウント統合table"));
+  ["shiftTableHtmlOf(", "shiftSheetCellOf(", "shiftSheetHeadcountOf("].forEach(k => assert.ok(pdf.includes(k), `PDF が ${k} を通っていない`));
+  assert.ok(sh.includes("shiftSheetStoredText(") && sh.includes("heatStaffDayEntriesOf("), "PDF の保存値の解決とヒートマップも同じ関数");
+  assert.strictEqual(m.myShiftSheetScale(343, 686), 0.5);
+  assert.strictEqual(m.myShiftSheetScale(1000, 300), m.MY_SHEET_MAX_SCALE);
+  assert.strictEqual(m.myShiftSheetScale(0, 300), 1);
   const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const tb = my.slice(my.indexOf("function MyAllShiftTable("), my.indexOf("function MyPageStatusScreen("));
+  assert.ok(/buildMyShiftSheet\(/.test(tb) && /dangerouslySetInnerHTML=\{\{__html:t\.html\}\}/.test(tb) && /transform:`scale\(\$\{sc\}\)`/.test(tb), "PDF と同じ HTML を縮めて出す");
+  assert.ok(!/<input/.test(tb), "全員の表は入力欄を持たない（16px の規約に触れない）");
+  assert.ok(!/2本の指/.test(my), "「2本の指で拡大」の文言は出さない（ユーザー指示）");
   assert.ok(/overflowX:zoomed\|\|single\?"hidden":"auto"/.test(my) && /scrollSnapType:"x mandatory"/.test(my), "ピンチで拡大中は横スクロールを止める・scroll-snap");
   assert.ok(/role="tablist" aria-label="表示の切り替え"/.test(my), "タップでも切り替えられる");
-  assert.ok(!/<input/.test(my.slice(my.indexOf("function MyAllShiftTable("), my.indexOf("function MyPageStatusScreen("))), "全員の表は入力欄を持たない（16px の規約に触れない）");
 });
 // ===== 全員のシフトの期間と店舗の選び方（2026-10-04・ユーザー指示: 未公開の案内を出さない・期間をプルダウン・直近3ヶ月・#/me でも）=====
 test("全員のシフト: 期間の選択肢は公開済みかつ直近3ヶ月（subsWindowCutoff と同じ窓）を新しい順。Premium でなければ空", () => {

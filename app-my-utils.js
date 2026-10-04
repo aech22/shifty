@@ -315,6 +315,8 @@ function _myU(U){
   return{scheduledDay,resolveActualDay,resolvePeriodMaster,resolveSubByAlias,isStaffHiddenInPeriod,isPeriodPublished,isPeriodConfirmed,featureEnabled,
     // 全員のシフト表（個別URL・2026-10-04）。期間の選択肢は管理者画面の subs 部分購読と同じ窓（subsWindowCutoff）
     visibleStaffList,isSpacer,leaveCellTextOf,isHoliday,subsWindowCutoff,
+    // 全員のシフト表は PDF のシフト表と同じ関数（2026-10-04）
+    isUnregisteredSubName,gd,isFixedShiftEligibleShop,oneSidedFillBounds,headcountAtOf,heatStaffDayEntriesOf,shiftSheetHeadcountOf,shiftTableHtmlOf,shiftSheetCellOf,shiftSheetStoredText,
     // 給料（E5）: 月次賃金ページ（P6b）・割増（P5）と同じ関数
     premiumMonthOf,premiumDayInput,dayRestKindOf,laborSystemForStaff,laborSettingsOf,rateDenominatorMinOf,payVersionOn,wageOf,deductionOf,
     premiumRatesOf,roundingRuleOf,roundYenFrac,nightMinutesOf,normalizePayVersion,isWeekendOrHoliday,OVER60_THRESHOLD_MIN};
@@ -1405,46 +1407,76 @@ function myLatestPeriodOf(periods){
   return best;
 }
 
-// ---- 最新期間の全員のシフト表（P3）----
-// 個別URL・メールのアカウントの「全員」の表示。**公開済みの期間だけ**（未公開は state:"unpublished"。画面は選択肢を myAllShiftPeriodOptions で
-// 公開済みに絞るので、この状態を画面に出すことは無い＝案内文も出さない・2026-10-04 のユーザー指示）。中身は管理者の調整後の確定値
-// （scheduledDay＝マイシフトの公開済みと同じ入口）。並びはシフト作成タブと同じ（写し＝resolvePeriodMaster・その期間に非表示の人は落とす
-// ＝visibleStaffList・空白列は残す）。休み・休暇は PDF のシフト表に近い（出勤の帯ごとに時刻、休暇の帯は種別名）。労務・ヒートマップ・賃金・メモは出さない。
-// o={period, staff, settings（企業設定を重ねた店舗の設定）, subs（その期間の提出）, todayStr, premium, me（本人の名前）}
-function myStaffTimeText(min){
-  if(min==null||!Number.isFinite(Number(min)))return"";
-  const n=Math.max(0,Math.round(Number(min))),h=Math.floor(n/60),mi=n%60;
-  return mi?`${h}:${String(mi).padStart(2,"0")}`:String(h);
-}
-function buildMyStaffTable(o,U){
+// ---- 全員のシフト表（P3 → 2026-10-04 に PDF の「シフト表」と同じ仕様へ・ユーザー指示）----
+// 個別URL・メールのアカウントの「全員のシフト」。**表は PDF と同じ関数（app-utils.js の shiftTableHtmlOf・shiftSheetCellOf・
+// shiftSheetStoredText・shiftSheetHeadcountOf・heatStaffDayEntriesOf）で作る**＝見た目も中身も PDF のシフト表と同じ
+// （日付と曜日の行・上が出勤／下が退勤・時刻は 17.5 の表記・メモ（h/k/x・略称・研修 等）と締・休み／休暇の斜線・
+// 変更マークの緑・メモの黄色・従業員番号の行・名前の色・土日祝の色・未登録の提出者の列・空白列（35人超は日付）・昼夜の人数）。
+// **公開済みの期間だけ**（未公開は state:"unpublished"。画面は選択肢を公開済みに絞るので、この状態を画面に出すことは無い）。
+// 並びと設定はシフト作成タブと同じ（写し＝resolvePeriodMaster・非表示の人は visibleStaffList で落とす）。
+// PDF と違うのは次の3つだけ: ①他店でのヘルプ勤務（H2。他店の提出を読まないと作れない）は出さない、②入力中の編集は無い（保存値だけ）、
+// ③本人の列の名前の見出しに印（markName）と、回帰が引く data 属性（tags）。労務・ヒートマップ・賃金は PDF の「シフト表」にも無い。
+// o={period, staff, settings（企業設定を重ねた店舗の設定）, subs（その期間の提出）, todayStr, premium, me（本人の名前）, shopName, abbrToShop（他店の略称・人数の除外）}
+function buildMyShiftSheet(o,U){
   const u=_myU(U);const x=o||{};const p=x.period;
   if(!p||!p.id)return{state:"noPeriod"};
   if(!x.premium)return{state:"premium",period:p};
   if(!u.isPeriodPublished(p))return{state:"unpublished",period:p};
   const master=u.resolvePeriodMaster(p,x.staff||[],x.settings||{},x.todayStr);
   const st=master.settings||{};
-  const names=u.visibleStaffList(master.staffList||[],st,p);
+  const roster=master.staffList||[];
+  const staffList=u.visibleStaffList(roster,st,p);
+  const aliases=st.staffAliases||{};
+  const subs=(Array.isArray(x.subs)?x.subs:[]).filter(s=>s&&s.periodId===p.id&&s.staffName);
   const byName=new Map();
-  (Array.isArray(x.subs)?x.subs:[]).forEach(s=>{if(s&&s.periodId===p.id&&s.staffName&&!byName.has(s.staffName))byName.set(s.staffName,s);});
-  const cols=names.map(n=>u.isSpacer(n)?{spacer:true}:{name:n,me:!!x.me&&n===x.me});
-  const dates=_myDatesOf(p);
-  let maxChars=1;
-  const rows=dates.map(date=>({date,holiday:!!(u.isHoliday&&u.isHoliday(date)),cells:cols.map(c=>{
-    if(c.spacer)return null;
-    const sub=u.resolveSubByAlias(n=>byName.get(n),c.name,st.staffAliases||{});
-    const sh=sub&&sub.shifts?sub.shifts[date]:null;
-    const lvS=sh?u.leaveCellTextOf(sh,"start"):"",lvE=sh?u.leaveCellTextOf(sh,"end"):"";
-    const sd=u.scheduledDay(sub,date,st,c.name);
-    const work=!sd.isRest&&sd.workMin>0;
-    const main=(sd.segments||[]).find(g=>!g.extra);
-    const extra=(sd.segments||[]).find(g=>g.extra);
-    const top=lvS||(work&&main?myStaffTimeText(main.startMin):work&&extra?myStaffTimeText(extra.startMin):"");
-    const bottom=lvE||(work&&main?myStaffTimeText(main.endMin):work&&extra?myStaffTimeText(extra.endMin):"");
-    [top,bottom].forEach(t=>{if(t.length>maxChars)maxChars=t.length;});
-    if(!top&&!bottom)return null;
-    return{top,bottom,work,leave:!!(lvS||lvE),extra:!!(work&&main&&extra)};
-  })}));
-  return{state:"ok",period:p,confirmed:u.isPeriodConfirmed(p),publishedAt:p.published.at,cols,rows,maxChars};
+  subs.forEach(s=>{if(!byName.has(s.staffName))byName.set(s.staffName,s);}); // 重複時は最初の1件（シフト作成タブの subsByKey と同じ）
+  const subOf=n=>u.resolveSubByAlias(k=>byName.get(k),n,aliases);
+  // 列は PDF の buildPdfCols("all") と同じ: 名簿（非表示を落とした）＋この期間に提出した未登録の名前（50音順）
+  const unreg=subs.map(s=>s.staffName).filter(n=>u.isUnregisteredSubName(n,roster,aliases,p)).sort((a,b)=>a.localeCompare(b,"ja"));
+  const cols=[...staffList,...unreg];
+  const dates=u.gd(p.startDate,p.endDate);
+  const fixedEnabled=u.isFixedShiftEligibleShop(x.shopName);
+  const shiftOf=(n,ds)=>{const sb=subOf(n);return sb&&sb.shifts?sb.shifts[ds]||null:null;};
+  // 昼夜の人数（PDF だけの表示＝この表にも出す）。区間はヒートマップと同じ（シフト作成タブの heatData と同じ関数）
+  const realStaff=staffList.filter(n=>!u.isSpacer(n));
+  const spIdx=staffList.findIndex(n=>u.isSpacer(n));
+  const hall=new Set(spIdx>-1?staffList.slice(spIdx+1).filter(n=>!u.isSpacer(n)):[]);
+  const hasSplit=hall.size>0;
+  const cfg=u.headcountAtOf(st);
+  const bounds=u.oneSidedFillBounds(st);
+  const entryCache=new Map();
+  const entriesOf=ds=>{
+    if(entryCache.has(ds))return entryCache.get(ds);
+    const out=[];
+    realStaff.forEach(n=>{
+      const sh=shiftOf(n,ds);if(!sh)return;
+      const rest=f=>!!(sh.adminRest&&sh.adminRest[f]);
+      const t=f=>rest(f)?"":((f==="start"?(sh.adjustedStart??sh.start):(sh.adjustedEnd??sh.end))||"");
+      const nt=f=>rest(f)?"":((f==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"");
+      const fx=f=>fixedEnabled&&!rest(f)&&!!sh[f==="start"?"adjustedStartFixed":"adjustedEndFixed"];
+      u.heatStaffDayEntriesOf({name:n,date:ds,settings:st,start:t("start"),end:t("end"),startNote:nt("start"),endNote:nt("end"),fixed:fx("start")||fx("end"),base:sh,
+        lunchEnd:bounds.lunchEnd,dinnerStart:bounds.dinnerStart,abbrToShop:x.abbrToShop||{},isHall:hall.has(n),splitEnabled:hasSplit}).forEach(e=>out.push(e));
+    });
+    entryCache.set(ds,out);
+    return out;
+  };
+  const html=u.shiftTableHtmlOf({cols,dates,periodLabel:String(p.label||"").replace(/^\d+年/,""),shopName:x.shopName||"",
+    staffNums:st.staffNumbers||{},staffColors:st.staffColors||{},settings:st,markName:x.me||"",tags:true,
+    headcountOf:cfg.enabled?(ds,section)=>u.shiftSheetHeadcountOf({settings:st,date:ds,entries:entriesOf(ds),shiftOf:n=>shiftOf(n,ds),hasSplit,section}):null,
+    cellOf:(nm,ds,field)=>{
+      const sh=shiftOf(nm,ds);
+      return u.shiftSheetCellOf({sh,field,hasSub:!!sh,helper:null,r:u.shiftSheetStoredText(sh,field,fixedEnabled),
+        otherDisp:u.shiftSheetStoredText(sh,field==="start"?"end":"start",fixedEnabled).disp});
+    }});
+  return{state:"ok",period:p,confirmed:u.isPeriodConfirmed(p),publishedAt:p.published.at,html,
+    names:cols.filter(n=>!u.isSpacer(n)),headcount:!!cfg.enabled};
+}
+// 全員の表を横幅に合わせる倍率（比率を保って表全体を縮める・広い画面では2倍まで）。natural＝表の本来の幅（px）
+const MY_SHEET_MAX_SCALE=2;
+function myShiftSheetScale(width,natural){
+  const w=Number(width)||0,n=Number(natural)||0;
+  if(!(w>0)||!(n>0))return 1;
+  return Math.min(MY_SHEET_MAX_SCALE,w/n);
 }
 // ---- 全員のシフト表の期間と店舗の選び方（2026-10-04・ユーザー指示）----
 // 未公開の期間は選択肢にも出さず、「まだ公開されていません」の案内も出さない。選択肢は**公開済み**かつ startDate が
@@ -1484,21 +1516,6 @@ function myAllShiftSelection(choices,sel){
   const period=shop.options.find(p=>p.id===s.periodId)||shop.options[0];
   return{shop,period};
 }
-// 全員の表を横幅いっぱいに収める寸法（横スクロールさせない。細部はピンチで拡大して見る）。
-// width＝表に使える幅（px）、cols＝buildMyStaffTable の cols、maxChars＝セルの最長の文字数。空白列は 0.4 列ぶん
-function myStaffTableLayout(o){
-  const x=o||{};
-  const width=Math.max(0,Number(x.width)||0);
-  const cols=Array.isArray(x.cols)?x.cols:[];
-  const units=cols.reduce((a,c)=>a+(c&&c.spacer?0.4:1),0)||1;
-  const dateW=Math.max(20,Math.min(34,Math.round(width*0.09)));
-  const colW=Math.max(0,(width-dateW)/units);
-  // 数字の幅はおよそ 0.6em。セルの左右の余白を 2px 取り、14px を上限にする（下限は設けない＝収めることを優先し、ピンチで拡大して読む）
-  const chars=Math.max(2,Number(x.maxChars)||2);
-  const fontPx=Math.max(1,Math.min(14,Math.floor(((colW-2)/(chars*0.62))*10)/10));
-  return{width,dateW,colW,spacerW:colW*0.4,fontPx,headFontPx:Math.max(1,Math.min(13,Math.floor(Math.min(colW*0.8,14)*10)/10)),rowH:Math.ceil(fontPx*1.2*2+2)};
-}
-
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
   module.exports={MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
@@ -1514,5 +1531,5 @@ if(typeof module!=="undefined"&&module.exports){
     myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
     MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,resolveMyPage,MY_PAGE_STATE_MESSAGES,
-    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,myStaffTimeText,buildMyStaffTable,myStaffTableLayout,myAllShiftPeriodOptions,myAllShiftChoices,myAllShiftSelection};
+    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myAllShiftSelection};
 }

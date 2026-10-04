@@ -282,12 +282,22 @@ async function requestPage(h, name, number) {
   // ---------------- AL: 全員の表と切り替え（P3）----------------
   const pagerState = h => h.evaluate(() => { const p = document.querySelector("[data-my-pager]"); const t = document.querySelector("[data-my-pager-track]");
     return { active: p && p.getAttribute("data-my-pager"), locked: p && p.getAttribute("data-my-pager-locked"), left: t ? Math.round(t.scrollLeft) : -1, w: t ? t.clientWidth : 0, ox: t ? getComputedStyle(t).overflowX : "" }; });
-  const tableInfo = h => h.evaluate(() => { const t = document.querySelector("[data-my-all-table]"); const box = document.querySelector('[data-my-pane="all"]');
-    if (!t) return null; const r = t.getBoundingClientRect(), b = box.getBoundingClientRect();
-    return { font: parseFloat(t.getAttribute("data-my-all-font")), cellFont: parseFloat(getComputedStyle(t.querySelector("td[data-my-all-cell]") || t).fontSize),
-      tableW: Math.round(r.width), paneW: Math.round(b.width), overTable: Math.round(r.right - b.right), cols: [...t.querySelectorAll("th[data-my-all-col]")].map(x => x.getAttribute("data-my-all-col")),
-      me: (t.querySelector("[data-my-all-me]") || {}).getAttribute ? t.querySelector("[data-my-all-me]").getAttribute("data-my-all-col") : null,
-      rows: t.querySelectorAll("[data-my-all-row]").length, spacers: t.querySelectorAll("thead th:not([data-my-all-col])").length - 1 }; });
+  // 全員の表は PDF のシフト表と同じ HTML（2026-10-04）。行は日付ごとに出勤（start）・退勤（end）の2行、セルは data-sheet-cell
+  const tableInfo = h => h.evaluate(() => { const s = document.querySelector("[data-my-sheet]"); const box = document.querySelector('[data-my-pane="all"]');
+    if (!s) return null; const t = s.querySelector("table"); const r = s.getBoundingClientRect(), b = box.getBoundingClientRect();
+    const fr = document.querySelector("[data-my-sheet-frame]").getBoundingClientRect();
+    const named = t.querySelectorAll("th[data-sheet-col]").length;
+    return { scale: parseFloat(s.getAttribute("data-my-sheet-scale")), tableW: Math.round(r.width), paneW: Math.round(b.width), overTable: Math.round(r.right - b.right),
+      frameW: Math.round(fr.width), frameH: Math.round(fr.height), sheetH: Math.round(r.height),
+      cols: [...t.querySelectorAll("th[data-sheet-col]")].map(x => x.getAttribute("data-sheet-col")),
+      me: t.querySelector("[data-sheet-me]") ? t.querySelector("[data-sheet-me]").getAttribute("data-sheet-col") : null,
+      rows: new Set([...t.querySelectorAll("tr[data-sheet-row]")].map(x => x.getAttribute("data-sheet-row"))).size,
+      spacers: t.querySelectorAll("thead tr:nth-child(2) th").length - 4 - named }; });
+  // その日の各スタッフの「出勤/退勤」（斜線のセルは「斜線」）
+  const dayCells = (h, d) => h.evaluate(d => { const a = document.querySelector(`tr[data-sheet-row="${d}"][data-sheet-field="start"]`), b = document.querySelector(`tr[data-sheet-row="${d}"][data-sheet-field="end"]`);
+    if (!a || !b) return null; const ca = [...a.querySelectorAll("td[data-sheet-cell]")], cb = [...b.querySelectorAll("td[data-sheet-cell]")];
+    const k = x => x.getAttribute("data-sheet-cell") === "hatch" ? "斜線" : x.textContent; return ca.map((c, i) => k(c) + "/" + k(cb[i])); }, d);
+  const sheetRows = h => h.evaluate(() => [...new Set([...document.querySelectorAll("tr[data-sheet-row]")].map(r => r.getAttribute("data-sheet-row")))]);
   // AL0: 公開済みの期間が無い（最新の期間が未公開）→ 「全員のシフト」の切り替えも「まだ公開されていません」の案内も出さない
   {
     const h = await openAnon({ hash: "#/m/" + T1, db: dump, wait: '[data-my-view="page"]' });
@@ -330,15 +340,15 @@ async function requestPage(h, name, number) {
       AL.start = await pagerState(h);
       await click(h, '[data-my-pager-tab="all"]'); await sleep(h, 700);
       AL.afterTap = await pagerState(h);
-      await waitSel(h, "[data-my-all-table]");
+      await waitSel(h, "[data-my-sheet] table");
       AL.sel = await selInfo(h);
-      AL.rows = await h.evaluate(() => [...document.querySelectorAll("[data-my-all-row]")].map(r => r.getAttribute("data-my-all-row")));
+      AL.rows = await sheetRows(h);
       AL.text = await h.evaluate(() => /まだ公開されていません/.test(document.body.innerText));
       // 先月を選ぶ
       await h.page.selectOption("[data-my-all-period]", "pPrev"); await sleep(h, 600);
       AL.selPrev = await selInfo(h);
-      AL.rowsPrev = await h.evaluate(() => [...document.querySelectorAll("[data-my-all-row]")].map(r => r.getAttribute("data-my-all-row")));
-      AL.prevCell = await h.evaluate(d => { const r = document.querySelector(`[data-my-all-row="${d}"]`); return r ? [...r.querySelectorAll("td[data-my-all-cell]")].map(c => c.innerText.replace(/\n/g, "/")) : null; }, `${ymOf(-1)}-03`);
+      AL.rowsPrev = await sheetRows(h);
+      AL.prevCell = await dayCells(h, `${ymOf(-1)}-03`);
       AL.reads = await h.evaluate(() => (window.__reads || []).filter(p => /\/subs$/.test(p)));
       AL.overflowSel = await overflowX(h);
       // 横スクロール（スワイプ相当）で戻る
@@ -392,11 +402,11 @@ async function requestPage(h, name, number) {
     try {
       const k = `${nS}x${nD}_${vp.width}`;
       await click(h, '[data-my-pager-tab="all"]'); await sleep(h, 800);
-      await waitSel(h, "[data-my-all-table]");
+      await waitSel(h, "[data-my-sheet] table");
       const T = await tableInfo(h);
       T.overflow = await overflowX(h);
-      T.day1 = await h.evaluate(d => { const r = document.querySelector(`[data-my-all-row="${d}"]`); return r ? [...r.querySelectorAll("td[data-my-all-cell]")].slice(0, 3).map(c => c.innerText.replace(/\n/g, "/")) : null; }, `${YM}-01`);
-      T.day2 = await h.evaluate(d => { const r = document.querySelector(`[data-my-all-row="${d}"]`); return r ? [...r.querySelectorAll("td[data-my-all-cell]")].slice(0, 3).map(c => c.innerText.replace(/\n/g, "/")) : null; }, `${YM}-02`);
+      T.day1 = await dayCells(h, `${YM}-01`);
+      T.day2 = await dayCells(h, `${YM}-02`);
       // ピンチの再現は Chromium の CDP だけ（WebKit では実機で確かめる＝BACKLOG の本番反映タスク）
       if (nS === 30 && vp.width === 375 && (process.env.SHIFTY_ENGINE || "chromium") === "chromium") {
         // ピンチで拡大（Chromium の page scale factor＝visualViewport.scale）している間は横スクロールを止める
@@ -409,9 +419,11 @@ async function requestPage(h, name, number) {
       }
       T.errors = h.errors.slice();
       R["AL_" + k] = T;
-      V["AL_fits_" + k] = T.overflow <= 0 && T.overTable <= 0 && T.tableW <= T.paneW && T.rows === nD;
+      // PDF と同じ表を比率を保って縮める: 表の幅＝枠の幅（横スクロール 0）・枠の高さ＝縮めた表の高さ
+      V["AL_fits_" + k] = T.overflow <= 0 && T.overTable <= 0 && T.tableW <= T.paneW && Math.abs(T.tableW - T.frameW) <= 1 && Math.abs(T.frameH - T.sheetH) <= 1 && T.scale < 1 && T.rows === nD;
       V["AL_columns_" + k] = T.cols.length === nS && !T.cols.includes("退職者") && T.spacers === 1 && T.me === "田中";
-      V["AL_values_" + k] = !!T.day1 && T.day1[0] === "10/16" && !!T.day2 && T.day2[1] === "有給/有給";
+      // 休暇は PDF と同じく斜線（種別名は出さない）
+      V["AL_values_" + k] = !!T.day1 && T.day1[0] === "10/16" && !!T.day2 && T.day2[1] === "斜線/斜線";
       V["AL_noErrors_" + k] = T.errors.length === 0;
       if (T.zoomed) V.AL_pinchLocks = T.vvScale > 1.5 && T.zoomed.locked === "1" && T.zoomed.ox === "hidden" && T.unzoomed.locked === "0" && T.unzoomed.ox === "auto";
     } finally { await h.browser.close(); }
