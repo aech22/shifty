@@ -166,8 +166,8 @@ function App(){
     // 匿名セッションもGoogle/メールの実ログインもLOCALで永続化する（端末ごとにuidを安定させ、
     // リロード後も複数店舗ログイン状態を維持するため）。
     // 「新端末で自動ログインされる」旧バグの再発防止は、実ユーザーセッションの有無ではなく
-    // 明示的なログアウト操作の有無（AUTH_LOGGED_OUT_LS）で判定する。doLogout/doFullSignOutで
-    // フラグが立っていれば、実ユーザーが復元されてもサインアウトして匿名に入り直す。
+    // 明示的なログアウト操作の有無（AUTH_LOGGED_OUT_LS）で判定する。doFullSignOut で
+    // フラグが立っていれば、実ユーザーが復元されてもサインアウトして匿名に入り直す（doLogout は立てない＝43166ab）。
     if(firebaseAuth){
       // アプリ内ブラウザ（iOS WKWebView等）でindexedDBがハングし、setPersistence/onAuthStateChangedが
       // 永久に解決しない事象への保険。10秒で初期化が進まなければエラー画面へ。
