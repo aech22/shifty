@@ -353,6 +353,10 @@ holdOn を使わないと「購読が届く前の操作」は作れない（exam
 `cfHandlers:{myPagePin:"myPage"}` で functions/my-page.js の本物の判定を通す（ハッシュは app-utils.js の payCodeHash）。`"reject:…"` で CF が無い環境（dev）を見る。
 ピンチの再現は Chromium の CDP（`Emulation.setPageScaleFactor`＝visualViewport.scale）だけで、モバイル WebKit はホイールも受け付けない
 （スワイプは scrollLeft を動かして scroll イベントの経路だけを見る）。`SHIFTY_ENGINE=webkit SHIFTY_DEVICE="iPhone 13"` でも通る
+全員のシフトの表は PDF のシフト表と同じ HTML（2026-10-04）なので、列は `th[data-sheet-col]`、行は `tr[data-sheet-row][data-sheet-field="start"|"end"]`、
+セルは `td[data-sheet-cell]`（`text`・`hatch`・`blank`・`none`）で引く。**PDF と同じ表かは `scripts/example-my-sheet-pdf.js`**（ShiftEditTab と MyAllShiftTable を
+同じページに載せ、PDF 出力（シフト）の table と、従業員画面の印（data-sheet-*・本人の列の見出しの背景）を外した table の outerHTML を比べる）。
+**アカウント作成の連結が列挙保護で拒否される本番の挙動**は `authSeed.linkBlocked:true`（linkWithCredential が `auth/operation-not-allowed`）で作る（example-my-account.js の L）
 
 **本物の index.html をこのスタブで丸ごと起動する例**が `scripts/example-index-html-load.js`（2026-09-30）。
 ハーネスは読み込むファイルを自前で並べるので、index.html の `<script>` の並び・`?v=` の食い違いは素通りする。
