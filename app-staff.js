@@ -490,7 +490,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
 function StaffHdr({ap,p0,pe,nd,subs,apid,onSm,shopName,onMy=null}){
   // source:"grid"はシフト作成タブの管理者入力用sub（実際の提出ではない）なのでバッジ件数から除外する
   const submitted=subs.filter(s=>s.periodId===apid&&s.source!=="grid");
-  return(
+  return(<>
     <div style={{background:"var(--c-accent)",boxShadow:"0 2px 12px rgba(248,112,54,.25)",padding:"12px 14px"}}>
       <div style={{maxWidth:560,margin:"0 auto",display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
         <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
@@ -505,13 +505,21 @@ function StaffHdr({ap,p0,pe,nd,subs,apid,onSm,shopName,onMy=null}){
             <div style={{fontSize:11,color:"rgba(255,255,255,.85)",marginTop:1}}>{p0} 〜 {pe}（{nd}日間）</div>
           </div>
         </div>
-        {onMy&&<button data-my-open="1" onClick={onMy} style={{flexShrink:0,background:"none",border:"1px solid rgba(255,255,255,.4)",borderRadius:12,padding:"7px 12px",color:"white",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>マイシフト</button>}
         <button onClick={onSm} style={{flexShrink:0,background:"rgba(255,255,255,.18)",border:"1px solid rgba(255,255,255,.4)",borderRadius:12,padding:"7px 14px",color:"white",fontSize:13,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
           提出状況
           <span style={{background:submitted.length>0?"white":"rgba(255,255,255,.3)",color:submitted.length>0?"var(--c-accent)":"white",borderRadius:12,padding:"1px 8px",fontSize:12,fontWeight:800}}>{submitted.length}</span>
         </button>
       </div>
     </div>
+    {/* マイシフトはオレンジのヘッダーの下・締切日の帯の上に横幅いっぱいで置く（2026-10-04 ユーザー指示。ヘッダーの中にあると期間名が省略されていた）。
+        塗りのオレンジを重ねず、白地にアクセントの文字でヘッダーと区別する */}
+    {onMy&&<button data-my-open="1" onClick={onMy} style={{display:"block",width:"100%",background:"var(--c-card)",border:"none",borderBottom:"1px solid var(--c-border)",
+      padding:0,cursor:"pointer",color:"var(--c-accent)",textAlign:"left"}}>
+      <span style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,maxWidth:560,margin:"0 auto",minHeight:44,padding:"0 14px",boxSizing:"border-box",fontSize:15,fontWeight:700}}>
+        マイシフト<span aria-hidden="true" style={{fontSize:18,fontWeight:400,color:"var(--c-text3)"}}>›</span>
+      </span>
+    </button>}
+    </>
   );
 }
 

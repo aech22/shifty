@@ -43,7 +43,7 @@ const USERS0 = { "taken@example.com": { uid: "OTHER", password: "otherpass1" }, 
 const hashHead = h => `<script>history.replaceState(null,"","/${h}");</script>`;
 const preLS = obj => `<script>${Object.entries(obj).map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)},${JSON.stringify(v)});`).join("")}</script>`;
 
-async function open({ hash, seedDb, authSeed, denyWrite, ls, devMode = true, wait = "#root > *" }) {
+async function open({ hash, seedDb, authSeed, denyWrite, ls, devMode = true, wait = "#root > *", viewport = PHONE }) {
   const head = hashHead(hash) + (ls ? preLS(ls) : "") + THEME +
     makeStub({ seed: seedDb || seed(), view: "staff", tab: "periods", auth: "accounts", authSeed: authSeed || { users: USERS0, cur: null }, denyWrite });
   let root = ROOT;
@@ -58,7 +58,7 @@ async function open({ hash, seedDb, authSeed, denyWrite, ls, devMode = true, wai
     if (swapped === core) throw new Error("DEV_MODE の行が見つからない");
     fs.writeFileSync(path.join(root, "app-core.js"), swapped);
   }
-  return openHarness({ root, jsx: "window.__harnessReady=true;", waitFor: wait, viewport: PHONE, extraHead: head, scripts: SCRIPTS });
+  return openHarness({ root, jsx: "window.__harnessReady=true;", waitFor: wait, viewport, extraHead: head, scripts: SCRIPTS });
 }
 const sleep = (h, ms) => h.page.waitForTimeout(ms);
 const text = h => h.evaluate(() => document.body.innerText);
@@ -180,6 +180,8 @@ const subsOf = h => h.evaluate(() => Object.values(window.__db("shops/S1/subs") 
       await click(h, '[data-my-tab="settings"]'); await sleep(h, 200);
       await click(h, '[data-my-action="logout"]');
       await h.page.waitForLoadState("networkidle"); await h.page.waitForSelector("#root > *", { timeout: 20000 }); await sleep(h, 800);
+      // WebKit では再読み込みの後の匿名サインインが 800ms に間に合わないことがある（2026-10-04 に3回中2回 null を読んだ）。サインインの完了を待つ
+      await h.page.waitForFunction(() => { const c = window.__authCur && window.__authCur(); return !!(c && c.isAnonymous); }, null, { timeout: 15000 }).catch(() => {});
       const after = await authCur(h);
       A.logoutAnon = !!(after && after.isAnonymous && after.uid !== uid0);
       A.markCleared = await h.evaluate(() => localStorage.getItem("ots_staffAccount_v1") === null);
@@ -320,6 +322,32 @@ const subsOf = h => h.evaluate(() => Object.values(window.__db("shops/S1/subs") 
       R.G = G;
       V.G_adminAccountRefused = G.notice && G.backToAnon && G.noMark && G.errors.length === 0;
     } catch (e) { R.G_exception = e.stack || e.message; V.G_noException = false; }
+    await h.close();
+  }
+  // ---------------- H: 「マイシフト」はオレンジのヘッダーの下・締切日の帯の上（2026-10-04 ユーザー指示）----------------
+  // 期間名が長い（年つき）・店舗名あり・締切日ありのスタッフURLを、iPhone 相当の 375px と 390px で開く。期間名が省略されないこと
+  for (const width of [375, 390]) {
+    const d = seed();
+    d.global.shops.S1.name = "鷄えん梅田3ビル店";
+    d.shops.S1.periods.p1 = { ...d.shops.S1.periods.p1, label: "2026年10月後半", deadlineDate: "2026-10-12" };
+    const h = await open({ hash: "#/s/t1", seedDb: d, wait: "[data-my-open]", viewport: { width, height: 812 } });
+    try {
+      const H = await h.evaluate(() => {
+        const b = document.querySelector("[data-my-open]"); const hdr = b.previousElementSibling;
+        const dl = [...document.querySelectorAll("div")].find(x => /^締切日：/.test(x.innerText.trim()));
+        const lab = [...hdr.querySelectorAll("div")].find(x => x.innerText.trim() === "2026年10月後半");
+        const r = b.getBoundingClientRect(), hr = hdr.getBoundingClientRect(), dr = dl ? dl.getBoundingClientRect() : null;
+        return { inHeader: hdr.contains(b), belowHeader: Math.abs(r.top - hr.bottom) <= 1, aboveDeadline: !!dr && r.bottom <= dr.top, fullWidth: Math.abs(r.width - window.innerWidth) <= 1,
+          height: Math.round(r.height), labelTruncated: lab ? lab.scrollWidth > lab.clientWidth : null, headerBg: getComputedStyle(hdr).backgroundColor, btnBg: getComputedStyle(b).backgroundColor,
+          text: b.innerText.trim(), overflow: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth };
+      });
+      await click(h, "[data-my-open]");
+      H.opens = await waitSel(h, '[data-my-auth="login"]');
+      H.errors = h.errors.slice();
+      R["H" + width] = H;
+      V["H_myButtonBelowHeader_" + width] = !H.inHeader && H.belowHeader && H.aboveDeadline && H.fullWidth && H.height >= 44 && H.labelTruncated === false &&
+        H.btnBg !== H.headerBg && /^マイシフト/.test(H.text) && H.overflow <= 0 && H.opens && H.errors.length === 0;
+    } catch (e) { R["H_exception_" + width] = e.stack || e.message; V["H_noException_" + width] = false; }
     await h.close();
   }
   // ---------------- F: 本番相当（DEV_MODE=false）では入口が出ない ----------------
