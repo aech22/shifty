@@ -1336,6 +1336,7 @@ git push origin develop
 **マージ前チェックリスト**:
 - [ ] `DEV_MODE` が `location.hostname !== "shiftyshifty.app"` の式のままか（**app-core.js 12行目**。固定の `true`/`false` に書き換わっていないか）
 - [ ] `npm test` が全パスするか（app-utils.js のユニットテスト）
+- [ ] BACKLOG.md の「🔴 次の本番リリースでユーザーと突き合わせる実機確認」をユーザーと1項目ずつ行ったか（高速化の体感・H2 の縮めた文字・Excel の名前行・.ics の取り込み・給料と明細。2026-10-04 ユーザー指示）
 
 **Firebaseルールの変更を含むリリースの順序（厳守）**: クライアント変更を先に main へ反映し本番配信を確認 → その後に `firebase deploy --only database --project ontheshift`。ルールを先に出すと旧クライアントが壊れる。
 
