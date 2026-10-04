@@ -30,9 +30,12 @@ function App(){
   const[allLinkedShops,setAllLinkedShops]=useState([]); // accounts/{uid}/shops に紐付いた全店舗
   // URLにtokenがある場合はsessionStorageを無視してPhase1で確定
   // 個別URL（#/m/<pageToken>・2026-10-04）もスタッフ専用の画面として扱う（セッションの店舗・期間を復元しない・書かない）
-  const _hasUrlToken=!!(parseUrl()?.type==="staff"||parseUrl()?.type==="page");
+  // 起動時の URL で一度だけ決める（2026-10-04）。マイシフトを重ねた間はアドレスバーを #/m/・#/me に切り替える（pushState）ので、
+  // レンダーのたびに parseUrl() を読むと、切り替えた瞬間に個別URL・#/me の画面へ描き替わって提出画面の入力途中の希望が消える
+  const[bootRoute]=useState(()=>parseUrl());
+  const _hasUrlToken=!!(bootRoute?.type==="staff"||bootRoute?.type==="page");
   // スタッフ個別URL（2026-10-04）。MY_SCREEN_ENABLED のときだけ parseUrl が返す。null＝個別URLではない
-  const pageRoute=MY_SCREEN_ENABLED&&parseUrl()?.type==="page"?String(parseUrl().pageToken||""):null;
+  const pageRoute=MY_SCREEN_ENABLED&&bootRoute?.type==="page"?String(bootRoute.pageToken||""):null;
   // Phase1 が staffPageTokens/{token} を読んだ結果（{state:"invalid"|"missing"|"error"|"shop", shopId}）。null＝読み込み中
   const[pageBoot,setPageBoot]=useState(null);
   // 募集URLの画面から開く個別URLの申請（null＝閉じている・文字列＝開いている。値は名前の初期値）
@@ -48,7 +51,7 @@ function App(){
   const staffUserRef=useRef(null);
   const setStaffUser=useCallback(u=>{staffUserRef.current=u||null;setStaffUserState(u||null);},[]);
   // 従業員画面を開いているか。#/me で直接開いたとき、またはスタッフURLの画面から開いてログインの再読み込みをまたいだとき
-  const myRoute=MY_SCREEN_ENABLED&&parseUrl()?.type==="me";
+  const myRoute=MY_SCREEN_ENABLED&&bootRoute?.type==="me";
   // 確認メールのリンクを開いたとき（新規登録の続き・2026-10-04）。?elk=staff|admin が付いた URL。Phase1 は普段どおり走らせ（匿名サインイン）、
   // 画面だけ続きの登録（EmailLinkFinishScreen）にする。登録を終える・やめると oobCode を落とした URL で開き直す
   const[emailLanding]=useState(()=>parseEmailLinkLanding(window.location.href));
