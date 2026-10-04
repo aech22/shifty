@@ -337,7 +337,8 @@ groupStaffRegs / groupStaffRegsWithPeople / PERSON_ID_RE
                            // （companies/{id}/pub/people）を渡すと保存済みの人物で束ね、推定は**どの人物にもつながっていない登録だけ**に当てる。
                            // 行に personId・links（[{shopId,shopName,name,number}]）が載り、entityId は人物の法人が優先
 featureEnabled(kind,{plan,companyLink}) / GATED_FEATURES
-                           // 新機能のプランゲートの**1本だけの入口**（2026-09-30・計画書 §3.7・決定6）。法人・所定・確定・実績・賃金は Premium。
+                           // 新機能のプランゲートの**1本だけの入口**（2026-09-30・計画書 §3.7・決定6）。法人・所定・確定・実績・賃金・
+                           // 従業員画面への公開（myShift・2026-10-04・第2部 E3）は Premium。
                            // 法人プランを足すときはここだけ触る。新しい機能で plan==="premium" を直接書かない
 rateDenominatorMinOf / DEFAULT_RATE_DENOMINATOR_MIN / fixedOtAmountOf / hourlyRateOf / payRateBaseYen / minWageCheck
                            // 賃金（P6a）。分母は laborSettings.rateDenominatorMin が正ならその値、0 なら年間所定÷12 を 0.1h（6分）単位で
@@ -602,8 +603,10 @@ Firebase Realtime Database
 │       ├── profile      ← {displayName, number?, updatedAt}。書きは本人で**メールのある認証**だけ（auth.token.email != null＝匿名のままの uid は不可）。
 │       │                  E3 以降は同じ users/{uid} の下に workplaces・shifts・overrides・actuals・goals・seen を足す（計画書 E.4）。
 │       │                  **ルールは develop の database.rules.json にあるだけで、dev・本番とも未デプロイ**
-│       └── links/{shopId} ← 本人の紐付けの索引（E2）{name, personId?, at}。**Cloud Functions だけが書く**（ルールに書き込みが無い）。
-│                          name は紐付けた時点の写しで、オーナーの端末の改名では書き換わらない——名前は shops/{sid}/staffLinks/{uid}.name を正とする
+│       ├── links/{shopId} ← 本人の紐付けの索引（E2）{name, personId?, at}。**Cloud Functions だけが書く**（ルールに書き込みが無い）。
+│       │                  name は紐付けた時点の写しで、オーナーの端末の改名では書き換わらない——名前は shops/{sid}/staffLinks/{uid}.name を正とする
+│       └── seen/{shopId}/{periodId} ← マイシフトで最後に見た公開内容（E3）{at, days?:{日付: 指紋}}。書きは本人でメールのある認証だけ・
+│                          days のキーは日付・値は40字以内（ルール未デプロイ）。「変更あり」の判定に使う（myChangedDates）
 ├── companies/
 │   └── {companyId}/     ← 企業アカウント（CompanyTab・企業コード＋パスワード方式。accounts/{uid}のcompanyLinkとは別系統）
 │       ├── pub          ← {name, ownerUid, shops:{shopId:true}}（連携店舗マップ）
@@ -680,7 +683,9 @@ Period = { id: string, urlToken: string, shopId: string, label: string,
            submission?: {at: string, byUid: string},                  // 企業への完成シフトの提出（2026-09-27。無ければ未提出）
            confirmation?: {at: string, byUid: string, note?: string},  // 確定（2026-09-30・P3）。セルの編集とスタッフの再提出を止める。旧 lockedAt はここへ統合（確定で消す）
            delivery?: {at: string, byUid: string, method?: string},    // 本人への交付の記録（確定済みのときだけ。公開機能ではない）
-           history?: {[key: string]: {kind: "submit"|"resubmit"|"confirm"|"unconfirm"|"deliver", at, byUid, note?, method?}} }
+           published?: {at: string, byUid: string},                    // 従業員画面（マイシフト）への公開（2026-10-04・第2部 E3）。確定で未公開なら同時に書く
+           history?: {[key: string]: {kind: "submit"|"resubmit"|"confirm"|"unconfirm"|"deliver"|"publish"|"unpublish", at, byUid, note?, method?}} }
+                                                                       // 確定と同時の公開は kind "publish"・method "confirm"
                                                                        // 上書きしない履歴。diffPeriodsForFlatWrite が記録1件ずつ書く
 
 // 提出
@@ -1129,6 +1134,35 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 - 検証: tests/my.test.js（照合・コード・差分・計画・ルールの形・入口のドリフト・クライアントと CF の一致）、`shifty-cf-verify/scripts/example-staff-link.js`
   （本物の index.js・44項目。拒否側を含む。E2 前の index.js では落ちる）、`shifty-e2e-verify/scripts/example-my-link.js`（スタブの cfHandlers "staffLink" が
   functions/staff-link.js の計画関数を通す・32項目・375px。E2 前の配信物では落ちる）。**ルールと CF の実機（dev・本番）は未検証**
+
+### マイシフトと「公開」ボタン（2026-10-04・第2部 E3・develop のみ・ルール未デプロイ・CF なし）
+
+- **公開**: シフト作成タブに「公開」／「公開中 日時」と「公開を取り下げる」。`period.published={at,byUid}` を `planPeriodPublish`／`planPeriodUnpublish`
+  （app-utils.js）で作り `savePeriods`（差分 update＝`p1/published` と履歴1件だけ）で書く。押す前に `flushEdits(true)` で未確定のセルを保存する
+  （提出ボタンと同じ。公開は計算結果を使わないので S3 の後回しの計算は待たない）。公開はセルの編集・提出・スタッフの再提出・ルールに何も効かない（表示だけ）
+- **確定は未公開なら同時に公開する**（`planPeriodConfirmation` の中＝シフト作成タブと企業連携タブの提出状況表の両方の入口に効く）。公開済みなら
+  その記録（at）を書き換えない。**確定の解除では公開を外さない**（`planPeriodUnconfirm` は published に触らない）。確定の確認文に、
+  未公開なら同時に公開する旨を `MY_SCREEN_ENABLED` のときだけ足している。データは本番でも同じく書かれる（confirm と同じ更新に `published` が入る）
+- **公開ボタンの出る条件**（`canPublish`）: `MY_SCREEN_ENABLED`（本番では出さない）・期間あり・`savePeriods` あり・`!ownerReadOnly`・`!exportJob`（非表示マウント）・
+  `featureEnabled("myShift",{plan})`（その店舗が Premium）。確定と違い企業セッションに限らない＝企業連携の店舗の店長が先に知らせるのに使う
+- **履歴**: `PERIOD_HISTORY_KINDS` に publish・unpublish を足した（表示名あり・ルールに history の検証は無い）。表示名の抜けはテストが検出する
+- **マイシフト**（app-my.js の `MyShiftTab`）: `readMyLinks` の ok の行ごとに periods・settings（`applyCompanySettings` で企業設定を重ねる）・staff・
+  `accounts/{sid}/plan`（`DEV_PLAN_OVERRIDE` が効く）を読み、表示中の月と今日以降にかかる期間の subs だけを期間ごとの部分読み
+  （`orderByChild("periodId").equalTo`）で読む。**店舗の subs 全件は読まない・店舗のデータには書かない**（書くのは users/{uid}/seen だけ＝テストで固定）。
+  紐付いていない他店（personId 経由）は読まない
+- **表示の規則**（`buildMyShiftDays`・app-my-utils.js）: 未公開の期間は本人の提出（`shifts[日付].start/end`・status work）をグレー（`var(--c-text3)`・ドットは `--c-text4`）で
+  「提出済み（未確定）」。公開済みの期間は `scheduledDay`（管理者の調整値・退勤延長・締を含む。設定は `resolvePeriodMaster`＝確定・終了済みなら写し）を黒（`var(--c-text)`）で
+  「公開」、確定済みなら「確定」。出勤にならなかった日は出さない。提出と時間が違えば「希望 …」を添える。その期間に非表示の人の公開分は出さない。
+  別名で出した提出は `resolveSubByAlias`（写しの別名）で拾う
+- **変更あり**: 指紋は「その人のその期間の公開済みの日ごとの `開始-終了-休憩(+締)`」（`myDayFingerprint`）。`users/{uid}/seen/{sid}/{pid}.days` と比べ
+  （`myChangedDates`）、違う日を帯（`[data-my-changed]`）とマスの「変更」で出す。**初めて見る公開は「変更あり」にせず今の内容を記録する**。
+  「確認した」で今の内容を記録すると消える。他人のシフトの変更・確定の有無だけの変化では付かない。seen が読めない間は書かない
+- **プラン**（計画書 E.5）: `featureEnabled("myShift")` を `myShiftPremiumOf` で「紐付いた店舗のいずれかが Premium」にする。**E3 で置いた境目**: 紐付けと提出のグレー表示は
+  プランに関係なく出し、公開済みの黒文字・次のシフト・変更ありを Premium の機能にした（Premium でなければ公開済みでもグレーと案内）
+- **勤務先の色**: `myWorkplaceColor(shopId, 並び順, overrides)`。既定は `MY_WORKPLACE_COLORS`（先頭がアクセント #f87036）。E4 で本人が選ぶ色を overrides に渡す
+- 検証: tests/core.test.js（公開・取り下げ・確定で同時に公開・解除で残る・差分の形・履歴の表示名・ゲート・入口のドリフト）・tests/my.test.js（グレー／黒・
+  写し・非表示・別名・指紋・他人の変更・次のシフト・カレンダー・プラン・色・seen のルールの形・書き込み先）と
+  `shifty-e2e-verify/scripts/example-my-shift.js`（スタブ・41項目・375px。E3 前の配信物では17項目が落ちる）。**ルールの実機は未検証**
 
 ---
 

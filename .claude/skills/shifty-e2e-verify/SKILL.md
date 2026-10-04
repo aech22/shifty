@@ -320,6 +320,8 @@ localStorage 上のアカウント表で動く（`window.__authCur()`・`window.
 `functions/staff-link.js` の本物の計画関数を通して DB に書く。オーナーの端末（既定の認証）とスタッフの端末（`auth:"accounts"`）を
 `__dbDump()` でつなぐ。**閲覧専用の端末はスタブでは自然に作れない**（ルールを評価しないので claim が通る）——`denyRead`・`denyWrite` に
 `shops/S1/private` と `shops/S1/owners` を渡して拒否を再現する。雛形は `scripts/example-my-link.js`。
+マイシフトと「公開」ボタン（E3）は `scripts/example-my-shift.js`。オーナーの端末（`tab:"edit"`・確定の解除の `prompt` は `page.on("dialog")` で答える）と
+スタッフの端末（`auth:"accounts"`・`#/me`）を `__dbDump()` でつなぎ、今日の日付で期間を作る（カレンダーは実行した日の月を出すため）。
 
 **本物の index.html をこのスタブで丸ごと起動する例**が `scripts/example-index-html-load.js`（2026-09-30）。
 ハーネスは読み込むファイルを自前で並べるので、index.html の `<script>` の並び・`?v=` の食い違いは素通りする。
