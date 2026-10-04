@@ -10,8 +10,8 @@
 //   スタッフアカウントの印と認証操作（myRegister / myLogin / myLogout / myChangePassword / mySendReset / mySaveProfile）
 //   MyView … 入口。未ログインなら MyAuthScreen、ログイン済みなら下部タブ（マイシフト・給料・設定）
 //   MyShiftTab … 月のカレンダー・次のシフト・変更あり（E3）／MyPayTab … E1 では中身が無いことを伝える空の状態だけ（E5 が埋める）
-//   MySettingsTab … 勤務先のお店（E2: 紐付けの一覧・申請・個人リンクコード）とアカウント（登録ネーム・従業員番号・メール・パスワード・ログアウト）
-//   StaffLinkRequestsCard / StaffLinkEditSection … 管理者側（スタッフタブ）の申請の提案・未リンクの申請・コードの発行と解除（E2）
+//   MySettingsTab … 勤務先のお店（E2: 紐付けの一覧・申請。個人リンクコードの入力は 2026-10-05 に外した）とアカウント（登録ネーム・従業員番号・メール・パスワード・ログアウト）
+//   StaffLinkRequestsCard / StaffLinkEditSection … 管理者側（スタッフタブ）の申請の提案・未リンクの申請・リンクの解除（E2。コードの発行は 2026-10-05 に外した）
 //   readMyLinks(uid) … 本人の紐付けの一覧（E3 以降が「どの店舗のどの名前か」を得る入口）
 //
 // 状態の持ち方: スタッフアカウントかどうかは App が staffUser（{uid,email}|null）として持つ（Phase1 が決める）。
@@ -454,7 +454,7 @@ function StaffLinkRequestsCard({links,staffList,staffNumbers,mirrorPeople,shopId
       ))}
       {unmatched.length>0&&<div data-link-unmatched="1" style={{marginTop:withCand.length?8:0}}>
         <div style={{fontSize:13,fontWeight:700,color:"var(--c-text2)",margin:"6px 0 2px"}}>未リンクの申請</div>
-        <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7}}>登録名・従業員番号のどちらとも一致しません。本人に登録ネームを直して申請し直してもらうか、スタッフの「編集」から個人リンクコードを発行してください。</div>
+        <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7}}>登録名・従業員番号のどちらとも一致しません。本人に登録ネームを直して申請し直してもらうか、スタッフの「編集」から「このスタッフ専用のURLを発行」で本人にURLを渡してください。</div>
         {unmatched.map(({uid,req})=>(
           <div key={uid} data-link-request={uid} style={{...row,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
             <div style={{flex:"1 1 200px",minWidth:0}}>
