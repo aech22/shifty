@@ -1798,3 +1798,51 @@ test("カレンダーへ取り込む前の確認（2026-10-04・端末とブラ�
   assert.ok(/withCalPrompt\("ics",writeIcs\)/.test(myjs), ".ics の書き出しは確認を通る");
   assert.ok(/data-my-gcal=\{e\.date\}[^>]*onClick=\{ev=>openGcal\(ev,g\.url\)\}/.test(myjs), "Google カレンダーのリンクも確認を通る");
 });
+
+// ===== メール確認つきの新規登録（2026-10-04）=====
+test("メール確認つきの登録: 戻り先の URL・開いた URL の判定・後始末の URL・覚えておく記録・パスワード・切り替えるエラー", () => {
+  const loc = { origin: "https://shiftyshifty.app", pathname: "/" };
+  assert.strictEqual(m.emailLinkContinueUrl(loc, { kind: "staff", hash: "#/s/abc_12" }), "https://shiftyshifty.app/?elk=staff&elh=%23%2Fs%2Fabc_12");
+  assert.strictEqual(m.emailLinkContinueUrl(loc, { kind: "admin", hash: "#/s/abc" }), "https://shiftyshifty.app/?elk=admin", "管理者はハッシュを持たない");
+  assert.strictEqual(m.emailLinkContinueUrl(loc, { kind: "x" }), "https://shiftyshifty.app/?elk=admin");
+  assert.ok(!/@|%40/.test(m.emailLinkContinueUrl(loc, { kind: "staff", hash: "#/me", email: "a@b.c" })), "メールアドレスは URL に載せない");
+  ["javascript:alert(1)", "#/../x", "https://evil.example/", "#/" + "a".repeat(200), "#me"].forEach(h => assert.strictEqual(m.emailLinkSafeHash(h), "", h));
+  ["#/s/t1", "#/me", "#/m/AAAA"].forEach(h => assert.strictEqual(m.emailLinkSafeHash(h), h));
+  const land = "https://shiftyshifty.app/?elk=staff&elh=%23%2Fs%2Ft1&apiKey=k&oobCode=OOB&mode=signIn&lang=ja";
+  assert.deepStrictEqual(m.parseEmailLinkLanding(land), { kind: "staff", hash: "#/s/t1", hasCode: true });
+  assert.deepStrictEqual(m.parseEmailLinkLanding("https://shiftyshifty.app/?elk=admin"), { kind: "admin", hash: "", hasCode: false });
+  assert.strictEqual(m.parseEmailLinkLanding("https://shiftyshifty.app/?oobCode=1&mode=signIn"), null, "elk の無い URL は続きの登録ではない");
+  assert.strictEqual(m.parseEmailLinkLanding("https://shiftyshifty.app/#/s/t1"), null);
+  assert.strictEqual(m.parseEmailLinkLanding("not a url"), null);
+  assert.strictEqual(m.emailLinkCleanUrl(land, "#/s/t1"), "https://shiftyshifty.app/#/s/t1", "oobCode を落とす");
+  assert.strictEqual(m.emailLinkCleanUrl(land, ""), "https://shiftyshifty.app/");
+  const rec = m.emailLinkPendingRecord(" a@b.jp ", "admin", 1000, "S1");
+  assert.deepStrictEqual(rec, { email: "a@b.jp", kind: "admin", at: 1000, linkShopId: "S1" });
+  assert.strictEqual(m.emailLinkPendingFor(rec, "admin", 2000), rec);
+  assert.strictEqual(m.emailLinkPendingFor(rec, "staff", 2000), null, "別の登録の記録は使わない");
+  assert.strictEqual(m.emailLinkPendingFor(rec, "admin", 1000 + m.EMAIL_LINK_PENDING_MAX_MS + 1), null, "古い記録は使わない");
+  assert.strictEqual(m.validateEmailLinkPassword("staff", "1234567", "1234567"), `パスワードは${m.MY_PASSWORD_MIN}文字以上にしてください`);
+  assert.strictEqual(m.validateEmailLinkPassword("admin", "123456", "123456"), null, "管理者は従来どおり6文字以上");
+  assert.ok(m.validateEmailLinkPassword("admin", "123456", "123457"));
+  ["auth/operation-not-allowed", "auth/unauthorized-continue-uri", "auth/invalid-continue-uri", "auth/unauthorized-domain"].forEach(c => assert.ok(m.isEmailLinkFallbackError({ code: c }), c));
+  ["auth/invalid-email", "auth/too-many-requests", "auth/network-request-failed"].forEach(c => assert.ok(!m.isEmailLinkFallbackError({ code: c }), c));
+  assert.ok(/期限切れ/.test(m.emailLinkErrorMessage({ code: "auth/invalid-action-code" }, "finish")) && /期限切れ/.test(m.emailLinkErrorMessage({ code: "auth/expired-action-code" }, "finish")));
+  assert.ok(/送ったアドレスと違います/.test(m.emailLinkErrorMessage({ code: "auth/invalid-email" }, "finish")));
+  assert.ok(/形式/.test(m.emailLinkErrorMessage({ code: "auth/invalid-email" }, "send")));
+});
+test("メール確認つきの登録: 新規登録の3つの入口が同じ部品を通り、確認なしに作るのは送れないとき（従来の欄）だけ（ドリフト検出）", () => {
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const main = fs.readFileSync(path.join(ROOT, "app-main.js"), "utf8");
+  const co = fs.readFileSync(path.join(ROOT, "app-company.js"), "utf8");
+  const auth = my.slice(my.indexOf("function MyAuthScreen("), my.indexOf("function MyAccountShiftPager("));
+  assert.ok(/mode==="register"&&!classic\?<EmailLinkSendBox kind="staff"/.test(auth), "マイシフトの新規登録");
+  assert.ok(/emailMode==="register"&&!regClassic\?<EmailLinkSendBox kind="admin"/.test(main), "ログイン画面の新規登録");
+  assert.ok(/acctEmailMode==="register"&&!acctRegClassic\?<EmailLinkSendBox kind="admin" linkShopId=\{shopId\}/.test(co), "設定タブのアカウント連携の新規登録");
+  assert.ok(/if\(emailLanding\) return <EmailLinkFinishScreen landing=\{emailLanding\}\/>;/.test(main), "リンクを開いたら続きの登録");
+  // 送信は sendSignInLinkToEmail だけ・切り替えは isEmailLinkFallbackError のときだけ（onFallback）
+  const send = my.slice(my.indexOf("async function sendEmailLinkRegister("), my.indexOf("function EmailLinkSendBox("));
+  assert.ok(/sendSignInLinkToEmail\(/.test(send) && /isEmailLinkFallbackError\(e\)\)return\{fallback:true/.test(send) && /handleCodeInApp:true/.test(send));
+  const fin = my.slice(my.indexOf("function EmailLinkFinishScreen("), my.indexOf("// ===== 紐付け（第2部 E2）====="));
+  assert.ok(/signInWithEmailLink\(/.test(fin) && /updatePassword\(/.test(fin) && /myBlockReason\(null\)/.test(fin) && /window\.location\.replace\(emailLinkCleanUrl\(/.test(fin));
+  assert.ok(/accounts\/\$\{user\.uid\}\/shops/.test(fin) && /readStaffProfile\(user\.uid\)/.test(fin), "管理者用とマイシフト用のアカウントを混ぜない");
+});

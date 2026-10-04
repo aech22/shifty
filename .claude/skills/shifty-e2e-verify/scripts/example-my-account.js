@@ -88,6 +88,14 @@ async function submitAs(h, name) {
   return (await waitText(h, "提出完了")) ? "ok" : "no-done";
 }
 const subsOf = h => h.evaluate(() => Object.values(window.__db("shops/S1/subs") || {}));
+// 新規登録はメール確認つき（2026-10-04）。スタブの既定は「メールリンク無効」（dev・本番のコンソール設定前と同じ auth/operation-not-allowed）なので、
+// 確認メールを送る → 送れない → 従来の登録の欄に切り替わる、を通ってから従来どおり入力する（＝設定前のフォールバックの回帰も兼ねる）
+async function toClassicRegister(h) {
+  await h.page.waitForSelector('[data-email-link-input="email"]', { timeout: 10000 });
+  await h.setInput('[data-email-link-input="email"]', "fallback@example.com");
+  await h.evaluate(() => document.querySelector('[data-email-link-action="send"]').click());
+  return h.page.waitForSelector('[data-email-link-fallback]', { timeout: 10000 }).then(() => true, () => false);
+}
 
 (async () => {
   const R = {};
@@ -111,6 +119,7 @@ const subsOf = h => h.evaluate(() => Object.values(window.__db("shops/S1/subs") 
       A.authScreen = await waitSel(h, '[data-my-auth="login"]');
       await click(h, '[data-my-mode="register"]');
       await waitSel(h, '[data-my-auth="register"]');
+      await toClassicRegister(h);
       // 確認用パスワード違い
       await setMy(h, "displayName", "　田中 ");
       await setMy(h, "number", "０１２");
@@ -261,6 +270,7 @@ const subsOf = h => h.evaluate(() => Object.values(window.__db("shops/S1/subs") 
       const D = {};
       D.uid0 = (await authCur(h)).uid;
       await click(h, '[data-my-mode="register"]'); await sleep(h, 200);
+      await toClassicRegister(h);
       await setMy(h, "displayName", "佐藤");
       await setMy(h, "email", "sato@example.com");
       await setMy(h, "password", "pass12345");
@@ -362,6 +372,7 @@ const subsOf = h => h.evaluate(() => Object.values(window.__db("shops/S1/subs") 
       await waitSel(h, '[data-my-auth="login"]');
       await click(h, '[data-my-mode="register"]');
       await waitSel(h, '[data-my-auth="register"]');
+      await toClassicRegister(h);
       await setMy(h, "displayName", "田中");
       await setMy(h, "email", "newstaff@example.com");
       await setMy(h, "password", "pass12345");

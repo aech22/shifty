@@ -69,6 +69,11 @@ const MYPG_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "f
  *                                別の端末を再現するときは、1台目の __authDump().users と __dbDump() を2台目の authSeed・seed に渡す。
  *                                linkBlocked:true にすると linkWithCredential が auth/operation-not-allowed で拒否される（本番・dev の
  *                                メールアドレスの列挙保護の挙動。2026-10-04 に本番で発生した不具合 4163394 の回帰用）
+ *                                emailLink: メール確認つきの新規登録（2026-10-04）。"on" で sendSignInLinkToEmail が通る（リンクは
+ *                                __authDump().links に残り、window.__emailLinkUrl(i) が開く URL を返す）。省略（既定）は dev・本番の
+ *                                コンソール設定前と同じく auth/operation-not-allowed、"domain" は auth/unauthorized-continue-uri。
+ *                                links: 別のブラウザを再現するとき1台目の __authDump().links を渡す。failUpdatePassword: n で
+ *                                updatePassword を n 回 auth/network-request-failed にする。expireLinks:true でリンクを期限切れ扱い
  */
 function makeStub(o) {
   const seed = o.seed || {};
@@ -261,7 +266,8 @@ function makeStub(o) {
     var LS_ACC="__stub_facc";
     var acc=null;
     try{ acc=JSON.parse(localStorage.getItem(LS_ACC)||"null"); }catch(e){}
-    if(!acc){ acc={users:JSON.parse(JSON.stringify(AUTH_SEED.users||{})),cur:AUTH_SEED.cur||null,seq:0,resets:[]}; localStorage.setItem(LS_ACC,JSON.stringify(acc)); }
+    if(!acc){ acc={users:JSON.parse(JSON.stringify(AUTH_SEED.users||{})),cur:AUTH_SEED.cur||null,seq:0,resets:[],links:JSON.parse(JSON.stringify(AUTH_SEED.links||[])),failPw:Number(AUTH_SEED.failUpdatePassword)||0}; localStorage.setItem(LS_ACC,JSON.stringify(acc)); }
+    if(!acc.links) acc.links=[];
     var saveAcc=function(){ localStorage.setItem(LS_ACC,JSON.stringify(acc)); };
     var aerr=function(code){ var e=new Error("Firebase: Error ("+code+")."); e.code=code; return e; };
     var EMAIL_RE=/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;  // テンプレート文字列の中なのでバックスラッシュは2つ
@@ -291,6 +297,8 @@ function makeStub(o) {
             return Promise.resolve({user:userObj});
           },
           updatePassword:function(pw){
+            window.__pwUpdates=(window.__pwUpdates||0)+1;
+            if(acc.failPw>0){ acc.failPw--; saveAcc(); return Promise.reject(aerr("auth/network-request-failed")); }
             if(String(pw||"").length<6) return Promise.reject(aerr("auth/weak-password"));
             acc.users[acc.cur.email].password=pw; saveAcc(); return Promise.resolve();
           },
@@ -329,7 +337,31 @@ function makeStub(o) {
       },
       signInWithPopup:function(){ return Promise.reject(aerr("auth/operation-not-allowed")); },
       signInWithCustomToken:function(){ return Promise.reject(aerr("auth/operation-not-allowed")); },
+      // メール確認つきの新規登録（2026-10-04）。リンクは acc.links に残す（メールは送らない）
+      sendSignInLinkToEmail:function(email,settings){
+        window.__linkSends=(window.__linkSends||[]);window.__linkSends.push({email:email,url:settings&&settings.url});
+        if(AUTH_SEED.emailLink!=="on"&&AUTH_SEED.emailLink!=="domain") return Promise.reject(aerr("auth/operation-not-allowed"));
+        if(AUTH_SEED.emailLink==="domain") return Promise.reject(aerr("auth/unauthorized-continue-uri"));
+        if(!EMAIL_RE.test(email||"")) return Promise.reject(aerr("auth/invalid-email"));
+        if(!settings||!settings.handleCodeInApp||!settings.url) return Promise.reject(aerr("auth/argument-error"));
+        acc.links.push({email:email,url:settings.url,oob:"OOB"+(acc.links.length+1)+Math.random().toString(36).slice(2,6),used:false}); saveAcc();
+        return Promise.resolve();
+      },
+      isSignInWithEmailLink:function(href){ try{ var u=new URL(href); return u.searchParams.get("mode")==="signIn"&&!!u.searchParams.get("oobCode"); }catch(e){ return false; } },
+      signInWithEmailLink:function(email,href){
+        var oob=null; try{ oob=new URL(href).searchParams.get("oobCode"); }catch(e){}
+        var rec=acc.links.filter(function(l){ return l.oob===oob; })[0];
+        if(!rec||rec.used) return Promise.reject(aerr("auth/invalid-action-code"));
+        if(AUTH_SEED.expireLinks) return Promise.reject(aerr("auth/expired-action-code"));
+        if(String(email||"").trim()!==rec.email) return Promise.reject(aerr("auth/invalid-email"));
+        rec.used=true;
+        var u=acc.users[rec.email], isNew=!u;
+        if(!u){ acc.seq++; u={uid:"user-"+acc.seq,password:null}; acc.users[rec.email]=u; }
+        acc.cur={uid:u.uid,isAnonymous:false,email:rec.email}; saveAcc();
+        return Promise.resolve({user:mkUser(),additionalUserInfo:{isNewUser:isNew}});
+      },
     };
+    window.__emailLinkUrl=function(i){ var l=acc.links[i==null?acc.links.length-1:i]; if(!l) return null; return l.url+"&apiKey=stub&oobCode="+l.oob+"&mode=signIn&lang=ja"; };
     Object.defineProperty(authObj,"currentUser",{get:function(){ return mkUser(); }});
   }
 

@@ -100,6 +100,77 @@ function myAuthErrorMessage(e,op){
   const what={register:"アカウントの作成",login:"ログイン",reset:"メールの送信",password:"パスワードの変更"}[op]||"処理";
   return `${what}に失敗しました。もう一度お試しください`;
 }
+// ===== メール確認つきの新規登録（2026-10-04・ユーザー指示「確認メールを送り、メールのリンクから続きの登録」）=====
+// Firebase Auth のメールリンク（sendSignInLinkToEmail → リンクを開く → signInWithEmailLink → updatePassword）。
+// 管理者（ログイン画面・設定タブのアカウント連携）とスタッフ（マイシフト）の**新規登録だけ**がこの流れを通る。ログイン・再設定・Google・企業コードは変えない。
+// 戻り先（continueUrl）はクエリで「どの登録の続きか」だけを持つ: elk=staff|admin、elh=戻るハッシュ（#/s/… #/me。スタッフだけ）。
+// **メールアドレス・店舗コード・名前は URL に載せない**（同じブラウザで開いたときのために localStorage に置く）。
+// Firebase はこの URL に apiKey・oobCode・mode=signIn・lang をクエリで付けて戻す。ハッシュを付けると付け足しが壊れるので戻り先にはハッシュを付けない
+const EMAIL_LINK_PENDING_LS="ots_emailLinkPending_v1";
+const EMAIL_LINK_KINDS=["staff","admin"];
+const EMAIL_LINK_PENDING_MAX_MS=7*24*60*60*1000; // 覚えておくアドレスの有効期間（リンク自体の期限は Firebase が決める）
+const EMAIL_LINK_RESEND_WAIT_MS=30*1000;
+// メールリンクが使えないとき（Firebase コンソールで無効・戻り先のドメインが承認されていない）のエラーコード。
+// これらは**従来の登録（その場でパスワードを入れて作る）へ自動で切り替える**（コンソールの設定前でも登録を止めない）。
+// 2026-10-04 に dev（メールリンク無効）へ本物の SDK で送ると、戻り先が localhost・shiftyshifty.app・firebaseapp.com のどれでも auth/operation-not-allowed
+const EMAIL_LINK_FALLBACK_CODES=["auth/operation-not-allowed","auth/unauthorized-continue-uri","auth/invalid-continue-uri","auth/missing-continue-uri","auth/unauthorized-domain","auth/admin-restricted-operation"];
+function isEmailLinkFallbackError(e){return EMAIL_LINK_FALLBACK_CODES.includes(String((e&&e.code)||""));}
+// 戻るハッシュとして受け付ける形（従来のスタッフURL・#/me）。それ以外は捨てる（任意の場所へ飛ばさない）
+function emailLinkSafeHash(h){const s=String(h||"");return /^#\/[A-Za-z0-9_\-/.~]{1,120}$/.test(s)&&!s.includes("..")?s:"";}
+// loc={origin, pathname}。戻り先の URL
+function emailLinkContinueUrl(loc,o){
+  const x=o||{};
+  const kind=EMAIL_LINK_KINDS.includes(x.kind)?x.kind:"admin";
+  const q=new URLSearchParams();q.set("elk",kind);
+  const h=kind==="staff"?emailLinkSafeHash(x.hash):"";
+  if(h)q.set("elh",h);
+  return`${loc.origin}${loc.pathname||"/"}?${q.toString()}`;
+}
+// 開いた URL がこの登録の続きか。続きでなければ null。{kind, hash, hasCode（oobCode と mode=signIn がある）}
+function parseEmailLinkLanding(href){
+  let u;try{u=new URL(String(href||""));}catch{return null;}
+  const kind=u.searchParams.get("elk");
+  if(!EMAIL_LINK_KINDS.includes(kind))return null;
+  return{kind,hash:emailLinkSafeHash(u.searchParams.get("elh")),hasCode:u.searchParams.get("mode")==="signIn"&&!!u.searchParams.get("oobCode")};
+}
+// 登録を終えた（やめた）あとに開く URL＝クエリ（oobCode）を落とし、戻るハッシュを付ける
+function emailLinkCleanUrl(href,hash){
+  let u;try{u=new URL(String(href||""));}catch{return"/";}
+  return`${u.origin}${u.pathname}${emailLinkSafeHash(hash)}`;
+}
+// 送った記録（同じブラウザで開いたときにアドレスを入れ直さなくて済むように）。kind が違う・古い記録は使わない
+function emailLinkPendingRecord(email,kind,nowMs,linkShopId){
+  const r={email:String(email||"").trim(),kind,at:Number(nowMs)||0};
+  if(typeof linkShopId==="string"&&linkShopId)r.linkShopId=linkShopId;
+  return r;
+}
+function emailLinkPendingFor(rec,kind,nowMs){
+  if(!rec||typeof rec!=="object"||rec.kind!==kind||typeof rec.email!=="string"||!rec.email)return null;
+  const at=Number(rec.at)||0;
+  if(!(at>0)||Number(nowMs)-at>EMAIL_LINK_PENDING_MAX_MS)return null;
+  return rec;
+}
+// 管理者のパスワードは従来どおり6文字以上（スタッフは MY_PASSWORD_MIN）
+const ADMIN_PASSWORD_MIN=6;
+function validateEmailLinkPassword(kind,pw,pw2){
+  const min=kind==="staff"?MY_PASSWORD_MIN:ADMIN_PASSWORD_MIN;
+  const s=String(pw==null?"":pw);
+  if(!s)return"パスワードを入力してください";
+  if(s.length<min)return`パスワードは${min}文字以上にしてください`;
+  if(s!==String(pw2==null?"":pw2))return"確認用のパスワードが一致しません";
+  return null;
+}
+// 送信・続きの登録のエラー文言。phase は "send"|"finish"|"password"
+function emailLinkErrorMessage(e,phase){
+  const code=String((e&&e.code)||"");
+  if(code==="auth/invalid-action-code"||code==="auth/expired-action-code")return"このリンクは期限切れか、すでに使われています。もう一度登録をやり直してください";
+  if(code==="auth/invalid-email")return phase==="finish"?"メールアドレスが、確認メールを送ったアドレスと違います":"メールアドレスの形式が正しくありません";
+  if(code==="auth/too-many-requests")return"送信が多すぎます。しばらく待ってからもう一度お試しください";
+  if(code==="auth/network-request-failed")return"通信できませんでした。通信状態を確認してもう一度お試しください";
+  if(code==="auth/weak-password")return"パスワードが短すぎます";
+  if(code==="auth/requires-recent-login")return"もう一度メールのリンクから登録を続けてください";
+  return phase==="send"?"確認メールを送れませんでした。もう一度お試しください":phase==="password"?"パスワードを設定できませんでした。もう一度お試しください":"登録を続けられませんでした。もう一度お試しください";
+}
 // ログインの失敗回数を数える対象（パスワード違いなど本人の入力の誤り）。通信エラーは数えない
 function isMyCredentialError(e){return MY_CREDENTIAL_ERROR_CODES.includes(String((e&&e.code)||""));}
 
@@ -1661,7 +1732,7 @@ function myAllShiftSelection(choices,sel){
 }
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
+  module.exports={EMAIL_LINK_PENDING_LS,EMAIL_LINK_KINDS,EMAIL_LINK_PENDING_MAX_MS,EMAIL_LINK_RESEND_WAIT_MS,EMAIL_LINK_FALLBACK_CODES,isEmailLinkFallbackError,emailLinkSafeHash,emailLinkContinueUrl,parseEmailLinkLanding,emailLinkCleanUrl,emailLinkPendingRecord,emailLinkPendingFor,ADMIN_PASSWORD_MIN,validateEmailLinkPassword,emailLinkErrorMessage,MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
     MY_LINK_METHOD_LABELS,MY_LINK_CODE_LEN,MY_LINK_CODE_TTL_MS,linkNumberKey,linkNameKey,normalizeLinkCode,isValidLinkCode,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,MY_STAFF_LINK_OPS_MAX,staffLinkOpOf,staffLinksAsOf,planStaffLinkOp,enqueueStaffLinkOp,MY_STAFF_LINK_PENDING_MSG,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,fmtLinkCodeExpiry,
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
     MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_STEP_MIN,MY_TIME_OPTIONS,MY_BREAK_MAX_OPTION_MIN,MY_BREAK_OPTIONS,myTimeSelectOptions,myBreakSelectOptions,parseMyMinutesInput,

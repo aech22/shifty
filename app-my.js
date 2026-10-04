@@ -190,6 +190,186 @@ async function myChangePassword(f){
   }
 }
 
+// ===== メール確認つきの新規登録（2026-10-04・ユーザー指示）=====
+// 規則（戻り先の URL・覚えておく記録・切り替えるエラー・文言）は app-my-utils.js の「メール確認つきの新規登録」の節。
+// 流れ: ①アドレスだけ入れて確認メールを送る（sendEmailLinkRegister）→ ②メールのリンクを開く（parseEmailLinkLanding）→
+// ③開いた画面（EmailLinkFinishScreen）でパスワード（スタッフは登録ネームと番号も）を入れる → signInWithEmailLink → updatePassword →
+// 印・プロフィール・店舗の紐付けを書いて、oobCode を落とした URL で開き直す（uid が替わるので Phase1 からやり直す＝別端末のログインと同じ流儀）。
+// **メールリンクが使えない（Firebase コンソールで無効・戻り先のドメインが未承認）ときは onFallback で従来の登録に切り替える**。
+async function sendEmailLinkRegister({email,kind,hash,linkShopId}){
+  const vErr=validateMyEmail(email);
+  if(vErr)return{error:vErr};
+  if(DEMO_MODE)return{error:MY_BLOCK_MESSAGES.demo};
+  if(!firebaseAuth)return{error:MY_BLOCK_MESSAGES.signin};
+  const em=String(email).trim();
+  try{
+    await firebaseAuth.sendSignInLinkToEmail(em,{url:emailLinkContinueUrl(window.location,{kind,hash}),handleCodeInApp:true});
+  }catch(e){
+    console.warn("確認メールの送信に失敗:",e&&e.code);
+    if(isEmailLinkFallbackError(e))return{fallback:true,code:String(e.code)};
+    return{error:emailLinkErrorMessage(e,"send")};
+  }
+  ls(EMAIL_LINK_PENDING_LS,emailLinkPendingRecord(em,kind,Date.now(),linkShopId));
+  return{sent:true,email:em};
+}
+// 新規登録の1段目（アドレスだけ）と、送ったあとの「メールを確認してください」。
+// kind: "staff"|"admin"、hash: 戻るハッシュ（スタッフだけ）、linkShopId: 設定タブのアカウント連携で、続きの登録のあとに紐付ける店舗（localStorage にだけ置く）。
+// onFallback(email): メールリンクが使えないとき。呼び出し側が従来の登録の欄を出す。inputStyle・buttonStyle は呼び出し側の見た目に合わせる
+function EmailLinkSendBox({kind,hash,linkShopId,onFallback,initialEmail,inputStyle,buttonStyle,beforeSend}){
+  const[email,setEmail]=useState(initialEmail||"");
+  const[sent,setSent]=useState(null);   // 送ったアドレス
+  const[sentAt,setSentAt]=useState(0);
+  const[now,setNow]=useState(Date.now());
+  const[busy,setBusy]=useState(false);
+  const[msg,setMsg]=useState({});
+  useEffect(()=>{if(!sent)return;const t=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(t);},[sent]);
+  const send=async()=>{
+    setBusy(true);setMsg({});
+    if(beforeSend){const b=await beforeSend();if(b){setBusy(false);setMsg({error:b});return;}}
+    const r=await sendEmailLinkRegister({email,kind,hash,linkShopId});
+    setBusy(false);
+    if(r.fallback){if(onFallback)onFallback(String(email).trim());return;}
+    if(r.error){setMsg({error:r.error});return;}
+    setSent(r.email);setSentAt(Date.now());setNow(Date.now());
+  };
+  const wait=Math.max(0,Math.ceil((sentAt+EMAIL_LINK_RESEND_WAIT_MS-now)/1000));
+  const inp=inputStyle||AI;
+  const btn=buttonStyle||{...AB,width:"100%",padding:"13px 18px",fontSize:15};
+  if(sent)return(
+    <div data-email-link="sent">
+      <div style={{fontSize:15,fontWeight:700,color:"var(--c-text)",marginBottom:8}}>メールを確認してください</div>
+      <div data-email-link-to="1" style={{fontSize:14,lineHeight:1.8,color:"var(--c-text2)",marginBottom:12,overflowWrap:"anywhere"}}>
+        {sent} に確認メールを送りました。メールのリンクを開くと、続きの登録（パスワードの設定）に進みます。届かないときは迷惑メールのフォルダも確認してください。
+      </div>
+      <MyMessage {...msg}/>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+        <button data-email-link-action="resend" disabled={busy||wait>0} onClick={send} style={{...AGray,opacity:busy||wait>0?.6:1}}>{wait>0?`もう一度送る（${wait}秒）`:busy?"送信中…":"もう一度送る"}</button>
+        <button data-email-link-action="edit" onClick={()=>{setSent(null);setMsg({});}} style={AGray}>メールアドレスを直す</button>
+      </div>
+    </div>
+  );
+  return(
+    <div data-email-link="form">
+      <input type="email" autoComplete="email" maxLength={254} value={email} data-email-link-input="email" placeholder="メールアドレス"
+        onChange={e=>{setEmail(e.target.value);setMsg({});}} onKeyDown={e=>{if(e.key==="Enter"&&!busy)send();}}
+        style={{...inp,marginBottom:10}}/>
+      <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:12}}>入力したアドレスに確認メールを送ります。メールのリンクから登録を続けます。</div>
+      <MyMessage {...msg}/>
+      <button data-email-link-action="send" disabled={busy} onClick={send} style={{...btn,opacity:busy?.6:1}}>{busy?"送信中…":"確認メールを送る"}</button>
+    </div>
+  );
+}
+// 確認メールのリンクを開いた画面（続きの登録）。App が Phase1 より先に描く（landing＝parseEmailLinkLanding の戻り値）。
+// 同じブラウザならアドレスは送った記録から入る。別のブラウザ・メールアプリの中のブラウザでは、アドレスをもう一度入れてもらう
+// （signInWithEmailLink がアドレスを求めるため）。パスワードの設定に失敗したら、サインインしたまま設定し直せる
+function EmailLinkFinishScreen({landing}){
+  const kind=landing.kind;
+  const href=useRef(window.location.href).current;
+  const pending=useMemo(()=>emailLinkPendingFor(lg(EMAIL_LINK_PENDING_LS,null),kind,Date.now()),[kind]);
+  const[f,setF]=useState({email:pending?pending.email:"",displayName:"",number:"",password:"",password2:""});
+  const[stage,setStage]=useState(landing.hasCode?"form":"bad"); // form | password（サインイン済みでパスワードだけ未設定）| bad | stop
+  const[msg,setMsg]=useState({});
+  const[busy,setBusy]=useState(false);
+  const set=(k,v)=>{setF(p=>({...p,[k]:v}));setMsg({});};
+  const leave=()=>{try{localStorage.removeItem(EMAIL_LINK_PENDING_LS);}catch{/* 書けない端末は何もしない */}window.location.replace(emailLinkCleanUrl(href,landing.hash));};
+  const finishWith=async user=>{
+    // パスワード（以後のログインはメール＋パスワード）。既にあるアカウントのアドレスでも、メールを受け取れることを確かめたので設定し直す（再設定と同じ）
+    try{await user.updatePassword(f.password);}
+    catch(e){console.warn("パスワードの設定に失敗:",e&&e.code);setStage("password");setMsg({error:emailLinkErrorMessage(e,"password")});return false;}
+    if(kind==="staff"){
+      await mySaveProfile(user.uid,f,{fresh:true});
+      // スタッフURLの画面から始めた登録は、戻った画面でマイシフトを開く
+      if(landing.hash&&!isMyRouteHash(landing.hash))ssSave(SS_MY_OPEN,"1");
+    }else{
+      ls(AUTH_LOGGED_OUT_LS,false); // 実ログイン成立（次の起動で復元する）
+      // 設定タブのアカウント連携から始めた登録（同じブラウザだけ）: その店舗をこのアカウントに紐付ける
+      if(pending&&pending.linkShopId&&pending.email.toLowerCase()===String(user.email||f.email).toLowerCase()){
+        try{await fbSet(`accounts/${user.uid}/shops/${pending.linkShopId}`,true);}catch(e){console.warn("店舗の紐付けに失敗:",e&&e.code);}
+      }
+    }
+    leave();
+    return true;
+  };
+  const submit=async()=>{
+    const vErr=validateMyEmail(f.email)||(kind==="staff"?validateMyProfile(f):null)||validateEmailLinkPassword(kind,f.password,f.password2);
+    if(vErr){setMsg({error:vErr});return;}
+    if(!firebaseAuth){setMsg({error:MY_BLOCK_MESSAGES.signin});return;}
+    setBusy(true);setMsg({});
+    if(stage==="password"){
+      const u=firebaseAuth.currentUser;
+      if(!u||u.isAnonymous){setBusy(false);setStage("bad");return;}
+      const ok=await finishWith(u);if(!ok)setBusy(false);return;
+    }
+    if(!firebaseAuth.isSignInWithEmailLink(href)){setBusy(false);setStage("bad");return;}
+    // スタッフ: 管理者の端末では作らせない（E1 の myBlockReason）。管理者: マイシフトのアカウントでログイン中の端末では作らせない
+    if(kind==="staff"){const b=await myBlockReason(null);if(b){setBusy(false);setMsg({error:b.message});return;}}
+    else if(isStaffAccountUser(firebaseAuth.currentUser)){setBusy(false);setMsg({error:MY_ADMIN_BLOCKED_MSG});return;}
+    let user;
+    try{
+      try{await firebaseAuth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);}catch{/* 既定も LOCAL */}
+      user=(await firebaseAuth.signInWithEmailLink(String(f.email).trim(),href)).user;
+    }catch(e){
+      console.warn("メールリンクでのサインインに失敗:",e&&e.code);
+      setBusy(false);
+      const c=String((e&&e.code)||"");
+      if(c==="auth/invalid-action-code"||c==="auth/expired-action-code"){setStage("bad");return;}
+      setMsg({error:emailLinkErrorMessage(e,"finish")});return;
+    }
+    // 管理者用とマイシフト用のアカウントは混ぜない（myLogin と同じ考え方）
+    const stopWith=async text=>{try{await firebaseAuth.signOut();}catch{/* 開き直しで匿名に戻る */}setBusy(false);setStage("stop");setMsg({error:text});};
+    if(kind==="staff"){
+      let adminShops=null;
+      try{adminShops=(await firebaseDB.ref(`accounts/${user.uid}/shops`).once("value")).val();}catch{adminShops=null;}
+      if(adminShops&&Object.keys(adminShops).length)return stopWith("このメールアドレスは店舗の管理用のアカウントです。マイシフトには別のメールアドレスで登録してください");
+      setStaffAccountMark(user.uid);
+    }else{
+      const prof=await readStaffProfile(user.uid);
+      if(prof)return stopWith("このメールアドレスはマイシフト用のアカウントです。店舗の管理には別のメールアドレスで登録してください");
+    }
+    const ok=await finishWith(user);
+    if(!ok)setBusy(false);
+  };
+  const onKey=e=>{if(e.key==="Enter"&&!busy)submit();};
+  const title=kind==="staff"?"マイシフトの登録":"アカウントの登録";
+  return(
+    <div data-email-link-finish={stage} data-email-link-kind={kind} style={{minHeight:"100vh",background:"var(--c-bg)"}}>
+      <MyHeader title={title}/>
+      <div style={{maxWidth:420,margin:"0 auto",padding:"24px 16px 40px"}}>
+        <section style={MY_SECTION}>
+          {stage==="bad"?<>
+            <div style={MY_SECTION_TITLE}>このリンクは使えません</div>
+            <div style={{fontSize:14,lineHeight:1.8,color:"var(--c-text2)",marginBottom:14}}>リンクの期限が切れているか、すでに使われています。お手数ですが、もう一度はじめから登録してください。</div>
+            <button data-email-link-action="leave" onClick={leave} style={{...AB,width:"100%"}}>はじめの画面へ</button>
+          </>:stage==="stop"?<>
+            <div style={MY_SECTION_TITLE}>登録できませんでした</div>
+            <MyMessage {...msg}/>
+            <button data-email-link-action="leave" onClick={leave} style={{...AB,width:"100%"}}>はじめの画面へ</button>
+          </>:<>
+            <div style={MY_SECTION_TITLE}>{stage==="password"?"パスワードの設定":"続きの登録"}</div>
+            <div style={{fontSize:13,lineHeight:1.7,color:"var(--c-text3)",marginBottom:14}}>
+              {stage==="password"?"メールアドレスの確認は済んでいます。パスワードを設定すると登録が終わります。"
+                :pending?"メールアドレスを確認できました。パスワードを決めて登録を終えてください。"
+                :"確認メールを送ったメールアドレスを入れてください（別のブラウザで開いたときは、アドレスの入力が必要です）。"}
+            </div>
+            {stage==="form"&&!pending&&<MyField label="メールアドレス" type="email" autoComplete="email" value={f.email} data-my-input="email" onChange={e=>set("email",e.target.value)} onKeyDown={onKey}/>}
+            {stage==="form"&&pending&&<div data-email-link-address="1" style={{fontSize:14,color:"var(--c-text2)",marginBottom:12,overflowWrap:"anywhere"}}>{pending.email}</div>}
+            {kind==="staff"&&stage==="form"&&<>
+              <MyField label="登録ネーム" value={f.displayName} maxLength={MY_DISPLAY_NAME_MAX} autoComplete="name" data-my-input="displayName" onChange={e=>set("displayName",e.target.value)} hint="お店に登録されている名前と同じにしてください"/>
+              <MyField label="従業員番号（任意）" value={f.number} maxLength={MY_NUMBER_MAX} inputMode="numeric" data-my-input="number" hint={MY_PROFILE_NUMBER_HINT} onChange={e=>set("number",e.target.value)}/>
+            </>}
+            <MyField label="パスワード" type="password" autoComplete="new-password" value={f.password} data-my-input="password"
+              hint={`${kind==="staff"?MY_PASSWORD_MIN:ADMIN_PASSWORD_MIN}文字以上`} onChange={e=>set("password",e.target.value)} onKeyDown={onKey}/>
+            <MyField label="パスワード（確認）" type="password" autoComplete="new-password" value={f.password2} data-my-input="password2" onChange={e=>set("password2",e.target.value)} onKeyDown={onKey}/>
+            <MyMessage {...msg}/>
+            <button data-email-link-action="finish" disabled={busy} onClick={submit} style={{...AB,width:"100%",padding:"13px 18px",fontSize:15,opacity:busy?.6:1}}>{busy?"処理中…":"登録する"}</button>
+            {stage==="form"&&<button data-email-link-action="leave" onClick={leave} style={{...MY_LINK_BTN,marginTop:10}}>やめる</button>}
+          </>}
+        </section>
+      </div>
+    </div>
+  );
+}
+
 // ===== 紐付け（第2部 E2）=====
 // 本人の端末から呼ぶ Cloud Functions（コードでの紐付け・解除）。App の _callCF と同じくデモでは呼ばない
 async function myCallCF(name,payload){
@@ -1889,6 +2069,8 @@ function MyAuthScreen({shopId,onClose}){
   const[busy,setBusy]=useState(false);
   const[block,setBlock]=useState(null);
   const[checked,setChecked]=useState(false);
+  // 新規登録はメール確認つき（EmailLinkSendBox）。メールリンクが使えない（Firebase の設定前）ときだけ従来の欄（classic）に切り替える
+  const[classic,setClassic]=useState(false);
   const set=(k,v)=>setF(p=>({...p,[k]:v}));
   useEffect(()=>{ssSave(SS_MY_NOTICE,null);},[]);
   useEffect(()=>{
@@ -1930,6 +2112,9 @@ function MyAuthScreen({shopId,onClose}){
               );})}
             </div>}
             {mode==="reset"&&<div style={MY_SECTION_TITLE}>パスワードの再設定</div>}
+            {mode==="register"&&!classic?<EmailLinkSendBox kind="staff" hash={window.location.hash} initialEmail={f.email}
+              onFallback={em=>{set("email",em);setClassic(true);setMsg({});}}/>:<>
+            {mode==="register"&&<div data-email-link-fallback="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:12}}>確認メールを送れないため、この画面で登録します。</div>}
             {mode==="register"&&<>
               <MyField label="登録ネーム" value={f.displayName} maxLength={MY_DISPLAY_NAME_MAX} autoComplete="name" data-my-input="displayName" onChange={e=>set("displayName",e.target.value)} hint="お店に登録されている名前と同じにしてください"/>
               <MyField label="従業員番号（任意）" value={f.number} maxLength={MY_NUMBER_MAX} inputMode="numeric" data-my-input="number" hint={MY_PROFILE_NUMBER_HINT} onChange={e=>set("number",e.target.value)}/>
@@ -1944,6 +2129,7 @@ function MyAuthScreen({shopId,onClose}){
             </button>
             {mode==="login"&&<button data-my-mode="reset" onClick={()=>go("reset")} style={{...MY_LINK_BTN,marginTop:10}}>パスワードを忘れた場合</button>}
             {mode==="reset"&&<button data-my-mode="login" onClick={()=>go("login")} style={{...MY_LINK_BTN,marginTop:10}}>ログインに戻る</button>}
+            </>}
           </section>
         )}
       </div>
