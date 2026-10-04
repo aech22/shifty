@@ -1553,9 +1553,9 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-10-03 自動実行 #163）
+## Shifty バグチェックレポート（2026-10-04 自動実行 #164）
 
-> 着手時の HEAD は `f053304`。#162 以降のコード変更は1件。`3a34438`（組み込み属性 dispatch の表示名を「派遣」から「応援・外部」に改称し、労働時間制の選択肢から none を外す）。2026-10-03 のユーザー指示による変更で、対象は app-utils.js・app-company.js・eslint.config.js・tests・回帰スクリプト。`f053304` は削除済み機能の回帰スクリプト `example-labor-external-over.js` をリポジトリから外しただけ。database.rules.json・functions/・index.html・app-shift.js・app-admin.js・app-main.js・app-staff.js・app-core.js に差分は無い。
+> 着手時の HEAD は `4edc06f`。#163（`456e6a9`）以降のコード変更は次のとおり。K1（保存ボタンのラベル）・K2（Excel の名前行を縦書き）・S1〜S3（シフト作成タブの高速化。セルを `ShiftCell` に分離し、重い計算を後回しにする）・H1（2セル表示用の店舗略称）・H2（ヘルプ勤務の表示）・企業連携タブの select のはみ出し修正（`b878640`）・tokens 補完の重複書き込みの修正（`af8845a`）。対象は app-*.js の7ファイルと index.html で、database.rules.json と functions/ に差分は無い。
 
 ### 修正済み
 
@@ -1563,26 +1563,22 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 
 ### 要確認（未修正）
 
-- **[🟢] #158 から継続の4件**（モーダルを開いた瞬間に前の結果が1フレーム見えうる／実績で時刻を変えた日の adjustedBreak＝BACKLOG化済み／企業の提出状況表からの確定がプランを見ない／他店舗略称＋「締」・番号欄の書き換え）。状態は同じ。
-- **[🟢] 従業員番号を使っていない店舗では、A制・B制の全員に「従業員番号が未設定」が労務の確認パネルに出る**（F6③）。計画どおりの仕様なので変更していない。
-- **[🟢] 月次賃金は、翌月の期間がまだ無い月末の週の法定休日を判定しない**（#161 と同じ・既存の仕様）。
-- **[🟢] `.cursorrules` に作業ツリーの未コミット変更（+547行・#162 と同数）がある。** 本ループの作業ではないので触っていない。
-
-#162 の「削除済み機能の回帰スクリプトが残っている」は `f053304` で解消した（ファイルが無いことを確認）。
+- **[🟢] 配信版数が app-*.js の変更に追随していない。** index.html の7箇所と app-core.js の `build:` は `20261003-f053304` のままだが、app-*.js はその後 `af8845a` まで変わっている。次のリリースで `/release-to-main` の手順どおりバンプすれば足りる。
+- **[🟢] H1 の2セル用略称を他店舗の settings へ差分 update で書くので、その店舗の端末が古い settings のまま全体 set() で保存すると消える。** 既存の BACKLOG「settings / staff / templates は今も全体 set()」と同じ根なので、新しくは起票しない。
+- **[🟢] tokens 補完は、一度「サーバーと同じ」と確かめた token を、そのセッションの間は読み直さない。** 他の端末が同じ token を消しても、このセッションでは書き戻さない。以前は periods が変わるたびに書き戻していた。意図された変更で、次のセッションでは補完される。
+- **[🟢] #158 から継続の4件と、#163 の F6③（従業員番号を使っていない店舗で「従業員番号が未設定」が全員に出る）・月次賃金の翌月期間なしの週の法定休日・`.cursorrules` の未コミット変更。** 状態は同じ。
 
 ### 異常なし
 
-- **`3a34438` の影響範囲を全ファイルで追った。** `LABOR_SYSTEM_LABELS` から none のラベルが消えたが、このオブジェクトを引く箇所は app-company.js の3箇所（企業の共通設定の select・設定タブの select・企業設定の固定表示）だけで、いずれも `LABOR_SYSTEM_CHOICES`（A・B）か `laborSystemChoiceOf`（none を B に寄せる）を通した値で引く。none をそのまま引いて undefined が画面に出る経路は無い。保存値の検証（`LABOR_SYSTEMS`・`_coLimitSet`・CF の `COMPANY_LABOR_SYSTEMS`）は3値のままで、本番に残る none は捨てられない。
-- **設定タブの select の初期値を場合分けで確かめた。** 保存値なしの dispatch／other は既定 none から B が選ばれた状態、保存値なしの独自属性は「未設定」、保存値 none は B。表示が B のまま何も選び直さなければ保存値は書き換わらない。
-- **「派遣」の文字列に依存する判定は属性名の側に無い。** app-*.js と functions/ で「派遣」が残るのは従業員番号欄の文字の話（`isStaffNumberMissing`・番号の重複判定のコメント）だけで、今回の改称の対象外。
-- `npm test` **522件パス**・`npx eslint app-*.js` **0 errors / 116 warnings**（#162 と同数）・`node --check` で functions/index.js と company-config.js は通過。
-- 実ブラウザ回帰7本（labor-external-as-b・labor-phase1・labor-cell-color・attr-order・company-settings・index-html-load・staff-pay）はすべて EXIT=0。
-- `DEV_MODE` は式のまま。読み込み順は7ファイルとも正しい。Babel を通る最大のファイルは app-company.js の 209,379 字（上限 500,000 字）。フォーム部品148件で `fontSize` 16未満は0件。未定義の CSS 変数・`subs`/`periods` の全体 set()・`global/shops` と `accounts` の全件読み・functions/ の `.delete()`・ルールの `.read: true` は0件。SRI 付き CDN は11本。
-- **Firebase・Stripe・本番データには一切アクセスしていない。**
+- **tokens 補完（app-main.js）**: 条件に足された `ownerClaimedSid` は 1184 行目の useState で宣言されており、補完の useEffect（1320 行目付近）より前にあるので TDZ にはならない。tokens の読みはルールで `auth != null`。新規期間の token は savePeriods が書いたときに記録され、二重に書かない。期間を消したときは記録も消す。
+- **セルの分離と計算の後回し（app-shift.js）**: 保存（`flushEdits`）・PDF・Excel は入力中の文字を `editsNow()` で拾う。確定（`confirmJob`）・Excel・PDF・非表示マウントの報告・laborTotals の書き込みは、どれも `calcPending` が解けた描画で動く。店舗切替と期間切替は `discardEdits` で、セルの入力中の文字を `resetKey` で捨てる。IME の確定の Enter は従来どおり除外されている。
+- **ヘルプ表示（app-utils.js の `helperCellDisplay`）と2セル略称（`shopAbbr2Of`・`shopAbbr2Error`）**: 予約語の検査は1セル用と同じ `isReservedShopAbbr` を通す。2セル用は `abbrToShop` にも期間の写しにも入らない。他店舗への保存は `fbUpd` の差分 update で、拒否されたら読み直す。
+- `npm test` **530件パス**・`npx eslint app-*.js` **0 errors / 119 warnings**（#163 の 116 から +3。S2 の新しいコンポーネント2つの no-unused-vars と S3 の `CalcPendingNote` で、どれも既存のコンポーネントと同じ扱い）。
+- `DEV_MODE` は式のまま。読み込み順は7ファイルとも正しい（utils→core→staff→admin→shift→company→main）。Babel を通る最大のファイルは app-shift.js の 286,687 字（上限 500,000 字）。フォーム部品149件で `fontSize` 16未満は0件。未定義の CSS 変数・`subs`/`periods` の全体 set()・functions/ の `.delete()` は0件。
+- **Firebase・Stripe・本番データには一切アクセスしていない。** 実ブラウザの回帰は今回回していない（各コミットの作業で S2・S3・H1・H2 の回帰スクリプトが EXIT=0 だったことは BACKLOG の完了記録にあるが、このループでは再実行していない）。
 
 **申し送り**:
-- 配信版数は本ループの実行中に別セッションのリリース（`45d59f1`）で `20261003-f053304` へ上がった（index.html 7箇所＋app-core.js の `build:`）。`f053304` は `3a34438` を含むので、app-*.js の変更はすべて版数に追随している。`DEV_MODE` は式のまま。
-- スケジュールタスクの PHASE 2〜4 の grep はいまも削除済みの `app.js` を対象にしている（19回目）。今回も app-*.js に読み替えた。
+- スケジュールタスクの PHASE 2〜4 の grep はいまも削除済みの `app.js` を対象にしている（20回目）。今回も app-*.js に読み替えた。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
