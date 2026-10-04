@@ -851,10 +851,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const getStoredFixed=(name,date,field)=>{if(!fixedShiftEnabled)return false;const sh=_getSub(name)?.shifts?.[date];const fk=field==="start"?"adjustedStartFixed":"adjustedEndFixed";return!!(sh&&sh[fk]);};
   // 終日の休暇はセルに種別名（公休/有給/慶弔）を出す。色は塗らない（2026-09-26 ユーザー指示）。
   // 出勤・退勤の**両方**に出す——片方だけだと半日の休み希望と見分けがつかない。
-  const leaveCellText=(name,date,field)=>{
-    if(!fieldRest(name,date,field))return "";
-    return leaveCellTextOf(_getSub(name)?.shifts?.[date],field);
-  };
+  // 判定は app-utils.js の leaveShownTextOf（PDF・従業員画面の全員の表・Excel と同じ関数・2026-10-04）
+  const leaveCellText=(name,date,field)=>leaveShownTextOf(_getSub(name)?.shifts?.[date],field);
   const ownVal=(name,date,field)=>{const lv=leaveCellText(name,date,field);if(lv)return lv;const t=toDecimal(getStoredTime(name,date,field));const n=getStoredNote(name,date,field);const fx=getStoredFixed(name,date,field)?FIXED_KEY:"";if(t)return t+n+fx;return(n+fx)||"";};
   // 所属店舗のグリッドに、他店でのヘルプ勤務を出す（P3.6 → 2026-10-04 H2 で表示を変更）。
   // 決まりは app-utils.js の helperCellDisplay（PDF の buildShiftTableHtml・Excel の adjResolver も同じ関数を通す）:

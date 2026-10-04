@@ -718,6 +718,10 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
       // 変更マーク（トリプルクリックで付ける緑）。出勤・休みのどちらの分岐でも塗る
       // （PDFも同じく出勤・休み・空白のすべてに chgBg を乗せる。984dc54 で空白セルの脱落を直した経緯がある）
       const isChanged=!!(sh&&sh.changed===true);
+      // 休暇の種別名（公休・有給・慶弔）。画面・PDF と同じ leaveShownTextOf（2026-10-04 ユーザー指示「Excel も統一して」）。
+      // 管理者が入れる値（adminRest＋leaveTypes）なので、どちらの入口（シフト作成タブ・期間管理タブ）からも出す
+      // ——期間管理タブの既定の解決（storedRv）も管理者の休み（adminRest）を通す＝2つの入口が同じ中身（バグチェック#134）
+      const lvS=isSpacer(nm)?"":leaveShownTextOf(sh,"start"),lvE=isSpacer(nm)?"":leaveShownTextOf(sh,"end");
       const ci=C_STAFF+si;
       // 上行: top:medium, bot:hair
       // 下行: top:hair, bot:thin (最終日はbot:medium)
@@ -736,7 +740,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
         // 未提出: 空白
         SC(rT,ci,null,aH,fill,{top:M,bottom:H,left:T,right:T});
         SC(rB,ci,null,aH,fill,{top:H,bottom:botT,left:T,right:T});
-      } else if(isWork||hasAdminDisp(nm,ds)||helperDayOf(nm,ds)){
+      } else if(isWork||hasAdminDisp(nm,ds)||helperDayOf(nm,ds)||lvS||lvE){
         const fmtT=t=>{if(!t)return null;const[h,m]=t.split(":").map(Number);return m===0?String(h):String(h+m/60);};
         // 調整済み値の解決は必ず effResolver を通す（呼び出し元が resolver を渡さない場合も既定の
         // 解決が入るので、2つの入口が同じ中身のExcelを出す。バグチェック#134）
@@ -753,14 +757,19 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
         // 時刻が無くてもnote・締めがあれば表示する。従来は時刻の有無だけで判定していたため、
         // 単独「締」やメモのみのセルがグリッド・PDFには出るのにExcelでだけ空欄に落ちていた
         // （バグチェック#52）。グリッドのgetVal・PDFのpdfResolveと同じ真偽判定に揃える
-        const startDisp=rv.st.helperText||((startT||sNote||sFx)?((fmtT(startT)||"")+sNote+sFx):null);
-        const endDisp=rv.en.helperText||((endT||eNote||eFx)?((fmtT(endT)||"")+eNote+eFx):null);
-        // 管理者入力の休み希望(/)はフィールド単位で斜線（どちらの入口から出しても同じ）
+        const startTimeDisp=rv.st.helperText||((startT||sNote||sFx)?((fmtT(startT)||"")+sNote+sFx):null);
+        const endTimeDisp=rv.en.helperText||((endT||eNote||eFx)?((fmtT(endT)||"")+eNote+eFx):null);
+        // 休暇の帯は種別名（斜線なし）。それ以外の帯は従来どおり
+        const startDisp=lvS||startTimeDisp,endDisp=lvE||endTimeDisp;
+        // 管理者入力の休み希望(/)はフィールド単位で斜線（どちらの入口から出しても同じ）。種別名を出す帯には引かない。
+        // スタッフ提出の休みの日に片側だけ休暇を入れた日は、もう片側（文字なし）を斜線にする（PDF の shiftSheetCellOf と同じ）
         const diagR={up:false,down:true,style:"thin",color:{argb:R("AAAAAA")}};
-        const stB={top:M,bottom:H,left:T,right:T,...(rv.st.rest?{diagonal:diagR}:{})};
-        const enB={top:H,bottom:botT,left:T,right:T,...(rv.en.rest?{diagonal:diagR}:{})};
-        SC(rT,ci,startDisp,rv.st.helperText?{...aH,shrinkToFit:true}:aH,startFill,stB,{name:"Yu Gothic",bold:false,size:12});
-        SC(rB,ci,endDisp,rv.en.helperText?{...aH,shrinkToFit:true}:aH,endFill,enB,{name:"Yu Gothic",bold:false,size:12});
+        const holHatch=(lvS||lvE)&&sh&&sh.status==="holiday"&&!helperDayOf(nm,ds)&&!startTimeDisp&&!endTimeDisp;
+        const stRest=!lvS&&(rv.st.rest||holHatch),enRest=!lvE&&(rv.en.rest||holHatch);
+        const stB={top:M,bottom:H,left:T,right:T,...(stRest?{diagonal:diagR}:{})};
+        const enB={top:H,bottom:botT,left:T,right:T,...(enRest?{diagonal:diagR}:{})};
+        SC(rT,ci,startDisp,(rv.st.helperText||lvS)?{...aH,shrinkToFit:true}:aH,startFill,stB,{name:"Yu Gothic",bold:false,size:12});
+        SC(rB,ci,endDisp,(rv.en.helperText||lvE)?{...aH,shrinkToFit:true}:aH,endFill,enB,{name:"Yu Gothic",bold:false,size:12});
       } else if(!sh){
         // その日のエントリ自体を持たない: 空白（未提出の列と同じ）。
         // 下の「休み」へ落とすと **提出していない日が休み希望として配布Excelに出る**。
