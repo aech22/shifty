@@ -1566,7 +1566,7 @@ function MyPayTab({me,personal,onGoSettings}){
     </MyEmptyState>
   );
   const anyEstimate=month&&month.rows.some(r=>r.estimate);
-  const progress=month?myGoalProgress(month.confirmedTotal,X.goal):null;
+  const summary=myPaySummaryOf(month,X.goal);
   return(
     <div data-my-pay="1" data-my-pay-view={view}>
       {badLinks.length>0&&<div data-my-bad-links="1" style={{fontSize:13,color:"var(--c-danger)",lineHeight:1.7,marginBottom:12}}>
@@ -1586,23 +1586,29 @@ function MyPayTab({me,personal,onGoSettings}){
           <div data-my-pay-month={ym} style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{_myYmLabel(ym)}の支給</div>
           <button data-my-pay-nav="next" aria-label="次の支給月" onClick={()=>setPayYm(myShiftMonth(ym,1))} style={navBtn}>›</button>
         </div>
-        {premium&&<section style={{...MY_SECTION,padding:"16px"}} data-my-pay-summary={month&&month.hasAmount?"amount":"none"}>
+        {premium&&<section style={{...MY_SECTION,padding:"16px"}} data-my-pay-summary={month&&month.hasAmount?"amount":"none"} data-my-pay-goal={summary.showRing?"set":"none"}>
           {loading?<div style={{fontSize:14,color:"var(--c-text3)"}}>読み込み中…</div>:month&&(
+            // 月間目標は任意（2026-10-04 ユーザー指示）。目標を設定したときだけ円グラフを出し、無ければ合計・確定分・見込みだけを大きく出す
             <div style={{display:"flex",gap:16,alignItems:"center"}}>
-              <MyGoalRing progress={progress}/>
+              {summary.showRing&&<MyGoalRing progress={summary.progress}/>}
               <div style={{flex:1,minWidth:0}}>
                 <div style={MY_LABEL}>合計（目安）</div>
-                <div data-my-pay-total={month.total} style={{fontSize:24,fontWeight:700,color:"var(--c-text)",fontVariantNumeric:"tabular-nums",lineHeight:1.2}}>{month.hasAmount?fmtMyYen(month.total):"—"}</div>
-                <div style={{fontSize:13,color:"var(--c-text2)",marginTop:6,lineHeight:1.8,fontVariantNumeric:"tabular-nums"}}>
-                  <div data-my-pay-confirmed={month.confirmedTotal}>確定分（今日まで）{month.hasAmount?fmtMyYen(month.confirmedTotal):"—"}</div>
-                  <div data-my-pay-projected={month.projectedTotal}>これからの見込み {month.hasAmount?fmtMyYen(month.projectedTotal):"—"}</div>
-                  <div data-my-pay-workmin={month.workMin}>勤務時間 {fmtMin(month.workMin)||"0:00"}</div>
+                <div data-my-pay-total={month.total} style={{fontSize:summary.showRing?24:30,fontWeight:700,color:"var(--c-text)",fontVariantNumeric:"tabular-nums",lineHeight:1.2}}>{month.hasAmount?fmtMyYen(month.total):"—"}</div>
+                <div style={{display:"grid",gridTemplateColumns:summary.showRing?"1fr":"repeat(2,minmax(0,1fr))",columnGap:12,fontSize:13,color:"var(--c-text2)",marginTop:6,lineHeight:1.8,fontVariantNumeric:"tabular-nums"}}>
+                  <div data-my-pay-confirmed={month.confirmedTotal}>確定分（今日まで）{summary.showRing?" ":<br/>}<span style={{fontWeight:summary.showRing?400:700,color:"var(--c-text)",fontSize:summary.showRing?13:16}}>{month.hasAmount?fmtMyYen(month.confirmedTotal):"—"}</span></div>
+                  <div data-my-pay-projected={month.projectedTotal}>これからの見込み{summary.showRing?" ":<br/>}<span style={{fontWeight:summary.showRing?400:700,color:"var(--c-text)",fontSize:summary.showRing?13:16}}>{month.hasAmount?fmtMyYen(month.projectedTotal):"—"}</span></div>
                 </div>
+                <div data-my-pay-workmin={month.workMin} style={{fontSize:13,color:"var(--c-text2)",marginTop:4,fontVariantNumeric:"tabular-nums"}}>勤務時間 {fmtMin(month.workMin)||"0:00"}</div>
               </div>
             </div>
           )}
+          {!loading&&month&&summary.missingWage.length>0&&<div data-my-pay-nowage={summary.allMissing?"all":"some"} style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.7,marginTop:10,paddingTop:10,borderTop:"1px solid var(--c-border)"}}>
+            {summary.allMissing?"時給（日給）が未設定のため、金額を計算できません。勤務時間だけを表示しています。"
+              :`${summary.missingWage.join("・")}の時給（日給）が未設定のため、その分は合計に入っていません。`}
+            {onGoSettings&&canEdit&&<button data-my-action="goWage" onClick={onGoSettings} style={{...MY_LINK_BTN,display:"block",padding:"4px 0 0",fontSize:13}}>設定で時給を入れる</button>}
+          </div>}
           {!loading&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginTop:10}}>
-            {X.goal>0?`月間目標 ${fmtMyYen(X.goal)} に対する確定分の割合です。`:<>月間目標を設定すると、確定分の進み具合が出ます。{onGoSettings&&<button data-my-action="goGoal" onClick={onGoSettings} style={{...MY_LINK_BTN,padding:"0 0 0 4px",fontSize:12}}>設定する</button>}</>}
+            {summary.showRing?`月間目標 ${fmtMyYen(X.goal)} に対する確定分の割合です。`:<>月間目標（任意）を設定すると、確定分の進み具合がグラフで出ます。{onGoSettings&&<button data-my-action="goGoal" onClick={onGoSettings} style={{...MY_LINK_BTN,padding:"0 0 0 4px",fontSize:12}}>設定する</button>}</>}
           </div>}
         </section>}
         {premium&&!loading&&month&&<div data-my-pay-estimate="1" style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,margin:"-6px 4px 12px"}}>
@@ -1620,6 +1626,7 @@ function MyPayTab({me,personal,onGoSettings}){
               <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginTop:2,fontVariantNumeric:"tabular-nums"}}>
                 {_myMd(r.plan.from)}〜{_myMd(r.plan.to)}の勤務 ／ {_myMd(r.plan.payDate)}払い ／ {fmtMin(r.amounts.minutes.workMin)||"0:00"}
                 {r.amounts.total!=null&&` ／ 確定 ${fmtMyYen(r.amounts.confirmedTotal)}`}{r.estimate&&" ／ 目安"}
+                {r.amounts.total==null&&<span data-my-pay-row-nowage="1"> ／ 時給が未設定</span>}
               </div>
               <button data-my-action="payDetail" aria-expanded={!!open[r.id]} onClick={()=>setOpen(o=>({...o,[r.id]:!o[r.id]}))} style={{...MY_LINK_BTN,padding:"6px 0"}}>{open[r.id]?"内訳を閉じる":"内訳"}</button>
               {open[r.id]&&<MyPayRowDetail row={r}/>}
@@ -2426,7 +2433,7 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
           <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
             <button data-my-action="lockPay" onClick={()=>setPay(null)} style={{...AGray,padding:"6px 12px",fontSize:13}}>給料を閉じる</button>
           </div>
-          <MyPayTab me={me} personal={personal}/>
+          <MyPayTab me={me} personal={personal} onGoSettings={()=>setTab("settings")}/>
         </div>:<MyPagePayGate token={token} onUnlock={unlockPay}/>)}
         {tab==="settings"&&<MyPageSettingsTab me={me} personal={personal} page={page} shopName={shopName} token={token} payUnlocked={!!pay}/>}
       </main>

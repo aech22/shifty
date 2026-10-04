@@ -1252,6 +1252,16 @@ function myPayMonthFor(o,U){
   return{payYm:x.payYm,rows,total:add("total"),confirmedTotal:add("confirmedTotal"),projectedTotal:add("projectedTotal"),
     workMin:rows.reduce((s,r)=>s+r.amounts.minutes.workMin,0),hasAmount:rows.some(r=>r.amounts.total!=null)};
 }
+// 給料タブの要約の出し方（2026-10-04 ユーザー指示「月間目標は任意。設定しなくても確定分とシフト上の見込みは出す」）。
+// 確定分・見込み・合計・勤務時間は目標と関係なく出し、**目標を設定したときだけ**進み具合（円グラフ・割合）を出す。
+// 時給（日給）が未設定の勤務先は金額を出せないので名前を返す（画面は「設定で時給を入れる」導線を出す）。
+// 戻り値 {showRing, progress（0〜1・目標なしは null）, missingWage:[勤務先の名前], allMissing（金額を1つも出せない）}
+function myPaySummaryOf(month,goal){
+  const g=Number(goal)>0?Number(goal):0;
+  const rows=month&&Array.isArray(month.rows)?month.rows:[];
+  const missing=rows.filter(r=>r&&r.amounts&&r.amounts.total==null).map(r=>r.name);
+  return{showRing:g>0,progress:g>0&&month?myGoalProgress(month.confirmedTotal,g):null,missingWage:missing,allMissing:rows.length>0&&missing.length===rows.length};
+}
 // 年（暦年）の支給月ごとの一覧と合計。received は users/{uid}/actuals（{支給月: {勤務先: 円}}）
 function myPayYearMonths(year){return Array.from({length:12},(_,i)=>`${year}-${String(i+1).padStart(2,"0")}`);}
 function myReceivedSum(received,payYm){return Object.values((_myObj(received)||{})[payYm]||{}).reduce((s,v)=>s+(Number(v)>0?Math.round(Number(v)):0),0);}
@@ -1545,7 +1555,7 @@ if(typeof module!=="undefined"&&module.exports){
     MY_PAY_END_DAY,MY_PAY_HOLIDAY_RULES,MY_PAY_HOLIDAY_RULE_LABELS,MY_PAY_WAGE_TYPES,MY_PAY_WAGE_TYPE_LABELS,MY_PAY_OFFSET_LABELS,MY_PAY_YEN_MAX,MY_PAY_GOAL_MAX,MY_PAY_DEFAULT,
     MY_MANUAL_NIGHT_PCT,MY_MANUAL_OVER8_PCT,MY_MANUAL_OVER8_MIN,myPayDayLabel,myPayOf,validateMyPayInput,buildMyPayRecord,myPayFormOf,parseMyGoalInput,myGoalOf,parseMyReceivedInput,
     myClampDay,myClosingMonthOf,myClosingRangeOf,myPayDateOf,myPayPlanOf,myPayMonthOfDate,myPeriodsInRange,myPayReadRange,myShiftyDayInfo,myMonthSettingsOf,
-    myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
+    myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPaySummaryOf,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
     MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,resolveMyPage,MY_PAGE_STATE_MESSAGES,
     approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myAllShiftSelection};

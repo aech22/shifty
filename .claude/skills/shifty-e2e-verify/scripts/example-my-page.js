@@ -452,6 +452,10 @@ async function requestPage(h, name, number) {
       await typePin(h, "１２３４", "1234");
       PN.unlocked = await waitGate(h, "unlocked");
       PN.payTab = await waitSel(h, "[data-my-pay]");
+      // 月間目標は任意（2026-10-04）: 目標を設定していない個別URLでも、読み込みが終わると合計・確定分・見込みが出て円グラフは出ない
+      await h.page.waitForFunction(() => !!document.querySelector("[data-my-pay-total]"), null, { timeout: 10000 }).catch(() => {});
+      PN.summary = await h.evaluate(() => { const q = s => document.querySelector(s); return { goal: q("[data-my-pay-summary]") && q("[data-my-pay-summary]").getAttribute("data-my-pay-goal"),
+        total: q("[data-my-pay-total]") && q("[data-my-pay-total]").getAttribute("data-my-pay-total"), confirmed: !!q("[data-my-pay-confirmed]"), projected: !!q("[data-my-pay-projected]"), ring: !!q("[data-my-goal-ring]") }; });
       PN.pinRec = await db(h, `staffPagePins/${T1}`);
       await click(h, '[data-my-tab="settings"]');
       await waitSel(h, '[data-my-section="pin"]');
@@ -472,6 +476,7 @@ async function requestPage(h, name, number) {
       R.PN = PN;
       V.PN_lockedSettings = PN.lockedNote && PN.noPayInSettings;
       V.PN_setAndOpen = PN.setGate && /一致しません/.test(PN.mismatch) && PN.unlocked && PN.payTab;
+      V.PN_noGoalStillShowsPay = !!PN.summary && PN.summary.goal === "none" && PN.summary.total != null && PN.summary.confirmed && PN.summary.projected && !PN.summary.ring;
       V.PN_hashOnly = !!PN.pinRec && /^[0-9a-f]{64}$/.test(PN.pinRec.hash) && !JSON.stringify({ ...PN.pinRec, salt: "" }).includes("1234") && PN.pinRec.hash !== "1234";
       V.PN_companyPayShown = /会社設定/.test(PN.companyPay) && /1,300円/.test(PN.companyPay);
       V.PN_wrongRejected = PN.relocked && /残り4回/.test(PN.wrongMsg) && PN.stillLocked && PN.reopened;

@@ -87,6 +87,8 @@ const payView = h => h.evaluate(() => {
     month: at("[data-my-pay-month]", "data-my-pay-month"), total: at("[data-my-pay-total]", "data-my-pay-total"),
     confirmed: at("[data-my-pay-confirmed]", "data-my-pay-confirmed"), projected: at("[data-my-pay-projected]", "data-my-pay-projected"),
     workmin: at("[data-my-pay-workmin]", "data-my-pay-workmin"), ring: at("[data-my-goal-ring]", "data-my-goal-ring"),
+    goalMode: at("[data-my-pay-summary]", "data-my-pay-goal"), noWage: at("[data-my-pay-nowage]", "data-my-pay-nowage"), noWageText: (q("[data-my-pay-nowage]") || {}).innerText || "",
+    goWage: !!q('[data-my-action="goWage"]'), totalFont: q("[data-my-pay-total]") ? parseFloat(getComputedStyle(q("[data-my-pay-total]")).fontSize) : 0,
     rows: [...document.querySelectorAll("[data-my-pay-row]")].map(r => ({ id: r.getAttribute("data-my-pay-row"), total: (r.querySelector("[data-my-pay-row-total]") || { getAttribute: () => null }).getAttribute("data-my-pay-row-total"),
       text: r.innerText, received: !!r.querySelector('[data-my-input="received"]'), receivedDisabled: !!(r.querySelector('[data-my-input="received"]') || {}).disabled,
       saveBtn: !!r.querySelector('[data-my-action="saveReceived"]') })),
@@ -161,6 +163,10 @@ async function editWorkplace(h, id) {
       V.B_amounts = s1.total === String(expS1) && cafe.total === String(expCafe) && v.total === String(expTotal);
       V.B_confirmedSplit = v.confirmed === String(expConfirmed) && v.projected === String(expTotal - expConfirmed);
       V.B_workMin = v.workmin === String(360 + 300);
+      // 月間目標は任意（2026-10-04 ユーザー指示）: 目標なしでも合計・確定分・見込みを大きく出し、円グラフは出さない。
+      // 時給が未設定の勤務先（B店）は名前と「設定で時給を入れる」を出す
+      V.B_noGoalShowsAmounts = v.goalMode === "none" && v.ring === null && v.totalFont >= 28 && v.total === String(expTotal) && v.confirmed === String(expConfirmed);
+      V.B_noWageGuide = v.noWage === "some" && /B店/.test(v.noWageText) && /合計に入っていません/.test(v.noWageText) && v.goWage;
       V.B_grayExcluded = s2.total === "none" && /未公開のシフト1日は含めていません/.test(s2.text) === false && /目安/.test(v.estimate) && /グレー表示（未公開）のシフトは含めていません/.test(v.estimate);
       V.B_layout = layoutB.overflow <= 0 && layoutB.fonts;
       // C: 内訳と振込額
@@ -212,7 +218,7 @@ async function editWorkplace(h, id) {
       await openPay(h);
       const v = await payView(h);
       R.E = { goal, ring: v.ring };
-      V.E_goal = goal && goal.monthly === 50000 && v.ring === String(Math.round(expConfirmed / 50000 * 100));
+      V.E_goal = goal && goal.monthly === 50000 && v.ring === String(Math.round(expConfirmed / 50000 * 100)) && v.goalMode === "set";
       V.E_noErrors = errs("E", h);
       dump = await h.evaluate(() => window.__dbDump());
     } finally { await h.browser.close(); }

@@ -1412,6 +1412,19 @@ test("全員のシフト表: PDF と同じ関数を通る（ドリフト検出�
   assert.ok(/overflowX:zoomed\|\|single\?"hidden":"auto"/.test(my) && /scrollSnapType:"x mandatory"/.test(my), "ピンチで拡大中は横スクロールを止める・scroll-snap");
   assert.ok(/role="tablist" aria-label="表示の切り替え"/.test(my), "タップでも切り替えられる");
 });
+test("給料タブの要約: 月間目標は任意（目標なしでも金額を出し、円グラフは目標を設定したときだけ）・時給が未設定の勤務先を返す（2026-10-04）", () => {
+  const row = (name, total, confirmed) => ({ name, amounts: { total, confirmedTotal: confirmed, projectedTotal: total == null ? null : total - confirmed, minutes: { workMin: 60 } } });
+  const month = { rows: [row("A店", 10000, 4000), row("B店", null, null)], total: 10000, confirmedTotal: 4000, projectedTotal: 6000, hasAmount: true };
+  assert.deepStrictEqual(m.myPaySummaryOf(month, 0), { showRing: false, progress: null, missingWage: ["B店"], allMissing: false });
+  assert.deepStrictEqual(m.myPaySummaryOf(month, 20000), { showRing: true, progress: 0.2, missingWage: ["B店"], allMissing: false });
+  assert.strictEqual(m.myPaySummaryOf({ rows: [row("B店", null, null)] }, 0).allMissing, true);
+  assert.deepStrictEqual(m.myPaySummaryOf(null, 5000), { showRing: true, progress: null, missingWage: [], allMissing: false });
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const tab = my.slice(my.indexOf("function MyPayTab("), my.indexOf("function MyGoalSection("));
+  assert.ok(/\{summary\.showRing&&<MyGoalRing /.test(tab), "円グラフは目標を設定したときだけ");
+  assert.ok(!/premium&&X\.goal/.test(tab) && !/X\.goal>0&&month/.test(tab), "金額の表示は目標に左右されない");
+  assert.ok(/<MyPayTab me=\{me\} personal=\{personal\} onGoSettings=\{\(\)=>setTab\("settings"\)\}\/>/.test(my), "個別URLの給料タブからも設定へ行ける");
+});
 // ===== 全員のシフトの期間と店舗の選び方（2026-10-04・ユーザー指示: 未公開の案内を出さない・期間をプルダウン・直近3ヶ月・#/me でも）=====
 test("全員のシフト: 期間の選択肢は公開済みかつ直近3ヶ月（subsWindowCutoff と同じ窓）を新しい順。Premium でなければ空", () => {
   const pub = { at: "2026-09-01T00:00:00.000Z", byUid: "O" };

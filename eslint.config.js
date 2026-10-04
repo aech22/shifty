@@ -143,6 +143,7 @@ const sharedGlobals = {
   myPeriodsInRange: "writable",
   myShiftyDayInfo: "writable",
   myMonthSettingsOf: "writable",
+  myPaySummaryOf: "writable",
   myPayMonthFor: "writable",
   myPayYearSummary: "writable",
   myReceivedSum: "writable",
