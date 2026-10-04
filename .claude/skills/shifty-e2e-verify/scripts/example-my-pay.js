@@ -17,6 +17,8 @@
 //     給料タブの A店は 1,300 円で計算（7,800＋会社設定の交通費 月3,000）。呼び出しは shopId だけ（名前を渡さない）
 //  K（E6・CF 失敗）: getMyPay が失敗 → 本人の設定（1,200円）で計算し「会社の賃金設定を確認できませんでした」
 //  L（E6・ヘルプ先だけ）: 賃金の記録が無く所属店舗が別 → 「所属店舗（本店）で設定されています」・本人の設定で計算
+//  HP（2026-10-04 B）: ヘルプ先（未公開・Free・未紐付け）の勤務が、所属店舗が公開済みならカレンダー・全員のシフトに出て、給料は所属店舗の行・時給で入る。
+//     ヘルプ先の日に給料計算の実績を入れられ（users/T1/overrides/{ヘルプ先}/{日付}）、その時間で計算する。消すと戻る。所属店舗が未公開なら出ない
 //  M: A〜L で店舗のデータ（shops/）が1バイトも変わらない
 //  すべての場面で console.error・pageerror が 0 件。375px で横はみ出し無し・入力欄16px以上
 //
@@ -399,6 +401,92 @@ async function editWorkplace(h, id) {
       V.L_homeShop = /所属店舗（本店）/.test(ed.home) && ed.rate && s1.total === String(expS1);
       V.L_noErrors = errs("L", h);
     } finally { await h.browser.close(); }
+  }
+
+  // ---------------- HP: ヘルプ先の勤務（2026-10-04 B）----------------
+  // 田中は A店（S1）所属（両店で staffHomeShop を S1 と明示）。企業の写しの連携店舗 C店（S3・**期間は未公開・Free・本人は紐付いていない**）の D3 に 17:00〜22:00。
+  // 所属店舗の期間が公開済みなので、カレンダー・全員のシフトに C店のヘルプ勤務が出て、給料は A店の行に A店の時給で入る（5h＝6,000＋交通費500）。
+  // ヘルプ先の日に給料計算の実績（17:00〜21:00）を入れると users/T1/overrides/S3/D3 に入り、4h＝4,800＋500 で計算。消すと元に戻る。
+  // 所属店舗の期間が未公開ならヘルプ勤務は出ない
+  if (run("HP")) {
+    const D3 = [4, 5, 6, 7].map(d => `${YM}-${pad(d)}`).find(d => d !== TODAY);
+    const helpSeed = (o = {}) => {
+      const d = JSON.parse(JSON.stringify(dump));
+      d.shops.S1.settings.staffHomeShop = { "田中": "S1" };
+      if (o.unpub) delete d.shops.S1.periods.p1.published;
+      if (!o.noLink) d.shops.S1.company = { id: "C1", name: "会社", shops: { S1: "A店", S3: "C店" }, settings: {}, syncedAt: "t" };
+      d.global.shops.S3 = { id: "S3", name: "C店" };
+      d.shops.S3 = { owners: { OWN3: "K3" }, private: { adminKey: "K3" }, staff: ["田中"], settings: { shopId: "S3", staffHomeShop: { "田中": "S1" } },
+        periods: { r1: per("r1", "S3", "t3") }, subs: { v1: { id: "v1", periodId: "r1", shopId: "S3", staffName: "田中", submittedAt: "t", shifts: { [D3]: { status: "work", start: "17:00", end: "22:00" } } } } };
+      d.accounts.S3 = { plan: "free" };
+      return d;
+    };
+    const s1Total = async h => { await openPay(h); const v = await payView(h); const r = v.rows.find(x => x.id === "S1") || {}; return { total: Number(r.total), text: r.text }; };
+    const dayRows = (h, date) => h.evaluate(date => { const c = document.querySelector(`[data-my-cal-day="${date}"]`); if (c) c.click(); return true; }, date)
+      .then(() => sleep(h, 300)).then(() => h.evaluate(() => [...document.querySelectorAll("[data-my-day] [data-my-entry]")].map(r => ({ shop: r.getAttribute("data-my-entry-shop"),
+        state: r.getAttribute("data-my-entry"), time: (r.querySelector("[data-my-entry-time]") || {}).innerText || "", helper: (r.querySelector("[data-my-entry-helper]") || { getAttribute: () => null }).getAttribute("data-my-entry-helper"),
+        text: r.innerText, edit: !!r.querySelector('[data-my-action="editOverride"]') }))));
+    const N = {};
+    // 対照: 企業に連携していない（ヘルプなし）
+    {
+      const h = await openStaff({ db: helpSeed({ noLink: true }) });
+      try { N.base = await s1Total(h); N.baseErr = h.errors.slice(); } finally { await h.browser.close(); }
+    }
+    {
+      const h = await openStaff({ db: helpSeed() });
+      try {
+        await waitSel(h, `[data-my-cal-day="${D3}"]`);
+        await sleep(h, 800);
+        N.rows = await dayRows(h, D3);
+        const row = N.rows.find(r => r.shop === "S3");
+        // 全員のシフト（A店の表）にも C店のヘルプが出る
+        await click(h, '[data-my-pager-tab="all"]');
+        N.sheet = await waitSel(h, '[data-my-all-state="ok"]');
+        await sleep(h, 800);
+        N.sheetHelp = await h.evaluate(() => { const e = document.querySelector("[data-my-sheet]"); return e ? /17C/.test(e.innerHTML) : false; });
+        await click(h, '[data-my-pager-tab="mine"]'); await sleep(h, 300);
+        // ヘルプ先の日に給料計算の実績を入れる
+        if (row && row.edit) {
+          await h.evaluate(() => { const r = [...document.querySelectorAll("[data-my-day] [data-my-entry]")].find(x => x.getAttribute("data-my-entry-shop") === "S3"); r.querySelector('[data-my-action="editOverride"]').click(); });
+          await waitSel(h, "[data-my-override-form]");
+          N.pre = await h.evaluate(() => ["start", "end", "breakMin"].map(k => document.querySelector(`[data-my-override-form] [data-my-select="${k}"]`).value));
+          await h.page.selectOption('[data-my-override-form] [data-my-select="end"]', "21:00");
+          await click(h, '[data-my-action="saveOverride"]');
+          await sleep(h, 500);
+          N.ov = await db(h, `users/T1/overrides/S3/${D3}`);
+          N.afterRows = await dayRows(h, D3);
+        }
+        N.pay = await s1Total(h);
+        await click(h, '[data-my-pay-row="S1"] [data-my-action="payDetail"]'); await sleep(h, 200);
+        N.payText = (((await payView(h)).rows.find(x => x.id === "S1")) || {}).text || "";
+        // 実績を消す
+        await click(h, '[data-my-tab="shift"]'); await waitSel(h, `[data-my-cal-day="${D3}"]`); await sleep(h, 500);
+        await dayRows(h, D3);
+        await h.evaluate(() => { const r = [...document.querySelectorAll("[data-my-day] [data-my-entry]")].find(x => x.getAttribute("data-my-entry-shop") === "S3"); const b = r && r.querySelector('[data-my-action="resetOverride"]'); if (b) b.click(); });
+        await sleep(h, 500);
+        N.ovAfterReset = await db(h, `users/T1/overrides/S3/${D3}`);
+        N.payReset = await s1Total(h);
+        N.overflow = await overflowX(h); N.fonts = await fontsOk(h);
+        N.errors = h.errors.slice();
+      } finally { await h.browser.close(); }
+    }
+    {
+      const h = await openStaff({ db: helpSeed({ unpub: true }) });
+      try { await waitSel(h, `[data-my-cal-day="${D3}"]`); await sleep(h, 800); N.unpubRows = await dayRows(h, D3); N.unpubErr = h.errors.slice(); } finally { await h.browser.close(); }
+    }
+    R.HP = N;
+    const hr = (N.rows || []).find(r => r.shop === "S3") || {};
+    V.HP_calendarHelper = hr.state === "published" && hr.helper === "S1" && /17:00〜22:00/.test(hr.time) && /C店/.test(hr.text) && hr.edit;
+    V.HP_sheetHelper = N.sheet && N.sheetHelp;
+    V.HP_payIncludesHelper = (N.payReset.total - N.base.total) === 6500;
+    V.HP_payNote = /うち他店でのヘルプ/.test(N.payText);
+    V.HP_override = JSON.stringify(N.pre) === JSON.stringify(["17:00", "22:00", "0"]) && !!N.ov && N.ov.end === "21:00" && N.ov.breakMin === 0
+      && (N.pay.total - N.base.total) === 5300 && /実績の時間で計算した日 1日/.test(N.payText)
+      && ((N.afterRows || []).find(r => r.shop === "S3") || {}).time === hr.time;
+    V.HP_overrideReset = N.ovAfterReset === null || N.ovAfterReset === undefined;
+    V.HP_unpublishedNoHelper = !(N.unpubRows || []).some(r => r.shop === "S3") && N.unpubErr.length === 0;
+    V.HP_layout = N.overflow <= 0 && N.fonts;
+    V.HP_noErrors = N.errors.length === 0 && N.baseErr.length === 0;
   }
 
   // ---------------- M: 店舗のデータは変わらない ----------------

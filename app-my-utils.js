@@ -390,6 +390,8 @@ function _myU(U){
     isUnregisteredSubName,gd,isFixedShiftEligibleShop,oneSidedFillBounds,headcountAtOf,heatStaffDayEntriesOf,shiftSheetHeadcountOf,shiftTableHtmlOf,shiftSheetCellOf,shiftSheetStoredText,
     // 全員のシフト表の他店でのヘルプ勤務（H2）。PDF（シフト作成タブの helperDisp）と同じ関数
     helperShopsOf,helperPersonOf,helperWorkOn,helperCellDisplay,effShiftRangeMin,shiftSheetDecimal,shiftSheetFixedKey,otherShopDataOf,
+    // 本人のカレンダーと給料のヘルプ勤務（2026-10-04 B）。行き先の店の設定（helperShopSettingsOn）で引く＝管理者画面の合算（P3.6）と同じ
+    helperShopSettingsOn,fmtMin,
     // 給料（E5）: 月次賃金ページ（P6b）・割増（P5）と同じ関数
     premiumMonthOf,premiumDayInput,dayRestKindOf,laborSystemForStaff,laborSettingsOf,rateDenominatorMinOf,payVersionOn,wageOf,deductionOf,
     premiumRatesOf,roundingRuleOf,roundYenFrac,nightMinutesOf,normalizePayVersion,isWeekendOrHoliday,OVER60_THRESHOLD_MIN};
@@ -502,7 +504,7 @@ function myPublishedFingerprints(entries,publishedKeys){
   const out={};
   (publishedKeys||[]).forEach(k=>{out[k]={};});
   (entries||[]).forEach(e=>{
-    if(!e||e.kind!=="published")return;
+    if(!e||e.kind!=="published"||e.helper)return; // ヘルプ先の勤務（2026-10-04）は他店のデータなので「変更あり」に入れない
     const k=myShiftSeenKey(e.shopId,e.periodId);
     (out[k]=out[k]||{})[e.date]=myDayFingerprint(e);
   });
@@ -523,6 +525,94 @@ function buildMySeenRecord(curDays,nowIso){
   const d=_myObj(curDays);
   if(d&&Object.keys(d).length)rec.days={...d};
   return rec;
+}
+// ---- 本人のカレンダーと給料のヘルプ勤務（2026-10-04 ユーザー指示「ヘルプ関係なしに所属店舗のシフトが確定されたら管理者画面の pdf 通りに
+// ヘルプ勤務も反映して」「ヘルプ先の勤務も計算に入れて」「ヘルプ先の日にも実績の時刻を入れられるように」）----
+// 所属店舗（shopId）が公開済みの期間で、PDF のシフト表のその人のセルがヘルプ表示になる日の他店での勤務。**ヘルプ先の店舗の状態**
+// （公開済みか・本人がヘルプ先に紐付いているか・ヘルプ先のプラン）には関係しない。規則は PDF（buildMyShiftSheet の helperDispOf・
+// シフト作成タブの helperDisp）と同じ: 所属店舗＝helperPersonOf の role "home" の人だけ・休暇の日は出さない・自店の勤務と時間が重なる
+// 他店の勤務は足さない（helperWorkOn）。時間は**行き先の店の設定**で引いた実働（helperShopSettingsOn・管理者画面の合算 P3.6 と同じ）。
+// 本人の実績（overrides）は**ヘルプ先の店舗の ID** をキーに持つ（users/{uid}/overrides/{ヘルプ先}/{日付}・同じ日に所属店舗とヘルプ先の
+// 両方で働く日もそれぞれの実績を持てる）。実績は給料計算だけに効き、休憩が無ければ行き先の店の設定で判定し直す（resolveActualDay）。
+// o={shopId, name, periods, subsByPeriod, settings（企業設定を重ねた所属店舗の設定）, staff, todayStr, premium（公開済みの表示ができるか）,
+//    companyLink（shops/{所属店舗}/company）, otherShops（{sid: otherShopDataOf の戻り値}）, overrides（{shopId:{日付:記録}}＝本人の全部）}
+// 戻り値 {role:"home"|null, unread（合算に要る他店を読めていない）, byDate:{日付:[{shopId,shopName,regName,homeShopId,periodId,confirmed,
+//          sched,ov,actualDay}]}}
+function myHelperDaysOf(o,U){
+  const u=_myU(U);const x=o||{};
+  const out={role:null,unread:false,byDate:{}};
+  const link=_myObj(x.companyLink);
+  if(!x.name||!x.shopId||!link||!x.premium)return out;
+  const shops=u.helperShopsOf(link,_myObj(x.otherShops)||{},x.shopId);
+  if(!Object.keys(shops).length)return out;
+  const people=link.people||null;
+  const eid=typeof link.entityId==="string"?link.entityId:null;
+  const coSt=link.settings||null;
+  const cache=new Map();
+  const ovs=_myObj(x.overrides)||{};
+  (x.periods||[]).forEach(p=>{
+    if(!p||!p.id||!u.isPeriodPublished(p))return;
+    const list=x.subsByPeriod&&x.subsByPeriod[p.id];
+    if(!Array.isArray(list))return;
+    const st=u.resolvePeriodMaster(p,x.staff||[],x.settings||{},x.todayStr).settings||{};
+    if(u.isStaffHiddenInPeriod(x.name,st,p))return;
+    const hi=u.helperPersonOf({shopId:x.shopId,name:x.name,settings:st,people,otherShops:shops,entityId:eid});
+    if(hi.unread)out.unread=true;
+    if(hi.role!=="home")return;
+    out.role="home";
+    const byName=new Map();
+    list.forEach(s=>{if(s&&s.staffName&&s.periodId===p.id&&!byName.has(s.staffName))byName.set(s.staffName,s);});
+    const sub=u.resolveSubByAlias(n=>byName.get(n),x.name,st.staffAliases||{});
+    const confirmed=u.isPeriodConfirmed(p);
+    _myDatesOf(p).forEach(date=>{
+      if(out.byDate[date])return;
+      const sh=sub&&sub.shifts?sub.shifts[date]:null;
+      if(u.leaveShownTextOf(sh,"start")||u.leaveShownTextOf(sh,"end"))return;
+      const wsh=sh&&sh.status==="work"?sh:null;
+      const ownRange=wsh?u.effShiftRangeMin(wsh,st):null;
+      const es=u.helperWorkOn({regs:hi.regs,otherShops:shops,date,todayStr:x.todayStr,companySettings:coSt,ownRange,cache});
+      const rows=[];
+      es.forEach(e=>{
+        const shop=shops[e.shopId];
+        const hsh=shop&&shop.workMap?shop.workMap.get(e.name+"|"+date):null;
+        if(!hsh)return;
+        const hst=u.helperShopSettingsOn(shop,e.shopId,date,x.todayStr,coSt,cache);
+        const one={shifts:{[date]:hsh}};
+        const sd=u.scheduledDay(one,date,hst,e.name);
+        const segOf=gs=>(gs||[]).map(g=>({startMin:g.startMin,endMin:g.endMin,extra:!!g.extra}));
+        const ov=myOverrideOf((_myObj(ovs[e.shopId])||{})[date]);
+        const ad=u.resolveActualDay(one,ov?{start:ov.start,end:ov.end,breakMin:ov.breakMin}:null,date,hst,e.name);
+        rows.push({shopId:e.shopId,shopName:e.shopName||e.shopId,regName:e.name,homeShopId:x.shopId,periodId:p.id,confirmed,
+          sched:{startMin:sd.startMin,endMin:sd.endMin,breakMin:sd.breakMin,workMin:sd.workMin,segments:segOf(sd.segments)},
+          ov,actualDay:ad,actual:ov?{startMin:ad.startMin,endMin:ad.endMin,breakMin:ad.breakMin,workMin:ad.workMin,segments:segOf(ad.segments)}:null});
+      });
+      if(rows.length)out.byDate[date]=rows;
+    });
+  });
+  return out;
+}
+// ヘルプ勤務をカレンダーの entry にする。kind は公開と同じ（次のシフト・.ics・日付の詳細・実績の入力に出す）。helper:true で見分け、
+// 「変更あり」の指紋には入れない（myPublishedFingerprints）。時刻は公開内容（sched）、実績は actual（給料計算だけ）
+function myHelperShiftEntries(hd,o){
+  const x=o||{};const out=[];
+  Object.entries((hd&&hd.byDate)||{}).forEach(([date,rows])=>(rows||[]).forEach(h=>{
+    out.push({shopId:h.shopId,workplaceId:h.shopId,shopName:h.shopName,color:x.colorOf?x.colorOf(h.shopId):MY_WORKPLACE_COLORS[0],periodId:h.periodId,date,
+      kind:"published",helper:true,homeShopId:h.homeShopId,homeShopName:x.homeShopName||"",confirmed:h.confirmed,...h.sched,sched:h.sched,
+      overridden:!!h.actual,override:h.actual?h.ov:null,actual:h.actual,actualDay:h.actualDay,hope:null,differs:false});
+  }));
+  return out;
+}
+// 二重に出さない: 本人がヘルプ先にも紐付いていて、そのお店の公開済みのシフトとして同じ日に出ているヘルプ勤務は外す（そちらを残す）
+function myMergeHelperEntries(entries,helperEntries){
+  const has=new Set((entries||[]).filter(e=>e&&e.kind==="published"&&!e.helper).map(e=>e.shopId+"|"+e.date));
+  return[...(entries||[]),...(helperEntries||[]).filter(h=>!has.has(h.shopId+"|"+h.date))];
+}
+// 所属店舗の給料に寄せたヘルプ先の日（{ヘルプ先の店舗: [日付]}）。ヘルプ先の勤務先の側では、この日を数えない（二重に数えない・
+// 所属店舗へ寄せるのが管理者画面の規則と同じ）。helperByHome＝{所属店舗: myHelperDaysOf の戻り値}
+function myMovedHelperDates(helperByHome){
+  const out={};
+  Object.values(_myObj(helperByHome)||{}).forEach(hd=>Object.entries((hd&&hd.byDate)||{}).forEach(([d,rows])=>(rows||[]).forEach(h=>{(out[h.shopId]=out[h.shopId]||new Set()).add(d);})));
+  return Object.fromEntries(Object.entries(out).map(([k,v])=>[k,[...v].sort()]));
 }
 // 今日以降で最も近い出勤（公開済みと手入力。同じ日なら開始の早い順＝myEntryOrder の並び）。未公開（グレー）は含めない
 function nextMyShift(entries,todayStr){
@@ -1142,6 +1232,8 @@ function myShiftyDayInfo(o,U){
   const out={};
   if(!x.name)return out;
   const ovs=_myObj(x.overrides)||{};
+  const helperDays=_myObj(x.helperDays)||{};      // myHelperDaysOf の byDate（所属店舗として計算するとき）
+  const moved=new Set(Array.isArray(x.movedDates)?x.movedDates:[]); // myMovedHelperDates の1店舗分（ヘルプ先として計算するとき）
   (x.periods||[]).forEach(p=>{
     if(!p||!p.id)return;
     const list=x.subsByPeriod&&x.subsByPeriod[p.id];
@@ -1155,14 +1247,34 @@ function myShiftyDayInfo(o,U){
       if(out[date])return;
       const sh=sub&&sub.shifts?sub.shifts[date]:null;
       out[date]={periodId:p.id,published,sub:sub||null,ov:published?myOverrideOf(ovs[date]):null,
-        submitted:!published&&!!(sh&&sh.status==="work"&&(sh.start||sh.end))};
+        submitted:!published&&!!(sh&&sh.status==="work"&&(sh.start||sh.end)),
+        // ヘルプ先の勤務（2026-10-04）: 所属店舗の公開済みの日に、他店での勤務を足す（myHelperDaysOf）。moved＝この勤務先がヘルプ先で、
+        // その日を所属店舗の給料に寄せた（ここでは数えない）
+        helpers:published&&helperDays[date]?helperDays[date]:[],moved:published&&moved.has(date)};
     });
   });
   return out;
 }
 // [from, to] の日のうち、本人の実績の上書きで計算する日（公開済みで上書きがある日）。info は myShiftyDayInfo の戻り値
 function myOverrideDatesIn(info,from,to){
-  return Object.keys(_myObj(info)||{}).filter(d=>d>=String(from||"")&&d<=String(to||"")&&info[d]&&info[d].published&&info[d].ov).sort();
+  return Object.keys(_myObj(info)||{}).filter(d=>d>=String(from||"")&&d<=String(to||"")&&info[d]&&info[d].published&&!info[d].moved
+    &&(info[d].ov||(info[d].helpers||[]).some(h=>h.ov))).sort();
+}
+// [from, to] のヘルプ先の勤務の合計（内訳の「うち他店でのヘルプ」）。{min, shops:[店舗名], dates}
+function myHelperTimesIn(info,from,to){
+  let min=0;const shops=[],dates=[];
+  Object.keys(_myObj(info)||{}).sort().forEach(d=>{
+    if(d<String(from||"")||d>String(to||""))return;
+    const hs=(info[d]&&info[d].published&&!info[d].moved?info[d].helpers:null)||[];
+    if(!hs.length)return;
+    dates.push(d);
+    hs.forEach(h=>{min+=Math.max(0,Number(h.actualDay&&h.actualDay.workMin)||0);if(!shops.includes(h.shopName))shops.push(h.shopName);});
+  });
+  return{min,shops,dates};
+}
+// [from, to] のうち、所属店舗へ寄せた日（ヘルプ先の勤務先の内訳）
+function myMovedDatesIn(info,from,to){
+  return Object.keys(_myObj(info)||{}).filter(d=>d>=String(from||"")&&d<=String(to||"")&&info[d]&&info[d].moved).sort();
 }
 // 暦月 ym の計算に使う店舗の設定。月次賃金ページと同じく「その月に始まる最も新しい期間（無ければ月にかかる最も新しい期間）」の設定
 // （確定・終了済みなら写し）。シフト作成タブの労務判定表もこの期間の設定で月を数える
@@ -1192,10 +1304,15 @@ function myShiftyPayTimes(o,U){
       if(cache.has(d))return cache.get(d);
       const it=info[d];let v;
       if(!it||!it.published)v=u.premiumDayInput({date:d,hasData:false});
+      else if(it.moved)v=u.premiumDayInput({date:d,hasData:true,kind:"rest"}); // 所属店舗の給料に寄せた日（ヘルプ先の勤務先の側）
       else{
         const sh=it.sub&&it.sub.shifts?it.sub.shifts[d]:null;
         const own=u.resolveActualDay(it.sub,it.ov?{start:it.ov.start,end:it.ov.end,breakMin:it.ov.breakMin}:null,d,st,x.name);
-        v=u.premiumDayInput({date:d,hasData:true,kind:u.dayRestKindOf(sh,true),own});
+        // ヘルプ先の勤務は月次賃金ページ（ShiftEditTab の premiumDayOf）と同じく helpers に渡す。自店が空欄でも他店で働いた日は出勤日
+        const helpers=(it.helpers||[]).map(h=>({day:h.actualDay,actualUnread:false}));
+        const k0=u.dayRestKindOf(sh,true);
+        const kind=k0==="rest"&&helpers.some(h=>(Number(h.day&&h.day.workMin)||0)>0)?"work":k0;
+        v=u.premiumDayInput({date:d,hasData:true,kind,own,helpers});
       }
       cache.set(d,v);return v;
     };
@@ -1336,17 +1453,23 @@ function myPayMonthFor(o,U){
       // 本人が入れた実績（上書き）は給料計算にだけ効く（シフトの表示は公開のまま）。どの日が実績で計算されたかを内訳に出す
       const ovDates=myOverrideDatesIn(wp.shifty.info,plan.from,plan.to);
       if(ovDates.length)notes.push(`あなたが入れた実績の時間で計算した日 ${ovDates.length}日（${ovDates.map(d=>`${Number(d.slice(5,7))}/${Number(d.slice(8))}`).join("・")}）。シフトの表示は公開された時間のままです`);
+      // ヘルプ先の勤務（2026-10-04）: 所属店舗の行に入れる（賃金は所属店舗の設定）。ヘルプ先の行からは寄せた日を外す
+      const ht=myHelperTimesIn(wp.shifty.info,plan.from,plan.to);
+      if(ht.min>0)notes.push(`うち他店でのヘルプ ${u.fmtMin(ht.min)}（${ht.shops.join("・")}・${ht.dates.length}日）。この勤務先の賃金で計算しています`);
+      const mv=myMovedDatesIn(wp.shifty.info,plan.from,plan.to);
+      if(mv.length)notes.push(`所属店舗${wp.shifty.homeShopName?`（${wp.shifty.homeShopName}）`:""}の給料に入れたヘルプの日 ${mv.length}日（${mv.map(d=>`${Number(d.slice(5,7))}/${Number(d.slice(8))}`).join("・")}）は、この勤務先には含めていません`);
+      if(wp.shifty.helperUnread)notes.push("ほかのお店でのヘルプ勤務の一部を読み込めていません。金額はその分を含まない途中の値です");
     }
     if(wage.payType==="daily"&&wp.kind==="shifty")notes.push("日給は割増を含めていません");
     if(wage.source==="none")notes.push(wp.kind==="manual"?"時給（日給）が未設定のため、時間だけ表示しています":"時給（日給）が未設定のため、時間だけ表示しています");
     const amounts=myPayAmounts({kind:wp.kind,wage,times,from:plan.from,to:plan.to,todayStr:x.todayStr,denomMin,
       wageSettings:wp.kind==="shifty"?wp.shifty.wageSettings:null,manualPay:own},u);
     return{id:wp.id,kind:wp.kind,name:wp.name,color:wp.color,plan,wage,amounts,notes,times,
-      estimate:!plan.monthEnd||(wp.kind==="shifty"&&wage.payType==="daily")};
+      estimate:!plan.monthEnd||(wp.kind==="shifty"&&wage.payType==="daily"),partial:wp.kind==="shifty"&&!!wp.shifty.helperUnread};
   });
   const add=k=>rows.reduce((s,r)=>s+(r.amounts[k]!=null?r.amounts[k]:0),0);
   return{payYm:x.payYm,rows,total:add("total"),confirmedTotal:add("confirmedTotal"),projectedTotal:add("projectedTotal"),
-    workMin:rows.reduce((s,r)=>s+r.amounts.minutes.workMin,0),hasAmount:rows.some(r=>r.amounts.total!=null)};
+    workMin:rows.reduce((s,r)=>s+r.amounts.minutes.workMin,0),hasAmount:rows.some(r=>r.amounts.total!=null),partial:rows.some(r=>r.partial)};
 }
 // 給料タブの要約の出し方（2026-10-04 ユーザー指示「月間目標は任意。設定しなくても確定分とシフト上の見込みは出す」）。
 // 確定分・見込み・合計・勤務時間は目標と関係なく出し、**目標を設定したときだけ**進み具合（円グラフ・割合）を出す。
@@ -1766,6 +1889,7 @@ if(typeof module!=="undefined"&&module.exports){
   module.exports={EMAIL_LINK_PENDING_LS,EMAIL_LINK_KINDS,EMAIL_LINK_PENDING_MAX_MS,EMAIL_LINK_RESEND_WAIT_MS,EMAIL_LINK_FALLBACK_CODES,isEmailLinkFallbackError,emailLinkSafeHash,emailLinkContinueUrl,parseEmailLinkLanding,emailLinkCleanUrl,emailLinkPendingRecord,emailLinkPendingFor,ADMIN_PASSWORD_MIN,validateEmailLinkPassword,emailLinkErrorMessage,MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
     MY_LINK_METHOD_LABELS,MY_LINK_CODE_LEN,MY_LINK_CODE_TTL_MS,linkNumberKey,linkNameKey,normalizeLinkCode,isValidLinkCode,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,MY_STAFF_LINK_OPS_MAX,staffLinkOpOf,staffLinksAsOf,planStaffLinkOp,enqueueStaffLinkOp,MY_STAFF_LINK_PENDING_MSG,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,fmtLinkCodeExpiry,
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
+    myHelperDaysOf,myHelperShiftEntries,myMergeHelperEntries,myMovedHelperDates,myHelperTimesIn,myMovedDatesIn,
     MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_STEP_MIN,MY_TIME_OPTIONS,MY_BREAK_MAX_OPTION_MIN,MY_BREAK_OPTIONS,myTimeSelectOptions,myBreakSelectOptions,parseMyMinutesInput,
     MY_OVERNIGHT_HINT,validateMyShiftInput,buildMyShiftRecord,myShiftDuplicateOf,myOverrideOf,planMyOverride,myStaffNumberOf,MY_PROFILE_NUMBER_HINT,myWorkplaceList,myNextWorkplaceColor,validateMyWorkplaceInput,buildMyWorkplacePatch,
     buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth,myIcsPlatformOf,MY_ICS_HINTS,MY_ICS_APP_GUIDE,myGoogleCalendarLinks,

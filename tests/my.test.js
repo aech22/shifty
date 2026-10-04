@@ -1877,3 +1877,153 @@ test("マイシフトを開いている間のアドレスバー（2026-10-04）:
   assert.ok(st.lastIndexOf('data-my-section="page"') > st.lastIndexOf("MyPagePinChange"), "個別URLは一番下");
   assert.ok(/URLの変更はお店の管理者に依頼してください/.test(st) && !/genMyPageToken|planIssueStaffPage|staffPages/.test(st));
 });
+
+// ---- ヘルプ先の勤務（2026-10-04 B）: 所属店舗（S1・A店）が公開済みなら、PDF のシフト表どおりのヘルプ勤務を本人のカレンダーと給料に入れる ----
+// 田中は S1 所属（両方の店舗で staffHomeShop を S1 と明示）。S2（B店）の 11/5（木）17:00〜23:00 にヘルプ。S2 の期間は**未公開**で、
+// 本人は S2 に紐付いていない。休憩は**行き先（S2）の設定** 20:00〜20:30 で引く＝実働 330分・深夜 22:00〜23:00＝60分
+const HelpLink = { shops: { S1: "A店", S2: "B店" }, settings: {} };
+const helpS2 = (o = {}) => U.otherShopDataOf({ name: "B店", settings: { staffHomeShop: { "田中": "S1" }, breakTimes: { weekday: [{ start: "20:00", end: "20:30" }] } }, staff: ["田中"],
+  periods: { q1: { id: "q1", startDate: "2026-11-01", endDate: "2026-11-30", ...(o.publish ? { published: PUB } : {}) } },
+  subs: { h1: { id: "h1", periodId: "q1", staffName: "田中", shifts: { "2026-11-05": { status: "work", start: o.start || "17:00", end: "23:00" } } } } });
+const HelpSettings = { ...E5Settings, staffHomeShop: { "田中": "S1" } };
+const helpDays = (o = {}) => m.myHelperDaysOf({ shopId: "S1", name: "田中", periods: o.periods || E5P, subsByPeriod: e5Subs(o.shifts || E5Shifts), settings: HelpSettings, staff: ["田中"],
+  todayStr: "2026-11-10", premium: o.premium !== false, companyLink: HelpLink, otherShops: { S2: helpS2(o) }, overrides: o.overrides }, U);
+
+test("ヘルプ勤務（B）: 所属店舗が公開済みなら、ヘルプ先が未公開・未紐付けでも PDF どおりの勤務（行き先の店の休憩で引いた実働）。未公開・休暇・自店と重なる日は出さない", () => {
+  const hd = helpDays();
+  assert.strictEqual(hd.role, "home");
+  const rows = hd.byDate["2026-11-05"];
+  assert.ok(rows && rows.length === 1, JSON.stringify(hd));
+  assert.deepStrictEqual({ s: rows[0].shopId, n: rows[0].shopName, st: rows[0].sched.startMin, en: rows[0].sched.endMin, b: rows[0].sched.breakMin, w: rows[0].sched.workMin },
+    { s: "S2", n: "B店", st: 1020, en: 1380, b: 30, w: 330 });
+  // 実働は管理者画面の合算（helperWorkOn）と同じ
+  const shops = U.helperShopsOf(HelpLink, { S2: helpS2() }, "S1");
+  const hi = U.helperPersonOf({ shopId: "S1", name: "田中", settings: HelpSettings, people: null, otherShops: shops });
+  assert.strictEqual(U.helperWorkOn({ regs: hi.regs, otherShops: shops, date: "2026-11-05", todayStr: "2026-11-10", companySettings: null, ownRange: null })[0].min, 330);
+  // 所属店舗の期間が未公開・Premium でないなら出さない
+  assert.deepStrictEqual(helpDays({ periods: E5P.map(p => ({ id: p.id, startDate: p.startDate, endDate: p.endDate })) }).byDate, {});
+  assert.deepStrictEqual(helpDays({ premium: false }).byDate, {});
+  // 自店のその日の勤務と時間が重なれば足さない（二重に数えない）・休暇の日は出さない（PDF と同じ）
+  assert.deepStrictEqual(helpDays({ shifts: { ...E5Shifts, "2026-11-05": { status: "work", start: "16:00", end: "18:00" } } }).byDate, {});
+  assert.deepStrictEqual(helpDays({ shifts: { ...E5Shifts, "2026-11-05": { status: "work", adminRest: { start: true, end: true }, leaveTypes: { start: "paid", end: "paid" } } } }).byDate, {});
+  // 所属店舗が決まらない人（両方とも未設定）は合算しない
+  const noHome = m.myHelperDaysOf({ shopId: "S1", name: "田中", periods: E5P, subsByPeriod: e5Subs(E5Shifts), settings: E5Settings, staff: ["田中"], todayStr: "2026-11-10", premium: true,
+    companyLink: HelpLink, otherShops: { S2: U.otherShopDataOf({ name: "B店", settings: {}, staff: ["田中"], periods: {}, subs: helpS2() && {} }) } }, U);
+  assert.strictEqual(noHome.role, null);
+  // 読めない他店があれば unread
+  const un = m.myHelperDaysOf({ shopId: "S1", name: "田中", periods: E5P, subsByPeriod: e5Subs(E5Shifts), settings: HelpSettings, staff: ["田中"], todayStr: "2026-11-10", premium: true,
+    companyLink: HelpLink, otherShops: { S2: U.otherShopDataOf({ name: "B店", loadFailed: true }) } }, U);
+  assert.strictEqual(un.unread, true);
+});
+
+test("ヘルプ勤務（B）: カレンダーの entry（公開と同じ扱い・変更ありに入れない）と、ヘルプ先に紐付いていて公開済みなら1つにまとめる", () => {
+  const es = m.myHelperShiftEntries(helpDays(), { homeShopName: "A店", colorOf: () => "#123456" });
+  assert.strictEqual(es.length, 1);
+  assert.deepStrictEqual({ k: es[0].kind, h: es[0].helper, s: es[0].shopId, home: es[0].homeShopId, st: es[0].startMin, w: es[0].workMin, c: es[0].color },
+    { k: "published", h: true, s: "S2", home: "S1", st: 1020, w: 330, c: "#123456" });
+  assert.strictEqual(m.nextMyShift(es, "2026-11-01").date, "2026-11-05", "次のシフトに出る");
+  assert.deepStrictEqual(m.myPublishedFingerprints(es, []), {}, "変更ありの指紋に入れない");
+  const own = { kind: "published", shopId: "S2", date: "2026-11-05", startMin: 1020, endMin: 1380 };
+  assert.strictEqual(m.myMergeHelperEntries([own], es).length, 1, "ヘルプ先の公開済みのシフトがあれば、そちらだけ");
+  assert.strictEqual(m.myMergeHelperEntries([], es).length, 1);
+});
+
+// 給料: 所属店舗（A店）の行に入れ、A店の時給で計算する
+const helpRow = (pay, o = {}) => {
+  const hd = helpDays(o);
+  const src = { name: "田中", periods: E5P, subsByPeriod: e5Subs(o.shifts || E5Shifts), settings: HelpSettings, staff: ["田中"], todayStr: "2026-11-10", premium: true,
+    overrides: (o.overrides || {}).S1, helperDays: hd.byDate };
+  const info = m.myShiftyDayInfo(src, U);
+  return m.myPayMonthFor({ payYm: "2026-12", todayStr: "2026-11-10", workplaces: [{ id: "S1", kind: "shifty", name: "A店", pay: m.myPayOf(pay), companyPay: o.companyPay || null,
+    shifty: { name: "田中", info, monthSettingsOf: ym => m.myMonthSettingsOf(src, ym, U), wageSettings: o.wageSettings || null, helperUnread: !!o.unread } }] }, U).rows[0];
+};
+test("ヘルプ勤務（B）: 給料は所属店舗の行・所属店舗の時給。手計算の額と内訳の注記。読めない他店は＋", () => {
+  // 11/2 600分（①120）・11/5 ヘルプ 330分（深夜60）・11/20 480分（深夜240）。週40h は超えない
+  // 基本 1200×1410/60＝28,200 ／ 時間外 1200×25%×120/60＝600 ／ 深夜 1200×25%×300/60＝1,500 ／ 交通費 500×3＝1,500 → 31,800
+  const r = helpRow(P31);
+  assert.deepStrictEqual(r.amounts.items, { base: 28200, ot: 600, over60: 0, night: 1500, holiday: 0, allowances: 0, commute: 1500, deduction: 0 });
+  assert.strictEqual(r.amounts.total, 31800);
+  assert.strictEqual(r.amounts.minutes.workMin, 1410);
+  assert.ok(r.notes.some(n => n === "うち他店でのヘルプ 5:30（B店・1日）。この勤務先の賃金で計算しています"), r.notes.join("／"));
+  assert.strictEqual(r.partial, false);
+  const un = helpRow(P31, { unread: true });
+  assert.ok(un.partial && un.notes.some(n => /ヘルプ勤務の一部を読み込めていません/.test(n)));
+  assert.strictEqual(m.myPayMonthFor({ payYm: "2026-12", todayStr: "2026-11-10", workplaces: [] }, U).partial, false);
+});
+
+test("ヘルプ勤務（B）: 本人がヘルプ先の日に入れた実績（overrides/{ヘルプ先}/{日付}）で計算する。休憩は入れた値。消せば公開の時間", () => {
+  // 11/5 を 17:00〜22:00 休憩0 → 300分・深夜0。基本 1200×1380/60＝27,600 ／ 時間外 600 ／ 深夜 1200×25%×240/60＝1,200 ／ 交通費 1,500 → 30,900
+  const ov = { S2: { "2026-11-05": { start: "17:00", end: "22:00", breakMin: 0 } } };
+  const hd = helpDays({ overrides: ov });
+  assert.deepStrictEqual({ w: hd.byDate["2026-11-05"][0].actualDay.workMin, sched: hd.byDate["2026-11-05"][0].sched.workMin }, { w: 300, sched: 330 }, "表示（sched）は公開のまま");
+  const r = helpRow(P31, { overrides: ov });
+  assert.deepStrictEqual({ b: r.amounts.items.base, n: r.amounts.items.night, t: r.amounts.total }, { b: 27600, n: 1200, t: 30900 });
+  assert.ok(r.notes.some(n => n === "あなたが入れた実績の時間で計算した日 1日（11/5）。シフトの表示は公開された時間のままです"), r.notes.join("／"));
+  // 休憩を入れない実績の形は無い（breakMin は必須）。ヘルプ先の勤務が無くなった日の実績は使わない
+  const gone = helpRow(P31, { overrides: { S2: { "2026-11-06": { start: "17:00", end: "22:00", breakMin: 0 } } } });
+  assert.strictEqual(gone.amounts.total, 31800);
+  assert.ok(!gone.notes.some(n => /実績の時間で計算/.test(n)));
+  // 実績の休憩が無い形（resolveActualDay に breakMin を渡さない）なら、行き先の店の設定で判定し直す
+  const shops = U.helperShopsOf(HelpLink, { S2: helpS2() }, "S1");
+  const st2 = U.helperShopSettingsOn(shops.S2, "S2", "2026-11-05", "2026-11-10", null, null);
+  assert.strictEqual(U.resolveActualDay({ shifts: { "2026-11-05": shops.S2.workMap.get("田中|2026-11-05") } }, { start: "17:30", end: "23:00" }, "2026-11-05", st2, "田中").breakMin, 30);
+});
+
+test("ヘルプ勤務（B）: ヘルプ先にも紐付いていれば、所属店舗へ寄せた日をヘルプ先の行から外す（二重に数えない）", () => {
+  const hd = helpDays();
+  const moved = m.myMovedHelperDates({ S1: hd });
+  assert.deepStrictEqual(moved, { S2: ["2026-11-05"] });
+  // ヘルプ先 S2 の勤務先（S2 の期間は公開済みとする）
+  const P2 = [{ id: "q1", startDate: "2026-11-01", endDate: "2026-11-30", published: PUB }];
+  const src2 = { name: "田中", periods: P2, subsByPeriod: { q1: [{ id: "h1", periodId: "q1", staffName: "田中", shifts: { "2026-11-05": { status: "work", start: "17:00", end: "23:00" } } }] },
+    settings: { staffHomeShop: { "田中": "S1" }, breakTimes: { weekday: [{ start: "20:00", end: "20:30" }] }, staffAttributes: { "田中": "parttime" } }, staff: ["田中"],
+    todayStr: "2026-11-10", premium: true, movedDates: moved.S2 };
+  const info2 = m.myShiftyDayInfo(src2, U);
+  const row = m.myPayMonthFor({ payYm: "2026-12", todayStr: "2026-11-10", workplaces: [{ id: "S2", kind: "shifty", name: "B店", pay: m.myPayOf(P31), companyPay: null,
+    shifty: { name: "田中", info: info2, monthSettingsOf: ym => m.myMonthSettingsOf(src2, ym, U), wageSettings: null, homeShopName: "A店" } }] }, U).rows[0];
+  assert.strictEqual(row.amounts.minutes.workMin, 0);
+  assert.ok(row.notes.some(n => n === "所属店舗（A店）の給料に入れたヘルプの日 1日（11/5）は、この勤務先には含めていません"), row.notes.join("／"));
+  const notMoved = m.myShiftyDayInfo({ ...src2, movedDates: [] }, U);
+  assert.strictEqual(m.myPayMonthFor({ payYm: "2026-12", todayStr: "2026-11-10", workplaces: [{ id: "S2", kind: "shifty", name: "B店", pay: m.myPayOf(P31), companyPay: null,
+    shifty: { name: "田中", info: notMoved, monthSettingsOf: ym => m.myMonthSettingsOf(src2, ym, U), wageSettings: null } }] }, U).rows[0].amounts.minutes.workMin, 330);
+});
+
+test("ヘルプ勤務（B）: 月末締めで月次賃金ページ（monthlyPayBreakdown・ShiftEditTab の premiumDayOf が他店の勤務を helpers に足す形）と同じ金額。実績なし", () => {
+  const settings = HelpSettings;
+  const ym = "2026-11", st = U.resolvePeriodMaster(E5P[1], ["田中"], settings, "2026-11-20").settings;
+  const shops = U.helperShopsOf(HelpLink, { S2: helpS2() }, "S1");
+  const hi = U.helperPersonOf({ shopId: "S1", name: "田中", settings: st, people: null, otherShops: shops });
+  const inP = d => E5P.some(p => p.startDate <= d && d <= p.endDate);
+  const dayOf = d => { const has = inP(d), s = E5Shifts[d];
+    const helpers = U.helperActualDaysOn({ regs: hi.regs, otherShops: shops, date: d, todayStr: "2026-11-20", companySettings: null, ownRange: s ? U.effShiftRangeMin(s, st) : null, cache: new Map() });
+    const k0 = U.dayRestKindOf(s, has);
+    return U.premiumDayInput({ date: d, hasData: has, kind: k0 === "rest" && helpers.length ? "work" : k0, own: U.resolveActualDay({ shifts: s ? { [d]: s } : {} }, null, d, st, "田中"), helpers }); };
+  const b = U.premiumMonthOf({ ym, system: U.laborSystemForStaff(st, "田中"), settings: st, dayOf });
+  assert.strictEqual(b.workMin, 1410, "ヘルプ先の 330分を含む");
+  const times = { workMin: b.workMin, dayOverMin: b.dayOverMin, weekOverMin: b.weekOverMin, monthOverMin: b.monthOverMin, otMin: b.otMin, over60Min: b.over60Min,
+    nightMin: b.nightMin, legalHolidayMin: b.legalHolidayMin, absentMin: b.absentMin, scheduledMin: 0 };
+  const denomMin = U.rateDenominatorMinOf(U.laborSettingsOf(st));
+  [{ payType: "hourly", base: 1234, effectiveFrom: "2026-01-01" }, { payType: "monthly", base: 213500, effectiveFrom: "2026-01-01" }].forEach(pay => {
+    const c = U.monthlyPayBreakdown({ pay, ym, times, denomMin, wageSettings: null });
+    const r = helpRow({ closingDay: 31, payMonthOffset: 1, payDay: 25, holidayRule: "before" }, { companyPay: pay });
+    const it = r.amounts.items;
+    assert.deepStrictEqual([it.base, it.ot, it.over60, it.night, it.holiday, it.deduction], [c.wage.basePay, c.wage.otPay, c.wage.over60Pay, c.wage.nightPay, c.wage.holidayPay, c.deduction], pay.payType);
+    assert.deepStrictEqual([r.amounts.minutes.workMin, r.amounts.minutes.otMin, r.amounts.minutes.nightMin], [b.workMin, b.otMin, b.nightMin]);
+  });
+});
+
+test("ヘルプ勤務（B）: 全員のシフト表もヘルプ先の状態に関係なく PDF どおり（ヘルプ先の期間が未公開・ヘルプ先のプランを見ない）", () => {
+  const sub = e5Subs(E5Shifts).p1;
+  const t = m.buildMyShiftSheet({ period: E5P[1], staff: ["田中"], settings: HelpSettings, subs: sub, todayStr: "2026-11-10", premium: true, me: "田中", shopName: "A店", shopId: "S1",
+    helpers: { companyLink: HelpLink, otherShops: { S2: helpS2() } } }, U);
+  assert.strictEqual(t.state, "ok");
+  assert.ok(/17B/.test(t.html) && /23B|>23</.test(t.html), "ヘルプ先が未公開でも B店 17〜23 が出る");
+  const none = m.buildMyShiftSheet({ period: E5P[1], staff: ["田中"], settings: HelpSettings, subs: sub, todayStr: "2026-11-10", premium: true, me: "田中", shopName: "A店", shopId: "S1" }, U);
+  assert.ok(!/17B/.test(none.html));
+  // 画面の読み込みは所属店舗の公開と Premium だけで決まり、他店の読みに公開・プランの判定は無い
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const rd = my.slice(my.indexOf("function readMyHelperShop("), my.indexOf("function useMyHelperShops("));
+  assert.ok(!/plan|published|isPeriodPublished/.test(rd), "他店の読みに公開・プランの判定を入れない");
+  const hk = my.slice(my.indexOf("function useMyHelperSources("), my.indexOf("function myRangeOfPeriods("));
+  assert.ok(/isPeriodPublished\(p\)\)/.test(hk) && !/accounts\//.test(hk), "公開の判定は所属店舗の期間だけ・他店のプランは読まない");
+});

@@ -183,6 +183,11 @@ const sharedGlobals = {
   myAllShiftSelection: "writable",
   MY_ICS_APP_GUIDE: "writable",
   myLatestPeriodOf: "writable",
+  // 本人のカレンダーと給料のヘルプ勤務（2026-10-04 B）
+  myHelperDaysOf: "writable",
+  myHelperShiftEntries: "writable",
+  myMergeHelperEntries: "writable",
+  myMovedHelperDates: "writable",
   myPageOpenCandidates: "writable",
   myPickOpenablePage: "writable",
   myOverlayHashOf: "writable",
