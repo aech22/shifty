@@ -10,7 +10,9 @@
 const LABOR_MONTHS_OFF={enabled:false,loaded:false,map:{},save:()=>Promise.resolve(),rename:()=>{},drop:()=>{}};
 // 実績（shops/{sid}/actuals・P4）を持たないとき（オーナーでない端末・一括PDFの非表示マウント）の既定
 const ACTUALS_OFF={enabled:false,loaded:false,map:{},save:()=>Promise.resolve(),rename:()=>{},drop:()=>{},csvMapping:null,saveCsvMapping:null};
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin,onCompanyCall,pay:payProp=null,laborMonths:lmProp,actuals:actProp=null}){
+// 従業員画面の紐付け（shops/{sid}/staffLinks・linkRequests・第2部 E2）を持たないとき（オーナーでない端末・本番・非表示マウント）の既定
+const STAFF_LINKS_OFF={enabled:false,loaded:false,map:{},requests:{},rename:()=>{},drop:()=>{},reject:()=>Promise.resolve({}),call:()=>Promise.resolve({error:"この操作はできません"})};
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin,onCompanyCall,pay:payProp=null,laborMonths:lmProp,actuals:actProp=null,staffLinks:slProp=null}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   // 管理者画面の中身を丸ごと差し替える全画面ビュー。null＝通常のタブ表示。
   // {kind:"companyStaff"}＝企業内登録スタッフ（2026-09-28）／{kind:"staffPay",name}＝賃金設定（2026-09-30・P6a）
@@ -19,6 +21,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
   const[returnEdit,setReturnEdit]=useState(null);
   const pay=payProp||PAY_OFF;
   const lm=lmProp||LABOR_MONTHS_OFF;
+  const sl=slProp||STAFF_LINKS_OFF;
   // 実績（P4）。CSV取込の列の位置は店舗の設定（settings.actualsCsv）に持つ＝現在の設定から読み書きする（確定済み期間の写しではない）
   const act=actProp?{...actProp,csvMapping:actualsCsvMappingOf(settings),saveCsvMapping:m=>saveSettings({...settings,actualsCsv:m})}:ACTUALS_OFF;
   // 所属店舗の選択肢。企業の写しが持つ連携店舗の一覧を優先し、この端末が知っている店舗（allLinkedShops）で補う。
@@ -238,7 +241,7 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
         </div>}
         {tab==="periods"&&<PeriodsTab periods={periods} subs={subs} staffList={staffList} shops={shops} onSave={savePeriods} saveSubs={saveSubs} tt={tt} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} isHqShop={isHqShop}/>}
         {tab==="staff"&&<StaffTab staffList={staffList} onSave={saveStaff} tt={tt} plan={plan} onUpgrade={setUpgradeReason} settings={settings} onSaveSettings={saveSettings} subs={subs} periods={periods} savePeriods={savePeriods} ownerReadOnly={ownerReadOnly} shopId={currentShopId} shopName={(shops.find(s=>s.id===currentShopId)||shops[0])?.name||""} linkedShops={homeShopChoices} companyShops={Object.entries((companyLink&&companyLink.shops)||{}).filter(([id])=>id&&id!==currentShopId).map(([id,nm])=>({id,name:nm||id}))}
-          pay={pay} laborMonths={lm} actuals={act} companyLinked={!!companyLink} onOpenPay={n=>setFullPage({kind:"staffPay",name:n})} onOpenPayroll={()=>setFullPage({kind:"payroll"})} initialEditKey={returnEdit} onInitialEditConsumed={()=>setReturnEdit(null)} onRenameStaff={(oldName,newName)=>{
+          pay={pay} laborMonths={lm} actuals={act} staffLinks={sl} mirrorPeople={(companyLink&&companyLink.people)||null} companyLinked={!!companyLink} onOpenPay={n=>setFullPage({kind:"staffPay",name:n})} onOpenPayroll={()=>setFullPage({kind:"payroll"})} initialEditKey={returnEdit} onInitialEditConsumed={()=>setReturnEdit(null)} onRenameStaff={(oldName,newName)=>{
           const newList=staffList.map(n=>n===oldName?newName:n);
           saveStaff(newList);
           const newSubs=subs.map(s=>s.staffName===oldName?{...s,staffName:newName}:s);
@@ -252,6 +255,10 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
           lm.rename(oldName,newName);
           // 実績（shops/{sid}/actuals/{期間ID}/{名前}）も名前がキーなので移す（STAFF_KEYED_PERIOD_NODES・P4）
           act.rename(oldName,newName);
+          // マイシフトの紐付け（shops/{sid}/staffLinks/{uid}.name・第2部 E2）も名前を値に持つので書き換える。
+          // 新しい名前に残っていた紐付け（前に同じ名前だった人の削除の追随が届かなかったもの）は先に外す
+          sl.drop([newName]);
+          sl.rename(oldName,newName);
           // 確定済み期間の写し（period.snapshot）も同時に改名する。上で sub.staffName を全期間ぶん
           // 書き換えるため、写しだけ旧名で残るとシフト作成タブ・Excel・PDF がその人のsubを引けなくなる。
           if(savePeriods){
@@ -804,7 +811,7 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
 
 // ===== スタッフ登録タブ =====
 function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,settings={},onSaveSettings,subs=[],periods=[],savePeriods,ownerReadOnly=false,shopId="",shopName="",linkedShops=[],companyShops=[],
-  pay=PAY_OFF,laborMonths:lm=LABOR_MONTHS_OFF,actuals:act=ACTUALS_OFF,companyLinked=false,onOpenPay,onOpenPayroll,initialEditKey=null,onInitialEditConsumed}){
+  pay=PAY_OFF,laborMonths:lm=LABOR_MONTHS_OFF,actuals:act=ACTUALS_OFF,staffLinks:sl=STAFF_LINKS_OFF,mirrorPeople=null,companyLinked=false,onOpenPay,onOpenPayroll,initialEditKey=null,onInitialEditConsumed}){
   const[newName,setNewName]=useState("");
   // 削除確認ポップアップ。対象は index ではなく「スタッフ名」で持つ（下のコメントと同じ理由）。
   const[delTarget,setDelTarget]=useState(null);
@@ -1036,6 +1043,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     const home={...(settings.staffHomeShop||{})};
     if(m.homeShopId&&m.homeShopId!==shopId)home[name]=m.homeShopId;else delete home[name];
     ph("staff_added",{staff_count:staffList.filter(n=>!isSpacer(n)).length+1,via:"number_lookup"});
+    sl.drop([name]); // 同じ名前に残っていたマイシフトの紐付け（削除の追随が届かなかったもの）を外す（E2）
     onSave([...staffList,name]);
     onSaveSettings&&onSaveSettings({...settings,
       staffNumbers:{...(settings.staffNumbers||{}),[name]:num},
@@ -1071,6 +1079,9 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     if(rejectAliasCollision(newName.trim(),null))return;
     if(staffList.filter(n=>!isSpacer(n)).length>=lim){onUpgrade&&onUpgrade({type:"staff",limit:lim,plan});return;}
     ph("staff_added",{staff_count:staffList.filter(n=>!isSpacer(n)).length+1});
+    // 同じ名前に残っていたマイシフトの紐付け（前任者の削除の追随が届かなかったもの）を外す。外さないと前任者のアカウントが
+    // 新しく登録した同名の人のシフトを見る（E2）。通常は削除の時点で外しているので何もしない
+    sl.drop([newName.trim()]);
     onSave([...staffList,newName.trim()]);setNewName("");tt(`✓ ${newName.trim()} を追加しました`);
   };
   // 他の破壊的操作（店舗 / 期間 / 提出 / ポジション）は全て confirm で対象を示すのに、
@@ -1183,7 +1194,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     pay.drop(expiredRetained.map(r=>r.name));
     lm.drop(expiredRetained.map(r=>r.name)); // 人×月の所定（laborMonths・P3）も同じ
     act.drop(expiredRetained.map(r=>r.name)); // 実績（actuals・P4）も同じ
-  },[expiredRetained,ownerReadOnly,settings,pay.map,lm.map,act.map]);
+    sl.drop(expiredRetained.map(r=>r.name)); // マイシフトの紐付け（staffLinks・E2）。削除の時点で外しているので通常は何もしない
+  },[expiredRetained,ownerReadOnly,settings,pay.map,lm.map,act.map,sl.map]);
   // スタッフ一覧に描く行の並び。実スタッフは staffList の index をそのまま持たせる
   // （ドラッグ・編集・削除は従来どおり staffList の index で動くため、意味を一切変えない）。
   // **並びはシフト作成グリッドと同じ関数（mergeKeepStaff）に決めさせる**。ここで独自に
@@ -1280,6 +1292,9 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     }
     // 名前で除外する（index の splice にしない。ポップアップが開いている間に他端末が並べ替えると別人が消える）
     if(inList)onSave(staffList.filter(x=>x!==n));
+    // マイシフトの紐付け（staffLinks・第2部 E2）は**削除した時点で外す**（名前を残す期間を選んでも外す）。
+    // 残すと、同じ名前で別の人を登録したときに前任者のアカウントがその人のシフトを見る。削除を取り消しても紐付けは戻らない
+    sl.drop([n]);
     // スタッフ名をキーに持つ設定マップの後始末（バグチェック#79）。
     // リネーム(onRenameStaff)は7マップを漏れなく移し替えるのに、削除は何も触っていなかったため
     // ①同名で追加し直すと前任者の社員番号・属性・ポジションをそのまま継承する
@@ -1521,6 +1536,8 @@ const dragIdxRef=useRef(null);
       </div>
       {payCodeModal&&<PayCodeChangeModal tt={tt} onClose={()=>setPayCodeModal(false)} onSubmit={pay.changeCode}
         note={companyLinked?"企業に連携している店舗は、企業のパスコードに統一されています。企業連携タブの「企業アカウント」か、「企業内登録スタッフ」の一覧の上部にある「変更」で変更してください。":null}/>}
+      {/* マイシフト（従業員画面）のリンク申請（第2部 E2）。MY_SCREEN_ENABLED・オーナーの端末だけ（sl.enabled）。申請が無ければ何も出さない */}
+      <StaffLinkRequestsCard links={sl} staffList={staffList} staffNumbers={settings.staffNumbers||{}} mirrorPeople={mirrorPeople} shopId={shopId} tt={tt}/>
       <AC title="スタッフ一覧">
         {!isPro&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:8,padding:"7px 10px"}}>
           {`Freeプラン：最大${lim}名まで登録可能（${staffList.filter(n=>!isSpacer(n)).length}/${lim}名）`}
@@ -1775,6 +1792,8 @@ const dragIdxRef=useRef(null);
                   <div style={{fontSize:11,color:"var(--c-text4)",marginTop:8}}>タップした名前が「{n}」の別名として登録されます</div>
               </div>
             </>)}
+
+            {sl.enabled&&sec("マイシフト",<StaffLinkEditSection links={sl} name={n} tt={tt}/>)}
 
             {pay.enabled&&(()=>{
               const hs=homeShopOf(settings,n,shopId);

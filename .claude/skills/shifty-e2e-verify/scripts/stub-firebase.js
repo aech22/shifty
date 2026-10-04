@@ -23,6 +23,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 // functions/company-config.js をページへ埋め込む（CommonJS を即時関数で包む）。法人の CF の後始末に使う
 const CFC_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "functions", "company-config.js"), "utf8");
+// functions/staff-link.js（従業員画面の紐付け・E2）も同じく埋め込む。cfHandlers の "staffLink" が本物の計画関数を通す
+const SLK_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "functions", "staff-link.js"), "utf8");
 
 /**
  * @param {object} o
@@ -33,6 +35,9 @@ const CFC_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "fu
  * @param {object} [o.cfHandlers] Callable名 → "ok" | "reject:メッセージ" | "unlink" | "link" | "companyConfig" | "companyLogin:<companyId>" | "entity" | "people" | "payCode"（本物のCFと同じ後始末）
  *                                "people" は人物の7本（P1b: ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId /
  *                                companyRenameStaff / companyUpdateStaff、統合しない: markPeopleDistinct）。規則は functions/company-config.js をそのまま使う。
+ *                                "staffLink" は従業員画面の紐付けの4本（E2: approveStaffLink / issueStaffLinkCode / redeemStaffLinkCode /
+ *                                unlinkStaff）。判定と書く差分は functions/staff-link.js の plan* をそのまま使う（呼び出し元の uid とメールは
+ *                                auth:"accounts" なら __authCur()、既定なら固定のユーザー）。読みの後のトランザクションは単純な削除で代える。
  *                                "payCode" は setCompanyPayCode（P6a）。現在の番号を照合して企業と連携全店舗の private/payCode を書く。
  *                                "entity" は法人の6本（ensureCompanyEntities / createEntity / renameEntity / assignShopEntity /
  *                                saveEntityConfig / setShopKind）。移行と写しの組み立ては **functions/company-config.js をそのまま読み込んで**
@@ -68,6 +73,8 @@ function makeStub(o) {
   var LS_DB="__stub_fdb", LS_AUTH="__stub_fauth";
   var SEED=${JSON.stringify(seed)};
   var CFC=(function(){var module={exports:{}};var exports=module.exports;${CFC_SRC}
+;return module.exports;})();
+  var SLK=(function(){var module={exports:{}};var exports=module.exports;${SLK_SRC}
 ;return module.exports;})();
   var CF=${JSON.stringify(cfHandlers)};
   var DENY_READ=${JSON.stringify(denyRead.map(d => String(d).split("/").filter(Boolean).join("/")))};
@@ -463,6 +470,48 @@ function makeStub(o) {
           });
           notify();
           return Promise.resolve({data:{ok:true,failed:[]}});
+        }
+      }
+      if(h==="staffLink"){
+        // 本物の紐付けの CF（functions/index.js・E2）と同じ後始末。判定は functions/staff-link.js の plan* を通す
+        var me=AUTH_MODE==="accounts"?window.__authCur():(signedIn?{uid:USER.uid,email:USER.email}:null);
+        var cu=me&&me.uid;
+        if(!cu) return Promise.reject(Object.assign(new Error("ログインが必要です"),{code:"functions/unauthenticated"}));
+        var lfail=function(r){ return Promise.reject(Object.assign(new Error(r.error.msg),{code:"functions/"+r.error.code})); };
+        var lapply=function(patch){ Object.keys(patch||{}).forEach(function(k){ setPath(k,patch[k]); }); notify(); };
+        var lnow=Date.now(), liso=new Date(lnow).toISOString();
+        var lsid=payload.shopId;
+        var lread=function(sid){ return {owners:getPath("shops/"+sid+"/owners"),staff:getPath("shops/"+sid+"/staff"),settings:getPath("shops/"+sid+"/settings"),
+          mirrorPeople:getPath("shops/"+sid+"/company/people"),staffLinks:getPath("shops/"+sid+"/staffLinks")}; };
+        if(name==="approveStaffLink"){
+          var ar=SLK.planApproveStaffLink(Object.assign(lread(lsid),{shopId:lsid,uid:payload.uid,name:payload.name,callerUid:cu,nowIso:liso,request:getPath("shops/"+lsid+"/linkRequests/"+payload.uid)}));
+          if(ar.error) return lfail(ar);
+          lapply(ar.patch); return Promise.resolve({data:{ok:true,method:ar.method}});
+        }
+        if(name==="issueStaffLinkCode"){
+          var code=SLK.genLinkCodeCF(function(n){ var a=[]; for(var i=0;i<n;i++) a.push(Math.floor(Math.random()*256)); return a; });
+          var ir=SLK.planIssueStaffLinkCode(Object.assign(lread(lsid),{shopId:lsid,name:payload.name,callerUid:cu,now:lnow,nowIso:liso,code:code,prevCode:getPath("staffLinkCodeIndex/"+lsid+"/"+payload.name)}));
+          if(ir.error) return lfail(ir);
+          lapply(ir.patch); return Promise.resolve({data:{ok:true,code:ir.code,expiry:ir.expiry}});
+        }
+        if(name==="redeemStaffLinkCode"){
+          var rc=SLK.normalizeLinkCodeCF(payload.code);
+          if(!SLK.isValidLinkCodeCF(rc)) return lfail({error:{code:"invalid-argument",msg:"コードは8文字の英数字です"}});
+          var att=getPath("staffLinkCodeAttempts/"+cu), wait=SLK.linkCodeWaitMsCF(att,lnow);
+          if(wait) return lfail({error:{code:"resource-exhausted",msg:"入力の誤りが続いたため止めています。"+Math.ceil(wait/60000)+"分後にもう一度お試しください"}});
+          var rec=getPath("staffLinkCodes/"+rc), rsid=rec&&rec.shopId;
+          var rr=SLK.planRedeemStaffLinkCode(Object.assign(rsid?lread(rsid):{},{uid:cu,email:me.email||null,rec:rec,code:rc,now:lnow,nowIso:liso}));
+          if(rr.deleteExpired&&rec) setPath("staffLinkCodes/"+rc,null);
+          if(rr.countFail) setPath("staffLinkCodeAttempts/"+cu,SLK.nextLinkCodeAttemptsCF(att,false,lnow));
+          if(rr.error){ notify(); return lfail(rr); }
+          setPath("staffLinkCodes/"+rc,null);
+          if(getPath("staffLinkCodeIndex/"+rsid+"/"+rec.name)===rc) rr.patch["staffLinkCodeIndex/"+rsid+"/"+rec.name]=null;
+          lapply(rr.patch); return Promise.resolve({data:{ok:true,shopId:rr.shopId,name:rr.name}});
+        }
+        if(name==="unlinkStaff"){
+          var ur=SLK.planUnlinkStaff({shopId:lsid,uid:payload.uid!==undefined?payload.uid:cu,callerUid:cu,owners:getPath("shops/"+lsid+"/owners")});
+          if(ur.error) return lfail(ur);
+          lapply(ur.patch); return Promise.resolve({data:{ok:true}});
         }
       }
       if(h==="payCode"){

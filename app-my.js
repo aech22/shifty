@@ -10,7 +10,9 @@
 //   スタッフアカウントの印と認証操作（myRegister / myLogin / myLogout / myChangePassword / mySendReset / mySaveProfile）
 //   MyView … 入口。未ログインなら MyAuthScreen、ログイン済みなら下部タブ（マイシフト・給料・設定）
 //   MyShiftTab / MyPayTab … E1 では中身が無いことを伝える空の状態だけ（E3・E5 が埋める）
-//   MySettingsTab … アカウント（登録ネーム・従業員番号・メール・パスワード・ログアウト）
+//   MySettingsTab … 勤務先のお店（E2: 紐付けの一覧・申請・個人リンクコード）とアカウント（登録ネーム・従業員番号・メール・パスワード・ログアウト）
+//   StaffLinkRequestsCard / StaffLinkEditSection … 管理者側（スタッフタブ）の申請の提案・未リンクの申請・コードの発行と解除（E2）
+//   readMyLinks(uid) … 本人の紐付けの一覧（E3 以降が「どの店舗のどの名前か」を得る入口）
 //
 // 状態の持ち方: スタッフアカウントかどうかは App が staffUser（{uid,email}|null）として持つ（Phase1 が決める）。
 // スタッフアカウントは管理者の実ログインとして扱わない＝App の authUser は null のまま（accounts/{uid}/shops を読まない・書かない）。
@@ -174,6 +176,233 @@ async function myChangePassword(f){
   }
 }
 
+// ===== 紐付け（第2部 E2）=====
+// 本人の端末から呼ぶ Cloud Functions（コードでの紐付け・解除）。App の _callCF と同じくデモでは呼ばない
+async function myCallCF(name,payload){
+  if(DEMO_MODE)return{error:MY_BLOCK_MESSAGES.demo};
+  if(!firebaseFunctions)return{error:MY_BLOCK_MESSAGES.signin};
+  try{return(await firebaseFunctions.httpsCallable(name)(payload||{})).data||{};}
+  catch(e){return{error:(e&&e.message)||"処理に失敗しました。もう一度お試しください"};}
+}
+const _myRead=p=>firebaseDB.ref(p).once("value").then(s=>({ok:true,v:s.val()}),()=>({ok:false,v:null}));
+// 本人の紐付けの一覧（E3 以降が「どの店舗のどの名前か」を得る入口）。users/{uid}/links を索引にし、
+// 店舗ごとに shops/{sid}/staffLinks/{uid}（名前の正本）と shops/{sid}/staff を読んで resolveMyLink で確かめる。
+// 戻り値は [{shopId, shopName, ok, name, personId, method, at, reason}]。ok=false の紐付けは使わない（reason は MY_LINK_INVALID_LABELS か "unread"）
+async function readMyLinks(uid){
+  if(!firebaseDB||!uid)return[];
+  const idx=await _myRead(`users/${uid}/links`);
+  if(!idx.ok)return null; // 読めない（ルール未反映・通信）。呼び出し側が「確認できませんでした」を出す
+  const ids=myOwnerCheckShopIds({cachedShops:Object.keys(idx.v||{}).map(id=>({id}))});
+  return Promise.all(ids.map(async sid=>{
+    const[sl,staff,nm]=await Promise.all([_myRead(`shops/${sid}/staffLinks/${uid}`),_myRead(`shops/${sid}/staff`),_myRead(`global/shops/${sid}/name`)]);
+    const shopName=typeof nm.v==="string"&&nm.v?nm.v:"（店舗名を読めませんでした）";
+    if(!sl.ok||!staff.ok)return{shopId:sid,shopName,ok:false,reason:"unread",name:((idx.v||{})[sid]||{}).name||""};
+    return{...resolveMyLink(sid,(idx.v||{})[sid],sl.v,staff.v),shopName};
+  }));
+}
+
+// 管理者側（スタッフタブ）: 申請の提案と未リンクの申請。オーナーの端末で MY_SCREEN_ENABLED のときだけ（links.enabled）
+function StaffLinkRequestsCard({links,staffList,staffNumbers,mirrorPeople,shopId,tt}){
+  const[busy,setBusy]=useState("");
+  if(!links||!links.enabled)return null;
+  const{withCand,unmatched}=splitLinkRequests(links.requests,{shopId,staff:staffList,staffNumbers,mirrorPeople,staffLinks:links.map});
+  if(!withCand.length&&!unmatched.length)return null;
+  const who=r=>`${r.displayName||"（名前なし）"}${r.number?`（従業員番号 ${r.number}）`:""}`;
+  const when=r=>{const d=new Date(r.at);return Number.isFinite(d.getTime())?`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")} に申請`:"";};
+  const approve=async(uid,name)=>{
+    setBusy(uid);
+    const r=await links.call("approveStaffLink",{uid,name});
+    setBusy("");
+    tt(r.error?`▲ ${r.error}`:`✓ 「${name}」さんにリンクしました`);
+  };
+  const reject=async uid=>{
+    setBusy(uid);
+    const r=await links.reject(uid);
+    setBusy("");
+    tt(r&&r.error?`▲ ${r.error}`:"申請を却下しました");
+  };
+  const row={padding:"12px 0",borderTop:"1px solid var(--c-border)"};
+  const btn={...AGray,padding:"7px 12px",fontSize:13};
+  return(
+    <AC title="マイシフトのリンク申請">
+      <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:6}}>スタッフがマイシフトのアカウントから申請しています。リンクすると、そのアカウントでこの店舗の本人のシフトが見られるようになります。</div>
+      {withCand.map(({uid,req,cands})=>(
+        <div key={uid} data-link-request={uid} style={row}>
+          <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>{who(req)}</div>
+          <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:8}}>{when(req)}</div>
+          {cands.map(c=>(
+            <div key={c.name} data-link-candidate={c.name} style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",marginBottom:8}}>
+              <div style={{flex:"1 1 200px",minWidth:0,fontSize:13,color:"var(--c-text2)",lineHeight:1.6}}>
+                このアカウントを「{c.name}」さんにリンクしますか
+                <span style={{display:"block",fontSize:12,color:"var(--c-text3)"}}>{c.methods.map(m=>MY_LINK_METHOD_LABELS[m]).join("・")}{c.takenBy?" ／ 既に別のアカウントとリンク済み":""}</span>
+              </div>
+              {!c.takenBy&&<button data-link-approve={c.name} disabled={busy===uid} onClick={()=>approve(uid,c.name)} style={{...AB,padding:"7px 14px",fontSize:13,opacity:busy===uid?.6:1}}>リンクする</button>}
+            </div>
+          ))}
+          <button data-link-reject={uid} disabled={busy===uid} onClick={()=>reject(uid)} style={btn}>却下</button>
+        </div>
+      ))}
+      {unmatched.length>0&&<div data-link-unmatched="1" style={{marginTop:withCand.length?8:0}}>
+        <div style={{fontSize:13,fontWeight:700,color:"var(--c-text2)",margin:"6px 0 2px"}}>未リンクの申請</div>
+        <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7}}>登録名・従業員番号のどちらとも一致しません。本人に登録ネームを直して申請し直してもらうか、スタッフの「編集」から個人リンクコードを発行してください。</div>
+        {unmatched.map(({uid,req})=>(
+          <div key={uid} data-link-request={uid} style={{...row,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <div style={{flex:"1 1 200px",minWidth:0}}>
+              <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>{who(req)}</div>
+              <div style={{fontSize:12,color:"var(--c-text4)"}}>{when(req)}</div>
+            </div>
+            <button data-link-reject={uid} disabled={busy===uid} onClick={()=>reject(uid)} style={btn}>却下</button>
+          </div>
+        ))}
+      </div>}
+    </AC>
+  );
+}
+
+// 管理者側（スタッフの編集モーダルの中）: その人の紐付けの状態・解除・個人リンクコードの発行
+function StaffLinkEditSection({links,name,tt}){
+  const[busy,setBusy]=useState(false);
+  const[issued,setIssued]=useState(null); // {name,code,expiry}
+  if(!links||!links.enabled)return null;
+  const linked=staffLinksByName(links.map)[name];
+  const issue=async()=>{
+    setBusy(true);
+    const r=await links.call("issueStaffLinkCode",{name});
+    setBusy(false);
+    if(r.error){tt(`▲ ${r.error}`);return;}
+    setIssued({name,code:r.code,expiry:r.expiry});
+  };
+  const unlink=async()=>{
+    if(!window.confirm(`「${name}」さんとマイシフトのアカウントのリンクを解除しますか？`))return;
+    setBusy(true);
+    const r=await links.call("unlinkStaff",{uid:linked.uid});
+    setBusy(false);
+    tt(r.error?`▲ ${r.error}`:"リンクを解除しました");
+  };
+  if(linked){
+    const d=new Date(linked.rec.at);
+    return(
+      <div data-staff-link="linked">
+        <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.7,marginBottom:8}}>
+          マイシフトのアカウントとリンク済み
+          <span style={{display:"block",fontSize:12,color:"var(--c-text3)"}}>{MY_LINK_METHOD_LABELS[linked.rec.method]||""}{Number.isFinite(d.getTime())?` ／ ${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`:""}</span>
+        </div>
+        <button data-staff-link-action="unlink" disabled={busy} onClick={unlink} style={{...AGray,opacity:busy?.6:1}}>リンクを解除</button>
+      </div>
+    );
+  }
+  const cur=issued&&issued.name===name?issued:null;
+  return(
+    <div data-staff-link="none">
+      <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:8}}>本人がマイシフトの設定でこのコードを入れると、承認なしでリンクされます。24時間有効・1回限りです。</div>
+      {cur&&<div data-staff-link-code={cur.code} style={{marginBottom:10}}>
+        <div style={{fontSize:24,fontWeight:700,letterSpacing:4,color:"var(--c-text)",fontVariantNumeric:"tabular-nums"}}>{cur.code}</div>
+        <div data-staff-link-expiry="1" style={{fontSize:12,color:"var(--c-text3)"}}>有効期限: {fmtLinkCodeExpiry(cur.expiry)}</div>
+      </div>}
+      <button data-staff-link-action="issue" disabled={busy} onClick={issue} style={{...AGray,opacity:busy?.6:1}}>{cur?"コードを発行し直す":"個人リンクコードを発行"}</button>
+      {cur&&<div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>発行し直すと、前のコードは使えなくなります。</div>}
+    </div>
+  );
+}
+
+// 本人側（設定タブ）: 紐付いた店舗・申請・コードの入力
+function MyLinksSection({staffUser,profile,shopId}){
+  const uid=staffUser.uid;
+  const[list,setList]=useState(undefined); // undefined=読み込み中・null=読めない
+  const[req,setReq]=useState(undefined);   // 開いている店舗への自分の申請（null=無い）
+  const[shopName,setShopName]=useState("");
+  const[code,setCode]=useState("");
+  const[msg,setMsg]=useState({});
+  const[busy,setBusy]=useState("");
+  const[seq,setSeq]=useState(0);
+  const reload=()=>setSeq(x=>x+1);
+  useEffect(()=>{
+    let alive=true;
+    readMyLinks(uid).then(v=>{if(alive)setList(v);}).catch(()=>{if(alive)setList(null);});
+    if(shopId&&firebaseDB){
+      _myRead(`shops/${shopId}/linkRequests/${uid}`).then(r=>{if(alive)setReq(r.ok?r.v:null);});
+      _myRead(`global/shops/${shopId}/name`).then(r=>{if(alive)setShopName(typeof r.v==="string"?r.v:"");});
+    }
+    return()=>{alive=false;};
+  },[uid,shopId,seq]);
+  const linkedHere=shopId&&Array.isArray(list)&&list.some(l=>l.shopId===shopId&&l.ok);
+  const apply=async()=>{
+    setMsg({});
+    if(!normalizeMyDisplayName(profile.displayName)){setMsg({error:"先に下の「アカウント」で登録ネームを保存してください"});return;}
+    setBusy("apply");
+    try{await fbSet(`shops/${shopId}/linkRequests/${uid}`,buildLinkRequestRecord(profile,new Date().toISOString()));setMsg({ok:"申請しました。お店の管理者が承認するとリンクされます"});}
+    catch(e){setMsg({error:isPermissionDeniedError(e)?"申請できませんでした（サーバー側の設定が未反映の可能性があります）":"申請できませんでした。通信状態を確認してもう一度お試しください"});}
+    setBusy("");reload();
+  };
+  const cancel=async()=>{
+    setBusy("cancel");setMsg({});
+    try{await fbSet(`shops/${shopId}/linkRequests/${uid}`,null);setMsg({ok:"申請を取り消しました"});}
+    catch{setMsg({error:"取り消せませんでした。もう一度お試しください"});}
+    setBusy("");reload();
+  };
+  const redeem=async()=>{
+    setMsg({});
+    const c=normalizeLinkCode(code);
+    if(!isValidLinkCode(c)){setMsg({error:`コードは${MY_LINK_CODE_LEN}文字の英数字です`});return;}
+    setBusy("code");
+    const r=await myCallCF("redeemStaffLinkCode",{code:c});
+    setBusy("");
+    if(r.error){setMsg({error:r.error});return;}
+    setCode("");setMsg({ok:`「${r.name||""}」としてリンクしました`});reload();
+  };
+  const unlink=async sid=>{
+    if(!window.confirm("このお店とのリンクを解除しますか？"))return;
+    setBusy("unlink:"+sid);setMsg({});
+    const r=await myCallCF("unlinkStaff",{shopId:sid});
+    setBusy("");
+    setMsg(r.error?{error:r.error}:{ok:"リンクを解除しました"});reload();
+  };
+  return(
+    <section style={MY_SECTION} data-my-section="links">
+      <div style={MY_SECTION_TITLE}>勤務先のお店</div>
+      {list===undefined&&<div style={{fontSize:14,color:"var(--c-text3)",marginBottom:12}}>読み込み中…</div>}
+      {list===null&&<MyMessage error="リンクを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/>}
+      {Array.isArray(list)&&list.length===0&&<div style={{fontSize:14,color:"var(--c-text3)",lineHeight:1.8,marginBottom:12}}>まだどのお店ともリンクしていません。</div>}
+      {Array.isArray(list)&&list.map(l=>(
+        <div key={l.shopId} data-my-link={l.shopId} data-my-link-ok={l.ok?"1":"0"} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:"1px solid var(--c-border)"}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:15,fontWeight:700,color:"var(--c-text)",overflowWrap:"anywhere"}}>{l.shopName}</div>
+            <div style={{fontSize:13,color:l.ok?"var(--c-text2)":"var(--c-danger)",lineHeight:1.6,overflowWrap:"anywhere"}}>
+              {l.ok?`登録名: ${l.name}`:(l.reason==="unread"?"状態を確認できませんでした":MY_LINK_INVALID_LABELS[l.reason])}
+            </div>
+          </div>
+          <button data-my-action="unlink" disabled={busy==="unlink:"+l.shopId} onClick={()=>unlink(l.shopId)} style={{...AGray,padding:"8px 12px",fontSize:13,whiteSpace:"nowrap"}}>解除</button>
+        </div>
+      ))}
+
+      {shopId&&!linkedHere&&Array.isArray(list)&&<div data-my-link-apply={req?"pending":"none"} style={{marginTop:16}}>
+        <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>{shopName||"このお店"}にリンクを申請</div>
+        {req?(
+          <>
+            <div style={{fontSize:14,color:"var(--c-text2)",lineHeight:1.8,marginBottom:10}}>申請中です。お店の管理者の承認を待っています。</div>
+            <button data-my-action="cancelRequest" disabled={busy==="cancel"} onClick={cancel} style={AGray}>申請を取り消す</button>
+          </>
+        ):(
+          <>
+            <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.8,marginBottom:10}}>
+              登録ネーム「{profile.displayName||"未設定"}」{profile.number?`と従業員番号「${profile.number}」`:""}をお店の管理者に送ります。お店に登録されている名前・番号と一致すると、管理者が承認してリンクされます。
+            </div>
+            <button data-my-action="apply" disabled={busy==="apply"||req===undefined} onClick={apply} style={{...AB,opacity:busy==="apply"?.6:1}}>{busy==="apply"?"申請中…":"申請する"}</button>
+          </>
+        )}
+      </div>}
+      {!shopId&&Array.isArray(list)&&list.length===0&&<div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.8,marginTop:4}}>お店から受け取ったスタッフ用URLから開くと、そのお店にリンクを申請できます。</div>}
+
+      <div style={{marginTop:18,paddingTop:14,borderTop:"1px solid var(--c-border)"}}>
+        <MyField label="個人リンクコード" value={code} maxLength={12} autoComplete="off" autoCapitalize="characters" data-my-input="linkCode"
+          onChange={e=>setCode(e.target.value)} hint="お店の管理者から受け取った8文字のコード。入れるとすぐにリンクされます（24時間有効）"/>
+        <button data-my-action="redeem" disabled={busy==="code"} onClick={redeem} style={{...AGray,opacity:busy==="code"?.6:1}}>{busy==="code"?"確認中…":"コードでリンク"}</button>
+      </div>
+      <MyMessage {...msg}/>
+    </section>
+  );
+}
+
 // ===== 画面の部品 =====
 const MY_LABEL={fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:6,display:"block"};
 const MY_SECTION={background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:12,padding:"18px 16px",marginBottom:16};
@@ -226,14 +455,15 @@ function MyHeader({title,onClose}){
 function MyEmptyState({children}){
   return <div data-my-empty="1" style={{padding:"32px 4px",fontSize:14,lineHeight:1.9,color:"var(--c-text3)"}}>{children}</div>;
 }
-function MyShiftTab(){
-  return <MyEmptyState>勤務先の店舗とアカウントのリンクが済むと、ここに提出した希望と確定したシフトが月のカレンダーで表示されます。</MyEmptyState>;
+function MyShiftTab({onGoSettings}){
+  return <MyEmptyState>勤務先の店舗とアカウントのリンクが済むと、ここに提出した希望と確定したシフトが月のカレンダーで表示されます。
+    {onGoSettings&&<button data-my-action="goLinks" onClick={onGoSettings} style={{...MY_LINK_BTN,display:"block",marginTop:8}}>設定でお店とリンクする</button>}</MyEmptyState>;
 }
 function MyPayTab(){
   return <MyEmptyState>勤務先の店舗とアカウントのリンクが済み、シフトが確定すると、ここに今月の給料の見込みが表示されます。</MyEmptyState>;
 }
 
-function MySettingsTab({staffUser,profile,profileState,initialError,onProfile}){
+function MySettingsTab({staffUser,profile,profileState,initialError,onProfile,shopId}){
   const[name,setName]=useState(profile.displayName);
   const[num,setNum]=useState(profile.number);
   const[pMsg,setPMsg]=useState(()=>initialError?{error:initialError}:{});
@@ -271,6 +501,7 @@ function MySettingsTab({staffUser,profile,profileState,initialError,onProfile}){
   };
   return(
     <div>
+      <MyLinksSection staffUser={staffUser} profile={profile} shopId={shopId}/>
       <section style={MY_SECTION} data-my-section="profile">
         <div style={MY_SECTION_TITLE}>アカウント</div>
         {profileState==="error"&&<MyMessage error="登録ネームを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/>}
@@ -429,9 +660,9 @@ function MyView({staffUser,onStaffUser,shopId,onClose}){
       <MyHeader title={label} onClose={onClose}/>
       <main style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 96px"}}>
         {profile.displayName&&<div style={{fontSize:13,color:"var(--c-text3)",marginBottom:4}} data-my-who="1">{profile.displayName} さん</div>}
-        {tab==="shift"&&<MyShiftTab/>}
+        {tab==="shift"&&<MyShiftTab onGoSettings={()=>setTab("settings")}/>}
         {tab==="pay"&&<MyPayTab/>}
-        {tab==="settings"&&<MySettingsTab staffUser={staffUser} profile={profile} profileState={profileState} initialError={saveError}
+        {tab==="settings"&&<MySettingsTab staffUser={staffUser} profile={profile} profileState={profileState} initialError={saveError} shopId={shopId}
           onProfile={p=>{draftRef.current=null;setSaveError(null);setProfile(myProfileOf(p));setProfileState("ok");}}/>}
       </main>
       <MyTabBar tab={tab} onTab={setTab}/>

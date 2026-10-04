@@ -147,7 +147,126 @@ function mayBeStaffAccountUser(user){
   return (Array.isArray(user.providerData)?user.providerData:[]).some(p=>p&&p.providerId==="password");
 }
 
+// ===== 紐付け（E2）=====
+// スタッフアカウントを「店舗＋登録名」に紐付ける3方式（計画書 E.3）。A＝従業員番号・B＝登録ネームは管理者への提案、
+// C＝個人リンクコードは承認なし。照合の規則は Cloud Functions の functions/staff-link.js と**同じ内容**にする
+// （functions/ はこのファイルを読めないので書き写している。一致は tests/my.test.js が照合する）。
+// データ: shops/{sid}/linkRequests/{uid}（本人の申請）・shops/{sid}/staffLinks/{uid}（紐付け。名前の正本）・users/{uid}/links/{sid}（本人の索引）。
+const MY_LINK_METHOD_LABELS={number:"従業員番号が一致",name:"登録ネームが一致",code:"個人リンクコード"};
+const MY_LINK_CODE_LEN=8;
+const MY_LINK_CODE_TTL_MS=24*60*60*1000;
+const _MY_LINK_CODE_RE=/^[A-HJ-NP-Z2-9]{8}$/;
+// 方式A の照合キー: 全角数字を半角にし前後の空白を落とす。数字だけのときだけキーになる（それ以外は ""＝照合しない）。先頭のゼロは残す
+function linkNumberKey(s){const t=normalizeMyNumber(s);return /^[0-9]+$/.test(t)?t:"";}
+// 方式B の照合キー: 空白（半角・全角、途中も含む）をすべて除く。それ以外は一字一句そのまま
+function linkNameKey(s){return String(s==null?"":s).replace(/[\s　]/g,"");}
+// 入力されたコード: 全角英数を半角に・小文字を大文字に・空白とハイフンを除く
+function normalizeLinkCode(s){
+  return String(s==null?"":s).replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+    .replace(/[\s　\-‐－ー]/g,"").toUpperCase();
+}
+function isValidLinkCode(s){return typeof s==="string"&&_MY_LINK_CODE_RE.test(s);}
+const _myObj=v=>(v&&typeof v==="object"?v:null);
+// 店舗の staff（配列か数値キーのオブジェクト）を名前の配列にする。空白列は除く
+function myStaffNamesOf(staff){
+  const arr=Array.isArray(staff)?staff:Object.values(_myObj(staff)||{});
+  return arr.filter(n=>typeof n==="string"&&n&&!n.startsWith("__spacer__"));
+}
+// 企業連携の店舗の写しの人物（{personId:{shopId:登録名}}）から、その店舗のその名前の人物IDを引く
+function personIdForShopName(mirrorPeople,shopId,name){
+  const p=_myObj(mirrorPeople)||{};
+  for(const id of Object.keys(p)){
+    if(!/^(?:[0-9]{1,20}|p_[A-Za-z0-9]{8})$/.test(id))continue;
+    if((_myObj(p[id])||{})[shopId]===name)return id;
+  }
+  return null;
+}
+// 申請 → 候補。req={displayName,number}、ctx={shopId,staff,staffNumbers,mirrorPeople,staffLinks,uid}。
+// 戻り値は staff の並び順の [{name,methods,takenBy}]（takenBy＝その名前に既に紐付いている別の uid）
+function linkCandidatesFor(req,ctx){
+  const r=_myObj(req)||{},c=_myObj(ctx)||{};
+  const names=myStaffNamesOf(c.staff);
+  const nums=_myObj(c.staffNumbers)||{};
+  const rn=linkNumberKey(r.number),rk=linkNameKey(r.displayName);
+  const byNum=new Set();
+  if(rn){
+    names.forEach(n=>{if(linkNumberKey(nums[n])===rn)byNum.add(n);});
+    const people=_myObj(c.mirrorPeople)||{};
+    if(/^[0-9]{1,20}$/.test(rn)&&_myObj(people[rn])){
+      const n=people[rn][c.shopId];
+      if(typeof n==="string"&&names.includes(n))byNum.add(n);
+    }
+  }
+  const takenOf={};
+  Object.entries(_myObj(c.staffLinks)||{}).forEach(([u,rec])=>{const nm=(_myObj(rec)||{}).name;if(typeof nm==="string"&&u!==c.uid)takenOf[nm]=u;});
+  const out=[];
+  names.forEach(n=>{
+    const methods=[];
+    if(byNum.has(n))methods.push("number");
+    if(rk&&linkNameKey(n)===rk)methods.push("name");
+    if(methods.length)out.push({name:n,methods,takenBy:takenOf[n]||null});
+  });
+  return out;
+}
+// 申請の一覧を「提案あり」と「未リンクの申請」に分ける。requests={uid:{displayName,number,at}}。古い申請から
+function splitLinkRequests(requests,ctx){
+  const withCand=[],unmatched=[];
+  Object.entries(_myObj(requests)||{}).filter(([,r])=>_myObj(r)).sort((a,b)=>String(a[1].at||"").localeCompare(String(b[1].at||"")))
+    .forEach(([uid,r])=>{
+      const cands=linkCandidatesFor(r,{...(ctx||{}),uid});
+      (cands.length?withCand:unmatched).push({uid,req:r,cands});
+    });
+  return{withCand,unmatched};
+}
+// staffLinks を名前から引く（{名前: {uid, rec}}）
+function staffLinksByName(staffLinks){
+  const out={};
+  Object.entries(_myObj(staffLinks)||{}).forEach(([u,r])=>{const rec=_myObj(r);if(rec&&typeof rec.name==="string")out[rec.name]={uid:u,rec};});
+  return out;
+}
+// 改名・削除の追随（オーナーの端末が shops/{sid}/staffLinks に update する差分。CF の renameStaffLinksPatchCF / dropStaffLinksPatchCF と同じ）
+const _MY_KEY_SAFE=k=>typeof k==="string"&&k.length>0&&k.length<=128&&!/[/.#$[\]\u0000-\u001f\u007f]/.test(k);
+function renameStaffInStaffLinks(staffLinks,oldName,newName){
+  const out={};
+  Object.entries(_myObj(staffLinks)||{}).forEach(([u,rec])=>{if(_MY_KEY_SAFE(u)&&(_myObj(rec)||{}).name===oldName)out[`${u}/name`]=newName;});
+  return Object.keys(out).length?out:null;
+}
+function dropStaffFromStaffLinks(staffLinks,names){
+  const set=new Set((Array.isArray(names)?names:[]).filter(n=>typeof n==="string"));
+  const out={};
+  Object.entries(_myObj(staffLinks)||{}).forEach(([u,rec])=>{if(_MY_KEY_SAFE(u)&&set.has((_myObj(rec)||{}).name))out[u]=null;});
+  return Object.keys(out).length?out:null;
+}
+// 本人のセッションから見た紐付けの1件（E3 以降が「どの店舗のどの名前か」を得る入口）。
+// userLink=users/{uid}/links/{shopId}、staffLink=shops/{shopId}/staffLinks/{uid}、staff=shops/{shopId}/staff。
+// **名前は staffLink の name を使う**（オーナーの端末の改名は staffLinks だけを書き換える）。次のどれかなら無効:
+// 店舗側の紐付けが無い（解除・削除で消えた）／その名前がいまのスタッフ一覧に無い（改名・削除の追随が届かなかった）
+function resolveMyLink(shopId,userLink,staffLink,staff){
+  const ul=_myObj(userLink),sl=_myObj(staffLink);
+  if(!ul&&!sl)return null;
+  if(!sl||typeof sl.name!=="string"||!sl.name)return{shopId,ok:false,reason:"unlinked",name:ul&&typeof ul.name==="string"?ul.name:""};
+  if(!myStaffNamesOf(staff).includes(sl.name))return{shopId,ok:false,reason:"missing",name:sl.name};
+  const pid=typeof sl.personId==="string"&&sl.personId?sl.personId:null;
+  return{shopId,ok:true,name:sl.name,personId:pid,method:sl.method||"",at:sl.at||""};
+}
+const MY_LINK_INVALID_LABELS={unlinked:"お店の側でリンクが外されました",missing:"お店のスタッフ一覧にこの名前がありません（名前の変更か削除）"};
+// 申請に書く形（users の profile から作る）。番号が空ならキーを持たない
+function buildLinkRequestRecord(profile,nowIso){
+  const rec={displayName:normalizeMyDisplayName(profile&&profile.displayName),at:String(nowIso||"")};
+  const num=normalizeMyNumber(profile&&profile.number);
+  if(num)rec.number=num;
+  return rec;
+}
+// 有効期限の表示（例 "2026/10/05 14:30"）。端末の時刻帯で出す
+function fmtLinkCodeExpiry(ms){
+  const d=new Date(ms);
+  if(!Number.isFinite(d.getTime()))return"";
+  const p=n=>String(n).padStart(2,"0");
+  return`${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser};
+  module.exports={MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
+    MY_LINK_METHOD_LABELS,MY_LINK_CODE_LEN,MY_LINK_CODE_TTL_MS,linkNumberKey,linkNameKey,normalizeLinkCode,isValidLinkCode,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,fmtLinkCodeExpiry};
 }

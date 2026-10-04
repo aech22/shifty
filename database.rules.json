@@ -90,6 +90,34 @@
             }
           }
         },
+        "linkRequests": {
+          ".read": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
+          "$uid": {
+            ".read": "auth != null && auth.uid === $uid",
+            ".write": "auth != null && $shopId !== 'demo-toriMatsu-v1' && ((auth.uid === $uid && auth.token.email != null && root.child('global').child('shops').child($shopId).exists()) || (!newData.exists() && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()))",
+            ".validate": "newData.hasChildren(['displayName','at'])",
+            "displayName": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 50" },
+            "number": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 8" },
+            "at": { ".validate": "newData.isString() && newData.val().length <= 40" },
+            "$other": { ".validate": false }
+          }
+        },
+        "staffLinks": {
+          ".read": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
+          "$uid": {
+            ".read": "auth != null && auth.uid === $uid",
+            ".write": "auth != null && !newData.exists() && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
+            ".validate": "newData.hasChildren(['name','method','at'])",
+            "name": {
+              ".write": "auth != null && data.exists() && newData.exists() && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 50"
+            },
+            "personId": { ".validate": "newData.isString() && newData.val().length <= 64" },
+            "method": { ".validate": "newData.val() === 'number' || newData.val() === 'name' || newData.val() === 'code'" },
+            "at": { ".validate": "newData.isString() && newData.val().length <= 40" },
+            "$other": { ".validate": false }
+          }
+        },
         "owners": {
           ".read": "auth != null && data.child(auth.uid).exists()",
           "$uid": {
@@ -165,6 +193,9 @@
         }
       }
     },
-    "companyCodes": { ".read": false, ".write": false }
+    "companyCodes": { ".read": false, ".write": false },
+    "staffLinkCodes": { ".read": false, ".write": false },
+    "staffLinkCodeIndex": { ".read": false, ".write": false },
+    "staffLinkCodeAttempts": { ".read": false, ".write": false }
   }
 }

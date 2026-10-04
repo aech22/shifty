@@ -106,10 +106,20 @@ function makeDb(initial) {
     orderByChild: field => ({
       equalTo: value => makeRef(p, { field, value }),
     }),
+    // 2026-10-04（従業員画面 E2・redeemStaffLinkCode）: 実 SDK と同じく、関数が undefined を返したら中止（committed:false）。
+    // 実 SDK は手元に値が無いと最初に null で呼び、サーバーの値で呼び直すことがある。ここではいまの値で1回だけ呼ぶ
+    transaction: async fn => {
+      const cur = getAt(p);
+      const next = fn(cur === undefined ? null : clone(cur));
+      if (next === undefined) return { committed: false, snapshot: snapshot(p) };
+      setAt(p, next);
+      return { committed: true, snapshot: snapshot(p) };
+    },
   });
 
   return {
-    ref: p => makeRef(p),
+    // db.ref()（引数なし）はルート。複数パスの update（{"a/b": v, "c/d": w}）に使う
+    ref: p => makeRef(p === undefined ? "" : p),
     // テスト側から中身を読み書きするためのヘルパー（本物のAPIには無い）
     get: p => clone(getAt(p)),
     put: (p, v) => setAt(p, v),

@@ -921,6 +921,24 @@ exports.purgeInactiveShops = functions
       }
     }
 
+    // 4) 期限切れの個人リンクコード（従業員画面 E2）と、それを指す索引・古い失敗回数を削除
+    const codeSnap = await db.ref("staffLinkCodes").once("value");
+    const codes = codeSnap.val() || {};
+    for (const [code, entry] of Object.entries(codes)) {
+      if (!linkCodeExpiredCF(entry, now)) continue;
+      await db.ref(`staffLinkCodes/${code}`).remove();
+      if (entry && isValidShopId(entry.shopId) && isSafeDbKey(entry.name)) {
+        const idx = (await db.ref(`staffLinkCodeIndex/${entry.shopId}/${entry.name}`).once("value")).val();
+        if (idx === code) await db.ref(`staffLinkCodeIndex/${entry.shopId}/${entry.name}`).remove();
+      }
+    }
+    const attSnap = await db.ref("staffLinkCodeAttempts").once("value");
+    const atts = attSnap.val() || {};
+    for (const [uid, st] of Object.entries(atts)) {
+      const last = st && typeof st.lastAt === "number" ? st.lastAt : NaN;
+      if (Number.isNaN(last) || (now - last > 24 * 60 * 60 * 1000 && !linkCodeWaitMsCF(st, now))) await db.ref(`staffLinkCodeAttempts/${uid}`).remove();
+    }
+
     return null;
   });
 
@@ -1128,7 +1146,11 @@ const { sanitizeCompanySettings, sanitizeCompanyDeadlines, sanitizeMonthlyDeadli
   isValidPersonId, genPersonAutoId, sanitizeStaffNumber, entityIdOfShop, planPeopleSync, staffNumberConflict,
   planMergePeople, planSplitPerson, planReassignPersonId, planMarkDistinct, planUnmarkDistinct, validateStaffRename, renameStaffListCF,
   renameStaffSettingsPatch, renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffLaborMonthsPatch, renameStaffActualsPatch, renameStaffSubsPatch,
-  COMPANY_BUILTIN_ATTRS, COMPANY_ATTR_ID_RE } = require("./company-config");
+  COMPANY_BUILTIN_ATTRS, COMPANY_ATTR_ID_RE, mirrorPeopleOf } = require("./company-config");
+// 従業員画面の紐付け（第2部 E2）の規則。クライアントの app-my-utils.js と同じ内容（tests/my.test.js が照合する）
+const { normalizeLinkCodeCF, isValidLinkCodeCF, renameStaffLinksPatchCF, staffLinkPersonIdPatchCF, linkCodeWaitMsCF, nextLinkCodeAttemptsCF,
+  linkCodeExpiredCF, genLinkCodeCF, planApproveStaffLink, planIssueStaffLinkCode, planRedeemStaffLinkCode, planUnlinkStaff,
+  LINK_NAME_MAX } = require("./staff-link");
 // 法人レイヤーの片方向移行（2026-09-30・P1）。法人が無い企業には企業名と同名の法人を1つ作り、
 // 割当の無い連携店舗をすべて既定の法人へ割り当てる。冪等なので、写しを作り直す前に毎回通してよい。
 async function ensureCompanyEntities(companyId) {
@@ -1649,6 +1671,24 @@ async function readCompanyRegs(companyId, pub) {
 // 失敗しても人物の保存は済んでいるので呼び出しを失敗にしない（写しは次の保存で作り直される＝冪等）
 async function syncPeopleMirror(companyId) {
   try { await syncCompanyMirror(companyId); } catch (e) { console.warn("syncPeopleMirror", companyId, e && e.message); }
+  // 従業員画面の紐付け（E2）の personId を人物に合わせ直す（統合・切り出し・ID の振り直し・改名の後）
+  try { await syncStaffLinkPersonIds(companyId); } catch (e) { console.warn("syncStaffLinkPersonIds", companyId, e && e.message); }
+}
+// shops/{sid}/staffLinks/{uid}.personId と users/{uid}/links/{sid}.personId を、いまの人物（店舗＋登録名）に揃える。
+// 人物を変える CF（ensureCompanyPeople・mergePeople・splitPerson・reassignPersonId・companyRenameStaff）はすべて
+// syncPeopleMirror を通るので、ここで1回まとめて直す。冪等（変わらなければ書かない）
+async function syncStaffLinkPersonIds(companyId) {
+  const pub = await readPub(companyId);
+  const mirror = mirrorPeopleOf(pub);
+  for (const sid of Object.keys(pub.shops || {}).filter(isValidShopId)) {
+    const links = (await db.ref(`shops/${sid}/staffLinks`).once("value")).val() || {};
+    const uids = Object.keys(links).filter(isSafeDbKey);
+    if (!uids.length) continue;
+    const userLinks = {};
+    for (const u of uids) userLinks[u] = (await db.ref(`users/${u}/links/${sid}`).once("value")).val();
+    const patch = staffLinkPersonIdPatchCF(sid, links, mirror, userLinks);
+    if (patch) await db.ref().update(patch);
+  }
 }
 async function readPub(companyId) {
   return (await db.ref(`companies/${companyId}/pub`).once("value")).val() || {};
@@ -1812,6 +1852,17 @@ exports.companyRenameStaff = functions
         const ac = (await db.ref(`shops/${sid}/actuals`).once("value")).val() || {};
         const acP = renameStaffActualsPatch(ac, oldName, newName);
         if (acP) await db.ref(`shops/${sid}/actuals`).update(acP);
+        // 従業員画面の紐付け（E2）も名前を値に持つ。staffLinks（名前の正本）と本人の索引 users/{uid}/links の写しを移す
+        const sl = (await db.ref(`shops/${sid}/staffLinks`).once("value")).val() || {};
+        const slP = renameStaffLinksPatchCF(sl, oldName, newName);
+        if (slP) {
+          await db.ref(`shops/${sid}/staffLinks`).update(slP);
+          for (const k of Object.keys(slP)) {
+            const u = k.split("/")[0];
+            const ul = (await db.ref(`users/${u}/links/${sid}`).once("value")).val();
+            if (ul) await db.ref(`users/${u}/links/${sid}/name`).set(newName);
+          }
+        }
         await db.ref(`companies/${companyId}/pub/people/${personId}/links/${sid}`).set(newName);
         done.push(sid);
       } catch (e) { failed.push(sid); }
@@ -1881,4 +1932,127 @@ exports.companyUpdateStaff = functions
       try { await db.ref(`shops/${sid}/settings`).update(sp); } catch (e) { failed.push(sid); }
     }
     return { ok: failed.length === 0, failed };
+  });
+
+// ============================================================
+// 従業員画面: スタッフアカウントと「店舗＋登録名」の紐付け（2026-10-04・Shifty_実装計画_2026-10.md 第2部 E2）
+// 3方式: A＝従業員番号・B＝登録ネーム（本人の申請 → 管理者が承認）、C＝個人リンクコード（承認なし）。
+// 規則は functions/staff-link.js の純粋関数（クライアントの app-my-utils.js と同じ。tests/my.test.js が照合する）。
+// 書くのは shops/{sid}/staffLinks/{uid}（名前の正本）と users/{uid}/links/{sid}（本人の索引）を同じ update で。
+// 入力の shopId・uid・名前・コードは、パスに埋め込む前に形を確かめる（Admin SDK は空セグメントを詰める・バグチェック#125）。
+// ============================================================
+function readLinkShopId(data) {
+  const shopId = data && data.shopId;
+  if (!isValidShopId(shopId)) throw new functions.https.HttpsError("invalid-argument", "店舗が無効です");
+  if (isDemoShop(shopId)) throw new functions.https.HttpsError("permission-denied", "体験版の店舗では使えません");
+  return shopId;
+}
+function readLinkName(data) {
+  const name = data && data.name;
+  if (typeof name !== "string" || !name || name.length > LINK_NAME_MAX || !isSafeDbKey(name)) throw new functions.https.HttpsError("invalid-argument", "スタッフ名が無効です");
+  return name;
+}
+function linkAuthUid(context) {
+  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
+  return context.auth.uid;
+}
+async function readVal(p) { return (await db.ref(p).once("value")).val(); }
+function throwPlanError(r) {
+  if (r && r.error) throw new functions.https.HttpsError(r.error.code, r.error.msg);
+}
+
+// 承認（方式A・B）: 店舗のオーナーが申請を候補の名前へ紐付ける。候補に無い名前は拒否する（CF が照合し直す）
+exports.approveStaffLink = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const callerUid = linkAuthUid(context);
+    const shopId = readLinkShopId(data);
+    const uid = data && data.uid;
+    if (!isSafeDbKey(uid)) throw new functions.https.HttpsError("invalid-argument", "アカウントが無効です");
+    const name = readLinkName(data);
+    const [owners, request, staff, settings, mirrorPeople, staffLinks] = await Promise.all([
+      readVal(`shops/${shopId}/owners`), readVal(`shops/${shopId}/linkRequests/${uid}`), readVal(`shops/${shopId}/staff`),
+      readVal(`shops/${shopId}/settings`), readVal(`shops/${shopId}/company/people`), readVal(`shops/${shopId}/staffLinks`),
+    ]);
+    const r = planApproveStaffLink({ shopId, uid, name, callerUid, nowIso: new Date().toISOString(), owners, request, staff, settings, mirrorPeople, staffLinks });
+    throwPlanError(r);
+    await db.ref().update(r.patch);
+    return { ok: true, method: r.method };
+  });
+
+// 個人リンクコードの発行（方式C）: 店舗のオーナーがスタッフ名に対して8桁・24時間・1回限りのコードを作る。
+// 同じ名前に前に発行したコードは使えなくする（最新の1つだけ）
+exports.issueStaffLinkCode = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const callerUid = linkAuthUid(context);
+    const shopId = readLinkShopId(data);
+    const name = readLinkName(data);
+    const [owners, staff, staffLinks, prevCode] = await Promise.all([
+      readVal(`shops/${shopId}/owners`), readVal(`shops/${shopId}/staff`), readVal(`shops/${shopId}/staffLinks`),
+      readVal(`staffLinkCodeIndex/${shopId}/${name}`),
+    ]);
+    let code = "";
+    for (let i = 0; i < 5 && !code; i++) {
+      const c = genLinkCodeCF(n => [...crypto.randomBytes(n)]);
+      if (!(await db.ref(`staffLinkCodes/${c}`).once("value")).exists()) code = c;
+    }
+    const now = Date.now();
+    const r = planIssueStaffLinkCode({ shopId, name, callerUid, now, nowIso: new Date(now).toISOString(), owners, staff, staffLinks, code, prevCode });
+    throwPlanError(r);
+    await db.ref().update(r.patch);
+    return { ok: true, code: r.code, expiry: r.expiry };
+  });
+
+// コードでの紐付け（方式C）: メールでログインした本人がコードを入れる。失敗は本人単位で数え、5回で15分止める
+exports.redeemStaffLinkCode = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const uid = linkAuthUid(context);
+    if (!isSafeDbKey(uid)) throw new functions.https.HttpsError("invalid-argument", "アカウントが無効です");
+    const email = context.auth.token && context.auth.token.email;
+    const code = normalizeLinkCodeCF(data && data.code);
+    if (!isValidLinkCodeCF(code)) throw new functions.https.HttpsError("invalid-argument", "コードは8文字の英数字です");
+    const now = Date.now();
+    const attempts = await readVal(`staffLinkCodeAttempts/${uid}`);
+    const wait = linkCodeWaitMsCF(attempts, now);
+    if (wait) throw new functions.https.HttpsError("resource-exhausted", `入力の誤りが続いたため止めています。${Math.ceil(wait / 60000)}分後にもう一度お試しください`);
+    const rec = await readVal(`staffLinkCodes/${code}`);
+    const shopId = rec && rec.shopId;
+    const shopOk = isValidShopId(shopId) && !isDemoShop(shopId);
+    const [owners, staff, mirrorPeople, staffLinks] = shopOk ? await Promise.all([
+      readVal(`shops/${shopId}/owners`), readVal(`shops/${shopId}/staff`), readVal(`shops/${shopId}/company/people`), readVal(`shops/${shopId}/staffLinks`),
+    ]) : [null, null, null, null];
+    const r = planRedeemStaffLinkCode({ uid, email, rec: shopOk ? rec : null, code, now, nowIso: new Date(now).toISOString(), owners, staff, mirrorPeople, staffLinks });
+    if (r.deleteExpired && rec) await db.ref(`staffLinkCodes/${code}`).remove();
+    if (r.countFail) await db.ref(`staffLinkCodeAttempts/${uid}`).set(nextLinkCodeAttemptsCF(attempts, false, now));
+    throwPlanError(r);
+    // 1回限り: いま読んだ記録と同じものが残っているときだけ消す（同時に2人が入れても片方だけが通る）
+    let consumed = false;
+    const tx = await db.ref(`staffLinkCodes/${code}`).transaction(cur => {
+      consumed = false;
+      if (cur === null) return null;
+      if (cur.createdAt === rec.createdAt && cur.shopId === rec.shopId && cur.name === rec.name) { consumed = true; return null; }
+      return undefined;
+    });
+    if (!tx.committed || !consumed) throw new functions.https.HttpsError("failed-precondition", "このコードは既に使われています");
+    const idx = await readVal(`staffLinkCodeIndex/${shopId}/${rec.name}`);
+    if (idx === code) r.patch[`staffLinkCodeIndex/${shopId}/${rec.name}`] = null;
+    await db.ref().update(r.patch);
+    return { ok: true, shopId: r.shopId, name: r.name };
+  });
+
+// 解除: 本人（uid を省く）か店舗のオーナー（uid を渡す）。staffLinks と users/{uid}/links の両方を消す
+exports.unlinkStaff = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const callerUid = linkAuthUid(context);
+    const shopId = readLinkShopId(data);
+    const uid = data && data.uid !== undefined ? data.uid : callerUid;
+    if (!isSafeDbKey(uid)) throw new functions.https.HttpsError("invalid-argument", "アカウントが無効です");
+    const owners = uid === callerUid ? null : await readVal(`shops/${shopId}/owners`);
+    const r = planUnlinkStaff({ shopId, uid, callerUid, owners });
+    throwPlanError(r);
+    await db.ref().update(r.patch);
+    return { ok: true };
   });

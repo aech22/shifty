@@ -1284,6 +1284,43 @@ function App(){
     const d=dropStaffFromActuals(actuals,names);
     if(d&&firebaseDB)fbUpd(`shops/${sid}/actuals`,d).catch(e=>console.warn("実績の削除に失敗:",e));
   };
+  // ===== 従業員画面の紐付け（2026-10-04・第2部 E2）=====
+  // shops/{sid}/staffLinks（紐付け・名前の正本）と linkRequests（本人の申請）はオーナーしか読めない。賃金と同じく
+  // **claim が通った店舗でだけ購読する**。入口と同じく MY_SCREEN_ENABLED（開発環境だけ）の下に置く（本番は購読もしない）。
+  const[staffLinkMap,setStaffLinkMap]=useState({});
+  const[linkRequestMap,setLinkRequestMap]=useState({});
+  const[staffLinksLoaded,setStaffLinksLoaded]=useState(false);
+  const staffLinkMapRef=useRef({});
+  useEffect(()=>{
+    setStaffLinkMap({});setLinkRequestMap({});setStaffLinksLoaded(false);staffLinkMapRef.current={};
+    if(!MY_SCREEN_ENABLED||!firebaseDB||DEMO_MODE||urlLocked||view!=="admin"||!sid||sid==="default"||ownerClaimedSid!==sid)return;
+    const rL=firebaseDB.ref(`shops/${sid}/staffLinks`), rR=firebaseDB.ref(`shops/${sid}/linkRequests`);
+    const cL=rL.on("value",s=>{const v=s.val()||{};staffLinkMapRef.current=v;setStaffLinkMap(v);setStaffLinksLoaded(true);},e=>console.warn("マイシフトのリンクの購読に失敗:",e));
+    const cR=rR.on("value",s=>setLinkRequestMap(s.val()||{}),e=>console.warn("マイシフトのリンク申請の購読に失敗:",e));
+    return()=>{rL.off("value",cL);rR.off("value",cR);};
+  },[sid,view,urlLocked,ownerClaimedSid]);
+  // 改名・削除の追随。staffLinks の作成は Cloud Functions だけだが、オーナーは削除と name の書き換えだけできる（ルール）。
+  // **CF を呼ばずにクライアントから直接書く**: CF が使えない環境（dev は Spark）や通信の失敗でも、名前を変えた・消した人の
+  // 紐付けが別人（同名で登録し直した人を含む）に残らないようにするため。users/{uid}/links は CF しか書けないので触らない
+  // ——読む側（resolveMyLink）は staffLinks の name を正とし、staffLinks が無い・名前がスタッフ一覧に無い紐付けを無効として扱う。
+  const renameStaffLinks=(oldName,newName)=>{
+    const d=renameStaffInStaffLinks(staffLinkMapRef.current,oldName,newName);
+    if(d&&firebaseDB)fbUpd(`shops/${sid}/staffLinks`,d).catch(e=>console.warn("マイシフトのリンクの改名に失敗:",e));
+  };
+  const dropStaffLinks=names=>{
+    const d=dropStaffFromStaffLinks(staffLinkMapRef.current,names);
+    if(d&&firebaseDB)fbUpd(`shops/${sid}/staffLinks`,d).catch(e=>console.warn("マイシフトのリンクの削除に失敗:",e));
+  };
+  // 申請の却下＝申請を消すだけ（オーナーは linkRequests/{uid} を消せる）
+  const rejectLinkRequest=async uid=>{
+    try{await fbSet(`shops/${sid}/linkRequests/${uid}`,null);return{};}catch(e){console.warn("申請の却下に失敗:",e);return{error:"却下できませんでした"};}
+  };
+  const STAFF_LINK_CFS=["approveStaffLink","issueStaffLinkCode","unlinkStaff"];
+  const callStaffLinkCF=async(name,payload)=>{
+    if(!STAFF_LINK_CFS.includes(name))return{error:"この操作はできません"};
+    try{return(await _callCF(name,{...(payload||{}),shopId:sid}))||{};}
+    catch(e){return{error:(e&&e.message)||"処理に失敗しました"};}
+  };
   // 解除状態は **App のメモリに持つ**（sessionStorage に置くとリロードをまたいで残り、「リロードで伏せ直す」と
   // 食い違うため。計画書 §3.7 の SS_PAY_UNLOCK から変えた）。値はどのパスコードで解除したか（payCodeIdentity）で、
   // 同じコードの店舗（企業連携店舗どうし）では解除を持ち越し、別のコードの店舗へ移ると伏せ直す。
@@ -1922,6 +1959,8 @@ function App(){
                 save:saveLaborMonths,rename:renameLaborMonths,drop:dropLaborMonths}}
               actuals={{enabled:!ownerReadOnly&&ownerClaimedSid===sid,loaded:actualsLoaded,map:actuals,
                 save:saveActuals,rename:renameActuals,drop:dropActuals}}
+              staffLinks={{enabled:MY_SCREEN_ENABLED&&!DEMO_MODE&&!ownerReadOnly&&ownerClaimedSid===sid,loaded:staffLinksLoaded,map:staffLinkMap,requests:linkRequestMap,
+                rename:renameStaffLinks,drop:dropStaffLinks,reject:rejectLinkRequest,call:callStaffLinkCF}}
               onRememberAdminKey={rememberAdminKey} onClaimShop={claimOwnership}
               plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed} billingSchedule={billingSchedule} billingExempt={billingExempt} companyLink={companyLink}
               setCurrentShopId={id=>{
