@@ -326,6 +326,9 @@ localStorage 上のアカウント表で動く（`window.__authCur()`・`window.
 （`page.on("dialog")` には何も来ない）、確認の文言は makeStub の後ろに置いた script で confirm を包んで記録する。.ics のダウンロードは
 `URL.createObjectURL` と `HTMLAnchorElement.prototype.click` を差し替えて Blob の中身とファイル名を捕まえる。
 `denyWrite` は**書き込みの基準パスの前方一致**なので、`users/{uid}` への複数パスの update を拒否させるには `"users/T1"` を渡す（`"users/T1/shifts"` では当たらない）。
+給料（E5）と会社設定の賃金（E6）は `scripts/example-my-pay.js`。`cfHandlers:{getMyPay:"myPay"}` で functions/my-pay.js の本物の判定を通し
+（呼び出し元の uid の staffLinks の名前で private/pay を読む）、`"reject:…"` で CF が使えないときのフォールバックを見る。`cfHandlers` を渡さないと
+既定の "ok" が `{ok:true}`（会社設定なし）を返す。期待値は今日の日付で作る（支給月の既定は翌月・月末締め）。`SHIFTY_ONLY=none` で E6 の場面（J〜L）を飛ばせる
 
 **本物の index.html をこのスタブで丸ごと起動する例**が `scripts/example-index-html-load.js`（2026-09-30）。
 ハーネスは読み込むファイルを自前で並べるので、index.html の `<script>` の並び・`?v=` の食い違いは素通りする。

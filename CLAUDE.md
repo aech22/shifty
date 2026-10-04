@@ -86,7 +86,8 @@ developブランチ・mainブランチのどちらにチェックアウトして
 ├── functions/
 │   ├── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗/期間の自動削除・企業アカウント・従業員画面の紐付け）
 │   ├── company-config.js ← 企業アカウント系 CF の純粋関数（tests/core.test.js がクライアントとの一致を照合）
-│   └── staff-link.js   ← 従業員画面の紐付け（E2）の純粋関数（tests/my.test.js が app-my-utils.js との一致を照合）
+│   ├── staff-link.js   ← 従業員画面の紐付け（E2）の純粋関数（tests/my.test.js が app-my-utils.js との一致を照合）
+│   └── my-pay.js       ← 従業員画面の会社設定の賃金（E6・getMyPay）の純粋関数（tests/my.test.js が normalizePayVersion との一致を照合）
 ├── RULES.md            ← やってはいけないこと（必読）
 ├── firebase.json       ← Firebase Hosting / Functions 設定
 ├── database.rules.json ← Firebase セキュリティルール（**正本はこの1ファイルのみ**。2026-07-28 に締めルールへ切替済み）
@@ -611,8 +612,13 @@ Firebase Realtime Database
 │       │                  手入力は id＝"m_"+英数字8桁（name 必須・shopId なし）。**書くのは update だけ**（E5 が同じレコードに pay を足す）。
 │       │                  紐付けが外れても残す（給料設定を消さない）。ルールは pay の子を持たない＝E5 が足す
 │       ├── shifts/{id}  ← 手入力の勤務先のシフト（E4）{workplaceId(m_…), date, start, end, breakMin, memo?}。id＝"h_"+英数字10桁。時刻は "HH:MM"（30:00 まで）
-│       └── overrides/{shopId}/{date} ← 公開済みの Shifty のシフトへの本人の実績（E4）{start, end, breakMin}。本人の画面と給料計算にだけ効く（店舗には送らない）。
-│                          workplaces・shifts・overrides の書きは本人でメールのある認証だけ・形の検証・未知のキーは拒否（ルール未デプロイ）
+│       ├── overrides/{shopId}/{date} ← 公開済みの Shifty のシフトへの本人の実績（E4）{start, end, breakMin}。本人の画面と給料計算にだけ効く（店舗には送らない）。
+│       │                  workplaces・shifts・overrides の書きは本人でメールのある認証だけ・形の検証・未知のキーは拒否（ルール未デプロイ）
+│       ├── workplaces/{id}/pay ← 本人の給料設定（E5）{closingDay, payMonthOffset, payDay, holidayRule, wageType?, rate?, commute?:{amount,per}, night?, over8?, updatedAt}。
+│       │                  締日・給料日の 31 は「末日」。night・over8（深夜25%・8h超25%）は手入力の勤務先だけ。勤務先の名前・色と同じ update で書く
+│       ├── goals        ← 月間目標（E5）{monthly(円), updatedAt}
+│       └── actuals/{支給月 YYYY-MM}/{勤務先ID} ← 振込額（E5・本人の手入力・円）。**店舗の shops/{sid}/actuals（打刻の実績・P4）とは別物**で、コードでは「振込額」（received）と呼ぶ。
+│                          pay・goals・actuals の書きも本人でメールのある認証だけ・形の検証（ルール未デプロイ）
 ├── companies/
 │   └── {companyId}/     ← 企業アカウント（CompanyTab・企業コード＋パスワード方式。accounts/{uid}のcompanyLinkとは別系統）
 │       ├── pub          ← {name, ownerUid, shops:{shopId:true}}（連携店舗マップ）
@@ -753,7 +759,12 @@ UserLink    = { name: string, personId?: string, at: string }                   
 StaffLinkCode = { shopId: string, name: string, expiry: number, issuedBy: string, createdAt: string }  // staffLinkCodes/{code}
 
 // 従業員画面の本人のデータ（2026-10-04・第2部 E4）。時刻は "HH:MM"（時は2桁・24時超え表記で 30:00 まで・退勤 > 出勤）
-MyWorkplace = { kind: "shifty"|"manual", color: "#rrggbb", name?: string, shopId?: string, pay?: 未定（E5） }  // users/{uid}/workplaces/{shopId | m_xxxxxxxx}
+MyWorkplace = { kind: "shifty"|"manual", color: "#rrggbb", name?: string, shopId?: string, pay?: MyPay }  // users/{uid}/workplaces/{shopId | m_xxxxxxxx}
+// 本人の給料設定（2026-10-04・第2部 E5）。読みは myPayOf（壊れた記録は null＝未設定）
+MyPay       = { closingDay: 1..31, payMonthOffset: 0|1|2, payDay: 1..31, holidayRule: "before"|"after"|"none",   // 31＝末日
+                wageType?: "hourly"|"daily", rate?: 円, commute?: {amount: 円, per: "day"|"month"}, night?: boolean, over8?: boolean, updatedAt: string }
+MyGoals     = { monthly: 円, updatedAt: string }                                                       // users/{uid}/goals
+// users/{uid}/actuals/{支給月}/{勤務先ID} = 振込額（円・number）
 MyShift     = { workplaceId: string, date: "YYYY-MM-DD", start: string, end: string, breakMin: number, memo?: string }  // users/{uid}/shifts/{h_xxxxxxxxxx}
 MyOverride  = { start: string, end: string, breakMin: number }                                // users/{uid}/overrides/{shopId}/{date}
 
@@ -1080,7 +1091,8 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
 
 計画は `Shifty_実装計画_2026-10.md` 第2部（E.0〜E.7）。画面は app-my.js、純粋関数は app-my-utils.js（テストは tests/my.test.js）。
 **入口は開発環境だけ**: `MY_SCREEN_ENABLED = DEV_MODE`（app-core.js）。本番ではスタッフURLの「マイシフト」ボタンが出ず、`#/me` は
-従来どおり旧形式のスタッフURL（トークン "me"）として扱われる。**E0〜E6 が揃ったらこのゲートを外す**（BACKLOG）。
+従来どおり旧形式のスタッフURL（トークン "me"）として扱われる。E0〜E6 は 2026-10-04 に develop で揃ったが、**このゲートはルールと CF の本番反映と同時に外す**
+（外す判断はユーザー。BACKLOG の「従業員画面の本番反映」に順序がある）。
 
 - **アカウント＝匿名 uid にメール＋パスワードを連結**（`currentUser.linkWithCredential(EmailAuthProvider.credential(...))`）。uid が変わらないので
   提出済みの `submitterUid` と一致したまま。別の端末では `signInWithEmailAndPassword` で同じ uid に入り、**成功したら再読み込みする**
@@ -1201,6 +1213,43 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 - 検証: tests/my.test.js（時刻の入力・24時超え・休憩・ID・勤務先の一覧と update の中身・手入力と Shifty の並び・次のシフト・履歴・上書きと指紋・給料の1日・.ics・ルールの形・書き込み先）と
   `shifty-e2e-verify/scripts/example-my-manual.js`（スタブ・375px。E4 前の配信物では最初の項目で止まる）。**ルールの実機は未検証**
 
+### 給料（E5）と会社設定の賃金（E6）（2026-10-04・第2部・develop のみ・ルールと CF は未デプロイ）
+
+計画書 E.2「給料」「設定」・E.4・E.5・E.6。純粋関数は app-my-utils.js の「給料」の節、CF の判定は functions/my-pay.js。**金額は目安**で、月次賃金ページ（給与計算の元）とは別物として表示する。
+- **支給月**: 勤務日 → 締め月（`myClosingMonthOf`・その月の締日以前ならその月、過ぎていれば翌月。31・短い月の29〜30は月末に寄せる）→ 支給月（＋payMonthOffset）。
+  締め期間は「前の月の締日の翌日〜その月の締日」（`myClosingRangeOf`）。給料日は土日祝（`isWeekendOrHoliday`）なら前倒し・後ろ倒し・そのまま（`myPayDateOf`。後ろ倒しで翌月にかかってもよい）。
+  当月払いは給料日を締日より後に限る。**締日と給料日が未設定の勤務先は月末締め・翌月25日・土日祝は前倒しで振り分け**、その旨を内訳に出す（`MY_PAY_DEFAULT`）
+- **Shifty の店舗の計算は既存の関数だけ**: 日ごとに `resolveActualDay`（本人の上書き込み）→ `premiumDayInput` → 暦月ごとに `premiumMonthOf`（設定は月次賃金ページと同じ
+  「その月に始まる最も新しい期間」の設定・確定済みなら写し＝`myMonthSettingsOf`）→ 締め期間の日の時間を足して `wageOf`／`deductionOf`（率は写しの `wageSettings` の
+  `premiumRatesOf`・端数は `roundingRuleOf`・分母は `rateDenominatorMinOf`）。日ごとの時間外は `perDay`（①はその日・②は週の最後の日・③は月の最終日）、
+  **月60時間超はその月の時間外を日付の順に積んで60hを超えた分**（月の合計は over60Min と一致）。**月末締めなら月次賃金ページと同じ金額**（tests/my.test.js が時給者・月給者・率と端数あり／なしで照合）。
+  締日が月末でない勤務先は「目安」の印と、月単位の割増が明細とずれうる注記を出す（計画書のリスク）
+- **月次賃金ページとの差が出る条件**（同じ人・同じ月でも）: ①店舗の打刻の実績（`shops/{sid}/actuals`）は本人に読めないので使わず、本人の上書き（`users/{uid}/overrides`）を使う。
+  ②月所定の登録値（`laborMonths`）・年平均所定を使わない（賃金の式に入らないので額は変わらないが、警告は出さない）。③**ヘルプ先の勤務の合算（P3.6）をしない**——紐付いた店舗ごとに
+  その店舗の自分のシフトだけで数える（所属店舗とヘルプ先の両方に紐付いていても別の勤務先として出す＝週40h・月の総枠を合算しない）。④未公開（グレー）の期間・Premium でないときは数えない。
+  ⑤月の途中で賃金の版が変わっても日割りしない（月次賃金と同じ）。版は締め期間の初日に効く版（月末締めなら月初＝月次賃金と同じ）
+- **確定分と見込み**: 確定分は今日までの日の時間で同じ式を通した額、見込みは合計との差（端数の合計がずれない）。**月給者の基本給・手当・月額の交通費は締め期間が終わるまで見込み**。
+  基本給は締め期間で日割りしない（月次賃金と同じ。月給者は基本給を動かさず割増と控除だけ）。欠勤控除は不就労（本人の画面では店舗の実績が無いので通常は0）
+- **手入力の勤務先**: 時給×実働（円未満切上げ）に、オンにした割増だけを足す（深夜25%＝22〜5時・休憩は拘束の比率で按分＝`nightMinutesOf` と同じ／1日8時間超25%）。日給は日給×出勤日数（割増なし）
+- **賃金の出どころ**（`myWageSourceOf`）: 会社設定（getMyPay）の版 → 本人の時給／日給 → どちらも無ければ時間だけ。会社設定があれば交通費も会社設定
+- **画面**: 給料タブ（月＝支給月ごとの円グラフ（月間目標に対する確定分・1つの弧・アクセント1色）・合計・確定分・見込み・勤務時間・勤務先ごとの行と内訳・振込額の入力／
+  年＝支給月ごとの見込みと振込額・年間合計）。設定タブの勤務先の編集に「給料」（締日・給料日・土日祝・時給／日給・交通費、手入力は割増のオン／オフ）、
+  「月間目標」の節。**Premium（紐付いた店舗のいずれかが Premium・`myShiftPremiumOf`）でなければ金額を出さず、給料設定と振込額は表示だけ**（変更できない）。手入力の勤務先しか無い人も使えない
+- **E4 の渡し口 `myPayWorkDays` は使っていない**: 週40h・法定休日の判定に休日・データの無い日まで要るので、店舗の期間の全日を `myShiftyDayInfo` で作り、
+  各日を `resolveActualDay` に通し直す（`myPayWorkDays` は勤務のある日だけを返す）。`myPayWorkDays` は残してあり、テストもそのまま
+- **読む範囲**: 支給月（年の表示なら12か月）ごとの締め期間を含む暦月の全日と前後1週（`myPayReadRange`）にかかる期間の subs だけ（期間ごとの部分読み）。読み込みはマイシフトと共有の
+  `useMyShiftSources`（app-my.js）。**書くのは users/{uid} の pay・goals・actuals だけ**（tests/my.test.js が書き込み先を固定）
+- **getMyPay（E6）**: Callable・`{shopId}` だけを受け取る。呼び出し元 uid の `shops/{sid}/staffLinks/{uid}.name` を確かめてから（メールのある認証・紐付けあり・名前がスタッフ一覧にある）
+  `shops/{sid}/private/pay/{名前}` を読み、いまの版と過去の版（`normalizePayVersion` と同じ形・updatedAt なし）を返す。**名前・uid は呼び出し元から受け取らない＝他人の賃金は取れない**。
+  閲覧パスコードは求めない（本人の分だけ）。shopId の形とデモ店舗を確かめる。何も書かない。最低賃金・割増率・端数は写しからクライアントが読むので返さない
+- **ヘルプ先だけの紐付け**: 賃金は所属店舗の private/pay にある（P6a）。紐付いた店舗に記録が無く `staffHomeShop` が別の店舗なら、getMyPay は `pay:null` と所属店舗を返し、
+  画面は「賃金は所属店舗（◯◯）で設定されています」と出して本人の設定で計算する（所属店舗の賃金を他の店舗の紐付けからは返さない＝紐付けの無い店舗の private を読まない）
+- **会社設定の表示**: 勤務先の編集で「会社設定（お店が登録した賃金・変更できません）」として時給／月給・手当・固定残業・交通費・適用開始を出し、時給と交通費の入力欄を出さない。
+  **CF が使えない（未デプロイ・通信・dev は CF が無い）ときは本人の設定にフォールバックし「会社の賃金設定を確認できませんでした」**。結果は uid と店舗ごとに覚え、失敗は覚えない
+- 検証: tests/my.test.js（締め期間・給料日・検証・手計算の額・月次賃金との一致・20日締め・グレーと上書き・手入力・年・ルールの形・書き込み先・CF の版の形の一致と判定）、
+  `shifty-e2e-verify/scripts/example-my-pay.js`（スタブ・375px。E5 前の配信物では落ちる）、`shifty-cf-verify/scripts/example-my-pay.js`（本物の index.js・15項目。E6 前の index.js では13項目が落ちる）。
+  **ルールと CF の実機（dev・本番）は未検証**
+
 ---
 
 ## Cloud Functions（functions/index.js）
@@ -1227,6 +1276,7 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 | `ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId / companyRenameStaff / companyUpdateStaff / markPeopleDistinct` | Callable | 人物ID と企業スタッフ一覧の編集（2026-09-30・P1b・**本番未デプロイ**）。`markPeopleDistinct` は「統合しない」（`{personIds:[…], distinct:true}` で全ペアを両方向に記録、`{personIds:[a,b], distinct:false}` で取り消し。写しは作り直さない）。権限は `assertCompanyMember`。人物（`companies/{id}/pub/people`）を作るのは `ensureCompanyPeople` だけ。改名は店舗のデータを差分 update で移す（上の「人物ID と企業スタッフ一覧の編集」）。規則は `functions/company-config.js` |
 | `setCompanyPayCode` | Callable | 企業の賃金閲覧パスコードの変更（2026-09-30・P6a・**本番未デプロイ**）。現在の番号を照合（未設定なら 0000）し、`companies/{id}/private/payCode` と連携全店舗の `shops/{sid}/private/payCode` に同じハッシュを書く。作成者と企業セッションの両方が可（`assertCompanyMember`）。`syncCompanyMirror` も写しを作り直すたびに企業のパスコードを同期する（後から連携した店舗に届く） |
 | `approveStaffLink / issueStaffLinkCode / redeemStaffLinkCode / unlinkStaff` | Callable | 従業員画面の紐付け（2026-10-04・第2部 E2・**未デプロイ**）。承認とコードの発行は店舗のオーナー（`owners/{uid}`）、コードの入力はメールのある認証（`token.email`）、解除は本人かオーナー。shopId・uid・名前・コードはパスに埋め込む前に形を確かめ、デモ店舗は拒否。紐付けは `shops/{sid}/staffLinks/{uid}` と `users/{uid}/links/{sid}` を同じ update で書く。コードは読んだ記録と同じものだけをトランザクションで消す（1回限り）。規則は `functions/staff-link.js` |
+| `getMyPay` | Callable | 従業員画面の会社設定の賃金（2026-10-04・第2部 E6・**未デプロイ**）。`{shopId}` だけを受け取り、呼び出し元 uid の staffLinks の名前の `private/pay` を返す（本人の分だけ・名前は受け取らない）。メールのある認証・紐付けあり・名前がスタッフ一覧にあることを確かめ、shopId の形とデモ店舗を拒否。何も書かない。規則は `functions/my-pay.js` |
 | `claimCompanyShop` | Callable `claimCompanyShop` | 連携済み店舗のオーナーに**呼び出し元のuid**を登録（企業連携タブの「ログイン」で管理コードの再入力を無くす。付与は `companies/{id}/grants/{shopId}/{uid}` に記録し、解除時に回収する） |
 | `unlinkStoreFromCompany` | Callable `unlinkStoreFromCompany` | 店舗の企業連携を解除（企業uid＋`grants` の付与uidを owners から外す） |
 

@@ -38,33 +38,16 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🟡 従業員画面 E2: 紐付けの Cloud Functions とルールの dev・本番反映と実測（E2 の残り）
+## 🟡 従業員画面（第2部 E0〜E6）の本番反映: ルール → CF → クライアント（入口のゲートを外す）
 
-**目的**: E2（2026-10-04）で `functions/index.js` に4本（`approveStaffLink`・`issueStaffLinkCode`・`redeemStaffLinkCode`・`unlinkStaff`）と
-既存の更新（`companyRenameStaff`・`syncPeopleMirror`・`purgeInactiveShops`）、`database.rules.json` に `shops/*/linkRequests`・`shops/*/staffLinks`・
-`staffLinkCodes`・`staffLinkCodeIndex`・`staffLinkCodeAttempts` を足したが、**dev・本番とも反映していない**（担当の制約）。
-CF は cf-harness（本物の index.js・44項目）、画面はスタブ（32項目）でしか確かめていない。
-**反映が要るもの**:
-- [ ] ルール: 新ノードだけ＝**ルールが先**（無いとリンクの申請・購読が拒否される。旧クライアントはこれらのノードを触らない）。
-      users/$uid（E1）と同じ回で dev → 本番。dev へは確認ゲートあり・ユーザー承認
-- [ ] REST で実測: 申請は本人かつメールのある認証だけ書ける（匿名 uid・他人の uid・存在しない店舗・デモ店舗・形の不正は 401）／オーナーは読めて消せる・本人は自分の申請だけ読める。
-      staffLinks はオーナーも**作れない**（401）・オーナーは消せる・既存の紐付けの `name` だけ書き換えられる（`method`・`personId` は 401）・本人は自分の分だけ読める。
-      `staffLinkCodes` 等の3ノードは誰も読み書きできない
-- [ ] CF: 上の4本と既存の更新を本番へ（P1・P1b と同じく1回のデプロイ）。**CF より先にクライアントを出すと**、承認・コードの発行と入力・解除が
-      「関数が無い」で失敗する（申請・却下・改名と削除の追随はクライアントだけで動く）
-- [ ] 実機（dev は Spark で CF が動かないので本番の検証店舗）で A・B・C を1回ずつ通し、`staffLinks` と `users/{uid}/links` が同じ値で書かれること、
-      コードが1回で消えること、`redeemStaffLinkCode` の `token.email` が連結直後の匿名 uid でも入ること（E1 の未検証と同じ問い）を確かめる
-- [ ] Admin SDK の `transaction()` の挙動（手元に値が無いと最初に null で呼ぶ）で「1回限り」が崩れないことを実機で確かめる（cf-harness のモックは1回だけ呼ぶ）
-**影響範囲**: database.rules.json・functions/index.js・functions/staff-link.js（コード変更は済み）
-
----
-
-## 🟡 従業員画面: users/{uid} ルールの dev 反映と実測、入口のゲートを外す（E1 の残り）
-
-**目的**: E1（2026-10-04）で `database.rules.json` に `users/$uid`（読みは本人・`profile` の書きは本人かつメールのある認証）を足したが、
-**dev・本番とも反映していない**（担当の制約）。反映まで dev の実機では登録はできてもプロフィールの保存が拒否される（画面は落ちず、理由を出す）。
-**受け入れ条件**:
-- [ ] dev の RTDB へルールを反映する（確認ゲートあり・ユーザー承認）。新ノードなので本番もルールが先でよい（旧クライアントは users/ を触らない）
+**目的**: 従業員画面（マイシフト・給料）は E0〜E6 を 2026-10-04 に develop で実装し終えたが、**ルールも Cloud Functions も dev・本番とも未デプロイ**（担当の制約）。
+入口は `MY_SCREEN_ENABLED = DEV_MODE`（app-core.js）の下にあり、本番では出ていない。CF は cf-harness（本物の index.js）、画面はスタブ Firebase でしか確かめていない。
+以前の「E1 の残り（users/{uid} ルール）」「E2 の残り（紐付けの CF とルール）」をここへまとめた（2026-10-04）。
+**順序（厳守）**: ①ルール（新ノードだけなので**ルールが先**＝CLAUDE.md の「クライアント先」と逆。旧クライアントは users/・linkRequests・staffLinks・staffLinkCode* を触らない。
+リリース直前にユーザーへ理由を示して承認を取る）→ ②CF（下の5本と既存の更新。P1〜P6 と同じく1回のデプロイ）→ ③クライアントの配信（`?v=` のバンプ）と `MY_SCREEN_ENABLED` のゲートを外す。
+ゲートを外すのは①②の実測が済んでから（外す判断はユーザー）。①だけ・②だけでゲートを外すと、プロフィール・紐付け・勤務先・給料の保存が拒否されるか「関数が無い」で失敗する（画面は落ちず理由を出す）。
+**①ルール（dev → 本番）と REST の実測**:
+- [ ] dev の RTDB へ反映する（確認ゲートあり・ユーザー承認）
 - [ ] REST で実測: 匿名 uid は自分の `users/{uid}/profile` に書けない（401）／メールを連結した uid は書ける（200）・他人の uid には書けない（401）・
       形の不正（displayName 51文字・number 9文字・余計なキー）は 401・本人は読める／他人は読めない。
       **連結の直後のトークンで書けるか**（`auth.token.email` が連結直後に入るか）を実 Firebase で確かめる
@@ -79,8 +62,30 @@ CF は cf-harness（本物の index.js・44項目）、画面はスタブ（32�
       shifts: `h_`+10桁の id で 200／id の形・workplaceId が m_ でない・日付の形（2026-13-01）・時刻 "9:30"（1桁）・"30:05"・breakMin 1441・memo 201字・必須の欠け・余計なキーは 401。
       overrides: start・end・breakMin が揃えば 200／欠け・形の不正は 401。`overrides/{shopId}` をまとめて null にできる（リンク解除済みの店舗を消すとき）。
       `users/{uid}` への複数パスの update（勤務先とそのシフトをまとめて消す）が子のルールだけで通ることも確かめる。反映まで dev の実機では手入力・上書き・勤務先の保存が拒否される（画面は落ちず、理由を出す）
-- [ ] E0〜E6 が揃ったら `MY_SCREEN_ENABLED = DEV_MODE`（app-core.js）を外して本番に入口を出す
-**影響範囲**: database.rules.json（反映のみ）・app-core.js（ゲート）
+- [ ] REST で実測: 申請は本人かつメールのある認証だけ書ける（匿名 uid・他人の uid・存在しない店舗・デモ店舗・形の不正は 401）／オーナーは読めて消せる・本人は自分の申請だけ読める。
+      staffLinks はオーナーも**作れない**（401）・オーナーは消せる・既存の紐付けの `name` だけ書き換えられる（`method`・`personId` は 401）・本人は自分の分だけ読める。
+      `staffLinkCodes` 等の3ノードは誰も読み書きできない
+- [ ] E5（2026-10-04）の `users/$uid/workplaces/$wid/pay`・`users/$uid/goals`・`users/$uid/actuals/$ym/$wid` を REST で実測する: メールのある本人は書ける（200）・匿名 uid・他人の uid は 401。
+      pay: 必須（closingDay・payMonthOffset・payDay・holidayRule）の欠け・closingDay 0／32・payMonthOffset 3・holidayRule "x"・rate だけで wageType なし・rate 0・commute の per "week"・
+      commute の余計なキー・余計なキーは 401。**勤務先の update（kind・shopId・color・name・pay を1回の update）が通ること**と、`pay:null` で給料設定だけ消せること。
+      goals: monthly 0 は 401（消すのは null）・余計なキーは 401。actuals: `2026-13` の月・負の値・1千万円超は 401、`actuals/{ym}` をまとめて消せる。`actuals` 全体への書き込みは 401
+- [ ] 本番へ反映する（dev と同じファイル。本番のルールは REST で叩かない）
+**②CF（本番）**:
+- [ ] 紐付けの4本（`approveStaffLink`・`issueStaffLinkCode`・`redeemStaffLinkCode`・`unlinkStaff`）と既存の更新（`companyRenameStaff`・`syncPeopleMirror`・`purgeInactiveShops`）、
+      E6 の `getMyPay`。**CF より先にクライアントを出すと**、承認・コードの発行と入力・解除が「関数が無い」で失敗し、給料は会社設定を読めず本人の設定で計算する（申請・却下・改名と削除の追随はクライアントだけで動く）
+- [ ] 実機（dev は Spark で CF が動かないので本番の検証店舗）で A・B・C を1回ずつ通し、`staffLinks` と `users/{uid}/links` が同じ値で書かれること、
+      コードが1回で消えること、`redeemStaffLinkCode` の `token.email` が連結直後の匿名 uid でも入ること（E1 の未検証と同じ問い）を確かめる
+- [ ] Admin SDK の `transaction()` の挙動（手元に値が無いと最初に null で呼ぶ）で「1回限り」が崩れないことを実機で確かめる（cf-harness のモックは1回だけ呼ぶ）
+- [ ] getMyPay を本番の検証店舗で1回通す: 紐付いた本人に自分の private/pay だけが返る・別の uid の紐付けの名前を渡しても自分の分だけ・紐付けの無い uid は permission-denied・
+      匿名 uid は failed-precondition（**連結直後のトークンに email が入るか**は E1 と同じ未検証の問い）
+- [ ] Admin SDK の `transaction()` の挙動（手元に値が無いと最初に null で呼ぶ）で「1回限り」が崩れないことを実機で確かめる（cf-harness のモックは1回だけ呼ぶ）
+**③クライアントとゲート**:
+- [ ] `MY_SCREEN_ENABLED = DEV_MODE` を外して本番に入口を出す（①②の実測の後・ユーザー判断）。外すと本番でもスタッフURLに「マイシフト」ボタンが出て、`#/me` が従業員画面になる
+- [ ] 本番で「登録 → 別ブラウザでログイン → 同じ uid・同じ登録ネーム」・紐付け（A・B・C を1回ずつ）・公開と確定で黒文字・手入力のシフト・給料の月と年を1回ずつ通す
+**未検証の一覧（2026-10-04 時点）**: ルールの実機すべて／CF の実機すべて（getMyPay を含む）／連結直後のトークンの email／`transaction()` の1回限り／
+iOS と Google カレンダーへの .ics の実際の取り込み／公開シフトが消えた日に残った上書きの掃除／給料の目安と実際の給与明細の突き合わせ（ユーザーの領分。Shifty の計算値を正解として代用しない）／
+ヘルプ先の勤務を所属店舗の給料に合算しない差（月次賃金ページとは週40h・月の総枠の扱いがずれる）
+**影響範囲**: database.rules.json・functions/index.js・functions/staff-link.js・functions/my-pay.js（反映のみ）・app-core.js（ゲート）
 
 ---
 
@@ -1799,6 +1804,34 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 🟡 従業員画面 E6: 会社設定の賃金の参照（getMyPay）と「会社設定」表示（2026-10-04 develop 完了 `2f52b75`／CF は未デプロイ・ルールの変更なし）
+
+`Shifty_実装計画_2026-10.md` 第2部 E.4・E.6 の E6（確認したい点5番）。設計は CLAUDE.md「給料（E5）と会社設定の賃金（E6）」の節。
+- [x] CF `getMyPay`: `{shopId}` だけを受け取り、呼び出し元 uid の staffLinks の名前の `private/pay` だけを返す（名前・uid は受け取らない）。
+      紐付けなし・匿名・名前がスタッフ一覧に無い・shopId の形・デモ店舗は拒否。何も書かない。`shifty-cf-verify/example-my-pay.js` 15項目（E6 前の index.js では13項目が落ちる）
+- [x] 判定は `functions/my-pay.js`（版の形は `normalizePayVersion` と同じ＝乱数400件で照合）。テスト4件
+- [x] 勤務先の編集で「会社設定」の固定表示・時給と交通費の入力欄なし・給料タブは会社設定の版で計算（`example-my-pay.js` の J）。CF 失敗で本人の設定にフォールバックし理由を出す（K）
+- [x] ヘルプ先だけの紐付け: 紐付いた店舗に記録が無く所属店舗が別なら「所属店舗（◯◯）で設定されています」と出して本人の設定で計算（L）。所属店舗の賃金を他の店舗の紐付けからは返さない
+- 未検証: CF の実機（未デプロイ。本番反映のタスクに getMyPay の実測を足した）
+
+### ✅ 🟡 従業員画面 E5: 給料設定・支給月の振り分け・給料タブ（月・内訳・年）・月間目標と振込額（2026-10-04 develop 完了 `f040353`／ルールは追加だけ・未反映）
+
+`Shifty_実装計画_2026-10.md` 第2部 E.2・E.4・E.5・E.6 の E5。設計は CLAUDE.md「給料（E5）と会社設定の賃金（E6）」の節。
+- [x] 給料設定 `users/{uid}/workplaces/{id}/pay`（締日・給料日と当月／翌月／翌々月・土日祝の前倒し後ろ倒し・時給／日給・交通費、手入力は深夜25%・8h超25%）。ルールで形を検証（`example-my-pay.js` の A・テスト）
+- [x] 月間目標 `users/{uid}/goals`・振込額 `users/{uid}/actuals/{支給月}/{勤務先}`（E・C）
+- [x] 支給月の振り分け（月末・15日・20日・30日締め・翌月払い・土日祝・祝日・年またぎ・うるう年2月）（テスト）
+- [x] Shifty の店舗は既存の関数だけで計算し、**月末締めで monthlyPayBreakdown と同じ金額**（時給者・月給者 × 率と端数あり／なし・法定休日・時間外・深夜が出る入力でテスト）
+- [x] 確定分（今日まで）と見込み・未公開を含めない・上書きが入る（B・テスト）。手入力の簡易計算（テスト・B）
+- [x] 給料タブ: 月（円グラフ・合計・確定分・見込み・勤務時間・勤務先別・内訳・振込額）・年（支給月ごとと年間合計）・20日締めの「目安」（B・C・D・I）
+- [x] Premium でないときは閲覧のみ（F）・ルール未反映で落ちない（G）・店舗のデータへの書き込み0件（M・テストで書き込み先を固定）・375px で横はみ出し無し・入力欄16px以上（A・B・D）
+- 検証: `npm test` 603件パス（587→603。E5 の12件と E6 の4件。E5 の12件と書き込み先を広げた2件は E5 前のソースで落ちる）・`npx eslint app-*.js` 0 errors / 152 warnings
+  （144→152 は app-my.js の新しい部品8つの未使用判定＝既存の部品と同じ扱い）。`example-my-pay.js` 36項目パス（E5 前の配信物では非0・E6 の J〜L は E5 の配信物で落ちる）。
+  回帰スクリプト67本（新規1本を含む）と cf-verify 4本すべて EXIT=0。フォーム部品158件で fontSize 16未満は0件。kill-ai-slop の走査で app-my.js に検出なし
+- 置いた前提: ①月給者の基本給・手当・月額の交通費は締め期間が終わるまで「見込み」に入れ、日割りしない（月次賃金と同じ）。②締日・給料日が未設定なら月末締め・翌月25日・前倒し。
+  ③日給は割増を含めない（Shifty の店舗でも）。④ヘルプ先の勤務を所属店舗の給料に合算しない（店舗ごとに別の勤務先）。⑤月間目標の弧は確定分の割合（見込みを含む割合ではない）。
+  ⑥土日祝の判定は app-utils.js の祝日テーブル（2029年まで）
+- 未検証: ルールの実機（未デプロイ）・実際の給与明細との突き合わせ
 
 ### ✅ 🟡 従業員画面 E4: 手入力の勤務先とシフト・履歴から追加・実績の上書き・.ics（2026-10-04 develop 完了／ルールは追加だけ・未反映・CF なし）
 
