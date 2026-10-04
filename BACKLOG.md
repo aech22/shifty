@@ -434,6 +434,9 @@ localStorage の前回値だけになる。保存も拒否されるが、その�
 
 **影響範囲**: app-main.js（`signInAnonymously` の2経路 :167/:172、`on` のエラーコールバック :386、
 `revertAdminWrite` :1215-1232、エラー画面の条件 :1354）
+**現在の場所（2026-10-05 確認）**: 上の行番号は #147 時点のもので、いまは別のコードを指す。どれも app-main.js の中にあり、
+Phase1 の `firebaseAuth.signInAnonymously()` の2経路（後ろが `.then(()=>proceed(null))` の側）、`const revertAdminWrite`、
+エラー画面の条件 `if(initError&&(!ready||!currentShopId))` を grep で引く。
 **備考**: バグチェック#147（2026-09-25）で検出・**条件B（どちらの失敗の見せ方を取るかの判断）に該当**。
 上の🟡「読みの失敗を『問題なし』に丸めている3箇所」と**家族は同じ**（失敗を良性の既定値に丸める）が、
 あちらは `.catch` の既定値、こちらは**サインインそのものの失敗**で、直す場所も倒す向きの判断も独立するため分けた。
@@ -485,7 +488,10 @@ localStorage の前回値だけになる。保存も拒否されるが、その�
       いま成功トーストは書き込み結果に関係なく出る
 - [ ] 設定タブの案内文（app-admin.js:4562）が、決めた経路と一致しているか確認する
 
-**影響範囲**: app-admin.js（`addShopByCode`・ドロップダウンのボタン・案内文）、app-main.js（`createNewShop`・`applyInviteCode`）
+**影響範囲**: app-admin.js（`addShopByCode`・ドロップダウンのボタン）、app-company.js（設定タブ `SetTab` の案内文）、app-main.js（`createNewShop`・`applyInviteCode`）
+**現在の場所（2026-10-05 確認）**: 上の行番号は #146 時点のもの。設定タブは 2026-09-30 に app-company.js へ移ったので、
+案内文「別端末への共有は『店舗名ボタン → コードで追加』」は app-company.js にある。`addShopByCode` は app-admin.js、
+`createNewShop`・`applyInviteCode` は app-main.js のまま（名前で grep する）。
 **備考**: バグチェック#146（2026-09-25）で検出・**条件B（可視範囲の仕様判断）に該当**。
 **実害の報告はまだ無い**——根拠はコードの読みだけで、本番データには一切アクセスしていない。
 自家用の店舗は企業連携タブ経由で連携済みなのでこの経路を踏んでいない可能性が高い。
@@ -521,14 +527,18 @@ localStorage の前回値だけになる。保存も拒否されるが、その�
       （切り分けの根拠を `e.code` で示せるようにする）
 - [ ] ③の非回帰: 非オーナー端末が従来どおり閲覧専用に落ちること・オーナー端末が従来どおり claim できることを確認する
 
-**影響範囲**: app-admin.js（`useEffect` の他店舗読み・`allAbbrs` の先読み）、app-main.js（`claimOwnership`）
+**影響範囲**: app-shift.js（`ShiftEditTab` の他店舗読み＝`companyData` の読み込み）、app-company.js（`CompanyTab` の `allAbbrs` の先読み）、app-main.js（`claimOwnership`）
+**現在の場所（2026-10-05 確認）**: 上の表の行番号は #146 時点のもの。①はシフト作成タブの分割で app-shift.js へ移った。
+2026-09-30（P3.6）から読めなかった店舗には `loadFailed` の印が付き、ヘルプ先勤務の合算はそれを見て「＋」を出すが、
+**`dupErrors` は `loadFailed` を見ず、読めなかった店舗をデータの無い店舗と同じに扱うので、重複0件として黙る形は変わっていない**（読み込み部のコメントも「倒す向きの判断はこのタスクのまま」と書いている）。
+②は app-company.js の `.catch(()=>[s.id,[]])`、③は app-main.js の `const claimOwnership` を grep で引く。
 **備考**: バグチェック#146（2026-09-25）で検出・**条件B（確認できなかったときに倒す向きの判断）に該当**。
 3件をまとめたのは根が同じ（読みの失敗を良性の値に丸める）で、**倒す向きを一度決めれば3箇所に同じ規則を当てられる**ため。
 **実際に失敗した形跡は見ていない**（Firebase には一切アクセスしていない）。根拠はコードの読みのみ。
 
 ---
 
-## 🟡 `settings` / `staff` / `templates` は今も「コレクション全体 set()」で、期間を1件失ったのと同じ形が3経路残っている
+## 🟡 `settings` / `staff` は今も「コレクション全体 set()」で、期間を1件失ったのと同じ形が2経路残っている（`templates` は 2026-09-28 に書き込みごと撤去）
 
 **目的**: 2026-09-23 の本番事故（期間レコードが1件消えた）の根は「**古い state をそのまま全体 `set()` する**」で、
 `periods` は `156a925` の差分 update() で塞いだ。**同じ根が `settings`・`staff`・`templates` に残っている。**
@@ -540,7 +550,7 @@ localStorage の前回値だけになる。保存も拒否されるが、その�
 | `periods` | `fbUpd`（差分・**塞いだ**） | 持つ（app-main.js:374 で localStorage から埋める） |
 | `settings` | **`fbW(fbPath(sid,"settings"), v)` ＝ 全体 set()**（app-main.js:1237） | 持つ（同:373） |
 | `staff` | **`fbW(fbPath(sid,"staff"), v)` ＝ 全体 set()**（同:1271） | 持つ（同:372） |
-| `templates` | **`fbSet(fbPath(targetSid,"templates"), v)`**（同:339） | 持つ（同:375） |
+| ~~`templates`~~ | ~~**`fbSet(fbPath(targetSid,"templates"), v)`**（同:339）~~ **2026-09-28 に UI・購読・保存を撤去済み**（クライアントはもう書かない） | — |
 
 `fbSet` は `firebaseDB.ref(path).set(value)`（app-core.js:80-87）＝そのノードを丸ごと置き換えるので、
 **保存する端末の state に無いキーはサーバーから消える**。
@@ -584,8 +594,11 @@ localStorage の前回値だけになる。保存も拒否されるが、その�
       （**空配列・空オブジェクトの往復で再書き込みにならないこと**を必ず含める。#142 で `periods` 側が踏んだ）
 - [ ] RULES.md の禁止事項に対象を追記する（現在は `subs` と `periods` だけ）
 
-**影響範囲**: app-main.js（`saveSettings` / `saveStaff` / `saveShopTemplates`）、app-utils.js（差分関数の追加）、
+**影響範囲**: app-main.js（`saveSettings` / `saveStaff`）、app-utils.js（差分関数の追加）、
 tests/core.test.js、RULES.md
+**現在の場所（2026-10-05 確認）**: 表の行番号は #142 時点のもの。`const saveSettings` と `const saveStaff` を app-main.js で grep すると、
+どちらもいまも `fbW(fbPath(sid,"settings"|"staff"), …)` で全体を set() している。localStorage から state を埋める処理は
+`startSubscriptions` の中の `lg(storeKey(targetSid,…_v6))` の並び。`saveShopTemplates` は撤去されてもう無い。
 **備考**: バグチェック#142（2026-09-23）で検出・**条件D（設計変更）と条件B（どこまで割るかの判断）に該当**。
 **実害の報告はまだ無い**——根拠は「`periods` で実際に起きた事故と機構が同一であること」と上の実測で、
 本番データには一切アクセスしていない。app-main.js:371 のコメントは**店舗切替時**の取り違えを
@@ -871,7 +884,8 @@ Node で実行。管理者が 9/10 を手動で緑にし、スタッフが別の
 - [ ] 決めた案を実装し、2つの surface が同じ答えを返すユニットテストを追加する
 
 **影響範囲**: app-utils.js（`deadlineGatePassed` の呼び出し位置）、app-staff.js（`buildShift`・`SmModal` の `applyCellEdit`）、
-app-admin.js（緑セル描画 `LEGEND_COLORS.changed`・`toggleChanged`・`expXl`・`buildShiftTableHtml` の `chgBg`）
+app-shift.js（緑セル描画 `LEGEND_COLORS.changed`・`toggleChanged`・`buildShiftTableHtml` の `chgBg`）、app-admin.js（`expXl`）
+（2026-10-05 確認: シフト作成タブ一式は 2026-09-30 に app-admin.js から app-shift.js へ移った。本文の行番号は #138・#143 時点のもので、名前で grep する）
 **備考**: バグチェック#138（2026-09-20）で検出・③はバグチェック#143（2026-09-23）で追加・
 **条件B（手動マークと同じフィールドを共有するため、区別を持つかの仕様判断が要る）に該当**。
 ①②③は**同じ根**（変更マークは書き込み時に1経路でだけ決まるのに、バッジは読み取り時に毎回決まる。
@@ -920,7 +934,8 @@ app-admin.js（緑セル描画 `LEGEND_COLORS.changed`・`toggleChanged`・`expX
       （ポジション削除は既にそうしている。バグチェック#74）
 - [ ] 決めた案を実装し、ユニットテストを追加する（`getBreaksFor` は純粋関数なので `tests/core.test.js` で足りる）
 
-**影響範囲**: app-admin.js（`deleteType`・休憩時間設定の `attrName`／チップ表示）、app-utils.js（掃除を純粋関数に切り出す場合）
+**影響範囲**: app-company.js（設定タブ `SetTab` の `deleteType`）、app-admin.js（候補タブ `CandTab` の休憩時間設定の `attrName`・`toggleTag`／チップ表示）、app-utils.js（掃除を純粋関数に切り出す場合）
+（2026-10-05 確認: 設定タブは 2026-09-30 に app-company.js へ移った。本文の行番号は #137 時点のもので、名前で grep する）
 **備考**: バグチェック#137（2026-09-20）で検出・**条件B（仕様判断）に該当**。
 **同じ「消えた属性を値で指す」問題は `period.keepAttrs` 側では既に塞がれている**——
 `applyKeepAttrs` が `attrIdExists` を通して当てない（#119）。そのときの判断は「当てない＝全員と同じ
@@ -1324,6 +1339,8 @@ app-admin.js:5160-5161 は `r.ok` だけを見て「✓ プラン変更の予約
 - [ ] 上の実購入テストに「release が失敗したときに成功と表示されない」を1項目として足す
 
 **影響範囲**: functions/index.js（`changePlan` または新規の予約解除関数、`cancelPlanChange` の catch）、app-admin.js（MyPageTab の予約バナー・`changeOptions`・`cancelPlanChange` のレスポンス処理）
+（2026-10-05 確認: 本文の行番号は #108・#146 時点のもので、いまは別のコードを指す。`exports.cancelPlanChange` と、app-admin.js の
+`const changeOptions`・トースト「✓ プラン変更の予約を取り消しました」を grep で引く。`r.ok` だけを見て `released` を読まない形はいまも同じ）
 **備考**: バグチェック#108（2026-09-04）で検出・**条件B（取り消しを許すかの仕様判断）と条件A（Stripe実データでの確認）に該当**。
 下の🔴「二重課金の根治」に残っている「実購入での全遷移検証」と**同じ購入テストの中で一緒に確認できる**ので、
 着手するならまとめてやるのが効率的。なお**降格そのものは正しく動く**（予約・切替・解約の各Webhookは実装済み）。
@@ -1656,6 +1673,8 @@ app-admin.js:5160-5161 は `r.ok` だけを見て「✓ プラン変更の予約
 `subscription_schedule.*` は含まれない（functions/index.js:303 のコメントも同じ）。
 さらにクライアントは `scheduledPlan===plan` のときバナーを出さない（app-admin.js:4937）ので、切り替え後に古い予約が残っても見えない。
 **ただし本番エンドポイントの実際の購読一覧は未確認**（Stripe には触れていない）。
+（2026-10-05 確認: この追記の app-admin.js の行番号は #128 時点のもの。いまは MyPageTab の「をもって終了します」の文言と
+`bs.scheduledPlan!==plan` の条件を grep で引く）
 
 **ループで直さなかった理由**: 上の #127 と同じ3つ（再現モックがフックのゲートに当たる／CF デプロイが要る＝条件A／
 直し方が #127 の案と同じ関数に重なるので一緒に決めるべき＝条件D）。起きる確率はどれも「配信の失敗か入れ替わり」が前提で低い。
@@ -1710,7 +1729,7 @@ app-admin.js:5160-5161 は `r.ok` だけを見て「✓ プラン変更の予約
 - [x] `linkStoreToCompany` / `createCompany` の未claim分岐（「先に触った人がオーナーになれる」）の扱いを合わせて決める → **廃止**（`d6c826a`）
 - [ ] 本番13店舗が全てclaim済みであることを再確認してから適用する（締めルール切替時と同じゲート）
 - [x] Cloud Functions を本番へデプロイする → **2026-08-25 のリリースで実施済み**（`d6c826a` は 2026-08-24 のコミットでデプロイに含まれる。バグチェック#97 で確認）。**したがってこのタスクに残るのは本番店舗の claim 監査だけ**
-**影響範囲**: functions/index.js（`unlinkStoreFromCompany`・`linkStoreToCompany`・`createCompany`）、app-admin.js（CompanyTab の解除UI・エラー表示）
+**影響範囲**: functions/index.js（`unlinkStoreFromCompany`・`linkStoreToCompany`・`createCompany`）、app-company.js（CompanyTab の解除UI・エラー表示。2026-09-30 に app-admin.js から移った）
 **備考**: バグチェック #65（2026-08-10）で検出・**条件B（仕様判断）に該当**。既存の🟢「未claim店舗は先に触った人がownerになれる」は「新規店舗作成直後の一瞬」と整理していたが、**解除操作が既存店舗を後からその状態に戻せる**点が新しい。本番13店舗は全てclaim済みのため現時点の実害はなく、解除操作を行った瞬間にだけ窓が開く。
 
 **2026-08-11 追記（バグチェック#67）**: 同じ根に**別の入口から2回目の到達**をした。#65 は `unlinkStoreFromCompany` 経由、#67 は `createCompany` 経由（`if (owners && !owners[uid]) continue` の未claim分岐）で、**本番のデモ店舗が owners を空のまま公開されていたため、デモURLの訪問者が自分の企業のオーナーとして登録できる状態だった**。#67 ではデモ店舗をdenylistに入れる対症療法で塞いだ（上の🔴タスク）ので、**このタスクの対象は「未claim店舗を誰でも取り込める」という設計そのものの可否**に絞られる。3回目の入口が現れる前に決着させたい。

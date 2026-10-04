@@ -1,6 +1,6 @@
 # CLAUDE.md — Shifty
 
-作成日: 2026年6月（コードベースから自動生成）／最終更新: 2026-07-06（app.js 5分割・セキュリティルール改修を反映）
+作成日: 2026年6月（コードベースから自動生成）／最終更新: 2026-10-05（9ファイル構成・従業員画面の本番公開・個人リンクコードの画面削除までをコードと照合）
 
 ---
 
@@ -18,7 +18,7 @@ Free / Pro / Premium の 3 段階プラン制。Stripe サブスク（Pro 500円
 
 1. **着手前にタスクを定型化する**: フリーフォームの依頼（「〜を直して」「〜を追加して」）は、実装前に「**目的**（なぜ必要か）/ **受け入れ条件**（チェックリスト）/ **影響範囲**（ファイル・コンポーネント）」の3点に変換して提示してから着手する。typo修正などの自明な1行修正は省略してよい。
 2. **該当スキルを必ず経由する**: バグ調査・修正 → `/bug-check`、BACKLOG実装 → `/shifty-feature`、本番リリース → `/release-to-main`。スキル内のPHASE・チェックリストを省略しない。
-3. **修正前に全呼び出し元を洗い出す**: 7ファイル分割のため定義と呼び出しが別ファイルにあるのが普通。`grep -n "関数名" app-*.js` で全ファイル横断で確認してから編集する。
+3. **修正前に全呼び出し元を洗い出す**: 9ファイル分割のため定義と呼び出しが別ファイルにあるのが普通。`grep -n "関数名" app-*.js` で全ファイル横断で確認してから編集する。
 4. **コミット前の検証は固定**: `npm test` と `npx eslint app-*.js` を必ず実行し、結果を省略せず報告する。失敗したら失敗のまま報告する（成功したことにしない）。
 5. **受け入れ条件を1つずつ照合してから完了報告する**: 未検証の項目は「未検証」と明記する。
 
@@ -71,20 +71,24 @@ developブランチ・mainブランチのどちらにチェックアウトして
 /
 ├── index.html          ← CDN 読み込み（SRI付き）・PWA meta・OGP・スクリプト読み込み
 ├── app-utils.js        ← 純粋関数・定数（ブラウザAPI非依存 = Nodeでテスト可能・プレーンscript）
-├── app-my-utils.js     ← 従業員画面（第2部）の純粋関数・定数（プレーンscript・Nodeテスト可能。app-utils.js は34万字あるので従業員画面の関数はこちら）
+├── app-my-utils.js     ← 従業員画面（第2部）の純粋関数・定数（プレーンscript・Nodeテスト可能。app-utils.js が大きい（2026-10-05 で約27万字）ので従業員画面の関数はこちら）
 ├── app-core.js         ← DEV_MODE・Firebase設定・Cookie/テーマ/localStorage・スタイル定数（プレーンscript）
 ├── app-staff.js        ← ShiftyIcon, StaffView, StaffHdr, CellEditPanel, SmModal（babel）
 ├── app-admin.js        ← AdminView・期間/スタッフ/候補/提出一覧/マイページの各タブ, expXl, UpgradeModal, AC/AL/AT/CL（babel）
 ├── app-shift.js        ← シフト作成タブ一式（ShiftEditTab・実績の ActualsGrid/ActualsCsvDialog・HeatTable/SummaryTable/GridLegend・LEGEND_COLORS/FIXED_KEY 等）（babel）
 ├── app-company.js      ← 企業連携タブ一式（CompanyTab と部品・企業の一括PDF・企業横断ダッシュボード）・設定タブ（SetTab）・賃金マスタ（StaffPayPage・PayCodeBox）・月次賃金（PayrollPage）（babel）
-├── app-my.js           ← 従業員画面（MyView・マイシフト／給料／設定の下部タブ・アカウントの登録とログイン）（babel）
+├── app-my.js           ← 従業員画面（MyView・マイシフト／給料／設定の下部タブ・アカウントの登録とログイン・メールリンクの画面）・
+│                          スタッフ個別URL（#/m/ の MyPageView・登録・暗証番号・URLの再送）・スタッフタブで描く管理者側の部品
+│                          （StaffPageEditSection・StaffPageRequestsCard・StaffLinkEditSection・StaffLinkRequestsCard）（babel）
 ├── app-main.js         ← App() 本体 + ReactDOM マウント（babel）
 ├── tests/
 │   ├── core.test.js    ← app-utils.js の Node ユニットテスト（node --test）。管理者画面の実装を読むドリフト検出は
 │   │                      app-admin.js＋app-shift.js＋app-company.js を連結して読む（`_readAdminSurface`）
 │   └── my.test.js      ← app-my-utils.js のユニットテストと、読み込み順（index.html・package.json・eslint）のドリフト検出
 ├── functions/
-│   ├── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗/期間の自動削除・企業アカウント・従業員画面の紐付け）
+│   ├── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗/期間の自動削除・企業アカウント・従業員画面の紐付け・
+│   │                      スタッフ個別URL（myPagePin・getMyPay・setPageEmail・recoverPageUrl）。40本。個人リンクコードの CF
+│   │                      （issueStaffLinkCode・redeemStaffLinkCode）は残っているが、2026-10-05 から画面からは呼ばない）
 │   ├── company-config.js ← 企業アカウント系 CF の純粋関数（tests/core.test.js がクライアントとの一致を照合）
 │   ├── staff-link.js   ← 従業員画面の紐付け（E2）の純粋関数（tests/my.test.js が app-my-utils.js との一致を照合）
 │   ├── my-pay.js       ← 従業員画面の会社設定の賃金（E6・getMyPay）の純粋関数（tests/my.test.js が normalizePayVersion との一致を照合）
@@ -142,7 +146,7 @@ Excel（expXl）・提出一覧・スタッフタブは app-admin.js に残っ�
 ### app-utils.js（純粋関数・Nodeテスト対象）
 
 ```js
-WD / JH_FIXED / JH_DATES   // 曜日・日本の祝日（2025〜2028）
+WD / JH_FIXED / JH_DATES   // 曜日・日本の祝日（2025〜2029。2029 は計算値）
 PLAN_LIMITS / PLAN_LABELS  // プラン定義
 fd(d) / pd(s) / gd(s,e)    // 日付ユーティリティ
 gto() → TO / TO_START      // 時間オプション 0:00〜27:00（15分刻み・連続。翌3:00まで）
@@ -152,7 +156,7 @@ calcNetWorkMinutes / getBreakList / getBreaksFor / getOT // 純勤務時間計�
 shiftBandInfo              // ランチ/ディナー帯判定（isBreakEligible は b5e23c1 で廃止。休憩適用は getBreaksFor が時間帯の重なりだけで判定する）
 dayTypeOf(dateStr) / POSITION_DAY_TYPES // 祝日をholSat/holSunに分割した5分類。必要ポジション設定タブと breakTimes（休憩時間設定）が共有する（getBreakList が positionDayTypeFor で日付→区分を解決。旧4区分の "hol" データは後方互換で流用）
 requiredPositionsFor(settings,dateStr) // 日付に適用する必要ポジション枠。getBreakList と同じ規則で旧 "hol" を流用する（祝日区分に枠が無いときだけ）。分割（1cdcd6b）で移行が無く祝日判定から消えていた枠を拾う（#120）
-firebaseKeyForbiddenChars(name)          // Firebaseがキーに使えない文字（. # $ / [ ] 制御文字）の検出。スタッフ名は7つの設定マップでキーになるため追加・改名の入口で弾く
+firebaseKeyForbiddenChars(name)          // Firebaseがキーに使えない文字（. # $ / [ ] 制御文字）の検出。スタッフ名は STAFF_KEYED_SETTING_MAPS の9つの設定マップ（＋overtimeSettings.byStaff）でキーになるため追加・改名の入口で弾く
 matchPositionSlots(slots, attendees)    // 必要ポジションと出勤者の最大二部マッチング（Kuhn法・ポジション不足エラー判定＝Premium限定）
 genToken() / genSecureId(len)   // ランダムID生成
 isSpacer(n) / resolveAlias / buildSuggestList
@@ -170,7 +174,7 @@ staffHiddenRanges / isStaffHiddenInPeriod / isStaffHiddenNow / hideStaffFrom / s
                            // 全キーがnullの範囲はFirebaseに保存できない（nullのキーは書かれず、空オブジェクトはノードごと消える）。
                            // `_writeHiddenRanges` は下限も上限も無い範囲が1つでもあれば `true` に潰す（全期間を覆うので同値。#113）
 visibleStaffList(list, settings, period) // 上の判定で名簿から落とす。シフト作成グリッド・ヒートマップ・Excel・PDF はこれを通した名簿で描く。**period を必ず渡す**（渡さないと隠さない側に倒れる）。**isUnregisteredSubName には通さない**（通すと非表示の人の提出が未登録名に化けてExcel/PDFの末尾に列として復活する）。staffList 本体は触らないので提出URL・別名・提出データの紐付けは生きたまま
-STAFF_KEYED_SETTING_MAPS   // スタッフ名をキーに持つ設定マップ7件の**正本**（+ overtimeSettings.byStaff で計8）。改名（renameStaffInSettings）と削除の後始末（app-admin.js の settingsWithoutStaff）の**両方がここを参照する**。新しいマップを足すときはここに登録し、あわせて PERIOD_SNAPSHOT_SETTING_KEYS にも入れる（入れないと写しの側で改名が届かず #107 が再発する）。一覧を別の場所へ書き写さないこと——tests/core.test.js がドリフトを検出する（#108）
+STAFF_KEYED_SETTING_MAPS   // スタッフ名をキーに持つ設定マップ9件の**正本**（+ overtimeSettings.byStaff で計10）。改名（renameStaffInSettings）と削除の後始末（app-admin.js の settingsWithoutStaff）の**両方がここを参照する**。新しいマップを足すときはここに登録し、あわせて PERIOD_SNAPSHOT_SETTING_KEYS にも入れる（入れないと写しの側で改名が届かず #107 が再発する）。一覧を別の場所へ書き写さないこと——tests/core.test.js がドリフトを検出する（#108）
 keepAttrsOf(period) / applyKeepAttrs(settings,period)
                            // 属性の期間指定（2026-09-08 決定）。`period.keepAttrs = {名前: 属性ID}` に**旧属性を書き置き**、
                            // resolvePeriodMaster が写しマージの**後**に staffAttributes へ上書きする（写しと食い違えば keepAttrs が勝つ）。
@@ -427,8 +431,8 @@ FIREBASE_CONFIG_PROD / DEV / FIREBASE_CONFIG
 firebaseDB / firebaseAuth / firebaseFunctions / firebaseEnabled
 fbPath(shopId, key) / ph(event, props) / dlog(...)  // dlogはDEV_MODE時のみconsole.log
 DEV_PLAN_OVERRIDE   // DEV_MODE時のみ ?plan= URLパラメータで上書き
-_LA_KEY / _LL_KEY   // ログイン試行ロック（10回・30分・メールログインで使用）
-lg / ls / storeKey  // localStorage
+_LA_KEY / _LL_KEY   // ログイン試行ロック（10回・30分・管理者のメールログインと従業員画面のログインで使用。名前空間で分ける）
+lg / ls             // localStorage（キーを作る storeKey は app-utils.js）
 CK_SHOP / ckStaffKey / SS_* / THEME_KEY / applyTheme // Cookie・セッション・テーマ
 makeShop / makeSettings / buildUrl(period) / parseUrl
 CF_BASE             // Cloud FunctionsエンドポイントをDEV_MODE連動で切り替え
@@ -449,10 +453,10 @@ AI / AB / AD / AGray // スタイル定数
 | ~~`authChecked`~~ | bool | **書かれるが読まれない**（app-main.js 冒頭で宣言。`setAuthChecked` は Firebase初期化失敗・Auth復元・未ログイン確定の3経路で呼ばれるが、**値を読む箇所は宣言以外にゼロ**でAuth待ちのゲートには使われていない。#70でこの記述を訂正） |
 | `view` | "staff"\|"admin" | 現在の画面 |
 | `apid` | string | アクティブ期間ID |
-| `urlLocked` | bool | URLにtokenがある場合true（スタッフ専用モード） |
+| `urlLocked` | bool | URLにtokenがある場合とスタッフ個別URL（#/m/）の場合true（スタッフ専用モード） |
 | `urlResolved` | bool | Phase3完了フラグ |
 | `unbound` | bool | 店舗未紐付け状態（ログイン画面を表示） |
-| `plan` | "free"\|"pro" | 現在のプラン |
+| `plan` | "free"\|"pro"\|"premium" | 現在のプラン（デモは常に premium） |
 | `planExpiry` | string\|null | プラン有効期限（"YYYY-MM-DD"） |
 | `paymentFailed` | bool | 決済失敗フラグ |
 | `settings` | Settings | 店舗設定 |
@@ -465,7 +469,7 @@ AI / AB / AD / AGray // スタイル定数
 
 | 関数 | 説明 |
 |---|---|
-| `startSubscriptions(targetSid, shopList)` | Firebase の5パス（settings/periods/staff/subs/accounts）をリアルタイム購読開始。Phase1から直接呼ぶ（useEffectに入れると競合） |
+| `startSubscriptions(targetSid, shopList)` | Firebase の settings/periods/staff/subs（期間ごとの部分購読）/company と accounts/{sid} の子フィールドをリアルタイム購読開始。Phase1から直接呼ぶ（useEffectに入れると競合） |
 | `saveSettings / savePeriods / saveStaff / saveSubs / saveShops` | Firebase + localStorage 二重書きラッパー |
 | `fbW(path, val)` | App内の Firebase 書き込みショートハンド |
 | `touchLastActivity()` | 最終更新日時を記録（1年未更新店舗の自動削除に使用） |
@@ -486,15 +490,21 @@ AI / AB / AD / AGray // スタイル定数
 
 ```
 Phase1 (useEffect[]) — Firebase初期化 → onAuthStateChanged → loadShops()
+  → #/demo:          デモ店舗（DEMO_SHOP_ID）を直キー読み → 管理者画面
+  → #/me:            店舗を読まずに従業員画面（MyView）
+  → #/m/<pageToken>: staffPageTokens/{pageToken} → global/shops/{shopId} 直キー読み → startSubscriptions()（MyPageView）
   → URLトークンあり: tokens/{token} をO(1)読み → global/shops/{shopId} 直キー読み → startSubscriptions()
   → Auth済み:        accounts/{uid}/shops → 各shopIdを直キー読み → setAllLinkedShops → startSubscriptions()
+                     （企業コードのセッション uid=company_… は companies/{id}/pub/shops を読む）
   → Cookie:          CK_SHOP → global/shops/{ckId} 直キー読み → startSubscriptions()
   → なし:            setUnbound(true) → ログイン画面
   ※ global/shops の全件読みはセキュリティルールで拒否される（一覧の公開廃止・直キー読みのみ）
 
 Phase2 (startSubscriptions関数) — sid確定後にuseEffectを経由せず直接呼ぶ
-  → shops/{sid}/settings, periods, staff, subs（templates は 2026-09-28 に購読を撤去）
-  → accounts/{sid}/plan, planExpiry, paymentFailed をリアルタイム購読
+  → shops/{sid}/settings, periods, staff, subs（直近3ヶ月の期間ごとに orderByChild("periodId")）, company（企業設定の写し）
+    （templates は 2026-09-28 に購読を撤去）
+  → accounts/{sid}/plan, planExpiry, paymentFailed, cancelAtPeriodEnd, currentPeriodEnd, scheduledPlan, scheduledPlanDate,
+    billingExempt を子フィールドごとに購読（accounts/{sid} 自体は .read:false）
 
 Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
   → sessionStorage復元 or periods[0]（最新期間）
@@ -519,6 +529,9 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 |---|---|---|
 | `App()` | app-main.js | メインアプリ・3フェーズ初期化・全 state 管理・ReactDOMマウント |
 | `ShiftyIcon` | app-staff.js | アプリアイコンSVG（全画面共通） |
+| `MyView` | app-my.js | 従業員画面（#/me・募集URLの「マイシフト」）。マイシフト／給料／設定の下部タブ・アカウントの登録とログイン |
+| `MyPageView` | app-my.js | スタッフ個別URL（#/m/<pageToken>）の画面。マイシフト／提出／給料／設定の下部タブ |
+| `StaffPageEditSection / StaffPageRequestsCard / StaffLinkEditSection / StaffLinkRequestsCard` | app-my.js | スタッフタブで描く管理者側の部品（専用URLの発行・申請の承認・リンクの解除。個人リンクコードの発行は 2026-10-05 に画面から外した） |
 | `StaffView` | app-staff.js | スタッフのシフト提出画面 |
 | `StaffHdr` | app-staff.js | スタッフ画面ヘッダー（期間選択） |
 | `CellEditPanel` | app-staff.js | 提出状況ビュー内のセル編集（既存データを初期値） |
@@ -821,7 +834,7 @@ CompanyLink = { id: string, name: string, entityId?: string, entityName?: string
    - 店舗の追加・解除は `linkStoreToCompany` / `unlinkStoreFromCompany`（管理コード `shopId.adminKey` の提示が必要）
    - **連携の実体は2箇所にある（2026-09-16）**: `accounts/{uid}/shops`（Phase1 が読む・作成者本人のセッション）と `companies/{companyId}/pub/shops`（企業ログインの Phase1 と、下記「連携店舗の一覧合流」が読む）。**解除は必ず両方を消す**——企業側だけ消していたため、企業の作成者が自分の店舗を解除すると一覧からは消えるのにリロードで戻ってきた（本番で報告）。実装は `unlinkShopFromAuth`（app-main.js）1本で、企業連携タブと店舗メニューの「解除」が共有する。企業IDは `companyInfo` を待たず `_resolveCompanyId` が引く（`accounts/{uid}/company` からの復元は非同期なので、押した瞬間に null でも企業側の登録は残っている）。企業側を先に解除するのは、CF が「外すと管理者が居なくなる解除」を拒否する（#65）ため、accounts を先に消すと拒否時に片側だけ消えた状態が残るから。**一覧を作り直すときも同じ集合（accounts ∪ companies）にする**（`_refreshCompanyLinkedShops`。企業側だけで置き換えると、企業に入れていない自分の店舗が操作直後だけ一覧から消える）
    - ~~旧・企業招待コード方式（`inviteCodes/{token}` + `accounts/{uid}/members`）~~: **2026-08-24 に削除済み**（`8384467`）。`generateInviteCode` の定義・`inviteCodes` と `accounts/{uid}/members` のセキュリティルールがこのとき消え、**app-*.js と `database.rules.json` には痕跡が無い**（バグチェック#66 で検出 → #116 で本記述を実態に訂正）。
-     **ただし Cloud Functions には残っている**（#147 で実測）: `purgeInactiveShops` の3節（functions/index.js:904-911）が
+     **ただし Cloud Functions には残っている**（#147 で実測）: `purgeInactiveShops` の3節（functions/index.js の「3) 期限切れの inviteCodes / email_otps を削除」のコメントの下）が
      いまも毎日 `inviteCodes` を全件読み、`expiresAt` が無いか期限切れのエントリを削除している。#116 が確認したのは
      app-*.js とルールだけで **`functions/` を見ていなかった**——「痕跡は無い」は**その2つについての話**だと読むこと。
      ノードが存在しないので実害は1日1回の空読みだけだが、**ルールが消えた今このパスに `.read`/`.write` は無く、
