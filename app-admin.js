@@ -719,9 +719,9 @@ function expXl(p,subs,staffList,tt,shopName,options={},resolver=null){
       // （PDFも同じく出勤・休み・空白のすべてに chgBg を乗せる。984dc54 で空白セルの脱落を直した経緯がある）
       const isChanged=!!(sh&&sh.changed===true);
       // 休暇の種別名（公休・有給・慶弔）。画面・PDF と同じ leaveShownTextOf（2026-10-04 ユーザー指示「Excel も統一して」）。
-      // 管理者が入れる値（adminRest＋leaveTypes）なので、どちらの入口（シフト作成タブ・期間管理タブ）からも出す
-      // ——期間管理タブの既定の解決（storedRv）も管理者の休み（adminRest）を通す＝2つの入口が同じ中身（バグチェック#134）
-      const lvS=isSpacer(nm)?"":leaveShownTextOf(sh,"start"),lvE=isSpacer(nm)?"":leaveShownTextOf(sh,"end");
+      // **シフト作成タブからの出力（resolver あり）だけ**。期間管理タブの Excel（resolver なし）は「提出したままで良い」（ユーザー決定）＝従来の斜線のまま
+      const lvOn=!!resolver&&!isSpacer(nm);
+      const lvS=lvOn?leaveShownTextOf(sh,"start"):"",lvE=lvOn?leaveShownTextOf(sh,"end"):"";
       const ci=C_STAFF+si;
       // 上行: top:medium, bot:hair
       // 下行: top:hair, bot:thin (最終日はbot:medium)
