@@ -273,9 +273,13 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       R.D.apps = await h.evaluate(() => { const d = document.querySelector("[data-my-ics-apps]"); if (!d) return null;
         const closed = !d.open; d.open = true;
         return { closed, plat: d.getAttribute("data-my-ics-apps"), steps: d.querySelectorAll("[data-my-ics-steps] li").length, text: d.innerText,
-          right: Math.round(d.getBoundingClientRect().right), vw: window.innerWidth }; });
+          right: Math.round(d.getBoundingClientRect().right), vw: window.innerWidth,
+          // 一番下（2026-10-04 ユーザー指示）: 日付の詳細・書き出しのボタンより下で、マイシフトの中で最後の要素
+          below: (() => { const t = d.getBoundingClientRect().top; const day = document.querySelector("[data-my-day]"), ics = document.querySelector('[data-my-action="ics"]');
+            const root = document.querySelector("[data-my-shift]"); const last = root && root.lastElementChild;
+            return !!day && !!ics && t >= day.getBoundingClientRect().bottom && t >= ics.getBoundingClientRect().bottom && !!last && last.contains(d); })() }; });
       V.D_icsAppGuide = !!R.D.apps && R.D.apps.closed && R.D.apps.plat === (IOS ? "ios" : "desktop") && R.D.apps.steps === 3 && /TimeTree/.test(R.D.apps.text) &&
-        /直接は取り込めません/.test(R.D.apps.text) && /重複/.test(R.D.apps.text) && R.D.apps.right <= R.D.apps.vw;
+        /直接は取り込めません/.test(R.D.apps.text) && /重複/.test(R.D.apps.text) && R.D.apps.right <= R.D.apps.vw && R.D.apps.below;
       // Google カレンダーに1件ずつ追加するリンク（日付の詳細・公開済みと手入力・上書きの時刻・送るのは勤務先名と時刻だけ）
       R.D.gcal = v.gcal;
       const g = v.gcal.map(x => new URL(x.href));

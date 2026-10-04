@@ -1108,7 +1108,6 @@ function MyShiftTab({me,onGoSettings,personal}){
       {canEdit&&<div style={{padding:"0 4px 12px"}}>
         <button data-my-action="ics" onClick={downloadIcs} style={{...AGray,width:"100%"}}>この月のシフトをカレンダーに取り込む（.ics）</button>
         <MyMessage {...icsMsg}/>
-        <MyIcsAppGuide/>
       </div>}
       {calPrompt&&<MyCalendarPrompt action={calPrompt.action} prompt={calPrompt.prompt}
         onProceed={()=>{const r=calPrompt.run;setCalPrompt(null);r(true);}} onClose={()=>setCalPrompt(null)}/>}
@@ -1148,6 +1147,8 @@ function MyShiftTab({me,onGoSettings,personal}){
       {wpList.filter(w=>w.linked||w.kind==="manual").length>1&&<div data-my-legend="1" style={{display:"flex",gap:14,flexWrap:"wrap",fontSize:12,color:"var(--c-text3)",padding:"0 4px"}}>
         {wpList.filter(w=>w.linked||w.kind==="manual").map(w=><span key={w.id} style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:8,height:8,borderRadius:4,background:w.color}}/>{w.name}</span>)}
       </div>}
+      {/* 「TimeTree などのアプリで見るには」はマイシフトの一番下（2026-10-04 ユーザー指示）。書き出しのボタンはカレンダーの下のまま */}
+      {canEdit&&<div data-my-ics-apps-wrap="1" style={{padding:"4px 4px 0"}}><MyIcsAppGuide/></div>}
     </div>
   );
 }

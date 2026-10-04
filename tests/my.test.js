@@ -789,7 +789,11 @@ test(".ics の渡し方と Google カレンダーのリンク（2026-10-04）", 
   const all = [G.title, G.intro, G.note, ...Object.values(G.steps).flat()].join("\n");
   assert.ok(!/ジョルテ|Yahoo|Lifebear|Outlook|Samsung/.test(all), "確かめていないアプリの名前を出さない");
   const myjs = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
-  assert.ok(/<MyMessage \{\.\.\.icsMsg\}\/>\s*<MyIcsAppGuide\/>/.test(myjs), "書き出しボタンのすぐ下に折りたたみで置く");
+  // 2026-10-04 ユーザー指示: 「TimeTree などのアプリで見るには」はマイシフトの一番下（書き出しのボタンの位置は変えない）
+  const tab = myjs.slice(myjs.indexOf("function MyShiftTab("), myjs.indexOf("// ===== 設定タブ → 勤務先"));
+  assert.ok(!/<MyMessage \{\.\.\.icsMsg\}\/>\s*<MyIcsAppGuide\/>/.test(tab), "書き出しボタンのすぐ下には置かない");
+  assert.ok(tab.indexOf('data-my-action="ics"') < tab.indexOf("data-my-day={sel}"), "書き出しのボタンはカレンダーの下・日付の詳細の上のまま");
+  assert.ok(tab.lastIndexOf("<MyIcsAppGuide/>") > tab.indexOf("data-my-legend") && tab.indexOf("<MyIcsAppGuide/>") === tab.lastIndexOf("<MyIcsAppGuide/>"), "案内は勤務先の凡例より下＝一番下に1つだけ");
   assert.ok(/<details data-my-ics-apps=/.test(myjs));
   const e = { kind: "published", date: "2026-10-31", shopId: "S1", shopName: "A店 & 梅田", startMin: 22 * 60, endMin: 26 * 60, breakMin: 30, memo: "秘密のメモ",
     segments: [{ startMin: 22 * 60, endMin: 26 * 60 }, { startMin: 26 * 60 + 30, endMin: 27 * 60, extra: true }] };
