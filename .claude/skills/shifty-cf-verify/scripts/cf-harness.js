@@ -106,7 +106,7 @@ function makeDb(initial) {
     orderByChild: field => ({
       equalTo: value => makeRef(p, { field, value }),
     }),
-    // 2026-10-04（従業員画面 E2・redeemStaffLinkCode）: 実 SDK と同じく、関数が undefined を返したら中止（committed:false）。
+    // 2026-10-04（従業員画面 E2・redeemStaffLinkCode。この CF は 2026-10-05 に削除）: 実 SDK と同じく、関数が undefined を返したら中止（committed:false）。
     // 実 SDK は手元に値が無いと最初に null で呼び、サーバーの値で呼び直すことがある。ここではいまの値で1回だけ呼ぶ
     transaction: async fn => {
       const cur = getAt(p);

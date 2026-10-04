@@ -10,8 +10,8 @@
 //   スタッフアカウントの印と認証操作（myRegister / myLogin / myLogout / myChangePassword / mySendReset / mySaveProfile）
 //   MyView … 入口。未ログインなら MyAuthScreen、ログイン済みなら下部タブ（マイシフト・給料・設定）
 //   MyShiftTab … 月のカレンダー・次のシフト・変更あり（E3）／MyPayTab … E1 では中身が無いことを伝える空の状態だけ（E5 が埋める）
-//   MySettingsTab … 勤務先のお店（E2: 紐付けの一覧・申請。個人リンクコードの入力は 2026-10-05 に外した）とアカウント（登録ネーム・従業員番号・メール・パスワード・ログアウト）
-//   StaffLinkRequestsCard / StaffLinkEditSection … 管理者側（スタッフタブ）の申請の提案・未リンクの申請・リンクの解除（E2。コードの発行は 2026-10-05 に外した）
+//   MySettingsTab … 勤務先のお店（E2: 紐付けの一覧・申請）とアカウント（登録ネーム・従業員番号・メール・パスワード・ログアウト）
+//   StaffLinkRequestsCard / StaffLinkEditSection … 管理者側（スタッフタブ）の申請の提案・未リンクの申請・リンクの解除（E2）
 //   readMyLinks(uid) … 本人の紐付けの一覧（E3 以降が「どの店舗のどの名前か」を得る入口）
 //
 // 状態の持ち方: スタッフアカウントかどうかは App が staffUser（{uid,email}|null）として持つ（Phase1 が決める）。
@@ -493,8 +493,7 @@ function StaffLinkEditSection({links,name,tt}){
       </div>
     );
   }
-  // 個人リンクコードの発行は 2026-10-05 にユーザー指示で画面から外した（スタッフ専用のURLの発行に一本化）。
-  // CF（issueStaffLinkCode・redeemStaffLinkCode）は残してあるが、画面からは呼ばない
+  // 個人リンクコードは 2026-10-05 にユーザー指示で機能ごと削除した（スタッフ専用のURLの発行に一本化）
   return null;
 }
 

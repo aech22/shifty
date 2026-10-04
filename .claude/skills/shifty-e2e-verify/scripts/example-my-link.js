@@ -8,10 +8,10 @@
 //  O（オーナーの端末・1200px と 375px）: スタッフタブに「マイシフトのリンク申請」。
 //     A（全角の番号 ０１２ → 田中）・B（空白違いの「山田　太郎」→ 山田 太郎）の提案、候補が2つの申請（田中＝名前・鈴木＝番号）、
 //     数字以外の番号「A-01」では佐藤が提案されず「未リンクの申請」に残る。承認・取られた名前は押せない・却下。
-//     編集モーダルで個人リンクコードを発行（8桁・有効期限の日時）・発行し直し・リンク済みの表示。
+//     編集モーダルのリンク済みの表示（個人リンクコードは 2026-10-05 に機能ごと削除＝発行のボタンもコードも出ない）。
 //     改名で staffLinks の名前が移る／削除で紐付けが外れる／同じ名前に残っていた古い紐付けは追加のときに外れる
-//  R（閲覧専用の端末）と P（本番相当 MY_SCREEN_ENABLED=false）: 提案もコードの発行も出ない
-//  C（別のスタッフの端末・#/me）: コード（小文字・ハイフン入り）でリンク → 店舗名と登録名が出る。期限切れのコードは使えない。解除
+//  R（閲覧専用の端末）と P（本番相当 MY_SCREEN_ENABLED=false）: 提案が出ない
+//  C（別のスタッフの端末・#/me）: 以前にコードで作られた紐付け（method "code"）が店舗名と登録名で出る。コードの入力欄は無い。解除
 //  T（S の端末）: オーナーの改名の後は新しい名前（staffLinks が正）。削除された人は「お店の側でリンクが外されました」
 //  H（2026-10-04）: オーナーの端末で staffLinks の購読が**まだ届いていない**あいだ（stub の holdOn）に、削除→同じ名前で再登録・改名・
 //     古い紐付けの残る名前の追加をしても追随が書かれる（読む側 resolveMyLink でも古い紐付けは使われない）。staffLinks が読めないときは
@@ -75,7 +75,7 @@ async function openOwner({ db, uid = OWN, viewport = { width: 1200, height: 900 
   return openHarness({ root, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport,
     extraHead: THEME + makeStub({ seed: db, uid, view: "admin", tab: "staff", cfHandlers: CFH, denyRead, denyWrite, holdOn }), scripts: SCRIPTS });
 }
-const CFH = Object.fromEntries(["approveStaffLink", "issueStaffLinkCode", "redeemStaffLinkCode", "unlinkStaff"].map(n => [n, "staffLink"]));
+const CFH = Object.fromEntries(["approveStaffLink", "unlinkStaff"].map(n => [n, "staffLink"]));
 const sleep = (h, ms) => h.page.waitForTimeout(ms);
 const text = h => h.evaluate(() => document.body.innerText);
 const waitSel = (h, s, ms = 15000) => h.page.waitForSelector(s, { timeout: ms }).then(() => true, () => false);
@@ -131,7 +131,6 @@ const cands = (h, uid) => h.evaluate(u => { const el = document.querySelector(`[
     Z1: { displayName: "さとう", number: "A-01", at: "2026-10-04T03:00:00.000Z" },
   };
   // ---------------- O: オーナー ----------------
-  let codeSato = null, expirySato = null;
   {
     const h = await openOwner({ db: dump });
     try {
@@ -163,26 +162,13 @@ const cands = (h, uid) => h.evaluate(u => { const el = document.querySelector(`[
       await h.page.waitForFunction(() => !document.querySelector('[data-link-request="Z1"]'), null, { timeout: 8000 }).catch(() => {});
       O.reqZ1Gone = (await db(h, "shops/S1/linkRequests/Z1")) === null;
       O.cardGone = !(await text(h)).includes("マイシフトのリンク申請");
-      // 編集モーダル: リンク済み／個人リンクコード
+      // 編集モーダル: リンク済み
       O.editTanaka = await openEdit(h, "田中");
       O.tanakaLinked = await h.evaluate(() => (document.querySelector('[data-staff-link="linked"]') || {}).innerText || "");
       await closeEdit(h);
       await openEdit(h, "佐藤");
-      // 2026-10-05: 個人リンクコードの発行は管理者画面から外した（スタッフ専用のURLに一本化）。CF は残っているので、
-      // 発行は CF を直接呼んで確かめ、画面には発行のボタンもコードも出ないことを確かめる
+      // 個人リンクコードは 2026-10-05 に機能ごと削除した。画面には発行のボタンもコードも出ない
       O.noIssueUi = await h.evaluate(() => !document.querySelector('[data-staff-link-action="issue"]') && !document.querySelector("[data-staff-link-code]") && !document.body.innerText.includes("個人リンクコード"));
-      const t0 = Date.now();
-      const issueCF = () => h.evaluate(() => firebase.app().functions("asia-northeast1").httpsCallable("issueStaffLinkCode")({ shopId: "S1", name: "佐藤" }).then(r => r.data, e => ({ error: String(e && e.message) })));
-      const i1 = await issueCF();
-      const c1 = i1 && i1.code;
-      O.expiryText = String(new Date(i1 && i1.expiry).getFullYear() + "/");
-      const rec1 = await db(h, `staffLinkCodes/${c1}`);
-      const i2 = await issueCF();
-      codeSato = i2 && i2.code;
-      O.c1 = c1; O.c2 = codeSato;
-      O.c1Gone = (await db(h, `staffLinkCodes/${c1}`)) === null;
-      expirySato = rec1 && rec1.expiry;
-      O.expiryOk = !!rec1 && Math.abs(rec1.expiry - (t0 + 24 * 3600e3)) < 10000 && O.expiryText.includes(new Date(rec1.expiry).getFullYear() + "/");
       O.overflow1200 = await overflowX(h);
       await closeEdit(h);
       // 改名: 田中 → 田中 一郎
@@ -223,7 +209,6 @@ const cands = (h, uid) => h.evaluate(u => { const el = document.querySelector(`[
       V.O_approveB = !!O.linkY1 && O.linkY1.name === "山田 太郎" && O.linkY1.method === "name";
       V.O_reject = O.reqZ1Gone && O.cardGone;
       V.O_editLinked = O.editTanaka === "ok" && /リンク済み/.test(O.tanakaLinked) && /従業員番号が一致/.test(O.tanakaLinked);
-      V.O_issueCode = /^[A-HJ-NP-Z2-9]{8}$/.test(O.c1 || "") && O.expiryOk && O.c2 && O.c2 !== O.c1 && O.c1Gone;
       V.O_noIssueUi = O.noIssueUi === true;
       V.O_renameFollows = O.renamed === "田中 一郎" && O.userT1NameAfterRename === "田中";
       V.O_deleteDrops = O.x1Dropped;
@@ -269,30 +254,23 @@ const cands = (h, uid) => h.evaluate(u => { const el = document.querySelector(`[
       V.P_prodHidden = R.P.edit === "ok" && !R.P.card && !R.P.section && R.P.reads.length === 0;
     } finally { await p.browser.close(); }
   }
-  // ---------------- C: コードでリンク（#/me）----------------
+  // ---------------- C: 以前にコードで作られた紐付けの表示と解除（#/me）----------------
   {
     const d = JSON.parse(JSON.stringify(dump));
-    // 期限切れのコードも1つ置く
-    d.staffLinkCodes = { ...(d.staffLinkCodes || {}), EXPD2345: { shopId: "S1", name: "山田 太郎", expiry: Date.now() - 1000, issuedBy: OWN, createdAt: "t" } };
+    // 個人リンクコードを削除する前に作られた紐付け（method "code"）が残っている状態
+    d.shops.S1.staffLinks = { ...(d.shops.S1.staffLinks || {}), SA1: { name: "佐藤", method: "code", at: "2026-10-04T00:00:00.000Z" } };
+    d.users = { ...(d.users || {}), SA1: { ...((d.users || {}).SA1 || {}), links: { S1: { name: "佐藤", at: "2026-10-04T00:00:00.000Z" } } } };
     const h = await openStaff({ hash: "#/me", db: d, cur: { uid: "SA1", isAnonymous: false, email: "sato@example.com" }, wait: "[data-my-view]" });
     try {
       const C = {};
       await click(h, '[data-my-tab="settings"]');
       await waitSel(h, '[data-my-section="links"]');
-      C.none = await waitText(h, "まだどのお店ともリンクしていません");
-      C.urlHint = (await text(h)).includes("スタッフ用URLから開くと");
-      C.noApply = !(await h.evaluate(() => !!document.querySelector("[data-my-link-apply]")));
-      // 本人側のコードの入力欄も外した。引き換えは CF を直接呼んで確かめる
+      // コードの入力欄は無い
       C.noCodeUi = await h.evaluate(() => !document.querySelector('[data-my-input="linkCode"]') && !document.querySelector('[data-my-action="redeem"]'));
-      const redeemCF = code => h.evaluate(code => firebase.app().functions("asia-northeast1").httpsCallable("redeemStaffLinkCode")({ code }).then(r => r.data, e => ({ error: String(e && e.message) })), code);
-      C.expiredMsg = String(((await redeemCF("EXPD2345")) || {}).error || "");
-      await redeemCF(codeSato);
-      await h.page.reload(); await waitSel(h, '[data-my-tab="settings"]'); await click(h, '[data-my-tab="settings"]');
       C.linked = await waitSel(h, '[data-my-link="S1"][data-my-link-ok="1"]');
       C.row = await h.evaluate(() => (document.querySelector('[data-my-link="S1"]') || {}).innerText || "");
       C.msg = await myMsg(h);
       C.link = await db(h, "shops/S1/staffLinks/SA1");
-      C.codeGone = (await db(h, `staffLinkCodes/${codeSato}`)) === null;
       C.overflow = await overflowX(h);
       C.fonts = await h.evaluate(() => [...document.querySelectorAll("[data-my-view] input")].map(i => parseFloat(getComputedStyle(i).fontSize)));
       h.page.on("dialog", dlg => dlg.accept());
@@ -302,10 +280,8 @@ const cands = (h, uid) => h.evaluate(u => { const el = document.querySelector(`[
       C.unlinked = (await db(h, "shops/S1/staffLinks/SA1")) === null && (await db(h, "users/SA1/links/S1")) === null;
       C.errors = h.errors.slice();
       R.C = C;
-      V.C_urlHintOnMe = C.none && C.urlHint && C.noApply;
-      V.C_expiredRejected = /有効期限が切れています/.test(C.expiredMsg);
       V.C_noCodeUi = C.noCodeUi === true;
-      V.C_redeemNoApproval = C.linked && /A店/.test(C.row) && /登録名: 佐藤/.test(C.row) && !!C.link && C.link.method === "code" && C.codeGone;
+      V.C_oldCodeLinkShown = C.linked && /A店/.test(C.row) && /登録名: 佐藤/.test(C.row) && !!C.link && C.link.method === "code";
       V.C_unlink = C.unlinked;
       V.C_layout = C.overflow <= 0 && C.fonts.every(f => f >= 16);
       V.C_noErrors = C.errors.length === 0;

@@ -1,30 +1,19 @@
 // 従業員画面（第2部 E2）: スタッフアカウントと「店舗＋登録名」の紐付けの規則（純粋関数）。index.js から読み込む。
 // firebase を読まないので、ローカルで node から直接呼んで確かめられる（tests/my.test.js が読む）。
-// 照合の規則（番号・名前の正規化、候補の列挙、リンクコードの形、改名・削除の差分）はクライアントの
+// 照合の規則（番号・名前の正規化、候補の列挙、改名・削除の差分）はクライアントの
 // app-my-utils.js と**同じ内容**にする（functions/ は app-my-utils.js を読めないため書き写している。一致は tests/my.test.js が照合する）。
 //
 // データ（Shifty_実装計画_2026-10.md E.4）:
 //   shops/{shopId}/linkRequests/{uid}  {displayName, number?, at}          本人が書く・オーナーが読む／消す
 //   shops/{shopId}/staffLinks/{uid}    {name, personId?, method, at}       作るのは CF だけ。オーナーは削除と name の書き換えだけできる（改名・削除の追随）
 //   users/{uid}/links/{shopId}         {name, personId?, at}               CF だけが書く。本人が読む「どの店舗に紐付いているか」の索引
-//   staffLinkCodes/{code}              {shopId, name, expiry, issuedBy, createdAt}   CF だけ
-//   staffLinkCodeIndex/{shopId}/{name} code                                その名前の最新のコード（発行し直すと古いコードを消す）。CF だけ
-//   staffLinkCodeAttempts/{uid}        {fails, lockedUntil?, lastAt}       コードの入力の失敗回数（本人単位）。CF だけ
+// 個人リンクコード（方式C・staffLinkCodes 等）は 2026-10-05 にユーザー指示で機能ごと削除した（スタッフ専用のURLに一本化）。
+// 以前にコードで作られた紐付けは method:"code" のまま残るので、LINK_METHODS とルールは "code" を受け付けたままにしている。
 // **名前の正本は shops/{shopId}/staffLinks/{uid}.name**。users/{uid}/links の name は紐付けた時点の写しで、
 // オーナーの端末の改名では書き換わらない（users/ は CF しか書けない）。読む側は staffLinks の name を使う。
 "use strict";
 
 const LINK_METHODS = ["number", "name", "code"];
-// 個人リンクコード: 企業コードと同じ文字種（紛らわしい I・O・0・1 を除く32文字）の8桁
-const LINK_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const LINK_CODE_LEN = 8;
-const LINK_CODE_RE = /^[A-HJ-NP-Z2-9]{8}$/;
-const LINK_CODE_TTL_MS = 24 * 60 * 60 * 1000;
-// コードの入力の失敗は本人（uid）単位で数える。誤ったコードはどの記録にも当たらないので、記録の側では数えられない
-const LINK_CODE_MAX_FAILS = 5;
-const LINK_CODE_LOCK_MS = 15 * 60 * 1000;
-// 失敗の記録をこの時間より古ければ数え直す（1日に数回の打ち間違いで締め出さない）
-const LINK_CODE_FAIL_WINDOW_MS = 24 * 60 * 60 * 1000;
 const LINK_NAME_MAX = 50;
 const LINK_NUMBER_MAX = 8;
 
@@ -52,14 +41,6 @@ function linkNumberKeyCF(s) {
 function linkNameKeyCF(s) {
   return String(s == null ? "" : s).replace(/[\s　]/g, "");
 }
-// 入力されたコード: 全角英数を半角に・小文字を大文字に・空白とハイフンを除く
-function normalizeLinkCodeCF(s) {
-  return String(s == null ? "" : s)
-    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-    .replace(/[\s　\-‐－ー]/g, "").toUpperCase();
-}
-function isValidLinkCodeCF(s) { return typeof s === "string" && LINK_CODE_RE.test(s); }
-
 // 企業連携の店舗の写しの人物（{personId: {shopId: 登録名}}）から、その店舗のその名前の人物IDを引く
 function personIdForShopNameCF(mirrorPeople, shopId, name) {
   const p = _obj(mirrorPeople) || {};
@@ -142,32 +123,6 @@ function staffLinkPersonIdPatchCF(shopId, staffLinks, mirrorPeople, userLinks) {
   return Object.keys(out).length ? out : null;
 }
 
-// ===== コードの入力の失敗回数 =====
-function linkCodeWaitMsCF(st, now) {
-  const s = _obj(st) || {};
-  return typeof s.lockedUntil === "number" && s.lockedUntil > now ? s.lockedUntil - now : 0;
-}
-// 成功なら null（記録を消す）。失敗なら回数を足し、上限で lockedUntil を置いて数え直す
-function nextLinkCodeAttemptsCF(st, ok, now) {
-  if (ok) return null;
-  const s = _obj(st) || {};
-  const fresh = typeof s.lastAt === "number" && now - s.lastAt <= LINK_CODE_FAIL_WINDOW_MS;
-  const fails = (fresh && typeof s.fails === "number" ? s.fails : 0) + 1;
-  if (fails >= LINK_CODE_MAX_FAILS) return { fails: 0, lockedUntil: now + LINK_CODE_LOCK_MS, lastAt: now };
-  return { fails, lastAt: now };
-}
-// 期限: expiry ちょうどの時刻から使えない（24時間ちょうどは期限切れ）
-function linkCodeExpiredCF(rec, now) {
-  const r = _obj(rec);
-  return !r || typeof r.expiry !== "number" || now >= r.expiry;
-}
-function genLinkCodeCF(randomBytes) {
-  const b = randomBytes(LINK_CODE_LEN);
-  let t = "";
-  for (let i = 0; i < LINK_CODE_LEN; i++) t += LINK_CODE_CHARS[b[i] % LINK_CODE_CHARS.length];
-  return t;
-}
-
 // ===== CF の計画（読んだ値 → 書く差分）。index.js と E2E のスタブが同じ関数を通す =====
 const err = (code, msg) => ({ error: { code, msg } });
 const isOwnerOf = (owners, uid) => !!(_obj(owners) || {})[uid];
@@ -182,7 +137,7 @@ function userLinkRecordOf(name, personId, at) {
   if (personId) rec.personId = personId;
   return rec;
 }
-// 紐付けてよい相手か（承認・コードの両方）。店舗のオーナー・企業ログインの uid は紐付けない
+// 紐付けてよい相手か。店舗のオーナー・企業ログインの uid は紐付けない
 function linkTargetError(uid, owners) {
   if (isCompanyUid(uid)) return err("failed-precondition", "企業アカウントのログインはリンクできません");
   if (isOwnerOf(owners, uid)) return err("failed-precondition", "この店舗の管理者として登録されているアカウントはリンクできません");
@@ -207,45 +162,6 @@ function planApproveStaffLink(o) {
     [`shops/${x.shopId}/linkRequests/${x.uid}`]: null,
   } };
 }
-// 発行（方式C）。o={shopId, name, callerUid, now, nowIso, owners, staff, staffLinks, code, prevCode}
-function planIssueStaffLinkCode(o) {
-  const x = _obj(o) || {};
-  if (!isOwnerOf(x.owners, x.callerUid)) return err("permission-denied", "この店舗の管理者権限がありません");
-  if (!staffNamesOf(x.staff).includes(x.name)) return err("failed-precondition", `「${x.name}」さんはスタッフに登録されていません`);
-  const taken = Object.values(_obj(x.staffLinks) || {}).some(r => (_obj(r) || {}).name === x.name);
-  if (taken) return err("failed-precondition", `「${x.name}」さんは既にアカウントとリンクされています。先に解除してください`);
-  if (!isValidLinkCodeCF(x.code)) return err("internal", "コードを作れませんでした");
-  const expiry = x.now + LINK_CODE_TTL_MS;
-  const patch = {
-    [`staffLinkCodes/${x.code}`]: { shopId: x.shopId, name: x.name, expiry, issuedBy: x.callerUid, createdAt: x.nowIso },
-    [`staffLinkCodeIndex/${x.shopId}/${x.name}`]: x.code,
-  };
-  // 同じ名前に前に発行したコードは使えなくする（最新の1つだけが有効）
-  if (isValidLinkCodeCF(x.prevCode) && x.prevCode !== x.code) patch[`staffLinkCodes/${x.prevCode}`] = null;
-  return { code: x.code, expiry, patch };
-}
-// コードでの紐付け（方式C）。rec は staffLinkCodes/{code} の値（無ければ null）。
-// o={uid, email, rec, code, now, nowIso, owners, staff, mirrorPeople, staffLinks}
-// 戻り値の consume=true のとき、index.js はトランザクションでコードを消してから patch を書く（1回限り）
-function planRedeemStaffLinkCode(o) {
-  const x = _obj(o) || {};
-  if (!x.email) return err("failed-precondition", "マイシフトのアカウントにログインしてから入力してください");
-  const bad = err("invalid-argument", "コードが正しくないか、有効期限が切れています");
-  const rec = _obj(x.rec);
-  if (!rec || linkCodeExpiredCF(rec, x.now)) return { ...bad, countFail: true, deleteExpired: !!rec };
-  const te = linkTargetError(x.uid, x.owners);
-  if (te) return te;
-  if (!staffNamesOf(x.staff).includes(rec.name)) return { ...err("failed-precondition", "このコードのスタッフはお店のスタッフ一覧にいません（名前の変更か削除）。お店の管理者にもう一度発行してもらってください"), deleteExpired: true };
-  const takenBy = Object.entries(_obj(x.staffLinks) || {}).find(([u, r]) => u !== x.uid && (_obj(r) || {}).name === rec.name);
-  if (takenBy) return err("failed-precondition", "このスタッフは既に別のアカウントとリンクされています。お店の管理者に確認してください");
-  const personId = personIdForShopNameCF(x.mirrorPeople, rec.shopId, rec.name);
-  return { consume: true, shopId: rec.shopId, name: rec.name, patch: {
-    [`shops/${rec.shopId}/staffLinks/${x.uid}`]: linkRecordOf(rec.name, personId, "code", x.nowIso),
-    [`users/${x.uid}/links/${rec.shopId}`]: userLinkRecordOf(rec.name, personId, x.nowIso),
-    [`shops/${rec.shopId}/linkRequests/${x.uid}`]: null,
-    [`staffLinkCodeAttempts/${x.uid}`]: null,
-  } };
-}
 // 解除。本人（uid を省くか自分の uid）か店舗のオーナー
 function planUnlinkStaff(o) {
   const x = _obj(o) || {};
@@ -255,9 +171,7 @@ function planUnlinkStaff(o) {
 }
 
 module.exports = {
-  LINK_METHODS, LINK_CODE_CHARS, LINK_CODE_LEN, LINK_CODE_RE, LINK_CODE_TTL_MS, LINK_CODE_MAX_FAILS, LINK_CODE_LOCK_MS, LINK_CODE_FAIL_WINDOW_MS,
-  LINK_NAME_MAX, LINK_NUMBER_MAX, isSafeKey, staffNamesOf, toHalfWidthDigitsCF, linkNumberKeyCF, linkNameKeyCF, normalizeLinkCodeCF, isValidLinkCodeCF,
+  LINK_METHODS, LINK_NAME_MAX, LINK_NUMBER_MAX, isSafeKey, staffNamesOf, toHalfWidthDigitsCF, linkNumberKeyCF, linkNameKeyCF,
   personIdForShopNameCF, linkCandidatesForCF, linkMethodForCF, renameStaffLinksPatchCF, dropStaffLinksPatchCF, staffLinkPersonIdPatchCF,
-  linkCodeWaitMsCF, nextLinkCodeAttemptsCF, linkCodeExpiredCF, genLinkCodeCF,
-  planApproveStaffLink, planIssueStaffLinkCode, planRedeemStaffLinkCode, planUnlinkStaff,
+  planApproveStaffLink, planUnlinkStaff,
 };

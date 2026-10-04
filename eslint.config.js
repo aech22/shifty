@@ -40,12 +40,8 @@ const sharedGlobals = {
   mayBeStaffAccountUser: "writable",
   // 紐付け（第2部 E2）: app-my-utils.js の純粋関数（app-my.js・app-main.js が使う）
   MY_LINK_METHOD_LABELS: "writable",
-  MY_LINK_CODE_LEN: "writable",
-  MY_LINK_CODE_TTL_MS: "writable",
   linkNumberKey: "writable",
   linkNameKey: "writable",
-  normalizeLinkCode: "writable",
-  isValidLinkCode: "writable",
   myStaffNamesOf: "writable",
   personIdForShopName: "writable",
   linkCandidatesFor: "writable",
@@ -62,7 +58,6 @@ const sharedGlobals = {
   resolveMyLink: "writable",
   MY_LINK_INVALID_LABELS: "writable",
   buildLinkRequestRecord: "writable",
-  fmtLinkCodeExpiry: "writable",
   // マイシフト（第2部 E3）: app-my-utils.js の純粋関数（app-my.js が使う）
   MY_WORKPLACE_COLORS: "writable",
   myWorkplaceColor: "writable",

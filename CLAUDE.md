@@ -1,6 +1,6 @@
 # CLAUDE.md — Shifty
 
-作成日: 2026年6月（コードベースから自動生成）／最終更新: 2026-10-05（9ファイル構成・従業員画面の本番公開・個人リンクコードの画面削除までをコードと照合）
+作成日: 2026年6月（コードベースから自動生成）／最終更新: 2026-10-05（9ファイル構成・従業員画面の本番公開・個人リンクコードの機能ごとの削除までをコードと照合）
 
 ---
 
@@ -87,8 +87,8 @@ developブランチ・mainブランチのどちらにチェックアウトして
 │   └── my.test.js      ← app-my-utils.js のユニットテストと、読み込み順（index.html・package.json・eslint）のドリフト検出
 ├── functions/
 │   ├── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗/期間の自動削除・企業アカウント・従業員画面の紐付け・
-│   │                      スタッフ個別URL（myPagePin・getMyPay・setPageEmail・recoverPageUrl）。40本。個人リンクコードの CF
-│   │                      （issueStaffLinkCode・redeemStaffLinkCode）は残っているが、2026-10-05 から画面からは呼ばない）
+│   │                      スタッフ個別URL（myPagePin・getMyPay・setPageEmail・recoverPageUrl）。38本。個人リンクコードの CF
+│   │                      （issueStaffLinkCode・redeemStaffLinkCode）は 2026-10-05 に削除した＝本番から消すには関数の削除が要る）
 │   ├── company-config.js ← 企業アカウント系 CF の純粋関数（tests/core.test.js がクライアントとの一致を照合）
 │   ├── staff-link.js   ← 従業員画面の紐付け（E2）の純粋関数（tests/my.test.js が app-my-utils.js との一致を照合）
 │   ├── my-pay.js       ← 従業員画面の会社設定の賃金（E6・getMyPay）の純粋関数（tests/my.test.js が normalizePayVersion との一致を照合）
@@ -531,7 +531,7 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `ShiftyIcon` | app-staff.js | アプリアイコンSVG（全画面共通） |
 | `MyView` | app-my.js | 従業員画面（#/me・募集URLの「マイシフト」）。マイシフト／給料／設定の下部タブ・アカウントの登録とログイン |
 | `MyPageView` | app-my.js | スタッフ個別URL（#/m/<pageToken>）の画面。マイシフト／提出／給料／設定の下部タブ |
-| `StaffPageEditSection / StaffPageRequestsCard / StaffLinkEditSection / StaffLinkRequestsCard` | app-my.js | スタッフタブで描く管理者側の部品（専用URLの発行・申請の承認・リンクの解除。個人リンクコードの発行は 2026-10-05 に画面から外した） |
+| `StaffPageEditSection / StaffPageRequestsCard / StaffLinkEditSection / StaffLinkRequestsCard` | app-my.js | スタッフタブで描く管理者側の部品（専用URLの発行・申請の承認・リンクの解除。個人リンクコードは 2026-10-05 に機能ごと削除した） |
 | `StaffView` | app-staff.js | スタッフのシフト提出画面 |
 | `StaffHdr` | app-staff.js | スタッフ画面ヘッダー（期間選択） |
 | `CellEditPanel` | app-staff.js | 提出状況ビュー内のセル編集（既存データを初期値） |
@@ -680,10 +680,8 @@ Firebase Realtime Database
 │                          （ルールで読み書きとも不可）。クライアントへは登録の有無と伏せたアドレスしか返さない
 ├── staffPageEmailIndex/{key}/{pageToken} = true ← アドレスからの逆引き（key＝正規化したアドレスの SHA-256）。CF だけ
 ├── staffPageEmailRate/{種類}_{鍵} ← 送信回数の制限 {count, windowStart}（同じ URL・同じアドレス・同じ呼び出し元の単位）。CF だけ
-├── staffLinkCodes/{code} ← 個人リンクコード（E2）{shopId, name, expiry, issuedBy, createdAt}。8桁・24時間・1回限り。CF だけ（ルールで読み書きとも不可）。
-│                          2026-10-05 に発行と入力を画面から外した（スタッフ専用のURLに一本化）。CF・ノード・ルールは残っているが、画面からは新しいコードを作らない
-├── staffLinkCodeIndex/{shopId}/{name} ← その名前の最新のコード（発行し直すと前のコードを消す）。CF だけ
-└── staffLinkCodeAttempts/{uid} ← コード入力の失敗回数 {fails, lockedUntil?, lastAt}（本人単位・5回で15分止める）。CF だけ
+└── （削除済み）staffLinkCodes・staffLinkCodeIndex・staffLinkCodeAttempts ← 個人リンクコード（E2）の置き場。2026-10-05 に機能ごと削除した
+                           （CF・ルール・画面とも無い。ルールに無い＝クライアントからは読み書きできない）。本番に残っている値は purgeInactiveShops が丸ごと消す
 ```
 
 **セキュリティモデル（2026-07-07改修・フェーズB）**: 「Anonymous Auth必須 + オーナー権限分離（管理キー方式）」。
@@ -803,7 +801,6 @@ Person = { displayName: string, entityId?: string, number?: string, links: {[sho
 LinkRequest = { displayName: string, number?: string, at: string }                      // shops/{shopId}/linkRequests/{uid}
 StaffLink   = { name: string, personId?: string, method: "number"|"name"|"code", at: string }  // shops/{shopId}/staffLinks/{uid}
 UserLink    = { name: string, personId?: string, at: string }                           // users/{uid}/links/{shopId}
-StaffLinkCode = { shopId: string, name: string, expiry: number, issuedBy: string, createdAt: string }  // staffLinkCodes/{code}
 
 // 従業員画面の本人のデータ（2026-10-04・第2部 E4）。時刻は "HH:MM"（時は2桁・24時超え表記で 30:00 まで・退勤 > 出勤）
 MyWorkplace = { kind: "shifty"|"manual", color: "#rrggbb", name?: string, shopId?: string, pay?: MyPay }  // users/{uid}/workplaces/{shopId | m_xxxxxxxx}
@@ -1203,19 +1200,18 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
 スタッフアカウントを「店舗＋登録名」に紐付ける。規則は app-my-utils.js（クライアント）と functions/staff-link.js（CF）に**同じ内容**で書き、
 tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI も入口と同じく `MY_SCREEN_ENABLED` の下（2026-10-04 から本番でも購読する）・オーナーの端末だけ。
 
-- **3方式**: A＝従業員番号（`linkNumberKey`。全角数字を半角にし前後の空白を落として、**双方が数字だけのときだけ**完全一致。先頭のゼロは区別。
+- **2方式**（以前は3方式）: A＝従業員番号（`linkNumberKey`。全角数字を半角にし前後の空白を落として、**双方が数字だけのときだけ**完全一致。先頭のゼロは区別。
   照合先は `settings.staffNumbers[名前]` と、企業連携の店舗では写しの人物（`shops/{sid}/company.people`）の**数字の人物ID**）、
   B＝登録ネーム（`linkNameKey`。空白を半角・全角・途中も含めてすべて除いて一字一句一致。かな・大文字小文字は揃えない）、
-  C＝個人リンクコード（8桁・紛らわしい I O 0 1 を除く32文字・24時間・1回限り・承認なし）。A・B は提案だけで、CF `approveStaffLink` が**候補を照合し直して**
-  候補に無い名前を拒否する（管理者が任意の名前を選ぶ経路は無い）。どちらにも当たらない申請は「未リンクの申請」に残り、却下で対応する（C の発行と入力は 2026-10-05 に画面から外した。CF は残っている）
-- **1つの名前に紐付くアカウントは1つ**（既に別の uid が紐付いた名前は提案で押せず、CF も拒否・コードも発行しない）。**1店舗に1つの名前**（staffLinks のキーが uid）
+  どちらも提案だけで、CF `approveStaffLink` が**候補を照合し直して**候補に無い名前を拒否する（管理者が任意の名前を選ぶ経路は無い）。
+  どちらにも当たらない申請は「未リンクの申請」に残り、却下で対応する。C＝個人リンクコードは 2026-10-05 にユーザー指示で機能ごと削除した
+  （スタッフ専用のURLに一本化）。以前にコードで作られた紐付けは method "code" のまま残るので、`LINK_METHODS`・ルール・`MY_LINK_METHOD_LABELS` は "code" を受け付けたまま
+- **1つの名前に紐付くアカウントは1つ**（既に別の uid が紐付いた名前は提案で押せず、CF も拒否する）。**1店舗に1つの名前**（staffLinks のキーが uid）
 - **店舗のオーナーの uid と企業ログイン（company_）は紐付けない**（CF の `linkTargetError`）。E1 の「管理者の端末ではアカウントを作らせない」と同じ理由
 - **本人の画面**（設定タブの「勤務先のお店」・`MyLinksSection`）: 紐付いた店舗の一覧と解除、スタッフURLから開いたときはその店舗への申請（登録ネームと番号を送る）・
-  申請中の表示と取り消し。**`#/me` で開いたとき（shopId が無い）は申請を出さず**、紐付いた店舗が無ければ「スタッフ用URLから開くと申請できます」の案内だけ（コードの入力欄は 2026-10-05 に外した）
+  申請中の表示と取り消し。**`#/me` で開いたとき（shopId が無い）は申請を出さず**、紐付いた店舗が無ければ「スタッフ用URLから開くと申請できます」の案内だけ（コードの入力欄は 2026-10-05 に削除）
 - **管理者の画面**: スタッフタブの「マイシフトのリンク申請」（`StaffLinkRequestsCard`・申請があるときだけ）と、編集モーダルの「メールのアカウントとのリンク」
-  （`StaffLinkEditSection`・リンク済みの人にだけ出し、表示と解除だけ。コードの発行は 2026-10-05 に外した）。部品は app-my.js にあり、App が `staffLinks` オブジェクト（購読した map・requests・rename・drop・reject・call）を渡す
-- **コードの試行回数は本人（uid）単位**（`staffLinkCodeAttempts/{uid}`・5回で15分）。誤ったコードはどの記録にも当たらないので記録の側では数えられない
-  （計画書 E.4 の `staffLinkCodes/{code}.attempts` はこの理由で持たない）。無いコードと期限切れは同じ文言（どちらかを教えない）。期限は `expiry` ちょうどから使えない
+  （`StaffLinkEditSection`・リンク済みの人にだけ出し、表示と解除だけ）。部品は app-my.js にあり、App が `staffLinks` オブジェクト（購読した map・requests・rename・drop・reject・call）を渡す
 - **改名・削除・統合への追随（計画書のリスク）**: staffLinks は名前を値に持つ。作成は CF だけだが、**改名・削除はオーナーの端末から staffLinks を直接書く**
   （ルールでオーナーに削除と `name` の書き換えだけを許した。CF が使えない環境・通信の失敗でも追随させるため）。入口はすべて StaffTab と App:
   改名（`onRenameStaff`）で `sl.drop([新しい名前])`→`sl.rename(旧,新)`、削除（`confirmDelete`）で**名前を残す期間を選んでも削除の時点で** `sl.drop([名前])`
@@ -1386,7 +1382,7 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
   その名前の**承認済み**の記録を申請なしで作る（`planIssueStaffPage`・App の `staffPageAct("issue")`。逆引き `staffPageTokens` を先に、記録を後に書く）。本人は URL を開くだけで
   自分の画面に入る（名前・番号・メール・パスワード・コードの入力なし）。発行済みの人には URL を出し直し、「新しいURLを発行」（確認つき）で古い URL を revoked にする。
   記録の形は承認したものと同じ（displayName は名前・requestedAt は発行時刻・byUid）なので、**ルールと CF の変更は無い**（オーナーは approved を新規作成でき、逆引きは新規作成なら書ける）。
-  改名・削除の追随も同じ（planStaffPageOp）。一覧の行に「URL」の印（発行済み）。個人リンクコードの発行は 2026-10-05 に画面から外した（CF `issueStaffLinkCode`・`redeemStaffLinkCode` は残す。リンク済みの人の編集モーダルには「メールのアカウントとのリンク」の解除だけが出る）。
+  改名・削除の追随も同じ（planStaffPageOp）。一覧の行に「URL」の印（発行済み）。個人リンクコードは 2026-10-05 に機能ごと削除した（CF・ルール・画面とも。リンク済みの人の編集モーダルには「メールのアカウントとのリンク」の解除だけが出る）。
   回帰は `example-staff-page-issue.js`
 - **改名・削除・同名の再登録への追随**: 紐付けの保留の列（`b43a7d7`）の**同じ操作を staffPages にも当てる**（`flushStaffLinkOps` が staffLinks と staffPages を順に読み直す。
   `planStaffPageOp`・世代の目印は approvedAt）。改名は name を移し、削除は revoked（同じ名前を登録し直しても古いURLは生き返らない）。読む側（`resolveMyPage`）も
@@ -1460,7 +1456,7 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 | `createPortalSession` | POST `/createPortalSession` | Stripe Customer Portal セッション |
 | `sendEmailOtp` | Callable `sendEmailOtp` | メール連携用OTP送信 |
 | `verifyEmailOtp` | Callable `verifyEmailOtp` | OTP検証（5回失敗で無効化） |
-| `purgeInactiveShops` | schedule 毎日（JST） | 1年未更新店舗を archived/ へ退避→30日後に本削除。Invalid Dateはスキップしてログ。期限切れの個人リンクコード（`staffLinkCodes`）と索引・古い入力失敗の記録も消す（E2）。退避する店舗のスタッフ個別URLの `staffPageTokens`・`staffPageData`・`staffPagePins` も消す（2026-10-04。本人のデータは archived に残さない）。URLをなくしたとき用のメールアドレス（`staffPageEmails`）とその逆引き（`staffPageEmailIndex`）も消す |
+| `purgeInactiveShops` | schedule 毎日（JST） | 1年未更新店舗を archived/ へ退避→30日後に本削除。Invalid Dateはスキップしてログ。削除した個人リンクコードの残り（`staffLinkCodes`・`staffLinkCodeIndex`・`staffLinkCodeAttempts`）があれば丸ごと消す（2026-10-05）。退避する店舗のスタッフ個別URLの `staffPageTokens`・`staffPageData`・`staffPagePins` も消す（2026-10-04。本人のデータは archived に残さない）。URLをなくしたとき用のメールアドレス（`staffPageEmails`）とその逆引き（`staffPageEmailIndex`）も消す |
 | `purgeOldPeriods` | schedule 毎日（JST） | endDateが36ヶ月超の期間の period・subs・tokens・actuals（P4）を削除。`PURGE_OLD_PERIODS_DRY_RUN=true` でdry-run中（本有効化はBACKLOG参照） |
 | `sendSurveyEmails` | POST `/sendSurveyEmails` | ユーザーアンケート一斉送信（要秘密トークン） |
 | `createCompany` | Callable `createCompany` | 企業アカウント作成（企業コード発行・パスワードハッシュ保存・作成者オーナー店舗を連携） |
@@ -1472,7 +1468,7 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 | `ensureCompanyEntities / createEntity / renameEntity / assignShopEntity / saveEntityConfig / setShopKind` | Callable | 法人の管理（2026-09-30・P1・本番反映済み）。権限は `assertCompanyMember`。保存後に写しを作り直す。規則は `functions/company-config.js` |
 | `ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId / companyRenameStaff / companyUpdateStaff / markPeopleDistinct` | Callable | 人物ID と企業スタッフ一覧の編集（2026-09-30・P1b・本番反映済み）。`markPeopleDistinct` は「統合しない」（`{personIds:[…], distinct:true}` で全ペアを両方向に記録、`{personIds:[a,b], distinct:false}` で取り消し。写しは作り直さない）。権限は `assertCompanyMember`。人物（`companies/{id}/pub/people`）を作るのは `ensureCompanyPeople` だけ。改名は店舗のデータを差分 update で移す（上の「人物ID と企業スタッフ一覧の編集」）。規則は `functions/company-config.js` |
 | `setCompanyPayCode` | Callable | 企業の賃金閲覧パスコードの変更（2026-09-30・P6a・本番反映済み）。現在の番号を照合（未設定なら 0000）し、`companies/{id}/private/payCode` と連携全店舗の `shops/{sid}/private/payCode` に同じハッシュを書く。作成者と企業セッションの両方が可（`assertCompanyMember`）。`syncCompanyMirror` も写しを作り直すたびに企業のパスコードを同期する（後から連携した店舗に届く） |
-| `approveStaffLink / issueStaffLinkCode / redeemStaffLinkCode / unlinkStaff` | Callable | 従業員画面の紐付け（2026-10-04・第2部 E2・本番反映済み。issueStaffLinkCode・redeemStaffLinkCode は 2026-10-05 から画面からは呼ばない）。承認とコードの発行は店舗のオーナー（`owners/{uid}`）、コードの入力はメールのある認証（`token.email`）、解除は本人かオーナー。shopId・uid・名前・コードはパスに埋め込む前に形を確かめ、デモ店舗は拒否。紐付けは `shops/{sid}/staffLinks/{uid}` と `users/{uid}/links/{sid}` を同じ update で書く。コードは読んだ記録と同じものだけをトランザクションで消す（1回限り）。規則は `functions/staff-link.js` |
+| `approveStaffLink / unlinkStaff` | Callable | 従業員画面の紐付け（2026-10-04・第2部 E2・本番反映済み。個人リンクコードの `issueStaffLinkCode`・`redeemStaffLinkCode` は 2026-10-05 にコードから削除＝本番の関数の削除は未実施）。承認は店舗のオーナー（`owners/{uid}`）、解除は本人かオーナー。shopId・uid・名前はパスに埋め込む前に形を確かめ、デモ店舗は拒否。紐付けは `shops/{sid}/staffLinks/{uid}` と `users/{uid}/links/{sid}` を同じ update で書く。規則は `functions/staff-link.js` |
 | `myPagePin` | Callable | スタッフ個別URLの給料の暗証番号（2026-10-04・本番反映済み）。`{token, action:"status"|"set"|"verify", pin?, currentPin?}`。URL が使える状態（承認済み・名前がスタッフ一覧にある）を確かめ、`staffPagePins/{token}` のハッシュと照合する（5回の誤りで15分・トランザクションで数える）。照合が通ると（決めたときも）会社が登録した本人の賃金（`private/pay/{staffPages の name}`）を getMyPay と同じ形で返す。名前・店舗は受け取らない（URL から引く）。デモ店舗は拒否。規則は `functions/my-page.js` |
 | `getMyPay` | Callable | 従業員画面の会社設定の賃金（2026-10-04・第2部 E6・本番反映済み）。`{shopId}` だけを受け取り、呼び出し元 uid の staffLinks の名前の `private/pay` を返す（本人の分だけ・名前は受け取らない）。メールのある認証・紐付けあり・名前がスタッフ一覧にあることを確かめ、shopId の形とデモ店舗を拒否。何も書かない。規則は `functions/my-pay.js` |
 | `claimCompanyShop` | Callable `claimCompanyShop` | 連携済み店舗のオーナーに**呼び出し元のuid**を登録（企業連携タブの「ログイン」で管理コードの再入力を無くす。付与は `companies/{id}/grants/{shopId}/{uid}` に記録し、解除時に回収する） |
@@ -1680,11 +1676,11 @@ if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 
 ### 従業員画面の 2026-10-05 時点の状態（本番公開済み・この節が最新。上の各節の「develop のみ」「未デプロイ」「DEV_MODE のときだけ」は当時の記述）
 
-- **本番公開**: `MY_SCREEN_ENABLED = true`（2026-10-04・`dff85c4`）。定数は止め口として残してあり、false にすると入口・`#/me`・`#/m/`・公開ボタン・管理者側の承認 UI が一括で消える。ルールと Cloud Functions（40本）は本番反映済み
+- **本番公開**: `MY_SCREEN_ENABLED = true`（2026-10-04・`dff85c4`）。定数は止め口として残してあり、false にすると入口・`#/me`・`#/m/`・公開ボタン・管理者側の承認 UI が一括で消える。ルールと Cloud Functions は本番反映済み（ただし個人リンクコードの削除（2026-10-05）はコードだけで、本番のルール・関数への反映は未実施）
 - **アカウント作成**: 匿名 uid への連結は、メールアドレスの列挙保護が有効なプロジェクト（本番・dev とも）では `auth/operation-not-allowed` で拒否される。確認メール（メールリンク）で登録し、方式が使えないときは従来の登録（`createUserWithEmailAndPassword`）へ自動で切り替える。**uid は匿名 uid を引き継がない**
 - **マイシフトのアドレス**: 募集URLの画面でマイシフトを開くと、アドレスバーが開き直せる URL（個別URLの人は `#/m/<token>`、アカウントの人は `#/me`）になる。閉じると `#/s/<token>` に戻る
 - **個別URL**: 設定タブの**一番下**に表示（コピー・共有だけ。変更は管理者）。メールアドレスの任意登録はその上。管理者がスタッフ編集モーダルで発行・再発行した URL が常に有効
-- **個人リンクコード**: 2026-10-05 に、管理者側の発行と本人側の入力欄を**画面から外した**（スタッフ専用の URL に一本化）。CF `issueStaffLinkCode`・`redeemStaffLinkCode` は残っているが画面からは呼ばない。リンク済みの人の編集モーダルには解除だけが出る
+- **個人リンクコード**: 2026-10-05 にユーザー指示で**機能ごと削除した**（スタッフ専用の URL に一本化）。画面・CF（`issueStaffLinkCode`・`redeemStaffLinkCode`）・ルール（`staffLinkCodes` 等の3ノード）・純粋関数・テストとも無い。以前にコードで作られた紐付け（method "code"）はそのまま有効。リンク済みの人の編集モーダルには解除だけが出る。**本番への反映は未実施**（クライアント → ルール → 関数の削除の順。BACKLOG）
 - **ヘルプ勤務**: 所属店舗が公開済みなら、ヘルプ先の状態に関係なく、全員の表・本人のカレンダー・.ics に PDF どおり出す。給料は所属店舗の賃金で計算し（`myHelperDaysOf`）、内訳に「うち他店でのヘルプ」。ヘルプ先の日にも給料計算用の実績を入れられる（`users/{uid}/overrides/{ヘルプ先}/{日付}`）
 - **スタッフが入れた時刻**: 表示（カレンダー・次のシフト・.ics・全員の表）は常に公開内容。本人の実績は給料計算だけに効く
 - **URLをなくしたとき用のメールアドレス（任意）**: CF `setPageEmail`（登録・変更・削除・状態と控えの送信）・`recoverPageUrl`（送り直し。結果の文言は登録の有無に関係なく同じ）。置き場は CF 専用の `staffPageEmails`・`staffPageEmailIndex`・`staffPageEmailRate`（ルールで読み書き不可）。メールの URL は本番ドメイン固定で `?openExternalBrowser=1` が付く。回帰は `example-my-page-email.js`（画面）と cf-verify の `example-page-email.js`

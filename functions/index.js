@@ -933,22 +933,13 @@ exports.purgeInactiveShops = functions
       }
     }
 
-    // 4) 期限切れの個人リンクコード（従業員画面 E2）と、それを指す索引・古い失敗回数を削除
-    const codeSnap = await db.ref("staffLinkCodes").once("value");
-    const codes = codeSnap.val() || {};
-    for (const [code, entry] of Object.entries(codes)) {
-      if (!linkCodeExpiredCF(entry, now)) continue;
-      await db.ref(`staffLinkCodes/${code}`).remove();
-      if (entry && isValidShopId(entry.shopId) && isSafeDbKey(entry.name)) {
-        const idx = (await db.ref(`staffLinkCodeIndex/${entry.shopId}/${entry.name}`).once("value")).val();
-        if (idx === code) await db.ref(`staffLinkCodeIndex/${entry.shopId}/${entry.name}`).remove();
+    // 4) 個人リンクコード（従業員画面 E2）は 2026-10-05 に機能ごと削除した。本番に残っているコード・索引・失敗回数を消す
+    //    （発行と入力の CF もルールも無いので、ノードごと消してよい。消えた後は空読みだけ）
+    for (const node of ["staffLinkCodes", "staffLinkCodeIndex", "staffLinkCodeAttempts"]) {
+      if ((await db.ref(node).once("value")).exists()) {
+        await db.ref(node).remove();
+        console.log(`廃止した個人リンクコードの残りを削除: ${node}`);
       }
-    }
-    const attSnap = await db.ref("staffLinkCodeAttempts").once("value");
-    const atts = attSnap.val() || {};
-    for (const [uid, st] of Object.entries(atts)) {
-      const last = st && typeof st.lastAt === "number" ? st.lastAt : NaN;
-      if (Number.isNaN(last) || (now - last > 24 * 60 * 60 * 1000 && !linkCodeWaitMsCF(st, now))) await db.ref(`staffLinkCodeAttempts/${uid}`).remove();
     }
 
     return null;
@@ -1160,8 +1151,7 @@ const { sanitizeCompanySettings, sanitizeCompanyDeadlines, sanitizeMonthlyDeadli
   renameStaffSettingsPatch, renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffLaborMonthsPatch, renameStaffActualsPatch, renameStaffSubsPatch,
   COMPANY_BUILTIN_ATTRS, COMPANY_ATTR_ID_RE, mirrorPeopleOf } = require("./company-config");
 // 従業員画面の紐付け（第2部 E2）の規則。クライアントの app-my-utils.js と同じ内容（tests/my.test.js が照合する）
-const { normalizeLinkCodeCF, isValidLinkCodeCF, renameStaffLinksPatchCF, staffLinkPersonIdPatchCF, linkCodeWaitMsCF, nextLinkCodeAttemptsCF,
-  linkCodeExpiredCF, genLinkCodeCF, planApproveStaffLink, planIssueStaffLinkCode, planRedeemStaffLinkCode, planUnlinkStaff,
+const { renameStaffLinksPatchCF, staffLinkPersonIdPatchCF, planApproveStaffLink, planUnlinkStaff,
   LINK_NAME_MAX } = require("./staff-link");
 // 従業員画面の会社設定の賃金（第2部 E6・getMyPay）の判定。tests/my.test.js が app-utils.js の normalizePayVersion との一致を照合する
 const { myPayLinkNameCF, planGetMyPay } = require("./my-pay");
@@ -1950,10 +1940,10 @@ exports.companyUpdateStaff = functions
 
 // ============================================================
 // 従業員画面: スタッフアカウントと「店舗＋登録名」の紐付け（2026-10-04・Shifty_実装計画_2026-10.md 第2部 E2）
-// 3方式: A＝従業員番号・B＝登録ネーム（本人の申請 → 管理者が承認）、C＝個人リンクコード（承認なし）。
+// 2方式: A＝従業員番号・B＝登録ネーム（本人の申請 → 管理者が承認）。C＝個人リンクコードは 2026-10-05 に機能ごと削除した。
 // 規則は functions/staff-link.js の純粋関数（クライアントの app-my-utils.js と同じ。tests/my.test.js が照合する）。
 // 書くのは shops/{sid}/staffLinks/{uid}（名前の正本）と users/{uid}/links/{sid}（本人の索引）を同じ update で。
-// 入力の shopId・uid・名前・コードは、パスに埋め込む前に形を確かめる（Admin SDK は空セグメントを詰める・バグチェック#125）。
+// 入力の shopId・uid・名前は、パスに埋め込む前に形を確かめる（Admin SDK は空セグメントを詰める・バグチェック#125）。
 // ============================================================
 function readLinkShopId(data) {
   const shopId = data && data.shopId;
@@ -1992,68 +1982,6 @@ exports.approveStaffLink = functions
     throwPlanError(r);
     await db.ref().update(r.patch);
     return { ok: true, method: r.method };
-  });
-
-// 個人リンクコードの発行（方式C）: 店舗のオーナーがスタッフ名に対して8桁・24時間・1回限りのコードを作る。
-// 同じ名前に前に発行したコードは使えなくする（最新の1つだけ）
-exports.issueStaffLinkCode = functions
-  .region("asia-northeast1")
-  .https.onCall(async (data, context) => {
-    const callerUid = linkAuthUid(context);
-    const shopId = readLinkShopId(data);
-    const name = readLinkName(data);
-    const [owners, staff, staffLinks, prevCode] = await Promise.all([
-      readVal(`shops/${shopId}/owners`), readVal(`shops/${shopId}/staff`), readVal(`shops/${shopId}/staffLinks`),
-      readVal(`staffLinkCodeIndex/${shopId}/${name}`),
-    ]);
-    let code = "";
-    for (let i = 0; i < 5 && !code; i++) {
-      const c = genLinkCodeCF(n => [...crypto.randomBytes(n)]);
-      if (!(await db.ref(`staffLinkCodes/${c}`).once("value")).exists()) code = c;
-    }
-    const now = Date.now();
-    const r = planIssueStaffLinkCode({ shopId, name, callerUid, now, nowIso: new Date(now).toISOString(), owners, staff, staffLinks, code, prevCode });
-    throwPlanError(r);
-    await db.ref().update(r.patch);
-    return { ok: true, code: r.code, expiry: r.expiry };
-  });
-
-// コードでの紐付け（方式C）: メールでログインした本人がコードを入れる。失敗は本人単位で数え、5回で15分止める
-exports.redeemStaffLinkCode = functions
-  .region("asia-northeast1")
-  .https.onCall(async (data, context) => {
-    const uid = linkAuthUid(context);
-    if (!isSafeDbKey(uid)) throw new functions.https.HttpsError("invalid-argument", "アカウントが無効です");
-    const email = context.auth.token && context.auth.token.email;
-    const code = normalizeLinkCodeCF(data && data.code);
-    if (!isValidLinkCodeCF(code)) throw new functions.https.HttpsError("invalid-argument", "コードは8文字の英数字です");
-    const now = Date.now();
-    const attempts = await readVal(`staffLinkCodeAttempts/${uid}`);
-    const wait = linkCodeWaitMsCF(attempts, now);
-    if (wait) throw new functions.https.HttpsError("resource-exhausted", `入力の誤りが続いたため止めています。${Math.ceil(wait / 60000)}分後にもう一度お試しください`);
-    const rec = await readVal(`staffLinkCodes/${code}`);
-    const shopId = rec && rec.shopId;
-    const shopOk = isValidShopId(shopId) && !isDemoShop(shopId);
-    const [owners, staff, mirrorPeople, staffLinks] = shopOk ? await Promise.all([
-      readVal(`shops/${shopId}/owners`), readVal(`shops/${shopId}/staff`), readVal(`shops/${shopId}/company/people`), readVal(`shops/${shopId}/staffLinks`),
-    ]) : [null, null, null, null];
-    const r = planRedeemStaffLinkCode({ uid, email, rec: shopOk ? rec : null, code, now, nowIso: new Date(now).toISOString(), owners, staff, mirrorPeople, staffLinks });
-    if (r.deleteExpired && rec) await db.ref(`staffLinkCodes/${code}`).remove();
-    if (r.countFail) await db.ref(`staffLinkCodeAttempts/${uid}`).set(nextLinkCodeAttemptsCF(attempts, false, now));
-    throwPlanError(r);
-    // 1回限り: いま読んだ記録と同じものが残っているときだけ消す（同時に2人が入れても片方だけが通る）
-    let consumed = false;
-    const tx = await db.ref(`staffLinkCodes/${code}`).transaction(cur => {
-      consumed = false;
-      if (cur === null) return null;
-      if (cur.createdAt === rec.createdAt && cur.shopId === rec.shopId && cur.name === rec.name) { consumed = true; return null; }
-      return undefined;
-    });
-    if (!tx.committed || !consumed) throw new functions.https.HttpsError("failed-precondition", "このコードは既に使われています");
-    const idx = await readVal(`staffLinkCodeIndex/${shopId}/${rec.name}`);
-    if (idx === code) r.patch[`staffLinkCodeIndex/${shopId}/${rec.name}`] = null;
-    await db.ref().update(r.patch);
-    return { ok: true, shopId: r.shopId, name: r.name };
   });
 
 // 解除: 本人（uid を省く）か店舗のオーナー（uid を渡す）。staffLinks と users/{uid}/links の両方を消す

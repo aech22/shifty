@@ -1811,7 +1811,7 @@ const dragIdxRef=useRef(null);
               </div>
             </>)}
 
-            {/* スタッフ専用のURLが導線。個人リンクコードの発行は 2026-10-05 に画面から外した。リンク済みの人にだけ解除を出す */}
+            {/* スタッフ専用のURLが導線（個人リンクコードは 2026-10-05 に機能ごと削除）。リンク済みの人にだけ解除を出す */}
             {sl.enabled&&sec("スタッフ専用のURL",<StaffPageEditSection links={sl} name={n} tt={tt}/>)}
             {sl.enabled&&staffLinksByName(sl.map)[n]&&sec("メールのアカウントとのリンク",<StaffLinkEditSection links={sl} name={n} tt={tt}/>)}
 

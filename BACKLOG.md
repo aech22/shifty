@@ -105,11 +105,29 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟡 個人リンクコードの削除を本番へ反映する（2026-10-05 にコードから削除・本番は未反映）
+
+**目的**: 2026-10-05 のユーザー指示で個人リンクコード（紐付けの方式C）を機能ごと削除した。コードからは消えたが、
+本番には CF `issueStaffLinkCode`・`redeemStaffLinkCode` とルール（`staffLinkCodes`・`staffLinkCodeIndex`・`staffLinkCodeAttempts`）が残っている。
+クライアントは 2026-10-05 から両 CF を呼ばないので、残っていても画面からは使われない（CF を直接呼べばコードの発行と引き換えはまだ通る）。
+**順序**: ①クライアント（/release-to-main。`STAFF_LINK_CFS` から2本を外した版）→ ②ルール（`firebase deploy --only database`。3ノードのルールが消える＝既定の拒否。
+3ノードはもともとクライアントから読み書きできないので、先後で壊れるものは無い）→ ③CF（`purgeInactiveShops` の更新と、2本の関数の削除。
+`firebase deploy --only functions` は関数の削除を確認してくるので承認する／または `firebase functions:delete issueStaffLinkCode redeemStaffLinkCode --region asia-northeast1`）。
+- [ ] ①〜③を反映する（本番デプロイ＝ユーザー承認）
+- [ ] `firebase functions:list` で38本・2本が無いことを確かめる
+- [ ] 次の `purgeInactiveShops` の実行ログで「廃止した個人リンクコードの残りを削除」が出る（ノードが残っていた場合）か、何も出ないことを確かめる
+- [ ] 以前にコードで作られた紐付け（`staffLinks/{uid}.method === "code"`）がマイシフトで従来どおり使えることを本番で1件確かめる（あれば）
+**影響範囲**: functions/index.js・functions/staff-link.js・database.rules.json（コード変更は済み）
+**検証（コード）**: `npm test`・`npx eslint app-*.js`・cf-verify の `example-staff-link.js`（24項目）。ブラウザの回帰 `example-my-link.js` は
+この環境では CDN（unpkg・cdnjs）へ出られず未実行
+
+---
+
 ## 🟡 従業員画面（第2部 E0〜E6）の本番反映: ルール → CF → クライアント（入口のゲートを外す）
 
 > **✅ 2026-10-05 確認: ①ルール（dev→本番）・②CF（40本）・③ゲート（`MY_SCREEN_ENABLED = true`・2026-10-04 `dff85c4`／リリース `048a52b`）は済んでいる。**
 > 残りは REST の実測・本番の検証店舗での CF の実測・実機での通しだけ（下の未チェックの項目）。本文の「未デプロイ」「本番では出ていない」は 2026-10-04 時点の記述。
-> 個人リンクコード（方式 C）の発行と入力は 2026-10-05（`5d80d39`）に画面から外したので、C の実測は対象外（CF は残っている）。
+> 個人リンクコード（方式 C）は 2026-10-05 に画面から外し（`5d80d39`）、同日ユーザー指示で機能ごと削除した（CF・ルール・関数とも。本番からの削除は下の🟡「個人リンクコードの削除を本番へ反映」）。C の実測は対象外。
 
 **目的**: 従業員画面（マイシフト・給料）は E0〜E6 を 2026-10-04 に develop で実装し終えたが、**ルールも Cloud Functions も dev・本番とも未デプロイ**（担当の制約）。
 入口は `MY_SCREEN_ENABLED = DEV_MODE`（app-core.js）の下にあり、本番では出ていない。CF は cf-harness（本物の index.js）、画面はスタブ Firebase でしか確かめていない。
@@ -135,7 +153,7 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
       `users/{uid}` への複数パスの update（勤務先とそのシフトをまとめて消す）が子のルールだけで通ることも確かめる。反映まで dev の実機では手入力・上書き・勤務先の保存が拒否される（画面は落ちず、理由を出す）
 - [ ] REST で実測: 申請は本人かつメールのある認証だけ書ける（匿名 uid・他人の uid・存在しない店舗・デモ店舗・形の不正は 401）／オーナーは読めて消せる・本人は自分の申請だけ読める。
       staffLinks はオーナーも**作れない**（401）・オーナーは消せる・既存の紐付けの `name` だけ書き換えられる（`method`・`personId` は 401）・本人は自分の分だけ読める。
-      `staffLinkCodes` 等の3ノードは誰も読み書きできない
+      `staffLinkCodes` 等の3ノードは誰も読み書きできない（2026-10-05 にルールから削除＝既定の拒否のまま）
 - [ ] E5（2026-10-04）の `users/$uid/workplaces/$wid/pay`・`users/$uid/goals`・`users/$uid/actuals/$ym/$wid` を REST で実測する: メールのある本人は書ける（200）・匿名 uid・他人の uid は 401。
       pay: 必須（closingDay・payMonthOffset・payDay・holidayRule）の欠け・closingDay 0／32・payMonthOffset 3・holidayRule "x"・rate だけで wageType なし・rate 0・commute の per "week"・
       commute の余計なキー・余計なキーは 401。**勤務先の update（kind・shopId・color・name・pay を1回の update）が通ること**と、`pay:null` で給料設定だけ消せること。
@@ -153,10 +171,10 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [x] 紐付けの4本（`approveStaffLink`・`issueStaffLinkCode`・`redeemStaffLinkCode`・`unlinkStaff`）と既存の更新（`companyRenameStaff`・`syncPeopleMirror`・`purgeInactiveShops`）、
       E6 の `getMyPay` → **2026-10-05 確認: 本番反映済み**（`firebase functions:list` で40本）。以下は反映前の注意（解消済み）: **CF より先にクライアントを出すと**、承認・コードの発行と入力・解除が「関数が無い」で失敗し、給料は会社設定を読めず本人の設定で計算する（申請・却下・改名と削除の追随はクライアントだけで動く）
 - [ ] 実機（dev は Spark で CF が動かないので本番の検証店舗）で A・B（申請→承認）を1回ずつ通し、`staffLinks` と `users/{uid}/links` が同じ値で書かれることを確かめる
-      （C＝個人リンクコードは 2026-10-05 に画面から外したので対象外。CF は残っているので、必要なら CF を直接呼んで確かめる）
+      （C＝個人リンクコードは 2026-10-05 に機能ごと削除したので対象外）
 - [ ] getMyPay を本番の検証店舗で1回通す: 紐付いた本人に自分の private/pay だけが返る・別の uid の紐付けの名前を渡しても自分の分だけ・紐付けの無い uid は permission-denied・
       匿名 uid は failed-precondition（**連結直後のトークンに email が入るか**は E1 と同じ未検証の問い）
-- [ ] Admin SDK の `transaction()` の挙動（手元に値が無いと最初に null で呼ぶ）で「1回限り」が崩れないことを実機で確かめる（cf-harness のモックは1回だけ呼ぶ）
+- [x] ~~Admin SDK の `transaction()` の挙動で「1回限り」が崩れないことを実機で確かめる~~ → 対象の `redeemStaffLinkCode` を 2026-10-05 に削除したので不要
 - [x] スタッフ個別URL（2026-10-04）の `myPagePin`（新規）と `purgeInactiveShops` の更新（アーカイブする店舗の staffPageTokens・staffPageData・staffPagePins を消す）を本番へ反映する
       → **2026-10-05 確認: 本番反映済み**（40本に入っている）
 - [ ] 上の myPagePin の実測（反映前の注意は解消済み: **CF より先にクライアントを出すと**、個別URLの給料タブが開かない（「暗証番号を確認できませんでした」）。閲覧・提出・承認はクライアントだけで動く。
@@ -1922,7 +1940,7 @@ app-utils.js（判定を純粋関数に切り出す場合）
 
 - **リリース済み**: マイシフトのアドレスバー（開き直せる URL）と設定の一番下の個別URL、ヘルプ勤務の表示と給料計算（ヘルプ先の日の実績入力を含む）、URLをなくしたとき用のメールアドレス（CF `setPageEmail`・`recoverPageUrl`、ルール3行＝CF 専用ノード）。ルールは dev→本番、CF は40本（新規2本）
 - **Opus のエージェントが利用上限で2回停止**したため、残り（回帰2本の修正・個別URLを設定の最下部へ並べ替え・検証・リリース）は主セッションが行った
-- **個人リンクコードの発行を画面から削除**（ユーザー指示）。本人側の入力欄も外した。CF は残置。`example-my-link.js` は発行と引き換えを CF 直接呼び出しで確かめる形に直した
+- **個人リンクコードの発行を画面から削除**（ユーザー指示）。本人側の入力欄も外した。続けて同日、ユーザー指示で**機能ごと削除**した（CF・ルール・純粋関数・テスト・回帰。下の🟡で本番へ反映する）
 - **メール登録の画面の回帰** `example-my-page-email.js` を追加（登録→控え1通・伏せ表示・CF 専用の置き場・「なくした場合」の統一文言・削除）。`9251272` の配信物では EXIT=2
 - **未検証**: 本番での控えのメール・送り直しのメールの実送信。Firebase Auth の確認メールは迷惑メールに入る（カスタムドメインの DNS 4件が未設定）
 

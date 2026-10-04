@@ -1424,7 +1424,7 @@ function App(){
     try{await fbUpd(`shops/${sid}/staffPages`,r.patch);return{ok:true};}
     catch(e){console.warn("個別URLの更新に失敗:",e);return{error:isPermissionDeniedError(e)?"保存できませんでした（サーバー側の設定が未反映の可能性があります）":"保存できませんでした。通信状態を確認してもう一度お試しください"};}
   };
-  const STAFF_LINK_CFS=["approveStaffLink","issueStaffLinkCode","unlinkStaff"];
+  const STAFF_LINK_CFS=["approveStaffLink","unlinkStaff"];
   const callStaffLinkCF=async(name,payload)=>{
     if(!STAFF_LINK_CFS.includes(name))return{error:"この操作はできません"};
     try{return(await _callCF(name,{...(payload||{}),shopId:sid}))||{};}

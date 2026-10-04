@@ -1,7 +1,8 @@
 // 実例: 従業員画面の紐付け（第2部 E2・2026-10-04）の Cloud Functions を本物のまま実行する。
-//   approveStaffLink / issueStaffLinkCode / redeemStaffLinkCode / unlinkStaff と、
-//   companyRenameStaff・mergePeople の追随（staffLinks の名前・personId）、purgeInactiveShops の期限切れコードの掃除。
-// 許可側だけでなく拒否側（permission-denied / failed-precondition / invalid-argument / resource-exhausted）も1項目ずつ通す。
+//   approveStaffLink / unlinkStaff と、companyRenameStaff・mergePeople の追随（staffLinks の名前・personId）。
+//   個人リンクコード（issueStaffLinkCode・redeemStaffLinkCode）は 2026-10-05 に機能ごと削除したので、CF が無いことと、
+//   purgeInactiveShops が本番に残ったコードのノードを消すことを確かめる。
+// 許可側だけでなく拒否側（permission-denied / failed-precondition）も1項目ずつ通す。
 // 反証: SHIFTY_CF_INDEX に E2 より前の functions/index.js を渡すと落ちる（関数が無い）。
 "use strict";
 const { loadFunctions, callFn, callRun, makeChecker } = require("./cf-harness.js");
@@ -58,67 +59,9 @@ const load = data => loadFunctions({ indexPath: INDEX, data });
   r = await callFn(h.fns.approveStaffLink, { shopId: "S1", uid: OWNER, name: "田中" }, { auth: em(OWNER).auth });
   check("拒否: 店舗のオーナーの uid の申請は承認しない", !r.ok && r.code === "failed-precondition" && h.db.get(`shops/S1/staffLinks/${OWNER}`) === undefined, r);
 
-  // ===== 発行と、コードでの紐付け（方式C）=====
+  // ===== 個人リンクコード（方式C）は削除済み =====
   h = load(base());
-  const t0 = Date.now();
-  r = await callFn(h.fns.issueStaffLinkCode, { shopId: "S1", name: "佐藤" }, { auth: em(OWNER).auth });
-  const code1 = r.ok && r.res.code;
-  check("C: オーナーが8桁のコードを発行できる", r.ok && /^[A-HJ-NP-Z2-9]{8}$/.test(code1), r);
-  check("C: 有効期限は発行から24時間", r.ok && Math.abs(r.res.expiry - (t0 + 24 * 3600 * 1000)) < 5000, r);
-  r = await callFn(h.fns.issueStaffLinkCode, { shopId: "S1", name: "佐藤" }, { auth: em(OWNER).auth });
-  const code2 = r.ok && r.res.code;
-  check("C: 発行し直すと前のコードは消える", r.ok && code2 !== code1 && h.db.get(`staffLinkCodes/${code1}`) === undefined && h.db.get(`staffLinkCodeIndex/S1/佐藤`) === code2);
-  r = await callFn(h.fns.issueStaffLinkCode, { shopId: "S1", name: "佐藤" }, { auth: em(STAFF).auth });
-  check("拒否: オーナーでない呼び出し元は発行できない", !r.ok && r.code === "permission-denied", r);
-  r = await callFn(h.fns.issueStaffLinkCode, { shopId: "S1", name: "鈴木" }, { auth: em(OWNER).auth });
-  check("拒否: 登録の無い名前", !r.ok && r.code === "failed-precondition", r);
-
-  r = await callFn(h.fns.redeemStaffLinkCode, { code: code1 }, { auth: em(STAFF).auth });
-  check("拒否: 発行し直す前のコードは使えない", !r.ok && r.code === "invalid-argument", r);
-  r = await callFn(h.fns.redeemStaffLinkCode, { code: code2.toLowerCase().replace(/(....)/, "$1-") }, { auth: anon("anonUid").auth });
-  check("拒否: メールの無い（匿名の）認証", !r.ok && r.code === "failed-precondition", r);
-  r = await callFn(h.fns.redeemStaffLinkCode, { code: code2.toLowerCase().replace(/(....)/, "$1-") }, { auth: em(STAFF).auth });
-  check("C: 小文字・ハイフン入りでも正規化して紐付く（承認なし）", r.ok && r.res.name === "佐藤", r);
-  check("C: staffLinks に method:code", h.db.get(`shops/S1/staffLinks/${STAFF}/method`) === "code");
-  check("C: コード・索引は消え、この店舗への申請も消える", h.db.get(`staffLinkCodes/${code2}`) === undefined && h.db.get("staffLinkCodeIndex/S1/佐藤") === undefined && h.db.get(`shops/S1/linkRequests/${STAFF}`) === undefined);
-  r = await callFn(h.fns.redeemStaffLinkCode, { code: code2 }, { auth: em(STAFF2).auth });
-  check("1回限り: 同じコードは2回使えない", !r.ok && r.code === "invalid-argument", r);
-  r = await callFn(h.fns.issueStaffLinkCode, { shopId: "S1", name: "佐藤" }, { auth: em(OWNER).auth });
-  check("拒否: 紐付け済みの名前には発行しない", !r.ok && r.code === "failed-precondition", r);
-
-  // 期限切れ（24時間ちょうど）
-  h = load(base());
-  r = await callFn(h.fns.issueStaffLinkCode, { shopId: "S1", name: "佐藤" }, { auth: em(OWNER).auth });
-  const c3 = r.res.code;
-  h.db.put(`staffLinkCodes/${c3}/expiry`, Date.now());
-  r = await callFn(h.fns.redeemStaffLinkCode, { code: c3 }, { auth: em(STAFF).auth });
-  check("期限: 24時間を過ぎたコードは使えない", !r.ok && r.code === "invalid-argument", r);
-  check("期限: 期限切れのコードは消える", h.db.get(`staffLinkCodes/${c3}`) === undefined);
-  check("期限: 失敗に数える", h.db.get(`staffLinkCodeAttempts/${STAFF}/fails`) === 1);
-
-  // 試行回数
-  h = load(base());
-  r = await callFn(h.fns.issueStaffLinkCode, { shopId: "S1", name: "佐藤" }, { auth: em(OWNER).auth });
-  const c4 = r.res.code;
-  for (let i = 0; i < 5; i++) await callFn(h.fns.redeemStaffLinkCode, { code: "ZZZZZZZZ" }, { auth: em(STAFF).auth });
-  r = await callFn(h.fns.redeemStaffLinkCode, { code: c4 }, { auth: em(STAFF).auth });
-  check("試行回数: 5回誤ると正しいコードでも止まる", !r.ok && r.code === "resource-exhausted", r);
-  check("試行回数: 止めている間はコードを消費しない", h.db.get(`staffLinkCodes/${c4}`) !== undefined);
-  r = await callFn(h.fns.redeemStaffLinkCode, { code: c4 }, { auth: em(STAFF2).auth });
-  check("試行回数: 本人単位（別のアカウントは使える）", r.ok, r);
-  r = await callFn(h.fns.redeemStaffLinkCode, { code: "12" }, { auth: em(STAFF).auth });
-  check("拒否: 形の違うコード", !r.ok && r.code === "invalid-argument", r);
-
-  // オーナーの uid はコードでも紐付けない
-  h = load(base());
-  r = await callFn(h.fns.issueStaffLinkCode, { shopId: "S1", name: "佐藤" }, { auth: em(OWNER).auth });
-  const c5 = r.res.code;
-  r = await callFn(h.fns.redeemStaffLinkCode, { code: c5 }, { auth: em(OWNER).auth });
-  check("拒否: 店舗のオーナーの uid はコードでも紐付けない", !r.ok && r.code === "failed-precondition", r);
-  // 発行後に名前が消えたコード
-  h.db.put("shops/S1/staff", ["田中", "山田 太郎"]);
-  r = await callFn(h.fns.redeemStaffLinkCode, { code: c5 }, { auth: em(STAFF).auth });
-  check("拒否: 発行後にスタッフ一覧から消えた名前のコード（消える）", !r.ok && r.code === "failed-precondition" && h.db.get(`staffLinkCodes/${c5}`) === undefined, r);
+  check("削除: issueStaffLinkCode・redeemStaffLinkCode の CF は無い", h.fns.issueStaffLinkCode === undefined && h.fns.redeemStaffLinkCode === undefined);
 
   // ===== 解除 =====
   h = load(base());
@@ -156,16 +99,15 @@ const load = data => loadFunctions({ indexPath: INDEX, data });
   r = await callFn(h.fns.mergePeople, { companyId: CO, keepPersonId: "0012", dropPersonId: "p_dropDROP" }, { auth: em(OWNER).auth });
   check("統合: 消えた人物を指していた紐付けの personId が残す方へ付け替わる", r.ok && h.db.get("shops/S2/staffLinks/u3/personId") === "0012" && h.db.get("users/u3/links/S2/personId") === "0012", r);
 
-  // ===== 定期の掃除 =====
+  // ===== 定期の掃除: 廃止した個人リンクコードの残りを消す =====
   h = load(base());
   h.db.put("staffLinkCodes/AAAA2222", { shopId: "S1", name: "佐藤", expiry: Date.now() - 1, issuedBy: OWNER, createdAt: "t" });
   h.db.put("staffLinkCodeIndex/S1/佐藤", "AAAA2222");
   h.db.put("staffLinkCodes/BBBB3333", { shopId: "S1", name: "田中", expiry: Date.now() + 3600e3, issuedBy: OWNER, createdAt: "t" });
-  h.db.put("staffLinkCodeAttempts/old", { fails: 2, lastAt: Date.now() - 3 * 24 * 3600e3 });
   h.db.put("staffLinkCodeAttempts/locked", { fails: 0, lockedUntil: Date.now() + 600e3, lastAt: Date.now() });
   r = await callRun(h.fns.purgeInactiveShops);
-  check("掃除: 期限切れのコードと索引が消え、期限内のコードは残る", r.ok && h.db.get("staffLinkCodes/AAAA2222") === undefined && h.db.get("staffLinkCodeIndex/S1/佐藤") === undefined && h.db.get("staffLinkCodes/BBBB3333") !== undefined, r);
-  check("掃除: 古い失敗回数は消え、止めている最中の記録は残る", h.db.get("staffLinkCodeAttempts/old") === undefined && h.db.get("staffLinkCodeAttempts/locked") !== undefined);
+  check("掃除: コード・索引・失敗回数のノードがまるごと消える（期限内のコードも）", r.ok && h.db.get("staffLinkCodes") === undefined && h.db.get("staffLinkCodeIndex") === undefined && h.db.get("staffLinkCodeAttempts") === undefined, r);
+  check("掃除: 紐付けそのもの（staffLinks）は消さない", h.db.get("shops/S1/staff") !== undefined);
 
   check.done();
 })();
