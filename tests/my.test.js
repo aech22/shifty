@@ -493,13 +493,229 @@ test("E3 database.rules.json: users/$uid/seen はメールのある本人だけ�
   assert.strictEqual(p.$other[".validate"], false);
   assert.strictEqual(rules.users.$uid[".write"], undefined, "users/$uid 全体の書き込みは許さない");
 });
-test("E3 マイシフトの書き込みは users/{uid}/seen だけ（店舗のデータに書かない）", () => {
+test("E3/E4 マイシフトと勤務先の書き込みは users/{uid}/ の下だけ（店舗のデータに書かない）", () => {
   const src = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
   const a = src.indexOf("async function readMyShiftShop"), b = src.indexOf("function MyPayTab(");
   assert.ok(a > 0 && b > a);
   const body = src.slice(a, b);
   const writes = [...body.matchAll(/\b(fbSet|fbUpd|\.set|\.update|\.remove)\(\s*`?([^,`)]*)/g)].map(x => x[1] + " " + x[2]);
-  assert.deepStrictEqual(writes, ["fbSet users/${uid}/seen/${sid}/${pid}"]);
+  // E3 は seen だけ。E4 で本人のデータ（workplaces・shifts・overrides）を users/{uid} への差分 update で書く（意図して広げた）
+  assert.deepStrictEqual(writes, ["fbUpd users/${uid}", "fbSet users/${uid}/seen/${sid}/${pid}"]);
+  // users/{uid} への update の鍵は workplaces・shifts・overrides の3つだけ
+  const keys = [...body.matchAll(/\[`(workplaces|shifts|overrides|[a-z]+)\/\$\{/g)].map(x => x[1]);
+  assert.ok(keys.length >= 5 && keys.every(k => ["workplaces", "shifts", "overrides"].includes(k)), JSON.stringify(keys));
   assert.ok(/orderByChild\("periodId"\)\.equalTo\(pid\)/.test(body), "subs は期間ごとの部分読み");
   assert.ok(!/ref\(`shops\/\$\{sid\}\/subs`\)\.once/.test(body), "店舗の subs 全件を読まない");
+  assert.ok(!/ref\([^)]*\)\.(push|transaction)\(/.test(body), "push・transaction で書かない");
+  assert.ok(!/fbSet\(`users\/\$\{uid\}\/(shifts|workplaces|overrides)`/.test(body), "コレクション全体を set() しない");
+});
+
+// ===== E4: 手入力の勤務先とシフト・実績の上書き・.ics =====
+test("E4 parseMyClockInput: 直接入力（9・930・1730・9:30・全角・24時超え）を HH:MM にする。30:00 を超える・読めない入力は null", () => {
+  const cases = { "9": "09:00", "930": "09:30", "1730": "17:30", "9:30": "09:30", "９：３０": "09:30", " 25:00 ": "25:00", "30:00": "30:00", "2400": "24:00", "0:05": "00:05" };
+  Object.entries(cases).forEach(([i, o]) => assert.strictEqual(m.parseMyClockInput(i), o, i));
+  ["30:05", "31", "9:60", "abc", "12345", "9:3x"].forEach(i => assert.strictEqual(m.parseMyClockInput(i), null, i));
+  assert.strictEqual(m.parseMyClockInput(""), "");
+  assert.strictEqual(m.MY_TIME_OPTIONS.length, 361, "0:00〜30:00 の5分刻み");
+  assert.deepStrictEqual([m.MY_TIME_OPTIONS[0], m.MY_TIME_OPTIONS[1], m.MY_TIME_OPTIONS[360]], [{ value: "00:00", label: "0:00" }, { value: "00:05", label: "0:05" }, { value: "30:00", label: "30:00" }]);
+  assert.strictEqual(m.parseMyMinutesInput(""), 0);
+  assert.strictEqual(m.parseMyMinutesInput("６０"), 60);
+  assert.strictEqual(m.parseMyMinutesInput("1441"), null);
+  assert.strictEqual(m.parseMyMinutesInput("-5"), null);
+});
+test("E4 validateMyShiftInput: 勤務先・日付・時刻・24時超えの案内・休憩が勤務より長い・メモの上限", () => {
+  const ok = { workplaceId: "m_ABCDEFGH", date: "2026-10-04", start: "9:00", end: "17:00", breakMin: "60", memo: "" };
+  assert.strictEqual(m.validateMyShiftInput(ok, { workplaceIds: ["m_ABCDEFGH"] }), null);
+  assert.match(m.validateMyShiftInput({ ...ok, workplaceId: "" }).error, /勤務先/);
+  assert.match(m.validateMyShiftInput(ok, { workplaceIds: ["m_ZZZZZZZZ"] }).error, /勤務先/, "消えた勤務先");
+  assert.match(m.validateMyShiftInput({ ...ok, workplaceId: "S1" }).error, /勤務先/, "Shifty の店舗には手入力のシフトを入れない");
+  ["2026-02-30", "2026-13-01", "20261004", ""].forEach(d => assert.match(m.validateMyShiftInput({ ...ok, date: d }).error, /日付/, d));
+  const night = m.validateMyShiftInput({ ...ok, start: "18:00", end: "2:00", breakMin: "" });
+  assert.match(night.error, /26:00/);
+  assert.strictEqual(night.suggestEnd, "26:00", "退勤が開始より前なら 24時を足した時刻を案内する");
+  assert.strictEqual(m.validateMyShiftInput({ ...ok, start: "08:00", end: "07:00" }).suggestEnd, null, "24時を足すと 30:00 を超えるなら案内しない");
+  assert.strictEqual(m.validateMyShiftInput({ ...ok, start: "18:00", end: "26:00", breakMin: "0" }), null, "24時超え表記はそのまま通る");
+  assert.match(m.validateMyShiftInput({ ...ok, start: "9:00", end: "9:00" }).error, /前/);
+  assert.match(m.validateMyShiftInput({ ...ok, breakMin: "480" }).error, /休憩/, "休憩が勤務の長さ以上");
+  assert.match(m.validateMyShiftInput({ ...ok, breakMin: "abc" }).error, /休憩/);
+  assert.match(m.validateMyShiftInput({ ...ok, end: "" }).error, /入力/);
+  assert.match(m.validateMyShiftInput({ ...ok, memo: "あ".repeat(201) }).error, /メモ/);
+  assert.deepStrictEqual(m.buildMyShiftRecord({ ...ok, start: "930", end: "1730", breakMin: "" }), { workplaceId: "m_ABCDEFGH", date: "2026-10-04", start: "09:30", end: "17:30", breakMin: 0 });
+  assert.deepStrictEqual(m.buildMyShiftRecord({ ...ok, memo: " 研修 " }).memo, "研修", "メモは前後の空白を落とし、空ならキーを持たない");
+});
+test("E4 ID: 手入力の勤務先は m_+8桁、シフトは h_+10桁（ルールの形と同じ）", () => {
+  const rnd = n => Array.from({ length: n }, (_, i) => i * 37);
+  const w = m.genMyRecordId("m_", 8, rnd), s = m.genMyRecordId("h_", 10, rnd);
+  assert.ok(m.MY_MANUAL_WP_ID_RE.test(w) && m.MY_SHIFT_ID_RE.test(s), w + " " + s);
+  assert.strictEqual(m.genMyRecordId("m_", 8, rnd), w, "同じ乱数なら同じ ID");
+});
+const E4L = [{ shopId: "S1", shopName: "A店", ok: true, name: "田中" }, { shopId: "S2", shopName: "B店", ok: true, name: "田中 太郎" }];
+const E4W = { S2: { kind: "shifty", shopId: "S2", color: "#8a5a9e", name: "B店（梅田）" }, m_CAFE0001: { kind: "manual", name: "カフェ", color: "#4f7d4a" },
+  m_AAAA0002: { kind: "manual", name: "あ書店", color: "#a3742c" }, S9: { kind: "shifty", shopId: "S9", color: "#6b6b6b", pay: { x: 1 } }, bad: { kind: "manual", name: "x" } };
+test("E4 myWorkplaceList: Shifty の店舗（リンク順・既定の色）→ 手入力（名前順）→ リンク解除済み。本人の名前と色が効く", () => {
+  const l = m.myWorkplaceList(E4L, E4W);
+  assert.deepStrictEqual(l.map(w => [w.id, w.kind, w.name, w.color, w.linked]), [
+    ["S1", "shifty", "A店", "#f87036", true], ["S2", "shifty", "B店（梅田）", "#8a5a9e", true],
+    ["m_AAAA0002", "manual", "あ書店", "#a3742c", false], ["m_CAFE0001", "manual", "カフェ", "#4f7d4a", false],
+    ["S9", "shifty", "（リンク解除済みのお店）", "#6b6b6b", false]]);
+  assert.ok(!l.some(w => w.id === "bad"), "形の違う ID の手入力の勤務先は出さない");
+  assert.strictEqual(m.myWorkplaceList(E4L, {})[1].color, m.MY_WORKPLACE_COLORS[1], "記録が無ければ E3 と同じ既定の色");
+  assert.strictEqual(m.myNextWorkplaceColor(l), "#2f6f9f", "使っていないプリセットの先頭");
+});
+test("E4 勤務先の検証と update の中身（pay を消さない・店舗名と同じ名前は持たない）", () => {
+  assert.match(m.validateMyWorkplaceInput({ name: " ", color: "#f87036" }, "manual"), /名前/);
+  assert.strictEqual(m.validateMyWorkplaceInput({ name: "", color: "#f87036" }, "shifty"), null, "Shifty の店舗は空欄＝店舗名");
+  assert.match(m.validateMyWorkplaceInput({ name: "x", color: "#123456" }, "manual"), /色/, "プリセット以外の色は選べない");
+  assert.match(m.validateMyWorkplaceInput({ name: "あ".repeat(31), color: "#f87036" }, "manual"), /30文字/);
+  const s1 = { kind: "shifty", shopId: "S1", shopName: "A店" };
+  assert.deepStrictEqual(m.buildMyWorkplacePatch({ name: "A店", color: "#2f6f9f" }, s1), { kind: "shifty", shopId: "S1", color: "#2f6f9f", name: null });
+  assert.deepStrictEqual(m.buildMyWorkplacePatch({ name: " 本店 ", color: "#2f6f9f" }, s1).name, "本店");
+  const p = m.buildMyWorkplacePatch({ name: "カフェ", color: "#4f7d4a" }, { kind: "manual" });
+  assert.deepStrictEqual(p, { kind: "manual", name: "カフェ", color: "#4f7d4a" });
+  assert.ok(!("pay" in p), "pay は E5 の担当（update で触らない）");
+});
+const E4Shifts = {
+  h_0000000001: { workplaceId: "m_CAFE0001", date: "2026-10-17", start: "09:00", end: "13:00", breakMin: 0, memo: "朝" },
+  h_0000000002: { workplaceId: "m_CAFE0001", date: "2026-10-10", start: "09:00", end: "13:00", breakMin: 0 },
+  h_0000000003: { workplaceId: "m_CAFE0001", date: "2026-10-12", start: "18:00", end: "26:00", breakMin: 30 },
+  h_0000000004: { workplaceId: "m_GONE0001", date: "2026-10-17", start: "09:00", end: "10:00", breakMin: 0 },
+  h_0000000005: { workplaceId: "m_AAAA0002", date: "2026-10-01", start: "10:00", end: "15:00", breakMin: 15 },
+};
+test("E4 手入力のシフトの entry: 同じ日に Shifty と手入力が並ぶ（開始順）。消えた勤務先のシフトは出さない。次のシフトに手入力も入る", () => {
+  const list = m.myWorkplaceList(E4L, E4W);
+  const man = m.buildMyManualDays(list, E4Shifts);
+  assert.deepStrictEqual(man.map(e => [e.date, e.workplaceId, e.kind, m.fmtMyRange(e), e.workMin]), [
+    ["2026-10-01", "m_AAAA0002", "manual", "10:00〜15:00", 285], ["2026-10-10", "m_CAFE0001", "manual", "9:00〜13:00", 240],
+    ["2026-10-12", "m_CAFE0001", "manual", "18:00〜26:00", 450], ["2026-10-17", "m_CAFE0001", "manual", "9:00〜13:00", 240]]);
+  assert.strictEqual(man[3].memo, "朝");
+  assert.strictEqual(man[3].color, "#4f7d4a");
+  const shifty = m.buildMyShiftDays(e3Base({ periods: [E3Pub] }), U);
+  const all = [...shifty, ...man].sort(m.myEntryOrder);
+  assert.deepStrictEqual(all.filter(e => e.date === "2026-10-17").map(e => [e.kind, m.fmtMyRange(e)]), [["manual", "9:00〜13:00"], ["published", "10:00〜15:00"]], "同じ日は開始の早い順");
+  assert.strictEqual(m.nextMyShift(all, "2026-10-11").date, "2026-10-12", "手入力のシフトも次のシフトになる");
+  assert.strictEqual(m.nextMyShift([{ date: "2026-10-12", kind: "submitted" }], "2026-10-11"), null, "グレーは次のシフトにしない");
+});
+test("E4 履歴から追加: 同じ勤務先の時間帯を新しい順に、同じ時間帯はまとめる。重複の判定", () => {
+  const h = m.myShiftHistoryCandidates(E4Shifts, "m_CAFE0001", 5);
+  assert.deepStrictEqual(h.map(x => x.label), ["9:00〜13:00", "18:00〜26:00（休憩30分）"]);
+  assert.deepStrictEqual(h[0], { start: "09:00", end: "13:00", breakMin: 0, label: "9:00〜13:00" });
+  assert.strictEqual(m.myShiftHistoryCandidates(E4Shifts, "m_CAFE0001", 1).length, 1);
+  assert.deepStrictEqual(m.myShiftHistoryCandidates(E4Shifts, "m_NONE0000"), []);
+  const dup = m.myShiftDuplicateOf(E4Shifts, { workplaceId: "m_CAFE0001", date: "2026-10-10", start: "09:00", end: "13:00" });
+  assert.strictEqual(dup[0], "h_0000000002");
+  assert.strictEqual(m.myShiftDuplicateOf(E4Shifts, { workplaceId: "m_CAFE0001", date: "2026-10-10", start: "09:00", end: "13:00" }, "h_0000000002"), null, "編集中のシフト自身は重複にしない");
+});
+test("E4 実績の上書き: 表示と給料の1日に効き、締の追加出勤は残る。指紋（変更あり）は公開内容のまま。公開と同じ値なら消す", () => {
+  const ov = { "2026-10-18": { start: "18:00", end: "23:30", breakMin: 15 } };
+  const base = m.buildMyShiftDays(e3Base({ periods: [E3Pub] }), U);
+  const es = m.buildMyShiftDays(e3Base({ periods: [E3Pub], overrides: ov }), U);
+  const d18 = es.find(e => e.date === "2026-10-18");
+  assert.strictEqual(m.fmtMyRange(d18), "18:00〜23:30");
+  assert.ok(d18.overridden && d18.breakMin === 15 && d18.workMin === 315, JSON.stringify(d18));
+  assert.strictEqual(m.fmtMyRange(d18.sched), "18:00〜23:00", "公開内容は sched に残る");
+  assert.deepStrictEqual(m.myPublishedFingerprints(es, ["S1|p1"]), m.myPublishedFingerprints(base, ["S1|p1"]), "上書きしても指紋は変わらない＝変更ありにならない");
+  assert.ok(!es.find(e => e.date === "2026-10-17").overridden);
+  // 締の追加出勤
+  const subsX = [{ ...E3Subs[0], shifts: { "2026-10-18": { status: "work", start: "17:00", end: "22:00", extraStart: "23:00", extraEnd: "25:00", adjustedStartFixed: true } } }];
+  const ex = m.buildMyShiftDays(e3Base({ periods: [E3Pub], subsByPeriod: { p1: subsX }, overrides: { "2026-10-18": { start: "17:00", end: "21:00", breakMin: 0 } } }), U)[0];
+  assert.deepStrictEqual(ex.segments.map(g => [g.startMin, g.endMin, g.extra]), [[1020, 1260, false], [1380, 1500, true]], "上書きは主シフトだけ・追加出勤は残す");
+  assert.strictEqual(ex.workMin, 240 + 120);
+  // 壊れた上書きは使わない
+  const broken = m.buildMyShiftDays(e3Base({ periods: [E3Pub], overrides: { "2026-10-18": { start: "20:00", end: "19:00", breakMin: 0 } } }), U);
+  assert.ok(!broken.find(e => e.date === "2026-10-18").overridden);
+  // Premium でない（グレー）なら上書きは効かない
+  assert.ok(m.buildMyShiftDays(e3Base({ periods: [E3Pub], premium: false, overrides: ov }), U).every(e => !e.overridden));
+  // 入力 → 記録
+  assert.deepStrictEqual(m.planMyOverride({ start: "18:00", end: "23:00", breakMin: "0" }, d18.sched), { remove: true }, "公開と同じなら消す");
+  assert.deepStrictEqual(m.planMyOverride({ start: "1800", end: "2330", breakMin: "15" }, d18.sched), { record: { start: "18:00", end: "23:30", breakMin: 15 } });
+  assert.strictEqual(m.planMyOverride({ start: "18:00", end: "1:00", breakMin: "" }, d18.sched).suggestEnd, "25:00");
+});
+test("E4 給料計算（E5）に渡す1日の勤務: 未公開を除き、公開・上書き・手入力を同じ形で返す。Shifty の日は resolveActualDay の値を持つ", () => {
+  const ov = { "2026-10-18": { start: "18:00", end: "23:30", breakMin: 15 } };
+  const es = [...m.buildMyShiftDays(e3Base({ periods: [E3Pub], overrides: ov }), U), ...m.buildMyManualDays(m.myWorkplaceList(E4L, E4W), E4Shifts),
+    ...m.buildMyShiftDays(e3Base({ shopId: "S2" }), U)].sort(m.myEntryOrder);
+  const days = m.myPayWorkDays(es);
+  assert.ok(days.every(d => d.source !== undefined && d.kind !== "submitted"));
+  assert.ok(!days.some(d => d.shopId === "S2"), "未公開（グレー）は入れない");
+  const d18 = days.find(d => d.date === "2026-10-18");
+  assert.deepStrictEqual([d18.kind, d18.source, d18.workplaceId, d18.workMin], ["shifty", "override", "S1", 315]);
+  assert.strictEqual(d18.actualDay.workMin, 315, "actualDay は resolveActualDay（上書き適用後）");
+  assert.strictEqual(d18.actualDay.scheduledWorkMin, 300, "所定は公開内容");
+  const d17 = days.filter(d => d.date === "2026-10-17");
+  assert.deepStrictEqual(d17.map(d => [d.kind, d.source]), [["manual", "manual"], ["shifty", "published"]]);
+  assert.strictEqual(d17[0].actualDay, null);
+});
+test("E4 .ics: VTIMEZONE と TZID=Asia/Tokyo・24時超えは翌日・締の追加出勤は別イベント・エスケープ・75オクテットの折り返し・CRLF・UID は固定", () => {
+  const es = [
+    { kind: "published", date: "2026-10-31", shopId: "eb6A+cX*xP", shopName: "A店; 本店, 梅田\\北", startMin: 22 * 60, endMin: 26 * 60, breakMin: 30, confirmed: true,
+      segments: [{ startMin: 22 * 60, endMin: 26 * 60, extra: false }, { startMin: 26 * 60 + 30, endMin: 27 * 60, extra: true }] },
+    { kind: "manual", date: "2026-10-12", shiftId: "h_0000000003", workplaceId: "m_CAFE0001", shopName: "カフェ", startMin: 18 * 60, endMin: 26 * 60, breakMin: 0,
+      segments: [{ startMin: 18 * 60, endMin: 26 * 60, extra: false }], memo: "長い説明" + "あ".repeat(40) },
+    { kind: "submitted", date: "2026-10-13", shopId: "S2", shopName: "B店", startMin: 600, endMin: 900, segments: [] },
+    { kind: "published", date: "2026-10-14", shopId: "S1", shopName: "A店", startMin: 600, endMin: 900, breakMin: 0, overridden: true, segments: [{ startMin: 600, endMin: 900 }] },
+  ];
+  const { text, count } = m.buildMyIcs(es, { nowIso: "2026-10-04T01:02:03.456Z" });
+  assert.strictEqual(count, 4, "主シフト3＋追加出勤1。グレーは入れない");
+  assert.ok(text.endsWith("\r\n") && !/[^\r]\n/.test(text), "すべての行が CRLF");
+  const lines = text.split("\r\n").slice(0, -1);
+  assert.ok(lines.every(l => Buffer.byteLength(l, "utf8") <= 75), "75オクテット以下");
+  const unfolded = text.replace(/\r\n /g, "");
+  assert.ok(/BEGIN:VTIMEZONE\r\nTZID:Asia\/Tokyo\r\nBEGIN:STANDARD\r\nDTSTART:19700101T000000\r\nTZOFFSETFROM:\+0900\r\nTZOFFSETTO:\+0900/.test(unfolded));
+  assert.ok(unfolded.includes("DTSTART;TZID=Asia/Tokyo:20261031T220000\r\nDTEND;TZID=Asia/Tokyo:20261101T020000"), "26:00 は翌日の 2:00");
+  assert.ok(unfolded.includes("DTSTART;TZID=Asia/Tokyo:20261101T023000\r\nDTEND;TZID=Asia/Tokyo:20261101T030000"), "締の追加出勤は別イベント・翌日");
+  assert.ok(unfolded.includes("SUMMARY:A店\\; 本店\\, 梅田\\\\北\r\n"), "; , \\ のエスケープ");
+  assert.ok(unfolded.includes("SUMMARY:A店\\; 本店\\, 梅田\\\\北（追加）"));
+  assert.ok(unfolded.includes("DESCRIPTION:確定\\n休憩30分"), "改行は \\n");
+  assert.ok(unfolded.includes("DESCRIPTION:実績（本人の入力）"), "上書きした日は実績と書く");
+  assert.ok(unfolded.includes("DTSTAMP:20261004T010203Z"));
+  const uids = [...unfolded.matchAll(/UID:([^\r]+)/g)].map(x => x[1]);
+  assert.deepStrictEqual(uids, ["shifty-eb6A_2bcX_2axP-20261031@shiftyshifty.app", "shifty-eb6A_2bcX_2axP-20261031-x1@shiftyshifty.app",
+    "manual-h_5f0000000003@shiftyshifty.app", "shifty-S1-20261014@shiftyshifty.app"]);
+  assert.strictEqual(m.buildMyIcs(es, { nowIso: "2027-01-01T00:00:00Z" }).text.replace(/DTSTAMP:[^\r]+/g, ""), text.replace(/DTSTAMP:[^\r]+/g, ""), "書き出し直しても DTSTAMP 以外は同じ（UID が安定）");
+  assert.ok(lines.some(l => l.startsWith(" ")), "長い DESCRIPTION は折り返す");
+  assert.ok(!unfolded.includes("B店"), "未公開は含めない");
+  assert.deepStrictEqual(m.myIcsEntriesForMonth(es, "2026-10").map(e => e.date), ["2026-10-31", "2026-10-12", "2026-10-14"]);
+  assert.strictEqual(m.icsFoldLine("a".repeat(75)), "a".repeat(75));
+  assert.strictEqual(m.icsFoldLine("a".repeat(76)), "a".repeat(75) + "\r\n a");
+});
+test("E4 database.rules.json: workplaces・shifts・overrides はメールのある本人だけ書け、形を検証し未知のキーを拒否する。pay は E5 が足す", () => {
+  const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "database.rules.json"), "utf8")).rules;
+  const W = "auth != null && auth.uid === $uid && auth.token.email != null";
+  const u = rules.users.$uid;
+  const wp = u.workplaces.$wid, sh = u.shifts.$sid, ov = u.overrides.$shopId;
+  assert.strictEqual(wp[".write"], W);
+  assert.strictEqual(sh[".write"], W);
+  assert.strictEqual(ov[".write"], W, "overrides は店舗ごとに書ける（リンク解除済みの店舗の上書きをまとめて消すため）");
+  [u.workplaces, u.shifts, u.overrides].forEach(n => assert.strictEqual(n[".write"], undefined, "コレクション全体の書き込みは許さない"));
+  assert.match(wp[".validate"], /hasChildren\(\['kind', ?'color'\]\)/);
+  assert.match(wp[".validate"], /\^m_\[A-Za-z0-9\]\{8\}\$/);
+  assert.match(wp[".validate"], /shopId'\)\.val\(\) === \$wid/, "Shifty の店舗の記録は id＝shopId");
+  assert.match(wp.color[".validate"], /#\[0-9a-fA-F\]\{6\}/);
+  assert.match(wp.kind[".validate"], /'shifty'/);
+  assert.match(wp.kind[".validate"], /'manual'/);
+  assert.strictEqual(wp.$other[".validate"], false);
+  assert.strictEqual(wp.pay, undefined, "pay の形は E5 の担当が決めて足す");
+  assert.match(sh[".validate"], /\^h_\[A-Za-z0-9\]\{10\}\$/);
+  assert.match(sh[".validate"], /hasChildren\(\['workplaceId', ?'date', ?'start', ?'end', ?'breakMin'\]\)/);
+  const clock = sh.start[".validate"];
+  assert.strictEqual(sh.end[".validate"], clock);
+  const reOf = v => new RegExp(v.match(/matches\(\/(.+)\/\)/)[1]);
+  const cre = reOf(clock);
+  ["00:00", "09:30", "23:59", "26:00", "29:55", "30:00"].forEach(t => assert.ok(cre.test(t), t));
+  ["9:30", "30:05", "31:00", "24:60", "0930", "09:3"].forEach(t => assert.ok(!cre.test(t), t));
+  const dre = reOf(sh.date[".validate"]);
+  assert.ok(dre.test("2026-10-04") && !dre.test("2026-13-01") && !dre.test("2026-1-4"));
+  assert.match(sh.breakMin[".validate"], /isNumber\(\) && newData\.val\(\) >= 0 && newData\.val\(\) <= 1440/);
+  assert.match(sh.memo[".validate"], /length <= 200/);
+  assert.match(sh.workplaceId[".validate"], /\^m_/);
+  assert.strictEqual(sh.$other[".validate"], false);
+  const od = ov.$date;
+  assert.match(od[".validate"], /hasChildren\(\['start', ?'end', ?'breakMin'\]\)/);
+  assert.strictEqual(od.start[".validate"], clock);
+  assert.strictEqual(od.$other[".validate"], false);
+  // クライアントの検証と同じ時刻の形を書く
+  ["9", "930", "25:00", "30:00"].forEach(i => assert.ok(cre.test(m.parseMyClockInput(i)), i));
+  // 既存のノードは変えていない
+  assert.strictEqual(u[".read"], "auth != null && auth.uid === $uid");
+  assert.strictEqual(u.profile[".write"], W);
 });

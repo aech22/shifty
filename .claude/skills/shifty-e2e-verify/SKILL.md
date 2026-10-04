@@ -322,6 +322,10 @@ localStorage 上のアカウント表で動く（`window.__authCur()`・`window.
 `shops/S1/private` と `shops/S1/owners` を渡して拒否を再現する。雛形は `scripts/example-my-link.js`。
 マイシフトと「公開」ボタン（E3）は `scripts/example-my-shift.js`。オーナーの端末（`tab:"edit"`・確定の解除の `prompt` は `page.on("dialog")` で答える）と
 スタッフの端末（`auth:"accounts"`・`#/me`）を `__dbDump()` でつなぎ、今日の日付で期間を作る（カレンダーは実行した日の月を出すため）。
+手入力の勤務先とシフト・実績の上書き・.ics（E4）は `scripts/example-my-manual.js`。**スタブは `window.confirm` を常に true に差し替える**ので
+（`page.on("dialog")` には何も来ない）、確認の文言は makeStub の後ろに置いた script で confirm を包んで記録する。.ics のダウンロードは
+`URL.createObjectURL` と `HTMLAnchorElement.prototype.click` を差し替えて Blob の中身とファイル名を捕まえる。
+`denyWrite` は**書き込みの基準パスの前方一致**なので、`users/{uid}` への複数パスの update を拒否させるには `"users/T1"` を渡す（`"users/T1/shifts"` では当たらない）。
 
 **本物の index.html をこのスタブで丸ごと起動する例**が `scripts/example-index-html-load.js`（2026-09-30）。
 ハーネスは読み込むファイルを自前で並べるので、index.html の `<script>` の並び・`?v=` の食い違いは素通りする。

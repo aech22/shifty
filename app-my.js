@@ -477,20 +477,224 @@ async function readMyPeriodSubs(sid,pid){
     return Object.values(snap.val()||{}).filter(s=>s&&s.id&&s.periodId===pid);
   }catch(e){console.warn("マイシフト: 提出の読み込みに失敗:",e&&e.code);return null;}
 }
-const MY_KIND_LABEL={published:"公開",confirmed:"確定",submitted:"提出済み（未確定）"};
-function myEntryState(e){return e.kind==="submitted"?"submitted":e.confirmed?"confirmed":"published";}
+
+// ===== 本人のデータ（2026-10-04・第2部 E4）=====
+// users/{uid}/workplaces・shifts・overrides を1回読み、書いたら手元の状態を合わせる（購読しない＝本人の端末からしか書かれない）。
+// MyView が1つ持ち、マイシフトと設定タブが共有する。書くのは users/{uid}/ の下だけ（店舗のデータには書かない）。
+// workplaces は update（E5 が同じレコードに pay を足すので set() で消さない）、shifts・overrides は1件ずつの set。
+const myRand=n=>{const a=new Uint8Array(n);(window.crypto||window.msCrypto).getRandomValues(a);return Array.from(a);};
+function myWriteError(e){return isPermissionDeniedError(e)?"保存できませんでした（サーバー側の設定が未反映の可能性があります）":"保存できませんでした。通信状態を確認してもう一度お試しください";}
+function useMyPersonal(uid){
+  const[d,setD]=useState({state:"loading",workplaces:{},shifts:{},overrides:{}});
+  useEffect(()=>{
+    if(!uid||!firebaseDB)return;
+    let alive=true;
+    Promise.all(["workplaces","shifts","overrides"].map(k=>_myRead(`users/${uid}/${k}`))).then(([w,s,o])=>{
+      if(!alive)return;
+      const ok=w.ok&&s.ok&&o.ok;
+      setD({state:ok?"ok":"error",workplaces:(w.ok&&w.v)||{},shifts:(s.ok&&s.v)||{},overrides:(o.ok&&o.v)||{}});
+    });
+    return()=>{alive=false;};
+  },[uid]);
+  // patch は {"workplaces/x": …} の形（users/{uid} からの相対パス・null で削除）。成功したら手元の状態にも同じ形で当てる
+  const apply=async patch=>{
+    try{await fbUpd(`users/${uid}`,patch);}
+    catch(e){console.warn("マイシフト: 保存に失敗:",e&&e.code);return{error:myWriteError(e)};}
+    setD(prev=>{
+      const next={...prev,workplaces:{...prev.workplaces},shifts:{...prev.shifts},overrides:{...prev.overrides}};
+      Object.entries(patch).forEach(([k,v])=>{
+        const parts=k.split("/");const top=parts[0];
+        if(parts.length===2){if(v==null)delete next[top][parts[1]];else next[top][parts[1]]=v;}
+        else if(parts.length===3&&top==="overrides"){
+          const inner={...(next.overrides[parts[1]]||{})};
+          if(v==null)delete inner[parts[2]];else inner[parts[2]]=v;
+          if(Object.keys(inner).length)next.overrides[parts[1]]=inner;else delete next.overrides[parts[1]];
+        }else if(parts.length===3&&top==="workplaces"){
+          const r={...(next.workplaces[parts[1]]||{})};if(v==null)delete r[parts[2]];else r[parts[2]]=v;next.workplaces[parts[1]]=r;
+        }
+      });
+      return next;
+    });
+    return{ok:true};
+  };
+  return{
+    ...d,
+    // 勤務先の名前と色。フィールド単位の update（pay など他のフィールドを消さない）
+    saveWorkplace:(id,fields)=>{const p={};Object.entries(fields).forEach(([k,v])=>{p[`workplaces/${id}/${k}`]=v;});return apply(p);},
+    // 勤務先を消す。手入力の勤務先はそのシフトも、リンク解除済みの店舗はその実績の上書きも一緒に消す
+    deleteWorkplace:(id,o)=>{
+      const p={[`workplaces/${id}`]:null};
+      (o&&o.shiftIds||[]).forEach(s=>{p[`shifts/${s}`]=null;});
+      if(o&&o.overridesShopId)p[`overrides/${o.overridesShopId}`]=null;
+      return apply(p);
+    },
+    saveShift:(id,rec)=>apply({[`shifts/${id}`]:rec}),
+    deleteShift:id=>apply({[`shifts/${id}`]:null}),
+    saveOverride:(sid,date,rec)=>apply({[`overrides/${sid}/${date}`]:rec}),
+    newWorkplaceId:()=>genMyRecordId("m_",8,myRand),
+    newShiftId:()=>genMyRecordId("h_",10,myRand),
+  };
+}
+// .ics をダウンロードさせる（iPhone の Safari は text/calendar を開くとカレンダーへの追加を案内する）
+function myDownloadIcs(text,fileName){
+  const blob=new Blob([text],{type:"text/calendar;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");a.href=url;a.download=fileName;document.body.appendChild(a);a.click();document.body.removeChild(a);
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+
+// 時刻の入力: 直接入力（"930"・"17:30"・"26:00"）と5分刻みの選択。値は入力の文字列のまま持ち、保存時に検証する
+function MyTimeInput({label,value,onChange,name}){
+  const parsed=parseMyClockInput(value);
+  const sel=parsed&&MY_TIME_OPTIONS.some(o=>o.value===parsed)?parsed:"";
+  return(
+    <label style={{display:"block",marginBottom:12}}>
+      <span style={MY_LABEL}>{label}</span>
+      <span style={{display:"flex",gap:8}}>
+        <input data-my-input={name} value={value} inputMode="numeric" autoComplete="off" placeholder="例 9:30" onChange={e=>onChange(e.target.value)}
+          style={{...AI,flex:"1 1 auto",minWidth:0}}/>
+        <select data-my-select={name} aria-label={`${label}を選ぶ`} value={sel} onChange={e=>{if(e.target.value)onChange(e.target.value);}}
+          style={{...AI,flex:"0 0 112px",width:112,padding:"11px 8px"}}>
+          <option value="">選ぶ</option>
+          {MY_TIME_OPTIONS.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      </span>
+    </label>
+  );
+}
+function MyMinutesInput({label,value,onChange,name}){
+  const n=parseMyMinutesInput(value);
+  const sel=n!=null&&MY_BREAK_OPTIONS.includes(n)&&String(value).trim()!==""?String(n):"";
+  return(
+    <label style={{display:"block",marginBottom:12}}>
+      <span style={MY_LABEL}>{label}</span>
+      <span style={{display:"flex",gap:8}}>
+        <input data-my-input={name} value={value} inputMode="numeric" autoComplete="off" placeholder="0" onChange={e=>onChange(e.target.value)}
+          style={{...AI,flex:"1 1 auto",minWidth:0}}/>
+        <select data-my-select={name} aria-label={`${label}を選ぶ`} value={sel} onChange={e=>{if(e.target.value!=="")onChange(e.target.value);}}
+          style={{...AI,flex:"0 0 112px",width:112,padding:"11px 8px"}}>
+          <option value="">選ぶ</option>
+          {MY_BREAK_OPTIONS.map(t=><option key={t} value={String(t)}>{t}分</option>)}
+        </select>
+      </span>
+    </label>
+  );
+}
+// 開始・終了・休憩の3欄と、日をまたぐ入力の言い直し（「26:00 にする」）
+function MyTimesFields({f,set,err}){
+  return(
+    <>
+      <MyTimeInput label="開始" name="start" value={f.start} onChange={v=>set("start",v)}/>
+      <MyTimeInput label="終了" name="end" value={f.end} onChange={v=>set("end",v)}/>
+      <MyMinutesInput label="休憩（分）" name="breakMin" value={f.breakMin} onChange={v=>set("breakMin",v)}/>
+      {err&&err.error&&<MyMessage error={err.error}/>}
+      {err&&err.suggestEnd&&<button data-my-action="useSuggestEnd" onClick={()=>set("end",err.suggestEnd)} style={{...AGray,marginBottom:12}}>終了を {fmtMyClock(_myClockMin(err.suggestEnd))} にする</button>}
+    </>
+  );
+}
+const _myClockMin=s=>{const m=/^(\d{1,2}):(\d{2})$/.exec(String(s||""));return m?(+m[1])*60+(+m[2]):null;};
+const _myInputOfMin=min=>min==null?"":myClockStr(min);
+
+// 手入力のシフトの追加・編集。manualList は手入力の勤務先（myWorkplaceList の kind "manual"）
+function MyManualShiftForm({personal,manualList,date,editing,onDone}){
+  const init=editing?{workplaceId:editing.workplaceId,date:editing.date,start:_myInputOfMin(editing.startMin),end:_myInputOfMin(editing.endMin),breakMin:String(editing.breakMin||0),memo:editing.memo||""}
+    :{workplaceId:(manualList[0]||{}).id||"",date,start:"",end:"",breakMin:"",memo:""};
+  const[f,setF]=useState(init);
+  const[err,setErr]=useState(null);
+  const[busy,setBusy]=useState(false);
+  const set=(k,v)=>{setF(p=>({...p,[k]:v}));setErr(null);};
+  const ids=manualList.map(w=>w.id);
+  const save=async(input)=>{
+    const x=input||f;
+    const e=validateMyShiftInput(x,{workplaceIds:ids});
+    if(e){setErr(e);return;}
+    const rec=buildMyShiftRecord(x);
+    if(myShiftDuplicateOf(personal.shifts,rec,editing&&editing.shiftId)){setErr({error:"同じ日・同じ時間のシフトが既にあります"});return;}
+    setBusy(true);
+    const r=await personal.saveShift(editing?editing.shiftId:personal.newShiftId(),rec);
+    setBusy(false);
+    if(r.error){setErr({error:r.error});return;}
+    onDone(editing?"シフトを直しました":"シフトを追加しました");
+  };
+  const hist=f.workplaceId?myShiftHistoryCandidates(personal.shifts,f.workplaceId,5):[];
+  return(
+    <div data-my-manual-form={editing?"edit":"add"} style={{borderTop:"1px solid var(--c-border)",paddingTop:12,marginTop:8}}>
+      <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)",marginBottom:10}}>{editing?"シフトを直す":"シフトを追加"}</div>
+      <label style={{display:"block",marginBottom:12}}>
+        <span style={MY_LABEL}>勤務先</span>
+        <select data-my-select="workplace" value={f.workplaceId} onChange={e=>set("workplaceId",e.target.value)} style={AI}>
+          {manualList.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
+      </label>
+      {!editing&&hist.length>0&&<div data-my-history="1" style={{marginBottom:12}}>
+        <div style={MY_LABEL}>履歴から追加（{myFmtDate(f.date)}に入ります）</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+          {hist.map(h=><button key={h.label} data-my-history-pick={`${h.start}-${h.end}-${h.breakMin}`} disabled={busy}
+            onClick={()=>save({...f,start:h.start,end:h.end,breakMin:String(h.breakMin)})}
+            style={{...AGray,padding:"8px 12px",fontSize:14,fontVariantNumeric:"tabular-nums"}}>{h.label}</button>)}
+        </div>
+      </div>}
+      <MyField label="日付" type="date" value={f.date} data-my-input="date" onChange={e=>set("date",e.target.value)}/>
+      <MyTimesFields f={f} set={set} err={err}/>
+      <MyField label="メモ（任意）" value={f.memo} maxLength={MY_SHIFT_MEMO_MAX} data-my-input="memo" onChange={e=>set("memo",e.target.value)}/>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+        <button data-my-action="saveManual" disabled={busy} onClick={()=>save()} style={{...AB,opacity:busy?.6:1}}>{busy?"保存中…":"保存"}</button>
+        <button data-my-action="cancelManual" onClick={()=>onDone(null)} style={AGray}>やめる</button>
+      </div>
+    </div>
+  );
+}
+// 公開済みのシフトへの実績の上書き。公開内容と同じ値で保存すると上書きを消す
+function MyOverrideForm({personal,entry,onDone}){
+  const[f,setF]=useState({start:_myInputOfMin(entry.startMin),end:_myInputOfMin(entry.endMin),breakMin:String(entry.breakMin||0)});
+  const[err,setErr]=useState(null);
+  const[busy,setBusy]=useState(false);
+  const set=(k,v)=>{setF(p=>({...p,[k]:v}));setErr(null);};
+  const save=async()=>{
+    const r=planMyOverride(f,entry.sched);
+    if(r.error){setErr(r);return;}
+    setBusy(true);
+    const w=await personal.saveOverride(entry.shopId,entry.date,r.remove?null:r.record);
+    setBusy(false);
+    if(w.error){setErr({error:w.error});return;}
+    onDone(r.remove?"公開された時間に戻しました":"実績を保存しました");
+  };
+  return(
+    <div data-my-override-form="1" style={{borderTop:"1px solid var(--c-border)",paddingTop:12,marginTop:8}}>
+      <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)",marginBottom:4}}>実際に働いた時間</div>
+      <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>
+        公開された時間: {fmtMyRange(entry.sched)}{entry.sched.breakMin>0?`（休憩${entry.sched.breakMin}分）`:""}。入れた時間はあなたの画面と給料の見込みにだけ使われ、お店には送られません。
+      </div>
+      <MyTimesFields f={f} set={set} err={err}/>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+        <button data-my-action="saveOverride" disabled={busy} onClick={save} style={{...AB,opacity:busy?.6:1}}>{busy?"保存中…":"保存"}</button>
+        <button data-my-action="cancelOverride" onClick={()=>onDone(null)} style={AGray}>やめる</button>
+      </div>
+    </div>
+  );
+}
+
+const MY_KIND_LABEL={published:"公開",confirmed:"確定",submitted:"提出済み（未確定）",manual:"手入力"};
+// 開いている編集欄を entry に結びつける鍵（entry は読み込みのたびに作り直されるので参照では比べない）
+function myEntryKey(e){return`${e.kind}|${e.shiftId||e.shopId||""}|${e.periodId||""}|${e.date}`;}
+function myEntryState(e){return e.kind==="submitted"?"submitted":e.kind==="manual"?"manual":e.confirmed?"confirmed":"published";}
 function myFmtDate(ds){const d=pd(ds);return isNaN(d)?ds:`${d.getMonth()+1}/${d.getDate()}(${WD[d.getDay()]})`;}
 
-function MyShiftEntryRow({e,changed}){
+// 日付の詳細の1件。actions は E4 の操作（実績の入力・手入力の編集と削除）。Premium でないとき（canEdit=false）は
+// 追加・編集を出さず、消すこと（実績の上書きを戻す・手入力のシフトを削除）だけを出す＝入れたデータは表示し、自分で消せる
+function MyShiftEntryRow({e,changed,actions}){
   const grey=e.kind==="submitted";
   const state=myEntryState(e);
+  const small={...AGray,padding:"6px 12px",fontSize:13,whiteSpace:"nowrap"};
   return(
-    <div data-my-entry={state} data-my-entry-shop={e.shopId} data-my-entry-date={e.date} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 0",borderTop:"1px solid var(--c-border)"}}>
+    <div data-my-entry={state} data-my-entry-shop={e.shopId||e.workplaceId} data-my-entry-date={e.date} data-my-entry-overridden={e.overridden?"1":undefined}
+      style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 0",borderTop:"1px solid var(--c-border)"}}>
       <span aria-hidden="true" style={{flex:"0 0 auto",width:10,height:10,borderRadius:5,marginTop:6,background:grey?"var(--c-text4)":e.color}}/>
       <div style={{flex:1,minWidth:0}}>
         <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
           <span data-my-entry-time="1" style={{fontSize:17,fontWeight:700,color:grey?"var(--c-text3)":"var(--c-text)",fontVariantNumeric:"tabular-nums"}}>{fmtMyRange(e)||"時間未定"}</span>
           <span style={{fontSize:12,fontWeight:700,color:grey?"var(--c-text3)":"var(--c-text2)"}}>{MY_KIND_LABEL[state]}</span>
+          {e.overridden&&<span data-my-entry-actual="1" style={{fontSize:12,fontWeight:700,color:"var(--c-text)"}}>実績</span>}
           {changed&&<span data-my-entry-changed="1" style={{fontSize:12,fontWeight:700,color:"var(--c-accent)"}}>変更あり</span>}
         </div>
         <div style={{fontSize:13,color:grey?"var(--c-text3)":"var(--c-text2)",lineHeight:1.6,overflowWrap:"anywhere"}}>
@@ -498,14 +702,23 @@ function MyShiftEntryRow({e,changed}){
           {!grey&&e.breakMin>0?` ／ 休憩${e.breakMin}分`:""}
           {!grey&&(e.segments||[]).filter(g=>g.extra).map(g=>` ／ 追加 ${fmtMyClock(g.startMin)}〜${fmtMyClock(g.endMin)}`).join("")}
         </div>
+        {e.overridden&&<div data-my-entry-sched="1" style={{fontSize:12,color:"var(--c-text3)"}}>公開 {fmtMyRange(e.sched)}{e.sched.breakMin>0?`（休憩${e.sched.breakMin}分）`:""}</div>}
         {!grey&&e.differs&&e.hope&&<div data-my-entry-hope="1" style={{fontSize:12,color:"var(--c-text3)"}}>希望 {fmtMyRange(e.hope)}</div>}
+        {e.memo&&<div data-my-entry-memo="1" style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6,overflowWrap:"anywhere"}}>{e.memo}</div>}
+        {actions&&<div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+          {e.kind==="published"&&actions.canEdit&&<button data-my-action="editOverride" onClick={actions.editOverride} style={small}>{e.overridden?"実績を直す":"実績を入力"}</button>}
+          {e.kind==="published"&&e.overridden&&<button data-my-action="resetOverride" disabled={actions.busy} onClick={actions.resetOverride} style={small}>公開の時間に戻す</button>}
+          {e.kind==="manual"&&actions.canEdit&&<button data-my-action="editManual" onClick={actions.editManual} style={small}>直す</button>}
+          {e.kind==="manual"&&<button data-my-action="deleteManual" disabled={actions.busy} onClick={actions.deleteManual} style={small}>削除</button>}
+        </div>}
       </div>
     </div>
   );
 }
 
-function MyShiftTab({staffUser,onGoSettings}){
+function MyShiftTab({staffUser,onGoSettings,personal}){
   const uid=staffUser&&staffUser.uid;
+  const P=personal||{state:"ok",workplaces:{},shifts:{},overrides:{}};
   const todayStr=fd(new Date());
   const[ym,setYm]=useState(todayStr.slice(0,7));
   const[sel,setSel]=useState(todayStr);
@@ -547,19 +760,24 @@ function MyShiftTab({staffUser,onGoSettings}){
     });
   },[okLinks,shops,ym,todayStr,subs]);
   const premium=myShiftPremiumOf(okLinks.map(l=>shops[l.shopId]&&shops[l.shopId].plan));
+  // 勤務先の名前と色（E4）。Shifty の店舗は本人が付けた名前・色（無ければ店舗名と既定の色）、手入力の勤務先はその記録
+  const wpList=useMemo(()=>myWorkplaceList(okLinks,P.workplaces),[okLinks,P.workplaces]);
+  const manualList=wpList.filter(w=>w.kind==="manual");
   const{entries,publishedKeys}=useMemo(()=>{
     const all=[];const keys=[];
-    okLinks.forEach((l,i)=>{
+    okLinks.forEach(l=>{
       const sh=shops[l.shopId];
       if(!sh||!sh.ok)return;
+      const w=wpList.find(x=>x.id===l.shopId)||{};
       const subsByPeriod={};
       sh.periods.forEach(p=>{const v=subs[l.shopId+"|"+p.id];if(Array.isArray(v)){subsByPeriod[p.id]=v;if(premium&&isPeriodPublished(p))keys.push(myShiftSeenKey(l.shopId,p.id));}});
-      all.push(...buildMyShiftDays({shopId:l.shopId,shopName:l.shopName,color:myWorkplaceColor(l.shopId,i),name:l.name,periods:sh.periods,
-        subsByPeriod,settings:sh.settings,staff:sh.staff,todayStr,premium}));
+      all.push(...buildMyShiftDays({shopId:l.shopId,shopName:w.name||l.shopName,color:w.color||myWorkplaceColor(l.shopId,0),name:l.name,periods:sh.periods,
+        subsByPeriod,settings:sh.settings,staff:sh.staff,todayStr,premium,overrides:(P.overrides||{})[l.shopId]}));
     });
-    all.sort((a,b)=>a.date.localeCompare(b.date)||String(a.shopId).localeCompare(String(b.shopId)));
+    all.push(...buildMyManualDays(wpList,P.shifts));
+    all.sort(myEntryOrder);
     return{entries:all,publishedKeys:keys};
-  },[okLinks,shops,subs,premium,todayStr]);
+  },[okLinks,shops,subs,premium,todayStr,wpList,P.shifts,P.overrides]);
   const fps=useMemo(()=>myPublishedFingerprints(entries,publishedKeys),[entries,publishedKeys]);
   const seenOf=k=>{const[sid,pid]=k.split("|");return seen&&seen[sid]?seen[sid][pid]:undefined;};
   // 初めて見る公開は「変更あり」にせず、今の内容を見たものとして記録する（前回の内容が無いと比べられないため）
@@ -589,11 +807,39 @@ function MyShiftTab({staffUser,onGoSettings}){
   const byDate=useMemo(()=>{const m={};entries.forEach(e=>{(m[e.date]=m[e.date]||[]).push(e);});return m;},[entries]);
   const next=nextMyShift(entries,todayStr);
   const grid=myMonthGrid(ym);
-  const shopName=sid=>{const l=okLinks.find(x=>x.shopId===sid);return l?l.shopName:"";};
-  const loadingAny=links===undefined||okLinks.some(l=>!shops[l.shopId]);
+  const shopName=sid=>{const w=wpList.find(x=>x.id===sid);return w?w.name:"";};
+  const loadingAny=links===undefined||okLinks.some(l=>!shops[l.shopId])||P.state==="loading";
+  // E4 の操作（手入力・実績の入力・.ics）は Premium のときだけ。本人のデータが読めないときも止める（重複の判定ができないため）
+  const canEdit=premium&&P.state==="ok";
+  const[form,setForm]=useState(null); // {type:"add"} | {type:"editManual",key} | {type:"override",key}（key は myEntryKey）
+  const[dayMsg,setDayMsg]=useState({});
+  const[busy,setBusy]=useState("");
+  const[icsMsg,setIcsMsg]=useState({});
+  useEffect(()=>{setForm(null);setDayMsg({});},[sel]);
+  useEffect(()=>{setIcsMsg({});},[ym]);
+  const formDone=msg=>{setForm(null);setDayMsg(msg?{ok:msg}:{});};
+  const resetOverride=async e=>{
+    setBusy("ov");setDayMsg({});
+    const r=await P.saveOverride(e.shopId,e.date,null);
+    setBusy("");setDayMsg(r.error?{error:r.error}:{ok:"公開された時間に戻しました"});
+  };
+  const deleteManual=async e=>{
+    if(!window.confirm(`${myFmtDate(e.date)} ${e.shopName} ${fmtMyRange(e)} のシフトを削除しますか？`))return;
+    setBusy("del");setDayMsg({});
+    const r=await P.deleteShift(e.shiftId);
+    setBusy("");setDayMsg(r.error?{error:r.error}:{ok:"シフトを削除しました"});
+  };
+  const downloadIcs=()=>{
+    const list=myIcsEntriesForMonth(entries,ym);
+    if(!list.length){setIcsMsg({error:"この月に取り込めるシフトがありません（公開済みと手入力のシフトだけが入ります）"});return;}
+    const{text,count}=buildMyIcs(list,{nowIso:new Date().toISOString()});
+    myDownloadIcs(text,`shifty-${ym}.ics`);
+    setIcsMsg({ok:`${count}件のシフトを書き出しました。開くとカレンダーに追加できます`});
+  };
 
   if(links===null)return <MyEmptyState><MyMessage error="お店とのリンクを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/></MyEmptyState>;
-  if(Array.isArray(links)&&!okLinks.length)return(
+  const hasManual=manualList.length>0||Object.keys(P.shifts||{}).length>0;
+  if(Array.isArray(links)&&!okLinks.length&&P.state!=="loading"&&!hasManual)return(
     <MyEmptyState>
       {badLinks.length>0&&<div data-my-bad-links="1" style={{marginBottom:12}}>{badLinks.map(l=><div key={l.shopId} style={{color:"var(--c-danger)",fontSize:14}}>{l.shopName}: {l.reason==="unread"?"状態を確認できませんでした":MY_LINK_INVALID_LABELS[l.reason]}</div>)}</div>}
       勤務先の店舗とアカウントのリンクが済むと、ここに提出した希望と公開されたシフトが月のカレンダーで表示されます。
@@ -632,7 +878,9 @@ function MyShiftTab({staffUser,onGoSettings}){
       </div>}
       {!premium&&!loadingAny&&<div data-my-premium-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:12}}>
         お店がプレミアムプランのとき、公開されたシフトが確定した時間で表示されます。いまは提出した希望だけを表示しています。
+        手入力のシフトの追加・実績の入力・カレンダーへの取り込みも、プレミアムプランのお店とリンクしている間に使えます（入れたシフトは表示されます）。
       </div>}
+      {P.state==="error"&&<div data-my-personal-error="1" style={{marginBottom:12}}><MyMessage error="手入力のシフトと実績を読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/></div>}
 
       <section style={{...MY_SECTION,padding:"12px 8px 8px"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 4px 10px"}}>
@@ -666,22 +914,163 @@ function MyShiftTab({staffUser,onGoSettings}){
         ))}
       </section>
 
+      {canEdit&&<div style={{padding:"0 4px 12px"}}>
+        <button data-my-action="ics" onClick={downloadIcs} style={{...AGray,width:"100%"}}>この月のシフトをカレンダーに取り込む（.ics）</button>
+        <MyMessage {...icsMsg}/>
+      </div>}
+
       <section style={{...MY_SECTION,padding:"14px 16px"}} data-my-day={sel}>
         <div style={{fontSize:15,fontWeight:700,color:"var(--c-text)"}}>{myFmtDate(sel)}</div>
-        {selEntries.length?selEntries.map((e,i)=><MyShiftEntryRow key={e.shopId+"|"+i} e={e} changed={isChanged(e)}/>)
-          :<div style={{fontSize:14,color:"var(--c-text3)",paddingTop:8}}>{loadingAny?"読み込み中…":"シフトはありません"}</div>}
+        {selEntries.length?selEntries.map((e,i)=>{
+          const canTouch=canEdit||e.overridden||e.kind==="manual";
+          const actions=e.kind!=="submitted"&&canTouch&&P.state==="ok"?{canEdit,busy:!!busy,
+            editOverride:()=>{setDayMsg({});setForm({type:"override",key:myEntryKey(e)});},resetOverride:()=>resetOverride(e),
+            editManual:()=>{setDayMsg({});setForm({type:"editManual",key:myEntryKey(e)});},deleteManual:()=>deleteManual(e)}:null;
+          const open=!!form&&form.key===myEntryKey(e);
+          return(
+            <div key={myEntryKey(e)+"|"+i}>
+              <MyShiftEntryRow e={e} changed={isChanged(e)} actions={open?null:actions}/>
+              {open&&form.type==="override"&&<MyOverrideForm personal={P} entry={e} onDone={formDone}/>}
+              {open&&form.type==="editManual"&&<MyManualShiftForm personal={P} manualList={manualList} date={sel} editing={e} onDone={formDone}/>}
+            </div>
+          );
+        }):<div style={{fontSize:14,color:"var(--c-text3)",paddingTop:8}}>{loadingAny?"読み込み中…":"シフトはありません"}</div>}
+        {form&&form.type==="add"&&<MyManualShiftForm personal={P} manualList={manualList} date={sel} onDone={formDone}/>}
+        <MyMessage {...dayMsg}/>
+        {canEdit&&!form&&(manualList.length?(
+          <button data-my-action="addManual" onClick={()=>{setDayMsg({});setForm({type:"add"});}} style={{...AGray,marginTop:10}}>＋ ほかの勤務先のシフトを追加</button>
+        ):(
+          <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginTop:10}}>
+            Shifty を使っていないお店で働いているときは、設定で勤務先を追加するとシフトを入れられます。
+            {onGoSettings&&<button data-my-action="goWorkplaces" onClick={onGoSettings} style={{...MY_LINK_BTN,display:"block"}}>勤務先を追加する</button>}
+          </div>
+        ))}
       </section>
-      {okLinks.length>1&&<div data-my-legend="1" style={{display:"flex",gap:14,flexWrap:"wrap",fontSize:12,color:"var(--c-text3)",padding:"0 4px"}}>
-        {okLinks.map((l,i)=><span key={l.shopId} style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:8,height:8,borderRadius:4,background:myWorkplaceColor(l.shopId,i)}}/>{l.shopName}</span>)}
+      {wpList.filter(w=>w.linked||w.kind==="manual").length>1&&<div data-my-legend="1" style={{display:"flex",gap:14,flexWrap:"wrap",fontSize:12,color:"var(--c-text3)",padding:"0 4px"}}>
+        {wpList.filter(w=>w.linked||w.kind==="manual").map(w=><span key={w.id} style={{display:"inline-flex",alignItems:"center",gap:6}}><span style={{width:8,height:8,borderRadius:4,background:w.color}}/>{w.name}</span>)}
       </div>}
     </div>
   );
 }
+// ===== 設定タブ → 勤務先（2026-10-04・第2部 E4）=====
+// Shifty の店舗（紐付いた店舗）と手入力の勤務先の一覧・追加・名前と色の変更・削除。
+// E5 はこの編集欄（MyWorkplaceEditor）に給料設定（workplaces/{id}.pay）を足す。
+// 紐付いた店舗のプラン（Premium の判定）は readMyShiftShop と同じ規則で読む
+async function readMyLinksWithPlans(uid){
+  const links=await readMyLinks(uid);
+  if(!Array.isArray(links))return{links,plans:[]};
+  const plans=await Promise.all(links.filter(l=>l&&l.ok).map(l=>_myRead(`accounts/${l.shopId}/plan`).then(r=>DEV_PLAN_OVERRIDE||(r.ok&&["free","pro","premium"].includes(r.v)?r.v:"free"))));
+  return{links,plans};
+}
+function MyColorPicker({value,onChange}){
+  return(
+    <div role="radiogroup" aria-label="色" style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:14}}>
+      {MY_WORKPLACE_COLORS.map(c=>{const on=c===value;return(
+        <button key={c} role="radio" aria-checked={on} aria-label={`色 ${c}`} data-my-color={c} onClick={()=>onChange(c)}
+          style={{width:40,height:40,borderRadius:20,background:c,border:"none",cursor:"pointer",boxShadow:on?"0 0 0 3px var(--c-card),0 0 0 5px var(--c-text)":"none"}}/>
+      );})}
+    </div>
+  );
+}
+function MyWorkplaceEditor({w,personal,isNew,list,onDone}){
+  const[f,setF]=useState({name:w?(w.kind==="shifty"?(w.rec&&w.rec.name)||"":w.name):"",color:w?w.color:myNextWorkplaceColor(list)});
+  const[err,setErr]=useState("");
+  const[busy,setBusy]=useState(false);
+  const kind=w?w.kind:"manual";
+  const save=async()=>{
+    const e=validateMyWorkplaceInput(f,kind);
+    if(e){setErr(e);return;}
+    setBusy(true);
+    const id=w?w.id:personal.newWorkplaceId();
+    const r=await personal.saveWorkplace(id,buildMyWorkplacePatch(f,w||{kind:"manual"}));
+    setBusy(false);
+    if(r.error){setErr(r.error);return;}
+    onDone(isNew?"勤務先を追加しました":"保存しました");
+  };
+  return(
+    <div data-my-wp-editor={isNew?"new":w.id} style={{padding:"12px 0 4px"}}>
+      <MyField label="名前" value={f.name} maxLength={MY_WORKPLACE_NAME_MAX} data-my-input="wpName" placeholder={kind==="shifty"?w.shopName:"例 カフェ（駅前）"}
+        hint={kind==="shifty"?"空欄ならお店の名前で表示します":null} onChange={e=>{setF({...f,name:e.target.value});setErr("");}}/>
+      <div style={MY_LABEL}>色</div>
+      <MyColorPicker value={f.color} onChange={c=>{setF({...f,color:c});setErr("");}}/>
+      <MyMessage error={err}/>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+        <button data-my-action="saveWorkplace" disabled={busy} onClick={save} style={{...AB,opacity:busy?.6:1}}>{busy?"保存中…":isNew?"追加":"保存"}</button>
+        <button data-my-action="cancelWorkplace" onClick={()=>onDone(null)} style={AGray}>やめる</button>
+      </div>
+    </div>
+  );
+}
+function MyWorkplacesSection({staffUser,personal}){
+  const uid=staffUser.uid;
+  const P=personal;
+  const[lp,setLp]=useState(undefined); // {links,plans}
+  const[edit,setEdit]=useState(null);  // 勤務先ID | "new"
+  const[msg,setMsg]=useState({});
+  const[busy,setBusy]=useState("");
+  useEffect(()=>{
+    let alive=true;
+    readMyLinksWithPlans(uid).then(v=>{if(alive)setLp(v);},()=>{if(alive)setLp({links:null,plans:[]});});
+    return()=>{alive=false;};
+  },[uid]);
+  const okLinks=lp&&Array.isArray(lp.links)?lp.links.filter(l=>l&&l.ok):[];
+  const list=myWorkplaceList(okLinks,P.workplaces);
+  const premium=!!lp&&myShiftPremiumOf(lp.plans);
+  const canEdit=premium&&P.state==="ok";
+  const done=m=>{setEdit(null);setMsg(m?{ok:m}:{});};
+  const remove=async w=>{
+    if(w.kind==="manual"){
+      const ids=Object.entries(P.shifts||{}).filter(([,s])=>s&&s.workplaceId===w.id).map(([id])=>id);
+      if(!window.confirm(`「${w.name}」を削除しますか？${ids.length?`この勤務先のシフト${ids.length}件も一緒に削除されます。`:"この勤務先のシフトはありません。"}`))return;
+      setBusy(w.id);setMsg({});
+      const r=await P.deleteWorkplace(w.id,{shiftIds:ids});
+      setBusy("");setMsg(r.error?{error:r.error}:{ok:"勤務先を削除しました"});
+    }else{
+      const n=Object.keys((P.overrides||{})[w.id]||{}).length;
+      if(!window.confirm(`リンクが外れたお店「${w.name}」の設定を削除しますか？${n?`入力した実績${n}件も一緒に削除されます。`:""}`))return;
+      setBusy(w.id);setMsg({});
+      const r=await P.deleteWorkplace(w.id,{overridesShopId:w.id});
+      setBusy("");setMsg(r.error?{error:r.error}:{ok:"削除しました"});
+    }
+  };
+  const kindLabel=w=>w.kind==="manual"?"手入力の勤務先":w.linked?"Shifty のお店":"リンク解除済みのお店";
+  return(
+    <section style={MY_SECTION} data-my-section="workplaces">
+      <div style={MY_SECTION_TITLE}>勤務先</div>
+      <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>カレンダーに出す名前と色です。Shifty を使っていないお店も追加すると、マイシフトでシフトを入れられます。</div>
+      {(lp===undefined||P.state==="loading")&&<div style={{fontSize:14,color:"var(--c-text3)"}}>読み込み中…</div>}
+      {P.state==="error"&&<MyMessage error="勤務先を読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/>}
+      {lp&&lp.links===null&&<MyMessage error="お店とのリンクを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/>}
+      {lp!==undefined&&P.state!=="loading"&&list.length===0&&<div style={{fontSize:14,color:"var(--c-text3)",marginBottom:8}}>まだ勤務先がありません。</div>}
+      {lp!==undefined&&P.state!=="loading"&&list.map(w=>(
+        <div key={w.id} data-my-wp={w.id} data-my-wp-kind={w.kind} data-my-wp-linked={w.linked?"1":"0"} style={{borderTop:"1px solid var(--c-border)"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0"}}>
+            <span aria-hidden="true" data-my-wp-dot="1" style={{flex:"0 0 auto",width:12,height:12,borderRadius:6,background:w.color}}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div data-my-wp-name="1" style={{fontSize:15,fontWeight:700,color:"var(--c-text)",overflowWrap:"anywhere"}}>{w.name}</div>
+              <div style={{fontSize:12,color:"var(--c-text3)"}}>{kindLabel(w)}{w.kind==="shifty"&&w.linked&&w.name!==w.shopName?`（${w.shopName}）`:""}</div>
+            </div>
+            {canEdit&&edit!==w.id&&(w.kind==="manual"||w.linked)&&<button data-my-action="editWorkplace" onClick={()=>{setMsg({});setEdit(w.id);}} style={{...AGray,padding:"8px 12px",fontSize:13,whiteSpace:"nowrap"}}>編集</button>}
+            {(w.kind==="manual"||!w.linked)&&P.state==="ok"&&edit!==w.id&&<button data-my-action="deleteWorkplace" disabled={busy===w.id} onClick={()=>remove(w)} style={{...AGray,padding:"8px 12px",fontSize:13,whiteSpace:"nowrap"}}>削除</button>}
+          </div>
+          {edit===w.id&&<MyWorkplaceEditor w={w} personal={P} list={list} onDone={done}/>}
+        </div>
+      ))}
+      {edit==="new"&&<div style={{borderTop:"1px solid var(--c-border)"}}><MyWorkplaceEditor w={null} isNew personal={P} list={list} onDone={done}/></div>}
+      <MyMessage {...msg}/>
+      {canEdit&&edit!=="new"&&<button data-my-action="addWorkplace" onClick={()=>{setMsg({});setEdit("new");}} style={{...AGray,marginTop:10}}>＋ 勤務先を追加</button>}
+      {lp!==undefined&&!premium&&P.state!=="loading"&&<div data-my-wp-premium-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginTop:10}}>
+        勤務先の追加と編集は、プレミアムプランのお店とリンクしている間に使えます。入れた勤務先とシフトは表示され、削除はいつでもできます。
+      </div>}
+    </section>
+  );
+}
+
 function MyPayTab(){
   return <MyEmptyState>勤務先の店舗とアカウントのリンクが済み、シフトが確定すると、ここに今月の給料の見込みが表示されます。</MyEmptyState>;
 }
 
-function MySettingsTab({staffUser,profile,profileState,initialError,onProfile,shopId}){
+function MySettingsTab({staffUser,profile,profileState,initialError,onProfile,shopId,personal}){
   const[name,setName]=useState(profile.displayName);
   const[num,setNum]=useState(profile.number);
   const[pMsg,setPMsg]=useState(()=>initialError?{error:initialError}:{});
@@ -720,6 +1109,7 @@ function MySettingsTab({staffUser,profile,profileState,initialError,onProfile,sh
   return(
     <div>
       <MyLinksSection staffUser={staffUser} profile={profile} shopId={shopId}/>
+      {personal&&<MyWorkplacesSection staffUser={staffUser} personal={personal}/>}
       <section style={MY_SECTION} data-my-section="profile">
         <div style={MY_SECTION_TITLE}>アカウント</div>
         {profileState==="error"&&<MyMessage error="登録ネームを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/>}
@@ -857,6 +1247,8 @@ function MyView({staffUser,onStaffUser,shopId,onClose}){
     return()=>window.removeEventListener("shifty:staffAccount",h);
   },[onStaffUser]);
   const uid=staffUser&&staffUser.uid;
+  // 本人の勤務先・手入力のシフト・実績の上書き（E4）。マイシフトと設定タブが共有する
+  const personal=useMyPersonal(uid);
   useEffect(()=>{
     if(!uid||!firebaseDB) return;
     let alive=true;
@@ -878,9 +1270,9 @@ function MyView({staffUser,onStaffUser,shopId,onClose}){
       <MyHeader title={label} onClose={onClose}/>
       <main style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 96px"}}>
         {profile.displayName&&<div style={{fontSize:13,color:"var(--c-text3)",marginBottom:4}} data-my-who="1">{profile.displayName} さん</div>}
-        {tab==="shift"&&<MyShiftTab staffUser={staffUser} onGoSettings={()=>setTab("settings")}/>}
+        {tab==="shift"&&<MyShiftTab staffUser={staffUser} personal={personal} onGoSettings={()=>setTab("settings")}/>}
         {tab==="pay"&&<MyPayTab/>}
-        {tab==="settings"&&<MySettingsTab staffUser={staffUser} profile={profile} profileState={profileState} initialError={saveError} shopId={shopId}
+        {tab==="settings"&&<MySettingsTab staffUser={staffUser} profile={profile} profileState={profileState} initialError={saveError} shopId={shopId} personal={personal}
           onProfile={p=>{draftRef.current=null;setSaveError(null);setProfile(myProfileOf(p));setProfileState("ok");}}/>}
       </main>
       <MyTabBar tab={tab} onTab={setTab}/>

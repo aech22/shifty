@@ -271,7 +271,7 @@ function fmtLinkCodeExpiry(ms){
 // module.exports）を引数で渡す。ブラウザでは省略してよい（同じ名前のグローバルを使う）
 function _myU(U){
   if(U)return U;
-  return{scheduledDay,resolvePeriodMaster,resolveSubByAlias,isStaffHiddenInPeriod,isPeriodPublished,isPeriodConfirmed,featureEnabled};
+  return{scheduledDay,resolveActualDay,resolvePeriodMaster,resolveSubByAlias,isStaffHiddenInPeriod,isPeriodPublished,isPeriodConfirmed,featureEnabled};
 }
 // 勤務先の色（ドット）。E3 は既定色だけで、E4 で本人が選べるようにする。差し替え口は overrides（{shopId:"#rrggbb"}）。
 // 先頭はブランドのアクセント（#f87036）。2店舗目以降は落ち着いた色で、店舗の区別だけに使う（意味を持たない装飾にしない）
@@ -333,7 +333,8 @@ function buildMyShiftDays(o,U){
     const published=!!x.premium&&u.isPeriodPublished(p);
     const confirmed=u.isPeriodConfirmed(p);
     if(published&&u.isStaffHiddenInPeriod(name,st,p))return;
-    const base={shopId:x.shopId,shopName:x.shopName||"",color:x.color||MY_WORKPLACE_COLORS[0],periodId:p.id};
+    const base={shopId:x.shopId,workplaceId:x.shopId,shopName:x.shopName||"",color:x.color||MY_WORKPLACE_COLORS[0],periodId:p.id};
+    const ovs=_myObj(x.overrides)||{};
     _myDatesOf(p).forEach(date=>{
       const sh=sub&&sub.shifts?sub.shifts[date]:null;
       const hope=sh&&sh.status==="work"&&(sh.start||sh.end)?{startMin:_myClock(sh.start),endMin:_myClock(sh.end)}:null;
@@ -341,18 +342,32 @@ function buildMyShiftDays(o,U){
         const sd=u.scheduledDay(sub,date,st,name);
         if(sd.isRest||!(sd.workMin>0))return;
         const differs=!!hope&&(hope.startMin!==sd.startMin||hope.endMin!==sd.endMin);
-        out.push({...base,date,kind:"published",confirmed,startMin:sd.startMin,endMin:sd.endMin,breakMin:sd.breakMin,workMin:sd.workMin,
-          segments:sd.segments.map(g=>({startMin:g.startMin,endMin:g.endMin,extra:!!g.extra})),hope,differs});
+        const segOf=gs=>(gs||[]).map(g=>({startMin:g.startMin,endMin:g.endMin,extra:!!g.extra}));
+        const sched={startMin:sd.startMin,endMin:sd.endMin,breakMin:sd.breakMin,workMin:sd.workMin,segments:segOf(sd.segments)};
+        // 実績の上書き（E4・users/{uid}/overrides/{shopId}/{date}）。本人の画面と給料計算にだけ効く。
+        // 計算は店舗の実績と同じ resolveActualDay（退勤延長は足さない・締の追加出勤は確定シフトのまま足す）。
+        // 「変更あり」の指紋は公開内容（sched）で作る＝上書きしても変更ありにならない
+        const ov=myOverrideOf(ovs[date]);
+        const ad=u.resolveActualDay?u.resolveActualDay(sub,ov?{start:ov.start,end:ov.end,breakMin:ov.breakMin}:null,date,st,name):null;
+        const eff=ov&&ad?{startMin:ad.startMin,endMin:ad.endMin,breakMin:ad.breakMin,workMin:ad.workMin,segments:segOf(ad.segments)}:sched;
+        out.push({...base,date,kind:"published",confirmed,...eff,sched,overridden:!!(ov&&ad),override:ov&&ad?ov:null,actualDay:ad,hope,differs});
       }else if(hope){
         out.push({...base,date,kind:"submitted",confirmed:false,startMin:hope.startMin,endMin:hope.endMin,breakMin:null,workMin:null,
           segments:[],hope,differs:false});
       }
     });
   });
-  return out.sort((a,b)=>a.date.localeCompare(b.date)||String(a.shopId).localeCompare(String(b.shopId)));
+  return out.sort(myEntryOrder);
 }
-// 1日の公開内容の指紋（「変更あり」の判定）。時刻・休憩・締の追加出勤で作る。確定の有無は含めない（内容の変化だけを見る）
-function myDayFingerprint(e){
+// 同じ日の中は開始の早い順、同じ開始なら勤務先の順（店舗ID・手入力の勤務先ID）
+function myEntryOrder(a,b){
+  const sa=a.startMin==null?99999:a.startMin,sb=b.startMin==null?99999:b.startMin;
+  return a.date.localeCompare(b.date)||sa-sb||String(a.workplaceId||a.shopId||"").localeCompare(String(b.workplaceId||b.shopId||""))||String(a.shiftId||"").localeCompare(String(b.shiftId||""));
+}
+// 1日の公開内容の指紋（「変更あり」の判定）。時刻・休憩・締の追加出勤で作る。確定の有無は含めない（内容の変化だけを見る）。
+// 実績の上書き（E4）がある日は、上書き前の公開内容（e.sched）で作る
+function myDayFingerprint(e0){
+  const e=e0&&e0.sched?e0.sched:e0;
   if(!e)return"";
   const seg=(e.segments||[]).filter(g=>g.extra).map(g=>`+${g.startMin}-${g.endMin}`).join("");
   return`${e.startMin==null?"":e.startMin}-${e.endMin==null?"":e.endMin}-${e.breakMin==null?"":e.breakMin}${seg}`;
@@ -385,9 +400,9 @@ function buildMySeenRecord(curDays,nowIso){
   if(d&&Object.keys(d).length)rec.days={...d};
   return rec;
 }
-// 今日以降で最も近い公開済みの出勤（同じ日なら店舗IDの順＝buildMyShiftDays の並び）
+// 今日以降で最も近い出勤（公開済みと手入力。同じ日なら開始の早い順＝myEntryOrder の並び）。未公開（グレー）は含めない
 function nextMyShift(entries,todayStr){
-  return(entries||[]).find(e=>e&&e.kind==="published"&&e.date>=String(todayStr||""))||null;
+  return(entries||[]).find(e=>e&&(e.kind==="published"||e.kind==="manual")&&e.date>=String(todayStr||""))||null;
 }
 // 月のカレンダー（日曜はじまり）。週ごとに7つの {date, inMonth}。ym は "YYYY-MM"
 function myMonthGrid(ym){
@@ -418,9 +433,265 @@ function myShiftPeriodsToRead(periods,ym,todayStr){
   return(periods||[]).filter(p=>p&&p.id&&(myPeriodOverlaps(p,from,to)||(p.endDate&&p.endDate>=String(todayStr||""))));
 }
 
+// ===== 手入力の勤務先とシフト・実績の上書き・.ics（2026-10-04・第2部 E4）=====
+// データ（計画書 E.4。すべて users/{uid} の下・本人のみ）:
+//   workplaces/{id}  { kind:"shifty"|"manual", color, name?, shopId? , pay?(E5) }
+//     - Shifty の店舗: id は shopId そのもの（kind:"shifty", shopId===id）。name は本人が付けた表示名で、無ければ店舗名。
+//       紐付けの正本は E2 の links／staffLinks のまま。レコードは本人が色・名前を変えたとき（E5 では給料設定を入れたとき）に作る。
+//       紐付けが外れてもレコードは残す（入力済みの給料設定を消さない）。一覧では「リンク解除済み」として出し、本人が消せる
+//     - 手入力の勤務先: id は "m_"+英数字8桁（kind:"manual", name 必須, shopId なし）
+//   shifts/{id}      { workplaceId, date, start, end, breakMin, memo? }  id は "h_"+英数字10桁。手入力の勤務先のシフトだけ
+//   overrides/{shopId}/{date}  { start, end, breakMin }  公開済みの Shifty のシフトに本人が入れた実績
+// 時刻は "HH:MM"（時は2桁・24時超え表記で 30:00 まで。退勤 > 出勤）。日をまたぐ勤務は 26:00 のように書く（シフト表と同じ表記）
+const MY_WORKPLACE_NAME_MAX=30;
+const MY_SHIFT_MEMO_MAX=200;
+const MY_CLOCK_MAX_MIN=30*60;
+const MY_MANUAL_WP_ID_RE=/^m_[A-Za-z0-9]{8}$/;
+const MY_SHIFT_ID_RE=/^h_[A-Za-z0-9]{10}$/;
+const _MY_ID_CHARS="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+// rand(n) は 0〜255 の数を n 個返す関数（ブラウザでは crypto.getRandomValues。テストでは固定値）
+function genMyRecordId(prefix,len,rand){
+  const bytes=rand(len);
+  let s="";
+  for(let i=0;i<len;i++)s+=_MY_ID_CHARS[(Number(bytes[i])||0)%_MY_ID_CHARS.length];
+  return prefix+s;
+}
+const _MY_DATE_RE=/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+function isMyDateStr(s){
+  if(typeof s!=="string"||!_MY_DATE_RE.test(s))return false;
+  const d=new Date(s+"T00:00:00Z");
+  return Number.isFinite(d.getTime())&&d.toISOString().slice(0,10)===s;
+}
+function _myAddDays(date,n){const d=new Date(date+"T00:00:00Z");d.setUTCDate(d.getUTCDate()+n);return d.toISOString().slice(0,10);}
+// 分 → 保存する "HH:MM"（時は2桁）
+function myClockStr(min){const n=Math.round(Number(min));return`${String(Math.floor(n/60)).padStart(2,"0")}:${String(n%60).padStart(2,"0")}`;}
+// 時刻の直接入力: "9"→09:00・"930"→09:30・"1730"→17:30・"9:30"・全角・"25:00"。空なら ""、読めない・30:00 超なら null
+function parseMyClockInput(v){
+  const s=toHalfWidthDigits(v).replace(/：/g,":").replace(_MY_TRIM_RE,"");
+  if(!s)return"";
+  let h,m;
+  let r=/^(\d{1,2}):(\d{1,2})$/.exec(s);
+  if(r){h=+r[1];m=+r[2];}
+  else if((r=/^(\d{1,2})$/.exec(s))){h=+r[1];m=0;}
+  else if((r=/^(\d{1,2})(\d{2})$/.exec(s))){h=+r[1];m=+r[2];}
+  else return null;
+  if(m>59||h*60+m>MY_CLOCK_MAX_MIN)return null;
+  return myClockStr(h*60+m);
+}
+// 5分刻みの選択肢（0:00〜30:00）。value は保存の形・label はシフト表と同じ表記
+const MY_TIME_OPTIONS=(()=>{const a=[];for(let t=0;t<=MY_CLOCK_MAX_MIN;t+=5)a.push({value:myClockStr(t),label:fmtMyClock(t)});return a;})();
+// 休憩（分）の選択肢と直接入力。空は 0
+const MY_BREAK_OPTIONS=(()=>{const a=[];for(let t=0;t<=180;t+=5)a.push(t);return a;})();
+function parseMyMinutesInput(v){
+  const s=toHalfWidthDigits(v).replace(_MY_TRIM_RE,"");
+  if(!s)return 0;
+  if(!/^\d{1,4}$/.test(s))return null;
+  const n=+s;return n<=1440?n:null;
+}
+// 開始・終了・休憩の検証（手入力のシフトと実績の上書きで共通）。戻り値 {error, suggestEnd?} か {start,end,breakMin,startMin,endMin}
+const MY_OVERNIGHT_HINT="日をまたぐときは、24時より後の時刻で入力します（翌2:00 なら 26:00）";
+function _myCheckTimes(o){
+  const x=o||{};
+  const start=parseMyClockInput(x.start),end=parseMyClockInput(x.end),brk=parseMyMinutesInput(x.breakMin);
+  if(start===""||end==="")return{error:"開始と終了の時刻を入力してください"};
+  if(start===null)return{error:"開始の時刻が読めません（例 9:30・930）"};
+  if(end===null)return{error:"終了の時刻が読めません（例 17:00・1700。最大 30:00）"};
+  if(brk===null)return{error:"休憩は分の数字で入力してください（0〜1440）"};
+  const sm=_myClock(start),em=_myClock(end);
+  if(em<=sm){
+    const alt=em+24*60;
+    return{error:`終了が開始より前です。${MY_OVERNIGHT_HINT}`,suggestEnd:alt>sm&&alt<=MY_CLOCK_MAX_MIN?myClockStr(alt):null};
+  }
+  if(brk>=em-sm)return{error:"休憩が勤務の長さ以上になっています"};
+  return{start,end,breakMin:brk,startMin:sm,endMin:em};
+}
+// 手入力のシフトの検証。o={workplaceId,date,start,end,breakMin,memo}、ctx.workplaceIds=使える勤務先ID（手入力の勤務先）
+function validateMyShiftInput(o,ctx){
+  const x=o||{};
+  const ids=(ctx&&ctx.workplaceIds)||null;
+  if(!x.workplaceId||!MY_MANUAL_WP_ID_RE.test(String(x.workplaceId))||(ids&&!ids.includes(x.workplaceId)))return{error:"勤務先を選んでください"};
+  if(!isMyDateStr(x.date))return{error:"日付を選んでください"};
+  const t=_myCheckTimes(x);
+  if(t.error)return t;
+  const memo=String(x.memo==null?"":x.memo).replace(_MY_TRIM_RE,"");
+  if(memo.length>MY_SHIFT_MEMO_MAX)return{error:`メモは${MY_SHIFT_MEMO_MAX}文字以内にしてください`};
+  return null;
+}
+// users/{uid}/shifts/{id} に書く形（検証を通った入力から作る）。メモが空ならキーを持たない
+function buildMyShiftRecord(o){
+  const t=_myCheckTimes(o);
+  const rec={workplaceId:o.workplaceId,date:o.date,start:t.start,end:t.end,breakMin:t.breakMin};
+  const memo=String(o.memo==null?"":o.memo).replace(_MY_TRIM_RE,"");
+  if(memo)rec.memo=memo;
+  return rec;
+}
+// 同じ勤務先・同じ日・同じ時間帯のシフトが既にあるか（履歴からの追加で二重に入れない）。exceptId は編集中のシフト
+function myShiftDuplicateOf(shifts,rec,exceptId){
+  return Object.entries(_myObj(shifts)||{}).find(([id,s])=>id!==exceptId&&s&&s.workplaceId===rec.workplaceId&&s.date===rec.date&&s.start===rec.start&&s.end===rec.end)||null;
+}
+// 実績の上書きの読み（壊れた記録は使わない）
+function myOverrideOf(v){
+  const o=_myObj(v);
+  if(!o)return null;
+  const sm=_myClock(o.start),em=_myClock(o.end),b=Number(o.breakMin);
+  if(sm==null||em==null||em<=sm||!Number.isFinite(b)||b<0)return null;
+  return{start:o.start,end:o.end,breakMin:Math.round(b)};
+}
+// 実績の上書きの入力 → 書く記録。公開内容（sched）と同じなら {remove:true}（＝上書きを消す）。戻り値 {error,suggestEnd?}|{record}|{remove:true}
+function planMyOverride(input,sched){
+  const t=_myCheckTimes(input);
+  if(t.error)return t;
+  const s=sched||{};
+  if(t.startMin===s.startMin&&t.endMin===s.endMin&&t.breakMin===s.breakMin)return{remove:true};
+  return{record:{start:t.start,end:t.end,breakMin:t.breakMin}};
+}
+// 勤務先の一覧（設定タブとカレンダーが共有する）。links は readMyLinks の ok の行（並び順＝既定の色の順）、workplaces は users/{uid}/workplaces。
+// 返り値 [{id, kind, shopId, name, shopName, color, linked, rec}]。並びは Shifty の店舗（リンクの順）→ 手入力（名前の順）→ リンク解除済みの店舗
+function myWorkplaceList(links,workplaces){
+  const recs=_myObj(workplaces)||{};
+  const ok=(Array.isArray(links)?links:[]).filter(l=>l&&l.ok&&l.shopId);
+  const goodColor=c=>typeof c==="string"&&/^#[0-9a-fA-F]{6}$/.test(c);
+  const out=ok.map((l,i)=>{
+    const r=_myObj(recs[l.shopId]);
+    const rec=r&&r.kind==="shifty"?r:null;
+    const nm=rec&&typeof rec.name==="string"&&rec.name?rec.name:"";
+    return{id:l.shopId,kind:"shifty",shopId:l.shopId,shopName:l.shopName||"",name:nm||l.shopName||"",color:rec&&goodColor(rec.color)?rec.color:MY_WORKPLACE_COLORS[i%MY_WORKPLACE_COLORS.length],linked:true,rec};
+  });
+  const linkedIds=new Set(ok.map(l=>l.shopId));
+  const manual=[],gone=[];
+  Object.entries(recs).forEach(([id,r])=>{
+    if(!_myObj(r))return;
+    if(r.kind==="manual"&&MY_MANUAL_WP_ID_RE.test(id)&&typeof r.name==="string"&&r.name)
+      manual.push({id,kind:"manual",shopId:null,shopName:"",name:r.name,color:goodColor(r.color)?r.color:MY_WORKPLACE_COLORS[0],linked:false,rec:r});
+    else if(r.kind==="shifty"&&!linkedIds.has(id))
+      gone.push({id,kind:"shifty",shopId:id,shopName:"",name:typeof r.name==="string"&&r.name?r.name:"（リンク解除済みのお店）",color:goodColor(r.color)?r.color:MY_WORKPLACE_COLORS[0],linked:false,rec:r});
+  });
+  manual.sort((a,b)=>a.name.localeCompare(b.name,"ja")||a.id.localeCompare(b.id));
+  return[...out,...manual,...gone];
+}
+// 新しい手入力の勤務先の既定の色（まだ使っていないプリセットの先頭。全部使っていれば数で回す）
+function myNextWorkplaceColor(list){
+  const used=new Set((list||[]).map(w=>w.color));
+  return MY_WORKPLACE_COLORS.find(c=>!used.has(c))||MY_WORKPLACE_COLORS[(list||[]).length%MY_WORKPLACE_COLORS.length];
+}
+// 勤務先の名前と色の検証。kind が shifty なら名前は空でよい（空＝店舗名で表示）
+function validateMyWorkplaceInput(o,kind){
+  const x=o||{};
+  const name=normalizeMyDisplayName(x.name);
+  if(kind!=="shifty"&&!name)return"勤務先の名前を入力してください";
+  if(name.length>MY_WORKPLACE_NAME_MAX)return`勤務先の名前は${MY_WORKPLACE_NAME_MAX}文字以内にしてください`;
+  if(!MY_WORKPLACE_COLORS.includes(x.color))return"色を選んでください";
+  return null;
+}
+// workplaces/{id} への update の中身（pay は E5 の担当が足すので触らない＝set() しない）。
+// Shifty の店舗で名前が店舗名と同じか空なら name を消す（null）＝店舗名で表示
+function buildMyWorkplacePatch(o,w){
+  const name=normalizeMyDisplayName(o&&o.name);
+  if(w&&w.kind==="shifty")return{kind:"shifty",shopId:w.shopId,color:o.color,name:name&&name!==w.shopName?name:null};
+  return{kind:"manual",name,color:o.color};
+}
+// 手入力のシフト → カレンダーの entry（buildMyShiftDays と同じ形・kind "manual"）。勤務先が無い（消えた）シフトは出さない
+function buildMyManualDays(list,shifts){
+  const wp=new Map((list||[]).filter(w=>w.kind==="manual").map(w=>[w.id,w]));
+  const out=[];
+  Object.entries(_myObj(shifts)||{}).forEach(([id,s])=>{
+    if(!_myObj(s)||!wp.has(s.workplaceId)||!isMyDateStr(s.date))return;
+    const sm=_myClock(s.start),em=_myClock(s.end);
+    if(sm==null||em==null||em<=sm)return;
+    const w=wp.get(s.workplaceId);
+    const b=Math.max(0,Math.min(Math.round(Number(s.breakMin)||0),em-sm));
+    out.push({date:s.date,shopId:null,workplaceId:w.id,shiftId:id,shopName:w.name,color:w.color,periodId:null,kind:"manual",confirmed:false,
+      startMin:sm,endMin:em,breakMin:b,workMin:em-sm-b,segments:[{startMin:sm,endMin:em,extra:false}],hope:null,differs:false,
+      memo:typeof s.memo==="string"?s.memo:""});
+  });
+  return out.sort(myEntryOrder);
+}
+// 履歴から追加の候補: 同じ勤務先で過去に入れた時間帯（開始・終了・休憩が同じものはまとめる）を新しい日付の順に limit 件
+function myShiftHistoryCandidates(shifts,workplaceId,limit){
+  const n=limit==null?5:limit;
+  const seen=new Set(),out=[];
+  Object.values(_myObj(shifts)||{}).filter(s=>s&&s.workplaceId===workplaceId&&isMyDateStr(s.date)&&_myClock(s.start)!=null&&_myClock(s.end)!=null)
+    .sort((a,b)=>b.date.localeCompare(a.date))
+    .forEach(s=>{
+      const b=Math.round(Number(s.breakMin)||0);
+      const k=`${s.start}|${s.end}|${b}`;
+      if(seen.has(k)||out.length>=n)return;
+      seen.add(k);
+      out.push({start:s.start,end:s.end,breakMin:b,label:`${fmtMyClock(_myClock(s.start))}〜${fmtMyClock(_myClock(s.end))}${b>0?`（休憩${b}分）`:""}`});
+    });
+  return out;
+}
+// 給料計算（E5）に渡す1日の勤務。マイシフトの entry（buildMyShiftDays＋buildMyManualDays）から、未公開（グレー）を除いて同じ形にそろえる。
+//   source: "published"（公開・確定シフト）| "override"（本人が上書きした実績）| "manual"（手入力の勤務先）
+//   actualDay: Shifty の店舗の日だけ。resolveActualDay の戻り値（上書き適用後）＝premiumDayInput の own にそのまま渡せる
+function myPayWorkDays(entries){
+  return(entries||[]).filter(e=>e&&(e.kind==="published"||e.kind==="manual")).map(e=>({
+    date:e.date,kind:e.kind==="manual"?"manual":"shifty",workplaceId:e.workplaceId||e.shopId,shopId:e.shopId||null,periodId:e.periodId||null,
+    shiftId:e.shiftId||null,confirmed:!!e.confirmed,source:e.kind==="manual"?"manual":e.overridden?"override":"published",
+    startMin:e.startMin,endMin:e.endMin,breakMin:e.breakMin,workMin:e.workMin,segments:(e.segments||[]).map(g=>({...g})),actualDay:e.actualDay||null}));
+}
+// ---- .ics（RFC 5545）----
+// 公開済み（上書きがあれば上書きの時刻）と手入力のシフトを VEVENT にする。未公開（グレー）は含めない。
+// 時刻帯は TZID=Asia/Tokyo（VTIMEZONE を同梱。日本は夏時間が無いので STANDARD 1つ）。24時超えは翌日の時刻に直す。
+// 締の追加出勤（segments の extra）は別のイベント。UID は「勤務先と日付（手入力はシフトID）」から作り、取り込み直しても同じになる
+function _icsEscape(s){return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r?\n/g,"\\n");}
+// 75オクテットで折り返す（UTF-8 の文字の途中では切らない。続きの行は先頭に空白1つ＝その空白も75に数える）
+function icsFoldLine(line){
+  const out=[];let cur="",bytes=0,limit=75;
+  for(const ch of String(line)){
+    const b=new TextEncoder().encode(ch).length;
+    if(bytes+b>limit){out.push(cur);cur=" "+ch;bytes=1+b;}
+    else{cur+=ch;bytes+=b;}
+  }
+  out.push(cur);
+  return out.join("\r\n");
+}
+function _icsUidPart(s){return String(s==null?"":s).replace(/[^A-Za-z0-9-]/g,c=>"_"+c.charCodeAt(0).toString(16));}
+function _icsLocal(date,min){
+  const d=_myAddDays(date,Math.floor(min/1440)),r=min%1440;
+  return`${d.replace(/-/g,"")}T${String(Math.floor(r/60)).padStart(2,"0")}${String(r%60).padStart(2,"0")}00`;
+}
+function _icsUtcStamp(iso){
+  const d=new Date(iso);const t=Number.isFinite(d.getTime())?d:new Date(0);
+  return t.toISOString().replace(/[-:]/g,"").replace(/\.\d{3}Z$/,"Z");
+}
+const MY_ICS_DOMAIN="shiftyshifty.app";
+function buildMyIcs(entries,o){
+  const x=o||{};
+  const stamp=_icsUtcStamp(x.nowIso||new Date().toISOString());
+  const L=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//TODGE//Shifty MyShift//JA","CALSCALE:GREGORIAN","METHOD:PUBLISH",
+    `X-WR-CALNAME:${_icsEscape(x.calName||"Shifty マイシフト")}`,"X-WR-TIMEZONE:Asia/Tokyo",
+    "BEGIN:VTIMEZONE","TZID:Asia/Tokyo","BEGIN:STANDARD","DTSTART:19700101T000000","TZOFFSETFROM:+0900","TZOFFSETTO:+0900","TZNAME:JST","END:STANDARD","END:VTIMEZONE"];
+  let n=0;
+  (entries||[]).filter(e=>e&&(e.kind==="published"||e.kind==="manual")&&isMyDateStr(e.date)).forEach(e=>{
+    const segs=(e.segments&&e.segments.length?e.segments:[{startMin:e.startMin,endMin:e.endMin}]).filter(g=>g&&g.startMin!=null&&g.endMin!=null&&g.endMin>g.startMin);
+    let ex=0;
+    segs.forEach(g=>{
+      const uid=e.kind==="manual"?`manual-${_icsUidPart(e.shiftId)}${g.extra?`-x${++ex}`:""}`
+        :`shifty-${_icsUidPart(e.shopId)}-${e.date.replace(/-/g,"")}${g.extra?`-x${++ex}`:""}`;
+      const desc=[];
+      if(e.kind==="published")desc.push(e.overridden?"実績（本人の入力）":e.confirmed?"確定":"公開");
+      if(!g.extra&&e.breakMin>0)desc.push(`休憩${e.breakMin}分`);
+      if(e.memo)desc.push(e.memo);
+      L.push("BEGIN:VEVENT",`UID:${uid}@${MY_ICS_DOMAIN}`,`DTSTAMP:${stamp}`,
+        `DTSTART;TZID=Asia/Tokyo:${_icsLocal(e.date,g.startMin)}`,`DTEND;TZID=Asia/Tokyo:${_icsLocal(e.date,g.endMin)}`,
+        `SUMMARY:${_icsEscape((e.shopName||"シフト")+(g.extra?"（追加）":""))}`);
+      if(desc.length)L.push(`DESCRIPTION:${_icsEscape(desc.join("\n"))}`);
+      L.push("END:VEVENT");n++;
+    });
+  });
+  L.push("END:VCALENDAR");
+  return{text:L.map(icsFoldLine).join("\r\n")+"\r\n",count:n};
+}
+// .ics に入れる entry（表示中の月の公開済み・手入力）
+function myIcsEntriesForMonth(entries,ym){return(entries||[]).filter(e=>e&&(e.kind==="published"||e.kind==="manual")&&String(e.date).slice(0,7)===ym);}
+
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
   module.exports={MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
     MY_LINK_METHOD_LABELS,MY_LINK_CODE_LEN,MY_LINK_CODE_TTL_MS,linkNumberKey,linkNameKey,normalizeLinkCode,isValidLinkCode,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,fmtLinkCodeExpiry,
-    MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead};
+    MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
+    MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_OPTIONS,MY_BREAK_OPTIONS,parseMyMinutesInput,
+    MY_OVERNIGHT_HINT,validateMyShiftInput,buildMyShiftRecord,myShiftDuplicateOf,myOverrideOf,planMyOverride,myWorkplaceList,myNextWorkplaceColor,validateMyWorkplaceInput,buildMyWorkplacePatch,
+    buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth};
 }
