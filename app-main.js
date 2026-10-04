@@ -40,6 +40,8 @@ function App(){
   const[pageBoot,setPageBoot]=useState(null);
   // 募集URLの画面から開く個別URLの申請（null＝閉じている・文字列＝開いている。値は名前の初期値）
   const[pageRegName,setPageRegName]=useState(null);
+  // 自分専用のURLをなくした人の送り直し（2026-10-04）。募集URLの画面に重ねて表示する
+  const[pageRecoverOpen,setPageRecoverOpen]=useState(false);
   const[currentShopId,setCurrentShopId]=useState(()=>_hasUrlToken?null:ssGet(SS_SHOP,null));
   const currentShopIdRef=useRef(_hasUrlToken?null:ssGet(SS_SHOP,null));
   const[view,setView]=useState(()=>_hasUrlToken?"staff":ssGet(SS_VIEW,"staff"));
@@ -2115,6 +2117,9 @@ function App(){
       {MY_SCREEN_ENABLED&&pageRegName!==null&&urlLocked&&sid!=="default"&&<div data-page-register-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
         <MyPageRegister shopId={sid} shopName={shop?.name||""} initialName={pageRegName} onClose={()=>setPageRegName(null)}/>
       </div>}
+      {MY_SCREEN_ENABLED&&pageRecoverOpen&&urlLocked&&<div data-page-recover-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
+        <MyPageRecoverScreen onClose={()=>setPageRecoverOpen(false)}/>
+      </div>}
       {/* 同期ステータスバー（接続中以外のみ表示） */}
       {syncStatus!=="online"&&<div style={{background:syncStatus==="offline"?"#F59E0B":"#6B7280",color:"white",fontSize:11,fontWeight:700,textAlign:"center",padding:"4px 8px"}}>
         {syncStatus==="offline"?"オフライン（再接続中...）":syncStatus==="no_config"?"Firebase未設定":"接続中..."}
@@ -2130,6 +2135,7 @@ function App(){
             urlLocked={urlLocked}
             onOpenMy={MY_SCREEN_ENABLED&&urlLocked&&!DEMO_MODE?openMyFromStaff:null}
             onOpenPageRegister={MY_SCREEN_ENABLED&&urlLocked&&!DEMO_MODE?n=>setPageRegName(String(n||"")):null}
+            onOpenPageRecover={MY_SCREEN_ENABLED&&urlLocked&&!DEMO_MODE?()=>setPageRecoverOpen(true):null}
             onSub={staffOnSub}
             onDeleteSub={staffOnDeleteSub}
             shopName={shop?.name}/>

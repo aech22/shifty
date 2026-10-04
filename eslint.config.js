@@ -194,6 +194,7 @@ const sharedGlobals = {
   buildMyAccountUrl: "writable",
   // app-my.js で定義し app-main.js が使う（募集URLの「マイシフト」から個別URLの画面を重ねる・2026-10-04）
   findOpenableMyPage: "writable",
+  MyPageRecoverScreen: "writable",
   SS_MY_BASE_HASH: "writable",
   // app-my.js で定義し app-admin.js・app-staff.js・app-main.js が使う個別URLの部品
   MyPageView: "writable",

@@ -892,6 +892,10 @@ exports.purgeInactiveShops = functions
         await db.ref(`staffPageTokens/${t}`).remove();
         await db.ref(`staffPageData/${t}`).remove();
         await db.ref(`staffPagePins/${t}`).remove();
+        // URLをなくしたとき用のメールアドレス（2026-10-04）と、その逆引き
+        const er = (await db.ref(`staffPageEmails/${t}`).once("value")).val();
+        if (er && typeof er.key === "string" && /^[0-9a-f]{64}$/.test(er.key)) await db.ref(`staffPageEmailIndex/${er.key}/${t}`).remove();
+        await db.ref(`staffPageEmails/${t}`).remove();
       }
 
       console.log(`アーカイブ: ${id} (${label}) lastActivity=${raw}`);
@@ -2077,7 +2081,8 @@ exports.unlinkStaff = functions
 // 会社が登録した賃金（private/pay）は**ここで番号を照合してから**本人の分だけ返す（名前は呼び出し元から受け取らず staffPages の name が正）。
 // ハッシュと試行回数は staffPagePins/{pageToken}（ルールでクライアントから読み書きできない）。試行回数はトランザクションで数える
 // （並べて投げて回数の制限を抜けられないように）。判定は functions/my-page.js の純粋関数（tests/my.test.js が照合する）
-const { isPageTokenCF, myPageAccessCF, planMyPagePin } = require("./my-page");
+const { isPageTokenCF, myPageAccessCF, planMyPagePin, PAGE_EMAIL_KEY_SALT_CF, PAGE_EMAIL_RATE_WINDOW_MS_CF, PAGE_EMAIL_RATE_LIMITS_CF,
+  normalizePageEmailCF, isPageEmailCF, pageEmailRateStepCF, planSetPageEmailCF, planRecoverPageUrlCF } = require("./my-page");
 exports.myPagePin = functions
   .region("asia-northeast1")
   .https.onCall(async (data, context) => {
@@ -2141,5 +2146,114 @@ exports.getMyPay = functions
     const homeShopName = home ? await readVal(`global/shops/${home}/name`) : null;
     const r = planGetMyPay({ shopId, name, staff, payRec, homeShopId: home, homeShopName });
     throwPlanError(r);
+    return r.result;
+  });
+
+// ============================================================
+// スタッフ個別URL: URLをなくしたとき用のメールアドレス（任意・2026-10-04）
+// ============================================================
+// setPageEmail＝登録・変更・削除・状態（登録したらそのアドレスに個別URLの控えを送る）、recoverPageUrl＝なくしたときの送り直し。
+// 判定は functions/my-page.js の planSetPageEmailCF・planRecoverPageUrlCF（tests/my.test.js と E2E のスタブが同じ関数を通す）。
+// アドレスは staffPageEmails・staffPageEmailIndex（CF 専用）にだけ置き、クライアントへは「登録済みか」と伏せたアドレスしか返さない。
+// 送り直しは画面に URL を出さず、結果は登録の有無に関係なく同じ文言。送信回数は URL・アドレス・呼び出し元ごとに1時間で制限する
+// （トランザクションで数える＝並べて投げて抜けられない）。メールの URL は本番ドメイン固定（APP_URL はサーバーの環境だけで変えられる）
+const PAGE_EMAIL_BASE = process.env.APP_URL || "https://shiftyshifty.app";
+function pageEmailKey(email) { return payCodeHashCF(PAGE_EMAIL_KEY_SALT_CF, normalizePageEmailCF(email)); }
+// 回数の制限（1時間）。超えていれば resource-exhausted
+async function pageEmailRate(kind, key) {
+  const max = PAGE_EMAIL_RATE_LIMITS_CF[kind];
+  if (!max || !isSafeDbKey(String(key || ""))) throw new functions.https.HttpsError("internal", "処理できませんでした");
+  const now = Date.now();
+  let ok = false;
+  await db.ref(`staffPageEmailRate/${kind}_${key}`).transaction(cur => {
+    const st = pageEmailRateStepCF(cur, now, max, PAGE_EMAIL_RATE_WINDOW_MS_CF);
+    ok = st.ok;
+    return st.ok ? st.rec : cur;
+  });
+  if (!ok) throw new functions.https.HttpsError("resource-exhausted", "しばらく時間をおいてから、もう一度お試しください");
+}
+async function sendPageEmail(mail) {
+  const smtpUser = process.env.SMTP_USER;
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || "smtp.gmail.com",
+    port: Number(process.env.SMTP_PORT) || 587,
+    secure: false,
+    auth: { user: smtpUser, pass: process.env.SMTP_PASS },
+  });
+  await transporter.sendMail({ from: `"Shifty" <${smtpUser}>`, to: mail.to, subject: mail.subject, text: mail.text });
+}
+// 個別URLの状態を確かめて、店舗の staffPages・staff・店舗名を返す（myPagePin と同じ入口の検証）
+async function pageEmailAccess(token) {
+  if (!isPageTokenCF(token)) throw new functions.https.HttpsError("invalid-argument", "URLが正しくありません");
+  const tokenRec = await readVal(`staffPageTokens/${token}`);
+  const shopId = tokenRec && tokenRec.shopId;
+  if (!isValidShopId(shopId)) throw new functions.https.HttpsError("not-found", "このURLは見つかりませんでした");
+  if (isDemoShop(shopId)) throw new functions.https.HttpsError("permission-denied", "体験版の店舗では使えません");
+  const [pages, staff, shopName] = await Promise.all([readVal(`shops/${shopId}/staffPages`), readVal(`shops/${shopId}/staff`), readVal(`global/shops/${shopId}/name`)]);
+  const access = myPageAccessCF({ token, tokenRec, pageRec: pages && pages[token], staff });
+  return { shopId, pages: pages || {}, staff, shopName: typeof shopName === "string" ? shopName : "", access };
+}
+exports.setPageEmail = functions
+  .region("asia-northeast1")
+  .runWith({ secrets: ["SMTP_USER", "SMTP_PASS"] })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
+    const token = data && data.token;
+    const action = data && data.action;
+    if (!["status", "set", "remove"].includes(action)) throw new functions.https.HttpsError("invalid-argument", "操作が正しくありません");
+    const a = await pageEmailAccess(token);
+    throwPlanError(a.access);
+    const email = typeof (data && data.email) === "string" ? data.email : "";
+    if (action === "set") {
+      if (!isPageEmailCF(normalizePageEmailCF(email))) throw new functions.https.HttpsError("invalid-argument", "メールアドレスの形が正しくありません");
+      await pageEmailRate("setToken", token);
+      await pageEmailRate("setUid", payCodeHashCF("uid:", context.auth.uid));
+    }
+    const name = a.access.name;
+    const prevTokens = Object.keys(a.pages).filter(t => t !== token && isPageTokenCF(t) && a.pages[t] && a.pages[t].status === "revoked" && a.pages[t].name === name);
+    const [emailRec, ...prevVals] = await Promise.all([readVal(`staffPageEmails/${token}`), ...prevTokens.map(t => readVal(`staffPageEmails/${t}`))]);
+    const prevEmailRecs = {};
+    prevTokens.forEach((t, i) => { if (prevVals[i]) prevEmailRecs[t] = prevVals[i]; });
+    const r = planSetPageEmailCF({ action, token, access: a.access, pages: a.pages, emailRec, prevEmailRecs, email, emailKey: action === "set" ? pageEmailKey(email) : "",
+      nowIso: new Date().toISOString(), base: PAGE_EMAIL_BASE, shopName: a.shopName });
+    throwPlanError(r);
+    if (Object.keys(r.writes).length) await db.ref().update(r.writes);
+    if (r.mail) {
+      try { await sendPageEmail(r.mail); } catch (e) {
+        console.error("個別URLの控えの送信に失敗:", e && e.message);
+        return { ...r.result, sent: false };
+      }
+    }
+    return r.result;
+  });
+exports.recoverPageUrl = functions
+  .region("asia-northeast1")
+  .runWith({ secrets: ["SMTP_USER", "SMTP_PASS"] })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
+    const email = normalizePageEmailCF(typeof (data && data.email) === "string" ? data.email : "");
+    if (!isPageEmailCF(email)) throw new functions.https.HttpsError("invalid-argument", "メールアドレスの形が正しくありません");
+    const key = pageEmailKey(email);
+    // 回数は登録の有無に関係なく数える（数え方で登録の有無が分からないように）
+    await pageEmailRate("recoverEmail", key);
+    await pageEmailRate("recoverUid", payCodeHashCF("uid:", context.auth.uid));
+    const index = (await readVal(`staffPageEmailIndex/${key}`)) || {};
+    const tokens = Object.keys(index).filter(isPageTokenCF);
+    const tokenShops = {}, emailRecs = {}, pagesByShop = {}, staffByShop = {}, shopNames = {};
+    await Promise.all(tokens.map(async t => {
+      const [tr, er] = await Promise.all([readVal(`staffPageTokens/${t}`), readVal(`staffPageEmails/${t}`)]);
+      if (tr && isValidShopId(tr.shopId) && !isDemoShop(tr.shopId)) tokenShops[t] = tr.shopId;
+      if (er) emailRecs[t] = er;
+    }));
+    await Promise.all([...new Set(Object.values(tokenShops))].map(async sid => {
+      const [pg, st, nm] = await Promise.all([readVal(`shops/${sid}/staffPages`), readVal(`shops/${sid}/staff`), readVal(`global/shops/${sid}/name`)]);
+      pagesByShop[sid] = pg || {}; staffByShop[sid] = st; shopNames[sid] = typeof nm === "string" ? nm : "";
+    }));
+    const r = planRecoverPageUrlCF({ email, emailKey: key, index, tokenShops, pagesByShop, staffByShop, shopNames, emailRecs, base: PAGE_EMAIL_BASE });
+    throwPlanError(r);
+    if (Object.keys(r.writes).length) await db.ref().update(r.writes);
+    if (r.mail) {
+      try { await sendPageEmail(r.mail); } catch (e) { console.error("個別URLの送り直しに失敗:", e && e.message); }
+    }
     return r.result;
   });

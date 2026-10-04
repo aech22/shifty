@@ -18,7 +18,8 @@ function ShiftyIcon({size=32}){
 // onOpenPageRegister: 募集URLの画面から自分専用の個別URLを申請する（2026-10-04）。App が MY_SCREEN_ENABLED のときだけ渡す。引数はいま入っている名前
 // fixedName: スタッフ個別URLの提出タブ（2026-10-04）。承認された名前で固定し、名前の入力欄を出さない（Cookie の名前も読まない・書かない）。
 // bottomOffset: 送信ボタンの帯を下から何px上げるか（個別URLの下部タブの上に出すため）
-function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub,onDeleteSub,shopName,urlLocked=false,plan="free",onOpenMy=null,onOpenPageRegister=null,fixedName=null,bottomOffset=0}){
+// onOpenPageRecover: 自分専用のURLをなくした人がメールで送り直す入口（2026-10-04）。App が MY_SCREEN_ENABLED のときだけ渡す
+function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub,onDeleteSub,shopName,urlLocked=false,plan="free",onOpenMy=null,onOpenPageRegister=null,onOpenPageRecover=null,fixedName=null,bottomOffset=0}){
   // Cookieからスタッフ名を復元（個別URLは承認された名前）
   const savedName=fixedName||(shopId&&apid?getCookie(ckStaffKey(shopId,apid))||"":"");
   const[name,setName]=useState(savedName);
@@ -290,6 +291,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
           <button onClick={reset} style={{padding:"11px 22px",background:"var(--c-bg)",border:"2px solid var(--c-border)",borderRadius:8,color:"var(--c-text3)",fontSize:14,fontWeight:700,cursor:"pointer"}}>↺ 最初から</button>
         </div>
         {onOpenPageRegister&&<button data-page-register-open="done" onClick={()=>onOpenPageRegister(name)} style={{marginTop:22,background:"none",border:"none",color:"var(--c-text2)",fontSize:14,textDecoration:"underline",cursor:"pointer",padding:"8px 0"}}>自分専用のURLを作る（次から名前の入力が不要）</button>}
+        {onOpenPageRecover&&<div><button data-page-recover-open="done" onClick={onOpenPageRecover} style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:13,textDecoration:"underline",cursor:"pointer",padding:"8px 0"}}>自分専用のURLをなくした場合</button></div>}
       </div>
     </div>
   );
@@ -363,6 +365,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
 
         {onOpenPageRegister&&<div style={{margin:"-6px 2px 12px"}}>
           <button data-page-register-open="form" onClick={()=>onOpenPageRegister(name)} style={{background:"none",border:"none",color:"var(--c-text2)",fontSize:13,textDecoration:"underline",cursor:"pointer",padding:"6px 0"}}>自分専用のURLを作る（次から名前の入力が不要）</button>
+          {onOpenPageRecover&&<button data-page-recover-open="form" onClick={onOpenPageRecover} style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:13,textDecoration:"underline",cursor:"pointer",padding:"6px 0",marginLeft:14}}>URLをなくした場合</button>}
         </div>}
 
         {/* 全日程一括入力 */}

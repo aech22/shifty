@@ -464,6 +464,9 @@
       }
     },
     "staffPagePins": { ".read": false, ".write": false },
+    "staffPageEmails": { ".read": false, ".write": false },
+    "staffPageEmailIndex": { ".read": false, ".write": false },
+    "staffPageEmailRate": { ".read": false, ".write": false },
     "staffLinkCodeAttempts": { ".read": false, ".write": false }
   }
 }

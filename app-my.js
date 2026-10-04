@@ -2239,6 +2239,11 @@ function MyAuthScreen({shopId,onClose}){
             </>}
           </section>
         )}
+        {/* 個別URL（ログイン不要）をなくした人の入口（2026-10-04）。アカウントのパスワードの再設定とは別 */}
+        <details data-my-recover-details="1" style={{...MY_SECTION,marginTop:16}}>
+          <summary style={{cursor:"pointer",fontSize:14,fontWeight:600,color:"var(--c-text2)",minHeight:32,display:"flex",alignItems:"center"}}>自分専用のURLをなくした場合</summary>
+          <div style={{marginTop:10}}><MyPageRecoverBox/></div>
+        </details>
       </div>
     </div>
   );
@@ -2842,6 +2847,98 @@ function MyPagePinChange({token}){
     </section>
   );
 }
+// ---- URLをなくしたとき用のメールアドレス（任意・2026-10-04 ユーザー指示）----
+// 登録・変更・削除と送り直しは Cloud Functions（setPageEmail・recoverPageUrl）だけ。アドレスは CF 専用の場所にあり、画面に出すのは伏せたアドレスだけ。
+// CF が使えない（未デプロイ・通信）間は「いまは登録できません」と出して止まる（画面は落ちない）
+const MY_PAGE_EMAIL_UNAVAILABLE="いまは登録できません（サーバー側の準備中か、通信できません）。時間をおいてもう一度お試しください";
+// CF の拒否の文言（日本語）はそのまま、英語の汎用のエラー（関数が無い・internal 等）は fallback に置き換える
+function myCfMsg(r,fallback){const e=r&&r.error?String(r.error):"";return /[^\x00-\x7f]/.test(e)?e:fallback;}
+function MyPageEmailBox({token}){
+  const[st,setSt]=useState(undefined); // undefined=確認中・{registered,masked}・{error}
+  const[editing,setEditing]=useState(false);
+  const[email,setEmail]=useState("");
+  const[msg,setMsg]=useState({});
+  const[busy,setBusy]=useState(false);
+  useEffect(()=>{
+    let alive=true;setSt(undefined);
+    myCallCF("setPageEmail",{token,action:"status"}).then(r=>{if(alive)setSt(r&&r.ok?{registered:!!r.registered,masked:String(r.masked||"")}:{error:true});});
+    return()=>{alive=false;};
+  },[token]);
+  const save=async()=>{
+    setMsg({});
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())){setMsg({error:"メールアドレスの形が正しくありません"});return;}
+    setBusy(true);
+    const r=await myCallCF("setPageEmail",{token,action:"set",email:email.trim()});
+    setBusy(false);
+    if(!r||!r.ok){setMsg({error:myCfMsg(r,MY_PAGE_EMAIL_UNAVAILABLE)});return;}
+    setSt({registered:true,masked:String(r.masked||"")});setEditing(false);setEmail("");
+    setMsg({ok:r.sent===false?`登録しました（${r.masked}）。控えのメールは送れませんでした。時間をおいて登録し直すと、もう一度送ります`
+      :`登録しました。${r.masked} にこの画面のURLを送りました。届いているか確かめてください`});
+  };
+  const remove=async()=>{
+    if(!window.confirm("登録したメールアドレスを削除しますか？ URLをなくしたときにメールで受け取れなくなります"))return;
+    setMsg({});setBusy(true);
+    const r=await myCallCF("setPageEmail",{token,action:"remove"});
+    setBusy(false);
+    if(!r||!r.ok){setMsg({error:myCfMsg(r,MY_PAGE_EMAIL_UNAVAILABLE)});return;}
+    setSt({registered:false,masked:""});setMsg({ok:"メールアドレスを削除しました"});
+  };
+  return(
+    <section style={MY_SECTION} data-my-section="pageEmail" data-my-page-email={st===undefined?"loading":st.error?"error":st.registered?"set":"none"}>
+      <div style={MY_SECTION_TITLE}>URLをなくしたとき用のメールアドレス（任意）</div>
+      <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>登録しておくと、URLをなくしたときにシフト募集の画面からこのアドレスへURLを送り直せます。登録しなくても、これまでどおり使えます。</div>
+      {st===undefined&&<div style={{fontSize:14,color:"var(--c-text3)"}}>確認しています…</div>}
+      {st&&st.error&&<MyMessage error={MY_PAGE_EMAIL_UNAVAILABLE}/>}
+      {st&&!st.error&&st.registered&&!editing&&<div>
+        <div data-my-page-email-masked={st.masked} style={{fontSize:15,color:"var(--c-text)",marginBottom:10,wordBreak:"break-all"}}>登録済み: {st.masked}</div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <button data-my-action="changePageEmail" onClick={()=>{setEditing(true);setMsg({});}} style={AGray}>変更</button>
+          <button data-my-action="removePageEmail" disabled={busy} onClick={remove} style={{...AGray,opacity:busy?.6:1}}>削除</button>
+        </div>
+      </div>}
+      {st&&!st.error&&(!st.registered||editing)&&<div>
+        <MyField label="メールアドレス" type="email" inputMode="email" autoComplete="email" value={email} maxLength={254} data-my-input="pageEmail" onChange={e=>{setEmail(e.target.value);setMsg({});}}/>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <button data-my-action="savePageEmail" disabled={busy} onClick={save} style={{...AB,opacity:busy?.6:1}}>{busy?"登録中…":"登録してURLを送る"}</button>
+          {editing&&<button onClick={()=>{setEditing(false);setEmail("");setMsg({});}} style={AGray}>やめる</button>}
+        </div>
+      </div>}
+      <MyMessage {...msg}/>
+    </section>
+  );
+}
+// URLをなくしたとき（募集URLの画面・#/me の最初の画面）。画面に URL を出さず、結果は登録の有無に関係なく同じ文言（CF が返す）
+function MyPageRecoverBox(){
+  const[email,setEmail]=useState("");
+  const[msg,setMsg]=useState({});
+  const[busy,setBusy]=useState(false);
+  const send=async()=>{
+    setMsg({});
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())){setMsg({error:"メールアドレスの形が正しくありません"});return;}
+    setBusy(true);
+    const r=await myCallCF("recoverPageUrl",{email:email.trim()});
+    setBusy(false);
+    if(!r||!r.ok){setMsg({error:myCfMsg(r,"いまは送れません（サーバー側の準備中か、通信できません）。時間をおいてもう一度お試しください")});return;}
+    setMsg({ok:String(r.message||"登録されているアドレスであれば、個別URLを送りました")});
+  };
+  return(
+    <div data-my-page-recover="1">
+      <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>自分専用のURLにメールアドレスを登録していれば、そのアドレスにURLを送り直します。登録していないときは、お店の管理者に新しいURLを発行してもらってください。</div>
+      <MyField label="登録したメールアドレス" type="email" inputMode="email" autoComplete="email" value={email} maxLength={254} data-my-input="recoverEmail" onChange={e=>{setEmail(e.target.value);setMsg({});}}/>
+      <button data-my-action="recoverPage" disabled={busy} onClick={send} style={{...AB,opacity:busy?.6:1}}>{busy?"送信中…":"URLを送る"}</button>
+      <MyMessage {...msg}/>
+    </div>
+  );
+}
+function MyPageRecoverScreen({onClose}){
+  return(
+    <div data-my-page-recover-screen="1" style={{minHeight:"100vh",background:"var(--c-bg)"}}>
+      <MyHeader title="自分専用のURLをなくした場合" onClose={onClose}/>
+      <div style={{maxWidth:480,margin:"0 auto",padding:"20px 16px 40px"}}><section style={MY_SECTION}><MyPageRecoverBox/></section></div>
+    </div>
+  );
+}
+
 // 個別URLの設定タブ: 勤務先・月間目標（暗証番号で給料を開いている間だけ）・**一番下に個別URL**（2026-10-04 ユーザー指示
 // 「設定の1番下に個別URLを表示。管理者画面でのみ変更可能」）。URL は表示・コピー・共有だけで、本人の画面からは変更も再発行もできない
 function MyPageSettingsTab({me,personal,page,shopName,token,payUnlocked}){
@@ -2857,6 +2954,7 @@ function MyPageSettingsTab({me,personal,page,shopName,token,payUnlocked}){
         <MyPageUrlBox url={buildMyPageUrl(myPageBaseUrl(),token)} note={MY_PAGE_URL_NOTE}/>
         <div data-my-page-url-admin="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7}}>URLの変更はお店の管理者に依頼してください。</div>
       </section>
+      <MyPageEmailBox token={token}/>
     </div>
   );
 }
