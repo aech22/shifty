@@ -201,6 +201,16 @@ async function readMyLinks(uid){
   }));
 }
 
+// ===== 本人（データの持ち主）（2026-10-04・スタッフ個別URL）=====
+// アカウント（users/{uid}・E1〜E6）と個別URL（staffPageData/{pageToken}）で、マイシフト・給料・勤務先・月間目標の画面を共有する（画面を二重に作らない）。
+//   key        … 読み込みをやり直す鍵（本人が替わったら読み直す）
+//   base       … 本人のデータの基点（workplaces・shifts・overrides・goals・actuals・seen はこの下。形は同じ）
+//   links()    … 紐付いた店舗の一覧（readMyLinks と同じ形の Promise。個別URLは承認された1店舗だけ）
+//   companyPay(sid) … 会社が登録した賃金（myCompanyPayOf の形の Promise）
+function myAccountSubject(uid){
+  return uid?{kind:"account",key:"u:"+uid,base:`users/${uid}`,links:()=>readMyLinks(uid),companyPay:sid=>readMyCompanyPay(uid,sid)}:null;
+}
+
 // 管理者側（スタッフタブ）: 申請の提案と未リンクの申請。オーナーの端末で MY_SCREEN_ENABLED のときだけ（links.enabled）
 function StaffLinkRequestsCard({links,staffList,staffNumbers,mirrorPeople,shopId,tt}){
   const[busy,setBusy]=useState("");
@@ -424,14 +434,15 @@ function MyMessage({error,ok}){
   return <div role={error?"alert":"status"} data-my-msg={error?"error":"ok"} style={{fontSize:14,lineHeight:1.7,color:error?"var(--c-danger)":"var(--c-text2)",margin:"4px 0 14px"}}>{error||ok}</div>;
 }
 
-// 下部タブ。並びは MY_TABS（app-my-utils.js）
-function MyTabBar({tab,onTab}){
+// 下部タブ。並びは MY_TABS（app-my-utils.js）。高さは MY_TAB_BAR_H（個別URLの提出タブが送信の帯をこの上に出す）
+const MY_TAB_BAR_H=52;
+function MyTabBar({tab,onTab,tabs=MY_TABS}){
   return(
     <nav style={{position:"fixed",left:0,right:0,bottom:0,background:"var(--c-card)",borderTop:"1px solid var(--c-border)",zIndex:50,paddingBottom:"env(safe-area-inset-bottom,0)"}}>
       <div style={{maxWidth:560,margin:"0 auto",display:"flex"}}>
-        {MY_TABS.map(t=>{const a=t.key===tab;return(
+        {tabs.map(t=>{const a=t.key===tab;return(
           <button key={t.key} data-my-tab={t.key} aria-current={a?"page":undefined} onClick={()=>onTab(t.key)}
-            style={{flex:1,minHeight:52,background:"none",border:"none",borderTop:`2px solid ${a?"var(--c-accent)":"transparent"}`,color:a?"var(--c-accent)":"var(--c-text3)",fontSize:14,fontWeight:a?700:600,cursor:"pointer"}}>
+            style={{flex:1,minHeight:MY_TAB_BAR_H,background:"none",border:"none",borderTop:`2px solid ${a?"var(--c-accent)":"transparent"}`,color:a?"var(--c-accent)":"var(--c-text3)",fontSize:14,fontWeight:a?700:600,cursor:"pointer"}}>
             {t.label}
           </button>
         );})}
@@ -483,17 +494,18 @@ async function readMyPeriodSubs(sid,pid){
 // 紐付いた店舗（readMyLinks の ok の行）ごとの periods・settings・staff・プランと、pick(期間の一覧) が返す期間の subs を読む。
 // マイシフト（表示中の月と今日以降）と給料（締め期間を含む暦月と前後の週・E5）が共有する。読んだ期間は覚えておき、読み直さない。
 // pending は「読み込み中の店舗か、pick の期間で subs をまだ読んでいないものがある」
-function useMyShiftSources(uid,pick){
+function useMyShiftSources(me,pick){
   const[links,setLinks]=useState(undefined);   // undefined=読み込み中・null=読めない
   const[shops,setShops]=useState({});         // {sid: {ok,periods,settings,staff,plan,wageSettings}}
   const[subs,setSubs]=useState({});           // {"sid|pid": sub[] | null}
   const loadingRef=useRef(new Set());
+  const key=me&&me.key;
   useEffect(()=>{
-    if(!uid)return;
+    if(!me)return;
     let alive=true;
-    readMyLinks(uid).then(v=>{if(alive)setLinks(v);}).catch(()=>{if(alive)setLinks(null);});
+    me.links().then(v=>{if(alive)setLinks(v);}).catch(()=>{if(alive)setLinks(null);});
     return()=>{alive=false;};
-  },[uid]);
+  },[key]);
   const okLinks=useMemo(()=>(Array.isArray(links)?links.filter(l=>l&&l.ok):[]),[links]);
   const badLinks=Array.isArray(links)?links.filter(l=>l&&!l.ok):[];
   useEffect(()=>{
@@ -534,24 +546,25 @@ function mySubsByPeriodOf(sid,sh,subs){
 // ===== 本人のデータ（2026-10-04・第2部 E4）=====
 // users/{uid}/workplaces・shifts・overrides を1回読み、書いたら手元の状態を合わせる（購読しない＝本人の端末からしか書かれない）。
 // MyView が1つ持ち、マイシフトと設定タブが共有する。書くのは users/{uid}/ の下だけ（店舗のデータには書かない）。
+// 引数は本人の基点（users/{uid} か staffPageData/{pageToken}・2026-10-04）。個別URLは別の端末からも書かれうるが、開き直しで読み直す
 // workplaces は update（E5 が同じレコードに pay を足すので set() で消さない）、shifts・overrides は1件ずつの set。
 const myRand=n=>{const a=new Uint8Array(n);(window.crypto||window.msCrypto).getRandomValues(a);return Array.from(a);};
 function myWriteError(e){return isPermissionDeniedError(e)?"保存できませんでした（サーバー側の設定が未反映の可能性があります）":"保存できませんでした。通信状態を確認してもう一度お試しください";}
-function useMyPersonal(uid){
+function useMyPersonal(base){
   const[d,setD]=useState({state:"loading",workplaces:{},shifts:{},overrides:{}});
   useEffect(()=>{
-    if(!uid||!firebaseDB)return;
+    if(!base||!firebaseDB)return;
     let alive=true;
-    Promise.all(["workplaces","shifts","overrides"].map(k=>_myRead(`users/${uid}/${k}`))).then(([w,s,o])=>{
+    Promise.all(["workplaces","shifts","overrides"].map(k=>_myRead(`${base}/${k}`))).then(([w,s,o])=>{
       if(!alive)return;
       const ok=w.ok&&s.ok&&o.ok;
       setD({state:ok?"ok":"error",workplaces:(w.ok&&w.v)||{},shifts:(s.ok&&s.v)||{},overrides:(o.ok&&o.v)||{}});
     });
     return()=>{alive=false;};
-  },[uid]);
-  // patch は {"workplaces/x": …} の形（users/{uid} からの相対パス・null で削除）。成功したら手元の状態にも同じ形で当てる
+  },[base]);
+  // patch は {"workplaces/x": …} の形（base からの相対パス・null で削除）。成功したら手元の状態にも同じ形で当てる
   const apply=async patch=>{
-    try{await fbUpd(`users/${uid}`,patch);}
+    try{await fbUpd(base,patch);}
     catch(e){console.warn("マイシフト: 保存に失敗:",e&&e.code);return{error:myWriteError(e)};}
     setD(prev=>{
       const next={...prev,workplaces:{...prev.workplaces},shifts:{...prev.shifts},overrides:{...prev.overrides}};
@@ -769,23 +782,23 @@ function MyShiftEntryRow({e,changed,actions}){
   );
 }
 
-function MyShiftTab({staffUser,onGoSettings,personal}){
-  const uid=staffUser&&staffUser.uid;
+function MyShiftTab({me,onGoSettings,personal}){
+  const base=me&&me.base;
   const P=personal||{state:"ok",workplaces:{},shifts:{},overrides:{}};
   const todayStr=fd(new Date());
   const[ym,setYm]=useState(todayStr.slice(0,7));
   const[sel,setSel]=useState(todayStr);
-  const[seen,setSeen]=useState(undefined);     // users/{uid}/seen（undefined=読み込み中・null=読めない）
+  const[seen,setSeen]=useState(undefined);     // {base}/seen（undefined=読み込み中・null=読めない）
   const baselineRef=useRef(new Set());
   useEffect(()=>{
-    if(!uid)return;
+    if(!base)return;
     let alive=true;
-    _myRead(`users/${uid}/seen`).then(r=>{if(alive)setSeen(r.ok?(r.v||{}):null);});
+    _myRead(`${base}/seen`).then(r=>{if(alive)setSeen(r.ok?(r.v||{}):null);});
     return()=>{alive=false;};
-  },[uid]);
+  },[base]);
   // 表示中の月と今日以降にかかる期間の subs だけを読む（読んだ期間は覚えておき、月を戻っても読み直さない）
   const pick=useCallback(ps=>myShiftPeriodsToRead(ps,ym,todayStr),[ym,todayStr]);
-  const{links,okLinks,badLinks,shops,subs}=useMyShiftSources(uid,pick);
+  const{links,okLinks,badLinks,shops,subs}=useMyShiftSources(me,pick);
   const premium=myShiftPremiumOf(okLinks.map(l=>shops[l.shopId]&&shops[l.shopId].plan));
   // 勤務先の名前と色（E4）。Shifty の店舗は本人が付けた名前・色（無ければ店舗名と既定の色）、手入力の勤務先はその記録
   const wpList=useMemo(()=>myWorkplaceList(okLinks,P.workplaces),[okLinks,P.workplaces]);
@@ -814,16 +827,16 @@ function MyShiftTab({staffUser,onGoSettings,personal}){
     keys.forEach(k=>{const[sid,pid]=k.split("|");patch[k]={sid,pid,rec:buildMySeenRecord(fps[k],now)};});
     setSeen(prev=>{const next={...(prev||{})};Object.values(patch).forEach(({sid,pid,rec})=>{next[sid]={...(next[sid]||{}),[pid]:rec};});return next;});
     Object.values(patch).forEach(({sid,pid,rec})=>{
-      fbSet(`users/${uid}/seen/${sid}/${pid}`,rec).catch(e=>console.warn(`マイシフト: ${label}の記録に失敗:`,e&&e.code));
+      fbSet(`${base}/seen/${sid}/${pid}`,rec).catch(e=>console.warn(`マイシフト: ${label}の記録に失敗:`,e&&e.code));
     });
   };
   useEffect(()=>{
-    if(!seen||!uid)return; // 読めない（null）間は書かない（既にある記録を上書きしないため）
+    if(!seen||!base)return; // 読めない（null）間は書かない（既にある記録を上書きしないため）
     const fresh=Object.keys(fps).filter(k=>seenOf(k)===undefined&&!baselineRef.current.has(k));
     if(!fresh.length)return;
     fresh.forEach(k=>baselineRef.current.add(k));
     writeSeen(fresh,"初回の表示");
-  },[fps,seen,uid]);
+  },[fps,seen,base]);
   const changed=useMemo(()=>{
     const out=[];
     Object.keys(fps).forEach(k=>{const d=myChangedDates(seenOf(k),fps[k]);if(d&&d.length)out.push({key:k,dates:d});});
@@ -991,8 +1004,8 @@ function MyShiftTab({staffUser,onGoSettings,personal}){
 // Shifty の店舗（紐付いた店舗）と手入力の勤務先の一覧・追加・名前と色の変更・削除。
 // E5 はこの編集欄（MyWorkplaceEditor）に給料設定（workplaces/{id}.pay）を足す。
 // 紐付いた店舗のプラン（Premium の判定）は readMyShiftShop と同じ規則で読む
-async function readMyLinksWithPlans(uid){
-  const links=await readMyLinks(uid);
+async function readMyLinksWithPlans(me){
+  const links=await me.links();
   if(!Array.isArray(links))return{links,plans:[]};
   const plans=await Promise.all(links.filter(l=>l&&l.ok).map(l=>_myRead(`accounts/${l.shopId}/plan`).then(r=>DEV_PLAN_OVERRIDE||(r.ok&&["free","pro","premium"].includes(r.v)?r.v:"free"))));
   return{links,plans};
@@ -1023,15 +1036,18 @@ function readMyCompanyPay(uid,sid){
   return _myCompanyPayCache.get(k);
 }
 // {shopId: {state:"ok"|"error", pay, homeShopId, homeShopName}}。読み込み中の店舗はキーが無い
-function useMyCompanyPays(uid,okLinks){
+function useMyCompanyPays(me,okLinks){
   const[m,setM]=useState({});
   const ids=(okLinks||[]).map(l=>l.shopId).join(",");
+  // 個別URLは暗証番号で開いたときに賃金が届く（me.payKey が変わる）ので、それも読み直しの鍵にする
+  const key=me?`${me.key}|${me.payKey||""}`:"";
   useEffect(()=>{
-    if(!uid||!ids)return;
+    if(!me||!ids)return;
     let alive=true;
-    ids.split(",").forEach(sid=>{readMyCompanyPay(uid,sid).then(v=>{if(alive)setM(p=>p[sid]===v?p:{...p,[sid]:v});});});
+    setM({});
+    ids.split(",").forEach(sid=>{me.companyPay(sid).then(v=>{if(alive)setM(p=>p[sid]===v?p:{...p,[sid]:v});});});
     return()=>{alive=false;};
-  },[uid,ids]);
+  },[key,ids]);
   return m;
 }
 
@@ -1123,7 +1139,7 @@ function myPaySummaryText(pay,company){
   else if(p&&p.rate>0)parts.push(`${MY_PAY_WAGE_TYPE_LABELS[p.wageType]}${fmtMyYen(p.rate)}`);
   return parts.join("・");
 }
-function MyWorkplaceEditor({w,personal,isNew,list,onDone,company}){
+function MyWorkplaceEditor({w,personal,isNew,list,onDone,company,payLocked=false}){
   const[f,setF]=useState({name:w?(w.kind==="shifty"?(w.rec&&w.rec.name)||"":w.name):"",color:w?w.color:myNextWorkplaceColor(list)});
   const hadPay=!!(w&&w.rec&&myPayOf(w.rec.pay));
   const[payOpen,setPayOpen]=useState(hadPay);
@@ -1136,12 +1152,13 @@ function MyWorkplaceEditor({w,personal,isNew,list,onDone,company}){
     const e=validateMyWorkplaceInput(f,kind);
     if(e){setErr(e);return;}
     const ctx={kind,companyPay:!!(company&&company.pay)};
-    if(payOpen&&!removePay){const e2=validateMyPayInput(pf,ctx);if(e2){setErr(e2);return;}}
+    if(payOpen&&!removePay&&!payLocked){const e2=validateMyPayInput(pf,ctx);if(e2){setErr(e2);return;}}
     setBusy(true);
     const id=w?w.id:personal.newWorkplaceId();
     const patch=buildMyWorkplacePatch(f,w||{kind:"manual"});
     // Shifty の店舗の記録がまだ無くても、ルールが要る kind・shopId・color は上の patch に入っている
-    if(removePay)patch.pay=null;
+    if(payLocked){/* 給料の設定に触らない（見えていない値を書き換えない） */}
+    else if(removePay)patch.pay=null;
     else if(payOpen)patch.pay=buildMyPayRecord(pf,ctx,new Date().toISOString());
     const r=await personal.saveWorkplace(id,patch);
     setBusy(false);
@@ -1154,7 +1171,9 @@ function MyWorkplaceEditor({w,personal,isNew,list,onDone,company}){
         hint={kind==="shifty"?"空欄ならお店の名前で表示します":null} onChange={e=>{setF({...f,name:e.target.value});setErr("");}}/>
       <div style={MY_LABEL}>色</div>
       <MyColorPicker value={f.color} onChange={c=>{setF({...f,color:c});setErr("");}}/>
-      <div style={{borderTop:"1px solid var(--c-border)",paddingTop:12,marginTop:4}} data-my-pay-section={payOpen?"open":"closed"}>
+      {payLocked?<div data-my-pay-section="locked" style={{borderTop:"1px solid var(--c-border)",paddingTop:12,marginTop:4,marginBottom:12,fontSize:13,color:"var(--c-text3)",lineHeight:1.7}}>
+        給料の設定は、給料タブで暗証番号を入れると表示されます。
+      </div>:<div style={{borderTop:"1px solid var(--c-border)",paddingTop:12,marginTop:4}} data-my-pay-section={payOpen?"open":"closed"}>
         <div style={{...MY_SECTION_TITLE,marginBottom:8}}>給料</div>
         {company&&company.state==="error"&&<div data-my-company-pay-error="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>会社の賃金設定を確認できませんでした。本人の設定で計算します。</div>}
         {company&&company.state==="ok"&&!company.pay&&company.homeShopId&&<div data-my-company-pay-home="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>
@@ -1169,18 +1188,18 @@ function MyWorkplaceEditor({w,personal,isNew,list,onDone,company}){
             <button data-my-action="openPay" onClick={()=>{setPayOpen(true);setErr("");}} style={{...AGray,marginBottom:12}}>給料を設定する</button>
           </div>
         )}
-      </div>
+      </div>}
       <MyMessage error={err}/>
       <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
         <button data-my-action="saveWorkplace" disabled={busy} onClick={()=>save()} style={{...AB,opacity:busy?.6:1}}>{busy?"保存中…":isNew?"追加":"保存"}</button>
         <button data-my-action="cancelWorkplace" onClick={()=>onDone(null)} style={AGray}>やめる</button>
-        {hadPay&&<button data-my-action="removePay" disabled={busy} onClick={()=>save({removePay:true})} style={MY_LINK_BTN}>給料の設定を消す</button>}
+        {hadPay&&!payLocked&&<button data-my-action="removePay" disabled={busy} onClick={()=>save({removePay:true})} style={MY_LINK_BTN}>給料の設定を消す</button>}
       </div>
     </div>
   );
 }
-function MyWorkplacesSection({staffUser,personal}){
-  const uid=staffUser.uid;
+// payLocked: 個別URLで暗証番号を入れていない間は給料の設定（時給・交通費・締日）を出さない（2026-10-04）
+function MyWorkplacesSection({me,personal,payLocked=false}){
   const P=personal;
   const[lp,setLp]=useState(undefined); // {links,plans}
   const[edit,setEdit]=useState(null);  // 勤務先ID | "new"
@@ -1188,13 +1207,13 @@ function MyWorkplacesSection({staffUser,personal}){
   const[busy,setBusy]=useState("");
   useEffect(()=>{
     let alive=true;
-    readMyLinksWithPlans(uid).then(v=>{if(alive)setLp(v);},()=>{if(alive)setLp({links:null,plans:[]});});
+    readMyLinksWithPlans(me).then(v=>{if(alive)setLp(v);},()=>{if(alive)setLp({links:null,plans:[]});});
     return()=>{alive=false;};
-  },[uid]);
+  },[me.key]);
   const okLinks=lp&&Array.isArray(lp.links)?lp.links.filter(l=>l&&l.ok):[];
   const list=myWorkplaceList(okLinks,P.workplaces);
   // 会社が登録した賃金（E6・getMyPay）。勤務先の編集で「会社設定」として固定表示する
-  const companyPays=useMyCompanyPays(uid,okLinks);
+  const companyPays=useMyCompanyPays(payLocked?null:me,okLinks);
   const premium=!!lp&&myShiftPremiumOf(lp.plans);
   const canEdit=premium&&P.state==="ok";
   const done=m=>{setEdit(null);setMsg(m?{ok:m}:{});};
@@ -1229,15 +1248,15 @@ function MyWorkplacesSection({staffUser,personal}){
             <div style={{flex:1,minWidth:0}}>
               <div data-my-wp-name="1" style={{fontSize:15,fontWeight:700,color:"var(--c-text)",overflowWrap:"anywhere"}}>{w.name}</div>
               <div style={{fontSize:12,color:"var(--c-text3)"}}>{kindLabel(w)}{w.kind==="shifty"&&w.linked&&w.name!==w.shopName?`（${w.shopName}）`:""}</div>
-              {(()=>{const t=myPaySummaryText(w.rec&&w.rec.pay,companyPays[w.id]);return t?<div data-my-wp-pay="1" style={{fontSize:12,color:"var(--c-text3)",overflowWrap:"anywhere"}}>{t}</div>:null;})()}
+              {!payLocked&&(()=>{const t=myPaySummaryText(w.rec&&w.rec.pay,companyPays[w.id]);return t?<div data-my-wp-pay="1" style={{fontSize:12,color:"var(--c-text3)",overflowWrap:"anywhere"}}>{t}</div>:null;})()}
             </div>
             {canEdit&&edit!==w.id&&(w.kind==="manual"||w.linked)&&<button data-my-action="editWorkplace" onClick={()=>{setMsg({});setEdit(w.id);}} style={{...AGray,padding:"8px 12px",fontSize:13,whiteSpace:"nowrap"}}>編集</button>}
             {(w.kind==="manual"||!w.linked)&&P.state==="ok"&&edit!==w.id&&<button data-my-action="deleteWorkplace" disabled={busy===w.id} onClick={()=>remove(w)} style={{...AGray,padding:"8px 12px",fontSize:13,whiteSpace:"nowrap"}}>削除</button>}
           </div>
-          {edit===w.id&&<MyWorkplaceEditor w={w} personal={P} list={list} onDone={done} company={w.kind==="shifty"?companyPays[w.id]:null}/>}
+          {edit===w.id&&<MyWorkplaceEditor w={w} personal={P} list={list} onDone={done} company={w.kind==="shifty"?companyPays[w.id]:null} payLocked={payLocked}/>}
         </div>
       ))}
-      {edit==="new"&&<div style={{borderTop:"1px solid var(--c-border)"}}><MyWorkplaceEditor w={null} isNew personal={P} list={list} onDone={done}/></div>}
+      {edit==="new"&&<div style={{borderTop:"1px solid var(--c-border)"}}><MyWorkplaceEditor w={null} isNew personal={P} list={list} onDone={done} payLocked={payLocked}/></div>}
       <MyMessage {...msg}/>
       {canEdit&&edit!=="new"&&<button data-my-action="addWorkplace" onClick={()=>{setMsg({});setEdit("new");}} style={{...AGray,marginTop:10}}>＋ 勤務先を追加</button>}
       {lp!==undefined&&!premium&&P.state!=="loading"&&<div data-my-wp-premium-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginTop:10}}>
@@ -1251,19 +1270,19 @@ function MyWorkplacesSection({staffUser,personal}){
 // 支給月ごとの見込み（目安）。計算は app-my-utils.js の myPayMonthFor 以下（Shifty の店舗は月次賃金ページと同じ関数）。
 // 読むのは本人のセッションが読めるものだけ（紐付いた店舗の periods・settings・写し・本人に関係する期間の subs と、users/{uid} の下）。
 // 書くのは users/{uid}/goals（月間目標）と users/{uid}/actuals/{支給月}/{勤務先}（振込額）だけ（店舗のデータには書かない）
-function useMyPayExtras(uid){
+function useMyPayExtras(base){
   const[d,setD]=useState({state:"loading",goal:0,received:{}});
   useEffect(()=>{
-    if(!uid||!firebaseDB)return;
+    if(!base||!firebaseDB)return;
     let alive=true;
-    Promise.all([_myRead(`users/${uid}/goals`),_myRead(`users/${uid}/actuals`)]).then(([g,a])=>{
+    Promise.all([_myRead(`${base}/goals`),_myRead(`${base}/actuals`)]).then(([g,a])=>{
       if(!alive)return;
       setD({state:g.ok&&a.ok?"ok":"error",goal:g.ok?myGoalOf(g.v):0,received:(a.ok&&a.v&&typeof a.v==="object")?a.v:{}});
     });
     return()=>{alive=false;};
-  },[uid]);
+  },[base]);
   const write=async patch=>{
-    try{await fbUpd(`users/${uid}`,patch);return{ok:true};}
+    try{await fbUpd(base,patch);return{ok:true};}
     catch(e){console.warn("給料: 保存に失敗:",e&&e.code);return{error:myWriteError(e)};}
   };
   return{...d,
@@ -1345,11 +1364,10 @@ function MyReceivedInput({ym,wid,value,onSave,disabled}){
     </div>
   );
 }
-function MyPayTab({staffUser,personal,onGoSettings}){
-  const uid=staffUser&&staffUser.uid;
+function MyPayTab({me,personal,onGoSettings}){
   const P=personal||{state:"ok",workplaces:{},shifts:{},overrides:{}};
   const todayStr=fd(new Date());
-  const X=useMyPayExtras(uid);
+  const X=useMyPayExtras(me&&me.base);
   const[view,setView]=useState("month");     // month | year
   const[payYm,setPayYm]=useState(null);
   const[year,setYear]=useState(Number(todayStr.slice(0,4)));
@@ -1365,11 +1383,11 @@ function MyPayTab({staffUser,personal,onGoSettings}){
     return myPayReadRange(months.flatMap(m=>pays.map(p=>myPayPlanOf(m,p,null))));
   },[view,year,ym,ownPays]);
   const pick=useCallback(ps=>range?myPeriodsInRange(ps,range.from,range.to):[],[range&&range.from,range&&range.to]);
-  const{links,okLinks,badLinks,shops,subs,pending}=useMyShiftSources(uid,pick);
+  const{links,okLinks,badLinks,shops,subs,pending}=useMyShiftSources(me,pick);
   const premium=myShiftPremiumOf(okLinks.map(l=>shops[l.shopId]&&shops[l.shopId].plan));
   const wpList=useMemo(()=>myWorkplaceList(okLinks,P.workplaces),[okLinks,P.workplaces]);
   // 会社が登録した賃金（E6・getMyPay）。読み込み中の店舗は計算を待つ（本人の設定で一度出してから変わらないように）
-  const companyPays=useMyCompanyPays(uid,okLinks);
+  const companyPays=useMyCompanyPays(me,okLinks);
   const workplaces=useMemo(()=>{
     const manualDays=buildMyManualDays(wpList,P.shifts);
     return wpList.filter(w=>w.kind==="manual"||w.linked).map(w=>{
@@ -1506,14 +1524,14 @@ function MyPayTab({staffUser,personal,onGoSettings}){
   );
 }
 // 設定タブ → 月間目標（E5）。給料タブの円グラフの基準。Premium のお店とリンクしている間だけ変えられる
-function MyGoalSection({staffUser}){
-  const X=useMyPayExtras(staffUser.uid);
+function MyGoalSection({me}){
+  const X=useMyPayExtras(me.base);
   const[lp,setLp]=useState(undefined);
   const[v,setV]=useState("");
   const[msg,setMsg]=useState({});
   const[busy,setBusy]=useState(false);
   const touched=useRef(false);
-  useEffect(()=>{let alive=true;readMyLinksWithPlans(staffUser.uid).then(x=>{if(alive)setLp(x);},()=>{if(alive)setLp({links:null,plans:[]});});return()=>{alive=false;};},[staffUser.uid]);
+  useEffect(()=>{let alive=true;readMyLinksWithPlans(me).then(x=>{if(alive)setLp(x);},()=>{if(alive)setLp({links:null,plans:[]});});return()=>{alive=false;};},[me.key]);
   useEffect(()=>{if(!touched.current)setV(X.goal>0?String(X.goal):"");},[X.goal]);
   const premium=!!lp&&myShiftPremiumOf(lp.plans);
   const save=async()=>{setBusy(true);setMsg({});const r=await X.saveGoal(v);setBusy(false);if(r.error){setMsg({error:r.error});return;}touched.current=false;setMsg({ok:"保存しました"});};
@@ -1531,7 +1549,7 @@ function MyGoalSection({staffUser}){
   );
 }
 
-function MySettingsTab({staffUser,profile,profileState,initialError,onProfile,shopId,personal}){
+function MySettingsTab({staffUser,me,profile,profileState,initialError,onProfile,shopId,personal}){
   const[name,setName]=useState(profile.displayName);
   const[num,setNum]=useState(profile.number);
   const[pMsg,setPMsg]=useState(()=>initialError?{error:initialError}:{});
@@ -1570,8 +1588,8 @@ function MySettingsTab({staffUser,profile,profileState,initialError,onProfile,sh
   return(
     <div>
       <MyLinksSection staffUser={staffUser} profile={profile} shopId={shopId}/>
-      {personal&&<MyWorkplacesSection staffUser={staffUser} personal={personal}/>}
-      <MyGoalSection staffUser={staffUser}/>
+      {personal&&<MyWorkplacesSection me={me} personal={personal}/>}
+      <MyGoalSection me={me}/>
       <section style={MY_SECTION} data-my-section="profile">
         <div style={MY_SECTION_TITLE}>アカウント</div>
         {profileState==="error"&&<MyMessage error="登録ネームを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/>}
@@ -1709,8 +1727,9 @@ function MyView({staffUser,onStaffUser,shopId,onClose}){
     return()=>window.removeEventListener("shifty:staffAccount",h);
   },[onStaffUser]);
   const uid=staffUser&&staffUser.uid;
+  const me=useMemo(()=>myAccountSubject(uid),[uid]);
   // 本人の勤務先・手入力のシフト・実績の上書き（E4）。マイシフトと設定タブが共有する
-  const personal=useMyPersonal(uid);
+  const personal=useMyPersonal(me&&me.base);
   useEffect(()=>{
     if(!uid||!firebaseDB) return;
     let alive=true;
@@ -1732,12 +1751,283 @@ function MyView({staffUser,onStaffUser,shopId,onClose}){
       <MyHeader title={label} onClose={onClose}/>
       <main style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 96px"}}>
         {profile.displayName&&<div style={{fontSize:13,color:"var(--c-text3)",marginBottom:4}} data-my-who="1">{profile.displayName} さん</div>}
-        {tab==="shift"&&<MyShiftTab staffUser={staffUser} personal={personal} onGoSettings={()=>setTab("settings")}/>}
-        {tab==="pay"&&<MyPayTab staffUser={staffUser} personal={personal} onGoSettings={()=>setTab("settings")}/>}
-        {tab==="settings"&&<MySettingsTab staffUser={staffUser} profile={profile} profileState={profileState} initialError={saveError} shopId={shopId} personal={personal}
+        {tab==="shift"&&<MyShiftTab me={me} personal={personal} onGoSettings={()=>setTab("settings")}/>}
+        {tab==="pay"&&<MyPayTab me={me} personal={personal} onGoSettings={()=>setTab("settings")}/>}
+        {tab==="settings"&&<MySettingsTab staffUser={staffUser} me={me} profile={profile} profileState={profileState} initialError={saveError} shopId={shopId} personal={personal}
           onProfile={p=>{draftRef.current=null;setSaveError(null);setProfile(myProfileOf(p));setProfileState("ok");}}/>}
       </main>
       <MyTabBar tab={tab} onTab={setTab}/>
+    </div>
+  );
+}
+
+// ============================================================
+// スタッフ個別URL（2026-10-04・ユーザーの仕様変更）
+// ============================================================
+// 募集URL（#/s/<token>）の画面から本人が申請 → その場で個別URL（#/m/<pageToken>）を表示し「承認待ち」。管理者がスタッフタブで
+// 「スタッフ一覧のどの名前か」を選んで承認すると有効になり、どの端末で開いても同じスタッフの画面（ログイン不要）。
+// 本人のデータは staffPageData/{pageToken}（users/{uid} と同じ形）に置き、画面はアカウントと同じ部品を「本人」（subject）を替えて使う。
+// **pageToken を知っている人は誰でもこの画面と本人のデータを読める**（capability。ログインが無い以上、ルールで本人を見分けられない）。
+// 給料は画面上の鍵（暗証番号）で伏せ、会社が登録した賃金だけは Cloud Functions が暗証番号を照合してから返す（P4）。
+const MY_PAGES_LS="ots_myPages_v1"; // この端末で作った個別URL {shopId: {token, displayName}}（募集URLの画面で見せ直すため）
+// 個別URLの本人。links() は承認された1店舗だけ（名前は staffPages の name が正）
+function myPageSubject(o){
+  const x=o||{};
+  return{kind:"page",key:"p:"+x.token,payKey:x.pay&&x.pay.key||"",base:`staffPageData/${x.token}`,
+    links:()=>Promise.resolve([{shopId:x.shopId,shopName:x.shopName||"",ok:true,name:x.name,personId:null,method:"page",at:x.approvedAt||""}]),
+    companyPay:sid=>Promise.resolve(x.pay&&x.pay.byShop&&x.pay.byShop[sid]?x.pay.byShop[sid]:{state:"error",error:"locked",pay:null})};
+}
+function myPageBaseUrl(){return`${window.location.origin}${window.location.pathname}`;}
+// コピー。clipboard API が無い・拒否される環境（http の LAN アドレス等）は、選択してコピーする旧方式に落とす
+async function myCopyText(text){
+  try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(text);return true;}}catch{/* 下の方式に落とす */}
+  try{
+    const ta=document.createElement("textarea");ta.value=text;ta.setAttribute("readonly","");ta.style.position="fixed";ta.style.top="-1000px";ta.style.fontSize="16px";
+    document.body.appendChild(ta);ta.select();const ok=document.execCommand("copy");document.body.removeChild(ta);return!!ok;
+  }catch{return false;}
+}
+// 個別URLの表示（URL・コピー・共有）。共有は Web Share API がある端末だけ
+function MyPageUrlBox({url,note}){
+  const[msg,setMsg]=useState("");
+  const canShare=typeof navigator!=="undefined"&&typeof navigator.share==="function";
+  return(
+    <div data-my-page-url={url} style={{marginBottom:12}}>
+      <div style={{fontSize:13,color:"var(--c-text)",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,padding:"10px 12px",
+        wordBreak:"break-all",lineHeight:1.6,fontFamily:"ui-monospace,SFMono-Regular,Menlo,monospace"}}>{url}</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
+        <button data-my-action="copyPageUrl" onClick={async()=>setMsg(await myCopyText(url)?"コピーしました":"コピーできませんでした。URLを長押ししてコピーしてください")} style={AGray}>URLをコピー</button>
+        {canShare&&<button data-my-action="sharePageUrl" onClick={()=>navigator.share({title:"Shifty",url}).catch(()=>{})} style={AGray}>共有</button>}
+      </div>
+      {msg&&<div role="status" data-my-copy-msg="1" style={{fontSize:13,color:"var(--c-text2)",marginTop:6}}>{msg}</div>}
+      {note&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginTop:6}}>{note}</div>}
+    </div>
+  );
+}
+const MY_PAGE_URL_NOTE="このURLを開くと、どの端末でもあなたのシフトの画面になります。ブックマークかホーム画面に追加しておいてください。ほかの人には教えないでください（URLを知っている人は誰でもこの画面を見られます）。";
+
+// 募集URLの画面から開く登録（申請）。名前と任意の従業員番号を送り、その場で個別URLを出す（承認されるまで「承認待ち」）
+function MyPageRegister({shopId,shopName,initialName,onClose}){
+  const remembered=(lg(MY_PAGES_LS,{})||{})[shopId]||null;
+  const[f,setF]=useState({displayName:initialName||"",number:""});
+  const[made,setMade]=useState(remembered&&isMyPageToken(remembered.token)?remembered:null);
+  const[status,setStatus]=useState(undefined); // 作った個別URLの状態（undefined=読み込み中・null=見つからない）
+  const[msg,setMsg]=useState({});
+  const[busy,setBusy]=useState(false);
+  useEffect(()=>{
+    if(!made||!firebaseDB)return;
+    let alive=true;
+    firebaseDB.ref(`shops/${shopId}/staffPages/${made.token}/status`).once("value").then(s=>{if(alive)setStatus(s.val()||null);},()=>{if(alive)setStatus(null);});
+    return()=>{alive=false;};
+  },[made&&made.token,shopId]);
+  const submit=async()=>{
+    setMsg({});
+    if(DEMO_MODE){setMsg({error:MY_BLOCK_MESSAGES.demo});return;}
+    if(!firebaseDB||!shopId){setMsg({error:"お店を読み込めませんでした。もう一度お試しください"});return;}
+    const r=buildMyPageRequest(f,new Date().toISOString());
+    if(r.error){setMsg({error:r.error});return;}
+    setBusy(true);
+    const token=genMyPageToken(myRand);
+    try{
+      // 先に逆引きを作る（作成後は書き換えられない＝URL を別の店舗へ付け替えられない）。次に申請の記録（pending だけ書ける）
+      await fbSet(`staffPageTokens/${token}`,{shopId,at:r.rec.requestedAt});
+      await fbSet(`shops/${shopId}/staffPages/${token}`,r.rec);
+    }catch(e){
+      setBusy(false);
+      setMsg({error:isPermissionDeniedError(e)?"申請できませんでした（サーバー側の設定が未反映の可能性があります）":"申請できませんでした。通信状態を確認してもう一度お試しください"});
+      return;
+    }
+    const rec={token,displayName:r.rec.displayName};
+    ls(MY_PAGES_LS,{...(lg(MY_PAGES_LS,{})||{}),[shopId]:rec});
+    setBusy(false);setMade(rec);setStatus("pending");
+  };
+  const url=made?buildMyPageUrl(myPageBaseUrl(),made.token):"";
+  return(
+    <div data-my-page-register="1" style={{minHeight:"100vh",background:"var(--c-bg)"}}>
+      <MyHeader title="自分専用のURL" onClose={onClose}/>
+      <div style={{maxWidth:480,margin:"0 auto",padding:"20px 16px 40px"}}>
+        {made?(
+          <section style={MY_SECTION} data-my-page-made={status||"unknown"}>
+            <div style={MY_SECTION_TITLE}>{made.displayName} さんの個別URL{shopName?`（${shopName}）`:""}</div>
+            <div style={{fontSize:14,lineHeight:1.8,color:"var(--c-text2)",marginBottom:12}}>
+              {status==="approved"?"承認されています。このURLから自分のシフトを見て、提出できます。"
+                :status==="pending"?"お店の管理者の承認を待っています。承認されると、このURLで自分のシフトを見て提出できるようになります。それまでは、これまでどおりこの画面から提出できます。"
+                :status===undefined?"状態を確認しています…":(MY_PAGE_STATE_MESSAGES[status]||"このURLは使えません。もう一度作り直してください。")}
+            </div>
+            <MyPageUrlBox url={url} note={MY_PAGE_URL_NOTE}/>
+            {status==="approved"&&<a data-my-action="openPage" href={url} style={{...AB,display:"inline-block",textDecoration:"none"}}>開く</a>}
+            {(status==="rejected"||status==="revoked"||status===null)&&<button data-my-action="remakePage" onClick={()=>{setMade(null);setStatus(undefined);}} style={{...AGray,marginTop:8}}>作り直す</button>}
+          </section>
+        ):(
+          <section style={MY_SECTION} data-my-page-form="1">
+            <p style={{fontSize:14,lineHeight:1.8,color:"var(--c-text2)",marginBottom:16}}>
+              自分専用のURLを作ると、次からは名前を入れずに提出でき、自分のシフトとお店のシフト表をいつでも見られます。お店の管理者の承認が必要です。作らなくても、これまでどおり提出できます。
+            </p>
+            <MyField label="名前（お店に登録されている名前）" value={f.displayName} maxLength={MY_DISPLAY_NAME_MAX} autoComplete="name" data-my-input="pageDisplayName"
+              onChange={e=>setF({...f,displayName:e.target.value})}/>
+            <MyField label="従業員番号（任意）" value={f.number} maxLength={MY_NUMBER_MAX} inputMode="numeric" data-my-input="pageNumber"
+              onChange={e=>setF({...f,number:e.target.value})}/>
+            <MyMessage {...msg}/>
+            <button data-my-action="requestPage" disabled={busy} onClick={submit} style={{...AB,width:"100%",padding:"13px 18px",fontSize:15,opacity:busy?.6:1}}>{busy?"作成中…":"個別URLを作って申請する"}</button>
+          </section>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// 管理者側（スタッフタブ）: 個別URLの申請。スタッフ一覧のどの名前に結び付けるかを選んで承認する（候補は従業員番号・名前の一致）。
+// スタッフ一覧に無い人は、先にスタッフを追加してから承認する（ここでは追加しない＝プランの人数上限・別名の規則はスタッフの追加の経路が持つ）
+function StaffPageRequestsCard({links,staffList,staffNumbers,mirrorPeople,shopId,tt}){
+  const[busy,setBusy]=useState("");
+  const[pick,setPick]=useState({}); // {token: 選んだ名前}
+  if(!links||!links.enabled)return null;
+  const{withCand,unmatched}=splitStaffPageRequests(links.pages,{shopId,staff:staffList,staffNumbers,mirrorPeople});
+  const all=[...withCand,...unmatched].sort((a,b)=>String(a.req.requestedAt||"").localeCompare(String(b.req.requestedAt||"")));
+  if(!all.length)return null;
+  const names=myStaffNamesOf(staffList);
+  const taken=approvedStaffPagesByName(links.pages);
+  const who=r=>`${r.displayName||"（名前なし）"}${r.number?`（従業員番号 ${r.number}）`:""}`;
+  const when=r=>{const d=new Date(r.requestedAt);return Number.isFinite(d.getTime())?`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")} に申請`:"";};
+  const act=async(kind,token,name)=>{
+    if(kind==="approve"&&taken[name]&&!window.confirm(`「${name}」さんには承認済みの個別URLがあります。新しいURLを承認すると、前のURLは使えなくなります。承認しますか？`))return;
+    setBusy(token);
+    const r=await links.pageAct(kind,token,name);
+    setBusy("");
+    tt(r.error?`▲ ${r.error}`:kind==="approve"?`✓ 「${name}」さんの個別URLを承認しました`:"申請を却下しました");
+  };
+  const row={padding:"12px 0",borderTop:"1px solid var(--c-border)"};
+  const btn={...AGray,padding:"7px 12px",fontSize:13};
+  return(
+    <AC title="個別URLの申請">
+      <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:6}}>スタッフがシフト募集URLの画面から自分専用のURLを申請しています。承認すると、そのURLで本人のシフトの閲覧と提出ができます（ログインは不要）。</div>
+      {all.map(({token,req,cands})=>{
+        const sel=pick[token]!==undefined?pick[token]:(cands.find(c=>!taken[c.name])||cands[0]||{}).name||"";
+        return(
+          <div key={token} data-page-request={token} style={row}>
+            <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>{who(req)}</div>
+            <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:6}}>{when(req)}</div>
+            {cands.length>0&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:6}}>
+              候補: {cands.map(c=>`${c.name}（${c.methods.map(m=>MY_LINK_METHOD_LABELS[m]).join("・")}${taken[c.name]?"・承認済みのURLあり":""}）`).join("、")}
+            </div>}
+            {!cands.length&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:6}}>登録名・従業員番号のどちらとも一致しません。下でスタッフを選ぶか、スタッフ一覧に追加してから承認してください。</div>}
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <select data-page-request-name={token} value={sel} onChange={e=>setPick(p=>({...p,[token]:e.target.value}))} style={{...AI,width:"auto",flex:"1 1 160px",minWidth:0}}>
+                <option value="">スタッフを選ぶ</option>
+                {names.map(n=><option key={n} value={n}>{n}{taken[n]?"（承認済みのURLあり）":""}</option>)}
+              </select>
+              <button data-page-approve={token} disabled={busy===token||!sel} onClick={()=>act("approve",token,sel)} style={{...AB,padding:"7px 14px",fontSize:13,opacity:busy===token||!sel?.6:1}}>承認</button>
+              <button data-page-reject={token} disabled={busy===token} onClick={()=>act("reject",token)} style={btn}>却下</button>
+            </div>
+          </div>
+        );
+      })}
+    </AC>
+  );
+}
+// 管理者側（スタッフの編集モーダルの中）: その人の承認済みの個別URL・取り消し・暗証番号のリセット
+function StaffPageEditSection({links,name,tt}){
+  const[busy,setBusy]=useState(false);
+  if(!links||!links.enabled)return null;
+  const cur=approvedStaffPagesByName(links.pages)[name];
+  if(!cur)return(
+    <div data-staff-page="none" style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7}}>個別URLはありません。本人がシフト募集URLの画面から申請すると、スタッフタブの「個別URLの申請」に出ます。</div>
+  );
+  const act=async(kind,confirmMsg,okMsg)=>{
+    if(!window.confirm(confirmMsg))return;
+    setBusy(true);
+    const r=await links.pageAct(kind,cur.token);
+    setBusy(false);
+    tt(r.error?`▲ ${r.error}`:okMsg);
+  };
+  const d=new Date(cur.rec.approvedAt);
+  return(
+    <div data-staff-page="approved" data-staff-page-token={cur.token}>
+      <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.7,marginBottom:6}}>
+        個別URLを承認済み{Number.isFinite(d.getTime())?`（${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}）`:""}
+      </div>
+      <MyPageUrlBox url={buildMyPageUrl(myPageBaseUrl(),cur.token)}/>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <button data-staff-page-action="revoke" disabled={busy} onClick={()=>act("revoke",`「${name}」さんの個別URLを取り消しますか？取り消すとそのURLは使えなくなります（本人がもう一度申請できます）。`,"個別URLを取り消しました")} style={{...AGray,opacity:busy?.6:1}}>個別URLを取り消す</button>
+        <button data-staff-page-action="resetPin" disabled={busy} onClick={()=>act("resetPin",`「${name}」さんの給料の暗証番号をリセットしますか？本人が次に給料タブを開いたときに、新しい番号を決め直します。`,"暗証番号をリセットしました")} style={{...AGray,opacity:busy?.6:1}}>暗証番号をリセット</button>
+      </div>
+    </div>
+  );
+}
+
+// 個別URLの画面の状態（承認待ち・却下・取り消し・見つからない）
+function MyPageStatusScreen({state,shopName,token}){
+  const url=isMyPageToken(token)?buildMyPageUrl(myPageBaseUrl(),token):"";
+  return(
+    <div data-my-page-state={state} style={{minHeight:"100vh",background:"var(--c-bg)"}}>
+      <MyHeader title={shopName||"Shifty"}/>
+      <div style={{maxWidth:480,margin:"0 auto",padding:"24px 16px 40px"}}>
+        <section style={MY_SECTION}>
+          <div style={MY_SECTION_TITLE}>{state==="pending"?"承認待ち":state==="loading"?"読み込み中…":"このURLは使えません"}</div>
+          {state!=="loading"&&<div data-my-page-message="1" style={{fontSize:14,lineHeight:1.8,color:"var(--c-text2)",marginBottom:state==="pending"?14:0}}>{MY_PAGE_STATE_MESSAGES[state]||MY_PAGE_STATE_MESSAGES.missing}</div>}
+          {state==="pending"&&url&&<MyPageUrlBox url={url} note="承認されるまでは、お店から受け取ったシフト募集のURLから提出できます。"/>}
+        </section>
+      </div>
+    </div>
+  );
+}
+// 個別URLの設定タブ: このページ（名前・お店・URL）・勤務先・月間目標（暗証番号で給料を開いている間だけ）
+function MyPageSettingsTab({me,personal,page,shopName,token,payUnlocked}){
+  return(
+    <div>
+      <section style={MY_SECTION} data-my-section="page">
+        <div style={MY_SECTION_TITLE}>このページ</div>
+        <div style={{fontSize:14,color:"var(--c-text2)",lineHeight:1.8,marginBottom:10}}>{shopName}の「{page.name}」さんのページです。</div>
+        <MyPageUrlBox url={buildMyPageUrl(myPageBaseUrl(),token)} note={MY_PAGE_URL_NOTE}/>
+      </section>
+      <MyWorkplacesSection me={me} personal={personal} payLocked={!payUnlocked}/>
+      {payUnlocked&&<MyGoalSection me={me}/>}
+    </div>
+  );
+}
+// 個別URLの入口。App が Phase1 で店舗を購読済み（periods・settings・staff・subs）。承認の状態は staffPages/{token} を購読して決める
+function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,plan,syncStatus,onSub,onDeleteSub}){
+  const[rec,setRec]=useState(undefined); // shops/{sid}/staffPages/{token}（undefined=読み込み中・null=無い）
+  const[tab,setTab]=useState("shift");
+  const[pay,setPay]=useState(null);      // 暗証番号で開いた給料（P4）: {key, byShop}
+  useEffect(()=>{
+    if(!shopId||!isMyPageToken(token)||!firebaseDB)return;
+    const r=firebaseDB.ref(`shops/${shopId}/staffPages/${token}`);
+    const cb=r.on("value",s=>setRec(s.val()||null),e=>{console.warn("個別URLの読み込みに失敗:",e&&e.code);setRec(null);});
+    return()=>r.off("value",cb);
+  },[shopId,token]);
+  const page=useMemo(()=>resolveMyPage(token,shopId?{shopId}:null,rec,staffList),[token,shopId,rec,staffList]);
+  const me=useMemo(()=>page.state==="ok"?myPageSubject({token,shopId,shopName,name:page.name,approvedAt:page.approvedAt,pay}):null,
+    [page.state,page.name,token,shopId,shopName,pay]);
+  const personal=useMyPersonal(me&&me.base);
+  if(!boot)return <MyPageStatusScreen state="loading" token={token}/>;
+  if(boot.state!=="shop")return <MyPageStatusScreen state={boot.state==="invalid"?"invalid":"missing"} token={token}/>;
+  if(rec===undefined)return <MyPageStatusScreen state="loading" shopName={shopName} token={token}/>;
+  if(page.state!=="ok")return <MyPageStatusScreen state={page.state} shopName={shopName} token={token}/>;
+  const tabs=MY_PAGE_TABS.filter(t=>t.key!=="pay");
+  const label=(tabs.find(t=>t.key===tab)||tabs[0]).label;
+  // 提出（P2）: 最新の期間へ、承認された名前で。募集URLと同じ StaffView・同じ提出の処理（App の staffOnSub）を通す。
+  // 確定済みの期間は StaffView が止め、ルールも拒否する。StaffView は自前のヘッダー（お店・期間）と送信の帯を持つので、外側の枠は付けない
+  if(tab==="submit"){
+    const latest=myLatestPeriodOf(periods);
+    return(
+      <div data-my-view="page" data-my-page-name={page.name} data-my-page-tab="submit" style={{minHeight:"100vh",background:"var(--c-bg)"}}>
+        {latest?<StaffView periods={periods} ap={latest} apid={latest.id} setApid={()=>{}} shopId={shopId} settings={settings} subs={subs} staffList={staffList} plan={plan}
+          urlLocked onSub={onSub} onDeleteSub={onDeleteSub} shopName={shopName} fixedName={page.name} bottomOffset={MY_TAB_BAR_H}/>
+          :<main style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 96px"}}><MyEmptyState>提出できる期間がまだありません。お店がシフトの募集を始めると、ここから提出できます。</MyEmptyState></main>}
+        <MyTabBar tab={tab} onTab={setTab} tabs={tabs}/>
+      </div>
+    );
+  }
+  return(
+    <div data-my-view="page" data-my-page-name={page.name} style={{minHeight:"100vh",background:"var(--c-bg)"}}>
+      <MyHeader title={label}/>
+      {syncStatus==="offline"&&<div style={{background:"var(--c-input)",color:"var(--c-text2)",fontSize:12,textAlign:"center",padding:"4px 8px"}}>オフライン（再接続中…）</div>}
+      <main style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 96px"}}>
+        <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:4}} data-my-who="1">{page.name} さん ／ {shopName}</div>
+        {tab==="shift"&&<MyShiftTab me={me} personal={personal}/>}
+        {tab==="settings"&&<MyPageSettingsTab me={me} personal={personal} page={page} shopName={shopName} token={token} payUnlocked={!!pay}/>}
+      </main>
+      <MyTabBar tab={tab} onTab={setTab} tabs={tabs}/>
     </div>
   );
 }

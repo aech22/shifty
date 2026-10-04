@@ -380,7 +380,9 @@ test("追随の操作: 形・世代（操作より後に作られた紐付けに
 test("追随の入口: App はキャッシュではなく読み直した staffLinks に操作を当て、失敗は保留して知らせる", () => {
   const main = fs.readFileSync(path.join(ROOT, "app-main.js"), "utf8");
   const blk = main.slice(main.indexOf("const flushStaffLinkOps="), main.indexOf("const flushStaffLinkOps=") + 1800);
-  assert.ok(blk.includes(".once(\"value\")") && blk.includes("planStaffLinkOp(cur,q[0])") && blk.includes("pending:true"), "読み直して当て、失敗は pending で返す");
+  // 2026-10-04: 1つの操作を紐付け（staffLinks）とスタッフ個別URL（staffPages）の両方に当てる（意図して広げた）
+  assert.ok(blk.includes(".once(\"value\")") && blk.includes("plan(cur,q[0])") && blk.includes("pending:true"), "読み直して当て、失敗は pending で返す");
+  assert.ok(blk.includes('["staffLinks",planStaffLinkOp') && blk.includes('["staffPages",planStaffPageOp'), "紐付けと個別URLの両方に当てる");
   assert.ok(!/staffLinkMapRef/.test(main.replace(/\/\/[^\n]*/g, "")), "購読のキャッシュから差分を作らない");
   assert.ok(/const renameStaffLinks=\(oldName,newName\)=>queueStaffLinkOp\(staffLinkOpOf\("rename"/.test(main));
   assert.ok(/const dropStaffLinks=names=>queueStaffLinkOp\(staffLinkOpOf\("drop"/.test(main));
@@ -553,8 +555,12 @@ test("E3/E4 マイシフトと勤務先の書き込みは users/{uid}/ の下だ
   const writes = [...body.matchAll(/\b(fbSet|fbUpd)\(\s*`?([^,`)]*)/g)].map(x => x[1] + " " + x[2]);
   assert.ok(!/\.ref\([^)]*\)\.(set|update|remove)\(/.test(body), "ref() から直接書かない");
   assert.deepStrictEqual([...body.matchAll(/(\w+)\.set\(/g)].map(x => x[1]).filter(n => n !== "_myCompanyPayCache"), [], "Map 以外の .set が無い");
-  // E3 は seen だけ。E4 で本人のデータ（workplaces・shifts・overrides）を users/{uid} への差分 update で書く（意図して広げた）
-  assert.deepStrictEqual(writes, ["fbUpd users/${uid}", "fbSet users/${uid}/seen/${sid}/${pid}"]);
+  // E3 は seen だけ。E4 で本人のデータ（workplaces・shifts・overrides）を users/{uid} への差分 update で書く（意図して広げた）。
+  // 2026-10-04: 基点は本人（subject）の base（users/{uid} か staffPageData/{pageToken}）になった（意図して広げた。下で base の出どころを固定）
+  assert.deepStrictEqual(writes, ["fbUpd base", "fbSet ${base}/seen/${sid}/${pid}"]);
+  assert.ok(/function myAccountSubject\(uid\)\{\s*return uid\?\{kind:"account",key:"u:"\+uid,base:`users\/\$\{uid\}`/.test(src), "アカウントの基点は users/{uid}");
+  assert.ok(/base:`staffPageData\/\$\{x\.token\}`/.test(src), "個別URLの基点は staffPageData/{pageToken}");
+  assert.strictEqual((src.match(/base:`/g) || []).length, 2, "基点を作るのはこの2か所だけ");
   // users/{uid} への update の鍵は workplaces・shifts・overrides の3つだけ
   const keys = [...body.matchAll(/\[`(workplaces|shifts|overrides|[a-z]+)\/\$\{/g)].map(x => x[1]);
   assert.ok(keys.length >= 5 && keys.every(k => ["workplaces", "shifts", "overrides"].includes(k)), JSON.stringify(keys));
@@ -1080,7 +1086,7 @@ test("E5 給料タブと月間目標の書き込みは users/{uid} の goals と
   assert.ok(a > 0 && b > a);
   const body = src.slice(a, b);
   const writes = [...body.matchAll(/\b(fbSet|fbUpd)\(\s*`?([^,`)]*)/g)].map(x => x[1] + " " + x[2]);
-  assert.deepStrictEqual(writes, ["fbUpd users/${uid}"]);
+  assert.deepStrictEqual(writes, ["fbUpd base"]); // 2026-10-04: 本人の基点（users/{uid} か staffPageData/{pageToken}）
   assert.ok(!/\.ref\([^)]*\)\.(set|update|remove|push|transaction)\(/.test(body), "ref() から直接書かない");
   const keys = [...body.matchAll(/write\(\{\s*\[?`?([a-z]+)[/`:]/g)].map(x => x[1]);
   assert.deepStrictEqual(keys.sort(), ["actuals", "goals"]);
@@ -1140,4 +1146,156 @@ test("E6 getMyPay は index.js で名前を呼び出し元から受け取らず�
   assert.ok(body.indexOf("myPayLinkNameCF") < body.indexOf("private/pay"), "紐付けを確かめてから賃金を読む");
   assert.ok(!/\.(set|update|remove|push|transaction)\(/.test(body), "何も書かない");
   assert.ok(/readLinkShopId\(data\)/.test(body), "shopId の形とデモ店舗を確かめる");
+});
+
+// ===== スタッフ個別URL（2026-10-04・ユーザーの仕様変更）=====
+test("個別URL: トークンの形・生成・ルート・URL", () => {
+  assert.ok(m.isMyPageToken("A".repeat(24)) && m.isMyPageToken("aZ09".repeat(6)));
+  ["", "A".repeat(23), "A".repeat(25), "A".repeat(23) + "-", "A".repeat(23) + ".", null, 5].forEach(t => assert.strictEqual(m.isMyPageToken(t), false, String(t)));
+  let i = 0;
+  const t = m.genMyPageToken(n => Array.from({ length: n }, () => (i++ * 37) % 256));
+  assert.ok(m.isMyPageToken(t), t);
+  assert.strictEqual(m.myPageRouteOf("#/m/" + t), t);
+  assert.strictEqual(m.myPageRouteOf("#/m/" + t + "/"), t);
+  assert.strictEqual(m.myPageRouteOf("#/m/"), "", "空は空文字（画面で使えないURLと出す）");
+  ["#/me", "#/s/abc", "#/demo", "#/mx/abc", "", null].forEach(h => assert.strictEqual(m.myPageRouteOf(h), null, String(h)));
+  assert.strictEqual(m.buildMyPageUrl("https://shiftyshifty.app/", t), `https://shiftyshifty.app/?openExternalBrowser=1#/m/${t}`);
+  assert.deepStrictEqual(m.MY_PAGE_TABS.map(x => x.key), ["shift", "submit", "pay", "settings"]);
+  // parseUrl は MY_SCREEN_ENABLED のときだけ個別URLとして返す（本番は旧形式のスタッフURLのまま）
+  const core = fs.readFileSync(path.join(ROOT, "app-core.js"), "utf8");
+  assert.ok(/if\(MY_SCREEN_ENABLED\)\{const pt=myPageRouteOf\(h\);if\(pt!==null\) return\{type:"page",pageToken:pt\};\}/.test(core));
+  assert.ok(core.indexOf("myPageRouteOf(h)") < core.indexOf('if(h.startsWith("#/s/"))'), "スタッフURL・旧形式より先に判定する");
+});
+test("個別URL: 申請の記録・画面の状態（承認済みで名前がスタッフ一覧にあるときだけ ok）", () => {
+  assert.ok(m.buildMyPageRequest({ displayName: " " }, "t").error);
+  assert.ok(m.buildMyPageRequest({ displayName: "あ".repeat(51) }, "t").error);
+  assert.deepStrictEqual(m.buildMyPageRequest({ displayName: " 田中 ", number: "０１２" }, "t").rec, { status: "pending", displayName: "田中", requestedAt: "t", number: "012" });
+  assert.ok(!("number" in m.buildMyPageRequest({ displayName: "田中", number: " " }, "t").rec), "番号が空ならキーを持たない");
+  const T = "A".repeat(24), staff = ["田中", "__spacer__1", "佐藤"];
+  assert.strictEqual(m.resolveMyPage("bad", { shopId: "S1" }, {}, staff).state, "invalid");
+  assert.strictEqual(m.resolveMyPage(T, null, null, staff).state, "missing");
+  assert.strictEqual(m.resolveMyPage(T, { shopId: "S1" }, null, staff).state, "missing");
+  assert.strictEqual(m.resolveMyPage(T, { shopId: "S1" }, { status: "weird" }, staff).state, "missing");
+  ["pending", "rejected", "revoked"].forEach(st => assert.strictEqual(m.resolveMyPage(T, { shopId: "S1" }, { status: st, displayName: "田中", name: "田中" }, staff).state, st));
+  assert.strictEqual(m.resolveMyPage(T, { shopId: "S1" }, { status: "approved", name: "高橋" }, staff).state, "missingName", "改名・削除の追随が届かなかった名前は使わない");
+  assert.strictEqual(m.resolveMyPage(T, { shopId: "S1" }, { status: "approved", name: "__spacer__1" }, staff).state, "missingName");
+  assert.deepStrictEqual(m.resolveMyPage(T, { shopId: "S1" }, { status: "approved", name: "田中", displayName: "たなか", approvedAt: "a" }, staff),
+    { state: "ok", shopId: "S1", displayName: "たなか", name: "田中", approvedAt: "a" });
+  Object.keys(m.MY_PAGE_STATE_MESSAGES).forEach(k => assert.ok(m.MY_PAGE_STATE_MESSAGES[k].length > 10, k));
+  ["invalid", "missing", "pending", "rejected", "revoked", "missingName"].forEach(k => assert.ok(m.MY_PAGE_STATE_MESSAGES[k], k));
+});
+test("個別URL: 承認・却下・取り消し・暗証番号のリセットの差分（1つの名前に承認済みは1つ）", () => {
+  const A = "A".repeat(24), B = "B".repeat(24), C = "C".repeat(24);
+  const pages = { [A]: { status: "pending", displayName: "田中" }, [B]: { status: "approved", name: "田中", approvedAt: "x" }, [C]: { status: "approved", name: "佐藤", approvedAt: "x" } };
+  const staff = ["田中", "佐藤"];
+  assert.deepStrictEqual(m.planApproveStaffPage({ pages, token: A, name: "田中", staff, byUid: "O", nowIso: "n" }).patch,
+    { [`${A}/status`]: "approved", [`${A}/name`]: "田中", [`${A}/approvedAt`]: "n", [`${A}/byUid`]: "O", [`${B}/status`]: "revoked", [`${B}/revokedAt`]: "n" });
+  assert.ok(m.planApproveStaffPage({ pages, token: A, name: "高橋", staff, nowIso: "n" }).error, "スタッフ一覧に無い名前");
+  assert.ok(m.planApproveStaffPage({ pages, token: B, name: "田中", staff, nowIso: "n" }).error, "pending だけ承認できる");
+  assert.ok(m.planApproveStaffPage({ pages, token: "x", name: "田中", staff }).error);
+  assert.ok(!("" + JSON.stringify(m.planApproveStaffPage({ pages, token: A, name: "田中", staff, nowIso: "n" }).patch)).includes(C), "別の名前の承認は触らない");
+  assert.deepStrictEqual(m.planRejectStaffPage(pages, A).patch, { [`${A}/status`]: "rejected" });
+  assert.ok(m.planRejectStaffPage(pages, B).error);
+  assert.deepStrictEqual(m.planRevokeStaffPage(pages, B, "n").patch, { [`${B}/status`]: "revoked", [`${B}/revokedAt`]: "n" });
+  assert.ok(m.planRevokeStaffPage(pages, A, "n").error);
+  assert.deepStrictEqual(m.planResetStaffPagePin(pages, C, "n").patch, { [`${C}/pinResetAt`]: "n" });
+  assert.ok(m.planResetStaffPagePin(pages, A, "n").error);
+  assert.deepStrictEqual(Object.keys(m.approvedStaffPagesByName(pages)).sort(), ["佐藤", "田中"]);
+});
+test("個別URL: 改名・削除の追随（紐付けと同じ操作・世代の目印・削除は取り消し）", () => {
+  const A = "A".repeat(24), B = "B".repeat(24), C = "C".repeat(24), D = "D".repeat(24);
+  const pages = { [A]: { status: "approved", name: "田中", approvedAt: "2026-10-01T00:00:00.000Z" },
+    [B]: { status: "approved", name: "田中", approvedAt: "2026-10-09T00:00:00.000Z" }, // 操作より後に承認＝当てない
+    [C]: { status: "pending", displayName: "田中" }, [D]: { status: "revoked", name: "田中", approvedAt: "2026-09-01T00:00:00.000Z" }, bad: { status: "approved", name: "田中" } };
+  const ren = m.staffLinkOpOf("rename", "田中", "田中 一郎", "2026-10-05T00:00:00.000Z");
+  assert.deepStrictEqual(m.planStaffPageOp(pages, ren), { [`${A}/name`]: "田中 一郎" });
+  const drop = m.staffLinkOpOf("drop", ["田中"], null, "2026-10-05T00:00:00.000Z");
+  assert.deepStrictEqual(m.planStaffPageOp(pages, drop), { [`${A}/status`]: "revoked", [`${A}/revokedAt`]: "2026-10-05T00:00:00.000Z" });
+  assert.strictEqual(m.planStaffPageOp(pages, m.staffLinkOpOf("drop", ["佐藤"], null, "t")), null);
+  assert.strictEqual(m.planStaffPageOp(pages, null), null);
+  // 当て直しても同じ（片方のノードだけ書けたときに列に残してやり直すため）
+  const after = JSON.parse(JSON.stringify(pages)); after[A].name = "田中 一郎";
+  assert.strictEqual(m.planStaffPageOp(after, ren), null);
+});
+test("個別URL: 申請の候補（番号・名前の一致）と、承認済みの名前の印", () => {
+  const A = "A".repeat(24), B = "B".repeat(24), C = "C".repeat(24);
+  const pages = { [A]: { status: "pending", displayName: "たなか", number: "012", requestedAt: "2" }, [B]: { status: "pending", displayName: "山田　太郎", requestedAt: "1" },
+    [C]: { status: "approved", name: "田中", approvedAt: "x" }, X: { status: "pending", displayName: "誰か", requestedAt: "3" } };
+  const r = m.splitStaffPageRequests(pages, { shopId: "S1", staff: ["田中", "山田 太郎"], staffNumbers: { 田中: "012" } });
+  assert.deepStrictEqual(r.withCand.map(x => x.token), [B, A], "古い申請から");
+  assert.deepStrictEqual(r.withCand[1].cands, [{ name: "田中", methods: ["number"], takenBy: C }]);
+  assert.deepStrictEqual(r.withCand[0].cands.map(c => c.name), ["山田 太郎"]);
+  assert.deepStrictEqual(r.unmatched.map(x => x.token), ["X"]);
+});
+test("個別URL: ルールの形（追加だけ。申請は pending だけ・名前と承認はオーナー・本人のデータは承認済みの間だけ・暗証番号はCFだけ）", () => {
+  const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "database.rules.json"), "utf8")).rules;
+  const own = "root.child('shops').child($shopId).child('owners').child(auth.uid).exists()";
+  const tk = rules.staffPageTokens;
+  assert.strictEqual(tk[".read"], undefined, "一覧は読めない（直キーだけ）");
+  assert.strictEqual(tk.$token[".read"], "auth != null");
+  assert.match(tk.$token[".write"], /\(!data\.exists\(\) && newData\.exists\(\)\)/, "作るだけ（作成後は書き換えられない）");
+  assert.match(tk.$token[".write"], /data\.exists\(\) && !newData\.exists\(\) && root\.child\('shops'\)\.child\(data\.child\('shopId'\)\.val\(\)\)\.child\('owners'\)/, "消せるのはその店舗のオーナーだけ");
+  assert.match(tk.$token[".validate"], /\$token\.matches\(\/\^\[A-Za-z0-9\]\{24\}\$\/\)/);
+  assert.match(tk.$token[".validate"], /demo-toriMatsu-v1/);
+  assert.match(tk.$token[".validate"], /root\.child\('global'\)\.child\('shops'\)\.child\(newData\.child\('shopId'\)\.val\(\)\)\.exists\(\)/, "存在しない店舗を指させない");
+  assert.strictEqual(tk.$token.$other[".validate"], false);
+  const tokRe = new RegExp(tk.$token[".validate"].match(/\$token\.matches\(\/(.+?)\/\)/)[1]);
+  assert.ok(tokRe.test(m.genMyPageToken(n => Array.from({ length: n }, (_, i) => i * 11))) && !tokRe.test("A".repeat(23)), "クライアントのトークンの形と一致");
+  const sp = rules.shops.$shopId.staffPages;
+  assert.strictEqual(sp[".read"], "auth != null && " + own, "一覧はオーナーだけ");
+  assert.strictEqual(sp[".write"], undefined);
+  assert.strictEqual(sp.$token[".read"], "auth != null", "1件はトークンを知っていれば読める");
+  const w = sp.$token[".write"];
+  assert.ok(w.includes(own) && w.includes("$shopId !== 'demo-toriMatsu-v1'"));
+  assert.match(w, /!data\.exists\(\) && newData\.child\('status'\)\.val\(\) === 'pending'/, "オーナー以外は pending を作るだけ");
+  assert.match(w, /data\.child\('status'\)\.val\(\) === 'pending' && !newData\.exists\(\)/, "pending の取り下げだけは誰でも");
+  ["name", "approvedAt", "byUid", "revokedAt", "pinResetAt"].forEach(k => assert.ok(sp.$token[k][".validate"].startsWith(own), `${k} はオーナーだけ`));
+  assert.match(sp.$token.byUid[".validate"], /newData\.val\(\) === auth\.uid/);
+  assert.match(sp.$token[".validate"], /newData\.child\('status'\)\.val\(\) !== 'approved' \|\| newData\.hasChildren\(\['name','approvedAt'\]\)/);
+  m.MY_PAGE_STATUSES.forEach(st => assert.ok(sp.$token.status[".validate"].includes(`'${st}'`), st));
+  assert.strictEqual(sp.$token.$other[".validate"], false);
+  // 申請の記録はルールの必須キーを満たし、オーナーの項目を持たない
+  const rec = m.buildMyPageRequest({ displayName: "田中", number: "1" }, "t").rec;
+  ["status", "displayName", "requestedAt"].forEach(k => assert.ok(k in rec));
+  assert.ok(Object.keys(rec).every(k => k in sp.$token && !sp.$token[k][".validate"].startsWith(own)), "申請はオーナーの項目を書かない");
+  // 本人のデータ: users/$uid と同じ形（.write を除く）。読み書きは承認済みの間だけ
+  const pd2 = rules.staffPageData;
+  assert.strictEqual(pd2[".read"], undefined, "一覧は読めない");
+  const ap = "root.child('shops').child(root.child('staffPageTokens').child($token).child('shopId').val()).child('staffPages').child($token).child('status').val() === 'approved'";
+  assert.ok(pd2.$token[".read"].includes(ap) && pd2.$token[".write"].includes(ap), "承認済みの間だけ");
+  assert.match(pd2.$token[".write"], /\$token\.matches\(\/\^\[A-Za-z0-9\]\{24\}\$\/\)/);
+  const strip = o => (o && typeof o === "object" ? Object.fromEntries(Object.entries(o).filter(([k]) => k !== ".write").map(([k, v]) => [k, strip(v)])) : o);
+  ["workplaces", "shifts", "overrides", "goals", "actuals", "seen"].forEach(k => assert.deepStrictEqual(pd2.$token[k], strip(rules.users.$uid[k]), `${k} の形が users と同じ（ドリフト検出）`));
+  assert.strictEqual(pd2.$token.$other[".validate"], false, "未知のキー（profile・links など）は書けない");
+  assert.deepStrictEqual(rules.staffPagePins, { ".read": false, ".write": false }, "暗証番号は Cloud Functions だけ");
+});
+test("個別URL: 入口のゲートと、App の書き込み（承認はオーナーが読み直して書く・追随は紐付けと同じ列）", () => {
+  const main = fs.readFileSync(path.join(ROOT, "app-main.js"), "utf8");
+  assert.ok(/const pageRoute=MY_SCREEN_ENABLED&&parseUrl\(\)\?\.type==="page"/.test(main), "個別URLはゲートの下");
+  assert.ok(/if\(MY_SCREEN_ENABLED&&pageRoute!==null\) return <MyPageView /.test(main));
+  assert.ok(/onOpenPageRegister=\{MY_SCREEN_ENABLED&&urlLocked&&!DEMO_MODE\?/.test(main), "申請の入口もゲートの下");
+  const act = main.slice(main.indexOf("const staffPageAct="), main.indexOf("const STAFF_LINK_CFS="));
+  assert.ok(act.includes('.ref(`shops/${sid}/staffPages`).once("value")') && act.includes("fbUpd(`shops/${sid}/staffPages`,r.patch)"), "読み直した staffPages から差分を作って update");
+  assert.ok(!/fbSet\(`shops\/\$\{sid\}\/staffPages`/.test(main), "staffPages 全体を set() しない");
+  // 店舗のデータへの書き込みは申請（staffPageTokens・staffPages）だけ。本人の画面から店舗の他のノードに書かない
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const reg = my.slice(my.indexOf("function MyPageRegister("), my.indexOf("function StaffPageRequestsCard("));
+  assert.deepStrictEqual([...reg.matchAll(/\b(fbSet|fbUpd)\(\s*`([^`]*)`/g)].map(x => x[2]), ["staffPageTokens/${token}", "shops/${shopId}/staffPages/${token}"]);
+  const view = my.slice(my.indexOf("function MyPageView("));
+  assert.ok(!/\b(fbSet|fbUpd)\(/.test(view.slice(0, view.indexOf("\n}\n"))), "個別URLの画面の入口は店舗に書かない（提出は App の staffOnSub）");
+});
+test("個別URL（P2）: 提出先は最新の期間・名前は承認された名前で固定（Cookie を読まない・書かない）・提出は App の同じ処理", () => {
+  assert.strictEqual(m.myLatestPeriodOf([]), null);
+  assert.strictEqual(m.myLatestPeriodOf([{ id: "a", startDate: "2026-10-01" }, { id: "b", startDate: "2026-10-16" }, { id: "c", startDate: "bad" }, null]).id, "b");
+  assert.strictEqual(m.myLatestPeriodOf([{ id: "a", startDate: "2026-10-16" }, { id: "b", startDate: "2026-10-01" }]).id, "a");
+  const st = fs.readFileSync(path.join(ROOT, "app-staff.js"), "utf8");
+  assert.ok(/const savedName=fixedName\|\|\(shopId&&apid\?getCookie/.test(st), "固定の名前を先に使う");
+  assert.ok(/if\(shopId&&apid&&!fixedName\) setCookie\(ckStaffKey/.test(st), "個別URLの提出は Cookie に名前を書かない");
+  assert.strictEqual((st.match(/setName\(fixedName\|\|sub\.staffName\)/g) || []).length, 2, "提出状況からの修正でも名前は固定のまま");
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const sub = my.slice(my.indexOf('if(tab==="submit"){'), my.indexOf('if(tab==="submit"){') + 900);
+  assert.ok(/ap=\{latest\} apid=\{latest\.id\}/.test(sub) && /fixedName=\{page\.name\}/.test(sub) && /onSub=\{onSub\}/.test(sub), "最新の期間・承認された名前・App の提出");
+  const main = fs.readFileSync(path.join(ROOT, "app-main.js"), "utf8");
+  assert.ok(/onSub=\{staffOnSub\}/.test(main) && /onSub=\{staffOnSub\} onDeleteSub=\{staffOnDeleteSub\}\/>;/.test(main), "募集URLと個別URLが同じ staffOnSub を通る");
+  assert.ok(/useEffect\(\(\)=>\{ if\(pageRoute!==null&&latestPeriod&&apid!==latestPeriod\.id\) setApid\(latestPeriod\.id\); \}/.test(main), "最新の期間を購読する");
 });

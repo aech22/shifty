@@ -118,6 +118,24 @@
             "$other": { ".validate": false }
           }
         },
+        "staffPages": {
+          ".read": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
+          "$token": {
+            ".read": "auth != null",
+            ".write": "auth != null && $shopId !== 'demo-toriMatsu-v1' && (root.child('shops').child($shopId).child('owners').child(auth.uid).exists() || (!data.exists() && newData.child('status').val() === 'pending' && root.child('global').child('shops').child($shopId).exists()) || (data.child('status').val() === 'pending' && !newData.exists()))",
+            ".validate": "$token.matches(/^[A-Za-z0-9]{24}$/) && newData.hasChildren(['status','displayName','requestedAt']) && (newData.child('status').val() !== 'approved' || newData.hasChildren(['name','approvedAt']))",
+            "status": { ".validate": "newData.val() === 'pending' || newData.val() === 'approved' || newData.val() === 'rejected' || newData.val() === 'revoked'" },
+            "displayName": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 50" },
+            "number": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 8" },
+            "requestedAt": { ".validate": "newData.isString() && newData.val().length <= 40" },
+            "name": { ".validate": "root.child('shops').child($shopId).child('owners').child(auth.uid).exists() && newData.isString() && newData.val().length >= 1 && newData.val().length <= 50" },
+            "approvedAt": { ".validate": "root.child('shops').child($shopId).child('owners').child(auth.uid).exists() && newData.isString() && newData.val().length <= 40" },
+            "byUid": { ".validate": "root.child('shops').child($shopId).child('owners').child(auth.uid).exists() && newData.val() === auth.uid" },
+            "revokedAt": { ".validate": "root.child('shops').child($shopId).child('owners').child(auth.uid).exists() && newData.isString() && newData.val().length <= 40" },
+            "pinResetAt": { ".validate": "root.child('shops').child($shopId).child('owners').child(auth.uid).exists() && newData.isString() && newData.val().length <= 40" },
+            "$other": { ".validate": false }
+          }
+        },
         "owners": {
           ".read": "auth != null && data.child(auth.uid).exists()",
           "$uid": {
@@ -279,6 +297,173 @@
     "companyCodes": { ".read": false, ".write": false },
     "staffLinkCodes": { ".read": false, ".write": false },
     "staffLinkCodeIndex": { ".read": false, ".write": false },
+    "staffPageTokens": {
+      "$token": {
+        ".read": "auth != null",
+        ".write": "auth != null && ((!data.exists() && newData.exists()) || (data.exists() && !newData.exists() && root.child('shops').child(data.child('shopId').val()).child('owners').child(auth.uid).exists()))",
+        ".validate": "$token.matches(/^[A-Za-z0-9]{24}$/) && newData.hasChildren(['shopId','at']) && newData.child('shopId').val() !== 'demo-toriMatsu-v1' && root.child('global').child('shops').child(newData.child('shopId').val()).exists()",
+        "shopId": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 128" },
+        "at": { ".validate": "newData.isString() && newData.val().length <= 40" },
+        "$other": { ".validate": false }
+      }
+    },
+    "staffPageData": {
+      "$token": {
+        ".read": "auth != null && root.child('staffPageTokens').child($token).child('shopId').isString() && root.child('shops').child(root.child('staffPageTokens').child($token).child('shopId').val()).child('staffPages').child($token).child('status').val() === 'approved'",
+        ".write": "auth != null && $token.matches(/^[A-Za-z0-9]{24}$/) && root.child('staffPageTokens').child($token).child('shopId').isString() && root.child('shops').child(root.child('staffPageTokens').child($token).child('shopId').val()).child('staffPages').child($token).child('status').val() === 'approved'",
+        "workplaces": {
+          "$wid": {
+            ".validate": "newData.hasChildren(['kind', 'color']) && (($wid.matches(/^m_[A-Za-z0-9]{8}$/) && newData.child('kind').val() === 'manual' && newData.hasChild('name') && !newData.hasChild('shopId')) || (!$wid.matches(/^m_/) && $wid.length <= 128 && newData.child('kind').val() === 'shifty' && newData.child('shopId').val() === $wid))",
+            "kind": {
+              ".validate": "newData.isString() && (newData.val() === 'shifty' || newData.val() === 'manual')"
+            },
+            "color": {
+              ".validate": "newData.isString() && newData.val().matches(/^#[0-9a-fA-F]{6}$/)"
+            },
+            "name": {
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 30"
+            },
+            "shopId": {
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 128"
+            },
+            "pay": {
+              ".validate": "newData.hasChildren(['closingDay', 'payMonthOffset', 'payDay', 'holidayRule']) && (!newData.hasChild('rate') || newData.hasChild('wageType'))",
+              "closingDay": {
+                ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 31"
+              },
+              "payMonthOffset": {
+                ".validate": "newData.isNumber() && (newData.val() === 0 || newData.val() === 1 || newData.val() === 2)"
+              },
+              "payDay": {
+                ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 31"
+              },
+              "holidayRule": {
+                ".validate": "newData.isString() && (newData.val() === 'before' || newData.val() === 'after' || newData.val() === 'none')"
+              },
+              "wageType": {
+                ".validate": "newData.isString() && (newData.val() === 'hourly' || newData.val() === 'daily')"
+              },
+              "rate": {
+                ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 1000000"
+              },
+              "commute": {
+                ".validate": "newData.hasChildren(['amount', 'per'])",
+                "amount": {
+                  ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 1000000"
+                },
+                "per": {
+                  ".validate": "newData.isString() && (newData.val() === 'day' || newData.val() === 'month')"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              },
+              "night": {
+                ".validate": "newData.isBoolean()"
+              },
+              "over8": {
+                ".validate": "newData.isBoolean()"
+              },
+              "updatedAt": {
+                ".validate": "newData.isString() && newData.val().length <= 40"
+              },
+              "$other": {
+                ".validate": false
+              }
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "shifts": {
+          "$sid": {
+            ".validate": "$sid.matches(/^h_[A-Za-z0-9]{10}$/) && newData.hasChildren(['workplaceId', 'date', 'start', 'end', 'breakMin'])",
+            "workplaceId": {
+              ".validate": "newData.isString() && newData.val().matches(/^m_[A-Za-z0-9]{8}$/)"
+            },
+            "date": {
+              ".validate": "newData.isString() && newData.val().matches(/^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/)"
+            },
+            "start": {
+              ".validate": "newData.isString() && newData.val().matches(/^(([01][0-9]|2[0-9]):[0-5][0-9]|30:00)$/)"
+            },
+            "end": {
+              ".validate": "newData.isString() && newData.val().matches(/^(([01][0-9]|2[0-9]):[0-5][0-9]|30:00)$/)"
+            },
+            "breakMin": {
+              ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1440"
+            },
+            "memo": {
+              ".validate": "newData.isString() && newData.val().length <= 200"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "overrides": {
+          "$shopId": {
+            "$date": {
+              ".validate": "$date.matches(/^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/) && $shopId.length <= 128 && newData.hasChildren(['start', 'end', 'breakMin'])",
+              "start": {
+                ".validate": "newData.isString() && newData.val().matches(/^(([01][0-9]|2[0-9]):[0-5][0-9]|30:00)$/)"
+              },
+              "end": {
+                ".validate": "newData.isString() && newData.val().matches(/^(([01][0-9]|2[0-9]):[0-5][0-9]|30:00)$/)"
+              },
+              "breakMin": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1440"
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          }
+        },
+        "goals": {
+          ".validate": "newData.hasChildren(['monthly'])",
+          "monthly": {
+            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 100000000"
+          },
+          "updatedAt": {
+            ".validate": "newData.isString() && newData.val().length <= 40"
+          },
+          "$other": {
+            ".validate": false
+          }
+        },
+        "actuals": {
+          "$ym": {
+            "$wid": {
+              ".validate": "$ym.matches(/^[0-9]{4}-(0[1-9]|1[0-2])$/) && $wid.length <= 128 && newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000"
+            }
+          }
+        },
+        "seen": {
+          "$shopId": {
+            "$periodId": {
+              ".validate": "newData.hasChildren(['at'])",
+              "at": {
+                ".validate": "newData.isString() && newData.val().length <= 40"
+              },
+              "days": {
+                "$date": {
+                  ".validate": "$date.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/) && newData.isString() && newData.val().length <= 40"
+                }
+              },
+              "$other": {
+                ".validate": false
+              }
+            }
+          }
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "staffPagePins": { ".read": false, ".write": false },
     "staffLinkCodeAttempts": { ".read": false, ".write": false }
   }
 }

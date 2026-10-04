@@ -29,7 +29,14 @@ function App(){
   const[shops,setShops]=useState([]);
   const[allLinkedShops,setAllLinkedShops]=useState([]); // accounts/{uid}/shops に紐付いた全店舗
   // URLにtokenがある場合はsessionStorageを無視してPhase1で確定
-  const _hasUrlToken=!!(parseUrl()?.type==="staff");
+  // 個別URL（#/m/<pageToken>・2026-10-04）もスタッフ専用の画面として扱う（セッションの店舗・期間を復元しない・書かない）
+  const _hasUrlToken=!!(parseUrl()?.type==="staff"||parseUrl()?.type==="page");
+  // スタッフ個別URL（2026-10-04）。MY_SCREEN_ENABLED のときだけ parseUrl が返す。null＝個別URLではない
+  const pageRoute=MY_SCREEN_ENABLED&&parseUrl()?.type==="page"?String(parseUrl().pageToken||""):null;
+  // Phase1 が staffPageTokens/{token} を読んだ結果（{state:"invalid"|"missing"|"error"|"shop", shopId}）。null＝読み込み中
+  const[pageBoot,setPageBoot]=useState(null);
+  // 募集URLの画面から開く個別URLの申請（null＝閉じている・文字列＝開いている。値は名前の初期値）
+  const[pageRegName,setPageRegName]=useState(null);
   const[currentShopId,setCurrentShopId]=useState(()=>_hasUrlToken?null:ssGet(SS_SHOP,null));
   const currentShopIdRef=useRef(_hasUrlToken?null:ssGet(SS_SHOP,null));
   const[view,setView]=useState(()=>_hasUrlToken?"staff":ssGet(SS_VIEW,"staff"));
@@ -273,6 +280,22 @@ function App(){
     // 従業員画面（#/me・第2部 E1）: 店舗を読まずに開く。管理者の経路（accounts/{uid}/shops）にも Cookie の店舗にも入らない
     if(parsed&&parsed.type==="me"){
       setReady(true);
+      return;
+    }
+    // スタッフ個別URL（#/m/<pageToken>・2026-10-04）: staffPageTokens の逆引きで店舗を決め、その店舗を購読する（スタッフURLと同じ）。
+    // 管理者の経路にも Cookie の店舗にも入らない。承認の状態は画面（MyPageView）が shops/{sid}/staffPages/{token} を購読して決める
+    if(parsed&&parsed.type==="page"){
+      const pt=String(parsed.pageToken||"");
+      if(!isMyPageToken(pt)){ setPageBoot({state:"invalid"}); setReady(true); return; }
+      firebaseDB.ref(`staffPageTokens/${pt}`).once("value").then(tsnap=>{
+        const tv=tsnap.val();
+        if(!tv||typeof tv.shopId!=="string"||!tv.shopId){ setPageBoot({state:"missing"}); setReady(true); return; }
+        return readShop(tv.shopId).then(shop=>{
+          if(!shop){ setPageBoot({state:"missing"}); setReady(true); return; }
+          setPageBoot({state:"shop",shopId:shop.id});
+          enterShop(shop);
+        });
+      }).catch(e=>{ console.warn("個別URLの解決に失敗:",e); setPageBoot({state:"error"}); setReady(true); });
       return;
     }
     // URLにtokenがある場合: tokens逆引きインデックスでshop/periodを特定
@@ -1200,7 +1223,7 @@ function App(){
   },[companyInfo]);
 
   // URLにtokenが含まれるか（スタッフ専用モード・期間固定）
-  const [urlLocked]=useState(()=>{ const p=parseUrl(); return !!(p&&p.token); });
+  const [urlLocked]=useState(()=>{ const p=parseUrl(); return !!(p&&(p.token||p.type==="page")); });
 
   // 管理者セッションのオーナーlazy claim（既存店舗の移行・端末追加時の再claim・冪等）
   // スタッフURL（urlLocked）では実行しない
@@ -1290,13 +1313,16 @@ function App(){
   const[staffLinkMap,setStaffLinkMap]=useState({});
   const[linkRequestMap,setLinkRequestMap]=useState({});
   const[staffLinksLoaded,setStaffLinksLoaded]=useState(false);
+  // スタッフ個別URL（shops/{sid}/staffPages・2026-10-04）。読みはオーナーだけ。紐付けと同じ条件で購読する
+  const[staffPageMap,setStaffPageMap]=useState({});
   useEffect(()=>{
-    setStaffLinkMap({});setLinkRequestMap({});setStaffLinksLoaded(false);
+    setStaffLinkMap({});setLinkRequestMap({});setStaffLinksLoaded(false);setStaffPageMap({});
     if(!MY_SCREEN_ENABLED||!firebaseDB||DEMO_MODE||urlLocked||view!=="admin"||!sid||sid==="default"||ownerClaimedSid!==sid)return;
-    const rL=firebaseDB.ref(`shops/${sid}/staffLinks`), rR=firebaseDB.ref(`shops/${sid}/linkRequests`);
+    const rL=firebaseDB.ref(`shops/${sid}/staffLinks`), rR=firebaseDB.ref(`shops/${sid}/linkRequests`), rP=firebaseDB.ref(`shops/${sid}/staffPages`);
     const cL=rL.on("value",s=>{const v=s.val()||{};setStaffLinkMap(v);setStaffLinksLoaded(true);},e=>console.warn("マイシフトのリンクの購読に失敗:",e));
     const cR=rR.on("value",s=>setLinkRequestMap(s.val()||{}),e=>console.warn("マイシフトのリンク申請の購読に失敗:",e));
-    return()=>{rL.off("value",cL);rR.off("value",cR);};
+    const cP=rP.on("value",s=>setStaffPageMap(s.val()||{}),e=>console.warn("個別URLの申請の購読に失敗:",e));
+    return()=>{rL.off("value",cL);rR.off("value",cR);rP.off("value",cP);};
   },[sid,view,urlLocked,ownerClaimedSid]);
   // 改名・削除・追加の追随。staffLinks の作成は Cloud Functions だけだが、オーナーは削除と name の書き換えだけできる（ルール）。
   // **CF を呼ばずにクライアントから直接書く**: CF が使えない環境（dev は Spark）や通信の失敗でも、名前を変えた・消した人の
@@ -1318,20 +1344,25 @@ function App(){
   const staffLinkOpsActive=targetSid=>MY_SCREEN_ENABLED&&!!firebaseDB&&!DEMO_MODE&&!urlLocked&&!ownerReadOnly&&!!targetSid&&targetSid!=="default";
   const readStaffLinkOps=targetSid=>{const all=lg(STAFF_LINK_OPS_LS,{})||{};return enqueueStaffLinkOp(all[targetSid],null);};
   const writeStaffLinkOps=(targetSid,q)=>{const all={...(lg(STAFF_LINK_OPS_LS,{})||{})};if(q.length)all[targetSid]=q;else delete all[targetSid];ls(STAFF_LINK_OPS_LS,all);};
-  // 保留の列を前から順に当てる。同時に2本走らせない（前の実行の後ろにつなぐ）。途中で失敗したらそこで止め、残りは列に残す
+  // 保留の列を前から順に当てる。同時に2本走らせない（前の実行の後ろにつなぐ）。途中で失敗したらそこで止め、残りは列に残す。
+  // 1つの操作を2つのノードに当てる: 紐付け（staffLinks・E2）とスタッフ個別URL（staffPages・2026-10-04）。片方だけ書けたときも列に残して
+  // やり直す（操作は当て直しても同じ結果になる＝旧名の記録はもう無い・取り消し済みは選ばない）
   const flushStaffLinkOps=targetSid=>{
     const run=async()=>{
       for(;;){
         const q=readStaffLinkOps(targetSid);
         if(!q.length)return{ok:true};
-        let cur;
-        try{cur=(await firebaseDB.ref(`shops/${targetSid}/staffLinks`).once("value")).val()||{};}
-        catch(e){console.warn("マイシフトのリンクを読み込めませんでした（追随を保留）:",e);return{pending:true,error:e};}
-        const d=planStaffLinkOp(cur,q[0]);
-        if(d){
-          try{await fbUpd(`shops/${targetSid}/staffLinks`,d);}
-          catch(e){console.warn("マイシフトのリンクの追随に失敗しました（保留）:",e);return{pending:true,error:e};}
+        let failed=null;
+        for(const[node,plan,label] of [["staffLinks",planStaffLinkOp,"マイシフトのリンク"],["staffPages",planStaffPageOp,"個別URL"]]){
+          let cur;
+          try{cur=(await firebaseDB.ref(`shops/${targetSid}/${node}`).once("value")).val()||{};}
+          catch(e){console.warn(`${label}を読み込めませんでした（追随を保留）:`,e);failed=failed||e;continue;}
+          const d=plan(cur,q[0]);
+          if(!d)continue;
+          try{await fbUpd(`shops/${targetSid}/${node}`,d);}
+          catch(e){console.warn(`${label}の追随に失敗しました（保留）:`,e);failed=failed||e;}
         }
+        if(failed)return{pending:true,error:failed};
         writeStaffLinkOps(targetSid,readStaffLinkOps(targetSid).slice(1));
       }
     };
@@ -1360,6 +1391,20 @@ function App(){
   // 申請の却下＝申請を消すだけ（オーナーは linkRequests/{uid} を消せる）
   const rejectLinkRequest=async uid=>{
     try{await fbSet(`shops/${sid}/linkRequests/${uid}`,null);return{};}catch(e){console.warn("申請の却下に失敗:",e);return{error:"却下できませんでした"};}
+  };
+  // スタッフ個別URLの承認・却下・取り消し・暗証番号のリセット（2026-10-04）。オーナーが staffPages を直接書く（CF を使わない＝dev でも動く）。
+  // 差分は**その時点の staffPages を読み直して**作る（購読のキャッシュが古いと、別の端末で処理済みの申請を承認し直すため）
+  const staffPageAct=async(kind,token,name)=>{
+    if(!firebaseDB||DEMO_MODE)return{error:"この操作はできません"};
+    let cur;
+    try{cur=(await firebaseDB.ref(`shops/${sid}/staffPages`).once("value")).val()||{};}
+    catch(e){console.warn("個別URLの申請を読み込めませんでした:",e);return{error:"申請を読み込めませんでした（サーバー側の設定が未反映の可能性があります）"};}
+    const nowIso=staffLinkNowIso();
+    const r=kind==="approve"?planApproveStaffPage({pages:cur,token,name,staff:staffList,byUid:firebaseAuth&&firebaseAuth.currentUser?firebaseAuth.currentUser.uid:"",nowIso})
+      :kind==="reject"?planRejectStaffPage(cur,token):kind==="revoke"?planRevokeStaffPage(cur,token,nowIso):kind==="resetPin"?planResetStaffPagePin(cur,token,nowIso):{error:"この操作はできません"};
+    if(r.error)return r;
+    try{await fbUpd(`shops/${sid}/staffPages`,r.patch);return{ok:true};}
+    catch(e){console.warn("個別URLの更新に失敗:",e);return{error:isPermissionDeniedError(e)?"保存できませんでした（サーバー側の設定が未反映の可能性があります）":"保存できませんでした。通信状態を確認してもう一度お試しください"};}
   };
   const STAFF_LINK_CFS=["approveStaffLink","issueStaffLinkCode","unlinkStaff"];
   const callStaffLinkCF=async(name,payload)=>{
@@ -1649,6 +1694,8 @@ function App(){
   // 企業設定＞店舗設定の重ね合わせはここ1箇所だけで行う（読み手ごとにマージを書かない）。
   // 毎回新しいオブジェクトを作るとシフト作成タブの useMemo 連鎖が毎レンダー再計算されるので memo する。
   const effectiveSettings=useMemo(()=>applyCompanySettings(settings||makeSettings(sid),companyLink?(companyLink.settings||{}):null),[settings,sid,companyLink]);
+  // 個別URLの提出先は常に最新の期間。期間が増えたら購読する期間（apid）も追随させる（subs の購読は apid を必ず含む）
+  useEffect(()=>{ if(pageRoute!==null&&latestPeriod&&apid!==latestPeriod.id) setApid(latestPeriod.id); },[pageRoute,latestPeriod&&latestPeriod.id,apid]);
 
   // 初期化失敗画面（匿名認証失敗/ハング・スタッフURL解決失敗。アプリ内ブラウザの制限や無効URLで発生）
   // ローディング判定より先に出す（urlLocked時はapidが確定しないため、これがないと無限ローディングになる）
@@ -1667,7 +1714,7 @@ function App(){
   );
 
   // ローディング画面
-  if(!ready||(urlLocked&&!apid)) return(
+  if(!ready||(urlLocked&&!apid&&pageRoute===null)) return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"var(--c-bg)",flexDirection:"column",gap:16}}>
       <ShiftyIcon size={64}/>
       <div style={{color:"var(--c-text)",fontSize:16,fontWeight:700}}>Shifty</div>
@@ -1675,8 +1722,67 @@ function App(){
     </div>
   );
 
+  // スタッフ画面の提出・削除（募集URLの StaffView と個別URLの提出タブが同じ関数を通す＝二重に実装しない）
+  const staffOnSub=sub=>{
+    const currentSid=currentShopIdRef.current||sid;
+    if(!firebaseDB)return Promise.reject(new Error("firebase未接続"));
+    // saveSubs（管理者側）と同じ3点の保護を通す。以前はここだけが sub 全体を set() しており、
+    // last-write-wins がオブジェクト全体に効いていた（管理者が同じsubの別の日を編集した直後に
+    // スタッフが再提出すると、スタッフ端末が持っている古い分で管理者の編集を上書きしうる）。
+    // 1) 差分書き込み: サーバー由来の最新sub（subsMapRef）を基準に、実際に変わったパスだけ update する。
+    //    リスナー未着で基準が取れないときはローカルstateの同一subへフォールバックする（従来と同じ全体書き）。
+    const prevSub=subsMapRef.current[sub.id]||subs.find(s=>s&&s.id===sub.id)||null;
+    const flat=diffSubForFlatWrite(sub.id,prevSub,sub);
+    // 2) 関数型更新: blurや連打で再レンダーが挟まらないとき、後の呼び出しが前の結果を消さない
+    setSubs(prev=>{
+      // id で引く（staffName+periodId ではない）。別名提出のsubを再利用すると
+      // staffName が別名→登録名へ正規化されるため、名前で探すと旧エントリに当たらず
+      // ローカルstateにだけ同じ人の行が2つ増える（サーバー同期まで画面が二重に見える）。
+      const i=prev.findIndex(s=>s&&s.id===sub.id);
+      const a=i>=0?prev.map((s,j)=>j===i?sub:s):[...prev,sub];
+      ls(storeKey(currentSid,"subs_v6"),a);
+      return a;
+    });
+    if(Object.keys(flat).length===0) return Promise.resolve(); // 変更なし＝書かない
+    // 3) 未確定書き込みの保護: 自分の書き込みがサーバー確認される前に届く value echo で巻き戻らないようにする
+    Object.entries(flat).forEach(([p,v])=>{ pendingSubWritesRef.current[p]=v; });
+    const path=fbPath(currentSid,"subs");
+    return fbUpd(path, flat)
+      .then(()=>dlog(sub.isUpdated?"変更保存完了":"提出完了","path=",path,"paths=",Object.keys(flat)))
+      .catch(e=>{console.warn("sub書き込み失敗:",path,e);throw e;})
+      .finally(()=>{
+        Object.entries(flat).forEach(([p,v])=>{ if(pendingSubWritesRef.current[p]===v)delete pendingSubWritesRef.current[p]; });
+      });
+  };
+  const staffOnDeleteSub=subId=>{
+    const currentSid=currentShopIdRef.current||sid;
+    const removed=subs.find(s=>s&&s.id===subId)||null;
+    const a=subs.filter(s=>s.id!==subId);
+    setSubs(a);
+    ls(storeKey(currentSid,"subs_v6"),a);
+    if(firebaseDB&&!DEMO_MODE) firebaseDB.ref(`shops/${currentSid}/subs/${subId}`).remove().catch(e=>{
+      console.warn("sub削除失敗:",e);
+      // 削除が拒否されることがある（デモ店舗・通信エラー等。2026-08-31 の決定1で
+      // 権限による拒否は無くなった）。
+      // 拒否されたときに画面から消えたままにすると、消えたように見えて実際は残る
+      // ＝リロードで戻る（データを失っていないのに失ったように見える／その逆も起きる）。
+      // 楽観的に消した行を戻し、理由を伝える。
+      setSubs(prev=>{
+        if(!removed||prev.some(s=>s&&s.id===subId))return prev;
+        const back=[...prev,removed];
+        ls(storeKey(currentSid,"subs_v6"),back);
+        return back;
+      });
+      tt("△ この提出を削除できませんでした（通信エラーの可能性があります）");
+    });
+  };
+
   // 従業員画面（第2部 E1）を #/me で直接開いたとき。店舗を読んでいないので、管理者の画面・ログイン画面には進まない
   if(MY_SCREEN_ENABLED&&myRoute) return <MyView staffUser={staffUser} onStaffUser={setStaffUser} shopId={null} onClose={null}/>;
+  // スタッフ個別URL（2026-10-04）。店舗はスタッフURLと同じく購読済み（Phase1）。提出は上の staffOnSub を通す
+  if(MY_SCREEN_ENABLED&&pageRoute!==null) return <MyPageView token={pageRoute} boot={pageBoot} shopId={pageBoot&&pageBoot.state==="shop"?pageBoot.shopId:null}
+    shopName={shop?.name||""} periods={periods} settings={effectiveSettings} staffList={staffList} subs={subs} plan={plan} syncStatus={syncStatus}
+    onSub={staffOnSub} onDeleteSub={staffOnDeleteSub}/>;
 
   // 引き継ぎコード（店舗コード / 管理コード shopId.adminKey）でログイン
   const applyInviteCode=()=>{
@@ -1926,6 +2032,10 @@ function App(){
         <MyView staffUser={staffUser} onStaffUser={setStaffUser} shopId={sid!=="default"?sid:null}
           onClose={()=>{ssSave(SS_MY_OPEN,null);setMyOpen(false);}}/>
       </div>}
+      {/* 個別URLの申請（2026-10-04）。提出画面は下に残す（入力途中の希望を消さない）＝マイシフトと同じく重ねて表示する */}
+      {MY_SCREEN_ENABLED&&pageRegName!==null&&urlLocked&&sid!=="default"&&<div data-page-register-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
+        <MyPageRegister shopId={sid} shopName={shop?.name||""} initialName={pageRegName} onClose={()=>setPageRegName(null)}/>
+      </div>}
       {/* 同期ステータスバー（接続中以外のみ表示） */}
       {syncStatus!=="online"&&<div style={{background:syncStatus==="offline"?"#F59E0B":"#6B7280",color:"white",fontSize:11,fontWeight:700,textAlign:"center",padding:"4px 8px"}}>
         {syncStatus==="offline"?"オフライン（再接続中...）":syncStatus==="no_config"?"Firebase未設定":"接続中..."}
@@ -1940,59 +2050,9 @@ function App(){
         ?<StaffView periods={periods} ap={ap} apid={apid} setApid={setApid} shopId={sid} settings={effectiveSettings} subs={subs} staffList={staffList} plan={plan}
             urlLocked={urlLocked}
             onOpenMy={MY_SCREEN_ENABLED&&urlLocked&&!DEMO_MODE?()=>{ssSave(SS_MY_OPEN,"1");setMyOpen(true);}:null}
-            onSub={sub=>{
-              const currentSid=currentShopIdRef.current||sid;
-              if(!firebaseDB)return Promise.reject(new Error("firebase未接続"));
-              // saveSubs（管理者側）と同じ3点の保護を通す。以前はここだけが sub 全体を set() しており、
-              // last-write-wins がオブジェクト全体に効いていた（管理者が同じsubの別の日を編集した直後に
-              // スタッフが再提出すると、スタッフ端末が持っている古い分で管理者の編集を上書きしうる）。
-              // 1) 差分書き込み: サーバー由来の最新sub（subsMapRef）を基準に、実際に変わったパスだけ update する。
-              //    リスナー未着で基準が取れないときはローカルstateの同一subへフォールバックする（従来と同じ全体書き）。
-              const prevSub=subsMapRef.current[sub.id]||subs.find(s=>s&&s.id===sub.id)||null;
-              const flat=diffSubForFlatWrite(sub.id,prevSub,sub);
-              // 2) 関数型更新: blurや連打で再レンダーが挟まらないとき、後の呼び出しが前の結果を消さない
-              setSubs(prev=>{
-                // id で引く（staffName+periodId ではない）。別名提出のsubを再利用すると
-                // staffName が別名→登録名へ正規化されるため、名前で探すと旧エントリに当たらず
-                // ローカルstateにだけ同じ人の行が2つ増える（サーバー同期まで画面が二重に見える）。
-                const i=prev.findIndex(s=>s&&s.id===sub.id);
-                const a=i>=0?prev.map((s,j)=>j===i?sub:s):[...prev,sub];
-                ls(storeKey(currentSid,"subs_v6"),a);
-                return a;
-              });
-              if(Object.keys(flat).length===0) return Promise.resolve(); // 変更なし＝書かない
-              // 3) 未確定書き込みの保護: 自分の書き込みがサーバー確認される前に届く value echo で巻き戻らないようにする
-              Object.entries(flat).forEach(([p,v])=>{ pendingSubWritesRef.current[p]=v; });
-              const path=fbPath(currentSid,"subs");
-              return fbUpd(path, flat)
-                .then(()=>dlog(sub.isUpdated?"変更保存完了":"提出完了","path=",path,"paths=",Object.keys(flat)))
-                .catch(e=>{console.warn("sub書き込み失敗:",path,e);throw e;})
-                .finally(()=>{
-                  Object.entries(flat).forEach(([p,v])=>{ if(pendingSubWritesRef.current[p]===v)delete pendingSubWritesRef.current[p]; });
-                });
-            }}
-            onDeleteSub={subId=>{
-              const currentSid=currentShopIdRef.current||sid;
-              const removed=subs.find(s=>s&&s.id===subId)||null;
-              const a=subs.filter(s=>s.id!==subId);
-              setSubs(a);
-              ls(storeKey(currentSid,"subs_v6"),a);
-              if(firebaseDB&&!DEMO_MODE) firebaseDB.ref(`shops/${currentSid}/subs/${subId}`).remove().catch(e=>{
-                console.warn("sub削除失敗:",e);
-                // 削除が拒否されることがある（デモ店舗・通信エラー等。2026-08-31 の決定1で
-                // 権限による拒否は無くなった）。
-                // 拒否されたときに画面から消えたままにすると、消えたように見えて実際は残る
-                // ＝リロードで戻る（データを失っていないのに失ったように見える／その逆も起きる）。
-                // 楽観的に消した行を戻し、理由を伝える。
-                setSubs(prev=>{
-                  if(!removed||prev.some(s=>s&&s.id===subId))return prev;
-                  const back=[...prev,removed];
-                  ls(storeKey(currentSid,"subs_v6"),back);
-                  return back;
-                });
-                tt("△ この提出を削除できませんでした（通信エラーの可能性があります）");
-              });
-            }}
+            onOpenPageRegister={MY_SCREEN_ENABLED&&urlLocked&&!DEMO_MODE?n=>setPageRegName(String(n||"")):null}
+            onSub={staffOnSub}
+            onDeleteSub={staffOnDeleteSub}
             shopName={shop?.name}/>
         :<AdminView settings={effectiveSettings} periods={periods} subs={subs} staffList={staffList} shops={shops}
               currentShopId={sid} saveSettings={saveSettings} savePeriods={savePeriods} saveSubs={saveSubs}
@@ -2006,7 +2066,7 @@ function App(){
               actuals={{enabled:!ownerReadOnly&&ownerClaimedSid===sid,loaded:actualsLoaded,map:actuals,
                 save:saveActuals,rename:renameActuals,drop:dropActuals}}
               staffLinks={{enabled:MY_SCREEN_ENABLED&&!DEMO_MODE&&!ownerReadOnly&&ownerClaimedSid===sid,loaded:staffLinksLoaded,map:staffLinkMap,requests:linkRequestMap,
-                rename:renameStaffLinks,drop:dropStaffLinks,reject:rejectLinkRequest,call:callStaffLinkCF}}
+                rename:renameStaffLinks,drop:dropStaffLinks,reject:rejectLinkRequest,call:callStaffLinkCF,pages:staffPageMap,pageAct:staffPageAct}}
               onRememberAdminKey={rememberAdminKey} onClaimShop={claimOwnership}
               plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed} billingSchedule={billingSchedule} billingExempt={billingExempt} companyLink={companyLink}
               setCurrentShopId={id=>{

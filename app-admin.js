@@ -11,7 +11,7 @@ const LABOR_MONTHS_OFF={enabled:false,loaded:false,map:{},save:()=>Promise.resol
 // 実績（shops/{sid}/actuals・P4）を持たないとき（オーナーでない端末・一括PDFの非表示マウント）の既定
 const ACTUALS_OFF={enabled:false,loaded:false,map:{},save:()=>Promise.resolve(),rename:()=>{},drop:()=>{},csvMapping:null,saveCsvMapping:null};
 // 従業員画面の紐付け（shops/{sid}/staffLinks・linkRequests・第2部 E2）を持たないとき（オーナーでない端末・本番・非表示マウント）の既定
-const STAFF_LINKS_OFF={enabled:false,loaded:false,map:{},requests:{},rename:()=>{},drop:()=>{},reject:()=>Promise.resolve({}),call:()=>Promise.resolve({error:"この操作はできません"})};
+const STAFF_LINKS_OFF={enabled:false,loaded:false,map:{},requests:{},rename:()=>{},drop:()=>{},reject:()=>Promise.resolve({}),call:()=>Promise.resolve({error:"この操作はできません"}),pages:{},pageAct:()=>Promise.resolve({error:"この操作はできません"})};
 // 紐付けの追随（sl.rename / sl.drop）の結果を見る。読めない・書けないで保留になったら操作者に知らせる（App が後でやり直す・2026-10-04）
 function staffLinkFollow(tt,...ps){
   Promise.all(ps.map(p=>Promise.resolve(p).catch(()=>({pending:true})))).then(rs=>{if(rs.some(r=>r&&r.pending)&&tt)tt(MY_STAFF_LINK_PENDING_MSG);});
@@ -1541,6 +1541,8 @@ const dragIdxRef=useRef(null);
         note={companyLinked?"企業に連携している店舗は、企業のパスコードに統一されています。企業連携タブの「企業アカウント」か、「企業内登録スタッフ」の一覧の上部にある「変更」で変更してください。":null}/>}
       {/* マイシフト（従業員画面）のリンク申請（第2部 E2）。MY_SCREEN_ENABLED・オーナーの端末だけ（sl.enabled）。申請が無ければ何も出さない */}
       <StaffLinkRequestsCard links={sl} staffList={staffList} staffNumbers={settings.staffNumbers||{}} mirrorPeople={mirrorPeople} shopId={shopId} tt={tt}/>
+      {/* スタッフ個別URLの申請（2026-10-04）。同じく MY_SCREEN_ENABLED・オーナーの端末だけ。申請が無ければ何も出さない */}
+      <StaffPageRequestsCard links={sl} staffList={staffList} staffNumbers={settings.staffNumbers||{}} mirrorPeople={mirrorPeople} shopId={shopId} tt={tt}/>
       <AC title="スタッフ一覧">
         {!isPro&&<div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:8,padding:"7px 10px"}}>
           {`Freeプラン：最大${lim}名まで登録可能（${staffList.filter(n=>!isSpacer(n)).length}/${lim}名）`}
@@ -1797,6 +1799,7 @@ const dragIdxRef=useRef(null);
             </>)}
 
             {sl.enabled&&sec("マイシフト",<StaffLinkEditSection links={sl} name={n} tt={tt}/>)}
+            {sl.enabled&&sec("個別URL",<StaffPageEditSection links={sl} name={n} tt={tt}/>)}
 
             {pay.enabled&&(()=>{
               const hs=homeShopOf(settings,n,shopId);

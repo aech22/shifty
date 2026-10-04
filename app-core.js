@@ -160,6 +160,8 @@ function parseUrl(){
   if(/^#\/demo\/?$/.test(h)) return{type:"demo"};
   // 従業員画面: #/me（下の「旧形式互換」より先に判定する。#/me は #/ で始まるため）
   if(MY_SCREEN_ENABLED&&isMyRouteHash(h)) return{type:"me"};
+  // スタッフ個別URL: #/m/<pageToken>（2026-10-04）。ゲートの下だけ。本番では従来どおり旧形式のスタッフURL（トークン "m/…"）として扱われる
+  if(MY_SCREEN_ENABLED){const pt=myPageRouteOf(h);if(pt!==null) return{type:"page",pageToken:pt};}
   // スタッフURL: #/s/<token>
   if(h.startsWith("#/s/")){
     const token=h.slice(4);

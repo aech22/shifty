@@ -1141,6 +1141,144 @@ function myCompanyPayOf(res){
   return{state:"ok",pay,homeShopId:typeof r.homeShopId==="string"?r.homeShopId:"",homeShopName:typeof r.homeShopName==="string"?r.homeShopName:""};
 }
 
+// ===== スタッフ個別URL（2026-10-04・ユーザーの仕様変更）=====
+// シフト募集URL（#/s/<token>）の画面から本人が申請すると、その場で個別URL（#/m/<pageToken>）ができる。管理者がスタッフタブで
+// 「スタッフ一覧のどの名前か」を選んで承認すると有効になり、どの端末で開いてもそのスタッフの画面（本人のカレンダー・最新期間の全員の表・
+// 最新期間への提出・暗証番号で開く給料）になる。ログインは要らない＝**pageToken を知っていることが権限**（capability）。
+// データ（追加だけ・既存ノードは変えない）:
+//   staffPageTokens/{pageToken} = {shopId, at}                     逆引き（tokens と同じ発想。直キー読みのみ・作成後は書き換え不可）
+//   shops/{shopId}/staffPages/{pageToken} = {status, displayName, number?, requestedAt, name?, approvedAt?, byUid?, revokedAt?, pinResetAt?}
+//                                                                  申請は誰でも（pending だけ・name は書けない）、承認・却下・取り消し・改名はオーナーだけ
+//   staffPageData/{pageToken}/…                                    本人のデータ（users/{uid} と同じ形。承認済みの間だけ読み書きできる）
+//   staffPagePins/{pageToken}                                      給料の暗証番号のハッシュと試行回数（Cloud Functions だけが読み書き）
+const MY_PAGE_TOKEN_LEN=24;
+const MY_PAGE_TOKEN_RE=/^[A-Za-z0-9]{24}$/;
+function isMyPageToken(s){return typeof s==="string"&&MY_PAGE_TOKEN_RE.test(s);}
+// 英大小文字と数字の24文字（約142ビット）。genSecureId は記号を含みURLとFirebaseのキーに使えないので使わない
+function genMyPageToken(rand){return genMyRecordId("",MY_PAGE_TOKEN_LEN,rand);}
+// "#/m/<token>" → token（形は問わない。違えば画面で「使えないURL」と出す）。それ以外のハッシュは null
+function myPageRouteOf(h){const m=/^#\/m\/([^/?#]*)\/?$/.exec(String(h==null?"":h));return m?m[1]:null;}
+// 個別URL。base は origin+pathname（スタッフ募集URLの buildUrl と同じく LINE のアプリ内ブラウザを外へ出すパラメータを付ける）
+function buildMyPageUrl(base,token){return`${String(base||"")}?openExternalBrowser=1#/m/${token}`;}
+// 個別URLの下部タブ（アカウントの MY_TABS に「提出」を足したもの）
+const MY_PAGE_TABS=[
+  {key:"shift",label:"マイシフト"},
+  {key:"submit",label:"提出"},
+  {key:"pay",label:"給料"},
+  {key:"settings",label:"設定"},
+];
+const MY_PAGE_STATUSES=["pending","approved","rejected","revoked"];
+// 申請の記録。入力の検証はアカウントの登録ネームと同じ（validateMyProfile）。番号が空ならキーを持たない
+function buildMyPageRequest(input,nowIso){
+  const e=validateMyProfile(input);
+  if(e)return{error:e};
+  const rec={status:"pending",displayName:normalizeMyDisplayName(input.displayName),requestedAt:String(nowIso||"")};
+  const num=normalizeMyNumber(input&&input.number);
+  if(num)rec.number=num;
+  return{rec};
+}
+// 個別URLを開いたときの状態。tokenRec=staffPageTokens/{token}、pageRec=shops/{shopId}/staffPages/{token}、staff=shops/{shopId}/staff。
+// 使ってよいのは state:"ok"（承認済みで、名前がいまのスタッフ一覧にある）だけ。改名・削除の追随が届かなかった名前は missingName で止める
+function resolveMyPage(token,tokenRec,pageRec,staff){
+  if(!isMyPageToken(token))return{state:"invalid"};
+  const tr=_myObj(tokenRec);
+  const shopId=tr&&typeof tr.shopId==="string"&&tr.shopId?tr.shopId:"";
+  if(!shopId)return{state:"missing"};
+  const r=_myObj(pageRec);
+  if(!r||!MY_PAGE_STATUSES.includes(r.status))return{state:"missing",shopId};
+  const displayName=typeof r.displayName==="string"?r.displayName:"";
+  if(r.status!=="approved")return{state:r.status,shopId,displayName};
+  const name=typeof r.name==="string"?r.name:"";
+  if(!name||!myStaffNamesOf(staff).includes(name))return{state:"missingName",shopId,displayName,name};
+  return{state:"ok",shopId,displayName,name,approvedAt:typeof r.approvedAt==="string"?r.approvedAt:""};
+}
+const MY_PAGE_STATE_MESSAGES={
+  invalid:"このURLは正しくありません。お店から受け取ったURLをそのまま開いてください",
+  missing:"このURLは見つかりませんでした。お店の管理者に確認してください",
+  pending:"お店の管理者の承認を待っています。承認されると、このURLで自分のシフトを見て提出できるようになります",
+  rejected:"このURLの申請は承認されませんでした。お店の管理者に確認してください",
+  revoked:"このURLは使えなくなりました（お店の管理者が取り消しました）。新しいURLをお店に確認してください",
+  missingName:"お店のスタッフ一覧にこの名前がありません（名前の変更か削除）。お店の管理者に確認してください",
+};
+// 承認済みの個別URLを名前から引く（{名前: {token, rec}}）。1つの名前に承認済みは1つ（承認の差分が前のものを取り消す）
+function approvedStaffPagesByName(pages){
+  const out={};
+  Object.entries(_myObj(pages)||{}).forEach(([t,r])=>{const rec=_myObj(r);if(rec&&rec.status==="approved"&&typeof rec.name==="string"&&rec.name)out[rec.name]={token:t,rec};});
+  return out;
+}
+// 申請（pending）を「提案あり」と「未一致」に分ける。照合は紐付け（E2）の A・B と同じ linkCandidatesFor（takenBy＝既に承認済みの個別URLがある名前）
+function splitStaffPageRequests(pages,ctx){
+  const taken={};
+  Object.entries(approvedStaffPagesByName(pages)).forEach(([n,v])=>{taken[v.token]={name:n};});
+  const withCand=[],unmatched=[];
+  Object.entries(_myObj(pages)||{}).filter(([,r])=>_myObj(r)&&r.status==="pending")
+    .sort((a,b)=>String(a[1].requestedAt||"").localeCompare(String(b[1].requestedAt||"")))
+    .forEach(([token,r])=>{
+      const cands=linkCandidatesFor({displayName:r.displayName,number:r.number},{...(ctx||{}),staffLinks:taken,uid:token});
+      (cands.length?withCand:unmatched).push({token,req:r,cands});
+    });
+  return{withCand,unmatched};
+}
+const _myPageErr=msg=>({error:msg});
+// 承認の差分（shops/{sid}/staffPages への update）。同じ名前に承認済みの個別URLがあれば取り消す（1つの名前に1つ）
+function planApproveStaffPage(o){
+  const x=_myObj(o)||{};
+  const rec=(_myObj(x.pages)||{})[x.token];
+  if(!isMyPageToken(x.token)||!_myObj(rec))return _myPageErr("申請が見つかりません");
+  if(rec.status!=="pending")return _myPageErr("この申請は既に処理されています");
+  if(typeof x.name!=="string"||!myStaffNamesOf(x.staff).includes(x.name))return _myPageErr("スタッフ一覧にない名前は選べません");
+  const at=String(x.nowIso||"");
+  const patch={[`${x.token}/status`]:"approved",[`${x.token}/name`]:x.name,[`${x.token}/approvedAt`]:at};
+  if(typeof x.byUid==="string"&&x.byUid)patch[`${x.token}/byUid`]=x.byUid;
+  Object.entries(_myObj(x.pages)||{}).forEach(([t,r])=>{
+    if(t!==x.token&&_myObj(r)&&r.status==="approved"&&r.name===x.name){patch[`${t}/status`]="revoked";patch[`${t}/revokedAt`]=at;}
+  });
+  return{patch};
+}
+function planRejectStaffPage(pages,token){
+  const rec=(_myObj(pages)||{})[token];
+  if(!_myObj(rec)||rec.status!=="pending")return _myPageErr("この申請は既に処理されています");
+  return{patch:{[`${token}/status`]:"rejected"}};
+}
+function planRevokeStaffPage(pages,token,nowIso){
+  const rec=(_myObj(pages)||{})[token];
+  if(!_myObj(rec)||rec.status!=="approved")return _myPageErr("承認済みの個別URLではありません");
+  return{patch:{[`${token}/status`]:"revoked",[`${token}/revokedAt`]:String(nowIso||"")}};
+}
+// 暗証番号のリセット（管理者）。Cloud Functions は pinResetAt より前に設定された番号を「未設定」として扱う（staffPagePins はクライアントから触れない）
+function planResetStaffPagePin(pages,token,nowIso){
+  const rec=(_myObj(pages)||{})[token];
+  if(!_myObj(rec)||rec.status!=="approved")return _myPageErr("承認済みの個別URLではありません");
+  return{patch:{[`${token}/pinResetAt`]:String(nowIso||"")}};
+}
+// 改名・削除・追加の追随（紐付けと同じ操作 staffLinkOpOf を、読み直した staffPages に当てる）。
+// 世代の目印も同じ: 操作の時刻より後に承認された個別URLには当てない（操作の後に正しく承認されたものを取り消さない）。
+// 削除は承認を取り消す（status:"revoked"）＝同じ名前をスタッフに登録し直しても、古い個別URLは生き返らない
+function planStaffPageOp(pages,op){
+  const o=_myObj(op);
+  if(!o)return null;
+  const out={};
+  Object.entries(_myObj(pages)||{}).forEach(([t,r])=>{
+    const rec=_myObj(r);
+    if(!rec||rec.status!=="approved"||!isMyPageToken(t))return;
+    const at=typeof rec.approvedAt==="string"?rec.approvedAt:"";
+    if(o.at&&at&&at>o.at)return;
+    if(o.kind==="drop"&&Array.isArray(o.names)&&o.names.includes(rec.name)){out[`${t}/status`]="revoked";out[`${t}/revokedAt`]=String(o.at||"");}
+    if(o.kind==="rename"&&rec.name===o.from)out[`${t}/name`]=o.to;
+  });
+  return Object.keys(out).length?out:null;
+}
+
+// 最新の期間（startDate が最も新しい期間。App の Phase3 の「periods[0]＝最新」・latestPeriod と同じ決め方）。個別URLの提出先と全員の表の期間
+function myLatestPeriodOf(periods){
+  let best=null;
+  (Array.isArray(periods)?periods:[]).forEach(p=>{
+    if(!p||!p.id||!/^\d{4}-\d{2}-\d{2}$/.test(String(p.startDate)))return;
+    if(!best||String(p.startDate)>String(best.startDate))best=p;
+  });
+  return best;
+}
+
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
   module.exports={MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
@@ -1153,5 +1291,7 @@ if(typeof module!=="undefined"&&module.exports){
     MY_MANUAL_NIGHT_PCT,MY_MANUAL_OVER8_PCT,MY_MANUAL_OVER8_MIN,myPayDayLabel,myPayOf,validateMyPayInput,buildMyPayRecord,myPayFormOf,parseMyGoalInput,myGoalOf,parseMyReceivedInput,
     myClampDay,myClosingMonthOf,myClosingRangeOf,myPayDateOf,myPayPlanOf,myPayMonthOfDate,myPeriodsInRange,myPayReadRange,myShiftyDayInfo,myMonthSettingsOf,
     myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
-    fmtMyYen,myGoalProgress,myCompanyPayOf};
+    fmtMyYen,myGoalProgress,myCompanyPayOf,
+    MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,resolveMyPage,MY_PAGE_STATE_MESSAGES,
+    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myLatestPeriodOf};
 }
