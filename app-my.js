@@ -2219,7 +2219,6 @@ function MyAllShiftTable({period,staff,settings,subs,plan,me}){
       <div data-my-all-state="ok">
         <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6,marginBottom:8}}>
           {t.confirmed?"確定":"公開"}{(()=>{const d=new Date(t.publishedAt);return Number.isFinite(d.getTime())?`（${d.getMonth()+1}/${d.getDate()} 公開）`:"";})()}
-          <span style={{display:"block",fontSize:12,color:"var(--c-text3)"}}>細かいところは2本の指で拡大して見てください。</span>
         </div>
         {/* 罫線は separate＋border-box（collapse だと外枠の半分が幅の外に出て、横幅を 1px 超える） */}
         <table data-my-all-table="1" data-my-all-font={L.fontPx} style={{tableLayout:"fixed",width:"100%",boxSizing:"border-box",borderCollapse:"separate",borderSpacing:0,fontSize:L.fontPx,fontVariantNumeric:"tabular-nums",
