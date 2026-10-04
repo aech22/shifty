@@ -65,8 +65,10 @@ const MYPG_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "f
  *                                signOut・パスワードの変更と再設定が、localStorage 上のアカウント表で動く。
  *                                ルールの代わりに **users/{uid} への書き込みは「その uid 本人で、メールのある認証」だけ**を通す
  *                                （database.rules.json の users/$uid/profile と同じ条件を真似たもの。ルールそのものは評価しない）。
- * @param {object} [o.authSeed]  accounts のときの初期状態 {users:{メール:{uid,password}}, cur:{uid,isAnonymous,email}|null}。
- *                                別の端末を再現するときは、1台目の __authDump().users と __dbDump() を2台目の authSeed・seed に渡す
+ * @param {object} [o.authSeed]  accounts のときの初期状態 {users:{メール:{uid,password}}, cur:{uid,isAnonymous,email}|null, linkBlocked?}。
+ *                                別の端末を再現するときは、1台目の __authDump().users と __dbDump() を2台目の authSeed・seed に渡す。
+ *                                linkBlocked:true にすると linkWithCredential が auth/operation-not-allowed で拒否される（本番・dev の
+ *                                メールアドレスの列挙保護の挙動。2026-10-04 に本番で発生した不具合 4163394 の回帰用）
  */
 function makeStub(o) {
   const seed = o.seed || {};
@@ -272,6 +274,9 @@ function makeStub(o) {
           getIdToken:function(){ window.__tokenRefreshes=(window.__tokenRefreshes||0)+1; return Promise.resolve("stub-id-token-"+acc.cur.uid); },
           reload:function(){ return Promise.resolve(); },
           linkWithCredential:function(cred){
+            window.__linkAttempts=(window.__linkAttempts||0)+1;
+            // 列挙保護が有効なプロジェクト: 匿名 uid へのメールの連結は「新しいメールを確認してから」と拒否される
+            if(AUTH_SEED.linkBlocked) return Promise.reject(aerr("auth/operation-not-allowed"));
             if(!acc.cur||!acc.cur.isAnonymous) return Promise.reject(aerr("auth/provider-already-linked"));
             if(!EMAIL_RE.test(cred.email||"")) return Promise.reject(aerr("auth/invalid-email"));
             if(acc.users[cred.email]) return Promise.reject(aerr("auth/email-already-in-use"));

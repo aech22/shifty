@@ -350,6 +350,41 @@ const subsOf = h => h.evaluate(() => Object.values(window.__db("shops/S1/subs") 
     } catch (e) { R["H_exception_" + width] = e.stack || e.message; V["H_noException_" + width] = false; }
     await h.close();
   }
+  // ---------------- L: 匿名 uid への連結が列挙保護で拒否される（本番の挙動・4163394 の回帰）----------------
+  // linkWithCredential が auth/operation-not-allowed → createUserWithEmailAndPassword で新しいアカウントとして作り、
+  // 印と profile を新しい uid で書いて再読み込み → スタッフアカウントとして開き直る。以前のスタブは連結が必ず成功したので検出できなかった
+  {
+    const h = await open({ hash: "#/s/t1", wait: "[data-my-open]", authSeed: { users: USERS0, cur: null, linkBlocked: true } });
+    try {
+      const L = {};
+      const anon = await authCur(h);
+      await click(h, "[data-my-open]");
+      await waitSel(h, '[data-my-auth="login"]');
+      await click(h, '[data-my-mode="register"]');
+      await waitSel(h, '[data-my-auth="register"]');
+      await setMy(h, "displayName", "田中");
+      await setMy(h, "email", "newstaff@example.com");
+      await setMy(h, "password", "pass12345");
+      await setMy(h, "password2", "pass12345");
+      await click(h, '[data-my-action="submit"]');
+      // 再読み込みの後、スタッフアカウントとして開き直る（ss_myOpen で重ねて開く）
+      await h.page.waitForFunction(() => { const c = window.__authCur && window.__authCur(); return !!(c && !c.isAnonymous && c.email === "newstaff@example.com"); }, null, { timeout: 15000 }).catch(() => {});
+      await h.page.waitForLoadState("networkidle").catch(() => {});
+      L.myView = await waitSel(h, "[data-my-view]", 20000);
+      const cur = await authCur(h);
+      L.cur = cur;
+      L.newUid = !!cur && !cur.isAnonymous && cur.email === "newstaff@example.com" && !!anon && cur.uid !== anon.uid;
+      L.mark = await h.evaluate(() => JSON.parse(localStorage.getItem("ots_staffAccount_v1") || "null"));
+      L.profile = cur ? await h.evaluate(u => window.__db(`users/${u}/profile`), cur.uid) : null;
+      L.account = (await h.evaluate(() => window.__authDump().users))["newstaff@example.com"] || null;
+      L.msgs = (await myMsg(h)).join("|");
+      L.errors = h.errors.slice();
+      R.L = L;
+      V.L_linkBlockedFallsBackToCreate = L.myView && L.newUid && !!L.mark && L.mark.uid === cur.uid && !!L.profile && L.profile.displayName === "田中" &&
+        !!L.account && L.account.uid === cur.uid && !/失敗|できませんでした/.test(L.msgs) && L.errors.length === 0;
+    } catch (e) { R.L_exception = e.stack || e.message; V.L_noException = false; }
+    await h.close();
+  }
   // ---------------- F: 本番相当（DEV_MODE=false）では入口が出ない ----------------
   {
     const h = await open({ hash: "#/s/t1", devMode: false, wait: "button" });
