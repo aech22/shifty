@@ -318,7 +318,7 @@ function StaffLinkEditSection({links,name,tt}){
   const cur=issued&&issued.name===name?issued:null;
   return(
     <div data-staff-link="none">
-      <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:8}}>本人がマイシフトの設定でこのコードを入れると、承認なしでリンクされます。24時間有効・1回限りです。</div>
+      <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:8}}>本人がメール＋パスワードのアカウント（マイシフト）を使う場合だけ必要です。本人がアカウントの設定でこのコードを入れると、承認なしでリンクされます。24時間有効・1回限りです。ふだんは上の「専用のURL」を送れば足ります。</div>
       {cur&&<div data-staff-link-code={cur.code} style={{marginBottom:10}}>
         <div style={{fontSize:24,fontWeight:700,letterSpacing:4,color:"var(--c-text)",fontVariantNumeric:"tabular-nums"}}>{cur.code}</div>
         <div data-staff-link-expiry="1" style={{fontSize:12,color:"var(--c-text3)"}}>有効期限: {fmtLinkCodeExpiry(cur.expiry)}</div>
@@ -2181,14 +2181,21 @@ function StaffPageRequestsCard({links,staffList,staffNumbers,mirrorPeople,shopId
     </AC>
   );
 }
-// 管理者側（スタッフの編集モーダルの中）: その人の承認済みの個別URL・取り消し・暗証番号のリセット
+// 管理者側（スタッフの編集モーダルの中）: スタッフ専用のURL（個別URL）の発行・再表示・再発行・取り消し・暗証番号のリセット（2026-10-04 ユーザー指示
+// 「個人リンクコードは新規登録に繋がる URL の方が助かる」）。発行すると承認済みの URL がその場でできる＝本人は開くだけで自分の画面に入る
+// （名前・番号・メール・パスワード・コードの入力なし・承認待ちなし）。書くのは App の staffPageAct（オーナーが staffPages を直接書く・CF なし）。
+// 1つの名前に承認済みは1つ: 発行済みの人には URL を出し直し、「新しいURLを発行」は確認つきの別操作（古い URL は使えなくなる）
 function StaffPageEditSection({links,name,tt}){
   const[busy,setBusy]=useState(false);
   if(!links||!links.enabled)return null;
   const cur=approvedStaffPagesByName(links.pages)[name];
-  if(!cur)return(
-    <div data-staff-page="none" style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7}}>個別URLはありません。本人がシフト募集URLの画面から申請すると、スタッフタブの「個別URLの申請」に出ます。</div>
-  );
+  const issue=async again=>{
+    if(again&&!window.confirm(`「${name}」さんに新しいURLを発行しますか？いまのURLは使えなくなります（URLが漏れた・端末を替えたときに使います）。`))return;
+    setBusy(true);
+    const r=await links.pageAct("issue",null,name);
+    setBusy(false);
+    tt(r.error?`▲ ${r.error}`:again?"新しいURLを発行しました（前のURLは使えなくなりました）":"専用のURLを発行しました");
+  };
   const act=async(kind,confirmMsg,okMsg)=>{
     if(!window.confirm(confirmMsg))return;
     setBusy(true);
@@ -2196,17 +2203,27 @@ function StaffPageEditSection({links,name,tt}){
     setBusy(false);
     tt(r.error?`▲ ${r.error}`:okMsg);
   };
+  if(!cur)return(
+    <div data-staff-page="none">
+      <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:8}}>
+        このスタッフ専用のURLを発行して本人に送ると、本人はURLを開くだけで自分のシフトの確認と提出ができます（名前やパスワードの入力は不要）。本人がシフト募集URLの画面から申請したときは、スタッフタブの「個別URLの申請」に出ます。
+      </div>
+      <button data-staff-page-action="issue" disabled={busy} onClick={()=>issue(false)} style={{...AB,opacity:busy?.6:1}}>{busy?"発行中…":"このスタッフ専用のURLを発行"}</button>
+    </div>
+  );
   const d=new Date(cur.rec.approvedAt);
   return(
     <div data-staff-page="approved" data-staff-page-token={cur.token}>
       <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.7,marginBottom:6}}>
-        個別URLを承認済み{Number.isFinite(d.getTime())?`（${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}）`:""}
+        専用のURLを発行済み{Number.isFinite(d.getTime())?`（${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}）`:""}。本人にこのURLを送ってください。
       </div>
       <MyPageUrlBox url={buildMyPageUrl(myPageBaseUrl(),cur.token)}/>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-        <button data-staff-page-action="revoke" disabled={busy} onClick={()=>act("revoke",`「${name}」さんの個別URLを取り消しますか？取り消すとそのURLは使えなくなります（本人がもう一度申請できます）。`,"個別URLを取り消しました")} style={{...AGray,opacity:busy?.6:1}}>個別URLを取り消す</button>
+        <button data-staff-page-action="reissue" disabled={busy} onClick={()=>issue(true)} style={{...AGray,opacity:busy?.6:1}}>新しいURLを発行</button>
+        <button data-staff-page-action="revoke" disabled={busy} onClick={()=>act("revoke",`「${name}」さんの専用のURLを取り消しますか？取り消すとそのURLは使えなくなります。`,"専用のURLを取り消しました")} style={{...AGray,opacity:busy?.6:1}}>URLを取り消す</button>
         <button data-staff-page-action="resetPin" disabled={busy} onClick={()=>act("resetPin",`「${name}」さんの給料の暗証番号をリセットしますか？本人が次に給料タブを開いたときに、新しい番号を決め直します。`,"暗証番号をリセットしました")} style={{...AGray,opacity:busy?.6:1}}>暗証番号をリセット</button>
       </div>
+      <div style={{fontSize:11,color:"var(--c-text4)",lineHeight:1.6,marginTop:6}}>「新しいURLを発行」すると、いまのURLは使えなくなります。</div>
     </div>
   );
 }

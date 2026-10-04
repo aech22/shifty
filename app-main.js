@@ -1400,6 +1400,14 @@ function App(){
     try{cur=(await firebaseDB.ref(`shops/${sid}/staffPages`).once("value")).val()||{};}
     catch(e){console.warn("個別URLの申請を読み込めませんでした:",e);return{error:"申請を読み込めませんでした（サーバー側の設定が未反映の可能性があります）"};}
     const nowIso=staffLinkNowIso();
+    // 管理者がスタッフ専用のURLを直接発行（2026-10-04）。逆引き（作成だけ許される）を先に書き、次に承認済みの記録（同じ名前の古い URL は取り消す）
+    if(kind==="issue"){
+      const token=genMyPageToken(myRand);
+      const p=planIssueStaffPage({pages:cur,token,name,staff:staffList,shopId:sid,byUid:firebaseAuth&&firebaseAuth.currentUser?firebaseAuth.currentUser.uid:"",nowIso});
+      if(p.error)return p;
+      try{await fbSet(`staffPageTokens/${token}`,p.tokenRec);await fbUpd(`shops/${sid}/staffPages`,p.patch);return{ok:true,token,revoked:p.revoked};}
+      catch(e){console.warn("個別URLの発行に失敗:",e);return{error:isPermissionDeniedError(e)?"URLを発行できませんでした（サーバー側の設定が未反映の可能性があります）":"URLを発行できませんでした。通信状態を確認してもう一度お試しください"};}
+    }
     const r=kind==="approve"?planApproveStaffPage({pages:cur,token,name,staff:staffList,byUid:firebaseAuth&&firebaseAuth.currentUser?firebaseAuth.currentUser.uid:"",nowIso})
       :kind==="reject"?planRejectStaffPage(cur,token):kind==="revoke"?planRevokeStaffPage(cur,token,nowIso):kind==="resetPin"?planResetStaffPagePin(cur,token,nowIso):{error:"この操作はできません"};
     if(r.error)return r;

@@ -907,6 +907,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   // 1つ手前までが非表示になり、解除した期間からは再び出る。境界はどちらも latestPeriod の startDate。
   // 範囲の読み書きは app-utils.js（hideStaffFrom / showStaffFrom）に寄せてあり、ここは入口だけ持つ。
   const hiddenNow=name=>isStaffHiddenNow(settings,name);
+  // 専用のURL（個別URL）を発行済みの名前（行の「URL」の印）。sl はマイシフトの紐付けと個別URLの購読（オーナーの端末だけ enabled）
+  const approvedPageNames=sl.enabled?approvedStaffPagesByName(sl.pages):{};
   const openHiddenFrom=name=>{
     const r=staffHiddenRanges(settings,name).find(x=>x.to==null);
     return r?r.from:null;
@@ -1598,6 +1600,8 @@ const dragIdxRef=useRef(null);
             <span style={{flex:1,minWidth:0,fontSize:14,color:hidden?"var(--c-text3)":"var(--c-text)",fontWeight:600}}>{n}</span>
             {/* 賃金は一覧に出さない（誰でも覗ける場面が多い）。設定済みかどうかだけを示す（P6a） */}
             {pay.enabled&&pay.map&&pay.map[n]&&<span data-pay-mark={n} title="賃金設定あり" style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",flexShrink:0}}>¥</span>}
+            {/* 専用のURL（個別URL）を発行済みかどうかだけを示す（2026-10-04）。URL のコピー・共有は「編集」の中 */}
+            {sl.enabled&&approvedPageNames[n]&&<span data-staff-page-mark={n} title="専用のURLを発行済み（「編集」から URL をコピー・共有できます）" style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",flexShrink:0,whiteSpace:"nowrap"}}>URL</span>}
             {/* 非表示の印は「(非表示)」だけにする（2026-09-08 ユーザー決定）。説明と対象期間は title へ。 */}
             {hidden&&<span title={`${hiddenFrom?`${periodLabelOfStart(hiddenFrom)}以降 ／ `:""}シフト作成タブ・Excel・PDF に出ません（提出は今までどおりできます）`} style={{fontSize:11,color:"var(--c-text4)",flexShrink:0,whiteSpace:"nowrap"}}>(非表示)</span>}
             </div>
@@ -1807,8 +1811,9 @@ const dragIdxRef=useRef(null);
               </div>
             </>)}
 
-            {sl.enabled&&sec("マイシフト",<StaffLinkEditSection links={sl} name={n} tt={tt}/>)}
-            {sl.enabled&&sec("個別URL",<StaffPageEditSection links={sl} name={n} tt={tt}/>)}
+            {/* 主な導線はスタッフ専用のURL（2026-10-04）。個人リンクコードはメールのアカウントとリンクする場合だけ */}
+            {sl.enabled&&sec("スタッフ専用のURL",<StaffPageEditSection links={sl} name={n} tt={tt}/>)}
+            {sl.enabled&&sec("メールのアカウントとリンクする場合",<StaffLinkEditSection links={sl} name={n} tt={tt}/>)}
 
             {pay.enabled&&(()=>{
               const hs=homeShopOf(settings,n,shopId);

@@ -1246,6 +1246,44 @@ test("個別URL: 承認・却下・取り消し・暗証番号のリセットの
   assert.ok(m.planResetStaffPagePin(pages, A, "n").error);
   assert.deepStrictEqual(Object.keys(m.approvedStaffPagesByName(pages)).sort(), ["佐藤", "田中"]);
 });
+test("個別URL: 管理者が直接発行（承認済みの記録・同じ名前の古い URL は取り消す・ルールは今のままで通る・CF なし）（2026-10-04）", () => {
+  const A = "A".repeat(24), B = "B".repeat(24), C = "C".repeat(24), N = "N".repeat(24);
+  const pages = { [A]: { status: "pending", displayName: "田中" }, [B]: { status: "approved", name: "田中", approvedAt: "x" }, [C]: { status: "approved", name: "佐藤", approvedAt: "x" } };
+  const staff = ["田中", "佐藤", "__spacer__1"];
+  const r = m.planIssueStaffPage({ pages, token: N, name: "田中", staff, shopId: "S1", byUid: "O", nowIso: "n" });
+  assert.deepStrictEqual(r.tokenRec, { shopId: "S1", at: "n" });
+  assert.deepStrictEqual(r.patch, { [N]: { status: "approved", displayName: "田中", requestedAt: "n", name: "田中", approvedAt: "n", byUid: "O" },
+    [`${B}/status`]: "revoked", [`${B}/revokedAt`]: "n" }, "再発行: 同じ名前の承認済みは取り消し、申請中（pending）と別の名前は触らない");
+  assert.deepStrictEqual(r.revoked, [B]);
+  const first = m.planIssueStaffPage({ pages: {}, token: N, name: "佐藤", staff, shopId: "S1", nowIso: "n" });
+  assert.deepStrictEqual(Object.keys(first.patch), [N], "初めての発行は記録1つだけ");
+  assert.ok(m.planIssueStaffPage({ pages, token: N, name: "高橋", staff, shopId: "S1" }).error, "スタッフ一覧に無い名前");
+  assert.ok(m.planIssueStaffPage({ pages, token: N, name: "__spacer__1", staff, shopId: "S1" }).error, "空白列");
+  assert.ok(m.planIssueStaffPage({ pages, token: A, name: "田中", staff, shopId: "S1" }).error, "既にある token は使わない");
+  assert.ok(m.planIssueStaffPage({ pages, token: "x", name: "田中", staff, shopId: "S1" }).error);
+  // 発行した URL は本人がそのまま開ける（resolveMyPage が ok）
+  assert.strictEqual(m.resolveMyPage(N, r.tokenRec, r.patch[N], ["田中", "佐藤"]).state, "ok");
+  // 改名・削除の追随は申請から承認したものと同じ（planStaffPageOp）。発行より前の操作は当てない（世代の目印）
+  const issued = { [N]: { ...r.patch[N], approvedAt: "2026-10-04T00:00:00.000Z" } };
+  assert.deepStrictEqual(m.planStaffPageOp(issued, m.staffLinkOpOf("rename", "田中", "田中 一郎", "2026-10-05T00:00:00.000Z")), { [`${N}/name`]: "田中 一郎" });
+  assert.deepStrictEqual(m.planStaffPageOp(issued, m.staffLinkOpOf("drop", ["田中"], null, "2026-10-05T00:00:00.000Z")), { [`${N}/status`]: "revoked", [`${N}/revokedAt`]: "2026-10-05T00:00:00.000Z" });
+  assert.strictEqual(m.planStaffPageOp(issued, m.staffLinkOpOf("drop", ["田中"], null, "2026-10-03T00:00:00.000Z")), null);
+  // ルール: オーナーは approved の記録を必須の子つきで新規作成でき（$other は無い）、逆引きは新規作成なら書ける＝ルールの変更は要らない
+  const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "database.rules.json"), "utf8")).rules;
+  const sp = rules.shops.$shopId.staffPages.$token, tk = rules.staffPageTokens.$token;
+  assert.ok(sp[".write"].includes("root.child('shops').child($shopId).child('owners').child(auth.uid).exists()"), "オーナーは書ける");
+  assert.ok(/hasChildren\(\['status','displayName','requestedAt'\]\)/.test(sp[".validate"]) && /hasChildren\(\['name','approvedAt'\]\)/.test(sp[".validate"]));
+  Object.keys(r.patch[N]).forEach(k => assert.ok(sp[k] && sp[k][".validate"], `${k} はルールにある子`));
+  assert.ok(/!data\.exists\(\) && newData\.exists\(\)/.test(tk[".write"]) && Object.keys(r.tokenRec).every(k => tk[k]));
+  // 入口: App は逆引きを先に、記録を後に書く。発行の UI はオーナーの端末（links.enabled）だけ
+  const main = fs.readFileSync(path.join(ROOT, "app-main.js"), "utf8");
+  const act = main.slice(main.indexOf("const staffPageAct="), main.indexOf("const STAFF_LINK_CFS="));
+  assert.ok(/kind==="issue"/.test(act) && act.indexOf("fbSet(`staffPageTokens/${token}`") < act.indexOf("fbUpd(`shops/${sid}/staffPages`,p.patch)"), "逆引き → 記録の順");
+  assert.ok(/staffLinks=\{\{enabled:MY_SCREEN_ENABLED&&!DEMO_MODE&&!ownerReadOnly&&ownerClaimedSid===sid/.test(main), "オーナーの端末・デモ以外だけ");
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const sec = my.slice(my.indexOf("function StaffPageEditSection("), my.indexOf("// ---- 本人のカレンダーと全員のシフト表の切り替え"));
+  assert.ok(/if\(!links\|\|!links\.enabled\)return null;/.test(sec) && /pageAct\("issue"/.test(sec) && /window\.confirm/.test(sec), "再発行は確認つき");
+});
 test("個別URL: 改名・削除の追随（紐付けと同じ操作・世代の目印・削除は取り消し）", () => {
   const A = "A".repeat(24), B = "B".repeat(24), C = "C".repeat(24), D = "D".repeat(24);
   const pages = { [A]: { status: "approved", name: "田中", approvedAt: "2026-10-01T00:00:00.000Z" },

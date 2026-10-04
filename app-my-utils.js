@@ -1434,6 +1434,28 @@ function planApproveStaffPage(o){
   });
   return{patch};
 }
+// 管理者がスタッフ専用のURLを直接発行する（2026-10-04 ユーザー指示「個人リンクコードは新規登録に繋がる URL の方が助かる」）。
+// 申請を経ずに、その名前に結び付いた**承認済み**の記録をオーナーが作る（承認と同じ権限・Cloud Functions を使わない）。
+// 記録の形は申請を承認したものと同じ（ルールの必須の子 displayName・requestedAt・name・approvedAt。displayName と requestedAt は
+// 名前と発行の時刻で埋める＝本人の申請ではない）。同じ名前に承認済みの個別URLがあれば取り消す（1つの名前に1つ＝再発行は古いURLを止める）。
+// 書く順は呼び出し側: 先に staffPageTokens/{token}（tokenRec・作成だけ許される）、次に staffPages への update（patch）
+function planIssueStaffPage(o){
+  const x=_myObj(o)||{};
+  const pages=_myObj(x.pages)||{};
+  if(!isMyPageToken(x.token))return _myPageErr("URLを作れませんでした。もう一度お試しください");
+  if(pages[x.token])return _myPageErr("URLを作れませんでした。もう一度お試しください");
+  if(typeof x.name!=="string"||!myStaffNamesOf(x.staff).includes(x.name))return _myPageErr("スタッフ一覧にない名前には発行できません");
+  if(typeof x.shopId!=="string"||!x.shopId)return _myPageErr("お店を読み込めませんでした");
+  const at=String(x.nowIso||"");
+  const rec={status:"approved",displayName:x.name.slice(0,MY_DISPLAY_NAME_MAX),requestedAt:at,name:x.name,approvedAt:at};
+  if(typeof x.byUid==="string"&&x.byUid)rec.byUid=x.byUid;
+  const patch={[x.token]:rec};
+  const revoked=[];
+  Object.entries(pages).forEach(([t,r])=>{
+    if(_myObj(r)&&r.status==="approved"&&r.name===x.name){patch[`${t}/status`]="revoked";patch[`${t}/revokedAt`]=at;revoked.push(t);}
+  });
+  return{tokenRec:{shopId:x.shopId,at},patch,revoked};
+}
 function planRejectStaffPage(pages,token){
   const rec=(_myObj(pages)||{})[token];
   if(!_myObj(rec)||rec.status!=="pending")return _myPageErr("この申請は既に処理されています");
@@ -1651,6 +1673,6 @@ if(typeof module!=="undefined"&&module.exports){
     myClampDay,myClosingMonthOf,myClosingRangeOf,myPayDateOf,myPayPlanOf,myPayMonthOfDate,myPeriodsInRange,myPayReadRange,myShiftyDayInfo,myOverrideDatesIn,myMonthSettingsOf,
     myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPaySummaryOf,planMyReceivedBulk,myReceivedBulkForm,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
-    MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,resolveMyPage,MY_PAGE_STATE_MESSAGES,
+    MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,planIssueStaffPage,resolveMyPage,MY_PAGE_STATE_MESSAGES,
     approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myAllShiftSelection};
 }
