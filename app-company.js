@@ -2203,9 +2203,6 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
   const[linkError,setLinkError]=useState("");
   // Cookie認証ユーザー向けアカウント登録/連携
   const[acctEmailMode,setAcctEmailMode]=useState(null); // null | "login" | "register"
-  // 新規登録はメール確認つき（app-my.js の EmailLinkSendBox・2026-10-04）。続きの登録を同じブラウザで終えると、この店舗をアカウントに紐付ける。
-  // メールリンクが使えない（Firebase の設定前）ときだけ従来の欄に切り替える
-  const[acctRegClassic,setAcctRegClassic]=useState(false);
   const[acctEmail,setAcctEmail]=useState("");
   const[acctPw,setAcctPw]=useState("");
   const[acctPw2,setAcctPw2]=useState("");
@@ -2848,15 +2845,10 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
         :acctEmailMode
           ?<div>
             <div style={{display:"flex",alignItems:"center",marginBottom:14}}>
-              <button onClick={()=>{setAcctEmailMode(null);setAcctRegClassic(false);setAcctError("");setAcctEmail("");setAcctPw("");setAcctPw2("");}}
+              <button onClick={()=>{setAcctEmailMode(null);setAcctError("");setAcctEmail("");setAcctPw("");setAcctPw2("");}}
                 style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:13,cursor:"pointer",padding:"0 8px 0 0"}}>← 戻る</button>
               <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>{acctEmailMode==="login"?"メールでログイン":"新規アカウント登録"}</div>
             </div>
-            {acctEmailMode==="register"&&!acctRegClassic?<EmailLinkSendBox kind="admin" linkShopId={shopId} initialEmail={acctEmail}
-              onFallback={em=>{setAcctEmail(em);setAcctRegClassic(true);setAcctError("");}}
-              inputStyle={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",boxSizing:"border-box"}}
-              buttonStyle={{width:"100%",padding:"11px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:8}}/>:<>
-            {acctEmailMode==="register"&&<div data-email-link-fallback="1" style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:8}}>確認メールを送れないため、この画面で登録します。</div>}
             <input type="email" value={acctEmail} onChange={e=>setAcctEmail(e.target.value)}
               placeholder="メールアドレス" maxLength={254}
               style={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:8,boxSizing:"border-box"}}/>
@@ -2878,7 +2870,6 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
             }} style={{width:"100%",padding:"11px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",marginBottom:8,opacity:acctLoading?.5:1}}>
               {acctEmailMode==="login"?"ログイン":"アカウント作成"}
             </button>
-            </>}
             {acctEmailMode==="login"
               ?<div style={{textAlign:"center",fontSize:12,color:"var(--c-text4)"}}>アカウントがない場合は<button onClick={()=>{setAcctEmailMode("register");setAcctError("");}} style={{background:"none",border:"none",color:"var(--c-accent)",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>新規登録</button></div>
               :<div style={{textAlign:"center",fontSize:12,color:"var(--c-text4)"}}>既にアカウントがある場合は<button onClick={()=>{setAcctEmailMode("login");setAcctError("");}} style={{background:"none",border:"none",color:"var(--c-accent)",fontSize:12,cursor:"pointer",textDecoration:"underline"}}>ログイン</button></div>
