@@ -635,9 +635,14 @@ function myPayWorkDays(entries){
 }
 // ---- .ics（RFC 5545）----
 // 公開済み（上書きがあれば上書きの時刻）と手入力のシフトを VEVENT にする。未公開（グレー）は含めない。
-// 時刻帯は TZID=Asia/Tokyo（VTIMEZONE を同梱。日本は夏時間が無いので STANDARD 1つ）。24時超えは翌日の時刻に直す。
-// 締の追加出勤（segments の extra）は別のイベント。UID は「勤務先と日付（手入力はシフトID）」から作り、取り込み直しても同じになる
-function _icsEscape(s){return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r?\n/g,"\\n");}
+// 時刻は TZID=Asia/Tokyo の現地時刻で書き、VTIMEZONE（+0900 の STANDARD 1つ・日本は夏時間なし）を同梱する。
+// **UTC（末尾 Z）にしない**: 2026-10-04 に iOS 27 のシミュレーターで比べると、UTC の予定は iPhone のカレンダーで
+// 「18:00（9:00GMT）」と全件に GMT の時刻が添えられ、TZID の予定は「18:00」とだけ出た（どちらも時刻自体は正しい）。
+// 独立した3つのパーサー（ical.js・node-ical・Python icalendar）はどちらの形も同じ JST の時刻に読む。IANA の "Asia/Tokyo" は
+// Google・Apple・現行の Outlook が解決でき、解決できない実装のために VTIMEZONE の定義と X-LIC-LOCATION を付ける。24時超えは翌日の時刻に直す。
+// 締の追加出勤（segments の extra）は別のイベント。UID は「勤務先と日付（手入力はシフトID）」から作り、取り込み直しても同じになる。
+// SEQUENCE は書き出した時刻（2026-01-01 からの分）で、取り込み直したときに新しい方で上書きされるようにする（Outlook・Apple は UID と SEQUENCE で更新を判定する）
+function _icsEscape(s){return String(s==null?"":s).replace(/\\/g,"\\\\").replace(/;/g,"\\;").replace(/,/g,"\\,").replace(/\r\n|\r|\n/g,"\\n");}
 // 75オクテットで折り返す（UTF-8 の文字の途中では切らない。続きの行は先頭に空白1つ＝その空白も75に数える）
 function icsFoldLine(line){
   const out=[];let cur="",bytes=0,limit=75;
@@ -658,13 +663,18 @@ function _icsUtcStamp(iso){
   const d=new Date(iso);const t=Number.isFinite(d.getTime())?d:new Date(0);
   return t.toISOString().replace(/[-:]/g,"").replace(/\.\d{3}Z$/,"Z");
 }
+function _icsSequence(iso){
+  const t=new Date(iso).getTime();
+  return Number.isFinite(t)?Math.max(0,Math.floor((t-Date.UTC(2026,0,1))/60000)):0;
+}
 const MY_ICS_DOMAIN="shiftyshifty.app";
 function buildMyIcs(entries,o){
   const x=o||{};
-  const stamp=_icsUtcStamp(x.nowIso||new Date().toISOString());
+  const nowIso=x.nowIso||new Date().toISOString();
+  const stamp=_icsUtcStamp(nowIso),seq=_icsSequence(nowIso);
   const L=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//TODGE//Shifty MyShift//JA","CALSCALE:GREGORIAN","METHOD:PUBLISH",
     `X-WR-CALNAME:${_icsEscape(x.calName||"Shifty マイシフト")}`,"X-WR-TIMEZONE:Asia/Tokyo",
-    "BEGIN:VTIMEZONE","TZID:Asia/Tokyo","BEGIN:STANDARD","DTSTART:19700101T000000","TZOFFSETFROM:+0900","TZOFFSETTO:+0900","TZNAME:JST","END:STANDARD","END:VTIMEZONE"];
+    "BEGIN:VTIMEZONE","TZID:Asia/Tokyo","X-LIC-LOCATION:Asia/Tokyo","BEGIN:STANDARD","DTSTART:19700101T000000","TZOFFSETFROM:+0900","TZOFFSETTO:+0900","TZNAME:JST","END:STANDARD","END:VTIMEZONE"];
   let n=0;
   (entries||[]).filter(e=>e&&(e.kind==="published"||e.kind==="manual")&&isMyDateStr(e.date)).forEach(e=>{
     const segs=(e.segments&&e.segments.length?e.segments:[{startMin:e.startMin,endMin:e.endMin}]).filter(g=>g&&g.startMin!=null&&g.endMin!=null&&g.endMin>g.startMin);
@@ -676,7 +686,7 @@ function buildMyIcs(entries,o){
       if(e.kind==="published")desc.push(e.overridden?"実績（本人の入力）":e.confirmed?"確定":"公開");
       if(!g.extra&&e.breakMin>0)desc.push(`休憩${e.breakMin}分`);
       if(e.memo)desc.push(e.memo);
-      L.push("BEGIN:VEVENT",`UID:${uid}@${MY_ICS_DOMAIN}`,`DTSTAMP:${stamp}`,
+      L.push("BEGIN:VEVENT",`UID:${uid}@${MY_ICS_DOMAIN}`,`DTSTAMP:${stamp}`,`SEQUENCE:${seq}`,
         `DTSTART;TZID=Asia/Tokyo:${_icsLocal(e.date,g.startMin)}`,`DTEND;TZID=Asia/Tokyo:${_icsLocal(e.date,g.endMin)}`,
         `SUMMARY:${_icsEscape((e.shopName||"シフト")+(g.extra?"（追加）":""))}`);
       if(desc.length)L.push(`DESCRIPTION:${_icsEscape(desc.join("\n"))}`);
@@ -688,6 +698,30 @@ function buildMyIcs(entries,o){
 }
 // .ics に入れる entry（表示中の月の公開済み・手入力）
 function myIcsEntriesForMonth(entries,ym){return(entries||[]).filter(e=>e&&(e.kind==="published"||e.kind==="manual")&&String(e.date).slice(0,7)===ym);}
+// .ics の渡し方を端末で分ける。iPadOS の Safari は UA が Mac と同じなので、タッチ点の数で iPad を見分ける
+function myIcsPlatformOf(ua,maxTouchPoints){
+  const u=String(ua||"");
+  if(/iPhone|iPad|iPod/.test(u)||(/Macintosh/.test(u)&&(+maxTouchPoints||0)>1))return"ios";
+  if(/Android/.test(u))return"android";
+  return"desktop";
+}
+// 書き出した後に出す案内（端末ごと）。Google カレンダーは .ics の取り込みが PC のウェブ版の設定画面からだけで、スマホのアプリでは開けない
+const MY_ICS_HINTS={
+  ios:"「カレンダーに追加」の画面が出たら「すべてを追加」を押してください。出ないときは Safari のダウンロード一覧からファイルを開きます。",
+  android:"ダウンロードしたファイルを開くとカレンダーアプリに追加できます。Google カレンダーのアプリは .ics を開けないので、日付の詳細の「Google カレンダーに追加」から1件ずつ追加してください。",
+  desktop:"ダウンロードしたファイルを開くと、Outlook・Apple のカレンダー等に追加できます。Google カレンダーは、パソコンのブラウザで Google カレンダーの「設定 → インポート / エクスポート」からこのファイルを選びます。",
+};
+// Google カレンダーに1件を追加するリンク（本人が押したときだけ開く）。送るのは勤務先名と時刻だけ（休憩・メモは送らない）。
+// 時刻は日本時間の現地表記＋ctz=Asia/Tokyo（24時超えは翌日の時刻）。締の追加出勤は1件ずつ別のリンク
+function myGoogleCalendarLinks(e){
+  if(!e||!(e.kind==="published"||e.kind==="manual")||!isMyDateStr(e.date))return[];
+  const segs=(e.segments&&e.segments.length?e.segments:[{startMin:e.startMin,endMin:e.endMin}]).filter(g=>g&&g.startMin!=null&&g.endMin!=null&&g.endMin>g.startMin);
+  return segs.map(g=>{
+    const title=(e.shopName||"シフト")+(g.extra?"（追加）":"");
+    return{extra:!!g.extra,url:"https://calendar.google.com/calendar/render?action=TEMPLATE&text="+encodeURIComponent(title)+
+      "&dates="+_icsLocal(e.date,g.startMin)+"/"+_icsLocal(e.date,g.endMin)+"&ctz=Asia%2FTokyo"};
+  });
+}
 
 // ===== 給料（2026-10-04・第2部 E5・E6）=====
 // 計画書 E.2「給料」「設定」・E.4・E.5。金額は**目安**（月次賃金＝給与計算の元とは別物）。
@@ -1073,7 +1107,7 @@ if(typeof module!=="undefined"&&module.exports){
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
     MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_OPTIONS,MY_BREAK_OPTIONS,parseMyMinutesInput,
     MY_OVERNIGHT_HINT,validateMyShiftInput,buildMyShiftRecord,myShiftDuplicateOf,myOverrideOf,planMyOverride,myWorkplaceList,myNextWorkplaceColor,validateMyWorkplaceInput,buildMyWorkplacePatch,
-    buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth,
+    buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth,myIcsPlatformOf,MY_ICS_HINTS,myGoogleCalendarLinks,
     MY_PAY_END_DAY,MY_PAY_HOLIDAY_RULES,MY_PAY_HOLIDAY_RULE_LABELS,MY_PAY_WAGE_TYPES,MY_PAY_WAGE_TYPE_LABELS,MY_PAY_OFFSET_LABELS,MY_PAY_YEN_MAX,MY_PAY_GOAL_MAX,MY_PAY_DEFAULT,
     MY_MANUAL_NIGHT_PCT,MY_MANUAL_OVER8_PCT,MY_MANUAL_OVER8_MIN,myPayDayLabel,myPayOf,validateMyPayInput,buildMyPayRecord,myPayFormOf,parseMyGoalInput,myGoalOf,parseMyReceivedInput,
     myClampDay,myClosingMonthOf,myClosingRangeOf,myPayDateOf,myPayPlanOf,myPayMonthOfDate,myPeriodsInRange,myPayReadRange,myShiftyDayInfo,myMonthSettingsOf,

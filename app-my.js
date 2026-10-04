@@ -861,7 +861,10 @@ function MyShiftTab({staffUser,onGoSettings,personal}){
     if(!list.length){setIcsMsg({error:"この月に取り込めるシフトがありません（公開済みと手入力のシフトだけが入ります）"});return;}
     const{text,count}=buildMyIcs(list,{nowIso:new Date().toISOString()});
     myDownloadIcs(text,`shifty-${ym}.ics`);
-    setIcsMsg({ok:`${count}件のシフトを書き出しました。開くとカレンダーに追加できます`});
+    // 渡し方は全端末で同じ（a[download]＋blob。iOS 27 の Safari ではこれで「n件の予定 / すべて追加」の画面が直接出ることをシミュレーターで確認済み）。
+    // 端末ごとに変えるのは書き出した後の案内だけ（Google カレンダーはスマホのアプリで .ics を開けない等）
+    const plat=myIcsPlatformOf(navigator.userAgent,navigator.maxTouchPoints);
+    setIcsMsg({ok:`${count}件のシフトを書き出しました。${MY_ICS_HINTS[plat]}`});
   };
 
   if(links===null)return <MyEmptyState><MyMessage error="お店とのリンクを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/></MyEmptyState>;
@@ -957,6 +960,11 @@ function MyShiftTab({staffUser,onGoSettings,personal}){
           return(
             <div key={myEntryKey(e)+"|"+i}>
               <MyShiftEntryRow e={e} changed={isChanged(e)} actions={open?null:actions}/>
+              {canEdit&&!open&&myGoogleCalendarLinks(e).map((g,j)=>(
+                <a key={j} data-my-gcal={e.date} href={g.url} target="_blank" rel="noopener noreferrer" style={{...MY_LINK_BTN,display:"inline-block",fontSize:13,color:"var(--c-text3)",padding:"2px 0 6px",marginRight:14}}>
+                  {g.extra?"Google カレンダーに追加（追加の勤務）":"Google カレンダーに追加"}
+                </a>
+              ))}
               {open&&form.type==="override"&&<MyOverrideForm personal={P} entry={e} onDone={formDone}/>}
               {open&&form.type==="editManual"&&<MyManualShiftForm personal={P} manualList={manualList} date={sel} editing={e} onDone={formDone}/>}
             </div>

@@ -664,7 +664,7 @@ test("E4 .ics: VTIMEZONE と TZID=Asia/Tokyo・24時超えは翌日・締の追�
   const lines = text.split("\r\n").slice(0, -1);
   assert.ok(lines.every(l => Buffer.byteLength(l, "utf8") <= 75), "75オクテット以下");
   const unfolded = text.replace(/\r\n /g, "");
-  assert.ok(/BEGIN:VTIMEZONE\r\nTZID:Asia\/Tokyo\r\nBEGIN:STANDARD\r\nDTSTART:19700101T000000\r\nTZOFFSETFROM:\+0900\r\nTZOFFSETTO:\+0900/.test(unfolded));
+  assert.ok(/BEGIN:VTIMEZONE\r\nTZID:Asia\/Tokyo\r\nX-LIC-LOCATION:Asia\/Tokyo\r\nBEGIN:STANDARD\r\nDTSTART:19700101T000000\r\nTZOFFSETFROM:\+0900\r\nTZOFFSETTO:\+0900\r\nTZNAME:JST\r\nEND:STANDARD\r\nEND:VTIMEZONE\r\n/.test(unfolded));
   assert.ok(unfolded.includes("DTSTART;TZID=Asia/Tokyo:20261031T220000\r\nDTEND;TZID=Asia/Tokyo:20261101T020000"), "26:00 は翌日の 2:00");
   assert.ok(unfolded.includes("DTSTART;TZID=Asia/Tokyo:20261101T023000\r\nDTEND;TZID=Asia/Tokyo:20261101T030000"), "締の追加出勤は別イベント・翌日");
   assert.ok(unfolded.includes("SUMMARY:A店\\; 本店\\, 梅田\\\\北\r\n"), "; , \\ のエスケープ");
@@ -675,12 +675,70 @@ test("E4 .ics: VTIMEZONE と TZID=Asia/Tokyo・24時超えは翌日・締の追�
   const uids = [...unfolded.matchAll(/UID:([^\r]+)/g)].map(x => x[1]);
   assert.deepStrictEqual(uids, ["shifty-eb6A_2bcX_2axP-20261031@shiftyshifty.app", "shifty-eb6A_2bcX_2axP-20261031-x1@shiftyshifty.app",
     "manual-h_5f0000000003@shiftyshifty.app", "shifty-S1-20261014@shiftyshifty.app"]);
-  assert.strictEqual(m.buildMyIcs(es, { nowIso: "2027-01-01T00:00:00Z" }).text.replace(/DTSTAMP:[^\r]+/g, ""), text.replace(/DTSTAMP:[^\r]+/g, ""), "書き出し直しても DTSTAMP 以外は同じ（UID が安定）");
+  const strip = t => t.replace(/DTSTAMP:[^\r]+/g, "").replace(/SEQUENCE:[^\r]+/g, "");
+  assert.strictEqual(strip(m.buildMyIcs(es, { nowIso: "2027-01-01T00:00:00Z" }).text), strip(text), "書き出し直しても DTSTAMP・SEQUENCE 以外は同じ（UID が安定）");
   assert.ok(lines.some(l => l.startsWith(" ")), "長い DESCRIPTION は折り返す");
   assert.ok(!unfolded.includes("B店"), "未公開は含めない");
   assert.deepStrictEqual(m.myIcsEntriesForMonth(es, "2026-10").map(e => e.date), ["2026-10-31", "2026-10-12", "2026-10-14"]);
   assert.strictEqual(m.icsFoldLine("a".repeat(75)), "a".repeat(75));
   assert.strictEqual(m.icsFoldLine("a".repeat(76)), "a".repeat(75) + "\r\n a");
+});
+test(".ics の互換性（2026-10-04）: 必須・推奨の項目・SEQUENCE・BOM なし・マルチバイトの折り返し・単独の CR のエスケープ", () => {
+  const es = [{ kind: "published", date: "2026-10-12", shopId: "S1", shopName: "鶏えん" + "三".repeat(30), startMin: 600, endMin: 900, breakMin: 0, memo: "a\rb",
+    segments: [{ startMin: 600, endMin: 900 }] }];
+  const t1 = m.buildMyIcs(es, { nowIso: "2026-10-04T03:00:00Z" }).text;
+  const t2 = m.buildMyIcs(es, { nowIso: "2026-10-04T04:10:00Z" }).text;
+  assert.ok(t1.startsWith("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//TODGE//Shifty MyShift//JA\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\n"), "BOM なし・VERSION・PRODID・CALSCALE・METHOD");
+  assert.notStrictEqual(t1.charCodeAt(0), 0xFEFF);
+  const ev = t1.replace(/\r\n /g, "").split("BEGIN:VEVENT\r\n")[1];
+  for (const k of ["UID:", "DTSTAMP:", "SEQUENCE:", "DTSTART;TZID=Asia/Tokyo:", "DTEND;TZID=Asia/Tokyo:", "SUMMARY:"]) assert.ok(ev.includes("\r\n" + k) || ev.startsWith(k), k + " がある");
+  assert.ok(/DTSTAMP:\d{8}T\d{6}Z\r\n/.test(ev), "DTSTAMP は UTC の基本形式");
+  const seq = s => +s.match(/SEQUENCE:(\d+)/)[1];
+  assert.strictEqual(seq(t1), 397620, "SEQUENCE は 2026-01-01 からの分");
+  assert.ok(seq(t2) > seq(t1), "後で書き出した方が SEQUENCE が大きい（取り込み直しで上書きされる）");
+  assert.strictEqual(seq(m.buildMyIcs(es, { nowIso: "bad" }).text), 0, "時刻が読めなければ 0");
+  assert.ok(ev.includes("DESCRIPTION:公開\\na\\nb\r\n"), "単独の CR も \\n に（生の CR を残さない）");
+  assert.ok(!/\r(?!\n)/.test(t1), "CRLF 以外の CR が無い");
+  // 折り返しは UTF-8 の文字の途中で切らない: 続きの行を足し戻すと元の文字列に戻り、どの行も有効な UTF-8
+  const raw = "SUMMARY:" + "鶏えん" + "三".repeat(30);
+  const folded = m.icsFoldLine(raw);
+  assert.strictEqual(folded.replace(/\r\n /g, ""), raw);
+  for (const l of folded.split("\r\n")) {
+    const b = Buffer.from(l, "utf8");
+    assert.ok(b.length <= 75, "75 オクテット以下");
+    assert.strictEqual(b.toString("utf8"), l, "行の中で文字が割れていない");
+  }
+  assert.ok(folded.split("\r\n").length >= 2, "折り返している");
+  // 4バイト文字（絵文字）でも割れない
+  const emo = m.icsFoldLine("X".repeat(73) + "😀😀");
+  assert.deepStrictEqual(emo.split("\r\n").map(l => Buffer.byteLength(l)), [73, 9]);
+});
+test(".ics の渡し方と Google カレンダーのリンク（2026-10-04）", () => {
+  assert.strictEqual(m.myIcsPlatformOf("Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 Version/27.0 Mobile/15E148 Safari/604.1", 5), "ios");
+  assert.strictEqual(m.myIcsPlatformOf("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15", 5), "ios", "iPadOS の Safari は Mac の UA＋タッチ");
+  assert.strictEqual(m.myIcsPlatformOf("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15", 0), "desktop");
+  assert.strictEqual(m.myIcsPlatformOf("Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/130 Mobile Safari/537.36", 5), "android");
+  assert.strictEqual(m.myIcsPlatformOf("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/130", 0), "desktop");
+  assert.strictEqual(m.myIcsPlatformOf(undefined, undefined), "desktop");
+  for (const k of ["ios", "android", "desktop"]) assert.ok(typeof m.MY_ICS_HINTS[k] === "string" && m.MY_ICS_HINTS[k].length > 10);
+  assert.ok(m.MY_ICS_HINTS.android.includes("Google カレンダー") && m.MY_ICS_HINTS.desktop.includes("インポート"));
+  const e = { kind: "published", date: "2026-10-31", shopId: "S1", shopName: "A店 & 梅田", startMin: 22 * 60, endMin: 26 * 60, breakMin: 30, memo: "秘密のメモ",
+    segments: [{ startMin: 22 * 60, endMin: 26 * 60 }, { startMin: 26 * 60 + 30, endMin: 27 * 60, extra: true }] };
+  const links = m.myGoogleCalendarLinks(e);
+  assert.strictEqual(links.length, 2, "締の追加出勤は別のリンク");
+  const u = new URL(links[0].url);
+  assert.strictEqual(u.origin + u.pathname, "https://calendar.google.com/calendar/render");
+  assert.strictEqual(u.searchParams.get("action"), "TEMPLATE");
+  assert.strictEqual(u.searchParams.get("text"), "A店 & 梅田");
+  assert.strictEqual(u.searchParams.get("dates"), "20261031T220000/20261101T020000", "26:00 は翌日の 2:00（現地表記）");
+  assert.strictEqual(u.searchParams.get("ctz"), "Asia/Tokyo");
+  assert.deepStrictEqual([...u.searchParams.keys()].sort(), ["action", "ctz", "dates", "text"], "送るのは勤務先名と時刻だけ（休憩・メモは送らない）");
+  assert.ok(!links[0].url.includes(encodeURIComponent("秘密")));
+  assert.strictEqual(new URL(links[1].url).searchParams.get("text"), "A店 & 梅田（追加）");
+  assert.strictEqual(links[1].extra, true);
+  assert.deepStrictEqual(m.myGoogleCalendarLinks({ ...e, kind: "submitted" }), [], "未公開（グレー）は出さない");
+  assert.deepStrictEqual(m.myGoogleCalendarLinks(null), []);
+  assert.strictEqual(m.myGoogleCalendarLinks({ kind: "manual", date: "2026-10-12", shopName: "", startMin: 600, endMin: 900, segments: [] }).length, 1, "segments が空なら主シフト1件");
 });
 test("E4 database.rules.json: workplaces・shifts・overrides はメールのある本人だけ書け、形を検証し未知のキーを拒否する。pay は E5 で足した", () => {
   const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "database.rules.json"), "utf8")).rules;

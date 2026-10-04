@@ -6,7 +6,8 @@
 //  B（マイシフト）: 今日に手入力のシフトを追加 → カレンダーに3つのドット（掛け持ち）・詳細に「手入力」。A店のドットは選んだ色。次のシフトが手入力の 9:00
 //     別の日に 18:00〜2:00 → 24時超えの案内と「26:00 にする」→ 保存は 26:00。今日のシフトを直す。3つ目の日に履歴から追加（ワンタップ）→ 削除（確認つき）
 //  C（実績の上書き）: 公開済みの A店の今日を 10:00〜17:30・休憩15分に → 「実績」・公開の時間も表示・変更ありは付かない。開き直しても同じ。公開の時間に戻すと消える
-//  D（.ics）: この月の公開済み＋手入力（グレーは入らない）。CRLF・TZID・26:00 は翌日の 2:00・上書きの時刻
+//  D（.ics）: この月の公開済み＋手入力（グレーは入らない）。CRLF・TZID・26:00 は翌日の 2:00・上書きの時刻・SEQUENCE・書き出し後の端末ごとの案内・
+//            日付の詳細の「Google カレンダーに追加」リンク（2026-10-04）
 //  E: A〜D で店舗のデータ（shops/）が1バイトも変わらない
 //  F（Premium でない）: 入れたシフトは表示・追加と編集と .ics は出ない・削除はできる。設定タブも追加と編集が出ない
 //  G（ルール未反映＝users への書き込みを拒否）: 追加しても画面が落ちず理由を出す
@@ -94,6 +95,7 @@ async function dayView(h, date) {
         changed: !!r.querySelector("[data-my-entry-changed]"), actions: [...r.querySelectorAll("[data-my-action]")].map(b => b.getAttribute("data-my-action")) })),
       next: document.querySelector("[data-my-next]").getAttribute("data-my-next"), nextText: document.querySelector("[data-my-next]").innerText,
       changed: !!document.querySelector("[data-my-changed]"), addBtn: !!document.querySelector('[data-my-action="addManual"]'),
+      gcal: [...document.querySelectorAll("[data-my-day] [data-my-gcal]")].map(a => ({ date: a.getAttribute("data-my-gcal"), href: a.getAttribute("href"), target: a.getAttribute("target"), rel: a.getAttribute("rel"), text: a.innerText })),
       icsBtn: !!document.querySelector('[data-my-action="ics"]'), msg: [...document.querySelectorAll("[data-my-day] [data-my-msg]")].map(x => x.getAttribute("data-my-msg") + ":" + x.innerText),
     };
   }, date);
@@ -254,13 +256,23 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       await sleep(h, 300);
       const ics = await h.evaluate(async () => ({ names: window.__dl.slice(), text: window.__lastBlob ? await window.__lastBlob.text() : "", type: window.__lastBlob ? window.__lastBlob.type : "" }));
       R.D = { names: ics.names, type: ics.type, text: ics.text };
+      // 書き出した後の案内は端末ごと（このハーネスはデスクトップの Chromium＝Google カレンダーの「インポート」を案内する）
+      R.D.msg = await h.evaluate(() => { const b = document.querySelector('[data-my-action="ics"]'); const m = b && b.parentElement.querySelector("[data-my-msg]"); return m ? m.getAttribute("data-my-msg") + ":" + m.innerText : ""; });
+      V.D_icsHint = /^ok:3件のシフトを書き出しました。/.test(R.D.msg) && R.D.msg.includes("設定 → インポート / エクスポート");
+      // Google カレンダーに1件ずつ追加するリンク（日付の詳細・公開済みと手入力・上書きの時刻・送るのは勤務先名と時刻だけ）
+      R.D.gcal = v.gcal;
+      const g = v.gcal.map(x => new URL(x.href));
+      V.D_gcalLinks = v.gcal.length >= 1 && v.gcal.every(x => x.date === TODAY && x.target === "_blank" && /noopener/.test(x.rel) && x.text.startsWith("Google カレンダーに追加"))
+        && g.every(u => u.origin === "https://calendar.google.com" && u.searchParams.get("ctz") === "Asia/Tokyo" && [...u.searchParams.keys()].sort().join() === "action,ctz,dates,text")
+        && g.some(u => u.searchParams.get("dates") === `${TODAY.replace(/-/g, "")}T100000/${TODAY.replace(/-/g, "")}T173000`);
       const u = ics.text.replace(/\r\n /g, "");
       const events = (u.match(/BEGIN:VEVENT/g) || []).length;
       V.D_icsFile = JSON.stringify(ics.names) === JSON.stringify([`shifty-${YM}.ics`]) && /^text\/calendar/.test(ics.type);
       V.D_icsContent = events === 3 && ics.text.endsWith("\r\n") && !/[^\r]\n/.test(ics.text) && /BEGIN:VTIMEZONE\r\nTZID:Asia\/Tokyo/.test(u)
         && u.includes(`DTSTART;TZID=Asia/Tokyo:${TODAY.replace(/-/g, "")}T100000\r\nDTEND;TZID=Asia/Tokyo:${TODAY.replace(/-/g, "")}T173000`)
         && u.includes(`DTEND;TZID=Asia/Tokyo:${nextDay(D2)}T020000`) && u.includes("SUMMARY:本店") && u.includes("SUMMARY:カフェ") && !u.includes("B店")
-        && u.includes("実績（本人の入力）") && ics.text.split("\r\n").every(l => Buffer.byteLength(l, "utf8") <= 75);
+        && u.includes("実績（本人の入力）") && ics.text.split("\r\n").every(l => Buffer.byteLength(l, "utf8") <= 75)
+        && /\r\nSEQUENCE:\d+\r\n/.test(u) && u.includes("X-LIC-LOCATION:Asia/Tokyo") && ics.text.charCodeAt(0) !== 0xFEFF;
       // 公開の時間に戻す
       await h.evaluate(() => { const r = [...document.querySelectorAll("[data-my-day] [data-my-entry]")].find(x => x.getAttribute("data-my-entry-shop") === "S1"); r.querySelector('[data-my-action="resetOverride"]').click(); });
       await sleep(h, 400);
@@ -283,7 +295,7 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       const v = await dayView(h, TODAY);
       const man = rowOf(v, cafeId);
       R.F = { v };
-      V.F_viewOnly = man.state === "manual" && man.time === "9:00〜14:00" && !v.addBtn && !v.icsBtn && !man.actions.includes("editManual") && man.actions.includes("deleteManual")
+      V.F_viewOnly = man.state === "manual" && man.time === "9:00〜14:00" && !v.addBtn && !v.icsBtn && v.gcal.length === 0 && !man.actions.includes("editManual") && man.actions.includes("deleteManual")
         && !v.rows.some(r => r.actions.includes("editOverride")) && v.rows.filter(r => r.shop === "S1").every(r => r.state === "submitted");
       await click(h, '[data-my-tab="settings"]');
       await waitSel(h, '[data-my-section="workplaces"] [data-my-wp]');

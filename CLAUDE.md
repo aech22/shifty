@@ -1210,7 +1210,15 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 - **次のシフト**は公開済みと手入力の出勤（同じ日は開始の早い順・`myEntryOrder`）
 - **.ics**（`buildMyIcs`）: 表示中の月の公開済み（上書きがあれば上書きの時刻）と手入力のシフト。未公開は含めない。VTIMEZONE（Asia/Tokyo・+0900 の STANDARD 1つ）を同梱して
   `DTSTART;TZID=Asia/Tokyo:…`。24時超えは翌日の時刻、締の追加出勤は別のイベント。UID は「勤務先と日付（手入力はシフトID）」から作るので書き出し直しても同じ。
-  RFC 5545 の75オクテットの折り返し（UTF-8 の文字の途中では切らない）・エスケープ（`\` `;` `,` 改行）・CRLF。iOS と Google カレンダーの実機での取り込みは未検証
+  RFC 5545 の75オクテットの折り返し（UTF-8 の文字の途中では切らない）・エスケープ（`\` `;` `,` 改行・単独の CR）・CRLF・BOM なし・`SEQUENCE`（2026-01-01 からの分＝後の書き出しほど大きい）・
+  VTIMEZONE に `X-LIC-LOCATION`（2026-10-04 に互換性を点検して足した）。**UTC（末尾 Z）にしない**: iOS 27 のシミュレーターで比べると UTC の予定は
+  iPhone のカレンダーで「18:00（9:00GMT）」と全件に GMT の時刻が添えられ、TZID の予定は「18:00」とだけ出た（独立した3つのパーサー＝ical.js・node-ical・
+  Python icalendar はどちらの形も同じ JST の時刻に読む）。**渡し方は全端末で a[download]＋blob**（iOS 27 の Safari ではこれで「n件の予定／すべて追加」の
+  画面が直接出て取り込めた）。端末ごとに変えるのは書き出した後の案内だけ（`myIcsPlatformOf`・`MY_ICS_HINTS`。iPadOS は Mac の UA＋タッチで見分ける）。
+  Google カレンダーは .ics の取り込みが PC のウェブ版の設定画面からだけなので、日付の詳細の各シフトに「Google カレンダーに追加」のリンク
+  （`myGoogleCalendarLinks`・`render?action=TEMPLATE&text&dates&ctz=Asia/Tokyo`・本人が押したときだけ開く・送るのは勤務先名と時刻だけ・締の追加出勤は別リンク・Premium のときだけ）。
+  **未検証**: Outlook（デスクトップ・Outlook.com）・Yahoo!カレンダー・Android の取り込みの実機、Google カレンダーの実際の取り込み（ログインが要る）、
+  iOS で同じ UID を取り込み直したときに SEQUENCE で上書きされるか
 - **Premium**: 手入力・上書き・.ics・勤務先の追加と編集は `myShiftPremiumOf`（紐付いた店舗のいずれかが Premium）のときだけ。Premium でないときも入れたシフトは表示し、
   **消すこと（手入力のシフトの削除・上書きを戻す・勤務先の削除）はできる**。本人のデータが読めないとき（ルール未反映）も追加と編集を止める
 - **給料計算（E5）への渡し口**: `myPayWorkDays(entries)`（app-my-utils.js）。マイシフトの entry から未公開を除き、`{date, kind:"shifty"|"manual", workplaceId, shopId, periodId, shiftId,
