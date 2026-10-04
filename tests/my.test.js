@@ -576,8 +576,26 @@ test("E4 parseMyClockInput: 直接入力（9・930・1730・9:30・全角・24�
   Object.entries(cases).forEach(([i, o]) => assert.strictEqual(m.parseMyClockInput(i), o, i));
   ["30:05", "31", "9:60", "abc", "12345", "9:3x"].forEach(i => assert.strictEqual(m.parseMyClockInput(i), null, i));
   assert.strictEqual(m.parseMyClockInput(""), "");
-  assert.strictEqual(m.MY_TIME_OPTIONS.length, 361, "0:00〜30:00 の5分刻み");
-  assert.deepStrictEqual([m.MY_TIME_OPTIONS[0], m.MY_TIME_OPTIONS[1], m.MY_TIME_OPTIONS[360]], [{ value: "00:00", label: "0:00" }, { value: "00:05", label: "0:05" }, { value: "30:00", label: "30:00" }]);
+  // 2026-10-04 ユーザー指示: 時刻と休憩は15分刻みのプルダウンだけ（自由記入の欄なし）
+  assert.strictEqual(m.MY_TIME_STEP_MIN, 15);
+  assert.strictEqual(m.MY_TIME_OPTIONS.length, 121, "0:00〜30:00 の15分刻み");
+  assert.deepStrictEqual([m.MY_TIME_OPTIONS[0], m.MY_TIME_OPTIONS[1], m.MY_TIME_OPTIONS[120]], [{ value: "00:00", label: "0:00" }, { value: "00:15", label: "0:15" }, { value: "30:00", label: "30:00" }]);
+  assert.ok(m.MY_TIME_OPTIONS.some(o => o.value === "24:00") && m.MY_TIME_OPTIONS.some(o => o.value === "26:00" && o.label === "26:00"), "24時超えの表記を選べる");
+  assert.ok(m.MY_TIME_OPTIONS.every(o => m.parseMyClockInput(o.value) === o.value), "選択肢は保存の形のまま検証を通る");
+  assert.deepStrictEqual(m.MY_BREAK_OPTIONS, [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180]);
+  // 15分刻みでない今の値（以前の5分刻みの入力・9:05・休憩10分）は選択肢に足して保持する（黙って丸めない）
+  assert.strictEqual(m.myTimeSelectOptions("09:00"), m.MY_TIME_OPTIONS, "刻みに合う値は同じ選択肢");
+  assert.strictEqual(m.myTimeSelectOptions(""), m.MY_TIME_OPTIONS);
+  const o905 = m.myTimeSelectOptions("09:05");
+  assert.strictEqual(o905.length, 122);
+  assert.deepStrictEqual(o905.slice(36, 39).map(o => o.value), ["09:00", "09:05", "09:15"], "時刻の順に差し込む");
+  assert.deepStrictEqual(m.myBreakSelectOptions("10").slice(0, 3), [0, 10, 15]);
+  assert.deepStrictEqual(m.myBreakSelectOptions("240").slice(-2), [180, 240], "180分を超える休憩も残す");
+  assert.strictEqual(m.myBreakSelectOptions(""), m.MY_BREAK_OPTIONS);
+  const myjs0 = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const inputs = myjs0.slice(myjs0.indexOf("function MyTimeInput("), myjs0.indexOf("// 開始・終了・休憩の3欄"));
+  assert.ok(!/<input/.test(inputs) && (inputs.match(/<select /g) || []).length === 2, "時刻と休憩の部品は select だけ");
+  assert.ok(/myTimeSelectOptions\(value\)/.test(inputs) && /myBreakSelectOptions\(value\)/.test(inputs) && /style=\{AI\}/.test(inputs), "今の値を保つ選択肢・16px（AI）");
   assert.strictEqual(m.parseMyMinutesInput(""), 0);
   assert.strictEqual(m.parseMyMinutesInput("６０"), 60);
   assert.strictEqual(m.parseMyMinutesInput("1441"), null);

@@ -526,10 +526,27 @@ function parseMyClockInput(v){
   if(m>59||h*60+m>MY_CLOCK_MAX_MIN)return null;
   return myClockStr(h*60+m);
 }
-// 5分刻みの選択肢（0:00〜30:00）。value は保存の形・label はシフト表と同じ表記
-const MY_TIME_OPTIONS=(()=>{const a=[];for(let t=0;t<=MY_CLOCK_MAX_MIN;t+=5)a.push({value:myClockStr(t),label:fmtMyClock(t)});return a;})();
-// 休憩（分）の選択肢と直接入力。空は 0
-const MY_BREAK_OPTIONS=(()=>{const a=[];for(let t=0;t<=180;t+=5)a.push(t);return a;})();
+// 時刻と休憩は**15分刻みのプルダウンだけ**で選ぶ（2026-10-04 ユーザー指示。自由記入の欄は置かない）。
+// 時刻は 0:00〜30:00（深夜営業の24時超え表記を含む＝シフト表と同じ）。value は保存の形・label はシフト表と同じ表記
+const MY_TIME_STEP_MIN=15;
+const MY_TIME_OPTIONS=(()=>{const a=[];for(let t=0;t<=MY_CLOCK_MAX_MIN;t+=MY_TIME_STEP_MIN)a.push({value:myClockStr(t),label:fmtMyClock(t)});return a;})();
+// 休憩（分）の選択肢（0〜180分の15分刻み）
+const MY_BREAK_MAX_OPTION_MIN=180;
+const MY_BREAK_OPTIONS=(()=>{const a=[];for(let t=0;t<=MY_BREAK_MAX_OPTION_MIN;t+=MY_TIME_STEP_MIN)a.push(t);return a;})();
+// プルダウンに出す時刻。今の値が15分刻みでない（以前の5分刻み・9:05 等）ときは、その値を選択肢に足して表示と保持をする
+// （黙って丸めない＝保存し直しても値が変わらない）。value は入力の文字列（"HH:MM" か ""）
+function myTimeSelectOptions(value){
+  const v=parseMyClockInput(value);
+  if(!v||MY_TIME_OPTIONS.some(o=>o.value===v))return MY_TIME_OPTIONS;
+  const min=_myClock(v);
+  return[...MY_TIME_OPTIONS,{value:v,label:fmtMyClock(min)}].sort((a,b)=>_myClock(a.value)-_myClock(b.value));
+}
+// プルダウンに出す休憩（分）。15分刻みでない・180分を超える今の値は、その値を足す
+function myBreakSelectOptions(value){
+  const n=parseMyMinutesInput(value);
+  if(n==null||MY_BREAK_OPTIONS.includes(n))return MY_BREAK_OPTIONS;
+  return[...MY_BREAK_OPTIONS,n].sort((a,b)=>a-b);
+}
 function parseMyMinutesInput(v){
   const s=toHalfWidthDigits(v).replace(_MY_TRIM_RE,"");
   if(!s)return 0;
@@ -537,7 +554,7 @@ function parseMyMinutesInput(v){
   const n=+s;return n<=1440?n:null;
 }
 // 開始・終了・休憩の検証（手入力のシフトと実績の上書きで共通）。戻り値 {error, suggestEnd?} か {start,end,breakMin,startMin,endMin}
-const MY_OVERNIGHT_HINT="日をまたぐときは、24時より後の時刻で入力します（翌2:00 なら 26:00）";
+const MY_OVERNIGHT_HINT="日をまたぐときは、24時より後の時刻を選びます（翌2:00 なら 26:00）";
 function _myCheckTimes(o){
   const x=o||{};
   const start=parseMyClockInput(x.start),end=parseMyClockInput(x.end),brk=parseMyMinutesInput(x.breakMin);
@@ -1521,7 +1538,7 @@ if(typeof module!=="undefined"&&module.exports){
   module.exports={MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
     MY_LINK_METHOD_LABELS,MY_LINK_CODE_LEN,MY_LINK_CODE_TTL_MS,linkNumberKey,linkNameKey,normalizeLinkCode,isValidLinkCode,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,MY_STAFF_LINK_OPS_MAX,staffLinkOpOf,staffLinksAsOf,planStaffLinkOp,enqueueStaffLinkOp,MY_STAFF_LINK_PENDING_MSG,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,fmtLinkCodeExpiry,
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
-    MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_OPTIONS,MY_BREAK_OPTIONS,parseMyMinutesInput,
+    MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_STEP_MIN,MY_TIME_OPTIONS,MY_BREAK_MAX_OPTION_MIN,MY_BREAK_OPTIONS,myTimeSelectOptions,myBreakSelectOptions,parseMyMinutesInput,
     MY_OVERNIGHT_HINT,validateMyShiftInput,buildMyShiftRecord,myShiftDuplicateOf,myOverrideOf,planMyOverride,myWorkplaceList,myNextWorkplaceColor,validateMyWorkplaceInput,buildMyWorkplacePatch,
     buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth,myIcsPlatformOf,MY_ICS_HINTS,MY_ICS_APP_GUIDE,myGoogleCalendarLinks,
     MY_IN_APP_BROWSERS,myInAppBrowserOf,myCalendarEnvOf,myCalendarPromptOf,MY_CAL_PROMPT_LS,myCalendarPromptKey,myCalendarPromptShown,MY_ICS_STANDALONE_NOTE,myExternalBrowserUrl,

@@ -669,40 +669,31 @@ function myDownloadIcs(text,fileName){
   setTimeout(()=>URL.revokeObjectURL(url),1500);
 }
 
-// 時刻の入力: 直接入力（"930"・"17:30"・"26:00"）と5分刻みの選択。値は入力の文字列のまま持ち、保存時に検証する
+// 時刻の入力は15分刻みのプルダウンだけ（2026-10-04 ユーザー指示・自由記入の欄は置かない）。0:00〜30:00＝24時超え表記を含む。
+// 今の値が15分刻みでなければ、その値を選択肢に足して表示・保持する（myTimeSelectOptions。黙って丸めない）。値は保存時に検証する
 function MyTimeInput({label,value,onChange,name}){
   const parsed=parseMyClockInput(value);
-  const sel=parsed&&MY_TIME_OPTIONS.some(o=>o.value===parsed)?parsed:"";
+  const opts=myTimeSelectOptions(value);
   return(
     <label style={{display:"block",marginBottom:12}}>
       <span style={MY_LABEL}>{label}</span>
-      <span style={{display:"flex",gap:8}}>
-        <input data-my-input={name} value={value} inputMode="numeric" autoComplete="off" placeholder="例 9:30" onChange={e=>onChange(e.target.value)}
-          style={{...AI,flex:"1 1 auto",minWidth:0}}/>
-        <select data-my-select={name} aria-label={`${label}を選ぶ`} value={sel} onChange={e=>{if(e.target.value)onChange(e.target.value);}}
-          style={{...AI,flex:"0 0 112px",width:112,padding:"11px 8px"}}>
-          <option value="">選ぶ</option>
-          {MY_TIME_OPTIONS.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-      </span>
+      <select data-my-select={name} value={parsed||""} onChange={e=>onChange(e.target.value)} style={AI}>
+        <option value="">選ぶ</option>
+        {opts.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
     </label>
   );
 }
+// 休憩（分）は0〜180分の15分刻みのプルダウンだけ。空は 0分。今の値が刻みに無ければ足す（myBreakSelectOptions）
 function MyMinutesInput({label,value,onChange,name}){
   const n=parseMyMinutesInput(value);
-  const sel=n!=null&&MY_BREAK_OPTIONS.includes(n)&&String(value).trim()!==""?String(n):"";
+  const opts=myBreakSelectOptions(value);
   return(
     <label style={{display:"block",marginBottom:12}}>
       <span style={MY_LABEL}>{label}</span>
-      <span style={{display:"flex",gap:8}}>
-        <input data-my-input={name} value={value} inputMode="numeric" autoComplete="off" placeholder="0" onChange={e=>onChange(e.target.value)}
-          style={{...AI,flex:"1 1 auto",minWidth:0}}/>
-        <select data-my-select={name} aria-label={`${label}を選ぶ`} value={sel} onChange={e=>{if(e.target.value!=="")onChange(e.target.value);}}
-          style={{...AI,flex:"0 0 112px",width:112,padding:"11px 8px"}}>
-          <option value="">選ぶ</option>
-          {MY_BREAK_OPTIONS.map(t=><option key={t} value={String(t)}>{t}分</option>)}
-        </select>
-      </span>
+      <select data-my-select={name} value={String(n==null?0:n)} onChange={e=>onChange(e.target.value)} style={AI}>
+        {opts.map(t=><option key={t} value={String(t)}>{t}分</option>)}
+      </select>
     </label>
   );
 }

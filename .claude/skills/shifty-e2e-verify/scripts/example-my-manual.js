@@ -154,7 +154,17 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       R.B = { before: v };
       await click(h, '[data-my-action="addManual"]');
       await waitSel(h, '[data-my-manual-form="add"]');
-      await fill(h, '[data-my-input="start"]', "9");
+      // 時刻と休憩は15分刻みのプルダウンだけ（2026-10-04 ユーザー指示）。自由記入の欄は無い
+      R.B.form = await h.evaluate(() => { const f = document.querySelector('[data-my-manual-form="add"]');
+        return { inputs: ["start", "end", "breakMin"].map(k => !!f.querySelector(`input[data-my-input="${k}"]`)), selects: ["start", "end", "breakMin"].map(k => !!f.querySelector(`select[data-my-select="${k}"]`)),
+          startOpts: [...f.querySelector('[data-my-select="start"]').options].map(o => o.value), breakOpts: [...f.querySelector('[data-my-select="breakMin"]').options].map(o => o.value),
+          startVal: f.querySelector('[data-my-select="start"]').value, breakVal: f.querySelector('[data-my-select="breakMin"]').value,
+          fonts: [...f.querySelectorAll("select")].map(x => parseFloat(getComputedStyle(x).fontSize)) }; });
+      V.B_selectOnly15 = R.B.form.inputs.every(x => !x) && R.B.form.selects.every(Boolean) && R.B.form.startOpts.length === 122 && R.B.form.startOpts[0] === "" &&
+        R.B.form.startOpts.slice(1).every(v => Number(v.slice(3)) % 15 === 0) && R.B.form.startOpts.includes("26:00") && R.B.form.startOpts.includes("30:00") &&
+        JSON.stringify(R.B.form.breakOpts) === JSON.stringify(["0", "15", "30", "45", "60", "75", "90", "105", "120", "135", "150", "165", "180"]) &&
+        R.B.form.startVal === "" && R.B.form.breakVal === "0" && R.B.form.fonts.every(x => x >= 16);
+      await h.page.selectOption('[data-my-select="start"]', "09:00");
       await h.page.selectOption('[data-my-select="end"]', "13:00");
       await fill(h, '[data-my-input="memo"]', "朝のシフト");
       const layoutB = { overflow: await overflowX(h), fonts: await fontsOk(h) };
@@ -175,15 +185,15 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       await dayView(h, D2);
       await click(h, '[data-my-action="addManual"]');
       await waitSel(h, '[data-my-manual-form="add"]');
-      await fill(h, '[data-my-input="start"]', "18:00");
-      await fill(h, '[data-my-input="end"]', "2:00");
-      await fill(h, '[data-my-input="breakMin"]', "30");
+      await h.page.selectOption('[data-my-select="start"]', "18:00");
+      await h.page.selectOption('[data-my-select="end"]', "02:00");
+      await h.page.selectOption('[data-my-select="breakMin"]', "30");
       await click(h, '[data-my-action="saveManual"]');
       await sleep(h, 200);
       const overnight = await h.evaluate(() => ({ msg: (document.querySelector('[data-my-manual-form] [data-my-msg="error"]') || {}).innerText || "", btn: (document.querySelector('[data-my-action="useSuggestEnd"]') || {}).innerText || "" }));
       await click(h, '[data-my-action="useSuggestEnd"]');
       await sleep(h, 100);
-      const endVal = await h.evaluate(() => document.querySelector('[data-my-input="end"]').value);
+      const endVal = await h.evaluate(() => document.querySelector('[data-my-select="end"]').value);
       await click(h, '[data-my-action="saveManual"]');
       await sleep(h, 400);
       const ids2 = await manualIds(h);
@@ -194,7 +204,7 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       await dayView(h, TODAY);
       await h.evaluate(id => { const r = [...document.querySelectorAll("[data-my-day] [data-my-entry]")].find(x => x.getAttribute("data-my-entry-shop") === id); r.querySelector('[data-my-action="editManual"]').click(); }, cafeId);
       await waitSel(h, '[data-my-manual-form="edit"]');
-      await fill(h, '[data-my-input="end"]', "14:00");
+      await h.page.selectOption('[data-my-select="end"]', "14:00");
       await click(h, '[data-my-action="saveManual"]');
       await sleep(h, 400);
       const rec1b = await db(h, `users/T1/shifts/${ids1[0]}`);
@@ -231,9 +241,9 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       const pubRow = rowOf(v, "S1", "published");
       await h.evaluate(() => { const r = [...document.querySelectorAll("[data-my-day] [data-my-entry]")].find(x => x.getAttribute("data-my-entry-shop") === "S1"); r.querySelector('[data-my-action="editOverride"]').click(); });
       await waitSel(h, "[data-my-override-form]");
-      const pre = await h.evaluate(() => ["start", "end", "breakMin"].map(k => document.querySelector(`[data-my-override-form] [data-my-input="${k}"]`).value));
+      const pre = await h.evaluate(() => ["start", "end", "breakMin"].map(k => document.querySelector(`[data-my-override-form] [data-my-select="${k}"]`).value));
       const layoutC = { overflow: await overflowX(h), fonts: await fontsOk(h) };
-      await fill(h, '[data-my-override-form] [data-my-input="end"]', "1730");
+      await h.page.selectOption('[data-my-override-form] [data-my-select="end"]', "17:30");
       await h.page.selectOption('[data-my-override-form] [data-my-select="breakMin"]', "15");
       await click(h, '[data-my-action="saveOverride"]');
       await sleep(h, 400);
@@ -334,14 +344,33 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       await dayView(h, D3);
       await click(h, '[data-my-action="addManual"]');
       await waitSel(h, '[data-my-manual-form="add"]');
-      await fill(h, '[data-my-input="start"]', "10");
-      await fill(h, '[data-my-input="end"]', "12");
+      await h.page.selectOption('[data-my-select="start"]', "10:00");
+      await h.page.selectOption('[data-my-select="end"]', "12:00");
       await click(h, '[data-my-action="saveManual"]');
       await sleep(h, 400);
       R.G = await h.evaluate(() => ({ msg: (document.querySelector('[data-my-manual-form] [data-my-msg="error"]') || {}).innerText || "", form: !!document.querySelector("[data-my-manual-form]") }));
       R.G.ids = await manualIds(h);
       V.G_deniedShowsReason = /サーバー側の設定が未反映/.test(R.G.msg) && R.G.form && R.G.ids.length === 2;
       V.G_noErrors = errs("G", h);
+    } finally { await h.browser.close(); }
+  }
+  // ---------------- I: 15分刻みでない以前の値（5分刻みの入力・休憩10分）は選択肢に足して保持する（黙って丸めない）----------------
+  {
+    const d = JSON.parse(JSON.stringify(dump));
+    d.users.T1.shifts.h_old0000000 = { workplaceId: cafeId, date: D3, start: "09:05", end: "17:10", breakMin: 10 };
+    const h = await openStaff({ db: d });
+    try {
+      await dayView(h, D3);
+      await h.evaluate(() => { const r = [...document.querySelectorAll("[data-my-day] [data-my-entry]")].find(x => /9:05/.test(x.innerText)); r.querySelector('[data-my-action="editManual"]').click(); });
+      await waitSel(h, '[data-my-manual-form="edit"]');
+      R.I = await h.evaluate(() => { const f = document.querySelector('[data-my-manual-form="edit"]'); const sel = k => f.querySelector(`[data-my-select="${k}"]`);
+        return { vals: ["start", "end", "breakMin"].map(k => sel(k).value), labels: ["start", "end", "breakMin"].map(k => sel(k).selectedOptions[0].textContent), counts: ["start", "end", "breakMin"].map(k => sel(k).options.length) }; });
+      await click(h, '[data-my-action="saveManual"]');
+      await sleep(h, 400);
+      R.I.rec = await db(h, "users/T1/shifts/h_old0000000");
+      V.I_keepsOffStepValues = JSON.stringify(R.I.vals) === JSON.stringify(["09:05", "17:10", "10"]) && JSON.stringify(R.I.labels) === JSON.stringify(["9:05", "17:10", "10分"]) &&
+        JSON.stringify(R.I.counts) === JSON.stringify([123, 123, 14]) && R.I.rec && R.I.rec.start === "09:05" && R.I.rec.end === "17:10" && R.I.rec.breakMin === 10;
+      V.I_noErrors = errs("I", h);
     } finally { await h.browser.close(); }
   }
   // ---------------- H: 勤務先の削除 ----------------
