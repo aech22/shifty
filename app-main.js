@@ -44,7 +44,8 @@ function App(){
   const[pageRecoverOpen,setPageRecoverOpen]=useState(false);
   const[currentShopId,setCurrentShopId]=useState(()=>_hasUrlToken?null:ssGet(SS_SHOP,null));
   const currentShopIdRef=useRef(_hasUrlToken?null:ssGet(SS_SHOP,null));
-  const[view,setView]=useState(()=>_hasUrlToken?"staff":ssGet(SS_VIEW,"staff"));
+  // #/admin（2026-10-05）で開いたタブは、そのタブの前回の表示に関係なく管理者画面から始める（上部の切り替えでスタッフ画面へも移れる）
+  const[view,setView]=useState(()=>_hasUrlToken?"staff":bootRoute?.type==="admin"?"admin":ssGet(SS_VIEW,"staff"));
   const[authUser,setAuthUser]=useState(null); // Firebase Auth ユーザー（null=未ログイン）
   // 従業員画面のスタッフアカウント（2026-10-04・第2部 E1）。{uid,email}|null。
   // スタッフアカウントは管理者の実ログインとして扱わないので authUser には入れない（accounts/{uid}/shops を読まない・書かない）。

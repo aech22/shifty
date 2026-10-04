@@ -447,7 +447,7 @@ AI / AB / AD / AGray // スタイル定数
 | `currentShopIdRef` | Ref | 非同期処理内で最新shopIdを参照するためのRef |
 | `authUser` | FirebaseUser\|null | Firebase Auth ユーザー（null=未ログイン） |
 | ~~`authChecked`~~ | bool | **書かれるが読まれない**（app-main.js 冒頭で宣言。`setAuthChecked` は Firebase初期化失敗・Auth復元・未ログイン確定の3経路で呼ばれるが、**値を読む箇所は宣言以外にゼロ**でAuth待ちのゲートには使われていない。#70でこの記述を訂正） |
-| `view` | "staff"\|"admin" | 現在の画面 |
+| `view` | "staff"\|"admin" | 現在の画面。タブごとの sessionStorage（`SS_VIEW`）で覚える。**`#/admin`（2026-10-05）で開いたタブはその記憶に関係なく管理者画面から始まる**（`isAdminRouteHash`・`parseUrl` が旧形式のスタッフURL `#/<token>` より先に判定する。後にすると "admin" というトークンのスタッフURLに読まれる）。回帰は `example-admin-route.js` |
 | `apid` | string | アクティブ期間ID |
 | `urlLocked` | bool | URLにtokenがある場合true（スタッフ専用モード） |
 | `urlResolved` | bool | Phase3完了フラグ |

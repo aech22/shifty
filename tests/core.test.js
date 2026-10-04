@@ -7094,3 +7094,45 @@ test("H2 helperCellFontPx: 列幅を変えずに収まる大きさまで縮め�
   assert.strictEqual(u.helperCellFontPx("11鶏三", 20, 6), 6);
   for (const t of ["11鶏三", "23鶏三", "11.5鶏", "15三"]) assert.ok(u.helperCellFontPx(t, 35, 16) * u.cellTextEm(t) <= 35 || u.helperCellFontPx(t, 35, 16) === u.HELPER_CELL_MIN_FONT_PX);
 });
+
+// ===== 管理者画面のURL #/admin（2026-10-05）=====
+test("isAdminRouteHash: #/admin と #/admin/ だけ", () => {
+  assert.ok(u.isAdminRouteHash("#/admin"));
+  assert.ok(u.isAdminRouteHash("#/admin/"));
+  ["", "#", "#/", "#/s/abcd2345", "#/admins", "#/administrator", "#/admin/x", "#/Admin", "#admin", "#/me", "#/demo", null, undefined]
+    .forEach(h => assert.strictEqual(u.isAdminRouteHash(h), false, String(h)));
+});
+
+test("parseUrl: #/admin は管理者画面（旧形式のスタッフURL「トークン admin」に読まれない）・他のURLは従来どおり", () => {
+  const fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
+  const src = fs.readFileSync(path.join(__dirname, "..", "app-core.js"), "utf8");
+  const start = src.indexOf("function parseUrl(){");
+  assert.ok(start >= 0);
+  // 関数の終わり（行頭の "}"）までを取り出して、window だけ差し替えて実行する
+  const end = src.indexOf("\n}\n", start);
+  const fnSrc = src.slice(start, end + 2);
+  const my = require("../app-my-utils.js");
+  const run = (hash, enabled) => {
+    const ctx = { window: { location: { hash } }, isAdminRouteHash: u.isAdminRouteHash, isMyRouteHash: my.isMyRouteHash,
+      myPageRouteOf: my.myPageRouteOf, MY_SCREEN_ENABLED: enabled };
+    vm.runInNewContext(fnSrc + "\nresult=JSON.stringify(parseUrl());", ctx);
+    return JSON.parse(ctx.result); // vm の別の realm のオブジェクトは deepStrictEqual で原型が違うので JSON で持ち出す
+  };
+  for (const enabled of [true, false]) {
+    assert.deepStrictEqual(run("#/admin", enabled), { type: "admin" });
+    assert.deepStrictEqual(run("#/admin/", enabled), { type: "admin" });
+    assert.deepStrictEqual(run("#/s/abcd2345", enabled), { type: "staff", token: "abcd2345" });
+    assert.deepStrictEqual(run("#/abcd2345", enabled), { type: "staff", token: "abcd2345" });
+    assert.deepStrictEqual(run("#/admins", enabled), { type: "staff", token: "admins" });
+    assert.deepStrictEqual(run("#/demo", enabled), { type: "demo" });
+    assert.strictEqual(run("", enabled), null);
+  }
+  assert.deepStrictEqual(run("#/me", true), { type: "me" });
+});
+
+test("App: #/admin で開いたタブは管理者画面から始まり、スタッフURLの扱い（urlLocked）は変えない", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const src = fs.readFileSync(path.join(__dirname, "..", "app-main.js"), "utf8");
+  assert.ok(/const\[view,setView\]=useState\(\(\)=>_hasUrlToken\?"staff":bootRoute\?\.type==="admin"\?"admin":ssGet\(SS_VIEW,"staff"\)\)/.test(src));
+  assert.ok(/const _hasUrlToken=!!\(bootRoute\?\.type==="staff"\|\|bootRoute\?\.type==="page"\);/.test(src));
+});

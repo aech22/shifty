@@ -355,6 +355,7 @@ const sharedGlobals = {
   fmtMin: "writable",
   gd: "writable",
   genSecureId: "writable",
+  isAdminRouteHash: "writable",
   genToken: "writable",
   getAdminKeyLS: "writable",
   getAttrOptions: "writable",

@@ -161,6 +161,8 @@ function parseUrl(){
   if(MY_SCREEN_ENABLED&&isMyRouteHash(h)) return{type:"me"};
   // スタッフ個別URL: #/m/<pageToken>（2026-10-04）。ゲートの下だけ。本番では従来どおり旧形式のスタッフURL（トークン "m/…"）として扱われる
   if(MY_SCREEN_ENABLED){const pt=myPageRouteOf(h);if(pt!==null) return{type:"page",pageToken:pt};}
+  // 管理者画面: #/admin（2026-10-05）。最初から管理者画面で開く。下の「旧形式互換」より先に判定する（#/admin は #/ で始まるため）
+  if(isAdminRouteHash(h)) return{type:"admin"};
   // スタッフURL: #/s/<token>
   if(h.startsWith("#/s/")){
     const token=h.slice(4);
