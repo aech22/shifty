@@ -49,6 +49,9 @@ function App(){
   const setStaffUser=useCallback(u=>{staffUserRef.current=u||null;setStaffUserState(u||null);},[]);
   // 従業員画面を開いているか。#/me で直接開いたとき、またはスタッフURLの画面から開いてログインの再読み込みをまたいだとき
   const myRoute=MY_SCREEN_ENABLED&&parseUrl()?.type==="me";
+  // 確認メールのリンクを開いたとき（新規登録の続き・2026-10-04）。?elk=staff|admin が付いた URL。Phase1 は普段どおり走らせ（匿名サインイン）、
+  // 画面だけ続きの登録（EmailLinkFinishScreen）にする。登録を終える・やめると oobCode を落とした URL で開き直す
+  const[emailLanding]=useState(()=>parseEmailLinkLanding(window.location.href));
   const[myOpen,setMyOpen]=useState(()=>MY_SCREEN_ENABLED&&(myRoute||(_hasUrlToken&&ssGet(SS_MY_OPEN,null)==="1")));
   const[authChecked,setAuthChecked]=useState(false); // Auth状態確認完了フラグ
   const[authLoading,setAuthLoading]=useState(false); // OAuth処理中
@@ -109,6 +112,8 @@ function App(){
   // 契約の予定状態（Stripeのsubscriptionから同期。解約予約とプラン変更予約を画面に出すために持つ）
   const[billingSchedule,setBillingSchedule]=useState({cancelAtPeriodEnd:false,currentPeriodEnd:null,scheduledPlan:null,scheduledPlanDate:null});
   const[emailMode,setEmailMode]=useState(null); // null | "login" | "register"
+  // 新規登録はメール確認つき（EmailLinkSendBox）。メールリンクが使えない（Firebase の設定前）ときだけ従来の欄に切り替える
+  const[regClassic,setRegClassic]=useState(false);
   const[emailVal,setEmailVal]=useState("");
   const[passwordVal,setPasswordVal]=useState("");
   const[password2Val,setPassword2Val]=useState("");
@@ -1700,6 +1705,7 @@ function App(){
   // 初期化失敗画面（匿名認証失敗/ハング・スタッフURL解決失敗。アプリ内ブラウザの制限や無効URLで発生）
   // ローディング判定より先に出す（urlLocked時はapidが確定しないため、これがないと無限ローディングになる）
   // 店舗に入れた（ready && currentShopId確定）場合は表示しない＝遅延後の初期化成功で自動的に消える
+  if(emailLanding) return <EmailLinkFinishScreen landing={emailLanding}/>;
   if(initError&&(!ready||!currentShopId)) return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"var(--c-bg)",flexDirection:"column",gap:16,padding:24}}>
       <ShiftyIcon size={64}/>
@@ -1901,10 +1907,16 @@ function App(){
               {(()=>{const locked=emailMode==="login"&&_isLocked("email");return(
               <React.Fragment>
               <div style={{display:"flex",alignItems:"center",marginBottom:16}}>
-                <button onClick={()=>{setEmailMode(null);setAuthError("");setEmailVal("");setPasswordVal("");setPassword2Val("");}}
+                <button onClick={()=>{setEmailMode(null);setRegClassic(false);setAuthError("");setEmailVal("");setPasswordVal("");setPassword2Val("");}}
                   style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:13,cursor:"pointer",padding:"0 8px 0 0"}}>← 戻る</button>
                 <div style={{color:"var(--c-text)",fontSize:16,fontWeight:700}}>{emailMode==="login"?"メールでログイン":"新規アカウント登録"}</div>
               </div>
+              {emailMode==="register"&&!regClassic?<EmailLinkSendBox kind="admin" initialEmail={emailVal}
+                onFallback={em=>{setEmailVal(em);setRegClassic(true);setAuthError("");}}
+                beforeSend={async()=>firebaseAuth&&isStaffAccountUser(firebaseAuth.currentUser)?MY_ADMIN_BLOCKED_MSG:null}
+                inputStyle={{width:"100%",padding:"12px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",boxSizing:"border-box"}}
+                buttonStyle={{width:"100%",padding:"13px",background:"var(--c-accent)",border:"none",borderRadius:12,color:"white",fontSize:15,fontWeight:700,cursor:"pointer",marginBottom:12}}/>:<>
+              {emailMode==="register"&&<div data-email-link-fallback="1" style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>確認メールを送れないため、この画面で登録します。</div>}
               <input type="email" value={emailVal} onChange={e=>setEmailVal(e.target.value)}
                 placeholder="メールアドレス" maxLength={254} disabled={locked}
                 style={{width:"100%",padding:"12px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:10,opacity:locked?.5:1}}/>
@@ -1922,6 +1934,7 @@ function App(){
                 style={{width:"100%",padding:"13px",background:locked?"var(--c-text3)":"var(--c-accent)",border:"none",borderRadius:12,color:"white",fontSize:15,fontWeight:700,cursor:locked?"not-allowed":"pointer",marginBottom:12}}>
                 {emailMode==="login"?"ログイン":"アカウント作成"}
               </button>
+              </>}
               </React.Fragment>
               );})()}
               {emailMode==="login"
