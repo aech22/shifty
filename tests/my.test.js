@@ -1392,6 +1392,50 @@ test("全員のシフト表（PDF と同じ仕様）: 公開済みだけ・並�
   assert.deepStrictEqual([...hc.html.matchAll(/data-headcount="([^"]*)"/g)].map(x => x[1]).slice(0, 2), ["夜1", "夜1"], "10/1 は田中（17:30〜）だけ。有給の佐藤は数えない");
   assert.strictEqual(hc.headcount, true);
 });
+test("全員のシフト表: 他店でのヘルプ勤務（H2）を PDF と同じ規則で出す（所属店舗の人だけ・休暇の日は出さない・読めない他店は helperUnread）（2026-10-04）", () => {
+  const pub = { id: "p1", startDate: "2026-10-01", endDate: "2026-10-03", label: "10月", published: { at: "2026-10-01T00:00:00.000Z", byUid: "O" } };
+  const staff = ["田中", "佐藤"];
+  const settings = {};
+  const subs = [{ id: "a", periodId: "p1", staffName: "田中", shifts: {
+    "2026-10-01": { status: "work", start: "10:00", end: "15:00" },
+    "2026-10-02": { status: "holiday" },
+    "2026-10-03": { status: "work", start: "10:00", end: "15:00", adminRest: { start: true, end: true }, leaveTypes: { start: "paid", end: "paid" } } } }];
+  const bSubs = { x: { id: "x", periodId: "b1", staffName: "田中", shifts: {
+    "2026-10-01": { status: "work", start: "17:00", end: "22:00" }, "2026-10-02": { status: "work", start: "11:00", end: "15:00" },
+    "2026-10-03": { status: "work", start: "17:00", end: "21:00" } } },
+    y: { id: "y", periodId: "b1", staffName: "佐藤", shifts: { "2026-10-01": { status: "work", start: "17:00", end: "22:00" } } } };
+  const B = U.otherShopDataOf({ name: "三ビル", settings: { staffHomeShop: { 田中: "A" }, shopAbbrs: ["鶏三"], shopAbbr2: { top: "鶏", bottom: "三" } },
+    subs: bSubs, staff: ["田中", "佐藤"], periods: { b1: { id: "b1", startDate: "2026-10-01", endDate: "2026-10-15" } } });
+  // 佐藤は B の別人（人物が別）。田中は人物 1042 で A・B がつながる
+  const link = { id: "C1", shops: { A: "駅前店", B: "三ビル" }, people: { "1042": { A: "田中", B: "田中" }, p_AAAAAAAA: { A: "佐藤" }, p_BBBBBBBB: { B: "佐藤" } } };
+  const t = m.buildMyShiftSheet({ period: pub, staff, settings, subs, premium: true, todayStr: "2026-10-01", shopId: "A", helpers: { companyLink: link, otherShops: { B } } }, U);
+  const c = _sheetCells(t.html);
+  assert.strictEqual(c["2026-10-01|end"][0].text, "22鶏三", "自店 10-15 ＋ B 17-22 は下のセルにヘルプ先の終了と略称");
+  assert.strictEqual(c["2026-10-01|end"][0].kind, "helper");
+  assert.ok(/#FFFF00/.test(c["2026-10-01|end"][0].style), "ヘルプのセルは黄色");
+  assert.strictEqual(c["2026-10-01|start"][0].text, "10", "上は自店の開始のまま");
+  assert.deepStrictEqual([c["2026-10-02|start"][0].text, c["2026-10-02|end"][0].text], ["11鶏", "15三"], "自店は休みの提出＋ヘルプ先だけの日は2セル用の略称・斜線なし");
+  assert.deepStrictEqual([c["2026-10-03|start"][0].kind, c["2026-10-03|end"][0].kind], ["hatch", "hatch"], "休暇の日はヘルプを出さない（PDF と同じ）");
+  assert.strictEqual(c["2026-10-01|end"][1].kind, "none", "別人の佐藤には合算しない");
+  assert.strictEqual(t.helperUnread, false);
+  // 材料が無い（企業に連携していない・読み込み中）ならヘルプなし＝従来の表
+  const t0 = m.buildMyShiftSheet({ period: pub, staff, settings, subs, premium: true, todayStr: "2026-10-01", shopId: "A" }, U);
+  assert.ok(!/data-helper/.test(t0.html));
+  assert.strictEqual(m.buildMyShiftSheet({ period: pub, staff, settings, subs, premium: true, todayStr: "2026-10-01", shopId: "A", helpers: { companyLink: null, otherShops: { B } } }, U).html, t0.html);
+  // 読めなかった他店があれば helperUnread（画面は注記を出す）
+  const F = U.otherShopDataOf({ name: "三ビル", loadFailed: true });
+  const tf = m.buildMyShiftSheet({ period: pub, staff, settings, subs, premium: true, todayStr: "2026-10-01", shopId: "A", helpers: { companyLink: link, otherShops: { B: F } } }, U);
+  assert.strictEqual(tf.helperUnread, true);
+  assert.ok(!/data-helper/.test(tf.html));
+  // ドリフト検出: 画面の材料は期間ごとの部分読みで、他店の subs を丸ごと読まない。PDF と同じ関数を通る
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const hk = my.slice(my.indexOf("const _myHelperReads="), my.indexOf("function MyAllShiftTable("));
+  assert.ok(/readMyPeriodSubs\(sid,pid\)/.test(hk) && !/\/subs`\)\.once/.test(hk) && /otherShopDataOf\(/.test(hk), "他店の subs は期間ごとの部分読み・形は otherShopDataOf");
+  assert.ok(!/\.(update|remove|push|transaction)\(|fbSet\(|fbUpd\(/.test(hk) && !/\.set\(/.test(hk.replace(/_myHelperReads\.set\(/g, "")), "他店の材料の読み込みは何も書かない");
+  const mu = fs.readFileSync(path.join(ROOT, "app-my-utils.js"), "utf8");
+  const b = mu.slice(mu.indexOf("function buildMyShiftSheet("), mu.indexOf("const MY_SHEET_MAX_SCALE"));
+  ["u.helperShopsOf(", "u.helperPersonOf(", "u.helperWorkOn(", "u.helperCellDisplay("].forEach(k => assert.ok(b.includes(k), `buildMyShiftSheet が ${k} を通っていない`));
+});
 test("全員のシフト表: PDF と同じ関数を通る（ドリフト検出）・倍率は横幅に合わせて比率を保つ（2倍まで）", () => {
   const mu = fs.readFileSync(path.join(ROOT, "app-my-utils.js"), "utf8");
   const b = mu.slice(mu.indexOf("function buildMyShiftSheet("), mu.indexOf("const MY_SHEET_MAX_SCALE"));

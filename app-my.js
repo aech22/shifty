@@ -2303,6 +2303,60 @@ function readMyOtherShopAbbrs(sid){
   _myAbbrReads.set(sid,pr);
   return pr;
 }
+// 全員のシフト表の、他店でのヘルプ勤務（H2・2026-10-04）の材料。PDF（シフト作成タブの companyData）と同じ otherShopDataOf の形にする。
+// 企業に連携していない店舗（shops/{sid}/company が無い）では他店を何も読まない。連携店舗（写しの法人が分かれば同じ法人だけ）ごとに
+// settings・staff・periods と、**表示中の期間の日付にかかる期間の subs だけ**を期間ごとの部分読み（orderByChild("periodId")）で読む
+// （店舗の subs 全件は読まない＝PDF とはここだけ違う）。どれも auth != null で読める。読めたものだけ30秒覚える。書き込みなし。
+// 戻り値: null＝読み込み中（表はヘルプなしで先に出す）／{companyLink, otherShops, failed}。読めなかった他店は loadFailed（helperPersonOf の unread になる）
+const _myHelperReads=new Map(); // key → {at, promise}
+function _myHelperCached(key,fn){
+  const hit=_myHelperReads.get(key);
+  if(hit&&Date.now()-hit.at<MY_SHOP_READ_TTL_MS)return hit.promise;
+  const promise=fn().then(v=>{if(!v||v.ok===false)_myHelperReads.delete(key);return v;},e=>{_myHelperReads.delete(key);throw e;});
+  _myHelperReads.set(key,{at:Date.now(),promise});
+  return promise;
+}
+function readMyHelperShop(sid){
+  return _myHelperCached("shop:"+sid,async()=>{
+    const[se,st,pe]=await Promise.all([_myRead(`shops/${sid}/settings`),_myRead(`shops/${sid}/staff`),_myRead(`shops/${sid}/periods`)]);
+    if(!se.ok||!st.ok||!pe.ok)return{ok:false};
+    return{ok:true,settings:se.v,staff:st.v,periods:pe.v};
+  });
+}
+function readMyHelperSubs(sid,pid){
+  return _myHelperCached("subs:"+sid+"|"+pid,()=>readMyPeriodSubs(sid,pid).then(v=>v===null?{ok:false}:{ok:true,list:v}));
+}
+function useMyHelperShops(shopId,period){
+  const[st,setSt]=useState(null);
+  const key=shopId&&period?[shopId,period.id,period.startDate,period.endDate].join("|"):"";
+  useEffect(()=>{
+    setSt(null);
+    if(!key||!firebaseDB)return;
+    let alive=true;
+    (async()=>{
+      const co=await _myHelperCached("company:"+shopId,()=>_myRead(`shops/${shopId}/company`));
+      const link=co&&co.ok&&co.v&&typeof co.v==="object"?co.v:null;
+      const shopsMap=link&&link.shops&&typeof link.shops==="object"?link.shops:null;
+      if(!shopsMap){if(alive)setSt({companyLink:null,otherShops:{},failed:!(co&&co.ok)});return;}
+      const ents=link.shopEntities&&typeof link.shopEntities==="object"?link.shopEntities:{};
+      const myEnt=typeof link.entityId==="string"?link.entityId:null;
+      const ids=Object.keys(shopsMap).filter(id=>id&&id!==shopId&&!(myEnt&&typeof ents[id]==="string"&&ents[id]!==myEnt));
+      const rows=await Promise.all(ids.map(async id=>{
+        const nm=typeof shopsMap[id]==="string"&&shopsMap[id]?shopsMap[id]:id;
+        const sh=await readMyHelperShop(id).catch(()=>({ok:false}));
+        if(!sh.ok)return[id,otherShopDataOf({name:nm,loadFailed:true})];
+        const ps=Object.values(sh.periods||{}).filter(q=>q&&q.id&&q.startDate&&q.endDate&&q.startDate<=period.endDate&&period.startDate<=q.endDate);
+        const lists=await Promise.all(ps.map(q=>readMyHelperSubs(id,q.id).catch(()=>({ok:false}))));
+        const subs={};
+        lists.forEach(r=>{if(r.ok)r.list.forEach(s=>{subs[s.id]=s;});});
+        return[id,otherShopDataOf({name:nm,settings:sh.settings,subs,staff:sh.staff,periods:sh.periods,loadFailed:lists.some(r=>!r.ok)})];
+      }));
+      if(alive)setSt({companyLink:link,otherShops:Object.fromEntries(rows),failed:false});
+    })().catch(e=>{console.warn("全員のシフト: 他店の読み込みに失敗:",e&&e.code);if(alive)setSt({companyLink:null,otherShops:{},failed:true});});
+    return()=>{alive=false;};
+  },[key]);
+  return st;
+}
 // 全員のシフト表（公開済みだけ）。**PDF のシフト表と同じ HTML**（buildMyShiftSheet → app-utils.js の shiftTableHtmlOf）を、
 // 比率を保ったまま画面の横幅に合わせて縮める（transform: scale・横スクロール 0・細部はピンチで拡大）。
 // 色は PDF と同じ固定色（白地・黒文字）なので、ダーク表示でも紙と同じ見た目になる
@@ -2320,7 +2374,11 @@ function MyAllShiftTable({period,staff,settings,subs,plan,me,shopId,shopName}){
   },[]);
   const todayStr=fd(new Date());
   const premium=featureEnabled("myShift",{plan});
-  const t=useMemo(()=>buildMyShiftSheet({period,staff,settings,subs,todayStr,premium,me,shopName,abbrToShop:abbrs}),[period,staff,settings,subs,todayStr,premium,me,shopName,abbrs]);
+  // 他店でのヘルプ勤務（H2）。読み終えるまではヘルプなしの表を出し、読めたら差し替える（表が空のまま止まらない）
+  const helpers=useMyHelperShops(premium&&isPeriodPublished(period)?shopId:null,period);
+  const t=useMemo(()=>buildMyShiftSheet({period,staff,settings,subs,todayStr,premium,me,shopName,abbrToShop:abbrs,shopId,helpers}),
+    [period,staff,settings,subs,todayStr,premium,me,shopName,abbrs,shopId,helpers]);
+  const helperState=!helpers?"loading":(helpers.failed||t.helperUnread)?"partial":helpers.companyLink?"ok":"none";
   // 他店の略称は昼夜の人数を出す店舗のときだけ読む
   useEffect(()=>{
     if(!t.headcount||!shopId||!firebaseDB)return;
@@ -2339,11 +2397,14 @@ function MyAllShiftTable({period,staff,settings,subs,plan,me,shopId,shopName}){
   const sc=nat?myShiftSheetScale(width,nat.w):1;
   // 期間なし・Premium でない・未公開は何も出さない（選択肢を公開済みに絞った MyAllShiftPane からは来ない。案内文は出さない＝ユーザー指示）
   return(
-    <div ref={boxRef} data-my-all="1" style={{width:"100%",minWidth:0}}>
+    <div ref={boxRef} data-my-all="1" data-my-all-helpers={helperState} style={{width:"100%",minWidth:0}}>
       {t.state==="ok"&&<div data-my-all-state="ok">
         <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6,marginBottom:8}}>
           {t.confirmed?"確定":"公開"}{(()=>{const d=new Date(t.publishedAt);return Number.isFinite(d.getTime())?`（${d.getMonth()+1}/${d.getDate()} 公開）`:"";})()}
         </div>
+        {helperState==="partial"&&<div data-my-all-helper-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8}}>
+          ほかのお店でのヘルプ勤務の一部を読み込めませんでした。表に出ていない勤務があるかもしれません
+        </div>}
         <div data-my-sheet-frame="1" style={{width:"100%",height:nat?Math.ceil(nat.h*sc):0,overflow:"hidden"}}>
           <div ref={sheetRef} data-my-sheet="1" data-my-sheet-scale={Math.round(sc*1000)/1000}
             style={{width:"max-content",transform:`scale(${sc})`,transformOrigin:"0 0",background:"#fff",color:"#000",visibility:nat?"visible":"hidden"}}

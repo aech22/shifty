@@ -72,6 +72,89 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);` });
   await h.close();
   return r;
 }
+// ---- 他店でのヘルプ勤務（H2）も PDF と同じに出る（2026-10-04 ユーザー指示）----
+// 所属店舗 A の田中が行き先 B（略称 1セル用「鶏三」・2セル用 上「鶏」下「三」）でも働く。同一人物は写しの people（personId 1042）。
+//   10/10 自店 10-15（変更マーク）＋ B 17-22 → 下のセルが「22鶏三」（黄）
+//   10/12 自店はスタッフ提出の休み＋ B 11-15 → 「11鶏」「15三」（黄・斜線なし）
+//   10/13 自店なし＋ B 17-23 → 「17鶏」「23三」
+// B の期間は b0（9月・表示中の期間にかからない）・b1（10/1〜15）・b2（10/16〜）。読むのは b1 の subs だけ（期間ごとの部分読み）
+const cfc = require(path.join(__dirname, "..", "..", "..", "..", "functions", "company-config.js"));
+const { makeStub } = require(path.join(__dirname, "stub-firebase.js"));
+function helperData() {
+  const { SUBS, STAFF, SETTINGS } = dataset(false);
+  const PA = { ...P, shopId: "A" };
+  const SA = { ...SETTINGS, shopId: "A" };
+  const B_SETTINGS = { ...SETTINGS, shopId: "B", headcountAt: undefined, staffNumbers: {}, staffColors: {}, overtimeSettings: { byStaff: {} },
+    staffHomeShop: { "田中": "A" }, shopAbbrs: ["鶏三"], shopAbbr2: { top: "鶏", bottom: "三" } };
+  const B_PERIODS = { b0: { id: "b0", startDate: "2026-09-01", endDate: "2026-09-15", label: "9月前半" },
+    b1: { id: "b1", startDate: "2026-10-01", endDate: "2026-10-15", label: "10月前半" }, b2: { id: "b2", startDate: "2026-10-16", endDate: "2026-10-31", label: "10月後半" } };
+  const B_SUBS = {
+    x0: { id: "x0", periodId: "b0", staffName: "田中", shopId: "B", shifts: { "2026-09-02": w("17:00", "23:00") } },
+    x1: { id: "x1", periodId: "b1", staffName: "田中", shopId: "B", shifts: { "2026-10-10": w("17:00", "22:00"), "2026-10-12": w("11:00", "15:00"), "2026-10-13": w("17:00", "23:00") } },
+    x2: { id: "x2", periodId: "b2", staffName: "田中", shopId: "B", shifts: { "2026-10-20": w("17:00", "21:00") } },
+  };
+  const PUB = { name: "テスト企業", shops: { A: true, B: true }, people: { "1042": { links: { A: "田中", B: "田中" } } } };
+  const LINK = sid => cfc.buildShopMirror("C1", PUB, sid, { A: "駅前店", B: "鷄えん3ビル" }, "t");
+  const SEED = { shops: {
+    A: { staff: STAFF, settings: SA, subs: Object.fromEntries(SUBS.map(s => [s.id, s])), periods: { p1: PA }, company: LINK("A") },
+    B: { staff: ["田中", "佐藤"], settings: B_SETTINGS, subs: B_SUBS, periods: B_PERIODS, company: LINK("B") },
+  }, global: { shops: { A: { name: "駅前店" }, B: { name: "鷄えん3ビル" } } } };
+  return { SUBS, STAFF, SA, PA, SEED, LINK };
+}
+// 期間ごとの部分読みを記録する（orderByChild("periodId").equalTo(pid)）。once() のパスは stub が __reads に残す
+const QUERY_LOG = `firebaseDB=firebase.database();window.__q=[];{const _r=firebaseDB.ref.bind(firebaseDB);firebaseDB.ref=p=>{const r=_r(p);const oc=r.orderByChild;
+r.orderByChild=k=>{const r2=oc(k);const eq=r2.equalTo;r2.equalTo=v=>{window.__q.push(p+"?"+k+"="+v);return eq(v);};return r2;};return r;};}`;
+async function compareHelper() {
+  const { SUBS, STAFF, SA, PA, SEED, LINK } = helperData();
+  const h = await openHarness({ root: ROOT, extraHead: THEME(false) + PDFLIBS + makeStub({ seed: SEED, uid: "u_staff" }), waitFor: "[data-my-all-helpers='ok']", jsx: `
+firebaseDB=firebase.database();
+const P=${JSON.stringify(PA)};const SUBS=${JSON.stringify(SUBS)};const SETTINGS=${JSON.stringify(SA)};const STAFF=${JSON.stringify(STAFF)};
+function Harness(){const [subs,setSubs]=React.useState(SUBS);
+  return <div><div id="mine" style={{width:340}}><MyAllShiftTable period={P} staff={STAFF} settings={SETTINGS} subs={subs} plan="premium" me="田中" shopId="A" shopName="駅前店"/></div>
+    <ShiftEditTab subs={subs} periods={[P]} staffList={STAFF} onSave={v=>setSubs(p=>typeof v==="function"?v(p):v)} tt={()=>{}}
+    settings={SETTINGS} plan="premium" shopId="A" shopName="駅前店" onUpgrade={()=>{}} allLinkedShops={[]} companyLink={${JSON.stringify(LINK("A"))}}
+    onLoadPastSubs={()=>{}} pastSubsLoaded={true} savePeriods={()=>{}} ownerReadOnly={false}/></div>;}
+ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);` });
+  await sleep(1500);
+  await h.capturePdf();
+  await h.clickExact("PDF出力");
+  await h.clickExact("シフト");
+  await sleep(7000);
+  const r = await h.evaluate(() => {
+    const norm = t => { const c = t.cloneNode(true); c.querySelectorAll("*").forEach(e => { [...e.attributes].forEach(a => { if (a.name.startsWith("data-sheet-")) e.removeAttribute(a.name); });
+      if (e.getAttribute("style")) e.setAttribute("style", e.getAttribute("style").replace("background:#FFE3D3;", "")); }); return c.outerHTML; };
+    const d = new DOMParser().parseFromString("<div>" + (window.__pdf ? window.__pdf.blocks : []).join("") + "</div>", "text/html");
+    const pdfT = d.querySelector("table");
+    const myT = document.querySelector("#mine [data-my-sheet] table");
+    const pdf = pdfT ? pdfT.outerHTML : "", mine = myT ? norm(myT) : "";
+    let at = 0; while (at < pdf.length && pdf[at] === mine[at]) at++;
+    // ヘルプのセル（data-helper・黄色。変更マークのある日は緑が勝つ）を「日付|上下=文字」で集める。ヘルプ先で働くのは田中だけ
+    const cells = myT ? [...myT.querySelectorAll("td[data-helper='1']")].map(td => { const tr = td.closest("tr");
+      const bg = /#FFFF00/i.test(td.getAttribute("style") || "") ? "Y" : /#B7EBC6/i.test(td.getAttribute("style") || "") ? "G" : "?";
+      return tr.getAttribute("data-sheet-row") + "|" + tr.getAttribute("data-sheet-field") + "=" + td.textContent.trim() + ":" + bg; }) : [];
+    return { same: !!pdf && pdf === mine, at, pdfAt: pdf.slice(Math.max(0, at - 60), at + 80), myAt: mine.slice(Math.max(0, at - 60), at + 80),
+      yellowTanaka: cells, pdfHas17: pdf.includes("17鶏"), state: document.querySelector("[data-my-all]").getAttribute("data-my-all-helpers") };
+  });
+  r.errors = h.errors.slice();
+  await h.close();
+  return r;
+}
+// 読む範囲: 表示中の期間（10/10〜14）にかかる B の期間（b1）の subs だけ。B の subs を丸ごと読まない・b0・b2 を読まない。
+// 企業に連携していない店舗（写しなし）では他店を何も読まない
+async function helperReads(linked) {
+  const { SUBS, STAFF, SA, PA, SEED } = helperData();
+  if (!linked) delete SEED.shops.A.company;
+  const h = await openHarness({ root: ROOT, extraHead: THEME(false) + makeStub({ seed: SEED, uid: "u_staff" }), waitFor: linked ? "[data-my-all-helpers='ok']" : "[data-my-all-helpers='none']", jsx: `
+${QUERY_LOG}
+const P=${JSON.stringify(PA)};const SUBS=${JSON.stringify(SUBS)};const SETTINGS=${JSON.stringify(SA)};const STAFF=${JSON.stringify(STAFF)};
+ReactDOM.createRoot(document.getElementById("root")).render(<div style={{padding:"0 16px"}}><MyAllShiftTable period={P} staff={STAFF} settings={SETTINGS} subs={SUBS} plan="premium" me="田中" shopId="A" shopName="駅前店"/></div>);` });
+  await sleep(500);
+  const r = await h.evaluate(() => ({ reads: (window.__reads || []).slice(), q: (window.__q || []).slice(), writes: Object.keys(window.__dbDump ? {} : {}),
+    text: (document.querySelector("[data-my-sheet]") || {}).textContent || "" }));
+  r.errors = h.errors.slice();
+  await h.close();
+  return r;
+}
 async function fit(width, dark) {
   const { SUBS, STAFF, SETTINGS } = dataset(false);
   const extra = Array.from({ length: 24 }, (_, i) => "人" + i);
@@ -97,6 +180,16 @@ ReactDOM.createRoot(document.getElementById("root")).render(<div style={{padding
   R.big = await compare(true);
   V.samePdf = R.small.same && R.small.errors.length === 0 && R.small.headcounts > 0 && R.small.me === "佐藤";
   V.samePdf35 = R.big.same && R.big.errors.length === 0;
+  R.helper = await compareHelper();
+  V.helperSamePdf = R.helper.same && R.helper.errors.length === 0 && R.helper.pdfHas17 && R.helper.state === "ok";
+  const yt = R.helper.yellowTanaka.join(",");
+  // 10/10 は田中に変更マークがあるので緑（黄より優先・PDF と同じ）。他は黄
+  V.helperCells = ["2026-10-10|end=22鶏三:G", "2026-10-12|start=11鶏:Y", "2026-10-12|end=15三:Y", "2026-10-13|start=17鶏:Y", "2026-10-13|end=23三:Y"].every(s => yt.includes(s)) && R.helper.yellowTanaka.length === 5;
+  R.reads = await helperReads(true);
+  const bSubs = R.reads.reads.filter(p => p === "shops/B/subs");
+  V.helperReadScope = R.reads.q.filter(s => s.startsWith("shops/B/subs")).join(",") === "shops/B/subs?periodId=b1" && bSubs.length === 1 && R.reads.errors.length === 0;
+  R.readsUnlinked = await helperReads(false);
+  V.helperNoReadUnlinked = !R.readsUnlinked.reads.some(p => p.startsWith("shops/B")) && R.readsUnlinked.errors.length === 0;
   for (const [wd, dark] of [[375, false], [390, true], [320, false]]) {
     const F = await fit(wd, dark);
     R["fit" + wd] = F;

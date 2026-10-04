@@ -317,6 +317,8 @@ function _myU(U){
     visibleStaffList,isSpacer,leaveCellTextOf,isHoliday,subsWindowCutoff,
     // 全員のシフト表は PDF のシフト表と同じ関数（2026-10-04）
     isUnregisteredSubName,gd,isFixedShiftEligibleShop,oneSidedFillBounds,headcountAtOf,heatStaffDayEntriesOf,shiftSheetHeadcountOf,shiftTableHtmlOf,shiftSheetCellOf,shiftSheetStoredText,
+    // 全員のシフト表の他店でのヘルプ勤務（H2）。PDF（シフト作成タブの helperDisp）と同じ関数
+    helperShopsOf,helperPersonOf,helperWorkOn,helperCellDisplay,effShiftRangeMin,shiftSheetDecimal,shiftSheetFixedKey,otherShopDataOf,
     // 給料（E5）: 月次賃金ページ（P6b）・割増（P5）と同じ関数
     premiumMonthOf,premiumDayInput,dayRestKindOf,laborSystemForStaff,laborSettingsOf,rateDenominatorMinOf,payVersionOn,wageOf,deductionOf,
     premiumRatesOf,roundingRuleOf,roundYenFrac,nightMinutesOf,normalizePayVersion,isWeekendOrHoliday,OVER60_THRESHOLD_MIN};
@@ -1477,9 +1479,14 @@ function myLatestPeriodOf(periods){
 // 変更マークの緑・メモの黄色・従業員番号の行・名前の色・土日祝の色・未登録の提出者の列・空白列（35人超は日付）・昼夜の人数）。
 // **公開済みの期間だけ**（未公開は state:"unpublished"。画面は選択肢を公開済みに絞るので、この状態を画面に出すことは無い）。
 // 並びと設定はシフト作成タブと同じ（写し＝resolvePeriodMaster・非表示の人は visibleStaffList で落とす）。
-// PDF と違うのは次の3つだけ: ①他店でのヘルプ勤務（H2。他店の提出を読まないと作れない）は出さない、②入力中の編集は無い（保存値だけ）、
-// ③本人の列の名前の見出しに印（markName）と、回帰が引く data 属性（tags）。労務・ヒートマップ・賃金は PDF の「シフト表」にも無い。
-// o={period, staff, settings（企業設定を重ねた店舗の設定）, subs（その期間の提出）, todayStr, premium, me（本人の名前）, shopName, abbrToShop（他店の略称・人数の除外）}
+// 他店でのヘルプ勤務（H2）も PDF と同じに出す（2026-10-04 ユーザー指示「ヘルプ勤務も pdf と同様に」）。規則はシフト作成タブの helperDisp と同じ
+// （所属店舗＝role "home" の人だけ・休暇の日は出さない・自店と重なる他店の勤務は足さない・helperCellDisplay の文字と黄色）。
+// 材料（helpers）は呼び出し側が読む（app-my.js の useMyHelperShops。企業の写しと、連携店舗の otherShopDataOf の形）。無ければヘルプなしの表。
+// PDF と違うのは次の2つだけ: ①入力中の編集は無い（保存値だけ）、②本人の列の名前の見出しに印（markName）と、回帰が引く data 属性（tags）。
+// 労務・ヒートマップ・賃金は PDF の「シフト表」にも無い。
+// o={period, staff, settings（企業設定を重ねた店舗の設定）, subs（その期間の提出）, todayStr, premium, me（本人の名前）, shopName, abbrToShop（他店の略称・人数の除外）,
+//    shopId, helpers:{companyLink（shops/{sid}/company）, otherShops:{sid: otherShopDataOf の戻り値}}（省略可）}
+// 戻り値の helperUnread は「ヘルプ先の勤務の合算に要る他店を読めていない人がいる」（helperPersonOf の unread）
 function buildMyShiftSheet(o,U){
   const u=_myU(U);const x=o||{};const p=x.period;
   if(!p||!p.id)return{state:"noPeriod"};
@@ -1523,16 +1530,54 @@ function buildMyShiftSheet(o,U){
     entryCache.set(ds,out);
     return out;
   };
+  // 他店でのヘルプ勤務（H2）。シフト作成タブの helperShops・helperInfo・helperDisp と同じ組み立て
+  const hx=x.helpers&&x.helpers.companyLink&&typeof x.helpers.companyLink==="object"?x.helpers:null;
+  const helperShops=hx?u.helperShopsOf(hx.companyLink,hx.otherShops||{},x.shopId):{};
+  const helperInfo={};
+  if(Object.keys(helperShops).length){
+    const people=hx.companyLink.people||null;
+    const eid=typeof hx.companyLink.entityId==="string"?hx.companyLink.entityId:null;
+    realStaff.forEach(n=>{
+      const h=u.helperPersonOf({shopId:x.shopId,name:n,settings:st,people,otherShops:helperShops,entityId:eid});
+      if(h.role||h.unread)helperInfo[n]=h;
+    });
+  }
+  const helperSettingsCache=new Map();
+  // 自店のセルの表示値（シフト作成タブの ownVal と同じ。休暇の日は helperDisp が先に null を返すので種別名の分岐は要らない）
+  const ownValOf=(sh,f)=>{
+    if(!sh)return"";
+    const rest=!!(sh.adminRest&&sh.adminRest[f]);
+    const time=rest?"":((f==="start"?(sh.adjustedStart??sh.start):(sh.adjustedEnd??sh.end))||"");
+    const t=time?u.shiftSheetDecimal(time):"";
+    const nt=rest?"":((f==="start"?(sh.adjustedStartNote??sh.startNote):(sh.adjustedEndNote??sh.endNote))||"");
+    const fx=fixedEnabled&&sh[f==="start"?"adjustedStartFixed":"adjustedEndFixed"]?u.shiftSheetFixedKey():"";
+    if(t)return t+nt+fx;
+    return(nt+fx)||"";
+  };
+  const helperDispOf=(nm,ds)=>{
+    const hi=helperInfo[nm];
+    if(!hi||hi.role!=="home")return null;
+    const sh=shiftOf(nm,ds);
+    const lv=f=>sh&&sh.adminRest&&sh.adminRest[f]?u.leaveCellTextOf(sh,f):"";
+    if(lv("start")||lv("end"))return null;
+    const wsh=sh&&sh.status==="work"?sh:null;
+    const ownRange=wsh?u.effShiftRangeMin(wsh,st):null;
+    const es=u.helperWorkOn({regs:hi.regs,otherShops:helperShops,date:ds,todayStr:x.todayStr,
+      companySettings:hx.companyLink.settings||null,ownRange,cache:helperSettingsCache});
+    if(!es.length)return null;
+    return u.helperCellDisplay({entries:es,ownRange,ownText:{start:ownValOf(sh,"start"),end:ownValOf(sh,"end")}});
+  };
   const html=u.shiftTableHtmlOf({cols,dates,periodLabel:String(p.label||"").replace(/^\d+年/,""),shopName:x.shopName||"",
     staffNums:st.staffNumbers||{},staffColors:st.staffColors||{},settings:st,markName:x.me||"",tags:true,
     headcountOf:cfg.enabled?(ds,section)=>u.shiftSheetHeadcountOf({settings:st,date:ds,entries:entriesOf(ds),shiftOf:n=>shiftOf(n,ds),hasSplit,section}):null,
     cellOf:(nm,ds,field)=>{
       const sh=shiftOf(nm,ds);
-      return u.shiftSheetCellOf({sh,field,hasSub:!!sh,helper:null,r:u.shiftSheetStoredText(sh,field,fixedEnabled),
+      return u.shiftSheetCellOf({sh,field,hasSub:!!sh,helper:helperDispOf(nm,ds),r:u.shiftSheetStoredText(sh,field,fixedEnabled),
         otherDisp:u.shiftSheetStoredText(sh,field==="start"?"end":"start",fixedEnabled).disp});
     }});
   return{state:"ok",period:p,confirmed:u.isPeriodConfirmed(p),publishedAt:p.published.at,html,
-    names:cols.filter(n=>!u.isSpacer(n)),headcount:!!cfg.enabled};
+    names:cols.filter(n=>!u.isSpacer(n)),headcount:!!cfg.enabled,
+    helperUnread:Object.values(helperInfo).some(h=>h&&h.unread)};
 }
 // 全員の表を横幅に合わせる倍率（比率を保って表全体を縮める・広い画面では2倍まで）。natural＝表の本来の幅（px）
 const MY_SHEET_MAX_SCALE=2;
