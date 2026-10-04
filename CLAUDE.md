@@ -1357,6 +1357,8 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
   （`myAccountSubject(uid)`＝users/{uid}・`myPageSubject`＝staffPageData/{token}。base と links() と companyPay(sid)。tests が base の出どころを2か所に固定）。
   マイシフトは「自分のシフト」「全員のシフト」を**横スクロール（scroll-snap）とタブで切り替え**（`MyShiftPager`。ピンチで拡大している間＝visualViewport.scale>1 は横スクロールを止める。
   表示が1つのときはタブを出さない＝木の形は同じなので、後から「全員のシフト」が足されても「自分のシフト」は作り直されない）
+- **開いた直後の既定はマイシフト（下部タブ）の本人のカレンダー（横スワイプの「自分のシフト」）**。タブも横スワイプの位置も保存しない（`MyPageView` の `useState("shift")`・`MyShiftPager` の `useState(0)`）ので、
+  全員のシフト・提出タブへ移ってから開き直してもマイシフトから始まる（2026-10-04 にユーザー指示を受けて実測。develop と `19da811` で Chromium・WebKit の iPhone 13 とも既にこの挙動＝コードの変更なし。回帰 `example-my-page.js` の V_defaultIsMyCalendar）
 - **全員のシフトの期間の選び方（2026-10-04 改め・ユーザー指示）**: 未公開でも「まだ公開されていません」の案内を**出さない**。表の上の**期間のプルダウン**の選択肢は
   **公開済みかつ startDate が直近3ヶ月**（管理者画面の subs 部分購読と同じ `subsWindowCutoff`）の期間を新しい順（`myAllShiftPeriodOptions`）、既定はその先頭＝
   **その時点で公開済みの最新の期間**（最新の期間が未公開なら1つ前の公開済み）。店舗が Premium でなければ選択肢は空。**選択肢が1つも無ければ「全員のシフト」の切り替えごと出さない**

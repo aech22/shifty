@@ -190,6 +190,16 @@ async function requestPage(h, name, number) {
       const W = {};
       W.view = await h.evaluate(() => { const e = document.querySelector('[data-my-view="page"]'); return e ? e.getAttribute("data-my-page-name") : null; });
       W.shift = await waitSel(h, "[data-my-shift]");
+      // 開いた直後の既定はマイシフト（下部タブ）の本人のカレンダー（横スワイプの「自分のシフト」）（2026-10-04 ユーザー指示）
+      const firstView = () => h.evaluate(() => ({ tab: (document.querySelector("[data-my-tab][aria-current=page]") || { getAttribute: () => null }).getAttribute("data-my-tab"),
+        pager: (document.querySelector("[data-my-pager]") || { getAttribute: () => null }).getAttribute("data-my-pager"),
+        left: (document.querySelector("[data-my-pager-track]") || {}).scrollLeft || 0, cal: !!document.querySelector('[data-my-pane="mine"] [data-my-shift]') }));
+      W.first = await firstView();
+      // 全員のシフト・提出タブへ移ってから開き直しても、マイシフトの本人のカレンダーから始まる
+      await click(h, '[data-my-pager-tab="all"]'); await sleep(h, 600);
+      await click(h, '[data-my-tab="submit"]'); await sleep(h, 300);
+      await h.page.reload({ waitUntil: "networkidle" }); await waitSel(h, "[data-my-shift]"); await sleep(h, 1500);
+      W.reopened = await firstView();
       W.uid = await h.evaluate(() => window.__authCur().uid);
       W.tabs = await h.evaluate(() => [...document.querySelectorAll("[data-my-tab]")].map(b => b.getAttribute("data-my-tab")));
       await h.page.waitForFunction(() => !/読み込み中/.test((document.querySelector("[data-my-shift]") || {}).innerText || "x"), null, { timeout: 15000 }).catch(() => {});
@@ -203,6 +213,7 @@ async function requestPage(h, name, number) {
       R.V = W;
       V.V_samePageOtherDevice = W.view === "田中" && W.shift && W.uid !== R.S.uid && W.uid !== R.P.uid;
       V.V_ownCalendar = W.todayKinds === "submitted";
+      V.V_defaultIsMyCalendar = [W.first, W.reopened].every(x => x.tab === "shift" && (x.pager === "mine" || x.pager === null) && x.left === 0 && x.cal);
       V.V_settings = W.settings && W.overflow <= 0 && W.fonts.every(f => f >= 16);
       V.V_noErrors = W.errors.length === 0;
     } finally { await h.browser.close(); }
