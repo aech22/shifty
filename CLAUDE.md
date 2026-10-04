@@ -84,7 +84,9 @@ developブランチ・mainブランチのどちらにチェックアウトして
 │   │                      app-admin.js＋app-shift.js＋app-company.js を連結して読む（`_readAdminSurface`）
 │   └── my.test.js      ← app-my-utils.js のユニットテストと、読み込み順（index.html・package.json・eslint）のドリフト検出
 ├── functions/
-│   └── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗/期間の自動削除・企業アカウント）
+│   ├── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗/期間の自動削除・企業アカウント・従業員画面の紐付け）
+│   ├── company-config.js ← 企業アカウント系 CF の純粋関数（tests/core.test.js がクライアントとの一致を照合）
+│   └── staff-link.js   ← 従業員画面の紐付け（E2）の純粋関数（tests/my.test.js が app-my-utils.js との一致を照合）
 ├── RULES.md            ← やってはいけないこと（必読）
 ├── firebase.json       ← Firebase Hosting / Functions 設定
 ├── database.rules.json ← Firebase セキュリティルール（**正本はこの1ファイルのみ**。2026-07-28 に締めルールへ切替済み）
@@ -572,6 +574,10 @@ Firebase Realtime Database
 │       │                 作成者しか読めないので、店長のセッションがヘルプ先勤務の合算で同一人物を引くためにここへ焼く
 │       │                 **CF（syncCompanyMirror）だけが書く**（.write:false）・読みは auth != null。
 │       │                 無い＝企業に連携していない。店舗側の企業機能（設定の重ね合わせ・提出ボタン・提出期限・所属店舗の選択肢）はこれだけを見る
+│       ├── linkRequests/{uid} ← 従業員画面のリンク申請（2026-10-04・第2部 E2）{displayName, number?, at}。書きは本人でメールのある認証
+│       │                 （auth.token.email != null・global/shops に店舗があること・デモ店舗は不可）、読みはオーナーと本人、消すのは本人かオーナー（却下）
+│       ├── staffLinks/{uid} ← 紐付け（E2）{name, personId?, method: "number"|"name"|"code", at}。**名前の正本**。作るのは Cloud Functions だけ。
+│       │                 オーナーは削除と `name` の書き換えだけできる（改名・削除の追随をクライアントからも書けるように）。読みはオーナーと本人
 │       └── private/     ← 読みはオーナーのみ（配下すべて）
 │           ├── adminKey ← 管理キー（32桁）
 │           ├── pay/{名前} ← 賃金マスタ（2026-09-30・P6a）。書きもオーナーのみ・.validate で payType（monthly|hourly）と base（数値）必須。
@@ -593,9 +599,11 @@ Firebase Realtime Database
 │   └── {uid}            ← {code, email, emailLink, expiry, attempts}（OTP・5回失敗で無効化）
 ├── users/
 │   └── {uid}/           ← 従業員画面のスタッフアカウント（2026-10-04・第2部 E1）。**読みは本人だけ**（auth.uid === $uid）
-│       └── profile      ← {displayName, number?, updatedAt}。書きは本人で**メールのある認証**だけ（auth.token.email != null＝匿名のままの uid は不可）。
-│                          E2 以降は同じ users/{uid} の下に links・workplaces・shifts・overrides・actuals・goals・seen を足す（計画書 E.4）。
-│                          **ルールは develop の database.rules.json にあるだけで、dev・本番とも未デプロイ**
+│       ├── profile      ← {displayName, number?, updatedAt}。書きは本人で**メールのある認証**だけ（auth.token.email != null＝匿名のままの uid は不可）。
+│       │                  E3 以降は同じ users/{uid} の下に workplaces・shifts・overrides・actuals・goals・seen を足す（計画書 E.4）。
+│       │                  **ルールは develop の database.rules.json にあるだけで、dev・本番とも未デプロイ**
+│       └── links/{shopId} ← 本人の紐付けの索引（E2）{name, personId?, at}。**Cloud Functions だけが書く**（ルールに書き込みが無い）。
+│                          name は紐付けた時点の写しで、オーナーの端末の改名では書き換わらない——名前は shops/{sid}/staffLinks/{uid}.name を正とする
 ├── companies/
 │   └── {companyId}/     ← 企業アカウント（CompanyTab・企業コード＋パスワード方式。accounts/{uid}のcompanyLinkとは別系統）
 │       ├── pub          ← {name, ownerUid, shops:{shopId:true}}（連携店舗マップ）
@@ -618,8 +626,11 @@ Firebase Realtime Database
 │       │                            オーナーは載せない＝巻き添えにしない）。**ルールを持たない
 │       │                            ＝クライアントからは読み書きできないCF専用パス**
 │       └── private/passwordHash ← パスワードハッシュ（Cloud Functions経由のみ）
-└── companyCodes/
-    └── {code}           ← companyId（企業コードの逆引き。companyLoginでカスタムトークン発行に使用）
+├── companyCodes/
+│   └── {code}           ← companyId（企業コードの逆引き。companyLoginでカスタムトークン発行に使用）
+├── staffLinkCodes/{code} ← 個人リンクコード（E2）{shopId, name, expiry, issuedBy, createdAt}。8桁・24時間・1回限り。CF だけ（ルールで読み書きとも不可）
+├── staffLinkCodeIndex/{shopId}/{name} ← その名前の最新のコード（発行し直すと前のコードを消す）。CF だけ
+└── staffLinkCodeAttempts/{uid} ← コード入力の失敗回数 {fails, lockedUntil?, lastAt}（本人単位・5回で15分止める）。CF だけ
 ```
 
 **セキュリティモデル（2026-07-07改修・フェーズB）**: 「Anonymous Auth必須 + オーナー権限分離（管理キー方式）」。
@@ -723,6 +734,12 @@ Pay = { payType: "monthly"|"hourly", base: number,            // 月給は基本
 Person = { displayName: string, entityId?: string, number?: string, links: {[shopId]: 登録名},   // 1店舗1名前
            createdAt: string, updatedAt: string, mergedFrom?: {[personId]: string},
            distinct?: {[personId]: string} }   // 「統合しない」と記録した相手（両方向に書く・値は記録した時刻）
+
+// 従業員画面の紐付け（2026-10-04・第2部 E2）。名前の正本は StaffLink.name（UserLink.name は紐付けた時点の写し）
+LinkRequest = { displayName: string, number?: string, at: string }                      // shops/{shopId}/linkRequests/{uid}
+StaffLink   = { name: string, personId?: string, method: "number"|"name"|"code", at: string }  // shops/{shopId}/staffLinks/{uid}
+UserLink    = { name: string, personId?: string, at: string }                           // users/{uid}/links/{shopId}
+StaffLinkCode = { shopId: string, name: string, expiry: number, issuedBy: string, createdAt: string }  // staffLinkCodes/{code}
 
 // 企業設定の写し（shops/{shopId}/company・2026-09-27）
 CompanyLink = { id: string, name: string, entityId?: string, entityName?: string, kind?: "shop"|"hq",   // 法人と本部（2026-09-30・P1）
@@ -1079,6 +1096,40 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
 - 検証: tests/my.test.js（入力の正規化・検証・エラー文言・端末の判定・ルールの形）と `example-my-account.js`（スタブの `auth:"accounts"`・
   375px・6場面23項目。E1 より前の配信物では最初の項目で落ちる）。**実 Firebase の連結・トークン・ルールは未検証**（dev へのデプロイ待ち）
 
+### 紐付け（2026-10-04・第2部 E2・develop のみ・ルールと CF は未デプロイ）
+
+スタッフアカウントを「店舗＋登録名」に紐付ける。規則は app-my-utils.js（クライアント）と functions/staff-link.js（CF）に**同じ内容**で書き、
+tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI も入口と同じく `MY_SCREEN_ENABLED` の下（本番は購読もしない）・オーナーの端末だけ。
+
+- **3方式**: A＝従業員番号（`linkNumberKey`。全角数字を半角にし前後の空白を落として、**双方が数字だけのときだけ**完全一致。先頭のゼロは区別。
+  照合先は `settings.staffNumbers[名前]` と、企業連携の店舗では写しの人物（`shops/{sid}/company.people`）の**数字の人物ID**）、
+  B＝登録ネーム（`linkNameKey`。空白を半角・全角・途中も含めてすべて除いて一字一句一致。かな・大文字小文字は揃えない）、
+  C＝個人リンクコード（8桁・紛らわしい I O 0 1 を除く32文字・24時間・1回限り・承認なし）。A・B は提案だけで、CF `approveStaffLink` が**候補を照合し直して**
+  候補に無い名前を拒否する（管理者が任意の名前を選ぶ経路は無い）。どちらにも当たらない申請は「未リンクの申請」に残り、却下か C で対応する
+- **1つの名前に紐付くアカウントは1つ**（既に別の uid が紐付いた名前は提案で押せず、CF も拒否・コードも発行しない）。**1店舗に1つの名前**（staffLinks のキーが uid）
+- **店舗のオーナーの uid と企業ログイン（company_）は紐付けない**（CF の `linkTargetError`）。E1 の「管理者の端末ではアカウントを作らせない」と同じ理由
+- **本人の画面**（設定タブの「勤務先のお店」・`MyLinksSection`）: 紐付いた店舗の一覧と解除、スタッフURLから開いたときはその店舗への申請（登録ネームと番号を送る）・
+  申請中の表示と取り消し、コードの入力。**`#/me` で開いたとき（shopId が無い）は申請を出さず**、「スタッフ用URLから開くと申請できます」とコードの入力だけ
+- **管理者の画面**: スタッフタブの「マイシフトのリンク申請」（`StaffLinkRequestsCard`・申請があるときだけ）と、編集モーダルの「マイシフト」（`StaffLinkEditSection`・
+  リンク済みの表示と解除・コードの発行と有効期限の日時）。部品は app-my.js にあり、App が `staffLinks` オブジェクト（購読した map・requests・rename・drop・reject・call）を渡す
+- **コードの試行回数は本人（uid）単位**（`staffLinkCodeAttempts/{uid}`・5回で15分）。誤ったコードはどの記録にも当たらないので記録の側では数えられない
+  （計画書 E.4 の `staffLinkCodes/{code}.attempts` はこの理由で持たない）。無いコードと期限切れは同じ文言（どちらかを教えない）。期限は `expiry` ちょうどから使えない
+- **改名・削除・統合への追随（計画書のリスク）**: staffLinks は名前を値に持つ。作成は CF だけだが、**改名・削除はオーナーの端末から staffLinks を直接書く**
+  （ルールでオーナーに削除と `name` の書き換えだけを許した。CF が使えない環境・通信の失敗でも追随させるため）。入口はすべて StaffTab と App:
+  改名（`onRenameStaff`）で `sl.drop([新しい名前])`→`sl.rename(旧,新)`、削除（`confirmDelete`）で**名前を残す期間を選んでも削除の時点で** `sl.drop([名前])`
+  （削除を取り消しても紐付けは戻らない）、期限切れで行が消える経路でも `sl.drop`、スタッフの追加（`add`・番号の呼び出し `registerLookup`）で
+  **同じ名前に残っていた古い紐付けを外す**。CF の `companyRenameStaff` は staffLinks と `users/{uid}/links` の写しの名前を移し、人物を変える CF は
+  すべて `syncPeopleMirror` → `syncStaffLinkPersonIds` で personId を合わせ直す。tests/my.test.js が入口のドリフトを検出する
+- **読む側の保証（E3 以降）**: `readMyLinks(uid)`（app-my.js）→ `resolveMyLink`（app-my-utils.js）。`users/{uid}/links` は「どの店舗か」の索引だけで、
+  **名前は `shops/{sid}/staffLinks/{uid}.name`**。staffLinks が無い（解除・削除）か、その名前がいまのスタッフ一覧に無いなら無効（ok:false）として**使わない**
+- **残る穴**: オーナーの端末が staffLinks を購読し終える前に改名・削除・追加をすると追随が書かれない（`staffLinkMapRef` が空）。削除と改名で名前が一覧から
+  消えれば読む側で無効になるが、その後に**同じ名前を、購読が届いていない端末で登録し直す**と古い紐付けが生き返る。名前以外に登録を区別する鍵が無いため
+  （スタッフの ID は無い）。personId は企業連携の店舗だけで、店舗の登録をまたいだ同一人物の判定にしか使えない。また subs は認証済みなら店舗全員分を
+  読める（E.4 の既存の注意）ので、紐付けは「画面で本人の分だけを出す」ための鍵で、ルール上の保護ではない
+- 検証: tests/my.test.js（照合・コード・差分・計画・ルールの形・入口のドリフト・クライアントと CF の一致）、`shifty-cf-verify/scripts/example-staff-link.js`
+  （本物の index.js・44項目。拒否側を含む。E2 前の index.js では落ちる）、`shifty-e2e-verify/scripts/example-my-link.js`（スタブの cfHandlers "staffLink" が
+  functions/staff-link.js の計画関数を通す・32項目・375px。E2 前の配信物では落ちる）。**ルールと CF の実機（dev・本番）は未検証**
+
 ---
 
 ## Cloud Functions（functions/index.js）
@@ -1092,7 +1143,7 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
 | `createPortalSession` | POST `/createPortalSession` | Stripe Customer Portal セッション |
 | `sendEmailOtp` | Callable `sendEmailOtp` | メール連携用OTP送信 |
 | `verifyEmailOtp` | Callable `verifyEmailOtp` | OTP検証（5回失敗で無効化） |
-| `purgeInactiveShops` | schedule 毎日（JST） | 1年未更新店舗を archived/ へ退避→30日後に本削除。Invalid Dateはスキップしてログ |
+| `purgeInactiveShops` | schedule 毎日（JST） | 1年未更新店舗を archived/ へ退避→30日後に本削除。Invalid Dateはスキップしてログ。期限切れの個人リンクコード（`staffLinkCodes`）と索引・古い入力失敗の記録も消す（E2・**未デプロイ**） |
 | `purgeOldPeriods` | schedule 毎日（JST） | endDateが36ヶ月超の期間の period・subs・tokens・actuals（P4）を削除。`PURGE_OLD_PERIODS_DRY_RUN=true` でdry-run中（本有効化はBACKLOG参照） |
 | `sendSurveyEmails` | POST `/sendSurveyEmails` | ユーザーアンケート一斉送信（要秘密トークン） |
 | `createCompany` | Callable `createCompany` | 企業アカウント作成（企業コード発行・パスワードハッシュ保存・作成者オーナー店舗を連携） |
@@ -1104,6 +1155,7 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
 | `ensureCompanyEntities / createEntity / renameEntity / assignShopEntity / saveEntityConfig / setShopKind` | Callable | 法人の管理（2026-09-30・P1・**本番未デプロイ**）。権限は `assertCompanyMember`。保存後に写しを作り直す。規則は `functions/company-config.js` |
 | `ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId / companyRenameStaff / companyUpdateStaff / markPeopleDistinct` | Callable | 人物ID と企業スタッフ一覧の編集（2026-09-30・P1b・**本番未デプロイ**）。`markPeopleDistinct` は「統合しない」（`{personIds:[…], distinct:true}` で全ペアを両方向に記録、`{personIds:[a,b], distinct:false}` で取り消し。写しは作り直さない）。権限は `assertCompanyMember`。人物（`companies/{id}/pub/people`）を作るのは `ensureCompanyPeople` だけ。改名は店舗のデータを差分 update で移す（上の「人物ID と企業スタッフ一覧の編集」）。規則は `functions/company-config.js` |
 | `setCompanyPayCode` | Callable | 企業の賃金閲覧パスコードの変更（2026-09-30・P6a・**本番未デプロイ**）。現在の番号を照合（未設定なら 0000）し、`companies/{id}/private/payCode` と連携全店舗の `shops/{sid}/private/payCode` に同じハッシュを書く。作成者と企業セッションの両方が可（`assertCompanyMember`）。`syncCompanyMirror` も写しを作り直すたびに企業のパスコードを同期する（後から連携した店舗に届く） |
+| `approveStaffLink / issueStaffLinkCode / redeemStaffLinkCode / unlinkStaff` | Callable | 従業員画面の紐付け（2026-10-04・第2部 E2・**未デプロイ**）。承認とコードの発行は店舗のオーナー（`owners/{uid}`）、コードの入力はメールのある認証（`token.email`）、解除は本人かオーナー。shopId・uid・名前・コードはパスに埋め込む前に形を確かめ、デモ店舗は拒否。紐付けは `shops/{sid}/staffLinks/{uid}` と `users/{uid}/links/{sid}` を同じ update で書く。コードは読んだ記録と同じものだけをトランザクションで消す（1回限り）。規則は `functions/staff-link.js` |
 | `claimCompanyShop` | Callable `claimCompanyShop` | 連携済み店舗のオーナーに**呼び出し元のuid**を登録（企業連携タブの「ログイン」で管理コードの再入力を無くす。付与は `companies/{id}/grants/{shopId}/{uid}` に記録し、解除時に回収する） |
 | `unlinkStoreFromCompany` | Callable `unlinkStoreFromCompany` | 店舗の企業連携を解除（企業uid＋`grants` の付与uidを owners から外す） |
 
