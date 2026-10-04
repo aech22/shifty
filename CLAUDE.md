@@ -1779,10 +1779,10 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   セルに何を出すかは app-utils.js の **`leaveShownTextOf(shift, field)` 1本**（その帯が休み扱い＝adminRest で種別があれば種別名、無ければ ""）で、
   画面の `leaveCellText`（app-shift.js）・PDF と全員の表の `shiftSheetCellOf`（kind "leave"・12px・斜線なし・変更マークの緑は残す）・
   Excel の `expXl`（種別名・`shrinkToFit`・`diagonal` なし）の4か所がこれを通す（tests/core.test.js がドリフトを検出）。
-  Excel は**2つの入口（シフト作成タブ・期間管理タブ）の両方**に出す——休暇は管理者が入れる値で、期間管理タブの既定の解決（storedRv）も
-  管理者の休み（adminRest）を通している（バグチェック#134 の「2つの入口が同じ中身」）。スタッフ提出の休みの日に片側だけ休暇を入れた日は、
+  **Excel はシフト作成タブからの出力（`adjResolver` あり）だけ種別名**。期間管理タブの Excel（resolver なし）は提出そのままの位置づけで変えない
+  （ユーザー決定「期間タブは提出したままで良い」。`expXl` の `lvOn=!!resolver`。休暇の帯は従来どおり斜線＝19da811 と同じセルを回帰が照合）。スタッフ提出の休みの日に片側だけ休暇を入れた日は、
   もう片側を斜線にする（画面の cellDash・PDF と同じ）。休暇の日はヘルプ勤務（H2）を出さない規則は変えていない。
-  **誰が有給かが全員の表で見える**ことはユーザーが承知済み。回帰は `example-excel-missing-day.js` の j〜l と `example-my-sheet-pdf.js` の leaveShown
+  **誰が有給かが全員の表で見える**ことはユーザーが承知済み。回帰は `example-excel-missing-day.js` の j〜l（l は期間管理タブが 19da811 の出力と一致）と `example-my-sheet-pdf.js` の leaveShown
 - 有給・慶弔の日数は**半日＝0.5**で数える（`leaveHalfDaysOf`）。公休は日単位で、無記入の日も含む。
   半日の有給を取った日は**出勤日のまま**なので週の休みには数えない（残り半分を働くため）。
 - `CELL_COLOR_LEGEND` に休暇の色は**持たない**（持つとレジェンドが嘘になる）。

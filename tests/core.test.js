@@ -4082,6 +4082,7 @@ test("leaveShownTextOf と PDF・全員の表のセル: ko は上下とも・yu/
   const ad = R("app-admin.js");
   const xl = ad.slice(ad.indexOf("const storedRv="), ad.indexOf("// ファイル名・ダウンロード"));
   assert.ok(/leaveShownTextOf\(sh,"start"\)/.test(xl) && /leaveShownTextOf\(sh,"end"\)/.test(xl), "expXl は leaveShownTextOf");
+  assert.ok(/const lvOn=!!resolver&&!isSpacer\(nm\);/.test(xl), "expXl の種別名はシフト作成タブ（resolver あり）だけ。期間管理タブは提出したまま（ユーザー決定）");
   const ut = R("app-utils.js");
   const sc = ut.slice(ut.indexOf("function shiftSheetCellOf("), ut.indexOf("function shiftTableHtmlOf("));
   assert.ok(/leaveShownTextOf\(sh,f\)/.test(sc), "shiftSheetCellOf は leaveShownTextOf");
