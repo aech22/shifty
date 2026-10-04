@@ -33,6 +33,8 @@ function loadPlaywright() {
 // 既定の読み込みセット。app-main.js は入れない（入れると App() がマウントされFirebaseへ繋ぐ）。
 const DEFAULT_SCRIPTS = [
   { src: "app-utils.js", babel: false },
+  // 2026-10-04 新設の従業員画面（第2部）の純粋関数。app-core.js の parseUrl が使うので core より前に読む
+  { src: "app-my-utils.js", babel: false },
   { src: "app-core.js", babel: false },
   { src: "app-staff.js", babel: true },
   { src: "app-admin.js", babel: true },
@@ -42,6 +44,8 @@ const DEFAULT_SCRIPTS = [
   // 2026-09-30 に app-admin.js から切り出した企業連携・SetTab・賃金マスタ。AdminView が描画するので
   // 管理者画面の部品を載せるときは必ず一緒に読む（index.html と同じく admin→shift の直後）。
   { src: "app-company.js", babel: true },
+  // 2026-10-04 新設の従業員画面（MyView）。index.html と同じく company の直後・main の前
+  { src: "app-my.js", babel: true },
 ];
 
 const CDN = [
@@ -89,7 +93,7 @@ ${jsx}
  * @param {string} [o.engine]   "chromium"（既定）| "webkit"。ユーザーの主戦場は iOS Safari なので
  *                              見た目・レイアウトの結論を出すときは webkit でも回す。
  * @param {object} [o.viewport] 既定 {width:1400,height:900}。モバイル検証は {width:375,height:812}。
- * @param {Array}  [o.scripts]  読み込むアプリファイル。既定は utils/core/staff/admin（app-main.js を含めない）。
+ * @param {Array}  [o.scripts]  読み込むアプリファイル。既定は utils/my-utils/core/staff/admin/shift/company/my（app-main.js を含めない）。
  * @param {string} [o.root]     配信物を読むルート。既定は環境変数 SHIFTY_ROOT、無ければリポジトリ本体。
  *                              worktree隔離（0.5節）や「修正前の版で落ちることの確認」に使う。
  * @param {boolean}[o.headed]   デバッグ時に true。

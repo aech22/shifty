@@ -38,6 +38,22 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟡 従業員画面 E1: アカウント（連結・ログイン・再設定）と入口
+
+**目的**: 第2部 E.3 のアカウント。匿名 uid にメール＋パスワードを連結し（uid が変わらない）、別端末ではログインで同じ uid に入る。
+管理者のログイン経路（`accounts/{uid}/shops`）とは分ける。
+**受け入れ条件**:
+- [ ] 登録（`linkWithCredential`）で uid が変わらず、`users/{uid}/profile` が書かれる
+- [ ] 別の端末でログインして同じ uid・同じプロフィールになる。誤ったパスワード・使用済みのメールにエラーが出る
+- [ ] パスワード再設定メール・パスワード変更・ログアウト（ログアウト後は匿名に戻り、従来どおり提出できる）
+- [ ] アカウントなしでも今までどおり提出できる。管理者ログイン画面の挙動（メールログイン・試行ロック）は変えない
+- [ ] `users/{uid}/profile` のルールを追加する（既存のルールは1バイトも変えない）。**デプロイは別途**
+- [ ] 入口: スタッフURLの画面の「マイシフト」ボタン（**DEV_MODE のときだけ**）と `#/me`。下部タブ「マイシフト」「給料」「設定」
+**影響範囲**: app-my.js・app-my-utils.js・app-main.js（Phase1・描画）・app-core.js（parseUrl）・app-staff.js（入口ボタン）・database.rules.json
+**備考**: 「マイシフト」ボタンと `#/me` は本番で出さない（`MY_SCREEN_ENABLED = DEV_MODE`・app-core.js）。**E0〜E6 が揃ったらこのゲートを外す**。
+
+---
+
 ## 🟢 実績で出勤・退勤を変えた日に、確定シフトの日別休憩上書き（adjustedBreak）をそのまま当てるか
 
 **目的**: `resolveActualDay`（app-utils.js）は実績の時刻で `getBreaksFor` を通し直すが、確定シフトの `adjustedBreak` は残すので、
@@ -258,8 +274,9 @@ tests/core.test.js の旧データのテスト。
 ## 🟢 シフト作成タブの「公開」ボタン（従業員画面への公開）
 
 **目的**: 2026-09-27 のユーザー指示「公開ボタンの実装は従業員画面ができた時に一緒に実装」。今回は置いていない（使えないボタンを出さない）。
-**再着手条件**: 従業員画面の実装計画（リポジトリ直下の `従業員画面_実装計画.html`）が確定し、公開状態を読む側が決まったとき。
-置き場は `period.published={at}` が自然で、`period.submission` と同じ形（savePeriods の差分 update）で書ける。
+**再着手条件**: 従業員画面の実装計画は `Shifty_実装計画_2026-10.md` 第2部（E.0〜E.7）で確定し、
+リポジトリ直下の `従業員画面_実装計画.html`（第4版）はこれで置き換えた（2026-10-04）。公開ボタンは第2部の **E3** で実装する
+（E.1「公開」ボタン・E.6 の E3 行が正本）。置き場は `period.published={at,byUid}` で、`period.submission` と同じ形（savePeriods の差分 update）で書く。
 
 ---
 
@@ -1761,6 +1778,18 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 🟡 従業員画面 E0: 土台（VISION の追記・ファイルの追加）（2026-10-04 develop 完了／ルール・CF・データ移行なし）
+
+`Shifty_実装計画_2026-10.md` 第2部 E0。
+- [x] VISION.md の原則1に「アカウントは任意。提出には不要」を追記した
+- [x] 新しいファイル `app-my-utils.js`（プレーン・純粋関数・module.exports ガード）と `app-my.js`（babel・画面）を足した。
+      index.html の読み込み順は utils → my-utils → core → staff → admin → shift → company → my → main。`?v=` は既存と同じ `20261003-f053304`（バンプしていない）
+- [x] eslint.config.js の files・package.json の lint 対象・`tests/my.test.js`（新設。読み込み順を index.html・package.json・eslint の3つで照合する）・
+      mount-component.js の既定の読み込み・自前で並べる回帰スクリプト18本・example-index-html-load.js（9ファイル・ハイフン入りのファイル名）・CLAUDE.md を追随した
+- [x] `npm test` 532件パス（+2）・`npx eslint app-*.js` 0 errors / 119 warnings（変更前と同数）・回帰スクリプト62本すべて EXIT=0
+- 置いた前提: app-my-utils.js は app-core.js の `parseUrl` が使う（E1）ので core より前に置いた。Stop フックの自動コミットは7ファイルを名指ししていて
+  新しい2ファイルを含まない（フックは変えていない）。`~/.claude/commands/bug-check.md` の読み込み順・ファイル数は追随していない（範囲外）
 
 ### ✅ 🟢 小さな修正3件: 自動コミットの記述・企業連携タブの横はみ出し・tokens の重複書き込み（2026-10-04 develop 完了／ルール・CF・データ移行なし）
 

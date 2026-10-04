@@ -9,7 +9,8 @@
 // app-shift.js に切り出して7分割になった。
 // 各ファイルは独立して lint されるため、ファイルをまたいで参照される共有識別子
 // （utils/core の関数・定数、staff/admin/shift/company のコンポーネント）を sharedGlobals に列挙し
-// no-undef の誤検知を防ぐ。読み込み順（utils→core→staff→admin→shift→company→main）で全ファイルは同一グローバルスコープを共有する。
+// no-undef の誤検知を防ぐ。読み込み順（utils→my-utils→core→staff→admin→shift→company→my→main）で全ファイルは同一グローバルスコープを共有する。
+// 2026-10-04 に従業員画面（第2部）の app-my-utils.js（プレーン・純粋関数）と app-my.js（babel・画面）を足して9ファイル。
 
 const babelParser = require("@babel/eslint-parser");
 const reactPlugin = require("eslint-plugin-react");
@@ -533,7 +534,7 @@ const sharedGlobals = {
 
 module.exports = [
   {
-    files: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"],
+    files: ["app-utils.js", "app-my-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"],
     languageOptions: {
       // app-*.js は import/export を使わないグローバルスクリプト
       sourceType: "script",

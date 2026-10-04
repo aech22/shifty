@@ -162,7 +162,7 @@ async function companyCard() {
     root: ROOT || REPO_ROOT, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport: { width: 1400, height: 950 },
     extraHead: EXTRA_HEAD + makeStub({ seed, uid: UID, view: "admin", tab: "company",
       cfHandlers: { saveCompanyConfig: "companyConfig", ...Object.fromEntries(["ensureCompanyEntities", "createEntity", "renameEntity", "assignShopEntity", "saveEntityConfig", "setShopKind"].map(n => [n, "entity"])) } }),
-    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
+    scripts: ["app-utils.js", "app-my-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
   });
   const R = {};
   try {

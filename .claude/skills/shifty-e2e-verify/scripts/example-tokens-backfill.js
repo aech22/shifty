@@ -21,7 +21,7 @@ const path = require("node:path");
 const { openHarness, REPO_ROOT } = require(path.join(__dirname, "mount-component.js"));
 const { makeStub } = require(path.join(__dirname, "stub-firebase.js"));
 const ROOT = process.env.SHIFTY_ROOT || REPO_ROOT;
-const SCRIPTS = ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) }));
+const SCRIPTS = ["app-utils.js", "app-my-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) }));
 const THEME = `<style>*{box-sizing:border-box;}:root{--c-bg:#F0F2F5;--c-card:#FFFFFF;--c-input:#F3F4F6;--c-input2:#F0F2F5;` +
   `--c-border:#E5E7EB;--c-border2:#D1D5DB;--c-text:#1A1A2E;--c-text2:#374151;--c-text3:#6B7280;` +
   `--c-text4:#9CA3AF;--c-shadow:rgba(0,0,0,.06);--c-accent:#f87036;--c-danger:#DC2626;}</style>`;

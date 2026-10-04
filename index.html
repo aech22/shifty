@@ -219,16 +219,19 @@
   </noscript>
   <div id="root"></div>
   <!-- app.js を5ファイルに分割（M-1）し、2026-09-30 に app-admin.js から app-company.js と app-shift.js を切り出して7ファイル。
-       読み込み順厳守: utils→core→staff→admin→shift→company→main。
-       utils/core は純JS/ブラウザ依存のプレーンscript。staff/admin/shift/company/main は JSX を含むため Babel でトランスパイル。
-       ?v= はキャッシュバスティング用バージョン（ビルドレス構成のためデプロイ毎に手動更新。下の7箇所を
+       2026-10-04 に従業員画面（第2部）の app-my-utils.js と app-my.js を足して9ファイル。
+       読み込み順厳守: utils→my-utils→core→staff→admin→shift→company→my→main。
+       utils/my-utils/core は純JS/ブラウザ依存のプレーンscript。staff/admin/shift/company/my/main は JSX を含むため Babel でトランスパイル。
+       ?v= はキャッシュバスティング用バージョン（ビルドレス構成のためデプロイ毎に手動更新。下の9箇所を
        app-core.js冒頭のconsole.logと揃える）。 -->
   <script src="app-utils.js?v=20261003-f053304"></script>
+  <script src="app-my-utils.js?v=20261003-f053304"></script>
   <script src="app-core.js?v=20261003-f053304"></script>
   <script type="text/babel" src="app-staff.js?v=20261003-f053304" data-presets="react"></script>
   <script type="text/babel" src="app-admin.js?v=20261003-f053304" data-presets="react"></script>
   <script type="text/babel" src="app-shift.js?v=20261003-f053304" data-presets="react"></script>
   <script type="text/babel" src="app-company.js?v=20261003-f053304" data-presets="react"></script>
+  <script type="text/babel" src="app-my.js?v=20261003-f053304" data-presets="react"></script>
   <script type="text/babel" src="app-main.js?v=20261003-f053304" data-presets="react"></script>
 </body>
 </html>

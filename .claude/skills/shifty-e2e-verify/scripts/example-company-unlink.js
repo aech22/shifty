@@ -23,11 +23,13 @@ const CID = "C1";
 
 const SCRIPTS = [
   { src: "app-utils.js", babel: false },
+  { src: "app-my-utils.js", babel: false },
   { src: "app-core.js", babel: false },
   { src: "app-staff.js", babel: true },
   { src: "app-admin.js", babel: true },
   { src: "app-shift.js", babel: true },
   { src: "app-company.js", babel: true },
+  { src: "app-my.js", babel: true },
   { src: "app-main.js", babel: true },
 ];
 

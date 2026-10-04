@@ -193,7 +193,7 @@ async function partCompany() {
   const h = await openHarness({
     root: ROOT, jsx: "window.__harnessReady=true;window.prompt=()=>'所定の直し';", waitFor: "#root > *", viewport: { width: 1400, height: 950 },
     extraHead: THEME + makeStub({ seed, uid: UID, view: "admin", tab: "company", cfHandlers: { saveCompanyConfig: "companyConfig", ensureCompanyEntities: "entity" } }),
-    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
+    scripts: ["app-utils.js", "app-my-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
   });
   const R = {};
   try {

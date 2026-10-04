@@ -65,21 +65,24 @@ developブランチ・mainブランチのどちらにチェックアウトして
 
 ---
 
-## ファイル構成（2026-07-06 に app.js を5ファイルに分割・2026-09-30 に app-company.js と app-shift.js を切り出して7ファイル）
+## ファイル構成（2026-07-06 に app.js を5ファイルに分割・2026-09-30 に app-company.js と app-shift.js を切り出して7ファイル・2026-10-04 に従業員画面の2ファイルを足して9ファイル）
 
 ```
 /
 ├── index.html          ← CDN 読み込み（SRI付き）・PWA meta・OGP・スクリプト読み込み
 ├── app-utils.js        ← 純粋関数・定数（ブラウザAPI非依存 = Nodeでテスト可能・プレーンscript）
+├── app-my-utils.js     ← 従業員画面（第2部）の純粋関数・定数（プレーンscript・Nodeテスト可能。app-utils.js は34万字あるので従業員画面の関数はこちら）
 ├── app-core.js         ← DEV_MODE・Firebase設定・Cookie/テーマ/localStorage・スタイル定数（プレーンscript）
 ├── app-staff.js        ← ShiftyIcon, StaffView, StaffHdr, CellEditPanel, SmModal（babel）
 ├── app-admin.js        ← AdminView・期間/スタッフ/候補/提出一覧/マイページの各タブ, expXl, UpgradeModal, AC/AL/AT/CL（babel）
 ├── app-shift.js        ← シフト作成タブ一式（ShiftEditTab・実績の ActualsGrid/ActualsCsvDialog・HeatTable/SummaryTable/GridLegend・LEGEND_COLORS/FIXED_KEY 等）（babel）
 ├── app-company.js      ← 企業連携タブ一式（CompanyTab と部品・企業の一括PDF・企業横断ダッシュボード）・設定タブ（SetTab）・賃金マスタ（StaffPayPage・PayCodeBox）・月次賃金（PayrollPage）（babel）
+├── app-my.js           ← 従業員画面（MyView・マイシフト／給料／設定の下部タブ・アカウントの登録とログイン）（babel）
 ├── app-main.js         ← App() 本体 + ReactDOM マウント（babel）
 ├── tests/
-│   └── core.test.js    ← app-utils.js の Node ユニットテスト（node --test）。管理者画面の実装を読むドリフト検出は
-│                          app-admin.js＋app-shift.js＋app-company.js を連結して読む（`_readAdminSurface`）
+│   ├── core.test.js    ← app-utils.js の Node ユニットテスト（node --test）。管理者画面の実装を読むドリフト検出は
+│   │                      app-admin.js＋app-shift.js＋app-company.js を連結して読む（`_readAdminSurface`）
+│   └── my.test.js      ← app-my-utils.js のユニットテストと、読み込み順（index.html・package.json・eslint）のドリフト検出
 ├── functions/
 │   └── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗/期間の自動削除・企業アカウント）
 ├── RULES.md            ← やってはいけないこと（必読）
@@ -97,7 +100,12 @@ developブランチ・mainブランチのどちらにチェックアウトして
 └── scripts/            ← 運用スクリプト（stripe-setup / seed_shops / list_shops / copy-prod-to-dev / obsidian-sync 等。service-account-*.jsonはgitignore済み）
 ```
 
-**分割の仕組み**: Babel Standalone は複数の `<script type="text/babel">` を同一グローバルスコープで順に実行するため、`import`/`export` なしでファイル間参照が成立する（実証済み）。**index.html の読み込み順（utils→core→staff→admin→shift→company→main）を変えてはいけない**。新しいコンポーネント・関数は所属に応じたファイルへ追加する。
+**分割の仕組み**: Babel Standalone は複数の `<script type="text/babel">` を同一グローバルスコープで順に実行するため、`import`/`export` なしでファイル間参照が成立する（実証済み）。**index.html の読み込み順（utils→my-utils→core→staff→admin→shift→company→my→main）を変えてはいけない**（tests/my.test.js が index.html・package.json の lint 対象・eslint の files の3つを照合する）。新しいコンポーネント・関数は所属に応じたファイルへ追加する。
+
+**従業員画面の2ファイル（2026-10-04・第2部 E0）**: app-my-utils.js は app-utils.js の直後（app-core.js の `parseUrl` が使うので core より前）、
+app-my.js は app-company.js の直後・app-main.js の前（App が MyView を描く）。app-my.js のトップレベル即時実行コードから
+staff/admin/shift/company の識別子を参照しない（関数の中ならよい＝描画は全ファイルの実行後）。**Stop フックの自動コミットは
+7ファイルを名指ししていて app-my-utils.js と app-my.js を含まない**——この2つの変更は自分でコミットすること。
 
 **app-company.js の切り出し（2026-09-30）**: app-admin.js が 50.8 万字になり、Babel Standalone が変換時に
 「[BABEL] Note: The code generator has deoptimised the styling of … as it exceeds the max of 500KB.」を console.error で
@@ -1131,7 +1139,7 @@ npx eslint app-*.js  # 0 errors を維持（CIでも実行）
 ### React・スタイル制約
 
 - **ビルド不要**: Babel Standalone がブラウザでトランスパイル。`import`/`export` は使えない
-- **ファイル分割の制約**: index.html の読み込み順（utils→core→staff→admin→shift→company→main）を変えない。全ファイルがグローバルスコープを共有する
+- **ファイル分割の制約**: index.html の読み込み順（utils→my-utils→core→staff→admin→shift→company→my→main）を変えない。全ファイルがグローバルスコープを共有する
 - **スタイルは inline style のみ**: 外部 CSS ファイル・CSS モジュール追加禁止
 - **`input`/`select`/`textarea` の `fontSize` は 16px 以上**: iOS Safari ズーム防止（2026-07-06に全箇所解消済み。新規追加時に守ること）
 - **CDNスクリプトはSRI付き**: バージョン変更時は integrity ハッシュの再計算が必要（`curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`）
@@ -1511,7 +1519,7 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   ```bash
   node -e '
   const fs=require("fs");let total=0;const bad=[];
-  for(const f of ["app-utils.js","app-core.js","app-staff.js","app-admin.js","app-shift.js","app-company.js","app-main.js"]){
+  for(const f of ["app-utils.js","app-my-utils.js","app-core.js","app-staff.js","app-admin.js","app-shift.js","app-company.js","app-my.js","app-main.js"]){
     const s=fs.readFileSync(f,"utf8");const re=/<(input|select|textarea)[\s\/>]/g;let m;
     while((m=re.exec(s))){
       total++;let d=0,end=-1;

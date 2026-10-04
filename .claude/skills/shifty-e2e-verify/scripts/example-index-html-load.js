@@ -1,10 +1,10 @@
 // 本物の index.html を丸ごと起動する回帰テスト（2026-09-30 app-admin.js → app-company.js 分割・
-// 同日の2回目の分割で app-shift.js を追加）。
+// 同日の2回目の分割で app-shift.js を追加・2026-10-04 に従業員画面の app-my-utils.js と app-my.js を追加）。
 //
 // mount-component.js（1.6節）は読み込むファイルを自前で並べるので、index.html の <script> の並びが
 // 壊れていても通ってしまう。ここでは **index.html をそのまま配信**し、次を確かめる:
-//   0. index.html の読み込み順が utils→core→staff→admin→shift→company→main で、?v= が7箇所とも同じ版数
-//      ／app-admin.js・app-shift.js・app-company.js がどれも 40万字以下（Babel Standalone の 500KB 上限に余裕を残す）
+//   0. index.html の読み込み順が utils→my-utils→core→staff→admin→shift→company→my→main で、?v= が9箇所とも同じ版数
+//      ／app-admin.js・app-shift.js・app-company.js・app-my.js がどれも 40万字以下（Babel Standalone の 500KB 上限に余裕を残す）
 //   1. 未ログインの端末でログイン画面が出る
 //   2. 管理者画面の企業連携タブ（app-company.js）・スタッフタブ（app-admin.js）・シフト作成タブ（app-shift.js）・
 //      設定タブ（app-company.js）が描ける
@@ -29,7 +29,8 @@ const PW_CANDIDATES = [
 const pw = (() => { for (const c of PW_CANDIDATES) { try { return require(c); } catch (e) { /* 次の候補 */ } } throw new Error("playwright-core が見つかりません"); })();
 
 const MIME = { ".js": "application/javascript; charset=utf-8", ".html": "text/html; charset=utf-8", ".css": "text/css", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".webmanifest": "application/manifest+json" };
-const APP_FILES = ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"];
+const APP_FILES = ["app-utils.js", "app-my-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"];
+const PLAIN_FILES = ["app-utils.js", "app-my-utils.js", "app-core.js"];
 const MAX_CHARS = 400000;
 
 const UID = "U1", CID = "C1";
@@ -58,11 +59,11 @@ function servedIndexHtml(stubHead) {
 
 function staticChecks() {
   const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
-  const tags = [...html.matchAll(/<script[^>]*src="(app-[a-z]+\.js)\?v=([^"]+)"[^>]*>/g)];
+  const tags = [...html.matchAll(/<script[^>]*src="(app-[a-z-]+\.js)\?v=([^"]+)"[^>]*>/g)];
   const order = tags.map(t => t[1]);
   const versions = [...new Set(tags.map(t => t[2]))];
-  const babelOk = tags.every(t => /^(app-utils|app-core)\.js$/.test(t[1]) ? !/text\/babel/.test(t[0]) : /type="text\/babel"/.test(t[0]) && /data-presets="react"/.test(t[0]));
-  const sizes = Object.fromEntries(["app-admin.js", "app-shift.js", "app-company.js"].map(f => [f, fs.readFileSync(path.join(ROOT, f), "utf8").length]));
+  const babelOk = tags.every(t => PLAIN_FILES.includes(t[1]) ? !/text\/babel/.test(t[0]) : /type="text\/babel"/.test(t[0]) && /data-presets="react"/.test(t[0]));
+  const sizes = Object.fromEntries(["app-admin.js", "app-shift.js", "app-company.js", "app-my.js"].map(f => [f, fs.readFileSync(path.join(ROOT, f), "utf8").length]));
   return {
     order, orderOk: JSON.stringify(order) === JSON.stringify(APP_FILES),
     vCount: tags.length, versions, versionOk: tags.length === APP_FILES.length && versions.length === 1,
@@ -89,7 +90,7 @@ async function openIndex(browser, { signedIn, view, tab }) {
     const rel = decodeURIComponent(u.pathname).replace(/^\//, "");
     const f = path.join(ROOT, rel);
     if (!f.startsWith(ROOT) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) return route.fulfill({ status: 404, body: "not found" });
-    if (/^app-[a-z]+\.js$/.test(rel)) loaded.push(rel);
+    if (/^app-[a-z-]+\.js$/.test(rel)) loaded.push(rel);
     return route.fulfill({ contentType: MIME[path.extname(f)] || "application/octet-stream", body: fs.readFileSync(f) });
   });
   await page.goto("http://shifty.test/", { waitUntil: "networkidle" });

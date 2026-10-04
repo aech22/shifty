@@ -60,7 +60,7 @@ const cellsOf = h => h.evaluate(() => {
   const h = await openHarness({
     root: ROOT, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport: { width: 1400, height: 900 },
     extraHead: THEME + makeStub({ seed, uid: UID, view: "admin", tab: "staff", cfHandlers: {} }),
-    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
+    scripts: ["app-utils.js", "app-my-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
   });
   try {
     await h.page.waitForFunction(() => !!document.querySelector("[data-open-payroll]"), { timeout: 15000 });

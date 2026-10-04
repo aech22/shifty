@@ -70,7 +70,7 @@ const seed2 = () => ({
   accounts: { S1: { plan: "premium" }, S2: { plan: "premium" }, S3: { plan: "premium" }, [UID]: { shops: { S1: true, S2: true, S3: true }, company: { companyId: CID, code: "ABCD1234", name: "テスト企業" } } },
   companies: { [CID]: { pub: PUB2 } },
 });
-const SCRIPTS = ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) }));
+const SCRIPTS = ["app-utils.js", "app-my-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) }));
 
 (async () => {
   const cfHandlers = {};
@@ -79,7 +79,7 @@ const SCRIPTS = ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", 
   const h = await openHarness({
     root: ROOT, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport: { width: 1200, height: 900 },
     extraHead: THEME + makeStub({ seed: seed(), uid: UID, view: "admin", tab: "company", cfHandlers }),
-    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
+    scripts: ["app-utils.js", "app-my-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
   });
   const R = {};
   try {

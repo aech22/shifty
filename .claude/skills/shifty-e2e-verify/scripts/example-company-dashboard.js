@@ -65,7 +65,7 @@ async function open(plan, o = {}) {
   return openHarness({
     root: ROOT, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport: o.viewport || { width: 1400, height: 900 },
     extraHead: THEME + makeStub({ seed: seed(plan), uid: UID, view: "admin", tab: "company", denyRead: ["shops/S3/laborMonths"] }),
-    scripts: ["app-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
+    scripts: ["app-utils.js", "app-my-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) })),
   });
 }
 const selectMonth = async (h, ym) => {
