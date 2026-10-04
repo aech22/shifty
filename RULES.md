@@ -5,6 +5,9 @@
 - `DEV_MODE` はホスト名で自動判定する式（`location.hostname !== "shiftyshifty.app"`）。固定値の `true`/`false` に書き換えない
 - Firebase の `set()` でコレクション全体を上書きしない（他端末データが消える）。**`subs` だけでなく `periods` も対象**（2026-09-23 に本番で期間レコードが1件消えた）
 - `firebaseDB.ref('accounts').once('value')` など全件読み取りを新規追加しない
+- index.html の読み込み順（utils→my-utils→core→staff→admin→shift→company→my→main の9ファイル）を変えない。全ファイルがグローバルスコープを共有する
+  （tests/my.test.js が index.html・package.json の lint・eslint.config.js の3か所を照合する）
+- CDN スクリプトの SRI（`integrity`）を外さない。バージョンを変えるときはハッシュを再計算する
 
 ## セキュリティ
 
