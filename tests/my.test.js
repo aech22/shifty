@@ -1344,9 +1344,66 @@ test("個別URL（P3）: 全員の表の寸法は横幅を超えない（列の�
   const a = m.myStaffTableLayout({ width: 341, cols: colsOf(10, 0), maxChars: 4 }), b = m.myStaffTableLayout({ width: 341, cols: colsOf(30, 1), maxChars: 4 });
   assert.ok(a.fontPx > b.fontPx, "人数が多いほど小さい");
   const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
-  assert.ok(/overflowX:zoomed\?"hidden":"auto"/.test(my) && /scrollSnapType:"x mandatory"/.test(my), "ピンチで拡大中は横スクロールを止める・scroll-snap");
+  assert.ok(/overflowX:zoomed\|\|single\?"hidden":"auto"/.test(my) && /scrollSnapType:"x mandatory"/.test(my), "ピンチで拡大中は横スクロールを止める・scroll-snap");
   assert.ok(/role="tablist" aria-label="表示の切り替え"/.test(my), "タップでも切り替えられる");
   assert.ok(!/<input/.test(my.slice(my.indexOf("function MyAllShiftTable("), my.indexOf("function MyPageStatusScreen("))), "全員の表は入力欄を持たない（16px の規約に触れない）");
+});
+// ===== 全員のシフトの期間と店舗の選び方（2026-10-04・ユーザー指示: 未公開の案内を出さない・期間をプルダウン・直近3ヶ月・#/me でも）=====
+test("全員のシフト: 期間の選択肢は公開済みかつ直近3ヶ月（subsWindowCutoff と同じ窓）を新しい順。Premium でなければ空", () => {
+  const pub = { at: "2026-09-01T00:00:00.000Z", byUid: "O" };
+  const ps = [
+    { id: "a", startDate: "2026-10-16", endDate: "2026-10-31", label: "10月後半" },                 // 最新だが未公開
+    { id: "b", startDate: "2026-10-01", endDate: "2026-10-15", label: "10月前半", published: pub },
+    { id: "c", startDate: "2026-09-16", endDate: "2026-09-30", published: pub },
+    { id: "d", startDate: "2026-07-04", endDate: "2026-07-15", published: pub },                  // 窓の下限ちょうど（今日 10-04 の3ヶ月前）
+    { id: "e", startDate: "2026-07-03", endDate: "2026-07-15", published: pub },                  // 窓の外
+    { id: "f", startDate: "bad", published: pub }, null,
+  ];
+  assert.strictEqual(U.subsWindowCutoff(new Date(2026, 9, 4)), "2026-07-04");
+  const o = m.myAllShiftPeriodOptions(ps, { premium: true, todayStr: "2026-10-04" }, U);
+  assert.deepStrictEqual(o.map(p => p.id), ["b", "c", "d"], "未公開・3ヶ月より古い・日付の無い期間は出さない。既定（先頭）は公開済みの最新");
+  assert.deepStrictEqual(m.myAllShiftPeriodOptions(ps, { premium: false, todayStr: "2026-10-04" }, U), []);
+  assert.deepStrictEqual(m.myAllShiftPeriodOptions(ps.filter(p => p && !p.published), { premium: true, todayStr: "2026-10-04" }, U), [], "公開済みが無ければ空");
+  // 管理者画面と同じ窓（recentPeriodIds の決め方）
+  const recent = new Set(U.recentPeriodIds(ps.filter(Boolean), new Date(2026, 9, 4)));
+  o.forEach(p => assert.ok(recent.has(p.id), p.id));
+});
+test("全員のシフト: 店舗の選択肢と既定（募集URLの店舗 → 公開済みの最新が最も新しい店舗）・選び直し", () => {
+  const pub = { at: "t", byUid: "O" };
+  const shop = (shopId, plan, starts, extra) => ({ shopId, shopName: shopId + "店", name: "田中", plan, settings: { x: shopId }, staff: ["田中"],
+    periods: starts.map((d, i) => ({ id: shopId + i, startDate: d, endDate: d, published: pub })), ...(extra || {}) });
+  const A = shop("A", "premium", ["2026-09-16"]), B = shop("B", "premium", ["2026-10-01", "2026-09-16"]),
+    C = shop("C", "pro", ["2026-10-01"]), D = shop("D", "premium", ["2026-01-01"]);
+  const c = m.myAllShiftChoices({ shops: [A, B, C, D], todayStr: "2026-10-04" }, U);
+  assert.deepStrictEqual(c.shops.map(s => s.shopId), ["A", "B"], "Premium でない店舗・選べる期間の無い店舗は出さない（並びは渡した順）");
+  assert.strictEqual(c.defaultShopId, "B", "公開済みの最新が最も新しい店舗");
+  assert.deepStrictEqual(c.shops[1].settings, { x: "B" }, "表の材料（settings・staff・plan）は持ち回る");
+  assert.strictEqual(c.shops[1].name, "田中");
+  assert.strictEqual(m.myAllShiftChoices({ shops: [A, B], preferredShopId: "A", todayStr: "2026-10-04" }, U).defaultShopId, "A", "募集URLから開いたときはその店舗");
+  assert.strictEqual(m.myAllShiftChoices({ shops: [A, B], preferredShopId: "C", todayStr: "2026-10-04" }, U).defaultShopId, "B", "その店舗に選択肢が無ければ通常の既定");
+  const tie = m.myAllShiftChoices({ shops: [shop("X", "premium", ["2026-10-01"]), shop("Y", "premium", ["2026-10-01"])], todayStr: "2026-10-04" }, U);
+  assert.strictEqual(tie.defaultShopId, "X", "同じ日なら並びの先");
+  const none = m.myAllShiftChoices({ shops: [C, D], todayStr: "2026-10-04" }, U);
+  assert.deepStrictEqual(none, { shops: [], defaultShopId: null });
+  assert.strictEqual(m.myAllShiftSelection(none, {}), null, "選べる期間が無ければ何も出さない");
+  // 選び直し
+  assert.strictEqual(m.myAllShiftSelection(c, {}).period.id, "B0");
+  assert.strictEqual(m.myAllShiftSelection(c, { shopId: "B", periodId: "B1" }).period.id, "B1");
+  assert.strictEqual(m.myAllShiftSelection(c, { shopId: "A", periodId: null }).period.id, "A0");
+  assert.strictEqual(m.myAllShiftSelection(c, { shopId: "B", periodId: "gone" }).period.id, "B0", "選んだ期間が選択肢から消えたら既定へ");
+  assert.strictEqual(m.myAllShiftSelection(c, { shopId: "Z", periodId: "B1" }).shop.shopId, "B", "店舗が消えたら既定の店舗へ");
+});
+test("全員のシフト（画面）: 未公開・Premium の案内文を出さない・選択肢が無いときは切り替えを出さない", () => {
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  assert.ok(!/まだ公開されていません/.test(my), "未公開の案内文は無い");
+  assert.ok(!/data-my-all-state="unpublished"/.test(my) && !/data-my-all-state="premium"/.test(my));
+  assert.ok(/\{!single&&<div role="tablist"/.test(my), "表示が1つのときはタブを出さない");
+  const pv = my.slice(my.indexOf("function MyPageView("));
+  assert.ok(/allChoices\.shops\.length\?\[\{key:"all"/.test(pv), "個別URL: 選択肢があるときだけ全員のシフト");
+  // プルダウンは 16px（AI）
+  const pane = my.slice(my.indexOf("function MyAllShiftPane("), my.indexOf("function MyAllShiftTable("));
+  assert.strictEqual((pane.match(/<select /g) || []).length, 2);
+  assert.strictEqual((pane.match(/style=\{\{\.\.\.AI,/g) || []).length, 2, "select は AI（16px）");
 });
 // ===== 個別URL（P4）: 給料の暗証番号（CF myPagePin）=====
 const mpg = require("../functions/my-page.js");

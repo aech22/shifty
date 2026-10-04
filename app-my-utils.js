@@ -313,8 +313,8 @@ function fmtLinkCodeExpiry(ms){
 function _myU(U){
   if(U)return U;
   return{scheduledDay,resolveActualDay,resolvePeriodMaster,resolveSubByAlias,isStaffHiddenInPeriod,isPeriodPublished,isPeriodConfirmed,featureEnabled,
-    // 全員のシフト表（個別URL・2026-10-04）
-    visibleStaffList,isSpacer,leaveCellTextOf,isHoliday,
+    // 全員のシフト表（個別URL・2026-10-04）。期間の選択肢は管理者画面の subs 部分購読と同じ窓（subsWindowCutoff）
+    visibleStaffList,isSpacer,leaveCellTextOf,isHoliday,subsWindowCutoff,
     // 給料（E5）: 月次賃金ページ（P6b）・割増（P5）と同じ関数
     premiumMonthOf,premiumDayInput,dayRestKindOf,laborSystemForStaff,laborSettingsOf,rateDenominatorMinOf,payVersionOn,wageOf,deductionOf,
     premiumRatesOf,roundingRuleOf,roundYenFrac,nightMinutesOf,normalizePayVersion,isWeekendOrHoliday,OVER60_THRESHOLD_MIN};
@@ -1290,7 +1290,8 @@ function myLatestPeriodOf(periods){
 }
 
 // ---- 最新期間の全員のシフト表（P3）----
-// 個別URLの「全員」の表示。**公開済みの期間だけ**（未公開は state:"unpublished"＝「まだ公開されていません」）。中身は管理者の調整後の確定値
+// 個別URL・メールのアカウントの「全員」の表示。**公開済みの期間だけ**（未公開は state:"unpublished"。画面は選択肢を myAllShiftPeriodOptions で
+// 公開済みに絞るので、この状態を画面に出すことは無い＝案内文も出さない・2026-10-04 のユーザー指示）。中身は管理者の調整後の確定値
 // （scheduledDay＝マイシフトの公開済みと同じ入口）。並びはシフト作成タブと同じ（写し＝resolvePeriodMaster・その期間に非表示の人は落とす
 // ＝visibleStaffList・空白列は残す）。休み・休暇は PDF のシフト表に近い（出勤の帯ごとに時刻、休暇の帯は種別名）。労務・ヒートマップ・賃金・メモは出さない。
 // o={period, staff, settings（企業設定を重ねた店舗の設定）, subs（その期間の提出）, todayStr, premium, me（本人の名前）}
@@ -1329,6 +1330,44 @@ function buildMyStaffTable(o,U){
   })}));
   return{state:"ok",period:p,confirmed:u.isPeriodConfirmed(p),publishedAt:p.published.at,cols,rows,maxChars};
 }
+// ---- 全員のシフト表の期間と店舗の選び方（2026-10-04・ユーザー指示）----
+// 未公開の期間は選択肢にも出さず、「まだ公開されていません」の案内も出さない。選択肢は**公開済み**かつ startDate が
+// **直近3ヶ月**（管理者画面の subs 部分購読と同じ窓＝subsWindowCutoff。startDate >= 窓の下限）の期間で、startDate の新しい順
+// （同じ日なら id の降順）。既定はその先頭＝その時点で公開済みの最新の期間。Premium でない店舗は空（公開済みの表示は Premium のときだけ）。
+// o={premium, todayStr:"YYYY-MM-DD"（省略は今日）}
+function _myDateOf(s){const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s||""));return m?new Date(+m[1],+m[2]-1,+m[3]):new Date();}
+function myAllShiftPeriodOptions(periods,o,U){
+  const u=_myU(U);const x=o||{};
+  if(!x.premium)return[];
+  const cutoff=u.subsWindowCutoff(_myDateOf(x.todayStr));
+  return(Array.isArray(periods)?periods:[])
+    .filter(p=>p&&p.id&&/^\d{4}-\d{2}-\d{2}$/.test(String(p.startDate))&&String(p.startDate)>=cutoff&&u.isPeriodPublished(p))
+    .sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate))||String(b.id).localeCompare(String(a.id)));
+}
+// 店舗の選択肢（メールのアカウント・個別URL）。shops=[{shopId, shopName, name（本人の名前）, periods, plan}]（並びは呼び出し側の並び＝
+// アカウントは readMyLinks の並び＝勤務先の既定の色の順）。選択肢のある店舗だけを残す（有効な紐付けでも、公開済みの期間が
+// 直近3ヶ月に無い店舗・Premium でない店舗は出さない）。
+// 既定の店舗: preferredShopId（募集URLから開いたときのその店舗）に選択肢があればそれ、なければ最新の選択肢の startDate が最も新しい店舗
+// （同じなら並びの先）。戻り値 {shops:[{shopId,shopName,name,options}], defaultShopId}（選択肢が無ければ shops は空・defaultShopId は null）
+function myAllShiftChoices(o,U){
+  const x=o||{};
+  const featureEnabled_=_myU(U).featureEnabled;
+  // 渡された店舗のフィールド（settings・staff・plan 等＝表を作る材料）はそのまま持ち回る
+  const shops=(Array.isArray(x.shops)?x.shops:[]).filter(s=>s&&s.shopId).map(s=>({...s,shopName:s.shopName||"",name:s.name||"",
+    options:myAllShiftPeriodOptions(s.periods,{premium:featureEnabled_("myShift",{plan:s.plan}),todayStr:x.todayStr},U)})).filter(s=>s.options.length>0);
+  let def=null;
+  if(x.preferredShopId&&shops.some(s=>s.shopId===x.preferredShopId))def=x.preferredShopId;
+  else shops.forEach(s=>{const d=String(s.options[0].startDate);if(!def||d>String(shops.find(t=>t.shopId===def).options[0].startDate))def=s.shopId;});
+  return{shops,defaultShopId:def};
+}
+// いま表示する店舗と期間。sel={shopId, periodId}（本人が選んだもの）が選択肢に無くなっていれば既定へ戻す（公開の取り下げ・3ヶ月の窓から外れた等）
+function myAllShiftSelection(choices,sel){
+  const c=choices||{shops:[]};const s=sel||{};
+  const shop=c.shops.find(x=>x.shopId===s.shopId)||c.shops.find(x=>x.shopId===c.defaultShopId)||c.shops[0]||null;
+  if(!shop)return null;
+  const period=shop.options.find(p=>p.id===s.periodId)||shop.options[0];
+  return{shop,period};
+}
 // 全員の表を横幅いっぱいに収める寸法（横スクロールさせない。細部はピンチで拡大して見る）。
 // width＝表に使える幅（px）、cols＝buildMyStaffTable の cols、maxChars＝セルの最長の文字数。空白列は 0.4 列ぶん
 function myStaffTableLayout(o){
@@ -1358,5 +1397,5 @@ if(typeof module!=="undefined"&&module.exports){
     myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
     MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,resolveMyPage,MY_PAGE_STATE_MESSAGES,
-    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,myStaffTimeText,buildMyStaffTable,myStaffTableLayout};
+    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,myStaffTimeText,buildMyStaffTable,myStaffTableLayout,myAllShiftPeriodOptions,myAllShiftChoices,myAllShiftSelection};
 }

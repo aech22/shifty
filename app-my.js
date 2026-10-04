@@ -1970,26 +1970,30 @@ function useMyPinchZoomed(){
   },[]);
   return z;
 }
+// 表示が1つ（全員のシフトに出せる期間が無い）ときは切り替えのタブを出さない。木の形（track と section）は同じなので、
+// 読み込みの後で「全員のシフト」が足されても「自分のシフト」は作り直されない（表示中の月などの状態が残る）
 function MyShiftPager({panes}){
   const ref=useRef(null);
-  const[active,setActive]=useState(0);
+  const[active0,setActive]=useState(0);
+  const active=Math.min(active0,Math.max(0,panes.length-1));
   const zoomed=useMyPinchZoomed();
+  const single=panes.length<2;
   const go=i=>{const el=ref.current;if(!el)return;el.scrollTo({left:i*el.clientWidth,behavior:"smooth"});setActive(i);};
   const onScroll=()=>{const el=ref.current;if(!el||!el.clientWidth)return;const i=Math.round(el.scrollLeft/el.clientWidth);if(i!==active&&i>=0&&i<panes.length)setActive(i);};
   return(
-    <div data-my-pager={panes[active]&&panes[active].key} data-my-pager-locked={zoomed?"1":"0"}>
-      <div role="tablist" aria-label="表示の切り替え" style={{display:"flex",gap:4,background:"var(--c-input)",borderRadius:10,padding:4,marginBottom:12}}>
+    <div data-my-pager={panes[active]&&panes[active].key} data-my-pager-locked={zoomed?"1":"0"} data-my-pager-count={panes.length}>
+      {!single&&<div role="tablist" aria-label="表示の切り替え" style={{display:"flex",gap:4,background:"var(--c-input)",borderRadius:10,padding:4,marginBottom:12}}>
         {panes.map((p,i)=>{const a=i===active;return(
           <button key={p.key} role="tab" aria-selected={a} aria-controls={`my-pane-${p.key}`} data-my-pager-tab={p.key} onClick={()=>go(i)}
             style={{flex:1,minHeight:40,background:a?"var(--c-card)":"none",border:"none",borderRadius:8,fontSize:14,fontWeight:a?700:600,
               color:a?"var(--c-text)":"var(--c-text3)",boxShadow:a?"0 0 0 1px var(--c-border2)":"none",cursor:"pointer"}}>{p.label}</button>
         );})}
-      </div>
+      </div>}
       <div ref={ref} data-my-pager-track="1" onScroll={onScroll}
-        style={{display:"flex",alignItems:"flex-start",overflowX:zoomed?"hidden":"auto",overflowY:"visible",scrollSnapType:"x mandatory",
+        style={{display:"flex",alignItems:"flex-start",overflowX:zoomed||single?"hidden":"auto",overflowY:"visible",scrollSnapType:"x mandatory",
           scrollbarWidth:"none",WebkitOverflowScrolling:"touch",overscrollBehaviorX:"contain"}}>
         {panes.map((p,i)=>(
-          <section key={p.key} id={`my-pane-${p.key}`} role="tabpanel" aria-label={p.label} data-my-pane={p.key} aria-hidden={i!==active}
+          <section key={p.key} id={`my-pane-${p.key}`} role={single?undefined:"tabpanel"} aria-label={p.label} data-my-pane={p.key} aria-hidden={i!==active}
             style={{flex:"0 0 100%",minWidth:0,scrollSnapAlign:"start",scrollSnapStop:"always",boxSizing:"border-box"}}>
             {p.node}
           </section>
@@ -1998,7 +2002,38 @@ function MyShiftPager({panes}){
     </div>
   );
 }
-// 最新期間の全員のシフト表（公開済みだけ）。横幅に収める（横スクロール 0）。文字の大きさは人数と日数から決まる
+// 全員のシフト（2026-10-04 改め）。店舗（2つ以上のときだけ）と期間をプルダウンで選ぶ。選択肢は公開済みかつ直近3ヶ月だけ
+// （myAllShiftChoices）で、既定は公開済みの最新。選択肢が無ければ呼び出し側がこの表示ごと出さない（未公開の案内文も出さない）。
+// choices＝myAllShiftChoices の戻り値、subsFor(sid,pid)＝その期間の提出（undefined＝読み込み中・null＝読めない）、onNeed(sid,pid)＝読み込みの依頼
+function myPeriodOptionLabel(p){return p.label||periodRangeLabel(p.startDate,p.endDate);}
+function MyAllShiftPane({choices,subsFor,onNeed}){
+  const[sel,setSel]=useState({shopId:null,periodId:null});
+  const cur=myAllShiftSelection(choices,sel);
+  const sid=cur&&cur.shop.shopId,pid=cur&&cur.period.id;
+  useEffect(()=>{if(sid&&pid&&onNeed)onNeed(sid,pid);},[sid,pid,onNeed]);
+  if(!cur)return null;
+  const subs=subsFor(sid,pid);
+  const many=choices.shops.length>1;
+  const lab={...MY_LABEL,marginBottom:4};
+  return(
+    <div data-my-all-pane="1" data-my-all-shop-sel={sid} data-my-all-period-sel={pid}>
+      <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:10}}>
+        {many&&<label style={{flex:"1 1 140px",minWidth:0}}><span style={lab}>お店</span>
+          <select data-my-all-shop="1" value={sid} onChange={e=>setSel({shopId:e.target.value,periodId:null})} style={{...AI,padding:"9px 10px"}}>
+            {choices.shops.map(s=><option key={s.shopId} value={s.shopId}>{s.shopName||s.shopId}</option>)}
+          </select></label>}
+        <label style={{flex:"1 1 160px",minWidth:0}}><span style={lab}>期間</span>
+          <select data-my-all-period="1" value={pid} onChange={e=>setSel({shopId:sid,periodId:e.target.value})} style={{...AI,padding:"9px 10px"}}>
+            {cur.shop.options.map(p=><option key={p.id} value={p.id}>{myPeriodOptionLabel(p)}</option>)}
+          </select></label>
+      </div>
+      {subs===undefined?<div data-my-all-loading="1" style={{fontSize:14,color:"var(--c-text3)",padding:"16px 4px"}}>読み込み中…</div>
+        :subs===null?<MyMessage error="この期間のシフトを読み込めませんでした。時間をおいてもう一度開いてください"/>
+        :<MyAllShiftTable period={cur.period} staff={cur.shop.staff} settings={cur.shop.settings} subs={subs} plan={cur.shop.plan} me={cur.shop.name}/>}
+    </div>
+  );
+}
+// 全員のシフト表（公開済みだけ）。横幅に収める（横スクロール 0）。文字の大きさは人数と日数から決まる
 function MyAllShiftTable({period,staff,settings,subs,plan,me}){
   const ref=useRef(null);
   const[width,setWidth]=useState(0);
@@ -2013,17 +2048,15 @@ function MyAllShiftTable({period,staff,settings,subs,plan,me}){
   const t=useMemo(()=>buildMyStaffTable({period,staff,settings,subs,todayStr,premium:featureEnabled("myShift",{plan}),me}),[period,staff,settings,subs,todayStr,plan,me]);
   // 列の幅の合計が表の幅を超えると table-layout:fixed は表を広げるので、表の外枠（左右 1px ずつ）を引いた幅で割る
   const L=myStaffTableLayout({width:Math.max(0,width-2),cols:t.cols||[],maxChars:t.maxChars});
+  // 期間なし・Premium でない・未公開は何も出さない（選択肢を公開済みに絞った MyAllShiftPane からは来ない。案内文は出さない＝ユーザー指示）
   let body=null;
-  if(t.state==="noPeriod")body=<MyEmptyState>まだ期間がありません。</MyEmptyState>;
-  else if(t.state==="premium")body=<MyEmptyState><span data-my-all-state="premium">全員のシフト表は、お店がプレミアムプランのときに表示されます。</span></MyEmptyState>;
-  else if(t.state==="unpublished")body=<MyEmptyState><span data-my-all-state="unpublished">{t.period.label||"最新の期間"}のシフトは、まだ公開されていません。お店が公開すると、全員のシフト表がここに出ます。</span></MyEmptyState>;
-  else if(width>0){
+  if(t.state==="ok"&&width>0){
     const cell={overflow:"hidden",whiteSpace:"nowrap",textAlign:"center",padding:"0 1px",borderRight:"1px solid var(--c-border)",lineHeight:1.2};
     const pd2=ds=>{const d=pd(ds);return{day:d.getDate(),wd:WD[d.getDay()],sun:d.getDay()===0,sat:d.getDay()===6};};
     body=(
       <div data-my-all-state="ok">
         <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6,marginBottom:8}}>
-          {t.period.label} ／ {t.confirmed?"確定":"公開"}{(()=>{const d=new Date(t.publishedAt);return Number.isFinite(d.getTime())?`（${d.getMonth()+1}/${d.getDate()} 公開）`:"";})()}
+          {t.confirmed?"確定":"公開"}{(()=>{const d=new Date(t.publishedAt);return Number.isFinite(d.getTime())?`（${d.getMonth()+1}/${d.getDate()} 公開）`:"";})()}
           <span style={{display:"block",fontSize:12,color:"var(--c-text3)"}}>細かいところは2本の指で拡大して見てください。</span>
         </div>
         {/* 罫線は separate＋border-box（collapse だと外枠の半分が幅の外に出て、横幅を 1px 超える） */}
@@ -2196,6 +2229,12 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
     return()=>{clearTimeout(t);window.removeEventListener("pointerdown",bump);window.removeEventListener("keydown",bump);};
   },[pay]);
   useEffect(()=>{if(page.state!=="ok")setPay(null);},[page.state]);
+  // 全員のシフト（2026-10-04 改め）: 公開済みかつ直近3ヶ月の期間から選ぶ。提出は App の購読（直近3ヶ月の期間ごとの部分購読＋最新の期間）を
+  // そのまま使う＝選択肢と同じ窓なので追加の読み込みは無い（店舗の subs 全件は読まない）。未公開の期間は選択肢にも出さない
+  const todayStr=fd(new Date());
+  const allChoices=useMemo(()=>myAllShiftChoices({shops:shopId&&page.state==="ok"?[{shopId,shopName,name:page.name,periods,settings,staff:staffList,plan}]:[],todayStr}),
+    [shopId,shopName,page.state,page.name,periods,settings,staffList,plan,todayStr]);
+  const allSubsFor=useCallback((sid,pid)=>(Array.isArray(subs)?subs:[]).filter(s=>s&&s.periodId===pid),[subs]);
   const unlockPay=r=>setPay({key:String(Date.now()),byShop:{[shopId]:myCompanyPayOf(r)}});
   if(!boot)return <MyPageStatusScreen state="loading" token={token}/>;
   if(boot.state!=="shop")return <MyPageStatusScreen state={boot.state==="invalid"?"invalid":"missing"} token={token}/>;
@@ -2224,7 +2263,7 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
         <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:4}} data-my-who="1">{page.name} さん ／ {shopName}</div>
         {tab==="shift"&&<MyShiftPager panes={[
           {key:"mine",label:"自分のシフト",node:<MyShiftTab me={me} personal={personal}/>},
-          {key:"all",label:"全員のシフト",node:<MyAllShiftTable period={myLatestPeriodOf(periods)} staff={staffList} settings={settings} subs={subs} plan={plan} me={page.name}/>},
+          ...(allChoices.shops.length?[{key:"all",label:"全員のシフト",node:<MyAllShiftPane choices={allChoices} subsFor={allSubsFor}/>}]:[]),
         ]}/>}
         {tab==="pay"&&(pay?<div data-my-pay-unlocked="1">
           <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>

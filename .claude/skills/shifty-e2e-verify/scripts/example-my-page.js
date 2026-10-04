@@ -8,7 +8,8 @@
 //  V（さらに別の端末）: 同じURLでそのスタッフの画面（本人のカレンダー）。uid は S・P と違う
 //  SB（P2・提出）: 佐藤の個別URLの「提出」タブ＝最新期間・名前は固定（入力欄なし）→ 通し → 提出 → subs に staffName 佐藤 の提出。
 //     田中（提出済み）は「提出完了」から修正して同じ提出（s1）を更新する。送信の帯は下部タブの上。確定済みの期間は提出できない（書き込みなし）
-//  AL（P3・全員の表）: 「自分のシフト」「全員のシフト」をタップと横スクロール（ホイール）で切り替え。未公開は「まだ公開されていません」。
+//  AL（P3・全員の表）: 「自分のシフト」「全員のシフト」をタップと横スクロール（ホイール）で切り替え。公開済みが無ければ切り替えも案内文も出さない（AL0）。
+//     期間はプルダウン（公開済みかつ直近3ヶ月・既定は公開済みの最新。最新が未公開でも案内を出さず1つ前の公開済みを出す・2026-10-04）。
 //     公開済みは確定値（調整後の時刻）で、空白列は残し・非表示の人は出さず・本人の列に印。10人×16日と30人×31日で 375px に収まる（横スクロール0）
 //     ことと文字サイズを実測。ピンチで拡大した状態（Chromium の page scale）では横スクロールを止める
 //  PN（P4・暗証番号）: 給料タブは暗証番号で開く（CF は stub の "myPage"＝functions/my-page.js の本物の判定）。初回に決める → 開く・会社設定の賃金が
@@ -285,15 +286,59 @@ async function requestPage(h, name, number) {
       tableW: Math.round(r.width), paneW: Math.round(b.width), overTable: Math.round(r.right - b.right), cols: [...t.querySelectorAll("th[data-my-all-col]")].map(x => x.getAttribute("data-my-all-col")),
       me: (t.querySelector("[data-my-all-me]") || {}).getAttribute ? t.querySelector("[data-my-all-me]").getAttribute("data-my-all-col") : null,
       rows: t.querySelectorAll("[data-my-all-row]").length, spacers: t.querySelectorAll("thead th:not([data-my-all-col])").length - 1 }; });
+  // AL0: 公開済みの期間が無い（最新の期間が未公開）→ 「全員のシフト」の切り替えも「まだ公開されていません」の案内も出さない
   {
     const h = await openAnon({ hash: "#/m/" + T1, db: dump, wait: '[data-my-view="page"]' });
     try {
-      const AL = {};
+      const A0 = {};
       await waitSel(h, "[data-my-pager]");
+      await sleep(h, 1200);
+      A0.count = await h.evaluate(() => document.querySelector("[data-my-pager]").getAttribute("data-my-pager-count"));
+      A0.tabs = await h.evaluate(() => document.querySelectorAll("[data-my-pager-tab]").length);
+      A0.allPane = await h.evaluate(() => !!document.querySelector('[data-my-pane="all"]'));
+      A0.text = await h.evaluate(() => /まだ公開されていません|プレミアムプランのときに/.test(document.body.innerText));
+      A0.overflow = await overflowX(h);
+      A0.errors = h.errors.slice();
+      R.AL0 = A0;
+      V.AL_noAllWhenNothingPublished = A0.count === "1" && A0.tabs === 0 && !A0.allPane && !A0.text && A0.overflow <= 0 && A0.errors.length === 0;
+    } finally { await h.browser.close(); }
+  }
+  // AL: 期間のプルダウン。最新（来月）が未公開でも案内を出さず、公開済みの最新（今月）を既定で出す。選択肢は公開済みかつ直近3ヶ月
+  // （先月は出る・5か月前と来月は出ない）。先月を選ぶとその期間の表に替わる。切り替えはタップと横スクロール
+  const ymOf = k => { const d = new Date(now.getFullYear(), now.getMonth() + k, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+  const lastOf = k => { const d = new Date(now.getFullYear(), now.getMonth() + k + 1, 0); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+  const PUB = { at: "2026-10-03T09:00:00.000Z", byUid: OWN };
+  const periodSeed = () => {
+    const d = JSON.parse(JSON.stringify(dump));
+    const P = d.shops.S1.periods;
+    P.p1 = { ...P.p1, published: PUB };
+    P.pNext = { id: "pNext", urlToken: "tN", shopId: "S1", label: "来月", startDate: `${ymOf(1)}-01`, endDate: lastOf(1), deadlineDate: "", createdAt: "2026-09-01T00:00:00.000Z" };
+    P.pPrev = { id: "pPrev", urlToken: "tP", shopId: "S1", label: "先月", startDate: `${ymOf(-1)}-01`, endDate: lastOf(-1), deadlineDate: "", createdAt: "2026-08-01T00:00:00.000Z", published: PUB };
+    P.pOld = { id: "pOld", urlToken: "tO", shopId: "S1", label: "5か月前", startDate: `${ymOf(-5)}-01`, endDate: lastOf(-5), deadlineDate: "", createdAt: "2026-04-01T00:00:00.000Z", published: PUB };
+    d.shops.S1.subs.sPrev = { id: "sPrev", periodId: "pPrev", shopId: "S1", staffName: "鈴木", submittedAt: "2026-08-02T00:00:00Z", shifts: { [`${ymOf(-1)}-03`]: { status: "work", start: "11:00", end: "14:00" } } };
+    return d;
+  };
+  const selInfo = h => h.evaluate(() => { const s = document.querySelector("[data-my-all-period]"); return s ? { value: s.value, options: [...s.options].map(o => o.value), labels: [...s.options].map(o => o.textContent),
+    font: parseFloat(getComputedStyle(s).fontSize), shopSel: !!document.querySelector("[data-my-all-shop]") } : null; });
+  {
+    const h = await openAnon({ hash: "#/m/" + T1, db: periodSeed(), wait: '[data-my-view="page"]' });
+    try {
+      const AL = {};
+      await waitSel(h, '[data-my-pager-tab="all"]');
       AL.start = await pagerState(h);
       await click(h, '[data-my-pager-tab="all"]'); await sleep(h, 700);
       AL.afterTap = await pagerState(h);
-      AL.unpublished = await waitSel(h, '[data-my-all-state="unpublished"]', 5000);
+      await waitSel(h, "[data-my-all-table]");
+      AL.sel = await selInfo(h);
+      AL.rows = await h.evaluate(() => [...document.querySelectorAll("[data-my-all-row]")].map(r => r.getAttribute("data-my-all-row")));
+      AL.text = await h.evaluate(() => /まだ公開されていません/.test(document.body.innerText));
+      // 先月を選ぶ
+      await h.page.selectOption("[data-my-all-period]", "pPrev"); await sleep(h, 600);
+      AL.selPrev = await selInfo(h);
+      AL.rowsPrev = await h.evaluate(() => [...document.querySelectorAll("[data-my-all-row]")].map(r => r.getAttribute("data-my-all-row")));
+      AL.prevCell = await h.evaluate(d => { const r = document.querySelector(`[data-my-all-row="${d}"]`); return r ? [...r.querySelectorAll("td[data-my-all-cell]")].map(c => c.innerText.replace(/\n/g, "/")) : null; }, `${ymOf(-1)}-03`);
+      AL.reads = await h.evaluate(() => (window.__reads || []).filter(p => /\/subs$/.test(p)));
+      AL.overflowSel = await overflowX(h);
       // 横スクロール（スワイプ相当）で戻る
       const box = await h.page.evaluate(() => { const r = document.querySelector("[data-my-pager-track]").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + 40 }; });
       // Chromium はホイールの横スクロール（スワイプ相当）。モバイル WebKit はホイールを受け付けないので、スクロール位置を動かして
@@ -304,12 +349,17 @@ async function requestPage(h, name, number) {
       await sleep(h, 900);
       AL.afterSwipe = await pagerState(h);
       AL.overflow = await overflowX(h);
+      await h.page.setViewportSize({ width: 320, height: 700 }); await sleep(h, 400);
+      AL.overflow320 = await overflowX(h);
       AL.errors = h.errors.slice();
       R.AL = AL;
       V.AL_tapSwitches = AL.start.active === "mine" && AL.afterTap.active === "all" && Math.abs(AL.afterTap.left - AL.afterTap.w) <= 2;
       V.AL_swipeSwitches = AL.afterSwipe.active === "mine" && AL.afterSwipe.left <= 2;
-      V.AL_unpublished = AL.unpublished;
-      V.AL_noOverflow = AL.overflow <= 0 && AL.errors.length === 0;
+      V.AL_defaultLatestPublished = !!AL.sel && AL.sel.value === "p1" && AL.rows[0] === `${YM}-01` && !AL.text;
+      V.AL_optionsPublishedRecent = !!AL.sel && JSON.stringify(AL.sel.options) === JSON.stringify(["p1", "pPrev"]) && !AL.sel.shopSel && AL.sel.font >= 16;
+      V.AL_selectPast = !!AL.selPrev && AL.selPrev.value === "pPrev" && AL.rowsPrev[0] === `${ymOf(-1)}-01` && AL.rowsPrev.length === Number(lastOf(-1).slice(8)) &&
+        !!AL.prevCell && AL.prevCell[2] === "11/14";
+      V.AL_noOverflow = AL.overflow <= 0 && AL.overflowSel <= 0 && AL.overflow320 <= 0 && AL.errors.length === 0;
     } finally { await h.browser.close(); }
   }
   // 公開済みの表（10人×16日・30人×31日）

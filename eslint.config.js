@@ -158,6 +158,9 @@ const sharedGlobals = {
   validateMyPagePinInput: "writable",
   buildMyStaffTable: "writable",
   myStaffTableLayout: "writable",
+  myAllShiftPeriodOptions: "writable",
+  myAllShiftChoices: "writable",
+  myAllShiftSelection: "writable",
   myLatestPeriodOf: "writable",
   // app-my.js で定義し app-admin.js・app-staff.js・app-main.js が使う個別URLの部品
   MyPageView: "writable",
