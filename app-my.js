@@ -95,7 +95,21 @@ async function myRegister(f,shopId){
     await u.linkWithCredential(firebase.auth.EmailAuthProvider.credential(String(f.email).trim(),f.password));
   }catch(e){
     console.warn("スタッフアカウントの連結に失敗:",e&&e.code);
-    return{error:myAuthErrorMessage(e,"register")};
+    // メールアドレスの列挙保護が有効なプロジェクト（本番・dev とも）では、匿名 uid へのメール＋パスワードの連結が
+    // auth/operation-not-allowed（"Please verify the new email before changing email"）で拒否される（2026-10-04 に本番で発生）。
+    // そのときは新しいアカウントとして作る。uid が替わるので、別端末のログインと同じく再読み込みして Phase1 からやり直す
+    if(String((e&&e.code)||"")!=="auth/operation-not-allowed") return{error:myAuthErrorMessage(e,"register")};
+    let nu;
+    try{
+      nu=(await firebaseAuth.createUserWithEmailAndPassword(String(f.email).trim(),f.password)).user;
+    }catch(e2){
+      console.warn("スタッフアカウントの作成に失敗:",e2&&e2.code);
+      return{error:myAuthErrorMessage(e2,"register")};
+    }
+    setStaffAccountMark(nu.uid);
+    await mySaveProfile(nu.uid,f,{fresh:true});
+    location.reload();
+    return{pending:true};
   }
   setStaffAccountMark(u.uid);
   const cur=firebaseAuth.currentUser||u;
