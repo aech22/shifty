@@ -87,7 +87,8 @@ developブランチ・mainブランチのどちらにチェックアウトして
 │   ├── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗/期間の自動削除・企業アカウント・従業員画面の紐付け）
 │   ├── company-config.js ← 企業アカウント系 CF の純粋関数（tests/core.test.js がクライアントとの一致を照合）
 │   ├── staff-link.js   ← 従業員画面の紐付け（E2）の純粋関数（tests/my.test.js が app-my-utils.js との一致を照合）
-│   └── my-pay.js       ← 従業員画面の会社設定の賃金（E6・getMyPay）の純粋関数（tests/my.test.js が normalizePayVersion との一致を照合）
+│   ├── my-pay.js       ← 従業員画面の会社設定の賃金（E6・getMyPay）の純粋関数（tests/my.test.js が normalizePayVersion との一致を照合）
+│   └── my-page.js      ← スタッフ個別URLの給料の暗証番号（myPagePin）の純粋関数（2026-10-04。crypto を読まない＝E2E のスタブにも埋め込む）
 ├── RULES.md            ← やってはいけないこと（必読）
 ├── firebase.json       ← Firebase Hosting / Functions 設定
 ├── database.rules.json ← Firebase セキュリティルール（**正本はこの1ファイルのみ**。2026-07-28 に締めルールへ切替済み）
@@ -580,6 +581,10 @@ Firebase Realtime Database
 │       │                 （auth.token.email != null・global/shops に店舗があること・デモ店舗は不可）、読みはオーナーと本人、消すのは本人かオーナー（却下）
 │       ├── staffLinks/{uid} ← 紐付け（E2）{name, personId?, method: "number"|"name"|"code", at}。**名前の正本**。作るのは Cloud Functions だけ。
 │       │                 オーナーは削除と `name` の書き換えだけできる（改名・削除の追随をクライアントからも書けるように）。読みはオーナーと本人
+│       ├── staffPages/{pageToken} ← スタッフ個別URL（2026-10-04）{status:"pending"|"approved"|"rejected"|"revoked", displayName, number?, requestedAt,
+│       │                 name?, approvedAt?, byUid?, revokedAt?, pinResetAt?}。**name（スタッフ一覧の名前）が正本**。申請は誰でも（pending を作るだけ・
+│       │                 name 等のオーナーの項目は書けない・pending の取り下げだけ可）、承認・却下・取り消し・改名・暗証番号のリセットはオーナーだけ。
+│       │                 一覧の読みはオーナー、1件は pageToken を知っていれば読める（auth != null）。デモ店舗は不可（ルール未デプロイ）
 │       └── private/     ← 読みはオーナーのみ（配下すべて）
 │           ├── adminKey ← 管理キー（32桁）
 │           ├── pay/{名前} ← 賃金マスタ（2026-09-30・P6a）。書きもオーナーのみ・.validate で payType（monthly|hourly）と base（数値）必須。
@@ -643,6 +648,11 @@ Firebase Realtime Database
 │       └── private/passwordHash ← パスワードハッシュ（Cloud Functions経由のみ）
 ├── companyCodes/
 │   └── {code}           ← companyId（企業コードの逆引き。companyLoginでカスタムトークン発行に使用）
+├── staffPageTokens/{pageToken} ← 個別URLの逆引き（2026-10-04）{shopId, at}。直キー読みだけ（一覧は不可）。**作成後は書き換えられない**
+│                          （URL を別の店舗へ付け替えさせない）・消せるのはその店舗のオーナー。token は英数字24文字（genMyPageToken）
+├── staffPageData/{pageToken}/ ← 個別URLの本人のデータ（2026-10-04）。workplaces・shifts・overrides・goals・actuals・seen を users/{uid} と**同じ形**で持つ
+│                          （tests/my.test.js が形の一致を照合）。読み書きは「その token の staffPages が approved の間」だけで、**token を知る人なら誰でも**
+├── staffPagePins/{pageToken} ← 個別URLの給料の暗証番号 {hash, salt, setAt, fails, lockedUntil}（2026-10-04）。CF myPagePin だけ（ルールで読み書きとも不可）
 ├── staffLinkCodes/{code} ← 個人リンクコード（E2）{shopId, name, expiry, issuedBy, createdAt}。8桁・24時間・1回限り。CF だけ（ルールで読み書きとも不可）
 ├── staffLinkCodeIndex/{shopId}/{name} ← その名前の最新のコード（発行し直すと前のコードを消す）。CF だけ
 └── staffLinkCodeAttempts/{uid} ← コード入力の失敗回数 {fails, lockedUntil?, lastAt}（本人単位・5回で15分止める）。CF だけ
@@ -775,6 +785,10 @@ MyGoals     = { monthly: 円, updatedAt: string }                               
 // users/{uid}/actuals/{支給月}/{勤務先ID} = 振込額（円・number）
 MyShift     = { workplaceId: string, date: "YYYY-MM-DD", start: string, end: string, breakMin: number, memo?: string }  // users/{uid}/shifts/{h_xxxxxxxxxx}
 MyOverride  = { start: string, end: string, breakMin: number }                                // users/{uid}/overrides/{shopId}/{date}
+// スタッフ個別URL（2026-10-04）。staffPageData/{pageToken} の下は上の My* と同じ形（users/{uid} の profile・links は持たない）
+StaffPage   = { status: "pending"|"approved"|"rejected"|"revoked", displayName: string, number?: string, requestedAt: string,
+                name?: string, approvedAt?: string, byUid?: string, revokedAt?: string, pinResetAt?: string }  // shops/{shopId}/staffPages/{pageToken}
+StaffPageToken = { shopId: string, at: string }                                                   // staffPageTokens/{pageToken}
 
 // 企業設定の写し（shops/{shopId}/company・2026-09-27）
 CompanyLink = { id: string, name: string, entityId?: string, entityName?: string, kind?: "shop"|"hq",   // 法人と本部（2026-09-30・P1）
@@ -1273,6 +1287,43 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
   `shifty-e2e-verify/scripts/example-my-pay.js`（スタブ・375px。E5 前の配信物では落ちる）、`shifty-cf-verify/scripts/example-my-pay.js`（本物の index.js・15項目。E6 前の index.js では13項目が落ちる）。
   **ルールと CF の実機（dev・本番）は未検証**
 
+### スタッフ個別URL（2026-10-04・ユーザーの仕様変更・develop のみ・ルールと CF は未デプロイ）
+
+決定（ユーザー・2026-10-04）: ①メール＋パスワードのアカウント（E1〜E6）と**併用**（個別URLで閲覧と提出・アカウントは任意で残す）。②給料は**4桁の暗証番号**。
+③登録はすべて**管理者が承認**。④全員のシフト表は**公開済みだけ**。計画書 `Shifty_実装計画_2026-10.md` の末尾「追記: スタッフ個別URL」。画面は app-my.js 末尾、
+純粋関数は app-my-utils.js の「スタッフ個別URL」の節、CF の判定は functions/my-page.js。**すべて `MY_SCREEN_ENABLED` の下**（本番では入口も `#/m/` も動かない＝parseUrl が返さない）。
+
+- **ルーティング**: `#/m/<pageToken>`（parseUrl が `{type:"page",pageToken}`。#/s/ と旧形式より先に判定）。App は `_hasUrlToken`・`urlLocked` を個別URLでも立てる
+  （セッションの店舗・期間を復元しない・管理者の経路に入らない・lazy claim しない）。Phase1 は `staffPageTokens/{token}` → `global/shops/{shopId}` を直キーで読み、
+  スタッフURLと同じく `enterShop`（店舗の settings・periods・staff・subs を購読）。`pageBoot` に結果、`MyPageView` が描く。apid は常に最新の期間（`latestPeriod`）に追随させる
+- **申請**: 募集URL（StaffView の「自分専用のURLを作る」→ 重ねて表示する `MyPageRegister`）。名前と任意の番号を入れると、トークンを作って `staffPageTokens` →
+  `staffPages`（pending）の順に書き、その場で個別URL（コピー・共有）と「承認待ち」を出す。作ったURLは端末の localStorage（`ots_myPages_v1`）に店舗ごとに覚えて見せ直す。
+  **募集URLだけで名前を入れて提出する従来の動線は変えていない**（VISION 原則1）
+- **承認**（スタッフタブの「個別URLの申請」・`StaffPageRequestsCard`）: 候補は紐付けの A・B（`linkCandidatesFor`）で、選んだ状態で出す。**管理者がスタッフ一覧から任意の名前を
+  選んで承認できる**（CF を使わずオーナーが書くので、E2 と違い候補に縛らない）。スタッフ一覧に無い人は先にスタッフを追加してから（承認時に追加するボタンは置かない＝
+  人数の上限・別名の規則はスタッフの追加の経路が持つ）。差分は App の `staffPageAct` が**その時点の staffPages を `once()` で読み直して**作り update する。
+  1つの名前に承認済みは1つ（新しい承認が前のものを revoked にする）。編集モーダルの「個別URL」（`StaffPageEditSection`）で URL の表示・取り消し・暗証番号のリセット
+- **改名・削除・同名の再登録への追随**: 紐付けの保留の列（`b43a7d7`）の**同じ操作を staffPages にも当てる**（`flushStaffLinkOps` が staffLinks と staffPages を順に読み直す。
+  `planStaffPageOp`・世代の目印は approvedAt）。改名は name を移し、削除は revoked（同じ名前を登録し直しても古いURLは生き返らない）。読む側（`resolveMyPage`）も
+  「承認済みで、名前がいまのスタッフ一覧にある」ときだけ使う（missingName で止める）
+- **本人の画面**（`MyPageView`・下部タブ マイシフト／提出／給料／設定）: マイシフト・給料・勤務先・月間目標はアカウントと**同じ部品**を「本人」（subject）を替えて使う
+  （`myAccountSubject(uid)`＝users/{uid}・`myPageSubject`＝staffPageData/{token}。base と links() と companyPay(sid)。tests が base の出どころを2か所に固定）。
+  マイシフトは「自分のシフト」「全員のシフト」を**横スクロール（scroll-snap）とタブで切り替え**（`MyShiftPager`。ピンチで拡大している間＝visualViewport.scale>1 は横スクロールを止める）
+- **全員のシフト表**（`MyAllShiftTable`・`buildMyStaffTable`）: 最新の期間（`myLatestPeriodOf`）が公開済み・その店舗が Premium のときだけ。中身は確定値（scheduledDay）、
+  並びはシフト作成タブと同じ（写し・visibleStaffList・空白列）、休暇の帯は種別名。労務・ヒートマップ・賃金・メモは出さない。**横幅に収める**（`myStaffTableLayout`。
+  列の幅の合計＝表の幅－外枠2px。文字は14pxを上限に下限なし）。実測: 10人×16日 375px で 11.2px、30人×31日で 375px 3.3px・320px 2.6px（細部はピンチで拡大）
+- **提出**: 「提出」タブは最新の期間へ、承認された名前で固定（`StaffView` の `fixedName`。名前の入力欄なし・Cookie を読まない書かない）。提出の処理は募集URLと同じ
+  App の `staffOnSub`（差分書き込み・締切・carryAdminShiftFields・別名の解決はそのまま）。確定済みの期間は StaffView が止め、ルールも拒否する
+- **給料の暗証番号**: 給料タブは CF `myPagePin` で開く（初回に決める・設定タブで変更・管理者のリセット＝`pinResetAt`）。開いた状態は MyPageView のメモリだけ
+  （再読み込み・10分操作なしで伏せる）。開くまで設定タブにも給料の設定・月間目標を出さない。会社が登録した賃金は照合が通ってから CF が返す。**CF が使えない環境（dev）では開かない**
+- **capability モデルの限界（承知のうえ）**: 個別URLにはログインが無いので、**pageToken を知る人は誰でも** その人のシフト・本人のデータ（staffPageData：
+  本人が入れた時給・交通費・締日・振込額・手入力のシフト）を REST で読める。暗証番号は画面上の鍵で、本人が入れた給料の設定は守らない。
+  守るのは**会社が登録した賃金（private/pay）だけ**（CF が番号を照合してから返す・ハッシュはクライアントから読めない場所）。URL の漏えい時は管理者が取り消す。
+  また subs は認証済みなら店舗全員分を読める（E.4 の既存の注意）ので、全員の表は「公開済みだけを画面に出す」絞り込みで、ルール上の保護ではない
+- 検証: tests/my.test.js（トークン・状態・承認と追随の差分・候補・全員の表と寸法・暗証番号の計画・CF との一致・ルールの形・入口と書き込み先のドリフト）、
+  `shifty-e2e-verify/scripts/example-my-page.js`（スタブ・P1〜P4・375px／320px・WebKit iPhone 13 でも allPass。73942db の配信物では最初の項目で止まる）、
+  `shifty-cf-verify/scripts/example-my-page.js`（本物の index.js・30項目。73942db の index.js では28項目が落ちる）。**ルールと CF の実機（dev・本番）・iPhone の指のスワイプとピンチは未検証**
+
 ---
 
 ## Cloud Functions（functions/index.js）
@@ -1286,7 +1337,7 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 | `createPortalSession` | POST `/createPortalSession` | Stripe Customer Portal セッション |
 | `sendEmailOtp` | Callable `sendEmailOtp` | メール連携用OTP送信 |
 | `verifyEmailOtp` | Callable `verifyEmailOtp` | OTP検証（5回失敗で無効化） |
-| `purgeInactiveShops` | schedule 毎日（JST） | 1年未更新店舗を archived/ へ退避→30日後に本削除。Invalid Dateはスキップしてログ。期限切れの個人リンクコード（`staffLinkCodes`）と索引・古い入力失敗の記録も消す（E2・**未デプロイ**） |
+| `purgeInactiveShops` | schedule 毎日（JST） | 1年未更新店舗を archived/ へ退避→30日後に本削除。Invalid Dateはスキップしてログ。期限切れの個人リンクコード（`staffLinkCodes`）と索引・古い入力失敗の記録も消す（E2・**未デプロイ**）。退避する店舗のスタッフ個別URLの `staffPageTokens`・`staffPageData`・`staffPagePins` も消す（2026-10-04・**未デプロイ**。本人のデータは archived に残さない） |
 | `purgeOldPeriods` | schedule 毎日（JST） | endDateが36ヶ月超の期間の period・subs・tokens・actuals（P4）を削除。`PURGE_OLD_PERIODS_DRY_RUN=true` でdry-run中（本有効化はBACKLOG参照） |
 | `sendSurveyEmails` | POST `/sendSurveyEmails` | ユーザーアンケート一斉送信（要秘密トークン） |
 | `createCompany` | Callable `createCompany` | 企業アカウント作成（企業コード発行・パスワードハッシュ保存・作成者オーナー店舗を連携） |
@@ -1299,6 +1350,7 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 | `ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId / companyRenameStaff / companyUpdateStaff / markPeopleDistinct` | Callable | 人物ID と企業スタッフ一覧の編集（2026-09-30・P1b・**本番未デプロイ**）。`markPeopleDistinct` は「統合しない」（`{personIds:[…], distinct:true}` で全ペアを両方向に記録、`{personIds:[a,b], distinct:false}` で取り消し。写しは作り直さない）。権限は `assertCompanyMember`。人物（`companies/{id}/pub/people`）を作るのは `ensureCompanyPeople` だけ。改名は店舗のデータを差分 update で移す（上の「人物ID と企業スタッフ一覧の編集」）。規則は `functions/company-config.js` |
 | `setCompanyPayCode` | Callable | 企業の賃金閲覧パスコードの変更（2026-09-30・P6a・**本番未デプロイ**）。現在の番号を照合（未設定なら 0000）し、`companies/{id}/private/payCode` と連携全店舗の `shops/{sid}/private/payCode` に同じハッシュを書く。作成者と企業セッションの両方が可（`assertCompanyMember`）。`syncCompanyMirror` も写しを作り直すたびに企業のパスコードを同期する（後から連携した店舗に届く） |
 | `approveStaffLink / issueStaffLinkCode / redeemStaffLinkCode / unlinkStaff` | Callable | 従業員画面の紐付け（2026-10-04・第2部 E2・**未デプロイ**）。承認とコードの発行は店舗のオーナー（`owners/{uid}`）、コードの入力はメールのある認証（`token.email`）、解除は本人かオーナー。shopId・uid・名前・コードはパスに埋め込む前に形を確かめ、デモ店舗は拒否。紐付けは `shops/{sid}/staffLinks/{uid}` と `users/{uid}/links/{sid}` を同じ update で書く。コードは読んだ記録と同じものだけをトランザクションで消す（1回限り）。規則は `functions/staff-link.js` |
+| `myPagePin` | Callable | スタッフ個別URLの給料の暗証番号（2026-10-04・**未デプロイ**）。`{token, action:"status"|"set"|"verify", pin?, currentPin?}`。URL が使える状態（承認済み・名前がスタッフ一覧にある）を確かめ、`staffPagePins/{token}` のハッシュと照合する（5回の誤りで15分・トランザクションで数える）。照合が通ると（決めたときも）会社が登録した本人の賃金（`private/pay/{staffPages の name}`）を getMyPay と同じ形で返す。名前・店舗は受け取らない（URL から引く）。デモ店舗は拒否。規則は `functions/my-page.js` |
 | `getMyPay` | Callable | 従業員画面の会社設定の賃金（2026-10-04・第2部 E6・**未デプロイ**）。`{shopId}` だけを受け取り、呼び出し元 uid の staffLinks の名前の `private/pay` を返す（本人の分だけ・名前は受け取らない）。メールのある認証・紐付けあり・名前がスタッフ一覧にあることを確かめ、shopId の形とデモ店舗を拒否。何も書かない。規則は `functions/my-pay.js` |
 | `claimCompanyShop` | Callable `claimCompanyShop` | 連携済み店舗のオーナーに**呼び出し元のuid**を登録（企業連携タブの「ログイン」で管理コードの再入力を無くす。付与は `companies/{id}/grants/{shopId}/{uid}` に記録し、解除時に回収する） |
 | `unlinkStoreFromCompany` | Callable `unlinkStoreFromCompany` | 店舗の企業連携を解除（企業uid＋`grants` の付与uidを owners から外す） |

@@ -345,6 +345,12 @@ holdOn を使わないと「購読が届く前の操作」は作れない（exam
 （呼び出し元の uid の staffLinks の名前で private/pay を読む）、`"reject:…"` で CF が使えないときのフォールバックを見る。`cfHandlers` を渡さないと
 既定の "ok" が `{ok:true}`（会社設定なし）を返す。期待値は今日の日付で作る（支給月の既定は翌月・月末締め）。`SHIFTY_ONLY=none` で E6 の場面（J〜L）を飛ばせる
 
+スタッフ個別URL（2026-10-04・`#/m/<pageToken>`）は `scripts/example-my-page.js`。スタブの `auth:"accounts"` で `authSeed.cur` を空にすると、
+開くたびに**新しい匿名 uid**になる＝「別の端末で同じ URL を開く」を再現できる（`window.__authCur().uid` で確かめる）。暗証番号は
+`cfHandlers:{myPagePin:"myPage"}` で functions/my-page.js の本物の判定を通す（ハッシュは app-utils.js の payCodeHash）。`"reject:…"` で CF が無い環境（dev）を見る。
+ピンチの再現は Chromium の CDP（`Emulation.setPageScaleFactor`＝visualViewport.scale）だけで、モバイル WebKit はホイールも受け付けない
+（スワイプは scrollLeft を動かして scroll イベントの経路だけを見る）。`SHIFTY_ENGINE=webkit SHIFTY_DEVICE="iPhone 13"` でも通る
+
 **本物の index.html をこのスタブで丸ごと起動する例**が `scripts/example-index-html-load.js`（2026-09-30）。
 ハーネスは読み込むファイルを自前で並べるので、index.html の `<script>` の並び・`?v=` の食い違いは素通りする。
 index.html を触ったとき・app-*.js を分割したときはこれも回す（Firebase の CDN 5本だけをスタブに差し替え、残りは本物）。

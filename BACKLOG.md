@@ -38,25 +38,6 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🟡 スタッフ個別URL（登録・承認・個別URLでの閲覧と提出・全員のシフト表・給料の暗証番号）（着手中・2026-10-04）
-
-**目的**: ユーザーの仕様変更（2026-10-04）。シフト募集URLからスタッフが登録（申請）し、管理者が承認すると個別URL（`#/m/<pageToken>`）が有効になる。
-個別URLはログイン不要・どの端末でも同じスタッフの画面を開き、最新期間への提出・本人のカレンダー・最新期間の全員のシフト表（横スワイプで切替）・暗証番号で開く給料を出す。
-メール＋パスワードのアカウント（E1〜E6）とは併用。決定事項は `Shifty_実装計画_2026-10.md` 末尾の「追記: スタッフ個別URL」。
-**受け入れ条件**:
-- [ ] (P1) 募集URLの画面から申請 → その場で個別URLを表示（コピー・共有）・承認待ち。承認前の個別URLは承認待ちの画面。管理者がスタッフタブで名前を選んで承認・却下・取り消し。別の端末（別の匿名 uid）で同じURLを開くとそのスタッフの画面（本人のカレンダー）
-- [ ] (P1) 改名・削除・同名の再登録に追随（`b43a7d7` の保留の列に同じ入口で載せる）。読む側は「承認済みで、名前がいまのスタッフ一覧にある」ときだけ有効
-- [ ] (P2) 個別URLから最新期間へ提出できる（名前は承認された名前で固定・subs の staffName が承認された名前）。確定済みの期間はその旨。募集URLの提出の動線は変わらない
-- [ ] (P3) 本人のカレンダーと最新期間の全員のシフト表を横スワイプ（scroll-snap）とタップで切り替え。全員の表は公開済みのときだけ（未公開は「まだ公開されていません」）。375px の横幅に収める（横スクロール0）
-- [ ] (P4) 給料タブは本人が決めた4桁の暗証番号で開く（初回設定・変更・5回失敗で待ち・管理者のリセット）。会社が登録した賃金は CF が番号を照合してから返す
-- [ ] ルールは追加だけ（`staffPageTokens`・`shops/*/staffPages`・`staffPageData`・`staffPagePins`）。デプロイしない。ルールの形のテストと REST 実測項目を本番反映タスクへ
-- [ ] `MY_SCREEN_ENABLED` のゲートの下（本番相当では入口も個別URLも動かない）。375px・320px で横はみ出し無し・入力欄16px以上・WebKit（iPhone 13）でも主要な流れが通る
-**影響範囲**: app-my-utils.js・app-my.js・app-core.js（parseUrl）・app-main.js（Phase1・描画・購読・追随）・app-staff.js（StaffView の名前固定・登録の入口）・app-admin.js（承認 UI の配置）・
-database.rules.json・functions/my-page.js（新規）・functions/index.js・tests/my.test.js・回帰スクリプト（新規）
-**備考**: 段階ごとにコミットする（P1→P2→P3→P4）。個別URLとメールのアカウントの統合（個別URLのデータをアカウントへ取り込む）は今回やらない
-
----
-
 ## 🔴 次の本番リリースでユーザーと突き合わせる実機確認（`/release-to-main` の担当は必ずこの一覧を開く）
 
 **目的**: 2026-10-04 の第1部（S1〜S3・H2・K2）と第2部（従業員画面 E0〜E6）は、ヘッドレスのブラウザ・スタブ Firebase・シミュレーターでしか確かめていない。
@@ -80,6 +61,12 @@ database.rules.json・functions/my-page.js（新規）・functions/index.js・te
 - [ ] **給料の目安と実際の明細の突き合わせ**（E5・E6）: 1人1か月ぶん、給料タブの金額（合計・確定分・内訳）と実際の給与明細を並べる。
       時給者と月給者、月末締めでない勤務先、ヘルプ先の勤務がある人を含める（ヘルプ先の勤務は所属店舗の給料に合算しない差がある＝CLAUDE.md の E5 の節）。
       **Shifty の計算値を正解として代用しない**（ユーザーの領分）。戻る先: 完了済みの E5・E6
+- [ ] **スタッフ個別URLの横スワイプとピンチ拡大**（2026-10-04）: 実機の iPhone の Safari で個別URLのマイシフトを開き、①指の横スワイプで「自分のシフト」「全員のシフト」が
+      切り替わるか（上のタブの表示も追随するか）、②全員の表を2本の指で拡大して細部（30人×31日では文字が約3px）が読めるか、③**拡大したまま表を左右に動かしても
+      隣の表示へ切り替わらないか**（visualViewport.scale で横スクロールを止める実装。Chromium の page scale では確かめた・WebKit の実機は未検証）、
+      ④縦のスクロールとスワイプが混ざって誤って切り替わらないか。Android の Chrome でも同じ。戻る先: 完了済みの「スタッフ個別URL」P3
+- [ ] **個別URLの申請から提出まで**（2026-10-04）: 実機で募集URL → 「自分専用のURLを作る」→ コピーと共有（LINE に貼る）→ 管理者が承認 → **別の端末（家族のスマホ等）で同じURL**
+      → 本人のシフト・全員の表・「提出」タブから最新期間に提出 → 管理者のシフト作成タブに出る。ホーム画面に追加して開けるか。戻る先: 完了済みの「スタッフ個別URL」P1・P2
 
 **影響範囲**: なし（確認だけ。食い違いが見つかったときは戻る先のタスクで直す）
 
@@ -116,6 +103,14 @@ database.rules.json・functions/my-page.js（新規）・functions/index.js・te
       pay: 必須（closingDay・payMonthOffset・payDay・holidayRule）の欠け・closingDay 0／32・payMonthOffset 3・holidayRule "x"・rate だけで wageType なし・rate 0・commute の per "week"・
       commute の余計なキー・余計なキーは 401。**勤務先の update（kind・shopId・color・name・pay を1回の update）が通ること**と、`pay:null` で給料設定だけ消せること。
       goals: monthly 0 は 401（消すのは null）・余計なキーは 401。actuals: `2026-13` の月・負の値・1千万円超は 401、`actuals/{ym}` をまとめて消せる。`actuals` 全体への書き込みは 401
+- [ ] スタッフ個別URL（2026-10-04）の `staffPageTokens`・`shops/*/staffPages`・`staffPageData`・`staffPagePins` を同じ回で反映し、REST で実測する（匿名 uid で足りる）:
+      **staffPageTokens**: 新しい token の作成は 200（shopId が global/shops にある店舗）・同じ token の上書き（別の shopId）は 401・存在しない店舗・デモ店舗・token の形（23文字・記号）・
+      余計なキーは 401・一覧の読みは 401・1件の読みは 200・削除はその店舗のオーナーだけ 200（他は 401）。
+      **staffPages**: オーナー以外は `status:"pending"` の新規作成だけ 200（`name`・`approvedAt`・`byUid`・`pinResetAt` を含むと 401・`status:"approved"` は 401）・
+      pending の削除は誰でも 200・approved の書き換えと削除はオーナー以外 401・オーナーは承認（status・name・approvedAt・byUid＝自分の uid）200・`byUid` が他人の uid なら 401・
+      approved なのに name が無いと 401・一覧の読みはオーナーだけ（他は 401）・1件の読みは 200・デモ店舗は 401。
+      **staffPageData**: approved の token は読み書き 200（形は users/{uid} と同じ検証）・pending／revoked／存在しない token は読み書きとも 401・`profile`・`links` 等の余計なキーは 401。
+      **staffPagePins**: 誰も読み書きできない（401）。反映まで dev の実機では申請・承認・本人のデータの保存が拒否される（画面は落ちず理由を出す）
 - [ ] 本番へ反映する（dev と同じファイル。本番のルールは REST で叩かない）
 **②CF（本番）**:
 - [ ] 紐付けの4本（`approveStaffLink`・`issueStaffLinkCode`・`redeemStaffLinkCode`・`unlinkStaff`）と既存の更新（`companyRenameStaff`・`syncPeopleMirror`・`purgeInactiveShops`）、
@@ -126,14 +121,34 @@ database.rules.json・functions/my-page.js（新規）・functions/index.js・te
 - [ ] getMyPay を本番の検証店舗で1回通す: 紐付いた本人に自分の private/pay だけが返る・別の uid の紐付けの名前を渡しても自分の分だけ・紐付けの無い uid は permission-denied・
       匿名 uid は failed-precondition（**連結直後のトークンに email が入るか**は E1 と同じ未検証の問い）
 - [ ] Admin SDK の `transaction()` の挙動（手元に値が無いと最初に null で呼ぶ）で「1回限り」が崩れないことを実機で確かめる（cf-harness のモックは1回だけ呼ぶ）
+- [ ] スタッフ個別URL（2026-10-04）の `myPagePin`（新規）と `purgeInactiveShops` の更新（アーカイブする店舗の staffPageTokens・staffPageData・staffPagePins を消す）。
+      **CF より先にクライアントを出すと**、個別URLの給料タブが開かない（「暗証番号を確認できませんでした」）。閲覧・提出・承認はクライアントだけで動く。
+      本番の検証店舗で1回通す: 番号を決める → 本人の private/pay だけが返る・誤りで残り回数・5回で15分・管理者のリセットで決め直し。
+      **試行回数のトランザクションが実 SDK で null から呼ばれても回数が数えられること**（cf-harness のモックは1回だけ呼ぶ）を確かめる
 **③クライアントとゲート**:
 - [ ] リリースの際に、この上の「🔴 次の本番リリースでユーザーと突き合わせる実機確認」をユーザーと1項目ずつ行う（.ics・給料の項目はこのゲートを外すリリースで）
 - [ ] `MY_SCREEN_ENABLED = DEV_MODE` を外して本番に入口を出す（①②の実測の後・ユーザー判断）。外すと本番でもスタッフURLに「マイシフト」ボタンが出て、`#/me` が従業員画面になる
 - [ ] 本番で「登録 → 別ブラウザでログイン → 同じ uid・同じ登録ネーム」・紐付け（A・B・C を1回ずつ）・公開と確定で黒文字・手入力のシフト・給料の月と年を1回ずつ通す
-**未検証の一覧（2026-10-04 時点）**: ルールの実機すべて／CF の実機すべて（getMyPay を含む）／連結直後のトークンの email／`transaction()` の1回限り／
+**未検証の一覧（2026-10-04 時点）**: ルールの実機すべて／CF の実機すべて（getMyPay・myPagePin を含む）／個別URLの iPhone の指のスワイプとピンチ拡大／連結直後のトークンの email／`transaction()` の1回限り／
 実機の iPhone・Google カレンダー・Outlook・Android への .ics の取り込み（2026-10-04 に iOS 27 のシミュレーターでは取り込めた）／公開シフトが消えた日に残った上書きの掃除／給料の目安と実際の給与明細の突き合わせ（ユーザーの領分。Shifty の計算値を正解として代用しない）／
 ヘルプ先の勤務を所属店舗の給料に合算しない差（月次賃金ページとは週40h・月の総枠の扱いがずれる）
-**影響範囲**: database.rules.json・functions/index.js・functions/staff-link.js・functions/my-pay.js（反映のみ）・app-core.js（ゲート）
+**影響範囲**: database.rules.json・functions/index.js・functions/staff-link.js・functions/my-pay.js・functions/my-page.js（反映のみ）・app-core.js（ゲート）
+
+---
+
+## 🟢 スタッフ個別URLとメールのアカウントの統合（見送り・2026-10-04）
+
+**目的**: 同じ人が個別URL（`staffPageData/{token}`）とメールのアカウント（`users/{uid}`）の両方を使うと、勤務先・手入力のシフト・給料の設定が別々に残る。
+個別URLのデータをアカウントへ取り込む（または逆）経路は作っていない。
+**やらなかった理由**: 重複は表示の問題で、取り込みには「同じ人である」ことの確認（個別URLの暗証番号とアカウントのログインの両方）と、重なった記録の決め方が要る。
+今回の依頼（個別URLでの閲覧と提出）には不要。
+**再着手条件**: 両方を使って困っているという声が出たとき、または本番で個別URLとアカウントの両方を持つ人が一定数を超えたとき。
+**影響範囲（そのとき）**: app-my.js（設定タブに取り込みの入口）・Cloud Functions（両方の本人確認をしてから写す）・database.rules.json
+
+## 🟢 アカウント（#/me）側の「全員のシフト」表示（見送り・2026-10-04）
+
+**目的**: 全員のシフト表と横スワイプは個別URLの画面にだけ付けた（依頼の範囲）。アカウントは複数の店舗に紐付くので、どの店舗の表を出すかの決め方が要る。
+**再着手条件**: アカウントでも全員の表を見たいという声が出たとき。部品（`MyShiftPager`・`MyAllShiftTable`）はそのまま使える
 
 ---
 
@@ -1852,6 +1867,19 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 🟡 スタッフ個別URL（登録・承認・個別URLでの閲覧と提出・全員のシフト表・給料の暗証番号）（2026-10-04 develop 完了／ルールは追加だけ・CF は新規1本＋更新1本・どちらも未デプロイ）
+
+**目的**: ユーザーの仕様変更（2026-10-04）。募集URLから申請 → 管理者が承認 → 個別URL（`#/m/<pageToken>`）でどの端末でも同じスタッフの画面（ログイン不要）。
+決定: アカウントと併用・給料は4桁の暗証番号・登録は管理者が承認・全員の表は公開済みだけ。設計は CLAUDE.md「スタッフ個別URL」と計画書の末尾の追記。
+- [x] (P1 `ed584af`) 申請 → その場で個別URL（コピー・共有）と承認待ち／承認前は承認待ちの画面／スタッフタブで名前を選んで承認・却下・取り消し／別の端末（別の匿名 uid）で同じ画面
+- [x] (P1) 改名・削除・同名の再登録に追随（保留の列に同じ入口）。読む側は承認済みで名前がスタッフ一覧にあるときだけ
+- [x] (P2 `ed584af`) 最新期間への提出（名前は固定・subs の staffName が承認された名前・既存の提出は同じ sub を更新）／確定済みは提出できない
+- [x] (P3 `15eec71`) 横スワイプとタップの切り替え・公開済みだけの全員の表・375px と 320px で横スクロール0（10人×16日 11.2px、30人×31日 3.3px／2.6px）・ピンチ拡大中は横スクロールを止める
+- [x] (P4 `c37063e`) 暗証番号（初回・変更・5回で15分・管理者のリセット）・会社が登録した賃金は CF が照合してから返す
+- [x] ルールは追加だけ（4ノード）・デプロイしない／`MY_SCREEN_ENABLED` の下（本番相当では入口も #/m/ も動かない）／375px・320px・入力欄16px以上／WebKit iPhone 13
+- 検証: npm test・eslint・`shifty-e2e-verify/scripts/example-my-page.js`（Chromium と WebKit iPhone 13 で allPass）・`shifty-cf-verify/scripts/example-my-page.js`（30項目）
+- **未検証**: ルールと CF の実機・iPhone の指のスワイプとピンチ（上の🔴の一覧と🟡の本番反映に足した）
 
 ### ✅ 🟡 従業員画面 E6: 会社設定の賃金の参照（getMyPay）と「会社設定」表示（2026-10-04 develop 完了 `2f52b75`／CF は未デプロイ・ルールの変更なし）
 

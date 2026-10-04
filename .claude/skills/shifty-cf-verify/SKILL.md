@@ -12,6 +12,7 @@ node .claude/skills/shifty-cf-verify/scripts/example-company-owner.js      # Cal
 node .claude/skills/shifty-cf-verify/scripts/example-purge-old-periods.js  # pubsub.onRun（期間の自動削除・dry-run）
 node .claude/skills/shifty-cf-verify/scripts/example-staff-link.js         # 従業員画面の紐付け（E2）。SHIFTY_CF_INDEX で別の index.js を読む
 node .claude/skills/shifty-cf-verify/scripts/example-my-pay.js            # 従業員画面の会社設定の賃金（E6・getMyPay）。他人の賃金が取れない・拒否側・何も書かない
+node .claude/skills/shifty-cf-verify/scripts/example-my-page.js           # スタッフ個別URLの給料の暗証番号（myPagePin）。5回で15分・リセット・拒否側・アーカイブ時の後始末
 ```
 
 どちらも `pass N / fail 0` で終わり、失敗があれば終了コード1を返す。**作業ディレクトリはどこでもよい**（依存はすべてモックなので `functions/` の node_modules に依存しない）。
