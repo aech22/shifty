@@ -1355,7 +1355,7 @@ function _sheetCells(html) {
   return out;
 }
 const _sheetCols = html => [...html.matchAll(/data-sheet-col="([^"]+)"/g)].map(x => x[1]);
-test("全員のシフト表（PDF と同じ仕様）: 公開済みだけ・並びは写しと非表示を当てた名簿＋未登録の提出者・保存値の時刻（17.5 の表記）・メモ・休暇は斜線", () => {
+test("全員のシフト表（PDF と同じ仕様）: 公開済みだけ・並びは写しと非表示を当てた名簿＋未登録の提出者・保存値の時刻（17.5 の表記）・メモ・休暇は種別名（2026-10-04 から PDF も種別名）", () => {
   const p = { id: "p1", startDate: "2026-10-01", endDate: "2026-10-03", label: "2026年10月" };
   const pub = { ...p, published: { at: "2026-10-01T00:00:00.000Z", byUid: "O" } };
   const settings = { staffAliases: { 佐藤: ["さとう"] }, staffHidden: { 退職: true }, overtimeSettings: { byStaff: { 田中: { dinner: 30 } } },
@@ -1382,14 +1382,17 @@ test("全員のシフト表（PDF と同じ仕様）: 公開済みだけ・並�
   assert.ok(t.html.includes("駅<br>前<br>店"), "右上は店舗名を縦に");
   const c = _sheetCells(t.html);
   // 列: 田中・空白・佐藤・飛び入り（空白列は data-sheet-cell を持たないので3つ）
-  assert.deepStrictEqual(c["2026-10-01|start"].map(x => x.text), ["17.5h", "", ""]);
+  assert.deepStrictEqual(c["2026-10-01|start"].map(x => x.text), ["17.5h", "有給", ""]);
   assert.ok(/#B7EBC6/.test(c["2026-10-01|start"][0].style), "変更マークは緑（メモの黄色より優先）");
   assert.strictEqual(c["2026-10-01|end"][0].text, "23", "退勤延長は足さない（PDF は保存された時刻を出す）");
   assert.deepStrictEqual(c["2026-10-02|start"].map(x => x.text), ["10", "11", ""], "管理者の調整値が出る");
   assert.strictEqual(c["2026-10-02|end"][0].text, "15研修");
   assert.ok(/#FFFF00/.test(c["2026-10-02|end"][0].style), "メモのあるセルは黄色");
-  assert.deepStrictEqual(c["2026-10-01|start"].map(x => x.kind), ["text", "hatch", "none"], "終日の有給は斜線（PDF は種別名を出さない）");
-  assert.strictEqual(c["2026-10-02|end"][1].kind, "hatch", "半日の慶弔は退勤の帯だけ斜線");
+  assert.deepStrictEqual(c["2026-10-01|start"].map(x => x.kind), ["text", "leave", "none"], "終日の有給は種別名（画面と同じ・斜線なし）");
+  assert.deepStrictEqual([c["2026-10-01|start"][1].text, c["2026-10-01|end"][1].text], ["有給", "有給"], "終日なら上下とも");
+  assert.ok(!/svg/.test(c["2026-10-01|start"][1].style), "種別名のセルには斜線を引かない");
+  assert.ok(/font-size:12px/.test(c["2026-10-01|start"][1].style), "全角2文字は 30px の列に 12px で収まる");
+  assert.deepStrictEqual([c["2026-10-02|start"][1].kind, c["2026-10-02|start"][1].text, c["2026-10-02|end"][1].kind, c["2026-10-02|end"][1].text], ["text", "11", "leave", "慶弔"], "半日の慶弔は退勤の帯だけ種別名・出勤は時刻");
   assert.deepStrictEqual(c["2026-10-03|start"].map(x => x.kind), ["none", "hatch", "text"], "休みの提出は斜線・別の期間の提出は使わない");
   assert.ok(!/data-headcount/.test(t.html), "昼夜の人数は設定した店舗だけ");
   // 確定・終了済みの期間は写しの並びと設定（写しに居ない人は出さない）
@@ -1424,7 +1427,8 @@ test("全員のシフト表: 他店でのヘルプ勤務（H2）を PDF と同�
   assert.ok(/#FFFF00/.test(c["2026-10-01|end"][0].style), "ヘルプのセルは黄色");
   assert.strictEqual(c["2026-10-01|start"][0].text, "10", "上は自店の開始のまま");
   assert.deepStrictEqual([c["2026-10-02|start"][0].text, c["2026-10-02|end"][0].text], ["11鶏", "15三"], "自店は休みの提出＋ヘルプ先だけの日は2セル用の略称・斜線なし");
-  assert.deepStrictEqual([c["2026-10-03|start"][0].kind, c["2026-10-03|end"][0].kind], ["hatch", "hatch"], "休暇の日はヘルプを出さない（PDF と同じ）");
+  assert.deepStrictEqual([c["2026-10-03|start"][0].kind, c["2026-10-03|end"][0].text], ["leave", "有給"], "休暇の日は種別名を優先してヘルプを出さない（画面・PDF と同じ）");
+  assert.ok(!t.html.includes("17鶏") && !t.html.includes("21三"), "10/3 の B 17-21 は出ない");
   assert.strictEqual(c["2026-10-01|end"][1].kind, "none", "別人の佐藤には合算しない");
   assert.strictEqual(t.helperUnread, false);
   // 材料が無い（企業に連携していない・読み込み中）ならヘルプなし＝従来の表

@@ -15,6 +15,11 @@
 // 画面（holidayCellDash の `if(!sh)return false`）・PDF（`if(sh&&sh.status==="holiday")`）は
 // どちらも空白にしており、Excel だけが else（休み）へ落ちていた。
 //
+// 2026-10-04（D・ユーザー指示「PDF も種別名に」「Excel も統一して」）: 休暇のセルは種別名（公休・有給・慶弔）で、斜線を引かない。
+// 高橋の5日: ko（上下とも公休）・yu 午前（上だけ有給・下は時刻）・ke 午後（上は時刻・下だけ慶弔）・/（種別なし＝斜線のまま）・
+// 提出の休みの日に yu 午前（上は有給・下は斜線）。2つの入口（resolver あり／なし）で同じ。種別名のセルは 12pt・中央・shrinkToFit。
+// 反証: SHIFTY_ROOT=<D の前の配信物> で j_〜l_ が落ちる
+//
 // Firebase へは1バイトも書かない（app-main.js を読み込まないので firebaseDB は null）。
 "use strict";
 
@@ -49,8 +54,17 @@ const DATES = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-
       id: "s2", periodId: "p1", staffName: "佐藤", source: "grid",
       shifts: { [dates[1]]: { status: "work", adjustedStart: "10:00", adjustedEnd: "19:00" } },
       comment: "", submittedAt: "2026-09-01T00:00:00Z",
+    }, {
+      id: "s3", periodId: "p1", staffName: "高橋",
+      shifts: {
+        [dates[0]]: { status: "work", start: "10:00", end: "15:00", adminRest: { start: true, end: true }, leaveTypes: { start: "public", end: "public" } },
+        [dates[1]]: { status: "work", end: "22:00", adminRest: { start: true }, leaveTypes: { start: "paid" } },
+        [dates[2]]: { status: "work", start: "11:00", adminRest: { end: true }, leaveTypes: { end: "ceremony" } },
+        [dates[3]]: { status: "work", start: "10:00", end: "15:00", adminRest: { start: true, end: true } },
+        [dates[4]]: { status: "holiday", adminRest: { start: true }, leaveTypes: { start: "paid" } },
+      }, comment: "", submittedAt: "2026-09-01T00:00:00Z",
     }];
-    const staffList = ["田中", "佐藤", "鈴木"];   // 鈴木は sub 自体が無い（対照＝従来から空白）
+    const staffList = ["田中", "佐藤", "鈴木", "高橋"];   // 鈴木は sub 自体が無い（対照＝従来から空白）
     const settings = { shopId: "x", candidates: [], weekdayCandidates: {}, dateCandidates: {}, breakTimes: {} };
 
     // シフト作成タブ側の入口（adjResolver）を模す。未保存の localEdits も1つ混ぜて、
@@ -106,7 +120,15 @@ const DATES = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-
         number: st(ws.getRow(1).getCell(ci("田中"))), day: st(ws.getRow(3).getCell(1)), weekday: st(ws.getRow(3).getCell(2)),
         timeTop: st(ws.getRow(3).getCell(ci("田中"))), timeBottom: st(ws.getRow(4).getCell(ci("田中"))),
       };
-      return { r, nameStyle, others };
+      // 休暇のセル（高橋）: セルごとに「値＋斜線なら＼」と書式
+      const tci = head.indexOf("高橋") + 1;
+      const leave = dates.map((ds, di) => [0, 1].map(k => { const c = ws.getRow(3 + di * 2 + k).getCell(tci);
+        return (c.value == null ? "" : String(c.value)) + (c.border && c.border.diagonal ? "＼" : ""); }).join("/"));
+      const lc = ws.getRow(3).getCell(tci);
+      const leaveStyle = { al: lc.alignment || null, size: lc.font && lc.font.size, name: lc.font && lc.font.name, fill: lc.fill ? JSON.stringify(lc.fill) : null };
+      const timeCell = ws.getRow(6).getCell(tci); // 9/2 の下＝時刻のセル
+      const timeStyle = { al: timeCell.alignment || null, size: timeCell.font && timeCell.font.size, fill: timeCell.fill ? JSON.stringify(timeCell.fill) : null };
+      return { r, nameStyle, others, leave, leaveStyle, timeStyle };
     };
     return { noResolver: await run(false), withResolver: await run(true) };
   }, DATES);
@@ -130,6 +152,13 @@ const DATES = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-
     h_2つの入口で名前行が同じ: eq(out.noResolver.nameStyle, out.withResolver.nameStyle),
     // 名前セル以外の書式は K2 の前と同じ（期待値は K2 より前の配信物 b014efa で書き出した値）
     i_名前セル以外は変わらない: eq(out.noResolver.others, OTHERS_BEFORE_K2) && eq(out.withResolver.others, OTHERS_BEFORE_K2),
+    // D: 休暇は種別名・斜線なし。/ と提出の休みは斜線のまま
+    j_休暇は種別名で斜線なし: ["noResolver", "withResolver"].every(k => eq(out[k].leave, ["公休/公休", "有給/22", "11/慶弔", "＼/＼", "有給/＼"])),
+    k_種別名のセルの書式は時刻のセルと同じで縮小表示: ["noResolver", "withResolver"].every(k => {
+      const L = out[k].leaveStyle, T = out[k].timeStyle;
+      return L.size === 12 && L.name === "Yu Gothic" && L.al && L.al.horizontal === "center" && L.al.vertical === "middle" && L.al.shrinkToFit === true
+        && T.size === 12 && L.fill === T.fill; }),
+    l_2つの入口で休暇が同じ: eq(out.noResolver.leave, out.withResolver.leave),
   };
   verdict.allPass = Object.values(verdict).every(Boolean);
 

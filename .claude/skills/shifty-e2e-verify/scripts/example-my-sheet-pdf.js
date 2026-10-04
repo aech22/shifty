@@ -3,6 +3,7 @@
 //   ①シフト作成タブの PDF 出力（シフト）の table と、MyAllShiftTable の table が、従業員画面だけの印（data-sheet-* と本人の列の見出しの背景）を除いて同じ HTML
 //     （時刻の表記・メモ・締・休み／休暇の斜線・変更マークの緑・メモの黄色・従業員番号・名前の色・土日祝の色・未登録の提出者・空白列・昼夜の人数）
 //   ②35人超（空白列に日付）でも同じ
+//   休暇（2026-10-04 D）: 種別の入った休暇は PDF・全員の表とも種別名（斜線なし）、種別の無い休み希望と提出の休みは斜線のまま
 //   ③画面の横幅に収まる（375・390・320px で横スクロール 0・表の幅＝枠の幅・比率を保って縮める）・ダーク表示でも白地に黒文字（紙と同じ）
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-my-sheet-pdf.js → allPass=true / EXIT=0
 //       SHIFTY_ENGINE=webkit SHIFTY_DEVICE="iPhone 13" node ... でも通る
@@ -66,7 +67,11 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);` });
     let at = 0; while (at < pdf.length && pdf[at] === mine[at]) at++;
     return { pdfLen: pdf.length, myLen: mine.length, same: !!pdf && pdf === mine, at, pdfAt: pdf.slice(Math.max(0, at - 60), at + 80), myAt: mine.slice(Math.max(0, at - 60), at + 80),
       me: myT ? (myT.querySelector("[data-sheet-me]") || { getAttribute: () => null }).getAttribute("data-sheet-col") : null,
-      headcounts: myT ? myT.querySelectorAll("[data-headcount]").length : 0 };
+      headcounts: myT ? myT.querySelectorAll("[data-headcount]").length : 0,
+      // 休暇（D・2026-10-04）: 高橋の 10/11 は終日の有給＝上下とも「有給」で斜線なし。渡辺の 10/11 の下は種別なしの休み希望＝斜線のまま
+      leaveCells: myT ? [...myT.querySelectorAll("td[data-sheet-cell='leave']")].map(td => { const tr = td.closest("tr"); return tr.getAttribute("data-sheet-row") + "|" + tr.getAttribute("data-sheet-field") + "=" + td.textContent + (/svg/.test(td.getAttribute("style") || "") ? "＼" : ""); }) : [],
+      pdfLeave: pdfT ? (pdfT.innerHTML.match(/>有給</g) || []).length : 0,
+      hatches: myT ? myT.querySelectorAll("td[data-sheet-cell='hatch']").length : 0 };
   });
   r.errors = h.errors.slice();
   await h.close();
@@ -180,6 +185,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<div style={{padding
   R.big = await compare(true);
   V.samePdf = R.small.same && R.small.errors.length === 0 && R.small.headcounts > 0 && R.small.me === "佐藤";
   V.samePdf35 = R.big.same && R.big.errors.length === 0;
+  V.leaveShown = R.small.leaveCells.join(",") === "2026-10-11|start=有給,2026-10-11|end=有給" && R.small.pdfLeave === 2 && R.small.hatches > 0;
   R.helper = await compareHelper();
   V.helperSamePdf = R.helper.same && R.helper.errors.length === 0 && R.helper.pdfHas17 && R.helper.state === "ok";
   const yt = R.helper.yellowTanaka.join(",");

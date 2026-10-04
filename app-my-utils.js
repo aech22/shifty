@@ -314,7 +314,7 @@ function _myU(U){
   if(U)return U;
   return{scheduledDay,resolveActualDay,resolvePeriodMaster,resolveSubByAlias,isStaffHiddenInPeriod,isPeriodPublished,isPeriodConfirmed,featureEnabled,
     // 全員のシフト表（個別URL・2026-10-04）。期間の選択肢は管理者画面の subs 部分購読と同じ窓（subsWindowCutoff）
-    visibleStaffList,isSpacer,leaveCellTextOf,isHoliday,subsWindowCutoff,
+    visibleStaffList,isSpacer,leaveCellTextOf,leaveShownTextOf,isHoliday,subsWindowCutoff,
     // 全員のシフト表は PDF のシフト表と同じ関数（2026-10-04）
     isUnregisteredSubName,gd,isFixedShiftEligibleShop,oneSidedFillBounds,headcountAtOf,heatStaffDayEntriesOf,shiftSheetHeadcountOf,shiftTableHtmlOf,shiftSheetCellOf,shiftSheetStoredText,
     // 全員のシフト表の他店でのヘルプ勤務（H2）。PDF（シフト作成タブの helperDisp）と同じ関数
@@ -1572,8 +1572,7 @@ function buildMyShiftSheet(o,U){
     const hi=helperInfo[nm];
     if(!hi||hi.role!=="home")return null;
     const sh=shiftOf(nm,ds);
-    const lv=f=>sh&&sh.adminRest&&sh.adminRest[f]?u.leaveCellTextOf(sh,f):"";
-    if(lv("start")||lv("end"))return null;
+    if(u.leaveShownTextOf(sh,"start")||u.leaveShownTextOf(sh,"end"))return null;
     const wsh=sh&&sh.status==="work"?sh:null;
     const ownRange=wsh?u.effShiftRangeMin(wsh,st):null;
     const es=u.helperWorkOn({regs:hi.regs,otherShops:helperShops,date:ds,todayStr:x.todayStr,

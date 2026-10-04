@@ -4044,6 +4044,48 @@ test("leaveCellTextOf: セルに出す文字（色も斜線も使わない）", 
     assert.ok(!u.CELL_COLOR_LEGEND.some(c => c.key === k), `legend ${k} は持たない`));
 });
 
+test("leaveShownTextOf と PDF・全員の表のセル: ko は上下とも・yu/ke は打ち込んだ帯だけ種別名・斜線なし。/ と提出の休みは斜線（2026-10-04 PDF・Excel も種別名）", () => {
+  const ko = { status: "work", start: "10:00", end: "15:00", adminRest: { start: true, end: true }, leaveTypes: { start: "public", end: "public" } };
+  const yuAm = { status: "work", end: "22:00", adminRest: { start: true }, leaveTypes: { start: "paid" } };
+  const kePm = { status: "work", start: "11:00", adminRest: { end: true }, leaveTypes: { end: "ceremony" } };
+  const slash = { status: "work", start: "10:00", end: "15:00", adminRest: { start: true, end: true } };
+  const subHol = { status: "holiday" };
+  const yuOnHol = { status: "holiday", adminRest: { start: true }, leaveTypes: { start: "paid" } };
+  const T = (sh, f) => u.leaveShownTextOf(sh, f);
+  assert.deepStrictEqual([T(ko, "start"), T(ko, "end")], ["公休", "公休"]);
+  assert.deepStrictEqual([T(yuAm, "start"), T(yuAm, "end")], ["有給", ""]);
+  assert.deepStrictEqual([T(kePm, "start"), T(kePm, "end")], ["", "慶弔"]);
+  assert.deepStrictEqual([T(slash, "start"), T(subHol, "start"), T(null, "start")], ["", "", ""]);
+  assert.strictEqual(T({ status: "work", leaveTypes: { start: "paid" } }, "start"), "", "休み扱い（adminRest）でない帯には出さない（画面と同じ）");
+  const cell = (sh, f, helper) => {
+    const r = u.shiftSheetStoredText(sh, f, false), o = u.shiftSheetStoredText(sh, f === "start" ? "end" : "start", false);
+    return u.shiftSheetCellOf({ sh, field: f, hasSub: !!sh, helper: helper || null, r, otherDisp: o.disp });
+  };
+  const k = (sh, f) => { const c = cell(sh, f); return c.kind + (c.text ? ":" + c.text : ""); };
+  assert.deepStrictEqual([k(ko, "start"), k(ko, "end")], ["leave:公休", "leave:公休"]);
+  assert.deepStrictEqual([k(yuAm, "start"), k(yuAm, "end")], ["leave:有給", "text:22"], "半日の有給: もう片側は勤務の時刻");
+  assert.deepStrictEqual([k(kePm, "start"), k(kePm, "end")], ["text:11", "leave:慶弔"]);
+  assert.deepStrictEqual([k(slash, "start"), k(subHol, "start"), k(subHol, "end")], ["hatch", "hatch", "hatch"], "種別の無い休み希望・提出の休みは斜線のまま");
+  assert.deepStrictEqual([k(yuOnHol, "start"), k(yuOnHol, "end")], ["leave:有給", "hatch"], "提出の休みの日の片側休暇: もう片側は斜線（画面の cellDash と同じ）");
+  assert.strictEqual(cell(ko, "start").fontPx, 12, "全角2文字は 30px の列に 12px で収まる");
+  assert.strictEqual(cell({ ...ko, changed: true }, "start").green, true, "変更マークの緑は残す");
+  // PDF の HTML: 種別名のセルは斜線の背景を持たない
+  const html = u.shiftTableHtmlOf({ cols: ["田中"], dates: ["2026-10-01"], periodLabel: "10月", shopName: "店", staffNums: {}, staffColors: {}, settings: {},
+    cellOf: (nm, ds, f) => cell(ko, f), tags: true });
+  const tds = [...html.matchAll(/<td data-sheet-cell="leave" style="([^"]*)">([^<]*)<\/td>/g)];
+  assert.deepStrictEqual(tds.map(t => t[2]), ["公休", "公休"]);
+  assert.ok(tds.every(t => !/svg/.test(t[1]) && /font-size:12px/.test(t[1])));
+  // 4か所（画面・PDF と全員の表・Excel）が同じ関数を通る（ドリフト検出）
+  const fs = require("node:fs"), path = require("node:path"), R = f => fs.readFileSync(path.join(__dirname, "..", f), "utf8");
+  const sh = R("app-shift.js");
+  assert.ok(/const leaveCellText=\(name,date,field\)=>leaveShownTextOf\(/.test(sh), "画面の leaveCellText は leaveShownTextOf");
+  const ad = R("app-admin.js");
+  const xl = ad.slice(ad.indexOf("const storedRv="), ad.indexOf("// ファイル名・ダウンロード"));
+  assert.ok(/leaveShownTextOf\(sh,"start"\)/.test(xl) && /leaveShownTextOf\(sh,"end"\)/.test(xl), "expXl は leaveShownTextOf");
+  const ut = R("app-utils.js");
+  const sc = ut.slice(ut.indexOf("function shiftSheetCellOf("), ut.indexOf("function shiftTableHtmlOf("));
+  assert.ok(/leaveShownTextOf\(sh,f\)/.test(sc), "shiftSheetCellOf は leaveShownTextOf");
+});
 test("斜線（y・提出の休み）も公休として数える — 見せ方と数え方を分けたあとの非回帰", () => {
   // 2026-09-26: y は**セルに文字を出さない**（斜線のまま）が、**数え方は公休のまま**。
   // 見せ方（leaveCellTextOf）と数え方（leaveTypeOf / dayRestKindOf）を別の関数で答える。
