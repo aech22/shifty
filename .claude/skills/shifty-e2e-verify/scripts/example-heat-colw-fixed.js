@@ -10,12 +10,12 @@
 //
 // 測るもの: 1400x900 で スタッフ数 6/12/20/28 × 通常／キッチン絞り込み／全表示 の9通り。
 //   ・時間帯1列の幅が全条件で同じ（＝スタッフ数にも表示モードにも依存しない）
-//   ・その幅が自然幅 24px であること（枠幅 687px まで伸びていないこと）
+//   ・その幅が自然幅 22px であること（枠幅 687px まで伸びていないこと）
 //   ・全時間帯が出ていて横スクロールしないこと
 //
 // 期待する出力:
 //   壊れている版 … allPass=false。通常・全表示の列幅だけ 39.7px になり distinctColW が2種類になる。
-//   直っている版 … allPass=true。distinctColW が [24] の1種類。
+//   直っている版 … allPass=true。distinctColW が [22] の1種類（2026-10-04 までのハーネスでは [24] と出ていた）。
 //
 // 携帯幅（375px）で「詰めて全部出す」側が壊れていないかは example-heatmap-mobile-fit.js が見る。
 // この2本は逆向きの条件を押さえているので、両方が緑のときだけ仕様を満たす。
@@ -24,10 +24,12 @@
 const path = require("node:path");
 const { openHarness } = require(path.join(__dirname, "mount-component.js"));
 
-// 10:00〜25:00（16時間ぶんの列）。自然幅は 52 + 24*16 + 8 = 444px で、1400px 幅なら余裕で収まる。
+// 10:00〜25:00（16時間ぶんの列）。自然幅は 52 + 22*16 + 8 = 412px で、1400px 幅なら余裕で収まる。
+// 自然幅は 22px（列の minWidth:22 を、本物の index.html の *{box-sizing:border-box} で測った値）。2026-10-04 まではハーネスが
+// index.html の CSS を持たず content-box で 22＋左右の padding 1px＝24px と測っていた（本番の幅ではない）。
 const CANDS = [{ start: "10:00", end: "17:00" }, { start: "17:00", end: "25:00" }];
 const EXPECTED_HOURS = 16;
-const NATURAL_COL_W = 24;
+const NATURAL_COL_W = 22;
 
 // スペーサーより後ろがホール。2枚（キッチン／ホール）を出すために必ず入れる。
 const mkStaff = n => {

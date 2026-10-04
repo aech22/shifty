@@ -1,8 +1,8 @@
 // 企業連携タブの横はみ出しの回帰テスト（2026-10-04）。
-// **本物の index.html を配信する**（mount-component.js は index.html の `*{box-sizing:border-box}` を持たないので、
-// width:100%＋padding の入力欄が content-box で測られ、本番では起きない 1〜2px のはみ出しを報告してしまう。
-// example-shop-abbr2.js の r2.wide が記録している「企業アカウントを作成」フォームの 376px はこの測り方の産物で、
-// 本物の index.html では 375px・320px とも 0px だった）。Firebase の CDN 5本だけを stub-firebase.js に差し替える。
+// **本物の index.html を配信する**（このスクリプトを書いた時点の mount-component.js は index.html の `*{box-sizing:border-box}` を持たず、
+// width:100%＋padding の入力欄が content-box で測られ、本番では起きない 1〜2px のはみ出しを報告した。
+// H1 が記録した「企業アカウントを作成」フォームの 376px はこの測り方の産物で、本物の index.html では 375px・320px とも 0px だった。
+// 2026-10-04 から mount-component.js も index.html の <style> を既定で入れるが、ここは index.html の body の構造ごと確かめるので本物を配信したままにする）。Firebase の CDN 5本だけを stub-firebase.js に差し替える。
 //
 // 場面は2つ。A=企業未作成（企業アカウントでログイン・企業アカウントを作成・連携店舗）、
 // B=企業ログイン後・Premium（提出状況・企業内登録スタッフ・ダッシュボード・企業アカウント・連携店舗・法人・企業の共通設定）。

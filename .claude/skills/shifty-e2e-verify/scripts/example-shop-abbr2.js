@@ -6,8 +6,10 @@
 //  (b) 変更・削除（null を update）・予約語（h・数字始まり）・3文字・片方だけ が拒否されて DB が変わらない
 //  (c) 表示中の店舗 A: onSave（saveSettings）に shopAbbr2 が載る。shopAbbrs は残る
 //  (d) 開き直す（再マウント）と登録済みの値が読み込まれて表示される
-//  (e) 375px でカードの入力欄がはみ出さない（店舗カードの中にはみ出す要素が無い・入力欄がカードの内側）
-//      ※ページ全体の scrollWidth は、既存の「企業アカウントを作成」フォームの入力欄で 376px になる（H1 の前から。r2.wide に記録）
+//  (e) 375px でカードの入力欄がはみ出さない（店舗カードの中にはみ出す要素が無い・入力欄がカードの内側）と、ページ全体の scrollWidth が 375px
+//      ※H1 の時点では「企業アカウントを作成」フォームの入力欄でページが 376px と出ていたが、これはハーネス（mount-component.js）が
+//        index.html の *{box-sizing:border-box} を持たず content-box で測っていたための産物で、本番では 375px・320px とも 0px だった（b878640 の調査）。
+//        2026-10-04 からハーネスが index.html の <style> を既定で入れるので、ここでもページ全体のはみ出しを確かめる
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-shop-abbr2.js → allPass=true / EXIT=0
 // 反証: SHIFTY_ROOT=<H1 より前の配信物> node ... → EXIT=1
@@ -129,6 +131,7 @@ const state = h => h.evaluate(() => ({
   });
   v.reload_loaded = /上「鶏」・下「三」/.test(r2.cur || "") && r2.inputs.length === 2 && r2.inputs[0].v === "鶏" && r2.inputs[1].v === "三";
   v.m375_cardNoOverflow = Array.isArray(r2.cardWide) && r2.cardWide.length === 0;
+  v.m375_pageNoOverflow = r2.docW <= r2.winW && r2.wide.length === 0;
   v.m375_inputsInsideCard = !!r2.cr && r2.inputs.every(i => i.l >= r2.cr.l - 0.5 && i.r <= r2.cr.r + 0.5) && r2.inputs.every(i => i.r <= r2.winW);
   v.inputsFont16 = r2.inputs.every(i => i.fs >= 16);
   v.noErrors2 = h2.errors.length === 0;

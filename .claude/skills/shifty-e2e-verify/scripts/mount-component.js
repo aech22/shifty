@@ -63,13 +63,25 @@ const MIME = {
   ".png": "image/png",
 };
 
-function buildHtml(scripts, jsx, extraHead, afterReact) {
+// index.html の <head> にある <style> をそのまま取り出す（テーマ変数・*{box-sizing:border-box;margin:0;padding:0}・body のフォント・
+// input の 16px など）。2026-10-04 まではハーネスがこれを持たず、box-sizing が content-box・body の余白 8px・ブラウザ既定のフォントのまま測っていた
+// （例: 企業連携タブの「企業アカウントを作成」フォームが 376px と出たが、本物の index.html では 375px・320px とも 0px のはみ出しだった＝b878640）。
+// 配信物と同じ root から読むので、SHIFTY_ROOT で古い配信物に向けたときはその版の CSS になる。
+function indexHtmlCss(root) {
+  const f = path.join(root, "index.html");
+  if (!fs.existsSync(f)) return "";
+  const head = fs.readFileSync(f, "utf8").split("</head>")[0];
+  return [...head.matchAll(/<style[^>]*>[\s\S]*?<\/style>/g)].map(m => m[0]).join("\n");
+}
+
+function buildHtml(scripts, jsx, extraHead, afterReact, baseCss) {
   const tags = scripts.map(s =>
     s.babel
       ? `<script type="text/babel" src="${s.src}" data-presets="react"></script>`
       : `<script src="${s.src}"></script>`
   ).join("\n");
   return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>shifty-harness</title>
+${baseCss || ""}
 ${extraHead || ""}</head><body>
 <div id="root"></div>
 ${CDN.map(u => `<script src="${u}"></script>`).join("\n")}
@@ -98,6 +110,8 @@ ${jsx}
  *                              worktree隔離（0.5節）や「修正前の版で落ちることの確認」に使う。
  * @param {boolean}[o.headed]   デバッグ時に true。
  * @param {number} [o.timeout]  マウント待ちのミリ秒（既定 20000）。
+ * @param {boolean}[o.indexCss] 既定 true。index.html の <style>（テーマ変数・box-sizing・body のフォント等）を head の先頭に入れる。
+ *                              false か環境変数 SHIFTY_INDEX_CSS=0 で外す（2026-10-04 まではこの注入が無かった）。
  * @param {string} [o.afterReact] React・ReactDOM の読み込み直後、アプリのファイルより前に実行する素の JS
  *                              （計測用に React.memo を包む等。perf-shift-edit-tab.js が使う）。
  */
@@ -133,7 +147,10 @@ async function openHarness(o) {
   // 同日 app-admin.js から app-company.js を切り出して上限を下回ったので除外を外した（再び出たらファイルを分けること）。
   page.on("console", m => { if (m.type() === "error") errors.push("console: " + m.text()); });
 
-  const html = buildHtml(scripts, o.jsx, o.extraHead, o.afterReact);
+  // 既定で index.html の <style> を先頭に入れる（extraHead はその後に入るので、スクリプトが自前で入れるテーマはそのまま上書きできる）。
+  // 外したいとき（CSS が無い状態を測る反証など）は indexCss:false か SHIFTY_INDEX_CSS=0
+  const useIndexCss = o.indexCss !== false && process.env.SHIFTY_INDEX_CSS !== "0";
+  const html = buildHtml(scripts, o.jsx, o.extraHead, o.afterReact, useIndexCss ? indexHtmlCss(root) : "");
 
   await page.route("**/*", route => {
     const u = new URL(route.request().url());
