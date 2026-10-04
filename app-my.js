@@ -1456,6 +1456,18 @@ function useMyPayExtras(base){
       if(res.ok)setD(p=>({...p,goal:r.remove?0:r.value}));
       return res;
     },
+    // これまでの給料の一括入力（2026-10-04）。patch は planMyReceivedBulk が作った「変えたセルだけ」（"actuals/{ym}/{wid}": 円|null）。1回の update で書く
+    saveReceivedBulk:async patch=>{
+      const keys=Object.keys(patch||{});
+      if(!keys.length)return{ok:true};
+      const res=await write(patch);
+      if(res.ok)setD(p=>{
+        const rc={...p.received};
+        keys.forEach(k=>{const[,ym,wid]=k.split("/");const m={...(rc[ym]||{})};if(patch[k]==null)delete m[wid];else m[wid]=patch[k];if(Object.keys(m).length)rc[ym]=m;else delete rc[ym];});
+        return{...p,received:rc};
+      });
+      return res;
+    },
     saveReceived:async(ym,wid,v)=>{
       const r=parseMyReceivedInput(v);
       if(r.error)return r;
@@ -1527,6 +1539,55 @@ function MyReceivedInput({ym,wid,value,onSave,disabled}){
     </div>
   );
 }
+// これまでの給料をまとめて入力（年の表示から・2026-10-04 ユーザー指示「引き継ぎ用に今までの給料を一括で入力」）。
+// その年の支給月（1〜12月）×勤務先の振込額。勤務先が2つ以上なら上のプルダウンで切り替える（入れた値は切り替えても残る）。
+// 保存は変えたセルだけ（planMyReceivedBulk）。入っていた金額を消したセルがあるときは件数を確認してから消す
+function MyReceivedBulkForm({year,workplaces,received,onSave,onDone}){
+  const wids=workplaces.map(w=>w.id);
+  const[form,setForm]=useState(()=>myReceivedBulkForm(received,year,wids));
+  const[wid,setWid]=useState(wids[0]||"");
+  const[msg,setMsg]=useState({});
+  const[bad,setBad]=useState(null);
+  const[busy,setBusy]=useState(false);
+  const set=(ym,v)=>{setForm(f=>({...f,[wid]:{...(f[wid]||{}),[ym]:v}}));setMsg({});setBad(null);};
+  const save=async()=>{
+    const r=planMyReceivedBulk(received,form);
+    if(r.error){setBad({ym:r.ym,wid:r.wid});if(r.wid!==wid)setWid(r.wid);setMsg({error:`${Number(r.ym.slice(5))}月: ${r.error}`});return;}
+    if(!r.writes&&!r.removes){setMsg({ok:"変更はありません"});return;}
+    if(r.removes&&!window.confirm(`入っていた振込額を${r.removes}件消します。よろしいですか？`))return;
+    setBusy(true);
+    const w=await onSave(r.patch);
+    setBusy(false);
+    if(w.error){setMsg({error:w.error});return;}
+    onDone(`${year}年の振込額を保存しました（${r.writes}件${r.removes?`・消したもの${r.removes}件`:""}）`);
+  };
+  const cur=form[wid]||{};
+  return(
+    <section data-my-bulk={year} style={{...MY_SECTION,padding:"14px 16px"}}>
+      <div style={{fontSize:15,fontWeight:700,color:"var(--c-text)",marginBottom:4}}>{year}年 これまでの給料（振込額）</div>
+      <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>給与明細の手取り（振込額）を支給月ごとに入れます。空欄の月は変えません。入っている金額を消したときは、保存の前に確認します。</div>
+      {workplaces.length>1&&<label style={{display:"block",marginBottom:10}}>
+        <span style={MY_LABEL}>勤務先</span>
+        <select data-my-bulk-wp="1" value={wid} onChange={e=>setWid(e.target.value)} style={AI}>
+          {workplaces.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
+      </label>}
+      {workplaces.length===1&&<div style={{fontSize:14,fontWeight:700,color:"var(--c-text2)",marginBottom:8,overflowWrap:"anywhere"}}>{workplaces[0].name}</div>}
+      {myPayYearMonths(year).map(ym=>(
+        <label key={ym} style={{display:"grid",gridTemplateColumns:"44px minmax(0,1fr)",gap:8,alignItems:"center",marginBottom:8}}>
+          <span style={{fontSize:14,color:"var(--c-text2)"}}>{Number(ym.slice(5))}月</span>
+          <input data-my-bulk-month={ym} value={cur[ym]||""} inputMode="numeric" placeholder="円" onChange={e=>set(ym,e.target.value)}
+            aria-invalid={bad&&bad.ym===ym&&bad.wid===wid?"true":undefined} style={{...AI,...(bad&&bad.ym===ym&&bad.wid===wid?{borderColor:"var(--c-danger)"}:{})}}/>
+        </label>
+      ))}
+      <MyMessage {...msg}/>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:4}}>
+        <button data-my-action="saveBulk" disabled={busy} onClick={save} style={{...AB,opacity:busy?.6:1}}>{busy?"保存中…":"まとめて保存"}</button>
+        <button data-my-action="cancelBulk" onClick={()=>onDone(null)} style={AGray}>やめる</button>
+      </div>
+    </section>
+  );
+}
 function MyPayTab({me,personal,onGoSettings}){
   const P=personal||{state:"ok",workplaces:{},shifts:{},overrides:{}};
   const todayStr=fd(new Date());
@@ -1535,6 +1596,9 @@ function MyPayTab({me,personal,onGoSettings}){
   const[payYm,setPayYm]=useState(null);
   const[year,setYear]=useState(Number(todayStr.slice(0,4)));
   const[open,setOpen]=useState({});
+  const[bulk,setBulk]=useState(false);   // 年の表示の「これまでの給料をまとめて入力」
+  const[bulkMsg,setBulkMsg]=useState({});
+  useEffect(()=>{setBulk(false);setBulkMsg({});},[year,view]);
   // 勤務先ごとの給料設定（Shifty の店舗・手入力の勤務先）。未設定の勤務先は MY_PAY_DEFAULT で振り分ける
   const ownPays=useMemo(()=>Object.values(P.workplaces||{}).map(r=>r&&myPayOf(r.pay)),[P.workplaces]);
   useEffect(()=>{if(payYm===null&&P.state!=="loading")setPayYm(myDefaultPayMonth(ownPays.filter(Boolean).length?ownPays:[MY_PAY_DEFAULT],todayStr));},[payYm,P.state,ownPays,todayStr]);
@@ -1689,6 +1753,16 @@ function MyPayTab({me,personal,onGoSettings}){
           })()}
         </section>
         {yearRows&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,padding:"0 4px"}}>勤務時間の合計 {fmtMin(yearRows.workMin)||"0:00"}。金額は目安です（月の表示と同じ計算）。</div>}
+        {/* 引き継ぎ用（2026-10-04）: Shifty を使う前の月も含めて、受け取った給料（振込額）を年単位でまとめて入れる。振込額の列と年間の合計に入る */}
+        <MyMessage {...bulkMsg}/>
+        {X.state==="ok"&&canEdit&&!bulk&&(()=>{const wps=wpList.filter(w=>w.kind==="manual"||w.linked);return wps.length?(
+          <button data-my-action="openBulk" onClick={()=>{setBulkMsg({});setBulk(true);}} style={{...AGray,width:"100%",marginTop:12}}>これまでの給料をまとめて入力</button>
+        ):(
+          <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginTop:12}}>給料をまとめて入れるには、先に勤務先を登録してください。
+            {onGoSettings&&<button data-my-action="goWorkplaces" onClick={onGoSettings} style={{...MY_LINK_BTN,display:"block"}}>勤務先を追加する</button>}</div>
+        );})()}
+        {bulk&&<div style={{marginTop:12}}><MyReceivedBulkForm key={year} year={year} workplaces={wpList.filter(w=>w.kind==="manual"||w.linked)} received={X.received}
+          onSave={X.saveReceivedBulk} onDone={m=>{setBulk(false);setBulkMsg(m?{ok:m}:{});}}/></div>}
       </>}
     </div>
   );

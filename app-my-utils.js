@@ -1274,6 +1274,33 @@ function myPaySummaryOf(month,goal){
 // 年（暦年）の支給月ごとの一覧と合計。received は users/{uid}/actuals（{支給月: {勤務先: 円}}）
 function myPayYearMonths(year){return Array.from({length:12},(_,i)=>`${year}-${String(i+1).padStart(2,"0")}`);}
 function myReceivedSum(received,payYm){return Object.values((_myObj(received)||{})[payYm]||{}).reduce((s,v)=>s+(Number(v)>0?Math.round(Number(v)):0),0);}
+// これまでの給料（振込額）の一括入力（2026-10-04 ユーザー指示「引き継ぎ用に年単位で今までの給料を一括で入力」）。置き場は振込額と同じ
+// actuals/{支給月}/{勤務先}（新しいノードは無い）。form={勤務先ID: {支給月: 入力の文字列}}、received＝今の actuals。
+// 書くのは**変えたセルだけ**（"actuals/{ym}/{wid}": 円 か null）。空欄のセルは、もともと空なら何もしない・金額が入っていた月を消したときだけ null
+// （画面は保存の前に消す件数を確認する）。読めない入力があれば書かずに {error, ym, wid} を返す
+function planMyReceivedBulk(received,form){
+  const rc=_myObj(received)||{};
+  const patch={};let writes=0,removes=0;
+  for(const[wid,months]of Object.entries(_myObj(form)||{})){
+    for(const[ym,raw]of Object.entries(_myObj(months)||{})){
+      if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(ym))continue;
+      const cur=Number((((rc[ym])||{})[wid]));
+      const has=Number.isFinite(cur)&&cur>=0&&(((rc[ym])||{})[wid])!=null;
+      const r=parseMyReceivedInput(raw);
+      if(r.error)return{error:r.error,ym,wid};
+      if(r.remove){if(has){patch[`actuals/${ym}/${wid}`]=null;removes++;}continue;}
+      if(has&&cur===r.value)continue;
+      patch[`actuals/${ym}/${wid}`]=r.value;writes++;
+    }
+  }
+  return{patch,writes,removes};
+}
+// 一括入力の初期値（その年の支給月×勤務先の、今入っている振込額）
+function myReceivedBulkForm(received,year,wids){
+  const rc=_myObj(received)||{};const out={};
+  (wids||[]).forEach(w=>{out[w]={};myPayYearMonths(year).forEach(ym=>{const v=((rc[ym])||{})[w];out[w][ym]=v!=null&&Number(v)>=0?String(Math.round(Number(v))):"";});});
+  return out;
+}
 function myPayYearSummary(months,received){
   const rows=(months||[]).map(m=>({payYm:m.payYm,total:m.total,confirmedTotal:m.confirmedTotal,projectedTotal:m.projectedTotal,workMin:m.workMin,
     received:myReceivedSum(received,m.payYm),hasReceived:Object.keys(((_myObj(received)||{})[m.payYm])||{}).length>0}));
@@ -1564,7 +1591,7 @@ if(typeof module!=="undefined"&&module.exports){
     MY_PAY_END_DAY,MY_PAY_HOLIDAY_RULES,MY_PAY_HOLIDAY_RULE_LABELS,MY_PAY_WAGE_TYPES,MY_PAY_WAGE_TYPE_LABELS,MY_PAY_OFFSET_LABELS,MY_PAY_YEN_MAX,MY_PAY_GOAL_MAX,MY_PAY_DEFAULT,
     MY_MANUAL_NIGHT_PCT,MY_MANUAL_OVER8_PCT,MY_MANUAL_OVER8_MIN,myPayDayLabel,myPayOf,validateMyPayInput,buildMyPayRecord,myPayFormOf,parseMyGoalInput,myGoalOf,parseMyReceivedInput,
     myClampDay,myClosingMonthOf,myClosingRangeOf,myPayDateOf,myPayPlanOf,myPayMonthOfDate,myPeriodsInRange,myPayReadRange,myShiftyDayInfo,myMonthSettingsOf,
-    myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPaySummaryOf,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
+    myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPaySummaryOf,planMyReceivedBulk,myReceivedBulkForm,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
     MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,resolveMyPage,MY_PAGE_STATE_MESSAGES,
     approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myAllShiftSelection};

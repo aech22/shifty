@@ -1438,6 +1438,27 @@ test("勤務先の従業員番号: 店舗ごとに settings.staffNumbers[名前]
   assert.ok(/data-my-wp-number=/.test(sec) && !/fbSet|fbUpd/.test(sec.slice(0, sec.indexOf("function MyWorkplacesSection("))), "読むだけ");
   assert.ok(/hint=\{MY_PROFILE_NUMBER_HINT\}/.test(my) && /照合に使います/.test(m.MY_PROFILE_NUMBER_HINT));
 });
+test("これまでの給料の一括入力（2026-10-04）: 変えたセルだけ書く・空欄は変えない・入っていた金額を消したときだけ null・読めない入力は書かない", () => {
+  const rc = { "2025-01": { S1: 100000 }, "2025-02": { S1: 90000, m_A: 1 }, "2026-01": { S1: 5 } };
+  const f = m.myReceivedBulkForm(rc, 2025, ["S1", "m_A"]);
+  assert.strictEqual(Object.keys(f.S1).length, 12);
+  assert.deepStrictEqual([f.S1["2025-01"], f.S1["2025-02"], f.S1["2025-03"], f.m_A["2025-02"]], ["100000", "90000", "", "1"], "今の値が初期値");
+  assert.deepStrictEqual(m.planMyReceivedBulk(rc, f), { patch: {}, writes: 0, removes: 0 }, "何も変えなければ書かない");
+  const r = m.planMyReceivedBulk(rc, { ...f, S1: { ...f.S1, "2025-01": "100000", "2025-02": "", "2025-03": "８０,０００" }, m_A: { ...f.m_A, "2025-12": "0" } });
+  assert.deepStrictEqual(r, { patch: { "actuals/2025-02/S1": null, "actuals/2025-03/S1": 80000, "actuals/2025-12/m_A": 0 }, writes: 2, removes: 1 });
+  assert.ok(!Object.keys(r.patch).some(k => k.startsWith("actuals/2026")), "ほかの年は触らない");
+  assert.deepStrictEqual(m.planMyReceivedBulk(rc, { S1: { "2025-05": "1万" } }), { error: "振込額は円の数字で入力してください", ym: "2025-05", wid: "S1" });
+  assert.deepStrictEqual(m.planMyReceivedBulk(rc, { S1: { "2025-13": "1" } }).patch, {}, "支給月の形でない鍵は使わない");
+  // 年の表示の合計の規則は変えない: 見込み（目安）と振込額は別々の列・別々の年間合計。シフトが無い月の振込額も振込額の年間に入る
+  const y = m.myPayYearSummary(m.myPayYearMonths(2025).map(ym => ({ payYm: ym, total: 0, confirmedTotal: 0, projectedTotal: 0, workMin: 0 })), rc);
+  assert.strictEqual(y.received, 190001); assert.strictEqual(y.total, 0);
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const tab = my.slice(my.indexOf("function MyReceivedBulkForm("), my.indexOf("function MyGoalSection("));
+  assert.ok(/planMyReceivedBulk\(received,form\)/.test(tab) && /saveReceivedBulk/.test(tab) && /canEdit&&!bulk/.test(tab), "保存は差分・入口は振込額の入力と同じ境目（canEdit）");
+  assert.ok(/inputMode="numeric"/.test(tab) && /style=\{\{\.\.\.AI/.test(tab), "数字の入力・16px（AI）");
+  const ex = my.slice(my.indexOf("function useMyPayExtras("), my.indexOf("// 月間目標に対する進捗の弧"));
+  assert.ok(/saveReceivedBulk:async patch=>\{/.test(ex) && !/fbSet\(/.test(ex), "1回の update で書く（set しない）");
+});
 // ===== 全員のシフトの期間と店舗の選び方（2026-10-04・ユーザー指示: 未公開の案内を出さない・期間をプルダウン・直近3ヶ月・#/me でも）=====
 test("全員のシフト: 期間の選択肢は公開済みかつ直近3ヶ月（subsWindowCutoff と同じ窓）を新しい順。Premium でなければ空", () => {
   const pub = { at: "2026-09-01T00:00:00.000Z", byUid: "O" };

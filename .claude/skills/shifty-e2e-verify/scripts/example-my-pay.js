@@ -205,6 +205,70 @@ async function editWorkplace(h, id) {
     } finally { await h.browser.close(); }
   }
 
+  // ---------------- N: これまでの給料をまとめて入力（引き継ぎ・2026-10-04）----------------
+  // 前の年（Shifty を使う前）の年の表示から開き、A店の1〜3月とカフェの1月を入れる。前から入っていた A店の2月（50,000）は初期表示され、
+  // 消すと確認が出て null で消える。書くのは変えたセルだけ（1回の update）。保存後、年の表の振込額の列と年間の合計に入る（見込みの列は変えない）
+  {
+    const PY = String(Number(YM.slice(0, 4)) - 1);
+    const d = JSON.parse(JSON.stringify(dump));
+    d.users.T1.actuals = { ...(d.users.T1.actuals || {}), [`${PY}-02`]: { S1: 50000 }, [`${PY}-04`]: { S1: 60000 } };
+    for (const vp of [PHONE, { width: 320, height: 700 }]) {
+      const h = await openStaff({ db: d, viewport: vp });
+      try {
+        const N = {};
+        await openPay(h);
+        await click(h, '[data-my-pay-tab="year"]'); await settledPay(h);
+        while (await h.evaluate(py => !document.querySelector(`[data-my-pay-year="${py}"]`), PY)) { await click(h, '[data-my-pay-nav="prevYear"]'); await sleep(h, 200); }
+        await settledPay(h); await sleep(h, 300);
+        N.openBtn = await click(h, '[data-my-action="openBulk"]');
+        await waitSel(h, `[data-my-bulk="${PY}"]`);
+        N.form = await h.evaluate(py => { const f = document.querySelector("[data-my-bulk]"); const ins = [...f.querySelectorAll("[data-my-bulk-month]")];
+          return { months: ins.length, wps: [...(f.querySelector("[data-my-bulk-wp]") || { options: [] }).options].map(o => o.value), feb: (f.querySelector(`[data-my-bulk-month="${py}-02"]`) || {}).value,
+            numeric: ins.every(i => i.getAttribute("inputmode") === "numeric"), fonts: [...f.querySelectorAll("input,select")].every(i => parseFloat(getComputedStyle(i).fontSize) >= 16) }; }, PY);
+        N.overflow = await overflowX(h);
+        if (vp.width === 375) {
+          await h.page.fill(`[data-my-bulk-month="${PY}-01"]`, "180000");
+          await h.page.fill(`[data-my-bulk-month="${PY}-02"]`, "");
+          await h.page.fill(`[data-my-bulk-month="${PY}-03"]`, "185,000");
+          await h.page.selectOption("[data-my-bulk-wp]", "m_CAFE0001");
+          await h.page.fill(`[data-my-bulk-month="${PY}-01"]`, "30000");
+          await h.page.selectOption("[data-my-bulk-wp]", "S1");
+          N.keptAfterSwitch = await h.evaluate(py => document.querySelector(`[data-my-bulk-month="${py}-01"]`).value, PY);
+          // 書き込みを記録する（update の基点と鍵）・確認の文言を記録する
+          await h.evaluate(() => { window.__upd = []; const o = firebaseDB.ref.bind(firebaseDB); firebaseDB.ref = p => { const r = o(p); const u = r.update && r.update.bind(r);
+            if (u) r.update = v => { window.__upd.push({ p, keys: Object.keys(v).sort(), v }); return u(v); }; return r; };
+            window.__cf = []; const c = window.confirm; window.confirm = m => { window.__cf.push(String(m)); return c(m); }; });
+          await click(h, '[data-my-action="saveBulk"]'); await sleep(h, 600);
+          N.upd = await h.evaluate(() => window.__upd); N.confirms = await h.evaluate(() => window.__cf);
+          N.saved = await db(h, "users/T1/actuals");
+          N.msg = await h.evaluate(() => [...document.querySelectorAll("[data-my-msg]")].map(x => x.innerText).join("|"));
+          N.year = await h.evaluate(py => { const r = m => document.querySelector(`[data-my-pay-year-row="${py}-${m}"]`); return { jan: r("01") && r("01").innerText.replace(/\s+/g, " "),
+            feb: r("02") && r("02").innerText.replace(/\s+/g, " "), sumRec: document.querySelector("[data-my-pay-year-sumreceived]").getAttribute("data-my-pay-year-sumreceived"),
+            sumTotal: document.querySelector("[data-my-pay-year-sumtotal]").getAttribute("data-my-pay-year-sumtotal") }; }, PY);
+          // もう一度開くと保存した値が入っている
+          await click(h, '[data-my-action="openBulk"]'); await waitSel(h, "[data-my-bulk]");
+          N.reopen = await h.evaluate(py => ["01", "02", "03"].map(m => document.querySelector(`[data-my-bulk-month="${py}-${m}"]`).value), PY);
+          // 読めない入力は書かずに理由を出す
+          await h.page.fill(`[data-my-bulk-month="${PY}-05"]`, "abc");
+          await h.evaluate(() => { window.__upd = []; });
+          await click(h, '[data-my-action="saveBulk"]'); await sleep(h, 300);
+          N.badMsg = await h.evaluate(() => (document.querySelector('[data-my-bulk] [data-my-msg="error"]') || {}).innerText || "");
+          N.badWrites = await h.evaluate(() => window.__upd.length);
+          const u0 = (N.upd || [])[0] || { keys: [] };
+          V.N_bulkSave = N.openBtn && N.form.months === 12 && N.form.wps.includes("S1") && N.form.wps.includes("m_CAFE0001") && N.form.feb === "50000" && N.form.numeric && N.form.fonts && N.keptAfterSwitch === "180000" &&
+            N.upd.length === 1 && u0.p === "users/T1" && JSON.stringify(u0.keys) === JSON.stringify([`actuals/${PY}-01/m_CAFE0001`, `actuals/${PY}-01/S1`, `actuals/${PY}-02/S1`, `actuals/${PY}-03/S1`].sort()) &&
+            u0.v[`actuals/${PY}-02/S1`] === null && N.confirms.some(m => /1件消します/.test(m)) &&
+            N.saved[`${PY}-01`].S1 === 180000 && N.saved[`${PY}-01`].m_CAFE0001 === 30000 && !N.saved[`${PY}-02`] && N.saved[`${PY}-03`].S1 === 185000 && N.saved[`${PY}-04`].S1 === 60000;
+          V.N_yearReflects = /210,000円/.test(N.year.jan) && N.year.sumRec === String(180000 + 30000 + 185000 + 60000) && N.year.sumTotal === "0" && /保存しました/.test(N.msg);
+          V.N_reopenShowsSaved = JSON.stringify(N.reopen) === JSON.stringify(["180000", "", "185000"]);
+          V.N_badInputNoWrite = /5月/.test(N.badMsg) && N.badWrites === 0;
+        }
+        N.errors = h.errors.slice();
+        R["N" + vp.width] = N;
+        V["N_layout" + vp.width] = N.overflow <= 0 && N.form.fonts && N.errors.length === 0;
+      } finally { await h.browser.close(); }
+    }
+  }
   // ---------------- E: 月間目標 ----------------
   {
     const h = await openStaff({ db: dump });
@@ -235,6 +299,9 @@ async function editWorkplace(h, id) {
       const s1 = v.rows.find(r => r.id === "S1") || {};
       R.F = { v };
       V.F_noAmounts = v.premiumNote && v.total === null && s1.total === null && s1.received && s1.receivedDisabled && !s1.saveBtn;
+      // 一括入力も振込額の入力と同じ境目（Premium でなければ入口を出さない）
+      await click(h, '[data-my-pay-tab="year"]'); await sleep(h, 400);
+      V.F_noBulk = await h.evaluate(() => !!document.querySelector("[data-my-pay-yeartable]") && !document.querySelector('[data-my-action="openBulk"]'));
       await click(h, '[data-my-tab="settings"]');
       await waitSel(h, '[data-my-section="workplaces"] [data-my-wp]');
       await sleep(h, 400);
