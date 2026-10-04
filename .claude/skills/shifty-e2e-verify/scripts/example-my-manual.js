@@ -5,7 +5,9 @@
 //     A店の名前と色を変える → workplaces/S1 は kind shifty・shopId S1（フィールド単位の update＝既存の pay は残る）
 //  B（マイシフト）: 今日に手入力のシフトを追加 → カレンダーに3つのドット（掛け持ち）・詳細に「手入力」。A店のドットは選んだ色。次のシフトが手入力の 9:00
 //     別の日に 18:00〜2:00 → 24時超えの案内と「26:00 にする」→ 保存は 26:00。今日のシフトを直す。3つ目の日に履歴から追加（ワンタップ）→ 削除（確認つき）
-//  C（実績の上書き）: 公開済みの A店の今日を 10:00〜17:30・休憩15分に → 「実績」・公開の時間も表示・変更ありは付かない。開き直しても同じ。公開の時間に戻すと消える
+//  C（実績の上書き）: 公開済みの A店の今日を 10:00〜17:30・休憩15分に → **シフトの表示は公開の 10:00〜16:00 のまま**（2026-10-04 ユーザー指示
+//     「スタッフ側の出退勤時間の変更は給料計算のみに影響」）で、「給料計算の実績 10:00〜17:30（休憩15分）」の1行が出る・変更ありは付かない。
+//     給料の内訳に「あなたが入れた実績の時間で計算した日」。開き直しても同じ。「実績を消す」で消える
 //  D（.ics）: この月の公開済み＋手入力（グレーは入らない）。CRLF・TZID・26:00 は翌日の 2:00・上書きの時刻・SEQUENCE・書き出し後の端末ごとの案内・
 //     TimeTree などで見るときの折りたたみの案内（端末ごとの3手順・2026-10-04）・
 //            日付の詳細の「Google カレンダーに追加」リンク（2026-10-04）
@@ -91,7 +93,7 @@ async function dayView(h, date) {
       dots: cell ? [...cell.querySelectorAll("[data-my-dot]")].map(d => d.getAttribute("data-my-dot") + ":" + getComputedStyle(d).backgroundColor) : [],
       cellChanged: !!(cell && cell.querySelector("[data-my-cal-changed]")),
       rows: [...document.querySelectorAll("[data-my-day] [data-my-entry]")].map(r => ({ state: r.getAttribute("data-my-entry"), shop: r.getAttribute("data-my-entry-shop"),
-        time: (r.querySelector("[data-my-entry-time]") || {}).innerText || "", actual: !!r.querySelector("[data-my-entry-actual]"),
+        time: (r.querySelector("[data-my-entry-time]") || {}).innerText || "", actual: !!r.querySelector("[data-my-entry-actual]"), actualText: (r.querySelector("[data-my-entry-actual]") || {}).innerText || "",
         sched: (r.querySelector("[data-my-entry-sched]") || {}).innerText || "", memo: (r.querySelector("[data-my-entry-memo]") || {}).innerText || "",
         changed: !!r.querySelector("[data-my-entry-changed]"), actions: [...r.querySelectorAll("[data-my-action]")].map(b => b.getAttribute("data-my-action")) })),
       next: document.querySelector("[data-my-next]").getAttribute("data-my-next"), nextText: document.querySelector("[data-my-next]").innerText,
@@ -259,16 +261,28 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       V.C_layout375 = layoutC.overflow <= 0 && layoutC.fonts;
       const r = rowOf(v, "S1", "published");
       V.C_overrideSaved = JSON.stringify(pre) === JSON.stringify(["10:00", "16:00", "0"]) && ov && ov.start === "10:00" && ov.end === "17:30" && ov.breakMin === 15;
-      V.C_overrideShown = r.actual && r.time === "10:00〜17:30" && /公開 10:00〜16:00/.test(r.sched) && !r.changed && !v.changed && !v.cellChanged;
+      V.C_overrideShown = r.actual && r.time === "10:00〜16:00" && r.actualText === "給料計算の実績 10:00〜17:30（休憩15分）" && !r.sched && !r.changed && !v.changed && !v.cellChanged;
       V.C_noErrors1 = errs("C1", h);
       dump = await dumpOf(h);
+    } finally { await h.browser.close(); }
+    // 給料の内訳に、実績で計算した日が出る（上書きは給料計算にだけ効く）
+    h = await openStaff({ db: dump });
+    try {
+      await click(h, '[data-my-tab="pay"]');
+      await waitSel(h, '[data-my-pay-row="S1"] [data-my-action="payDetail"]');
+      await click(h, '[data-my-pay-row="S1"] [data-my-action="payDetail"]');
+      await sleep(h, 300);
+      R.C.payNotes = await h.evaluate(() => { const n = document.querySelector('[data-my-pay-notes="S1"]'); return n ? n.innerText : ""; });
+      const md = `${Number(TODAY.slice(5, 7))}/${Number(TODAY.slice(8))}`;
+      V.C_payNote = R.C.payNotes.includes(`あなたが入れた実績の時間で計算した日 1日（${md}）。シフトの表示は公開された時間のままです`);
+      V.C_noErrorsPay = errs("Cpay", h);
     } finally { await h.browser.close(); }
     h = await openStaff({ db: dump });
     try {
       let v = await dayView(h, TODAY);
       R.C.reopen = v;
       V.C_reopenNoChanged = rowOf(v, "S1", "published").actual && !v.changed && !v.cellChanged;
-      // D（.ics）はこの状態で書き出す（上書きの時刻が入る）
+      // D（.ics）はこの状態で書き出す（上書きがあっても公開の時刻＝上書きは給料計算だけ）
       await click(h, '[data-my-action="ics"]');
       await sleep(h, 300);
       // PC・Android では書き出す前に確認が出る（2026-10-04・example-my-cal-prompt.js が詳しく見る）。iOS の Safari では出ない
@@ -296,21 +310,22 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
             return !!day && !!ics && t >= day.getBoundingClientRect().bottom && t >= ics.getBoundingClientRect().bottom && !!last && last.contains(d); })() }; });
       V.D_icsAppGuide = !!R.D.apps && R.D.apps.closed && R.D.apps.plat === (IOS ? "ios" : "desktop") && R.D.apps.steps === 3 && /TimeTree/.test(R.D.apps.text) &&
         /直接は取り込めません/.test(R.D.apps.text) && /重複/.test(R.D.apps.text) && R.D.apps.right <= R.D.apps.vw && R.D.apps.below;
-      // Google カレンダーに1件ずつ追加するリンク（日付の詳細・公開済みと手入力・上書きの時刻・送るのは勤務先名と時刻だけ）
+      // Google カレンダーに1件ずつ追加するリンク（日付の詳細・公開済みと手入力・上書きがあっても公開の時刻・送るのは勤務先名と時刻だけ）
       R.D.gcal = v.gcal;
       const g = v.gcal.map(x => new URL(x.href));
       V.D_gcalLinks = v.gcal.length >= 1 && v.gcal.every(x => x.date === TODAY && x.target === "_blank" && /noopener/.test(x.rel) && x.text.startsWith("Google カレンダーに追加"))
         && g.every(u => u.origin === "https://calendar.google.com" && u.searchParams.get("ctz") === "Asia/Tokyo" && [...u.searchParams.keys()].sort().join() === "action,ctz,dates,text")
-        && g.some(u => u.searchParams.get("dates") === `${TODAY.replace(/-/g, "")}T100000/${TODAY.replace(/-/g, "")}T173000`);
+        && g.some(u => u.searchParams.get("dates") === `${TODAY.replace(/-/g, "")}T100000/${TODAY.replace(/-/g, "")}T160000`)
+        && !g.some(u => /T173000/.test(u.searchParams.get("dates")));
       const u = ics.text.replace(/\r\n /g, "");
       const events = (u.match(/BEGIN:VEVENT/g) || []).length;
       V.D_icsFile = JSON.stringify(ics.names) === JSON.stringify([`shifty-${YM}.ics`]) && /^text\/calendar/.test(ics.type);
       V.D_icsContent = events === 3 && ics.text.endsWith("\r\n") && !/[^\r]\n/.test(ics.text) && /BEGIN:VTIMEZONE\r\nTZID:Asia\/Tokyo/.test(u)
-        && u.includes(`DTSTART;TZID=Asia/Tokyo:${TODAY.replace(/-/g, "")}T100000\r\nDTEND;TZID=Asia/Tokyo:${TODAY.replace(/-/g, "")}T173000`)
+        && u.includes(`DTSTART;TZID=Asia/Tokyo:${TODAY.replace(/-/g, "")}T100000\r\nDTEND;TZID=Asia/Tokyo:${TODAY.replace(/-/g, "")}T160000`)
         && u.includes(`DTEND;TZID=Asia/Tokyo:${nextDay(D2)}T020000`) && u.includes("SUMMARY:本店") && u.includes("SUMMARY:カフェ") && !u.includes("B店")
-        && u.includes("実績（本人の入力）") && ics.text.split("\r\n").every(l => Buffer.byteLength(l, "utf8") <= 75)
+        && !u.includes("実績") && !u.includes("T173000") && ics.text.split("\r\n").every(l => Buffer.byteLength(l, "utf8") <= 75)
         && /\r\nSEQUENCE:\d+\r\n/.test(u) && u.includes("X-LIC-LOCATION:Asia/Tokyo") && ics.text.charCodeAt(0) !== 0xFEFF;
-      // 公開の時間に戻す
+      // 実績を消す
       await h.evaluate(() => { const r = [...document.querySelectorAll("[data-my-day] [data-my-entry]")].find(x => x.getAttribute("data-my-entry-shop") === "S1"); r.querySelector('[data-my-action="resetOverride"]').click(); });
       await sleep(h, 400);
       v = await dayView(h, TODAY);

@@ -762,8 +762,11 @@ function MyManualShiftForm({personal,manualList,date,editing,onDone}){
   );
 }
 // 公開済みのシフトへの実績の上書き。公開内容と同じ値で保存すると上書きを消す
+// 2026-10-04 ユーザー指示: 本人が入れた時間は**給料計算にだけ**使う。シフトの表示（カレンダー・日付の詳細・次のシフト・.ics・全員の表）は
+// 管理者が公開した時間のまま。入力欄の初期値は、実績があればその値、無ければ公開の時間
 function MyOverrideForm({personal,entry,onDone}){
-  const[f,setF]=useState({start:_myInputOfMin(entry.startMin),end:_myInputOfMin(entry.endMin),breakMin:String(entry.breakMin||0)});
+  const cur=entry.overridden&&entry.actual?entry.actual:entry.sched||entry;
+  const[f,setF]=useState({start:_myInputOfMin(cur.startMin),end:_myInputOfMin(cur.endMin),breakMin:String(cur.breakMin||0)});
   const[err,setErr]=useState(null);
   const[busy,setBusy]=useState(false);
   const set=(k,v)=>{setF(p=>({...p,[k]:v}));setErr(null);};
@@ -774,13 +777,13 @@ function MyOverrideForm({personal,entry,onDone}){
     const w=await personal.saveOverride(entry.shopId,entry.date,r.remove?null:r.record);
     setBusy(false);
     if(w.error){setErr({error:w.error});return;}
-    onDone(r.remove?"公開された時間に戻しました":"実績を保存しました");
+    onDone(r.remove?"実績を消しました（給料は公開された時間で計算します）":"実績を保存しました（給料の計算にだけ使います）");
   };
   return(
     <div data-my-override-form="1" style={{borderTop:"1px solid var(--c-border)",paddingTop:12,marginTop:8}}>
-      <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)",marginBottom:4}}>実際に働いた時間</div>
-      <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>
-        公開された時間: {fmtMyRange(entry.sched)}{entry.sched.breakMin>0?`（休憩${entry.sched.breakMin}分）`:""}。入れた時間はあなたの画面と給料の見込みにだけ使われ、お店には送られません。
+      <div style={{fontSize:14,fontWeight:700,color:"var(--c-text)",marginBottom:4}}>給料計算に使う実際の時間</div>
+      <div data-my-override-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>
+        公開された時間: {fmtMyRange(entry.sched)}{entry.sched.breakMin>0?`（休憩${entry.sched.breakMin}分）`:""}。入れた時間は給料の見込みの計算にだけ使います。シフトの表示は公開された時間のままで、お店には送られません。
       </div>
       <MyTimesFields f={f} set={set} err={err}/>
       <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
@@ -811,7 +814,6 @@ function MyShiftEntryRow({e,changed,actions}){
         <div style={{display:"flex",alignItems:"baseline",gap:8,flexWrap:"wrap"}}>
           <span data-my-entry-time="1" style={{fontSize:17,fontWeight:700,color:grey?"var(--c-text3)":"var(--c-text)",fontVariantNumeric:"tabular-nums"}}>{fmtMyRange(e)||"時間未定"}</span>
           <span style={{fontSize:12,fontWeight:700,color:grey?"var(--c-text3)":"var(--c-text2)"}}>{MY_KIND_LABEL[state]}</span>
-          {e.overridden&&<span data-my-entry-actual="1" style={{fontSize:12,fontWeight:700,color:"var(--c-text)"}}>実績</span>}
           {changed&&<span data-my-entry-changed="1" style={{fontSize:12,fontWeight:700,color:"var(--c-accent)"}}>変更あり</span>}
         </div>
         <div style={{fontSize:13,color:grey?"var(--c-text3)":"var(--c-text2)",lineHeight:1.6,overflowWrap:"anywhere"}}>
@@ -819,12 +821,12 @@ function MyShiftEntryRow({e,changed,actions}){
           {!grey&&e.breakMin>0?` ／ 休憩${e.breakMin}分`:""}
           {!grey&&(e.segments||[]).filter(g=>g.extra).map(g=>` ／ 追加 ${fmtMyClock(g.startMin)}〜${fmtMyClock(g.endMin)}`).join("")}
         </div>
-        {e.overridden&&<div data-my-entry-sched="1" style={{fontSize:12,color:"var(--c-text3)"}}>公開 {fmtMyRange(e.sched)}{e.sched.breakMin>0?`（休憩${e.sched.breakMin}分）`:""}</div>}
+        {e.overridden&&e.actual&&<div data-my-entry-actual="1" style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6}}>給料計算の実績 {fmtMyRange(e.actual)}{e.actual.breakMin>0?`（休憩${e.actual.breakMin}分）`:""}</div>}
         {!grey&&e.differs&&e.hope&&<div data-my-entry-hope="1" style={{fontSize:12,color:"var(--c-text3)"}}>希望 {fmtMyRange(e.hope)}</div>}
         {e.memo&&<div data-my-entry-memo="1" style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6,overflowWrap:"anywhere"}}>{e.memo}</div>}
         {actions&&<div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
-          {e.kind==="published"&&actions.canEdit&&<button data-my-action="editOverride" onClick={actions.editOverride} style={small}>{e.overridden?"実績を直す":"実績を入力"}</button>}
-          {e.kind==="published"&&e.overridden&&<button data-my-action="resetOverride" disabled={actions.busy} onClick={actions.resetOverride} style={small}>公開の時間に戻す</button>}
+          {e.kind==="published"&&actions.canEdit&&<button data-my-action="editOverride" onClick={actions.editOverride} style={small}>{e.overridden?"給料計算の実績を直す":"給料計算の実績を入力"}</button>}
+          {e.kind==="published"&&e.overridden&&<button data-my-action="resetOverride" disabled={actions.busy} onClick={actions.resetOverride} style={small}>実績を消す</button>}
           {e.kind==="manual"&&actions.canEdit&&<button data-my-action="editManual" onClick={actions.editManual} style={small}>直す</button>}
           {e.kind==="manual"&&<button data-my-action="deleteManual" disabled={actions.busy} onClick={actions.deleteManual} style={small}>削除</button>}
         </div>}
@@ -982,7 +984,7 @@ function MyShiftTab({me,onGoSettings,personal}){
   const resetOverride=async e=>{
     setBusy("ov");setDayMsg({});
     const r=await P.saveOverride(e.shopId,e.date,null);
-    setBusy("");setDayMsg(r.error?{error:r.error}:{ok:"公開された時間に戻しました"});
+    setBusy("");setDayMsg(r.error?{error:r.error}:{ok:"実績を消しました（給料は公開された時間で計算します）"});
   };
   const deleteManual=async e=>{
     if(!window.confirm(`${myFmtDate(e.date)} ${e.shopName} ${fmtMyRange(e)} のシフトを削除しますか？`))return;

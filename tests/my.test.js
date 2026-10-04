@@ -683,21 +683,27 @@ test("E4 履歴から追加: 同じ勤務先の時間帯を新しい順に、同
   assert.strictEqual(dup[0], "h_0000000002");
   assert.strictEqual(m.myShiftDuplicateOf(E4Shifts, { workplaceId: "m_CAFE0001", date: "2026-10-10", start: "09:00", end: "13:00" }, "h_0000000002"), null, "編集中のシフト自身は重複にしない");
 });
-test("E4 実績の上書き: 表示と給料の1日に効き、締の追加出勤は残る。指紋（変更あり）は公開内容のまま。公開と同じ値なら消す", () => {
+test("E4 実績の上書き: 給料の1日にだけ効き、表示の時刻は公開内容のまま（2026-10-04 ユーザー指示）。締の追加出勤は残る。指紋（変更あり）は公開内容のまま。公開と同じ値なら消す", () => {
   const ov = { "2026-10-18": { start: "18:00", end: "23:30", breakMin: 15 } };
   const base = m.buildMyShiftDays(e3Base({ periods: [E3Pub] }), U);
   const es = m.buildMyShiftDays(e3Base({ periods: [E3Pub], overrides: ov }), U);
   const d18 = es.find(e => e.date === "2026-10-18");
-  assert.strictEqual(m.fmtMyRange(d18), "18:00〜23:30");
-  assert.ok(d18.overridden && d18.breakMin === 15 && d18.workMin === 315, JSON.stringify(d18));
-  assert.strictEqual(m.fmtMyRange(d18.sched), "18:00〜23:00", "公開内容は sched に残る");
+  assert.strictEqual(m.fmtMyRange(d18), "18:00〜23:00", "表示の時刻は公開内容（上書きはシフトの表示に出さない）");
+  assert.deepStrictEqual([d18.breakMin, d18.workMin], [0, 300], "表示の休憩・実働も公開内容");
+  assert.deepStrictEqual(["startMin", "endMin", "breakMin", "workMin", "segments"].map(k => d18[k]), ["startMin", "endMin", "breakMin", "workMin", "segments"].map(k => d18.sched[k]));
+  assert.ok(d18.overridden && d18.actual && d18.actual.breakMin === 15 && d18.actual.workMin === 315 && m.fmtMyRange(d18.actual) === "18:00〜23:30", JSON.stringify(d18));
+  assert.strictEqual(d18.actualDay.workMin, 315, "給料に渡す actualDay は上書き適用後");
+  assert.strictEqual(m.nextMyShift(es, "2026-10-18").startMin, d18.sched.startMin, "次のシフトも公開内容");
+  assert.ok(/dates=20261018T180000\/20261018T230000/.test(m.myGoogleCalendarLinks(d18)[0].url), "Google カレンダーのリンクも公開の時刻");
+  assert.ok(/T230000/.test(m.buildMyIcs([d18], { nowIso: "2026-10-04T00:00:00Z" }).text) && !/T233000/.test(m.buildMyIcs([d18], { nowIso: "2026-10-04T00:00:00Z" }).text), ".ics も公開の時刻");
   assert.deepStrictEqual(m.myPublishedFingerprints(es, ["S1|p1"]), m.myPublishedFingerprints(base, ["S1|p1"]), "上書きしても指紋は変わらない＝変更ありにならない");
   assert.ok(!es.find(e => e.date === "2026-10-17").overridden);
   // 締の追加出勤
   const subsX = [{ ...E3Subs[0], shifts: { "2026-10-18": { status: "work", start: "17:00", end: "22:00", extraStart: "23:00", extraEnd: "25:00", adjustedStartFixed: true } } }];
   const ex = m.buildMyShiftDays(e3Base({ periods: [E3Pub], subsByPeriod: { p1: subsX }, overrides: { "2026-10-18": { start: "17:00", end: "21:00", breakMin: 0 } } }), U)[0];
-  assert.deepStrictEqual(ex.segments.map(g => [g.startMin, g.endMin, g.extra]), [[1020, 1260, false], [1380, 1500, true]], "上書きは主シフトだけ・追加出勤は残す");
-  assert.strictEqual(ex.workMin, 240 + 120);
+  assert.deepStrictEqual(ex.actual.segments.map(g => [g.startMin, g.endMin, g.extra]), [[1020, 1260, false], [1380, 1500, true]], "上書きは主シフトだけ・追加出勤は残す");
+  assert.strictEqual(ex.actual.workMin, 240 + 120);
+  assert.deepStrictEqual(ex.segments.map(g => [g.startMin, g.endMin, g.extra]), [[1020, 1320, false], [1380, 1500, true]], "表示は公開内容のまま");
   // 壊れた上書きは使わない
   const broken = m.buildMyShiftDays(e3Base({ periods: [E3Pub], overrides: { "2026-10-18": { start: "20:00", end: "19:00", breakMin: 0 } } }), U);
   assert.ok(!broken.find(e => e.date === "2026-10-18").overridden);
@@ -744,7 +750,8 @@ test("E4 .ics: VTIMEZONE と TZID=Asia/Tokyo・24時超えは翌日・締の追�
   assert.ok(unfolded.includes("SUMMARY:A店\\; 本店\\, 梅田\\\\北\r\n"), "; , \\ のエスケープ");
   assert.ok(unfolded.includes("SUMMARY:A店\\; 本店\\, 梅田\\\\北（追加）"));
   assert.ok(unfolded.includes("DESCRIPTION:確定\\n休憩30分"), "改行は \\n");
-  assert.ok(unfolded.includes("DESCRIPTION:実績（本人の入力）"), "上書きした日は実績と書く");
+  assert.ok(!unfolded.includes("実績"), "上書きのある日もカレンダーには公開として書く（上書きは給料計算だけ）");
+  assert.ok(/UID:shifty-S1-20261014@shiftyshifty.app[\s\S]*?DESCRIPTION:公開/.test(unfolded));
   assert.ok(unfolded.includes("DTSTAMP:20261004T010203Z"));
   const uids = [...unfolded.matchAll(/UID:([^\r]+)/g)].map(x => x[1]);
   assert.deepStrictEqual(uids, ["shifty-eb6A_2bcX_2axP-20261031@shiftyshifty.app", "shifty-eb6A_2bcX_2axP-20261031-x1@shiftyshifty.app",
@@ -1049,6 +1056,8 @@ test("E5 未公開（グレー）は含めない・Premium でないと計算し
   // 上書き: 11/2 を 10:00〜18:00 休憩0 → 480分・時間外0。基本 1200×960/60＝19,200 ＋ 深夜 1,200 ＋ 交通費 1,000
   const ov = e5Row(P31, { overrides: { "2026-11-02": { start: "10:00", end: "18:00", breakMin: 0 } } });
   assert.deepStrictEqual({ b: ov.amounts.items.base, ot: ov.amounts.items.ot, t: ov.amounts.total }, { b: 19200, ot: 0, t: 21400 });
+  assert.ok(ov.notes.some(n => n === "あなたが入れた実績の時間で計算した日 1日（11/2）。シフトの表示は公開された時間のままです"), ov.notes.join("／"));
+  assert.ok(!r.notes.some(n => /実績の時間で計算/.test(n)) && !e5Row(P31, {}).notes.some(n => /実績の時間で計算/.test(n)), "上書きの無い月は注記しない");
 });
 
 test("E5 手入力の勤務先: 時給×時間・深夜25%（休憩は拘束の比率で按分）・8h超25%・日給×出勤日数。交通費の月額", () => {

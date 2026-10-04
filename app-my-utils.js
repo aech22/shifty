@@ -394,13 +394,16 @@ function buildMyShiftDays(o,U){
         const differs=!!hope&&(hope.startMin!==sd.startMin||hope.endMin!==sd.endMin);
         const segOf=gs=>(gs||[]).map(g=>({startMin:g.startMin,endMin:g.endMin,extra:!!g.extra}));
         const sched={startMin:sd.startMin,endMin:sd.endMin,breakMin:sd.breakMin,workMin:sd.workMin,segments:segOf(sd.segments)};
-        // 実績の上書き（E4・users/{uid}/overrides/{shopId}/{date}）。本人の画面と給料計算にだけ効く。
+        // 実績の上書き（E4・users/{uid}/overrides/{shopId}/{date}）は**給料計算にだけ効く**（2026-10-04 ユーザー指示
+        // 「スタッフ側の出退勤時間の変更は給料計算のみに影響」）。entry の時刻（startMin〜segments）は常に公開内容（sched）で、
+        // カレンダー・日付の詳細の主表示・次のシフト・.ics・Google カレンダー・全員の表は上書きの有無に関係なく公開内容を出す。
+        // 上書きの値は actual（表示用の要約）と actualDay（resolveActualDay の戻り値＝myPayWorkDays が使う）にだけ載せる。
         // 計算は店舗の実績と同じ resolveActualDay（退勤延長は足さない・締の追加出勤は確定シフトのまま足す）。
-        // 「変更あり」の指紋は公開内容（sched）で作る＝上書きしても変更ありにならない
+        // 「変更あり」の指紋も公開内容（sched）で作る＝上書きしても変更ありにならない
         const ov=myOverrideOf(ovs[date]);
         const ad=u.resolveActualDay?u.resolveActualDay(sub,ov?{start:ov.start,end:ov.end,breakMin:ov.breakMin}:null,date,st,name):null;
-        const eff=ov&&ad?{startMin:ad.startMin,endMin:ad.endMin,breakMin:ad.breakMin,workMin:ad.workMin,segments:segOf(ad.segments)}:sched;
-        out.push({...base,date,kind:"published",confirmed,...eff,sched,overridden:!!(ov&&ad),override:ov&&ad?ov:null,actualDay:ad,hope,differs});
+        const actual=ov&&ad?{startMin:ad.startMin,endMin:ad.endMin,breakMin:ad.breakMin,workMin:ad.workMin,segments:segOf(ad.segments)}:null;
+        out.push({...base,date,kind:"published",confirmed,...sched,sched,overridden:!!actual,override:actual?ov:null,actual,actualDay:ad,hope,differs});
       }else if(hope){
         out.push({...base,date,kind:"submitted",confirmed:false,startMin:hope.startMin,endMin:hope.endMin,breakMin:null,workMin:null,
           segments:[],hope,differs:false});
@@ -700,14 +703,17 @@ function myShiftHistoryCandidates(shifts,workplaceId,limit){
 // 給料計算（E5）に渡す1日の勤務。マイシフトの entry（buildMyShiftDays＋buildMyManualDays）から、未公開（グレー）を除いて同じ形にそろえる。
 //   source: "published"（公開・確定シフト）| "override"（本人が上書きした実績）| "manual"（手入力の勤務先）
 //   actualDay: Shifty の店舗の日だけ。resolveActualDay の戻り値（上書き適用後）＝premiumDayInput の own にそのまま渡せる
+//   時刻は、上書きのある日は上書き（e.actual）・それ以外は公開内容（entry の表示用の時刻は常に公開内容なので、ここで取り替える）
 function myPayWorkDays(entries){
-  return(entries||[]).filter(e=>e&&(e.kind==="published"||e.kind==="manual")).map(e=>({
-    date:e.date,kind:e.kind==="manual"?"manual":"shifty",workplaceId:e.workplaceId||e.shopId,shopId:e.shopId||null,periodId:e.periodId||null,
-    shiftId:e.shiftId||null,confirmed:!!e.confirmed,source:e.kind==="manual"?"manual":e.overridden?"override":"published",
-    startMin:e.startMin,endMin:e.endMin,breakMin:e.breakMin,workMin:e.workMin,segments:(e.segments||[]).map(g=>({...g})),actualDay:e.actualDay||null}));
+  return(entries||[]).filter(e=>e&&(e.kind==="published"||e.kind==="manual")).map(e=>{
+    const t=e.kind==="published"&&e.overridden&&e.actual?e.actual:e;
+    return{date:e.date,kind:e.kind==="manual"?"manual":"shifty",workplaceId:e.workplaceId||e.shopId,shopId:e.shopId||null,periodId:e.periodId||null,
+      shiftId:e.shiftId||null,confirmed:!!e.confirmed,source:e.kind==="manual"?"manual":e.overridden?"override":"published",
+      startMin:t.startMin,endMin:t.endMin,breakMin:t.breakMin,workMin:t.workMin,segments:(t.segments||[]).map(g=>({...g})),actualDay:e.actualDay||null};
+  });
 }
 // ---- .ics（RFC 5545）----
-// 公開済み（上書きがあれば上書きの時刻）と手入力のシフトを VEVENT にする。未公開（グレー）は含めない。
+// 公開済み（本人の実績の上書きがあっても公開の時刻）と手入力のシフトを VEVENT にする。未公開（グレー）は含めない。
 // 時刻は TZID=Asia/Tokyo の現地時刻で書き、VTIMEZONE（+0900 の STANDARD 1つ・日本は夏時間なし）を同梱する。
 // **UTC（末尾 Z）にしない**: 2026-10-04 に iOS 27 のシミュレーターで比べると、UTC の予定は iPhone のカレンダーで
 // 「18:00（9:00GMT）」と全件に GMT の時刻が添えられ、TZID の予定は「18:00」とだけ出た（どちらも時刻自体は正しい）。
@@ -756,7 +762,8 @@ function buildMyIcs(entries,o){
       const uid=e.kind==="manual"?`manual-${_icsUidPart(e.shiftId)}${g.extra?`-x${++ex}`:""}`
         :`shifty-${_icsUidPart(e.shopId)}-${e.date.replace(/-/g,"")}${g.extra?`-x${++ex}`:""}`;
       const desc=[];
-      if(e.kind==="published")desc.push(e.overridden?"実績（本人の入力）":e.confirmed?"確定":"公開");
+      // 時刻は公開内容（本人の実績の上書きは給料計算にだけ効く＝カレンダーには出さない・2026-10-04）
+      if(e.kind==="published")desc.push(e.confirmed?"確定":"公開");
       if(!g.extra&&e.breakMin>0)desc.push(`休憩${e.breakMin}分`);
       if(e.memo)desc.push(e.memo);
       L.push("BEGIN:VEVENT",`UID:${uid}@${MY_ICS_DOMAIN}`,`DTSTAMP:${stamp}`,`SEQUENCE:${seq}`,
@@ -1082,6 +1089,10 @@ function myShiftyDayInfo(o,U){
   });
   return out;
 }
+// [from, to] の日のうち、本人の実績の上書きで計算する日（公開済みで上書きがある日）。info は myShiftyDayInfo の戻り値
+function myOverrideDatesIn(info,from,to){
+  return Object.keys(_myObj(info)||{}).filter(d=>d>=String(from||"")&&d<=String(to||"")&&info[d]&&info[d].published&&info[d].ov).sort();
+}
 // 暦月 ym の計算に使う店舗の設定。月次賃金ページと同じく「その月に始まる最も新しい期間（無ければ月にかかる最も新しい期間）」の設定
 // （確定・終了済みなら写し）。シフト作成タブの労務判定表もこの期間の設定で月を数える
 function myMonthSettingsOf(o,ym,U){
@@ -1251,6 +1262,9 @@ function myPayMonthFor(o,U){
       if(times.submittedDays)notes.push(`未公開のシフト${times.submittedDays}日は含めていません`);
       if(times.missingDays)notes.push(`お店のシフト期間が無い日${times.missingDays}日は勤務なしとして数えています`);
       if(times.undetermined)notes.push("シフトの無い日を含む週は、法定休日の判定をしていません");
+      // 本人が入れた実績（上書き）は給料計算にだけ効く（シフトの表示は公開のまま）。どの日が実績で計算されたかを内訳に出す
+      const ovDates=myOverrideDatesIn(wp.shifty.info,plan.from,plan.to);
+      if(ovDates.length)notes.push(`あなたが入れた実績の時間で計算した日 ${ovDates.length}日（${ovDates.map(d=>`${Number(d.slice(5,7))}/${Number(d.slice(8))}`).join("・")}）。シフトの表示は公開された時間のままです`);
     }
     if(wage.payType==="daily"&&wp.kind==="shifty")notes.push("日給は割増を含めていません");
     if(wage.source==="none")notes.push(wp.kind==="manual"?"時給（日給）が未設定のため、時間だけ表示しています":"時給（日給）が未設定のため、時間だけ表示しています");
@@ -1635,7 +1649,7 @@ if(typeof module!=="undefined"&&module.exports){
     MY_IN_APP_BROWSERS,myInAppBrowserOf,myCalendarEnvOf,myCalendarPromptOf,MY_CAL_PROMPT_LS,myCalendarPromptKey,myCalendarPromptShown,MY_ICS_STANDALONE_NOTE,myExternalBrowserUrl,
     MY_PAY_END_DAY,MY_PAY_HOLIDAY_RULES,MY_PAY_HOLIDAY_RULE_LABELS,MY_PAY_WAGE_TYPES,MY_PAY_WAGE_TYPE_LABELS,MY_PAY_OFFSET_LABELS,MY_PAY_YEN_MAX,MY_PAY_GOAL_MAX,MY_PAY_DEFAULT,
     MY_MANUAL_NIGHT_PCT,MY_MANUAL_OVER8_PCT,MY_MANUAL_OVER8_MIN,myPayDayLabel,myPayOf,validateMyPayInput,buildMyPayRecord,myPayFormOf,parseMyGoalInput,myGoalOf,parseMyReceivedInput,
-    myClampDay,myClosingMonthOf,myClosingRangeOf,myPayDateOf,myPayPlanOf,myPayMonthOfDate,myPeriodsInRange,myPayReadRange,myShiftyDayInfo,myMonthSettingsOf,
+    myClampDay,myClosingMonthOf,myClosingRangeOf,myPayDateOf,myPayPlanOf,myPayMonthOfDate,myPeriodsInRange,myPayReadRange,myShiftyDayInfo,myOverrideDatesIn,myMonthSettingsOf,
     myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPaySummaryOf,planMyReceivedBulk,myReceivedBulkForm,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
     MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,resolveMyPage,MY_PAGE_STATE_MESSAGES,
