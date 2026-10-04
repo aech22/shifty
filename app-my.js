@@ -484,6 +484,16 @@ async function readMyShiftShop(sid){
   const wageSettings=coLink&&coLink.settings&&coLink.settings.wageSettings&&typeof coLink.settings.wageSettings==="object"?coLink.settings.wageSettings:null;
   return{ok:true,periods,settings,staff:st.v||[],plan,wageSettings};
 }
+// 同じ店舗を短い間に2回読まない（マイシフトの「自分のシフト」と「全員のシフト」は同時に開く）。読めたものだけを30秒覚える
+const MY_SHOP_READ_TTL_MS=30000;
+const _myShopReads=new Map(); // sid → {at, promise}
+function readMyShiftShopShared(sid){
+  const hit=_myShopReads.get(sid);
+  if(hit&&Date.now()-hit.at<MY_SHOP_READ_TTL_MS)return hit.promise;
+  const promise=readMyShiftShop(sid).then(v=>{if(!v||!v.ok)_myShopReads.delete(sid);return v;},e=>{_myShopReads.delete(sid);throw e;});
+  _myShopReads.set(sid,{at:Date.now(),promise});
+  return promise;
+}
 async function readMyPeriodSubs(sid,pid){
   try{
     const snap=await firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(pid).once("value");
@@ -513,7 +523,7 @@ function useMyShiftSources(me,pick){
     okLinks.forEach(l=>{
       if(shops[l.shopId]||loadingRef.current.has("shop:"+l.shopId))return;
       loadingRef.current.add("shop:"+l.shopId);
-      readMyShiftShop(l.shopId).then(v=>{if(alive)setShops(p=>({...p,[l.shopId]:v}));},()=>{if(alive)setShops(p=>({...p,[l.shopId]:{ok:false}}));});
+      readMyShiftShopShared(l.shopId).then(v=>{if(alive)setShops(p=>({...p,[l.shopId]:v}));},()=>{if(alive)setShops(p=>({...p,[l.shopId]:{ok:false}}));});
     });
     return()=>{alive=false;};
   },[okLinks,shops]);
@@ -535,6 +545,42 @@ function useMyShiftSources(me,pick){
     return sh.ok&&pick(sh.periods).some(p=>!((l.shopId+"|"+p.id) in subs));
   });
   return{links,okLinks,badLinks,shops,subs,pending};
+}
+// メールのアカウントの「全員のシフト」（2026-10-04）。有効な紐付け（readMyLinks の ok）の店舗の periods・settings・staff・プランを読み、
+// 選んだ期間の subs だけを期間ごとの部分読みで読む（店舗の subs 全件は読まない・読んだ期間は覚えて読み直さない）。何も書かない。
+// 戻り値 {shops: myAllShiftChoices に渡す店舗の配列（読めた店舗だけ・readMyLinks の並び）, subsFor, need, loading}
+function useMyAllShiftSources(me){
+  const[links,setLinks]=useState(undefined);
+  const[shops,setShops]=useState({});
+  const[subs,setSubs]=useState({});
+  const startedRef=useRef(new Set());
+  const key=me&&me.key;
+  useEffect(()=>{
+    if(!me)return;
+    let alive=true;
+    me.links().then(v=>{if(alive)setLinks(v);}).catch(()=>{if(alive)setLinks(null);});
+    return()=>{alive=false;};
+  },[key]);
+  const okLinks=useMemo(()=>(Array.isArray(links)?links.filter(l=>l&&l.ok):[]),[links]);
+  useEffect(()=>{
+    let alive=true;
+    okLinks.forEach(l=>{
+      if(startedRef.current.has("shop:"+l.shopId))return;
+      startedRef.current.add("shop:"+l.shopId);
+      readMyShiftShopShared(l.shopId).then(v=>{if(alive)setShops(p=>({...p,[l.shopId]:v}));},()=>{if(alive)setShops(p=>({...p,[l.shopId]:{ok:false}}));});
+    });
+    return()=>{alive=false;};
+  },[okLinks]);
+  const need=useCallback((sid,pid)=>{
+    const k=sid+"|"+pid;
+    if(startedRef.current.has(k))return;
+    startedRef.current.add(k);
+    readMyPeriodSubs(sid,pid).then(v=>setSubs(p=>({...p,[k]:v})));
+  },[]);
+  const list=useMemo(()=>okLinks.map(l=>{const sh=shops[l.shopId];return sh&&sh.ok?{shopId:l.shopId,shopName:l.shopName,name:l.name,periods:sh.periods,settings:sh.settings,staff:sh.staff,plan:sh.plan}:null;}).filter(Boolean),[okLinks,shops]);
+  const subsFor=useCallback((sid,pid)=>subs[sid+"|"+pid],[subs]);
+  const loading=links===undefined||okLinks.some(l=>!shops[l.shopId]);
+  return{shops:list,subsFor,need,loading};
 }
 // 店舗の読めた期間の subs（{期間ID: sub[]}）。subs が null（読めなかった）の期間は入れない
 function mySubsByPeriodOf(sid,sh,subs){
@@ -1705,6 +1751,17 @@ function MyAuthScreen({shopId,onClose}){
   );
 }
 
+// メールのアカウントのマイシフト（2026-10-04）: 「自分のシフト」と「全員のシフト」（個別URLと同じ部品）。全員のシフトの店舗は
+// 有効な紐付けのある全店舗のうち、公開済みの期間が直近3ヶ月にある店舗（myAllShiftChoices）。既定は募集URLから開いたときはその店舗、
+// それ以外は公開済みの最新の期間が最も新しい店舗。選べる期間が1つも無い間は「全員のシフト」の切り替えを出さない
+function MyAccountShiftPager({me,personal,shopId,onGoSettings}){
+  const src=useMyAllShiftSources(me);
+  const todayStr=fd(new Date());
+  const choices=useMemo(()=>myAllShiftChoices({shops:src.shops,preferredShopId:shopId,todayStr}),[src.shops,shopId,todayStr]);
+  const panes=[{key:"mine",label:"自分のシフト",node:<MyShiftTab me={me} personal={personal} onGoSettings={onGoSettings}/>}];
+  if(choices.shops.length)panes.push({key:"all",label:"全員のシフト",node:<MyAllShiftPane choices={choices} subsFor={src.subsFor} onNeed={src.need}/>});
+  return <MyShiftPager panes={panes}/>;
+}
 // 入口。staffUser が null なら登録・ログイン、あれば下部タブ
 function MyView({staffUser,onStaffUser,shopId,onClose}){
   const[tab,setTab]=useState("shift");
@@ -1751,7 +1808,7 @@ function MyView({staffUser,onStaffUser,shopId,onClose}){
       <MyHeader title={label} onClose={onClose}/>
       <main style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 96px"}}>
         {profile.displayName&&<div style={{fontSize:13,color:"var(--c-text3)",marginBottom:4}} data-my-who="1">{profile.displayName} さん</div>}
-        {tab==="shift"&&<MyShiftTab me={me} personal={personal} onGoSettings={()=>setTab("settings")}/>}
+        {tab==="shift"&&<MyAccountShiftPager me={me} personal={personal} shopId={shopId} onGoSettings={()=>setTab("settings")}/>}
         {tab==="pay"&&<MyPayTab me={me} personal={personal} onGoSettings={()=>setTab("settings")}/>}
         {tab==="settings"&&<MySettingsTab staffUser={staffUser} me={me} profile={profile} profileState={profileState} initialError={saveError} shopId={shopId} personal={personal}
           onProfile={p=>{draftRef.current=null;setSaveError(null);setProfile(myProfileOf(p));setProfileState("ok");}}/>}

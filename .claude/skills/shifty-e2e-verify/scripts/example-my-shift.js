@@ -11,6 +11,8 @@
 //  G（スタッフ）: 他人のシフトの変更では「変更あり」が付かない
 //  H（スタッフ）: 改名で紐付けが無効になった店舗は出さない（理由を出す）
 //  I（スタッフ）: どの店舗も Premium でないと公開済みでもグレー・プランの案内
+//  AM（スタッフ・#/me）: 全員のシフト（2026-10-04）。有効な紐付けの2店舗・既定は公開済みの最新が新しい店舗・店舗の切り替え・未公開は選択肢に無い・
+//     無効な紐付けの店舗は出ない・募集URLから開くとその店舗・公開済みが無ければ切り替えを出さない・375/320px
 //  J（閲覧専用の端末）と K（本番相当 MY_SCREEN_ENABLED=false）: 公開ボタンが出ない。K はスタッフURLにマイシフトの入口も出ない
 //  すべての場面で console.error・pageerror が 0 件。375px で横はみ出し無し
 //
@@ -315,6 +317,79 @@ const rowOf = (v, shop) => v.rows.find(r => r.shop === shop) || {};
       R.J = await o.evaluate(() => ({ publish: !!document.querySelector("[data-period-publish]"), text: document.body.innerText.includes("Excel出力"), readOnly: document.body.innerText.includes("管理者として登録されていません") }));
       V.J_readOnlyNoPublish = R.J.text && R.J.readOnly && !R.J.publish;
     } finally { await o.browser.close(); }
+  }
+  // ---------------- AM: メールのアカウントの「全員のシフト」（2026-10-04）----------------
+  // 有効な紐付けのある2店舗。既定は公開済みの最新が新しい店舗（B店の後半）。店舗を A店に替えると A店の表（本人の列に印）。
+  // 未公開の期間は選択肢に無い。紐付けが無効な店舗は出ない（1店舗なら店舗のプルダウンも出ない）。募集URLから開くとその店舗が既定。
+  // どの店舗にも公開済みが無ければ切り替えを出さない。375px・320px で横はみ出し無し
+  {
+    const PUBM = { at: "2026-10-03T09:00:00.000Z", byUid: OWN };
+    const amSeed = () => {
+      const d = seed0();
+      d.shops.S1.periods.p1.published = PUBM;
+      d.shops.S2.periods.q1.published = PUBM;
+      d.shops.S2.periods.q2 = { ...per("q2", "S2", "t3"), label: "後半", startDate: `${YM}-16`, published: PUBM };
+      d.shops.S2.periods.q3 = { ...per("q3", "S2", "t4"), label: "未公開", startDate: `${YM}-20` };
+      d.tokens.t3 = { shopId: "S2", periodId: "q2" }; d.tokens.t4 = { shopId: "S2", periodId: "q3" };
+      return d;
+    };
+    const allInfo = h => h.evaluate(() => {
+      const ps = document.querySelector("[data-my-all-period]"), ss = document.querySelector("[data-my-all-shop]"), t = document.querySelector("[data-my-all-table]");
+      return { shop: ss ? ss.value : null, shops: ss ? [...ss.options].map(o => o.value) : [], period: ps ? ps.value : null, periods: ps ? [...ps.options].map(o => o.value) : [],
+        cols: t ? [...t.querySelectorAll("th[data-my-all-col]")].map(x => x.getAttribute("data-my-all-col")) : [], me: t && t.querySelector("[data-my-all-me]") ? t.querySelector("[data-my-all-me]").getAttribute("data-my-all-col") : null,
+        fonts: [...document.querySelectorAll("[data-my-all-pane] select")].map(x => parseFloat(getComputedStyle(x).fontSize)),
+        tabs: document.querySelectorAll("[data-my-pager-tab]").length, text: /まだ公開されていません/.test(document.body.innerText) };
+    });
+    const openAll = async s => { await s.page.waitForSelector('[data-my-pager-tab="all"]', { timeout: 15000 }); await click(s, '[data-my-pager-tab="all"]'); await sleep(s, 600); await s.page.waitForSelector("[data-my-all-table]", { timeout: 15000 }); await sleep(s, 300); };
+    let s = await openStaff({ db: amSeed() });
+    try {
+      const A = {};
+      await openAll(s);
+      A.first = await allInfo(s);
+      await s.page.selectOption("[data-my-all-shop]", "S1"); await sleep(s, 800);
+      await s.page.waitForSelector("[data-my-all-table]", { timeout: 15000 });
+      A.s1 = await allInfo(s);
+      A.overflow = await overflowX(s);
+      await s.page.setViewportSize({ width: 320, height: 700 }); await sleep(s, 400);
+      A.overflow320 = await overflowX(s);
+      A.subsReads = await s.evaluate(() => (window.__reads || []).filter(p => /\/subs$/.test(p)).length);
+      R.AM = A;
+      V.AM_defaultNewestShop = A.first.shop === "S2" && JSON.stringify(A.first.shops) === JSON.stringify(["S1", "S2"]) && A.first.period === "q2" &&
+        JSON.stringify(A.first.periods) === JSON.stringify(["q2", "q1"]) && A.first.me === "田中 太郎" && !A.first.text;
+      V.AM_switchShop = A.s1.shop === "S1" && A.s1.period === "p1" && JSON.stringify(A.s1.cols) === JSON.stringify(["田中", "佐藤"]) && A.s1.me === "田中";
+      V.AM_layout = A.overflow <= 0 && A.overflow320 <= 0 && A.first.fonts.length === 2 && A.first.fonts.every(f => f >= 16);
+      V.AM_noErrors = errs("AM", s);
+    } finally { await s.browser.close(); }
+    // 紐付けが無効な店舗（S1 の名前が改名で消えた）は出ない。1店舗なので店舗のプルダウンも出ない
+    const d = amSeed(); d.shops.S1.staff = ["田中 一郎", "佐藤"];
+    s = await openStaff({ db: d });
+    try {
+      await openAll(s);
+      const B = await allInfo(s);
+      R.AM.invalid = B;
+      V.AM_invalidLinkHidden = B.shops.length === 0 && B.shop === null && B.period === "q2" && B.me === "田中 太郎";
+      V.AM_noErrors2 = errs("AM2", s);
+    } finally { await s.browser.close(); }
+    // 募集URL（A店）の「マイシフト」から開くと A店が既定
+    s = await openStaff({ db: amSeed(), hash: "#/s/t1", wait: "[data-my-open]" });
+    try {
+      await click(s, "[data-my-open]");
+      await openAll(s);
+      const C = await allInfo(s);
+      R.AM.fromStaffUrl = C;
+      V.AM_preferredShop = C.shop === "S1" && C.period === "p1";
+      V.AM_noErrors3 = errs("AM3", s);
+    } finally { await s.browser.close(); }
+    // どの店舗にも公開済みが無い → 切り替えを出さない（案内文も出さない）
+    s = await openStaff({ db: seed0() });
+    try {
+      await staffView(s); await sleep(s, 1200);
+      const D = await allInfo(s);
+      D.allPane = await s.evaluate(() => !!document.querySelector('[data-my-pane="all"]'));
+      R.AM.none = D;
+      V.AM_noneNoSwitch = D.tabs === 0 && !D.allPane && !D.text;
+      V.AM_noErrors4 = errs("AM4", s);
+    } finally { await s.browser.close(); }
   }
   // ---------------- K: 本番相当 ----------------
   {

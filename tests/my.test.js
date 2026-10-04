@@ -551,10 +551,10 @@ test("E3/E4 マイシフトと勤務先の書き込みは users/{uid}/ の下だ
   const a = src.indexOf("async function readMyShiftShop"), b = src.indexOf("function useMyPayExtras(");
   assert.ok(a > 0 && b > a);
   const body = src.slice(a, b);
-  // DB への書き込みだけを数える（E6 の会社設定の結果を覚える Map の .set は書き込みではない）
+  // DB への書き込みだけを数える（E6 の会社設定の結果を覚える Map と、2026-10-04 の店舗の読み込みを共有する Map の .set は書き込みではない）
   const writes = [...body.matchAll(/\b(fbSet|fbUpd)\(\s*`?([^,`)]*)/g)].map(x => x[1] + " " + x[2]);
   assert.ok(!/\.ref\([^)]*\)\.(set|update|remove)\(/.test(body), "ref() から直接書かない");
-  assert.deepStrictEqual([...body.matchAll(/(\w+)\.set\(/g)].map(x => x[1]).filter(n => n !== "_myCompanyPayCache"), [], "Map 以外の .set が無い");
+  assert.deepStrictEqual([...body.matchAll(/(\w+)\.set\(/g)].map(x => x[1]).filter(n => n !== "_myCompanyPayCache" && n !== "_myShopReads"), [], "Map 以外の .set が無い");
   // E3 は seen だけ。E4 で本人のデータ（workplaces・shifts・overrides）を users/{uid} への差分 update で書く（意図して広げた）。
   // 2026-10-04: 基点は本人（subject）の base（users/{uid} か staffPageData/{pageToken}）になった（意図して広げた。下で base の出どころを固定）
   assert.deepStrictEqual(writes, ["fbUpd base", "fbSet ${base}/seen/${sid}/${pid}"]);
@@ -1393,13 +1393,20 @@ test("全員のシフト: 店舗の選択肢と既定（募集URLの店舗 → �
   assert.strictEqual(m.myAllShiftSelection(c, { shopId: "B", periodId: "gone" }).period.id, "B0", "選んだ期間が選択肢から消えたら既定へ");
   assert.strictEqual(m.myAllShiftSelection(c, { shopId: "Z", periodId: "B1" }).shop.shopId, "B", "店舗が消えたら既定の店舗へ");
 });
-test("全員のシフト（画面）: 未公開・Premium の案内文を出さない・選択肢が無いときは切り替えを出さない", () => {
+test("全員のシフト（画面）: 未公開・Premium の案内文を出さない・選択肢が無いときは切り替えを出さない・#/me にも同じ部品", () => {
   const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
   assert.ok(!/まだ公開されていません/.test(my), "未公開の案内文は無い");
   assert.ok(!/data-my-all-state="unpublished"/.test(my) && !/data-my-all-state="premium"/.test(my));
   assert.ok(/\{!single&&<div role="tablist"/.test(my), "表示が1つのときはタブを出さない");
   const pv = my.slice(my.indexOf("function MyPageView("));
   assert.ok(/allChoices\.shops\.length\?\[\{key:"all"/.test(pv), "個別URL: 選択肢があるときだけ全員のシフト");
+  const ap = my.slice(my.indexOf("function MyAccountShiftPager("), my.indexOf("function MyView("));
+  assert.ok(/useMyAllShiftSources\(me\)/.test(ap) && /preferredShopId:shopId/.test(ap) && /<MyAllShiftPane /.test(ap), "#/me: 同じ部品・募集URLの店舗が既定");
+  assert.ok(/<MyAccountShiftPager /.test(my.slice(my.indexOf("function MyView("), my.indexOf("function MyView(") + 4000)));
+  // 読み込み: 期間ごとの部分読み（readMyPeriodSubs）だけ。店舗の subs 全件を読まない
+  const src = my.slice(my.indexOf("function useMyAllShiftSources("), my.indexOf("function mySubsByPeriodOf("));
+  assert.ok(/readMyPeriodSubs\(sid,pid\)/.test(src) && !/\/subs`\)/.test(src) && !/\.set\(|\.update\(|\.push\(/.test(src), "期間ごとの部分読み・書き込みなし");
+  assert.ok(/orderByChild\("periodId"\)\.equalTo\(pid\)/.test(my.slice(my.indexOf("async function readMyPeriodSubs("), my.indexOf("async function readMyPeriodSubs(") + 400)));
   // プルダウンは 16px（AI）
   const pane = my.slice(my.indexOf("function MyAllShiftPane("), my.indexOf("function MyAllShiftTable("));
   assert.strictEqual((pane.match(/<select /g) || []).length, 2);
