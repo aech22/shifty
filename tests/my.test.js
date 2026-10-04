@@ -1353,7 +1353,7 @@ test("個別URL: ルールの形（追加だけ。申請は pending だけ・名
 });
 test("個別URL: 入口のゲートと、App の書き込み（承認はオーナーが読み直して書く・追随は紐付けと同じ列）", () => {
   const main = fs.readFileSync(path.join(ROOT, "app-main.js"), "utf8");
-  assert.ok(/const pageRoute=MY_SCREEN_ENABLED&&parseUrl\(\)\?\.type==="page"/.test(main), "個別URLはゲートの下");
+  assert.ok(/const pageRoute=MY_SCREEN_ENABLED&&bootRoute\?\.type==="page"/.test(main), "個別URLはゲートの下");
   assert.ok(/if\(MY_SCREEN_ENABLED&&pageRoute!==null\) return <MyPageView /.test(main));
   assert.ok(/onOpenPageRegister=\{MY_SCREEN_ENABLED&&urlLocked&&!DEMO_MODE\?/.test(main), "申請の入口もゲートの下");
   const act = main.slice(main.indexOf("const staffPageAct="), main.indexOf("const STAFF_LINK_CFS="));
@@ -1845,4 +1845,35 @@ test("メール確認つきの登録: 新規登録の3つの入口が同じ部�
   const fin = my.slice(my.indexOf("function EmailLinkFinishScreen("), my.indexOf("// ===== 紐付け（第2部 E2）====="));
   assert.ok(/signInWithEmailLink\(/.test(fin) && /updatePassword\(/.test(fin) && /myBlockReason\(null\)/.test(fin) && /window\.location\.replace\(emailLinkCleanUrl\(/.test(fin));
   assert.ok(/accounts\/\$\{user\.uid\}\/shops/.test(fin) && /readStaffProfile\(user\.uid\)/.test(fin), "管理者用とマイシフト用のアカウントを混ぜない");
+});
+
+test("マイシフトを開いている間のアドレスバー（2026-10-04）: 開く個別URLの選び方・ハッシュ・起動時の URL で一度だけ決める", () => {
+  const T1 = "A".repeat(24), T2 = "B".repeat(24), T3 = "C".repeat(24);
+  // 候補は known（開いたもの）が先・made（申請したもの）が後・同じ token は1つ・形の違う token と他店は入れない
+  assert.deepStrictEqual(m.myPageOpenCandidates({ S1: { token: T1 }, S2: { token: T3 } }, { S1: { token: T2 } }, "S1"), [T1, T2]);
+  assert.deepStrictEqual(m.myPageOpenCandidates({ S1: { token: T1 } }, { S1: { token: T1 } }, "S1"), [T1]);
+  assert.deepStrictEqual(m.myPageOpenCandidates({ S1: { token: "bad" } }, null, "S1"), []);
+  const staff = ["田中", "佐藤"];
+  const ok = { status: "approved", displayName: "田中", name: "田中", approvedAt: "x", requestedAt: "x" };
+  // 使えるもの（承認済み・名前がスタッフ一覧にある）だけ。取り消し・承認待ち・名前が消えたものは選ばない
+  assert.deepStrictEqual(m.myPickOpenablePage([T1, T2], { [T1]: { ...ok, status: "revoked" }, [T2]: { ...ok, name: "佐藤" } }, staff, "S1"), { token: T2, name: "佐藤" });
+  assert.strictEqual(m.myPickOpenablePage([T1], { [T1]: { ...ok, status: "pending" } }, staff, "S1"), null);
+  assert.strictEqual(m.myPickOpenablePage([T1], { [T1]: { ...ok, name: "鈴木" } }, staff, "S1"), null);
+  assert.deepStrictEqual(m.myPickOpenablePage([T1, T2], { [T1]: ok, [T2]: { ...ok, name: "佐藤" } }, staff, "S1"), { token: T1, name: "田中" });
+  // ハッシュ: 個別URL ＞ アカウント ＞ 変えない
+  assert.strictEqual(m.myOverlayHashOf({ pageToken: T1, account: true }), "#/m/" + T1);
+  assert.strictEqual(m.myOverlayHashOf({ account: true }), "#/me");
+  assert.strictEqual(m.myOverlayHashOf({}), null);
+  assert.strictEqual(m.buildMyAccountUrl("https://shiftyshifty.app/"), "https://shiftyshifty.app/?openExternalBrowser=1#/me");
+  assert.ok(/^このURLは使えなくなりました。お店の管理者から新しいURLを受け取ってください/.test(m.MY_PAGE_STATE_MESSAGES.revoked));
+  // App は起動時の URL で一度だけ画面を決める（pushState でハッシュを替えても個別URL・#/me の画面へ描き替わらない）
+  const main = fs.readFileSync(path.join(ROOT, "app-main.js"), "utf8");
+  const head = main.slice(main.indexOf("function App(){"), main.indexOf("// Phase1: Firebase初期化"));
+  assert.ok(/const\[bootRoute\]=useState\(\(\)=>parseUrl\(\)\)/.test(head));
+  assert.ok(!/parseUrl\(\)\?\./.test(head), "レンダーのたびに parseUrl() を読まない");
+  // 個別URLの設定タブは個別URLを一番下に置き、本人の画面からは変更・再発行できない（入力欄・発行の操作が無い）
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const st = my.slice(my.indexOf("function MyPageSettingsTab("), my.indexOf("// 個別URLの入口。"));
+  assert.ok(st.lastIndexOf('data-my-section="page"') > st.lastIndexOf("MyPagePinChange"), "個別URLは一番下");
+  assert.ok(/URLの変更はお店の管理者に依頼してください/.test(st) && !/genMyPageToken|planIssueStaffPage|staffPages/.test(st));
 });

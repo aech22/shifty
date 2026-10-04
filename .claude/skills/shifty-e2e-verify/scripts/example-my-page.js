@@ -16,7 +16,11 @@
 //     勤務先の編集に出る・番号は平文で保存しない。閉じる → 誤りで開かない（残り回数）→ 正しい番号で開く。別の端末でも番号を求める。5回の誤りで止まる。
 //     管理者のリセットの後は決め直し。CF が使えないときは開かない。閉じている間は設定タブに時給などを出さない
 //  F（オーナー）: 2人目を佐藤として承認 → 改名（佐藤 → 佐藤 花子）で name が移る → 削除で revoked → 同じ名前で再登録しても revoked のまま
-//  X（オーナー）: 編集モーダルから田中の個別URLを取り消す → 開くと「使えなくなりました」
+//  AU（2026-10-04）: 募集URLの「マイシフト」→ この端末が知っている使える個別URLなら個別URLの画面を重ね、アドレスバーは #/m/<token>。
+//     その URL を別の端末で開くとマイシフト。設定タブの一番下に個別URL（入力欄なし・管理者に依頼の1行）。閉じる・戻るで #/s/、進むで開き直す。
+//     未登録の端末は URL を変えない。申請し直しても承認済みの URL は取り消されず、マイシフトは承認済みを開く。ログイン中のアカウントは #/me
+//  X（オーナー）: 編集モーダルから田中の個別URLを取り消す → 開くと「使えなくなりました。お店の管理者から新しいURLを受け取ってください」。
+//     取り消された URL を覚えている端末の「マイシフト」は個別URLの画面を重ねない
 //  R（閲覧専用の端末）と PROD（本番相当 MY_SCREEN_ENABLED=false）: 申請の一覧が出ない／募集URLに入口が無く #/m/ は個別URLとして開かない
 //  すべての場面で console.error・pageerror が 0 件
 //
@@ -62,10 +66,13 @@ function prodRoot() {
   return root;
 }
 // スタッフの端末（匿名。auth:"accounts" で cur を空にすると起動時に新しい匿名 uid が作られる＝別の端末）
-async function openAnon({ hash, db, viewport = PHONE, root = ROOT, wait = "#root > *", cfHandlers }) {
+async function openAnon({ hash, db, viewport = PHONE, root = ROOT, wait = "#root > *", cfHandlers, pre = "", authSeed = { users: {}, cur: null } }) {
   return openHarness({ root, jsx: "window.__harnessReady=true;", waitFor: wait, viewport,
-    extraHead: hashHead(hash) + makeStub({ seed: db, view: "staff", tab: "periods", auth: "accounts", authSeed: { users: {}, cur: null }, cfHandlers }), scripts: SCRIPTS });
+    extraHead: hashHead(hash) + pre + makeStub({ seed: db, view: "staff", tab: "periods", auth: "accounts", authSeed, cfHandlers }), scripts: SCRIPTS });
 }
+const preLS = obj => `<script>${Object.entries(obj).map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)},${JSON.stringify(v)});`).join("")}</script>`;
+const hashOf = h => h.evaluate(() => location.hash);
+const overlayOf = h => h.evaluate(() => { const e = document.querySelector("[data-my-overlay]"); return e ? e.getAttribute("data-my-overlay") : null; });
 async function openOwner({ db, uid = OWN, viewport = { width: 1200, height: 900 }, root = ROOT }) {
   return openHarness({ root, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport,
     extraHead: makeStub({ seed: db, uid, view: "admin", tab: "staff" }), scripts: SCRIPTS });
@@ -582,6 +589,111 @@ async function requestPage(h, name, number) {
       V.F_revokedPageClosed = R.F2.state === "revoked" && R.F2.errors.length === 0;
     } finally { await h.browser.close(); }
   }
+  // ---------------- AU: マイシフトを開いている間のアドレスバー（2026-10-04）----------------
+  // 募集URLの「マイシフト」で、この端末が知っている使える個別URL（田中・T1）があれば個別URLの画面を重ね、アドレスバーは #/m/T1。
+  // その URL を別の端末で開くと田中のマイシフト。設定タブの一番下に個別URL。閉じる・戻るで #/s/t1、進むで開き直す
+  {
+    const h = await openAnon({ hash: "#/s/t1", db: dump, wait: "[data-my-open]", pre: preLS({ ots_myPageKnown_v1: JSON.stringify({ S1: { token: T1 } }) }) });
+    try {
+      const A = {};
+      // 提出画面は下に残る（作り直されない）ことを、ボタンの要素に付けた印で確かめる
+      await h.evaluate(() => { document.querySelector("[data-my-open]").__keep = 1; });
+      await click(h, "[data-my-open]");
+      A.opened = await waitSel(h, '[data-my-overlay="page"] [data-my-view="page"]');
+      A.underneathKept = await h.evaluate(() => { const e = document.querySelector("[data-my-open]"); return !!e && e.__keep === 1; });
+      A.hash = await hashOf(h);
+      if (!A.opened) { A.dbg = await h.evaluate(() => ({ ov: (document.querySelector("[data-my-overlay]") || { outerHTML: "" }).outerHTML.slice(0, 400), ls: localStorage.getItem("ots_myPageKnown_v1") })); R.AU = A; throw new Error("AU: 個別URLの画面が重ならない " + JSON.stringify(A)); }
+      A.name = await h.evaluate(() => document.querySelector('[data-my-overlay="page"] [data-my-view="page"]').getAttribute("data-my-page-name"));
+      A.calendar = await waitSel(h, '[data-my-overlay="page"] [data-my-pane="mine"] [data-my-shift]');
+      await click(h, '[data-my-overlay="page"] [data-my-tab="settings"]'); await sleep(h, 300);
+      A.settingsLast = await h.evaluate(() => {
+        const main = document.querySelector('[data-my-overlay="page"] main');
+        const secs = main ? [...main.querySelectorAll("section")] : [];
+        const last = secs[secs.length - 1];
+        return last ? { sec: last.getAttribute("data-my-section"), url: (last.querySelector("[data-my-page-url]") || { getAttribute: () => "" }).getAttribute("data-my-page-url"),
+          copy: !!last.querySelector('[data-my-action="copyPageUrl"]'), adminNote: !!last.querySelector("[data-my-page-url-admin]"),
+          inputs: last.querySelectorAll("input,select,textarea").length } : null;
+      });
+      A.overflow = await overflowX(h);
+      await click(h, "[data-my-overlay] [data-my-close]"); await sleep(h, 500);
+      A.closedHash = await hashOf(h); A.closedOverlay = await overlayOf(h);
+      A.keptAfterClose = await h.evaluate(() => { const e = document.querySelector("[data-my-open]"); return !!e && e.__keep === 1; });
+      await click(h, "[data-my-open]"); await waitSel(h, '[data-my-overlay="page"]');
+      A.hash2 = await hashOf(h);
+      await h.page.goBack(); await sleep(h, 500);
+      A.backHash = await hashOf(h); A.backOverlay = await overlayOf(h);
+      A.submitScreen = await h.evaluate(() => !!document.querySelector("[data-my-open]"));
+      await h.page.goForward(); await sleep(h, 600);
+      A.fwdHash = await hashOf(h); A.fwdOverlay = await overlayOf(h);
+      A.errors = h.errors.slice();
+      R.AU = A;
+      V.AU_pageOverlay = A.opened && A.name === "田中" && A.calendar;
+      V.AU_hashIsPageUrl = A.hash === "#/m/" + T1 && A.hash2 === "#/m/" + T1;
+      V.AU_settingsBottomUrl = !!A.settingsLast && A.settingsLast.sec === "page" && tokenOf(A.settingsLast.url) === T1 && A.settingsLast.copy && A.settingsLast.adminNote && A.settingsLast.inputs === 0;
+      V.AU_submitScreenKept = A.underneathKept && A.keptAfterClose;
+      V.AU_closeBack = A.closedHash === "#/s/t1" && A.closedOverlay === null && A.backHash === "#/s/t1" && A.backOverlay === null && A.submitScreen;
+      V.AU_forwardReopens = A.fwdHash === "#/m/" + T1 && A.fwdOverlay === "page";
+      V.AU_noErrors = A.errors.length === 0 && A.overflow <= 0;
+    } finally { await h.browser.close(); }
+  }
+  // AU2: アドレスバーの URL（#/m/T1）を別の端末で開くと田中のマイシフト（提出画面ではない）
+  {
+    const h = await openAnon({ hash: R.AU.hash, db: dump, wait: '[data-my-view="page"],[data-my-page-state]' });
+    try {
+      R.AU2 = { name: await h.evaluate(() => { const e = document.querySelector('[data-my-view="page"]'); return e ? e.getAttribute("data-my-page-name") : null; }),
+        cal: await waitSel(h, '[data-my-pane="mine"] [data-my-shift]'), submit: await h.evaluate(() => !!document.querySelector("[data-my-open]")),
+        known: await h.evaluate(() => JSON.parse(localStorage.getItem("ots_myPageKnown_v1") || "{}")), errors: h.errors.slice() };
+      V.AU2_reopenIsMyShift = R.AU2.name === "田中" && R.AU2.cal && !R.AU2.submit && R.AU2.errors.length === 0;
+      V.AU2_remembered = R.AU2.known && R.AU2.known.S1 && R.AU2.known.S1.token === T1;
+    } finally { await h.browser.close(); }
+  }
+  // AU3: 何も知らない端末（未登録）は従来どおりアカウントの画面を重ね、URL は変えない
+  {
+    const h = await openAnon({ hash: "#/s/t1", db: dump, wait: "[data-my-open]" });
+    try {
+      await click(h, "[data-my-open]"); await waitSel(h, '[data-my-overlay="1"]');
+      R.AU3 = { overlay: await overlayOf(h), hash: await hashOf(h), errors: h.errors.slice() };
+      V.AU3_unregisteredKeepsUrl = R.AU3.overlay === "1" && R.AU3.hash === "#/s/t1" && R.AU3.errors.length === 0;
+    } finally { await h.browser.close(); }
+  }
+  // AU4: 管理者が承認済みの URL を持つ端末で、募集URLから申請し直しても承認済みの URL は取り消されない（申請は承認待ちで足されるだけ）。
+  //      「マイシフト」は承認済みの URL のほうを開く
+  {
+    const h = await openAnon({ hash: "#/s/t1", db: dump, wait: '[data-page-register-open="form"]', pre: preLS({ ots_myPageKnown_v1: JSON.stringify({ S1: { token: T1 } }) }) });
+    try {
+      const A = {};
+      A.t3 = await requestPage(h, "田中");
+      A.t1 = await db(h, `shops/S1/staffPages/${T1}/status`);
+      A.t3s = await db(h, `shops/S1/staffPages/${A.t3}/status`);
+      await click(h, '[data-page-register-overlay] [data-my-close]'); await sleep(h, 300);
+      await click(h, "[data-my-open]"); await waitSel(h, '[data-my-overlay="page"]');
+      A.hash = await hashOf(h);
+      A.errors = h.errors.slice();
+      R.AU4 = A;
+      V.AU4_reapplyKeepsApproved = A.t1 === "approved" && A.t3s === "pending" && A.t3 !== T1;
+      V.AU4_opensApproved = A.hash === "#/m/" + T1 && A.errors.length === 0;
+    } finally { await h.browser.close(); }
+  }
+  // AU5: メールのアカウントでログイン中の端末は #/me（再読み込みしても同じ画面）
+  {
+    const users = { "tanaka@example.com": { uid: "ST1", password: "pass12345" } };
+    const pre = preLS({ ots_staffAccount_v1: JSON.stringify({ uid: "ST1" }) });
+    const authSeed = { users, cur: { uid: "ST1", isAnonymous: false, email: "tanaka@example.com" } };
+    const h = await openAnon({ hash: "#/s/t1", db: dump, wait: "[data-my-open]", pre, authSeed });
+    try {
+      const A = {};
+      await click(h, "[data-my-open]"); await waitSel(h, '[data-my-overlay="1"] [data-my-view]');
+      await sleep(h, 300);
+      A.hash = await hashOf(h);
+      await click(h, '[data-my-overlay="1"] [data-my-tab="settings"]'); await sleep(h, 300);
+      A.accountUrl = await h.evaluate(() => { const e = document.querySelector('[data-my-section="accountUrl"] [data-my-page-url]'); return e ? e.getAttribute("data-my-page-url") : null; });
+      await click(h, "[data-my-overlay] [data-my-close]"); await sleep(h, 500);
+      A.closedHash = await hashOf(h);
+      A.errors = h.errors.slice();
+      R.AU5 = A;
+      V.AU5_accountHash = A.hash === "#/me" && /#\/me$/.test(A.accountUrl || "") && A.closedHash === "#/s/t1" && A.errors.length === 0;
+    } finally { await h.browser.close(); }
+  }
   // ---------------- X: 取り消し ----------------
   {
     const h = await openOwner({ db: dump });
@@ -605,7 +717,16 @@ async function requestPage(h, name, number) {
     try {
       R.X2 = { state: await h.evaluate(() => { const e = document.querySelector("[data-my-page-state]"); return e ? e.getAttribute("data-my-page-state") : "view"; }),
         msg: await h.evaluate(() => (document.querySelector("[data-my-page-message]") || {}).innerText || ""), errors: h.errors.slice() };
-      V.X_pageClosed = R.X2.state === "revoked" && /使えなくなりました/.test(R.X2.msg) && R.X2.errors.length === 0;
+      V.X_pageClosed = R.X2.state === "revoked" && /使えなくなりました/.test(R.X2.msg) && /お店の管理者から新しいURLを受け取ってください/.test(R.X2.msg) && R.X2.errors.length === 0;
+    } finally { await h.browser.close(); }
+  }
+  // X3: 取り消された URL を覚えている端末で「マイシフト」→ 個別URLの画面は重ねず（アカウントの画面）、URL は変えない
+  {
+    const h = await openAnon({ hash: "#/s/t1", db: dump, wait: "[data-my-open]", pre: preLS({ ots_myPageKnown_v1: JSON.stringify({ S1: { token: T1 } }) }) });
+    try {
+      await click(h, "[data-my-open]"); await waitSel(h, "[data-my-overlay]");
+      R.X3 = { overlay: await overlayOf(h), hash: await hashOf(h), errors: h.errors.slice() };
+      V.X3_revokedNotOpened = R.X3.overlay === "1" && R.X3.hash === "#/s/t1" && R.X3.errors.length === 0;
     } finally { await h.browser.close(); }
   }
   // ---------------- R: 閲覧専用の端末（owners に居ない uid）----------------
