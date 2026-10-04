@@ -25,6 +25,8 @@
 const STAFF_ACCOUNT_LS="ots_staffAccount_v1";
 // スタッフURLの画面から開いたマイシフトを、ログイン後の再読み込みで開き直すための印
 const SS_MY_OPEN="ss_myOpen";
+// 募集URL（#/s/<token>）の画面からマイシフトを重ねて開き、アドレスバーを #/m/・#/me に切り替えたときの元のハッシュ（2026-10-04）
+const SS_MY_BASE_HASH="ss_myBaseHash";
 // 再読み込みをまたいで1回だけ出す知らせ（ログインを取り消したときの理由など）
 const SS_MY_NOTICE="ss_myNotice";
 // ログイン試行の制限は管理者のメールログイン（名前空間 "email"）と分ける。管理者のロックに影響させないため
@@ -158,6 +160,10 @@ async function myLogin(f,shopId){
 async function myLogout(){
   clearStaffAccountMark();
   ssSave(SS_MY_OPEN,null);
+  // 募集URLの画面から開いて #/me に切り替えていたら、募集URLに戻してから再読み込みする（#/me のまま読み込むとログインの画面だけになる）
+  const base=ssGet(SS_MY_BASE_HASH,null);
+  ssSave(SS_MY_BASE_HASH,null);
+  try{if(base&&history.state&&history.state.shiftyOverlay&&isMyRouteHash(location.hash))history.replaceState(null,"",location.pathname+location.search+base);}catch{/* そのまま再読み込み */}
   try{if(firebaseAuth)await firebaseAuth.signOut();}catch(e){console.warn("サインアウト失敗:",e);}
   location.reload();
 }
@@ -2057,6 +2063,12 @@ function MySettingsTab({staffUser,me,profile,profileState,initialError,onProfile
 
       <button data-my-action="logout" onClick={()=>{setBusy("logout");myLogout();}} disabled={busy==="logout"} style={{...AGray,width:"100%"}}>ログアウト</button>
       <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginTop:10}}>ログアウトしても、URL からのシフトの提出はこれまでどおりできます。</div>
+      {/* 一番下に、この画面を開き直すURL（2026-10-04）。アカウントの入口は #/me で、ログインすればどの端末でも同じ画面になる。
+          お店ごとの個別URL（#/m/）はアカウントとは別の入口なので、ここには出さない */}
+      <section style={{...MY_SECTION,marginTop:16}} data-my-section="accountUrl">
+        <div style={MY_SECTION_TITLE}>この画面のURL</div>
+        <MyPageUrlBox url={buildMyAccountUrl(myPageBaseUrl())} note="このURLを開いてログインすると、どの端末でもこの画面になります。"/>
+      </section>
     </div>
   );
 }
@@ -2213,6 +2225,28 @@ function MyView({staffUser,onStaffUser,shopId,onClose}){
 // **pageToken を知っている人は誰でもこの画面と本人のデータを読める**（capability。ログインが無い以上、ルールで本人を見分けられない）。
 // 給料は画面上の鍵（暗証番号）で伏せ、会社が登録した賃金だけは Cloud Functions が暗証番号を照合してから返す（P4）。
 const MY_PAGES_LS="ots_myPages_v1"; // この端末で作った個別URL {shopId: {token, displayName}}（募集URLの画面で見せ直すため）
+// この端末で開けた（承認済みで使えた）個別URL {shopId: {token, at}}（2026-10-04）。管理者が発行した URL を開いたときもここに入る。
+// 募集URLの画面の「マイシフト」は、ここと MY_PAGES_LS の token のうち、いま使えるものがあれば個別URLの画面を重ねる（myPickOpenablePage）
+const MY_PAGE_KNOWN_LS="ots_myPageKnown_v1";
+function rememberKnownMyPage(shopId,token){
+  if(!shopId||!isMyPageToken(token))return;
+  try{
+    const m=lg(MY_PAGE_KNOWN_LS,{})||{};
+    if(m[shopId]&&m[shopId].token===token)return;
+    ls(MY_PAGE_KNOWN_LS,{...m,[shopId]:{token,at:new Date().toISOString()}});
+  }catch(e){console.warn("個別URLを覚えられませんでした:",e);}
+}
+// 「マイシフト」を押したときに重ねる個別URL。{token,name}|null。読めない・遅いとき（3秒）は null＝従来の画面
+async function findOpenableMyPage(shopId,staffList){
+  if(!shopId||!firebaseDB)return null;
+  const cands=myPageOpenCandidates(lg(MY_PAGE_KNOWN_LS,{})||{},lg(MY_PAGES_LS,{})||{},shopId);
+  if(!cands.length)return null;
+  const read=Promise.all(cands.map(t=>firebaseDB.ref(`shops/${shopId}/staffPages/${t}`).once("value").then(s=>[t,s.val()],()=>[t,null])));
+  const timeout=new Promise(r=>setTimeout(()=>r(null),3000));
+  const rows=await Promise.race([read,timeout]);
+  if(!rows)return null;
+  return myPickOpenablePage(cands,Object.fromEntries(rows),staffList,shopId);
+}
 // 個別URLの本人。links() は承認された1店舗だけ（名前は staffPages の name が正）
 function myPageSubject(o){
   const x=o||{};
@@ -2621,11 +2655,11 @@ function MyAllShiftTable({period,staff,settings,subs,plan,me,shopId,shopName}){
 }
 
 // 個別URLの画面の状態（承認待ち・却下・取り消し・見つからない）
-function MyPageStatusScreen({state,shopName,token}){
+function MyPageStatusScreen({state,shopName,token,onClose=null}){
   const url=isMyPageToken(token)?buildMyPageUrl(myPageBaseUrl(),token):"";
   return(
     <div data-my-page-state={state} style={{minHeight:"100vh",background:"var(--c-bg)"}}>
-      <MyHeader title={shopName||"Shifty"}/>
+      <MyHeader title={shopName||"Shifty"} onClose={onClose}/>
       <div style={{maxWidth:480,margin:"0 auto",padding:"24px 16px 40px"}}>
         <section style={MY_SECTION}>
           <div style={MY_SECTION_TITLE}>{state==="pending"?"承認待ち":state==="loading"?"読み込み中…":"このURLは使えません"}</div>
@@ -2713,24 +2747,27 @@ function MyPagePinChange({token}){
     </section>
   );
 }
-// 個別URLの設定タブ: このページ（名前・お店・URL）・勤務先・月間目標（暗証番号で給料を開いている間だけ）
+// 個別URLの設定タブ: 勤務先・月間目標（暗証番号で給料を開いている間だけ）・**一番下に個別URL**（2026-10-04 ユーザー指示
+// 「設定の1番下に個別URLを表示。管理者画面でのみ変更可能」）。URL は表示・コピー・共有だけで、本人の画面からは変更も再発行もできない
 function MyPageSettingsTab({me,personal,page,shopName,token,payUnlocked}){
   return(
     <div>
-      <section style={MY_SECTION} data-my-section="page">
-        <div style={MY_SECTION_TITLE}>このページ</div>
-        <div style={{fontSize:14,color:"var(--c-text2)",lineHeight:1.8,marginBottom:10}}>{shopName}の「{page.name}」さんのページです。</div>
-        <MyPageUrlBox url={buildMyPageUrl(myPageBaseUrl(),token)} note={MY_PAGE_URL_NOTE}/>
-      </section>
       <MyWorkplacesSection me={me} personal={personal} payLocked={!payUnlocked}/>
       {payUnlocked&&<MyGoalSection me={me}/>}
       {payUnlocked&&<MyPagePinChange token={token}/>}
-      {!payUnlocked&&<div data-my-pin-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,padding:"0 4px"}}>月間目標と暗証番号の変更は、給料タブで暗証番号を入れると表示されます。</div>}
+      {!payUnlocked&&<div data-my-pin-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,padding:"0 4px",marginBottom:16}}>月間目標と暗証番号の変更は、給料タブで暗証番号を入れると表示されます。</div>}
+      <section style={MY_SECTION} data-my-section="page">
+        <div style={MY_SECTION_TITLE}>あなたの個別URL</div>
+        <div style={{fontSize:14,color:"var(--c-text2)",lineHeight:1.8,marginBottom:10}}>{shopName}の「{page.name}」さんのページです。</div>
+        <MyPageUrlBox url={buildMyPageUrl(myPageBaseUrl(),token)} note={MY_PAGE_URL_NOTE}/>
+        <div data-my-page-url-admin="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7}}>URLの変更はお店の管理者に依頼してください。</div>
+      </section>
     </div>
   );
 }
 // 個別URLの入口。App が Phase1 で店舗を購読済み（periods・settings・staff・subs）。承認の状態は staffPages/{token} を購読して決める
-function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,plan,syncStatus,onSub,onDeleteSub}){
+// onClose: 募集URLの画面の「マイシフト」から重ねて開いたとき（2026-10-04）だけ。個別URLを直接開いたときは閉じる先が無いので null
+function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,plan,syncStatus,onSub,onDeleteSub,onClose=null}){
   const[rec,setRec]=useState(undefined); // shops/{sid}/staffPages/{token}（undefined=読み込み中・null=無い）
   const[tab,setTab]=useState("shift");
   const[pay,setPay]=useState(null);      // 暗証番号で開いた給料（P4）: {key, byShop}
@@ -2741,6 +2778,8 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
     return()=>r.off("value",cb);
   },[shopId,token]);
   const page=useMemo(()=>resolveMyPage(token,shopId?{shopId}:null,rec,staffList),[token,shopId,rec,staffList]);
+  // 使えた個別URLはこの端末に覚える（募集URLの画面の「マイシフト」から、次はこの画面に入れるように）
+  useEffect(()=>{if(page.state==="ok"&&shopId)rememberKnownMyPage(shopId,token);},[page.state,shopId,token]);
   const me=useMemo(()=>page.state==="ok"?myPageSubject({token,shopId,shopName,name:page.name,approvedAt:page.approvedAt,pay}):null,
     [page.state,page.name,token,shopId,shopName,pay]);
   const personal=useMyPersonal(me&&me.base);
@@ -2760,10 +2799,10 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
     [shopId,shopName,page.state,page.name,periods,settings,staffList,plan,todayStr]);
   const allSubsFor=useCallback((sid,pid)=>(Array.isArray(subs)?subs:[]).filter(s=>s&&s.periodId===pid),[subs]);
   const unlockPay=r=>setPay({key:String(Date.now()),byShop:{[shopId]:myCompanyPayOf(r)}});
-  if(!boot)return <MyPageStatusScreen state="loading" token={token}/>;
-  if(boot.state!=="shop")return <MyPageStatusScreen state={boot.state==="invalid"?"invalid":"missing"} token={token}/>;
-  if(rec===undefined)return <MyPageStatusScreen state="loading" shopName={shopName} token={token}/>;
-  if(page.state!=="ok")return <MyPageStatusScreen state={page.state} shopName={shopName} token={token}/>;
+  if(!boot)return <MyPageStatusScreen state="loading" token={token} onClose={onClose}/>;
+  if(boot.state!=="shop")return <MyPageStatusScreen state={boot.state==="invalid"?"invalid":"missing"} token={token} onClose={onClose}/>;
+  if(rec===undefined)return <MyPageStatusScreen state="loading" shopName={shopName} token={token} onClose={onClose}/>;
+  if(page.state!=="ok")return <MyPageStatusScreen state={page.state} shopName={shopName} token={token} onClose={onClose}/>;
   const tabs=MY_PAGE_TABS;
   const label=(tabs.find(t=>t.key===tab)||tabs[0]).label;
   // 提出（P2）: 最新の期間へ、承認された名前で。募集URLと同じ StaffView・同じ提出の処理（App の staffOnSub）を通す。
@@ -2781,7 +2820,7 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
   }
   return(
     <div data-my-view="page" data-my-page-name={page.name} style={{minHeight:"100vh",background:"var(--c-bg)"}}>
-      <MyHeader title={label}/>
+      <MyHeader title={label} onClose={onClose}/>
       {syncStatus==="offline"&&<div style={{background:"var(--c-input)",color:"var(--c-text2)",fontSize:12,textAlign:"center",padding:"4px 8px"}}>オフライン（再接続中…）</div>}
       <main style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 96px"}}>
         <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:4}} data-my-who="1">{page.name} さん ／ {shopName}</div>

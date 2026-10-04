@@ -1467,7 +1467,7 @@ const MY_PAGE_STATE_MESSAGES={
   missing:"このURLは見つかりませんでした。お店の管理者に確認してください",
   pending:"お店の管理者の承認を待っています。承認されると、このURLで自分のシフトを見て提出できるようになります",
   rejected:"このURLの申請は承認されませんでした。お店の管理者に確認してください",
-  revoked:"このURLは使えなくなりました（お店の管理者が取り消しました）。新しいURLをお店に確認してください",
+  revoked:"このURLは使えなくなりました。お店の管理者から新しいURLを受け取ってください",
   missingName:"お店のスタッフ一覧にこの名前がありません（名前の変更か削除）。お店の管理者に確認してください",
 };
 // 承認済みの個別URLを名前から引く（{名前: {token, rec}}）。1つの名前に承認済みは1つ（承認の差分が前のものを取り消す）
@@ -1560,6 +1560,37 @@ function planStaffPageOp(pages,op){
   });
   return Object.keys(out).length?out:null;
 }
+
+// ---- マイシフトを開いている間のアドレスバー（2026-10-04 ユーザー指示「マイシフトを開き、そのURLを開いたらシフト提出画面がでた」）----
+// 募集URL（#/s/<token>）の画面で「マイシフト」を押したら、アドレスバーを「開き直すと同じ画面になる URL」にする。
+//  ①この端末が知っている個別URL（個別URLで開いた・申請した・管理者が発行した URL を開いた）のうち、いま使える（承認済みで
+//    名前がいまのスタッフ一覧にある＝resolveMyPage の ok）もの → #/m/<pageToken>（個別URLの画面を重ねる）
+//  ②メールのアカウントでログイン中 → #/me
+//  ③どちらでもない（未登録・承認待ち・取り消された）→ URL を変えない（登録・ログインの画面）
+// known＝個別URLで開いたもの・made＝この端末で申請したもの。どちらも {shopId: {token}}。known を先に見る
+// （申請をやり直すと made は新しい承認待ちの token に替わるが、管理者が発行した承認済みの URL は known に残る）
+function myPageOpenCandidates(known,made,shopId){
+  const out=[];
+  [known,made].forEach(m=>{const r=_myObj(m)&&_myObj(m[shopId]);const t=r&&r.token;if(isMyPageToken(t)&&!out.includes(t))out.push(t);});
+  return out;
+}
+// 候補のうち最初に使えるもの {token, name}。recs＝{token: shops/{shopId}/staffPages/{token} の値}
+function myPickOpenablePage(cands,recs,staff,shopId){
+  for(const t of(Array.isArray(cands)?cands:[])){
+    const r=resolveMyPage(t,{shopId},(_myObj(recs)||{})[t],staff);
+    if(r.state==="ok")return{token:t,name:r.name};
+  }
+  return null;
+}
+// 重ねた画面に合わせるハッシュ。null＝URL を変えない
+function myOverlayHashOf(o){
+  const x=_myObj(o)||{};
+  if(isMyPageToken(x.pageToken))return"#/m/"+x.pageToken;
+  if(x.account)return"#/me";
+  return null;
+}
+// メールのアカウントの「この画面のURL」（設定タブの一番下）。#/me はログインすればどの端末でも同じ画面になる
+function buildMyAccountUrl(base){return`${String(base||"")}?openExternalBrowser=1#/me`;}
 
 // 給料の暗証番号（P4）。4桁の数字（全角は半角に）。照合・保存は Cloud Functions（functions/my-page.js）だけが行う
 function normalizeMyPagePin(s){return toHalfWidthDigits(s).replace(/[\s　]/g,"");}
@@ -1745,5 +1776,5 @@ if(typeof module!=="undefined"&&module.exports){
     myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPaySummaryOf,planMyReceivedBulk,myReceivedBulkForm,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
     MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,planIssueStaffPage,resolveMyPage,MY_PAGE_STATE_MESSAGES,
-    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myAllShiftSelection};
+    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myPageOpenCandidates,myPickOpenablePage,myOverlayHashOf,buildMyAccountUrl,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myAllShiftSelection};
 }

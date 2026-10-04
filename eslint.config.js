@@ -183,6 +183,13 @@ const sharedGlobals = {
   myAllShiftSelection: "writable",
   MY_ICS_APP_GUIDE: "writable",
   myLatestPeriodOf: "writable",
+  myPageOpenCandidates: "writable",
+  myPickOpenablePage: "writable",
+  myOverlayHashOf: "writable",
+  buildMyAccountUrl: "writable",
+  // app-my.js で定義し app-main.js が使う（募集URLの「マイシフト」から個別URLの画面を重ねる・2026-10-04）
+  findOpenableMyPage: "writable",
+  SS_MY_BASE_HASH: "writable",
   // app-my.js で定義し app-admin.js・app-staff.js・app-main.js が使う個別URLの部品
   MyPageView: "writable",
   MyPageRegister: "writable",

@@ -1721,12 +1721,13 @@ function App(){
   const pushOverlayHash=(h,kind,token)=>{
     if(!h)return;
     try{
-      if(!overlayPushRef.current)ssSave(SS_MY_BASE_HASH,location.hash);
+      const base=overlayPushRef.current?(ssGet(SS_MY_BASE_HASH,null)||location.hash):location.hash;
+      if(!overlayPushRef.current)ssSave(SS_MY_BASE_HASH,base);
       if(location.hash!==h){
         const url=location.pathname+location.search+h;
         if(overlayPushRef.current)history.replaceState({shiftyOverlay:h},"",url);else history.pushState({shiftyOverlay:h},"",url);
       }
-      overlayPushRef.current=h;overlayLastRef.current={hash:h,kind,token:token||null};
+      overlayPushRef.current=h;overlayLastRef.current={hash:h,kind,token:token||null,base};
     }catch(e){console.warn("URLを切り替えられませんでした:",e);}
   };
   // メールのアカウントでログインしている（ログインの再読み込みをまたいで開き直した・重ねた画面の中で登録した）なら #/me にする
@@ -1741,7 +1742,7 @@ function App(){
       if(pushed&&h!==pushed){
         overlayPushRef.current=null;ssSave(SS_MY_OPEN,null);ssSave(SS_MY_BASE_HASH,null);setMyOpen(false);setPageOverlay(null);
       }else if(!pushed&&last&&h===last.hash){
-        overlayPushRef.current=h;
+        overlayPushRef.current=h;ssSave(SS_MY_BASE_HASH,last.base||null);
         if(last.kind==="page")setPageOverlay(last.token);else{ssSave(SS_MY_OPEN,"1");setMyOpen(true);}
       }
     };
@@ -2081,6 +2082,17 @@ function App(){
     </div>
   );
 
+  // 募集URLの画面の「マイシフト」（2026-10-04）。使える個別URLがあれば個別URLの画面、無ければアカウントの画面（ログイン・登録）を重ねる
+  const openMyFromStaff=async()=>{
+    const pg=sid!=="default"?await findOpenableMyPage(sid,staffList).catch(()=>null):null;
+    if(pg){ssSave(SS_MY_OPEN,null);setPageOverlay(pg.token);pushOverlayHash(myOverlayHashOf({pageToken:pg.token}),"page",pg.token);return;}
+    ssSave(SS_MY_OPEN,"1");setMyOpen(true);
+  };
+  // 閉じる。アドレスバーを切り替えていれば「戻る」で閉じる（popstate の処理が閉じて #/s/<token> に戻る）
+  const closeMyOverlay=()=>{
+    if(overlayPushRef.current){try{history.back();return;}catch{/* 下で閉じる */}}
+    ssSave(SS_MY_OPEN,null);ssSave(SS_MY_BASE_HASH,null);setMyOpen(false);setPageOverlay(null);
+  };
   return(
     <div style={{fontFamily:"'Hiragino Sans','Yu Gothic',sans-serif",minHeight:"100vh",background:"var(--c-bg)"}}>
       {paymentToast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:2000,background:paymentToast==="success"?"#10B981":"#6B7280",color:"white",padding:"13px 24px",borderRadius:12,fontWeight:700,fontSize:14,boxShadow:"0 4px 20px rgba(0,0,0,.3)",animation:"sI .3s"}}>
@@ -2088,9 +2100,13 @@ function App(){
       </div>}
       {appToast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1000,background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:12,fontSize:14,fontWeight:500,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)",whiteSpace:"nowrap"}}>{appToast}</div>}
       {/* 従業員画面（第2部 E1）をスタッフURLの画面から開いたとき。提出画面は下に残す（入力途中の希望を消さない）＝重ねて表示する */}
-      {MY_SCREEN_ENABLED&&myOpen&&urlLocked&&<div data-my-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
-        <MyView staffUser={staffUser} onStaffUser={setStaffUser} shopId={sid!=="default"?sid:null}
-          onClose={()=>{ssSave(SS_MY_OPEN,null);setMyOpen(false);}}/>
+      {MY_SCREEN_ENABLED&&myOpen&&!pageOverlay&&urlLocked&&<div data-my-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
+        <MyView staffUser={staffUser} onStaffUser={setStaffUser} shopId={sid!=="default"?sid:null} onClose={closeMyOverlay}/>
+      </div>}
+      {/* 募集URLの画面の「マイシフト」で、この端末が知っている使える個別URLがあれば個別URLの画面を重ねる（2026-10-04・アドレスバーは #/m/<token>） */}
+      {MY_SCREEN_ENABLED&&pageOverlay&&urlLocked&&sid!=="default"&&<div data-my-overlay="page" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
+        <MyPageView token={pageOverlay} boot={{state:"shop",shopId:sid}} shopId={sid} shopName={shop?.name||""} periods={periods} settings={effectiveSettings}
+          staffList={staffList} subs={subs} plan={plan} syncStatus={syncStatus} onSub={staffOnSub} onDeleteSub={staffOnDeleteSub} onClose={closeMyOverlay}/>
       </div>}
       {/* 個別URLの申請（2026-10-04）。提出画面は下に残す（入力途中の希望を消さない）＝マイシフトと同じく重ねて表示する */}
       {MY_SCREEN_ENABLED&&pageRegName!==null&&urlLocked&&sid!=="default"&&<div data-page-register-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
@@ -2109,7 +2125,7 @@ function App(){
       {(urlLocked||view==="staff")
         ?<StaffView periods={periods} ap={ap} apid={apid} setApid={setApid} shopId={sid} settings={effectiveSettings} subs={subs} staffList={staffList} plan={plan}
             urlLocked={urlLocked}
-            onOpenMy={MY_SCREEN_ENABLED&&urlLocked&&!DEMO_MODE?()=>{ssSave(SS_MY_OPEN,"1");setMyOpen(true);}:null}
+            onOpenMy={MY_SCREEN_ENABLED&&urlLocked&&!DEMO_MODE?openMyFromStaff:null}
             onOpenPageRegister={MY_SCREEN_ENABLED&&urlLocked&&!DEMO_MODE?n=>setPageRegName(String(n||"")):null}
             onSub={staffOnSub}
             onDeleteSub={staffOnDeleteSub}
