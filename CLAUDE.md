@@ -1156,10 +1156,19 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
   すべて `syncPeopleMirror` → `syncStaffLinkPersonIds` で personId を合わせ直す。tests/my.test.js が入口のドリフトを検出する
 - **読む側の保証（E3 以降）**: `readMyLinks(uid)`（app-my.js）→ `resolveMyLink`（app-my-utils.js）。`users/{uid}/links` は「どの店舗か」の索引だけで、
   **名前は `shops/{sid}/staffLinks/{uid}.name`**。staffLinks が無い（解除・削除）か、その名前がいまのスタッフ一覧に無いなら無効（ok:false）として**使わない**
-- **残る穴**: オーナーの端末が staffLinks を購読し終える前に改名・削除・追加をすると追随が書かれない（`staffLinkMapRef` が空）。削除と改名で名前が一覧から
-  消えれば読む側で無効になるが、その後に**同じ名前を、購読が届いていない端末で登録し直す**と古い紐付けが生き返る。名前以外に登録を区別する鍵が無いため
-  （スタッフの ID は無い）。personId は企業連携の店舗だけで、店舗の登録をまたいだ同一人物の判定にしか使えない。また subs は認証済みなら店舗全員分を
-  読める（E.4 の既存の注意）ので、紐付けは「画面で本人の分だけを出す」ための鍵で、ルール上の保護ではない
+- **追随は購読を待たない（2026-10-04 に穴を塞いだ）**: 以前は差分を購読のキャッシュ（`staffLinkMapRef`）から作っていたので、購読が届く前の改名・削除・追加は
+  何も書かれず、その後に同じ名前を登録し直すと古い紐付けが生き返った（前任者のアカウントが新しい人のシフトを見る）。いまは `sl.rename`／`sl.drop` が
+  **操作**（`staffLinkOpOf`）を店舗ごとの保留の列（localStorage `ots_staffLinkOps_v1`）に積み、App の `flushStaffLinkOps` が**その時点の
+  `shops/{sid}/staffLinks` を `once()` で読み直して**差分を作り（`planStaffLinkOp`）update する。読めない・書けないときは列に残して
+  `MY_STAFF_LINK_PENDING_MSG`（「保留しました」）を出し（入口は app-admin.js の `staffLinkFollow`）、購読が届いたとき・`online` のとき・次の操作のときに
+  前から順にやり直す（同時に2本走らせない）。**世代の目印**: 操作は自分の時刻（`.info/serverTimeOffset` で寄せた時刻）を持ち、
+  紐付けの `at`（CF のサーバー時刻）がそれより新しいものには当てない（`staffLinksAsOf`）——やり直しが遅れても、操作の後に正しく作られた紐付けを消さない。
+  対象は `MY_SCREEN_ENABLED`・デモでない・閲覧専用でない端末だけ（本番の挙動は変わらない）。ルール・CF の変更は無い。
+  **それでも残る条件**: ①保留は**その端末の** localStorage にあるので、その端末で管理画面を二度と開かなければやり直されない（ただし名前が一覧から消えていれば
+  読む側で無効、同じ名前を別の端末で登録し直せばその端末の追加が読み直して外す）。②その別の端末でも読めない（ルール未反映・オフライン）なら古い紐付けは残るが、
+  その場合は操作者に「保留しました」が出る。③端末の時計とサーバーの時計の差が `.info/serverTimeOffset` で取れないと、世代の判定がその差だけずれる。
+  ④名前以外に登録を区別する鍵は依然として無い（スタッフの ID は無い）。personId は企業連携の店舗だけで、店舗の登録をまたいだ同一人物の判定にしか使えない。
+  また subs は認証済みなら店舗全員分を読める（E.4 の既存の注意）ので、紐付けは「画面で本人の分だけを出す」ための鍵で、ルール上の保護ではない
 - 検証: tests/my.test.js（照合・コード・差分・計画・ルールの形・入口のドリフト・クライアントと CF の一致）、`shifty-cf-verify/scripts/example-staff-link.js`
   （本物の index.js・44項目。拒否側を含む。E2 前の index.js では落ちる）、`shifty-e2e-verify/scripts/example-my-link.js`（スタブの cfHandlers "staffLink" が
   functions/staff-link.js の計画関数を通す・32項目・375px。E2 前の配信物では落ちる）。**ルールと CF の実機（dev・本番）は未検証**

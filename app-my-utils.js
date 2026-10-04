@@ -237,6 +237,47 @@ function dropStaffFromStaffLinks(staffLinks,names){
   Object.entries(_myObj(staffLinks)||{}).forEach(([u,rec])=>{if(_MY_KEY_SAFE(u)&&set.has((_myObj(rec)||{}).name))out[u]=null;});
   return Object.keys(out).length?out:null;
 }
+// ---- 追随の操作（2026-10-04）----
+// オーナーの端末の改名・削除・追加の追随を「操作」として持ち、**その時点の staffLinks を読み直して**差分を作る（App の staffLinkOps）。
+// 以前は購読のキャッシュ（staffLinkMapRef）から差分を作っていたので、購読が届く前の操作は何も書かれず、削除の追随が落ちたまま
+// 同じ名前を登録し直すと、前任者のアカウントが新しい人のシフトを見られた。操作は店舗ごとに端末の localStorage に積み、
+// 読めない・書けないときは残して、購読が届いたとき・オンラインに戻ったとき・次の操作のときにやり直す。
+// **世代の目印**: 操作は自分の時刻 at を持ち、紐付けの at（CF が作った時刻）がそれより新しいものには当てない。やり直しが遅れても、
+// 操作の後に作られた正しい紐付け（例: 前の紐付けが別の経路で外れたあとに同じ名前で承認されたもの）を消さないため
+const MY_STAFF_LINK_OPS_MAX=100;
+function staffLinkOpOf(kind,a,b,atIso){
+  const at=typeof atIso==="string"&&atIso?atIso:"";
+  if(kind==="drop"){
+    const names=(Array.isArray(a)?a:[]).filter(n=>typeof n==="string"&&n);
+    return names.length?{kind,names:[...new Set(names)],at}:null;
+  }
+  if(kind==="rename")return typeof a==="string"&&a&&typeof b==="string"&&b&&a!==b?{kind,from:a,to:b,at}:null;
+  return null;
+}
+// 操作の時刻より後に作られた紐付けを除く（at が無い紐付けは古いものとして扱う）
+function staffLinksAsOf(staffLinks,atIso){
+  const all=_myObj(staffLinks)||{};
+  if(!atIso)return all;
+  const out={};
+  Object.entries(all).forEach(([u,r])=>{const rec=_myObj(r);if(!rec)return;const at=typeof rec.at==="string"?rec.at:"";if(!at||at<=atIso)out[u]=rec;});
+  return out;
+}
+// 読み直した staffLinks に操作を当てた update の差分（変わらなければ null）
+function planStaffLinkOp(staffLinks,op){
+  const o=_myObj(op);
+  if(!o)return null;
+  const base=staffLinksAsOf(staffLinks,o.at);
+  if(o.kind==="drop")return dropStaffFromStaffLinks(base,o.names);
+  if(o.kind==="rename")return renameStaffInStaffLinks(base,o.from,o.to);
+  return null;
+}
+// 保留の列に足す（形の壊れた記録は捨てる・上限を超えたら古い方から落とす）
+function enqueueStaffLinkOp(queue,op){
+  const q=(Array.isArray(queue)?queue:[]).filter(x=>_myObj(x)&&(x.kind==="drop"||x.kind==="rename"));
+  if(op)q.push(op);
+  return q.length>MY_STAFF_LINK_OPS_MAX?q.slice(q.length-MY_STAFF_LINK_OPS_MAX):q;
+}
+const MY_STAFF_LINK_PENDING_MSG="▲ マイシフトのリンクの後始末を保留しました（リンクを読み込めませんでした）。この端末で管理画面を開いているあいだに、やり直します";
 // 本人のセッションから見た紐付けの1件（E3 以降が「どの店舗のどの名前か」を得る入口）。
 // userLink=users/{uid}/links/{shopId}、staffLink=shops/{shopId}/staffLinks/{uid}、staff=shops/{shopId}/staff。
 // **名前は staffLink の name を使う**（オーナーの端末の改名は staffLinks だけを書き換える）。次のどれかなら無効:
@@ -1103,7 +1144,7 @@ function myCompanyPayOf(res){
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
   module.exports={MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
-    MY_LINK_METHOD_LABELS,MY_LINK_CODE_LEN,MY_LINK_CODE_TTL_MS,linkNumberKey,linkNameKey,normalizeLinkCode,isValidLinkCode,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,fmtLinkCodeExpiry,
+    MY_LINK_METHOD_LABELS,MY_LINK_CODE_LEN,MY_LINK_CODE_TTL_MS,linkNumberKey,linkNameKey,normalizeLinkCode,isValidLinkCode,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,MY_STAFF_LINK_OPS_MAX,staffLinkOpOf,staffLinksAsOf,planStaffLinkOp,enqueueStaffLinkOp,MY_STAFF_LINK_PENDING_MSG,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,fmtLinkCodeExpiry,
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
     MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_OPTIONS,MY_BREAK_OPTIONS,parseMyMinutesInput,
     MY_OVERNIGHT_HINT,validateMyShiftInput,buildMyShiftRecord,myShiftDuplicateOf,myOverrideOf,planMyOverride,myWorkplaceList,myNextWorkplaceColor,validateMyWorkplaceInput,buildMyWorkplacePatch,

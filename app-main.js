@@ -1290,27 +1290,73 @@ function App(){
   const[staffLinkMap,setStaffLinkMap]=useState({});
   const[linkRequestMap,setLinkRequestMap]=useState({});
   const[staffLinksLoaded,setStaffLinksLoaded]=useState(false);
-  const staffLinkMapRef=useRef({});
   useEffect(()=>{
-    setStaffLinkMap({});setLinkRequestMap({});setStaffLinksLoaded(false);staffLinkMapRef.current={};
+    setStaffLinkMap({});setLinkRequestMap({});setStaffLinksLoaded(false);
     if(!MY_SCREEN_ENABLED||!firebaseDB||DEMO_MODE||urlLocked||view!=="admin"||!sid||sid==="default"||ownerClaimedSid!==sid)return;
     const rL=firebaseDB.ref(`shops/${sid}/staffLinks`), rR=firebaseDB.ref(`shops/${sid}/linkRequests`);
-    const cL=rL.on("value",s=>{const v=s.val()||{};staffLinkMapRef.current=v;setStaffLinkMap(v);setStaffLinksLoaded(true);},e=>console.warn("マイシフトのリンクの購読に失敗:",e));
+    const cL=rL.on("value",s=>{const v=s.val()||{};setStaffLinkMap(v);setStaffLinksLoaded(true);},e=>console.warn("マイシフトのリンクの購読に失敗:",e));
     const cR=rR.on("value",s=>setLinkRequestMap(s.val()||{}),e=>console.warn("マイシフトのリンク申請の購読に失敗:",e));
     return()=>{rL.off("value",cL);rR.off("value",cR);};
   },[sid,view,urlLocked,ownerClaimedSid]);
-  // 改名・削除の追随。staffLinks の作成は Cloud Functions だけだが、オーナーは削除と name の書き換えだけできる（ルール）。
+  // 改名・削除・追加の追随。staffLinks の作成は Cloud Functions だけだが、オーナーは削除と name の書き換えだけできる（ルール）。
   // **CF を呼ばずにクライアントから直接書く**: CF が使えない環境（dev は Spark）や通信の失敗でも、名前を変えた・消した人の
   // 紐付けが別人（同名で登録し直した人を含む）に残らないようにするため。users/{uid}/links は CF しか書けないので触らない
   // ——読む側（resolveMyLink）は staffLinks の name を正とし、staffLinks が無い・名前がスタッフ一覧に無い紐付けを無効として扱う。
-  const renameStaffLinks=(oldName,newName)=>{
-    const d=renameStaffInStaffLinks(staffLinkMapRef.current,oldName,newName);
-    if(d&&firebaseDB)fbUpd(`shops/${sid}/staffLinks`,d).catch(e=>console.warn("マイシフトのリンクの改名に失敗:",e));
+  // **購読のキャッシュ（staffLinkMap）から差分を作らない**（2026-10-04）: 購読が届く前は空なので、追随が黙って落ちていた。
+  // 操作を店舗ごとの保留の列（localStorage）に積み、その時点の staffLinks を読み直して当てる（planStaffLinkOp）。
+  // 読めない・書けないときは列に残し、購読が届いたとき・オンラインに戻ったとき・次の操作のときにやり直す。戻り値の pending で操作者に知らせる
+  const STAFF_LINK_OPS_LS="ots_staffLinkOps_v1";
+  const staffLinkOpsChainRef=useRef(Promise.resolve({ok:true}));
+  const serverTimeOffsetRef=useRef(0);
+  useEffect(()=>{
+    if(!MY_SCREEN_ENABLED||!firebaseDB||DEMO_MODE)return;
+    // 操作の時刻は紐付けの at（CF のサーバー時刻）と比べるので、端末の時計のずれを .info/serverTimeOffset で寄せる
+    const r=firebaseDB.ref(".info/serverTimeOffset");
+    const cb=r.on("value",s=>{const v=+(s&&s.val());serverTimeOffsetRef.current=Number.isFinite(v)?v:0;},()=>{});
+    return()=>r.off("value",cb);
+  },[]);
+  const staffLinkOpsActive=targetSid=>MY_SCREEN_ENABLED&&!!firebaseDB&&!DEMO_MODE&&!urlLocked&&!ownerReadOnly&&!!targetSid&&targetSid!=="default";
+  const readStaffLinkOps=targetSid=>{const all=lg(STAFF_LINK_OPS_LS,{})||{};return enqueueStaffLinkOp(all[targetSid],null);};
+  const writeStaffLinkOps=(targetSid,q)=>{const all={...(lg(STAFF_LINK_OPS_LS,{})||{})};if(q.length)all[targetSid]=q;else delete all[targetSid];ls(STAFF_LINK_OPS_LS,all);};
+  // 保留の列を前から順に当てる。同時に2本走らせない（前の実行の後ろにつなぐ）。途中で失敗したらそこで止め、残りは列に残す
+  const flushStaffLinkOps=targetSid=>{
+    const run=async()=>{
+      for(;;){
+        const q=readStaffLinkOps(targetSid);
+        if(!q.length)return{ok:true};
+        let cur;
+        try{cur=(await firebaseDB.ref(`shops/${targetSid}/staffLinks`).once("value")).val()||{};}
+        catch(e){console.warn("マイシフトのリンクを読み込めませんでした（追随を保留）:",e);return{pending:true,error:e};}
+        const d=planStaffLinkOp(cur,q[0]);
+        if(d){
+          try{await fbUpd(`shops/${targetSid}/staffLinks`,d);}
+          catch(e){console.warn("マイシフトのリンクの追随に失敗しました（保留）:",e);return{pending:true,error:e};}
+        }
+        writeStaffLinkOps(targetSid,readStaffLinkOps(targetSid).slice(1));
+      }
+    };
+    const p=staffLinkOpsChainRef.current.then(run,run).catch(e=>({pending:true,error:e}));
+    staffLinkOpsChainRef.current=p;
+    return p;
   };
-  const dropStaffLinks=names=>{
-    const d=dropStaffFromStaffLinks(staffLinkMapRef.current,names);
-    if(d&&firebaseDB)fbUpd(`shops/${sid}/staffLinks`,d).catch(e=>console.warn("マイシフトのリンクの削除に失敗:",e));
+  const queueStaffLinkOp=op=>{
+    if(!op||!staffLinkOpsActive(sid))return Promise.resolve({ok:true,skipped:true});
+    writeStaffLinkOps(sid,enqueueStaffLinkOp(readStaffLinkOps(sid),op));
+    return flushStaffLinkOps(sid);
   };
+  const staffLinkNowIso=()=>new Date(Date.now()+serverTimeOffsetRef.current).toISOString();
+  const renameStaffLinks=(oldName,newName)=>queueStaffLinkOp(staffLinkOpOf("rename",oldName,newName,staffLinkNowIso()));
+  const dropStaffLinks=names=>queueStaffLinkOp(staffLinkOpOf("drop",names,null,staffLinkNowIso()));
+  // 保留が残っていればやり直す: 購読が届いたとき（＝読める状態になったとき）とオンラインに戻ったとき
+  useEffect(()=>{
+    if(!staffLinksLoaded||!staffLinkOpsActive(sid)||!readStaffLinkOps(sid).length)return;
+    flushStaffLinkOps(sid);
+  },[staffLinksLoaded,sid,ownerReadOnly]);
+  useEffect(()=>{
+    const on=()=>{if(staffLinkOpsActive(sid)&&readStaffLinkOps(sid).length)flushStaffLinkOps(sid);};
+    window.addEventListener("online",on);
+    return()=>window.removeEventListener("online",on);
+  },[sid,ownerReadOnly]);
   // 申請の却下＝申請を消すだけ（オーナーは linkRequests/{uid} を消せる）
   const rejectLinkRequest=async uid=>{
     try{await fbSet(`shops/${sid}/linkRequests/${uid}`,null);return{};}catch(e){console.warn("申請の却下に失敗:",e);return{error:"却下できませんでした"};}

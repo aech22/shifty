@@ -342,6 +342,56 @@ test("E2 統合・切り出しの後の personId の合わせ直し（staffLinkP
   assert.deepStrictEqual(cf.staffLinkPersonIdPatchCF("S1", { U1: { name: "田中", personId: "0042" } }, {}, {}), { "shops/S1/staffLinks/U1/personId": null }, "人物から外れたら消す・users 側は無ければ書かない");
 });
 
+// 追随の操作（2026-10-04）: 購読が届く前でも落ちないよう、操作を積んで読み直した staffLinks に当てる
+test("追随の操作: 形・世代（操作より後に作られた紐付けには当てない）・保留の列・従来の差分と同じ結果", () => {
+  assert.strictEqual(m.staffLinkOpOf("drop", [], null, "t"), null);
+  assert.deepStrictEqual(m.staffLinkOpOf("drop", ["佐藤", "佐藤", "", 3], null, "2026-10-04T00:00:00.000Z"), { kind: "drop", names: ["佐藤"], at: "2026-10-04T00:00:00.000Z" });
+  assert.deepStrictEqual(m.staffLinkOpOf("rename", "田中", "田中 一郎", "a"), { kind: "rename", from: "田中", to: "田中 一郎", at: "a" });
+  assert.strictEqual(m.staffLinkOpOf("rename", "田中", "田中", "a"), null, "名前が変わらなければ操作にしない");
+  assert.strictEqual(m.staffLinkOpOf("x", "a", "b", "a"), null);
+  const links = {
+    OLD: { name: "佐藤", method: "code", at: "2026-10-01T00:00:00.000Z" },
+    NEW: { name: "佐藤", method: "name", at: "2026-10-05T00:00:00.000Z" },
+    NOAT: { name: "田中", method: "number" },
+    REN: { name: "田中", method: "number", at: "2026-10-01T00:00:00.000Z" },
+    "bad/key": { name: "佐藤", at: "2026-10-01T00:00:00.000Z" },
+  };
+  const opAt = "2026-10-04T00:00:00.000Z";
+  assert.deepStrictEqual(m.planStaffLinkOp(links, m.staffLinkOpOf("drop", ["佐藤"], null, opAt)), { OLD: null }, "操作より後に作られた NEW は消さない・不正なキーは触らない");
+  assert.deepStrictEqual(m.planStaffLinkOp(links, m.staffLinkOpOf("rename", "田中", "田中 一郎", opAt)), { "NOAT/name": "田中 一郎", "REN/name": "田中 一郎" }, "at の無い紐付けは古いものとして扱う");
+  assert.strictEqual(m.planStaffLinkOp(links, m.staffLinkOpOf("drop", ["鈴木"], null, opAt)), null);
+  assert.strictEqual(m.planStaffLinkOp(links, null), null);
+  // at の無い操作（世代を見ない）は従来の差分とまったく同じ
+  for (const [o, nn] of [["佐藤", "佐藤 花子"], ["田中", "x"], ["無い人", "y"]]) {
+    assert.deepStrictEqual(m.planStaffLinkOp(links, { kind: "drop", names: [o], at: "" }), m.dropStaffFromStaffLinks(links, [o]));
+    assert.deepStrictEqual(m.planStaffLinkOp(links, { kind: "rename", from: o, to: nn, at: "" }), m.renameStaffInStaffLinks(links, o, nn));
+  }
+  assert.deepStrictEqual(m.staffLinksAsOf(links, opAt), { OLD: links.OLD, NOAT: links.NOAT, REN: links.REN, "bad/key": links["bad/key"] });
+  // 保留の列
+  const q1 = m.enqueueStaffLinkOp(undefined, m.staffLinkOpOf("drop", ["a"], null, "t1"));
+  const q2 = m.enqueueStaffLinkOp([...q1, null, { kind: "zzz" }, 5], m.staffLinkOpOf("rename", "a", "b", "t2"));
+  assert.deepStrictEqual(q2.map(x => x.kind), ["drop", "rename"], "形の壊れた記録は捨て、順番は保つ");
+  let big = [];
+  for (let i = 0; i < m.MY_STAFF_LINK_OPS_MAX + 5; i++) big = m.enqueueStaffLinkOp(big, m.staffLinkOpOf("drop", ["n" + i], null, "t"));
+  assert.strictEqual(big.length, m.MY_STAFF_LINK_OPS_MAX);
+  assert.deepStrictEqual(big[0].names, ["n5"], "上限を超えたら古い方から落とす");
+  assert.ok(/保留/.test(m.MY_STAFF_LINK_PENDING_MSG));
+});
+test("追随の入口: App はキャッシュではなく読み直した staffLinks に操作を当て、失敗は保留して知らせる", () => {
+  const main = fs.readFileSync(path.join(ROOT, "app-main.js"), "utf8");
+  const blk = main.slice(main.indexOf("const flushStaffLinkOps="), main.indexOf("const flushStaffLinkOps=") + 1800);
+  assert.ok(blk.includes(".once(\"value\")") && blk.includes("planStaffLinkOp(cur,q[0])") && blk.includes("pending:true"), "読み直して当て、失敗は pending で返す");
+  assert.ok(!/staffLinkMapRef/.test(main.replace(/\/\/[^\n]*/g, "")), "購読のキャッシュから差分を作らない");
+  assert.ok(/const renameStaffLinks=\(oldName,newName\)=>queueStaffLinkOp\(staffLinkOpOf\("rename"/.test(main));
+  assert.ok(/const dropStaffLinks=names=>queueStaffLinkOp\(staffLinkOpOf\("drop"/.test(main));
+  assert.ok(/if\(!staffLinksLoaded\|\|!staffLinkOpsActive\(sid\)\|\|!readStaffLinkOps\(sid\)\.length\)return;\s*flushStaffLinkOps\(sid\)/.test(main), "購読が届いたら保留をやり直す");
+  const admin = fs.readFileSync(path.join(ROOT, "app-admin.js"), "utf8");
+  const calls = admin.match(/sl\.(drop|rename)\(/g) || [];
+  const wrapped = admin.match(/staffLinkFollow\(tt,sl\.(drop|rename)\([^;]*/g) || [];
+  assert.strictEqual(calls.length, 6, "追随の呼び出しは6か所（改名2・削除・追加・呼び出しの追加・期限切れ）");
+  assert.strictEqual(wrapped.join("").match(/sl\.(drop|rename)\(/g).length, 6, "すべて staffLinkFollow で結果を見る（保留を知らせる）");
+});
+
 // 改名・削除・統合への追随（計画書のリスク: 落とすと別人の確定シフトが見える）。入口のドリフト検出
 test("E2 追随の入口: 改名（StaffTab・CF）・削除・追加・人物の変更がすべて staffLinks を通る", () => {
   const admin = fs.readFileSync(path.join(ROOT, "app-admin.js"), "utf8");

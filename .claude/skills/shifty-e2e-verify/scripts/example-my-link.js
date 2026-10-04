@@ -13,6 +13,10 @@
 //  R（閲覧専用の端末）と P（本番相当 MY_SCREEN_ENABLED=false）: 提案もコードの発行も出ない
 //  C（別のスタッフの端末・#/me）: コード（小文字・ハイフン入り）でリンク → 店舗名と登録名が出る。期限切れのコードは使えない。解除
 //  T（S の端末）: オーナーの改名の後は新しい名前（staffLinks が正）。削除された人は「お店の側でリンクが外されました」
+//  H（2026-10-04）: オーナーの端末で staffLinks の購読が**まだ届いていない**あいだ（stub の holdOn）に、削除→同じ名前で再登録・改名・
+//     古い紐付けの残る名前の追加をしても追随が書かれる（読む側 resolveMyLink でも古い紐付けは使われない）。staffLinks が読めないときは
+//     「保留しました」を出して localStorage の列に残し、読めるようになって購読が届くとやり直す。
+//     反証: SHIFTY_ROOT=<この修正より前の配信物> node ... → EXIT=1（購読が届く前の操作は何も書かれない）
 //  すべての場面で console.error・pageerror が 0 件
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-my-link.js → allPass=true / EXIT=0
@@ -65,9 +69,9 @@ async function openStaff({ hash, db, cur, viewport = PHONE, wait = "#root > *" }
     makeStub({ seed: db, view: "staff", tab: "periods", auth: "accounts", authSeed: { users: USERS, cur }, cfHandlers: CFH });
   return openHarness({ root: ROOT, jsx: "window.__harnessReady=true;", waitFor: wait, viewport, extraHead: head, scripts: SCRIPTS });
 }
-async function openOwner({ db, uid = OWN, viewport = { width: 1200, height: 900 }, root = ROOT, denyRead, denyWrite }) {
+async function openOwner({ db, uid = OWN, viewport = { width: 1200, height: 900 }, root = ROOT, denyRead, denyWrite, holdOn }) {
   return openHarness({ root, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport,
-    extraHead: THEME + makeStub({ seed: db, uid, view: "admin", tab: "staff", cfHandlers: CFH, denyRead, denyWrite }), scripts: SCRIPTS });
+    extraHead: THEME + makeStub({ seed: db, uid, view: "admin", tab: "staff", cfHandlers: CFH, denyRead, denyWrite, holdOn }), scripts: SCRIPTS });
 }
 const CFH = Object.fromEntries(["approveStaffLink", "issueStaffLinkCode", "redeemStaffLinkCode", "unlinkStaff"].map(n => [n, "staffLink"]));
 const sleep = (h, ms) => h.page.waitForTimeout(ms);
@@ -318,6 +322,93 @@ const cands = (h, uid) => h.evaluate(u => { const el = document.querySelector(`[
       R.X = { row: await x.evaluate(() => (document.querySelector('[data-my-link="S1"]') || {}).innerText || ""), ok: await x.evaluate(() => document.querySelector('[data-my-link="S1"]').getAttribute("data-my-link-ok")), errors: x.errors.slice() };
       V.T_deletedShowsUnlinked = R.X.ok === "0" && /お店の側でリンクが外されました/.test(R.X.row) && R.X.errors.length === 0;
     } finally { await x.browser.close(); }
+  }
+
+  // ---------------- H: 購読が届く前の追随（2026-10-04）----------------
+  {
+    const at0 = "2026-10-01T00:00:00.000Z";
+    const seedH = () => {
+      const d = seed0();
+      d.shops.S1.staff = ["田中", "佐藤", "鈴木"];
+      d.shops.S1.staffLinks = { U_TAN: { name: "田中", method: "number", at: at0 }, U_SAT: { name: "佐藤", method: "name", at: at0 },
+        U_SUZ: { name: "鈴木", method: "code", at: at0 }, U_OLD: { name: "高橋", method: "code", at: at0 } };
+      delete d.shops.S1.linkRequests;
+      return d;
+    };
+    const SL = "shops/S1/staffLinks";
+    const queueOf = h => h.evaluate(() => { try { return JSON.parse(localStorage.getItem("ots_staffLinkOps_v1") || "{}"); } catch { return { broken: true }; } });
+    const linkOk = (h, uid, nameForUser) => h.evaluate(([u, n]) => { const r = resolveMyLink("S1", { name: n }, window.__db("shops/S1/staffLinks/" + u), window.__db("shops/S1/staff")); return !!(r && r.ok); }, [uid, nameForUser]);
+    const renameTanaka = async h => {
+      await openEdit(h, "田中");
+      await h.evaluate(() => {
+        const inp = [...document.querySelectorAll("input")].find(i => i.value === "田中" && i.maxLength === 50);
+        const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+        set.call(inp, "田中 一郎"); inp.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await h.evaluate(() => { const b = [...document.querySelectorAll("button")].find(x => x.innerText.trim() === "保存" && x.closest("div[style*='9998']")); b && b.click(); });
+      await sleep(h, 800);
+    };
+    // H1: 購読は止めたまま（once は読める）
+    let hDump = null;
+    const h = await openOwner({ db: seedH(), holdOn: [SL] });
+    try {
+      const H = {};
+      await waitText(h, "スタッフ一覧");
+      await sleep(h, 600);
+      H.heldAtStart = await h.evaluate(p => window.__holdPending(p), SL);
+      // 削除 → 同じ名前で再登録
+      await h.clickExact("削除", { rowText: "佐藤" }); await sleep(h, 300);
+      await h.clickExact("削除する"); await sleep(h, 800);
+      H.satAfterDelete = await db(h, SL + "/U_SAT");
+      await h.setInput('input[placeholder="スタッフ名を入力"]', "佐藤");
+      await h.clickExact("＋ 追加"); await sleep(h, 800);
+      H.satReAdded = ((await db(h, "shops/S1/staff")) || []).includes("佐藤");
+      H.satLinkGone = (await db(h, SL + "/U_SAT")) === null;
+      H.satOldAccountSeesNew = await linkOk(h, "U_SAT", "佐藤");
+      // 改名
+      await renameTanaka(h);
+      H.tanRenamed = await db(h, SL + "/U_TAN/name");
+      // 古い紐付けの残る名前（高橋）の追加
+      await h.setInput('input[placeholder="スタッフ名を入力"]', "高橋");
+      await h.clickExact("＋ 追加"); await sleep(h, 800);
+      H.oldGone = (await db(h, SL + "/U_OLD")) === null;
+      H.oldAccountSeesNew = await linkOk(h, "U_OLD", "高橋");
+      H.suzKept = !!(await db(h, SL + "/U_SUZ"));
+      H.heldAtEnd = await h.evaluate(p => window.__holdPending(p), SL);
+      H.queue = await queueOf(h);
+      H.pendingToast = (await text(h)).includes("保留しました");
+      H.errors = h.errors.slice();
+      hDump = await h.evaluate(() => window.__dbDump());
+      R.H = H;
+      V.H_heldWholeTime = H.heldAtStart === true && H.heldAtEnd === true;
+      V.H_deleteThenReAddDrops = H.satAfterDelete === null && H.satReAdded && H.satLinkGone && H.satOldAccountSeesNew === false;
+      V.H_renameFollows = H.tanRenamed === "田中 一郎";
+      V.H_addDropsStale = H.oldGone && H.oldAccountSeesNew === false && H.suzKept;
+      V.H_noPending = !H.pendingToast && Object.keys(H.queue).length === 0;
+      V.H_noErrors = H.errors.length === 0;
+    } finally { await h.browser.close(); }
+    // H2: staffLinks が読めない（ルール未反映・通信の失敗に相当）→ 保留して知らせる → 読めるようになって購読が届くとやり直す
+    const h2 = await openOwner({ db: hDump, holdOn: [SL], denyRead: [SL] });
+    try {
+      const H2 = {};
+      await waitText(h2, "スタッフ一覧");
+      await sleep(h2, 600);
+      await h2.clickExact("削除", { rowText: "鈴木" }); await sleep(h2, 300);
+      await h2.clickExact("削除する");
+      H2.toast = await waitText(h2, "保留しました", 5000);
+      H2.suzStillThere = !!(await db(h2, SL + "/U_SUZ"));
+      H2.queue = await queueOf(h2);
+      await h2.evaluate(p => { window.__setDenyRead([]); window.__releaseHold(p); }, SL);
+      await h2.page.waitForFunction(p => window.__db(p) === null, SL + "/U_SUZ", { timeout: 8000 }).catch(() => {});
+      H2.suzGone = (await db(h2, SL + "/U_SUZ")) === null;
+      H2.queueAfter = await queueOf(h2);
+      H2.othersKept = !!(await db(h2, SL + "/U_TAN"));
+      H2.errors = h2.errors.slice();
+      R.H2 = H2;
+      V.H2_pendingNotified = H2.toast && H2.suzStillThere && Array.isArray(H2.queue.S1) && H2.queue.S1.length === 1 && H2.queue.S1[0].kind === "drop";
+      V.H2_retriedWhenReadable = H2.suzGone && Object.keys(H2.queueAfter).length === 0 && H2.othersKept;
+      V.H2_noErrors = H2.errors.length === 0;
+    } finally { await h2.browser.close(); }
   }
 
   const allPass = Object.values(V).every(Boolean);

@@ -331,6 +331,10 @@ localStorage 上のアカウント表で動く（`window.__authCur()`・`window.
 `functions/staff-link.js` の本物の計画関数を通して DB に書く。オーナーの端末（既定の認証）とスタッフの端末（`auth:"accounts"`）を
 `__dbDump()` でつなぐ。**閲覧専用の端末はスタブでは自然に作れない**（ルールを評価しないので claim が通る）——`denyRead`・`denyWrite` に
 `shops/S1/private` と `shops/S1/owners` を渡して拒否を再現する。雛形は `scripts/example-my-link.js`。
+**「購読がまだ届いていない」は `holdOn:["shops/S1/staffLinks"]`**（2026-10-04）: そのパスの `on()` の配信（最初の値も変化も）を止め、`once()` は止めない。
+ページの `window.__releaseHold(path)` で配信し、`window.__holdPending(path)` で止まっているかを確かめる。`window.__setDenyRead([...])`／`__setDenyWrite([...])` で
+拒否するパスを途中で差し替えられる（「読めない → 読めるようになる」の再現）。stub の on() は既定で `setTimeout(0)` で届くので、
+holdOn を使わないと「購読が届く前の操作」は作れない（example-my-link.js の H・H2 がこの形）。
 マイシフトと「公開」ボタン（E3）は `scripts/example-my-shift.js`。オーナーの端末（`tab:"edit"`・確定の解除の `prompt` は `page.on("dialog")` で答える）と
 スタッフの端末（`auth:"accounts"`・`#/me`）を `__dbDump()` でつなぎ、今日の日付で期間を作る（カレンダーは実行した日の月を出すため）。
 手入力の勤務先とシフト・実績の上書き・.ics（E4）は `scripts/example-my-manual.js`。**スタブは `window.confirm` を常に true に差し替える**ので

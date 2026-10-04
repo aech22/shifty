@@ -49,6 +49,9 @@ const MYP_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "fu
  * @param {boolean}[o.confirm]   window.confirm の戻り値（既定 true）
  * @param {string[]}[o.denyRead] once() を PERMISSION_DENIED で拒否するパス（前方一致）。ルールは評価しないので、
  *                                「オーナーでない店舗の actuals は読めない」のような拒否を再現するときに使う（P5）
+ * @param {string[]}[o.holdOn]    on() の購読の配信（最初の値もその後の変化も）を止めておくパス（前方一致・2026-10-04）。once() は止めない＝
+ *                              「購読がまだ届いていないが、読みにいけば読める」状態。ページの window.__releaseHold(path) で配信する。
+ *                              window.__setDenyRead([...]) / window.__setDenyWrite([...]) で拒否するパスを途中で差し替えられる。
  * @param {string[]}[o.denyWrite] set/update/remove を PERMISSION_DENIED で拒否するパス（前方一致）。「ルールが未デプロイで
  *                                users/{uid} に書けない」を再現するときに使う（従業員画面 E1）
  * @param {string} [o.auth]      "accounts" にすると認証が本物に近い形になる（従業員画面 E1・2026-10-04）。既定は従来の
@@ -69,6 +72,7 @@ function makeStub(o) {
   const confirmValue = o.confirm === undefined ? true : !!o.confirm;
   const denyRead = Array.isArray(o.denyRead) ? o.denyRead : [];
   const denyWrite = Array.isArray(o.denyWrite) ? o.denyWrite : [];
+  const holdOn = Array.isArray(o.holdOn) ? o.holdOn : [];
   const authMode = o.auth || "simple";
   const authSeed = o.authSeed || { users: {}, cur: null };
 
@@ -85,6 +89,12 @@ function makeStub(o) {
   var CF=${JSON.stringify(cfHandlers)};
   var DENY_READ=${JSON.stringify(denyRead.map(d => String(d).split("/").filter(Boolean).join("/")))};
   var DENY_WRITE=${JSON.stringify(denyWrite.map(d => String(d).split("/").filter(Boolean).join("/")))};
+  var HOLD_ON=${JSON.stringify(holdOn.map(d => String(d).split("/").filter(Boolean).join("/")))};
+  var _np=function(p){ return String(p).split("/").filter(Boolean).join("/"); };
+  var held=function(p){ var np=_np(p); return HOLD_ON.some(function(d){ return np===d||np.indexOf(d+"/")===0; }); };
+  window.__setDenyRead=function(a){ DENY_READ=(a||[]).map(_np); };
+  window.__setDenyWrite=function(a){ DENY_WRITE=(a||[]).map(_np); };
+  window.__holdPending=function(p){ var np=_np(p); return HOLD_ON.indexOf(np)>=0; };
   var AUTH_MODE=${JSON.stringify(authMode)};
   var AUTH_SEED=${JSON.stringify(authSeed)};
   var root=null;
@@ -162,6 +172,7 @@ function makeStub(o) {
     listeners.slice().forEach(function(e){
       setTimeout(function(){
         if(listeners.indexOf(e)<0) return;
+        if(held(e.path)) return;
         var v=applyQuery(getPath(e.path),e.query);
         var j=JSON.stringify(v===undefined?null:v);
         if(e.last===j) return;
@@ -169,6 +180,8 @@ function makeStub(o) {
       },0);
     });
   }
+  // holdOn で止めていた購読に、いまの値を配信する（最初の値を含む）
+  window.__releaseHold=function(p){ var np=_np(p); HOLD_ON=HOLD_ON.filter(function(d){ return d!==np; }); listeners.slice().forEach(function(e){ if(held(e.path)) return; if(_np(e.path)!==np&&_np(e.path).indexOf(np+"/")!==0) return; setTimeout(function(){ if(listeners.indexOf(e)<0) return; var v=applyQuery(getPath(e.path),e.query); e.last=JSON.stringify(v===undefined?null:v); e.cb(snap(v)); },0); }); };
   function refFor(p,q){
     var ks=norm(p);
     return {
@@ -188,7 +201,7 @@ function makeStub(o) {
         if(p===".info/connected"){ setTimeout(function(){ cb(snap(true)); },0); return cb; }
         var ent={path:p,cb:cb,query:q,last:undefined};
         listeners.push(ent);
-        setTimeout(function(){ if(listeners.indexOf(ent)<0) return; var v=applyQuery(getPath(p),q); ent.last=JSON.stringify(v===undefined?null:v); cb(snap(v)); },0);
+        setTimeout(function(){ if(listeners.indexOf(ent)<0||held(p)) return; var v=applyQuery(getPath(p),q); ent.last=JSON.stringify(v===undefined?null:v); cb(snap(v)); },0);
         return cb;
       },
       off:function(){ for(var i=listeners.length-1;i>=0;i--) if(listeners[i].path===p) listeners.splice(i,1); },
