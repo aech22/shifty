@@ -38,6 +38,21 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟡 メール確認つきの新規登録: Firebase コンソールの設定（ユーザー作業）→ 本番で登録を1回通す
+
+**目的**: 2026-10-04 に新規登録（マイシフト・管理者のログイン画面・設定タブのアカウント連携）を「確認メールのリンクを開いて続きを登録」に変えた（`dd06a46`）。
+コードはコンソールの設定前でも壊れない（`auth/operation-not-allowed`・`auth/unauthorized-continue-uri` なら従来の登録に自動で切り替わる）が、
+**設定するまで本番は従来の登録のまま**（確認メールは送られない）。設定はユーザーの作業（コードやデプロイでは変えられない）。
+**受け入れ条件**:
+- [ ] Firebase コンソール（ontheshift）→ Authentication → Sign-in method → 「メール / パスワード」→ 「メールリンク（パスワードなしでログイン）」を有効にして保存
+- [ ] Authentication → Settings → 承認済みドメイン に `shiftyshifty.app` を追加（2026-10-04 時点は localhost・ontheshift.firebaseapp.com・ontheshift.web.app・aech22.github.io だけ）
+- [ ] Authentication → Templates → 「メールアドレスのリンクでログイン」（Email link sign-in）のテンプレートの言語を日本語に（任意）
+- [ ] 本番で新規登録を1回通す（実在の自分のアドレス）: 確認メールが届く → リンクで続きの画面が開く → パスワードを決めて登録 → 再読み込み後もログインのまま
+- [ ] dev（thirty-dev-b6958）でも同じ設定をするかはユーザー判断（しない場合、dev は従来の登録のまま）
+**影響範囲**: Firebase コンソールだけ（コード・ルール・CF の変更なし）
+
+---
+
 ## 🔴 次の本番リリースでユーザーと突き合わせる実機確認（`/release-to-main` の担当は必ずこの一覧を開く）
 
 **目的**: 2026-10-04 の第1部（S1〜S3・H2・K2）と第2部（従業員画面 E0〜E6）は、ヘッドレスのブラウザ・スタブ Firebase・シミュレーターでしか確かめていない。
@@ -1873,6 +1888,17 @@ Vite + TS へのフル移行は不要。
 ---
 
 ## 完了済みタスク
+
+### ✅ 🟡 スタッフ画面の追加指示 A・B・D・E'・C（2026-10-04 develop 完了／ルール・CF の変更なし・本番未反映）
+
+- **A 全員のシフト表に他店でのヘルプ勤務**（`828875d`）: PDF と同じ規則・同じ関数。他店は表示中の期間にかかる期間の subs だけを部分読み。回帰 `example-my-sheet-pdf.js`（helperSamePdf・helperReadScope）
+- **B スタッフの実績の上書きは給料計算だけ**（`7801432`）: シフトの表示（カレンダー・詳細・次のシフト・.ics・Google カレンダー）は公開内容のまま。給料の内訳に実績で計算した日の注記。回帰 `example-my-manual.js` の C・D
+- **D 休暇を PDF・全員の表・Excel でも種別名**（`a794735`＋`f6a0804`）: 4か所が `leaveShownTextOf` を通る。Excel は2つの入口とも。回帰 `example-excel-missing-day.js`・`example-my-sheet-pdf.js`
+- **E' 管理者がスタッフ専用のURLを直接発行**（`a47183e`）: 承認済みの個別URLを申請なしで作る・再発行（確認つき）・取り消し。ルール・CF の変更なし。回帰 `example-staff-page-issue.js`。
+  当初の E（匿名 uid で個人リンクコードを引き換える CF）はユーザーの方針変更で取りやめ（着手前）
+- **C メール確認つきの新規登録**（`dd06a46`）: 上の🟡（コンソールの設定）が残る。回帰 `example-email-link.js`
+- 経緯: Stop フックが C の作業途中の app-main.js・app-company.js を `1c43f62` として自動コミット・push したため、develop が起動時に壊れる状態になった。
+  `d70aef5` で revert し（履歴は書き換えていない）、C は E' のあとに改めて `dd06a46` で入れた
 
 ### ✅ 🟡 本番のスタッフ画面を実機で見たうえでの修正7件・これまでの給料の一括入力・アカウント作成のフォールバックの回帰（2026-10-04 develop 完了／ルール・CF の変更なし・本番未反映）
 

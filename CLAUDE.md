@@ -1129,6 +1129,19 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
   `linkWithCredential` が `auth/operation-not-allowed`（"Please verify the new email before changing email"）になる。そのときだけ
   `createUserWithEmailAndPassword` で作り、新しい uid で印と profile を書いて再読み込みする（uid が替わるので、匿名のときの提出の `submitterUid` とは一致しない）。
   回帰は `example-my-account.js` の L（スタブの `authSeed.linkBlocked:true`。以前のスタブは連結が必ず成功したので本番の不具合を検出できなかった）
+- **新規登録はメール確認つき（2026-10-04 ユーザー指示「メアドの打ち間違いと不正登録防止」・`dd06a46`）**: マイシフト（`MyAuthScreen`）・管理者のログイン画面・
+  設定タブのアカウント連携の3つの新規登録が、app-my.js の `EmailLinkSendBox`（アドレスだけ入れて `sendSignInLinkToEmail`）を通る。メールのリンクを開くと
+  App が Phase1 の画面の代わりに `EmailLinkFinishScreen` を描き（`?elk=staff|admin`・`parseEmailLinkLanding`）、パスワード（スタッフは登録ネーム・番号も）を入れると
+  `signInWithEmailLink` → `updatePassword` → 印・profile（スタッフ）／`AUTH_LOGGED_OUT_LS=false` と設定タブから始めた店舗の紐付け（管理者）→ oobCode を落とした URL で開き直す。
+  戻り先の URL は `?elk=…&elh=戻るハッシュ` だけ（メールアドレス・店舗コードは URL に載せず localStorage `ots_emailLinkPending_v1` に置く）。別のブラウザでは
+  アドレスをもう一度入れてもらう。管理者用とマイシフト用のアカウントは混ぜない（スタッフの登録で accounts/{uid}/shops がある・管理者の登録で users/{uid}/profile がある
+  ならサインアウトして理由）。既にあるアカウントのアドレスでも、リンクを開けた＝メールを受け取れるのでパスワードを設定し直す（再設定と同じ）。パスワードの設定に
+  失敗したらサインインしたまま設定し直せ、離脱した人は同じアドレスで登録をやり直すと続きができる（スタッフは印を付けてあるのでその端末ではマイシフトに入れる）。
+  匿名 uid は引き継がない（uid が替わる＝列挙保護の下の従来のフォールバックと同じ）。**メールリンクが使えない（Firebase コンソールで無効・戻り先のドメインが未承認）
+  ときは従来の登録欄に自動で切り替える**（`EMAIL_LINK_FALLBACK_CODES`。2026-10-04 に dev へ本物の SDK で送ると、戻り先が localhost・shiftyshifty.app・firebaseapp.com の
+  どれでも `auth/operation-not-allowed`）。**前提のコンソール設定はユーザーが行う**（Authentication の「メール/パスワード」で「メールリンク（パスワードなしでログイン）」を有効・
+  承認済みドメインに shiftyshifty.app・メールテンプレートの日本語化。BACKLOG）。ログイン・再設定・Google・企業コード・OTP の連携は変えていない。
+  回帰は `example-email-link.js`（スタブの `authSeed.emailLink`）と `example-my-account.js`（設定前のフォールバックを通る）
 - **スタッフアカウントは管理者の実ログインとして扱わない**: App は `staffUser`（{uid,email}）を別に持ち、`authUser` は null のまま。
   したがって `accounts/{uid}/shops` を読まない・書かない、`doFullSignOut` も signOut しない。判定は Phase1 の `onAuthStateChanged` で、
   ①localStorage の印 `ots_staffAccount_v1`（{uid}・登録とログインの成功で書き、ログアウトで消す）が一致すればスタッフ、
@@ -1244,10 +1257,15 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
   同じ勤務先・同じ日・同じ時間のシフトは二重に入れない。手入力のシフトは手入力の勤務先にだけ入る（Shifty の店舗には入れない＝公開分と二重に数えないため）
 - **履歴から追加**: 追加の欄で、同じ勤務先の過去の時間帯（開始・終了・休憩が同じものはまとめ、新しい順に5件）をタップすると選んだ日にそのまま保存する（`myShiftHistoryCandidates`）
 - **実績の上書き**: 公開済みの Shifty のシフトに開始・終了・休憩を入れる（`MyOverrideForm`）。計算は店舗の実績と同じ `resolveActualDay`（退勤延長は足さない・締の追加出勤は残す）。
-  公開と同じ値で保存すると上書きを消す。表示は「実績」と「公開 …」の併記、「公開の時間に戻す」で消す。**「変更あり」の指紋は公開内容（`entry.sched`）で作る**ので上書きしても付かない。
+  公開と同じ値で保存すると上書きを消す。**「変更あり」の指紋は公開内容（`entry.sched`）で作る**ので上書きしても付かない。
+  **上書きは給料計算にだけ効く（2026-10-04 ユーザー指示「スタッフ側の出退勤時間の変更は給料計算のみに影響」・`7801432`）**: entry の時刻（startMin〜segments）は
+  常に公開内容（`scheduledDay`）で、カレンダー・日付の詳細の主表示・次のシフト・.ics・Google カレンダーのリンク・全員の表は上書きの有無に関係なく公開内容。
+  上書きの値は `entry.actual`（表示用の要約）と `entry.actualDay`（resolveActualDay の戻り値）にだけ載り、`myPayWorkDays` は上書きのある日だけ actual の時刻を返す。
+  入れる場所は日付の詳細のまま（「給料計算の実績を入力／直す」・「実績を消す」）で、主表示の下に「給料計算の実績 …」の1行。給料タブの内訳の注記に
+  「あなたが入れた実績の時間で計算した日 n日（日付）」（`myOverrideDatesIn`）。保存データ（`overrides`）の形は変えていない
   Premium でないとき（グレー表示）は上書きを当てない（公開済みの表示が無いため）
 - **次のシフト**は公開済みと手入力の出勤（同じ日は開始の早い順・`myEntryOrder`）
-- **.ics**（`buildMyIcs`）: 表示中の月の公開済み（上書きがあれば上書きの時刻）と手入力のシフト。未公開は含めない。VTIMEZONE（Asia/Tokyo・+0900 の STANDARD 1つ）を同梱して
+- **.ics**（`buildMyIcs`）: 表示中の月の公開済み（上書きがあっても公開の時刻・2026-10-04 から）と手入力のシフト。未公開は含めない。VTIMEZONE（Asia/Tokyo・+0900 の STANDARD 1つ）を同梱して
   `DTSTART;TZID=Asia/Tokyo:…`。24時超えは翌日の時刻、締の追加出勤は別のイベント。UID は「勤務先と日付（手入力はシフトID）」から作るので書き出し直しても同じ。
   RFC 5545 の75オクテットの折り返し（UTF-8 の文字の途中では切らない）・エスケープ（`\` `;` `,` 改行・単独の CR）・CRLF・BOM なし・`SEQUENCE`（2026-01-01 からの分＝後の書き出しほど大きい）・
   VTIMEZONE に `X-LIC-LOCATION`（2026-10-04 に互換性を点検して足した）。**UTC（末尾 Z）にしない**: iOS 27 のシミュレーターで比べると UTC の予定は
@@ -1325,7 +1343,13 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 - **承認**（スタッフタブの「個別URLの申請」・`StaffPageRequestsCard`）: 候補は紐付けの A・B（`linkCandidatesFor`）で、選んだ状態で出す。**管理者がスタッフ一覧から任意の名前を
   選んで承認できる**（CF を使わずオーナーが書くので、E2 と違い候補に縛らない）。スタッフ一覧に無い人は先にスタッフを追加してから（承認時に追加するボタンは置かない＝
   人数の上限・別名の規則はスタッフの追加の経路が持つ）。差分は App の `staffPageAct` が**その時点の staffPages を `once()` で読み直して**作り update する。
-  1つの名前に承認済みは1つ（新しい承認が前のものを revoked にする）。編集モーダルの「個別URL」（`StaffPageEditSection`）で URL の表示・取り消し・暗証番号のリセット
+  1つの名前に承認済みは1つ（新しい承認が前のものを revoked にする）。編集モーダルの「スタッフ専用のURL」（`StaffPageEditSection`）で URL の表示・取り消し・暗証番号のリセット
+- **管理者が直接発行（2026-10-04 ユーザー指示「個人リンクコードは新規登録に繋がる URL の方が助かる」・`a47183e`）**: 編集モーダルの「このスタッフ専用のURLを発行」で、
+  その名前の**承認済み**の記録を申請なしで作る（`planIssueStaffPage`・App の `staffPageAct("issue")`。逆引き `staffPageTokens` を先に、記録を後に書く）。本人は URL を開くだけで
+  自分の画面に入る（名前・番号・メール・パスワード・コードの入力なし）。発行済みの人には URL を出し直し、「新しいURLを発行」（確認つき）で古い URL を revoked にする。
+  記録の形は承認したものと同じ（displayName は名前・requestedAt は発行時刻・byUid）なので、**ルールと CF の変更は無い**（オーナーは approved を新規作成でき、逆引きは新規作成なら書ける）。
+  改名・削除の追随も同じ（planStaffPageOp）。一覧の行に「URL」の印（発行済み）。個人リンクコードは「メールのアカウントとリンクする場合」の下に下げた（機能は残す）。
+  回帰は `example-staff-page-issue.js`
 - **改名・削除・同名の再登録への追随**: 紐付けの保留の列（`b43a7d7`）の**同じ操作を staffPages にも当てる**（`flushStaffLinkOps` が staffLinks と staffPages を順に読み直す。
   `planStaffPageOp`・世代の目印は approvedAt）。改名は name を移し、削除は revoked（同じ名前を登録し直しても古いURLは生き返らない）。読む側（`resolveMyPage`）も
   「承認済みで、名前がいまのスタッフ一覧にある」ときだけ使う（missingName で止める）
@@ -1348,7 +1372,12 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
   （文字はすべて `shiftSheetEsc` を通す）。日付と曜日（左右）・上が出勤／下が退勤・時刻は「17.5」の表記で保存値（管理者の調整値＞提出値。退勤延長は足さない）・
   メモ（h/k/x・略称・研修 等）と締・休み希望／休暇／休みの提出は斜線（種別名は出さない）・変更マークの緑・メモの黄色・従業員番号の行・名前の色・土日祝の色・
   この期間に提出した未登録の名前の列・空白列（35人超は日付）・昼夜の人数（`headcountAt`。他店の略称は企業の写しの店舗の `settings/shopAbbrs` だけを読む）。
-  **PDF と違うのは3つだけ**: ①他店でのヘルプ勤務（H2）は出さない（他店の提出を読まないと作れない）、②入力中の編集は無い、③本人の列の名前の見出しに印（`data-sheet-me`）。
+  **PDF と違うのは2つだけ**: ①入力中の編集は無い、②本人の列の名前の見出しに印（`data-sheet-me`）。
+  **他店でのヘルプ勤務（H2）も PDF と同じに出す（2026-10-04 ユーザー指示・`828875d`）**: `buildMyShiftSheet` が `helpers`（写しと連携店舗の `otherShopDataOf`）を受け取り、
+  シフト作成タブの helperDisp と同じ規則（所属店舗＝role "home" の人だけ・休暇の日は出さない・自店と重なる勤務は足さない・`helperCellDisplay`）で解決する。
+  材料は app-my.js の `useMyHelperShops`: 企業に連携していない店舗では他店を何も読まず、連携店舗（写しの法人が分かれば同じ法人だけ）の settings・staff・periods と、
+  **表示中の期間の日付にかかる期間の subs だけ**を期間ごとの部分読みで読む（PDF は他店の subs を丸ごと読むが、ここは読まない）。書き込みなし・30秒覚える。
+  読み終えるまではヘルプなしの表を出して差し替え、読めない他店があれば「ほかのお店でのヘルプ勤務の一部を読み込めませんでした」（`data-my-all-helpers`）
   **比率を保って画面の横幅に合わせる**（`transform: scale`・`myShiftSheetScale`・2倍まで。白地・黒文字の紙と同じ見た目でダーク表示でも変えない。ピンチで拡大）。
   回帰 `example-my-sheet-pdf.js` が PDF 出力の table と HTML の一致（印を外して）を確かめる。実測: 30人×5日 375px で倍率0.288
 - **提出**: 「提出」タブは最新の期間へ、承認された名前で固定（`StaffView` の `fixedName`。名前の入力欄なし・Cookie を読まない書かない）。提出の処理は募集URLと同じ
@@ -1744,6 +1773,14 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   **数え方は公休のまま**——`leaveTypeOf` は終日の休み希望とスタッフ提出の休みを公休として扱い、
   週の休みに数える。**見せ方（`leaveCellTextOf`）と数え方（`leaveTypeOf`）は別の関数で答える。**
 - **種別名を出すセルには斜線を引かない**（文字と重なって読めなくなる）。
+- **PDF・従業員画面の全員のシフト表・Excel も同じ見せ方（2026-10-04 ユーザー指示「PDF も種別名に」「Excel も統一して」・`f6a0804`＋自動コミット `a794735`）**。
+  セルに何を出すかは app-utils.js の **`leaveShownTextOf(shift, field)` 1本**（その帯が休み扱い＝adminRest で種別があれば種別名、無ければ ""）で、
+  画面の `leaveCellText`（app-shift.js）・PDF と全員の表の `shiftSheetCellOf`（kind "leave"・12px・斜線なし・変更マークの緑は残す）・
+  Excel の `expXl`（種別名・`shrinkToFit`・`diagonal` なし）の4か所がこれを通す（tests/core.test.js がドリフトを検出）。
+  Excel は**2つの入口（シフト作成タブ・期間管理タブ）の両方**に出す——休暇は管理者が入れる値で、期間管理タブの既定の解決（storedRv）も
+  管理者の休み（adminRest）を通している（バグチェック#134 の「2つの入口が同じ中身」）。スタッフ提出の休みの日に片側だけ休暇を入れた日は、
+  もう片側を斜線にする（画面の cellDash・PDF と同じ）。休暇の日はヘルプ勤務（H2）を出さない規則は変えていない。
+  **誰が有給かが全員の表で見える**ことはユーザーが承知済み。回帰は `example-excel-missing-day.js` の j〜l と `example-my-sheet-pdf.js` の leaveShown
 - 有給・慶弔の日数は**半日＝0.5**で数える（`leaveHalfDaysOf`）。公休は日単位で、無記入の日も含む。
   半日の有給を取った日は**出勤日のまま**なので週の休みには数えない（残り半分を働くため）。
 - `CELL_COLOR_LEGEND` に休暇の色は**持たない**（持つとレジェンドが嘘になる）。
