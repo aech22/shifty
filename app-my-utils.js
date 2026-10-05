@@ -1825,8 +1825,8 @@ function buildMyShiftSheet(o,U){
   const u=_myU(U);const x=o||{};const p=x.period;
   if(!p||!p.id)return{state:"noPeriod"};
   if(!x.premium)return{state:"premium",period:p};
-  // ヘルプ先の店舗（helpDest・2026-10-05）は確定済みの期間だけ。自分の店舗は公開済みから
-  if(x.helpDest?!u.isPeriodConfirmed(p):!u.isPeriodPublished(p))return{state:"unpublished",period:p};
+  // 公開済みか確定済みの期間だけ（ヘルプ先も同じ・2026-10-05 ユーザー指示「公開だけの期間も出して」。以前ヘルプ先は確定済みだけ）
+  if(!u.isPeriodPublished(p)&&!u.isPeriodConfirmed(p))return{state:"unpublished",period:p};
   const master=u.resolvePeriodMaster(p,x.staff||[],x.settings||{},x.todayStr);
   const st=master.settings||{};
   const roster=master.staffList||[];
@@ -1950,7 +1950,7 @@ function myAllShiftChoices(o,U){
   const x=o||{};
   const featureEnabled_=_myU(U).featureEnabled;
   // 渡された店舗のフィールド（settings・staff・plan 等＝表を作る材料）はそのまま持ち回る。
-  // ヘルプ先の店舗（helpDest・2026-10-05）は**確定済み**の期間だけ（myHelpDestPeriodOptions）。同じ店舗が2回来たら先のもの（自分の店舗）を残す
+  // ヘルプ先の店舗（helpDest・2026-10-05）は公開済みか確定済みの期間（myHelpDestPeriodOptions）。同じ店舗が2回来たら先のもの（自分の店舗）を残す
   const seen=new Set();
   const shops=(Array.isArray(x.shops)?x.shops:[]).filter(s=>s&&s.shopId&&!seen.has(s.shopId)&&seen.add(s.shopId)).map(s=>{
     const opt={premium:featureEnabled_("myShift",{plan:s.plan}),todayStr:x.todayStr};
@@ -1980,13 +1980,14 @@ function myHelpDestRegs(o,U){
   return u.samePersonRegistrations({shopId:x.shopId,name:x.name,settings:x.settings||{},people:link.people||null,otherShops:others,
     entityId:typeof link.entityId==="string"?link.entityId:null}).filter(r=>others[r.shopId]&&!others[r.shopId].loadFailed);
 }
-// ヘルプ先の期間の選択肢: **確定済み**かつ startDate が直近3ヶ月（自分の店舗と同じ窓）。新しい順。premium は自分の店舗のプランで決める
+// ヘルプ先の期間の選択肢: **公開済みか確定済み**かつ startDate が直近3ヶ月（自分の店舗と同じ窓）。新しい順。premium は自分の店舗のプランで決める
+// （2026-10-05 同日の追加指示「公開だけの期間も出して」。以前は確定済みだけ）
 function myHelpDestPeriodOptions(periods,o,U){
   const u=_myU(U);const x=o||{};
   if(!x.premium)return[];
   const cutoff=u.subsWindowCutoff(_myDateOf(x.todayStr));
   return(Array.isArray(periods)?periods:[])
-    .filter(p=>p&&p.id&&/^\d{4}-\d{2}-\d{2}$/.test(String(p.startDate))&&String(p.startDate)>=cutoff&&u.isPeriodConfirmed(p))
+    .filter(p=>p&&p.id&&/^\d{4}-\d{2}-\d{2}$/.test(String(p.startDate))&&String(p.startDate)>=cutoff&&(u.isPeriodPublished(p)||u.isPeriodConfirmed(p)))
     .sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate))||String(b.id).localeCompare(String(a.id)));
 }
 // 既定の期間（2026-10-05 ユーザー指示「全員表示の期間はいまの日時が含まれる期間を表示する」）。options は新しい順（上の2関数の戻り値）。
@@ -2012,7 +2013,7 @@ function myAllShiftSelection(choices,sel){
 // 全員のシフトを1画面に縦に並べる（2026-10-05 ユーザー指示「店舗の切り替えは要らない。同じ期間なら所属店舗のシフトの下にヘルプ先・
 // Shifty を使っている別の店舗のシフトを縦に並べて1画面で見られるように」）。店舗のプルダウンは無く、期間だけを選ぶ。
 // 先頭（primary）は myAllShiftChoices の既定の店舗（自分の店舗を優先・募集URLの店舗・今日を含む期間）で、期間の選択肢はその店舗の options。
-// その下に、選んだ期間と日付が1日でも重なる期間を持つ店舗を並べる（その店舗の options＝ヘルプ先は確定済み・自分の店舗は公開済みの中から）。
+// その下に、選んだ期間と日付が1日でも重なる期間を持つ店舗を並べる（その店舗の options＝ヘルプ先は公開済みか確定済み・自分の店舗は公開済みの中から）。
 // 並びは primary → primary のヘルプ先（baseShopId が primary）→ 他の自分の店舗（それぞれの直後にそのヘルプ先）→ 残り。
 // 1つの店舗で重なる期間が2つ以上（期間の切り方が違う）なら開始の早い順にすべて出す。重なる期間の無い店舗は出さない。
 // sel={periodId}（本人が選んだもの・選択肢から消えていれば既定へ）。戻り値 {primary, period, blocks:[{shop, period, primary}]}（選択肢が無ければ null）

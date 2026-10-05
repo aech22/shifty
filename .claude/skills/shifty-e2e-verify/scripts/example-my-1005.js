@@ -9,7 +9,8 @@
 //     A店・C店（ヘルプ先）の下に縦に並ぶ。D店の個別URLが取り消されていれば出ない
 //  SB（提出タブ）: 個別URLで提出済みの期間は「提出完了」ではなく、提出の内容を反映した選択画面（data-staff-restored）が開く
 //  HD（全員のシフトのヘルプ先）: 店舗のプルダウンは無く（2026-10-05 改め）、自分の店（A店）の表の下に、企業の写しの人物で束ねた他店（C店）の
-//     確定済みの期間の表が「C店（ヘルプ先）」の見出しで縦に並ぶ（本人の列に印・見出しは「ヘルプ先 ／ 確定」）。自分の店の見出しは「公開」ではなく「確定」。公開だけの期間は出ない
+//     確定済みの期間（c1）と公開だけの期間（c2・2026-10-05 同日の追加指示）の表が「C店（ヘルプ先）」の見出しで縦に並ぶ（本人の列に印・見出しは「ヘルプ先 ／ 確定」）。
+//     未公開の期間（c3）は出ない。自分の店の見出しは「公開」ではなく「確定」
 //  LB（「公開」→「確定」）: 自分のシフトの日付の詳細・次のシフトに「公開」の表示が無く「確定」
 //  GR（給料のグラフ）: 月間目標を設定すると、確定分（アクセント）と見込みまで（--c-text4）の2本の弧。年の表示にも同じグラフ（目標×12）と勤務先ごとの行・内訳
 //  PC（締日・給料日の優先）: お店の settings.payCalendar（20日締め・翌月10日）が本人の設定（月末締め・翌月25日）より優先され、給料タブの行の締め期間が 21日〜20日。
@@ -56,13 +57,13 @@ const seed0 = () => ({
         people: { p_aaaaaaaa: { S1: "田中", S3: "田中一郎" } }, shopEntities: { S1: "E1", S3: "E1" }, syncedAt: "t" } },
     S3: { owners: { OWN: "K3" }, private: { adminKey: "K3" }, staff: ["田中一郎", "山田"],
       settings: { shopId: "S3", candidates: [{ start: "17:00", end: "22:00" }] },
-      periods: { c1: per("c1", "S3", "t3", CONF), c2: per("c2", "S3", "t4", { ...PUB, label: "公開だけ", startDate: `${YM}-01` }) },
+      periods: { c1: per("c1", "S3", "t3", CONF), c2: per("c2", "S3", "t4", { ...PUB, label: "公開だけ", startDate: `${YM}-01` }), c3: per("c3", "S3", "t6", { label: "未公開" }) },
       subs: { v1: { id: "v1", periodId: "c1", shopId: "S3", staffName: "山田", submittedAt: "t", shifts: { [TODAY]: work("17:00", "22:00") } } },
       company: { id: "C1", name: "企業", entityId: "E1", kind: "shop", settings: {}, deadlines: {}, shops: { S1: "A店", S3: "C店" },
         people: { p_aaaaaaaa: { S1: "田中", S3: "田中一郎" } }, shopEntities: { S1: "E1", S3: "E1" }, syncedAt: "t" } },
   },
   staffPageTokens: { [TOKEN]: { shopId: "S1", at: "t" } },
-  tokens: { t1: { shopId: "S1", periodId: "p1" }, t3: { shopId: "S3", periodId: "c1" }, t4: { shopId: "S3", periodId: "c2" } },
+  tokens: { t1: { shopId: "S1", periodId: "p1" }, t3: { shopId: "S3", periodId: "c1" }, t4: { shopId: "S3", periodId: "c2" }, t6: { shopId: "S3", periodId: "c3" } },
   accounts: { S1: { plan: "premium" }, S3: { plan: "premium" }, OWN: { shops: { S1: true, S3: true } } },
   users: { T1: { profile: { displayName: "田中", updatedAt: "t" }, links: { S1: { name: "田中", at: "t" } }, goals: { monthly: 10000, updatedAt: "t" },
     workplaces: { S1: { kind: "shifty", shopId: "S1", color: "#2f6f9f",
@@ -130,8 +131,8 @@ const settledPay = h => h.page.waitForFunction(() => { const d = document.queryS
       await click(h, '[data-my-pager-tab="all"]');
       const pane = await waitSel(h, "[data-my-all-pane]");
       // 2026-10-05 改め: 店舗のプルダウンは無く、所属店舗（A店）の表の下にヘルプ先（C店・確定済みの期間だけ）の表が縦に並ぶ
-      await h.page.waitForFunction(() => document.querySelectorAll("[data-my-all-block]").length >= 2, null, { timeout: 15000 }).catch(() => {});
-      await h.page.waitForFunction(() => document.querySelectorAll('[data-my-all-state="ok"]').length >= 2, null, { timeout: 15000 }).catch(() => {});
+      await h.page.waitForFunction(() => document.querySelectorAll("[data-my-all-block]").length >= 3, null, { timeout: 15000 }).catch(() => {});
+      await h.page.waitForFunction(() => document.querySelectorAll('[data-my-all-state="ok"]').length >= 3, null, { timeout: 15000 }).catch(() => {});
       await sleep(h, 500);
       const HD = {};
       HD.pane = pane;
@@ -149,10 +150,10 @@ const settledPay = h => h.page.waitForFunction(() => { const d = document.queryS
       HD.overflow = await overflowX(h);
       R.HD = HD;
       V.HD_noShopSelect = !HD.shopSelect && HD.defaultShop === "S1";
-      V.HD_stacked = JSON.stringify(HD.blocks.map(b => b.slice(0, 3))) === JSON.stringify([["S1", "p1", "0"], ["S3", "c1", "1"]]) &&
-        /^A店$/.test(HD.blocks[0][3]) && /^C店（ヘルプ先）$/.test(HD.blocks[1][3]) && HD.order;
+      V.HD_stacked = JSON.stringify(HD.blocks.map(b => b.slice(0, 3))) === JSON.stringify([["S1", "p1", "0"], ["S3", "c1", "1"], ["S3", "c2", "1"]]) &&
+        /^A店$/.test(HD.blocks[0][3]) && /^C店（ヘルプ先）$/.test(HD.blocks[1][3]) && /^C店（ヘルプ先）$/.test(HD.blocks[2][3]) && HD.order;
       V.HD_ownHeadConfirmed = /^確定/.test(HD.ownHead) && !/公開/.test(HD.ownHead.split("\n")[0]) && HD.ownMe === "田中";
-      V.HD_confirmedOnly = !HD.blocks.some(b => b[1] === "c2");
+      V.HD_publishedShown = HD.blocks.some(b => b[1] === "c2") && !HD.blocks.some(b => b[1] === "c3");
       V.HD_table = /^ヘルプ先 ／ 確定/.test(HD.helpHead) && HD.helpCols.includes("田中一郎") && HD.helpCols.includes("山田") && HD.me === "田中一郎";
       V.HD_layout = HD.overflow <= 0;
       // SB: 提出タブ
@@ -186,12 +187,12 @@ const settledPay = h => h.page.waitForFunction(() => { const d = document.queryS
     try {
       await waitSel(h, '[data-my-pager-tab="all"]');
       await click(h, '[data-my-pager-tab="all"]');
-      await h.page.waitForFunction(() => document.querySelectorAll('[data-my-all-block] [data-my-all-state="ok"]').length >= 3, null, { timeout: 15000 }).catch(() => {});
+      await h.page.waitForFunction(() => document.querySelectorAll('[data-my-all-block] [data-my-all-state="ok"]').length >= 4, null, { timeout: 15000 }).catch(() => {});
       await sleep(h, 500);
       const K = { blocks: await blocksOf(h), overflow: await overflowX(h), s4: await h.evaluate(() => window.__db("shops/S4")) };
       R.KP = K;
-      V.KP_otherShopStacked = JSON.stringify(K.blocks.map(b => [b[0], b[1]])) === JSON.stringify([["S1", "p1"], ["S3", "c1"], ["S4", "d1"]]) &&
-        K.blocks[2][2] === "D店" && K.blocks[2][3] === "たなか" && K.overflow <= 0 &&
+      V.KP_otherShopStacked = JSON.stringify(K.blocks.map(b => [b[0], b[1]])) === JSON.stringify([["S1", "p1"], ["S3", "c1"], ["S3", "c2"], ["S4", "d1"]]) &&
+        K.blocks[3][2] === "D店" && K.blocks[3][3] === "たなか" && K.overflow <= 0 &&
         require("node:util").isDeepStrictEqual(K.s4, kpSeed("approved").shops.S4);
       V.KP_noErrors = errs("KP", h);
     } finally { await h.close(); }
@@ -199,11 +200,11 @@ const settledPay = h => h.page.waitForFunction(() => { const d = document.queryS
     try {
       await waitSel(h, '[data-my-pager-tab="all"]');
       await click(h, '[data-my-pager-tab="all"]');
-      await h.page.waitForFunction(() => document.querySelectorAll('[data-my-all-block] [data-my-all-state="ok"]').length >= 2, null, { timeout: 15000 }).catch(() => {});
+      await h.page.waitForFunction(() => document.querySelectorAll('[data-my-all-block] [data-my-all-state="ok"]').length >= 3, null, { timeout: 15000 }).catch(() => {});
       await sleep(h, 1200);
       const K2 = { blocks: await blocksOf(h) };
       R.KP_revoked = K2;
-      V.KP_revokedHidden = JSON.stringify(K2.blocks.map(b => b[0])) === JSON.stringify(["S1", "S3"]);
+      V.KP_revokedHidden = JSON.stringify(K2.blocks.map(b => b[0])) === JSON.stringify(["S1", "S3", "S3"]);
       V.KP_noErrors2 = errs("KP2", h);
     } finally { await h.close(); }
   }

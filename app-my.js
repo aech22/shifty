@@ -2331,7 +2331,7 @@ function MyAuthScreen({shopId,onClose}){
 function MyAccountShiftPager({me,personal,shopId,onGoSettings}){
   const src=useMyAllShiftSources(me);
   const todayStr=fd(new Date());
-  // ヘルプ先の店舗（確定済みの期間だけ・2026-10-05）。提出は src の部分読み（need）がそのまま読む
+  // ヘルプ先の店舗（公開済みか確定済みの期間・2026-10-05）。提出は src の部分読み（need）がそのまま読む
   // この端末で開いた個別URLの店舗のうち、紐付けの無い店舗も並べる（2026-10-05）。紐付けを読み終えてから読む（二重に読まない）
   const knownShops=useMyKnownPageShops(src.loading?null:"",src.loading?null:src.shops.map(x=>x.shopId));
   const ownShops=useMemo(()=>src.loading?src.shops:[...src.shops,...knownShops],[src.loading,src.shops,knownShops]);
@@ -2678,7 +2678,7 @@ function MyShiftPager({panes}){
   );
 }
 // 全員のシフト（2026-10-04・2026-10-05 改め）。期間だけをプルダウンで選び、店舗の切り替えは無い（2026-10-05 ユーザー指示）。
-// 先頭に所属店舗（myAllShiftChoices の既定の店舗）の表、その下に同じ期間（日付が重なる期間）のヘルプ先（確定済みだけ）と、
+// 先頭に所属店舗（myAllShiftChoices の既定の店舗）の表、その下に同じ期間（日付が重なる期間）のヘルプ先（公開済みか確定済み）と、
 // Shifty を使っている別の店舗（紐付いた店舗・この端末で開いた個別URLの店舗）の表を縦に並べる（myAllShiftStack）。
 // 選択肢は公開済みかつ直近3ヶ月だけで、既定は今日を含む期間（無ければ今日より前に始まった最も新しい期間）。選択肢が無ければ呼び出し側がこの表示ごと出さない。
 // choices＝myAllShiftChoices の戻り値、subsFor(sid,pid)＝その期間の提出（undefined＝読み込み中・null＝読めない）、onNeed(sid,pid)＝読み込みの依頼
@@ -3172,7 +3172,7 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
   const knownShops=useMyKnownPageShops(page.state==="ok"?shopId:null,[]);
   const homeShops=useMemo(()=>shopId&&page.state==="ok"?[{shopId,shopName,name:page.name,periods,settings,staff:staffList,plan},...knownShops]:[],
     [shopId,shopName,page.state,page.name,periods,settings,staffList,plan,knownShops]);
-  // ヘルプ先の店舗（確定済みの期間だけ・2026-10-05）。その提出は選んだ期間だけを部分読みする（自分の店舗は App の購読をそのまま使う）
+  // ヘルプ先の店舗（公開済みか確定済みの期間・2026-10-05）。その提出は選んだ期間だけを部分読みする（自分の店舗は App の購読をそのまま使う）
   const helpDest=useMyHelpDestShops(homeShops);
   const allChoices=useMemo(()=>myAllShiftChoices({shops:[...homeShops,...helpDest],todayStr}),[homeShops,helpDest,todayStr]);
   const helpSubs=useMyPeriodSubsLoader();

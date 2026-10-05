@@ -2085,7 +2085,7 @@ test("URLをなくしたとき用のメールアドレス（C）: ルールは C
 });
 
 // ===== 2026-10-05 のユーザー指示 =====
-test("全員のシフトのヘルプ先（2026-10-05）: 同じ人の他店の登録をヘルプ先にし、確定済みの期間だけを選択肢にする・既定は自分の店舗", () => {
+test("全員のシフトのヘルプ先（2026-10-05）: 同じ人の他店の登録をヘルプ先にし、公開済みか確定済みの期間を選択肢にする・既定は自分の店舗", () => {
   const conf = { at: "2026-09-20T00:00:00.000Z", byUid: "O" }, pub = { at: "2026-09-10T00:00:00.000Z", byUid: "O" };
   const link = { id: "co1", shops: { A: "A店", B: "B店", C: "C店" }, people: { "123": { A: "田中", B: "田中太郎" } }, shopEntities: { A: "e1", B: "e1", C: "e2" }, entityId: "e1" };
   const others = {
@@ -2097,29 +2097,32 @@ test("全員のシフトのヘルプ先（2026-10-05）: 同じ人の他店の�
   // 企業に連携していない・読めなかった店舗は出さない
   assert.deepStrictEqual(m.myHelpDestRegs({ shopId: "A", name: "田中", settings: {}, companyLink: null, otherShops: others }, U), []);
   assert.deepStrictEqual(m.myHelpDestRegs({ shopId: "A", name: "田中", settings: {}, companyLink: link, otherShops: { B: U.otherShopDataOf({ name: "B店", loadFailed: true }) } }, U), []);
-  // 期間: 確定済みかつ直近3ヶ月だけ（公開だけ・未確定は出さない）
+  // 期間: 公開済みか確定済みで直近3ヶ月だけ（2026-10-05 同日の追加指示で公開だけの期間も出す。未公開は出さない）
   const ps = [
     { id: "b1", startDate: "2026-10-01", endDate: "2026-10-15", published: pub },                       // 公開だけ
     { id: "b2", startDate: "2026-09-16", endDate: "2026-09-30", confirmation: conf },                   // 確定（公開の記録なし）
     { id: "b3", startDate: "2026-09-01", endDate: "2026-09-15", confirmation: conf, published: pub },
     { id: "b4", startDate: "2026-06-01", endDate: "2026-06-15", confirmation: conf },                   // 窓の外
+    { id: "b5", startDate: "2026-10-16", endDate: "2026-10-31" },                                       // 未公開
   ];
-  assert.deepStrictEqual(m.myHelpDestPeriodOptions(ps, { premium: true, todayStr: "2026-10-04" }, U).map(p => p.id), ["b2", "b3"]);
+  assert.deepStrictEqual(m.myHelpDestPeriodOptions(ps, { premium: true, todayStr: "2026-10-04" }, U).map(p => p.id), ["b1", "b2", "b3"]);
   assert.deepStrictEqual(m.myHelpDestPeriodOptions(ps, { premium: false, todayStr: "2026-10-04" }, U), []);
   // 店舗の選択肢: ヘルプ先は確定の期間だけ。既定はヘルプ先の期間が新しくても自分の店舗
   const A = { shopId: "A", shopName: "A店", name: "田中", plan: "premium", periods: [{ id: "a1", startDate: "2026-09-01", endDate: "2026-09-15", published: pub }] };
   const B = { shopId: "B", shopName: "B店", name: "田中太郎", plan: "premium", periods: ps, helpDest: true };
   const c = m.myAllShiftChoices({ shops: [A, B], todayStr: "2026-10-04" }, U);
-  assert.deepStrictEqual(c.shops.map(s => [s.shopId, s.helpDest, s.options.map(p => p.id)]), [["A", false, ["a1"]], ["B", true, ["b2", "b3"]]]);
+  assert.deepStrictEqual(c.shops.map(s => [s.shopId, s.helpDest, s.options.map(p => p.id)]), [["A", false, ["a1"]], ["B", true, ["b1", "b2", "b3"]]]);
   assert.strictEqual(c.defaultShopId, "A");
   // ヘルプ先しか無ければヘルプ先が既定。自分の店舗と同じ店舗がヘルプ先として来ても重ねない
   assert.strictEqual(m.myAllShiftChoices({ shops: [B], todayStr: "2026-10-04" }, U).defaultShopId, "B");
   assert.strictEqual(m.myAllShiftChoices({ shops: [A, { ...A, helpDest: true }], todayStr: "2026-10-04" }, U).shops.length, 1);
-  // 表: ヘルプ先は確定済みなら公開の記録が無くても出す・公開だけなら出さない。日付は確定した日
+  // 表: ヘルプ先は確定済みなら公開の記録が無くても出す・公開だけでも出す（日付は公開した日）・未公開は出さない。日付は確定済みなら確定した日
   const sheet = p => m.buildMyShiftSheet({ period: p, staff: ["田中太郎"], settings: {}, subs: [], premium: true, todayStr: "2026-10-04", me: "田中太郎", shopName: "B店", shopId: "B", helpDest: true }, U);
   assert.strictEqual(sheet(ps[1]).state, "ok");
   assert.strictEqual(sheet(ps[1]).shownAt, conf.at);
-  assert.strictEqual(sheet(ps[0]).state, "unpublished");
+  assert.strictEqual(sheet(ps[0]).state, "ok");
+  assert.strictEqual(sheet(ps[0]).shownAt, pub.at);
+  assert.strictEqual(sheet(ps[4]).state, "unpublished");
   // 自分の店舗は従来どおり公開済みから（日付は公開した日・確定済みなら確定した日）
   assert.strictEqual(m.buildMyShiftSheet({ period: ps[0], staff: ["田中"], settings: {}, subs: [], premium: true, todayStr: "2026-10-04", shopId: "A" }, U).shownAt, pub.at);
   assert.strictEqual(m.buildMyShiftSheet({ period: ps[2], staff: ["田中"], settings: {}, subs: [], premium: true, todayStr: "2026-10-04", shopId: "A" }, U).shownAt, conf.at);
@@ -2130,15 +2133,15 @@ test("全員のシフトのヘルプ先（2026-10-05）: 同じ人の他店の�
   assert.ok(/myHelpDestRegs\(/.test(hk) && /readMyPeriodSubs\(sid,pid\)/.test(hk) && !/\/subs`\)\.once/.test(hk));
   assert.ok(!/\.(update|remove|push|transaction)\(|fbSet\(|fbUpd\(/.test(hk), "ヘルプ先の読み込みは何も書かない");
 });
-test("全員のシフトを1画面に縦に並べる（2026-10-05）: 所属店舗の下に同じ期間のヘルプ先（確定済み）と別の店舗", () => {
+test("全員のシフトを1画面に縦に並べる（2026-10-05）: 所属店舗の下に同じ期間のヘルプ先（公開済みか確定済み）と別の店舗", () => {
   const pub = { at: "2026-10-01T00:00:00.000Z", byUid: "O" }, conf = { at: "2026-10-02T00:00:00.000Z", byUid: "O" };
   const A = { shopId: "A", shopName: "A店", name: "田中", plan: "premium", periods: [
     { id: "a1", startDate: "2026-10-01", endDate: "2026-10-15", published: pub },
     { id: "a0", startDate: "2026-09-16", endDate: "2026-09-30", published: pub }] };
-  // A のヘルプ先 H（確定済み・半月）。h2 は公開だけ＝出さない
+  // A のヘルプ先 H（半月）。h1 は公開だけ＝出す（2026-10-05 同日の追加指示）、h2 は未公開＝出さない
   const H = { shopId: "H", shopName: "H店", name: "田中太郎", plan: "premium", helpDest: true, baseShopId: "A", periods: [
-    { id: "h1", startDate: "2026-10-01", endDate: "2026-10-15", confirmation: conf },
-    { id: "h2", startDate: "2026-10-01", endDate: "2026-10-15", published: pub },
+    { id: "h1", startDate: "2026-10-01", endDate: "2026-10-15", published: pub },
+    { id: "h2", startDate: "2026-10-01", endDate: "2026-10-15" },
     { id: "h0", startDate: "2026-09-16", endDate: "2026-09-30", confirmation: conf }] };
   // 別の店舗 B（期間の切り方が違う＝1か月）と、B のヘルプ先 BH。X は重なる期間が無い
   const B = { shopId: "B", shopName: "B店", name: "田中", plan: "premium", periods: [{ id: "b1", startDate: "2026-10-01", endDate: "2026-10-31", published: pub }] };
@@ -2152,7 +2155,7 @@ test("全員のシフトを1画面に縦に並べる（2026-10-05）: 所属店�
   assert.strictEqual(st.period.id, "a1", "既定は今日を含む期間");
   assert.deepStrictEqual(st.blocks.map(b => [b.shop.shopId, b.period.id, b.primary]),
     [["A", "a1", true], ["H", "h1", false], ["B", "b1", false], ["BH", "bh1", false]],
-    "所属店舗 → そのヘルプ先 → 別の店舗 → そのヘルプ先。公開だけのヘルプ先の期間・重ならない店舗（X）は出さない");
+    "所属店舗 → そのヘルプ先 → 別の店舗 → そのヘルプ先。未公開のヘルプ先の期間・重ならない店舗（X）は出さない");
   // 前の期間を選ぶと、同じ期間（重なる期間）に替わる。B は重ならないので出ない
   assert.deepStrictEqual(m.myAllShiftStack(c, { periodId: "a0" }).blocks.map(b => [b.shop.shopId, b.period.id]), [["A", "a0"], ["H", "h0"]]);
   // 選んだ期間が消えたら既定へ

@@ -1713,11 +1713,11 @@ if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 - **休暇の種別名**: 画面・PDF・全員の表・シフト作成タブからの Excel。期間タブの Excel は提出そのまま（斜線）
 - **ホーム画面のアプリ（2026-10-05・同日2回目で改め）**: manifest.json の start_url は "./" なので、iOS でスタッフ側のURLを「ホーム画面に追加」するとアプリは "/" で開き、管理者の端末では管理者画面になっていた。二段構えで直した。①**iOS のスタッフ側のURL（#/s/・#/m/・#/me）では manifest を置かない**（manifest が無ければ iOS は追加した時点の URL＝ハッシュ込みで開く）。index.html の head のスクリプトが最初の manifest を同じ規則で入れ（静的な link は置かない）、以後は app-core.js の `applyHomeManifest`（`homeManifestPlanOf`）。iOS 以外は data: の manifest（`homeManifestOf`）。②**ホーム画面から開いてハッシュが無いときの保険**: ブラウザのタブでスタッフ側のURLを開いている間は Cookie `ots_homeLaunch` にそのハッシュを置き（管理者側では消す）、ホーム画面のアプリ（`navigator.standalone`・display-mode standalone）で最初に開いたときだけその Cookie で開き先を決めて、アプリ側の localStorage `ots_homeLaunch_v1` に残す（以後はそれだけ＝`homeLaunchRestoreOf`。Cookie が無ければ "admin"）。app-core.js の読み込み時（App が URL を読む前）に `history.replaceState` でハッシュを付ける。**iPhone 実機では未確認**（iOS が追加時に Safari の Cookie をアプリへ写す前提。写らなくても①で開く想定）。既に追加済みのアプリは追加し直しが要る。回帰は `example-my-1005.js` の IOS（iPhone の UA と standalone を差し替え）
 - **提出タブ（2026-10-05）**: 個別URLの「提出」タブは、提出済みでも「提出完了」ではなく提出の内容を反映した選択画面を開く（`data-staff-restored` の帯）。提出した直後だけ「提出完了」。募集URL（Cookie の名前）は従来どおり「提出完了」から
-- **全員のシフトのヘルプ先（2026-10-05）**: 同じ人の他店の登録（写しの人物、無ければ所属店舗の一致＝`myHelpDestRegs`・同じ法人だけ）がある店舗を「◯◯店（ヘルプ先）」として出す（同日の2回目の指示で、お店のプルダウンではなく下の「1画面に縦に並べる」の1ブロック）。選択肢は**確定済み**かつ直近3ヶ月の期間だけ（`myHelpDestPeriodOptions`）、既定は自分の店舗。読み込みは `useMyHelpDestShops`（settings・staff・periods）と、選んだ期間の subs だけの部分読み（書き込みなし）。個別URL・#/me の両方
+- **全員のシフトのヘルプ先（2026-10-05）**: 同じ人の他店の登録（写しの人物、無ければ所属店舗の一致＝`myHelpDestRegs`・同じ法人だけ）がある店舗を「◯◯店（ヘルプ先）」として出す（同日の2回目の指示で、お店のプルダウンではなく下の「1画面に縦に並べる」の1ブロック）。選択肢は**公開済みか確定済み**かつ直近3ヶ月の期間（`myHelpDestPeriodOptions`。同日の追加指示「公開だけの期間も出して」で確定済みだけから広げた）、既定は自分の店舗。読み込みは `useMyHelpDestShops`（settings・staff・periods）と、選んだ期間の subs だけの部分読み（書き込みなし）。個別URL・#/me の両方
 - **全員のシフトを1画面に縦に並べる（2026-10-05 ユーザー指示「店舗の切り替えは要らない。同じ期間なら所属店舗のシフトの下にヘルプ先、Shifty を使っている別の店舗も縦に並べて1画面で」）**:
   店舗のプルダウンを廃止し、期間のプルダウン（先頭の店舗＝`myAllShiftChoices` の既定の店舗の選択肢）だけにした。`myAllShiftStack`（app-my-utils.js）が
   先頭の店舗の選んだ期間と**日付が1日でも重なる期間**を他の店舗から拾い、`MyAllShiftBlock`（店舗名の見出し＋`MyAllShiftTable`）を縦に並べる。並びは
-  所属店舗 → そのヘルプ先（`baseShopId`）→ 別の店舗（それぞれの直後にそのヘルプ先）。ヘルプ先は**確定済み**の期間だけ、別の店舗は公開済みの期間だけ（従来の選択肢の規則のまま）。
+  所属店舗 → そのヘルプ先（`baseShopId`）→ 別の店舗（それぞれの直後にそのヘルプ先）。ヘルプ先は**公開済みか確定済み**の期間、別の店舗は公開済みの期間（従来の選択肢の規則のまま）。
   期間の切り方が違う店舗は重なる期間をすべて開始の順に出し、見出しにその店舗の期間名を添える。重なる期間の無い店舗は出さない（その店の別の期間は、
   先頭の店舗で重なる期間を選べば出る＝**先頭の店舗に公開済みの期間が無い月の、別の店舗だけの期間は見られない**）。
   「別の店舗」は #/me なら有効な紐付けの全店舗、個別URL（#/m/）なら**この端末で開いた・作った別の店舗の個別URL**（`ots_myPageKnown_v1`・`ots_myPages_v1`。
