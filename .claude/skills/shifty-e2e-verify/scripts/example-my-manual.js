@@ -76,6 +76,17 @@ async function openStaff({ db, viewport = PHONE, denyWrite, wait = "[data-my-shi
 const sleep = (h, ms) => h.page.waitForTimeout(ms);
 const waitSel = (h, s, ms = 15000) => h.page.waitForSelector(s, { timeout: ms }).then(() => true, () => false);
 const click = (h, sel) => h.evaluate(sel => { const e = document.querySelector(sel); if (!e) return false; e.click(); return true; }, sel);
+// 時刻の2列ホイール（2026-10-05）で選ぶ: 欄を押す → 時の行・分の行を押す → 決定。戻り値は決定の直前にダイアログが持っていた値
+const pickTime = async (h, sel, v) => {
+  if (!await click(h, sel)) throw new Error("時刻の欄が無い " + sel);
+  await waitSel(h, "[data-time-wheel-dialog]");
+  const [hh, mm] = v.split(":").map(Number);
+  await click(h, `[data-time-wheel-col="h"] [data-time-wheel-item="${hh}"]`); await sleep(h, 80);
+  await click(h, `[data-time-wheel-col="m"] [data-time-wheel-item="${mm}"]`); await sleep(h, 80);
+  const got = await h.evaluate(() => document.querySelector("[data-time-wheel-dialog]").getAttribute("data-time-wheel-dialog"));
+  await click(h, "[data-time-wheel-done]"); await sleep(h, 120);
+  return got;
+};
 const fill = (h, sel, v) => h.page.fill(sel, v);
 const db = (h, p) => h.evaluate(p => window.__db(p), p);
 const dumpOf = h => h.evaluate(() => window.__dbDump());
@@ -162,18 +173,38 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       R.B = { before: v };
       await click(h, '[data-my-action="addManual"]');
       await waitSel(h, '[data-my-manual-form="add"]');
-      // 時刻と休憩は15分刻みのプルダウンだけ（2026-10-04 ユーザー指示）。自由記入の欄は無い
+      // 時刻は時と分の2列ホイールで1分刻み（2026-10-05 ユーザー指示）、休憩は15分刻みのプルダウン。自由記入の欄は無い
       R.B.form = await h.evaluate(() => { const f = document.querySelector('[data-my-manual-form="add"]');
-        return { inputs: ["start", "end", "breakMin"].map(k => !!f.querySelector(`input[data-my-input="${k}"]`)), selects: ["start", "end", "breakMin"].map(k => !!f.querySelector(`select[data-my-select="${k}"]`)),
-          startOpts: [...f.querySelector('[data-my-select="start"]').options].map(o => o.value), breakOpts: [...f.querySelector('[data-my-select="breakMin"]').options].map(o => o.value),
-          startVal: f.querySelector('[data-my-select="start"]').value, breakVal: f.querySelector('[data-my-select="breakMin"]').value,
-          fonts: [...f.querySelectorAll("select")].map(x => parseFloat(getComputedStyle(x).fontSize)) }; });
-      V.B_selectOnly15 = R.B.form.inputs.every(x => !x) && R.B.form.selects.every(Boolean) && R.B.form.startOpts.length === 122 && R.B.form.startOpts[0] === "" &&
-        R.B.form.startOpts.slice(1).every(v => Number(v.slice(3)) % 15 === 0) && R.B.form.startOpts.includes("26:00") && R.B.form.startOpts.includes("30:00") &&
+        return { inputs: ["start", "end", "breakMin"].map(k => !!f.querySelector(`input[data-my-input="${k}"]`)),
+          wheels: ["start", "end"].map(k => !!f.querySelector(`button[data-time-wheel="${k}"]`)), breakSelect: !!f.querySelector('select[data-my-select="breakMin"]'),
+          breakOpts: [...f.querySelector('[data-my-select="breakMin"]').options].map(o => o.value),
+          startVal: f.querySelector('[data-time-wheel="start"]').getAttribute("data-time-wheel-value"), startText: f.querySelector('[data-time-wheel="start"]').innerText,
+          breakVal: f.querySelector('[data-my-select="breakMin"]').value,
+          fonts: [...f.querySelectorAll("select,[data-time-wheel]")].map(x => parseFloat(getComputedStyle(x).fontSize)) }; });
+      // ホイールの中身: 空の開始を開くと 9:00 から。時は 0〜30・分は 00〜59（1分刻み）・30時は 00 分だけ。指で回して端まで行くと先頭・末尾で止まる
+      await click(h, '[data-time-wheel="start"]'); await waitSel(h, "[data-time-wheel-dialog]");
+      const wheel = async () => h.evaluate(() => { const d = document.querySelector("[data-time-wheel-dialog]");
+        const items = c => [...d.querySelectorAll(`[data-time-wheel-col="${c}"] [data-time-wheel-item]`)].map(x => x.getAttribute("data-time-wheel-item"));
+        return { val: d.getAttribute("data-time-wheel-dialog"), hours: items("h"), mins: items("m") }; });
+      const scrollCol = (c, top) => h.evaluate(([c, top]) => { const el = document.querySelector(`[data-time-wheel-col="${c}"]`); el.scrollTop = top; el.dispatchEvent(new Event("scroll")); }, [c, top]);
+      const W = { open: await wheel() };
+      await scrollCol("m", 99999); await sleep(h, 450); W.minEnd = await wheel();
+      await scrollCol("m", -500); await sleep(h, 450); W.minStart = await wheel();
+      await scrollCol("m", 44 * 37); await sleep(h, 450); W.min37 = await wheel();
+      await scrollCol("h", 99999); await sleep(h, 450); W.hourEnd = await wheel();
+      await scrollCol("h", 0); await sleep(h, 450); W.hourStart = await wheel();
+      W.layout = await h.evaluate(() => { const d = document.querySelector("[data-time-wheel-dialog]").getBoundingClientRect(); return { left: d.left, right: d.right, vw: window.innerWidth }; });
+      await h.page.keyboard.press("Escape"); await sleep(h, 150);
+      W.cancelled = await h.evaluate(() => !document.querySelector("[data-time-wheel-dialog]") && document.querySelector('[data-time-wheel="start"]').getAttribute("data-time-wheel-value") === "");
+      R.B.wheel = W;
+      V.B_wheel1min = R.B.form.inputs.every(x => !x) && R.B.form.wheels.every(Boolean) && R.B.form.breakSelect &&
         JSON.stringify(R.B.form.breakOpts) === JSON.stringify(["0", "15", "30", "45", "60", "75", "90", "105", "120", "135", "150", "165", "180"]) &&
-        R.B.form.startVal === "" && R.B.form.breakVal === "0" && R.B.form.fonts.every(x => x >= 16);
-      await h.page.selectOption('[data-my-select="start"]', "09:00");
-      await h.page.selectOption('[data-my-select="end"]', "13:00");
+        R.B.form.startVal === "" && /選ぶ/.test(R.B.form.startText) && R.B.form.breakVal === "0" && R.B.form.fonts.every(x => x >= 16) &&
+        W.open.val === "09:00" && W.open.hours.length === 31 && W.open.hours[0] === "0" && W.open.hours[30] === "30" && W.open.mins.length === 60 && W.open.mins[59] === "59" &&
+        W.minEnd.val === "09:59" && W.minStart.val === "09:00" && W.min37.val === "09:37" && W.hourEnd.val === "30:00" && JSON.stringify(W.hourEnd.mins) === '["0"]' &&
+        W.hourStart.val === "00:00" && W.layout.left >= 0 && W.layout.right <= W.layout.vw && W.cancelled;
+      await pickTime(h, '[data-time-wheel="start"]', "09:00");
+      await pickTime(h, '[data-time-wheel="end"]', "13:00");
       await fill(h, '[data-my-input="memo"]', "朝のシフト");
       const layoutB = { overflow: await overflowX(h), fonts: await fontsOk(h) };
       await click(h, '[data-my-action="saveManual"]');
@@ -193,15 +224,15 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       await dayView(h, D2);
       await click(h, '[data-my-action="addManual"]');
       await waitSel(h, '[data-my-manual-form="add"]');
-      await h.page.selectOption('[data-my-select="start"]', "18:00");
-      await h.page.selectOption('[data-my-select="end"]', "02:00");
+      await pickTime(h, '[data-time-wheel="start"]', "18:00");
+      await pickTime(h, '[data-time-wheel="end"]', "02:00");
       await h.page.selectOption('[data-my-select="breakMin"]', "30");
       await click(h, '[data-my-action="saveManual"]');
       await sleep(h, 200);
       const overnight = await h.evaluate(() => ({ msg: (document.querySelector('[data-my-manual-form] [data-my-msg="error"]') || {}).innerText || "", btn: (document.querySelector('[data-my-action="useSuggestEnd"]') || {}).innerText || "" }));
       await click(h, '[data-my-action="useSuggestEnd"]');
       await sleep(h, 100);
-      const endVal = await h.evaluate(() => document.querySelector('[data-my-select="end"]').value);
+      const endVal = await h.evaluate(() => document.querySelector('[data-time-wheel="end"]').getAttribute("data-time-wheel-value"));
       await click(h, '[data-my-action="saveManual"]');
       await sleep(h, 400);
       const ids2 = await manualIds(h);
@@ -212,7 +243,7 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       await dayView(h, TODAY);
       await h.evaluate(id => { const r = [...document.querySelectorAll("[data-my-day] [data-my-entry]")].find(x => x.getAttribute("data-my-entry-shop") === id); r.querySelector('[data-my-action="editManual"]').click(); }, cafeId);
       await waitSel(h, '[data-my-manual-form="edit"]');
-      await h.page.selectOption('[data-my-select="end"]', "14:00");
+      await pickTime(h, '[data-time-wheel="end"]', "14:00");
       await click(h, '[data-my-action="saveManual"]');
       await sleep(h, 400);
       const rec1b = await db(h, `users/T1/shifts/${ids1[0]}`);
@@ -249,9 +280,9 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       const pubRow = rowOf(v, "S1", "published");
       await h.evaluate(() => { const r = [...document.querySelectorAll("[data-my-day] [data-my-entry]")].find(x => x.getAttribute("data-my-entry-shop") === "S1"); r.querySelector('[data-my-action="editOverride"]').click(); });
       await waitSel(h, "[data-my-override-form]");
-      const pre = await h.evaluate(() => ["start", "end", "breakMin"].map(k => document.querySelector(`[data-my-override-form] [data-my-select="${k}"]`).value));
+      const pre = await h.evaluate(() => ["start", "end", "breakMin"].map(k => { const e = document.querySelector(`[data-my-override-form] [data-time-wheel="${k}"]`); return e ? e.getAttribute("data-time-wheel-value") : document.querySelector(`[data-my-override-form] [data-my-select="${k}"]`).value; }));
       const layoutC = { overflow: await overflowX(h), fonts: await fontsOk(h) };
-      await h.page.selectOption('[data-my-override-form] [data-my-select="end"]', "17:30");
+      await pickTime(h, '[data-my-override-form] [data-time-wheel="end"]', "17:30");
       await h.page.selectOption('[data-my-override-form] [data-my-select="breakMin"]', "15");
       await click(h, '[data-my-action="saveOverride"]');
       await sleep(h, 400);
@@ -361,8 +392,8 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       await dayView(h, D3);
       await click(h, '[data-my-action="addManual"]');
       await waitSel(h, '[data-my-manual-form="add"]');
-      await h.page.selectOption('[data-my-select="start"]', "10:00");
-      await h.page.selectOption('[data-my-select="end"]', "12:00");
+      await pickTime(h, '[data-time-wheel="start"]', "10:00");
+      await pickTime(h, '[data-time-wheel="end"]', "12:00");
       await click(h, '[data-my-action="saveManual"]');
       await sleep(h, 400);
       R.G = await h.evaluate(() => ({ msg: (document.querySelector('[data-my-manual-form] [data-my-msg="error"]') || {}).innerText || "", form: !!document.querySelector("[data-my-manual-form]") }));
@@ -380,13 +411,18 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       await dayView(h, D3);
       await h.evaluate(() => { const r = [...document.querySelectorAll("[data-my-day] [data-my-entry]")].find(x => /9:05/.test(x.innerText)); r.querySelector('[data-my-action="editManual"]').click(); });
       await waitSel(h, '[data-my-manual-form="edit"]');
-      R.I = await h.evaluate(() => { const f = document.querySelector('[data-my-manual-form="edit"]'); const sel = k => f.querySelector(`[data-my-select="${k}"]`);
-        return { vals: ["start", "end", "breakMin"].map(k => sel(k).value), labels: ["start", "end", "breakMin"].map(k => sel(k).selectedOptions[0].textContent), counts: ["start", "end", "breakMin"].map(k => sel(k).options.length) }; });
+      // 2026-10-05 から時刻は1分刻みのホイールなので 9:05・17:10 はそのまま選べる値。休憩10分は15分刻みのプルダウンに足して保つ
+      R.I = await h.evaluate(() => { const f = document.querySelector('[data-my-manual-form="edit"]'); const w = k => f.querySelector(`[data-time-wheel="${k}"]`); const b = f.querySelector('[data-my-select="breakMin"]');
+        return { vals: [w("start").getAttribute("data-time-wheel-value"), w("end").getAttribute("data-time-wheel-value"), b.value],
+          labels: [w("start").innerText, w("end").innerText, b.selectedOptions[0].textContent], breakCount: b.options.length }; });
+      await click(h, '[data-time-wheel="end"]'); await waitSel(h, "[data-time-wheel-dialog]");
+      R.I.endOpen = await h.evaluate(() => document.querySelector("[data-time-wheel-dialog]").getAttribute("data-time-wheel-dialog"));
+      await click(h, "[data-time-wheel-done]"); await sleep(h, 120);
       await click(h, '[data-my-action="saveManual"]');
       await sleep(h, 400);
       R.I.rec = await db(h, "users/T1/shifts/h_old0000000");
       V.I_keepsOffStepValues = JSON.stringify(R.I.vals) === JSON.stringify(["09:05", "17:10", "10"]) && JSON.stringify(R.I.labels) === JSON.stringify(["9:05", "17:10", "10分"]) &&
-        JSON.stringify(R.I.counts) === JSON.stringify([123, 123, 14]) && R.I.rec && R.I.rec.start === "09:05" && R.I.rec.end === "17:10" && R.I.rec.breakMin === 10;
+        R.I.breakCount === 14 && R.I.endOpen === "17:10" && R.I.rec && R.I.rec.start === "09:05" && R.I.rec.end === "17:10" && R.I.rec.breakMin === 10;
       V.I_noErrors = errs("I", h);
     } finally { await h.browser.close(); }
   }

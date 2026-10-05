@@ -7229,3 +7229,32 @@ test("ホーム画面のアイコン: index.html の link と app-core.js の切
     assert.ok(fs.existsSync(path.join(root, f)), f + " が無い");
   }
 });
+
+// ===== 時刻の2列ホイール（2026-10-05 ユーザー指示「時間と分をそれぞれ選べるように。シフト提出は従来どおりの刻み」）=====
+test("時刻のホイール: 提出の刻みは従来どおり（出勤 TO_START＝30分・退勤 TO＝15分）で、端で止まり、選べない組み合わせは寄せる", () => {
+  const ms = u.timeWheelModel(u.TO_START);
+  assert.deepStrictEqual([ms.hours[0], ms.hours[ms.hours.length - 1]], [0, 27], "時は 0〜27（ループしない）");
+  assert.deepStrictEqual(ms.minutes[18], [0, 30], "出勤の分は 00・30");
+  assert.deepStrictEqual(ms.minutes[27], [0], "27時は 00 分だけ");
+  const me = u.timeWheelModel(u.TO);
+  assert.deepStrictEqual(me.minutes[18], [0, 15, 30, 45], "退勤の分は 00・15・30・45");
+  // 選択肢に無い分は近い方へ、選べない時は列の端へ寄せる（同じ距離なら小さい方）
+  assert.strictEqual(u.timeWheelPick(ms, 26, 30), "26:30");
+  assert.strictEqual(u.timeWheelPick(ms, 27, 30), "27:00", "27時は 00 分に寄る");
+  assert.strictEqual(u.timeWheelPick(ms, 18, 15), "18:00", "15分は 00 と 30 の中間＝小さい方");
+  assert.strictEqual(u.timeWheelPick(ms, 18, 20), "18:30");
+  assert.strictEqual(u.timeWheelPick(ms, 40, 0), "27:00", "列に無い時は末尾で止まる");
+  assert.strictEqual(u.timeWheelPick(ms, -3, 0), "00:00", "先頭で止まる");
+  // 提出済みの値が刻みに合わない（例 18:10）ときは選択肢に足して保つ（StaffView の opts と同じ規則）
+  const opts = [...u.TO_START, "18:10"].sort();
+  assert.deepStrictEqual(u.timeWheelModel(opts).minutes[18], [0, 10, 30]);
+  assert.strictEqual(u.timeWheelPick(u.timeWheelModel(opts), 18, 10), "18:10");
+  assert.strictEqual(u.timeWheelPick(u.timeWheelModel([]), 9, 0), null);
+  assert.deepStrictEqual(u.timeWheelSplit("9:05"), { h: 9, m: 5 });
+  assert.strictEqual(u.timeWheelSplit(""), null);
+  // 入口: 提出画面とセル編集は select ではなくホイール（刻みの配列は従来のもの）
+  const staff = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-staff.js"), "utf8");
+  const view = staff.slice(staff.indexOf("function StaffView("));
+  assert.ok(/const base=f==="start"\?TO_START:TO;/.test(view) && /<TimeWheelField name=\{`\$\{ds\}-\$\{f\}`\}[^>]*options=\{opts\}/.test(view), "提出画面: 出勤 TO_START・退勤 TO のホイール");
+  assert.ok(/<TimeWheelField name=\{`cell-\$\{f\}`\}/.test(staff) && !/\{TO\.map\(t=><option/.test(staff), "セル編集もホイール");
+});

@@ -1257,7 +1257,7 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
   **Shifty の店舗の名前の横に、その店舗でのその人の従業員番号**（`settings.staffNumbers[紐付いた名前]`・`myStaffNumberOf`。番号は店舗ごとに違う・2026-10-04 ユーザー指示）。
   未登録なら出さない。アカウントの `profile.number`（1つだけ）は紐付けの提案（方式A）の照合に使う番号で、入力欄に「申請するお店の番号を入れる」旨の説明（`MY_PROFILE_NUMBER_HINT`）
   **紐付けが外れた店舗の記録は残し**「リンク解除済みのお店」として出す（本人が消すと実績の上書きも消える）。手入力の勤務先を消すと**そのシフトも一緒に消す**（確認文に件数）
-- **手入力のシフト**（マイシフトの日付の詳細・`MyManualShiftForm`）: 勤務先・日付・開始・終了・休憩・メモ。**時刻と休憩は15分刻みのプルダウンだけ**
+- **手入力のシフト**（マイシフトの日付の詳細・`MyManualShiftForm`）: 勤務先・日付・開始・終了・休憩・メモ。**時刻と休憩は15分刻みのプルダウンだけ**（2026-10-05 に時刻は1分刻みの2列ホイールへ変更・「従業員画面の 2026-10-05 時点の状態」の節）
   （2026-10-04 ユーザー指示で自由記入の欄を削除。時刻は 0:00〜30:00＝24時超え表記を含む・休憩は 0〜180分。実績の上書きも同じ部品）。15分刻みでない以前の値
   （5分刻みで入れた 9:05・休憩10分）は選択肢に足して表示・保持する（`myTimeSelectOptions`・`myBreakSelectOptions`。黙って丸めない）。
   **終了が開始より前なら保存せず、24時超え表記を案内して「26:00 にする」ボタンを出す**（翌日扱いに自動で直さない＝シフト表と同じ表記にそろえる）。
@@ -1661,6 +1661,7 @@ if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 - **確認メールのリンクの判定（2026-10-05・本番で「リンクを開くと管理者のログイン画面」）**: Firebase コンソールでアクション URL を自前のドメインにすると、リンクは `https://shiftyshifty.app/?mode=signIn&oobCode=…&continueUrl=<戻り先>` の形で届き、`elk` が continueUrl の中に入ったままになる。`parseEmailLinkLanding` は continueUrl・link の中も見て、それでも分からないメールリンク（mode=signIn と oobCode）は送った記録の kind、無ければスタッフとして続きの登録にする。スタッフで戻り先が無ければ後始末は `#/me`（`emailLinkReturnHash`。"/" は管理者のログイン画面）。**原因がコンソールのアクション URL かは本番の設定を見ていないので推定**。回帰は `example-email-link.js` の S7
 - **登録と同時にリンクを申請（2026-10-05）**: 続きの登録（メールリンク）と従来の登録の「登録する」で、始めた画面のお店（`#/s/<token>`→tokens、`#/m/<pageToken>`→staffPageTokens＝`myLinkShopRefOfHash`）へそのまま `linkRequests` を書く（`myAutoLinkRequest`・設定タブの「申請する」と同じ形・リンク済みなら書かない）。開き直したマイシフトは「◯◯にリンクを申請しました」を出し、「設定でお店とリンクする」を出さない（sessionStorage `ss_myLinkReq`）。回帰は `example-email-link.js` の S2
 - **管理者のスタッフ編集の「URLを取り消す」は「連携解除」（2026-10-05）**: 中身（staffPages を revoked にする）は同じ
+- **時刻の2列ホイール（2026-10-05）**: 時刻は select ではなく、押すと時と分の2列のホイールが開く部品（app-staff.js の `TimeWheelField`・`data-time-wheel`）で選ぶ。「決定」で反映し、背景のタップと Esc は取り消し。列は scroll-snap で1行ずつ止まり、**先頭（0時・00分）と末尾（最後の時・59分）で止まる＝ループしない**。選べる時刻は呼び出し側の options が決め、時の列は options にある時、分の列はその時にある分だけ（27時・30時は 00 分だけ）。寄せ方は app-utils.js の `timeWheelModel`・`timeWheelPick`（同じ距離なら小さい方）。ダイアログは document.body へのポータルで、背景のタップは親へ伝えない（セル編集の画面が閉じない）。**シフト提出は刻みを変えていない**（出勤 `TO_START`＝30分・退勤 `TO`＝15分。ユーザーは「従来通り30分刻み」と言ったが、退勤は元から15分刻みなのでそのまま）。提出状況一覧のセル編集（`CellEditPanel`）も同じ部品（`TO`）。**マイシフトの手入力のシフトと給料計算の実績の開始・終了は1分刻み**（`MY_TIME_STEP_MIN=1`・`MY_TIME_WHEEL_VALUES`＝0:00〜30:00 の1801件。以前の `myTimeSelectOptions` は削除）。空の欄を開くと開始は 9:00、終了は開始＋1時間（開始が空なら 18:00）から。**休憩は15分刻みのプルダウンのまま**（`MY_BREAK_STEP_MIN`）。回帰は `example-time-wheel.js`（提出・セル編集）と `example-my-manual.js` の B・C・I（マイシフト）。**iPhone の指でのスクロールは未確認**（ヘッドレスの Chromium で scrollTop を動かして測った）
 - **メールの差出人**: Firebase Auth の確認メールは標準の差出人だと迷惑メールに入る（2026-10-05 にユーザーが確認）。`shiftyshifty.app` を差出人にするには Firebase コンソールのカスタムドメインの DNS レコード4件（SPF・firebase の TXT、DKIM の CNAME 2件）を Cloudflare に足して確認する（未実施）
 
 ## 労務判定（2026-09-26・3弾すべて実装済み）

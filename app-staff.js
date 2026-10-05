@@ -2,6 +2,108 @@
 // Shifty - スタッフ画面コンポーネント（app.js から分割 M-1）
 // ============================================================
 
+// ===== 時刻の2列ホイール（2026-10-05 ユーザー指示）=====
+// 押すと時と分の2列のホイールが開き、「決定」で反映する（背景のタップ・Esc は取り消し）。列は scroll-snap で1行ずつ止まり、
+// 先頭（0時・00分）と末尾（最後の時・59分）で止まる＝ループしない。選べる時刻は options（刻みは呼び出し側が決める）、寄せ方は timeWheelPick
+const TW_ITEM_H=44;
+const TW_PAD_ROWS=2; // 選んでいる行の上下に見せる行数
+function TimeWheelColumn({items,value,onChange,fmt,col}){
+  const ref=useRef(null);
+  const timer=useRef(null);
+  const valueRef=useRef(value);valueRef.current=value;
+  const itemsRef=useRef(items);itemsRef.current=items;
+  const idx=Math.max(0,items.indexOf(value));
+  // 値が外から変わったとき（開いた直後・時を変えて分が寄せられたとき・行を押したとき）はその行へ動かす
+  React.useLayoutEffect(()=>{
+    const el=ref.current;if(!el)return;
+    const top=idx*TW_ITEM_H;
+    if(Math.abs(el.scrollTop-top)>1)el.scrollTop=top;
+  },[idx,items.length]);
+  useEffect(()=>()=>clearTimeout(timer.current),[]);
+  // 指で回して止まったところの行を選ぶ（慣性で動いている間は待つ）
+  const onScroll=()=>{
+    clearTimeout(timer.current);
+    timer.current=setTimeout(()=>{
+      const el=ref.current;if(!el)return;
+      const its=itemsRef.current;
+      const i=Math.min(its.length-1,Math.max(0,Math.round(el.scrollTop/TW_ITEM_H)));
+      if(its[i]!==valueRef.current)onChange(its[i]);
+    },140);
+  };
+  const fade="linear-gradient(to bottom,transparent 0,#000 30%,#000 70%,transparent 100%)";
+  return(
+    <div style={{position:"relative",flex:1,minWidth:0}}>
+      <div aria-hidden="true" style={{position:"absolute",left:0,right:0,top:TW_PAD_ROWS*TW_ITEM_H,height:TW_ITEM_H,borderRadius:10,background:"var(--c-input)",border:"1px solid var(--c-border)",boxSizing:"border-box",pointerEvents:"none"}}/>
+      <div ref={ref} data-time-wheel-col={col} role="listbox" onScroll={onScroll}
+        style={{position:"relative",height:TW_ITEM_H*(TW_PAD_ROWS*2+1),overflowY:"auto",scrollSnapType:"y mandatory",overscrollBehavior:"contain",
+          WebkitOverflowScrolling:"touch",scrollbarWidth:"none",paddingTop:TW_PAD_ROWS*TW_ITEM_H,paddingBottom:TW_PAD_ROWS*TW_ITEM_H,boxSizing:"border-box",
+          maskImage:fade,WebkitMaskImage:fade}}>
+        {items.map(it=>{
+          const sel=it===value;
+          return(
+            <div key={it} role="option" aria-selected={sel} data-time-wheel-item={it} data-time-wheel-selected={sel?"1":undefined}
+              onClick={()=>onChange(it)}
+              style={{height:TW_ITEM_H,lineHeight:`${TW_ITEM_H}px`,textAlign:"center",scrollSnapAlign:"center",cursor:"pointer",userSelect:"none",
+                fontSize:sel?24:20,fontWeight:sel?700:500,color:sel?"var(--c-text)":"var(--c-text3)",fontVariantNumeric:"tabular-nums"}}>
+              {fmt(it)}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+function TimeWheelDialog({title,value,options,onDone,onClose}){
+  const model=useMemo(()=>timeWheelModel(options),[options]);
+  const init=timeWheelSplit(value)||{h:0,m:0};
+  const[cur,setCur]=useState(()=>timeWheelPick(model,init.h,init.m));
+  const p=timeWheelSplit(cur)||{h:model.hours[0],m:0};
+  const minutes=model.minutes[p.h]||[0];
+  const panelRef=useRef(null);
+  const closeRef=useRef(onClose);closeRef.current=onClose;
+  useEffect(()=>{
+    const prev=document.activeElement;
+    if(panelRef.current)panelRef.current.focus();
+    const onKey=ev=>{if(ev.key==="Escape"){ev.preventDefault();closeRef.current();}};
+    document.addEventListener("keydown",onKey);
+    return()=>{document.removeEventListener("keydown",onKey);try{if(prev&&prev.focus)prev.focus();}catch{/* 戻せないときは何もしない */}};
+  },[]);
+  if(!cur)return null;
+  // document.body へ出す（祖先の transform・overflow に影響されない）。React のイベントはポータル越しにも親へ伝わるので、背景のタップは止める
+  return ReactDOM.createPortal(
+    <div data-time-wheel-overlay="1" onClick={ev=>{ev.stopPropagation();onClose();}} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:10050,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title||"時刻を選ぶ"} data-time-wheel-dialog={cur}
+        onClick={ev=>ev.stopPropagation()}
+        style={{background:"var(--c-card)",borderRadius:14,padding:"14px 16px 10px",width:"100%",maxWidth:360,boxShadow:"0 8px 24px var(--c-shadow)",outline:"none",color:"var(--c-text)"}}>
+        {title&&<div style={{fontSize:14,fontWeight:700,color:"var(--c-text2)",textAlign:"center",marginBottom:8}}>{title}</div>}
+        <div style={{display:"flex",alignItems:"stretch",gap:8}}>
+          <TimeWheelColumn col="h" items={model.hours} value={p.h} fmt={h=>String(h)} onChange={h=>setCur(timeWheelPick(model,h,p.m))}/>
+          <div aria-hidden="true" style={{alignSelf:"center",fontSize:22,fontWeight:700,color:"var(--c-text2)"}}>:</div>
+          <TimeWheelColumn col="m" items={minutes} value={p.m} fmt={m=>String(m).padStart(2,"0")} onChange={m=>setCur(timeWheelPick(model,p.h,m))}/>
+        </div>
+        <button type="button" data-time-wheel-done="1" onClick={()=>onDone(cur)}
+          style={{display:"block",width:"100%",marginTop:10,padding:"12px 0",background:"none",border:"none",color:"var(--c-accent)",fontSize:17,fontWeight:700,cursor:"pointer"}}>決定</button>
+      </div>
+    </div>,
+    document.body
+  );
+}
+// 入力欄の見た目のボタン。value は "HH:MM"（空なら placeholder）。開いたときの初期位置は value、空なら defaultValue
+function TimeWheelField({value,options,onChange,fmt,placeholder="選ぶ",defaultValue,title,name,style}){
+  const[open,setOpen]=useState(false);
+  const show=fmt||(v=>v);
+  return(
+    <>
+      <button type="button" data-time-wheel={name} data-time-wheel-value={value||""} aria-haspopup="dialog" onClick={()=>setOpen(true)}
+        style={{textAlign:"left",fontVariantNumeric:"tabular-nums",...style}}>
+        {value?show(value):<span style={{color:"var(--c-text3)"}}>{placeholder}</span>}
+      </button>
+      {open&&<TimeWheelDialog title={title} value={value||defaultValue||""} options={options}
+        onDone={v=>{setOpen(false);if(v&&v!==value)onChange(v);}} onClose={()=>setOpen(false)}/>}
+    </>
+  );
+}
+
 // ===== アイコン =====
 function ShiftyIcon({size=32}){
   return(
@@ -437,10 +539,10 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                         <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>{l}</div>
                         {/* 矢印は data URI 内のSVGのため CSS変数が使えない。ライト/ダーク両方の背景で
                             非テキストコントラスト3:1を満たす中間グレー(#7E8899)を固定値で使う */}
-                        <select value={st[f]||"18:00"} onChange={e=>upd(ds,{[f]:e.target.value})}
-                          style={{width:"100%",padding:"9px 28px 9px 10px",fontSize:16,fontWeight:600,background:`var(--c-input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%237E8899' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 8px center`,border:"2px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",outline:"none",cursor:"pointer",appearance:"none",WebkitAppearance:"none"}}>
-                          {opts.map(t=><option key={t} value={t}>{t}</option>)}
-                        </select>
+                        {/* 時と分の2列ホイール（2026-10-05）。刻みは従来どおり（出勤 TO_START＝30分・退勤 TO＝15分）で、opts が決める */}
+                        <TimeWheelField name={`${ds}-${f}`} value={st[f]||"18:00"} options={opts} onChange={v=>upd(ds,{[f]:v})}
+                          title={`${+ds.slice(5,7)}/${+ds.slice(8,10)} ${l}`}
+                          style={{width:"100%",padding:"9px 28px 9px 10px",fontSize:16,fontWeight:600,background:`var(--c-input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%237E8899' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 8px center`,border:"2px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",outline:"none",cursor:"pointer",appearance:"none",WebkitAppearance:"none"}}/>
                       </div>
                       );
                     })}
@@ -564,10 +666,8 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
             {[["start","出勤時間"],["end","退勤時間"]].map(([f,l])=>(
               <div key={f} style={{flex:1}}>
                 <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>{l}</div>
-                <select value={f==="start"?start:end} onChange={e=>f==="start"?setStart(e.target.value):setEnd(e.target.value)}
-                  style={{width:"100%",padding:"9px 10px",fontSize:16,fontWeight:700,background:"var(--c-input)",border:"2px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",outline:"none",cursor:"pointer"}}>
-                  {TO.map(t=><option key={t} value={t}>{t}</option>)}
-                </select>
+                <TimeWheelField name={`cell-${f}`} value={f==="start"?start:end} options={(v=>v&&!TO.includes(v)?[...TO,v].sort():TO)(f==="start"?start:end)} onChange={v=>f==="start"?setStart(v):setEnd(v)} title={l}
+                  style={{width:"100%",padding:"9px 10px",fontSize:16,fontWeight:700,background:"var(--c-input)",border:"2px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",outline:"none",cursor:"pointer"}}/>
               </div>
             ))}
           </div>

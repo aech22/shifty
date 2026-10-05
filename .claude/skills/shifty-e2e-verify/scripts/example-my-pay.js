@@ -77,6 +77,17 @@ async function openStaff({ db, viewport = PHONE, denyWrite, cfHandlers, wait = "
 const sleep = (h, ms) => h.page.waitForTimeout(ms);
 const waitSel = (h, s, ms = 15000) => h.page.waitForSelector(s, { timeout: ms }).then(() => true, () => false);
 const click = (h, sel) => h.evaluate(sel => { const e = document.querySelector(sel); if (!e) return false; e.click(); return true; }, sel);
+// 時刻の2列ホイール（2026-10-05）で選ぶ: 欄を押す → 時の行・分の行を押す → 決定。戻り値は決定の直前にダイアログが持っていた値
+const pickTime = async (h, sel, v) => {
+  if (!await click(h, sel)) throw new Error("時刻の欄が無い " + sel);
+  await waitSel(h, "[data-time-wheel-dialog]");
+  const [hh, mm] = v.split(":").map(Number);
+  await click(h, `[data-time-wheel-col="h"] [data-time-wheel-item="${hh}"]`); await sleep(h, 80);
+  await click(h, `[data-time-wheel-col="m"] [data-time-wheel-item="${mm}"]`); await sleep(h, 80);
+  const got = await h.evaluate(() => document.querySelector("[data-time-wheel-dialog]").getAttribute("data-time-wheel-dialog"));
+  await click(h, "[data-time-wheel-done]"); await sleep(h, 120);
+  return got;
+};
 const db = (h, p) => h.evaluate(p => window.__db(p), p);
 const overflowX = h => h.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth);
 const fontsOk = h => h.evaluate(() => [...document.querySelectorAll("input,select,textarea")].every(i => parseFloat(getComputedStyle(i).fontSize) >= 16));
@@ -449,8 +460,8 @@ async function editWorkplace(h, id) {
         if (row && row.edit) {
           await h.evaluate(() => { const r = [...document.querySelectorAll("[data-my-day] [data-my-entry]")].find(x => x.getAttribute("data-my-entry-shop") === "S3"); r.querySelector('[data-my-action="editOverride"]').click(); });
           await waitSel(h, "[data-my-override-form]");
-          N.pre = await h.evaluate(() => ["start", "end", "breakMin"].map(k => document.querySelector(`[data-my-override-form] [data-my-select="${k}"]`).value));
-          await h.page.selectOption('[data-my-override-form] [data-my-select="end"]', "21:00");
+          N.pre = await h.evaluate(() => ["start", "end", "breakMin"].map(k => { const e = document.querySelector(`[data-my-override-form] [data-time-wheel="${k}"]`); return e ? e.getAttribute("data-time-wheel-value") : document.querySelector(`[data-my-override-form] [data-my-select="${k}"]`).value; }));
+          await pickTime(h, '[data-my-override-form] [data-time-wheel="end"]', "21:00");
           await click(h, '[data-my-action="saveOverride"]');
           await sleep(h, 500);
           N.ov = await db(h, `users/T1/overrides/S3/${D3}`);

@@ -919,19 +919,16 @@ function myDownloadIcs(text,fileName){
   setTimeout(()=>URL.revokeObjectURL(url),1500);
 }
 
-// 時刻の入力は15分刻みのプルダウンだけ（2026-10-04 ユーザー指示・自由記入の欄は置かない）。0:00〜30:00＝24時超え表記を含む。
-// 今の値が15分刻みでなければ、その値を選択肢に足して表示・保持する（myTimeSelectOptions。黙って丸めない）。値は保存時に検証する
-function MyTimeInput({label,value,onChange,name}){
+// 時刻は時と分の2列ホイールで1分刻み（2026-10-05 ユーザー指示。以前は15分刻みのプルダウン）。0:00〜30:00＝24時超え表記を含む。
+// 空のときに開くと defaultValue の位置から始まる。値は保存時に検証する
+function MyTimeInput({label,value,onChange,name,defaultValue}){
   const parsed=parseMyClockInput(value);
-  const opts=myTimeSelectOptions(value);
   return(
-    <label style={{display:"block",marginBottom:12}}>
+    <div style={{marginBottom:12}}>
       <span style={MY_LABEL}>{label}</span>
-      <select data-my-select={name} value={parsed||""} onChange={e=>onChange(e.target.value)} style={AI}>
-        <option value="">選ぶ</option>
-        {opts.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-    </label>
+      <TimeWheelField name={name} value={parsed||""} options={MY_TIME_WHEEL_VALUES} onChange={onChange} title={label}
+        fmt={v=>fmtMyClock(_myClockMin(v))} defaultValue={defaultValue} style={{...AI,display:"block",cursor:"pointer"}}/>
+    </div>
   );
 }
 // 休憩（分）は0〜180分の15分刻みのプルダウンだけ。空は 0分。今の値が刻みに無ければ足す（myBreakSelectOptions）
@@ -951,8 +948,9 @@ function MyMinutesInput({label,value,onChange,name}){
 function MyTimesFields({f,set,err}){
   return(
     <>
-      <MyTimeInput label="開始" name="start" value={f.start} onChange={v=>set("start",v)}/>
-      <MyTimeInput label="終了" name="end" value={f.end} onChange={v=>set("end",v)}/>
+      <MyTimeInput label="開始" name="start" value={f.start} onChange={v=>set("start",v)} defaultValue="09:00"/>
+      <MyTimeInput label="終了" name="end" value={f.end} onChange={v=>set("end",v)}
+        defaultValue={_myClockMin(f.start)!=null?myClockStr(Math.min(MY_CLOCK_MAX_MIN,_myClockMin(f.start)+60)):"18:00"}/>
       <MyMinutesInput label="休憩（分）" name="breakMin" value={f.breakMin} onChange={v=>set("breakMin",v)}/>
       {err&&err.error&&<MyMessage error={err.error}/>}
       {err&&err.suggestEnd&&<button data-my-action="useSuggestEnd" onClick={()=>set("end",err.suggestEnd)} style={{...AGray,marginBottom:12}}>終了を {fmtMyClock(_myClockMin(err.suggestEnd))} にする</button>}

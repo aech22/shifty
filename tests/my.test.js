@@ -576,26 +576,29 @@ test("E4 parseMyClockInput: 直接入力（9・930・1730・9:30・全角・24�
   Object.entries(cases).forEach(([i, o]) => assert.strictEqual(m.parseMyClockInput(i), o, i));
   ["30:05", "31", "9:60", "abc", "12345", "9:3x"].forEach(i => assert.strictEqual(m.parseMyClockInput(i), null, i));
   assert.strictEqual(m.parseMyClockInput(""), "");
-  // 2026-10-04 ユーザー指示: 時刻と休憩は15分刻みのプルダウンだけ（自由記入の欄なし）
-  assert.strictEqual(m.MY_TIME_STEP_MIN, 15);
-  assert.strictEqual(m.MY_TIME_OPTIONS.length, 121, "0:00〜30:00 の15分刻み");
-  assert.deepStrictEqual([m.MY_TIME_OPTIONS[0], m.MY_TIME_OPTIONS[1], m.MY_TIME_OPTIONS[120]], [{ value: "00:00", label: "0:00" }, { value: "00:15", label: "0:15" }, { value: "30:00", label: "30:00" }]);
+  // 2026-10-05 ユーザー指示: 時刻は時と分の2列ホイールで1分刻み（以前は15分刻みのプルダウン）。休憩は15分刻みのプルダウンのまま
+  assert.strictEqual(m.MY_TIME_STEP_MIN, 1);
+  assert.strictEqual(m.MY_TIME_OPTIONS.length, 1801, "0:00〜30:00 の1分刻み");
+  assert.deepStrictEqual([m.MY_TIME_OPTIONS[0], m.MY_TIME_OPTIONS[1], m.MY_TIME_OPTIONS[1800]], [{ value: "00:00", label: "0:00" }, { value: "00:01", label: "0:01" }, { value: "30:00", label: "30:00" }]);
   assert.ok(m.MY_TIME_OPTIONS.some(o => o.value === "24:00") && m.MY_TIME_OPTIONS.some(o => o.value === "26:00" && o.label === "26:00"), "24時超えの表記を選べる");
   assert.ok(m.MY_TIME_OPTIONS.every(o => m.parseMyClockInput(o.value) === o.value), "選択肢は保存の形のまま検証を通る");
+  assert.deepStrictEqual(m.MY_TIME_WHEEL_VALUES, m.MY_TIME_OPTIONS.map(o => o.value));
+  assert.strictEqual(m.myTimeSelectOptions, undefined, "1分刻みで全部の値が入るので、今の値を足す関数は持たない");
+  const wm = U.timeWheelModel(m.MY_TIME_WHEEL_VALUES);
+  assert.deepStrictEqual([wm.hours[0], wm.hours[wm.hours.length - 1], wm.hours.length], [0, 30, 31], "時は 0〜30");
+  assert.deepStrictEqual([wm.minutes[9].length, wm.minutes[9][0], wm.minutes[9][59]], [60, 0, 59], "分は 00〜59");
+  assert.deepStrictEqual(wm.minutes[30], [0], "30時は 00 分だけ");
+  assert.strictEqual(U.timeWheelPick(wm, 30, 45), "30:00", "30時を選ぶと分は 00 に寄る");
+  assert.strictEqual(U.timeWheelPick(wm, 9, 5), "09:05");
   assert.deepStrictEqual(m.MY_BREAK_OPTIONS, [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180]);
-  // 15分刻みでない今の値（以前の5分刻みの入力・9:05・休憩10分）は選択肢に足して保持する（黙って丸めない）
-  assert.strictEqual(m.myTimeSelectOptions("09:00"), m.MY_TIME_OPTIONS, "刻みに合う値は同じ選択肢");
-  assert.strictEqual(m.myTimeSelectOptions(""), m.MY_TIME_OPTIONS);
-  const o905 = m.myTimeSelectOptions("09:05");
-  assert.strictEqual(o905.length, 122);
-  assert.deepStrictEqual(o905.slice(36, 39).map(o => o.value), ["09:00", "09:05", "09:15"], "時刻の順に差し込む");
   assert.deepStrictEqual(m.myBreakSelectOptions("10").slice(0, 3), [0, 10, 15]);
   assert.deepStrictEqual(m.myBreakSelectOptions("240").slice(-2), [180, 240], "180分を超える休憩も残す");
   assert.strictEqual(m.myBreakSelectOptions(""), m.MY_BREAK_OPTIONS);
   const myjs0 = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
   const inputs = myjs0.slice(myjs0.indexOf("function MyTimeInput("), myjs0.indexOf("// 開始・終了・休憩の3欄"));
-  assert.ok(!/<input/.test(inputs) && (inputs.match(/<select /g) || []).length === 2, "時刻と休憩の部品は select だけ");
-  assert.ok(/myTimeSelectOptions\(value\)/.test(inputs) && /myBreakSelectOptions\(value\)/.test(inputs) && /style=\{AI\}/.test(inputs), "今の値を保つ選択肢・16px（AI）");
+  assert.ok(!/<input/.test(inputs) && (inputs.match(/<select /g) || []).length === 1, "休憩だけが select・時刻は自由記入の欄なし");
+  assert.ok(/<TimeWheelField[^>]*options=\{MY_TIME_WHEEL_VALUES\}/.test(inputs), "時刻は1分刻みのホイール");
+  assert.ok(/myBreakSelectOptions\(value\)/.test(inputs) && /style=\{AI\}/.test(inputs), "休憩は今の値を保つ選択肢・16px（AI）");
   assert.strictEqual(m.parseMyMinutesInput(""), 0);
   assert.strictEqual(m.parseMyMinutesInput("６０"), 60);
   assert.strictEqual(m.parseMyMinutesInput("1441"), null);
