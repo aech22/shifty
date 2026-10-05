@@ -7,6 +7,8 @@
 //  S4（パスワードの設定に失敗）: サインインしたまま「パスワードの設定」になり、やり直すと終わる
 //  S5（管理者用のアドレスでマイシフトに登録）: 断ってサインアウトし理由を出す
 //  S6（期限切れのリンク）: 「このリンクは使えません」
+//  S2・S7（2026-10-05）: 登録と同時に始めた画面のお店へリンクを申請（次の画面で「申請する」を押させない）。アクション URL を自前のドメインにした形
+//     （?mode=signIn&oobCode=…&continueUrl=<戻り先>）でも管理者のログイン画面ではなく続きの登録になる
 //  A1（管理者のログイン画面・320px）: メールアドレスで続ける → 新規登録 → 送る → リンク → パスワード → 管理者の実ログイン（印なし・AUTH_LOGGED_OUT_LS=false）
 //  F（メールリンクが無効＝コンソール設定前）: 管理者のログイン画面でも従来の登録欄に切り替わり、そのまま作れる。ドメイン未承認でも同じ
 //  すべての画面で横はみ出し 0・入力欄 16px 以上・console.error 0 件
@@ -94,6 +96,11 @@ async function fillFinish(h, f) {
       S.profile = cur ? await h.evaluate(u => window.__db(`users/${u}/profile`), cur.uid) : null;
       S.user = (await h.evaluate(() => window.__authDump().users))["tanaka@example.com"];
       S.pendingCleared = await h.evaluate(() => localStorage.getItem("ots_emailLinkPending_v1") === null);
+      // 2026-10-05: 登録と同時に、始めた画面のお店（募集URL t1 → S1）にリンクを申請し、マイシフトに「申請しました」
+      S.linkReq = cur ? await h.evaluate(u => window.__db(`shops/S1/linkRequests/${u}`), cur.uid) : null;
+      await waitSel(h, '[data-my-link-requested="S1"]', 8000);
+      S.requestedShown = await h.evaluate(() => { const e = document.querySelector('[data-my-link-requested="S1"]'); return e ? e.innerText : ""; });
+      S.goLinksHidden = await h.evaluate(() => !document.querySelector('[data-my-action="goLinks"]'));
       accUsed = await h.evaluate(() => window.__authDump());
       S.errors = h.errors.slice();
       R.S = S;
@@ -102,6 +109,7 @@ async function fillFinish(h, f) {
       V.S2_finishSameBrowser = S.finish && S.addressShown === "tanaka@example.com" && S.noEmailInput && okLayout(S.finishLayout) && /一致しません/.test(S.mismatch);
       V.S2_done = S.after.myView && /\/#\/me$/.test(S.after.url) /* マイシフトを開いている間は開き直せる URL（#/me）になる（d5822bc） */ && !/oobCode/.test(S.after.url) && cur && !cur.isAnonymous && cur.email === "tanaka@example.com" &&
         S.mark && S.mark.uid === cur.uid && S.profile && S.profile.displayName === "田中" && S.profile.number === "012" && S.user && S.user.password === "pass1234" && S.pendingCleared;
+      V.S2_autoLinkRequest = !!S.linkReq && S.linkReq.displayName === "田中" && S.linkReq.number === "012" && /A店にリンクを申請しました/.test(S.requestedShown) && S.goLinksHidden;
       V.S_noErrors = S.errors.length === 0;
     } finally { await h.browser.close(); }
   }
@@ -162,6 +170,26 @@ async function fillFinish(h, f) {
       await h.page.waitForFunction(() => !location.search, null, { timeout: 8000 }).catch(() => {});
       R.S6.leftUrl = await h.evaluate(() => location.href);
       V.S6_expiredBad = R.S6.bad && /期限が切れているか/.test(R.S6.text) && /\/#\/s\/t1$/.test(R.S6.leftUrl) && R.S6.errors.length === 0;
+    } finally { await h.browser.close(); }
+  }
+  // ---- S7（2026-10-05）: アクション URL を自前のドメインにした形（戻り先が continueUrl の中）でも、管理者のログイン画面ではなく続きの登録 ----
+  {
+    const links = [{ email: "sato@example.com", url: "http://shifty.test/?elk=staff&elh=%23%2Fs%2Ft1", oob: "OOBSATO", used: false }];
+    const cont = encodeURIComponent("http://shifty.test/?elk=staff&elh=%23%2Fs%2Ft1");
+    const h = await open({ url: `/?mode=signIn&oobCode=OOBSATO&apiKey=stub&continueUrl=${cont}&lang=ja`, wait: "#root > *",
+      authSeed: { users: USERS0, links, cur: null, emailLink: "on" } });
+    try {
+      const C = {};
+      C.finish = await waitSel(h, '[data-email-link-finish="form"][data-email-link-kind="staff"]', 10000);
+      C.adminLogin = await h.evaluate(() => /Googleでログイン/.test(document.body.innerText));
+      await fillFinish(h, { email: "sato@example.com", displayName: "鈴木", password: "pass1234", password2: "pass1234" });
+      await h.page.waitForFunction(() => !location.search && document.querySelector("[data-my-view]"), null, { timeout: 15000 }).catch(() => {});
+      C.url = await h.evaluate(() => location.href);
+      const cur = await authCur(h);
+      C.linkReq = cur ? await h.evaluate(u => window.__db(`shops/S1/linkRequests/${u}`), cur.uid) : null;
+      C.errors = h.errors.slice();
+      R.S7 = C;
+      V.S7_customActionUrl = C.finish && !C.adminLogin && !/oobCode/.test(C.url) && !!C.linkReq && C.linkReq.displayName === "鈴木" && C.errors.length === 0;
     } finally { await h.browser.close(); }
   }
   // ---- A1: 管理者のログイン画面（320px） ----

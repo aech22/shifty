@@ -225,6 +225,8 @@ const sharedGlobals = {
   EmailLinkSendBox: "writable",
   EmailLinkFinishScreen: "writable",
   parseEmailLinkLanding: "writable",
+  myLinkShopRefOfHash: "writable",
+  emailLinkReturnHash: "writable",
   EMAIL_LINK_PENDING_LS: "writable",
   emailLinkContinueUrl: "writable",
   isEmailLinkFallbackError: "writable",

@@ -85,6 +85,27 @@ async function mySaveProfile(uid,input,opts){
   catch(e){return{error:myAuthErrorMessage(e,"profile")};}
 }
 
+// 登録したらそのままお店にリンクを申請する（2026-10-05 ユーザー指示「登録を押したら連携の提案まで。次のページで申請ボタンを押すのは無駄」）。
+// 申請の中身は設定タブの「申請する」と同じ（buildLinkRequestRecord）。既にその店舗とリンク済みなら申請しない。
+// 申請できたら、開き直した先のマイシフトに「申請しました」を出すため sessionStorage に店舗を覚える（SS_MY_LINK_REQ）
+const SS_MY_LINK_REQ="ss_myLinkReq";
+async function myResolveShopIdOfHash(h){
+  const p=myLinkShopRefOfHash(h);
+  if(!p||!firebaseDB)return null;
+  const r=await _myRead(p);
+  return r.ok&&r.v&&typeof r.v.shopId==="string"&&r.v.shopId?r.v.shopId:null;
+}
+async function myAutoLinkRequest(uid,shopId,input){
+  if(!uid||!shopId||!firebaseDB||DEMO_MODE||!normalizeMyDisplayName(input&&input.displayName))return{skipped:true};
+  const linked=await _myRead(`shops/${shopId}/staffLinks/${uid}`);
+  if(linked.ok&&linked.v)return{already:true};
+  try{
+    await fbSet(`shops/${shopId}/linkRequests/${uid}`,buildLinkRequestRecord(input,new Date().toISOString()));
+  }catch(e){console.warn("リンクの申請に失敗:",e&&e.code);return{error:true};}
+  const nm=await _myRead(`global/shops/${shopId}/name`);
+  ssSave(SS_MY_LINK_REQ,JSON.stringify({shopId,name:typeof nm.v==="string"?nm.v:""}));
+  return{ok:true};
+}
 // 登録＝いまの匿名 uid にメール＋パスワードを連結する（uid は変わらない）
 async function myRegister(f,shopId){
   const vErr=validateMyProfile(f)||validateMyEmail(f.email)||validateMyPassword(f.password,f.password2);
@@ -110,12 +131,14 @@ async function myRegister(f,shopId){
     }
     setStaffAccountMark(nu.uid);
     await mySaveProfile(nu.uid,f,{fresh:true});
+    await myAutoLinkRequest(nu.uid,shopId,f);
     location.reload();
     return{pending:true};
   }
   setStaffAccountMark(u.uid);
   const cur=firebaseAuth.currentUser||u;
   const pr=await mySaveProfile(cur.uid,f,{fresh:true});
+  if(pr.profile)await myAutoLinkRequest(cur.uid,shopId,f);
   return{user:{uid:cur.uid,email:cur.email||String(f.email).trim()},profile:pr.profile||null,profileError:pr.error?`アカウントは作成しました。登録ネームを${pr.error}。下の「保存」でもう一度保存してください`:null,
     draft:{displayName:normalizeMyDisplayName(f.displayName),number:normalizeMyNumber(f.number)}};
 }
@@ -277,13 +300,15 @@ function EmailLinkFinishScreen({landing}){
   const[msg,setMsg]=useState({});
   const[busy,setBusy]=useState(false);
   const set=(k,v)=>{setF(p=>({...p,[k]:v}));setMsg({});};
-  const leave=()=>{try{localStorage.removeItem(EMAIL_LINK_PENDING_LS);}catch{/* 書けない端末は何もしない */}window.location.replace(emailLinkCleanUrl(href,landing.hash));};
+  const leave=()=>{try{localStorage.removeItem(EMAIL_LINK_PENDING_LS);}catch{/* 書けない端末は何もしない */}window.location.replace(emailLinkCleanUrl(href,emailLinkReturnHash(kind,landing.hash)));};
   const finishWith=async user=>{
     // パスワード（以後のログインはメール＋パスワード）。既にあるアカウントのアドレスでも、メールを受け取れることを確かめたので設定し直す（再設定と同じ）
     try{await user.updatePassword(f.password);}
     catch(e){console.warn("パスワードの設定に失敗:",e&&e.code);setStage("password");setMsg({error:emailLinkErrorMessage(e,"password")});return false;}
     if(kind==="staff"){
-      await mySaveProfile(user.uid,f,{fresh:true});
+      const pr=await mySaveProfile(user.uid,f,{fresh:true});
+      // 募集URL・個別URLの画面から始めた登録は、そのお店にそのままリンクを申請する（次の画面で「申請する」を押させない）
+      if(pr.profile){const sid=await myResolveShopIdOfHash(landing.hash);if(sid)await myAutoLinkRequest(user.uid,sid,f);}
       // スタッフURLの画面から始めた登録は、戻った画面でマイシフトを開く
       if(landing.hash&&!isMyRouteHash(landing.hash))ssSave(SS_MY_OPEN,"1");
     }else{
@@ -1259,11 +1284,17 @@ function MyShiftTab({me,onGoSettings,personal}){
 
   if(links===null)return <MyEmptyState><MyMessage error="お店とのリンクを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/></MyEmptyState>;
   const hasManual=manualList.length>0||Object.keys(P.shifts||{}).length>0;
+  // 登録と同時に送ったリンクの申請（myAutoLinkRequest）。承認されるまで「申請しました」を出す
+  const linkReq=(()=>{try{const v=JSON.parse(ssGet(SS_MY_LINK_REQ,null)||"null");return v&&v.shopId?v:null;}catch{return null;}})();
   if(Array.isArray(links)&&!okLinks.length&&P.state!=="loading"&&!hasManual)return(
     <MyEmptyState>
       {badLinks.length>0&&<div data-my-bad-links="1" style={{marginBottom:12}}>{badLinks.map(l=><div key={l.shopId} style={{color:"var(--c-danger)",fontSize:14}}>{l.shopName}: {l.reason==="unread"?"状態を確認できませんでした":MY_LINK_INVALID_LABELS[l.reason]}</div>)}</div>}
-      勤務先の店舗とアカウントのリンクが済むと、ここに提出した希望と公開されたシフトが月のカレンダーで表示されます。
-      {onGoSettings&&<button data-my-action="goLinks" onClick={onGoSettings} style={{...MY_LINK_BTN,display:"block",marginTop:8}}>設定でお店とリンクする</button>}
+      {linkReq?<div data-my-link-requested={linkReq.shopId}>
+        {linkReq.name||"お店"}にリンクを申請しました。お店の管理者が承認すると、ここに提出した希望とシフトが月のカレンダーで表示されます。
+      </div>:<>
+        勤務先の店舗とアカウントのリンクが済むと、ここに提出した希望と公開されたシフトが月のカレンダーで表示されます。
+        {onGoSettings&&<button data-my-action="goLinks" onClick={onGoSettings} style={{...MY_LINK_BTN,display:"block",marginTop:8}}>設定でお店とリンクする</button>}
+      </>}
     </MyEmptyState>
   );
   const selEntries=byDate[sel]||[];
@@ -2601,7 +2632,7 @@ function StaffPageEditSection({links,name,tt}){
       <MyPageUrlBox url={buildMyPageUrl(myPageBaseUrl(),cur.token)}/>
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
         <button data-staff-page-action="reissue" disabled={busy} onClick={()=>issue(true)} style={{...AGray,opacity:busy?.6:1}}>新しいURLを発行</button>
-        <button data-staff-page-action="revoke" disabled={busy} onClick={()=>act("revoke",`「${name}」さんの専用のURLを取り消しますか？取り消すとそのURLは使えなくなります。`,"専用のURLを取り消しました")} style={{...AGray,opacity:busy?.6:1}}>URLを取り消す</button>
+        <button data-staff-page-action="revoke" disabled={busy} onClick={()=>act("revoke",`「${name}」さんとの連携を解除しますか？解除すると専用のURLは使えなくなります。`,"連携を解除しました")} style={{...AGray,opacity:busy?.6:1}}>連携解除</button>
         <button data-staff-page-action="resetPin" disabled={busy} onClick={()=>act("resetPin",`「${name}」さんの給料の暗証番号をリセットしますか？本人が次に給料タブを開いたときに、新しい番号を決め直します。`,"暗証番号をリセットしました")} style={{...AGray,opacity:busy?.6:1}}>暗証番号をリセット</button>
       </div>
       <div style={{fontSize:11,color:"var(--c-text4)",lineHeight:1.6,marginTop:6}}>「新しいURLを発行」すると、いまのURLは使えなくなります。</div>

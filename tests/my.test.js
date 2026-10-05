@@ -1812,7 +1812,10 @@ test("メール確認つきの登録: 戻り先の URL・開いた URL の判定
   const land = "https://shiftyshifty.app/?elk=staff&elh=%23%2Fs%2Ft1&apiKey=k&oobCode=OOB&mode=signIn&lang=ja";
   assert.deepStrictEqual(m.parseEmailLinkLanding(land), { kind: "staff", hash: "#/s/t1", hasCode: true });
   assert.deepStrictEqual(m.parseEmailLinkLanding("https://shiftyshifty.app/?elk=admin"), { kind: "admin", hash: "", hasCode: false });
-  assert.strictEqual(m.parseEmailLinkLanding("https://shiftyshifty.app/?oobCode=1&mode=signIn"), null, "elk の無い URL は続きの登録ではない");
+  // 2026-10-05: elk の無いメールリンク（mode=signIn と oobCode がある）も続きの登録。送った記録の kind、無ければスタッフ
+  assert.deepStrictEqual(m.parseEmailLinkLanding("https://shiftyshifty.app/?oobCode=1&mode=signIn"), { kind: "staff", hash: "", hasCode: true });
+  assert.deepStrictEqual(m.parseEmailLinkLanding("https://shiftyshifty.app/?oobCode=1&mode=signIn", { pendingKind: "admin" }), { kind: "admin", hash: "", hasCode: true });
+  assert.strictEqual(m.parseEmailLinkLanding("https://shiftyshifty.app/?oobCode=1&mode=resetPassword"), null, "パスワード再設定のリンクは続きの登録ではない");
   assert.strictEqual(m.parseEmailLinkLanding("https://shiftyshifty.app/#/s/t1"), null);
   assert.strictEqual(m.parseEmailLinkLanding("not a url"), null);
   assert.strictEqual(m.emailLinkCleanUrl(land, "#/s/t1"), "https://shiftyshifty.app/#/s/t1", "oobCode を落とす");
@@ -2208,4 +2211,37 @@ test("お店の締日・給料日（2026-10-05）: 検証・読み・本人の�
   // 他店舗への保存は settings/payCalendar だけの差分（settings を丸ごと set しない）
   const card = co.slice(co.indexOf("function CompanyPayCalendarCard("), co.indexOf("function SetTab("));
   assert.ok(/fbUpd\(`shops\/\$\{id\}\/settings`,\{payCalendar:rec\}\)/.test(card) && !/fbSet\(/.test(card));
+});
+
+test("確認メールのリンク（2026-10-05）: アクション URL を自前のドメインにした形でも続きの登録・戻り先が無いスタッフは #/me・登録と同時にリンクを申請", () => {
+  // Firebase コンソールでアクション URL を https://shiftyshifty.app/ にしたときの形（戻り先は continueUrl の中）
+  const cont = "https://shiftyshifty.app/?elk=staff&elh=%23%2Fs%2Ft1";
+  const custom = "https://shiftyshifty.app/?mode=signIn&oobCode=ABC&apiKey=K&continueUrl=" + encodeURIComponent(cont) + "&lang=ja";
+  assert.deepStrictEqual(m.parseEmailLinkLanding(custom), { kind: "staff", hash: "#/s/t1", hasCode: true });
+  // 旧 Dynamic Links の形（link の中に Firebase のリンク、その中に continueUrl）
+  const fb = "https://ontheshift.firebaseapp.com/__/auth/action?apiKey=K&mode=signIn&oobCode=ABC&continueUrl=" + encodeURIComponent("https://shiftyshifty.app/?elk=admin");
+  assert.deepStrictEqual(m.parseEmailLinkLanding("https://shiftyshifty.app/?link=" + encodeURIComponent(fb)), { kind: "admin", hash: "", hasCode: true });
+  // 戻るハッシュ: スタッフで戻り先が無ければ #/me（"/" は管理者のログイン画面）
+  assert.strictEqual(m.emailLinkReturnHash("staff", ""), "#/me");
+  assert.strictEqual(m.emailLinkReturnHash("staff", "#/s/t1"), "#/s/t1");
+  assert.strictEqual(m.emailLinkReturnHash("admin", ""), "");
+  // 申請する店舗を引くパス
+  assert.strictEqual(m.myLinkShopRefOfHash("#/s/abc23"), "tokens/abc23");
+  assert.strictEqual(m.myLinkShopRefOfHash("#/m/AbCdEfGhIjKlMnOpQrStUvWx"), "staffPageTokens/AbCdEfGhIjKlMnOpQrStUvWx");
+  assert.strictEqual(m.myLinkShopRefOfHash("#/me"), null);
+  assert.strictEqual(m.myLinkShopRefOfHash("#/s/a.b"), null);
+  assert.strictEqual(m.myLinkShopRefOfHash("#/m/short"), null);
+  // 画面: 続きの登録・従来の登録の両方が登録と同時に申請する。後始末は戻るハッシュを通す
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const fin = my.slice(my.indexOf("function EmailLinkFinishScreen("), my.indexOf("function EmailLinkFinishScreen(") + 6000);
+  assert.ok(/myResolveShopIdOfHash\(landing\.hash\)/.test(fin) && /myAutoLinkRequest\(user\.uid,sid,f\)/.test(fin));
+  assert.ok(/emailLinkCleanUrl\(href,emailLinkReturnHash\(kind,landing\.hash\)\)/.test(fin));
+  const reg = my.slice(my.indexOf("async function myRegister("), my.indexOf("async function myLogin("));
+  assert.strictEqual((reg.match(/myAutoLinkRequest\(/g) || []).length, 2);
+  const ar = my.slice(my.indexOf("async function myAutoLinkRequest("), my.indexOf("async function myRegister("));
+  assert.ok(/fbSet\(`shops\/\$\{shopId\}\/linkRequests\/\$\{uid\}`,buildLinkRequestRecord\(input,/.test(ar) && /staffLinks\/\$\{uid\}/.test(ar), "設定タブの申請と同じ形・リンク済みなら申請しない");
+  const main = fs.readFileSync(path.join(ROOT, "app-main.js"), "utf8");
+  assert.ok(/parseEmailLinkLanding\(window\.location\.href,\{pendingKind:/.test(main));
+  // 管理者のスタッフ編集: 個別URLの取り消しは「連携解除」
+  assert.ok(/>連携解除<\/button>/.test(my) && !/>URLを取り消す</.test(my));
 });

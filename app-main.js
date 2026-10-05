@@ -57,7 +57,7 @@ function App(){
   const myRoute=MY_SCREEN_ENABLED&&bootRoute?.type==="me";
   // 確認メールのリンクを開いたとき（新規登録の続き・2026-10-04）。?elk=staff|admin が付いた URL。Phase1 は普段どおり走らせ（匿名サインイン）、
   // 画面だけ続きの登録（EmailLinkFinishScreen）にする。登録を終える・やめると oobCode を落とした URL で開き直す
-  const[emailLanding]=useState(()=>parseEmailLinkLanding(window.location.href));
+  const[emailLanding]=useState(()=>parseEmailLinkLanding(window.location.href,{pendingKind:(lg(EMAIL_LINK_PENDING_LS,null)||{}).kind}));
   const[myOpen,setMyOpen]=useState(()=>MY_SCREEN_ENABLED&&(myRoute||(_hasUrlToken&&ssGet(SS_MY_OPEN,null)==="1")));
   const[authChecked,setAuthChecked]=useState(false); // Auth状態確認完了フラグ
   const[authLoading,setAuthLoading]=useState(false); // OAuth処理中

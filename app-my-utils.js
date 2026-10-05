@@ -127,12 +127,27 @@ function emailLinkContinueUrl(loc,o){
   return`${loc.origin}${loc.pathname||"/"}?${q.toString()}`;
 }
 // 開いた URL がこの登録の続きか。続きでなければ null。{kind, hash, hasCode（oobCode と mode=signIn がある）}
-function parseEmailLinkLanding(href){
+// 2026-10-05 ユーザー報告「確認メールのリンクを開くと管理者のログイン画面になる」: Firebase コンソールでアクション URL を
+// 自前のドメイン（shiftyshifty.app）にしていると、リンクは https://shiftyshifty.app/?mode=signIn&oobCode=…&continueUrl=<戻り先> の形で届き、
+// elk は continueUrl の中に入ったまま＝トップの elk だけを見ると続きの登録と分からず管理者のログイン画面になる。
+// そこで continueUrl（と link＝旧 Dynamic Links の形）の中も見る。それでも分からないメールリンク（mode=signIn と oobCode がある）は、
+// この端末で送った記録の kind（o.pendingKind）、無ければスタッフ（マイシフトの登録）として扱う
+function _emailLinkParamsOf(p){const k=p.get("elk");return EMAIL_LINK_KINDS.includes(k)?{kind:k,hash:emailLinkSafeHash(p.get("elh"))}:null;}
+function _emailLinkHasCode(p){return p.get("mode")==="signIn"&&!!p.get("oobCode");}
+function parseEmailLinkLanding(href,o){
   let u;try{u=new URL(String(href||""));}catch{return null;}
-  const kind=u.searchParams.get("elk");
-  if(!EMAIL_LINK_KINDS.includes(kind))return null;
-  return{kind,hash:emailLinkSafeHash(u.searchParams.get("elh")),hasCode:u.searchParams.get("mode")==="signIn"&&!!u.searchParams.get("oobCode")};
+  const nested=[];
+  ["continueUrl","link"].forEach(k=>{const v=u.searchParams.get(k);if(!v)return;try{const n=new URL(v);nested.push(n.searchParams);
+    const c=n.searchParams.get("continueUrl");if(c){try{nested.push(new URL(c).searchParams);}catch{/* 読めない戻り先は見ない */}}}catch{/* URL でない値は見ない */}});
+  const hasCode=_emailLinkHasCode(u.searchParams)||nested.some(_emailLinkHasCode);
+  let hit=_emailLinkParamsOf(u.searchParams);
+  for(const p of nested){if(hit)break;hit=_emailLinkParamsOf(p);}
+  if(!hit&&hasCode){const pk=o&&EMAIL_LINK_KINDS.includes(o.pendingKind)?o.pendingKind:"staff";hit={kind:pk,hash:""};}
+  if(!hit)return null;
+  return{...hit,hasCode};
 }
+// 続きの登録を終えた（やめた）あとに開くハッシュ。スタッフで戻り先が無ければ #/me（ハッシュ無しの "/" は管理者のログイン画面になる）
+function emailLinkReturnHash(kind,hash){const h=emailLinkSafeHash(hash);return h||(kind==="staff"?"#/me":"");}
 // 登録を終えた（やめた）あとに開く URL＝クエリ（oobCode）を落とし、戻るハッシュを付ける
 function emailLinkCleanUrl(href,hash){
   let u;try{u=new URL(String(href||""));}catch{return"/";}
@@ -1626,6 +1641,15 @@ function isMyPageToken(s){return typeof s==="string"&&MY_PAGE_TOKEN_RE.test(s);}
 function genMyPageToken(rand){return genMyRecordId("",MY_PAGE_TOKEN_LEN,rand);}
 // "#/m/<token>" → token（形は問わない。違えば画面で「使えないURL」と出す）。それ以外のハッシュは null
 function myPageRouteOf(h){const m=/^#\/m\/([^/?#]*)\/?$/.exec(String(h==null?"":h));return m?m[1]:null;}
+// 登録した画面のハッシュから、リンクを申請する店舗を引くパス（2026-10-05「登録を押したらそのままリンクを申請」）。
+// 募集URL #/s/<token> は tokens/<token>、個別URL #/m/<pageToken> は staffPageTokens/<pageToken>（どちらも {shopId}）。それ以外（#/me 等）は null
+function myLinkShopRefOfHash(h){
+  const s=String(h==null?"":h);
+  const pt=myPageRouteOf(s);
+  if(pt!==null)return isMyPageToken(pt)?`staffPageTokens/${pt}`:null;
+  const m=/^#\/s\/([A-Za-z0-9_-]{1,64})\/?$/.exec(s);
+  return m?`tokens/${m[1]}`:null;
+}
 // 個別URL。base は origin+pathname（スタッフ募集URLの buildUrl と同じく LINE のアプリ内ブラウザを外へ出すパラメータを付ける）
 function buildMyPageUrl(base,token){return`${String(base||"")}?openExternalBrowser=1#/m/${token}`;}
 // 個別URLの下部タブ（アカウントの MY_TABS に「提出」を足したもの）
@@ -1993,7 +2017,7 @@ function myAllShiftSelection(choices,sel){
 }
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={EMAIL_LINK_PENDING_LS,EMAIL_LINK_KINDS,EMAIL_LINK_PENDING_MAX_MS,EMAIL_LINK_RESEND_WAIT_MS,EMAIL_LINK_FALLBACK_CODES,isEmailLinkFallbackError,emailLinkSafeHash,emailLinkContinueUrl,parseEmailLinkLanding,emailLinkCleanUrl,emailLinkPendingRecord,emailLinkPendingFor,ADMIN_PASSWORD_MIN,validateEmailLinkPassword,emailLinkErrorMessage,MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
+  module.exports={EMAIL_LINK_PENDING_LS,EMAIL_LINK_KINDS,EMAIL_LINK_PENDING_MAX_MS,EMAIL_LINK_RESEND_WAIT_MS,EMAIL_LINK_FALLBACK_CODES,isEmailLinkFallbackError,emailLinkSafeHash,emailLinkContinueUrl,parseEmailLinkLanding,emailLinkReturnHash,emailLinkCleanUrl,emailLinkPendingRecord,emailLinkPendingFor,ADMIN_PASSWORD_MIN,validateEmailLinkPassword,emailLinkErrorMessage,MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
     MY_LINK_METHOD_LABELS,MY_LINK_CODE_LEN,MY_LINK_CODE_TTL_MS,linkNumberKey,linkNameKey,normalizeLinkCode,isValidLinkCode,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,MY_STAFF_LINK_OPS_MAX,staffLinkOpOf,staffLinksAsOf,planStaffLinkOp,enqueueStaffLinkOp,MY_STAFF_LINK_PENDING_MSG,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,fmtLinkCodeExpiry,
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
     myHelperDaysOf,myHelperShiftEntries,myMergeHelperEntries,myMovedHelperDates,myHelperTimesIn,myMovedDatesIn,
@@ -2006,6 +2030,6 @@ if(typeof module!=="undefined"&&module.exports){
     myClampDay,myClosingMonthOf,myClosingRangeOf,myPayDateOf,myPayPlanOf,myPayMonthOfDate,myPeriodsInRange,myPayReadRange,myShiftyDayInfo,myOverrideDatesIn,myMonthSettingsOf,
     myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPaySummaryOf,MY_PAY_YEAR_GOAL_MONTHS,myPayYearGoalOf,myPayYearByWorkplace,planMyReceivedBulk,myReceivedBulkForm,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
-    MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,planIssueStaffPage,resolveMyPage,MY_PAGE_STATE_MESSAGES,
+    MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,myLinkShopRefOfHash,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,planIssueStaffPage,resolveMyPage,MY_PAGE_STATE_MESSAGES,
     approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myPageOpenCandidates,myPickOpenablePage,myOverlayHashOf,buildMyAccountUrl,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myHelpDestRegs,myHelpDestPeriodOptions,myAllShiftSelection};
 }
