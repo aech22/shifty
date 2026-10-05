@@ -745,7 +745,7 @@ function useMyAllShiftSources(me){
     startedRef.current.add(k);
     readMyPeriodSubs(sid,pid).then(v=>setSubs(p=>({...p,[k]:v})));
   },[]);
-  const list=useMemo(()=>okLinks.map(l=>{const sh=shops[l.shopId];return sh&&sh.ok?{shopId:l.shopId,shopName:l.shopName,name:l.name,periods:sh.periods,settings:sh.settings,staff:sh.staff,plan:sh.plan}:null;}).filter(Boolean),[okLinks,shops]);
+  const list=useMemo(()=>okLinks.map(l=>{const sh=shops[l.shopId];return sh&&sh.ok?{shopId:l.shopId,shopName:l.shopName,name:l.name,periods:sh.periods,settings:sh.settings,staff:sh.staff,plan:sh.plan,companyLink:sh.companyLink||null}:null;}).filter(Boolean),[okLinks,shops]);
   const subsFor=useCallback((sid,pid)=>subs[sid+"|"+pid],[subs]);
   const loading=links===undefined||okLinks.some(l=>!shops[l.shopId]);
   return{shops:list,subsFor,need,loading};
@@ -1019,7 +1019,8 @@ function MyOverrideForm({personal,entry,onDone}){
   );
 }
 
-const MY_KIND_LABEL={published:"公開",confirmed:"確定",submitted:"提出済み（未確定）",manual:"手入力"};
+// お店が出したシフトは公開でも「確定」と出す（2026-10-05 ユーザー指示「提出だけが未確定なので、公開ではなく確定に合わせる」）
+const MY_KIND_LABEL={published:"確定",confirmed:"確定",submitted:"提出済み（未確定）",manual:"手入力"};
 // 開いている編集欄を entry に結びつける鍵（entry は読み込みのたびに作り直されるので参照では比べない）
 function myEntryKey(e){return`${e.kind}|${e.shiftId||e.shopId||""}|${e.periodId||""}|${e.date}`;}
 function myEntryState(e){return e.kind==="submitted"?"submitted":e.kind==="manual"?"manual":e.confirmed?"confirmed":"published";}
@@ -1473,18 +1474,19 @@ function MyCompanyPayView({pay}){
     </div>
   );
 }
-function MyPayFields({kind,f,set,company}){
+function MyPayFields({kind,f,set,company,shopCal=null}){
   const cp=company&&company.pay;
   return(
     <div data-my-pay-fields={kind}>
-      <div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)",gap:"0 12px"}}>
+      {/* お店が締日・給料日を登録していれば固定表示（本人の設定より優先・2026-10-05） */}
+      {shopCal?<MyShopCalendarView cal={shopCal}/>:<div style={{display:"grid",gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)",gap:"0 12px"}}>
         <MySelect label="締日" name="closingDay" value={f.closingDay} onChange={v=>set({closingDay:v})} options={MY_PAY_DAY_OPTIONS}/>
         <MySelect label="給料日が土日祝なら" name="holidayRule" value={f.holidayRule} onChange={v=>set({holidayRule:v})}
           options={MY_PAY_HOLIDAY_RULES.map(k=>({value:k,label:MY_PAY_HOLIDAY_RULE_LABELS[k]}))}/>
         <MySelect label="給料日の月" name="payMonthOffset" value={f.payMonthOffset} onChange={v=>set({payMonthOffset:v})}
           options={[0,1,2].map(k=>({value:String(k),label:MY_PAY_OFFSET_LABELS[k]}))}/>
         <MySelect label="給料日" name="payDay" value={f.payDay} onChange={v=>set({payDay:v})} options={MY_PAY_DAY_OPTIONS}/>
-      </div>
+      </div>}
       {cp?<MyCompanyPayView pay={cp}/>:(
         <>
           <div style={{display:"grid",gridTemplateColumns:"minmax(0,2fr) minmax(0,3fr)",gap:"0 12px"}}>
@@ -1512,17 +1514,19 @@ function MyPayFields({kind,f,set,company}){
   );
 }
 // 一覧に出す給料設定の要約
-function myPaySummaryText(pay,company){
+function myPaySummaryText(pay,company,shopCal=null){
   const p=myPayOf(pay);
   const cp=company&&company.pay?normalizePayVersion(company.pay):null;
-  if(!p&&!cp)return"";
+  const sc=normalizePayCalendar(shopCal);
+  if(!p&&!cp&&!sc)return"";
   const parts=[];
-  if(p)parts.push(`${myPayDayLabel(p.closingDay)}締め・${MY_PAY_OFFSET_LABELS[p.payMonthOffset]}${myPayDayLabel(p.payDay)}払い`);
+  if(sc)parts.push(`${myPayDayLabel(sc.closingDay)}締め・${MY_PAY_OFFSET_LABELS[sc.payMonthOffset]}${myPayDayLabel(sc.payDay)}払い（お店の登録）`);
+  else if(p)parts.push(`${myPayDayLabel(p.closingDay)}締め・${MY_PAY_OFFSET_LABELS[p.payMonthOffset]}${myPayDayLabel(p.payDay)}払い`);
   if(cp)parts.push(`会社設定 ${cp.payType==="hourly"?"時給":"月給"}${fmtMyYen(cp.base)}`);
   else if(p&&p.rate>0)parts.push(`${MY_PAY_WAGE_TYPE_LABELS[p.wageType]}${fmtMyYen(p.rate)}`);
   return parts.join("・");
 }
-function MyWorkplaceEditor({w,personal,isNew,list,onDone,company,payLocked=false}){
+function MyWorkplaceEditor({w,personal,isNew,list,onDone,company,payLocked=false,shopCal=null}){
   const[f,setF]=useState({name:w?(w.kind==="shifty"?(w.rec&&w.rec.name)||"":w.name):"",color:w?w.color:myNextWorkplaceColor(list)});
   const hadPay=!!(w&&w.rec&&myPayOf(w.rec.pay));
   const[payOpen,setPayOpen]=useState(hadPay);
@@ -1563,11 +1567,11 @@ function MyWorkplaceEditor({w,personal,isNew,list,onDone,company,payLocked=false
           賃金は所属店舗{company.homeShopName?`（${company.homeShopName}）`:""}で設定されています。所属店舗とリンクすると、そちらで会社設定が出ます。このお店の分は本人の設定で計算します。
         </div>}
         {payOpen?(
-          <MyPayFields kind={kind} f={pf} set={v=>{setPf(p=>({...p,...v}));setErr("");}} company={company}/>
+          <MyPayFields kind={kind} f={pf} set={v=>{setPf(p=>({...p,...v}));setErr("");}} company={company} shopCal={shopCal}/>
         ):(
           <div>
             {company&&company.pay&&<MyCompanyPayView pay={company.pay}/>}
-            <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:8}}>締日と給料日を入れると、給料タブで支給月ごとの見込みが出ます。</div>
+            {shopCal?<MyShopCalendarView cal={shopCal}/>:<div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:8}}>締日と給料日を入れると、給料タブで支給月ごとの見込みが出ます。</div>}
             <button data-my-action="openPay" onClick={()=>{setPayOpen(true);setErr("");}} style={{...AGray,marginBottom:12}}>給料を設定する</button>
           </div>
         )}
@@ -1598,6 +1602,30 @@ function useMyStaffNumbers(okLinks){
   },[key]);
   return m;
 }
+// 紐付いた店舗ごとの、お店が登録した締日・給料日（{shopId: normalizePayCalendar の値}・無ければキーなし・2026-10-05）
+function useMyShopPayCalendars(okLinks){
+  const[m,setM]=useState({});
+  const key=(okLinks||[]).map(l=>l.shopId).join(",");
+  useEffect(()=>{
+    let alive=true;
+    (okLinks||[]).forEach(l=>{
+      readMyShiftShopShared(l.shopId).then(v=>{
+        const c=v&&v.ok?normalizePayCalendar(v.settings&&v.settings.payCalendar):null;
+        if(alive)setM(p=>{if(JSON.stringify(p[l.shopId]||null)===JSON.stringify(c))return p;const n={...p};if(c)n[l.shopId]=c;else delete n[l.shopId];return n;});
+      },()=>{});
+    });
+    return()=>{alive=false;};
+  },[key]);
+  return m;
+}
+function MyShopCalendarView({cal}){
+  return(
+    <div data-my-shop-calendar="1" style={{border:"1px solid var(--c-border2)",borderRadius:10,padding:"10px 12px",marginBottom:14}}>
+      <div style={{fontSize:12,fontWeight:700,color:"var(--c-text2)",marginBottom:4}}>締日・給料日（お店の登録・変更できません）</div>
+      <div style={{fontSize:14,color:"var(--c-text)"}}>{payCalendarText(cal)}</div>
+    </div>
+  );
+}
 function MyWorkplacesSection({me,personal,payLocked=false}){
   const P=personal;
   const[lp,setLp]=useState(undefined); // {links,plans}
@@ -1613,6 +1641,8 @@ function MyWorkplacesSection({me,personal,payLocked=false}){
   const list=myWorkplaceList(okLinks,P.workplaces);
   // その店舗での従業員番号（店舗ごとに違う・2026-10-04）。店舗の settings を読む（マイシフトと同じ読み込みを共有する）
   const numbers=useMyStaffNumbers(okLinks);
+  // お店が登録した締日・給料日（2026-10-05）。登録があれば本人の締日・給料日の欄の代わりに固定表示する
+  const shopCals=useMyShopPayCalendars(okLinks);
   // 会社が登録した賃金（E6・getMyPay）。勤務先の編集で「会社設定」として固定表示する
   const companyPays=useMyCompanyPays(payLocked?null:me,okLinks);
   const premium=!!lp&&myShiftPremiumOf(lp.plans);
@@ -1651,12 +1681,13 @@ function MyWorkplacesSection({me,personal,payLocked=false}){
                 {w.kind==="shifty"&&w.linked&&numbers[w.id]&&<span data-my-wp-number={numbers[w.id]} style={{fontSize:13,fontWeight:400,color:"var(--c-text2)",marginLeft:8,whiteSpace:"nowrap"}}>従業員番号 {numbers[w.id]}</span>}
               </div>
               <div style={{fontSize:12,color:"var(--c-text3)"}}>{kindLabel(w)}{w.kind==="shifty"&&w.linked&&w.name!==w.shopName?`（${w.shopName}）`:""}</div>
-              {!payLocked&&(()=>{const t=myPaySummaryText(w.rec&&w.rec.pay,companyPays[w.id]);return t?<div data-my-wp-pay="1" style={{fontSize:12,color:"var(--c-text3)",overflowWrap:"anywhere"}}>{t}</div>:null;})()}
+              {!payLocked&&(()=>{const t=myPaySummaryText(w.rec&&w.rec.pay,companyPays[w.id],w.kind==="shifty"&&w.linked?shopCals[w.id]:null);return t?<div data-my-wp-pay="1" style={{fontSize:12,color:"var(--c-text3)",overflowWrap:"anywhere"}}>{t}</div>:null;})()}
             </div>
             {canEdit&&edit!==w.id&&(w.kind==="manual"||w.linked)&&<button data-my-action="editWorkplace" onClick={()=>{setMsg({});setEdit(w.id);}} style={{...AGray,padding:"8px 12px",fontSize:13,whiteSpace:"nowrap"}}>編集</button>}
             {(w.kind==="manual"||!w.linked)&&P.state==="ok"&&edit!==w.id&&<button data-my-action="deleteWorkplace" disabled={busy===w.id} onClick={()=>remove(w)} style={{...AGray,padding:"8px 12px",fontSize:13,whiteSpace:"nowrap"}}>削除</button>}
           </div>
-          {edit===w.id&&<MyWorkplaceEditor w={w} personal={P} list={list} onDone={done} company={w.kind==="shifty"?companyPays[w.id]:null} payLocked={payLocked}/>}
+          {edit===w.id&&<MyWorkplaceEditor w={w} personal={P} list={list} onDone={done} company={w.kind==="shifty"?companyPays[w.id]:null} payLocked={payLocked}
+            shopCal={w.kind==="shifty"&&w.linked?shopCals[w.id]||null:null}/>}
         </div>
       ))}
       {edit==="new"&&<div style={{borderTop:"1px solid var(--c-border)"}}><MyWorkplaceEditor w={null} isNew personal={P} list={list} onDone={done} payLocked={payLocked}/></div>}
@@ -1721,20 +1752,46 @@ function useMyPayExtras(base){
       return res;
     }};
 }
-// 月間目標に対する進捗の弧（1つの弧。アクセント1色＋中立色の下地）
-function MyGoalRing({progress,size=112}){
+// 目標に対する進捗の弧（2026-10-05 改め）。下地（100%の線）の上に、これからの見込みまでを下地より濃いグレー、
+// 確定分をアクセントで重ねる。中央は確定分の割合、その下に見込みを含めた割合
+function MyGoalRing({progress,projected=null,size=112}){
   const r=size/2-8,c=2*Math.PI*r;
   const v=progress==null?0:progress;
+  const pv=projected==null?v:Math.max(v,projected);
+  const arc=(x,stroke)=>x>0&&<circle cx={size/2} cy={size/2} r={r} fill="none" stroke={stroke} strokeWidth="10" strokeLinecap="butt"
+    strokeDasharray={`${c*Math.min(1,x)} ${c}`} transform={`rotate(-90 ${size/2} ${size/2})`}/>;
+  const showP=progress!=null&&pv>v;
   return(
-    <svg data-my-goal-ring={progress==null?"none":Math.round(v*100)} width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img"
-      aria-label={progress==null?"目標は未設定":`目標の${Math.round(v*100)}%`} style={{flex:"0 0 auto"}}>
+    <svg data-my-goal-ring={progress==null?"none":Math.round(v*100)} data-my-goal-projected={progress==null?"none":Math.round(pv*100)} width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img"
+      aria-label={progress==null?"目標は未設定":`確定分は目標の${Math.round(v*100)}%・見込みを含めると${Math.round(pv*100)}%`} style={{flex:"0 0 auto"}}>
       <circle cx={size/2} cy={size/2} r={r} fill="none" stroke="var(--c-border)" strokeWidth="10"/>
-      {v>0&&<circle cx={size/2} cy={size/2} r={r} fill="none" stroke="var(--c-accent)" strokeWidth="10" strokeLinecap="butt"
-        strokeDasharray={`${c*v} ${c}`} transform={`rotate(-90 ${size/2} ${size/2})`}/>}
-      <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" style={{fontSize:20,fontWeight:700,fill:"var(--c-text)",fontVariantNumeric:"tabular-nums"}}>
+      {showP&&<g data-my-goal-arc="projected">{arc(pv,"var(--c-text4)")}</g>}
+      {v>0&&<g data-my-goal-arc="confirmed">{arc(v,"var(--c-accent)")}</g>}
+      <text x="50%" y={showP?"44%":"50%"} textAnchor="middle" dominantBaseline="central" style={{fontSize:20,fontWeight:700,fill:"var(--c-text)",fontVariantNumeric:"tabular-nums"}}>
         {progress==null?"—":`${Math.round(v*100)}%`}
       </text>
+      {showP&&<text x="50%" y="63%" textAnchor="middle" dominantBaseline="central" style={{fontSize:11,fill:"var(--c-text3)",fontVariantNumeric:"tabular-nums"}}>見込み {Math.round(pv*100)}%</text>}
     </svg>
+  );
+}
+// 合計・確定分・見込み・勤務時間と、目標を設定したときのグラフ（月と年で同じ表示・2026-10-05）。
+// data＝{total, confirmedTotal, projectedTotal, workMin, hasAmount, partial}、summary＝myPaySummaryOf／myPayYearGoalOf の戻り値
+function MyPaySummaryBody({data,summary}){
+  const ring=summary.showRing;
+  const sub={fontWeight:ring?400:700,color:"var(--c-text)",fontSize:ring?13:16};
+  return(
+    <div style={{display:"flex",gap:16,alignItems:"center"}}>
+      {ring&&<MyGoalRing progress={summary.progress} projected={summary.projectedProgress}/>}
+      <div style={{flex:1,minWidth:0}}>
+        <div style={MY_LABEL}>合計（目安）</div>
+        <div data-my-pay-total={data.total} style={{fontSize:ring?24:30,fontWeight:700,color:"var(--c-text)",fontVariantNumeric:"tabular-nums",lineHeight:1.2}}>{data.hasAmount?(data.partial?"＋":"")+fmtMyYen(data.total):"—"}</div>
+        <div style={{display:"grid",gridTemplateColumns:ring?"1fr":"repeat(2,minmax(0,1fr))",columnGap:12,fontSize:13,color:"var(--c-text2)",marginTop:6,lineHeight:1.8,fontVariantNumeric:"tabular-nums"}}>
+          <div data-my-pay-confirmed={data.confirmedTotal}>{ring&&<span aria-hidden="true" style={{display:"inline-block",width:8,height:8,borderRadius:4,background:"var(--c-accent)",marginRight:5}}/>}確定分（今日まで）{ring?" ":<br/>}<span style={sub}>{data.hasAmount?fmtMyYen(data.confirmedTotal):"—"}</span></div>
+          <div data-my-pay-projected={data.projectedTotal}>{ring&&<span aria-hidden="true" style={{display:"inline-block",width:8,height:8,borderRadius:4,background:"var(--c-text4)",marginRight:5}}/>}これからの見込み{ring?" ":<br/>}<span style={sub}>{data.hasAmount?fmtMyYen(data.projectedTotal):"—"}</span></div>
+        </div>
+        <div data-my-pay-workmin={data.workMin} style={{fontSize:13,color:"var(--c-text2)",marginTop:4,fontVariantNumeric:"tabular-nums"}}>勤務時間 {fmtMin(data.workMin)||"0:00"}</div>
+      </div>
+    </div>
   );
 }
 const _myYmLabel=ym=>`${Number(String(ym).slice(0,4))}年${Number(String(ym).slice(5,7))}月`;
@@ -1839,8 +1896,10 @@ function MyPayTab({me,personal,onGoSettings}){
   const[bulk,setBulk]=useState(false);   // 年の表示の「これまでの給料をまとめて入力」
   const[bulkMsg,setBulkMsg]=useState({});
   useEffect(()=>{setBulk(false);setBulkMsg({});},[year,view]);
-  // 勤務先ごとの給料設定（Shifty の店舗・手入力の勤務先）。未設定の勤務先は MY_PAY_DEFAULT で振り分ける
-  const ownPays=useMemo(()=>Object.values(P.workplaces||{}).map(r=>r&&myPayOf(r.pay)),[P.workplaces]);
+  // 勤務先ごとの給料設定（Shifty の店舗・手入力の勤務先）。未設定の勤務先は MY_PAY_DEFAULT で振り分ける。
+  // お店が締日・給料日を登録していれば（settings.payCalendar・2026-10-05）そちらを優先する＝読む範囲にも入れる
+  const[shopCals,setShopCals]=useState({});
+  const ownPays=useMemo(()=>[...Object.values(P.workplaces||{}).map(r=>r&&myPayOf(r.pay)),...Object.values(shopCals)],[P.workplaces,shopCals]);
   useEffect(()=>{if(payYm===null&&P.state!=="loading")setPayYm(myDefaultPayMonth(ownPays.filter(Boolean).length?ownPays:[MY_PAY_DEFAULT],todayStr));},[payYm,P.state,ownPays,todayStr]);
   const ym=payYm||myDefaultPayMonth([MY_PAY_DEFAULT],todayStr);
   // 読む日の範囲（表示中の支給月、年の表示なら12か月分）。全勤務先の設定と既定の振り分けの両方を含める
@@ -1852,6 +1911,11 @@ function MyPayTab({me,personal,onGoSettings}){
   const pick=useCallback(ps=>range?myPeriodsInRange(ps,range.from,range.to):[],[range&&range.from,range&&range.to]);
   const{links,okLinks,badLinks,shops,subs,pending}=useMyShiftSources(me,pick);
   const premium=myShiftPremiumOf(okLinks.map(l=>shops[l.shopId]&&shops[l.shopId].plan));
+  useEffect(()=>{
+    const m={};
+    okLinks.forEach(l=>{const sh=shops[l.shopId];const c=sh&&sh.ok?normalizePayCalendar(sh.settings&&sh.settings.payCalendar):null;if(c)m[l.shopId]=c;});
+    setShopCals(p=>JSON.stringify(p)===JSON.stringify(m)?p:m);
+  },[okLinks,shops]);
   const wpList=useMemo(()=>myWorkplaceList(okLinks,P.workplaces),[okLinks,P.workplaces]);
   // 会社が登録した賃金（E6・getMyPay）。読み込み中の店舗は計算を待つ（本人の設定で一度出してから変わらないように）
   const companyPays=useMyCompanyPays(me,okLinks);
@@ -1870,6 +1934,8 @@ function MyPayTab({me,personal,onGoSettings}){
       if(w.kind==="manual")return{...base,manualEntries:manualDays.filter(e=>e.workplaceId===w.id)};
       const l=okLinks.find(x=>x.shopId===w.id);const sh=shops[w.id];
       if(!l||!sh||!sh.ok)return null;
+      // お店の締日・給料日が本人の設定より優先（2026-10-05）
+      base.pay=myPayWithShopCalendar(base.pay,sh.settings&&sh.settings.payCalendar);
       const hd=helperByHome[w.id];
       const src={name:l.name,periods:sh.periods,subsByPeriod:mySubsByPeriodOf(w.id,sh,subs),settings:sh.settings,staff:sh.staff,todayStr,premium,
         overrides:(P.overrides||{})[w.id],helperDays:hd?hd.byDate:null,movedDates:moved[w.id]||[]};
@@ -1884,8 +1950,12 @@ function MyPayTab({me,personal,onGoSettings}){
     }).filter(Boolean);
   },[wpList,okLinks,shops,subs,premium,todayStr,P.shifts,P.overrides,companyPays,helperByHome]);
   const month=useMemo(()=>premium&&view==="month"?myPayMonthFor({payYm:ym,workplaces,todayStr}):null,[premium,view,ym,workplaces,todayStr]);
-  const yearRows=useMemo(()=>premium&&view==="year"?myPayYearSummary(myPayYearMonths(year).map(m=>myPayMonthFor({payYm:m,workplaces,todayStr})),X.received):null,
-    [premium,view,year,workplaces,todayStr,X.received]);
+  const yearMonths=useMemo(()=>premium&&view==="year"?myPayYearMonths(year).map(m=>myPayMonthFor({payYm:m,workplaces,todayStr})):null,
+    [premium,view,year,workplaces,todayStr]);
+  const yearRows=useMemo(()=>yearMonths?myPayYearSummary(yearMonths,X.received):null,[yearMonths,X.received]);
+  // 年の勤務先ごとの収入（2026-10-05）と、年の目標（月間目標×12）のグラフ
+  const yearByWp=useMemo(()=>yearMonths?myPayYearByWorkplace(yearMonths,X.received):null,[yearMonths,X.received]);
+  const yearGoal=myPayYearGoalOf(yearRows,X.goal);
   const loading=pending||helper.pending||P.state==="loading"||X.state==="loading"||okLinks.some(l=>!companyPays[l.shopId]);
   const canEdit=premium&&X.state==="ok";
   const navBtn={background:"none",border:"1px solid var(--c-border2)",borderRadius:8,minWidth:44,minHeight:40,fontSize:18,color:"var(--c-text2)",cursor:"pointer"};
@@ -1923,18 +1993,7 @@ function MyPayTab({me,personal,onGoSettings}){
         {premium&&<section style={{...MY_SECTION,padding:"16px"}} data-my-pay-summary={month&&month.hasAmount?"amount":"none"} data-my-pay-goal={summary.showRing?"set":"none"}>
           {loading?<div style={{fontSize:14,color:"var(--c-text3)"}}>読み込み中…</div>:month&&(
             // 月間目標は任意（2026-10-04 ユーザー指示）。目標を設定したときだけ円グラフを出し、無ければ合計・確定分・見込みだけを大きく出す
-            <div style={{display:"flex",gap:16,alignItems:"center"}}>
-              {summary.showRing&&<MyGoalRing progress={summary.progress}/>}
-              <div style={{flex:1,minWidth:0}}>
-                <div style={MY_LABEL}>合計（目安）</div>
-                <div data-my-pay-total={month.total} style={{fontSize:summary.showRing?24:30,fontWeight:700,color:"var(--c-text)",fontVariantNumeric:"tabular-nums",lineHeight:1.2}}>{month.hasAmount?(month.partial?"＋":"")+fmtMyYen(month.total):"—"}</div>
-                <div style={{display:"grid",gridTemplateColumns:summary.showRing?"1fr":"repeat(2,minmax(0,1fr))",columnGap:12,fontSize:13,color:"var(--c-text2)",marginTop:6,lineHeight:1.8,fontVariantNumeric:"tabular-nums"}}>
-                  <div data-my-pay-confirmed={month.confirmedTotal}>確定分（今日まで）{summary.showRing?" ":<br/>}<span style={{fontWeight:summary.showRing?400:700,color:"var(--c-text)",fontSize:summary.showRing?13:16}}>{month.hasAmount?fmtMyYen(month.confirmedTotal):"—"}</span></div>
-                  <div data-my-pay-projected={month.projectedTotal}>これからの見込み{summary.showRing?" ":<br/>}<span style={{fontWeight:summary.showRing?400:700,color:"var(--c-text)",fontSize:summary.showRing?13:16}}>{month.hasAmount?fmtMyYen(month.projectedTotal):"—"}</span></div>
-                </div>
-                <div data-my-pay-workmin={month.workMin} style={{fontSize:13,color:"var(--c-text2)",marginTop:4,fontVariantNumeric:"tabular-nums"}}>勤務時間 {fmtMin(month.workMin)||"0:00"}</div>
-              </div>
-            </div>
+            <MyPaySummaryBody data={month} summary={summary}/>
           )}
           {!loading&&month&&summary.missingWage.length>0&&<div data-my-pay-nowage={summary.allMissing?"all":"some"} style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.7,marginTop:10,paddingTop:10,borderTop:"1px solid var(--c-border)"}}>
             {summary.allMissing?"時給（日給）が未設定のため、金額を計算できません。勤務時間だけを表示しています。"
@@ -1942,7 +2001,7 @@ function MyPayTab({me,personal,onGoSettings}){
             {onGoSettings&&canEdit&&<button data-my-action="goWage" onClick={onGoSettings} style={{...MY_LINK_BTN,display:"block",padding:"4px 0 0",fontSize:13}}>設定で時給を入れる</button>}
           </div>}
           {!loading&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginTop:10}}>
-            {summary.showRing?`月間目標 ${fmtMyYen(X.goal)} に対する確定分の割合です。`:<>月間目標（任意）を設定すると、確定分の進み具合がグラフで出ます。{onGoSettings&&<button data-my-action="goGoal" onClick={onGoSettings} style={{...MY_LINK_BTN,padding:"0 0 0 4px",fontSize:12}}>設定する</button>}</>}
+            {summary.showRing?`月間目標 ${fmtMyYen(X.goal)} に対する割合です（オレンジが確定分、グレーがこれからの見込みまで）。`:<>月間目標（任意）を設定すると、確定分の進み具合がグラフで出ます。{onGoSettings&&<button data-my-action="goGoal" onClick={onGoSettings} style={{...MY_LINK_BTN,padding:"0 0 0 4px",fontSize:12}}>設定する</button>}</>}
           </div>}
         </section>}
         {premium&&!loading&&month&&<div data-my-pay-estimate="1" style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,margin:"-6px 4px 12px"}}>
@@ -1977,6 +2036,39 @@ function MyPayTab({me,personal,onGoSettings}){
           <div data-my-pay-year={year} style={{fontSize:16,fontWeight:700,color:"var(--c-text)"}}>{year}年の支給</div>
           <button data-my-pay-nav="nextYear" aria-label="次の年" onClick={()=>setYear(y=>y+1)} style={navBtn}>›</button>
         </div>
+        {premium&&<section style={{...MY_SECTION,padding:"16px"}} data-my-pay-year-summary={yearRows&&yearRows.hasAmount?"amount":"none"} data-my-pay-goal={yearGoal.showRing?"set":"none"}>
+          {loading?<div style={{fontSize:14,color:"var(--c-text3)"}}>読み込み中…</div>:yearRows&&<MyPaySummaryBody data={yearRows} summary={yearGoal}/>}
+          {!loading&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7,marginTop:10}}>
+            {yearGoal.showRing?`年間の目標（月間目標 ${fmtMyYen(X.goal)} × ${MY_PAY_YEAR_GOAL_MONTHS} ＝ ${fmtMyYen(yearGoal.goal)}）に対する割合です（オレンジが確定分、グレーがこれからの見込みまで）。`
+              :<>月間目標（任意）を設定すると、年間（×{MY_PAY_YEAR_GOAL_MONTHS}）の進み具合がグラフで出ます。{onGoSettings&&<button data-my-action="goGoalYear" onClick={onGoSettings} style={{...MY_LINK_BTN,padding:"0 0 0 4px",fontSize:12}}>設定する</button>}</>}
+          </div>}
+        </section>}
+        {/* 勤務先ごとの年間の収入（2026-10-05 ユーザー指示「月のように勤務先別の収入を出す」）。内訳は支給月ごと */}
+        {premium&&!loading&&yearByWp&&yearByWp.map(w=>(
+          <section key={w.id} data-my-pay-year-wp={w.id} style={{...MY_SECTION,padding:"14px 16px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <span aria-hidden="true" style={{flex:"0 0 auto",width:10,height:10,borderRadius:5,background:w.color}}/>
+              <div style={{flex:1,minWidth:0,fontSize:15,fontWeight:700,color:"var(--c-text)",overflowWrap:"anywhere"}}>{w.name}</div>
+              <div data-my-pay-year-wp-total={w.total==null?"none":w.total} style={{fontSize:16,fontWeight:700,color:"var(--c-text)",fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>{w.total==null?"—":(w.partial?"＋":"")+fmtMyYen(w.total)}</div>
+            </div>
+            <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginTop:2,fontVariantNumeric:"tabular-nums"}}>
+              {fmtMin(w.workMin)||"0:00"}
+              {w.total!=null&&` ／ 確定 ${fmtMyYen(w.confirmedTotal)}`}
+              {w.hasReceived&&` ／ 振込額 ${fmtMyYen(w.received)}`}
+              {w.total==null&&<span data-my-pay-year-wp-nowage="1"> ／ 時給が未設定</span>}
+            </div>
+            <button data-my-action="payYearWpDetail" aria-expanded={!!open["y:"+w.id]} onClick={()=>setOpen(o=>({...o,["y:"+w.id]:!o["y:"+w.id]}))} style={{...MY_LINK_BTN,padding:"6px 0"}}>{open["y:"+w.id]?"内訳を閉じる":"内訳"}</button>
+            {open["y:"+w.id]&&<div data-my-pay-year-wp-detail={w.id} style={{fontSize:13,color:"var(--c-text2)",padding:"4px 0"}}>
+              {w.months.filter(m=>m.total||m.workMin).length?w.months.filter(m=>m.total||m.workMin).map(m=>(
+                <button key={m.payYm} data-my-pay-year-wp-month={m.payYm} onClick={()=>{setPayYm(m.payYm);setView("month");}}
+                  style={{display:"flex",justifyContent:"space-between",gap:12,width:"100%",background:"none",border:"none",borderTop:"1px solid var(--c-border)",padding:"6px 0",fontSize:13,color:"var(--c-text2)",cursor:"pointer",textAlign:"left"}}>
+                  <span>{Number(m.payYm.slice(5))}月支給 <span style={{color:"var(--c-text3)"}}>{fmtMin(m.workMin)||"0:00"}</span></span>
+                  <span style={{fontVariantNumeric:"tabular-nums",color:"var(--c-text)"}}>{m.total==null?"—":fmtMyYen(m.total)}</span>
+                </button>
+              )):<div style={{color:"var(--c-text3)"}}>この年の勤務はありません。</div>}
+            </div>}
+          </section>
+        ))}
         <section style={{...MY_SECTION,padding:"6px 16px"}} data-my-pay-yeartable="1">
           {loading&&premium?<div style={{fontSize:14,color:"var(--c-text3)",padding:"10px 0"}}>読み込み中…</div>:(()=>{
             const rows=yearRows?yearRows.rows:myPayYearMonths(year).map(m=>({payYm:m,total:null,workMin:null,received:myReceivedSum(X.received,m),hasReceived:!!(X.received||{})[m]}));
@@ -2222,7 +2314,9 @@ function MyAuthScreen({shopId,onClose}){
 function MyAccountShiftPager({me,personal,shopId,onGoSettings}){
   const src=useMyAllShiftSources(me);
   const todayStr=fd(new Date());
-  const choices=useMemo(()=>myAllShiftChoices({shops:src.shops,preferredShopId:shopId,todayStr}),[src.shops,shopId,todayStr]);
+  // ヘルプ先の店舗（確定済みの期間だけ・2026-10-05）。提出は src の部分読み（need）がそのまま読む
+  const helpDest=useMyHelpDestShops(src.shops);
+  const choices=useMemo(()=>myAllShiftChoices({shops:[...src.shops,...helpDest],preferredShopId:shopId,todayStr}),[src.shops,helpDest,shopId,todayStr]);
   const panes=[{key:"mine",label:"自分のシフト",node:<MyShiftTab me={me} personal={personal} onGoSettings={onGoSettings}/>}];
   if(choices.shops.length)panes.push({key:"all",label:"全員のシフト",node:<MyAllShiftPane choices={choices} subsFor={src.subsFor} onNeed={src.need}/>});
   return <MyShiftPager panes={panes}/>;
@@ -2577,11 +2671,11 @@ function MyAllShiftPane({choices,subsFor,onNeed}){
   const many=choices.shops.length>1;
   const lab={...MY_LABEL,marginBottom:4};
   return(
-    <div data-my-all-pane="1" data-my-all-shop-sel={sid} data-my-all-period-sel={pid}>
+    <div data-my-all-pane="1" data-my-all-shop-sel={sid} data-my-all-period-sel={pid} data-my-all-helpdest={cur.shop.helpDest?"1":"0"}>
       <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:10}}>
         {many&&<label style={{flex:"1 1 140px",minWidth:0}}><span style={lab}>お店</span>
           <select data-my-all-shop="1" value={sid} onChange={e=>setSel({shopId:e.target.value,periodId:null})} style={{...AI,padding:"9px 10px"}}>
-            {choices.shops.map(s=><option key={s.shopId} value={s.shopId}>{s.shopName||s.shopId}</option>)}
+            {choices.shops.map(s=><option key={s.shopId} value={s.shopId}>{(s.shopName||s.shopId)+(s.helpDest?"（ヘルプ先）":"")}</option>)}
           </select></label>}
         <label style={{flex:"1 1 160px",minWidth:0}}><span style={lab}>期間</span>
           <select data-my-all-period="1" value={pid} onChange={e=>setSel({shopId:sid,periodId:e.target.value})} style={{...AI,padding:"9px 10px"}}>
@@ -2590,7 +2684,7 @@ function MyAllShiftPane({choices,subsFor,onNeed}){
       </div>
       {subs===undefined?<div data-my-all-loading="1" style={{fontSize:14,color:"var(--c-text3)",padding:"16px 4px"}}>読み込み中…</div>
         :subs===null?<MyMessage error="この期間のシフトを読み込めませんでした。時間をおいてもう一度開いてください"/>
-        :<MyAllShiftTable period={cur.period} staff={cur.shop.staff} settings={cur.shop.settings} subs={subs} plan={cur.shop.plan} me={cur.shop.name} shopId={sid} shopName={cur.shop.shopName}/>}
+        :<MyAllShiftTable period={cur.period} staff={cur.shop.staff} settings={cur.shop.settings} subs={subs} plan={cur.shop.plan} me={cur.shop.name} shopId={sid} shopName={cur.shop.shopName} helpDest={cur.shop.helpDest}/>}
     </div>
   );
 }
@@ -2663,10 +2757,64 @@ function useMyHelperShops(shopId,period){
   },[key]);
   return st;
 }
+// 全員のシフトのヘルプ先の店舗（2026-10-05 ユーザー指示）。自分の店舗（bases=[{shopId,name,settings,plan}]）ごとに企業の写しを読み、
+// 連携店舗（同じ法人）の settings・staff・periods を読んで、同じ人の登録がある店舗（myHelpDestRegs）を返す。
+// 提出はここでは読まない（選んだ期間だけを呼び出し側が部分読みする）。企業に連携していない店舗では他店を読まない。書き込みなし・30秒覚える。
+// 戻り値: myAllShiftChoices に足す店舗の配列 [{shopId, shopName, name（その店舗での登録名）, periods, settings（企業設定を重ねた）, staff, plan（自分の店舗のプラン）, helpDest:true}]
+function useMyHelpDestShops(bases){
+  const[st,setSt]=useState({}); // 自分の店舗ID → 配列
+  const list=Array.isArray(bases)?bases.filter(b=>b&&b.shopId&&b.name):[];
+  const key=list.map(b=>b.shopId+":"+b.name+":"+(b.plan||"")).join(",");
+  const listRef=useRef(list);listRef.current=list;
+  useEffect(()=>{
+    if(!key||!firebaseDB)return;
+    let alive=true;
+    listRef.current.forEach(b=>{
+      (async()=>{
+        const co=await _myHelperCached("company:"+b.shopId,()=>_myRead(`shops/${b.shopId}/company`));
+        const link=co&&co.ok&&co.v&&typeof co.v==="object"?co.v:null;
+        const shopsMap=link&&link.shops&&typeof link.shops==="object"?link.shops:null;
+        if(!shopsMap){if(alive)setSt(p=>({...p,[b.shopId]:[]}));return;}
+        const ids=Object.keys(shopsMap).filter(id=>id&&id!==b.shopId);
+        const metas=new Map(await Promise.all(ids.map(id=>readMyHelperShop(id).then(v=>[id,v],()=>[id,{ok:false}]))));
+        const nameOf=id=>typeof shopsMap[id]==="string"&&shopsMap[id]?shopsMap[id]:id;
+        const pre={};
+        metas.forEach((v,id)=>{if(v.ok)pre[id]=otherShopDataOf({name:nameOf(id),settings:v.settings,staff:v.staff,periods:v.periods});});
+        const regs=myHelpDestRegs({shopId:b.shopId,name:b.name,settings:b.settings,companyLink:link,otherShops:pre});
+        const rows=regs.map(r=>{
+          const v=metas.get(r.shopId);
+          const periods=Object.values(v.periods||{}).filter(q=>q&&q.id&&q.startDate&&q.endDate).sort((a,c)=>String(a.startDate).localeCompare(String(c.startDate)));
+          return{shopId:r.shopId,shopName:nameOf(r.shopId),name:r.name,periods,settings:applyCompanySettings(v.settings||makeSettings(r.shopId),link.settings||{}),
+            staff:v.staff||[],plan:b.plan,helpDest:true};
+        });
+        if(alive)setSt(p=>({...p,[b.shopId]:rows}));
+      })().catch(e=>{console.warn("全員のシフト: ヘルプ先の読み込みに失敗:",e&&e.code);if(alive)setSt(p=>({...p,[b.shopId]:[]}));});
+    });
+    return()=>{alive=false;};
+  },[key]);
+  return useMemo(()=>{
+    const own=new Set(list.map(b=>b.shopId));
+    const seen=new Set();
+    return list.flatMap(b=>st[b.shopId]||[]).filter(r=>!own.has(r.shopId)&&!seen.has(r.shopId)&&!!seen.add(r.shopId));
+  },[key,st]);
+}
+// 選んだ期間の提出だけを部分読みする（読んだ期間は覚えて読み直さない・書き込みなし）。subsFor(sid,pid): undefined＝読み込み中・null＝読めない
+function useMyPeriodSubsLoader(){
+  const[subs,setSubs]=useState({});
+  const startedRef=useRef(new Set());
+  const need=useCallback((sid,pid)=>{
+    const k=sid+"|"+pid;
+    if(startedRef.current.has(k))return;
+    startedRef.current.add(k);
+    readMyPeriodSubs(sid,pid).then(v=>setSubs(p=>({...p,[k]:v})));
+  },[]);
+  const subsFor=useCallback((sid,pid)=>subs[sid+"|"+pid],[subs]);
+  return{subsFor,need};
+}
 // 全員のシフト表（公開済みだけ）。**PDF のシフト表と同じ HTML**（buildMyShiftSheet → app-utils.js の shiftTableHtmlOf）を、
 // 比率を保ったまま画面の横幅に合わせて縮める（transform: scale・横スクロール 0・細部はピンチで拡大）。
 // 色は PDF と同じ固定色（白地・黒文字）なので、ダーク表示でも紙と同じ見た目になる
-function MyAllShiftTable({period,staff,settings,subs,plan,me,shopId,shopName}){
+function MyAllShiftTable({period,staff,settings,subs,plan,me,shopId,shopName,helpDest=false}){
   const boxRef=useRef(null),sheetRef=useRef(null);
   const[width,setWidth]=useState(0);
   const[nat,setNat]=useState(null); // 表の本来の大きさ {w,h}
@@ -2681,9 +2829,9 @@ function MyAllShiftTable({period,staff,settings,subs,plan,me,shopId,shopName}){
   const todayStr=fd(new Date());
   const premium=featureEnabled("myShift",{plan});
   // 他店でのヘルプ勤務（H2）。読み終えるまではヘルプなしの表を出し、読めたら差し替える（表が空のまま止まらない）
-  const helpers=useMyHelperShops(premium&&isPeriodPublished(period)?shopId:null,period);
-  const t=useMemo(()=>buildMyShiftSheet({period,staff,settings,subs,todayStr,premium,me,shopName,abbrToShop:abbrs,shopId,helpers}),
-    [period,staff,settings,subs,todayStr,premium,me,shopName,abbrs,shopId,helpers]);
+  const helpers=useMyHelperShops(premium&&(isPeriodPublished(period)||isPeriodConfirmed(period))?shopId:null,period);
+  const t=useMemo(()=>buildMyShiftSheet({period,staff,settings,subs,todayStr,premium,me,shopName,abbrToShop:abbrs,shopId,helpers,helpDest}),
+    [period,staff,settings,subs,todayStr,premium,me,shopName,abbrs,shopId,helpers,helpDest]);
   const helperState=!helpers?"loading":(helpers.failed||t.helperUnread)?"partial":helpers.companyLink?"ok":"none";
   // 他店の略称は昼夜の人数を出す店舗のときだけ読む
   useEffect(()=>{
@@ -2706,7 +2854,8 @@ function MyAllShiftTable({period,staff,settings,subs,plan,me,shopId,shopName}){
     <div ref={boxRef} data-my-all="1" data-my-all-helpers={helperState} style={{width:"100%",minWidth:0}}>
       {t.state==="ok"&&<div data-my-all-state="ok">
         <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.6,marginBottom:8}}>
-          {t.confirmed?"確定":"公開"}{(()=>{const d=new Date(t.publishedAt);return Number.isFinite(d.getTime())?`（${d.getMonth()+1}/${d.getDate()} 公開）`:"";})()}
+          {/* 提出だけが未確定なので、店舗が出したシフトは公開でも「確定」と表示する（2026-10-05 ユーザー指示） */}
+          {helpDest?"ヘルプ先 ／ ":""}確定{(()=>{const d=new Date(t.shownAt);return t.shownAt&&Number.isFinite(d.getTime())?`（${d.getMonth()+1}/${d.getDate()}）`:"";})()}
         </div>
         {helperState==="partial"&&<div data-my-all-helper-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8}}>
           ほかのお店でのヘルプ勤務の一部を読み込めませんでした。表に出ていない勤務があるかもしれません
@@ -2956,9 +3105,14 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
   // 全員のシフト（2026-10-04 改め）: 公開済みかつ直近3ヶ月の期間から選ぶ。提出は App の購読（直近3ヶ月の期間ごとの部分購読＋最新の期間）を
   // そのまま使う＝選択肢と同じ窓なので追加の読み込みは無い（店舗の subs 全件は読まない）。未公開の期間は選択肢にも出さない
   const todayStr=fd(new Date());
-  const allChoices=useMemo(()=>myAllShiftChoices({shops:shopId&&page.state==="ok"?[{shopId,shopName,name:page.name,periods,settings,staff:staffList,plan}]:[],todayStr}),
-    [shopId,shopName,page.state,page.name,periods,settings,staffList,plan,todayStr]);
-  const allSubsFor=useCallback((sid,pid)=>(Array.isArray(subs)?subs:[]).filter(s=>s&&s.periodId===pid),[subs]);
+  const homeShops=useMemo(()=>shopId&&page.state==="ok"?[{shopId,shopName,name:page.name,periods,settings,staff:staffList,plan}]:[],
+    [shopId,shopName,page.state,page.name,periods,settings,staffList,plan]);
+  // ヘルプ先の店舗（確定済みの期間だけ・2026-10-05）。その提出は選んだ期間だけを部分読みする（自分の店舗は App の購読をそのまま使う）
+  const helpDest=useMyHelpDestShops(homeShops);
+  const allChoices=useMemo(()=>myAllShiftChoices({shops:[...homeShops,...helpDest],todayStr}),[homeShops,helpDest,todayStr]);
+  const helpSubs=useMyPeriodSubsLoader();
+  const allSubsFor=useCallback((sid,pid)=>sid===shopId?(Array.isArray(subs)?subs:[]).filter(s=>s&&s.periodId===pid):helpSubs.subsFor(sid,pid),[subs,shopId,helpSubs.subsFor]);
+  const allNeed=useCallback((sid,pid)=>{if(sid!==shopId)helpSubs.need(sid,pid);},[shopId,helpSubs.need]);
   const unlockPay=r=>setPay({key:String(Date.now()),byShop:{[shopId]:myCompanyPayOf(r)}});
   if(!boot)return <MyPageStatusScreen state="loading" token={token} onClose={onClose}/>;
   if(boot.state!=="shop")return <MyPageStatusScreen state={boot.state==="invalid"?"invalid":"missing"} token={token} onClose={onClose}/>;
@@ -2987,7 +3141,7 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
         <div style={{fontSize:13,color:"var(--c-text3)",marginBottom:4}} data-my-who="1">{page.name} さん ／ {shopName}</div>
         {tab==="shift"&&<MyShiftPager panes={[
           {key:"mine",label:"自分のシフト",node:<MyShiftTab me={me} personal={personal}/>},
-          ...(allChoices.shops.length?[{key:"all",label:"全員のシフト",node:<MyAllShiftPane choices={allChoices} subsFor={allSubsFor}/>}]:[]),
+          ...(allChoices.shops.length?[{key:"all",label:"全員のシフト",node:<MyAllShiftPane choices={allChoices} subsFor={allSubsFor} onNeed={allNeed}/>}]:[]),
         ]}/>}
         {tab==="pay"&&(pay?<div data-my-pay-unlocked="1">
           <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>

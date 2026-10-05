@@ -1754,6 +1754,8 @@ function App(){
       if(location.hash!==h){
         const url=location.pathname+location.search+h;
         if(overlayPushRef.current)history.replaceState({shiftyOverlay:h},"",url);else history.pushState({shiftyOverlay:h},"",url);
+        // pushState・replaceState は hashchange を出さないので、ホーム画面のアプリの開き先（manifest）をここで合わせる
+        applyHomeLaunch();
       }
       overlayPushRef.current=h;overlayLastRef.current={hash:h,kind,token:token||null,base};
     }catch(e){console.warn("URLを切り替えられませんでした:",e);}

@@ -389,7 +389,7 @@ function _myU(U){
     // 全員のシフト表は PDF のシフト表と同じ関数（2026-10-04）
     isUnregisteredSubName,gd,isFixedShiftEligibleShop,oneSidedFillBounds,headcountAtOf,heatStaffDayEntriesOf,shiftSheetHeadcountOf,shiftTableHtmlOf,shiftSheetCellOf,shiftSheetStoredText,
     // 全員のシフト表の他店でのヘルプ勤務（H2）。PDF（シフト作成タブの helperDisp）と同じ関数
-    helperShopsOf,helperPersonOf,helperWorkOn,helperCellDisplay,effShiftRangeMin,shiftSheetDecimal,shiftSheetFixedKey,otherShopDataOf,
+    helperShopsOf,helperPersonOf,helperWorkOn,samePersonRegistrations,helperCellDisplay,effShiftRangeMin,shiftSheetDecimal,shiftSheetFixedKey,otherShopDataOf,
     // 本人のカレンダーと給料のヘルプ勤務（2026-10-04 B）。行き先の店の設定（helperShopSettingsOn）で引く＝管理者画面の合算（P3.6）と同じ
     helperShopSettingsOn,fmtMin,
     // 給料（E5）: 月次賃金ページ（P6b）・割増（P5）と同じ関数
@@ -924,7 +924,7 @@ function buildMyIcs(entries,o){
         :`shifty-${_icsUidPart(e.shopId)}-${e.date.replace(/-/g,"")}${g.extra?`-x${++ex}`:""}`;
       const desc=[];
       // 時刻は公開内容（本人の実績の上書きは給料計算にだけ効く＝カレンダーには出さない・2026-10-04）
-      if(e.kind==="published")desc.push(e.confirmed?"確定":"公開");
+      if(e.kind==="published")desc.push("確定"); // 公開でも「確定」と出す（2026-10-05）
       if(!g.extra&&e.breakMin>0)desc.push(`休憩${e.breakMin}分`);
       if(e.memo)desc.push(e.memo);
       L.push("BEGIN:VEVENT",`UID:${uid}@${MY_ICS_DOMAIN}`,`DTSTAMP:${stamp}`,`SEQUENCE:${seq}`,
@@ -1127,15 +1127,53 @@ function myPayOf(v){
     wageType:MY_PAY_WAGE_TYPES.includes(o.wageType)?o.wageType:"hourly",rate:rate>0?rate:0,
     commute:{amount:ca>0?ca:0,per:cm.per==="day"?"day":"month"},night:o.night===true,over8:o.over8===true};
 }
-// 入力欄の値（文字列）の検証。ctx={kind:"shifty"|"manual", companyPay:boolean}。会社設定があるなら時給・交通費は入力しない
-function validateMyPayInput(o,ctx){
-  const x=o||{},c=ctx||{};
+// ---- お店が登録する締日・給料日（2026-10-05 ユーザー指示「管理者画面の設定タブと企業連携タブで給料日と締め日を登録。スタッフの登録より優先」）----
+// settings.payCalendar={closingDay, payMonthOffset, payDay, holidayRule, updatedAt}（締日・給料日の 31 は末日）。賃金ではないので settings に置く。
+// マイシフトの給料の見込みは、紐付いた Shifty の店舗にこれがあれば本人の締日・給料日の代わりに使う（myPayWithShopCalendar）。
+// 検証は本人の給料設定と同じ規則（validatePayCalendarInput を validateMyPayInput も通す）
+function validatePayCalendarInput(o){
+  const x=o||{};
   const cd=_myInt(x.closingDay),pd0=_myInt(x.payDay),off=_myInt(x.payMonthOffset);
   if(!(cd>=1&&cd<=31))return"締日を選んでください";
   if(![0,1,2].includes(off))return"給料日の月を選んでください";
   if(!(pd0>=1&&pd0<=31))return"給料日を選んでください";
   if(!MY_PAY_HOLIDAY_RULES.includes(x.holidayRule))return"土日祝の扱いを選んでください";
   if(off===0&&pd0<=cd)return"当月払いのときは、給料日を締日より後の日にしてください";
+  return null;
+}
+// 保存された値の読み（壊れた・矛盾した記録は使わない＝null＝本人の設定のまま）
+function normalizePayCalendar(v){
+  const o=_myObj(v);
+  if(!o||validatePayCalendarInput(o))return null;
+  return{closingDay:_myInt(o.closingDay),payMonthOffset:_myInt(o.payMonthOffset),payDay:_myInt(o.payDay),holidayRule:o.holidayRule};
+}
+function buildPayCalendarRecord(o,nowIso){
+  const x=o||{};
+  return{closingDay:_myInt(x.closingDay),payMonthOffset:_myInt(x.payMonthOffset),payDay:_myInt(x.payDay),holidayRule:x.holidayRule,updatedAt:String(nowIso||"")};
+}
+function payCalendarFormOf(v){
+  const c=normalizePayCalendar(v)||MY_PAY_DEFAULT;
+  return{closingDay:String(c.closingDay),payMonthOffset:String(c.payMonthOffset),payDay:String(c.payDay),holidayRule:c.holidayRule};
+}
+// 「25日締め・翌月10日払い（土日祝は前倒し）」
+function payCalendarText(v){
+  const c=normalizePayCalendar(v);
+  if(!c)return"";
+  return`${myPayDayLabel(c.closingDay)}締め・${MY_PAY_OFFSET_LABELS[c.payMonthOffset]}${myPayDayLabel(c.payDay)}払い（土日祝は${MY_PAY_HOLIDAY_RULE_LABELS[c.holidayRule]}）`;
+}
+// 本人の給料設定（myPayOf の値か null）にお店の締日・給料日を重ねる。お店の登録が無ければ本人の設定のまま。
+// 本人が給料を設定していなくても、お店の締日・給料日で振り分ける（時給などは未設定＝時間だけ）。calendarFrom:"shop" が印
+const MY_PAY_BLANK_WAGE={wageType:"hourly",rate:0,commute:{amount:0,per:"month"},night:false,over8:false};
+function myPayWithShopCalendar(own,cal){
+  const c=normalizePayCalendar(cal);
+  if(!c)return own||null;
+  return{...MY_PAY_BLANK_WAGE,...(own||{}),...c,calendarFrom:"shop"};
+}
+// 入力欄の値（文字列）の検証。ctx={kind:"shifty"|"manual", companyPay:boolean}。会社設定があるなら時給・交通費は入力しない
+function validateMyPayInput(o,ctx){
+  const x=o||{},c=ctx||{};
+  const ce=validatePayCalendarInput(x);
+  if(ce)return ce;
   if(c.companyPay)return null;
   if(!MY_PAY_WAGE_TYPES.includes(x.wageType))return"時給か日給かを選んでください";
   const r=_myYenInput(x.rate);
@@ -1437,6 +1475,7 @@ function myPayMonthFor(o,U){
     const plan=myPayPlanOf(x.payYm,own,isOff);
     const notes=[];
     if(!own)notes.push("締日と給料日が未設定のため、月末締め・翌月25日払い（土日祝は前倒し）として振り分けています");
+    else if(own.calendarFrom==="shop")notes.push(`締日・給料日はお店の登録（${payCalendarText(own)}）で振り分けています`);
     let times;
     if(wp.kind==="manual")times=myManualPayTimes(wp.manualEntries,plan.from,plan.to,x.todayStr,u);
     else times=myShiftyPayTimes({name:wp.shifty.name,info:wp.shifty.info,monthSettingsOf:wp.shifty.monthSettingsOf,from:plan.from,to:plan.to,todayStr:x.todayStr},u);
@@ -1479,7 +1518,41 @@ function myPaySummaryOf(month,goal){
   const g=Number(goal)>0?Number(goal):0;
   const rows=month&&Array.isArray(month.rows)?month.rows:[];
   const missing=rows.filter(r=>r&&r.amounts&&r.amounts.total==null).map(r=>r.name);
-  return{showRing:g>0,progress:g>0&&month?myGoalProgress(month.confirmedTotal,g):null,missingWage:missing,allMissing:rows.length>0&&missing.length===rows.length};
+  // projectedProgress＝合計（確定分＋これからの見込み）の割合。グラフは確定分をアクセント、見込みまでを下地より濃いグレーで重ねる（2026-10-05）
+  return{showRing:g>0,progress:g>0&&month?myGoalProgress(month.confirmedTotal,g):null,
+    projectedProgress:g>0&&month?myGoalProgress(Math.max(Number(month.confirmedTotal)||0,Number(month.total)||0),g):null,
+    missingWage:missing,allMissing:rows.length>0&&missing.length===rows.length};
+}
+// 年の目標（月間目標×12）に対する進み具合（2026-10-05 ユーザー指示「年間の金額も月と同じ仕様のグラフで」）。
+// year＝myPayYearSummary の戻り値。戻り値は myPaySummaryOf と同じ形（missingWage は年の表示では使わない＝空）
+const MY_PAY_YEAR_GOAL_MONTHS=12;
+function myPayYearGoalOf(year,goal){
+  const g=Number(goal)>0?Number(goal)*MY_PAY_YEAR_GOAL_MONTHS:0;
+  return{showRing:g>0,goal:g,progress:g>0&&year?myGoalProgress(year.confirmedTotal,g):null,
+    projectedProgress:g>0&&year?myGoalProgress(Math.max(Number(year.confirmedTotal)||0,Number(year.total)||0),g):null,missingWage:[],allMissing:false};
+}
+// 年の勤務先ごとの収入（2026-10-05 ユーザー指示「年間の給料でも月と同じように勤務先別の収入を出す」）。months＝支給月ごとの myPayMonthFor の戻り値、
+// received＝振込額。戻り値 [{id, kind, name, color, total（金額を1つも出せなければ null）, confirmedTotal, projectedTotal, workMin, partial,
+//   received, hasReceived, months:[{payYm, total|null, workMin}]}]（並びは最初に出てきた順＝月の表示と同じ）
+function myPayYearByWorkplace(months,received){
+  const rc=_myObj(received)||{};const map=new Map();
+  const list=(months||[]).filter(Boolean);
+  list.forEach(m=>(m.rows||[]).forEach(r=>{
+    if(!r||!r.id)return;
+    let w=map.get(r.id);
+    if(!w){w={id:r.id,kind:r.kind,name:r.name,color:r.color,total:0,confirmedTotal:0,projectedTotal:0,workMin:0,hasAmount:false,partial:false,months:[]};map.set(r.id,w);}
+    const a=r.amounts||{};const has=a.total!=null;
+    if(has){w.total+=a.total;w.confirmedTotal+=a.confirmedTotal||0;w.projectedTotal+=a.projectedTotal||0;w.hasAmount=true;}
+    const wm=(a.minutes&&a.minutes.workMin)||0;w.workMin+=wm;
+    if(r.partial)w.partial=true;
+    w.months.push({payYm:m.payYm,total:has?a.total:null,workMin:wm});
+  }));
+  return[...map.values()].map(w=>{
+    let sum=0,has=false;
+    list.forEach(m=>{const v=((rc[m.payYm])||{})[w.id];if(v!=null&&Number(v)>=0){sum+=Math.round(Number(v));has=true;}});
+    const{hasAmount,...rest}=w;
+    return{...rest,total:hasAmount?w.total:null,received:sum,hasReceived:has};
+  });
 }
 // 年（暦年）の支給月ごとの一覧と合計。received は users/{uid}/actuals（{支給月: {勤務先: 円}}）
 function myPayYearMonths(year){return Array.from({length:12},(_,i)=>`${year}-${String(i+1).padStart(2,"0")}`);}
@@ -1514,7 +1587,9 @@ function myReceivedBulkForm(received,year,wids){
 function myPayYearSummary(months,received){
   const rows=(months||[]).map(m=>({payYm:m.payYm,total:m.total,confirmedTotal:m.confirmedTotal,projectedTotal:m.projectedTotal,workMin:m.workMin,
     received:myReceivedSum(received,m.payYm),hasReceived:Object.keys(((_myObj(received)||{})[m.payYm])||{}).length>0}));
-  return{rows,total:rows.reduce((s,r)=>s+r.total,0),received:rows.reduce((s,r)=>s+r.received,0),workMin:rows.reduce((s,r)=>s+r.workMin,0)};
+  return{rows,total:rows.reduce((s,r)=>s+r.total,0),received:rows.reduce((s,r)=>s+r.received,0),workMin:rows.reduce((s,r)=>s+r.workMin,0),
+    confirmedTotal:rows.reduce((s,r)=>s+(r.confirmedTotal||0),0),projectedTotal:rows.reduce((s,r)=>s+(r.projectedTotal||0),0),
+    hasAmount:(months||[]).some(m=>m&&m.hasAmount),partial:(months||[]).some(m=>m&&m.partial)};
 }
 // 給料タブの既定の支給月: 今日の勤務が払われる支給月のうち最も早いもの（勤務先ごとに設定が違うため）
 function myDefaultPayMonth(pays,todayStr){
@@ -1752,7 +1827,8 @@ function buildMyShiftSheet(o,U){
   const u=_myU(U);const x=o||{};const p=x.period;
   if(!p||!p.id)return{state:"noPeriod"};
   if(!x.premium)return{state:"premium",period:p};
-  if(!u.isPeriodPublished(p))return{state:"unpublished",period:p};
+  // ヘルプ先の店舗（helpDest・2026-10-05）は確定済みの期間だけ。自分の店舗は公開済みから
+  if(x.helpDest?!u.isPeriodConfirmed(p):!u.isPeriodPublished(p))return{state:"unpublished",period:p};
   const master=u.resolvePeriodMaster(p,x.staff||[],x.settings||{},x.todayStr);
   const st=master.settings||{};
   const roster=master.staffList||[];
@@ -1835,7 +1911,10 @@ function buildMyShiftSheet(o,U){
       return u.shiftSheetCellOf({sh,field,hasSub:!!sh,helper:helperDispOf(nm,ds),r:u.shiftSheetStoredText(sh,field,fixedEnabled),
         otherDisp:u.shiftSheetStoredText(sh,field==="start"?"end":"start",fixedEnabled).disp});
     }});
-  return{state:"ok",period:p,confirmed:u.isPeriodConfirmed(p),publishedAt:p.published.at,html,
+  // 表の上の「確定（m/d）」の日付: 確定済みなら確定した日、公開だけなら公開した日（2026-10-05「公開」の表示を「確定」に）
+  const conf=u.isPeriodConfirmed(p);
+  return{state:"ok",period:p,confirmed:conf,publishedAt:(p.published&&p.published.at)||null,
+    shownAt:(conf&&p.confirmation&&p.confirmation.at)||(p.published&&p.published.at)||null,html,
     names:cols.filter(n=>!u.isSpacer(n)),headcount:!!cfg.enabled,
     helperUnread:Object.values(helperInfo).some(h=>h&&h.unread)};
 }
@@ -1868,13 +1947,41 @@ function myAllShiftPeriodOptions(periods,o,U){
 function myAllShiftChoices(o,U){
   const x=o||{};
   const featureEnabled_=_myU(U).featureEnabled;
-  // 渡された店舗のフィールド（settings・staff・plan 等＝表を作る材料）はそのまま持ち回る
-  const shops=(Array.isArray(x.shops)?x.shops:[]).filter(s=>s&&s.shopId).map(s=>({...s,shopName:s.shopName||"",name:s.name||"",
-    options:myAllShiftPeriodOptions(s.periods,{premium:featureEnabled_("myShift",{plan:s.plan}),todayStr:x.todayStr},U)})).filter(s=>s.options.length>0);
+  // 渡された店舗のフィールド（settings・staff・plan 等＝表を作る材料）はそのまま持ち回る。
+  // ヘルプ先の店舗（helpDest・2026-10-05）は**確定済み**の期間だけ（myHelpDestPeriodOptions）。同じ店舗が2回来たら先のもの（自分の店舗）を残す
+  const seen=new Set();
+  const shops=(Array.isArray(x.shops)?x.shops:[]).filter(s=>s&&s.shopId&&!seen.has(s.shopId)&&seen.add(s.shopId)).map(s=>{
+    const opt={premium:featureEnabled_("myShift",{plan:s.plan}),todayStr:x.todayStr};
+    return{...s,shopName:s.shopName||"",name:s.name||"",helpDest:!!s.helpDest,
+      options:s.helpDest?myHelpDestPeriodOptions(s.periods,opt,U):myAllShiftPeriodOptions(s.periods,opt,U)};
+  }).filter(s=>s.options.length>0);
+  // 既定の店舗はヘルプ先より自分の店舗を先に選ぶ（ヘルプ先しか無いときだけヘルプ先）
+  const pool=shops.some(s=>!s.helpDest)?shops.filter(s=>!s.helpDest):shops;
   let def=null;
-  if(x.preferredShopId&&shops.some(s=>s.shopId===x.preferredShopId))def=x.preferredShopId;
-  else shops.forEach(s=>{const d=String(s.options[0].startDate);if(!def||d>String(shops.find(t=>t.shopId===def).options[0].startDate))def=s.shopId;});
+  if(x.preferredShopId&&pool.some(s=>s.shopId===x.preferredShopId))def=x.preferredShopId;
+  else pool.forEach(s=>{const d=String(s.options[0].startDate);if(!def||d>String(pool.find(t=>t.shopId===def).options[0].startDate))def=s.shopId;});
   return{shops,defaultShopId:def};
+}
+// ---- 全員のシフトの「ヘルプ先」の店舗（2026-10-05 ユーザー指示「ヘルプ先のシフトを店舗の選択で見られるように。確定していたら表示」）----
+// 同じ人の他店舗での登録（企業の写しの人物、無ければ所属店舗の一致＝samePersonRegistrations・同じ法人の中だけ）がある店舗をヘルプ先とする。
+// o={shopId, name（自分の店舗での登録名）, settings, companyLink（shops/{sid}/company）, otherShops:{sid: otherShopDataOf の戻り値}}
+// 戻り値 [{shopId, name（その店舗での登録名）}]。読めなかった店舗・企業に連携していない店舗は出さない
+function myHelpDestRegs(o,U){
+  const u=_myU(U);const x=o||{};
+  const link=x.companyLink&&typeof x.companyLink==="object"?x.companyLink:null;
+  if(!link||!x.shopId||!x.name)return[];
+  const others=u.helperShopsOf(link,x.otherShops||{},x.shopId);
+  return u.samePersonRegistrations({shopId:x.shopId,name:x.name,settings:x.settings||{},people:link.people||null,otherShops:others,
+    entityId:typeof link.entityId==="string"?link.entityId:null}).filter(r=>others[r.shopId]&&!others[r.shopId].loadFailed);
+}
+// ヘルプ先の期間の選択肢: **確定済み**かつ startDate が直近3ヶ月（自分の店舗と同じ窓）。新しい順。premium は自分の店舗のプランで決める
+function myHelpDestPeriodOptions(periods,o,U){
+  const u=_myU(U);const x=o||{};
+  if(!x.premium)return[];
+  const cutoff=u.subsWindowCutoff(_myDateOf(x.todayStr));
+  return(Array.isArray(periods)?periods:[])
+    .filter(p=>p&&p.id&&/^\d{4}-\d{2}-\d{2}$/.test(String(p.startDate))&&String(p.startDate)>=cutoff&&u.isPeriodConfirmed(p))
+    .sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate))||String(b.id).localeCompare(String(a.id)));
 }
 // いま表示する店舗と期間。sel={shopId, periodId}（本人が選んだもの）が選択肢に無くなっていれば既定へ戻す（公開の取り下げ・3ヶ月の窓から外れた等）
 function myAllShiftSelection(choices,sel){
@@ -1895,10 +2002,10 @@ if(typeof module!=="undefined"&&module.exports){
     buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth,myIcsPlatformOf,MY_ICS_HINTS,MY_ICS_APP_GUIDE,myGoogleCalendarLinks,
     MY_IN_APP_BROWSERS,myInAppBrowserOf,myCalendarEnvOf,myCalendarPromptOf,MY_CAL_PROMPT_LS,myCalendarPromptKey,myCalendarPromptShown,MY_ICS_STANDALONE_NOTE,myExternalBrowserUrl,
     MY_PAY_END_DAY,MY_PAY_HOLIDAY_RULES,MY_PAY_HOLIDAY_RULE_LABELS,MY_PAY_WAGE_TYPES,MY_PAY_WAGE_TYPE_LABELS,MY_PAY_OFFSET_LABELS,MY_PAY_YEN_MAX,MY_PAY_GOAL_MAX,MY_PAY_DEFAULT,
-    MY_MANUAL_NIGHT_PCT,MY_MANUAL_OVER8_PCT,MY_MANUAL_OVER8_MIN,myPayDayLabel,myPayOf,validateMyPayInput,buildMyPayRecord,myPayFormOf,parseMyGoalInput,myGoalOf,parseMyReceivedInput,
+    MY_MANUAL_NIGHT_PCT,MY_MANUAL_OVER8_PCT,MY_MANUAL_OVER8_MIN,myPayDayLabel,myPayOf,validatePayCalendarInput,normalizePayCalendar,buildPayCalendarRecord,payCalendarFormOf,payCalendarText,MY_PAY_BLANK_WAGE,myPayWithShopCalendar,validateMyPayInput,buildMyPayRecord,myPayFormOf,parseMyGoalInput,myGoalOf,parseMyReceivedInput,
     myClampDay,myClosingMonthOf,myClosingRangeOf,myPayDateOf,myPayPlanOf,myPayMonthOfDate,myPeriodsInRange,myPayReadRange,myShiftyDayInfo,myOverrideDatesIn,myMonthSettingsOf,
-    myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPaySummaryOf,planMyReceivedBulk,myReceivedBulkForm,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
+    myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPaySummaryOf,MY_PAY_YEAR_GOAL_MONTHS,myPayYearGoalOf,myPayYearByWorkplace,planMyReceivedBulk,myReceivedBulkForm,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
     MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,planIssueStaffPage,resolveMyPage,MY_PAGE_STATE_MESSAGES,
-    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myPageOpenCandidates,myPickOpenablePage,myOverlayHashOf,buildMyAccountUrl,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myAllShiftSelection};
+    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myPageOpenCandidates,myPickOpenablePage,myOverlayHashOf,buildMyAccountUrl,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myHelpDestRegs,myHelpDestPeriodOptions,myAllShiftSelection};
 }

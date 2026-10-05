@@ -2160,6 +2160,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
       )}
       <div>{listShops.map(shopCard)}</div>
     </AC>}
+    {MY_SCREEN_ENABLED&&featureEnabled("myShift",{plan})&&listShops.length>0&&<CompanyPayCalendarCard listShops={listShops} shopId={shopId} settings={settings} onSave={onSave} tt={tt}/>}
     {companyInfo&&plan==="premium"&&<CompanyEntityCard companyId={companyInfo.companyId} shopNames={Object.fromEntries((allLinkedShops||[]).map(s=>[s.id,s.name]))} onCompanyCall={onCompanyCall} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt} onChanged={()=>setStructureTick(t=>t+1)} onOpenPayroll={onOpenPayroll}/>}
     {companyInfo&&plan==="premium"&&<CompanyConfigCard companyId={companyInfo.companyId} onSaveCompanyConfig={onSaveCompanyConfig} tt={tt}/>}
     <AC title="シフト作成タブでのヘルプ入力">
@@ -2173,6 +2174,125 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
     </AC>
     </>)}
   </div>);
+}
+
+// ===== 締日・給料日（2026-10-05 ユーザー指示「管理者画面の設定タブと企業連携タブの両方で給料日と締め日を登録。スタッフの登録より優先」）=====
+// settings.payCalendar（形と検証は app-my-utils.js の validatePayCalendarInput・buildPayCalendarRecord）。マイシフトの給料の見込みは
+// 本人が入れた締日・給料日よりこちらを優先する。賃金ではないので settings（店舗のスタッフも読める）に置く
+const PAY_CAL_DAY_OPTIONS=Array.from({length:31},(_,i)=>i+1);
+function PayCalendarFields({value,onChange,disabled=false}){
+  const f=value||{};
+  const sel=(label,key,options)=>(
+    <label style={{display:"block",minWidth:0}}>
+      <span style={{display:"block",fontSize:12,color:"var(--c-text3)",marginBottom:4}}>{label}</span>
+      <select data-pay-cal={key} disabled={disabled} value={f[key]} onChange={e=>onChange({...f,[key]:e.target.value})} style={{...AI,width:"100%",boxSizing:"border-box"}}>
+        {options.map(([v,l])=><option key={v} value={v}>{l}</option>)}
+      </select>
+    </label>
+  );
+  return(
+    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))",gap:10,marginBottom:10}}>
+      {sel("締日","closingDay",PAY_CAL_DAY_OPTIONS.map(d=>[String(d),myPayDayLabel(d)]))}
+      {sel("給料日の月","payMonthOffset",[0,1,2].map(k=>[String(k),MY_PAY_OFFSET_LABELS[k]]))}
+      {sel("給料日","payDay",PAY_CAL_DAY_OPTIONS.map(d=>[String(d),myPayDayLabel(d)]))}
+      {sel("給料日が土日祝なら","holidayRule",MY_PAY_HOLIDAY_RULES.map(k=>[k,MY_PAY_HOLIDAY_RULE_LABELS[k]]))}
+    </div>
+  );
+}
+// 設定タブのカード（この店舗）
+function PayCalendarCard({settings,onSave,tt,readOnly=false}){
+  const cur=normalizePayCalendar(settings&&settings.payCalendar);
+  const[f,setF]=useState(()=>payCalendarFormOf(settings&&settings.payCalendar));
+  const curKey=JSON.stringify(cur);
+  useEffect(()=>{setF(payCalendarFormOf(settings&&settings.payCalendar));},[curKey]);
+  const save=()=>{
+    const e=validatePayCalendarInput(f);
+    if(e){tt("✕ "+e);return;}
+    onSave({...settings,payCalendar:buildPayCalendarRecord(f,new Date().toISOString())});
+    tt("✓ 締日・給料日を保存しました");
+  };
+  const remove=()=>{
+    if(!window.confirm("締日・給料日の登録を消しますか？スタッフのマイシフトは、本人が入れた締日・給料日で計算するようになります。"))return;
+    const n={...settings};delete n.payCalendar;onSave(n);tt("✓ 締日・給料日の登録を消しました");
+  };
+  return(
+    <AC title="締日・給料日（スタッフのマイシフト）">
+      <div data-pay-cal-card="1" style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.7}}>
+        登録すると、スタッフのマイシフトの給料の見込みをこの締日・給料日で振り分けます（スタッフが自分で入れた締日・給料日より優先）。企業連携タブからも登録できます。
+      </div>
+      <div data-pay-cal-current="1" style={{fontSize:13,color:"var(--c-text2)",marginBottom:10}}>{cur?`登録中：${payCalendarText(cur)}`:"未登録（スタッフが入れた締日・給料日を使います）"}</div>
+      <PayCalendarFields value={f} onChange={setF} disabled={readOnly}/>
+      {!readOnly&&<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <button data-pay-cal-save="1" onClick={save} style={{...AB,padding:"8px 16px",fontSize:13}}>{cur?"変更":"登録"}</button>
+        {cur&&<button data-pay-cal-remove="1" onClick={remove} style={{...AGray,padding:"8px 14px",fontSize:13}}>登録を消す</button>}
+      </div>}
+    </AC>
+  );
+}
+// 企業連携タブのカード（連携店舗。選んだ店舗にまとめて登録）。表示中の店舗は saveSettings（onSave）、他店舗は settings/payCalendar だけを update する
+// （略称と同じ書き方。その店舗のオーナーでなければ拒否される）
+function CompanyPayCalendarCard({listShops,shopId,settings,onSave,tt}){
+  const[cals,setCals]=useState({});      // {shopId: payCalendar の値 | null}
+  const[checked,setChecked]=useState(null); // {shopId:true}（null＝全店舗）
+  const[f,setF]=useState(()=>payCalendarFormOf(settings&&settings.payCalendar));
+  const[busy,setBusy]=useState(false);
+  const ids=listShops.filter(sh=>sh&&sh.id).map(sh=>sh.id);
+  const idsKey=ids.join(",");
+  const load=()=>{
+    if(!firebaseDB)return;
+    Promise.all(ids.filter(id=>id!==shopId).map(id=>firebaseDB.ref(`shops/${id}/settings/payCalendar`).once("value").then(sn=>[id,sn.val()]).catch(()=>[id,undefined])))
+      .then(rows=>setCals(Object.fromEntries(rows)));
+  };
+  useEffect(load,[idsKey,shopId]);
+  const calOf=id=>id===shopId?(settings&&settings.payCalendar):cals[id];
+  const isOn=id=>checked===null?true:!!checked[id];
+  const toggle=id=>setChecked(c=>{const base=c===null?Object.fromEntries(ids.map(x=>[x,true])):c;return{...base,[id]:!base[id]};});
+  const targets=ids.filter(isOn);
+  const apply=async remove=>{
+    if(!targets.length){tt("✕ 店舗を選んでください");return;}
+    if(!remove){const e=validatePayCalendarInput(f);if(e){tt("✕ "+e);return;}}
+    if(remove&&!window.confirm(`選んだ${targets.length}店舗の締日・給料日の登録を消しますか？`))return;
+    const rec=remove?null:buildPayCalendarRecord(f,new Date().toISOString());
+    setBusy(true);
+    let ok=0;const failed=[];
+    for(const id of targets){
+      if(id===shopId){
+        const n={...settings};if(rec)n.payCalendar=rec;else delete n.payCalendar;
+        onSave(n);ok++;continue;
+      }
+      try{await fbUpd(`shops/${id}/settings`,{payCalendar:rec});ok++;}
+      catch{failed.push((listShops.find(x=>x.id===id)||{}).name||id);}
+    }
+    setBusy(false);load();
+    if(failed.length)tt(`△ ${ok}店舗に${remove?"反映":"保存"}しました。${failed.join("・")}は保存できませんでした（この店舗の管理者権限がありません）`);
+    else tt(`✓ ${ok}店舗の締日・給料日を${remove?"消しました":"保存しました"}`);
+  };
+  return(
+    <AC title="締日・給料日（スタッフのマイシフト）">
+      <div data-company-pay-cal="1" style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.7}}>
+        選んだ店舗にまとめて登録します。登録すると、その店舗のスタッフのマイシフトの給料の見込みはこの締日・給料日で振り分けます（スタッフが自分で入れた締日・給料日より優先）。各店舗の設定タブからも変更できます。
+      </div>
+      <div style={{marginBottom:10}}>
+        {listShops.filter(sh=>sh&&sh.id).map(sh=>{
+          const c=calOf(sh.id);
+          return(
+            <label key={sh.id} data-company-pay-cal-shop={sh.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderTop:"1px solid var(--c-border)",cursor:"pointer"}}>
+              <input type="checkbox" checked={isOn(sh.id)} onChange={()=>toggle(sh.id)} style={{width:18,height:18,flex:"0 0 auto"}}/>
+              <span style={{flex:1,minWidth:0}}>
+                <span style={{fontSize:13,fontWeight:700,color:"var(--c-text)",overflowWrap:"anywhere"}}>{sh.name||sh.id}</span>
+                <span style={{display:"block",fontSize:12,color:"var(--c-text3)"}}>{c===undefined&&sh.id!==shopId?"読み込めませんでした":normalizePayCalendar(c)?payCalendarText(c):"未登録"}</span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      <PayCalendarFields value={f} onChange={setF}/>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <button data-company-pay-cal-save="1" disabled={busy} onClick={()=>apply(false)} style={{...AB,padding:"8px 16px",fontSize:13,opacity:busy?.6:1}}>選んだ{targets.length}店舗に保存</button>
+        <button data-company-pay-cal-remove="1" disabled={busy} onClick={()=>apply(true)} style={{...AGray,padding:"8px 14px",fontSize:13}}>選んだ店舗の登録を消す</button>
+      </div>
+    </AC>
+  );
 }
 
 function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
@@ -2824,6 +2944,8 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
         })}
       </div>
     </AC>}
+
+    {MY_SCREEN_ENABLED&&featureEnabled("myShift",{plan})&&<PayCalendarCard settings={settings} onSave={onSaveOwn} tt={tt} readOnly={ownerReadOnly}/>}
 
     <AC title="テーマ設定">
       <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>

@@ -242,9 +242,22 @@ function applyHomeIcon(){
     document.querySelectorAll('link[rel="icon"][type="image/svg+xml"]').forEach(l=>{if(l.getAttribute("href")!==ic.svg)l.setAttribute("href",ic.svg);});
   }catch(e){console.warn("アイコンの切り替えに失敗:",e);}
 }
-applyHomeIcon();
-window.addEventListener("hashchange",applyHomeIcon);
-window.addEventListener("popstate",applyHomeIcon);
+// ホーム画面のアプリの開き先（homeManifestOf）。スタッフ側のURLでは開いているURLを start_url にした manifest に差し替える。
+// 要素ごと入れ替えるのは、href の書き換えだけだとブラウザが前の manifest を使い続けることがあるため
+function applyHomeManifest(){
+  try{
+    const m=homeManifestOf(parseUrl(),window.location.href);
+    const href=m?"data:application/manifest+json;charset=utf-8,"+encodeURIComponent(JSON.stringify(m)):"manifest.json";
+    const cur=document.querySelector('link[rel="manifest"]');
+    if(cur&&cur.getAttribute("href")===href)return;
+    const l=document.createElement("link");l.setAttribute("rel","manifest");l.setAttribute("href",href);
+    if(cur)cur.replaceWith(l);else document.head.appendChild(l);
+  }catch(e){console.warn("manifest の切り替えに失敗:",e);}
+}
+function applyHomeLaunch(){applyHomeIcon();applyHomeManifest();}
+applyHomeLaunch();
+window.addEventListener("hashchange",applyHomeLaunch);
+window.addEventListener("popstate",applyHomeLaunch);
 
 // 実ログイン（Google/メール）は端末にLOCAL永続化し、リロード後も複数店舗ログイン状態を維持する。
 // ただし明示的なログアウト操作後は、Firebase Authに実ユーザーセッションが残っていても

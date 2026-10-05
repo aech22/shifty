@@ -751,7 +751,7 @@ test("E4 .ics: VTIMEZONE と TZID=Asia/Tokyo・24時超えは翌日・締の追�
   assert.ok(unfolded.includes("SUMMARY:A店\\; 本店\\, 梅田\\\\北（追加）"));
   assert.ok(unfolded.includes("DESCRIPTION:確定\\n休憩30分"), "改行は \\n");
   assert.ok(!unfolded.includes("実績"), "上書きのある日もカレンダーには公開として書く（上書きは給料計算だけ）");
-  assert.ok(/UID:shifty-S1-20261014@shiftyshifty.app[\s\S]*?DESCRIPTION:公開/.test(unfolded));
+  assert.ok(/UID:shifty-S1-20261014@shiftyshifty.app[\s\S]*?DESCRIPTION:確定/.test(unfolded));
   assert.ok(unfolded.includes("DTSTAMP:20261004T010203Z"));
   const uids = [...unfolded.matchAll(/UID:([^\r]+)/g)].map(x => x[1]);
   assert.deepStrictEqual(uids, ["shifty-eb6A_2bcX_2axP-20261031@shiftyshifty.app", "shifty-eb6A_2bcX_2axP-20261031-x1@shiftyshifty.app",
@@ -778,7 +778,7 @@ test(".ics の互換性（2026-10-04）: 必須・推奨の項目・SEQUENCE・B
   assert.strictEqual(seq(t1), 397620, "SEQUENCE は 2026-01-01 からの分");
   assert.ok(seq(t2) > seq(t1), "後で書き出した方が SEQUENCE が大きい（取り込み直しで上書きされる）");
   assert.strictEqual(seq(m.buildMyIcs(es, { nowIso: "bad" }).text), 0, "時刻が読めなければ 0");
-  assert.ok(ev.includes("DESCRIPTION:公開\\na\\nb\r\n"), "単独の CR も \\n に（生の CR を残さない）");
+  assert.ok(ev.includes("DESCRIPTION:確定\\na\\nb\r\n"), "単独の CR も \\n に（生の CR を残さない）");
   assert.ok(!/\r(?!\n)/.test(t1), "CRLF 以外の CR が無い");
   // 折り返しは UTF-8 の文字の途中で切らない: 続きの行を足し戻すと元の文字列に戻り、どの行も有効な UTF-8
   const raw = "SUMMARY:" + "鶏えん" + "三".repeat(30);
@@ -1510,13 +1510,14 @@ test("全員のシフト表: PDF と同じ関数を通る（ドリフト検出�
 test("給料タブの要約: 月間目標は任意（目標なしでも金額を出し、円グラフは目標を設定したときだけ）・時給が未設定の勤務先を返す（2026-10-04）", () => {
   const row = (name, total, confirmed) => ({ name, amounts: { total, confirmedTotal: confirmed, projectedTotal: total == null ? null : total - confirmed, minutes: { workMin: 60 } } });
   const month = { rows: [row("A店", 10000, 4000), row("B店", null, null)], total: 10000, confirmedTotal: 4000, projectedTotal: 6000, hasAmount: true };
-  assert.deepStrictEqual(m.myPaySummaryOf(month, 0), { showRing: false, progress: null, missingWage: ["B店"], allMissing: false });
-  assert.deepStrictEqual(m.myPaySummaryOf(month, 20000), { showRing: true, progress: 0.2, missingWage: ["B店"], allMissing: false });
+  assert.deepStrictEqual(m.myPaySummaryOf(month, 0), { showRing: false, progress: null, projectedProgress: null, missingWage: ["B店"], allMissing: false });
+  assert.deepStrictEqual(m.myPaySummaryOf(month, 20000), { showRing: true, progress: 0.2, projectedProgress: 0.5, missingWage: ["B店"], allMissing: false });
   assert.strictEqual(m.myPaySummaryOf({ rows: [row("B店", null, null)] }, 0).allMissing, true);
-  assert.deepStrictEqual(m.myPaySummaryOf(null, 5000), { showRing: true, progress: null, missingWage: [], allMissing: false });
+  assert.deepStrictEqual(m.myPaySummaryOf(null, 5000), { showRing: true, progress: null, projectedProgress: null, missingWage: [], allMissing: false });
   const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
   const tab = my.slice(my.indexOf("function MyPayTab("), my.indexOf("function MyGoalSection("));
-  assert.ok(/\{summary\.showRing&&<MyGoalRing /.test(tab), "円グラフは目標を設定したときだけ");
+  const body = my.slice(my.indexOf("function MyPaySummaryBody("), my.indexOf("const _myYmLabel="));
+  assert.ok(/<MyPaySummaryBody data=\{month\} summary=\{summary\}\/>/.test(tab) && /\{ring&&<MyGoalRing progress=\{summary\.progress\} projected=\{summary\.projectedProgress\}\/>\}/.test(body), "円グラフは目標を設定したときだけ（月と年で同じ部品）");
   assert.ok(!/premium&&X\.goal/.test(tab) && !/X\.goal>0&&month/.test(tab), "金額の表示は目標に左右されない");
   assert.ok(/<MyPayTab me=\{me\} personal=\{personal\} onGoSettings=\{\(\)=>setTab\("settings"\)\}\/>/.test(my), "個別URLの給料タブからも設定へ行ける");
 });
@@ -1551,7 +1552,7 @@ test("これまでの給料の一括入力（2026-10-04）: 変えたセルだ�
   const tab = my.slice(my.indexOf("function MyReceivedBulkForm("), my.indexOf("function MyGoalSection("));
   assert.ok(/planMyReceivedBulk\(received,form\)/.test(tab) && /saveReceivedBulk/.test(tab) && /canEdit&&!bulk/.test(tab), "保存は差分・入口は振込額の入力と同じ境目（canEdit）");
   assert.ok(/inputMode="numeric"/.test(tab) && /style=\{\{\.\.\.AI/.test(tab), "数字の入力・16px（AI）");
-  const ex = my.slice(my.indexOf("function useMyPayExtras("), my.indexOf("// 月間目標に対する進捗の弧"));
+  const ex = my.slice(my.indexOf("function useMyPayExtras("), my.indexOf("function MyGoalRing("));
   assert.ok(/saveReceivedBulk:async patch=>\{/.test(ex) && !/fbSet\(/.test(ex), "1回の update で書く（set しない）");
 });
 // ===== 全員のシフトの期間と店舗の選び方（2026-10-04・ユーザー指示: 未公開の案内を出さない・期間をプルダウン・直近3ヶ月・#/me でも）=====
@@ -2090,4 +2091,121 @@ test("URLをなくしたとき用のメールアドレス（C）: ルールは C
   assert.ok(rec.indexOf('pageEmailRate("recoverEmail"') < rec.indexOf("staffPageEmailIndex/"), "回数は登録の有無を読む前に数える");
   const pu = idx.slice(idx.indexOf("exports.purgeInactiveShops"));
   assert.ok(/staffPageEmails\/\$\{t\}/.test(pu) && /staffPageEmailIndex\/\$\{er\.key\}\/\$\{t\}/.test(pu), "アーカイブで後始末");
+});
+
+// ===== 2026-10-05 のユーザー指示 =====
+test("全員のシフトのヘルプ先（2026-10-05）: 同じ人の他店の登録をヘルプ先にし、確定済みの期間だけを選択肢にする・既定は自分の店舗", () => {
+  const conf = { at: "2026-09-20T00:00:00.000Z", byUid: "O" }, pub = { at: "2026-09-10T00:00:00.000Z", byUid: "O" };
+  const link = { id: "co1", shops: { A: "A店", B: "B店", C: "C店" }, people: { "123": { A: "田中", B: "田中太郎" } }, shopEntities: { A: "e1", B: "e1", C: "e2" }, entityId: "e1" };
+  const others = {
+    B: U.otherShopDataOf({ name: "B店", settings: {}, staff: ["田中太郎", "佐藤"], periods: {} }),
+    C: U.otherShopDataOf({ name: "C店", settings: {}, staff: ["田中"], periods: {} }),
+  };
+  // 人物で束ねた B（登録名は違ってよい）。C は別の法人なので出さない
+  assert.deepStrictEqual(m.myHelpDestRegs({ shopId: "A", name: "田中", settings: {}, companyLink: link, otherShops: others }, U).map(r => [r.shopId, r.name]), [["B", "田中太郎"]]);
+  // 企業に連携していない・読めなかった店舗は出さない
+  assert.deepStrictEqual(m.myHelpDestRegs({ shopId: "A", name: "田中", settings: {}, companyLink: null, otherShops: others }, U), []);
+  assert.deepStrictEqual(m.myHelpDestRegs({ shopId: "A", name: "田中", settings: {}, companyLink: link, otherShops: { B: U.otherShopDataOf({ name: "B店", loadFailed: true }) } }, U), []);
+  // 期間: 確定済みかつ直近3ヶ月だけ（公開だけ・未確定は出さない）
+  const ps = [
+    { id: "b1", startDate: "2026-10-01", endDate: "2026-10-15", published: pub },                       // 公開だけ
+    { id: "b2", startDate: "2026-09-16", endDate: "2026-09-30", confirmation: conf },                   // 確定（公開の記録なし）
+    { id: "b3", startDate: "2026-09-01", endDate: "2026-09-15", confirmation: conf, published: pub },
+    { id: "b4", startDate: "2026-06-01", endDate: "2026-06-15", confirmation: conf },                   // 窓の外
+  ];
+  assert.deepStrictEqual(m.myHelpDestPeriodOptions(ps, { premium: true, todayStr: "2026-10-04" }, U).map(p => p.id), ["b2", "b3"]);
+  assert.deepStrictEqual(m.myHelpDestPeriodOptions(ps, { premium: false, todayStr: "2026-10-04" }, U), []);
+  // 店舗の選択肢: ヘルプ先は確定の期間だけ。既定はヘルプ先の期間が新しくても自分の店舗
+  const A = { shopId: "A", shopName: "A店", name: "田中", plan: "premium", periods: [{ id: "a1", startDate: "2026-09-01", endDate: "2026-09-15", published: pub }] };
+  const B = { shopId: "B", shopName: "B店", name: "田中太郎", plan: "premium", periods: ps, helpDest: true };
+  const c = m.myAllShiftChoices({ shops: [A, B], todayStr: "2026-10-04" }, U);
+  assert.deepStrictEqual(c.shops.map(s => [s.shopId, s.helpDest, s.options.map(p => p.id)]), [["A", false, ["a1"]], ["B", true, ["b2", "b3"]]]);
+  assert.strictEqual(c.defaultShopId, "A");
+  // ヘルプ先しか無ければヘルプ先が既定。自分の店舗と同じ店舗がヘルプ先として来ても重ねない
+  assert.strictEqual(m.myAllShiftChoices({ shops: [B], todayStr: "2026-10-04" }, U).defaultShopId, "B");
+  assert.strictEqual(m.myAllShiftChoices({ shops: [A, { ...A, helpDest: true }], todayStr: "2026-10-04" }, U).shops.length, 1);
+  // 表: ヘルプ先は確定済みなら公開の記録が無くても出す・公開だけなら出さない。日付は確定した日
+  const sheet = p => m.buildMyShiftSheet({ period: p, staff: ["田中太郎"], settings: {}, subs: [], premium: true, todayStr: "2026-10-04", me: "田中太郎", shopName: "B店", shopId: "B", helpDest: true }, U);
+  assert.strictEqual(sheet(ps[1]).state, "ok");
+  assert.strictEqual(sheet(ps[1]).shownAt, conf.at);
+  assert.strictEqual(sheet(ps[0]).state, "unpublished");
+  // 自分の店舗は従来どおり公開済みから（日付は公開した日・確定済みなら確定した日）
+  assert.strictEqual(m.buildMyShiftSheet({ period: ps[0], staff: ["田中"], settings: {}, subs: [], premium: true, todayStr: "2026-10-04", shopId: "A" }, U).shownAt, pub.at);
+  assert.strictEqual(m.buildMyShiftSheet({ period: ps[2], staff: ["田中"], settings: {}, subs: [], premium: true, todayStr: "2026-10-04", shopId: "A" }, U).shownAt, conf.at);
+  // 画面: ヘルプ先は「（ヘルプ先）」の印・提出は選んだ期間だけを部分読み（読み込みは書き込みなし）
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  assert.ok(/s\.helpDest\?"（ヘルプ先）":""/.test(my));
+  const hk = my.slice(my.indexOf("function useMyHelpDestShops("), my.indexOf("function MyAllShiftTable("));
+  assert.ok(/myHelpDestRegs\(/.test(hk) && /readMyPeriodSubs\(sid,pid\)/.test(hk) && !/\/subs`\)\.once/.test(hk));
+  assert.ok(!/\.(update|remove|push|transaction)\(|fbSet\(|fbUpd\(/.test(hk), "ヘルプ先の読み込みは何も書かない");
+});
+test("マイシフトの「公開」は「確定」と表示する（2026-10-05）", () => {
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  assert.ok(/const MY_KIND_LABEL=\{published:"確定",confirmed:"確定",/.test(my));
+  const tb = my.slice(my.indexOf("function MyAllShiftTable("), my.indexOf("function MyPageStatusScreen("));
+  assert.ok(!/"公開"/.test(tb) && !/ 公開）/.test(tb), "全員の表の見出しに「公開」を出さない");
+});
+test("給料のグラフ（2026-10-05）: 見込みまでの割合・年の目標（月×12）・年の勤務先ごとの収入", () => {
+  const month = { rows: [], total: 30000, confirmedTotal: 10000, projectedTotal: 20000, hasAmount: true };
+  const s = m.myPaySummaryOf(month, 40000);
+  assert.strictEqual(s.progress, 0.25); assert.strictEqual(s.projectedProgress, 0.75);
+  assert.strictEqual(m.myPaySummaryOf({ ...month, total: 90000 }, 40000).projectedProgress, 1, "100%で止める");
+  // 年
+  const row = (id, name, total, confirmed, wm) => ({ id, name, kind: "shifty", color: "#000", partial: false,
+    amounts: { total, confirmedTotal: confirmed, projectedTotal: total == null ? null : total - confirmed, minutes: { workMin: wm } } });
+  const months = [
+    { payYm: "2026-01", rows: [row("A", "A店", 100000, 100000, 600), row("m_1", "カフェ", null, null, 120)], total: 100000, confirmedTotal: 100000, projectedTotal: 0, workMin: 720, hasAmount: true },
+    { payYm: "2026-02", rows: [row("A", "A店", 80000, 30000, 480), row("m_1", "カフェ", null, null, 0)], total: 80000, confirmedTotal: 30000, projectedTotal: 50000, workMin: 480, hasAmount: true },
+  ];
+  const received = { "2026-01": { A: 95000 }, "2026-02": { m_1: 0 } };
+  const y = m.myPayYearSummary(months, received);
+  assert.strictEqual(y.total, 180000); assert.strictEqual(y.confirmedTotal, 130000); assert.strictEqual(y.projectedTotal, 50000); assert.strictEqual(y.hasAmount, true);
+  const g = m.myPayYearGoalOf(y, 30000);
+  assert.strictEqual(g.goal, 360000); assert.strictEqual(g.showRing, true);
+  assert.strictEqual(g.progress, 130000 / 360000); assert.strictEqual(g.projectedProgress, 0.5);
+  assert.strictEqual(m.myPayYearGoalOf(y, 0).showRing, false);
+  const w = m.myPayYearByWorkplace(months, received);
+  assert.deepStrictEqual(w.map(x => [x.id, x.total, x.confirmedTotal, x.workMin, x.received, x.hasReceived]),
+    [["A", 180000, 130000, 1080, 95000, true], ["m_1", null, 0, 120, 0, true]]);
+  assert.deepStrictEqual(w[0].months.map(x => [x.payYm, x.total]), [["2026-01", 100000], ["2026-02", 80000]]);
+  // 画面: 月と年は同じ部品（MyPaySummaryBody）で、見込みは下地より濃いグレー（--c-text4）
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const ring = my.slice(my.indexOf("function MyGoalRing("), my.indexOf("function MyPaySummaryBody("));
+  assert.ok(/stroke="var\(--c-border\)"/.test(ring) && /arc\(pv,"var\(--c-text4\)"\)/.test(ring) && /arc\(v,"var\(--c-accent\)"\)/.test(ring));
+  const tab = my.slice(my.indexOf("function MyPayTab("), my.indexOf("function MyGoalSection("));
+  assert.ok(/<MyPaySummaryBody data=\{yearRows\} summary=\{yearGoal\}\/>/.test(tab) && /myPayYearByWorkplace\(yearMonths,X\.received\)/.test(tab));
+});
+test("お店の締日・給料日（2026-10-05）: 検証・読み・本人の設定より優先・画面の入口", () => {
+  assert.strictEqual(m.validatePayCalendarInput({ closingDay: "25", payMonthOffset: "1", payDay: "10", holidayRule: "before" }), null);
+  assert.strictEqual(m.validatePayCalendarInput({ closingDay: "25", payMonthOffset: "0", payDay: "10", holidayRule: "before" }), "当月払いのときは、給料日を締日より後の日にしてください");
+  assert.strictEqual(m.validatePayCalendarInput({ closingDay: "0", payMonthOffset: "1", payDay: "10", holidayRule: "before" }), "締日を選んでください");
+  // 本人の給料設定の検証も同じ規則
+  assert.strictEqual(m.validateMyPayInput({ closingDay: "25", payMonthOffset: "0", payDay: "10", holidayRule: "before" }, { companyPay: true }), "当月払いのときは、給料日を締日より後の日にしてください");
+  const rec = m.buildPayCalendarRecord({ closingDay: "20", payMonthOffset: "1", payDay: "31", holidayRule: "after" }, "2026-10-05T00:00:00.000Z");
+  assert.deepStrictEqual(rec, { closingDay: 20, payMonthOffset: 1, payDay: 31, holidayRule: "after", updatedAt: "2026-10-05T00:00:00.000Z" });
+  assert.deepStrictEqual(m.normalizePayCalendar(rec), { closingDay: 20, payMonthOffset: 1, payDay: 31, holidayRule: "after" });
+  assert.strictEqual(m.normalizePayCalendar({ closingDay: 20, payMonthOffset: 0, payDay: 10, holidayRule: "after" }), null, "矛盾した記録は使わない");
+  assert.strictEqual(m.normalizePayCalendar(null), null);
+  assert.strictEqual(m.payCalendarText(rec), "20日締め・翌月末日払い（土日祝は後ろ倒し）");
+  assert.deepStrictEqual(m.payCalendarFormOf(null), { closingDay: "31", payMonthOffset: "1", payDay: "25", holidayRule: "before" });
+  // 優先: 締日・給料日はお店、時給・交通費は本人のまま
+  const own = m.myPayOf({ closingDay: 31, payMonthOffset: 1, payDay: 25, holidayRule: "before", wageType: "hourly", rate: 1200, commute: { amount: 300, per: "day" } });
+  const eff = m.myPayWithShopCalendar(own, rec);
+  assert.deepStrictEqual([eff.closingDay, eff.payMonthOffset, eff.payDay, eff.holidayRule, eff.rate, eff.commute.amount, eff.calendarFrom], [20, 1, 31, "after", 1200, 300, "shop"]);
+  assert.strictEqual(m.myPayWithShopCalendar(own, null), own, "お店の登録が無ければ本人の設定のまま");
+  const blank = m.myPayWithShopCalendar(null, rec);
+  assert.deepStrictEqual([blank.closingDay, blank.rate, blank.wageType], [20, 0, "hourly"], "本人が未設定でもお店の締日で振り分ける（時給は未設定）");
+  // 振り分け: 20日締め・翌月末払い → 11月支給は 9/21〜10/20
+  const plan = m.myPayPlanOf("2026-11", eff, null);
+  assert.deepStrictEqual([plan.from, plan.to, plan.payDate], ["2026-09-21", "2026-10-20", "2026-11-30"]);
+  // 画面の入口: 給料タブの Shifty の店舗はお店の登録を重ねる・設定の欄は固定表示・管理者は設定タブと企業連携タブ
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const tab = my.slice(my.indexOf("function MyPayTab("), my.indexOf("function MyGoalSection("));
+  assert.ok(/base\.pay=myPayWithShopCalendar\(base\.pay,sh\.settings&&sh\.settings\.payCalendar\)/.test(tab));
+  assert.ok(/\{shopCal\?<MyShopCalendarView cal=\{shopCal\}\/>/.test(my));
+  const co = fs.readFileSync(path.join(ROOT, "app-company.js"), "utf8");
+  assert.ok(/<PayCalendarCard settings=\{settings\} onSave=\{onSaveOwn\}/.test(co) && /<CompanyPayCalendarCard listShops=\{listShops\}/.test(co));
+  // 他店舗への保存は settings/payCalendar だけの差分（settings を丸ごと set しない）
+  const card = co.slice(co.indexOf("function CompanyPayCalendarCard("), co.indexOf("function SetTab("));
+  assert.ok(/fbUpd\(`shops\/\$\{id\}\/settings`,\{payCalendar:rec\}\)/.test(card) && !/fbSet\(/.test(card));
 });

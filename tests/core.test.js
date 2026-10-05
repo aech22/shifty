@@ -7166,6 +7166,24 @@ test("homeIconKindOf: スタッフ側の URL だけスタッフ用アイコン",
   assert.strictEqual(u.homeIconKindOf({ type: "demo" }), "admin");
   assert.strictEqual(u.homeIconKindOf(null), "admin");
 });
+test("homeManifestOf: スタッフ側の URL は開いている URL を start_url にする（ホーム画面のアプリが管理者画面で開かない）", () => {
+  const href = "https://shiftyshifty.app/#/m/AbCdEfGhIjKlMnOpQrStUvWx";
+  const m = u.homeManifestOf({ type: "page", pageToken: "AbCdEfGhIjKlMnOpQrStUvWx" }, href);
+  assert.strictEqual(m.start_url, href);
+  assert.strictEqual(m.id, href);
+  assert.strictEqual(m.scope, "https://shiftyshifty.app/");
+  assert.strictEqual(m.display, "standalone");
+  m.icons.forEach(ic => assert.ok(/^https:\/\/shiftyshifty\.app\/favicon-staff/.test(ic.src), ic.src));
+  // 募集URL（クエリ付き）・#/me もそのまま
+  const s = "https://shiftyshifty.app/?openExternalBrowser=1#/s/tok123";
+  assert.strictEqual(u.homeManifestOf({ type: "staff", token: "tok123" }, s).start_url, s);
+  assert.strictEqual(u.homeManifestOf({ type: "me" }, "https://shiftyshifty.app/#/me").start_url, "https://shiftyshifty.app/#/me");
+  // 管理者側・ハッシュの無い URL・壊れた URL は null（manifest.json のまま）
+  assert.strictEqual(u.homeManifestOf({ type: "admin" }, "https://shiftyshifty.app/#/admin"), null);
+  assert.strictEqual(u.homeManifestOf(null, "https://shiftyshifty.app/"), null);
+  assert.strictEqual(u.homeManifestOf({ type: "page", pageToken: "x" }, "https://shiftyshifty.app/"), null);
+  assert.strictEqual(u.homeManifestOf({ type: "page", pageToken: "x" }, "not a url"), null);
+});
 test("ホーム画面のアイコン: index.html の link と app-core.js の切り替え先のファイルが揃っている", () => {
   const fs = require("node:fs");
   const path = require("node:path");

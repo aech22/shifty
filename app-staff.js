@@ -25,6 +25,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   const[name,setName]=useState(savedName);
   const[sd,setSd]=useState({});
   const[done,setDone]=useState(false);
+  // 個別URLで、この期間の提出を選択画面に反映したとき（2026-10-05）。その提出の日時を持つ（null＝反映していない）
+  const[restoredAt,setRestoredAt]=useState(null);
   const[conf,setConf]=useState(false);
   const[sending,setSending]=useState(false);
   const[toast,setToast]=useState(null);
@@ -52,7 +54,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     const ckName=fixedName||(shopId&&apid?getCookie(ckStaffKey(shopId,apid))||"":"");
     if(ckName)setName(ckName);
     const i={};dates.forEach(d=>{i[d]={status:"holiday"};});
-    setSd(i);setDone(false);setComment("");
+    setSd(i);setDone(false);setComment("");setRestoredAt(null);
   },[apid,ap?.startDate,ap?.endDate,shopId,fixedName]);
 
   // Cookieに保存された名前の提出済みデータを復元して完了画面を表示。
@@ -77,7 +79,10 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     });
     setSd(init);
     setComment(prevSub.comment||"");
-    setDone(true);
+    // 個別URL（fixedName）は「提出完了」ではなく、提出の内容を反映した選択画面を開く（2026-10-05 ユーザー指示）。
+    // 入力を始めるまでは（dirty でない間は）提出の更新もそのまま反映し直す
+    if(fixedName)setRestoredAt(prevSub.updatedAt||prevSub.submittedAt||"");
+    else setDone(true);
   },[apid,ap?.startDate,ap?.endDate,shopId,subs,done,settings?.staffAliases,fixedName]);
 
   const tt_=m=>{setToast(m);clearTimeout(tr.current);tr.current=setTimeout(()=>setToast(null),2500);};
@@ -93,7 +98,9 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     if(shopId&&apid&&!fixedName) delCookie(ckStaffKey(shopId,apid));
     setName(fixedName||"");
     const i={};dates.forEach(d=>{i[d]={status:"holiday"};});
-    setSd(i);setDone(false);setComment("");
+    setSd(i);setDone(false);setComment("");setRestoredAt(null);
+    // 個別URLは名前が固定で提出も消えないので、リセットした空の選択を他の人の提出の更新で上書きし直さない
+    if(fixedName)dirtyRef.current=true;
     tt_("↺ リセットしました");
   };
 
@@ -304,6 +311,9 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
         {isPeriodConfirmed(ap)&&<div data-staff-confirmed="1" style={{background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:"var(--c-text2)"}}>この期間のシフトは確定済みです（提出・修正はできません）</div>}
         {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`▲ 締切日（${ap.deadlineDate.replace(/-/g,"/")}）を過ぎています（提出・修正は可能です）`:`締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
 
+        {fixedName&&restoredAt!==null&&<div data-staff-restored="1" style={{background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,color:"var(--c-text2)",lineHeight:1.6}}>
+          <span style={{fontWeight:700,color:"var(--c-text)"}}>提出済み</span>{(()=>{const d=new Date(restoredAt);return Number.isFinite(d.getTime())?`（${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,"0")}）`:"";})()}。提出した内容を表示しています。変えるときは選び直して「シフトを提出する」を押してください
+        </div>}
         {/* 名前カード */}
         <div style={{background:"var(--c-card)",borderRadius:12,boxShadow:"0 1px 4px var(--c-shadow)",marginBottom:14,padding:"16px 18px",display:"flex",alignItems:"center",gap:14}}>
           <div style={{flex:1,minWidth:0}} ref={nameWrapRef}>
