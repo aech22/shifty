@@ -36,6 +36,7 @@ const pad = n => String(n).padStart(2, "0");
 const now = new Date();
 const TODAY = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 const YM = TODAY.slice(0, 7);
+const fdLocal = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const LAST = `${YM}-${pad(new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate())}`;
 const per = (id, sid, tok) => ({ id, urlToken: tok, shopId: sid, label: "今月", startDate: `${YM}-01`, endDate: LAST, deadlineDate: "", createdAt: "2026-09-01T00:00:00.000Z" });
 const seed0 = () => ({
@@ -321,7 +322,7 @@ const rowOf = (v, shop) => v.rows.find(r => r.shop === shop) || {};
     } finally { await o.browser.close(); }
   }
   // ---------------- AM: メールのアカウントの「全員のシフト」（2026-10-04）----------------
-  // 有効な紐付けのある2店舗。既定は公開済みの最新が新しい店舗（B店の後半）。店舗を A店に替えると A店の表（本人の列に印）。
+  // 有効な紐付けのある2店舗。既定は今日を含む期間の開始が新しい店舗（B店の後半＝今日から）。明日からの公開済み（q5）は選択肢に出るが既定にしない。店舗を A店に替えると A店の表（本人の列に印）。
   // 未公開の期間は選択肢に無い。紐付けが無効な店舗は出ない（1店舗なら店舗のプルダウンも出ない）。募集URLから開くとその店舗が既定。
   // どの店舗にも公開済みが無ければ切り替えを出さない。375px・320px で横はみ出し無し
   {
@@ -330,9 +331,14 @@ const rowOf = (v, shop) => v.rows.find(r => r.shop === shop) || {};
       const d = seed0();
       d.shops.S1.periods.p1.published = PUBM;
       d.shops.S2.periods.q1.published = PUBM;
-      d.shops.S2.periods.q2 = { ...per("q2", "S2", "t3"), label: "後半", startDate: `${YM}-16`, published: PUBM };
-      d.shops.S2.periods.q3 = { ...per("q3", "S2", "t4"), label: "未公開", startDate: `${YM}-20` };
-      d.tokens.t3 = { shopId: "S2", periodId: "q2" }; d.tokens.t4 = { shopId: "S2", periodId: "q3" };
+      // 2026-10-05: 既定は今日を含む期間。q2＝今日から始まる期間（今日を含む・最も新しい）、q5＝明日から始まる公開済み（先の期間は既定にしない）。
+      // A店の p1 は昨日から始まる（今日を含むが q2 より古い＝既定の店舗は B店）。日付は実行日から作る
+      const YEST = fdLocal(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1)), TOMO = fdLocal(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+      d.shops.S1.periods.p1.startDate = YEST;
+      d.shops.S2.periods.q2 = { ...per("q2", "S2", "t3"), label: "後半", startDate: TODAY, published: PUBM };
+      d.shops.S2.periods.q5 = { ...per("q5", "S2", "t5"), label: "次", startDate: TOMO, endDate: TOMO, published: PUBM };
+      d.shops.S2.periods.q3 = { ...per("q3", "S2", "t4"), label: "未公開", startDate: TODAY };
+      d.tokens.t3 = { shopId: "S2", periodId: "q2" }; d.tokens.t4 = { shopId: "S2", periodId: "q3" }; d.tokens.t5 = { shopId: "S2", periodId: "q5" };
       return d;
     };
     const allInfo = h => h.evaluate(() => {
@@ -356,8 +362,8 @@ const rowOf = (v, shop) => v.rows.find(r => r.shop === shop) || {};
       A.overflow320 = await overflowX(s);
       A.subsReads = await s.evaluate(() => (window.__reads || []).filter(p => /\/subs$/.test(p)).length);
       R.AM = A;
-      V.AM_defaultNewestShop = A.first.shop === "S2" && JSON.stringify(A.first.shops) === JSON.stringify(["S1", "S2"]) && A.first.period === "q2" &&
-        JSON.stringify(A.first.periods) === JSON.stringify(["q2", "q1"]) && A.first.me === "田中 太郎" && !A.first.text;
+      V.AM_defaultNowShop = A.first.shop === "S2" && JSON.stringify(A.first.shops) === JSON.stringify(["S1", "S2"]) && A.first.period === "q2" &&
+        JSON.stringify(A.first.periods) === JSON.stringify(["q5", "q2", "q1"]) && A.first.me === "田中 太郎" && !A.first.text;
       V.AM_switchShop = A.s1.shop === "S1" && A.s1.period === "p1" && JSON.stringify(A.s1.cols) === JSON.stringify(["田中", "佐藤"]) && A.s1.me === "田中";
       V.AM_layout = A.overflow <= 0 && A.overflow320 <= 0 && A.first.fonts.length === 2 && A.first.fonts.every(f => f >= 16);
       V.AM_noErrors = errs("AM", s);

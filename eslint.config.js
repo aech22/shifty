@@ -194,6 +194,7 @@ const sharedGlobals = {
   myHelpDestRegs: "writable",
   myHelpDestPeriodOptions: "writable",
   myAllShiftSelection: "writable",
+  myNowPeriodOf: "writable",
   MY_ICS_APP_GUIDE: "writable",
   myLatestPeriodOf: "writable",
   // 本人のカレンダーと給料のヘルプ勤務（2026-10-04 B）

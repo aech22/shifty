@@ -1934,9 +1934,10 @@ function myShiftSheetScale(width,natural){
 // ---- 全員のシフト表の期間と店舗の選び方（2026-10-04・ユーザー指示）----
 // 未公開の期間は選択肢にも出さず、「まだ公開されていません」の案内も出さない。選択肢は**公開済み**かつ startDate が
 // **直近3ヶ月**（管理者画面の subs 部分購読と同じ窓＝subsWindowCutoff。startDate >= 窓の下限）の期間で、startDate の新しい順
-// （同じ日なら id の降順）。既定はその先頭＝その時点で公開済みの最新の期間。Premium でない店舗は空（公開済みの表示は Premium のときだけ）。
+// （同じ日なら id の降順）。既定は今日を含む期間（2026-10-05 改め・myNowPeriodOf。以前は先頭＝公開済みの最新）。Premium でない店舗は空（公開済みの表示は Premium のときだけ）。
 // o={premium, todayStr:"YYYY-MM-DD"（省略は今日）}
 function _myDateOf(s){const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s||""));return m?new Date(+m[1],+m[2]-1,+m[3]):new Date();}
+function _myTodayStr(){const d=new Date();return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;}
 function myAllShiftPeriodOptions(periods,o,U){
   const u=_myU(U);const x=o||{};
   if(!x.premium)return[];
@@ -1948,8 +1949,9 @@ function myAllShiftPeriodOptions(periods,o,U){
 // 店舗の選択肢（メールのアカウント・個別URL）。shops=[{shopId, shopName, name（本人の名前）, periods, plan}]（並びは呼び出し側の並び＝
 // アカウントは readMyLinks の並び＝勤務先の既定の色の順）。選択肢のある店舗だけを残す（有効な紐付けでも、公開済みの期間が
 // 直近3ヶ月に無い店舗・Premium でない店舗は出さない）。
-// 既定の店舗: preferredShopId（募集URLから開いたときのその店舗）に選択肢があればそれ、なければ最新の選択肢の startDate が最も新しい店舗
-// （同じなら並びの先）。戻り値 {shops:[{shopId,shopName,name,options}], defaultShopId}（選択肢が無ければ shops は空・defaultShopId は null）
+// 既定の店舗: preferredShopId（募集URLから開いたときのその店舗）に選択肢があればそれ、なければ今日を含む期間がある店舗、
+// その中で（無ければ全体で）既定の期間の startDate が最も新しい店舗（同じなら並びの先）。
+// 戻り値 {shops:[{shopId,shopName,name,options,defaultPeriodId,hasNow}], defaultShopId}（選択肢が無ければ shops は空・defaultShopId は null）
 function myAllShiftChoices(o,U){
   const x=o||{};
   const featureEnabled_=_myU(U).featureEnabled;
@@ -1958,14 +1960,18 @@ function myAllShiftChoices(o,U){
   const seen=new Set();
   const shops=(Array.isArray(x.shops)?x.shops:[]).filter(s=>s&&s.shopId&&!seen.has(s.shopId)&&seen.add(s.shopId)).map(s=>{
     const opt={premium:featureEnabled_("myShift",{plan:s.plan}),todayStr:x.todayStr};
-    return{...s,shopName:s.shopName||"",name:s.name||"",helpDest:!!s.helpDest,
-      options:s.helpDest?myHelpDestPeriodOptions(s.periods,opt,U):myAllShiftPeriodOptions(s.periods,opt,U)};
+    const options=s.helpDest?myHelpDestPeriodOptions(s.periods,opt,U):myAllShiftPeriodOptions(s.periods,opt,U);
+    const now=myNowPeriodOf(options,x.todayStr||_myTodayStr());
+    return{...s,shopName:s.shopName||"",name:s.name||"",helpDest:!!s.helpDest,options,
+      defaultPeriodId:now?now.period.id:null,hasNow:!!(now&&now.now)};
   }).filter(s=>s.options.length>0);
-  // 既定の店舗はヘルプ先より自分の店舗を先に選ぶ（ヘルプ先しか無いときだけヘルプ先）
+  // 既定の店舗はヘルプ先より自分の店舗を先に選ぶ（ヘルプ先しか無いときだけヘルプ先）。その中では
+  // 今日を含む期間がある店舗を先に（2026-10-05）、同じ条件なら既定の期間の開始が新しい店舗、同じなら並びの先
   const pool=shops.some(s=>!s.helpDest)?shops.filter(s=>!s.helpDest):shops;
+  const keyOf=s=>(s.hasNow?"1":"0")+String((s.options.find(p=>p.id===s.defaultPeriodId)||s.options[0]).startDate);
   let def=null;
   if(x.preferredShopId&&pool.some(s=>s.shopId===x.preferredShopId))def=x.preferredShopId;
-  else pool.forEach(s=>{const d=String(s.options[0].startDate);if(!def||d>String(pool.find(t=>t.shopId===def).options[0].startDate))def=s.shopId;});
+  else pool.forEach(s=>{if(!def||keyOf(s)>keyOf(pool.find(t=>t.shopId===def)))def=s.shopId;});
   return{shops,defaultShopId:def};
 }
 // ---- 全員のシフトの「ヘルプ先」の店舗（2026-10-05 ユーザー指示「ヘルプ先のシフトを店舗の選択で見られるように。確定していたら表示」）----
@@ -1989,12 +1995,24 @@ function myHelpDestPeriodOptions(periods,o,U){
     .filter(p=>p&&p.id&&/^\d{4}-\d{2}-\d{2}$/.test(String(p.startDate))&&String(p.startDate)>=cutoff&&u.isPeriodConfirmed(p))
     .sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate))||String(b.id).localeCompare(String(a.id)));
 }
-// いま表示する店舗と期間。sel={shopId, periodId}（本人が選んだもの）が選択肢に無くなっていれば既定へ戻す（公開の取り下げ・3ヶ月の窓から外れた等）
+// 既定の期間（2026-10-05 ユーザー指示「全員表示の期間はいまの日時が含まれる期間を表示する」）。options は新しい順（上の2関数の戻り値）。
+// ① 今日を含む期間（startDate ≦ 今日 ≦ endDate。重なっていれば開始の新しい方）→ ② 無ければ（いまの期間が未公開・期間の間の日）
+// 今日より前に始まった最も新しい期間 → ③ それも無ければ（先の期間しか無い）いちばん近い先の期間。戻り値 {period, now:①か}（空なら null）
+function myNowPeriodOf(options,todayStr){
+  const os=Array.isArray(options)?options:[];
+  if(!os.length)return null;
+  const t=String(todayStr||"");
+  const cur=os.find(p=>String(p.startDate)<=t&&/^\d{4}-\d{2}-\d{2}$/.test(String(p.endDate))&&t<=String(p.endDate));
+  if(cur)return{period:cur,now:true};
+  return{period:os.find(p=>String(p.startDate)<=t)||os[os.length-1],now:false};
+}
+// いま表示する店舗と期間。sel={shopId, periodId}（本人が選んだもの）が選択肢に無くなっていれば既定へ戻す（公開の取り下げ・3ヶ月の窓から外れた等）。
+// 既定の期間は店舗ごとの defaultPeriodId（myAllShiftChoices が myNowPeriodOf で決める）
 function myAllShiftSelection(choices,sel){
   const c=choices||{shops:[]};const s=sel||{};
   const shop=c.shops.find(x=>x.shopId===s.shopId)||c.shops.find(x=>x.shopId===c.defaultShopId)||c.shops[0]||null;
   if(!shop)return null;
-  const period=shop.options.find(p=>p.id===s.periodId)||shop.options[0];
+  const period=shop.options.find(p=>p.id===s.periodId)||shop.options.find(p=>p.id===shop.defaultPeriodId)||shop.options[0];
   return{shop,period};
 }
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
@@ -2013,5 +2031,5 @@ if(typeof module!=="undefined"&&module.exports){
     myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPaySummaryOf,MY_PAY_YEAR_GOAL_MONTHS,myPayYearGoalOf,myPayYearByWorkplace,planMyReceivedBulk,myReceivedBulkForm,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
     MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,myLinkShopRefOfHash,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,planIssueStaffPage,resolveMyPage,MY_PAGE_STATE_MESSAGES,
-    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myPageOpenCandidates,myPickOpenablePage,myOverlayHashOf,buildMyAccountUrl,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myHelpDestRegs,myHelpDestPeriodOptions,myAllShiftSelection};
+    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myPageOpenCandidates,myPickOpenablePage,myOverlayHashOf,buildMyAccountUrl,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myHelpDestRegs,myHelpDestPeriodOptions,myNowPeriodOf,myAllShiftSelection};
 }

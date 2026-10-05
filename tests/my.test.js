@@ -1589,6 +1589,41 @@ test("全員のシフト: 店舗の選択肢と既定（募集URLの店舗 → �
   assert.strictEqual(m.myAllShiftSelection(c, { shopId: "B", periodId: "gone" }).period.id, "B0", "選んだ期間が選択肢から消えたら既定へ");
   assert.strictEqual(m.myAllShiftSelection(c, { shopId: "Z", periodId: "B1" }).shop.shopId, "B", "店舗が消えたら既定の店舗へ");
 });
+test("全員のシフト: 既定の期間は今日を含む期間（2026-10-05）。無ければ今日より前に始まった最新、それも無ければいちばん近い先", () => {
+  const pub = { at: "t", byUid: "O" };
+  const P = (id, s, e) => ({ id, startDate: s, endDate: e, published: pub });
+  const ps = [P("oct2", "2026-10-16", "2026-10-31"), P("oct1", "2026-10-01", "2026-10-15"), P("sep2", "2026-09-16", "2026-09-30")];
+  const opts = today => m.myAllShiftPeriodOptions(ps, { premium: true, todayStr: today }, U);
+  // 次の期間（10月後半）が公開済みでも、今日（10/5）を含む10月前半を出す。境界（開始日・最終日）も含む
+  assert.deepStrictEqual(m.myNowPeriodOf(opts("2026-10-05"), "2026-10-05"), { period: ps[1], now: true });
+  assert.strictEqual(m.myNowPeriodOf(opts("2026-10-01"), "2026-10-01").period.id, "oct1");
+  assert.strictEqual(m.myNowPeriodOf(opts("2026-10-15"), "2026-10-15").period.id, "oct1");
+  assert.strictEqual(m.myNowPeriodOf(opts("2026-10-16"), "2026-10-16").period.id, "oct2");
+  // いまの期間が未公開なら、今日より前に始まった最も新しい公開済み（先の期間には飛ばない）
+  const noCur = [ps[0], ps[2]];
+  assert.deepStrictEqual(m.myNowPeriodOf(noCur, "2026-10-05"), { period: ps[2], now: false });
+  // 先の期間しか無ければいちばん近い先
+  assert.strictEqual(m.myNowPeriodOf([ps[0], ps[1]], "2026-09-20").period.id, "oct1");
+  assert.strictEqual(m.myNowPeriodOf([], "2026-10-05"), null);
+  // myAllShiftChoices と myAllShiftSelection: 選択肢の並び（新しい順）は変えず、既定だけ今日の期間
+  const shop = (shopId, periods) => ({ shopId, shopName: shopId, name: "田中", plan: "premium", periods });
+  const c = m.myAllShiftChoices({ shops: [shop("A", ps)], todayStr: "2026-10-05" }, U);
+  assert.deepStrictEqual(c.shops[0].options.map(p => p.id), ["oct2", "oct1", "sep2"]);
+  assert.strictEqual(c.shops[0].defaultPeriodId, "oct1");
+  assert.strictEqual(m.myAllShiftSelection(c, {}).period.id, "oct1");
+  assert.strictEqual(m.myAllShiftSelection(c, { shopId: "A", periodId: "oct2" }).period.id, "oct2", "選び直しは従来どおり");
+  assert.strictEqual(m.myAllShiftSelection(c, { shopId: "A", periodId: "gone" }).period.id, "oct1", "選んだ期間が消えたら今日の期間へ");
+  // 既定の店舗: 今日を含む期間がある店舗を先に（B は先の期間の開始が新しくても、今日の期間が未公開）
+  const A = shop("A", [ps[2], P("a-oct1", "2026-10-01", "2026-10-15")]), B = shop("B", [ps[2], P("b-oct2", "2026-10-16", "2026-10-31")]);
+  assert.strictEqual(m.myAllShiftChoices({ shops: [B, A], todayStr: "2026-10-05" }, U).defaultShopId, "A");
+  assert.strictEqual(m.myAllShiftChoices({ shops: [B, A], preferredShopId: "B", todayStr: "2026-10-05" }, U).defaultShopId, "B", "募集URLの店舗が優先");
+  // ヘルプ先（確定済みだけ）も同じ規則
+  const conf = { at: "t", byUid: "O" };
+  const H = { shopId: "H", shopName: "H", name: "田中", plan: "premium", helpDest: true,
+    periods: [{ id: "h2", startDate: "2026-10-16", endDate: "2026-10-31", confirmation: conf }, { id: "h1", startDate: "2026-10-01", endDate: "2026-10-15", confirmation: conf }] };
+  const ch = m.myAllShiftChoices({ shops: [H], todayStr: "2026-10-05" }, U);
+  assert.strictEqual(m.myAllShiftSelection(ch, {}).period.id, "h1");
+});
 test("全員のシフト（画面）: 未公開・Premium の案内文を出さない・選択肢が無いときは切り替えを出さない・#/me にも同じ部品", () => {
   const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
   assert.ok(!/まだ公開されていません/.test(my), "未公開の案内文は無い");

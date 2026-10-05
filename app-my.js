@@ -2676,7 +2676,7 @@ function MyShiftPager({panes}){
   );
 }
 // 全員のシフト（2026-10-04 改め）。店舗（2つ以上のときだけ）と期間をプルダウンで選ぶ。選択肢は公開済みかつ直近3ヶ月だけ
-// （myAllShiftChoices）で、既定は公開済みの最新。選択肢が無ければ呼び出し側がこの表示ごと出さない（未公開の案内文も出さない）。
+// （myAllShiftChoices）で、既定は今日を含む期間（無ければ今日より前に始まった最も新しい期間・2026-10-05）。選択肢が無ければ呼び出し側がこの表示ごと出さない（未公開の案内文も出さない）。
 // choices＝myAllShiftChoices の戻り値、subsFor(sid,pid)＝その期間の提出（undefined＝読み込み中・null＝読めない）、onNeed(sid,pid)＝読み込みの依頼
 function myPeriodOptionLabel(p){return p.label||periodRangeLabel(p.startDate,p.endDate);}
 function MyAllShiftPane({choices,subsFor,onNeed}){
