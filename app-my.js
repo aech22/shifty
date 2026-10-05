@@ -2332,8 +2332,11 @@ function MyAccountShiftPager({me,personal,shopId,onGoSettings}){
   const src=useMyAllShiftSources(me);
   const todayStr=fd(new Date());
   // ヘルプ先の店舗（確定済みの期間だけ・2026-10-05）。提出は src の部分読み（need）がそのまま読む
-  const helpDest=useMyHelpDestShops(src.shops);
-  const choices=useMemo(()=>myAllShiftChoices({shops:[...src.shops,...helpDest],preferredShopId:shopId,todayStr}),[src.shops,helpDest,shopId,todayStr]);
+  // この端末で開いた個別URLの店舗のうち、紐付けの無い店舗も並べる（2026-10-05）。紐付けを読み終えてから読む（二重に読まない）
+  const knownShops=useMyKnownPageShops(src.loading?null:"",src.loading?null:src.shops.map(x=>x.shopId));
+  const ownShops=useMemo(()=>src.loading?src.shops:[...src.shops,...knownShops],[src.loading,src.shops,knownShops]);
+  const helpDest=useMyHelpDestShops(ownShops);
+  const choices=useMemo(()=>myAllShiftChoices({shops:[...ownShops,...helpDest],preferredShopId:shopId,todayStr}),[ownShops,helpDest,shopId,todayStr]);
   const panes=[{key:"mine",label:"自分のシフト",node:<MyShiftTab me={me} personal={personal} onGoSettings={onGoSettings}/>}];
   if(choices.shops.length)panes.push({key:"all",label:"全員のシフト",node:<MyAllShiftPane choices={choices} subsFor={src.subsFor} onNeed={src.need}/>});
   return <MyShiftPager panes={panes}/>;
@@ -2674,35 +2677,48 @@ function MyShiftPager({panes}){
     </div>
   );
 }
-// 全員のシフト（2026-10-04 改め）。店舗（2つ以上のときだけ）と期間をプルダウンで選ぶ。選択肢は公開済みかつ直近3ヶ月だけ
-// （myAllShiftChoices）で、既定は今日を含む期間（無ければ今日より前に始まった最も新しい期間・2026-10-05）。選択肢が無ければ呼び出し側がこの表示ごと出さない（未公開の案内文も出さない）。
+// 全員のシフト（2026-10-04・2026-10-05 改め）。期間だけをプルダウンで選び、店舗の切り替えは無い（2026-10-05 ユーザー指示）。
+// 先頭に所属店舗（myAllShiftChoices の既定の店舗）の表、その下に同じ期間（日付が重なる期間）のヘルプ先（確定済みだけ）と、
+// Shifty を使っている別の店舗（紐付いた店舗・この端末で開いた個別URLの店舗）の表を縦に並べる（myAllShiftStack）。
+// 選択肢は公開済みかつ直近3ヶ月だけで、既定は今日を含む期間（無ければ今日より前に始まった最も新しい期間）。選択肢が無ければ呼び出し側がこの表示ごと出さない。
 // choices＝myAllShiftChoices の戻り値、subsFor(sid,pid)＝その期間の提出（undefined＝読み込み中・null＝読めない）、onNeed(sid,pid)＝読み込みの依頼
 function myPeriodOptionLabel(p){return p.label||periodRangeLabel(p.startDate,p.endDate);}
 function MyAllShiftPane({choices,subsFor,onNeed}){
-  const[sel,setSel]=useState({shopId:null,periodId:null});
-  const cur=myAllShiftSelection(choices,sel);
-  const sid=cur&&cur.shop.shopId,pid=cur&&cur.period.id;
-  useEffect(()=>{if(sid&&pid&&onNeed)onNeed(sid,pid);},[sid,pid,onNeed]);
-  if(!cur)return null;
-  const subs=subsFor(sid,pid);
-  const many=choices.shops.length>1;
+  const[periodId,setPeriodId]=useState(null);
+  const st=myAllShiftStack(choices,{periodId});
+  if(!st)return null;
   const lab={...MY_LABEL,marginBottom:4};
+  const many=st.blocks.length>1;
   return(
-    <div data-my-all-pane="1" data-my-all-shop-sel={sid} data-my-all-period-sel={pid} data-my-all-helpdest={cur.shop.helpDest?"1":"0"}>
+    <div data-my-all-pane="1" data-my-all-shop-sel={st.primary.shopId} data-my-all-period-sel={st.period.id} data-my-all-blocks={st.blocks.length}>
       <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:10}}>
-        {many&&<label style={{flex:"1 1 140px",minWidth:0}}><span style={lab}>お店</span>
-          <select data-my-all-shop="1" value={sid} onChange={e=>setSel({shopId:e.target.value,periodId:null})} style={{...AI,padding:"9px 10px"}}>
-            {choices.shops.map(s=><option key={s.shopId} value={s.shopId}>{(s.shopName||s.shopId)+(s.helpDest?"（ヘルプ先）":"")}</option>)}
-          </select></label>}
         <label style={{flex:"1 1 160px",minWidth:0}}><span style={lab}>期間</span>
-          <select data-my-all-period="1" value={pid} onChange={e=>setSel({shopId:sid,periodId:e.target.value})} style={{...AI,padding:"9px 10px"}}>
-            {cur.shop.options.map(p=><option key={p.id} value={p.id}>{myPeriodOptionLabel(p)}</option>)}
+          <select data-my-all-period="1" value={st.period.id} onChange={e=>setPeriodId(e.target.value)} style={{...AI,padding:"9px 10px"}}>
+            {st.primary.options.map(p=><option key={p.id} value={p.id}>{myPeriodOptionLabel(p)}</option>)}
           </select></label>
       </div>
-      {subs===undefined?<div data-my-all-loading="1" style={{fontSize:14,color:"var(--c-text3)",padding:"16px 4px"}}>読み込み中…</div>
-        :subs===null?<MyMessage error="この期間のシフトを読み込めませんでした。時間をおいてもう一度開いてください"/>
-        :<MyAllShiftTable period={cur.period} staff={cur.shop.staff} settings={cur.shop.settings} subs={subs} plan={cur.shop.plan} me={cur.shop.name} shopId={sid} shopName={cur.shop.shopName} helpDest={cur.shop.helpDest}/>}
+      {st.blocks.map(b=><MyAllShiftBlock key={b.shop.shopId+"|"+b.period.id} block={b} base={st.period} showShop={many} subsFor={subsFor} onNeed={onNeed}/>)}
     </div>
+  );
+}
+// 全員のシフトの1店舗ぶん（店舗名の見出しと表）。base＝先頭の店舗で選んだ期間（期間の切り方が違う店舗だけ、その店舗の期間名を見出しに添える）
+function MyAllShiftBlock({block,base,showShop,subsFor,onNeed}){
+  const{shop,period,primary}=block;
+  const sid=shop.shopId,pid=period.id;
+  useEffect(()=>{if(sid&&pid&&onNeed)onNeed(sid,pid);},[sid,pid,onNeed]);
+  const subs=subsFor(sid,pid);
+  const sameRange=period.startDate===base.startDate&&period.endDate===base.endDate;
+  return(
+    <section data-my-all-block={sid} data-my-all-block-period={pid} data-my-all-helpdest={shop.helpDest?"1":"0"}
+      style={primary?{}:{borderTop:"1px solid var(--c-border)",marginTop:18,paddingTop:14}}>
+      {showShop&&<div data-my-all-block-title="1" style={{fontSize:15,fontWeight:700,color:"var(--c-text)",lineHeight:1.5,marginBottom:4,overflowWrap:"anywhere"}}>
+        {(shop.shopName||sid)+(shop.helpDest?"（ヘルプ先）":"")}
+        {!sameRange&&<span style={{fontSize:13,fontWeight:600,color:"var(--c-text3)"}}>{" ／ "+myPeriodOptionLabel(period)}</span>}
+      </div>}
+      {subs===undefined?<div data-my-all-loading="1" style={{fontSize:14,color:"var(--c-text3)",padding:"16px 4px"}}>読み込み中…</div>
+        :subs===null?<MyMessage error="このお店のシフトを読み込めませんでした。時間をおいてもう一度開いてください"/>
+        :<MyAllShiftTable period={period} staff={shop.staff} settings={shop.settings} subs={subs} plan={shop.plan} me={shop.name} shopId={sid} shopName={shop.shopName} helpDest={shop.helpDest}/>}
+    </section>
   );
 }
 // 他店の略称（昼夜の人数で、他店へのヘルプの帯を数えないため。シフト作成タブの abbrToShop と同じ形）。
@@ -2777,7 +2793,8 @@ function useMyHelperShops(shopId,period){
 // 全員のシフトのヘルプ先の店舗（2026-10-05 ユーザー指示）。自分の店舗（bases=[{shopId,name,settings,plan}]）ごとに企業の写しを読み、
 // 連携店舗（同じ法人）の settings・staff・periods を読んで、同じ人の登録がある店舗（myHelpDestRegs）を返す。
 // 提出はここでは読まない（選んだ期間だけを呼び出し側が部分読みする）。企業に連携していない店舗では他店を読まない。書き込みなし・30秒覚える。
-// 戻り値: myAllShiftChoices に足す店舗の配列 [{shopId, shopName, name（その店舗での登録名）, periods, settings（企業設定を重ねた）, staff, plan（自分の店舗のプラン）, helpDest:true}]
+// 戻り値: myAllShiftChoices に足す店舗の配列 [{shopId, shopName, name（その店舗での登録名）, periods, settings（企業設定を重ねた）, staff, plan（自分の店舗のプラン）, helpDest:true,
+//   baseShopId（どの自分の店舗のヘルプ先か＝myAllShiftStack がその店舗の直後に並べる）}]
 function useMyHelpDestShops(bases){
   const[st,setSt]=useState({}); // 自分の店舗ID → 配列
   const list=Array.isArray(bases)?bases.filter(b=>b&&b.shopId&&b.name):[];
@@ -2802,7 +2819,7 @@ function useMyHelpDestShops(bases){
           const v=metas.get(r.shopId);
           const periods=Object.values(v.periods||{}).filter(q=>q&&q.id&&q.startDate&&q.endDate).sort((a,c)=>String(a.startDate).localeCompare(String(c.startDate)));
           return{shopId:r.shopId,shopName:nameOf(r.shopId),name:r.name,periods,settings:applyCompanySettings(v.settings||makeSettings(r.shopId),link.settings||{}),
-            staff:v.staff||[],plan:b.plan,helpDest:true};
+            staff:v.staff||[],plan:b.plan,helpDest:true,baseShopId:b.shopId};
         });
         if(alive)setSt(p=>({...p,[b.shopId]:rows}));
       })().catch(e=>{console.warn("全員のシフト: ヘルプ先の読み込みに失敗:",e&&e.code);if(alive)setSt(p=>({...p,[b.shopId]:[]}));});
@@ -2814,6 +2831,35 @@ function useMyHelpDestShops(bases){
     const seen=new Set();
     return list.flatMap(b=>st[b.shopId]||[]).filter(r=>!own.has(r.shopId)&&!seen.has(r.shopId)&&!!seen.add(r.shopId));
   },[key,st]);
+}
+// 全員のシフトに並べる「Shifty を使っている別の店舗」のうち、この端末で開けた・作った個別URLの店舗（2026-10-05 ユーザー指示）。
+// 店舗ごとに staffPages/{token}（token を知っていれば読める）と periods・settings・staff・プラン・店舗名を読み、承認済みで名前がスタッフ一覧に
+// ある個別URL（resolveMyPage の ok）の店舗だけを返す。exclude（いま開いている店舗）と skip（紐付けで既に並べる店舗）は読まない。書き込みなし。
+// 戻り値: myAllShiftChoices に渡す店舗の配列 [{shopId, shopName, name, periods, settings, staff, plan}]
+function useMyKnownPageShops(exclude,skip){
+  const[rows,setRows]=useState([]);
+  const skipKey=(Array.isArray(skip)?skip:[]).slice().sort().join(",");
+  useEffect(()=>{
+    if(exclude===null||exclude===undefined||!firebaseDB){setRows(p=>p.length?[]:p);return;}
+    const skipSet=new Set(skipKey?skipKey.split(","):[]);
+    const cands=myKnownPageShops(lg(MY_PAGE_KNOWN_LS,{})||{},lg(MY_PAGES_LS,{})||{},exclude||"").filter(c=>!skipSet.has(c.shopId));
+    if(!cands.length){setRows(p=>p.length?[]:p);return;}
+    let alive=true;
+    Promise.all(cands.map(async c=>{
+      const sh=await readMyShiftShopShared(c.shopId).catch(()=>({ok:false}));
+      if(!sh||!sh.ok)return null;
+      for(const t of c.tokens){
+        const r=await _myRead(`shops/${c.shopId}/staffPages/${t}`);
+        const pg=resolveMyPage(t,{shopId:c.shopId},r.ok?r.v:null,sh.staff);
+        if(pg.state!=="ok")continue;
+        const nm=await _myRead(`global/shops/${c.shopId}/name`);
+        return{shopId:c.shopId,shopName:nm.ok&&typeof nm.v==="string"&&nm.v?nm.v:c.shopId,name:pg.name,periods:sh.periods,settings:sh.settings,staff:sh.staff,plan:sh.plan};
+      }
+      return null;
+    })).then(v=>{if(alive)setRows(v.filter(Boolean));},e=>{console.warn("全員のシフト: 別の店舗の読み込みに失敗:",e&&e.code);if(alive)setRows([]);});
+    return()=>{alive=false;};
+  },[exclude,skipKey]);
+  return rows;
 }
 // 選んだ期間の提出だけを部分読みする（読んだ期間は覚えて読み直さない・書き込みなし）。subsFor(sid,pid): undefined＝読み込み中・null＝読めない
 function useMyPeriodSubsLoader(){
@@ -3122,8 +3168,10 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
   // 全員のシフト（2026-10-04 改め）: 公開済みかつ直近3ヶ月の期間から選ぶ。提出は App の購読（直近3ヶ月の期間ごとの部分購読＋最新の期間）を
   // そのまま使う＝選択肢と同じ窓なので追加の読み込みは無い（店舗の subs 全件は読まない）。未公開の期間は選択肢にも出さない
   const todayStr=fd(new Date());
-  const homeShops=useMemo(()=>shopId&&page.state==="ok"?[{shopId,shopName,name:page.name,periods,settings,staff:staffList,plan}]:[],
-    [shopId,shopName,page.state,page.name,periods,settings,staffList,plan]);
+  // この端末で開いた別の店舗の個別URL（2026-10-05・Shifty を使っている別の店舗も同じ画面に縦に並べる）
+  const knownShops=useMyKnownPageShops(page.state==="ok"?shopId:null,[]);
+  const homeShops=useMemo(()=>shopId&&page.state==="ok"?[{shopId,shopName,name:page.name,periods,settings,staff:staffList,plan},...knownShops]:[],
+    [shopId,shopName,page.state,page.name,periods,settings,staffList,plan,knownShops]);
   // ヘルプ先の店舗（確定済みの期間だけ・2026-10-05）。その提出は選んだ期間だけを部分読みする（自分の店舗は App の購読をそのまま使う）
   const helpDest=useMyHelpDestShops(homeShops);
   const allChoices=useMemo(()=>myAllShiftChoices({shops:[...homeShops,...helpDest],todayStr}),[homeShops,helpDest,todayStr]);

@@ -5,9 +5,11 @@
 //     差し替わる（iOS の「ホーム画面に追加」が manifest.json の start_url "./" で開き、管理者の端末では管理者画面になっていた）。#/admin は manifest.json のまま
 //  IOS（2026-10-05 2回目・iPhone の UA）: Safari の個別URLでは manifest を置かず Cookie に開き先。ホーム画面から開く（ハッシュ無し）と、管理者登録している端末でも
 //     マイシフト（以後はアプリ側に残した開き先）。Cookie の無いアプリ（管理者画面から追加）は管理者側のまま
+//  KP（全員のシフトの別の店舗・2026-10-05）: この端末で開いた別の店舗（D店・企業に連携していない）の個別URLが承認済みなら、その店の同じ期間の表も
+//     A店・C店（ヘルプ先）の下に縦に並ぶ。D店の個別URLが取り消されていれば出ない
 //  SB（提出タブ）: 個別URLで提出済みの期間は「提出完了」ではなく、提出の内容を反映した選択画面（data-staff-restored）が開く
-//  HD（全員のシフトのヘルプ先）: 企業の写しの人物で束ねた他店（C店）が「C店（ヘルプ先）」として選べ、確定済みの期間だけが選択肢。
-//     選ぶとその店の表（本人の列に印）が出て、見出しは「ヘルプ先 ／ 確定」。自分の店の見出しは「公開」ではなく「確定」。公開だけの期間はヘルプ先では選べない
+//  HD（全員のシフトのヘルプ先）: 店舗のプルダウンは無く（2026-10-05 改め）、自分の店（A店）の表の下に、企業の写しの人物で束ねた他店（C店）の
+//     確定済みの期間の表が「C店（ヘルプ先）」の見出しで縦に並ぶ（本人の列に印・見出しは「ヘルプ先 ／ 確定」）。自分の店の見出しは「公開」ではなく「確定」。公開だけの期間は出ない
 //  LB（「公開」→「確定」）: 自分のシフトの日付の詳細・次のシフトに「公開」の表示が無く「確定」
 //  GR（給料のグラフ）: 月間目標を設定すると、確定分（アクセント）と見込みまで（--c-text4）の2本の弧。年の表示にも同じグラフ（目標×12）と勤務先ごとの行・内訳
 //  PC（締日・給料日の優先）: お店の settings.payCalendar（20日締め・翌月10日）が本人の設定（月末締め・翌月25日）より優先され、給料タブの行の締め期間が 21日〜20日。
@@ -127,26 +129,30 @@ const settledPay = h => h.page.waitForFunction(() => { const d = document.queryS
       // HD: 全員のシフト
       await click(h, '[data-my-pager-tab="all"]');
       const pane = await waitSel(h, "[data-my-all-pane]");
-      await h.page.waitForFunction(() => { const s = document.querySelector("[data-my-all-shop]"); return s && s.options.length >= 2; }, null, { timeout: 15000 }).catch(() => {});
+      // 2026-10-05 改め: 店舗のプルダウンは無く、所属店舗（A店）の表の下にヘルプ先（C店・確定済みの期間だけ）の表が縦に並ぶ
+      await h.page.waitForFunction(() => document.querySelectorAll("[data-my-all-block]").length >= 2, null, { timeout: 15000 }).catch(() => {});
+      await h.page.waitForFunction(() => document.querySelectorAll('[data-my-all-state="ok"]').length >= 2, null, { timeout: 15000 }).catch(() => {});
+      await sleep(h, 500);
       const HD = {};
       HD.pane = pane;
-      HD.shopOptions = await h.evaluate(() => { const s = document.querySelector("[data-my-all-shop]"); return s ? [...s.options].map(o => [o.value, o.text]) : []; });
+      HD.shopSelect = await h.evaluate(() => !!document.querySelector("[data-my-all-shop]"));
+      HD.blocks = await h.evaluate(() => [...document.querySelectorAll("[data-my-all-block]")].map(b => [b.getAttribute("data-my-all-block"), b.getAttribute("data-my-all-block-period"),
+        b.getAttribute("data-my-all-helpdest"), (b.querySelector("[data-my-all-block-title]") || {}).innerText || ""]));
       HD.defaultShop = await h.evaluate(() => document.querySelector("[data-my-all-pane]").getAttribute("data-my-all-shop-sel"));
-      await waitSel(h, '[data-my-all-state="ok"]');
-      HD.ownHead = await h.evaluate(() => (document.querySelector('[data-my-all-state="ok"]') || {}).innerText || "");
-      await setSelect(h, "[data-my-all-shop]", "S3");
-      await h.page.waitForFunction(() => { const p = document.querySelector("[data-my-all-pane]"); return p && p.getAttribute("data-my-all-helpdest") === "1"; }, null, { timeout: 15000 }).catch(() => {});
-      await waitSel(h, '[data-my-all-state="ok"]');
-      await sleep(h, 500);
-      HD.helpPeriods = await h.evaluate(() => [...document.querySelector("[data-my-all-period]").options].map(o => o.value));
-      HD.helpHead = await h.evaluate(() => (document.querySelector('[data-my-all-state="ok"]') || {}).innerText.split("\n")[0] || "");
-      HD.helpCols = await h.evaluate(() => [...document.querySelectorAll("th[data-sheet-col]")].map(t => t.getAttribute("data-sheet-col")));
-      HD.me = await h.evaluate(() => { const t = document.querySelector("th[data-sheet-me]"); return t ? t.getAttribute("data-sheet-col") : null; });
+      HD.ownHead = await h.evaluate(() => (document.querySelector('[data-my-all-block="S1"] [data-my-all-state="ok"]') || {}).innerText || "");
+      HD.helpHead = await h.evaluate(() => ((document.querySelector('[data-my-all-block="S3"] [data-my-all-state="ok"]') || {}).innerText || "").split("\n")[0]);
+      HD.helpCols = await h.evaluate(() => [...document.querySelectorAll('[data-my-all-block="S3"] th[data-sheet-col]')].map(t => t.getAttribute("data-sheet-col")));
+      HD.me = await h.evaluate(() => { const t = document.querySelector('[data-my-all-block="S3"] th[data-sheet-me]'); return t ? t.getAttribute("data-sheet-col") : null; });
+      HD.ownMe = await h.evaluate(() => { const t = document.querySelector('[data-my-all-block="S1"] th[data-sheet-me]'); return t ? t.getAttribute("data-sheet-col") : null; });
+      HD.order = await h.evaluate(() => { const a = document.querySelector('[data-my-all-block="S1"]'), b = document.querySelector('[data-my-all-block="S3"]');
+        return a && b ? b.getBoundingClientRect().top > a.getBoundingClientRect().bottom - 1 : false; });
       HD.overflow = await overflowX(h);
       R.HD = HD;
-      V.HD_option = HD.shopOptions.some(([v, t]) => v === "S3" && /C店（ヘルプ先）/.test(t)) && HD.defaultShop === "S1";
-      V.HD_ownHeadConfirmed = /^確定/.test(HD.ownHead) && !/公開/.test(HD.ownHead.split("\n")[0]);
-      V.HD_confirmedOnly = JSON.stringify(HD.helpPeriods) === JSON.stringify(["c1"]);
+      V.HD_noShopSelect = !HD.shopSelect && HD.defaultShop === "S1";
+      V.HD_stacked = JSON.stringify(HD.blocks.map(b => b.slice(0, 3))) === JSON.stringify([["S1", "p1", "0"], ["S3", "c1", "1"]]) &&
+        /^A店$/.test(HD.blocks[0][3]) && /^C店（ヘルプ先）$/.test(HD.blocks[1][3]) && HD.order;
+      V.HD_ownHeadConfirmed = /^確定/.test(HD.ownHead) && !/公開/.test(HD.ownHead.split("\n")[0]) && HD.ownMe === "田中";
+      V.HD_confirmedOnly = !HD.blocks.some(b => b[1] === "c2");
       V.HD_table = /^ヘルプ先 ／ 確定/.test(HD.helpHead) && HD.helpCols.includes("田中一郎") && HD.helpCols.includes("山田") && HD.me === "田中一郎";
       V.HD_layout = HD.overflow <= 0;
       // SB: 提出タブ
@@ -158,6 +164,47 @@ const settledPay = h => h.page.waitForFunction(() => { const d = document.queryS
       R.SB = SB;
       V.SB_restoredForm = SB.restored && !SB.done;
       V.PAGE_noErrors = errs("PAGE", h);
+    } finally { await h.close(); }
+  }
+  // ---------------- KP: この端末で開いた別の店舗の個別URL ----------------
+  {
+    const TOKEN2 = "ZyXwVuTsRqPoNmLkJiHgFeDc";
+    const kpSeed = status => { const d = seed0();
+      d.global.shops.S4 = { id: "S4", name: "D店" };
+      d.shops.S4 = { owners: { OWN4: "K4" }, private: { adminKey: "K4" }, staff: ["たなか", "鈴木"], settings: { shopId: "S4", candidates: [{ start: "09:00", end: "13:00" }] },
+        periods: { d1: per("d1", "S4", "t5", PUB) },
+        subs: { w1: { id: "w1", periodId: "d1", shopId: "S4", staffName: "鈴木", submittedAt: "t", shifts: { [TODAY]: work("09:00", "13:00") } } },
+        staffPages: { [TOKEN2]: { status, displayName: "たなか", name: "たなか", requestedAt: "t", approvedAt: "2026-10-01T00:00:00.000Z", byUid: "OWN4" } } };
+      d.staffPageTokens[TOKEN2] = { shopId: "S4", at: "t" }; d.tokens.t5 = { shopId: "S4", periodId: "d1" }; d.accounts.S4 = { plan: "premium" };
+      return d; };
+    const openKp = db => openHarness({ root: ROOT, jsx: "window.__harnessReady=true;", waitFor: '[data-my-view="page"]', viewport: PHONE,
+      extraHead: hashHead("#/m/" + TOKEN) + preLS({ ots_myPageKnown_v1: JSON.stringify({ S1: { token: TOKEN, at: "t" }, S4: { token: TOKEN2, at: "t" } }) }) +
+        makeStub({ seed: db, view: "staff", tab: "periods", auth: "accounts", authSeed: { users: {}, cur: null } }), scripts: SCRIPTS });
+    const blocksOf = h => h.evaluate(() => [...document.querySelectorAll("[data-my-all-block]")].map(b => [b.getAttribute("data-my-all-block"), b.getAttribute("data-my-all-block-period"),
+      (b.querySelector("[data-my-all-block-title]") || {}).innerText || "", (b.querySelector("th[data-sheet-me]") || { getAttribute: () => null }).getAttribute("data-sheet-col")]));
+    let h = await openKp(kpSeed("approved"));
+    try {
+      await waitSel(h, '[data-my-pager-tab="all"]');
+      await click(h, '[data-my-pager-tab="all"]');
+      await h.page.waitForFunction(() => document.querySelectorAll('[data-my-all-block] [data-my-all-state="ok"]').length >= 3, null, { timeout: 15000 }).catch(() => {});
+      await sleep(h, 500);
+      const K = { blocks: await blocksOf(h), overflow: await overflowX(h), s4: await h.evaluate(() => window.__db("shops/S4")) };
+      R.KP = K;
+      V.KP_otherShopStacked = JSON.stringify(K.blocks.map(b => [b[0], b[1]])) === JSON.stringify([["S1", "p1"], ["S3", "c1"], ["S4", "d1"]]) &&
+        K.blocks[2][2] === "D店" && K.blocks[2][3] === "たなか" && K.overflow <= 0 &&
+        require("node:util").isDeepStrictEqual(K.s4, kpSeed("approved").shops.S4);
+      V.KP_noErrors = errs("KP", h);
+    } finally { await h.close(); }
+    h = await openKp(kpSeed("revoked"));
+    try {
+      await waitSel(h, '[data-my-pager-tab="all"]');
+      await click(h, '[data-my-pager-tab="all"]');
+      await h.page.waitForFunction(() => document.querySelectorAll('[data-my-all-block] [data-my-all-state="ok"]').length >= 2, null, { timeout: 15000 }).catch(() => {});
+      await sleep(h, 1200);
+      const K2 = { blocks: await blocksOf(h) };
+      R.KP_revoked = K2;
+      V.KP_revokedHidden = JSON.stringify(K2.blocks.map(b => b[0])) === JSON.stringify(["S1", "S3"]);
+      V.KP_noErrors2 = errs("KP2", h);
     } finally { await h.close(); }
   }
   // ---------------- IOS（2026-10-05 2回目）: iPhone の Safari で個別URL → manifest を置かない・Cookie に開き先 ----------------

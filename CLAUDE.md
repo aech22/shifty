@@ -1422,8 +1422,8 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 - **全員のシフトの期間の選び方（2026-10-04 改め・ユーザー指示）**: 未公開でも「まだ公開されていません」の案内を**出さない**。表の上の**期間のプルダウン**の選択肢は
   **公開済みかつ startDate が直近3ヶ月**（管理者画面の subs 部分購読と同じ `subsWindowCutoff`）の期間を新しい順（`myAllShiftPeriodOptions`）、既定はその先頭＝
   **今日を含む期間**（2026-10-05 改め・`myNowPeriodOf`。今日を含む公開済みが無ければ今日より前に始まった最も新しい公開済み、それも無ければいちばん近い先の期間。次の期間を先に公開しても既定は今の期間のまま。選択肢の並びは新しい順のまま）。店舗が Premium でなければ選択肢は空。**選択肢が1つも無ければ「全員のシフト」の切り替えごと出さない**
-  （プレミアムの案内文も出さない）。部品は `MyAllShiftPane`（期間の select と、店舗が2つ以上のときだけ店舗の select。どちらも `AI`＝16px）と `myAllShiftSelection`
-  （選んだ期間が選択肢から消えたら既定へ戻す）。個別URLの提出は App の購読（直近3ヶ月の期間ごとの部分購読＝選択肢と同じ窓）をそのまま使う。**「提出」タブの対象は従来どおり最新の期間**
+  （プレミアムの案内文も出さない）。部品は `MyAllShiftPane`（期間の select だけ・`AI`＝16px。**店舗の select は 2026-10-05 に廃止**＝下の「1画面に縦に並べる」）と `myAllShiftStack`
+  （選んだ期間が選択肢から消えたら既定へ戻す。旧 `myAllShiftSelection` はテストだけが使う）。個別URLの提出は App の購読（直近3ヶ月の期間ごとの部分購読＝選択肢と同じ窓）をそのまま使う。**「提出」タブの対象は従来どおり最新の期間**
 - **メールのアカウント（`#/me`）の全員のシフト（2026-10-04・ユーザー指示）**: `MyAccountShiftPager` が「自分のシフト」「全員のシフト」を同じ部品で出す。店舗は
   **有効な紐付け（`readMyLinks` の ok＝承認済みで名前がいまのスタッフ一覧にある）の全店舗のうち、選べる期間がある店舗**（`myAllShiftChoices`・並びは readMyLinks の並び）。
   既定の店舗は**募集URLの「マイシフト」から開いたときはその店舗**、それ以外は**今日を含む期間がある店舗**を先に、その中で既定の期間の startDate が最も新しい店舗（同じなら並びの先・2026-10-05）。
@@ -1713,7 +1713,17 @@ if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 - **休暇の種別名**: 画面・PDF・全員の表・シフト作成タブからの Excel。期間タブの Excel は提出そのまま（斜線）
 - **ホーム画面のアプリ（2026-10-05・同日2回目で改め）**: manifest.json の start_url は "./" なので、iOS でスタッフ側のURLを「ホーム画面に追加」するとアプリは "/" で開き、管理者の端末では管理者画面になっていた。二段構えで直した。①**iOS のスタッフ側のURL（#/s/・#/m/・#/me）では manifest を置かない**（manifest が無ければ iOS は追加した時点の URL＝ハッシュ込みで開く）。index.html の head のスクリプトが最初の manifest を同じ規則で入れ（静的な link は置かない）、以後は app-core.js の `applyHomeManifest`（`homeManifestPlanOf`）。iOS 以外は data: の manifest（`homeManifestOf`）。②**ホーム画面から開いてハッシュが無いときの保険**: ブラウザのタブでスタッフ側のURLを開いている間は Cookie `ots_homeLaunch` にそのハッシュを置き（管理者側では消す）、ホーム画面のアプリ（`navigator.standalone`・display-mode standalone）で最初に開いたときだけその Cookie で開き先を決めて、アプリ側の localStorage `ots_homeLaunch_v1` に残す（以後はそれだけ＝`homeLaunchRestoreOf`。Cookie が無ければ "admin"）。app-core.js の読み込み時（App が URL を読む前）に `history.replaceState` でハッシュを付ける。**iPhone 実機では未確認**（iOS が追加時に Safari の Cookie をアプリへ写す前提。写らなくても①で開く想定）。既に追加済みのアプリは追加し直しが要る。回帰は `example-my-1005.js` の IOS（iPhone の UA と standalone を差し替え）
 - **提出タブ（2026-10-05）**: 個別URLの「提出」タブは、提出済みでも「提出完了」ではなく提出の内容を反映した選択画面を開く（`data-staff-restored` の帯）。提出した直後だけ「提出完了」。募集URL（Cookie の名前）は従来どおり「提出完了」から
-- **全員のシフトのヘルプ先（2026-10-05）**: 同じ人の他店の登録（写しの人物、無ければ所属店舗の一致＝`myHelpDestRegs`・同じ法人だけ）がある店舗を「◯◯店（ヘルプ先）」としてお店のプルダウンに足す。選択肢は**確定済み**かつ直近3ヶ月の期間だけ（`myHelpDestPeriodOptions`）、既定は自分の店舗。読み込みは `useMyHelpDestShops`（settings・staff・periods）と、選んだ期間の subs だけの部分読み（書き込みなし）。個別URL・#/me の両方
+- **全員のシフトのヘルプ先（2026-10-05）**: 同じ人の他店の登録（写しの人物、無ければ所属店舗の一致＝`myHelpDestRegs`・同じ法人だけ）がある店舗を「◯◯店（ヘルプ先）」として出す（同日の2回目の指示で、お店のプルダウンではなく下の「1画面に縦に並べる」の1ブロック）。選択肢は**確定済み**かつ直近3ヶ月の期間だけ（`myHelpDestPeriodOptions`）、既定は自分の店舗。読み込みは `useMyHelpDestShops`（settings・staff・periods）と、選んだ期間の subs だけの部分読み（書き込みなし）。個別URL・#/me の両方
+- **全員のシフトを1画面に縦に並べる（2026-10-05 ユーザー指示「店舗の切り替えは要らない。同じ期間なら所属店舗のシフトの下にヘルプ先、Shifty を使っている別の店舗も縦に並べて1画面で」）**:
+  店舗のプルダウンを廃止し、期間のプルダウン（先頭の店舗＝`myAllShiftChoices` の既定の店舗の選択肢）だけにした。`myAllShiftStack`（app-my-utils.js）が
+  先頭の店舗の選んだ期間と**日付が1日でも重なる期間**を他の店舗から拾い、`MyAllShiftBlock`（店舗名の見出し＋`MyAllShiftTable`）を縦に並べる。並びは
+  所属店舗 → そのヘルプ先（`baseShopId`）→ 別の店舗（それぞれの直後にそのヘルプ先）。ヘルプ先は**確定済み**の期間だけ、別の店舗は公開済みの期間だけ（従来の選択肢の規則のまま）。
+  期間の切り方が違う店舗は重なる期間をすべて開始の順に出し、見出しにその店舗の期間名を添える。重なる期間の無い店舗は出さない（その店の別の期間は、
+  先頭の店舗で重なる期間を選べば出る＝**先頭の店舗に公開済みの期間が無い月の、別の店舗だけの期間は見られない**）。
+  「別の店舗」は #/me なら有効な紐付けの全店舗、個別URL（#/m/）なら**この端末で開いた・作った別の店舗の個別URL**（`ots_myPageKnown_v1`・`ots_myPages_v1`。
+  `myKnownPageShops`→`useMyKnownPageShops` が staffPages/{token} を読み、承認済みで名前がスタッフ一覧にあるもの＝`resolveMyPage` の ok だけ。#/me でも紐付けの無い店舗はこれで足す）。
+  個別URLの人が別の端末で開くと、その端末で開いたことの無い店舗は出ない（個別URLにはログインが無く、端末の記憶しか手がかりが無いため）。読み込みは従来どおり
+  期間ごとの部分読みで書き込みなし。回帰は `example-my-1005.js` の HD・KP と `example-my-shift.js` の AM（前の配信物では HD・KP・AM が落ちる）
 - **「公開」の表示は「確定」（2026-10-05）**: 提出だけが未確定なので、マイシフトのラベル（MY_KIND_LABEL）・全員の表の見出し（`確定（m/d）`＝確定済みなら確定した日）・.ics の説明は公開でも「確定」。説明文の「公開された時間」などはそのまま
 - **給料のグラフ（2026-10-05）**: 目標の弧は下地（--c-border）の上に、これからの見込みまでを --c-text4、確定分をアクセントで重ねる（`MyGoalRing`・`myPaySummaryOf` の projectedProgress）。年の表示にも同じ部品（`MyPaySummaryBody`）で年の目標＝月間目標×12（`myPayYearGoalOf`）と、勤務先ごとの年間の収入と支給月ごとの内訳（`myPayYearByWorkplace`）
 - **お店の締日・給料日（2026-10-05）**: `settings.payCalendar={closingDay,payMonthOffset,payDay,holidayRule,updatedAt}`。設定タブの「締日・給料日（スタッフのマイシフト）」（この店舗）と企業連携タブの同名カード（選んだ連携店舗にまとめて。他店舗は `settings/payCalendar` だけを update）で登録する。マイシフトの給料は本人の締日・給料日よりこちらを優先し（`myPayWithShopCalendar`。時給・交通費は本人のまま）、勤務先の編集は締日の欄の代わりに「お店の登録・変更できません」。検証は `validatePayCalendarInput`（本人の設定と同じ規則）。ルール・CF の変更なし（settings の既存ルール）。回帰は `example-my-1005.js`

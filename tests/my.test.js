@@ -1600,8 +1600,11 @@ test("全員のシフト（画面）: 未公開・Premium の案内文を出さ�
   assert.ok(/orderByChild\("periodId"\)\.equalTo\(pid\)/.test(my.slice(my.indexOf("async function readMyPeriodSubs("), my.indexOf("async function readMyPeriodSubs(") + 400)));
   // プルダウンは 16px（AI）
   const pane = my.slice(my.indexOf("function MyAllShiftPane("), my.indexOf("function MyAllShiftTable("));
-  assert.strictEqual((pane.match(/<select /g) || []).length, 2);
-  assert.strictEqual((pane.match(/style=\{\{\.\.\.AI,/g) || []).length, 2, "select は AI（16px）");
+  // 2026-10-05: 店舗のプルダウンは無く、期間の1つだけ（店舗は縦に並べる＝myAllShiftStack）
+  assert.strictEqual((pane.match(/<select /g) || []).length, 1);
+  assert.ok(!/data-my-all-shop="1"/.test(pane), "店舗のプルダウンは無い");
+  assert.ok(/myAllShiftStack\(choices,/.test(pane) && /st\.blocks\.map\(/.test(pane), "店舗は縦に並べる");
+  assert.strictEqual((pane.match(/style=\{\{\.\.\.AI,/g) || []).length, 1, "select は AI（16px）");
 });
 // ===== 個別URL（P4）: 給料の暗証番号（CF myPagePin）=====
 const mpg = require("../functions/my-page.js");
@@ -2122,10 +2125,53 @@ test("全員のシフトのヘルプ先（2026-10-05）: 同じ人の他店の�
   assert.strictEqual(m.buildMyShiftSheet({ period: ps[2], staff: ["田中"], settings: {}, subs: [], premium: true, todayStr: "2026-10-04", shopId: "A" }, U).shownAt, conf.at);
   // 画面: ヘルプ先は「（ヘルプ先）」の印・提出は選んだ期間だけを部分読み（読み込みは書き込みなし）
   const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
-  assert.ok(/s\.helpDest\?"（ヘルプ先）":""/.test(my));
+  assert.ok(/shop\.helpDest\?"（ヘルプ先）":""/.test(my));
   const hk = my.slice(my.indexOf("function useMyHelpDestShops("), my.indexOf("function MyAllShiftTable("));
   assert.ok(/myHelpDestRegs\(/.test(hk) && /readMyPeriodSubs\(sid,pid\)/.test(hk) && !/\/subs`\)\.once/.test(hk));
   assert.ok(!/\.(update|remove|push|transaction)\(|fbSet\(|fbUpd\(/.test(hk), "ヘルプ先の読み込みは何も書かない");
+});
+test("全員のシフトを1画面に縦に並べる（2026-10-05）: 所属店舗の下に同じ期間のヘルプ先（確定済み）と別の店舗", () => {
+  const pub = { at: "2026-10-01T00:00:00.000Z", byUid: "O" }, conf = { at: "2026-10-02T00:00:00.000Z", byUid: "O" };
+  const A = { shopId: "A", shopName: "A店", name: "田中", plan: "premium", periods: [
+    { id: "a1", startDate: "2026-10-01", endDate: "2026-10-15", published: pub },
+    { id: "a0", startDate: "2026-09-16", endDate: "2026-09-30", published: pub }] };
+  // A のヘルプ先 H（確定済み・半月）。h2 は公開だけ＝出さない
+  const H = { shopId: "H", shopName: "H店", name: "田中太郎", plan: "premium", helpDest: true, baseShopId: "A", periods: [
+    { id: "h1", startDate: "2026-10-01", endDate: "2026-10-15", confirmation: conf },
+    { id: "h2", startDate: "2026-10-01", endDate: "2026-10-15", published: pub },
+    { id: "h0", startDate: "2026-09-16", endDate: "2026-09-30", confirmation: conf }] };
+  // 別の店舗 B（期間の切り方が違う＝1か月）と、B のヘルプ先 BH。X は重なる期間が無い
+  const B = { shopId: "B", shopName: "B店", name: "田中", plan: "premium", periods: [{ id: "b1", startDate: "2026-10-01", endDate: "2026-10-31", published: pub }] };
+  const BH = { shopId: "BH", shopName: "BH店", name: "田中", plan: "premium", helpDest: true, baseShopId: "B", periods: [
+    { id: "bh2", startDate: "2026-10-16", endDate: "2026-10-31", confirmation: conf },
+    { id: "bh1", startDate: "2026-10-01", endDate: "2026-10-15", confirmation: conf }] };
+  const X = { shopId: "X", shopName: "X店", name: "田中", plan: "premium", periods: [{ id: "x1", startDate: "2026-11-01", endDate: "2026-11-15", published: pub }] };
+  const c = m.myAllShiftChoices({ shops: [A, B, X, BH, H], todayStr: "2026-10-05" }, U);
+  const st = m.myAllShiftStack(c, {});
+  assert.strictEqual(st.primary.shopId, "A");
+  assert.strictEqual(st.period.id, "a1", "既定は今日を含む期間");
+  assert.deepStrictEqual(st.blocks.map(b => [b.shop.shopId, b.period.id, b.primary]),
+    [["A", "a1", true], ["H", "h1", false], ["B", "b1", false], ["BH", "bh1", false]],
+    "所属店舗 → そのヘルプ先 → 別の店舗 → そのヘルプ先。公開だけのヘルプ先の期間・重ならない店舗（X）は出さない");
+  // 前の期間を選ぶと、同じ期間（重なる期間）に替わる。B は重ならないので出ない
+  assert.deepStrictEqual(m.myAllShiftStack(c, { periodId: "a0" }).blocks.map(b => [b.shop.shopId, b.period.id]), [["A", "a0"], ["H", "h0"]]);
+  // 選んだ期間が消えたら既定へ
+  assert.strictEqual(m.myAllShiftStack(c, { periodId: "gone" }).period.id, "a1");
+  // 先頭が1か月の期間なら、半月の店舗は重なる期間をすべて開始の順に出す
+  const c2 = m.myAllShiftChoices({ shops: [B, BH], todayStr: "2026-10-05" }, U);
+  assert.deepStrictEqual(m.myAllShiftStack(c2, {}).blocks.map(b => b.period.id), ["b1", "bh1", "bh2"]);
+  // 選択肢が無ければ null
+  assert.strictEqual(m.myAllShiftStack(m.myAllShiftChoices({ shops: [], todayStr: "2026-10-05" }, U), {}), null);
+  // この端末で開いた個別URLの別の店舗（いま開いている店舗は除く・開けたもの→作ったものの順）
+  const T1 = "AbCdEfGhIjKlMnOpQrStUvWx", T2 = "ZyXwVuTsRqPoNmLkJiHgFeDc";
+  assert.deepStrictEqual(m.myKnownPageShops({ A: { token: T1 }, B: { token: T1 } }, { B: { token: T2 }, C: { token: "bad" } }, "A"),
+    [{ shopId: "B", tokens: [T1, T2] }]);
+  assert.deepStrictEqual(m.myKnownPageShops(null, null, "A"), []);
+  // 画面: 別の店舗の読み込みは書き込みなし・承認済みの個別URLだけ
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const kh = my.slice(my.indexOf("function useMyKnownPageShops("), my.indexOf("function useMyPeriodSubsLoader("));
+  assert.ok(/resolveMyPage\(/.test(kh) && /pg\.state!=="ok"/.test(kh));
+  assert.ok(!/\.(set|update|remove|push|transaction)\(|fbSet\(|fbUpd\(/.test(kh), "別の店舗の読み込みは何も書かない");
 });
 test("マイシフトの「公開」は「確定」と表示する（2026-10-05）", () => {
   const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
