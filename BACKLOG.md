@@ -44,7 +44,7 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 ②個別URL（#/m/）の設定の「マイシフトのアカウントに追加」（CF `linkStaffPage`＝新規、ルールの staffLinks.method に 'page'）。
 URLへのまとめ（2店目以降を最初の個別URLに集約）は**採らない**（2026-10-05 ユーザー判断「当初の予定で進めて」）。
 **受け入れ条件**:
-- [ ] develop へマージ → `/release-to-main`（`?v=` のバンプ）でクライアントを本番へ
+- [x] develop へマージ → クライアントを本番へ（2026-10-05・`701d4c1`・版数 20261005-7c9fdf6。GitHub Pages の build and deployment が success。クラウドのセッションからは shiftyshifty.app に繋がらず配信物の照合は未実施）
 - [ ] ルール（dev → 本番）。既存パスの値の追加なのでクライアントが先でよい
 - [ ] `firebase deploy --only functions --project ontheshift`（linkStaffPage が create になること）。CF より先にクライアントだけ出ると「追加」が「関数が無い」で失敗するだけ
 - [ ] 本番で1回、個別URLから自分のテスト用アカウントに追加し、`shops/{sid}/staffLinks/{uid}.method==="page"` を読み取りで確かめる
