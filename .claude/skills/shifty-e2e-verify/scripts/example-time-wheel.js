@@ -1,9 +1,9 @@
 // 時刻の2列ホイール（2026-10-05 ユーザー指示「時間と分をそれぞれ選べるように。最初と最後で止まる。シフト提出は従来どおりの刻み、マイシフトは1分刻み」）の
 // シフト提出側の回帰テスト。マイシフト側（1分刻み）は example-my-manual.js の B・C・I が測る。アプリ全体をスタブ Firebase で動かす（Firebase へは1バイトも出ない）。
 //
-//  S（個別URLの「提出」タブ・375px）: 出勤・退勤は select ではなくホイールのボタン。出勤の分は 00・30、退勤の分は 00・15・30・45（従来の TO_START・TO）。
+//  S（個別URLの「提出」タブ・375px）: 出勤・退勤は select ではなくホイールのボタン。出勤・退勤とも分は 00・15・30・45（TO・2026-10-05 に出勤も15分刻みへ）。
 //     時は 0〜27 で、27時は 00 分だけ。指で回して端まで行くと先頭・末尾で止まる。Esc で取り消すと値は変わらない。
-//     出勤 18:30・退勤 22:45 を選んで提出すると、提出の shifts[今日] に入る。ダイアログは横にはみ出さない
+//     出勤 18:15・退勤 22:45 を選んで提出すると、提出の shifts[今日] に入る。ダイアログは横にはみ出さない
 //  C（提出状況一覧のセル編集＝CellEditPanel だけをマウント）: 出勤・退勤もホイール（TO＝15分刻み）。刻みに合わない今の値（18:10）は選択肢に足して保つ。
 //     ダイアログの背景をタップしてもセル編集の画面は閉じない（ポータル越しのクリックを止める）
 //  すべての場面で console.error・pageerror が 0 件
@@ -88,7 +88,7 @@ const valOf = (h, sel) => h.evaluate(sel => { const e = document.querySelector(s
       await click(h, "[data-time-wheel-overlay]"); await sleep(h, 150);
       S.afterBackdrop = { open: !!(await wheel(h)), val: await valOf(h, EN) };
       // 選んで提出
-      S.pickStart = await pickTime(h, ST, "18:30");
+      S.pickStart = await pickTime(h, ST, "18:15");
       S.pickEnd = await pickTime(h, EN, "22:45");
       S.after = [await valOf(h, ST), await valOf(h, EN)];
       S.overflow = await h.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth);
@@ -101,13 +101,13 @@ const valOf = (h, sel) => h.evaluate(sel => { const e = document.querySelector(s
       S.saved = mine && mine.shifts && mine.shifts[TODAY];
       R.S = S;
       V.S_wheelNotSelect = S.fields && S.noSelect && JSON.stringify(S.before) === JSON.stringify(["10:00", "15:00"]);
-      V.S_startStep30 = !!S.startOpen && S.startOpen.val === "10:00" && JSON.stringify(S.startOpen.mins) === '["0","30"]' &&
+      V.S_startStep15 = !!S.startOpen && S.startOpen.val === "10:00" && JSON.stringify(S.startOpen.mins) === '["0","15","30","45"]' &&
         S.startOpen.hours[0] === "0" && S.startOpen.hours[S.startOpen.hours.length - 1] === "27";
-      V.S_stopsAtEnds = S.startHourEnd.val === "27:00" && JSON.stringify(S.startHourEnd.mins) === '["0"]' && S.startHourStart.val === "00:00" && S.startMinEnd.val === "18:30";
+      V.S_stopsAtEnds = S.startHourEnd.val === "27:00" && JSON.stringify(S.startHourEnd.mins) === '["0"]' && S.startHourStart.val === "00:00" && S.startMinEnd.val === "18:45";
       V.S_escCancels = !S.afterEsc.open && S.afterEsc.val === "10:00";
       V.S_endStep15 = !!S.endOpen && S.endOpen.val === "15:00" && JSON.stringify(S.endOpen.mins) === '["0","15","30","45"]' && !S.afterBackdrop.open && S.afterBackdrop.val === "15:00";
-      V.S_pickAndSubmit = S.pickStart === "18:30" && S.pickEnd === "22:45" && JSON.stringify(S.after) === JSON.stringify(["18:30", "22:45"]) &&
-        !!S.saved && S.saved.start === "18:30" && S.saved.end === "22:45";
+      V.S_pickAndSubmit = S.pickStart === "18:15" && S.pickEnd === "22:45" && JSON.stringify(S.after) === JSON.stringify(["18:15", "22:45"]) &&
+        !!S.saved && S.saved.start === "18:15" && S.saved.end === "22:45";
       V.S_layout375 = S.startOpen.left >= 0 && S.startOpen.right <= S.startOpen.vw && S.overflow <= 0;
       V.S_noErrors = errs("S", h);
     } finally { await h.browser.close(); }

@@ -106,10 +106,10 @@ function gto(){
   return o;
 }
 const TO=gto();
-const TO_START=TO.filter(t=>{const m=t.split(":")[1];return m==="00"||m==="30";}); // 出勤時間は30分刻み
+const TO_START=TO.filter(t=>{const m=t.split(":")[1];return m==="00"||m==="30";}); // 30分刻み（2026-10-05 から提出画面の出勤も TO＝15分刻みで、画面からは使わない）
 // 時刻の2列ホイール（時・分。2026-10-05 ユーザー指示「時間と分をそれぞれ選べるように。最初と最後で止まる」）。
 // options は選べる時刻 "HH:MM" の配列で、時の列は options にある時、分の列はその時にある分だけを出す
-// （27:00 だけ・30:00 だけの時は分が 00 しかない）。刻みは options が決める＝提出は TO_START・TO、マイシフトは1分刻み
+// （27:00 だけ・30:00 だけの時は分が 00 しかない）。刻みは options が決める＝提出は出勤・退勤とも TO（15分）、マイシフトは1分刻み
 function timeWheelSplit(v){
   const m=/^(\d{1,2}):(\d{2})$/.exec(String(v||""));
   return m?{h:+m[1],m:+m[2]}:null;
