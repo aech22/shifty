@@ -96,7 +96,7 @@ developブランチ・mainブランチのどちらにチェックアウトして
 │                            ルール変更のたびに二重管理を強いていた。`firebase.json` はこの1本だけを参照する）
 ├── CNAME               ← shiftyshifty.app
 ├── privacy.html / terms.html ← 静的ページ（プライバシー・規約）
-├── favicon-staff.svg / favicon-staff-180.png ← スタッフ側の URL で使うアイコン（2026-10-05・管理画面の favicon のオレンジと白を入れ替えたもの）
+├── favicon-staff.svg / favicon-staff-180.png ← スタッフ側の URL で使うアイコン（2026-10-05・管理画面の favicon のオレンジと白を入れ替えたもの。オレンジは #f87036 に白を10%混ぜた #f97e4a）
 ├── ogp.png             ← OGP画像（実配信物。index.html の og:image が参照）
 ├── generate-ogp.js     ← ogp.png の生成元。画像を変えるときはこれを編集して再生成する
 │                          （@napi-rs/canvas が必要。フォントは Hiragino Sans を明示すること）
