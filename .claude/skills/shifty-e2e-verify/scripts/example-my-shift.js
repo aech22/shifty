@@ -11,7 +11,8 @@
 //  G（スタッフ）: 他人のシフトの変更では「変更あり」が付かない
 //  H（スタッフ）: 改名で紐付けが無効になった店舗は出さない（理由を出す）
 //  I（スタッフ）: どの店舗も Premium でないと公開済みでもグレー・プランの案内
-//  AM（スタッフ・#/me）: 全員のシフト（2026-10-04）。有効な紐付けの2店舗・既定は公開済みの最新が新しい店舗・店舗の切り替え・未公開は選択肢に無い・
+//  AM（スタッフ・#/me）: 全員のシフト（2026-10-04）。有効な紐付けの2店舗・既定は今日を含む期間の店舗・店舗のプルダウンは無く（2026-10-05）同じ期間の
+//     別の店舗の表が下に縦に並ぶ・期間を選び直すと並ぶ表も替わる・未公開は選択肢に無い・
 //     無効な紐付けの店舗は出ない・募集URLから開くとその店舗・公開済みが無ければ切り替えを出さない・375/320px
 //  J（閲覧専用の端末）と K（本番相当 MY_SCREEN_ENABLED=false）: 公開ボタンが出ない。K はスタッフURLにマイシフトの入口も出ない
 //  すべての場面で console.error・pageerror が 0 件。375px で横はみ出し無し
@@ -341,10 +342,15 @@ const rowOf = (v, shop) => v.rows.find(r => r.shop === shop) || {};
       d.tokens.t3 = { shopId: "S2", periodId: "q2" }; d.tokens.t4 = { shopId: "S2", periodId: "q3" }; d.tokens.t5 = { shopId: "S2", periodId: "q5" };
       return d;
     };
+    // 2026-10-05 改め: 店舗のプルダウンは無く、先頭の店舗の期間を選ぶと、同じ期間（日付が重なる期間）の他の店舗の表が下に縦に並ぶ
     const allInfo = h => h.evaluate(() => {
-      const ps = document.querySelector("[data-my-all-period]"), ss = document.querySelector("[data-my-all-shop]"), t = document.querySelector("[data-my-sheet] table");
-      return { shop: ss ? ss.value : null, shops: ss ? [...ss.options].map(o => o.value) : [], period: ps ? ps.value : null, periods: ps ? [...ps.options].map(o => o.value) : [],
-        cols: t ? [...t.querySelectorAll("th[data-sheet-col]")].map(x => x.getAttribute("data-sheet-col")) : [], me: t && t.querySelector("[data-sheet-me]") ? t.querySelector("[data-sheet-me]").getAttribute("data-sheet-col") : null,
+      const ps = document.querySelector("[data-my-all-period]"), pane = document.querySelector("[data-my-all-pane]");
+      const blocks = [...document.querySelectorAll("[data-my-all-block]")].map(b => { const t = b.querySelector("[data-my-sheet] table");
+        return { shop: b.getAttribute("data-my-all-block"), period: b.getAttribute("data-my-all-block-period"), title: (b.querySelector("[data-my-all-block-title]") || {}).innerText || "",
+          cols: t ? [...t.querySelectorAll("th[data-sheet-col]")].map(x => x.getAttribute("data-sheet-col")) : [], me: t && t.querySelector("[data-sheet-me]") ? t.querySelector("[data-sheet-me]").getAttribute("data-sheet-col") : null }; });
+      return { shop: pane ? pane.getAttribute("data-my-all-shop-sel") : null, shopSelect: !!document.querySelector("[data-my-all-shop]"), blocks,
+        period: ps ? ps.value : null, periods: ps ? [...ps.options].map(o => o.value) : [],
+        cols: blocks[0] ? blocks[0].cols : [], me: blocks[0] ? blocks[0].me : null,
         fonts: [...document.querySelectorAll("[data-my-all-pane] select")].map(x => parseFloat(getComputedStyle(x).fontSize)),
         tabs: document.querySelectorAll("[data-my-pager-tab]").length, text: /まだ公開されていません/.test(document.body.innerText) };
     });
@@ -353,19 +359,24 @@ const rowOf = (v, shop) => v.rows.find(r => r.shop === shop) || {};
     try {
       const A = {};
       await openAll(s);
+      await s.page.waitForFunction(() => document.querySelectorAll("[data-my-all-block] [data-my-sheet] table").length >= 2, null, { timeout: 15000 }).catch(() => {});
       A.first = await allInfo(s);
-      await s.page.selectOption("[data-my-all-shop]", "S1"); await sleep(s, 800);
-      await s.page.waitForSelector("[data-my-sheet] table", { timeout: 15000 });
+      await s.page.selectOption("[data-my-all-period]", "q1"); await sleep(s, 800);
+      await s.page.waitForFunction(() => document.querySelectorAll("[data-my-all-block] [data-my-sheet] table").length >= 2, null, { timeout: 15000 }).catch(() => {});
       A.s1 = await allInfo(s);
       A.overflow = await overflowX(s);
       await s.page.setViewportSize({ width: 320, height: 700 }); await sleep(s, 400);
       A.overflow320 = await overflowX(s);
       A.subsReads = await s.evaluate(() => (window.__reads || []).filter(p => /\/subs$/.test(p)).length);
       R.AM = A;
-      V.AM_defaultNowShop = A.first.shop === "S2" && JSON.stringify(A.first.shops) === JSON.stringify(["S1", "S2"]) && A.first.period === "q2" &&
+      const bl = x => JSON.stringify(x.blocks.map(b => [b.shop, b.period]));
+      V.AM_defaultNowShop = A.first.shop === "S2" && !A.first.shopSelect && A.first.period === "q2" &&
         JSON.stringify(A.first.periods) === JSON.stringify(["q5", "q2", "q1"]) && A.first.me === "田中 太郎" && !A.first.text;
-      V.AM_switchShop = A.s1.shop === "S1" && A.s1.period === "p1" && JSON.stringify(A.s1.cols) === JSON.stringify(["田中", "佐藤"]) && A.s1.me === "田中";
-      V.AM_layout = A.overflow <= 0 && A.overflow320 <= 0 && A.first.fonts.length === 2 && A.first.fonts.every(f => f >= 16);
+      // 同じ期間の別の店舗（A店）の表が下に並ぶ（店舗の切り替えなし）
+      V.AM_stacked = bl(A.first) === JSON.stringify([["S2", "q2"], ["S1", "p1"]]) && A.first.blocks[0].title === "B店" && /^A店/.test(A.first.blocks[1].title) &&
+        JSON.stringify(A.first.blocks[1].cols) === JSON.stringify(["田中", "佐藤"]) && A.first.blocks[1].me === "田中";
+      V.AM_switchShop = A.s1.shop === "S2" && A.s1.period === "q1" && bl(A.s1) === JSON.stringify([["S2", "q1"], ["S1", "p1"]]) && A.s1.blocks[1].me === "田中";
+      V.AM_layout = A.overflow <= 0 && A.overflow320 <= 0 && A.first.fonts.length === 1 && A.first.fonts.every(f => f >= 16);
       V.AM_noErrors = errs("AM", s);
     } finally { await s.browser.close(); }
     // 紐付けが無効な店舗（S1 の名前が改名で消えた）は出ない。1店舗なので店舗のプルダウンも出ない
@@ -375,7 +386,7 @@ const rowOf = (v, shop) => v.rows.find(r => r.shop === shop) || {};
       await openAll(s);
       const B = await allInfo(s);
       R.AM.invalid = B;
-      V.AM_invalidLinkHidden = B.shops.length === 0 && B.shop === null && B.period === "q2" && B.me === "田中 太郎";
+      V.AM_invalidLinkHidden = B.blocks.length === 1 && B.blocks[0].shop === "S2" && !B.shopSelect && B.period === "q2" && B.me === "田中 太郎";
       V.AM_noErrors2 = errs("AM2", s);
     } finally { await s.browser.close(); }
     // 募集URL（A店）の「マイシフト」から開くと A店が既定

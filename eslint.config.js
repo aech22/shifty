@@ -192,6 +192,7 @@ const sharedGlobals = {
   myHelpDestRegs: "writable",
   myHelpDestPeriodOptions: "writable",
   myAllShiftSelection: "writable",
+  myAllShiftStack: "writable",
   myNowPeriodOf: "writable",
   MY_ICS_APP_GUIDE: "writable",
   myLatestPeriodOf: "writable",
@@ -202,6 +203,7 @@ const sharedGlobals = {
   myMovedHelperDates: "writable",
   myPageOpenCandidates: "writable",
   myPickOpenablePage: "writable",
+  myKnownPageShops: "writable",
   myOverlayHashOf: "writable",
   buildMyAccountUrl: "writable",
   // app-my.js で定義し app-main.js が使う（募集URLの「マイシフト」から個別URLの画面を重ねる・2026-10-04）

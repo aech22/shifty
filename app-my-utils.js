@@ -1782,6 +1782,13 @@ function myPageOpenCandidates(known,made,shopId){
   [known,made].forEach(m=>{const r=_myObj(m)&&_myObj(m[shopId]);const t=r&&r.token;if(isMyPageToken(t)&&!out.includes(t))out.push(t);});
   return out;
 }
+// この端末で開けた・作った個別URLのうち、いま開いている店舗（exclude）以外の店舗（2026-10-05・全員のシフトに別の店舗も並べるため）。
+// 戻り値 [{shopId, tokens:[…]}]（店舗IDの順・tokens は myPageOpenCandidates と同じ順＝開けたもの→作ったもの）
+function myKnownPageShops(known,made,exclude){
+  const ids=[];
+  [known,made].forEach(m=>Object.keys(_myObj(m)||{}).forEach(id=>{if(id&&id!==exclude&&!ids.includes(id))ids.push(id);}));
+  return ids.sort().map(id=>({shopId:id,tokens:myPageOpenCandidates(known,made,id)})).filter(x=>x.tokens.length>0);
+}
 // 候補のうち最初に使えるもの {token, name}。recs＝{token: shops/{shopId}/staffPages/{token} の値}
 function myPickOpenablePage(cands,recs,staff,shopId){
   for(const t of(Array.isArray(cands)?cands:[])){
@@ -1837,8 +1844,8 @@ function buildMyShiftSheet(o,U){
   const u=_myU(U);const x=o||{};const p=x.period;
   if(!p||!p.id)return{state:"noPeriod"};
   if(!x.premium)return{state:"premium",period:p};
-  // ヘルプ先の店舗（helpDest・2026-10-05）は確定済みの期間だけ。自分の店舗は公開済みから
-  if(x.helpDest?!u.isPeriodConfirmed(p):!u.isPeriodPublished(p))return{state:"unpublished",period:p};
+  // 公開済みか確定済みの期間だけ（ヘルプ先も同じ・2026-10-05 ユーザー指示「公開だけの期間も出して」。以前ヘルプ先は確定済みだけ）
+  if(!u.isPeriodPublished(p)&&!u.isPeriodConfirmed(p))return{state:"unpublished",period:p};
   const master=u.resolvePeriodMaster(p,x.staff||[],x.settings||{},x.todayStr);
   const st=master.settings||{};
   const roster=master.staffList||[];
@@ -1962,7 +1969,7 @@ function myAllShiftChoices(o,U){
   const x=o||{};
   const featureEnabled_=_myU(U).featureEnabled;
   // 渡された店舗のフィールド（settings・staff・plan 等＝表を作る材料）はそのまま持ち回る。
-  // ヘルプ先の店舗（helpDest・2026-10-05）は**確定済み**の期間だけ（myHelpDestPeriodOptions）。同じ店舗が2回来たら先のもの（自分の店舗）を残す
+  // ヘルプ先の店舗（helpDest・2026-10-05）は公開済みか確定済みの期間（myHelpDestPeriodOptions）。同じ店舗が2回来たら先のもの（自分の店舗）を残す
   const seen=new Set();
   const shops=(Array.isArray(x.shops)?x.shops:[]).filter(s=>s&&s.shopId&&!seen.has(s.shopId)&&seen.add(s.shopId)).map(s=>{
     const opt={premium:featureEnabled_("myShift",{plan:s.plan}),todayStr:x.todayStr};
@@ -1992,13 +1999,14 @@ function myHelpDestRegs(o,U){
   return u.samePersonRegistrations({shopId:x.shopId,name:x.name,settings:x.settings||{},people:link.people||null,otherShops:others,
     entityId:typeof link.entityId==="string"?link.entityId:null}).filter(r=>others[r.shopId]&&!others[r.shopId].loadFailed);
 }
-// ヘルプ先の期間の選択肢: **確定済み**かつ startDate が直近3ヶ月（自分の店舗と同じ窓）。新しい順。premium は自分の店舗のプランで決める
+// ヘルプ先の期間の選択肢: **公開済みか確定済み**かつ startDate が直近3ヶ月（自分の店舗と同じ窓）。新しい順。premium は自分の店舗のプランで決める
+// （2026-10-05 同日の追加指示「公開だけの期間も出して」。以前は確定済みだけ）
 function myHelpDestPeriodOptions(periods,o,U){
   const u=_myU(U);const x=o||{};
   if(!x.premium)return[];
   const cutoff=u.subsWindowCutoff(_myDateOf(x.todayStr));
   return(Array.isArray(periods)?periods:[])
-    .filter(p=>p&&p.id&&/^\d{4}-\d{2}-\d{2}$/.test(String(p.startDate))&&String(p.startDate)>=cutoff&&u.isPeriodConfirmed(p))
+    .filter(p=>p&&p.id&&/^\d{4}-\d{2}-\d{2}$/.test(String(p.startDate))&&String(p.startDate)>=cutoff&&(u.isPeriodPublished(p)||u.isPeriodConfirmed(p)))
     .sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate))||String(b.id).localeCompare(String(a.id)));
 }
 // 既定の期間（2026-10-05 ユーザー指示「全員表示の期間はいまの日時が含まれる期間を表示する」）。options は新しい順（上の2関数の戻り値）。
@@ -2021,6 +2029,34 @@ function myAllShiftSelection(choices,sel){
   const period=shop.options.find(p=>p.id===s.periodId)||shop.options.find(p=>p.id===shop.defaultPeriodId)||shop.options[0];
   return{shop,period};
 }
+// 全員のシフトを1画面に縦に並べる（2026-10-05 ユーザー指示「店舗の切り替えは要らない。同じ期間なら所属店舗のシフトの下にヘルプ先・
+// Shifty を使っている別の店舗のシフトを縦に並べて1画面で見られるように」）。店舗のプルダウンは無く、期間だけを選ぶ。
+// 先頭（primary）は myAllShiftChoices の既定の店舗（自分の店舗を優先・募集URLの店舗・今日を含む期間）で、期間の選択肢はその店舗の options。
+// その下に、選んだ期間と日付が1日でも重なる期間を持つ店舗を並べる（その店舗の options＝ヘルプ先は公開済みか確定済み・自分の店舗は公開済みの中から）。
+// 並びは primary → primary のヘルプ先（baseShopId が primary）→ 他の自分の店舗（それぞれの直後にそのヘルプ先）→ 残り。
+// 1つの店舗で重なる期間が2つ以上（期間の切り方が違う）なら開始の早い順にすべて出す。重なる期間の無い店舗は出さない。
+// sel={periodId}（本人が選んだもの・選択肢から消えていれば既定へ）。戻り値 {primary, period, blocks:[{shop, period, primary}]}（選択肢が無ければ null）
+function _myRangeEnd(p){return /^\d{4}-\d{2}-\d{2}$/.test(String(p&&p.endDate))?String(p.endDate):String(p&&p.startDate);}
+function myAllShiftStack(choices,sel){
+  const c=choices||{shops:[]};const s=sel||{};
+  const shops=Array.isArray(c.shops)?c.shops:[];
+  const primary=shops.find(x=>x.shopId===c.defaultShopId)||shops[0]||null;
+  if(!primary||!primary.options||!primary.options.length)return null;
+  const period=primary.options.find(p=>p.id===s.periodId)||primary.options.find(p=>p.id===primary.defaultPeriodId)||primary.options[0];
+  const from=String(period.startDate),to=_myRangeEnd(period);
+  const overlaps=p=>p&&String(p.startDate)<=to&&from<=_myRangeEnd(p);
+  const order=[primary];
+  const add=x=>{if(x&&!order.includes(x))order.push(x);};
+  const helpsOf=id=>shops.filter(x=>x.helpDest&&x.baseShopId===id);
+  helpsOf(primary.shopId).forEach(add);
+  shops.filter(x=>!x.helpDest).forEach(x=>{add(x);helpsOf(x.shopId).forEach(add);});
+  shops.forEach(add);
+  const blocks=[{shop:primary,period,primary:true}];
+  order.slice(1).forEach(x=>(x.options||[]).filter(overlaps)
+    .sort((a,b)=>String(a.startDate).localeCompare(String(b.startDate))||String(a.id).localeCompare(String(b.id)))
+    .forEach(p=>blocks.push({shop:x,period:p,primary:false})));
+  return{primary,period,blocks};
+}
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
   module.exports={EMAIL_LINK_PENDING_LS,EMAIL_LINK_KINDS,EMAIL_LINK_PENDING_MAX_MS,EMAIL_LINK_RESEND_WAIT_MS,EMAIL_LINK_FALLBACK_CODES,isEmailLinkFallbackError,emailLinkSafeHash,emailLinkContinueUrl,parseEmailLinkLanding,emailLinkReturnHash,emailLinkCleanUrl,emailLinkPendingRecord,emailLinkPendingFor,ADMIN_PASSWORD_MIN,validateEmailLinkPassword,emailLinkErrorMessage,MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
@@ -2037,5 +2073,5 @@ if(typeof module!=="undefined"&&module.exports){
     myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPaySummaryOf,MY_PAY_YEAR_GOAL_MONTHS,myPayYearGoalOf,myPayYearByWorkplace,planMyReceivedBulk,myReceivedBulkForm,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
     MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,myLinkShopRefOfHash,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,planIssueStaffPage,resolveMyPage,MY_PAGE_STATE_MESSAGES,
-    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myPageOpenCandidates,myPickOpenablePage,myOverlayHashOf,buildMyAccountUrl,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myHelpDestRegs,myHelpDestPeriodOptions,myNowPeriodOf,myAllShiftSelection};
+    approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myPageOpenCandidates,myKnownPageShops,myPickOpenablePage,myOverlayHashOf,buildMyAccountUrl,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myHelpDestRegs,myHelpDestPeriodOptions,myNowPeriodOf,myAllShiftSelection,myAllShiftStack};
 }
