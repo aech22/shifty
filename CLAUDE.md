@@ -1279,8 +1279,8 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
   iPhone のカレンダーで「18:00（9:00GMT）」と全件に GMT の時刻が添えられ、TZID の予定は「18:00」とだけ出た（独立した3つのパーサー＝ical.js・node-ical・
   Python icalendar はどちらの形も同じ JST の時刻に読む）。**渡し方は全端末で a[download]＋blob**（iOS 27 の Safari ではこれで「n件の予定／すべて追加」の
   画面が直接出て取り込めた）。端末ごとに変えるのは書き出した後の案内だけ（`myIcsPlatformOf`・`MY_ICS_HINTS`。iPadOS は Mac の UA＋タッチで見分ける）。
-  Google カレンダーは .ics の取り込みが PC のウェブ版の設定画面からだけなので、日付の詳細の各シフトに「Google カレンダーに追加」のリンク
-  （`myGoogleCalendarLinks`・`render?action=TEMPLATE&text&dates&ctz=Asia/Tokyo`・本人が押したときだけ開く・送るのは勤務先名と時刻だけ・締の追加出勤は別リンク・Premium のときだけ）。
+  **カレンダーへの取り込みは「この月のシフトをカレンダーに取り込む」1つだけ**（2026-10-05 ユーザー指示で、日付の詳細の各シフトにあった「Google カレンダーに追加」のリンクと
+  `myGoogleCalendarLinks` を外した）。Google カレンダーは .ics の取り込みが PC のウェブ版の「設定 → インポート / エクスポート」からだけなので、案内（`MY_ICS_HINTS`・確認の手順）はそれを書く。
   **未検証**: Outlook（デスクトップ・Outlook.com）・Yahoo!カレンダー・Android の取り込みの実機、Google カレンダーの実際の取り込み（ログインが要る）、
   iOS で同じ UID を取り込み直したときに SEQUENCE で上書きされるか
 - **Premium**: 手入力・上書き・.ics・勤務先の追加と編集は `myShiftPremiumOf`（紐付いた店舗のいずれかが Premium）のときだけ。Premium でないときも入れたシフトは表示し、
@@ -1401,15 +1401,14 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
   （.ics を直接取り込めない・端末の標準カレンダーの予定をホームカレンダーに表示できる＝自動更新・共有カレンダーへのインポートは自動更新されず重複しうる）だけを書き、
   端末（iOS・Android・PC）ごとの3手順を出す。確かめていない他社アプリの名前は出さない。.ics の中身と渡し方は変えていない
 - **カレンダーへ取り込む前の確認**（2026-10-04・ユーザー指示「ホーム画面にブックマークを保存する必要がある、ないしはその他操作が必要ならその操作を促すポップアップ」）:
-  「この月のシフトをカレンダーに取り込む」と日付の詳細の「Google カレンダーに追加」を押したとき、**この端末・このブラウザで追加の操作が要るときだけ**モーダル（`MyCalendarPrompt`）を出す。
+  「この月のシフトをカレンダーに取り込む」を押したとき、**この端末・このブラウザで追加の操作が要るときだけ**モーダル（`MyCalendarPrompt`）を出す。
   条件と文言は `myCalendarPromptOf`（app-my-utils.js）1本で、入力は UA・タッチ点・standalone。**ホーム画面への追加は取り込みに不要なので促さない**
   （iOS 27 のシミュレーターで、Safari のタブとホーム画面から開いた状態＝navigator.standalone の両方で a[download]＋blob が「カレンダーに追加」の画面を出し、閉じると戻った。
   UA は両方同じ）。ホーム画面から開いた iOS だけ、書き出した後の案内に「出ないときは Safari で開く」の1文を足す（古い iOS で効かない報告があり、UA の OS 表記は 18_7 固定で版を分けられない）。
-  出す環境: アプリの中のブラウザ（LINE・Instagram・Facebook・TikTok・Android の「; wv」・「Safari/」の無い iOS の UA）＝**必須**（「次から表示しない」を覚えていても出す・
-  Google カレンダーのリンクもここだけ確認を出す＝Google は埋め込みのブラウザからのログインを拒否する）、iOS の Safari 以外のブラウザ（CriOS 等）・Android の Chrome・PC の .ics＝**任意**
+  出す環境: アプリの中のブラウザ（LINE・Instagram・Facebook・TikTok・Android の「; wv」・「Safari/」の無い iOS の UA）＝**必須**（「次から表示しない」を覚えていても出す）、iOS の Safari 以外のブラウザ（CriOS 等）・Android の Chrome・PC の .ics＝**任意**
   （localStorage `shifty_my_calPrompt_v1` に `{"ics:downloadThenOpen":true}` の形で覚える）。iOS の Safari は出さない。LINE は「Safariで開く／Chromeで開く」で今の URL に
   `openExternalBrowser=1` を足して移る（`myExternalBrowserUrl`・ハッシュ #/m/… と #/me を保つ）。ほかのアプリは「URL をコピー」（コピーできなければ URL の欄）。
-  #/me ではログインし直しの1行を足す。誤判定しても「このまま書き出す／このまま開く」で先へ進める。確認で手順を見せたときは書き出した後の案内を重ねない。
+  #/me ではログインし直しの1行を足す。誤判定しても「このまま書き出す」で先へ進める。確認で手順を見せたときは書き出した後の案内を重ねない。
   **アプリの中のブラウザの実機は未検証**（シミュレーターに LINE 等が無い。BACKLOG の実機確認 ⑥）。回帰は `example-my-cal-prompt.js`（UA と standalone を差し替える）
 - 検証: tests/my.test.js（トークン・状態・承認と追随の差分・候補・全員の表と寸法・期間と店舗の選び方・暗証番号の計画・CF との一致・ルールの形・入口と書き込み先のドリフト）、
   `shifty-e2e-verify/scripts/example-my-page.js`（スタブ・P1〜P4・375px／320px・WebKit iPhone 13 でも allPass。73942db の配信物では最初の項目で止まる。

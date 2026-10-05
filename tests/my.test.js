@@ -694,7 +694,6 @@ test("E4 実績の上書き: 給料の1日にだけ効き、表示の時刻は�
   assert.ok(d18.overridden && d18.actual && d18.actual.breakMin === 15 && d18.actual.workMin === 315 && m.fmtMyRange(d18.actual) === "18:00〜23:30", JSON.stringify(d18));
   assert.strictEqual(d18.actualDay.workMin, 315, "給料に渡す actualDay は上書き適用後");
   assert.strictEqual(m.nextMyShift(es, "2026-10-18").startMin, d18.sched.startMin, "次のシフトも公開内容");
-  assert.ok(/dates=20261018T180000\/20261018T230000/.test(m.myGoogleCalendarLinks(d18)[0].url), "Google カレンダーのリンクも公開の時刻");
   assert.ok(/T230000/.test(m.buildMyIcs([d18], { nowIso: "2026-10-04T00:00:00Z" }).text) && !/T233000/.test(m.buildMyIcs([d18], { nowIso: "2026-10-04T00:00:00Z" }).text), ".ics も公開の時刻");
   assert.deepStrictEqual(m.myPublishedFingerprints(es, ["S1|p1"]), m.myPublishedFingerprints(base, ["S1|p1"]), "上書きしても指紋は変わらない＝変更ありにならない");
   assert.ok(!es.find(e => e.date === "2026-10-17").overridden);
@@ -820,23 +819,10 @@ test(".ics の渡し方と Google カレンダーのリンク（2026-10-04）", 
   assert.ok(tab.indexOf('data-my-action="ics"') < tab.indexOf("data-my-day={sel}"), "書き出しのボタンはカレンダーの下・日付の詳細の上のまま");
   assert.ok(tab.lastIndexOf("<MyIcsAppGuide/>") > tab.indexOf("data-my-legend") && tab.indexOf("<MyIcsAppGuide/>") === tab.lastIndexOf("<MyIcsAppGuide/>"), "案内は勤務先の凡例より下＝一番下に1つだけ");
   assert.ok(/<details data-my-ics-apps=/.test(myjs));
-  const e = { kind: "published", date: "2026-10-31", shopId: "S1", shopName: "A店 & 梅田", startMin: 22 * 60, endMin: 26 * 60, breakMin: 30, memo: "秘密のメモ",
-    segments: [{ startMin: 22 * 60, endMin: 26 * 60 }, { startMin: 26 * 60 + 30, endMin: 27 * 60, extra: true }] };
-  const links = m.myGoogleCalendarLinks(e);
-  assert.strictEqual(links.length, 2, "締の追加出勤は別のリンク");
-  const u = new URL(links[0].url);
-  assert.strictEqual(u.origin + u.pathname, "https://calendar.google.com/calendar/render");
-  assert.strictEqual(u.searchParams.get("action"), "TEMPLATE");
-  assert.strictEqual(u.searchParams.get("text"), "A店 & 梅田");
-  assert.strictEqual(u.searchParams.get("dates"), "20261031T220000/20261101T020000", "26:00 は翌日の 2:00（現地表記）");
-  assert.strictEqual(u.searchParams.get("ctz"), "Asia/Tokyo");
-  assert.deepStrictEqual([...u.searchParams.keys()].sort(), ["action", "ctz", "dates", "text"], "送るのは勤務先名と時刻だけ（休憩・メモは送らない）");
-  assert.ok(!links[0].url.includes(encodeURIComponent("秘密")));
-  assert.strictEqual(new URL(links[1].url).searchParams.get("text"), "A店 & 梅田（追加）");
-  assert.strictEqual(links[1].extra, true);
-  assert.deepStrictEqual(m.myGoogleCalendarLinks({ ...e, kind: "submitted" }), [], "未公開（グレー）は出さない");
-  assert.deepStrictEqual(m.myGoogleCalendarLinks(null), []);
-  assert.strictEqual(m.myGoogleCalendarLinks({ kind: "manual", date: "2026-10-12", shopName: "", startMin: 600, endMin: 900, segments: [] }).length, 1, "segments が空なら主シフト1件");
+  // 2026-10-05 ユーザー指示: 日付ごとの「Google カレンダーに追加」は外し、取り込みは「この月のシフトをカレンダーに取り込む」1つにまとめる
+  assert.strictEqual(m.myGoogleCalendarLinks, undefined, "1件ずつのリンクを作る関数は持たない");
+  assert.ok(!/data-my-gcal|calendar\.google\.com|Google カレンダーに追加/.test(myjs), "日付の詳細に Google カレンダーのリンクを出さない");
+  assert.strictEqual((tab.match(/data-my-action="ics"/g) || []).length, 1, "取り込みのボタンは1つ");
 });
 test("E4 database.rules.json: workplaces・shifts・overrides はメールのある本人だけ書け、形を検証し未知のキーを拒否する。pay は E5 で足した", () => {
   const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "database.rules.json"), "utf8")).rules;
@@ -1766,11 +1752,13 @@ test("カレンダーへ取り込む前の確認（2026-10-04・端末とブラ�
     const x = p(k, "ics");
     assert.ok(x.kind === "downloadThenOpen" && !x.required && x.steps.length === 3 && /インポート \/ エクスポート/.test(x.steps[2]), k);
   }
-  // Google カレンダーに追加: アプリの中のブラウザだけ（Google は埋め込みのブラウザからのログインを拒否する）
-  for (const k of ["iosSafari", "iosChrome", "androidChrome", "winChrome", "macSafari"]) assert.strictEqual(p(k, "gcal"), null, k);
-  assert.strictEqual(p("iosStandalone", "gcal", {}, { standalone: true }), null);
-  const gl = p("iosLine", "gcal");
-  assert.ok(gl.required && /Google にログイン/.test(gl.lead) && /Google カレンダーに追加/.test(gl.steps[1]));
+  // 確認の文言が、外した「Google カレンダーに追加」を案内しない（2026-10-05）
+  for (const k of Object.keys(UA)) for (const nl of [false, true]) {
+    const x = p(k, "ics", { needsLogin: nl });
+    if (x) assert.ok(!/Google カレンダーに追加/.test([x.title, x.lead, ...x.steps].join("")), k);
+  }
+  for (const v of Object.values(m.MY_ICS_HINTS)) assert.ok(!/Google カレンダーに追加/.test(v));
+  for (const v of Object.values(m.MY_ICS_APP_GUIDE.steps).flat()) assert.ok(!/Google カレンダーに追加/.test(v));
   // 「次から表示しない」: 任意のものだけ覚える。必須は覚えていても出す
   assert.strictEqual(m.myCalendarPromptKey("ics", ac), "ics:downloadThenOpen");
   assert.strictEqual(m.myCalendarPromptShown(ac, "ics", {}), true);
@@ -1779,7 +1767,7 @@ test("カレンダーへ取り込む前の確認（2026-10-04・端末とブラ�
   assert.strictEqual(m.myCalendarPromptShown(null, "ics", {}), false);
   assert.strictEqual(m.myCalendarPromptShown(ac, "ics", null), true);
   // 手順は3つまで・文言に絵文字を使わない
-  for (const k of Object.keys(UA)) for (const a of ["ics", "gcal"]) for (const nl of [false, true]) {
+  for (const k of Object.keys(UA)) for (const a of ["ics"]) for (const nl of [false, true]) {
     const x = p(k, a, { needsLogin: nl });
     if (!x) continue;
     assert.ok(x.steps.length <= 3, `${k} ${a} 手順は3つまで`);
@@ -1794,10 +1782,9 @@ test("カレンダーへ取り込む前の確認（2026-10-04・端末とブラ�
   assert.strictEqual(m.myExternalBrowserUrl(""), "");
   // ホーム画面から開いた iOS の書き出し後の1文（促すのではなく、出ないときの逃げ道）
   assert.ok(/ホーム画面/.test(m.MY_ICS_STANDALONE_NOTE) && /Safari/.test(m.MY_ICS_STANDALONE_NOTE));
-  // 入口: .ics の書き出しと Google カレンダーのリンクの両方が確認を通る
+  // 入口: .ics の書き出しが確認を通る
   const myjs = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
   assert.ok(/withCalPrompt\("ics",writeIcs\)/.test(myjs), ".ics の書き出しは確認を通る");
-  assert.ok(/data-my-gcal=\{e\.date\}[^>]*onClick=\{ev=>openGcal\(ev,g\.url\)\}/.test(myjs), "Google カレンダーのリンクも確認を通る");
 });
 
 // ===== メール確認つきの新規登録（2026-10-04）=====

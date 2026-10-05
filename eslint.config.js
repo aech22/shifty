@@ -111,7 +111,6 @@ const sharedGlobals = {
   myIcsEntriesForMonth: "writable",
   myIcsPlatformOf: "writable",
   MY_ICS_HINTS: "writable",
-  myGoogleCalendarLinks: "writable",
   // カレンダーへ取り込む前の確認（2026-10-04）
   myCalendarEnvOf: "writable",
   myCalendarPromptOf: "writable",

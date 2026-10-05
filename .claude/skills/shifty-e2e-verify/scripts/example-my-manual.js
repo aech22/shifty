@@ -10,7 +10,7 @@
 //     給料の内訳に「あなたが入れた実績の時間で計算した日」。開き直しても同じ。「実績を消す」で消える
 //  D（.ics）: この月の公開済み＋手入力（グレーは入らない）。CRLF・TZID・26:00 は翌日の 2:00・上書きの時刻・SEQUENCE・書き出し後の端末ごとの案内・
 //     TimeTree などで見るときの折りたたみの案内（端末ごとの3手順・2026-10-04）・
-//            日付の詳細の「Google カレンダーに追加」リンク（2026-10-04）
+//            日付の詳細の「Google カレンダーに追加」リンク（2026-10-04。2026-10-05 に外したので、無いことを確かめる）
 //  E: A〜D で店舗のデータ（shops/）が1バイトも変わらない
 //  F（Premium でない）: 入れたシフトは表示・追加と編集と .ics は出ない・削除はできる。設定タブも追加と編集が出ない
 //  G（ルール未反映＝users への書き込みを拒否）: 追加しても画面が落ちず理由を出す
@@ -310,13 +310,9 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
             return !!day && !!ics && t >= day.getBoundingClientRect().bottom && t >= ics.getBoundingClientRect().bottom && !!last && last.contains(d); })() }; });
       V.D_icsAppGuide = !!R.D.apps && R.D.apps.closed && R.D.apps.plat === (IOS ? "ios" : "desktop") && R.D.apps.steps === 3 && /TimeTree/.test(R.D.apps.text) &&
         /直接は取り込めません/.test(R.D.apps.text) && /重複/.test(R.D.apps.text) && R.D.apps.right <= R.D.apps.vw && R.D.apps.below;
-      // Google カレンダーに1件ずつ追加するリンク（日付の詳細・公開済みと手入力・上書きがあっても公開の時刻・送るのは勤務先名と時刻だけ）
+      // 日付の詳細に「Google カレンダーに追加」のリンクは出さない（2026-10-05 ユーザー指示で外した。取り込みは .ics の1つ）
       R.D.gcal = v.gcal;
-      const g = v.gcal.map(x => new URL(x.href));
-      V.D_gcalLinks = v.gcal.length >= 1 && v.gcal.every(x => x.date === TODAY && x.target === "_blank" && /noopener/.test(x.rel) && x.text.startsWith("Google カレンダーに追加"))
-        && g.every(u => u.origin === "https://calendar.google.com" && u.searchParams.get("ctz") === "Asia/Tokyo" && [...u.searchParams.keys()].sort().join() === "action,ctz,dates,text")
-        && g.some(u => u.searchParams.get("dates") === `${TODAY.replace(/-/g, "")}T100000/${TODAY.replace(/-/g, "")}T160000`)
-        && !g.some(u => /T173000/.test(u.searchParams.get("dates")));
+      V.D_noGcalLinks = v.gcal.length === 0 && v.icsBtn;
       const u = ics.text.replace(/\r\n /g, "");
       const events = (u.match(/BEGIN:VEVENT/g) || []).length;
       V.D_icsFile = JSON.stringify(ics.names) === JSON.stringify([`shifty-${YM}.ics`]) && /^text\/calendar/.test(ics.type);

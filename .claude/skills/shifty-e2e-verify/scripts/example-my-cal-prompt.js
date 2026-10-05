@@ -7,7 +7,7 @@
 //  C（LINE の中・iOS・#/me）: 必須の確認。「Safariで開く」で openExternalBrowser=1 付きの URL（ハッシュ #/me を保つ）へ移る。ログインし直しの1行。
 //     「このまま書き出す」で書き出せる。Esc・背景のタップで閉じる。開くとフォーカスが確認の中に移る。「次から表示しない」は出ない
 //  D（Instagram の中・Android）: 必須。外部ブラウザのボタンは無く「URL をコピー」（コピーできなければ URL の欄を出す）
-//  E（Google カレンダーに追加）: LINE の中ではリンクの既定の動作を止めて確認を出し、「このまま開く」で window.open。PC の Chrome では止めない
+//  E（2026-10-05）: 日付の詳細に「Google カレンダーに追加」のリンクが無い（取り込みは「この月のシフトをカレンダーに取り込む」1つ）。LINE の中・PC の Chrome の両方
 //  F（PC の Chrome）: 任意の確認（手順3つ・「次から表示しない」）。書き出した後の案内は重ねない。チェックして書き出すと次から出ず、案内が出る。
 //     LINE の必須の確認は覚えていても出る
 //  G（375px・320px）: 確認の横はみ出し無し・入力欄 16px 以上
@@ -167,28 +167,19 @@ const state = h => h.evaluate(() => {
       V.D_noErrors = errs("D", h);
     } finally { await h.browser.close(); }
   }
-  // E: Google カレンダーに追加
-  {
-    const h = await open({ env: { ua: UA.iosLine, touch: 5 } });
+  // E: 日付の詳細に Google カレンダーのリンクが無い（2026-10-05 ユーザー指示で外した）
+  for (const [k, env] of [["line", { ua: UA.iosLine, touch: 5 }], ["pc", { ua: UA.winChrome }]]) {
+    const h = await open({ env });
     try {
-      const has = await h.page.waitForSelector("[data-my-gcal]", { timeout: 10000 }).then(() => true, () => false);
-      await click(h, "[data-my-gcal]"); await sleep(h, 300);
-      let s = await state(h); R.E = { line: s };
-      V.E_lineGcalPrompt = has && !!s.prompt && s.prompt.action === "gcal" && /Google にログイン/.test(s.prompt.text) && s.clicks[0] === true && s.opened.length === 0 &&
-        s.prompt.actions.includes("calProceed") && /このまま開く/.test(s.prompt.text);
-      await click(h, '[data-my-action="calProceed"]'); await sleep(h, 200);
-      s = await state(h); R.E.lineProceed = s;
-      V.E_lineGcalOpen = !s.prompt && s.opened.length === 1 && /^https:\/\/calendar\.google\.com\/calendar\/render\?/.test(s.opened[0][0]) && s.opened[0][1] === "_blank" && /noopener/.test(s.opened[0][2]);
-      V.E_noErrors1 = errs("E1", h);
+      await h.page.waitForSelector("[data-my-day] [data-my-entry]", { timeout: 10000 }).catch(() => {});
+      const v = await h.page.evaluate(() => ({ entries: document.querySelectorAll("[data-my-day] [data-my-entry]").length,
+        gcal: document.querySelectorAll("[data-my-gcal]").length, gText: /Google カレンダーに追加/.test(document.body.innerText),
+        gHref: [...document.querySelectorAll("a[href]")].some(a => /calendar\.google\.com/.test(a.getAttribute("href"))),
+        ics: document.querySelectorAll('[data-my-action="ics"]').length }));
+      (R.E = R.E || {})[k] = v;
+      V["E_noGcal_" + k] = v.entries >= 1 && v.gcal === 0 && !v.gText && !v.gHref && v.ics === 1;
+      V["E_noErrors_" + k] = errs("E_" + k, h);
     } finally { await h.browser.close(); }
-    const h2 = await open({ env: { ua: UA.winChrome } });
-    try {
-      await h2.page.waitForSelector("[data-my-gcal]", { timeout: 10000 }).catch(() => {});
-      await click(h2, "[data-my-gcal]"); await sleep(h2, 300);
-      const s = await state(h2); R.E.pc = s;
-      V.E_pcGcalNoPrompt = !s.prompt && s.clicks[0] === false && s.opened.length === 0;
-      V.E_noErrors2 = errs("E2", h2);
-    } finally { await h2.browser.close(); }
   }
   // F: PC の Chrome（任意の確認と「次から表示しない」）
   {

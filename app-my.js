@@ -1125,7 +1125,7 @@ function MyCalendarPrompt({action,prompt,onProceed,onClose}){
   const copyUrl=async()=>{
     try{await navigator.clipboard.writeText(href);setCopy("ok");}catch{setCopy("manual");}
   };
-  const proceedLabel=action==="gcal"?"このまま開く":prompt.required?"このまま書き出す":"書き出す";
+  const proceedLabel=prompt.required?"このまま書き出す":"書き出す";
   const titleId="my-cal-prompt-title";
   return(
     <div data-my-cal-overlay="1" onClick={close} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
@@ -1275,12 +1275,6 @@ function MyShiftTab({me,onGoSettings,personal}){
     if(!myIcsEntriesForMonth(entries,ym).length){setIcsMsg({error:"この月に取り込めるシフトがありません（公開済みと手入力のシフトだけが入ります）"});return;}
     withCalPrompt("ics",writeIcs);
   };
-  const openGcal=(ev,url)=>{
-    const p=myCalendarPromptOf(calEnv(),"gcal",{needsLogin:/^#\/me(\/|$)/.test(location.hash)});
-    if(!myCalendarPromptShown(p,"gcal",lg(MY_CAL_PROMPT_LS,{})||{}))return; // そのままリンクを開く
-    ev.preventDefault();
-    setCalPrompt({action:"gcal",prompt:p,run:()=>{window.open(url,"_blank","noopener,noreferrer");}});
-  };
 
   if(links===null)return <MyEmptyState><MyMessage error="お店とのリンクを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/></MyEmptyState>;
   const hasManual=manualList.length>0||Object.keys(P.shifts||{}).length>0;
@@ -1386,11 +1380,6 @@ function MyShiftTab({me,onGoSettings,personal}){
           return(
             <div key={myEntryKey(e)+"|"+i}>
               <MyShiftEntryRow e={e} changed={isChanged(e)} actions={open?null:actions}/>
-              {canEdit&&!open&&myGoogleCalendarLinks(e).map((g,j)=>(
-                <a key={j} data-my-gcal={e.date} href={g.url} target="_blank" rel="noopener noreferrer" onClick={ev=>openGcal(ev,g.url)} style={{...MY_LINK_BTN,display:"inline-block",fontSize:13,color:"var(--c-text3)",padding:"2px 0 6px",marginRight:14}}>
-                  {g.extra?"Google カレンダーに追加（追加の勤務）":"Google カレンダーに追加"}
-                </a>
-              ))}
               {open&&form.type==="override"&&<MyOverrideForm personal={P} entry={e} onDone={formDone}/>}
               {open&&form.type==="editManual"&&<MyManualShiftForm personal={P} manualList={manualList} date={sel} editing={e} onDone={formDone}/>}
             </div>

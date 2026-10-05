@@ -484,7 +484,7 @@ function buildMyShiftDays(o,U){
         const sched={startMin:sd.startMin,endMin:sd.endMin,breakMin:sd.breakMin,workMin:sd.workMin,segments:segOf(sd.segments)};
         // 実績の上書き（E4・users/{uid}/overrides/{shopId}/{date}）は**給料計算にだけ効く**（2026-10-04 ユーザー指示
         // 「スタッフ側の出退勤時間の変更は給料計算のみに影響」）。entry の時刻（startMin〜segments）は常に公開内容（sched）で、
-        // カレンダー・日付の詳細の主表示・次のシフト・.ics・Google カレンダー・全員の表は上書きの有無に関係なく公開内容を出す。
+        // カレンダー・日付の詳細の主表示・次のシフト・.ics・全員の表は上書きの有無に関係なく公開内容を出す。
         // 上書きの値は actual（表示用の要約）と actualDay（resolveActualDay の戻り値＝myPayWorkDays が使う）にだけ載せる。
         // 計算は店舗の実績と同じ resolveActualDay（退勤延長は足さない・締の追加出勤は確定シフトのまま足す）。
         // 「変更あり」の指紋も公開内容（sched）で作る＝上書きしても変更ありにならない
@@ -964,7 +964,7 @@ function myIcsPlatformOf(ua,maxTouchPoints){
 // 書き出した後に出す案内（端末ごと）。Google カレンダーは .ics の取り込みが PC のウェブ版の設定画面からだけで、スマホのアプリでは開けない
 const MY_ICS_HINTS={
   ios:"「カレンダーに追加」の画面が出たら「すべてを追加」を押してください。出ないときは Safari のダウンロード一覧からファイルを開きます。",
-  android:"ダウンロードしたファイルを開くとカレンダーアプリに追加できます。Google カレンダーのアプリは .ics を開けないので、日付の詳細の「Google カレンダーに追加」から1件ずつ追加してください。",
+  android:"ダウンロードしたファイルを開くとカレンダーアプリに追加できます。Google カレンダーのアプリは .ics を開けないので、Google カレンダーに入れるときはパソコンのブラウザで Google カレンダーの「設定 → インポート / エクスポート」からこのファイルを選びます。",
   desktop:"ダウンロードしたファイルを開くと、Outlook・Apple のカレンダー等に追加できます。Google カレンダーは、パソコンのブラウザで Google カレンダーの「設定 → インポート / エクスポート」からこのファイルを選びます。",
 };
 // TimeTree などのアプリで見るときの案内（2026-10-04・ユーザー指示「TimeTree 等のアプリにも対応して」）。
@@ -982,7 +982,7 @@ const MY_ICS_APP_GUIDE={
     ios:["上のボタンでこの月のシフトを書き出し、「すべてを追加」で iPhone のカレンダーに取り込む",
       "iPhone の「設定」→「TimeTree」→「カレンダー」で「フルアクセス」を許可する",
       "TimeTree の画面左下のカレンダー → 右上のアイコン →「表示するフィルターを選択」で、取り込んだカレンダー（iCloud など）をオンにする"],
-    android:["パソコンのブラウザで Google カレンダーの「設定 → インポート / エクスポート」からこのファイルを取り込む（スマホだけなら、日付の詳細の「Google カレンダーに追加」で1件ずつ）",
+    android:["パソコンのブラウザで Google カレンダーの「設定 → インポート / エクスポート」からこのファイルを取り込む",
       "端末の「設定」でその Google アカウントのカレンダーの同期をオンにし、「アプリ」→「TimeTree」→「権限」でカレンダーを許可する",
       "TimeTree の画面左下のカレンダー → 右上のアイコン →「表示するフィルターを選択」で、そのカレンダーをオンにする"],
     desktop:["このパソコンで Google カレンダーの「設定 → インポート / エクスポート」からこのファイルを取り込む",
@@ -991,18 +991,6 @@ const MY_ICS_APP_GUIDE={
   },
   note:"ホームカレンダーに表示する方法なら、端末のカレンダーの予定が変わると TimeTree にも自動で反映されます。共有カレンダーへの「外部カレンダーの予定をインポート」は自動では更新されず、時刻が変わった予定は別の予定として重複して入ります。",
 };
-// Google カレンダーに1件を追加するリンク（本人が押したときだけ開く）。送るのは勤務先名と時刻だけ（休憩・メモは送らない）。
-// 時刻は日本時間の現地表記＋ctz=Asia/Tokyo（24時超えは翌日の時刻）。締の追加出勤は1件ずつ別のリンク
-function myGoogleCalendarLinks(e){
-  if(!e||!(e.kind==="published"||e.kind==="manual")||!isMyDateStr(e.date))return[];
-  const segs=(e.segments&&e.segments.length?e.segments:[{startMin:e.startMin,endMin:e.endMin}]).filter(g=>g&&g.startMin!=null&&g.endMin!=null&&g.endMin>g.startMin);
-  return segs.map(g=>{
-    const title=(e.shopName||"シフト")+(g.extra?"（追加）":"");
-    return{extra:!!g.extra,url:"https://calendar.google.com/calendar/render?action=TEMPLATE&text="+encodeURIComponent(title)+
-      "&dates="+_icsLocal(e.date,g.startMin)+"/"+_icsLocal(e.date,g.endMin)+"&ctz=Asia%2FTokyo"};
-  });
-}
-
 // ===== カレンダーへ取り込む前の確認（2026-10-04・ユーザー指示「カレンダー同期の際、ホーム画面にブックマークを保存する必要がある、
 // ないしはその他操作が必要ならその操作を促すポップアップを表示する」）=====
 // 確かめた事実（2026-10-04）:
@@ -1043,20 +1031,19 @@ function myCalendarEnvOf(o){
   const iosOther=platform==="ios"&&!inApp&&/CriOS|FxiOS|EdgiOS|OPiOS|OPT\/|GSA\/|YaBrowser|DuckDuckGo/.test(ua);
   return{platform,inApp,standalone:!!x.standalone,iosOther};
 }
-// action: "ics"（.ics の書き出し）| "gcal"（Google カレンダーに追加のリンク）。o.needsLogin: メールのアカウントの画面（#/me）
+// action: "ics"（.ics の書き出し。2026-10-05 に日付ごとの「Google カレンダーに追加」を外し、取り込みはこれ1つにまとめた）。o.needsLogin: メールのアカウントの画面（#/me）
 // 戻り値: null（そのまま進める）| {kind, required, title, lead, steps[], openLabel?}
 //   required=true は「そのままでは取り込めないことが多い」環境。「次から表示しない」を覚えていても出す
 function myCalendarPromptOf(env,action,o){
   const e=env||{};const x=o||{};
   const browser=e.platform==="android"?"Chrome":e.platform==="ios"?"Safari":"ブラウザ";
-  const again=action==="gcal"?"開いたページで、日付の詳細の「Google カレンダーに追加」をもう一度押します":"開いたページで、もう一度「この月のシフトをカレンダーに取り込む」を押します";
+  const again="開いたページで、もう一度「この月のシフトをカレンダーに取り込む」を押します";
   const login=x.needsLogin?["メールのアカウントの画面は、開いたブラウザでもう一度ログインします"]:[];
   if(e.inApp){
     const line=e.inApp.id==="line";
     return{kind:"inApp",required:true,
       title:`${e.inApp.name}の中で開いています`,
-      lead:action==="gcal"?`アプリの中のブラウザでは Google にログインできないことがあります。${browser}で開いてから追加してください。`
-        :`アプリの中のブラウザでは、カレンダーのファイルを受け取れないことがあります。${browser}で開いてから取り込んでください。`,
+      lead:`アプリの中のブラウザでは、カレンダーのファイルを受け取れないことがあります。${browser}で開いてから取り込んでください。`,
       steps:[line?`下の「${browser}で開く」を押します`:`画面の「…」などのメニューから、${browser}（ブラウザ）で開く項目を選びます。見つからないときは「URL をコピー」して${browser}に貼り付けます`,again,...login],
       openLabel:line?`${browser}で開く`:null};
   }
@@ -1070,7 +1057,7 @@ function myCalendarPromptOf(env,action,o){
   if(e.platform==="android")return{kind:"downloadThenOpen",required:false,title:"ダウンロードしたファイルを開いて追加します",lead:"",
     steps:["「書き出す」を押すと、.ics のファイルがダウンロードされます",
       "通知かダウンロードの一覧からファイルを開き、カレンダーのアプリを選びます",
-      "Google カレンダーのアプリは .ics を開けません。Google カレンダーだけのときは、日付の詳細の「Google カレンダーに追加」から1件ずつ追加します"],openLabel:null};
+      "Google カレンダーのアプリは .ics を開けません。Google カレンダーに入れるときは、パソコンのブラウザで Google カレンダーの「設定 → インポート / エクスポート」からこのファイルを選びます"],openLabel:null};
   return{kind:"downloadThenOpen",required:false,title:"ダウンロードしたファイルを開いて追加します",lead:"",
     steps:["「書き出す」を押すと、.ics のファイルがダウンロードされます",
       "ファイルを開くと、Outlook や Apple のカレンダーなどに追加できます",
@@ -2023,7 +2010,7 @@ if(typeof module!=="undefined"&&module.exports){
     myHelperDaysOf,myHelperShiftEntries,myMergeHelperEntries,myMovedHelperDates,myHelperTimesIn,myMovedDatesIn,
     MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_STEP_MIN,MY_TIME_OPTIONS,MY_BREAK_MAX_OPTION_MIN,MY_BREAK_OPTIONS,myTimeSelectOptions,myBreakSelectOptions,parseMyMinutesInput,
     MY_OVERNIGHT_HINT,validateMyShiftInput,buildMyShiftRecord,myShiftDuplicateOf,myOverrideOf,planMyOverride,myStaffNumberOf,MY_PROFILE_NUMBER_HINT,myWorkplaceList,myNextWorkplaceColor,validateMyWorkplaceInput,buildMyWorkplacePatch,
-    buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth,myIcsPlatformOf,MY_ICS_HINTS,MY_ICS_APP_GUIDE,myGoogleCalendarLinks,
+    buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth,myIcsPlatformOf,MY_ICS_HINTS,MY_ICS_APP_GUIDE,
     MY_IN_APP_BROWSERS,myInAppBrowserOf,myCalendarEnvOf,myCalendarPromptOf,MY_CAL_PROMPT_LS,myCalendarPromptKey,myCalendarPromptShown,MY_ICS_STANDALONE_NOTE,myExternalBrowserUrl,
     MY_PAY_END_DAY,MY_PAY_HOLIDAY_RULES,MY_PAY_HOLIDAY_RULE_LABELS,MY_PAY_WAGE_TYPES,MY_PAY_WAGE_TYPE_LABELS,MY_PAY_OFFSET_LABELS,MY_PAY_YEN_MAX,MY_PAY_GOAL_MAX,MY_PAY_DEFAULT,
     MY_MANUAL_NIGHT_PCT,MY_MANUAL_OVER8_PCT,MY_MANUAL_OVER8_MIN,myPayDayLabel,myPayOf,validatePayCalendarInput,normalizePayCalendar,buildPayCalendarRecord,payCalendarFormOf,payCalendarText,MY_PAY_BLANK_WAGE,myPayWithShopCalendar,validateMyPayInput,buildMyPayRecord,myPayFormOf,parseMyGoalInput,myGoalOf,parseMyReceivedInput,
