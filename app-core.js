@@ -227,6 +227,24 @@ const CF_BASE = DEV_MODE
 const ADMIN_KEYS_LS="ots_adminKeys_v1";
 function getAdminKeyLS(shopId){const m=lg(ADMIN_KEYS_LS,{})||{};return m[shopId]||null;}
 function setAdminKeyLS(shopId,key){const m=lg(ADMIN_KEYS_LS,{})||{};m[shopId]=key;ls(ADMIN_KEYS_LS,m);}
+// 管理者のセッションで開いている店舗のID一覧（2026-10-05）。次に開いたとき、Cookie の1店舗だけでなくこの一覧を戻す
+// （sessionShopIdsToRestore）。shift_shops_v6 はスタッフURL・デモを開くと上書きされるので、こちらは管理者の経路だけが書く。
+// 書くのは App の effect（店舗が1つ以上あるとき）、消すのはログアウト（doLogout・doFullSignOut）
+const ADMIN_SHOPS_LS="ots_adminShops_v1";
+
+// ホーム画面に追加したときのアイコンを URL で切り替える（2026-10-05）。iOS は「ホーム画面に追加」を押した時点の
+// <link rel="apple-touch-icon"> を使うので、読み込み時とハッシュが変わったときに合わせておく。判定は homeIconKindOf
+const HOME_ICONS={admin:{png:"favicon-180.png",svg:"favicon.svg"},staff:{png:"favicon-staff-180.png",svg:"favicon-staff.svg"}};
+function applyHomeIcon(){
+  try{
+    const ic=HOME_ICONS[homeIconKindOf(parseUrl())];
+    document.querySelectorAll('link[rel="apple-touch-icon"],link[rel="icon"][type="image/png"]').forEach(l=>{if(l.getAttribute("href")!==ic.png)l.setAttribute("href",ic.png);});
+    document.querySelectorAll('link[rel="icon"][type="image/svg+xml"]').forEach(l=>{if(l.getAttribute("href")!==ic.svg)l.setAttribute("href",ic.svg);});
+  }catch(e){console.warn("アイコンの切り替えに失敗:",e);}
+}
+applyHomeIcon();
+window.addEventListener("hashchange",applyHomeIcon);
+window.addEventListener("popstate",applyHomeIcon);
 
 // 実ログイン（Google/メール）は端末にLOCAL永続化し、リロード後も複数店舗ログイン状態を維持する。
 // ただし明示的なログアウト操作後は、Firebase Authに実ユーザーセッションが残っていても

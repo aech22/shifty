@@ -96,6 +96,7 @@ developブランチ・mainブランチのどちらにチェックアウトして
 │                            ルール変更のたびに二重管理を強いていた。`firebase.json` はこの1本だけを参照する）
 ├── CNAME               ← shiftyshifty.app
 ├── privacy.html / terms.html ← 静的ページ（プライバシー・規約）
+├── favicon-staff.svg / favicon-staff-180.png ← スタッフ側の URL で使うアイコン（2026-10-05・管理画面の favicon のオレンジと白を入れ替えたもの）
 ├── ogp.png             ← OGP画像（実配信物。index.html の og:image が参照）
 ├── generate-ogp.js     ← ogp.png の生成元。画像を変えるときはこれを編集して再生成する
 │                          （@napi-rs/canvas が必要。フォントは Hiragino Sans を明示すること）
@@ -430,6 +431,11 @@ DEV_PLAN_OVERRIDE   // DEV_MODE時のみ ?plan= URLパラメータで上書き
 _LA_KEY / _LL_KEY   // ログイン試行ロック（10回・30分・メールログインで使用）
 lg / ls / storeKey  // localStorage
 CK_SHOP / ckStaffKey / SS_* / THEME_KEY / applyTheme // Cookie・セッション・テーマ
+ADMIN_SHOPS_LS      // 管理者のセッションで開いている店舗IDの一覧（2026-10-05・ots_adminShops_v1）。Google・メールのログインが無い端末も、
+                    // 起動時に Cookie の1店舗だけでなくこの一覧を戻す（cookieFallback・sessionShopIdsToRestore）。書くのは App の effect（店舗が1つ以上・
+                    // スタッフURL／#/m/／#/me／デモでは書かない）、消すのはログアウト。権限は従来どおり owners と管理コードで決まる
+HOME_ICONS / applyHomeIcon // ホーム画面に追加したときのアイコン（2026-10-05）。スタッフ側の URL（#/s/・#/m/・#/me＝homeIconKindOf）は
+                    // favicon-staff-180.png / favicon-staff.svg（管理画面のアイコンのオレンジと白を入れ替えたもの）。読み込み時と hashchange・popstate で切り替える
 makeShop / makeSettings / buildUrl(period) / parseUrl
 CF_BASE             // Cloud FunctionsエンドポイントをDEV_MODE連動で切り替え
 AI / AB / AD / AGray // スタイル定数

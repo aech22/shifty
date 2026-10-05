@@ -255,20 +255,33 @@ function App(){
     // shift_shops_v6キャッシュのうち、現在もこのアカウントに紐付いている店舗のみを対象にし、
     // targetShopは必ず含める（リロード直後に「他の店舗がログアウトになる」のを防ぐ）
     const restoreShopList=(linkedShops,targetShop)=>{
+      // 管理者の経路だけが書く ADMIN_SHOPS_LS を優先する（shift_shops_v6 はスタッフURL・デモを開くと上書きされる）。
+      // まだ一度も書かれていない端末（null）だけ従来の shift_shops_v6 を見る
+      const savedIds=lg(ADMIN_SHOPS_LS,null);
       const cached=lg("shift_shops_v6",[])||[];
-      const cachedIds=cached.map(s=>s&&s.id).filter(Boolean);
+      const cachedIds=Array.isArray(savedIds)?savedIds:cached.map(s=>s&&s.id).filter(Boolean);
       const restored=cachedIds.map(id=>linkedShops.find(s=>s.id===id)).filter(Boolean);
       if(!restored.some(s=>s.id===targetShop.id)) restored.unshift(targetShop);
       return restored;
     };
     const toUnbound=()=>{ setUnbound(true); setReady(true); };
-    // Cookie店舗で入る（DB読み失敗時はlocalStorageキャッシュでオフライン継続）
+    // Cookie店舗で入る（DB読み失敗時はlocalStorageキャッシュでオフライン継続）。
+    // 2026-10-05: 前回このセッションで開いていた他の店舗（「コードで追加」した店舗）も一緒に戻す。
+    // 以前は Cookie の1店舗だけを戻していたので、Google・メールのログインが無い端末では再読み込みのたびに
+    // 他の店舗が消えていた（iOS のホーム画面アプリは終了・再起動が多く特に目立った）。
+    // 管理の権限は従来どおり店舗ごとの owners と管理コード（ots_adminKeys_v1）で決まり、一覧に戻すだけでは変わらない
     const cookieFallback=()=>{
       const ckId=getCookie(CK_SHOP);
       if(!ckId||ckId==="default"){ dlog("未ログイン: ログイン画面へ"); toUnbound(); return; }
       readShop(ckId).then(shop=>{
-        if(shop){ dlog("Cookie店舗:",shop.name); enterShop(shop); }
-        else toUnbound(); // CookieのIDがDBに存在しない
+        if(!shop){ toUnbound(); return; } // CookieのIDがDBに存在しない
+        dlog("Cookie店舗:",shop.name);
+        const ids=sessionShopIdsToRestore(lg(ADMIN_SHOPS_LS,null),shop.id);
+        if(ids.length<=1){ enterShop(shop); return; }
+        const cached=lg("shift_shops_v6",null)||[];
+        // 消えた店舗（null）は落とし、読めなかった店舗は手元の写しがあればそれで残す
+        return Promise.all(ids.map(id=>id===shop.id?shop:readShop(id).catch(()=>cached.find(s=>s&&s.id===id)||null)))
+          .then(list=>{ const restored=list.filter(s=>s&&s.id); dlog("Cookie店舗＋前回の店舗:",restored.map(s=>s.name)); enterShop(shop,restored); });
       }).catch(e=>{
         console.warn("shops読み込み失敗:",e);
         const local=lg("shift_shops_v6",null)||[];
@@ -400,6 +413,13 @@ function App(){
       }
     }
   },[sid]);
+  // 管理者のセッションで開いている店舗の一覧を覚える（2026-10-05・次に開いたとき cookieFallback / restoreShopList が戻す）。
+  // 空の一覧は書かない: 起動直後（Phase1 が店舗を決める前）や #/me で一覧を消さないため。消すのはログアウトだけ
+  useEffect(()=>{
+    if(!ready||unbound||_hasUrlToken||DEMO_MODE||bootRoute?.type==="me")return;
+    const ids=shops.map(s=>s&&s.id).filter(id=>id&&id!=="default");
+    if(ids.length>0) ls(ADMIN_SHOPS_LS,ids);
+  },[ready,unbound,shops]);
 
   useEffect(()=>{ if(!_hasUrlToken&&!DEMO_MODE) ssSave(SS_APID,apid); },[apid]);
   useEffect(()=>{ if(!_hasUrlToken&&!DEMO_MODE) ssSave(SS_VIEW,view); },[view]);
@@ -944,6 +964,7 @@ function App(){
     activeSubsRef.current=[];
     stopSubsListeners(); // 期間別subs購読も解除（activeSubsRefには含まれない）
     delCookie(CK_SHOP);
+    ls(ADMIN_SHOPS_LS,[]); // 次に開いたとき前回の店舗一覧を戻さない（2026-10-05）
     sessionStorage.clear();
     setCurrentShopId(null);
     setShops([]); // セッションの店舗リストをクリア（authUser・allLinkedShops は維持）
@@ -975,6 +996,7 @@ function App(){
       try{await firebaseAuth.signOut();}catch(e){console.warn("signOut失敗:",e);}
     }
     delCookie(CK_SHOP);
+    ls(ADMIN_SHOPS_LS,[]); // 次に開いたとき前回の店舗一覧を戻さない（2026-10-05）
     sessionStorage.clear();
     ls(AUTH_LOGGED_OUT_LS,true); // 明示ログアウト: 次回起動時に実ユーザーセッションを自動復元しない
     setAuthUser(null);

@@ -7136,3 +7136,45 @@ test("App: #/admin で開いたタブは管理者画面から始まり、スタ�
   assert.ok(/const\[view,setView\]=useState\(\(\)=>_hasUrlToken\?"staff":bootRoute\?\.type==="admin"\?"admin":ssGet\(SS_VIEW,"staff"\)\)/.test(src));
   assert.ok(/const _hasUrlToken=!!\(bootRoute\?\.type==="staff"\|\|bootRoute\?\.type==="page"\);/.test(src));
 });
+
+// ===== 管理者のセッションの店舗一覧の復元・ホーム画面のアイコン（2026-10-05） =====
+test("sessionShopIdsToRestore: 保存した並びを保ち、Cookie の店舗を必ず含める", () => {
+  assert.deepStrictEqual(u.sessionShopIdsToRestore(["A", "B", "C"], "B"), ["A", "B", "C"]);
+  assert.deepStrictEqual(u.sessionShopIdsToRestore(["A", "B"], "C"), ["C", "A", "B"]); // 保存に無い店舗は先頭
+  assert.deepStrictEqual(u.sessionShopIdsToRestore(null, "A"), ["A"]); // 何も保存していない端末は従来どおり1店舗
+  assert.deepStrictEqual(u.sessionShopIdsToRestore([], "A"), ["A"]); // ログアウトで消した後
+});
+test("sessionShopIdsToRestore: 重複・不正な ID・壊れた保存値を落とす", () => {
+  assert.deepStrictEqual(u.sessionShopIdsToRestore(["A", "A", "", null, 3, "default", "x.y", "a/b", "B"], "A"), ["A", "B"]);
+  assert.deepStrictEqual(u.sessionShopIdsToRestore({ 0: "A" }, "B"), ["B"]);
+  assert.deepStrictEqual(u.sessionShopIdsToRestore(["A"], null), ["A"]);
+  assert.deepStrictEqual(u.sessionShopIdsToRestore(["A"], "bad#id"), ["A"]);
+});
+test("sessionShopIdsToRestore: 件数の上限でも Cookie の店舗は残る", () => {
+  const many = Array.from({ length: 60 }, (_, i) => "S" + i);
+  const r = u.sessionShopIdsToRestore(many, "S59", 50);
+  assert.strictEqual(r.length, 50);
+  assert.ok(r.includes("S59"));
+  assert.strictEqual(u.sessionShopIdsToRestore(many, "S3", 50).length, 50);
+  assert.strictEqual(u.SESSION_SHOPS_MAX, 50);
+});
+test("homeIconKindOf: スタッフ側の URL だけスタッフ用アイコン", () => {
+  assert.strictEqual(u.homeIconKindOf({ type: "staff", token: "t" }), "staff");
+  assert.strictEqual(u.homeIconKindOf({ type: "page", pageToken: "p" }), "staff");
+  assert.strictEqual(u.homeIconKindOf({ type: "me" }), "staff");
+  assert.strictEqual(u.homeIconKindOf({ type: "admin" }), "admin");
+  assert.strictEqual(u.homeIconKindOf({ type: "demo" }), "admin");
+  assert.strictEqual(u.homeIconKindOf(null), "admin");
+});
+test("ホーム画面のアイコン: index.html の link と app-core.js の切り替え先のファイルが揃っている", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const root = path.join(__dirname, "..");
+  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const core = fs.readFileSync(path.join(root, "app-core.js"), "utf8");
+  assert.ok(/<link rel="apple-touch-icon"[^>]*href="favicon-180\.png"/.test(html));
+  for (const f of ["favicon-180.png", "favicon.svg", "favicon-staff-180.png", "favicon-staff.svg"]) {
+    assert.ok(core.includes(`"${f}"`), f + " が app-core.js の HOME_ICONS に無い");
+    assert.ok(fs.existsSync(path.join(root, f)), f + " が無い");
+  }
+});
