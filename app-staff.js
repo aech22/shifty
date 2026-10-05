@@ -532,14 +532,14 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
                   </div>}
                   <div style={{display:"flex",gap:8}}>
                     {[["start","出勤"],["end","退勤"]].map(([f,l])=>{
-                      const base=TO; // 出勤・退勤とも15分刻み（2026-10-05 ユーザー指示。以前の出勤は30分刻み＝TO_START）
+                      const base=f==="start"?TO_START:TO;
                       const opts=st[f]&&!base.includes(st[f])?[...base,st[f]].sort():base;
                       return(
                       <div key={f} style={{flex:1}}>
                         <div style={{fontSize:11,fontWeight:700,color:"var(--c-text3)",marginBottom:4}}>{l}</div>
                         {/* 矢印は data URI 内のSVGのため CSS変数が使えない。ライト/ダーク両方の背景で
                             非テキストコントラスト3:1を満たす中間グレー(#7E8899)を固定値で使う */}
-                        {/* 時と分の2列ホイール（2026-10-05）。刻みは出勤・退勤とも15分（TO）で、opts が決める */}
+                        {/* 時と分の2列ホイール（2026-10-05）。刻みは従来どおり（出勤 TO_START＝30分・退勤 TO＝15分）で、opts が決める */}
                         <TimeWheelField name={`${ds}-${f}`} value={st[f]||"18:00"} options={opts} onChange={v=>upd(ds,{[f]:v})}
                           title={`${+ds.slice(5,7)}/${+ds.slice(8,10)} ${l}`}
                           style={{width:"100%",padding:"9px 28px 9px 10px",fontSize:16,fontWeight:600,background:`var(--c-input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='13' height='13' viewBox='0 0 24 24' fill='none' stroke='%237E8899' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E") no-repeat right 8px center`,border:"2px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",outline:"none",cursor:"pointer",appearance:"none",WebkitAppearance:"none"}}/>

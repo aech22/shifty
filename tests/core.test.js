@@ -7231,7 +7231,7 @@ test("ホーム画面のアイコン: index.html の link と app-core.js の切
 });
 
 // ===== 時刻の2列ホイール（2026-10-05 ユーザー指示「時間と分をそれぞれ選べるように。シフト提出は従来どおりの刻み」）=====
-test("時刻のホイール: 提出の刻みは出勤・退勤とも TO＝15分（2026-10-05）で、端で止まり、選べない組み合わせは寄せる", () => {
+test("時刻のホイール: 提出の刻みは従来どおり（出勤 TO_START＝30分・退勤 TO＝15分）で、端で止まり、選べない組み合わせは寄せる", () => {
   const ms = u.timeWheelModel(u.TO_START);
   assert.deepStrictEqual([ms.hours[0], ms.hours[ms.hours.length - 1]], [0, 27], "時は 0〜27（ループしない）");
   assert.deepStrictEqual(ms.minutes[18], [0, 30], "出勤の分は 00・30");
@@ -7255,7 +7255,7 @@ test("時刻のホイール: 提出の刻みは出勤・退勤とも TO＝15分�
   // 入口: 提出画面とセル編集は select ではなくホイール（刻みの配列は従来のもの）
   const staff = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-staff.js"), "utf8");
   const view = staff.slice(staff.indexOf("function StaffView("));
-  assert.ok(/const base=TO;/.test(view) && !/TO_START/.test(view.replace(/\/\/[^\n]*|\{\/\*[\s\S]*?\*\/\}/g, "")) && /<TimeWheelField name=\{`\$\{ds\}-\$\{f\}`\}[^>]*options=\{opts\}/.test(view), "提出画面: 出勤・退勤とも TO（15分刻み）のホイール");
+  assert.ok(/const base=f==="start"\?TO_START:TO;/.test(view) && /<TimeWheelField name=\{`\$\{ds\}-\$\{f\}`\}[^>]*options=\{opts\}/.test(view), "提出画面: 出勤 TO_START・退勤 TO のホイール");
   assert.ok(/<TimeWheelField name=\{`cell-\$\{f\}`\}/.test(staff) && !/\{TO\.map\(t=><option/.test(staff), "セル編集もホイール");
 });
 test("時刻のホイール: 候補タブの時刻欄（全体・曜日別・日付別・休憩）もホイール（TO＝15分）で、CandTab の外の部品（2026-10-05）", () => {
