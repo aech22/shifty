@@ -154,7 +154,11 @@ async function openHarness(o) {
 
   await page.route("**/*", route => {
     const u = new URL(route.request().url());
-    if (u.hostname !== "shifty.test") return route.continue();      // CDNは実ネットワークへ通す
+    if (u.hostname !== "shifty.test") {                              // CDNは実ネットワークへ通す（SHIFTY_CDN_DIR があれば手元から返す）
+      const local = cdnLocalFile(u);
+      if (local) return route.fulfill({ contentType: MIME[".js"], body: fs.readFileSync(local) });
+      return route.continue();
+    }
     if (u.pathname === "/") return route.fulfill({ contentType: MIME[".html"], body: html });
     const f = path.join(root, decodeURIComponent(u.pathname).replace(/^\//, ""));
     if (!f.startsWith(root) || !fs.existsSync(f)) return route.fulfill({ status: 404, body: "not found" });
@@ -285,4 +289,20 @@ async function openHarness(o) {
   };
 }
 
-module.exports = { openHarness, REPO_ROOT, DEFAULT_SCRIPTS };
+
+// CDN に出られない環境（クラウドのセッションのネットワーク方針）では、同じ版の npm パッケージを置いたディレクトリ
+// （SHIFTY_CDN_DIR＝その node_modules の親）から返す（2026-10-05。example-admin-route.js と同じ規則）。未設定・見つからなければ null
+function cdnLocalFile(u) {
+  const dir = process.env.SHIFTY_CDN_DIR;
+  if (!dir) return null;
+  let rel = null;
+  const npm = /^\/(?:npm\/)?((?:@[^/]+\/)?[^/@]+)@[^/]+\/(.+)$/.exec(u.pathname);
+  if ((u.hostname === "unpkg.com" || u.hostname === "cdn.jsdelivr.net") && npm) rel = `${npm[1]}/${npm[2]}`;
+  const cdnjs = /^\/ajax\/libs\/([^/]+)\/[^/]+\/(.+)$/.exec(u.pathname);
+  if (u.hostname === "cdnjs.cloudflare.com" && cdnjs) rel = `${cdnjs[1]}/dist/${cdnjs[2]}`;
+  if (!rel) return null;
+  const f = path.join(dir, "node_modules", rel);
+  return fs.existsSync(f) ? f : null;
+}
+
+module.exports = { openHarness, REPO_ROOT, DEFAULT_SCRIPTS, cdnLocalFile };

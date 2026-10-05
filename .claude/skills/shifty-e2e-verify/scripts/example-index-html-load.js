@@ -17,7 +17,7 @@
 "use strict";
 const fs = require("node:fs");
 const path = require("node:path");
-const { REPO_ROOT } = require(path.join(__dirname, "mount-component.js"));
+const { REPO_ROOT, cdnLocalFile } = require(path.join(__dirname, "mount-component.js"));
 const { makeStub } = require(path.join(__dirname, "stub-firebase.js"));
 const ROOT = process.env.SHIFTY_ROOT || REPO_ROOT;
 
@@ -85,7 +85,11 @@ async function openIndex(browser, { signedIn, view, tab }) {
     if (/googletagmanager\.com|google-analytics\.com|posthog\.com/.test(u.hostname)) {
       return route.fulfill({ status: 200, contentType: MIME[".js"], body: "" });
     }
-    if (u.hostname !== "shifty.test") return route.continue();
+    if (u.hostname !== "shifty.test") {
+      const local = cdnLocalFile(u);
+      if (local) return route.fulfill({ contentType: "application/javascript; charset=utf-8", body: fs.readFileSync(local) });
+      return route.continue();
+    }
     if (u.pathname === "/" || u.pathname === "/index.html") return route.fulfill({ contentType: MIME[".html"], body: html });
     const rel = decodeURIComponent(u.pathname).replace(/^\//, "");
     const f = path.join(ROOT, rel);
