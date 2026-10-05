@@ -2053,6 +2053,24 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     });
     return {restCounts:rest,fullDayCounts:full,halfDayCounts:half};
   },[realStaff,dates,subsCalc,heatEditsCalc,selPid,fixedShiftEnabled]);
+  // 削りカウント（2026-10-05 ユーザー指示）: スタッフの提出から帯を削った日数。通しの半分も終日も1日1回。
+  // 判定は app-utils.js の shiftCutOf（手入力だけの日・休みコマンドの帯・ヘルプ・帯の移し替えは数えない）。
+  // セルの値は休みカウントと同じ getHeatVal / getFieldNote / hasFixedCmd で読む＝2つの表が同じ値を見る
+  const cutCounts=React.useMemo(()=>{
+    const result={};
+    realStaff.forEach(name=>{
+      const sub=_getSub(name);
+      let n=0;
+      if(sub)dates.forEach(date=>{
+        if(shiftCutOf({sub,shift:sub.shifts&&sub.shifts[date],
+          startH:parseFloat(getHeatVal(name,date,"start")),endH:parseFloat(getHeatVal(name,date,"end")),
+          startNote:getFieldNote(name,date,"start"),endNote:getFieldNote(name,date,"end"),
+          fixed:hasFixedCmd(name,date)}))n++;
+      });
+      result[name]=n;
+    });
+    return result;
+  },[realStaff,dates,subsCalc,heatEditsCalc,selPid,fixedShiftEnabled]);
   // 連勤カウント: 期間内の最大連続出勤日数（0.5出勤も出勤扱い）
   const consecCounts=React.useMemo(()=>{
     const result={};
@@ -2378,7 +2396,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     h+=`<th style="border:${BDp};padding:3px 6px;background:#f7f7f7;"></th>`;
     cols.forEach(nm=>{if(isSpacer(nm)){h+=`<th style="border:${BDp};width:26px;"></th>`;return;}const col=staffColorsPdf[nm]==="red"?"#e53935":"#000";h+=`<th style="border:${BDp};padding:3px 1px;width:26px;text-align:center;font-size:${vfontSize(nm,10)}px;line-height:1.15;color:${col};vertical-align:middle;">${vtext(nm)}</th>`;});
     h+='</tr></thead><tbody>';
-    const rows=[["1日休み（回）",nm=>fullDayCounts[nm]||0],["半日休み（回）",nm=>halfDayCounts[nm]||0],["休み合計",nm=>{const v=restCounts[nm]||0;return v%1===0?v:v.toFixed(1);}],["最大連勤数",nm=>consecCounts[nm]||0]];
+    const rows=[["1日休み（回）",nm=>fullDayCounts[nm]||0],["半日休み（回）",nm=>halfDayCounts[nm]||0],["休み合計",nm=>{const v=restCounts[nm]||0;return v%1===0?v:v.toFixed(1);}],["最大連勤数",nm=>consecCounts[nm]||0],["削り（回）",nm=>cutCounts[nm]||0]];
     rows.forEach(([lbl,valFn])=>{
       h+=`<tr><td style="border:${BDp};padding:3px 6px;background:#f7f7f7;font-weight:600;white-space:nowrap;">${esc(lbl)}</td>`;
       cols.forEach(nm=>{if(isSpacer(nm)){h+=`<td style="border:${BDp};"></td>`;return;}h+=`<td style="border:${BDp};padding:3px 2px;text-align:center;">${esc(valFn(nm))}</td>`;});
@@ -3216,7 +3234,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                   {key:"full",label:"1日休み（回）",short:"1日休",bb:BD,val:name=>fullDayCounts[name]||0},
                   {key:"half",label:"半日休み（回）",short:"半日休",bb:BD,val:name=>halfDayCounts[name]||0},
                   {key:"sum",label:"休み合計",short:"休計",bb:BD,val:name=>(restCounts[name]||0)%1===0?(restCounts[name]||0):(restCounts[name]||0).toFixed(1)},
-                  {key:"consec",label:"最大連勤数",short:"連勤",bb:BD2,val:name=>consecCounts[name]||0},
+                  {key:"consec",label:"最大連勤数",short:"連勤",bb:BD,val:name=>consecCounts[name]||0},
+                  {key:"cut",label:"削り（回）",short:"削り",bb:BD2,val:name=>cutCounts[name]||0},
                 ].map(r=>(
                   <tr key={r.key}>
                     <td title={r.label} style={{...SD,fontWeight:600,borderBottom:r.bb,background:CRD,fontSize:fullView?Math.min(11,fvDateFont):11}}>{r.short}</td>

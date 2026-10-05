@@ -7281,3 +7281,61 @@ test("時刻のホイール: 提出一覧の詳細の調整値と PDF の昼夜�
   const staff = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-staff.js"), "utf8");
   assert.ok(/clearLabel=\{value\?clearLabel:null\}/.test(staff), "空に戻すボタンは値が入っているときだけ");
 });
+
+// ===== 削り（2026-10-05 ユーザー指示）=====
+// 提出した帯を管理者が削った日だけを数える。通しの半分も終日も1日1回。
+{
+  const sub = { id: "s1", staffName: "田中", periodId: "p1", shifts: {} };
+  const through = { status: "work", start: "11:00", end: "23:00" };
+  const cut = (shift, cell, s = sub) => u.shiftCutOf({ sub: s, shift, startH: NaN, endH: NaN, startNote: "", endNote: "", fixed: false, ...cell });
+
+  test("shiftCutOf: 提出どおりなら削りではない", () => {
+    assert.strictEqual(cut(through, { startH: 11, endH: 23 }), false);
+    assert.strictEqual(cut({ status: "work", start: "17:00", end: "23:00" }, { startH: 17, endH: 23 }), false);
+  });
+  test("shiftCutOf: 通しの片方の帯を空欄にした日・終日空欄にした日は削り", () => {
+    assert.strictEqual(cut(through, { startH: NaN, endH: 23 }), true, "ランチ帯を空欄");
+    assert.strictEqual(cut(through, { startH: 11, endH: 15 }), true, "退勤を15にしてディナー帯を削る");
+    assert.strictEqual(cut(through, { startH: 11, endH: 17 }), true, "退勤17はディナー帯に入らない");
+    assert.strictEqual(cut(through, {}), true, "終日空欄");
+    assert.strictEqual(cut({ status: "work", start: "11:00", end: "15:00" }, {}), true, "ランチだけの提出を空欄");
+  });
+  test("shiftCutOf: 11〜23 の提出を 17〜23 にした日は削り（ユーザー決定）", () => {
+    assert.strictEqual(cut(through, { startH: 17, endH: 23 }), true);
+  });
+  test("shiftCutOf: 帯の移し替え（提出に無い帯を足した日）は数えない", () => {
+    assert.strictEqual(cut({ status: "work", start: "11:00", end: "15:00" }, { startH: 17, endH: 23 }), false);
+    assert.strictEqual(cut({ status: "work", start: "17:00", end: "23:00" }, { startH: 11, endH: 15 }), false);
+    assert.strictEqual(cut({ status: "work", start: "11:00", end: "15:00" }, { startH: 11, endH: 15, fixed: true }), false, "締を足しただけ");
+  });
+  test("shiftCutOf: 同じ帯の中で短くしただけは削りではない", () => {
+    assert.strictEqual(cut({ status: "work", start: "17:00", end: "23:00" }, { startH: 17, endH: 20 }), false);
+    assert.strictEqual(cut(through, { startH: 12, endH: 22 }), false);
+  });
+  test("shiftCutOf: 休みコマンドを入れた帯は数えない", () => {
+    assert.strictEqual(cut({ ...through, adminRest: { start: true } }, { startH: NaN, endH: 23 }), false, "/ をランチ帯に");
+    assert.strictEqual(cut({ ...through, adminRest: { start: true, end: true }, leaveTypes: { start: "public", end: "public" } }, {}), false, "ko");
+    assert.strictEqual(cut({ ...through, adminRest: { end: true }, leaveTypes: { end: "paid" } }, { startH: 11 }), false, "yu をディナー帯に");
+    assert.strictEqual(cut({ ...through, adminRest: { start: true } }, { startH: NaN, endH: 15 }), true, "休みにしていない帯を削れば数える");
+  });
+  test("shiftCutOf: ヘルプ（x・他店舗の略称）にした帯は数えない", () => {
+    assert.strictEqual(cut(through, { startH: 11, startNote: "三", endH: 23 }), false, "11三");
+    assert.strictEqual(cut(through, { startH: NaN, startNote: "x", endH: 23 }), false, "時刻なしの略称・x");
+    assert.strictEqual(cut(through, { startH: NaN, startNote: "研修", endH: 23 }), false, "メモが入っていれば帯は残っているとみなす");
+  });
+  test("shiftCutOf: 提出の無い日・休みの提出・手入力だけの日は数えない", () => {
+    assert.strictEqual(cut(undefined, {}), false);
+    assert.strictEqual(cut({ status: "holiday" }, {}), false);
+    assert.strictEqual(cut({ status: "work", origStatus: "holiday", adjustedStart: "" }, {}), false, "休みの提出に時刻を入れて消した日");
+    assert.strictEqual(cut({ status: "work", adjustedStart: "", adjustedEnd: "23:00" }, { endH: 23 }), false, "提出の時刻が無い");
+    const grid = { ...sub, source: "grid" };
+    assert.strictEqual(cut({ status: "work", start: "11:00", end: "23:00" }, {}, grid), false, "source:grid は手入力");
+  });
+}
+
+test("削り: 画面の表と PDF の表が同じ cutCounts を使う", () => {
+  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "app-shift.js"), "utf8");
+  assert.ok(/\["削り（回）",nm=>cutCounts\[nm\]\|\|0\]/.test(src), "PDF の休み・連勤カウント表に削りの行");
+  assert.ok(/key:"cut",label:"削り（回）",short:"削り",[^\n]*cutCounts\[name\]/.test(src), "画面の表に削りの行");
+  assert.ok(/shiftCutOf\(\{sub,shift:/.test(src), "cutCounts は shiftCutOf を通す");
+});
