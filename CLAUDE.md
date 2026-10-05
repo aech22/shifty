@@ -765,6 +765,7 @@ Settings = { shopId, candidates: Cand[], weekdayCandidates: {[dow]: Cand[]},
              staffHomeShop?: {[name]: shopId},    // 所属店舗（2026-09-27。無ければ自店所属。STAFF_KEYED_SETTING_MAPS 登録済み）
              shopAbbrs?: string[],                // 店舗略称。手入力のヘルプコマンド（例「9三」）と、先頭がヘルプ表示の1セル用
              shopAbbr2?: {top, bottom}|null,      // 2セル表示用の略称（2026-10-04・H1）。表示専用・各2文字・企業連携タブで登録
+             payCalendar?: {closingDay, payMonthOffset, payDay, holidayRule, updatedAt},  // マイシフトの給料の締日・給料日（2026-10-05・本人の設定より優先）
              actualsCsv?: {hasHeader, date, name, start, end, breakMin} }  // 実績の CSV 取込の列の位置（1始まり・0=使わない・P4）
 
 // 実績（shops/{shopId}/actuals/{期間ID}/{名前}/{日付}・2026-09-30・P4）。確定シフトと違う項目だけ。解決は resolveActualDay
@@ -1652,6 +1653,12 @@ if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 - **スタッフが入れた時刻**: 表示（カレンダー・次のシフト・.ics・全員の表）は常に公開内容。本人の実績は給料計算だけに効く
 - **URLをなくしたとき用のメールアドレス（任意）**: CF `setPageEmail`（登録・変更・削除・状態と控えの送信）・`recoverPageUrl`（送り直し。結果の文言は登録の有無に関係なく同じ）。置き場は CF 専用の `staffPageEmails`・`staffPageEmailIndex`・`staffPageEmailRate`（ルールで読み書き不可）。メールの URL は本番ドメイン固定で `?openExternalBrowser=1` が付く。回帰は `example-my-page-email.js`（画面）と cf-verify の `example-page-email.js`
 - **休暇の種別名**: 画面・PDF・全員の表・シフト作成タブからの Excel。期間タブの Excel は提出そのまま（斜線）
+- **ホーム画面のアプリ（2026-10-05）**: manifest.json の start_url は "./" なので、iOS でスタッフ側のURLを「ホーム画面に追加」するとアプリは "/" で開き、管理者の端末では管理者画面になっていた。スタッフ側のURL（`homeIconKindOf` が staff＝#/s/・#/m/・#/me）では、app-core.js の `applyHomeManifest` が link[rel=manifest] を「いま開いているURLを start_url・id にした data: の manifest」（`homeManifestOf`・app-utils.js）に差し替える（読み込み時・hashchange・popstate・マイシフトを重ねる pushState の後）。管理者側は manifest.json のまま。**iOS・Android の実機で追加して開く確認は未実施**（Safari が data: の manifest を読まない場合も、manifest が無いときと同じく開いているURLで追加される想定）
+- **提出タブ（2026-10-05）**: 個別URLの「提出」タブは、提出済みでも「提出完了」ではなく提出の内容を反映した選択画面を開く（`data-staff-restored` の帯）。提出した直後だけ「提出完了」。募集URL（Cookie の名前）は従来どおり「提出完了」から
+- **全員のシフトのヘルプ先（2026-10-05）**: 同じ人の他店の登録（写しの人物、無ければ所属店舗の一致＝`myHelpDestRegs`・同じ法人だけ）がある店舗を「◯◯店（ヘルプ先）」としてお店のプルダウンに足す。選択肢は**確定済み**かつ直近3ヶ月の期間だけ（`myHelpDestPeriodOptions`）、既定は自分の店舗。読み込みは `useMyHelpDestShops`（settings・staff・periods）と、選んだ期間の subs だけの部分読み（書き込みなし）。個別URL・#/me の両方
+- **「公開」の表示は「確定」（2026-10-05）**: 提出だけが未確定なので、マイシフトのラベル（MY_KIND_LABEL）・全員の表の見出し（`確定（m/d）`＝確定済みなら確定した日）・.ics の説明は公開でも「確定」。説明文の「公開された時間」などはそのまま
+- **給料のグラフ（2026-10-05）**: 目標の弧は下地（--c-border）の上に、これからの見込みまでを --c-text4、確定分をアクセントで重ねる（`MyGoalRing`・`myPaySummaryOf` の projectedProgress）。年の表示にも同じ部品（`MyPaySummaryBody`）で年の目標＝月間目標×12（`myPayYearGoalOf`）と、勤務先ごとの年間の収入と支給月ごとの内訳（`myPayYearByWorkplace`）
+- **お店の締日・給料日（2026-10-05）**: `settings.payCalendar={closingDay,payMonthOffset,payDay,holidayRule,updatedAt}`。設定タブの「締日・給料日（スタッフのマイシフト）」（この店舗）と企業連携タブの同名カード（選んだ連携店舗にまとめて。他店舗は `settings/payCalendar` だけを update）で登録する。マイシフトの給料は本人の締日・給料日よりこちらを優先し（`myPayWithShopCalendar`。時給・交通費は本人のまま）、勤務先の編集は締日の欄の代わりに「お店の登録・変更できません」。検証は `validatePayCalendarInput`（本人の設定と同じ規則）。ルール・CF の変更なし（settings の既存ルール）。回帰は `example-my-1005.js`
 - **メールの差出人**: Firebase Auth の確認メールは標準の差出人だと迷惑メールに入る（2026-10-05 にユーザーが確認）。`shiftyshifty.app` を差出人にするには Firebase コンソールのカスタムドメインの DNS レコード4件（SPF・firebase の TXT、DKIM の CNAME 2件）を Cloudflare に足して確認する（未実施）
 
 ## 労務判定（2026-09-26・3弾すべて実装済み）
