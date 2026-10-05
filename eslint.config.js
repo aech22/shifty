@@ -333,6 +333,7 @@ const sharedGlobals = {
   THEME_KEY: "writable",
   TO: "writable",
   TO_START: "writable",
+  timeWheelOptionsWith: "writable",
   timeWheelSplit: "writable",
   timeWheelModel: "writable",
   timeWheelPick: "writable",

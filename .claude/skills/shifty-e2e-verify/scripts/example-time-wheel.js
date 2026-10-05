@@ -9,6 +9,9 @@
 //  K（候補タブ＝CandTab だけをマウント・375px・2026-10-05 ユーザー指示「候補タブの時間設定もホイールで」）: 全体・曜日別・日付別・休憩の
 //     時刻欄（8つ）が select ではなくホイール（TO＝15分刻み・0〜27時）。全体で 9:15〜14:45 を選んで追加すると candidates に入る。
 //     退勤のホイールは出勤の値から始まる。ホイールを開いたまま親が描き直してもホイールは閉じない。休憩 12:00〜13:00 を追加すると breakTimes に入る
+//  D（提出一覧の詳細画面＝SubsTab だけをマウント・375px・2026-10-05）: 出勤・退勤の調整値もホイール（TO＝15分）。未調整は「提出値」と出て、
+//     開くと提出値（刻みに合わない 18:10 は寄せる）から始まる。選ぶと adjustedEnd に入り、「提出値に戻す」で消える。未調整のときは戻すボタンを出さない。
+//     ホイールの背景をタップしても詳細画面は閉じない
 //  すべての場面で console.error・pageerror が 0 件
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-time-wheel.js → allPass=true / EXIT=0
@@ -185,6 +188,48 @@ const valOf = (h, sel) => h.evaluate(sel => { const e = document.querySelector(s
       V.K_addBreak = JSON.stringify(K.pickBrk) === JSON.stringify(["12:00", "13:00"]) && JSON.stringify(K.breaks) === JSON.stringify([{ start: "12:00", end: "13:00" }]);
       V.K_layout375 = K.overflow <= 0 && K.openStart.left >= 0 && K.openStart.right <= K.openStart.vw;
       V.K_noErrors = errs("K", h);
+    } finally { await h.browser.close(); }
+  }
+  // ---------------- D: 提出一覧の詳細画面（SubsTab だけ）----------------
+  {
+    const jsx = `const P={id:"p1",urlToken:"t1",shopId:"S1",label:"10月",startDate:"2026-10-01",endDate:"2026-10-31",deadlineDate:"",createdAt:"2026-09-01T00:00:00.000Z"};
+      const SUBS=[{id:"s1",periodId:"p1",staffName:"田中",shopId:"S1",comment:"",submittedAt:"2026-09-02T00:00:00.000Z",
+        shifts:{"2026-10-01":{status:"work",start:"09:00",end:"18:10"}}}];
+      const SETTINGS={shopId:"S1",candidates:[],weekdayCandidates:{},dateCandidates:{},breakTimes:{weekday:[],sat:[],sun:[],holSat:[],holSun:[]},
+        staffAttributes:{},staffTypeLimits:{},staffColors:{},staffAliases:{},positions:{kitchen:[],hall:[]},requiredPositions:{},staffPositions:{}};
+      function Harness(){const[subs,setSubs]=React.useState(SUBS);window.__subs=subs;
+        return <SubsTab subs={subs} periods={[P]} staffList={["田中"]} tt={()=>{}} plan="premium" settings={SETTINGS} onSaveSettings={()=>{}} pastSubsLoaded={true}
+          onSave={v=>setSubs(p=>{const n=typeof v==="function"?v(p):v;window.__subs=n;return n;})}/>;}
+      ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);window.__harnessReady=true;`;
+    const h = await openHarness({ root: ROOT, jsx, waitFor: "table", viewport: PHONE, scripts: SCRIPTS.filter(s => s.src !== "app-main.js") });
+    try {
+      const D = {};
+      await h.evaluate(() => { const b = [...document.querySelectorAll("button")].find(x => x.innerText.trim() === "詳細"); if (b) b.click(); });
+      const ST = '[data-time-wheel="adj-2026-10-01-start"]', EN = '[data-time-wheel="adj-2026-10-01-end"]';
+      D.fields = await waitSel(h, ST, 8000) && await waitSel(h, EN, 3000);
+      D.noSelect = await h.evaluate(() => ![...document.querySelectorAll("select")].some(sel => [...sel.options].some(o => o.value === "18:00")));
+      D.label = await h.evaluate(sel => document.querySelector(sel).innerText.trim(), EN);
+      await click(h, EN); await waitSel(h, "[data-time-wheel-dialog]");
+      D.open = await wheel(h);
+      D.noClearWhenEmpty = await h.evaluate(() => !document.querySelector("[data-time-wheel-clear]"));
+      await click(h, "[data-time-wheel-overlay]"); await sleep(h, 150);
+      D.modalStays = await h.evaluate(sel => !!document.querySelector(sel) && !document.querySelector("[data-time-wheel-dialog]"), EN);
+      D.pick = await pickTime(h, EN, "20:45");
+      D.saved = await h.evaluate(() => window.__subs[0].shifts["2026-10-01"].adjustedEnd || null);
+      D.valAfter = await valOf(h, EN);
+      await click(h, EN); await waitSel(h, "[data-time-wheel-dialog]");
+      D.hasClear = await h.evaluate(() => !!document.querySelector("[data-time-wheel-clear]"));
+      await click(h, "[data-time-wheel-clear]"); await sleep(h, 200);
+      D.afterClear = await h.evaluate(() => window.__subs[0].shifts["2026-10-01"].adjustedEnd);
+      D.valCleared = await valOf(h, EN);
+      D.submitted = await h.evaluate(() => window.__subs[0].shifts["2026-10-01"].end);
+      D.overflow = await h.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth);
+      R.D = D;
+      V.D_wheelNotSelect = D.fields && D.noSelect && D.label === "提出値" && !!D.open && D.open.val === "18:15" && JSON.stringify(D.open.mins) === '["0","15","30","45"]' && D.noClearWhenEmpty;
+      V.D_backdropKeepsModal = D.modalStays;
+      V.D_pickAndClear = D.pick === "20:45" && D.saved === "20:45" && D.valAfter === "20:45" && D.hasClear && D.afterClear === undefined && D.valCleared === "" && D.submitted === "18:10";
+      V.D_layout375 = D.open.left >= 0 && D.open.right <= D.open.vw;
+      V.D_noErrors = errs("D", h);
     } finally { await h.browser.close(); }
   }
   const allPass = Object.values(V).every(Boolean);

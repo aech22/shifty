@@ -7268,3 +7268,16 @@ test("時刻のホイール: 候補タブの時刻欄（全体・曜日別・日
   assert.ok(!/SingleTimeSelect/.test(tab) && !/\{TO\.map\(t=><option/.test(tab), "候補タブに時刻の select は残っていない");
   assert.ok(!/const CandTimeWheel|function CandTimeWheel/.test(tab), "CandTab の中で定義しない（再描画で開いたホイールが閉じる）");
 });
+test("時刻のホイール: 提出一覧の詳細の調整値と PDF の昼夜の人数の確認時刻もホイール（TO）・空に戻すボタン・刻みに合わない値を保つ（2026-10-05）", () => {
+  assert.deepStrictEqual(u.timeWheelOptionsWith(["09:00", "09:15"], "09:10", "", null, "9:5", "09:15"), ["09:00", "09:10", "09:15"]);
+  const base = ["09:00"];
+  assert.strictEqual(u.timeWheelOptionsWith(base), base, "足すものが無ければ同じ配列");
+  const adm = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-admin.js"), "utf8");
+  const subs = adm.slice(adm.indexOf("function SubsTab("));
+  ["start", "end"].forEach(f => { const i = subs.indexOf("<TimeWheelField name={`adj-${ds}-" + f + "`}"); assert.ok(i > 0 && subs.slice(i, i + 600).includes('clearLabel="提出値に戻す"'), f); });
+  assert.ok(!/<option value="">提出値<\/option>/.test(subs), "調整値の select は残っていない");
+  const co = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-company.js"), "utf8");
+  { const i = co.indexOf("<TimeWheelField name={`headcount-${k}`}"); assert.ok(i > 0 && co.slice(i, i + 400).includes('clearLabel="出さない"') && !/TOPT\.map/.test(co), "確認時刻はホイール"); }
+  const staff = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-staff.js"), "utf8");
+  assert.ok(/clearLabel=\{value\?clearLabel:null\}/.test(staff), "空に戻すボタンは値が入っているときだけ");
+});

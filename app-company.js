@@ -2910,14 +2910,14 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
 
     {/* PDF の日付ヘッダに出す昼・夜の人数（2026-09-30・P3.5d）。確認時刻は店舗の設定で、コードに既定の時刻は無い */}
     {plan==="premium"&&(()=>{
+      // 確認時刻は時刻ホイール（2026-10-05 ユーザー指示・刻みは従来の select と同じ TO＝15分）。「出さない」は空に戻すボタン
       const hc=headcountAtOf(settings);
       const saveHc=patch=>onSave({...settings,headcountAt:{...hc,...patch}});
-      const TOPT=["",...TO];
-      const sel=(k,lbl)=>(<div style={{display:"flex",alignItems:"center",gap:4}}>
+      const sel=(k,lbl)=>(<div data-headcount-at={k} data-headcount-value={hc[k]||""} style={{display:"flex",alignItems:"center",gap:4}}>
         <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{lbl}</span>
-        <select data-headcount-at={k} value={hc[k]} onChange={e=>saveHc({[k]:e.target.value})} style={{...AI,width:"auto",padding:"5px 8px",cursor:"pointer"}}>
-          {TOPT.map(t=><option key={t||"none"} value={t}>{t||"出さない"}</option>)}
-        </select></div>);
+        <TimeWheelField name={`headcount-${k}`} value={hc[k]||""} options={timeWheelOptionsWith(TO,hc[k])} onChange={v=>saveHc({[k]:v})}
+          placeholder="出さない" defaultValue={k==="lunch"?"12:00":"19:00"} clearLabel="出さない" title={lbl}
+          style={{...AI,width:"auto",minWidth:96,padding:"5px 8px",cursor:"pointer"}}/></div>);
       return(<AC title="PDF の昼・夜の人数">
         <div data-headcount-card>
           <label style={{display:"flex",gap:8,alignItems:"center",cursor:"pointer",marginBottom:hc.enabled?8:0}}>

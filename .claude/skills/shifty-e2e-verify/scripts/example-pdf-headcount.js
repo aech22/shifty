@@ -90,12 +90,30 @@ async function setTab() {
   const m = {};
   m.offByDefault = await h.evaluate(() => { const c = document.querySelector("[data-headcount-card] input[type=checkbox]"); return c ? !c.checked : null; });
   await h.evaluate(() => document.querySelector("[data-headcount-card] input[type=checkbox]").click()); await sleep(300);
-  const setSel = (k, v) => h.evaluate(([k, v]) => { const s = document.querySelector(`[data-headcount-at="${k}"]`);
-    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(s, v); s.dispatchEvent(new Event("change", { bubbles: true })); }, [k, v]);
-  await setSel("lunch", "12:00"); await sleep(200);
-  await setSel("dinner", "19:00"); await sleep(200);
+  // 確認時刻は時刻ホイール（2026-10-05）。ボタンを押してダイアログの時・分の行を選び「決定」
+  const clickSel = sel => h.evaluate(sel => { const e = document.querySelector(sel); if (!e) return false; e.click(); return true; }, sel);
+  const setSel = async (k, v) => {
+    m.isWheel = (m.isWheel !== false) && await h.evaluate(k => !!document.querySelector(`button[data-time-wheel="headcount-${k}"]`) && !document.querySelector(`select[data-headcount-at="${k}"]`), k);
+    if (!await clickSel(`[data-time-wheel="headcount-${k}"]`)) return;
+    await sleep(150);
+    const [hh, mm] = v.split(":").map(Number);
+    await clickSel(`[data-time-wheel-col="h"] [data-time-wheel-item="${hh}"]`); await sleep(80);
+    await clickSel(`[data-time-wheel-col="m"] [data-time-wheel-item="${mm}"]`); await sleep(80);
+    await clickSel("[data-time-wheel-done]"); await sleep(200);
+  };
+  m.clearBeforeSet = await h.evaluate(() => { const b = document.querySelector('[data-time-wheel="headcount-lunch"]'); if (!b) return null; b.click(); return true; });
+  await sleep(150);
+  m.noClearWhenEmpty = await h.evaluate(() => !!document.querySelector("[data-time-wheel-dialog]") && !document.querySelector("[data-time-wheel-clear]"));
+  await clickSel("[data-time-wheel-overlay]"); await sleep(150);
+  await setSel("lunch", "12:00");
+  await setSel("dinner", "19:15");
+  // 「出さない」で空に戻せる・もう一度選べる
+  await clickSel('[data-time-wheel="headcount-dinner"]'); await sleep(150);
+  await clickSel("[data-time-wheel-clear]"); await sleep(200);
+  m.cleared = await h.evaluate(() => window.__settings.headcountAt && window.__settings.headcountAt.dinner);
+  await setSel("dinner", "19:00");
   m.saved = await h.evaluate(() => window.__settings.headcountAt);
-  m.fontsizes = await h.evaluate(() => [...document.querySelectorAll("[data-headcount-at]")].map(e => parseFloat(getComputedStyle(e).fontSize)));
+  m.fontsizes = await h.evaluate(() => [...document.querySelectorAll('[data-time-wheel^="headcount-"]')].map(e => parseFloat(getComputedStyle(e).fontSize)));
   m.errors = h.errors.slice();
   await h.close();
   return m;
@@ -120,6 +138,7 @@ async function setTab() {
     offPdfHasNone: off.pdf.blocks > 0 && off.pdf.hc.length === 0,
     setOffByDefault: st.offByDefault === true,
     setSaved: !!(st.saved && st.saved.enabled === true && st.saved.lunch === "12:00" && st.saved.dinner === "19:00"),
+    setIsWheel: st.isWheel === true && st.noClearWhenEmpty === true && st.cleared === "",
     font16: st.fontsizes.length === 2 && st.fontsizes.every(f => f >= 16),
     splitLeftKitchenRightHall: JSON.stringify(splitDays) === JSON.stringify(["昼2 夜1/夜2", "昼1/夜1"]),
     splitCellsPerDay: split.pdf.hc.filter(x => x === "昼2 夜1").length === 2 && split.pdf.hc.filter(x => x === "夜2").length === 2 && !split.pdf.hc.some(x => /[KH]/.test(x)),

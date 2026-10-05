@@ -53,7 +53,7 @@ function TimeWheelColumn({items,value,onChange,fmt,col}){
     </div>
   );
 }
-function TimeWheelDialog({title,value,options,onDone,onClose}){
+function TimeWheelDialog({title,value,options,onDone,onClose,clearLabel,onClear}){
   const model=useMemo(()=>timeWheelModel(options),[options]);
   const init=timeWheelSplit(value)||{h:0,m:0};
   const[cur,setCur]=useState(()=>timeWheelPick(model,init.h,init.m));
@@ -83,13 +83,16 @@ function TimeWheelDialog({title,value,options,onDone,onClose}){
         </div>
         <button type="button" data-time-wheel-done="1" onClick={()=>onDone(cur)}
           style={{display:"block",width:"100%",marginTop:10,padding:"12px 0",background:"none",border:"none",color:"var(--c-accent)",fontSize:17,fontWeight:700,cursor:"pointer"}}>決定</button>
+        {clearLabel&&onClear&&<button type="button" data-time-wheel-clear="1" onClick={onClear}
+          style={{display:"block",width:"100%",padding:"10px 0",background:"none",border:"none",borderTop:"1px solid var(--c-border)",color:"var(--c-text2)",fontSize:15,fontWeight:600,cursor:"pointer"}}>{clearLabel}</button>}
       </div>
     </div>,
     document.body
   );
 }
-// 入力欄の見た目のボタン。value は "HH:MM"（空なら placeholder）。開いたときの初期位置は value、空なら defaultValue
-function TimeWheelField({value,options,onChange,fmt,placeholder="選ぶ",defaultValue,title,name,style}){
+// 入力欄の見た目のボタン。value は "HH:MM"（空なら placeholder）。開いたときの初期位置は value、空なら defaultValue。
+// clearLabel を渡すと、値が入っているときだけダイアログに「空に戻す」ボタン（data-time-wheel-clear）を出し、押すと onChange("")（例「提出値に戻す」「出さない」）
+function TimeWheelField({value,options,onChange,fmt,placeholder="選ぶ",defaultValue,title,name,style,clearLabel}){
   const[open,setOpen]=useState(false);
   const show=fmt||(v=>v);
   return(
@@ -99,7 +102,8 @@ function TimeWheelField({value,options,onChange,fmt,placeholder="選ぶ",default
         {value?show(value):<span style={{color:"var(--c-text3)"}}>{placeholder}</span>}
       </button>
       {open&&<TimeWheelDialog title={title} value={value||defaultValue||""} options={options}
-        onDone={v=>{setOpen(false);if(v&&v!==value)onChange(v);}} onClose={()=>setOpen(false)}/>}
+        onDone={v=>{setOpen(false);if(v&&v!==value)onChange(v);}} onClose={()=>setOpen(false)}
+        clearLabel={value?clearLabel:null} onClear={()=>{setOpen(false);onChange("");}}/>}
     </>
   );
 }

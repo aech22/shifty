@@ -1526,7 +1526,7 @@ npx eslint app-*.js  # 0 errors を維持（CIでも実行）
 - **スタイルは inline style のみ**: 外部 CSS ファイル・CSS モジュール追加禁止
 - **`input`/`select`/`textarea` の `fontSize` は 16px 以上**: iOS Safari ズーム防止（2026-07-06に全箇所解消済み。新規追加時に守ること）
 - **CDNスクリプトはSRI付き**: バージョン変更時は integrity ハッシュの再計算が必要（`curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`）
-- **時刻を選ぶ欄は時刻ホイール（`TimeWheelField`）で統一する**（2026-10-05 ユーザー指示）。新しく時刻の設定欄を作るときは select・文字入力にしない。刻みはその都度ユーザーに決めてもらい `options` で渡す（RULES.md）。この指示より前からある時刻の欄（提出一覧の詳細モーダルの調整値・実績の出勤退勤・本部の固定勤務パターン・PDF の昼夜の人数の確認時刻）はまだ select か文字入力のまま
+- **時刻を選ぶ欄は、指定が無ければ時刻ホイール（`TimeWheelField`）にする**（2026-10-05 ユーザー指示）。文字入力などの指定があればそれに従う。刻みはその都度ユーザーに決めてもらい `options` で渡す（RULES.md）。提出一覧の詳細モーダルの出勤・退勤の調整値（`adj-{日付}-{start|end}`・「提出値に戻す」）と設定タブの PDF の昼夜の人数の確認時刻（`headcount-{lunch|dinner}`・「出さない」）も同日にホイールにした（刻みは従来の TO＝15分）。実績の出勤・退勤と本部の固定勤務パターンは文字入力のまま残す（ユーザー指示）
 - **スタイル定数**: `AI`（input）/ `AB`（primary button）/ `AD`（delete）/ `AGray`（secondary）が app-core.js に定義済み
 - **console.log は `dlog()` を使う**（DEV_MODE時のみ出力。warn/errorはそのまま）
 - **シフト作成タブ（ShiftEditTab）の重い計算の依存を、描画のたびに新しくなる値にしない**（S1・2026-10-04）。`weeks`・`sameMoPeriods` は `useMemo`、`staffAliases` の既定値はモジュール直下の凍結した `NO_STAFF_ALIASES`（`||{}` と書くと毎回新しいオブジェクトになる）。どれも `weekRestByStaff`・`laborByStaff`・`liveTotalFor`・`liveMonthOtFor` の依存に入っていて、1つでも毎回変わると**セルの選択と1文字入力のたびに労務判定・割増・36協定の年の集計が全員分やり直される**（30人×31日で `laborFindingsFor` が30回）。依存に値を足すときは、その値が入力・フォーカスで変わらないことを確かめる。測り方は `.claude/skills/shifty-e2e-verify/scripts/perf-shift-edit-tab.js`（選択と入力で `laborFindingsFor` が0回でないと EXIT=1）
