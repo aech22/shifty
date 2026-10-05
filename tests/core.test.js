@@ -7184,6 +7184,39 @@ test("homeManifestOf: スタッフ側の URL は開いている URL を start_ur
   assert.strictEqual(u.homeManifestOf({ type: "page", pageToken: "x" }, "https://shiftyshifty.app/"), null);
   assert.strictEqual(u.homeManifestOf({ type: "page", pageToken: "x" }, "not a url"), null);
 });
+test("iOS のホーム画面のアプリ（2026-10-05 2回目）: スタッフ側は manifest を外す・ホーム画面から開いたときに戻すハッシュ", () => {
+  const iphone = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1";
+  assert.strictEqual(u.isIosLike(iphone, "iPhone", 5), true);
+  assert.strictEqual(u.isIosLike("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", "MacIntel", 5), true, "iPadOS は Mac の UA＋タッチ");
+  assert.strictEqual(u.isIosLike("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", "MacIntel", 0), false);
+  assert.strictEqual(u.isIosLike("Mozilla/5.0 (Linux; Android 14)", "Linux", 5), false);
+  const page = { type: "page", pageToken: "AbCdEfGhIjKlMnOpQrStUvWx" }, href = "https://shiftyshifty.app/#/m/AbCdEfGhIjKlMnOpQrStUvWx";
+  assert.deepStrictEqual(u.homeManifestPlanOf(page, href, true), { mode: "none" });
+  assert.strictEqual(u.homeManifestPlanOf(page, href, false).mode, "data");
+  assert.deepStrictEqual(u.homeManifestPlanOf({ type: "admin" }, "https://shiftyshifty.app/#/admin", true), { mode: "json" });
+  // スタッフ側のハッシュの検査
+  ["#/s/abc23", "#/m/AbCdEfGhIjKlMnOpQrStUvWx", "#/me"].forEach(h => assert.ok(u.isHomeStaffHash(h), h));
+  ["", "#/admin", "#/demo", "#/s/a.b", "javascript:alert(1)", "#/me/x"].forEach(h => assert.ok(!u.isHomeStaffHash(h), h));
+  // ホーム画面から開いたとき
+  const M = "#/m/AbCdEfGhIjKlMnOpQrStUvWx";
+  assert.deepStrictEqual(u.homeLaunchRestoreOf({ hash: "", cookieHash: M, saved: null }), { hash: M, save: M }, "初回: Safari から写った Cookie で決める");
+  assert.deepStrictEqual(u.homeLaunchRestoreOf({ hash: "", cookieHash: "", saved: null }), { save: "admin" }, "初回で Cookie が無ければ管理者のアプリ");
+  assert.deepStrictEqual(u.homeLaunchRestoreOf({ hash: "", cookieHash: M, saved: "admin" }), {}, "管理者のアプリと決めたら、あとの Cookie に引きずられない");
+  assert.deepStrictEqual(u.homeLaunchRestoreOf({ hash: "", cookieHash: "", saved: M }), { hash: M });
+  assert.deepStrictEqual(u.homeLaunchRestoreOf({ hash: M, cookieHash: "", saved: null }), { save: M }, "ハッシュ付きで開けたらそれを残す");
+  assert.deepStrictEqual(u.homeLaunchRestoreOf({ hash: M, cookieHash: "", saved: M }), {});
+  assert.deepStrictEqual(u.homeLaunchRestoreOf({ hash: "#/admin", cookieHash: M, saved: null }), {});
+  assert.deepStrictEqual(u.homeLaunchRestoreOf({ hash: "", cookieHash: "#/s/a.b", saved: null }), { save: "admin" }, "壊れた値は戻さない");
+  // index.html の head は静的な manifest を置かず、iOS のスタッフ側では入れない（app-core.js と同じ規則）
+  const fs = require("node:fs"), path = require("node:path");
+  const html = fs.readFileSync(path.join(__dirname, "..", "index.html"), "utf8");
+  assert.ok(!/<link rel="manifest"/.test(html), "静的な manifest の link を置かない");
+  const head = html.split("</head>")[0];
+  assert.ok(/if\(staff&&ios\)return;/.test(head) && /l\.href="manifest\.json"/.test(head));
+  const core = fs.readFileSync(path.join(__dirname, "..", "app-core.js"), "utf8");
+  assert.ok(/homeManifestPlanOf\(parseUrl\(\),window\.location\.href,HOME_IOS\)/.test(core) && /restoreHomeLaunch/.test(core));
+  assert.ok(core.indexOf("(function restoreHomeLaunch(){") < core.indexOf("applyHomeLaunch();\nwindow.addEventListener"), "App が URL を読む前（app-core.js の読み込み時）に戻す");
+});
 test("ホーム画面のアイコン: index.html の link と app-core.js の切り替え先のファイルが揃っている", () => {
   const fs = require("node:fs");
   const path = require("node:path");

@@ -242,19 +242,45 @@ function applyHomeIcon(){
     document.querySelectorAll('link[rel="icon"][type="image/svg+xml"]').forEach(l=>{if(l.getAttribute("href")!==ic.svg)l.setAttribute("href",ic.svg);});
   }catch(e){console.warn("アイコンの切り替えに失敗:",e);}
 }
-// ホーム画面のアプリの開き先（homeManifestOf）。スタッフ側のURLでは開いているURLを start_url にした manifest に差し替える。
-// 要素ごと入れ替えるのは、href の書き換えだけだとブラウザが前の manifest を使い続けることがあるため
+// ホーム画面のアプリの開き先（homeManifestPlanOf）。スタッフ側のURLでは、iOS は manifest を外し（追加した時点の URL で開く）、
+// 他の端末は開いているURLを start_url にした data: の manifest にする。要素ごと入れ替えるのは、href の書き換えだけだとブラウザが前の manifest を使い続けることがあるため。
+// 最初の manifest は index.html の head のスクリプトが同じ規則で入れる（静的な link を置くと読み込み時に manifest.json を読まれうる）
+const HOME_IOS=(()=>{try{return isIosLike(navigator.userAgent,navigator.platform,navigator.maxTouchPoints);}catch{return false;}})();
 function applyHomeManifest(){
   try{
-    const m=homeManifestOf(parseUrl(),window.location.href);
-    const href=m?"data:application/manifest+json;charset=utf-8,"+encodeURIComponent(JSON.stringify(m)):"manifest.json";
-    const cur=document.querySelector('link[rel="manifest"]');
-    if(cur&&cur.getAttribute("href")===href)return;
+    const plan=homeManifestPlanOf(parseUrl(),window.location.href,HOME_IOS);
+    const cur=document.querySelectorAll('link[rel="manifest"]');
+    if(plan.mode==="none"){cur.forEach(l=>l.remove());return;}
+    const href=plan.mode==="data"?"data:application/manifest+json;charset=utf-8,"+encodeURIComponent(JSON.stringify(plan.manifest)):"manifest.json";
+    if(cur.length===1&&cur[0].getAttribute("href")===href)return;
+    cur.forEach(l=>l.remove());
     const l=document.createElement("link");l.setAttribute("rel","manifest");l.setAttribute("href",href);
-    if(cur)cur.replaceWith(l);else document.head.appendChild(l);
+    document.head.appendChild(l);
   }catch(e){console.warn("manifest の切り替えに失敗:",e);}
 }
-function applyHomeLaunch(){applyHomeIcon();applyHomeManifest();}
+// ホーム画面から開いたときの保険（homeLaunchRestoreOf）。HOME_LAUNCH_CK はブラウザのタブで開いているスタッフ側のハッシュ、
+// HOME_LAUNCH_LS はホーム画面のアプリ側で最初に決めた開き先（iOS のアプリは Safari と別の保存領域を持つ）
+const HOME_LAUNCH_CK="ots_homeLaunch";
+const HOME_LAUNCH_LS="ots_homeLaunch_v1";
+function isStandaloneLaunch(){try{return navigator.standalone===true||(!!window.matchMedia&&window.matchMedia("(display-mode: standalone)").matches);}catch{return false;}}
+function rememberHomeLaunch(){
+  try{
+    if(isStandaloneLaunch())return;
+    const h=window.location.hash;
+    if(isHomeStaffHash(h))setCookie(HOME_LAUNCH_CK,h,365);
+    else if(!h||parseUrl().type==="admin")delCookie(HOME_LAUNCH_CK);
+  }catch(e){console.warn("開き先の記録に失敗:",e);}
+}
+// 起動時に1回（App が URL を読む前）。ホーム画面から開いてハッシュが無ければ、決めておいたスタッフ側のハッシュを付ける
+(function restoreHomeLaunch(){
+  try{
+    if(!isStandaloneLaunch())return;
+    const d=homeLaunchRestoreOf({hash:window.location.hash,cookieHash:getCookie(HOME_LAUNCH_CK)||"",saved:lg(HOME_LAUNCH_LS,null)});
+    if(d.save!==undefined)ls(HOME_LAUNCH_LS,d.save);
+    if(d.hash)history.replaceState(null,"",window.location.pathname+window.location.search+d.hash);
+  }catch(e){console.warn("開き先の復元に失敗:",e);}
+})();
+function applyHomeLaunch(){applyHomeIcon();applyHomeManifest();rememberHomeLaunch();}
 applyHomeLaunch();
 window.addEventListener("hashchange",applyHomeLaunch);
 window.addEventListener("popstate",applyHomeLaunch);

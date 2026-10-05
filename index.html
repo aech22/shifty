@@ -12,8 +12,16 @@
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="icon" type="image/png" sizes="180x180" href="favicon-180.png">
   <link rel="apple-touch-icon" sizes="180x180" href="favicon-180.png">
-  <!-- PWA マニフェスト -->
-  <link rel="manifest" href="manifest.json">
+  <!-- PWA マニフェスト（2026-10-05）。iOS のスタッフ側の URL（#/s/・#/m/・#/me）では置かない＝ホーム画面に追加した時点の URL で開く。
+       それ以外は manifest.json。以後の切り替えは app-core.js の applyHomeManifest（同じ規則・homeManifestPlanOf） -->
+  <script>
+    (function(){
+      var h=location.hash||"",staff=/^#\/(s\/|m\/|me(\/|$))/.test(h);
+      var ios=/iPhone|iPad|iPod/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1);
+      if(staff&&ios)return;
+      var l=document.createElement("link");l.rel="manifest";l.href="manifest.json";document.head.appendChild(l);
+    })();
+  </script>
   <!-- Android Chrome対応 -->
   <meta name="theme-color" content="#f87036">
   <meta name="mobile-web-app-capable" content="yes">

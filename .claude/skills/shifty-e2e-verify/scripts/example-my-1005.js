@@ -3,6 +3,8 @@
 //
 //  MF（ホーム画面のアプリ）: スタッフ側の URL（#/m/<token>・#/me）では link[rel=manifest] が「いま開いている URL を start_url にした」data: の manifest に
 //     差し替わる（iOS の「ホーム画面に追加」が manifest.json の start_url "./" で開き、管理者の端末では管理者画面になっていた）。#/admin は manifest.json のまま
+//  IOS（2026-10-05 2回目・iPhone の UA）: Safari の個別URLでは manifest を置かず Cookie に開き先。ホーム画面から開く（ハッシュ無し）と、管理者登録している端末でも
+//     マイシフト（以後はアプリ側に残した開き先）。Cookie の無いアプリ（管理者画面から追加）は管理者側のまま
 //  SB（提出タブ）: 個別URLで提出済みの期間は「提出完了」ではなく、提出の内容を反映した選択画面（data-staff-restored）が開く
 //  HD（全員のシフトのヘルプ先）: 企業の写しの人物で束ねた他店（C店）が「C店（ヘルプ先）」として選べ、確定済みの期間だけが選択肢。
 //     選ぶとその店の表（本人の列に印）が出て、見出しは「ヘルプ先 ／ 確定」。自分の店の見出しは「公開」ではなく「確定」。公開だけの期間はヘルプ先では選べない
@@ -82,6 +84,18 @@ async function openPage(db) {
   return openHarness({ root: ROOT, jsx: "window.__harnessReady=true;", waitFor: '[data-my-view="page"]', viewport: PHONE,
     extraHead: hashHead("#/m/" + TOKEN) + makeStub({ seed: db, view: "staff", tab: "periods", auth: "accounts", authSeed: { users: {}, cur: null } }), scripts: SCRIPTS });
 }
+// iPhone の Safari／ホーム画面のアプリ（standalone）を UA と navigator.standalone の差し替えで作る（Chromium でも効く）
+const IOS_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1";
+const iosHead = standalone => `<script>(function(){var P=Navigator.prototype;var d=function(k,v){Object.defineProperty(P,k,{get:function(){return v;},configurable:true});};
+  d("userAgent",${JSON.stringify(IOS_UA)});d("platform","iPhone");d("maxTouchPoints",5);d("standalone",${standalone ? "true" : "false"});})();</script>`;
+// 管理者登録している端末（管理キー・開いていた店舗・Cookie の店舗）。ホーム画面のアプリにも Safari の Cookie が写る前提
+const adminDeviceHead = (cookieHash) => `<script>localStorage.setItem("ots_adminKeys_v1",JSON.stringify({S1:"K1"}));localStorage.setItem("ots_adminShops_v1",JSON.stringify(["S1"]));
+  document.cookie="ots_shopId=S1;path=/";${cookieHash ? `document.cookie="ots_homeLaunch="+encodeURIComponent(${JSON.stringify(cookieHash)})+";path=/";` : ""}</script>`;
+async function openIos({ db, hash, standalone, cookieHash, wait = "#root > *" }) {
+  return openHarness({ root: ROOT, jsx: "window.__harnessReady=true;", waitFor: wait, viewport: PHONE,
+    extraHead: (hash ? hashHead(hash) : "") + iosHead(standalone) + adminDeviceHead(cookieHash) +
+      makeStub({ seed: db, view: "admin", tab: "periods", auth: "accounts", authSeed: { users: {}, cur: null } }), scripts: SCRIPTS });
+}
 async function openStaff(db) {
   return openHarness({ root: ROOT, jsx: "window.__harnessReady=true;", waitFor: "[data-my-shift],[data-my-empty]", viewport: PHONE,
     extraHead: hashHead("#/me") + preLS({ ots_staffAccount_v1: JSON.stringify({ uid: "T1" }) }) +
@@ -144,6 +158,45 @@ const settledPay = h => h.page.waitForFunction(() => { const d = document.queryS
       R.SB = SB;
       V.SB_restoredForm = SB.restored && !SB.done;
       V.PAGE_noErrors = errs("PAGE", h);
+    } finally { await h.close(); }
+  }
+  // ---------------- IOS（2026-10-05 2回目）: iPhone の Safari で個別URL → manifest を置かない・Cookie に開き先 ----------------
+  {
+    const h = await openIos({ db: seed0(), hash: "#/m/" + TOKEN, standalone: false, wait: '[data-my-view="page"]' });
+    try {
+      await sleep(h, 500);
+      const I = { manifests: await h.evaluate(() => document.querySelectorAll('link[rel="manifest"]').length),
+        cookie: await h.evaluate(() => (document.cookie.match(/(?:^|; )ots_homeLaunch=([^;]*)/) || [])[1] || "") };
+      R.IOS_safari = I;
+      V.IOS_safariNoManifest = I.manifests === 0 && decodeURIComponent(I.cookie) === "#/m/" + TOKEN;
+      V.IOS_safari_noErrors = errs("IOS_safari", h);
+    } finally { await h.close(); }
+  }
+  {
+    // ホーム画面のアプリとして初めて開く（start_url はハッシュ無しの "/"）＝管理者登録している端末でもマイシフト
+    const h = await openIos({ db: seed0(), hash: "", standalone: true, cookieHash: "#/m/" + TOKEN, wait: '[data-my-view="page"]' });
+    try {
+      const I = { page: await waitSel(h, '[data-my-view="page"]', 8000), hash: await h.evaluate(() => location.hash),
+        saved: await h.evaluate(() => JSON.parse(localStorage.getItem("ots_homeLaunch_v1") || "null")),
+        adminLogin: await h.evaluate(() => /Googleでログイン/.test(document.body.innerText)) };
+      R.IOS_app = I;
+      V.IOS_appOpensMyShift = I.page && I.hash === "#/m/" + TOKEN && I.saved === "#/m/" + TOKEN && !I.adminLogin;
+      // 2回目以降も同じ（Cookie が消えていても、アプリ側に残した開き先で開く）
+      await h.evaluate(() => { document.cookie = "ots_homeLaunch=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/"; history.replaceState(null, "", "/"); });
+      await h.page.reload({ waitUntil: "networkidle" });
+      V.IOS_appReopen = (await waitSel(h, '[data-my-view="page"]', 8000)) && (await h.evaluate(() => location.hash)) === "#/m/" + TOKEN;
+      V.IOS_app_noErrors = errs("IOS_app", h);
+    } finally { await h.close(); }
+  }
+  {
+    // 管理者画面から追加したアプリ（Cookie なし）は管理者側のまま
+    const h = await openIos({ db: seed0(), hash: "", standalone: true, cookieHash: "", wait: "#root > *" });
+    try {
+      await sleep(h, 1500);
+      const I = { my: await h.evaluate(() => !!document.querySelector("[data-my-view]")), hash: await h.evaluate(() => location.hash),
+        saved: await h.evaluate(() => JSON.parse(localStorage.getItem("ots_homeLaunch_v1") || "null")) };
+      R.IOS_admin = I;
+      V.IOS_adminAppStaysAdmin = !I.my && I.hash === "" && I.saved === "admin";
     } finally { await h.close(); }
   }
   // ---------------- GR・PC: メールのアカウント（給料）----------------
