@@ -38,6 +38,21 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟡 掛け持ち対応（2026-10-05・develop 未マージ）の本番反映
+
+**目的**: 作業ブランチ `claude/nifty-lovelace-6scrq6`（`6cf8a9a`）の2件を本番に出す。①申請の欄で**お店ごとの従業員番号**を入れる（クライアントだけ）。
+②個別URL（#/m/）の設定の「マイシフトのアカウントに追加」（CF `linkStaffPage`＝新規、ルールの staffLinks.method に 'page'）。
+URLへのまとめ（2店目以降を最初の個別URLに集約）は**採らない**（2026-10-05 ユーザー判断「当初の予定で進めて」）。
+**受け入れ条件**:
+- [ ] develop へマージ → `/release-to-main`（`?v=` のバンプ）でクライアントを本番へ
+- [ ] ルール（dev → 本番）。既存パスの値の追加なのでクライアントが先でよい
+- [ ] `firebase deploy --only functions --project ontheshift`（linkStaffPage が create になること）。CF より先にクライアントだけ出ると「追加」が「関数が無い」で失敗するだけ
+- [ ] 本番で1回、個別URLから自分のテスト用アカウントに追加し、`shops/{sid}/staffLinks/{uid}.method==="page"` を読み取りで確かめる
+**影響範囲**: app-my.js・app-my-utils.js・app-main.js・functions/index.js・functions/staff-link.js・database.rules.json
+**備考**: 検証は npm test 677件・cf-verify `example-link-staff-page.js` 23/23・E2E `example-my-multi-shop.js` 30/30 と既存の my-link・my-page・my-account・email-link・my-1005 が全パス（クラウドのセッションでは SHIFTY_ROOT と SHIFTY_CDN_DIR、cf-verify は SHIFTY_CF_INDEX の指定が要る）
+
+---
+
 ## 🟡 メール確認つきの新規登録: Firebase コンソールの設定（ユーザー作業）→ 本番で登録を1回通す
 
 **目的**: 2026-10-04 に新規登録（マイシフト・管理者のログイン画面・設定タブのアカウント連携）を「確認メールのリンクを開いて続きを登録」に変えた（`dd06a46`）。
