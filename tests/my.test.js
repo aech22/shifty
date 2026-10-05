@@ -1324,7 +1324,7 @@ test("個別URL（P2）: 提出先は最新の期間・名前は承認された�
   const sub = my.slice(my.indexOf('if(tab==="submit"){'), my.indexOf('if(tab==="submit"){') + 900);
   assert.ok(/ap=\{latest\} apid=\{latest\.id\}/.test(sub) && /fixedName=\{page\.name\}/.test(sub) && /onSub=\{onSub\}/.test(sub), "最新の期間・承認された名前・App の提出");
   const main = fs.readFileSync(path.join(ROOT, "app-main.js"), "utf8");
-  assert.ok(/onSub=\{staffOnSub\}/.test(main) && /onSub=\{staffOnSub\} onDeleteSub=\{staffOnDeleteSub\}\/>;/.test(main), "募集URLと個別URLが同じ staffOnSub を通る");
+  assert.ok(/onSub=\{staffOnSub\}/.test(main) && /onSub=\{staffOnSub\} onDeleteSub=\{staffOnDeleteSub\}( staffUser=\{staffUser\})?\/>;/.test(main), "募集URLと個別URLが同じ staffOnSub を通る");
   assert.ok(/useEffect\(\(\)=>\{ if\(pageRoute!==null&&latestPeriod&&apid!==latestPeriod\.id\) setApid\(latestPeriod\.id\); \}/.test(main), "最新の期間を購読する");
 });
 // 全員のシフト表（2026-10-04 に PDF の「シフト表」と同じ仕様へ・ユーザー指示）。HTML から列・行・セルを読む
@@ -1481,7 +1481,7 @@ test("勤務先の従業員番号: 店舗ごとに settings.staffNumbers[名前]
   const sec = my.slice(my.indexOf("function useMyStaffNumbers("), my.indexOf("// ===== 給料（2026-10-04・第2部 E5）====="));
   assert.ok(/readMyShiftShopShared\(l\.shopId\)/.test(sec) && /myStaffNumberOf\(v\.settings,l\.name\)/.test(sec), "番号は店舗の settings から、紐付いた名前で引く");
   assert.ok(/data-my-wp-number=/.test(sec) && !/fbSet|fbUpd/.test(sec.slice(0, sec.indexOf("function MyWorkplacesSection("))), "読むだけ");
-  assert.ok(/hint=\{MY_PROFILE_NUMBER_HINT\}/.test(my) && /照合に使います/.test(m.MY_PROFILE_NUMBER_HINT));
+  assert.ok(/hint=\{MY_PROFILE_NUMBER_HINT\}/.test(my) && /掛け持ち先の番号は、そのお店に申請するとき/.test(m.MY_PROFILE_NUMBER_HINT));
 });
 test("これまでの給料の一括入力（2026-10-04）: 変えたセルだけ書く・空欄は変えない・入っていた金額を消したときだけ null・読めない入力は書かない", () => {
   const rc = { "2025-01": { S1: 100000 }, "2025-02": { S1: 90000, m_A: 1 }, "2026-01": { S1: 5 } };
@@ -2229,4 +2229,63 @@ test("確認メールのリンク（2026-10-05）: アクション URL を自前
   assert.ok(/parseEmailLinkLanding\(window\.location\.href,\{pendingKind:/.test(main));
   // 管理者のスタッフ編集: 個別URLの取り消しは「連携解除」
   assert.ok(/>連携解除<\/button>/.test(my) && !/>URLを取り消す</.test(my));
+});
+
+// ===== 掛け持ち（2026-10-05 ユーザー指示）: お店ごとの従業員番号・専用URLのお店をアカウントに追加 =====
+test("掛け持ちの番号: 申請の欄の初期値はリンク済みのお店が無いときだけアカウントの番号・申請はお店ごとの番号を送る", () => {
+  assert.strictEqual(m.myLinkRequestNumberDefault({ number: " ０１２ " }, []), "012");
+  assert.strictEqual(m.myLinkRequestNumberDefault({ number: "012" }, undefined), "012", "読み込み中も初期値は出す");
+  assert.strictEqual(m.myLinkRequestNumberDefault({ number: "012" }, [{ shopId: "A", ok: true }]), "", "リンク済みのお店がある＝その番号は別のお店のもの");
+  assert.strictEqual(m.myLinkRequestNumberDefault({ number: "012" }, [{ shopId: "A", ok: false }]), "012", "外れたリンクは数えない");
+  assert.strictEqual(m.myLinkRequestNumberDefault(null, []), "");
+  assert.deepStrictEqual(m.buildLinkRequestRecord({ displayName: "山田", number: "７７" }, "T"), { displayName: "山田", at: "T", number: "77" });
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const sec = my.slice(my.indexOf("function MyLinksSection("), my.indexOf("function MyLinksSection(") + 9000);
+  assert.ok(/buildLinkRequestRecord\(\{displayName:profile\.displayName,number:numValue\}/.test(sec), "設定タブの申請はこのお店の番号を送る");
+  assert.ok(/data-my-input="linkNumber"/.test(sec) && /hint=\{MY_LINK_NUMBER_HINT\}/.test(sec), "申請の欄に番号の入力がある");
+  assert.ok(!/buildLinkRequestRecord\(profile,/.test(sec), "アカウントの番号をそのまま送らない");
+});
+test("専用URLのアカウント追加の状態: ログインなし・読み込み中・読めない・同じ名前でリンク済み・別の名前・追加できる", () => {
+  const u = { uid: "U1", email: "a@b.c" };
+  assert.strictEqual(m.myPageAccountLinkState({ staffUser: null, links: [], shopId: "S", name: "田中" }), "login");
+  assert.strictEqual(m.myPageAccountLinkState({ staffUser: u, links: undefined, shopId: "S", name: "田中" }), "loading");
+  assert.strictEqual(m.myPageAccountLinkState({ staffUser: u, links: null, shopId: "S", name: "田中" }), "unread");
+  assert.strictEqual(m.myPageAccountLinkState({ staffUser: u, links: [{ shopId: "S", ok: true, name: "田中" }], shopId: "S", name: "田中" }), "linked");
+  assert.strictEqual(m.myPageAccountLinkState({ staffUser: u, links: [{ shopId: "S", ok: true, name: "佐藤" }], shopId: "S", name: "田中" }), "other");
+  assert.strictEqual(m.myPageAccountLinkState({ staffUser: u, links: [{ shopId: "A", ok: true, name: "田中" }], shopId: "S", name: "田中" }), "ready", "別のお店とのリンクは関係ない");
+  assert.strictEqual(m.myPageAccountLinkState({ staffUser: u, links: [{ shopId: "S", ok: false, name: "田中" }], shopId: "S", name: "田中" }), "ready");
+  assert.ok(m.MY_LINK_METHOD_LABELS.page);
+});
+test("専用URLからアカウントへ追加（planLinkStaffPage）: 名前は URL の承認済みの名前・管理者と企業の uid は拒否・別の名前／取られた名前は拒否・同じなら書かない", () => {
+  const b = { shopId: "S1", uid: "U1", name: "田中", nowIso: "T", owners: { OWN: "k" }, staffLinks: {}, mirrorPeople: null };
+  const ok = cf.planLinkStaffPage(b);
+  assert.deepStrictEqual(ok, { method: "page", patch: {
+    "shops/S1/staffLinks/U1": { name: "田中", method: "page", at: "T" },
+    "users/U1/links/S1": { name: "田中", at: "T" },
+    "shops/S1/linkRequests/U1": null,
+  } });
+  const pp = cf.planLinkStaffPage({ ...b, mirrorPeople: { "0042": { S1: "田中" } } });
+  assert.strictEqual(pp.patch["shops/S1/staffLinks/U1"].personId, "0042");
+  assert.strictEqual(pp.patch["users/U1/links/S1"].personId, "0042");
+  assert.deepStrictEqual(cf.planLinkStaffPage({ ...b, staffLinks: { U1: { name: "田中", method: "name", at: "a" } } }), { already: true, patch: null });
+  const e = o => cf.planLinkStaffPage({ ...b, ...o }).error;
+  assert.strictEqual(e({ staffLinks: { U1: { name: "佐藤", method: "name", at: "a" } } }).code, "failed-precondition");
+  assert.strictEqual(e({ staffLinks: { U2: { name: "田中", method: "name", at: "a" } } }).code, "failed-precondition");
+  assert.strictEqual(e({ uid: "OWN" }).code, "failed-precondition", "店舗の管理者の uid は紐付けない");
+  assert.strictEqual(e({ uid: "company_X" }).code, "failed-precondition");
+  assert.strictEqual(e({ name: "" }).code, "failed-precondition");
+  assert.ok(cf.LINK_METHODS.includes("page"));
+});
+test("専用URLからアカウントへ追加: ルールの method と CF の LINK_METHODS が同じ・CF は名前を呼び出し元から受け取らず暗証番号を照合する", () => {
+  const rules = fs.readFileSync(path.join(ROOT, "database.rules.json"), "utf8");
+  const line = rules.split("\n").find(l => /"method":/.test(l) && /newData\.val\(\) === 'number'/.test(l));
+  const inRule = [...line.matchAll(/newData\.val\(\) === '([a-z]+)'/g)].map(x => x[1]).sort();
+  assert.deepStrictEqual(inRule, [...cf.LINK_METHODS].sort());
+  const idx = fs.readFileSync(path.join(ROOT, "functions", "index.js"), "utf8");
+  const fn = idx.slice(idx.indexOf("exports.linkStaffPage"), idx.indexOf("exports.getMyPay"));
+  assert.ok(/myPageAccessCF\(\{ token, tokenRec, pageRec, staff \}\)/.test(fn) && /name: acc\.name/.test(fn), "名前は staffPages の承認済みの名前");
+  assert.ok(!/data\.name|data && data\.name/.test(fn), "名前を呼び出し元から受け取らない");
+  assert.ok(/action: "verify"/.test(fn) && /\.transaction\(/.test(fn), "暗証番号はトランザクションで照合する");
+  assert.ok(fn.indexOf("planLinkStaffPage(") < fn.indexOf(".transaction("), "リンクできないのに試行回数を減らさない");
+  assert.ok(/auth\.token && context\.auth\.token\.email/.test(fn), "メールのある認証だけ");
 });

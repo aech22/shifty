@@ -239,7 +239,8 @@ function mayBeStaffAccountUser(user){
 // method:"code" のまま残るので、表示名（MY_LINK_METHOD_LABELS.code）は残してある。照合の規則は Cloud Functions の functions/staff-link.js と**同じ内容**にする
 // （functions/ はこのファイルを読めないので書き写している。一致は tests/my.test.js が照合する）。
 // データ: shops/{sid}/linkRequests/{uid}（本人の申請）・shops/{sid}/staffLinks/{uid}（紐付け。名前の正本）・users/{uid}/links/{sid}（本人の索引）。
-const MY_LINK_METHOD_LABELS={number:"従業員番号が一致",name:"登録ネームが一致",code:"個人リンクコード"};
+// page＝スタッフ専用のURLから本人がアカウントへ追加（2026-10-05・CF linkStaffPage）
+const MY_LINK_METHOD_LABELS={number:"従業員番号が一致",name:"登録ネームが一致",code:"個人リンクコード",page:"専用URLから追加"};
 // 方式A の照合キー: 全角数字を半角にし前後の空白を落とす。数字だけのときだけキーになる（それ以外は ""＝照合しない）。先頭のゼロは残す
 function linkNumberKey(s){const t=normalizeMyNumber(s);return /^[0-9]+$/.test(t)?t:"";}
 // 方式B の照合キー: 空白（半角・全角、途中も含む）をすべて除く。それ以外は一字一句そのまま
@@ -779,7 +780,25 @@ function myStaffNumberOf(settings,name){
   return typeof v==="string"||typeof v==="number"?String(v).replace(_MY_TRIM_RE,""):"";
 }
 // アカウントの従業員番号（profile.number）の説明。1つしか持てないので、照合に使う番号であることと、お店ごとに違うときの入れ方を書く
-const MY_PROFILE_NUMBER_HINT="お店とのリンクの照合に使います。お店ごとに番号が違うときは、リンクを申請するお店の番号を入れてください。お店ごとの番号は勤務先の一覧に出ます";
+const MY_PROFILE_NUMBER_HINT="最初にリンクを申請するお店の番号です。掛け持ち先の番号は、そのお店に申請するときに入れます。お店ごとの番号は勤務先の一覧に出ます";
+// 掛け持ち（2026-10-05 ユーザー指示「掛け持ち先が複数あれば同数の従業員番号が存在している」）: 番号はお店ごとに申請のときに入れる。
+// アカウントの番号（profile.number）は、まだどのお店ともリンクしていないときだけ申請の欄の初期値にする
+// （リンク済みのお店がある＝その番号は別のお店のものの可能性が高いので、空欄から入れてもらう）
+const MY_LINK_NUMBER_HINT="このお店で使っている従業員番号です（お店ごとに違ってかまいません）。分からなければ空欄のままで、登録ネームで照合します";
+function myLinkRequestNumberDefault(profile,links){
+  const hasLinked=Array.isArray(links)&&links.some(l=>l&&l.ok);
+  return hasLinked?"":normalizeMyNumber(profile&&profile.number);
+}
+// 専用URLの画面の「マイシフトのアカウントに追加」（2026-10-05）の状態。links は readMyLinks の戻り値（undefined=読み込み中・null=読めない）
+// login＝アカウントにログインしていない／loading／unread／linked＝このお店に同じ名前でリンク済み／other＝このお店に別の名前でリンク済み／ready
+function myPageAccountLinkState({staffUser,links,shopId,name}){
+  if(!staffUser||!staffUser.uid)return"login";
+  if(links===undefined)return"loading";
+  if(links===null)return"unread";
+  const hit=(Array.isArray(links)?links:[]).find(l=>l&&l.shopId===shopId);
+  if(hit&&hit.ok)return hit.name===name?"linked":"other";
+  return"ready";
+}
 // 勤務先の一覧（設定タブとカレンダーが共有する）。links は readMyLinks の ok の行（並び順＝既定の色の順）、workplaces は users/{uid}/workplaces。
 // 返り値 [{id, kind, shopId, name, shopName, color, linked, rec}]。並びは Shifty の店舗（リンクの順）→ 手入力（名前の順）→ リンク解除済みの店舗
 function myWorkplaceList(links,workplaces){
@@ -2009,7 +2028,7 @@ if(typeof module!=="undefined"&&module.exports){
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
     myHelperDaysOf,myHelperShiftEntries,myMergeHelperEntries,myMovedHelperDates,myHelperTimesIn,myMovedDatesIn,
     MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_STEP_MIN,MY_TIME_OPTIONS,MY_TIME_WHEEL_VALUES,MY_BREAK_STEP_MIN,MY_BREAK_MAX_OPTION_MIN,MY_BREAK_OPTIONS,myBreakSelectOptions,parseMyMinutesInput,
-    MY_OVERNIGHT_HINT,validateMyShiftInput,buildMyShiftRecord,myShiftDuplicateOf,myOverrideOf,planMyOverride,myStaffNumberOf,MY_PROFILE_NUMBER_HINT,myWorkplaceList,myNextWorkplaceColor,validateMyWorkplaceInput,buildMyWorkplacePatch,
+    MY_OVERNIGHT_HINT,validateMyShiftInput,buildMyShiftRecord,myShiftDuplicateOf,myOverrideOf,planMyOverride,myStaffNumberOf,MY_PROFILE_NUMBER_HINT,MY_LINK_NUMBER_HINT,myLinkRequestNumberDefault,myPageAccountLinkState,myWorkplaceList,myNextWorkplaceColor,validateMyWorkplaceInput,buildMyWorkplacePatch,
     buildMyManualDays,myShiftHistoryCandidates,myPayWorkDays,icsFoldLine,MY_ICS_DOMAIN,buildMyIcs,myIcsEntriesForMonth,myIcsPlatformOf,MY_ICS_HINTS,MY_ICS_APP_GUIDE,
     MY_IN_APP_BROWSERS,myInAppBrowserOf,myCalendarEnvOf,myCalendarPromptOf,MY_CAL_PROMPT_LS,myCalendarPromptKey,myCalendarPromptShown,MY_ICS_STANDALONE_NOTE,myExternalBrowserUrl,
     MY_PAY_END_DAY,MY_PAY_HOLIDAY_RULES,MY_PAY_HOLIDAY_RULE_LABELS,MY_PAY_WAGE_TYPES,MY_PAY_WAGE_TYPE_LABELS,MY_PAY_OFFSET_LABELS,MY_PAY_YEN_MAX,MY_PAY_GOAL_MAX,MY_PAY_DEFAULT,

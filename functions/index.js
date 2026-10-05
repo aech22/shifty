@@ -1151,7 +1151,7 @@ const { sanitizeCompanySettings, sanitizeCompanyDeadlines, sanitizeMonthlyDeadli
   renameStaffSettingsPatch, renameStaffPeriodsPatch, renameStaffPayPatch, renameStaffLaborMonthsPatch, renameStaffActualsPatch, renameStaffSubsPatch,
   COMPANY_BUILTIN_ATTRS, COMPANY_ATTR_ID_RE, mirrorPeopleOf } = require("./company-config");
 // 従業員画面の紐付け（第2部 E2）の規則。クライアントの app-my-utils.js と同じ内容（tests/my.test.js が照合する）
-const { renameStaffLinksPatchCF, staffLinkPersonIdPatchCF, planApproveStaffLink, planUnlinkStaff,
+const { renameStaffLinksPatchCF, staffLinkPersonIdPatchCF, planApproveStaffLink, planUnlinkStaff, planLinkStaffPage,
   LINK_NAME_MAX } = require("./staff-link");
 // 従業員画面の会社設定の賃金（第2部 E6・getMyPay）の判定。tests/my.test.js が app-utils.js の normalizePayVersion との一致を照合する
 const { myPayLinkNameCF, planGetMyPay } = require("./my-pay");
@@ -2054,6 +2054,54 @@ exports.myPagePin = functions
     const g = planGetMyPay({ shopId, name, staff, payRec, homeShopId: home, homeShopName });
     throwPlanError(g);
     return { ...g.result, ...r.result, shopId };
+  });
+
+// 専用URLのお店をメールのアカウントに追加（方式 "page"・2026-10-05 ユーザー指示）。{token, pin?}。
+// URL が使える状態（承認済み・名前がスタッフ一覧にある）を myPagePin と同じ myPageAccessCF で確かめ、名前は staffPages の name を使う
+// （呼び出し元から受け取らない）。リンクすると getMyPay で会社が登録した賃金が見えるようになるので、暗証番号を決めている URL は
+// myPagePin と同じ照合（試行回数をトランザクションで数える）を通す。決めていない URL は番号なしで通す
+// （URL を持っていれば暗証番号を決めて賃金を開けるので、守りの強さは変わらない）。管理者の再承認はしない（URL の承認で済んでいる）
+exports.linkStaffPage = functions
+  .region("asia-northeast1")
+  .https.onCall(async (data, context) => {
+    const uid = linkAuthUid(context);
+    if (!isSafeDbKey(uid)) throw new functions.https.HttpsError("invalid-argument", "アカウントが無効です");
+    const email = context.auth.token && context.auth.token.email;
+    if (typeof email !== "string" || !email) throw new functions.https.HttpsError("failed-precondition", "メールアドレスで登録したマイシフトのアカウントでログインしてください");
+    const token = data && data.token;
+    if (!isPageTokenCF(token)) throw new functions.https.HttpsError("invalid-argument", "URLが正しくありません");
+    const tokenRec = await readVal(`staffPageTokens/${token}`);
+    const shopId = tokenRec && tokenRec.shopId;
+    if (!isValidShopId(shopId)) throw new functions.https.HttpsError("not-found", "このURLは見つかりませんでした");
+    if (isDemoShop(shopId)) throw new functions.https.HttpsError("permission-denied", "体験版の店舗では使えません");
+    const [pageRec, staff, owners, staffLinks, mirrorPeople, pinRec] = await Promise.all([
+      readVal(`shops/${shopId}/staffPages/${token}`), readVal(`shops/${shopId}/staff`), readVal(`shops/${shopId}/owners`),
+      readVal(`shops/${shopId}/staffLinks`), readVal(`shops/${shopId}/company/people`), readVal(`staffPagePins/${token}`),
+    ]);
+    const acc = myPageAccessCF({ token, tokenRec, pageRec, staff });
+    throwPlanError(acc);
+    if (!isSafeDbKey(acc.name)) throw new functions.https.HttpsError("failed-precondition", "名前が正しくありません");
+    const nowIso = new Date().toISOString();
+    // 先にリンクできるかを確かめる（できないのに暗証番号の試行回数を減らさない）
+    const pre = planLinkStaffPage({ shopId, uid, name: acc.name, nowIso, owners, staffLinks, mirrorPeople });
+    throwPlanError(pre);
+    if (pre.already) return { ok: true, already: true, shopId, name: acc.name };
+    const st = planMyPagePin({ action: "status", pinRec, pageRec, now: Date.now() });
+    if (st.result && st.result.hasPin) {
+      const pin = typeof (data && data.pin) === "string" ? data.pin : "";
+      // 番号が入っていないときは照合しない（試行回数を減らさない）。画面はこの文言で暗証番号の欄を出す
+      if (!/^[0-9]{4}$/.test(pin)) throw new functions.https.HttpsError("failed-precondition", "このURLの暗証番号（4桁）を入れてください");
+      let r;
+      await db.ref(`staffPagePins/${token}`).transaction(cur => {
+        const pr = cur && typeof cur === "object" ? cur : null;
+        const hash = pr && typeof pr.salt === "string" && /^[0-9]{4}$/.test(pin) ? payCodeHashCF(pr.salt, pin) : "";
+        r = planMyPagePin({ action: "verify", pin, pinRec: pr, pageRec, now: Date.now(), nowIso, pinHash: hash });
+        return r.pinPatch !== undefined ? r.pinPatch : cur;
+      });
+      throwPlanError(r);
+    }
+    await db.ref().update(pre.patch);
+    return { ok: true, shopId, name: acc.name };
   });
 
 exports.getMyPay = functions

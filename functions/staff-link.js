@@ -9,11 +9,14 @@
 //   users/{uid}/links/{shopId}         {name, personId?, at}               CF だけが書く。本人が読む「どの店舗に紐付いているか」の索引
 // 個人リンクコード（方式C・staffLinkCodes 等）は 2026-10-05 にユーザー指示で機能ごと削除した（スタッフ専用のURLに一本化）。
 // 以前にコードで作られた紐付けは method:"code" のまま残るので、LINK_METHODS とルールは "code" を受け付けたままにしている。
+// 方式 "page"（2026-10-05 ユーザー指示）: 管理者が承認・発行したスタッフ専用のURL（#/m/<token>）を開いた本人が、
+// その URL のお店をメールのアカウントに追加する（planLinkStaffPage）。管理者の承認は URL の承認で済んでいるので再承認しない。
+// 暗証番号を決めている URL は番号の照合を通してから（index.js の linkStaffPage がトランザクションで照合する）
 // **名前の正本は shops/{shopId}/staffLinks/{uid}.name**。users/{uid}/links の name は紐付けた時点の写しで、
 // オーナーの端末の改名では書き換わらない（users/ は CF しか書けない）。読む側は staffLinks の name を使う。
 "use strict";
 
-const LINK_METHODS = ["number", "name", "code"];
+const LINK_METHODS = ["number", "name", "code", "page"];
 const LINK_NAME_MAX = 50;
 const LINK_NUMBER_MAX = 8;
 
@@ -162,6 +165,29 @@ function planApproveStaffLink(o) {
     [`shops/${x.shopId}/linkRequests/${x.uid}`]: null,
   } };
 }
+// 専用URLからアカウントへ追加（方式 "page"・2026-10-05）。o={shopId, uid, name, nowIso, owners, staffLinks, mirrorPeople}
+// name は URL の承認済みの名前（呼び出し元からは受け取らない＝index.js が staffPages の name を確かめてから渡す）。
+// 既に同じ名前でリンク済みなら書かない（already）。このお店に別の名前でリンク済み・その名前が別のアカウントとリンク済みなら拒否
+function planLinkStaffPage(o) {
+  const x = _obj(o) || {};
+  if (typeof x.name !== "string" || !x.name) return err("failed-precondition", "お店のスタッフ一覧にこの名前がありません（名前の変更か削除）");
+  const te = linkTargetError(x.uid, x.owners);
+  if (te) return te;
+  const links = _obj(x.staffLinks) || {};
+  const mine = _obj(links[x.uid]);
+  if (mine && typeof mine.name === "string" && mine.name) {
+    if (mine.name === x.name) return { already: true, patch: null };
+    return err("failed-precondition", `このアカウントは既にこのお店の「${mine.name}」さんとリンクされています。先に設定の「勤務先のお店」で解除してください`);
+  }
+  const taken = Object.entries(links).find(([u, r]) => u !== x.uid && (_obj(r) || {}).name === x.name);
+  if (taken) return err("failed-precondition", `「${x.name}」さんは既に別のアカウントとリンクされています。お店の管理者に解除を依頼してください`);
+  const personId = personIdForShopNameCF(x.mirrorPeople, x.shopId, x.name);
+  return { method: "page", patch: {
+    [`shops/${x.shopId}/staffLinks/${x.uid}`]: linkRecordOf(x.name, personId, "page", x.nowIso),
+    [`users/${x.uid}/links/${x.shopId}`]: userLinkRecordOf(x.name, personId, x.nowIso),
+    [`shops/${x.shopId}/linkRequests/${x.uid}`]: null,
+  } };
+}
 // 解除。本人（uid を省くか自分の uid）か店舗のオーナー
 function planUnlinkStaff(o) {
   const x = _obj(o) || {};
@@ -173,5 +199,5 @@ function planUnlinkStaff(o) {
 module.exports = {
   LINK_METHODS, LINK_NAME_MAX, LINK_NUMBER_MAX, isSafeKey, staffNamesOf, toHalfWidthDigitsCF, linkNumberKeyCF, linkNameKeyCF,
   personIdForShopNameCF, linkCandidatesForCF, linkMethodForCF, renameStaffLinksPatchCF, dropStaffLinksPatchCF, staffLinkPersonIdPatchCF,
-  planApproveStaffLink, planUnlinkStaff,
+  planApproveStaffLink, planUnlinkStaff, planLinkStaffPage,
 };

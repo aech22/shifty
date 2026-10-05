@@ -42,6 +42,7 @@ const MYPG_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "f
  *                                "staffLink" は従業員画面の紐付けの2本（E2: approveStaffLink / unlinkStaff。個人リンクコードの
  *                                issueStaffLinkCode・redeemStaffLinkCode は 2026-10-05 に機能ごと削除）。判定と書く差分は functions/staff-link.js の
  *                                plan* をそのまま使う（呼び出し元の uid とメールは auth:"accounts" なら __authCur()、既定なら固定のユーザー）。
+ *                                "pageLink" は linkStaffPage（専用URLのお店をアカウントに追加・2026-10-05）。planLinkStaffPage と planMyPagePin を通す。
  *                                "myPay" は getMyPay（E6）。呼び出し元の uid の staffLinks の名前で private/pay を読み、functions/my-pay.js の
  *                                myPayLinkNameCF・planGetMyPay をそのまま通す（名前は payload から受け取らない＝本物と同じ）。
  *                                "myPage" は myPagePin（スタッフ個別URLの給料の暗証番号・2026-10-04）。functions/my-page.js の myPageAccessCF・
@@ -559,6 +560,38 @@ function makeStub(o) {
           if(ur.error) return lfail(ur);
           lapply(ur.patch); return Promise.resolve({data:{ok:true}});
         }
+      }
+      if(h==="pageLink"){
+        // 本物の linkStaffPage（functions/index.js・2026-10-05）と同じ順: メールのある認証 → URL の状態 → リンクできるか → 暗証番号 → 書く。
+        // 判定は functions/staff-link.js の planLinkStaffPage と functions/my-page.js の myPageAccessCF・planMyPagePin をそのまま通す
+        var kfail=function(e){ return Promise.reject(Object.assign(new Error(e.msg),{code:"functions/"+e.code})); };
+        var kme=AUTH_MODE==="accounts"?window.__authCur():(signedIn?{uid:USER.uid,email:USER.email}:null);
+        if(!kme||!kme.uid) return kfail({code:"unauthenticated",msg:"ログインが必要です"});
+        if(!kme.email) return kfail({code:"failed-precondition",msg:"メールアドレスで登録したマイシフトのアカウントでログインしてください"});
+        var ktk=payload&&payload.token;
+        if(!MYPG.isPageTokenCF(ktk)) return kfail({code:"invalid-argument",msg:"URLが正しくありません"});
+        var ktr=getPath("staffPageTokens/"+ktk), ksid=ktr&&ktr.shopId;
+        if(!ksid) return kfail({code:"not-found",msg:"このURLは見つかりませんでした"});
+        var kprec=getPath("shops/"+ksid+"/staffPages/"+ktk);
+        var kacc=MYPG.myPageAccessCF({token:ktk,tokenRec:ktr,pageRec:kprec,staff:getPath("shops/"+ksid+"/staff")});
+        if(kacc.error) return kfail(kacc.error);
+        var kiso=new Date().toISOString();
+        var kpre=SLK.planLinkStaffPage({shopId:ksid,uid:kme.uid,name:kacc.name,nowIso:kiso,owners:getPath("shops/"+ksid+"/owners"),
+          staffLinks:getPath("shops/"+ksid+"/staffLinks"),mirrorPeople:getPath("shops/"+ksid+"/company/people")});
+        if(kpre.error) return kfail(kpre.error);
+        if(kpre.already) return Promise.resolve({data:{ok:true,already:true,shopId:ksid,name:kacc.name}});
+        var kpin=getPath("staffPagePins/"+ktk);
+        var kst=MYPG.planMyPagePin({action:"status",pinRec:kpin,pageRec:kprec,now:Date.now()});
+        var kdone=function(){ Object.keys(kpre.patch).forEach(function(k){ setPath(k,kpre.patch[k]); }); notify(); return {data:{ok:true,shopId:ksid,name:kacc.name}}; };
+        if(!(kst.result&&kst.result.hasPin)) return Promise.resolve(kdone());
+        var kp=typeof payload.pin==="string"?payload.pin:"";
+        if(!/^[0-9]{4}$/.test(kp)) return kfail({code:"failed-precondition",msg:"このURLの暗証番号（4桁）を入れてください"});
+        return window.payCodeHash(kpin.salt,kp).then(function(hh){
+          var kr=MYPG.planMyPagePin({action:"verify",pin:kp,pinRec:kpin,pageRec:kprec,now:Date.now(),nowIso:kiso,pinHash:hh});
+          if(kr.pinPatch!==undefined) setPath("staffPagePins/"+ktk,kr.pinPatch);
+          if(kr.error) return kfail(kr.error);
+          return kdone();
+        });
       }
       if(h==="myPay"){
         // 本物の getMyPay（functions/index.js・E6）と同じ順: 紐付けを確かめてから private/pay を読む。何も書かない

@@ -612,7 +612,7 @@ Firebase Realtime Database
 │       │                 無い＝企業に連携していない。店舗側の企業機能（設定の重ね合わせ・提出ボタン・提出期限・所属店舗の選択肢）はこれだけを見る
 │       ├── linkRequests/{uid} ← 従業員画面のリンク申請（2026-10-04・第2部 E2）{displayName, number?, at}。書きは本人でメールのある認証
 │       │                 （auth.token.email != null・global/shops に店舗があること・デモ店舗は不可）、読みはオーナーと本人、消すのは本人かオーナー（却下）
-│       ├── staffLinks/{uid} ← 紐付け（E2）{name, personId?, method: "number"|"name"|"code", at}。**名前の正本**。作るのは Cloud Functions だけ。
+│       ├── staffLinks/{uid} ← 紐付け（E2）{name, personId?, method: "number"|"name"|"code"|"page", at}。**名前の正本**。作るのは Cloud Functions だけ。
 │       │                 オーナーは削除と `name` の書き換えだけできる（改名・削除の追随をクライアントからも書けるように）。読みはオーナーと本人
 │       ├── staffPages/{pageToken} ← スタッフ個別URL（2026-10-04）{status:"pending"|"approved"|"rejected"|"revoked", displayName, number?, requestedAt,
 │       │                 name?, approvedAt?, byUid?, revokedAt?, pinResetAt?}。**name（スタッフ一覧の名前）が正本**。申請は誰でも（pending を作るだけ・
@@ -815,7 +815,7 @@ Person = { displayName: string, entityId?: string, number?: string, links: {[sho
 
 // 従業員画面の紐付け（2026-10-04・第2部 E2）。名前の正本は StaffLink.name（UserLink.name は紐付けた時点の写し）
 LinkRequest = { displayName: string, number?: string, at: string }                      // shops/{shopId}/linkRequests/{uid}
-StaffLink   = { name: string, personId?: string, method: "number"|"name"|"code", at: string }  // shops/{shopId}/staffLinks/{uid}
+StaffLink   = { name: string, personId?: string, method: "number"|"name"|"code"|"page", at: string }  // shops/{shopId}/staffLinks/{uid}（page＝専用URLから本人が追加・2026-10-05）
 UserLink    = { name: string, personId?: string, at: string }                           // users/{uid}/links/{shopId}
 
 // 従業員画面の本人のデータ（2026-10-04・第2部 E4）。時刻は "HH:MM"（時は2桁・24時超え表記で 30:00 まで・退勤 > 出勤）
@@ -1226,7 +1226,7 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
 スタッフアカウントを「店舗＋登録名」に紐付ける。規則は app-my-utils.js（クライアント）と functions/staff-link.js（CF）に**同じ内容**で書き、
 tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI も入口と同じく `MY_SCREEN_ENABLED` の下（2026-10-04 から本番でも購読する）・オーナーの端末だけ。
 
-- **2方式**（以前は3方式）: A＝従業員番号（`linkNumberKey`。全角数字を半角にし前後の空白を落として、**双方が数字だけのときだけ**完全一致。先頭のゼロは区別。
+- **2方式**（以前は3方式。2026-10-05 に本人が専用URLから追加する method "page" が加わった＝「従業員画面の 2026-10-05 時点の状態」の「掛け持ち」）: A＝従業員番号（`linkNumberKey`。全角数字を半角にし前後の空白を落として、**双方が数字だけのときだけ**完全一致。先頭のゼロは区別。
   照合先は `settings.staffNumbers[名前]` と、企業連携の店舗では写しの人物（`shops/{sid}/company.people`）の**数字の人物ID**）、
   B＝登録ネーム（`linkNameKey`。空白を半角・全角・途中も含めてすべて除いて一字一句一致。かな・大文字小文字は揃えない）、
   どちらも提案だけで、CF `approveStaffLink` が**候補を照合し直して**候補に無い名前を拒否する（管理者が任意の名前を選ぶ経路は無い）。
@@ -1494,6 +1494,7 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 | `ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId / companyRenameStaff / companyUpdateStaff / markPeopleDistinct` | Callable | 人物ID と企業スタッフ一覧の編集（2026-09-30・P1b・本番反映済み）。`markPeopleDistinct` は「統合しない」（`{personIds:[…], distinct:true}` で全ペアを両方向に記録、`{personIds:[a,b], distinct:false}` で取り消し。写しは作り直さない）。権限は `assertCompanyMember`。人物（`companies/{id}/pub/people`）を作るのは `ensureCompanyPeople` だけ。改名は店舗のデータを差分 update で移す（上の「人物ID と企業スタッフ一覧の編集」）。規則は `functions/company-config.js` |
 | `setCompanyPayCode` | Callable | 企業の賃金閲覧パスコードの変更（2026-09-30・P6a・本番反映済み）。現在の番号を照合（未設定なら 0000）し、`companies/{id}/private/payCode` と連携全店舗の `shops/{sid}/private/payCode` に同じハッシュを書く。作成者と企業セッションの両方が可（`assertCompanyMember`）。`syncCompanyMirror` も写しを作り直すたびに企業のパスコードを同期する（後から連携した店舗に届く） |
 | `approveStaffLink / unlinkStaff` | Callable | 従業員画面の紐付け（2026-10-04・第2部 E2・本番反映済み。個人リンクコードの `issueStaffLinkCode`・`redeemStaffLinkCode` は 2026-10-05 にコードから削除＝本番の関数の削除は未実施）。承認は店舗のオーナー（`owners/{uid}`）、解除は本人かオーナー。shopId・uid・名前はパスに埋め込む前に形を確かめ、デモ店舗は拒否。紐付けは `shops/{sid}/staffLinks/{uid}` と `users/{uid}/links/{sid}` を同じ update で書く。規則は `functions/staff-link.js` |
+| `linkStaffPage` | Callable | 専用URLのお店をメールのアカウントに追加（2026-10-05・**本番未デプロイ**）。`{token, pin?}`。メールのある認証だけ。URL が使える状態を `myPageAccessCF` で確かめ、名前は staffPages の承認済みの name（呼び出し元から受け取らない）。暗証番号を決めている URL は myPagePin と同じ照合（トランザクションで試行回数を数える）を、リンクできることを確かめた**後**に通す。管理者の再承認はしない。staffLinks（method "page"）・users/{uid}/links を書き、保留中の申請を消す。規則は `functions/staff-link.js` の `planLinkStaffPage` |
 | `myPagePin` | Callable | スタッフ個別URLの給料の暗証番号（2026-10-04・本番反映済み）。`{token, action:"status"|"set"|"verify", pin?, currentPin?}`。URL が使える状態（承認済み・名前がスタッフ一覧にある）を確かめ、`staffPagePins/{token}` のハッシュと照合する（5回の誤りで15分・トランザクションで数える）。照合が通ると（決めたときも）会社が登録した本人の賃金（`private/pay/{staffPages の name}`）を getMyPay と同じ形で返す。名前・店舗は受け取らない（URL から引く）。デモ店舗は拒否。規則は `functions/my-page.js` |
 | `getMyPay` | Callable | 従業員画面の会社設定の賃金（2026-10-04・第2部 E6・本番反映済み）。`{shopId}` だけを受け取り、呼び出し元 uid の staffLinks の名前の `private/pay` を返す（本人の分だけ・名前は受け取らない）。メールのある認証・紐付けあり・名前がスタッフ一覧にあることを確かめ、shopId の形とデモ店舗を拒否。何も書かない。規則は `functions/my-pay.js` |
 | `claimCompanyShop` | Callable `claimCompanyShop` | 連携済み店舗のオーナーに**呼び出し元のuid**を登録（企業連携タブの「ログイン」で管理コードの再入力を無くす。付与は `companies/{id}/grants/{shopId}/{uid}` に記録し、解除時に回収する） |
@@ -1710,6 +1711,7 @@ if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 - **ヘルプ勤務**: 所属店舗が公開済みなら、ヘルプ先の状態に関係なく、全員の表・本人のカレンダー・.ics に PDF どおり出す。給料は所属店舗の賃金で計算し（`myHelperDaysOf`）、内訳に「うち他店でのヘルプ」。ヘルプ先の日にも給料計算用の実績を入れられる（`users/{uid}/overrides/{ヘルプ先}/{日付}`）
 - **スタッフが入れた時刻**: 表示（カレンダー・次のシフト・.ics・全員の表）は常に公開内容。本人の実績は給料計算だけに効く
 - **URLをなくしたとき用のメールアドレス（任意）**: CF `setPageEmail`（登録・変更・削除・状態と控えの送信）・`recoverPageUrl`（送り直し。結果の文言は登録の有無に関係なく同じ）。置き場は CF 専用の `staffPageEmails`・`staffPageEmailIndex`・`staffPageEmailRate`（ルールで読み書き不可）。メールの URL は本番ドメイン固定で `?openExternalBrowser=1` が付く。回帰は `example-my-page-email.js`（画面）と cf-verify の `example-page-email.js`
+- **掛け持ち（2026-10-05 ユーザー指示・**CF とルールは本番未反映**）**: ①**従業員番号はお店ごとに申請のときに入れる**（設定タブ「勤務先のお店」の申請の欄の「このお店の従業員番号」・`MY_LINK_NUMBER_HINT`）。初期値はリンク済みのお店が無いときだけアカウントの番号（`myLinkRequestNumberDefault`）。アカウントの番号（profile.number）は1つ目のお店の申請（登録と同時の自動申請）に使う。リンク後のお店ごとの番号は従来どおり勤務先の一覧（`settings.staffNumbers`）。#/me の設定に、リンク済みのお店があっても「掛け持ち先のお店を足すとき」の案内を出す。②**専用URL（#/m/）のお店をアカウントに追加**: 個別URLの設定タブの「マイシフトのアカウントに追加」（`MyPageAccountLinkBox`・状態は `myPageAccountLinkState`）。未ログインなら「ログイン・登録して追加する」でログインの画面（戻ると sessionStorage `ss_myPageLinkIntent` で設定タブから始まる）、ログイン済みなら CF `linkStaffPage`（暗証番号を決めていれば入力）で即時にリンク（method "page"・管理者の再承認なし＝ユーザー決定）。**個別URLの本人のデータ（staffPageData）はアカウントへ持ち込まない**（ユーザー決定）。個別URLはそのまま使える。ルールは staffLinks の method に 'page' を足した（既存パスの値の追加＝**クライアント→ルール→CF の順で本番反映**。CF より先にクライアントを出すと「追加」が「関数が無い」で失敗するだけで他は壊れない）。回帰は `example-my-multi-shop.js`（30項目・d781ac6 の配信物で EXIT≠0）と cf-verify の `example-link-staff-page.js`（23項目）
 - **休暇の種別名**: 画面・PDF・全員の表・シフト作成タブからの Excel。期間タブの Excel は提出そのまま（斜線）
 - **ホーム画面のアプリ（2026-10-05・同日2回目で改め）**: manifest.json の start_url は "./" なので、iOS でスタッフ側のURLを「ホーム画面に追加」するとアプリは "/" で開き、管理者の端末では管理者画面になっていた。二段構えで直した。①**iOS のスタッフ側のURL（#/s/・#/m/・#/me）では manifest を置かない**（manifest が無ければ iOS は追加した時点の URL＝ハッシュ込みで開く）。index.html の head のスクリプトが最初の manifest を同じ規則で入れ（静的な link は置かない）、以後は app-core.js の `applyHomeManifest`（`homeManifestPlanOf`）。iOS 以外は data: の manifest（`homeManifestOf`）。②**ホーム画面から開いてハッシュが無いときの保険**: ブラウザのタブでスタッフ側のURLを開いている間は Cookie `ots_homeLaunch` にそのハッシュを置き（管理者側では消す）、ホーム画面のアプリ（`navigator.standalone`・display-mode standalone）で最初に開いたときだけその Cookie で開き先を決めて、アプリ側の localStorage `ots_homeLaunch_v1` に残す（以後はそれだけ＝`homeLaunchRestoreOf`。Cookie が無ければ "admin"）。app-core.js の読み込み時（App が URL を読む前）に `history.replaceState` でハッシュを付ける。**iPhone 実機では未確認**（iOS が追加時に Safari の Cookie をアプリへ写す前提。写らなくても①で開く想定）。既に追加済みのアプリは追加し直しが要る。回帰は `example-my-1005.js` の IOS（iPhone の UA と standalone を差し替え）
 - **提出タブ（2026-10-05）**: 個別URLの「提出」タブは、提出済みでも「提出完了」ではなく提出の内容を反映した選択画面を開く（`data-staff-restored` の帯）。提出した直後だけ「提出完了」。募集URL（Cookie の名前）は従来どおり「提出完了」から

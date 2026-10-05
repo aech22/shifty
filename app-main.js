@@ -1866,7 +1866,7 @@ function App(){
   // スタッフ個別URL（2026-10-04）。店舗はスタッフURLと同じく購読済み（Phase1）。提出は上の staffOnSub を通す
   if(MY_SCREEN_ENABLED&&pageRoute!==null) return <MyPageView token={pageRoute} boot={pageBoot} shopId={pageBoot&&pageBoot.state==="shop"?pageBoot.shopId:null}
     shopName={shop?.name||""} periods={periods} settings={effectiveSettings} staffList={staffList} subs={subs} plan={plan} syncStatus={syncStatus}
-    onSub={staffOnSub} onDeleteSub={staffOnDeleteSub}/>;
+    onSub={staffOnSub} onDeleteSub={staffOnDeleteSub} staffUser={staffUser}/>;
 
   // 引き継ぎコード（店舗コード / 管理コード shopId.adminKey）でログイン
   const applyInviteCode=()=>{
@@ -2136,7 +2136,7 @@ function App(){
       {/* 募集URLの画面の「マイシフト」で、この端末が知っている使える個別URLがあれば個別URLの画面を重ねる（2026-10-04・アドレスバーは #/m/<token>） */}
       {MY_SCREEN_ENABLED&&pageOverlay&&urlLocked&&sid!=="default"&&<div data-my-overlay="page" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
         <MyPageView token={pageOverlay} boot={{state:"shop",shopId:sid}} shopId={sid} shopName={shop?.name||""} periods={periods} settings={effectiveSettings}
-          staffList={staffList} subs={subs} plan={plan} syncStatus={syncStatus} onSub={staffOnSub} onDeleteSub={staffOnDeleteSub} onClose={closeMyOverlay}/>
+          staffList={staffList} subs={subs} plan={plan} syncStatus={syncStatus} onSub={staffOnSub} onDeleteSub={staffOnDeleteSub} onClose={closeMyOverlay} staffUser={staffUser}/>
       </div>}
       {/* 個別URLの申請（2026-10-04）。提出画面は下に残す（入力途中の希望を消さない）＝マイシフトと同じく重ねて表示する */}
       {MY_SCREEN_ENABLED&&pageRegName!==null&&urlLocked&&sid!=="default"&&<div data-page-register-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>

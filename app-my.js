@@ -531,6 +531,8 @@ function MyLinksSection({staffUser,profile,shopId}){
   const[msg,setMsg]=useState({});
   const[busy,setBusy]=useState("");
   const[seq,setSeq]=useState(0);
+  // このお店で使っている従業員番号（掛け持ち先ごとに違う・2026-10-05）。null＝まだ触っていない（初期値を使う）
+  const[num,setNum]=useState(null);
   const reload=()=>setSeq(x=>x+1);
   useEffect(()=>{
     let alive=true;
@@ -542,11 +544,14 @@ function MyLinksSection({staffUser,profile,shopId}){
     return()=>{alive=false;};
   },[uid,shopId,seq]);
   const linkedHere=shopId&&Array.isArray(list)&&list.some(l=>l.shopId===shopId&&l.ok);
+  const numValue=num!==null?num:myLinkRequestNumberDefault(profile,list);
   const apply=async()=>{
     setMsg({});
     if(!normalizeMyDisplayName(profile.displayName)){setMsg({error:"先に下の「アカウント」で登録ネームを保存してください"});return;}
+    const vErr=validateMyProfile({displayName:profile.displayName,number:numValue});
+    if(vErr){setMsg({error:vErr});return;}
     setBusy("apply");
-    try{await fbSet(`shops/${shopId}/linkRequests/${uid}`,buildLinkRequestRecord(profile,new Date().toISOString()));setMsg({ok:"申請しました。お店の管理者が承認するとリンクされます"});}
+    try{await fbSet(`shops/${shopId}/linkRequests/${uid}`,buildLinkRequestRecord({displayName:profile.displayName,number:numValue},new Date().toISOString()));setMsg({ok:"申請しました。お店の管理者が承認するとリンクされます"});setNum(null);}
     catch(e){setMsg({error:isPermissionDeniedError(e)?"申請できませんでした（サーバー側の設定が未反映の可能性があります）":"申請できませんでした。通信状態を確認してもう一度お試しください"});}
     setBusy("");reload();
   };
@@ -586,18 +591,23 @@ function MyLinksSection({staffUser,profile,shopId}){
         {req?(
           <>
             <div style={{fontSize:14,color:"var(--c-text2)",lineHeight:1.8,marginBottom:10}}>申請中です。お店の管理者の承認を待っています。</div>
+            <div data-my-link-req-sent="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>送った内容: 登録ネーム「{req.displayName||""}」{req.number?` ／ 従業員番号「${req.number}」`:" ／ 従業員番号なし"}</div>
             <button data-my-action="cancelRequest" disabled={busy==="cancel"} onClick={cancel} style={AGray}>申請を取り消す</button>
           </>
         ):(
           <>
             <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.8,marginBottom:10}}>
-              登録ネーム「{profile.displayName||"未設定"}」{profile.number?`と従業員番号「${profile.number}」`:""}をお店の管理者に送ります。お店に登録されている名前・番号と一致すると、管理者が承認してリンクされます。
+              登録ネーム「{profile.displayName||"未設定"}」と下の従業員番号をお店の管理者に送ります。お店に登録されている名前・番号と一致すると、管理者が承認してリンクされます。
             </div>
+            <MyField label="このお店の従業員番号（任意）" value={numValue} maxLength={MY_NUMBER_MAX} inputMode="numeric" data-my-input="linkNumber" hint={MY_LINK_NUMBER_HINT} onChange={e=>setNum(e.target.value)}/>
             <button data-my-action="apply" disabled={busy==="apply"||req===undefined} onClick={apply} style={{...AB,opacity:busy==="apply"?.6:1}}>{busy==="apply"?"申請中…":"申請する"}</button>
           </>
         )}
       </div>}
-      {!shopId&&Array.isArray(list)&&list.length===0&&<div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.8,marginTop:4}}>お店から受け取ったスタッフ用URLから開くと、そのお店にリンクを申請できます。</div>}
+      {/* 掛け持ち先を足す方法（2026-10-05）。リンク済みのお店があっても出す（以前は0件のときだけで、2つ目のお店の足し方が分からなかった） */}
+      {!shopId&&Array.isArray(list)&&<div data-my-link-howto="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.8,marginTop:list.length?12:4}}>
+        {list.length?"掛け持ち先のお店を足すときは、":""}お店から受け取ったスタッフ用URLから開くと、そのお店にリンクを申請できます。お店から自分専用のURLをもらっている場合は、そのURLの設定から「マイシフトのアカウントに追加」で足せます。
+      </div>}
 
       <MyMessage {...msg}/>
     </section>
@@ -3074,13 +3084,82 @@ function MyPageRecoverScreen({onClose}){
 
 // 個別URLの設定タブ: 勤務先・月間目標（暗証番号で給料を開いている間だけ）・**一番下に個別URL**（2026-10-04 ユーザー指示
 // 「設定の1番下に個別URLを表示。管理者画面でのみ変更可能」）。URL は表示・コピー・共有だけで、本人の画面からは変更も再発行もできない
-function MyPageSettingsTab({me,personal,page,shopName,token,payUnlocked}){
+// 専用URLのお店をメールのアカウント（マイシフト）に追加する（2026-10-05 ユーザー指示「スタッフ専用のURLのお店をアカウントに増やせるように」）。
+// CF linkStaffPage が URL の承認と名前を確かめてリンクする（管理者の再承認なし）。暗証番号を決めている URL は番号を入れてから。
+// 個別URLで入れた本人のデータ（手入力の勤務先・給料設定・目標・振込額）はアカウントへ持ち込まない（ユーザー決定）＝お店だけを足す
+const SS_MY_PAGE_LINK_INTENT="ss_myPageLinkIntent";
+function MyPageAccountLinkBox({token,shopId,shopName,name,staffUser,onLogin}){
+  const uid=staffUser&&staffUser.uid;
+  const[links,setLinks]=useState(undefined);
+  const[pinSt,setPinSt]=useState(undefined); // undefined=確認中・{hasPin}・{error}
+  const[pin,setPin]=useState("");
+  const[msg,setMsg]=useState({});
+  const[busy,setBusy]=useState(false);
+  const[seq,setSeq]=useState(0);
+  useEffect(()=>{
+    if(!uid)return;
+    let alive=true;setLinks(undefined);
+    readMyLinks(uid).then(v=>{if(alive)setLinks(v);}).catch(()=>{if(alive)setLinks(null);});
+    return()=>{alive=false;};
+  },[uid,seq]);
+  const state=myPageAccountLinkState({staffUser,links,shopId,name});
+  useEffect(()=>{
+    if(state!=="ready")return;
+    let alive=true;
+    myCallCF("myPagePin",{token,action:"status"}).then(r=>{if(alive)setPinSt(r&&r.ok?{hasPin:!!r.hasPin}:{error:true});});
+    return()=>{alive=false;};
+  },[state,token]);
+  const add=async()=>{
+    setMsg({});
+    const p=normalizeMyPagePin(pin);
+    if(pinSt&&pinSt.hasPin&&!/^[0-9]{4}$/.test(p)){setMsg({error:"このURLの暗証番号（4桁の数字）を入れてください"});return;}
+    setBusy(true);
+    const r=await myCallCF("linkStaffPage",pinSt&&pinSt.hasPin?{token,pin:p}:{token});
+    setBusy(false);setPin("");
+    if(!r||r.error||!r.ok){setMsg({error:(r&&r.error)||"追加できませんでした。時間をおいてもう一度お試しください"});return;}
+    setMsg({ok:r.already?"このお店は既にアカウントに追加されています":`${shopName||"このお店"}をマイシフトのアカウントに追加しました`});
+    setSeq(x=>x+1);
+  };
+  return(
+    <section style={MY_SECTION} data-my-section="pageAccount" data-my-page-account={state}>
+      <div style={MY_SECTION_TITLE}>マイシフトのアカウントに追加</div>
+      {state==="login"&&<>
+        <div style={{fontSize:14,color:"var(--c-text2)",lineHeight:1.8,marginBottom:12}}>
+          メールアドレスで登録したマイシフトのアカウントにこのお店を追加すると、掛け持ち先のお店と一緒にシフトと給料を見られます。このURLもそのまま使えます。
+        </div>
+        <button data-my-action="pageAccountLogin" onClick={onLogin} style={{...AB,width:"100%"}}>ログイン・登録して追加する</button>
+      </>}
+      {state==="loading"&&<div style={{fontSize:14,color:"var(--c-text3)"}}>確認しています…</div>}
+      {state==="unread"&&<>
+        <MyMessage error="アカウントのリンクを確認できませんでした。時間をおいてもう一度お試しください"/>
+        <button data-my-action="retryPageAccount" onClick={()=>setSeq(x=>x+1)} style={AGray}>もう一度</button>
+      </>}
+      {state==="linked"&&<div data-my-page-account-linked="1" style={{fontSize:14,color:"var(--c-text2)",lineHeight:1.8}}>
+        このお店はマイシフトのアカウント{staffUser.email?`（${staffUser.email}）`:""}に追加済みです。<a href="#/me" style={{color:"var(--c-accent)"}}>アカウントのマイシフトを開く</a>
+      </div>}
+      {state==="other"&&<MyMessage error={`ログイン中のアカウントは、このお店の別の名前とリンクしています。アカウントの設定の「勤務先のお店」で解除してから追加してください`}/>}
+      {state==="ready"&&<>
+        <div style={{fontSize:14,color:"var(--c-text2)",lineHeight:1.8,marginBottom:12}}>
+          ログイン中のアカウント{staffUser.email?`（${staffUser.email}）`:""}に、{shopName}の「{name}」さんとして追加します。お店の管理者の承認はこのURLで済んでいるので、すぐに追加されます。
+          このURLで入れた勤務先・給料の設定などはアカウントには移りません。
+        </div>
+        {pinSt===undefined&&<div style={{fontSize:13,color:"var(--c-text3)",marginBottom:10}}>確認しています…</div>}
+        {pinSt&&pinSt.hasPin&&<MyPinField label="このURLの暗証番号" name="pageAccountPin" value={pin} onChange={setPin} onKeyDown={e=>{if(e.key==="Enter"&&!busy)add();}}/>}
+        <MyMessage {...msg}/>
+        <button data-my-action="addPageToAccount" disabled={busy||pinSt===undefined} onClick={add} style={{...AB,width:"100%",opacity:busy||pinSt===undefined?.6:1}}>{busy?"追加しています…":"このお店をアカウントに追加"}</button>
+      </>}
+      {state!=="ready"&&msg.ok&&<MyMessage {...msg}/>}
+    </section>
+  );
+}
+function MyPageSettingsTab({me,personal,page,shopId,shopName,token,payUnlocked,staffUser,onAccountLogin}){
   return(
     <div>
       <MyWorkplacesSection me={me} personal={personal} payLocked={!payUnlocked}/>
       {payUnlocked&&<MyGoalSection me={me}/>}
       {payUnlocked&&<MyPagePinChange token={token}/>}
       {!payUnlocked&&<div data-my-pin-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,padding:"0 4px",marginBottom:16}}>月間目標と暗証番号の変更は、給料タブで暗証番号を入れると表示されます。</div>}
+      <MyPageAccountLinkBox token={token} shopId={shopId} shopName={shopName} name={page.name} staffUser={staffUser} onLogin={onAccountLogin}/>
       {/* 個別URLは設定の一番下に置く（2026-10-04 ユーザー指示）。メールの登録はその上 */}
       <MyPageEmailBox token={token}/>
       <section style={MY_SECTION} data-my-section="page">
@@ -3094,9 +3173,19 @@ function MyPageSettingsTab({me,personal,page,shopName,token,payUnlocked}){
 }
 // 個別URLの入口。App が Phase1 で店舗を購読済み（periods・settings・staff・subs）。承認の状態は staffPages/{token} を購読して決める
 // onClose: 募集URLの画面の「マイシフト」から重ねて開いたとき（2026-10-04）だけ。個別URLを直接開いたときは閉じる先が無いので null
-function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,plan,syncStatus,onSub,onDeleteSub,onClose=null}){
+function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,plan,syncStatus,onSub,onDeleteSub,onClose=null,staffUser=null}){
   const[rec,setRec]=useState(undefined); // shops/{sid}/staffPages/{token}（undefined=読み込み中・null=無い）
-  const[tab,setTab]=useState("shift");
+  // アカウントに追加するためにログインして戻ってきた（再読み込み）ときは設定タブから始める（MyPageAccountLinkBox）
+  const[tab,setTab]=useState(()=>ssGet(SS_MY_PAGE_LINK_INTENT,null)===token?"settings":"shift");
+  const[authOpen,setAuthOpen]=useState(false);
+  useEffect(()=>{if(ssGet(SS_MY_PAGE_LINK_INTENT,null)===token&&staffUser)ssSave(SS_MY_PAGE_LINK_INTENT,null);},[token,staffUser]);
+  // ログインの画面で登録が再読み込みなしで済んだとき（匿名 uid への連結）も、再読み込みして App にアカウントを読み直させる
+  useEffect(()=>{
+    if(!authOpen)return;
+    const h=()=>location.reload();
+    window.addEventListener("shifty:staffAccount",h);
+    return()=>window.removeEventListener("shifty:staffAccount",h);
+  },[authOpen]);
   const[pay,setPay]=useState(null);      // 暗証番号で開いた給料（P4）: {key, byShop}
   useEffect(()=>{
     if(!shopId||!isMyPageToken(token)||!firebaseDB)return;
@@ -3135,6 +3224,7 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
   if(boot.state!=="shop")return <MyPageStatusScreen state={boot.state==="invalid"?"invalid":"missing"} token={token} onClose={onClose}/>;
   if(rec===undefined)return <MyPageStatusScreen state="loading" shopName={shopName} token={token} onClose={onClose}/>;
   if(page.state!=="ok")return <MyPageStatusScreen state={page.state} shopName={shopName} token={token} onClose={onClose}/>;
+  if(authOpen)return <MyAuthScreen shopId={shopId} onClose={()=>{ssSave(SS_MY_PAGE_LINK_INTENT,null);setAuthOpen(false);}}/>;
   const tabs=MY_PAGE_TABS;
   const label=(tabs.find(t=>t.key===tab)||tabs[0]).label;
   // 提出（P2）: 最新の期間へ、承認された名前で。募集URLと同じ StaffView・同じ提出の処理（App の staffOnSub）を通す。
@@ -3166,7 +3256,8 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
           </div>
           <MyPayTab me={me} personal={personal} onGoSettings={()=>setTab("settings")}/>
         </div>:<MyPagePayGate token={token} onUnlock={unlockPay}/>)}
-        {tab==="settings"&&<MyPageSettingsTab me={me} personal={personal} page={page} shopName={shopName} token={token} payUnlocked={!!pay}/>}
+        {tab==="settings"&&<MyPageSettingsTab me={me} personal={personal} page={page} shopId={shopId} shopName={shopName} token={token} payUnlocked={!!pay}
+          staffUser={staffUser} onAccountLogin={()=>{ssSave(SS_MY_PAGE_LINK_INTENT,token);setAuthOpen(true);}}/>}
       </main>
       <MyTabBar tab={tab} onTab={setTab} tabs={tabs}/>
     </div>

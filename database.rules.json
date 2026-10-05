@@ -113,7 +113,7 @@
               ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 50"
             },
             "personId": { ".validate": "newData.isString() && newData.val().length <= 64" },
-            "method": { ".validate": "newData.val() === 'number' || newData.val() === 'name' || newData.val() === 'code'" },
+            "method": { ".validate": "newData.val() === 'number' || newData.val() === 'name' || newData.val() === 'code' || newData.val() === 'page'" },
             "at": { ".validate": "newData.isString() && newData.val().length <= 40" },
             "$other": { ".validate": false }
           }

@@ -103,6 +103,8 @@ const cands = (h, uid) => h.evaluate(u => { const el = document.querySelector(`[
       S.none = await waitText(h, "まだどのお店ともリンクしていません");
       S.applyBox = await waitSel(h, '[data-my-link-apply="none"]');
       S.applyText = await h.evaluate(() => (document.querySelector('[data-my-link-apply]') || {}).innerText || "");
+      // 2026-10-05: 番号はお店ごとに申請の欄で入れる（初期値はリンク済みのお店が無いときだけアカウントの番号）
+      S.applyNumber = await h.evaluate(() => (document.querySelector('[data-my-input="linkNumber"]') || {}).value);
       await click(h, '[data-my-action="apply"]');
       S.pending = await waitSel(h, '[data-my-link-apply="pending"]');
       S.req = await db(h, "shops/S1/linkRequests/T1");
@@ -116,7 +118,7 @@ const cands = (h, uid) => h.evaluate(u => { const el = document.querySelector(`[
       S.errors = h.errors.slice();
       dump = await h.evaluate(() => window.__dbDump());
       R.S = S;
-      V.S_apply = S.view && S.section && S.none && S.applyBox && /A店にリンクを申請/.test(S.applyText) && /たなか/.test(S.applyText) && /012/.test(S.applyText);
+      V.S_apply = S.view && S.section && S.none && S.applyBox && /A店にリンクを申請/.test(S.applyText) && /たなか/.test(S.applyText) && S.applyNumber === "012";
       V.S_requestWritten = !!S.req && S.req.displayName === "たなか" && S.req.number === "012" && typeof S.req.at === "string";
       V.S_pendingAndCancel = S.pending && S.afterCancel === null;
       V.S_layout = S.overflow <= 0 && S.fonts.length > 0 && S.fonts.every(f => f >= 16);
