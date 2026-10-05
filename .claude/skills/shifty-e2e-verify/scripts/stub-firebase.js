@@ -39,9 +39,9 @@ const MYPG_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "f
  * @param {object} [o.cfHandlers] Callable名 → "ok" | "reject:メッセージ" | "unlink" | "link" | "companyConfig" | "companyLogin:<companyId>" | "entity" | "people" | "payCode"（本物のCFと同じ後始末）
  *                                "people" は人物の7本（P1b: ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId /
  *                                companyRenameStaff / companyUpdateStaff、統合しない: markPeopleDistinct）。規則は functions/company-config.js をそのまま使う。
- *                                "staffLink" は従業員画面の紐付けの4本（E2: approveStaffLink / issueStaffLinkCode / redeemStaffLinkCode /
- *                                unlinkStaff）。判定と書く差分は functions/staff-link.js の plan* をそのまま使う（呼び出し元の uid とメールは
- *                                auth:"accounts" なら __authCur()、既定なら固定のユーザー）。読みの後のトランザクションは単純な削除で代える。
+ *                                "staffLink" は従業員画面の紐付けの2本（E2: approveStaffLink / unlinkStaff。個人リンクコードの
+ *                                issueStaffLinkCode・redeemStaffLinkCode は 2026-10-05 に機能ごと削除）。判定と書く差分は functions/staff-link.js の
+ *                                plan* をそのまま使う（呼び出し元の uid とメールは auth:"accounts" なら __authCur()、既定なら固定のユーザー）。
  *                                "myPay" は getMyPay（E6）。呼び出し元の uid の staffLinks の名前で private/pay を読み、functions/my-pay.js の
  *                                myPayLinkNameCF・planGetMyPay をそのまま通す（名前は payload から受け取らない＝本物と同じ）。
  *                                "myPage" は myPagePin（スタッフ個別URLの給料の暗証番号・2026-10-04）。functions/my-page.js の myPageAccessCF・
@@ -545,7 +545,7 @@ function makeStub(o) {
         if(!cu) return Promise.reject(Object.assign(new Error("ログインが必要です"),{code:"functions/unauthenticated"}));
         var lfail=function(r){ return Promise.reject(Object.assign(new Error(r.error.msg),{code:"functions/"+r.error.code})); };
         var lapply=function(patch){ Object.keys(patch||{}).forEach(function(k){ setPath(k,patch[k]); }); notify(); };
-        var lnow=Date.now(), liso=new Date(lnow).toISOString();
+        var liso=new Date().toISOString();
         var lsid=payload.shopId;
         var lread=function(sid){ return {owners:getPath("shops/"+sid+"/owners"),staff:getPath("shops/"+sid+"/staff"),settings:getPath("shops/"+sid+"/settings"),
           mirrorPeople:getPath("shops/"+sid+"/company/people"),staffLinks:getPath("shops/"+sid+"/staffLinks")}; };
@@ -553,26 +553,6 @@ function makeStub(o) {
           var ar=SLK.planApproveStaffLink(Object.assign(lread(lsid),{shopId:lsid,uid:payload.uid,name:payload.name,callerUid:cu,nowIso:liso,request:getPath("shops/"+lsid+"/linkRequests/"+payload.uid)}));
           if(ar.error) return lfail(ar);
           lapply(ar.patch); return Promise.resolve({data:{ok:true,method:ar.method}});
-        }
-        if(name==="issueStaffLinkCode"){
-          var code=SLK.genLinkCodeCF(function(n){ var a=[]; for(var i=0;i<n;i++) a.push(Math.floor(Math.random()*256)); return a; });
-          var ir=SLK.planIssueStaffLinkCode(Object.assign(lread(lsid),{shopId:lsid,name:payload.name,callerUid:cu,now:lnow,nowIso:liso,code:code,prevCode:getPath("staffLinkCodeIndex/"+lsid+"/"+payload.name)}));
-          if(ir.error) return lfail(ir);
-          lapply(ir.patch); return Promise.resolve({data:{ok:true,code:ir.code,expiry:ir.expiry}});
-        }
-        if(name==="redeemStaffLinkCode"){
-          var rc=SLK.normalizeLinkCodeCF(payload.code);
-          if(!SLK.isValidLinkCodeCF(rc)) return lfail({error:{code:"invalid-argument",msg:"コードは8文字の英数字です"}});
-          var att=getPath("staffLinkCodeAttempts/"+cu), wait=SLK.linkCodeWaitMsCF(att,lnow);
-          if(wait) return lfail({error:{code:"resource-exhausted",msg:"入力の誤りが続いたため止めています。"+Math.ceil(wait/60000)+"分後にもう一度お試しください"}});
-          var rec=getPath("staffLinkCodes/"+rc), rsid=rec&&rec.shopId;
-          var rr=SLK.planRedeemStaffLinkCode(Object.assign(rsid?lread(rsid):{},{uid:cu,email:me.email||null,rec:rec,code:rc,now:lnow,nowIso:liso}));
-          if(rr.deleteExpired&&rec) setPath("staffLinkCodes/"+rc,null);
-          if(rr.countFail) setPath("staffLinkCodeAttempts/"+cu,SLK.nextLinkCodeAttemptsCF(att,false,lnow));
-          if(rr.error){ notify(); return lfail(rr); }
-          setPath("staffLinkCodes/"+rc,null);
-          if(getPath("staffLinkCodeIndex/"+rsid+"/"+rec.name)===rc) rr.patch["staffLinkCodeIndex/"+rsid+"/"+rec.name]=null;
-          lapply(rr.patch); return Promise.resolve({data:{ok:true,shopId:rr.shopId,name:rr.name}});
         }
         if(name==="unlinkStaff"){
           var ur=SLK.planUnlinkStaff({shopId:lsid,uid:payload.uid!==undefined?payload.uid:cu,callerUid:cu,owners:getPath("shops/"+lsid+"/owners")});

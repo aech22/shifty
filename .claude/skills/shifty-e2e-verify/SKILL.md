@@ -327,7 +327,7 @@ localStorage 上のアカウント表で動く（`window.__authCur()`・`window.
 真似て通すだけで、ルールそのものは評価しない。`denyWrite:["users"]` で「ルール未デプロイで拒否される」を再現できる。
 スタッフURLや `#/me` で開くときは `extraHead` の先頭に `<script>history.replaceState(null,"","/#/s/t1")</script>` を置く（parseUrl が読む前に）。
 雛形は `scripts/example-my-account.js`。
-紐付け（E2）は `cfHandlers` に `"staffLink"`（approveStaffLink / issueStaffLinkCode / redeemStaffLinkCode / unlinkStaff）を渡すと、
+紐付け（E2）は `cfHandlers` に `"staffLink"`（approveStaffLink / unlinkStaff。個人リンクコードの2本は 2026-10-05 に削除）を渡すと、
 `functions/staff-link.js` の本物の計画関数を通して DB に書く。オーナーの端末（既定の認証）とスタッフの端末（`auth:"accounts"`）を
 `__dbDump()` でつなぐ。**閲覧専用の端末はスタブでは自然に作れない**（ルールを評価しないので claim が通る）——`denyRead`・`denyWrite` に
 `shops/S1/private` と `shops/S1/owners` を渡して拒否を再現する。雛形は `scripts/example-my-link.js`。

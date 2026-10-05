@@ -295,8 +295,6 @@
       }
     },
     "companyCodes": { ".read": false, ".write": false },
-    "staffLinkCodes": { ".read": false, ".write": false },
-    "staffLinkCodeIndex": { ".read": false, ".write": false },
     "staffPageTokens": {
       "$token": {
         ".read": "auth != null",
@@ -466,7 +464,6 @@
     "staffPagePins": { ".read": false, ".write": false },
     "staffPageEmails": { ".read": false, ".write": false },
     "staffPageEmailIndex": { ".read": false, ".write": false },
-    "staffPageEmailRate": { ".read": false, ".write": false },
-    "staffLinkCodeAttempts": { ".read": false, ".write": false }
+    "staffPageEmailRate": { ".read": false, ".write": false }
   }
 }

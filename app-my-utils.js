@@ -234,24 +234,16 @@ function mayBeStaffAccountUser(user){
 }
 
 // ===== 紐付け（E2）=====
-// スタッフアカウントを「店舗＋登録名」に紐付ける3方式（計画書 E.3）。A＝従業員番号・B＝登録ネームは管理者への提案、
-// C＝個人リンクコードは承認なし。照合の規則は Cloud Functions の functions/staff-link.js と**同じ内容**にする
+// スタッフアカウントを「店舗＋登録名」に紐付ける（計画書 E.3）。A＝従業員番号・B＝登録ネームは管理者への提案。
+// C＝個人リンクコードは 2026-10-05 にユーザー指示で機能ごと削除した（スタッフ専用のURLに一本化）。以前にコードで作られた紐付けは
+// method:"code" のまま残るので、表示名（MY_LINK_METHOD_LABELS.code）は残してある。照合の規則は Cloud Functions の functions/staff-link.js と**同じ内容**にする
 // （functions/ はこのファイルを読めないので書き写している。一致は tests/my.test.js が照合する）。
 // データ: shops/{sid}/linkRequests/{uid}（本人の申請）・shops/{sid}/staffLinks/{uid}（紐付け。名前の正本）・users/{uid}/links/{sid}（本人の索引）。
 const MY_LINK_METHOD_LABELS={number:"従業員番号が一致",name:"登録ネームが一致",code:"個人リンクコード"};
-const MY_LINK_CODE_LEN=8;
-const MY_LINK_CODE_TTL_MS=24*60*60*1000;
-const _MY_LINK_CODE_RE=/^[A-HJ-NP-Z2-9]{8}$/;
 // 方式A の照合キー: 全角数字を半角にし前後の空白を落とす。数字だけのときだけキーになる（それ以外は ""＝照合しない）。先頭のゼロは残す
 function linkNumberKey(s){const t=normalizeMyNumber(s);return /^[0-9]+$/.test(t)?t:"";}
 // 方式B の照合キー: 空白（半角・全角、途中も含む）をすべて除く。それ以外は一字一句そのまま
 function linkNameKey(s){return String(s==null?"":s).replace(/[\s　]/g,"");}
-// 入力されたコード: 全角英数を半角に・小文字を大文字に・空白とハイフンを除く
-function normalizeLinkCode(s){
-  return String(s==null?"":s).replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
-    .replace(/[\s　\-‐－ー]/g,"").toUpperCase();
-}
-function isValidLinkCode(s){return typeof s==="string"&&_MY_LINK_CODE_RE.test(s);}
 const _myObj=v=>(v&&typeof v==="object"?v:null);
 // 店舗の staff（配列か数値キーのオブジェクト）を名前の配列にする。空白列は除く
 function myStaffNamesOf(staff){
@@ -383,13 +375,6 @@ function buildLinkRequestRecord(profile,nowIso){
   const num=normalizeMyNumber(profile&&profile.number);
   if(num)rec.number=num;
   return rec;
-}
-// 有効期限の表示（例 "2026/10/05 14:30"）。端末の時刻帯で出す
-function fmtLinkCodeExpiry(ms){
-  const d=new Date(ms);
-  if(!Number.isFinite(d.getTime()))return"";
-  const p=n=>String(n).padStart(2,"0");
-  return`${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 // ===== マイシフト（2026-10-04・第2部 E3）=====
@@ -2020,7 +2005,7 @@ function myAllShiftSelection(choices,sel){
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
   module.exports={EMAIL_LINK_PENDING_LS,EMAIL_LINK_KINDS,EMAIL_LINK_PENDING_MAX_MS,EMAIL_LINK_RESEND_WAIT_MS,EMAIL_LINK_FALLBACK_CODES,isEmailLinkFallbackError,emailLinkSafeHash,emailLinkContinueUrl,parseEmailLinkLanding,emailLinkReturnHash,emailLinkCleanUrl,emailLinkPendingRecord,emailLinkPendingFor,ADMIN_PASSWORD_MIN,validateEmailLinkPassword,emailLinkErrorMessage,MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
-    MY_LINK_METHOD_LABELS,MY_LINK_CODE_LEN,MY_LINK_CODE_TTL_MS,linkNumberKey,linkNameKey,normalizeLinkCode,isValidLinkCode,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,MY_STAFF_LINK_OPS_MAX,staffLinkOpOf,staffLinksAsOf,planStaffLinkOp,enqueueStaffLinkOp,MY_STAFF_LINK_PENDING_MSG,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,fmtLinkCodeExpiry,
+    MY_LINK_METHOD_LABELS,linkNumberKey,linkNameKey,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,MY_STAFF_LINK_OPS_MAX,staffLinkOpOf,staffLinksAsOf,planStaffLinkOp,enqueueStaffLinkOp,MY_STAFF_LINK_PENDING_MSG,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
     myHelperDaysOf,myHelperShiftEntries,myMergeHelperEntries,myMovedHelperDates,myHelperTimesIn,myMovedDatesIn,
     MY_WORKPLACE_NAME_MAX,MY_SHIFT_MEMO_MAX,MY_CLOCK_MAX_MIN,MY_MANUAL_WP_ID_RE,MY_SHIFT_ID_RE,genMyRecordId,isMyDateStr,myClockStr,parseMyClockInput,MY_TIME_STEP_MIN,MY_TIME_OPTIONS,MY_TIME_WHEEL_VALUES,MY_BREAK_STEP_MIN,MY_BREAK_MAX_OPTION_MIN,MY_BREAK_OPTIONS,myBreakSelectOptions,parseMyMinutesInput,

@@ -209,9 +209,6 @@ test("E2 クライアントと CF の照合規則が一致する（正規化・�
     const s = str();
     assert.strictEqual(m.linkNumberKey(s), cf.linkNumberKeyCF(s), `番号 ${JSON.stringify(s)}`);
     assert.strictEqual(m.linkNameKey(s), cf.linkNameKeyCF(s), `名前 ${JSON.stringify(s)}`);
-    const code = pick(["abcd efgh", "ＡＢＣＤ－２３４５", "ABCD2345", "abcd-2345", "ABCDI234", str()]);
-    assert.strictEqual(m.normalizeLinkCode(code), cf.normalizeLinkCodeCF(code));
-    assert.strictEqual(m.isValidLinkCode(m.normalizeLinkCode(code)), cf.isValidLinkCodeCF(cf.normalizeLinkCodeCF(code)));
     const staff = Array.from({ length: 4 }, str).filter(Boolean);
     const nums = {}; staff.forEach(n => { if (rnd() < 0.6) nums[n] = str(); });
     const links = {}; staff.forEach((n, j) => { if (rnd() < 0.3) links["U" + j] = { name: n, method: "name", at: "t" }; });
@@ -224,15 +221,8 @@ test("E2 クライアントと CF の照合規則が一致する（正規化・�
     assert.deepStrictEqual(m.dropStaffFromStaffLinks(links, [o]), cf.dropStaffLinksPatchCF(links, [o]));
     assert.strictEqual(m.personIdForShopName(people, "S1", o), cf.personIdForShopNameCF(people, "S1", o));
   }
-  assert.strictEqual(m.MY_LINK_CODE_LEN, cf.LINK_CODE_LEN);
-  assert.strictEqual(m.MY_LINK_CODE_TTL_MS, cf.LINK_CODE_TTL_MS);
   assert.strictEqual(m.MY_DISPLAY_NAME_MAX, cf.LINK_NAME_MAX);
   assert.strictEqual(m.MY_NUMBER_MAX, cf.LINK_NUMBER_MAX);
-  // 生成したコードは検証を通る（紛らわしい I・O・0・1 を含まない）
-  for (let i = 0; i < 200; i++) {
-    const c = cf.genLinkCodeCF(n => Array.from({ length: n }, () => Math.floor(Math.random() * 256)));
-    assert.ok(cf.isValidLinkCodeCF(c) && m.isValidLinkCode(c) && !/[IO01]/.test(c), c);
-  }
 });
 
 test("E2 改名・削除の差分: 旧名の紐付けだけを書き換える／消す", () => {
@@ -255,11 +245,9 @@ test("E2 resolveMyLink: 名前は staffLinks が正。staffLinks が無い・名
   Object.values(m.MY_LINK_INVALID_LABELS).forEach(t => assert.ok(t.length > 0));
 });
 
-test("E2 buildLinkRequestRecord / fmtLinkCodeExpiry", () => {
+test("E2 buildLinkRequestRecord", () => {
   assert.deepStrictEqual(m.buildLinkRequestRecord({ displayName: " 田中 ", number: "０１" }, "T"), { displayName: "田中", at: "T", number: "01" });
   assert.deepStrictEqual(m.buildLinkRequestRecord({ displayName: "田中" }, "T"), { displayName: "田中", at: "T" });
-  assert.match(m.fmtLinkCodeExpiry(new Date(2026, 9, 5, 9, 3).getTime()), /^2026\/10\/05 09:03$/);
-  assert.strictEqual(m.fmtLinkCodeExpiry(NaN), "");
 });
 
 // ===== E2: Cloud Functions の計画（functions/staff-link.js）=====
@@ -284,47 +272,15 @@ test("E2 承認（planApproveStaffLink）: オーナーだけ・申請が要る�
   assert.strictEqual(pp.patch["users/U1/links/S1"].personId, "0042");
 });
 
-test("E2 発行（planIssueStaffLinkCode）: 24時間・前のコードを消す・登録の無い名前と紐付け済みの名前は拒否", () => {
-  const now = Date.UTC(2026, 9, 4, 0, 0);
-  const r = cf.planIssueStaffLinkCode({ ...base(), name: "田中", callerUid: "OWN", now, nowIso: "T", code: "ABCD2345", prevCode: "WXYZ6789" });
-  assert.strictEqual(r.expiry, now + 24 * 3600 * 1000);
-  assert.deepStrictEqual(r.patch, { "staffLinkCodes/ABCD2345": { shopId: "S1", name: "田中", expiry: r.expiry, issuedBy: "OWN", createdAt: "T" }, "staffLinkCodeIndex/S1/田中": "ABCD2345", "staffLinkCodes/WXYZ6789": null });
-  const e = o => cf.planIssueStaffLinkCode({ ...base(), name: "田中", callerUid: "OWN", now, nowIso: "T", code: "ABCD2345", ...o }).error;
-  assert.strictEqual(e({ callerUid: "X" }).code, "permission-denied");
-  assert.strictEqual(e({ name: "鈴木" }).code, "failed-precondition");
-  assert.strictEqual(e({ staffLinks: { U1: { name: "田中", method: "name", at: "t" } } }).code, "failed-precondition");
-});
-
-test("E2 コードでの紐付け（planRedeemStaffLinkCode）: 24時間ちょうどで使えない・無いコードは失敗に数える・1回限りの印", () => {
-  const now0 = Date.UTC(2026, 9, 4, 0, 0);
-  const rec = { shopId: "S1", name: "田中", expiry: now0 + cf.LINK_CODE_TTL_MS, issuedBy: "OWN", createdAt: "c" };
-  const go = o => cf.planRedeemStaffLinkCode({ ...base(), uid: "U1", email: "a@b.jp", rec, code: "ABCD2345", nowIso: "T", ...o });
-  const ok = go({ now: rec.expiry - 1 });
-  assert.ok(ok.consume, "24時間の直前は使える");
-  assert.deepStrictEqual(ok.patch, { "shops/S1/staffLinks/U1": { name: "田中", method: "code", at: "T" }, "users/U1/links/S1": { name: "田中", at: "T" }, "shops/S1/linkRequests/U1": null, "staffLinkCodeAttempts/U1": null });
-  const exact = go({ now: rec.expiry });
-  assert.strictEqual(exact.error.code, "invalid-argument", "24時間ちょうどは期限切れ");
-  assert.ok(exact.countFail && exact.deleteExpired);
-  assert.strictEqual(go({ now: rec.expiry + 1 }).error.code, "invalid-argument");
-  const missing = go({ now: now0, rec: null });
-  assert.ok(missing.countFail && !missing.deleteExpired);
-  assert.strictEqual(missing.error.msg, exact.error.msg, "無いコードと期限切れは同じ文言（どちらかを教えない）");
-  assert.strictEqual(go({ now: now0, email: null }).error.code, "failed-precondition", "メールのある認証だけ");
-  assert.strictEqual(go({ now: now0, uid: "OWN" }).error.code, "failed-precondition", "オーナーの uid はリンクしない");
-  const gone = go({ now: now0, staff: ["山田 太郎"] });
-  assert.ok(gone.error && gone.deleteExpired && !gone.consume, "名前が消えたコードは使わず消す");
-  assert.strictEqual(go({ now: now0, staffLinks: { U9: { name: "田中", method: "name", at: "t" } } }).error.code, "failed-precondition");
-});
-
-test("E2 入力の失敗回数: 5回で15分止め、成功で消える。古い失敗は数え直す", () => {
-  let st = null; const t0 = 1e12;
-  for (let i = 1; i <= 4; i++) { st = cf.nextLinkCodeAttemptsCF(st, false, t0 + i); assert.strictEqual(st.fails, i); assert.strictEqual(cf.linkCodeWaitMsCF(st, t0 + i), 0); }
-  st = cf.nextLinkCodeAttemptsCF(st, false, t0 + 5);
-  assert.strictEqual(cf.linkCodeWaitMsCF(st, t0 + 5), cf.LINK_CODE_LOCK_MS);
-  assert.strictEqual(cf.linkCodeWaitMsCF(st, t0 + 5 + cf.LINK_CODE_LOCK_MS), 0);
-  assert.strictEqual(cf.nextLinkCodeAttemptsCF(st, true, t0), null);
-  const old = { fails: 4, lastAt: t0 };
-  assert.strictEqual(cf.nextLinkCodeAttemptsCF(old, false, t0 + cf.LINK_CODE_FAIL_WINDOW_MS + 1).fails, 1);
+test("個人リンクコード（方式C）は 2026-10-05 に機能ごと削除した: クライアント・CF・ルールに残っていない", () => {
+  ["normalizeLinkCode", "isValidLinkCode", "fmtLinkCodeExpiry", "MY_LINK_CODE_LEN", "MY_LINK_CODE_TTL_MS"].forEach(k => assert.strictEqual(m[k], undefined, k));
+  ["planIssueStaffLinkCode", "planRedeemStaffLinkCode", "genLinkCodeCF", "normalizeLinkCodeCF", "nextLinkCodeAttemptsCF", "LINK_CODE_LEN"].forEach(k => assert.strictEqual(cf[k], undefined, k));
+  const idx = fs.readFileSync(path.join(__dirname, "..", "functions", "index.js"), "utf8");
+  assert.ok(!/exports\.(issueStaffLinkCode|redeemStaffLinkCode)\b/.test(idx), "コードの発行と入力の CF は無い");
+  const client = ["app-main.js", "app-my.js", "app-admin.js"].map(f => fs.readFileSync(path.join(__dirname, "..", f), "utf8")).join("\n");
+  assert.ok(!/issueStaffLinkCode|redeemStaffLinkCode|staffLinkCodes/.test(client), "画面からは呼ばない");
+  // 以前にコードで作られた紐付けは method "code" のまま残るので、表示名と CF の受け付ける方式からは外さない
+  assert.ok(m.MY_LINK_METHOD_LABELS.code && cf.LINK_METHODS.includes("code"));
 });
 
 test("E2 解除（planUnlinkStaff）: 本人かオーナー。両方のノードを消す", () => {
@@ -440,7 +396,8 @@ test("E2 ルール: linkRequests は本人（メールのある認証）が書�
   assert.match(sl.$uid.name[".write"], /data\.exists\(\) && newData\.exists\(\)/, "名前は既存の紐付けの書き換えだけ");
   assert.strictEqual(sl.$uid.method[".write"], undefined);
   assert.strictEqual(sl.$uid.$other[".validate"], false);
-  ["staffLinkCodes", "staffLinkCodeIndex", "staffLinkCodeAttempts"].forEach(k => assert.deepStrictEqual(rules[k], { ".read": false, ".write": false }, k));
+  // 個人リンクコードのノードは 2026-10-05 に機能ごと削除した（ルールが無い＝クライアントからは読み書きできない。残りのデータは purgeInactiveShops が消す）
+  ["staffLinkCodes", "staffLinkCodeIndex", "staffLinkCodeAttempts"].forEach(k => assert.strictEqual(rules[k], undefined, k));
   assert.strictEqual(rules.users.$uid.links, undefined, "users/{uid}/links は書き込みルールを持たない（CF だけ）");
 });
 

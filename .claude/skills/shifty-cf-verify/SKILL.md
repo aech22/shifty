@@ -57,7 +57,7 @@ h.db.put("shops/s1/owners", null); // 実行前にDBを直接いじる
 4. **モジュール読み込み時に決まる定数は後から変えられない。** `PURGE_OLD_PERIODS_DRY_RUN` はソース直書きの `const` なので、dry-run を外した挙動を試すには `indexPath` に書き換えた写しを渡す。環境変数で決まるものは `env` オプションで渡せる。
 5. **Stripe を使う関数はスタブを渡さないと落ちる**（「stripe を使う関数を呼ぶなら…」というエラーが出る）。Webhook の検証では `constructEvent` を差し替えて任意のイベントを流し込む形にする。
 6. **`callHttp` の `rawBody`** は署名検証を通す関数（`stripeWebhook`）で要る。省略すると `body` の JSON 文字列が入る。
-7. **`transaction()` と `db.ref()`（ルート）は 2026-10-04 に足した**（E2 の `redeemStaffLinkCode`）。モックの transaction は**いまの値で1回だけ**関数を呼ぶ——実 SDK は手元に値が無いと最初に null で呼んでからサーバーの値で呼び直すことがあるので、null の扱いの検証にはならない。
+7. **`transaction()` と `db.ref()`（ルート）は 2026-10-04 に足した**（E2 の `redeemStaffLinkCode`。この CF は 2026-10-05 に削除したが、モックは他の transaction のために残している）。モックの transaction は**いまの値で1回だけ**関数を呼ぶ——実 SDK は手元に値が無いと最初に null で呼んでからサーバーの値で呼び直すことがあるので、null の扱いの検証にはならない。
 8. **モックに無い API・依存で落ちたら、ロジックの書き写しへ退行しない。** DBモックは `functions/index.js` が現に使う API（`once` / `set` / `update` / `remove` / `push` / `orderByChild().equalTo()`）だけを実装しているので、`transaction()` や新しい npm 依存が増えると `TypeError` や `Cannot find module` で落ちる。そのときは `cf-harness.js` のモックに不足分を足す（このスキルの存在理由は「本物のコードを動かす」ことなので、ロジックを手で書き写して合成データに当てる形に戻ってはいけない）。足せない事情があるなら、その関数を**「未検証」と明記して報告する**（検証したことにしない）。
 9. **自作のテストは `scripts/` に置く。** 「使い方」のスニペットは `require("./cf-harness.js")` の相対参照なので、別の場所に置くならフルパスで require する。
 
