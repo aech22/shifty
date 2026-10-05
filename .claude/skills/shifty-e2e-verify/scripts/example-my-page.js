@@ -7,7 +7,7 @@
 //  O（オーナー・1200px）: スタッフタブの「個別URLの申請」→ 候補（番号・名前の一致）が選ばれた状態 → 承認 → status approved・name・approvedAt・byUid
 //  V（さらに別の端末）: 同じURLでそのスタッフの画面（本人のカレンダー）。uid は S・P と違う
 //  SB（P2・提出）: 佐藤の個別URLの「提出」タブ＝最新期間・名前は固定（入力欄なし）→ 通し → 提出 → subs に staffName 佐藤 の提出。
-//     田中（提出済み）は「提出完了」から修正して同じ提出（s1）を更新する。送信の帯は下部タブの上。確定済みの期間は提出できない（書き込みなし）
+//     田中（提出済み）は「提出完了」ではなく提出を反映した選択画面が開き（2026-10-05）、そこから同じ提出（s1）を更新する。送信の帯は下部タブの上。確定済みの期間は提出できない（書き込みなし）
 //  AL（P3・全員の表）: 「自分のシフト」「全員のシフト」をタップと横スクロール（ホイール）で切り替え。公開済みが無ければ切り替えも案内文も出さない（AL0）。
 //     期間はプルダウン（公開済みかつ直近3ヶ月・既定は公開済みの最新。最新が未公開でも案内を出さず1つ前の公開済みを出す・2026-10-04）。
 //     公開済みは確定値（調整後の時刻）で、空白列は残し・非表示の人は出さず・本人の列に印。10人×16日と30人×31日で 375px に収まる（横スクロール0）
@@ -268,12 +268,19 @@ async function requestPage(h, name, number) {
     const h = await openAnon({ hash: "#/m/" + T1, db: dump, wait: '[data-my-view="page"]' });
     try {
       const SB2 = {};
-      await submitVia(h, { edit: true });
+      // 2026-10-05: 提出済みでも「提出完了」ではなく、提出の内容を反映した選択画面を開く（「修正する」を押さない）
+      await click(h, '[data-my-tab="submit"]');
+      await waitSel(h, "[data-staff-fixed-name]");
+      SB2.restored = await waitSel(h, "[data-staff-restored]", 5000);
+      SB2.doneScreen = await h.evaluate(() => /提出完了/.test(document.body.innerText));
+      SB2.submitBtn = await h.evaluate(() => !!document.querySelector("[data-staff-submit-bar]"));
+      await submitVia(h);
       SB2.s1 = await db(h, "shops/S1/subs/s1");
       SB2.count = Object.values((await db(h, "shops/S1/subs")) || {}).filter(x => x.staffName === "田中").length;
       SB2.errors = h.errors.slice();
       dump = await h.evaluate(() => window.__dbDump());
       R.SB2 = SB2;
+      V.SB_restoredForm = SB2.restored && !SB2.doneScreen && SB2.submitBtn;
       V.SB_updatesOwnSub = !!SB2.s1 && SB2.s1.staffName === "田中" && SB2.s1.isUpdated === true && SB2.count === 1 && SB2.errors.length === 0 &&
         Object.values(SB2.s1.shifts).filter(x => x.status === "work").length > 1;
     } finally { await h.browser.close(); }

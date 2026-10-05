@@ -87,8 +87,8 @@ const pageState = h => h.evaluate(() => { const e = document.querySelector("[dat
       X.uid = await h.evaluate(() => window.__authCur().uid);
       X.noLogin = await h.evaluate(() => !document.querySelector('input[type="password"]'));
       await click(h, '[data-my-tab="submit"]');
-      // 375px で提出したあとの 320px は「提出完了」の画面になる（佐藤の提出がある）
-      X.fixed = width === 375 ? await waitSel(h, '[data-staff-fixed-name="佐藤"]') : await waitText(h, "提出完了", 8000);
+      // 375px で提出したあとの 320px は、提出の内容を反映した選択画面（2026-10-05。以前は「提出完了」の画面）
+      X.fixed = width === 375 ? await waitSel(h, '[data-staff-fixed-name="佐藤"]') : (await waitSel(h, "[data-staff-restored]", 8000)) && !(await h.evaluate(() => /提出完了/.test(document.body.innerText)));
       X.overflow = await overflowX(h); X.fonts = await inputFonts(h);
       if (width === 375) {
         await h.clickExact("全日程「通し」"); await sleep(h, 200);
