@@ -862,12 +862,35 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   const helperDisp=(name,date)=>{
     const hi=helperInfo[name];
     if(!hi||hi.role!=="home")return null;
+    // この期間でこの人の自動表示を OFF にしていれば出さない（2026-10-05・見た目だけ。合算の helperEntriesOn は変えない）。
+    // 画面・PDF・Excel・blur の保存しない判定・読み取り専用（isHelperOnly）・斜線（cellDash）がすべてここを通るので一緒に追随する
+    if(isHelperDisplayOff(period,name))return null;
     if(leaveCellText(name,date,"start")||leaveCellText(name,date,"end"))return null;
     const es=helperEntriesOn(name,date,helperCache);
     if(!es.length)return null;
     const own=_getWorkShift(name,date);
     return helperCellDisplay({entries:es,ownRange:own?effShiftRangeMin(own,settings):null,
       ownText:{start:ownVal(name,date,"start"),end:ownVal(name,date,"end")}});
+  };
+  // ===== ヘルプ勤務の自動表示の ON/OFF（2026-10-05 ユーザー指示）=====
+  // メイングリッドの名前の見出しの下に切り替えを出す。出すのは自動で取得したヘルプ勤務がこの期間にある人（所属店舗＝role "home"）と、
+  // 既に OFF にしてある人（ON に戻せるように）だけ。全表示では列が細いので出さない。
+  // 保存先は period.helperDisplayOff（作成中のこの期間だけ）。押せるのは期間を書ける端末で、確定済みの期間では押せない（表示だけ）
+  const helperToggleNames=new Set();
+  if(period){
+    Object.keys(helperInfo).forEach(n=>{
+      if(helperInfo[n].role!=="home")return;
+      if(isHelperDisplayOff(period,n)||dates.some(d=>helperEntriesOn(n,d,helperCache).length>0))helperToggleNames.add(n);
+    });
+  }
+  const canToggleHelperDisp=!!period&&!!savePeriods&&!ownerReadOnly&&!exportJob&&!periodConfirmed;
+  const toggleHelperDisp=name=>{
+    if(!canToggleHelperDisp)return;
+    const off=!isHelperDisplayOff(period,name);
+    const np=planHelperDisplayToggle(period,name,off);
+    if(np===period)return;
+    savePeriods(periods.map(p=>p&&p.id===period.id?np:p));
+    tt(off?`✓ ${name}さんのヘルプ勤務の自動表示をOFFにしました（この期間だけ・勤務時間の合算は続けます）`:`✓ ${name}さんのヘルプ勤務の自動表示をONにしました`);
   };
   const isHelperOnly=(name,date)=>{const hd=helperDisp(name,date);return!!(hd&&hd.helperOnly);};
   // フォーカスしていないときにセルに合成表示（時刻＋略称）を出すならその文字列、出さないなら ""。
@@ -2009,11 +2032,27 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // sticky=true: メイングリッドの名前行のみ画面上端に固定（出勤・退勤行はその下をスクロール、テーブル末尾を過ぎると自然に解除される）。
   // 全表示では縦スクロールが起きないので固定しない。
   // 列見出しは名前だけ（所属店舗名は出さない・2026-09-27 ユーザー指示）。所属店舗は重複エラーの判定にだけ使う。
-  const VTH=(name,sticky=false)=>(
+  // helperToggle=true はメイングリッドの見出しだけ（集計表の見出しは同じ VTH を使うが切り替えを出さない）
+  const VTH=(name,sticky=false,helperToggle=false)=>{
+    const showHt=helperToggle&&!fullView&&helperToggleNames.has(name);
+    const htOff=showHt&&isHelperDisplayOff(period,name);
+    return(
     <th key={name} style={{width:colW,minWidth:colW,maxWidth:colW,boxSizing:BOXS,padding:fullView?0:"2px",textAlign:"center",borderLeft:BD,borderBottom:BD2,background:CRD,verticalAlign:"middle",...(sticky&&(!fullView||fvScrolls)?{position:"sticky",top:0,zIndex:3}:{})}}>
       <div style={{writingMode:"vertical-rl",textOrientation:"mixed",height:fullView?fvNameH:72,display:"inline-block",fontSize:fullView?Math.max(7,Math.min(11,colW-2)):11,fontWeight:600,color:nameColor(name),whiteSpace:"nowrap",textAlign:"center",lineHeight:String(colW-4)+"px",overflow:fullView?"hidden":undefined}}>{name}</div>
+      {showHt&&(
+        <button type="button" data-helper-toggle={name} data-helper-off={htOff?"1":"0"} disabled={!canToggleHelperDisp}
+          onClick={()=>toggleHelperDisp(name)}
+          title={(htOff?"ヘルプ勤務の自動表示: OFF（押すと表示する）":"ヘルプ勤務の自動表示: ON（押すと隠す）")+"\nこの期間だけ・見た目だけの切り替えです。勤務時間・労務の合算は続けます。手入力のヘルプ（例「9三」）は変わりません。"+(canToggleHelperDisp?"":"\n確定済みの期間・閲覧専用の端末では変更できません。")}
+          style={{display:"block",margin:"2px auto 0",width:Math.max(20,colW-6),height:20,padding:0,fontSize:10,fontWeight:700,lineHeight:"18px",borderRadius:4,
+            cursor:canToggleHelperDisp?"pointer":"default",opacity:canToggleHelperDisp?1:0.6,
+            border:htOff?"1px solid var(--c-border2)":"1px solid #d4b106",
+            background:htOff?"transparent":"#FFF3B0",color:htOff?"var(--c-text3)":"#5c4a00",textDecoration:htOff?"line-through":"none"}}>
+          ヘ
+        </button>
+      )}
     </th>
-  );
+    );
+  };
   // 集計用の実効値（heatEdits＝blur確定値ベース）
   const getHeatVal=(name,date,field)=>{const key=`${name}|${date}|${field}`;if(key in heatEdits)return heatEdits[key];const t=toDecimal(getStoredTime(name,date,field));return t||"";};
   // その日出勤しているか（0.5出勤含む）: start か end のどちらかに有効値がある
@@ -3171,7 +3210,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
                   {/* 通常表示のヘッダは padding を SD（2px 1px）のまま使う。4px にすると45pxの
                       border-box では中身が37pxになり、「日付」の位置だけ下の行とずれて見える */}
                   <th style={{...SD,...(fullView?(fvScrolls?{position:"sticky",top:0,zIndex:4}:{}):{top:0,zIndex:4}),fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>
-                  {mapGridCols(name=>VTH(name,true),key=>spacerTh(key,true))}
+                  {mapGridCols(name=>VTH(name,true,true),key=>spacerTh(key,true))}
                   {fullView&&<th style={{...SDR,...(fvScrolls?{position:"sticky",top:0,zIndex:4}:{}),fontWeight:600,borderBottom:BD2,background:CRD}}>日付</th>}
                 </tr>
               </thead>

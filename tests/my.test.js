@@ -1460,6 +1460,9 @@ test("全員のシフト表: 他店でのヘルプ勤務（H2）を PDF と同�
   assert.strictEqual(t.helperUnread, false);
   // 材料が無い（企業に連携していない・読み込み中）ならヘルプなし＝従来の表
   const t0 = m.buildMyShiftSheet({ period: pub, staff, settings, subs, premium: true, todayStr: "2026-10-01", shopId: "A" }, U);
+  // シフト作成タブでこの期間の田中の自動表示を OFF にしたら出さない（PDF と同じ・2026-10-05）。表はヘルプなしの表と同じ
+  const tOff = m.buildMyShiftSheet({ period: { ...pub, helperDisplayOff: { 田中: true } }, staff, settings, subs, premium: true, todayStr: "2026-10-01", shopId: "A", helpers: { companyLink: link, otherShops: { B } } }, U);
+  assert.strictEqual(tOff.html, t0.html, "OFF にした人の自動表示は消え、ヘルプなしの表と一致する");
   assert.ok(!/data-helper/.test(t0.html));
   assert.strictEqual(m.buildMyShiftSheet({ period: pub, staff, settings, subs, premium: true, todayStr: "2026-10-01", shopId: "A", helpers: { companyLink: null, otherShops: { B } } }, U).html, t0.html);
   // 読めなかった他店があれば helperUnread（画面は注記を出す）

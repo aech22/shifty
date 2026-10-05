@@ -737,6 +737,13 @@ function renameStaffPeriodsPatch(periods, oldName, newName) {
     if (ks) out[`${pk}/keepStaff`] = ks;
     const ka = _keepAttrsOfCF(p);
     if (ka && ka[oldName] !== undefined) out[`${pk}/keepAttrs`] = _renameMapKeyCF(ka, oldName, newName);
+    // ヘルプ勤務の自動表示の OFF（period.helperDisplayOff・2026-10-05）。クライアントの renameStaffInPeriods と同じ（値が true のキーだけ）
+    const hdoRaw = p.helperDisplayOff;
+    if (hdoRaw && typeof hdoRaw === "object" && hdoRaw[oldName] === true) {
+      const hdo = {};
+      Object.keys(hdoRaw).forEach(k => { if (hdoRaw[k] === true) hdo[k] = true; });
+      out[`${pk}/helperDisplayOff`] = _renameMapKeyCF(hdo, oldName, newName);
+    }
     const lt = p.laborTotals;
     if (lt && typeof lt === "object" && lt[oldName] !== undefined) out[`${pk}/laborTotals`] = _renameMapKeyCF(lt, oldName, newName);
     const snap = p.snapshot;
