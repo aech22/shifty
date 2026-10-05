@@ -328,6 +328,9 @@ shiftTableHtmlOf / shiftSheetCellOf / shiftSheetStoredText / shiftSheetHeadcount
                            // ヒートマップ）は呼び出し側に残し、ここは「解決した値 → セル → HTML」だけ。heatStaffDayEntriesOf はシフト作成タブの
                            // heatData の1人1日の区間（片側セルの補完・退勤延長・x と他店の略称の帯・締）で、昼夜の人数もこれを数える。
                            // markName・tags（本人の列の印と data-sheet-* 属性）は従業員画面だけが渡す＝PDF の HTML は共有化の前とバイト一致（実測）
+helperDisplayOffOf / isHelperDisplayOff / planHelperDisplayToggle
+                           // ヘルプ勤務の自動表示の ON/OFF（2026-10-05・period.helperDisplayOff={名前:true}）。**作成中の期間ごと・スタッフごと・見た目だけ**。
+                           // 詳細は「ヘルプ先勤務の所属店舗への合算」の節のグリッドの項の直後
 shopAbbr2Of / shopAbbr2Error / SHOP_ABBR2_MAX_LEN
                            // 2セル表示用の店舗略称（settings.shopAbbr2={top,bottom}・H1）。上下が両方揃ったときだけ有効・各2文字・予約語は isReservedShopAbbr。
                            // **表示専用**で abbrToShop（手入力のヘルプコマンド）にも期間の写しにも入れない。otherShopDataOf が abbr2 として読み、helperWorkOn の勤務に載る
@@ -726,6 +729,7 @@ Period = { id: string, urlToken: string, shopId: string, label: string,
            confirmation?: {at: string, byUid: string, note?: string},  // 確定（2026-09-30・P3）。セルの編集とスタッフの再提出を止める。旧 lockedAt はここへ統合（確定で消す）
            delivery?: {at: string, byUid: string, method?: string},    // 本人への交付の記録（確定済みのときだけ。公開機能ではない）
            published?: {at: string, byUid: string},                    // 従業員画面（マイシフト）への公開（2026-10-04・第2部 E3）。確定で未公開なら同時に書く
+           helperDisplayOff?: {[name: string]: true},                  // ヘルプ勤務の自動表示を出さない人（2026-10-05・この期間だけ・見た目だけ）
            history?: {[key: string]: {kind: "submit"|"resubmit"|"confirm"|"unconfirm"|"deliver"|"publish"|"unpublish", at, byUid, note?, method?}} }
                                                                        // 確定と同時の公開は kind "publish"・method "confirm"
                                                                        // 上書きしない履歴。diffPeriodsForFlatWrite が記録1件ずつ書く
@@ -965,6 +969,16 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
   縮めるのは合成表示を出している間だけで、混在の日にフォーカスして自店の値を編集する間は通常の 16px に戻る（iOS のズーム防止の規約どおり）。
   縮めたセルは line-height を 16px のときと同じ 18px に固定して行の高さを保つ（指定しないと 26px→20px に詰まる）。Excel は該当セルだけ
   `shrinkToFit`。15分刻みの時刻（例「11.25鶏三」）は下限 8px でも収まらず端が切れる。回帰は `example-helper-aggregate.js`（41項目・WebKit でも通る。計算が H2 前と同じことは `example-helper-aggregate.stable.json` と照合）
+- **自動表示の ON/OFF（2026-10-05 ユーザー指示）**: メイングリッドの名前の見出しの下の「ヘ」ボタン（`data-helper-toggle`）で、
+  **作成中のこの期間だけ・この人だけ**、上の合成表示を出さない。保存は `period.helperDisplayOff={名前:true}`（既定 ON＝キー無し・
+  `planHelperDisplayToggle`→`savePeriods`。`diffPeriodsForFlatWrite` が名前1件ずつのパスで書く）。ボタンが出るのは、この期間に自動のヘルプ勤務がある
+  所属店舗の人と既に OFF の人だけで、全表示では出さない。押せるのは期間を書ける端末（savePeriods あり・閲覧専用でない・非表示マウントでない）で、
+  **確定済みの期間では押せない**（表示だけ）。**見た目だけ**: OFF は `helperDisp` の先頭で null を返すだけなので、画面・PDF・Excel・読み取り専用・斜線・
+  blur の保存しない判定が一緒に戻り、**労務の合算（`helperEntriesOn` → 月実働・週の休み・36協定・laborTotals・laborMonths・賃金）は変えない**
+  （tests/core.test.js のドリフト検出が守る）。手打ちのヘルプ（「9三」）は subs の値なのでそのまま出る。従業員画面の「全員のシフト」（`buildMyShiftSheet`）も
+  同じ期間の設定に従い、本人のカレンダー・給料（`myHelperDaysOf`）は変えない。改名は `renameStaffInPeriods` と CF の `renameStaffPeriodsPatch` が移す
+  （CF は**本番未デプロイ**＝企業の一覧からの改名ではその期間の OFF が旧名に残り、表示が ON に戻る）。削除では掃除しない（keepAttrs と同じ）。
+  ルール・データ移行なし。回帰は `example-helper-toggle.js`（20項目・前の配信物では切り替えが現れず落ちる）
 - **laborMonths**: 確定の2つの入口（シフト作成タブ・企業の確定）がどちらも `helperScheduleContext` を通して `planPeriodConfirmation` の
   `extraDayMin`／`excludeNames` に渡す（`aggregateScheduledMonth` が他店の勤務を足し、行き先では所属店舗で判定する人を数えない）
 - **読めない他店**: 読み込みに失敗した店舗に登録がある人（people に載っていない人は、失敗した店舗が1つでもあれば）は月実働・総括に「＋」と

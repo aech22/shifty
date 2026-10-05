@@ -404,7 +404,7 @@ function _myU(U){
     // 全員のシフト表は PDF のシフト表と同じ関数（2026-10-04）
     isUnregisteredSubName,gd,isFixedShiftEligibleShop,oneSidedFillBounds,headcountAtOf,heatStaffDayEntriesOf,shiftSheetHeadcountOf,shiftTableHtmlOf,shiftSheetCellOf,shiftSheetStoredText,
     // 全員のシフト表の他店でのヘルプ勤務（H2）。PDF（シフト作成タブの helperDisp）と同じ関数
-    helperShopsOf,helperPersonOf,helperWorkOn,samePersonRegistrations,helperCellDisplay,effShiftRangeMin,shiftSheetDecimal,shiftSheetFixedKey,otherShopDataOf,
+    helperShopsOf,helperPersonOf,helperWorkOn,samePersonRegistrations,helperCellDisplay,effShiftRangeMin,shiftSheetDecimal,shiftSheetFixedKey,otherShopDataOf,isHelperDisplayOff,
     // 本人のカレンダーと給料のヘルプ勤務（2026-10-04 B）。行き先の店の設定（helperShopSettingsOn）で引く＝管理者画面の合算（P3.6）と同じ
     helperShopSettingsOn,fmtMin,
     // 給料（E5）: 月次賃金ページ（P6b）・割増（P5）と同じ関数
@@ -1900,6 +1900,8 @@ function buildMyShiftSheet(o,U){
   const helperDispOf=(nm,ds)=>{
     const hi=helperInfo[nm];
     if(!hi||hi.role!=="home")return null;
+    // シフト作成タブでこの期間のこの人の自動表示を OFF にしていれば出さない（PDF と同じ・2026-10-05）。本人のカレンダーと給料は変えない
+    if(u.isHelperDisplayOff(p,nm))return null;
     const sh=shiftOf(nm,ds);
     if(u.leaveShownTextOf(sh,"start")||u.leaveShownTextOf(sh,"end"))return null;
     const wsh=sh&&sh.status==="work"?sh:null;

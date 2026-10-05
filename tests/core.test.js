@@ -7281,3 +7281,57 @@ test("時刻のホイール: 提出一覧の詳細の調整値と PDF の昼夜�
   const staff = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-staff.js"), "utf8");
   assert.ok(/clearLabel=\{value\?clearLabel:null\}/.test(staff), "空に戻すボタンは値が入っているときだけ");
 });
+
+// ===== ヘルプ勤務の自動表示の ON/OFF（period.helperDisplayOff・2026-10-05）=====
+const cfhd = require("../functions/company-config.js");
+test("helperDisplayOff: 既定は ON・切り替えは期間ごと・ON に戻して誰も残らなければフィールドを外す", () => {
+  const p = { id: "p1", startDate: "2026-10-01", endDate: "2026-10-15" };
+  assert.strictEqual(u.isHelperDisplayOff(p, "田中"), false);
+  assert.strictEqual(u.helperDisplayOffOf(p), null);
+  const off = u.planHelperDisplayToggle(p, "田中", true);
+  assert.notStrictEqual(off, p);
+  assert.deepStrictEqual(off.helperDisplayOff, { 田中: true });
+  assert.strictEqual(u.isHelperDisplayOff(off, "田中"), true);
+  assert.strictEqual(u.isHelperDisplayOff(off, "鈴木"), false); // 他の人には効かない
+  assert.strictEqual(p.helperDisplayOff, undefined); // 元の期間は変えない
+  assert.strictEqual(u.planHelperDisplayToggle(off, "田中", true), off); // 変わらなければ同じ参照
+  const on = u.planHelperDisplayToggle(off, "田中", false);
+  assert.ok(!("helperDisplayOff" in on));
+  // true 以外の値は OFF とみなさない（壊れた値で表示が消えない）
+  assert.strictEqual(u.isHelperDisplayOff({ helperDisplayOff: { 田中: "1", 鈴木: false } }, "田中"), false);
+});
+test("helperDisplayOff: diffPeriodsForFlatWrite は名前1件ずつのパスで書く（他の端末の切り替えを巻き戻さない）", () => {
+  const p = { id: "p1", label: "10月前半" };
+  const a = u.planHelperDisplayToggle(p, "田中", true);
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([p], [a]), { "p1/helperDisplayOff/田中": true });
+  const b = u.planHelperDisplayToggle(a, "鈴木", true);
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([a], [b]), { "p1/helperDisplayOff/鈴木": true });
+  // 全員 ON に戻した（フィールドごと消えた）ときも1件ずつ null
+  const c = u.planHelperDisplayToggle(a, "田中", false);
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([a], [c]), { "p1/helperDisplayOff/田中": null });
+  // 別の期間には書かない
+  const q = { id: "p2", label: "10月後半" };
+  assert.deepStrictEqual(u.diffPeriodsForFlatWrite([p, q], [a, q]), { "p1/helperDisplayOff/田中": true });
+});
+test("helperDisplayOff: 改名で名前が移り、CF の renameStaffPeriodsPatch とクライアントが同じ結果になる", () => {
+  const periods = [
+    { id: "p1", helperDisplayOff: { 田中: true, 鈴木: true } },
+    { id: "p2", helperDisplayOff: { 鈴木: true } },
+    { id: "p3" },
+  ];
+  const r = u.renameStaffInPeriods(periods, "田中", "田中 太郎");
+  const out = Array.isArray(r) ? r : r.periods;
+  assert.deepStrictEqual(out[0].helperDisplayOff, { "田中 太郎": true, 鈴木: true });
+  assert.deepStrictEqual(out[1].helperDisplayOff, { 鈴木: true });
+  const patch = cfhd.renameStaffPeriodsPatch(periods, "田中", "田中 太郎");
+  assert.deepStrictEqual(patch["p1/helperDisplayOff"], out[0].helperDisplayOff);
+  assert.ok(!("p2/helperDisplayOff" in patch));
+  assert.ok(!("p3/helperDisplayOff" in patch));
+});
+test("helperDisplayOff: 自動表示の入口（helperDisp）が OFF を見て、合算（helperEntriesOn）は見ない（ドリフト検出）", () => {
+  const src = require("fs").readFileSync(require("path").join(__dirname, "..", "app-shift.js"), "utf8");
+  const disp = src.slice(src.indexOf("const helperDisp=(name,date)=>{"), src.indexOf("const isHelperOnly="));
+  assert.ok(/isHelperDisplayOff\(period,name\)/.test(disp), "helperDisp が OFF を見ていない");
+  const ent = src.slice(src.indexOf("const helperEntriesOn="), src.indexOf("const helperMinOn="));
+  assert.ok(ent.length > 0 && !/isHelperDisplayOff/.test(ent), "合算（helperEntriesOn）が OFF を見ている＝見た目だけの設定が労務に効く");
+});
