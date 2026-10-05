@@ -154,6 +154,7 @@ shiftCutOf                 // 削り（2026-10-05）。スタッフの提出（s
                            // 「削り（回）」（連勤の下の行・画面と全データPDF）が日数を数える。帯は休みカウントと同じ（出勤セル<17時＝ランチ・退勤セル>17時か締＝ディナー）。
                            // 1日に何帯削っても1回。11〜23→17〜23 は数える。数えない: 手入力だけの日（source:"grid"）・休みコマンドの帯（adminRest）・
                            // ヘルプ（時刻か略称がセルに残る）・帯の移し替え（提出に無い帯を足した日。例 11〜15→17〜23）・同じ帯の中での短縮。回帰は example-shift-cut-count.js
+                           // （2026-10-05 本番反映。Chromium と iPhone 13 のエミュレーションで確認・WebKit は未確認）
 shiftBandInfo              // ランチ/ディナー帯判定（isBreakEligible は b5e23c1 で廃止。休憩適用は getBreaksFor が時間帯の重なりだけで判定する）
 dayTypeOf(dateStr) / POSITION_DAY_TYPES // 祝日をholSat/holSunに分割した5分類。必要ポジション設定タブと breakTimes（休憩時間設定）が共有する（getBreakList が positionDayTypeFor で日付→区分を解決。旧4区分の "hol" データは後方互換で流用）
 requiredPositionsFor(settings,dateStr) // 日付に適用する必要ポジション枠。getBreakList と同じ規則で旧 "hol" を流用する（祝日区分に枠が無いときだけ）。分割（1cdcd6b）で移行が無く祝日判定から消えていた枠を拾う（#120）
