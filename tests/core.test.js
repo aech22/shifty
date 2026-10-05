@@ -7258,3 +7258,13 @@ test("時刻のホイール: 提出の刻みは出勤・退勤とも TO＝15分�
   assert.ok(/const base=TO;/.test(view) && !/TO_START/.test(view.replace(/\/\/[^\n]*|\{\/\*[\s\S]*?\*\/\}/g, "")) && /<TimeWheelField name=\{`\$\{ds\}-\$\{f\}`\}[^>]*options=\{opts\}/.test(view), "提出画面: 出勤・退勤とも TO（15分刻み）のホイール");
   assert.ok(/<TimeWheelField name=\{`cell-\$\{f\}`\}/.test(staff) && !/\{TO\.map\(t=><option/.test(staff), "セル編集もホイール");
 });
+test("時刻のホイール: 候補タブの時刻欄（全体・曜日別・日付別・休憩）もホイール（TO＝15分）で、CandTab の外の部品（2026-10-05）", () => {
+  const adm = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-admin.js"), "utf8");
+  const comp = adm.slice(adm.indexOf("function CandTimeWheel("), adm.indexOf("function CandTab("));
+  assert.ok(comp.length > 0 && /<TimeWheelField [^>]*options=\{TO\}/.test(comp), "部品は TO のホイール");
+  const tab = adm.slice(adm.indexOf("function CandTab("), adm.indexOf("function SubsTab("));
+  ["global", "weekday", "date", "break"].forEach(n => ["start", "end"].forEach(f =>
+    assert.ok(tab.includes(`<CandTimeWheel name="cand-${n}-${f}"`), `cand-${n}-${f}`)));
+  assert.ok(!/SingleTimeSelect/.test(tab) && !/\{TO\.map\(t=><option/.test(tab), "候補タブに時刻の select は残っていない");
+  assert.ok(!/const CandTimeWheel|function CandTimeWheel/.test(tab), "CandTab の中で定義しない（再描画で開いたホイールが閉じる）");
+});

@@ -1833,6 +1833,18 @@ const dragIdxRef=useRef(null);
 }
 
 // ===== 候補管理タブ（複数選択対応）=====
+// 候補タブの時刻欄（2026-10-05 ユーザー指示「候補タブの時間設定もホイールで」）。時と分の2列ホイール（TimeWheelField・app-staff.js）で、
+// 刻みは従来の select と同じ TO（15分・0:00〜27:00）。CandTab の外に置く（中で定義すると CandTab の再描画のたびに作り直され、開いているホイールが閉じる）。
+// name は data-time-wheel の値（例 "cand-global-start"）。開いたときの初期位置は defaultValue（未入力のとき）
+function CandTimeWheel({value,onChange,label,name,defaultValue}){
+  return(
+    <div style={{flex:1,minWidth:0}}>
+      <div style={{fontSize:11,color:"var(--c-text3)",marginBottom:4}}>{label}</div>
+      <TimeWheelField name={name} value={value} options={TO} onChange={onChange} placeholder="-- 選択 --" defaultValue={defaultValue} title={label}
+        style={{width:"100%",padding:"9px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",cursor:"pointer"}}/>
+    </div>
+  );
+}
 function CandTab({settings,onSave,tt,plan="free",periods=[]}){
   const[mode,setMode]=useState("global");
   const[selDows,setSelDows]=useState([1]);
@@ -1942,17 +1954,6 @@ function CandTab({settings,onSave,tt,plan="free",periods=[]}){
   const wdIsSat=d=>d===6; // 土曜扱い（土曜のみ）
   const wdIsSun=d=>d===0||d===7||d===8; // 日曜扱い（日曜そのもの・祝日は連休中/単日・最終日ともに日曜色）
 
-  const SingleTimeSelect=({value,onChange,label})=>(
-    <div style={{flex:1}}>
-      <div style={{fontSize:11,color:"var(--c-text3)",marginBottom:4}}>{label}</div>
-      <select value={value} onChange={e=>onChange(e.target.value)}
-        style={{width:"100%",padding:"9px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",cursor:"pointer"}}>
-        <option value="">-- 選択 --</option>
-        {TO.map(t=><option key={t} value={t}>{t}</option>)}
-      </select>
-    </div>
-  );
-
   return(
     <div>
       <AT>候補管理</AT>
@@ -1965,9 +1966,9 @@ function CandTab({settings,onSave,tt,plan="free",periods=[]}){
       {mode==="global"&&<AC title="全体候補（優先度低）">
         <CL items={settings.candidates||[]} onDel={delG}/>
         <div style={{marginTop:12,display:"flex",gap:10,alignItems:"flex-end"}}>
-          <SingleTimeSelect value={selStart} onChange={setSelStart} label="出勤時刻"/>
+          <CandTimeWheel name="cand-global-start" value={selStart} onChange={setSelStart} label="出勤時刻" defaultValue={"10:00"}/>
           <div style={{color:"var(--c-text4)",paddingBottom:12,fontSize:16}}>〜</div>
-          <SingleTimeSelect value={selEnd} onChange={setSelEnd} label="退勤時刻"/>
+          <CandTimeWheel name="cand-global-end" value={selEnd} onChange={setSelEnd} label="退勤時刻" defaultValue={selStart||"17:00"}/>
           <button onClick={addG} style={{...AB,whiteSpace:"nowrap",marginBottom:0}}>＋ 追加</button>
         </div>
       </AC>}
@@ -1993,9 +1994,9 @@ function CandTab({settings,onSave,tt,plan="free",periods=[]}){
         {/* 追加フォーム（常に表示・選択中の曜日を表示） */}
         <div style={{marginBottom:16,padding:"12px",background:"var(--c-input2)",borderRadius:8}}>
           <div style={{display:"flex",gap:10,alignItems:"flex-end",marginBottom:8}}>
-            <SingleTimeSelect value={wSelStart} onChange={setWSelStart} label="出勤時刻"/>
+            <CandTimeWheel name="cand-weekday-start" value={wSelStart} onChange={setWSelStart} label="出勤時刻" defaultValue={"10:00"}/>
             <div style={{color:"var(--c-text4)",paddingBottom:12,fontSize:16}}>〜</div>
-            <SingleTimeSelect value={wSelEnd} onChange={setWSelEnd} label="退勤時刻"/>
+            <CandTimeWheel name="cand-weekday-end" value={wSelEnd} onChange={setWSelEnd} label="退勤時刻" defaultValue={wSelStart||"17:00"}/>
             <button onClick={addW} style={{...AB,whiteSpace:"nowrap"}}>＋ 追加</button>
           </div>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -2084,9 +2085,9 @@ function CandTab({settings,onSave,tt,plan="free",periods=[]}){
         </>}
         <div style={{marginTop:12,padding:"12px",background:"var(--c-input2)",borderRadius:8}}>
           <div style={{display:"flex",gap:10,alignItems:"flex-end",marginBottom:8}}>
-            <SingleTimeSelect value={dSelStart} onChange={setDSelStart} label="出勤時刻"/>
+            <CandTimeWheel name="cand-date-start" value={dSelStart} onChange={setDSelStart} label="出勤時刻" defaultValue={"10:00"}/>
             <div style={{color:"var(--c-text4)",paddingBottom:12,fontSize:16}}>〜</div>
-            <SingleTimeSelect value={dSelEnd} onChange={setDSelEnd} label="退勤時刻"/>
+            <CandTimeWheel name="cand-date-end" value={dSelEnd} onChange={setDSelEnd} label="退勤時刻" defaultValue={dSelStart||"17:00"}/>
             <button onClick={addD} style={{...AB,whiteSpace:"nowrap"}}>＋ 追加</button>
           </div>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -2168,9 +2169,9 @@ function CandTab({settings,onSave,tt,plan="free",periods=[]}){
             </div>
           </div>
           <div style={{display:"flex",gap:10,alignItems:"flex-end"}}>
-            <SingleTimeSelect value={brkStart} onChange={setBrkStart} label="開始時刻"/>
+            <CandTimeWheel name="cand-break-start" value={brkStart} onChange={setBrkStart} label="開始時刻" defaultValue={"12:00"}/>
             <div style={{color:"var(--c-text4)",paddingBottom:12,fontSize:16}}>〜</div>
-            <SingleTimeSelect value={brkEnd} onChange={setBrkEnd} label="終了時刻"/>
+            <CandTimeWheel name="cand-break-end" value={brkEnd} onChange={setBrkEnd} label="終了時刻" defaultValue={brkStart||"13:00"}/>
             <button onClick={()=>{
               if(!brkStart||!brkEnd){tt("▲ 開始・終了を選択してください");return;}
               if(brkStart>=brkEnd){tt("▲ 終了は開始より後にしてください");return;}
