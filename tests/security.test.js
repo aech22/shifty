@@ -128,6 +128,35 @@ test("companyLogin: 照合（scrypt）の前に試行を数え、成功で消す
   assert.ok(/private\/loginFails/.test(body), "置き場は companies/{id}/private（ルールで閉じている）");
 });
 
+test("genToken（スタッフURLのトークン）: crypto.getRandomValues で8文字・使う文字は32種類・Math.random を使わない", () => {
+  const { genToken } = require("../app-utils.js");
+  const CHARS = "abcdefghijkmnpqrstuvwxyz23456789";
+  assert.strictEqual(CHARS.length, 32, "256 の約数なので剰余に偏りが出ない");
+  const orig = globalThis.crypto.getRandomValues;
+  let calls = 0;
+  globalThis.crypto.getRandomValues = function (a) { calls++; return orig.call(globalThis.crypto, a); };
+  const origRandom = Math.random;
+  Math.random = () => { throw new Error("Math.random を使った"); };
+  try {
+    const seen = new Set();
+    for (let i = 0; i < 2000; i++) {
+      const t = genToken();
+      assert.ok(t.length === 8 && [...t].every(c => CHARS.includes(c)), t);
+      seen.add(t);
+    }
+    assert.strictEqual(seen.size, 2000, "2000個に重複が無い");
+    assert.strictEqual(calls, 2000, "1回ごとに crypto.getRandomValues を呼ぶ");
+  } finally {
+    globalThis.crypto.getRandomValues = orig;
+    Math.random = origRandom;
+  }
+  // 全32文字が出る（偏りの粗い確認）
+  const counts = {};
+  for (let i = 0; i < 4000; i++) for (const c of genToken()) counts[c] = (counts[c] || 0) + 1;
+  assert.strictEqual(Object.keys(counts).length, 32);
+  assert.ok(Math.min(...Object.values(counts)) > 32000 / 32 * 0.7, "各文字が平均の7割以上は出る");
+});
+
 test("verifyShopOwner: owners に uid があるときだけ許可・未claim（owners なし・空）は拒否", () => {
   assert.strictEqual(S.isShopOwnerOf({ u1: "KEY" }, "u1"), true);
   assert.strictEqual(S.isShopOwnerOf({ u1: "KEY" }, "u2"), false);
