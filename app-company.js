@@ -3065,6 +3065,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       {linkError&&<div style={{marginTop:10,fontSize:12,color:"#FF4757"}}>{linkError}</div>}
     </AC>}
 
+    <AdminPushCard shopId={shopId} ownerReadOnly={ownerReadOnly}/>
     <div style={{textAlign:"center",padding:"8px 0 4px",display:"flex",justifyContent:"center",gap:20}}>
       <a href="/terms.html" target="_blank" style={{fontSize:12,color:"var(--c-text4)",textDecoration:"none"}}>利用規約</a>
       <a href="/privacy.html" target="_blank" style={{fontSize:12,color:"var(--c-text4)",textDecoration:"none"}}>プライバシーポリシー</a>

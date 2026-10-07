@@ -13,6 +13,7 @@ node .claude/skills/shifty-cf-verify/scripts/example-purge-old-periods.js  # pub
 node .claude/skills/shifty-cf-verify/scripts/example-staff-link.js         # 従業員画面の紐付け（E2）。SHIFTY_CF_INDEX で別の index.js を読む
 node .claude/skills/shifty-cf-verify/scripts/example-my-pay.js            # 従業員画面の会社設定の賃金（E6・getMyPay）。他人の賃金が取れない・拒否側・何も書かない
 node .claude/skills/shifty-cf-verify/scripts/example-my-page.js           # スタッフ個別URLの給料の暗証番号（myPagePin）。5回で15分・リセット・拒否側・アーカイブ時の後始末
+node .claude/skills/shifty-cf-verify/scripts/example-notify.js            # 通知（Web Push・2026-10-08）。periods の onCreate・subs の onWrite・毎日12時の schedule。web-push はスタブ
 ```
 
 どちらも `pass N / fail 0` で終わり、失敗があれば終了コード1を返す。**作業ディレクトリはどこでもよい**（依存はすべてモックなので `functions/` の node_modules に依存しない）。
@@ -40,9 +41,11 @@ h.db.put("shops/s1/owners", null); // 実行前にDBを直接いじる
 | `https.onCall` | `callFn(fn, data, {uid, provider})` | `{ok, res}` / `{ok:false, code, msg}` |
 | `https.onRequest` | `callHttp(fn, {method, body, headers, rawBody})` | `{status, body, headers}` |
 | `pubsub.onRun` | `callRun(fn)` | `{ok, res}` |
+| `database.ref().onCreate` / `onWrite` | `fn(snap, {params})` / `fn(change, {params})` を直接呼ぶ（`snap.val()`・`change.before.val()`・`change.after.val()` を持つ物を渡す） | ハンドラの戻り値 |
 
 `loadFunctions` のオプション: `data`（初期DB）・`stripe`（Stripeスタブ）・`verifyIdToken`（IDトークン検証の差し替え）・`env`（モジュール読み込み時に読む環境変数）・`indexPath`（別バージョンの index.js を読む＝下記の反証確認用）。
-返り値には `fns`（エクスポート一式）・`db`（`get` / `put` / `dump` / `reset`）・`mails`（nodemailer が送ろうとしたメール）・`customTokens`（発行されたカスタムトークン）が入る。
+返り値には `fns`（エクスポート一式）・`db`（`get` / `put` / `dump` / `reset`）・`mails`（nodemailer が送ろうとしたメール）・`customTokens`（発行されたカスタムトークン）・`pushes`（既定の web-push スタブが送ろうとした通知）が入る。`webpush` を渡すと web-push をそのスタブに差し替える（410 を返す端末の再現など。example-notify.js）。
+**依存の差し替えは index.js を読み込む間だけ効く**。関数の中で遅れて `require()` すると本物のパッケージに届く（2026-10-08 に web-push で実際に起きた）ので、依存は index.js の先頭で読む。
 
 ## 踏む罠
 

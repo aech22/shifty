@@ -2203,6 +2203,7 @@ function MySettingsTab({staffUser,me,profile,profileState,initialError,onProfile
       <MyLinksSection staffUser={staffUser} profile={profile} shopId={shopId}/>
       {personal&&<MyWorkplacesSection me={me} personal={personal}/>}
       <MyGoalSection me={me}/>
+      <MyPushSection base={me&&me.base}/>
       <section style={MY_SECTION} data-my-section="profile">
         <div style={MY_SECTION_TITLE}>アカウント</div>
         {profileState==="error"&&<MyMessage error="登録ネームを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/>}
@@ -3205,6 +3206,7 @@ function MyPageSettingsTab({me,personal,page,shopId,shopName,token,payUnlocked,s
       {payUnlocked&&<MyGoalSection me={me}/>}
       {payUnlocked&&<MyPagePinChange token={token}/>}
       {!payUnlocked&&<div data-my-pin-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,padding:"0 4px",marginBottom:16}}>月間目標と暗証番号の変更は、給料タブで暗証番号を入れると表示されます。</div>}
+      <MyPushSection base={me&&me.base}/>
       <MyPageAccountLinkBox token={token} shopId={shopId} shopName={shopName} name={page.name} staffUser={staffUser} onLogin={onAccountLogin}/>
       {/* 個別URLは設定の一番下に置く（2026-10-04 ユーザー指示）。メールの登録はその上 */}
       <MyPageEmailBox token={token}/>
@@ -3309,5 +3311,128 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
       </main>
       <MyTabBar tab={tab} onTab={setTab} tabs={tabs}/>
     </div>
+  );
+}
+
+// ===== 通知（Web Push・2026-10-08）=====
+// 置き場と規則は app-my-utils.js の「通知」の節。送るのは Cloud Functions（functions/notify.js）。
+// Service Worker（リポジトリ直下の sw.js・push と notificationclick だけ。ファイルのキャッシュはしない）は、
+// 通知を有効にする操作のときにだけ登録する（開いただけでは登録しない＝既存の ?v= の版数管理に何も足さない）。
+const PUSH_SW_URL="sw.js";
+function pushEnvOf(){
+  const has=k=>{try{return typeof window[k]!=="undefined";}catch{return false;}};
+  let permission="default";
+  try{if(has("Notification"))permission=window.Notification.permission;}catch{/* 読めなければ default */}
+  return{secure:!!window.isSecureContext,hasSW:!!(typeof navigator!=="undefined"&&navigator.serviceWorker),hasPush:has("PushManager"),
+    hasNotification:has("Notification"),ios:!!HOME_IOS,standalone:isStandaloneLaunch(),permission};
+}
+function pushSameKey(a,b){
+  try{
+    const x=new Uint8Array(a),y=new Uint8Array(b);
+    return x.length===y.length&&x.every((v,i)=>v===y[i]);
+  }catch{return false;}
+}
+// いまの端末の購読（Service Worker を登録していなければ null）
+async function pushCurrentSubscription(){
+  const reg=await navigator.serviceWorker.getRegistration("./");
+  if(!reg||!reg.pushManager)return null;
+  return reg.pushManager.getSubscription();
+}
+// 購読を作る（あれば使い回す）。鍵を替えた後の古い購読は subscribe が拒否するので、鍵が違えば作り直す
+async function pushSubscribe(){
+  const reg=await navigator.serviceWorker.register(PUSH_SW_URL,{scope:"./"});
+  const ready=await navigator.serviceWorker.ready;
+  const r=ready&&ready.pushManager?ready:reg;
+  const opts={userVisibleOnly:true,applicationServerKey:pushUrlBase64ToBytes(PUSH_VAPID_PUBLIC_KEY)};
+  let sub=await r.pushManager.getSubscription();
+  if(sub){
+    const cur=sub.options&&sub.options.applicationServerKey;
+    if(cur&&!pushSameKey(cur,opts.applicationServerKey)){try{await sub.unsubscribe();}catch{/* 作り直しで上書きされる */}sub=null;}
+  }
+  return sub||r.pushManager.subscribe(opts);
+}
+// base: staffPageData/{token} | users/{uid} | shops/{sid}/private。uid は管理者の端末だけ（記録に入れ、CF が owners と照合する）
+function PushOptInBody({base,uid=null,audience}){
+  const env=useMemo(pushEnvOf,[]);
+  const sup=pushSupportOf(env);
+  const[st,setSt]=useState("checking"); // checking | on | off
+  const[busy,setBusy]=useState(false);
+  const[msg,setMsg]=useState({});
+  const keyRef=useRef("");
+  useEffect(()=>{
+    let alive=true;
+    if(!env.hasSW||!env.hasPush||!base||!firebaseDB){setSt("off");return()=>{alive=false;};}
+    (async()=>{
+      try{
+        const sub=await pushCurrentSubscription();
+        const key=sub?pushKeyOfEndpoint(sub.endpoint,sha256HexOfBytes):"";
+        keyRef.current=key;
+        if(!key){if(alive)setSt("off");return;}
+        const v=(await firebaseDB.ref(`${base}/push/${key}`).once("value")).val();
+        // 管理者の記録は uid がいまの端末の uid と同じときだけ「受け取り中」（ログインし直して uid が替わると CF が送らない）
+        if(alive)setSt(v&&(!uid||v.uid===uid)?"on":"off");
+      }catch{if(alive)setSt("off");}
+    })();
+    return()=>{alive=false;};
+  },[base,uid,env]);
+  const enable=async()=>{
+    setBusy(true);setMsg({});
+    try{
+      const perm=await window.Notification.requestPermission();
+      if(perm!=="granted"){setMsg({error:perm==="denied"?"通知が許可されませんでした。端末（ブラウザ）の設定で、このサイトの通知を許可してください。":"通知が許可されませんでした。"});return;}
+      const sub=await pushSubscribe();
+      const json=sub&&typeof sub.toJSON==="function"?sub.toJSON():sub;
+      const key=pushKeyOfEndpoint(json&&json.endpoint,sha256HexOfBytes);
+      const rec=pushRecordOf(json,{at:new Date().toISOString(),uid:uid||"",ua:navigator.userAgent||""});
+      if(!key||!rec){setMsg({error:"この端末の通知の情報を読み取れませんでした。"});return;}
+      await fbSet(`${base}/push/${key}`,rec);
+      keyRef.current=key;setSt("on");setMsg({ok:"この端末で通知を受け取ります。"});
+    }catch(e){
+      setMsg({error:isPermissionDeniedError(e)?"保存できませんでした（サーバー側の設定が未反映の可能性があります）。":`通知を有効にできませんでした（${(e&&e.message)||e}）。`});
+    }finally{setBusy(false);}
+  };
+  const disable=async()=>{
+    setBusy(true);setMsg({});
+    try{
+      if(keyRef.current&&firebaseDB)await firebaseDB.ref(`${base}/push/${keyRef.current}`).remove();
+      setSt("off");setMsg({ok:"この端末への通知を止めました。"});
+    }catch(e){
+      setMsg({error:isPermissionDeniedError(e)?"止められませんでした（サーバー側の設定が未反映の可能性があります）。":`止められませんでした（${(e&&e.message)||e}）。`});
+    }finally{setBusy(false);}
+  };
+  const blocked=sup.state==="unsupported"||sup.state==="ios-home";
+  return(
+    <div data-push-state={st} data-push-support={sup.state}>
+      <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>{PUSH_DESCRIPTIONS[audience]||PUSH_DESCRIPTIONS.staff}</div>
+      {sup.message&&st!=="on"&&<div data-push-hint={sup.state} style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.7,marginBottom:10}}>{sup.message}</div>}
+      <MyMessage {...msg}/>
+      {st==="checking"&&<div style={{fontSize:13,color:"var(--c-text3)"}}>確認しています…</div>}
+      {st==="on"&&<div style={{display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+        <span data-push-on="1" style={{fontSize:14,fontWeight:700,color:"var(--c-text)"}}>この端末で受け取り中</span>
+        <button data-push-action="off" disabled={busy} onClick={disable} style={{...AGray,opacity:busy?.6:1}}>{busy?"処理中…":"通知を止める"}</button>
+      </div>}
+      {st==="off"&&!blocked&&<button data-push-action="on" disabled={busy||sup.state==="denied"} onClick={enable}
+        style={{...AB,opacity:busy||sup.state==="denied"?.6:1}}>{busy?"設定しています…":"通知を受け取る（この端末）"}</button>}
+    </div>
+  );
+}
+// スタッフ（マイシフトのアカウント・個別URL）の設定タブ
+function MyPushSection({base}){
+  if(!base)return null;
+  return(
+    <section style={MY_SECTION} data-my-section="push">
+      <div style={MY_SECTION_TITLE}>通知</div>
+      <PushOptInBody base={base} audience="staff"/>
+    </section>
+  );
+}
+// 管理者の設定タブ。この店舗のオーナーの端末だけ（閲覧専用・デモでは出さない）
+function AdminPushCard({shopId,ownerReadOnly}){
+  const uid=firebaseAuth&&firebaseAuth.currentUser?firebaseAuth.currentUser.uid:"";
+  if(!shopId||shopId==="default"||ownerReadOnly||DEMO_MODE||!firebaseDB||!uid)return null;
+  return(
+    <AC title="通知（この端末）">
+      <div data-admin-push="1"><PushOptInBody base={`shops/${shopId}/private`} uid={uid} audience="admin"/></div>
+    </AC>
   );
 }
