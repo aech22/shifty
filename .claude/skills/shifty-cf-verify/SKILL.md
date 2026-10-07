@@ -24,6 +24,8 @@ node .claude/skills/shifty-cf-verify/scripts/example-notify.js            # 通�
 const h = loadFunctions({ indexPath: "/Users/hiroshi/Documents/Claude Code/<worktree名>/functions/index.js", data });
 ```
 
+既存のスクリプトを worktree に向けるときは、環境変数 `SHIFTY_CF_INDEX` に worktree の `functions/index.js` のフルパスを渡す（2026-10-08 から `loadFunctions` の既定がこの環境変数に従うので、`indexPath` を渡さないスクリプトも worktree を読む。それ以前は example-company-owner.js・example-purge-old-periods.js が環境変数を無視して本体を検証していた）。
+
 ## 使い方
 
 ```js
