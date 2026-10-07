@@ -94,6 +94,8 @@ developブランチ・mainブランチのどちらにチェックアウトして
 │   ├── my-pay.js       ← 従業員画面の会社設定の賃金（E6・getMyPay）の純粋関数（tests/my.test.js が normalizePayVersion との一致を照合）
 │   └── my-page.js      ← スタッフ個別URLの給料の暗証番号（myPagePin）の純粋関数（2026-10-04。crypto を読まない＝E2E のスタブにも埋め込む）
 ├── RULES.md            ← やってはいけないこと（必読）
+├── sw.js               ← 通知（Web Push）の Service Worker（2026-10-08）。push と notificationclick だけ・**ファイルをキャッシュしない**・index.html からは読み込まない（通知を有効にする操作のときだけ登録）
+├── functions/notify.js（※ functions/ 配下）← 通知の宛先と判定の純粋関数（tests/notify.test.js が照合）
 ├── firebase.json       ← Firebase Hosting / Functions 設定
 ├── database.rules.json ← Firebase セキュリティルール（**正本はこの1ファイルのみ**。2026-07-28 に締めルールへ切替済み）
 │                          ※ `database.rules.tightened.json` は 2026-09-05 に削除（切替完了後はバイト同一の残骸で、
@@ -694,6 +696,10 @@ Firebase Realtime Database
 ├── staffPageEmails/{pageToken} ← 個別URLをなくしたとき用のメールアドレス（2026-10-05）{email, key, setAt, sentAt?}。CF setPageEmail・recoverPageUrl だけが書く
 │                          （ルールで読み書きとも不可）。クライアントへは登録の有無と伏せたアドレスしか返さない
 ├── staffPageEmailIndex/{key}/{pageToken} = true ← アドレスからの逆引き（key＝正規化したアドレスの SHA-256）。CF だけ
+├── （通知の購読・2026-10-08）staffPageData/{token}/push/{key}・users/{uid}/push/{key}・shops/{sid}/private/push/{key}
+│                          ← {endpoint, keys:{p256dh,auth}, at, ua?}（管理者の記録は uid も必須＝書いた本人の uid）。key は endpoint の SHA-256 の先頭32桁。
+│                          **endpoint はブラウザの Push サービスだけ**（FCM・Apple・Mozilla・WNS。ルールと CF の `PUSH_ENDPOINT_RE` が同じ・テストで照合）
+├── notifyRate/submit_{shopId} ← 提出の通知の1時間あたりの回数（CF だけ・ルールに無い）
 ├── staffPageEmailRate/{種類}_{鍵} ← 送信回数の制限 {count, windowStart}（同じ URL・同じアドレス・同じ呼び出し元の単位）。CF だけ
 └── （削除済み）staffLinkCodes・staffLinkCodeIndex・staffLinkCodeAttempts ← 個人リンクコード（E2）の置き場。2026-10-05 に機能ごと削除した
                            （CF・ルール・画面とも無い。ルールに無い＝クライアントからは読み書きできない）。本番に残っている値は purgeInactiveShops が丸ごと消す
@@ -1498,6 +1504,7 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 | `linkStaffPage` | Callable | 専用URLのお店をメールのアカウントに追加（2026-10-05・**本番未デプロイ**）。`{token, pin?}`。メールのある認証だけ。URL が使える状態を `myPageAccessCF` で確かめ、名前は staffPages の承認済みの name（呼び出し元から受け取らない）。暗証番号を決めている URL は myPagePin と同じ照合（トランザクションで試行回数を数える）を、リンクできることを確かめた**後**に通す。管理者の再承認はしない。staffLinks（method "page"）・users/{uid}/links を書き、保留中の申請を消す。規則は `functions/staff-link.js` の `planLinkStaffPage` |
 | `myPagePin` | Callable | スタッフ個別URLの給料の暗証番号（2026-10-04・本番反映済み）。`{token, action:"status"|"set"|"verify", pin?, currentPin?}`。URL が使える状態（承認済み・名前がスタッフ一覧にある）を確かめ、`staffPagePins/{token}` のハッシュと照合する（5回の誤りで15分・トランザクションで数える）。照合が通ると（決めたときも）会社が登録した本人の賃金（`private/pay/{staffPages の name}`）を getMyPay と同じ形で返す。名前・店舗は受け取らない（URL から引く）。デモ店舗は拒否。規則は `functions/my-page.js` |
 | `getMyPay` | Callable | 従業員画面の会社設定の賃金（2026-10-04・第2部 E6・本番反映済み）。`{shopId}` だけを受け取り、呼び出し元 uid の staffLinks の名前の `private/pay` を返す（本人の分だけ・名前は受け取らない）。メールのある認証・紐付けあり・名前がスタッフ一覧にあることを確かめ、shopId の形とデモ店舗を拒否。何も書かない。規則は `functions/my-pay.js` |
+| `notifyNewPeriod / notifyStaffSubmit / notifyDeadlines` | DB トリガー・schedule | 通知（Web Push・2026-10-08）。新しい期間の作成でスタッフへ（承認済みの個別URLとアカウントの紐付け・終了済みの期間とデモは送らない）、スタッフの提出・再提出で管理者へ（owners にいる uid の購読だけ・店舗ごとに1時間60件まで）、毎日12:00 JST に締切日の未提出のスタッフ（別名・非表示を考慮）と、企業への提出締切日に未提出の期間の管理者へ。送信は npm の `web-push`（VAPID）。宛先と判定は `functions/notify.js`。410/404 の購読は消す。**提出かどうかは `submittedAt`（初回）と `isUpdated:true`＋`updatedAt` の進み（再提出）で判定する**ので、`isUpdated`・`updatedAt` を書いてよいのはスタッフ画面だけ（管理者の編集で書くと「提出しました」が送られる・テストが守る）。入口はマイシフトと個別URLの設定タブ、管理者の設定タブ「通知（この端末）」。募集URLだけのスタッフは本人を特定できないので対象外。iPhone はホーム画面に追加したアプリだけ。入社日・退社日（staffTenure）は締切の宛先にまだ当てていない |
 | `claimCompanyShop` | Callable `claimCompanyShop` | 連携済み店舗のオーナーに**呼び出し元のuid**を登録（企業連携タブの「ログイン」で管理コードの再入力を無くす。付与は `companies/{id}/grants/{shopId}/{uid}` に記録し、解除時に回収する） |
 | `unlinkStoreFromCompany` | Callable `unlinkStoreFromCompany` | 店舗の企業連携を解除（企業uid＋`grants` の付与uidを owners から外す） |
 
@@ -1521,6 +1528,7 @@ STRIPE_WEBHOOK_SECRET
 SMTP_USER
 SMTP_PASS
 SURVEY_SEND_TOKEN
+VAPID_PRIVATE_KEY   ← 通知（2026-10-08）。公開鍵は app-core.js と functions/notify.js（一致をテストで照合）
 ```
 
 ---
