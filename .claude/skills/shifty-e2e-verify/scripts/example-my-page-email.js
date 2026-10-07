@@ -1,23 +1,24 @@
-// スタッフ個別URLの「URLをなくしたとき用のメールアドレス（任意）」を実ブラウザで確かめる（2026-10-05）。
-// スタブ Firebase の cfHandlers "pageEmail" が functions/my-page.js の planSetPageEmailCF・planRecoverPageUrlCF をそのまま通し、
-// 送ろうとしたメールを window.__mails に積む（実際には送らない）。
-//  A: 個別URLの設定タブで登録 → 控えのメールが1通（宛先・本文に本番ドメインの個別URL）／伏せたアドレスだけ画面に出る／
-//     アドレスは staffPageEmails に入り staffPageData・shops には入らない／個別URLのセクションが設定の一番下
-//  B: 形の不正なアドレスは送らずに理由を出す
-//  C: 募集URLの画面の「なくした場合」→ 登録済みのアドレスで1通・画面に URL を出さない／未登録のアドレスでも同じ文言で0通
-//  D: 削除すると登録なしに戻り、送り直しても0通
-//  375px・320px で横はみ出し無し、入力欄は 16px 以上
+// 「自分専用のURLをなくしたとき」をマイシフトのアカウントに一本化した（2026-10-08 ユーザー指示「URLをなくしたとき用のメールアドレスを
+// アカウント登録で解決・統一」）回帰テスト。以前（2026-10-05）は個別URLに任意のメールアドレスを登録し、なくしたら CF recoverPageUrl で送り直していた。
+// アプリ全体をスタブ Firebase で動かす（Firebase へは1バイトも出ない）。CF の呼び出しはスタブの window.__cf で数える。
+//  A: 個別URLの設定タブにメールアドレスの欄が無い（data-my-page-email・pageEmail の入力欄なし）。その位置に「アカウントに追加しておけば、URLをなくしても
+//     メールアドレスとパスワードでログインして見られます」の案内（data-my-section="pageLost"）が「マイシフトのアカウントに追加」の下にあり、
+//     個別URLのセクションは一番下のまま。setPageEmail を呼ばない
+//  C: 募集URLの画面の「URLをなくした場合」: メールの入力欄が無く、「アカウントに追加済みなら マイシフト（#/me）からログイン／追加していなければ
+//     お店の管理者に再発行を頼む」案内と「マイシフトにログインする」ボタン。押すと #/me のログイン画面が開く。recoverPageUrl を呼ばない
+//  M: #/me のログイン画面の「自分専用のURLをなくした場合」も同じ案内（入力欄なし・この画面の上からログイン）
+//  375px・320px で横はみ出し無し、console.error 0 件
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-my-page-email.js → allPass=true / EXIT=0
-// 反証: SHIFTY_ROOT=<9251272 の配信物> node ... → EXIT=1（登録欄が無い）
+// 反証: SHIFTY_ROOT=<8d9ee98 の配信物> node ... → EXIT=1（メールアドレスの欄と送り直しの入力がある）
 "use strict";
 const path = require("node:path");
-const { openHarness, REPO_ROOT } = require(path.join(__dirname, "mount-component.js"));
+const { openHarness } = require(path.join(__dirname, "mount-component.js"));
 const { makeStub } = require(path.join(__dirname, "stub-firebase.js"));
-const ROOT = process.env.SHIFTY_ROOT || REPO_ROOT;
+// 既定はこのスクリプトが置かれたチェックアウト（mount-component.js の REPO_ROOT は本体のパスに固定）
+const ROOT = process.env.SHIFTY_ROOT || path.resolve(__dirname, "..", "..", "..", "..");
 const SCRIPTS = ["app-utils.js", "app-my-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"].map(src => ({ src, babel: !/utils|core/.test(src) }));
 const PHONE = { width: 375, height: 812 };
 const TOK = "AbCdEfGhIjKlMnOpQrStUvWx";
-const MAIL = "tanaka@example.com";
 const pad = n => String(n).padStart(2, "0");
 const now = new Date();
 const YM = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
@@ -32,124 +33,87 @@ const seed0 = () => ({
   staffPageTokens: { [TOK]: { shopId: "S1" } },
   accounts: { S1: { plan: "premium" } },
 });
-const hashHead = h => `<script>history.replaceState(null,"","/${h}");</script>`;
-const open = ({ hash, db, wait }) => openHarness({ root: ROOT, jsx: "window.__harnessReady=true;", waitFor: wait, viewport: PHONE,
-  extraHead: hashHead(hash) + makeStub({ seed: db, view: "staff", tab: "periods", auth: "accounts", authSeed: { users: {}, cur: null }, cfHandlers: { setPageEmail: "pageEmail", recoverPageUrl: "pageEmail" } }), scripts: SCRIPTS });
+const urlHead = u => `<script>if(!sessionStorage.__urlSet){sessionStorage.__urlSet="1";history.replaceState(null,"",${JSON.stringify(u)});}</script>`;
+const open = ({ url, wait }) => openHarness({ root: ROOT, jsx: "window.__harnessReady=true;", waitFor: wait, viewport: PHONE,
+  extraHead: urlHead(url) + makeStub({ seed: seed0(), view: "staff", tab: "periods", auth: "accounts", authSeed: { users: {}, cur: null } }), scripts: SCRIPTS });
 const sleep = (h, ms) => h.page.waitForTimeout(ms);
 const waitSel = (h, s, ms = 15000) => h.page.waitForSelector(s, { timeout: ms }).then(() => true, () => false);
 const click = (h, sel) => h.evaluate(sel => { const e = document.querySelector(sel); if (!e) return false; e.click(); return true; }, sel);
 const overflowX = h => h.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth);
-const inputFonts = h => h.evaluate(() => [...document.querySelectorAll("input,select,textarea")].filter(i => i.offsetParent).map(i => parseFloat(getComputedStyle(i).fontSize)));
-const mails = h => h.evaluate(() => (window.__mails || []).map(m => ({ to: m.to, subject: m.subject || "", text: String(m.text || m.body || m.html || "") })));
-const secState = h => h.evaluate(() => { const e = document.querySelector("[data-my-page-email]"); return e ? e.getAttribute("data-my-page-email") : null; });
-const secText = h => h.evaluate(() => { const e = document.querySelector('[data-my-section="pageEmail"]'); return e ? e.innerText : ""; });
+const cfCalls = h => h.evaluate(() => (window.__cf || []).map(c => c.name));
+const noEmailCf = calls => !calls.some(n => n === "setPageEmail" || n === "recoverPageUrl");
 
 (async () => {
   const R = {}, V = {};
-  let dump = null;
-  // ---------------- A・B・D の前半: 個別URLの設定タブ ----------------
+  // ---------------- A: 個別URLの設定タブ ----------------
   {
-    const h = await open({ hash: "#/m/" + TOK, db: seed0(), wait: '[data-my-view="page"]' });
+    const h = await open({ url: "/#/m/" + TOK, wait: '[data-my-view="page"]' });
     try {
       const A = {};
       await click(h, '[data-my-tab="settings"]');
-      A.hasBox = await waitSel(h, '[data-my-page-email="none"]');
-      A.lastSec = await h.evaluate(() => { const s = [...document.querySelectorAll("[data-my-section]")]; return s.length ? s[s.length - 1].getAttribute("data-my-section") : null; });
+      A.lost = await waitSel(h, '[data-my-section="pageLost"]');
+      await sleep(h, 600);
+      A.secs = await h.evaluate(() => [...document.querySelectorAll("[data-my-section]")].map(s => s.getAttribute("data-my-section")));
+      A.noEmailBox = await h.evaluate(() => !document.querySelector("[data-my-page-email]") && !document.querySelector('[data-my-input="pageEmail"]'));
+      A.note = await h.evaluate(() => (document.querySelector('[data-my-section="pageLost"]') || {}).innerText || "");
       A.overflow = await overflowX(h);
-      A.fonts = await inputFonts(h);
-      // B: 形の不正
-      await h.setInput('[data-my-input="pageEmail"]', "tanaka-at-example");
-      await click(h, '[data-my-action="savePageEmail"]');
-      await sleep(h, 300);
-      A.badText = await secText(h);
-      A.badMails = (await mails(h)).length;
-      // A: 登録
-      await h.setInput('[data-my-input="pageEmail"]', MAIL);
-      await click(h, '[data-my-action="savePageEmail"]');
-      A.saved = await waitSel(h, '[data-my-page-email="set"]');
-      await sleep(h, 300);
-      A.text = await secText(h);
-      A.mails = await mails(h);
-      dump = await h.evaluate(() => window.__dbDump());
-      A.rec = (dump.staffPageEmails || {})[TOK] || null;
-      A.inPageData = JSON.stringify(dump.staffPageData || {}).includes(MAIL);
-      A.inShops = JSON.stringify(dump.shops || {}).includes(MAIL);
       await h.page.setViewportSize({ width: 320, height: 700 });
       await sleep(h, 200);
       A.overflow320 = await overflowX(h);
+      A.calls = await cfCalls(h);
       A.errors = h.errors.slice();
       R.A = A;
-      const m = A.mails[0] || { to: "", text: "" };
-      V.A_boxShown = A.hasBox;
-      V.A_urlSectionLast = A.lastSec === "page";
-      V.B_badRejected = /形が正しくありません/.test(A.badText) && A.badMails === 0;
-      V.A_savedMasked = A.saved && !A.text.includes(MAIL) && /登録済み/.test(A.text) && /@/.test(A.text);
-      V.A_oneMail = A.mails.length === 1 && m.to === MAIL && new RegExp("https://shiftyshifty\\.app/(\\?openExternalBrowser=1)?#/m/" + TOK).test(m.text);
-      V.A_storedCfOnly = !!A.rec && !A.inPageData && !A.inShops;
-      V.A_layout = A.overflow <= 0 && A.overflow320 <= 0 && A.fonts.length > 0 && A.fonts.every(f => f >= 16);
+      const iAcc = A.secs.indexOf("pageAccount"), iLost = A.secs.indexOf("pageLost");
+      V.A_noEmailBox = A.lost && A.noEmailBox;
+      V.A_noteText = /アカウントに追加しておけば、URLをなくしてもメールアドレスとパスワードでログインして見られます/.test(A.note);
+      V.A_order = iAcc >= 0 && iLost > iAcc && A.secs[A.secs.length - 1] === "page";
+      V.A_noCf = noEmailCf(A.calls);
+      V.A_layout = A.overflow <= 0 && A.overflow320 <= 0;
       V.A_noErrors = A.errors.length === 0;
     } finally { await h.browser.close(); }
   }
   // ---------------- C: 募集URLの画面の「なくした場合」 ----------------
   {
-    const h = await open({ hash: "#/s/t1", db: dump, wait: "[data-page-recover-open]" });
+    const h = await open({ url: "/#/s/t1", wait: "[data-page-recover-open]" });
     try {
       const C = {};
       await click(h, "[data-page-recover-open]");
       C.screen = await waitSel(h, "[data-my-page-recover-screen]");
+      C.text = await h.evaluate(() => (document.querySelector("[data-my-page-recover]") || {}).innerText || "");
+      C.inputs = await h.evaluate(() => document.querySelectorAll("[data-my-page-recover-screen] input").length);
       C.overflow = await overflowX(h);
-      C.fonts = await inputFonts(h);
-      await h.setInput('[data-my-input="recoverEmail"]', "nobody@example.com");
-      await click(h, '[data-my-action="recoverPage"]');
-      await sleep(h, 600);
-      C.unknownText = await h.evaluate(() => document.querySelector("[data-my-page-recover]").innerText);
-      C.unknownMails = (await mails(h)).length;
-      await h.setInput('[data-my-input="recoverEmail"]', MAIL);
-      await click(h, '[data-my-action="recoverPage"]');
-      await sleep(h, 600);
-      C.knownText = await h.evaluate(() => document.querySelector("[data-my-page-recover]").innerText);
-      C.mails = await mails(h);
-      C.urlOnScreen = await h.evaluate(t => document.body.innerText.includes(t), TOK);
+      await h.page.setViewportSize({ width: 320, height: 700 });
+      await sleep(h, 200);
+      C.overflow320 = await overflowX(h);
+      C.calls = await cfCalls(h);
+      // 「マイシフトにログインする」で #/me のログイン画面へ（search を変えた開き直し）
+      await Promise.all([h.page.waitForNavigation({ timeout: 15000 }).catch(() => null), click(h, '[data-my-action="openAccount"]')]);
+      C.toMe = await waitSel(h, '[data-my-auth="login"]');
+      C.url = await h.evaluate(() => location.hash + "|" + location.search);
       C.errors = h.errors.slice();
       R.C = C;
-      const tail = s => (s.split("\n").filter(Boolean).pop() || "");
-      const m = C.mails[0] || { to: "", text: "" };
-      V.C_screen = C.screen && C.overflow <= 0 && C.fonts.length > 0 && C.fonts.every(f => f >= 16);
-      V.C_unknownNoMail = C.unknownMails === 0 && /送りました/.test(C.unknownText);
-      V.C_knownOneMail = C.mails.length === 1 && m.to === MAIL && new RegExp("https://shiftyshifty\\.app/(\\?openExternalBrowser=1)?#/m/" + TOK).test(m.text);
-      V.C_sameMessage = tail(C.unknownText) === tail(C.knownText);
-      V.C_urlNotShown = C.urlOnScreen === false;
+      V.C_noInput = C.screen && C.inputs === 0;
+      V.C_text = /アカウントに追加済みなら/.test(C.text) && /マイシフト/.test(C.text) && /お店の管理者にURLの再発行を頼んでください/.test(C.text);
+      V.C_toMe = C.toMe && /^#\/me\|/.test(C.url);
+      V.C_noCf = noEmailCf(C.calls);
+      V.C_layout = C.overflow <= 0 && C.overflow320 <= 0;
       V.C_noErrors = C.errors.length === 0;
     } finally { await h.browser.close(); }
   }
-  // ---------------- D: 削除 → 送り直しても届かない ----------------
+  // ---------------- M: #/me のログイン画面の「なくした場合」 ----------------
   {
-    const h = await open({ hash: "#/m/" + TOK, db: dump, wait: '[data-my-view="page"]' });
+    const h = await open({ url: "/#/me", wait: '[data-my-auth="login"]' });
     try {
-      const D = {};
-      await h.evaluate(() => { window.confirm = () => true; });
-      await click(h, '[data-my-tab="settings"]');
-      D.set = await waitSel(h, '[data-my-page-email="set"]');
-      await click(h, '[data-my-action="removePageEmail"]');
-      D.none = await waitSel(h, '[data-my-page-email="none"]');
-      const d = await h.evaluate(() => window.__dbDump());
-      D.recGone = !((d.staffPageEmails || {})[TOK]);
-      D.errors = h.errors.slice();
-      R.D = D;
-      V.D_removed = D.set && D.none && D.recGone;
-      V.D_noErrors = D.errors.length === 0;
-      dump = d;
-    } finally { await h.browser.close(); }
-  }
-  {
-    const h = await open({ hash: "#/s/t1", db: dump, wait: "[data-page-recover-open]" });
-    try {
-      await click(h, "[data-page-recover-open]");
-      await waitSel(h, "[data-my-page-recover-screen]");
-      await h.setInput('[data-my-input="recoverEmail"]', MAIL);
-      await click(h, '[data-my-action="recoverPage"]');
-      await sleep(h, 600);
-      V.D_noMailAfterRemove = (await mails(h)).length === 0;
+      const M = {};
+      await h.evaluate(() => { const d = document.querySelector("[data-my-recover-details]"); if (d) d.open = true; });
+      await sleep(h, 200);
+      M.text = await h.evaluate(() => (document.querySelector("[data-my-recover-details] [data-my-page-recover]") || {}).innerText || "");
+      M.inputs = await h.evaluate(() => document.querySelectorAll("[data-my-recover-details] input").length);
+      M.noButton = await h.evaluate(() => !document.querySelector('[data-my-recover-details] [data-my-action="openAccount"]'));
+      M.calls = await cfCalls(h);
+      M.errors = h.errors.slice();
+      R.M = M;
+      V.M_guide = /この画面の上からログインしてください/.test(M.text) && /再発行/.test(M.text) && M.inputs === 0 && M.noButton && noEmailCf(M.calls) && M.errors.length === 0;
     } finally { await h.browser.close(); }
   }
   const allPass = Object.values(V).every(Boolean);

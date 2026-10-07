@@ -7,19 +7,52 @@
 // 先頭（0時・00分）と末尾（最後の時・59分）で止まる＝ループしない。選べる時刻は options（刻みは呼び出し側が決める）、寄せ方は timeWheelPick
 const TW_ITEM_H=44;
 const TW_PAD_ROWS=2; // 選んでいる行の上下に見せる行数
+const TW_WHEEL_GAP_MS=150; // ピクセル単位の wheel で、この間が空いたら新しい1回（マウスの1回）とみなす
 function TimeWheelColumn({items,value,onChange,fmt,col}){
   const ref=useRef(null);
   const timer=useRef(null);
   const valueRef=useRef(value);valueRef.current=value;
   const itemsRef=useRef(items);itemsRef.current=items;
+  const onChangeRef=useRef(onChange);onChangeRef.current=onChange;
   const idx=Math.max(0,items.indexOf(value));
+  const idxRef=useRef(idx);
   // 値が外から変わったとき（開いた直後・時を変えて分が寄せられたとき・行を押したとき）はその行へ動かす
   React.useLayoutEffect(()=>{
+    idxRef.current=idx;
     const el=ref.current;if(!el)return;
     const top=idx*TW_ITEM_H;
     if(Math.abs(el.scrollTop-top)>1)el.scrollTop=top;
   },[idx,items.length]);
   useEffect(()=>()=>clearTimeout(timer.current),[]);
+  // マウスのホイールは1回で1行だけ動かす（2026-10-08 ユーザー指示。ブラウザに任せると1回＝約100pxで2行動いていた）。
+  // 行・ページ単位の wheel（deltaMode≠0）は1回＝1行。ピクセル単位は、間が空いた最初の1回で1行、続く分は1行の高さ分たまるごとに1行
+  // （トラックパッドの細かい連続の wheel はこれまでどおり指の量に応じて進む）。タッチのスワイプは wheel を出さないので変わらない。
+  // 既定のスクロールを止めるため、passive にならない addEventListener で受ける（React の onWheel は passive）
+  useEffect(()=>{
+    const el=ref.current;if(!el)return;
+    const w={acc:0,t:-Infinity};
+    const onWheel=ev=>{
+      if(ev.ctrlKey)return; // ピンチでの拡大はブラウザに任せる
+      const dy=ev.deltaY;
+      if(!dy||Math.abs(ev.deltaX)>Math.abs(dy))return;
+      ev.preventDefault();
+      const now=ev.timeStamp||Date.now();
+      let step=0;
+      if(ev.deltaMode!==0){step=Math.sign(dy);w.acc=0;}
+      else if(now-w.t>TW_WHEEL_GAP_MS||(w.acc&&Math.sign(w.acc)!==Math.sign(dy))){step=Math.sign(dy);w.acc=0;}
+      else{w.acc+=dy;if(Math.abs(w.acc)>=TW_ITEM_H){step=Math.sign(w.acc);w.acc=0;}}
+      w.t=now;
+      if(!step)return;
+      const its=itemsRef.current;
+      const i=Math.min(its.length-1,Math.max(0,idxRef.current+step));
+      if(i===idxRef.current)return;
+      idxRef.current=i;
+      clearTimeout(timer.current);
+      onChangeRef.current(its[i]);
+    };
+    el.addEventListener("wheel",onWheel,{passive:false});
+    return()=>el.removeEventListener("wheel",onWheel);
+  },[]);
   // 指で回して止まったところの行を選ぶ（慣性で動いている間は待つ）
   const onScroll=()=>{
     clearTimeout(timer.current);
@@ -124,7 +157,7 @@ function ShiftyIcon({size=32}){
 // onOpenPageRegister: 募集URLの画面から自分専用の個別URLを申請する（2026-10-04）。App が MY_SCREEN_ENABLED のときだけ渡す。引数はいま入っている名前
 // fixedName: スタッフ個別URLの提出タブ（2026-10-04）。承認された名前で固定し、名前の入力欄を出さない（Cookie の名前も読まない・書かない）。
 // bottomOffset: 送信ボタンの帯を下から何px上げるか（個別URLの下部タブの上に出すため）
-// onOpenPageRecover: 自分専用のURLをなくした人がメールで送り直す入口（2026-10-04）。App が MY_SCREEN_ENABLED のときだけ渡す
+// onOpenPageRecover: 自分専用のURLをなくした人への案内の入口（2026-10-04・2026-10-08 からアカウントへの誘導）。App が MY_SCREEN_ENABLED のときだけ渡す
 function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub,onDeleteSub,shopName,urlLocked=false,plan="free",onOpenMy=null,onOpenPageRegister=null,onOpenPageRecover=null,fixedName=null,bottomOffset=0}){
   // Cookieからスタッフ名を復元（個別URLは承認された名前）
   const savedName=fixedName||(shopId&&apid?getCookie(ckStaffKey(shopId,apid))||"":"");
@@ -387,7 +420,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   if(done)return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName} onMy={onOpenMy}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(fixedName||sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} settings={settings} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(fixedName||sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"50px 20px",textAlign:"center"}}>
         <div style={{fontSize:68,animation:"bI .5s"}}>✓</div>
         <div style={{fontSize:22,fontWeight:700,color:"var(--c-accent)",marginTop:14,marginBottom:8}}>提出完了！</div>
@@ -413,7 +446,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName} onMy={onOpenMy}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(fixedName||sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} settings={settings} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(fixedName||sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:`14px 12px ${120+bottomOffset}px`}}>
         {isPeriodConfirmed(ap)&&<div data-staff-confirmed="1" style={{background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:"var(--c-text2)"}}>この期間のシフトは確定済みです（提出・修正はできません）</div>}
         {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`▲ 締切日（${ap.deadlineDate.replace(/-/g,"/")}）を過ぎています（提出・修正は可能です）`:`締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
@@ -689,7 +722,7 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
 // ============================================================
 // myName を渡すと「その名前の行だけ」操作できる（スタッフ画面用）。削除・セル編集・「✎ 修正」の3つとも同じ絞り込み。
 // 渡さない＝管理者画面からの利用で、従来どおり全行を操作できる。
-function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onDeleteSub,plan="free",staffAliases={},myName=null}){
+function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onDeleteSub,plan="free",staffAliases={},myName=null,settings=null}){
   const period=periods.find(p=>p.id===apid);
   // source:"grid"はシフト作成タブが未提出スタッフのセルに直接作成した管理者入力用のsub（実際の提出ではない）。
   // スタッフ向けの提出状況一覧には表示しない（app-admin.jsのSubsTabと同じ除外基準）。
@@ -702,7 +735,9 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
   // シフト作成グリッド・Excel・PDF・「別名を登録」・名前サジェストと同じ名簿にそろえている（#109/#110）。
   // 呼び出し元は3つ（StaffView から2つ・PeriodsTab から1つ）だが、period はここで apid から解決しているので
   // このマージ1箇所で全経路に効く。名簿の要素を増やすときもここを直せばよい。
-  const roster=mergeKeepStaff(staffList,period);
+  // さらに、その期間で非表示（スタッフタブの「非表示」）の人は未提出に数えない（2026-10-08 ユーザー指示・BACKLOG の案B）。
+  // 判定はシフト作成グリッド・Excel・PDF と同じ visibleStaffList（期間の startDate で判定）。settings を渡さない呼び出しは従来どおり
+  const roster=visibleStaffList(mergeKeepStaff(staffList,period),settings,period);
   // 別名照合: 提出名が登録名そのもの、または登録名の別名配列に含まれれば「提出済み」とみなす（提出一覧タブ/Excel出力と同じ照合）。
   const notSubmitted=roster.filter(n=>!isSpacer(n)&&!submitted.some(s=>s.staffName===n||(staffAliases[n]||[]).includes(s.staffName)));
   const NW=88,CW=86,COMMENT_W=150;

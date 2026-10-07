@@ -1284,6 +1284,9 @@ function MyShiftTab({me,onGoSettings,personal}){
   };
 
   if(links===null)return <MyEmptyState><MyMessage error="お店とのリンクを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/></MyEmptyState>;
+  // リンクと本人のデータを読み終えるまでは、カレンダーと下の案内（申請しました・リンクの案内）のどちらを出すかが決まらない。
+  // 決まる前にカレンダーを描くと、登録の直後（リンクがまだ無い）にカレンダーが一瞬出てから「申請しました」に切り替わる（2026-10-08 ユーザー報告）
+  if(links===undefined||(!okLinks.length&&P.state==="loading"))return <MyEmptyState><div data-my-loading="1">読み込み中…</div></MyEmptyState>;
   const hasManual=manualList.length>0||Object.keys(P.shifts||{}).length>0;
   // 登録と同時に送ったリンクの申請（myAutoLinkRequest）。承認されるまで「申請しました」を出す
   const linkReq=(()=>{try{const v=JSON.parse(ssGet(SS_MY_LINK_REQ,null)||"null");return v&&v.shopId?v:null;}catch{return null;}})();
@@ -2329,7 +2332,7 @@ function MyAuthScreen({shopId,onClose}){
         {/* 個別URL（ログイン不要）をなくした人の入口（2026-10-04）。アカウントのパスワードの再設定とは別 */}
         <details data-my-recover-details="1" style={{...MY_SECTION,marginTop:16}}>
           <summary style={{cursor:"pointer",fontSize:14,fontWeight:600,color:"var(--c-text2)",minHeight:32,display:"flex",alignItems:"center"}}>自分専用のURLをなくした場合</summary>
-          <div style={{marginTop:10}}><MyPageRecoverBox/></div>
+          <div style={{marginTop:10}}><MyPageRecoverBox inAuth/></div>
         </details>
       </div>
     </div>
@@ -3037,86 +3040,37 @@ function MyPagePinChange({token}){
     </section>
   );
 }
-// ---- URLをなくしたとき用のメールアドレス（任意・2026-10-04 ユーザー指示）----
-// 登録・変更・削除と送り直しは Cloud Functions（setPageEmail・recoverPageUrl）だけ。アドレスは CF 専用の場所にあり、画面に出すのは伏せたアドレスだけ。
-// CF が使えない（未デプロイ・通信）間は「いまは登録できません」と出して止まる（画面は落ちない）
-const MY_PAGE_EMAIL_UNAVAILABLE="いまは登録できません（サーバー側の準備中か、通信できません）。時間をおいてもう一度お試しください";
-// CF の拒否の文言（日本語）はそのまま、英語の汎用のエラー（関数が無い・internal 等）は fallback に置き換える
-function myCfMsg(r,fallback){const e=r&&r.error?String(r.error):"";return /[^\x00-\x7f]/.test(e)?e:fallback;}
-function MyPageEmailBox({token}){
-  const[st,setSt]=useState(undefined); // undefined=確認中・{registered,masked}・{error}
-  const[editing,setEditing]=useState(false);
-  const[email,setEmail]=useState("");
-  const[msg,setMsg]=useState({});
-  const[busy,setBusy]=useState(false);
-  useEffect(()=>{
-    let alive=true;setSt(undefined);
-    myCallCF("setPageEmail",{token,action:"status"}).then(r=>{if(alive)setSt(r&&r.ok?{registered:!!r.registered,masked:String(r.masked||"")}:{error:true});});
-    return()=>{alive=false;};
-  },[token]);
-  const save=async()=>{
-    setMsg({});
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())){setMsg({error:"メールアドレスの形が正しくありません"});return;}
-    setBusy(true);
-    const r=await myCallCF("setPageEmail",{token,action:"set",email:email.trim()});
-    setBusy(false);
-    if(!r||!r.ok){setMsg({error:myCfMsg(r,MY_PAGE_EMAIL_UNAVAILABLE)});return;}
-    setSt({registered:true,masked:String(r.masked||"")});setEditing(false);setEmail("");
-    setMsg({ok:r.sent===false?`登録しました（${r.masked}）。控えのメールは送れませんでした。時間をおいて登録し直すと、もう一度送ります`
-      :`登録しました。${r.masked} にこの画面のURLを送りました。届いているか確かめてください`});
-  };
-  const remove=async()=>{
-    if(!window.confirm("登録したメールアドレスを削除しますか？ URLをなくしたときにメールで受け取れなくなります"))return;
-    setMsg({});setBusy(true);
-    const r=await myCallCF("setPageEmail",{token,action:"remove"});
-    setBusy(false);
-    if(!r||!r.ok){setMsg({error:myCfMsg(r,MY_PAGE_EMAIL_UNAVAILABLE)});return;}
-    setSt({registered:false,masked:""});setMsg({ok:"メールアドレスを削除しました"});
-  };
+// ---- 自分専用のURLをなくしたとき（2026-10-08 ユーザー指示「URLをなくしたとき用のメールアドレスをアカウント登録で解決・統一」）----
+// 以前は個別URLにメールアドレスを任意で登録し、なくしたら CF recoverPageUrl でURLを送り直していた（setPageEmail・recoverPageUrl）。
+// いまはマイシフトのアカウント（メール＋パスワード）に一本化した: 個別URLのお店をアカウントに追加しておけば（MyPageAccountLinkBox・CF linkStaffPage）、
+// URLをなくしてもアカウントでログインして見られる。追加していない人はお店の管理者にURLを再発行してもらう。
+// CF・ルール・保存済みのアドレス（CF 専用の置き場）は残してある（クライアントから呼ばなくなっただけ）
+const MY_PAGE_LOST_NOTE="アカウントに追加しておけば、URLをなくしてもメールアドレスとパスワードでログインして見られます。";
+// マイシフトのアカウントの画面（#/me）を開く。search を変えて開き直す（App は起動時の URL で一度だけ画面を決めるため、ハッシュだけ変えても描き替わらない）
+function myOpenAccountScreen(){
+  const u=buildMyAccountUrl(myPageBaseUrl());
+  const same=window.location.search==="?openExternalBrowser=1";
+  window.location.assign(u);
+  if(same)window.location.reload();
+}
+// 個別URLの設定タブの案内（以前のメールアドレスの欄の位置）。追加の操作はすぐ上の「マイシフトのアカウントに追加」
+function MyPageLostNote(){
   return(
-    <section style={MY_SECTION} data-my-section="pageEmail" data-my-page-email={st===undefined?"loading":st.error?"error":st.registered?"set":"none"}>
-      <div style={MY_SECTION_TITLE}>URLをなくしたとき用のメールアドレス（任意）</div>
-      <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>登録しておくと、URLをなくしたときにシフト募集の画面からこのアドレスへURLを送り直せます。登録しなくても、これまでどおり使えます。</div>
-      {st===undefined&&<div style={{fontSize:14,color:"var(--c-text3)"}}>確認しています…</div>}
-      {st&&st.error&&<MyMessage error={MY_PAGE_EMAIL_UNAVAILABLE}/>}
-      {st&&!st.error&&st.registered&&!editing&&<div>
-        <div data-my-page-email-masked={st.masked} style={{fontSize:15,color:"var(--c-text)",marginBottom:10,wordBreak:"break-all"}}>登録済み: {st.masked}</div>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-          <button data-my-action="changePageEmail" onClick={()=>{setEditing(true);setMsg({});}} style={AGray}>変更</button>
-          <button data-my-action="removePageEmail" disabled={busy} onClick={remove} style={{...AGray,opacity:busy?.6:1}}>削除</button>
-        </div>
-      </div>}
-      {st&&!st.error&&(!st.registered||editing)&&<div>
-        <MyField label="メールアドレス" type="email" inputMode="email" autoComplete="email" value={email} maxLength={254} data-my-input="pageEmail" onChange={e=>{setEmail(e.target.value);setMsg({});}}/>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-          <button data-my-action="savePageEmail" disabled={busy} onClick={save} style={{...AB,opacity:busy?.6:1}}>{busy?"登録中…":"登録してURLを送る"}</button>
-          {editing&&<button onClick={()=>{setEditing(false);setEmail("");setMsg({});}} style={AGray}>やめる</button>}
-        </div>
-      </div>}
-      <MyMessage {...msg}/>
+    <section style={MY_SECTION} data-my-section="pageLost">
+      <div style={MY_SECTION_TITLE}>URLをなくしたときのために</div>
+      <div data-my-page-lost-note="1" style={{fontSize:14,color:"var(--c-text2)",lineHeight:1.8}}>{MY_PAGE_LOST_NOTE}上の「マイシフトのアカウントに追加」から追加できます。</div>
     </section>
   );
 }
-// URLをなくしたとき（募集URLの画面・#/me の最初の画面）。画面に URL を出さず、結果は登録の有無に関係なく同じ文言（CF が返す）
-function MyPageRecoverBox(){
-  const[email,setEmail]=useState("");
-  const[msg,setMsg]=useState({});
-  const[busy,setBusy]=useState(false);
-  const send=async()=>{
-    setMsg({});
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())){setMsg({error:"メールアドレスの形が正しくありません"});return;}
-    setBusy(true);
-    const r=await myCallCF("recoverPageUrl",{email:email.trim()});
-    setBusy(false);
-    if(!r||!r.ok){setMsg({error:myCfMsg(r,"いまは送れません（サーバー側の準備中か、通信できません）。時間をおいてもう一度お試しください")});return;}
-    setMsg({ok:String(r.message||"登録されているアドレスであれば、個別URLを送りました")});
-  };
+// URLをなくした人への案内（募集URLの画面・マイシフトのログイン画面）。inAuth: マイシフトのログイン画面の中（ログインはその画面の上でできる）
+function MyPageRecoverBox({inAuth=false}){
   return(
     <div data-my-page-recover="1">
-      <div style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:10}}>自分専用のURLにメールアドレスを登録していれば、そのアドレスにURLを送り直します。登録していないときは、お店の管理者に新しいURLを発行してもらってください。</div>
-      <MyField label="登録したメールアドレス" type="email" inputMode="email" autoComplete="email" value={email} maxLength={254} data-my-input="recoverEmail" onChange={e=>{setEmail(e.target.value);setMsg({});}}/>
-      <button data-my-action="recoverPage" disabled={busy} onClick={send} style={{...AB,opacity:busy?.6:1}}>{busy?"送信中…":"URLを送る"}</button>
-      <MyMessage {...msg}/>
+      <div style={{fontSize:14,color:"var(--c-text2)",lineHeight:1.8,marginBottom:inAuth?0:12}}>
+        自分専用のURLのお店をマイシフトのアカウントに追加済みなら、{inAuth?"この画面の上からログインしてください":"マイシフト（アカウントの画面）からログインしてください"}。
+        追加していない場合は、お店の管理者にURLの再発行を頼んでください。
+      </div>
+      {!inAuth&&<button data-my-action="openAccount" onClick={myOpenAccountScreen} style={{...AB,width:"100%"}}>マイシフトにログインする</button>}
     </div>
   );
 }
@@ -3208,8 +3162,8 @@ function MyPageSettingsTab({me,personal,page,shopId,shopName,token,payUnlocked,s
       {!payUnlocked&&<div data-my-pin-note="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,padding:"0 4px",marginBottom:16}}>月間目標と暗証番号の変更は、給料タブで暗証番号を入れると表示されます。</div>}
       <MyPushSection base={me&&me.base}/>
       <MyPageAccountLinkBox token={token} shopId={shopId} shopName={shopName} name={page.name} staffUser={staffUser} onLogin={onAccountLogin}/>
-      {/* 個別URLは設定の一番下に置く（2026-10-04 ユーザー指示）。メールの登録はその上 */}
-      <MyPageEmailBox token={token}/>
+      {/* 個別URLは設定の一番下に置く（2026-10-04 ユーザー指示）。なくしたときの案内はその上（以前のメールアドレスの欄の位置） */}
+      <MyPageLostNote/>
       <section style={MY_SECTION} data-my-section="page">
         <div style={MY_SECTION_TITLE}>あなたの個別URL</div>
         <div style={{fontSize:14,color:"var(--c-text2)",lineHeight:1.8,marginBottom:10}}>{shopName}の「{page.name}」さんのページです。</div>

@@ -2067,12 +2067,19 @@ test("URLをなくしたとき用のメールアドレス（C）: 形・伏せ�
   assert.ok(!P.planRecoverPageUrlCF({ ...base, email: "other@example.com", index: { [T]: true }, emailRecs: { [T]: cur } }).mail, "記録と違うアドレスには送らない");
 });
 
-test("URLをなくしたとき用のメールアドレス（C）: ルールは CF 専用・クライアントは CF を呼ぶだけ・入口はゲートの下・index.js の配線", () => {
+test("URLをなくしたとき用のメールアドレス（C）: ルールは CF 専用・クライアントはもう呼ばない（2026-10-08 アカウントに一本化）・入口はゲートの下・index.js の配線は残す", () => {
   const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "database.rules.json"), "utf8")).rules;
   ["staffPageEmails", "staffPageEmailIndex", "staffPageEmailRate"].forEach(k => assert.deepStrictEqual(rules[k], { ".read": false, ".write": false }, k));
   const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
   assert.ok(!/staffPageEmail/.test(my), "クライアントはアドレスの置き場を読み書きしない");
-  assert.ok(/myCallCF\("setPageEmail"/.test(my) && /myCallCF\("recoverPageUrl"/.test(my));
+  // 2026-10-08: URLをなくしたときはマイシフトのアカウントへ誘導する。クライアントは setPageEmail・recoverPageUrl を呼ばない（CF は残す）
+  const src = ["app-utils.js", "app-my-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"]
+    .map(f => fs.readFileSync(path.join(ROOT, f), "utf8")).join("\n");
+  assert.ok(!/myCallCF\("(setPageEmail|recoverPageUrl)"/.test(src) && !/MyPageEmailBox/.test(src), "クライアントから呼ばない");
+  const st = my.slice(my.indexOf("function MyPageSettingsTab("), my.indexOf("// 個別URLの入口。"));
+  assert.ok(st.indexOf("<MyPageAccountLinkBox") >= 0 && st.indexOf("<MyPageLostNote/>") > st.indexOf("<MyPageAccountLinkBox"), "なくしたときの案内はアカウントに追加の下");
+  const rb = my.slice(my.indexOf("function MyPageRecoverBox("), my.indexOf("function MyPageRecoverScreen("));
+  assert.ok(/myOpenAccountScreen/.test(rb) && /URLの再発行を頼んでください/.test(rb) && !/<input|MyField/.test(rb), "送り直しの入力は無く、#/me への案内とボタン");
   const main = fs.readFileSync(path.join(ROOT, "app-main.js"), "utf8");
   assert.ok(/onOpenPageRecover=\{MY_SCREEN_ENABLED&&urlLocked&&!DEMO_MODE\?/.test(main));
   const idx = fs.readFileSync(path.join(ROOT, "functions", "index.js"), "utf8");
