@@ -1284,6 +1284,9 @@ function MyShiftTab({me,onGoSettings,personal}){
   };
 
   if(links===null)return <MyEmptyState><MyMessage error="お店とのリンクを読み込めませんでした（サーバー側の設定が未反映の可能性があります）"/></MyEmptyState>;
+  // リンクと本人のデータを読み終えるまでは、カレンダーと下の案内（申請しました・リンクの案内）のどちらを出すかが決まらない。
+  // 決まる前にカレンダーを描くと、登録の直後（リンクがまだ無い）にカレンダーが一瞬出てから「申請しました」に切り替わる（2026-10-08 ユーザー報告）
+  if(links===undefined||(!okLinks.length&&P.state==="loading"))return <MyEmptyState><div data-my-loading="1">読み込み中…</div></MyEmptyState>;
   const hasManual=manualList.length>0||Object.keys(P.shifts||{}).length>0;
   // 登録と同時に送ったリンクの申請（myAutoLinkRequest）。承認されるまで「申請しました」を出す
   const linkReq=(()=>{try{const v=JSON.parse(ssGet(SS_MY_LINK_REQ,null)||"null");return v&&v.shopId?v:null;}catch{return null;}})();
