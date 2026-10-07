@@ -2282,7 +2282,6 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
   // 提出一覧 65:00 と食い違い、週上限40hの判定が画面ごとに反転した）。衝突が無い通常時の挙動は不変。
   const shiftByStaffDate=useMemo(()=>{const m=new Map();subs.forEach(s=>{if(!s||!s.shifts)return;Object.keys(s.shifts).forEach(d=>{const sh=s.shifts[d];const k=s.staffName+"|"+d;if(sh&&sh.status==="work"&&!m.has(k))m.set(k,sh);});});return m;},[subs]);
   const _shiftAt=(name,date)=>resolveSubByAlias(n=>shiftByStaffDate.get(n+"|"+date),name,staffAliases);
-  const _workDatesOf=name=>{const names=[name,...(staffAliases[name]||[])];const out=new Set();shiftByStaffDate.forEach((_v,k)=>{const i=k.lastIndexOf("|");if(names.includes(k.slice(0,i)))out.add(k.slice(i+1));});return[...out].sort();};
   const registerAlias=(subName,registeredName)=>{
     const cur=staffAliases[registeredName]||[];
     if(!cur.includes(subName)){
@@ -2375,8 +2374,10 @@ function SubsTab({subs,periods,staffList,onSave,tt,settings={},onSaveSettings,pl
    実測: 9/1 が両方に含まれる2期間で、片方が 9:00-18:00・もう片方が 9:00-13:00 のとき、
    行は「1日超過」バッジ（9:00 と判定）を出すのに、同じ行の週集計と詳細モーダルの週間勤務時間は
    4:00 を数えていた。重複が無い通常時は 28 ケースすべてで現行と同じ分数を返すことを確認済み。 */
-ds.forEach(d=>{const nm=_min(resolvedName,d);if(limitStateOf(nm,typeLim.daily)==="over")dailyVio=true;});const wkSet2=new Set(),moSet2=new Set();ds.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet2.add(fd(mon));moSet2.add(d.slice(0,7));});wkSet2.forEach(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=pd(monStr);dd.setDate(dd.getDate()+i);tot+=_min(resolvedName,fd(dd));}weekMap[monStr]=tot;});moSet2.forEach(mo=>{let tot=0;const[yy,mm]=mo.split("-").map(Number);const dim=new Date(yy,mm,0).getDate();for(let i=1;i<=dim;i++)tot+=_min(resolvedName,`${mo}-${String(i).padStart(2,"0")}`);monthMap[mo]=tot;});let _awCache=null;const _allWork=()=>(_awCache||(_awCache=_workDatesOf(resolvedName)));/* 上限を窓ごとに見る（目安は判定しない・2026-09-28）。 */
-const _windowStates=(days,upH)=>{const startDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";}).sort();const allWork=_allWork();const r={over:false};for(const sd of startDs){const start=pd(sd);let tot=0;for(const d2 of allWork){if(d2<sd)continue;const diffD=(pd(d2)-start)/86400000;if(diffD>=days)break;tot+=_min(resolvedName,d2);}if(limitStateOf(tot,upH)==="over")r.over=true;}return r;};
+ds.forEach(d=>{const nm=_min(resolvedName,d);if(limitStateOf(nm,typeLim.daily)==="over")dailyVio=true;});const wkSet2=new Set(),moSet2=new Set();ds.forEach(d=>{const dt=pd(d),dow=dt.getDay(),mon=new Date(dt);mon.setDate(dt.getDate()-(dow===0?6:dow-1));wkSet2.add(fd(mon));moSet2.add(d.slice(0,7));});wkSet2.forEach(monStr=>{let tot=0;for(let i=0;i<7;i++){const dd=pd(monStr);dd.setDate(dd.getDate()+i);tot+=_min(resolvedName,fd(dd));}weekMap[monStr]=tot;});moSet2.forEach(mo=>{let tot=0;const[yy,mm]=mo.split("-").map(Number);const dim=new Date(yy,mm,0).getDate();for(let i=1;i<=dim;i++)tot+=_min(resolvedName,`${mo}-${String(i).padStart(2,"0")}`);monthMap[mo]=tot;});/* 上限を窓ごとに見る（目安は判定しない・2026-09-28）。 */
+/* 起点からの n 日間の窓（2週間・任意日数）は app-utils.js の rollingLimitOverWindows（シフト作成タブの紫と同じ関数・2026-10-08）。
+   以前ここにあった「全出勤日を起点からの日数で足す」式と同じ値（出勤でない日の _min は0）。 */
+const _windowStates=(days,upH)=>{const startDs=ds.filter(d=>{const sh=sub.shifts[d];return sh&&sh.status==="work";});return{over:rollingLimitOverWindows({startDates:startDs,minOf:d2=>_min(resolvedName,d2),days,upperHours:upH}).length>0};};
 Object.values(weekMap).forEach(wm=>{if(limitStateOf(wm,typeLim.weekly)==="over")weeklyVio=true;});
 if(typeLim.biweekly){biweeklyVio=_windowStates(14,typeLim.biweekly).over;}
 /* 1ヶ月の上限は月ごとに暦日数で日割り＋残業（attrMonthFrameOf・2026-09-28）。monthMap のキーは "YYYY-MM" */

@@ -1,5 +1,5 @@
 // 2026-09-26 のユーザー指示4件の実ブラウザ回帰テスト。
-//   ① 色で示すと決めた日（12h超・1日の残業が上限超）だけを塗り、
+//   ① 色で示すと決めた日（12h超。1日の残業が上限超は 2026-10-08 から塗らない）だけを塗り、
 //      パネルには出るが塗らないと決めたもの（4h未満・休憩不足）は塗らない
 //   ② 労務の確認パネルを労務判定表の下に置く
 //   ③ シフト表の空欄は公休として数える（全日が空欄の週も 休7）
@@ -132,16 +132,17 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
   const painted = se.purple.map(key).sort();
   const rowOf = (rows, label) => (rows.find(r => r[0] === label) || []).slice(1);
   const pass = {
-    // ① 塗るのは 12h超（田中 9/16）と 1日の残業が上限超（佐藤 9/16）だけ。
+    // ① 塗るのは 12h超（田中 9/16）だけ。1日の残業が上限超（佐藤 9/16・B制）は 2026-10-08 のユーザー指示で塗らなくなった
+    //    （新しい基準の全体は example-labor-purple.js）。
     //    正常な日（田中 9/17）・4h未満（同 9/18）・休憩不足（同 9/20）は塗らない。
     labor_cell_painted: painted.join(",") === [
-      "田中|2026-09-16|start", "田中|2026-09-16|end",
-      "佐藤|2026-09-16|start", "佐藤|2026-09-16|end"].sort().join(","),
+      "田中|2026-09-16|start", "田中|2026-09-16|end"].sort().join(","),
     labor_cell_title: se.purple.every(c => c.title.startsWith("労務の要修正: "))
       && se.purple.some(c => c.title.includes("12h超"))
-      && se.purple.some(c => c.title.includes("1日の残業が上限超")),
+      && !se.purple.some(c => c.title.includes("1日の残業が上限超")),
     // 塗らないと決めたものは、パネルには出るのにセルは塗られない
-    panel_has_unpainted: /4h未満/.test(se.laborPanel || "") && /休憩不足/.test(se.laborPanel || ""),
+    panel_has_unpainted: /4h未満/.test(se.laborPanel || "") && /休憩不足/.test(se.laborPanel || "")
+      && /1日の残業が上限超/.test(se.laborPanel || ""),
     labor_cell_in_legend: se.legendHasLabor === true,
     // ② 労務判定表 → 労務の確認 の順
     panel_below_table: se.order.join(">") === "労務判定表>労務の確認",
