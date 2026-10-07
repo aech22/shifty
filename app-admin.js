@@ -854,6 +854,10 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   const[editName,setEditName]=useState("");
   const[paidKey,setPaidKey]=useState(null);   // 有給日数パネルを開いているスタッフ名
   const[posKey,setPosKey]=useState(null); // ポジション編集中のスタッフ名
+  // 新店開始日（所属店舗の移動・2026-10-08）の入力欄。編集モーダルを開くたびに startEdit が空に戻す
+  const[trShop,setTrShop]=useState("");
+  const[trDate,setTrDate]=useState("");
+  const[trBusy,setTrBusy]=useState(false);
   const isPro=plan==="pro"||plan==="premium";
   const isPremium=plan==="premium";
   const[dragIdx,setDragIdx]=useState(null);
@@ -1000,7 +1004,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
       ?`✓「${n}」を${attrLabelOf(v)}に変更しました（「${last?(last.label||"(名称なし)"):""}」までは${attrLabelOf(old)}のままです）`
       :`✓「${n}」を${attrLabelOf(v)}に変更しました`);
   };
-  const startEdit=n=>{setEditKey(n);setEditName(n);};
+  const startEdit=n=>{setEditKey(n);setEditName(n);setTrShop("");setTrDate("");};
   const cancelEdit=()=>{setEditKey(null);setEditName("");};
   // 賃金設定ページから戻ったら、開いていた編集モーダルを開き直す（全画面の間このタブはアンマウントされている）
   useEffect(()=>{
@@ -1039,6 +1043,59 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     if(rejectAliasCollision(trimmed,n))return;
     onRenameStaff&&onRenameStaff(n,trimmed);
     setEditKey(null);setEditName("");
+  };
+  // ===== 入社日・退社日・新店開始日（2026-10-08）=====
+  // 保存先は settings.staffTenure[名前]（STAFF_KEYED_SETTING_MAPS に登録済み＝改名・削除の後始末は自動）。
+  // シフト作成タブ・Excel・PDF・従業員画面の全員のシフト表で名前を出す期間は visibleStaffList（isStaffInTenure）が決める。
+  const tenureShopName=id=>{const f=[...(companyShops||[]),...(linkedShops||[])].find(s=>s&&s.id===id);return f?(f.name||f.id):null;};
+  // 入社日・退社日を1つ書き換える。v が "" なら消す。入社日 > 退社日になる入力は保存しない（入力欄は元の値へ戻す）
+  const saveTenureDate=(n,field,v,el)=>{
+    const t=staffTenureOf(settings,n);
+    const join=field==="join"?(v||null):t.join,leave=field==="leave"?(v||null):t.leave;
+    const err=staffTenureDateError(join,leave);
+    if(err){tt("▲ "+err);if(el)el.value=(field==="join"?t.join:t.leave)||"";return;}
+    const ns=setStaffTenureField(settings,n,field,v||null);
+    if(ns===settings)return;
+    onSaveSettings&&onSaveSettings(ns);
+  };
+  // 新店開始日を設定する。自店（旧店舗）には transfer を、新店には staff への追加（居なければ）と join＝新店開始日を書く。
+  // 新店の staff はトランザクションで末尾に足し、settings は staffTenure/{名前}/join の1キーだけを update する
+  // （どちらも全体 set() で新店の他のスタッフ・設定を消さない）。新店のオーナーでない端末はルールで拒否されるので、
+  // そのときは自店の transfer だけ保存したうえで、新店側での登録を案内する（黙って失敗させない）。
+  const saveTransfer=async n=>{
+    const sid=trShop,date=trDate;
+    if(!sid){tt("▲ 新店を選んでください");return;}
+    if(!isValidDateStr(date)){tt("▲ 新店開始日を入れてください");return;}
+    const t=staffTenureOf(settings,n);
+    if(t.join&&date<t.join){tt("▲ 新店開始日は入社日より後の日付にしてください");return;}
+    if(t.leave&&date>t.leave){tt("▲ 新店開始日は退社日より前の日付にしてください");return;}
+    const nm=tenureShopName(sid)||"新店";
+    setTrBusy(true);
+    let existed=false;
+    if(firebaseDB){
+      try{const sn=await firebaseDB.ref(`shops/${sid}/staff`).once("value");existed=staffListWithName(sn.val(),n)===null;}catch{/* 読めなくても下の書き込みで確かめる */}
+    }
+    if(existed&&!window.confirm(`${nm}に同じ名前のスタッフ（${n}）がいます。同じ人として扱います。\n${nm}の入社日を${date}にします。よろしいですか？`)){setTrBusy(false);return;}
+    const ns=setStaffTenureField(settings,n,"transfer",{shopId:sid,date});
+    if(ns!==settings&&onSaveSettings)onSaveSettings(ns);
+    const guide=`${nm}側でスタッフ「${n}」を追加し、入社日を${date}に設定してください`;
+    if(!firebaseDB){setTrBusy(false);tt(`△ 新店開始日を保存しました。${nm}へは書き込めませんでした（オフライン）。${guide}`);return;}
+    try{
+      if(!DEMO_MODE)await firebaseDB.ref(`shops/${sid}/staff`).transaction(cur=>{const nx=staffListWithName(cur,n);return nx===null?undefined:nx;});
+      await fbUpd(`shops/${sid}/settings`,staffTransferTargetPatch(n,date));
+      tt(existed?`✓ 新店開始日を保存しました（${nm}の${n}さんの入社日を${date}にしました）`:`✓ 新店開始日を保存しました（${nm}に${n}さんを追加し、入社日を${date}にしました）`);
+    }catch(e){
+      const denied=!!e&&(e.code==="PERMISSION_DENIED"||/permission[_ ]denied/i.test(String(e.message||e)));
+      tt(denied?`△ 新店開始日を保存しました。${nm}の管理者権限が無いため、${guide}`:`△ 新店開始日を保存しました。${nm}へ書き込めませんでした。${guide}`);
+    }
+    setTrBusy(false);
+  };
+  // 解除は自店の transfer だけを消す（新店側の登録・入社日は触らない）
+  const clearTransfer=n=>{
+    const ns=setStaffTenureField(settings,n,"transfer",null);
+    if(ns===settings)return;
+    onSaveSettings&&onSaveSettings(ns);
+    tt("新店開始日を解除しました（新店側の登録はそのままです）");
   };
   // 従業員番号（数字だけ）で企業内の他店舗から呼び出して登録する（2026-09-28）。対象は企業の写しの連携店舗だけ
   // （companyShops。企業に入れていない自分の店舗は読まない）。名前・番号・属性・所属店舗を揃え、有給の付与日数は持ち込まない
@@ -1597,7 +1654,12 @@ const dragIdxRef=useRef(null);
             {isPro&&<span onPointerDown={e=>handleGripPointerDown(e,i)} onPointerMove={handleGripPointerMove} onPointerUp={handleGripPointerUp} onPointerCancel={handleGripPointerCancel} onContextMenu={e=>e.preventDefault()} style={{cursor:"grab",color:dragIdx===i?"var(--c-accent)":"var(--c-text4)",fontSize:16,padding:"0 2px",userSelect:"none",WebkitUserSelect:"none",lineHeight:1,flexShrink:0,touchAction:"none"}}>⠿</span>}
             <span style={{fontSize:13,color:"var(--c-text4)",minWidth:24,textAlign:"center"}}>{staffList.slice(0,i).filter(x=>!isSpacer(x)).length+1}</span>
             {isPro&&<button onClick={()=>toggleColor(n)} title="タップで色を切り替え" style={{width:18,height:18,borderRadius:"50%",background:(staffColors[n]||"black")==="red"?"#FF4757":"#374151",border:"2px solid var(--c-border2)",cursor:"pointer",flexShrink:0,padding:0}}/>}
-            <span style={{flex:1,minWidth:0,fontSize:14,color:hidden?"var(--c-text3)":"var(--c-text)",fontWeight:600}}>{n}</span>
+            <span style={{flex:1,minWidth:0,fontSize:14,color:hidden?"var(--c-text3)":"var(--c-text)",fontWeight:600}}>{n}
+              {/* 入社日・退社日・新店開始日（2026-10-08）。名前の下に小さく出す（行のボタン構成は変えない） */}
+              {(()=>{const bs=staffTenureBadges(settings,n,tenureShopName);return bs.length>0&&<span style={{display:"flex",flexWrap:"wrap",columnGap:8,fontSize:11,fontWeight:400,color:"var(--c-text4)",marginTop:2}}>
+                {bs.map(b=><span key={b.kind} data-staff-tenure={b.kind} title={b.date} style={{whiteSpace:"nowrap"}}>{b.text}</span>)}
+              </span>;})()}
+            </span>
             {/* 賃金は一覧に出さない（誰でも覗ける場面が多い）。設定済みかどうかだけを示す（P6a） */}
             {pay.enabled&&pay.map&&pay.map[n]&&<span data-pay-mark={n} title="賃金設定あり" style={{fontSize:12,fontWeight:700,color:"var(--c-text3)",flexShrink:0}}>¥</span>}
             {/* 専用のURL（個別URL）を発行済みかどうかだけを示す（2026-10-04）。URL のコピー・共有は「編集」の中 */}
@@ -1761,6 +1823,53 @@ const dragIdxRef=useRef(null);
                   {!known&&<option value={cur}>連携していない店舗</option>}
                 </select>
                 <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>他店舗を選ぶと、{shopName||"この店舗"}のシフトではヘルプとして扱われます。所属店舗と勤務時間が重なるとシフト作成タブにエラーが出ます。</div>
+              </>);
+            })()}
+
+            {/* 入社日・退社日（2026-10-08）。入社日を含む期間から退社日を含む期間まで、シフト作成タブ・Excel・PDF・
+                従業員画面の全員のシフト表に名前が出る（判定は app-utils.js の isStaffInTenure）。退社後もこの一覧からは消さない。 */}
+            {(()=>{
+              const t=staffTenureOf(settings,n);
+              const dateIn=(field,label,val)=>(
+                <div style={{display:"flex",alignItems:"center",gap:6,flex:"1 1 160px",minWidth:0}}>
+                  <span style={{fontSize:12,color:"var(--c-text3)",whiteSpace:"nowrap"}}>{label}</span>
+                  <input type="date" key={`${n}:${field}:${val||""}`} defaultValue={val||""} data-staff-tenure-input={field}
+                    onChange={e=>{const v=e.target.value;if(isValidDateStr(v))saveTenureDate(n,field,v,e.target);}}
+                    onBlur={e=>{if(e.target.value===""&&val)saveTenureDate(n,field,"",e.target);}}
+                    style={{...AI,flex:1,minWidth:0,padding:"6px 8px"}}/>
+                  {val&&<button onClick={()=>saveTenureDate(n,field,"")} data-staff-tenure-clear={field} style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:12,cursor:"pointer",padding:"4px",whiteSpace:"nowrap"}}>消す</button>}
+                </div>);
+              return sec("入社日・退社日",<>
+                <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                  {dateIn("join","入社日",t.join)}
+                  {dateIn("leave","退社日",t.leave)}
+                </div>
+                <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>入社日を含む期間から、退社日を含む期間まで、シフト作成タブ・Excel・PDF に名前が出ます。退社後もこの一覧には残ります（過去の期間のため）。</div>
+              </>);
+            })()}
+
+            {/* 新店開始日（所属店舗の移動・2026-10-08）。企業連携の店舗だけ（Premium）。新店開始日を含む期間は
+                この店舗と新店の両方に出し、新店開始日が期間の初日ならこの店舗には出さない。新店では新店開始日を含む期間から出る。 */}
+            {isPremium&&companyLinked&&(()=>{
+              const t=staffTenureOf(settings,n);
+              if(!t.transfer&&!(companyShops||[]).length)return null;
+              if(t.transfer)return sec("新店開始日",<>
+                <div data-staff-transfer-current="1" style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                  <span style={{fontSize:14,color:"var(--c-text)",fontWeight:600}}>{tenureShopName(t.transfer.shopId)||"他の店舗"}　{t.transfer.date}〜</span>
+                  <button onClick={()=>clearTransfer(n)} style={{...AGray,padding:"6px 12px",fontSize:12}}>解除</button>
+                </div>
+                <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>新店開始日を含む期間まで{shopName||"この店舗"}のシフトに出ます（新店開始日が期間の初日ならその期間からは出ません）。解除しても新店側の登録はそのままです。</div>
+              </>);
+              return sec("新店開始日",<>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <select value={trShop} onChange={e=>setTrShop(e.target.value)} data-staff-transfer-shop="1" style={{...selStyle,flex:"1 1 160px",minWidth:0}}>
+                    <option value="">新店を選ぶ</option>
+                    {(companyShops||[]).map(s=><option key={s.id} value={s.id}>{s.name||s.id}</option>)}
+                  </select>
+                  <input type="date" value={trDate} onChange={e=>setTrDate(e.target.value)} data-staff-transfer-date="1" style={{...AI,flex:"1 1 150px",minWidth:0,padding:"6px 8px"}}/>
+                </div>
+                <button onClick={()=>saveTransfer(n)} disabled={trBusy||ownerReadOnly} data-staff-transfer-save="1" style={{...AB,width:"100%",marginTop:8,fontSize:13,padding:"8px 14px",opacity:trBusy||ownerReadOnly?.5:1}}>{trBusy?"保存しています…":"新店開始日を設定する"}</button>
+                <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>新店開始日を含む期間は{shopName||"この店舗"}と新店の両方のシフトに出ます（新店開始日が期間の初日なら{shopName||"この店舗"}には出ません）。新店には、まだ居なければスタッフを追加し、入社日を新店開始日にします。</div>
               </>);
             })()}
 

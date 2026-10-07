@@ -644,7 +644,7 @@ function planUnmarkDistinct(people, a, b) {
 // renameStaffInPay と同じ規則を、update 用の差分パッチで返す（settings も periods も全体 set() しない）。
 // 名前キーのノードを足したら、ここと app-utils.js の両方に足す（テストが照合する）。
 // P3 の laborMonths は renameStaffLaborMonthsPatch、P4 の actuals は renameStaffActualsPatch で移す。
-const STAFF_KEYED_SETTING_MAPS_CF = ["staffColors", "staffAttributes", "staffNumbers", "staffPositions", "staffAliases", "staffWorkplaces", "staffHidden", "paidLeaveGranted", "staffHomeShop"];
+const STAFF_KEYED_SETTING_MAPS_CF = ["staffColors", "staffAttributes", "staffNumbers", "staffPositions", "staffAliases", "staffWorkplaces", "staffHidden", "paidLeaveGranted", "staffHomeShop", "staffTenure"];
 const STAFF_KEYED_PRIVATE_NODES_CF = ["pay"];
 // 月キー付きの名前ノード（shops/{sid}/laborMonths/{YYYY-MM}/{名前}・P3）。app-utils.js の STAFF_KEYED_MONTH_NODES と一致（テストが照合する）
 const STAFF_KEYED_MONTH_NODES_CF = ["laborMonths"];
