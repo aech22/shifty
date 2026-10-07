@@ -38,6 +38,20 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🔴 2026-10-08 分（店舗コードの廃止・入社日と退社日・紫の基準・通知ほか）の本番反映（ユーザーの承認待ち）
+
+**目的**: develop の 2026-10-08 分を本番に出す。掛け持ち対応（下の🟡）のルール・`linkStaffPage` も同じ回で出す。
+**順序**（新ノード＝通知の push があるのでルールが先）:
+- [ ] ルール: database のデプロイを dev → REST で push ノードの書き込み（許可リスト外の endpoint は拒否）を確かめる → 本番
+- [ ] 秘密: `VAPID_PRIVATE_KEY` を本番（ontheshift）に設定する（値は端末の `~/.config/shifty/vapid-private.txt`。リポジトリには無い。公開鍵は app-core.js と functions/notify.js）
+- [ ] CF: notifyNewPeriod・notifyStaffSubmit・notifyDeadlines・linkStaffPage・companyRenameStaff を**名指しで**本番へデプロイする
+      （全関数のデプロイは、削除済みの issueStaffLinkCode・redeemStaffLinkCode の削除を求めてくるため）
+- [ ] クライアント: `/release-to-main`（`?v=` と `build:` を上げる。`sw.js` が shiftyshifty.app の直下で配信されること）
+- [ ] 反映後: 全マニュアルの表紙の「次回の本番反映から使えるようになります」を外して PDF を作り直す（`/Users/hiroshi/shifty-video/manual-src/`）
+**未検証**: 通知の実機（iPhone のホーム画面アプリ・Android・PC）での受信、本物の Firebase でのトリガーの発火
+
+---
+
 ## 🟡 掛け持ち対応（2026-10-05・develop 未マージ）の本番反映
 
 **目的**: 作業ブランチ `claude/nifty-lovelace-6scrq6`（`6cf8a9a`）の2件を本番に出す。①申請の欄で**お店ごとの従業員番号**を入れる（クライアントだけ）。
