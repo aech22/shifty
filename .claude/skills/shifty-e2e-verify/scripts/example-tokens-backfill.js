@@ -136,9 +136,10 @@ const clickExact = (h, t) => h.evaluate(t => { const b = [...document.querySelec
   const F = {};
   h = await open("U2", true);
   try {
-    await h.page.waitForFunction(() => document.body.innerText.includes("期間管理"), { timeout: 20000 });
+    // 2026-10-08 から、オーナーでない端末には管理者画面を描かず管理コードの入力画面を出す
+    await h.page.waitForFunction(() => !!document.querySelector("[data-admin-code-gate]"), { timeout: 20000 });
     await sleep(h, 2500);
-    F.readOnlyBanner = await h.evaluate(() => document.body.innerText.includes("管理者として登録されていません"));
+    F.readOnlyBanner = await h.evaluate(() => !!document.querySelector("[data-admin-code-gate]") && !document.body.innerText.includes("期間管理"));
     await h.evaluate(() => firebase.database().ref("shops/S1/periods/p1/label").set("他端末の改名"));
     await h.evaluate(() => firebase.database().ref("shops/S2/periods/q1/label").set("他端末の改名"));
     await sleep(h, 1500);

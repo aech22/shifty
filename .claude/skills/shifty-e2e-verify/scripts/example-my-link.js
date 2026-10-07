@@ -235,15 +235,14 @@ const cands = (h, uid) => h.evaluate(u => { const el = document.querySelector(`[
     // スタブはルールを評価しないので、オーナーでない端末の拒否（private の読み・owners と private の書き込み）を denyRead/denyWrite で再現する
     const r = await openOwner({ db: d2, uid: "STR", denyRead: ["shops/S1/private", "shops/S1/owners"], denyWrite: ["shops/S1/private", "shops/S1/owners"] });
     try {
-      await waitText(r, "スタッフ一覧");
-      await waitText(r, "この端末は管理者として登録されていません", 8000);
+      // 2026-10-08 から、管理者として登録されていない端末には管理者画面そのものを描かず管理コードの入力画面を出す
+      await waitSel(r, "[data-admin-code-gate]");
       await sleep(r, 800);
-      R.R = { card: (await text(r)).includes("マイシフトのリンク申請") };
-      R.R.edit = await openEdit(r, "佐藤");
-      R.R.readOnlyBanner = (await text(r)).includes("この端末は管理者として登録されていません");
+      R.R = { gate: await r.evaluate(() => !!document.querySelector("[data-admin-code-gate]")), card: (await text(r)).includes("マイシフトのリンク申請") };
       R.R.section = await r.evaluate(() => !!document.querySelector("[data-staff-link]"));
+      R.R.staffTab = (await text(r)).includes("スタッフ一覧");
       R.R.errors = r.errors.slice();
-      V.R_readOnlyHidden = R.R.readOnlyBanner && R.R.edit === "ok" && !R.R.card && !R.R.section;
+      V.R_readOnlyHidden = R.R.gate && !R.R.staffTab && !R.R.card && !R.R.section;
     } finally { await r.browser.close(); }
     const p = await openOwner({ db: d, root: prodRoot() });
     try {

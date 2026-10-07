@@ -291,7 +291,8 @@ window.addEventListener("popstate",applyHomeLaunch);
 // このフラグは doFullSignOut（Firebase Auth を含む完全サインアウト）だけが true にし、実ログイン成立時に false へ戻す。
 // doLogout（店舗セッションだけのログアウト）は立てない（43166ab で外した）＝リロードで実ユーザーが復元され店舗に戻る。
 const AUTH_LOGGED_OUT_LS="ots_authLoggedOut_v1";
-// 店舗コード入力のパース: "shopId"（旧形式）または "shopId.adminKey"（管理コード）
+// 管理コード（"shopId.adminKey"）のパース。2026-10-08 に店舗ID（旧「店舗コード」）だけの入力は廃止したので、
+// adminKey が null なら呼び出し側が拒否する
 function parseShopCode(raw){
   const t=(raw||"").trim();
   const i=t.indexOf(".");

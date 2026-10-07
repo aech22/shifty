@@ -60,6 +60,8 @@ const MYPG_SRC = fs.readFileSync(path.join(__dirname, "..", "..", "..", "..", "f
  * @param {string[]}[o.holdOn]    on() の購読の配信（最初の値もその後の変化も）を止めておくパス（前方一致・2026-10-04）。once() は止めない＝
  *                              「購読がまだ届いていないが、読みにいけば読める」状態。ページの window.__releaseHold(path) で配信する。
  *                              window.__setDenyRead([...]) / window.__setDenyWrite([...]) で拒否するパスを途中で差し替えられる。
+ * @param {boolean}[o.ownerRules] database.rules.json の owners・private の規則を真似る（既定 false＝従来どおり評価しない）。
+ *                                管理コードの照合（owners/{uid} の値が private/adminKey と一致）を通すときに使う（2026-10-08）
  * @param {string[]}[o.denyWrite] set/update/remove を PERMISSION_DENIED で拒否するパス（前方一致）。「ルールが未デプロイで
  *                                users/{uid} に書けない」を再現するときに使う（従業員画面 E1）
  * @param {string} [o.auth]      "accounts" にすると認証が本物に近い形になる（従業員画面 E1・2026-10-04）。既定は従来の
@@ -90,6 +92,7 @@ function makeStub(o) {
   const holdOn = Array.isArray(o.holdOn) ? o.holdOn : [];
   const authMode = o.auth || "simple";
   const authSeed = o.authSeed || { users: {}, cur: null };
+  const ownerRules = !!o.ownerRules;
 
   return `<script>
 (function(){
@@ -114,6 +117,29 @@ function makeStub(o) {
   window.__holdPending=function(p){ var np=_np(p); return HOLD_ON.indexOf(np)>=0; };
   var AUTH_MODE=${JSON.stringify(authMode)};
   var AUTH_SEED=${JSON.stringify(authSeed)};
+  // ownerRules:true のとき、database.rules.json の owners と private の規則だけを真似る（2026-10-08・店舗コードの廃止の回帰用）:
+  // shops/{sid}/private の読み書きと owners の削除はオーナーだけ、owners/{uid} の書き込みは本人の uid で、値が private/adminKey と
+  // 一致するか既にオーナーのとき、private/adminKey の書き込みはオーナーか、まだオーナーが1人もいない店舗だけ。
+  var OWNER_RULES=${JSON.stringify(ownerRules)};
+  var _curUid=function(){ try{ if(AUTH_MODE==="accounts"){ var c=window.__authCur&&window.__authCur(); return c&&c.uid; } return firebase.auth().currentUser&&firebase.auth().currentUser.uid; }catch(e){ return null; } };
+  var _isOwner=function(sid,u){ var o=getPath("shops/"+sid+"/owners"); return !!(u&&o&&o[u]!==undefined&&o[u]!==null); };
+  var _ownerRuleDenied=function(np,v,isWrite){
+    if(!OWNER_RULES) return false;
+    var s=np.split("/"); if(s[0]!=="shops"||!s[1]) return false;
+    var sid=s[1], u=_curUid();
+    if(s[2]==="private"){
+      if(!isWrite) return !_isOwner(sid,u);
+      if(s[3]==="adminKey"){ var ow=getPath("shops/"+sid+"/owners"); return !(_isOwner(sid,u)||!ow||!Object.keys(ow).length); }
+      return !_isOwner(sid,u);
+    }
+    if(s[2]==="owners"&&isWrite){
+      if(!s[3]) return !_isOwner(sid,u);
+      if(v===null||v===undefined) return !_isOwner(sid,u);
+      if(s[3]!==u) return true;
+      return !(_isOwner(sid,u)||v===getPath("shops/"+sid+"/private/adminKey"));
+    }
+    return false;
+  };
   var root=null;
   try{ root=JSON.parse(localStorage.getItem(LS_DB)||"null"); }catch(e){}
   if(!root){ root=SEED; localStorage.setItem(LS_DB, JSON.stringify(root)); }
@@ -153,10 +179,11 @@ function makeStub(o) {
   }
 
   // 書き込みの拒否（denyWrite と、auth:"accounts" のときの users/{uid} の本人・メール認証の条件）
-  function writeDenied(p){
+  function writeDenied(p,v){
     var np=norm(p).join("/");
     var deny=function(){ var err=new Error("PERMISSION_DENIED: Permission denied"); err.code="PERMISSION_DENIED"; (window.__denied=window.__denied||[]).push(np); return err; };
     if(DENY_WRITE.some(function(d){ return np===d||np.indexOf(d+"/")===0; })) return deny();
+    if(_ownerRuleDenied(np,v,true)) return deny();
     if(AUTH_MODE==="accounts"&&(np==="users"||np.indexOf("users/")===0)){
       var segs=np.split("/"), cu=window.__authCur&&window.__authCur();
       if(!cu||cu.isAnonymous||!cu.email||segs[1]!==cu.uid) return deny();
@@ -209,7 +236,7 @@ function makeStub(o) {
         if(p===".info/connected") return Promise.resolve(snap(true));
         (window.__reads=window.__reads||[]).push(p);
         var np=norm(p).join("/");
-        if(DENY_READ.some(function(d){ return np===d||np.indexOf(d+"/")===0; })){
+        if(DENY_READ.some(function(d){ return np===d||np.indexOf(d+"/")===0; })||_ownerRuleDenied(np,null,false)){
           var err=new Error("PERMISSION_DENIED: Permission denied"); err.code="PERMISSION_DENIED"; return Promise.reject(err);
         }
         return Promise.resolve(snap(applyQuery(getPath(p),q)));
@@ -222,7 +249,7 @@ function makeStub(o) {
         return cb;
       },
       off:function(){ for(var i=listeners.length-1;i>=0;i--) if(listeners[i].path===p) listeners.splice(i,1); },
-      set:function(v){ var d=writeDenied(p); if(d) return Promise.reject(d); setPath(p,v); notify(); return Promise.resolve(); },
+      set:function(v){ var d=writeDenied(p,v); if(d) return Promise.reject(d); setPath(p,v); notify(); return Promise.resolve(); },
       update:function(o){ var d=writeDenied(p); if(d) return Promise.reject(d); Object.keys(o||{}).forEach(function(k){ setPath(p+"/"+k,o[k]); }); notify(); return Promise.resolve(); },
       remove:function(){ var d=writeDenied(p); if(d) return Promise.reject(d); setPath(p,null); notify(); return Promise.resolve(); },
       push:function(v){

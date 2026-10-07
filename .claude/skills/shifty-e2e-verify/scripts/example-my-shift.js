@@ -318,8 +318,9 @@ const rowOf = (v, shop) => v.rows.find(r => r.shop === shop) || {};
     const o = await openOwner({ db: seed0(), denyRead: ["shops/S1/private", "shops/S1/owners"], denyWrite: ["shops/S1/private", "shops/S1/owners"], wait: "#root > *" });
     try {
       await sleep(o, 2000);
-      R.J = await o.evaluate(() => ({ publish: !!document.querySelector("[data-period-publish]"), text: document.body.innerText.includes("Excel出力"), readOnly: document.body.innerText.includes("管理者として登録されていません") }));
-      V.J_readOnlyNoPublish = R.J.text && R.J.readOnly && !R.J.publish;
+      // 2026-10-08 から、管理者として登録されていない端末には管理者画面を描かず管理コードの入力画面を出す
+      R.J = await o.evaluate(() => ({ publish: !!document.querySelector("[data-period-publish]"), text: document.body.innerText.includes("Excel出力"), gate: !!document.querySelector("[data-admin-code-gate]") }));
+      V.J_readOnlyNoPublish = !R.J.text && R.J.gate && !R.J.publish;
     } finally { await o.browser.close(); }
   }
   // ---------------- AM: メールのアカウントの「全員のシフト」（2026-10-04）----------------

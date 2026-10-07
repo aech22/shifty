@@ -116,7 +116,7 @@ const clickTab = (page, label) => page.evaluate(l => {
     {
       const h = await openIndex(browser, { signedIn: false, view: "admin", tab: "periods" });
       R.login = {
-        loginScreen: await textHas(h.page, "店舗コードで参加"),
+        loginScreen: await textHas(h.page, "管理コードで参加"),
         googleBtn: await h.page.evaluate(() => [...document.querySelectorAll("button")].some(b => b.innerText.includes("Googleでログイン"))),
         loaded: h.loaded.slice(),
         errors: h.errors.slice(),

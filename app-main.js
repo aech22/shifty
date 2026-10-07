@@ -9,6 +9,48 @@
 // メインアプリ - 3フェーズ初期化
 // ============================================================
 
+// 管理コードの入力画面（2026-10-08・店舗コードの廃止）。この店舗の管理者として登録されていない端末では、
+// 管理者画面（閲覧のみの表示も含む）を描かずにこれを出す。店舗ID だけでは何も見えない。
+function AdminCodeGate({shopName,shopId,blockedMsg,onSubmit,onStaffView,otherShops=[],onSwitchShop,onLogout}){
+  const[code,setCode]=useState("");
+  const[msg,setMsg]=useState("");
+  const[busy,setBusy]=useState(false);
+  const submit=async()=>{
+    if(busy)return;
+    setBusy(true);setMsg("確認中...");
+    const r=await onSubmit(code);
+    setBusy(false);
+    if(r&&r.ok){setMsg("");setCode("");}else setMsg((r&&r.error)||"管理コードが正しくありません");
+  };
+  return(
+    <div data-admin-code-gate={shopId||""} style={{maxWidth:440,margin:"0 auto",padding:"40px 16px 60px"}}>
+      <div style={{background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:12,padding:"22px 18px"}}>
+        <div style={{fontSize:17,fontWeight:700,color:"var(--c-text)",marginBottom:6}}>管理コードを入力してください</div>
+        <div style={{fontSize:13,color:"var(--c-text2)",lineHeight:1.7,marginBottom:16}}>
+          この端末は「{shopName||"この店舗"}」の管理者として登録されていません。管理者の端末の「設定タブ → 店舗管理コード」に表示されているコードを貼り付けると、この端末でも管理者画面を使えるようになります。
+        </div>
+        {blockedMsg?<div style={{fontSize:13,color:"#B45309",lineHeight:1.7}}>{blockedMsg}</div>:<>
+        <div style={{display:"flex",gap:8}}>
+          <input value={code} onChange={e=>{setCode(e.target.value);setMsg("");}} onKeyDown={e=>e.key==="Enter"&&submit()}
+            placeholder="管理コード（店舗ID.キー）" maxLength={100} autoComplete="off"
+            style={{flex:1,minWidth:0,padding:"12px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none"}}/>
+          <button onClick={submit} disabled={busy} style={{padding:"12px 16px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:14,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>登録</button>
+        </div>
+        {msg&&<div data-admin-code-msg="1" style={{fontSize:12,color:msg==="確認中..."?"#F59E0B":"#FF4757",marginTop:8}}>{msg}</div>}
+        </>}
+      </div>
+      {otherShops.length>0&&<div style={{marginTop:16}}>
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:6}}>ほかの店舗に切り替える</div>
+        {otherShops.map(sh=><button key={sh.id} onClick={()=>onSwitchShop(sh.id)} style={{display:"block",width:"100%",textAlign:"left",padding:"11px 14px",marginBottom:6,background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:14,cursor:"pointer"}}>{sh.name}</button>)}
+      </div>}
+      <div style={{display:"flex",gap:8,marginTop:16}}>
+        <button onClick={onStaffView} style={{flex:1,padding:"11px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text2)",fontSize:14,cursor:"pointer"}}>スタッフ画面へ</button>
+        <button onClick={onLogout} style={{flex:1,padding:"11px",background:"rgba(255,71,87,.08)",border:"1px solid rgba(255,71,87,.25)",borderRadius:8,color:"#FF4757",fontSize:14,fontWeight:600,cursor:"pointer"}}>この店舗からログアウト</button>
+      </div>
+    </div>
+  );
+}
+
 function App(){
   const[syncStatus,setSyncStatus]=useState("init");
   const[ready,setReady]=useState(false); // Phase1完了フラグ
@@ -726,6 +768,30 @@ function App(){
     }
   },[rememberAdminKey,claimViaCompany]);
 
+  // 管理コード（shopId.adminKey）を照合して、この端末を店舗の管理者に登録する（2026-10-08・店舗コードの廃止）。
+  // 店舗ID（旧「店舗コード」）だけの入力は受け付けない。照合は owners/{uid} への書き込みそのもので行う
+  // （ルールが private/adminKey との一致を要求する）ので、間違ったキーは保存しない。
+  // 戻り値: {ok:true, shop} か {error}
+  const verifyAdminCode=useCallback(async(raw,expectShopId)=>{
+    const t=String(raw||"").trim();
+    if(!t)return{error:"管理コードを入力してください"};
+    if(staffUserRef.current)return{error:MY_ADMIN_BLOCKED_MSG};
+    const{shopId,adminKey}=parseShopCode(t);
+    if(!adminKey)return{error:"管理コードは「店舗ID.キー」の形です。設定タブの「店舗管理コード」をそのまま貼り付けてください"};
+    // ref() は禁止文字（# $ [ ]）や空パスに対して同期に throw する。入口で弾く
+    if(!shopId||firebaseKeyForbiddenChars(shopId).length||firebaseKeyForbiddenChars(adminKey).length)return{error:"管理コードが正しくありません"};
+    if(expectShopId&&shopId!==expectShopId)return{error:"この店舗の管理コードではありません"};
+    if(!firebaseDB||!firebaseAuth?.currentUser)return{error:"接続できません。再読み込みしてください"};
+    let found=null;
+    try{ found=(await firebaseDB.ref(`global/shops/${shopId}`).once("value")).val(); }
+    catch{ return{error:"確認に失敗しました。もう一度お試しください"}; }
+    if(!found||found.id!==shopId)return{error:"管理コードが正しくありません"};
+    try{ await fbSet(`shops/${shopId}/owners/${firebaseAuth.currentUser.uid}`,adminKey); }
+    catch{ return{error:"管理コードが正しくありません"}; }
+    rememberAdminKey(shopId,adminKey);
+    return{ok:true,shop:found};
+  },[rememberAdminKey]);
+
   // 店舗をアカウントに紐付け（Google/Apple ユーザーのみ）
   const linkShopToAccount=(uid,shopId)=>{
     if(!firebaseDB||!uid)return;
@@ -1004,7 +1070,7 @@ function App(){
     setShops([]);
     setAllLinkedShops([]);
     setUnbound(true);
-    // ルールがauth必須のため匿名セッションに戻す（戻せないとログイン画面の店舗コード参加等が失敗する）
+    // ルールがauth必須のため匿名セッションに戻す（戻せないとログイン画面の管理コード参加等が失敗する）
     await _restoreAnonSession();
   };
 
@@ -1186,18 +1252,17 @@ function App(){
     try{ return (await _callCF(name,{...(payload||{}),companyId:companyInfo.companyId}))||{}; }
     catch(e){ return {error:(e&&e.message)||"保存に失敗しました"}; }
   };
-  // 店舗コードで企業に連携（SetTabの連携店舗一覧の追加ボタン）
+  // 管理コードで企業に連携（企業連携タブの連携店舗一覧の追加ボタン）。
+  // 2026-10-08 から店舗ID（旧「店舗コード」）だけの入力は受け付けない（端末に保存済みのキーを流用する経路も外した）
   const linkStoreToCompany=async(rawCode)=>{
     if(!companyInfo) return {error:"企業アカウントがありません"};
-    // 管理コード（shopId.adminKey）の鍵部分は捨てずにCFへ渡す。CF側は shopId だけでは
-    // ownersに登録しない（linkStoreToCompany）。貼り付けが旧形式の店舗コードでも、この端末が
-    // 既にその店舗の管理キーを持っていれば流用する。
     const {shopId,adminKey}=parseShopCode(rawCode);
+    if(!shopId||!adminKey) return {error:"管理コード（店舗ID.キー）を貼り付けてください。追加する店舗の設定タブの「店舗管理コード」です"};
     try{
-      const {name}=await _callCF("linkStoreToCompany",{companyId:companyInfo.companyId,shopId,adminKey:adminKey||adminKeys[shopId]||""});
+      const {name}=await _callCF("linkStoreToCompany",{companyId:companyInfo.companyId,shopId,adminKey});
       await _refreshCompanyLinkedShops();
       return {name};
-    }catch(e){ return {error:/not-found|正しく/.test((e&&e.message)||"")?"店舗コードが正しくありません":((e&&e.message)||"追加に失敗しました")}; }
+    }catch(e){ return {error:/not-found|正しく/.test((e&&e.message)||"")?"管理コードが正しくありません":((e&&e.message)||"追加に失敗しました")}; }
   };
   // 店舗の追加後の連携店舗一覧の作り直し。**リロード後と同じ集合**を作る必要がある。
   // companies/pub/shops だけで置き換えると、企業に連携していない自分の店舗（accounts/{uid}/shops
@@ -1265,7 +1330,7 @@ function App(){
     if(view!=="admin")return;
     if(!sid||sid==="default")return;
     let cancelled=false;
-    claimOwnership(sid).then(ok=>{ if(!cancelled){ setOwnerReadOnly(!ok); setOwnerClaimedSid(ok?sid:null); } });
+    claimOwnership(sid).then(ok=>{ if(!cancelled){ setOwnerReadOnly(!ok); setOwnerClaimedSid(ok?sid:null); setClaimDoneSid(sid); } });
     return()=>{ cancelled=true; };
     // companyInfo を依存に入れているのは、企業情報の復元（非同期）が claim より後に
     // 終わったときに企業経由のオーナー登録をやり直すため
@@ -1275,6 +1340,10 @@ function App(){
   // shops/{sid}/private/pay と private/payCode は owners しか読めない。**claim が通った店舗でだけ購読する**
   // （先に購読すると、オーナーでない端末では拒否されてリスナーが外れ、あとで claim が通っても戻らない）。
   const[ownerClaimedSid,setOwnerClaimedSid]=useState(null);
+  // claim の結果が出た店舗（成功・失敗とも）。管理者画面の入口の判定に使う（2026-10-08・店舗コードの廃止）:
+  // 結果が出るまでは、この端末にその店舗の管理キーがあれば管理者画面を出し（オフラインでも開ける）、
+  // 無ければ確認中を出す。失敗した店舗では管理者画面を描かず、管理コードの入力画面を出す。
+  const[claimDoneSid,setClaimDoneSid]=useState(null);
   const[payMap,setPayMap]=useState({});
   const[payCodeRec,setPayCodeRec]=useState(null);
   const[payLoaded,setPayLoaded]=useState(false);
@@ -1603,7 +1672,7 @@ function App(){
     // 権限以外の失敗（.validate違反など）で「管理者として登録されていません」と出すと誤誘導になるため文言を分ける
     const denied=!!e&&(e.code==="PERMISSION_DENIED"||/permission[_ ]denied/i.test(String(e.message||e)));
     tt(denied
-      ?"△ 保存できませんでした（この端末は管理者として登録されていません。設定タブの「コードで追加」から登録できます）"
+      ?"△ 保存できませんでした（この端末は管理者として登録されていません。管理コードを入力し直してください）"
       :"△ 保存できませんでした（通信エラー）");
   },[]);
   const fbW=(path,val,kind)=>{ if(firebaseDB) fbSet(path,val).catch(e=>revertAdminWrite(kind||path,e)); };
@@ -1868,44 +1937,31 @@ function App(){
     shopName={shop?.name||""} periods={periods} settings={effectiveSettings} staffList={staffList} subs={subs} plan={plan} syncStatus={syncStatus}
     onSub={staffOnSub} onDeleteSub={staffOnDeleteSub} staffUser={staffUser}/>;
 
-  // 引き継ぎコード（店舗コード / 管理コード shopId.adminKey）でログイン
-  const applyInviteCode=()=>{
-    const raw=inviteCode.trim();
-    if(!raw){setInviteError("店舗コードを入力してください");return;}
-    if(staffUserRef.current){setInviteError(MY_ADMIN_BLOCKED_MSG);return;}
-    if(!firebaseDB){setInviteError("Firebase未接続です");return;}
-    const{shopId:code,adminKey}=parseShopCode(raw);
-    // ref() は禁止文字（# $ [ ]）や空パスに対して「同期に」throwする。下の .catch は
-    // promiseに付くため同期throwを受け取れず、「確認中...」のまま固まる。入口で弾く。
-    if(!code||firebaseKeyForbiddenChars(code).length){setInviteError("コードが正しくありません。もう一度確認してください。");return;}
+  // 管理コード（shopId.adminKey）でこの端末を店舗の管理者に登録してログインする。
+  // 2026-10-08 に店舗ID（旧「店舗コード」）だけでの参加は廃止した（店舗IDはスタッフURLから辿れるため）
+  const applyInviteCode=async()=>{
     setInviteError("確認中...");
-    firebaseDB.ref(`global/shops/${code}`).once("value").then(snap=>{
-      const found=snap.val();
-      if(found&&found.id===code){
-        // 管理コードにadminKeyが含まれていれば保存（claimは管理者画面表示時のlazy claimで行う）
-        if(adminKey) rememberAdminKey(code,adminKey);
-        // Auth ユーザーがいればアカウントにも紐付け
-        if(authUser) linkShopToAccount(authUser.uid,code);
-        // 古いCookie を完全削除（複数店舗対応の遺跡削除）
-        delCookie(CK_SHOP);
-        try{ delCookie("ots_shopIds"); }catch{}
-        // Cookie: 単一店舗のみ保存（上書き）
-        setCookie(CK_SHOP,code,365);
-        // localStorage も単一店舗のみに統一
-        const newShops=[found];
-        ls("shift_shops_v6",newShops);
-        // sessionStorage もクリア（古い状態を削除）
-        sessionStorage.clear();
-        currentShopIdRef.current=code;
-        setCurrentShopId(code);
-        startSubscriptions(code,newShops);
-        setUnbound(false);
-        setInviteError("");
-        setInviteCode("");
-      } else {
-        setInviteError("コードが正しくありません。もう一度確認してください。");
-      }
-    }).catch(()=>setInviteError("確認に失敗しました。もう一度お試しください。"));
+    const r=await verifyAdminCode(inviteCode);
+    if(!r.ok){setInviteError(r.error);return;}
+    const found=r.shop, code=found.id;
+    // Auth ユーザーがいればアカウントにも紐付け
+    if(authUser) linkShopToAccount(authUser.uid,code);
+    // 古いCookie を完全削除（複数店舗対応の遺跡削除）
+    delCookie(CK_SHOP);
+    try{ delCookie("ots_shopIds"); }catch{}
+    // Cookie: 単一店舗のみ保存（上書き）
+    setCookie(CK_SHOP,code,365);
+    // localStorage も単一店舗のみに統一
+    const newShops=[found];
+    ls("shift_shops_v6",newShops);
+    // sessionStorage もクリア（古い状態を削除）
+    sessionStorage.clear();
+    currentShopIdRef.current=code;
+    setCurrentShopId(code);
+    startSubscriptions(code,newShops);
+    setUnbound(false);
+    setInviteError("");
+    setInviteCode("");
   };
 
   // 新規店舗作成
@@ -2074,15 +2130,15 @@ function App(){
         </div>
         </>}
 
-        {/* 店舗コードで参加・新規作成（メール認証フォーム非表示時のみ） */}
+        {/* 管理コードで参加・新規作成（メール認証フォーム非表示時のみ） */}
         {!emailMode&&!companyLoginMode&&<>
-        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:6,fontWeight:600}}>店舗コードで参加（この端末でのみ有効）</div>
+        <div style={{fontSize:12,color:"var(--c-text4)",marginBottom:6,fontWeight:600}}>管理コードで参加（この端末でのみ有効）</div>
         <div style={{display:"flex",gap:8,marginBottom:6}}>
           <input
             value={inviteCode}
             onChange={e=>{setInviteCode(e.target.value);setInviteError("");}}
             onKeyDown={e=>e.key==="Enter"&&applyInviteCode()}
-            placeholder="店舗コードを貼り付け" maxLength={100}
+            placeholder="管理コード（店舗ID.キー）を貼り付け" maxLength={100}
             style={{flex:1,padding:"12px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none"}}
           />
           <button onClick={applyInviteCode}
@@ -2101,7 +2157,8 @@ function App(){
         {/* 注意書き */}
         <div style={{marginTop:20,fontSize:11,color:"var(--c-text4)",textAlign:"center",lineHeight:1.7}}>
           複数端末でデータを同期するにはGoogle/メール認証をご利用ください。<br/>
-          店舗コード・新規作成はこの端末のみ有効です。
+          管理コードは、管理者の端末の「設定タブ → 店舗管理コード」で確認できます。<br/>
+          管理コードでの参加・新規作成はこの端末のみ有効です。
         </div>
         </>}
         <div style={{marginTop:16,paddingTop:14,borderTop:"1px solid var(--c-border)",display:"flex",justifyContent:"center",gap:16,flexWrap:"wrap"}}>
@@ -2164,10 +2221,23 @@ function App(){
             onSub={staffOnSub}
             onDeleteSub={staffOnDeleteSub}
             shopName={shop?.name}/>
+        :(firebaseDB&&!DEMO_MODE&&sid!=="default"&&claimDoneSid===sid&&ownerReadOnly&&ownerClaimedSid!==sid)
+          ?<AdminCodeGate shopName={shop?.name||""} shopId={sid} blockedMsg={staffUser?MY_ADMIN_BLOCKED_MSG:""}
+              onSubmit={async raw=>{
+                const r=await verifyAdminCode(raw,sid);
+                if(r.ok&&currentShopIdRef.current===sid){ setOwnerReadOnly(false); setOwnerClaimedSid(sid); setClaimDoneSid(sid); }
+                return r;
+              }}
+              onStaffView={()=>setView("staff")}
+              otherShops={shops.filter(s=>s.id!==sid)}
+              onSwitchShop={id=>{ currentShopIdRef.current=id; setCurrentShopId(id); ssSave(SS_SHOP,id); setApid(null); startSubscriptions(id); }}
+              onLogout={()=>{ if(window.confirm("この店舗からログアウトしますか？"))doShopLogout(sid); }}/>
+        :(firebaseDB&&!DEMO_MODE&&sid!=="default"&&claimDoneSid!==sid&&ownerClaimedSid!==sid&&!adminKeys[sid])
+          ?<div data-admin-claim-pending="1" style={{textAlign:"center",padding:"60px 16px",color:"var(--c-text3)",fontSize:14}}>管理者の確認中…</div>
         :<AdminView settings={effectiveSettings} periods={periods} subs={subs} staffList={staffList} shops={shops}
               currentShopId={sid} saveSettings={saveSettings} savePeriods={savePeriods} saveSubs={saveSubs}
               saveStaff={saveStaff} saveShops={saveShops}
-              adminCode={adminKeys[sid]?`${sid}.${adminKeys[sid]}`:sid} ownerReadOnly={ownerReadOnly}
+              adminCode={adminKeys[sid]?`${sid}.${adminKeys[sid]}`:null} ownerReadOnly={ownerReadOnly}
               pay={{enabled:!ownerReadOnly&&ownerClaimedSid===sid&&featureEnabled("pay",{plan,companyLink}),loaded:payLoaded,map:payMap,codeRec:payCodeRec,
                 unlockedFor:payUnlockedFor,unlockedDefault:payUnlockedDefault,unlock:unlockPay,lock:()=>setPayUnlockedId(null),
                 save:savePay,rename:renamePay,drop:dropPay,changeCode:changeShopPayCode}}
@@ -2177,7 +2247,7 @@ function App(){
                 save:saveActuals,rename:renameActuals,drop:dropActuals}}
               staffLinks={{enabled:MY_SCREEN_ENABLED&&!DEMO_MODE&&!ownerReadOnly&&ownerClaimedSid===sid,loaded:staffLinksLoaded,map:staffLinkMap,requests:linkRequestMap,
                 rename:renameStaffLinks,drop:dropStaffLinks,reject:rejectLinkRequest,call:callStaffLinkCF,pages:staffPageMap,pageAct:staffPageAct}}
-              onRememberAdminKey={rememberAdminKey} onClaimShop={claimOwnership}
+              onClaimShop={claimOwnership} onVerifyAdminCode={verifyAdminCode}
               plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed} billingSchedule={billingSchedule} billingExempt={billingExempt} companyLink={companyLink}
               setCurrentShopId={id=>{
                 currentShopIdRef.current=id;

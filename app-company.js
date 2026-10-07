@@ -1967,7 +1967,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
               // companyInfo の有無で分岐しない。企業情報の復元は非同期なので押した時点で null でも
               // 企業側の登録は残っていることがあり、片方だけ消すとリロードで一覧へ戻る。
               // App 側の1つの実装（unlinkShopFromAuth）が accounts と companies の両方を消す。
-              if(!window.confirm(`「${shop.name}」の連携を解除しますか？\nシフトデータは削除されません。戻すには店舗コード（設定タブ）が必要です。`))return;
+              if(!window.confirm(`「${shop.name}」の連携を解除しますか？\nシフトデータは削除されません。戻すには管理コード（設定タブ）が必要です。`))return;
               const unlink=onUnlinkStoreFromCompany||onUnlinkShop;
               if(!unlink)return;
               const r=await unlink(shop.id);
@@ -2410,14 +2410,14 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       ):(<>
       <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>このコードを別の端末で入力すると、同じ店舗を管理者として操作できるようになります。<b>スタッフには共有しないでください。</b></div>
       <div style={{display:"flex",alignItems:"center",gap:8,background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,padding:"10px 14px"}}>
-        <span style={{flex:1,fontFamily:"monospace",fontSize:13,color:"var(--c-text)",letterSpacing:"0.05em",wordBreak:"break-all"}}>{adminCode||shopId}</span>
+        <span style={{flex:1,fontFamily:"monospace",fontSize:13,color:"var(--c-text)",letterSpacing:"0.05em",wordBreak:"break-all"}}>{adminCode||"（この端末では表示できません）"}</span>
         <button onClick={()=>{
-          const codeVal=adminCode||shopId;
+          const codeVal=adminCode;if(!codeVal)return;
           const copy=()=>{const el=document.createElement("textarea");el.value=codeVal;document.body.appendChild(el);el.select();document.execCommand("copy");document.body.removeChild(el);tt("✓ 管理コードをコピーしました");};
           if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(codeVal).then(()=>tt("✓ 管理コードをコピーしました")).catch(copy);}else{copy();}
         }} style={{padding:"6px 12px",background:"var(--c-accent)",border:"none",borderRadius:8,color:"white",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0}}>コピー</button>
       </div>
-      <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>別端末への共有は「店舗名ボタン → コードで追加」から行えます</div>
+      <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>別の端末では、ログイン画面の「管理コードで参加」か「店舗名ボタン → 管理コードで追加」に入力します</div>
       </>)}
     </AC>}
 

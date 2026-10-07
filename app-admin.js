@@ -16,7 +16,7 @@ const STAFF_LINKS_OFF={enabled:false,loaded:false,map:{},requests:{},rename:()=>
 function staffLinkFollow(tt,...ps){
   Promise.all(ps.map(p=>Promise.resolve(p).catch(()=>({pending:true})))).then(rs=>{if(rs.some(r=>r&&r.pending)&&tt)tt(MY_STAFF_LINK_PENDING_MSG);});
 }
-function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onRememberAdminKey,onClaimShop,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin,onCompanyCall,pay:payProp=null,laborMonths:lmProp,actuals:actProp=null,staffLinks:slProp=null}){
+function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSettings,savePeriods,saveSubs,saveStaff,saveShops,setCurrentShopId,startSubscriptions,onLoadPastSubs,pastSubsLoaded=false,logout,logoutShop,authUser,syncStatus,plan="free",planExpiry=null,paymentFailed=false,billingSchedule=null,billingExempt=false,companyLink=null,onSaveCompanyConfig,allLinkedShops=[],onSwitchToShop,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,onSignInAndLinkGoogle,onSignInAndLinkEmail,onUnlinkShop,adminCode,ownerReadOnly=false,onClaimShop,onVerifyAdminCode,companyInfo=null,onCreateCompany,onChangeCompanyPassword,onRenameCompany,onLinkStoreToCompany,onUnlinkStoreFromCompany,onCompanyLogin,onCompanyCall,pay:payProp=null,laborMonths:lmProp,actuals:actProp=null,staffLinks:slProp=null}){
   const[tab,setTab]=useState(()=>ssGet(SS_TAB,"periods"));
   // 管理者画面の中身を丸ごと差し替える全画面ビュー。null＝通常のタブ表示。
   // {kind:"companyStaff"}＝企業内登録スタッフ（2026-09-28）／{kind:"staffPay",name}＝賃金設定（2026-09-30・P6a）
@@ -62,44 +62,33 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
   const tt=m=>{setToast(m);clearTimeout(tr.current);tr.current=setTimeout(()=>setToast(null),2500);};
   const currentShop=shops.find(s=>s.id===currentShopId)||shops[0];
 
-  // 店舗コード / 管理コード（shopId.adminKey）で既存店舗を追加（global/shopsの直キー読み。Enter/クリック共通）
-  const addShopByCode=()=>{
+  // 管理コード（shopId.adminKey）で既存店舗を追加し、この端末をその店舗の管理者に登録する（Enter/クリック共通）。
+  // 2026-10-08 に店舗ID（旧「店舗コード」）だけの追加は廃止した。照合は App の verifyAdminCode（owners への書き込み）
+  const addShopByCode=async()=>{
     const raw=shopCodeInput.trim();
-    if(!raw){setShopCodeError("コードを入力してください");return;}
+    if(!raw){setShopCodeError("管理コードを入力してください");return;}
     const{shopId:code,adminKey}=parseShopCode(raw);
-    // ref() は禁止文字（# $ [ ]）や空パスに対して「同期に」throwする。下の .catch は
-    // promiseに付くため同期throwを受け取れず、「確認中...」のまま固まる。入口で弾く。
-    // プラン上限より前に置く（不正なコードでアップグレード案内を出さないため）。
-    if(!code||firebaseKeyForbiddenChars(code).length){setShopCodeError("コードが正しくありません");return;}
+    if(!adminKey){setShopCodeError("管理コード（店舗ID.キー）を貼り付けてください");return;}
+    // プラン上限より前に形を確かめる（不正なコードでアップグレード案内を出さないため）
+    if(!code||firebaseKeyForbiddenChars(code).length){setShopCodeError("管理コードが正しくありません");return;}
+    const already=shops.find(s=>s.id===code);
     const lim=PLAN_LIMITS[plan]?.shops??Infinity;
-    if(shops.length>=lim){setShopCodeMode(false);setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
-    if(!firebaseDB){setShopCodeError("Firebase未接続");return;}
+    if(!already&&shops.length>=lim){setShopCodeMode(false);setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
+    if(!onVerifyAdminCode){setShopCodeError("管理者登録に失敗しました");return;}
     setShopCodeError("確認中...");
-    firebaseDB.ref(`global/shops/${code}`).once("value").then(snap=>{
-      const found=snap.val();
-      if(!found||found.id!==code){setShopCodeError("コードが正しくありません");return;}
-      if(adminKey&&onRememberAdminKey) onRememberAdminKey(code,adminKey);
-      if(shops.find(s=>s.id===code)){
-        if(!adminKey){setShopCodeError("既に追加済みです");return;}
-        if(!onClaimShop){setShopCodeError("管理者登録に失敗しました");return;}
-        setShopCodeError("確認中...");
-        onClaimShop(code).then(ok=>{
-          if(ok){
-            setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");
-            tt("✓ 管理コードを登録しました");
-          }else{
-            setShopCodeError("管理コードが正しくありません");
-          }
-        });
-        return;
-      }
-      const newShops=[...shops,found];
-      saveShops(newShops);
-      if(authUser) fbSet(`accounts/${authUser.uid}/shops/${code}`, true);
-      setCurrentShopId(code);
-      setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");
-      tt(`✓ 「${found.name}」を追加しました`);
-    }).catch(()=>setShopCodeError("確認に失敗しました"));
+    const r=await onVerifyAdminCode(raw);
+    if(!r||!r.ok){setShopCodeError((r&&r.error)||"管理コードが正しくありません");return;}
+    setShopCodeMode(false);setShopMenuOpen(false);setShopCodeInput("");setShopCodeError("");
+    if(already){
+      if(code===currentShopId&&onClaimShop)await onClaimShop(code);
+      tt("✓ 管理コードを登録しました");
+      return;
+    }
+    const found=r.shop;
+    saveShops([...shops,found]);
+    if(authUser) fbSet(`accounts/${authUser.uid}/shops/${code}`, true).catch(e=>console.warn("店舗紐付け失敗:",e));
+    setCurrentShopId(code);
+    tt(`✓ 「${found.name}」を追加しました`);
   };
 
   // 外タップでドロップダウンを閉じる
@@ -164,20 +153,20 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                       <div style={{borderTop:"1px solid var(--c-border)",padding:"8px 10px",display:"flex",gap:6}}>
 
                         <button onClick={()=>{setShopEditMode(v=>!v);setShopCodeMode(false);}} style={{flex:1,padding:"7px",background:"var(--c-bg)",border:"none",borderRadius:8,fontSize:12,fontWeight:600,color:"var(--c-text)",cursor:"pointer"}}>編集</button>
-                        <button onClick={()=>{setShopCodeMode(v=>!v);setShopEditMode(false);setShopCodeInput("");setShopCodeError("");}} style={{flex:1,padding:"7px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,fontSize:12,fontWeight:600,color:"var(--c-text2)",cursor:"pointer"}}>コードで追加</button>
+                        <button onClick={()=>{setShopCodeMode(v=>!v);setShopEditMode(false);setShopCodeInput("");setShopCodeError("");}} style={{flex:1,padding:"7px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,fontSize:12,fontWeight:600,color:"var(--c-text2)",cursor:"pointer"}}>管理コードで追加</button>
                         <button onClick={()=>{
                           const lim=PLAN_LIMITS[plan]?.shops??Infinity;
                           if(shops.length>=lim){setShopMenuOpen(false);setUpgradeReason({type:"shops",limit:lim,plan});return;}
                           const name=prompt("新しい店舗名を入力");if(!name)return;const ns=makeShop(name.trim());const newShops=[...shops,ns];saveShops(newShops);if(authUser&&firebaseDB)fbSet(`accounts/${authUser.uid}/shops/${ns.id}`, true).catch(e=>console.warn("店舗紐付け失敗:",e));setCurrentShopId(ns.id);setShopMenuOpen(false);tt("✓ 店舗を追加しました");
                         }} style={{flex:1,padding:"7px",background:"var(--c-accent)",border:"none",borderRadius:8,fontSize:12,fontWeight:700,color:"white",cursor:"pointer"}}>＋ 新規</button>
                       </div>
-                      {/* 店舗コードで追加パネル */}
+                      {/* 管理コードで追加パネル */}
                       {shopCodeMode&&<div style={{borderTop:"1px solid var(--c-border)",padding:"10px"}}>
-                        <div style={{fontSize:11,color:"var(--c-text3)",marginBottom:6}}>店舗コードを入力して既存店舗を追加</div>
+                        <div style={{fontSize:11,color:"var(--c-text3)",marginBottom:6}}>管理コード（設定タブの「店舗管理コード」）を入力して既存店舗を追加</div>
                         <div style={{display:"flex",gap:6}}>
                           <input value={shopCodeInput} onChange={e=>{setShopCodeInput(e.target.value);setShopCodeError("");}}
                             onKeyDown={e=>e.key==="Enter"&&addShopByCode()}
-                            placeholder="店舗コードを貼り付け"
+                            placeholder="管理コード（店舗ID.キー）を貼り付け"
                             style={{flex:1,padding:"7px 10px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none"}}/>
                           <button onClick={addShopByCode} style={{padding:"7px 10px",background:"var(--c-accent)",border:"none",borderRadius:8,fontSize:12,fontWeight:700,color:"white",cursor:"pointer"}}>追加</button>
                         </div>
@@ -190,8 +179,8 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
                             <button onClick={()=>{const name=prompt("店舗名を変更",sh.name);if(!name)return;saveShops(shops.map(s=>s.id===sh.id?{...s,name:name.trim()}:s));tt("✓ 変更しました");}} style={{padding:"4px 8px",background:"var(--c-bg)",border:"none",borderRadius:4,fontSize:11,color:"var(--c-text3)",cursor:"pointer"}}>名前</button>
                             {/* この操作は店舗を削除しない。Authなら accounts/{uid}/shops から、非Authならこの端末の一覧から外すだけで、
                                 shops/{shopId} も global/shops/{shopId} も残る（クライアントに削除経路は無く、消すのは CF の purgeInactiveShops だけ）。
-                                CompanyTab の同じ操作（:3203）が「解除」と呼んでいるのに合わせる。戻すには店舗コードが要る点が実際の損失。 */}
-                            {shops.length>1&&<button onClick={async()=>{if(!confirm(`「${sh.name}」を一覧から外しますか？\nシフトデータは削除されません。戻すには店舗コード（設定タブ）が必要です。`))return;if(authUser&&onUnlinkShop){const r=await onUnlinkShop(sh.id);tt(r&&r.error?("✕ "+r.error):"✓ 一覧から外しました");}else{const ns=shops.filter(s=>s.id!==sh.id);saveShops(ns);if(sh.id===currentShopId){setCurrentShopId(ns[0].id);startSubscriptions(ns[0].id,ns);}tt("✓ 一覧から外しました");}}} style={{padding:"4px 8px",background:"none",border:"none",borderRadius:4,fontSize:11,color:"#FF4757",cursor:"pointer"}}>解除</button>}
+                                CompanyTab の同じ操作（:3203）が「解除」と呼んでいるのに合わせる。戻すには管理コードが要る点が実際の損失。 */}
+                            {shops.length>1&&<button onClick={async()=>{if(!confirm(`「${sh.name}」を一覧から外しますか？\nシフトデータは削除されません。戻すには管理コード（設定タブ）が必要です。`))return;if(authUser&&onUnlinkShop){const r=await onUnlinkShop(sh.id);tt(r&&r.error?("✕ "+r.error):"✓ 一覧から外しました");}else{const ns=shops.filter(s=>s.id!==sh.id);saveShops(ns);if(sh.id===currentShopId){setCurrentShopId(ns[0].id);startSubscriptions(ns[0].id,ns);}tt("✓ 一覧から外しました");}}} style={{padding:"4px 8px",background:"none",border:"none",borderRadius:4,fontSize:11,color:"#FF4757",cursor:"pointer"}}>解除</button>}
                           </div>
                         ))}
                       </div>}
@@ -227,12 +216,8 @@ function AdminView({settings,periods,subs,staffList,shops,currentShopId,saveSett
               GA4でデモからの「無料で始める」到達を計測できる副次効果もある */}
           <a href={window.location.pathname+"?start=1"} style={{padding:"10px 18px",background:"var(--c-accent)",color:"#fff",borderRadius:8,fontSize:14,fontWeight:700,textDecoration:"none",whiteSpace:"nowrap"}}>無料で始める</a>
         </div>}
-        {ownerReadOnly&&<div style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",borderRadius:8,padding:"12px 16px",marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
-          <div style={{flex:1}}>
-            <div style={{fontSize:13,fontWeight:700,color:"#B45309",marginBottom:2}}>この端末は管理者として登録されていません</div>
-            <div style={{fontSize:12,color:"#92400E"}}>提出データの編集はできますが、設定・期間・スタッフ・候補時間・店舗名の変更は保存できません。変更するには、登録済みの端末の「設定タブ → 管理コード」を「店舗名ボタン → コードで追加」に入力してください。</div>
-          </div>
-        </div>}
+        {/* 「この端末は管理者として登録されていません」の閲覧専用バナーは 2026-10-08 に外した。管理者として登録されていない端末には
+            App が管理者画面そのものを描かず、管理コードの入力画面（AdminCodeGate・app-main.js）を出す */}
         {/* 課金対象外の店舗ではバナーごと出さない（2026-08-31 決定6）。本文が「マイページ → 請求管理」を
             案内しており、ボタンだけ隠すと存在しないタブへ誘導する文言が残るため。契約が無い店舗に
             paymentFailed が立つことはないはずだが、経路として塞いでおく */}

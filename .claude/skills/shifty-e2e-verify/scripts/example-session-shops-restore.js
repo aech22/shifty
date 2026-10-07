@@ -125,9 +125,9 @@ const iconOf = page => page.evaluate(() => ({
     R.A_first = await menuShops(page);
     R.D_adminIcon = await iconOf(page);
     // コードで追加（B店）
-    R.A_codeOpen = await clickText(page, "コードで追加");
+    R.A_codeOpen = await clickText(page, "管理コードで追加");
     await page.waitForTimeout(200);
-    await page.fill('input[placeholder="店舗コードを貼り付け"]', "S2");
+    await page.fill('input[placeholder="管理コード（店舗ID.キー）を貼り付け"]', "S2.K2");
     R.A_add = await clickText(page, "追加");
     await page.waitForFunction(() => /「B店」を追加しました/.test(document.body.innerText), null, { timeout: 5000 }).catch(() => {});
     await page.waitForTimeout(400);
