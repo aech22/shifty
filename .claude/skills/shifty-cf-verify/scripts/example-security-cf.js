@@ -1,11 +1,14 @@
 // 実例: セキュリティ強化（2026-10-08）の Cloud Functions を本物のまま実行する。
 //   1. sendEmailOtp / verifyEmailOtp: 送信回数（uid ごと・アドレスごとに1時間5回）・乱数のコード・再送しても誤りの回数を持ち越す・掃除
 //   2. companyLogin: 企業コードごとの試行回数（5回目から1分・倍・上限30分）・待ちの間は scrypt を回さない・成功で数え直す
+//   3. verifyShopOwner（課金系4エンドポイント）: owners の無い（未claim の）店舗も 403。オーナーは従来どおり通る
+//      （外部の決済サービスのスタブは渡さない。オーナーが通ったことは、照合の後にある「決済情報が見つかりません」の 404 で確かめる。
+//       403 の項目は照合より先の処理しか通らないので、スタブが無くても落ちない＝決済サービスへ届く前に止まっている）
 // 許可側（従来の正しい呼び出しが通る）と拒否側（上限・ロック）を1項目ずつ通す。
 // 使い方: SHIFTY_CF_INDEX=<worktree>/functions/index.js node example-security-cf.js
-// 反証: SHIFTY_CF_INDEX に 1bc0b4f の functions/index.js を渡すと落ちる（上限が無い・再送で回数が戻る）。
+// 反証: SHIFTY_CF_INDEX に 1bc0b4f の functions/index.js を渡すと落ちる（上限が無い・再送で回数が戻る・未claim が通る）。
 "use strict";
-const { loadFunctions, callFn, callRun, makeChecker } = require("./cf-harness.js");
+const { loadFunctions, callFn, callHttp, callRun, makeChecker } = require("./cf-harness.js");
 const crypto = require("crypto");
 // scrypt の呼び出し回数を数える（functions/index.js の verifyPassword が呼ぶ。同じ crypto モジュールを共有する）
 let scryptCalls = 0;
@@ -124,8 +127,35 @@ async function sectionCompanyLogin() {
   check("login: 試行回数は private の下にだけ書く", h.db.get(`companies/${CID}/pub/loginFails`) == null, h.db.get(`companies/${CID}/pub`));
 }
 
+async function sectionShopOwner() {
+  const h = loadFunctions({ indexPath: INDEX,
+    verifyIdToken: async tok => ({ uid: tok.replace(/^tok-/, "") }),
+    data: { shops: { S1: { owners: { OWN: "K" } }, S0: { staff: ["田中"] }, SE: { owners: {} }, "demo-toriMatsu-v1": { staff: ["田中"] } } } });
+  const post = (name, body, uid) => callHttp(h.fns[name], { body, headers: uid ? { Authorization: `Bearer tok-${uid}` } : {} });
+  const portal = (shopId, uid) => post("createPortalSession", { shopId, returnUrl: "https://shiftyshifty.app/" }, uid);
+  let r = await portal("S1", "OWN");
+  check("owner: オーナーは照合を通る（従来どおり。決済情報の無い店舗なので 404）", r.status === 404 && /決済情報が見つかりません/.test(r.body.error), r);
+  r = await portal("S1", "OTHER");
+  check("owner: オーナーでない uid は 403", r.status === 403, r);
+  r = await portal("S0", "ANY");
+  check("owner: owners の無い（未claim の）店舗は 403（以前は移行猶予で通った）", r.status === 403 && /管理者権限がありません/.test(r.body.error), r);
+  r = await portal("SE", "ANY");
+  check("owner: owners が空の店舗も 403", r.status === 403, r);
+  r = await portal("demo-toriMatsu-v1", "ANY");
+  check("owner: デモ店舗は従来どおり 403", r.status === 403, r);
+  r = await portal("S1", null);
+  check("owner: トークンなしは従来どおり 401", r.status === 401, r);
+  r = await post("createCheckoutSession", { shopId: "S0", plan: "pro", successUrl: "https://shiftyshifty.app/", cancelUrl: "https://shiftyshifty.app/" }, "ANY");
+  check("owner: 未claim の店舗では createCheckoutSession も 403", r.status === 403, r);
+  r = await post("changePlan", { shopId: "S0", plan: "premium" }, "ANY");
+  check("owner: 未claim の店舗では changePlan も 403", r.status === 403, r);
+  r = await post("cancelPlanChange", { shopId: "S0" }, "ANY");
+  check("owner: 未claim の店舗では cancelPlanChange も 403", r.status === 403, r);
+}
+
 (async () => {
   await sectionEmailOtp();
   await sectionCompanyLogin();
+  await sectionShopOwner();
   check.done();
 })().catch(e => { console.error(e); process.exit(1); });

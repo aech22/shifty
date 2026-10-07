@@ -127,3 +127,18 @@ test("companyLogin: 照合（scrypt）の前に試行を数え、成功で消す
   assert.ok(iGate > 0 && iVerify > iGate && iReset > iVerify, "数える → 照合 → 成功で消す の順");
   assert.ok(/private\/loginFails/.test(body), "置き場は companies/{id}/private（ルールで閉じている）");
 });
+
+test("verifyShopOwner: owners に uid があるときだけ許可・未claim（owners なし・空）は拒否", () => {
+  assert.strictEqual(S.isShopOwnerOf({ u1: "KEY" }, "u1"), true);
+  assert.strictEqual(S.isShopOwnerOf({ u1: "KEY" }, "u2"), false);
+  assert.strictEqual(S.isShopOwnerOf(null, "u1"), false, "owners が無い店舗（2026-10-08 まで移行猶予で許可していた）");
+  assert.strictEqual(S.isShopOwnerOf({}, "u1"), false);
+  assert.strictEqual(S.isShopOwnerOf({ u1: "" }, "u1"), false);
+  assert.strictEqual(S.isShopOwnerOf({ toString: "x" }, "toString"), true, "自分のキーとして持っているときだけ");
+  assert.strictEqual(S.isShopOwnerOf({}, "toString"), false, "プロトタイプの名前は所有者にしない");
+  assert.strictEqual(S.isShopOwnerOf({ u1: "K" }, undefined), false);
+  const src = fs.readFileSync(path.join(__dirname, "..", "functions", "index.js"), "utf8");
+  const body = src.slice(src.indexOf("async function verifyShopOwner"), src.indexOf("exports.createCheckoutSession"));
+  assert.ok(/SEC\.isShopOwnerOf\(owners, decoded\.uid\)/.test(body), "verifyShopOwner はこの判定を通す");
+  assert.ok(!/移行猶予として許可する/.test(body), "移行猶予の記述を残さない");
+});

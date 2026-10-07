@@ -116,10 +116,20 @@ function companyLoginWaitMsg(waitMs) {
   return `ログインの失敗が続いたため、しばらく待ってから（約${min}分後に）もう一度お試しください`;
 }
 
+// ------------------------------------------------------------
+// 課金系エンドポイントの店舗オーナー照合（verifyShopOwner）
+// ------------------------------------------------------------
+// owners に uid が登録されているときだけ true。owners が無い（未claim の）店舗は false（2026-10-08 まで移行猶予で true だった）
+function isShopOwnerOf(owners, uid) {
+  const o = _o(owners);
+  return !!(o && typeof uid === "string" && uid && Object.prototype.hasOwnProperty.call(o, uid) && o[uid]);
+}
+
 module.exports = {
   EMAIL_OTP_RATE_WINDOW_MS, EMAIL_OTP_RATE_LIMITS, EMAIL_OTP_TTL_MS, EMAIL_OTP_MAX_FAILS, EMAIL_OTP_FAIL_WINDOW_MS,
   EMAIL_OTP_EXHAUSTED_MSG, EMAIL_OTP_INVALID_MSG,
   emailOtpRateStep, emailOtpFailsOf, planEmailOtpSend, planEmailOtpVerify, emailOtpPurgeable, emailOtpRatePurgeable,
   COMPANY_LOGIN_MAX_FAILS, COMPANY_LOGIN_LOCK_BASE_MS, COMPANY_LOGIN_LOCK_MAX_MS, COMPANY_LOGIN_FAIL_RESET_MS,
   companyLoginLockMs, planCompanyLoginAttempt, companyLoginWaitMsg,
+  isShopOwnerOf,
 };

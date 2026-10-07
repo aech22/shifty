@@ -3,6 +3,8 @@ const Stripe = require("stripe");
 const admin = require("firebase-admin");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
+// 認証まわりの回数の制限と店舗オーナーの判定（純粋関数・tests/security.test.js）
+const SEC = require("./security");
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.database();
 
@@ -76,9 +78,8 @@ const STRIPE_PRICES = {
 };
 
 // デモ店舗（クライアントの #/demo が読み込む固定店舗）。
-// この店舗は owners を持たない状態で運用するため、下の verifyShopOwner の
-// 「未claim店舗は許可」という移行猶予をそのまま通過してしまう。デモURLは広告から
-// 誰でも開けるので、課金系のエンドポイントだけは shopId で明示的に拒否する
+// この店舗は owners を持たない状態で運用する。下の verifyShopOwner は 2026-10-08 から owners の無い店舗を 403 にするので
+// 課金系はそこでも止まるが、デモURLは広告から誰でも開けるので、多重防御として shopId で明示的にも拒否する
 // （クライアント側の DEMO_MODE 判定は、直接POSTされれば無いのと同じ）。
 const DEMO_SHOP_IDS = ["demo-toriMatsu-v1"];
 function isDemoShop(shopId) { return DEMO_SHOP_IDS.includes(shopId); }
@@ -106,7 +107,8 @@ function isSafeDbKey(k) {
 
 // ============================================================
 // Firebase IDトークン検証 + 店舗オーナー照合
-// owners未登録（未claim）の店舗は移行猶予として許可する。
+// owners に呼び出し元の uid が登録されている店舗だけを許可する。owners が無い（未claim の）店舗も 403。
+// 2026-10-08 まではここだけ未claim を「移行猶予」として許可していたが、ルール側の猶予は 2026-07-28（dbdd9d9）に終わっている。
 // クライアントは匿名認証を含め常にauth済みのため、トークンなしは拒否してよい。
 // ============================================================
 async function verifyShopOwner(req, shopId) {
@@ -120,7 +122,7 @@ async function verifyShopOwner(req, shopId) {
   }
   const ownersSnap = await db.ref(`shops/${shopId}/owners`).once("value");
   const owners = ownersSnap.val();
-  if (owners && !owners[decoded.uid]) {
+  if (!SEC.isShopOwnerOf(owners, decoded.uid)) {
     return { ok: false, status: 403, error: "この店舗の管理者権限がありません。" };
   }
   return { ok: true, uid: decoded.uid };
@@ -740,7 +742,6 @@ exports.createPortalSession = functions
 // 2026-10-08: 送信回数を呼び出し元 uid ごと・宛先アドレスごとに1時間5回までに制限し（emailOtpRate・CF 専用のパス）、
 // コードは crypto.randomInt で作る（以前は Math.random）。誤りの回数は再送しても0に戻さない（以前は再送のたびに attempts:0）。
 // 判定は functions/security.js（tests/security.test.js が同じ関数を通す）
-const SEC = require("./security");
 async function emailOtpRate(kind, key) {
   const now = Date.now();
   let ok = false;
