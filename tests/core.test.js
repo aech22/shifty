@@ -7538,3 +7538,121 @@ test("helperDisplayOff: 自動表示の入口（helperDisp）が OFF を見て�
   const ent = src.slice(src.indexOf("const helperEntriesOn="), src.indexOf("const helperMinOn="));
   assert.ok(ent.length > 0 && !/isHelperDisplayOff/.test(ent), "合算（helperEntriesOn）が OFF を見ている＝見た目だけの設定が労務に効く");
 });
+
+// ===== 入社日・退社日・新店開始日（settings.staffTenure・2026-10-08）=====
+// 期間は半月。P1=10/1〜10/15、P2=10/16〜10/31、P3=11/1〜11/15
+const TP = {
+  p1: { id: "p1", startDate: "2026-10-01", endDate: "2026-10-15" },
+  p2: { id: "p2", startDate: "2026-10-16", endDate: "2026-10-31" },
+  p3: { id: "p3", startDate: "2026-11-01", endDate: "2026-11-15" },
+};
+const tenureVis = (tenure, p) => u.visibleStaffList(["田中", "佐藤"], { staffTenure: { "田中": tenure } }, p);
+
+test("staffTenure: 入社日は、その日を含む期間から出す（途中・初日・最終日）", () => {
+  // 期間の途中（10/20）
+  assert.deepStrictEqual(tenureVis({ join: "2026-10-20" }, TP.p1), ["佐藤"], "入社日より前に終わる期間には出さない");
+  assert.deepStrictEqual(tenureVis({ join: "2026-10-20" }, TP.p2), ["田中", "佐藤"], "入社日を含む期間から出す");
+  assert.deepStrictEqual(tenureVis({ join: "2026-10-20" }, TP.p3), ["田中", "佐藤"]);
+  // 期間の初日（10/16）
+  assert.deepStrictEqual(tenureVis({ join: "2026-10-16" }, TP.p1), ["佐藤"]);
+  assert.deepStrictEqual(tenureVis({ join: "2026-10-16" }, TP.p2), ["田中", "佐藤"]);
+  // 期間の最終日（10/31）
+  assert.deepStrictEqual(tenureVis({ join: "2026-10-31" }, TP.p1), ["佐藤"]);
+  assert.deepStrictEqual(tenureVis({ join: "2026-10-31" }, TP.p2), ["田中", "佐藤"], "最終日に入社でもその期間に出す");
+});
+
+test("staffTenure: 退社日は、その日を含む期間まで出す", () => {
+  assert.deepStrictEqual(tenureVis({ leave: "2026-10-20" }, TP.p1), ["田中", "佐藤"]);
+  assert.deepStrictEqual(tenureVis({ leave: "2026-10-20" }, TP.p2), ["田中", "佐藤"], "退社日を含む期間には出す");
+  assert.deepStrictEqual(tenureVis({ leave: "2026-10-20" }, TP.p3), ["佐藤"], "退社日より後に始まる期間には出さない");
+  assert.deepStrictEqual(tenureVis({ leave: "2026-10-16" }, TP.p2), ["田中", "佐藤"], "期間の初日に退社でもその期間には出す");
+  assert.deepStrictEqual(tenureVis({ leave: "2026-10-15" }, TP.p2), ["佐藤"], "前の期間の最終日に退社なら次の期間には出さない");
+});
+
+test("staffTenure: 新店開始日が期間の途中なら旧店舗にも出し、初日なら旧店舗には出さない", () => {
+  const mid = { transfer: { shopId: "B", date: "2026-10-20" } };
+  assert.deepStrictEqual(tenureVis(mid, TP.p1), ["田中", "佐藤"]);
+  assert.deepStrictEqual(tenureVis(mid, TP.p2), ["田中", "佐藤"], "期間の途中で移る＝その期間は旧店舗にも出す");
+  assert.deepStrictEqual(tenureVis(mid, TP.p3), ["佐藤"]);
+  const first = { transfer: { shopId: "B", date: "2026-10-16" } };
+  assert.deepStrictEqual(tenureVis(first, TP.p1), ["田中", "佐藤"]);
+  assert.deepStrictEqual(tenureVis(first, TP.p2), ["佐藤"], "新店開始日が期間の初日なら旧店舗には出さない");
+  // 新店の側は join＝新店開始日で、その日を含む期間から出る
+  assert.deepStrictEqual(tenureVis({ join: "2026-10-20" }, TP.p2), ["田中", "佐藤"], "新店では新店開始日を含む期間から出る");
+});
+
+test("staffTenure: 日付が無い・期間が無い・読めない値は出す側に倒す", () => {
+  assert.deepStrictEqual(tenureVis(undefined, TP.p1), ["田中", "佐藤"]);
+  assert.deepStrictEqual(tenureVis({}, TP.p1), ["田中", "佐藤"]);
+  assert.deepStrictEqual(tenureVis({ join: "2026-12-01" }, null), ["田中", "佐藤"], "期間が特定できない");
+  assert.deepStrictEqual(tenureVis({ join: "2026-12-01" }, { id: "x" }), ["田中", "佐藤"], "期間に日付が無い");
+  assert.deepStrictEqual(tenureVis({ join: "12/1", leave: "x", transfer: { shopId: "", date: "2026-10-01" } }, TP.p3), ["田中", "佐藤"], "読めない値は無いものとして扱う");
+  assert.deepStrictEqual(u.visibleStaffList(["田中"], {}, TP.p1), ["田中"], "staffTenure が無い店舗は従来どおり");
+});
+
+test("staffTenure: 非表示（staffHidden）と両方効く", () => {
+  const st = { ...u.hideStaffFrom({}, "佐藤", TP.p2.startDate), staffTenure: { "田中": { join: "2026-11-01" } } };
+  assert.deepStrictEqual(u.visibleStaffList(["田中", "佐藤"], st, TP.p2), []);
+  assert.deepStrictEqual(u.visibleStaffList(["田中", "佐藤"], st, TP.p1), ["佐藤"]);
+});
+
+test("staffTenure: 書き換えは空のエントリをキーごと消し、変化が無ければ同じ参照を返す", () => {
+  const s0 = { shopId: "A" };
+  const s1 = u.setStaffTenureField(s0, "田中", "join", "2026-10-01");
+  assert.deepStrictEqual(s1.staffTenure, { "田中": { join: "2026-10-01" } });
+  assert.strictEqual(u.setStaffTenureField(s1, "田中", "join", "2026-10-01"), s1, "同じ値なら同じ参照（書かない）");
+  const s2 = u.setStaffTenureField(s1, "田中", "transfer", { shopId: "B", date: "2026-11-01" });
+  assert.deepStrictEqual(s2.staffTenure["田中"], { join: "2026-10-01", transfer: { shopId: "B", date: "2026-11-01" } });
+  const s3 = u.setStaffTenureField(u.setStaffTenureField(s2, "田中", "join", ""), "田中", "transfer", null);
+  assert.ok(!("staffTenure" in s3), "最後の項目を消したら staffTenure ごと消す（null/undefined を残さない）");
+  assert.ok(!JSON.stringify(s3).includes("null"));
+  assert.strictEqual(u.setStaffTenureField(s0, "田中", "leave", "bad"), s0, "読めない日付は書かない");
+});
+
+test("staffTenure: 入社日・退社日の検証", () => {
+  assert.strictEqual(u.staffTenureDateError("2026-10-01", "2026-10-31"), null);
+  assert.strictEqual(u.staffTenureDateError("2026-10-01", "2026-10-01"), null);
+  assert.ok(u.staffTenureDateError("2026-11-01", "2026-10-31"));
+  assert.ok(u.staffTenureDateError("2026-02-30", null));
+});
+
+test("staffTenure: 新店の staff への追加と settings の差分（全体 set() しない）", () => {
+  assert.deepStrictEqual(u.staffListWithName(["佐藤"], "田中"), ["佐藤", "田中"]);
+  assert.deepStrictEqual(u.staffListWithName({ 0: "佐藤", 1: "鈴木" }, "田中"), ["佐藤", "鈴木", "田中"], "数値キーのオブジェクト");
+  assert.deepStrictEqual(u.staffListWithName(null, "田中"), ["田中"]);
+  assert.strictEqual(u.staffListWithName(["佐藤", "田中"], "田中"), null, "既に居れば書かない");
+  assert.deepStrictEqual(u.staffTransferTargetPatch("田中", "2026-11-01"), { "staffTenure/田中/join": "2026-11-01" });
+});
+
+test("staffTenure: 一覧の行の表記", () => {
+  const st = { staffTenure: { "田中": { join: "2026-09-01", leave: "2026-10-15", transfer: { shopId: "B", date: "2026-11-01" } } } };
+  assert.deepStrictEqual(u.staffTenureBadges(st, "田中", id => id === "B" ? "梅田店" : null).map(b => b.text), ["入社 9/1", "退社 10/15", "→梅田店 11/1〜"]);
+  assert.deepStrictEqual(u.staffTenureBadges(st, "佐藤", () => null), []);
+});
+
+test("staffTenure: 改名でキーが移り、削除の後始末の一覧に載り、写しには凍結しない", () => {
+  const t = { join: "2026-10-01", transfer: { shopId: "B", date: "2026-11-01" } };
+  const s = u.renameStaffInSettings({ staffTenure: { "田中": t } }, "田中", "田中 太郎");
+  assert.deepStrictEqual(s.staffTenure, { "田中 太郎": t });
+  assert.ok(u.STAFF_KEYED_SETTING_MAPS.includes("staffTenure"), "settingsWithoutStaff（削除の後始末）はこの一覧を見る");
+  assert.ok(u.PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS.includes("staffTenure"));
+  assert.ok(!u.PERIOD_SNAPSHOT_SETTING_KEYS.includes("staffTenure"));
+  // 終了して写しを持つ期間でも、いまの入社日で判定する（写しに焼いていないから効く）
+  const ended = { ...TP.p1, snapshot: { staffList: ["田中", "佐藤"], settings: {} } };
+  const m = u.resolvePeriodMaster(ended, ["田中", "佐藤"], { staffTenure: { "田中": { join: "2026-10-16" } } }, "2026-12-01");
+  assert.strictEqual(m.locked, true);
+  assert.deepStrictEqual(u.visibleStaffList(m.staffList, m.settings, ended), ["佐藤"]);
+  // CF の改名パッチも同じ結果
+  const st = { staffTenure: { "田中": t, "佐藤": { leave: "2026-12-31" } } };
+  const patched = p1bApply(st, cfp.renameStaffSettingsPatch(st, "田中", "田中 太郎"));
+  assert.deepStrictEqual(p1bNorm(patched), p1bNorm(u.renameStaffInSettings(st, "田中", "田中 太郎")));
+});
+
+test("staffTenure: 削除の後始末（settingsWithoutStaff と同じ規則）で消える", () => {
+  // settingsWithoutStaff（app-admin.js の StaffTab 内）は STAFF_KEYED_SETTING_MAPS の各マップから名前を落とす。同じ規則で確かめる
+  // （実際の削除ボタンからの後始末は example-staff-tenure.js が実ブラウザで確かめる）
+  const st = { staffTenure: { "田中": { join: "2026-10-01" }, "佐藤": { leave: "2026-12-31" } } };
+  const ns = { ...st };
+  u.STAFF_KEYED_SETTING_MAPS.forEach(k => { if (ns[k] && ns[k]["田中"] !== undefined) { const m = { ...ns[k] }; delete m["田中"]; ns[k] = m; } });
+  assert.deepStrictEqual(ns.staffTenure, { "佐藤": { leave: "2026-12-31" } });
+});

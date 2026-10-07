@@ -252,6 +252,8 @@ function makeStub(o) {
       set:function(v){ var d=writeDenied(p,v); if(d) return Promise.reject(d); setPath(p,v); notify(); return Promise.resolve(); },
       update:function(o){ var d=writeDenied(p); if(d) return Promise.reject(d); Object.keys(o||{}).forEach(function(k){ setPath(p+"/"+k,o[k]); }); notify(); return Promise.resolve(); },
       remove:function(){ var d=writeDenied(p); if(d) return Promise.reject(d); setPath(p,null); notify(); return Promise.resolve(); },
+      // トランザクション（2026-10-08・新店開始日の staff への追加）。競合は起きないので1回だけ更新関数を呼ぶ。undefined を返したら中止
+      transaction:function(fn){ var d=writeDenied(p); if(d) return Promise.reject(d); var cur=getPath(p); var nx=fn(cur===undefined?null:JSON.parse(JSON.stringify(cur))); if(nx===undefined) return Promise.resolve({committed:false,snapshot:snap(cur)}); setPath(p,nx); notify(); return Promise.resolve({committed:true,snapshot:snap(nx)}); },
       push:function(v){
         var id="-Stub"+(++pushSeq);
         if(v!==undefined) setPath(p+"/"+id,v);
