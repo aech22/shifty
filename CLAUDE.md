@@ -1594,6 +1594,9 @@ npx eslint app-*.js  # 0 errors を維持（CI は同じ9ファイルを npm run
 - **スタイルは inline style のみ**: 外部 CSS ファイル・CSS モジュール追加禁止
 - **`input`/`select`/`textarea` の `fontSize` は 16px 以上**: iOS Safari ズーム防止（2026-07-06に全箇所解消済み。新規追加時に守ること）
 - **CDNスクリプトはSRI付き**: バージョン変更時は integrity ハッシュの再計算が必要（`curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`）
+- **時刻ホイールのマウスホイールは1回＝1行**（2026-10-08）。passive でない wheel のリスナーで、行・ページ単位の wheel は1回1行、ピクセル単位は150ms 空いた最初の1回で1行・続きは 44px（1行の高さ）たまるごとに1行。タッチのスワイプは scroll-snap のまま。回帰は `example-time-wheel.js`
+- **提出状況一覧（SmModal）の未提出は `visibleStaffList(mergeKeepStaff(staffList,period),settings,period)`**（2026-10-08）。その期間に非表示の人（と入社前・退社後の人）は未提出に出さない。期限付き削除で名前を残した人は数える。呼び出し元3か所は settings を渡す（tests/core.test.js が検査）。回帰は `example-smmodal-hidden.js`
+- **マイシフトの新規登録の直後**（2026-10-08）: マイシフトのタブはリンクと本人データを読み終えるまで「読み込み中…」だけを出す（以前はカレンダーを先に描き、リンクが無いと分かってから「申請しました」に描き替えていたので一瞬カレンダーが見えた）。回帰は `example-my-register-flash.js`
 - **時刻を選ぶ欄は、指定が無ければ時刻ホイール（`TimeWheelField`）にする**（2026-10-05 ユーザー指示）。文字入力などの指定があればそれに従う。刻みはその都度ユーザーに決めてもらい `options` で渡す（RULES.md）。提出一覧の詳細モーダルの出勤・退勤の調整値（`adj-{日付}-{start|end}`・「提出値に戻す」）と設定タブの PDF の昼夜の人数の確認時刻（`headcount-{lunch|dinner}`・「出さない」）も同日にホイールにした（刻みは従来の TO＝15分）。実績の出勤・退勤と本部の固定勤務パターンは文字入力のまま残す（ユーザー指示）
 - **スタイル定数**: `AI`（input）/ `AB`（primary button）/ `AD`（delete）/ `AGray`（secondary）が app-core.js に定義済み
 - **console.log は `dlog()` を使う**（DEV_MODE時のみ出力。warn/errorはそのまま）
@@ -1719,7 +1722,7 @@ if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 - **個人リンクコード**: 2026-10-05 にユーザー指示で**機能ごと削除した**（スタッフ専用の URL に一本化）。画面・CF（`issueStaffLinkCode`・`redeemStaffLinkCode`）・ルール（`staffLinkCodes` 等の3ノード）・純粋関数・テストとも無い。以前にコードで作られた紐付け（method "code"）はそのまま有効。リンク済みの人の編集モーダルには解除だけが出る。**本番への反映は未実施**（クライアント → ルール → 関数の削除の順。BACKLOG）
 - **ヘルプ勤務**: 所属店舗が公開済みなら、ヘルプ先の状態に関係なく、全員の表・本人のカレンダー・.ics に PDF どおり出す。給料は所属店舗の賃金で計算し（`myHelperDaysOf`）、内訳に「うち他店でのヘルプ」。ヘルプ先の日にも給料計算用の実績を入れられる（`users/{uid}/overrides/{ヘルプ先}/{日付}`）
 - **スタッフが入れた時刻**: 表示（カレンダー・次のシフト・.ics・全員の表）は常に公開内容。本人の実績は給料計算だけに効く
-- **URLをなくしたとき用のメールアドレス（任意）**: CF `setPageEmail`（登録・変更・削除・状態と控えの送信）・`recoverPageUrl`（送り直し。結果の文言は登録の有無に関係なく同じ）。置き場は CF 専用の `staffPageEmails`・`staffPageEmailIndex`・`staffPageEmailRate`（ルールで読み書き不可）。メールの URL は本番ドメイン固定で `?openExternalBrowser=1` が付く。回帰は `example-my-page-email.js`（画面）と cf-verify の `example-page-email.js`
+- **URLをなくしたときはアカウントに一本化（2026-10-08 ユーザー指示）**: 個別URLの設定タブの「URLをなくしたとき用のメールアドレス」の欄は外し、「マイシフトのアカウントに追加」の下に「アカウントに追加しておけば、URLをなくしてもメールアドレスとパスワードでログインして見られます」の案内だけを出す。募集URLの「URLをなくした場合」と #/me のログイン画面は「追加済みならマイシフトからログイン・未追加ならお店の管理者に再発行を頼む」の案内（募集URLには `?openExternalBrowser=1#/me` で開き直すボタン）。CF `setPageEmail`・`recoverPageUrl`・ルール・`staffPageEmails` は残置（クライアントからは呼ばない・tests/my.test.js が検査）。回帰は `example-my-page-email.js`
 - **掛け持ち（2026-10-05 ユーザー指示・**CF とルールは本番未反映**）**: ①**従業員番号はお店ごとに申請のときに入れる**（設定タブ「勤務先のお店」の申請の欄の「このお店の従業員番号」・`MY_LINK_NUMBER_HINT`）。初期値はリンク済みのお店が無いときだけアカウントの番号（`myLinkRequestNumberDefault`）。アカウントの番号（profile.number）は1つ目のお店の申請（登録と同時の自動申請）に使う。リンク後のお店ごとの番号は従来どおり勤務先の一覧（`settings.staffNumbers`）。#/me の設定に、リンク済みのお店があっても「掛け持ち先のお店を足すとき」の案内を出す。②**専用URL（#/m/）のお店をアカウントに追加**: 個別URLの設定タブの「マイシフトのアカウントに追加」（`MyPageAccountLinkBox`・状態は `myPageAccountLinkState`）。未ログインなら「ログイン・登録して追加する」でログインの画面（戻ると sessionStorage `ss_myPageLinkIntent` で設定タブから始まる）、ログイン済みなら CF `linkStaffPage`（暗証番号を決めていれば入力）で即時にリンク（method "page"・管理者の再承認なし＝ユーザー決定）。**個別URLの本人のデータ（staffPageData）はアカウントへ持ち込まない**（ユーザー決定）。個別URLはそのまま使える。ルールは staffLinks の method に 'page' を足した（既存パスの値の追加＝**クライアント→ルール→CF の順で本番反映**。CF より先にクライアントを出すと「追加」が「関数が無い」で失敗するだけで他は壊れない）。回帰は `example-my-multi-shop.js`（30項目・d781ac6 の配信物で EXIT≠0）と cf-verify の `example-link-staff-page.js`（23項目）
 - **休暇の種別名**: 画面・PDF・全員の表・シフト作成タブからの Excel。期間タブの Excel は提出そのまま（斜線）
 - **ホーム画面のアプリ（2026-10-05・同日2回目で改め）**: manifest.json の start_url は "./" なので、iOS でスタッフ側のURLを「ホーム画面に追加」するとアプリは "/" で開き、管理者の端末では管理者画面になっていた。二段構えで直した。①**iOS のスタッフ側のURL（#/s/・#/m/・#/me）では manifest を置かない**（manifest が無ければ iOS は追加した時点の URL＝ハッシュ込みで開く）。index.html の head のスクリプトが最初の manifest を同じ規則で入れ（静的な link は置かない）、以後は app-core.js の `applyHomeManifest`（`homeManifestPlanOf`）。iOS 以外は data: の manifest（`homeManifestOf`）。②**ホーム画面から開いてハッシュが無いときの保険**: ブラウザのタブでスタッフ側のURLを開いている間は Cookie `ots_homeLaunch` にそのハッシュを置き（管理者側では消す）、ホーム画面のアプリ（`navigator.standalone`・display-mode standalone）で最初に開いたときだけその Cookie で開き先を決めて、アプリ側の localStorage `ots_homeLaunch_v1` に残す（以後はそれだけ＝`homeLaunchRestoreOf`。Cookie が無ければ "admin"）。app-core.js の読み込み時（App が URL を読む前）に `history.replaceState` でハッシュを付ける。**iPhone 実機では未確認**（iOS が追加時に Safari の Cookie をアプリへ写す前提。写らなくても①で開く想定）。既に追加済みのアプリは追加し直しが要る。回帰は `example-my-1005.js` の IOS（iPhone の UA と standalone を差し替え）
@@ -3190,29 +3193,7 @@ adjustedStartFixed:true,extraStart:"23:00",extraEnd:"25:00"}`）。上表がそ�
 
 ---
 
-## 🟢 非表示にしたスタッフを「未提出」に数えるか（提出状況一覧）
 
-**目的**: スタッフ非表示（2026-09-06 実装）は効果範囲を「シフト作成タブ・Excel・PDF から名前が出なくなるだけ」と
-ポップアップで明示しており、**提出状況一覧（`SmModal`）の未提出リストには従来どおり出る**。設計どおりの挙動だが、
-休職などで非表示にした人が締切まで「未提出」に並び続けるため、**管理者が「全員提出済み」を読み取れない**。
-`SmModal` はスタッフ側からも開けるので、休職者の名前が未提出として全員に見え続ける点も併せて判断がいる。
-
-**受け入れ条件**:
-- [ ] 非表示スタッフを未提出に数えるかを決める（**ユーザー判断**）
-  - 案A: 現状維持（数える）。非表示はシフト表の見た目だけの機能という位置づけを保つ。コード変更なし
-  - 案B: その期間で非表示なら未提出から外す。`SmModal` は対象期間を `periods.find(p=>p.id===apid)` で
-    既に解決しているので、`visibleStaffList(staffList, settings, period)` を1回通すだけで
-    呼び出し元3経路すべてに効く（**完了済みタスク「期限付き削除で名前を残した人を『未提出』に数える」と同じ形**）。
-    `SmModal` に `settings` を渡す必要がある（現在は `staffAliases` だけを受けている）
-- [ ] 決めた案を実装する（案Aならポップアップの説明文に「提出状況一覧には残ります」を1行足すだけでよい）
-
-**影響範囲**: app-staff.js（`SmModal`）、呼び出し元3箇所（app-staff.js の StaffView 2箇所／app-admin.js の PeriodsTab 1箇所）の props
-**備考**: バグチェック#113（2026-09-07）で検出・**条件B（仕様判断）に該当**。
-**先例がある**: 2026-09-05（#110・案A）に「期限付き削除で名前を残した人」について同じ問いを立て、
-**数える**と決めている（完了済みタスク参照）。ただしあちらは「その期間にシフト表の列が残る人」で、
-今回は**列が消えている人**なので、同じ答えになるとは限らない。
-
----
 
 ## 🟡 プラン変更の予約（ダウングレード）を、ユーザーが自分で取り消せない
 
