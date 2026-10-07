@@ -124,7 +124,7 @@ function ShiftyIcon({size=32}){
 // onOpenPageRegister: 募集URLの画面から自分専用の個別URLを申請する（2026-10-04）。App が MY_SCREEN_ENABLED のときだけ渡す。引数はいま入っている名前
 // fixedName: スタッフ個別URLの提出タブ（2026-10-04）。承認された名前で固定し、名前の入力欄を出さない（Cookie の名前も読まない・書かない）。
 // bottomOffset: 送信ボタンの帯を下から何px上げるか（個別URLの下部タブの上に出すため）
-// onOpenPageRecover: 自分専用のURLをなくした人がメールで送り直す入口（2026-10-04）。App が MY_SCREEN_ENABLED のときだけ渡す
+// onOpenPageRecover: 自分専用のURLをなくした人への案内の入口（2026-10-04・2026-10-08 からアカウントへの誘導）。App が MY_SCREEN_ENABLED のときだけ渡す
 function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub,onDeleteSub,shopName,urlLocked=false,plan="free",onOpenMy=null,onOpenPageRegister=null,onOpenPageRecover=null,fixedName=null,bottomOffset=0}){
   // Cookieからスタッフ名を復元（個別URLは承認された名前）
   const savedName=fixedName||(shopId&&apid?getCookie(ckStaffKey(shopId,apid))||"":"");

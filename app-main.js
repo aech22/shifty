@@ -40,7 +40,7 @@ function App(){
   const[pageBoot,setPageBoot]=useState(null);
   // 募集URLの画面から開く個別URLの申請（null＝閉じている・文字列＝開いている。値は名前の初期値）
   const[pageRegName,setPageRegName]=useState(null);
-  // 自分専用のURLをなくした人の送り直し（2026-10-04）。募集URLの画面に重ねて表示する
+  // 自分専用のURLをなくした人への案内（2026-10-04・2026-10-08 にメールでの送り直しをやめアカウントへ誘導）。募集URLの画面に重ねて表示する
   const[pageRecoverOpen,setPageRecoverOpen]=useState(false);
   const[currentShopId,setCurrentShopId]=useState(()=>_hasUrlToken?null:ssGet(SS_SHOP,null));
   const currentShopIdRef=useRef(_hasUrlToken?null:ssGet(SS_SHOP,null));
