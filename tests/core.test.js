@@ -7393,3 +7393,21 @@ test("helperDisplayOff: 自動表示の入口（helperDisp）が OFF を見て�
   const ent = src.slice(src.indexOf("const helperEntriesOn="), src.indexOf("const helperMinOn="));
   assert.ok(ent.length > 0 && !/isHelperDisplayOff/.test(ent), "合算（helperEntriesOn）が OFF を見ている＝見た目だけの設定が労務に効く");
 });
+
+// 提出状況一覧（SmModal）の未提出は、その期間で非表示の人を数えない（2026-10-08 ユーザー指示）。
+// 判定は SmModal の中の visibleStaffList で、settings を渡さない呼び出しは非表示の人を数えたままになる＝呼び出し元のドリフト検出
+test("SmModal: 未提出は visibleStaffList を通し、呼び出し元はすべて settings を渡す", () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const read = f => fs.readFileSync(path.join(__dirname, "..", f), "utf8");
+  const staff = read("app-staff.js");
+  const body = staff.slice(staff.indexOf("function SmModal("), staff.indexOf("const notSubmitted=", staff.indexOf("function SmModal(")));
+  assert.ok(/const roster=visibleStaffList\(mergeKeepStaff\(staffList,period\),settings,period\);/.test(body), "未提出の名簿が visibleStaffList を通っていない");
+  const calls = ["app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"]
+    .flatMap(f => (read(f).match(/<SmModal [^\n]*?\/>/g) || []).map(c => [f, c]));
+  assert.ok(calls.length >= 3, "SmModal の呼び出しが見つからない");
+  calls.forEach(([f, c]) => assert.ok(/ settings=\{settings\}/.test(c), `${f} の SmModal に settings が渡っていない`));
+  // 振る舞い: 非表示の人だけが名簿から落ちる（期間の startDate で判定）
+  const P = { id: "p1", startDate: "2026-10-01", endDate: "2026-10-15" };
+  assert.deepStrictEqual(u.visibleStaffList(["田中", "佐藤"], { staffHidden: { "佐藤": true } }, P), ["田中"]);
+  assert.deepStrictEqual(u.visibleStaffList(["田中", "佐藤"], { staffHidden: { "佐藤": [{ from: "2026-11-01", to: null }] } }, P), ["田中", "佐藤"]);
+});

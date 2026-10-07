@@ -387,7 +387,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   if(done)return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName} onMy={onOpenMy}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(fixedName||sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} settings={settings} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(fixedName||sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"50px 20px",textAlign:"center"}}>
         <div style={{fontSize:68,animation:"bI .5s"}}>✓</div>
         <div style={{fontSize:22,fontWeight:700,color:"var(--c-accent)",marginTop:14,marginBottom:8}}>提出完了！</div>
@@ -412,7 +412,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName} onMy={onOpenMy}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(fixedName||sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} settings={settings} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(fixedName||sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:`14px 12px ${120+bottomOffset}px`}}>
         {isPeriodConfirmed(ap)&&<div data-staff-confirmed="1" style={{background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:"var(--c-text2)"}}>この期間のシフトは確定済みです（提出・修正はできません）</div>}
         {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`▲ 締切日（${ap.deadlineDate.replace(/-/g,"/")}）を過ぎています（提出・修正は可能です）`:`締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
@@ -688,7 +688,7 @@ function CellEditPanel({sub,s,d,onApply,onClose}){
 // ============================================================
 // myName を渡すと「その名前の行だけ」操作できる（スタッフ画面用）。削除・セル編集・「✎ 修正」の3つとも同じ絞り込み。
 // 渡さない＝管理者画面からの利用で、従来どおり全行を操作できる。
-function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onDeleteSub,plan="free",staffAliases={},myName=null}){
+function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onDeleteSub,plan="free",staffAliases={},myName=null,settings=null}){
   const period=periods.find(p=>p.id===apid);
   // source:"grid"はシフト作成タブが未提出スタッフのセルに直接作成した管理者入力用のsub（実際の提出ではない）。
   // スタッフ向けの提出状況一覧には表示しない（app-admin.jsのSubsTabと同じ除外基準）。
@@ -701,7 +701,9 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
   // シフト作成グリッド・Excel・PDF・「別名を登録」・名前サジェストと同じ名簿にそろえている（#109/#110）。
   // 呼び出し元は3つ（StaffView から2つ・PeriodsTab から1つ）だが、period はここで apid から解決しているので
   // このマージ1箇所で全経路に効く。名簿の要素を増やすときもここを直せばよい。
-  const roster=mergeKeepStaff(staffList,period);
+  // さらに、その期間で非表示（スタッフタブの「非表示」）の人は未提出に数えない（2026-10-08 ユーザー指示・BACKLOG の案B）。
+  // 判定はシフト作成グリッド・Excel・PDF と同じ visibleStaffList（期間の startDate で判定）。settings を渡さない呼び出しは従来どおり
+  const roster=visibleStaffList(mergeKeepStaff(staffList,period),settings,period);
   // 別名照合: 提出名が登録名そのもの、または登録名の別名配列に含まれれば「提出済み」とみなす（提出一覧タブ/Excel出力と同じ照合）。
   const notSubmitted=roster.filter(n=>!isSpacer(n)&&!submitted.some(s=>s.staffName===n||(staffAliases[n]||[]).includes(s.staffName)));
   const NW=88,CW=86,COMMENT_W=150;

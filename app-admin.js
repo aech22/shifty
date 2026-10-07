@@ -353,7 +353,7 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
             スタッフが「締切後に変更あり」と表示される（バグチェック#59）。管理者の他のセル編集経路
             （シフト作成タブのapplyEditToSubs・提出一覧詳細モーダルのsaveAdj:2930）も同じ理由で立てていない。
             既にスタッフの再提出で立っている値はそのまま引き継ぐ（消すと本物の再提出記録が消えるため）。 */}
-        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} plan={plan} staffAliases={settings.staffAliases||{}} onDeleteSub={subId=>{const a=subs.filter(s=>s.id!==subId);saveSubs&&saveSubs(a,subId);tt("提出を削除しました");}} onEditSub={sub=>{const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=sub;saveSubs&&saveSubs(a);}tt("✓ 更新しました");}}/>
+        <SmModal subs={subs} periods={periods} apid={viewPeriodId} onClose={()=>setViewPeriodId(null)} staffList={staffList} plan={plan} staffAliases={settings.staffAliases||{}} settings={settings} onDeleteSub={subId=>{const a=subs.filter(s=>s.id!==subId);saveSubs&&saveSubs(a,subId);tt("提出を削除しました");}} onEditSub={sub=>{const a=[...subs];const i=a.findIndex(s=>s.id===sub.id);if(i>=0){a[i]=sub;saveSubs&&saveSubs(a);}tt("✓ 更新しました");}}/>
       </div>
     );
   }
