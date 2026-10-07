@@ -1,0 +1,91 @@
+"use strict";
+// ============================================================
+// 認証まわりの回数の制限（2026-10-08・セキュリティ強化）
+// ============================================================
+// 純粋関数だけを置く（index.js と tests/security.test.js が同じ関数を通す）。crypto も DB も読まない。
+// 置き場はすべて Cloud Functions だけが書くパス（database.rules.json に書いていない＝クライアントからは読み書きできない）。
+//   email_otps/{uid}                         = {code, email, emailLink, expiry, attempts, attemptsSince}
+//   emailOtpRate/{uid|email}_{SHA-256の鍵}    = {count, windowStart}（送信回数。staffPageEmailRate と同じ形・同じ1歩の関数）
+
+const { pageEmailRateStepCF } = require("./my-page");
+
+const _o = v => (v && typeof v === "object" ? v : null);
+const err = (code, msg) => ({ error: { code, msg } });
+
+// ------------------------------------------------------------
+// メール連携の確認コード（sendEmailOtp / verifyEmailOtp）
+// ------------------------------------------------------------
+// 1時間あたりの送信回数（呼び出し元 uid ごと・宛先アドレスごと）。超えたら resource-exhausted
+const EMAIL_OTP_RATE_WINDOW_MS = 60 * 60 * 1000;
+const EMAIL_OTP_RATE_LIMITS = { uid: 5, email: 5 };
+const EMAIL_OTP_TTL_MS = 10 * 60 * 1000;           // コードの有効期限（従来どおり10分）
+const EMAIL_OTP_MAX_FAILS = 5;                      // 誤りの上限（従来どおり5回）
+const EMAIL_OTP_FAIL_WINDOW_MS = 60 * 60 * 1000;    // 誤りの回数を持ち越す期間。再送しても0に戻さない
+const EMAIL_OTP_EXHAUSTED_MSG = "確認コードの入力を続けて間違えたため、1時間ほど待ってから確認コードを再送信してください";
+const EMAIL_OTP_INVALID_MSG = "確認コードが無効か期限切れです";
+
+// 送信回数の制限の1歩（staffPageEmailRate と同じ形）。kind は "uid" | "email"
+function emailOtpRateStep(rec, now, kind) {
+  return pageEmailRateStepCF(rec, now, EMAIL_OTP_RATE_LIMITS[kind], EMAIL_OTP_RATE_WINDOW_MS);
+}
+// いまの記録で数えている誤りの回数（期間が過ぎていれば0）
+function emailOtpFailsOf(rec, now) {
+  const r = _o(rec);
+  if (!r) return 0;
+  const since = Number(r.attemptsSince) || 0;
+  if (!(since > 0) || now - since >= EMAIL_OTP_FAIL_WINDOW_MS) return 0;
+  return Math.max(0, Number(r.attempts) || 0);
+}
+// 送信の計画。prev＝いまの email_otps/{uid}。戻り値 {record} | {error}
+// 誤りの回数は再送でも持ち越す（以前は再送のたびに attempts:0 で書き直していた＝再送を挟めば無制限に試せた）
+function planEmailOtpSend(o) {
+  const x = _o(o) || {};
+  const now = Number(x.now) || 0;
+  const prev = _o(x.prev);
+  const fails = emailOtpFailsOf(prev, now);
+  if (fails >= EMAIL_OTP_MAX_FAILS) return err("resource-exhausted", EMAIL_OTP_EXHAUSTED_MSG);
+  if (typeof x.code !== "string" || !/^[0-9]{6}$/.test(x.code)) return err("internal", "確認コードを作れませんでした");
+  const since = fails > 0 ? Number(prev.attemptsSince) : now;
+  return { record: { code: x.code, email: String(x.email || ""), emailLink: String(x.emailLink || ""), expiry: now + EMAIL_OTP_TTL_MS, attempts: fails, attemptsSince: since } };
+}
+// 照合の計画。otp＝いまの email_otps/{uid}。戻り値 {result?, error?, patch}
+// patch は email_otps/{uid} に書く値（null で消す・undefined は変えない）。誤りは比べる前に数える（並べて投げても回数を抜けない）
+function planEmailOtpVerify(o) {
+  const x = _o(o) || {};
+  const now = Number(x.now) || 0;
+  const otp = _o(x.otp);
+  const fails = emailOtpFailsOf(otp, now);
+  if (fails >= EMAIL_OTP_MAX_FAILS) return { ...err("resource-exhausted", EMAIL_OTP_EXHAUSTED_MSG), patch: undefined };
+  if (!otp || typeof otp.code !== "string" || !otp.code || !(Number(otp.expiry) > now)) return { ...err("invalid-argument", EMAIL_OTP_INVALID_MSG), patch: undefined };
+  const code = typeof x.code === "string" ? x.code.trim() : "";
+  if (code !== otp.code) {
+    const n = fails + 1;
+    const since = fails > 0 ? Number(otp.attemptsSince) : now;
+    // 上限に達したらコードを消す（記録は残して誤りの回数を持ち越す）
+    const patch = n >= EMAIL_OTP_MAX_FAILS
+      ? { attempts: n, attemptsSince: since, expiry: Number(otp.expiry) || 0 }
+      : { ...otp, attempts: n, attemptsSince: since };
+    return { ...err(n >= EMAIL_OTP_MAX_FAILS ? "resource-exhausted" : "invalid-argument", n >= EMAIL_OTP_MAX_FAILS ? EMAIL_OTP_EXHAUSTED_MSG : EMAIL_OTP_INVALID_MSG), patch };
+  }
+  return { result: { emailLink: otp.emailLink, email: otp.email }, patch: null };
+}
+// 毎日の掃除で email_otps/{uid} を消してよいか（コードの期限が切れていて、誤りの回数も持ち越していない）
+function emailOtpPurgeable(entry, now) {
+  const e = _o(entry);
+  if (!e) return true;
+  const exp = Number(e.expiry);
+  const expired = !Number.isFinite(exp) || !(exp > now);
+  return expired && emailOtpFailsOf(e, now) === 0;
+}
+// 毎日の掃除で emailOtpRate/{key} を消してよいか（窓が過ぎている）
+function emailOtpRatePurgeable(rec, now) {
+  const r = _o(rec);
+  const ws = r ? Number(r.windowStart) : NaN;
+  return !(ws > 0) || now - ws >= EMAIL_OTP_RATE_WINDOW_MS;
+}
+
+module.exports = {
+  EMAIL_OTP_RATE_WINDOW_MS, EMAIL_OTP_RATE_LIMITS, EMAIL_OTP_TTL_MS, EMAIL_OTP_MAX_FAILS, EMAIL_OTP_FAIL_WINDOW_MS,
+  EMAIL_OTP_EXHAUSTED_MSG, EMAIL_OTP_INVALID_MSG,
+  emailOtpRateStep, emailOtpFailsOf, planEmailOtpSend, planEmailOtpVerify, emailOtpPurgeable, emailOtpRatePurgeable,
+};
