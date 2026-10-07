@@ -220,6 +220,11 @@ const CF_BASE = DEV_MODE
   ? "https://asia-northeast1-thirty-dev-b6958.cloudfunctions.net"
   : "https://asia-northeast1-ontheshift.cloudfunctions.net";
 
+// ===== 通知（Web Push・2026-10-08）=====
+// VAPID の公開鍵（公開してよい値）。送る側の functions/notify.js の VAPID_PUBLIC_KEY_CF と同じ値（tests/notify.test.js が照合する）。
+// 秘密鍵は Cloud Functions の Secret Manager（VAPID_PRIVATE_KEY）にだけある。dev（Spark）は CF が動かないので同じ鍵のままでよい
+const PUSH_VAPID_PUBLIC_KEY = "BPnyDGWCQvzW2fBXzjwi4kIHpKmEAB--D93n8zIB1OSuNP_HAdiQ4jYp9br0Lc9O5QodfNq7nCOOrTPHCpgyhNo";
+
 // ===== 管理キー（オーナー権限のcapability）=====
 // shopIdはスタッフURLからも辿れるため管理権限の根拠にできない。
 // 管理キーは管理者端末のlocalStorageのみに保存し、Firebaseルールの

@@ -404,6 +404,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
           <button onClick={reset} style={{padding:"11px 22px",background:"var(--c-bg)",border:"2px solid var(--c-border)",borderRadius:8,color:"var(--c-text3)",fontSize:14,fontWeight:700,cursor:"pointer"}}>↺ 最初から</button>
         </div>
         {onOpenPageRegister&&<button data-page-register-open="done" onClick={()=>onOpenPageRegister(name)} style={{marginTop:22,background:"none",border:"none",color:"var(--c-text2)",fontSize:14,textDecoration:"underline",cursor:"pointer",padding:"8px 0"}}>自分専用のURLを作る（次から名前の入力が不要）</button>}
+        {onOpenPageRegister&&<div data-push-need-page="1" style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.7}}>{PUSH_STAFF_URL_REQUIRED_MSG}（通知の設定は自分専用のURLの設定タブから）</div>}
         {onOpenPageRecover&&<div><button data-page-recover-open="done" onClick={onOpenPageRecover} style={{background:"none",border:"none",color:"var(--c-text3)",fontSize:13,textDecoration:"underline",cursor:"pointer",padding:"8px 0"}}>自分専用のURLをなくした場合</button></div>}
       </div>
     </div>

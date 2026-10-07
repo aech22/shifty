@@ -2075,3 +2075,61 @@ if(typeof module!=="undefined"&&module.exports){
     MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,myLinkShopRefOfHash,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,planIssueStaffPage,resolveMyPage,MY_PAGE_STATE_MESSAGES,
     approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myPageOpenCandidates,myKnownPageShops,myPickOpenablePage,myOverlayHashOf,buildMyAccountUrl,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myHelpDestRegs,myHelpDestPeriodOptions,myNowPeriodOf,myAllShiftSelection,myAllShiftStack};
 }
+
+// ===== 通知（Web Push・2026-10-08）=====
+// 端末ごとの購読（PushSubscription の JSON）を Firebase に置き、Cloud Functions（functions/notify.js）が送る。
+//   スタッフ個別URL staffPageData/{token}/push/{key} ／ アカウント users/{uid}/push/{key} ／ 管理者 shops/{sid}/private/push/{key}
+// key は endpoint の SHA-256 の16進の先頭32文字（同じ端末を二重に置かない）。ブラウザの購読は1端末1つで、
+// 同じ端末が個別URL・アカウント・管理者のどれで有効にしても endpoint は同じ。オフは「その置き場の記録を消す」だけで、
+// ブラウザの購読そのものは解除しない（他の置き場がまだ使っているかもしれないため）。
+// 募集URL（#/s/）だけで使っている人は本人を特定できないので対象外（PUSH_STAFF_URL_REQUIRED_MSG を出す）。
+const PUSH_KEY_RE=/^[0-9a-f]{32}$/;
+const PUSH_UA_MAX=300;
+const PUSH_STAFF_URL_REQUIRED_MSG="通知を受け取るには自分専用のURLかアカウントが必要です";
+const PUSH_DESCRIPTIONS={
+  staff:"新しい期間のシフト提出が始まったときと、提出締切日の昼12時（まだ提出していないとき）にこの端末へお知らせします。",
+  admin:"スタッフがシフトを提出・再提出したときと、企業へのシフト提出締切日の昼12時（まだ提出していないとき）にこの端末へお知らせします。",
+};
+// sha256Hex は app-utils.js の sha256HexOfBytes（Node のテストは引数で渡す）
+function pushKeyOfEndpoint(endpoint,sha256Hex){
+  if(typeof endpoint!=="string"||!endpoint||typeof sha256Hex!=="function")return"";
+  return String(sha256Hex(new TextEncoder().encode(endpoint))).slice(0,32);
+}
+// applicationServerKey 用。base64url の文字列をバイト列にする
+function pushUrlBase64ToBytes(b64){
+  const s=String(b64||"").replace(/-/g,"+").replace(/_/g,"/");
+  const pad=s+"=".repeat((4-s.length%4)%4);
+  const bin=atob(pad);
+  const out=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)out[i]=bin.charCodeAt(i);
+  return out;
+}
+// PushSubscription.toJSON() から保存する記録を作る。形が足りなければ null（database.rules.json の push/$key の .validate と同じ範囲）
+function pushRecordOf(json,o){
+  const j=json&&typeof json==="object"?json:null;
+  const k=j&&j.keys&&typeof j.keys==="object"?j.keys:null;
+  if(!j||typeof j.endpoint!=="string"||!/^https:\/\//.test(j.endpoint)||j.endpoint.length>1000)return null;
+  if(!k||typeof k.p256dh!=="string"||!k.p256dh||k.p256dh.length>200||typeof k.auth!=="string"||!k.auth||k.auth.length>100)return null;
+  const x=o||{};
+  const rec={endpoint:j.endpoint,keys:{p256dh:k.p256dh,auth:k.auth},at:typeof x.at==="string"?x.at.slice(0,40):""};
+  if(typeof x.uid==="string"&&x.uid)rec.uid=x.uid;
+  if(typeof x.ua==="string"&&x.ua)rec.ua=x.ua.slice(0,PUSH_UA_MAX);
+  return rec;
+}
+// この端末・このブラウザで通知を有効にできるか。env はブラウザから取った値（app-my.js の pushEnvOf）
+//   ok … 有効にできる ／ ios-home … iPhone・iPad の Safari のタブ（ホーム画面に追加したアプリでしか使えない・iOS 16.4 以降）
+//   denied … 通知が拒否されている ／ unsupported … このブラウザ・この接続では使えない
+function pushSupportOf(env){
+  const e=env||{};
+  if(!e.secure)return{state:"unsupported",message:"この接続（http）では通知を使えません。https のアドレスで開いてください。"};
+  if(e.ios&&!e.standalone)return{state:"ios-home",message:"iPhone・iPad では、ホーム画面に追加したアプリから開くと通知を受け取れます（iOS 16.4 以降）。Safari の共有ボタンから「ホーム画面に追加」を選び、追加したアプリでこの画面を開いてから有効にしてください。"};
+  if(!e.hasSW||!e.hasPush||!e.hasNotification){
+    return{state:"unsupported",message:e.ios?"この端末では通知を使えません（iOS 16.4 以降で、ホーム画面に追加したアプリから使えます）。":"このブラウザは通知に対応していません。"};
+  }
+  if(e.permission==="denied")return{state:"denied",message:"この端末では通知がブロックされています。端末（ブラウザ）の設定で、このサイトの通知を許可してから有効にしてください。"};
+  return{state:"ok",message:""};
+}
+
+if(typeof module!=="undefined"&&module.exports){
+  Object.assign(module.exports,{PUSH_KEY_RE,PUSH_UA_MAX,PUSH_STAFF_URL_REQUIRED_MSG,PUSH_DESCRIPTIONS,pushKeyOfEndpoint,pushUrlBase64ToBytes,pushRecordOf,pushSupportOf});
+}

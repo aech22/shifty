@@ -17,6 +17,17 @@ const reactPlugin = require("eslint-plugin-react");
 
 // app-*.js のトップレベル宣言（関数・定数・let）。分割ファイル間で相互参照されるため writable globals として登録する。
 const sharedGlobals = {
+  // 通知（Web Push・2026-10-08）: app-my-utils.js の純粋関数・app-core.js の公開鍵とホーム画面の判定・app-my.js の管理者カード（app-company.js の SetTab が描く）
+  PUSH_STAFF_URL_REQUIRED_MSG: "writable",
+  PUSH_DESCRIPTIONS: "writable",
+  pushKeyOfEndpoint: "writable",
+  pushUrlBase64ToBytes: "writable",
+  pushRecordOf: "writable",
+  pushSupportOf: "writable",
+  PUSH_VAPID_PUBLIC_KEY: "writable",
+  HOME_IOS: "writable",
+  isStandaloneLaunch: "writable",
+  AdminPushCard: "writable",
   // 従業員画面（第2部・2026-10-04）: app-my-utils.js の純粋関数・定数（app-core.js の parseUrl と app-my.js が使う）
   MY_TABS: "writable",
   isMyRouteHash: "writable",

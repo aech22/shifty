@@ -157,6 +157,23 @@
           "payCode": {
             ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
             ".validate": "newData.hasChildren(['hash','salt']) && newData.child('hash').isString() && newData.child('hash').val().length === 64 && newData.child('salt').isString() && newData.child('salt').val().length <= 64"
+          },
+          "push": {
+            ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
+            "$key": {
+              ".validate": "$key.matches(/^[0-9a-f]{32}$/) && newData.hasChildren(['endpoint','keys','at','uid'])",
+              "endpoint": { ".validate": "newData.isString() && newData.val().beginsWith('https://') && newData.val().length <= 1000" },
+              "keys": {
+                ".validate": "newData.hasChildren(['p256dh','auth'])",
+                "p256dh": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200" },
+                "auth": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 100" },
+                "$other": { ".validate": false }
+              },
+              "at": { ".validate": "newData.isString() && newData.val().length <= 40" },
+              "uid": { ".validate": "newData.isString() && newData.val() === auth.uid" },
+              "ua": { ".validate": "newData.isString() && newData.val().length <= 300" },
+              "$other": { ".validate": false }
+            }
           }
         }
       }
@@ -290,6 +307,22 @@
               "breakMin": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1440" },
               "$other": { ".validate": false }
             }
+          }
+        },
+        "push": {
+          "$key": {
+            ".write": "auth != null && auth.uid === $uid && auth.token.email != null",
+            ".validate": "$key.matches(/^[0-9a-f]{32}$/) && newData.hasChildren(['endpoint','keys','at'])",
+            "endpoint": { ".validate": "newData.isString() && newData.val().beginsWith('https://') && newData.val().length <= 1000" },
+            "keys": {
+              ".validate": "newData.hasChildren(['p256dh','auth'])",
+              "p256dh": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200" },
+              "auth": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 100" },
+              "$other": { ".validate": false }
+            },
+            "at": { ".validate": "newData.isString() && newData.val().length <= 40" },
+            "ua": { ".validate": "newData.isString() && newData.val().length <= 300" },
+            "$other": { ".validate": false }
           }
         }
       }
@@ -454,6 +487,21 @@
                 ".validate": false
               }
             }
+          }
+        },
+        "push": {
+          "$key": {
+            ".validate": "$key.matches(/^[0-9a-f]{32}$/) && newData.hasChildren(['endpoint','keys','at'])",
+            "endpoint": { ".validate": "newData.isString() && newData.val().beginsWith('https://') && newData.val().length <= 1000" },
+            "keys": {
+              ".validate": "newData.hasChildren(['p256dh','auth'])",
+              "p256dh": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200" },
+              "auth": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 100" },
+              "$other": { ".validate": false }
+            },
+            "at": { ".validate": "newData.isString() && newData.val().length <= 40" },
+            "ua": { ".validate": "newData.isString() && newData.val().length <= 300" },
+            "$other": { ".validate": false }
           }
         },
         "$other": {

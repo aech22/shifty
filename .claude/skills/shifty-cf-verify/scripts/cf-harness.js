@@ -28,7 +28,9 @@ function makeFunctionsMock() {
   const chain = () => new Proxy(function () {}, {
     get(_t, p) {
       if (p === "HttpsError") return HttpsError;
-      if (p === "onCall" || p === "onRequest" || p === "onRun") return fn => fn;
+      // database.ref(..).onCreate/onWrite/onUpdate/onDelete（2026-10-08 通知で追加）も受け取った関数をそのまま返す。
+      // 呼ぶ側は onCreate なら handler(snap, {params})、onWrite なら handler(change, {params}) の形で渡す（example-notify.js）
+      if (p === "onCall" || p === "onRequest" || p === "onRun" || p === "onCreate" || p === "onWrite" || p === "onUpdate" || p === "onDelete") return fn => fn;
       return chain();
     },
     apply() { return chain(); },
@@ -162,6 +164,12 @@ function loadFunctions(opts = {}) {
     createTransport: () => ({ sendMail: async m => { mails.push(m); return { messageId: `sim-${mails.length}` }; } }),
   };
 
+  const pushes = [];
+  const webpushMock = opts.webpush || {
+    setVapidDetails() {},
+    sendNotification: async (sub, payload) => { pushes.push({ endpoint: sub && sub.endpoint, payload: JSON.parse(payload) }); return { statusCode: 201 }; },
+  };
+
   const savedEnv = {};
   for (const [k, v] of Object.entries(opts.env || {})) { savedEnv[k] = process.env[k]; process.env[k] = v; }
 
@@ -171,6 +179,8 @@ function loadFunctions(opts = {}) {
     if (req === "firebase-admin") return adminMock;
     if (req === "stripe") return () => stripeStub;
     if (req === "nodemailer") return nodemailerMock;
+    // web-push（2026-10-08 通知）。opts.webpush を渡せばそれ、無ければ送ったものを pushes に記録するだけのスタブ
+    if (req === "web-push") return webpushMock;
     return origLoad(req, parent, isMain);
   };
   let fns;
@@ -183,7 +193,7 @@ function loadFunctions(opts = {}) {
       if (v === undefined) delete process.env[k]; else process.env[k] = v;
     }
   }
-  return { fns, db, mails, customTokens, HttpsError };
+  return { fns, db, mails, customTokens, pushes, HttpsError };
 }
 
 // ---------------------------------------------------------------------------

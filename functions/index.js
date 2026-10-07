@@ -2233,3 +2233,150 @@ exports.recoverPageUrl = functions
     }
     return r.result;
   });
+
+// ============================================================
+// 通知（Web Push・2026-10-08）
+// 誰に何を送るかは functions/notify.js（純粋関数・tests/notify.test.js）。ここは読み込みと送信だけ。
+// 送信は npm の web-push（標準の Web Push＝VAPID。FCM のコンソール設定に依存しない）。
+// 秘密鍵は Secret Manager の VAPID_PRIVATE_KEY（runWith の secrets で process.env に入る。既存の STRIPE_SECRET_KEY と同じ形）。
+// 1つの宛先の失敗で他の宛先を止めない。404/410（購読が無効になった）の記録は消す。
+// ============================================================
+const NOTIFY = require("./notify");
+const webPush = require("web-push");
+let _webPushReady = false;
+function getWebPush() {
+  const key = process.env.VAPID_PRIVATE_KEY;
+  if (!key) { console.warn("VAPID_PRIVATE_KEY が未設定のため通知を送りません"); return null; }
+  if (!_webPushReady) {
+    // 鍵の形が壊れている（二重ペースト・改行の混入）と setVapidDetails が例外を投げる。関数ごと落とさず送らない側に倒す。
+    // 値そのものはログに出さない（バイト長だけ。getStripe と同じ扱い）
+    try { webPush.setVapidDetails(NOTIFY.VAPID_SUBJECT_CF, NOTIFY.VAPID_PUBLIC_KEY_CF, key.trim()); }
+    catch (e) { console.error(`VAPID の設定に失敗（VAPID_PRIVATE_KEY ${Buffer.byteLength(key)}b）:`, e && e.message); return null; }
+    _webPushReady = true;
+  }
+  return webPush;
+}
+// targets: [{path, sub, payload}]。同じ endpoint は1回だけ送る
+async function sendPushTargets(targets) {
+  const list = NOTIFY.dedupeTargetsCF(targets);
+  const result = { sent: 0, removed: 0, failed: 0 };
+  if (!list.length) return result;
+  const wp = getWebPush();
+  if (!wp) return result;
+  await Promise.all(list.map(async t => {
+    try {
+      await wp.sendNotification(t.sub, JSON.stringify(t.payload), { TTL: 24 * 60 * 60, urgency: "normal" });
+      result.sent++;
+    } catch (e) {
+      const code = e && e.statusCode;
+      if (NOTIFY.pushErrorActionCF(code) === "delete") {
+        result.removed++;
+        try { await db.ref(t.path).remove(); } catch (e2) { console.warn("無効な購読の削除に失敗:", t.path, e2 && e2.message); }
+      } else {
+        result.failed++;
+        console.warn("通知の送信に失敗:", code || "", e && e.message);
+      }
+    }
+  }));
+  return result;
+}
+// スタッフの宛先（staffRecipientsCF の結果）ごとに購読を読み、その宛先の payload を付けて返す
+async function staffPushTargets(recipients) {
+  const out = [];
+  await Promise.all((recipients || []).map(async r => {
+    const node = await readVal(`${r.base}/push`);
+    NOTIFY.pushTargetsOfCF(node, `${r.base}/push`).forEach(t => out.push({ ...t, payload: r.payload }));
+  }));
+  return out;
+}
+// 管理者の宛先: private/push のうち、記録した uid がいまも owners にいる端末だけ
+async function ownerPushTargets(shopId, payload) {
+  const [node, owners] = await Promise.all([readVal(`shops/${shopId}/private/push`), readVal(`shops/${shopId}/owners`)]);
+  return NOTIFY.pushTargetsOfCF(node, `shops/${shopId}/private/push`, { ownerUids: Object.keys(owners || {}) })
+    .map(t => ({ ...t, payload }));
+}
+
+// 1. 新しい期間（スタッフ向け）。期間は savePeriods が丸ごと1エントリで新規作成する（diffPeriodsForFlatWrite）ので onCreate で1回
+exports.notifyNewPeriod = functions
+  .region("asia-northeast1")
+  .runWith({ secrets: ["VAPID_PRIVATE_KEY"] })
+  .database.ref("/shops/{shopId}/periods/{periodId}")
+  .onCreate(async (snap, context) => {
+    const { shopId, periodId } = context.params;
+    if (!isValidShopId(shopId) || isDemoShop(shopId)) return null;
+    const period = { ...(snap.val() || {}), id: periodId };
+    const [shopName, staff, staffHidden, staffPages, staffLinks] = await Promise.all([
+      readVal(`global/shops/${shopId}/name`), readVal(`shops/${shopId}/staff`), readVal(`shops/${shopId}/settings/staffHidden`),
+      readVal(`shops/${shopId}/staffPages`), readVal(`shops/${shopId}/staffLinks`),
+    ]);
+    const plan = NOTIFY.planNewPeriodNotifyCF({ shopId, shopName, period, staff, staffHidden, staffPages, staffLinks, today: NOTIFY.jstTodayCF(Date.now()) });
+    if (plan.skip) return null;
+    const r = await sendPushTargets(await staffPushTargets(plan.recipients));
+    console.log(`[notifyNewPeriod] shop=${shopId} period=${periodId} sent=${r.sent} removed=${r.removed} failed=${r.failed}`);
+    return null;
+  });
+
+// 3. 提出（管理者向け）。subs は差分 update で書かれるが、トリガーには sub 全体の前後が来る
+exports.notifyStaffSubmit = functions
+  .region("asia-northeast1")
+  .runWith({ secrets: ["VAPID_PRIVATE_KEY"] })
+  .database.ref("/shops/{shopId}/subs/{subId}")
+  .onWrite(async (change, context) => {
+    const { shopId } = context.params;
+    if (!isValidShopId(shopId) || isDemoShop(shopId)) return null;
+    const before = change.before.val(), after = change.after.val();
+    // 提出でない書き込み（管理者の編集・削除）はここで終わる＝余計な読み込みをしない
+    if (!NOTIFY.isStaffSubmissionWriteCF(before, after)) return null;
+    const [shopName, period, staffAliases] = await Promise.all([
+      readVal(`global/shops/${shopId}/name`), readVal(`shops/${shopId}/periods/${after.periodId}`), readVal(`shops/${shopId}/settings/staffAliases`),
+    ]);
+    const plan = NOTIFY.planSubmitNotifyCF({ shopId, shopName, before, after, period, staffAliases });
+    if (plan.skip) return null;
+    const r = await sendPushTargets(await ownerPushTargets(shopId, plan.payload));
+    console.log(`[notifyStaffSubmit] shop=${shopId} kind=${plan.kind} sent=${r.sent} removed=${r.removed} failed=${r.failed}`);
+    return null;
+  });
+
+// 2・4. 締切日の昼12時（日本時間）。スタッフの提出締切（period.deadlineDate）と企業への提出締切（写しの deadlines・monthlyDeadlineDays）
+exports.notifyDeadlines = functions
+  .region("asia-northeast1")
+  .runWith({ secrets: ["VAPID_PRIVATE_KEY"], timeoutSeconds: 300 })
+  .pubsub.schedule("0 12 * * *")
+  .timeZone("Asia/Tokyo")
+  .onRun(async () => {
+    const today = NOTIFY.jstTodayCF(Date.now());
+    const shopIds = Object.keys((await readVal("global/shops")) || {}).filter(id => isValidShopId(id) && !isDemoShop(id));
+    const total = { staffSent: 0, adminSent: 0, removed: 0, failed: 0, errors: 0 };
+    for (const shopId of shopIds) {
+      try {
+        const [periods, company, shopName] = await Promise.all([
+          readVal(`shops/${shopId}/periods`), readVal(`shops/${shopId}/company`), readVal(`global/shops/${shopId}/name`),
+        ]);
+        // スタッフの提出締切
+        const due = NOTIFY.deadlinePeriodsCF(periods, today);
+        if (due.length) {
+          const [staff, staffHidden, staffAliases, staffPages, staffLinks] = await Promise.all([
+            readVal(`shops/${shopId}/staff`), readVal(`shops/${shopId}/settings/staffHidden`), readVal(`shops/${shopId}/settings/staffAliases`),
+            readVal(`shops/${shopId}/staffPages`), readVal(`shops/${shopId}/staffLinks`),
+          ]);
+          for (const period of due) {
+            const subs = (await db.ref(`shops/${shopId}/subs`).orderByChild("periodId").equalTo(period.id).once("value")).val();
+            const plan = NOTIFY.planDeadlineStaffNotifyCF({ shopId, shopName, period, subs, staff, staffHidden, staffAliases, staffPages, staffLinks });
+            const r = await sendPushTargets(await staffPushTargets(plan.recipients));
+            total.staffSent += r.sent; total.removed += r.removed; total.failed += r.failed;
+          }
+        }
+        // 企業への提出締切
+        const coDue = NOTIFY.planCompanyDeadlineNotifyCF({ shopId, shopName, company, periods, today });
+        for (const item of coDue) {
+          const r = await sendPushTargets(await ownerPushTargets(shopId, item.payload));
+          total.adminSent += r.sent; total.removed += r.removed; total.failed += r.failed;
+        }
+      } catch (e) {
+        total.errors++;
+        console.warn(`[notifyDeadlines] shop=${shopId} の処理に失敗:`, e && e.message);
+      }
+    }
+    console.log(`[notifyDeadlines] today=${today} shops=${shopIds.length} staffSent=${total.staffSent} adminSent=${total.adminSent} removed=${total.removed} failed=${total.failed} errors=${total.errors}`);
+    return null;
+  });
