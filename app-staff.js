@@ -7,19 +7,52 @@
 // 先頭（0時・00分）と末尾（最後の時・59分）で止まる＝ループしない。選べる時刻は options（刻みは呼び出し側が決める）、寄せ方は timeWheelPick
 const TW_ITEM_H=44;
 const TW_PAD_ROWS=2; // 選んでいる行の上下に見せる行数
+const TW_WHEEL_GAP_MS=150; // ピクセル単位の wheel で、この間が空いたら新しい1回（マウスの1回）とみなす
 function TimeWheelColumn({items,value,onChange,fmt,col}){
   const ref=useRef(null);
   const timer=useRef(null);
   const valueRef=useRef(value);valueRef.current=value;
   const itemsRef=useRef(items);itemsRef.current=items;
+  const onChangeRef=useRef(onChange);onChangeRef.current=onChange;
   const idx=Math.max(0,items.indexOf(value));
+  const idxRef=useRef(idx);
   // 値が外から変わったとき（開いた直後・時を変えて分が寄せられたとき・行を押したとき）はその行へ動かす
   React.useLayoutEffect(()=>{
+    idxRef.current=idx;
     const el=ref.current;if(!el)return;
     const top=idx*TW_ITEM_H;
     if(Math.abs(el.scrollTop-top)>1)el.scrollTop=top;
   },[idx,items.length]);
   useEffect(()=>()=>clearTimeout(timer.current),[]);
+  // マウスのホイールは1回で1行だけ動かす（2026-10-08 ユーザー指示。ブラウザに任せると1回＝約100pxで2行動いていた）。
+  // 行・ページ単位の wheel（deltaMode≠0）は1回＝1行。ピクセル単位は、間が空いた最初の1回で1行、続く分は1行の高さ分たまるごとに1行
+  // （トラックパッドの細かい連続の wheel はこれまでどおり指の量に応じて進む）。タッチのスワイプは wheel を出さないので変わらない。
+  // 既定のスクロールを止めるため、passive にならない addEventListener で受ける（React の onWheel は passive）
+  useEffect(()=>{
+    const el=ref.current;if(!el)return;
+    const w={acc:0,t:-Infinity};
+    const onWheel=ev=>{
+      if(ev.ctrlKey)return; // ピンチでの拡大はブラウザに任せる
+      const dy=ev.deltaY;
+      if(!dy||Math.abs(ev.deltaX)>Math.abs(dy))return;
+      ev.preventDefault();
+      const now=ev.timeStamp||Date.now();
+      let step=0;
+      if(ev.deltaMode!==0){step=Math.sign(dy);w.acc=0;}
+      else if(now-w.t>TW_WHEEL_GAP_MS||(w.acc&&Math.sign(w.acc)!==Math.sign(dy))){step=Math.sign(dy);w.acc=0;}
+      else{w.acc+=dy;if(Math.abs(w.acc)>=TW_ITEM_H){step=Math.sign(w.acc);w.acc=0;}}
+      w.t=now;
+      if(!step)return;
+      const its=itemsRef.current;
+      const i=Math.min(its.length-1,Math.max(0,idxRef.current+step));
+      if(i===idxRef.current)return;
+      idxRef.current=i;
+      clearTimeout(timer.current);
+      onChangeRef.current(its[i]);
+    };
+    el.addEventListener("wheel",onWheel,{passive:false});
+    return()=>el.removeEventListener("wheel",onWheel);
+  },[]);
   // 指で回して止まったところの行を選ぶ（慣性で動いている間は待つ）
   const onScroll=()=>{
     clearTimeout(timer.current);

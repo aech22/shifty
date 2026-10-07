@@ -12,10 +12,11 @@
 //  D（提出一覧の詳細画面＝SubsTab だけをマウント・375px・2026-10-05）: 出勤・退勤の調整値もホイール（TO＝15分）。未調整は「提出値」と出て、
 //     開くと提出値（刻みに合わない 18:10 は寄せる）から始まる。選ぶと adjustedEnd に入り、「提出値に戻す」で消える。未調整のときは戻すボタンを出さない。
 //     ホイールの背景をタップしても詳細画面は閉じない
+//  W（CellEditPanel・2026-10-08）: マウスのホイール1回で1行だけ動く（ピクセル単位 deltaY=100・行単位 deltaMode=1 の両方）。トラックパッドの細かい連続の wheel は止まらない
 //  すべての場面で console.error・pageerror が 0 件
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-time-wheel.js → allPass=true / EXIT=0
-// 反証: SHIFTY_ROOT=<8cbeb56 の配信物> node ... → EXIT=1（ホイールが無い）
+// 反証: SHIFTY_ROOT=<8cbeb56 の配信物> node ... → EXIT=1（ホイールが無い）。W は SHIFTY_ROOT=<ff5d942 の配信物> で W1・W2 が落ちる（1回で2行・行単位では動かない）
 "use strict";
 const path = require("node:path");
 const { openHarness, REPO_ROOT } = require(path.join(__dirname, "mount-component.js"));
@@ -144,6 +145,54 @@ const valOf = (h, sel) => h.evaluate(sel => { const e = document.querySelector(s
       V.C_backdropKeepsPanel = C.panelStays && C.panelStays2;
       V.C_apply = C.pick === "23:15" && JSON.stringify(C.applied) === JSON.stringify(["work", "18:10", "23:15"]);
       V.C_noErrors = errs("C", h);
+    } finally { await h.browser.close(); }
+  }
+  // ---------------- W: マウスのホイール1回で1行（2026-10-08 ユーザー指示「マウスのホイールの1回でスクロールする数を1つに。現在2つ」）----------------
+  // CellEditPanel の出勤（TO＝15分刻み）を 18:00 で開き、時の列にマウスを置いて wheel を送る。
+  //  W1: 本物の wheel（ピクセル単位 deltaY=100＝Chromium のマウス1回）で 18→19（以前はブラウザが 100px 動かして 2 行＝20）
+  //  W2: 行単位（deltaMode=1・deltaY=3＝Firefox のマウス1回）の wheel 1回で 19→20（以前は何も動かない）
+  //  W3: 上向き（deltaY=-100）1回で 20→19、分の列でも 1 回で 00→15
+  //  W4: トラックパッドの細かい連続（deltaY=8 を 16ms ごとに 12 回＝96px）は 1〜3 行進む（止まらない・跳ばない）
+  //  W5: 先頭で上向きに回しても 0 時で止まる
+  {
+    const jsx = `function Harness(){
+      return <CellEditPanel sub={{staffName:"田中"}} s={{status:"work",start:"18:00",end:"22:00"}} d={new Date(2026,9,12)} onApply={()=>{}} onClose={()=>{}}/>;}
+      ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);window.__harnessReady=true;`;
+    const h = await openHarness({ root: ROOT, jsx, waitFor: '[data-time-wheel="cell-start"]', viewport: { width: 1280, height: 800 },
+      scripts: SCRIPTS.filter(s => s.src !== "app-main.js") });
+    try {
+      const W = {};
+      const cur = () => h.evaluate(() => document.querySelector("[data-time-wheel-dialog]").getAttribute("data-time-wheel-dialog"));
+      const over = async c => { const b = await h.evaluate(c => { const r = document.querySelector(`[data-time-wheel-col="${c}"]`).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }, c); await h.page.mouse.move(b.x, b.y); };
+      const settle = () => sleep(h, 450); // 次の wheel を「新しい1回」とみなす間（150ms）とスクロールの後処理（140ms）を越える
+      await click(h, '[data-time-wheel="cell-start"]'); await waitSel(h, "[data-time-wheel-dialog]");
+      W.open = await cur();
+      await over("h");
+      await h.page.mouse.wheel(0, 100); await settle();
+      W.w1 = await cur();
+      await h.evaluate(() => document.querySelector('[data-time-wheel-col="h"]').dispatchEvent(new WheelEvent("wheel", { deltaY: 3, deltaMode: 1, bubbles: true, cancelable: true })));
+      await settle();
+      W.w2 = await cur();
+      await h.page.mouse.wheel(0, -100); await settle();
+      W.w3h = await cur();
+      await over("m");
+      await h.page.mouse.wheel(0, 100); await settle();
+      W.w3m = await cur();
+      await over("h");
+      for (let i = 0; i < 12; i++) { await h.page.mouse.wheel(0, 8); await sleep(h, 16); }
+      await settle();
+      W.w4 = await cur();
+      await click(h, '[data-time-wheel-col="h"] [data-time-wheel-item="0"]'); await sleep(h, 200);
+      await h.page.mouse.wheel(0, -100); await settle();
+      W.w5 = await cur();
+      R.W = W;
+      const hourOf = v => Number(String(v).split(":")[0]);
+      V.W1_mouseOneRow = W.open === "18:00" && W.w1 === "19:00";
+      V.W2_lineModeOneRow = hourOf(W.w2) === hourOf(W.w1) + 1;
+      V.W3_upAndMinutes = W.w3h === "19:00" && W.w3m === "19:15";
+      V.W4_trackpadContinues = hourOf(W.w4) - hourOf(W.w3m) >= 1 && hourOf(W.w4) - hourOf(W.w3m) <= 3;
+      V.W5_stopsAtTop = W.w5 === "00:15" || W.w5 === "00:00";
+      V.W_noErrors = errs("W", h);
     } finally { await h.browser.close(); }
   }
   // ---------------- K: 候補タブ（CandTab だけ）----------------
