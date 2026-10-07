@@ -494,7 +494,8 @@ AI / AB / AD / AGray // スタイル定数
 | `doLogout()` | セッションのみクリア（Firebase Auth は維持。明示ログアウトの印 `AUTH_LOGGED_OUT_LS` は立てない＝リロードで実ユーザーが復元される） |
 | `doFullSignOut()` | Firebase Auth 含む完全サインアウト（`AUTH_LOGGED_OUT_LS` を立てる＝次の起動で実ユーザーを復元しない） |
 | ~~`generateInviteCode()` / `joinByInviteCode(code)`~~ | **どちらもコード上に存在しない**。2026-07-08 の CompanyTab 新設で企業コード＋パスワード方式に置き換わり、残っていた `generateInviteCode` の定義も 2026-08-24 に削除済み（`8384467`） |
-| `applyInviteCode()` | 店舗コード（shopId）で端末を店舗に紐付け |
+| `applyInviteCode()` | 管理コード（`shopId.adminKey`）で端末を店舗の管理者に登録して入る（2026-10-08 に店舗IDだけの参加は廃止） |
+| `verifyAdminCode(raw, expectShopId?)` | 管理コードの照合の1本だけの入口（2026-10-08）。店舗IDだけ・形の不正・別の店舗のコードを拒否し、`owners/{uid}` への書き込み（ルールが `private/adminKey` との一致を要求）で照合する。ログイン画面・店舗メニューの「管理コードで追加」・管理コードの入力画面の3か所が通る |
 | `createNewShop()` | 新規店舗作成（global/shops に追加） |
 | `linkExistingShopToAuth(shopId)` | 既存店舗を Auth UIDに紐付け |
 | `unlinkShopFromAuth(targetShopId)` | 企業アカウントから店舗の紐付けを解除 |
@@ -574,7 +575,7 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 | `GridLegend / HeatTable / SummaryTable` | app-shift.js | シフト作成タブの操作説明レジェンド・ヒートマップ表・集計表 |
 | `AC / AL / AT / CL` | app-admin.js | 汎用UIパーツ（カード・ラベル・タイトル・候補リスト） |
 
-※ 管理者パスワード認証（AdminLogin）は廃止・削除済み。管理者権限は2026-07-07から**管理キー（adminKey）方式**: `shops/{shopId}/owners/{uid}` に登録された端末のみ管理系パスに書き込める。端末追加は管理コード（`shopId.adminKey`）を「コードで追加」に入力する。
+※ 管理者パスワード認証（AdminLogin）は廃止・削除済み。管理者権限は2026-07-07から**管理キー（adminKey）方式**: `shops/{shopId}/owners/{uid}` に登録された端末のみ管理系パスに書き込める。端末追加は管理コード（`shopId.adminKey`）をログイン画面の「管理コードで参加」か店舗メニューの「管理コードで追加」に入力する。**2026-10-08 に店舗ID（旧「店舗コード」）だけでの参加・追加・企業連携を廃止した**。管理者として登録されていない端末には管理者画面（以前の「閲覧専用」表示を含む）を描かず、管理コードの入力画面（app-main.js の `AdminCodeGate`・`[data-admin-code-gate]`）を出す。claim の結果が出るまでは、端末にその店舗の管理キーがあれば管理者画面（オフラインでも開ける）、無ければ「管理者の確認中」（`claimDoneSid`）。デモと Firebase 未接続では出さない。回帰は `example-admin-code-only.js`（スタブの `ownerRules` で owners の規則を真似る）。
 
 ---
 
@@ -708,7 +709,7 @@ Firebase Realtime Database
   `doLogout`（店舗セッションだけのログアウト）は印を立てない（`43166ab` で外した）＝リロードで実ユーザーが復元され店舗に戻る。
   スタッフアカウント（従業員画面）にはこの印を当てない（「従業員画面」の節）。app-core.js の `AUTH_LOGGED_OUT_LS` の上のコメントと app-main.js の Phase1 のコメントも
   2026-10-04 に実装へ合わせた（立てるのは doFullSignOut だけ）
-- 管理系パス（settings/periods/staff/templates/tokens/global/shops）の書き込みは `shops/{shopId}/owners/{auth.uid}` 登録者のみ。owners への自己登録は `private/adminKey` との値照合が必要で、adminKeyは管理者端末のlocalStorage（`ots_adminKeys_v1`）にのみ保存される。**スタッフURLから得られるshopIdだけでは管理操作できない**。
+- 管理系パス（settings/periods/staff/templates/tokens/global/shops）の書き込みは `shops/{shopId}/owners/{auth.uid}` 登録者のみ。owners への自己登録は `private/adminKey` との値照合が必要で、adminKeyは管理者端末のlocalStorage（`ots_adminKeys_v1`）にのみ保存される。**スタッフURLから得られるshopIdだけでは管理操作できない**（2026-10-08 から閲覧もできない＝管理コードの入力画面だけが出る）。
 - スタッフは subs の読み書きと settings/periods/staff の読みのみ（従来機能を維持）。**subs の書き込み・削除は認証済みなら誰でも通る**（`.write: auth != null && $shopId !== 'demo-toriMatsu-v1'`）。**ただし 2026-09-30（P3）から、その sub の期間（書き込み後の periodId と、削除・変更前の periodId の両方）に `confirmation` があるときはオーナーだけが書ける**（スタッフの再提出を確定でルールごと止める）。提出を触れるのを本人だけに絞っているのは **UI（app-staff.js の `canTouch`）だけ**で、ルールは名乗った名前を検証できない——2026-08-31 決定1で承知のうえ引き受けたトレードオフなので、**再検出しても「バグ」として直さない**。
 - **移行猶予は 2026-07-28 に終了済み**（`dbdd9d9`）。未claim店舗への「誰でも書き込み可」ブランチは撤去され、管理系パスは owner uid 一致が必須。**ルールファイルは `database.rules.json` の1本だけ**（同内容の残骸だった `database.rules.tightened.json` は 2026-09-05 に削除済み。以後この二重管理は無い）。
 - Cloud Functions（createCheckoutSession/createPortalSession）はIDトークン検証+オーナー照合。App CheckはSDK読込済み・サイトキー未設定でスキップ中（BACKLOG参照）。
@@ -1203,7 +1204,7 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
   匿名 uid を連結すると、そのアカウントでログインした**別の端末にも店舗の管理権限が付く**。判定は「管理キー（`ots_adminKeys_v1`）を1つでも持つ」か
   「現在の店舗・Cookie の店舗・管理キーの店舗・キャッシュの店舗の `owners/{uid}` が読めて存在する」（読みはオーナーにしか許されない＝拒否は
   オーナーでない、それ以外の失敗は確かめられない＝止める）。企業ログイン（company_）・管理者の実ログイン中・体験版も止める。
-  逆向きの防御として、`claimOwnership` はスタッフアカウントの uid を owners に登録しない（閲覧のみ）、ログイン画面の「店舗コードで参加」と
+  逆向きの防御として、`claimOwnership` はスタッフアカウントの uid を owners に登録しない（閲覧のみ）、ログイン画面の「管理コードで参加」と
   「新規作成」はスタッフアカウントの端末では止める（`MY_ADMIN_BLOCKED_MSG`）。**管理者のメールアカウント（accounts/{uid}/shops がある）で
   マイシフトにログインしたら、サインアウトして理由を残し再読み込みする**
 - **ログイン試行の制限は名前空間 "staff"**（`_isLocked` 等は app-core.js の既存の仕組み）。管理者のメールログイン（"email"）のロックとは独立
@@ -1488,7 +1489,7 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 | `companyLogin` | Callable `companyLogin` | 企業コード＋パスワードで認証しカスタムトークンを発行。**カスタムトークンの署名に、CF の実行サービスアカウントの「サービス アカウント トークン作成者」（`iam.serviceAccounts.signBlob`）が要る**——無いと照合は通るのに `createCustomToken` が `auth/insufficient-permission` で 500 になり、画面は「ログインに失敗しました」だけを出す（2026-09-27 に本番で実際に発生・`firebase functions:log --only companyLogin` で確認）。ログイン画面と企業連携タブの「企業アカウントでログイン」の両方がこれを呼ぶ |
 | `changeCompanyPassword` | Callable `changeCompanyPassword` | 企業パスワード変更。**現在のパスワード（`currentPassword`）を照合してから**変える（2026-09-27）。UI は新しいパスワードを2回入力して一致したときだけ送る。**変更できるのは企業の作成者のアカウント（`pub/ownerUid`）だけ**で、企業コードでログインしたセッション（uid が `company_` で始まる）は `permission-denied`（2026-09-28・判定は `functions/company-config.js` の `canChangeCompanyPassword`）。UI もそのセッションではボタンを出さない |
 | `renameCompany` | Callable `renameCompany` | 企業名変更（作成者ポインタの表示名も更新） |
-| `linkStoreToCompany` | Callable `linkStoreToCompany` | 店舗コード（shopId / shopId.adminKey）で店舗を企業に連携 |
+| `linkStoreToCompany` | Callable `linkStoreToCompany` | 管理コード（shopId.adminKey）で店舗を企業に連携（CF は既にオーナーなら shopId だけでも通すが、クライアントは 2026-10-08 から管理コードの形しか送らない） |
 | `saveCompanyConfig` | Callable `saveCompanyConfig` | 企業の共通設定（settings は丸ごと置換）と提出期限（期間ごとの差分）を保存し、連携全店舗の `shops/{sid}/company` を作り直す（2026-09-27）。検証は `functions/company-config.js`（純粋関数・テストで照合） |
 | `ensureCompanyEntities / createEntity / renameEntity / assignShopEntity / saveEntityConfig / setShopKind` | Callable | 法人の管理（2026-09-30・P1・本番反映済み）。権限は `assertCompanyMember`。保存後に写しを作り直す。規則は `functions/company-config.js` |
 | `ensureCompanyPeople / mergePeople / splitPerson / reassignPersonId / companyRenameStaff / companyUpdateStaff / markPeopleDistinct` | Callable | 人物ID と企業スタッフ一覧の編集（2026-09-30・P1b・本番反映済み）。`markPeopleDistinct` は「統合しない」（`{personIds:[…], distinct:true}` で全ペアを両方向に記録、`{personIds:[a,b], distinct:false}` で取り消し。写しは作り直さない）。権限は `assertCompanyMember`。人物（`companies/{id}/pub/people`）を作るのは `ensureCompanyPeople` だけ。改名は店舗のデータを差分 update で移す（上の「人物ID と企業スタッフ一覧の編集」）。規則は `functions/company-config.js` |
@@ -1825,6 +1826,23 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 
 ---
 
+## 入社日・退社日・新店開始日（2026-10-08）
+
+`settings.staffTenure[名前] = {join?, leave?, transfer?:{shopId,date}}`（日付は "YYYY-MM-DD"）。判定は app-utils.js の `isStaffInTenure` の1本で、
+`visibleStaffList` の中から呼ぶ。そのためシフト作成グリッド・ヒートマップ・集計・Excel・PDF・従業員画面の全員のシフト表・確定時の所定の集計
+（`planPeriodConfirmation`）が同じ規則を通る。入社日は期間の endDate < join の期間に出さない、退社日は startDate > leave の期間に出さない、
+新店開始日は startDate >= transfer.date の期間に旧店舗で出さない（期間の途中なら旧店舗と新店の両方、初日なら新店だけ）。期間・日付が無い・
+読めない値は出す側に倒す。`STAFF_KEYED_SETTING_MAPS`（CF の `STAFF_KEYED_SETTING_MAPS_CF` にも）に登録＝改名・削除の後始末が自動で効く。
+値が日付を持つので写しには凍結しない（`PERIOD_SNAPSHOT_EXEMPT_STAFF_MAPS`）。
+
+入口はスタッフタブの編集モーダルだけ（シフト作成タブには入力欄を作らず、表示が自動で変わる）。入社日・退社日は全プラン、新店開始日は企業連携の写しが
+ある店舗（Premium）だけで、候補は `companyLink.shops` から自店を除いたもの。保存は ①自店の transfer（saveSettings）②新店の `shops/{新店}/staff`
+にその名前が無ければトランザクションで末尾に足す ③`shops/{新店}/settings/staffTenure/{名前}/join` の1キーだけ update。新店に同じ名前があれば
+確認して同じ人として join だけ書く。新店に書けない（オーナーでない）ときは自店の transfer だけ残して新店側での登録を案内する。解除は自店の
+transfer だけを消す。退社後もスタッフ一覧からは消さない。`staffHomeShop` は触らない。**新店へ足すときにプランの人数上限・別名の衝突は確かめず、
+番号・属性・所属店舗も写さない**（未対応）。従業員画面の本人のカレンダーと給料（`isStaffHiddenInPeriod` を直接呼ぶ3か所）には在籍期間を当てていない。
+回帰は `example-staff-tenure.js`（変更前の配信物では20項目が落ちる）。
+
 ## スタッフタブの構成（2026-09-26 ユーザー指示で再編）
 
 スタッフ1行に出すボタンは **有給日数・ポジション・非表示・編集・削除 の5つだけ**。
@@ -1917,7 +1935,7 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
 - **データの無い日（nodata）を含む月の側は判定しない**（既存の `＋休n` と同じ扱い）。揃っている側で公休0なら、もう一方が未作成でも違反
 - 表示: またがない週の違反は従来どおり `×休なし`、またぐ週の違反は `×休n`（n は週の公休の合計）。title に `9月側 0日・10月側 1日`。
   全データPDFは画面と同じ行定義（`weekRestRows`・`laborRows`）なので自動で載る
-- `LABOR_DAY_FIX_KEYS` には入れない（セル色は塗らない）。`OVERALL_FIX_KEYS` には入れる
+- 不足した週（月をまたぐ週は足りない側）の出勤日を紫で塗る（2026-10-08・`LABOR_DAY_FIX_KEYS`）。`OVERALL_FIX_KEYS` にも入れる
 - 回帰: `example-skilled-week-rest.js`（画面・PDF・両側に公休がある対照・非特定技能の対照）
 
 ## シフト作成タブの労務の見せ方（2026-09-26 ユーザー指示・リリース後の追加）
@@ -1933,17 +1951,18 @@ Shifty の期間は半月のことがある。「選択中の期間の startDate
   （`＋0h`。`0h＋` のように後ろへ置くと単位のように読める。2026-09-26 ユーザー指示）。
   年計の `＋` も同じ位置に揃えたが意味は違い、**読めていない期間がある**ことを示す
   （購読の窓の外＝「過去データ読み込み」で消える）。
-- **一部の日はセルを塗る**（`CELL_COLOR_LEGEND` の `laborErr`）。塗るのは
-  `LABOR_DAY_FIX_KEYS`＝**12h超 と 1日の残業が上限超（A制の残業予定・B制の実残業）の2種類だけ**
-  （2026-09-26 ユーザー指定）。**4h未満と休憩不足は要修正だが塗らない**——該当日が多くなりやすく、
-  塗ると直すべき日が埋もれる（休憩を1件も設定していない店舗では実働6h超の日がすべて休憩不足に当たる）。
-  8h超と週40h超はそもそも要修正ではない。週・月に帰属する判定（月の残業・目安・年の36協定）は
-  日を特定できない。2026-09-30（P3.5c）に足した3つ目（判定対象外の人の長時間の日を専用の赤で塗る店舗トグル）は、
-  **2026-10-03 のユーザー指示で機能ごと削除した**（完成したシフトにも色が残り、直す必要のない目印が増えるため）。
-  本番の店舗に残る `laborSettings` の保存値はデータ移行せず、`laborSettingsOf` が既定値の無いキーとして捨てる（テストで固定）。
-  **つまりパネルに名前が出ていてもセルが塗られないことが普通にある**——
-  パネルが判定の全量で、色はその一部にすぎない。理由はセルの `title` に出る。
-  `laborDayFindingsFor` と `laborFindingsFor` の件数が一致することを `tests/core.test.js` が照合する。
+- **一部の日はセルを紫で塗る**（`CELL_COLOR_LEGEND` の `laborErr`・2026-10-08 ユーザー指示で基準を変更）。塗るのは
+  `LABOR_DAY_FIX_KEYS`＝**12h超（A制）・法定休日労働の日・月60h超の日（時間外を日付順に積んで60hを超えた出勤日・`over60DatesOf`）・
+  特定技能の週の公休不足の週の出勤日（月をまたぐ週は足りない側だけ・`skilledShortWorkDates`）・属性の勤務時間の上限超（`attrLimitOverDatesOf`）**。
+  属性の上限の窓は既存の表示と同じ値を使う（週＝週間勤務時間の表、1ヶ月＝期間別勤務時間の「月計」、2週間・任意日数＝提出一覧のバッジと同じ
+  `rollingLimitOverWindows`）。窓を超えたら、その窓の中の出勤日を塗る。**1日の残業予定が上限超（A制）と1日の残業が上限超（B制・「8h超(残業)」の日を含む）は
+  2026-10-08 から塗らない**（パネルには出る）。4h未満・休憩不足・8h超・週40h超・月の残業・目安・年の36協定も塗らない
+  （該当日が多く、塗ると直すべき日が埋もれるため）。紫は総括判定とは別で、法定休日労働・月60h超・属性の上限超は総括を変えない。
+  法定休日と月60h超は割増の計算と同じく期間の開始月だけで判定する。2026-09-30（P3.5c）に足した判定対象外の人の長時間の日を
+  専用の赤で塗る店舗トグルは、**2026-10-03 のユーザー指示で機能ごと削除した**。本番の店舗に残る `laborSettings` の保存値は
+  `laborSettingsOf` が既定値の無いキーとして捨てる（テストで固定）。
+  **パネルに名前が出ていてもセルが塗られないことが普通にある**——パネルが判定の全量で、色はその一部にすぎない。理由はセルの `title`
+  （「労務の要修正: 法定休日労働」の形）に出る。回帰は `example-labor-purple.js`（変更前の配信物では落ちる）。
 - **パネルの判定は該当日をラベルの後ろに出す**（2026-09-26 ユーザー指示・リリース後の追加）。
   `休憩不足2日（3・5）` の形で、**日だけを出し月は出さない**（日次の判定は選択中の期間で絞られている
   ——同日の追加指示）。**10件で打ち切り残りは「ほかn日」**（`LABOR_FINDING_DATES_MAX`）——休憩を
