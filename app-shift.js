@@ -139,10 +139,12 @@ function GridLegend({abbrToShop,shopName}){
   const chip=t=>(
     <code style={{display:"inline-block",padding:"1px 7px",borderRadius:4,border:LBD,background:"var(--c-input)",color:"var(--c-text)",fontSize:12,fontWeight:700,whiteSpace:"nowrap"}}>{t}</code>
   );
+  // 説明文の **…** は太字にする（文字列のまま出すと ** が画面に見える・2026-10-08）
+  const rich=t=>String(t).split("**").map((x,i)=>i%2?<b key={i} style={{color:"var(--c-text)"}}>{x}</b>:x);
   const row=(key,left,desc)=>(
     <div key={key} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"3px 0"}}>
       <div style={{minWidth:120,display:"flex",alignItems:"center",gap:6,flexShrink:0}}>{left}</div>
-      <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.55}}>{desc}</div>
+      <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.55}}>{rich(desc)}</div>
     </div>
   );
   const SecH=({children})=>(<div style={{fontSize:12,fontWeight:700,color:"var(--c-text)",margin:"10px 0 3px"}}>{children}</div>);
@@ -2629,7 +2631,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const diff=av.avgMin-den;const miss=av.missing.length;
       return{label:`${miss?"＋":""}${fmtMin(av.avgMin)} ${fmtSignedMin(diff)}`,color:miss?"var(--c-text3)":"var(--c-text2)",
         title:`${fiscalYearLabel(fy,fyStart)}の月平均所定 ${fmtMin(av.avgMin)}（${av.count}か月）／分母 ${fmtMin(den)}（差 ${fmtSignedMin(diff)}）`
-          +(miss?`／読み込めていない月 ${av.missing.join("・")}（「3ヶ月より前の提出データも読み込む」で正確になります）`:"")};}},
+          +(miss?`／読み込めていない月 ${av.missing.join("・")}（「過去データ読込」で正確になります）`:"")};}},
     {id:"labor_guide",label:"目安",getText:name=>{const l=laborByStaff[name];if(!l||l.sys!=="A")return{};return{label:l.guide.label,color:l.guide.color,title:l.guide.title||l.guide.label};}},
     {id:"labor_ot",label:"残業予定",getText:name=>{const l=laborByStaff[name];
       // B制は店舗トグル（showDailyOverB）がオンのときだけ、日ごとの「しきい値超」の合計を出す（P3.5b）。
@@ -2665,7 +2667,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // 年計の `＋` も先頭に置く（2026-09-26 ユーザー指示。表の中で印の位置を揃える）
       return{label:(miss?"＋":"")+(l.year.workMin>0?fmtMin(l.year.workMin):""),
         color:miss?"var(--c-text3)":"var(--c-text2)",
-        title:(miss?`読み込めていない期間が${miss}件あります（「3ヶ月より前の提出データも読み込む」で正確になります）／`:"")
+        title:(miss?`読み込めていない期間が${miss}件あります（「過去データ読込」で正確になります）／`:"")
           +`${fiscalYearLabel(fy,fyStart)}の累計 ${fmtMin(l.year.workMin)}`
           +(yo==null?"":`／残業予定の年計 ${yo}h`)};}},
     {id:"labor_leave",label:"休暇",getText:name=>{const l=laborByStaff[name];

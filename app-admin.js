@@ -2734,7 +2734,8 @@ async function requestPlanAction(shopId,plan,currentPlan){
   try{
     const r=await fetch(`${CF_BASE}/createCheckoutSession`,{
       method:"POST",headers,
-      body:JSON.stringify({shopId,plan,successUrl:window.location.href+"?payment=success",cancelUrl:window.location.href+"?payment=cancel"}),
+      // 戻り先はハッシュ（#/admin など）の前にクエリを置く。href の末尾に足すとハッシュの中に入り、App が読めない（2026-10-08）
+      body:JSON.stringify({shopId,plan,successUrl:window.location.origin+window.location.pathname+"?payment=success&plan="+encodeURIComponent(plan)+window.location.hash,cancelUrl:window.location.origin+window.location.pathname+"?payment=cancel"+window.location.hash}),
     });
     const d=await r.json().catch(()=>({}));
     if(d.url)return{kind:"checkout",url:d.url,newContract:fellBack};

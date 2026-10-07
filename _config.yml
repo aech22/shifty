@@ -1,0 +1,20 @@
+# GitHub Pages（legacy の Jekyll ビルド・main の直下）で配信しないファイル（2026-10-08）。
+# 開発用の文書・Cloud Functions のコード・ルール・テストが shiftyshifty.app から読めていた。
+# 配信するのは index.html・app-*.js・sw.js・manifest.json・アイコン・ogp.png・privacy.html・terms.html・blog/・robots.txt・sitemap.xml・CNAME だけ。
+# ドット始まりのファイル（.claude・.github・.firebaserc など）は Jekyll が元から配信しない。
+exclude:
+  - "*.md"
+  - "*_実装計画.html"
+  - "*実装計画*.html"
+  - app.js.bak
+  - database.rules.json
+  - firebase.json
+  - eslint.config.js
+  - generate-ogp.js
+  - package.json
+  - package-lock.json
+  - functions
+  - scripts
+  - tests
+  - x-bot
+  - node_modules

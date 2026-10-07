@@ -7674,3 +7674,15 @@ test("SmModal: 未提出は visibleStaffList を通し、呼び出し元はす�
   assert.deepStrictEqual(u.visibleStaffList(["田中", "佐藤"], { staffHidden: { "佐藤": true } }, P), ["田中"]);
   assert.deepStrictEqual(u.visibleStaffList(["田中", "佐藤"], { staffHidden: { "佐藤": [{ from: "2026-11-01", to: null }] } }, P), ["田中", "佐藤"]);
 });
+
+// 2026-10-08: 全員のシフト表（従業員画面）では、スタッフURLから提出された未登録の名前が data-sheet-col="…" の属性値に入る。
+// " をエスケープしないと属性を抜け出してイベントハンドラを書き込める（dangerouslySetInnerHTML で描くのでスクリプトが動く）
+test("shiftSheetEsc: 属性値を抜け出す \" と ' もエスケープする（全員のシフト表のスクリプト注入の修正）", () => {
+  const bad = `x" onmouseover="alert(1)`;
+  const e = u.shiftSheetEsc(bad);
+  assert.ok(!e.includes('"') && !e.includes("'"), e);
+  assert.strictEqual(u.shiftSheetEsc(`<a href='x'>&`), "&lt;a href=&#39;x&#39;&gt;&amp;");
+  // 実際の表: 属性に入る名前が属性を閉じない
+  const html = `<td data-sheet-col="${u.shiftSheetEsc(bad)}">`;
+  assert.strictEqual((html.match(/"/g) || []).length, 2, html);
+});

@@ -1864,7 +1864,7 @@ Vite + TS へのフル移行は不要。
 - [x] `cd functions && firebase deploy --only functions --project ontheshift`
       → 2026-09-23 実行。**17関数すべて `Skipped (No changes detected)`＝反映済みだった**
 - [ ] 反映後、企業連携タブから正規の解除が従来どおり通ることを確認する（`isValidShopId` は
-      `genSecureId` 形式10万件・`shop_1780453329813`・`eb6AfsQv4JAht+cX*xP7fuDa` を全件通すことを
+      `genSecureId` 形式10万件・`shop_…9813`・`eb6AfsQv4JAht+cX*xP7fuDa` を全件通すことを
       ローカルで実測済みなので、既存店舗が締め出される想定は無い）→ **未検証**
 - [x] `purgeInactiveShops` の関数更新が成功したことを確認する
       → 上の一覧に `purgeInactiveShops`・`purgeOldPeriods` とも載っており、現行ソースと一致している
@@ -2869,13 +2869,13 @@ REST実測。`database.rules.json` の `subs/$subId/.write` から削除条件�
 
 1. **11店舗**（有料プランだが Stripe 契約なし＝手動シード）: 監査時のリストを固定せず**書く直前に同じ規則で
    再導出**し、Stripe契約のある店舗が1件でも混ざったら中止する安全弁を通した。**11/11件成功・誤書き込み0件**
-2. **`鷄えん東通り`（`shop_1780453329813`）**: **Stripe契約を持つ唯一の店舗**だが、ユーザーの明示指示により
+2. **`鷄えん東通り`（`shop_…9813`）**: **Stripe契約を持つ唯一の店舗**だが、ユーザーの明示指示により
    同じ扱いにした。規則ベースの一括スクリプトの安全弁に当たるため、対象を1件に固定した別スクリプトで書き、
    `plan`・`planExpiry`・`stripeCustomerId`・`stripeSubscriptionId` が無傷であることを読み返しで確認した
 
 > **⚠️ この店舗だけ副作用がある**: 契約が生きているのにアプリ内から**請求・解約の導線（Stripeポータル）が消え、
 > 決済失敗バナーも出なくなる**。カードの更新・解約は **Stripeダッシュボードから**行う必要がある。
-> 元に戻すには `accounts/shop_1780453329813/billingExempt` を削除する。
+> 元に戻すには `accounts/shop_…9813/billingExempt` を削除する。
 
 **本番での実測**（配信版数 `20260831-27f8a76`・実ブラウザ・読み取りのみ）:
 

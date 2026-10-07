@@ -114,7 +114,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
       byName[head.split("\n")[0].trim()] = { value: s.value, text: s.options[s.selectedIndex] ? s.options[s.selectedIndex].text : "" }; });
     return {
       optTexts: sels.length ? [...sels[0].options].map(o => o.text) : [],
-      anyNoneOption: [...document.querySelectorAll("option")].some(o => o.value === "none"),
+      // 労働時間制の select（A・B を持つもの）だけを見る。画面の他の select（休憩の決め方など）の "none" を拾わない
+      anyNoneOption: sels.some(x => [...x.options].some(o => o.value === "none")),
       byName,
       hasExternalToggle: !!document.querySelector("[data-external-over]"),
       bodyHasJudgeExcluded: document.body.innerText.includes("判定対象外"),

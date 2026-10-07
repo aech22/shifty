@@ -2254,7 +2254,7 @@ const CELL_COMMANDS=[
   {key:"k",kind:"suffix",usage:"9k",label:"キッチン入り",desc:"ホール所属のスタッフをキッチンの人数として集計する。出勤セルに付けるとランチ帯（〜17時）、退勤セルに付けるとディナー帯（17時〜）だけに反映する。片方の帯しかないシフトでは、もう一方のセルのコマンドも有効になる",color:"#FFF3B0"},
   {key:"x",kind:"suffix",usage:"9x",label:"ヘルプ（カウント外）",desc:"時間帯別出勤人数・店舗間重複・ポジション判定から外す。出勤セルに付けるとランチ帯（〜17時）、退勤セルに付けるとディナー帯（17時〜）だけ、両方に付けると終日（片方の帯しかないシフトでは反対側のセルの x も有効）。x単体入力も同じ扱い（コマンド以外の文字だけの入力はメモとしてそのまま表示される）",color:"#FFF3B0"},
   {key:"/",kind:"rest",aliases:["／"],usage:"/",label:"休み希望",desc:"セルを休み扱いにして斜線を表示する（出勤セル=ランチ帯・退勤セル=ディナー帯・両方=終日）。**表示は斜線のまま**で、終日でも「公休」の文字は出ない（文字を出したいときは ko を使う）。週の休みには終日の / も公休として数える。もう一度 / で解除、時間を入力すると出勤に上書き。全角の「／」でも入力できる（「y」「休」は休みにならず、メモとして残る）",hatch:true},
-  {key:"ko",kind:"rest",leaveType:"public",usage:"ko",label:"公休（終日）",desc:"その日を終日の公休にする（セルに「公休」と表示され、斜線は引かれない）。もう一度 ko で解除、または**セルの「公休」の文字を消しても解除**（終日なので出勤・退勤どちらのセルから消しても両方外れる）。**週の休みに数える**（何も入力していない日・終日の y も同じく公休として数える）",hatch:false},
+  {key:"ko",kind:"rest",leaveType:"public",usage:"ko",label:"公休（終日）",desc:"その日を終日の公休にする（セルに「公休」と表示され、斜線は引かれない）。もう一度 ko で解除、または**セルの「公休」の文字を消しても解除**（終日なので出勤・退勤どちらのセルから消しても両方外れる）。**週の休みに数える**（何も入力していない日・終日の / も同じく公休として数える）",hatch:false},
   {key:"yu",kind:"rest",leaveType:"paid",usage:"yu",label:"有給（終日）",desc:"**打ち込んだセルだけ**を有給にする（出勤セル=ランチ帯・退勤セル=ディナー帯。有給は半日単位で取れる）。そのセルに「有給」と表示される。もう一度 yu で解除、または**そのセルの「有給」の文字を消しても解除**。**週の休みには数えず**（有給は出勤日に取る休暇のため、有給の週も別に公休が1日以上要る）、実働にも入らない。管理者のみ入力できる",color:"#DCEBFB"},
   {key:"ke",kind:"rest",leaveType:"ceremony",usage:"ke",label:"慶弔（終日）",desc:"**打ち込んだセルだけ**を慶弔休暇にする（有給と同じく半日単位）。そのセルに「慶弔」と表示される。もう一度 ke で解除、または**そのセルの「慶弔」の文字を消しても解除**。有給と同じく週の休みには数えず、実働にも入らない。管理者のみ入力できる",color:"#FADCE6"},
   {key:"締",kind:"fixed",usage:"16k締",label:"締め（東通り店専用・追加出勤）",desc:"出勤・退勤どちらのセルに単独入力、または数字・h/k/x・他店舗略称など他のコマンドと組み合わせて（前後どちらでも可）入力しても、23:00〜25:00(翌1:00)を主シフトとは別の追加出勤として計上する（例: 出勤13・退勤17締 → 13〜17時と23〜25時の2出勤。出勤16k締 → キッチン入りかつ追加出勤）。鷄えん東通り店でのみ有効",start:"23:00",end:"25:00"},
@@ -3551,7 +3551,8 @@ function helperCellFontPx(text,availPx,basePx,minPx){
 // 値を解決する部分（入力中の編集・他店のヘルプ・ヒートマップ）は呼び出し側が持ち、ここは「解決した値 → セル → HTML」だけを持つ。
 // HTML は html2canvas が描けるよう rowspan・writing-mode を使わない。文字はすべて shiftSheetEsc を通す（従業員画面は innerHTML で入れる）。
 const SHIFT_SHEET_CELL_AVAIL_PX=26; // スタッフ列のセルで文字に使える幅（th の width:30px − td の左右 padding 1px − 罫線・余白）
-function shiftSheetEsc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+// 属性値（data-sheet-col="…" など）にも入るので " と ' もエスケープする（2026-10-08・スタッフURLから提出された名前によるスクリプト注入の修正）
+function shiftSheetEsc(s){return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");}
 // "HH:MM" → PDF の表記（"17:30" → "17.5"）。シフト作成タブの toDecimal と同じ式
 function shiftSheetDecimal(t){if(!t)return"";const[h,m]=String(t).split(":").map(Number);return m===0?String(h):String(h+m/60);}
 // 「締」（店舗限定の追加出勤）のコマンド文字。CELL_COMMANDS の kind "fixed"（app-shift.js の FIXED_KEY と同じ）

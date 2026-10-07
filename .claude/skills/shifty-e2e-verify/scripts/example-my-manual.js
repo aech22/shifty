@@ -135,7 +135,8 @@ const manualIds = async h => Object.keys((await db(h, "users/T1/shifts")) || {})
       // 勤務先の名前の横に、その店舗でのその人の従業員番号（店舗ごとに違う・2026-10-04）。番号が無い店舗（S1 の田中）は出さない
       await h.page.waitForFunction(() => !!document.querySelector('[data-my-wp="S2"] [data-my-wp-number]'), null, { timeout: 8000 }).catch(() => {});
       const nums = await h.evaluate(() => [...document.querySelectorAll("[data-my-wp]")].map(e => { const n = e.querySelector("[data-my-wp-number]"); return e.getAttribute("data-my-wp") + ":" + (n ? n.innerText : ""); }));
-      const numHint = await h.evaluate(() => /照合に使います/.test(document.querySelector('[data-my-section]') ? document.body.innerText : ""));
+      // 番号の説明文（MY_PROFILE_NUMBER_HINT・掛け持ち対応で2026-10-05 に変更）が出ていること
+      const numHint = await h.evaluate(() => /最初にリンクを申請するお店の番号です/.test(document.querySelector('[data-my-section]') ? document.body.innerText : ""));
       await click(h, '[data-my-action="addWorkplace"]');
       await waitSel(h, '[data-my-wp-editor="new"]');
       await fill(h, '[data-my-wp-editor="new"] [data-my-input="wpName"]', "カフェ");
