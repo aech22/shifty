@@ -49,11 +49,19 @@ function jstTodayCF(nowMs) {
 }
 
 // ===== 購読の記録 =====
+// 送ってよい宛先（ブラウザの Push サービス）。endpoint は購読した端末が書くので、ここに無いホストへは CF から POST しない
+// （任意の URL を書かれると CF が外部へリクエストを送る踏み台になるため・2026-10-08）。database.rules.json の3つの push ノードの
+// endpoint の .validate と同じ規則（tests/notify.test.js が照合する）。Chrome・Edge（Android）・Samsung は FCM、Safari は web.push.apple.com、
+// Firefox は mozilla、Windows の Edge は *.notify.windows.com。
+const PUSH_ENDPOINT_RE = /^https:\/\/(fcm\.googleapis\.com|android\.googleapis\.com|web\.push\.apple\.com|updates\.push\.services\.mozilla\.com|[a-z0-9-]+\.notify\.windows\.com)\//;
+function isPushEndpointCF(endpoint) {
+  return typeof endpoint === "string" && endpoint.length <= 1000 && PUSH_ENDPOINT_RE.test(endpoint);
+}
 function isPushRecordCF(rec) {
   const r = _o(rec);
   if (!r) return false;
   const k = _o(r.keys);
-  return typeof r.endpoint === "string" && /^https:\/\//.test(r.endpoint) && r.endpoint.length <= 1000 &&
+  return isPushEndpointCF(r.endpoint) &&
     !!k && typeof k.p256dh === "string" && k.p256dh.length >= 1 && k.p256dh.length <= 200 &&
     typeof k.auth === "string" && k.auth.length >= 1 && k.auth.length <= 100;
 }
@@ -251,6 +259,7 @@ function planCompanyDeadlineNotifyCF(o) {
 }
 
 module.exports = {
+  PUSH_ENDPOINT_RE, isPushEndpointCF,
   VAPID_PUBLIC_KEY_CF, VAPID_SUBJECT_CF, NOTIFY_BASE_URL_CF, PUSH_KEY_RE_CF, NOTIFY_TITLE_CF,
   jstTodayCF, isPushRecordCF, pushTargetsOfCF, dedupeTargetsCF, pushErrorActionCF,
   resolveAliasCF, isStaffHiddenInPeriodCF, submittedNamesCF, periodLabelCF, staffRecipientsCF,

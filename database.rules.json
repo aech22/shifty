@@ -162,7 +162,7 @@
             ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
             "$key": {
               ".validate": "$key.matches(/^[0-9a-f]{32}$/) && newData.hasChildren(['endpoint','keys','at','uid'])",
-              "endpoint": { ".validate": "newData.isString() && newData.val().beginsWith('https://') && newData.val().length <= 1000" },
+              "endpoint": { ".validate": "newData.isString() && newData.val().length <= 1000 && newData.val().matches(/^https:\\/\\/(fcm\\.googleapis\\.com|android\\.googleapis\\.com|web\\.push\\.apple\\.com|updates\\.push\\.services\\.mozilla\\.com|[a-z0-9-]+\\.notify\\.windows\\.com)\\//)" },
               "keys": {
                 ".validate": "newData.hasChildren(['p256dh','auth'])",
                 "p256dh": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200" },
@@ -313,7 +313,7 @@
           "$key": {
             ".write": "auth != null && auth.uid === $uid && auth.token.email != null",
             ".validate": "$key.matches(/^[0-9a-f]{32}$/) && newData.hasChildren(['endpoint','keys','at'])",
-            "endpoint": { ".validate": "newData.isString() && newData.val().beginsWith('https://') && newData.val().length <= 1000" },
+            "endpoint": { ".validate": "newData.isString() && newData.val().length <= 1000 && newData.val().matches(/^https:\\/\\/(fcm\\.googleapis\\.com|android\\.googleapis\\.com|web\\.push\\.apple\\.com|updates\\.push\\.services\\.mozilla\\.com|[a-z0-9-]+\\.notify\\.windows\\.com)\\//)" },
             "keys": {
               ".validate": "newData.hasChildren(['p256dh','auth'])",
               "p256dh": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200" },
@@ -492,7 +492,7 @@
         "push": {
           "$key": {
             ".validate": "$key.matches(/^[0-9a-f]{32}$/) && newData.hasChildren(['endpoint','keys','at'])",
-            "endpoint": { ".validate": "newData.isString() && newData.val().beginsWith('https://') && newData.val().length <= 1000" },
+            "endpoint": { ".validate": "newData.isString() && newData.val().length <= 1000 && newData.val().matches(/^https:\\/\\/(fcm\\.googleapis\\.com|android\\.googleapis\\.com|web\\.push\\.apple\\.com|updates\\.push\\.services\\.mozilla\\.com|[a-z0-9-]+\\.notify\\.windows\\.com)\\//)" },
             "keys": {
               ".validate": "newData.hasChildren(['p256dh','auth'])",
               "p256dh": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200" },

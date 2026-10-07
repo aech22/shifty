@@ -44,7 +44,7 @@ test("pushKeyOfEndpoint: endpoint の SHA-256 の16進の先頭32文字（node �
 });
 
 test("pushRecordOf: 形の揃った購読だけを記録にし、CF の isPushRecordCF が読める。uid・ua は渡したときだけ", () => {
-  const json = { endpoint: "https://push.example/1", expirationTime: null, keys: { p256dh: "BPk", auth: "au" } };
+  const json = { endpoint: "https://fcm.googleapis.com/fcm/send/1", expirationTime: null, keys: { p256dh: "BPk", auth: "au" } };
   const rec = m.pushRecordOf(json, { at: "2026-10-08T00:00:00.000Z", ua: "x".repeat(400) });
   assert.deepStrictEqual(Object.keys(rec).sort(), ["at", "endpoint", "keys", "ua"]);
   assert.strictEqual(rec.ua.length, m.PUSH_UA_MAX);
@@ -68,11 +68,14 @@ test("database.rules.json: push は3か所。スタッフ個別URLとアカウ�
     assert.match(k[".validate"], /\$key\.matches\(\/\^\[0-9a-f\]\{32\}\$\/\)/);
     assert.strictEqual(k.$other[".validate"], false);
     assert.strictEqual(k.keys.$other[".validate"], false);
-    assert.match(k.endpoint[".validate"], /beginsWith\('https:\/\/'\)/);
+    // endpoint の許可リストは CF の PUSH_ENDPOINT_RE と同じ正規表現（ルールの中の文字列から取り出して比べる）
+    const m2 = /matches\((\/.*\/)\)/.exec(k.endpoint[".validate"]);
+    assert.ok(m2, "endpoint は matches で許可リストを持つ");
+    assert.strictEqual(m2[1], String(n.PUSH_ENDPOINT_RE));
   });
   assert.strictEqual(up.$key.uid, undefined, "スタッフの記録は uid を持たない（$other で拒否）");
   // クライアントの記録のキーはルールが受け付けるキーだけ
-  const rec = m.pushRecordOf({ endpoint: "https://p/1", keys: { p256dh: "a", auth: "b" } }, { at: "t", uid: "u", ua: "ua" });
+  const rec = m.pushRecordOf({ endpoint: "https://fcm.googleapis.com/fcm/send/1", keys: { p256dh: "a", auth: "b" } }, { at: "t", uid: "u", ua: "ua" });
   Object.keys(rec).forEach(k => assert.ok(k in pp.$key, `${k} は管理者のルールにある`));
   Object.keys(rec).filter(k => k !== "uid").forEach(k => assert.ok(k in up.$key, `${k} はスタッフのルールにある`));
 });
@@ -246,11 +249,11 @@ test("planCompanyDeadlineNotifyCF: 今日が締切（日付指定か毎月の固
 // ===== 送信 =====
 test("pushTargetsOfCF / dedupeTargetsCF / pushErrorActionCF: 形の違う記録は読まず、owners から外れた端末に送らず、同じ端末へは1回、410/404 だけ消す", () => {
   const rec = (e, uid) => ({ endpoint: e, keys: { p256dh: "a", auth: "b" }, at: "t", ...(uid ? { uid } : {}) });
-  const node = { ["a".repeat(32)]: rec("https://p/1", "o1"), ["b".repeat(32)]: rec("https://p/2", "gone"), short: rec("https://p/3", "o1"), ["c".repeat(32)]: { endpoint: "x" } };
+  const node = { ["a".repeat(32)]: rec("https://fcm.googleapis.com/fcm/send/1", "o1"), ["b".repeat(32)]: rec("https://fcm.googleapis.com/fcm/send/2", "gone"), short: rec("https://fcm.googleapis.com/fcm/send/3", "o1"), ["c".repeat(32)]: { endpoint: "x" } };
   const all = n.pushTargetsOfCF(node, "shops/s1/private/push");
-  assert.deepStrictEqual(all.map(t => t.sub.endpoint), ["https://p/1", "https://p/2"]);
+  assert.deepStrictEqual(all.map(t => t.sub.endpoint), ["https://fcm.googleapis.com/fcm/send/1", "https://fcm.googleapis.com/fcm/send/2"]);
   assert.strictEqual(all[0].path, `shops/s1/private/push/${"a".repeat(32)}`);
-  assert.deepStrictEqual(n.pushTargetsOfCF(node, "x", { ownerUids: ["o1"] }).map(t => t.sub.endpoint), ["https://p/1"]);
+  assert.deepStrictEqual(n.pushTargetsOfCF(node, "x", { ownerUids: ["o1"] }).map(t => t.sub.endpoint), ["https://fcm.googleapis.com/fcm/send/1"]);
   assert.strictEqual(n.dedupeTargetsCF([...all, ...all]).length, 2);
   assert.strictEqual(n.pushErrorActionCF(410), "delete");
   assert.strictEqual(n.pushErrorActionCF(404), "delete");
@@ -275,4 +278,15 @@ test("sw.js: push と notificationclick だけで、ファイルのキャッシ�
 test("functions/package.json に web-push がある", () => {
   const pkg = JSON.parse(read("functions/package.json"));
   assert.ok(pkg.dependencies["web-push"]);
+});
+
+test("isPushEndpointCF: ブラウザの Push サービスの宛先だけを通す（任意の URL へ CF が POST する踏み台にしない）", () => {
+  ["https://fcm.googleapis.com/fcm/send/abc", "https://android.googleapis.com/gcm/send/abc", "https://web.push.apple.com/QAbc",
+   "https://updates.push.services.mozilla.com/wpush/v2/abc", "https://wns2-par02p.notify.windows.com/w/?token=abc"]
+    .forEach(e => assert.ok(n.isPushEndpointCF(e), e));
+  ["http://fcm.googleapis.com/fcm/send/abc", "https://fcm.googleapis.com.evil.example/x", "https://evil.example/fcm.googleapis.com/",
+   "https://169.254.169.254/latest", "https://metadata.google.internal/x", "https://fcm.googleapis.com", "https://a.b.notify.windows.com/x",
+   "https://fcm.googleapis.com/" + "a".repeat(1000), null, 1]
+    .forEach(e => assert.ok(!n.isPushEndpointCF(e), String(e)));
+  assert.ok(!n.isPushRecordCF({ endpoint: "https://evil.example/x", keys: { p256dh: "a", auth: "b" } }));
 });

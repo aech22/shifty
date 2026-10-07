@@ -52,7 +52,7 @@ const PUSH_STUB = `<script>
   var sub=saved?mk(saved,null):null;
   var pm={getSubscription:function(){return Promise.resolve(sub);},
     subscribe:function(o){P.subscribes++;P.keyLen=o&&o.applicationServerKey?o.applicationServerKey.length:0;P.userVisibleOnly=o&&o.userVisibleOnly;
-      var ep="https://push.example/sub-"+Date.now();localStorage.setItem(LS,ep);sub=mk(ep,o.applicationServerKey.buffer);return Promise.resolve(sub);}};
+      var ep="https://fcm.googleapis.com/fcm/send/sub-"+Date.now();localStorage.setItem(LS,ep);sub=mk(ep,o.applicationServerKey.buffer);return Promise.resolve(sub);}};
   var reg={scope:location.origin+"/",pushManager:pm};
   var sw={register:function(u,o){P.registers++;P.swUrl=u;P.swScope=o&&o.scope;return Promise.resolve(reg);},
     getRegistration:function(){return Promise.resolve(localStorage.getItem(LS)?reg:undefined);}};

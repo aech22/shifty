@@ -18,7 +18,7 @@ const TODAY = jstToday();
 const tok = c => c.repeat(24);
 const key = c => c.repeat(32);
 const rec = (endpoint, extra = {}) => ({ endpoint, keys: { p256dh: "BPk", auth: "au" }, at: "2026-10-08T00:00:00Z", ...extra });
-const EP = n => `https://push.example/${n}`;
+const EP = n => `https://fcm.googleapis.com/fcm/send/${n}`;
 
 const p2 = { id: "p2", label: "10月後半", startDate: addDays(TODAY, 3), endDate: addDays(TODAY, 18), deadlineDate: addDays(TODAY, 1), urlToken: "u2" };
 const p3 = { id: "p3", label: "10月前半", startDate: addDays(TODAY, 2), endDate: addDays(TODAY, 16), deadlineDate: TODAY, urlToken: "u3" };
