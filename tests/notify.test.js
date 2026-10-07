@@ -290,3 +290,13 @@ test("isPushEndpointCF: ブラウザの Push サービスの宛先だけを通�
     .forEach(e => assert.ok(!n.isPushEndpointCF(e), String(e)));
   assert.ok(!n.isPushRecordCF({ endpoint: "https://evil.example/x", keys: { p256dh: "a", auth: "b" } }));
 });
+
+test("nextSubmitNotifyRateCF: 店舗ごとに1時間あたり上限まで・窓が過ぎたら数え直す・壊れた値は数え直す", () => {
+  const H = 60 * 60 * 1000;
+  let cur = null, sent = 0;
+  for (let i = 0; i < 70; i++) { const r = n.nextSubmitNotifyRateCF(cur, 1000 + i); cur = r.rec; if (r.allowed) sent++; }
+  assert.strictEqual(sent, n.SUBMIT_NOTIFY_LIMIT_PER_HOUR);
+  assert.ok(n.nextSubmitNotifyRateCF(cur, 1000 + H).allowed, "窓が過ぎたら送れる");
+  assert.ok(n.nextSubmitNotifyRateCF({ count: "x" }, 5).allowed);
+  assert.ok(n.nextSubmitNotifyRateCF({ count: 99, windowStart: 9e15 }, 5).allowed, "未来の windowStart は数え直す");
+});

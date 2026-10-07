@@ -258,7 +258,21 @@ function planCompanyDeadlineNotifyCF(o) {
     }));
 }
 
+
+// ===== 提出の通知の回数の上限（2026-10-08）=====
+// subs はスタッフURLを知っていれば匿名でも書けるので、書き込みを繰り返されると管理者へ通知があふれる。店舗ごとに1時間あたりの上限を設ける。
+// cur は notifyRate/submit_{shopId} の今の値（無ければ null）。戻り値の rec をトランザクションで書き、allowed のときだけ送る。
+const SUBMIT_NOTIFY_LIMIT_PER_HOUR = 60;
+function nextSubmitNotifyRateCF(cur, nowMs, limit = SUBMIT_NOTIFY_LIMIT_PER_HOUR, windowMs = 60 * 60 * 1000) {
+  const c = _o(cur);
+  const fresh = !c || typeof c.windowStart !== "number" || typeof c.count !== "number" || nowMs - c.windowStart >= windowMs || nowMs < c.windowStart;
+  const base = fresh ? { count: 0, windowStart: nowMs } : { count: c.count, windowStart: c.windowStart };
+  if (base.count >= limit) return { rec: base, allowed: false };
+  return { rec: { count: base.count + 1, windowStart: base.windowStart }, allowed: true };
+}
+
 module.exports = {
+  SUBMIT_NOTIFY_LIMIT_PER_HOUR, nextSubmitNotifyRateCF,
   PUSH_ENDPOINT_RE, isPushEndpointCF,
   VAPID_PUBLIC_KEY_CF, VAPID_SUBJECT_CF, NOTIFY_BASE_URL_CF, PUSH_KEY_RE_CF, NOTIFY_TITLE_CF,
   jstTodayCF, isPushRecordCF, pushTargetsOfCF, dedupeTargetsCF, pushErrorActionCF,

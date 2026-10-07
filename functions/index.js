@@ -2332,6 +2332,14 @@ exports.notifyStaffSubmit = functions
     ]);
     const plan = NOTIFY.planSubmitNotifyCF({ shopId, shopName, before, after, period, staffAliases });
     if (plan.skip) return null;
+    // 店舗ごとの1時間あたりの上限（匿名の書き込みの繰り返しで通知をあふれさせない）。notifyRate はルールに無い＝CF だけが書く
+    let allowed = false;
+    await db.ref(`notifyRate/submit_${shopId}`).transaction(cur => {
+      const nx = NOTIFY.nextSubmitNotifyRateCF(cur, Date.now());
+      allowed = nx.allowed;
+      return nx.rec;
+    });
+    if (!allowed) { console.warn(`[notifyStaffSubmit] shop=${shopId} 上限（${NOTIFY.SUBMIT_NOTIFY_LIMIT_PER_HOUR}/時）に達したので送らない`); return null; }
     const r = await sendPushTargets(await ownerPushTargets(shopId, plan.payload));
     console.log(`[notifyStaffSubmit] shop=${shopId} kind=${plan.kind} sent=${r.sent} removed=${r.removed} failed=${r.failed}`);
     return null;
