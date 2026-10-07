@@ -1524,11 +1524,12 @@ function _readAdminSurface() {
   return [admin, shift, company].map(f => fs.readFileSync(f, "utf8")).join("\n");
 }
 
-function collectShiftDayWrites() {
+function collectShiftDayWrites(srcOverride) {
   const babel = require("@babel/core"); // devDependencies に宣言済み（@babel/parser は推移的依存なので直接requireしない）
   // 既定は配信物そのもの（app-admin.js＋app-shift.js＋app-company.js）。SHIFTY_ADMIN_SRC／SHIFTY_SHIFT_SRC／SHIFTY_COMPANY_SRC は
   // **この走査が本当に検出できるかを確かめる**ための差し替え口（_readAdminSurface）。
-  const src = _readAdminSurface();
+  // srcOverride はほかのファイル（app-utils.js・app-staff.js）を同じ規則で読むため（subs のルールのドリフト検出）。
+  const src = srcOverride != null ? srcOverride : _readAdminSurface();
   const ast = babel.parseSync(src, {
     configFile: false, babelrc: false, sourceType: "script",
     parserOpts: { plugins: ["jsx"], errorRecovery: true },
@@ -1668,6 +1669,186 @@ test("ADMIN_SHIFT_FIELDS: app-admin.js が実際に書くキーと一覧が食�
     "app-admin.js がシフト日へ書くキーと ADMIN_SHIFT_FIELDS が食い違っている。" +
     "新しい管理者フィールドなら ADMIN_SHIFT_FIELDS に登録する（登録しないとスタッフ再提出で黙って消える）。" +
     "引き継がないフィールドなら上の NOT_ADMIN_FIELDS に理由つきで足す。");
+});
+
+// ===== subs のルール（形の検証）のドリフト検出（2026-10-08）=====
+// database.rules.json の shops/$shopId/subs/$subId は、提出の直下と日ごとの項目を許可制にしている
+// （$other は書き込めない）。**クライアントに新しい項目を足してルールに足し忘れると、その書き込みが
+// ルールに拒否されて黙って保存されない**（saveSubs は削除以外の拒否を console.warn にしか出さない）。
+// このテストはクライアントが subs に書く項目を実装から読み出し、ルールが許す項目に入っていることを確かめる。
+// 読む場所:
+//   提出の直下 … 提出の形のオブジェクト（periodId・staffName・shifts を持つリテラル。条件付きの spread の中も）、
+//                onSub/onEditSub に渡す {...sub, …}、subs の .map の中の {...s, …}（改名・調整値の保存）
+//   日ごと     … 管理者画面（collectShiftDayWrites）・app-utils.js（固定勤務パターン）・app-staff.js（提出・セル編集）
+function _babelAst(src) {
+  const babel = require("@babel/core");
+  return babel.parseSync(src, { configFile: false, babelrc: false, sourceType: "script", parserOpts: { plugins: ["jsx"], errorRecovery: true } });
+}
+function _walkAst(node, fn) {
+  if (!node || typeof node.type !== "string") return;
+  fn(node);
+  for (const k of Object.keys(node)) {
+    if (k === "loc" || k === "leadingComments" || k === "trailingComments") continue;
+    const v = node[k];
+    if (Array.isArray(v)) v.forEach(c => c && typeof c.type === "string" && _walkAst(c, fn));
+    else if (v && typeof v.type === "string") _walkAst(v, fn);
+  }
+}
+// 提出の直下に書く項目（全 app-*.js を連結した src から）
+function collectSubTopWrites(src) {
+  const ast = _babelAst(src);
+  const srcOf = n => src.slice(n.start, n.end);
+  const keys = new Set(), unresolved = [];
+  const keyOf = p => {
+    if (p.type !== "ObjectProperty") return;
+    if (!p.computed && p.key.type === "Identifier") keys.add(p.key.name);
+    else if (p.key.type === "StringLiteral") keys.add(p.key.value);
+    else unresolved.push(srcOf(p.key));
+  };
+  // spread の中の条件付きオブジェクト: ...(cond?{a}:{b}) / ...(cond&&{a})
+  const spreadObjs = e => {
+    if (!e) return [];
+    if (e.type === "ObjectExpression") return [e];
+    if (e.type === "ConditionalExpression") return [...spreadObjs(e.consequent), ...spreadObjs(e.alternate)];
+    if (e.type === "LogicalExpression") return spreadObjs(e.right);
+    return [];
+  };
+  const take = obj => obj.properties.forEach(p => {
+    if (p.type === "SpreadElement") spreadObjs(p.argument).forEach(take);
+    else keyOf(p);
+  });
+  const hasKey = (obj, k) => obj.properties.some(p => p.type === "ObjectProperty" && !p.computed && p.key.type === "Identifier" && p.key.name === k);
+  const spreadsIdent = obj => obj.properties.length && obj.properties[0].type === "SpreadElement" && obj.properties[0].argument.type === "Identifier";
+  // .map の中（subs の配列）の範囲
+  const mapRanges = [];
+  _walkAst(ast, n => {
+    if (n.type === "CallExpression" && n.callee.type === "MemberExpression" && !n.callee.computed &&
+        n.callee.property.name === "map" && /(^|\.)(subs|newSubs|prevSubs)$/i.test(srcOf(n.callee.object))) {
+      mapRanges.push({ start: n.start, end: n.end });
+    }
+  });
+  _walkAst(ast, n => {
+    if (n.type === "ObjectExpression" && hasKey(n, "periodId") && hasKey(n, "staffName") && hasKey(n, "shifts")) take(n);
+    if (n.type === "CallExpression" && n.callee.type === "Identifier" && /^on(Edit)?Sub$/.test(n.callee.name)) {
+      n.arguments.filter(a => a.type === "ObjectExpression").forEach(take);
+    }
+    if (n.type === "ObjectExpression" && spreadsIdent(n) && mapRanges.some(r => r.start <= n.start && n.end <= r.end)) take(n);
+  });
+  return { keys, unresolved };
+}
+// app-staff.js が日ごとに書く項目（提出の buildShift・提出状況一覧のセル編集・入力中の upd・一括反映）
+function collectStaffDayWrites(src) {
+  const ast = _babelAst(src);
+  const srcOf = n => src.slice(n.start, n.end);
+  const keys = new Set(), unresolved = [];
+  const DAY_VARS = new Set(["nw", "next"]);
+  // TimeWheelField の [f] は [["start",…],["end",…]].map(([f,l])=> から来る
+  const fVals = /\[\["start","[^"]*"\],\["end","[^"]*"\]\]\.map\(\(\[f,/.test(src) ? ["start", "end"] : null;
+  const keyOf = p => {
+    if (p.type !== "ObjectProperty") return;
+    if (!p.computed && p.key.type === "Identifier") keys.add(p.key.name);
+    else if (p.key.type === "StringLiteral") keys.add(p.key.value);
+    else if (p.key.type === "Identifier" && p.key.name === "f" && fVals) fVals.forEach(v => keys.add(v));
+    else unresolved.push(srcOf(p.key));
+  };
+  _walkAst(ast, n => {
+    const mem = n.type === "AssignmentExpression" ? n.left : (n.type === "UnaryExpression" && n.operator === "delete" ? n.argument : null);
+    if (mem && mem.type === "MemberExpression" && mem.object.type === "Identifier" && DAY_VARS.has(mem.object.name)) {
+      if (!mem.computed && mem.property.type === "Identifier") keys.add(mem.property.name); else unresolved.push(srcOf(mem));
+    }
+    if (n.type === "CallExpression" && n.callee.type === "Identifier" && n.callee.name === "upd" && n.arguments[1] && n.arguments[1].type === "ObjectExpression") {
+      n.arguments[1].properties.forEach(keyOf);
+    }
+    // 一括反映: {...n[ds], status:…, start:…, end:…} と、日の既定値 {status:"holiday"}
+    if (n.type === "ObjectExpression" && n.properties.length) {
+      const p0 = n.properties[0];
+      const spreadsDay = p0.type === "SpreadElement" && /^n\[ds\]$/.test(srcOf(p0.argument));
+      const isDefault = /^\{\s*status\s*:/.test(srcOf(n));
+      if (spreadsDay || isDefault) n.properties.forEach(keyOf);
+    }
+  });
+  return { keys, unresolved };
+}
+function _allAppSrc() {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  return ["app-utils.js", "app-my-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"]
+    .map(f => fs.readFileSync(path.join(__dirname, "..", f), "utf8")).join("\n");
+}
+function _subsRuleKeys() {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const S = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "database.rules.json"), "utf8")).rules.shops.$shopId.subs.$subId;
+  const own = o => Object.keys(o).filter(k => !k.startsWith(".") && k !== "$other");
+  return { S, D: S.shifts.$date, top: own(S), day: own(S.shifts.$date) };
+}
+
+test("subs ルール: 提出の直下と日ごとの項目は許可制（未知の項目・長すぎる値・名前の記号を拒否）", () => {
+  const { S, D } = _subsRuleKeys();
+  assert.strictEqual(S.$other[".validate"], false, "提出の直下の未知の項目は書けない");
+  assert.strictEqual(D.$other[".validate"], false, "日ごとの未知の項目は書けない");
+  assert.strictEqual(D.adminRest.$other[".validate"], false);
+  assert.strictEqual(D.leaveTypes.$other[".validate"], false);
+  assert.match(S[".validate"], /newData\.hasChildren\(\['id','staffName','periodId','shifts','submittedAt'\]\)/, "必須の項目");
+  assert.match(D[".validate"], /\$date\.matches\(/, "日付のキーを検証する");
+  // 既存の書き込み規則（確定済みの期間はオーナーだけ・デモ店舗は不可）は変えていない
+  assert.ok(S[".write"].includes("demo-toriMatsu-v1") && (S[".write"].match(/child\('confirmation'\)\.exists\(\)/g) || []).length === 2);
+  // 名前: 全員のシフト表へのスクリプト注入の多重防御として " < > と（空白以外の）制御的な空白を拒否
+  const sn = S.staffName[".validate"];
+  assert.ok(sn.includes("length <= 50") && sn.includes('matches(/["<>]/)') && sn.includes("matches(/\\s/)"), sn);
+  assert.ok(sn.includes("replace(' ', '')") && sn.includes("replace('　', '')"), "半角・全角の空白は名前に使える（実データに半角空白の名前が多数ある）");
+  assert.match(S.comment[".validate"], /length <= 500/, "コメントは入力欄（maxLength 500）と同じ上限");
+  assert.match(S.id[".validate"], /newData\.val\(\) === \$subId/);
+  // 休暇の種別はクライアントの LEAVE_TYPES と一致
+  u.LEAVE_TYPES.forEach(t => {
+    assert.ok(D.leaveTypes.start[".validate"].includes(`'${t}'`) && D.leaveTypes.end[".validate"].includes(`'${t}'`) && D.leaveType[".validate"].includes(`'${t}'`), t);
+  });
+  // 時刻の形はシフト作成タブのセル（parseTime: 0〜30時・分は 00〜59）と一致させる。30:00 を上限にする
+  // 正規表現（実績の .validate と同じ）を当てると、parseTime が受け付ける "30:30" の保存が黙って拒否される
+  const timeRe = new RegExp(D.adjustedStart[".validate"].match(/matches\(\/(.+?)\/\)/)[1]);
+  ["00:00", "09:30", "23:45", "25:00", "29:59", "30:00", "30:30"].forEach(t => assert.ok(timeRe.test(t), t));
+  ["9:00", "31:00", "24:60", "ab:cd", "09:00x"].forEach(t => assert.ok(!timeRe.test(t), t));
+  ["start", "end", "adjustedStart", "adjustedEnd", "extraStart", "extraEnd"].forEach(k =>
+    assert.strictEqual(D[k][".validate"], D.adjustedStart[".validate"], `${k} は同じ時刻の規則（空文字は管理者の「時間なし」の上書き）`));
+});
+
+test("subs ルール ドリフト検出: クライアントが subs に書く項目はすべてルールが許している", () => {
+  const { top, day } = _subsRuleKeys();
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const all = _allAppSrc();
+  const staffSrc = fs.readFileSync(path.join(__dirname, "..", "app-staff.js"), "utf8");
+  const utilsSrc = fs.readFileSync(path.join(__dirname, "..", "app-utils.js"), "utf8");
+
+  // 提出の直下
+  const t = collectSubTopWrites(all);
+  assert.deepStrictEqual(t.unresolved, [], "提出の直下へ書くキーを解決できなかった（テスト側の規則を足すこと）");
+  // 走査が機能していること（0件が測定失敗でない担保）
+  ["id", "periodId", "staffName", "shifts", "submittedAt", "comment", "source", "submitterUid", "updatedAt", "isUpdated", "shopId"]
+    .forEach(k => assert.ok(t.keys.has(k), `走査が ${k} を見つけられていない＝走査が壊れている`));
+  const topMissing = [...t.keys].filter(k => !top.includes(k));
+  assert.deepStrictEqual(topMissing, [], `クライアントが提出の直下に書くのにルールが許していない項目: ${topMissing.join(",")}` +
+    "（database.rules.json の shops/$shopId/subs/$subId に型と長さを決めて足す。足さないと書き込みが拒否される）");
+
+  // 日ごと
+  const admin = collectShiftDayWrites();
+  const utilsW = collectShiftDayWrites(utilsSrc);
+  const staffW = collectStaffDayWrites(staffSrc);
+  assert.deepStrictEqual([...admin.unresolved, ...utilsW.unresolved, ...staffW.unresolved], [], "日ごとに書くキーを解決できなかった");
+  ["status", "start", "end", "changed"].forEach(k => assert.ok(staffW.keys.has(k), `スタッフ側の走査が ${k} を見つけられていない＝走査が壊れている`));
+  assert.ok(utilsW.written.has("adjustedBreak"), "固定勤務パターン（app-utils.js）の走査が壊れている");
+  const dayWritten = new Set([...admin.written, ...utilsW.written, ...staffW.keys, ...u.ADMIN_SHIFT_FIELDS]);
+  const dayMissing = [...dayWritten].filter(k => !day.includes(k));
+  assert.deepStrictEqual(dayMissing, [], `クライアントが日ごとに書くのにルールが許していない項目: ${dayMissing.join(",")}` +
+    "（database.rules.json の subs/$subId/shifts/$date に足す。日ごとは丸ごと書き直すので、1つでも漏れるとその日の保存がすべて拒否される）");
+
+  // 対照: 新しい項目を足した写しを読むと、走査がそれを拾う（＝上の照合が素通りしない）
+  const injTop = all.replace("comment:comment.trim()", "comment:comment.trim(),__probeTop:1");
+  assert.notStrictEqual(injTop, all, "注入箇所（app-staff.js の提出の comment）が見つからない");
+  assert.ok(collectSubTopWrites(injTop).keys.has("__probeTop"), "提出の直下に足した項目を走査が拾えない");
+  const injStaff = staffSrc.replace("if(changed)nw.changed=true;", "if(changed)nw.changed=true;nw.__probeDay=1;");
+  assert.notStrictEqual(injStaff, staffSrc, "注入箇所（buildShift の changed）が見つからない");
+  assert.ok(collectStaffDayWrites(injStaff).keys.has("__probeDay"), "日ごとに足した項目を走査が拾えない");
 });
 
 test("carryAdminShiftFields: 管理者の休み希望(adminRest)が再提出で消えない", () => {

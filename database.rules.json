@@ -55,8 +55,121 @@
           "$subId": {
             ".write": "auth != null && $shopId !== 'demo-toriMatsu-v1' && (root.child('shops').child($shopId).child('owners').child(auth.uid).exists() || ((!newData.exists() || !root.child('shops').child($shopId).child('periods').child(newData.child('periodId').val()).child('confirmation').exists()) && (!data.exists() || !root.child('shops').child($shopId).child('periods').child(data.child('periodId').val()).child('confirmation').exists())))",
             ".validate": "newData.hasChildren(['id','staffName','periodId','shifts','submittedAt']) && newData.child('staffName').isString() && newData.child('staffName').val().length <= 50",
+            "id": {
+              ".validate": "newData.isString() && newData.val() === $subId"
+            },
+            "periodId": {
+              ".validate": "newData.isString() && newData.val().length <= 64 && newData.val().matches(/^[A-Za-z0-9_-]+$/)"
+            },
+            "staffName": {
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 50 && !newData.val().matches(/[\"<>]/) && !newData.val().replace(' ', '').replace('　', '').matches(/\\s/)"
+            },
+            "shopId": {
+              ".validate": "newData.isString() && newData.val().length <= 64"
+            },
+            "comment": {
+              ".validate": "newData.isString() && newData.val().length <= 500"
+            },
+            "submittedAt": {
+              ".validate": "newData.isString() && newData.val().length <= 40"
+            },
+            "updatedAt": {
+              ".validate": "newData.isString() && newData.val().length <= 40"
+            },
+            "isUpdated": {
+              ".validate": "newData.isBoolean()"
+            },
+            "source": {
+              ".validate": "newData.val() === 'grid'"
+            },
             "submitterUid": {
               ".validate": "newData.isString() && newData.val().length <= 128 && (newData.val() === auth.uid || root.child('shops').child($shopId).child('owners').child(auth.uid).exists())"
+            },
+            "shifts": {
+              "$date": {
+                ".validate": "$date.matches(/^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/) && newData.hasChildren(['status'])",
+                "status": {
+                  ".validate": "newData.val() === 'work' || newData.val() === 'holiday'"
+                },
+                "origStatus": {
+                  ".validate": "newData.val() === 'work' || newData.val() === 'holiday'"
+                },
+                "start": {
+                  ".validate": "newData.isString() && (newData.val() === '' || newData.val().matches(/^([0-2][0-9]|30):[0-5][0-9]$/))"
+                },
+                "end": {
+                  ".validate": "newData.isString() && (newData.val() === '' || newData.val().matches(/^([0-2][0-9]|30):[0-5][0-9]$/))"
+                },
+                "adjustedStart": {
+                  ".validate": "newData.isString() && (newData.val() === '' || newData.val().matches(/^([0-2][0-9]|30):[0-5][0-9]$/))"
+                },
+                "adjustedEnd": {
+                  ".validate": "newData.isString() && (newData.val() === '' || newData.val().matches(/^([0-2][0-9]|30):[0-5][0-9]$/))"
+                },
+                "extraStart": {
+                  ".validate": "newData.isString() && (newData.val() === '' || newData.val().matches(/^([0-2][0-9]|30):[0-5][0-9]$/))"
+                },
+                "extraEnd": {
+                  ".validate": "newData.isString() && (newData.val() === '' || newData.val().matches(/^([0-2][0-9]|30):[0-5][0-9]$/))"
+                },
+                "adjustedStartNote": {
+                  ".validate": "newData.isString() && newData.val().length <= 200"
+                },
+                "adjustedEndNote": {
+                  ".validate": "newData.isString() && newData.val().length <= 200"
+                },
+                "startNote": {
+                  ".validate": "newData.isString() && newData.val().length <= 200"
+                },
+                "endNote": {
+                  ".validate": "newData.isString() && newData.val().length <= 200"
+                },
+                "adjustedStartFixed": {
+                  ".validate": "newData.isBoolean()"
+                },
+                "adjustedEndFixed": {
+                  ".validate": "newData.isBoolean()"
+                },
+                "changed": {
+                  ".validate": "newData.isBoolean()"
+                },
+                "adjustedBreak": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1440"
+                },
+                "adminRest": {
+                  ".validate": "newData.hasChildren()",
+                  "start": {
+                    ".validate": "newData.isBoolean()"
+                  },
+                  "end": {
+                    ".validate": "newData.isBoolean()"
+                  },
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "leaveTypes": {
+                  ".validate": "newData.hasChildren()",
+                  "start": {
+                    ".validate": "newData.val() === 'public' || newData.val() === 'paid' || newData.val() === 'ceremony'"
+                  },
+                  "end": {
+                    ".validate": "newData.val() === 'public' || newData.val() === 'paid' || newData.val() === 'ceremony'"
+                  },
+                  "$other": {
+                    ".validate": false
+                  }
+                },
+                "leaveType": {
+                  ".validate": "newData.val() === 'public' || newData.val() === 'paid' || newData.val() === 'ceremony'"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            },
+            "$other": {
+              ".validate": false
             }
           }
         },
