@@ -1,10 +1,17 @@
 // 実例: セキュリティ強化（2026-10-08）の Cloud Functions を本物のまま実行する。
 //   1. sendEmailOtp / verifyEmailOtp: 送信回数（uid ごと・アドレスごとに1時間5回）・乱数のコード・再送しても誤りの回数を持ち越す・掃除
+//   2. companyLogin: 企業コードごとの試行回数（5回目から1分・倍・上限30分）・待ちの間は scrypt を回さない・成功で数え直す
 // 許可側（従来の正しい呼び出しが通る）と拒否側（上限・ロック）を1項目ずつ通す。
 // 使い方: SHIFTY_CF_INDEX=<worktree>/functions/index.js node example-security-cf.js
 // 反証: SHIFTY_CF_INDEX に 1bc0b4f の functions/index.js を渡すと落ちる（上限が無い・再送で回数が戻る）。
 "use strict";
 const { loadFunctions, callFn, callRun, makeChecker } = require("./cf-harness.js");
+const crypto = require("crypto");
+// scrypt の呼び出し回数を数える（functions/index.js の verifyPassword が呼ぶ。同じ crypto モジュールを共有する）
+let scryptCalls = 0;
+const origScrypt = crypto.scryptSync;
+crypto.scryptSync = function (...a) { scryptCalls++; return origScrypt.apply(this, a); };
+function hashPw(plain) { const salt = "0123456789abcdef0123456789abcdef"; return `${salt}:${origScrypt(String(plain), salt, 64).toString("hex")}`; }
 
 const INDEX = process.env.SHIFTY_CF_INDEX || undefined;
 const user = (uid, email) => ({ auth: { uid, token: { email: email || `${uid}@example.com`, firebase: { sign_in_provider: "password" } } } });
@@ -74,7 +81,51 @@ async function sectionEmailOtp() {
   check("掃除: 窓の過ぎた送信回数は消し、窓の中は残す", h.db.get("emailOtpRate/uid_old") == null && h.db.get("emailOtpRate/uid_new") != null, h.db.get("emailOtpRate"));
 }
 
+async function sectionCompanyLogin() {
+  const CID = "-Nco1";
+  const h = loadFunctions({ indexPath: INDEX, data: {
+    companyCodes: { ABCD2345: CID },
+    companies: { [CID]: { pub: { name: "テスト企業", ownerUid: "OWN", shops: {} }, private: { passwordHash: hashPw("correct-pw") } } },
+  } });
+  const login = (password, code = "abcd2345") => callFn(h.fns.companyLogin, { code, password }, {});
+  const fails = () => h.db.get(`companies/${CID}/private/loginFails`);
+
+  let r = await login("correct-pw");
+  check("login: 正しいパスワードでカスタムトークンが返る（従来どおり）", r.ok && r.res.token && r.res.companyId === CID && fails() == null, { r, f: fails() });
+  for (let i = 1; i <= 4; i++) r = await login("wrong");
+  check("login: 4回の誤りは permission-denied・待ちなし", !r.ok && r.code === "permission-denied" && (fails() || {}).fails === 4 && (fails() || {}).lockedUntil === 0, { r, f: fails() });
+  r = await login("wrong");
+  const until = (fails() || {}).lockedUntil;
+  check("login: 5回目の誤りで1分の待ちが入る", !r.ok && r.code === "permission-denied" && until > Date.now() + 50 * 1000 && until <= Date.now() + 60 * 1000, { r, f: fails() });
+  const s0 = scryptCalls;
+  check("login: scrypt の計数が効いている（ここまでの照合6回ぶん以上）", s0 >= 6, s0);
+  r = await login("correct-pw");
+  check("login: 待ちの間は正しいパスワードでも resource-exhausted（しばらく待ってから）", !r.ok && r.code === "resource-exhausted" && /しばらく待ってから/.test(r.msg) && /約1分後/.test(r.msg), r);
+  check("login: 待ちの間は scrypt を回さない", scryptCalls === s0, { scryptCalls, s0 });
+  check("login: 待ちの間の試行は数えない（記録が変わらない）", (fails() || {}).fails === 5 && (fails() || {}).lockedUntil === until, fails());
+  // 待ちが過ぎた後の誤りは2分
+  h.db.put(`companies/${CID}/private/loginFails/lockedUntil`, Date.now() - 1);
+  r = await login("wrong");
+  const w2 = (fails() || {}).lockedUntil - Date.now();
+  check("login: 6回目の誤りで待ちが倍（2分）", !r.ok && r.code === "permission-denied" && (fails() || {}).fails === 6 && w2 > 110 * 1000 && w2 <= 120 * 1000, { r, f: fails() });
+  // 上限30分
+  h.db.put(`companies/${CID}/private/loginFails`, { fails: 20, lockedUntil: Date.now() - 1, lastAt: Date.now() - 1000 });
+  r = await login("wrong");
+  const w3 = (fails() || {}).lockedUntil - Date.now();
+  check("login: 待ちの上限は30分", !r.ok && w3 > 29 * 60 * 1000 && w3 <= 30 * 60 * 1000, { r, f: fails() });
+  // 待ちが過ぎれば正しいパスワードで入れて、数え直す
+  h.db.put(`companies/${CID}/private/loginFails/lockedUntil`, Date.now() - 1);
+  r = await login("correct-pw");
+  check("login: 待ちが過ぎれば正しいパスワードで入れて、記録を消す（数え直す）", r.ok && r.res.token && fails() == null, { r, f: fails() });
+  r = await login("x", "NOPE9999");
+  check("login: 存在しない企業コードは not-found", !r.ok && r.code === "not-found", r);
+  r = await login("x", "AB.CD/12");
+  check("login: 形のおかしい企業コードは DB を読まずに not-found（throw しない）", !r.ok && r.code === "not-found", r);
+  check("login: 試行回数は private の下にだけ書く", h.db.get(`companies/${CID}/pub/loginFails`) == null, h.db.get(`companies/${CID}/pub`));
+}
+
 (async () => {
   await sectionEmailOtp();
+  await sectionCompanyLogin();
   check.done();
 })().catch(e => { console.error(e); process.exit(1); });

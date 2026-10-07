@@ -6,6 +6,7 @@
 // 置き場はすべて Cloud Functions だけが書くパス（database.rules.json に書いていない＝クライアントからは読み書きできない）。
 //   email_otps/{uid}                         = {code, email, emailLink, expiry, attempts, attemptsSince}
 //   emailOtpRate/{uid|email}_{SHA-256の鍵}    = {count, windowStart}（送信回数。staffPageEmailRate と同じ形・同じ1歩の関数）
+//   companies/{companyId}/private/loginFails = {fails, lockedUntil, lastAt}（企業コードのログインの試行回数。private はルールで閉じている）
 
 const { pageEmailRateStepCF } = require("./my-page");
 
@@ -84,8 +85,41 @@ function emailOtpRatePurgeable(rec, now) {
   return !(ws > 0) || now - ws >= EMAIL_OTP_RATE_WINDOW_MS;
 }
 
+// ------------------------------------------------------------
+// 企業コードのログイン（companyLogin）の試行回数
+// ------------------------------------------------------------
+// 企業コードごとに数える。5回目の試行から待ち時間を置き（1分）、以後は試行のたびに倍（2分・4分…上限30分）。成功で数え直す。
+// 試行は**照合の前に**トランザクションで数える（悲観的に数える）。並べて投げても5回を超えて scrypt まで届かない。
+// 最後の試行から24時間たてば数え直す（たまの打ち間違いが積もって何か月も後に止まらないように）。
+// 待ち時間の間は scrypt を回さない（CPU を消費させる攻撃も止める）
+const COMPANY_LOGIN_MAX_FAILS = 5;
+const COMPANY_LOGIN_LOCK_BASE_MS = 60 * 1000;
+const COMPANY_LOGIN_LOCK_MAX_MS = 30 * 60 * 1000;
+const COMPANY_LOGIN_FAIL_RESET_MS = 24 * 60 * 60 * 1000;
+// n 回目の試行（n>=5）のあとに置く待ち時間
+function companyLoginLockMs(n) {
+  const k = Math.max(0, (Number(n) || 0) - COMPANY_LOGIN_MAX_FAILS);
+  return Math.min(COMPANY_LOGIN_LOCK_BASE_MS * Math.pow(2, Math.min(k, 30)), COMPANY_LOGIN_LOCK_MAX_MS);
+}
+// 試行の1歩。rec＝いまの loginFails。戻り値 {ok:false, waitMs}（待ち時間の間・記録は変えない）| {ok:true, rec}（この試行を数えた記録）
+function planCompanyLoginAttempt(rec, now) {
+  const r = _o(rec) || {};
+  const until = Number(r.lockedUntil) || 0;
+  if (until > now) return { ok: false, waitMs: until - now };
+  const last = Number(r.lastAt) || 0;
+  const fails = last > 0 && now - last < COMPANY_LOGIN_FAIL_RESET_MS ? Math.max(0, Number(r.fails) || 0) : 0;
+  const n = fails + 1;
+  return { ok: true, rec: { fails: n, lockedUntil: n >= COMPANY_LOGIN_MAX_FAILS ? now + companyLoginLockMs(n) : 0, lastAt: now } };
+}
+function companyLoginWaitMsg(waitMs) {
+  const min = Math.max(1, Math.ceil((Number(waitMs) || 0) / 60000));
+  return `ログインの失敗が続いたため、しばらく待ってから（約${min}分後に）もう一度お試しください`;
+}
+
 module.exports = {
   EMAIL_OTP_RATE_WINDOW_MS, EMAIL_OTP_RATE_LIMITS, EMAIL_OTP_TTL_MS, EMAIL_OTP_MAX_FAILS, EMAIL_OTP_FAIL_WINDOW_MS,
   EMAIL_OTP_EXHAUSTED_MSG, EMAIL_OTP_INVALID_MSG,
   emailOtpRateStep, emailOtpFailsOf, planEmailOtpSend, planEmailOtpVerify, emailOtpPurgeable, emailOtpRatePurgeable,
+  COMPANY_LOGIN_MAX_FAILS, COMPANY_LOGIN_LOCK_BASE_MS, COMPANY_LOGIN_LOCK_MAX_MS, COMPANY_LOGIN_FAIL_RESET_MS,
+  companyLoginLockMs, planCompanyLoginAttempt, companyLoginWaitMsg,
 };

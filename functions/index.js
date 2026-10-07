@@ -1298,13 +1298,25 @@ exports.companyLogin = functions
     const password = (data && typeof data.password === "string") ? data.password : "";
     if (!code || !password) throw new functions.https.HttpsError("invalid-argument", "企業コードとパスワードを入力してください");
 
+    // 企業コードは genCompanyCode の文字種（英大文字と数字）。それ以外は DB を読まずに同じ文言で返す（パスの禁止文字で ref() が throw しない）
+    if (!/^[0-9A-Z]{1,32}$/.test(code)) throw new functions.https.HttpsError("not-found", "企業コードまたはパスワードが正しくありません");
     const idSnap = await db.ref(`companyCodes/${code}`).once("value");
     const companyId = idSnap.val();
-    if (!companyId) throw new functions.https.HttpsError("not-found", "企業コードまたはパスワードが正しくありません");
+    if (!companyId || !isValidCompanyId(companyId)) throw new functions.https.HttpsError("not-found", "企業コードまたはパスワードが正しくありません");
+    // 試行回数（2026-10-08）: 照合の前に企業コードごとに数え、5回目から待ち時間（1分から倍・上限30分）。待ち時間の間は scrypt を回さない。
+    // 判定は functions/security.js の planCompanyLoginAttempt（tests/security.test.js）
+    const failsRef = db.ref(`companies/${companyId}/private/loginFails`);
+    let gate;
+    await failsRef.transaction(cur => {
+      gate = SEC.planCompanyLoginAttempt(cur, Date.now());
+      return gate.ok ? gate.rec : cur;
+    });
+    if (!gate.ok) throw new functions.https.HttpsError("resource-exhausted", SEC.companyLoginWaitMsg(gate.waitMs));
     const hashSnap = await db.ref(`companies/${companyId}/private/passwordHash`).once("value");
     if (!verifyPassword(password, hashSnap.val())) {
       throw new functions.https.HttpsError("permission-denied", "企業コードまたはパスワードが正しくありません");
     }
+    await failsRef.remove(); // 成功で数え直す
     const nameSnap = await db.ref(`companies/${companyId}/pub/name`).once("value");
     const token = await admin.auth().createCustomToken(companyUid(companyId), { companyId, kind: "company" });
     return { token, companyId, name: nameSnap.val() || "" };

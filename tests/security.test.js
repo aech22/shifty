@@ -90,3 +90,40 @@ test("sendEmailOtp: コードは crypto.randomInt で作り、Math.random を使
   assert.ok(!/Math\.random/.test(body));
   assert.ok(/emailOtpRate\("uid"/.test(body) && /emailOtpRate\("email"/.test(body), "uid とアドレスの両方で数える");
 });
+
+test("companyLogin の試行回数: 5回目から1分・試行のたびに倍・上限30分・待ちの間は数えない・24時間で数え直す", () => {
+  const M = 60 * 1000;
+  assert.deepStrictEqual([5, 6, 7, 8, 9, 10, 11, 50].map(S.companyLoginLockMs), [1, 2, 4, 8, 16, 30, 30, 30].map(x => x * M));
+  let now = 1e12, rec = null;
+  for (let i = 1; i <= 4; i++) {
+    const st = S.planCompanyLoginAttempt(rec, now);
+    assert.ok(st.ok && st.rec.fails === i && st.rec.lockedUntil === 0, `${i}回目は待ちなし`);
+    rec = st.rec;
+  }
+  let st = S.planCompanyLoginAttempt(rec, now);
+  assert.ok(st.ok && st.rec.fails === 5 && st.rec.lockedUntil === now + M, "5回目の試行で1分の待ち");
+  rec = st.rec;
+  st = S.planCompanyLoginAttempt(rec, now + 30 * 1000);
+  assert.ok(!st.ok && st.waitMs === 30 * 1000, "待ちの間は通さない（記録も変えない）");
+  assert.ok(/約1分後/.test(S.companyLoginWaitMsg(st.waitMs)) && /しばらく待ってから/.test(S.companyLoginWaitMsg(st.waitMs)));
+  now += M;
+  st = S.planCompanyLoginAttempt(rec, now);
+  assert.ok(st.ok && st.rec.fails === 6 && st.rec.lockedUntil === now + 2 * M, "6回目は2分");
+  rec = st.rec;
+  for (let i = 0; i < 10; i++) { now = rec.lockedUntil; rec = S.planCompanyLoginAttempt(rec, now).rec; }
+  assert.strictEqual(rec.lockedUntil - now, 30 * M, "上限30分");
+  // 24時間たてば数え直す
+  st = S.planCompanyLoginAttempt({ fails: 4, lockedUntil: 0, lastAt: now }, now + 24 * 60 * M);
+  assert.ok(st.ok && st.rec.fails === 1);
+  // 壊れた記録は0から
+  assert.strictEqual(S.planCompanyLoginAttempt("x", now).rec.fails, 1);
+});
+
+test("companyLogin: 照合（scrypt）の前に試行を数え、成功で消す（functions/index.js のドリフト検出）", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "functions", "index.js"), "utf8");
+  const start = src.indexOf("exports.companyLogin");
+  const body = src.slice(start, src.indexOf("exports.changeCompanyPassword"));
+  const iGate = body.indexOf("planCompanyLoginAttempt"), iVerify = body.indexOf("verifyPassword("), iReset = body.indexOf("failsRef.remove()");
+  assert.ok(iGate > 0 && iVerify > iGate && iReset > iVerify, "数える → 照合 → 成功で消す の順");
+  assert.ok(/private\/loginFails/.test(body), "置き場は companies/{id}/private（ルールで閉じている）");
+});
