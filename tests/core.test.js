@@ -4140,18 +4140,24 @@ test("laborDayFindingsFor: 日ごとの該当数が laborFindingsFor の件数�
       breakShortCount: c.breakShortDays.filter(Boolean).length });
     const per = k => days.filter(ks => ks.includes(k)).length;
     assert.strictEqual(per("over12"), countOf(labels, /^12h超/), "12h超");
-    assert.strictEqual(per("dayOtOverAgreement"), countOf(labels, /^1日の残業予定が上限超/), "A制の1日残業");
-    assert.strictEqual(per("dayOverAgreementB"), countOf(labels, /^1日の残業が上限超/), "B制の1日残業");
+    // **1日の残業の上限超は塗らない**（2026-10-08 ユーザー指示。A制の残業予定・B制の実残業とも）。パネルには従来どおり出る
+    assert.strictEqual(per("dayOtOverAgreement"), 0, "A制の1日の残業予定が上限超は塗らない");
+    assert.strictEqual(per("dayOverAgreementB"), 0, "B制の1日の残業が上限超は塗らない");
     // **塗らないと決めたもの**は日ごとの一覧に出ない（パネルには出る・2026-09-26 ユーザー指定）
     assert.strictEqual(per("under4"), 0, "4h未満は塗らない");
     assert.strictEqual(per("breakShort"), 0, "休憩不足は塗らない");
     assert.ok(countOf(labels, /^4h未満/) + countOf(labels, /^休憩不足/) >= 0, "パネル側の件数は数えられる");
-    // 返すキーは要修正だけ（8h超・週40h超のような「残業あり」は塗らない）
+    // 返すキーは LABOR_DAY_FIX_KEYS だけ（8h超・週40h超のような「残業あり」は塗らない）
     days.forEach(ks => ks.forEach(k => {
       assert.ok(u.LABOR_DAY_FIX_KEYS.includes(k), `${k} は LABOR_DAY_FIX_KEYS にある`);
-      assert.ok(u.OVERALL_FIX_KEYS.includes(k), `${k} は要修正のキー`);
     }));
   }
+  // 外した2つはパネルには出る（入力の1件目・2件目で実際に該当していることを確かめ、上の 0 が素通りでないことを示す）
+  assert.ok(countOf(u.laborFindingLabels({ ...cases[0], monthReady: true }), /^1日の残業予定が上限超/) > 0, "A制の1日残業はパネルに出る");
+  assert.ok(countOf(u.laborFindingLabels({ ...cases[1], monthReady: true }), /^1日の残業が上限超/) > 0, "B制の1日残業はパネルに出る");
+  // B制の「1日の残業が上限超」の日は必ず「8h超(残業)」の日でもある（8h＋協定の上限を超えた日）＝外したのはユーザーの言う「8h超(残業)」の紫
+  const bLabels = u.laborFindingLabels({ ...cases[1], monthReady: true });
+  assert.ok(countOf(bLabels, /^8h超/) >= countOf(bLabels, /^1日の残業が上限超/), "B制の1日残業の上限超の日は8h超の日に含まれる");
   // パネルには出るが色は付かない、という非対称そのものを固定する
   const panelOnly = { laborSystem: "A", dayMins: [120, 600], dayOtH: [0, 0], agreementDailyOtH: 0,
     breakShortDays: [false, true] };
@@ -4166,6 +4172,144 @@ test("LABOR_DAY_FIX_KEYS: 全キーに title 用のラベルがあり、セル�
     assert.ok(u.LABOR_DAY_ERR_LABELS[k], `${k} のラベルが無い`));
   const legend = u.CELL_COLOR_LEGEND.find(c => c.key === "laborErr");
   assert.ok(legend && legend.color, "laborErr の色が CELL_COLOR_LEGEND に登録されている");
+  // 操作方法レジェンドの説明が新しい基準（2026-10-08）を書いている
+  for (const w of ["12時間", "法定休日", "60時間", "特定技能", "属性"]) assert.ok(legend.desc.includes(w), `説明に「${w}」が無い`);
+  assert.ok(/1日の残業の上限超/.test(legend.desc) && /色を付けず/.test(legend.desc), "1日の残業の上限超は塗らないと書いてある");
+});
+
+// === セルの紫の基準（2026-10-08 ユーザー指示）===
+// 塗る: 12h超・法定休日労働・月60h超・特定技能の週の公休不足の週の出勤日・属性の上限超。塗らない: 1日の残業の上限超（A・B）
+function _premDaysOf(ym, minOf) {
+  return u.premiumMonthDates(ym, 1).map(d => ({ date: d, workMin: minOf(d), scheduledMin: 0, nightMin: 0, rest: minOf(d) > 0 ? false : true }));
+}
+test("紫: 法定休日労働の日が塗られ、件数がパネル（premiumFindingsFor）と一致する", () => {
+  // 毎日12h・休みなし（B制）。各週の最後の勤務日（日曜）が法定休日労働
+  const b = u.premiumBreakdownOf({ system: "B", days: _premDaysOf("2026-09", () => 720), ym: "2026-09", weekStartDow: 1 });
+  assert.ok(b.legalHolidayDates.length >= 4, "法定休日労働がある＝素通りしない");
+  const dates = u.gd("2026-09-14", "2026-09-27");
+  const day = u.laborDayFindingsFor({ laborSystem: "B", dayMins: dates.map(() => 720), dayDates: dates,
+    legalHolidayDates: b.legalHolidayDates });
+  const painted = dates.filter((d, i) => day[i].includes("legalHoliday"));
+  assert.deepStrictEqual(painted, ["2026-09-20", "2026-09-27"]);
+  const f = u.premiumFindingsFor(b, { system: "B", dates }).find(x => x.key === "p5LegalHoliday");
+  assert.ok(f && f.label.startsWith(`法定休日労働${painted.length}日`), "パネルの件数と一致");
+  // B制の12h勤務でも「1日の残業が上限超」は塗らない（パネルには出る）
+  assert.ok(!day.some(ks => ks.includes("dayOverAgreementB")));
+  assert.ok(u.laborFindingLabels({ laborSystem: "B", dayMins: dates.map(() => 720), agreementDailyOtH: 2, monthReady: true })
+    .some(l => l.startsWith("1日の残業が上限超")), "パネルには出る");
+  // 日付を渡さない呼び出し（従来の形）では法定休日は塗られない＝12h超（A制）だけ
+  assert.deepStrictEqual(u.laborDayFindingsFor({ laborSystem: "A", dayMins: [800, 480] }), [["over12"], []]);
+});
+test("紫: over60DatesOf は時間外を日付の順に積み、60h を超えた日とそれ以降に時間外がある日を返す（超過の合計は over60Min）", () => {
+  const b = u.premiumBreakdownOf({ system: "B", days: _premDaysOf("2026-09", () => 720), ym: "2026-09", weekStartDow: 1 });
+  assert.ok(b.over60Min > 0, "60h超がある＝素通りしない");
+  const ds = u.over60DatesOf(b);
+  let cum = 0, sum = 0; const exp = [];
+  Object.keys(b.perDay).sort().forEach(d => { const before = cum; cum += b.perDay[d]; const inc = Math.max(0, cum - 3600) - Math.max(0, before - 3600); if (inc > 0) { exp.push(d); sum += inc; } });
+  assert.deepStrictEqual(ds, exp);
+  assert.strictEqual(sum, b.over60Min, "超過分の合計が over60Min と一致");
+  // 60h に届く前の日は返さない・届いた後も時間外の無い日は返さない
+  const firstIdx = Object.keys(b.perDay).sort().indexOf(ds[0]);
+  let pre = 0; Object.keys(b.perDay).sort().slice(0, firstIdx).forEach(d => { pre += b.perDay[d]; });
+  assert.ok(pre <= 3600, "最初の日の前までは60h以下");
+  assert.ok(ds.every(d => b.perDay[d] > 0));
+  // 時間外が60h以下の月は空
+  assert.deepStrictEqual(u.over60DatesOf(u.premiumBreakdownOf({ system: "B", days: _premDaysOf("2026-09", () => 540), ym: "2026-09", weekStartDow: 1 })), []);
+  assert.deepStrictEqual(u.over60DatesOf(null), []);
+  const dates = u.gd("2026-09-01", "2026-09-30");
+  const day = u.laborDayFindingsFor({ laborSystem: "B", dayMins: dates.map(() => 720), dayDates: dates, over60Dates: ds });
+  assert.deepStrictEqual(dates.filter((d, i) => day[i].includes("over60")), ds.filter(d => d.startsWith("2026-09")));
+});
+test("紫: skilledShortWorkDates は不足した週の出勤日（月をまたぐ週は足りなかった月の側だけ）", () => {
+  const cross = u.gd("2026-09-28", "2026-10-04");
+  const kinds = ["work", "work", "work", "work", "rest", "work", "work"];
+  const st = u.skilledWeekRestStateOf(kinds, cross);
+  assert.strictEqual(st.key, "skilledNone");
+  assert.deepStrictEqual(u.skilledShortWorkDates(st, cross, kinds), ["2026-09-28", "2026-09-29", "2026-09-30"], "9月側だけ");
+  const flat = u.gd("2026-09-14", "2026-09-20");
+  const k2 = ["work", "work", "leave", "work", "work", "work", "work"];
+  const st2 = u.skilledWeekRestStateOf(k2, flat);
+  assert.strictEqual(st2.key, "none");
+  assert.deepStrictEqual(u.skilledShortWorkDates(st2, flat, k2), flat.filter((d, i) => k2[i] === "work"), "有給の日は出勤日に数えない");
+  const ok = u.skilledWeekRestStateOf(["work", "rest", "work", "work", "work", "work", "work"], flat);
+  assert.deepStrictEqual(u.skilledShortWorkDates(ok, flat, ["work", "rest", "work", "work", "work", "work", "work"]), []);
+  const day = u.laborDayFindingsFor({ laborSystem: "A", dayMins: cross.map(() => 480), dayDates: cross,
+    skilledWeekRestDates: u.skilledShortWorkDates(st, cross, kinds) });
+  assert.deepStrictEqual(day.map(ks => ks.includes("skilledWeekRest")), [true, true, true, false, false, false, false]);
+});
+test("紫: rollingLimitOverWindows は提出一覧のバッジの以前の式（全出勤日を起点からの日数で足す）と同じ判定を返す", () => {
+  // 以前の SubsTab の _windowStates をそのまま写した参照実装
+  const old = (startDs, allWork, minOf, days, upH) => {
+    for (const sd of [...startDs].sort()) {
+      const start = u.pd(sd); let tot = 0;
+      for (const d2 of allWork) { if (d2 < sd) continue; const diffD = (u.pd(d2) - start) / 86400000; if (diffD >= days) break; tot += minOf(d2); }
+      if (u.limitStateOf(tot, upH) === "over") return true;
+    }
+    return false;
+  };
+  let seed = 7; const rnd = n => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  const all = u.gd("2026-08-20", "2026-10-20");
+  let overs = 0;
+  for (let t = 0; t < 300; t++) {
+    const mins = {}; all.forEach(d => { if (rnd(3) > 0) mins[d] = 120 + rnd(9) * 60; });
+    const minOf = d => mins[d] || 0;
+    const allWork = all.filter(d => minOf(d) > 0);
+    const startDs = u.gd("2026-09-14", "2026-09-27").filter(d => minOf(d) > 0);
+    const days = [3, 7, 14, 21][rnd(4)], upH = 10 + rnd(60);
+    const a = old(startDs, allWork, minOf, days, upH);
+    const w = u.rollingLimitOverWindows({ startDates: startDs, minOf, days, upperHours: upH });
+    assert.strictEqual(w.length > 0, a, `t=${t}`);
+    if (a) overs++;
+    w.forEach(x => x.dates.forEach(d => { assert.ok(minOf(d) > 0 && d >= x.start && (u.pd(d) - u.pd(x.start)) / 86400000 < days); }));
+  }
+  assert.ok(overs > 20 && overs < 280, `超える場合と超えない場合の両方を通る（${overs}）`);
+  assert.deepStrictEqual(u.rollingLimitOverWindows({ startDates: ["2026-09-14"], minOf: () => 600, days: 14, upperHours: 0 }), [], "上限0は判定しない");
+});
+test("紫: attrLimitOverDatesOf は属性の上限を超えた日と窓の中の出勤日を返す（目安は判定しない）", () => {
+  const dates = u.gd("2026-09-14", "2026-09-27");
+  const mins = { "2026-09-14": 540, "2026-09-15": 240, "2026-09-16": 240, "2026-09-17": 240, "2026-09-21": 240, "2026-09-22": 240 };
+  const minOf = d => mins[d] || 0;
+  const weeks = ["2026-09-14", "2026-09-21"];
+  const weekMinOf = ws => u.gd(ws, u.fd(new Date(u.pd(ws).getTime() + 6 * 86400000))).reduce((a, d) => a + minOf(d), 0);
+  const base = { dates, minOf, weeks, weekMinOf, monthYm: "2026-09", monthMin: 1740 };
+  const lim = o => ({ ...u.STAFF_LIMIT_DEFAULTS, ...o });
+  assert.deepStrictEqual(u.attrLimitOverDatesOf({ ...base, lim: lim({ daily: 8 }) }).daily, ["2026-09-14"]);
+  // 週: 14〜20 は 21h（上限20h）＝その週の出勤日4日、21〜27 は 8h で超えない
+  assert.deepStrictEqual(u.attrLimitOverDatesOf({ ...base, lim: lim({ weekly: 20 }) }).weekly, ["2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17"]);
+  // 2週間: 14 起点の14日間が 29h（上限20h）
+  assert.deepStrictEqual(u.attrLimitOverDatesOf({ ...base, lim: lim({ biweekly: 20 }) }).biweekly,
+    ["2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-21", "2026-09-22"]);
+  // 任意日数（3日で10h）: 14起点 17h・15起点 12h が超え、16起点 8h・21起点 8h は超えない
+  assert.deepStrictEqual(u.attrLimitOverDatesOf({ ...base, lim: lim({ customDays: 3, customHours: 10 }) }).custom,
+    ["2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17"]);
+  // 1ヶ月: 月計（monthMin）を attrMonthFrameOf の上限と比べる＝期間別勤務時間の「月計」の赤と同じ
+  const lm = lim({ monthly: 20 });
+  const cap = u.attrMonthFrameOf(lm, "2026-09").capMin;
+  assert.ok(cap > 0 && 1740 > cap, "月計が上限を超える入力");
+  assert.deepStrictEqual(u.attrLimitOverDatesOf({ ...base, lim: lm }).monthly, Object.keys(mins).sort());
+  assert.deepStrictEqual(u.attrLimitOverDatesOf({ ...base, lim: lm, monthMin: cap }).monthly, [], "ちょうど上限は超えていない");
+  // 上限 0（未設定）・目安だけ（*Min）は何も返さない
+  const none = u.attrLimitOverDatesOf({ ...base, lim: lim({ dailyMin: 1, weeklyMin: 1, biweeklyMin: 1, monthlyMin: 1, customHoursMin: 1 }) });
+  Object.values(none).forEach(v => assert.deepStrictEqual(v, []));
+  // laborDayFindingsFor に渡すと窓ごとのキーで塗られる
+  const all = u.attrLimitOverDatesOf({ ...base, lim: lim({ daily: 8, weekly: 20 }) });
+  const day = u.laborDayFindingsFor({ laborSystem: "B", dayMins: dates.map(minOf), dayDates: dates, attrLimitDates: all });
+  assert.deepStrictEqual(day[0], ["attrLimitDaily", "attrLimitWeekly"]);
+  assert.deepStrictEqual(day[1], ["attrLimitWeekly"]);
+  assert.deepStrictEqual(day[7], [], "21日は超えていない");
+});
+test("紫: シフト作成タブと提出一覧が同じ判定を通す（ドリフト検出）", () => {
+  const src = _readAdminSurface();
+  const lc = src.slice(src.indexOf("const laborCalc=useMemo("), src.indexOf("const laborByStaff=laborCalc.out;"));
+  assert.ok(lc.length > 1000, "laborCalc を切り出せた");
+  assert.ok(/laborDayFindingsFor\(\{laborSystem:sys,dayMins,dayDates:dates,/.test(lc), "日付を渡している");
+  for (const s of ["legalHolidayDates:prem?prem.legalHolidayDates", "over60DatesOf(prem)", "skilledShortDatesFor(name)", "attrLimitDatesFor(name)"]) assert.ok(lc.includes(s), `${s} が無い`);
+  assert.ok(!/laborDayFindingsFor\(\{[^}]*agreementDailyOtH/.test(lc), "1日の残業の上限は紫の判定に渡さない");
+  // 属性の上限: 週は週間勤務時間の表と同じ getWeekMin、1ヶ月は「月計」と同じ getPeriodMin の和
+  const at = src.slice(src.indexOf("const attrLimitDatesFor="), src.indexOf("const skilledShortDatesFor="));
+  assert.ok(at.includes("weekMinOf:ws=>getWeekMin(ws,name)") && at.includes("getPeriodMin(p.id,name)") && at.includes("attrLimitOverDatesOf("));
+  // 提出一覧のバッジの2週間・任意日数も同じ関数
+  assert.ok(/const _windowStates=[^\n]*rollingLimitOverWindows\(/.test(src), "提出一覧が rollingLimitOverWindows を通していない");
 });
 
 // 労務の要修正の色は**画面だけ**の目印で、配る Excel・PDF には出さない（2026-09-26 ユーザー指示）。
@@ -6908,7 +7052,8 @@ test("laborFindingsFor: 特定技能の週の公休不足が該当週つきで�
   assert.strictEqual(u.overallVerdictOf({ laborSystem: "B", findings: fb }).key, "fix");
   assert.ok(!u.laborFindingsFor({ laborSystem: "none", skilledWeekDates: ["2026-09-28"] }).some(x => x.key === "skilledWeekRest"));
   assert.ok(!u.laborFindingsFor({ laborSystem: "A" }).some(x => x.key === "skilledWeekRest"), "渡さなければ出ない");
-  assert.ok(!u.LABOR_DAY_FIX_KEYS.includes("skilledWeekRest"), "セル色は塗らない");
+  // 2026-10-08 のユーザー指示で、不足した週の出勤日を紫で塗るようになった（skilledShortWorkDates）
+  assert.ok(u.LABOR_DAY_FIX_KEYS.includes("skilledWeekRest"), "セル色を塗る");
 });
 test("特定技能の週の公休はシフト作成タブの週の休みと労務判定の両方が同じ判定を通す（ドリフト検出）", () => {
   const src = _readAdminSurface();

@@ -1631,6 +1631,19 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // （利用者が今そこで直せる範囲＝期間、法令・協定の単位＝月）。
   // 合計（totals）は useMemo の結果として返す（S3）。後回しの描画は途中で捨てられることがあるので、描画中に ref へ書くと
   // 画面に出ていない計算の値を laborTotals の保存が拾いうる
+  // セルの紫（労務の要確認・2026-10-08 ユーザー指示）のうち、属性の勤務時間の上限を超えた日。
+  // 窓と比べる値は既存の表示と同じ: 週＝週間勤務時間の表（getWeekMin）、1ヶ月＝期間別勤務時間の「月計」（getPeriodMin の和）、
+  // 2週間・任意日数＝提出一覧のバッジと同じ rollingLimitOverWindows（attrLimitOverDatesOf・app-utils.js）
+  const attrLimitDatesFor=name=>attrLimitOverDatesOf({lim:staffLimitOf(settings,(settings.staffAttributes||{})[name]),dates,
+    minOf:d=>laborDayMin(name,d),weeks,weekMinOf:ws=>getWeekMin(ws,name),monthYm:period?period.startDate.slice(0,7):"",
+    monthMin:sameMoPeriods.reduce((a,p)=>a+getPeriodMin(p.id,name),0)});
+  // 特定技能の週の公休不足の週の出勤日（月をまたぐ週は足りなかった月の側だけ）。週の判定は週の休みの表と同じ weekRestByStaff
+  const skilledShortDatesFor=name=>weeks.flatMap((ws,i)=>{
+    const st=(weekRestByStaff[name]||[])[i];
+    if(!st||!st.skilled||!isSkilledWeekRestShort(st))return[];
+    const wds=[];for(let k=0;k<7;k++){const dd=new Date(pd(ws));dd.setDate(pd(ws).getDate()+k);wds.push(fd(dd));}
+    return skilledShortWorkDates(st,wds,wds.map(d=>dayKindWithHelper(name,d,laborDayHasData(d))));
+  });
   const laborCalc=useMemo(()=>{
     const out={},totals={};
     if(!isPremium||!period||!laborFrame)return{out,totals:null};
@@ -1644,7 +1657,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       const hi=helperInfo[name];
       if(hi&&hi.role==="dest"){
         // 入力の確認（F6）はこの店舗のセルの話なので、所属店舗で判定する人にも出す（総括は「所属店舗で判定」のまま）
-        out[name]={dest:true,homeName:hi.homeName,sys:"none",monthWorkMin:0,findings:laborFindingsFor({laborSystem:"none",inputCheckDates:inputCheckDatesOf(name)}),dayFindings:[],guide:{key:"none",label:"",color:null},
+        // セルの紫は属性の上限超だけ（週間勤務時間の表の赤と同じ窓。労務の判定は所属店舗で行う）
+        const destDayFindings=laborDayFindingsFor({laborSystem:"none",dayMins:dates.map(d=>laborDayMin(name,d)),dayDates:dates,
+          attrLimitDates:attrLimitDatesFor(name)});
+        out[name]={dest:true,homeName:hi.homeName,sys:"none",monthWorkMin:0,findings:laborFindingsFor({laborSystem:"none",inputCheckDates:inputCheckDatesOf(name)}),dayFindings:destDayFindings,guide:{key:"none",label:"",color:null},
           overall:{key:"dest",label:"所属店舗で判定"},monthCovered:laborMonthCovered,paidRemain:null,year:null};
         return;
       }
@@ -1720,8 +1736,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // 年度の累計。**提出を読めている期間は実データで数え**（2026-09-29 ユーザー指示）、
       // 読めない期間だけ凍結時に残した laborTotals で埋める＝過去参照を押さなくても出る。
       const yr=fy==null?null:yearLaborSummary(periods,name,fy,fyStart,liveTotalFor(name),true);
-      // その日に帰属する要修正（セル色で該当日を示す。dates と同じ並び）
-      const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins,dayOtH:periodOtH,agreementDailyOtH:agDay});
+      // セルを紫で塗る日（dates と同じ並び・2026-10-08 ユーザー指示）。12h超・法定休日労働・月60h超・
+      // 特定技能の週の公休不足の週の出勤日・属性の上限超。1日の残業の上限超（A制・B制）は塗らない（パネルには出る）
+      const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins,dayDates:dates,
+        // 月60h超は出勤した日だけ（週の時間外②は週の最後の日＝空欄の日曜にも載るので、空欄のセルは塗らない）
+        legalHolidayDates:prem?prem.legalHolidayDates:[],over60Dates:prem?over60DatesOf(prem).filter(d=>laborDayMin(name,d)>0):[],
+        skilledWeekRestDates:skilledShortDatesFor(name),attrLimitDates:attrLimitDatesFor(name)});
       out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,otWindow:otPlan&&otPlan.fixed?otPlan.window:null,dayOverB,
         prem,monthOtB,periodOtB,
         monthCovered:laborMonthCovered,yearOt,findings,guide,overall,weekNoRest,dayFindings,
@@ -1742,7 +1762,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(c)totals[name]=c;
     });
     return{out,totals};
-  },[isPremium,period,laborFrame,laborMonthDays,laborMonthCovered,laborIsLastOfMonth,laborPendingReason,realStaff,dates,weeks,settings,heatEditsCalc,subsCalc,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart,liveMonthOtFor,liveTotalFor,helperInfo,helperCacheCalc,premiumDayCache,abbrToShop]);
+  },[isPremium,period,laborFrame,laborMonthDays,laborMonthCovered,laborIsLastOfMonth,laborPendingReason,realStaff,dates,weeks,settings,heatEditsCalc,subsCalc,timeErrors,selPid,weekRestByStaff,periods,fy,fyStart,liveMonthOtFor,liveTotalFor,helperInfo,helperCacheCalc,premiumDayCache,abbrToShop,totalsCache,sameMoPeriods]);
   const laborByStaff=laborCalc.out;
 
   // 期間が生きている間はシフト作成タブを開くたびに写しと労務の合計を最新化し、最終日を超えたら
@@ -1788,9 +1808,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     return out;
   },[isPremium,realStaff,dates,settings,laborByStaff]);
 
-  // 労務の要修正が当たっている日（セル色用）。`名前|日付` → 理由キーの配列。
-  // 週・月に帰属する判定（週40h超・月の残業・目安）は日を特定できないので含まない
-  // ＝パネルに名前が出ていてもセルが塗られないことがある。
+  // セルを紫で塗る日（セル色用）。`名前|日付` → 理由キーの配列（一覧は app-utils.js の LABOR_DAY_FIX_KEYS）。
+  // 週・月の窓で判定するもの（特定技能の週の公休不足・属性の週／2週間／1ヶ月／任意日数の上限）は窓の中の出勤日を塗る。
+  // 週40h超・月の残業・目安・1日の残業の上限超は塗らない＝パネルに名前が出ていてもセルが塗られないことがある。
   const laborDayErrors=useMemo(()=>{
     const m={};
     if(!isPremium)return m;
@@ -2142,9 +2162,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(_getSub(name)?.shifts?.[date]?.changed===true)return LEGEND_COLORS.changed;
     if(timeErrors[`${name}|${date}`])return LEGEND_COLORS.timeErr;
     if(dupErrors[`${name}|${date}`])return LEGEND_COLORS.dup;
-    // 労務の要修正のうち**色で示すと決めた日**（12h超・1日の残業が上限超）。
-    // 一覧は app-utils.js の LABOR_DAY_FIX_KEYS が正本で、4h未満・休憩不足は
-    // パネルには出るが色は付けない（2026-09-26 ユーザー指定）。
+    // 労務で**紫に塗ると決めた日**（12h超・法定休日労働・月60h超・特定技能の週の公休不足・属性の上限超。2026-10-08 ユーザー指示）。
+    // 一覧は app-utils.js の LABOR_DAY_FIX_KEYS が正本で、1日の残業の上限超・4h未満・休憩不足は
+    // パネルには出るが色は付けない。
     if(laborDayErrors[`${name}|${date}`])return LEGEND_COLORS.laborErr;
     // ヘルプの合成表示（時刻＋略称・H2）は特記ありと同じ黄色（表示だけ。subs に特記を書かない）
     if(helperShownText(name,date,field))return LEGEND_COLORS.note;
