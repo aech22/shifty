@@ -4,6 +4,15 @@
   <meta charset="UTF-8">
   <!-- 各OS・ブラウザ互換性のためのmeta設定 -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <!-- CSP（2026-10-08）。GitHub Pages はレスポンスヘッダーを付けられないので meta で入れる（frame-ancestors・report-uri は meta では効かない）。
+       script-src の 'unsafe-eval' と 'unsafe-inline' は Babel Standalone（変換したコードを script 要素で実行する）と、この head の中のスクリプトのため。
+       許可先: CDN（unpkg＝React・Babel／jsDelivr＝ExcelJS／cdnjs＝html2canvas・jsPDF／gstatic＝Firebase SDK）、
+       Firebase（RTDB は *.firebaseio.com の https と wss。WebSocket が使えないときの長時間ポーリングは同じホストの script と iframe）、
+       Auth（identitytoolkit・securetoken・www.googleapis.com、Google・Apple のポップアップは apis.google.com の gapi と authDomain の iframe）、
+       Cloud Functions（asia-northeast1 の2プロジェクト）、GA4（Google の推奨の一覧）、PostHog（us と us-assets）。
+       Stripe・Google のログイン画面へはページ遷移・ポップアップで移るだけなので CSP の対象外。
+       新しい外部の読み込み先を足すときはここにも足す（回帰は .claude/skills/shifty-e2e-verify/scripts/example-csp.js） -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://www.gstatic.com https://apis.google.com https://*.firebaseio.com https://*.googletagmanager.com https://us-assets.i.posthog.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.google-analytics.com https://*.googletagmanager.com https://*.g.doubleclick.net https://*.google.com; font-src 'self' data:; connect-src 'self' https://*.firebaseio.com wss://*.firebaseio.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://content-firebaseappcheck.googleapis.com https://asia-northeast1-ontheshift.cloudfunctions.net https://asia-northeast1-thirty-dev-b6958.cloudfunctions.net https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com https://*.g.doubleclick.net https://*.google.com https://us.i.posthog.com https://us-assets.i.posthog.com; frame-src https://ontheshift.firebaseapp.com https://thirty-dev-b6958.firebaseapp.com https://*.firebaseio.com; worker-src 'self' blob:; manifest-src 'self' data:; media-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'self'">
   <!-- iOSのノッチ・ホームバー対応 -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
