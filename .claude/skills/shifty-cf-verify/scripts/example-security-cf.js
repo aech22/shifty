@@ -4,6 +4,7 @@
 //   3. verifyShopOwner（課金系4エンドポイント）: owners の無い（未claim の）店舗も 403。オーナーは従来どおり通る
 //      （外部の決済サービスのスタブは渡さない。オーナーが通ったことは、照合の後にある「決済情報が見つかりません」の 404 で確かめる。
 //       403 の項目は照合より先の処理しか通らないので、スタブが無くても落ちない＝決済サービスへ届く前に止まっている）
+//   4. myPagePin: 5回の誤りで15分のロック、2回目から倍（30分・60分…上限24時間）・正しい番号で数え直す
 // 許可側（従来の正しい呼び出しが通る）と拒否側（上限・ロック）を1項目ずつ通す。
 // 使い方: SHIFTY_CF_INDEX=<worktree>/functions/index.js node example-security-cf.js
 // 反証: SHIFTY_CF_INDEX に 1bc0b4f の functions/index.js を渡すと落ちる（上限が無い・再送で回数が戻る・未claim が通る）。
@@ -153,9 +154,47 @@ async function sectionShopOwner() {
   check("owner: 未claim の店舗では cancelPlanChange も 403", r.status === 403, r);
 }
 
+async function sectionMyPagePin() {
+  const T = "A".repeat(24);
+  const h = loadFunctions({ indexPath: INDEX, data: {
+    global: { shops: { S1: { id: "S1", name: "A店" } } },
+    shops: { S1: { owners: { OWN: "K" }, staff: ["田中"],
+      staffPages: { [T]: { status: "approved", name: "田中", displayName: "田中", requestedAt: "a", approvedAt: "2026-10-01T00:00:00.000Z" } },
+      private: { pay: { "田中": { payType: "hourly", base: 1300, effectiveFrom: "2026-04-01", commute: { amount: 0, per: "month" } } } } } },
+    staffPageTokens: { [T]: { shopId: "S1", at: "a" } },
+  } });
+  const anon = { auth: { uid: "dev1", token: { firebase: { sign_in_provider: "anonymous" } } } };
+  const pinCall = data => callFn(h.fns.myPagePin, { token: T, ...data }, anon);
+  const rec = () => h.db.get(`staffPagePins/${T}`) || {};
+  const M = 60 * 1000;
+  let r = await pinCall({ action: "set", pin: "1234" });
+  check("pin: 番号を決める（従来どおり）", r.ok && r.res.hasPin === true, r);
+  const wrongFive = async () => { let x; for (let i = 0; i < 5; i++) x = await pinCall({ action: "verify", pin: "0000" }); return x; };
+  r = await wrongFive();
+  let w = rec().lockedUntil - Date.now();
+  check("pin: 1回目のロックは15分", !r.ok && /15分後/.test(r.msg) && rec().locks === 1 && w > 14 * M && w <= 15 * M, { r, rec: rec() });
+  r = await pinCall({ action: "verify", pin: "1234" });
+  check("pin: ロック中は正しい番号でも開かない", !r.ok && r.code === "resource-exhausted", r);
+  h.db.put(`staffPagePins/${T}/lockedUntil`, Date.now() - 1);
+  r = await wrongFive();
+  w = rec().lockedUntil - Date.now();
+  check("pin: 2回目のロックは倍の30分", !r.ok && /30分後/.test(r.msg) && rec().locks === 2 && w > 29 * M && w <= 30 * M, { r, rec: rec() });
+  h.db.put(`staffPagePins/${T}`, { ...rec(), locks: 8, lockedUntil: Date.now() - 1 });
+  r = await wrongFive();
+  w = rec().lockedUntil - Date.now();
+  check("pin: 上限は24時間", !r.ok && /24時間後/.test(r.msg) && w > 23.9 * 60 * M && w <= 24 * 60 * M, { r, rec: rec() });
+  h.db.put(`staffPagePins/${T}/lockedUntil`, Date.now() - 1);
+  r = await pinCall({ action: "verify", pin: "1234" });
+  check("pin: 正しい番号で開き、ロックの段階を数え直す", r.ok && r.res.ok === true && rec().locks === 0 && rec().fails === 0, { r, rec: rec() });
+  r = await wrongFive();
+  w = rec().lockedUntil - Date.now();
+  check("pin: 数え直した後のロックは15分から", !r.ok && rec().locks === 1 && w > 14 * M && w <= 15 * M, { r, rec: rec() });
+}
+
 (async () => {
   await sectionEmailOtp();
   await sectionCompanyLogin();
   await sectionShopOwner();
+  await sectionMyPagePin();
   check.done();
 })().catch(e => { console.error(e); process.exit(1); });

@@ -8,7 +8,7 @@
 // ここで暗証番号を照合してから返す**——ハッシュと試行回数は staffPagePins/{pageToken}（ルールでクライアントから読み書きできない）に置く。
 // 4桁は1万通りなので、置き場がクライアントから読めると総当たりで破れる（だから CF 専用の場所に置き、設定・変更・照合も CF を通す）。
 // 試行回数は5回の失敗で15分止める（賃金閲覧パスコードの60秒より長い: こちらは店舗の画面ではなく URL を知る誰でも試せるため。
-// 削除した個人リンクコードと同じ15分）。管理者のリセットは shops/{sid}/staffPages/{token}.pinResetAt（オーナーが書く）より前に設定した番号を「未設定」として扱う。
+// 削除した個人リンクコードと同じ15分）。2回目以降のロックは前の倍（30分・60分…上限24時間・2026-10-08）。正しい番号で数え直す。管理者のリセットは shops/{sid}/staffPages/{token}.pinResetAt（オーナーが書く）より前に設定した番号を「未設定」として扱う。
 // ハッシュは呼び出し側が計算して渡す（index.js は company-config.js の payCodeHashCF＝SHA-256(salt+番号)、E2E のスタブは app-utils.js の
 // payCodeHash＝同じ値）。このファイルは crypto を読まない（スタブでブラウザにも埋め込むため）
 
@@ -16,6 +16,18 @@ const PAGE_TOKEN_RE_CF = /^[A-Za-z0-9]{24}$/;
 const PAGE_PIN_RE_CF = /^[0-9]{4}$/;
 const PAGE_PIN_MAX_FAILS_CF = 5;
 const PAGE_PIN_LOCK_MS_CF = 15 * 60 * 1000;
+// 2回目以降のロックは前の倍（30分・60分…）で、上限24時間（2026-10-08）。正しい番号で数え直す（locks を0に戻す）
+const PAGE_PIN_LOCK_MAX_MS_CF = 24 * 60 * 60 * 1000;
+// n 回目のロック（n>=1）の長さ
+function pageLockMsCF(n) {
+  const k = Math.max(1, Math.floor(Number(n) || 1));
+  return Math.min(PAGE_PIN_LOCK_MS_CF * Math.pow(2, Math.min(k - 1, 30)), PAGE_PIN_LOCK_MAX_MS_CF);
+}
+// 待ち時間の表示（2時間未満は分、それ以上は時間）
+function pinWaitLabelCF(ms) {
+  const min = Math.max(1, Math.ceil((Number(ms) || 0) / 60000));
+  return min < 120 ? `${min}分` : `${Math.ceil(min / 60)}時間`;
+}
 const _o = v => (v && typeof v === "object" ? v : null);
 const err = (code, msg) => ({ error: { code, msg } });
 function isPageTokenCF(t) { return typeof t === "string" && PAGE_TOKEN_RE_CF.test(t); }
@@ -56,11 +68,14 @@ function _sameHexCF(a, b) {
   for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return d === 0;
 }
-// 失敗を1つ数えた記録（5回で15分止め、数え直す）
+// 失敗を1つ数えた記録（5回で止め、数え直す）。止める長さは1回目15分・以後は前の倍・上限24時間（locks＝これまでに止めた回数）
 function _pinFailCF(pinRec, now) {
   const r = { ..._o(pinRec) };
   const fails = (Number(r.fails) || 0) + 1;
-  if (fails >= PAGE_PIN_MAX_FAILS_CF) { r.fails = 0; r.lockedUntil = now + PAGE_PIN_LOCK_MS_CF; } else { r.fails = fails; r.lockedUntil = 0; }
+  if (fails >= PAGE_PIN_MAX_FAILS_CF) {
+    const locks = Math.max(0, Math.floor(Number(r.locks) || 0)) + 1;
+    r.fails = 0; r.locks = locks; r.lockedUntil = now + pageLockMsCF(locks);
+  } else { r.fails = fails; r.lockedUntil = 0; }
   return r;
 }
 // 操作の計画。o={action:"status"|"set"|"verify", pin, currentPin, pinRec, pageRec, now, nowIso, salt,
@@ -73,7 +88,7 @@ function planMyPagePin(o) {
   const hasPin = pinIsSetCF(x.pinRec, x.pageRec);
   const wait = hasPin ? pinWaitMsCF(x.pinRec, now) : 0;
   if (x.action === "status") return { result: { ok: true, hasPin, waitSec: Math.ceil(wait / 1000) } };
-  const lockedErr = () => err("resource-exhausted", `暗証番号を${PAGE_PIN_MAX_FAILS_CF}回まちがえたため、${Math.ceil(wait / 60000)}分後にもう一度お試しください`);
+  const lockedErr = () => err("resource-exhausted", `暗証番号を${PAGE_PIN_MAX_FAILS_CF}回まちがえたため、${pinWaitLabelCF(wait)}後にもう一度お試しください`);
   if (x.action === "set") {
     if (!isPagePinCF(x.pin)) return err("invalid-argument", "暗証番号は4桁の数字にしてください");
     if (hasPin) {
@@ -92,10 +107,11 @@ function planMyPagePin(o) {
     if (!isPagePinCF(x.pin) || !_sameHexCF(x.pinHash, x.pinRec.hash)) {
       const p = _pinFailCF(x.pinRec, now);
       const left = p.lockedUntil ? 0 : PAGE_PIN_MAX_FAILS_CF - p.fails;
-      return { ...err("permission-denied", left ? `暗証番号が正しくありません（残り${left}回）` : `暗証番号を${PAGE_PIN_MAX_FAILS_CF}回まちがえたため、15分後にもう一度お試しください`), pinPatch: p };
+      return { ...err("permission-denied", left ? `暗証番号が正しくありません（残り${left}回）` : `暗証番号を${PAGE_PIN_MAX_FAILS_CF}回まちがえたため、${pinWaitLabelCF(p.lockedUntil - now)}後にもう一度お試しください`), pinPatch: p };
     }
     const r = _o(x.pinRec) || {};
-    return { result: { ok: true, hasPin: true }, pinPatch: Number(r.fails) || Number(r.lockedUntil) ? { ...r, fails: 0, lockedUntil: 0 } : undefined, unlocked: true };
+    // 正しい番号で失敗の回数・ロックの段階（locks）を数え直す
+    return { result: { ok: true, hasPin: true }, pinPatch: Number(r.fails) || Number(r.lockedUntil) || Number(r.locks) ? { ...r, fails: 0, lockedUntil: 0, locks: 0 } : undefined, unlocked: true };
   }
   return err("invalid-argument", "操作が正しくありません");
 }
@@ -239,6 +255,6 @@ function planRecoverPageUrlCF(o) {
   return { result, writes, mail: { to: email, ...pageEmailMailCF("recover", out) } };
 }
 
-module.exports = { PAGE_TOKEN_RE_CF, PAGE_PIN_RE_CF, PAGE_PIN_MAX_FAILS_CF, PAGE_PIN_LOCK_MS_CF, isPageTokenCF, isPagePinCF, myPageAccessCF, pinIsSetCF, pinWaitMsCF, planMyPagePin,
+module.exports = { PAGE_TOKEN_RE_CF, PAGE_PIN_RE_CF, PAGE_PIN_MAX_FAILS_CF, PAGE_PIN_LOCK_MS_CF, PAGE_PIN_LOCK_MAX_MS_CF, pageLockMsCF, pinWaitLabelCF, isPageTokenCF, isPagePinCF, myPageAccessCF, pinIsSetCF, pinWaitMsCF, planMyPagePin,
   PAGE_EMAIL_MAX_CF, PAGE_EMAIL_KEY_SALT_CF, PAGE_EMAIL_RATE_WINDOW_MS_CF, PAGE_EMAIL_RATE_LIMITS_CF, PAGE_EMAIL_RECOVER_MSG_CF, normalizePageEmailCF, isPageEmailCF, maskPageEmailCF,
   pageUrlCF, pageEmailRateStepCF, pageEmailCurrentTokenCF, pageEmailInheritFromCF, pageEmailMailCF, planSetPageEmailCF, planRecoverPageUrlCF };
