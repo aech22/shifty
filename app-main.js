@@ -1801,24 +1801,42 @@ function App(){
     }
     touchLastActivity();
   },[sid,periods,subs,touchLastActivity]);
-  // スタッフ個別URL（#/m/）を開いた端末を shops/{sid}/pageDevices/{uid} に登録する（2026-10-08）。ルールは、承認済みの個別URLの
-  // 名前（nameGuards のある名前）の提出を、ここに登録した端末だけに許す。開いたときと提出の前に呼ぶ（同じ端末・同じURLなら1回）
+  // 本人の端末を shops/{sid}/pageDevices/{uid} に登録する（2026-10-08）。ルールは、縛りのある名前（nameGuards）の提出を、
+  // 承認済みの個別URLを登録した端末とオーナー・紐付いたアカウントだけに許す。登録に使う token は
+  //  - 個別URL（#/m/）を開いているとき: その URL
+  //  - 募集URL（#/s/）を開いているとき: この端末が覚えている同じ店舗の個別URL（開いた・作った URL。2026-10-08 ユーザー指示
+  //    「専用URLかアカウントを持つ人も募集URLから出すのは残す」＝本人の端末なら募集URLからも出せる）
+  // ルールが承認済みの token しか通さないので、取り消された URL は次の候補へ進む。開いたときと提出の前に呼ぶ（同じ組み合わせなら1回）
   const pageDeviceRef=useRef(null);
   const ensurePageDevice=()=>{
-    if(!MY_SCREEN_ENABLED||pageRoute===null||!pageBoot||pageBoot.state!=="shop"||!firebaseDB||DEMO_MODE)return Promise.resolve();
+    if(!MY_SCREEN_ENABLED||!firebaseDB||DEMO_MODE)return Promise.resolve();
+    let shopId=null,tokens=[];
+    if(pageRoute!==null){
+      if(!pageBoot||pageBoot.state!=="shop")return Promise.resolve();
+      shopId=pageBoot.shopId;tokens=[pageRoute];
+    }else if(urlLocked&&currentShopIdRef.current){
+      shopId=currentShopIdRef.current;
+      tokens=myPageOpenCandidates(lg(MY_PAGE_KNOWN_LS,{})||{},lg(MY_PAGES_LS,{})||{},shopId);
+    }
+    tokens=tokens.filter(isMyPageToken);
     const uid=firebaseAuth&&firebaseAuth.currentUser&&firebaseAuth.currentUser.uid;
-    const rec=pageDeviceRecordOf(pageRoute,new Date().toISOString());
-    if(!uid||!rec)return Promise.resolve();
-    const key=`${pageBoot.shopId}/${uid}/${pageRoute}`;
+    if(!uid||!shopId||!tokens.length)return Promise.resolve();
+    const key=`${shopId}/${uid}/${tokens.join(",")}`;
     if(pageDeviceRef.current&&pageDeviceRef.current.key===key)return pageDeviceRef.current.p;
-    const path=`shops/${pageBoot.shopId}/pageDevices/${uid}`;
-    // 承認前（申請中）は拒否される。失敗は覚えず、次に開いたとき・提出の前にやり直す
-    const p=firebaseDB.ref(path).once("value").then(snap=>{const cur=snap.val();if(cur&&cur.token===pageRoute)return;return fbSet(path,rec);})
-      .catch(e=>{console.warn("個別URLの端末の登録に失敗:",e);if(pageDeviceRef.current&&pageDeviceRef.current.key===key)pageDeviceRef.current=null;});
+    const path=`shops/${shopId}/pageDevices/${uid}`;
+    const p=firebaseDB.ref(path).once("value").then(async snap=>{
+      const cur=snap.val();
+      if(cur&&cur.token===tokens[0])return;
+      for(const t of tokens){
+        try{await fbSet(path,pageDeviceRecordOf(t,new Date().toISOString()));return;}
+        catch(e){/* 承認前・取り消し済みは拒否される＝次の候補へ */}
+      }
+      throw new Error("承認済みの個別URLがありません");
+    }).catch(e=>{dlog("本人の端末の登録なし:",e&&e.message);if(pageDeviceRef.current&&pageDeviceRef.current.key===key)pageDeviceRef.current=null;});
     pageDeviceRef.current={key,p};
     return p;
   };
-  useEffect(()=>{ensurePageDevice();},[pageRoute,pageBoot,ready]);
+  useEffect(()=>{ensurePageDevice();},[pageRoute,pageBoot,ready,currentShopId,urlLocked]);
   // 受付期限の補完（2026-10-08）: 期限（expiresAtMs）を持たない・endDate と合わない期間があれば、オーナーの端末が1回だけ書き直す。
   // 失敗してサーバーの値に戻されても繰り返さない（店舗ごとに1セッション1回）
   const periodExpiryTriedRef=useRef({});

@@ -1,6 +1,8 @@
 // 提出の人単位の縛りと募集URLの受付期限（2026-10-08）の回帰テスト。スタブ Firebase・実ブラウザ。
 //   P: 承認済みの個別URL（#/m/）を開いた端末は shops/S1/pageDevices/{uid} に {token} を登録し、そのあと提出できる
-//   G: 縛りのある名前（nameGuards）の提出がルールに拒否されたら「本人専用のURL…」と出し、「提出完了」にしない（書き込みは拒否をスタブで再現）
+//   K: 募集URL（#/s/）を開いた端末も、この端末が覚えている同じ店舗の個別URL（localStorage）で本人の端末として登録する
+//      （2026-10-08 ユーザー指示「専用URLかアカウントを持つ人も募集URLから出すのは残す」）。覚えていない端末は登録しない
+//   G: 縛りのある名前（nameGuards）の提出がルールに拒否されたら「ご本人の端末…」と出し、「提出完了」にしない（書き込みは拒否をスタブで再現）
 //   E: 受付期限を過ぎた募集URL（tokens の読みが拒否される）を開くと「このURLの受付は終了しました」。管理者の画面に進まない
 //   X: 期間の最終日を過ぎた募集URLの提出画面に「受付は終了しました」の帯
 //   O: オーナーの端末: 承認済みの個別URLの名前に nameGuards を書く・期間に expiresAtMs を補う・tokens に expiresAtMs を書き直す・
@@ -43,9 +45,9 @@ const seed = (extra = {}) => ({
   accounts: { S1: { plan: "premium" }, [OWN]: { shops: { S1: true } } },
 });
 const hashHead = h => `<script>history.replaceState(null,"","/${h}");</script>`;
-async function openAnon({ hash, db, wait = "#root > *", denyRead, denyWrite }) {
+async function openAnon({ hash, db, wait = "#root > *", denyRead, denyWrite, pre = "" }) {
   return openHarness({ root: ROOT, jsx: "window.__harnessReady=true;", waitFor: wait, viewport: PHONE,
-    extraHead: hashHead(hash) + makeStub({ seed: db, view: "staff", tab: "periods", auth: "accounts", authSeed: { users: {}, cur: null }, denyRead, denyWrite }), scripts: SCRIPTS });
+    extraHead: hashHead(hash) + pre + makeStub({ seed: db, view: "staff", tab: "periods", auth: "accounts", authSeed: { users: {}, cur: null }, denyRead, denyWrite }), scripts: SCRIPTS });
 }
 async function openOwner({ db, tab = "periods" }) {
   return openHarness({ root: ROOT, jsx: "window.__harnessReady=true;", waitFor: "#root > *", viewport: { width: 1200, height: 900 },
@@ -82,12 +84,33 @@ const submitAll = async h => {
       V.P_noErrors = R.P.errors.length === 0;
     } finally { await h.browser.close(); }
   }
+  // ---------------- K: 募集URLでも本人の端末として登録 ----------------
+  {
+    const pre = `<script>localStorage.setItem("ots_myPageKnown_v1",${JSON.stringify(JSON.stringify({ S1: { token: T } }))});</script>`;
+    const h = await openAnon({ hash: "#/s/t1", db: seed(), pre });
+    try {
+      const uid = await h.evaluate(() => window.__authCur().uid);
+      const dev = await waitDb(h, `shops/S1/pageDevices/${uid}`, v => v && v.token);
+      R.K = { uid, dev, errors: h.errors.slice() };
+      V.K_recruitUrlRegisters = !!dev && dev.token === T;
+      V.K_noErrors = R.K.errors.length === 0;
+    } finally { await h.browser.close(); }
+  }
+  {
+    const h = await openAnon({ hash: "#/s/t1", db: seed() });
+    try {
+      await sleep(h, 2500);
+      const uid = await h.evaluate(() => window.__authCur().uid);
+      R.K2 = { dev: await db(h, `shops/S1/pageDevices/${uid}`), errors: h.errors.slice() };
+      V.K_unknownDeviceNotRegistered = !R.K2.dev && R.K2.errors.length === 0;
+    } finally { await h.browser.close(); }
+  }
   // ---------------- G: 縛りによる拒否の案内 ----------------
   {
     const h = await openAnon({ hash: "#/m/" + T, db: seed({ shop: { nameGuards: { 佐藤: true } } }), wait: '[data-my-view="page"]', denyWrite: ["shops/S1/subs"] });
     try {
       await submitAll(h);
-      const msg = await waitText(h, "本人専用のURL", 8000);
+      const msg = await waitText(h, "ご本人の端末", 8000);
       const done = await h.evaluate(() => document.body.innerText.includes("提出完了"));
       R.G = { msg, done, errors: h.errors.slice() };
       V.G_guardMessage = msg && !done;

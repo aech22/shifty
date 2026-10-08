@@ -628,8 +628,9 @@ Firebase Realtime Database
 │       ├── nameGuards/{名前} = true ← 提出の人単位の縛り（2026-10-08）。承認済みの個別URLか staffLinks の紐付けがあり、スタッフ一覧にある名前。
 │       │                 書くのはオーナーと CF（planNameGuards・planNameGuardsCF＝同じ規則）。読みは auth != null。改名・削除・取り消しのあとは
 │       │                 今の staffPages・staffLinks・スタッフ一覧から**計算し直す**（印を移す処理は持たない）
-│       ├── pageDevices/{uid} = {token, at} ← 承認済みの個別URLを開いた端末（2026-10-08）。本人の uid に、承認済みの token のときだけ書ける。
-│       │                 読みは本人とオーナー。App の ensurePageDevice が開いたときと提出の前に書く
+│       ├── pageDevices/{uid} = {token, at} ← 本人の端末（2026-10-08）。本人の uid に、承認済みの token のときだけ書ける。読みは本人とオーナー。
+│       │                 App の ensurePageDevice が、個別URL（#/m/）ではその URL、募集URL（#/s/）ではこの端末が覚えている同じ店舗の個別URL
+│       │                 （ots_myPageKnown_v1・ots_myPages_v1）で、開いたときと提出の前に書く＝本人の端末なら募集URLからも出せる（ユーザー指示）
 │       └── private/     ← 読みはオーナーのみ（配下すべて）。subAudit/{期間ID}/{push id} は提出の監査の記録（CF auditSubWrite だけが書く・2026-10-08）
 │           ├── adminKey ← 管理キー（32桁）
 │           ├── pay/{名前} ← 賃金マスタ（2026-09-30・P6a）。書きもオーナーのみ・.validate で payType（monthly|hourly）と base（数値）必須。

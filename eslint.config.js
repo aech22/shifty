@@ -176,6 +176,8 @@ const sharedGlobals = {
   // スタッフ個別URL（2026-10-04）: app-my-utils.js の純粋関数（app-core.js の parseUrl・app-my.js・app-main.js が使う）
   MY_PAGE_TOKEN_LEN: "writable",
   isMyPageToken: "writable",
+  MY_PAGE_KNOWN_LS: "writable",
+  MY_PAGES_LS: "writable",
   genMyPageToken: "writable",
   myRand: "writable",
   myPageRouteOf: "writable",

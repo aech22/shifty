@@ -148,6 +148,9 @@ test("配線: 紐付けを変える CF は印を計算し直し、企業の改�
   // 提出: 個別URLの端末を登録してから書く・拒否は理由を付けて返し、画面から消す
   const so = main.slice(main.indexOf("const staffOnSub="), main.indexOf("const staffOnDeleteSub="));
   assert.ok(/ensurePageDevice\(\)\.then\(\(\)=>fbUpd\(path, flat\)\)/.test(so) && /userMessage:msg/.test(so) && /prevSub\?prev\.map/.test(so));
+  // 募集URLでも、この端末が覚えている同じ店舗の個別URLで本人の端末として登録する（2026-10-08 ユーザー指示）
+  const ep = main.slice(main.indexOf("const ensurePageDevice="), main.indexOf("useEffect(()=>{ensurePageDevice();}"));
+  assert.ok(/myPageOpenCandidates\(lg\(MY_PAGE_KNOWN_LS,\{\}\)\|\|\{\},lg\(MY_PAGES_LS,\{\}\)\|\|\{\},shopId\)/.test(ep) && /urlLocked&&currentShopIdRef\.current/.test(ep));
   // 期間の保存は受付期限を endDate に合わせ、逆引きにも書く
   const sp = main.slice(main.indexOf("const savePeriods =useCallback("), main.indexOf("const saveStaff   =useCallback("));
   assert.ok(/map\(withPeriodExpiry\)/.test(sp) && /staffUrlTokenRecord\(sid,p\)/.test(sp));

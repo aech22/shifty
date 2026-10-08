@@ -1801,7 +1801,7 @@ function pageDeviceRecordOf(token,nowIso){return isMyPageToken(token)?{token,at:
 const SUB_DENIED_MESSAGES={
   expired:"この期間の受付は終了しました（期間の最終日の翌日から提出できません）",
   confirmed:"この期間のシフトは確定済みのため、提出・変更できません。お店の管理者に連絡してください",
-  guard:"このお名前の提出は、本人専用のURLかマイシフトのアカウントからだけ受け付けています。お店から受け取った専用のURLを開いて提出してください",
+  guard:"このお名前の提出は、ご本人の端末（専用のURLを開いたことがある端末か、マイシフトにログインしている端末）からだけ受け付けています。お店から受け取った専用のURLを一度開いてから、もう一度お試しください",
 };
 function subDeniedReasonOf(o){
   const x=_myObj(o)||{};
