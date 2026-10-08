@@ -1633,10 +1633,14 @@ Admin SDK はパスの空セグメントを詰めるので、`"demo-toriMatsu-v1
 
 **目的**: 正規のWebアプリ以外（curl・スクレイパー・改造クライアント）からのFirebaseアクセスを層として遮断する。SDK読込と初期化コードは実装済み（サイトキー未設定のためスキップ動作中）。
 **受け入れ条件**:
-- [ ] Firebaseコンソール（両プロジェクト）→ App Check → アプリを登録し、reCAPTCHA v3 サイトキーを発行する
-- [ ] `app-core.js` の `APP_CHECK_SITE_KEY` にサイトキーを設定する（DEV_MODE分岐でdev/本番それぞれ）
-- [ ] **未enforceの監視モードで2週間観察**し、コンソールのApp Checkメトリクスで正規トラフィックの検証成功率がほぼ100%であることを確認する
-- [ ] Realtime Database と Cloud Functions のenforcementをコンソールから有効化する
+- [x] 本番（ontheshift）の App Check に Fraud Defense（旧 reCAPTCHA Enterprise）のキー「shifty」（ドメイン shiftyshifty.app）を登録した（2026-10-08・ユーザー）。
+      reCAPTCHA v3（Classic）は非推奨なので使わない。dev は登録しない（キーのドメインに localhost が無い＝`APP_CHECK_SITE_KEY` は dev では空）
+- [x] `APP_CHECK_SITE_KEY` に本番のキー、`ReCaptchaEnterpriseProvider` で有効化、CSP に www.google.com・recaptcha.google.com（`4ce93f2`）。
+      本番の appId がプロジェクトに無いアプリを指していて交換が「App not registered」の 400 だったので、実在するウェブアプリ（…858670ff…）に直した（`66fd32e`）。
+      版数 20261008-66fd32e で本番の画面からトークンの交換が 200（provider recaptcha_enterprise・ttl 3600s）、CSP の違反0件を確認
+- [ ] **未enforceの監視モードで2週間観察**（2026-10-22 ごろまで）し、コンソールのApp Checkメトリクスで正規トラフィックの検証成功率がほぼ100%であることを確認する
+- [ ] Realtime Database の enforcement をコンソールで有効化する。Cloud Functions はコードで `enforceAppCheck` を付ける（`stripeWebhook` と schedule・DB トリガーは除く）
+- [ ] 有効化したら CLAUDE.md のセキュリティモデルの「App CheckはSDK読込済み・サイトキー未設定でスキップ中」を書き換える
 **影響範囲**: app-core.js（定数1箇所）、Firebaseコンソール操作
 **備考**: enforce後はRESTでの直接デバッグアクセスが遮断される点に注意（管理用途はAdmin SDK/コンソールを使う）。
 
