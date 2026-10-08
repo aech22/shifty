@@ -1004,7 +1004,8 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
   // fbW の .catch では拾えないまま保存が黙って失われる（画面とlocalStorageだけが更新される）。
   // ID生成側（genSecureId・app-utils.js）は既に同じ集合を除外している。入口をそちらに揃える。
   const rejectBadName=n=>{
-    const bad=firebaseKeyForbiddenChars(n);
+    // 提出のルールが拒否する " < > と改行・タブも弾く（その名前のスタッフは提出できなくなるため・2026-10-08）
+    const bad=[...firebaseKeyForbiddenChars(n),...staffNameUnsafeChars(n)];
     if(!bad.length)return false;
     tt(`▲ 名前に使えない文字があります（${bad.join(" ")}）`);
     return true;

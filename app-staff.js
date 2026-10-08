@@ -465,7 +465,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
             ):editN?(
               <div style={{position:"relative"}}>
                 <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                  <input ref={nr} value={ni} onChange={e=>{setNi(e.target.value);setShowSuggest(true);}}
+                  <input ref={nr} value={ni} onChange={e=>{setNi(e.target.value.replace(STAFF_NAME_UNSAFE_RE,""));setShowSuggest(true);}}
                     onKeyDown={e=>{
                       if(e.key==="Enter"){
                         if(ni.trim()){const resolved=resolveAlias(ni.trim(),staffAliases);dirtyRef.current=true;setName(resolved);}

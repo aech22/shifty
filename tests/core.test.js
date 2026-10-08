@@ -7867,3 +7867,13 @@ test("shiftSheetEsc: 属性値を抜け出す \" と ' もエスケープする�
   const html = `<td data-sheet-col="${u.shiftSheetEsc(bad)}">`;
   assert.strictEqual((html.match(/"/g) || []).length, 2, html);
 });
+
+test("staffNameUnsafeChars: 提出のルールが拒否する \" < > と改行・タブを拾い、普通の名前は通す（ルールと同じ集合）", () => {
+  assert.deepStrictEqual(u.staffNameUnsafeChars("田中 太郎"), []);
+  assert.deepStrictEqual(u.staffNameUnsafeChars("山田　花子"), [], "全角空白は通す");
+  assert.deepStrictEqual(u.staffNameUnsafeChars('a"b<c>'), ['"', "<", ">"]);
+  assert.deepStrictEqual(u.staffNameUnsafeChars("a\tb\nc"), ["改行・タブ"]);
+  const rules = require("../database.rules.json");
+  const v = rules.rules.shops.$shopId.subs.$subId.staffName[".validate"];
+  ['"', "<", ">"].forEach(c => assert.ok(v.includes(c), `ルールの staffName が ${c} を拒否していない`));
+});

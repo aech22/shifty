@@ -107,9 +107,11 @@ async function req(m, p, tok, body) { const r = await fetch(`${DB}/${enc(p)}.jso
     if (sa.project_id !== "thirty-dev-b6958") throw new Error("サービスアカウントが dev（thirty-dev-b6958）ではない: " + sa.project_id);
     const { createRequire } = require("module");
     const req2 = createRequire(path.resolve(path.dirname(process.argv[3]), "package.json"));
-    const admin = req2("firebase-admin");
-    const app = admin.initializeApp({ credential: admin.credential.cert(sa), databaseURL: DB }, "probe-rules-subs");
-    adminDb = app.database();
+    // firebase-admin v14 はルートの export に credential が無い。subpath（firebase-admin/app・/database）で読む
+    const { initializeApp, cert } = req2("firebase-admin/app");
+    const { getDatabase } = req2("firebase-admin/database");
+    const app = initializeApp({ credential: cert(sa), databaseURL: DB }, "probe-rules-subs");
+    adminDb = getDatabase(app);
     await adminDb.ref(`${SUBS}/__probeSubsL`).set({ ...sub("__probeSubsL"), legacyTop: "x", shifts: { "2099-01-02": { status: "work", start: "10:00", end: "15:00", legacyDay: 1 } } });
     await patch("[legacy] 未知の項目を持つ提出の updatedAt を update", A, { "__probeSubsL/updatedAt": "2099-01-01T03:00:00.000Z" }, 200);
     await patch("[legacy] 未知の項目を持つ提出の別の日を update", A, { "__probeSubsL/shifts/2099-01-03": { status: "work", start: "11:00", end: "15:00" } }, 200);
