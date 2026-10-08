@@ -210,7 +210,8 @@ function App(){
     // App Check（サイトキー設定済みの場合のみ有効化。未設定時はスキップ）
     try{
       if(APP_CHECK_SITE_KEY && firebase.appCheck){
-        firebase.appCheck().activate(APP_CHECK_SITE_KEY, true);
+        // キー文字列だけを渡すと v3 として扱われるので、Enterprise のプロバイダを明示する
+        firebase.appCheck().activate(new firebase.appCheck.ReCaptchaEnterpriseProvider(APP_CHECK_SITE_KEY), true);
       }
     }catch(e){ console.warn("App Check init failed:",e); }
 

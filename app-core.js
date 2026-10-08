@@ -305,10 +305,11 @@ function parseShopCode(raw){
   return{shopId:t.slice(0,i),adminKey:t.slice(i+1)||null};
 }
 
-// ===== App Check（reCAPTCHA v3）=====
-// Firebaseコンソールでアプリ登録・サイトキー発行後にキーを設定すると有効化される。
-// 空文字の間は初期化をスキップする（enforce はコンソール側で別途操作）。
-const APP_CHECK_SITE_KEY = DEV_MODE ? "" : "";
+// ===== App Check（Fraud Defense＝旧 reCAPTCHA Enterprise）=====
+// 本番のキーは Google Cloud の Fraud Defense で作った「shifty」（ドメイン shiftyshifty.app）。公開してよいサイトキー。
+// Firebase コンソールの App Check に同じキーを登録してある前提。dev は空＝初期化しない（キーのドメインに localhost が無いため）。
+// enforce はコンソール（RTDB）とコード（Cloud Functions）で別途行う。
+const APP_CHECK_SITE_KEY = DEV_MODE ? "" : "6LdEdeQtAAAAAAE51pmPSKT7fajmv9wZhZjaags6";
 
 // ===== 共通スタイル定数 =====
 const AI={width:"100%",padding:"11px 14px",background:"var(--c-card)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none"};
