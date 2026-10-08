@@ -43,9 +43,7 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 **目的**: スタッフ・管理者・企業のパスワードを決めるとき、8文字以上・よく使われるもの・日付に見える数字（8桁・4桁）を断る（ユーザー指示）。ログインには当てない。
 - [x] develop へマージ → クライアントを本番へ（2026-10-08・`6203c33`・版数 20261008-cdd1c73）。画面だけで効く（ルールの変更なし）。
       クラウドのセッションからは shiftyshifty.app に繋がらず、配信物の照合は未実施（GitHub Pages の build and deployment で確認）
-- [ ] CF: `createCompany`・`changeCompanyPassword` を**名指しで**本番へデプロイする（`newPasswordErrorCF`）。クライアントが先でも壊れない（画面が同じ規則で先に断る）。
-      **クラウドのセッションには firebase CLI と認証情報が無く未実施**。Mac で `cd functions && firebase deploy --only functions:createCompany,functions:changeCompanyPassword --project ontheshift`
-      （全関数のデプロイは削除済みの関数の削除を求めてくるので名指しにする）
+- [x] CF: `createCompany`・`changeCompanyPassword` を名指しで本番へデプロイした（2026-10-08・ユーザーが Mac で実行。2本とも「Successful update operation」）
 - [ ] 本番で、スタッフの新規登録・管理者の新規登録・企業のパスワード変更で `sakura0315` が断られることを1回ずつ見る
 - [ ] （任意・ユーザーの作業）Firebase コンソールのパスワードポリシーで最低8文字をサーバー側でも強制するか決める。Auth の REST を直接叩く登録と、
       Firebase のパスワード再設定のページはこれでしか止められない（一覧と日付の規則は Firebase 側では表せない）

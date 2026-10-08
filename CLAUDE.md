@@ -1206,7 +1206,7 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
   企業のパスワード（企業連携タブの作成と変更）。**ログインには当てない**（既存のパスワードで入れなくなるため・テストで固定）。ヒントは `NEW_PASSWORD_HINT`。
   **企業のパスワードは CF でも同じ規則**（同日「全て揃えて」）: `createCompany`・`changeCompanyPassword` が `newPasswordErrorCF`（functions/security.js）を通す。
   一覧・判定・文言は画面と同じで、tests/security.test.js が乱数3000件で `newPasswordError` と同じ答えになることと一覧の一致を照合する（cf-verify は `example-company-password-cf.js`）。
-  **CF は本番未デプロイ**（デプロイまでは画面を通さない直接の呼び出しで6文字が通る）。
+  **CF も本番反映済み**（2026-10-08・createCompany・changeCompanyPassword を名指しでデプロイ）。
   画面の中の検査しか無いのは Firebase Auth のアカウント（スタッフ・管理者）で、Auth の REST を直接叩く登録と、Firebase が用意するパスワード再設定のページは止められない
   （止めるには Firebase コンソールのパスワードポリシー。一覧と日付の規則は Firebase 側では表せず、最低文字数と文字の種類だけ）
 - **連結が拒否されたら新しいアカウントとして作る（2026-10-04・`4163394`）**: メールアドレスの列挙保護が有効なプロジェクト（本番・dev とも）では
