@@ -50,6 +50,14 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] 反映後: 全マニュアルの表紙の「次回の本番反映から使えるようになります」を外して PDF を作り直す（`/Users/hiroshi/shifty-video/manual-src/`）
 **未検証**: 通知の実機（iPhone のホーム画面アプリ・Android・PC）での受信、本物の Firebase でのトリガーの発火
 
+**同じ develop に入っているセキュリティ強化（`6da4bb6` のマージ・2026-10-08）の追加項目**（バグチェック#165 で手順が無いことを検出・条件A）:
+- [ ] **ルールを出す前に**、本番の全店舗の `shops/*/subs` を `shifty-prod-data-probe`（読み取り専用）で走査し、
+      `b107087` の許可制に無い項目や形の合わない値（日ごとの未知のキー・`adjustedStartNote` 201字以上・時刻の形）が残っていないかを確かめる。
+      日ごとの書き込みは丸ごとなので、1つでも残っている日はその日の編集がすべて拒否され、同じ回の他の人のセルも保存されない
+- [ ] ルールの反映後、dev で `node .claude/skills/shifty-e2e-verify/scripts/probe-rules-subs.js` を回す（本番のルールは REST で叩かない）
+- [ ] CF: `companyLogin`（試行回数の制限）・`verifyShopOwner` を使う課金系4本（未claim の店舗を 403）・`myPagePin`（ロックの倍増）・`sendEmailOtp` も同じ回で出す
+- [ ] クライアントの CSP（index.html の meta）: 本番で Google ログイン・企業コードのログイン・Stripe への遷移・Excel/PDF の書き出し・通知の購読を1回ずつ通し、コンソールに CSP の違反が出ないことを見る
+
 ---
 
 ## 🟡 掛け持ち対応（2026-10-05・develop 未マージ）の本番反映
