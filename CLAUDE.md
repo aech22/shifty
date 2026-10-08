@@ -2091,27 +2091,27 @@ transfer だけを消す。退社後もスタッフ一覧からは消さない�
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-10-08 自動実行 #165）
+## Shifty バグチェックレポート（2026-10-08 自動実行 #166）
 
-> 着手時の HEAD は `fe3bbe6`。#164（`4edc06f`）以降に163コミット。主な変更は従業員画面（app-my.js・app-my-utils.js）、通知（functions/notify.js・Web Push の CF 3本）、セキュリティ強化（subs の許可制ルール・CSP・計測の伏せ字・管理端末の一覧と管理コードの作り直し・CF の試行回数制限）、労務の紫セルの基準変更、入社日・退社日。
+> 着手時の HEAD は `69511e8`。同日の #165 の静的検査に加え、サブエージェント2つで「subs の許可制ルールとクライアントが書く値」と「2026-10-08 の CF・管理端末まわり」を点検した。修正2件は同日の本番反映（版数 20261008-6141385 以降）に入っている（コミットメッセージには誤って #165 とある）。
 
 ### 修正済み
 
-なし。
+- **[🟡] 管理コードを作り直したあと、owners に残した企業アカウントの端末が管理コードの入力画面で止まる**（app-main.js の `claimOwnership`・`2dd25d8`）。ルールは既にオーナーでも現在の adminKey と同じ値しか書かせないので、古いキーの控えでの再登録が拒否されていた。拒否されたら `private/adminKey` を読み直し、外されていれば `claimViaCompany` で戻る（キーは生成しない）。回帰 `example-admin-devices.js` の場面G（修正前 EXIT=1）。スタブの owners 規則も本物に合わせた（以前は既にオーナーなら値が違っても書けたので再現できなかった）。
+- **[🟡] シフト作成タブのセルに201字以上入れると許可制ルールに保存を拒否される**（app-shift.js の `ShiftCell`・`09ad9c4`）。メモの上限200字に合わせ入力欄を `maxLength=200` にした。拒否は saveSubs の1回の update ごとで、同じ回の他の人のセルも保存されず画面は保存済みに見えていた。
 
 ### 要確認（未修正）
 
-- **[🟢] develop に本番未反映のコミットが20件ある。** origin/main..HEAD にセキュリティ強化（subs の許可制ルール `b107087`・CF の試行回数制限・verifyShopOwner の未claim 拒否・CSP）とマイシフト登録の表示が入っている。配信版数は `20261008-8328670` のままで、app-*.js・index.html が版数より後に変わっている。subs のルールは既存パスの締め付けなので CLAUDE.md の順（クライアント → ルール → CF）で `/release-to-main` を通せば閉じる。BACKLOG 化はしない。
-- **[🟢] lint の warnings が 119 から 184 に増えた。** 全件 no-unused-vars（ファイルをまたぐコンポーネントと定数の誤検知）で、errors は0件。
-- **[🟢] SVG の属性に `var()` を書いた箇所が2件**（app-staff.js:148 の `fill`、app-my.js:1799 の `stroke`）。後者を WebKit で実測した記録はまだ無い。
-- **[🟢] #158 から継続の4件・#163 の F6③・`.cursorrules` の未コミット変更。** 状態は同じ。
+- **[🟢] 企業ログインの試行制限と OTP の送信制限は、第三者が正規の利用者を締め出せる**（案Aの代償どおり・解除手段なし）。
+- **[🟢] app-admin.js の `requestPlanAction` の上のコメント「未claim店舗は許可」が `27b80e8` 以降は古い。**
+- **[🟢] #165 からの継続**（lint warnings 187・SVG 属性の var() の WebKit 実測・#158 からの4件・#163 の F6③・`.cursorrules` の未コミット変更）。
 
 ### 異常なし
 
-- 通知の CF（notifyStaffSubmit）は `after.periodId` をパスに埋め込むが、ルールが subs の periodId を `^[A-Za-z0-9_-]+$`・64字以内に限っているので Admin SDK の空セグメントの詰め（#125 の形）は起きない。secrets は通知3本とも `VAPID_PRIVATE_KEY` を持つ。
-- `npm test` **739件パス**・`npx eslint app-*.js` **0 errors / 184 warnings**・functions/*.js の構文チェックはすべて通過。
-- `DEV_MODE` は式のまま。読み込み順は9ファイルとも正しい。Babel を通る最大のファイルは app-company.js の 225,150 字。SRI は11本。未定義の CSS 変数は0件で、ダーク定義の2箇所も一致。フォーム部品162件で fontSize 16 未満は0件。subs・periods の全体 set()・global/shops の一覧読み・`".read": true`・functions の `.delete()` は0件。削除の filter 3か所はどれも deletedId を渡すか remove() を呼んでいる。
-- **Firebase・Stripe・本番データには一切アクセスしていない。** 実ブラウザの回帰は今回回していない。
+- 許可制ルールとクライアントが書く項目・値はメモの文字数以外で一致。本番の subs の走査（拒否0件）は反映のセッションが実施済み。
+- 通知3本・companyLogin・sendEmailOtp・myPagePin・verifyShopOwner に、トランザクション・secrets・await・日付・パスの検証の問題なし。CSP は使っている外部オリジンをすべて含み、PDF・全員のシフト表の HTML はすべてエスケープを通る。
+- `npm test` **739件パス**・`npx eslint app-*.js` **0 errors / 187 warnings**・functions の構文チェック通過。回帰5本（admin-devices・admin-code-only・shift-cell-behaviors・shift-edit-tab・shift-calc-deferred）EXIT=0。
+- Firebase・Stripe・本番データにはアクセスしていない。
 
 <!-- BUG_CHECK_LATEST_END -->
 
@@ -2159,6 +2159,43 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🔴 2026-10-08 分（店舗コードの廃止・入社日と退社日・紫の基準・通知ほか）の本番反映（ユーザーの承認待ち）
+
+**目的**: develop の 2026-10-08 分を本番に出す。掛け持ち対応（下の🟡）のルール・`linkStaffPage` も同じ回で出す。
+**順序**（新ノード＝通知の push があるのでルールが先）:
+- [ ] ルール: database のデプロイを dev → REST で push ノードの書き込み（許可リスト外の endpoint は拒否）を確かめる → 本番
+- [ ] 秘密: `VAPID_PRIVATE_KEY` を本番（ontheshift）に設定する（値は端末の `~/.config/shifty/vapid-private.txt`。リポジトリには無い。公開鍵は app-core.js と functions/notify.js）
+- [ ] CF: notifyNewPeriod・notifyStaffSubmit・notifyDeadlines・linkStaffPage・companyRenameStaff を**名指しで**本番へデプロイする
+      （全関数のデプロイは、削除済みの issueStaffLinkCode・redeemStaffLinkCode の削除を求めてくるため）
+- [ ] クライアント: `/release-to-main`（`?v=` と `build:` を上げる。`sw.js` が shiftyshifty.app の直下で配信されること）
+- [ ] 反映後: 全マニュアルの表紙の「次回の本番反映から使えるようになります」を外して PDF を作り直す（`/Users/hiroshi/shifty-video/manual-src/`）
+**未検証**: 通知の実機（iPhone のホーム画面アプリ・Android・PC）での受信、本物の Firebase でのトリガーの発火
+
+**同じ develop に入っているセキュリティ強化（`6da4bb6` のマージ・2026-10-08）の追加項目**（バグチェック#165 で手順が無いことを検出・条件A）:
+- [ ] **ルールを出す前に**、本番の全店舗の `shops/*/subs` を `shifty-prod-data-probe`（読み取り専用）で走査し、
+      `b107087` の許可制に無い項目や形の合わない値（日ごとの未知のキー・`adjustedStartNote` 201字以上・時刻の形）が残っていないかを確かめる。
+      日ごとの書き込みは丸ごとなので、1つでも残っている日はその日の編集がすべて拒否され、同じ回の他の人のセルも保存されない
+- [ ] ルールの反映後、dev で `node .claude/skills/shifty-e2e-verify/scripts/probe-rules-subs.js` を回す（本番のルールは REST で叩かない）
+- [ ] CF: `companyLogin`（試行回数の制限）・`verifyShopOwner` を使う課金系4本（未claim の店舗を 403）・`myPagePin`（ロックの倍増）・`sendEmailOtp` も同じ回で出す
+- [ ] クライアントの CSP（index.html の meta）: 本番で Google ログイン・企業コードのログイン・Stripe への遷移・Excel/PDF の書き出し・通知の購読を1回ずつ通し、コンソールに CSP の違反が出ないことを見る
+
+---
+
+## 🟡 掛け持ち対応（2026-10-05・develop 未マージ）の本番反映
+
+**目的**: 作業ブランチ `claude/nifty-lovelace-6scrq6`（`6cf8a9a`）の2件を本番に出す。①申請の欄で**お店ごとの従業員番号**を入れる（クライアントだけ）。
+②個別URL（#/m/）の設定の「マイシフトのアカウントに追加」（CF `linkStaffPage`＝新規、ルールの staffLinks.method に 'page'）。
+URLへのまとめ（2店目以降を最初の個別URLに集約）は**採らない**（2026-10-05 ユーザー判断「当初の予定で進めて」）。
+**受け入れ条件**:
+- [x] develop へマージ → クライアントを本番へ（2026-10-05・`701d4c1`・版数 20261005-7c9fdf6。GitHub Pages の build and deployment が success。クラウドのセッションからは shiftyshifty.app に繋がらず配信物の照合は未実施）
+- [ ] ルール（dev → 本番）。既存パスの値の追加なのでクライアントが先でよい
+- [ ] `firebase deploy --only functions --project ontheshift`（linkStaffPage が create になること）。CF より先にクライアントだけ出ると「追加」が「関数が無い」で失敗するだけ
+- [ ] 本番で1回、個別URLから自分のテスト用アカウントに追加し、`shops/{sid}/staffLinks/{uid}.method==="page"` を読み取りで確かめる
+**影響範囲**: app-my.js・app-my-utils.js・app-main.js・functions/index.js・functions/staff-link.js・database.rules.json
+**備考**: 検証は npm test 677件・cf-verify `example-link-staff-page.js` 23/23・E2E `example-my-multi-shop.js` 30/30 と既存の my-link・my-page・my-account・email-link・my-1005 が全パス（クラウドのセッションでは SHIFTY_ROOT と SHIFTY_CDN_DIR、cf-verify は SHIFTY_CF_INDEX の指定が要る）
+
+---
+
 ## 🟡 メール確認つきの新規登録: Firebase コンソールの設定（ユーザー作業）→ 本番で登録を1回通す
 
 **目的**: 2026-10-04 に新規登録（マイシフト・管理者のログイン画面・設定タブのアカウント連携）を「確認メールのリンクを開いて続きを登録」に変えた（`dd06a46`）。
@@ -2170,6 +2207,10 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] Authentication → Templates → 「メールアドレスのリンクでログイン」（Email link sign-in）のテンプレートの言語を日本語に（任意）
 - [ ] 本番で新規登録を1回通す（実在の自分のアドレス）: 確認メールが届く → リンクで続きの画面が開く → パスワードを決めて登録 → 再読み込み後もログインのまま
 - [ ] dev（thirty-dev-b6958）でも同じ設定をするかはユーザー判断（しない場合、dev は従来の登録のまま）
+- [ ] （2026-10-05 追記）確認メールの差出人を `shiftyshifty.app` にする: Firebase コンソールのカスタムドメインの DNS レコード4件（SPF・firebase の TXT、DKIM の CNAME 2件）を
+      Cloudflare に足して確認する（未実施）。標準の差出人だと迷惑メールに入ることを 2026-10-05 にユーザーが確認した（CLAUDE.md の「従業員画面の 2026-10-05 時点の状態」）。
+      同じ日に確認メールが届いているので、上のメールリンクの有効化と承認済みドメインは少なくとも一方のプロジェクトで済んでいる可能性がある——本番で済んだかをユーザーに確かめてからチェックする
+      （2026-10-05: ユーザーの回答は「更新待ち」。上の2項目はユーザーが設定を確かめて更新するまで未チェックのまま）
 **影響範囲**: Firebase コンソールだけ（コード・ルール・CF の変更なし）
 
 ---
@@ -2180,6 +2221,7 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 見た目と体感、実際のアプリへの取り込み、実際の給与明細との一致は**実機とユーザーの目でしか決まらない**ので、本番へ出すリリースの際にユーザーと1項目ずつ突き合わせる
 （2026-10-04 ユーザー指示）。**ここに✅を付けるのはユーザーと確認した後だけ**。読めない・切れる・合わないが見つかったら、その項目の「戻る先」のタスクを開き直す。
 **いつ**: 第1部（S1〜S3・H2・K2）が載るリリースと、従業員画面の入口（`MY_SCREEN_ENABLED`）を外すリリース（下の「従業員画面の本番反映」③）。同じリリースなら1回でよい。
+**（2026-10-05 確認）第1部も従業員画面の入口も 2026-10-04 に本番へ出た（`ff384fd`・`048a52b`）が、この一覧の突き合わせはまだ済んでいない。次の `/release-to-main` で行う。**
 
 - [ ] **高速化（S1〜S3）の体感**: 人数の多い店舗（30人×31日ほど）のシフト作成タブで、セルの入力・選択・確定（Enter・フォーカスの移動）が引っかからないか。
       確定のあとに労務判定・ヒートマップ・集計が少し遅れて更新される（S3 の「後回しの計算」・淡く表示）のが気にならないか。PC と iPhone の両方。
@@ -2190,8 +2232,8 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 - [ ] **Excel の名前行（K2）**: 9pt・縦書き・行の高さ 78 のまま。**7文字を超える名前が切れないか**を、実際の Excel（Windows と Mac）でファイルを開いて確かめる。
       切れるなら行の高さか文字の大きさを決め直す。戻る先: 完了済みの K2
 - [ ] **.ics の取り込み**（従業員画面の給料・マイシフト。2026-10-04 に互換性を点検）: ①実機の iPhone の Safari でマイシフトの「この月のシフトをカレンダーに取り込む」→
-      「すべて追加」（iOS 27 のシミュレーターでは取り込めた）、②Google カレンダー（PC のウェブ版の「設定 → インポート / エクスポート」でファイルを選ぶ・
-      日付の詳細の「Google カレンダーに追加」リンク）、③Outlook（デスクトップと Outlook.com）、④Android のカレンダー。
+      「すべて追加」（iOS 27 のシミュレーターでは取り込めた）、②Google カレンダー（PC のウェブ版の「設定 → インポート / エクスポート」でファイルを選ぶ。
+      日付ごとの「Google カレンダーに追加」リンクは 2026-10-05 に外した）、③Outlook（デスクトップと Outlook.com）、④Android のカレンダー。
       見るもの: 時刻（**24時超えの勤務が翌日の時刻になるか**・時刻がずれないか）、日本語のタイトル、締の追加出勤が別の予定になるか、
       同じ月を書き出し直したときに予定が増えずに上書きされるか（SEQUENCE。シミュレーターでは確かめられなかった）。戻る先: 完了済みの E4
       ⑤**TimeTree**（2026-10-04 追加）: TimeTree は .ics を直接取り込めない（公式ヘルプ）ので、①で iPhone のカレンダーに取り込んだあと、iPhone の「設定」→「TimeTree」→
@@ -2221,7 +2263,29 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟡 個人リンクコードの削除を本番へ反映する（2026-10-05 にコードから削除・本番は未反映）
+
+**目的**: 2026-10-05 のユーザー指示で個人リンクコード（紐付けの方式C）を機能ごと削除した。コードからは消えたが、
+本番には CF `issueStaffLinkCode`・`redeemStaffLinkCode` とルール（`staffLinkCodes`・`staffLinkCodeIndex`・`staffLinkCodeAttempts`）が残っている。
+クライアントは 2026-10-05 から両 CF を呼ばないので、残っていても画面からは使われない（CF を直接呼べばコードの発行と引き換えはまだ通る）。
+**順序**: ①クライアント（/release-to-main。`STAFF_LINK_CFS` から2本を外した版）→ ②ルール（`firebase deploy --only database`。3ノードのルールが消える＝既定の拒否。
+3ノードはもともとクライアントから読み書きできないので、先後で壊れるものは無い）→ ③CF（`purgeInactiveShops` の更新と、2本の関数の削除。
+`firebase deploy --only functions` は関数の削除を確認してくるので承認する／または `firebase functions:delete issueStaffLinkCode redeemStaffLinkCode --region asia-northeast1`）。
+- [ ] ①〜③を反映する（本番デプロイ＝ユーザー承認）
+- [ ] `firebase functions:list` で38本・2本が無いことを確かめる
+- [ ] 次の `purgeInactiveShops` の実行ログで「廃止した個人リンクコードの残りを削除」が出る（ノードが残っていた場合）か、何も出ないことを確かめる
+- [ ] 以前にコードで作られた紐付け（`staffLinks/{uid}.method === "code"`）がマイシフトで従来どおり使えることを本番で1件確かめる（あれば）
+**影響範囲**: functions/index.js・functions/staff-link.js・database.rules.json（コード変更は済み）
+**検証（コード）**: `npm test`・`npx eslint app-*.js`・cf-verify の `example-staff-link.js`（24項目）。ブラウザの回帰 `example-my-link.js` は
+この環境では CDN（unpkg・cdnjs）へ出られず未実行
+
+---
+
 ## 🟡 従業員画面（第2部 E0〜E6）の本番反映: ルール → CF → クライアント（入口のゲートを外す）
+
+> **✅ 2026-10-05 確認: ①ルール（dev→本番）・②CF（40本）・③ゲート（`MY_SCREEN_ENABLED = true`・2026-10-04 `dff85c4`／リリース `048a52b`）は済んでいる。**
+> 残りは REST の実測・本番の検証店舗での CF の実測・実機での通しだけ（下の未チェックの項目）。本文の「未デプロイ」「本番では出ていない」は 2026-10-04 時点の記述。
+> 個人リンクコード（方式 C）は 2026-10-05 に画面から外し（`5d80d39`）、同日ユーザー指示で機能ごと削除した（CF・ルール・関数とも。本番からの削除は下の🟡「個人リンクコードの削除を本番へ反映」）。C の実測は対象外。
 
 **目的**: 従業員画面（マイシフト・給料）は E0〜E6 を 2026-10-04 に develop で実装し終えたが、**ルールも Cloud Functions も dev・本番とも未デプロイ**（担当の制約）。
 入口は `MY_SCREEN_ENABLED = DEV_MODE`（app-core.js）の下にあり、本番では出ていない。CF は cf-harness（本物の index.js）、画面はスタブ Firebase でしか確かめていない。
@@ -2230,7 +2294,7 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 リリース直前にユーザーへ理由を示して承認を取る）→ ②CF（下の5本と既存の更新。P1〜P6 と同じく1回のデプロイ）→ ③クライアントの配信（`?v=` のバンプ）と `MY_SCREEN_ENABLED` のゲートを外す。
 ゲートを外すのは①②の実測が済んでから（外す判断はユーザー）。①だけ・②だけでゲートを外すと、プロフィール・紐付け・勤務先・給料の保存が拒否されるか「関数が無い」で失敗する（画面は落ちず理由を出す）。
 **①ルール（dev → 本番）と REST の実測**:
-- [ ] dev の RTDB へ反映する（確認ゲートあり・ユーザー承認）
+- [x] dev の RTDB へ反映する（確認ゲートあり・ユーザー承認）→ **2026-10-05 確認: 本番反映済み**（2026-10-05 のリリースで dev→本番。REST の実測の記録は無い）
 - [ ] REST で実測: 匿名 uid は自分の `users/{uid}/profile` に書けない（401）／メールを連結した uid は書ける（200）・他人の uid には書けない（401）・
       形の不正（displayName 51文字・number 9文字・余計なキー）は 401・本人は読める／他人は読めない。
       **連結の直後のトークンで書けるか**（`auth.token.email` が連結直後に入るか）を実 Firebase で確かめる
@@ -2247,7 +2311,7 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
       `users/{uid}` への複数パスの update（勤務先とそのシフトをまとめて消す）が子のルールだけで通ることも確かめる。反映まで dev の実機では手入力・上書き・勤務先の保存が拒否される（画面は落ちず、理由を出す）
 - [ ] REST で実測: 申請は本人かつメールのある認証だけ書ける（匿名 uid・他人の uid・存在しない店舗・デモ店舗・形の不正は 401）／オーナーは読めて消せる・本人は自分の申請だけ読める。
       staffLinks はオーナーも**作れない**（401）・オーナーは消せる・既存の紐付けの `name` だけ書き換えられる（`method`・`personId` は 401）・本人は自分の分だけ読める。
-      `staffLinkCodes` 等の3ノードは誰も読み書きできない
+      `staffLinkCodes` 等の3ノードは誰も読み書きできない（2026-10-05 にルールから削除＝既定の拒否のまま）
 - [ ] E5（2026-10-04）の `users/$uid/workplaces/$wid/pay`・`users/$uid/goals`・`users/$uid/actuals/$ym/$wid` を REST で実測する: メールのある本人は書ける（200）・匿名 uid・他人の uid は 401。
       pay: 必須（closingDay・payMonthOffset・payDay・holidayRule）の欠け・closingDay 0／32・payMonthOffset 3・holidayRule "x"・rate だけで wageType なし・rate 0・commute の per "week"・
       commute の余計なキー・余計なキーは 401。**勤務先の update（kind・shopId・color・name・pay を1回の update）が通ること**と、`pay:null` で給料設定だけ消せること。
@@ -2260,27 +2324,27 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
       approved なのに name が無いと 401・一覧の読みはオーナーだけ（他は 401）・1件の読みは 200・デモ店舗は 401。
       **staffPageData**: approved の token は読み書き 200（形は users/{uid} と同じ検証）・pending／revoked／存在しない token は読み書きとも 401・`profile`・`links` 等の余計なキーは 401。
       **staffPagePins**: 誰も読み書きできない（401）。反映まで dev の実機では申請・承認・本人のデータの保存が拒否される（画面は落ちず理由を出す）
-- [ ] 本番へ反映する（dev と同じファイル。本番のルールは REST で叩かない）
+- [x] 本番へ反映する（dev と同じファイル。本番のルールは REST で叩かない）→ **2026-10-05 確認: 本番反映済み**（2026-10-05 のリリースで dev→本番。REST の実測の記録は無い）
 **②CF（本番）**:
-- [ ] 紐付けの4本（`approveStaffLink`・`issueStaffLinkCode`・`redeemStaffLinkCode`・`unlinkStaff`）と既存の更新（`companyRenameStaff`・`syncPeopleMirror`・`purgeInactiveShops`）、
-      E6 の `getMyPay`。**CF より先にクライアントを出すと**、承認・コードの発行と入力・解除が「関数が無い」で失敗し、給料は会社設定を読めず本人の設定で計算する（申請・却下・改名と削除の追随はクライアントだけで動く）
-- [ ] 実機（dev は Spark で CF が動かないので本番の検証店舗）で A・B・C を1回ずつ通し、`staffLinks` と `users/{uid}/links` が同じ値で書かれること、
-      コードが1回で消えること、`redeemStaffLinkCode` の `token.email` が連結直後の匿名 uid でも入ること（E1 の未検証と同じ問い）を確かめる
-- [ ] Admin SDK の `transaction()` の挙動（手元に値が無いと最初に null で呼ぶ）で「1回限り」が崩れないことを実機で確かめる（cf-harness のモックは1回だけ呼ぶ）
+- [x] 紐付けの4本（`approveStaffLink`・`issueStaffLinkCode`・`redeemStaffLinkCode`・`unlinkStaff`）と既存の更新（`companyRenameStaff`・`syncPeopleMirror`・`purgeInactiveShops`）、
+      E6 の `getMyPay` → **2026-10-05 確認: 本番反映済み**（`firebase functions:list` で40本）。以下は反映前の注意（解消済み）: **CF より先にクライアントを出すと**、承認・コードの発行と入力・解除が「関数が無い」で失敗し、給料は会社設定を読めず本人の設定で計算する（申請・却下・改名と削除の追随はクライアントだけで動く）
+- [ ] 実機（dev は Spark で CF が動かないので本番の検証店舗）で A・B（申請→承認）を1回ずつ通し、`staffLinks` と `users/{uid}/links` が同じ値で書かれることを確かめる
+      （C＝個人リンクコードは 2026-10-05 に機能ごと削除したので対象外）
 - [ ] getMyPay を本番の検証店舗で1回通す: 紐付いた本人に自分の private/pay だけが返る・別の uid の紐付けの名前を渡しても自分の分だけ・紐付けの無い uid は permission-denied・
       匿名 uid は failed-precondition（**連結直後のトークンに email が入るか**は E1 と同じ未検証の問い）
-- [ ] Admin SDK の `transaction()` の挙動（手元に値が無いと最初に null で呼ぶ）で「1回限り」が崩れないことを実機で確かめる（cf-harness のモックは1回だけ呼ぶ）
-- [ ] スタッフ個別URL（2026-10-04）の `myPagePin`（新規）と `purgeInactiveShops` の更新（アーカイブする店舗の staffPageTokens・staffPageData・staffPagePins を消す）。
-      **CF より先にクライアントを出すと**、個別URLの給料タブが開かない（「暗証番号を確認できませんでした」）。閲覧・提出・承認はクライアントだけで動く。
+- [x] ~~Admin SDK の `transaction()` の挙動で「1回限り」が崩れないことを実機で確かめる~~ → 対象の `redeemStaffLinkCode` を 2026-10-05 に削除したので不要
+- [x] スタッフ個別URL（2026-10-04）の `myPagePin`（新規）と `purgeInactiveShops` の更新（アーカイブする店舗の staffPageTokens・staffPageData・staffPagePins を消す）を本番へ反映する
+      → **2026-10-05 確認: 本番反映済み**（40本に入っている）
+- [ ] 上の myPagePin の実測（反映前の注意は解消済み: **CF より先にクライアントを出すと**、個別URLの給料タブが開かない（「暗証番号を確認できませんでした」）。閲覧・提出・承認はクライアントだけで動く。
       本番の検証店舗で1回通す: 番号を決める → 本人の private/pay だけが返る・誤りで残り回数・5回で15分・管理者のリセットで決め直し。
-      **試行回数のトランザクションが実 SDK で null から呼ばれても回数が数えられること**（cf-harness のモックは1回だけ呼ぶ）を確かめる
+      **試行回数のトランザクションが実 SDK で null から呼ばれても回数が数えられること**（cf-harness のモックは1回だけ呼ぶ）を確かめる）
 **③クライアントとゲート**:
 - [ ] リリースの際に、この上の「🔴 次の本番リリースでユーザーと突き合わせる実機確認」をユーザーと1項目ずつ行う（.ics・給料の項目はこのゲートを外すリリースで）
-- [ ] `MY_SCREEN_ENABLED = DEV_MODE` を外して本番に入口を出す（①②の実測の後・ユーザー判断）。外すと本番でもスタッフURLに「マイシフト」ボタンが出て、`#/me` が従業員画面になる
-- [ ] 本番で「登録 → 別ブラウザでログイン → 同じ uid・同じ登録ネーム」・紐付け（A・B・C を1回ずつ）・公開と確定で黒文字・手入力のシフト・給料の月と年を1回ずつ通す
-**未検証の一覧（2026-10-04 時点）**: ルールの実機すべて／CF の実機すべて（getMyPay・myPagePin を含む）／個別URLの iPhone の指のスワイプとピンチ拡大／連結直後のトークンの email／`transaction()` の1回限り／
-実機の iPhone・Google カレンダー・Outlook・Android への .ics の取り込み（2026-10-04 に iOS 27 のシミュレーターでは取り込めた）／公開シフトが消えた日に残った上書きの掃除／給料の目安と実際の給与明細の突き合わせ（ユーザーの領分。Shifty の計算値を正解として代用しない）／
-ヘルプ先の勤務を所属店舗の給料に合算しない差（月次賃金ページとは週40h・月の総枠の扱いがずれる）
+- [x] `MY_SCREEN_ENABLED = DEV_MODE` を外して本番に入口を出す（①②の実測の後・ユーザー判断）→ **2026-10-04 `dff85c4`／リリース `048a52b`。①②の実測を待たずにユーザー指示で外した**。外すと本番でもスタッフURLに「マイシフト」ボタンが出て、`#/me` が従業員画面になる
+- [ ] 本番で「登録 → 別ブラウザでログイン → 同じ uid・同じ登録ネーム」・紐付け（A・B を1回ずつ）・公開と確定で黒文字・手入力のシフト・給料の月と年を1回ずつ通す
+**未検証の一覧（2026-10-04 時点・2026-10-05 更新）**: ルールの実機での実測すべて（反映は済み）／CF の実機での実測すべて（反映は済み。getMyPay・myPagePin を含む）／個別URLの iPhone の指のスワイプとピンチ拡大／連結直後のトークンの email／`transaction()` の1回限り／
+実機の iPhone・Google カレンダー・Outlook・Android への .ics の取り込み（2026-10-04 に iOS 27 のシミュレーターでは取り込めた）／公開シフトが消えた日に残った上書きの掃除／給料の目安と実際の給与明細の突き合わせ（ユーザーの領分。Shifty の計算値を正解として代用しない）
+（「ヘルプ先の勤務を所属店舗の給料に合算しない差」は 2026-10-04 `64b6e76` で合算するようにしたので外した）
 **影響範囲**: database.rules.json・functions/index.js・functions/staff-link.js・functions/my-pay.js・functions/my-page.js（反映のみ）・app-core.js（ゲート）
 
 ---
@@ -2293,6 +2357,19 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 今回の依頼（個別URLでの閲覧と提出）には不要。
 **再着手条件**: 両方を使って困っているという声が出たとき、または本番で個別URLとアカウントの両方を持つ人が一定数を超えたとき。
 **影響範囲（そのとき）**: app-my.js（設定タブに取り込みの入口）・Cloud Functions（両方の本人確認をしてから写す）・database.rules.json
+
+## 🟡 2026-10-05 の変更の実機確認（ホーム画面のアプリの開き先・お店の締日と給料日）
+
+**目的**: ホーム画面のアプリの開き先は manifest の扱いがブラウザごとに違い、スタブの実ブラウザでは「追加して開く」まで再現できない。
+**受け入れ条件**:
+- [ ] iPhone の Safari で個別URL（#/m/…）を開き「ホーム画面に追加」→ ホーム画面から開くとマイシフト（管理者登録している端末でも）
+- [ ] 同じく募集URL（#/s/…）・#/me から追加したアプリがその URL で開く。管理者画面（/・#/admin）から追加したアプリは従来どおり管理者画面
+- [ ] Android の Chrome でも同じ（data: の manifest を読まない場合はショートカットとして追加される想定）
+- [ ] 本番でお店の締日・給料日を登録し、スタッフのマイシフトの給料の締め期間が変わること
+**影響範囲**: app-core.js（applyHomeManifest）・app-utils.js（homeManifestOf）
+**備考**: 既にホーム画面に追加済みのアプリは古い start_url のまま。追加し直してもらう必要がある
+
+---
 
 ## 🟢 実績で出勤・退勤を変えた日に、確定シフトの日別休憩上書き（adjustedBreak）をそのまま当てるか
 
@@ -2318,11 +2395,11 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋関数）とスタブ Firebase の実ブラウザ回帰
 （`example-company-entities.js`）でしか確かめていない。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
 **反映が要るもの**:
-- [ ] CF: 新規6本（`ensureCompanyEntities`・`createEntity`・`renameEntity`・`assignShopEntity`・`saveEntityConfig`・`setShopKind`）と
-      既存の更新（`syncCompanyMirror` を使う全関数・`createCompany`・`linkStoreToCompany`・`unlinkStoreFromCompany`）
-- [ ] ルール: **変更なし**（新ノードはすべて `companies/$id/pub` 配下＝既存ルールで CF 専用・企業 uid と作成者だけ読める。dev の REST で19項目実測済み）
-- [ ] 順序: CF を先に出してからクライアント。**クライアントだけ先に出ると**、法人カードの `ensureCompanyEntities` が存在しない CF を呼んで
-      「法人を準備できませんでした」のトーストが出る（他の機能は壊れない。法人の無い企業は従来どおり1法人扱いで表示される）
+- [x] CF: 新規6本（`ensureCompanyEntities`・`createEntity`・`renameEntity`・`assignShopEntity`・`saveEntityConfig`・`setShopKind`）と
+      既存の更新（`syncCompanyMirror` を使う全関数・`createCompany`・`linkStoreToCompany`・`unlinkStoreFromCompany`） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
+- [x] ルール: **変更なし**（新ノードはすべて `companies/$id/pub` 配下＝既存ルールで CF 専用・企業 uid と作成者だけ読める。dev の REST で19項目実測済み） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
+- [x] 順序: CF を先に出してからクライアント。**クライアントだけ先に出ると**、法人カードの `ensureCompanyEntities` が存在しない CF を呼んで
+      「法人を準備できませんでした」のトーストが出る（他の機能は壊れない。法人の無い企業は従来どおり1法人扱いで表示される） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
 - [ ] 反映後、既存企業で企業連携タブを1回開き、`companies/{id}/pub/entities` ができて全店舗が割り当たり、写し `shops/{sid}/company` に
       `entityId`・`entityName`・`kind` が入ることを `shifty-prod-data-probe`（読み取り専用）で確認する
 - [ ] 別の企業に連携中の店舗を `linkStoreToCompany` で追加すると拒否されることを本番で1回確かめる（dev では CF が動かず未検証）
@@ -2343,11 +2420,11 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 中身は `tests/core.test.js`（`functions/company-config.js` の純粋関数とクライアントとの一致）とスタブ Firebase の実ブラウザ回帰
 （`example-company-people.js`）でしか確かめていない。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
 **反映が要るもの**:
-- [ ] CF: 新規6本（`ensureCompanyPeople`・`mergePeople`・`splitPerson`・`reassignPersonId`・`companyRenameStaff`・`companyUpdateStaff`）
+- [x] CF: 新規6本（`ensureCompanyPeople`・`mergePeople`・`splitPerson`・`reassignPersonId`・`companyRenameStaff`・`companyUpdateStaff`） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
 - [x] CF: 「統合しない」（2026-09-30）の `markPeopleDistinct` と、distinct の後始末を足した `mergePeople`・`splitPerson`・`reassignPersonId`。**CF より先にクライアントを出すと**、重複候補の「統合しない」と編集モーダルの「取消」が「関数が無い」で失敗する（候補の表示・統合は従来どおり動く） → **2026-09-30 13:16 に本番へデプロイ済み**（32関数・markPeopleDistinct は create、他は update。未認証 POST が INVALID_ARGUMENT を返すことを確認）
-- [ ] ルール: **変更なし**（`companies/$id/pub/people` は既存の pub のルールで読みが企業uidと作成者・書きは `companies/$id/.write:false`＝CF 専用）
-- [ ] 順序: CF を先に出してからクライアント。**クライアントだけ先に出ると**、企業内登録スタッフを開いたときの `ensureCompanyPeople` が失敗し、
-      行に人物IDが付かないので「編集」と統合のチェックが押せないまま（一覧の表示は従来どおりで壊れない）
+- [x] ルール: **変更なし**（`companies/$id/pub/people` は既存の pub のルールで読みが企業uidと作成者・書きは `companies/$id/.write:false`＝CF 専用） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
+- [x] 順序: CF を先に出してからクライアント。**クライアントだけ先に出ると**、企業内登録スタッフを開いたときの `ensureCompanyPeople` が失敗し、
+      行に人物IDが付かないので「編集」と統合のチェックが押せないまま（一覧の表示は従来どおりで壊れない） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
 - [ ] 反映後、企業内登録スタッフを1回開いて `companies/{id}/pub/people` ができ、行数と並びが反映前と同じことを `shifty-prod-data-probe`（読み取り専用）で確認する
 - [ ] 本番で1人の改名を企業の一覧から通し、店舗の staff・全 subs・settings・periods・private/pay が移ったことを同じく読み取りで確認する
       （Admin SDK での `staff` のトランザクションと subs 全件の読みは実データでしか確かめられない）
@@ -2364,11 +2441,11 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 **目的**: P3.6（2026-09-30・develop `a892d85`〜）は写し `shops/{sid}/company` に `people`・`shopEntities` を焼くよう CF を変えた。**本番に未デプロイ**。
 中身は `tests/core.test.js`（`buildShopMirror`・`mirrorPeopleOf`）とスタブの実ブラウザ回帰（`example-helper-aggregate.js`・`example-company-dup-candidates.js`）でしか確かめていない。
 **反映が要るもの**:
-- [ ] CF: `syncCompanyMirror` を使う全関数（写しの形が変わる）と、人物を変える5本（`ensureCompanyPeople`・`mergePeople`・`splitPerson`・`reassignPersonId`・`companyRenameStaff`）の `syncPeopleMirror`。
-      P1b の CF と同じデプロイで出せば足りる
-- [ ] ルール: **変更なし**（写しは既存ルールで CF 専用・読みは `auth != null`。他店の subs・staff・settings・periods も既存ルールで `auth != null` で読める）
-- [ ] 順序: CF を先に出してからクライアント。**クライアントだけ先に出ると**、写しに `people` が無いので同一人物は後方互換の規則（所属店舗の一致）だけで判定され、
-      人物で束ねた（登録名が違う・所属店舗が未設定の）登録は合算されない（壊れはしない＝以前と同じ表示に倒れる）
+- [x] CF: `syncCompanyMirror` を使う全関数（写しの形が変わる）と、人物を変える5本（`ensureCompanyPeople`・`mergePeople`・`splitPerson`・`reassignPersonId`・`companyRenameStaff`）の `syncPeopleMirror`。
+      P1b の CF と同じデプロイで出せば足りる → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
+- [x] ルール: **変更なし**（写しは既存ルールで CF 専用・読みは `auth != null`。他店の subs・staff・settings・periods も既存ルールで `auth != null` で読める） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
+- [x] 順序: CF を先に出してからクライアント。**クライアントだけ先に出ると**、写しに `people` が無いので同一人物は後方互換の規則（所属店舗の一致）だけで判定され、
+      人物で束ねた（登録名が違う・所属店舗が未設定の）登録は合算されない（壊れはしない＝以前と同じ表示に倒れる） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
 - [ ] 反映後、企業内登録スタッフを1回開き（または人物を1つ統合し）、写し `shops/{sid}/company.people` ができたことを `shifty-prod-data-probe`（読み取り専用）で確かめる
 - [ ] 本番で、所属店舗が明示されていて他店にもシフトがある人を1人選び、所属店舗のシフト作成タブで読み取り専用セル・月実働の合算を目で確かめる
       （行き先の店の設定で引いた実働が、その店のシフト作成タブの値と一致すること）
@@ -2385,9 +2462,9 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 **目的**: P4（2026-09-30・develop `7520a55`〜`564ae08`）は新ノード `shops/{sid}/actuals` を足した。ルールは dev にだけ反映する（反映と REST 実測は
 `probe-rules-actuals.js`）。CF の変更（`companyRenameStaff` が actuals を移す・`purgeOldPeriods` が actuals/{期間ID} を消す）は本番に未デプロイ。
 **反映が要るもの**:
-- [ ] ルール: `actuals`（読み書きともオーナー・形の検証）。**新ノードなので本番はルールが先**（計画書 §6 冒頭。ルールが無いと実績の保存が拒否される）
-- [ ] CF: `companyRenameStaff`・`purgeOldPeriods`（P1b・P3.6 と同じデプロイで出せば足りる）。**クライアントだけ先に出ても壊れない**
-      （企業の一覧からの改名で actuals だけ旧名のまま残る。店舗のスタッフタブからの改名はクライアントが移す）
+- [x] ルール: `actuals`（読み書きともオーナー・形の検証）。**新ノードなので本番はルールが先**（計画書 §6 冒頭。ルールが無いと実績の保存が拒否される） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
+- [x] CF: `companyRenameStaff`・`purgeOldPeriods`（P1b・P3.6 と同じデプロイで出せば足りる）。**クライアントだけ先に出ても壊れない**
+      （企業の一覧からの改名で actuals だけ旧名のまま残る。店舗のスタッフタブからの改名はクライアントが移す） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
 - [ ] 反映後、本番の確定済みの期間で「実績」を1件入れて消し、`shops/{sid}/actuals` に差分だけが書かれ、消すとノードが無くなることを `shifty-prod-data-probe`（読み取り専用）で確かめる
 - [ ] 打刻機の CSV 形式が分かったら、`DEFAULT_ACTUALS_CSV_MAPPING` と文字コードの既定を合わせる（計画書 §8「残る確認」）
 **影響範囲**: database.rules.json・functions/index.js・functions/company-config.js（コード変更は済み）
@@ -2403,12 +2480,12 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 **目的**: P6a（2026-09-30・develop `65f7a49`〜`374e914`）はルールを dev にだけ反映し、CF は本番に未デプロイ。
 ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
 **反映が要るもの**:
-- [ ] ルール: 新ノード（`shops/*/private/pay`・`shops/*/private/payCode` の書き込み＝オーナー、`companies/*/private/payCode` の読み＝企業uidと作成者）。
+- [x] ルール: 新ノード（`shops/*/private/pay`・`shops/*/private/payCode` の書き込み＝オーナー、`companies/*/private/payCode` の読み＝企業uidと作成者）。
       **新ノードなのでルールが先**（計画書 §6 冒頭。CLAUDE.md の「クライアント先」と逆になるので、リリース直前にユーザーへ理由を示して承認を取る）。
-      ルールより先にクライアントを出すと、賃金の保存と店舗のパスコード変更が拒否される（トーストが出るだけで他は壊れない）
-- [ ] CF: 新規 `setCompanyPayCode`、`syncCompanyMirror` のパスコード同期、`sanitizeCompanySettings`・`mergeEntitySettings` の `wageSettings`
+      ルールより先にクライアントを出すと、賃金の保存と店舗のパスコード変更が拒否される（トーストが出るだけで他は壊れない） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
+- [x] CF: 新規 `setCompanyPayCode`、`syncCompanyMirror` のパスコード同期、`sanitizeCompanySettings`・`mergeEntitySettings` の `wageSettings`
       （`saveEntityConfig`・`saveCompanyConfig` とその写しを作る全関数に効く）。CF より先にクライアントを出すと、法人の最低賃金を保存しても
-      旧 CF の sanitize で捨てられ最賃比較が出ない／企業のパスコード変更が「関数が無い」で失敗する（賃金の入力そのものは動く）
+      旧 CF の sanitize で捨てられ最賃比較が出ない／企業のパスコード変更が「関数が無い」で失敗する（賃金の入力そのものは動く） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
 - [ ] 反映後、本番で企業アカウントの「賃金の閲覧パスコードを変更する」を1回通し、連携全店舗の `private/payCode` に同じ値が入ることを
       `shifty-prod-data-probe`（読み取り専用）で確認する（dev は Spark で CF が動かず未検証）
 - [ ] 反映後、`node .claude/skills/shifty-e2e-verify/scripts/probe-rules-pay.js` と同じ20項目を本番ではなく dev で再実行して ALL_OK を確かめる
@@ -2426,9 +2503,9 @@ CF の中身は `tests/core.test.js`（`functions/company-config.js` の純粋�
 **目的**: P6b（2026-09-30・develop `8d0cff1`〜）は法人の賃金設定に割増率（`premiumRates`）と端数規則（`roundingRule`）を足し、
 CF の `sanitizeWageSettings`（functions/company-config.js）を同じ規則に広げた。**本番に未デプロイ**。ルール・データ移行は無し。
 **反映が要るもの**:
-- [ ] CF: `sanitizeCompanySettings` を通る `saveEntityConfig`・`saveCompanyConfig`（P6a の CF と同じデプロイで出せば足りる）。
+- [x] CF: `sanitizeCompanySettings` を通る `saveEntityConfig`・`saveCompanyConfig`（P6a の CF と同じデプロイで出せば足りる）。
       CF より先にクライアントを出すと、法人の設定で割増率・端数を入れて保存しても旧 CF の sanitize で捨てられ、月次賃金は法定率・切上げで計算される
-      （月次賃金ページ自体は動く）
+      （月次賃金ページ自体は動く） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
 - [ ] 反映後、本番の法人の設定で割増率を1つ入れて保存し、写し `shops/{sid}/company/settings/wageSettings/premiumRates` に入ることを
       `shifty-prod-data-probe`（読み取り専用）で確かめる
 - [ ] 実データで1か月分の月次賃金を給与ソフト（または手計算）と突き合わせる（ユーザーの領分。Shifty の計算値を正解として代用しない）
@@ -2445,11 +2522,11 @@ CF の `sanitizeWageSettings`（functions/company-config.js）を同じ規則に
 
 **目的**: P3（2026-09-30・develop `96458b6`〜）は本番に未反映。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
 **反映が要るもの**:
-- [ ] ルール（2つ・性質が違う）: ①新ノード `shops/*/laborMonths`（読み書きともオーナー）＝**ルールが先**（無いとクライアントの所定の保存・購読が拒否される）。
+- [x] ルール（2つ・性質が違う）: ①新ノード `shops/*/laborMonths`（読み書きともオーナー）＝**ルールが先**（無いとクライアントの所定の保存・購読が拒否される）。
       ②既存パスの締め付け `shops/*/subs/$subId/.write`（期間に `confirmation` があるときはオーナーだけ）＝CLAUDE.md の順（**クライアントが先**）。
-      同じファイルなので1回で出すなら、リリース直前にユーザーへ「①のためにルールを先に出す。②は旧クライアントが confirmation を書かないので先に出しても壊れない」を示して承認を取る
-- [ ] CF: `companyRenameStaff`（laborMonths の移し替え）。P1・P1b・P6a の CF と同じ1回のデプロイでよい
-- [ ] データ移行: なし（旧 `lockedAt` は読まない。確定で消える。旧「確定済み」の期間は未確定として表示され、必要なら「確定」を押し直す）
+      同じファイルなので1回で出すなら、リリース直前にユーザーへ「①のためにルールを先に出す。②は旧クライアントが confirmation を書かないので先に出しても壊れない」を示して承認を取る → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
+- [x] CF: `companyRenameStaff`（laborMonths の移し替え）。P1・P1b・P6a の CF と同じ1回のデプロイでよい → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
+- [x] データ移行: なし（旧 `lockedAt` は読まない。確定で消える。旧「確定済み」の期間は未確定として表示され、必要なら「確定」を押し直す） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
 - [ ] 反映後、本番で11月分を1店舗だけ確定し、`laborMonths/2026-11` が書かれることと、スタッフURLからの再提出が拒否されることを確かめる
 - [ ] 10月分（手運用）の所定を、10月の期間を選んで「人×月の所定」欄から遡って登録する（運用。コードの作業ではない）
 **影響範囲**: database.rules.json・functions/index.js・functions/company-config.js（コード変更は済み）
@@ -2464,17 +2541,17 @@ CF の `sanitizeWageSettings`（functions/company-config.js）を同じ規則に
 
 **目的**: P3.5（2026-09-30・develop `f97cb72`〜`a921796`）は本番に未反映。ユーザー指示（2026-09-30）で本番反映は P0〜P7 の完了後に1回だけ行う。
 **反映が要るもの**:
-- [ ] ルール: **変更なし**（新しい設定はすべて既存の `settings` の中・`laborSettings` の中・`staffTypeLimits` の中に入る）
-- [ ] CF: `functions/company-config.js` の `sanitizeCompanySettings`（`laborSettings` の新キー4つ `showDailyOverB`・`dailyOverThresholdMin`・
+- [x] ルール: **変更なし**（新しい設定はすべて既存の `settings` の中・`laborSettings` の中・`staffTypeLimits` の中に入る） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
+- [x] CF: `functions/company-config.js` の `sanitizeCompanySettings`（`laborSettings` の新キー4つ `showDailyOverB`・`dailyOverThresholdMin`・
       `highlightExternalOver8h`・`externalOverThresholdMin` と、属性の `otProrate`）。`saveCompanyConfig`・`saveEntityConfig` と写しを作る全関数に効く。
       **CF より先にクライアントを出すと、企業の共通設定・法人設定で「残業予定の配り方」を保存しても旧 CF の sanitize で捨てられる**
-      （店舗の設定タブで入れた値は CF を通らないので効く）。P1・P1b・P3・P6a の CF と同じ1回のデプロイでよい
-- [ ] データ移行: なし（設定が無い店舗は従来と同じ計算）
+      （店舗の設定タブで入れた値は CF を通らないので効く）。P1・P1b・P3・P6a の CF と同じ1回のデプロイでよい → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
+- [x] データ移行: なし（設定が無い店舗は従来と同じ計算） → 2026-10-01 確認済み（ルールのバイト照合・functions:list）
 - [ ] 設定の投入（しきい値・B制トグル・外部の色・昼夜人数・特定技能の按分窓。中休みは 2026-10-02 に機能ごと削除）は P8-7 の運用手順で行う（コードの作業ではない）
 **影響範囲**: functions/company-config.js（コード変更は済み）
 - **2026-10-03 追記**: P3.5c（判定対象外の人の長時間の日のセル色）はユーザー指示で機能ごと削除した（develop `4f5d200`）。
   CF の `COMPANY_LABOR_KEYS`・`COMPANY_LABOR_RANGES` からも `highlightExternalOver8h`・`externalOverThresholdMin` を外したので、
-  **次の CF デプロイからは企業・法人の設定でこの2キーを保存しても捨てられる**（クライアントにも入力欄は無い）。
+  **2026-10-05 の CF デプロイ（40本）以降は、企業・法人の設定でこの2キーを保存しても捨てられる**（クライアントにも入力欄は無い）。
   本番10店舗の `settings.laborSettings` に残る保存値はデータ移行しない（`laborSettingsOf` が読み捨てる）。上の「外部の色」の投入は不要になった
 
 ---
@@ -2506,7 +2583,7 @@ CF 本体の動作は本番の実データでは未検証（dev＝Spark には C
 **目的**: 2026-09-27 に企業連携タブの「勤務先店舗」UI を廃止し、店舗間重複の判定を所属店舗（staffHomeShop）へ移した。
 既存データを1リリースだけ `dupTargetShopsFor` の和集合で併用しているので、所属店舗の登録が済んだら撤去する。
 **再着手条件**: 本番のヘルプ要員全員に staffHomeShop が入っていることを `shifty-prod-data-probe` で確認したとき。
-**撤去箇所**: `dupTargetShopsFor` の和集合・`STAFF_KEYED_SETTING_MAPS`・`PERIOD_SNAPSHOT_SETTING_KEYS`・`makeSettings`（app-core.js）の4箇所と、
+**撤去箇所**: `dupTargetShopsFor` の和集合・`STAFF_KEYED_SETTING_MAPS`・`PERIOD_SNAPSHOT_SETTING_KEYS`（この3つは app-utils.js）・`makeSettings`（app-core.js）の4箇所と、
 tests/core.test.js の旧データのテスト。
 
 ---
@@ -2725,129 +2802,6 @@ tests/core.test.js、RULES.md
 本番データには一切アクセスしていない。app-main.js:371 のコメントは**店舗切替時**の取り違えを
 同じ機構で説明しており（だから 372-375 でキャッシュへ同期リセットしている）、
 **古いキャッシュそのものが同じ危険を持つ**ところまでは届いていなかった。
-
----
-
-## 🔴 シフト作成タブ: 「全員表示」を「全表示」に改め、期間全体（左上「日付」〜右下最終日）を縦横スクロールなしで一望できるようにする
-
-> **✅ 2026-09-23: 実装・本番解放まで完了**
-> 当初はユーザー指示「一旦Devのみで表示して」により `const fullView=fitAll&&DEV_MODE;` で囲っていたが、
-> 同日に `&&DEV_MODE` を外して**本番（shiftyshifty.app）へ解放した**（現在は `const fullView=fitAll;`）。
-> ボタンのラベルも常に「全表示」になる。`boxSizing:"border-box"` が `fullView` に連動するため、
-> **本番の全員表示に残っていた横はみ出し（8/15/25名で26/49/89px）も同時に解消した**。
-> 通常表示の10指標はベースラインとバイト単位で一致することを実測済み（非回帰）。
->
-> **2026-09-28 のユーザー指示で一部を改めた**: 人数が多いときだけ列を横幅いっぱいに合わせる
-> （横幅いっぱいに割った列幅が48px＝39×1.25 以下になる人数から。1400px 幅なら26名以上）。
-> 人数が少ないときは下の 39px 上限のまま、1ヶ月（17日以上）の期間は従来どおり。縦は人数に関係なく常に
-> 高さいっぱいで余りが無いので、「拡大」は列幅だけで行高・文字は広げない。列が39pxより細いときは文字も比例して小さくする。
-> 規則は app-utils.js の `fullViewColW` / `fullViewFontOf`。回帰は `example-fitall-geometry.js`（10水準）。
->
-> **追加のユーザー指示（2026-09-23）**: スタッフが少なくても画面幅いっぱいに列を引き伸ばさない。
-> **スタッフ列の幅は通常表示と同じ39pxを上限**とし、余った幅は左右の余白にして**表は中央寄せ**にする。
-> グリッド・休みカウント表・集計表の3つとも同じ幅で中央に置くので列位置は揃ったまま。
->
-> 実測（`node .claude/skills/shifty-e2e-verify/scripts/example-fitall-geometry.js` → **EXIT=0 / allPass**。
-> viewport 1400×900・Firebase非接続）:
->
-> | 水準 | 横の余り | 縦の余り | 日付列 | スタッフ列 | セルのfont |
-> |---|---|---|---|---|---|
-> | 16日×8/15/25名 | 0px | 0px | 45px | 39px（上限） | **16px**（規約違反なし） |
-> | 31日×8/15/25名 | 0px | 0px | 45px | 39px（上限） | **9px** |
->
-> **2週間期間なら16pxのまま収まる**（＝16px規約に触れるのは1ヶ月期間だけ）。1ヶ月でも9pxで、
-> 計画時の試算（5〜7px）より読める。全表示のまま編集できることも実測済み
-> （31日×3名で186個のinputが描画され、セル編集→保存が「✓ 2件のシフトを保存しました」で通る）。
->
-> **localhost の実アプリ（標準テスト店舗・8月前半15日・スタッフ4名）でも確認済み**:
-> 縦横とも余り0px、日付列45px・スタッフ列39px、セルのfont 14px、表の中心が画面中心と一致
-> （表の左右端 557/844・画面中心700）、グリッドと下段3表の1スタッフ目の列が全て同じ603pxから始まる。
->
-> **行高は小数のまま使う**（整数に丸めると収まる最大値を1px下回った時点で行数ぶんまとめて捨てる）。
-> thead は `<tr>` に height を明示して高さを確定させ、行あたり0.5px（border-collapse の分け合うボーダー）と
-> 枠線・丸め用に6pxを差し引く。**この差し引きが無いと実アプリで4pxはみ出す**（実測して確定した値）。
->
-> **2026-09-23 追加分**:
-> - **2週間を上限**: 行高を期間の日数ではなく最長16日ぶんで決める（`FV_MAX_DAYS`）。1ヶ月の期間でも
->   フォントは16pxのままで、入りきらない日は縦スクロール。これが無いと1ヶ月×30名でフォントが
->   下限5pxまで落ちて時刻が読めない（実測）。16日なのは Shifty の「2週間」期間が半月単位＝最長16日だから。
-> - **セル色の欠落を修正（`fill` で確定）**: 全表示では input が td を覆うため、td 側の2色（土日祝の行色・
->   ポジション不足の黄色）が消えていた（バグチェック#141 が検出）。2案を実装して見比べ、
->   **2026-09-23 に `fill` で確定した**（`const fvEdge=false;`。切り替えスイッチ `?fvcolor=` は削除済み）。
->   - `fill`（採用） … input の背景を透明にして td の色をセル全面に出す。**フォントを落とさない**。色は最も濃い
->   - `edge`（不採用） … input を一回り小さくし、通常表示と同じ帯（7px/4.5px）で見せる。見た目は揃うが
->     行高を4px使うのでフォントが落ちる（実測: 15日×30名で16px→12px）
-> - **絞り込み時のヒートマップの置き場**: グリッドが必要とする幅（`gridNeedW`）を先に確保し、
->   余った幅だけをヒートマップの横パネルに回す。横パネルとして成立する下限は3時間ぶん
->   （`HEAT_PANEL_MIN_HOURS=3`）で、それを割るならヒートマップをグリッドの下へ回す。
-> - **キッチン/ホール絞り込み時のヒートマップ**: 時間帯を横スクロールさせず全部出す（`fitHours`）。
->   px を計算せず `table-layout:fixed` に割らせるので、横パネルでもグリッド下でも同じ1本で効く。
->   実測（localhost・標準テスト店舗・10〜25時の16列）: 絞り込み無しは従来どおり1列22pxで160pxスクロール、
->   キッチンのみ／ホールのみでは**両方のヒートマップがはみ出し0**（列幅は12.1〜65.9pxで枠に応じて可変）。
->
-> **並行していた `/bug-check` ループとの統合（2026-09-23）**: #140・#141 のセッションが
-> `example-fullview-cell-colors.js` を追加していた（`5ea68ab`。app-admin.js は「並行セッションが編集中」
-> として触っていない）。このスクリプトを本タスクの検証に取り込み、判定だけ拡張した——
-> **帯の太さしか見ておらず `fill` 方式が偽陰性になる**ため、「帯がある」か「input が透明」かの
-> どちらかで可とする `fullShowsTdColor` に変えた。
->
-> **残り**: 本番リリース（`/release-to-main`・`?v=` のバンプ）のみ。
-> ①`fill` の確定・②本番解放・③ドキュメントのコミット・④dev標準テスト店舗での実機E2E は完了済み。
-
-**目的**: 現在の「全員表示」（`fitAll`・app-admin.js:376）は、導入時の意図が「列幅均等・横スクロールなし」＝**横だけ**を画面幅に収めることだった（`8b55951`。`88cd3f2` で熱マップをグリッド下部へ移し「全スタッフ一覧の目的を最優先」と確定）。縦は `maxHeight:"70vh"`（:1777）のままなので、31日期間×15名では表高1694pxに対し可視630pxしかなく、期間全体は一望できない。これを「**縦横とも収める**」に拡張し、左上の「日付」ヘッダから右下（最終日の行の右端）までをスクロールなしで表示する。あわせて、現行の全員表示に**今も本番で起きている横方向のはみ出し**（下記。`overflowX:"hidden"` のためスクロールバーも出ず右端の列に到達できない）を先行して修正する。
-
-**現行の横はみ出し（先行コミットで直すバグ）**: `td`/`th` は既定 `box-sizing:content-box` なので、日付セル `SD`（:1192・padding "2px 4px"）で+8px、スタッフ列ヘッダ `VTH`（:1196-1200・padding "2px"）で各列+4pxずつ実幅が式より増えるのに、`colW=fitAll?Math.max(24,Math.floor((centerW-90)/Math.max(1,gridStaff.length))):39`（:1179）はそれを勘定していない。はみ出し量≒`4×スタッフ数+8−端数`。実測（Playwright・`.claude/skills/shifty-e2e-verify/scripts/mount-component.js`・viewport 1400×900・Firebase非接続・2026-09-23・develop `2f758c4`）:
-
-| スタッフ数 | 表の幅 | 可視幅 | 切れている量 |
-|---|---|---|---|
-| 8名 | 1410px | 1384px | 26px |
-| 15名 | 1433px | 1384px | 49px |
-| 25名 | 1473px | 1384px | 89px（幅55pxの列1.6本分） |
-
-**ユーザーが下した決定（2026-09-23・決定済み。実装者はこの節をユーザーに問い直さない）**:
-- **全表示モードのセルに限り `input` の `fontSize` を16px未満にしてよい**。＝RULES.md:17「`input` の `fontSize` を 16px 未満にしない（iOS Safari でズームが発生する）」の**例外を全表示モードのセルに限って認める**、という解釈をユーザーに明示して採用済み。
-- その帰結として**全表示中もセルの編集を維持する**（読み取り専用にしない。`readOnly={!isPremium}` の既存条件は据え置き）。
-- 通常表示のフォント・レイアウトは1pxも変えない。
-- 代替案（この解釈が違っていて「編集は不要」が真意だった場合のみ）: 全表示のセルを読み取り専用のテキスト描画（`input` をやめ `td` に直書き）に置き換えれば16px規約に一切触れず実装も小さくなる。ユーザーがそう言い直したときだけ切り替える。
-
-**仕様**:
-- ラベル「全員表示」→「全表示」（:1670）。コメント :1186 も直す。文字列「全員表示」の出現はこの2箇所のみ（他ファイル・テスト・スキルに出現なし・grep済み）。
-- 日付列は**左右両端**に置く（最終スタッフ列の右外側に同内容の日付セルを追加し、ヘッダの「日付」も両端）。幅は現行90pxの半分（45px）を上限に、`fmtDL` の出力（例 "31(土)"＝半角4+全角1・:1150）が選んだフォントで省略なく収まる幅を計算する。
-- 縦は全表示時のみ `70vh` 固定をやめ、「グリッド上端〜ビューポート下端」の実際に使える高さを枠にする。行高 `rowH=floor((枠高−thead高)/(日数×2))`、セル fontSize は行高から導出（上限16px）。thead（スタッフ名の縦書き `height:72`・:1198）も全表示時は縮めてよい。
-- 行高・列幅・フォントは**レンダーごとの算術計算**（都度計算）。スタッフ数別の事前計算テーブルは作らない。DOM 計測の追加パスも足さない——追加されるのは既知数からの割り算だけなので、表示は今より遅くならない。
-- 全表示では sticky 固定を使わない（全体が見えるので不要。通常表示の sticky は維持）。
-- 「ヒートマップは下に配置」「通常表示でヒートマップを置いている所まで幅を使う」の2点は**現行の全員表示で既に満たされている**（`hasPanel` が fitAll で false・:1157、`useBreakout=hasPanel||fitAll`・:1162、下部表示 :1892-1901、`width:100vw` ブレイクアウト :1762）。新規実装として書かず**非回帰項目**として扱う。
-- 推奨: レイアウト計算（入力: 可視幅・可視高・日数・スタッフ数 → 出力: 日付列幅・colW・行高・fontSize）を純粋関数として app-utils.js に置き、tests/core.test.js に6水準の数値テストを足す（Node で受け入れ条件を機械照合できる）。
-
-**受け入れ条件**:
-- [x] **本番解放**: `const fullView=fitAll&&DEV_MODE;` から `&&DEV_MODE` を外した（現在 `const fullView=fitAll;`）
-- [x] **本番の横はみ出しの解消**: `boxSizing` が `fullView` に連動するため、本番解放と同時に解消した（解放前は8/15/25名で26/49/89px 切れていた）。無条件に `border-box` にはせず、通常表示の列幅は43pxのまま変えていない
-- [x] ラベルを「全表示」に変更（`fitAll?"通常表示":"全表示"`）し、コメントも更新。本番解放に伴い DEV_MODE 分岐は無くなった
-- [x] 全表示で、左上の「日付」ヘッダから右下（最終日の行の右端の日付セル）までが可視。**16日/31日 × 8/15/25名の6水準**を実測（`example-fitall-geometry.js` → EXIT=0）。横は全水準で余り0px。縦は `FV_MAX_DAYS=16` の決定により**16日までは1画面に収まり、31日は縦スクロール**になる（その場合だけスタッフ名の行を上端に固定する）
-- [x] 日付列が左右両端にあり、幅は45px指定・実レンダー46pxで `fmtDL` 出力（"31(土)" 型）が収まる。右端ヘッダが "日付" であることを6水準で実測
-- [x] 下段3表（休みカウント／期間別勤務時間／週間勤務時間）の列位置がグリッドと一致。**1スタッフ目の列開始位置が4表とも46pxで一致**することを6水準で実測。ラベルは45pxに詰まるので休みカウント表だけ短縮見出し（1日休／半日休／休計／連勤）に差し替え、`title` に元の見出しを残した
-- [x] 行高・列幅・フォントが都度計算（事前計算テーブルなし）。DOM計測は `gridTop` の1つだけで、その値は出力に依存しないため測り直しのループにならない。`measuredRowH`/`measuredTheadH` は全表示のレイアウト計算に使っていない
-- [x] 非回帰: 通常表示の10指標（日付列98px・スタッフ列43px・行ストライド52px・thead82px・表幅743px・font16px・可視幅1368px・表幅1368px・可視高630px・表高914px）が変更前のベースラインと**全項目一致**。既存の回帰テスト `example-shift-edit-tab.js` も allPass
-- [x] 全表示でも土日祝の色（`dc`/`baseRb`）・ポジション不足の黄色（`rbS`/`rbE`）・セルコマンドの背景色（`cellBgStyle`）・スタッフ名色（`nameColor`）が通常表示と同一規則で再現される。`fill` 方式（input を透明にして td の色を全面に透かす）で実測（`example-fullview-cell-colors.js` → EXIT=0・`fullShowsTdColor:true`・`fullMode:"fill(input透明)"`・6水準ともコンソールエラー0件）
-- [x] **16px例外の記録**: RULES.md の16px規約に例外節を追記し、CLAUDE.md「既知の技術負債」の走査節にも注記した。**走査は変更後も「フォーム部品58件・違反0件」と答える**（`fvFont` が変数で、走査は数値リテラルしか見ないため）＝0件はこの1件を含まない数字である旨を両方に明記済み
-- [x] `npm test` **270件パス**／`npx eslint app-*.js` **0 errors 95 warnings**（どちらも変更前と同数）
-- [x] E2E は dev 環境の標準テスト店舗（`eb6AfsQv4JAht+cX*xP7fuDa`・新規店舗は作っていない）で実施した。2026-09-23・実ブラウザ 1400×900・`?plan=premium`・8月前半（15日）×スタッフ30名。**全表示で縦横とも余り0px**（可視1299×653 / 表1299×653）、日付列45pxが両端（左右のヘッダーとも「日付」）、スタッフ列39px、セルのfont 14px、**表の中心700pxが画面中心700pxと一致**。グリッド・期間別勤務時間表・週間勤務時間表で田中の列が**3表とも left=96px / 幅39px で一致**。色は平のセルの input が透明で td の土曜 `rgba(25,118,210,0.07)`・日曜 `rgba(229,57,53,0.07)`・ポジション不足 `rgba(250,204,21,0.35)` が透ける（セルコマンド色を持つセルだけ通常表示と同じく不透明）。全表示のままセル編集→保存が通り（`✓ 1件のシフトを保存しました`）、値は元に戻した。**pageerror・console error ともに0件**
-- [x] コミットする → `4327e23`（回帰スクリプト2本）・`f59a579`（本番解放と fill 確定・ドキュメント）
-
-**フォント縮小の副作用（実装者への申し送り・取りこぼし禁止）**:
-- **iOS/iPadOS で全表示のセルをタップすると自動ズームが起きる**（16px規約の由来はこれ）。全表示は一望が目的で編集は例外的な操作、ズームはフォーカス時のみでピンチで戻せる——が、編集を維持する以上タップ→ズームは実際に起きる。全表示中の編集頻度が高いと分かったときが読み取り専用案（上記代替案）への再着手条件。
-- **各期間長での実現水準**（実測: 31日×15名で行ストライド52px/日＝26px/行・thead 82px・input実高20px。行のchrome（tdパディング+inputの枠）を約4〜6px/行まで詰めた場合の試算）:
-
-| 期間 | 枠630px（現行70vh・高さ900px時） | 枠765px（85vh相当・全表示専用に枠を広げた場合） |
-|---|---|---|
-| 16日（2週間運用） | 17.1px/行 → セル約11px相当・実用下限 | 21.3px/行 → 約15px相当・実用 |
-| 31日（1ヶ月運用） | 8.8px/行 → 約3〜5px相当・**時刻は判読不能** | 11.0px/行 → 約5〜7px相当・**判読限界以下** |
-
-ユーザーは「小さくなるのは可」としているが、**1ヶ月期間では時刻の数字は判読できず、用途は「出勤の有無・埋まり具合の俯瞰」に限られる**。この水準を仕様として受け入れ済みの前提で実装し、完了報告に各水準の実測フォントサイズを記載する。
-
-**影響範囲**: app-admin.js（`ShiftEditTab` 本体・`SummaryTable`）。推奨案を採る場合は app-utils.js（レイアウト純粋関数の追加）と tests/core.test.js（数値テスト）。例外の記録で RULES.md・CLAUDE.md。**触らない**: app-core.js（共通スタイル定数 `AI` 等は変更しない。`AI2` は ShiftEditTab ローカル :1190）・app-staff.js・app-main.js・functions/・database.rules.json・index.html。Excel/PDF 出力は `colW` に依存しないため対象外（`colW` の参照は `ShiftEditTab` の描画内に閉じている・grep済み）。
-
-**備考**: 設計意図の出典は `8b55951`（feat: シフト作成に全員表示トグルを追加（列幅均等・横スクロールなし））と `88cd3f2`（refactor: 全員表示では熱マップをグリッド下部に表示）。数値はすべて実ブラウザ実測（Playwright・mount-component.js で `ShiftEditTab` 単体をマウント・viewport 1400×900・develop `2f758c4`・2026-09-23）で、**Firebase / Stripe には1バイトもアクセスしていない**。行番号は同コミット時点のもの。実装は `/shifty-feature` を経由し、本番反映は `/release-to-main` 経由でのみ行う。
 
 ---
 
@@ -3124,137 +3078,6 @@ app-admin.js（CompanyTab のエラー表示）
 
 ---
 
-## 🟡 Cloud Functions を本番へ反映する（未デプロイの修正が3件たまっている）
-
-> **✅ 2026-09-23 に実測で解決——3件とも既に本番へ反映されていた（このタスクの前提が誤りだった）**
-> `firebase deploy --only functions --project ontheshift` を実行したところ、
-> **17関数すべてが `Skipped (No changes detected)`** で、本番は1バイトも変わらなかった。
-> firebase-tools はソースのハッシュを突き合わせてスキップを決めるので、これは
-> **本番に載っているソースが現在の `functions/index.js` と一致している**ことの証明になる。
-> `main` と `develop` の `functions/` にも差分は無い（`git diff main develop -- functions/` が空）。
->
-> **起票時の判定が誤っていた。** 3件が「未デプロイ」とされた根拠はコミット履歴だけで、
-> 本番の状態は一度も測られていない。**完了済みの「Stripe秘密鍵の一部がログに出続けていた」
-> タスクが残した教訓（「本番の状態はコミット履歴ではなく本番のログ／監査ログで確かめる」）が、
-> ここに届いていなかった**——同じ形の取り違えが2回目。
->
-> **残り（🟢 に下げてよい）**: 「企業連携タブから正規の解除が従来どおり通る」は**未検証**。
-> 反映自体はいつの間にか済んでいたので、デプロイ直後の確認という形では取れない。
-> 次に企業連携の解除を使う機会に見れば足りる（`isValidShopId` が既存店舗のIDを全件通すことは
-> ローカルで実測済みで、締め出される想定は無い）。
-
-**目的**: コード側は直っているが、**Cloud Functions は本番へデプロイするまで1バイトも効かない**。
-現在3件たまっており、どれも同じ1回のデプロイで出る。
-
-| コミット | 内容 | 効かないと起きること |
-|---|---|---|
-| `be8143e`（#132） | `linkStoreToCompany`・`unlinkStoreFromCompany` の `shopId` を `isValidShopId` に通す | 企業メンバーが `shopId:"/"` を送ると、`companies/{id}/pub/shops`（連携マップ）と `companies/{id}/grants`（付与台帳）が**丸ごと消える**。「最後のオーナーは外さない」判定（#65）も発火しない。**台帳が消えると企業経由で与えたオーナー権限を後から回収できない** |
-| `0727598`（#131） | `purgeInactiveShops`・`purgeOldPeriods` に `isDemoShop` のガード | 本番のデモ店舗（`demo-toriMatsu-v1`・広告の着地先 `#/demo`）が1年未更新の自動アーカイブで消える |
-| `aa17c88`（#133） | `createCompany` の `shopIds`（複数形）を `isValidShopId` に通す | **到達可能な穴は無い**（多重防御）。`shopId:"/"` は `companies/{id}/pub/shops` を `true` で上書きしうる形だが、通過には `shops/owners` が呼び出し元の uid を持つ必要があり、`shops/$shopId` の任意の子は `database.rules.json` に `.write` が無いのでクライアントからは作れない |
-
-**受け入れ条件**:
-- [x] `cd functions && firebase deploy --only functions --project ontheshift`
-      → 2026-09-23 実行。**17関数すべて `Skipped (No changes detected)`＝反映済みだった**
-- [ ] 反映後、企業連携タブから正規の解除が従来どおり通ることを確認する（`isValidShopId` は
-      `genSecureId` 形式10万件・`shop_1780453329813`・`eb6AfsQv4JAht+cX*xP7fuDa` を全件通すことを
-      ローカルで実測済みなので、既存店舗が締め出される想定は無い）→ **未検証**
-- [x] `purgeInactiveShops` の関数更新が成功したことを確認する
-      → 上の一覧に `purgeInactiveShops`・`purgeOldPeriods` とも載っており、現行ソースと一致している
-
-**影響範囲**: functions/index.js（デプロイのみ・コード変更は済んでいる）
-**備考**: バグチェック#131（2026-09-17）・#132（2026-09-17）・#133（2026-09-18）で検出・**条件A（本番デプロイ）に該当**。
-`be8143e` の追加で優先度を 🟢 → 🟡 に上げた（デモの保護は期限が遠いが、連携マップの消失は
-呼ばれた瞬間に起きる）。**期限もある**: デモ店舗の `lastActivity` が投入時刻（2026-08-11 ごろ）の
-ままなら **2027-08-12** にアーカイブ対象へ変わる。
-
----
-
-## 🟡 管理者が退勤を出勤より前の時刻で入力すると、シフト表には正しく見えるのに勤務時間・ヒートマップ・上限判定が黙って0になる
-
-> **✅ 2026-09-26 案Cで実装済み（`44e7561`）／残りは dev 実機E2Eのみ**
-> ユーザー判断は **案C**（保存は通し、`dupErrors` と同じくセル色付け＋エラーパネル）で確定。
-> 判定を `isTimeOrderInvalid`（app-utils.js）に切り出し、**両側とも入力されている日だけ**を対象にした
-> （片側セルは補完の領分なので対象外・24時超え表記の 25:00・26:00 は影響を受けない）。
-> 入口2つ（シフト作成タブの `applyEditToSubs`・提出一覧の `saveAdj`）の**両方**から同じ関数を通す。
-> シフト作成タブにはセル色（`CELL_COLOR_LEGEND` の `timeErr`）と「⚠ 時刻の入力ミス」パネルが出る。
-> **データの扱いは1バイトも変えていない**（`effShiftRangeMin` が null を返すことも実働0のままも変えない）。
->
-> 検証: ユニットテスト（`isTimeOrderInvalid` の境界・24時超え表記の非回帰）、
-> ドリフト検出テスト（両経路が同じ関数を通ることを走査。対照3種で落ちることを確認済み）、
-> 実ブラウザ（`example-labor-phase1.js` 17項目 allPass・コンソールエラー0件）、
-> 既存回帰 `example-shift-edit-tab.js` allPass。
-> dev 実機E2E（検証手順4）も 2026-09-26 に実施済み。標準テスト店舗（8月前半・`?plan=premium`）で
-> セル編集→保存→表示を踏み、Firebase に `adjustedStart/adjustedEnd` が書かれること（既存subを再利用し
-> 新規作成していないこと）、トースト・エラーパネル・セル色が出ること、Excel（10,721 bytes）と PDF の
-> 出力が通ることを確認した。pageerror・console error ともに0件。**この検証でセル色の不具合を1件見つけて
-> 直した**（ポジション不足の黄色が入力ミス色を上書きしていた・`a67b27b`）。触ったデータは元に戻してある。
-
-**目的**: 深夜まで営業する店舗で、管理者が22:00〜翌2:00のシフトを**退勤セルに「2」**と入力すると、
-セルにもExcelにも「22 / 2」と普通の深夜シフトとして印字されるのに、**そこから計算される数字がすべて0になる**。
-警告もエラー表示も出ない。正しい入力は24時超え表記の「26」で、候補時間の選択肢（`gto()` は 0:00〜27:00）も
-その表記で作られているが、**シフト作成タブのセルは自由入力**で、そのことを伝える導線が無い。
-
-**原因**（コード上で確定）: `effShiftRangeMin`（app-utils.js）は最後に `return e>s?{startMin:s,endMin:e}:null;`
-と書かれており、**退勤 ≤ 出勤 の日は範囲を null にする**。`calcNetWorkMinutes`・`shiftBandInfo`・`getBreaksFor` は
-いずれも null を「勤務時間なし」として扱うため、その日は集計にも時間帯別出勤人数にも一切現れない。
-防御的なコードとして正しいが、**捨てたことを管理者に伝える経路がどこにも無い**。
-
-**実測**（配信物の関数をそのまま Node で実行。`app-admin.js` の `parseTime` は定義をソースから切り出して実行。
-候補時間 18:00〜26:00・休憩なし。**Firebase・Stripe には一切アクセスしていない**）:
-
-`parseTime("2")` → `"02:00"` ／ `parseTime("26")` → `"26:00"`（どちらも受理される。0〜30時を許す）
-
-| 管理者が入力した退勤 | 実効レンジ | 純勤務 | 出勤数 | ディナー帯 | 「両側入力」と判定 |
-|---|---|---|---|---|---|
-| 22:00 → **02:00** | **null** | **0:00** | **0** | **false** | **true** |
-| 22:00 → 26:00 | あり | 4:00 | 0.5 | true | true |
-| 18:00 → **01:00** | **null** | **0:00** | **0** | **false** | **true** |
-| 18:00 → 25:00 | あり | 7:00 | 0.5 | true | true |
-
-**Excelは正しく見える**: `expXl`（app-admin.js）は保存された時刻をそのまま
-`fmtT(startT)` / `fmtT(endT)` で印字するだけで範囲を検証しないため、セルには「22」「2」と出る。
-**つまり配るシフト表は正しく、集計だけが間違っている**という一番気づきにくい壊れ方をする。
-
-**同じ条件を他の入力欄はすべて弾いている**のに、管理者の編集経路だけが素通りする:
-
-| 入力欄 | 検証 |
-|---|---|
-| 候補時間（全体・曜日別・日付別／`addG`・`addW`・`addD`） | `start>=end` で「▲ 退勤は出勤より後にしてください」 |
-| 休憩時間（`CandTab`） | `brkStart>=brkEnd` で「▲ 終了は開始より後にしてください」 |
-| **シフト作成タブのセル（`applyEditToSubs`）** | **なし** |
-| **提出一覧の詳細モーダル（`saveAdj`）** | **なし** |
-
-**副次的な影響（確度は低い）**: 店舗間シフト重複（`dupErrors`）は他店舗のシフトを
-`effShiftRangeMin` に通し `if(!orng)continue;` で飛ばすため、ヘルプ先の店舗がこの形で入力していると
-**二重予約が検出されない**。さらに `hasBoth`（app-admin.js:424）は `effShiftStart`/`effShiftEnd` が
-どちらも非空なら true を返す＝この壊れたシフトを「完全なデータ」とみなすので、同じ人・同じ日に
-片側セルのsubが別にあると**そちらを押しのけて**採用され、本来動いていた補完つきの重複判定まで止まる。
-ただしこれは同一人物・同一日に複数subがある状態（#81 の根）が前提なので発生頻度は低い。
-
-**ループで直さなかった理由**: どう直すかで結果が実質的に変わり、ユーザー判断が要る（条件B）。
-加えて修正箇所がセル編集フローで、ここは #51・#56・#58 の回帰がすべて起きた場所のため
-実機E2Eが前提になる（条件D）。
-
-**受け入れ条件**:
-- [ ] どう扱うかを決める（**ユーザー判断**）
-  - 案A: 保存前に弾いて候補時間・休憩と同じトーストを出す（「深夜は 25:00・26:00 のように入力します」を添える）。
-    **ただしセルは1つずつ確定するので、出勤を直す前に退勤を直すと途中経過が弾かれる**。
-    「両方揃ってから判定する」等の逃げ道を併せて決める必要がある
-  - 案B: 退勤 < 出勤 なら24時間足して解釈する（「2」→ 26:00）。入力の手間は最小になるが、
-    単なる打ち間違いを**4時間の深夜シフトとして黙って確定させる**向きに倒れる
-  - 案C: 保存はそのまま通し、`dupErrors` と同じようにセルを色付けしてエラーパネルに出す（表示のみ・データは変えない）
-- [ ] 決めた案を `applyEditToSubs`（シフト作成タブ）と `saveAdj`（提出一覧の詳細モーダル）の**両方**に入れる
-      （片方だけだと同じ状態をもう一方の入口から作れる）
-- [ ] 純粋関数に切り出せる部分にユニットテストを追加し、実機E2Eでセル編集の非回帰を確認する
-
-**影響範囲**: app-admin.js（`applyEditToSubs` / `saveAdj`、案Cなら `ShiftEditTab` のエラーパネル）、
-app-utils.js（判定を純粋関数に切り出す場合）
-**備考**: バグチェック#129（2026-09-16）で検出・**条件B（どう直すかの仕様判断）と条件D（セル編集フローの実機E2E）に該当**。
-**深夜営業の店舗ほど踏みやすい**——鷄えん東通り店は 23:00〜25:00 の「締」シフトを運用しており、
-24時超え表記が日常的に必要な店舗が現に存在する。
-
----
-
 ## 🟡 スタッフが「休み」にする2つの入口で、「締」の追加出勤の扱いが正反対
 
 **目的**: 同じスタッフが同じ日を「休み」にする操作に**入口が2つ**あり、`period` でも `settings` でもなく
@@ -3344,29 +3167,7 @@ adjustedStartFixed:true,extraStart:"23:00",extraEnd:"25:00"}`）。上表がそ�
 
 ---
 
-## 🟢 非表示にしたスタッフを「未提出」に数えるか（提出状況一覧）
 
-**目的**: スタッフ非表示（2026-09-06 実装）は効果範囲を「シフト作成タブ・Excel・PDF から名前が出なくなるだけ」と
-ポップアップで明示しており、**提出状況一覧（`SmModal`）の未提出リストには従来どおり出る**。設計どおりの挙動だが、
-休職などで非表示にした人が締切まで「未提出」に並び続けるため、**管理者が「全員提出済み」を読み取れない**。
-`SmModal` はスタッフ側からも開けるので、休職者の名前が未提出として全員に見え続ける点も併せて判断がいる。
-
-**受け入れ条件**:
-- [ ] 非表示スタッフを未提出に数えるかを決める（**ユーザー判断**）
-  - 案A: 現状維持（数える）。非表示はシフト表の見た目だけの機能という位置づけを保つ。コード変更なし
-  - 案B: その期間で非表示なら未提出から外す。`SmModal` は対象期間を `periods.find(p=>p.id===apid)` で
-    既に解決しているので、`visibleStaffList(staffList, settings, period)` を1回通すだけで
-    呼び出し元3経路すべてに効く（**完了済みタスク「期限付き削除で名前を残した人を『未提出』に数える」と同じ形**）。
-    `SmModal` に `settings` を渡す必要がある（現在は `staffAliases` だけを受けている）
-- [ ] 決めた案を実装する（案Aならポップアップの説明文に「提出状況一覧には残ります」を1行足すだけでよい）
-
-**影響範囲**: app-staff.js（`SmModal`）、呼び出し元3箇所（app-staff.js の StaffView 2箇所／app-admin.js の PeriodsTab 1箇所）の props
-**備考**: バグチェック#113（2026-09-07）で検出・**条件B（仕様判断）に該当**。
-**先例がある**: 2026-09-05（#110・案A）に「期限付き削除で名前を残した人」について同じ問いを立て、
-**数える**と決めている（完了済みタスク参照）。ただしあちらは「その期間にシフト表の列が残る人」で、
-今回は**列が消えている人**なので、同じ答えになるとは限らない。
-
----
 
 ## 🟡 プラン変更の予約（ダウングレード）を、ユーザーが自分で取り消せない
 
@@ -3668,10 +3469,10 @@ app-admin.js:5160-5161 は `r.ok` だけを見て「✓ プラン変更の予約
 - 解約してもマイページの表示は `pro`・「2026-09-10 まで有効」のままで、**「解約済み・9/10で終了」という状態がどこにも出ない**。ユーザーからは解約が効いていないように見える
 - 実際の降格は期間終了時に `customer.subscription.deleted` が飛んだ時点で正しく起きる（＝データとしては最終的に正しくなる）。**壊れているのは「解約したことが分かるか」というUXの部分**
 **受け入れ条件**:
-- [ ] `stripeWebhook` に `customer.subscription.updated` の分岐を追加し、`cancel_at_period_end` と `current_period_end` を `accounts/{shopId}` へ保存する
+- [x] `stripeWebhook` に `customer.subscription.updated` の分岐を追加し、`cancel_at_period_end` と `current_period_end` を `accounts/{shopId}` へ保存する → 2026-10-05 確認: functions/index.js の `customer.subscription.updated` の分岐で実装済み
 - [ ] 解約予約を取り消した場合（ポータルの「サブスクリプションをキャンセルしない」）にフラグが戻ることも確認する
-- [ ] MyPageTab に「解約済み・YYYY-MM-DD で終了します」を表示する
-- [ ] プラン降格そのものは従来どおり `customer.subscription.deleted` で行う（期間終了まで使える仕様は維持する）
+- [x] MyPageTab に「解約済み・YYYY-MM-DD で終了します」を表示する → 2026-10-05 確認: MyPageTab の「…をもって終了します」で実装済み
+- [x] プラン降格そのものは従来どおり `customer.subscription.deleted` で行う（期間終了まで使える仕様は維持する） → 2026-10-05 確認: 降格は `customer.subscription.deleted` のまま
 **影響範囲**: functions/index.js（`stripeWebhook`）、app-main.js（購読の追加）、app-admin.js（MyPageTab の表示）
 **備考**: 2026-08-11 の実購入テストで検出。下の「二重課金の根治」の受け入れ条件にある「`customer.subscription.updated` の処理が必要か検討する」への**答えは Yes** で確定した。単独でも実装できるが、二重課金の根治と同じファイルを触るため一緒にやるのが効率的。
 
@@ -3703,10 +3504,10 @@ app-admin.js:5160-5161 は `r.ok` だけを見て「✓ プラン変更の予約
 - [x] 方式を決める → **案A・案Bのいずれでもなく案C**（契約を作り直さず price を差し替える。`changePlan` を新設し `subscriptions.update` を使う）で**実装・本番反映済み**（2026-08-11・`2123952`/`7767551`/`b73bba4`・リリース `88a4ca5`）。契約が増えないため二重課金が「起きない」のではなく**起こしようがない**構造になった。`createCheckoutSession` は有効な契約がある店舗を409で拒否する。Stripe側の設定変更は不要
   - 参考（採らなかった案）: 案A＝Checkout に既存 `customer` を渡し旧契約を解約してから新契約を作る／案B＝Customer Portal のプラン変更に寄せる（Portal側の設定変更が必要）
   - **⚠️ 2026-08-11 実測: 現在のカスタマーポータルには「プラン変更」のUIが無い**（表示されるのは「サブスクリプションのキャンセル」「決済手段」「請求先情報」のみ）。案Bを採るには **Stripe側でPortal設定の「サブスクリプションの更新」を有効化し、切替可能な価格を登録する**必要があり、さらにアップグレード操作がアプリ外へ出るためUXも変わる。**この実測により案Aの方が有利になった**（コードだけで完結し、アプリ内に導線が残る）。一度「案B推奨」と報告したが撤回し、再検討する
-- [ ] 1店舗が同時に2つの有効な契約を持たない状態になる
+- [x] 1店舗が同時に2つの有効な契約を持たない状態になる → 2026-10-05 確認: アプリからは作れない（`createCheckoutSession` は有効な契約がある店舗を 409 `already_subscribed` で拒否・`changePlan` は price の差し替え）
 - [ ] 既に2契約になっている店舗があるか Stripe ダッシュボードで確認し、あれば手動で解消する
 - [ ] 根治後、対症療法で入れたガード（`shouldApplyRenewalPlan` / 解約時のプラン照合）を残すか外すか判断する（残す場合は「多重防御として意図的に残す」とコメントに書く）
-- [ ] `customer.subscription.updated`（Portalでのプラン変更）のWebhook処理が必要か検討する
+- [x] `customer.subscription.updated`（Portalでのプラン変更）のWebhook処理が必要か検討する → 答えは Yes で実装済み（上の「カスタマーポータルの解約がアプリに伝わらない」）
 **影響範囲**: functions/index.js（`createCheckoutSession`・`stripeWebhook`・`createPortalSession`）、app-admin.js（`UpgradeModal` の導線・MyPageTab）、Stripe本番設定（Customer Portal の設定変更を伴う可能性）
 **備考**: バグチェック #64（2026-08-09）で検出・#65（2026-08-10）で派生2件を確認・**条件A（Stripe本番設定）と条件B（方式の選択）の両方に該当**。RULES.md「ユーザーに確認なく Stripe の本番設定を変更しない」によりループでは着手できない。**現在は Webhook のイベント種別ごとにガードを足して回る形になっており、イベントが増えるたびに同じ穴が開く**。
 
@@ -3836,6 +3637,7 @@ app-admin.js:5160-5161 は `r.ok` だけを見て「✓ プラン変更の予約
 
 **目的**: `unlinkStoreFromCompany`（functions/index.js）は `shops/{shopId}/owners/company_{companyId}` を無条件に削除する。企業ログインのセッションで作った店舗はオーナーが企業uidだけなので、**解除すると owners が空になる**。`linkStoreToCompany` は未claim店舗（`allowed = !owners`）を**管理キーなしで連携できる**ため、その隙に shopId を知る第三者が自分の企業へ連携してオーナーになれる。shopId はスタッフURLの `tokens` 逆引きから辿れるため、店舗コードは秘密情報として扱えない。
 > **✅ 2026-08-25 コード修正済み（`d6c826a`）— 案A＋案Bで実装。残りは本番デプロイと claim 監査のみ**
+> **（2026-10-05 確認）本番デプロイと claim 監査はどちらも済んでいる。残りは `verifyShopOwner` に未claim の拒否を広げるかの判断（下の 2026-09-05 追記）だけ。**
 > - `unlinkStoreFromCompany`: 解除後に owners が空になるなら failed-precondition で拒否（案A）
 > - `linkStoreToCompany`: 「未claim なら無条件許可」を廃止し管理コードを要求（案B）。未claim店舗には
 >   adminKey が無いため「先に店舗の管理者画面を開いて claim してください」と案内する
@@ -3848,7 +3650,7 @@ app-admin.js:5160-5161 は `r.ok` だけを見て「✓ プラン変更の予約
   - 案B: 解除は許すが、`private/adminKey` を残したまま「要再claim」状態にし、`linkStoreToCompany` の未claim分岐を**adminKey必須**に変更する
   - 案C: 解除時に企業の作成者uid（`companies/{id}/pub/ownerUid`）へオーナーを移し替える
 - [x] `linkStoreToCompany` / `createCompany` の未claim分岐（「先に触った人がオーナーになれる」）の扱いを合わせて決める → **廃止**（`d6c826a`）
-- [ ] 本番13店舗が全てclaim済みであることを再確認してから適用する（締めルール切替時と同じゲート）
+- [x] 本番13店舗が全てclaim済みであることを再確認してから適用する（締めルール切替時と同じゲート） → 2026-08-25 の claim 監査（本番15店舗中14が claim 済み・未claim はデモのみ）で確認済み（下の 2026-09-05 追記）
 - [x] Cloud Functions を本番へデプロイする → **2026-08-25 のリリースで実施済み**（`d6c826a` は 2026-08-24 のコミットでデプロイに含まれる。バグチェック#97 で確認）。**したがってこのタスクに残るのは本番店舗の claim 監査だけ**
 **影響範囲**: functions/index.js（`unlinkStoreFromCompany`・`linkStoreToCompany`・`createCompany`）、app-company.js（CompanyTab の解除UI・エラー表示。2026-09-30 に app-admin.js から移った）
 **備考**: バグチェック #65（2026-08-10）で検出・**条件B（仕様判断）に該当**。既存の🟢「未claim店舗は先に触った人がownerになれる」は「新規店舗作成直後の一瞬」と整理していたが、**解除操作が既存店舗を後からその状態に戻せる**点が新しい。本番13店舗は全てclaim済みのため現時点の実害はなく、解除操作を行った瞬間にだけ窓が開く。
@@ -4029,11 +3831,270 @@ Vite + TS へのフル移行は不要。
 
 ## 完了済みタスク
 
+### ✅ 非表示にしたスタッフを「未提出」に数えない（2026-10-08 完了・案B）
+
+ユーザー指示で案Bに決定。SmModal の未提出の名簿に `visibleStaffList` を通した（回帰 `example-smmodal-hidden.js`）。
+
+
+### ✅ シフト作成タブ: 「全員表示」を「全表示」に改め、期間全体（左上「日付」〜右下最終日）を縦横スクロールなしで一望できるようにする
+
+（2026-10-05 完了済みへ移動: `const fullView=fitAll;` は本番（847888f・版数 20261005-8525a0d）に入っている。下の「残り: 本番リリース」は済んだ）
+
+> **✅ 2026-09-23: 実装・本番解放まで完了**
+> 当初はユーザー指示「一旦Devのみで表示して」により `const fullView=fitAll&&DEV_MODE;` で囲っていたが、
+> 同日に `&&DEV_MODE` を外して**本番（shiftyshifty.app）へ解放した**（現在は `const fullView=fitAll;`）。
+> ボタンのラベルも常に「全表示」になる。`boxSizing:"border-box"` が `fullView` に連動するため、
+> **本番の全員表示に残っていた横はみ出し（8/15/25名で26/49/89px）も同時に解消した**。
+> 通常表示の10指標はベースラインとバイト単位で一致することを実測済み（非回帰）。
+>
+> **2026-09-28 のユーザー指示で一部を改めた**: 人数が多いときだけ列を横幅いっぱいに合わせる
+> （横幅いっぱいに割った列幅が48px＝39×1.25 以下になる人数から。1400px 幅なら26名以上）。
+> 人数が少ないときは下の 39px 上限のまま、1ヶ月（17日以上）の期間は従来どおり。縦は人数に関係なく常に
+> 高さいっぱいで余りが無いので、「拡大」は列幅だけで行高・文字は広げない。列が39pxより細いときは文字も比例して小さくする。
+> 規則は app-utils.js の `fullViewColW` / `fullViewFontOf`。回帰は `example-fitall-geometry.js`（10水準）。
+>
+> **追加のユーザー指示（2026-09-23）**: スタッフが少なくても画面幅いっぱいに列を引き伸ばさない。
+> **スタッフ列の幅は通常表示と同じ39pxを上限**とし、余った幅は左右の余白にして**表は中央寄せ**にする。
+> グリッド・休みカウント表・集計表の3つとも同じ幅で中央に置くので列位置は揃ったまま。
+>
+> 実測（`node .claude/skills/shifty-e2e-verify/scripts/example-fitall-geometry.js` → **EXIT=0 / allPass**。
+> viewport 1400×900・Firebase非接続）:
+>
+> | 水準 | 横の余り | 縦の余り | 日付列 | スタッフ列 | セルのfont |
+> |---|---|---|---|---|---|
+> | 16日×8/15/25名 | 0px | 0px | 45px | 39px（上限） | **16px**（規約違反なし） |
+> | 31日×8/15/25名 | 0px | 0px | 45px | 39px（上限） | **9px** |
+>
+> **2週間期間なら16pxのまま収まる**（＝16px規約に触れるのは1ヶ月期間だけ）。1ヶ月でも9pxで、
+> 計画時の試算（5〜7px）より読める。全表示のまま編集できることも実測済み
+> （31日×3名で186個のinputが描画され、セル編集→保存が「✓ 2件のシフトを保存しました」で通る）。
+>
+> **localhost の実アプリ（標準テスト店舗・8月前半15日・スタッフ4名）でも確認済み**:
+> 縦横とも余り0px、日付列45px・スタッフ列39px、セルのfont 14px、表の中心が画面中心と一致
+> （表の左右端 557/844・画面中心700）、グリッドと下段3表の1スタッフ目の列が全て同じ603pxから始まる。
+>
+> **行高は小数のまま使う**（整数に丸めると収まる最大値を1px下回った時点で行数ぶんまとめて捨てる）。
+> thead は `<tr>` に height を明示して高さを確定させ、行あたり0.5px（border-collapse の分け合うボーダー）と
+> 枠線・丸め用に6pxを差し引く。**この差し引きが無いと実アプリで4pxはみ出す**（実測して確定した値）。
+>
+> **2026-09-23 追加分**:
+> - **2週間を上限**: 行高を期間の日数ではなく最長16日ぶんで決める（`FV_MAX_DAYS`）。1ヶ月の期間でも
+>   フォントは16pxのままで、入りきらない日は縦スクロール。これが無いと1ヶ月×30名でフォントが
+>   下限5pxまで落ちて時刻が読めない（実測）。16日なのは Shifty の「2週間」期間が半月単位＝最長16日だから。
+> - **セル色の欠落を修正（`fill` で確定）**: 全表示では input が td を覆うため、td 側の2色（土日祝の行色・
+>   ポジション不足の黄色）が消えていた（バグチェック#141 が検出）。2案を実装して見比べ、
+>   **2026-09-23 に `fill` で確定した**（`const fvEdge=false;`。切り替えスイッチ `?fvcolor=` は削除済み）。
+>   - `fill`（採用） … input の背景を透明にして td の色をセル全面に出す。**フォントを落とさない**。色は最も濃い
+>   - `edge`（不採用） … input を一回り小さくし、通常表示と同じ帯（7px/4.5px）で見せる。見た目は揃うが
+>     行高を4px使うのでフォントが落ちる（実測: 15日×30名で16px→12px）
+> - **絞り込み時のヒートマップの置き場**: グリッドが必要とする幅（`gridNeedW`）を先に確保し、
+>   余った幅だけをヒートマップの横パネルに回す。横パネルとして成立する下限は3時間ぶん
+>   （`HEAT_PANEL_MIN_HOURS=3`）で、それを割るならヒートマップをグリッドの下へ回す。
+> - **キッチン/ホール絞り込み時のヒートマップ**: 時間帯を横スクロールさせず全部出す（`fitHours`）。
+>   px を計算せず `table-layout:fixed` に割らせるので、横パネルでもグリッド下でも同じ1本で効く。
+>   実測（localhost・標準テスト店舗・10〜25時の16列）: 絞り込み無しは従来どおり1列22pxで160pxスクロール、
+>   キッチンのみ／ホールのみでは**両方のヒートマップがはみ出し0**（列幅は12.1〜65.9pxで枠に応じて可変）。
+>
+> **並行していた `/bug-check` ループとの統合（2026-09-23）**: #140・#141 のセッションが
+> `example-fullview-cell-colors.js` を追加していた（`5ea68ab`。app-admin.js は「並行セッションが編集中」
+> として触っていない）。このスクリプトを本タスクの検証に取り込み、判定だけ拡張した——
+> **帯の太さしか見ておらず `fill` 方式が偽陰性になる**ため、「帯がある」か「input が透明」かの
+> どちらかで可とする `fullShowsTdColor` に変えた。
+>
+> **残り**: 本番リリース（`/release-to-main`・`?v=` のバンプ）のみ。
+> ①`fill` の確定・②本番解放・③ドキュメントのコミット・④dev標準テスト店舗での実機E2E は完了済み。
+
+**目的**: 現在の「全員表示」（`fitAll`・app-admin.js:376）は、導入時の意図が「列幅均等・横スクロールなし」＝**横だけ**を画面幅に収めることだった（`8b55951`。`88cd3f2` で熱マップをグリッド下部へ移し「全スタッフ一覧の目的を最優先」と確定）。縦は `maxHeight:"70vh"`（:1777）のままなので、31日期間×15名では表高1694pxに対し可視630pxしかなく、期間全体は一望できない。これを「**縦横とも収める**」に拡張し、左上の「日付」ヘッダから右下（最終日の行の右端）までをスクロールなしで表示する。あわせて、現行の全員表示に**今も本番で起きている横方向のはみ出し**（下記。`overflowX:"hidden"` のためスクロールバーも出ず右端の列に到達できない）を先行して修正する。
+
+**現行の横はみ出し（先行コミットで直すバグ）**: `td`/`th` は既定 `box-sizing:content-box` なので、日付セル `SD`（:1192・padding "2px 4px"）で+8px、スタッフ列ヘッダ `VTH`（:1196-1200・padding "2px"）で各列+4pxずつ実幅が式より増えるのに、`colW=fitAll?Math.max(24,Math.floor((centerW-90)/Math.max(1,gridStaff.length))):39`（:1179）はそれを勘定していない。はみ出し量≒`4×スタッフ数+8−端数`。実測（Playwright・`.claude/skills/shifty-e2e-verify/scripts/mount-component.js`・viewport 1400×900・Firebase非接続・2026-09-23・develop `2f758c4`）:
+
+| スタッフ数 | 表の幅 | 可視幅 | 切れている量 |
+|---|---|---|---|
+| 8名 | 1410px | 1384px | 26px |
+| 15名 | 1433px | 1384px | 49px |
+| 25名 | 1473px | 1384px | 89px（幅55pxの列1.6本分） |
+
+**ユーザーが下した決定（2026-09-23・決定済み。実装者はこの節をユーザーに問い直さない）**:
+- **全表示モードのセルに限り `input` の `fontSize` を16px未満にしてよい**。＝RULES.md:17「`input` の `fontSize` を 16px 未満にしない（iOS Safari でズームが発生する）」の**例外を全表示モードのセルに限って認める**、という解釈をユーザーに明示して採用済み。
+- その帰結として**全表示中もセルの編集を維持する**（読み取り専用にしない。`readOnly={!isPremium}` の既存条件は据え置き）。
+- 通常表示のフォント・レイアウトは1pxも変えない。
+- 代替案（この解釈が違っていて「編集は不要」が真意だった場合のみ）: 全表示のセルを読み取り専用のテキスト描画（`input` をやめ `td` に直書き）に置き換えれば16px規約に一切触れず実装も小さくなる。ユーザーがそう言い直したときだけ切り替える。
+
+**仕様**:
+- ラベル「全員表示」→「全表示」（:1670）。コメント :1186 も直す。文字列「全員表示」の出現はこの2箇所のみ（他ファイル・テスト・スキルに出現なし・grep済み）。
+- 日付列は**左右両端**に置く（最終スタッフ列の右外側に同内容の日付セルを追加し、ヘッダの「日付」も両端）。幅は現行90pxの半分（45px）を上限に、`fmtDL` の出力（例 "31(土)"＝半角4+全角1・:1150）が選んだフォントで省略なく収まる幅を計算する。
+- 縦は全表示時のみ `70vh` 固定をやめ、「グリッド上端〜ビューポート下端」の実際に使える高さを枠にする。行高 `rowH=floor((枠高−thead高)/(日数×2))`、セル fontSize は行高から導出（上限16px）。thead（スタッフ名の縦書き `height:72`・:1198）も全表示時は縮めてよい。
+- 行高・列幅・フォントは**レンダーごとの算術計算**（都度計算）。スタッフ数別の事前計算テーブルは作らない。DOM 計測の追加パスも足さない——追加されるのは既知数からの割り算だけなので、表示は今より遅くならない。
+- 全表示では sticky 固定を使わない（全体が見えるので不要。通常表示の sticky は維持）。
+- 「ヒートマップは下に配置」「通常表示でヒートマップを置いている所まで幅を使う」の2点は**現行の全員表示で既に満たされている**（`hasPanel` が fitAll で false・:1157、`useBreakout=hasPanel||fitAll`・:1162、下部表示 :1892-1901、`width:100vw` ブレイクアウト :1762）。新規実装として書かず**非回帰項目**として扱う。
+- 推奨: レイアウト計算（入力: 可視幅・可視高・日数・スタッフ数 → 出力: 日付列幅・colW・行高・fontSize）を純粋関数として app-utils.js に置き、tests/core.test.js に6水準の数値テストを足す（Node で受け入れ条件を機械照合できる）。
+
+**受け入れ条件**:
+- [x] **本番解放**: `const fullView=fitAll&&DEV_MODE;` から `&&DEV_MODE` を外した（現在 `const fullView=fitAll;`）
+- [x] **本番の横はみ出しの解消**: `boxSizing` が `fullView` に連動するため、本番解放と同時に解消した（解放前は8/15/25名で26/49/89px 切れていた）。無条件に `border-box` にはせず、通常表示の列幅は43pxのまま変えていない
+- [x] ラベルを「全表示」に変更（`fitAll?"通常表示":"全表示"`）し、コメントも更新。本番解放に伴い DEV_MODE 分岐は無くなった
+- [x] 全表示で、左上の「日付」ヘッダから右下（最終日の行の右端の日付セル）までが可視。**16日/31日 × 8/15/25名の6水準**を実測（`example-fitall-geometry.js` → EXIT=0）。横は全水準で余り0px。縦は `FV_MAX_DAYS=16` の決定により**16日までは1画面に収まり、31日は縦スクロール**になる（その場合だけスタッフ名の行を上端に固定する）
+- [x] 日付列が左右両端にあり、幅は45px指定・実レンダー46pxで `fmtDL` 出力（"31(土)" 型）が収まる。右端ヘッダが "日付" であることを6水準で実測
+- [x] 下段3表（休みカウント／期間別勤務時間／週間勤務時間）の列位置がグリッドと一致。**1スタッフ目の列開始位置が4表とも46pxで一致**することを6水準で実測。ラベルは45pxに詰まるので休みカウント表だけ短縮見出し（1日休／半日休／休計／連勤）に差し替え、`title` に元の見出しを残した
+- [x] 行高・列幅・フォントが都度計算（事前計算テーブルなし）。DOM計測は `gridTop` の1つだけで、その値は出力に依存しないため測り直しのループにならない。`measuredRowH`/`measuredTheadH` は全表示のレイアウト計算に使っていない
+- [x] 非回帰: 通常表示の10指標（日付列98px・スタッフ列43px・行ストライド52px・thead82px・表幅743px・font16px・可視幅1368px・表幅1368px・可視高630px・表高914px）が変更前のベースラインと**全項目一致**。既存の回帰テスト `example-shift-edit-tab.js` も allPass
+- [x] 全表示でも土日祝の色（`dc`/`baseRb`）・ポジション不足の黄色（`rbS`/`rbE`）・セルコマンドの背景色（`cellBgStyle`）・スタッフ名色（`nameColor`）が通常表示と同一規則で再現される。`fill` 方式（input を透明にして td の色を全面に透かす）で実測（`example-fullview-cell-colors.js` → EXIT=0・`fullShowsTdColor:true`・`fullMode:"fill(input透明)"`・6水準ともコンソールエラー0件）
+- [x] **16px例外の記録**: RULES.md の16px規約に例外節を追記し、CLAUDE.md「既知の技術負債」の走査節にも注記した。**走査は変更後も「フォーム部品58件・違反0件」と答える**（`fvFont` が変数で、走査は数値リテラルしか見ないため）＝0件はこの1件を含まない数字である旨を両方に明記済み
+- [x] `npm test` **270件パス**／`npx eslint app-*.js` **0 errors 95 warnings**（どちらも変更前と同数）
+- [x] E2E は dev 環境の標準テスト店舗（`eb6AfsQv4JAht+cX*xP7fuDa`・新規店舗は作っていない）で実施した。2026-09-23・実ブラウザ 1400×900・`?plan=premium`・8月前半（15日）×スタッフ30名。**全表示で縦横とも余り0px**（可視1299×653 / 表1299×653）、日付列45pxが両端（左右のヘッダーとも「日付」）、スタッフ列39px、セルのfont 14px、**表の中心700pxが画面中心700pxと一致**。グリッド・期間別勤務時間表・週間勤務時間表で田中の列が**3表とも left=96px / 幅39px で一致**。色は平のセルの input が透明で td の土曜 `rgba(25,118,210,0.07)`・日曜 `rgba(229,57,53,0.07)`・ポジション不足 `rgba(250,204,21,0.35)` が透ける（セルコマンド色を持つセルだけ通常表示と同じく不透明）。全表示のままセル編集→保存が通り（`✓ 1件のシフトを保存しました`）、値は元に戻した。**pageerror・console error ともに0件**
+- [x] コミットする → `4327e23`（回帰スクリプト2本）・`f59a579`（本番解放と fill 確定・ドキュメント）
+
+**フォント縮小の副作用（実装者への申し送り・取りこぼし禁止）**:
+- **iOS/iPadOS で全表示のセルをタップすると自動ズームが起きる**（16px規約の由来はこれ）。全表示は一望が目的で編集は例外的な操作、ズームはフォーカス時のみでピンチで戻せる——が、編集を維持する以上タップ→ズームは実際に起きる。全表示中の編集頻度が高いと分かったときが読み取り専用案（上記代替案）への再着手条件。
+- **各期間長での実現水準**（実測: 31日×15名で行ストライド52px/日＝26px/行・thead 82px・input実高20px。行のchrome（tdパディング+inputの枠）を約4〜6px/行まで詰めた場合の試算）:
+
+| 期間 | 枠630px（現行70vh・高さ900px時） | 枠765px（85vh相当・全表示専用に枠を広げた場合） |
+|---|---|---|
+| 16日（2週間運用） | 17.1px/行 → セル約11px相当・実用下限 | 21.3px/行 → 約15px相当・実用 |
+| 31日（1ヶ月運用） | 8.8px/行 → 約3〜5px相当・**時刻は判読不能** | 11.0px/行 → 約5〜7px相当・**判読限界以下** |
+
+ユーザーは「小さくなるのは可」としているが、**1ヶ月期間では時刻の数字は判読できず、用途は「出勤の有無・埋まり具合の俯瞰」に限られる**。この水準を仕様として受け入れ済みの前提で実装し、完了報告に各水準の実測フォントサイズを記載する。
+
+**影響範囲**: app-admin.js（`ShiftEditTab` 本体・`SummaryTable`）。推奨案を採る場合は app-utils.js（レイアウト純粋関数の追加）と tests/core.test.js（数値テスト）。例外の記録で RULES.md・CLAUDE.md。**触らない**: app-core.js（共通スタイル定数 `AI` 等は変更しない。`AI2` は ShiftEditTab ローカル :1190）・app-staff.js・app-main.js・functions/・database.rules.json・index.html。Excel/PDF 出力は `colW` に依存しないため対象外（`colW` の参照は `ShiftEditTab` の描画内に閉じている・grep済み）。
+
+**備考**: 設計意図の出典は `8b55951`（feat: シフト作成に全員表示トグルを追加（列幅均等・横スクロールなし））と `88cd3f2`（refactor: 全員表示では熱マップをグリッド下部に表示）。数値はすべて実ブラウザ実測（Playwright・mount-component.js で `ShiftEditTab` 単体をマウント・viewport 1400×900・develop `2f758c4`・2026-09-23）で、**Firebase / Stripe には1バイトもアクセスしていない**。行番号は同コミット時点のもの。実装は `/shifty-feature` を経由し、本番反映は `/release-to-main` 経由でのみ行う。
+
+### ✅ Cloud Functions を本番へ反映する（未デプロイの修正が3件たまっている）
+
+（2026-10-05 完了済みへ移動: 前提は 2026-09-23 に解決済みで、その後も CF は全体を出し直している（2026-10-05 時点で40本）。残っている「正規の解除が通るか」は次に解除を使うときに見る）
+
+> **✅ 2026-09-23 に実測で解決——3件とも既に本番へ反映されていた（このタスクの前提が誤りだった）**
+> `firebase deploy --only functions --project ontheshift` を実行したところ、
+> **17関数すべてが `Skipped (No changes detected)`** で、本番は1バイトも変わらなかった。
+> firebase-tools はソースのハッシュを突き合わせてスキップを決めるので、これは
+> **本番に載っているソースが現在の `functions/index.js` と一致している**ことの証明になる。
+> `main` と `develop` の `functions/` にも差分は無い（`git diff main develop -- functions/` が空）。
+>
+> **起票時の判定が誤っていた。** 3件が「未デプロイ」とされた根拠はコミット履歴だけで、
+> 本番の状態は一度も測られていない。**完了済みの「Stripe秘密鍵の一部がログに出続けていた」
+> タスクが残した教訓（「本番の状態はコミット履歴ではなく本番のログ／監査ログで確かめる」）が、
+> ここに届いていなかった**——同じ形の取り違えが2回目。
+>
+> **残り（🟢 に下げてよい）**: 「企業連携タブから正規の解除が従来どおり通る」は**未検証**。
+> 反映自体はいつの間にか済んでいたので、デプロイ直後の確認という形では取れない。
+> 次に企業連携の解除を使う機会に見れば足りる（`isValidShopId` が既存店舗のIDを全件通すことは
+> ローカルで実測済みで、締め出される想定は無い）。
+
+**目的**: コード側は直っているが、**Cloud Functions は本番へデプロイするまで1バイトも効かない**。
+現在3件たまっており、どれも同じ1回のデプロイで出る。
+
+| コミット | 内容 | 効かないと起きること |
+|---|---|---|
+| `be8143e`（#132） | `linkStoreToCompany`・`unlinkStoreFromCompany` の `shopId` を `isValidShopId` に通す | 企業メンバーが `shopId:"/"` を送ると、`companies/{id}/pub/shops`（連携マップ）と `companies/{id}/grants`（付与台帳）が**丸ごと消える**。「最後のオーナーは外さない」判定（#65）も発火しない。**台帳が消えると企業経由で与えたオーナー権限を後から回収できない** |
+| `0727598`（#131） | `purgeInactiveShops`・`purgeOldPeriods` に `isDemoShop` のガード | 本番のデモ店舗（`demo-toriMatsu-v1`・広告の着地先 `#/demo`）が1年未更新の自動アーカイブで消える |
+| `aa17c88`（#133） | `createCompany` の `shopIds`（複数形）を `isValidShopId` に通す | **到達可能な穴は無い**（多重防御）。`shopId:"/"` は `companies/{id}/pub/shops` を `true` で上書きしうる形だが、通過には `shops/owners` が呼び出し元の uid を持つ必要があり、`shops/$shopId` の任意の子は `database.rules.json` に `.write` が無いのでクライアントからは作れない |
+
+**受け入れ条件**:
+- [x] `cd functions && firebase deploy --only functions --project ontheshift`
+      → 2026-09-23 実行。**17関数すべて `Skipped (No changes detected)`＝反映済みだった**
+- [ ] 反映後、企業連携タブから正規の解除が従来どおり通ることを確認する（`isValidShopId` は
+      `genSecureId` 形式10万件・`shop_…9813`・`eb6AfsQv4JAht+cX*xP7fuDa` を全件通すことを
+      ローカルで実測済みなので、既存店舗が締め出される想定は無い）→ **未検証**
+- [x] `purgeInactiveShops` の関数更新が成功したことを確認する
+      → 上の一覧に `purgeInactiveShops`・`purgeOldPeriods` とも載っており、現行ソースと一致している
+
+**影響範囲**: functions/index.js（デプロイのみ・コード変更は済んでいる）
+**備考**: バグチェック#131（2026-09-17）・#132（2026-09-17）・#133（2026-09-18）で検出・**条件A（本番デプロイ）に該当**。
+`be8143e` の追加で優先度を 🟢 → 🟡 に上げた（デモの保護は期限が遠いが、連携マップの消失は
+呼ばれた瞬間に起きる）。**期限もある**: デモ店舗の `lastActivity` が投入時刻（2026-08-11 ごろ）の
+ままなら **2027-08-12** にアーカイブ対象へ変わる。
+
+### ✅ 管理者が退勤を出勤より前の時刻で入力すると、シフト表には正しく見えるのに勤務時間・ヒートマップ・上限判定が黙って0になる
+
+（2026-10-05 完了済みへ移動: 受け入れ条件はすべて満たしている）
+
+> **✅ 2026-09-26 案Cで実装済み（`44e7561`）／残りは dev 実機E2Eのみ**
+> ユーザー判断は **案C**（保存は通し、`dupErrors` と同じくセル色付け＋エラーパネル）で確定。
+> 判定を `isTimeOrderInvalid`（app-utils.js）に切り出し、**両側とも入力されている日だけ**を対象にした
+> （片側セルは補完の領分なので対象外・24時超え表記の 25:00・26:00 は影響を受けない）。
+> 入口2つ（シフト作成タブの `applyEditToSubs`・提出一覧の `saveAdj`）の**両方**から同じ関数を通す。
+> シフト作成タブにはセル色（`CELL_COLOR_LEGEND` の `timeErr`）と「⚠ 時刻の入力ミス」パネルが出る。
+> **データの扱いは1バイトも変えていない**（`effShiftRangeMin` が null を返すことも実働0のままも変えない）。
+>
+> 検証: ユニットテスト（`isTimeOrderInvalid` の境界・24時超え表記の非回帰）、
+> ドリフト検出テスト（両経路が同じ関数を通ることを走査。対照3種で落ちることを確認済み）、
+> 実ブラウザ（`example-labor-phase1.js` 17項目 allPass・コンソールエラー0件）、
+> 既存回帰 `example-shift-edit-tab.js` allPass。
+> dev 実機E2E（検証手順4）も 2026-09-26 に実施済み。標準テスト店舗（8月前半・`?plan=premium`）で
+> セル編集→保存→表示を踏み、Firebase に `adjustedStart/adjustedEnd` が書かれること（既存subを再利用し
+> 新規作成していないこと）、トースト・エラーパネル・セル色が出ること、Excel（10,721 bytes）と PDF の
+> 出力が通ることを確認した。pageerror・console error ともに0件。**この検証でセル色の不具合を1件見つけて
+> 直した**（ポジション不足の黄色が入力ミス色を上書きしていた・`a67b27b`）。触ったデータは元に戻してある。
+
+**目的**: 深夜まで営業する店舗で、管理者が22:00〜翌2:00のシフトを**退勤セルに「2」**と入力すると、
+セルにもExcelにも「22 / 2」と普通の深夜シフトとして印字されるのに、**そこから計算される数字がすべて0になる**。
+警告もエラー表示も出ない。正しい入力は24時超え表記の「26」で、候補時間の選択肢（`gto()` は 0:00〜27:00）も
+その表記で作られているが、**シフト作成タブのセルは自由入力**で、そのことを伝える導線が無い。
+
+**原因**（コード上で確定）: `effShiftRangeMin`（app-utils.js）は最後に `return e>s?{startMin:s,endMin:e}:null;`
+と書かれており、**退勤 ≤ 出勤 の日は範囲を null にする**。`calcNetWorkMinutes`・`shiftBandInfo`・`getBreaksFor` は
+いずれも null を「勤務時間なし」として扱うため、その日は集計にも時間帯別出勤人数にも一切現れない。
+防御的なコードとして正しいが、**捨てたことを管理者に伝える経路がどこにも無い**。
+
+**実測**（配信物の関数をそのまま Node で実行。`app-admin.js` の `parseTime` は定義をソースから切り出して実行。
+候補時間 18:00〜26:00・休憩なし。**Firebase・Stripe には一切アクセスしていない**）:
+
+`parseTime("2")` → `"02:00"` ／ `parseTime("26")` → `"26:00"`（どちらも受理される。0〜30時を許す）
+
+| 管理者が入力した退勤 | 実効レンジ | 純勤務 | 出勤数 | ディナー帯 | 「両側入力」と判定 |
+|---|---|---|---|---|---|
+| 22:00 → **02:00** | **null** | **0:00** | **0** | **false** | **true** |
+| 22:00 → 26:00 | あり | 4:00 | 0.5 | true | true |
+| 18:00 → **01:00** | **null** | **0:00** | **0** | **false** | **true** |
+| 18:00 → 25:00 | あり | 7:00 | 0.5 | true | true |
+
+**Excelは正しく見える**: `expXl`（app-admin.js）は保存された時刻をそのまま
+`fmtT(startT)` / `fmtT(endT)` で印字するだけで範囲を検証しないため、セルには「22」「2」と出る。
+**つまり配るシフト表は正しく、集計だけが間違っている**という一番気づきにくい壊れ方をする。
+
+**同じ条件を他の入力欄はすべて弾いている**のに、管理者の編集経路だけが素通りする:
+
+| 入力欄 | 検証 |
+|---|---|
+| 候補時間（全体・曜日別・日付別／`addG`・`addW`・`addD`） | `start>=end` で「▲ 退勤は出勤より後にしてください」 |
+| 休憩時間（`CandTab`） | `brkStart>=brkEnd` で「▲ 終了は開始より後にしてください」 |
+| **シフト作成タブのセル（`applyEditToSubs`）** | **なし** |
+| **提出一覧の詳細モーダル（`saveAdj`）** | **なし** |
+
+**副次的な影響（確度は低い）**: 店舗間シフト重複（`dupErrors`）は他店舗のシフトを
+`effShiftRangeMin` に通し `if(!orng)continue;` で飛ばすため、ヘルプ先の店舗がこの形で入力していると
+**二重予約が検出されない**。さらに `hasBoth`（app-admin.js:424）は `effShiftStart`/`effShiftEnd` が
+どちらも非空なら true を返す＝この壊れたシフトを「完全なデータ」とみなすので、同じ人・同じ日に
+片側セルのsubが別にあると**そちらを押しのけて**採用され、本来動いていた補完つきの重複判定まで止まる。
+ただしこれは同一人物・同一日に複数subがある状態（#81 の根）が前提なので発生頻度は低い。
+
+**ループで直さなかった理由**: どう直すかで結果が実質的に変わり、ユーザー判断が要る（条件B）。
+加えて修正箇所がセル編集フローで、ここは #51・#56・#58 の回帰がすべて起きた場所のため
+実機E2Eが前提になる（条件D）。
+
+**受け入れ条件**:
+- [x] どう扱うかを決める（**ユーザー判断**）→ 案C（2026-09-26）
+  - 案A: 保存前に弾いて候補時間・休憩と同じトーストを出す（「深夜は 25:00・26:00 のように入力します」を添える）。
+    **ただしセルは1つずつ確定するので、出勤を直す前に退勤を直すと途中経過が弾かれる**。
+    「両方揃ってから判定する」等の逃げ道を併せて決める必要がある
+  - 案B: 退勤 < 出勤 なら24時間足して解釈する（「2」→ 26:00）。入力の手間は最小になるが、
+    単なる打ち間違いを**4時間の深夜シフトとして黙って確定させる**向きに倒れる
+  - 案C: 保存はそのまま通し、`dupErrors` と同じようにセルを色付けしてエラーパネルに出す（表示のみ・データは変えない）
+- [x] 決めた案を `applyEditToSubs`（シフト作成タブ）と `saveAdj`（提出一覧の詳細モーダル）の**両方**に入れる → `isTimeOrderInvalid` を app-shift.js と app-admin.js の両方から呼ぶ（2026-10-05 確認）
+      （片方だけだと同じ状態をもう一方の入口から作れる）
+- [x] 純粋関数に切り出せる部分にユニットテストを追加し、実機E2Eでセル編集の非回帰を確認する → テストと dev 実機E2E（2026-09-26）は上の注記のとおり済んでいる
+
+**影響範囲**: app-admin.js（`applyEditToSubs` / `saveAdj`、案Cなら `ShiftEditTab` のエラーパネル）、
+app-utils.js（判定を純粋関数に切り出す場合）
+**備考**: バグチェック#129（2026-09-16）で検出・**条件B（どう直すかの仕様判断）と条件D（セル編集フローの実機E2E）に該当**。
+**深夜営業の店舗ほど踏みやすい**——鷄えん東通り店は 23:00〜25:00 の「締」シフトを運用しており、
+24時超え表記が日常的に必要な店舗が現に存在する。
+
 ### ✅ 2026-10-05 の本番リリース（版数 20261005-d54059e ほか）と、そのあとの修正
 
 - **リリース済み**: マイシフトのアドレスバー（開き直せる URL）と設定の一番下の個別URL、ヘルプ勤務の表示と給料計算（ヘルプ先の日の実績入力を含む）、URLをなくしたとき用のメールアドレス（CF `setPageEmail`・`recoverPageUrl`、ルール3行＝CF 専用ノード）。ルールは dev→本番、CF は40本（新規2本）
 - **Opus のエージェントが利用上限で2回停止**したため、残り（回帰2本の修正・個別URLを設定の最下部へ並べ替え・検証・リリース）は主セッションが行った
-- **個人リンクコードの発行を画面から削除**（ユーザー指示）。本人側の入力欄も外した。CF は残置。`example-my-link.js` は発行と引き換えを CF 直接呼び出しで確かめる形に直した
+- **個人リンクコードの発行を画面から削除**（ユーザー指示）。本人側の入力欄も外した。続けて同日、ユーザー指示で**機能ごと削除**した（CF・ルール・純粋関数・テスト・回帰。下の🟡で本番へ反映する）
 - **メール登録の画面の回帰** `example-my-page-email.js` を追加（登録→控え1通・伏せ表示・CF 専用の置き場・「なくした場合」の統一文言・削除）。`9251272` の配信物では EXIT=2
 - **未検証**: 本番での控えのメール・送り直しのメールの実送信。Firebase Auth の確認メールは迷惑メールに入る（カスタムドメインの DNS 4件が未設定）
 
@@ -4937,13 +4998,13 @@ REST実測。`database.rules.json` の `subs/$subId/.write` から削除条件�
 
 1. **11店舗**（有料プランだが Stripe 契約なし＝手動シード）: 監査時のリストを固定せず**書く直前に同じ規則で
    再導出**し、Stripe契約のある店舗が1件でも混ざったら中止する安全弁を通した。**11/11件成功・誤書き込み0件**
-2. **`鷄えん東通り`（`shop_1780453329813`）**: **Stripe契約を持つ唯一の店舗**だが、ユーザーの明示指示により
+2. **`鷄えん東通り`（`shop_…9813`）**: **Stripe契約を持つ唯一の店舗**だが、ユーザーの明示指示により
    同じ扱いにした。規則ベースの一括スクリプトの安全弁に当たるため、対象を1件に固定した別スクリプトで書き、
    `plan`・`planExpiry`・`stripeCustomerId`・`stripeSubscriptionId` が無傷であることを読み返しで確認した
 
 > **⚠️ この店舗だけ副作用がある**: 契約が生きているのにアプリ内から**請求・解約の導線（Stripeポータル）が消え、
 > 決済失敗バナーも出なくなる**。カードの更新・解約は **Stripeダッシュボードから**行う必要がある。
-> 元に戻すには `accounts/shop_1780453329813/billingExempt` を削除する。
+> 元に戻すには `accounts/shop_…9813/billingExempt` を削除する。
 
 **本番での実測**（配信版数 `20260831-27f8a76`・実ブラウザ・読み取りのみ）:
 
