@@ -2058,59 +2058,23 @@ test("ヘルプ勤務（B）: 全員のシフト表もヘルプ先の状態に�
   assert.ok(/isPeriodPublished\(p\)\)/.test(hk) && !/accounts\//.test(hk), "公開の判定は所属店舗の期間だけ・他店のプランは読まない");
 });
 
-test("URLをなくしたとき用のメールアドレス（C）: 形・伏せ方・回数・後継・登録と送り直しの計画（functions/my-page.js）", () => {
+test("送信回数の制限の1歩（functions/my-page.js の pageEmailRateStepCF・sendEmailOtp が使う）", () => {
   const P = require("../functions/my-page.js");
-  assert.strictEqual(P.normalizePageEmailCF("  A@B.Co "), "a@b.co");
-  assert.ok(P.isPageEmailCF("a@b.co") && !P.isPageEmailCF("a@b") && !P.isPageEmailCF("a@b.co\r\nBcc: x@y.z") && !P.isPageEmailCF("a b@c.d") && !P.isPageEmailCF("x".repeat(250) + "@b.co"));
-  assert.strictEqual(P.maskPageEmailCF("tanaka@example.com"), "t***@example.com");
-  assert.strictEqual(P.pageUrlCF("https://shiftyshifty.app/", "A".repeat(24)), "https://shiftyshifty.app/?openExternalBrowser=1#/m/" + "A".repeat(24));
-  // 回数: 窓の中は max まで・窓が過ぎたら数え直す
+  // 窓の中は max まで・窓が過ぎたら数え直す
   let rr = null; const now = 1e12;
   for (let i = 0; i < 3; i++) { const st = P.pageEmailRateStepCF(rr, now + i, 3, 3600000); assert.ok(st.ok); rr = st.rec; }
   assert.strictEqual(P.pageEmailRateStepCF(rr, now + 10, 3, 3600000).ok, false);
   assert.ok(P.pageEmailRateStepCF(rr, now + 3600000, 3, 3600000).ok);
-  // 後継: 取り消された URL は同じ名前の承認済み（名前がスタッフ一覧にある）へ。後継が無ければ null
-  const T = "A".repeat(24), N = "N".repeat(24), X = "X".repeat(24);
-  const pages = { [T]: { status: "revoked", name: "田中" }, [N]: { status: "approved", name: "田中", approvedAt: "b" }, [X]: { status: "revoked", name: "退職" } };
-  assert.strictEqual(P.pageEmailCurrentTokenCF(T, pages, ["田中"]), N);
-  assert.strictEqual(P.pageEmailCurrentTokenCF(N, pages, ["田中"]), N);
-  assert.strictEqual(P.pageEmailCurrentTokenCF(X, pages, ["田中"]), null);
-  assert.strictEqual(P.pageEmailCurrentTokenCF(T, pages, ["佐藤"]), null, "名前が消えていれば送らない");
-  // 登録: 状態は伏せたアドレスだけ・登録は記録と逆引きと控えのメール・変更で前の逆引きを消す・削除
-  const acc = { shopId: "S1", name: "田中" }, key = "a".repeat(64), key2 = "b".repeat(64);
-  let r = P.planSetPageEmailCF({ action: "set", token: N, access: acc, pages, email: " Tanaka@Example.com", emailKey: key, nowIso: "t", base: "https://shiftyshifty.app", shopName: "A店" });
-  assert.deepStrictEqual(r.result, { ok: true, registered: true, masked: "t***@example.com", sent: true });
-  assert.deepStrictEqual(r.writes, { [`staffPageEmails/${N}`]: { email: "tanaka@example.com", key, setAt: "t", sentAt: "t" }, [`staffPageEmailIndex/${key}/${N}`]: true });
-  assert.ok(r.mail.to === "tanaka@example.com" && r.mail.text.includes("#/m/" + N) && r.mail.text.includes("A店"));
-  const cur = { email: "tanaka@example.com", key, setAt: "t" };
-  r = P.planSetPageEmailCF({ action: "set", token: N, access: acc, pages, emailRec: cur, email: "new@example.com", emailKey: key2, nowIso: "t2" });
-  assert.strictEqual(r.writes[`staffPageEmailIndex/${key}/${N}`], null);
-  r = P.planSetPageEmailCF({ action: "status", token: N, access: acc, pages, emailRec: cur });
-  assert.deepStrictEqual(r.result, { ok: true, registered: true, masked: "t***@example.com" });
-  assert.ok(!JSON.stringify(r.result).includes("tanaka@"), "生のアドレスを返さない");
-  r = P.planSetPageEmailCF({ action: "remove", token: N, access: acc, pages, emailRec: cur });
-  assert.deepStrictEqual(r.writes, { [`staffPageEmails/${N}`]: null, [`staffPageEmailIndex/${key}/${N}`]: null });
-  // 発行し直した URL の状態で、前の URL の登録を引き継ぐ
-  r = P.planSetPageEmailCF({ action: "status", token: N, access: acc, pages, emailRec: null, prevEmailRecs: { [T]: cur } });
-  assert.ok(r.result.registered && r.writes[`staffPageEmails/${N}`] && r.writes[`staffPageEmails/${T}`] === null && r.writes[`staffPageEmailIndex/${key}/${N}`] === true);
-  assert.ok(P.planSetPageEmailCF({ action: "set", token: N, access: { error: { code: "permission-denied", msg: "x" } } }).error);
-  assert.ok(P.planSetPageEmailCF({ action: "set", token: N, access: acc, email: "bad", emailKey: key }).error);
-  // 送り直し: 結果は登録の有無に関係なく同じ。送るのは記録のアドレスが一致し、いま使える URL だけ（再発行は新しい URL）
-  const base = { email: "tanaka@example.com", emailKey: key, tokenShops: { [T]: "S1" }, pagesByShop: { S1: pages }, staffByShop: { S1: ["田中"] }, shopNames: { S1: "A店" }, base: "https://shiftyshifty.app" };
-  r = P.planRecoverPageUrlCF({ ...base, index: { [T]: true }, emailRecs: { [T]: cur } });
-  const none = P.planRecoverPageUrlCF({ ...base, index: {}, emailRecs: {} });
-  assert.deepStrictEqual(r.result, none.result);
-  assert.ok(r.mail && r.mail.text.includes("#/m/" + N) && !r.mail.text.includes("#/m/" + T) && !none.mail);
-  assert.ok(!JSON.stringify(r.result).includes("#/m/"), "戻り値に URL を出さない");
-  assert.ok(!P.planRecoverPageUrlCF({ ...base, email: "other@example.com", index: { [T]: true }, emailRecs: { [T]: cur } }).mail, "記録と違うアドレスには送らない");
+  // 2026-10-08: 個別URLのメールアドレスの関数（setPageEmail・recoverPageUrl）は削除した。判定の関数も残さない
+  ["planSetPageEmailCF", "planRecoverPageUrlCF", "normalizePageEmailCF", "isPageEmailCF"].forEach(k => assert.strictEqual(P[k], undefined, k));
 });
 
-test("URLをなくしたとき用のメールアドレス（C）: ルールは CF 専用・クライアントはもう呼ばない（2026-10-08 アカウントに一本化）・入口はゲートの下・index.js の配線は残す", () => {
+test("URLをなくしたとき用のメールアドレス（C）: ルールは CF 専用・クライアントは呼ばない・CF は削除（2026-10-08 アカウントに一本化）・アーカイブで残りを消す", () => {
   const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "database.rules.json"), "utf8")).rules;
   ["staffPageEmails", "staffPageEmailIndex", "staffPageEmailRate"].forEach(k => assert.deepStrictEqual(rules[k], { ".read": false, ".write": false }, k));
   const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
   assert.ok(!/staffPageEmail/.test(my), "クライアントはアドレスの置き場を読み書きしない");
-  // 2026-10-08: URLをなくしたときはマイシフトのアカウントへ誘導する。クライアントは setPageEmail・recoverPageUrl を呼ばない（CF は残す）
+  // 2026-10-08: URLをなくしたときはマイシフトのアカウントへ誘導する。クライアントは setPageEmail・recoverPageUrl を呼ばない（CF も同日に削除）
   const src = ["app-utils.js", "app-my-utils.js", "app-core.js", "app-staff.js", "app-admin.js", "app-shift.js", "app-company.js", "app-my.js", "app-main.js"]
     .map(f => fs.readFileSync(path.join(ROOT, f), "utf8")).join("\n");
   assert.ok(!/myCallCF\("(setPageEmail|recoverPageUrl)"/.test(src) && !/MyPageEmailBox/.test(src), "クライアントから呼ばない");
@@ -2121,10 +2085,8 @@ test("URLをなくしたとき用のメールアドレス（C）: ルールは C
   const main = fs.readFileSync(path.join(ROOT, "app-main.js"), "utf8");
   assert.ok(/onOpenPageRecover=\{MY_SCREEN_ENABLED&&urlLocked&&!DEMO_MODE\?/.test(main));
   const idx = fs.readFileSync(path.join(ROOT, "functions", "index.js"), "utf8");
-  assert.ok(/exports\.setPageEmail = functions/.test(idx) && /exports\.recoverPageUrl = functions/.test(idx));
-  assert.ok(/const PAGE_EMAIL_BASE = process\.env\.APP_URL \|\| "https:\/\/shiftyshifty\.app"/.test(idx), "URL はサーバーの環境で決める（呼び出し元から受け取らない）");
-  const rec = idx.slice(idx.indexOf("exports.recoverPageUrl"), idx.indexOf("});", idx.indexOf("exports.recoverPageUrl")));
-  assert.ok(rec.indexOf('pageEmailRate("recoverEmail"') < rec.indexOf("staffPageEmailIndex/"), "回数は登録の有無を読む前に数える");
+  // 2026-10-08: 関数ごと削除した（呼ばれない関数を本番に残すと、直接呼べばメールを送れる入口が残るため）
+  assert.ok(!/exports\.(setPageEmail|recoverPageUrl)\b/.test(idx), "関数を残さない");
   const pu = idx.slice(idx.indexOf("exports.purgeInactiveShops"));
   assert.ok(/staffPageEmails\/\$\{t\}/.test(pu) && /staffPageEmailIndex\/\$\{er\.key\}\/\$\{t\}/.test(pu), "アーカイブで後始末");
 });
