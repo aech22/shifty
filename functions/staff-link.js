@@ -196,8 +196,27 @@ function planUnlinkStaff(o) {
   return { uid: target, patch: { [`shops/${x.shopId}/staffLinks/${target}`]: null, [`users/${target}/links/${x.shopId}`]: null } };
 }
 
+// ===== 提出の人単位の縛り（2026-10-08）: shops/{shopId}/nameGuards/{名前}=true =====
+// 承認済みの個別URLか staffLinks の紐付けがある名前に印を付ける。ルールはこの印がある名前の提出を本人（紐付いた uid・登録した端末）と
+// オーナーに限る。紐付けを変える関数（approveStaffLink・unlinkStaff・linkStaffPage・companyRenameStaff）のあとに計算し直す。
+// クライアントの app-my-utils.js の planNameGuards と同じ規則（tests/my.test.js が照合する）
+const NAME_GUARD_KEY_BAD_CF = /[.#$/[\]\x00-\x1f\x7f]/;
+function nameGuardKeyOkCF(name) { return typeof name === "string" && !!name && name.length <= 50 && !NAME_GUARD_KEY_BAD_CF.test(name); }
+function planNameGuardsCF(o) {
+  const x = _obj(o) || {};
+  const names = new Set(staffNamesOf(x.staff).filter(nameGuardKeyOkCF));
+  const want = {};
+  Object.values(_obj(x.pages) || {}).forEach(r => { const rec = _obj(r); if (rec && rec.status === "approved" && names.has(rec.name)) want[rec.name] = true; });
+  Object.values(_obj(x.staffLinks) || {}).forEach(r => { const rec = _obj(r); if (rec && typeof rec.name === "string" && names.has(rec.name)) want[rec.name] = true; });
+  const cur = _obj(x.guards) || {};
+  const patch = {};
+  Object.keys(want).forEach(n => { if (cur[n] !== true) patch[n] = true; });
+  Object.keys(cur).forEach(n => { if (!want[n]) patch[n] = null; });
+  return Object.keys(patch).length ? patch : null;
+}
+
 module.exports = {
   LINK_METHODS, LINK_NAME_MAX, LINK_NUMBER_MAX, isSafeKey, staffNamesOf, toHalfWidthDigitsCF, linkNumberKeyCF, linkNameKeyCF,
   personIdForShopNameCF, linkCandidatesForCF, linkMethodForCF, renameStaffLinksPatchCF, dropStaffLinksPatchCF, staffLinkPersonIdPatchCF,
-  planApproveStaffLink, planUnlinkStaff, planLinkStaffPage,
+  planApproveStaffLink, planUnlinkStaff, planLinkStaffPage, nameGuardKeyOkCF, planNameGuardsCF,
 };

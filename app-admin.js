@@ -464,6 +464,8 @@ function PeriodsTab({periods,subs,staffList,shops,onSave,saveSubs,tt,shopId,shop
                 </div>:
                 <div style={{marginTop:10,padding:"8px 12px",background:"rgba(0,0,0,.03)",borderRadius:8,display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:11,color:"var(--c-text4)",flexShrink:0}}>URL</span>
+                  {/* 受付期限（末日の翌日0時・2026-10-08）を過ぎた募集URLはスタッフが開けない（ルール）。管理者には残して見せる */}
+                  {isPeriodExpiredAt(p,Date.now())&&<span data-period-url-expired="1" style={{fontSize:11,color:"var(--c-text2)",fontWeight:700,flexShrink:0}}>受付終了</span>}
                   <span style={{fontSize:11,color:"var(--c-text3)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pUrl}</span>
                   <button onClick={e=>{e.stopPropagation();
               if(navigator.clipboard&&navigator.clipboard.writeText){

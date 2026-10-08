@@ -26,6 +26,7 @@ const THEME = `<style>*{box-sizing:border-box;}:root{--c-bg:#F0F2F5;--c-card:#FF
   `--c-border:#E5E7EB;--c-border2:#D1D5DB;--c-text:#1A1A2E;--c-text2:#374151;--c-text3:#6B7280;` +
   `--c-text4:#9CA3AF;--c-shadow:rgba(0,0,0,.06);--c-accent:#f87036;--c-danger:#DC2626;}</style>`;
 
+const EXP = end => { const [y, m, d] = end.split("-").map(Number); return Date.UTC(y, m - 1, d + 1) - 9 * 3600000; };
 const per = (id, sid, tok, label, start, end) => ({ id, urlToken: tok, shopId: sid, label, startDate: start, endDate: end, deadlineDate: "", createdAt: "2026-09-01T00:00:00.000Z" });
 const seed = owner => ({
   global: { shops: { S1: { id: "S1", name: "A店" }, S2: { id: "S2", name: "B店" } } },
@@ -36,7 +37,9 @@ const seed = owner => ({
     S2: { owners: { [owner]: "K2" }, private: { adminKey: "K2" }, staff: { 0: "鈴木" }, settings: { shopId: "S2", candidates: [] },
       periods: { q1: per("q1", "S2", "tokQ1", "8月前半", "2026-08-01", "2026-08-15"), q2: per("q2", "S2", "tokQ2", "8月後半", "2026-08-16", "2026-08-31") } },
   },
-  tokens: { tok1: { shopId: "S1", periodId: "p1" }, tok3: { shopId: "S1", periodId: "pOld" }, tokQ2: { shopId: "S2", periodId: "q2" } },
+  // 2026-10-08 から逆引きは受付期限（expiresAtMs＝末日の翌日0時・日本時間）も持つ。tok1 は期限まで同じ値＝書かない。
+  // tokQ2 は期限を持たない古い形＝期限を足すために1回だけ書き直す（移行）
+  tokens: { tok1: { shopId: "S1", periodId: "p1", expiresAtMs: EXP("2026-08-15") }, tok3: { shopId: "S1", periodId: "pOld" }, tokQ2: { shopId: "S2", periodId: "q2" } },
   accounts: { S1: { plan: "premium" }, S2: { plan: "premium" }, U1: { shops: { S1: true, S2: true } }, U2: { shops: { S1: true, S2: true } } },
 });
 
@@ -150,11 +153,13 @@ const clickExact = (h, t) => h.evaluate(t => { const b = [...document.querySelec
 
   const sets = w => (w || []).filter(x => x.op === "set").map(x => x.path).sort();
   const firstShop = R.shop0 === "A店" ? "S1" : "S2";
-  const expA = firstShop === "S1" ? ["tokens/tok2", "tokens/tok3"] : ["tokens/tokQ1"];
-  const expD1 = firstShop === "S1" ? ["tokens/tokQ1"] : ["tokens/tok2", "tokens/tok3"];
+  const expA = firstShop === "S1" ? ["tokens/tok2", "tokens/tok3"] : ["tokens/tokQ1", "tokens/tokQ2"];
+  const expD1 = firstShop === "S1" ? ["tokens/tokQ1", "tokens/tokQ2"] : ["tokens/tok2", "tokens/tok3"];
   const v = {
     a_missingAndWrongWrittenOnce: JSON.stringify(sets(R.a)) === JSON.stringify(expA) && R.a.length === expA.length,
-    a_sameValueNotWritten: !(R.a || []).some(x => x.path === "tokens/tok1" || x.path === "tokens/tokQ2"),
+    a_sameValueNotWritten: ![...(R.a || []), ...(R.d1 || []), ...(R.d2 || [])].some(x => x.path === "tokens/tok1"),
+    a_noExpiryRewrittenWithExpiry: [...(R.a || []), ...(R.d1 || [])].filter(x => x.path === "tokens/tokQ2").length === 1 &&
+      [...(R.a || []), ...(R.d1 || [])].find(x => x.path === "tokens/tokQ2").val.expiresAtMs === EXP("2026-08-31"),
     a_valuesRight: firstShop !== "S1" || ((R.tokensFinal || {}).tok3 || {}).periodId === "p3",
     b_labelReachedUi: R.bLabelShown === true,
     b_noTokenWrites: Array.isArray(R.b) && R.b.length === 0,

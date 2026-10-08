@@ -11,9 +11,12 @@
     },
     "tokens": {
       "$token": {
-        ".read": "auth != null",
+        ".read": "auth != null && (!data.child('expiresAtMs').exists() || data.child('expiresAtMs').val() > now || root.child('shops').child(data.child('shopId').val()).child('owners').child(auth.uid).exists())",
         ".write": "auth != null && ((newData.exists() && (!data.exists() || newData.child('shopId').val() === data.child('shopId').val()) && root.child('shops').child(newData.child('shopId').val()).child('owners').child(auth.uid).exists()) || (!newData.exists() && data.exists() && root.child('shops').child(data.child('shopId').val()).child('owners').child(auth.uid).exists()))",
-        ".validate": "newData.hasChildren(['shopId','periodId'])"
+        ".validate": "newData.hasChildren(['shopId','periodId'])",
+        "expiresAtMs": {
+          ".validate": "newData.isNumber()"
+        }
       }
     },
     "shops": {
@@ -26,7 +29,10 @@
           ".read": "auth != null && ($shopId === 'demo-toriMatsu-v1' || root.child('shops').child($shopId).child('owners').child(auth.uid).exists() || root.child('shops').child($shopId).child('staffLinks').child(auth.uid).exists() || (root.child('shops').child($shopId).child('company').child('id').isString() && (auth.uid === 'company_' + root.child('shops').child($shopId).child('company').child('id').val() || root.child('companies').child(root.child('shops').child($shopId).child('company').child('id').val()).child('pub').child('ownerUid').val() === auth.uid)) || (root.child('shops').child($shopId).child('readers').child(auth.uid).child('t').isString() && root.child('tokens').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('t').val()).child('shopId').val() === $shopId) || (root.child('shops').child($shopId).child('readers').child(auth.uid).child('p').isString() && root.child('staffPageTokens').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('p').val()).child('shopId').val() === $shopId && root.child('shops').child($shopId).child('staffPages').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('p').val()).child('status').val() === 'approved') || (root.child('shops').child($shopId).child('readers').child(auth.uid).child('o').isString() && root.child('shops').child($shopId).child('company').child('shops').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('o').val()).exists() && root.child('shops').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('o').val()).child('owners').child(auth.uid).exists()) || (root.child('shops').child($shopId).child('readers').child(auth.uid).child('l').isString() && root.child('shops').child($shopId).child('company').child('shops').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('l').val()).exists() && root.child('shops').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('l').val()).child('staffLinks').child(auth.uid).exists()) || (root.child('shops').child($shopId).child('readers').child(auth.uid).child('q').isString() && root.child('shops').child($shopId).child('readers').child(auth.uid).child('qs').isString() && root.child('shops').child($shopId).child('company').child('shops').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('qs').val()).exists() && root.child('staffPageTokens').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('q').val()).child('shopId').val() === root.child('shops').child($shopId).child('readers').child(auth.uid).child('qs').val() && root.child('shops').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('qs').val()).child('staffPages').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('q').val()).child('status').val() === 'approved'))",
           ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
           "$periodId": {
-            ".validate": "newData.hasChildren(['id'])"
+            ".validate": "newData.hasChildren(['id'])",
+            "expiresAtMs": {
+              ".validate": "newData.isNumber()"
+            }
           }
         },
         "staff": {
@@ -81,7 +87,7 @@
           ".read": "auth != null && ($shopId === 'demo-toriMatsu-v1' || root.child('shops').child($shopId).child('owners').child(auth.uid).exists() || root.child('shops').child($shopId).child('staffLinks').child(auth.uid).exists() || (root.child('shops').child($shopId).child('company').child('id').isString() && (auth.uid === 'company_' + root.child('shops').child($shopId).child('company').child('id').val() || root.child('companies').child(root.child('shops').child($shopId).child('company').child('id').val()).child('pub').child('ownerUid').val() === auth.uid)) || (root.child('shops').child($shopId).child('readers').child(auth.uid).child('t').isString() && root.child('tokens').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('t').val()).child('shopId').val() === $shopId) || (root.child('shops').child($shopId).child('readers').child(auth.uid).child('p').isString() && root.child('staffPageTokens').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('p').val()).child('shopId').val() === $shopId && root.child('shops').child($shopId).child('staffPages').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('p').val()).child('status').val() === 'approved') || (root.child('shops').child($shopId).child('readers').child(auth.uid).child('o').isString() && root.child('shops').child($shopId).child('company').child('shops').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('o').val()).exists() && root.child('shops').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('o').val()).child('owners').child(auth.uid).exists()) || (root.child('shops').child($shopId).child('readers').child(auth.uid).child('l').isString() && root.child('shops').child($shopId).child('company').child('shops').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('l').val()).exists() && root.child('shops').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('l').val()).child('staffLinks').child(auth.uid).exists()) || (root.child('shops').child($shopId).child('readers').child(auth.uid).child('q').isString() && root.child('shops').child($shopId).child('readers').child(auth.uid).child('qs').isString() && root.child('shops').child($shopId).child('company').child('shops').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('qs').val()).exists() && root.child('staffPageTokens').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('q').val()).child('shopId').val() === root.child('shops').child($shopId).child('readers').child(auth.uid).child('qs').val() && root.child('shops').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('qs').val()).child('staffPages').child(root.child('shops').child($shopId).child('readers').child(auth.uid).child('q').val()).child('status').val() === 'approved'))",
           ".indexOn": ["periodId"],
           "$subId": {
-            ".write": "auth != null && $shopId !== 'demo-toriMatsu-v1' && (root.child('shops').child($shopId).child('owners').child(auth.uid).exists() || ((!newData.exists() || !root.child('shops').child($shopId).child('periods').child(newData.child('periodId').val()).child('confirmation').exists()) && (!data.exists() || !root.child('shops').child($shopId).child('periods').child(data.child('periodId').val()).child('confirmation').exists())))",
+            ".write": "auth != null && $shopId !== 'demo-toriMatsu-v1' && (root.child('shops').child($shopId).child('owners').child(auth.uid).exists() || ((!newData.exists() || (!root.child('shops').child($shopId).child('periods').child(newData.child('periodId').val()).child('confirmation').exists() && (!root.child('shops').child($shopId).child('periods').child(newData.child('periodId').val()).child('expiresAtMs').exists() || root.child('shops').child($shopId).child('periods').child(newData.child('periodId').val()).child('expiresAtMs').val() > now) && (newData.child('staffName').val().matches(/[.#$\\[\\]\\/]/) || !root.child('shops').child($shopId).child('nameGuards').child(newData.child('staffName').val()).exists() || root.child('shops').child($shopId).child('staffLinks').child(auth.uid).child('name').val() === newData.child('staffName').val() || (root.child('shops').child($shopId).child('pageDevices').child(auth.uid).child('token').exists() && root.child('shops').child($shopId).child('staffPages').child(root.child('shops').child($shopId).child('pageDevices').child(auth.uid).child('token').val()).child('status').val() === 'approved' && root.child('shops').child($shopId).child('staffPages').child(root.child('shops').child($shopId).child('pageDevices').child(auth.uid).child('token').val()).child('name').val() === newData.child('staffName').val())))) && (!data.exists() || (!root.child('shops').child($shopId).child('periods').child(data.child('periodId').val()).child('confirmation').exists() && (!root.child('shops').child($shopId).child('periods').child(data.child('periodId').val()).child('expiresAtMs').exists() || root.child('shops').child($shopId).child('periods').child(data.child('periodId').val()).child('expiresAtMs').val() > now) && (data.child('staffName').val().matches(/[.#$\\[\\]\\/]/) || !root.child('shops').child($shopId).child('nameGuards').child(data.child('staffName').val()).exists() || root.child('shops').child($shopId).child('staffLinks').child(auth.uid).child('name').val() === data.child('staffName').val() || (root.child('shops').child($shopId).child('pageDevices').child(auth.uid).child('token').exists() && root.child('shops').child($shopId).child('staffPages').child(root.child('shops').child($shopId).child('pageDevices').child(auth.uid).child('token').val()).child('status').val() === 'approved' && root.child('shops').child($shopId).child('staffPages').child(root.child('shops').child($shopId).child('pageDevices').child(auth.uid).child('token').val()).child('name').val() === data.child('staffName').val()))))))",
             ".validate": "newData.hasChildren(['id','staffName','periodId','shifts','submittedAt']) && newData.child('staffName').isString() && newData.child('staffName').val().length <= 50",
             "id": {
               ".validate": "newData.isString() && newData.val() === $subId"
@@ -257,6 +263,30 @@
             "method": { ".validate": "newData.val() === 'number' || newData.val() === 'name' || newData.val() === 'code' || newData.val() === 'page'" },
             "at": { ".validate": "newData.isString() && newData.val().length <= 40" },
             "$other": { ".validate": false }
+          }
+        },
+        "nameGuards": {
+          ".read": "auth != null",
+          "$name": {
+            ".write": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
+            ".validate": "newData.val() === true"
+          }
+        },
+        "pageDevices": {
+          ".read": "auth != null && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()",
+          "$uid": {
+            ".read": "auth != null && auth.uid === $uid",
+            ".write": "auth != null && $shopId !== 'demo-toriMatsu-v1' && ((auth.uid === $uid && (!newData.exists() || root.child('shops').child($shopId).child('staffPages').child(newData.child('token').val()).child('status').val() === 'approved')) || (!newData.exists() && root.child('shops').child($shopId).child('owners').child(auth.uid).exists()))",
+            ".validate": "newData.hasChildren(['token','at'])",
+            "token": {
+              ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z0-9]{24}$/)"
+            },
+            "at": {
+              ".validate": "newData.isString() && newData.val().length <= 40"
+            },
+            "$other": {
+              ".validate": false
+            }
           }
         },
         "staffPages": {

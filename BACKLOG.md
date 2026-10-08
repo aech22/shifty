@@ -77,7 +77,31 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🟡 Cloud Functions の依存の更新（firebase-admin 14・firebase-functions 7・nodemailer 10）を本番へ出す
+## 🟡 提出の監査・人単位の縛り・募集URLの受付期限（2026-10-08 本番反映済み）の反映後の確認
+
+> **✅ 2026-10-08 本番反映済み**（ユーザー指示「本番まで出して」）。dev のルールを `probe-rules-guard.js` で実測して ALL_OK（既存の probe-rules-subs・confirm・push も ALL_OK）→ 本番のルール → Cloud Functions 41本（auditSubWrite は create）→ クライアント（`a99bc69`・版数 20261008-0c95063。本番の配信物10ファイルが origin/main と一致）。残りは下の反映後の確認だけ。
+
+**目的**: ユーザー指示「推奨案と、個別URLやアカウントで人単位に縛る案の両方を実行」「募集URLは該当期間の末日の翌日に無効」。
+①CF `auditSubWrite` が他人名義の上書き・削除・重複作成を `private/subAudit` に残す。②承認済みの個別URLかアカウントの紐付けがある名前（`nameGuards`）は、
+本人（紐付けの uid・`pageDevices` に登録した端末）とオーナーだけが書ける。③期間の `expiresAtMs`（末日の翌日0時）を過ぎたら、スタッフはその期間に書けず、募集URL（tokens）も読めない。
+**順序**（新しいノード nameGuards・pageDevices を書く新クライアントより、ルールが先。subs の締め付けは古いクライアントが印も期限も書かないので先に出しても壊れない）:
+- [x] dev のルール: `firebase deploy --only database --project thirty-dev-b6958`（不可逆ゲートの承認が要る）→ `probe-rules-guard.js` で ALL_OK（縛り・端末の登録・期限・tokens・キーに使えない名前の短絡評価）
+- [x] 本番のルール: `firebase deploy --only database --project ontheshift`
+- [x] クライアント: `/release-to-main`（`?v=` と `build:` を上げる）
+- [x] CF: `firebase deploy --only functions --project ontheshift`（auditSubWrite は create。依存の更新と同じ回でよい）
+- [ ] 反映後: オーナーの端末で管理画面を1回開き、`nameGuards` と各期間・tokens の `expiresAtMs` が補われたことを `shifty-prod-data-probe` で確かめる
+- [ ] 反映後: 承認済みの個別URLを持つ人がスタッフURLの別の端末から同じ名前で出すと「本人専用のURL…」になること、個別URLからは出せることを本番で1回確かめる
+- [ ] 2026-12-08 ごろ: `private/subAudit` の件数を読み取りで数え、人単位の縛りを広げるか（全員に個別URLを配る等）を決める（Fable の推奨の観測期間）
+**承知している挙動の変化**: 個別URLかアカウントを持つ人は、本人の端末（その個別URLを開いたことがある・作った端末か、アカウントでログインしている端末）からなら募集URLでも出せる（2026-10-08 ユーザー指示で残した）。それ以外の端末からその名前では出せない。
+同じ個別URLを2台の端末で開いていると、それぞれ登録されるので両方から出せる。終わった期間の提出は、スタッフからは直せない（オーナーは直せる）。
+**検証済み（develop）**: npm test 748件・eslint 0 errors・cf-verify `example-sub-guard.js` 10項目（変更前の index.js では落ちる）・E2E `example-sub-guard.js` 14項目（変更前の配信物では落ちる）。
+**ルールの実機**: dev の REST で確認済み（キーに使えない文字の名前の短絡評価・pageDevices を2段で引く式を含む）。
+
+---
+
+## 🟡 Cloud Functions の依存の更新（firebase-admin 14・firebase-functions 7・nodemailer 10）の反映後の確認
+
+> **✅ 2026-10-08 本番反映済み**（41本すべて更新成功。本番で未認証の呼び出しが 401・GET が 405・署名なしの Webhook が 400 と従来どおり、反映直後のログにエラーなし）。残りは実際のメール送信と Stripe の実イベントの確認だけ。
 
 **目的**: `npm audit --omit=dev` の19件（critical 1・high 6）を0件にした（`19dafa8`・develop）。本番に出すまで効かない。
 critical は proxy-addr の IP 偽装（GHSA-jqcg-44mw-7w3h）、high は nodemailer の宛先ドメインの取り違え・ヘッダー注入など。
