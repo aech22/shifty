@@ -38,25 +38,22 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
-## 🔴 2026-10-08 分（店舗コードの廃止・入社日と退社日・紫の基準・通知ほか）の本番反映（ユーザーの承認待ち）
+## 🟡 2026-10-08 分の本番反映の残り（実機での確認だけ）
 
-**目的**: develop の 2026-10-08 分を本番に出す。掛け持ち対応（下の🟡）のルール・`linkStaffPage` も同じ回で出す。
-**順序**（新ノード＝通知の push があるのでルールが先）:
-- [ ] ルール: database のデプロイを dev → REST で push ノードの書き込み（許可リスト外の endpoint は拒否）を確かめる → 本番
-- [ ] 秘密: `VAPID_PRIVATE_KEY` を本番（ontheshift）に設定する（値は端末の `~/.config/shifty/vapid-private.txt`。リポジトリには無い。公開鍵は app-core.js と functions/notify.js）
-- [ ] CF: notifyNewPeriod・notifyStaffSubmit・notifyDeadlines・linkStaffPage・companyRenameStaff を**名指しで**本番へデプロイする
-      （全関数のデプロイは、削除済みの issueStaffLinkCode・redeemStaffLinkCode の削除を求めてくるため）
-- [ ] クライアント: `/release-to-main`（`?v=` と `build:` を上げる。`sw.js` が shiftyshifty.app の直下で配信されること）
-- [ ] 反映後: 全マニュアルの表紙の「次回の本番反映から使えるようになります」を外して PDF を作り直す（`/Users/hiroshi/shifty-video/manual-src/`）
-**未検証**: 通知の実機（iPhone のホーム画面アプリ・Android・PC）での受信、本物の Firebase でのトリガーの発火
-
-**同じ develop に入っているセキュリティ強化（`6da4bb6` のマージ・2026-10-08）の追加項目**（バグチェック#165 で手順が無いことを検出・条件A）:
-- [ ] **ルールを出す前に**、本番の全店舗の `shops/*/subs` を `shifty-prod-data-probe`（読み取り専用）で走査し、
-      `b107087` の許可制に無い項目や形の合わない値（日ごとの未知のキー・`adjustedStartNote` 201字以上・時刻の形）が残っていないかを確かめる。
-      日ごとの書き込みは丸ごとなので、1つでも残っている日はその日の編集がすべて拒否され、同じ回の他の人のセルも保存されない
-- [ ] ルールの反映後、dev で `node .claude/skills/shifty-e2e-verify/scripts/probe-rules-subs.js` を回す（本番のルールは REST で叩かない）
-- [ ] CF: `companyLogin`（試行回数の制限）・`verifyShopOwner` を使う課金系4本（未claim の店舗を 403）・`myPagePin`（ロックの倍増）・`sendEmailOtp` も同じ回で出す
-- [ ] クライアントの CSP（index.html の meta）: 本番で Google ログイン・企業コードのログイン・Stripe への遷移・Excel/PDF の書き出し・通知の購読を1回ずつ通し、コンソールに CSP の違反が出ないことを見る
+**本番反映は2回とも完了**（ユーザー指示「本番反映して」）:
+- [x] 1回目（`6b01c51`・版数 20261008-56af711）: ルール（dev で probe-rules-push ほか4本 ALL_OK → 本番）→ 秘密 `VAPID_PRIVATE_KEY`（version 1）→
+      CF（notifyNewPeriod・notifyStaffSubmit・notifyDeadlines を create、linkStaffPage・companyRenameStaff を update）→ クライアント。
+      shiftyshifty.app/CLAUDE.md・functions/index.js が 404 になったことを確認
+- [x] 2回目（`e4f8018`・版数 20261008-6141385）: CF 10本（sendEmailOtp・verifyEmailOtp・purgeInactiveShops・companyLogin・課金系4本・myPagePin・linkStaffPage）→
+      クライアント（CSP・計測の伏せ字・管理端末・名前の文字の制限・バグチェック#165 の修正）→ ルール（提出の許可制）。
+      ルールの前に本番の subs を読み取り専用で走査（17店舗・976件・12,569日）し、拒否される項目・値が0件であることを確認。
+      名前の空白は RTDB の replace() が全部置き換えることを dev で実測（半角・全角の空白を2つ以上含む名前も 200）。
+      本番の index.html を実ブラウザで開き、CSP の違反0件・console のエラー0件・Firebase への接続ありを確認
+- [x] 全マニュアルの表紙の「次回の本番反映から」の一文を外した（マニュアル修正のサブエージェント）
+**残り（実機・本人のアカウントが要る確認）**:
+- [ ] 本番で Google ログイン・企業コードのログイン・Stripe への遷移・Excel/PDF の書き出し・通知の購読を1回ずつ通し、CSP の違反が出ないことを見る
+- [ ] 通知を実機で受け取る（iPhone はホーム画面に追加したアプリ・Android・PC）。新しい期間を作る・提出する・締切日の12時
+- [ ] 管理端末の一覧で「管理コードを作り直す」を本番で1回通す（作り直したあと、ほかの端末は新しい管理コードが要る）
 
 ---
 
@@ -67,8 +64,8 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 URLへのまとめ（2店目以降を最初の個別URLに集約）は**採らない**（2026-10-05 ユーザー判断「当初の予定で進めて」）。
 **受け入れ条件**:
 - [x] develop へマージ → クライアントを本番へ（2026-10-05・`701d4c1`・版数 20261005-7c9fdf6。GitHub Pages の build and deployment が success。クラウドのセッションからは shiftyshifty.app に繋がらず配信物の照合は未実施）
-- [ ] ルール（dev → 本番）。既存パスの値の追加なのでクライアントが先でよい
-- [ ] `firebase deploy --only functions --project ontheshift`（linkStaffPage が create になること）。CF より先にクライアントだけ出ると「追加」が「関数が無い」で失敗するだけ
+- [x] ルール（dev → 本番）。2026-10-08 に本番へ反映
+- [x] CF `linkStaffPage` を本番へ（2026-10-08。すでに本番にあり update になった＝以前のどこかで反映済みだった）
 - [ ] 本番で1回、個別URLから自分のテスト用アカウントに追加し、`shops/{sid}/staffLinks/{uid}.method==="page"` を読み取りで確かめる
 **影響範囲**: app-my.js・app-my-utils.js・app-main.js・functions/index.js・functions/staff-link.js・database.rules.json
 **備考**: 検証は npm test 677件・cf-verify `example-link-staff-page.js` 23/23・E2E `example-my-multi-shop.js` 30/30 と既存の my-link・my-page・my-account・email-link・my-1005 が全パス（クラウドのセッションでは SHIFTY_ROOT と SHIFTY_CDN_DIR、cf-verify は SHIFTY_CF_INDEX の指定が要る）
