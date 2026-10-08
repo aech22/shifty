@@ -144,7 +144,9 @@ function clone(v) {
 //      その挙動を試すには indexPath に書き換えた写しを渡す。
 // ---------------------------------------------------------------------------
 function loadFunctions(opts = {}) {
-  const indexPath = opts.indexPath || path.join(REPO, "functions", "index.js");
+  // 環境変数 SHIFTY_CF_INDEX があればそれを既定にする（2026-10-08）。indexPath を渡さないスクリプト（example-company-owner.js 等）も
+  // worktree の index.js を検証できるように。無ければ従来どおりメインのリポジトリの index.js
+  const indexPath = opts.indexPath || process.env.SHIFTY_CF_INDEX || path.join(REPO, "functions", "index.js");
   const db = makeDb(opts.data);
   const mails = [];
   const customTokens = [];
@@ -153,6 +155,8 @@ function loadFunctions(opts = {}) {
   });
   const auth = {
     createCustomToken: async (uid, claims) => { customTokens.push({ uid, claims }); return `tok_${uid}`; },
+    // sendEmailOtp（2026-10-08 の送信回数の制限の検証で足した）。本物はメールのリンクを作るだけなので固定の文字列を返す
+    generateSignInWithEmailLink: async (email) => `https://sim.example/emailLink?to=${encodeURIComponent(email)}`,
     verifyIdToken: opts.verifyIdToken || (async () => { throw new Error("verifyIdToken を使うなら loadFunctions({verifyIdToken:...}) を渡す"); }),
   };
   const adminMock = {

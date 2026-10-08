@@ -13,6 +13,7 @@ node .claude/skills/shifty-cf-verify/scripts/example-purge-old-periods.js  # pub
 node .claude/skills/shifty-cf-verify/scripts/example-staff-link.js         # 従業員画面の紐付け（E2）。SHIFTY_CF_INDEX で別の index.js を読む
 node .claude/skills/shifty-cf-verify/scripts/example-my-pay.js            # 従業員画面の会社設定の賃金（E6・getMyPay）。他人の賃金が取れない・拒否側・何も書かない
 node .claude/skills/shifty-cf-verify/scripts/example-my-page.js           # スタッフ個別URLの給料の暗証番号（myPagePin）。5回で15分・リセット・拒否側・アーカイブ時の後始末
+node .claude/skills/shifty-cf-verify/scripts/example-security-cf.js       # 回数の制限（2026-10-08）: sendEmailOtp の送信回数・companyLogin の試行回数・verifyShopOwner の未claim・myPagePin のロックの段階
 node .claude/skills/shifty-cf-verify/scripts/example-notify.js            # 通知（Web Push・2026-10-08）。periods の onCreate・subs の onWrite・毎日12時の schedule。web-push はスタブ
 ```
 
@@ -23,6 +24,8 @@ node .claude/skills/shifty-cf-verify/scripts/example-notify.js            # 通�
 ```js
 const h = loadFunctions({ indexPath: "/Users/hiroshi/Documents/Claude Code/<worktree名>/functions/index.js", data });
 ```
+
+既存のスクリプトを worktree に向けるときは、環境変数 `SHIFTY_CF_INDEX` に worktree の `functions/index.js` のフルパスを渡す（2026-10-08 から `loadFunctions` の既定がこの環境変数に従うので、`indexPath` を渡さないスクリプトも worktree を読む。それ以前は example-company-owner.js・example-purge-old-periods.js が環境変数を無視して本体を検証していた）。
 
 ## 使い方
 

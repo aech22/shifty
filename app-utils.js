@@ -2081,11 +2081,13 @@ function isAdminRouteHash(h){return /^#\/admin\/?$/.test(String(h==null?"":h));}
 
 // ===== ランダムID生成 =====
 function genToken(){
-  // 8文字のランダム英数字（URLトークン用・小文字のみ・紛らわしい文字除外）
+  // 8文字のランダム英数字（URLトークン用・小文字のみ・紛らわしい文字除外）。
+  // 乱数は crypto.getRandomValues（genSecureId と同じ・2026-10-08。以前は Math.random で、スタッフURLのトークンを推測されうる）。
+  // 文字は32種類なので 1バイト % 32 に偏りは出ない
   const chars="abcdefghijkmnpqrstuvwxyz23456789";
-  let t="";
-  for(let i=0;i<8;i++) t+=chars[Math.floor(Math.random()*chars.length)];
-  return t;
+  const arr=new Uint8Array(8);
+  crypto.getRandomValues(arr);
+  return Array.from(arr,b=>chars[b%chars.length]).join("");
 }
 function genSecureId(len=24){
   // 大文字・小文字・数字・記号を含む強力なランダムID（招待コード・shopId用）

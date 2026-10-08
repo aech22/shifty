@@ -1670,6 +1670,44 @@ test("個別URL（P4）: 暗証番号の計画（決める・照合・5回で15�
   // ハッシュはクライアント（app-utils.js の payCodeHash）と同じ SHA-256(salt+番号)
   assert.strictEqual(cc.payCodeHashCF("abc", "1234"), require("node:crypto").createHash("sha256").update("abc1234").digest("hex"));
 });
+
+test("個別URL: 暗証番号のロックは2回目から倍（30分・60分…上限24時間）・正しい番号で数え直す（2026-10-08）", () => {
+  const H = (salt, p) => cc.payCodeHashCF(salt, p);
+  const M = 60 * 1000, page = { status: "approved", name: "田中" };
+  assert.deepStrictEqual([1, 2, 3, 4, 5, 6, 7, 8, 20].map(mpg.pageLockMsCF), [15, 30, 60, 120, 240, 480, 960, 1440, 1440].map(x => x * M));
+  assert.strictEqual(mpg.PAGE_PIN_LOCK_MAX_MS_CF, 24 * 60 * M);
+  let now = 1e12;
+  let rec = { hash: H("s".repeat(16), "1234"), salt: "s".repeat(16), setAt: "2026-10-04T00:00:00.000Z", fails: 0, lockedUntil: 0 };
+  const wrongFive = () => {
+    let r;
+    for (let i = 0; i < 5; i++) { r = mpg.planMyPagePin({ action: "verify", pin: "0000", pinHash: H(rec.salt, "0000"), pinRec: rec, pageRec: page, now }); rec = r.pinPatch; }
+    return r;
+  };
+  const lens = [];
+  for (let k = 1; k <= 9; k++) {
+    const r = wrongFive();
+    lens.push((rec.lockedUntil - now) / M);
+    assert.strictEqual(rec.locks, k, `${k}回目のロック`);
+    if (k === 1) assert.ok(/15分後/.test(r.error.msg), r.error.msg);
+    if (k === 2) assert.ok(/30分後/.test(r.error.msg), r.error.msg);
+    if (k === 9) assert.ok(/24時間後/.test(r.error.msg), r.error.msg);
+    // 止まっている間は正しい番号でも開かず、待ちの表示も同じ長さ
+    const locked = mpg.planMyPagePin({ action: "verify", pin: "1234", pinHash: H(rec.salt, "1234"), pinRec: rec, pageRec: page, now: now + 1000 });
+    assert.strictEqual(locked.error.code, "resource-exhausted");
+    now = rec.lockedUntil;
+  }
+  assert.deepStrictEqual(lens, [15, 30, 60, 120, 240, 480, 960, 1440, 1440]);
+  // 正しい番号で数え直す（次のロックは15分から）
+  const ok = mpg.planMyPagePin({ action: "verify", pin: "1234", pinHash: H(rec.salt, "1234"), pinRec: rec, pageRec: page, now });
+  assert.ok(ok.unlocked && ok.pinPatch.locks === 0 && ok.pinPatch.fails === 0 && ok.pinPatch.lockedUntil === 0);
+  rec = ok.pinPatch;
+  wrongFive();
+  assert.strictEqual(rec.lockedUntil - now, 15 * M, "数え直した後の最初のロックは15分");
+  // 番号の変更（いまの番号が正しい）でも数え直す
+  now = rec.lockedUntil;
+  const set = mpg.planMyPagePin({ action: "set", pin: "5678", currentPin: "1234", currentHash: H(rec.salt, "1234"), salt: "t".repeat(16), newHash: H("t".repeat(16), "5678"), pinRec: rec, pageRec: page, now, nowIso: "2026-10-05T00:00:00.000Z" });
+  assert.ok(set.unlocked && !set.pinPatch.locks);
+});
 test("個別URL（P4）: CF myPagePin は名前を受け取らず、照合が通るまで賃金を読まない・回数はトランザクション・店舗のアーカイブで後始末", () => {
   const src = fs.readFileSync(path.join(ROOT, "functions", "index.js"), "utf8");
   const a = src.indexOf("exports.myPagePin"), b = src.indexOf("exports.getMyPay");

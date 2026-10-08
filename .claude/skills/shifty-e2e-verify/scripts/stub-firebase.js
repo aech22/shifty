@@ -416,6 +416,12 @@ function makeStub(o) {
       window.__cf.push({name:name,payload:payload});
       var h=CF[name]||"ok";
       if(h.indexOf("reject:")===0) return Promise.reject(new Error(h.slice("reject:".length)));
+      // "rejectCode:<code>|<文言>"（2026-10-08）: 本物の SDK と同じく code が "functions/<code>"・message がサーバーの文言のエラーで失敗する
+      if(h.indexOf("rejectCode:")===0){
+        var rc=h.slice("rejectCode:".length), bar=rc.indexOf("|");
+        var re=new Error(bar<0?"":rc.slice(bar+1)); re.code="functions/"+(bar<0?rc:rc.slice(0,bar));
+        return Promise.reject(re);
+      }
       if(h==="unlink") runUnlink(payload||{});
       if(h.indexOf("companyLogin:")===0){
         // 本物の companyLogin（functions/index.js）の成功応答の形: {token, companyId, name}

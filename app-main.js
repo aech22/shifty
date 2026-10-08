@@ -1195,6 +1195,8 @@ function App(){
       return {};
     }catch(e){
       const msg=(e&&e.message)||"";
+      // 試行回数の上限（companyLogin が resource-exhausted で返す「約n分後に」）はサーバーの文言をそのまま出す（2026-10-08）
+      if(/resource-exhausted/.test(String((e&&e.code)||""))&&msg) return {error:msg};
       if(/permission|not-found|正しく/.test(msg)) return {error:"企業コードまたはパスワードが正しくありません"};
       return {error:"ログインに失敗しました。しばらくしてから再度お試しください"};
     }

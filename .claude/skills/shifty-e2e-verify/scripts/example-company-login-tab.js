@@ -5,6 +5,7 @@
 //    「パスワードを表示」で伏せ字が外れる／企業コードとパスワードだけで companyLogin が呼ばれる／
 //    ログイン後は企業アカウントの画面（企業名）に切り替わり、ログインカードは消える／開いていた店舗（B店）のまま
 // B. サーバーが失敗を返したとき: エラーが表示され、ログインカードが残る
+// C. 試行回数の上限（2026-10-08・companyLogin が resource-exhausted）: サーバーの文言「約n分後に」をそのまま出す
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-company-login-tab.js → allPass=true / EXIT=0
 "use strict";
@@ -60,6 +61,8 @@ async function run(cfHandlers) {
 (async () => {
   const A = await run({ companyLogin: `companyLogin:${CID}` });
   const B = await run({ companyLogin: "reject:INTERNAL" });
+  const WAIT = "ログインの失敗が続いたため、しばらく待ってから（約2分後に）もう一度お試しください";
+  const C = await run({ companyLogin: `rejectCode:resource-exhausted|${WAIT}` });
   const v = {
     A_cardShown: A.cardShown === true,
     A_showToggles: A.typeBefore === "password" && A.toggle === true && A.typeAfter === "text",
@@ -67,9 +70,10 @@ async function run(cfHandlers) {
     A_switchedToCompany: !!(A.after && !A.after.loginCard && A.after.companyName && A.after.pwChangeBtn),
     A_keptCurrentShop: A.shopBefore === "B店" && A.shopAfter === "B店",
     B_errorShown: !!(B.after && B.after.loginCard && B.after.err === "ログインに失敗しました。しばらくしてから再度お試しください"),
-    noErrors: [A, B].every(x => x.errors.length === 0 && !x.exception),
+    C_waitMsgShown: !!(C.after && C.after.loginCard && C.after.err === WAIT),
+    noErrors: [A, B, C].every(x => x.errors.length === 0 && !x.exception),
   };
   v.allPass = Object.values(v).every(Boolean);
-  console.log(JSON.stringify({ A, B, verdict: v }, null, 2));
+  console.log(JSON.stringify({ A, B, C, verdict: v }, null, 2));
   process.exit(v.allPass ? 0 : 1);
 })().catch(e => { console.error(e); process.exit(2); });

@@ -3,6 +3,8 @@ const Stripe = require("stripe");
 const admin = require("firebase-admin");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
+// 認証まわりの回数の制限と店舗オーナーの判定（純粋関数・tests/security.test.js）
+const SEC = require("./security");
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.database();
 
@@ -76,9 +78,8 @@ const STRIPE_PRICES = {
 };
 
 // デモ店舗（クライアントの #/demo が読み込む固定店舗）。
-// この店舗は owners を持たない状態で運用するため、下の verifyShopOwner の
-// 「未claim店舗は許可」という移行猶予をそのまま通過してしまう。デモURLは広告から
-// 誰でも開けるので、課金系のエンドポイントだけは shopId で明示的に拒否する
+// この店舗は owners を持たない状態で運用する。下の verifyShopOwner は 2026-10-08 から owners の無い店舗を 403 にするので
+// 課金系はそこでも止まるが、デモURLは広告から誰でも開けるので、多重防御として shopId で明示的にも拒否する
 // （クライアント側の DEMO_MODE 判定は、直接POSTされれば無いのと同じ）。
 const DEMO_SHOP_IDS = ["demo-toriMatsu-v1"];
 function isDemoShop(shopId) { return DEMO_SHOP_IDS.includes(shopId); }
@@ -106,7 +107,8 @@ function isSafeDbKey(k) {
 
 // ============================================================
 // Firebase IDトークン検証 + 店舗オーナー照合
-// owners未登録（未claim）の店舗は移行猶予として許可する。
+// owners に呼び出し元の uid が登録されている店舗だけを許可する。owners が無い（未claim の）店舗も 403。
+// 2026-10-08 まではここだけ未claim を「移行猶予」として許可していたが、ルール側の猶予は 2026-07-28（dbdd9d9）に終わっている。
 // クライアントは匿名認証を含め常にauth済みのため、トークンなしは拒否してよい。
 // ============================================================
 async function verifyShopOwner(req, shopId) {
@@ -120,7 +122,7 @@ async function verifyShopOwner(req, shopId) {
   }
   const ownersSnap = await db.ref(`shops/${shopId}/owners`).once("value");
   const owners = ownersSnap.val();
-  if (owners && !owners[decoded.uid]) {
+  if (!SEC.isShopOwnerOf(owners, decoded.uid)) {
     return { ok: false, status: 403, error: "この店舗の管理者権限がありません。" };
   }
   return { ok: true, uid: decoded.uid };
@@ -737,6 +739,19 @@ exports.createPortalSession = functions
 // ============================================================
 // メールアドレス連携用 OTP 送信
 // ============================================================
+// 2026-10-08: 送信回数を呼び出し元 uid ごと・宛先アドレスごとに1時間5回までに制限し（emailOtpRate・CF 専用のパス）、
+// コードは crypto.randomInt で作る（以前は Math.random）。誤りの回数は再送しても0に戻さない（以前は再送のたびに attempts:0）。
+// 判定は functions/security.js（tests/security.test.js が同じ関数を通す）
+async function emailOtpRate(kind, key) {
+  const now = Date.now();
+  let ok = false;
+  await db.ref(`emailOtpRate/${kind}_${key}`).transaction(cur => {
+    const st = SEC.emailOtpRateStep(cur, now, kind);
+    ok = st.ok;
+    return st.ok ? st.rec : cur;
+  });
+  if (!ok) throw new functions.https.HttpsError("resource-exhausted", "確認コードの送信が続いたため、しばらく待ってからもう一度お試しください");
+}
 exports.sendEmailOtp = functions
   .region("asia-northeast1")
   .runWith({ secrets: ["SMTP_USER", "SMTP_PASS"] })
@@ -744,22 +759,30 @@ exports.sendEmailOtp = functions
     if (!context.auth) {
       throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
     }
-    const email = (data.email || "").trim();
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    const email = (data && typeof data.email === "string" ? data.email : "").trim();
+    if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       throw new functions.https.HttpsError("invalid-argument", "メールアドレスが無効です");
     }
 
     const uid = context.auth.uid;
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-    const expiry = Date.now() + 10 * 60 * 1000; // 10分
+    if (!isSafeDbKey(uid)) throw new functions.https.HttpsError("invalid-argument", "アカウントが無効です");
+    // 誤りの上限に達している間は送らない（回数も数えない）
+    const prev = (await db.ref(`email_otps/${uid}`).once("value")).val();
+    const pre = SEC.planEmailOtpSend({ prev, now: Date.now(), code: "000000" });
+    throwPlanError(pre);
+    await emailOtpRate("uid", payCodeHashCF("otpUid:", uid));
+    await emailOtpRate("email", payCodeHashCF("otpEmail:", email.toLowerCase()));
 
+    const code = String(crypto.randomInt(100000, 1000000));
     const appUrl = process.env.APP_URL || "https://shiftyshifty.app";
     const emailLink = await admin.auth().generateSignInWithEmailLink(email, {
       url: appUrl,
       handleCodeInApp: true,
     });
 
-    await admin.database().ref(`email_otps/${uid}`).set({ code, email, emailLink, expiry, attempts: 0 });
+    const plan = SEC.planEmailOtpSend({ prev, now: Date.now(), code, email, emailLink });
+    throwPlanError(plan);
+    await admin.database().ref(`email_otps/${uid}`).set(plan.record);
 
     const smtpUser = process.env.SMTP_USER;
     const transporter = nodemailer.createTransport({
@@ -782,6 +805,7 @@ exports.sendEmailOtp = functions
 // ============================================================
 // メールアドレス連携用 OTP 検証
 // ============================================================
+// 総当たり対策: 誤りは5回まで（1時間は再送しても持ち越す）。比べる前にトランザクションで数える（並べて投げても回数を抜けない）
 exports.verifyEmailOtp = functions
   .region("asia-northeast1")
   .https.onCall(async (data, context) => {
@@ -789,27 +813,17 @@ exports.verifyEmailOtp = functions
       throw new functions.https.HttpsError("unauthenticated", "ログインが必要です");
     }
     const uid = context.auth.uid;
-    const code = String(data.code || "").trim();
+    if (!isSafeDbKey(uid)) throw new functions.https.HttpsError("invalid-argument", "アカウントが無効です");
+    const code = String((data && data.code) || "").trim();
 
-    const snap = await admin.database().ref(`email_otps/${uid}`).once("value");
-    const otp = snap.val();
-
-    if (!otp || Date.now() > otp.expiry) {
-      throw new functions.https.HttpsError("invalid-argument", "確認コードが無効か期限切れです");
-    }
-    // 総当たり対策: 5回失敗でOTPを無効化（再送信が必要）
-    const attempts = (otp.attempts || 0) + 1;
-    if (attempts > 5) {
-      await admin.database().ref(`email_otps/${uid}`).remove();
-      throw new functions.https.HttpsError("resource-exhausted", "試行回数の上限を超えました。確認コードを再送信してください");
-    }
-    if (otp.code !== code) {
-      await admin.database().ref(`email_otps/${uid}/attempts`).set(attempts);
-      throw new functions.https.HttpsError("invalid-argument", "確認コードが無効か期限切れです");
-    }
-
-    await admin.database().ref(`email_otps/${uid}`).remove();
-    return { emailLink: otp.emailLink, email: otp.email };
+    let r;
+    // 手元に値が無いと最初に null で呼ばれる（Admin SDK）。null なら何も変えずに返し、サーバーの値で呼び直される
+    await db.ref(`email_otps/${uid}`).transaction(cur => {
+      r = SEC.planEmailOtpVerify({ otp: cur, code, now: Date.now() });
+      return r.patch !== undefined ? r.patch : cur;
+    });
+    throwPlanError(r);
+    return r.result;
   });
 
 // ============================================================
@@ -926,11 +940,16 @@ exports.purgeInactiveShops = functions
     const otpSnap = await db.ref("email_otps").once("value");
     const otps = otpSnap.val() || {};
     for (const [uid, entry] of Object.entries(otps)) {
-      const exp = entry && entry.expiry ? Number(entry.expiry) : NaN;
-      if (Number.isNaN(exp) || now > exp) {
+      // 誤りの回数を持ち越している間（1時間）は消さない（消すと再送で数え直せてしまう）
+      if (SEC.emailOtpPurgeable(entry, now)) {
         await db.ref(`email_otps/${uid}`).remove();
         console.log(`email_otp期限切れを削除: ${uid}`);
       }
+    }
+    // 確認コードの送信回数（emailOtpRate）は窓が過ぎたものを消す
+    const otpRate = (await db.ref("emailOtpRate").once("value")).val() || {};
+    for (const [k, rec] of Object.entries(otpRate)) {
+      if (SEC.emailOtpRatePurgeable(rec, now)) await db.ref(`emailOtpRate/${k}`).remove();
     }
 
     // 4) 個人リンクコード（従業員画面 E2）は 2026-10-05 に機能ごと削除した。本番に残っているコード・索引・失敗回数を消す
@@ -1280,13 +1299,25 @@ exports.companyLogin = functions
     const password = (data && typeof data.password === "string") ? data.password : "";
     if (!code || !password) throw new functions.https.HttpsError("invalid-argument", "企業コードとパスワードを入力してください");
 
+    // 企業コードは genCompanyCode の文字種（英大文字と数字）。それ以外は DB を読まずに同じ文言で返す（パスの禁止文字で ref() が throw しない）
+    if (!/^[0-9A-Z]{1,32}$/.test(code)) throw new functions.https.HttpsError("not-found", "企業コードまたはパスワードが正しくありません");
     const idSnap = await db.ref(`companyCodes/${code}`).once("value");
     const companyId = idSnap.val();
-    if (!companyId) throw new functions.https.HttpsError("not-found", "企業コードまたはパスワードが正しくありません");
+    if (!companyId || !isValidCompanyId(companyId)) throw new functions.https.HttpsError("not-found", "企業コードまたはパスワードが正しくありません");
+    // 試行回数（2026-10-08）: 照合の前に企業コードごとに数え、5回目から待ち時間（1分から倍・上限30分）。待ち時間の間は scrypt を回さない。
+    // 判定は functions/security.js の planCompanyLoginAttempt（tests/security.test.js）
+    const failsRef = db.ref(`companies/${companyId}/private/loginFails`);
+    let gate;
+    await failsRef.transaction(cur => {
+      gate = SEC.planCompanyLoginAttempt(cur, Date.now());
+      return gate.ok ? gate.rec : cur;
+    });
+    if (!gate.ok) throw new functions.https.HttpsError("resource-exhausted", SEC.companyLoginWaitMsg(gate.waitMs));
     const hashSnap = await db.ref(`companies/${companyId}/private/passwordHash`).once("value");
     if (!verifyPassword(password, hashSnap.val())) {
       throw new functions.https.HttpsError("permission-denied", "企業コードまたはパスワードが正しくありません");
     }
+    await failsRef.remove(); // 成功で数え直す
     const nameSnap = await db.ref(`companies/${companyId}/pub/name`).once("value");
     const token = await admin.auth().createCustomToken(companyUid(companyId), { companyId, kind: "company" });
     return { token, companyId, name: nameSnap.val() || "" };
