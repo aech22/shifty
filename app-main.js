@@ -762,7 +762,22 @@ function App(){
       rememberAdminKey(shopId,key);
       return applyResult(true);
     }catch(e){
-      // 保存済みキーが古い（ローテーション済み）場合はルールで拒否される
+      // 保存済みキーが古い（設定タブで管理コードを作り直した）場合はルールで拒否される。
+      // 作り直しは企業アカウントを owners に残す（adminKeyRotationRemovals）ので、オーナーのままなら
+      // private/adminKey を読み直して登録し直せる。外されていても企業に連携していれば CF 経由で戻る。
+      // ここではキーを生成しない（読みが一時的に失敗しただけのオーナーが他の端末のキーを無効にしないため）
+      let fresh=null;
+      try{ fresh=(await firebaseDB.ref(`shops/${shopId}/private/adminKey`).once("value")).val(); }catch(e2){ fresh=null; }
+      if(!fresh&&await claimViaCompany(shopId)){
+        try{ fresh=(await firebaseDB.ref(`shops/${shopId}/private/adminKey`).once("value")).val(); }catch(e3){ fresh=null; }
+      }
+      if(fresh&&fresh!==key){
+        try{
+          await fbSet(`shops/${shopId}/owners/${uid}`, fresh);
+          rememberAdminKey(shopId,fresh);
+          return applyResult(true);
+        }catch(e4){ /* 下の失敗へ */ }
+      }
       console.warn("オーナー登録失敗:",shopId,e);
       return applyResult(false);
     }
