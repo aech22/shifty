@@ -2295,9 +2295,76 @@ function CompanyPayCalendarCard({listShops,shopId,settings,onSave,tt}){
   );
 }
 
+// 管理者として登録されている端末（2026-10-08・設定タブの「店舗管理コード」の下・オーナーの端末だけ）。
+// 一覧（owners）・端末ごとの解除・管理コードの作り直し。書き込みは App の adminDevices（app-main.js の rotateAdminKey 等）が持つ。
+// 解除だけでは、管理コードを覚えている端末は次に開いたとき claimOwnership で登録し直される（ルール上も正しい管理コードなら書ける）。
+// 確実に締め出すには作り直しが要るので、説明文と確認文でそう伝える。企業アカウント・企業メンバーの端末は claimCompanyShop で戻る。
+function AdminDevicesCard({dev,tt,companyLinked=false}){
+  const[owners,setOwners]=useState(null);   // null＝読み込み中
+  const[err,setErr]=useState("");
+  const[busy,setBusy]=useState(false);
+  const load=()=>{
+    setErr("");
+    dev.list().then(o=>setOwners(o||{}),()=>{setOwners({});setErr("端末の一覧を読み込めませんでした");});
+  };
+  // 開いたときに1回読む（店舗が変わると key で作り直される）。解除・作り直しの後は load で読み直す
+  useEffect(()=>{load();},[]);
+  const rows=owners?adminDeviceRows(owners,dev.myUid):[];
+  const removals=owners?adminKeyRotationRemovals(owners,dev.myUid):[];
+  const remove=async r=>{
+    const msg=r.company
+      ?"企業アカウントの登録を解除しますか？\n企業連携タブのログイン（企業コードでのログイン）から、この店舗を管理者として操作できなくなります。\n※企業連携が続いている間は、企業アカウントでこの店舗を開くと自動で登録し直されます。"
+      :`「${r.label}」の管理者の登録を解除しますか？\n解除した端末は管理者画面を使えなくなります。\n※その端末が今の管理コードを覚えている間は、次に開いたときに登録し直されます。確実に締め出すには「管理コードを作り直す」を使ってください。`;
+    if(!window.confirm(msg))return;
+    setBusy(true);
+    try{await dev.remove(r.uid);tt(`✓ ${r.label}の登録を解除しました`);}
+    catch(e){tt("✕ 解除できませんでした: "+((e&&e.message)||e));}
+    finally{setBusy(false);load();}
+  };
+  const rotate=async()=>{
+    const lines=["管理コードを作り直しますか？","・今の管理コードは使えなくなります（新しい管理コードはこの画面に出ます）。",
+      removals.length?`・この端末と企業アカウント以外の${removals.length}台の登録を外します。ほかの端末では新しい管理コードの入力が必要になります。`:"・ほかに外す端末はありません。"];
+    if(companyLinked)lines.push("・企業アカウントの作成者・企業コードでログインした端末は、企業連携タブのログインで登録し直されます。");
+    if(!window.confirm(lines.join("\n")))return;
+    setBusy(true);
+    try{const r=await dev.rotate();tt(r.removed?`✓ 管理コードを作り直し、ほかの端末${r.removed}台の登録を外しました`:"✓ 管理コードを作り直しました");}
+    catch(e){tt("✕ 作り直せませんでした: "+((e&&e.message)||e));}
+    finally{setBusy(false);load();}
+  };
+  return(
+    <AC title="管理者として登録されている端末">
+      <div data-admin-devices={owners?String(rows.length):"loading"}>
+        <div style={{fontSize:12,color:"var(--c-text3)",marginBottom:10,lineHeight:1.6}}>
+          この店舗を管理者として操作できる端末です。端末の名前は記録していないため、登録の識別番号の先頭で区別します。
+          なくした端末・手放した端末を締め出すときは「管理コードを作り直す」を使ってください（解除だけでは、管理コードを覚えている端末は次に開いたときに登録し直されます）。
+        </div>
+        {!owners&&<div style={{fontSize:13,color:"var(--c-text3)"}}>読み込み中…</div>}
+        {err&&<div style={{fontSize:12,color:"var(--c-danger)",marginBottom:8}}>{err}</div>}
+        {owners&&<div style={{fontSize:13,color:"var(--c-text2)",marginBottom:6}}>{rows.length}台</div>}
+        {rows.map(r=>(
+          <div key={r.uid} data-admin-device={r.uid} data-admin-device-me={r.me?"1":undefined} data-admin-device-company={r.company?"1":undefined}
+            style={{display:"flex",alignItems:"center",gap:8,padding:"8px 0",borderTop:"1px solid var(--c-border)"}}>
+            <div style={{flex:1,minWidth:0}}>
+              <span style={{fontSize:14,color:"var(--c-text)",fontFamily:r.company?"inherit":"monospace"}}>{r.label}</span>
+              {r.me&&<span style={{fontSize:12,color:"var(--c-text3)",marginLeft:8}}>この端末</span>}
+            </div>
+            {!r.me&&<button data-admin-device-remove={r.uid} disabled={busy} onClick={()=>remove(r)}
+              style={{...AD,marginLeft:0,padding:"8px 12px",opacity:busy?.5:1}}>解除</button>}
+          </div>
+        ))}
+        <div style={{borderTop:"1px solid var(--c-border)",paddingTop:12,marginTop:owners?0:8}}>
+          <button data-admin-key-rotate="1" disabled={busy||!owners} onClick={rotate}
+            style={{...AGray,padding:"9px 14px",fontSize:13,opacity:busy||!owners?.5:1}}>管理コードを作り直す</button>
+          <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6,lineHeight:1.6}}>新しい管理コードを作り、この端末と企業アカウント以外の登録を外します。</div>
+        </div>
+      </div>
+    </AC>
+  );
+}
+
 function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
                  authUser,onLinkProvider,onSendEmailOtp,onVerifyAndLinkEmail,onUnlinkProvider,
-                 onSignInAndLinkGoogle,onSignInAndLinkEmail,adminCode=null,ownerReadOnly=false,companyLink=null}){
+                 onSignInAndLinkGoogle,onSignInAndLinkEmail,adminCode=null,ownerReadOnly=false,companyLink=null,adminDevices=null}){
   const[themePref,setThemePref]=useState(()=>lg(THEME_KEY,"light"));
   // 企業が決めている項目（2026-09-27 企業連携の拡張）。入力欄を出さず値と「企業設定」を出す。
   // settings は App で企業設定を重ねた値。保存は App の saveSettings が剥がすが、この2枚のカードは
@@ -2420,6 +2487,7 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
       <div style={{fontSize:11,color:"var(--c-text4)",marginTop:6}}>別の端末では、ログイン画面の「管理コードで参加」か「店舗名ボタン → 管理コードで追加」に入力します</div>
       </>)}
     </AC>}
+    {shopId&&!ownerReadOnly&&adminDevices&&adminDevices.enabled&&<AdminDevicesCard key={shopId} dev={adminDevices} tt={tt} companyLinked={!!companyLink}/>}
 
     {plan==="premium"&&(()=>{
       const tls=settings.staffTypeLimits||{};

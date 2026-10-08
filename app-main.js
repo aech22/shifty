@@ -792,6 +792,38 @@ function App(){
     return{ok:true,shop:found};
   },[rememberAdminKey]);
 
+  // 管理端末の一覧・解除・管理コードの作り直し（2026-10-08・設定タブの「店舗管理コード」の下）。
+  // ルール（database.rules.json の owners）: 一覧の読みはオーナーだけ、他の端末の削除もオーナーなら可、
+  // 自分の登録の書き込みは「書き込む前の private/adminKey と同じ値」のときだけ。
+  // そのため作り直しは ①private/adminKey を新しいキーにする ②この端末の owners を新しいキーで書き直す
+  // ③他の端末を外す の順に**別々に**書く（1回の update にまとめると②が古いキーと比べられて拒否される）。
+  // owners の値はオーナーかどうかの判定には使われない（存在だけを見る）ので、外さなければ他の端末は管理者のまま＝③が要る。
+  const listAdminDevices=useCallback(async sid=>{
+    const s=await firebaseDB.ref(`shops/${sid}/owners`).once("value");
+    return s.val()||{};
+  },[]);
+  const removeAdminDevice=useCallback(async(sid,uid)=>{
+    const me=firebaseAuth?.currentUser?.uid;
+    if(!uid||uid===me)throw new Error("この端末は解除できません");
+    if(firebaseKeyForbiddenChars(uid).length)throw new Error("端末を特定できません");
+    await fbUpd(`shops/${sid}/owners`,{[uid]:null});
+  },[]);
+  const rotateAdminKey=useCallback(async sid=>{
+    const me=firebaseAuth?.currentUser?.uid;
+    if(!firebaseDB||!me||!sid)throw new Error("接続できません。再読み込みしてください");
+    const owners=(await firebaseDB.ref(`shops/${sid}/owners`).once("value")).val()||{};
+    if(owners[me]===undefined||owners[me]===null)throw new Error("この端末は管理者として登録されていません");
+    const removals=adminKeyRotationRemovals(owners,me);
+    const key=genSecureId(32);
+    await fbSet(`shops/${sid}/private/adminKey`,key);
+    // キーは書けた＝この時点で古い管理コードでは新しい端末を登録できない。この端末の控えを先に新しいキーにする
+    // （以降が失敗しても、設定タブには新しい管理コードが出る）
+    rememberAdminKey(sid,key);
+    await fbSet(`shops/${sid}/owners/${me}`,key);
+    if(removals.length)await fbUpd(`shops/${sid}/owners`,Object.fromEntries(removals.map(u=>[u,null])));
+    return{key,removed:removals.length};
+  },[rememberAdminKey]);
+
   // 店舗をアカウントに紐付け（Google/Apple ユーザーのみ）
   const linkShopToAccount=(uid,shopId)=>{
     if(!firebaseDB||!uid)return;
@@ -2250,6 +2282,8 @@ function App(){
               staffLinks={{enabled:MY_SCREEN_ENABLED&&!DEMO_MODE&&!ownerReadOnly&&ownerClaimedSid===sid,loaded:staffLinksLoaded,map:staffLinkMap,requests:linkRequestMap,
                 rename:renameStaffLinks,drop:dropStaffLinks,reject:rejectLinkRequest,call:callStaffLinkCF,pages:staffPageMap,pageAct:staffPageAct}}
               onClaimShop={claimOwnership} onVerifyAdminCode={verifyAdminCode}
+              adminDevices={{enabled:!DEMO_MODE&&!ownerReadOnly&&ownerClaimedSid===sid&&!!firebaseDB,myUid:firebaseAuth?.currentUser?.uid||null,
+                list:()=>listAdminDevices(sid),remove:uid=>removeAdminDevice(sid,uid),rotate:()=>rotateAdminKey(sid)}}
               plan={plan} planExpiry={planExpiry} paymentFailed={paymentFailed} billingSchedule={billingSchedule} billingExempt={billingExempt} companyLink={companyLink}
               setCurrentShopId={id=>{
                 currentShopIdRef.current=id;
