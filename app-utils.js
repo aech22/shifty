@@ -1517,7 +1517,8 @@ function premiumBreakdownOf(o){
 function premiumAgreementH(b){return b?excelRound(((Number(b.otMin)||0)+(Number(b.legalHolidayMin)||0))/60,2):0;}
 // 労務確認パネルに出す割増の該当日（2026-09-30・P5）。dates は選択中の期間の日（日に帰属する判定はこの範囲で数える）。
 // 要修正ではない（総括判定の OVERALL_FIX_KEYS に入れない）。A・B 以外（区分が空欄・内部値 none）には出さない。
-const PREMIUM_FINDING_KEYS=["p5DayOt","p5WeekOt","p5Night","p5LegalHoliday","p5Over60"];
+// 深夜は出さない（2026-10-08 ユーザー指示）。深夜の時間は労務判定表の「深夜」列（日数は title）と月次賃金で見る。
+const PREMIUM_FINDING_KEYS=["p5DayOt","p5WeekOt","p5LegalHoliday","p5Over60"];
 function premiumFindingsFor(b,o){
   const {system=null,dates=[]}=o||{};
   if(!b||(system!=="A"&&system!=="B"))return[];
@@ -1531,8 +1532,6 @@ function premiumFindingsFor(b,o){
       const f=pd(a[0]||w.dates[0]).getDate(),l=pd(a[a.length-1]||w.dates[w.dates.length-1]).getDate();return`${f}〜${l}`;});
     out.push({key:"p5WeekOt",label:`週の時間外（${lab.join("・")}）`});
   }
-  const nd=(b.nightDates||[]).filter(d=>inP.has(d));
-  if(nd.length)out.push({key:"p5Night",label:`深夜${nd.length}日${laborFindingDatesLabel(nd)}`});
   const ld=(b.legalHolidayDates||[]).filter(d=>inP.has(d));
   if(ld.length)out.push({key:"p5LegalHoliday",label:`法定休日労働${ld.length}日${laborFindingDatesLabel(ld)}`});
   if(b.over60Min>0)out.push({key:"p5Over60",label:`月60h超 ${fmtMin(b.over60Min)}`});
