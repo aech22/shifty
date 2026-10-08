@@ -1,12 +1,15 @@
-const functions = require("firebase-functions");
+const functions = require("firebase-functions/v1");
 const Stripe = require("stripe");
-const admin = require("firebase-admin");
+// firebase-admin 14 で名前空間の書き方（admin の auth・database）が廃止されたので、機能ごとのモジュールから読む（2026-10-08）
+const { initializeApp, getApps } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
+const { getDatabase } = require("firebase-admin/database");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
 // 認証まわりの回数の制限と店舗オーナーの判定（純粋関数・tests/security.test.js）
 const SEC = require("./security");
-if (!admin.apps.length) admin.initializeApp();
-const db = admin.database();
+if (!getApps().length) initializeApp();
+const db = getDatabase();
 
 // ============================================================
 // 企業アカウント: パスワードハッシュ（scrypt・追加依存なし）
@@ -116,7 +119,7 @@ async function verifyShopOwner(req, shopId) {
   if (!m) return { ok: false, status: 401, error: "認証トークンがありません。ページを再読み込みしてお試しください。" };
   let decoded;
   try {
-    decoded = await admin.auth().verifyIdToken(m[1]);
+    decoded = await getAuth().verifyIdToken(m[1]);
   } catch (e) {
     return { ok: false, status: 401, error: "認証トークンが無効です。ページを再読み込みしてお試しください。" };
   }
@@ -775,14 +778,14 @@ exports.sendEmailOtp = functions
 
     const code = String(crypto.randomInt(100000, 1000000));
     const appUrl = process.env.APP_URL || "https://shiftyshifty.app";
-    const emailLink = await admin.auth().generateSignInWithEmailLink(email, {
+    const emailLink = await getAuth().generateSignInWithEmailLink(email, {
       url: appUrl,
       handleCodeInApp: true,
     });
 
     const plan = SEC.planEmailOtpSend({ prev, now: Date.now(), code, email, emailLink });
     throwPlanError(plan);
-    await admin.database().ref(`email_otps/${uid}`).set(plan.record);
+    await db.ref(`email_otps/${uid}`).set(plan.record);
 
     const smtpUser = process.env.SMTP_USER;
     const transporter = nodemailer.createTransport({
@@ -1080,7 +1083,7 @@ exports.sendSurveyEmails = functions
     let nextPageToken;
 
     do {
-      const listResult = await admin.auth().listUsers(1000, nextPageToken);
+      const listResult = await getAuth().listUsers(1000, nextPageToken);
       nextPageToken = listResult.pageToken;
 
       for (const user of listResult.users) {
@@ -1319,7 +1322,7 @@ exports.companyLogin = functions
     }
     await failsRef.remove(); // 成功で数え直す
     const nameSnap = await db.ref(`companies/${companyId}/pub/name`).once("value");
-    const token = await admin.auth().createCustomToken(companyUid(companyId), { companyId, kind: "company" });
+    const token = await getAuth().createCustomToken(companyUid(companyId), { companyId, kind: "company" });
     return { token, companyId, name: nameSnap.val() || "" };
   });
 

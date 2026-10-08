@@ -179,7 +179,11 @@ function loadFunctions(opts = {}) {
 
   const origLoad = Module._load;
   Module._load = function (req, parent, isMain) {
-    if (req === "firebase-functions") return makeFunctionsMock();
+    // index.js は 2026-10-08 から firebase-functions/v1 と firebase-admin の機能ごとのモジュールを読む（firebase-admin 14 に名前空間が無いため）
+    if (req === "firebase-functions" || req === "firebase-functions/v1") return makeFunctionsMock();
+    if (req === "firebase-admin/app") return { initializeApp() {}, getApps: () => [] };
+    if (req === "firebase-admin/auth") return { getAuth: () => auth };
+    if (req === "firebase-admin/database") return { getDatabase: () => db };
     if (req === "firebase-admin") return adminMock;
     if (req === "stripe") return () => stripeStub;
     if (req === "nodemailer") return nodemailerMock;
