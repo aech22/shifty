@@ -1769,6 +1769,50 @@ function planStaffPageOp(pages,op){
   return Object.keys(out).length?out:null;
 }
 
+// ---- 提出の人単位の縛り（2026-10-08 ユーザー指示「個別URLやアカウントで人単位に縛る」）----
+// 承認済みの個別URLか、メールのアカウントとの紐付け（staffLinks）がある名前は、shops/{sid}/nameGuards/{名前}=true にする。
+// ルール（database.rules.json の subs）は、この印がある名前の提出を、オーナー・その名前に紐付いたアカウントの uid・
+// その名前の承認済み個別URLを開いて登録した端末（pageDevices/{uid}）だけに許す。印は名前がキーなので、改名・削除・取り消しのあとは
+// ここで今の staffPages・staffLinks・スタッフ一覧から計算し直す（印を移す処理を別に持たない＝同じ問いへの答えを1つにする）。
+// 印が残りすぎると、同じ名前で登録し直した新しい人が募集URLから出せなくなるので、スタッフ一覧に無い名前と、Firebase のキーに
+// 使えない文字を含む名前は印を持たない。規則は functions/staff-link.js の planNameGuardsCF と同じ（tests/my.test.js が照合する）
+const NAME_GUARD_KEY_BAD=/[.#$\/\[\]\x00-\x1f\x7f]/;
+function nameGuardKeyOk(name){return typeof name==="string"&&!!name&&name.length<=50&&!NAME_GUARD_KEY_BAD.test(name);}
+function desiredNameGuards(pages,staffLinks,staff){
+  const names=new Set(myStaffNamesOf(staff).filter(nameGuardKeyOk));
+  const out={};
+  Object.values(_myObj(pages)||{}).forEach(r=>{const rec=_myObj(r);if(rec&&rec.status==="approved"&&names.has(rec.name))out[rec.name]=true;});
+  Object.values(_myObj(staffLinks)||{}).forEach(r=>{const rec=_myObj(r);if(rec&&typeof rec.name==="string"&&names.has(rec.name))out[rec.name]=true;});
+  return out;
+}
+// 今の nameGuards との差分（shops/{sid}/nameGuards への update・変わらなければ null）
+function planNameGuards(o){
+  const x=_myObj(o)||{};
+  const want=desiredNameGuards(x.pages,x.staffLinks,x.staff);
+  const cur=_myObj(x.guards)||{};
+  const patch={};
+  Object.keys(want).forEach(n=>{if(cur[n]!==true)patch[n]=true;});
+  Object.keys(cur).forEach(n=>{if(!want[n])patch[n]=null;});
+  return Object.keys(patch).length?patch:null;
+}
+// 個別URLを開いた端末の登録（shops/{sid}/pageDevices/{uid}）。ルールは token が承認済みのときだけ書かせる
+function pageDeviceRecordOf(token,nowIso){return isMyPageToken(token)?{token,at:String(nowIso||"").slice(0,40)}:null;}
+// 提出が拒否されたときに出す理由。expired＝受付終了（期間の末日の翌日0時を過ぎた）、confirmed＝確定済み、guard＝本人だけの名前
+const SUB_DENIED_MESSAGES={
+  expired:"この期間の受付は終了しました（期間の最終日の翌日から提出できません）",
+  confirmed:"この期間のシフトは確定済みのため、提出・変更できません。お店の管理者に連絡してください",
+  guard:"このお名前の提出は、本人専用のURLかマイシフトのアカウントからだけ受け付けています。お店から受け取った専用のURLを開いて提出してください",
+};
+function subDeniedReasonOf(o){
+  const x=_myObj(o)||{};
+  const p=_myObj(x.period);
+  const now=Number(x.nowMs)||0;
+  if(p&&Number(p.expiresAtMs)>0&&now>=Number(p.expiresAtMs))return"expired";
+  if(p&&p.confirmation)return"confirmed";
+  if(x.guarded)return"guard";
+  return null;
+}
+
 // ---- マイシフトを開いている間のアドレスバー（2026-10-04 ユーザー指示「マイシフトを開き、そのURLを開いたらシフト提出画面がでた」）----
 // 募集URL（#/s/<token>）の画面で「マイシフト」を押したら、アドレスバーを「開き直すと同じ画面になる URL」にする。
 //  ①この端末が知っている個別URL（個別URLで開いた・申請した・管理者が発行した URL を開いた）のうち、いま使える（承認済みで
@@ -2059,7 +2103,7 @@ function myAllShiftStack(choices,sel){
 }
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={EMAIL_LINK_PENDING_LS,EMAIL_LINK_KINDS,EMAIL_LINK_PENDING_MAX_MS,EMAIL_LINK_RESEND_WAIT_MS,EMAIL_LINK_FALLBACK_CODES,isEmailLinkFallbackError,emailLinkSafeHash,emailLinkContinueUrl,parseEmailLinkLanding,emailLinkReturnHash,emailLinkCleanUrl,emailLinkPendingRecord,emailLinkPendingFor,ADMIN_PASSWORD_MIN,validateEmailLinkPassword,emailLinkErrorMessage,MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
+  module.exports={NAME_GUARD_KEY_BAD,nameGuardKeyOk,desiredNameGuards,planNameGuards,pageDeviceRecordOf,SUB_DENIED_MESSAGES,subDeniedReasonOf,EMAIL_LINK_PENDING_LS,EMAIL_LINK_KINDS,EMAIL_LINK_PENDING_MAX_MS,EMAIL_LINK_RESEND_WAIT_MS,EMAIL_LINK_FALLBACK_CODES,isEmailLinkFallbackError,emailLinkSafeHash,emailLinkContinueUrl,parseEmailLinkLanding,emailLinkReturnHash,emailLinkCleanUrl,emailLinkPendingRecord,emailLinkPendingFor,ADMIN_PASSWORD_MIN,validateEmailLinkPassword,emailLinkErrorMessage,MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
     MY_LINK_METHOD_LABELS,linkNumberKey,linkNameKey,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,MY_STAFF_LINK_OPS_MAX,staffLinkOpOf,staffLinksAsOf,planStaffLinkOp,enqueueStaffLinkOp,MY_STAFF_LINK_PENDING_MSG,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
     myHelperDaysOf,myHelperShiftEntries,myMergeHelperEntries,myMovedHelperDates,myHelperTimesIn,myMovedDatesIn,

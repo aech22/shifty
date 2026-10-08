@@ -87,8 +87,11 @@ developブランチ・mainブランチのどちらにチェックアウトして
 │   └── my.test.js      ← app-my-utils.js のユニットテストと、読み込み順（index.html・package.json・eslint）のドリフト検出
 ├── functions/
 │   ├── index.js        ← Firebase Cloud Functions（Stripe・メール送信・店舗/期間の自動削除・企業アカウント・従業員画面の紐付け・
-│   │                      スタッフ個別URL（myPagePin・getMyPay・setPageEmail・recoverPageUrl）。38本。個人リンクコードの CF
-│   │                      （issueStaffLinkCode・redeemStaffLinkCode）は 2026-10-05 に削除した＝本番から消すには関数の削除が要る）
+│   │                      スタッフ個別URL（myPagePin・getMyPay）・通知・提出の監査（auditSubWrite）。41本。個人リンクコードの CF は 2026-10-05、
+│   │                      setPageEmail・recoverPageUrl は 2026-10-08 に削除した（どちらも本番からも削除済み）。
+│   │                      **firebase-functions 7・firebase-admin 14**（2026-10-08）: firebase-functions は `firebase-functions/v1` から読む
+│   │                      （関数は v1 のまま）。firebase-admin は名前空間（admin.auth() 等）が無いので `firebase-admin/app|auth|database` から読む）
+│   ├── sub-audit.js    ← 提出データの監査（auditSubWrite・2026-10-08）の判定（tests/sub-guard.test.js）
 │   ├── company-config.js ← 企業アカウント系 CF の純粋関数（tests/core.test.js がクライアントとの一致を照合）
 │   ├── staff-link.js   ← 従業員画面の紐付け（E2）の純粋関数（tests/my.test.js が app-my-utils.js との一致を照合）
 │   ├── my-pay.js       ← 従業員画面の会社設定の賃金（E6・getMyPay）の純粋関数（tests/my.test.js が normalizePayVersion との一致を照合）
@@ -588,7 +591,8 @@ Firebase Realtime Database
 ├── global/
 │   └── shops/{shopId} ← 店舗情報。直キー読みのみ許可（一覧読みはルールで拒否）
 ├── tokens/
-│   └── {urlToken}     ← {shopId, periodId} スタッフURLのO(1)逆引きインデックス
+│   └── {urlToken}     ← {shopId, periodId, expiresAtMs?} スタッフURLのO(1)逆引きインデックス。expiresAtMs（期間の末日の翌日0時・日本時間のミリ秒・2026-10-08）を
+│                         過ぎるとその店舗のオーナー以外は読めない（ルール）＝募集URLが「受付終了」になる
 ├── shops/
 │   └── {shopId}/
 │       ├── settings   ← 候補時間・スタッフ色・別名・休憩・属性・Excel設定など
@@ -621,7 +625,12 @@ Firebase Realtime Database
 │       │                 name?, approvedAt?, byUid?, revokedAt?, pinResetAt?}。**name（スタッフ一覧の名前）が正本**。申請は誰でも（pending を作るだけ・
 │       │                 name 等のオーナーの項目は書けない・pending の取り下げだけ可）、承認・却下・取り消し・改名・暗証番号のリセットはオーナーだけ。
 │       │                 一覧の読みはオーナー、1件は pageToken を知っていれば読める（auth != null）。デモ店舗は不可
-│       └── private/     ← 読みはオーナーのみ（配下すべて）
+│       ├── nameGuards/{名前} = true ← 提出の人単位の縛り（2026-10-08）。承認済みの個別URLか staffLinks の紐付けがあり、スタッフ一覧にある名前。
+│       │                 書くのはオーナーと CF（planNameGuards・planNameGuardsCF＝同じ規則）。読みは auth != null。改名・削除・取り消しのあとは
+│       │                 今の staffPages・staffLinks・スタッフ一覧から**計算し直す**（印を移す処理は持たない）
+│       ├── pageDevices/{uid} = {token, at} ← 承認済みの個別URLを開いた端末（2026-10-08）。本人の uid に、承認済みの token のときだけ書ける。
+│       │                 読みは本人とオーナー。App の ensurePageDevice が開いたときと提出の前に書く
+│       └── private/     ← 読みはオーナーのみ（配下すべて）。subAudit/{期間ID}/{push id} は提出の監査の記録（CF auditSubWrite だけが書く・2026-10-08）
 │           ├── adminKey ← 管理キー（32桁）
 │           ├── pay/{名前} ← 賃金マスタ（2026-09-30・P6a）。書きもオーナーのみ・.validate で payType（monthly|hourly）と base（数値）必須。
 │           │                **給与は settings（auth != null で誰でも読める）に絶対に置かない**。期間の写しにも入れない。
@@ -693,7 +702,7 @@ Firebase Realtime Database
 ├── staffPageData/{pageToken}/ ← 個別URLの本人のデータ（2026-10-04）。workplaces・shifts・overrides・goals・actuals・seen を users/{uid} と**同じ形**で持つ
 │                          （tests/my.test.js が形の一致を照合）。読み書きは「その token の staffPages が approved の間」だけで、**token を知る人なら誰でも**
 ├── staffPagePins/{pageToken} ← 個別URLの給料の暗証番号 {hash, salt, setAt, fails, lockedUntil}（2026-10-04）。CF myPagePin だけ（ルールで読み書きとも不可）
-├── staffPageEmails/{pageToken} ← 個別URLをなくしたとき用のメールアドレス（2026-10-05）{email, key, setAt, sentAt?}。CF setPageEmail・recoverPageUrl だけが書く
+├── staffPageEmails/{pageToken} ← 個別URLをなくしたとき用のメールアドレス（2026-10-05）{email, key, setAt, sentAt?}。書いていた CF（setPageEmail・recoverPageUrl）は 2026-10-08 に削除。残りのデータの扱いは BACKLOG
 │                          （ルールで読み書きとも不可）。クライアントへは登録の有無と伏せたアドレスしか返さない
 ├── staffPageEmailIndex/{key}/{pageToken} = true ← アドレスからの逆引き（key＝正規化したアドレスの SHA-256）。CF だけ
 ├── （通知の購読・2026-10-08）staffPageData/{token}/push/{key}・users/{uid}/push/{key}・shops/{sid}/private/push/{key}
@@ -717,6 +726,12 @@ Firebase Realtime Database
   2026-10-04 に実装へ合わせた（立てるのは doFullSignOut だけ）
 - 管理系パス（settings/periods/staff/templates/tokens/global/shops）の書き込みは `shops/{shopId}/owners/{auth.uid}` 登録者のみ。owners への自己登録は `private/adminKey` との値照合が必要で、adminKeyは管理者端末のlocalStorage（`ots_adminKeys_v1`）にのみ保存される。**スタッフURLから得られるshopIdだけでは管理操作できない**（2026-10-08 から閲覧もできない＝管理コードの入力画面だけが出る）。
 - スタッフは subs の読み書きと settings/periods/staff の読みのみ（従来機能を維持）。**subs の書き込み・削除は認証済みなら誰でも通る**（`.write: auth != null && $shopId !== 'demo-toriMatsu-v1'`）。**ただし 2026-09-30（P3）から、その sub の期間（書き込み後の periodId と、削除・変更前の periodId の両方）に `confirmation` があるときはオーナーだけが書ける**（スタッフの再提出を確定でルールごと止める）。提出を触れるのを本人だけに絞っているのは **UI（app-staff.js の `canTouch`）だけ**で、ルールは名乗った名前を検証できない——2026-08-31 決定1で承知のうえ引き受けたトレードオフなので、**再検出しても「バグ」として直さない**。
+  **2026-10-08 から2つを足した（ユーザー指示）**: ①**人単位の縛り**: `nameGuards/{名前}` がある名前の提出（新規・上書き・削除・その名前への改名。前後の値の両方で見る）は、
+  オーナー・`staffLinks/{uid}.name` がその名前の uid・`pageDevices/{uid}.token` が承認済みでその名前の個別URLの端末だけが書ける。縛りの無い名前と、
+  キーに使えない文字（`. # $ [ ] /`）の名前は従来どおり（後者は判定を読まない＝読むとルールの評価が失敗して誰も書けなくなる）。拒否されたら App の
+  `staffOnSub` が理由（SUB_DENIED_MESSAGES）を付けて返し、拒否された提出を画面から消す。②**受付期限**: 期間の `expiresAtMs`（末日の翌日0時）を過ぎたら、
+  オーナー以外はその期間の提出を書けない。期限を持たない期間は従来どおり（オーナーの端末が savePeriods で補う）。あわせて CF `auditSubWrite` が、オーナー以外の
+  削除・別 uid の上書き・同じ名前と期間の重複作成を `private/subAudit` に残す（件数の基準値を測るための記録。見る画面は無い）
 - **移行猶予は 2026-07-28 に終了済み**（`dbdd9d9`）。未claim店舗への「誰でも書き込み可」ブランチは撤去され、管理系パスは owner uid 一致が必須。**ルールファイルは `database.rules.json` の1本だけ**（同内容の残骸だった `database.rules.tightened.json` は 2026-09-05 に削除済み。以後この二重管理は無い）。
 - Cloud Functions（createCheckoutSession/createPortalSession）はIDトークン検証+オーナー照合。App CheckはSDK読込済み・サイトキー未設定でスキップ中（BACKLOG参照）。
 
@@ -752,6 +767,7 @@ Shop = { id: string, name: string, createdAt: string, lastActivity: string }
 // 期間
 Period = { id: string, urlToken: string, shopId: string, label: string,
            startDate: string, endDate: string, deadlineDate: string, createdAt: string,
+           expiresAtMs?: number,                                   // 受付期限＝末日の翌日0時（日本時間）のミリ秒（2026-10-08・withPeriodExpiry が endDate に合わせる）
            snapshot?: {staffList: string[], settings: Settings},  // 確定済み期間の写し
            keepStaff?: {name: string, index: number}[],           // 削除しても列を残す人
            keepAttrs?: {[name: string]: 属性ID},                  // その期間に効かせる旧属性
@@ -1504,6 +1520,7 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 | `linkStaffPage` | Callable | 専用URLのお店をメールのアカウントに追加（2026-10-05・**本番未デプロイ**）。`{token, pin?}`。メールのある認証だけ。URL が使える状態を `myPageAccessCF` で確かめ、名前は staffPages の承認済みの name（呼び出し元から受け取らない）。暗証番号を決めている URL は myPagePin と同じ照合（トランザクションで試行回数を数える）を、リンクできることを確かめた**後**に通す。管理者の再承認はしない。staffLinks（method "page"）・users/{uid}/links を書き、保留中の申請を消す。規則は `functions/staff-link.js` の `planLinkStaffPage` |
 | `myPagePin` | Callable | スタッフ個別URLの給料の暗証番号（2026-10-04・本番反映済み）。`{token, action:"status"|"set"|"verify", pin?, currentPin?}`。URL が使える状態（承認済み・名前がスタッフ一覧にある）を確かめ、`staffPagePins/{token}` のハッシュと照合する（5回の誤りで15分・トランザクションで数える）。照合が通ると（決めたときも）会社が登録した本人の賃金（`private/pay/{staffPages の name}`）を getMyPay と同じ形で返す。名前・店舗は受け取らない（URL から引く）。デモ店舗は拒否。規則は `functions/my-page.js` |
 | `getMyPay` | Callable | 従業員画面の会社設定の賃金（2026-10-04・第2部 E6・本番反映済み）。`{shopId}` だけを受け取り、呼び出し元 uid の staffLinks の名前の `private/pay` を返す（本人の分だけ・名前は受け取らない）。メールのある認証・紐付けあり・名前がスタッフ一覧にあることを確かめ、shopId の形とデモ店舗を拒否。何も書かない。規則は `functions/my-pay.js` |
+| `auditSubWrite` | DB トリガー（subs の onWrite） | 提出データの監査（2026-10-08）。オーナー以外の削除・前の提出者（submitterUid）と違う uid の上書き・同じ名前と期間の重複作成を、サーバーが確かめた uid と変更前の値ごと `shops/{sid}/private/subAudit/{期間ID}` に残す。オーナー・Admin SDK・デモは残さない。判定は `functions/sub-audit.js`。purgeOldPeriods が期間と一緒に消す |
 | `notifyNewPeriod / notifyStaffSubmit / notifyDeadlines` | DB トリガー・schedule | 通知（Web Push・2026-10-08）。新しい期間の作成でスタッフへ（承認済みの個別URLとアカウントの紐付け・終了済みの期間とデモは送らない）、スタッフの提出・再提出で管理者へ（owners にいる uid の購読だけ・店舗ごとに1時間60件まで）、毎日12:00 JST に締切日の未提出のスタッフ（別名・非表示を考慮）と、企業への提出締切日に未提出の期間の管理者へ。送信は npm の `web-push`（VAPID）。宛先と判定は `functions/notify.js`。410/404 の購読は消す。**提出かどうかは `submittedAt`（初回）と `isUpdated:true`＋`updatedAt` の進み（再提出）で判定する**ので、`isUpdated`・`updatedAt` を書いてよいのはスタッフ画面だけ（管理者の編集で書くと「提出しました」が送られる・テストが守る）。入口はマイシフトと個別URLの設定タブ、管理者の設定タブ「通知（この端末）」。募集URLだけのスタッフは本人を特定できないので対象外。iPhone はホーム画面に追加したアプリだけ。入社日・退社日（staffTenure）は締切の宛先にまだ当てていない |
 | `claimCompanyShop` | Callable `claimCompanyShop` | 連携済み店舗のオーナーに**呼び出し元のuid**を登録（企業連携タブの「ログイン」で管理コードの再入力を無くす。付与は `companies/{id}/grants/{shopId}/{uid}` に記録し、解除時に回収する） |
 | `unlinkStoreFromCompany` | Callable `unlinkStoreFromCompany` | 店舗の企業連携を解除（企業uid＋`grants` の付与uidを owners から外す） |

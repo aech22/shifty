@@ -302,6 +302,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     if(submittingRef.current)return; // 連打・二重発火防止（stateの反映を待たず同期チェック）
     // 本部が確定した期間は提出・修正できない（ルールでも拒否される。P3）
     if(isPeriodConfirmed(ap)){tt_("▲ この期間のシフトは確定済みのため、提出・修正できません");return;}
+    // 受付期限（期間の末日の翌日0時・2026-10-08）を過ぎた期間は提出できない（ルールでも拒否される）
+    if(isPeriodExpiredAt(ap,Date.now())){tt_(`▲ ${SUB_DENIED_MESSAGES.expired}`);return;}
     submittingRef.current=true;
     // 出勤>退勤バリデーション（HH:MMゼロ埋め文字列なので文字列比較でよい。25:00〜27:00形式も正しく比較される）
     const badDate=dates.find(d=>sd[d]?.status==="work"&&sd[d].start&&sd[d].end&&sd[d].start>=sd[d].end);
@@ -384,7 +386,8 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
     }catch(e){
       submittingRef.current=false;
       setSending(false);
-      tt_("△ 通信エラー：提出できませんでした。もう一度お試しください");
+      // 拒否の理由が分かるとき（受付終了・確定済み・本人専用の名前）はそれを出す（App の staffOnSub が userMessage を付ける）
+      tt_(e&&e.userMessage?`▲ ${e.userMessage}`:"△ 通信エラー：提出できませんでした。もう一度お試しください");
       return;
     }
     submittingRef.current=false;
@@ -420,7 +423,7 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   if(done)return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName} onMy={onOpenMy}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} settings={settings} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(fixedName||sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} settings={settings} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(e=>tt_(e&&e.userMessage?`▲ ${e.userMessage}`:"△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(fixedName||sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:"50px 20px",textAlign:"center"}}>
         <div style={{fontSize:68,animation:"bI .5s"}}>✓</div>
         <div style={{fontSize:22,fontWeight:700,color:"var(--c-accent)",marginTop:14,marginBottom:8}}>提出完了！</div>
@@ -446,8 +449,9 @@ function StaffView({periods,ap,apid,setApid,shopId,settings,subs,staffList,onSub
   return(
     <div style={{background:"var(--c-bg)",minHeight:"calc(100vh - 44px)"}}>
       <StaffHdr ap={ap} p0={p0} pe={pe} nd={dates.length} subs={subs} apid={apid} onSm={()=>setSm(true)} shopName={shopName} onMy={onOpenMy}/>
-      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} settings={settings} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(()=>tt_("△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(fixedName||sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
+      {sm&&<SmModal subs={subs} periods={periods} apid={apid} onClose={()=>setSm(false)} staffList={staffList} plan={plan} staffAliases={staffAliases} settings={settings} onDeleteSub={onDeleteSub} myName={(name||"").trim()} onEditSub={sub=>{onSub({...sub,updatedAt:new Date().toISOString(),isUpdated:true}).catch(e=>tt_(e&&e.userMessage?`▲ ${e.userMessage}`:"△ 通信エラー：保存できませんでした"));}} onEditByName={sub=>{editingRef.current=true;setName(fixedName||sub.staffName);const init={};const ds2=ap?gd(ap.startDate,ap.endDate):[];ds2.forEach(d=>{init[d]=(sub.shifts||{})[d]||{status:"holiday"};});setSd(init);setComment(sub.comment||"");setConf(false);setDone(false);}}/>}
       <div style={{maxWidth:560,margin:"0 auto",padding:`14px 12px ${120+bottomOffset}px`}}>
+        {!isPeriodConfirmed(ap)&&isPeriodExpiredAt(ap,Date.now())&&<div data-staff-expired="1" style={{background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:"var(--c-text2)"}}>この期間の受付は終了しました（期間の最終日の翌日から提出できません）</div>}
         {isPeriodConfirmed(ap)&&<div data-staff-confirmed="1" style={{background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:"var(--c-text2)"}}>この期間のシフトは確定済みです（提出・修正はできません）</div>}
         {ap?.deadlineDate&&<div style={{background:dl?"#FFF0F1":"#FFFBEB",border:`1px solid ${dl?"#FF4757":"#FCD34D"}`,borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:13,fontWeight:700,color:dl?"#FF4757":"#92400E"}}>{dl?`▲ 締切日（${ap.deadlineDate.replace(/-/g,"/")}）を過ぎています（提出・修正は可能です）`:`締切日：${ap.deadlineDate.replace(/-/g,"/")}`}</div>}
 

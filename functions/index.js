@@ -1039,6 +1039,8 @@ exports.purgeOldPeriods = functions
         }
         // 実績（P4・shops/{sid}/actuals/{期間ID}）も期間と一緒に消す
         await db.ref(`shops/${shopId}/actuals/${periodId}`).remove();
+        // 提出の監査の記録（2026-10-08・private/subAudit/{期間ID}）も期間と一緒に消す
+        await db.ref(`shops/${shopId}/private/subAudit/${periodId}`).remove();
         await db.ref(`shops/${shopId}/periods/${periodId}`).remove();
         console.log(`削除: shop=${shopId} period=${periodId} (endDate=${period.endDate}) subs=${subCount}件`);
       }
@@ -1174,7 +1176,9 @@ const { sanitizeCompanySettings, sanitizeCompanyDeadlines, sanitizeMonthlyDeadli
   COMPANY_BUILTIN_ATTRS, COMPANY_ATTR_ID_RE, mirrorPeopleOf } = require("./company-config");
 // 従業員画面の紐付け（第2部 E2）の規則。クライアントの app-my-utils.js と同じ内容（tests/my.test.js が照合する）
 const { renameStaffLinksPatchCF, staffLinkPersonIdPatchCF, planApproveStaffLink, planUnlinkStaff, planLinkStaffPage,
-  LINK_NAME_MAX } = require("./staff-link");
+  LINK_NAME_MAX, planNameGuardsCF } = require("./staff-link");
+// 提出データの監査（2026-10-08）の判定
+const { planSubAuditCF, subAuditRecordCF } = require("./sub-audit");
 // 従業員画面の会社設定の賃金（第2部 E6・getMyPay）の判定。tests/my.test.js が app-utils.js の normalizePayVersion との一致を照合する
 const { myPayLinkNameCF, planGetMyPay } = require("./my-pay");
 // 法人レイヤーの片方向移行（2026-09-30・P1）。法人が無い企業には企業名と同名の法人を1つ作り、
@@ -1901,7 +1905,13 @@ exports.companyRenameStaff = functions
             if (ul) await db.ref(`users/${u}/links/${sid}/name`).set(newName);
           }
         }
+        // スタッフ個別URL（2026-10-04）の名前も移す（クライアントの改名の追随 planStaffPageOp と同じ。移さないと URL が「名前が無い」で止まる）
+        const pg = (await db.ref(`shops/${sid}/staffPages`).once("value")).val() || {};
+        const pgP = {};
+        Object.entries(pg).forEach(([t, r]) => { if (isPageTokenCF(t) && r && typeof r === "object" && r.status === "approved" && r.name === oldName) pgP[`${t}/name`] = newName; });
+        if (Object.keys(pgP).length) await db.ref(`shops/${sid}/staffPages`).update(pgP);
         await db.ref(`companies/${companyId}/pub/people/${personId}/links/${sid}`).set(newName);
+        await syncNameGuardsCF(sid);
         done.push(sid);
       } catch (e) { failed.push(sid); }
     }
@@ -1998,6 +2008,17 @@ async function readVal(p) { return (await db.ref(p).once("value")).val(); }
 function throwPlanError(r) {
   if (r && r.error) throw new functions.https.HttpsError(r.error.code, r.error.msg);
 }
+// 提出の人単位の縛りの印（shops/{sid}/nameGuards）を、今の staffPages・staffLinks・スタッフ一覧から計算し直す（2026-10-08）。
+// 紐付けを変える関数のあとに呼ぶ。失敗しても呼び出し元の処理は成功のまま返す（オーナーの端末が管理画面を開くたびに同じ計算で直す）
+async function syncNameGuardsCF(shopId) {
+  try {
+    const [pages, staffLinks, staff, guards] = await Promise.all([
+      readVal(`shops/${shopId}/staffPages`), readVal(`shops/${shopId}/staffLinks`), readVal(`shops/${shopId}/staff`), readVal(`shops/${shopId}/nameGuards`),
+    ]);
+    const patch = planNameGuardsCF({ pages, staffLinks, staff, guards });
+    if (patch) await db.ref(`shops/${shopId}/nameGuards`).update(patch);
+  } catch (e) { console.warn("nameGuards の更新に失敗:", shopId, e && e.message); }
+}
 
 // 承認（方式A・B）: 店舗のオーナーが申請を候補の名前へ紐付ける。候補に無い名前は拒否する（CF が照合し直す）
 exports.approveStaffLink = functions
@@ -2015,6 +2036,7 @@ exports.approveStaffLink = functions
     const r = planApproveStaffLink({ shopId, uid, name, callerUid, nowIso: new Date().toISOString(), owners, request, staff, settings, mirrorPeople, staffLinks });
     throwPlanError(r);
     await db.ref().update(r.patch);
+    await syncNameGuardsCF(shopId);
     return { ok: true, method: r.method };
   });
 
@@ -2030,6 +2052,7 @@ exports.unlinkStaff = functions
     const r = planUnlinkStaff({ shopId, uid, callerUid, owners });
     throwPlanError(r);
     await db.ref().update(r.patch);
+    await syncNameGuardsCF(shopId);
     return { ok: true };
   });
 
@@ -2134,6 +2157,7 @@ exports.linkStaffPage = functions
       throwPlanError(r);
     }
     await db.ref().update(pre.patch);
+    await syncNameGuardsCF(shopId);
     return { ok: true, shopId, name: acc.name };
   });
 
@@ -2241,6 +2265,37 @@ exports.notifyNewPeriod = functions
   });
 
 // 3. 提出（管理者向け）。subs は差分 update で書かれるが、トリガーには sub 全体の前後が来る
+// ============================================================
+// 提出データの監査（2026-10-08 ユーザー指示）。名前の一致で書ける提出を、オーナー以外が他人名義で上書き・削除・重複作成したときに、
+// サーバーが確かめた uid（context.auth.uid）と変更前の値を shops/{sid}/private/subAudit/{期間ID}/{push id} に残す（オーナーだけが読める）。
+// 判定は functions/sub-audit.js。通知（notifyStaffSubmit）とは別の関数にする（通知は提出以外の書き込みで先に戻り、回数の上限もあるため）。
+// 記録を見る画面は無い（件数の基準値を測るための記録。読むときは shifty-prod-data-probe）
+// ============================================================
+const SUB_AUDIT_PERIOD_RE = /^[A-Za-z0-9_-]{1,64}$/;
+exports.auditSubWrite = functions
+  .region("asia-northeast1")
+  .database.ref("/shops/{shopId}/subs/{subId}")
+  .onWrite(async (change, context) => {
+    const { shopId, subId } = context.params;
+    if (!isValidShopId(shopId) || isDemoShop(shopId)) return null;
+    // Admin SDK の書き込み（CF の改名・期間の削除など）は記録しない
+    const authUid = context.authType === "USER" && context.auth && context.auth.uid;
+    if (!authUid || !isSafeDbKey(authUid)) return null;
+    const before = change.before.val(), after = change.after.val();
+    const isOwner = (await readVal(`shops/${shopId}/owners/${authUid}`)) !== null;
+    if (isOwner) return null;
+    let samePeriodSubs = null;
+    if (!before && after && typeof after.periodId === "string" && SUB_AUDIT_PERIOD_RE.test(after.periodId)) {
+      samePeriodSubs = (await db.ref(`shops/${shopId}/subs`).orderByChild("periodId").equalTo(after.periodId).once("value")).val();
+    }
+    const decision = planSubAuditCF({ before, after, authUid, isOwner, samePeriodSubs, subId });
+    if (!decision) return null;
+    const rec = subAuditRecordCF({ decision, before, after, authUid, subId, nowIso: new Date().toISOString() });
+    const pid = SUB_AUDIT_PERIOD_RE.test(rec.periodId) ? rec.periodId : "_unknown";
+    await db.ref(`shops/${shopId}/private/subAudit/${pid}`).push(rec);
+    return null;
+  });
+
 exports.notifyStaffSubmit = functions
   .region("asia-northeast1")
   .runWith({ secrets: ["VAPID_PRIVATE_KEY"] })

@@ -388,7 +388,12 @@ function App(){
           return true;
         });
       }).then(ok=>{ if(!ok){ console.warn("token一致なし:",token,"→ Cookieチェックへ"); setInitError("resolve"); cookieFallback(); } })
-        .catch(e=>{ console.warn("スタッフURL解決失敗:",e); setInitError("resolve"); cookieFallback(); });
+        .catch(e=>{
+          // 受付期限（期間の末日の翌日0時・tokens/{token}.expiresAtMs）を過ぎた募集URLはルールが読ませない（2026-10-08）。
+          // 管理者の画面や Cookie の店舗へは進めず「受付終了」を出す
+          if(isPermissionDeniedError(e)){ console.warn("受付期限を過ぎたスタッフURL:",token); setInitError("expired"); return; }
+          console.warn("スタッフURL解決失敗:",e); setInitError("resolve"); cookieFallback();
+        });
       return;
     }
     // 1) Firebase Auth ユーザーがいる場合 → accounts/{uid}/shops を確認
@@ -1496,6 +1501,23 @@ function App(){
   const staffLinkOpsActive=targetSid=>MY_SCREEN_ENABLED&&!!firebaseDB&&!DEMO_MODE&&!urlLocked&&!ownerReadOnly&&!!targetSid&&targetSid!=="default";
   const readStaffLinkOps=targetSid=>{const all=lg(STAFF_LINK_OPS_LS,{})||{};return enqueueStaffLinkOp(all[targetSid],null);};
   const writeStaffLinkOps=(targetSid,q)=>{const all={...(lg(STAFF_LINK_OPS_LS,{})||{})};if(q.length)all[targetSid]=q;else delete all[targetSid];ls(STAFF_LINK_OPS_LS,all);};
+  // 提出の人単位の縛りの印（shops/{sid}/nameGuards・2026-10-08）を、今の staffPages・staffLinks・スタッフ一覧から計算し直す。
+  // 改名・削除・取り消しに追随する処理はこの1本（印を移す処理を別に持たない）。オーナーの端末だけ（ルールがオーナーにだけ書かせる）。
+  // 読みは同じ端末の未確定の書き込みを含む（RTDB のローカルキャッシュ）ので、スタッフ一覧の保存の直後に呼んでよい
+  const syncNameGuards=async targetSid=>{
+    if(!MY_SCREEN_ENABLED||!firebaseDB||DEMO_MODE||!targetSid||targetSid==="default")return;
+    try{
+      const rd=p=>firebaseDB.ref(p).once("value").then(x=>x.val());
+      const[pages,links,staff,guards]=await Promise.all([rd(`shops/${targetSid}/staffPages`),rd(`shops/${targetSid}/staffLinks`),rd(`shops/${targetSid}/staff`),rd(`shops/${targetSid}/nameGuards`)]);
+      const patch=planNameGuards({pages,staffLinks:links,staff,guards});
+      if(patch)await fbUpd(`shops/${targetSid}/nameGuards`,patch);
+    }catch(e){console.warn("提出の縛り（nameGuards）の更新に失敗:",e);}
+  };
+  useEffect(()=>{
+    if(!staffLinkOpsActive(sid)||ownerClaimedSid!==sid)return;
+    const t=setTimeout(()=>{syncNameGuards(sid);},800);
+    return()=>clearTimeout(t);
+  },[staffList,sid,ownerClaimedSid,ownerReadOnly]);
   // 保留の列を前から順に当てる。同時に2本走らせない（前の実行の後ろにつなぐ）。途中で失敗したらそこで止め、残りは列に残す。
   // 1つの操作を2つのノードに当てる: 紐付け（staffLinks・E2）とスタッフ個別URL（staffPages・2026-10-04）。片方だけ書けたときも列に残して
   // やり直す（操作は当て直しても同じ結果になる＝旧名の記録はもう無い・取り消し済みは選ばない）
@@ -1516,6 +1538,7 @@ function App(){
         }
         if(failed)return{pending:true,error:failed};
         writeStaffLinkOps(targetSid,readStaffLinkOps(targetSid).slice(1));
+        await syncNameGuards(targetSid);
       }
     };
     const p=staffLinkOpsChainRef.current.then(run,run).catch(e=>({pending:true,error:e}));
@@ -1557,13 +1580,13 @@ function App(){
       const token=genMyPageToken(myRand);
       const p=planIssueStaffPage({pages:cur,token,name,staff:staffList,shopId:sid,byUid:firebaseAuth&&firebaseAuth.currentUser?firebaseAuth.currentUser.uid:"",nowIso});
       if(p.error)return p;
-      try{await fbSet(`staffPageTokens/${token}`,p.tokenRec);await fbUpd(`shops/${sid}/staffPages`,p.patch);return{ok:true,token,revoked:p.revoked};}
+      try{await fbSet(`staffPageTokens/${token}`,p.tokenRec);await fbUpd(`shops/${sid}/staffPages`,p.patch);await syncNameGuards(sid);return{ok:true,token,revoked:p.revoked};}
       catch(e){console.warn("個別URLの発行に失敗:",e);return{error:isPermissionDeniedError(e)?"URLを発行できませんでした（サーバー側の設定が未反映の可能性があります）":"URLを発行できませんでした。通信状態を確認してもう一度お試しください"};}
     }
     const r=kind==="approve"?planApproveStaffPage({pages:cur,token,name,staff:staffList,byUid:firebaseAuth&&firebaseAuth.currentUser?firebaseAuth.currentUser.uid:"",nowIso})
       :kind==="reject"?planRejectStaffPage(cur,token):kind==="revoke"?planRevokeStaffPage(cur,token,nowIso):kind==="resetPin"?planResetStaffPagePin(cur,token,nowIso):{error:"この操作はできません"};
     if(r.error)return r;
-    try{await fbUpd(`shops/${sid}/staffPages`,r.patch);return{ok:true};}
+    try{await fbUpd(`shops/${sid}/staffPages`,r.patch);await syncNameGuards(sid);return{ok:true};}
     catch(e){console.warn("個別URLの更新に失敗:",e);return{error:isPermissionDeniedError(e)?"保存できませんでした（サーバー側の設定が未反映の可能性があります）":"保存できませんでした。通信状態を確認してもう一度お試しください"};}
   };
   const STAFF_LINK_CFS=["approveStaffLink","unlinkStaff"];
@@ -1651,13 +1674,14 @@ function App(){
     periods.forEach(p=>{
       if(!p||!p.urlToken||!p.id)return;
       if(p.shopId&&p.shopId!==sid)return; // 店舗切替直後の古いstate混入を防ぐ
-      const val={shopId:p.shopId||sid,periodId:p.id};
-      const sig=`${val.shopId}/${val.periodId}`;
+      // 受付期限（expiresAtMs）も逆引きに持たせる（2026-10-08）。期限を過ぎた token はオーナーしか読めない（ルール）
+      const val=staffUrlTokenRecord(p.shopId||sid,p);
+      const sig=staffUrlTokenSig(val);
       if(synced[p.urlToken]===sig)return;
       synced[p.urlToken]=sig; // 読み込み中に periods がまた変わっても重ねて読まない
       firebaseDB.ref(`tokens/${p.urlToken}`).once("value").then(s=>{
         const cur=s.val();
-        if(cur&&cur.shopId===val.shopId&&cur.periodId===val.periodId)return;
+        if(cur&&staffUrlTokenSig(cur)===sig)return;
         // 書き込みの拒否（別店舗の同じ token など）はこのセッションでは繰り返さない（次のセッションでもう1回試す）
         fbSet(`tokens/${p.urlToken}`,val).catch(()=>{});
       },()=>{ if(synced[p.urlToken]===sig) delete synced[p.urlToken]; }); // 読めなかったら次の periods の変化で読み直す
@@ -1736,7 +1760,10 @@ function App(){
     const own=cl?stripCompanySettings(v,cl.settings||{}):v;
     setSettings(own); ls(storeKey(sid,"settings_v6"),own); fbW(fbPath(sid,"settings"),own,"settings"); touchLastActivity();
   },[sid,touchLastActivity]);
-  const savePeriods =useCallback(v=>{
+  const savePeriods =useCallback(v0=>{
+    // 受付期限（expiresAtMs＝末日の翌日0時・2026-10-08）を endDate に合わせる。ルールはこの値で、期限を過ぎた期間への
+    // スタッフの提出と、募集URL（tokens）の読み込みを止める。合っている期間は同じ参照のまま（差分が増えない）
+    const v=(Array.isArray(v0)?v0:[]).map(withPeriodExpiry);
     // 削除された期間のsubsとURLトークン逆引きをFirebaseから削除
     const deletedPeriods=periods.filter(p=>!v.find(np=>np.id===p.id));
     const deletedIds=deletedPeriods.map(p=>p.id);
@@ -1767,12 +1794,42 @@ function App(){
       // 追加された期間のURLトークン逆引きを登録（スタッフURLのO(1)解決用）
       // ここで書いた token は補完（tokensSyncedRef を見る useEffect）にも記録し、同じ値を二重に書かせない
       v.filter(p=>p&&p.urlToken&&!periods.find(op=>op.id===p.id)).forEach(p=>{
-        fbSet(`tokens/${p.urlToken}`, {shopId:sid,periodId:p.id}).catch(()=>{});
-        (tokensSyncedRef.current[sid]||(tokensSyncedRef.current[sid]={}))[p.urlToken]=`${sid}/${p.id}`;
+        const tv=staffUrlTokenRecord(sid,p);
+        fbSet(`tokens/${p.urlToken}`, tv).catch(()=>{});
+        (tokensSyncedRef.current[sid]||(tokensSyncedRef.current[sid]={}))[p.urlToken]=staffUrlTokenSig(tv);
       });
     }
     touchLastActivity();
   },[sid,periods,subs,touchLastActivity]);
+  // スタッフ個別URL（#/m/）を開いた端末を shops/{sid}/pageDevices/{uid} に登録する（2026-10-08）。ルールは、承認済みの個別URLの
+  // 名前（nameGuards のある名前）の提出を、ここに登録した端末だけに許す。開いたときと提出の前に呼ぶ（同じ端末・同じURLなら1回）
+  const pageDeviceRef=useRef(null);
+  const ensurePageDevice=()=>{
+    if(!MY_SCREEN_ENABLED||pageRoute===null||!pageBoot||pageBoot.state!=="shop"||!firebaseDB||DEMO_MODE)return Promise.resolve();
+    const uid=firebaseAuth&&firebaseAuth.currentUser&&firebaseAuth.currentUser.uid;
+    const rec=pageDeviceRecordOf(pageRoute,new Date().toISOString());
+    if(!uid||!rec)return Promise.resolve();
+    const key=`${pageBoot.shopId}/${uid}/${pageRoute}`;
+    if(pageDeviceRef.current&&pageDeviceRef.current.key===key)return pageDeviceRef.current.p;
+    const path=`shops/${pageBoot.shopId}/pageDevices/${uid}`;
+    // 承認前（申請中）は拒否される。失敗は覚えず、次に開いたとき・提出の前にやり直す
+    const p=firebaseDB.ref(path).once("value").then(snap=>{const cur=snap.val();if(cur&&cur.token===pageRoute)return;return fbSet(path,rec);})
+      .catch(e=>{console.warn("個別URLの端末の登録に失敗:",e);if(pageDeviceRef.current&&pageDeviceRef.current.key===key)pageDeviceRef.current=null;});
+    pageDeviceRef.current={key,p};
+    return p;
+  };
+  useEffect(()=>{ensurePageDevice();},[pageRoute,pageBoot,ready]);
+  // 受付期限の補完（2026-10-08）: 期限（expiresAtMs）を持たない・endDate と合わない期間があれば、オーナーの端末が1回だけ書き直す。
+  // 失敗してサーバーの値に戻されても繰り返さない（店舗ごとに1セッション1回）
+  const periodExpiryTriedRef=useRef({});
+  useEffect(()=>{
+    if(!firebaseDB||DEMO_MODE||urlLocked||!ready)return;
+    if(!sid||sid==="default"||ownerClaimedSid!==sid||periodExpiryTriedRef.current[sid])return;
+    if(periods.some(p=>p&&p.shopId&&p.shopId!==sid))return; // 店舗切替直後の古いstate混入を防ぐ
+    if(!periods.some(p=>p&&withPeriodExpiry(p)!==p))return;
+    periodExpiryTriedRef.current[sid]=true;
+    savePeriods(periods);
+  },[periods,sid,ready,urlLocked,ownerClaimedSid,savePeriods]);
   const saveStaff   =useCallback(v=>{ setStaffList(v);ls(storeKey(sid,"staff_v6"),v);    fbW(fbPath(sid,"staff"),v,"staff"); touchLastActivity();   },[sid,touchLastActivity]);
   const saveSubs    =useCallback((v,deletedId=null)=>{
     // vは配列そのもの、または (prevSubs=>newArray) の関数のどちらでも受け付ける。
@@ -1903,6 +1960,16 @@ function App(){
   // ローディング判定より先に出す（urlLocked時はapidが確定しないため、これがないと無限ローディングになる）
   // 店舗に入れた（ready && currentShopId確定）場合は表示しない＝遅延後の初期化成功で自動的に消える
   if(emailLanding) return <EmailLinkFinishScreen landing={emailLanding}/>;
+  if(initError==="expired") return(
+    <div data-staff-url-expired="1" style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"var(--c-bg)",flexDirection:"column",gap:16,padding:24}}>
+      <ShiftyIcon size={64}/>
+      <div style={{color:"var(--c-text)",fontSize:18,fontWeight:700}}>このURLの受付は終了しました</div>
+      <div style={{color:"var(--c-text2)",fontSize:14,lineHeight:1.8,maxWidth:340,textAlign:"left"}}>
+        シフト提出のURLは、その期間の最終日の翌日から使えなくなります。<br/>
+        次の期間のURLは、お店の管理者から受け取ってください。
+      </div>
+    </div>
+  );
   if(initError&&(!ready||!currentShopId)) return(
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"var(--c-bg)",flexDirection:"column",gap:16,padding:24}}>
       <ShiftyIcon size={64}/>
@@ -1924,6 +1991,18 @@ function App(){
       <div style={{color:"var(--c-text3)",fontSize:13}}>データを読み込み中...</div>
     </div>
   );
+
+  // 提出が拒否されたときの理由（2026-10-08）。ルールが止めるのは 確定済み・受付期限切れ・本人だけの名前（nameGuards）の3つ。
+  // 受付期限は endDate から計算し直す（期間に expiresAtMs がまだ書かれていない店舗でも同じ文言にする）
+  const subDeniedMessage=async(currentSid,sub)=>{
+    const period=periods.find(p=>p&&p.id===(sub&&sub.periodId))||null;
+    let guarded=false;
+    try{
+      if(sub&&nameGuardKeyOk(sub.staffName))guarded=(await firebaseDB.ref(`shops/${currentSid}/nameGuards/${sub.staffName}`).once("value")).val()===true;
+    }catch(e){/* 読めなければ縛りの理由は出さない */}
+    const reason=subDeniedReasonOf({period:withPeriodExpiry(period),nowMs:Date.now(),guarded});
+    return reason?SUB_DENIED_MESSAGES[reason]:null;
+  };
 
   // スタッフ画面の提出・削除（募集URLの StaffView と個別URLの提出タブが同じ関数を通す＝二重に実装しない）
   const staffOnSub=sub=>{
@@ -1950,9 +2029,19 @@ function App(){
     // 3) 未確定書き込みの保護: 自分の書き込みがサーバー確認される前に届く value echo で巻き戻らないようにする
     Object.entries(flat).forEach(([p,v])=>{ pendingSubWritesRef.current[p]=v; });
     const path=fbPath(currentSid,"subs");
-    return fbUpd(path, flat)
+    return ensurePageDevice().then(()=>fbUpd(path, flat))
       .then(()=>dlog(sub.isUpdated?"変更保存完了":"提出完了","path=",path,"paths=",Object.keys(flat)))
-      .catch(e=>{console.warn("sub書き込み失敗:",path,e);throw e;})
+      .catch(async e=>{
+        console.warn("sub書き込み失敗:",path,e);
+        // 拒否された提出を画面に残さない（残すと「提出済み」に見えるのに保存されていない）
+        setSubs(prev=>{
+          const a=prevSub?prev.map(s=>s&&s.id===sub.id?prevSub:s):prev.filter(s=>!(s&&s.id===sub.id));
+          ls(storeKey(currentSid,"subs_v6"),a);
+          return a;
+        });
+        if(isPermissionDeniedError(e)){const msg=await subDeniedMessage(currentSid,sub);if(msg)throw Object.assign(new Error(msg),{userMessage:msg});}
+        throw e;
+      })
       .finally(()=>{
         Object.entries(flat).forEach(([p,v])=>{ if(pendingSubWritesRef.current[p]===v)delete pendingSubWritesRef.current[p]; });
       });
@@ -1976,7 +2065,9 @@ function App(){
         ls(storeKey(currentSid,"subs_v6"),back);
         return back;
       });
-      tt("△ この提出を削除できませんでした（通信エラーの可能性があります）");
+      const fallback="△ この提出を削除できませんでした（通信エラーの可能性があります）";
+      if(isPermissionDeniedError(e)&&removed)subDeniedMessage(currentSid,removed).then(m=>tt(m?`△ ${m}`:fallback),()=>tt(fallback));
+      else tt(fallback);
     });
   };
 
