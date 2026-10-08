@@ -2057,6 +2057,9 @@ transfer だけを消す。退社後もスタッフ一覧からは消さない�
   - `genToken`（スタッフURLのトークン）は `crypto.getRandomValues`
   - `_config.yml` で開発用の文書・functions・ルール・テストを GitHub Pages で配信しない（以前は shiftyshifty.app/CLAUDE.md が読めた）。**ただしリポジトリ（aech22/shifty）が公開なので GitHub からは読める**（非公開化はユーザー判断・Pages に有料プランが要る）
   - 通知の購読の endpoint はブラウザの Push サービスだけ（`PUSH_ENDPOINT_RE`）・提出の通知は店舗ごとに1時間60件
+  - **CSP**: index.html の meta（GitHub Pages なのでヘッダーは付けられない）。script-src・connect-src・frame-src を既知の先に限る（Babel のため 'unsafe-eval'・'unsafe-inline' は残る。frame-ancestors は meta では効かない）。**外部の読み込み先・接続先を足すときは CSP にも足す**（回帰 `example-csp.js`＝本物の SDK で dev に接続して違反0件を確かめる）。App Check を有効にするときは reCAPTCHA の許可を足す
+  - **計測の URL の伏せ字**: PostHog の `before_send` と GA の page_location で、#/s/・#/m/ のトークンと oobCode などのクエリを伏せる（index.html の analytics-mask の印の間・`tests/analytics-mask.test.js`・`example-analytics-mask.js`）。PostHog のセッション録画の画面の文字には届かない
+  - **管理端末の一覧・解除・管理コードの作り直し**（設定タブの店舗管理コードの下・オーナーの端末だけ・app-main.js の rotateAdminKey）。解除だけでは管理コードを覚えた端末と企業メンバーは次に開いたとき自動で登録し直されるので、締め出しは作り直しで行う（この端末と企業アカウントは残る）。回帰 `example-admin-devices.js`
 - 残存する既知の設計課題は capability モデル（管理系の書き込みは 2026-07-07 から owners 必須になったが、提出 `subs` の書き込みと個別URL（pageToken）は「URL・shopId を知る者」なら行える）。恒久対応は BACKLOG の「App Check の有効化」を参照
 - ~~`globalTemplates` という state/prop 名の不一致~~ → 2026-08-10 に `shopTemplates` / `setShopTemplates` / `saveShopTemplates` へ改名して解消。**2026-09-28 にテンプレート機能そのもの（UI・購読・保存）を撤去したので、これらの名前もコードには無い**（Firebase の `shops/{shopId}/templates` は残存データのみ）（Firebaseパス `shops/{shopId}/templates` と localStorage キー `templates_v6` は変更なし＝データ移行不要）
 
