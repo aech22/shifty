@@ -30,7 +30,7 @@ async function req(m,p,tok,body){const r=await fetch(`${DB}/${enc(p)}.json?auth=
   await t("A 非オーナー pay 書き","PUT",`${S}/private/pay/__probe`,A,good,401);
   await t("A 非オーナー payCode 読み","GET",`${S}/private/payCode`,A,undefined,401);
   await t("A 非オーナー payCode 書き","PUT",`${S}/private/payCode`,A,{hash,salt:"s"},401);
-  await t("A settings は従来どおり読める(賃金は無い)","GET",`${S}/settings/staffNumbers`,A,undefined,200);
+  await t("A settings は店舗IDだけでは読めない(2026-10-08 から)","GET",`${S}/settings/staffNumbers`,A,undefined,401);
   // オーナー
   await t("B オーナー pay 書き","PUT",`${S}/private/pay/__probe`,B,good,200);
   await t("B オーナー pay 読み","GET",`${S}/private/pay/__probe`,B,undefined,200);

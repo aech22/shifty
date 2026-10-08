@@ -58,9 +58,10 @@ async function req(m, p, tok, body) { const r = await fetch(`${DB}/${enc(p)}.jso
   await t("B 後始末 subs __probeS1(念のため)", "DELETE", `${S}/subs/__probeS1`, B, undefined, 200);
   await t("B 後始末 periods __probeP", "DELETE", `${S}/periods/__probeP`, B, undefined, 200);
   await t("B 後始末 periods __probeC", "DELETE", `${S}/periods/__probeC`, B, undefined, 200);
+  // 残りの確認はオーナー登録を消す前に B で読む（2026-10-08 から店舗のデータは店舗IDだけでは読めない）
+  const left = await (await fetch(`${DB}/${enc(S + "/subs/__probeS1")}.json?auth=${B.tok}`)).json();
   await t("B owners 自己登録の削除", "DELETE", `${S}/owners/${B.uid}`, B, undefined, 200);
   R.push({ label: "後始末の確認(Bはもう非オーナー→laborMonths 401)", status: await req("GET", `${S}/laborMonths`, B.tok), expect: 401 });
-  const left = await (await fetch(`${DB}/${enc(S + "/subs/__probeS1")}.json?auth=${A.tok}`)).json();
   R.push({ label: "後始末の確認(__probeS1 が残っていない)", value: left, ok: left === null });
   console.log(JSON.stringify(R, null, 1));
   console.log("ALL_OK", R.filter(r => "expect" in r).every(r => r.status === r.expect) && left === null);
