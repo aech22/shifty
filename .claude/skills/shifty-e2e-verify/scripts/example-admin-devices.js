@@ -9,6 +9,7 @@
 //   D. 企業アカウントの解除: 確認文に「企業連携タブのログイン」、owners から消える
 //   E. 別の端末（匿名 uid・Cookie の店舗）: 古い管理コードでは登録できず、新しい管理コードで登録できる
 //   F. 閲覧専用の端末（管理者でない）では一覧のカードを出さない
+//   G. 作り直しで owners に残った企業アカウントの端末（作り直す前のキーを控えに持つ）が開き直しても管理者のまま（バグチェック#165）
 // すべてで console.error・pageerror が 0 件、カードは横にはみ出さない。
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-admin-devices.js → allPass=true / EXIT=0
@@ -100,7 +101,7 @@ const gateTry = async (page, code) => {
   const allErrors = [];
   const browser = await pw.chromium.launch({ headless: true });
   try {
-    let dump = null, newKey = null;
+    let dump = null, newKey = null, dumpAfterRotate = null;
     {
       const h = await open(browser, { stub: makeStub({ seed: seed(), uid: "ME", ownerRules: true, view: "admin", tab: "settings" }), adminKeys: { S1: OLD } });
       // A. 一覧
@@ -130,6 +131,7 @@ const gateTry = async (page, code) => {
       C.codeAfter = await shownCode(h.page);
       C.card = await card(h.page);
       R.C = C;
+      dumpAfterRotate = await h.page.evaluate(() => JSON.parse(JSON.stringify(window.__dbDump())));
       // D. 企業アカウントの解除
       const D = {};
       D.clicked = await h.page.evaluate(() => { const b = document.querySelector('[data-admin-device-remove="company_C1"]'); if (!b) return false; b.click(); return true; });
@@ -152,6 +154,24 @@ const gateTry = async (page, code) => {
       // F. この端末は管理者になったので、設定タブにカードが出る（2台）
       E.cardAfter = await waitCount(h.page, 2);
       R.E = E;
+      allErrors.push(...h.errors);
+      await h.context.close();
+    }
+    // G. 作り直しで owners に残った企業アカウントの端末（作り直す前のキーを控えに持つ）: 開き直しても管理者のまま。
+    //    本物のルールは既にオーナーでも古いキーでの書き直しを拒否するので、読み直したキーで登録し直す必要がある（バグチェック#165）
+    {
+      // 企業コードでログインしたセッションと同じく、店舗の一覧は companies/{id}/pub/shops から読む
+      const g = JSON.parse(JSON.stringify(dumpAfterRotate || {}));
+      g.companies = { C1: { pub: { name: "テスト企業", ownerUid: "ME", shops: { S1: true } } } };
+      const h = await open(browser, { stub: makeStub({ seed: g, uid: "company_C1", ownerRules: true, view: "admin", tab: "settings" }), adminKeys: { S1: OLD } });
+      await h.page.waitForTimeout(800);
+      R.G = {
+        gate: await h.page.evaluate(() => !!document.querySelector("[data-admin-code-gate]")),
+        readOnlyBanner: await h.page.evaluate(() => document.body.innerText.includes("管理者として登録されていません")),
+        card: await h.page.evaluate(() => !!document.querySelector("[data-admin-devices]")),
+        owner: await db(h.page, "shops/S1/owners/company_C1"),
+        lsKey: await h.page.evaluate(() => JSON.parse(localStorage.getItem("ots_adminKeys_v1") || "{}").S1),
+      };
       allErrors.push(...h.errors);
       await h.context.close();
     }
@@ -193,6 +213,7 @@ const gateTry = async (page, code) => {
     E_newAccepted: !!(E.neu && E.neu.admin && E.ownersAfter && Object.keys(E.ownersAfter).length === 2),
     E_cardAfter: !!E.cardAfter,
     F_noCardReadOnly: F.card === false,
+    G_companyStaysAdmin: !!(R.G && !R.G.gate && !R.G.readOnlyBanner && R.G.card && R.G.owner === newKeyOf(R) && R.G.lsKey === newKeyOf(R)),
     noErrors: allErrors.length === 0,
     noException: !R.exception,
   };

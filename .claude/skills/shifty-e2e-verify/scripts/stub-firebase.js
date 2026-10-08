@@ -119,7 +119,7 @@ function makeStub(o) {
   var AUTH_SEED=${JSON.stringify(authSeed)};
   // ownerRules:true のとき、database.rules.json の owners と private の規則だけを真似る（2026-10-08・店舗コードの廃止の回帰用）:
   // shops/{sid}/private の読み書きと owners の削除はオーナーだけ、owners/{uid} の書き込みは本人の uid で、値が private/adminKey と
-  // 一致するか既にオーナーのとき、private/adminKey の書き込みはオーナーか、まだオーナーが1人もいない店舗だけ。
+  // 一致するときだけ（既にオーナーでも古いキーでの書き直しは拒否＝本物のルールと同じ）、private/adminKey の書き込みはオーナーか、まだオーナーが1人もいない店舗だけ。
   var OWNER_RULES=${JSON.stringify(ownerRules)};
   var _curUid=function(){ try{ if(AUTH_MODE==="accounts"){ var c=window.__authCur&&window.__authCur(); return c&&c.uid; } return firebase.auth().currentUser&&firebase.auth().currentUser.uid; }catch(e){ return null; } };
   var _isOwner=function(sid,u){ var o=getPath("shops/"+sid+"/owners"); return !!(u&&o&&o[u]!==undefined&&o[u]!==null); };
@@ -136,7 +136,8 @@ function makeStub(o) {
       if(!s[3]) return !_isOwner(sid,u);
       if(v===null||v===undefined) return !_isOwner(sid,u);
       if(s[3]!==u) return true;
-      return !(_isOwner(sid,u)||v===getPath("shops/"+sid+"/private/adminKey"));
+      // 本物のルールは既にオーナーでも「値が現在の private/adminKey と同じ」ことを求める（作り直し前のキーでの書き直しは拒否）
+      return v!==getPath("shops/"+sid+"/private/adminKey");
     }
     return false;
   };
