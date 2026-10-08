@@ -108,13 +108,43 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js" integrity="sha384-xD1t9dGSVKobUztxDkv6xUI0H4AnFz0NxwlgDJJ7FDlblG9xxr1Z9iauCZuJYj6p" crossorigin="anonymous"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js" integrity="sha384-Cn425IPPqYFT0+lUg71+39dOh8zj/Ebpl97FkjUqrd+P37HLlysOYDvdw+N7tPuj" crossorigin="anonymous"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-check-compat.js" integrity="sha384-HTm9DHQcJ0avSI5BWVmeKtm3+YULHbl/wgtLQaMGgYEZLQ8cINY+UF+ZsliUaBvK" crossorigin="anonymous"></script>
-  <!-- Google Analytics GA4 -->
+  <!-- 計測（GA4・PostHog）に送る URL を伏せる（2026-10-08）。スタッフ個別URL（#/m/<token>）は知っている人なら誰でも本人のデータを読める鍵、
+       スタッフURL（#/s/<token>・旧形式 #/<token>・#p=<token>）は提出画面の鍵、メールリンクの oobCode・apiKey・continueUrl・elh は登録の続きに使う値。
+       ハッシュは経路だけ残し（#/s/:token・#/m/:token・#/:token。#/admin・#/demo・#/me はそのまま）、クエリの該当の値は :redacted にする。
+       計測の初期化より前に置く（PostHog の array.js は async で、app-*.js より先に動くことがある）。
+       規則のテストは tests/core.test.js（この script の analytics-mask の印の間を取り出して実行する）、送信の実測は example-analytics-mask.js -->
+  <script>
+    /* analytics-mask:start */
+    function shiftyMaskUrlText(s) {
+      if (typeof s !== "string" || (s.indexOf("#") < 0 && s.indexOf("=") < 0 && s.indexOf("%23") < 0)) return s;
+      return s
+        .replace(/([?&](?:oobCode|apiKey|continueUrl|link|elh|token|code|key|email|pin)=)[^&#\s"'<>]*/gi, "$1:redacted")
+        .replace(/%23%2F(s|m)%2F[^&\s"'<>]*/gi, "%23%2F$1%2F%3Atoken")
+        .replace(/#(\/[^\s"'<>]*|p=[^\s"'<>]*)/g, function (m, r) {
+          if (/^\/(?:admin|demo|me)\/?$/.test(r)) return m;
+          if (/^\/s\//.test(r)) return "#/s/:token";
+          if (/^\/m\//.test(r)) return "#/m/:token";
+          return "#/:token";
+        });
+    }
+    // PostHog の before_send に渡すイベント（properties・$set・$set_once・録画の $snapshot_data を含む）の文字列を全部伏せる
+    function shiftyScrubForAnalytics(v, depth) {
+      if (typeof v === "string") return shiftyMaskUrlText(v);
+      if (!v || typeof v !== "object" || (depth || 0) > 40) return v;
+      if (Array.isArray(v)) { for (var i = 0; i < v.length; i++) v[i] = shiftyScrubForAnalytics(v[i], (depth || 0) + 1); return v; }
+      if (Object.prototype.toString.call(v) !== "[object Object]") return v; // Date・Blob 等はそのまま（素のオブジェクトと配列だけ辿る）
+      for (var k in v) { if (Object.prototype.hasOwnProperty.call(v, k)) v[k] = shiftyScrubForAnalytics(v[k], (depth || 0) + 1); }
+      return v;
+    }
+    /* analytics-mask:end */
+  </script>
+  <!-- Google Analytics GA4。page_location はハッシュを落としクエリを伏せた値で渡す（GA4 は既定でもハッシュを送らない＝以前と同じ。クエリはそのまま送っていた）。page_referrer も伏せる -->
   <script async src="https://www.googletagmanager.com/gtag/js?id=G-P8RP0TG9JG"></script>
   <script>
     window.dataLayer = window.dataLayer || [];
     function gtag(){dataLayer.push(arguments);}
     gtag('js', new Date());
-    gtag('config', 'G-P8RP0TG9JG');
+    gtag('config', 'G-P8RP0TG9JG', { page_location: shiftyMaskUrlText(location.href.split('#')[0]), page_referrer: shiftyMaskUrlText(document.referrer) });
   </script>
   <!-- PostHog Analytics -->
   <script>
@@ -122,6 +152,8 @@
     posthog.init('phc_uN2wUNxmtxYzJJewZXcPeocfwsM4gajCrHzQAzN58EET', {
       api_host: 'https://us.i.posthog.com',
       defaults: '2026-01-30',
+      // 送る直前に URL を伏せる（上の analytics-mask）。伏せられなかったときは送らない（null で捨てる）
+      before_send: function(ev) { try { return shiftyScrubForAnalytics(ev, 0); } catch (e) { return null; } },
       loaded: function(ph) { if (location.hostname === 'localhost') ph.opt_out_capturing(); }
     });
   </script>
