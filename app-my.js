@@ -385,7 +385,7 @@ function EmailLinkFinishScreen({landing}){
             {stage==="form"&&!pending&&<MyField label="メールアドレス" type="email" autoComplete="email" value={f.email} data-my-input="email" onChange={e=>set("email",e.target.value)} onKeyDown={onKey}/>}
             {stage==="form"&&pending&&<div data-email-link-address="1" style={{fontSize:14,color:"var(--c-text2)",marginBottom:12,overflowWrap:"anywhere"}}>{pending.email}</div>}
             {kind==="staff"&&stage==="form"&&<>
-              <MyField label="登録ネーム" value={f.displayName} maxLength={MY_DISPLAY_NAME_MAX} autoComplete="name" data-my-input="displayName" onChange={e=>set("displayName",e.target.value)} hint="お店に登録されている名前と同じにしてください"/>
+              <MyField label="登録ネーム" value={f.displayName} maxLength={MY_DISPLAY_NAME_MAX} autoComplete="name" data-my-input="displayName" placeholder={MY_DISPLAY_NAME_PLACEHOLDER} onChange={e=>set("displayName",e.target.value)} hint="お店に登録されている名前と同じにしてください"/>
               <MyField label="従業員番号（任意）" value={f.number} maxLength={MY_NUMBER_MAX} inputMode="numeric" data-my-input="number" hint={MY_PROFILE_NUMBER_HINT} onChange={e=>set("number",e.target.value)}/>
             </>}
             <MyField label="パスワード" type="password" autoComplete="new-password" value={f.password} data-my-input="password"
@@ -615,6 +615,8 @@ function MyLinksSection({staffUser,profile,shopId}){
 }
 
 // ===== 画面の部品 =====
+// 新規登録の名前の欄に薄く出す見本（2026-10-08 ユーザー指示）
+const MY_DISPLAY_NAME_PLACEHOLDER="シフトに登録されている名前";
 const MY_LABEL={fontSize:12,fontWeight:700,color:"var(--c-text3)",marginBottom:6,display:"block"};
 const MY_SECTION={background:"var(--c-card)",border:"1px solid var(--c-border)",borderRadius:12,padding:"18px 16px",marginBottom:16};
 const MY_SECTION_TITLE={fontSize:14,fontWeight:700,color:"var(--c-text)",marginBottom:14};
@@ -2313,7 +2315,7 @@ function MyAuthScreen({shopId,onClose}){
               onFallback={em=>{set("email",em);setClassic(true);setMsg({});}}/>:<>
             {mode==="register"&&<div data-email-link-fallback="1" style={{fontSize:13,color:"var(--c-text3)",lineHeight:1.7,marginBottom:12}}>確認メールを送れないため、この画面で登録します。</div>}
             {mode==="register"&&<>
-              <MyField label="登録ネーム" value={f.displayName} maxLength={MY_DISPLAY_NAME_MAX} autoComplete="name" data-my-input="displayName" onChange={e=>set("displayName",e.target.value)} hint="お店に登録されている名前と同じにしてください"/>
+              <MyField label="登録ネーム" value={f.displayName} maxLength={MY_DISPLAY_NAME_MAX} autoComplete="name" data-my-input="displayName" placeholder={MY_DISPLAY_NAME_PLACEHOLDER} onChange={e=>set("displayName",e.target.value)} hint="お店に登録されている名前と同じにしてください"/>
               <MyField label="従業員番号（任意）" value={f.number} maxLength={MY_NUMBER_MAX} inputMode="numeric" data-my-input="number" hint={MY_PROFILE_NUMBER_HINT} onChange={e=>set("number",e.target.value)}/>
             </>}
             <MyField label="メールアドレス" type="email" autoComplete="email" value={f.email} data-my-input="email" onChange={e=>set("email",e.target.value)} onKeyDown={onKey}/>
@@ -2534,7 +2536,7 @@ function MyPageRegister({shopId,shopName,initialName,onClose}){
             <p style={{fontSize:14,lineHeight:1.8,color:"var(--c-text2)",marginBottom:16}}>
               自分専用のURLを作ると、次からは名前を入れずに提出でき、自分のシフトとお店のシフト表をいつでも見られます。お店の管理者の承認が必要です。作らなくても、これまでどおり提出できます。
             </p>
-            <MyField label="名前（お店に登録されている名前）" value={f.displayName} maxLength={MY_DISPLAY_NAME_MAX} autoComplete="name" data-my-input="pageDisplayName"
+            <MyField label="名前（お店に登録されている名前）" value={f.displayName} maxLength={MY_DISPLAY_NAME_MAX} autoComplete="name" data-my-input="pageDisplayName" placeholder={MY_DISPLAY_NAME_PLACEHOLDER}
               onChange={e=>setF({...f,displayName:e.target.value})}/>
             <MyField label="従業員番号（任意）" value={f.number} maxLength={MY_NUMBER_MAX} inputMode="numeric" data-my-input="pageNumber"
               onChange={e=>setF({...f,number:e.target.value})}/>
