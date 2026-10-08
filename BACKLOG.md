@@ -45,7 +45,7 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
       CF（notifyNewPeriod・notifyStaffSubmit・notifyDeadlines を create、linkStaffPage・companyRenameStaff を update）→ クライアント。
       shiftyshifty.app/CLAUDE.md・functions/index.js が 404 になったことを確認
 - [x] 2回目（`e4f8018`・版数 20261008-6141385）: CF 10本（sendEmailOtp・verifyEmailOtp・purgeInactiveShops・companyLogin・課金系4本・myPagePin・linkStaffPage）→
-      クライアント（CSP・計測の伏せ字・管理端末・名前の文字の制限・バグチェック#165 の修正）→ ルール（提出の許可制）。
+      クライアント（CSP・計測の伏せ字・管理端末・名前の文字の制限・バグチェック#166 の修正）→ ルール（提出の許可制）。
       ルールの前に本番の subs を読み取り専用で走査（17店舗・976件・12,569日）し、拒否される項目・値が0件であることを確認。
       名前の空白は RTDB の replace() が全部置き換えることを dev で実測（半角・全角の空白を2つ以上含む名前も 200）。
       本番の index.html を実ブラウザで開き、CSP の違反0件・console のエラー0件・Firebase への接続ありを確認
