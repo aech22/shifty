@@ -445,6 +445,10 @@ const cellBgStyleOf=(col,dash)=>{
   if(layers.length){st.backgroundImage=layers.join(",");st.backgroundRepeat="no-repeat";st.backgroundSize="100% 100%";}
   return st;
 };
+// セルの入力の上限。打った文字のうちコマンド以外はメモ（adjustedStartNote / adjustedEndNote）になり、
+// ルール（database.rules.json）がメモを200字までに制限している。超えると saveSubs の1回の update ごと拒否され、
+// 同じ回の他の人のセルも保存されない（画面は保存できたように見える）ので、入力の時点で止める
+const SHIFT_CELL_MAX_LEN=200;
 const ShiftCell=React.memo(function ShiftCell({name,date,field,idleVal,editVal,col,dash,color,hFont,hLh,hKeep,hDay,title,readOnly,isPremium,canEdit,locked,base,cursor,prevDate,nextDate,resetKey,api}){
   const[focused,setFocused]=useState(false);
   const[draft,setDraft]=useState(null);
@@ -461,6 +465,7 @@ const ShiftCell=React.memo(function ShiftCell({name,date,field,idleVal,editVal,c
   },[base,focused,col,dash,color,isPremium,cursor,showHelper,hFont,hLh,hDay]);
   return(
     <input type="text" inputMode="text" value={value} placeholder="--"
+      maxLength={SHIFT_CELL_MAX_LEN}
       title={title}
       data-helper={showHelper?"1":undefined}
       readOnly={readOnly}
