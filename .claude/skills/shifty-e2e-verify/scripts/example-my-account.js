@@ -120,8 +120,20 @@ async function toClassicRegister(h) {
       await click(h, '[data-my-mode="register"]');
       await waitSel(h, '[data-my-auth="register"]');
       await toClassicRegister(h);
-      // 確認用パスワード違い
+      // 推測されやすいパスワード（2026-10-08）: 日付に見える数字・よく使われるものは登録させない
       await setMy(h, "displayName", "　田中 ");
+      await setMy(h, "email", "tanaka@example.com");
+      A.pwHint = await h.evaluate(() => { const i = document.querySelector('[data-my-input="password"]'); const l = i && i.closest("label"); return l ? l.innerText : ""; });
+      await setMy(h, "password", "sakura0315");
+      await setMy(h, "password2", "sakura0315");
+      await click(h, '[data-my-action="submit"]'); await sleep(h, 500);
+      A.weakDate = (await myMsg(h)).join("|");
+      await setMy(h, "password", "Password!!");
+      await setMy(h, "password2", "Password!!");
+      await click(h, '[data-my-action="submit"]'); await sleep(h, 500);
+      A.weakCommon = (await myMsg(h)).join("|");
+      A.anonAfterWeak = (await authCur(h)).isAnonymous === true;
+      // 確認用パスワード違い
       await setMy(h, "number", "０１２");
       await setMy(h, "email", "tanaka@example.com");
       await setMy(h, "password", "pass12345");
@@ -163,6 +175,12 @@ async function toClassicRegister(h) {
       await click(h, '[data-my-action="changePassword"]'); await sleep(h, 500);
       A.pwWrong = (await myMsg(h)).join("|");
       await setMy(h, "pwCurrent", "pass12345");
+      await setMy(h, "pwNext", "tanaka1999x");
+      await setMy(h, "pwNext2", "tanaka1999x");
+      await click(h, '[data-my-action="changePassword"]'); await sleep(h, 500);
+      A.pwWeak = (await myMsg(h)).join("|");
+      await setMy(h, "pwNext", "newpass123");
+      await setMy(h, "pwNext2", "newpass123");
       await click(h, '[data-my-action="changePassword"]'); await sleep(h, 500);
       A.pwOk = (await myMsg(h)).join("|");
       await click(h, '[data-my-action="sendReset"]'); await sleep(h, 500);
@@ -208,6 +226,8 @@ async function toClassicRegister(h) {
       V.A_tabs = JSON.stringify(A.tabs) === JSON.stringify(["マイシフト", "給料", "設定"]) && A.emptyShift && A.who.includes("田中");
       V.A_settings = A.emailShown === "tanaka@example.com" && /保存しました/.test(A.saveMsg) && A.profile2 && A.profile2.displayName === "田中 太郎" && A.profile2.number === "012";
       V.A_password = /現在のパスワードが正しくありません/.test(A.pwWrong) && /パスワードを変更しました/.test(A.pwOk);
+      V.A_weakPassword = /日付に見える数字/.test(A.weakDate) && /よく使われるパスワード/.test(A.weakCommon) && A.anonAfterWeak
+        && /日付に見える数字/.test(A.pwWeak) && /日付に見える数字/.test(A.pwHint);
       V.A_reset = /再設定するメールを送りました/.test(A.resetMsg) && A.resets.includes("tanaka@example.com");
       V.A_closeKeepsStaff = A.backToStaff;
       V.A_reloadStaysStaff = A.afterReloadUid && A.readsAccounts.length === 0 && A.reloadMyView && A.reloadWho;
@@ -297,12 +317,12 @@ async function toClassicRegister(h) {
       E.loginScreen = await waitText(h, "メールアドレスで続ける");
       await clickText(h, "メールアドレスで続ける"); await sleep(h, 200);
       await h.setInput('input[placeholder="メールアドレス"]', "admin@example.com");
-      await h.setInput('input[placeholder="パスワード（6文字以上）"]', "wrongpass");
+      await h.setInput('input[data-admin-pw]', "wrongpass");
       await clickText(h, "ログイン"); await sleep(h, 600);
       E.wrong = await waitText(h, "メールアドレスまたはパスワードが正しくありません（残り9回）", 5000);
       E.emailAttempts = await h.evaluate(() => localStorage.getItem("ots_login_attempts_email"));
       E.staffAttempts = await h.evaluate(() => localStorage.getItem("ots_login_attempts_staff"));
-      await h.setInput('input[placeholder="パスワード（6文字以上）"]', "adminpass1");
+      await h.setInput('input[data-admin-pw]', "adminpass1");
       await clickText(h, "ログイン");
       E.enteredShop = await waitText(h, "管理者画面", 15000);
       E.uid = (await authCur(h)).uid;

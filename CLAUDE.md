@@ -1198,7 +1198,17 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
   メールリンクが使えないときの従来の登録欄（`myRegister`）は、まず匿名 uid に連結を試み（`currentUser.linkWithCredential(EmailAuthProvider.credential(...))`）、
   列挙保護で拒否されたら新しいアカウントを作る。連結が通る環境なら uid が変わらないので
   提出済みの `submitterUid` と一致したまま。別の端末では `signInWithEmailAndPassword` で同じ uid に入り、**成功したら再読み込みする**
-  （匿名 uid から替わるので、購読と App の状態を Phase1 から作り直す）。パスワードは8文字以上（`MY_PASSWORD_MIN`。管理者の登録は6文字のまま）
+  （匿名 uid から替わるので、購読と App の状態を Phase1 から作り直す）。パスワードは8文字以上（`MY_PASSWORD_MIN`。管理者・企業のパスワードも 2026-10-08 から8文字＝`ADMIN_PASSWORD_MIN`）。
+  **推測されやすいパスワードを断る（2026-10-08 ユーザー指示）**: よく使われるもの（一覧・同じ文字の繰り返し・1つずつ上がる下がる並び・前後の数字と記号を外した芯が一覧の語）と、
+  日付に見える連続した数字（8桁＝YYYYMMDD・MMDDYYYY・DDMMYYYY、4桁＝月日 MMDD か西暦 1900〜2099。長い数字の並びの途中も見る）を `myPasswordWeakness`（app-my-utils.js）で断る。
+  入口は `newPasswordError(pw, min)` 1本で、パスワードを**決める**ところすべてが通る: スタッフ（`myRegister`・`myChangePassword`・メールリンクの続きの登録）、
+  管理者（同日の追加指示。ログイン画面の新規登録 `signUpWithEmail`・設定タブのアカウント連携 `signInAndLinkEmail` の新規・メールリンクの admin）、
+  企業のパスワード（企業連携タブの作成と変更）。**ログインには当てない**（既存のパスワードで入れなくなるため・テストで固定）。ヒントは `NEW_PASSWORD_HINT`。
+  **企業のパスワードは CF でも同じ規則**（同日「全て揃えて」）: `createCompany`・`changeCompanyPassword` が `newPasswordErrorCF`（functions/security.js）を通す。
+  一覧・判定・文言は画面と同じで、tests/security.test.js が乱数3000件で `newPasswordError` と同じ答えになることと一覧の一致を照合する（cf-verify は `example-company-password-cf.js`）。
+  **CF は本番未デプロイ**（デプロイまでは画面を通さない直接の呼び出しで6文字が通る）。
+  画面の中の検査しか無いのは Firebase Auth のアカウント（スタッフ・管理者）で、Auth の REST を直接叩く登録と、Firebase が用意するパスワード再設定のページは止められない
+  （止めるには Firebase コンソールのパスワードポリシー。一覧と日付の規則は Firebase 側では表せず、最低文字数と文字の種類だけ）
 - **連結が拒否されたら新しいアカウントとして作る（2026-10-04・`4163394`）**: メールアドレスの列挙保護が有効なプロジェクト（本番・dev とも）では
   `linkWithCredential` が `auth/operation-not-allowed`（"Please verify the new email before changing email"）になる。そのときだけ
   `createUserWithEmailAndPassword` で作り、新しい uid で印と profile を書いて再読み込みする（uid が替わるので、匿名のときの提出の `submitterUid` とは一致しない）。
@@ -1510,7 +1520,7 @@ tests/my.test.js が乱数の入力で一致を照合する。管理者側の UI
 | `sendSurveyEmails` | POST `/sendSurveyEmails` | ユーザーアンケート一斉送信（要秘密トークン） |
 | `createCompany` | Callable `createCompany` | 企業アカウント作成（企業コード発行・パスワードハッシュ保存・作成者オーナー店舗を連携） |
 | `companyLogin` | Callable `companyLogin` | 企業コード＋パスワードで認証しカスタムトークンを発行。**カスタムトークンの署名に、CF の実行サービスアカウントの「サービス アカウント トークン作成者」（`iam.serviceAccounts.signBlob`）が要る**——無いと照合は通るのに `createCustomToken` が `auth/insufficient-permission` で 500 になり、画面は「ログインに失敗しました」だけを出す（2026-09-27 に本番で実際に発生・`firebase functions:log --only companyLogin` で確認）。ログイン画面と企業連携タブの「企業アカウントでログイン」の両方がこれを呼ぶ |
-| `changeCompanyPassword` | Callable `changeCompanyPassword` | 企業パスワード変更。**現在のパスワード（`currentPassword`）を照合してから**変える（2026-09-27）。UI は新しいパスワードを2回入力して一致したときだけ送る。**変更できるのは企業の作成者のアカウント（`pub/ownerUid`）だけ**で、企業コードでログインしたセッション（uid が `company_` で始まる）は `permission-denied`（2026-09-28・判定は `functions/company-config.js` の `canChangeCompanyPassword`）。UI もそのセッションではボタンを出さない |
+| `changeCompanyPassword` | Callable `changeCompanyPassword` | 企業パスワード変更。新しいパスワードは画面と同じ規則（8文字以上・よく使われるもの・日付に見える数字を断る＝`newPasswordErrorCF`・2026-10-08。`createCompany` も同じ）。**現在のパスワード（`currentPassword`）を照合してから**変える（2026-09-27）。UI は新しいパスワードを2回入力して一致したときだけ送る。**変更できるのは企業の作成者のアカウント（`pub/ownerUid`）だけ**で、企業コードでログインしたセッション（uid が `company_` で始まる）は `permission-denied`（2026-09-28・判定は `functions/company-config.js` の `canChangeCompanyPassword`）。UI もそのセッションではボタンを出さない |
 | `renameCompany` | Callable `renameCompany` | 企業名変更（作成者ポインタの表示名も更新） |
 | `linkStoreToCompany` | Callable `linkStoreToCompany` | 管理コード（shopId.adminKey）で店舗を企業に連携（CF は既にオーナーなら shopId だけでも通すが、クライアントは 2026-10-08 から管理コードの形しか送らない） |
 | `saveCompanyConfig` | Callable `saveCompanyConfig` | 企業の共通設定（settings は丸ごと置換）と提出期限（期間ごとの差分）を保存し、連携全店舗の `shops/{sid}/company` を作り直す（2026-09-27）。検証は `functions/company-config.js`（純粋関数・テストで照合） |

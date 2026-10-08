@@ -389,7 +389,7 @@ function EmailLinkFinishScreen({landing}){
               <MyField label="従業員番号（任意）" value={f.number} maxLength={MY_NUMBER_MAX} inputMode="numeric" data-my-input="number" hint={MY_PROFILE_NUMBER_HINT} onChange={e=>set("number",e.target.value)}/>
             </>}
             <MyField label="パスワード" type="password" autoComplete="new-password" value={f.password} data-my-input="password"
-              hint={`${kind==="staff"?MY_PASSWORD_MIN:ADMIN_PASSWORD_MIN}文字以上`} onChange={e=>set("password",e.target.value)} onKeyDown={onKey}/>
+              hint={NEW_PASSWORD_HINT} onChange={e=>set("password",e.target.value)} onKeyDown={onKey}/>
             <MyField label="パスワード（確認）" type="password" autoComplete="new-password" value={f.password2} data-my-input="password2" onChange={e=>set("password2",e.target.value)} onKeyDown={onKey}/>
             <MyMessage {...msg}/>
             <button data-email-link-action="finish" disabled={busy} onClick={submit} style={{...AB,width:"100%",padding:"13px 18px",fontSize:15,opacity:busy?.6:1}}>{busy?"処理中…":"登録する"}</button>
@@ -2227,7 +2227,7 @@ function MySettingsTab({staffUser,me,profile,profileState,initialError,onProfile
         {pwOpen?(
           <div>
             <MyField label="現在のパスワード" type="password" autoComplete="current-password" value={pw.current} data-my-input="pwCurrent" onChange={e=>setPw({...pw,current:e.target.value})}/>
-            <MyField label="新しいパスワード" type="password" autoComplete="new-password" value={pw.next} data-my-input="pwNext" hint={`${MY_PASSWORD_MIN}文字以上`} onChange={e=>setPw({...pw,next:e.target.value})}/>
+            <MyField label="新しいパスワード" type="password" autoComplete="new-password" value={pw.next} data-my-input="pwNext" hint={NEW_PASSWORD_HINT} onChange={e=>setPw({...pw,next:e.target.value})}/>
             <MyField label="新しいパスワード（確認）" type="password" autoComplete="new-password" value={pw.next2} data-my-input="pwNext2" onChange={e=>setPw({...pw,next2:e.target.value})}/>
             <MyMessage {...pwMsg}/>
             <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
@@ -2320,7 +2320,7 @@ function MyAuthScreen({shopId,onClose}){
             </>}
             <MyField label="メールアドレス" type="email" autoComplete="email" value={f.email} data-my-input="email" onChange={e=>set("email",e.target.value)} onKeyDown={onKey}/>
             {mode!=="reset"&&<MyField label="パスワード" type="password" autoComplete={mode==="register"?"new-password":"current-password"} value={f.password} data-my-input="password"
-              hint={mode==="register"?`${MY_PASSWORD_MIN}文字以上`:null} onChange={e=>set("password",e.target.value)} onKeyDown={onKey}/>}
+              hint={mode==="register"?NEW_PASSWORD_HINT:null} onChange={e=>set("password",e.target.value)} onKeyDown={onKey}/>}
             {mode==="register"&&<MyField label="パスワード（確認）" type="password" autoComplete="new-password" value={f.password2} data-my-input="password2" onChange={e=>set("password2",e.target.value)} onKeyDown={onKey}/>}
             <MyMessage {...msg}/>
             <button data-my-action="submit" disabled={busy||!checked} onClick={submit} style={{...AB,width:"100%",padding:"13px 18px",fontSize:15,opacity:busy||!checked?.6:1}}>

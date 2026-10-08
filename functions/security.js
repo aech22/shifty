@@ -125,7 +125,57 @@ function isShopOwnerOf(owners, uid) {
   return !!(o && typeof uid === "string" && uid && Object.prototype.hasOwnProperty.call(o, uid) && o[uid]);
 }
 
+// ------------------------------------------------------------
+// 新しいパスワードの検査（2026-10-08 ユーザー指示「全て揃えて」）
+// ------------------------------------------------------------
+// 画面の newPasswordError（app-my-utils.js）と同じ規則を企業のパスワードの作成・変更（createCompany・changeCompanyPassword）でも当てる。
+// 画面を通さずに Callable を直接呼ぶ変更も止めるため。一覧・判定・文言は app-my-utils.js と同じで、tests/security.test.js が一致を照合する
+const NEW_PASSWORD_MIN_CF = 8;
+const NEW_PASSWORD_MAX_CF = 128;
+const PW_COMMON_MSG_CF = "よく使われるパスワードは使えません。推測されにくいものにしてください";
+const PW_DATE_MSG_CF = "日付に見える数字（19990315・0315・1999 など）を含むパスワードは使えません";
+const PW_COMMON_CF = new Set(["password","password1","password12","password123","passw0rd","p@ssw0rd","p@ssword","12345678","123456789","1234567890","0123456789","87654321","987654321","0987654321","qwertyui","qwertyuiop","qwerty12","qwerty123","qwer1234","1q2w3e4r","1q2w3e4r5t","q1w2e3r4","1qaz2wsx","zaq12wsx","zaq1zaq1","asdfghjk","asdfghjkl","asdf1234","zxcvbnm1","abcd1234","abc12345","aa12345678","a1b2c3d4","iloveyou","sunshine","princess","football","baseball","superman","starwars","trustno1","whatever","computer","internet","welcome1","letmein1","admin123","administrator","changeme","shiftyshifty","ontheshift"]);
+const PW_COMMON_CORES_CF = new Set(["password","passwd","passw0rd","p@ssw0rd","p@ssword","qwerty","qwertyui","qwertyuiop","qwer","asdf","asdfghjk","asdfghjkl","zxcvbnm","abc","abcd","abcdefg","abcdefgh","iloveyou","sunshine","princess","football","baseball","superman","starwars","welcome","letmein","admin","administrator","changeme","shifty","shiftyshifty","ontheshift","myshift"]);
+const _pwHalf = s => String(s == null ? "" : s).replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+const _pwDaysIn = (m, y) => m === 2 ? ((y == null || (y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0))) ? 29 : 28) : ([4, 6, 9, 11].includes(m) ? 30 : 31);
+const _pwYmd = (y, m, d) => y >= 1900 && y <= 2099 && m >= 1 && m <= 12 && d >= 1 && d <= _pwDaysIn(m, y);
+function _pwDate8(t) {
+  const n = i => +t.slice(i, i + 2), y4 = i => +t.slice(i, i + 4);
+  return _pwYmd(y4(0), n(4), n(6)) || _pwYmd(y4(4), n(0), n(2)) || _pwYmd(y4(4), n(2), n(0));
+}
+function _pwDate4(t) {
+  const m = +t.slice(0, 2), d = +t.slice(2, 4), y = +t;
+  return (m >= 1 && m <= 12 && d >= 1 && d <= _pwDaysIn(m, null)) || (y >= 1900 && y <= 2099);
+}
+function passwordHasDateCF(pw) {
+  for (const r of _pwHalf(pw).match(/\d{4,}/g) || []) {
+    for (let i = 0; i + 8 <= r.length; i++) if (_pwDate8(r.slice(i, i + 8))) return true;
+    for (let i = 0; i + 4 <= r.length; i++) if (_pwDate4(r.slice(i, i + 4))) return true;
+  }
+  return false;
+}
+function passwordIsCommonCF(pw) {
+  const s = _pwHalf(pw).toLowerCase();
+  if (PW_COMMON_CF.has(s)) return true;
+  if (/^(.)\1+$/.test(s)) return true;
+  const cs = [...s].map(c => c.codePointAt(0)), st = cs[1] - cs[0];
+  if (cs.length > 1 && Math.abs(st) === 1 && cs.every((c, i) => i === 0 || c - cs[i - 1] === st)) return true;
+  return PW_COMMON_CORES_CF.has(s.replace(/^[^a-z]+|[^a-z]+$/g, ""));
+}
+// 断る理由（無ければ null）。文字列でないものは空のパスワードとして扱う
+function newPasswordErrorCF(pw) {
+  const s = typeof pw === "string" ? pw : "";
+  if (!s) return "パスワードを入力してください";
+  if (s.length < NEW_PASSWORD_MIN_CF) return `パスワードは${NEW_PASSWORD_MIN_CF}文字以上にしてください`;
+  if (s.length > NEW_PASSWORD_MAX_CF) return `パスワードは${NEW_PASSWORD_MAX_CF}文字以内にしてください`;
+  if (passwordIsCommonCF(s)) return PW_COMMON_MSG_CF;
+  if (passwordHasDateCF(s)) return PW_DATE_MSG_CF;
+  return null;
+}
+
 module.exports = {
+  NEW_PASSWORD_MIN_CF, NEW_PASSWORD_MAX_CF, PW_COMMON_MSG_CF, PW_DATE_MSG_CF, PW_COMMON_CF, PW_COMMON_CORES_CF,
+  passwordHasDateCF, passwordIsCommonCF, newPasswordErrorCF,
   EMAIL_OTP_RATE_WINDOW_MS, EMAIL_OTP_RATE_LIMITS, EMAIL_OTP_TTL_MS, EMAIL_OTP_MAX_FAILS, EMAIL_OTP_FAIL_WINDOW_MS,
   EMAIL_OTP_EXHAUSTED_MSG, EMAIL_OTP_INVALID_MSG,
   emailOtpRateStep, emailOtpFailsOf, planEmailOtpSend, planEmailOtpVerify, emailOtpPurgeable, emailOtpRatePurgeable,

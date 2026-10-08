@@ -38,6 +38,19 @@ localhost での Premium テストは `?plan=premium` を URL に追加。
 
 ---
 
+## 🟡 推測されやすいパスワードを断る（2026-10-08・ブランチ `claude/myshift-staff-password-requirements-h2w7re`）の本番反映
+
+**目的**: スタッフ・管理者・企業のパスワードを決めるとき、8文字以上・よく使われるもの・日付に見える数字（8桁・4桁）を断る（ユーザー指示）。ログインには当てない。
+- [ ] develop へマージ → クライアントを本番へ（`/release-to-main`）。画面だけで効く（ルールの変更なし）
+- [ ] CF: `createCompany`・`changeCompanyPassword` を**名指しで**本番へデプロイする（`newPasswordErrorCF`）。クライアントが先でも壊れない（画面が同じ規則で先に断る）
+- [ ] 本番で、スタッフの新規登録・管理者の新規登録・企業のパスワード変更で `sakura0315` が断られることを1回ずつ見る
+- [ ] （任意・ユーザーの作業）Firebase コンソールのパスワードポリシーで最低8文字をサーバー側でも強制するか決める。Auth の REST を直接叩く登録と、
+      Firebase のパスワード再設定のページはこれでしか止められない（一覧と日付の規則は Firebase 側では表せない）
+**検証（コード）**: `npm test` 753件・`npx eslint app-*.js` 0 errors / 189 warnings（変更前と同じ）・E2E（my-account・email-link・company-password・
+company-tab-mobile-fit ほか）・cf-verify `example-company-password-cf.js` 14項目（797f522 の index.js では12項目が落ちる）
+
+---
+
 ## 🟡 2026-10-08 分の本番反映の残り（実機での確認だけ）
 
 **本番反映は2回とも完了**（ユーザー指示「本番反映して」）:

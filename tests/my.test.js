@@ -74,9 +74,57 @@ test("validateMyEmail / validateMyPassword: 形式・8文字以上・確認の�
   assert.strictEqual(m.validateMyEmail(" a@b.jp "), null);
   assert.strictEqual(m.MY_PASSWORD_MIN, 8);
   assert.match(m.validateMyPassword("1234567"), /8文字以上/);
-  assert.strictEqual(m.validateMyPassword("12345678"), null, "確認を渡さなければ一致は見ない（ログイン）");
-  assert.strictEqual(m.validateMyPassword("12345678", "12345679"), "確認用のパスワードが一致しません");
-  assert.strictEqual(m.validateMyPassword("12345678", "12345678"), null);
+  assert.strictEqual(m.validateMyPassword("kumo-hashi7"), null, "確認を渡さなければ一致は見ない");
+  assert.strictEqual(m.validateMyPassword("kumo-hashi7", "kumo-hashi8"), "確認用のパスワードが一致しません");
+  assert.strictEqual(m.validateMyPassword("kumo-hashi7", "kumo-hashi7"), null);
+});
+
+test("myPasswordWeakness: よく使われるパスワードを断る（2026-10-08）", () => {
+  ["password", "Password", "PASSWORD123", "12345678", "１２３４５６７８", "87654321", "qwertyuiop", "1q2w3e4r", "iloveyou", "aaaaaaaa", "11111111", "abcdefgh", "hgfedcba",
+    "Password!!", "!!password", "qwerty2025", "admin12345", "abc12345", "abcd1234", "shifty123", "Shifty!!"].forEach(pw =>
+    assert.strictEqual(m.myPasswordWeakness(pw), m.MY_PASSWORD_COMMON_MSG, pw));
+  // E2E が使うパスワード・ふつうのパスワードは通る
+  ["pass12345", "pass1234", "pass5678", "newpass123", "adminpass1", "otherpass1", "kumo-hashi7", "Tamago!yaki", "sora8kaze3", "passwordless-x"].forEach(pw =>
+    assert.strictEqual(m.myPasswordWeakness(pw), null, pw));
+});
+
+test("myPasswordWeakness: 日付に見える8桁・4桁の連続した数字を断る（2026-10-08）", () => {
+  // 8桁: YYYYMMDD・MMDDYYYY・DDMMYYYY
+  ["19990315", "x20240229y", "03151999", "15031999", "ab１９９９０３１５"].forEach(pw =>
+    assert.strictEqual(m.myPasswordWeakness(pw), m.MY_PASSWORD_DATE_MSG, pw));
+  // 4桁: 月日・西暦。前後に文字や数字が付いていても、長い数字の並びの途中でも断る
+  ["sakura0315", "0229neko", "tora1225!", "inu1999xyz", "neko2099aa", "kame1900", "x9031599y", "abc_1111_x"].forEach(pw =>
+    assert.strictEqual(m.myPasswordWeakness(pw), m.MY_PASSWORD_DATE_MSG, pw));
+  // 日付にならない4桁・3桁以下・離れた数字は通る
+  ["sakura1234", "neko0230aa", "tora1300zz", "inu1899xyz", "neko2100aa", "kame0000xx", "x31y12zz", "ab12cd34ef", "sora999kaze"].forEach(pw =>
+    assert.strictEqual(m.myPasswordWeakness(pw), null, pw));
+  assert.strictEqual(m.myPasswordHasDate("ab12cd34"), false, "離れた2桁ずつは日付として見ない");
+  assert.strictEqual(m.myPasswordHasDate("ab0315cd"), true);
+});
+
+test("パスワードの決め方の入口が推測されやすいパスワードを断り、ログインには当てない（2026-10-08）", () => {
+  assert.strictEqual(m.validateMyPassword("sakura0315", "sakura0315"), m.MY_PASSWORD_DATE_MSG);
+  assert.strictEqual(m.validateMyPassword("password1", "password1"), m.MY_PASSWORD_COMMON_MSG);
+  assert.strictEqual(m.validateEmailLinkPassword("staff", "sakura0315", "sakura0315"), m.MY_PASSWORD_DATE_MSG);
+  assert.strictEqual(m.validateEmailLinkPassword("staff", "password1", "password1"), m.MY_PASSWORD_COMMON_MSG);
+  assert.strictEqual(m.validateEmailLinkPassword("admin", "password1", "password1"), m.MY_PASSWORD_COMMON_MSG, "管理者も同じ規則（2026-10-08）");
+  assert.strictEqual(m.validateEmailLinkPassword("admin", "boss1999x", "boss1999x"), m.MY_PASSWORD_DATE_MSG);
+  const src = fs.readFileSync(path.join(__dirname, "..", "app-my.js"), "utf8");
+  const body = name => { const i = src.indexOf(`async function ${name}(`); assert.ok(i >= 0, name); return src.slice(i, src.indexOf("\nasync function ", i + 1)); };
+  assert.ok(/validateMyPassword\(f\.password,f\.password2\)/.test(body("myRegister")), "登録");
+  assert.ok(/validateMyPassword\(f\.next,f\.next2\)/.test(body("myChangePassword")), "変更");
+  assert.ok(!/validateMyPassword|myPasswordWeakness/.test(body("myLogin")), "ログインには当てない（既存のパスワードで入れなくなる）");
+  assert.ok(m.NEW_PASSWORD_HINT.includes(`${m.MY_PASSWORD_MIN}文字以上`));
+  // 管理者・企業のパスワードを決める入口（app-main.js の登録2つ・app-company.js の企業の作成と変更）も同じ検査を通し、6文字の検査が残っていない
+  const main = fs.readFileSync(path.join(__dirname, "..", "app-main.js"), "utf8");
+  const co = fs.readFileSync(path.join(__dirname, "..", "app-company.js"), "utf8");
+  const seg = (src, start) => { const i = src.indexOf(start); assert.ok(i >= 0, start); return src.slice(i, i + 600); };
+  assert.ok(/newPasswordError\(password,ADMIN_PASSWORD_MIN\)/.test(seg(main, "const signUpWithEmail=async")), "ログイン画面の新規登録");
+  assert.ok(/isSignUp\)\{const pwErr=newPasswordError\(password,ADMIN_PASSWORD_MIN\)/.test(seg(main, "const signInAndLinkEmail=async")), "設定タブのアカウント連携の新規登録");
+  assert.ok(/newPasswordError\(coPw,ADMIN_PASSWORD_MIN\)/.test(co), "企業アカウントの作成");
+  assert.ok(/newPasswordError\(coNewPw,ADMIN_PASSWORD_MIN\)/.test(co), "企業のパスワード変更");
+  assert.ok(!/(?:Pw|pw|password)\.length<6\b|6文字以上/.test(main + co + src), "パスワードの6文字の検査が残っていない（OTP の6桁は別物）");
+  assert.ok(!/newPasswordError|myPasswordWeakness/.test(seg(main, "const signInWithEmail=async")), "管理者のログインには当てない");
 });
 
 test("myAuthErrorMessage: 主なコードを日本語にし、パスワード変更では『現在のパスワード』と言う", () => {
@@ -1852,8 +1900,10 @@ test("メール確認つきの登録: 戻り先の URL・開いた URL の判定
   assert.strictEqual(m.emailLinkPendingFor(rec, "staff", 2000), null, "別の登録の記録は使わない");
   assert.strictEqual(m.emailLinkPendingFor(rec, "admin", 1000 + m.EMAIL_LINK_PENDING_MAX_MS + 1), null, "古い記録は使わない");
   assert.strictEqual(m.validateEmailLinkPassword("staff", "1234567", "1234567"), `パスワードは${m.MY_PASSWORD_MIN}文字以上にしてください`);
-  assert.strictEqual(m.validateEmailLinkPassword("admin", "123456", "123456"), null, "管理者は従来どおり6文字以上");
-  assert.ok(m.validateEmailLinkPassword("admin", "123456", "123457"));
+  assert.strictEqual(m.ADMIN_PASSWORD_MIN, 8, "管理者・企業も 2026-10-08 から8文字以上");
+  assert.strictEqual(m.validateEmailLinkPassword("admin", "1234567", "1234567"), "パスワードは8文字以上にしてください");
+  assert.strictEqual(m.validateEmailLinkPassword("admin", "boss-pass42", "boss-pass42"), null);
+  assert.ok(m.validateEmailLinkPassword("admin", "boss-pass42", "boss-pass43"));
   ["auth/operation-not-allowed", "auth/unauthorized-continue-uri", "auth/invalid-continue-uri", "auth/unauthorized-domain"].forEach(c => assert.ok(m.isEmailLinkFallbackError({ code: c }), c));
   ["auth/invalid-email", "auth/too-many-requests", "auth/network-request-failed"].forEach(c => assert.ok(!m.isEmailLinkFallbackError({ code: c }), c));
   assert.ok(/期限切れ/.test(m.emailLinkErrorMessage({ code: "auth/invalid-action-code" }, "finish")) && /期限切れ/.test(m.emailLinkErrorMessage({ code: "auth/expired-action-code" }, "finish")));

@@ -36,18 +36,27 @@ async function create() {
     await h.page.waitForFunction(() => document.body.innerText.includes("企業アカウントを作成する"), { timeout: 15000 });
     R.confirmField = await h.evaluate(`!!document.querySelector('input[placeholder="パスワード（確認）"]')`);
     // 同じ画面に「企業アカウントでログイン」のカードもあるので、作成フォームの欄と表示切替に絞る
-    R.typeBefore = await h.evaluate(typeOf("パスワード（6文字以上）"));
+    R.typeBefore = await h.evaluate(typeOf("パスワード（8文字以上）"));
     R.toggled = await h.evaluate(toggleShowIn("パスワード（確認）"));
     await h.page.waitForTimeout(150);
-    R.typeAfter = await h.evaluate(typeOf("パスワード（6文字以上）"));
+    R.typeAfter = await h.evaluate(typeOf("パスワード（8文字以上）"));
     await h.evaluate(setVal("例）〇〇フーズ", "テスト企業"));
-    await h.evaluate(setVal("パスワード（6文字以上）", "abc123"));
-    await h.evaluate(setVal("パスワード（確認）", "abc124"));
+    await h.evaluate(setVal("パスワード（8文字以上）", "umikaze-42"));
+    await h.evaluate(setVal("パスワード（確認）", "umikaze-43"));
     await h.clickByText("企業アカウントを作成する");
     await h.page.waitForTimeout(300);
     R.mismatchMsg = await h.evaluate(() => document.body.innerText.includes("パスワードが一致しません"));
     R.cfAfterMismatch = await h.evaluate(cfCalls("createCompany"));
-    await h.evaluate(setVal("パスワード（確認）", "abc123"));
+    // 推測されやすいパスワードは作成させない（2026-10-08）
+    await h.evaluate(setVal("パスワード（8文字以上）", "sakura0315"));
+    await h.evaluate(setVal("パスワード（確認）", "sakura0315"));
+    await h.clickByText("企業アカウントを作成する");
+    await h.page.waitForTimeout(300);
+    R.weakMsg = await h.evaluate(() => document.body.innerText.includes("日付に見える数字"));
+    R.hint = await h.evaluate(() => document.body.innerText.includes("よく使われるものや日付に見える数字"));
+    R.cfAfterWeak = await h.evaluate(cfCalls("createCompany"));
+    await h.evaluate(setVal("パスワード（8文字以上）", "umikaze-42"));
+    await h.evaluate(setVal("パスワード（確認）", "umikaze-42"));
     await h.clickByText("企業アカウントを作成する");
     await h.page.waitForTimeout(600);
     R.cfAfterMatch = await h.evaluate(cfCalls("createCompany"));
@@ -71,21 +80,24 @@ async function change(cfHandlers) {
     await h.clickByText("パスワードを変更する");
     await h.page.waitForTimeout(200);
     R.fields = await h.evaluate(() => ["現在のパスワード", "新しいパスワード", "新しいパスワード（確認）"].map(p => !!document.querySelector(`input[placeholder="${p}"]`)));
-    await h.evaluate(setVal("新しいパスワード", "newpw1"));
-    await h.evaluate(setVal("新しいパスワード（確認）", "newpw1"));
+    await h.evaluate(setVal("新しいパスワード", "newpass-mi7"));
+    await h.evaluate(setVal("新しいパスワード（確認）", "newpass-mi7"));
     await press(); R.noCurrent = await toast();
-    await h.evaluate(setVal("現在のパスワード", "oldpw1"));
-    await h.evaluate(setVal("新しいパスワード（確認）", "newpw2"));
+    await h.evaluate(setVal("現在のパスワード", "oldpass-ki7"));
+    await h.evaluate(setVal("新しいパスワード（確認）", "newpass-mi8"));
     await press(); R.mismatch = await toast();
-    await h.evaluate(setVal("新しいパスワード", "oldpw1"));
-    await h.evaluate(setVal("新しいパスワード（確認）", "oldpw1"));
+    await h.evaluate(setVal("新しいパスワード", "password1"));
+    await h.evaluate(setVal("新しいパスワード（確認）", "password1"));
+    await press(); R.weak = await toast();
+    await h.evaluate(setVal("新しいパスワード", "oldpass-ki7"));
+    await h.evaluate(setVal("新しいパスワード（確認）", "oldpass-ki7"));
     await press(); R.same = await toast();
     R.cfBefore = await h.evaluate(cfCalls("changeCompanyPassword"));
     R.toggled = await h.evaluate(toggleShowIn("新しいパスワード（確認）"));
     await h.page.waitForTimeout(150);
     R.typesShown = await h.evaluate(() => ["現在のパスワード", "新しいパスワード", "新しいパスワード（確認）"].map(p => (document.querySelector(`input[placeholder="${p}"]`) || {}).type));
-    await h.evaluate(setVal("新しいパスワード", "newpw1"));
-    await h.evaluate(setVal("新しいパスワード（確認）", "newpw1"));
+    await h.evaluate(setVal("新しいパスワード", "newpass-mi7"));
+    await h.evaluate(setVal("新しいパスワード（確認）", "newpass-mi7"));
     await press(); R.final = await toast();
     R.cfAfter = await h.evaluate(cfCalls("changeCompanyPassword"));
   } catch (e) { R.exception = e.message; }
@@ -121,14 +133,16 @@ async function companySession() {
     A_confirmField: A.confirmField === true,
     A_showToggles: A.typeBefore === "password" && A.toggled === true && A.typeAfter === "text",
     A_mismatchBlocks: A.mismatchMsg === true && Array.isArray(A.cfAfterMismatch) && A.cfAfterMismatch.length === 0,
-    A_matchCallsCF: !!(A.cfAfterMatch && A.cfAfterMatch.length === 1 && A.cfAfterMatch[0].password === "abc123"),
+    A_weakBlocks: A.weakMsg === true && A.hint === true && Array.isArray(A.cfAfterWeak) && A.cfAfterWeak.length === 0,
+    B_blocksWeak: B.weak === "✕ よく使われるパスワードは使えません。推測されにくいものにしてください",
+    A_matchCallsCF: !!(A.cfAfterMatch && A.cfAfterMatch.length === 1 && A.cfAfterMatch[0].password === "umikaze-42"),
     B_threeFields: !!(B.fields && B.fields.every(Boolean)),
     B_blocksNoCurrent: B.noCurrent === "✕ 現在のパスワードを入力してください",
     B_blocksMismatch: B.mismatch === "✕ 新しいパスワードが一致しません",
     B_blocksSame: B.same === "✕ 現在と同じパスワードです",
     B_noCFBeforeValid: Array.isArray(B.cfBefore) && B.cfBefore.length === 0,
     B_showToggles: !!(B.typesShown && B.typesShown.every(t => t === "text")),
-    B_sendsCurrentAndNew: !!(B.cfAfter && B.cfAfter.length === 1 && B.cfAfter[0].currentPassword === "oldpw1" && B.cfAfter[0].newPassword === "newpw1" && B.cfAfter[0].companyId === CID),
+    B_sendsCurrentAndNew: !!(B.cfAfter && B.cfAfter.length === 1 && B.cfAfter[0].currentPassword === "oldpass-ki7" && B.cfAfter[0].newPassword === "newpass-mi7" && B.cfAfter[0].companyId === CID),
     B_successToast: B.final === "✓ パスワードを変更しました",
     C_wrongCurrentShown: C.final === "✕ 現在のパスワードが正しくありません",
     D_noButtonForCompanySession: D.hasButton === false && D.note === true,

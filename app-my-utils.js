@@ -25,7 +25,7 @@ function isMyRouteHash(h){return /^#\/me\/?$/.test(String(h==null?"":h));}
 const MY_DISPLAY_NAME_MAX=50;
 // 従業員番号は settings.staffNumbers と同じ上限（スタッフ編集モーダルの番号欄が maxLength 8）
 const MY_NUMBER_MAX=8;
-// Firebase の下限は6文字。従業員画面は E5・E6 で本人の給料を扱うので8文字にする（管理者の登録は6文字のまま変えない）
+// Firebase の下限は6文字。従業員画面は E5・E6 で本人の給料を扱うので8文字にする（管理者・企業のパスワードも 2026-10-08 から8文字＝ADMIN_PASSWORD_MIN）
 const MY_PASSWORD_MIN=8;
 
 const _MY_TRIM_RE=/^[\s　]+|[\s　]+$/g;
@@ -67,12 +67,66 @@ function validateMyEmail(e){
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return "メールアドレスの形式が正しくありません";
   return null;
 }
-// pw2 を渡したときだけ一致も見る（ログインは1回入力、登録と変更は確認用の2回目がある）
-function validateMyPassword(pw,pw2){
+// ===== 推測されやすいパスワード（2026-10-08 ユーザー指示）=====
+// パスワードを決めるとき（スタッフ・管理者・企業。登録・続きの登録・変更）だけ通す。ログインには当てない（既存のパスワードで入れなくなるため）。
+// 画面の中の検査なので、Firebase Auth の REST・Cloud Functions を直接呼ぶ登録は止められない（サーバー側の強制は Firebase のパスワードポリシーの領分）
+const NEW_PASSWORD_HINT=`${MY_PASSWORD_MIN}文字以上。よく使われるものや日付に見える数字（0315・1999 など）は使えません`;
+const MY_PASSWORD_COMMON_MSG="よく使われるパスワードは使えません。推測されにくいものにしてください";
+const MY_PASSWORD_DATE_MSG="日付に見える数字（19990315・0315・1999 など）を含むパスワードは使えません";
+// 丸ごと一致で断る（小文字にして比べる）。8文字未満のものは長さの検査で先に落ちるので載せない
+const MY_PASSWORD_COMMON=new Set(["password","password1","password12","password123","passw0rd","p@ssw0rd","p@ssword","12345678","123456789","1234567890","0123456789","87654321","987654321","0987654321","qwertyui","qwertyuiop","qwerty12","qwerty123","qwer1234","1q2w3e4r","1q2w3e4r5t","q1w2e3r4","1qaz2wsx","zaq12wsx","zaq1zaq1","asdfghjk","asdfghjkl","asdf1234","zxcvbnm1","abcd1234","abc12345","aa12345678","a1b2c3d4","iloveyou","sunshine","princess","football","baseball","superman","starwars","trustno1","whatever","computer","internet","welcome1","letmein1","admin123","administrator","changeme","shiftyshifty","ontheshift"]);
+// 前後の数字・記号を外した芯がこれなら断る（"Password!!"・"qwerty2025" など）
+const MY_PASSWORD_COMMON_CORES=new Set(["password","passwd","passw0rd","p@ssw0rd","p@ssword","qwerty","qwertyui","qwertyuiop","qwer","asdf","asdfghjk","asdfghjkl","zxcvbnm","abc","abcd","abcdefg","abcdefgh","iloveyou","sunshine","princess","football","baseball","superman","starwars","welcome","letmein","admin","administrator","changeme","shifty","shiftyshifty","ontheshift","myshift"]);
+function _myPwDaysIn(m,y){return m===2?(y==null||(y%4===0&&(y%100!==0||y%400===0))?29:28):[4,6,9,11].includes(m)?30:31;}
+function _myPwValidYmd(y,m,d){return y>=1900&&y<=2099&&m>=1&&m<=12&&d>=1&&d<=_myPwDaysIn(m,y);}
+// 8桁: YYYYMMDD・MMDDYYYY・DDMMYYYY のどれかで実在する日付
+function _myPwDate8(t){
+  const n=i=>+t.slice(i,i+2),y4=i=>+t.slice(i,i+4);
+  return _myPwValidYmd(y4(0),n(4),n(6))||_myPwValidYmd(y4(4),n(0),n(2))||_myPwValidYmd(y4(4),n(2),n(0));
+}
+// 4桁: 月日（MMDD・2月29日を含む）か西暦（1900〜2099）
+function _myPwDate4(t){
+  const m=+t.slice(0,2),d=+t.slice(2,4),y=+t;
+  return (m>=1&&m<=12&&d>=1&&d<=_myPwDaysIn(m,null))||(y>=1900&&y<=2099);
+}
+// 数字の並びの中のどの位置の8桁・4桁も見る（"ab0315cd"・"x199903150" のように前後に文字・数字が付いていても断る）
+function myPasswordHasDate(pw){
+  const runs=toHalfWidthDigits(pw).match(/\d{4,}/g)||[];
+  for(const r of runs){
+    for(let i=0;i+8<=r.length;i++)if(_myPwDate8(r.slice(i,i+8)))return true;
+    for(let i=0;i+4<=r.length;i++)if(_myPwDate4(r.slice(i,i+4)))return true;
+  }
+  return false;
+}
+function myPasswordIsCommon(pw){
+  const s=toHalfWidthDigits(pw).toLowerCase();
+  if(MY_PASSWORD_COMMON.has(s))return true;
+  if(/^(.)\1+$/.test(s))return true;
+  // 1つずつ上がる・下がるだけの並び（abcdefgh・12345678・87654321）
+  const cs=[...s].map(c=>c.codePointAt(0)),st=cs[1]-cs[0];
+  if(cs.length>1&&Math.abs(st)===1&&cs.every((c,i)=>i===0||c-cs[i-1]===st))return true;
+  const core=s.replace(/^[^a-z]+|[^a-z]+$/g,"");
+  return MY_PASSWORD_COMMON_CORES.has(core);
+}
+// 推測されやすいパスワードとして断る理由（無ければ null）。長さは見ない（newPasswordError が先に見る）
+function myPasswordWeakness(pw){
+  const s=String(pw==null?"":pw);
+  if(myPasswordIsCommon(s))return MY_PASSWORD_COMMON_MSG;
+  if(myPasswordHasDate(s))return MY_PASSWORD_DATE_MSG;
+  return null;
+}
+// 新しいパスワードの長さと推測されやすさ（無ければ null）。パスワードを決める入口すべて（スタッフ・管理者・企業）が通る
+function newPasswordError(pw,min){
   const s=String(pw==null?"":pw);
   if(!s) return "パスワードを入力してください";
-  if(s.length<MY_PASSWORD_MIN) return `パスワードは${MY_PASSWORD_MIN}文字以上にしてください`;
-  if(pw2!==undefined&&s!==String(pw2==null?"":pw2)) return "確認用のパスワードが一致しません";
+  if(s.length<min) return `パスワードは${min}文字以上にしてください`;
+  return myPasswordWeakness(s);
+}
+// pw2 を渡したときだけ一致も見る（登録と変更は確認用の2回目がある）。ログインはこの関数を通さない
+function validateMyPassword(pw,pw2){
+  const e=newPasswordError(pw,MY_PASSWORD_MIN);
+  if(e) return e;
+  if(pw2!==undefined&&String(pw)!==String(pw2==null?"":pw2)) return "確認用のパスワードが一致しません";
   return null;
 }
 
@@ -165,14 +219,12 @@ function emailLinkPendingFor(rec,kind,nowMs){
   if(!(at>0)||Number(nowMs)-at>EMAIL_LINK_PENDING_MAX_MS)return null;
   return rec;
 }
-// 管理者のパスワードは従来どおり6文字以上（スタッフは MY_PASSWORD_MIN）
-const ADMIN_PASSWORD_MIN=6;
+// 管理者（店舗のメールアカウント）と企業のパスワード。2026-10-08 に6文字からスタッフと同じ8文字・同じ規則にした（ユーザー指示）
+const ADMIN_PASSWORD_MIN=8;
 function validateEmailLinkPassword(kind,pw,pw2){
-  const min=kind==="staff"?MY_PASSWORD_MIN:ADMIN_PASSWORD_MIN;
-  const s=String(pw==null?"":pw);
-  if(!s)return"パスワードを入力してください";
-  if(s.length<min)return`パスワードは${min}文字以上にしてください`;
-  if(s!==String(pw2==null?"":pw2))return"確認用のパスワードが一致しません";
+  const e=newPasswordError(pw,kind==="staff"?MY_PASSWORD_MIN:ADMIN_PASSWORD_MIN);
+  if(e)return e;
+  if(String(pw)!==String(pw2==null?"":pw2))return"確認用のパスワードが一致しません";
   return null;
 }
 // 送信・続きの登録のエラー文言。phase は "send"|"finish"|"password"
@@ -2103,7 +2155,7 @@ function myAllShiftStack(choices,sel){
 }
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={NAME_GUARD_KEY_BAD,nameGuardKeyOk,desiredNameGuards,planNameGuards,pageDeviceRecordOf,SUB_DENIED_MESSAGES,subDeniedReasonOf,EMAIL_LINK_PENDING_LS,EMAIL_LINK_KINDS,EMAIL_LINK_PENDING_MAX_MS,EMAIL_LINK_RESEND_WAIT_MS,EMAIL_LINK_FALLBACK_CODES,isEmailLinkFallbackError,emailLinkSafeHash,emailLinkContinueUrl,parseEmailLinkLanding,emailLinkReturnHash,emailLinkCleanUrl,emailLinkPendingRecord,emailLinkPendingFor,ADMIN_PASSWORD_MIN,validateEmailLinkPassword,emailLinkErrorMessage,MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
+  module.exports={NAME_GUARD_KEY_BAD,nameGuardKeyOk,desiredNameGuards,planNameGuards,pageDeviceRecordOf,SUB_DENIED_MESSAGES,subDeniedReasonOf,EMAIL_LINK_PENDING_LS,EMAIL_LINK_KINDS,EMAIL_LINK_PENDING_MAX_MS,EMAIL_LINK_RESEND_WAIT_MS,EMAIL_LINK_FALLBACK_CODES,isEmailLinkFallbackError,emailLinkSafeHash,emailLinkContinueUrl,parseEmailLinkLanding,emailLinkReturnHash,emailLinkCleanUrl,emailLinkPendingRecord,emailLinkPendingFor,ADMIN_PASSWORD_MIN,validateEmailLinkPassword,emailLinkErrorMessage,MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,NEW_PASSWORD_HINT,newPasswordError,MY_PASSWORD_COMMON_MSG,MY_PASSWORD_DATE_MSG,MY_PASSWORD_COMMON,MY_PASSWORD_COMMON_CORES,myPasswordHasDate,myPasswordIsCommon,myPasswordWeakness,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
     MY_LINK_METHOD_LABELS,linkNumberKey,linkNameKey,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,MY_STAFF_LINK_OPS_MAX,staffLinkOpOf,staffLinksAsOf,planStaffLinkOp,enqueueStaffLinkOp,MY_STAFF_LINK_PENDING_MSG,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
     myHelperDaysOf,myHelperShiftEntries,myMergeHelperEntries,myMovedHelperDates,myHelperTimesIn,myMovedDatesIn,
