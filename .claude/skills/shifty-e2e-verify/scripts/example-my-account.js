@@ -223,7 +223,7 @@ async function toClassicRegister(h) {
       V.A_errors = /確認用のパスワードが一致しません/.test(A.mismatch) && /このメールアドレスは既に使われています/.test(A.taken) && A.stillAnonAfterErrors;
       V.A_registerSameUid = A.myView && A.sameUid && A.linked && A.tokenRefreshed && !!A.mark && A.mark.uid === uid0;
       V.A_profile = !!A.profile && A.profile.displayName === "田中" && A.profile.number === "012" && typeof A.profile.updatedAt === "string";
-      V.A_tabs = JSON.stringify(A.tabs) === JSON.stringify(["マイシフト", "給料", "設定"]) && A.emptyShift && A.who.includes("田中");
+      V.A_tabs = JSON.stringify(A.tabs) === JSON.stringify(["マイシフト", "提出", "給料", "設定"]) && A.emptyShift && A.who.includes("田中");
       V.A_settings = A.emailShown === "tanaka@example.com" && /保存しました/.test(A.saveMsg) && A.profile2 && A.profile2.displayName === "田中 太郎" && A.profile2.number === "012";
       V.A_password = /現在のパスワードが正しくありません/.test(A.pwWrong) && /パスワードを変更しました/.test(A.pwOk);
       V.A_weakPassword = /日付に見える数字/.test(A.weakDate) && /よく使われるパスワード/.test(A.weakCommon) && A.anonAfterWeak
