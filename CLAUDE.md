@@ -2091,9 +2091,9 @@ transfer だけを消す。退社後もスタッフ一覧からは消さない�
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-10-04 自動実行 #164）
+## Shifty バグチェックレポート（2026-10-08 自動実行 #165）
 
-> 着手時の HEAD は `4edc06f`。#163（`456e6a9`）以降のコード変更は次のとおり。K1（保存ボタンのラベル）・K2（Excel の名前行を縦書き）・S1〜S3（シフト作成タブの高速化。セルを `ShiftCell` に分離し、重い計算を後回しにする）・H1（2セル表示用の店舗略称）・H2（ヘルプ勤務の表示）・企業連携タブの select のはみ出し修正（`b878640`）・tokens 補完の重複書き込みの修正（`af8845a`）。対象は app-*.js の7ファイルと index.html で、database.rules.json と functions/ に差分は無い。
+> 着手時の HEAD は `fe3bbe6`。#164（`4edc06f`）以降に163コミット。主な変更は従業員画面（app-my.js・app-my-utils.js）、通知（functions/notify.js・Web Push の CF 3本）、セキュリティ強化（subs の許可制ルール・CSP・計測の伏せ字・管理端末の一覧と管理コードの作り直し・CF の試行回数制限）、労務の紫セルの基準変更、入社日・退社日。
 
 ### 修正済み
 
@@ -2101,22 +2101,18 @@ transfer だけを消す。退社後もスタッフ一覧からは消さない�
 
 ### 要確認（未修正）
 
-- **[🟢] 配信版数が app-*.js の変更に追随していない。** index.html の7箇所と app-core.js の `build:` は `20261003-f053304` のままだが、app-*.js はその後 `af8845a` まで変わっている。次のリリースで `/release-to-main` の手順どおりバンプすれば足りる。
-- **[🟢] H1 の2セル用略称を他店舗の settings へ差分 update で書くので、その店舗の端末が古い settings のまま全体 set() で保存すると消える。** 既存の BACKLOG「settings / staff / templates は今も全体 set()」と同じ根なので、新しくは起票しない。
-- **[🟢] tokens 補完は、一度「サーバーと同じ」と確かめた token を、そのセッションの間は読み直さない。** 他の端末が同じ token を消しても、このセッションでは書き戻さない。以前は periods が変わるたびに書き戻していた。意図された変更で、次のセッションでは補完される。
-- **[🟢] #158 から継続の4件と、#163 の F6③（従業員番号を使っていない店舗で「従業員番号が未設定」が全員に出る）・月次賃金の翌月期間なしの週の法定休日・`.cursorrules` の未コミット変更。** 状態は同じ。
+- **[🟢] develop に本番未反映のコミットが20件ある。** origin/main..HEAD にセキュリティ強化（subs の許可制ルール `b107087`・CF の試行回数制限・verifyShopOwner の未claim 拒否・CSP）とマイシフト登録の表示が入っている。配信版数は `20261008-8328670` のままで、app-*.js・index.html が版数より後に変わっている。subs のルールは既存パスの締め付けなので CLAUDE.md の順（クライアント → ルール → CF）で `/release-to-main` を通せば閉じる。BACKLOG 化はしない。
+- **[🟢] lint の warnings が 119 から 184 に増えた。** 全件 no-unused-vars（ファイルをまたぐコンポーネントと定数の誤検知）で、errors は0件。
+- **[🟢] SVG の属性に `var()` を書いた箇所が2件**（app-staff.js:148 の `fill`、app-my.js:1799 の `stroke`）。後者を WebKit で実測した記録はまだ無い。
+- **[🟢] #158 から継続の4件・#163 の F6③・`.cursorrules` の未コミット変更。** 状態は同じ。
 
 ### 異常なし
 
-- **tokens 補完（app-main.js）**: 条件に足された `ownerClaimedSid` は 1184 行目の useState で宣言されており、補完の useEffect（1320 行目付近）より前にあるので TDZ にはならない。tokens の読みはルールで `auth != null`。新規期間の token は savePeriods が書いたときに記録され、二重に書かない。期間を消したときは記録も消す。
-- **セルの分離と計算の後回し（app-shift.js）**: 保存（`flushEdits`）・PDF・Excel は入力中の文字を `editsNow()` で拾う。確定（`confirmJob`）・Excel・PDF・非表示マウントの報告・laborTotals の書き込みは、どれも `calcPending` が解けた描画で動く。店舗切替と期間切替は `discardEdits` で、セルの入力中の文字を `resetKey` で捨てる。IME の確定の Enter は従来どおり除外されている。
-- **ヘルプ表示（app-utils.js の `helperCellDisplay`）と2セル略称（`shopAbbr2Of`・`shopAbbr2Error`）**: 予約語の検査は1セル用と同じ `isReservedShopAbbr` を通す。2セル用は `abbrToShop` にも期間の写しにも入らない。他店舗への保存は `fbUpd` の差分 update で、拒否されたら読み直す。
-- `npm test` **530件パス**・`npx eslint app-*.js` **0 errors / 119 warnings**（#163 の 116 から +3。S2 の新しいコンポーネント2つの no-unused-vars と S3 の `CalcPendingNote` で、どれも既存のコンポーネントと同じ扱い）。
-- `DEV_MODE` は式のまま。読み込み順は7ファイルとも正しい（utils→core→staff→admin→shift→company→main）。Babel を通る最大のファイルは app-shift.js の 286,687 字（上限 500,000 字）。フォーム部品149件で `fontSize` 16未満は0件。未定義の CSS 変数・`subs`/`periods` の全体 set()・functions/ の `.delete()` は0件。
-- **Firebase・Stripe・本番データには一切アクセスしていない。** 実ブラウザの回帰は今回回していない（各コミットの作業で S2・S3・H1・H2 の回帰スクリプトが EXIT=0 だったことは BACKLOG の完了記録にあるが、このループでは再実行していない）。
+- 通知の CF（notifyStaffSubmit）は `after.periodId` をパスに埋め込むが、ルールが subs の periodId を `^[A-Za-z0-9_-]+$`・64字以内に限っているので Admin SDK の空セグメントの詰め（#125 の形）は起きない。secrets は通知3本とも `VAPID_PRIVATE_KEY` を持つ。
+- `npm test` **739件パス**・`npx eslint app-*.js` **0 errors / 184 warnings**・functions/*.js の構文チェックはすべて通過。
+- `DEV_MODE` は式のまま。読み込み順は9ファイルとも正しい。Babel を通る最大のファイルは app-company.js の 225,150 字。SRI は11本。未定義の CSS 変数は0件で、ダーク定義の2箇所も一致。フォーム部品162件で fontSize 16 未満は0件。subs・periods の全体 set()・global/shops の一覧読み・`".read": true`・functions の `.delete()` は0件。削除の filter 3か所はどれも deletedId を渡すか remove() を呼んでいる。
+- **Firebase・Stripe・本番データには一切アクセスしていない。** 実ブラウザの回帰は今回回していない。
 
-**申し送り**:
-- スケジュールタスクの PHASE 2〜4 の grep はいまも削除済みの `app.js` を対象にしている（20回目）。今回も app-*.js に読み替えた。
 <!-- BUG_CHECK_LATEST_END -->
 
 ---
