@@ -793,7 +793,7 @@ function SmModal({subs,periods,apid,onClose,staffList,onEditSub,onEditByName,onD
   const dataColRef=useRef();
 
   return(
-    <div style={{position:"fixed",inset:0,background:"var(--c-card)",zIndex:300,display:"flex",flexDirection:"column",animation:"fI .2s"}}>
+    <div data-sm-modal="1" style={{position:"fixed",inset:0,background:"var(--c-card)",zIndex:300,display:"flex",flexDirection:"column",animation:"fI .2s",borderTop:"var(--safe-top,0px) solid var(--c-card)"}}>
       <div style={{background:"var(--c-accent)",padding:"12px 16px",flexShrink:0,boxShadow:"0 2px 8px rgba(248,112,54,.3)"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
           <div>

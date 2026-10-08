@@ -656,7 +656,7 @@ function MyTabBar({tab,onTab,tabs=MY_TABS}){
 
 function MyHeader({title,onClose}){
   return(
-    <header style={{background:"var(--c-card)",borderBottom:"1px solid var(--c-border)",position:"sticky",top:0,zIndex:40}}>
+    <header style={{background:"var(--c-card)",borderBottom:"1px solid var(--c-border)",position:"sticky",top:"var(--sticky-top,0px)",zIndex:40}}>
       <div style={{maxWidth:560,margin:"0 auto",padding:"0 16px",minHeight:52,display:"flex",alignItems:"center",gap:12}}>
         {onClose&&<button data-my-close="1" onClick={onClose} style={{background:"none",border:"none",color:"var(--c-text2)",fontSize:14,fontWeight:600,cursor:"pointer",padding:"10px 0",whiteSpace:"nowrap"}}>← 提出画面</button>}
         <div style={{fontSize:17,fontWeight:700,color:"var(--c-text)",minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{title}</div>

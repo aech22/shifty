@@ -279,6 +279,7 @@ const sharedGlobals = {
   AC: "writable",
   AD: "writable",
   AGray: "writable",
+  SAFE_TOP_OVERLAY: "writable",
   AI: "writable",
   AL: "writable",
   AT: "writable",

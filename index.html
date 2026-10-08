@@ -219,6 +219,12 @@
     body{font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Yu Gothic',sans-serif;background:var(--c-bg);color:var(--c-text);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;text-size-adjust:100%;}
     /* iOS Safariのsafe-area対応（ノッチ・ホームバー） */
     body{padding-bottom:env(safe-area-inset-bottom,0);}
+    /* 上側の safe-area（2026-10-08）。viewport-fit=cover のため、ホーム画面に追加したアプリ（standalone）では
+       ページがステータスバーの裏から描かれ、上端の要素（提出するお店の帯など）が隠れていた。
+       --safe-top はステータスバーの高さ（通常の Safari・PC では 0）。--sticky-top は上に貼り付く見出しの止まる位置で、
+       全画面の重ね表示（app-main.js の data-my-overlay 等）は自分の上端に帯を持つので、その中では 0px に上書きする */
+    :root{--safe-top:env(safe-area-inset-top,0px);--sticky-top:var(--safe-top);}
+    body{padding-top:var(--safe-top);}
     /* iOS Safariのposition:sticky対応 */
     .sticky-header{position:-webkit-sticky;position:sticky;}
     /* Androidのタップハイライトを無効化 */

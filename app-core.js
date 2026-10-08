@@ -319,3 +319,7 @@ const AB={padding:"10px 18px",background:"var(--c-accent)",border:"none",borderR
 // 密度を優先して据え置き、取り返しのつかない操作だけ指1本ぶんの距離を確保する。
 const AD={padding:"6px 11px",background:"rgba(255,71,87,.1)",border:"1px solid rgba(255,71,87,.25)",borderRadius:4,color:"#FF4757",fontSize:12,fontWeight:600,cursor:"pointer",marginLeft:10};
 const AGray={padding:"10px 16px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text2)",fontSize:14,cursor:"pointer"};
+// 全画面の重ね表示（position:fixed・inset:0 でスクロールするもの）の上端（2026-10-08）。ホーム画面に追加したアプリでは
+// 画面がステータスバーの裏から描かれるので、ステータスバーの高さ（--safe-top・index.html）の帯を上に置き、
+// 中の上に貼り付く見出しは帯の下（--sticky-top を 0px）で止める。通常の Safari・PC では帯の高さは 0
+const SAFE_TOP_OVERLAY={borderTop:"var(--safe-top,0px) solid var(--c-bg)","--sticky-top":"0px"};

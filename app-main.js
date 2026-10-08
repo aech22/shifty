@@ -2350,19 +2350,19 @@ function App(){
       </div>}
       {appToast&&<div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:1000,background:"var(--c-card)",backdropFilter:"blur(10px)",color:"var(--c-text)",padding:"10px 20px",borderRadius:12,fontSize:14,fontWeight:500,border:"1px solid var(--c-border2)",boxShadow:"0 4px 16px var(--c-shadow)",whiteSpace:"nowrap"}}>{appToast}</div>}
       {/* 従業員画面（第2部 E1）をスタッフURLの画面から開いたとき。提出画面は下に残す（入力途中の希望を消さない）＝重ねて表示する */}
-      {MY_SCREEN_ENABLED&&myOpen&&!pageOverlay&&urlLocked&&<div data-my-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
+      {MY_SCREEN_ENABLED&&myOpen&&!pageOverlay&&urlLocked&&<div data-my-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)",...SAFE_TOP_OVERLAY}}>
         <MyView staffUser={staffUser} onStaffUser={setStaffUser} shopId={sid!=="default"?sid:null} onClose={closeMyOverlay}/>
       </div>}
       {/* 募集URLの画面の「マイシフト」で、この端末が知っている使える個別URLがあれば個別URLの画面を重ねる（2026-10-04・アドレスバーは #/m/<token>） */}
-      {MY_SCREEN_ENABLED&&pageOverlay&&urlLocked&&sid!=="default"&&<div data-my-overlay="page" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
+      {MY_SCREEN_ENABLED&&pageOverlay&&urlLocked&&sid!=="default"&&<div data-my-overlay="page" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)",...SAFE_TOP_OVERLAY}}>
         <MyPageView token={pageOverlay} boot={{state:"shop",shopId:sid}} shopId={sid} shopName={shop?.name||""} periods={periods} settings={effectiveSettings}
           staffList={staffList} subs={subs} plan={plan} syncStatus={syncStatus} onSub={staffOnSub} onDeleteSub={staffOnDeleteSub} onClose={closeMyOverlay} staffUser={staffUser}/>
       </div>}
       {/* 個別URLの申請（2026-10-04）。提出画面は下に残す（入力途中の希望を消さない）＝マイシフトと同じく重ねて表示する */}
-      {MY_SCREEN_ENABLED&&pageRegName!==null&&urlLocked&&sid!=="default"&&<div data-page-register-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
+      {MY_SCREEN_ENABLED&&pageRegName!==null&&urlLocked&&sid!=="default"&&<div data-page-register-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)",...SAFE_TOP_OVERLAY}}>
         <MyPageRegister shopId={sid} shopName={shop?.name||""} initialName={pageRegName} onClose={()=>setPageRegName(null)}/>
       </div>}
-      {MY_SCREEN_ENABLED&&pageRecoverOpen&&urlLocked&&<div data-page-recover-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
+      {MY_SCREEN_ENABLED&&pageRecoverOpen&&urlLocked&&<div data-page-recover-overlay="1" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)",...SAFE_TOP_OVERLAY}}>
         <MyPageRecoverScreen onClose={()=>setPageRecoverOpen(false)}/>
       </div>}
       {/* 同期ステータスバー（接続中以外のみ表示） */}
@@ -2370,7 +2370,7 @@ function App(){
         {syncStatus==="offline"?"オフライン（再接続中...）":syncStatus==="no_config"?"Firebase未設定":"接続中..."}
       </div>}
       {/* タブ: URLロック時はスタッフ画面のみ表示 */}
-      {!urlLocked&&<div style={{display:"flex",position:"sticky",top:0,zIndex:100,boxShadow:"0 2px 8px rgba(0,0,0,.15)"}}>
+      {!urlLocked&&<div style={{display:"flex",position:"sticky",top:"var(--sticky-top,0px)",zIndex:100,boxShadow:"0 2px 8px rgba(0,0,0,.15)"}}>
         <button onClick={()=>setView("staff")} style={{flex:1,padding:"13px 0",border:"none",cursor:"pointer",fontSize:14,fontWeight:700,background:view==="staff"?"var(--c-accent)":"#1A1A2E",color:"white"}}>スタッフ画面</button>
         <button onClick={()=>setView("admin")} style={{flex:1,padding:"13px 0",border:"none",cursor:"pointer",fontSize:14,fontWeight:700,background:view==="admin"?"#16213E":"#111827",color:"white"}}>管理者画面</button>
       </div>}
