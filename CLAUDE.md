@@ -2129,27 +2129,25 @@ transfer だけを消す。退社後もスタッフ一覧からは消さない�
 > 全履歴: `/Users/hiroshi/Documents/Obsidian Vault/Projects/Shifty/バグチェックログ.md`
 
 <!-- BUG_CHECK_LATEST_START -->
-## Shifty バグチェックレポート（2026-10-08 自動実行 #166）
+## Shifty バグチェックレポート（2026-10-08 自動実行 #167）
 
-> 着手時の HEAD は `69511e8`。同日の #165 の静的検査に加え、サブエージェント2つで「subs の許可制ルールとクライアントが書く値」と「2026-10-08 の CF・管理端末まわり」を点検した。修正2件は同日の本番反映（版数 20261008-6141385 以降）に入っている（コミットメッセージには誤って #165 とある）。
+> 着手時の HEAD は `7e2d0d5`。#166 以降の26コミット（提出の監査 `auditSubWrite`・人単位の縛り `nameGuards`／`pageDevices`・募集URLの受付期限 `expiresAtMs`・firebase-admin 14／firebase-functions 7 への更新・App Check）を点検した。
 
 ### 修正済み
 
-- **[🟡] 管理コードを作り直したあと、owners に残した企業アカウントの端末が管理コードの入力画面で止まる**（app-main.js の `claimOwnership`・`2dd25d8`）。ルールは既にオーナーでも現在の adminKey と同じ値しか書かせないので、古いキーの控えでの再登録が拒否されていた。拒否されたら `private/adminKey` を読み直し、外されていれば `claimViaCompany` で戻る（キーは生成しない）。回帰 `example-admin-devices.js` の場面G（修正前 EXIT=1）。スタブの owners 規則も本物に合わせた（以前は既にオーナーなら値が違っても書けたので再現できなかった）。
-- **[🟡] シフト作成タブのセルに201字以上入れると許可制ルールに保存を拒否される**（app-shift.js の `ShiftCell`・`09ad9c4`）。メモの上限200字に合わせ入力欄を `maxLength=200` にした。拒否は saveSubs の1回の update ごとで、同じ回の他の人のセルも保存されず画面は保存済みに見えていた。
+なし。
 
 ### 要確認（未修正）
 
-- **[🟢] 企業ログインの試行制限と OTP の送信制限は、第三者が正規の利用者を締め出せる**（案Aの代償どおり・解除手段なし）。
-- **[🟢] app-admin.js の `requestPlanAction` の上のコメント「未claim店舗は許可」が `27b80e8` 以降は古い。**
-- **[🟢] #165 からの継続**（lint warnings 187・SVG 属性の var() の WebKit 実測・#158 からの4件・#163 の F6③・`.cursorrules` の未コミット変更）。
+- **[🟢] 募集URLの読みが拒否されると、理由を問わず「このURLの受付は終了しました」を出す**（app-main.js の Phase1 の `isPermissionDeniedError` の分岐）。匿名サインインに失敗した端末では期限内の URL でもこの表示になる → BACKLOG化済み（「匿名サインインに失敗しても起動を続ける」タスクに追記）
+- **[🟢] ルールの縛りの判定は制御文字の名前を避けない**（database.rules.json の subs の .write）。スタッフ一覧の名前は `firebaseKeyForbiddenChars` で弾いているので、未登録の名前で制御文字を打つ経路しか無く実害は無い。
+- **[🟢] lint warnings 187 → 189**（すべて no-unused-vars）と #166 からの継続（企業ログインの締め出し・`requestPlanAction` の古いコメント・SVG 属性の var()・#158 からの4件・#163 の F6③・`.cursorrules` の未コミット変更）。
 
 ### 異常なし
 
-- 許可制ルールとクライアントが書く項目・値はメモの文字数以外で一致。本番の subs の走査（拒否0件）は反映のセッションが実施済み。
-- 通知3本・companyLogin・sendEmailOtp・myPagePin・verifyShopOwner に、トランザクション・secrets・await・日付・パスの検証の問題なし。CSP は使っている外部オリジンをすべて含み、PDF・全員のシフト表の HTML はすべてエスケープを通る。
-- `npm test` **739件パス**・`npx eslint app-*.js` **0 errors / 187 warnings**・functions の構文チェック通過。回帰5本（admin-devices・admin-code-only・shift-cell-behaviors・shift-edit-tab・shift-calc-deferred）EXIT=0。
-- Firebase・Stripe・本番データにはアクセスしていない。
+- 縛りと受付期限は、ルール・StaffView の事前チェック・`staffOnSub` の拒否後の巻き戻し・tokens の補完で同じ値を使っている。functions/index.js に `admin.` の名前空間・`functions.config()`・`.delete()` は0件で、purgeOldPeriods が `private/subAudit` も消す。
+- `npm test` **748件パス**・`npx eslint app-*.js` **0 errors / 189 warnings**・functions の構文チェック通過。`DEV_MODE` は式のまま・読み込み順9ファイル・SRI 11本・未定義の CSS 変数0件。
+- Firebase・Stripe・本番データにはアクセスしていない。実ブラウザの回帰は回していない。
 
 <!-- BUG_CHECK_LATEST_END -->
 
