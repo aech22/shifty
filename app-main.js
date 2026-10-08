@@ -357,8 +357,12 @@ function App(){
       firebaseDB.ref(`staffPageTokens/${pt}`).once("value").then(tsnap=>{
         const tv=tsnap.val();
         if(!tv||typeof tv.shopId!=="string"||!tv.shopId){ setPageBoot({state:"missing"}); setReady(true); return; }
-        return readShop(tv.shopId).then(shop=>{
+        return readShop(tv.shopId).then(async shop=>{
           if(!shop){ setPageBoot({state:"missing"}); setReady(true); return; }
+          // 店舗のデータは承認済みの個別URLの端末だけが読める（2026-10-08）。購読の前に shops/{sid}/readers/{uid}/p を登録する。
+          // 承認待ちの間は登録が拒否され、承認されたら MyPageView の onApproved が登録し直して購読を張り直す
+          noteShopReadCred("p",shop.id,pt);
+          await shopReadReady(shop.id);
           setPageBoot({state:"shop",shopId:shop.id});
           enterShop(shop);
         });
@@ -379,9 +383,12 @@ function App(){
       firebaseDB.ref(`tokens/${token}`).once("value").then(tsnap=>{
         const tv=tsnap.val();
         if(!tv||!tv.shopId) return false;
-        return readShop(tv.shopId).then(shop=>{
+        return readShop(tv.shopId).then(async shop=>{
           if(!shop) return false;
           dlog("URL解決(tokens): shop=",shop.name);
+          // 店舗のデータはスタッフURLのトークンを登録した端末だけが読める（2026-10-08）。購読の前に readers/{uid}/t を登録する
+          noteShopReadCred("t",shop.id,token);
+          await shopReadReady(shop.id);
           setApid(tv.periodId||null);
           setUrlResolved(true);
           enterShop(shop);
@@ -469,6 +476,9 @@ function App(){
 
   // startSubscriptions: Phase1内でsid確定直後に呼ぶ（useEffectに依存しない）
   const activeSubsRef=useRef([]); // 購読中のrefリスト（クリーンアップ用）
+  // 読みを拒否された店舗（2026-10-08・店舗IDだけでの読み取りの禁止）。拒否された購読は Firebase が外すので、
+  // 管理コードが通った・個別URLが承認されたなど読めるようになった時点で resubscribeIfDenied が購読し直す
+  const subsDeniedRef=useRef(new Set());
   // subs期間別購読の解除とマージ状態のクリア。startSubscriptions（店舗切替）と
   // doLogout/doFullSignOut（ログイン画面へ戻る）の両方から呼ぶ。subsSidRefをnullに
   // 落とすことで、apid変更のuseEffect経由でreconcileSubsが再入しても購読が張り直されない。
@@ -491,6 +501,7 @@ function App(){
     // subs期間別購読もクリア（店舗切替時に前店舗のリスナー・マージ結果を持ち越さない）
     stopSubsListeners();
     subsSidRef.current=targetSid;
+    subsDeniedRef.current.delete(targetSid);
     // staffList/settings/periodsをキャッシュ値へ同期リセットする（subsと同じパターン）。
     // Firebaseのon("value")が新店舗のデータを非同期で返すまでの間、これらのstateが前店舗のデータの
     // ままだと、その間に「スタッフ登録」の追加等でstaffListをそのまま書き込む操作をした場合、
@@ -511,7 +522,7 @@ function App(){
     setCompanyLink(null);companyLinkRef.current=null;
     const on=(path,cb)=>{
       const r=firebaseDB.ref(path);
-      r.on("value",snap=>cb(snap.val()),err=>console.warn("購読失敗:",path,err));
+      r.on("value",snap=>cb(snap.val()),err=>{console.warn("購読失敗:",path,err);subsDeniedRef.current.add(targetSid);});
       refs.push(r);
     };
     dlog("購読開始 targetSid=",targetSid);
@@ -595,7 +606,7 @@ function App(){
       want.forEach(pid=>{
         if(subsListenersRef.current[pid])return;
         const q=firebaseDB.ref(fbPath(targetSid,"subs")).orderByChild("periodId").equalTo(pid);
-        q.on("value",snap=>setPeriodSubs(pid,snap.val()),err=>console.warn("subs購読失敗:",pid,err));
+        q.on("value",snap=>setPeriodSubs(pid,snap.val()),err=>{console.warn("subs購読失敗:",pid,err);subsDeniedRef.current.add(targetSid);if(subsListenersRef.current[pid]===q)delete subsListenersRef.current[pid];});
         subsListenersRef.current[pid]=q;
       });
       // 除去: 対象外になった期間の購読とマージ結果
@@ -658,6 +669,12 @@ function App(){
       if(!snap.val()) fbSet(fbPath(targetSid,"settings"), makeSettings(targetSid)).catch(()=>{});
     }).catch(()=>{});
   },[]);
+  // 読みを拒否された店舗の購読を張り直す（管理コードが通った・個別URLが承認されたとき）。拒否されていなければ何もしない
+  const resubscribeIfDenied=useCallback(targetSid=>{
+    if(!targetSid||!subsDeniedRef.current.has(targetSid))return;
+    if(currentShopIdRef.current!==targetSid)return;
+    startSubscriptions(targetSid);
+  },[startSubscriptions]);
 
   // apid（アクティブ期間）変更に追随してsubs期間別購読を張り替える。
   // 過去期間のスタッフURLでもアクティブ期間が購読対象に入るようにする。
@@ -717,7 +734,11 @@ function App(){
     }
   },[]);
   const claimOwnership=useCallback(async(shopId)=>{
-    const applyResult=ok=>{ if(shopId===currentShopIdRef.current) setOwnerReadOnly(!ok); return ok; };
+    const applyResult=ok=>{
+      if(ok&&!DEMO_MODE) noteShopReadCred("owned",shopId); // 同じ企業の他店を読むときの理由（shopReadReady の o）
+      if(shopId===currentShopIdRef.current) setOwnerReadOnly(!ok);
+      return ok;
+    };
     // デモ: 書き込みは全て無効化済みなのでclaimしない。localStorageに偽のadminKeyを残さないため。
     // 閲覧専用バナーではなくデモバナーを出したいので ownerReadOnly は立てない（UIは触れる）
     if(DEMO_MODE) return applyResult(true);
@@ -805,6 +826,7 @@ function App(){
     try{ await fbSet(`shops/${shopId}/owners/${firebaseAuth.currentUser.uid}`,adminKey); }
     catch{ return{error:"管理コードが正しくありません"}; }
     rememberAdminKey(shopId,adminKey);
+    noteShopReadCred("owned",shopId);
     return{ok:true,shop:found};
   },[rememberAdminKey]);
 
@@ -1380,11 +1402,11 @@ function App(){
     if(view!=="admin")return;
     if(!sid||sid==="default")return;
     let cancelled=false;
-    claimOwnership(sid).then(ok=>{ if(!cancelled){ setOwnerReadOnly(!ok); setOwnerClaimedSid(ok?sid:null); setClaimDoneSid(sid); } });
+    claimOwnership(sid).then(ok=>{ if(!cancelled){ setOwnerReadOnly(!ok); setOwnerClaimedSid(ok?sid:null); setClaimDoneSid(sid); if(ok) resubscribeIfDenied(sid); } });
     return()=>{ cancelled=true; };
     // companyInfo を依存に入れているのは、企業情報の復元（非同期）が claim より後に
     // 終わったときに企業経由のオーナー登録をやり直すため
-  },[ready,sid,view,urlLocked,claimOwnership,companyInfo]);
+  },[ready,sid,view,urlLocked,claimOwnership,companyInfo,resubscribeIfDenied]);
 
   // ===== 賃金マスタ・閲覧パスコード（2026-09-30・労務給与_複数法人_実装計画.md §3.7・P6a）=====
   // shops/{sid}/private/pay と private/payCode は owners しか読めない。**claim が通った店舗でだけ購読する**
@@ -1983,7 +2005,13 @@ function App(){
   // 従業員画面（第2部 E1）を #/me で直接開いたとき。店舗を読んでいないので、管理者の画面・ログイン画面には進まない
   if(MY_SCREEN_ENABLED&&myRoute) return <MyView staffUser={staffUser} onStaffUser={setStaffUser} shopId={null} onClose={null}/>;
   // スタッフ個別URL（2026-10-04）。店舗はスタッフURLと同じく購読済み（Phase1）。提出は上の staffOnSub を通す
-  if(MY_SCREEN_ENABLED&&pageRoute!==null) return <MyPageView token={pageRoute} boot={pageBoot} shopId={pageBoot&&pageBoot.state==="shop"?pageBoot.shopId:null}
+  // 個別URLが承認されたら、読みの登録（readers/{uid}/p）をやり直して購読を張り直す（承認待ちの間は店舗のデータを読めない・2026-10-08）
+  const onMyPageApproved=pageSid=>{
+    if(!pageSid||!subsDeniedRef.current.has(pageSid))return;
+    forgetShopReadCache(pageSid);
+    shopReadReady(pageSid).then(ok=>{ if(ok) resubscribeIfDenied(pageSid); });
+  };
+  if(MY_SCREEN_ENABLED&&pageRoute!==null) return <MyPageView token={pageRoute} boot={pageBoot} onApproved={onMyPageApproved} shopId={pageBoot&&pageBoot.state==="shop"?pageBoot.shopId:null}
     shopName={shop?.name||""} periods={periods} settings={effectiveSettings} staffList={staffList} subs={subs} plan={plan} syncStatus={syncStatus}
     onSub={staffOnSub} onDeleteSub={staffOnDeleteSub} staffUser={staffUser}/>;
 
@@ -2242,7 +2270,7 @@ function App(){
       </div>}
       {/* 募集URLの画面の「マイシフト」で、この端末が知っている使える個別URLがあれば個別URLの画面を重ねる（2026-10-04・アドレスバーは #/m/<token>） */}
       {MY_SCREEN_ENABLED&&pageOverlay&&urlLocked&&sid!=="default"&&<div data-my-overlay="page" style={{position:"fixed",inset:0,zIndex:1200,overflowY:"auto",background:"var(--c-bg)"}}>
-        <MyPageView token={pageOverlay} boot={{state:"shop",shopId:sid}} shopId={sid} shopName={shop?.name||""} periods={periods} settings={effectiveSettings}
+        <MyPageView token={pageOverlay} boot={{state:"shop",shopId:sid}} onApproved={onMyPageApproved} shopId={sid} shopName={shop?.name||""} periods={periods} settings={effectiveSettings}
           staffList={staffList} subs={subs} plan={plan} syncStatus={syncStatus} onSub={staffOnSub} onDeleteSub={staffOnDeleteSub} onClose={closeMyOverlay} staffUser={staffUser}/>
       </div>}
       {/* 個別URLの申請（2026-10-04）。提出画面は下に残す（入力途中の希望を消さない）＝マイシフトと同じく重ねて表示する */}
@@ -2275,7 +2303,7 @@ function App(){
           ?<AdminCodeGate shopName={shop?.name||""} shopId={sid} blockedMsg={staffUser?MY_ADMIN_BLOCKED_MSG:""}
               onSubmit={async raw=>{
                 const r=await verifyAdminCode(raw,sid);
-                if(r.ok&&currentShopIdRef.current===sid){ setOwnerReadOnly(false); setOwnerClaimedSid(sid); setClaimDoneSid(sid); }
+                if(r.ok&&currentShopIdRef.current===sid){ setOwnerReadOnly(false); setOwnerClaimedSid(sid); setClaimDoneSid(sid); resubscribeIfDenied(sid); }
                 return r;
               }}
               onStaffView={()=>setView("staff")}

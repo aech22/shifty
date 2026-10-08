@@ -1117,6 +1117,7 @@ function StaffTab({staffList,onSave,tt,plan="free",onUpgrade,onRenameStaff,setti
     const failed=[];
     const shops=(await Promise.all((companyShops||[]).map(async s=>{
       try{
+        await shopReadReady(s.id).catch(()=>false); // 同じ企業の店舗の管理者として読む理由を登録する（2026-10-08）
         const [st,nums,attrs,homes]=await Promise.all(["staff","settings/staffNumbers","settings/staffAttributes","settings/staffHomeShop"]
           .map(p=>firebaseDB.ref(`shops/${s.id}/${p}`).once("value").then(x=>x.val())));
         return{id:s.id,name:s.name,staff:st||[],staffNumbers:nums||{},staffAttributes:attrs||{},staffHomeShop:homes||{}};

@@ -247,7 +247,7 @@ function PayrollPage({shopId,shopName,pay=PAY_OFF,tt,onBack}){
     if(!firebaseDB||!shopId||!/^\d{4}-\d{2}$/.test(ym)){setData({error:"月を選んでください"});return;}
     const run=++runRef.current;
     setData(null);setReport(null);
-    const ref=p=>firebaseDB.ref(p).once("value").then(x=>x.val());
+    const ref=p=>shopReadOnce(p).then(x=>x.val());
     (async()=>{
       const[staff,settingsRaw,coLink,periodsRaw,plan]=await Promise.all([ref(`shops/${shopId}/staff`),ref(`shops/${shopId}/settings`),
         ref(`shops/${shopId}/company`).catch(()=>null),ref(`shops/${shopId}/periods`),ref(`accounts/${shopId}/plan`).catch(()=>null)]);
@@ -885,7 +885,7 @@ function CompanyStaffDirectory({companyId,onBack,pay=PAY_OFF,plan="free",onCompa
         const name=(nS&&nS.val())||sid;
         try{
           // subs は読まない（有給の残数は期間の凍結値 laborTotals だけで数える）
-          const[st,se,pe]=await Promise.all(["staff","settings","periods"].map(p=>firebaseDB.ref(`shops/${sid}/${p}`).once("value").then(x=>x.val())));
+          const[st,se,pe]=await Promise.all(["staff","settings","periods"].map(p=>shopReadOnce(`shops/${sid}/${p}`).then(x=>x.val())));
           // 写しの settings（企業共通 → 法人 を重ねた値）。無ければ企業の共通設定で代える（2026-09-30・P1）
           const coS=await firebaseDB.ref(`shops/${sid}/company/settings`).once("value").catch(()=>null);
           return{id:sid,name,staff:st||[],settings:se||{},periods:pe||{},coSettings:(coS&&coS.val())||null,
@@ -1221,7 +1221,7 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
       await Promise.all(shopIds.map(async sid=>{
         const[nS,pS]=await Promise.all([
           firebaseDB.ref(`global/shops/${sid}/name`).once("value").catch(()=>null),
-          firebaseDB.ref(`shops/${sid}/periods`).once("value").catch(()=>null),
+          shopReadOnce(`shops/${sid}/periods`).catch(()=>null),
         ]);
         names[sid]=(nS&&nS.val())||shopNames[sid]||sid;
         // 配列はオブジェクトで返るので Object.values → id 持ちに絞る（CLAUDE.md の読み取り規則）
@@ -1293,7 +1293,7 @@ function CompanySubmissionsCard({companyId,shopNames={},onSaveCompanyConfig,tt,r
   // 企業セッションで開いた店舗のシフト作成タブだけ。店舗の提出データ・設定・所定を読み、シフト作成タブと
   // 同じ planPeriodConfirmation で集計する（計算を二重に持たない）。期間は差分 update（全体 set() しない）。
   const loadForConfirm=async(sid,period,withHelper)=>{
-    const ref=p=>firebaseDB.ref(p).once("value");
+    const ref=p=>shopReadOnce(p);
     const[stS,seS,coS,pS,lmS]=await Promise.all([ref(`shops/${sid}/staff`),ref(`shops/${sid}/settings`),ref(`shops/${sid}/company`),ref(`shops/${sid}/periods`),ref(`shops/${sid}/laborMonths`)]);
     const periods=Object.values(pS.val()||{}).filter(x=>x&&x.id);
     const cur=periods.find(p=>p.id===period.id);
@@ -1468,7 +1468,7 @@ function CompanyBulkPdf({range,rows,companyName,tt}){
   // タブを離れたら進行中の一括出力を止める（待っている Promise を解放する）
   useEffect(()=>()=>{runRef.current++;if(pendingRef.current)pendingRef.current(new Error("cancelled"));},[]);
   const loadShop=async(sid,period)=>{
-    const ref=p=>firebaseDB.ref(p).once("value");
+    const ref=p=>shopReadOnce(p);
     // 写しは丸ごと読む（settings に加え、ヘルプ先勤務の合算（P3.6）が使う連携店舗・人物・法人）
     const[stS,seS,coS,pS]=await Promise.all([ref(`shops/${sid}/staff`),ref(`shops/${sid}/settings`),ref(`shops/${sid}/company`),ref(`shops/${sid}/periods`)]);
     const periods=Object.values(pS.val()||{}).filter(x=>x&&x.id).sort((a,b)=>String(b.startDate).localeCompare(String(a.startDate)));
@@ -1553,7 +1553,7 @@ function CompanyBulkPdf({range,rows,companyName,tt}){
 // ============================================================
 const DASHBOARD_JOB_TIMEOUT_MS=60000;
 async function loadShopForDashboard(sid,ym){
-  const ref=p=>firebaseDB.ref(p).once("value").then(x=>x.val());
+  const ref=p=>shopReadOnce(p).then(x=>x.val());
   const[staff,settingsRaw,coLink,periodsRaw]=await Promise.all([ref(`shops/${sid}/staff`),ref(`shops/${sid}/settings`),
     ref(`shops/${sid}/company`).catch(()=>null),ref(`shops/${sid}/periods`)]);
   const settings=applyCompanySettings(settingsRaw||makeSettings(sid),(coLink&&coLink.settings)||{});
@@ -1859,7 +1859,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
 
   const loadShopMeta=(sid)=>{
     if(!firebaseDB)return;
-    Promise.all([firebaseDB.ref(`shops/${sid}/settings/shopAbbrs`).once("value"),firebaseDB.ref(`shops/${sid}/settings/shopAbbr2`).once("value")]).then(([aS,a2S])=>{
+    Promise.all([shopReadOnce(`shops/${sid}/settings/shopAbbrs`),shopReadOnce(`shops/${sid}/settings/shopAbbr2`)]).then(([aS,a2S])=>{
       const abbrs=Object.values(aS.val()||{}).filter(v=>typeof v==="string");
       setShopMeta(m=>({...m,[sid]:{abbrs,abbr2:shopAbbr2Of({shopAbbr2:a2S.val()}),loaded:true}}));
     }).catch(()=>{
@@ -1892,7 +1892,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
     if(!firebaseDB)return;
     let cancelled=false;
     Promise.all(listShops.filter(s=>s&&s.id).map(s=>
-      firebaseDB.ref(`shops/${s.id}/settings/shopAbbrs`).once("value")
+      shopReadOnce(`shops/${s.id}/settings/shopAbbrs`)
         .then(sn=>[s.id,Object.values(sn.val()||{}).filter(v=>typeof v==="string")])
         .catch(()=>[s.id,[]])
     )).then(entries=>{if(!cancelled)setAllAbbrs(Object.fromEntries(entries));});
@@ -2240,7 +2240,7 @@ function CompanyPayCalendarCard({listShops,shopId,settings,onSave,tt}){
   const idsKey=ids.join(",");
   const load=()=>{
     if(!firebaseDB)return;
-    Promise.all(ids.filter(id=>id!==shopId).map(id=>firebaseDB.ref(`shops/${id}/settings/payCalendar`).once("value").then(sn=>[id,sn.val()]).catch(()=>[id,undefined])))
+    Promise.all(ids.filter(id=>id!==shopId).map(id=>shopReadOnce(`shops/${id}/settings/payCalendar`).then(sn=>[id,sn.val()]).catch(()=>[id,undefined])))
       .then(rows=>setCals(Object.fromEntries(rows)));
   };
   useEffect(load,[idsKey,shopId]);

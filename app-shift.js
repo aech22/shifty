@@ -604,7 +604,8 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     if(!firebaseDB||otherShops.length===0){setCompanyData({});setCompanyDataReady(true);return;}
     setCompanyDataReady(false);
     let cancelled=false;
-    Promise.all(otherShops.map(os=>
+    // 他店の読みは、この端末がその店舗を読める理由（同じ企業の店舗の管理者＝readers の o）を先に登録する（2026-10-08）
+    Promise.all(otherShops.map(os=>shopReadReady(os.id).catch(()=>false).then(()=>
       Promise.all([
         // 設定は丸ごと読む（略称・別名・所属店舗に加え、ヘルプ先勤務の合算（P3.6）が行き先の店の休憩・退勤延長で
         // 実働を数えるため）。どれも auth != null で読める
@@ -624,7 +625,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         // 倒す向きの判断は BACKLOG「読みの失敗を『問題なし』に丸めている3箇所」のまま）
         return[os.id,otherShopDataOf({name:os.name,settings:seS&&seS.val(),subs:sS&&sS.val(),staff:stS&&stS.val(),periods:peS&&peS.val(),
           loadFailed:!seS||!sS||!stS||!peS,actuals:acR&&acR.ok?(acR.v||{}):undefined,actualsUnread:!(acR&&acR.ok)})];
-      })
+      }))
     )).then(entries=>{if(!cancelled){setCompanyData(Object.fromEntries(entries));setCompanyDataReady(true);}});
     return()=>{cancelled=true;};
     // selPidは依存に入れない: この取得は期間に依存しない（workMapは名前|日付キーで全期間を保持し、
