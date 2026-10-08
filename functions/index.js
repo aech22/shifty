@@ -1246,7 +1246,7 @@ exports.createCompany = functions
     const password = (data && typeof data.password === "string") ? data.password : "";
     const shopIds = (data && Array.isArray(data.shopIds)) ? data.shopIds.filter(s => typeof s === "string").slice(0, 50) : [];
     if (!name || name.length > 100) throw new functions.https.HttpsError("invalid-argument", "企業名が無効です");
-    if (password.length < 6 || password.length > 128) throw new functions.https.HttpsError("invalid-argument", "パスワードは6〜128文字にしてください");
+    { const pwErr = SEC.newPasswordErrorCF(password); if (pwErr) throw new functions.https.HttpsError("invalid-argument", pwErr); }
 
     // 企業コードを衝突しないよう生成
     let code = "";
@@ -1338,7 +1338,7 @@ exports.changeCompanyPassword = functions
     const newPassword = (data && typeof data.newPassword === "string") ? data.newPassword : "";
     const currentPassword = (data && typeof data.currentPassword === "string") ? data.currentPassword : "";
     if (!isValidCompanyId(companyId)) throw new functions.https.HttpsError("invalid-argument", "企業IDが無効です");
-    if (newPassword.length < 6 || newPassword.length > 128) throw new functions.https.HttpsError("invalid-argument", "パスワードは6〜128文字にしてください");
+    { const pwErr = SEC.newPasswordErrorCF(newPassword); if (pwErr) throw new functions.https.HttpsError("invalid-argument", pwErr); }
     await assertCompanyMember(context, companyId);
     // 変更は作成者のアカウント（メール／Google）だけ（2026-09-28）。企業コードでログインした人は現在の
     // パスワードを知っているので、下の照合だけでは作成者を締め出す変更を防げない

@@ -171,3 +171,32 @@ test("verifyShopOwner: owners に uid があるときだけ許可・未claim（o
   assert.ok(/SEC\.isShopOwnerOf\(owners, decoded\.uid\)/.test(body), "verifyShopOwner はこの判定を通す");
   assert.ok(!/移行猶予として許可する/.test(body), "移行猶予の記述を残さない");
 });
+
+// 2026-10-08「全て揃えて」: 企業のパスワードの CF の検査が画面（app-my-utils.js の newPasswordError）と同じ答えを出す
+test("newPasswordErrorCF: 画面の newPasswordError と同じ一覧・文言・答え", () => {
+  const M = require("../app-my-utils.js");
+  assert.deepStrictEqual([...S.PW_COMMON_CF].sort(), [...M.MY_PASSWORD_COMMON].sort(), "よく使われるパスワードの一覧");
+  assert.deepStrictEqual([...S.PW_COMMON_CORES_CF].sort(), [...M.MY_PASSWORD_COMMON_CORES].sort(), "前後を外した芯の一覧");
+  assert.strictEqual(S.PW_COMMON_MSG_CF, M.MY_PASSWORD_COMMON_MSG);
+  assert.strictEqual(S.PW_DATE_MSG_CF, M.MY_PASSWORD_DATE_MSG);
+  assert.strictEqual(S.NEW_PASSWORD_MIN_CF, M.ADMIN_PASSWORD_MIN);
+  assert.strictEqual(S.NEW_PASSWORD_MIN_CF, M.MY_PASSWORD_MIN);
+  const fixed = ["", "1234567", "password", "Password!!", "qwerty2025", "abcdefgh", "aaaaaaaa", "１２３４５６７８", "sakura0315", "tora1225!", "x9031599y",
+    "kame1900", "neko2100aa", "inu1899xyz", "neko0230aa", "19990315", "03151999", "x20240229y", "pass12345", "umikaze-42", "boss-pass42", "kumo-hashi7"];
+  let seed = 7;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  const chars = "abcxyzABC0123456789!-_";
+  const random = Array.from({ length: 3000 }, () => Array.from({ length: 1 + Math.floor(rnd() * 14) }, () => chars[Math.floor(rnd() * chars.length)]).join(""));
+  for (const pw of [...fixed, ...random]) assert.strictEqual(S.newPasswordErrorCF(pw), M.newPasswordError(pw, M.ADMIN_PASSWORD_MIN), pw);
+  assert.match(S.newPasswordErrorCF("a".repeat(5) + "x".repeat(124)), /128文字以内/);
+  assert.strictEqual(S.newPasswordErrorCF(undefined), "パスワードを入力してください");
+});
+
+test("createCompany・changeCompanyPassword が newPasswordErrorCF を通し、6文字の検査が残っていない", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "functions", "index.js"), "utf8");
+  const body = name => { const i = src.indexOf(`exports.${name} =`); assert.ok(i >= 0, name); return src.slice(i, src.indexOf("\nexports.", i + 1)); };
+  assert.ok(/SEC\.newPasswordErrorCF\(password\)/.test(body("createCompany")), "企業の作成");
+  assert.ok(/SEC\.newPasswordErrorCF\(newPassword\)/.test(body("changeCompanyPassword")), "企業のパスワード変更");
+  assert.ok(!/length < 6|6〜128文字/.test(src), "6文字の検査が残っていない");
+  assert.ok(!/newPasswordErrorCF/.test(body("companyLogin")), "ログインには当てない");
+});
