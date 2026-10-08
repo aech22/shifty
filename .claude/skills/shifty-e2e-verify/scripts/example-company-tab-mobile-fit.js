@@ -103,7 +103,7 @@ const MEASURE = () => {
   }
   for (const p of document.querySelectorAll("body *")) { const o = getComputedStyle(p).overflowX; if ((o === "auto" || o === "scroll") && p.scrollWidth > p.clientWidth + 1) boxes.push({ el: lab(p).slice(0, 40), sw: p.scrollWidth, cw: p.clientWidth }); }
   return { scrollWidth: de.scrollWidth, clientWidth: cw, page, card, boxes, small,
-    createInputs: [...document.querySelectorAll('input[placeholder="例）〇〇フーズ"],input[placeholder="パスワード（6文字以上）"],input[placeholder="パスワード（確認）"]')].length };
+    createInputs: [...document.querySelectorAll('input[placeholder="例）〇〇フーズ"],input[placeholder="パスワード（8文字以上）"],input[placeholder="パスワード（確認）"]')].length };
 };
 // maxWidth を足した select が PC で縮んでいないか（maxWidth を外した幅と比べる）
 const SELECT_WIDTHS = () => {

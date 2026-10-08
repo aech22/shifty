@@ -1198,11 +1198,13 @@ sub は行き先の店にあるので、以前は所属店舗の労務判定・�
   メールリンクが使えないときの従来の登録欄（`myRegister`）は、まず匿名 uid に連結を試み（`currentUser.linkWithCredential(EmailAuthProvider.credential(...))`）、
   列挙保護で拒否されたら新しいアカウントを作る。連結が通る環境なら uid が変わらないので
   提出済みの `submitterUid` と一致したまま。別の端末では `signInWithEmailAndPassword` で同じ uid に入り、**成功したら再読み込みする**
-  （匿名 uid から替わるので、購読と App の状態を Phase1 から作り直す）。パスワードは8文字以上（`MY_PASSWORD_MIN`。管理者の登録は6文字のまま）。
+  （匿名 uid から替わるので、購読と App の状態を Phase1 から作り直す）。パスワードは8文字以上（`MY_PASSWORD_MIN`。管理者・企業のパスワードも 2026-10-08 から8文字＝`ADMIN_PASSWORD_MIN`）。
   **推測されやすいパスワードを断る（2026-10-08 ユーザー指示）**: よく使われるもの（一覧・同じ文字の繰り返し・1つずつ上がる下がる並び・前後の数字と記号を外した芯が一覧の語）と、
   日付に見える連続した数字（8桁＝YYYYMMDD・MMDDYYYY・DDMMYYYY、4桁＝月日 MMDD か西暦 1900〜2099。長い数字の並びの途中も見る）を `myPasswordWeakness`（app-my-utils.js）で断る。
-  通すのはスタッフのパスワードを**決める**3か所（`myRegister`・`myChangePassword`・メールリンクの続きの登録の staff）だけで、**ログインと管理者のパスワードには当てない**（既存のパスワードで入れなくなるため・テストで固定）。
-  画面の中の検査なので、Firebase Auth の REST を直接叩く登録と、Firebase が用意するパスワード再設定のページは止められない
+  入口は `newPasswordError(pw, min)` 1本で、パスワードを**決める**ところすべてが通る: スタッフ（`myRegister`・`myChangePassword`・メールリンクの続きの登録）、
+  管理者（同日の追加指示。ログイン画面の新規登録 `signUpWithEmail`・設定タブのアカウント連携 `signInAndLinkEmail` の新規・メールリンクの admin）、
+  企業のパスワード（企業連携タブの作成と変更）。**ログインには当てない**（既存のパスワードで入れなくなるため・テストで固定）。ヒントは `NEW_PASSWORD_HINT`。
+  画面の中の検査なので、Firebase Auth の REST を直接叩く登録、Firebase が用意するパスワード再設定のページ、CF `createCompany`・`changeCompanyPassword` を直接呼ぶ変更（CF は6文字以上のまま）は止められない
 - **連結が拒否されたら新しいアカウントとして作る（2026-10-04・`4163394`）**: メールアドレスの列挙保護が有効なプロジェクト（本番・dev とも）では
   `linkWithCredential` が `auth/operation-not-allowed`（"Please verify the new email before changing email"）になる。そのときだけ
   `createUserWithEmailAndPassword` で作り、新しい uid で印と profile を書いて再読み込みする（uid が替わるので、匿名のときの提出の `submitterUid` とは一致しない）。

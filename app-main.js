@@ -945,6 +945,8 @@ function App(){
   };
   const signUpWithEmail=async(email,password)=>{
     if(!firebaseAuth){setAuthError("Firebase Auth未初期化");return;}
+    const pwErr=newPasswordError(password,ADMIN_PASSWORD_MIN);
+    if(pwErr){setAuthError(pwErr);return;}
     setAuthLoading(true);setAuthError("");
     try{
       await _preRealSignIn();
@@ -957,7 +959,7 @@ function App(){
       else if(e.code==="auth/invalid-email")
         setAuthError("メールアドレスの形式が正しくありません");
       else if(e.code==="auth/weak-password")
-        setAuthError("パスワードは6文字以上にしてください");
+        setAuthError(`パスワードは${ADMIN_PASSWORD_MIN}文字以上にしてください`);
       else setAuthError("登録に失敗しました: "+e.message);
     }finally{setAuthLoading(false);}
   };
@@ -987,6 +989,7 @@ function App(){
   };
   const signInAndLinkEmail=async(email,password,isSignUp)=>{
     if(!firebaseAuth)return{error:"Firebase Auth未初期化"};
+    if(isSignUp){const pwErr=newPasswordError(password,ADMIN_PASSWORD_MIN);if(pwErr)return{error:pwErr};}
     try{
       await _preRealSignIn();
       let result;
@@ -1001,7 +1004,7 @@ function App(){
       if(e.code==="auth/email-already-in-use")return{error:"このメールアドレスは既に使用されています"};
       if(e.code==="auth/user-not-found"||e.code==="auth/wrong-password"||e.code==="auth/invalid-credential")return{error:"メールアドレスまたはパスワードが正しくありません"};
       if(e.code==="auth/invalid-email")return{error:"メールアドレスの形式が正しくありません"};
-      if(e.code==="auth/weak-password")return{error:"パスワードは6文字以上にしてください"};
+      if(e.code==="auth/weak-password")return{error:`パスワードは${ADMIN_PASSWORD_MIN}文字以上にしてください`};
       return{error:(isSignUp?"登録":"ログイン")+"に失敗しました: "+e.message};
     }
   };
@@ -2215,8 +2218,9 @@ function App(){
                 style={{width:"100%",padding:"12px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:10,opacity:locked?.5:1}}/>
               <input type="password" value={passwordVal} onChange={e=>setPasswordVal(e.target.value)}
                 onKeyDown={e=>{if(e.key==="Enter"&&emailMode==="login"&&!locked)signInWithEmail(emailVal,passwordVal);}}
-                placeholder="パスワード（6文字以上）" maxLength={128} disabled={locked}
+                placeholder={emailMode==="register"?`パスワード（${ADMIN_PASSWORD_MIN}文字以上）`:"パスワード"} maxLength={128} disabled={locked} data-admin-pw="1"
                 style={{width:"100%",padding:"12px 14px",background:"var(--c-input)",border:"1px solid var(--c-border)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:emailMode==="register"?10:16,opacity:locked?.5:1}}/>
+              {emailMode==="register"&&<div data-admin-pw-hint="1" style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6,margin:"-4px 0 10px"}}>{NEW_PASSWORD_HINT}</div>}
               {emailMode==="register"&&<input type="password" value={password2Val} onChange={e=>setPassword2Val(e.target.value)}
                 onKeyDown={e=>{if(e.key==="Enter"&&password2Val===passwordVal)signUpWithEmail(emailVal,passwordVal);}}
                 placeholder="パスワード（確認）" maxLength={128}

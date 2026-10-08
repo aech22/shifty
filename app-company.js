@@ -2075,14 +2075,15 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
             <div style={{marginBottom:4}}>
               <AL>現在のパスワード</AL>
               <input type={pwType} value={coCurPw} onChange={e=>setCoCurPw(e.target.value)} maxLength={128} placeholder="現在のパスワード" autoComplete="current-password" style={{...AI,marginBottom:10}}/>
-              <AL>新しいパスワード（6文字以上）</AL>
+              <AL>新しいパスワード</AL>
               <input type={pwType} value={coNewPw} onChange={e=>setCoNewPw(e.target.value)} maxLength={128} placeholder="新しいパスワード" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
               <input type={pwType} value={coNewPw2} onChange={e=>setCoNewPw2(e.target.value)} maxLength={128} placeholder="新しいパスワード（確認）" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
+              <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8}}>{NEW_PASSWORD_HINT}</div>
               {showPwBox}
               <div style={{display:"flex",gap:8}}>
                 <button disabled={coBusy} onClick={async()=>{
                   if(!coCurPw){tt("✕ 現在のパスワードを入力してください");return;}
-                  if(coNewPw.length<6){tt("✕ 新しいパスワードは6文字以上にしてください");return;}
+                  {const pwErr=newPasswordError(coNewPw,ADMIN_PASSWORD_MIN);if(pwErr){tt("✕ "+pwErr);return;}}
                   if(coNewPw!==coNewPw2){tt("✕ 新しいパスワードが一致しません");return;}
                   if(coNewPw===coCurPw){tt("✕ 現在と同じパスワードです");return;}
                   setCoBusy(true); const r=await onChangeCompanyPassword(coCurPw,coNewPw); setCoBusy(false);
@@ -2113,9 +2114,10 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
             </div>
             <AL>企業名</AL>
             <input value={coName} onChange={e=>setCoName(e.target.value)} maxLength={100} placeholder="例）〇〇フーズ" style={{...AI,marginBottom:10}}/>
-            <AL>ログイン用パスワード（6文字以上）</AL>
-            <input type={pwType} value={coPw} onChange={e=>setCoPw(e.target.value)} maxLength={128} placeholder="パスワード（6文字以上）" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
+            <AL>ログイン用パスワード</AL>
+            <input type={pwType} value={coPw} onChange={e=>setCoPw(e.target.value)} maxLength={128} placeholder={`パスワード（${ADMIN_PASSWORD_MIN}文字以上）`} autoComplete="new-password" style={{...AI,marginBottom:8}}/>
             <input type={pwType} value={coPw2} onChange={e=>setCoPw2(e.target.value)} maxLength={128} placeholder="パスワード（確認）" autoComplete="new-password" style={{...AI,marginBottom:8}}/>
+            <div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6,marginBottom:8}}>{NEW_PASSWORD_HINT}</div>
             {showPwBox}
             {coErr&&<div style={{color:"#FF4757",fontSize:12,marginBottom:8}}>{coErr}</div>}
             {coCreated?(
@@ -2127,7 +2129,7 @@ function CompanyTab({settings,onSave,tt,shopId,authUser,plan="free",onSaveCompan
               <button disabled={coBusy} onClick={async()=>{
                 setCoErr("");
                 if(!coName.trim()){setCoErr("企業名を入力してください");return;}
-                if(coPw.length<6){setCoErr("パスワードは6文字以上にしてください");return;}
+                {const pwErr=newPasswordError(coPw,ADMIN_PASSWORD_MIN);if(pwErr){setCoErr(pwErr);return;}}
                 if(coPw!==coPw2){setCoErr("パスワードが一致しません");return;}
                 setCoBusy(true); const r=await onCreateCompany(coName.trim(),coPw); setCoBusy(false);
                 if(r&&r.error)setCoErr(r.error); else {setCoCreated({code:r.code});setCoName("");setCoPw("");setCoPw2("");setCoShowPw(false);
@@ -3052,8 +3054,9 @@ function SetTab({settings,onSave,subs,saveSubs,tt,syncStatus,plan="free",shopId,
               style={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:8,boxSizing:"border-box"}}/>
             <input type="password" value={acctPw} onChange={e=>setAcctPw(e.target.value)}
               onKeyDown={async e=>{if(e.key==="Enter"&&acctEmailMode==="login"){setAcctLoading(true);setAcctError("");const r=await onSignInAndLinkEmail(acctEmail,acctPw,false);setAcctLoading(false);if(r?.error)setAcctError(r.error);else{setAcctEmailMode(null);tt("✓ アカウントを連携しました");}}}}
-              placeholder="パスワード（6文字以上）" maxLength={128}
+              placeholder={acctEmailMode==="register"?`パスワード（${ADMIN_PASSWORD_MIN}文字以上）`:"パスワード"} maxLength={128}
               style={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:acctEmailMode==="register"?8:12,boxSizing:"border-box"}}/>
+            {acctEmailMode==="register"&&<div style={{fontSize:12,color:"var(--c-text3)",lineHeight:1.6,margin:"-2px 0 8px"}}>{NEW_PASSWORD_HINT}</div>}
             {acctEmailMode==="register"&&<input type="password" value={acctPw2} onChange={e=>setAcctPw2(e.target.value)}
               placeholder="パスワード（確認）" maxLength={128}
               style={{width:"100%",padding:"10px 12px",background:"var(--c-input)",border:"1px solid var(--c-border2)",borderRadius:8,color:"var(--c-text)",fontSize:16,outline:"none",marginBottom:12,boxSizing:"border-box"}}/>}

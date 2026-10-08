@@ -210,7 +210,11 @@ async function fillFinish(h, f) {
       A.finish = await waitSel(h, '[data-email-link-finish="form"][data-email-link-kind="admin"]');
       A.noProfile = await h.evaluate(() => !document.querySelector('[data-email-link-finish] [data-my-input="displayName"]'));
       A.finLayout = await layout(h);
-      await fillFinish(h, { password: "abc123", password2: "abc123" });
+      await fillFinish(h, { password: "sakura0315", password2: "sakura0315" });
+      await sleep(h, 400);
+      A.weakFinish = await h.evaluate(() => document.body.innerText.includes("日付に見える数字"));
+      A.weakStillForm = await h.evaluate(() => !!document.querySelector('[data-email-link-finish="form"]'));
+      await fillFinish(h, { password: "boss-pass42", password2: "boss-pass42" });
       await h.page.waitForFunction(() => !location.search, null, { timeout: 15000 }).catch(() => {});
       await sleep(h, 800);
       A.cur = await authCur(h);
@@ -220,8 +224,9 @@ async function fillFinish(h, f) {
       A.url = await h.evaluate(() => location.href);
       A.errors = h.errors.slice();
       R.A = A;
+      V.A1_adminWeakBlocked = A.weakFinish && A.weakStillForm;
       V.A1_adminLinkFlow = A.form && okLayout(A.layout) && A.sent && /\?elk=admin$/.test(A.send.url) && A.finish && A.noProfile && okLayout(A.finLayout) &&
-        A.cur && !A.cur.isAnonymous && A.cur.email === "boss@example.com" && A.loggedOutFlag === "false" && A.mark === null && A.user && A.user.password === "abc123" && !/oobCode/.test(A.url) && A.errors.length === 0;
+        A.cur && !A.cur.isAnonymous && A.cur.email === "boss@example.com" && A.loggedOutFlag === "false" && A.mark === null && A.user && A.user.password === "boss-pass42" && !/oobCode/.test(A.url) && A.errors.length === 0;
     } finally { await h.browser.close(); }
   }
   // ---- F: メールリンクが無効・ドメイン未承認 → 管理者のログイン画面でも従来の登録 ----
@@ -234,14 +239,23 @@ async function fillFinish(h, f) {
       await click(h, '[data-email-link-action="send"]');
       const fb = await waitSel(h, "[data-email-link-fallback]", 8000);
       const emailKept = await h.evaluate(() => document.querySelector('input[type="email"]').value);
-      await h.setInput('input[placeholder="パスワード（6文字以上）"]', "abc123");
-      await h.setInput('input[placeholder="パスワード（確認）"]', "abc123");
+      // 推測されやすいパスワードは作らせない（2026-10-08・管理者も同じ規則）
+      await h.setInput('input[placeholder="パスワード（8文字以上）"]', "Password!!");
+      await h.setInput('input[placeholder="パスワード（確認）"]', "Password!!");
+      await h.clickExact("アカウント作成");
+      await sleep(h, 600);
+      const weakMsg = await h.evaluate(() => document.body.innerText.includes("よく使われるパスワードは使えません"));
+      const weakUser = (await h.evaluate(() => window.__authDump().users))["classic@example.com"];
+      const hint = await h.evaluate(() => !!document.querySelector("[data-admin-pw-hint]"));
+      await h.setInput('input[placeholder="パスワード（8文字以上）"]', "boss-pass42");
+      await h.setInput('input[placeholder="パスワード（確認）"]', "boss-pass42");
       await h.clickExact("アカウント作成");
       await sleep(h, 1200);
       const user = (await h.evaluate(() => window.__authDump().users))["classic@example.com"];
       const k = "F_" + (mode || "disabled");
-      R[k] = { fb, emailKept, user, errors: h.errors.slice() };
-      V[k + "_fallsBackToClassic"] = fb && emailKept === "classic@example.com" && !!user && user.password === "abc123" && R[k].errors.length === 0;
+      R[k] = { fb, emailKept, user, weakMsg, weakUser: !!weakUser, hint, errors: h.errors.slice() };
+      V[k + "_weakBlocked"] = weakMsg && !weakUser && hint;
+      V[k + "_fallsBackToClassic"] = fb && emailKept === "classic@example.com" && !!user && user.password === "boss-pass42" && R[k].errors.length === 0;
     } finally { await h.browser.close(); }
   }
   const allPass = Object.values(V).every(Boolean);

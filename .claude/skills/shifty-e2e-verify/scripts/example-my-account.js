@@ -317,12 +317,12 @@ async function toClassicRegister(h) {
       E.loginScreen = await waitText(h, "メールアドレスで続ける");
       await clickText(h, "メールアドレスで続ける"); await sleep(h, 200);
       await h.setInput('input[placeholder="メールアドレス"]', "admin@example.com");
-      await h.setInput('input[placeholder="パスワード（6文字以上）"]', "wrongpass");
+      await h.setInput('input[data-admin-pw]', "wrongpass");
       await clickText(h, "ログイン"); await sleep(h, 600);
       E.wrong = await waitText(h, "メールアドレスまたはパスワードが正しくありません（残り9回）", 5000);
       E.emailAttempts = await h.evaluate(() => localStorage.getItem("ots_login_attempts_email"));
       E.staffAttempts = await h.evaluate(() => localStorage.getItem("ots_login_attempts_staff"));
-      await h.setInput('input[placeholder="パスワード（6文字以上）"]', "adminpass1");
+      await h.setInput('input[data-admin-pw]', "adminpass1");
       await clickText(h, "ログイン");
       E.enteredShop = await waitText(h, "管理者画面", 15000);
       E.uid = (await authCur(h)).uid;
