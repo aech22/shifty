@@ -9,9 +9,10 @@ const m = require("../app-my-utils.js");
 
 const ROOT = path.join(__dirname, "..");
 
-test("MY_TABS: 下部タブは マイシフト・給料・設定 の順", () => {
-  assert.deepStrictEqual(m.MY_TABS.map(t => t.label), ["マイシフト", "給料", "設定"]);
-  assert.deepStrictEqual(m.MY_TABS.map(t => t.key), ["shift", "pay", "settings"]);
+test("MY_TABS: 下部タブは マイシフト・提出・給料・設定 の順（2026-10-08 にアカウントにも提出を足した＝個別URLと同じ）", () => {
+  assert.deepStrictEqual(m.MY_TABS.map(t => t.label), ["マイシフト", "提出", "給料", "設定"]);
+  assert.deepStrictEqual(m.MY_TABS.map(t => t.key), ["shift", "submit", "pay", "settings"]);
+  assert.strictEqual(m.MY_PAGE_TABS, m.MY_TABS);
 });
 
 // 読み込み順のドリフト検出（E0）。index.html・package.json の lint 対象・eslint の files が同じ9ファイル・同じ順か
@@ -1369,8 +1370,12 @@ test("個別URL（P2）: 提出先は最新の期間・名前は承認された�
   assert.ok(/if\(shopId&&apid&&!fixedName\) setCookie\(ckStaffKey/.test(st), "個別URLの提出は Cookie に名前を書かない");
   assert.strictEqual((st.match(/setName\(fixedName\|\|sub\.staffName\)/g) || []).length, 2, "提出状況からの修正でも名前は固定のまま");
   const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  // 2026-10-08 から提出タブは MySubmitPane（店舗の切り替え）。個別URLの店舗は home として App の購読と onSub をそのまま渡す
   const sub = my.slice(my.indexOf('if(tab==="submit"){'), my.indexOf('if(tab==="submit"){') + 900);
-  assert.ok(/ap=\{latest\} apid=\{latest\.id\}/.test(sub) && /fixedName=\{page\.name\}/.test(sub) && /onSub=\{onSub\}/.test(sub), "最新の期間・承認された名前・App の提出");
+  assert.ok(/home:\{shopId,shopName,name:page\.name,token,/.test(sub) && /app=\{\{shopId,subs,onSub,onDeleteSub\}\}/.test(sub), "個別URLの店舗・承認された名前・App の提出");
+  const pane = my.slice(my.indexOf("function MySubmitPane("), my.indexOf("function MyAccountSubmitTab("));
+  assert.ok(/const latest=cur\?myLatestPeriodOf\(cur\.periods\):null;/.test(pane), "提出先は選んだ店舗の最新の期間");
+  assert.ok(/ap=\{latest\} apid=\{latest\.id\}/.test(pane) && /fixedName=\{cur\.name\}/.test(pane) && /onSub=\{app\.onSub\}/.test(pane), "App の店舗は App の提出・名前は固定");
   const main = fs.readFileSync(path.join(ROOT, "app-main.js"), "utf8");
   assert.ok(/onSub=\{staffOnSub\}/.test(main) && /onSub=\{staffOnSub\} onDeleteSub=\{staffOnDeleteSub\}( staffUser=\{staffUser\})?\/>;/.test(main), "募集URLと個別URLが同じ staffOnSub を通る");
   assert.ok(/useEffect\(\(\)=>\{ if\(pageRoute!==null&&latestPeriod&&apid!==latestPeriod\.id\) setApid\(latestPeriod\.id\); \}/.test(main), "最新の期間を購読する");
@@ -2394,4 +2399,51 @@ test("専用URLからアカウントへ追加: ルールの method と CF の LI
   assert.ok(/action: "verify"/.test(fn) && /\.transaction\(/.test(fn), "暗証番号はトランザクションで照合する");
   assert.ok(fn.indexOf("planLinkStaffPage(") < fn.indexOf(".transaction("), "リンクできないのに試行回数を減らさない");
   assert.ok(/auth\.token && context\.auth\.token\.email/.test(fn), "メールのある認証だけ");
+});
+
+// ---- 提出タブの店舗の切り替え（2026-10-08 ユーザー指示）----
+const _subShop = (id, extra) => ({ shopId: id, shopName: id + "店", name: "田中", periods: [{ id: "p1", startDate: "2026-10-16", endDate: "2026-10-31" }], settings: {}, staff: ["田中"], plan: "premium", ...extra });
+const _tok = n => String(n).repeat(24).slice(0, 24);
+test("提出の店舗の候補: 個別URLの店舗 → 紐付け → この端末で開いた個別URL → ヘルプ先の順・同じ店舗は先の種類だけ", () => {
+  const cs = m.mySubmitShopChoices({
+    home: _subShop("A", { token: _tok("a") }),
+    links: [_subShop("B"), _subShop("A")],
+    known: [_subShop("C", { token: _tok("c") }), _subShop("B", { token: _tok("b") }), _subShop("D", { token: "short" })],
+    help: [_subShop("E", { name: "田中太郎" }), _subShop("C"), { shopId: "F" }, null],
+  });
+  assert.deepStrictEqual(cs.map(c => [c.shopId, c.kind]), [["A", "home"], ["B", "link"], ["C", "page"], ["E", "help"]]);
+  assert.strictEqual(cs[0].token, _tok("a"));
+  assert.strictEqual(cs[1].token, null, "紐付けは token を持たない（staffLinks で書ける）");
+  assert.strictEqual(cs[2].token, _tok("c"), "個別URLの店舗は端末の登録に使う token を持つ");
+  assert.strictEqual(cs[3].token, null);
+  assert.strictEqual(cs[3].name, "田中太郎", "ヘルプ先はその店舗での登録名");
+  assert.deepStrictEqual(m.mySubmitShopChoices({}), []);
+  assert.deepStrictEqual(m.mySubmitShopChoices(null), []);
+});
+test("提出の店舗の既定・表示名・ゲート・案内", () => {
+  const cs = m.mySubmitShopChoices({ links: [_subShop("B"), _subShop("C")], help: [_subShop("E")] });
+  assert.strictEqual(m.mySubmitDefaultShopId(cs, "C"), "C");
+  assert.strictEqual(m.mySubmitDefaultShopId(cs, "Z"), "B");
+  assert.strictEqual(m.mySubmitDefaultShopId([], "Z"), null);
+  assert.strictEqual(m.mySubmitShopLabel(cs[0]), "B店");
+  assert.strictEqual(m.mySubmitShopLabel(cs[2]), "E店（ヘルプ先）");
+  assert.strictEqual(m.mySubmitGateOf(null), "none");
+  assert.strictEqual(m.mySubmitGateOf(cs[0], true), "ok", "紐付け・個別URLの店舗は縛りがあっても書ける");
+  assert.strictEqual(m.mySubmitGateOf(cs[2], undefined), "loading");
+  assert.strictEqual(m.mySubmitGateOf(cs[2], false), "ok");
+  assert.strictEqual(m.mySubmitGateOf(cs[2], true), "guard");
+  const g = m.mySubmitGuardGuide(cs[2], false);
+  assert.ok(g.some(t => t.includes("専用のURL") && t.includes("E店")));
+  assert.ok(!g.some(t => t.includes("リンクを申請")), "個別URLの画面ではアカウントの案内を出さない");
+  assert.ok(m.mySubmitGuardGuide(cs[2], true).some(t => t.includes("リンクを申請")));
+});
+test("提出の店舗の切り替え: 他店への書き込みは差分 update だけ・端末の登録の後・アカウントにも提出タブ", () => {
+  const my = fs.readFileSync(path.join(ROOT, "app-my.js"), "utf8");
+  const fn = my.slice(my.indexOf("async function mySubmitToShop("), my.indexOf("async function myDeleteSubAt("));
+  assert.ok(/await myEnsureSubmitDevice\(sid,token\);[\s\S]*diffSubForFlatWrite\(sub\.id,prevSub\|\|null,sub\)[\s\S]*fbUpd\(`shops\/\$\{sid\}\/subs`,flat\)/.test(fn), "端末の登録 → 差分 → update の順");
+  assert.ok(!/fbSet\(`shops\/\$\{sid\}\/subs/.test(my), "subs を set() しない");
+  const pane = my.slice(my.indexOf("function useMySubmitShopSubs("), my.indexOf("async function myEnsureSubmitDevice("));
+  assert.ok(/orderByChild\("periodId"\)\.equalTo\(pid\)/.test(pane), "他店の提出は選んだ期間だけを読む");
+  const view = my.slice(my.indexOf("function MyView("), my.indexOf("// スタッフ個別URL（2026-10-04・ユーザーの仕様変更）"));
+  assert.ok(/if\(tab==="submit"\)return\(/.test(view) && /<MyAccountSubmitTab /.test(view), "アカウントに提出タブ");
 });

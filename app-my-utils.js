@@ -9,8 +9,10 @@
 // ただし Node のテストはこのファイルだけを require するので、app-utils.js の関数を使う関数はテストで引数に渡す形にする。
 
 // 下部タブ。並びと表示名の正本（app-my.js の MyTabBar が描く）
+// 2026-10-08: メールのアカウントにも「提出」を足した（個別URLと同じ並び）
 const MY_TABS=[
   {key:"shift",label:"マイシフト"},
+  {key:"submit",label:"提出"},
   {key:"pay",label:"給料"},
   {key:"settings",label:"設定"},
 ];
@@ -1690,13 +1692,8 @@ function myLinkShopRefOfHash(h){
 }
 // 個別URL。base は origin+pathname（スタッフ募集URLの buildUrl と同じく LINE のアプリ内ブラウザを外へ出すパラメータを付ける）
 function buildMyPageUrl(base,token){return`${String(base||"")}?openExternalBrowser=1#/m/${token}`;}
-// 個別URLの下部タブ（アカウントの MY_TABS に「提出」を足したもの）
-const MY_PAGE_TABS=[
-  {key:"shift",label:"マイシフト"},
-  {key:"submit",label:"提出"},
-  {key:"pay",label:"給料"},
-  {key:"settings",label:"設定"},
-];
+// 個別URLの下部タブ。2026-10-08 にアカウントにも「提出」を足したので MY_TABS と同じ並び
+const MY_PAGE_TABS=MY_TABS;
 const MY_PAGE_STATUSES=["pending","approved","rejected","revoked"];
 // 申請の記録。入力の検証はアカウントの登録ネームと同じ（validateMyProfile）。番号が空ならキーを持たない
 function buildMyPageRequest(input,nowIso){
@@ -1919,6 +1916,54 @@ function myLatestPeriodOf(periods){
     if(!best||String(p.startDate)>String(best.startDate))best=p;
   });
   return best;
+}
+
+// ---- 提出タブの店舗の切り替え（2026-10-08 ユーザー指示）----
+// 個別URL（#/m/）とメールのアカウント（#/me）の「提出」タブで、出す先の店舗を選べるようにする。候補と並び:
+//   home … 個別URLの店舗（App が購読している店舗）
+//   link … アカウントの有効な紐付け（readMyLinks の ok）。名前は staffLinks の name
+//   page … この端末で開いた・作った別の店舗の個別URL（useMyKnownPageShops の ok）。提出の前にこの端末を pageDevices に登録する
+//   help … ヘルプ先（useMyHelpDestShops）。名前はその店舗での登録名
+// 同じ店舗は先に出た種類だけを残す。各行は {shopId, shopName, name, kind, token, periods, settings, staff, plan}
+const MY_SUBMIT_KINDS=["home","link","page","help"];
+function mySubmitShopChoices(o){
+  const x=_myObj(o)||{};
+  const out=[];const seen=new Set();
+  const add=(rows,kind)=>(Array.isArray(rows)?rows:[]).forEach(r=>{
+    if(!r||typeof r.shopId!=="string"||!r.shopId||typeof r.name!=="string"||!r.name||seen.has(r.shopId))return;
+    if(kind==="page"&&!isMyPageToken(r.token))return;
+    seen.add(r.shopId);
+    out.push({shopId:r.shopId,shopName:r.shopName||r.shopId,name:r.name,kind,
+      token:(kind==="page"||kind==="home")&&isMyPageToken(r.token)?r.token:null,
+      periods:Array.isArray(r.periods)?r.periods:[],settings:_myObj(r.settings)||{},staff:Array.isArray(r.staff)?r.staff:[],plan:r.plan||"free"});
+  });
+  add(x.home?[x.home]:[],"home");add(x.links,"link");add(x.known,"page");add(x.help,"help");
+  return out;
+}
+// 既定の店舗: preferred（個別URLの店舗・募集URLから開いたときのその店舗）が候補にあればそれ、無ければ先頭
+function mySubmitDefaultShopId(choices,preferred){
+  const cs=Array.isArray(choices)?choices:[];
+  return(cs.find(c=>c.shopId===preferred)||cs[0]||{}).shopId||null;
+}
+// プルダウンの表示名
+function mySubmitShopLabel(c){return c?`${c.shopName||c.shopId}${c.kind==="help"?"（ヘルプ先）":""}`:"";}
+// 選んだ店舗で提出フォームを出してよいか。ヘルプ先だけは、その名前に本人だけの縛り（nameGuards）があると
+// この端末からは書けない（紐付けも個別URLの端末登録も無い＝ルールが拒否する）ので案内を出す。
+// guarded: undefined＝確かめている途中・true/false。戻り値 "ok" | "loading" | "guard" | "none"
+function mySubmitGateOf(choice,guarded){
+  if(!choice)return"none";
+  if(choice.kind!=="help")return"ok";
+  if(guarded===undefined)return"loading";
+  return guarded?"guard":"ok";
+}
+// 縛りのあるヘルプ先の案内（2026-10-08 ユーザー決定「案内を出す」）。account はメールのアカウントの画面
+function mySubmitGuardGuide(choice,account){
+  const shop=choice&&(choice.shopName||choice.shopId)||"このお店";
+  const name=choice&&choice.name||"";
+  const lines=[`${shop}では、${name}さんのお名前の提出をご本人の端末からだけ受け付けています。`,
+    `${shop}から受け取ったあなた専用のURLを、この端末で一度開いてください。開いたあとは、ここから${shop}にも提出できます。`];
+  if(account)lines.push(`マイシフトの設定の「勤務先のお店」から${shop}にリンクを申請し、承認されたときも提出できるようになります。`);
+  return lines;
 }
 
 // ---- 全員のシフト表（P3 → 2026-10-04 に PDF の「シフト表」と同じ仕様へ・ユーザー指示）----
@@ -2168,7 +2213,7 @@ if(typeof module!=="undefined"&&module.exports){
     myClampDay,myClosingMonthOf,myClosingRangeOf,myPayDateOf,myPayPlanOf,myPayMonthOfDate,myPeriodsInRange,myPayReadRange,myShiftyDayInfo,myOverrideDatesIn,myMonthSettingsOf,
     myShiftyPayTimes,myManualPayTimes,myWageSourceOf,MY_PAY_ITEM_KEYS,myPayAmounts,myPayMonthFor,myPaySummaryOf,MY_PAY_YEAR_GOAL_MONTHS,myPayYearGoalOf,myPayYearByWorkplace,planMyReceivedBulk,myReceivedBulkForm,myPayYearMonths,myReceivedSum,myPayYearSummary,myDefaultPayMonth,
     fmtMyYen,myGoalProgress,myCompanyPayOf,
-    MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,myLinkShopRefOfHash,buildMyPageUrl,MY_PAGE_TABS,MY_PAGE_STATUSES,buildMyPageRequest,planIssueStaffPage,resolveMyPage,MY_PAGE_STATE_MESSAGES,
+    MY_PAGE_TOKEN_LEN,MY_PAGE_TOKEN_RE,isMyPageToken,genMyPageToken,myPageRouteOf,myLinkShopRefOfHash,buildMyPageUrl,MY_PAGE_TABS,MY_SUBMIT_KINDS,mySubmitShopChoices,mySubmitDefaultShopId,mySubmitShopLabel,mySubmitGateOf,mySubmitGuardGuide,MY_PAGE_STATUSES,buildMyPageRequest,planIssueStaffPage,resolveMyPage,MY_PAGE_STATE_MESSAGES,
     approvedStaffPagesByName,splitStaffPageRequests,planApproveStaffPage,planRejectStaffPage,planRevokeStaffPage,planResetStaffPagePin,planStaffPageOp,myPageOpenCandidates,myKnownPageShops,myPickOpenablePage,myOverlayHashOf,buildMyAccountUrl,myLatestPeriodOf,normalizeMyPagePin,isValidMyPagePin,validateMyPagePinInput,buildMyShiftSheet,MY_SHEET_MAX_SCALE,myShiftSheetScale,myAllShiftPeriodOptions,myAllShiftChoices,myHelpDestRegs,myHelpDestPeriodOptions,myNowPeriodOf,myAllShiftSelection,myAllShiftStack};
 }
 

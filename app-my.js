@@ -2397,6 +2397,13 @@ function MyView({staffUser,onStaffUser,shopId,onClose}){
     return()=>{alive=false;};
   },[uid]);
   if(!staffUser) return <MyAuthScreen shopId={shopId} onClose={onClose}/>;
+  // 提出（2026-10-08）: StaffView が自前のヘッダー（お店・期間）と送信の帯を持つので、外側の見出しと枠は付けない（個別URLの提出タブと同じ）
+  if(tab==="submit")return(
+    <div data-my-view="1" data-my-account-tab="submit" style={{minHeight:"100vh",background:"var(--c-bg)"}}>
+      <MyAccountSubmitTab me={me} shopId={shopId} onClose={onClose} onGoSettings={()=>setTab("settings")}/>
+      <MyTabBar tab={tab} onTab={setTab}/>
+    </div>
+  );
   const label=(MY_TABS.find(t=>t.key===tab)||MY_TABS[0]).label;
   return(
     <div data-my-view="1" style={{minHeight:"100vh",background:"var(--c-bg)"}}>
@@ -2851,7 +2858,7 @@ function useMyHelpDestShops(bases){
 // 全員のシフトに並べる「Shifty を使っている別の店舗」のうち、この端末で開けた・作った個別URLの店舗（2026-10-05 ユーザー指示）。
 // 店舗ごとに staffPages/{token}（token を知っていれば読める）と periods・settings・staff・プラン・店舗名を読み、承認済みで名前がスタッフ一覧に
 // ある個別URL（resolveMyPage の ok）の店舗だけを返す。exclude（いま開いている店舗）と skip（紐付けで既に並べる店舗）は読まない。書き込みなし。
-// 戻り値: myAllShiftChoices に渡す店舗の配列 [{shopId, shopName, name, periods, settings, staff, plan}]
+// 戻り値: myAllShiftChoices に渡す店舗の配列 [{shopId, shopName, name, token（使えた個別URL・提出タブが端末の登録に使う）, periods, settings, staff, plan}]
 function useMyKnownPageShops(exclude,skip){
   const[rows,setRows]=useState([]);
   const skipKey=(Array.isArray(skip)?skip:[]).slice().sort().join(",");
@@ -2869,7 +2876,7 @@ function useMyKnownPageShops(exclude,skip){
         const pg=resolveMyPage(t,{shopId:c.shopId},r.ok?r.v:null,sh.staff);
         if(pg.state!=="ok")continue;
         const nm=await _myRead(`global/shops/${c.shopId}/name`);
-        return{shopId:c.shopId,shopName:nm.ok&&typeof nm.v==="string"&&nm.v?nm.v:c.shopId,name:pg.name,periods:sh.periods,settings:sh.settings,staff:sh.staff,plan:sh.plan};
+        return{shopId:c.shopId,shopName:nm.ok&&typeof nm.v==="string"&&nm.v?nm.v:c.shopId,name:pg.name,token:t,periods:sh.periods,settings:sh.settings,staff:sh.staff,plan:sh.plan};
       }
       return null;
     })).then(v=>{if(alive)setRows(v.filter(Boolean));},e=>{console.warn("全員のシフト: 別の店舗の読み込みに失敗:",e&&e.code);if(alive)setRows([]);});
@@ -2947,6 +2954,129 @@ function MyAllShiftTable({period,staff,settings,subs,plan,me,shopId,shopName,hel
       </div>}
     </div>
   );
+}
+
+// ===== 提出タブの店舗の切り替え（2026-10-08 ユーザー指示）=====
+// 個別URL（#/m/）とメールのアカウント（#/me）の「提出」タブ。候補は mySubmitShopChoices（app-my-utils.js）。
+// App が購読している店舗（個別URLの店舗）は従来どおり App の staffOnSub を通す。それ以外の店舗は、選んだ店舗の最新の期間の提出だけを
+// 購読し（店舗の subs 全件は読まない）、書き込みは staffOnSub と同じく diffSubForFlatWrite の差分 update で行う（全体 set() しない）。
+// 名前は店舗ごとに固定（StaffView の fixedName）。個別URLの店舗（page）はこの端末を pageDevices に登録してから書く（縛りのある名前のため）。
+function useMySubmitShopSubs(sid,pid){
+  const[st,setSt]=useState({key:"",list:undefined});
+  const key=sid&&pid?sid+"|"+pid:"";
+  useEffect(()=>{
+    if(!key||!firebaseDB)return;
+    const q=firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(pid);
+    const cb=q.on("value",snap=>setSt({key,list:Object.values(snap.val()||{}).filter(x=>x&&x.id&&x.periodId===pid)}),
+      e=>{console.warn("提出: 店舗の提出の読み込みに失敗:",e&&e.code);setSt({key,list:null});});
+    return()=>q.off("value",cb);
+  },[key]);
+  return st.key===key?st.list:undefined;
+}
+// shops/{sid}/nameGuards/{名前}。undefined＝確かめている途中。キーに使えない文字の名前はルールが縛りを読まない＝false
+function useMyNameGuard(sid,name){
+  const[st,setSt]=useState({key:"",v:undefined});
+  const key=sid&&name?sid+"|"+name:"";
+  useEffect(()=>{
+    if(!key)return;
+    if(!nameGuardKeyOk(name)||!firebaseDB){setSt({key,v:false});return;}
+    let alive=true;
+    _myRead(`shops/${sid}/nameGuards/${name}`).then(r=>{if(alive)setSt({key,v:r.ok&&r.v===true});});
+    return()=>{alive=false;};
+  },[key]);
+  return key&&st.key===key?st.v:undefined;
+}
+async function myEnsureSubmitDevice(sid,token){
+  const uid=firebaseAuth&&firebaseAuth.currentUser&&firebaseAuth.currentUser.uid;
+  if(!uid||!sid||!isMyPageToken(token))return;
+  const path=`shops/${sid}/pageDevices/${uid}`;
+  const cur=await _myRead(path);
+  if(cur.ok&&cur.v&&cur.v.token===token)return;
+  try{await fbSet(path,pageDeviceRecordOf(token,new Date().toISOString()));}
+  catch(e){dlog("提出: 本人の端末の登録なし:",e&&e.code);} // 取り消された URL は拒否される＝提出の拒否の理由で知らせる
+}
+async function mySubmitDeniedError(sid,period,sub){
+  let guarded=false;
+  if(sub&&nameGuardKeyOk(sub.staffName)){const r=await _myRead(`shops/${sid}/nameGuards/${sub.staffName}`);guarded=r.ok&&r.v===true;}
+  const reason=subDeniedReasonOf({period:withPeriodExpiry(period),nowMs:Date.now(),guarded});
+  return reason?Object.assign(new Error(SUB_DENIED_MESSAGES[reason]),{userMessage:SUB_DENIED_MESSAGES[reason]}):null;
+}
+async function mySubmitToShop({sid,token,period,prevSub,sub}){
+  if(!firebaseDB)throw new Error("firebase未接続");
+  await myEnsureSubmitDevice(sid,token);
+  const flat=diffSubForFlatWrite(sub.id,prevSub||null,sub);
+  if(!Object.keys(flat).length)return;
+  try{await fbUpd(`shops/${sid}/subs`,flat);}
+  catch(e){
+    console.warn("提出: 書き込み失敗:",sid,e&&e.code);
+    if(isPermissionDeniedError(e)){const d=await mySubmitDeniedError(sid,period,sub);if(d)throw d;}
+    throw e;
+  }
+}
+async function myDeleteSubAt(sid,token,subId){
+  if(!firebaseDB||DEMO_MODE)return;
+  await myEnsureSubmitDevice(sid,token);
+  await firebaseDB.ref(`shops/${sid}/subs/${subId}`).remove().catch(e=>console.warn("提出: 削除に失敗:",sid,e&&e.code));
+}
+// choices: mySubmitShopChoices の戻り値。app: App が購読している店舗 {shopId, subs, onSub, onDeleteSub}（個別URLの画面だけ）
+function MySubmitPane({choices,preferredShopId=null,app=null,account=false,onClose=null,onGoSettings=null}){
+  const[sel,setSel]=useState(null);
+  const list=Array.isArray(choices)?choices:[];
+  const cur=list.find(c=>c.shopId===sel)||list.find(c=>c.shopId===mySubmitDefaultShopId(list,preferredShopId))||null;
+  const isApp=!!(app&&cur&&cur.shopId===app.shopId);
+  const latest=cur?myLatestPeriodOf(cur.periods):null;
+  const remoteSubs=useMySubmitShopSubs(cur&&!isApp?cur.shopId:null,latest&&latest.id);
+  const guarded=useMyNameGuard(cur&&cur.kind==="help"?cur.shopId:null,cur&&cur.name);
+  const gate=mySubmitGateOf(cur,guarded);
+  const bar=(list.length>1||onClose)&&(
+    <div data-my-submit-bar="1" style={{background:"var(--c-card)",borderBottom:"1px solid var(--c-border)"}}>
+      <div style={{maxWidth:560,margin:"0 auto",padding:"8px 16px",display:"flex",alignItems:"center",gap:10}}>
+        {onClose&&<button data-my-close="1" onClick={onClose} style={{background:"none",border:"none",color:"var(--c-text2)",fontSize:14,fontWeight:600,cursor:"pointer",padding:"10px 0",whiteSpace:"nowrap"}}>← 提出画面</button>}
+        {list.length>1&&<label style={{flex:1,minWidth:0,display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:13,color:"var(--c-text2)",whiteSpace:"nowrap"}}>提出するお店</span>
+          <select data-my-submit-select="1" value={cur?cur.shopId:""} onChange={e=>setSel(e.target.value)} style={{...MY_SELECT,flex:1,minWidth:0,width:"auto"}}>
+            {list.map(c=><option key={c.shopId} value={c.shopId}>{mySubmitShopLabel(c)}</option>)}
+          </select>
+        </label>}
+      </div>
+    </div>
+  );
+  const note=children=><main style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 96px"}}>{children}</main>;
+  let body;
+  if(!cur)body=note(<MyEmptyState>
+    <span data-my-submit-empty="1">提出できるお店がありません。{account?"設定の「勤務先のお店」からお店とリンクすると、ここから提出できます。":""}</span>
+    {account&&onGoSettings&&<div style={{marginTop:12}}><button onClick={onGoSettings} style={AB}>設定を開く</button></div>}
+  </MyEmptyState>);
+  else if(gate==="guard")body=note(
+    <section data-my-submit-guard="1" style={MY_SECTION}>
+      <div style={MY_SECTION_TITLE}>{cur.shopName}にはこの端末から提出できません</div>
+      {mySubmitGuardGuide(cur,account).map((t,i)=><p key={i} style={{fontSize:14,lineHeight:1.8,color:"var(--c-text2)",margin:"0 0 8px"}}>{t}</p>)}
+    </section>);
+  else if(!latest)body=note(<MyEmptyState>提出できる期間がまだありません。お店がシフトの募集を始めると、ここから提出できます。</MyEmptyState>);
+  else if(gate==="loading"||(!isApp&&remoteSubs===undefined))body=note(<MyEmptyState>読み込み中…</MyEmptyState>);
+  else if(!isApp&&remoteSubs===null)body=note(<MyEmptyState><span data-my-submit-unread="1">{cur.shopName}の提出を読み込めませんでした。通信の状態を確かめて、開き直してください。</span></MyEmptyState>);
+  else if(isApp)body=<StaffView key={cur.shopId} periods={cur.periods} ap={latest} apid={latest.id} setApid={()=>{}} shopId={cur.shopId} settings={cur.settings} subs={app.subs}
+    staffList={cur.staff} plan={cur.plan} urlLocked onSub={app.onSub} onDeleteSub={app.onDeleteSub} shopName={cur.shopName} fixedName={cur.name} bottomOffset={MY_TAB_BAR_H}/>;
+  else body=<StaffView key={cur.shopId} periods={cur.periods} ap={latest} apid={latest.id} setApid={()=>{}} shopId={cur.shopId} settings={cur.settings} subs={remoteSubs}
+    staffList={cur.staff} plan={cur.plan} urlLocked shopName={cur.shopName} fixedName={cur.name} bottomOffset={MY_TAB_BAR_H}
+    onSub={sub=>mySubmitToShop({sid:cur.shopId,token:cur.token,period:latest,prevSub:remoteSubs.find(s=>s.id===sub.id)||null,sub})}
+    onDeleteSub={subId=>{myDeleteSubAt(cur.shopId,cur.token,subId);}}/>;
+  return(
+    <div data-my-submit="1" data-my-submit-shop={cur?cur.shopId:""} data-my-submit-kind={cur?cur.kind:""}>
+      {bar}
+      {body}
+    </div>
+  );
+}
+// メールのアカウントの「提出」（2026-10-08）。候補は有効な紐付けの店舗・この端末で開いた別の店舗の個別URL・ヘルプ先（全員のシフトと同じ読み込み）
+function MyAccountSubmitTab({me,shopId,onClose,onGoSettings}){
+  const src=useMyAllShiftSources(me);
+  const knownShops=useMyKnownPageShops(src.loading?null:"",src.loading?null:src.shops.map(x=>x.shopId));
+  const ownShops=useMemo(()=>src.loading?src.shops:[...src.shops,...knownShops],[src.loading,src.shops,knownShops]);
+  const helpDest=useMyHelpDestShops(ownShops);
+  const choices=useMemo(()=>mySubmitShopChoices({links:src.shops,known:knownShops,help:helpDest}),[src.shops,knownShops,helpDest]);
+  if(src.loading)return <main style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 96px"}}><MyEmptyState>読み込み中…</MyEmptyState></main>;
+  return <MySubmitPane choices={choices} preferredShopId={shopId} account onClose={onClose} onGoSettings={onGoSettings}/>;
 }
 
 // 個別URLの画面の状態（承認待ち・却下・取り消し・見つからない）
@@ -3235,13 +3365,12 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
   const label=(tabs.find(t=>t.key===tab)||tabs[0]).label;
   // 提出（P2）: 最新の期間へ、承認された名前で。募集URLと同じ StaffView・同じ提出の処理（App の staffOnSub）を通す。
   // 確定済みの期間は StaffView が止め、ルールも拒否する。StaffView は自前のヘッダー（お店・期間）と送信の帯を持つので、外側の枠は付けない
+  // 2026-10-08: この端末で開いた別の店舗の個別URLとヘルプ先にも出せる（提出するお店のプルダウン・MySubmitPane）。個別URLの店舗は従来どおり App の購読と staffOnSub
   if(tab==="submit"){
-    const latest=myLatestPeriodOf(periods);
+    const choices=mySubmitShopChoices({home:{shopId,shopName,name:page.name,token,periods,settings,staff:staffList,plan},known:knownShops,help:helpDest});
     return(
       <div data-my-view="page" data-my-page-name={page.name} data-my-page-tab="submit" style={{minHeight:"100vh",background:"var(--c-bg)"}}>
-        {latest?<StaffView periods={periods} ap={latest} apid={latest.id} setApid={()=>{}} shopId={shopId} settings={settings} subs={subs} staffList={staffList} plan={plan}
-          urlLocked onSub={onSub} onDeleteSub={onDeleteSub} shopName={shopName} fixedName={page.name} bottomOffset={MY_TAB_BAR_H}/>
-          :<main style={{maxWidth:560,margin:"0 auto",padding:"16px 16px 96px"}}><MyEmptyState>提出できる期間がまだありません。お店がシフトの募集を始めると、ここから提出できます。</MyEmptyState></main>}
+        <MySubmitPane choices={choices} preferredShopId={shopId} app={{shopId,subs,onSub,onDeleteSub}}/>
         <MyTabBar tab={tab} onTab={setTab} tabs={tabs}/>
       </div>
     );

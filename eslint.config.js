@@ -211,6 +211,13 @@ const sharedGlobals = {
   myNowPeriodOf: "writable",
   MY_ICS_APP_GUIDE: "writable",
   myLatestPeriodOf: "writable",
+  // 提出タブの店舗の切り替え（2026-10-08）
+  MY_SUBMIT_KINDS: "writable",
+  mySubmitShopChoices: "writable",
+  mySubmitDefaultShopId: "writable",
+  mySubmitShopLabel: "writable",
+  mySubmitGateOf: "writable",
+  mySubmitGuardGuide: "writable",
   // 本人のカレンダーと給料のヘルプ勤務（2026-10-04 B）
   myHelperDaysOf: "writable",
   myHelperShiftEntries: "writable",

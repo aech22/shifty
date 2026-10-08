@@ -77,7 +77,7 @@ developブランチ・mainブランチのどちらにチェックアウトして
 ├── app-admin.js        ← AdminView・期間/スタッフ/候補/提出一覧/マイページの各タブ, expXl, UpgradeModal, AC/AL/AT/CL（babel）
 ├── app-shift.js        ← シフト作成タブ一式（ShiftEditTab・実績の ActualsGrid/ActualsCsvDialog・HeatTable/SummaryTable/GridLegend・LEGEND_COLORS/FIXED_KEY 等）（babel）
 ├── app-company.js      ← 企業連携タブ一式（CompanyTab と部品・企業の一括PDF・企業横断ダッシュボード）・設定タブ（SetTab）・賃金マスタ（StaffPayPage・PayCodeBox）・月次賃金（PayrollPage）（babel）
-├── app-my.js           ← 従業員画面（MyView・マイシフト／給料／設定の下部タブ・アカウントの登録とログイン・メールリンクの画面）・
+├── app-my.js           ← 従業員画面（MyView・マイシフト／提出／給料／設定の下部タブ・アカウントの登録とログイン・メールリンクの画面）・
 │                          スタッフ個別URL（#/m/ の MyPageView・登録・暗証番号・URLの再送）・スタッフタブで描く管理者側の部品
 │                          （StaffPageEditSection・StaffPageRequestsCard・StaffLinkEditSection・StaffLinkRequestsCard）（babel）
 ├── app-main.js         ← App() 本体 + ReactDOM マウント（babel）
@@ -549,7 +549,7 @@ Phase3 (useEffect[ready, periods, urlResolved]) — URLなし時のapid初期化
 |---|---|---|
 | `App()` | app-main.js | メインアプリ・3フェーズ初期化・全 state 管理・ReactDOMマウント |
 | `ShiftyIcon` | app-staff.js | アプリアイコンSVG（全画面共通） |
-| `MyView` | app-my.js | 従業員画面（#/me・募集URLの「マイシフト」）。マイシフト／給料／設定の下部タブ・アカウントの登録とログイン |
+| `MyView` | app-my.js | 従業員画面（#/me・募集URLの「マイシフト」）。マイシフト／提出／給料／設定の下部タブ（提出は 2026-10-08）・アカウントの登録とログイン |
 | `MyPageView` | app-my.js | スタッフ個別URL（#/m/<pageToken>）の画面。マイシフト／提出／給料／設定の下部タブ |
 | `StaffPageEditSection / StaffPageRequestsCard / StaffLinkEditSection / StaffLinkRequestsCard` | app-my.js | スタッフタブで描く管理者側の部品（専用URLの発行・申請の承認・リンクの解除。個人リンクコードは 2026-10-05 に機能ごと削除した） |
 | `StaffView` | app-staff.js | スタッフのシフト提出画面 |
@@ -1754,6 +1754,16 @@ if (Object.keys(flat).length > 0) fbUpd(fbPath(sid, "periods"), flat);
 - **掛け持ち（2026-10-05 ユーザー指示・**CF とルールは本番未反映**）**: ①**従業員番号はお店ごとに申請のときに入れる**（設定タブ「勤務先のお店」の申請の欄の「このお店の従業員番号」・`MY_LINK_NUMBER_HINT`）。初期値はリンク済みのお店が無いときだけアカウントの番号（`myLinkRequestNumberDefault`）。アカウントの番号（profile.number）は1つ目のお店の申請（登録と同時の自動申請）に使う。リンク後のお店ごとの番号は従来どおり勤務先の一覧（`settings.staffNumbers`）。#/me の設定に、リンク済みのお店があっても「掛け持ち先のお店を足すとき」の案内を出す。②**専用URL（#/m/）のお店をアカウントに追加**: 個別URLの設定タブの「マイシフトのアカウントに追加」（`MyPageAccountLinkBox`・状態は `myPageAccountLinkState`）。未ログインなら「ログイン・登録して追加する」でログインの画面（戻ると sessionStorage `ss_myPageLinkIntent` で設定タブから始まる）、ログイン済みなら CF `linkStaffPage`（暗証番号を決めていれば入力）で即時にリンク（method "page"・管理者の再承認なし＝ユーザー決定）。**個別URLの本人のデータ（staffPageData）はアカウントへ持ち込まない**（ユーザー決定）。個別URLはそのまま使える。ルールは staffLinks の method に 'page' を足した（既存パスの値の追加＝**クライアント→ルール→CF の順で本番反映**。CF より先にクライアントを出すと「追加」が「関数が無い」で失敗するだけで他は壊れない）。回帰は `example-my-multi-shop.js`（30項目・d781ac6 の配信物で EXIT≠0）と cf-verify の `example-link-staff-page.js`（23項目）
 - **休暇の種別名**: 画面・PDF・全員の表・シフト作成タブからの Excel。期間タブの Excel は提出そのまま（斜線）
 - **ホーム画面のアプリ（2026-10-05・同日2回目で改め）**: manifest.json の start_url は "./" なので、iOS でスタッフ側のURLを「ホーム画面に追加」するとアプリは "/" で開き、管理者の端末では管理者画面になっていた。二段構えで直した。①**iOS のスタッフ側のURL（#/s/・#/m/・#/me）では manifest を置かない**（manifest が無ければ iOS は追加した時点の URL＝ハッシュ込みで開く）。index.html の head のスクリプトが最初の manifest を同じ規則で入れ（静的な link は置かない）、以後は app-core.js の `applyHomeManifest`（`homeManifestPlanOf`）。iOS 以外は data: の manifest（`homeManifestOf`）。②**ホーム画面から開いてハッシュが無いときの保険**: ブラウザのタブでスタッフ側のURLを開いている間は Cookie `ots_homeLaunch` にそのハッシュを置き（管理者側では消す）、ホーム画面のアプリ（`navigator.standalone`・display-mode standalone）で最初に開いたときだけその Cookie で開き先を決めて、アプリ側の localStorage `ots_homeLaunch_v1` に残す（以後はそれだけ＝`homeLaunchRestoreOf`。Cookie が無ければ "admin"）。app-core.js の読み込み時（App が URL を読む前）に `history.replaceState` でハッシュを付ける。**iPhone 実機では未確認**（iOS が追加時に Safari の Cookie をアプリへ写す前提。写らなくても①で開く想定）。既に追加済みのアプリは追加し直しが要る。回帰は `example-my-1005.js` の IOS（iPhone の UA と standalone を差し替え）
+- **提出タブの店舗の切り替え（2026-10-08 ユーザー指示・develop のみ・ルールと CF の変更なし）**: 個別URL（#/m/）の「提出」タブに「提出するお店」のプルダウンを置き、
+  **メールのアカウント（#/me）にも「提出」タブを新設**した（`MY_TABS` が マイシフト／提出／給料／設定 になり、`MY_PAGE_TABS` は同じもの）。部品は app-my.js の `MySubmitPane`
+  （個別URL）と `MyAccountSubmitTab`（#/me）。候補と並びは `mySubmitShopChoices`（app-my-utils.js）: 個別URLの店舗（home）→ アカウントの有効な紐付け（link・名前は staffLinks）→
+  **この端末で開いた別の店舗の個別URL**（page・`useMyKnownPageShops`・名前はその URL の承認された名前）→ ヘルプ先（help・`useMyHelpDestShops`・名前はその店舗での登録名）。
+  同じ店舗は先の種類だけ。既定は個別URLの店舗（#/me は募集URLから開いたときのその店舗、無ければ先頭）。提出先は選んだ店舗の最新の期間（`myLatestPeriodOf`）。
+  個別URLの店舗は従来どおり App の購読と `staffOnSub`。**それ以外の店舗は、選んだ期間の提出だけを購読し（`useMySubmitShopSubs`・orderByChild）、`mySubmitToShop` が
+  `diffSubForFlatWrite` の差分 update で書く**（全体 set() しない）。page の店舗は提出・削除の前にこの端末を `shops/{sid}/pageDevices/{uid}` にその URL の token で登録する
+  （縛りのある名前のため）。拒否の理由は `subDeniedReasonOf`。**ヘルプ先の名前に nameGuards があるとこの端末からは書けない**（紐付けも端末の登録も無い）ので、
+  フォームの代わりに「その店舗の専用のURLを一度開いて」の案内（`mySubmitGuardGuide`・#/me はリンクの申請の1文を足す・ユーザー決定）。候補の店舗の settings・periods・staff は
+  全員のシフトと同じ30秒の読み込みの写し（提出の内容は購読で最新）。回帰は `example-my-submit-switch.js`（99be503 の配信物では EXIT≠0）
 - **提出タブ（2026-10-05）**: 個別URLの「提出」タブは、提出済みでも「提出完了」ではなく提出の内容を反映した選択画面を開く（`data-staff-restored` の帯）。提出した直後だけ「提出完了」。募集URL（Cookie の名前）は従来どおり「提出完了」から
 - **全員のシフトのヘルプ先（2026-10-05）**: 同じ人の他店の登録（写しの人物、無ければ所属店舗の一致＝`myHelpDestRegs`・同じ法人だけ）がある店舗を「◯◯店（ヘルプ先）」として出す（同日の2回目の指示で、お店のプルダウンではなく下の「1画面に縦に並べる」の1ブロック）。選択肢は**公開済みか確定済み**かつ直近3ヶ月の期間（`myHelpDestPeriodOptions`。同日の追加指示「公開だけの期間も出して」で確定済みだけから広げた）、既定は自分の店舗。読み込みは `useMyHelpDestShops`（settings・staff・periods）と、選んだ期間の subs だけの部分読み（書き込みなし）。個別URL・#/me の両方
 - **全員のシフトを1画面に縦に並べる（2026-10-05 ユーザー指示「店舗の切り替えは要らない。同じ期間なら所属店舗のシフトの下にヘルプ先、Shifty を使っている別の店舗も縦に並べて1画面で」）**:
