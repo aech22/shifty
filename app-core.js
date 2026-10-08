@@ -36,7 +36,7 @@ const FIREBASE_CONFIG_PROD = {
   projectId:         "ontheshift",
   storageBucket:     "ontheshift.firebasestorage.app",
   messagingSenderId: "29720860733",
-  appId:             "1:29720860733:web:94aec772f4cddcb1287254",
+  appId:             "1:29720860733:web:858670ff3a1db9b6287254", // 2026-10-08: プロジェクトに実在するウェブアプリ（App Check に登録したもの）。旧 ID のアプリはプロジェクトに無かった
   measurementId:     "G-P8RP0TG9JG"
 };
 
