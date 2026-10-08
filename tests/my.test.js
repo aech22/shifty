@@ -74,9 +74,46 @@ test("validateMyEmail / validateMyPassword: 形式・8文字以上・確認の�
   assert.strictEqual(m.validateMyEmail(" a@b.jp "), null);
   assert.strictEqual(m.MY_PASSWORD_MIN, 8);
   assert.match(m.validateMyPassword("1234567"), /8文字以上/);
-  assert.strictEqual(m.validateMyPassword("12345678"), null, "確認を渡さなければ一致は見ない（ログイン）");
-  assert.strictEqual(m.validateMyPassword("12345678", "12345679"), "確認用のパスワードが一致しません");
-  assert.strictEqual(m.validateMyPassword("12345678", "12345678"), null);
+  assert.strictEqual(m.validateMyPassword("kumo-hashi7"), null, "確認を渡さなければ一致は見ない");
+  assert.strictEqual(m.validateMyPassword("kumo-hashi7", "kumo-hashi8"), "確認用のパスワードが一致しません");
+  assert.strictEqual(m.validateMyPassword("kumo-hashi7", "kumo-hashi7"), null);
+});
+
+test("myPasswordWeakness: よく使われるパスワードを断る（2026-10-08）", () => {
+  ["password", "Password", "PASSWORD123", "12345678", "１２３４５６７８", "87654321", "qwertyuiop", "1q2w3e4r", "iloveyou", "aaaaaaaa", "11111111", "abcdefgh", "hgfedcba",
+    "Password!!", "!!password", "qwerty2025", "admin12345", "abc12345", "abcd1234", "shifty123", "Shifty!!"].forEach(pw =>
+    assert.strictEqual(m.myPasswordWeakness(pw), m.MY_PASSWORD_COMMON_MSG, pw));
+  // E2E が使うパスワード・ふつうのパスワードは通る
+  ["pass12345", "pass1234", "pass5678", "newpass123", "adminpass1", "otherpass1", "kumo-hashi7", "Tamago!yaki", "sora8kaze3", "passwordless-x"].forEach(pw =>
+    assert.strictEqual(m.myPasswordWeakness(pw), null, pw));
+});
+
+test("myPasswordWeakness: 日付に見える8桁・4桁の連続した数字を断る（2026-10-08）", () => {
+  // 8桁: YYYYMMDD・MMDDYYYY・DDMMYYYY
+  ["19990315", "x20240229y", "03151999", "15031999", "ab１９９９０３１５"].forEach(pw =>
+    assert.strictEqual(m.myPasswordWeakness(pw), m.MY_PASSWORD_DATE_MSG, pw));
+  // 4桁: 月日・西暦。前後に文字や数字が付いていても、長い数字の並びの途中でも断る
+  ["sakura0315", "0229neko", "tora1225!", "inu1999xyz", "neko2099aa", "kame1900", "x9031599y", "abc_1111_x"].forEach(pw =>
+    assert.strictEqual(m.myPasswordWeakness(pw), m.MY_PASSWORD_DATE_MSG, pw));
+  // 日付にならない4桁・3桁以下・離れた数字は通る
+  ["sakura1234", "neko0230aa", "tora1300zz", "inu1899xyz", "neko2100aa", "kame0000xx", "x31y12zz", "ab12cd34ef", "sora999kaze"].forEach(pw =>
+    assert.strictEqual(m.myPasswordWeakness(pw), null, pw));
+  assert.strictEqual(m.myPasswordHasDate("ab12cd34"), false, "離れた2桁ずつは日付として見ない");
+  assert.strictEqual(m.myPasswordHasDate("ab0315cd"), true);
+});
+
+test("パスワードの決め方の3つの入口が推測されやすいパスワードを断り、ログインと管理者には当てない（2026-10-08）", () => {
+  assert.strictEqual(m.validateMyPassword("sakura0315", "sakura0315"), m.MY_PASSWORD_DATE_MSG);
+  assert.strictEqual(m.validateMyPassword("password1", "password1"), m.MY_PASSWORD_COMMON_MSG);
+  assert.strictEqual(m.validateEmailLinkPassword("staff", "sakura0315", "sakura0315"), m.MY_PASSWORD_DATE_MSG);
+  assert.strictEqual(m.validateEmailLinkPassword("staff", "password1", "password1"), m.MY_PASSWORD_COMMON_MSG);
+  assert.strictEqual(m.validateEmailLinkPassword("admin", "password1", "password1"), null, "管理者のパスワードは変えない");
+  const src = fs.readFileSync(path.join(__dirname, "..", "app-my.js"), "utf8");
+  const body = name => { const i = src.indexOf(`async function ${name}(`); assert.ok(i >= 0, name); return src.slice(i, src.indexOf("\nasync function ", i + 1)); };
+  assert.ok(/validateMyPassword\(f\.password,f\.password2\)/.test(body("myRegister")), "登録");
+  assert.ok(/validateMyPassword\(f\.next,f\.next2\)/.test(body("myChangePassword")), "変更");
+  assert.ok(!/validateMyPassword|myPasswordWeakness/.test(body("myLogin")), "ログインには当てない（既存のパスワードで入れなくなる）");
+  assert.ok(m.MY_PASSWORD_HINT.includes(`${m.MY_PASSWORD_MIN}文字以上`));
 });
 
 test("myAuthErrorMessage: 主なコードを日本語にし、パスワード変更では『現在のパスワード』と言う", () => {

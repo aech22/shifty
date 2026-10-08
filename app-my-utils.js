@@ -67,11 +67,61 @@ function validateMyEmail(e){
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return "メールアドレスの形式が正しくありません";
   return null;
 }
-// pw2 を渡したときだけ一致も見る（ログインは1回入力、登録と変更は確認用の2回目がある）
+// ===== 推測されやすいパスワード（2026-10-08 ユーザー指示）=====
+// スタッフのパスワードを決めるとき（登録・続きの登録・変更）だけ通す。ログインには当てない（既存のパスワードで入れなくなるため）。
+// 画面の中の検査なので、Firebase Auth の REST を直接叩く登録は止められない（サーバー側の強制は Firebase のパスワードポリシーの領分）
+const MY_PASSWORD_HINT=`${MY_PASSWORD_MIN}文字以上。よく使われるものや日付に見える数字（0315・1999 など）は使えません`;
+const MY_PASSWORD_COMMON_MSG="よく使われるパスワードは使えません。推測されにくいものにしてください";
+const MY_PASSWORD_DATE_MSG="日付に見える数字（19990315・0315・1999 など）を含むパスワードは使えません";
+// 丸ごと一致で断る（小文字にして比べる）。8文字未満のものは長さの検査で先に落ちるので載せない
+const MY_PASSWORD_COMMON=new Set(["password","password1","password12","password123","passw0rd","p@ssw0rd","p@ssword","12345678","123456789","1234567890","0123456789","87654321","987654321","0987654321","qwertyui","qwertyuiop","qwerty12","qwerty123","qwer1234","1q2w3e4r","1q2w3e4r5t","q1w2e3r4","1qaz2wsx","zaq12wsx","zaq1zaq1","asdfghjk","asdfghjkl","asdf1234","zxcvbnm1","abcd1234","abc12345","aa12345678","a1b2c3d4","iloveyou","sunshine","princess","football","baseball","superman","starwars","trustno1","whatever","computer","internet","welcome1","letmein1","admin123","administrator","changeme","shiftyshifty","ontheshift"]);
+// 前後の数字・記号を外した芯がこれなら断る（"Password!!"・"qwerty2025" など）
+const MY_PASSWORD_COMMON_CORES=new Set(["password","passwd","passw0rd","p@ssw0rd","p@ssword","qwerty","qwertyui","qwertyuiop","qwer","asdf","asdfghjk","asdfghjkl","zxcvbnm","abc","abcd","abcdefg","abcdefgh","iloveyou","sunshine","princess","football","baseball","superman","starwars","welcome","letmein","admin","administrator","changeme","shifty","shiftyshifty","ontheshift","myshift"]);
+function _myPwDaysIn(m,y){return m===2?(y==null||(y%4===0&&(y%100!==0||y%400===0))?29:28):[4,6,9,11].includes(m)?30:31;}
+function _myPwValidYmd(y,m,d){return y>=1900&&y<=2099&&m>=1&&m<=12&&d>=1&&d<=_myPwDaysIn(m,y);}
+// 8桁: YYYYMMDD・MMDDYYYY・DDMMYYYY のどれかで実在する日付
+function _myPwDate8(t){
+  const n=i=>+t.slice(i,i+2),y4=i=>+t.slice(i,i+4);
+  return _myPwValidYmd(y4(0),n(4),n(6))||_myPwValidYmd(y4(4),n(0),n(2))||_myPwValidYmd(y4(4),n(2),n(0));
+}
+// 4桁: 月日（MMDD・2月29日を含む）か西暦（1900〜2099）
+function _myPwDate4(t){
+  const m=+t.slice(0,2),d=+t.slice(2,4),y=+t;
+  return (m>=1&&m<=12&&d>=1&&d<=_myPwDaysIn(m,null))||(y>=1900&&y<=2099);
+}
+// 数字の並びの中のどの位置の8桁・4桁も見る（"ab0315cd"・"x199903150" のように前後に文字・数字が付いていても断る）
+function myPasswordHasDate(pw){
+  const runs=toHalfWidthDigits(pw).match(/\d{4,}/g)||[];
+  for(const r of runs){
+    for(let i=0;i+8<=r.length;i++)if(_myPwDate8(r.slice(i,i+8)))return true;
+    for(let i=0;i+4<=r.length;i++)if(_myPwDate4(r.slice(i,i+4)))return true;
+  }
+  return false;
+}
+function myPasswordIsCommon(pw){
+  const s=toHalfWidthDigits(pw).toLowerCase();
+  if(MY_PASSWORD_COMMON.has(s))return true;
+  if(/^(.)\1+$/.test(s))return true;
+  // 1つずつ上がる・下がるだけの並び（abcdefgh・12345678・87654321）
+  const cs=[...s].map(c=>c.codePointAt(0)),st=cs[1]-cs[0];
+  if(cs.length>1&&Math.abs(st)===1&&cs.every((c,i)=>i===0||c-cs[i-1]===st))return true;
+  const core=s.replace(/^[^a-z]+|[^a-z]+$/g,"");
+  return MY_PASSWORD_COMMON_CORES.has(core);
+}
+// スタッフのパスワードとして断る理由（無ければ null）。長さは見ない（呼び出し側が先に見る）
+function myPasswordWeakness(pw){
+  const s=String(pw==null?"":pw);
+  if(myPasswordIsCommon(s))return MY_PASSWORD_COMMON_MSG;
+  if(myPasswordHasDate(s))return MY_PASSWORD_DATE_MSG;
+  return null;
+}
+// pw2 を渡したときだけ一致も見る（登録と変更は確認用の2回目がある）。ログインはこの関数を通さない
 function validateMyPassword(pw,pw2){
   const s=String(pw==null?"":pw);
   if(!s) return "パスワードを入力してください";
   if(s.length<MY_PASSWORD_MIN) return `パスワードは${MY_PASSWORD_MIN}文字以上にしてください`;
+  const weak=myPasswordWeakness(s);
+  if(weak) return weak;
   if(pw2!==undefined&&s!==String(pw2==null?"":pw2)) return "確認用のパスワードが一致しません";
   return null;
 }
@@ -172,6 +222,7 @@ function validateEmailLinkPassword(kind,pw,pw2){
   const s=String(pw==null?"":pw);
   if(!s)return"パスワードを入力してください";
   if(s.length<min)return`パスワードは${min}文字以上にしてください`;
+  if(kind==="staff"){const weak=myPasswordWeakness(s);if(weak)return weak;}
   if(s!==String(pw2==null?"":pw2))return"確認用のパスワードが一致しません";
   return null;
 }
@@ -2103,7 +2154,7 @@ function myAllShiftStack(choices,sel){
 }
 // ===== Nodeテスト用エクスポート（ブラウザでは module 未定義のため無視される）=====
 if(typeof module!=="undefined"&&module.exports){
-  module.exports={NAME_GUARD_KEY_BAD,nameGuardKeyOk,desiredNameGuards,planNameGuards,pageDeviceRecordOf,SUB_DENIED_MESSAGES,subDeniedReasonOf,EMAIL_LINK_PENDING_LS,EMAIL_LINK_KINDS,EMAIL_LINK_PENDING_MAX_MS,EMAIL_LINK_RESEND_WAIT_MS,EMAIL_LINK_FALLBACK_CODES,isEmailLinkFallbackError,emailLinkSafeHash,emailLinkContinueUrl,parseEmailLinkLanding,emailLinkReturnHash,emailLinkCleanUrl,emailLinkPendingRecord,emailLinkPendingFor,ADMIN_PASSWORD_MIN,validateEmailLinkPassword,emailLinkErrorMessage,MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
+  module.exports={NAME_GUARD_KEY_BAD,nameGuardKeyOk,desiredNameGuards,planNameGuards,pageDeviceRecordOf,SUB_DENIED_MESSAGES,subDeniedReasonOf,EMAIL_LINK_PENDING_LS,EMAIL_LINK_KINDS,EMAIL_LINK_PENDING_MAX_MS,EMAIL_LINK_RESEND_WAIT_MS,EMAIL_LINK_FALLBACK_CODES,isEmailLinkFallbackError,emailLinkSafeHash,emailLinkContinueUrl,parseEmailLinkLanding,emailLinkReturnHash,emailLinkCleanUrl,emailLinkPendingRecord,emailLinkPendingFor,ADMIN_PASSWORD_MIN,validateEmailLinkPassword,emailLinkErrorMessage,MY_TABS,isMyRouteHash,MY_DISPLAY_NAME_MAX,MY_NUMBER_MAX,MY_PASSWORD_MIN,MY_PASSWORD_HINT,MY_PASSWORD_COMMON_MSG,MY_PASSWORD_DATE_MSG,myPasswordHasDate,myPasswordIsCommon,myPasswordWeakness,toHalfWidthDigits,normalizeMyDisplayName,normalizeMyNumber,validateMyProfile,buildMyProfileRecord,myProfileOf,validateMyEmail,validateMyPassword,MY_CREDENTIAL_ERROR_CODES,isPermissionDeniedError,myAuthErrorMessage,isMyCredentialError,MY_BLOCK_MESSAGES,staffAccountBlockReason,myOwnerCheckShopIds,isStaffAccountMarked,mayBeStaffAccountUser,
     MY_LINK_METHOD_LABELS,linkNumberKey,linkNameKey,myStaffNamesOf,personIdForShopName,linkCandidatesFor,splitLinkRequests,staffLinksByName,renameStaffInStaffLinks,dropStaffFromStaffLinks,MY_STAFF_LINK_OPS_MAX,staffLinkOpOf,staffLinksAsOf,planStaffLinkOp,enqueueStaffLinkOp,MY_STAFF_LINK_PENDING_MSG,resolveMyLink,MY_LINK_INVALID_LABELS,buildLinkRequestRecord,
     MY_WORKPLACE_COLORS,myWorkplaceColor,myShiftPremiumOf,fmtMyClock,fmtMyRange,myPeriodOverlaps,buildMyShiftDays,myDayFingerprint,myShiftSeenKey,myPublishedFingerprints,myChangedDates,buildMySeenRecord,nextMyShift,myMonthGrid,myShiftMonth,myShiftPeriodsToRead,myEntryOrder,
     myHelperDaysOf,myHelperShiftEntries,myMergeHelperEntries,myMovedHelperDates,myHelperTimesIn,myMovedDatesIn,

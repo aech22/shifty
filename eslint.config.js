@@ -34,6 +34,7 @@ const sharedGlobals = {
   MY_DISPLAY_NAME_MAX: "writable",
   MY_NUMBER_MAX: "writable",
   MY_PASSWORD_MIN: "writable",
+  MY_PASSWORD_HINT: "writable",
   normalizeMyDisplayName: "writable",
   normalizeMyNumber: "writable",
   validateMyProfile: "writable",
