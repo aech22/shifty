@@ -125,8 +125,8 @@ firebase-functions 7 は既定の読み込み先が v2 になったので、`fir
 **確認済み**: 40関数の定義（リージョン・トリガー・秘密・スケジュール）が更新前と完全一致した。本物の SDK で、未認証の呼び出し可能な関数が 401、
 GET が 405、署名の無い Webhook が 400 を返す。cf-verify 8本と npm test 739件がパスした。nodemailer 10 の SMTP の組み立てと送信の呼び方は変わらない。
 **受け入れ条件**:
-- [ ] `firebase deploy --only functions --project ontheshift`（ユーザーの指示が要る。フックが止める）
-- [ ] 反映後、未認証の POST が従来どおり返ること・`firebase functions:log` にエラーが出ないことを見る
+- [x] Cloud Functions を本番へデプロイする（2026-10-08・41本すべて更新成功）
+- [x] 反映後、未認証の POST が従来どおり返ること・`firebase functions:log` にエラーが出ないことを見る（2026-10-08 確認）
 - [ ] 実際のメール送信（メール連携の OTP・提出の通知）と Stripe の Webhook の実イベントを1回ずつ確かめる（未検証。ローカルでは本物の SMTP と Stripe に出していない）
 **戻し方**: `git revert 19dafa8` して functions を再デプロイする（データの変更は無い）
 
