@@ -613,6 +613,8 @@ Firebase Realtime Database
 │       │                 作成者しか読めないので、店長のセッションがヘルプ先勤務の合算で同一人物を引くためにここへ焼く
 │       │                 **CF（syncCompanyMirror）だけが書く**（.write:false）・読みは auth != null。
 │       │                 無い＝企業に連携していない。店舗側の企業機能（設定の重ね合わせ・提出ボタン・提出期限・所属店舗の選択肢）はこれだけを見る
+│       ├── readers/{uid} ← この店舗のデータを読む理由（2026-10-08）{t?, p?, o?, l?, q?, qs?}。書きは本人（オーナーは削除）・読みはオーナーと本人。
+│       │                 ルールが値を毎回確かめる（上の「セキュリティモデル」）。デモ店舗は不可
 │       ├── linkRequests/{uid} ← 従業員画面のリンク申請（2026-10-04・第2部 E2）{displayName, number?, at}。書きは本人でメールのある認証
 │       │                 （auth.token.email != null・global/shops に店舗があること・デモ店舗は不可）、読みはオーナーと本人、消すのは本人かオーナー（却下）
 │       ├── staffLinks/{uid} ← 紐付け（E2）{name, personId?, method: "number"|"name"|"code"|"page", at}。**名前の正本**。作るのは Cloud Functions だけ。
@@ -716,6 +718,15 @@ Firebase Realtime Database
   スタッフアカウント（従業員画面）にはこの印を当てない（「従業員画面」の節）。app-core.js の `AUTH_LOGGED_OUT_LS` の上のコメントと app-main.js の Phase1 のコメントも
   2026-10-04 に実装へ合わせた（立てるのは doFullSignOut だけ）
 - 管理系パス（settings/periods/staff/templates/tokens/global/shops）の書き込みは `shops/{shopId}/owners/{auth.uid}` 登録者のみ。owners への自己登録は `private/adminKey` との値照合が必要で、adminKeyは管理者端末のlocalStorage（`ots_adminKeys_v1`）にのみ保存される。**スタッフURLから得られるshopIdだけでは管理操作できない**（2026-10-08 から閲覧もできない＝管理コードの入力画面だけが出る）。
+- **店舗のデータの読みは店舗IDだけでは通らない（2026-10-08・ルールは未デプロイ）**。`shops/{sid}` の settings・periods・staff・templates・lastActivity・company・subs の `.read` は
+  `auth != null` だけでなく、次のどれかを要求する: デモ店舗／その店舗の owners／staffLinks（リンク済みの従業員アカウント）／企業ログイン（`company_`＋写しの企業ID）と企業の作成者／
+  `shops/{sid}/readers/{uid}` に登録した読む理由（t＝その店舗のスタッフURLのトークン・p＝その店舗の承認済みの個別URL・o＝写しの連携店舗のうち自分がオーナーの店舗・
+  l＝写しの連携店舗のうち自分がリンク済みの店舗・q＋qs＝連携店舗 qs の承認済みの個別URL）。ルールは理由を**毎回その場で確かめる**ので、トークンの削除・URL の取り消し・
+  オーナーやリンクの解除で読めなくなる。readers は本人だけが書ける（オーナーは消せる）・項目は許可制。クライアントは app-core.js の `noteShopReadCred`（理由を覚える）→
+  `shopReadReady(sid)`（読む前に readers へ登録・失敗は30秒覚える）→ `shopReadOnce(path)` を通す。入口はスタッフURL・個別URLの Phase1、シフト作成タブの他店の読み込み、
+  従業員画面の `_myRead`、企業連携タブの他店の読み。拒否された購読は App の `resubscribeIfDenied`（claim・管理コード・個別URLの承認の後）で張り直す。
+  **global/shops の店舗名と accounts/{sid}/plan は従来どおり店舗IDで読める**（残した）。ルールの実測はエミュレータの `emu-rules-shop-read.js`（51項目）、
+  本物の SDK での画面の実測は `emu-e2e-shop-read.js`（25項目・変更前のルールでは7項目が落ちる）。ドリフト検出は tests/shop-read.test.js
 - スタッフは subs の読み書きと settings/periods/staff の読みのみ（従来機能を維持）。**subs の書き込み・削除は認証済みなら誰でも通る**（`.write: auth != null && $shopId !== 'demo-toriMatsu-v1'`）。**ただし 2026-09-30（P3）から、その sub の期間（書き込み後の periodId と、削除・変更前の periodId の両方）に `confirmation` があるときはオーナーだけが書ける**（スタッフの再提出を確定でルールごと止める）。提出を触れるのを本人だけに絞っているのは **UI（app-staff.js の `canTouch`）だけ**で、ルールは名乗った名前を検証できない——2026-08-31 決定1で承知のうえ引き受けたトレードオフなので、**再検出しても「バグ」として直さない**。
 - **移行猶予は 2026-07-28 に終了済み**（`dbdd9d9`）。未claim店舗への「誰でも書き込み可」ブランチは撤去され、管理系パスは owner uid 一致が必須。**ルールファイルは `database.rules.json` の1本だけ**（同内容の残骸だった `database.rules.tightened.json` は 2026-09-05 に削除済み。以後この二重管理は無い）。
 - Cloud Functions（createCheckoutSession/createPortalSession）はIDトークン検証+オーナー照合。App CheckはSDK読込済み・サイトキー未設定でスキップ中（BACKLOG参照）。
