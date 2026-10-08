@@ -12,7 +12,7 @@ const PORT = +(process.env.EMU_PORT || 9010);
 
 const seed = () => ({
   global: { shops: { S1: { id: "S1", name: "A店" }, S2: { id: "S2", name: "B店" }, S3: { id: "S3", name: "C店" } } },
-  tokens: { T1: { shopId: "S1", periodId: "p1" }, T3: { shopId: "S3", periodId: "p3" } },
+  tokens: { T1: { shopId: "S1", periodId: "p1" }, T3: { shopId: "S3", periodId: "p3" }, TX: { shopId: "S1", periodId: "p1", expiresAtMs: 1 }, TF: { shopId: "S1", periodId: "p1", expiresAtMs: 9999999999999 } },
   staffPageTokens: { PT1: { shopId: "S1", at: "x" }, PT2: { shopId: "S1", at: "x" }, PT3: { shopId: "S2", at: "x" } },
   companies: { C1: { pub: { ownerUid: "CREATOR", name: "企業" } } },
   shops: {
@@ -51,7 +51,7 @@ const seed = () => ({
   const upd = (uid, path, v) => can(db(uid).ref(path).update(v));
   const admin = fn => env.withSecurityRulesDisabled(c => fn(c.database()));
   const R = {};
-  const NODES = ["settings", "periods", "staff", "subs", "company"];
+  const NODES = ["settings", "periods", "staff", "subs", "company", "nameGuards"];
 
   // 1. 店舗IDだけでは読めない（匿名の他人）。global/shops の名前は従来どおり読める
   for (const n of NODES) R[`stranger_${n}_denied`] = !(await read("X", `shops/S1/${n}`));
@@ -74,6 +74,14 @@ const seed = () => ({
   R.t_read = (await read("X", "shops/S1/settings")) && (await query("X", "S1", "p1")) && (await read("X", "shops/S1/company"));
   R.t_notOtherShop = !(await read("X", "shops/S3/settings"));
   R.t_extraKey_denied = !(await set("X", "shops/S1/readers/X/zz", "T1"));
+  // 受付期限（tokens の expiresAtMs）を過ぎたスタッフURLは読む理由にならない。期限前は従来どおり
+  R.t_expired_register_denied = !(await set("V", "shops/S1/readers/V/t", "TX"));
+  R.t_future_register = await set("V", "shops/S1/readers/V/t", "TF");
+  R.t_future_read = await read("V", "shops/S1/settings");
+  await admin(d => d.ref("tokens/TF/expiresAtMs").set(1));
+  R.t_expiredAfter_read_denied = !(await read("V", "shops/S1/settings"));
+  R.nameGuards_stranger_denied = !(await read("Z", "shops/S1/nameGuards"));
+  R.nameGuards_reader_read = await read("X", "shops/S1/nameGuards");
   // 4. 個別URL（p）: 承認済みだけ。取り消すとその場で読めなくなる
   R.p_pending_denied = !(await set("Z", "shops/S1/readers/Z/p", "PT2"));
   R.p_register = await set("Y", "shops/S1/readers/Y/p", "PT1");

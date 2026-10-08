@@ -628,7 +628,7 @@ Firebase Realtime Database
 │       │                 name 等のオーナーの項目は書けない・pending の取り下げだけ可）、承認・却下・取り消し・改名・暗証番号のリセットはオーナーだけ。
 │       │                 一覧の読みはオーナー、1件は pageToken を知っていれば読める（auth != null）。デモ店舗は不可
 │       ├── nameGuards/{名前} = true ← 提出の人単位の縛り（2026-10-08）。承認済みの個別URLか staffLinks の紐付けがあり、スタッフ一覧にある名前。
-│       │                 書くのはオーナーと CF（planNameGuards・planNameGuardsCF＝同じ規則）。読みは auth != null。改名・削除・取り消しのあとは
+│       │                 書くのはオーナーと CF（planNameGuards・planNameGuardsCF＝同じ規則）。読みは店舗の他のデータと同じ（店舗IDだけでは読めない）。改名・削除・取り消しのあとは
 │       │                 今の staffPages・staffLinks・スタッフ一覧から**計算し直す**（印を移す処理は持たない）
 │       ├── pageDevices/{uid} = {token, at} ← 本人の端末（2026-10-08）。本人の uid に、承認済みの token のときだけ書ける。読みは本人とオーナー。
 │       │                 App の ensurePageDevice が、個別URL（#/m/）ではその URL、募集URL（#/s/）ではこの端末が覚えている同じ店舗の個別URL
@@ -728,14 +728,14 @@ Firebase Realtime Database
   スタッフアカウント（従業員画面）にはこの印を当てない（「従業員画面」の節）。app-core.js の `AUTH_LOGGED_OUT_LS` の上のコメントと app-main.js の Phase1 のコメントも
   2026-10-04 に実装へ合わせた（立てるのは doFullSignOut だけ）
 - 管理系パス（settings/periods/staff/templates/tokens/global/shops）の書き込みは `shops/{shopId}/owners/{auth.uid}` 登録者のみ。owners への自己登録は `private/adminKey` との値照合が必要で、adminKeyは管理者端末のlocalStorage（`ots_adminKeys_v1`）にのみ保存される。**スタッフURLから得られるshopIdだけでは管理操作できない**（2026-10-08 から閲覧もできない＝管理コードの入力画面だけが出る）。
-- **店舗のデータの読みは店舗IDだけでは通らない（2026-10-08・ルールは未デプロイ）**。`shops/{sid}` の settings・periods・staff・templates・lastActivity・company・subs の `.read` は
+- **店舗のデータの読みは店舗IDだけでは通らない（2026-10-08・ルールは未デプロイ）**。`shops/{sid}` の settings・periods・staff・templates・lastActivity・company・subs・nameGuards の `.read` は
   `auth != null` だけでなく、次のどれかを要求する: デモ店舗／その店舗の owners／staffLinks（リンク済みの従業員アカウント）／企業ログイン（`company_`＋写しの企業ID）と企業の作成者／
   `shops/{sid}/readers/{uid}` に登録した読む理由（t＝その店舗のスタッフURLのトークン・p＝その店舗の承認済みの個別URL・o＝写しの連携店舗のうち自分がオーナーの店舗・
-  l＝写しの連携店舗のうち自分がリンク済みの店舗・q＋qs＝連携店舗 qs の承認済みの個別URL）。ルールは理由を**毎回その場で確かめる**ので、トークンの削除・URL の取り消し・
+  l＝写しの連携店舗のうち自分がリンク済みの店舗・q＋qs＝連携店舗 qs の承認済みの個別URL）。t は tokens の受付期限（`expiresAtMs`）を過ぎると読む理由にならない（期限後の募集URLはオーナー以外には開けないのに合わせた）。ルールは理由を**毎回その場で確かめる**ので、トークンの削除・URL の取り消し・
   オーナーやリンクの解除で読めなくなる。readers は本人だけが書ける（オーナーは消せる）・項目は許可制。クライアントは app-core.js の `noteShopReadCred`（理由を覚える）→
   `shopReadReady(sid)`（読む前に readers へ登録・失敗は30秒覚える）→ `shopReadOnce(path)` を通す。入口はスタッフURL・個別URLの Phase1、シフト作成タブの他店の読み込み、
   従業員画面の `_myRead`、企業連携タブの他店の読み。拒否された購読は App の `resubscribeIfDenied`（claim・管理コード・個別URLの承認の後）で張り直す。
-  **global/shops の店舗名と accounts/{sid}/plan は従来どおり店舗IDで読める**（残した）。ルールの実測はエミュレータの `emu-rules-shop-read.js`（51項目）、
+  **global/shops の店舗名と accounts/{sid}/plan は従来どおり店舗IDで読める**（残した）。ルールの実測はエミュレータの `emu-rules-shop-read.js`（59項目）、
   本物の SDK での画面の実測は `emu-e2e-shop-read.js`（25項目・変更前のルールでは7項目が落ちる）。ドリフト検出は tests/shop-read.test.js
 - スタッフは subs の読み書きと settings/periods/staff の読みのみ（従来機能を維持）。**subs の書き込み・削除は認証済みなら誰でも通る**（`.write: auth != null && $shopId !== 'demo-toriMatsu-v1'`）。**ただし 2026-09-30（P3）から、その sub の期間（書き込み後の periodId と、削除・変更前の periodId の両方）に `confirmation` があるときはオーナーだけが書ける**（スタッフの再提出を確定でルールごと止める）。提出を触れるのを本人だけに絞っているのは **UI（app-staff.js の `canTouch`）だけ**で、ルールは名乗った名前を検証できない——2026-08-31 決定1で承知のうえ引き受けたトレードオフなので、**再検出しても「バグ」として直さない**。
   **2026-10-08 から2つを足した（ユーザー指示）**: ①**人単位の縛り**: `nameGuards/{名前}` がある名前の提出（新規・上書き・削除・その名前への改名。前後の値の両方で見る）は、

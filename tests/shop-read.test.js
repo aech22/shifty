@@ -10,7 +10,7 @@ const path = require("node:path");
 const ROOT = path.join(__dirname, "..");
 const rules = JSON.parse(fs.readFileSync(path.join(ROOT, "database.rules.json"), "utf8")).rules;
 const shop = rules.shops.$shopId;
-const READ_NODES = ["settings", "periods", "staff", "templates", "lastActivity", "company", "subs"];
+const READ_NODES = ["settings", "periods", "staff", "templates", "lastActivity", "company", "subs", "nameGuards"];
 
 test("店舗のデータの読みは、オーナー・リンク・企業・読みの登録（readers）のどれかを要求する", () => {
   for (const n of READ_NODES) {

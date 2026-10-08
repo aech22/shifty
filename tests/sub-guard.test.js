@@ -118,7 +118,8 @@ test("ルール: subs はオーナー以外に、受付期限内・縛りのあ�
   assert.ok(w.includes(".matches(/[.#$\\[\\]\\/]/)"), "キーに使えない名前は縛りの判定を読まない（読むとルールの評価が失敗して誰も書けなくなる）");
 });
 test("ルール: nameGuards はオーナーだけが true を書く・pageDevices は承認済みの個別URLの本人の端末だけ・tokens は期限後にオーナーしか読めない", () => {
-  assert.strictEqual(shop.nameGuards[".read"], "auth != null");
+  // 読みは店舗の他のデータと同じ式（店舗IDだけでは読めない・2026-10-08。tests/shop-read.test.js が式の中身を検査する）
+  assert.strictEqual(shop.nameGuards[".read"], shop.settings[".read"]);
   assert.ok(/owners'\)\.child\(auth\.uid\)\.exists\(\)/.test(shop.nameGuards.$name[".write"]) && shop.nameGuards.$name[".validate"] === "newData.val() === true");
   const pd = shop.pageDevices.$uid;
   assert.ok(pd[".write"].includes("auth.uid === $uid") && pd[".write"].includes("child('staffPages').child(newData.child('token').val()).child('status').val() === 'approved'"));
