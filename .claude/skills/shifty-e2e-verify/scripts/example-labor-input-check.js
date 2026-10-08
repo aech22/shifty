@@ -7,7 +7,7 @@
 //   鈴木     … グリッドから設計どおりの入力だけを打つ: 「9k」「18」／出勤「11」＋退勤「/」（半日の休み希望）／
 //              出勤「11」＋退勤「yu」（半日の有給）／出勤「9x」だけ（ランチ帯の応援）。番号あり
 // 期待: 「⚠ 労務の確認が必要です」に
-//   松南恭介：入力の確認4日（2・6・9・13）、深夜3日（2・6・9）（深夜は既存の割増の目印）
+//   松南恭介：入力の確認4日（2・6・9・13）（深夜は 2026-10-08 から一覧に出さない）
 //   山田：入力の確認1日（14）、従業員番号が未設定
 // が出て、鈴木は出ない。**総括は3人とも「OK」**（入力の確認は要修正ではない）。
 //
@@ -88,8 +88,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`;
     suzuki_stored:!!(m.suzuki.d1&&m.suzuki.d1.adjustedStartNote==="k"&&m.suzuki.d5&&m.suzuki.d5.adminRest&&m.suzuki.d5.adminRest.end
       &&m.suzuki.d8&&m.suzuki.d8.leaveTypes&&m.suzuki.d8.leaveTypes.end==="paid"&&m.suzuki.d12&&m.suzuki.d12.adjustedStartNote==="x"),
     panel_found:m.panelText!==null,
-    // 23:00 退勤なので既存の「深夜3日（2・6・9）」（割増の目印・要修正ではない）が後ろに続く
-    matsunami_line:line("松南恭介").startsWith("松南恭介：入力の確認4日（2・6・9・13）"),
+    // 23:00 退勤でも「深夜n日」は出さない（2026-10-08 ユーザー指示）
+    matsunami_line:line("松南恭介").split("\n")[0]==="松南恭介：入力の確認4日（2・6・9・13）",
     yamada_line:line("山田")==="山田：入力の確認1日（14）、従業員番号が未設定",
     suzuki_absent:line("鈴木")==="",
     // 総括は3人とも OK（入力の確認は要修正ではない）

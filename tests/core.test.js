@@ -6763,7 +6763,9 @@ test("P5 労務確認パネル: 割増の該当日（期間の日だけ）・総
     nightDates: ["2026-11-04"], legalHolidayDates: ["2026-11-15"], over60Min: 90 };
   const dates = u.gd("2026-11-01", "2026-11-15");
   const f = u.premiumFindingsFor(b, { system: "A", dates });
-  assert.deepStrictEqual(f.map(x => x.label), ["日の時間外1日（2）", "週の時間外（2〜8）", "深夜1日（4）", "法定休日労働1日（15）", "月60h超 1:30"]);
+  // 深夜は出さない（2026-10-08 ユーザー指示。nightDates があっても一覧に載らない）
+  assert.deepStrictEqual(f.map(x => x.label), ["日の時間外1日（2）", "週の時間外（2〜8）", "法定休日労働1日（15）", "月60h超 1:30"]);
+  assert.ok(!f.some(x => /深夜/.test(x.label)) && !u.PREMIUM_FINDING_KEYS.includes("p5Night"));
   assert.deepStrictEqual(u.premiumFindingsFor(b, { system: "none", dates }), []);
   assert.ok(f.every(x => u.PREMIUM_FINDING_KEYS.includes(x.key)));
   // 要修正に入らない（OK のまま）
