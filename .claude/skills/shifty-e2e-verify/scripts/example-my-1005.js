@@ -193,7 +193,9 @@ const settledPay = h => h.page.waitForFunction(() => { const d = document.queryS
       R.KP = K;
       V.KP_otherShopStacked = JSON.stringify(K.blocks.map(b => [b[0], b[1]])) === JSON.stringify([["S1", "p1"], ["S3", "c1"], ["S3", "c2"], ["S4", "d1"]]) &&
         K.blocks[3][2] === "D店" && K.blocks[3][3] === "たなか" && K.overflow <= 0 &&
-        require("node:util").isDeepStrictEqual(K.s4, kpSeed("approved").shops.S4);
+        // 店舗IDだけでの読み取りの禁止（2026-10-08）から、読む前に readers/{uid} へ読む理由（この店の個別URL）を書く。それ以外は書かない
+        (() => { const { readers, ...rest } = K.s4 || {}; const rs = Object.values(readers || {});
+          return require("node:util").isDeepStrictEqual(rest, kpSeed("approved").shops.S4) && rs.length === 1 && require("node:util").isDeepStrictEqual(rs[0], { p: TOKEN2 }); })();
       V.KP_noErrors = errs("KP", h);
     } finally { await h.close(); }
     h = await openKp(kpSeed("revoked"));

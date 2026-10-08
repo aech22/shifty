@@ -409,7 +409,13 @@ async function myCallCF(name,payload){
   try{return(await firebaseFunctions.httpsCallable(name)(payload||{})).data||{};}
   catch(e){return{error:(e&&e.message)||"処理に失敗しました。もう一度お試しください"};}
 }
-const _myRead=p=>firebaseDB.ref(p).once("value").then(s=>({ok:true,v:s.val()}),()=>({ok:false,v:null}));
+// shops/{sid}/… を読む前に、この端末が読む理由（リンク・個別URL・スタッフURL）を登録する（2026-10-08・店舗IDだけでの読み取りの禁止）
+const _myShopOfPath=p=>{const m=/^shops\/([^/]+)\//.exec(String(p||""));return m?m[1]:null;};
+const _myRead=p=>{
+  const sid=_myShopOfPath(p);
+  const ready=sid&&!/^shops\/[^/]+\/(staffLinks|staffPages|linkRequests)\//.test(p)?shopReadReady(sid).catch(()=>false):Promise.resolve();
+  return ready.then(()=>firebaseDB.ref(p).once("value")).then(s=>({ok:true,v:s.val()}),()=>({ok:false,v:null}));
+};
 // 本人の紐付けの一覧（E3 以降が「どの店舗のどの名前か」を得る入口）。users/{uid}/links を索引にし、
 // 店舗ごとに shops/{sid}/staffLinks/{uid}（名前の正本）と shops/{sid}/staff を読んで resolveMyLink で確かめる。
 // 戻り値は [{shopId, shopName, ok, name, personId, method, at, reason}]。ok=false の紐付けは使わない（reason は MY_LINK_INVALID_LABELS か "unread"）
@@ -419,7 +425,11 @@ async function readMyLinks(uid){
   if(!idx.ok)return null; // 読めない（ルール未反映・通信）。呼び出し側が「確認できませんでした」を出す
   const ids=myOwnerCheckShopIds({cachedShops:Object.keys(idx.v||{}).map(id=>({id}))});
   return Promise.all(ids.map(async sid=>{
-    const[sl,staff,nm]=await Promise.all([_myRead(`shops/${sid}/staffLinks/${uid}`),_myRead(`shops/${sid}/staff`),_myRead(`global/shops/${sid}/name`)]);
+    // 紐付けを先に読む。紐付いていればスタッフ一覧はリンク済みの端末として読める（readers の登録は要らない）。
+    // 紐付いた店舗は、同じ企業の他店（ヘルプ先）を読むときの理由にもなる（shopReadReady の l）
+    const sl=await _myRead(`shops/${sid}/staffLinks/${uid}`);
+    if(sl.ok&&sl.v)noteShopReadCred("linked",sid);
+    const[staff,nm]=await Promise.all([_myRead(`shops/${sid}/staff`),_myRead(`global/shops/${sid}/name`)]);
     const shopName=typeof nm.v==="string"&&nm.v?nm.v:"（店舗名を読めませんでした）";
     if(!sl.ok||!staff.ok)return{shopId:sid,shopName,ok:false,reason:"unread",name:((idx.v||{})[sid]||{}).name||""};
     return{...resolveMyLink(sid,(idx.v||{})[sid],sl.v,staff.v),shopName};
@@ -700,6 +710,7 @@ function readMyShiftShopShared(sid){
 }
 async function readMyPeriodSubs(sid,pid){
   try{
+    await shopReadReady(sid).catch(()=>false);
     const snap=await firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(pid).once("value");
     return Object.values(snap.val()||{}).filter(s=>s&&s.id&&s.periodId===pid);
   }catch(e){console.warn("マイシフト: 提出の読み込みに失敗:",e&&e.code);return null;}
@@ -2869,6 +2880,8 @@ function useMyKnownPageShops(exclude,skip){
     if(!cands.length){setRows(p=>p.length?[]:p);return;}
     let alive=true;
     Promise.all(cands.map(async c=>{
+      // この端末が持つ個別URLを、その店舗を読む理由として登録する（承認済みのものだけルールが通す）
+      (c.tokens||[]).forEach(t=>noteShopReadCred("p",c.shopId,t));
       const sh=await readMyShiftShopShared(c.shopId).catch(()=>({ok:false}));
       if(!sh||!sh.ok)return null;
       for(const t of c.tokens){
@@ -2966,10 +2979,15 @@ function useMySubmitShopSubs(sid,pid){
   const key=sid&&pid?sid+"|"+pid:"";
   useEffect(()=>{
     if(!key||!firebaseDB)return;
+    // 読む理由を readers に登録してから購読する（拒否された購読は外れて戻らないため）
     const q=firebaseDB.ref(`shops/${sid}/subs`).orderByChild("periodId").equalTo(pid);
-    const cb=q.on("value",snap=>setSt({key,list:Object.values(snap.val()||{}).filter(x=>x&&x.id&&x.periodId===pid)}),
-      e=>{console.warn("提出: 店舗の提出の読み込みに失敗:",e&&e.code);setSt({key,list:null});});
-    return()=>q.off("value",cb);
+    let alive=true,cb=null;
+    shopReadReady(sid).catch(()=>false).then(()=>{
+      if(!alive)return;
+      cb=q.on("value",snap=>setSt({key,list:Object.values(snap.val()||{}).filter(x=>x&&x.id&&x.periodId===pid)}),
+        e=>{console.warn("提出: 店舗の提出の読み込みに失敗:",e&&e.code);setSt({key,list:null});});
+    });
+    return()=>{alive=false;if(cb)q.off("value",cb);};
   },[key]);
   return st.key===key?st.list:undefined;
 }
@@ -3307,7 +3325,7 @@ function MyPageSettingsTab({me,personal,page,shopId,shopName,token,payUnlocked,s
 }
 // 個別URLの入口。App が Phase1 で店舗を購読済み（periods・settings・staff・subs）。承認の状態は staffPages/{token} を購読して決める
 // onClose: 募集URLの画面の「マイシフト」から重ねて開いたとき（2026-10-04）だけ。個別URLを直接開いたときは閉じる先が無いので null
-function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,plan,syncStatus,onSub,onDeleteSub,onClose=null,staffUser=null}){
+function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,plan,syncStatus,onSub,onDeleteSub,onClose=null,staffUser=null,onApproved=null}){
   const[rec,setRec]=useState(undefined); // shops/{sid}/staffPages/{token}（undefined=読み込み中・null=無い）
   // アカウントに追加するためにログインして戻ってきた（再読み込み）ときは設定タブから始める（MyPageAccountLinkBox）
   const[tab,setTab]=useState(()=>ssGet(SS_MY_PAGE_LINK_INTENT,null)===token?"settings":"shift");
@@ -3327,9 +3345,12 @@ function MyPageView({token,boot,shopId,shopName,periods,settings,staffList,subs,
     const cb=r.on("value",s=>setRec(s.val()||null),e=>{console.warn("個別URLの読み込みに失敗:",e&&e.code);setRec(null);});
     return()=>r.off("value",cb);
   },[shopId,token]);
+  // 承認されたら、店舗のデータの読みを登録し直してもらう（承認待ちの間は読めない・2026-10-08）
+  const approvedStatus=rec&&rec.status;
+  useEffect(()=>{if(approvedStatus==="approved"&&onApproved)onApproved(shopId);},[approvedStatus,shopId]);
   const page=useMemo(()=>resolveMyPage(token,shopId?{shopId}:null,rec,staffList),[token,shopId,rec,staffList]);
   // 使えた個別URLはこの端末に覚える（募集URLの画面の「マイシフト」から、次はこの画面に入れるように）
-  useEffect(()=>{if(page.state==="ok"&&shopId)rememberKnownMyPage(shopId,token);},[page.state,shopId,token]);
+  useEffect(()=>{if(page.state==="ok"&&shopId){rememberKnownMyPage(shopId,token);noteShopReadCred("p",shopId,token);}},[page.state,shopId,token]);
   const me=useMemo(()=>page.state==="ok"?myPageSubject({token,shopId,shopName,name:page.name,approvedAt:page.approvedAt,pay}):null,
     [page.state,page.name,token,shopId,shopName,pay]);
   const personal=useMyPersonal(me&&me.base);

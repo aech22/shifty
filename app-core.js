@@ -305,6 +305,71 @@ function parseShopCode(raw){
   return{shopId:t.slice(0,i),adminKey:t.slice(i+1)||null};
 }
 
+// ===== 店舗のデータの読み取りの許可（2026-10-08・店舗IDだけでの読み取りの禁止）=====
+// shops/{sid} の settings・periods・staff・subs・company 等は、database.rules.json で次の端末だけが読める:
+// デモ店舗・その店舗の管理者（owners）・リンク済みのスタッフ（staffLinks）・企業の作成者と企業ログイン、
+// そして shops/{sid}/readers/{uid} に読む理由を登録した端末（t=スタッフURLのトークン・p=承認済みの個別URL・
+// o/l/q=同じ企業の別の店舗の管理者／リンク済み／個別URL）。登録はルールが値を照合するので、店舗IDを知っているだけでは書けない。
+// この端末が持っている理由（スタッフURL・個別URL・管理者・リンク）を覚えておき、他の店舗を読む直前に shopReadReady(sid) で登録する。
+const _shopReadCreds={t:new Map(),p:new Map(),owned:new Set(),linked:new Set()}; // t・p: sid → Set(token)
+// 管理コードを持つ店舗は、claim の結果を待たずに「同じ企業の他店を読む理由」に使う（シフト作成タブは claim より先に他店を読み始めるため）。
+// 管理者から外された端末なら、ルールが readers の書き込みを拒否するだけ
+try{Object.keys(lg(ADMIN_KEYS_LS,{})||{}).forEach(s=>{if(s)_shopReadCreds.owned.add(s);});}catch{/* localStorage が使えない */}
+const _shopReadDone=new Map(); // uid|sid → Promise<boolean>（成功だけ覚える）
+const _shopReadFail=new Map(); // uid|sid → 失敗した時刻（30秒は書き込みを繰り返さない）
+const SHOP_READ_RETRY_MS=30000;
+const SHOP_READ_TOKEN_RE=/^[A-Za-z0-9_-]{1,64}$/;
+function noteShopReadCred(kind,sid,value){
+  if(!sid||typeof sid!=="string")return;
+  if(kind==="owned"||kind==="linked"){_shopReadCreds[kind].add(sid);}
+  else if(kind==="t"||kind==="p"){
+    if(typeof value!=="string"||!SHOP_READ_TOKEN_RE.test(value))return;
+    const m=_shopReadCreds[kind];if(!m.has(sid))m.set(sid,new Set());m.get(sid).add(value);
+  }else return;
+  // 新しい理由が増えたので、失敗した店舗も読み直せるようにする
+  _shopReadFail.clear();
+}
+function forgetShopReadCache(sid){
+  for(const k of [..._shopReadDone.keys()])if(!sid||k.endsWith("|"+sid))_shopReadDone.delete(k);
+  for(const k of [..._shopReadFail.keys()])if(!sid||k.endsWith("|"+sid))_shopReadFail.delete(k);
+}
+// once("value") の前に、パスの店舗（shops/{sid}/…）を読む理由を登録する。shops/ 以外のパスはそのまま読む
+function shopReadOnce(path){
+  const m=/^shops\/([^/]+)\//.exec(String(path||""));
+  const ready=m?shopReadReady(m[1]).catch(()=>false):Promise.resolve();
+  return ready.then(()=>firebaseDB.ref(path).once("value"));
+}
+// 店舗 sid を読む前に呼ぶ。読めるようにできた（または登録が要らない）なら true。書けなければ false（読みはそのまま試してよい＝拒否されるだけ）
+function shopReadReady(sid){
+  const uid=firebaseAuth&&firebaseAuth.currentUser&&firebaseAuth.currentUser.uid;
+  if(!firebaseDB||!uid||!sid||typeof sid!=="string"||DEMO_MODE||sid===DEMO_SHOP_ID)return Promise.resolve(!!sid);
+  const c=_shopReadCreds;
+  if(c.owned.has(sid)||c.linked.has(sid))return Promise.resolve(true);
+  const key=uid+"|"+sid;
+  if(_shopReadDone.has(key))return _shopReadDone.get(key);
+  const failedAt=_shopReadFail.get(key);
+  if(failedAt&&Date.now()-failedAt<SHOP_READ_RETRY_MS)return Promise.resolve(false);
+  const tries=[];
+  (c.t.get(sid)||new Set()).forEach(v=>tries.push({t:v}));
+  (c.p.get(sid)||new Set()).forEach(v=>tries.push({p:v}));
+  c.owned.forEach(b=>{if(b!==sid)tries.push({o:b});});
+  c.linked.forEach(b=>{if(b!==sid)tries.push({l:b});});
+  c.p.forEach((set,b)=>{if(b!==sid)set.forEach(v=>tries.push({q:v,qs:b}));});
+  if(!tries.length)return Promise.resolve(false);
+  const ref=firebaseDB.ref(`shops/${sid}/readers/${uid}`);
+  const pr=(async()=>{
+    for(const t of tries){
+      try{await ref.update(t);return true;}catch{/* ルールが照合に通さなかった＝次の理由を試す */}
+    }
+    return false;
+  })().then(ok=>{
+    if(!ok){_shopReadDone.delete(key);_shopReadFail.set(key,Date.now());}
+    return ok;
+  });
+  _shopReadDone.set(key,pr);
+  return pr;
+}
+
 // ===== App Check（Fraud Defense＝旧 reCAPTCHA Enterprise）=====
 // 本番のキーは Google Cloud の Fraud Defense で作った「shifty」（ドメイン shiftyshifty.app）。公開してよいサイトキー。
 // Firebase コンソールの App Check に同じキーを登録してある前提。dev は空＝初期化しない（キーのドメインに localhost が無いため）。
