@@ -2319,8 +2319,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       prevDate:di>0?dates[di-1]:"",nextDate:di<dates.length-1?dates[di+1]:"",resetKey:cellResetKey,api:cellApi};
   };
 
-  // グリッドの実際の行高・thead高を測定してサイドパネルと同期
+  // グリッドの実際の行高・thead高を測定してサイドパネルと同期。
+  // 見出しの高さは描画の後からも変わる（他店舗を読み終えてからヘルプ勤務の切り替え「ヘ」が名前の下に出る等）ので、
+  // 依存の変化だけでなく見出しと本体の大きさの変化（ResizeObserver）でも測り直す。測り直しで変わるのは
+  // ヒートマップ側の高さだけで、グリッドの大きさには戻らないのでループにならない（2026-10-09 本番で全行が見出しの差だけずれた）
   useEffect(()=>{
+    const measure=()=>{
     if(gridBodyRef.current){
       const rows=gridBodyRef.current.querySelectorAll("tr");
       if(rows.length>=4){
@@ -2342,7 +2346,15 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
         if(offset>0)setMeasuredTheadH(offset);
       }
     }
-  },[selPid,dates.length,colW]);
+    };
+    measure();
+    if(typeof ResizeObserver==="undefined")return;
+    const ro=new ResizeObserver(()=>measure());
+    if(gridTheadRef.current)ro.observe(gridTheadRef.current);
+    if(gridBodyRef.current)ro.observe(gridBodyRef.current);
+    return()=>ro.disconnect();
+    // fitAll・showActuals・deptFilter はグリッドの表を作り直す（監視先の要素が替わる）ので依存に入れる
+  },[selPid,dates.length,colW,fitAll,showActuals,deptFilter]);
 
   // 全表示（DEV限定）: グリッド上端のページ内オフセットを測る。使うのは「画面の残り高さ」を出すためだけで、
   // 出力（行高・フォント）はこの値に戻らないので測り直しのループにならない。依存配列にも行高・フォントを
