@@ -1810,8 +1810,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // B制の週40h超は月曜起算（weeks は前の期間ぶんも含む）。データの無い日は0分で入るので、
       // 前月・翌月にまたがる週は結果として「データのある日だけ」で計算されたのと同じになる（S-5）。
       void sys;void dayMins;
-      const f=(laborByStaff[name]?.findings||[]).map(x=>x.label);
-      if(f.length)out.push({name,findings:f});
+      const all=laborByStaff[name]?.findings||[];
+      // findings は PDF の「労務の確認が必要です」、screen は画面の一覧（SHIFT_TAB_HIDDEN_FINDING_KEYS を除く）
+      const f=all.map(x=>x.label);
+      if(f.length)out.push({name,findings:f,screen:shiftTabFindingLabels(all)});
     });
     return out;
   },[isPremium,realStaff,dates,settings,laborByStaff]);
@@ -3443,12 +3445,12 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
               応援・外部の属性は B と同じ判定（2026-10-03）。
               **労務判定の表のすぐ下に置く**（2026-09-26 ユーザー指示）。総括が「要修正」の人を
               表で見つけ、そのまま下の一覧で理由を読む並びにしている */}
-          {laborFindings.length>0&&(
+          {laborFindings.some(f=>f.screen.length>0)&&(
             <div style={{background:"rgba(248,112,54,.07)",border:"1px solid rgba(248,112,54,.3)",borderRadius:8,padding:"8px 12px",marginBottom:10,...NORMAL_W}}>
               <div style={{fontSize:12,fontWeight:700,color:"var(--c-accent)",marginBottom:4,display:"flex",alignItems:"center",gap:8}}><span>⚠ 労務の確認が必要です</span>{calcPending&&<CalcPendingNote/>}</div>
               <div style={{fontSize:12,color:"var(--c-text2)",lineHeight:1.7}}>
-                {laborFindings.map(({name,findings})=>(
-                  <div key={name}>{name}：{findings.join("、")}</div>
+                {laborFindings.filter(f=>f.screen.length>0).map(({name,screen})=>(
+                  <div key={name}>{name}：{screen.join("、")}</div>
                 ))}
               </div>
             </div>
