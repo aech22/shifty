@@ -449,6 +449,89 @@ const cellBgStyleOf=(col,dash)=>{
 // ルール（database.rules.json）がメモを200字までに制限している。超えると saveSubs の1回の update ごと拒否され、
 // 同じ回の他の人のセルも保存されない（画面は保存できたように見える）ので、入力の時点で止める
 const SHIFT_CELL_MAX_LEN=200;
+// ===== 試作: iPhone でセルを移ってもキーボードを戻さない（2026-10-09・本番では動かない）=====
+// iOS は別の入力欄にフォーカスが移るたびにキーボードを既定（日本語かななら「かな」）に戻す。入力欄を1つ（KbTrialEditor）だけにし、
+// Enter ではフォーカスを動かさずにその欄を次のセルの上へ動かせば、キーボードがそのまま残るかを実機で確かめるための試作。
+// 動くのは開発環境（DEV_MODE）で URL に ?kbtrial=1 を付けて開いたときだけ（端末に覚える。?kbtrial=0 で戻す）。本番（shiftyshifty.app）では
+// DEV_MODE が false なので常に false。**切り離すとき**は KB_TRIAL・KbTrialEditor と、「KB_TRIAL」で検索して出る ShiftCell と ShiftEditTab の数行を消す
+const KB_TRIAL=(()=>{
+  try{
+    if(typeof DEV_MODE==="undefined"||!DEV_MODE)return false;
+    const m=/[?&]kbtrial=([01])/.exec(location.search);
+    if(m){if(m[1]==="1")localStorage.setItem("ots_kbTrial_v1","1");else localStorage.removeItem("ots_kbTrial_v1");}
+    return localStorage.getItem("ots_kbTrial_v1")==="1";
+  }catch{return false;}
+})();
+function KbTrialEditor({openRef,api,resetKey}){
+  const inRef=useRef(null);
+  const tgtRef=useRef(null); // {el,name,date,field,readOnly}
+  const skipCommitRef=useRef(false);
+  const place=()=>{
+    const t=tgtRef.current,inp=inRef.current;if(!t||!inp)return;
+    if(!t.el.isConnected){const el=document.querySelector(`[data-sc="${t.date}|${t.field}"][data-scn="${CSS.escape(t.name)}"]`);if(el)t.el=el;}
+    const r=t.el.getBoundingClientRect(),cs=getComputedStyle(t.el);
+    Object.assign(inp.style,{left:r.left+"px",top:r.top+"px",width:r.width+"px",height:r.height+"px",fontSize:cs.fontSize,fontWeight:cs.fontWeight,textAlign:cs.textAlign,padding:cs.padding,opacity:"1",pointerEvents:"auto"});
+  };
+  const hide=()=>{const inp=inRef.current;if(inp)Object.assign(inp.style,{left:"-9999px",top:"0px",opacity:"0",pointerEvents:"none"});};
+  const valueOf=el=>el.dataset.edit!=null?el.dataset.edit:el.value;
+  const setTarget=(el,name,date,field)=>{
+    const inp=inRef.current;
+    tgtRef.current={el,name,date,field,readOnly:el.readOnly};
+    inp.value=valueOf(el);inp.readOnly=el.readOnly;
+    place();
+    api.tip(name,date,field,el.getBoundingClientRect());
+  };
+  const commit=()=>{
+    const t=tgtRef.current,inp=inRef.current;if(!t||!inp)return;
+    if(!t.readOnly)api.commit(t.name,t.date,t.field,inp.value);
+    api.draft(`${t.name}|${t.date}|${t.field}`,null);
+  };
+  React.useLayoutEffect(()=>{
+    openRef.current=(el,name,date,field)=>{
+      const inp=inRef.current;if(!inp)return false;
+      setTarget(el,name,date,field);
+      inp.focus({preventScroll:true});
+      try{inp.setSelectionRange(inp.value.length,inp.value.length);}catch{}
+      return document.activeElement===inp;
+    };
+    return()=>{openRef.current=null;};
+  },[openRef,api]);
+  // 店舗・期間の切り替え（親の discardEdits）では入力中の文字を保存せずに閉じる
+  const resetSeen=useRef(resetKey);
+  useEffect(()=>{if(resetSeen.current===resetKey)return;resetSeen.current=resetKey;if(tgtRef.current){skipCommitRef.current=true;inRef.current?.blur();}},[resetKey]);
+  // グリッドのスクロール・画面の大きさの変化（キーボードの出入り）で位置を合わせ直す
+  useEffect(()=>{
+    const f=()=>{if(tgtRef.current)place();};
+    window.addEventListener("scroll",f,true);window.addEventListener("resize",f);
+    const vv=window.visualViewport;if(vv){vv.addEventListener("resize",f);vv.addEventListener("scroll",f);}
+    return()=>{window.removeEventListener("scroll",f,true);window.removeEventListener("resize",f);if(vv){vv.removeEventListener("resize",f);vv.removeEventListener("scroll",f);}};
+  },[]);
+  return(
+    <input type="text" inputMode="text" ref={inRef} data-kb-trial="1" maxLength={SHIFT_CELL_MAX_LEN}
+      style={{position:"fixed",left:-9999,top:0,opacity:0,pointerEvents:"none",zIndex:50,boxSizing:"border-box",margin:0,
+        border:"2px solid var(--c-accent)",borderRadius:2,background:"var(--c-card)",color:"var(--c-text)",outline:"none",fontFamily:"inherit"}}
+      onInput={e=>{const t=tgtRef.current;if(t&&!t.readOnly)api.draft(`${t.name}|${t.date}|${t.field}`,e.target.value);}}
+      onBlur={()=>{if(!skipCommitRef.current)commit();else{const t=tgtRef.current;if(t)api.draft(`${t.name}|${t.date}|${t.field}`,null);}skipCommitRef.current=false;tgtRef.current=null;api.hideTip();hide();}}
+      onClick={e=>{const t=tgtRef.current;if(t&&e.detail===3&&t.el.dataset.tt==="1")api.triple(t.name,t.date);}}
+      onTouchEnd={()=>{const t=tgtRef.current;if(t&&t.el.dataset.tt==="1")api.tripleTap(t.name,t.date);}}
+      onKeyDown={e=>{
+        if(e.key!=="Enter"||e.nativeEvent.isComposing||e.keyCode===229)return;
+        e.preventDefault();
+        const t=tgtRef.current;if(!t)return;
+        commit();
+        // 出勤→同じ日の退勤→次の日の出勤（ShiftCell と同じ順）。その人のセルは文書の順に 日付ごとに 出勤・退勤 と並ぶ
+        const back=e.ctrlKey||e.metaKey;
+        const cells=[...document.querySelectorAll(`input[data-sc][data-scn="${CSS.escape(t.name)}"]`)];
+        const i=cells.findIndex(c=>c.getAttribute("data-sc")===`${t.date}|${t.field}`);
+        const next=i<0?null:cells[back?i-1:i+1];
+        // フォーカスは動かさない（ここが試作の要点）。欄を次のセルの上へ動かして中身を入れ替える
+        const go=el=>{const[d,f]=el.getAttribute("data-sc").split("|");el.scrollIntoView({block:"nearest",inline:"nearest"});setTarget(el,t.name,d,f);try{const v=inRef.current.value.length;inRef.current.setSelectionRange(v,v);}catch{}};
+        if(next)go(next);
+        // 確定した値をセルに反映した後の表示で中身を合わせ直す（次のセルが無いときは今のセルのまま）
+        else setTimeout(()=>{const cur=tgtRef.current;if(cur&&cur.el===t.el){inRef.current.value=valueOf(t.el);place();}},0);
+      }}/>
+  );
+}
 const ShiftCell=React.memo(function ShiftCell({name,date,field,idleVal,editVal,col,dash,color,hFont,hLh,hKeep,hDay,title,readOnly,isPremium,canEdit,locked,base,cursor,prevDate,nextDate,resetKey,api}){
   const[focused,setFocused]=useState(false);
   const[draft,setDraft]=useState(null);
@@ -470,11 +553,12 @@ const ShiftCell=React.memo(function ShiftCell({name,date,field,idleVal,editVal,c
       data-helper={showHelper?"1":undefined}
       readOnly={readOnly}
       data-sc={`${date}|${field}`} data-scn={name}
+      data-edit={KB_TRIAL&&editVal!==undefined?editVal:undefined} data-tt={KB_TRIAL&&canEdit&&!hDay?"1":undefined}
       onChange={e=>{if(!isPremium||locked)return;const v=e.target.value;setDraft(v);api.draft(key,v);}}
       onClick={e=>{if(!isPremium){api.upgrade();return;}if(canEdit&&e.detail===3&&!hDay)api.triple(name,date);}}
       onTouchEnd={()=>{if(!canEdit||hDay)return;api.tripleTap(name,date);}}
-      onFocus={e=>{if(!isPremium){e.target.blur();api.upgrade();return;}setFocused(true);api.tip(name,date,field,e.target.getBoundingClientRect());}}
-      onBlur={e=>{api.commit(name,date,field,e.target.value);api.hideTip();setFocused(false);setDraft(null);api.draft(key,null);}}
+      onFocus={e=>{if(!isPremium){e.target.blur();api.upgrade();return;}if(KB_TRIAL&&api.kbOpen(e.target,name,date,field))return;setFocused(true);api.tip(name,date,field,e.target.getBoundingClientRect());}}
+      onBlur={e=>{if(KB_TRIAL&&!focused)return;api.commit(name,date,field,e.target.value);api.hideTip();setFocused(false);setDraft(null);api.draft(key,null);}}
       // 日本語IME変換確定のEnter(isComposing/keyCode229)はセル確定・フォーカス移動として扱わない。
       // 除外しないと変換確定のEnterで即座に次セルへ移動し、IMEの確定処理がそのまま次セルに入って
       // 手打ちしていないセルにも同じ文字（例:「締」）が入ってしまう
@@ -2278,6 +2362,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // （描画のたびに新しい関数を渡すと memo が効かず、選択・入力のたびに全セルが描き直される）。
   const cellApiRef=useRef(null);
   const tipSetRef=useRef(null);
+  const kbOpenRef=useRef(null); // 試作（KB_TRIAL）
   React.useLayoutEffect(()=>{
     cellApiRef.current={
       commit:handleBlur,
@@ -2299,6 +2384,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     tripleTap:(n,d)=>cellApiRef.current.tripleTap(n,d),
     tip:(n,d,f,r)=>cellApiRef.current.tip(n,d,f,r),
     hideTip:()=>{const set=tipSetRef.current;if(set)set(null);},
+    kbOpen:(el,n,d,f)=>{const o=kbOpenRef.current;return o?o(el,n,d,f):false;}, // 試作（KB_TRIAL）
     // 入力中の文字。value=null は「このセルの入力を終えた」（別のセルの入力中の文字は消さない）
     draft:(key,value)=>{if(value==null){if(draftRef.current&&draftRef.current.key===key)draftRef.current=null;}else{draftRef.current={key,value};if(calcTimerRef.current)scheduleCalc();}},
   }),[]);
@@ -3046,6 +3132,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   return(
     <div ref={outerRef} style={{padding:"12px 8px"}}>
       <CellTip setRef={tipSetRef}/>
+      {KB_TRIAL&&!exportJob&&<KbTrialEditor openRef={kbOpenRef} api={cellApi} resetKey={cellResetKey}/>}
       <div style={{marginBottom:10,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         <span style={{fontWeight:700,fontSize:15}}>シフト作成</span>
         <select value={selPid} onChange={e=>{setSelPid(e.target.value);discardEdits();setActualMode(false);}}
