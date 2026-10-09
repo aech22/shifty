@@ -1252,24 +1252,28 @@ function laborFindingLabels(o){return laborFindingsFor(o).map(f=>f.label);}
 //          「いま分かっている範囲では問題なし。月の判定は月が埋まってから」を意味する。
 //          2026-09-26 にユーザー指示で「要確認」から変えた（出せる判定は出し、実数も見せる）。
 // weekNoRest（週の休みに ×休なし がある）は第3弾で渡すようになるまで常に false。
-const OVERALL_FIX_KEYS=["over12","under4","monthOtOverAgreement","dayOtOverAgreement",
-  "monthOt100","dayOverAgreementB","weekOver40NoAgreement","breakShort","timeError","badSystem","skilledWeekRest"];
+// 2026-10-10: 画面の「労務の確認」から外した10項目（SHIFT_TAB_HIDDEN_FINDING_KEYS）は総括の要修正にも数えない（ユーザー指示）。
+// 以前は monthOtOverAgreement・dayOtOverAgreement・dayOverAgreementB・breakShort もここにあった
+const OVERALL_FIX_KEYS=["over12","under4","monthOt100","weekOver40NoAgreement","timeError","badSystem","skilledWeekRest"];
 function overallVerdictOf(o){
   const {laborSystem=null,findings=[],guideKey="none",weekNoRest=false,monthReady=true}=o||{};
   // 内部値 none は行き先の店で「所属店舗で判定」する人（P3.6）。応援・外部の属性は B に読み替え済みでここには来ない
   if(laborSystem==="none")return{key:"none",label:""};
   const keys=new Set((findings||[]).map(f=>f&&f.key));
+  // 要修正の判定は、画面の「労務の確認」から外した10項目（SHIFT_TAB_HIDDEN_FINDING_KEYS）を数えない（2026-10-10 ユーザー指示）。
+  // 「残業あり」（B制の over8・weekOver40）は要修正ではないので keys のまま見る
+  const fk=new Set([...keys].filter(k=>!SHIFT_TAB_HIDDEN_FINDING_KEYS.includes(k)));
   // **月が埋まっていない間は目安を総括に入れない。** 呼び出し側は月が埋まる前も現状の実数で
   // guideStatusOf を出すようになった（画面に「＋所定未満 あと90h」と出る）ので、その key を
   // そのまま採ると全員が要修正になる。月に帰属する findings は laborFindingsFor 側が落としている。
   const gk=monthReady?guideKey:"none";
   // monthOt100 は S-6 の一覧に無いが、36協定の絶対上限の違反なので要修正に入れる（判断4）。
-  const fix=weekNoRest||keys.has("badSystem")||keys.has("timeError")||keys.has("breakShort")||keys.has("skilledWeekRest")
+  const fix=weekNoRest||fk.has("badSystem")||fk.has("timeError")||fk.has("breakShort")||fk.has("skilledWeekRest")
     ||(laborSystem==="A"&&(gk==="over"||gk==="under_base"
-        ||keys.has("over12")||keys.has("under4")||keys.has("monthOtOverAgreement")
-        ||keys.has("dayOtOverAgreement")||keys.has("monthOt100")))
-    ||(laborSystem==="B"&&(keys.has("dayOverAgreementB")||keys.has("weekOver40NoAgreement")
-        ||keys.has("monthOtOverAgreement")||keys.has("monthOt100")));
+        ||fk.has("over12")||fk.has("under4")||fk.has("monthOtOverAgreement")
+        ||fk.has("dayOtOverAgreement")||fk.has("monthOt100")))
+    ||(laborSystem==="B"&&(fk.has("dayOverAgreementB")||fk.has("weekOver40NoAgreement")
+        ||fk.has("monthOtOverAgreement")||fk.has("monthOt100")));
   if(fix)return{key:"fix",label:"要修正"};
   if(laborSystem==="A"&&gk==="under_guide")return{key:"under_guide",label:"目安未満"};
   if(laborSystem==="B"&&(keys.has("over8")||keys.has("weekOver40")))return{key:"ot",label:"残業あり"};

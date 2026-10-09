@@ -2704,10 +2704,11 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       if(l.dest)return{label:"所属店舗で判定",color:"var(--c-text3)",
         title:`${l.homeName||"所属店舗"}で、この店舗での勤務を合算して判定します（この店舗の集計には含めません）`};
       if(l.helperUnread)return{label:(String(l.overall.label).startsWith("＋")?"":"＋")+l.overall.label,color:"var(--c-text3)",
-        title:`他店の勤務を読み込めていません。判定は他店の分が足りない途中の値です${(l.findings||[]).length?"／"+(l.findings||[]).map(f=>f.label).join("、"):""}`};
+        title:`他店の勤務を読み込めていません。判定は他店の分が足りない途中の値です${shiftTabFindingLabels(l.findings).length?"／"+shiftTabFindingLabels(l.findings).join("、"):""}`};
       const c=l.overall.key==="fix"?"#e53935":l.overall.key==="under_guide"?"#B8860B":l.overall.key==="ot"?"#3B82F6":l.overall.key==="ok_partial"?"var(--c-text3)":"var(--c-text2)";
       // ＋OK は「日・週の判定では問題なし。月の判定は月が埋まってから」。理由を title に出す。
-      const ft=(l.findings||[]).map(f=>f.label).join("、");
+      // 画面の「労務の確認」と同じく、外した10項目（SHIFT_TAB_HIDDEN_FINDING_KEYS）は title にも出さない
+      const ft=shiftTabFindingLabels(l.findings).join("、");
       return{label:l.overall.label,color:c,bold:l.overall.key==="fix",
         title:l.overall.key==="ok_partial"?`日・週の判定では問題ありません／${laborPendingReason}`:ft};}},
   ];

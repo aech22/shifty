@@ -3633,10 +3633,9 @@ test("S-6 総括判定: 上から順に 要修正／目安未満／残業あり�
   assert.strictEqual(v({ laborSystem: "A", findings: [], guideKey: "under_guide" }), "目安未満");
   assert.strictEqual(v({ laborSystem: "B", findings: F({ laborSystem: "B", dayMins: [HM(9, 0)] }), guideKey: "none" }), "残業あり");
   assert.strictEqual(v({ laborSystem: "B", findings: [], guideKey: "none" }), "OK");
-  // 共通の3つはどちらの区分でも要修正
-  for (const o of [{ timeErrorCount: 1 }, { breakShortCount: 1 }]) {
-    assert.strictEqual(v({ laborSystem: "B", findings: F({ laborSystem: "B", ...o }), guideKey: "none" }), "要修正");
-  }
+  // 時刻の入力ミスはどちらの区分でも要修正。休憩不足は 2026-10-10 から要修正にしない（画面の労務の確認から外した10項目）
+  assert.strictEqual(v({ laborSystem: "B", findings: F({ laborSystem: "B", timeErrorCount: 1 }), guideKey: "none" }), "要修正");
+  assert.strictEqual(v({ laborSystem: "B", findings: F({ laborSystem: "B", breakShortCount: 1 }), guideKey: "none" }), "OK");
   // 内部値 none は休憩不足も出さない（労務の判定のため）。時刻の入力ミスだけは区分によらず出る
   assert.deepStrictEqual(u.laborFindingLabels({ laborSystem: "none", breakShortCount: 2, timeErrorCount: 1 }),
     ["時刻の入力ミス1日"]);
@@ -6119,7 +6118,8 @@ test("応援・外部: 同じ勤務データなら parttime の人と laborFindi
   const ext = run("外部さん"), pt = run("バイト");
   assert.ok(ext.f.length > 0, "判定が出る＝素通りしない");
   assert.deepStrictEqual(ext, pt);
-  assert.strictEqual(ext.overall.key, "fix");
+  // 2026-10-10: 1日の残業が上限超・月の残業が上限超・休憩不足は総括の要修正に数えない。8h超があるので「残業あり」
+  assert.strictEqual(ext.overall.key, "ot");
   // 番号を持たない場合: バイトには「従業員番号が未設定」が出て、応援・外部には出ない
   const st2 = { ...st, staffNumbers: {} };
   assert.ok(u.laborFindingsFor({ laborSystem: "B", staffNumberMissing: u.isStaffNumberMissing(st2, "バイト") }).some(x => x.key === "inputCheckNumber"));
@@ -6732,7 +6732,9 @@ test("P5 36協定: B制に月45h・単月100h、100h と複数月平均80h は�
   assert.ok(!K({ monthOtH: 45 }).includes("monthOtOverAgreement"), "ちょうど45hは超えていない");
   assert.ok(!K({ monthOtH: 46, monthReady: false }).includes("monthOtOverAgreement"), "月が埋まるまで出さない");
   assert.ok(K({ monthOtH: 90, monthAgreementH: 100 }).includes("monthOt100"), "時間外90h＋法定休日10h = 100h");
-  assert.strictEqual(u.overallVerdictOf({ laborSystem: "B", findings: u.laborFindingsFor({ ...base, monthOtH: 46 }) }).key, "fix");
+  // 2026-10-10: 月の残業が上限超は総括の要修正に数えない（画面の労務の確認から外した10項目）。単月100h は従来どおり要修正
+  assert.notStrictEqual(u.overallVerdictOf({ laborSystem: "B", findings: u.laborFindingsFor({ ...base, monthOtH: 46 }) }).key, "fix");
+  assert.strictEqual(u.overallVerdictOf({ laborSystem: "B", findings: u.laborFindingsFor({ ...base, monthOtH: 90, monthAgreementH: 100 }) }).key, "fix");
   // A制の単月100h も同じ（以前は残業予定だけ＝休日労働を足していなかった）
   const A = o => u.laborFindingsFor({ laborSystem: "A", dayMins: [], monthReady: true, ...o }).map(f => f.key);
   assert.ok(!A({ monthOtH: 90 }).includes("monthOt100"));
@@ -7906,4 +7908,22 @@ test("労務の確認（画面）: 8h超・休憩不足・日の時間外・1日
   assert.ok(/laborFindings\.filter\(f=>f\.screen\.length>0\)\.map\(\(\{name,screen\}\)/.test(shift));
   const pdf = shift.slice(shift.indexOf("const buildLaborFindingsHtml"), shift.indexOf("const renderBlock"));
   assert.ok(pdf.includes("findings.join") && !pdf.includes("screen"), "PDF は全項目のまま");
+});
+
+// 画面の「労務の確認」から外した10項目は総括の要修正にも数えない（2026-10-10 ユーザー指示）
+test("総括: SHIFT_TAB_HIDDEN_FINDING_KEYS だけでは要修正にならない・ほかの要修正と残業ありは従来どおり", () => {
+  const v = (sys, keys, o) => u.overallVerdictOf({ laborSystem: sys, findings: keys.map(key => ({ key })), guideKey: "none", monthReady: true, ...(o || {}) }).key;
+  u.SHIFT_TAB_HIDDEN_FINDING_KEYS.forEach(k => {
+    assert.notStrictEqual(v("A", [k]), "fix", `A ${k}`);
+    assert.notStrictEqual(v("B", [k]), "fix", `B ${k}`);
+    assert.ok(!u.OVERALL_FIX_KEYS.includes(k), `OVERALL_FIX_KEYS に ${k} が残っている`);
+  });
+  assert.strictEqual(v("A", u.SHIFT_TAB_HIDDEN_FINDING_KEYS), "ok");
+  assert.strictEqual(v("B", ["over8", "breakShort"]), "ot", "8h超は残業ありのまま");
+  assert.strictEqual(v("B", ["weekOver40"]), "ot", "週40h超は残業ありのまま");
+  ["over12", "under4", "monthOt100"].forEach(k => assert.strictEqual(v("A", [k, "breakShort"]), "fix", k));
+  ["timeError", "badSystem", "skilledWeekRest"].forEach(k => assert.strictEqual(v("B", [k]), "fix", k));
+  assert.strictEqual(v("B", ["weekOver40NoAgreement"]), "fix");
+  assert.strictEqual(v("B", [], { weekNoRest: true }), "fix", "×休なし");
+  assert.strictEqual(u.overallVerdictOf({ laborSystem: "A", findings: [], guideKey: "over" }).key, "fix", "みなし超");
 });
