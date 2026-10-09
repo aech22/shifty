@@ -1,11 +1,13 @@
-// シフト作成タブの「⚠ 労務の確認が必要です」（画面）から 8h超(残業)・休憩不足・日の時間外・1日の残業が上限超（B制）を
-// 出さない（2026-10-10 ユーザー指示）の回帰テスト。PDF の同じ欄と、それ以外の判定は従来どおり出ることも測る。
+// シフト作成タブの「⚠ 労務の確認が必要です」（画面）から 8h超(残業)・休憩不足・日の時間外・1日の残業が上限超（B制）、
+// 1日の残業予定が上限超・週40h超(残業)・月の残業が上限超・複数月平均80h超・月60h超・週の時間外を
+// 出さない（2026-10-10 ユーザー指示・2回）の回帰テスト。PDF の同じ欄と、それ以外の判定は従来どおり出ることも測る。
 // app-main.js を読み込まないので Firebase へは1バイトも出ない（SKILL.md 1.6節）。
 //
 // 仕込み（10月後半・休憩の設定なし）:
 //   田中（パート・B制） … 09:00〜20:00 を2日＝8h超・休憩不足・日の時間外・1日の残業が上限超（協定1h）だけに当たる
 //   鈴木（社員・A制）   … 09:00〜23:00 を1日＝12h超（画面に残る）と、8h超ではない A制の指摘
-// 期待: 画面の欄に田中の行は無く、鈴木の行は12h超を含み、4項目の文言はどこにも出ない。PDF には田中の4項目が残る。
+//   佐藤（パート・B制） … 10/19〜24 に 09:00〜18:00 を6日＝週40h超(残業)・週の時間外（画面に出ない・PDF に出る）
+// 期待: 画面の欄に田中・佐藤の行は無く、鈴木の行は12h超を含み、外した項目の文言はどこにも出ない。PDF には残る。
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-labor-panel-hidden.js → allPass=true / EXIT=0
 // 反証: SHIFTY_ROOT=<変更前の配信物> node ... → EXIT=1
@@ -20,21 +22,23 @@ const JSX=`
 const P={id:"p1",urlToken:"t1",shopId:"S1",label:"10月後半",startDate:"2026-10-16",endDate:"2026-10-31",deadlineDate:"",createdAt:"2026-09-01T00:00:00.000Z"};
 const SUBS=[
  {id:"a",periodId:"p1",staffName:"田中",shopId:"S1",comment:"",submittedAt:"2026-09-02T00:00:00.000Z",shifts:${JSON.stringify({"2026-10-19":w("09:00","20:00"),"2026-10-20":w("09:00","20:00")})}},
+ {id:"c",periodId:"p1",staffName:"佐藤",shopId:"S1",comment:"",submittedAt:"2026-09-02T00:00:00.000Z",shifts:${JSON.stringify(Object.fromEntries([19,20,21,22,23,24].map(d=>["2026-10-"+d,w("09:00","18:00")])))}},
  {id:"b",periodId:"p1",staffName:"鈴木",shopId:"S1",comment:"",submittedAt:"2026-09-02T00:00:00.000Z",shifts:${JSON.stringify({"2026-10-21":w("09:00","23:00")})}},
 ];
 const BRK={weekday:[],sat:[],sun:[],holSat:[],holSun:[]};
 const SETTINGS={shopId:"S1",candidates:[{start:"09:00",end:"23:00"}],weekdayCandidates:{},dateCandidates:{},breakTimes:BRK,
-  staffAttributes:{田中:"parttime",鈴木:"employee"},staffTypeLimits:{},staffNumbers:{田中:"1",鈴木:"2"},
+  staffAttributes:{田中:"parttime",鈴木:"employee",佐藤:"parttime"},staffTypeLimits:{},staffNumbers:{田中:"1",鈴木:"2",佐藤:"3"},
   laborSettings:{agreementDailyOtMin:60},
   staffColors:{},staffAliases:{},positions:{kitchen:[],hall:[]},requiredPositions:{},staffPositions:{}};
 function Harness(){
-  return <ShiftEditTab subs={SUBS} periods={[P]} staffList={["田中","鈴木"]}
+  return <ShiftEditTab subs={SUBS} periods={[P]} staffList={["田中","鈴木","佐藤"]}
     onSave={()=>{}} tt={()=>{}} settings={SETTINGS} plan="premium" shopId="S1" shopName="テスト店" onUpgrade={()=>{}}
     savePeriods={()=>{}} ownerReadOnly={false} onLoadPastSubs={()=>Promise.resolve()} pastSubsLoaded={true}/>;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`;
 
-const HIDDEN=["8h超","休憩不足","日の時間外","1日の残業が上限超"];
+const HIDDEN1=["8h超","休憩不足","日の時間外","1日の残業が上限超"];
+const HIDDEN=[...HIDDEN1,"1日の残業予定が上限超","週40h超(残業)","月の残業が上限超","複数月平均","月60h超","週の時間外"];
 (async()=>{
   const h=await openHarness({root:ROOT,extraHead:EXTRA_HEAD,waitFor:"select",jsx:JSX});
   const out={};
@@ -55,13 +59,15 @@ const HIDDEN=["8h超","休憩不足","日の時間外","1日の残業が上限�
     const fb=blocks.find(b=>plain(b).startsWith("労務の確認が必要です"));
     out.pdf=fb?plain(fb):null;
     const scr=(out.screen||[]).join("\n");
-    const tanakaPdf=(out.pdf||"").split("田中：")[1]||"";
+    const tanakaPdf=((out.pdf||"").split("田中：")[1]||"").split("鈴木：")[0];
+    const satoPdf=(out.pdf||"").split("佐藤：")[1]||"";
     out.verdict={
       panelShown:Array.isArray(out.screen)&&out.screen.length>0,
       tanakaRowGone:!(out.screen||[]).some(l=>l.startsWith("田中：")),
+      satoRowGone:!(out.screen||[]).some(l=>l.startsWith("佐藤：")),
       suzukiKeepsOver12:(out.screen||[]).some(l=>l.startsWith("鈴木：")&&l.includes("12h超")),
       hiddenNotOnScreen:HIDDEN.every(k=>!scr.includes(k)),
-      pdfKeepsAll:HIDDEN.every(k=>tanakaPdf.includes(k)),
+      pdfKeepsAll:HIDDEN1.every(k=>tanakaPdf.includes(k))&&["週40h超(残業)","週の時間外"].every(k=>satoPdf.includes(k)),
     };
     out.verdict.allPass=Object.values(out.verdict).every(Boolean);
     out.errors=h.errors.slice();

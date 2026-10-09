@@ -171,10 +171,11 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);` });
     a_basisActual: /実績（入力の無い日は確定シフト）で計算/.test(g(L1, "時間外①②③", "田中").t),
     b_ot: g(L1, "時間外①②③", "鈴木").v === "14:00" && /①日8時間超 6:00／②週40時間超 8:00/.test(g(L1, "時間外①②③", "鈴木").t),
     b_planRow: g(L1, "残業予定", "鈴木").v === "14h" && /1日8時間超 6:00・週40時間超 8:00/.test(g(L1, "残業予定", "鈴木").t),
-    b_agreementMonth: /鈴木.*月の残業が上限超/.test(panel1) && g(L1, "総括", "鈴木").v === "要修正",
+    // 2026-10-10: 月の残業が上限超は画面の欄に出さない。判定（総括の要修正）は従来どおり
+    b_agreementMonth: !/月の残業が上限超/.test(panel1) && g(L1, "総括", "鈴木").v === "要修正",
     // 2026-10-10: 日の時間外は画面の欄に出さない（PDF には出る）
     panelDates: !/日の時間外/.test(panel1) && !/深夜/.test(panel1) && /法定休日労働1日（15）/.test(panel1)
-      && /週の時間外（2〜8）/.test(panel1),
+      && !/週の時間外/.test(panel1),
     frozen: !!saved1 && saved1["鈴木"] && saved1["鈴木"].monthOtH === 14 && saved1["鈴木"].monthAgH === 14
       && saved1["田中"] && saved1["田中"].monthAgH === 12 && saved1["田中"].monthOtH === undefined,
     pdfRows: /時間外①②③4:0014:00/.test(pdfLabor) && /深夜2:00/.test(pdfLabor) && /法定休日8:00/.test(pdfLabor),
