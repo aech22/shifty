@@ -1143,11 +1143,13 @@ function laborFindingsFor(o){
 // P3.5c の「判定対象外の人の長時間の日」のキーは 2026-10-03 のユーザー指示で削除した。
 const LABOR_DAY_ATTR_LIMIT_KEYS={daily:"attrLimitDaily",weekly:"attrLimitWeekly",biweekly:"attrLimitBiweekly",
   monthly:"attrLimitMonthly",custom:"attrLimitCustom"};
-// シフト作成タブの「⚠ 労務の確認が必要です」（画面）に出さない判定（2026-10-10 ユーザー指示）。
-// 8h超(残業)・休憩不足・日の時間外・1日の残業が上限超（B制）は出勤日の多くに当たり、直すべき指摘が埋もれるため。
+// シフト作成タブの「⚠ 労務の確認が必要です」（画面）に出さない判定（2026-10-10 ユーザー指示・2回）。
+// 1回目: 8h超(残業)・休憩不足・日の時間外・1日の残業が上限超（B制）。
+// 2回目: 1日の残業予定が上限超（A制）・週40h超(残業)・月の残業が上限超・複数月平均80h超・月60h超・週の時間外。
 // **画面の一覧から外すだけ**で、判定そのもの・労務判定表・総括・セル色・PDF の「労務の確認が必要です」は従来どおり。
-// 1日の残業予定が上限超（A制・dayOtOverAgreement）は外さない（指示の文言が「1日の残業が上限超」のため）
-const SHIFT_TAB_HIDDEN_FINDING_KEYS=["over8","breakShort","p5DayOt","dayOverAgreementB"];
+// 週40h超(協定なし)・月の残業が100h以上・年の36協定の他の項目は指示に無いので外していない
+const SHIFT_TAB_HIDDEN_FINDING_KEYS=["over8","breakShort","p5DayOt","dayOverAgreementB",
+  "dayOtOverAgreement","weekOver40","monthOtOverAgreement","avgOver80","p5Over60","p5WeekOt"];
 function shiftTabFindingLabels(findings){
   return (findings||[]).filter(f=>f&&!SHIFT_TAB_HIDDEN_FINDING_KEYS.includes(f.key)).map(f=>f.label);
 }
@@ -2302,7 +2304,7 @@ const CELL_COLOR_LEGEND=[
   {key:"rest",hatch:true,label:"休み希望（斜線）",desc:"スタッフが提出した休み希望、または管理者が / で入力した休み（他店でのヘルプ勤務がある日は引かない）"},
   {key:"posErr",color:"rgba(250,204,21,0.35)",label:"ポジション不足",desc:"必要ポジション設定に対して出勤人数・ポジションが不足しているランチ/ディナーの行"},
   {key:"timeErr",color:"rgba(190,24,93,.25)",label:"時刻の入力ミス",desc:"退勤が出勤以前になっている。深夜は 25:00・26:00 のように24時を超える表記で入力する"},
-  {key:"laborErr",color:"rgba(139,92,246,.28)",label:"労務の要修正",desc:"1日12時間を超える日・法定休日労働の日・月の時間外が60時間を超えた日・特定技能の週の公休が足りない週の出勤日・属性の勤務時間の上限（1日／週／2週間／1ヶ月／任意日数）を超えた日と、超えた週・期間の出勤日。理由はセルにカーソルを合わせると出る。他の労務の指摘（1日の残業の上限超・4h未満・休憩不足など）は色を付けず「労務の確認が必要です」に出す。ただし8h超・休憩不足・日の時間外・1日の残業が上限超はこの画面には出さず、全データのPDFにだけ出る"},
+  {key:"laborErr",color:"rgba(139,92,246,.28)",label:"労務の要修正",desc:"1日12時間を超える日・法定休日労働の日・月の時間外が60時間を超えた日・特定技能の週の公休が足りない週の出勤日・属性の勤務時間の上限（1日／週／2週間／1ヶ月／任意日数）を超えた日と、超えた週・期間の出勤日。理由はセルにカーソルを合わせると出る。他の労務の指摘（1日の残業の上限超・4h未満・休憩不足など）は色を付けず「労務の確認が必要です」に出す。ただし8h超・休憩不足・日・週の時間外・1日の残業の上限超・週40h超・月の残業の上限超・複数月平均80h超・月60h超はこの画面には出さず、全データのPDFにだけ出る"},
 ];
 // 休みコマンド判定（セル全体が / ／ ko yu ke のとき。時間付きの「9/」は通常サフィックス＝メモ扱い）。
 // **レジストリ駆動**にしてあるので kind:"rest" を足せば判定・予約語（isReservedShopAbbr）に自動で乗る。

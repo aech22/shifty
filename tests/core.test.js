@@ -7883,15 +7883,22 @@ test("staffNameUnsafeChars: 提出のルールが拒否する \" < > と改行�
 // シフト作成タブの「⚠ 労務の確認が必要です」（画面）から外す4項目（2026-10-10 ユーザー指示）。
 // 判定そのもの・PDF の同じ欄・総括・セル色は変えない。
 test("労務の確認（画面）: 8h超・休憩不足・日の時間外・1日の残業が上限超（B制）だけを外す", () => {
-  assert.deepStrictEqual([...u.SHIFT_TAB_HIDDEN_FINDING_KEYS].sort(), ["breakShort", "dayOverAgreementB", "over8", "p5DayOt"]);
+  assert.deepStrictEqual([...u.SHIFT_TAB_HIDDEN_FINDING_KEYS].sort(), ["avgOver80", "breakShort", "dayOtOverAgreement", "dayOverAgreementB",
+    "monthOtOverAgreement", "over8", "p5DayOt", "p5Over60", "p5WeekOt", "weekOver40"]);
   // キーの書き間違いで黙って何も外れない、を防ぐ: 実際の判定が同じキーを出すこと
   const B = u.laborFindingsFor({ laborSystem: "B", dayMins: [600], dayDates: ["2026-10-16"], agreementDailyOtH: 1, breakShortDates: ["2026-10-16"] }).map(f => f.key);
   ["over8", "dayOverAgreementB", "breakShort"].forEach(k => assert.ok(B.includes(k), k));
+  const A = u.laborFindingsFor({ laborSystem: "A", dayMins: [600], dayDates: ["2026-10-16"], dayOtH: [3], agreementDailyOtH: 1,
+    monthOtH: 50, agreementMonthlyOtH: 45, monthReady: true }).map(f => f.key);
+  ["dayOtOverAgreement", "monthOtOverAgreement"].forEach(k => assert.ok(A.includes(k), k));
+  assert.ok(u.laborFindingsFor({ laborSystem: "B", dayMins: [], weekDayMins: [[480, 480, 480, 480, 480, 480]], weekDates: ["2026-10-12"] }).some(f => f.key === "weekOver40"));
+  assert.ok(u.agreementYearFindings([{ h: 85, ag: 85 }, { h: 85, ag: 85 }], 360).some(f => f.key === "avgOver80"));
   const src = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-utils.js"), "utf8");
-  assert.ok(/key:"p5DayOt"/.test(src), "日の時間外のキー");
+  ["p5DayOt", "p5WeekOt", "p5Over60"].forEach(k => assert.ok(new RegExp(`key:"${k}"`).test(src), k));
   const fs = [{ key: "over8", label: "8h超1日(残業)" }, { key: "breakShort", label: "休憩不足1日" }, { key: "p5DayOt", label: "日の時間外1日" },
-    { key: "dayOverAgreementB", label: "1日の残業が上限超1日" }, { key: "dayOtOverAgreement", label: "1日の残業予定が上限超1日" }, { key: "over12", label: "12h超1日" }];
-  assert.deepStrictEqual(u.shiftTabFindingLabels(fs), ["1日の残業予定が上限超1日", "12h超1日"]);
+    { key: "dayOverAgreementB", label: "1日の残業が上限超1日" }, { key: "dayOtOverAgreement", label: "1日の残業予定が上限超1日" }, { key: "over12", label: "12h超1日" },
+    { key: "weekOver40NoAgreement", label: "週40h超(協定なし)" }, { key: "monthOt100", label: "月の残業が100h以上" }, { key: "p5LegalHoliday", label: "法定休日労働1日" }];
+  assert.deepStrictEqual(u.shiftTabFindingLabels(fs), ["12h超1日", "週40h超(協定なし)", "月の残業が100h以上", "法定休日労働1日"]);
   assert.deepStrictEqual(u.shiftTabFindingLabels(null), []);
   // 外すのは画面だけ: 画面の一覧は screen、PDF（buildLaborFindingsHtml）は findings のまま。総括は判定の全量
   const shift = require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "app-shift.js"), "utf8");
