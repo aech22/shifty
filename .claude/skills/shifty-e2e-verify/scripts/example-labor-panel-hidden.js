@@ -8,6 +8,7 @@
 //   鈴木（社員・A制）   … 09:00〜23:00 を1日＝12h超（画面に残る）と、8h超ではない A制の指摘
 //   佐藤（パート・B制） … 10/19〜24 に 09:00〜18:00 を6日＝週40h超(残業)・週の時間外（画面に出ない・PDF に出る）
 // 期待: 画面の欄に田中・佐藤の行は無く、鈴木の行は12h超を含み、外した項目の文言はどこにも出ない。PDF には残る。
+// 総括（2026-10-10 追加の指示）: 外した10項目だけの田中・佐藤は要修正にならず「残業あり」、12h超の鈴木は要修正のまま。
 //
 // 実行: node .claude/skills/shifty-e2e-verify/scripts/example-labor-panel-hidden.js → allPass=true / EXIT=0
 // 反証: SHIFTY_ROOT=<変更前の配信物> node ... → EXIT=1
@@ -50,6 +51,14 @@ const HIDDEN=[...HIDDEN1,"1日の残業予定が上限超","週40h超(残業)","
       const box=head.parentElement.nextElementSibling;
       return [...box.children].map(d=>d.textContent.trim());
     });
+    out.verdictRow=await h.evaluate(()=>{
+      const tr=[...document.querySelectorAll("tr")].find(r=>(r.querySelector("td")||{}).textContent==="総括");
+      if(!tr)return null;
+      const names=[...tr.closest("table").querySelectorAll("thead th")].slice(1).map(th=>th.textContent.trim());
+      const vals=[...tr.querySelectorAll("td")].slice(1);
+      const o={};names.forEach((n,i)=>{if(vals[i])o[n]={v:vals[i].textContent.trim(),title:vals[i].title||(vals[i].querySelector("[title]")||{}).title||""};});
+      return o;
+    });
     await h.evaluate(()=>{const Orig=window.jspdf.jsPDF;window.jspdf.jsPDF=function(...a){const d=new Orig(...a);d.save=()=>{window.__pdfSaved=true;};return d;};});
     await h.capturePdf();
     await h.clickExact("PDF出力");await h.clickExact("全データ");
@@ -67,6 +76,10 @@ const HIDDEN=[...HIDDEN1,"1日の残業予定が上限超","週40h超(残業)","
       satoRowGone:!(out.screen||[]).some(l=>l.startsWith("佐藤：")),
       suzukiKeepsOver12:(out.screen||[]).some(l=>l.startsWith("鈴木：")&&l.includes("12h超")),
       hiddenNotOnScreen:HIDDEN.every(k=>!scr.includes(k)),
+      verdictTanakaNotFix:!!out.verdictRow&&!!out.verdictRow["田中"]&&out.verdictRow["田中"].v==="残業あり",
+      verdictSatoNotFix:!!out.verdictRow&&!!out.verdictRow["佐藤"]&&out.verdictRow["佐藤"].v==="残業あり",
+      verdictSuzukiFix:!!out.verdictRow&&!!out.verdictRow["鈴木"]&&out.verdictRow["鈴木"].v==="要修正",
+      verdictTitleHidden:!!out.verdictRow&&Object.values(out.verdictRow).every(c=>HIDDEN.every(k=>!c.title.includes(k))),
       pdfKeepsAll:HIDDEN1.every(k=>tanakaPdf.includes(k))&&["週40h超(残業)","週の時間外"].every(k=>satoPdf.includes(k)),
     };
     out.verdict.allPass=Object.values(out.verdict).every(Boolean);
