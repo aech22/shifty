@@ -141,8 +141,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
       && se.purple.some(c => c.title.includes("12h超"))
       && !se.purple.some(c => c.title.includes("1日の残業が上限超")),
     // 塗らないと決めたものは、パネルには出るのにセルは塗られない
-    panel_has_unpainted: /4h未満/.test(se.laborPanel || "") && /休憩不足/.test(se.laborPanel || "")
-      && /1日の残業が上限超/.test(se.laborPanel || ""),
+    // 2026-10-10: 休憩不足・1日の残業が上限超は画面の欄に出さない（4h未満は色を付けず欄に出す）
+    panel_has_unpainted: /4h未満/.test(se.laborPanel || "") && !/休憩不足/.test(se.laborPanel || "")
+      && !/1日の残業が上限超/.test(se.laborPanel || ""),
     labor_cell_in_legend: se.legendHasLabor === true,
     // ② 労務判定表 → 労務の確認 の順
     panel_below_table: se.order.join(">") === "労務判定表>労務の確認",

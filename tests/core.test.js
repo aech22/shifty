@@ -4353,7 +4353,10 @@ test("LABOR_DAY_FIX_KEYS: 全キーに title 用のラベルがあり、セル�
   const legend = u.CELL_COLOR_LEGEND.find(c => c.key === "laborErr");
   assert.ok(legend && legend.color, "laborErr の色が CELL_COLOR_LEGEND に登録されている");
   // 操作方法レジェンドの説明が新しい基準（2026-10-08）を書いている
-  for (const w of ["12時間", "法定休日", "60時間", "特定技能", "属性"]) assert.ok(legend.desc.includes(w), `説明に「${w}」が無い`);
+  for (const w of ["12時間", "法定休日", "特定技能", "属性"]) assert.ok(legend.desc.includes(w), `説明に「${w}」が無い`);
+  // 2026-10-10: 月60h超は紫に塗らない
+  assert.ok(!legend.desc.includes("60時間を超えた日"), "月60h超を塗ると書いていない");
+  assert.ok(!u.LABOR_DAY_FIX_KEYS.includes("over60"));
   assert.ok(/1日の残業の上限超/.test(legend.desc) && /色を付けず/.test(legend.desc), "1日の残業の上限超は塗らないと書いてある");
 });
 
@@ -4397,8 +4400,9 @@ test("紫: over60DatesOf は時間外を日付の順に積み、60h を超えた
   assert.deepStrictEqual(u.over60DatesOf(u.premiumBreakdownOf({ system: "B", days: _premDaysOf("2026-09", () => 540), ym: "2026-09", weekStartDow: 1 })), []);
   assert.deepStrictEqual(u.over60DatesOf(null), []);
   const dates = u.gd("2026-09-01", "2026-09-30");
+  // 2026-10-10: 月60h超は紫に塗らない（over60Dates を渡しても塗る日にならない）
   const day = u.laborDayFindingsFor({ laborSystem: "B", dayMins: dates.map(() => 720), dayDates: dates, over60Dates: ds });
-  assert.deepStrictEqual(dates.filter((d, i) => day[i].includes("over60")), ds.filter(d => d.startsWith("2026-09")));
+  assert.deepStrictEqual(dates.filter((d, i) => day[i].length > 0), []);
 });
 test("紫: skilledShortWorkDates は不足した週の出勤日（月をまたぐ週は足りなかった月の側だけ）", () => {
   const cross = u.gd("2026-09-28", "2026-10-04");
@@ -4483,7 +4487,8 @@ test("紫: シフト作成タブと提出一覧が同じ判定を通す（ドリ
   const lc = src.slice(src.indexOf("const laborCalc=useMemo("), src.indexOf("const laborByStaff=laborCalc.out;"));
   assert.ok(lc.length > 1000, "laborCalc を切り出せた");
   assert.ok(/laborDayFindingsFor\(\{laborSystem:sys,dayMins,dayDates:dates,/.test(lc), "日付を渡している");
-  for (const s of ["legalHolidayDates:prem?prem.legalHolidayDates", "over60DatesOf(prem)", "skilledShortDatesFor(name)", "attrLimitDatesFor(name)"]) assert.ok(lc.includes(s), `${s} が無い`);
+  for (const s of ["legalHolidayDates:prem?prem.legalHolidayDates", "skilledShortDatesFor(name)", "attrLimitDatesFor(name)"]) assert.ok(lc.includes(s), `${s} が無い`);
+  assert.ok(!lc.includes("over60Dates:"), "月60h超は紫の判定に渡さない（2026-10-10）");
   assert.ok(!/laborDayFindingsFor\(\{[^}]*agreementDailyOtH/.test(lc), "1日の残業の上限は紫の判定に渡さない");
   // 属性の上限: 週は週間勤務時間の表と同じ getWeekMin、1ヶ月は「月計」と同じ getPeriodMin の和
   const at = src.slice(src.indexOf("const attrLimitDatesFor="), src.indexOf("const skilledShortDatesFor="));

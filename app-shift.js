@@ -556,11 +556,14 @@ const ShiftCell=React.memo(function ShiftCell({name,date,field,idleVal,editVal,c
       readOnly={readOnly}
       data-sc={`${date}|${field}`} data-scn={name}
       // タッチ用の入力欄（TouchCellEditor）がこのセルの値と、トリプルタップを受けてよいかを読む
-      data-edit={editVal!==undefined?editVal:undefined} data-tt={canEdit&&!hDay?"1":undefined}
+      data-edit={editVal!==undefined?editVal:undefined} data-tt={canEdit?"1":undefined}
       onPointerDown={e=>{const pt=e.pointerType;if(pt==="touch"||pt==="pen"){touchCellPress.el=e.currentTarget;touchCellPress.t=Date.now();}else if(touchCellPress.el===e.currentTarget)touchCellPress.el=null;}}
       onChange={e=>{if(!isPremium||locked)return;const v=e.target.value;setDraft(v);api.draft(key,v);}}
-      onClick={e=>{if(!isPremium){api.upgrade();return;}if(canEdit&&e.detail===3&&!hDay)api.triple(name,date);}}
-      onTouchEnd={()=>{if(!canEdit||hDay)return;api.tripleTap(name,date);}}
+      // 変更マークのトリプルクリック／トリプルタップは、ヘルプ先だけの日（hDay・読み取り専用）のセルでも効かせる。
+      // マークは自店の提出（subs）の changed で、ヘルプの合成表示とは別物。以前は hDay で止めていたため、
+      // 緑が付いたままヘルプ表示に変わったセルのマークを外せなかった（2026-10-10 本番で報告）
+      onClick={e=>{if(!isPremium){api.upgrade();return;}if(canEdit&&e.detail===3)api.triple(name,date);}}
+      onTouchEnd={()=>{if(!canEdit)return;api.tripleTap(name,date);}}
       onFocus={e=>{if(!isPremium){e.target.blur();api.upgrade();return;}if(isTouchCellFocus(e.target)){
           // 入力欄へフォーカスを渡すと、このセルの blur が touchOpen の中で（focus() の呼び出し中に）来るので、印は先に立てる
           touchRedirectRef.current=true;
@@ -1838,11 +1841,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // 年度の累計。**提出を読めている期間は実データで数え**（2026-09-29 ユーザー指示）、
       // 読めない期間だけ凍結時に残した laborTotals で埋める＝過去参照を押さなくても出る。
       const yr=fy==null?null:yearLaborSummary(periods,name,fy,fyStart,liveTotalFor(name),true);
-      // セルを紫で塗る日（dates と同じ並び・2026-10-08 ユーザー指示）。12h超・法定休日労働・月60h超・
-      // 特定技能の週の公休不足の週の出勤日・属性の上限超。1日の残業の上限超（A制・B制）は塗らない（パネルには出る）
+      // セルを紫で塗る日（dates と同じ並び・2026-10-08 ユーザー指示）。12h超・法定休日労働・
+      // 特定技能の週の公休不足の週の出勤日・属性の上限超。1日の残業の上限超（A制・B制）と月60h超（2026-10-10）は塗らない
       const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins,dayDates:dates,
-        // 月60h超は出勤した日だけ（週の時間外②は週の最後の日＝空欄の日曜にも載るので、空欄のセルは塗らない）
-        legalHolidayDates:prem?prem.legalHolidayDates:[],over60Dates:prem?over60DatesOf(prem).filter(d=>laborDayMin(name,d)>0):[],
+        legalHolidayDates:prem?prem.legalHolidayDates:[],
         skilledWeekRestDates:skilledShortDatesFor(name),attrLimitDates:attrLimitDatesFor(name)});
       out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,otWindow:otPlan&&otPlan.fixed?otPlan.window:null,dayOverB,
         prem,monthOtB,periodOtB,

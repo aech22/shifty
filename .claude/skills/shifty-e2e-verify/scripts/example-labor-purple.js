@@ -120,7 +120,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
     legal_holiday_day: eq(daysOf("法定"), expect["法定"]) && titlesOf("法定").every(t => t.includes("法定休日労働")),
     // 2026-10-10: 1日の残業予定が上限超は画面の欄に出さない
     day_ot_only_not_purple: eq(daysOf("残業"), expect["残業"]) && !/1日の残業予定が上限超/.test(m.panel),
-    over60_days: eq(daysOf("六十"), expect["六十"]) && titlesOf("六十").every(t => t.includes("月60h超")),
+    // 2026-10-10: 月60h超は紫に塗らない（画面の労務の確認から外した10項目）
+    over60_days: daysOf("六十").length === 0 && !/月60h超/.test(m.panel || ""),
     // 2026-10-10: 1日の残業が上限超（B制）は画面の欄に出さない
     b_day_ot_before_60h_not_purple: !/1日の残業が上限超/.test(m.panel) && !daysOf("六十").some(d => d < "2026-09-16"),
     skilled_short_week: eq(daysOf("技能"), expect["技能"]) && titlesOf("技能").every(t => t.includes("特定技能の週の公休不足")),
