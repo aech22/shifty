@@ -52,6 +52,12 @@ async function run(trial) {
     r.a_movedToEnd = await overCell();
     r.a_sameElement = await ev(() => document.activeElement === window.__el);
     r.a_valueIsNext = await ev(() => document.activeElement.value);
+    // ページとグリッドの中をスクロールしても欄がセルの上に残る（iPhone でずれた件・2026-10-10）
+    await ev(() => { document.body.style.minHeight = "3000px"; window.scrollBy(0, 150); }); await wait(100);
+    r.a2_afterPageScroll = await overCell();
+    await ev(() => { let e = document.querySelector('input[data-sc]'); while (e && !(e.scrollHeight > e.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(e).overflowY))) e = e.parentElement; if (e) e.scrollTop += 40; window.__inner = !!e; }); await wait(100);
+    r.a3_afterInnerScroll = await overCell();
+    r.a3_innerFound = await ev(() => window.__inner);
     await p.keyboard.press("ControlOrMeta+A"); await p.keyboard.insertText("19"); await p.keyboard.press("Enter"); await wait(150);
     r.b_movedToNextStart = await overCell();
     r.b_sameElement = await ev(() => document.activeElement === window.__el);
@@ -83,6 +89,7 @@ async function run(trial) {
 (async () => {
   const on = await run(true), off = await run(false);
   const ok = on.badge && on.focusTarget === "editor:佐藤|2099-01-02|start" && on.a_movedToEnd === "editor:佐藤|2099-01-02|end" && on.a_sameElement && on.a_valueIsNext === "18"
+    && on.a2_afterPageScroll === "editor:佐藤|2099-01-02|end" && on.a3_afterInnerScroll === "editor:佐藤|2099-01-02|end"
     && on.b_movedToNextStart === "editor:佐藤|2099-01-03|start" && on.b_sameElement
     && on.c_committed && on.c_committed.adjustedStart === "10:00" && on.c_committed.adjustedEnd === "19:00"
     && on.c_shown[0] === "10" && on.c_shown[1] === "19" && on.d_back === "editor:佐藤|2099-01-02|end" && on.e_imeStays === "editor:佐藤|2099-01-02|end"

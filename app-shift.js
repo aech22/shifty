@@ -470,7 +470,7 @@ function KbTrialEditor({openRef,api,resetKey}){
     const t=tgtRef.current,inp=inRef.current;if(!t||!inp)return;
     if(!t.el.isConnected){const el=document.querySelector(`[data-sc="${t.date}|${t.field}"][data-scn="${CSS.escape(t.name)}"]`);if(el)t.el=el;}
     const r=t.el.getBoundingClientRect(),cs=getComputedStyle(t.el);
-    Object.assign(inp.style,{left:r.left+"px",top:r.top+"px",width:r.width+"px",height:r.height+"px",fontSize:cs.fontSize,fontWeight:cs.fontWeight,textAlign:cs.textAlign,padding:cs.padding,opacity:"1",pointerEvents:"auto"});
+    Object.assign(inp.style,{left:(r.left+window.scrollX)+"px",top:(r.top+window.scrollY)+"px",width:r.width+"px",height:r.height+"px",fontSize:cs.fontSize,fontWeight:cs.fontWeight,textAlign:cs.textAlign,padding:cs.padding,opacity:"1",pointerEvents:"auto"});
   };
   const hide=()=>{const inp=inRef.current;if(inp)Object.assign(inp.style,{left:"-9999px",top:"0px",opacity:"0",pointerEvents:"none"});};
   const valueOf=el=>el.dataset.edit!=null?el.dataset.edit:el.value;
@@ -506,9 +506,11 @@ function KbTrialEditor({openRef,api,resetKey}){
     const vv=window.visualViewport;if(vv){vv.addEventListener("resize",f);vv.addEventListener("scroll",f);}
     return()=>{window.removeEventListener("scroll",f,true);window.removeEventListener("resize",f);if(vv){vv.removeEventListener("resize",f);vv.removeEventListener("scroll",f);}};
   },[]);
-  return(
+  // body 直下にページ内の座標（absolute）で置く。fixed だと iOS でキーボードが出ている間、画面上の位置（getBoundingClientRect）と
+  // fixed の基準がずれ、欄がセルからずれる（2026-10-10 実機で確認）
+  return ReactDOM.createPortal(
     <input type="text" inputMode="text" ref={inRef} data-kb-trial="1" maxLength={SHIFT_CELL_MAX_LEN}
-      style={{position:"fixed",left:-9999,top:0,opacity:0,pointerEvents:"none",zIndex:50,boxSizing:"border-box",margin:0,
+      style={{position:"absolute",left:-9999,top:0,opacity:0,pointerEvents:"none",zIndex:50,boxSizing:"border-box",margin:0,
         border:"2px solid var(--c-accent)",borderRadius:2,background:"var(--c-card)",color:"var(--c-text)",outline:"none",fontFamily:"inherit"}}
       onInput={e=>{const t=tgtRef.current;if(t&&!t.readOnly)api.draft(`${t.name}|${t.date}|${t.field}`,e.target.value);}}
       onBlur={()=>{if(!skipCommitRef.current)commit();else{const t=tgtRef.current;if(t)api.draft(`${t.name}|${t.date}|${t.field}`,null);}skipCommitRef.current=false;tgtRef.current=null;api.hideTip();hide();}}
@@ -529,8 +531,8 @@ function KbTrialEditor({openRef,api,resetKey}){
         if(next)go(next);
         // 確定した値をセルに反映した後の表示で中身を合わせ直す（次のセルが無いときは今のセルのまま）
         else setTimeout(()=>{const cur=tgtRef.current;if(cur&&cur.el===t.el){inRef.current.value=valueOf(t.el);place();}},0);
-      }}/>
-  );
+      }}/>,
+    document.body);
 }
 const ShiftCell=React.memo(function ShiftCell({name,date,field,idleVal,editVal,col,dash,color,hFont,hLh,hKeep,hDay,title,readOnly,isPremium,canEdit,locked,base,cursor,prevDate,nextDate,resetKey,api}){
   const[focused,setFocused]=useState(false);
