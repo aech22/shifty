@@ -201,7 +201,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`});
     // 36協定の年単位（4〜9月と11月に90h×7＝630h の凍結値。年360h超・月45h超が年7回・平均80h超）
     year_360:!!ya.panel&&/年360h超/.test(ya.panel),
     year_over45:!!ya.panel&&/月45h超が年\d+回/.test(ya.panel),
-    year_avg80:!!ya.panel&&/複数月平均80h超/.test(ya.panel),
+    // 2026-10-10: 複数月平均80h超は画面の欄に出さない（判定・PDF は従来どおり）
+    year_avg80:!/複数月平均80h超/.test(ya.panel||""),
     no_console_errors:st.errors.length===0&&sh.errors.length===0&&hm.errors.length===0&&ya.errors.length===0,
   };
   const allPass=Object.values(pass).every(Boolean);

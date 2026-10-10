@@ -728,7 +728,7 @@ Firebase Realtime Database
   スタッフアカウント（従業員画面）にはこの印を当てない（「従業員画面」の節）。app-core.js の `AUTH_LOGGED_OUT_LS` の上のコメントと app-main.js の Phase1 のコメントも
   2026-10-04 に実装へ合わせた（立てるのは doFullSignOut だけ）
 - 管理系パス（settings/periods/staff/templates/tokens/global/shops）の書き込みは `shops/{shopId}/owners/{auth.uid}` 登録者のみ。owners への自己登録は `private/adminKey` との値照合が必要で、adminKeyは管理者端末のlocalStorage（`ots_adminKeys_v1`）にのみ保存される。**スタッフURLから得られるshopIdだけでは管理操作できない**（2026-10-08 から閲覧もできない＝管理コードの入力画面だけが出る）。
-- **店舗のデータの読みは店舗IDだけでは通らない（2026-10-08・ルールは未デプロイ）**。`shops/{sid}` の settings・periods・staff・templates・lastActivity・company・subs・nameGuards の `.read` は
+- **店舗のデータの読みは店舗IDだけでは通らない（2026-10-08・2026-10-09 にクライアントとルールを本番反映）**。`shops/{sid}` の settings・periods・staff・templates・lastActivity・company・subs・nameGuards の `.read` は
   `auth != null` だけでなく、次のどれかを要求する: デモ店舗／その店舗の owners／staffLinks（リンク済みの従業員アカウント）／企業ログイン（`company_`＋写しの企業ID）と企業の作成者／
   `shops/{sid}/readers/{uid}` に登録した読む理由（t＝その店舗のスタッフURLのトークン・p＝その店舗の承認済みの個別URL・o＝写しの連携店舗のうち自分がオーナーの店舗・
   l＝写しの連携店舗のうち自分がリンク済みの店舗・q＋qs＝連携店舗 qs の承認済みの個別URL）。t は tokens の受付期限（`expiresAtMs`）を過ぎると読む理由にならない（期限後の募集URLはオーナー以外には開けないのに合わせた）。ルールは理由を**毎回その場で確かめる**ので、トークンの削除・URL の取り消し・

@@ -45,7 +45,7 @@ async function req(m, p, tok, body) { const r = await fetch(`${DB}/${enc(p)}.jso
   await t("A nameGuards を書けない", "PUT", `${S}/nameGuards/${NAME}`, A, true, 401);
   await t("B nameGuards に true 以外は書けない", "PUT", `${S}/nameGuards/${NAME}`, B, "yes", 401);
   await t("B nameGuards を書く", "PUT", `${S}/nameGuards/${NAME}`, B, true, 200);
-  await t("A nameGuards を読める", "GET", `${S}/nameGuards/${NAME}`, A, undefined, 200);
+  await t("A 読む理由の無い端末は nameGuards を読めない(2026-10-08 から)", "GET", `${S}/nameGuards/${NAME}`, A, undefined, 401);
 
   // ---- pageDevices ----
   const dev = tk => ({ token: tk, at: "2099-01-01T00:00:00Z" });

@@ -546,6 +546,7 @@ const sharedGlobals = {
   rollingLimitOverWindows: "writable",
   attrLimitOverDatesOf: "writable",
         laborFindingLabels: "writable",
+        shiftTabFindingLabels: "writable",
   excelRound: "writable",
   excelRoundUp: "writable",
   excelRoundDown: "writable",

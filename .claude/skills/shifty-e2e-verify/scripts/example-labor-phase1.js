@@ -171,13 +171,13 @@ ReactDOM.createRoot(document.getElementById("root")).render(<Harness/>);`,
     // 日次判定パネル（S-4）
     // 日に帰属する判定はすべて該当日を（）付きで出す（2026-09-26 ユーザー指示）。**日だけで月は出さない**
     // ——日次の判定は選択中の期間で絞られている。セル色を付けない判定は日付が無いと画面から辿れない
-    labor_panel_a: !!se.laborPanel && /田中：12h超1日（1）、4h未満1日（2）、休憩不足1日（1）/.test(se.laborPanel),
+    // 2026-10-10: 8h超(残業)・休憩不足・日の時間外・1日の残業が上限超（B制）は画面の欄に出さない（PDF には出る）
+    labor_panel_a: !!se.laborPanel && /田中：12h超1日（1）、4h未満1日（2）/.test(se.laborPanel) && !/休憩不足/.test(se.laborPanel),
     labor_panel_b: !!se.laborPanel && /鈴木：時刻の入力ミス1日（1）/.test(se.laborPanel),
-    labor_panel_badsystem: !!se.laborPanel && /佐藤：休憩不足1日（1）、区分が空欄か誤り/.test(se.laborPanel),
+    labor_panel_badsystem: !!se.laborPanel && /佐藤：区分が空欄か誤り/.test(se.laborPanel),
     // 項目1（2026-10-03 改定）: 応援・外部（dispatch）は B と同じ判定が出る。従業員番号の未設定だけは出さない
-    labor_panel_none_as_b: !!se.laborPanel && /平：[^\n]*8h超1日\(残業\)（1）/.test(se.laborPanel)
-      && /平：[^\n]*1日の残業が上限超1日（1）/.test(se.laborPanel) && /平：[^\n]*休憩不足1日（1）/.test(se.laborPanel)
-      && !/平：[^\n]*従業員番号が未設定/.test(se.laborPanel),
+    // 平の指摘は8h超・1日の残業が上限超・休憩不足だけなので、画面の欄には行ごと出ない（B と同じ判定かは表で見る）
+    labor_panel_none_as_b: !!se.laborPanel && !/平：/.test(se.laborPanel),
     no_console_errors: se.errors.length === 0,
   };
   const allPass = Object.values(pass).every(Boolean);

@@ -126,11 +126,12 @@ async function req(m, p, tok, body) { const r = await fetch(`${DB}/${enc(p)}.jso
   await t("B 後始末 subs __probeSubs2", "DELETE", `${SUBS}/__probeSubs2`, B, undefined, 200);
   for (const id of ["__probeSubs3", "__probeSubs4", "__probeSubs5", "__probeSubsL"]) await req("DELETE", `${SUBS}/${id}`, B.tok);
   await t("B 後始末 periods", "DELETE", `${S}/periods/${P}`, B, undefined, 200);
-  await t("B owners 自己登録の削除", "DELETE", `${S}/owners/${B.uid}`, B, undefined, 200);
+  // 残りの確認はオーナー登録を消す前に B で読む（2026-10-08 から店舗のデータは店舗IDだけでは読めない）
   const left = {};
   for (const id of ["__probeSubs1", "__probeSubs2", "__probeSubs3", "__probeSubs4", "__probeSubs5", "__probeSubsL"]) {
-    left[id] = await (await fetch(`${DB}/${enc(`${SUBS}/${id}`)}.json?auth=${A.tok}`)).json();
+    left[id] = await (await fetch(`${DB}/${enc(`${SUBS}/${id}`)}.json?auth=${B.tok}`)).json();
   }
+  await t("B owners 自己登録の削除", "DELETE", `${S}/owners/${B.uid}`, B, undefined, 200);
   const clean = Object.values(left).every(v => v === null);
   R.push({ label: "後始末の確認(__probeSubs* が残っていない)", value: left, ok: clean });
   if (adminDb) await adminDb.app.delete();

@@ -194,7 +194,8 @@ async function companyCard() {
     labor_column_same_as_b: se.laborRows.length > 0 && colOf(se.laborRows, 1).join("|") === colOf(se.laborRows, 2).join("|"),
     labor_verdict_not_blank: (() => { const r = se.laborRows.find(x => x[0] === "総括"); return !!r && r[1] !== "" && r[1] === r[2]; })(),
     // 労務の確認パネル: 同じ判定が出て、従業員番号の未設定は出さない（バイトは番号を持つので両方とも出ない）
-    panel_line_same_as_b: ext !== "" && ext === pt && /8h超/.test(ext) && /休憩不足/.test(ext),
+    // 2026-10-10: 8h超・休憩不足は画面の欄に出さない。両方とも同じ（ここでは行が無い）ことを見る
+    panel_line_same_as_b: ext === pt && !/8h超|休憩不足/.test(se.panel || ""),
     panel_no_number_for_external: !/従業員番号が未設定/.test(ext),
     week_rest_same_as_b: colOf(se.weekRows, 1).join("|") === colOf(se.weekRows, 2).join("|"),
     // ② 外部の長時間は消えた（保存済みの設定があっても塗らない・レジェンドにも無い）
