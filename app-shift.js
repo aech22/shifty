@@ -1747,11 +1747,10 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       // 年度の累計。**提出を読めている期間は実データで数え**（2026-09-29 ユーザー指示）、
       // 読めない期間だけ凍結時に残した laborTotals で埋める＝過去参照を押さなくても出る。
       const yr=fy==null?null:yearLaborSummary(periods,name,fy,fyStart,liveTotalFor(name),true);
-      // セルを紫で塗る日（dates と同じ並び・2026-10-08 ユーザー指示）。12h超・法定休日労働・月60h超・
-      // 特定技能の週の公休不足の週の出勤日・属性の上限超。1日の残業の上限超（A制・B制）は塗らない（パネルには出る）
+      // セルを紫で塗る日（dates と同じ並び・2026-10-08 ユーザー指示）。12h超・法定休日労働・
+      // 特定技能の週の公休不足の週の出勤日・属性の上限超。1日の残業の上限超（A制・B制）と月60h超（2026-10-10）は塗らない
       const dayFindings=laborDayFindingsFor({laborSystem:sys,dayMins,dayDates:dates,
-        // 月60h超は出勤した日だけ（週の時間外②は週の最後の日＝空欄の日曜にも載るので、空欄のセルは塗らない）
-        legalHolidayDates:prem?prem.legalHolidayDates:[],over60Dates:prem?over60DatesOf(prem).filter(d=>laborDayMin(name,d)>0):[],
+        legalHolidayDates:prem?prem.legalHolidayDates:[],
         skilledWeekRestDates:skilledShortDatesFor(name),attrLimitDates:attrLimitDatesFor(name)});
       out[name]={sys,monthWorkMin,monthOtH,periodOtSumH,otWindow:otPlan&&otPlan.fixed?otPlan.window:null,dayOverB,
         prem,monthOtB,periodOtB,

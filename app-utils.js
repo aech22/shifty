@@ -1131,15 +1131,17 @@ function laborFindingsFor(o){
 }
 // 労務判定のうち「その日」のセルを紫（CELL_COLOR_LEGEND の laborErr）で塗る日を、日ごとに返す。
 // **何を塗るかは 2026-10-08 のユーザー指示で決め直した**:
-//   塗る    … 12h超（A制）／法定休日労働の日（P5 の legalHolidayDates）／月60h超（over60DatesOf）／
+//   塗る    … 12h超（A制）／法定休日労働の日（P5 の legalHolidayDates）／
 //             特定技能の週の公休不足の週の出勤日（skilledShortWorkDates）／
 //             属性の勤務時間の上限（1日・週・2週間・1ヶ月・任意日数）を超えた日と窓の中の出勤日（attrLimitOverDatesOf）
 //   塗らない … 1日の残業予定が上限超（A制）・1日の残業が上限超（B制。8h＋協定の上限を超えた日＝必ず「8h超(残業)」の日でもある）。
 //             4h未満・休憩不足・8h超・週40h超・月の残業・目安・年の36協定。時刻の入力ミスは専用の色（timeErr）
+//             月60h超も 2026-10-10 から塗らない（画面の労務の確認から外した10項目＝SHIFT_TAB_HIDDEN_FINDING_KEYS の p5Over60。ユーザー指示）。
+//             over60DatesOf は残してある（日付の積み方の正本・テストが照合する）
 // どれもパネル（laborFindingsFor・premiumFindingsFor）と総括（OVERALL_FIX_KEYS）は従来どおりで、ここは**色を塗る日**の一覧にすぎない
 // （紫の日は要修正とは限らない＝法定休日労働・月60h超・属性の上限超は総括を変えない）。
 // 12h超と法定休日労働は、パネルの件数と一致することを tests/core.test.js が照合する。
-// 日付を渡す判定（法定休日・60h超・特定技能・属性の上限）は dayDates が要る。渡さなければ 12h超だけ（従来の呼び出しとの互換）。
+// 日付を渡す判定（法定休日・特定技能・属性の上限）は dayDates が要る。渡さなければ 12h超だけ（従来の呼び出しとの互換）。
 // P3.5c の「判定対象外の人の長時間の日」のキーは 2026-10-03 のユーザー指示で削除した。
 const LABOR_DAY_ATTR_LIMIT_KEYS={daily:"attrLimitDaily",weekly:"attrLimitWeekly",biweekly:"attrLimitBiweekly",
   monthly:"attrLimitMonthly",custom:"attrLimitCustom"};
@@ -1153,16 +1155,16 @@ const SHIFT_TAB_HIDDEN_FINDING_KEYS=["over8","breakShort","p5DayOt","dayOverAgre
 function shiftTabFindingLabels(findings){
   return (findings||[]).filter(f=>f&&!SHIFT_TAB_HIDDEN_FINDING_KEYS.includes(f.key)).map(f=>f.label);
 }
-const LABOR_DAY_FIX_KEYS=["over12","legalHoliday","over60","skilledWeekRest",...Object.values(LABOR_DAY_ATTR_LIMIT_KEYS)];
+const LABOR_DAY_FIX_KEYS=["over12","legalHoliday","skilledWeekRest",...Object.values(LABOR_DAY_ATTR_LIMIT_KEYS)];
 // セルの title に出す短い理由。**LABOR_DAY_FIX_KEYS の全キーを持つ**ことをテストが照合する。
-const LABOR_DAY_ERR_LABELS={over12:"12h超",legalHoliday:"法定休日労働",over60:"月60h超",skilledWeekRest:"特定技能の週の公休不足",
+const LABOR_DAY_ERR_LABELS={over12:"12h超",legalHoliday:"法定休日労働",skilledWeekRest:"特定技能の週の公休不足",
   attrLimitDaily:"属性の1日の上限超",attrLimitWeekly:"属性の週の上限超",attrLimitBiweekly:"属性の2週間の上限超",
   attrLimitMonthly:"属性の1ヶ月の上限超",attrLimitCustom:"属性の任意日数の上限超"};
 function laborDayFindingsFor(o){
-  const {laborSystem=null,dayMins=[],dayDates=null,legalHolidayDates=[],over60Dates=[],skilledWeekRestDates=[],attrLimitDates=null}=o||{};
+  const {laborSystem=null,dayMins=[],dayDates=null,legalHolidayDates=[],skilledWeekRestDates=[],attrLimitDates=null}=o||{};
   const mins=(dayMins||[]).map(m=>Math.max(0,Number(m)||0));
   const has=a=>new Set((a||[]).filter(Boolean));
-  const lh=has(legalHolidayDates),o60=has(over60Dates),sk=has(skilledWeekRestDates);
+  const lh=has(legalHolidayDates),sk=has(skilledWeekRestDates);
   const lim=Object.entries(LABOR_DAY_ATTR_LIMIT_KEYS).map(([w,k])=>[k,has(attrLimitDates&&attrLimitDates[w])]);
   return mins.map((m,i)=>{
     const keys=[];
@@ -1170,7 +1172,6 @@ function laborDayFindingsFor(o){
     const d=dayDates&&dayDates[i];
     if(d){
       if(lh.has(d))keys.push("legalHoliday");
-      if(o60.has(d))keys.push("over60");
       if(sk.has(d))keys.push("skilledWeekRest");
       lim.forEach(([k,s])=>{if(s.has(d))keys.push(k);});
     }
@@ -2308,7 +2309,7 @@ const CELL_COLOR_LEGEND=[
   {key:"rest",hatch:true,label:"休み希望（斜線）",desc:"スタッフが提出した休み希望、または管理者が / で入力した休み（他店でのヘルプ勤務がある日は引かない）"},
   {key:"posErr",color:"rgba(250,204,21,0.35)",label:"ポジション不足",desc:"必要ポジション設定に対して出勤人数・ポジションが不足しているランチ/ディナーの行"},
   {key:"timeErr",color:"rgba(190,24,93,.25)",label:"時刻の入力ミス",desc:"退勤が出勤以前になっている。深夜は 25:00・26:00 のように24時を超える表記で入力する"},
-  {key:"laborErr",color:"rgba(139,92,246,.28)",label:"労務の要修正",desc:"1日12時間を超える日・法定休日労働の日・月の時間外が60時間を超えた日・特定技能の週の公休が足りない週の出勤日・属性の勤務時間の上限（1日／週／2週間／1ヶ月／任意日数）を超えた日と、超えた週・期間の出勤日。理由はセルにカーソルを合わせると出る。他の労務の指摘（1日の残業の上限超・4h未満・休憩不足など）は色を付けず「労務の確認が必要です」に出す。ただし8h超・休憩不足・日・週の時間外・1日の残業の上限超・週40h超・月の残業の上限超・複数月平均80h超・月60h超はこの画面には出さず、全データのPDFにだけ出る"},
+  {key:"laborErr",color:"rgba(139,92,246,.28)",label:"労務の要修正",desc:"1日12時間を超える日・法定休日労働の日・特定技能の週の公休が足りない週の出勤日・属性の勤務時間の上限（1日／週／2週間／1ヶ月／任意日数）を超えた日と、超えた週・期間の出勤日。理由はセルにカーソルを合わせると出る。他の労務の指摘（1日の残業の上限超・4h未満・休憩不足など）は色を付けず「労務の確認が必要です」に出す。ただし8h超・休憩不足・日・週の時間外・1日の残業の上限超・週40h超・月の残業の上限超・複数月平均80h超・月60h超はこの画面には出さず、全データのPDFにだけ出る"},
 ];
 // 休みコマンド判定（セル全体が / ／ ko yu ke のとき。時間付きの「9/」は通常サフィックス＝メモ扱い）。
 // **レジストリ駆動**にしてあるので kind:"rest" を足せば判定・予約語（isReservedShopAbbr）に自動で乗る。
