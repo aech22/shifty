@@ -46,6 +46,7 @@ async function run(trial) {
   const startEl = await p.evaluateHandle(() => document.activeElement);
   r.focusTarget = await overCell();
   if (trial) {
+    r.badge = await ev(() => !!document.querySelector("[data-kb-trial-badge]"));
     await ev(() => { window.__el = document.activeElement; });
     await p.keyboard.press("ControlOrMeta+A"); await p.keyboard.insertText("10"); await p.keyboard.press("Enter"); await wait(150);
     r.a_movedToEnd = await overCell();
@@ -69,7 +70,7 @@ async function run(trial) {
     await ev(() => document.activeElement.blur()); await wait(150);
     r.g_hiddenAfterBlur = await ev(() => { const e = document.querySelector("[data-kb-trial]"); return e.getBoundingClientRect().left < -1000; });
   } else {
-    r.noEditor = await ev(() => !document.querySelector("[data-kb-trial]"));
+    r.noEditor = await ev(() => !document.querySelector("[data-kb-trial]") && !document.querySelector("[data-kb-trial-badge]"));
     await p.keyboard.press("ControlOrMeta+A"); await p.keyboard.insertText("10"); await p.keyboard.press("Enter"); await wait(150);
     r.a_movedToEnd = await overCell();
     r.c_committed = await shiftOf("佐藤", "2099-01-02");
@@ -81,7 +82,7 @@ async function run(trial) {
 
 (async () => {
   const on = await run(true), off = await run(false);
-  const ok = on.focusTarget === "editor:佐藤|2099-01-02|start" && on.a_movedToEnd === "editor:佐藤|2099-01-02|end" && on.a_sameElement && on.a_valueIsNext === "18"
+  const ok = on.badge && on.focusTarget === "editor:佐藤|2099-01-02|start" && on.a_movedToEnd === "editor:佐藤|2099-01-02|end" && on.a_sameElement && on.a_valueIsNext === "18"
     && on.b_movedToNextStart === "editor:佐藤|2099-01-03|start" && on.b_sameElement
     && on.c_committed && on.c_committed.adjustedStart === "10:00" && on.c_committed.adjustedEnd === "19:00"
     && on.c_shown[0] === "10" && on.c_shown[1] === "19" && on.d_back === "editor:佐藤|2099-01-02|end" && on.e_imeStays === "editor:佐藤|2099-01-02|end"

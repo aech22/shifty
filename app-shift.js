@@ -3135,6 +3135,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
       {KB_TRIAL&&!exportJob&&<KbTrialEditor openRef={kbOpenRef} api={cellApi} resetKey={cellResetKey}/>}
       <div style={{marginBottom:10,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         <span style={{fontWeight:700,fontSize:15}}>シフト作成</span>
+        {KB_TRIAL&&<span data-kb-trial-badge="1" style={{fontSize:12,fontWeight:700,color:"#fff",background:"var(--c-accent)",borderRadius:10,padding:"2px 8px"}}>キーボード試作ON</span>}
         <select value={selPid} onChange={e=>{setSelPid(e.target.value);discardEdits();setActualMode(false);}}
           style={{fontSize:16,padding:"4px 8px",border:BD,borderRadius:4,background:"var(--c-input)",color:"var(--c-text)"}}>
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
