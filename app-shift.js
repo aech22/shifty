@@ -471,8 +471,11 @@ const ShiftCell=React.memo(function ShiftCell({name,date,field,idleVal,editVal,c
       readOnly={readOnly}
       data-sc={`${date}|${field}`} data-scn={name}
       onChange={e=>{if(!isPremium||locked)return;const v=e.target.value;setDraft(v);api.draft(key,v);}}
-      onClick={e=>{if(!isPremium){api.upgrade();return;}if(canEdit&&e.detail===3&&!hDay)api.triple(name,date);}}
-      onTouchEnd={()=>{if(!canEdit||hDay)return;api.tripleTap(name,date);}}
+      // 変更マークのトリプルクリック／トリプルタップは、ヘルプ先だけの日（hDay・読み取り専用）のセルでも効かせる。
+      // マークは自店の提出（subs）の changed で、ヘルプの合成表示とは別物。以前は hDay で止めていたため、
+      // 緑が付いたままヘルプ表示に変わったセルのマークを外せなかった（2026-10-10 本番で報告）
+      onClick={e=>{if(!isPremium){api.upgrade();return;}if(canEdit&&e.detail===3)api.triple(name,date);}}
+      onTouchEnd={()=>{if(!canEdit)return;api.tripleTap(name,date);}}
       onFocus={e=>{if(!isPremium){e.target.blur();api.upgrade();return;}setFocused(true);api.tip(name,date,field,e.target.getBoundingClientRect());}}
       onBlur={e=>{api.commit(name,date,field,e.target.value);api.hideTip();setFocused(false);setDraft(null);api.draft(key,null);}}
       // 日本語IME変換確定のEnter(isComposing/keyCode229)はセル確定・フォーカス移動として扱わない。
