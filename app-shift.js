@@ -449,20 +449,19 @@ const cellBgStyleOf=(col,dash)=>{
 // ルール（database.rules.json）がメモを200字までに制限している。超えると saveSubs の1回の update ごと拒否され、
 // 同じ回の他の人のセルも保存されない（画面は保存できたように見える）ので、入力の時点で止める
 const SHIFT_CELL_MAX_LEN=200;
-// ===== 試作: iPhone でセルを移ってもキーボードを戻さない（2026-10-09・本番では動かない）=====
-// iOS は別の入力欄にフォーカスが移るたびにキーボードを既定（日本語かななら「かな」）に戻す。入力欄を1つ（KbTrialEditor）だけにし、
-// Enter ではフォーカスを動かさずにその欄を次のセルの上へ動かせば、キーボードがそのまま残るかを実機で確かめるための試作。
-// 動くのは開発環境（DEV_MODE）で URL に ?kbtrial=1 を付けて開いたときだけ（端末に覚える。?kbtrial=0 で戻す）。本番（shiftyshifty.app）では
-// DEV_MODE が false なので常に false。**切り離すとき**は KB_TRIAL・KbTrialEditor と、「KB_TRIAL」で検索して出る ShiftCell と ShiftEditTab の数行を消す
-const KB_TRIAL=(()=>{
-  try{
-    if(typeof DEV_MODE==="undefined"||!DEV_MODE)return false;
-    const m=/[?&]kbtrial=([01])/.exec(location.search);
-    if(m){if(m[1]==="1")localStorage.setItem("ots_kbTrial_v1","1");else localStorage.removeItem("ots_kbTrial_v1");}
-    return localStorage.getItem("ots_kbTrial_v1")==="1";
-  }catch{return false;}
-})();
-function KbTrialEditor({openRef,api,resetKey}){
+// ===== 指でタップしたセルの入力欄（タッチ用の入力欄・2026-10-10）=====
+// iOS は別の入力欄にフォーカスが移るたびにキーボードを既定（日本語かななら「かな」）に戻すので、数字を打って改行で次のセルへ
+// 移るたびに ☆123 から「かな」に戻っていた（本番の報告）。指（とペン）でセルをタップしたときだけ、セルの代わりに入力欄を1つ
+// （TouchCellEditor）出し、改行ではフォーカスを動かさずにその欄を次のセルの上へ動かす（フォーカスが動かないのでキーボードが戻らない。
+// 2026-10-10 に iPhone の実機で確認）。マウスのクリック・Tab などのキーボード操作で選んだセルは今までどおりセル自身で入力する。
+// 画面のキーボードが出ているかはブラウザから分からないので、判定は「どう選んだか」（直前の pointerdown の pointerType）で行う。
+// 止めるときは TOUCH_CELL_EDITOR を false にする（セルは今までどおりに戻る）。
+const TOUCH_CELL_EDITOR=true;
+// 直前にセルを指で押した記録。pointerdown（指・ペン）→ focus の順に来るので、同じセルに短い間に来た focus だけを指の操作とみなす
+const touchCellPress={el:null,t:0};
+const TOUCH_CELL_PRESS_MS=1500;
+const isTouchCellFocus=el=>TOUCH_CELL_EDITOR&&touchCellPress.el===el&&Date.now()-touchCellPress.t<TOUCH_CELL_PRESS_MS;
+function TouchCellEditor({openRef,api,resetKey}){
   const inRef=useRef(null);
   const tgtRef=useRef(null); // {el,name,date,field,readOnly}
   const skipCommitRef=useRef(false);
@@ -509,7 +508,7 @@ function KbTrialEditor({openRef,api,resetKey}){
   // body 直下にページ内の座標（absolute）で置く。fixed だと iOS でキーボードが出ている間、画面上の位置（getBoundingClientRect）と
   // fixed の基準がずれ、欄がセルからずれる（2026-10-10 実機で確認）
   return ReactDOM.createPortal(
-    <input type="text" inputMode="text" ref={inRef} data-kb-trial="1" maxLength={SHIFT_CELL_MAX_LEN}
+    <input type="text" inputMode="text" ref={inRef} data-touch-editor="1" maxLength={SHIFT_CELL_MAX_LEN}
       style={{position:"absolute",left:-9999,top:0,opacity:0,pointerEvents:"none",zIndex:50,boxSizing:"border-box",margin:0,
         border:"2px solid var(--c-accent)",borderRadius:2,background:"var(--c-card)",color:"var(--c-text)",outline:"none",fontFamily:"inherit"}}
       onInput={e=>{const t=tgtRef.current;if(t&&!t.readOnly)api.draft(`${t.name}|${t.date}|${t.field}`,e.target.value);}}
@@ -526,7 +525,7 @@ function KbTrialEditor({openRef,api,resetKey}){
         const cells=[...document.querySelectorAll(`input[data-sc][data-scn="${CSS.escape(t.name)}"]`)];
         const i=cells.findIndex(c=>c.getAttribute("data-sc")===`${t.date}|${t.field}`);
         const next=i<0?null:cells[back?i-1:i+1];
-        // フォーカスは動かさない（ここが試作の要点）。欄を次のセルの上へ動かして中身を入れ替える
+        // フォーカスは動かさない（フォーカスが動かなければ iOS はキーボードを戻さない）。欄を次のセルの上へ動かして中身を入れ替える
         const go=el=>{const[d,f]=el.getAttribute("data-sc").split("|");el.scrollIntoView({block:"nearest",inline:"nearest"});setTarget(el,t.name,d,f);try{const v=inRef.current.value.length;inRef.current.setSelectionRange(v,v);}catch{}};
         if(next)go(next);
         // 確定した値をセルに反映した後の表示で中身を合わせ直す（次のセルが無いときは今のセルのまま）
@@ -537,6 +536,7 @@ function KbTrialEditor({openRef,api,resetKey}){
 const ShiftCell=React.memo(function ShiftCell({name,date,field,idleVal,editVal,col,dash,color,hFont,hLh,hKeep,hDay,title,readOnly,isPremium,canEdit,locked,base,cursor,prevDate,nextDate,resetKey,api}){
   const[focused,setFocused]=useState(false);
   const[draft,setDraft]=useState(null);
+  const touchRedirectRef=useRef(false); // フォーカスをタッチ用の入力欄へ渡した（このセルの blur では何もしない）
   // 店舗の切り替え・選択中の期間の消失（親の discardEdits）で入力中の文字を捨てる。初回は何もしない
   const resetSeen=useRef(resetKey);
   useEffect(()=>{if(resetSeen.current===resetKey)return;resetSeen.current=resetKey;setDraft(null);setFocused(false);},[resetKey]);
@@ -555,12 +555,20 @@ const ShiftCell=React.memo(function ShiftCell({name,date,field,idleVal,editVal,c
       data-helper={showHelper?"1":undefined}
       readOnly={readOnly}
       data-sc={`${date}|${field}`} data-scn={name}
-      data-edit={KB_TRIAL&&editVal!==undefined?editVal:undefined} data-tt={KB_TRIAL&&canEdit&&!hDay?"1":undefined}
+      // タッチ用の入力欄（TouchCellEditor）がこのセルの値と、トリプルタップを受けてよいかを読む
+      data-edit={editVal!==undefined?editVal:undefined} data-tt={canEdit&&!hDay?"1":undefined}
+      onPointerDown={e=>{const pt=e.pointerType;if(pt==="touch"||pt==="pen"){touchCellPress.el=e.currentTarget;touchCellPress.t=Date.now();}else if(touchCellPress.el===e.currentTarget)touchCellPress.el=null;}}
       onChange={e=>{if(!isPremium||locked)return;const v=e.target.value;setDraft(v);api.draft(key,v);}}
       onClick={e=>{if(!isPremium){api.upgrade();return;}if(canEdit&&e.detail===3&&!hDay)api.triple(name,date);}}
       onTouchEnd={()=>{if(!canEdit||hDay)return;api.tripleTap(name,date);}}
-      onFocus={e=>{if(!isPremium){e.target.blur();api.upgrade();return;}if(KB_TRIAL&&api.kbOpen(e.target,name,date,field))return;setFocused(true);api.tip(name,date,field,e.target.getBoundingClientRect());}}
-      onBlur={e=>{if(KB_TRIAL&&!focused)return;api.commit(name,date,field,e.target.value);api.hideTip();setFocused(false);setDraft(null);api.draft(key,null);}}
+      onFocus={e=>{if(!isPremium){e.target.blur();api.upgrade();return;}if(isTouchCellFocus(e.target)){
+          // 入力欄へフォーカスを渡すと、このセルの blur が touchOpen の中で（focus() の呼び出し中に）来るので、印は先に立てる
+          touchRedirectRef.current=true;
+          if(api.touchOpen(e.target,name,date,field))return;
+          touchRedirectRef.current=false;
+        }
+        setFocused(true);api.tip(name,date,field,e.target.getBoundingClientRect());}}
+      onBlur={e=>{if(touchRedirectRef.current){touchRedirectRef.current=false;return;}api.commit(name,date,field,e.target.value);api.hideTip();setFocused(false);setDraft(null);api.draft(key,null);}}
       // 日本語IME変換確定のEnter(isComposing/keyCode229)はセル確定・フォーカス移動として扱わない。
       // 除外しないと変換確定のEnterで即座に次セルへ移動し、IMEの確定処理がそのまま次セルに入って
       // 手打ちしていないセルにも同じ文字（例:「締」）が入ってしまう
@@ -2366,7 +2374,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   // （描画のたびに新しい関数を渡すと memo が効かず、選択・入力のたびに全セルが描き直される）。
   const cellApiRef=useRef(null);
   const tipSetRef=useRef(null);
-  const kbOpenRef=useRef(null); // 試作（KB_TRIAL）
+  const touchOpenRef=useRef(null); // タッチ用の入力欄（TouchCellEditor）を開く
   React.useLayoutEffect(()=>{
     cellApiRef.current={
       commit:handleBlur,
@@ -2388,7 +2396,7 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
     tripleTap:(n,d)=>cellApiRef.current.tripleTap(n,d),
     tip:(n,d,f,r)=>cellApiRef.current.tip(n,d,f,r),
     hideTip:()=>{const set=tipSetRef.current;if(set)set(null);},
-    kbOpen:(el,n,d,f)=>{const o=kbOpenRef.current;return o?o(el,n,d,f):false;}, // 試作（KB_TRIAL）
+    touchOpen:(el,n,d,f)=>{const o=touchOpenRef.current;return o?o(el,n,d,f):false;},
     // 入力中の文字。value=null は「このセルの入力を終えた」（別のセルの入力中の文字は消さない）
     draft:(key,value)=>{if(value==null){if(draftRef.current&&draftRef.current.key===key)draftRef.current=null;}else{draftRef.current={key,value};if(calcTimerRef.current)scheduleCalc();}},
   }),[]);
@@ -3149,10 +3157,9 @@ function ShiftEditTab({subs,periods,staffList:staffListProp,onSave,tt,settings:s
   return(
     <div ref={outerRef} style={{padding:"12px 8px"}}>
       <CellTip setRef={tipSetRef}/>
-      {KB_TRIAL&&!exportJob&&<KbTrialEditor openRef={kbOpenRef} api={cellApi} resetKey={cellResetKey}/>}
+      {TOUCH_CELL_EDITOR&&!exportJob&&<TouchCellEditor openRef={touchOpenRef} api={cellApi} resetKey={cellResetKey}/>}
       <div style={{marginBottom:10,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
         <span style={{fontWeight:700,fontSize:15}}>シフト作成</span>
-        {KB_TRIAL&&<span data-kb-trial-badge="1" style={{fontSize:12,fontWeight:700,color:"#fff",background:"var(--c-accent)",borderRadius:10,padding:"2px 8px"}}>キーボード試作ON</span>}
         <select value={selPid} onChange={e=>{setSelPid(e.target.value);discardEdits();setActualMode(false);}}
           style={{fontSize:16,padding:"4px 8px",border:BD,borderRadius:4,background:"var(--c-input)",color:"var(--c-text)"}}>
           {periods.map(p=><option key={p.id} value={p.id}>{p.label||(p.startDate+"〜"+p.endDate)}</option>)}
